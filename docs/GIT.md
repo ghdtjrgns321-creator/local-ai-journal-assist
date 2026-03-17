@@ -63,7 +63,7 @@ main                    ← 안정된 릴리즈만 머지 (항상 실행 가능 
 feat: Excel 파일 검증 로직 구현
 fix: 심야 시간 판정 경계값 오류 수정
 refactor: detection 모듈 BaseDetector 추상화
-docs: AUDIT_DOMAIN.md 룰 R005 설명 보강
+docs: AUDIT_DOMAIN_FINAL.md C04 소급전기 설명 보강
 chore: ruff 설정 추가
 test: Benford 판정 엣지케이스 테스트 추가
 ```
