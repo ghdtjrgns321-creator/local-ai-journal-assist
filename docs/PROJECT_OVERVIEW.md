@@ -42,7 +42,7 @@ local-ai-assist/
 │   ├── ingest/                 # 수집·평탄화
 │   ├── feature/                # 감사 파생변수
 │   ├── validation/             # 계층적 검증 (L1~L3)
-│   ├── detection/              # 멀티트랙 이상탐지
+│   ├── detection/              # 3-Layer 이상탐지 (A무결성/B부정/C징후)
 │   ├── db/                     # DuckDB
 │   ├── llm/                    # LLM 연동 (Phase 3)
 │   └── export/                 # 내보내기 (Phase 3)
@@ -75,12 +75,12 @@ local-ai-assist/
 | 2  | [02-ingest.md](pre-plan/02-ingest.md)                    | 파일 검증, Excel 읽기, 헤더 탐지, 컬럼 매핑, 타입 캐스팅     | MVP    |
 | 3  | [03-feature.md](pre-plan/03-feature.md)                  | 감사 파생변수 11개 (time/amount/pattern/text)                 | MVP    |
 | 4  | [04-validation.md](pre-plan/04-validation.md)            | L1 Pandera + L2 회계 + L3 통계 검증 + 리포트                 | MVP+P2 |
-| 5  | [05-detection.md](pre-plan/05-detection.md)              | BaseDetector, 룰엔진, Benford, XGBoost, VAE, 중복, NLP       | MVP~P3 |
+| 5  | [05-detection.md](pre-plan/05-detection.md)              | BaseDetector, 3레이어 22개 룰(A/B/C), Benford(C07), ML 16개, NLP 5개 | MVP~P3 |
 | 6  | [06-db.md](pre-plan/06-db.md)                            | DuckDB 커넥션, 스키마, 로더, 프리셋 쿼리                     | MVP    |
 | 7  | [07-dashboard.md](pre-plan/07-dashboard.md)              | Streamlit 5탭, 컴포넌트, 차트, 필터                          | MVP+P3 |
 | 8  | [08-llm.md](pre-plan/08-llm.md)                          | Ollama, Vanna AI 2.0, SQL 검증, 프리셋, 인사이트             | P3     |
 | 9  | [09-export.md](pre-plan/09-export.md)                    | Excel/PDF 감사조서, Audit Trail                               | P3     |
-| 10 | [10-sample-data.md](pre-plan/10-sample-data.md)          | 가상 GL 데이터 생성기, Excel 템플릿                           | MVP    |
+| 10 | [10-sample-data.md](pre-plan/10-sample-data.md)          | 가상 GL 데이터 생성기 — DataSynth로 대체됨                    | MVP    |
 
 **구현 의존 그래프:**
 ```
@@ -100,7 +100,7 @@ DataSynth (tools/datasynth/) → config/datasynth.yaml → journal_entries.csv (
   ↓
 Excel/CSV → file_validator → excel_reader → header_detector → column_mapper → type_caster
   → 표준 DataFrame → feature/engine (감사 파생변수) → validation (3-Level)
-    → detection (rule_engine + benford_analyzer + ...) → score_aggregator
+    → detection (3-Layer: A무결성 3개 + B부정 10개 + C징후 9개, 22개 룰) → score_aggregator
       → DuckDB → 프리셋 SQL / Text-to-SQL (Phase 3)
         → Streamlit 대시보드
 ```

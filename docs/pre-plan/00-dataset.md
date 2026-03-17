@@ -98,9 +98,9 @@ fraud:
 |-------------------|-------:|------------------------------------------|
 | sap-merged        |   332K | DataSynth가 실제 SAP 구조와 일치하는지   |
 | schreyer-fraud    |   533K | ML 모델 성능을 학술 벤치마크와 비교      |
-| bpi2019           | 1,596K | 사용자 행동 패턴 (R005~R007 룰 검증)     |
+| bpi2019           | 1,596K | 사용자 행동 패턴 (B06~B08 룰 검증)       |
 | financial-anomaly |   217K | Benford 분석 함수 단위 테스트            |
-| general-ledger    |    28K | Benford + R001/R003 로직 검증            |
+| general-ledger    |    28K | Benford + B02/C03 로직 검증              |
 
 > 각 데이터셋 상세: [data/journal/OVERVIEW.md](../../data/journal/OVERVIEW.md)
 
@@ -108,12 +108,15 @@ fraud:
 
 ```
 Phase 1 (룰 탐지)   → DataSynth journal_entries.csv (메인)
+                      → 22개 룰(A01~C09) 3레이어 탐지
                       → validation/ 데이터로 룰 로직 교차 검증
 Phase 2 (ML)         → DataSynth is_fraud/is_anomaly로 지도학습
+                      → +16개 유형 ML 확장 (총 36개)
                       → schreyer-fraud label로 학술 벤치마크 비교
-Phase 3 (LLM)        → DataSynth line_text/header_text로 NLP 테스트
-Benford 검증         → financial-anomaly, general-ledger로 로직 테스트
-사용자 행동 분석     → bpi2019로 R005/R006/R007 룰 검증
+Phase 3 (LLM/그래프) → DataSynth line_text/header_text로 NLP 테스트
+                      → +5개 유형 NLP/그래프 확장 (총 41개)
+Benford 검증         → financial-anomaly, general-ledger로 C07 로직 테스트
+사용자 행동 분석     → bpi2019로 B06/B07/B08 룰 검증
 ```
 
 ## 스키마 확정 근거
@@ -121,7 +124,7 @@ Benford 검증         → financial-anomaly, general-ledger로 로직 테스트
 - `config/schema.yaml`: DataSynth 29개 컬럼 기준 (ACDOCA 매핑 포함)
 - `config/keywords.yaml`: DataSynth 컬럼명 + SAP 필드명 추가
 - `config/risk_keywords.yaml`: DataSynth FraudType 참고 위험 키워드
-- `docs/AUDIT_DOMAIN.md`: DataSynth anomaly.rs 132개 유형 기준
+- `docs/AUDIT_DOMAIN_FINAL.md`: DataSynth anomaly.rs 132개 유형 기준
 
 ## 선행/후행 의존
 

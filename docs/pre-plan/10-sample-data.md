@@ -1,5 +1,9 @@
 # 10. 가상 GL 데이터 생성기 및 Excel 템플릿
 
+> **DataSynth로 대체됨**: 메인 데이터는 DataSynth(`data/journal/primary/datasynth/`)에서 생성.
+> 이 모듈은 ingest 파이프라인 테스트용 소규모 ERP 샘플 생성 용도로만 유지.
+> 이상 전표 유형은 22개 룰(A01~C09) 체계를 반영하되, 테스트용이므로 주요 유형만 포함.
+
 ## 목적
 전체 파이프라인을 테스트할 수 있는 가상 GL(General Ledger) 데이터를 자동 생성한다.
 정상 전표(80%)와 의도적 이상 전표(20%)를 혼합하여 탐지 검증에 활용.
@@ -41,39 +45,37 @@ def _generate_normal_entries(n: int) -> DataFrame:
     """
 
 def _generate_anomaly_entries(n: int) -> DataFrame:
-    """이상 전표 생성 (20%). 8개 룰 + Benford 위반 포함.
+    """이상 전표 생성 (20%). 22개 룰 주요 유형 포함.
     각 이상 유형별 균등 배분."""
 
-def _generate_r001_entries(n: int) -> DataFrame:
-    """R001: 승인한도 직하 금액 (4,900~4,999만원대).
+def _generate_b02_entries(n: int) -> DataFrame:
+    """B02: 승인한도 직하 금액 (4,900~4,999만원대).
     감사 관점: 5,000만원 승인 한도 회피 의도."""
 
-def _generate_r002_entries(n: int) -> DataFrame:
-    """R002: 주말(토/일) 전표.
+def _generate_c02_entries(n: int) -> DataFrame:
+    """C02: 주말(토/일) 전표.
     감사 관점: 비업무일 처리는 통제 우회 가능성."""
 
-def _generate_r003_entries(n: int) -> DataFrame:
-    """R003: 심야(22시~06시) 전표.
+def _generate_c03_entries(n: int) -> DataFrame:
+    """C03: 심야(22시~06시) 전표.
     감사 관점: 야간 처리는 승인 절차 우회."""
 
-def _generate_r004_entries(n: int) -> DataFrame:
-    """R004: 기말(월말 5일 이내) 대규모 매출.
+def _generate_c01_entries(n: int) -> DataFrame:
+    """C01: 기말(월말 5일 이내) 대규모 매출.
     감사 관점: 실적 조정 목적의 기말 매출 집중."""
 
-def _generate_r005_entries(n: int) -> DataFrame:
-    """R005: 역분개 쌍 (동일 계정·금액, 차변↔대변).
-    감사 관점: 부정 거래 은폐 수단."""
+# R005 (ReversedAmount) → Phase 2 ML 확장으로 이동, 테스트 생성기에서 제외
 
-def _generate_r006_entries(n: int) -> DataFrame:
-    """R006: 수기 전표 (source_type='수동').
+def _generate_b08_entries(n: int) -> DataFrame:
+    """B08: 수기 전표 (source_type='수동').
     감사 관점: 자동화 통제 우회."""
 
-def _generate_r007_entries(n: int) -> DataFrame:
-    """R007: 위험 적요 키워드 포함 ('상품권', '가계정', '가수금' 등).
+def _generate_c06_entries(n: int) -> DataFrame:
+    """C06: 위험 적요 키워드 포함 ('상품권', '가계정', '가수금' 등).
     감사 관점: 자금 유용 관련 계정."""
 
-def _generate_r008_entries(n: int) -> DataFrame:
-    """R008: 관계사/특수관계자 거래.
+def _generate_b10_entries(n: int) -> DataFrame:
+    """B10: 관계사/특수관계자 거래.
     감사 관점: 이전가격 조작 위험."""
 
 def _generate_benford_violation(df: DataFrame) -> DataFrame:
@@ -107,14 +109,13 @@ def save_to_excel(df: DataFrame, output_path: Path) -> Path:
 
 | 룰   | 생성 비율 | 핵심 특성                | 검증 기대                      |
 |------|-----------|--------------------------|--------------------------------|
-| R001 | ~2.5%     | 금액 4,900~4,999만원     | `is_near_threshold=True`       |
-| R002 | ~2.5%     | 토/일 일자               | `is_weekend=True`              |
-| R003 | ~2.5%     | 22~06시 시간             | `is_midnight=True`             |
-| R004 | ~2.5%     | 월말 5일 + 1억 이상 매출 | `is_period_end=True` + 고액    |
-| R005 | ~2.5%     | 동일 금액 차대 쌍        | `is_reversal=True`             |
-| R006 | ~2.5%     | source_type='수동'       | `is_manual_je=True`            |
-| R007 | ~2.5%     | 적요에 '상품권' 등       | `has_risk_keyword!=none`       |
-| R008 | ~2.5%     | 거래처='관계사'          | `is_intercompany=True`         |
+| B02  | ~2.8%     | 금액 4,900~4,999만원     | `is_near_threshold=True`       |
+| C02  | ~2.8%     | 토/일 일자               | `is_weekend=True`              |
+| C03  | ~2.8%     | 22~06시 시간             | `is_midnight=True`             |
+| C01  | ~2.8%     | 월말 5일 + 1억 이상 매출 | `is_period_end=True` + 고액    |
+| B08  | ~2.8%     | source_type='수동'       | `is_manual_je=True`            |
+| C06  | ~2.8%     | 적요에 '상품권' 등       | `has_risk_keyword!=none`       |
+| B10  | ~2.8%     | 거래처='관계사'          | `is_intercompany=True`         |
 
 **합계:** ~20% 이상 전표 (anomaly_ratio 파라미터로 조절)
 
@@ -135,9 +136,9 @@ generate_gl_data(n=10000, anomaly_ratio=0.20)
        ↓
   ├── _generate_normal_entries(8000)
   └── _generate_anomaly_entries(2000)
-       ├── _generate_r001_entries(250)
-       ├── _generate_r002_entries(250)
-       ├── ... (각 룰 균등)
+       ├── _generate_b02_entries(285)
+       ├── _generate_c02_entries(285)
+       ├── ... (7개 룰 균등, R005 제외)
        └── _generate_benford_violation()
        ↓
 save_to_excel(df, "data/sample/sample_gl.xlsx")
@@ -147,7 +148,7 @@ save_to_excel(df, "data/sample/sample_gl.xlsx")
 
 ## 구현 순서
 1. `generate_sample.py` — 정상 전표 생성기
-2. 각 룰별 이상 전표 생성 함수 (R001~R008)
+2. 각 룰별 이상 전표 생성 함수 (B02, C02, C03, C01, B08, C06, B10)
 3. Benford 위반 데이터 삽입
 4. `save_to_excel()` — Excel 저장
 5. `gl_template.xlsx` — 수동 작성 (openpyxl로 제목/병합셀 포함)
@@ -160,7 +161,7 @@ save_to_excel(df, "data/sample/sample_gl.xlsx")
 ## 테스트 전략
 - **생성 건수 확인:** `len(df) == n`
 - **이상 비율 확인:** 이상 전표가 `anomaly_ratio ± 1%` 범위
-- **각 룰 커버리지:** R001~R008 모든 유형 최소 1건 이상 존재
+- **각 룰 커버리지:** B02/C02/C03/C01/B08/C06/B10 모든 유형 최소 1건 이상 존재
 - **대차일치:** 전표 단위 debit_amount + credit_amount 합이 쌍으로 일치
 - **Benford 위반:** 생성 데이터의 첫째 자릿수 분포가 Benford와 유의미하게 다름 (MAD > 0.015)
 - **재현성:** 동일 seed → 동일 데이터

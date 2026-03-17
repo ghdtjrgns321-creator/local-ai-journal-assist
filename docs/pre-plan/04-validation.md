@@ -24,12 +24,12 @@ class GeneralLedgerSchema(pa.DataFrameModel):
     """표준 GL DataFrame의 구조 스키마.
     필수 컬럼 존재, 타입, 기본 제약조건을 검증."""
 
-    journal_id: pa.typing.Series[str] = pa.Field(nullable=False)
-    entry_date: pa.typing.Series[pa.DateTime] = pa.Field(nullable=False)
-    account_code: pa.typing.Series[str] = pa.Field(nullable=False)
+    document_id: pa.typing.Series[str] = pa.Field(nullable=False)
+    posting_date: pa.typing.Series[pa.DateTime] = pa.Field(nullable=False)
+    gl_account: pa.typing.Series[int] = pa.Field(nullable=False)
     debit_amount: pa.typing.Series[float] = pa.Field(ge=0, nullable=False)
     credit_amount: pa.typing.Series[float] = pa.Field(ge=0, nullable=False)
-    description: pa.typing.Series[str] = pa.Field(nullable=True)
+    line_text: pa.typing.Series[str] = pa.Field(nullable=True)
 
 def validate_schema(df: DataFrame) -> ValidationReport:
     """L1 검증: Pandera로 구조·타입·제약조건 검증.
@@ -60,7 +60,7 @@ def validate_accounting(df: DataFrame) -> AccountingValidation:
     """
 
 def check_balance(df: DataFrame) -> tuple[bool, float]:
-    """전표번호 단위 + 전체 대차일치 검증.
+    """document_id 단위 + 전체 대차일치 검증.
     반환: (일치 여부, 차이 금액)"""
 
 def check_date_continuity(df: DataFrame) -> tuple[bool, list[str]]:
@@ -137,7 +137,7 @@ report_generator.generate_report(df, L1, L2, L3)
 - **L1 테스트:**
   - 필수 컬럼 누락 → 에러 반환
   - 금액에 음수 → 에러 반환
-  - 날짜에 문자열 → 에러 반환
+  - posting_date에 문자열 → 에러 반환
 - **L2 테스트:**
   - 차변 합계 ≠ 대변 합계 → balance_check=False
   - 중간 영업일 누락 → 누락 일자 리스트 반환

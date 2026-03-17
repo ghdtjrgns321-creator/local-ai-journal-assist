@@ -33,43 +33,46 @@
 | #  | 태스크            | 파일                                                           | 가이드                                    | 상태 |
 |----|-------------------|----------------------------------------------------------------|------------------------------------------|------|
 | 15 | BaseDetector      | `src/detection/base.py`                                        | [05-detection](pre-plan/05-detection.md) | ⬜   |
-| 16 | 룰 엔진           | `src/detection/rule_engine.py`                                 | [05-detection](pre-plan/05-detection.md) | ⬜   |
-| 17 | Benford 분석      | `src/detection/benford_analyzer.py`                            | [05-detection](pre-plan/05-detection.md) | ⬜   |
-| 18 | 점수 집계         | `src/detection/score_aggregator.py`                            | [05-detection](pre-plan/05-detection.md) | ⬜   |
-| 19 | DuckDB            | `src/db/connection.py`, `schema.py`, `loader.py`, `queries.py` | [06-db](pre-plan/06-db.md)              | ⬜   |
-| 20 | 파이프라인        | `src/pipeline.py`                                              | 05-detection + 06-db 통합                | ⬜   |
-| 21 | 단위 테스트 (1b)  | `tests/test_detection/`, `test_db/`                            | 각 가이드 "테스트 전략" 섹션              | ⬜   |
+| 16 | Layer A 무결성    | `src/detection/integrity_layer.py` (A01~A03)                   | [05-detection](pre-plan/05-detection.md) | ⬜   |
+| 17 | Layer B 부정탐지  | `src/detection/fraud_layer.py` (B01~B10)                       | [05-detection](pre-plan/05-detection.md) | ⬜   |
+| 18 | Layer C 이상징후  | `src/detection/anomaly_layer.py` (C01~C09, Benford=C07)        | [05-detection](pre-plan/05-detection.md) | ⬜   |
+| 19 | 점수 집계         | `src/detection/score_aggregator.py` (3레이어+Benford)          | [05-detection](pre-plan/05-detection.md) | ⬜   |
+| 20 | DuckDB            | `src/db/connection.py`, `schema.py`, `loader.py`, `queries.py` | [06-db](pre-plan/06-db.md)              | ⬜   |
+| 21 | 파이프라인        | `src/pipeline.py`                                              | 05-detection + 06-db 통합                | ⬜   |
+| 22 | 단위 테스트 (1b)  | `tests/test_detection/`, `test_db/`                            | 각 가이드 "테스트 전략" 섹션              | ⬜   |
 
-**완료 기준**: `AuditPipeline.run("sample.xlsx")` → DuckDB 적재 → 프리셋 쿼리 정상
+**완료 기준**: `AuditPipeline.run("datasynth.csv")` → 22개 룰 3레이어 탐지 → DuckDB 적재 → 프리셋 쿼리 정상
 
 ### Phase 1c: 대시보드
 
 | #  | 태스크          | 파일                       | 가이드                                    | 상태 |
 |----|-----------------|----------------------------|------------------------------------------|------|
-| 22 | UI 컴포넌트     | `dashboard/components/`    | [07-dashboard](pre-plan/07-dashboard.md) | ⬜   |
-| 23 | Tab 1: Summary  | `dashboard/tab_summary.py` | [07-dashboard](pre-plan/07-dashboard.md) | ⬜   |
-| 24 | Tab 2: Benford  | `dashboard/tab_benford.py` | [07-dashboard](pre-plan/07-dashboard.md) | ⬜   |
-| 25 | Tab 3: Explorer | `dashboard/tab_explorer.py`| [07-dashboard](pre-plan/07-dashboard.md) | ⬜   |
-| 26 | 메인 앱         | `dashboard/app.py`         | [07-dashboard](pre-plan/07-dashboard.md) | ⬜   |
+| 23 | UI 컴포넌트     | `dashboard/components/`    | [07-dashboard](pre-plan/07-dashboard.md) | ⬜   |
+| 24 | Tab 1: Summary  | `dashboard/tab_summary.py` | [07-dashboard](pre-plan/07-dashboard.md) | ⬜   |
+| 25 | Tab 2: Benford  | `dashboard/tab_benford.py` | [07-dashboard](pre-plan/07-dashboard.md) | ⬜   |
+| 26 | Tab 3: Explorer | `dashboard/tab_explorer.py`| [07-dashboard](pre-plan/07-dashboard.md) | ⬜   |
+| 27 | 메인 앱         | `dashboard/app.py`         | [07-dashboard](pre-plan/07-dashboard.md) | ⬜   |
 
 **완료 기준**: `streamlit run dashboard/app.py` → 3탭 정상 렌더링
 
 ---
 
-## Phase 2: Core AI (ML 모델 + 고급 탐지)
+## Phase 2: Core AI (ML 모델 + 16개 추가 유형)
 
 | 태스크                       | 파일                                       | 가이드                                    | 상태 |
 |------------------------------|--------------------------------------------|------------------------------------------|------|
-| XGBoost + SHAP               | `src/detection/xgboost_detector.py`        | [05-detection](pre-plan/05-detection.md) | ⬜   |
+| GridSearchCV 지도학습        | `src/detection/supervised_detector.py`     | [05-detection](pre-plan/05-detection.md) | ⬜   |
 | VAE + IF 앙상블              | `src/detection/vae_detector.py`            | [05-detection](pre-plan/05-detection.md) | ⬜   |
-| 중복/분할 거래               | `src/detection/duplicate_detector.py`      | [05-detection](pre-plan/05-detection.md) | ⬜   |
+| DuplicateDetector            | `src/detection/duplicate_detector.py`      | [05-detection](pre-plan/05-detection.md) | ⬜   |
+| 시계열 분석                  | `src/detection/timeseries_detector.py`     | [05-detection](pre-plan/05-detection.md) | ⬜   |
+| 내부거래 매칭                | `src/detection/intercompany_matcher.py`    | [05-detection](pre-plan/05-detection.md) | ⬜   |
 | score_aggregator 5트랙 확장  | `src/detection/score_aggregator.py`        | [05-detection](pre-plan/05-detection.md) | ⬜   |
 | L3 통계 검증                 | `src/validation/statistical_validator.py`  | [04-validation](pre-plan/04-validation.md) | ⬜   |
 | SHAP 시각화                  | `dashboard/tab_explorer.py`                | [07-dashboard](pre-plan/07-dashboard.md) | ⬜   |
 
 ---
 
-## Phase 3: NLQ + Polish (LLM 연동 + 내보내기)
+## Phase 3: NLQ + Graph + Polish (NLP·그래프 5개 유형 + LLM + 내보내기)
 
 | 태스크              | 파일                             | 가이드                                    | 상태 |
 |---------------------|----------------------------------|------------------------------------------|------|
@@ -78,6 +81,7 @@
 | SQL 검증            | `src/llm/sql_validator.py`       | [08-llm](pre-plan/08-llm.md)            | ⬜   |
 | 감사 프리셋 6종     | `src/llm/prompt_presets.py`      | [08-llm](pre-plan/08-llm.md)            | ⬜   |
 | 적요 NLP            | `src/detection/nlp_analyzer.py`  | [05-detection](pre-plan/05-detection.md) | ⬜   |
+| 그래프 순환 탐지   | `src/detection/graph_detector.py`    | [05-detection](pre-plan/05-detection.md) | ⬜   |
 | Chat UI 탭          | `dashboard/tab_chat.py`          | [07-dashboard](pre-plan/07-dashboard.md) | ⬜   |
 | Export 탭           | `dashboard/tab_export.py`        | [07-dashboard](pre-plan/07-dashboard.md) | ⬜   |
 | 감사조서 Excel/PDF  | `src/export/`                    | [09-export](pre-plan/09-export.md)       | ⬜   |

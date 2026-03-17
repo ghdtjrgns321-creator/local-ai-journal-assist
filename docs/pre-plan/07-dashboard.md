@@ -82,7 +82,7 @@ def render(result: PipelineResult) -> dict:
     - risk_level 선택 (multiselect)
     - 계정과목 선택 (multiselect)
     - 금액 범위 (slider)
-    - 위반 룰 선택 (multiselect)
+    - 위반 룰 선택 (A01~C09) (multiselect)
     """
 ```
 
@@ -94,7 +94,7 @@ def render(result: PipelineResult):
     - 위험 등급 파이 차트
     - 월별 이상 추이 라인 차트
     - 위험 히트맵 (월별 × 계정별)
-    - 룰별 위반 건수 바 차트
+    - 22개 룰(A/B/C 레이어) 위반 건수 바 차트
     - 전처리 리포트 요약 (데이터 품질 점수)
     """
 ```
@@ -115,7 +115,7 @@ def render(result: PipelineResult):
 def render(result: PipelineResult):
     """이상 전표 상세 탐색.
     - AgGrid 인터랙티브 테이블 (정렬, 필터, 검색)
-    - 행 선택 시 상세 패널: 위반 룰, 점수 breakdown, 원본 데이터
+    - 행 선택 시 상세 패널: 위반 룰(A01~C09), 점수 breakdown, 원본 데이터
     - risk_detail: 선택 전표의 이상 근거 상세 설명
     - SHAP waterfall plot (Phase 2)
     """
