@@ -1,0 +1,57 @@
+# DataSynth 설정 — Local AI Audit Assistant 프로젝트용
+# 실행: cd tools/datasynth && ./target/release/datasynth-data generate -c ../../config/datasynth.yaml -o ../../data/journal/datasynth --seed 2024 --verbose
+
+global:
+  seed: 2024
+  industry: manufacturing
+  start_date: "2022-01-01"
+  period_months: 12
+  group_currency: USD
+  parallel: true
+
+companies:
+  - code: "C001"
+    name: "US Manufacturing HQ"
+    currency: USD
+    country: US
+    fiscal_year_variant: K4
+    annual_transaction_volume: hundred_k
+    volume_weight: 1.0
+  - code: "C002"
+    name: "EU Manufacturing"
+    currency: EUR
+    country: DE
+    fiscal_year_variant: K4
+    annual_transaction_volume: ten_k
+    volume_weight: 0.3
+
+chart_of_accounts:
+  complexity: medium
+  industry_specific: true
+
+fraud:
+  enabled: true
+  fraud_rate: 0.02
+  fraud_type_distribution:
+    duplicate_payment: 0.20
+    fictitious_transaction: 0.20
+    revenue_manipulation: 0.15
+    split_transaction: 0.15
+    timing_anomaly: 0.10
+    unauthorized_access: 0.10
+    suspense_account_abuse: 0.05
+    expense_capitalization: 0.05
+
+output:
+  mode: flat_file
+  output_directory: ../../data/journal/datasynth
+  formats:
+    - csv
+    - parquet
+  compression:
+    enabled: true
+    algorithm: zstd
+    level: 3
+  include_acdoca: true
+  include_bseg: false
+  partition_by_period: false

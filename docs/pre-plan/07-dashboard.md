@@ -183,15 +183,15 @@ data_uploader → AuditPipeline.run(file)
 - **빈 데이터:** 업로드 전 / 필터 결과 0건 시 에러 없이 빈 상태 표시
 
 ## Phase 구분
-| 항목 | Phase |
-|------|-------|
+| 항목                           | Phase          |
+|--------------------------------|----------------|
 | data_uploader, charts, filters | MVP (Phase 1c) |
-| Tab 1: Summary | MVP (Phase 1c) |
-| Tab 2: Benford | MVP (Phase 1c) |
-| Tab 3: Explorer (AgGrid) | MVP (Phase 1c) |
-| Tab 3: SHAP waterfall | Phase 2 |
-| Tab 4: Chat (Vanna) | Phase 3 |
-| Tab 5: Export | Phase 3 |
+| Tab 1: Summary                 | MVP (Phase 1c) |
+| Tab 2: Benford                 | MVP (Phase 1c) |
+| Tab 3: Explorer (AgGrid)       | MVP (Phase 1c) |
+| Tab 3: SHAP waterfall          | Phase 2        |
+| Tab 4: Chat (Vanna)            | Phase 3        |
+| Tab 5: Export                   | Phase 3        |
 
 ## 구현 시 주의사항
 - **session_state:** 파이프라인 결과를 `st.session_state`에 캐싱 → 탭 전환 시 재실행 방지

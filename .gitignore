@@ -44,3 +44,6 @@ Thumbs.db
 
 # ruff
 .ruff_cache/
+
+# 외부 도구 (별도 클론)
+tools/datasynth/

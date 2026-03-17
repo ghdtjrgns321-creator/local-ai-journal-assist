@@ -89,32 +89,32 @@ def save_to_excel(df: DataFrame, output_path: Path) -> Path:
 
 생성되는 DataFrame의 컬럼 구조 (schema.yaml 일치):
 
-| 컬럼 | 타입 | 예시 값 |
-|------|------|---------|
-| journal_id | str | "JE-2025-00001" |
-| entry_date | datetime | 2025-01-15 09:30:00 |
-| account_code | str | "411000" |
-| account_name | str | "매출" |
-| debit_amount | float | 15,000,000 |
-| credit_amount | float | 0 |
-| description | str | "1월 제품 매출" |
-| department | str | "영업부" |
-| created_by | str | "김영희" |
-| source_type | str | "자동" / "수동" |
-| counterparty | str | "ABC상사" |
+| 컬럼          | 타입     | 예시 값             |
+|---------------|----------|---------------------|
+| journal_id    | str      | "JE-2025-00001"     |
+| entry_date    | datetime | 2025-01-15 09:30:00 |
+| account_code  | str      | "411000"            |
+| account_name  | str      | "매출"              |
+| debit_amount  | float    | 15,000,000          |
+| credit_amount | float    | 0                   |
+| description   | str      | "1월 제품 매출"     |
+| department    | str      | "영업부"            |
+| created_by    | str      | "김영희"            |
+| source_type   | str      | "자동" / "수동"     |
+| counterparty  | str      | "ABC상사"           |
 
 ## 이상 전표 유형별 상세
 
-| 룰 | 생성 비율 | 핵심 특성 | 검증 기대 |
-|----|----------|----------|----------|
-| R001 | ~2.5% | 금액 4,900~4,999만원 | `is_near_threshold=True` |
-| R002 | ~2.5% | 토/일 일자 | `is_weekend=True` |
-| R003 | ~2.5% | 22~06시 시간 | `is_midnight=True` |
-| R004 | ~2.5% | 월말 5일 + 1억 이상 매출 | `is_period_end=True` + 고액 |
-| R005 | ~2.5% | 동일 금액 차대 쌍 | `is_reversal=True` |
-| R006 | ~2.5% | source_type='수동' | `is_manual_je=True` |
-| R007 | ~2.5% | 적요에 '상품권' 등 | `has_risk_keyword!=none` |
-| R008 | ~2.5% | 거래처='관계사' | `is_intercompany=True` |
+| 룰   | 생성 비율 | 핵심 특성                | 검증 기대                      |
+|------|-----------|--------------------------|--------------------------------|
+| R001 | ~2.5%     | 금액 4,900~4,999만원     | `is_near_threshold=True`       |
+| R002 | ~2.5%     | 토/일 일자               | `is_weekend=True`              |
+| R003 | ~2.5%     | 22~06시 시간             | `is_midnight=True`             |
+| R004 | ~2.5%     | 월말 5일 + 1억 이상 매출 | `is_period_end=True` + 고액    |
+| R005 | ~2.5%     | 동일 금액 차대 쌍        | `is_reversal=True`             |
+| R006 | ~2.5%     | source_type='수동'       | `is_manual_je=True`            |
+| R007 | ~2.5%     | 적요에 '상품권' 등       | `has_risk_keyword!=none`       |
+| R008 | ~2.5%     | 거래처='관계사'          | `is_intercompany=True`         |
 
 **합계:** ~20% 이상 전표 (anomaly_ratio 파라미터로 조절)
 
@@ -166,11 +166,11 @@ save_to_excel(df, "data/sample/sample_gl.xlsx")
 - **재현성:** 동일 seed → 동일 데이터
 
 ## Phase 구분
-| 항목 | Phase |
-|------|-------|
-| generate_sample.py | MVP (Phase 1a) |
-| gl_template.xlsx | MVP (Phase 1a) |
-| 생성기 파라미터 확장 (Phase 2 이상 유형) | Phase 2 |
+| 항목                                     | Phase          |
+|------------------------------------------|----------------|
+| generate_sample.py                       | MVP (Phase 1a) |
+| gl_template.xlsx                         | MVP (Phase 1a) |
+| 생성기 파라미터 확장 (Phase 2 이상 유형) | Phase 2        |
 
 ## 구현 시 주의사항
 - **재현성:** `seed` 파라미터로 동일 결과 재현 가능 → 테스트 안정성

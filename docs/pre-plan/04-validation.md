@@ -147,13 +147,13 @@ report_generator.generate_report(df, L1, L2, L3)
 - **리포트 테스트:** 모든 필드 정상 생성 확인
 
 ## Phase 구분
-| 항목 | Phase |
-|------|-------|
-| L1 구조 검증 (Pandera) | MVP (Phase 1a) |
-| L2 회계 검증 | MVP (Phase 1a) |
-| L3 통계 검증 | Phase 2 |
-| 전처리 리포트 (L1+L2) | MVP (Phase 1a) |
-| 전처리 리포트 (L3 포함) | Phase 2 |
+| 항목                     | Phase          |
+|--------------------------|----------------|
+| L1 구조 검증 (Pandera)   | MVP (Phase 1a) |
+| L2 회계 검증             | MVP (Phase 1a) |
+| L3 통계 검증             | Phase 2        |
+| 전처리 리포트 (L1+L2)    | MVP (Phase 1a) |
+| 전처리 리포트 (L3 포함)  | Phase 2        |
 
 ## 구현 시 주의사항
 - **Pandera 유연성:** 필수/선택 컬럼을 schema.yaml 기반으로 동적 생성하면 ERP별 유연성 확보

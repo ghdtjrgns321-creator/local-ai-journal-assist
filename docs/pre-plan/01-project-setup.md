@@ -10,12 +10,44 @@ local-ai-assist/
 ├── uv.lock                   # 자동 생성 lock 파일
 ├── .env.example              # 환경변수 템플릿
 ├── .gitignore                # data/, .env, __pycache__ 등 제외
-└── config/
-    ├── settings.py           # Pydantic Settings (환경변수 + 기본값)
-    ├── schema.yaml           # 표준 컬럼 스키마 (⚠️ 예시 — 실제 전표 확인 후 확정)
-    ├── keywords.yaml         # ERP별 헤더 키워드 사전 (⚠️ 예시 — 실제 ERP 확인 후 추가)
-    └── risk_keywords.yaml    # 감사 위험 적요 키워드 사전 (⚠️ 예시 — 감사 매뉴얼 참고 후 보강)
+├── config/
+│   ├── settings.py           # Pydantic Settings (환경변수 + 기본값)
+│   ├── datasynth.yaml        # DataSynth 생성 설정 (seed, 회사, fraud 비율)
+│   ├── schema.yaml           # 표준 컬럼 스키마 (DataSynth 출력 기준)
+│   ├── keywords.yaml         # ERP별 헤더 키워드 사전
+│   └── risk_keywords.yaml    # 감사 위험 적요 키워드 사전
+└── tools/
+    └── datasynth/            # EY-ASU DataSynth (Rust, 합성 전표 생성기)
 ```
+
+## 스키마 설계 근거
+
+### 왜 DataSynth 출력을 표준 스키마로 채택했는가
+
+32개 공개 데이터셋/도구를 검토한 결과, 대부분의 공개 데이터셋은
+핵심 필드 누락(날짜 없음, 레이블 없음, 익명화)으로 프로젝트 요건을 충족하지 못했다.
+
+DataSynth(EY Switzerland + ASU 공동 개발)를 선택한 이유:
+
+1. **SAP ACDOCA 네이티브 구조**: 71개 필드를 정의한 `AcdocaEntry` 구조체가
+   SAP S/4HANA Universal Journal과 동일한 필드명(`rbukrs`, `belnr`, `racct`, `budat`, `drcrk` 등)을 사용
+   (`crates/datasynth-core/src/models/acdoca.rs`)
+
+2. **감사 기준 내장**: PCAOB, ISA, COSO 2013, SOX 302/404를 `crates/datasynth-standards/`에서
+   직접 구현. 감사인이 정의한 fraud 시나리오가 코드 레벨에서 보장됨
+
+3. **Fraud 레이블 132종**: `FraudType`(49종), `ErrorType`(28종), `ProcessIssueType`(22종),
+   `StatisticalAnomalyType`(18종), `RelationalAnomalyType`(15종)이
+   `crates/datasynth-core/src/models/anomaly.rs`에 정의
+   → `is_fraud`, `is_anomaly` 컬럼으로 출력되어 지도학습에 바로 사용 가능
+
+4. **복식부기 보장**: `JournalEntry`가 생성 시점에 차변 합 = 대변 합을 강제
+   (`CLAUDE.md` — "JournalEntry enforces debits = credits at construction")
+
+5. **Benford 준수**: 금액 분포가 Benford's Law를 따르도록 생성
+   (`crates/datasynth-core/src/distributions/benford.rs`)
+
+6. **재현성**: seed 고정(2024)으로 동일 데이터 재생성 가능
 
 ## 핵심 클래스/함수
 
@@ -24,19 +56,27 @@ local-ai-assist/
 class AuditSettings(BaseSettings):
     """프로젝트 전역 설정. 환경변수 > .env > YAML 기본값 순 우선."""
 
-    # 파일 관련 (⚠️ 예시값 — 실제 전표 파일 크기·형식에 따라 조정 필요)
-    max_file_size_mb: int = 100
-    allowed_extensions: list[str] = [".xlsx", ".xls", ".csv"]
+    # 파일 관련
+    max_file_size_mb: int = 500            # DataSynth CSV 232MB 대응
+    allowed_extensions: list[str] = [".csv", ".parquet", ".xlsx"]
 
-    # 매핑 관련 (⚠️ 예시값 — 실제 ERP 헤더 매칭 정확도를 보며 튜닝 필요)
-    fuzzy_threshold: int = 80          # rapidfuzz 매칭 임계값
+    # 매핑 관련
+    fuzzy_threshold: int = 80              # rapidfuzz 매칭 임계값
 
-    # 감사 룰 관련 (⚠️ 예시값 — 실제 감사 기준에 맞춰 조정 필요)
-    approval_threshold: float = 50_000_000  # R001: 승인 한도 (5천만원)
-    near_threshold_ratio: float = 0.98      # 한도의 98% 이상이면 플래그
-    midnight_start: int = 22                # R003: 심야 시작 시간
-    midnight_end: int = 6                   # R003: 심야 종료 시간
-    period_end_days: int = 5                # R004: 기말 n일
+    # 감사 룰 관련 (DataSynth FraudTypeConfig 참고)
+    # R001: JustBelowThreshold — DataSynth에서 approval threshold 기반으로 주입
+    approval_thresholds: list[float] = [1_000, 5_000, 10_000, 25_000, 50_000, 100_000]
+    near_threshold_ratio: float = 0.95     # 한도의 95% 이상이면 플래그
+
+    # R003: AfterHoursPosting — DataSynth weekend_activity/holiday_activity 설정 참고
+    after_hours_start: int = 18            # 업무 외 시간 시작
+    after_hours_end: int = 7               # 업무 외 시간 종료
+
+    # R004: RushedPeriodEnd — DataSynth month_end_lead_days=5 참고
+    period_end_days: int = 5               # 기말 n영업일
+
+    # Benford — DataSynth threshold_mad=0.015 참고
+    benford_mad_threshold: float = 0.012   # MAD 부적합 기준
 
     # DB 관련
     duckdb_path: str = "data/audit.duckdb"
@@ -48,87 +88,140 @@ class AuditSettings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_prefix="AUDIT_",
-        yaml_file="config/settings.yaml",  # 선택적 YAML 오버라이드
+        yaml_file="config/settings.yaml",
     )
 ```
 
 ### `config/schema.yaml` — 표준 컬럼 스키마
+
+DataSynth `journal_entries.csv` 출력 29개 컬럼 기준.
+ACDOCA 필드명과의 매핑은 `docs/AUDIT_DOMAIN.md` 참조.
+
 ```yaml
-# ⚠️ 예시 스키마 — 실제 전표 데이터를 확인한 뒤 컬럼 구성·타입·필수 여부를 재정의할 것
+# DataSynth journal_entries.csv 출력 기준 (tools/datasynth/ v1.2.0)
+# ACDOCA 매핑: crates/datasynth-core/src/models/acdoca.rs
 columns:
-  - name: journal_id        # 전표번호
+  # --- 필수 (전표 식별 + 핵심 회계 정보) ---
+  - name: document_id          # ACDOCA: belnr
     type: str
     required: true
-  - name: entry_date        # 전표일자
-    type: datetime
-    required: true
-  - name: account_code      # 계정코드
+  - name: company_code         # ACDOCA: rbukrs
     type: str
     required: true
-  - name: account_name      # 계정과목명
-    type: str
+  - name: fiscal_year          # ACDOCA: gjahr
+    type: int
     required: true
-  - name: debit_amount      # 차변금액
+  - name: posting_date         # ACDOCA: budat
+    type: date
+    required: true
+  - name: document_date        # ACDOCA: bldat
+    type: date
+    required: true
+  - name: gl_account           # ACDOCA: racct
+    type: int
+    required: true
+  - name: debit_amount         # ACDOCA: wsl (drcrk='S')
     type: float
     required: true
-  - name: credit_amount     # 대변금액
+  - name: credit_amount        # ACDOCA: wsl (drcrk='H')
     type: float
     required: true
-  - name: description       # 적요
+  - name: document_type        # ACDOCA: blart
+    type: str
+    required: true
+
+  # --- 권장 (감사 룰에 필요) ---
+  - name: created_by           # ACDOCA: usnam — R006(수기전표) 판정용
     type: str
     required: false
-  - name: department        # 부서
+  - name: source               # automated/manual/recurring/adjustment — R006 판정용
     type: str
     required: false
-  - name: created_by        # 작성자
+  - name: business_process     # P2P/O2C/R2R/H2R/A2R
     type: str
     required: false
-  - name: source_type       # 전표유형 (자동/수동)
+  - name: line_number          # ACDOCA: docln
+    type: int
+    required: false
+  - name: local_amount         # ACDOCA: hsl
+    type: float
+    required: false
+  - name: currency             # ACDOCA: rwcur
     type: str
     required: false
-  - name: counterparty      # 거래처
+  - name: cost_center          # ACDOCA: rcntr
     type: str
+    required: false
+  - name: profit_center        # ACDOCA: prctr
+    type: str
+    required: false
+  - name: line_text            # ACDOCA: sgtxt — R007(위험적요) 판정용
+    type: str
+    required: false
+  - name: header_text          # ACDOCA: bktxt
+    type: str
+    required: false
+
+  # --- 레이블 (DataSynth 전용) ---
+  - name: is_fraud             # DataSynth sim_is_fraud
+    type: bool
+    required: false
+  - name: is_anomaly           # DataSynth 파생
+    type: bool
     required: false
 ```
 
 ### `config/keywords.yaml` — ERP별 헤더 키워드
 ```yaml
-# ⚠️ 예시 키워드 — 실제 ERP(더존, SAP, Oracle 등) 엑셀 헤더를 확인하며 추가할 것
-# key: 표준 컬럼명, values: ERP별 다양한 표현
-journal_id: ["전표번호", "전표No", "voucher_no", "JE Number", "Doc No"]
-entry_date: ["전표일자", "기표일", "posting_date", "Entry Date", "일자"]
-account_code: ["계정코드", "계정CD", "account_cd", "GL Code"]
-debit_amount: ["차변금액", "차변", "debit", "Debit Amount", "Dr"]
-credit_amount: ["대변금액", "대변", "credit", "Credit Amount", "Cr"]
-description: ["적요", "설명", "description", "Memo", "비고"]
-# ... 기타 컬럼
+# DataSynth 컬럼명 + SAP/더존/Oracle 등 ERP별 다양한 표현
+document_id:    ["전표번호", "전표No", "voucher_no", "JE Number", "Doc No", "document_id", "belnr"]
+posting_date:   ["전표일자", "기표일", "posting_date", "Entry Date", "일자", "budat"]
+gl_account:     ["계정코드", "계정CD", "account_cd", "GL Code", "gl_account", "racct", "hkont"]
+debit_amount:   ["차변금액", "차변", "debit", "Debit Amount", "Dr", "debit_amount"]
+credit_amount:  ["대변금액", "대변", "credit", "Credit Amount", "Cr", "credit_amount"]
+line_text:      ["적요", "설명", "description", "Memo", "비고", "line_text", "sgtxt"]
+created_by:     ["작성자", "입력자", "기표자", "user", "created_by", "usnam"]
+source:         ["전표유형", "입력구분", "source_type", "source"]
+company_code:   ["회사코드", "법인", "company", "company_code", "bukrs"]
 ```
 
 ### `config/risk_keywords.yaml` — 위험 적요 키워드
 ```yaml
-# ⚠️ 예시 키워드 — 실제 감사 매뉴얼·과거 감사조서를 참고하여 보강할 것
 # R007: has_risk_keyword 판정에 사용
+# DataSynth ProcessIssueType::VagueDescription, FraudType::SuspenseAccountAbuse 참고
 high_risk:
   - "상품권"
   - "가계정"
-  - "가수금"
+  - "가수금"         # DataSynth: suspense_account_abuse
   - "가지급"
   - "대여금"
   - "선급금"
+  - "suspense"
+  - "clearing"
 medium_risk:
   - "잡손실"
   - "잡이익"
   - "기타"
   - "임시"
+  - "adjustment"     # DataSynth: source='adjustment'
+  - "manual"
 ```
 
 ## 데이터 흐름
 ```
+DataSynth (tools/datasynth/)
+  │  config/datasynth.yaml → seed 2024, 12개월, 2회사, fraud 2%
+  ▼
+data/journal/primary/datasynth/journal_entries.csv (1,068K rows)
+  │
+  ▼
 .env / 환경변수
-       ↓
+  │
+  ▼
 AuditSettings(BaseSettings) ← schema.yaml, keywords.yaml, risk_keywords.yaml
-       ↓
-모든 모듈에서 settings 인스턴스 참조
+  │
+  ▼
+Ingest → Feature → Detection → DB → Dashboard
 ```
 
 ## 구현 순서
@@ -136,12 +229,13 @@ AuditSettings(BaseSettings) ← schema.yaml, keywords.yaml, risk_keywords.yaml
 2. `uv sync --group core --group dashboard --group dev`
 3. `.gitignore`, `.env.example` 생성
 4. `config/settings.py` — `AuditSettings` 클래스 구현
-5. `config/schema.yaml` — 표준 컬럼 정의 (⚠️ 실제 전표 데이터 확인 후 확정)
-6. `config/keywords.yaml` — ERP별 헤더 키워드 (⚠️ 실제 ERP 엑셀 확인 후 추가)
-7. `config/risk_keywords.yaml` — 위험 적요 키워드 (⚠️ 감사 매뉴얼 참고 후 보강)
+5. `config/schema.yaml` — DataSynth 출력 기준 스키마 확정
+6. `config/keywords.yaml` — DataSynth + SAP + 더존 헤더 키워드
+7. `config/risk_keywords.yaml` — DataSynth fraud type 참고 위험 키워드
 
 ## 의존성
 - **외부 패키지:** `pydantic-settings`, `pyyaml`
+- **데이터 생성:** `tools/datasynth/` (Rust, 별도 빌드)
 - **하위 의존:** 모든 모듈이 이 설정에 의존 → **가장 먼저 구현**
 
 ## dependency-groups 설계
@@ -161,13 +255,16 @@ dev = ["pytest", "ruff", "mypy"]
 ## 테스트 전략
 - `settings.py` 단위 테스트: 환경변수 오버라이드 동작, YAML 로드, 기본값 확인
 - YAML 파일 스키마 유효성 검증 (필수 키 존재 여부)
+- DataSynth 출력 CSV를 schema.yaml로 검증 (컬럼명·타입 일치)
 
 ## Phase 구분
-| 항목 | Phase |
-|------|-------|
-| pyproject.toml, .gitignore | MVP (Phase 1a) |
-| settings.py, YAML 설정 | MVP (Phase 1a) |
-| LLM 관련 설정 필드 | Phase 3에서 활성화 |
+
+| 항목                        | Phase              |
+|-----------------------------|--------------------|
+| pyproject.toml, .gitignore  | MVP (Phase 1a)     |
+| settings.py, YAML 설정     | MVP (Phase 1a)     |
+| DataSynth 빌드 + 데이터 생성| MVP (Phase 1a)     |
+| LLM 관련 설정 필드          | Phase 3에서 활성화 |
 
 ## 구현 시 주의사항
 - `.env`에는 시크릿만 넣고, 일반 설정은 YAML 사용
@@ -175,3 +272,4 @@ dev = ["pytest", "ruff", "mypy"]
 - YAML 파일 경로는 상대경로 → 프로젝트 루트 기준
 - `risk_keywords.yaml`은 사용자가 커스터마이징 가능하도록 외부 파일 유지
 - `.env.example`에는 실제 값 대신 플레이스홀더만 기입
+- DataSynth 재생성: `config/datasynth.yaml` + seed 변경으로 다른 데이터셋 생성 가능

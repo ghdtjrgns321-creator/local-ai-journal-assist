@@ -4,6 +4,10 @@
 다양한 형태의 Excel/CSV 원본 전표 데이터를 읽어 표준 DataFrame으로 변환한다.
 ERP마다 다른 헤더 위치, 컬럼명, 병합셀 등을 자동으로 처리하는 것이 핵심.
 
+> **메인 데이터**: DataSynth CSV (`data/journal/primary/datasynth/journal_entries.csv`)는
+> 표준 스키마와 동일한 컬럼명을 사용하므로 매핑 없이 직접 로드 가능.
+> ingest 파이프라인은 **외부 ERP 엑셀 업로드 시** 필요한 모듈이다.
+
 ## 관련 파일
 ```
 src/ingest/
@@ -148,11 +152,11 @@ mapping_profile.save_profile()              → JSON 저장 (재사용용)
 - **통합 테스트:** `gl_template.xlsx` → 표준 DataFrame 변환 E2E
 
 ## Phase 구분
-| 항목 | Phase |
-|------|-------|
-| file_validator ~ mapping_profile | MVP (Phase 1a) |
+| 항목                               | Phase          |
+|------------------------------------|----------------|
+| file_validator ~ mapping_profile   | MVP (Phase 1a) |
 | 수동 매핑 UI (column_mapper 폴백) | MVP (Phase 1c) |
-| LLM 기반 매핑 보조 | Phase 3 |
+| LLM 기반 매핑 보조                 | Phase 3        |
 
 ## 구현 시 주의사항
 - **병합셀 처리:** openpyxl `merged_cells.ranges`로 병합 해제 후 값 복제

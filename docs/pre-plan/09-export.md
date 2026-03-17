@@ -139,12 +139,12 @@ audit_trail.log(event)
 - **한글:** Excel/PDF에 한글 데이터 정상 출력 확인
 
 ## Phase 구분
-| 항목 | Phase |
-|------|-------|
+| 항목                   | Phase   |
+|------------------------|---------|
 | audit_trail (기본 로깅) | Phase 3 |
-| excel_exporter | Phase 3 |
-| pdf_exporter | Phase 3 |
-| LLM 인사이트 포함 PDF | Phase 3 |
+| excel_exporter          | Phase 3 |
+| pdf_exporter            | Phase 3 |
+| LLM 인사이트 포함 PDF  | Phase 3 |
 
 ## 구현 시 주의사항
 - **한글 폰트:** fpdf2에서 한글 출력 시 `add_font()`로 TTF 폰트 등록 필수 (NanumGothic 추천)

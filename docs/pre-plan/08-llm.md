@@ -187,19 +187,19 @@ insight_generator → 자연어 해석
 - **E2E:** "12월 매출 5천만 이상 이상거래" → SQL → DataFrame → 인사이트
 
 ## Phase 구분
-| 항목 | Phase |
-|------|-------|
-| ollama_client | Phase 3 |
-| text_to_sql (Vanna) | Phase 3 |
-| sql_validator | Phase 3 |
-| prompt_presets | Phase 3 |
-| insight_generator | Phase 3 |
+| 항목                  | Phase   |
+|-----------------------|---------|
+| ollama_client         | Phase 3 |
+| text_to_sql (Vanna)   | Phase 3 |
+| sql_validator         | Phase 3 |
+| prompt_presets        | Phase 3 |
+| insight_generator     | Phase 3 |
 
 ## LLM 모델 선택
-| 우선순위 | 모델 | 용도 | VRAM |
-|----------|------|------|------|
-| 1순위 | Qwen3-8B (Q4_K_M) | 범용 (인사이트, 해석) | ~6GB |
-| 폴백 | Qwen2.5-Coder-7B | Text-to-SQL 특화 | ~6GB |
+| 우선순위 | 모델               | 용도                  | VRAM |
+|----------|--------------------|-----------------------|------|
+| 1순위    | Qwen3-8B (Q4_K_M)  | 범용 (인사이트, 해석) | ~6GB |
+| 폴백     | Qwen2.5-Coder-7B   | Text-to-SQL 특화      | ~6GB |
 
 **개발 환경:** RTX 3070 Ti (VRAM 8GB) → 위 모델 중 하나만 로드 가능
 

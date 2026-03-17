@@ -15,13 +15,13 @@ main                    ← 안정된 릴리즈만 머지 (항상 실행 가능 
 
 ## 브랜치 네이밍 규칙
 
-| 접두사 | 용도 | 예시 |
-|--------|------|------|
-| `feat/` | 새 기능 개발 | `feat/1a-ingest` |
-| `fix/` | 버그 수정 | `fix/12-benford-edge-case` |
-| `refactor/` | 구조 개선 (기능 변경 없음) | `refactor/settings-loader` |
-| `docs/` | 문서만 변경 | `docs/update-audit-domain` |
-| `chore/` | 설정·CI·의존성 등 | `chore/add-ruff-config` |
+| 접두사      | 용도                     | 예시                          |
+|-------------|--------------------------|-------------------------------|
+| `feat/`     | 새 기능 개발             | `feat/1a-ingest`              |
+| `fix/`      | 버그 수정                | `fix/12-benford-edge-case`    |
+| `refactor/` | 구조 개선 (기능 변경 없음) | `refactor/settings-loader`    |
+| `docs/`     | 문서만 변경              | `docs/update-audit-domain`    |
+| `chore/`    | 설정·CI·의존성 등        | `chore/add-ruff-config`       |
 
 ## 워크플로우
 
@@ -46,13 +46,13 @@ main                    ← 안정된 릴리즈만 머지 (항상 실행 가능 
 
 ## 태그 (버전)
 
-| 태그 | 시점 |
-|------|------|
-| `v0.1.0` | Phase 1a 완료 (수집·피처·검증) |
-| `v0.2.0` | Phase 1b 완료 (이상탐지·DB) |
-| `v0.3.0` | Phase 1c 완료 (대시보드) — MVP |
-| `v0.4.0` | Phase 2 완료 (ML) |
-| `v1.0.0` | Phase 3 완료 (LLM·Export) — 정식 릴리즈 |
+| 태그      | 시점                                     |
+|-----------|------------------------------------------|
+| `v0.1.0`  | Phase 1a 완료 (수집·피처·검증)           |
+| `v0.2.0`  | Phase 1b 완료 (이상탐지·DB)              |
+| `v0.3.0`  | Phase 1c 완료 (대시보드) — MVP           |
+| `v0.4.0`  | Phase 2 완료 (ML)                        |
+| `v1.0.0`  | Phase 3 완료 (LLM·Export) — 정식 릴리즈  |
 
 ## 커밋 메시지 규칙
 

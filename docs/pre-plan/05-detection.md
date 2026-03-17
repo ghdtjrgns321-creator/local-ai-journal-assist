@@ -164,16 +164,16 @@ class NLPAnalyzer(BaseDetector):
 
 ## 8개 감사 룰 상세
 
-| 룰 | 이름 | 조건 | 참조 피처 |
-|----|------|------|----------|
-| R001 | 승인한도 직하 | 금액 ≥ threshold × ratio | `is_near_threshold` |
-| R002 | 주말 전표 | 토/일 기표 | `is_weekend` |
-| R003 | 심야 전표 | 22시~06시 기표 | `is_midnight` |
-| R004 | 기말 대규모 | 월말 5일 이내 + 고액 | `is_period_end` + 금액 |
-| R005 | 역분개 | 동일 계정·금액 차대 쌍 | `is_reversal` |
-| R006 | 수기 전표 | source_type=수동 | `is_manual_je` |
-| R007 | 위험 적요 | 적요에 위험 키워드 | `has_risk_keyword` |
-| R008 | 관계사 거래 | 거래처가 특수관계자 | `is_intercompany` |
+| 룰   | 이름         | 조건                      | 참조 피처              |
+|------|--------------|---------------------------|------------------------|
+| R001 | 승인한도 직하 | 금액 ≥ threshold × ratio  | `is_near_threshold`    |
+| R002 | 주말 전표     | 토/일 기표                 | `is_weekend`           |
+| R003 | 심야 전표     | 22시~06시 기표             | `is_midnight`          |
+| R004 | 기말 대규모   | 월말 5일 이내 + 고액       | `is_period_end` + 금액 |
+| R005 | 역분개       | 동일 계정·금액 차대 쌍     | `is_reversal`          |
+| R006 | 수기 전표     | source_type=수동           | `is_manual_je`         |
+| R007 | 위험 적요     | 적요에 위험 키워드         | `has_risk_keyword`     |
+| R008 | 관계사 거래   | 거래처가 특수관계자        | `is_intercompany`      |
 
 ## 데이터 흐름
 ```
@@ -217,18 +217,18 @@ score_aggregator.aggregate_scores(df, results)
 - **BaseDetector 준수:** 모든 트랙이 DetectionResult 스키마 반환 확인
 
 ## Phase 구분
-| 항목 | Phase |
-|------|-------|
+| 항목                          | Phase          |
+|-------------------------------|----------------|
 | BaseDetector, DetectionResult | MVP (Phase 1b) |
-| RuleEngine (R001~R008) | MVP (Phase 1b) |
-| BenfordAnalyzer (MAD + KS) | MVP (Phase 1b) |
-| score_aggregator (2트랙) | MVP (Phase 1b) |
-| XGBoostDetector + SHAP | Phase 2 |
-| VAEDetector + IF 앙상블 | Phase 2 |
-| DuplicateDetector | Phase 2 |
-| score_aggregator (5트랙) | Phase 2 |
-| NLPAnalyzer (kiwipiepy) | Phase 3 |
-| score_aggregator (6트랙) | Phase 3 |
+| RuleEngine (R001~R008)        | MVP (Phase 1b) |
+| BenfordAnalyzer (MAD + KS)    | MVP (Phase 1b) |
+| score_aggregator (2트랙)      | MVP (Phase 1b) |
+| XGBoostDetector + SHAP        | Phase 2        |
+| VAEDetector + IF 앙상블       | Phase 2        |
+| DuplicateDetector             | Phase 2        |
+| score_aggregator (5트랙)      | Phase 2        |
+| NLPAnalyzer (kiwipiepy)       | Phase 3        |
+| score_aggregator (6트랙)      | Phase 3        |
 
 ## 구현 시 주의사항
 - **BaseDetector 인터페이스:** `detect()` → `DetectionResult` 반환 엄수. 새 트랙 추가 시 score_aggregator만 가중치 수정

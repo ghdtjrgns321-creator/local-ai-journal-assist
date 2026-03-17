@@ -96,19 +96,19 @@ def add_is_description_missing(df: DataFrame) -> DataFrame:
 
 ## 11개 파생변수 요약
 
-| # | 변수명 | 타입 | 대응 룰 | 카테고리 |
-|---|--------|------|---------|---------|
-| 1 | `is_weekend` | bool | R002 | time |
-| 2 | `is_midnight` | bool | R003 | time |
-| 3 | `is_period_end` | bool | R004 | time |
-| 4 | `is_round_number` | bool | — | amount |
-| 5 | `is_near_threshold` | bool | R001 | amount |
-| 6 | `amount_magnitude` | float | — (ML) | amount |
-| 7 | `is_reversal` | bool | R005 | pattern |
-| 8 | `is_manual_je` | bool | R006 | pattern |
-| 9 | `is_intercompany` | bool | R008 | pattern |
-| 10 | `has_risk_keyword` | str | R007 | text |
-| 11 | `is_description_missing` | bool | — | text |
+| #  | 변수명                     | 타입  | 대응 룰 | 카테고리 |
+|----|----------------------------|-------|---------|----------|
+| 1  | `is_weekend`               | bool  | R002    | time     |
+| 2  | `is_midnight`              | bool  | R003    | time     |
+| 3  | `is_period_end`            | bool  | R004    | time     |
+| 4  | `is_round_number`          | bool  | —       | amount   |
+| 5  | `is_near_threshold`        | bool  | R001    | amount   |
+| 6  | `amount_magnitude`         | float | — (ML)  | amount   |
+| 7  | `is_reversal`              | bool  | R005    | pattern  |
+| 8  | `is_manual_je`             | bool  | R006    | pattern  |
+| 9  | `is_intercompany`          | bool  | R008    | pattern  |
+| 10 | `has_risk_keyword`         | str   | R007    | text     |
+| 11 | `is_description_missing`   | bool  | —       | text     |
 
 ## 데이터 흐름
 ```
@@ -146,10 +146,10 @@ engine.generate_all_features(df, settings)
 - **engine 통합 테스트:** 전체 11개 변수 생성 + 컬럼 존재 확인
 
 ## Phase 구분
-| 항목 | Phase |
-|------|-------|
-| 11개 파생변수 전체 | MVP (Phase 1a) |
-| NLP 기반 텍스트 피처 확장 | Phase 3 (kiwipiepy) |
+| 항목                       | Phase               |
+|----------------------------|---------------------|
+| 11개 파생변수 전체         | MVP (Phase 1a)      |
+| NLP 기반 텍스트 피처 확장  | Phase 3 (kiwipiepy) |
 
 ## 구현 시 주의사항
 - **is_reversal 성능:** 대량 데이터에서 O(n²) 방지 → groupby + merge 활용
