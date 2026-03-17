@@ -75,6 +75,24 @@ test: Benford 판정 엣지케이스 테스트 추가
 - **머지 전 테스트 통과 필수** — `uv run pytest tests/ -v`
 - **1 커밋 = 1 논리적 변경** — 여러 기능을 한 커밋에 섞지 않기
 
+## 외부 도구 관리
+
+`tools/datasynth/`(EY-ASU DataSynth)는 **`.gitignore`에 포함**하여 리포에 커밋하지 않는다.
+외부 프로젝트의 소스(65MB) + 빌드 아티팩트(1.3GB)를 포함하면 리포가 불필요하게 무거워지기 때문.
+
+설정 파일 `config/datasynth.yaml`만 리포에서 관리하고, 도구 자체는 별도 클론으로 운용한다.
+
+```bash
+# DataSynth 설치 (최초 1회)
+git clone https://github.com/mivertowski/SyntheticData.git tools/datasynth
+cd tools/datasynth
+# Cargo.toml에서 datasynth-graph-export 주석 처리 필요 (RustGraph 로컬 의존성 제거)
+cargo build --release -p datasynth-cli
+
+# 데이터 재생성
+./target/release/datasynth-data generate -c ../../config/datasynth.yaml --seed 2024
+```
+
 ## ⛔ 절대 금지
 
 - **커밋 메시지에 AI/Claude 관련 문구 절대 포함 금지**
