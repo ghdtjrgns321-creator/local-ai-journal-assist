@@ -1,0 +1,35 @@
+# ⚠️ 예시 스키마 — 실제 전표 데이터를 확인한 뒤 컬럼 구성·타입·필수 여부를 재정의할 것
+columns:
+  - name: journal_id        # 전표번호
+    type: str
+    required: true
+  - name: entry_date        # 전표일자
+    type: datetime
+    required: true
+  - name: account_code      # 계정코드
+    type: str
+    required: true
+  - name: account_name      # 계정과목명
+    type: str
+    required: true
+  - name: debit_amount      # 차변금액
+    type: float
+    required: true
+  - name: credit_amount     # 대변금액
+    type: float
+    required: true
+  - name: description       # 적요
+    type: str
+    required: false
+  - name: department        # 부서
+    type: str
+    required: false
+  - name: created_by        # 작성자
+    type: str
+    required: false
+  - name: source_type       # 전표유형 (자동/수동)
+    type: str
+    required: false
+  - name: counterparty      # 거래처
+    type: str
+    required: false
