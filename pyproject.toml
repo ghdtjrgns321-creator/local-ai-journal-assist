@@ -8,6 +8,10 @@ requires-python = ">=3.11"
 core = [
     "pandas>=2.2",
     "openpyxl",
+    "xlrd",
+    "pyxlsb",
+    "pyarrow",
+    "charset-normalizer",
     "pandera",
     "rapidfuzz",
     "duckdb",
