@@ -10,6 +10,7 @@ import functools
 from pathlib import Path
 
 import yaml
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # 프로젝트 루트 = config/ 의 부모
@@ -29,6 +30,19 @@ class AuditSettings(BaseSettings):
         ".csv", ".tsv", ".txt", ".dat",
         ".parquet",
     ]
+
+    # --- 헤더 탐지 관련 ---
+    min_expected_headers: int = 4        # 키워드 스코어 정규화 분모
+    max_header_scan_rows: int = 20       # 상위 N행만 탐색
+    min_header_confidence: float = 0.3   # 이하면 탐지 실패 → UI 개입
+
+    @field_validator("min_expected_headers")
+    @classmethod
+    def _check_min_expected_headers(cls, v: int) -> int:
+        """0 이하면 스코어 공식이 무의미 → 조기 차단."""
+        if v <= 0:
+            raise ValueError("min_expected_headers는 1 이상이어야 합니다.")
+        return v
 
     # --- 매핑 관련 (⚠️ 예시값 — 실제 ERP 헤더 매칭 정확도 보며 튜닝) ---
     fuzzy_threshold: int = 80
@@ -50,6 +64,7 @@ class AuditSettings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_prefix="AUDIT_",
+        extra="ignore",
     )
 
 

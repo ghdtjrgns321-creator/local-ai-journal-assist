@@ -58,6 +58,7 @@ src/ingest/
 
 **검증 5단계:** 존재 → 확장자 → 빈파일 → 크기(카테고리별) → 무결성(확장자별)
 **error/warning 분류:** error = 파이프라인 중단 / warning = 계속 진행 + 사용자 안내
+**테스트:** [32개 통과](../../tests/test_ingest/test-results/ingest-file-validator.md) (확장자 분류 15 + 경로 2 + 확장자 3 + 빈파일 1 + 크기 2 + 무결성 7 + 출력 2)
 
 ---
 
@@ -122,18 +123,42 @@ ws.merged_cells.ranges 순회 → unmerge → 좌상단 값을 모든 셀에 복
 - `read_file(path) -> ReadResult`: 확장자 기반 디스패치
 - 미지원 확장자 → `ValueError` (정상적으로는 file_validator에서 이미 걸림)
 
+**테스트:** [24개 통과](../../tests/test_ingest/test-results/ingest-file-reader.md) (excel 8 + text 7 + parquet 3 + reader_api 6)
+
 ---
 
-### ③ 헤더 행 탐지 — 🔲 미구현
+### ③ 헤더 행 탐지 — ✅ 구현 완료
 
-`header_detector.py` — ERP마다 다른 헤더 위치를 스코어링으로 자동 탐지한다.
+```
+src/ingest/
+├── header_detector.py  # detect_header_row() + detect_headers() 퍼사드
+└── models.py           # HeaderDetectionResult 추가
+```
 
-**구현할 것:**
-- 각 행에 대해 `keywords.yaml` 키워드 매칭 수 + 문자열 셀 비율로 점수 산정
-- 병합셀이면 해제 후 재평가
-- 최고 점수 행 = 헤더 행
+**스코어 공식:**
+```
+Confidence = (KeywordScore × 0.8) + (StringRatio × 0.2)
 
-**의존:** `config/keywords.yaml` (ERP별 헤더 키워드 사전)
+KeywordScore = min(matched / MIN_EXPECTED_HEADERS, 1.0)  # MIN_EXPECTED_HEADERS=4
+StringRatio  = string_cells / valid_cells                 # NaN 제외, 0/0 방어
+```
+
+**설계 결정:**
+
+| 항목             | 결정                                                    |
+|:-----------------|:-------------------------------------------------------|
+| 매칭 방식        | 정확 일치 (`strip().lower()`) — fuzzy 불필요            |
+| 탐색 범위        | 상위 20행 (`max_header_scan_rows`, settings.py 튜닝)    |
+| 메시지 3단계     | >= 0.7 자동패스 / 0.3~0.7 UI경고 / < 0.3 수동입력      |
+| 동점 처리        | strict `>` 비교 → 상단 행 우선                          |
+| 멀티시트         | `detect_headers(ReadResult)` 퍼사드로 일괄 처리         |
+| 빈 DF/NaN        | 빈 DF → 즉시 실패, NaN 행 → 스코어링에서 자연 처리     |
+
+**반환 타입:** `HeaderDetectionResult(header_row, confidence, matched_keywords, total_columns, message)`
+
+**테스트:** [12개 통과](../../tests/test_ingest/test-results/ingest-header-detector.md) (핵심 탐지 8 + 메시지 3단계 3 + 멀티시트 1)
+
+**부수 변경:** `AuditSettings.model_config`에 `extra="ignore"` 추가 — 환경변수 확장 시 ValidationError 방지
 
 ---
 
@@ -310,7 +335,16 @@ def read_parquet(path: Path) -> ReadResult:
 
 ### header_detector.py
 ```python
-def detect_header_row(sheet_data: DataFrame, keywords: dict[str, list[str]]) -> int: ...
+@dataclass
+class HeaderDetectionResult:
+    header_row: int | None       # None = 탐지 실패
+    confidence: float            # 0.0~1.0
+    matched_keywords: list[str]  # 매칭된 키워드 원본명
+    total_columns: int
+    message: str                 # 사용자 안내 메시지
+
+def detect_header_row(sheet_data: DataFrame, keywords: dict | None = None) -> HeaderDetectionResult: ...
+def detect_headers(read_result: ReadResult, keywords: dict | None = None) -> dict[str, HeaderDetectionResult]: ...
 ```
 
 ### column_mapper.py

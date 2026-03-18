@@ -32,3 +32,17 @@ class ReadResult:
 
     # 원본 파일 포맷 (예: "xlsx", "csv", "parquet")
     source_format: str = ""
+
+
+@dataclass
+class HeaderDetectionResult:
+    """헤더 행 탐지 결과 — detect_header_row()가 반환하는 통합 타입.
+
+    header_row가 None이면 자동 탐지 실패 → UI에서 사용자 개입 필요.
+    """
+
+    header_row: int | None        # None = 탐지 실패, UI 개입 필요
+    confidence: float             # 0.0~1.0 스코어
+    matched_keywords: list[str]   # 매칭된 키워드 원본명 (예: ["전표일자", "차변"])
+    total_columns: int            # 해당 행의 전체 컬럼 수
+    message: str                  # 사용자 안내 메시지

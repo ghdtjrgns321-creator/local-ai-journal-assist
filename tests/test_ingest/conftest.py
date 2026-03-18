@@ -158,3 +158,131 @@ def hwp_file(tmp_path: Path) -> Path:
     filepath = tmp_path / "report.hwp"
     filepath.write_bytes(b"\xd0\xcf\x11\xe0 dummy")
     return filepath
+
+
+# ── 헤더 탐지(header_detector) 전용 fixture ──────────────────
+
+
+@pytest.fixture
+def hd_standard_xlsx(tmp_path: Path) -> Path:
+    """표준 1행 헤더 — keywords.yaml 별칭 사용."""
+    filepath = tmp_path / "hd_standard.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(["전표번호", "전표일자", "계정코드", "차변금액", "대변금액", "적요"])
+    ws.append([1, "2025-01-01", "1110", 10000, 0, "사무용품 구매"])
+    ws.append([2, "2025-01-02", "2110", 0, 5000, "매출 입금"])
+    wb.save(filepath)
+    return filepath
+
+
+@pytest.fixture
+def hd_erp_style_xlsx(tmp_path: Path) -> Path:
+    """ERP 스타일 — 1~2행 제목, 3행(idx=2) 헤더."""
+    filepath = tmp_path / "hd_erp.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(["[결산 보고서]", None, None, None])
+    ws.append(["작성일: 2025-03-18", None, None, None])
+    ws.append(["전표번호", "전표일자", "차변금액", "대변금액"])
+    ws.append([1, "2025-01-01", 10000, 0])
+    wb.save(filepath)
+    return filepath
+
+
+@pytest.fixture
+def hd_merged_header_xlsx(tmp_path: Path) -> Path:
+    """병합셀 상위 + 실제 헤더 2행(idx=1).
+
+    pandas read_excel(header=None)은 병합셀의 첫 번째 셀에만 값을 넣고
+    나머지는 NaN으로 처리 → 1행은 문자열 2개뿐(키워드 없음, confidence~0.2),
+    2행은 키워드 5개 → row=1이 정확히 탐지되는 구조를 검증.
+    """
+    filepath = tmp_path / "hd_merged.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    # Row 1: 병합 그룹명
+    ws["A1"] = "전표 정보"
+    ws.merge_cells("A1:C1")
+    ws["D1"] = "금액 정보"
+    ws.merge_cells("D1:E1")
+    # Row 2: 실제 헤더
+    ws["A2"] = "전표번호"
+    ws["B2"] = "전표일자"
+    ws["C2"] = "계정코드"
+    ws["D2"] = "차변금액"
+    ws["E2"] = "대변금액"
+    # Row 3: 데이터
+    ws["A3"] = 1
+    ws["B3"] = "2025-01-01"
+    ws["C3"] = "1110"
+    ws["D3"] = 10000
+    ws["E3"] = 0
+    wb.save(filepath)
+    return filepath
+
+
+@pytest.fixture
+def hd_non_accounting_xlsx(tmp_path: Path) -> Path:
+    """비회계 데이터 — 키워드 매칭 실패 기대."""
+    filepath = tmp_path / "hd_non_acct.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(["이름", "부서", "직급", "연락처"])
+    ws.append(["홍길동", "경영지원", "과장", "010-1234-5678"])
+    wb.save(filepath)
+    return filepath
+
+
+@pytest.fixture
+def hd_dirty_columns_xlsx(tmp_path: Path) -> Path:
+    """유효 키워드 + 대량 빈 컬럼 혼재."""
+    filepath = tmp_path / "hd_dirty.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    row = ["전표번호", "전표일자", "차변금액", "대변금액"] + [None] * 16
+    ws.append(row)
+    ws.append([1, "2025-01-01", 10000, 0] + [None] * 16)
+    wb.save(filepath)
+    return filepath
+
+
+@pytest.fixture
+def hd_trick_data_xlsx(tmp_path: Path) -> Path:
+    """데이터 행에 키워드가 섞인 트릭 케이스."""
+    filepath = tmp_path / "hd_trick.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(["전표번호", "전표일자", "차변금액", "대변금액", "적요"])
+    ws.append([1, "2025-01-01", 10000, 0, "전표일자 수정 요청"])
+    ws.append([2, "2025-01-02", 0, 5000, "차변 금액 확인"])
+    wb.save(filepath)
+    return filepath
+
+
+@pytest.fixture
+def hd_mid_confidence_xlsx(tmp_path: Path) -> Path:
+    """중간 신뢰도(0.3~0.7) 강제 — 키워드 1개만 매칭.
+
+    keyword_score = 1/4 = 0.25, string_ratio = 1.0
+    → confidence ≈ 0.25*0.8 + 1.0*0.2 = 0.4 (중간 구간)
+    """
+    filepath = tmp_path / "hd_mid.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(["전표번호", "날짜", "금액", "구분"])
+    ws.append([1, "2025-01-01", 10000, "매출"])
+    wb.save(filepath)
+    return filepath
+
+
+@pytest.fixture
+def hd_sap_style_xlsx(tmp_path: Path) -> Path:
+    """SAP 스타일 영문/코드명 헤더."""
+    filepath = tmp_path / "hd_sap.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(["BELNR", "BUDAT", "HKONT", "Debit Amount", "Credit Amount"])
+    ws.append(["5000001", "2025-01-01", "1110", 10000, 0])
+    wb.save(filepath)
+    return filepath

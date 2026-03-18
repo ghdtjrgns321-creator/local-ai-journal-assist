@@ -15,9 +15,9 @@
 | 2  | 설정 레이어         | `config/settings.py`, YAML 3종 + `datasynth.yaml`            | [01-project-setup](pre-plan/01-project-setup.md) | ✅   |
 | 3  | 샘플 데이터 생성기  | DataSynth로 대체 (10-sample-data 불필요)                      | -                                              | ✅   |
 | 4  | 수동 Excel 템플릿   | DataSynth CSV로 대체                                          | -                                              | ✅   |
-| 5  | 파일 검증           | `src/ingest/file_validator.py`                                | [02-ingest](pre-plan/02-ingest.md)             | ⬜   |
-| 6  | Excel 읽기          | `src/ingest/excel_reader.py`                                  | [02-ingest](pre-plan/02-ingest.md)             | ⬜   |
-| 7  | 헤더 탐지           | `src/ingest/header_detector.py`                               | [02-ingest](pre-plan/02-ingest.md)             | ⬜   |
+| 5  | 파일 검증           | `src/ingest/file_validator.py`                                | [02-ingest](pre-plan/02-ingest.md)             | ✅   |
+| 6  | Excel 읽기          | `src/ingest/excel_reader.py`                                  | [02-ingest](pre-plan/02-ingest.md)             | ✅   |
+| 7  | 헤더 탐지           | `src/ingest/header_detector.py`                               | [02-ingest](pre-plan/02-ingest.md)             | ✅   |
 | 8  | 컬럼 매핑           | `src/ingest/column_mapper.py`                                 | [02-ingest](pre-plan/02-ingest.md)             | ⬜   |
 | 9  | 타입 캐스팅         | `src/ingest/type_caster.py`                                   | [02-ingest](pre-plan/02-ingest.md)             | ⬜   |
 | 10 | 매핑 프로파일       | `src/ingest/mapping_profile.py`                               | [02-ingest](pre-plan/02-ingest.md)             | ⬜   |
