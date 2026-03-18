@@ -36,9 +36,8 @@ DataSynth(EY Switzerland + ASU 공동 개발)를 선택한 이유:
 2. **감사 기준 내장**: PCAOB, ISA, COSO 2013, SOX 302/404를 `crates/datasynth-standards/`에서
    직접 구현. 감사인이 정의한 fraud 시나리오가 코드 레벨에서 보장됨
 
-3. **Fraud 레이블 132종**: `FraudType`(49종), `ErrorType`(28종), `ProcessIssueType`(22종),
-   `StatisticalAnomalyType`(18종), `RelationalAnomalyType`(15종)이
-   `crates/datasynth-core/src/models/anomaly.rs`에 정의
+3. **anomaly 유형 52개** (AUDIT_DOMAIN_FINAL.md §4 기준). Rust 소스(anomaly.rs)에는
+   열거형이 더 많으나, 프로젝트 채택 범위는 52개.
    → `is_fraud`, `is_anomaly` 컬럼으로 출력되어 지도학습에 바로 사용 가능
 
 4. **복식부기 보장**: `JournalEntry`가 생성 시점에 차변 합 = 대변 합을 강제
@@ -64,15 +63,15 @@ class AuditSettings(BaseSettings):
     fuzzy_threshold: int = 80              # rapidfuzz 매칭 임계값
 
     # 감사 룰 관련 (DataSynth FraudTypeConfig 참고)
-    # R001: JustBelowThreshold — DataSynth에서 approval threshold 기반으로 주입
-    approval_thresholds: list[float] = [1_000, 5_000, 10_000, 25_000, 50_000, 100_000]
-    near_threshold_ratio: float = 0.95     # 한도의 95% 이상이면 플래그
+    # B02: 승인한도 직하 (JustBelowThreshold) — DataSynth에서 approval threshold 기반으로 주입
+    approval_threshold: float = 50_000_000
+    near_threshold_ratio: float = 0.90     # 한도의 90% 이상이면 플래그
 
-    # R003: AfterHoursPosting — DataSynth weekend_activity/holiday_activity 설정 참고
-    after_hours_start: int = 18            # 업무 외 시간 시작
-    after_hours_end: int = 7               # 업무 외 시간 종료
+    # C03: 심야 전기 (AfterHoursPosting) — DataSynth weekend_activity/holiday_activity 설정 참고
+    midnight_start: int = 22               # 심야 시작
+    midnight_end: int = 6                  # 심야 종료
 
-    # R004: RushedPeriodEnd — DataSynth month_end_lead_days=5 참고
+    # C01: 기말 대규모 (RushedPeriodEnd) — DataSynth month_end_lead_days=5 참고
     period_end_days: int = 5               # 기말 n영업일
 
     # Benford — DataSynth threshold_mad=0.015 참고
@@ -95,7 +94,7 @@ class AuditSettings(BaseSettings):
 ### `config/schema.yaml` — 표준 컬럼 스키마
 
 DataSynth `journal_entries.csv` 출력 29개 컬럼 기준.
-ACDOCA 필드명과의 매핑은 `docs/AUDIT_DOMAIN.md` 참조.
+ACDOCA 필드명과의 매핑은 `docs/AUDIT_DOMAIN_FINAL.md` 참조.
 
 ```yaml
 # DataSynth journal_entries.csv 출력 기준 (tools/datasynth/ v1.2.0)
@@ -131,10 +130,10 @@ columns:
     required: true
 
   # --- 권장 (감사 룰에 필요) ---
-  - name: created_by           # ACDOCA: usnam — R006(수기전표) 판정용
+  - name: created_by           # ACDOCA: usnam — B06~B09(통제 위반) 판정용
     type: str
     required: false
-  - name: source               # automated/manual/recurring/adjustment — R006 판정용
+  - name: source               # automated/manual/recurring/adjustment — B08(수기전표) 판정용
     type: str
     required: false
   - name: business_process     # P2P/O2C/R2R/H2R/A2R
@@ -155,7 +154,7 @@ columns:
   - name: profit_center        # ACDOCA: prctr
     type: str
     required: false
-  - name: line_text            # ACDOCA: sgtxt — R007(위험적요) 판정용
+  - name: line_text            # ACDOCA: sgtxt — C06(위험 적요) 판정용
     type: str
     required: false
   - name: header_text          # ACDOCA: bktxt
@@ -187,7 +186,7 @@ company_code:   ["회사코드", "법인", "company", "company_code", "bukrs"]
 
 ### `config/risk_keywords.yaml` — 위험 적요 키워드
 ```yaml
-# R007: has_risk_keyword 판정에 사용
+# C06: 위험 적요 판정에 사용
 # DataSynth ProcessIssueType::VagueDescription, FraudType::SuspenseAccountAbuse 참고
 high_risk:
   - "상품권"
