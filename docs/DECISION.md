@@ -80,3 +80,23 @@
 - **이유**: Layer A 위반 시 다른 점수 신뢰도 자체가 하락, Layer B가 핵심 부정 탐지이므로 가중치 최대
 - **위험등급**: High(>0.7 또는 A위반+B 2개+), Medium(>0.4), Low(>0.2), Normal(≤0.2)
 - **참고**: 가중치·임계값은 근거 없는 초기 설계값. Phase 1 완료 후 back-testing으로 튜닝 예정
+
+### D014: 파일 카테고리별 검증 전략 (file_validator 3분류)
+- **결정**: 10개 확장자를 3개 카테고리(Excel/Text/Columnar)로 분류하여 각각 다른 크기 제한·검증 전략 적용. PDF/HWP는 프로젝트 범위 외로 거부
+- **이유**:
+  - Excel(.xlsx/.xls/.xlsb): 시트당 104만 행 물리 제한 → 100MB 충분. 각각 openpyxl/xlrd/pyxlsb로 손상 검증
+  - Text(.csv/.tsv/.txt/.dat): 크기 제한 없는 포맷, 인코딩 다양(UTF-8/CP949/EUC-KR) → 500MB + charset_normalizer 자동 감지
+  - Columnar(.parquet): 압축 효율 높아 1GB 허용. pyarrow 메타데이터만 읽어 검증
+  - PDF/HWP: 비정형 문서 데이터 추출은 별도 프로젝트 범위 (CONSTRAINTS.md 참고)
+- **구조**: `file_categories.py`(카테고리 정의) + `integrity_checkers.py`(확장자별 열기 검증) + `file_validator.py`(퍼사드) 3파일 분리 (SRP)
+- **설정**: `settings.py`의 `allowed_extensions`/`max_file_size_mb`는 deprecated. 카테고리별 제한은 `file_categories.py` 상수로 관리 (파일 포맷 물리적 특성이므로 사용자 설정이 아님)
+
+### D015: 파일 읽기 4-리더 분리 + read_only=False 결정
+- **결정**: pre-plan의 단일 `excel_reader.py`(WorkbookInfo) → 4개 리더 + 1개 퍼사드 + 1개 모델로 확장. xlsx는 `read_only=False`로 병합셀 처리 우선
+- **이유**:
+  - `read_only=True`와 `merged_cells.ranges`는 openpyxl에서 양립 불가. ERP 엑셀의 병합셀은 매우 흔함
+  - xlsx/xls/xlsb/csv/tsv/txt/dat/parquet 10개 확장자가 모두 다른 라이브러리·API 사용 → 단일 파일로 불가 (SRP 위반, 100줄 초과)
+  - DataSynth CSV(232MB)가 메인 데이터인데 openpyxl 경로를 타면 안 됨 → CSV fast path 필수
+  - CSV/Parquet은 "시트" 개념이 없으므로 WorkbookInfo 대신 통합 `ReadResult` 타입 필요
+- **구조**: `models.py`(ReadResult) + `excel_reader.py`(xlsx/xls/xlsb) + `text_reader.py`(csv/tsv) + `parquet_reader.py` + `reader_api.py`(퍼사드)
+- **메모리 안전장치**: file_validator의 100MB 제한이 read_only=False의 메모리 위험을 상쇄 (16GB RAM)
