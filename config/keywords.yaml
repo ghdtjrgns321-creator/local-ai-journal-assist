@@ -1,13 +1,10 @@
-# ⚠️ 예시 키워드 — 실제 ERP(더존, SAP, Oracle 등) 엑셀 헤더를 확인하며 추가할 것
-# key: 표준 컬럼명, values: ERP별 다양한 표현
-journal_id: ["전표번호", "전표No", "voucher_no", "JE Number", "Doc No"]
-entry_date: ["전표일자", "기표일", "posting_date", "Entry Date", "일자"]
-account_code: ["계정코드", "계정CD", "account_cd", "GL Code"]
-account_name: ["계정과목", "계정과목명", "account_name", "GL Name"]
-debit_amount: ["차변금액", "차변", "debit", "Debit Amount", "Dr"]
-credit_amount: ["대변금액", "대변", "credit", "Credit Amount", "Cr"]
-description: ["적요", "설명", "description", "Memo", "비고"]
-department: ["부서", "부서명", "department", "Dept"]
-created_by: ["작성자", "기표자", "created_by", "User", "담당자"]
-source_type: ["전표유형", "유형", "entry_type", "Type"]
-counterparty: ["거래처", "거래처명", "vendor", "Vendor Name", "고객"]
+# DataSynth 컬럼명 + SAP/더존/Oracle 등 ERP별 다양한 표현
+document_id:    ["전표번호", "전표No", "voucher_no", "JE Number", "Doc No", "document_id", "belnr"]
+posting_date:   ["전표일자", "기표일", "posting_date", "Entry Date", "일자", "budat"]
+gl_account:     ["계정코드", "계정CD", "account_cd", "GL Code", "gl_account", "racct", "hkont"]
+debit_amount:   ["차변금액", "차변", "debit", "Debit Amount", "Dr", "debit_amount"]
+credit_amount:  ["대변금액", "대변", "credit", "Credit Amount", "Cr", "credit_amount"]
+line_text:      ["적요", "설명", "description", "Memo", "비고", "line_text", "sgtxt"]
+created_by:     ["작성자", "입력자", "기표자", "user", "created_by", "usnam"]
+source:         ["전표유형", "입력구분", "source_type", "source"]
+company_code:   ["회사코드", "법인", "company", "company_code", "bukrs"]

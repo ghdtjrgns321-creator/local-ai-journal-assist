@@ -128,7 +128,7 @@ class InsightGenerator:
     def generate_summary_insight(self, pipeline_result) -> str:
         """전체 분석 결과 요약 인사이트 생성.
         예: '총 10,000건 중 382건(3.8%)이 이상 전표로 탐지되었으며,
-            특히 R001(승인한도 직하) 위반이 45%로 가장 높은 비중을 차지합니다.'
+            특히 B02(승인한도 직하) 위반이 45%로 가장 높은 비중을 차지합니다.'
         """
 
     def generate_entry_insight(self, entry: dict) -> str:
@@ -202,6 +202,34 @@ insight_generator → 자연어 해석
 | 폴백     | Qwen2.5-Coder-7B   | Text-to-SQL 특화      | ~6GB |
 
 **개발 환경:** RTX 3070 Ti (VRAM 8GB) → 위 모델 중 하나만 로드 가능
+
+## C06 위험 적요 LLM 보완 (Phase 3 확장)
+
+Phase 1에서는 `risk_keywords.yaml` 딕셔너리 exact/partial match로 C06을 탐지한다.
+Phase 3에서 LLM을 **보완 레이어**로 추가하여 딕셔너리가 놓치는 케이스를 잡는다.
+
+### 딕셔너리 한계 → LLM이 보완하는 케이스
+- 동의어: "기프트카드" (상품권), "일시 보관금" (가수금)
+- 우회 표현: "임직원 선물비", "경조사 지원"
+- 영문 혼재: "gift card", "suspense clearing"
+
+### 설계 원칙
+1. **106만건 전체에 LLM 호출하지 않음** — 비현실적 (비용·시간)
+2. 딕셔너리 미매칭 + **다른 위험 징후가 있는 건만** LLM에 전달
+3. Phase 1 딕셔너리 결과가 **baseline(비교 기준)** 역할
+
+### 호출 조건 (AND)
+```python
+# 딕셔너리 미매칭이면서, 다른 위험 신호가 있는 건만 LLM 분류
+if not C06_flag and has_other_risk_signals(entry):
+    C06_llm = llm_classify_risk(line_text)
+```
+
+`has_other_risk_signals` 예시: 고액(B02/B03), 심야(C03), 수기(B08) 등 다른 룰에서 이미 플래그된 건.
+
+### 구현 위치
+`insight_generator.py`의 `generate_entry_insight()`에 C06 LLM 분류 로직을 통합하거나,
+별도 `risk_classifier.py` 모듈로 분리.
 
 ## 구현 시 주의사항
 - **Vanna train:** DDL, 프리셋 쿼리, 도메인 용어를 학습시켜야 정확도 향상

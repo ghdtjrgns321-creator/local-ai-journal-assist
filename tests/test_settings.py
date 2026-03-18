@@ -46,16 +46,16 @@ class TestYamlLoaders:
         assert len(schema["columns"]) > 0
 
     def test_schema_required_fields(self):
-        """필수 컬럼(journal_id, entry_date, debit_amount, credit_amount)이 존재해야 한다."""
+        """필수 컬럼(AUDIT_DOMAIN_FINAL §8 기준)이 존재해야 한다."""
         schema = get_schema()
         names = [col["name"] for col in schema["columns"]]
-        for required in ["journal_id", "entry_date", "debit_amount", "credit_amount"]:
+        for required in ["document_id", "posting_date", "gl_account", "debit_amount", "credit_amount"]:
             assert required in names
 
     def test_keywords_has_standard_columns(self):
         """keywords.yaml에 주요 표준 컬럼 키가 존재해야 한다."""
         kw = get_keywords()
-        for key in ["journal_id", "entry_date", "debit_amount", "credit_amount"]:
+        for key in ["document_id", "posting_date", "gl_account", "debit_amount", "credit_amount"]:
             assert key in kw
             assert isinstance(kw[key], list)
 

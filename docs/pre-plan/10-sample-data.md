@@ -64,7 +64,7 @@ def _generate_c01_entries(n: int) -> DataFrame:
     """C01: 기말(월말 5일 이내) 대규모 매출.
     감사 관점: 실적 조정 목적의 기말 매출 집중."""
 
-# R005 (ReversedAmount) → Phase 2 ML 확장으로 이동, 테스트 생성기에서 제외
+# ReversedAmount → Phase 2 ML 확장으로 이동, 테스트 생성기에서 제외
 
 def _generate_b08_entries(n: int) -> DataFrame:
     """B08: 수기 전표 (source_type='수동').
@@ -138,7 +138,7 @@ generate_gl_data(n=10000, anomaly_ratio=0.20)
   └── _generate_anomaly_entries(2000)
        ├── _generate_b02_entries(285)
        ├── _generate_c02_entries(285)
-       ├── ... (7개 룰 균등, R005 제외)
+       ├── ... (7개 룰 균등)
        └── _generate_benford_violation()
        ↓
 save_to_excel(df, "data/sample/sample_gl.xlsx")

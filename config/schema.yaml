@@ -1,35 +1,71 @@
-# ⚠️ 예시 스키마 — 실제 전표 데이터를 확인한 뒤 컬럼 구성·타입·필수 여부를 재정의할 것
+# DataSynth journal_entries.csv 출력 기준 (tools/datasynth/ v1.2.0)
+# ACDOCA 매핑: crates/datasynth-core/src/models/acdoca.rs
 columns:
-  - name: journal_id        # 전표번호
+  # --- 필수 (전표 식별 + 핵심 회계 정보) ---
+  - name: document_id          # ACDOCA: belnr
     type: str
     required: true
-  - name: entry_date        # 전표일자
-    type: datetime
-    required: true
-  - name: account_code      # 계정코드
+  - name: company_code         # ACDOCA: rbukrs
     type: str
     required: true
-  - name: account_name      # 계정과목명
-    type: str
+  - name: fiscal_year          # ACDOCA: gjahr
+    type: int
     required: true
-  - name: debit_amount      # 차변금액
+  - name: posting_date         # ACDOCA: budat
+    type: date
+    required: true
+  - name: document_date        # ACDOCA: bldat
+    type: date
+    required: true
+  - name: gl_account           # ACDOCA: racct
+    type: int
+    required: true
+  - name: debit_amount         # ACDOCA: wsl (drcrk='S')
     type: float
     required: true
-  - name: credit_amount     # 대변금액
+  - name: credit_amount        # ACDOCA: wsl (drcrk='H')
     type: float
     required: true
-  - name: description       # 적요
+  - name: document_type        # ACDOCA: blart
+    type: str
+    required: true
+
+  # --- 권장 (감사 룰에 필요) ---
+  - name: created_by           # ACDOCA: usnam — B06~B09(통제 위반) 판정용
     type: str
     required: false
-  - name: department        # 부서
+  - name: source               # automated/manual/recurring/adjustment — B08(수기전표) 판정용
     type: str
     required: false
-  - name: created_by        # 작성자
+  - name: business_process     # P2P/O2C/R2R/H2R/A2R
     type: str
     required: false
-  - name: source_type       # 전표유형 (자동/수동)
+  - name: line_number          # ACDOCA: docln
+    type: int
+    required: false
+  - name: local_amount         # ACDOCA: hsl
+    type: float
+    required: false
+  - name: currency             # ACDOCA: rwcur
     type: str
     required: false
-  - name: counterparty      # 거래처
+  - name: cost_center          # ACDOCA: rcntr
     type: str
+    required: false
+  - name: profit_center        # ACDOCA: prctr
+    type: str
+    required: false
+  - name: line_text            # ACDOCA: sgtxt — C06(위험 적요) 판정용
+    type: str
+    required: false
+  - name: header_text          # ACDOCA: bktxt
+    type: str
+    required: false
+
+  # --- 레이블 (DataSynth 전용) ---
+  - name: is_fraud             # DataSynth sim_is_fraud
+    type: bool
+    required: false
+  - name: is_anomaly           # DataSynth 파생
+    type: bool
     required: false

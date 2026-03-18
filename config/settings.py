@@ -20,19 +20,25 @@ CONFIG_DIR = PROJECT_ROOT / "config"
 class AuditSettings(BaseSettings):
     """프로젝트 전역 설정. 환경변수 > .env > 코드 기본값 순 우선."""
 
-    # --- 파일 관련 (⚠️ 예시값 — 실제 전표 파일에 맞춰 조정) ---
+    # --- 파일 관련 (deprecated: file_validator는 file_categories.py 사용) ---
+    # 카테고리별 크기 제한은 src/ingest/file_categories.py에 정의
+    # 아래 필드는 하위 호환용으로 유지. 신규 코드에서 참조하지 말 것
     max_file_size_mb: int = 100
-    allowed_extensions: list[str] = [".xlsx", ".xls", ".csv"]
+    allowed_extensions: list[str] = [
+        ".xlsx", ".xls", ".xlsb",
+        ".csv", ".tsv", ".txt", ".dat",
+        ".parquet",
+    ]
 
     # --- 매핑 관련 (⚠️ 예시값 — 실제 ERP 헤더 매칭 정확도 보며 튜닝) ---
     fuzzy_threshold: int = 80
 
     # --- 감사 룰 관련 (⚠️ 예시값 — 실제 감사 기준에 맞춰 조정) ---
-    approval_threshold: float = 50_000_000  # R001: 승인 한도
-    near_threshold_ratio: float = 0.98  # 한도의 98% 이상이면 플래그
-    midnight_start: int = 22  # R003: 심야 시작
-    midnight_end: int = 6  # R003: 심야 종료
-    period_end_days: int = 5  # R004: 기말 n일
+    approval_threshold: float = 50_000_000  # B02/B03: 승인한도 직하/초과
+    near_threshold_ratio: float = 0.90  # 한도의 90% 이상이면 플래그
+    midnight_start: int = 22  # C03: 심야 전기
+    midnight_end: int = 6  # C03: 심야 전기
+    period_end_days: int = 5  # C01: 기말 대규모
 
     # --- DB ---
     duckdb_path: str = "data/audit.duckdb"
