@@ -64,3 +64,18 @@ class MappingResult:
     unmapped: list[str]            # 매핑 불가 원본 컬럼명
     missing_required: list[str]    # 필수 표준 컬럼 중 미매핑
     needs_review: bool             # suggestions 있거나 missing_required 있으면 True
+
+
+@dataclass
+class CastingResult:
+    """타입 캐스팅 결과 — cast_dataframe()이 반환하는 통합 타입.
+
+    errors가 있으면 파이프라인 중단, warnings는 로깅 후 계속 진행.
+    """
+
+    data: pd.DataFrame                          # 캐스팅 완료 DataFrame
+    errors: list[str] = field(default_factory=list)      # 필수 컬럼 캐스팅 실패
+    warnings: list[str] = field(default_factory=list)    # 부분 결측, 권장 컬럼 실패
+    cast_summary: dict[str, str] = field(default_factory=dict)  # {"col": "object→float64"}
+    skipped_columns: list[str] = field(default_factory=list)    # 이미 올바른 dtype
+    success: bool = True                        # len(errors) == 0

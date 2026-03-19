@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import openpyxl
+import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
@@ -332,3 +334,81 @@ def cm_mixed_columns() -> list[str]:
         "차변", "Credit Amount", "메모",
         "담당자", "XYZ_UNKNOWN",
     ]
+
+
+# ── 타입 캐스팅(type_caster) 전용 fixture ──────────────────
+
+
+@pytest.fixture
+def tc_amount_series() -> pd.Series:
+    """쉼표/원화/괄호음수/빈값/대시 혼합 금액 데이터."""
+    return pd.Series([
+        "1,234,567", "₩10,000", "$5,000.50", "(3,000)",
+        "", "-", None, "0", "999",
+    ], dtype="object")
+
+
+@pytest.fixture
+def tc_date_series() -> pd.Series:
+    """ISO/슬래시/한국어/8자리/빈값 혼합 날짜 데이터."""
+    return pd.Series([
+        "2025-01-15", "2025/03/19", "2025년 1월 5일",
+        "20250320", "", None,
+    ], dtype="object")
+
+
+@pytest.fixture
+def tc_int_series() -> pd.Series:
+    """정수 문자열 + NaN 혼합."""
+    return pd.Series(["2025", "1110", "42", None, ""], dtype="object")
+
+
+@pytest.fixture
+def tc_bool_series() -> pd.Series:
+    """true/false/1/0/yes/no + 빈값 혼합."""
+    return pd.Series(["true", "False", "1", "0", "yes", "no", None], dtype="object")
+
+
+@pytest.fixture
+def tc_standard_df() -> pd.DataFrame:
+    """column_mapper 이후 상태 — dtype=object, 표준 컬럼명."""
+    return pd.DataFrame({
+        "document_id": ["JE001", "JE002", "JE003"],
+        "company_code": ["1000", "1000", "2000"],
+        "fiscal_year": ["2025", "2025", "2025"],
+        "posting_date": ["2025-01-15", "2025-03-19", "20250320"],
+        "document_date": ["2025-01-15", "2025-03-19", "2025년 3월 20일"],
+        "gl_account": ["1110", "2110", "3100"],
+        "debit_amount": ["1,234,567", "₩10,000", "0"],
+        "credit_amount": ["0", "0", "(3,000)"],
+        "document_type": ["SA", "RE", "AB"],
+        "created_by": ["USER01", "USER02", "USER03"],
+        "source": ["manual", "automated", "recurring"],
+        "line_text": ["사무용품 구매", "매출 입금", "급여 지급"],
+    })
+
+
+@pytest.fixture
+def tc_parquet_df() -> pd.DataFrame:
+    """Parquet에서 읽은 상태 — 이미 올바른 타입."""
+    return pd.DataFrame({
+        "document_id": ["JE001", "JE002"],
+        "company_code": ["1000", "1000"],
+        "fiscal_year": pd.array([2025, 2025], dtype="Int64"),
+        "posting_date": pd.to_datetime(["2025-01-15", "2025-03-19"]),
+        "document_date": pd.to_datetime(["2025-01-15", "2025-03-19"]),
+        "gl_account": pd.array([1110, 2110], dtype="Int64"),
+        "debit_amount": [1234567.0, 10000.0],
+        "credit_amount": [0.0, 0.0],
+        "document_type": ["SA", "RE"],
+    })
+
+
+@pytest.fixture
+def tc_unified_amount_df() -> pd.DataFrame:
+    """단일 amount + D/C indicator — unify_debit_credit 테스트용."""
+    return pd.DataFrame({
+        "document_id": ["JE001", "JE002", "JE003", "JE004"],
+        "amount": [10000.0, 5000.0, 3000.0, 7000.0],
+        "dc_indicator": ["D", "C", "S", "H"],
+    })

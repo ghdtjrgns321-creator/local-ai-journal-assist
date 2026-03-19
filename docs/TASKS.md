@@ -19,7 +19,7 @@
 | 6  | Excel 읽기          | `src/ingest/excel_reader.py`                                  | [02-ingest](pre-plan/02-ingest.md)             | ✅   |
 | 7  | 헤더 탐지           | `src/ingest/header_detector.py`                               | [02-ingest](pre-plan/02-ingest.md)             | ✅   |
 | 8  | 컬럼 매핑           | `src/ingest/column_mapper.py`                                 | [02-ingest](pre-plan/02-ingest.md)             | ✅   |
-| 9  | 타입 캐스팅         | `src/ingest/type_caster.py`                                   | [02-ingest](pre-plan/02-ingest.md)             | ⬜   |
+| 9  | 타입 캐스팅         | `src/ingest/type_caster.py`                                   | [02-ingest](pre-plan/02-ingest.md)             | ✅   |
 | 10 | 매핑 프로파일       | `src/ingest/mapping_profile.py`                               | [02-ingest](pre-plan/02-ingest.md)             | ⬜   |
 | 11 | 피처 엔진           | `src/feature/engine.py` + 4개 서브모듈                        | [03-feature](pre-plan/03-feature.md)           | ⬜   |
 | 12 | L1~L2 검증          | `src/validation/schema_validator.py`, `accounting_validator.py` | [04-validation](pre-plan/04-validation.md)     | ⬜   |

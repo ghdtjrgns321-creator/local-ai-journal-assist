@@ -209,14 +209,46 @@ conf < 40%         → 수동 선택 (빨강)   → unmapped
 
 ---
 
-### ⑤ 타입 캐스팅 — 🔲 미구현
+### ⑤ 타입 캐스팅 — ✅ 구현 완료
 
-`type_caster.py` — 금액·날짜 컬럼을 올바른 타입으로 변환한다.
+```
+src/ingest/
+├── type_caster.py    # cast_amount/cast_date/_cast_int/_cast_bool/unify_debit_credit + cast_dataframe() 퍼사드
+└── models.py         # CastingResult 추가
+```
 
-**구현할 것:**
-- `cast_amount`: 쉼표, 원화 기호(₩), 괄호 음수 처리 → float
-- `cast_date`: 다양한 한국어 날짜 포맷 → datetime
-- `unify_debit_credit`: 단일 금액 컬럼(+/-) → debit_amount/credit_amount 분리
+**알고리즘:**
+```
+1. cast_dataframe(df, schema) 진입
+2. schema.yaml → {컬럼명: type} 맵 생성
+3. 컬럼 순회 → 이미 올바른 dtype이면 스킵(Parquet fast path)
+4. 타입별 캐스터 디스패치: float→cast_amount, date→cast_date, int→_cast_int, bool→_cast_bool
+5. 필수 컬럼 실패 → errors, 권장 컬럼 실패 → warnings
+6. 결측률 > 10% → warnings
+7. debit/credit 없고 amount 있으면 → unify_debit_credit 호출
+8. CastingResult 반환
+```
+
+**설계 결정:**
+
+| 항목                    | 결정                                                           |
+|:------------------------|:--------------------------------------------------------------|
+| 퍼사드 추가             | `cast_dataframe()` — 파이프라인 단일 진입점 (문서 대비 추가)   |
+| int/bool 캐스팅         | `_cast_int()`/`_cast_bool()` 추가 — fiscal_year, is_fraud 등  |
+| Parquet fast path       | `_is_already_correct_type()` — 이미 올바른 dtype이면 스킵     |
+| 금액 처리 순서          | 통화기호→괄호음수→쉼표 제거 후 `pd.to_numeric(coerce)`         |
+| 날짜 5단계 폴백         | ISO8601→한국어→8자리→Excel serial→dayfirst 폴백               |
+| 차대변 통합 3케이스     | Case A(이미 분리), B(DC indicator), C(부호 기반)              |
+| 유럽 금액 포맷          | MVP 범위 외 — Phase 2에서 확장                                 |
+
+**반환 타입:** `CastingResult(data, errors, warnings, cast_summary, skipped_columns, success)`
+
+**테스트:** [34개 통과](../../tests/test_ingest/test-results/ingest-type-caster.md) (cast_amount 9 + cast_date 8 + cast_int 4 + cast_bool 3 + unify 4 + 퍼사드 6)
+
+**부수 변경:**
+- `models.py`: `CastingResult` dataclass 추가
+- `settings.py`: `casting_null_warn_threshold`, `casting_date_dayfirst` 추가
+- `__init__.py`: `cast_dataframe`, `CastingResult` export 추가
 
 ---
 
@@ -387,9 +419,21 @@ def auto_map_columns(source_columns: list[str], schema: dict, threshold: int = 8
 
 ### type_caster.py
 ```python
-def cast_amount(series: pd.Series) -> pd.Series: ...
-def cast_date(series: pd.Series) -> pd.Series: ...
-def unify_debit_credit(df: DataFrame) -> DataFrame: ...
+@dataclass
+class CastingResult:
+    data: pd.DataFrame
+    errors: list[str]
+    warnings: list[str]
+    cast_summary: dict[str, str]     # {"posting_date": "object→datetime64[ns]"}
+    skipped_columns: list[str]       # Parquet fast path
+    success: bool
+
+def cast_amount(series: pd.Series) -> pd.Series: ...   # → float64
+def cast_date(series: pd.Series) -> pd.Series: ...     # → datetime64[ns]
+def _cast_int(series: pd.Series) -> pd.Series: ...     # → Int64 (nullable)
+def _cast_bool(series: pd.Series) -> pd.Series: ...    # → boolean (nullable)
+def unify_debit_credit(df: DataFrame) -> tuple[DataFrame, list[str]]: ...
+def cast_dataframe(df: DataFrame, schema: dict | None = None) -> CastingResult: ...  # 퍼사드
 ```
 
 ### mapping_profile.py

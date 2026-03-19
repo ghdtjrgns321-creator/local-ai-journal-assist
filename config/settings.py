@@ -48,6 +48,10 @@ class AuditSettings(BaseSettings):
     fuzzy_threshold: int = 80            # 이상이면 확정 매핑
     fuzzy_low_threshold: int = 40        # 이상이면 추천(suggestions), 미만이면 unmapped
 
+    # --- 타입 캐스팅 관련 ---
+    casting_null_warn_threshold: float = 0.1   # 캐스팅 후 결측률 경고 임계 (10%)
+    casting_date_dayfirst: bool = False         # True면 DD/MM/YYYY 해석
+
     # --- 감사 룰 관련 (⚠️ 예시값 — 실제 감사 기준에 맞춰 조정) ---
     approval_threshold: float = 50_000_000  # B02/B03: 승인한도 직하/초과
     near_threshold_ratio: float = 0.90  # 한도의 90% 이상이면 플래그
