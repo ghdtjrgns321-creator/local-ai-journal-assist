@@ -1,4 +1,5 @@
-# DataSynth 컬럼명 + SAP/더존/Oracle 등 ERP별 다양한 표현
+# DataSynth 컬럼명 + SAP ACDOCA 필드명 + 한국 공인회계사 일반 용어
+# ERP별(더존/Oracle 등) 실제 컬럼명은 실무 테스트 후 확장 예정
 document_id:    ["전표번호", "전표No", "voucher_no", "JE Number", "Doc No", "document_id", "belnr"]
 posting_date:   ["전표일자", "기표일", "posting_date", "Entry Date", "일자", "budat"]
 gl_account:     ["계정코드", "계정CD", "account_cd", "GL Code", "gl_account", "racct", "hkont"]
@@ -6,5 +7,15 @@ debit_amount:   ["차변금액", "차변", "debit", "Debit Amount", "Dr", "debit
 credit_amount:  ["대변금액", "대변", "credit", "Credit Amount", "Cr", "credit_amount"]
 line_text:      ["적요", "설명", "description", "Memo", "비고", "line_text", "sgtxt"]
 created_by:     ["작성자", "입력자", "기표자", "user", "created_by", "usnam"]
-source:         ["전표유형", "입력구분", "source_type", "source"]
+source:         ["입력구분", "source_type", "source"]
 company_code:   ["회사코드", "법인", "company", "company_code", "bukrs"]
+fiscal_year:    ["회계연도", "사업연도", "fiscal_year", "gjahr"]
+document_date:  ["증빙일자", "증빙일", "document_date", "bldat"]
+document_type:  ["전표유형", "증빙유형", "문서유형", "document_type", "blart"]
+line_number:    ["행번호", "라인번호", "line_number", "docln"]
+local_amount:   ["현지금액", "원화금액", "local_amount", "hsl"]
+currency:       ["통화", "통화코드", "currency", "rwcur"]
+cost_center:    ["코스트센터", "원가센터", "cost_center", "rcntr"]
+profit_center:  ["손익센터", "이익센터", "profit_center", "prctr"]
+header_text:    ["헤더적요", "전표적요", "header_text", "bktxt"]
+business_process: ["업무프로세스", "비즈니스프로세스", "business_process"]

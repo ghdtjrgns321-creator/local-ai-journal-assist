@@ -286,3 +286,49 @@ def hd_sap_style_xlsx(tmp_path: Path) -> Path:
     ws.append(["5000001", "2025-01-01", "1110", 10000, 0])
     wb.save(filepath)
     return filepath
+
+
+# ── 컬럼 매핑(column_mapper) 전용 fixture ──────────────────
+
+
+@pytest.fixture
+def cm_standard_columns() -> list[str]:
+    """DataSynth 표준 스키마 컬럼명 — fast path 기대."""
+    return [
+        "document_id", "company_code", "fiscal_year",
+        "posting_date", "document_date", "gl_account",
+        "debit_amount", "credit_amount", "document_type",
+        "created_by", "source", "line_text",
+    ]
+
+
+@pytest.fixture
+def cm_korean_columns() -> list[str]:
+    """한국어 별칭 — exact match 기대."""
+    return [
+        "전표번호", "회사코드", "회계연도",
+        "전표일자", "증빙일자", "계정코드",
+        "차변금액", "대변금액", "전표유형",
+        "작성자", "입력구분", "적요",
+    ]
+
+
+@pytest.fixture
+def cm_sap_columns() -> list[str]:
+    """SAP ACDOCA 코드명 — exact match 기대."""
+    return [
+        "belnr", "bukrs", "gjahr",
+        "budat", "bldat", "racct",
+        "debit_amount", "credit_amount", "blart",
+        "usnam", "source", "sgtxt",
+    ]
+
+
+@pytest.fixture
+def cm_mixed_columns() -> list[str]:
+    """한글 + 영문 + 비표준 혼합 — fuzzy/unmapped 혼재."""
+    return [
+        "전표번호", "posting_date", "GL코드",
+        "차변", "Credit Amount", "메모",
+        "담당자", "XYZ_UNKNOWN",
+    ]

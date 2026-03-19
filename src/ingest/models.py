@@ -46,3 +46,21 @@ class HeaderDetectionResult:
     matched_keywords: list[str]   # 매칭된 키워드 원본명 (예: ["전표일자", "차변"])
     total_columns: int            # 해당 행의 전체 컬럼 수
     message: str                  # 사용자 안내 메시지
+
+
+@dataclass
+class MappingResult:
+    """컬럼 매핑 결과. mapping 방향: {원본컬럼명: 표준컬럼명}.
+
+    3-tier 분류:
+      - mapping: confidence >= threshold (확정)
+      - suggestions: low_threshold <= confidence < threshold (추천, UI 확인 필요)
+      - unmapped: confidence < low_threshold (매핑 불가)
+    """
+
+    mapping: dict[str, str]        # 확정 매핑 {원본: 표준}
+    suggestions: dict[str, str]    # 추천 매핑 {원본: 표준} — UI 확인 대기
+    confidence: dict[str, float]   # mapping+suggestions 전체 (0.0~1.0)
+    unmapped: list[str]            # 매핑 불가 원본 컬럼명
+    missing_required: list[str]    # 필수 표준 컬럼 중 미매핑
+    needs_review: bool             # suggestions 있거나 missing_required 있으면 True

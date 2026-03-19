@@ -45,7 +45,8 @@ class AuditSettings(BaseSettings):
         return v
 
     # --- 매핑 관련 (⚠️ 예시값 — 실제 ERP 헤더 매칭 정확도 보며 튜닝) ---
-    fuzzy_threshold: int = 80
+    fuzzy_threshold: int = 80            # 이상이면 확정 매핑
+    fuzzy_low_threshold: int = 40        # 이상이면 추천(suggestions), 미만이면 unmapped
 
     # --- 감사 룰 관련 (⚠️ 예시값 — 실제 감사 기준에 맞춰 조정) ---
     approval_threshold: float = 50_000_000  # B02/B03: 승인한도 직하/초과
