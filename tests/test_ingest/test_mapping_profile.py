@@ -27,14 +27,13 @@ from src.ingest.models import MappingResult
 
 @pytest.fixture
 def _use_tmp_profile_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """프로파일 디렉토리를 tmp_path로 교체."""
+    """프로파일 디렉토리를 tmp_path로 교체.
+
+    _log_dir는 _profile_dir() / "logs"를 반환하므로 별도 패치 불필요.
+    """
     monkeypatch.setattr(
         "src.ingest.mapping_profile._profile_dir",
         lambda: tmp_path,
-    )
-    monkeypatch.setattr(
-        "src.ingest.mapping_profile._log_dir",
-        lambda: tmp_path / "logs",
     )
 
 

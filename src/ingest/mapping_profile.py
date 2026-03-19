@@ -220,6 +220,9 @@ def list_profiles() -> list[dict]:
     for path in profile_dir.glob("*.json"):
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
+            # profile_version 없으면 프로파일이 아닌 파일 → 스킵
+            if "profile_version" not in data:
+                continue
             profiles.append({
                 "fingerprint": data.get("fingerprint", path.stem),
                 "source_name": data.get("source_name", ""),
