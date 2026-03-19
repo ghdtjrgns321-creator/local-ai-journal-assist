@@ -252,13 +252,43 @@ src/ingest/
 
 ---
 
-### ⑥ 매핑 프로파일 — 🔲 미구현
+### ⑥ 매핑 프로파일 — ✅ 구현 완료
 
-`mapping_profile.py` — 매핑 결과를 JSON으로 저장/로드한다.
+```
+src/ingest/
+└── mapping_profile.py   # save_profile/load_profile/list_profiles/delete_profile
+```
 
-**구현할 것:**
-- `save_profile`: MappingResult → JSON 저장
-- `load_profile`: 동일 ERP 재업로드 시 기존 매핑 자동 적용 → UX 향상
+**매칭 전략:** 원본 컬럼명 집합의 SHA-256 해시(fingerprint, 앞 12자)로 프로파일 식별.
+순서·대소문자 무관 → 동일 ERP면 동일 fingerprint.
+
+**2계층 저장 구조:**
+```
+data/profiles/
+├── {fingerprint}.json              ← 확정 매핑 프로파일 (load_profile 대상)
+└── logs/
+    └── {fingerprint}_{timestamp}.json  ← 메타데이터 로그 (suggestions, unmapped)
+```
+
+**설계 결정:**
+
+| 항목                  | 결정                                                            |
+|:----------------------|:---------------------------------------------------------------|
+| 프로파일 저장 범위    | 확정 매핑(mapping + confidence)만 저장                          |
+| 불확실 정보 분리      | suggestions/unmapped → 별도 로그 파일로 분리                    |
+| 재저장 시             | created_at 유지, updated_at만 갱신                              |
+| 손상 JSON 처리        | load_profile → None 반환 + 경고 로그                            |
+| 로드된 결과           | suggestions=빈, needs_review=False (확정 매핑만 복원)           |
+| 삭제 시               | 프로파일 + 관련 로그 모두 삭제                                  |
+
+**API:**
+- `column_fingerprint(columns)` → SHA-256 앞 12자
+- `save_profile(result, source_columns, **meta)` → Path
+- `load_profile(source_columns)` → MappingResult | None
+- `list_profiles()` → list[dict] (최신 순)
+- `delete_profile(fingerprint)` → bool
+
+**테스트:** [26개 통과](../../tests/test_ingest/test-results/ingest-mapping-profile.md) (fingerprint 6 + save 5 + log 3 + load 5 + list 3 + delete 3 + 통합 1)
 
 ---
 
@@ -381,36 +411,36 @@ def read_excel(path: Path) -> ReadResult:
 
 ### text_reader.py
 ```python
-def read_text(path: Path) -> ReadResult:
-    """csv/tsv/txt/dat → ReadResult. 인코딩·구분자 자동 감지, dtype=str."""
+def read_text(path: dl:
+    """csv/tsv/txt/ddl코딩·구분자 자동 감지, dtype=str."""
 ```
 
-### parquet_reader.py
+### parquet_reader.pdl
 ```python
-def read_parquet(path: Path) -> ReadResult:
-    """parquet → ReadResult. 타입 보존."""
+def read_parquet(patdlult:
+    """parquet → Readl"""
 ```
 
-### header_detector.py
-```python
-@dataclass
-class HeaderDetectionResult:
-    header_row: int | None       # None = 탐지 실패
-    confidence: float            # 0.0~1.0
-    matched_keywords: list[str]  # 매칭된 키워드 원본명
-    total_columns: int
-    message: str                 # 사용자 안내 메시지
-
-def detect_header_row(sheet_data: DataFrame, keywords: dict | None = None) -> HeaderDetectionResult: ...
-def detect_headers(read_result: ReadResult, keywords: dict | None = None) -> dict[str, HeaderDetectionResult]: ...
-```
-
-### column_mapper.py
+### header_detector.dl
 ```python
 @dataclass
-class MappingResult:
-    mapping: dict[str, str]
-    confidence: dict[str, float]
+class HeaderDetectiodl
+    header_row: int dl = 탐지 실패
+    confidence: floadl1.0
+    matched_keywordsdl된 키워드 원본명
+    total_columns: idl
+    message: str    dl자 안내 메시지
+
+def detect_header_rodlrame, keywords: dict | None = None) -> HeaderDetectionResuldl
+def detect_headers(rdlult, keywords: dict | None = None) -> dict[str, HeaderDetectiodl
+```
+
+### column_mapper.pydl
+```python
+@dataclass
+class MappingResult:dl
+    mapping: dict[stdl
+    confidence: dictdl
     unmapped: list[str]
     needs_review: bool
 

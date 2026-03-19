@@ -59,6 +59,9 @@ class AuditSettings(BaseSettings):
     midnight_end: int = 6  # C03: 심야 전기
     period_end_days: int = 5  # C01: 기말 대규모
 
+    # --- 매핑 프로파일 관련 ---
+    profile_dir: str = "data/profiles"    # 프로파일 저장 디렉토리
+
     # --- DB ---
     duckdb_path: str = "data/audit.duckdb"
 
