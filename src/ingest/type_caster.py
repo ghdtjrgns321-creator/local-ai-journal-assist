@@ -43,8 +43,10 @@ def _is_already_correct_type(series: pd.Series, expected: str) -> bool:
         return pd.api.types.is_integer_dtype(dtype)
     if expected == "bool":
         return pd.api.types.is_bool_dtype(dtype)
-    # str은 object 그대로 유지
-    return expected == "str"
+    # str은 object/string dtype이면 이미 올바름
+    if expected == "str":
+        return pd.api.types.is_object_dtype(dtype) or pd.api.types.is_string_dtype(dtype)
+    return False
 
 
 def _build_required_set(schema_columns: list[dict]) -> set[str]:
@@ -166,6 +168,34 @@ def _cast_int(series: pd.Series) -> pd.Series:
     return numeric.round().astype("Int64")
 
 
+def _cast_str(series: pd.Series) -> pd.Series:
+    """문자열 컬럼 → str 변환. Excel에서 int64로 읽힌 계정코드 등 대응.
+
+    NaN/NA는 pd.NA로 유지하여 결측 정보를 보존한다.
+    (빈 문자열 변환은 하지 않음 — L1 검증에서 처리)
+    float64 중 정수값(1000.0)은 ".0" 제거하여 "1000"으로 변환.
+    """
+    # NaN 마스크 먼저 확보 (astype(str) 시 "nan" 문자열로 변환되므로)
+    null_mask = series.isna()
+
+    # float64인데 실질적으로 정수인 경우 → Int64 경유하여 ".0" 방지
+    # (예: NaN 혼합 int 컬럼이 float64로 승격된 경우)
+    if pd.api.types.is_float_dtype(series.dtype):
+        # 비결측값이 모두 정수이면 Int64 경유
+        non_null = series.dropna()
+        if len(non_null) == 0 or (non_null == non_null.astype(int)).all():
+            int_series = series.astype("Int64")
+            result = int_series.astype(str).str.strip()
+            # Int64의 NA는 "<NA>" 문자열로 변환되므로 pd.NA로 복원
+            result = result.where(~null_mask, pd.NA)
+            return result
+
+    result = series.astype(str).str.strip()
+    # NaN이었던 위치를 pd.NA로 복원
+    result = result.where(~null_mask, pd.NA)
+    return result
+
+
 def _cast_bool(series: pd.Series) -> pd.Series:
     """불리언 컬럼 → boolean(nullable) 변환."""
     if pd.api.types.is_bool_dtype(series.dtype):
@@ -232,6 +262,7 @@ _CASTER_MAP: dict[str, Callable[[pd.Series], pd.Series]] = {
     "date": cast_date,
     "int": _cast_int,
     "bool": _cast_bool,
+    "str": _cast_str,
 }
 
 
@@ -263,7 +294,7 @@ def cast_dataframe(
 
     for col_name in result_df.columns:
         expected_type = type_map.get(col_name)
-        if expected_type is None or expected_type == "str":
+        if expected_type is None:
             continue
 
         series = result_df[col_name]

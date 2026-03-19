@@ -9,6 +9,7 @@ import pytest
 from src.ingest.type_caster import (
     _cast_bool,
     _cast_int,
+    _cast_str,
     cast_amount,
     cast_dataframe,
     cast_date,
@@ -151,6 +152,50 @@ class TestCastInt:
         s = pd.Series([1, 2, 3], dtype="int64")
         result = _cast_int(s)
         assert result.dtype == pd.Int64Dtype()
+
+
+# ── TestCastStr ──────────────────────────────────────────────
+
+
+class TestCastStr:
+    """문자열 캐스팅 — int→str, float→str, 이미 str, NaN 보존."""
+
+    def test_int_to_str(self):
+        """Excel에서 int64로 읽힌 계정코드 → str 변환."""
+        s = pd.Series([1001, 2025, 42], dtype="int64")
+        result = _cast_str(s)
+        assert result.tolist() == ["1001", "2025", "42"]
+        assert result.dtype == object
+
+    def test_float_to_str(self):
+        """float → str 변환 (소수점 포함)."""
+        s = pd.Series([1001.0, 2025.5], dtype="float64")
+        result = _cast_str(s)
+        assert result.tolist() == ["1001.0", "2025.5"]
+
+    def test_already_str(self):
+        """이미 str(object)이면 strip만 적용."""
+        s = pd.Series(["  hello ", " world"])
+        result = _cast_str(s)
+        assert result.tolist() == ["hello", "world"]
+
+    def test_nan_preserved(self):
+        """NaN/None → pd.NA 보존 (빈 문자열로 변환하지 않음)."""
+        # int64 + NaN → pandas가 float64로 승격하지만 _cast_str이 Int64 경유로 .0 제거
+        s = pd.Series([1001, None, np.nan, 42])
+        result = _cast_str(s)
+        assert result.iloc[0] == "1001"  # float64→Int64 경유로 .0 없음
+        assert pd.isna(result.iloc[1])
+        assert pd.isna(result.iloc[2])
+        assert result.iloc[3] == "42"
+
+    def test_nan_preserved_pure_int(self):
+        """순수 Int64(nullable) → NaN이 pd.NA로 보존."""
+        s = pd.array([1001, pd.NA, 42], dtype="Int64")
+        result = _cast_str(pd.Series(s))
+        assert result.iloc[0] == "1001"
+        assert pd.isna(result.iloc[1])
+        assert result.iloc[2] == "42"
 
 
 # ── TestCastBool ─────────────────────────────────────────────

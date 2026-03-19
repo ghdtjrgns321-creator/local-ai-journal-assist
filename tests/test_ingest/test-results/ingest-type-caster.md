@@ -1,6 +1,6 @@
 # Type Caster 테스트 결과
 
-> 실행일: 2026-03-19 | 34 passed in 0.21s
+> 실행일: 2026-03-19 | 39 passed in 0.26s
 
 ## 테스트 요약
 
@@ -9,10 +9,11 @@
 | TestCastAmount         |     9     |  ✅  |
 | TestCastDate           |     8     |  ✅  |
 | TestCastInt            |     4     |  ✅  |
+| TestCastStr            |     5     |  ✅  |
 | TestCastBool           |     3     |  ✅  |
 | TestUnifyDebitCredit   |     4     |  ✅  |
 | TestCastDataframe      |     6     |  ✅  |
-| **합계**               |  **34**   |  ✅  |
+| **합계**               |  **39**   |  ✅  |
 
 ## 상세
 
@@ -36,6 +37,13 @@
 - `test_excel_serial` — 45678 Excel serial number
 - `test_empty_and_none` — 빈값/None → NaT
 - `test_already_datetime` — datetime → 스킵
+
+### TestCastStr (5)
+- `test_int_to_str` — Excel int64 계정코드 → str 변환
+- `test_float_to_str` — float64 → str (소수점 유지)
+- `test_already_str` — object dtype → strip만 적용
+- `test_nan_preserved` — NaN 혼합 Series → pd.NA 보존
+- `test_nan_preserved_pure_int` — Int64(nullable) → NaN은 pd.NA
 
 ### TestCastInt (4)
 - `test_string_to_int64` — "2025" → Int64
