@@ -19,6 +19,7 @@ core = [
     "numpy",
     "pyyaml",
     "pydantic-settings",
+    "holidays",
 ]
 ml = ["xgboost", "scikit-learn", "shap", "torch"]
 nlp = ["kiwipiepy"]

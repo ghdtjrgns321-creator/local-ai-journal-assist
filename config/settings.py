@@ -56,9 +56,16 @@ class AuditSettings(BaseSettings):
     # --- 감사 룰 관련 (⚠️ 예시값 — 실제 감사 기준에 맞춰 조정) ---
     approval_threshold: float = 50_000_000  # B02/B03: 승인한도 직하/초과
     near_threshold_ratio: float = 0.90  # 한도의 90% 이상이면 플래그
+    round_unit: int = 1_000_000           # B04: 정수 단위 판정 기준 (100만원)
+    zscore_threshold: float = 3.0         # C08: 이상치 기준 (detection에서 사용)
     midnight_start: int = 22  # C03: 심야 전기
     midnight_end: int = 6  # C03: 심야 전기
-    period_end_days: int = 5  # C01: 기말 대규모
+    period_end_margin_days: int = 5  # C01: 기말 판정 마진 (월말 전후 n일)
+    fiscal_year_start: int = 1       # 회계연도 시작월 (1=1월, 4=4월~3월)
+    custom_holidays: list[str] = []  # 회사 지정 휴일 ["2025-07-01"]
+
+    # --- 텍스트 피처 관련 ---
+    min_description_length: int = 3  # C06: poor/normal 경계 글자수
 
     # --- 매핑 프로파일 관련 ---
     profile_dir: str = "data/profiles"    # 프로파일 저장 디렉토리
@@ -109,3 +116,9 @@ def get_keywords() -> dict:
 def get_risk_keywords() -> dict:
     """위험 적요 키워드 사전 로드."""
     return _load_yaml("risk_keywords.yaml")
+
+
+@functools.lru_cache
+def get_audit_rules() -> dict:
+    """감사 업무 룰(패턴/키워드) 로드. config/audit_rules.yaml."""
+    return _load_yaml("audit_rules.yaml")

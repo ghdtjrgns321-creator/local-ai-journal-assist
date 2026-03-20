@@ -26,7 +26,7 @@ class TestAuditSettings:
         assert s.approval_threshold == 50_000_000
         assert s.midnight_start == 22
         assert s.midnight_end == 6
-        assert s.period_end_days == 5
+        assert s.period_end_margin_days == 5
         assert ".xlsx" in s.allowed_extensions
 
     def test_env_prefix(self, monkeypatch):

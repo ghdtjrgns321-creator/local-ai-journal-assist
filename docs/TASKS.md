@@ -22,7 +22,7 @@
 | 9  | 타입 캐스팅         | `src/ingest/type_caster.py`                                   | [02-ingest](pre-plan/02-ingest.md)             | ✅   |
 | 10 | 매핑 프로파일       | `src/ingest/mapping_profile.py`                               | [02-ingest](pre-plan/02-ingest.md)             | ✅   |
 | 10a | **UX 1단계**       | 구조적 헤더탐지 + 타입검증 + ReviewItem + Null분기 + latin-1 폴백 | [02-ingest](pre-plan/02-ingest.md)          | ✅   |
-| 11 | 피처 엔진           | `src/feature/engine.py` + 4개 서브모듈                        | [03-feature](pre-plan/03-feature.md)           | ⬜   |
+| 11 | 피처 엔진           | `src/feature/engine.py` + 4개 서브모듈 (time_features ✅)     | [03-feature](pre-plan/03-feature.md)           | 🔨   |
 | 11a | **UX 2단계 — EDA** | `src/eda/profiler.py` + `report.py` (EDA 프로파일링)          | [03a-preprocessing](pre-plan/03a-preprocessing.md) | ⬜   |
 | 12 | L1~L2 검증          | `src/validation/schema_validator.py`, `accounting_validator.py` | [04-validation](pre-plan/04-validation.md)     | ⬜   |
 | 13 | 전처리 리포트       | `src/validation/report_generator.py`                          | [04-validation](pre-plan/04-validation.md)     | ⬜   |
