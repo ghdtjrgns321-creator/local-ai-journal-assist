@@ -157,6 +157,31 @@ src/feature/
 | description_quality 등급           | NaN→missing, noise→poor, len<min_length→poor, else→normal (3단계)            |
 | Phase 2/3 stubs                   | `add_semantic_similarity`, `add_semantic_anomaly` — no-op + logger.info      |
 
+**테스트**: [test_text_features.py](../../tests/test_feature/test_text_features.py) — 38 케이스
+
+#### Phase 2/3 텍스트 피처 확장 로드맵
+
+현재 stub으로 선언된 2개 함수의 구체적 구현 계획:
+
+| 함수                       | Phase | 입력                      | 출력 (컬럼)              | 알고리즘                                          | 감사 관점                                   |
+|:---------------------------|:------|:--------------------------|:-------------------------|:--------------------------------------------------|:--------------------------------------------|
+| `add_semantic_similarity`  | 2     | combined_text (정제 버전) | `semantic_similarity` (float 0~1) | kiwipiepy 형태소 분석 → TF-IDF/임베딩 벡터화 → gl_account 그룹 내 코사인 유사도 | 같은 계정인데 적요가 이질적인 전표 탐지 — 계정 오분류·위장 거래 |
+| `add_semantic_anomaly`     | 3     | combined_text + 주변 컨텍스트 | `semantic_anomaly` (bool/float) | Ollama (Qwen3-8B) 프롬프트 기반 문맥 이상 판단 | 숫자·키워드로는 잡히지 않는 문맥상 부자연스러운 적요 탐지 |
+
+**Phase 2 — `add_semantic_similarity` 구현 방향:**
+- **형태소 분석**: kiwipiepy로 한글 적요 토큰화 (명사+동사 추출)
+- **벡터화**: 그룹(gl_account)별 TF-IDF 매트릭스 구축
+- **유사도**: 각 전표의 적요 벡터를 그룹 중심 벡터와 코사인 유사도 계산
+- **이상 판정**: 유사도 < threshold → 그룹 내 이질적 전표로 플래그
+- **성능 고려**: 대량 전표 시 배치 처리, sparse matrix 활용
+
+**Phase 3 — `add_semantic_anomaly` 구현 방향:**
+- **LLM**: Ollama + Qwen3-8B (Q4_K_M), 로컬 추론
+- **프롬프트 전략**: 전표의 계정·금액·날짜·적요를 컨텍스트로 제공 → "이 전표의 적요가 거래 내용과 부합하는가?" 판정
+- **배치 처리**: 전체 전표가 아닌 Phase 1~2에서 플래그된 고위험 전표만 LLM 통과 (비용·시간 절약)
+- **출력**: 이상 여부(bool) + 이유 텍스트(str) — 감사 보고서 근거 자료로 활용
+- **fallback**: Ollama 미실행 시 skip + warning (MVP와 동일한 graceful degradation)
+
 ---
 
 ## 18개 파생변수 요약
@@ -197,10 +222,13 @@ src/feature/
 
 ## Phase 구분
 
-| 항목                       | Phase               |
-|----------------------------|---------------------|
-| 17개 파생변수 전체         | MVP (Phase 1a)      |
-| NLP 기반 텍스트 피처 확장  | Phase 3 (kiwipiepy) |
+| 항목                                                          | Phase    |
+|---------------------------------------------------------------|----------|
+| 18개 파생변수 전체 (time 6 + amount 5 + pattern 5 + text 2)   | Phase 1a |
+| `add_semantic_similarity` — kiwipiepy 형태소 + TF-IDF 유사도  | Phase 2  |
+| `add_semantic_anomaly` — Ollama LLM 문맥 이상 탐지            | Phase 3  |
+
+> Phase 2/3 확장 상세는 문서 하단 **[Phase 2/3 확장 로드맵](#phase-23-확장-로드맵)** 참조.
 
 ## 테스트 전략
 - **각 피처 함수 단위 테스트:**
@@ -216,7 +244,7 @@ src/feature/
   - 금액 -1500 → `first_digit=1` 확인 (abs 후 추출)
   - 금액 0.0053 → `first_digit=5` 확인 (non-zero digit)
 - **edge case:** NaN 적요, 0원 금액, 시간 정보 없는 날짜, document_date 누락, 음수 금액, 소수점 금액
-- **engine 통합 테스트:** 전체 17개 변수 생성 + 컬럼 존재 확인
+- **engine 통합 테스트:** 전체 18개 변수 생성 + 컬럼 존재 확인
 
 ## 구현 시 주의사항
 - **days_backdated:** document_date가 없는 ERP 대비 → skip 또는 warning
@@ -311,22 +339,26 @@ def add_is_round_number(df: DataFrame, unit: int = 1_000_000) -> DataFrame:
 
 ### pattern_features.py
 ```python
-def add_is_manual_je(df: DataFrame) -> DataFrame:
-    """source == 'manual'이면 True. (B08 대응)
-    감사 관점: 수기 전표는 자동화 통제 우회."""
+def add_is_manual_je(df: DataFrame, manual_codes: list[str]) -> DataFrame:
+    """source 컬럼이 수기 전표 코드와 매칭되면 True. (B08 대응)
+    감사 관점: 수기 전표는 자동화 통제 우회. codes는 audit_rules.yaml에서 주입."""
 
-def add_is_intercompany(df: DataFrame) -> DataFrame:
-    """company_code 쌍 또는 reference에 관계사 패턴이 있으면 True. (B10 대응)
-    감사 관점: 관계사 거래는 순환거래 위험."""
+def add_is_intercompany(df: DataFrame, identifiers: list[str]) -> DataFrame:
+    """gl_account OR company_code에서 관계사 식별자 매칭. (B10 대응)
+    감사 관점: 관계사 거래는 순환거래·이전가격 위험."""
 
-def add_is_revenue_account(df: DataFrame, prefixes: list[str] = None) -> DataFrame:
-    """gl_account가 settings.revenue_account_prefixes에 해당하면 True. (B01 대응)
-    감사 관점: 매출 이상 변동 탐지의 기준. 기본값 ['4'], settings로 외부화."""
+def add_is_revenue_account(df: DataFrame, prefixes: list[str]) -> DataFrame:
+    """gl_account가 매출 계정 prefix에 해당하면 True. (B01 대응)
+    감사 관점: 매출 이상 변동 탐지의 기준. audit_rules.yaml에서 주입."""
 
 def add_first_digit(df: DataFrame) -> DataFrame:
-    """금액의 첫째 non-zero 자릿수(1~9) 추출. (C07 Benford 대응)
-    전처리: abs() → 0이 아닌 첫 번째 숫자. 0원 → NaN.
-    감사 관점: Benford 분석 입력."""
+    """금액의 첫 유효숫자(1~9) 추출. str.extract(r"([1-9])") 사용. (C07 대응)
+    전처리: abs() → str → regex. 0원 → NaN. 과학표기법/소수 안전."""
+
+def add_is_suspense_account(df: DataFrame, keywords: list[str]) -> DataFrame:
+    """line_text/header_text에서 가계정·미결산 키워드 매칭. (B11/C06 대응)
+    감사 관점: 가수금/가지급/미결산 장기 미정리 시 부정 은폐 수단.
+    keywords는 정규식 지원, audit_rules.yaml에서 주입."""
 ```
 
 ### text_features.py
