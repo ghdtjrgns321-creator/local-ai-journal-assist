@@ -52,7 +52,15 @@ def _detect_encoding(path: Path) -> str:
         )
         return "utf-8"
 
-    return detection.encoding
+    detected = detection.encoding
+
+    # ascii → latin-1 폴백: ascii는 latin-1의 진부분집합(0x00~0x7F)이므로
+    # 샘플에 0x80+ 바이트가 없으면 ascii로 오탐할 수 있다.
+    # latin-1은 0x00~0xFF 전체 매핑이라 어떤 바이트든 에러 없이 읽힘.
+    if detected == "ascii":
+        return "latin-1"
+
+    return detected
 
 
 def _detect_separator(path: Path, encoding: str) -> str:

@@ -1,10 +1,8 @@
 # Design Decisions
 
-아키텍처·기술 선택 결정 로그. 새로운 결정 시 날짜와 함께 추가.
+아키텍처·기술 선택 결정 로그. 새로운 결정 시 내용 추가.
 
 ---
-
-## 2026-03-16: 초기 기술 스택 확정
 
 ### D001: Qwen3-8B 1순위 (Qwen2.5-Coder 폴백)
 - **이유**: Qwen3 Ollama 지원, reasoning 성능 향상. RTX 3070 Ti 8GB에 Q4_K_M 적합 (6~7GB VRAM)
@@ -85,11 +83,34 @@
 - **결정**: 10개 확장자를 3개 카테고리(Excel/Text/Columnar)로 분류하여 각각 다른 크기 제한·검증 전략 적용. PDF/HWP는 프로젝트 범위 외로 거부
 - **이유**:
   - Excel(.xlsx/.xls/.xlsb): 시트당 104만 행 물리 제한 → 100MB 충분. 각각 openpyxl/xlrd/pyxlsb로 손상 검증
-  - Text(.csv/.tsv/.txt/.dat): 크기 제한 없는 포맷, 인코딩 다양(UTF-8/CP949/EUC-KR) → 500MB + charset_normalizer 자동 감지
+  - Text(.csv/.tsv/.txt/.dat): 크기 제한 없는 포맷, 인코딩 다양(UTF-8/CP949/latin-1) → 800MB + charset_normalizer 자동 감지 + ascii→latin-1 폴백
   - Columnar(.parquet): 압축 효율 높아 1GB 허용. pyarrow 메타데이터만 읽어 검증
   - PDF/HWP: 비정형 문서 데이터 추출은 별도 프로젝트 범위 (CONSTRAINTS.md 참고)
 - **구조**: `file_categories.py`(카테고리 정의) + `integrity_checkers.py`(확장자별 열기 검증) + `file_validator.py`(퍼사드) 3파일 분리 (SRP)
 - **설정**: `settings.py`의 `allowed_extensions`/`max_file_size_mb`는 deprecated. 카테고리별 제한은 `file_categories.py` 상수로 관리 (파일 포맷 물리적 특성이므로 사용자 설정이 아님)
+
+### D016: UX 1단계 — 데이터 수집 투명성 (Ingest v2)
+- **정의**: 사용자가 데이터를 넣으면 AI가 헤더/컬럼을 자동 지정하고, 애매한 부분은 사용자에게 위임하며, 판단 근거(신뢰도, 매칭 방식)를 투명하게 노출하는 UX 모델
+- **결정**: 헤더 탐지를 구조적 신호 기반으로 전환, fuzzy 매핑에 타입 검증 추가, 매핑 판단 근거를 ReviewItem으로 구조화
+- **UX 원칙**:
+  - **80/20 자동화**: 확신 높은 80%는 자동 처리(action="auto"), 나머지 20%는 사용자 검토(action="review")
+  - **블랙박스 공포증 해소**: 모든 매핑에 reason(판단 근거) + confidence(신뢰도) + source_type/target_type 노출
+  - **3-tier 시각 피드백**: 확정(초록) / 추천+확인 필요(노랑) / 차단됨(빨강)
+- **구현 내용**:
+  - A1. 구조적 헤더 탐지 — 키워드 없어도 데이터 구조(타입다양성/고유값/null밀도)로 헤더 판별
+  - B1. 타입 호환성 검증 — fuzzy 후보의 소스↔스키마 타입 비교, 비호환 차단
+  - B3. Null 3단계 분기 — 유령 컬럼 조용히 분리, 오매핑 의심 명시 경고
+  - C. dc_indicator 표준 컬럼 등록
+  - D. ReviewItem 모델 — action/confidence/reason/source_type/target_type 구조
+  - E. ascii→latin-1 인코딩 폴백 — 대용량 CSV 오탐 근본 해결
+- **결과**: 5종 실데이터셋 전체 올그린 (bpi2019 527MB 1.6M행 포함), 197 tests passed
+- **Phase 1c 연계**: ReviewItem → Streamlit 매핑 확인 UI의 데이터 소스로 직접 사용
+
+### D017: ascii→latin-1 인코딩 폴백
+- **결정**: `text_reader._detect_encoding()`에서 charset_normalizer가 "ascii"로 감지하면 "latin-1"으로 폴백
+- **이유**: charset_normalizer는 64KB 샘플 기반. bpi2019(527MB, latin-1)의 첫 특수문자(0x96)가 249KB 지점 → 샘플 범위 밖 → ascii 오탐 → 읽기 실패
+- **근거**: ascii는 latin-1의 진부분집합(0x00~0x7F). latin-1은 0x00~0xFF 전체 매핑이므로 어떤 바이트든 에러 없이 읽힘. 순수 ascii 파일을 latin-1로 읽어도 결과 동일 → 부작용 없음
+- **대안 검토**: 샘플 크기 확대(256KB~1MB)는 더 뒤에 특수문자가 나오면 또 실패 → 근본 해결 아님
 
 ### D015: 파일 읽기 4-리더 분리 + read_only=False 결정
 - **결정**: pre-plan의 단일 `excel_reader.py`(WorkbookInfo) → 4개 리더 + 1개 퍼사드 + 1개 모델로 확장. xlsx는 `read_only=False`로 병합셀 처리 우선

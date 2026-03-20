@@ -291,6 +291,8 @@ def cast_dataframe(
     warnings: list[str] = []
     cast_summary: dict[str, str] = {}
     skipped: list[str] = []
+    high_null_columns: list[str] = []
+    empty_columns: list[str] = []
 
     for col_name in result_df.columns:
         expected_type = type_map.get(col_name)
@@ -317,10 +319,21 @@ def cast_dataframe(
             new_dtype = str(casted.dtype)
             cast_summary[col_name] = f"{original_dtype}→{new_dtype}"
 
-            # 결측률 경고 체크
+            # 결측률 3단계 분기: 유령 컬럼 → 오매핑 의심 → 경고
             if len(casted) > 0:
+                original_all_nan = series.isna().all()
                 null_ratio = casted.isna().sum() / len(casted)
-                if null_ratio > settings.casting_null_warn_threshold:
+
+                if original_all_nan:
+                    # 원본부터 100% NaN — 유령 컬럼, 조용히 분리 (경고 없음)
+                    empty_columns.append(col_name)
+                elif null_ratio > settings.casting_null_demote_threshold:
+                    # 캐스팅 후 90%+ 결측 — 오매핑 의심
+                    high_null_columns.append(col_name)
+                    warnings.append(
+                        f"{col_name}: 캐스팅 후 결측률 {null_ratio:.1%} — 오매핑 의심"
+                    )
+                elif null_ratio > settings.casting_null_warn_threshold:
                     warnings.append(
                         f"{col_name}: 캐스팅 후 결측률 {null_ratio:.1%} "
                         f"(임계 {settings.casting_null_warn_threshold:.0%} 초과)"
@@ -356,5 +369,7 @@ def cast_dataframe(
         warnings=warnings,
         cast_summary=cast_summary,
         skipped_columns=skipped,
+        high_null_columns=high_null_columns,
+        empty_columns=empty_columns,
         success=success,
     )

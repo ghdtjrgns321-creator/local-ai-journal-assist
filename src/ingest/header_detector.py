@@ -1,9 +1,10 @@
-"""헤더 행 자동 탐지 모듈 — 스코어링 기반.
+"""헤더 행 자동 탐지 모듈 — 구조적 스코어링 기반.
 
 ERP마다 헤더 위치가 다르므로(1행/3행/5행 등),
-keywords.yaml 별칭과 문자열 비율을 조합한 스코어로 자동 탐지한다.
+데이터 구조 신호(타입 다양성, 고유값, null 밀도) + 키워드 보조로 자동 탐지한다.
 
-공식: Confidence = (KeywordScore × 0.8) + (StringRatio × 0.2)
+공식: Confidence = TypeDiversity×0.35 + Uniqueness×0.25 + NullDensity×0.15
+                 + KeywordScore×0.15 + StringRatio×0.10
 """
 
 from __future__ import annotations
@@ -11,6 +12,11 @@ from __future__ import annotations
 import pandas as pd
 
 from config.settings import get_keywords, get_settings
+from src.ingest._header_scoring import (
+    null_density_score,
+    type_diversity_score,
+    uniqueness_score,
+)
 from src.ingest.models import HeaderDetectionResult, ReadResult
 
 
@@ -33,8 +39,9 @@ def _score_row(
     row: pd.Series,
     keyword_map: dict[str, str],
     min_expected: int,
+    total_cols: int,
 ) -> tuple[float, list[str]]:
-    """단일 행의 헤더 신뢰도를 계산.
+    """단일 행의 헤더 신뢰도를 5개 구조 신호로 계산.
 
     Returns:
         (confidence, matched_keywords_원본명)
@@ -59,9 +66,21 @@ def _score_row(
     keyword_score = min(len(matched) / min_expected, 1.0) if min_expected > 0 else 0.0
 
     # 문자열 비율: 헤더 행은 대부분 문자열
-    string_ratio = string_count / len(valid_cells)
+    string_ratio = string_count / len(valid_cells) if len(valid_cells) > 0 else 0.0
 
-    confidence = keyword_score * 0.8 + string_ratio * 0.2
+    # 구조적 신호 3개
+    td_score = type_diversity_score(row)
+    uq_score = uniqueness_score(row)
+    nd_score = null_density_score(row, total_cols)
+
+    # 5개 신호 가중 합산
+    confidence = (
+        td_score * 0.35
+        + uq_score * 0.25
+        + nd_score * 0.15
+        + keyword_score * 0.15
+        + string_ratio * 0.10
+    )
     return confidence, matched
 
 
@@ -84,13 +103,23 @@ def _build_message(
     row_display = header_row + 1  # 0-based → 1-based 사용자 표시
 
     if confidence >= 0.7:
+        if matched:
+            return (
+                f"AI가 {row_display}번째 줄을 헤더로 완벽히 인식했습니다. "
+                f"(신뢰도 {pct}%, 매칭 키워드: {kw_str})"
+            )
         return (
-            f"AI가 {row_display}번째 줄을 헤더로 완벽히 인식했습니다. "
-            f"(신뢰도 {pct}%, 매칭 키워드: {kw_str})"
+            f"AI가 {row_display}번째 줄을 데이터 구조 기반으로 헤더로 인식했습니다. "
+            f"(신뢰도 {pct}%)"
+        )
+    if matched:
+        return (
+            f"{row_display}번째 줄을 헤더로 추정하지만, 확신이 낮습니다. "
+            f"확인해 주세요. (신뢰도 {pct}%, 매칭 키워드: {kw_str})"
         )
     return (
-        f"{row_display}번째 줄을 헤더로 추정하지만, 확신이 낮습니다. "
-        f"확인해 주세요. (신뢰도 {pct}%, 매칭 키워드: {kw_str})"
+        f"{row_display}번째 줄을 데이터 구조 기반으로 헤더로 추정합니다. "
+        f"확인해 주세요. (신뢰도 {pct}%)"
     )
 
 
@@ -124,6 +153,7 @@ def detect_header_row(
 
     keyword_map = _build_keyword_map(keywords)
     scan_rows = min(len(sheet_data), settings.max_header_scan_rows)
+    total_cols = len(sheet_data.columns)
 
     best_row: int | None = None
     best_confidence = 0.0
@@ -131,7 +161,9 @@ def detect_header_row(
 
     for idx in range(scan_rows):
         row = sheet_data.iloc[idx]
-        confidence, matched = _score_row(row, keyword_map, settings.min_expected_headers)
+        confidence, matched = _score_row(
+            row, keyword_map, settings.min_expected_headers, total_cols,
+        )
 
         # 동점(>=) 시 상단 행 우선 → strict > 비교
         if confidence > best_confidence:

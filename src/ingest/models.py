@@ -49,6 +49,21 @@ class HeaderDetectionResult:
 
 
 @dataclass
+class ReviewItem:
+    """파이프라인 각 단계의 판단 근거 — UI 투명성 레이어.
+
+    80/20 원칙: action="auto"는 자동 처리, "review"는 사용자 확인 필요.
+    """
+
+    column: str                     # 대상 컬럼명
+    action: str                     # "auto" | "review" | "blocked" | "empty"
+    confidence: float               # 0.0~1.0
+    reason: str                     # 사람이 읽는 판단 근거
+    source_type: str | None = None  # 추론된 소스 타입 (B1 결과)
+    target_type: str | None = None  # 스키마 기대 타입
+
+
+@dataclass
 class MappingResult:
     """컬럼 매핑 결과. mapping 방향: {원본컬럼명: 표준컬럼명}.
 
@@ -64,6 +79,7 @@ class MappingResult:
     unmapped: list[str]            # 매핑 불가 원본 컬럼명
     missing_required: list[str]    # 필수 표준 컬럼 중 미매핑
     needs_review: bool             # suggestions 있거나 missing_required 있으면 True
+    review_items: list[ReviewItem] = field(default_factory=list)  # 판단 근거 리스트
 
 
 @dataclass
@@ -78,4 +94,6 @@ class CastingResult:
     warnings: list[str] = field(default_factory=list)    # 부분 결측, 권장 컬럼 실패
     cast_summary: dict[str, str] = field(default_factory=dict)  # {"col": "object→float64"}
     skipped_columns: list[str] = field(default_factory=list)    # 이미 올바른 dtype
+    high_null_columns: list[str] = field(default_factory=list)  # 캐스팅 후 결측률 90%+ (오매핑 의심)
+    empty_columns: list[str] = field(default_factory=list)      # 원본부터 100% NaN (유령 컬럼)
     success: bool = True                        # len(errors) == 0

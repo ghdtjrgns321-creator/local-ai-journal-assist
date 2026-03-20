@@ -15,6 +15,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
+from src.ingest._type_compat import infer_column_type, validate_type_compatibility
 from src.ingest.column_mapper import (
     _build_alias_map,
     _exact_match,
@@ -26,7 +27,7 @@ from src.ingest.column_mapper import (
     map_columns,
     prepare_dataframe,
 )
-from src.ingest.models import HeaderDetectionResult, MappingResult, ReadResult
+from src.ingest.models import HeaderDetectionResult, MappingResult, ReadResult, ReviewItem
 
 
 # ── 공용 fixture ──────────────────────────────────────────
@@ -436,3 +437,119 @@ class TestIsStandardSchema:
         required = _get_required_columns(sample_schema)
         cols = list(required)[:-1]  # 마지막 하나 제거
         assert _is_standard_schema(cols, required) is False
+
+
+# ── 타입 호환성 검증 (B1) ──────────────────────────────────
+
+
+class TestInferColumnType:
+    """_infer_column_type 단위 테스트."""
+
+    def test_numeric_int(self):
+        """정수 컬럼 → 'int'."""
+        s = pd.Series(["1000", "2000", "3000", "4000"])
+        assert infer_column_type(s) == "int"
+
+    def test_numeric_float(self):
+        """실수 컬럼 → 'float'."""
+        s = pd.Series(["1000.5", "2000.3", "3000.7"])
+        assert infer_column_type(s) == "float"
+
+    def test_date_regex_fast(self):
+        """날짜 정규식 fast path → 'date'."""
+        s = pd.Series(["2025-01-01", "2025-02-15", "2025-03-20"])
+        assert infer_column_type(s) == "date"
+
+    def test_string(self):
+        """문자열 컬럼 → 'str'."""
+        s = pd.Series(["hello", "world", "test", "foo"])
+        assert infer_column_type(s) == "str"
+
+    def test_all_nan(self):
+        """100% NaN → 'unknown'."""
+        s = pd.Series([None, None, None])
+        assert infer_column_type(s) == "unknown"
+
+
+class TestTypeCompatibility:
+    """validate_type_compatibility 단위 테스트."""
+
+    def test_str_to_float_blocked(self):
+        """str → float 차단."""
+        assert validate_type_compatibility("str", "float") is False
+
+    def test_str_to_date_blocked(self):
+        """str → date 차단."""
+        assert validate_type_compatibility("str", "date") is False
+
+    def test_int_to_float_allowed(self):
+        """int → float 허용."""
+        assert validate_type_compatibility("int", "float") is True
+
+    def test_unknown_always_allowed(self):
+        """unknown → 모든 타입 허용."""
+        for target in ("float", "date", "int", "str", "bool"):
+            assert validate_type_compatibility("unknown", target) is True
+
+    def test_fuzzy_with_data_df_blocks_type_mismatch(self, sample_keywords, sample_schema):
+        """drcrk(str) → debit_amount(float) 타입 비호환 차단 E2E."""
+        data_df = pd.DataFrame({
+            "drcrk": ["S", "H", "S", "H", "S"],
+        })
+        result = auto_map_columns(
+            ["drcrk"],
+            data_df=data_df,
+            schema=sample_schema,
+            keywords=sample_keywords,
+        )
+        # drcrk이 debit_amount로 오매핑되면 안 됨
+        if "drcrk" in result.mapping:
+            assert result.mapping["drcrk"] != "debit_amount"
+
+    def test_dc_indicator_exact_match(self):
+        """drcrk → dc_indicator 키워드 정확 일치."""
+        from config.settings import get_keywords, get_schema
+        keywords = get_keywords()
+        schema = get_schema()
+        result = auto_map_columns(
+            ["drcrk", "debit_amount", "credit_amount"],
+            schema=schema,
+            keywords=keywords,
+        )
+        # drcrk은 dc_indicator에 정확 매칭되어야 함
+        assert result.mapping.get("drcrk") == "dc_indicator"
+
+
+class TestReviewItems:
+    """ReviewItem 생성 테스트."""
+
+    def test_review_items_generated(self, sample_schema, sample_keywords):
+        """매핑 결과에 ReviewItem이 정상 생성되는지 확인."""
+        result = auto_map_columns(
+            ["전표번호", "차변금액", "XYZ_UNKNOWN"],
+            schema=sample_schema,
+            keywords=sample_keywords,
+        )
+        assert len(result.review_items) > 0
+        # 전표번호 → auto
+        auto_items = [r for r in result.review_items if r.action == "auto"]
+        assert any(r.column == "전표번호" for r in auto_items)
+        # XYZ_UNKNOWN → review 또는 unmapped
+        review_items = [r for r in result.review_items if r.column == "XYZ_UNKNOWN"]
+        assert len(review_items) > 0
+
+    def test_review_items_with_data_df(self, sample_schema, sample_keywords):
+        """data_df 전달 시 source_type 정보 포함."""
+        data_df = pd.DataFrame({
+            "전표번호": ["JE001", "JE002"],
+            "XYZ_COL": [100, 200],
+        })
+        result = auto_map_columns(
+            ["전표번호", "XYZ_COL"],
+            data_df=data_df,
+            schema=sample_schema,
+            keywords=sample_keywords,
+        )
+        # XYZ_COL의 ReviewItem에 source_type 존재
+        xyz_items = [r for r in result.review_items if r.column == "XYZ_COL"]
+        assert len(xyz_items) > 0

@@ -50,6 +50,7 @@ class AuditSettings(BaseSettings):
 
     # --- 타입 캐스팅 관련 ---
     casting_null_warn_threshold: float = 0.1   # 캐스팅 후 결측률 경고 임계 (10%)
+    casting_null_demote_threshold: float = 0.9  # 90% 초과 → 오매핑 의심
     casting_date_dayfirst: bool = False         # True면 DD/MM/YYYY 해석
 
     # --- 감사 룰 관련 (⚠️ 예시값 — 실제 감사 기준에 맞춰 조정) ---

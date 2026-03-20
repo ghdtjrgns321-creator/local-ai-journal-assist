@@ -1,71 +1,103 @@
 # Type Caster 테스트 결과
 
-> 실행일: 2026-03-19 | 39 passed in 0.26s
+> 실행일: 2026-03-20 | **44 passed** in 0.24s
 
-## 테스트 요약
+## 1. 테스트 요약
 
-| 클래스                 | 테스트 수 | 상태 |
-|:-----------------------|:---------:|:----:|
-| TestCastAmount         |     9     |  ✅  |
-| TestCastDate           |     8     |  ✅  |
-| TestCastInt            |     4     |  ✅  |
-| TestCastStr            |     5     |  ✅  |
-| TestCastBool           |     3     |  ✅  |
-| TestUnifyDebitCredit   |     4     |  ✅  |
-| TestCastDataframe      |     6     |  ✅  |
-| **합계**               |  **39**   |  ✅  |
+| 클래스               | 테스트 수 | 상태 |
+|:---------------------|:---------:|:----:|
+| TestCastAmount       |     9     |  ✅  |
+| TestCastDate         |     8     |  ✅  |
+| TestCastInt          |     4     |  ✅  |
+| TestCastStr          |     5     |  ✅  |
+| TestCastBool         |     3     |  ✅  |
+| TestUnifyDebitCredit |     4     |  ✅  |
+| TestCastDataframe    |     6     |  ✅  |
+| TestNullDemote (v2)  |     5     |  ✅  |
+| **합계**             |  **44**   |  ✅  |
 
-## 상세
+---
+
+## 2. v1 문제점
+
+**캐스팅 후 결측률 경고가 단일 기준** → 오매핑과 유령 컬럼을 구분 못함.
+
+| 현상                      | 원인                     | 영향                         |
+|:--------------------------|:-------------------------|:-----------------------------|
+| gl_account 결측률 100%    | HKONT(익명화 str)→int 캐스팅 | 오매핑인데 단순 warning만    |
+| SAP 빈 컬럼 60개 중 다수  | 원본부터 100% NaN        | warnings 리스트 노이즈       |
+
+---
+
+## 3. 개선방안
+
+**Null 3단계 분기** — `CastingResult`에 `high_null_columns`, `empty_columns` 추가:
+
+```
+원본 100% NaN → empty_columns  (유령 컬럼 — 경고 없이 조용히 분리)
+캐스팅 후 >90% → high_null_columns (오매핑 의심 — 명시적 경고)
+캐스팅 후 >10% → warnings     (일반 경고)
+```
+
+---
+
+## 4. v2 개선 결과
+
+| 시나리오              | v1                  | v2                                 |
+|:----------------------|:--------------------|:-----------------------------------|
+| SAP 빈 컬럼          | warning 노이즈      | empty_columns 분리 (경고 없음)     |
+| HKONT→gl_account 100% | "결측률 100%" 경고  | "오매핑 의심" 명시 + high_null 분류 |
+| 정상 캐스팅          | 변화 없음           | 변화 없음 (하위 호환)             |
+
+---
+
+## 5. 남은 문제점
+
+없음 — 캐스팅 모듈 단독으로는 모든 케이스 해결. 오매핑 자체의 방지는 column_mapper 책임.
+
+---
+
+## 6. 세부 테스트 케이스
 
 ### TestCastAmount (9)
-- `test_comma_separated` — 쉼표 구분 금액 ("1,234,567" → 1234567.0)
-- `test_won_symbol` — 원화 기호 ("₩10,000", "1000원")
-- `test_dollar_symbol` — 달러 기호 ("$5,000.50")
-- `test_parenthesis_negative` — 괄호 음수 ("(1,234)" → -1234.0)
-- `test_empty_and_dash` — 빈값/대시 → NaN
-- `test_none_and_nan` — None/NaN/문자열 nan → NaN
-- `test_zero` — "0", "0.0", "0.00" → 0.0
-- `test_plain_number` — 일반 숫자 문자열
-- `test_already_numeric` — int64 → float64 fast path
+- 쉼표, 원화(₩), 달러($), 괄호음수, 빈값/대시, None/NaN, 0, 일반숫자, 이미 numeric
 
 ### TestCastDate (8)
-- `test_iso` — "2025-01-15" ISO 형식
-- `test_slash` — "2025/01/15" 슬래시 형식
-- `test_dot` — "2025.01.15" 점 형식
-- `test_compact_yyyymmdd` — "20250115" 8자리
-- `test_korean` — "2025년 1월 5일" 한국어
-- `test_excel_serial` — 45678 Excel serial number
-- `test_empty_and_none` — 빈값/None → NaT
-- `test_already_datetime` — datetime → 스킵
-
-### TestCastStr (5)
-- `test_int_to_str` — Excel int64 계정코드 → str 변환
-- `test_float_to_str` — float64 → str (소수점 유지)
-- `test_already_str` — object dtype → strip만 적용
-- `test_nan_preserved` — NaN 혼합 Series → pd.NA 보존
-- `test_nan_preserved_pure_int` — Int64(nullable) → NaN은 pd.NA
+- ISO, 슬래시, 점, 8자리, 한국어, Excel serial, 빈값, 이미 datetime
 
 ### TestCastInt (4)
-- `test_string_to_int64` — "2025" → Int64
-- `test_float_string` — "2025.0" → Int64 (반올림)
-- `test_nan` — None/빈값 → NA
-- `test_already_int` — int64 → Int64 nullable
+- 문자열→Int64, 소수점→반올림, NaN, 이미 int
+
+### TestCastStr (5)
+- int→str, float→str, 이미 str, NaN→pd.NA 보존, Int64→str
 
 ### TestCastBool (3)
-- `test_true_variants` — true/1/yes/Y/t
-- `test_false_variants` — false/0/no/N/f
-- `test_nan` — None/빈값 → NA
+- true 변형(true/1/yes), false 변형, NaN
 
 ### TestUnifyDebitCredit (4)
-- `test_case_a_already_split` — debit/credit 이미 존재 → 통과
-- `test_case_b_dc_indicator` — amount + D/C indicator → 분리
-- `test_case_c_sign_based` — 양수=차변, 음수=대변
-- `test_no_amount_column` — amount 없음 → warning
+- Case A(이미 분리), Case B(dc_indicator), Case C(부호), amount 없음
 
 ### TestCastDataframe (6)
-- `test_full_casting` — object → float/datetime/Int64 전체 변환
-- `test_parquet_skip` — 이미 올바른 dtype → skipped_columns
-- `test_missing_required_error` — 필수 컬럼 NaN → warning
-- `test_partial_nan_warning` — 결측률 50% → 임계 초과 warning
-- `test_empty_dataframe` — 빈 DF → 에러 없이 통과
-- `test_unify_called_when_amount_exists` — amount만 → debit/credit 자동 생성
+- 전체 캐스팅, Parquet 스킵, 필수 실패, 결측률 경고, 빈 DF, amount→debit/credit
+
+### TestNullDemote (5) — v2
+
+| #  | 테스트명                       | 시나리오                       | 검증 포인트                     |
+|:---|:-------------------------------|:-------------------------------|:-------------------------------|
+| 40 | test_empty_column_separated    | 원본 100% NaN                  | empty_columns, warning 없음    |
+| 41 | test_high_null_detected        | 캐스팅 후 100% NaN (원본 str)  | high_null + "오매핑 의심"      |
+| 42 | test_normal_not_flagged        | 정상 캐스팅                    | 둘 다 비어있음                 |
+| 43 | test_demote_threshold_boundary | 90% 경계 (90%=통과, 91%=감지)  | threshold 정확 동작            |
+| 44 | test_empty_vs_high_null        | 유령 vs 오매핑 구분            | 각각 올바른 리스트 분류        |
+
+---
+
+## 7. 소스 바로가기
+
+| 구현 코드    | [type_caster.py](../../../src/ingest/type_caster.py) |
+|:------------|:------------|
+| 테스트 코드  | [test_type_caster.py](../test_type_caster.py) |
+
+```bash
+uv run pytest tests/test_ingest/test_type_caster.py -v
+```

@@ -61,6 +61,9 @@ columns:
   - name: header_text          # ACDOCA: bktxt
     type: str
     required: false
+  - name: dc_indicator         # SAP: drcrk/shkzg (D/S=차변, C/H=대변)
+    type: str
+    required: false
 
   # --- 레이블 (DataSynth 전용) ---
   - name: is_fraud             # DataSynth sim_is_fraud

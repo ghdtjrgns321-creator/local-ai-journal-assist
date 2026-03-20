@@ -17,7 +17,13 @@ import pandas as pd
 from rapidfuzz import process as fuzz_process
 
 from config.settings import get_keywords, get_schema, get_settings
-from src.ingest.models import HeaderDetectionResult, MappingResult, ReadResult
+from src.ingest._type_compat import infer_column_type, validate_type_compatibility
+from src.ingest.models import (
+    HeaderDetectionResult,
+    MappingResult,
+    ReadResult,
+    ReviewItem,
+)
 
 
 # ── 내부 헬퍼 ──────────────────────────────────────────────
@@ -102,11 +108,15 @@ def _exact_match(
 def _fuzzy_match(
     unmatched_columns: list[str],
     alias_map: dict[str, str],
+    data_df: pd.DataFrame | None = None,
+    schema_type_map: dict[str, str] | None = None,
 ) -> dict[str, tuple[str, float]]:
     """Phase 2: rapidfuzz extractOne — 미매칭 컬럼만 퍼지 매칭.
 
+    data_df와 schema_type_map이 주어지면 타입 호환성 검증을 수행하여
+    비호환 매칭(예: str→float)을 스코어 0으로 차단한다.
+
     Returns: {원본컬럼명: (표준컬럼명, 0~100 스코어)}
-    스코어 0인 경우(빈 별칭 리스트 등)는 결과에 포함하지 않음.
     """
     result: dict[str, tuple[str, float]] = {}
 
@@ -125,6 +135,16 @@ def _fuzzy_match(
         if match is not None:
             matched_alias, score, _ = match
             standard_name = alias_map[matched_alias]
+
+            # 타입 호환성 검증 — 비호환이면 스코어 0 (차단)
+            if data_df is not None and schema_type_map is not None and col in data_df.columns:
+                target_type = schema_type_map.get(standard_name)
+                if target_type:
+                    source_type = infer_column_type(data_df[col])
+                    if not validate_type_compatibility(source_type, target_type):
+                        # 차단: 결과에 포함하지 않음 (unmapped로 분류)
+                        continue
+
             result[col] = (standard_name, score)
 
     return result
@@ -232,10 +252,61 @@ def prepare_dataframe(
     return non_empty_cols, data_df
 
 
+def _build_review_items(
+    mapping: dict[str, str],
+    suggestions: dict[str, str],
+    confidence: dict[str, float],
+    unmapped: list[str],
+    exact_results: dict[str, tuple[str, float]],
+    data_df: pd.DataFrame | None,
+    schema_type_map: dict[str, str] | None,
+) -> list[ReviewItem]:
+    """매핑 결과로부터 ReviewItem 리스트를 생성."""
+    items: list[ReviewItem] = []
+
+    for col, std in mapping.items():
+        conf = confidence.get(col, 1.0)
+        if col in exact_results:
+            reason = f"키워드 정확 일치: {col} → {std}"
+        else:
+            pct = round(conf * 100)
+            reason = f"fuzzy 매칭 ({pct}%): {col} → {std}"
+        items.append(ReviewItem(column=col, action="auto", confidence=conf, reason=reason))
+
+    for col, std in suggestions.items():
+        conf = confidence.get(col, 0.0)
+        pct = round(conf * 100)
+        reason = f"fuzzy 매칭 ({pct}%): {col} → {std} — 확인 필요"
+        items.append(ReviewItem(column=col, action="review", confidence=conf, reason=reason))
+
+    for col in unmapped:
+        # TODO: 타입 비호환 차단 컬럼과 단순 unmapped 미구분 — Phase 1c UI 직전에 _fuzzy_match 차단 사유 반환으로 개선
+        src_type = None
+        tgt_type = None
+        if data_df is not None and schema_type_map is not None and col in data_df.columns:
+            src_type = infer_column_type(data_df[col])
+        reason = "자동 매핑 불가 — 수동 지정 필요"
+        items.append(ReviewItem(
+            column=col, action="review", confidence=0.0, reason=reason,
+            source_type=src_type, target_type=tgt_type,
+        ))
+
+    return items
+
+
+def _build_schema_type_map(schema: dict) -> dict[str, str]:
+    """schema에서 {표준컬럼명: 타입문자열} 맵 생성."""
+    return {
+        col["name"]: col["type"]
+        for col in schema.get("columns", [])
+    }
+
+
 def auto_map_columns(
     source_columns: list[str],
     matched_keywords: list[str] | None = None,
     *,
+    data_df: pd.DataFrame | None = None,
     schema: dict | None = None,
     keywords: dict | None = None,
     settings_override: dict | None = None,
@@ -245,6 +316,7 @@ def auto_map_columns(
     Args:
         source_columns: 원본 컬럼명 리스트
         matched_keywords: header_detector가 매칭한 키워드 (Phase 1 활용)
+        data_df: 헤더 아래 데이터 DataFrame (타입 호환성 검증용, None이면 스킵)
         schema: schema.yaml dict (테스트 시 주입, None이면 자동 로드)
         keywords: keywords.yaml dict (테스트 시 주입, None이면 자동 로드)
         settings_override: threshold 등 오버라이드 (테스트용)
@@ -300,10 +372,14 @@ def auto_map_columns(
     alias_map = _build_alias_map(keywords)
     exact_results = _exact_match(source_columns, alias_map, matched_keywords)
 
-    # Phase 2: 미매칭 컬럼만 fuzzy
+    # Phase 2: 미매칭 컬럼만 fuzzy (타입 호환성 검증 포함)
     matched_sources = set(exact_results.keys())
     unmatched = [col for col in source_columns if col not in matched_sources]
-    fuzzy_results = _fuzzy_match(unmatched, alias_map)
+    schema_type_map = _build_schema_type_map(schema) if data_df is not None else None
+    fuzzy_results = _fuzzy_match(
+        unmatched, alias_map,
+        data_df=data_df, schema_type_map=schema_type_map,
+    )
 
     # 합치기 — exact는 score 100으로 통일
     all_candidates: dict[str, tuple[str, float]] = {}
@@ -329,6 +405,12 @@ def auto_map_columns(
 
     needs_review = bool(suggestions or missing_required)
 
+    # ReviewItem 생성 — 투명성 레이어
+    review_items = _build_review_items(
+        mapping, suggestions, confidence, unmapped_list,
+        exact_results, data_df, schema_type_map,
+    )
+
     return MappingResult(
         mapping=mapping,
         suggestions=suggestions,
@@ -336,6 +418,7 @@ def auto_map_columns(
         unmapped=unmapped_list,
         missing_required=missing_required,
         needs_review=needs_review,
+        review_items=review_items,
     )
 
 
@@ -374,13 +457,14 @@ def map_columns(
             )
             continue
 
-        # prepare_dataframe → 컬럼 추출
-        source_columns, _ = prepare_dataframe(raw_df, header_result.header_row)
+        # prepare_dataframe → 컬럼 추출 + 데이터
+        source_columns, data_df = prepare_dataframe(raw_df, header_result.header_row)
 
-        # auto_map_columns
+        # auto_map_columns (data_df 전달 → 타입 호환성 검증)
         results[sheet_name] = auto_map_columns(
             source_columns,
             matched_keywords=header_result.matched_keywords,
+            data_df=data_df,
             schema=schema,
             keywords=keywords,
         )

@@ -99,6 +99,7 @@ local-ai-assist/
 DataSynth (tools/datasynth/) → config/datasynth.yaml → journal_entries.csv (1,068K건)
   ↓
 Excel/CSV → file_validator → excel_reader → header_detector → column_mapper → type_caster
+  ↑ UX 1단계: 자동 헤더/매핑 + 애매한 부분 사용자 위임 + 판단 근거 투명 노출 (ReviewItem)
   → 표준 DataFrame → feature/engine (감사 파생변수) → validation (3-Level)
     → detection (3-Layer: A무결성 3개 + B부정 10개 + C징후 9개, 22개 룰) → score_aggregator
       → DuckDB → 프리셋 SQL / Text-to-SQL (Phase 3)

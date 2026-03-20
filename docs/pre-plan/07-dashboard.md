@@ -193,6 +193,23 @@ data_uploader → AuditPipeline.run(file)
 | Tab 4: Chat (Vanna)            | Phase 3        |
 | Tab 5: Export                   | Phase 3        |
 
+## Phase 1a에서 넘어온 미해결 과제 (UX 1단계 잔여)
+
+Phase 1a ingest 개선(D016) 시 발견되었으나 UI가 필요하여 Phase 1c로 이관된 항목.
+구현 시 함께 해결할 것.
+
+| 과제                       | 현상                                            | 해결 방향                                          |
+|:---------------------------|:------------------------------------------------|:---------------------------------------------------|
+| Parquet 헤더 탐지 스킵     | Parquet도 불필요한 헤더 탐지 시도               | 오케스트레이터에서 `source_format` 분기             |
+| 멀티시트 UI 선택           | `active_sheet`가 데이터 양과 무관한 시트일 수 있음 | 시트 목록 + 행 수 표시 → 사용자 선택               |
+| Fuzzy 추천 부정확          | monat→debit_amount 등 잘못된 추천               | ReviewItem UI에서 사용자 확인/변경 → 프로파일 저장  |
+| 매핑 프로파일 학습         | 같은 구조 파일 반복 업로드 시 매번 매핑          | 프로파일 우선 적용 → 사용자 검토 0건 목표           |
+| ReviewItem UI 노출         | 판단 근거 데이터는 준비됨 (action/reason/conf)  | 3-tier 시각 피드백(초록/노랑/빨강) 구현             |
+
+> 상세: [02-ingest.md → UX 1단계](02-ingest.md#ux-1단계-데이터-수집-투명성-phase-1a-구현-완료)
+
+---
+
 ## 구현 시 주의사항
 - **session_state:** 파이프라인 결과를 `st.session_state`에 캐싱 → 탭 전환 시 재실행 방지
 - **layout="wide":** 데이터 분석 대시보드는 와이드 레이아웃 필수

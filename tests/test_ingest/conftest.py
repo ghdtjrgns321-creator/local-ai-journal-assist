@@ -264,16 +264,20 @@ def hd_trick_data_xlsx(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def hd_mid_confidence_xlsx(tmp_path: Path) -> Path:
-    """중간 신뢰도(0.3~0.7) 강제 — 키워드 1개만 매칭.
+    """중간 신뢰도(0.3~0.7) 강제 — 헤더/데이터 모두 유사한 패턴.
 
-    keyword_score = 1/4 = 0.25, string_ratio = 1.0
-    → confidence ≈ 0.25*0.8 + 1.0*0.2 = 0.4 (중간 구간)
+    모든 행이 문자열+숫자 혼합이고 uniqueness가 비슷해서
+    구조적 구분이 어려운 케이스. NaN을 섞어 null_density도 낮춤.
     """
     filepath = tmp_path / "hd_mid.xlsx"
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.append(["전표번호", "날짜", "금액", "구분"])
-    ws.append([1, "2025-01-01", 10000, "매출"])
+    # 행0: 헤더처럼 보이지만 숫자도 섞여있어 type_diversity 낮음
+    ws.append(["A01", 100, "B02", 200])
+    # 행1~3: 데이터도 비슷한 패턴
+    ws.append(["A03", 300, "B04", 400])
+    ws.append(["A05", 500, "B06", 600])
+    ws.append(["A07", 700, "B08", 800])
     wb.save(filepath)
     return filepath
 

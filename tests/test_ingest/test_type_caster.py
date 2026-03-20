@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from config.settings import get_settings
 from src.ingest.type_caster import (
     _cast_bool,
     _cast_int,
@@ -374,3 +375,93 @@ class TestCastDataframe:
         assert result.success is True
         assert "debit_amount" in result.data.columns
         assert "credit_amount" in result.data.columns
+
+
+# ── TestNullDemote (B3) ────────────────────────────────────────
+
+
+class TestNullDemote:
+    """high_null_columns + empty_columns 3단계 분기 테스트."""
+
+    def _simple_schema(self):
+        return {
+            "columns": [
+                {"name": "amount", "type": "float", "required": True},
+                {"name": "ghost", "type": "float", "required": False},
+                {"name": "normal", "type": "float", "required": False},
+            ],
+        }
+
+    def test_empty_column_separated(self):
+        """원본부터 100% NaN → empty_columns (warning 없음)."""
+        df = pd.DataFrame({
+            "amount": ["1000", "2000", "3000"],
+            "ghost": [None, None, None],
+            "normal": ["100", "200", "300"],
+        })
+        result = cast_dataframe(df, schema=self._simple_schema())
+        assert "ghost" in result.empty_columns
+        # 유령 컬럼은 warning에 포함되지 않음
+        assert not any("ghost" in w for w in result.warnings)
+
+    def test_high_null_detected(self):
+        """캐스팅 후 90%+ 결측 → high_null_columns."""
+        # 10개 중 10개가 변환 불가 → 100% 결측 (원본은 NaN이 아님)
+        df = pd.DataFrame({
+            "amount": ["abc", "def", "ghi", "jkl", "mno",
+                        "pqr", "stu", "vwx", "yz", "!!"],
+        })
+        schema = {
+            "columns": [
+                {"name": "amount", "type": "float", "required": True},
+            ],
+        }
+        result = cast_dataframe(df, schema=schema)
+        assert "amount" in result.high_null_columns
+        assert any("오매핑 의심" in w for w in result.warnings)
+
+    def test_normal_not_flagged(self):
+        """정상 캐스팅 → high_null도 empty도 아님."""
+        df = pd.DataFrame({
+            "amount": ["1000", "2000", "3000"],
+            "normal": ["100", "200", "300"],
+        })
+        result = cast_dataframe(df, schema=self._simple_schema())
+        assert result.high_null_columns == []
+        assert result.empty_columns == []
+
+    def test_demote_threshold_boundary(self):
+        """90% 경계 테스트 — 정확히 90%는 demote 아님, 91%는 demote."""
+        settings = get_settings()
+        # 10개 중 9개 변환 실패 = 90% → threshold(0.9) 이하이므로 demote 아님
+        vals_90 = ["abc"] * 9 + ["100"]
+        df_90 = pd.DataFrame({"amount": vals_90})
+        schema = {"columns": [{"name": "amount", "type": "float", "required": True}]}
+        result_90 = cast_dataframe(df_90, schema=schema)
+        assert "amount" not in result_90.high_null_columns
+
+        # 100개 중 91개 변환 실패 = 91% → threshold(0.9) 초과이므로 demote
+        vals_91 = ["abc"] * 91 + ["100"] * 9
+        df_91 = pd.DataFrame({"amount": vals_91})
+        result_91 = cast_dataframe(df_91, schema=schema)
+        assert "amount" in result_91.high_null_columns
+
+    def test_empty_vs_high_null_distinction(self):
+        """유령 컬럼과 오매핑 컬럼 구분."""
+        df = pd.DataFrame({
+            "amount": ["1000", "2000"],
+            "ghost": [None, None],           # 원본 100% NaN → empty
+            "broken": ["abc", "def"],         # 캐스팅 100% 실패 → high_null
+        })
+        schema = {
+            "columns": [
+                {"name": "amount", "type": "float", "required": True},
+                {"name": "ghost", "type": "float", "required": False},
+                {"name": "broken", "type": "float", "required": False},
+            ],
+        }
+        result = cast_dataframe(df, schema=schema)
+        assert "ghost" in result.empty_columns
+        assert "broken" in result.high_null_columns
+        assert "ghost" not in result.high_null_columns
+        assert "broken" not in result.empty_columns

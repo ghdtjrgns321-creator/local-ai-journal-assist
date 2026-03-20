@@ -231,6 +231,20 @@ if not C06_flag and has_other_risk_signals(entry):
 `insight_generator.py`의 `generate_entry_insight()`에 C06 LLM 분류 로직을 통합하거나,
 별도 `risk_classifier.py` 모듈로 분리.
 
+## Phase 1a에서 넘어온 미해결 과제 (UX 1단계 잔여)
+
+Phase 1a ingest 개선(D016) 시 발견되었으나 LLM이 필요하여 Phase 3으로 이관된 항목.
+
+| 과제              | 현상                                            | 해결 방향                                    |
+|:------------------|:------------------------------------------------|:---------------------------------------------|
+| LLM 시맨틱 매핑   | Fuzzy 문자열 유사도만으로는 의미 파악 불가       | Ollama + Qwen3-8B로 컬럼명 의미 추론 후 매핑 |
+
+현재 타입 호환성 검증(B1)과 매핑 프로파일(Phase 1c)로 대부분 커버되므로, Phase 3에서 추가 정확도가 필요한 경우에만 구현.
+
+> 상세: [02-ingest.md → UX 1단계](02-ingest.md#ux-1단계-데이터-수집-투명성-phase-1a-구현-완료)
+
+---
+
 ## 구현 시 주의사항
 - **Vanna train:** DDL, 프리셋 쿼리, 도메인 용어를 학습시켜야 정확도 향상
 - **SQL 안전성:** LLM이 생성한 SQL은 반드시 `sql_validator`를 거쳐야 함 (DML 차단 필수)
