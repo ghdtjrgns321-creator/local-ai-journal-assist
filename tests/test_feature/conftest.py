@@ -189,3 +189,41 @@ def xt_no_text_cols_df() -> pd.DataFrame:
         "debit_amount": [1000.0, 2000.0],
         "credit_amount": [0.0, 0.0],
     })
+
+
+# ── Engine fixtures (en_) ────────────────────────────────────────
+
+
+@pytest.fixture
+def en_full_df() -> pd.DataFrame:
+    """엔진 풀 스펙 — 모든 서브모듈에 필요한 10개 입력 컬럼 (3행)."""
+    return pd.DataFrame({
+        "posting_date": pd.to_datetime([
+            "2025-01-04 23:30",   # 토요일, 심야
+            "2025-01-06 14:00",   # 월요일, 평일
+            "2025-01-31 17:00",   # 금요일, 월말
+        ]),
+        "document_date": pd.to_datetime([
+            "2024-12-30",         # 5일 지연
+            "2025-01-06",         # 당일
+            "2025-01-25",         # 6일 지연
+        ]),
+        "fiscal_period": pd.array([1, 1, 1], dtype="Int64"),
+        "debit_amount": [45_000_000.0, 1_000_000.0, 10_000_000.0],
+        "credit_amount": [0.0, 0.0, 0.0],
+        "gl_account": pd.array([4100, 1200, 9100], dtype="Int64"),
+        "source": ["SA", "AUTO", "Manual"],
+        "company_code": ["HQ", "SUB01", "INTER"],
+        "line_text": ["가수금 정리", "매출 입금", "일반 전표"],
+        "header_text": ["월말 정리", "정상 거래", "일반"],
+    })
+
+
+@pytest.fixture
+def en_minimal_df() -> pd.DataFrame:
+    """엔진 최소 컬럼 — posting_date + 금액만 (1행). graceful 처리 검증."""
+    return pd.DataFrame({
+        "posting_date": pd.to_datetime(["2025-01-06 14:00"]),
+        "debit_amount": [5_000_000.0],
+        "credit_amount": [0.0],
+    })
