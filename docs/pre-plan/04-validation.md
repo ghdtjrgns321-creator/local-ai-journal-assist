@@ -129,7 +129,7 @@ report_generator.generate_report(df, L1, L2, L3)
 4. `statistical_validator.py` — L3 통계 검증 (Phase 2에서 구현)
 
 ## 의존성
-- **선행:** `03-feature` (피처 보강된 DataFrame)
+- **선행:** `03-feature` (피처 보강된 DataFrame), `03a-preprocessing` (EDA 프로파일링 — 데이터 현황 파악 후 검증)
 - **외부 패키지:** `pandera`, `pandas`, `numpy`, `scipy` (L3)
 - **후행:** `05-detection` (검증 통과된 DataFrame으로 이상탐지)
 
