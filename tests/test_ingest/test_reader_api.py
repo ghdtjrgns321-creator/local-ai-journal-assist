@@ -43,6 +43,28 @@ class TestDispatch:
         assert isinstance(result, ReadResult)
 
 
+class TestEncodingOverride:
+    """encoding_override 전달 테스트."""
+
+    def test_csv_override_passed(self, valid_csv_cp949: Path) -> None:
+        """CSV에 encoding_override → text_reader에 전달."""
+        result = read_file(valid_csv_cp949, encoding_override="cp949")
+        assert result.encoding == "cp949"
+        assert result.encoding_confidence is None
+
+    def test_xlsx_override_ignored(self, valid_xlsx: Path) -> None:
+        """Excel에 encoding_override → 무시됨 (인코딩 개념 없음)."""
+        result = read_file(valid_xlsx, encoding_override="cp949")
+        assert result.source_format == "xlsx"
+        # Excel은 encoding 필드가 None
+        assert result.encoding is None
+
+    def test_parquet_override_ignored(self, valid_parquet: Path) -> None:
+        """Parquet에 encoding_override → 무시됨."""
+        result = read_file(valid_parquet, encoding_override="cp949")
+        assert result.source_format == "parquet"
+
+
 class TestUnsupported:
     """미지원 확장자."""
 

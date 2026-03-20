@@ -34,11 +34,15 @@ _FALLBACK_SEPARATORS: dict[str, str] = {
 }
 
 
-def _detect_encoding(path: Path) -> str:
+def _detect_encoding(path: Path) -> tuple[str, float | None]:
     """charset_normalizer로 파일 인코딩을 감지한다.
 
-    integrity_checkers에서도 동일한 감지를 하지만, 결과를 반환하지 않으므로
-    여기서 재감지한다 (64KB 샘플링, <10ms 비용).
+    Returns:
+        (encoding, confidence) — confidence는 1.0 - chaos (0.0~1.0).
+        감지 실패 시 ("utf-8", None).
+
+    Why: confidence를 ReadResult에 노출하여 UI에서 낮은 신뢰도(<0.7) 시
+    수동 인코딩 선택을 유도한다.
     """
     import charset_normalizer
 
@@ -46,21 +50,22 @@ def _detect_encoding(path: Path) -> str:
     detection = charset_normalizer.from_bytes(raw).best()
 
     if detection is None:
-        # 감지 실패 시 UTF-8로 폴백 — integrity_checker 통과 파일이므로 대부분 안전
         logger.warning(
             "인코딩 감지 실패, utf-8로 폴백합니다: %s", path.name,
         )
-        return "utf-8"
+        return "utf-8", None
 
     detected = detection.encoding
+    # chaos: 0.0(완벽) ~ 1.0(혼돈) → confidence = 1.0 - chaos
+    confidence = max(0.0, 1.0 - detection.chaos)
 
     # ascii → latin-1 폴백: ascii는 latin-1의 진부분집합(0x00~0x7F)이므로
     # 샘플에 0x80+ 바이트가 없으면 ascii로 오탐할 수 있다.
     # latin-1은 0x00~0xFF 전체 매핑이라 어떤 바이트든 에러 없이 읽힘.
     if detected == "ascii":
-        return "latin-1"
+        return "latin-1", confidence
 
-    return detected
+    return detected, confidence
 
 
 def _detect_separator(path: Path, encoding: str) -> str:
@@ -79,18 +84,26 @@ def _detect_separator(path: Path, encoding: str) -> str:
         return _FALLBACK_SEPARATORS.get(ext, ",")
 
 
-def read_text(path: Path) -> ReadResult:
+def read_text(path: Path, *, encoding_override: str | None = None) -> ReadResult:
     """텍스트 파일을 DataFrame으로 읽어 ReadResult를 반환한다.
 
-    - 인코딩: charset_normalizer 자동 감지
-    - 구분자: csv.Sniffer 자동 감지 (실패 시 확장자 폴백)
-    - 헤더: None (header_detector가 별도 처리)
-    - 타입: 전부 str (type_caster가 별도 처리)
+    Args:
+        path: 읽을 파일 경로.
+        encoding_override: 수동 인코딩 지정. 지정하면 자동 감지 스킵.
+            Why: CP949/EUC-KR 오인 등 실무 ERP 덤프에서 자동 감지가
+            틀릴 때 사용자가 직접 교정할 수 있게 한다.
 
     Raises:
         OSError: 파일 읽기 실패 시.
+        LookupError: encoding_override가 잘못된 인코딩명일 때.
     """
-    encoding = _detect_encoding(path)
+    if encoding_override is not None:
+        # 수동 지정 시 자동 감지 스킵, confidence=None
+        encoding = encoding_override
+        encoding_confidence = None
+    else:
+        encoding, encoding_confidence = _detect_encoding(path)
+
     separator = _detect_separator(path, encoding)
     ext = path.suffix.lower()
 
@@ -100,7 +113,6 @@ def read_text(path: Path) -> ReadResult:
         encoding=encoding,
         header=None,
         dtype=str,
-        # 깨진 행은 skip 대신 경고 — 누락 행은 다음 단계 validation에서 탐지됨
         on_bad_lines="warn",
     )
 
@@ -109,5 +121,6 @@ def read_text(path: Path) -> ReadResult:
         active_sheet=_DEFAULT_SHEET,
         raw_data={_DEFAULT_SHEET: df},
         encoding=encoding,
+        encoding_confidence=encoding_confidence,
         source_format=ext.lstrip("."),
     )

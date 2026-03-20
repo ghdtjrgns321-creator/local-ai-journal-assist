@@ -95,7 +95,8 @@ def validate_file(path: Path | str) -> ValidationResult:
     if size_mb > category.max_size_mb * _SIZE_WARNING_RATIO:
         result.warnings.append(
             f"파일 크기({size_mb:.1f}MB)가 "
-            f"제한({category.max_size_mb}MB)의 80%를 초과합니다."
+            f"제한({category.max_size_mb}MB)의 80%를 초과합니다. "
+            f"기간을 좁혀 추출하면 처리 성능이 향상됩니다."
         )
 
     # 5단계: 무결성 — 확장자별 검증 함수로 실제 열기 시도

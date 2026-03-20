@@ -61,7 +61,7 @@ class TestClassifyExtension:
     def test_category_size_limits(self):
         """카테고리별 크기 제한이 올바르게 설정되어야 한다."""
         assert EXCEL.max_size_mb == 100
-        assert TEXT.max_size_mb == 500
+        assert TEXT.max_size_mb == 800
         assert COLUMNAR.max_size_mb == 1000
 
 

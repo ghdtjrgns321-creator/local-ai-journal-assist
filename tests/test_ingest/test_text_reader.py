@@ -1,4 +1,4 @@
-"""text_reader 테스트 — CSV/TSV 읽기, 인코딩·구분자 감지."""
+"""text_reader 테스트 — CSV/TSV 읽기, 인코딩·구분자 감지, 인코딩 오버라이드."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 
 from src.ingest.models import ReadResult
-from src.ingest.text_reader import read_text
+from src.ingest.text_reader import _detect_encoding, read_text
 
 
 class TestReadCsv:
@@ -66,6 +66,55 @@ class TestEncoding:
         """encoding 필드에 감지된 인코딩이 포함."""
         result = read_text(valid_csv)
         assert result.encoding is not None
+
+    def test_encoding_confidence_returned(self, valid_csv: Path) -> None:
+        """자동 감지 시 encoding_confidence가 0~1 범위로 반환."""
+        result = read_text(valid_csv)
+        assert result.encoding_confidence is not None
+        assert 0.0 <= result.encoding_confidence <= 1.0
+
+    def test_cp949_confidence(self, valid_csv_cp949: Path) -> None:
+        """CP949 감지 시에도 confidence 반환."""
+        result = read_text(valid_csv_cp949)
+        assert result.encoding_confidence is not None
+        assert result.encoding_confidence > 0.0
+
+
+class TestEncodingOverride:
+    """인코딩 수동 오버라이드."""
+
+    def test_override_skips_detection(self, valid_csv_cp949: Path) -> None:
+        """encoding_override 지정 시 자동 감지 스킵, 해당 인코딩으로 읽기."""
+        result = read_text(valid_csv_cp949, encoding_override="cp949")
+        assert result.encoding == "cp949"
+        # 수동 지정 시 confidence는 None
+        assert result.encoding_confidence is None
+
+    def test_override_wrong_encoding_raises(self, valid_csv_cp949: Path) -> None:
+        """CP949 파일에 UTF-8 오버라이드 → UnicodeDecodeError."""
+        with pytest.raises(UnicodeDecodeError):
+            read_text(valid_csv_cp949, encoding_override="utf-8")
+
+    def test_override_none_uses_auto(self, valid_csv: Path) -> None:
+        """override=None → 기존 자동 감지 동작 유지."""
+        result = read_text(valid_csv, encoding_override=None)
+        assert result.encoding is not None
+        assert result.encoding_confidence is not None
+
+
+class TestDetectEncoding:
+    """_detect_encoding 내부 함수 직접 테스트."""
+
+    def test_returns_tuple(self, valid_csv: Path) -> None:
+        """(encoding, confidence) 튜플 반환."""
+        enc, conf = _detect_encoding(valid_csv)
+        assert isinstance(enc, str)
+        assert conf is None or isinstance(conf, float)
+
+    def test_ascii_becomes_latin1(self, valid_csv: Path) -> None:
+        """ASCII 감지 시 latin-1로 폴백."""
+        enc, _ = _detect_encoding(valid_csv)
+        assert enc != "ascii"  # ascii → latin-1 폴백
 
 
 class TestSeparatorDetection:

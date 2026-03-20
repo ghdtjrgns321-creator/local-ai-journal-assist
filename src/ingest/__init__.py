@@ -7,13 +7,15 @@ from src.ingest.mapping_profile import (
     load_profile,
     save_profile,
 )
-from src.ingest.models import CastingResult, ReadResult
+from src.ingest.models import CastingResult, ReadResult, SheetScore
 from src.ingest.reader_api import read_file
+from src.ingest.sheet_scorer import score_sheets
 from src.ingest.type_caster import cast_dataframe
 
 __all__ = [
     "CastingResult",
     "ReadResult",
+    "SheetScore",
     "ValidationResult",
     "cast_dataframe",
     "delete_profile",
@@ -21,5 +23,6 @@ __all__ = [
     "load_profile",
     "read_file",
     "save_profile",
+    "score_sheets",
     "validate_file",
 ]

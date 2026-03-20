@@ -27,14 +27,26 @@ _READERS: dict[str, Callable[[Path], ReadResult]] = {
 }
 
 
-def read_file(path: Path | str) -> ReadResult:
+# 텍스트 파일 확장자 — encoding_override 전달 대상
+# Why: _READERS에서 동적 계산하면 새 바이너리 포맷 추가 시 자동으로 텍스트 분류될 위험.
+# 명시적 집합으로 관리. 새 텍스트 형식 추가 시 _READERS와 함께 이 집합도 업데이트 필요.
+_TEXT_EXTENSIONS: frozenset[str] = frozenset({".csv", ".tsv", ".txt", ".dat"})
+
+
+def read_file(
+    path: Path | str,
+    *,
+    encoding_override: str | None = None,
+) -> ReadResult:
     """검증 통과된 파일을 읽어 ReadResult로 반환한다.
 
-    file_validator.validate_file()로 먼저 검증한 뒤 호출해야 한다.
-    확장자를 기반으로 적절한 리더(excel/text/parquet)를 자동 선택한다.
+    Args:
+        path: 읽을 파일 경로.
+        encoding_override: 텍스트 파일 인코딩 수동 지정.
+            Excel/Parquet은 인코딩 개념이 없으므로 무시된다.
 
     Raises:
-        ValueError: 지원하지 않는 확장자일 때 (정상적으로는 file_validator에서 걸림).
+        ValueError: 지원하지 않는 확장자일 때.
         OSError: 파일 읽기 실패 시.
     """
     path = Path(path)
@@ -44,5 +56,9 @@ def read_file(path: Path | str) -> ReadResult:
     if reader is None:
         msg = f"지원하지 않는 파일 형식입니다: {ext}"
         raise ValueError(msg)
+
+    # 텍스트 파일일 때만 encoding_override 전달
+    if encoding_override is not None and ext in _TEXT_EXTENSIONS:
+        return read_text(path, encoding_override=encoding_override)
 
     return reader(path)

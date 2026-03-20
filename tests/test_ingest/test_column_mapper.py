@@ -23,6 +23,7 @@ from src.ingest.column_mapper import (
     _get_required_columns,
     _greedy_assign,
     _is_standard_schema,
+    _suggest_amount_split,
     auto_map_columns,
     map_columns,
     prepare_dataframe,
@@ -553,3 +554,83 @@ class TestReviewItems:
         # XYZ_COL의 ReviewItem에 source_type 존재
         xyz_items = [r for r in result.review_items if r.column == "XYZ_COL"]
         assert len(xyz_items) > 0
+
+
+# ── 중복 금액 퀵픽스 ──────────────────────────────────
+
+
+class TestSuggestAmountSplit:
+    """_suggest_amount_split — 인접 중복 금액 컬럼 추천."""
+
+    def test_adjacent_duplicate_amount(self):
+        """'금액' + '금액_2' 인접 → 차변/대변 추천 2건."""
+        columns = ["전표번호", "금액", "금액_2", "적요"]
+        items = _suggest_amount_split(columns)
+        assert len(items) == 2
+        assert items[0].column == "금액"
+        assert items[0].target_type == "debit_amount"
+        assert items[1].column == "금액_2"
+        assert items[1].target_type == "credit_amount"
+        # action=review (자동 적용 아님)
+        assert all(i.action == "review" for i in items)
+
+    def test_non_adjacent_ignored(self):
+        """'금액'과 '금액_2'가 비인접 → 추천 안 함."""
+        columns = ["금액", "적요", "금액_2"]
+        items = _suggest_amount_split(columns)
+        assert len(items) == 0
+
+    def test_three_duplicates_ignored(self):
+        """'금액' 3개 이상 중복 → 모호하므로 추천 안 함."""
+        columns = ["금액", "금액_2", "금액_3"]
+        items = _suggest_amount_split(columns)
+        assert len(items) == 0
+
+    def test_non_amount_keyword_ignored(self):
+        """금액 키워드가 아닌 중복 → 추천 안 함."""
+        columns = ["날짜", "날짜_2"]
+        items = _suggest_amount_split(columns)
+        assert len(items) == 0
+
+    def test_english_amount_keyword(self):
+        """영문 'amount' 키워드도 탐지."""
+        columns = ["id", "amount", "amount_2"]
+        items = _suggest_amount_split(columns)
+        assert len(items) == 2
+
+    def test_amt_keyword(self):
+        """약어 'amt' 키워드도 탐지."""
+        columns = ["amt", "amt_2"]
+        items = _suggest_amount_split(columns)
+        assert len(items) == 2
+
+    def test_map_columns_integrates_amount_split(self, sample_schema, sample_keywords):
+        """map_columns 퍼사드에서 금액 추천이 review_items에 병합되는지 E2E."""
+        raw_df = pd.DataFrame([
+            ["전표번호", "전표일자", "금액", "금액"],
+            ["001", "2025-01-01", 10000, 5000],
+        ])
+        read_result = ReadResult(
+            sheets=["Sheet1"],
+            active_sheet="Sheet1",
+            raw_data={"Sheet1": raw_df},
+            source_format="csv",
+        )
+        header_results = {
+            "Sheet1": HeaderDetectionResult(
+                header_row=0,
+                confidence=0.9,
+                matched_keywords=["전표번호", "전표일자"],
+                total_columns=4,
+                message="OK",
+            ),
+        }
+        results = map_columns(
+            read_result, header_results,
+            schema=sample_schema, keywords=sample_keywords,
+        )
+        mr = results["Sheet1"]
+        # 금액 추천 ReviewItem이 포함되어야 함
+        amount_items = [r for r in mr.review_items if "인접 중복" in r.reason]
+        assert len(amount_items) == 2
+        assert mr.needs_review is True

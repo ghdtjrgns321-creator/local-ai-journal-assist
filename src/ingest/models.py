@@ -30,8 +30,30 @@ class ReadResult:
     # 텍스트 파일만 해당 — 감지된 인코딩 (예: "utf-8", "cp949")
     encoding: str | None = None
 
+    # 인코딩 감지 신뢰도 (0.0~1.0, 1-chaos 기반)
+    # Why: UI에서 낮은 신뢰도(< 0.7) 시 수동 인코딩 선택 유도
+    encoding_confidence: float | None = None
+
     # 원본 파일 포맷 (예: "xlsx", "csv", "parquet")
     source_format: str = ""
+
+
+@dataclass
+class SheetScore:
+    """멀티시트 Excel에서 시트 품질 순위를 매기는 스코어.
+
+    Why: 메모/표지 시트 오탐 방지 — 데이터 시트를 자동 추천하고,
+    UI에서 스코어 테이블로 시트 선택 근거를 투명하게 보여준다.
+
+    가중치: 행 수(0.3) + 열 수(0.2) + 헤더 신뢰도(0.5)
+    """
+
+    sheet_name: str
+    row_count: int            # 빈 행 제외 실제 행 수
+    col_count: int            # 비어있지 않은 열 수
+    header_confidence: float  # header_detector 신뢰도
+    total_score: float        # 가중 합산
+    recommended: bool         # 최고 점수 여부
 
 
 @dataclass

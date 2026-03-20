@@ -25,6 +25,9 @@ from src.ingest.models import (
     ReviewItem,
 )
 
+# 중복 "금액" 퀵픽스 대상 키워드 (한/영/독)
+_AMOUNT_KEYWORDS = {"금액", "amount", "amt", "betrag"}
+
 
 # ── 내부 헬퍼 ──────────────────────────────────────────────
 
@@ -252,6 +255,59 @@ def prepare_dataframe(
     return non_empty_cols, data_df
 
 
+def _suggest_amount_split(columns: list[str]) -> list[ReviewItem]:
+    """인접한 중복 "금액" 컬럼 2개 → 차변/대변 추천.
+
+    Why: ERP 덤프에서 "금액", "금액_2"가 인접하면 실무상
+    왼쪽=차변, 오른쪽=대변 패턴이 대부분이다.
+
+    조건: 정확히 2개 중복(원본_2 패턴) + _AMOUNT_KEYWORDS 포함 + 인접 위치.
+    3개 이상 중복은 모호하므로 추천하지 않는다.
+    action="review" — 자동 적용이 아닌 사용자 확인 추천.
+    """
+    items: list[ReviewItem] = []
+
+    for i, col in enumerate(columns):
+        # "{이름}_2" 패턴 탐지 — prepare_dataframe이 붙인 접미사
+        if not col.endswith("_2"):
+            continue
+
+        base_name = col[:-2]  # "_2" 제거
+
+        # 금액 키워드 포함 여부 (대소문자 무시)
+        if not any(kw in base_name.lower() for kw in _AMOUNT_KEYWORDS):
+            continue
+
+        # 원본(첫 번째)이 바로 앞에 인접해야 함
+        if i == 0 or columns[i - 1] != base_name:
+            continue
+
+        # 3개 이상 중복 확인 — _3이 존재하면 모호하므로 스킵
+        suffix_3 = f"{base_name}_3"
+        if suffix_3 in columns:
+            continue
+
+        # 추천 생성: 왼쪽=debit_amount, 오른쪽=credit_amount
+        # Why: 인접 패턴은 실무 ERP에서 높은 정확도이나, 시트 변형 가능성이 있어
+        # 자동 적용(1.0)이 아닌 0.8로 설정 → action="review"와 함께 사용자 확인 유도
+        items.append(ReviewItem(
+            column=base_name,
+            action="review",
+            confidence=0.8,
+            reason=f"인접 중복 '{base_name}' 감지 → 차변금액(debit_amount) 추천",
+            target_type="debit_amount",
+        ))
+        items.append(ReviewItem(
+            column=col,
+            action="review",
+            confidence=0.8,
+            reason=f"인접 중복 '{base_name}' 감지 → 대변금액(credit_amount) 추천",
+            target_type="credit_amount",
+        ))
+
+    return items
+
+
 def _build_review_items(
     mapping: dict[str, str],
     suggestions: dict[str, str],
@@ -312,6 +368,11 @@ def auto_map_columns(
     settings_override: dict | None = None,
 ) -> MappingResult:
     """원본 컬럼명 리스트 → MappingResult (Exact → Fuzzy → 3-tier).
+
+    Note:
+        중복 금액 퀵픽스(_suggest_amount_split)는 map_columns() 퍼사드에서만
+        실행된다. prepare_dataframe의 dedup 접미사(_2)에 의존하기 때문.
+        이 함수를 직접 호출하면 금액 퀵픽스가 포함되지 않는다.
 
     Args:
         source_columns: 원본 컬럼명 리스트
@@ -461,12 +522,20 @@ def map_columns(
         source_columns, data_df = prepare_dataframe(raw_df, header_result.header_row)
 
         # auto_map_columns (data_df 전달 → 타입 호환성 검증)
-        results[sheet_name] = auto_map_columns(
+        mapping_result = auto_map_columns(
             source_columns,
             matched_keywords=header_result.matched_keywords,
             data_df=data_df,
             schema=schema,
             keywords=keywords,
         )
+
+        # 중복 "금액" 퀵픽스 — prepare_dataframe이 붙인 _2 접미사 기반
+        amount_items = _suggest_amount_split(source_columns)
+        if amount_items:
+            mapping_result.review_items.extend(amount_items)
+            mapping_result.needs_review = True
+
+        results[sheet_name] = mapping_result
 
     return results
