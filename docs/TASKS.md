@@ -22,11 +22,12 @@
 | 9  | 타입 캐스팅         | `src/ingest/type_caster.py`                                   | [02-ingest](pre-plan/02-ingest.md)             | ✅   |
 | 10 | 매핑 프로파일       | `src/ingest/mapping_profile.py`                               | [02-ingest](pre-plan/02-ingest.md)             | ✅   |
 | 10a | **UX 1단계**       | 구조적 헤더탐지 + 타입검증 + ReviewItem + Null분기 + latin-1 폴백 | [02-ingest](pre-plan/02-ingest.md)          | ✅   |
-| 11 | 피처 엔진           | `src/feature/engine.py` + 4개 서브모듈 (time_features ✅)     | [03-feature](pre-plan/03-feature.md)           | 🔨   |
-| 11a | **UX 2단계 — EDA** | `src/eda/profiler.py` + `report.py` (EDA 프로파일링)          | [03a-preprocessing](pre-plan/03a-preprocessing.md) | ⬜   |
+| 10b | **피드백 반영**    | 인코딩 오버라이드+confidence, 시트 스코어링, 금액 퀵픽스, Phase 1c UI 스펙 | [02-ingest](pre-plan/02-ingest.md)   | ✅   |
+| 11 | 피처 엔진           | `src/feature/engine.py` + 4개 서브모듈 (170 tests passed)     | [03-feature](pre-plan/03-feature.md)           | ✅   |
+| 11a | **UX 3단계 — EDA** | `src/eda/` 7개 모듈 (52 tests passed)                         | [03a-preprocessing](pre-plan/03a-preprocessing.md) | ✅   |
 | 12 | L1~L2 검증          | `src/validation/schema_validator.py`, `accounting_validator.py` | [04-validation](pre-plan/04-validation.md)     | ⬜   |
 | 13 | 전처리 리포트       | `src/validation/report_generator.py`                          | [04-validation](pre-plan/04-validation.md)     | ⬜   |
-| 14 | 단위 테스트 (1a)    | `tests/test_ingest/`, `test_feature/`                         | 각 가이드 "테스트 전략" 섹션                    | ⬜   |
+| 14 | 단위 테스트 (1a)    | `tests/test_ingest/`, `test_feature/`                         | 각 가이드 "테스트 전략" 섹션                    | ✅   |
 
 **완료 기준**: DataSynth CSV → ingest → feature → validation 파이프라인 통과
 

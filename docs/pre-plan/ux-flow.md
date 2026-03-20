@@ -1,0 +1,256 @@
+# UX 데이터 흐름 & 설계 원칙 [공통 — Phase 1a~1c]
+
+> **이 문서는 전체 UX 설계의 기준 문서(Single Source of Truth)**입니다.
+> 각 모듈별 상세 구현은 하단 [교차 참조](#교차-참조-상세-문서) 링크를 따라가세요.
+
+---
+
+## 전체 UX 데이터 흐름도
+
+```
+[사용자 파일 업로드]
+       ↓
+━━━ UX 1단계: 데이터 수집 및 전처리 (Ingest) ━━━  ← Phase 1a ✅
+│  ① 파일 업로드 & 초기 세팅
+│     └ 인코딩 수동 선택 (confidence < 0.7 시) + 데이터 시트 선택
+│  ② AI 매핑 & 사용자 검토 (Human-in-the-Loop)
+│     └ 3-tier: 자동(초록 ≥80%) / 추천(노랑 40~80%) / 수동(빨강 <40%)
+│     └ 매핑 엄격도 슬라이더 (30~70) + 중복 금액 퀵픽스
+│  ③ 타입 캐스팅 (자동 완료)
+│     └ 금액 콤마 제거, 날짜 포맷 통일, Null 3단계 분기
+│  → 표준 DataFrame 출력
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+       ↓
+━━━ UX 2단계: 감사 룰 세팅 & 파생변수 생성 (Feature) ━━━  ← Phase 1a ✅ (엔진) + Phase 1c ⬜ (UI)
+│  ④ 감사 룰 조종석 (Control Panel) 세팅
+│     └ 시간 기준: 심야 시간대(22~06), 기말 마진(5일)
+│     └ 금액 기준: 승인 한도(5천만원), Z-score(3.0)
+│     └ 패턴/키워드: 수기 전표 코드, 가계정/위험 키워드
+│     └ 저장된 프로파일 로드 가능
+│  ⑤ 파생변수 생성 (자동)
+│     └ 4개 피처 엔진 → 18개 파생변수 일괄 생성
+│       ├ time_features (6개): is_weekend, is_after_hours, is_period_end, ...
+│       ├ amount_features (5개): is_near_threshold, amount_zscore, ...
+│       ├ pattern_features (5개): is_manual_je, first_digit, ...
+│       └ text_features (2개): has_risk_keyword, description_quality
+│  → 피처 보강된 DataFrame 출력
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+       ↓
+━━━ UX 3단계: 전처리 투명성 & EDA (Preprocessing) ━━━  ← Phase 1a ⬜ (EDA) + Phase 2 ⬜ (ML Pipeline)
+│  ⑥ EDA 프로파일링 (Phase 1a)
+│     └ 전체 수준: 행수, 컬럼수, 메모리, 중복행
+│     └ 컬럼별: dtype, 결측률, 유니크수, 분포
+│  ⑦ 전처리 설정 패널 (Phase 2)
+│     └ 결측치/인코딩/스케일링 옵션 — 기본값 자동 적용 + 변경 가능
+│     └ Pipeline별 성능 비교 (F1/AUC)
+│  → ML-ready DataFrame 출력
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+       ↓
+[Detection → DuckDB → Streamlit 대시보드]
+```
+
+---
+
+## UX 1단계: 데이터 수집 및 전처리 (Ingest) — ✅ Phase 1a 구현 완료
+
+**목적**: 다양한 형태의 ERP 엑셀/CSV 원본을 표준 DataFrame으로 변환
+
+### 흐름
+
+1. **파일 업로드 & 초기 세팅**: 사용자가 원본 파일을 업로드한다.
+   인코딩 감지 신뢰도가 낮으면(< 0.7) **[인코딩 수동 선택]** UI를 노출하고,
+   멀티시트 파일이면 **[데이터 시트 선택]** UI를 제공한다.
+
+2. **AI 매핑 & 사용자 검토 (Human-in-the-Loop)**:
+   시스템이 헤더를 탐지하고 컬럼을 자동 매핑한다.
+   사용자는 **[매핑 엄격도 슬라이더]**로 임계값을 조정하거나,
+   저신뢰 컬럼(노랑/빨강 — 예: 차/대변 금액 중복)을 직접 확정한다.
+
+3. **타입 캐스팅 (자동)**: 매핑 확정 후 `type_caster.py`가
+   금액 포맷 정규화(콤마/통화기호 제거), 날짜 포맷 통일, Null 분류를 수행한다.
+
+### 구현 상태
+
+| 구현 항목                          | 상태 | 백엔드 위치                              |
+|:-----------------------------------|:-----|:----------------------------------------|
+| 5단계 파일 검증                    | ✅   | `file_validator.py` (32 tests)          |
+| 10개 확장자 읽기                   | ✅   | `reader_api.py` + 4개 리더 (24 tests)   |
+| 구조적 헤더 탐지 (v2)             | ✅   | `header_detector.py` (21 tests)         |
+| Fuzzy+타입검증 컬럼 매핑 (v2)     | ✅   | `column_mapper.py` (45 tests)           |
+| 5단계 타입 캐스팅 + Null 3분기    | ✅   | `type_caster.py` (44 tests)             |
+| 매핑 프로파일 저장/로드            | ✅   | `mapping_profile.py` (26 tests)         |
+| ReviewItem 투명성 모델             | ✅   | `models.py:ReviewItem`                  |
+| 인코딩 오버라이드 + confidence     | ✅   | `text_reader.py`                        |
+| 시트 품질 스코어링                 | ✅   | `sheet_scorer.py` (8 tests)             |
+| 중복 금액 퀵픽스                   | ✅   | `column_mapper._suggest_amount_split()` |
+
+### Phase 1c UI 스펙 (4건)
+
+| UI 요소                          | 트리거                              | 백엔드 연동                                |
+|:---------------------------------|:------------------------------------|:------------------------------------------|
+| UI-1. 인코딩 드롭다운            | `encoding_confidence < 0.7`         | `read_file(encoding_override=)`           |
+| UI-2. 시트 선택 테이블           | 멀티시트 Excel                      | `sheet_scorer.score_sheets()`             |
+| UI-3. Fuzzy 엄격도 슬라이더     | 매핑 확인 UI                        | `auto_map_columns(settings_override=)`    |
+| UI-4. 중복 금액 퀵픽스 버튼     | 인접 '금액' 2개 감지                | `_suggest_amount_split()` → ReviewItem    |
+
+> 상세: [02-ingest.md → Phase 1c UI 스펙](02-ingest.md#phase-1c-ui-스펙--피드백-반영-4건)
+
+---
+
+## UX 2단계: 감사 룰 세팅 & 파생변수 생성 (Feature) — ✅ 엔진 구현 완료, ⬜ UI 예정
+
+**목적**: 표준 DataFrame에 감사 도메인 기준(시간/금액/패턴/텍스트)을 적용하여 이상탐지용 파생변수를 생성
+
+### 감사 룰 조종석 (Control Panel) 세팅
+
+전처리 완료된 데이터를 대상으로 분석 기준을 설정한다.
+
+| 카테고리     | 설정 항목                                            | 기본값 (스마트 디폴트)       |
+|:-------------|:----------------------------------------------------|:----------------------------|
+| 시간 기준    | 심야 기표 시간대                                     | 22:00 ~ 06:00               |
+|              | 기말 판정 마진                                       | 5일                          |
+| 금액 기준    | 승인 한도                                            | 5,000만 원                   |
+|              | 이상치 Z-score 임계값                                | 3.0                          |
+|              | round 금액 판정 단위                                 | 100만 원                     |
+| 패턴/키워드  | 수기 전표 코드                                       | `audit_rules.yaml` 로드     |
+|              | 매출 계정 prefix                                     | `["4"]`                      |
+|              | 가계정/위험 키워드 리스트                             | `risk_keywords.yaml` 로드   |
+|              | 관계사 식별자                                        | 빈 리스트 (고객사별 입력)    |
+
+### 파생변수 생성 (자동)
+
+설정값을 4개의 피처 엔진이 수신하여 **18개 파생변수**를 DataFrame에 일괄 추가한다.
+
+| 엔진              | 변수 수 | 주요 변수                                                | 대응 룰           |
+|:------------------|:--------|:---------------------------------------------------------|:-----------------|
+| time_features     | 6개     | is_weekend, is_after_hours, is_period_end, ...           | C01~C05          |
+| amount_features   | 5개     | is_near_threshold, amount_zscore, is_round_number, ...   | B02~B04, C08     |
+| pattern_features  | 5개     | is_manual_je, first_digit, is_suspense_account, ...      | B01,B08~B11, C07 |
+| text_features     | 2개     | has_risk_keyword, description_quality                    | C06              |
+
+### Data Flywheel (audit_rules.yaml ↔ UI ↔ Profile)
+
+```
+[config/audit_rules.yaml] ← 기본값 (K-IFRS 표준)
+        ↓ 로드
+[Streamlit UI] — 감사인이 고객사별 커스터마이징
+        ↓ 저장
+[data/profiles/customer_A.json] ← mapping_profile + audit_rules 통합
+        ↓ 다음 감사 시 자동 로드
+```
+
+> 상세: [03-feature.md → Data Flywheel](03-feature.md#d-phase-1c-data-flywheel-audit_rulesyaml--ui--profile)
+
+---
+
+## UX 3단계: 전처리 투명성 & EDA (Preprocessing) — ⬜ 구현 예정
+
+**목적**: 데이터 현황을 투명하게 보여주고, ML Pipeline 전처리 과정을 사용자가 확인·변경할 수 있게 하는 과정
+
+| 항목                     | Phase   | 내용                                                         |
+|:-------------------------|:--------|:------------------------------------------------------------|
+| EDA 프로파일링           | 1a      | `profiler.py` → 행수/컬럼수/결측률/분포/이상치 프로파일     |
+| 대시보드 EDA 탭          | 1c      | 프로파일링 결과 시각화 (컬럼 카드, 히트맵, 박스플롯)         |
+| sklearn Pipeline 설정    | 2       | 결측치/인코딩/스케일링 옵션 — 기본값 자동 + 변경 UI         |
+| Pipeline 성능 비교       | 2       | F1/AUC 바 차트 + 신뢰구간                                    |
+| LLM 전처리 제안          | 3       | EDAProfile(JSON) → Ollama → 전처리 전략 추천                 |
+
+> 상세: [03a-preprocessing.md → UX 3단계](03a-preprocessing.md#ux-3단계-전처리-투명성)
+
+---
+
+## UX 설계 배경: 감사 업무의 두 가지 상충 요구
+
+감사 도구 UX는 **통제 요구와 간결성 요구가 상충**하는 환경에서 설계되어야 한다.
+
+### 1. 통제 요구 — 판단 근거의 투명성
+
+감사인은 분석 결과에 대해 최종 책임을 진다(PCAOB AS 1201, 감사인의 전문가적 판단).
+따라서 AI가 자동 처리한 항목이라도 **판단 근거와 신뢰도를 확인·수정할 수 있어야** 도구를 신뢰한다.
+통제권이 없는 블랙박스 도구는 감리 리스크 때문에 실무에서 채택되지 않는다.
+
+→ **대응**: ReviewItem에 판단 근거(reason) + 신뢰도(confidence) 투명 노출.
+모든 매핑·설정에 사용자 오버라이드 제공.
+
+### 2. 간결성 요구 — 초기 설정 부담 최소화
+
+반면, 업로드 직후 10개 이상의 설정 항목을 요구하면 기존 도구(Excel 피벗) 대비 이점이 사라진다.
+설정 항목이 많을수록 사용자 이탈률이 높아지므로, **최소한의 입력으로 즉시 분석을 시작**할 수 있어야 한다.
+
+→ **대응**: 스마트 디폴트 + 점진적 공개로 초기 진입 장벽 최소화.
+
+---
+
+## 3가지 UX 디자인 원칙
+
+Phase 1c (Streamlit UI) 구현 시 적용할 원칙. 위 두 가지 상충 요구를 동시에 충족하는 설계 전략.
+
+### 원칙 1: 스마트 디폴트 (Smart Defaults)
+
+사용자 입력 없이 **[다음] 버튼만으로 전체 파이프라인이 실행**되어야 한다.
+모든 설정 항목에 업계 표준 기본값을 사전 적용한다.
+
+- 승인 한도: 5천만 원 / Z-score: 3.0 / 매출 계정 prefix: 4 / 인코딩: Auto
+- 기본값만으로 유의미한 분석 결과를 제공 → 사용자가 필요에 따라 조정
+
+**적용 위치:**
+
+| UX 단계 | 적용 항목                                                    |
+|:--------|:------------------------------------------------------------|
+| 1단계   | 인코딩=Auto, 시트=최고점수 자동선택, fuzzy threshold=40      |
+| 2단계   | `config/settings.py`의 모든 설정에 업계 표준 기본값           |
+| 3단계   | 전처리 옵션 자동 선택 — 결측치→중앙값, 스케일링→StandardScaler |
+
+### 원칙 2: 점진적 공개 (Progressive Disclosure)
+
+설정 UI를 **기본/전문가 2계층**으로 분리하여 초기 인지 부하를 줄인다.
+
+- **기본 모드 (Basic)**: 파일 업로드 + 시트 선택 + 저신뢰 컬럼 매핑 확정 → 즉시 분석 시작
+- **전문가 모드 (Advanced)**: 접이식 패널(Accordion) 내부에 배치
+  - Z-score 민감도, Benford 단위, 수기 전표 코드, 가계정 키워드 등
+
+**적용 위치:**
+
+| UX 단계 | 적용 항목                                                    |
+|:--------|:------------------------------------------------------------|
+| 1단계   | confidence ≥ 0.7이면 인코딩 드롭다운 숨김                    |
+| 2단계   | 기본=디폴트 사용 / Advanced=audit_rules 직접 편집             |
+| 3단계   | EDA 요약만 기본 노출 / Pipeline 옵션은 접이식                 |
+
+### 원칙 3: 프로파일 재사용 (One-Time Setup)
+
+초기 설정 비용을 **프로파일 저장 → 재사용** 구조로 상쇄한다.
+동일 고객사의 반복 감사 시 이전 설정을 자동 로드하여 설정 단계를 최소화한다.
+
+- UI 안내 문구: "현재 설정은 프로파일로 저장됩니다. 이후 감사 시 자동 적용됩니다."
+- `mapping_profile`(컬럼 매핑) + `audit_rules`(감사 기준) 통합 프로파일
+
+**적용 위치:**
+
+| UX 단계 | 적용 항목                                                    |
+|:--------|:------------------------------------------------------------|
+| 1단계   | `mapping_profile.save_profile()` — 컬럼 매핑 자동 저장/로드  |
+| 2단계   | `audit_rules` 고객사별 프로파일 저장 (Data Flywheel)          |
+| 3단계   | Pipeline 설정 프로파일 (Phase 2)                              |
+
+---
+
+## UX 단계별 요약
+
+| UX 단계 | 목적                       | Phase 구현          | 투명성 모델                              | 상세 문서                                  |
+|:--------|:---------------------------|:--------------------|:----------------------------------------|:------------------------------------------|
+| 1단계   | 데이터 수집 투명성         | 1a ✅ + 1c UI ⬜    | ReviewItem (action/confidence/reason)   | [02-ingest.md](02-ingest.md)              |
+| 2단계   | 감사 룰 세팅 + 파생변수    | 1a ✅ + 1c UI ⬜    | audit_rules.yaml + settings + profile   | [03-feature.md](03-feature.md)            |
+| 3단계   | 전처리 투명성 + EDA        | 1a ⬜ + 2 ⬜        | EDAProfile(JSON) + Pipeline 설정         | [03a-preprocessing.md](03a-preprocessing.md) |
+
+---
+
+## 교차 참조: 상세 문서
+
+| 문서                                           | UX 관련 내용                                                    |
+|:-----------------------------------------------|:---------------------------------------------------------------|
+| [02-ingest.md](02-ingest.md)                   | UX 1단계 상세 구현, ReviewItem, Phase 1c UI 스펙 4건            |
+| [03-feature.md](03-feature.md)                 | UX 2단계 엔진, 18개 파생변수, Data Flywheel, audit_rules       |
+| [03a-preprocessing.md](03a-preprocessing.md)   | UX 3단계 EDA 프로파일링, ML Pipeline 전처리 투명성              |
+| [07-dashboard.md](07-dashboard.md)             | Streamlit 5탭 UI 설계, UX 1단계 잔여 과제                       |
+| [DECISION.md](../DECISION.md)                  | D016: UX 1단계 설계 결정 로그                                   |

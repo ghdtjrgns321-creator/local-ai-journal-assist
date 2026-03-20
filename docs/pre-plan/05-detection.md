@@ -1,4 +1,4 @@
-# 05. 멀티트랙 이상탐지 (Detection)
+# 05. 멀티트랙 이상탐지 (Detection) [Phase 1b — 의존: 03, 04]
 
 ## 목적
 검증 완료된 DataFrame에 3레이어 22개 룰 + ML + NLP/그래프로 이상을 탐지하고,
@@ -293,3 +293,17 @@ score_aggregator.aggregate_scores(df, results)
 - **VAE 학습:** 정상 데이터만으로 학습 → 이상 데이터를 reconstruction error로 탐지
 - **SHAP 비용:** SHAP는 계산 비용이 높음 → 플래그된 전표에 대해서만 on-demand 계산
 - **가중치 튜닝:** ⚠️ 초기 가중치는 근거 없는 설계값. Phase 1 완료 후 DataSynth 레이블 대비 back-testing 필수
+
+---
+
+## 선행 모듈에서 넘어온 미해결 이슈 (교차 참조)
+
+Phase 2 detection/ML 구현 시 함께 해결해야 하는 선행 모듈 이슈.
+
+| 문제                                 | 현상                                          | Phase 2 해결 방향                                    | 발견 위치                                                        |
+|:-------------------------------------|:----------------------------------------------|:-----------------------------------------------------|:-----------------------------------------------------------------|
+| Z-score 소그룹 fallback 왜곡         | n<30 그룹이 전체 분포에 의존 → 왜곡           | CoA 상위그룹(자산/부채/수익/비용)별 fallback         | [03-feature §G](03-feature.md#g-미해결-이슈-발견--해결-교차-참조) |
+| 외화 소수점 is_round_number          | float % 연산 정수값 전제                      | Decimal 연산 또는 통화별 소수점 설정                 | [03-feature §G](03-feature.md#g-미해결-이슈-발견--해결-교차-참조) |
+| is_suspense_account 대상 컬럼 제한   | gl_account_name 미포함                        | `_SUSPENSE_TEXT_COLS` 상수에 추가                    | [03-feature §G](03-feature.md#g-미해결-이슈-발견--해결-교차-참조) |
+| description_quality 규칙 기반 한계   | 길이+패턴 정밀도 부족                         | Entropy + TTR + ML 분류기                            | [03-feature §G](03-feature.md#g-미해결-이슈-발견--해결-교차-참조) |
+| 은어/동의어 미탐지                   | 정확 키워드만 반응                            | Phase 3 NLP 임베딩으로 이관                          | [08-llm §미해결](08-llm.md#미해결-이슈-phase-3에서-해결--발견-위치-교차-참조) |

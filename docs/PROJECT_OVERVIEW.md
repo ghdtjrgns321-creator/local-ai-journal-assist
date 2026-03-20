@@ -41,6 +41,7 @@ local-ai-assist/
 │   ├── pipeline.py             # 전체 오케스트레이터
 │   ├── ingest/                 # 수집·평탄화
 │   ├── feature/                # 감사 파생변수
+│   ├── eda/                    # EDA 프로파일링 (품질·분포·이상치)
 │   ├── validation/             # 계층적 검증 (L1~L3)
 │   ├── detection/              # 3-Layer 이상탐지 (A무결성/B부정/C징후)
 │   ├── db/                     # DuckDB
@@ -81,6 +82,7 @@ local-ai-assist/
 | 8  | [08-llm.md](pre-plan/08-llm.md)                          | Ollama, Vanna AI 2.0, SQL 검증, 프리셋, 인사이트             | P3     |
 | 9  | [09-export.md](pre-plan/09-export.md)                    | Excel/PDF 감사조서, Audit Trail                               | P3     |
 | 10 | [10-sample-data.md](pre-plan/10-sample-data.md)          | 가상 GL 데이터 생성기 — DataSynth로 대체됨                    | MVP    |
+| UX | [ux-flow.md](pre-plan/ux-flow.md)                        | UX 3단계 흐름도, 감사인 심리, 3가지 디자인 원칙               | 전체   |
 
 **구현 의존 그래프:**
 ```
@@ -100,8 +102,13 @@ DataSynth (tools/datasynth/) → config/datasynth.yaml → journal_entries.csv (
   ↓
 Excel/CSV → file_validator → excel_reader → header_detector → column_mapper → type_caster
   ↑ UX 1단계: 자동 헤더/매핑 + 애매한 부분 사용자 위임 + 판단 근거 투명 노출 (ReviewItem)
-  → 표준 DataFrame → feature/engine (감사 파생변수) → validation (3-Level)
-    → detection (3-Layer: A무결성 3개 + B부정 10개 + C징후 9개, 22개 룰) → score_aggregator
-      → DuckDB → 프리셋 SQL / Text-to-SQL (Phase 3)
-        → Streamlit 대시보드
+  → 표준 DataFrame → feature/engine (감사 파생변수 18개)
+  → eda/profiler (EDAProfile JSON) → eda/report (대시보드 요약)
+  ↑ UX 2단계: 감사 룰 조종석(Control Panel) + 파생변수 자동 생성 + audit_rules 프로파일 저장
+  → validation (3-Level) → detection (3-Layer: A무결성 3개 + B부정 10개 + C징후 9개, 22개 룰)
+    → score_aggregator → DuckDB → 프리셋 SQL / Text-to-SQL (Phase 3)
+      → Streamlit 대시보드
+  ↑ UX 3단계: EDA 프로파일링 + 전처리 투명성 (Phase 1a EDA + Phase 2 ML Pipeline)
+
+> UX 전체 흐름 & 3가지 디자인 원칙: [ux-flow.md](pre-plan/ux-flow.md) 참조
 ```

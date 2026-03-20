@@ -1,4 +1,4 @@
-# 10. 가상 GL 데이터 생성기 및 Excel 템플릿
+# 10. 가상 GL 데이터 생성기 및 Excel 템플릿 [Phase 0 — 사전 준비]
 
 > **DataSynth로 대체됨**: 메인 데이터는 DataSynth(`data/journal/primary/datasynth/`)에서 생성.
 > 이 모듈은 ingest 파이프라인 테스트용 소규모 ERP 샘플 생성 용도로만 유지.

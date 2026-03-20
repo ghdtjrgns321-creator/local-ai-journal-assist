@@ -90,11 +90,12 @@
 - **설정**: `settings.py`의 `allowed_extensions`/`max_file_size_mb`는 deprecated. 카테고리별 제한은 `file_categories.py` 상수로 관리 (파일 포맷 물리적 특성이므로 사용자 설정이 아님)
 
 ### D016: UX 1단계 — 데이터 수집 투명성 (Ingest v2)
+- **UX 단계 체계**: UX 1단계(수집 투명성) → UX 2단계(룰 세팅+파생변수) → UX 3단계(전처리+EDA). 상세: [ux-flow.md](pre-plan/ux-flow.md)
 - **정의**: 사용자가 데이터를 넣으면 AI가 헤더/컬럼을 자동 지정하고, 애매한 부분은 사용자에게 위임하며, 판단 근거(신뢰도, 매칭 방식)를 투명하게 노출하는 UX 모델
 - **결정**: 헤더 탐지를 구조적 신호 기반으로 전환, fuzzy 매핑에 타입 검증 추가, 매핑 판단 근거를 ReviewItem으로 구조화
 - **UX 원칙**:
   - **80/20 자동화**: 확신 높은 80%는 자동 처리(action="auto"), 나머지 20%는 사용자 검토(action="review")
-  - **블랙박스 공포증 해소**: 모든 매핑에 reason(판단 근거) + confidence(신뢰도) + source_type/target_type 노출
+  - **판단 투명성 확보**: 모든 매핑에 reason(판단 근거) + confidence(신뢰도) + source_type/target_type 노출
   - **3-tier 시각 피드백**: 확정(초록) / 추천+확인 필요(노랑) / 차단됨(빨강)
 - **구현 내용**:
   - A1. 구조적 헤더 탐지 — 키워드 없어도 데이터 구조(타입다양성/고유값/null밀도)로 헤더 판별

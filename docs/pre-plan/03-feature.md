@@ -1,4 +1,4 @@
-# 03. 감사 파생변수 엔진 (Feature Engineering)
+# 03. 감사 파생변수 엔진 (Feature Engineering) [Phase 1a — 의존: 02]
 
 ## 목적
 표준 DataFrame에 감사 관점의 파생변수 18개를 추가하여, 이상탐지 룰과 ML 모델의 입력 피처로 활용한다.
@@ -28,9 +28,10 @@ engine.generate_all_features(df, settings)
 
 ## 구현 상태 & 모듈별 가이드
 
-### engine.py — ⬜ 구현 예정
+### engine.py — ✅ 구현 완료 (14 tests passed)
 
 4개 서브모듈을 순서대로 호출하여 18개 파생변수를 일괄 생성하는 오케스트레이터.
+[테스트 결과](../../tests/test_feature/test-results/engine-test-results.md)
 
 ```
 src/feature/
@@ -70,7 +71,7 @@ src/feature/
 | fiscal_period_mismatch — 비표준 회계연도       | `(month - fiscal_year_start) % 12 + 1` modulo 연산            |
 | fiscal_period_mismatch — NaN 함정              | 결측치 마스크 → pd.NA 덮어씌움 (오탐 방지), dtype=boolean      |
 
-**테스트**: [test_time_features.py](../../tests/test_feature/test_time_features.py) — 47 케이스
+**테스트**: [test_time_features.py](../../tests/test_feature/test_time_features.py) — 49 케이스 | [테스트 결과](../../tests/test_feature/test-results/time-features.md)
 
 ---
 
@@ -102,7 +103,7 @@ src/feature/
 | float % 연산 안전성                      | ingest에서 정수값 보장 → 안전. 외화 소수점은 Phase 2 round() 전처리 예정    |
 | gl_account 컬럼 누락                     | zscore NaN + warning 로깅 (에러 미발생)                                     |
 
-**테스트**: [test_amount_features.py](../../tests/test_feature/test_amount_features.py) — 27 케이스
+**테스트**: [test_amount_features.py](../../tests/test_feature/test_amount_features.py) — 27 케이스 | [테스트 결과](../../tests/test_feature/test-results/amount-features.md)
 
 ---
 
@@ -132,7 +133,7 @@ src/feature/
 | 정규식 키워드 안전성                           | `re.compile` 실패 시 `re.escape()` 폴백 + warning                          |
 | 함수 인자 vs settings 직접 참조                | 함수 인자로 받기 (테스트 용이, engine.py에서 audit_rules 주입)              |
 
-**테스트**: [test_pattern_features.py](../../tests/test_feature/test_pattern_features.py) — 41 케이스
+**테스트**: [test_pattern_features.py](../../tests/test_feature/test_pattern_features.py) — 42 케이스 | [테스트 결과](../../tests/test_feature/test-results/pattern-features.md)
 
 ---
 
@@ -157,7 +158,7 @@ src/feature/
 | description_quality 등급           | NaN→missing, noise→poor, len<min_length→poor, else→normal (3단계)            |
 | Phase 2/3 stubs                   | `add_semantic_similarity`, `add_semantic_anomaly` — no-op + logger.info      |
 
-**테스트**: [test_text_features.py](../../tests/test_feature/test_text_features.py) — 38 케이스
+**테스트**: [test_text_features.py](../../tests/test_feature/test_text_features.py) — 38 케이스 | [테스트 결과](../../tests/test_feature/test-results/text-features.md)
 
 #### Phase 2/3 텍스트 피처 확장 로드맵
 
@@ -229,6 +230,31 @@ src/feature/
 | `add_semantic_anomaly` — Ollama LLM 문맥 이상 탐지            | Phase 3  |
 
 > Phase 2/3 확장 상세는 문서 하단 **[Phase 2/3 확장 로드맵](#phase-23-확장-로드맵)** 참조.
+
+## E2E 테스트 (ingest → feature)
+
+실 데이터로 전체 파이프라인을 검증하는 통합 테스트. 단위 테스트 170개와 별도.
+
+| 데이터셋                | 행수      | 피처 생성 | 소요시간 | 결과                                                                           |
+|:------------------------|----------:|:---------:|:--------:|:-------------------------------------------------------------------------------|
+| datasynth (1,068K건)    | 1,068,119 | 18/18     | ~6.5s    | [e2e-datasynth.md](../../tests/test_feature/test-results/e2e-datasynth.md)     |
+| sap-merged (331K건)     |   331,934 | 13/18     | ~0.8s    | [e2e-sap-merged.md](../../tests/test_feature/test-results/e2e-sap-merged.md) — graceful degradation |
+
+**engine.py 개선**: `_run_category()` try/except(KeyError) 추가 — 필수 컬럼 누락 시 해당 카테고리만 스킵, 나머지 정상 실행.
+
+**발견된 데이터 특성** (datasynth):
+- `is_after_hours`, `is_near_threshold`, `is_round_number`, `is_intercompany`, `is_suspense_account` — 합성 데이터 특성상 all-False
+- `fiscal_period_mismatch` — nullable `boolean` dtype (all-True)
+
+```bash
+# E2E 빠른 실행 (리포트 제외)
+uv run pytest tests/test_feature/test_e2e_datasynth.py tests/test_feature/test_e2e_validation.py -v -k "not slow"
+
+# 리포트 포함
+uv run pytest tests/test_feature/test_e2e_datasynth.py -v -k slow
+```
+
+---
 
 ## 테스트 전략
 - **각 피처 함수 단위 테스트:**
@@ -376,3 +402,244 @@ def add_description_quality(df: DataFrame, min_length: int = 3) -> DataFrame:
 ```
 
 </details>
+
+---
+
+## Phase 2/3 확장 로드맵
+
+Phase 1a에서 구현한 18개 파생변수를 토대로, Phase 2/3에서 기존 피처를 개선하고 새 피처를 추가한다.
+이 섹션은 **미래 LLM/개발자가 Phase 2/3 작업에 진입할 때 맥락을 빠르게 파악**하기 위한 종합 가이드.
+
+---
+
+### A. 기존 피처 개선 (Phase 2)
+
+Phase 1a에서 MVP 타협한 항목들. 각 모듈의 설계 결정 테이블에 흩어진 "Phase 2 개선" 메모를 한 곳에 모음.
+
+| 모듈              | 대상                       | 현재 (Phase 1a)                                | 개선 (Phase 2)                                               |
+|:------------------|:---------------------------|:-----------------------------------------------|:-------------------------------------------------------------|
+| amount_features   | `amount_zscore` fallback   | n<30 그룹 → 전체 데이터 mean/std 사용          | CoA 상위그룹(자산/부채/수익/비용)별 fallback으로 왜곡 최소화 |
+| amount_features   | `is_round_number` 외화     | float % 연산 (정수값 전제)                     | 외화 소수점 → `round()` 전처리 후 판정                       |
+| pattern_features  | `is_suspense_account` 대상 | `_SUSPENSE_TEXT_COLS = [line_text, header_text]` | `gl_account_name` 컬럼 추가 (상수에 한 줄 추가)              |
+| text_features     | `description_quality` 노이즈 | `_is_noise_pattern()` 규칙 기반                 | Entropy + 어휘 다양성 + kiwipiepy 형태소 분석 (아래 상세)    |
+
+#### `description_quality` 진화 로드맵 (Length → Entropy & Pattern)
+
+Phase 1a의 `description_quality`는 `len() ≤ 2 → poor` + `_is_noise_pattern()` 규칙 기반.
+Phase 2에서 텍스트의 **정보량(Entropy)과 패턴**을 수학적으로 분석하여 정밀도를 높인다.
+
+**Phase 1a (현재)**:
+```
+missing: NaN/빈문자열
+poor:    len(strip()) ≤ 2 또는 _is_noise_pattern() (자음만/특수문자만/동일문자 반복)
+normal:  3글자 이상
+```
+
+**Phase 2 (개선)**:
+```
+1단계 — 반복/무의미 패턴 강화:
+  - 정규식으로 자음·모음 단독("ㅋㅋㅋ", "ㅇㅇ"), 특수문자 도배("...", "---"), 동일문자 반복("비품비품비품") 정밀 탐지
+  - Phase 1a의 _is_noise_pattern()을 확장 (현재 3가지 → 추가 패턴)
+
+2단계 — 어휘 다양성 (Lexical Diversity):
+  - 정상 적요는 2개+ 형태소로 구성 (예: "3월 / 식대")
+  - 고유 토큰 수 / 전체 토큰 수 = TTR(Type-Token Ratio)
+  - TTR < threshold → poor 판정
+  - 파이썬 내장 split()만으로 MVP 가능, Phase 3에서 kiwipiepy 형태소 분석으로 정밀화
+
+3단계 — 정보 엔트로피 (Shannon Entropy):
+  - 문자 단위 정보 엔트로피: H = -Σ p(c)·log2(p(c))
+  - "aaaa" → H≈0 (극저), "3월 식대 외근" → H≈3.5 (정상)
+  - 극저 엔트로피 = 의미 없는 반복/패딩 → poor 판정
+```
+
+**등급 체계 (Phase 2 확장)**:
+```
+missing:  NaN/빈문자열
+poor:     len ≤ 2 OR noise_pattern OR TTR < 0.3 OR entropy < 1.0
+normal:   3글자+ AND 패턴 통과
+good:     (Phase 3) LLM 실질 평가 — 아래 상세
+```
+
+**Phase 3 "good" 등급 — LLM 기반 적요 실질 평가**:
+
+Phase 2까지는 kiwipiepy 형태소 분석(명사 2개+ 포함)으로 `good` 후보를 선별한다.
+Phase 3에서는 LLM이 **"제3자(감사인)가 거래 실질을 파악할 수 있는가"** 관점에서 최종 등급을 판정한다.
+
+```
+평가 기준: 육하원칙(5W1H) 기반 실질 정보 포함 여부
+  - Who:  거래 상대방 식별 가능 (예: "○○전자")
+  - What: 거래 대상/내용 명시 (예: "서버 호스팅비")
+  - When: 귀속 시점 식별 가능 (예: "3월분")
+  - Why:  거래 사유/목적 추론 가능
+
+판정 흐름:
+  1. Phase 2 형태소 필터 통과 (명사 2개+, TTR ≥ 0.3)
+  2. LLM 프롬프트: "이 적요만 보고 제3자가 거래 실질을 파악할 수 있는가?"
+  3. LLM 응답 → good / normal 재분류
+     - 5W1H 중 2개+ 충족 → good
+     - 미충족 → normal 유지
+
+호출 최적화:
+  - Phase 2 필터 통과 건만 LLM에 전달 (전체 대비 ~10~20%)
+  - 배치 프롬프트: 한 번에 50건씩 묶어 호출 → API 오버헤드 최소화
+```
+
+---
+
+### B. 새 피처 추가 — Phase 2 (`add_semantic_similarity`)
+
+**Stub 위치**: `src/feature/text_features.py` (no-op + logger.info)
+**호출 경로**: `add_all_text_features()` → 내부에서 호출 (현재 no-op)
+
+**목적**: 같은 gl_account 내에서 적요(description)가 이질적인 전표 탐지
+
+```
+입력: combined_text (line_text + header_text), gl_account (그룹화 키)
+출력: semantic_similarity (float, 0~1) — 그룹 내 코사인 유사도
+```
+
+**알고리즘**:
+1. kiwipiepy 형태소 분석 → 명사/동사 토큰화
+2. TF-IDF 벡터화 (sklearn TfidfVectorizer) → gl_account별 sparse matrix
+3. 각 전표 벡터 → 그룹 중심 벡터와 코사인 유사도 계산
+4. similarity < 0.3 → 이상 플래그
+
+**의존성**: `kiwipiepy` (dependency-groups: nlp)
+
+**edge case**:
+- gl_account별 n<10: 스킵 (신뢰도 부족)
+- 대량 전표(100만건): 배치 처리 + sparse matrix 활용
+
+**감사 관점**: 같은 계정인데 적요 패턴 급변 → 계정 오분류·위장거래 의심
+
+**Phase 2 추가 활용 — 은어/동의어 임베딩 매칭**:
+`add_semantic_similarity`의 벡터화 인프라를 활용해 **키워드 동의어 탐지**도 수행.
+Phase 1a의 `is_suspense_account`, `has_risk_keyword`는 정확한 키워드/정규식에만 반응하므로,
+의도적으로 우회하는 변형 표현을 못 잡음.
+
+```
+현재 한계: audit_rules.yaml에 "상품권"만 등록 → "기프트카드", "백화점티켓"은 미탐지
+Phase 2 보완: 임베딩 벡터 유사도로 "상품권과 85% 유사한 의미" → 자동 탐지
+```
+
+**구현 방향**:
+1. risk_keywords.yaml의 키워드 목록 → kiwipiepy + TF-IDF (또는 sentence embedding) 벡터화
+2. 전표 적요 → 동일 벡터 공간에 투영
+3. 코사인 유사도 > threshold → "등록된 키워드의 의미적 변형" 플래그
+- 예: "상품권" ↔ "기프트카드" (유사도 0.85), "가수금" ↔ "대표이사_개인대체" (유사도 0.72)
+
+---
+
+### C. 새 피처 추가 — Phase 3 (`add_semantic_anomaly`)
+
+**Stub 위치**: `src/feature/text_features.py` (no-op + logger.info)
+**호출 경로**: `add_all_text_features()` → 내부에서 호출 (현재 no-op)
+
+**목적**: Ollama(Qwen3-8B) LLM의 문맥 기반 이상 탐지
+
+```
+입력: combined_text, gl_account, debit/credit_amount, posting_date
+출력: semantic_anomaly (bool), semantic_anomaly_reason (str) — LLM 판단 이유
+```
+
+**구현 전략**:
+- **선별 투입**: 전체 전표가 아님 — Phase 1~2에서 플래그된 고위험 전표만 LLM 통과
+- **프롬프트**: 계정과목 + 금액 + 거래일 + 적요 → "문맥상 부자연스러운가?" 판정
+- **VRAM 관리**: Qwen3-8B Q4_K_M 단독 ~5GB (RTX 3070 Ti 8GB — 여유)
+- **Fail-safe**: Ollama 미실행 시 skip + warning (graceful degradation)
+
+**감사 관점**: 숫자·키워드로 못 잡는 문맥 불일치 탐지
+- 예1: "소프트웨어구입비" 계정 + "스타벅스 리저브 10잔" 적요 → 계정-적요 의미 충돌
+- 예2: "ZZ_Temp", "대표이사_개인대체" 같은 교묘한 가계정명 → LLM이 계정 성격을 추론하여 가계정 분류
+
+**`is_suspense_account` 고도화 연계**:
+Phase 1a의 `is_suspense_account`는 키워드 매칭 전용이므로, 의도적 우회(은어·변형)에 취약.
+Phase 3에서 LLM이 계정명의 **의미 자체**를 읽어 "이건 사실상 가계정이다"라고 추론하는 보완 레이어 추가.
+```
+Phase 1a: "가수금" 키워드 → 탐지 ✅ / "ZZ_Temp" → 미탐지 ❌
+Phase 3:  LLM("ZZ_Temp는 임시계정의 관행적 명명 패턴") → 탐지 ✅
+```
+
+---
+
+### D. Phase 1c Data Flywheel (audit_rules.yaml ↔ UI ↔ Profile)
+
+Phase 1c 대시보드에서 `config/audit_rules.yaml`의 업무 룰을 UI로 편집하고, 고객사 프로파일에 저장하는 순환 구조.
+
+```
+[config/audit_rules.yaml] ← 기본값 (K-IFRS 표준)
+        ↓ 로드
+[Streamlit UI] — 감사인이 고객사별 커스터마이징
+  ├── manual_source_codes: SAP→SA, Oracle→Manual, ...
+  ├── revenue_account_prefixes: 4 (+ 필요 시 9 추가)
+  ├── intercompany_identifiers: 관계사 코드 직접 입력
+  └── suspense_keywords: 고객사 특수 키워드 추가
+        ↓ 저장
+[data/profiles/customer_A.json] ← mapping_profile + audit_rules 통합
+        ↓ 다음 감사 시 자동 로드
+[config/audit_rules.yaml 대신 프로파일 우선 적용]
+```
+
+**UX 원칙** ([ux-flow.md → 3가지 원칙](ux-flow.md#3가지-ux-디자인-원칙)):
+- **스마트 디폴트**: 기본값만으로 분석 가능 (intercompany_identifiers만 빈 리스트)
+- **점진적 공개**: 기본 모드(디폴트 사용) / 전문가 모드(직접 편집)
+- **프로파일 재사용**: 결정 피로 해소 — "이번 설정은 내년 감사에 자동 적용"
+
+> 이 섹션은 [ux-flow.md → UX 2단계](ux-flow.md#ux-2단계-감사-룰-세팅--파생변수-생성-feature--엔진-구현-완료-ui-예정)의 상세 구현입니다.
+
+---
+
+### E. Phase 2 ML Pipeline과 피처의 관계
+
+Phase 2에서 feature 모듈이 생성한 18+1개 피처가 ML Pipeline의 입력이 된다.
+
+```
+[18개 파생변수 + semantic_similarity]
+        ↓
+sklearn ColumnTransformer
+  ├── 수치형: SimpleImputer(median) → StandardScaler (VAE/IF용, XGBoost는 불필요)
+  ├── 범주형: SimpleImputer(most_frequent) → TargetEncoder (gl_account 4000+ 대응)
+  └── 시간형: forward fill
+        ↓
+GridSearchCV로 최적 모델/파라미터 동시 선택
+  ├── XGBClassifier      — Tier 2 지도학습 (Phase 1 룰 결과 = pseudo-label)
+  ├── VAEDetector         — 비지도 이상탐지 (reconstruction error)
+  └── IsolationForest     — 비지도 이상탐지 (앙상블)
+```
+
+**핵심 결정**:
+- gl_account 고카디널리티(4000+) → OneHotEncoder 대신 **TargetEncoder** (cross-fitting)
+- Phase 1 룰 탐지 결과를 **pseudo-label**로 활용 → 별도 라벨링 비용 없음
+- VAE와 LLM(Phase 3) **순차 실행** — 동시 VRAM ~7GB, RTX 3070 Ti에서 위험
+
+---
+
+### F. 관련 참조 문서
+
+| 문서                                                               | 관련 내용                                  |
+|:-------------------------------------------------------------------|:-------------------------------------------|
+| [03a-preprocessing.md](03a-preprocessing.md)                       | EDA 프로파일링, ML Pipeline 전처리 전략    |
+| [AUDIT_DOMAIN_FINAL.md](../AUDIT_DOMAIN_FINAL.md)                  | 22→36→41개 유형 Tier 분류, 점수 체계       |
+| [08-llm.md](08-llm.md)                                            | Ollama, Vanna Text-to-SQL, Insight 생성    |
+| [ux-flow.md](ux-flow.md)                                          | UX 2단계, 스마트 디폴트, 프로파일 재사용   |
+| [config/audit_rules.yaml](../../config/audit_rules.yaml)           | 감사 업무 룰 (Data Flywheel 시작점)        |
+
+---
+
+### G. 미해결 이슈 (발견 → 해결 교차 참조)
+
+> 출처: [unit test-results](../../tests/test_feature/test-results/), [e2e-datasynth.md](../../tests/test_feature/test-results/e2e-datasynth.md), [e2e-sap-merged.md](../../tests/test_feature/test-results/e2e-sap-merged.md)
+
+| Phase | 모듈           | 문제                                  | 현상                                            | 해결 위치                                                                      |
+|:------|:---------------|:--------------------------------------|:------------------------------------------------|:-------------------------------------------------------------------------------|
+| ~~2~~ | ~~engine~~     | ~~FeatureResult 상세 로그~~           | ~~경고/스킵 사유 미기록~~                       | ✅ **해결됨** — `warnings` 필드 추가 완료                                      |
+| ~~1c~~ | ~~time_features~~ | ~~is_after_hours 날짜 경계~~       | ✅ **버그 아님** — `dt.hour` 기반 자정 걸침 정확 처리 확인 | —                                                                             |
+| 1c    | time_features  | fiscal_period_mismatch NaN (SAP)      | sap-merged에서 전체 NaN                         | [07-dashboard §미해결과제](07-dashboard.md#phase-1a에서-넘어온-미해결-과제-ux-1단계-잔여) |
+| 2     | amount_features| Z-score 소그룹 fallback 왜곡          | n<30 그룹이 전체 분포에 의존                    | [05-detection](05-detection.md) — Phase 2 ML 파이프라인에서 CoA 상위그룹 fallback |
+| 2     | amount_features| 외화 소수점 is_round_number           | float % 연산 정수값 전제                        | 자체 수정 — Decimal 연산 또는 통화별 소수점 설정                               |
+| ~~2~~ | ~~pattern_features~~| ~~is_suspense_account 대상 컬럼 제한~~ | ~~line_text + header_text만 (gl_account_name 미포함)~~ | ✅ **해결됨** — `_SUSPENSE_TEXT_COLS`에 `gl_account_name` 추가 완료 (Phase 2 스키마 확장 시 자동 반영) |
+| 2     | text_features  | description_quality 규칙 기반 한계    | 길이+패턴 정밀도 부족                           | 자체 수정 — [03a-preprocessing](03a-preprocessing.md) Entropy + TTR 도입       |
+| 2     | engine         | 순차 실행 성능                        | 대용량 시 병목                                  | 자체 수정 — concurrent.futures 병렬 실행 옵션                                  |
+| 2~3   | pattern + text | 은어/동의어 미탐지                    | 키워드 정확 매칭만 지원                         | [08-llm §미해결과제](08-llm.md#phase-1a에서-넘어온-미해결-과제-ux-1단계-잔여) — NLP 임베딩 유사도 |
+| 2~3   | text_features  | semantic stub 미구현                  | no-op 상태                                      | [08-llm §미해결과제](08-llm.md#phase-1a에서-넘어온-미해결-과제-ux-1단계-잔여) — Ollama 임베딩 연동 |

@@ -1,4 +1,4 @@
-# 02. 데이터 수집·평탄화 (Ingest)
+# 02. 데이터 수집·평탄화 (Ingest) [Phase 1a — 의존: 00, 01]
 
 ## 목적
 다양한 형태의 Excel/CSV 원본 전표 데이터를 읽어 표준 DataFrame으로 변환한다.
@@ -85,11 +85,12 @@ pre-plan 초안은 xlsx만 고려했으나, **10개 확장자 전체를 지원**
 
 ```
 src/ingest/
-├── models.py           # ReadResult dataclass (순환참조 방지용 별도 모듈)
+├── models.py           # ReadResult/SheetScore dataclass (순환참조 방지용 별도 모듈)
 ├── excel_reader.py     # xlsx/xls/xlsb → ReadResult
-├── text_reader.py      # csv/tsv/txt/dat → ReadResult (DataSynth CSV fast path)
+├── text_reader.py      # csv/tsv/txt/dat → ReadResult (인코딩 오버라이드 + confidence 지원)
 ├── parquet_reader.py   # parquet → ReadResult
-└── reader_api.py       # read_file() 퍼사드 — 확장자 기반 디스패치
+├── reader_api.py       # read_file() 퍼사드 — 확장자 기반 디스패치 + encoding_override
+└── sheet_scorer.py     # score_sheets() — 멀티시트 품질 스코어링 + 추천
 ```
 
 #### 설계 결정
@@ -120,9 +121,9 @@ ws.merged_cells.ranges 순회 → unmerge → 좌상단 값을 모든 셀에 복
 #### text_reader.py
 
 **구현할 것:**
-- `_detect_encoding(path)`: charset_normalizer 64KB 샘플링
+- `_detect_encoding(path)` → `tuple[str, float | None]`: charset_normalizer 64KB 샘플링 + confidence(1-chaos) 반환
 - `_detect_separator(path, encoding)`: csv.Sniffer로 구분자 감지, 실패 시 확장자 폴백
-- `read_text(path)`: `pd.read_csv(path, sep, encoding, header=None, dtype=str)`
+- `read_text(path, *, encoding_override=None)`: 수동 인코딩 지정 시 자동 감지 스킵
 - `sheets=["Sheet1"]`로 정규화하여 다운스트림 호환
 
 #### parquet_reader.py
@@ -134,7 +135,8 @@ ws.merged_cells.ranges 순회 → unmerge → 좌상단 값을 모든 셀에 복
 #### reader_api.py (퍼사드)
 
 **구현할 것:**
-- `read_file(path) -> ReadResult`: 확장자 기반 디스패치
+- `read_file(path, *, encoding_override=None) -> ReadResult`: 확장자 기반 디스패치
+- 텍스트 파일일 때만 `encoding_override`를 text_reader에 전달 (Excel/Parquet은 무시)
 - 미지원 확장자 → `ValueError` (정상적으로는 file_validator에서 이미 걸림)
 
 **테스트:** [24개 통과](../../tests/test_ingest/test-results/ingest-file-reader.md) (excel 8 + text 7 + parquet 3 + reader_api 6)
@@ -376,6 +378,75 @@ data/profiles/
 | LLM 기반 매핑 보조                                      | Phase 3               |
 | PDF/HWP 데이터 추출                                     | 범위 외 (별도 프로젝트) |
 
+### Phase 3 LLM 업그레이드 — Ingest 모듈
+
+Phase 1a에서 규칙 기반으로 구현한 부분 중, Phase 3에서 LLM을 붙이면 정확도가 올라가는 항목.
+
+#### 1. 지능형 컬럼 매핑 보조 (`column_mapper.py`)
+
+**현재 한계**: RapidFuzz 문자열 유사도 + 타입 호환성 검증으로도 매핑 안 되는 완전히 생소한 컬럼명(예: "필드1", "COL_A")은 사용자 수동 매핑 필요.
+
+**LLM 보완**: 데이터 샘플(상위 10행)을 LLM에 던져 컬럼의 정체를 추론.
+- 예: 컬럼명 "필드1" → 데이터 ["2025-01-01", "2025-01-02"] → LLM "posting_date일 확률 95%" 제안
+- 예: 컬럼명 "COL_A" → 데이터 ["SA", "RE", "AB"] → LLM "document_type 추론" 제안
+- `ReviewItem(action="review")` 형태로 기존 투명성 레이어에 통합
+
+#### 2. 중복 금액 의미 판별 (`_suggest_amount_split`)
+
+**현재 한계**: 인접 위치 + "금액" 키워드 패턴 매칭만으로 차변/대변 추천. 비인접이거나 컬럼명에 "금액"이 없으면 미탐.
+
+**LLM 보완**: 컬럼 내용물(양수/음수 분포, 합계 대칭성)을 LLM이 읽고 차변/대변 의미를 직접 판별.
+- 예: "항목1", "항목2" 컬럼인데 데이터가 [10000, 0], [0, 5000] 패턴 → LLM "차변/대변 쌍" 추론
+
+#### 3. 시트 내용 분류 (`sheet_scorer.py`)
+
+**현재 한계**: 행·열·헤더 가중합 스코어링. 메모 시트에 행이 많으면 오탐 가능.
+
+**LLM 보완**: 시트 상위 5행을 LLM에 던져 "데이터 시트 vs 메모/표지/요약 시트" 의미 분류.
+- **우선순위 낮음** — 현재 가중합 스코어링이 실무 충분. 오탐 빈도 보고 판단.
+
+#### 4. 하이브리드 타입 캐스팅 (`type_caster.py`) — 우선순위 2
+
+**현재 한계**: 5단계 폴백으로도 변환 불가한 악의적/비정형 입력값.
+
+**LLM 보완**: 규칙 엔진 실패분(NaN)만 배치로 LLM에 전달하여 복구.
+- 예: "25년 2월 말일" → "2025-02-28", "1만 5천불" → "15000.00"
+- `CastingResult.warnings`에 실패 목록 이미 존재 → 입력 파이프 추가 비용 낮음
+
+#### 5. 에러 복구 자연어 가이드 (`file_validator.py` + pipeline) — 우선순위 1
+
+**현재 한계**: FAILED 상태에서 시스템적 에러 텍스트만 노출.
+
+**LLM 보완**: `ValidationResult.errors`를 LLM에 1회 전달 → 행동 지향적 한국어 가이드 생성.
+- 파이프라인당 최대 1회 호출, 빈출 에러 캐싱 가능 → 부하 최소
+- 예: "필수 컬럼 posting_date 누락" → "전표일자에 해당하는 컬럼을 매핑하십시오. '일자', '날짜' 등의 이름을 가진 컬럼이 있는지 확인하십시오."
+
+#### 6. ReviewItem reason 자연어 렌더링 (`column_mapper.py`) — 우선순위 3
+
+**현재 한계**: "TypeCompat fail: str != float" 같은 기계적 사유.
+
+**LLM 보완**: review/blocked `ReviewItem`만 선별하여 배치 1회로 자연어 변환.
+- 대상 5개 내외, 1회 호출로 완료
+- 예: "TypeCompat fail: str != float" → "이 컬럼은 텍스트인데 숫자가 필요합니다. 데이터를 확인해 주세요."
+
+#### LLM 업그레이드 우선순위 요약
+
+| 순위 | 항목                          | 대상 모듈              | LLM 호출 빈도    | 기대 효과          |
+|------|-------------------------------|------------------------|-------------------|--------------------|
+| 1    | 에러 복구 자연어 가이드       | file_validator+pipeline | 파이프라인당 1회  | UX 품질 대폭 향상  |
+| 2    | 하이브리드 타입 캐스팅        | type_caster             | NaN 건수 배치 1회 | 데이터 복구율 향상  |
+| 2    | 지능형 컬럼 매핑 보조 (기존1) | column_mapper           | 미매핑 건수만     | 수동 매핑 감소     |
+| 2    | 중복 금액 의미 판별 (기존2)   | column_mapper           | 후보 쌍당 1회     | 차변/대변 자동 판별 |
+| 3    | ReviewItem 자연어 렌더링      | column_mapper           | 배치 1회          | 리뷰 가독성 향상   |
+| 3    | 시트 내용 분류 (기존3)        | sheet_scorer            | 시트당 1회        | 오탐 감소 (낮음)   |
+
+#### LLM 불필요 확정 항목
+
+| 기능                    | 사유                                                    |
+|------------------------|--------------------------------------------------------|
+| 인코딩 감지/오버라이드  | charset_normalizer + UI 드롭다운으로 충분. LLM은 바이트 스트림 판별 불가 |
+| Fuzzy threshold 조정    | UI 슬라이더로 해결. 수치 튜닝에 LLM 불필요               |
+
 ---
 
 ## 대용량 파일 처리 전략 (Phase별 로드맵)
@@ -387,7 +458,7 @@ data/profiles/
 
 - TEXT 카테고리 500MB → **800MB** (`file_categories.py` 1줄)
 - 16GB RAM에서 800MB CSV → pandas ~5GB → Streamlit/OS 제외 여유 충분
-- 80% 경고(640MB+)에 "기간을 좁혀 추출하면 처리 속도가 향상됩니다" 안내 추가
+- 80% 경고(640MB+)에 "추출 기간을 좁히면 처리 성능을 개선할 수 있음" 안내 추가
 - **판단 근거**: 1GB는 Phase 2/3에서 Ollama(3~5GB) + detection 동시 실행 시 OOM 위험
 
 ### Phase 1b (DuckDB 도입 시) — 적재 시점 최적화
@@ -415,12 +486,13 @@ data/profiles/
 - **file_categories:** 모든 확장자→올바른 카테고리, 미지원→None ✅ 32 passed
 - **file_validator:** 정상/손상/빈/초과/PDF거부 등 카테고리별 ✅ 32 passed
 - **excel_reader:** 단일/멀티 시트, 빈 시트, 병합셀 해제+값복제, xls/xlsb ✅ 24 passed (reader 전체)
-- **text_reader:** UTF-8, CP949, BOM, TSV 구분자 자동감지, dtype=str 검증 ✅ (위 24에 포함)
+- **text_reader:** UTF-8, CP949, BOM, TSV 구분자 자동감지, dtype=str, 인코딩 오버라이드, confidence 반환 ✅ (위에 포함)
 - **parquet_reader:** 기본 읽기, 타입 보존 ✅ (위 24에 포함)
 - **reader_api:** 확장자별 디스패치, 미지원 확장자 ValueError ✅ (위 24에 포함)
 - **header_detector:** 1행/3행/병합셀 헤더 + 구조적 스코어링(v2) + 메시지 분기 ✅ 20 passed
-- **column_mapper:** exact/fuzzy + 타입 호환성 검증(v2) + ReviewItem + dc_indicator ✅ 38 passed
+- **column_mapper:** exact/fuzzy + 타입 호환성 검증(v2) + ReviewItem + dc_indicator + 금액 퀵픽스 ✅ 45 passed
 - **type_caster:** 금액/날짜/정수/문자열/불리언 캐스팅 + Null 3단계 분기(v2) ✅ 44 passed
+- **sheet_scorer:** 단일시트, 멀티시트 순위, 빈 시트, 동점, 헤더 가중치 ✅ 8 passed
 - **mapping_profile:** fingerprint, save/load/list/delete, 통합 ✅ 26 passed
 - **text_reader:** ascii→latin-1 폴백(v2)으로 bpi2019(527MB, latin-1) 읽기 성공
 - **validation 데이터셋:** 5종 전체 파이프라인 통과 (bpi2019 포함) ✅ 6 passed → [결과](../../tests/test_ingest/test-results/ingest-validation-datasets.md)
@@ -477,17 +549,33 @@ def validate_file(path: Path | str) -> ValidationResult: ...
 ```python
 @dataclass
 class ReadResult:
-    sheets: list[str]              # CSV/parquet: ["Sheet1"]로 정규화
+    sheets: list[str]                        # CSV/parquet: ["Sheet1"]로 정규화
     active_sheet: str
     raw_data: dict[str, DataFrame]
-    encoding: str | None = None    # 텍스트만 해당
-    source_format: str = ""        # "xlsx" | "csv" | "parquet" 등
+    encoding: str | None = None              # 텍스트만 해당
+    encoding_confidence: float | None = None # 인코딩 감지 신뢰도 (1-chaos, 0~1)
+    source_format: str = ""                  # "xlsx" | "csv" | "parquet" 등
+
+@dataclass
+class SheetScore:
+    sheet_name: str
+    row_count: int            # 빈 행 제외 실제 행 수
+    col_count: int            # 비어있지 않은 열 수
+    header_confidence: float  # header_detector 신뢰도
+    total_score: float        # 가중 합산 (행 0.3 + 열 0.2 + 헤더 0.5)
+    recommended: bool         # 최고 점수 여부
 ```
 
 ### reader_api.py
 ```python
-def read_file(path: Path) -> ReadResult:
-    """확장자 기반 디스패치. Raises ValueError(미지원), IOError(읽기 실패)."""
+def read_file(path: Path, *, encoding_override: str | None = None) -> ReadResult:
+    """확장자 기반 디스패치. 텍스트 파일만 encoding_override 전달."""
+```
+
+### sheet_scorer.py
+```python
+def score_sheets(read_result: ReadResult, header_results: dict[str, HeaderDetectionResult]) -> list[SheetScore]:
+    """시트별 품질 스코어 → 내림차순 정렬, 최고 점수 1개 recommended=True."""
 ```
 
 ### excel_reader.py
@@ -498,8 +586,8 @@ def read_excel(path: Path) -> ReadResult:
 
 ### text_reader.py
 ```python
-def read_text(path: Path) -> ReadResult:
-    """csv/tsv/txt/dat 인코딩·구분자 자동 감지, dtype=str."""
+def read_text(path: Path, *, encoding_override: str | None = None) -> ReadResult:
+    """csv/tsv/txt/dat 인코딩·구분자 자동 감지, dtype=str. 수동 인코딩 오버라이드 지원."""
 ```
 
 ### parquet_reader.py
@@ -574,6 +662,9 @@ def delete_profile(fingerprint: str) -> bool: ...
 
 ## UX 1단계: 데이터 수집 투명성 (Phase 1a 구현 완료)
 
+> **UX 전체 흐름**: [ux-flow.md](ux-flow.md) 참조 (본 섹션은 UX 1단계 상세 구현)
+> **UX 디자인 원칙**: [ux-flow.md → 3가지 원칙](ux-flow.md#3가지-ux-디자인-원칙) (스마트 디폴트 / 점진적 공개 / 프로파일 재사용)
+
 사용자가 데이터를 넣으면 AI가 자동 처리하고, 애매한 부분만 사용자에게 위임하며,
 모든 판단 근거를 투명하게 노출하는 UX 모델. Phase 1c UI의 데이터 기반.
 
@@ -582,7 +673,7 @@ def delete_profile(fingerprint: str) -> bool: ...
 | 원칙                 | 구현                                                              |
 |:---------------------|:------------------------------------------------------------------|
 | 80/20 자동화         | 확신 높은 80%는 auto, 나머지 20%는 review로 분류                  |
-| 블랙박스 공포증 해소 | ReviewItem에 reason(판단 근거) + confidence(신뢰도) 노출          |
+| 판단 투명성 확보 | ReviewItem에 reason(판단 근거) + confidence(신뢰도) 노출          |
 | 3-tier 시각 피드백   | 확정(초록, auto) / 추천(노랑, review) / 차단(빨강, blocked)       |
 | 구조적 판단          | 키워드 미등록 데이터도 타입 다양성/고유값/null 밀도로 헤더 판별   |
 | 타입 안전            | fuzzy 매칭 후보의 소스↔스키마 타입 비호환 시 자동 차단            |
@@ -641,3 +732,57 @@ class IngestState(str, Enum):
 - **FAILED**: 에러 메시지 표시 → 다른 파일 업로드 유도
 
 > Phase 1c 구현 시 구체화 예정. 현재는 개념 정의만 기록.
+
+### Phase 1c UI 스펙 — 피드백 반영 (4건)
+
+#### UI-1. 인코딩 수동 오버라이드 드롭다운
+
+- **트리거**: `ReadResult.encoding_confidence < 0.7` 시 자동 노출
+- **옵션**: UTF-8, CP949, EUC-KR, Shift_JIS, Latin-1, 직접 입력
+- **동작**: 선택 시 `read_file(path, encoding_override="cp949")` 재호출
+- **백엔드**: `text_reader.read_text(encoding_override=)`, `ReadResult.encoding_confidence` (1-chaos 기반)
+- **Why**: 한국 ERP 덤프에서 CP949/EUC-KR 오인 실제 발생
+
+#### UI-2. 시트 선택 UI (SheetScore 테이블)
+
+- **트리거**: 멀티시트 Excel 업로드 시 항상 노출
+- **표시**: 시트별 행 수, 열 수, 헤더 신뢰도, 총점 테이블
+- **pre-select**: `SheetScore.recommended=True`인 시트 자동 선택
+- **동작**: 사용자 시트 변경 시 해당 시트로 파이프라인 재실행
+- **백엔드**: `sheet_scorer.score_sheets()`, `SheetScore` dataclass
+- **가중치**: 행 수(0.3) + 열 수(0.2) + 헤더 신뢰도(0.5)
+- **Why**: 메모/표지 시트 오탐 방지 — 실무 Excel 80%가 멀티시트
+
+#### UI-3. Fuzzy threshold 슬라이더
+
+- **위치**: 매핑 확인 UI 상단
+- **범위**: 30~70 (기본 40, `settings.fuzzy_low_threshold`)
+- **동작**: 슬라이더 변경 시 `auto_map_columns(settings_override={"fuzzy_low_threshold": val})` 재호출
+- **표시**: suggestions↔unmapped 경계 실시간 변경
+- **백엔드**: 이미 구현됨 (`settings_override` 파라미터)
+- **Why**: ERP별로 컬럼명 유사도 분포가 달라 고정 threshold 비적합
+
+#### UI-4. 중복 금액 퀵픽스 버튼
+
+- **트리거**: `_suggest_amount_split()`이 ReviewItem 2건 생성 시
+- **표시**: "인접 '금액' 2개 감지 → 차변/대변으로 분리?" + [수락] 버튼
+- **동작**: 수락 시 `mapping["금액"] = "debit_amount"`, `mapping["금액_2"] = "credit_amount"` 적용
+- **미수락 시**: suggestions로 유지, 사용자 수동 매핑
+- **백엔드**: `column_mapper._suggest_amount_split()`, `ReviewItem(action="review")`
+- **Why**: ERP 덤프에서 인접 "금액" 2개 = 차변/대변 패턴 실무적으로 타당
+
+---
+
+### 미해결 이슈 (발견 → 해결 교차 참조)
+
+> 출처: [ingest-column-mapper.md](../../tests/test_ingest/test-results/ingest-column-mapper.md), [ingest-validation-datasets.md](../../tests/test_ingest/test-results/ingest-validation-datasets.md), [e2e-sap-merged.md](../../tests/test_feature/test-results/e2e-sap-merged.md)
+
+| Phase | 문제                         | 현상                                                              | 해결 위치                                                                 |
+|:------|:-----------------------------|:------------------------------------------------------------------|:--------------------------------------------------------------------------|
+| 1c    | Fuzzy 추천 부정확            | monat→debit_amount 등 오추천                                      | [07-dashboard §미해결과제](07-dashboard.md#phase-1a에서-넘어온-미해결-과제-ux-1단계-잔여) — ReviewItem UI |
+| 1c    | 차단 vs unmapped 미구분      | ReviewItem에서 타입 차단 사유 미표시                               | [07-dashboard §미해결과제](07-dashboard.md#phase-1a에서-넘어온-미해결-과제-ux-1단계-잔여) — ReviewItem.reason 세분화 |
+| 1c    | Parquet 헤더 탐지 스킵       | Parquet도 불필요한 헤더 탐지 시도                                  | [07-dashboard §미해결과제](07-dashboard.md#phase-1a에서-넘어온-미해결-과제-ux-1단계-잔여) — 오케스트레이터 분기 |
+| 1c    | 멀티시트 UI 선택             | active_sheet가 데이터 양 무관                                      | [07-dashboard §미해결과제](07-dashboard.md#phase-1a에서-넘어온-미해결-과제-ux-1단계-잔여) — data_uploader UI |
+| 1c    | fiscal_period_mismatch NaN   | sap-merged에서 전체 NaN 출력                                       | [07-dashboard §미해결과제](07-dashboard.md#phase-1a에서-넘어온-미해결-과제-ux-1단계-잔여) — 매핑 리뷰 UI에서 원인 확인 |
+| 1c    | sap-merged debit/credit 미매핑 | amount 카테고리 전체 스킵                                        | [07-dashboard §미해결과제](07-dashboard.md#phase-1a에서-넘어온-미해결-과제-ux-1단계-잔여) — 수동 매핑 조정 |
+| 1c~3  | 데이터셋 필수 컬럼 미매핑    | bpi2019 등 8개 필수 컬럼 미매핑                                    | Fuzzy 정확도 개선 + 매핑 프로파일 누적                                    |

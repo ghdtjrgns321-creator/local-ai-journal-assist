@@ -1,4 +1,4 @@
-# 07. Streamlit 대시보드
+# 07. Streamlit 대시보드 [Phase 1c — 의존: 06]
 
 ## 목적
 DuckDB에 적재된 감사 분석 결과를 5개 탭으로 시각화한다.
@@ -193,20 +193,41 @@ data_uploader → AuditPipeline.run(file)
 | Tab 4: Chat (Vanna)            | Phase 3        |
 | Tab 5: Export                   | Phase 3        |
 
-## Phase 1a에서 넘어온 미해결 과제 (UX 1단계 잔여)
+## UX 디자인 원칙 (Phase 1c 필수 적용)
 
-Phase 1a ingest 개선(D016) 시 발견되었으나 UI가 필요하여 Phase 1c로 이관된 항목.
-구현 시 함께 해결할 것.
+> 상세: [ux-flow.md → 3가지 UX 디자인 원칙](ux-flow.md#3가지-ux-디자인-원칙)
 
-| 과제                       | 현상                                            | 해결 방향                                          |
-|:---------------------------|:------------------------------------------------|:---------------------------------------------------|
-| Parquet 헤더 탐지 스킵     | Parquet도 불필요한 헤더 탐지 시도               | 오케스트레이터에서 `source_format` 분기             |
-| 멀티시트 UI 선택           | `active_sheet`가 데이터 양과 무관한 시트일 수 있음 | 시트 목록 + 행 수 표시 → 사용자 선택               |
-| Fuzzy 추천 부정확          | monat→debit_amount 등 잘못된 추천               | ReviewItem UI에서 사용자 확인/변경 → 프로파일 저장  |
-| 매핑 프로파일 학습         | 같은 구조 파일 반복 업로드 시 매번 매핑          | 프로파일 우선 적용 → 사용자 검토 0건 목표           |
-| ReviewItem UI 노출         | 판단 근거 데이터는 준비됨 (action/reason/conf)  | 3-tier 시각 피드백(초록/노랑/빨강) 구현             |
+대시보드 구현 시 **감사 도구의 두 가지 상충 요구**(통제 요구 vs 간결성 요구)를 충족하는 3원칙:
 
-> 상세: [02-ingest.md → UX 1단계](02-ingest.md#ux-1단계-데이터-수집-투명성-phase-1a-구현-완료)
+| 원칙                                    | 대시보드 적용                                                                |
+|:----------------------------------------|:----------------------------------------------------------------------------|
+| **1. 스마트 디폴트 (Smart Defaults)**   | 모든 설정에 업계 표준 기본값 → [다음]만 눌러도 분석 가능                     |
+| **2. 점진적 공개 (Progressive Disclosure)** | 기본 모드(업로드+시트+매핑) / 전문가 모드(⚙️ 접이식 Accordion)          |
+| **3. 프로파일 재사용 (One-Time Setup)**  | 고객사별 설정 프로파일 저장 → 이후 감사 시 자동 로드                         |
+
+**구현 가이드:**
+- `data_uploader.py`: confidence ≥ 0.7이면 인코딩 드롭다운 숨김 (점진적 공개)
+- `filters.py`: 감사 기준 상세 설정은 `st.expander("⚙️ 감사 기준 상세 설정", expanded=False)` 안에 배치
+- `app.py`: 화면 상단에 프로파일 저장/로드 UI 노출 (mapping_profile + audit_rules)
+
+---
+
+## 미해결 이슈 (Phase 1c에서 해결 — 발견 위치 교차 참조)
+
+Phase 1a ingest/feature에서 발견되었으나 UI가 필요하여 Phase 1c로 이관된 항목.
+
+| 과제                            | 현상                                               | 해결 방향                                    | 발견 위치                                                    |
+|:--------------------------------|:---------------------------------------------------|:---------------------------------------------|:-------------------------------------------------------------|
+| Parquet 헤더 탐지 스킵          | 불필요한 헤더 탐지 시도                            | 오케스트레이터 `source_format` 분기          | [02-ingest §미해결](02-ingest.md#미해결-이슈-발견--해결-교차-참조) |
+| 멀티시트 UI 선택                | active_sheet가 데이터 양 무관                      | 시트 목록 + 행 수 → 사용자 선택              | [02-ingest §미해결](02-ingest.md#미해결-이슈-발견--해결-교차-참조) |
+| Fuzzy 추천 부정확               | monat→debit_amount 등 오추천                       | ReviewItem UI 확인/변경 → 프로파일 저장      | [02-ingest §미해결](02-ingest.md#미해결-이슈-발견--해결-교차-참조) |
+| 매핑 프로파일 학습              | 반복 업로드 시 매번 매핑                           | 프로파일 우선 적용                           | [02-ingest §미해결](02-ingest.md#미해결-이슈-발견--해결-교차-참조) |
+| ReviewItem UI 노출              | 판단 근거 데이터 준비됨, UI 미구현                 | 3-tier 시각 피드백(초록/노랑/빨강)           | [02-ingest §미해결](02-ingest.md#미해결-이슈-발견--해결-교차-참조) |
+| 차단 vs unmapped 미구분         | 타입 차단 사유 미표시                              | ReviewItem.reason 세분화                     | [02-ingest §미해결](02-ingest.md#미해결-이슈-발견--해결-교차-참조) |
+| ~~is_after_hours 날짜 경계~~    | ✅ **버그 아님** — `dt.hour` 기반 자정 걸침 정확 처리 확인 | —                                            | [03-feature §G](03-feature.md#g-미해결-이슈-발견--해결-교차-참조) |
+| fiscal_period_mismatch NaN(SAP) | sap-merged에서 전체 NaN                            | 매핑 리뷰 UI에서 원인 규명                   | [e2e-sap-merged.md §3](../../tests/test_feature/test-results/e2e-sap-merged.md) |
+| sap-merged debit/credit 미매핑  | amount 카테고리 전체 스킵 (5개 피처 미생성)        | 수동 매핑 조정                               | [e2e-sap-merged.md §3](../../tests/test_feature/test-results/e2e-sap-merged.md) |
+| schreyer-fraud gl_account 오매핑 | 캐스팅 후 결측률 100%                             | 타입 호환성 재확인                           | [ingest-validation-datasets.md](../../tests/test_ingest/test-results/ingest-validation-datasets.md) |
 
 ---
 
