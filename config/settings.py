@@ -70,12 +70,30 @@ class AuditSettings(BaseSettings):
     # --- 매핑 프로파일 관련 ---
     profile_dir: str = "data/profiles"    # 프로파일 저장 디렉토리
 
+    # --- ML Pipeline (Phase 2) ---
+    vae_latent_dim: int = 32
+    vae_epochs: int = 50
+    vae_batch_size: int = 256
+    if_contamination: float = 0.01          # IsolationForest
+    cv_folds: int = 5
+    cv_scoring: str = "f1_macro"
+
     # --- DB ---
     duckdb_path: str = "data/audit.duckdb"
 
     # --- LLM (Phase 3) ---
     ollama_model: str = "qwen3:8b"
     ollama_base_url: str = "http://localhost:11434"
+    ollama_keep_alive: str = "5m"          # 모델 자동 언로드 시간
+    ollama_temperature: float = 0.1        # 감사 분석은 정확성 우선 → 낮은 temperature
+
+    # --- 전처리 판정 기준 (Heuristics) ---
+    heuristic_skewness_threshold: float = 2.0      # |skewness| 초과 시 고왜도 판정 (imputer 분기)
+    heuristic_log_skewness_threshold: float = 3.0  # |skewness| 초과 시 log 변환 권장 (outlier 분기)
+    heuristic_outlier_rate_threshold: float = 0.10  # outlier_rate 초과 시 다수 이상치
+    heuristic_high_cardinality_threshold: int = 50  # cardinality 초과 시 고카디널리티
+    heuristic_imbalance_threshold: float = 0.05     # 레이블 비율 미만 시 불균형 판정
+    heuristic_missing_rate_threshold: float = 0.10  # missing_rate 초과 시 고결측 판정
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -7,11 +7,15 @@
 ## 관련 파일
 ```
 src/llm/
-├── ollama_client.py       # Ollama API 클라이언트
-├── text_to_sql.py         # 하이브리드 Text-to-SQL (Vanna + 템플릿 폴백)
-├── sql_validator.py       # 생성 SQL 검증
-├── prompt_presets.py      # 감사 프롬프트 프리셋 6종
-└── insight_generator.py   # 결과 해석 자연어 생성
+├── __init__.py                # 퍼블릭 API (lazy import)
+├── ollama_client.py           # ✅ Ollama API 래퍼 (format=JSON Schema 지원)
+├── models.py                  # ✅ Pydantic 응답 스키마 (StrEnum + ModelGroupStrategy)
+├── prompt_templates.py        # ✅ EDAProfile → 프롬프트 변환 (heuristic_* 참조)
+├── preprocessing_advisor.py   # ✅ LLM 전처리 제안 오케스트레이터
+├── text_to_sql.py             # ⬜ 하이브리드 Text-to-SQL (Vanna + 템플릿 폴백)
+├── sql_validator.py           # ⬜ 생성 SQL 검증
+├── prompt_presets.py          # ⬜ 감사 프롬프트 프리셋 6종
+└── insight_generator.py       # ⬜ 결과 해석 자연어 생성
 ```
 
 ## 핵심 클래스/함수
