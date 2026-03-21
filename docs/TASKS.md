@@ -62,16 +62,38 @@
 
 ## Phase 2: Core AI (ML 모델 + 16개 추가 유형)
 
+### Phase 2a: ML 전처리 파이프라인
+
+| 태스크                       | 파일                                         | 가이드                                              | 상태 |
+|------------------------------|----------------------------------------------|-----------------------------------------------------|------|
+| 피처 그룹 분류               | `src/preprocessing/feature_groups.py`        | [03a-preprocessing](pre-plan/03a-preprocessing.md)  | ⬜   |
+| 커스텀 트랜스포머            | `src/preprocessing/transformers.py`          | [03a-preprocessing](pre-plan/03a-preprocessing.md)  | ⬜   |
+| 파이프라인 빌더              | `src/preprocessing/pipeline_builder.py`      | [03a-preprocessing](pre-plan/03a-preprocessing.md)  | ⬜   |
+| 라벨 전략 (자동 모드 전환)   | `src/preprocessing/label_strategy.py`        | [03a-preprocessing](pre-plan/03a-preprocessing.md)  | ⬜   |
+| CV 셀렉터                   | `src/preprocessing/cv_selector.py`           | [03a-preprocessing](pre-plan/03a-preprocessing.md)  | ⬜   |
+| VAE 래퍼 + 모델             | `src/preprocessing/vae_wrapper.py`, `vae_model.py` | [03a-preprocessing](pre-plan/03a-preprocessing.md) | ⬜   |
+| 모델 레지스트리              | `src/preprocessing/model_registry.py`        | [03a-preprocessing](pre-plan/03a-preprocessing.md)  | ⬜   |
+| 전처리 투명성                | `src/preprocessing/transparency.py`          | [03a-preprocessing](pre-plan/03a-preprocessing.md)  | ⬜   |
+| 단위 테스트 (preprocessing)  | `tests/test_preprocessing/`                  | 03a-preprocessing "테스트 전략"                     | ⬜   |
+
+### Phase 2b: ML 탐지기
+
 | 태스크                       | 파일                                       | 가이드                                    | 상태 |
 |------------------------------|--------------------------------------------|------------------------------------------|------|
-| GridSearchCV 지도학습        | `src/detection/supervised_detector.py`     | [05-detection](pre-plan/05-detection.md) | ⬜   |
-| VAE + IF 앙상블              | `src/detection/vae_detector.py`            | [05-detection](pre-plan/05-detection.md) | ⬜   |
-| DuplicateDetector            | `src/detection/duplicate_detector.py`      | [05-detection](pre-plan/05-detection.md) | ⬜   |
-| 시계열 분석                  | `src/detection/timeseries_detector.py`     | [05-detection](pre-plan/05-detection.md) | ⬜   |
-| 내부거래 매칭                | `src/detection/intercompany_matcher.py`    | [05-detection](pre-plan/05-detection.md) | ⬜   |
+| SupervisedDetector           | `src/detection/supervised_detector.py`     | [05-detection](pre-plan/05-detection.md) | ⬜   |
+| VAEDetector + IF 앙상블      | `src/detection/vae_detector.py`            | [05-detection](pre-plan/05-detection.md) | ⬜   |
 | score_aggregator 5트랙 확장  | `src/detection/score_aggregator.py`        | [05-detection](pre-plan/05-detection.md) | ⬜   |
 | L3 통계 검증                 | `src/validation/statistical_validator.py`  | [04-validation](pre-plan/04-validation.md) | ⬜   |
 | SHAP 시각화                  | `dashboard/tab_explorer.py`                | [07-dashboard](pre-plan/07-dashboard.md) | ⬜   |
+| 단위 테스트 (ML detection)   | `tests/test_detection/test_ml_*.py`        | 05-detection "테스트 전략"               | ⬜   |
+
+### Phase 2c: 추가 탐지기 (별도 계획)
+
+| 태스크                       | 파일                                       | 가이드                                    | 상태 |
+|------------------------------|--------------------------------------------|------------------------------------------|------|
+| DuplicateDetector            | `src/detection/duplicate_detector.py`      | [05-detection](pre-plan/05-detection.md) | ⬜   |
+| 시계열 분석                  | `src/detection/timeseries_detector.py`     | [05-detection](pre-plan/05-detection.md) | ⬜   |
+| 내부거래 매칭                | `src/detection/intercompany_matcher.py`    | [05-detection](pre-plan/05-detection.md) | ⬜   |
 
 ---
 

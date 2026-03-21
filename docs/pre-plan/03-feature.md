@@ -31,7 +31,7 @@ engine.generate_all_features(df, settings)
 ### engine.py — ✅ 구현 완료 (14 tests passed)
 
 4개 서브모듈을 순서대로 호출하여 18개 파생변수를 일괄 생성하는 오케스트레이터.
-[테스트 결과](../../tests/test_feature/test-results/engine-test-results.md)
+[테스트 결과](../../tests/test_feature/test-results/feature-test-summary.md#5-엔진-오케스트레이터-14-cases)
 
 ```
 src/feature/
@@ -71,7 +71,7 @@ src/feature/
 | fiscal_period_mismatch — 비표준 회계연도       | `(month - fiscal_year_start) % 12 + 1` modulo 연산            |
 | fiscal_period_mismatch — NaN 함정              | 결측치 마스크 → pd.NA 덮어씌움 (오탐 방지), dtype=boolean      |
 
-**테스트**: [test_time_features.py](../../tests/test_feature/test_time_features.py) — 49 케이스 | [테스트 결과](../../tests/test_feature/test-results/time-features.md)
+**테스트**: [test_time_features.py](../../tests/test_feature/test_time_features.py) — 49 케이스 | [테스트 결과](../../tests/test_feature/test-results/feature-test-summary.md#time_features-49-cases)
 
 ---
 
@@ -103,7 +103,7 @@ src/feature/
 | float % 연산 안전성                      | ingest에서 정수값 보장 → 안전. 외화 소수점은 Phase 2 round() 전처리 예정    |
 | gl_account 컬럼 누락                     | zscore NaN + warning 로깅 (에러 미발생)                                     |
 
-**테스트**: [test_amount_features.py](../../tests/test_feature/test_amount_features.py) — 27 케이스 | [테스트 결과](../../tests/test_feature/test-results/amount-features.md)
+**테스트**: [test_amount_features.py](../../tests/test_feature/test_amount_features.py) — 27 케이스 | [테스트 결과](../../tests/test_feature/test-results/feature-test-summary.md#amount_features-27-cases)
 
 ---
 
@@ -133,7 +133,7 @@ src/feature/
 | 정규식 키워드 안전성                           | `re.compile` 실패 시 `re.escape()` 폴백 + warning                          |
 | 함수 인자 vs settings 직접 참조                | 함수 인자로 받기 (테스트 용이, engine.py에서 audit_rules 주입)              |
 
-**테스트**: [test_pattern_features.py](../../tests/test_feature/test_pattern_features.py) — 42 케이스 | [테스트 결과](../../tests/test_feature/test-results/pattern-features.md)
+**테스트**: [test_pattern_features.py](../../tests/test_feature/test_pattern_features.py) — 42 케이스 | [테스트 결과](../../tests/test_feature/test-results/feature-test-summary.md#pattern_features-42-cases)
 
 ---
 
@@ -158,7 +158,7 @@ src/feature/
 | description_quality 등급           | NaN→missing, noise→poor, len<min_length→poor, else→normal (3단계)            |
 | Phase 2/3 stubs                   | `add_semantic_similarity`, `add_semantic_anomaly` — no-op + logger.info      |
 
-**테스트**: [test_text_features.py](../../tests/test_feature/test_text_features.py) — 38 케이스 | [테스트 결과](../../tests/test_feature/test-results/text-features.md)
+**테스트**: [test_text_features.py](../../tests/test_feature/test_text_features.py) — 38 케이스 | [테스트 결과](../../tests/test_feature/test-results/feature-test-summary.md#text_features-38-cases)
 
 #### Phase 2/3 텍스트 피처 확장 로드맵
 
@@ -629,7 +629,7 @@ GridSearchCV로 최적 모델/파라미터 동시 선택
 
 ### G. 미해결 이슈 (발견 → 해결 교차 참조)
 
-> 출처: [unit test-results](../../tests/test_feature/test-results/), [e2e-datasynth.md](../../tests/test_feature/test-results/e2e-datasynth.md), [e2e-sap-merged.md](../../tests/test_feature/test-results/e2e-sap-merged.md)
+> 출처: [feature-test-summary.md](../../tests/test_feature/test-results/feature-test-summary.md), [e2e-datasynth.md](../../tests/test_feature/test-results/e2e-datasynth.md), [e2e-sap-merged.md](../../tests/test_feature/test-results/e2e-sap-merged.md)
 
 | Phase | 모듈           | 문제                                  | 현상                                            | 해결 위치                                                                      |
 |:------|:---------------|:--------------------------------------|:------------------------------------------------|:-------------------------------------------------------------------------------|

@@ -56,7 +56,7 @@ src/validation/
 
 ---
 
-### ① schema_validator.py — ✅ 구현 완료 (Phase 1a)
+### ① schema_validator.py — ✅ 구현 완료 (Phase 1a) → [테스트 결과](../../tests/test_validation/test-results/validation-all-results.md)
 
 Pandera 스키마 기반 구조·타입·제약조건 검증. ingest의 type_caster가 보장한 타입을 재확인하고, 값 범위 제약을 추가 검증한다.
 
@@ -101,7 +101,7 @@ def validate_schema(df: DataFrame) -> SchemaResult:
 
 ---
 
-### ② accounting_validator.py — ✅ 구현 완료 (Phase 1a) → [테스트 결과](../../tests/test_validation/test-results/accounting-validator.md)
+### ② accounting_validator.py — ✅ 구현 완료 (Phase 1a) → [테스트 결과](../../tests/test_validation/test-results/validation-all-results.md)
 
 회계 규칙 준수 여부를 검증한다. L1 통과 후 실행.
 
@@ -150,7 +150,7 @@ def check_date_continuity(df: DataFrame) -> tuple[bool, list[str]]:
 L1+L2 검증 결과를 종합하여 JSON-serializable 리포트를 생성한다.
 대시보드 Tab 1(Summary)에서 표시 + export 양쪽에서 사용.
 
-**테스트 결과:** [validation-report.md](../../tests/test_validation/test-results/validation-report.md) (17 tests passed)
+**테스트 결과:** [validation-all-results.md](../../tests/test_validation/test-results/validation-all-results.md) (89 tests passed)
 
 **퍼블릭 API:**
 - `generate_report(df, schema_result, accounting_result, *, source_file=None) -> ValidationReport`
@@ -274,3 +274,16 @@ def validate_statistics(df: DataFrame) -> StatisticalResult:
 - **L1 실패 시 흐름:** 치명적(필수 컬럼 누락) → 파이프라인 중단 / 경고(null 비율 높음) → 계속 진행.
 - **피처 컬럼 제외:** L1 검증은 ingest 원본 컬럼만 대상. feature에서 추가한 18개 파생변수는 검증 범위 외.
 - **리포트 포맷:** dict → JSON 직렬화 가능하게 설계 (numpy int64/float64 → Python 네이티브 변환 필수).
+
+## 테스트 결과
+
+**통합 리포트:** [validation-all-results.md](../../tests/test_validation/test-results/validation-all-results.md) (89 tests passed)
+
+## 남은 과제 (교차 참조)
+
+| 문제                         | 해결 시점 | 해결 위치                                                                        |
+|:-----------------------------|:----------|:---------------------------------------------------------------------------------|
+| L3 통계 검증 리포트 통합     | Phase 2   | [05-detection §교차참조](05-detection.md#선행-모듈에서-넘어온-미해결-이슈-교차-참조) |
+| 한국 공휴일 지원             | Phase 2   | [05-detection §교차참조](05-detection.md#선행-모듈에서-넘어온-미해결-이슈-교차-참조) |
+| 업종별 영업일 차이           | Phase 1c  | [07-dashboard §미해결](07-dashboard.md#미해결-이슈-phase-1c에서-해결--발견-위치-교차-참조) |
+| `_sanitize` 공용 추출        | Phase 1b  | [05-detection §교차참조](05-detection.md#선행-모듈에서-넘어온-미해결-이슈-교차-참조) |

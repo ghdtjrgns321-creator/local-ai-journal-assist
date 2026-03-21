@@ -72,7 +72,7 @@ src/ingest/
 
 **검증 5단계:** 존재 → 확장자 → 빈파일 → 크기(카테고리별) → 무결성(확장자별)
 **error/warning 분류:** error = 파이프라인 중단 / warning = 계속 진행 + 사용자 안내
-**테스트:** [32개 통과](../../tests/test_ingest/test-results/ingest-file-validator.md) (확장자 분류 15 + 경로 2 + 확장자 3 + 빈파일 1 + 크기 2 + 무결성 7 + 출력 2)
+**테스트:** [32개 통과](../../tests/test_ingest/test-results/ingest-all-results.md#5-1-file-validator-32-tests) (확장자 분류 15 + 경로 2 + 확장자 3 + 빈파일 1 + 크기 2 + 무결성 7 + 출력 2)
 
 ---
 
@@ -139,7 +139,7 @@ ws.merged_cells.ranges 순회 → unmerge → 좌상단 값을 모든 셀에 복
 - 텍스트 파일일 때만 `encoding_override`를 text_reader에 전달 (Excel/Parquet은 무시)
 - 미지원 확장자 → `ValueError` (정상적으로는 file_validator에서 이미 걸림)
 
-**테스트:** [24개 통과](../../tests/test_ingest/test-results/ingest-file-reader.md) (excel 8 + text 7 + parquet 3 + reader_api 6)
+**테스트:** [24개 통과](../../tests/test_ingest/test-results/ingest-all-results.md#5-2-file-reader-24-tests) (excel 8 + text 7 + parquet 3 + reader_api 6)
 
 ---
 
@@ -339,7 +339,7 @@ data/profiles/
 - `list_profiles()` → list[dict] (최신 순)
 - `delete_profile(fingerprint)` → bool
 
-**테스트:** [26개 통과](../../tests/test_ingest/test-results/ingest-mapping-profile.md) (fingerprint 6 + save 5 + log 3 + load 5 + list 3 + delete 3 + 통합 1)
+**테스트:** [26개 통과](../../tests/test_ingest/test-results/ingest-all-results.md#5-5-mapping-profile-26-tests) (fingerprint 6 + save 5 + log 3 + load 5 + list 3 + delete 3 + 통합 1)
 
 ---
 
@@ -775,7 +775,7 @@ class IngestState(str, Enum):
 
 ### 미해결 이슈 (발견 → 해결 교차 참조)
 
-> 출처: [ingest-column-mapper.md](../../tests/test_ingest/test-results/ingest-column-mapper.md), [ingest-validation-datasets.md](../../tests/test_ingest/test-results/ingest-validation-datasets.md), [e2e-sap-merged.md](../../tests/test_feature/test-results/e2e-sap-merged.md)
+> 출처: [ingest-all-results.md](../../tests/test_ingest/test-results/ingest-all-results.md#5-4-column-mapper-38-tests), [ingest-validation-datasets.md](../../tests/test_ingest/test-results/ingest-validation-datasets.md), [e2e-sap-merged.md](../../tests/test_feature/test-results/e2e-sap-merged.md)
 
 | Phase | 문제                         | 현상                                                              | 해결 위치                                                                 |
 |:------|:-----------------------------|:------------------------------------------------------------------|:--------------------------------------------------------------------------|

@@ -122,3 +122,51 @@
   - CSV/Parquet은 "시트" 개념이 없으므로 WorkbookInfo 대신 통합 `ReadResult` 타입 필요
 - **구조**: `models.py`(ReadResult) + `excel_reader.py`(xlsx/xls/xlsb) + `text_reader.py`(csv/tsv) + `parquet_reader.py` + `reader_api.py`(퍼사드)
 - **메모리 안전장치**: file_validator의 100MB 제한이 read_only=False의 메모리 위험을 상쇄 (16GB RAM)
+
+### D018: 이상치/특이치 이중 탐지 체계
+- **결정**: 이상치(Outlier, 라벨 있는 데이터)는 Classification(XGBoost 등), 특이치(Novelty, 정상만 학습)는 VAE+IF 앙상블로 이중 탐지
+- **이유**: 지도학습은 "이미 본 패턴"만 탐지. VAE는 "정상 분포 밖"이면 미지의 부정도 탐지 가능 (zero-day fraud detection)
+- **역할 분리**: XGBoost는 DataSynth 벤치마크 + 전이학습 보조 점수, VAE+IF는 실전 메인 탐지 엔진
+
+### D019: ML 모델 후보 선정
+- **결정**: 지도학습 4종(LR 베이스라인, RF, XGBoost 메인, LightGBM) + 비지도 2종(IF, VAE). KNN/LOF 제거, DNN 보류
+- **이유**: KNN/LOF는 1M건에서 O(n²) 스케일링 문제. DNN은 피처 엔지니어링 완료 상태에서 이점 감소. cv_selector가 후보 4종 자동 비교
+- **근거**: 2025 벤치마크에서 테이블 데이터는 XGBoost가 Transformer보다 안정적 우위
+
+### D020: VAE 아키텍처 — Basic FC + Phase 3 BiLSTM+Attention 교체
+- **결정**: Phase 2는 Basic FC VAE(50→32→8→32→50) + IF 앙상블. Phase 3에서 vae_model.py를 BiLSTM+Attention으로 교체 실험
+- **이유**: (1) 파이프라인 호환성 — 2D 유지, 3D 변환은 vae_wrapper 내부 캡슐화 (2) 회계 전표는 개별 사건(Discrete Events) — 시간 피처는 이미 추출됨 (3) IF+VAE 앙상블 시너지로 충분
+- **교체 전략**: vae_wrapper.py 외부 인터페이스(sklearn 2D)는 유지, 내부만 교체. 래퍼 패턴의 핵심 가치
+
+### D021: 데이터 불균형 처리 — 모델 무관 4단계 전략
+- **결정**: (1) 알고리즘 레벨(scale_pos_weight/class_weight 자동 매핑) 1순위 (2) 평가 지표 PR-AUC/F2 (3) SMOTE-ENN 선택적 (4) Threshold Moving
+- **이유**: 알고리즘 수준 조정이 데이터 수준(SMOTE)보다 안정적 (ICML 2025). SMOTE는 train set에만 적용 필수 (data leakage 방지)
+- **모델별 매핑**: XGBClassifier→scale_pos_weight, RandomForest→class_weight="balanced", LGBMClassifier→is_unbalance=True
+
+### D022: 성능 평가 지표 체계
+- **결정**: 1차 AUPRC+F2-score, 2차 MCC+DR@FAR=5%, 3차 ROC-AUC(caveat 명시), 보고용 Precision/Recall/F1
+- **이유**: 극단적 불균형(<1%)에서 Accuracy/ROC-AUC 무의미. F2는 Recall 2배 가중(부정 놓치는 비용 > 오탐 비용). DR@FAR=5%는 감사인에게 가장 직관적
+- **UI 요구**: 대시보드에서 각 지표를 비전문가 친화적으로 tooltip 설명
+
+### D023: 라벨링 전략 — 자동 학습 모드 전환
+- **결정**: label_strategy.py에서 양성 ≥50건 AND ≥1%이면 지도학습, 미달 시 자동으로 비지도(VAE+IF) 전환
+- **이유**: StratifiedKFold 5-fold 기준 각 fold 최소 양성 10건 필요. DataSynth는 2%(~21K건)로 충분하지만 실무 데이터는 부족할 수 있음
+- **전이 학습**: DataSynth로 학습한 XGBoost를 실무 데이터에 전이 적용 (보조 점수). Phase 3에서 감사인 피드백 루프로 재학습
+
+### D024: score_aggregator — 전략 패턴 + Percentile Ranking
+- **결정**: settings.py에 가중치 딕셔너리 정의, score_aggregator는 받은 딕셔너리로 합산. 가중합 전 Percentile Ranking으로 점수 스케일 통일
+- **이유**: 코드에 Phase 분기 없이 설정만 교체. 각 모델 점수 단위(XGBoost 0~1, IF -0.5~0.5, VAE 0~∞)가 달라 정규화 필수
+- **Percentile Ranking**: 분포 무관, 극단값에 강건. Min-Max(극단값 취약)/Z-score(정규분포 가정) 대비 우수
+
+### D025: preprocessing/detection 단방향 의존
+- **결정**: 디렉토리 분리 + detection → preprocessing 단방향 import
+- **이유**: 전처리는 "데이터를 모델이 먹기 좋게 요리", 탐지는 "요리를 먹고 판단". 결합도 최소화, 순환 의존 없음
+- **구현 순서**: 1단계 detection 룰(22개) → 2단계 preprocessing(11개 모듈) → 3단계 detection ML
+
+### D026: VAE 학습 데이터 — 검증/실전 모드 분리
+- **결정**: 검증 모드(DataSynth)는 is_fraud=False만 필터링, 실전 모드(라벨 없음)는 전체 데이터 투입
+- **이유**: 실전에서 정상만 분리 불가. 이상치 <2%이면 VAE 잠재 공간은 정상 위주로 형성 (Contamination Tolerance)
+
+### D027: ML 테스트 — Hold-out Fraud Type + 보완 테스트
+- **결정**: 8개 부정 유형 중 6개 훈련, 2개(suspense_account_abuse, expense_capitalization)는 미지 유형으로 테스트. 보완: Feature Perturbation + t-SNE/UMAP 잠재 공간 시각화
+- **이유**: VAE의 zero-day 탐지 능력 실증. XGBoost는 미지 유형 못 잡고 VAE는 잡는 것을 보여주면 포트폴리오 차별화

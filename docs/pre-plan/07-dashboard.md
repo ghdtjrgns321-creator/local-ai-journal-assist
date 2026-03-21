@@ -225,9 +225,29 @@ Phase 1a ingest/feature에서 발견되었으나 UI가 필요하여 Phase 1c로 
 | ReviewItem UI 노출              | 판단 근거 데이터 준비됨, UI 미구현                 | 3-tier 시각 피드백(초록/노랑/빨강)           | [02-ingest §미해결](02-ingest.md#미해결-이슈-발견--해결-교차-참조) |
 | 차단 vs unmapped 미구분         | 타입 차단 사유 미표시                              | ReviewItem.reason 세분화                     | [02-ingest §미해결](02-ingest.md#미해결-이슈-발견--해결-교차-참조) |
 | ~~is_after_hours 날짜 경계~~    | ✅ **버그 아님** — `dt.hour` 기반 자정 걸침 정확 처리 확인 | —                                            | [03-feature §G](03-feature.md#g-미해결-이슈-발견--해결-교차-참조) |
+| 업종별 영업일 차이              | 단일 bdate_range 기준 (공휴일 미반영)              | 업종 선택 UI + holidays 패키지 연동          | [04-validation §5](../../tests/test_validation/test-results/validation-all-results.md) |
 | fiscal_period_mismatch NaN(SAP) | sap-merged에서 전체 NaN                            | 매핑 리뷰 UI에서 원인 규명                   | [e2e-sap-merged.md §3](../../tests/test_feature/test-results/e2e-sap-merged.md) |
 | sap-merged debit/credit 미매핑  | amount 카테고리 전체 스킵 (5개 피처 미생성)        | 수동 매핑 조정                               | [e2e-sap-merged.md §3](../../tests/test_feature/test-results/e2e-sap-merged.md) |
 | schreyer-fraud gl_account 오매핑 | 캐스팅 후 결측률 100%                             | 타입 호환성 재확인                           | [ingest-validation-datasets.md](../../tests/test_ingest/test-results/ingest-validation-datasets.md) |
+| datetime `.values`→`.array`      | 타임존 정보 손실 (`.values`가 ndarray 반환)       | `.array` 전환으로 타임존 보존               | [eda-profiling.md §코드리뷰](../../tests/test_eda/test-results/eda-profiling.md)                    |
+| `top_values` 반환 타입 계약      | tuple 반환이지만 대시보드 JSON 직렬화 시 list 기대 | 인터페이스 문서 + 타입 통일                 | [eda-profiling.md §코드리뷰](../../tests/test_eda/test-results/eda-profiling.md)                    |
+
+---
+
+## 감사인 친화적 지표 표시
+
+### ML 지표 비전문가 설명 (Phase 2 대시보드 반영)
+
+감사인은 ML 지표에 익숙하지 않을 수 있다. 각 지표 옆에 tooltip/info icon으로 한글 설명 표시.
+
+| 지표         | tooltip 설명                                                          |
+|:-------------|:----------------------------------------------------------------------|
+| AUPRC        | "모델이 부정 전표를 얼마나 정확하게 골라내는지를 나타내는 종합 점수 (0~1)" |
+| F2-score     | "부정을 놓치지 않는 능력에 가중치를 둔 정확도 (0~1)"                    |
+| DR@FAR=5%    | "오탐 5건을 허용할 때 실제 부정을 몇 건 잡는지"                         |
+| risk_level   | 위험 등급 기준: High(>0.7), Medium(>0.4), Low(>0.2), Normal(≤0.2)     |
+
+잠재 공간 시각화(t-SNE/UMAP)도 Tab에 포함하여 모델 학습 결과를 시각적으로 확인 가능하게 한다.
 
 ---
 
