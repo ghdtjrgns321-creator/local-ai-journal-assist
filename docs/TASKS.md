@@ -62,6 +62,23 @@
 
 ## Phase 2: Core AI (ML 모델 + 16개 추가 유형)
 
+### 전처리 파이프라인 (src/preprocessing/)
+
+| 태스크                         | 파일                                       | 가이드                                                | 상태 |
+|--------------------------------|--------------------------------------------|------------------------------------------------------|------|
+| 피처 자동 분류                 | `src/preprocessing/feature_groups.py`      | [03a-preprocessing](pre-plan/03a-preprocessing.md)   | ✅   |
+| 커스텀 Transformer             | `src/preprocessing/transformers.py`        | [03a-preprocessing](pre-plan/03a-preprocessing.md)   | ✅   |
+| Pipeline 빌더 (지도/비지도 분기)| `src/preprocessing/pipeline_builder.py`    | [03a-preprocessing](pre-plan/03a-preprocessing.md)   | ✅   |
+| VAE 네트워크 (PyTorch)         | `src/preprocessing/vae_model.py`           | [03a-preprocessing](pre-plan/03a-preprocessing.md)   | ✅   |
+| VAE sklearn 래퍼               | `src/preprocessing/vae_wrapper.py`         | [03a-preprocessing](pre-plan/03a-preprocessing.md)   | ✅   |
+| 라벨 전략                     | `src/preprocessing/label_strategy.py`      | [03a-preprocessing](pre-plan/03a-preprocessing.md)   | ✅   |
+| Pipeline 비교 (StratifiedKFold)| `src/preprocessing/cv_selector.py`         | [03a-preprocessing](pre-plan/03a-preprocessing.md)   | ✅   |
+| 전처리 투명성 메타데이터       | `src/preprocessing/transparency.py`        | [03a-preprocessing](pre-plan/03a-preprocessing.md)   | ✅   |
+| SHAP XAI 기여도               | `src/preprocessing/explainer.py`           | [03a-preprocessing](pre-plan/03a-preprocessing.md)   | ✅   |
+| Pipeline 직렬화/모델 레지스트리| `src/preprocessing/model_registry.py`      | [03a-preprocessing](pre-plan/03a-preprocessing.md)   | ✅   |
+
+### 탐지 모듈 (src/detection/)
+
 | 태스크                       | 파일                                       | 가이드                                    | 상태 |
 |------------------------------|--------------------------------------------|------------------------------------------|------|
 | GridSearchCV 지도학습        | `src/detection/supervised_detector.py`     | [05-detection](pre-plan/05-detection.md) | ⬜   |

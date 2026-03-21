@@ -70,6 +70,14 @@ class AuditSettings(BaseSettings):
     # --- 매핑 프로파일 관련 ---
     profile_dir: str = "data/profiles"    # 프로파일 저장 디렉토리
 
+    # --- ML Pipeline (Phase 2) ---
+    vae_latent_dim: int = 32
+    vae_epochs: int = 50
+    vae_batch_size: int = 256
+    if_contamination: float = 0.01          # IsolationForest
+    cv_folds: int = 5
+    cv_scoring: str = "f1_macro"
+
     # --- DB ---
     duckdb_path: str = "data/audit.duckdb"
 
