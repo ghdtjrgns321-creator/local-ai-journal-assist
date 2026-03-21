@@ -61,3 +61,89 @@ class ValidationReport:
     generated_at: str = ""
     source_file: str | None = None
     date_range: tuple[str, str] | None = None
+
+
+# ── L3 통계 검증 결과 (Phase 2) ──────────────────────────────
+
+
+@dataclass
+class BenfordResult:
+    """Benford's Law 분석 결과. C07 detection 입력.
+
+    판정 기준: MAD(주) + Chi-square(주) + KS(보조).
+    Nigrini(2012) MAD 판정 기준: close≤0.006, acceptable≤0.012,
+    marginally≤0.015, nonconforming>0.015.
+    """
+
+    sample_size: int
+    observed: dict[int, float]       # {1: 0.301, ..., 9: 0.046}
+    expected: dict[int, float]       # Benford 이론값
+    mad: float | None                # Mean Absolute Deviation
+    mad_conformity: str              # "close"|"acceptable"|"marginally"|"nonconforming"
+    chi2_statistic: float | None
+    chi2_p_value: float | None
+    ks_statistic: float | None       # 보조 지표 (이산 분포 한계)
+    ks_p_value: float | None         # 보조 지표
+    is_conforming: bool              # 종합 판정 (MAD + Chi-square)
+    confidence: str                  # "high"(≥500) | "moderate"(100~499) | "low"(<100)
+
+
+@dataclass
+class MonthlyVolatility:
+    """월별 변동성 분석 결과."""
+
+    monthly_totals: dict[str, float]            # {"2024-01": 총액, ...}
+    mom_change_rates: dict[str, float]          # MoM % 변화율
+    outlier_months: list[str]                   # |Z-score| > threshold 월
+    seasonality_index: dict[int, float] | None  # 월(1~12)별 계절성 지수
+
+
+@dataclass
+class DistributionStats:
+    """금액 분포 분석 결과."""
+
+    shapiro_statistic: float | None
+    shapiro_p_value: float | None
+    is_normal: bool | None           # p > alpha → True
+    skewness: float | None
+    skewness_label: str | None       # "symmetric"|"right_skewed"|"left_skewed"
+    kurtosis: float | None
+    kurtosis_label: str | None       # "mesokurtic"|"leptokurtic"|"platykurtic"
+    outlier_concentration: float | None  # 이상치 금액 합 / 전체 금액 합
+
+
+@dataclass
+class AccountStats:
+    """계정별 통계 요약."""
+
+    account_count: int
+    cv_by_account: dict[str, float]     # 계정별 변동계수 (CV = std/mean)
+    high_cv_accounts: list[str]         # CV > threshold 계정
+    hhi: float                          # Herfindahl-Hirschman Index
+    hhi_label: str                      # "concentrated"|"moderate"|"diversified"
+    activity_frequency: dict[str, int]  # 계정별 거래 건수
+
+
+@dataclass
+class TemporalPatternStats:
+    """시간 패턴 통계."""
+
+    weekday_volume: dict[int, int]          # 0(Mon)~6(Sun) → 건수
+    weekend_ratio: float
+    period_end_concentration: float         # 월말 margin일 거래 비율
+    yoy_change: dict[str, float] | None     # {"01": 0.05, ...} 월별 평균 YoY
+
+
+@dataclass
+class StatisticalResult:
+    """L3 통계 검증 종합 결과. JSON-serializable."""
+
+    total_rows: int
+    analysis_timestamp: str                 # ISO 8601
+    monthly_volatility: MonthlyVolatility
+    distribution: DistributionStats
+    benford: BenfordResult
+    account_stats: AccountStats
+    temporal_patterns: TemporalPatternStats
+    warnings: list[str] = field(default_factory=list)
+    flags: list[dict[str, str]] = field(default_factory=list)

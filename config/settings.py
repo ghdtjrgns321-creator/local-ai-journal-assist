@@ -64,6 +64,15 @@ class AuditSettings(BaseSettings):
     fiscal_year_start: int = 1       # 회계연도 시작월 (1=1월, 4=4월~3월)
     custom_holidays: list[str] = []  # 회사 지정 휴일 ["2025-07-01"]
 
+    # --- L3 통계 검증 (statistical_validator) ---
+    monthly_volatility_zscore: float = 2.0      # 월별 변동률 이상 판정 Z-score
+    shapiro_alpha: float = 0.05                  # 정규성 검정 유의수준
+    benford_mad_threshold: float = 0.012         # MAD 이상 판정 (Nigrini "acceptable")
+    benford_min_sample: int = 100                # Benford 최소 표본
+    benford_chi2_alpha: float = 0.05             # Chi-square 유의수준
+    hhi_concentrated_threshold: float = 0.25     # HHI 집중 판정
+    cv_high_threshold: float = 1.0               # 계정 CV 고변동 판정
+
     # --- 텍스트 피처 관련 ---
     min_description_length: int = 3  # C06: poor/normal 경계 글자수
 
