@@ -14,9 +14,11 @@ dashboard/
 ├── tab_chat.py            # Tab 4: Text-to-SQL Chat (Phase 3)
 ├── tab_export.py          # Tab 5: Export (Phase 3)
 └── components/
-    ├── data_uploader.py   # 파일 업로드 위젯
-    ├── charts.py          # Plotly 차트 래퍼
-    └── filters.py         # 공통 필터 사이드바
+    ├── data_uploader.py       # 파일 업로드 위젯
+    ├── charts.py              # Plotly 차트 래퍼
+    ├── filters.py             # 공통 필터 사이드바
+    ├── threshold_sidebar.py   # 실시간 임계값 튜닝 슬라이더 (UX 4단계 A)
+    └── preset_selector.py     # 산업별/시즌별 프리셋 드롭다운 (UX 4단계 C)
 ```
 
 ## 핵심 클래스/함수
@@ -86,6 +88,28 @@ def render(result: PipelineResult) -> dict:
     """
 ```
 
+### `components/threshold_sidebar.py` — 실시간 임계값 튜닝 (UX 4단계 A)
+```python
+def render(settings: AuditSettings) -> AuditSettings:
+    """탐지 기준 슬라이더 패널.
+    - st.expander("⚙️ 탐지 기준 상세 설정") 안에 배치 (점진적 공개)
+    - AuditSettings의 threshold 필드를 슬라이더/입력 위젯으로 노출
+    - 값 변경 시 AuditSettings 복사본을 오버라이드하여 반환
+    - session_state에 캐싱하여 탭 전환 시 유지
+    """
+```
+
+### `components/preset_selector.py` — 산업별/시즌별 프리셋 (UX 4단계 C)
+```python
+def render() -> AuditSettings | None:
+    """환경 프리셋 드롭다운.
+    - st.selectbox: 평시 모드 / 결산기 모드 / 건설업 모드 / 커스텀
+    - 프리셋 선택 시 config/presets/{name}.yaml 로드 → AuditSettings 반환
+    - threshold_sidebar 슬라이더 값을 일괄 갱신
+    - 커스텀 프리셋 저장/로드 (프로파일 재사용 원칙)
+    """
+```
+
 ### `tab_summary.py` — Tab 1: Executive Summary
 ```python
 def render(result: PipelineResult):
@@ -117,6 +141,8 @@ def render(result: PipelineResult):
     - AgGrid 인터랙티브 테이블 (정렬, 필터, 검색)
     - 행 선택 시 상세 패널: 위반 룰(A01~C09), 점수 breakdown, 원본 데이터
     - risk_detail: 선택 전표의 이상 근거 상세 설명
+    - HITL 예외 처리: "예외 처리" 체크박스 컬럼 + [예외 저장] 버튼 (UX 4단계 B)
+      → DuckDB whitelist 테이블에 INSERT → 다음 탐지 시 ANTI JOIN으로 제외
     - SHAP waterfall plot (Phase 2)
     """
 ```
@@ -165,11 +191,13 @@ data_uploader → AuditPipeline.run(file)
 1. `components/data_uploader.py` — 파일 업로드 + 파이프라인 트리거
 2. `components/charts.py` — Plotly 차트 래퍼 5종
 3. `components/filters.py` — 사이드바 공통 필터
-4. `tab_summary.py` — KPI + 차트 조합
-5. `tab_benford.py` — Benford 시각화 + 드릴다운
-6. `tab_explorer.py` — AgGrid 테이블 + 상세 패널
-7. `app.py` — 3탭 통합 + session_state 관리
-8. (Phase 3) `tab_chat.py`, `tab_export.py`
+4. `components/preset_selector.py` — 환경 프리셋 드롭다운 (UX 4단계 C)
+5. `components/threshold_sidebar.py` — 실시간 임계값 튜닝 슬라이더 (UX 4단계 A)
+6. `tab_summary.py` — KPI + 차트 조합
+7. `tab_benford.py` — Benford 시각화 + 드릴다운
+8. `tab_explorer.py` — AgGrid 테이블 + 상세 패널 + HITL 예외 처리 (UX 4단계 B)
+9. `app.py` — 3탭 통합 + session_state 관리
+10. (Phase 3) `tab_chat.py`, `tab_export.py`
 
 ## 의존성
 - **선행:** `06-db` (DuckDB 쿼리), `05-detection` (PipelineResult)
@@ -181,17 +209,21 @@ data_uploader → AuditPipeline.run(file)
 - **차트 테스트:** 각 차트 함수에 샘플 DataFrame → Figure 객체 반환 확인
 - **필터 연동:** 필터 변경 시 모든 탭 데이터 갱신 확인
 - **빈 데이터:** 업로드 전 / 필터 결과 0건 시 에러 없이 빈 상태 표시
+- **임계값 튜닝:** 슬라이더 변경 → 탐지 재실행 → 결과 건수 변동 확인
+- **프리셋 전환:** 프리셋 선택 → 슬라이더 값 일괄 변경 확인
+- **HITL 예외 처리:** 전표 체크 → 예외 저장 → 재탐지 시 해당 전표 제외 확인
 
 ## Phase 구분
-| 항목                           | Phase          |
-|--------------------------------|----------------|
-| data_uploader, charts, filters | MVP (Phase 1c) |
-| Tab 1: Summary                 | MVP (Phase 1c) |
-| Tab 2: Benford                 | MVP (Phase 1c) |
-| Tab 3: Explorer (AgGrid)       | MVP (Phase 1c) |
-| Tab 3: SHAP waterfall          | Phase 2        |
-| Tab 4: Chat (Vanna)            | Phase 3        |
-| Tab 5: Export                   | Phase 3        |
+| 항목                                          | Phase          |
+|:----------------------------------------------|:---------------|
+| data_uploader, charts, filters                | MVP (Phase 1c) |
+| threshold_sidebar, preset_selector (UX 4단계) | MVP (Phase 1c) |
+| Tab 1: Summary                                | MVP (Phase 1c) |
+| Tab 2: Benford                                | MVP (Phase 1c) |
+| Tab 3: Explorer (AgGrid + HITL 예외 처리)     | MVP (Phase 1c) |
+| Tab 3: SHAP waterfall                         | Phase 2        |
+| Tab 4: Chat (Vanna)                           | Phase 3        |
+| Tab 5: Export                                  | Phase 3        |
 
 ## UX 디자인 원칙 (Phase 1c 필수 적용)
 

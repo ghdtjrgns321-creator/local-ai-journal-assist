@@ -1,6 +1,6 @@
 # Validation 데이터셋 Ingest 파이프라인 검증 결과
 
-> 실행일: 2026-03-21 11:45 | 5종 실데이터셋
+> 실행일: 2026-03-22 14:08 | 5종 실데이터셋
 
 ## 1. 테스트 요약
 
@@ -60,13 +60,13 @@
 **✅ ① 파일 검증** (0.16s)
   category=text
 
-**✅ ② 파일 읽기** (4.93s)
+**✅ ② 파일 읽기** (4.08s)
   sheets=['Sheet1'], selected=Sheet1, rows=1595924, cols=22, format=csv, encoding=latin-1
 
 **✅ ③ 헤더 탐지** (0.01s)
   header_row=0, confidence=0.85, matched=[]
 
-**✅ ④ 컬럼 매핑** (1.69s)
+**✅ ④ 컬럼 매핑** (1.68s)
   mapping=3개, suggestions=4개, unmapped=15개, needs_review=True
   WARN: 필수 컬럼 미매핑: ['credit_amount', 'debit_amount', 'document_date', 'document_id', 'document_type', 'fiscal_year', 'gl_account', 'posting_date']
 
@@ -98,13 +98,13 @@
 **✅ ① 파일 검증** (0.01s)
   category=text
 
-**✅ ② 파일 읽기** (0.23s)
+**✅ ② 파일 읽기** (0.25s)
   sheets=['Sheet1'], selected=Sheet1, rows=217442, cols=7, format=csv, encoding=latin-1
 
 **✅ ③ 헤더 탐지** (0.00s)
   header_row=0, confidence=0.85, matched=[]
 
-**✅ ④ 컬럼 매핑** (0.07s)
+**✅ ④ 컬럼 매핑** (0.08s)
   mapping=1개, suggestions=2개, unmapped=4개, needs_review=True
   WARN: 필수 컬럼 미매핑: ['company_code', 'credit_amount', 'document_date', 'document_id', 'document_type', 'fiscal_year', 'gl_account', 'posting_date']
 
@@ -136,7 +136,7 @@
 **✅ ① 파일 검증** (0.03s)
   category=excel
 
-**✅ ② 파일 읽기** (2.20s)
+**✅ ② 파일 읽기** (2.35s)
   sheets=['GL', 'Chart of Accounts', 'Calendar', 'Territory', 'CashFlow_St', 'SoCE_St'], selected=GL, rows=27910, cols=12, format=xlsx
 
 **✅ ③ 헤더 탐지** (0.00s)
@@ -146,7 +146,7 @@
   mapping=1개, suggestions=2개, unmapped=3개, needs_review=True
   WARN: 필수 컬럼 미매핑: ['company_code', 'credit_amount', 'document_date', 'document_id', 'document_type', 'fiscal_year', 'gl_account', 'posting_date']
 
-**✅ ⑤ 타입 캐스팅** (0.04s)
+**✅ ⑤ 타입 캐스팅** (0.03s)
   cast=1개, skipped=0개
 
 | 원본 | 표준 | 구분 |
@@ -174,17 +174,17 @@
 **✅ ① 파일 검증** (0.00s)
   category=columnar
 
-**✅ ② 파일 읽기** (0.20s)
+**✅ ② 파일 읽기** (0.21s)
   sheets=['Sheet1'], selected=Sheet1, rows=331934, cols=60, format=parquet
 
 **✅ ③ 헤더 탐지** (0.00s)
   Parquet — 컬럼명이 메타데이터에 포함, 헤더 탐지 불필요
 
-**✅ ④ 컬럼 매핑** (0.25s)
+**✅ ④ 컬럼 매핑** (0.30s)
   mapping=14개, suggestions=4개, unmapped=42개, needs_review=True
   WARN: 필수 컬럼 미매핑: ['credit_amount', 'debit_amount']
 
-**✅ ⑤ 타입 캐스팅** (0.27s)
+**✅ ⑤ 타입 캐스팅** (0.28s)
   cast=3개, skipped=11개
 
 | 원본 | 표준 | 구분 |
@@ -229,10 +229,10 @@
 **✅ ① 파일 검증** (0.01s)
   category=text
 
-**✅ ② 파일 읽기** (0.49s)
+**✅ ② 파일 읽기** (0.54s)
   sheets=['Sheet1'], selected=Sheet1, rows=533010, cols=10, format=csv, encoding=latin-1
 
-**✅ ③ 헤더 탐지** (0.00s)
+**✅ ③ 헤더 탐지** (0.01s)
   header_row=0, confidence=1.00, matched=['belnr', 'bukrs', 'prctr', 'hkont']
 
 **✅ ④ 컬럼 매핑** (0.16s)

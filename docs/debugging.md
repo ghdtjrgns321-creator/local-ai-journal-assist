@@ -50,3 +50,83 @@
 **해결**: 이중 방어 — (1) dc_indicator 표준 컬럼 등록으로 정확 매칭 우선 (2) `_type_compat.py`에서 fuzzy 후보의 소스 타입↔스키마 타입 비교, 비호환 시 스코어 0
 
 **교훈**: 문자열 유사도 매칭은 반드시 타입 검증과 병행해야 한다. "이름이 비슷해도 타입이 다르면 틀린 매핑".
+
+---
+
+## 2026-03-22: engine.py rules 전달 형식 불일치 → pattern 피처 전부 False
+
+### 증상
+
+Detection E2E 테스트(DataSynth 1M행)에서 B01(매출 이상 변동), B08(수기 전표) 등이 0건.
+`is_revenue_account`, `is_manual_je`, `is_intercompany`, `is_suspense_account` 피처가 전부 False.
+
+### 원인
+
+`audit_rules.yaml`의 YAML 구조와 피처 엔진 내부의 기대 형식 간 **깊이(depth) 불일치**.
+
+```
+audit_rules.yaml:              get_audit_rules() 반환값:
+──────────────                 ────────────────────────
+patterns:                      {"patterns": {
+  revenue_account_prefixes:        "revenue_account_prefixes": ["4"],
+    - "4"                          "manual_source_codes": ["SA", ...],
+  manual_source_codes:             ...
+    - "SA"                     }}
+```
+
+호출 체인에서 문제 발생 지점:
+
+```
+경로 A — pattern_features.py 직접 호출 (정상):
+  add_all_pattern_features(df, rules=None)
+  → rules = get_audit_rules()["patterns"]     ← 자동으로 ["patterns"] 접근
+  → rules.get("revenue_account_prefixes")     ← ["4"] 반환
+
+경로 B — engine.py 경유 (버그):
+  generate_all_features(df, rules=get_audit_rules())
+  → engine.py가 {"patterns": {...}} 을 그대로 pattern_features에 전달
+  → rules.get("revenue_account_prefixes")     ← 최상위에 해당 키 없음
+  → 빈 리스트 [] fallback → 피처 전부 False → 에러 없이 조용히 실패
+```
+
+`pattern_features.py`는 `rules=None`일 때만 자동으로 `["patterns"]`를 꺼낸다.
+`engine.py`의 docstring에 "patterns 수준 dict를 넘기세요"라고 적혀있지만,
+중첩 dict가 들어와도 **에러 없이 빈 리스트로 fallback**하여 버그를 감춘다.
+
+### 영향 범위
+
+`generate_all_features(df, rules=get_audit_rules())` 형태로 호출하는 코드에서
+pattern 피처 4개가 전부 False (first_digit은 rules 미사용이라 영향 없음):
+
+```
+is_revenue_account  → B01 매출 이상 변동 미탐지
+is_manual_je        → B08 수기 전표 미탐지
+is_intercompany     → B10 관계사 순환거래 미탐지
+is_suspense_account → C06 가계정 키워드 미탐지
+```
+
+기존 feature 단위 테스트는 `rules=None` 또는 평탄 dict로 호출하여 이 버그를 미포착.
+
+### 해결
+
+**`engine.py`에서 방어 처리** — 중첩 dict가 들어오면 자동으로 `["patterns"]`를 꺼냄:
+
+```python
+# src/feature/engine.py generate_all_features() 시작 부분 (L116~119)
+if rules is not None and "patterns" in rules:
+    rules = rules["patterns"]
+```
+
+적용 후 E2E 재실행 결과: B01 0→1,069건, B08 0→2건 정상 탐지.
+
+### 회귀 테스트
+
+```bash
+uv run pytest tests/test_feature/ tests/test_detection/ -v
+```
+
+### 교훈
+
+함수가 dict를 받을 때 **키 부재를 빈 리스트로 fallback하면 버그가 숨는다**.
+"조용한 실패(silent failure)"는 즉시 에러보다 디버깅이 훨씬 어렵다.
+방어 방법: (1) 공개 API에서 입력 형식 정규화 (2) fallback 시 warning 로그 추가.

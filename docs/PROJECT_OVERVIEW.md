@@ -58,7 +58,7 @@ local-ai-assist/
 │   └── components/
 ├── tests/
 ├── data/journal/               # 전표 데이터 (.gitignore)
-│   ├── primary/datasynth/     # 메인: EY-ASU 합성 전표 (1,068K건)
+│   ├── primary/datasynth/     # 메인: EY-ASU 합성 전표 (1,106K건)
 │   └── validation/            # 검증: sap-merged, schreyer-fraud, bpi2019 등
 ├── tools/datasynth/            # EY-ASU DataSynth (Rust, 합성 전표 생성기)
 └── docs/
@@ -102,7 +102,7 @@ local-ai-assist/
 ## 데이터 흐름
 
 ```
-DataSynth (tools/datasynth/) → config/datasynth.yaml → journal_entries.csv (1,068K건)
+DataSynth (tools/datasynth/) → config/datasynth.yaml → journal_entries.csv (1,106K건)
   ↓
 Excel/CSV → file_validator → excel_reader → header_detector → column_mapper → type_caster
   ↑ UX 1단계: 자동 헤더/매핑 + 애매한 부분 사용자 위임 + 판단 근거 투명 노출 (ReviewItem)

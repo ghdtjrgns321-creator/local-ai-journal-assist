@@ -45,9 +45,9 @@ DataSynth(EY Switzerland + ASU 공동 개발)를 선택한 이유:
 ## 데이터 흐름
 ```
 DataSynth (tools/datasynth/)
-  │  config/datasynth.yaml → seed 2024, 12개월, 2회사, fraud 2%
+  │  config/datasynth.yaml → seed 2024, 12개월, 3회사, fraud 2%
   ▼
-data/journal/primary/datasynth/journal_entries.csv (1,068K rows)
+data/journal/primary/datasynth/journal_entries.csv (1,106K rows)
   │
   ▼
 .env / 환경변수
@@ -129,7 +129,7 @@ class AuditSettings(BaseSettings):
     """프로젝트 전역 설정. 환경변수 > .env > YAML 기본값 순 우선."""
 
     # 파일 관련
-    max_file_size_mb: int = 500            # DataSynth CSV 232MB 대응
+    max_file_size_mb: int = 500            # DataSynth CSV 247MB 대응
     allowed_extensions: list[str] = [".csv", ".parquet", ".xlsx"]
 
     # 매핑 관련
@@ -209,7 +209,7 @@ columns:
   - name: source               # automated/manual/recurring/adjustment — B08(수기전표) 판정용
     type: str
     required: false
-  - name: business_process     # P2P/O2C/R2R/H2R/A2R
+  - name: business_process     # P2P/O2C/R2R/H2R/TRE/A2R
     type: str
     required: false
   - name: line_number          # ACDOCA: docln

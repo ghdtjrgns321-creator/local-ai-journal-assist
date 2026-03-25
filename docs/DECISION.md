@@ -48,11 +48,11 @@
   - **ACFE Fraud Tree**: 49개 부정 scheme → 디지털 전표 환경으로 확장
   - **PCAOB AS 2401 / ISA 240 / COSO 2013 / SOX 302·404**: 실무 감사기준 코드 구현
   - **Schreyer & Sattarov 연구** (arXiv 1709.05254, 1908.00734): 전표 이상치 분류 학술 표준
-  - 이 세 프레임워크의 교차 설계로 132개 유형 정의, 우리 데이터에 52개 유형 · 3,103건 주입
+  - 이 세 프레임워크의 교차 설계로 132개 유형 정의, 우리 데이터에 52개 유형 · 8,044건 주입
 - **도구 최신성**: DataSynth 레포 2025-01경 최종 활동(v1.2.0, 506커밋). 우리 데이터는 2026-03-17 직접 빌드·생성 → 최신 코드 기반 출력물 보장
 - **대안 검토**: 실제 SAP 데이터(sap-merged 332K)는 이상치 레이블 1%뿐, Schreyer(533K)는 날짜 없음+전부 익명화, BPI 2019(1.6M)는 전표가 아닌 이벤트 로그
-- **생성 설정**: `config/datasynth.yaml` (seed 2024, 12개월, 2회사, fraud 2%)
-- **결과**: 1,068,119건, 29컬럼, fraud 1.3%, anomaly 2.5%
+- **생성 설정**: `config/datasynth.yaml` (seed 2024, 12개월, 3회사, fraud 2%)
+- **결과**: 1,105,510건, 29컬럼, fraud 2.1%, anomaly 7.7%
 
 ### D011: 22개 룰 3레이어 탐지 체계 확정 (R001~R008 → A/B/C 레이어)
 - **결정**: 기존 R001~R008(8개 룰 + Benford) 체계를 폐기하고, DataSynth 52개 anomaly 유형에서 3축 평가(법규 근거 × FSS 실증 × 데이터 가용성)로 선별한 22개 룰 3레이어 체계로 전면 재설계
@@ -118,7 +118,7 @@
 - **이유**:
   - `read_only=True`와 `merged_cells.ranges`는 openpyxl에서 양립 불가. ERP 엑셀의 병합셀은 매우 흔함
   - xlsx/xls/xlsb/csv/tsv/txt/dat/parquet 10개 확장자가 모두 다른 라이브러리·API 사용 → 단일 파일로 불가 (SRP 위반, 100줄 초과)
-  - DataSynth CSV(232MB)가 메인 데이터인데 openpyxl 경로를 타면 안 됨 → CSV fast path 필수
+  - DataSynth CSV(247MB)가 메인 데이터인데 openpyxl 경로를 타면 안 됨 → CSV fast path 필수
   - CSV/Parquet은 "시트" 개념이 없으므로 WorkbookInfo 대신 통합 `ReadResult` 타입 필요
 - **구조**: `models.py`(ReadResult) + `excel_reader.py`(xlsx/xls/xlsb) + `text_reader.py`(csv/tsv) + `parquet_reader.py` + `reader_api.py`(퍼사드)
 - **메모리 안전장치**: file_validator의 100MB 제한이 read_only=False의 메모리 위험을 상쇄 (16GB RAM)
@@ -170,3 +170,14 @@
 ### D027: ML 테스트 — Hold-out Fraud Type + 보완 테스트
 - **결정**: 8개 부정 유형 중 6개 훈련, 2개(suspense_account_abuse, expense_capitalization)는 미지 유형으로 테스트. 보완: Feature Perturbation + t-SNE/UMAP 잠재 공간 시각화
 - **이유**: VAE의 zero-day 탐지 능력 실증. XGBoost는 미지 유형 못 잡고 VAE는 잡는 것을 보여주면 포트폴리오 차별화
+
+### D028: DataSynth 프로세스 배정 현실화 — 부서 기반 SoD
+- **결정**: shuffle 기반 랜덤 배정 → persona별 부서 기반 배정으로 교체
+  - Junior: 단일 프로세스 100% 전담 (Maker only, 겸직 불가)
+  - Senior+: compatible_pairs 기반 현실적 겸직 허용 (25%)
+  - 7%: anomalous_pairs 기반 비현실적 겸직 (감사 탐지 대상)
+  - AutomatedSystem: 전체 프로세스 (제한 없음)
+- **이유**: 기존 shuffle()로 H2R+O2C 같은 현실에서 불가능한 조합이 일상적으로 발생. 실무에서 Junior는 AP전담/AR전담으로 엄격 분리하며, 비현실적 겸직 자체가 감사 적발 대상
+- **승인한도 변경**: 기존 [1M~100M] → [10M~50B] KRW (제조업 전결규정 반영)
+- **트레이드오프**: seed 재현성 breaking change (프로세스 배정 로직 변경으로 기존 seed 출력 달라짐)
+- **근거**: generation_principles.md §2, FSS 189건 분석, 한국 중견 제조업 실무 피드백

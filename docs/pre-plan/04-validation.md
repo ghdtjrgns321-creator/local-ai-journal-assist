@@ -58,6 +58,32 @@ src/validation/
 
 ### ① schema_validator.py — ✅ 구현 완료 (Phase 1a) → [테스트 결과](../../tests/test_validation/test-results/validation-all-results.md)
 
+#### 이 모듈이 하는 일
+
+Excel에서 읽어온 DataFrame이 후속 파이프라인(detection, DB, 대시보드)에서 안전하게 사용될 수 있는지
+**구조적 무결성**을 사전에 보장한다.
+
+```
+문제:
+  ingest의 type_caster가 타입 변환을 수행하지만,
+  원본 데이터 자체가 필수 컬럼 누락·음수 금액·비정상 타입인 경우가 있다.
+  → 이 상태로 detection에 진입하면 런타임 에러 또는 침묵하는 오탐이 발생한다.
+
+해결:
+  Pandera DataFrameModel로 9개 필수 + 13개 권장 컬럼의 존재·타입·값 범위를 정의하고,
+  lazy=True로 모든 위반을 일괄 수집한 뒤 치명적(structural) vs 경고(값 범위)로 분류한다.
+  치명적 에러가 있으면 파이프라인을 중단하고, 경고만 있으면 누적 후 계속 진행한다.
+```
+
+구체적으로 3가지를 수행한다:
+
+- **필수 컬럼 사전 체크**: schema.yaml 기반으로 필수/전체 컬럼 set을 캐싱하여,
+  Pandera 검증 전에 누락 컬럼을 빠르게 식별
+- **Pandera lazy 검증**: `schema.validate(df, lazy=True)`로 첫 에러에서 중단하지 않고
+  모든 위반을 수집 → 사용자에게 한 번에 전체 문제 목록 제공
+- **치명적/경고 분류**: `_classify_failures()`가 에러를 구조적 치명(필수 컬럼 누락, 타입 불일치)과
+  값 범위 경고(null 비율, 음수 등)로 분리 → `is_valid` 판정에 반영
+
 Pandera 스키마 기반 구조·타입·제약조건 검증. ingest의 type_caster가 보장한 타입을 재확인하고, 값 범위 제약을 추가 검증한다.
 
 **구현할 것:**
@@ -103,6 +129,31 @@ def validate_schema(df: DataFrame) -> SchemaResult:
 
 ### ② accounting_validator.py — ✅ 구현 완료 (Phase 1a) → [테스트 결과](../../tests/test_validation/test-results/validation-all-results.md)
 
+#### 이 모듈이 하는 일
+
+L1(구조) 검증을 통과한 DataFrame이 **복식부기 원칙**을 준수하는지 검증한다.
+구조적으로 올바른 데이터라도 회계적으로 불균형이면 detection 결과가 왜곡된다.
+
+```
+문제:
+  L1 통과 = "컬럼과 타입이 맞다"는 뜻이지, "회계적으로 올바르다"는 뜻이 아니다.
+  차변 ≠ 대변인 전표, 영업일 누락, 완전 중복 행이 있으면
+  detection의 대차집중도·기말집중 룰이 정상 데이터를 오탐하거나 진짜 이상을 놓친다.
+
+해결:
+  3가지 회계 규칙(대차일치, 일자 연속성, 중복)을 각각 검증하고,
+  위반 건은 report_generator에 전달하여 감점 + 대시보드 경고로 표시한다.
+```
+
+3가지 검증을 수행한다:
+
+- **대차일치 (`check_balance`)**: document_id별 + 전체 차변-대변 차이를 단일 diff Series로
+  groupby 1회 처리. 허용오차(0.01) 초과 시 불일치 전표 ID 목록 반환
+- **일자 연속성 (`check_date_continuity`)**: `pandas.bdate_range`로 영업일 기준
+  누락 날짜 식별 (한국 공휴일은 Phase 2에서 holidays.KR 연동 예정)
+- **중복 행 탐지 (`check_duplicates`)**: schema.yaml 원본 컬럼만 추출하여 중복 판정
+  (feature에서 추가한 파생변수는 제외 — 같은 원본 데이터의 중복만 탐지)
+
 회계 규칙 준수 여부를 검증한다. L1 통과 후 실행.
 
 **구현할 것:**
@@ -146,6 +197,32 @@ def check_date_continuity(df: DataFrame) -> tuple[bool, list[str]]:
 ---
 
 ### ③ report_generator.py — ✅ 구현 완료 (Phase 1a)
+
+#### 이 모듈이 하는 일
+
+L1(구조) + L2(회계) 검증 결과를 **단일 ValidationReport**로 통합하고,
+**파이프라인 진입 게이트** 역할을 수행한다.
+
+```
+문제:
+  schema_validator와 accounting_validator가 각각 별도 결과(SchemaResult, AccountingResult)를 반환한다.
+  대시보드는 하나의 요약 리포트를 필요로 하고,
+  detection 파이프라인은 "이 데이터를 처리해도 되는가?"라는 단일 판정이 필요하다.
+
+해결:
+  두 결과를 합산하여 0~100 validation_score를 산출하고,
+  L1 치명적 에러가 0건이면 is_pipeline_ready=True로 detection 진입을 허용한다.
+  모든 숫자를 Python native 타입으로 변환(_sanitize)하여 JSON 직렬화를 보장한다.
+```
+
+핵심 기능 3가지:
+
+- **감점 기반 점수 산출**: L1 치명적(-50), 경고 비율(-20), L2 대차불일치(-15),
+  일자 누락(-5), 중복(-10) — 비율 기반 차등 감점으로 데이터 품질을 수치화
+- **유효 행/전표 수 산출**: 에러 건수를 차감하여 근사치 계산.
+  `valid_documents` = 전체 전표 - L2 대차불일치 전표 수
+- **JSON 안전 변환**: `_sanitize()` 재귀 함수로 numpy int64/float64 → Python int/float 변환.
+  대시보드·DuckDB 적재·export 모두에서 안전하게 사용 가능
 
 L1+L2 검증 결과를 종합하여 JSON-serializable 리포트를 생성한다.
 대시보드 Tab 1(Summary)에서 표시 + export 양쪽에서 사용.
@@ -203,6 +280,32 @@ def generate_report(
 ---
 
 ### ④ statistical_validator.py — ⬜ 구현 예정 (Phase 2)
+
+#### 이 모듈이 하는 일
+
+L1(구조) + L2(회계) 검증을 넘어, **통계적 관점에서 데이터의 이상 징후**를 사전 탐지한다.
+detection Layer C의 기반 데이터를 제공하는 역할을 한다.
+
+```
+문제:
+  L1+L2는 "규칙 위반 여부"만 판정한다.
+  하지만 규칙을 충족하더라도 12월 금액이 평균의 5배이거나,
+  Benford 법칙에서 벗어나는 분포는 부정의 징후일 수 있다.
+  → 이런 통계적 패턴은 규칙 기반 검증으로는 잡을 수 없다.
+
+해결:
+  5개 서브모듈(benford, volatility, distribution, account_stats, temporal_patterns)을
+  오케스트레이션하여 통계적 이상 징후를 수집하고,
+  detection Layer C(C01 기말집중, C07 Benford 등)에 입력 데이터를 제공한다.
+```
+
+5가지 통계 분석을 조합한다:
+
+- **Benford 분석**: 첫째 자릿수 분포가 Benford 법칙과 부합하는지 검정 → C07 detection 입력
+- **월별 변동성**: Z-score > 2인 급변 월 식별 → C01 기말집중 detection 입력
+- **분포 분석**: 정규성 검정(Shapiro-Wilk), 이상치 비율 산출
+- **계정별 통계**: CV(변동계수), HHI(집중도 지수) 등 계정 단위 요약
+- **시간 패턴**: 요일별·기말·전년 대비(YoY) 패턴 분석
 
 통계적 이상 징후를 탐지한다. Phase 2에서 구현.
 
@@ -287,3 +390,23 @@ def validate_statistics(df: DataFrame) -> StatisticalResult:
 | 한국 공휴일 지원             | Phase 2   | [05-detection §교차참조](05-detection.md#선행-모듈에서-넘어온-미해결-이슈-교차-참조) |
 | 업종별 영업일 차이           | Phase 1c  | [07-dashboard §미해결](07-dashboard.md#미해결-이슈-phase-1c에서-해결--발견-위치-교차-참조) |
 | `_sanitize` 공용 추출        | Phase 1b  | [05-detection §교차참조](05-detection.md#선행-모듈에서-넘어온-미해결-이슈-교차-참조) |
+
+---
+
+## L3 검증 확장 후보 (audit_domain_additional.md 기반)
+
+### 통제 운영 효과성 검증 (approval 컬럼 활성화 시)
+
+| 검증 항목          | 산출 로직                                      | 임계값 기준          |
+|-------------------|-----------------------------------------------|---------------------|
+| 승인 누락률        | 한도 초과 전표 중 approved_by IS NULL 비율        | > 5% 시 통제 미작동   |
+| 평균 승인 지연      | approval_timestamp - posting_date 평균           | > 48시간 시 경고     |
+| 레벨 우회율        | 금액 대비 approval_level 부족 비율                | > 3% 시 통제 미작동   |
+
+### 재무제표-장부 대사 (Phase 2, TB 테이블 추가 시)
+
+| 대사 유형    | GL 계정      | 비교 대상                | 허용 차이         |
+|-------------|-------------|-------------------------|------------------|
+| 매출채권     | AR GL 잔액   | AR Aging Report 합계     | 중요성 금액 이하   |
+| 매입채무     | AP GL 잔액   | AP Aging Report 합계     | 중요성 금액 이하   |
+| 고정자산     | FA GL 잔액   | 고정자산 보조원장 합계    | 중요성 금액 이하   |

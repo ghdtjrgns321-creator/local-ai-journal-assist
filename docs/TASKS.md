@@ -1,6 +1,8 @@
 # Phase별 태스크
 
 > 각 태스크의 상세 구현 가이드는 `docs/pre-plan/` 참조
+> pre-plan 번호(00~10)는 **도메인 분류**이며, 구현 순서는 **Phase 번호**를 따른다.
+> 예: `05a-detection-ml.md`는 Phase 2b의 설계 레퍼런스이지, 05 다음에 바로 구현하는 것이 아님.
 
 ## Phase 1: MVP (Python Only 파이프라인 + 기본 UI)
 
@@ -10,7 +12,7 @@
 |----|--------------------|---------------------------------------------------------------|------------------------------------------------|------|
 | 0  | 데이터셋 수집·선정 | `data/journal/`, 32개 검토                                    | [00-dataset](pre-plan/00-dataset.md)           | ✅   |
 | 0a | DataSynth 빌드    | `tools/datasynth/` (Rust, EY-ASU)                              | [00-dataset](pre-plan/00-dataset.md)           | ✅   |
-| 0b | 메인 데이터 생성  | `data/journal/primary/datasynth/` (1,068K건)                   | [00-dataset](pre-plan/00-dataset.md)           | ✅   |
+| 0b | 메인 데이터 생성  | `data/journal/primary/datasynth/` (1,106K건)                   | [00-dataset](pre-plan/00-dataset.md)           | ✅   |
 | 1  | 프로젝트 초기화     | `pyproject.toml`, `.gitignore`, `.env.example`                | [01-project-setup](pre-plan/01-project-setup.md) | ✅   |
 | 2  | 설정 레이어         | `config/settings.py`, YAML 3종 + `datasynth.yaml`            | [01-project-setup](pre-plan/01-project-setup.md) | ✅   |
 | 3  | 샘플 데이터 생성기  | DataSynth로 대체 (10-sample-data 불필요)                      | -                                              | ✅   |
@@ -35,32 +37,63 @@
 
 | #  | 태스크            | 파일                                                           | 가이드                                    | 상태 |
 |----|-------------------|----------------------------------------------------------------|------------------------------------------|------|
-| 15 | BaseDetector      | `src/detection/base.py`                                        | [05-detection](pre-plan/05-detection.md) | ⬜   |
-| 16 | Layer A 무결성    | `src/detection/integrity_layer.py` (A01~A03)                   | [05-detection](pre-plan/05-detection.md) | ⬜   |
-| 17 | Layer B 부정탐지  | `src/detection/fraud_layer.py` (B01~B10)                       | [05-detection](pre-plan/05-detection.md) | ⬜   |
-| 18 | Layer C 이상징후  | `src/detection/anomaly_layer.py` (C01~C09, Benford=C07)        | [05-detection](pre-plan/05-detection.md) | ⬜   |
-| 19 | 점수 집계         | `src/detection/score_aggregator.py` (3레이어+Benford)          | [05-detection](pre-plan/05-detection.md) | ⬜   |
-| 20 | DuckDB            | `src/db/connection.py`, `schema.py`, `loader.py`, `queries.py` | [06-db](pre-plan/06-db.md)              | ⬜   |
+| 15 | BaseDetector      | `src/detection/base.py`                                        | [05-detection](pre-plan/05-detection.md) | ✅   |
+| 16 | Layer A 무결성    | `src/detection/integrity_layer.py` (A01~A03)                   | [05-detection](pre-plan/05-detection.md) | ✅   |
+| 17 | Layer B 부정탐지  | `src/detection/fraud_layer.py` (B01~B10, 42 tests)             | [05-detection](pre-plan/05-detection.md) | ✅   |
+| 18 | Layer C 이상징후  | `src/detection/anomaly_layer.py` (C01~C09, 41 tests)           | [05-detection](pre-plan/05-detection.md) | ✅   |
+| 19 | 점수 집계         | `src/detection/score_aggregator.py` (3레이어+Benford, 12 tests) | [05-detection](pre-plan/05-detection.md) | ✅   |
+| 19a | 역분개 패턴 탐지 (1:1 + N:M) | `src/detection/anomaly_layer.py` (확장)              | [05-detection](pre-plan/05-detection.md) | ⬜   |
+| 19b | Top-side JE 조합 탐지        | `src/detection/score_aggregator.py` (확장)           | [05-detection](pre-plan/05-detection.md) | ⬜   |
+| 19c | 비정상 시간대 입력자 집중     | `src/feature/time_features.py` (확장)                | [03-feature](pre-plan/03-feature.md)     | ⬜   |
+| 20 | DuckDB (ML 확장 스키마) | `src/db/connection.py`, `schema.py`, `loader.py`, `queries.py` — schema에 supervised/unsupervised_score nullable 예약 | [06-db](pre-plan/06-db.md) | ⬜   |
 | 21 | 파이프라인        | `src/pipeline.py`                                              | 05-detection + 06-db 통합                | ⬜   |
-| 22 | 단위 테스트 (1b)  | `tests/test_detection/`, `test_db/`                            | 각 가이드 "테스트 전략" 섹션              | ⬜   |
+| 22 | 단위 테스트 (1b)  | `tests/test_detection/` (120 tests + [E2E](../tests/test_detection/test-results/e2e-detection-datasynth.md)), `test_db/` | 각 가이드 "테스트 전략" 섹션 | ⬜   |
 
 **완료 기준**: `AuditPipeline.run("datasynth.csv")` → 22개 룰 3레이어 탐지 → DuckDB 적재 → 프리셋 쿼리 정상
 
 ### Phase 1c: 대시보드
 
-| #  | 태스크          | 파일                       | 가이드                                    | 상태 |
-|----|-----------------|----------------------------|------------------------------------------|------|
-| 23 | UI 컴포넌트     | `dashboard/components/`    | [07-dashboard](pre-plan/07-dashboard.md) | ⬜   |
-| 24 | Tab 1: Summary  | `dashboard/tab_summary.py` | [07-dashboard](pre-plan/07-dashboard.md) | ⬜   |
-| 25 | Tab 2: Benford  | `dashboard/tab_benford.py` | [07-dashboard](pre-plan/07-dashboard.md) | ⬜   |
-| 26 | Tab 3: Explorer | `dashboard/tab_explorer.py`| [07-dashboard](pre-plan/07-dashboard.md) | ⬜   |
-| 27 | 메인 앱         | `dashboard/app.py`         | [07-dashboard](pre-plan/07-dashboard.md) | ⬜   |
+| #  | 태스크                   | 파일                                      | 가이드                                    | 상태 |
+|----|--------------------------|-------------------------------------------|------------------------------------------|------|
+| 23 | UI 컴포넌트              | `dashboard/components/`                   | [07-dashboard](pre-plan/07-dashboard.md) | ⬜   |
+| 24 | Tab 1: Summary           | `dashboard/tab_summary.py`                | [07-dashboard](pre-plan/07-dashboard.md) | ⬜   |
+| 25 | Tab 2: Benford           | `dashboard/tab_benford.py`                | [07-dashboard](pre-plan/07-dashboard.md) | ⬜   |
+| 26 | Tab 3: Explorer          | `dashboard/tab_explorer.py`               | [07-dashboard](pre-plan/07-dashboard.md) | ⬜   |
+| 27 | 메인 앱                  | `dashboard/app.py`                        | [07-dashboard](pre-plan/07-dashboard.md) | ⬜   |
+| 28 | 임계값 튜닝 슬라이더     | `dashboard/components/threshold_sidebar.py`| [ux-flow §4A](pre-plan/ux-flow.md#a-실시간-파라미터-튜닝-dynamic-threshold-tuning--흐름도-⑧) | ⬜   |
+| 29 | 프리셋 드롭다운          | `dashboard/components/preset_selector.py` | [ux-flow §4C](pre-plan/ux-flow.md#c-산업별시즌별-프리셋-environment-presets--흐름도-⑩)       | ⬜   |
+| 30 | HITL 예외 처리 (whitelist)| `src/db/schema.py` + `tab_explorer.py`   | [ux-flow §4B](pre-plan/ux-flow.md#b-화이트리스트--hitl-피드백-루프-mark-as-false-positive--흐름도-⑨) | ⬜   |
 
-**완료 기준**: `streamlit run dashboard/app.py` → 3탭 정상 렌더링
+**완료 기준**: `streamlit run dashboard/app.py` → 3탭 정상 렌더링 + 슬라이더 변경 시 탐지 결과 갱신 + 프리셋 전환 + 예외 처리 저장/제외
 
 ---
 
-## Phase 2: Core AI (ML 모델 + 16개 추가 유형)
+### 문서 보완: AUDIT_DOMAIN_FINAL 기준서 매핑 완성
+
+> `audit_domain_additional.md` §3 "문서 보완 14건" 기반. 코드 변경 없음, 문서만 수정.
+
+| 태스크                                                                 | 파일                          | 가이드                                                          | 상태 |
+|------------------------------------------------------------------------|-------------------------------|-----------------------------------------------------------------|------|
+| AUDIT_DOMAIN_FINAL 기준서 매핑 추가 (5건) + 참조 출처 (8건) + 범위 섹션 (1건) | `docs/AUDIT_DOMAIN_FINAL.md` | [audit_domain_additional](audit_domain_additional.md) §3        | ⬜   |
+
+---
+
+### Phase 2 준비: DataSynth 확장 (한국 실무 맞춤 컬럼 추가)
+
+> DataSynth Rust 코드 수정 + YAML 설정 추가. Phase 2 탐지 룰의 **선행 의존**.
+
+| 태스크                            | 파일                                                | 가이드                                                              | 상태 |
+|-----------------------------------|-----------------------------------------------------|---------------------------------------------------------------------|------|
+| approval.rs 한국식 전결규정 적용  | `tools/datasynth/crates/*/approval.rs, je_generator.rs, user.rs` | [audit_domain_additional](audit_domain_additional.md) §4-4          | ⬜   |
+| 증빙/컷오프/변경이력 컬럼 추가    | `tools/datasynth/crates/*/journal_entry.rs`          | [audit_domain_additional](audit_domain_additional.md) §2-1,2-4,4-1  | ⬜   |
+| 전표번호 순차 생성                | `tools/datasynth/crates/*/je_generator.rs`           | [audit_domain_additional](audit_domain_additional.md) §2-2          | ⬜   |
+| IP 주소 생성                      | `tools/datasynth/crates/*/je_generator.rs`           | [audit_domain_additional](audit_domain_additional.md) §4-2          | ⬜   |
+| datasynth.yaml approval 섹션     | `config/datasynth.yaml`                              | [audit_domain_additional](audit_domain_additional.md) §4-4          | ⬜   |
+| 데이터 재생성 + ingest/feature 검증 | `data/journal/primary/datasynth/`                   | 신규 컬럼 포함 데이터로 기존 파이프라인 호환 확인                    | ⬜   |
+
+---
+
+## Phase 2: Core AI (ML 모델 + 추가 탐지 유형)
 
 ### Phase 2a: ML 전처리 파이프라인
 
@@ -76,16 +109,33 @@
 | 전처리 투명성                | `src/preprocessing/transparency.py`          | [03a-preprocessing](pre-plan/03a-preprocessing.md)  | ⬜   |
 | 단위 테스트 (preprocessing)  | `tests/test_preprocessing/`                  | 03a-preprocessing "테스트 전략"                     | ⬜   |
 
+### Phase 2a 확장: 신규 컬럼 탐지 룰 (DataSynth 확장 컬럼 활용)
+
+> [audit_domain_additional.md](audit_domain_additional.md) 기반. DataSynth 확장 완료 후 구현 가능.
+
+| 태스크                             | 파일                                         | 가이드                                                | 상태 |
+|------------------------------------|----------------------------------------------|-------------------------------------------------------|------|
+| 증빙 존재 확인 + 적격증빙 미수취   | `src/detection/` (신규 또는 fraud_layer 확장) | [audit_domain_additional](audit_domain_additional.md) §2-1 | ⬜   |
+| 컷오프 검증 (납품일 vs 전기일)     | `src/detection/` (신규 또는 anomaly_layer 확장) | [audit_domain_additional](audit_domain_additional.md) §2-4 | ⬜   |
+| 증빙 금액 불일치 + 부가세 검증     | `src/detection/` (신규 또는 anomaly_layer 확장) | [audit_domain_additional](audit_domain_additional.md) §2-5 | ⬜   |
+| 전표 수정 이력 탐지                | `src/detection/` (신규)                       | [audit_domain_additional](audit_domain_additional.md) §4-1 | ⬜   |
+| IP 주소 비정상 접근 탐지           | `src/detection/` (신규)                       | [audit_domain_additional](audit_domain_additional.md) §4-2 | ⬜   |
+| 전표번호 연속성 갭 탐지            | `src/detection/` (신규)                       | [audit_domain_additional](audit_domain_additional.md) §2-2 | ⬜   |
+| 승인 프로세스·TOE 검증             | `src/detection/` (신규)                       | [audit_domain_additional](audit_domain_additional.md) §4-4,3-3 | ⬜   |
+
 ### Phase 2b: ML 탐지기
 
-| 태스크                       | 파일                                       | 가이드                                    | 상태 |
-|------------------------------|--------------------------------------------|------------------------------------------|------|
-| SupervisedDetector           | `src/detection/supervised_detector.py`     | [05-detection](pre-plan/05-detection.md) | ⬜   |
-| VAEDetector + IF 앙상블      | `src/detection/vae_detector.py`            | [05-detection](pre-plan/05-detection.md) | ⬜   |
-| score_aggregator 5트랙 확장  | `src/detection/score_aggregator.py`        | [05-detection](pre-plan/05-detection.md) | ⬜   |
-| L3 통계 검증                 | `src/validation/statistical_validator.py`  | [04-validation](pre-plan/04-validation.md) | ⬜   |
-| SHAP 시각화                  | `dashboard/tab_explorer.py`                | [07-dashboard](pre-plan/07-dashboard.md) | ⬜   |
-| 단위 테스트 (ML detection)   | `tests/test_detection/test_ml_*.py`        | 05-detection "테스트 전략"               | ⬜   |
+| 태스크                       | 파일                                       | 가이드                                                | 상태 |
+|------------------------------|--------------------------------------------|------------------------------------------------------|------|
+| SupervisedDetector           | `src/detection/supervised_detector.py`     | [05a-detection-ml](pre-plan/05a-detection-ml.md)     | ⬜   |
+| VAEDetector + IF 앙상블      | `src/detection/vae_detector.py`            | [05a-detection-ml](pre-plan/05a-detection-ml.md)     | ⬜   |
+| score_aggregator 3→5트랙 확장 | `src/detection/score_aggregator.py` — 기존 A/B/C + supervised + unsupervised | [05-detection](pre-plan/05-detection.md) + 05a | ⬜   |
+| L3 통계 검증                 | `src/validation/statistical_validator.py`  | [04-validation](pre-plan/04-validation.md)           | ✅ (Phase 1a 선행 구현) |
+| SHAP 시각화                  | `dashboard/tab_explorer.py`                | [07-dashboard](pre-plan/07-dashboard.md)             | ⬜   |
+| 단위 테스트 (ML detection)   | `tests/test_detection/test_ml_*.py`        | [05a-detection-ml](pre-plan/05a-detection-ml.md)     | ⬜   |
+| TrendBreak (회계추정치 편의) | `src/detection/timeseries_detector.py`     | [05a-detection-ml](pre-plan/05a-detection-ml.md) §TrendBreak | ⬜   |
+| 재무제표-장부 대사 (TB 교차검증) | `src/validation/tb_reconciliation.py`  | [04-validation](pre-plan/04-validation.md) §재무제표-장부 대사 | ⬜   |
+| 배치 전표 이상 패턴          | `src/detection/` (anomaly_layer 확장)      | [05a-detection-ml](pre-plan/05a-detection-ml.md) §배치 전표 | ⬜   |
 
 ### Phase 2c: 추가 탐지기 (별도 계획)
 
@@ -112,3 +162,6 @@
 | 감사조서 Excel/PDF  | `src/export/`                    | [09-export](pre-plan/09-export.md)       | ⬜   |
 | Audit Trail         | `src/export/audit_trail.py`      | [09-export](pre-plan/09-export.md)       | ⬜   |
 | 인사이트 생성       | `src/llm/insight_generator.py`   | [08-llm](pre-plan/08-llm.md)            | ⬜   |
+| 경제적 실질 판단 (NLP)      | `src/detection/nlp_analyzer.py` (확장)  | [08-llm](pre-plan/08-llm.md) §경제적 실질           | ⬜   |
+| 유의적 거래 합리성 평가 (LLM) | `src/llm/insight_generator.py` (확장) | [08-llm](pre-plan/08-llm.md) §유의적 거래           | ⬜   |
+| TransferPricingAnomaly (이전가격) | `src/detection/graph_detector.py` (확장) | [AUDIT_DOMAIN_FINAL](AUDIT_DOMAIN_FINAL.md) §4.4 | ⬜   |

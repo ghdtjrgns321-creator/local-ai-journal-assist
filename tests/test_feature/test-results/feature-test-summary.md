@@ -26,15 +26,15 @@ engine (오케스트레이터) 14   ✅ PASS   0.64s
 ### DataSynth (풀 스펙)
 
 ```
-입력: 1,068,119행 | 피처: 18/18 생성 | 소요: 6.53s
+입력: 1,101,677행 | 피처: 18/18 생성 | 소요: 8.02s
 ```
 
 | 카테고리 | 소요(s) | 피처 수 | 상태 |
 |:---------|--------:|--------:|:----:|
-| time     |   0.813 |       6 | 성공 |
-| amount   |   0.234 |       5 | 성공 |
-| pattern  |   2.328 |       5 | 성공 |
-| text     |   3.157 |       2 | 성공 |
+| time     |   1.110 |       6 | 성공 |
+| amount   |   0.328 |       5 | 성공 |
+| pattern  |   2.953 |       5 | 성공 |
+| text     |   3.625 |       2 | 성공 |
 
 ### SAP-Merged (Graceful Degradation)
 
@@ -60,22 +60,22 @@ engine (오케스트레이터) 14   ✅ PASS   0.64s
 피처                     카테고리   dtype     DataSynth         SAP-Merged
 ────────────────────────────────────────────────────────────────────────────
 is_weekend               time      bool      True 0.1%         True 19.6%
-is_after_hours           time      bool      all-False(*)      all-False(*)
-is_period_end            time      bool      True 51.9%        True 36.7%
-days_backdated           time      Int64     [-32, 32]         [-730, 365]
+is_after_hours           time      bool      True 42.8%        all-False(*)
+is_period_end            time      bool      True 52.2%        True 36.7%
+days_backdated           time      Int64     [-18, 32]         [-730, 365]
 fiscal_period_mismatch   time      boolean   all-True(*)       all-NaN(**)
-is_holiday               time      bool      True 4.6%         True 2.8%
+is_holiday               time      bool      True 4.9%         True 2.8%
 is_near_threshold        amount    bool      all-False(*)      — 스킵
 exceeds_threshold        amount    bool      True 0.0%         — 스킵
-amount_zscore            amount    float64   [-1.39, 64.30]    — 스킵
-amount_magnitude         amount    float64   [0.0, 8.79]       — 스킵
+amount_zscore            amount    float64   [-0.64, 64.58]    — 스킵
+amount_magnitude         amount    float64   [0.0, 7.93]       — 스킵
 is_round_number          amount    bool      all-False(*)      — 스킵
-is_manual_je             pattern   bool      True 21.6%        all-False(*)
+is_manual_je             pattern   bool      True 21.2%        all-False(*)
 is_intercompany          pattern   bool      all-False(*)      all-False(*)
 is_revenue_account       pattern   bool      True 20.3%        True 7.1%
 first_digit              pattern   Int64     [1-9], null 2.1%  all-NaN
 is_suspense_account      pattern   bool      all-False(*)      all-False(*)
-description_quality      text      object    3 levels          2 levels
+description_quality      text      object    2 levels          2 levels
 has_risk_keyword         text      object    all-low           all-low
 ```
 

@@ -17,7 +17,7 @@
 data/journal/
 ├── OVERVIEW.md                      # 전체 개요 + 32개 검토 기록
 ├── primary/
-│   └── datasynth/                   # 메인: EY-ASU 합성 전표 (1,068K건, 232MB)
+│   └── datasynth/                   # 메인: EY-ASU 합성 전표 (1,106K건, 247MB)
 │       ├── journal_entries.csv
 │       ├── chart_of_accounts.json   # 430개 계정과목
 │       ├── master_data/             # 벤더·고객·사원
@@ -40,8 +40,8 @@ data/journal/
 | 금액                | O (debit/credit/local_amount)          | O (hsl, dmbtr, wrbtr)     |
 | GL 계정             | O (gl_account, 430개)                  | O (racct, hkont)          |
 | 날짜                | O (posting_date, document_date)        | O (budat, cpudt)          |
-| 입력자              | O (created_by, 41명)                   | O (usnam)                 |
-| **이상치 레이블**   | **O (fraud 1.3% + anomaly 2.5%)**     | 1%만 (IF/LOF)             |
+| 입력자              | O (created_by, 152명)                   | O (usnam)                 |
+| **이상치 레이블**   | **O (fraud 2.1% + anomaly 7.7%)**     | 1%만 (IF/LOF)             |
 | **fraud 시나리오**  | **52개 anomaly 유형 (Must 20 / Should 16 / Could 5 / Drop 11)**         | 없음                      |
 | 복식부기 보장       | O (생성 시 강제)                       | 원본 의존                 |
 | Benford 분포        | O (생성 시 준수)                       | 원본 의존                 |
@@ -61,8 +61,9 @@ global:
   period_months: 12
 
 companies:
-  - code: "C001"  # US 본사, 100K/yr
-  - code: "C002"  # EU 법인, 10K/yr
+  - code: "C001"  # KR 본사, 100K/yr
+  - code: "C002"  # US 법인, 10K/yr
+  - code: "C003"  # EU 법인, 10K/yr
 
 fraud:
   enabled: true
@@ -73,14 +74,14 @@ fraud:
 
 | 항목         | 값                                                       |
 |--------------|----------------------------------------------------------|
-| 행수         | 1,068,119                                                |
+| 행수         | 1,105,510                                                |
 | 컬럼수       | 29                                                       |
-| 크기         | 232MB (CSV)                                              |
-| fraud 비율   | 1.3%                                                     |
-| anomaly 비율 | 2.5%                                                     |
-| 프로세스     | P2P(26%), O2C(31%), R2R(24%), H2R(12%), A2R(6%)         |
-| 입력자       | 41명 (SYSTEM + 사용자)                                   |
-| GL 계정      | 386개 사용 / 430개 정의                                  |
+| 크기         | 247MB (CSV)                                              |
+| fraud 비율   | 2.1%                                                     |
+| anomaly 비율 | 7.7%                                                     |
+| 프로세스     | O2C(30%), P2P(25%), R2R(20%), H2R(10%), TRE(10%), A2R(5%) |
+| 입력자       | 152명 (SYSTEM + 사용자)                                   |
+| GL 계정      | 397개 사용 / 430개 정의                                  |
 
 ### 핵심 컬럼 (29개)
 
