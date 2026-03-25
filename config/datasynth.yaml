@@ -1,25 +1,33 @@
 # DataSynth 설정 — Local AI Audit Assistant 프로젝트용
-# 실행: cd tools/datasynth && ./target/release/datasynth-data generate -c ../../config/datasynth.yaml -o ../../data/journal/datasynth --seed 2024 --verbose
+# K-IFRS 적용 한국 중견 제조 그룹사 (3법인) 시뮬레이션
+# 실행: cd tools/datasynth && ./target/release/datasynth-data generate -c ../../config/datasynth.yaml -o ../../data/journal/primary/datasynth --seed 2024 --verbose
 
 global:
   seed: 2024
   industry: manufacturing
   start_date: "2022-01-01"
   period_months: 12
-  group_currency: USD
+  group_currency: KRW
   parallel: true
 
 companies:
   - code: "C001"
-    name: "US Manufacturing HQ"
-    currency: USD
-    country: US
+    name: "KR Manufacturing HQ"
+    currency: KRW
+    country: KR
     fiscal_year_variant: K4
     annual_transaction_volume: hundred_k
     volume_weight: 1.0
   - code: "C002"
+    name: "US Manufacturing"
+    currency: KRW
+    country: US
+    fiscal_year_variant: K4
+    annual_transaction_volume: ten_k
+    volume_weight: 0.3
+  - code: "C003"
     name: "EU Manufacturing"
-    currency: EUR
+    currency: KRW
     country: DE
     fiscal_year_variant: K4
     annual_transaction_volume: ten_k
@@ -29,9 +37,104 @@ chart_of_accounts:
   complexity: medium
   industry_specific: true
 
+master_data:
+  vendors:
+    count: 500
+  customers:
+    count: 300
+  employees:
+    count: 300
+
+# B07 SOD 과탐 해소: JE 작성자 풀 150명 (기본 40명 → 전원 위반 문제)
+# K-IFRS 적용 중견 제조 그룹사(3법인) 기준
+user_personas:
+  users_per_persona:
+    junior_accountant: 60
+    senior_accountant: 30
+    controller: 10
+    manager: 10
+    automated_system: 40
+
+# B04 중복 지급 탐지용 document flow 활성화
+document_flows:
+  p2p:
+    enabled: true
+  o2c:
+    enabled: true
+
+# B10 관계사 순환거래 탐지용
+intercompany:
+  enabled: true
+  ic_transaction_rate: 0.10
+  generate_matched_pairs: true
+
+# KRW 금액 스케일 — 한국 중견 제조업 기준
+# LogNormal(14.0, 2.5) → 중앙값 ~120만원, 평균 ~2,900만원
+# B02 승인한도 직하 탐지: split_transaction이 threshold×0.9~threshold 구간 생성
+transactions:
+  amounts:
+    min_amount: 100
+    max_amount: 100000000000    # 1,000억원 (대기업 단일 전표 상한)
+    lognormal_mu: 14.0          # ln(1,200,000) ≈ 14.0 → 중앙값 ~120만원
+    lognormal_sigma: 2.5
+    decimal_places: 0           # 원화는 소수점 없음
+    round_number_probability: 0.25
+    nice_number_probability: 0.15
+  benford:
+    enabled: true
+    tolerance: 0.05
+    exempt_sources: [recurring, payroll]
+
+# C02/C03 시간대 탐지용 — audit_domain_additional.md §4-3 반영
+# 한국 야근 문화: 18:30~22:00은 결산기 정상, 22:00~06:00이 심야(고위험)
+temporal_patterns:
+  enabled: true
+  intraday:
+    enabled: true
+    segments:
+      - { name: late_night,     start: "00:00", end: "06:00", multiplier: 0.02 }
+      - { name: early_morning,  start: "06:00", end: "08:30", multiplier: 0.15 }
+      - { name: morning_spike,  start: "08:30", end: "11:30", multiplier: 1.8 }
+      - { name: lunch_dip,      start: "11:30", end: "13:00", multiplier: 0.3 }
+      - { name: afternoon,      start: "13:00", end: "16:00", multiplier: 1.2 }
+      - { name: eod_rush,       start: "16:00", end: "18:30", multiplier: 1.5 }
+      - { name: overtime,       start: "18:30", end: "22:00", multiplier: 0.3 }
+      - { name: midnight,       start: "22:00", end: "23:59", multiplier: 0.05 }
+  calendars:
+    regions: [KR]
+
+# A02 필수필드 누락 탐지용 — 결측값 주입
+data_quality:
+  enabled: true
+  missing_values:
+    enabled: true
+    rate: 0.02
+    strategy: mcar
+    protected_fields: [document_id, company_code, posting_date]
+  generate_labels: true
+
+# C07 Benford 위반 등 통계적 이상 주입
+anomaly_injection:
+  enabled: true
+  rates:
+    total_rate: 0.05
+    fraud_rate: 0.02
+    error_rate: 0.02
+    process_rate: 0.01
+
+# 프로세스 배정 현실화 — generation_principles.md §2 기반
+internal_controls:
+  enabled: true
+  sod_violation_rate: 0.01
+  anomalous_assignment_rate: 0.07   # 비현실적 프로세스 겸직 비율 (감사 탐지 대상)
+  compatible_extension_rate: 0.25   # 현실적 프로세스 겸직 확장 비율 (Senior 이상)
+
 fraud:
   enabled: true
   fraud_rate: 0.02
+  # B02/B08: KRW 승인한도 — 한국 중견 제조업 전결규정 반영
+  # Level 1: 10M(자동) → Level 3: 1B(팀장) → Level 4: 5B(본부장) → Level 5: 10B(CFO) → Level 6: 50B(이사회)
+  approval_thresholds: [10000000, 100000000, 1000000000, 5000000000, 10000000000, 50000000000]
   fraud_type_distribution:
     duplicate_payment: 0.20
     fictitious_transaction: 0.20
@@ -44,7 +147,7 @@ fraud:
 
 output:
   mode: flat_file
-  output_directory: ../../data/journal/datasynth
+  output_directory: ../../data/journal/primary/datasynth
   formats:
     - csv
     - parquet

@@ -15,9 +15,11 @@ patterns:
   revenue_account_prefixes:
     - "4"
 
-  # B10: 관계사 식별 기준 (계정코드 또는 거래처 코드)
-  # 회사마다 관계사 식별 방법이 다름 — UI에서 입력 필수
-  intercompany_identifiers: []
+  # B10: 관계사 식별 기준 (GL 계정 prefix 목록)
+  # 관계사 채권/채무 전용 계정 prefix. 실무에서는 UI에서 고객사별 입력
+  intercompany_identifiers:
+    - "1150C"   # IC Receivable (관계사 채권)
+    - "2050C"   # IC Payable (관계사 채무)
 
   # B11/C06: 가계정/미결산계정 키워드 (정규식 지원)
   # ".*임시.*" 형태로 와일드카드 매칭 가능
