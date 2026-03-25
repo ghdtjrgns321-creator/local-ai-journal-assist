@@ -51,40 +51,25 @@ def add_is_intercompany(
     df: pd.DataFrame,
     identifiers: list[str],
 ) -> pd.DataFrame:
-    """B10: 관계사 거래 여부. gl_account 또는 company_code에서 식별자 매칭.
+    """B10: 관계사 거래 여부. gl_account에서 IC 전용 계정 prefix 매칭.
 
     감사 관점: 관계사 거래는 순환거래·이전가격 위험.
-    identifiers는 회사별 관계사 코드 목록 — UI에서 입력.
+    identifiers는 관계사 채권/채무 GL 계정 prefix 목록 — UI에서 입력.
     """
     if not identifiers:
         logger.warning("intercompany_identifiers 비어있음 — is_intercompany를 전체 False로 설정")
         df["is_intercompany"] = False
         return df
 
-    has_gl = "gl_account" in df.columns
-    has_cc = "company_code" in df.columns
-
-    if not has_gl and not has_cc:
-        logger.warning(
-            "gl_account, company_code 컬럼 모두 없음 — is_intercompany를 전체 False로 설정",
-        )
+    if "gl_account" not in df.columns:
+        logger.warning("gl_account 컬럼 없음 — is_intercompany를 전체 False로 설정")
         df["is_intercompany"] = False
         return df
 
-    result = pd.Series(False, index=df.index)
-    prefix_tuple = tuple(identifiers)
-
-    # gl_account(Int64 가능) → str 변환 후 startswith 매칭
-    if has_gl:
-        gl_str = df["gl_account"].astype(str).str.strip()
-        result = result | gl_str.str.startswith(prefix_tuple).fillna(False)
-
-    # company_code(str)에서도 startswith 매칭 (contains는 오탐 위험)
-    if has_cc:
-        cc_str = df["company_code"].astype(str).str.strip()
-        result = result | cc_str.str.startswith(prefix_tuple).fillna(False)
-
-    df["is_intercompany"] = result
+    # Why: company_code 매칭은 모든 행이 True가 되는 과탐 유발
+    #      GL 계정 prefix(IC Receivable/Payable)만으로 관계사 거래 식별
+    gl_str = df["gl_account"].astype(str).str.strip()
+    df["is_intercompany"] = gl_str.str.startswith(tuple(identifiers)).fillna(False)
     return df
 
 

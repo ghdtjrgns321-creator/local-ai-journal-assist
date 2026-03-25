@@ -89,32 +89,29 @@ class TestAddIsIntercompany:
         assert result["is_intercompany"].iloc[0] == True
         assert result["is_intercompany"].iloc[1] == False
 
-    def test_company_code_startswith(self):
-        """company_code가 식별자로 시작."""
+    def test_company_code_ignored(self):
+        """company_code만 있고 gl_account 없으면 → 전부 False (GL 기반 식별)."""
         df = pd.DataFrame({
             "company_code": ["INTER_01", "HQ"],
         })
         result = add_is_intercompany(df, self.IDENTIFIERS)
-        assert result["is_intercompany"].iloc[0] == True
-        assert result["is_intercompany"].iloc[1] == False
+        assert not result["is_intercompany"].any()
 
-    def test_or_combination(self):
-        """gl_account OR company_code 중 하나라도 매칭이면 True."""
+    def test_multiple_gl_prefixes(self):
+        """여러 GL prefix 중 하나라도 매칭이면 True."""
         df = pd.DataFrame({
-            "gl_account": pd.array([1200, 9900], dtype="Int64"),
-            "company_code": ["INTER_01", "HQ"],
+            "gl_account": pd.array([9900, 1200, 9901], dtype="Int64"),
         })
         result = add_is_intercompany(df, self.IDENTIFIERS)
-        # 둘 다 True (각각 다른 경로로 매칭)
-        assert result["is_intercompany"].tolist() == [True, True]
+        assert result["is_intercompany"].tolist() == [True, False, True]
 
     def test_empty_identifiers(self, pf_basic_df):
         """identifiers 비어있으면 → 전부 False."""
         result = add_is_intercompany(pf_basic_df, [])
         assert not result["is_intercompany"].any()
 
-    def test_no_relevant_columns(self, pf_minimal_df):
-        """gl_account, company_code 둘 다 없으면 → 전부 False."""
+    def test_no_gl_account_column(self, pf_minimal_df):
+        """gl_account 컬럼 없으면 → 전부 False."""
         result = add_is_intercompany(pf_minimal_df, self.IDENTIFIERS)
         assert not result["is_intercompany"].any()
 
