@@ -37,7 +37,7 @@ columns:
   - name: source               # automated/manual/recurring/adjustment — B08(수기전표) 판정용
     type: str
     required: false
-  - name: business_process     # P2P/O2C/R2R/H2R/A2R
+  - name: business_process     # P2P/O2C/R2R/H2R/TRE/A2R
     type: str
     required: false
   - name: line_number          # ACDOCA: docln
