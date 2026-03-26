@@ -3,42 +3,21 @@
 ## 브랜치 구조
 
 ```
-main                    ← 안정된 릴리즈만 머지 (항상 실행 가능 상태)
- ├── develop            ← 개발 통합 브랜치 (Phase별 작업이 모이는 곳)
- │    ├── feat/1a-ingest          ← Phase 1a: 수집·피처·검증
- │    ├── feat/1b-detection       ← Phase 1b: 이상탐지·DB
- │    ├── feat/1c-dashboard       ← Phase 1c: Streamlit 대시보드
- │    ├── feat/2-ml               ← Phase 2: ML 앙상블
- │    └── feat/3-llm              ← Phase 3: LLM·NLP·Export
- └── fix/<이슈번호>-<설명>        ← 버그 수정
+main      ← 안정 릴리즈 (Phase 완료 시 태그)
+└── develop  ← 모든 개발 작업 (직접 커밋)
 ```
 
-## 브랜치 네이밍 규칙
-
-| 접두사      | 용도                     | 예시                          |
-|-------------|--------------------------|-------------------------------|
-| `feat/`     | 새 기능 개발             | `feat/1a-ingest`              |
-| `fix/`      | 버그 수정                | `fix/12-benford-edge-case`    |
-| `refactor/` | 구조 개선 (기능 변경 없음) | `refactor/settings-loader`    |
-| `docs/`     | 문서만 변경              | `docs/update-audit-domain`    |
-| `chore/`    | 설정·CI·의존성 등        | `chore/add-ruff-config`       |
+1인 프로젝트이므로 2-branch 체제로 운영한다.
+feature 브랜치는 별도로 생성하지 않고 develop에서 직접 작업한다.
 
 ## 워크플로우
 
 ```
-1. develop에서 feat 브랜치 생성
-   git checkout develop
-   git checkout -b feat/1a-ingest
-
-2. 작업 → 커밋 (Conventional Commits)
+1. develop에서 직접 작업 → 커밋 (Conventional Commits)
    feat: Excel 파일 로더 구현
    fix: 컬럼 매핑 fuzzy threshold 버그 수정
 
-3. 기능 완성 시 develop에 머지
-   git checkout develop
-   git merge feat/1a-ingest
-
-4. Phase 완료 시 main에 머지
+2. Phase 완료 시 main에 머지
    git checkout main
    git merge develop --no-ff
    git tag v0.1.0  # Phase 1a 완료
@@ -57,24 +36,37 @@ main                    ← 안정된 릴리즈만 머지 (항상 실행 가능 
 ## 커밋 메시지 규칙
 
 ```
-<type>: <설명>
+<type>(<scope>): <설명>
+
+type:
+  feat      새 기능
+  fix       버그 수정
+  refactor  구조 개선 (기능 변경 없음)
+  docs      문서만 변경
+  chore     설정·CI·의존성 등
+  test      테스트 추가·수정
+
+scope (선택):
+  ingest, feature, validation, detection, db, preprocessing, llm, dashboard
 
 예시:
-feat: Excel 파일 검증 로직 구현
-fix: 심야 시간 판정 경계값 오류 수정
-refactor: detection 모듈 BaseDetector 추상화
-docs: AUDIT_DOMAIN_FINAL.md C04 소급전기 설명 보강
-chore: ruff 설정 추가
-test: Benford 판정 엣지케이스 테스트 추가
+  feat(detection): Benford 판정 모듈 구현
+  fix(ingest): 컬럼 매핑 fuzzy threshold 버그 수정
+  refactor(feature): engine.py rules 전달 형식 정규화
+  docs: AUDIT_DOMAIN_FINAL.md C04 소급전기 설명 보강
+  chore: ruff 설정 추가
+  test(validation): L3 통계 검증 엣지케이스 추가
 ```
 
 ## 규칙
 
 - **main에 직접 커밋 금지** — 항상 develop → main 머지
+- **develop에서 직접 작업** — feature 브랜치 생성하지 않음
 - **force push 금지** — 특히 main, develop
 - **머지 전 테스트 통과 필수** — `uv run pytest tests/ -v`
 - **1 커밋 = 1 논리적 변경** — 여러 기능을 한 커밋에 섞지 않기
-- **절대 안전 커밋** - 날아간 파일이나 과거로 돌아간 파일이 생기지않게, 생겼다면 복구, 안전을 최우선으로
+- **커밋 전 브랜치 확인** — `git branch --show-current`로 develop인지 반드시 확인
+- **절대 안전 커밋** — 날아간 파일이나 과거로 돌아간 파일이 생기지 않게, 생겼다면 복구, 안전을 최우선으로
 
 ## 외부 도구 관리
 

@@ -130,3 +130,15 @@ uv run pytest tests/test_feature/ tests/test_detection/ -v
 함수가 dict를 받을 때 **키 부재를 빈 리스트로 fallback하면 버그가 숨는다**.
 "조용한 실패(silent failure)"는 즉시 에러보다 디버깅이 훨씬 어렵다.
 방어 방법: (1) 공개 API에서 입력 형식 정규화 (2) fallback 시 warning 로그 추가.
+
+---
+
+## 2026-03-26: 브랜치 전략 단순화 시 벌크 커밋 발생
+
+**증상**: `60b9603` 커밋에 116파일(11,198줄 추가)이 단일 커밋으로 들어감. "1커밋 = 1논리적 변경" 원칙 위배.
+
+**원인**: Phase별 feature 브랜치 5개(feat/1a-ingest, 1b-detection, 2-ml, 3-llm, backup) 운용 중 작업이 브랜치 간 왔다갔다하면서 feat/1a-ingest에 미커밋 변경 91파일이 누적. develop+main 2-branch 체제로 전환하기 위해 브랜치 머지 전 안전 확보 목적으로 일괄 커밋.
+
+**해결**: 벌크 커밋 그대로 유지. 머지 시 충돌은 ours(최신본) 기준으로 해결. 파일 손실 없음 확인 완료. 이후 feature 브랜치 전부 삭제하고 develop+main 2-branch 체제로 전환.
+
+**교훈**: 1인 프로젝트에서 phase별 feature 브랜치는 오버엔지니어링. 작업이 phase 간 교차되면 브랜치 전환 시 미커밋 변경 분실 위험이 높아진다. 단순한 브랜치 전략(develop+main)이 안전하다.
