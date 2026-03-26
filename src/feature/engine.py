@@ -108,10 +108,15 @@ def generate_all_features(
     ----------
     df : 입력 DataFrame (in-place 수정)
     settings : AuditSettings 주입. None이면 자동 로드.
-    rules : audit_rules.yaml["patterns"] 수준 dict. pattern 카테고리에 전달.
+    rules : audit_rules dict. {"patterns": {...}} 또는 평탄 dict 모두 허용.
     categories : 실행할 카테고리 목록. None이면 전체 4개.
     """
     s = settings or get_settings()
+
+    # Why: get_audit_rules()는 {"patterns": {...}} 중첩 구조를 반환하지만
+    #      pattern_features는 평탄 dict를 기대. 호출자가 어느 형태로 넘기든 안전 처리.
+    if rules is not None and "patterns" in rules:
+        rules = rules["patterns"]
 
     # 실행 대상 결정: 사용자 지정 or 전체, 항상 고정 순서로 실행
     target_set = set(categories) if categories else set(_EXECUTION_ORDER)

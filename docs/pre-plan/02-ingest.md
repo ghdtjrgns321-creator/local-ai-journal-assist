@@ -4,8 +4,8 @@
 다양한 형태의 Excel/CSV 원본 전표 데이터를 읽어 표준 DataFrame으로 변환한다.
 ERP마다 다른 헤더 위치, 컬럼명, 병합셀 등을 자동으로 처리하는 것이 핵심.
 
-> **메인 데이터**: DataSynth CSV (`data/journal/primary/datasynth/journal_entries.csv`)는
-> 표준 스키마와 동일한 컬럼명을 사용하므로 매핑 없이 직접 로드 가능.
+> **메인 데이터**: DataSynth CSV (`data/journal/primary/datasynth/journal_entries.csv`, 319MB)는
+> 표준 스키마(schema.yaml)의 슈퍼셋(39개 컬럼 ⊇ 스키마 필수 10개)을 사용하므로 매핑 없이 직접 로드 가능.
 > ingest 파이프라인은 **외부 ERP 엑셀 업로드 시** 필요한 모듈이다.
 
 ---
@@ -60,6 +60,22 @@ src/ingest/
 └── file_validator.py      # validate_file() 퍼사드
 ```
 
+#### 이 모듈이 하는 일
+
+사용자가 업로드한 파일이 **파이프라인에 진입할 자격이 있는지** 사전에 검증한다.
+
+```
+문제:
+  감사인이 업로드하는 파일은 형태가 다양하다.
+  존재하지 않는 경로, 지원하지 않는 확장자(PDF/HWP), 빈 파일, 수백 MB 초과 파일,
+  확장자를 위조한 손상 파일 등이 그대로 리더에 들어가면 cryptic한 에러가 발생한다.
+
+해결:
+  5단계 검증(존재→확장자→빈파일→크기→무결성)을 통과한 파일만 다음 단계로 전달한다.
+  각 단계는 error(중단)와 warning(계속 진행+안내)을 구분하여,
+  사용자에게 "왜 파일이 거부되었는지" 명확한 사유를 제공한다.
+```
+
 **구현 내용:**
 - 10개 확장자를 3개 카테고리로 분류, 카테고리별 크기 제한·검증 전략 분리
 - PDF/HWP는 "unsupported"로 거부 + 사유 안내 (CONSTRAINTS.md)
@@ -72,7 +88,7 @@ src/ingest/
 
 **검증 5단계:** 존재 → 확장자 → 빈파일 → 크기(카테고리별) → 무결성(확장자별)
 **error/warning 분류:** error = 파이프라인 중단 / warning = 계속 진행 + 사용자 안내
-**테스트:** [32개 통과](../../tests/test_ingest/test-results/ingest-file-validator.md) (확장자 분류 15 + 경로 2 + 확장자 3 + 빈파일 1 + 크기 2 + 무결성 7 + 출력 2)
+**테스트:** [32개 통과](../../tests/test_ingest/test-results/ingest-all-results.md#5-1-file-validator-32-tests) (확장자 분류 15 + 경로 2 + 확장자 3 + 빈파일 1 + 크기 2 + 무결성 7 + 출력 2)
 
 ---
 
@@ -80,6 +96,24 @@ src/ingest/
 
 검증 통과된 파일을 포맷별 리더로 읽어 통합 `ReadResult`로 반환한다.
 pre-plan 초안은 xlsx만 고려했으나, **10개 확장자 전체를 지원**하도록 확장.
+
+#### 이 모듈이 하는 일
+
+검증 통과된 파일을 **포맷에 관계없이 동일한 형태의 DataFrame**으로 변환한다.
+
+```
+문제:
+  ERP에서 내보낸 전표 파일은 xlsx, xls, xlsb, csv, parquet 등 포맷이 제각각이다.
+  Excel은 병합셀·멀티시트가 있고, CSV는 인코딩·구분자가 다르고,
+  Parquet은 시트 개념 자체가 없다.
+  → 다운스트림(헤더 탐지, 컬럼 매핑)이 각 포맷을 개별 처리하면 복잡도가 폭발한다.
+
+해결:
+  포맷별 리더(excel/text/parquet)가 각자의 차이를 흡수하고,
+  reader_api 퍼사드가 확장자 기반으로 디스패치하여
+  어떤 포맷이든 동일한 ReadResult(sheets, metadata)로 정규화한다.
+  다운스트림은 ReadResult만 받으면 되므로 포맷을 알 필요가 없다.
+```
 
 #### 모듈 구조 (4개 리더 + 1개 퍼사드 + 1개 모델)
 
@@ -99,10 +133,10 @@ src/ingest/
 |----------------------------------|----------------------------|----------------------------------------------------|
 | `read_only=True` vs 병합셀 충돌   | **`read_only=False`** 사용  | read_only에서 merged_cells 접근 불가. 100MB 제한이 안전장치 |
 | Multi-format 지원                 | 포맷별 리더 분리 + 퍼사드    | xlsx/xls/xlsb/csv/parquet API가 모두 다름             |
-| CSV fast path                    | `pd.read_csv` 직접 호출     | DataSynth 232MB CSV가 메인 데이터                     |
+| CSV fast path                    | `pd.read_csv` 직접 호출     | DataSynth 319MB CSV가 메인 데이터                     |
 | 통합 반환 타입                    | `ReadResult` (WorkbookInfo 대체) | CSV/Parquet에는 시트 개념 없음 → 정규화 필요          |
 | 인코딩 감지 중복                  | text_reader에서 재감지       | integrity_checkers 시그니처 변경 시 32개 기존 테스트 영향 |
-| 메모리 (232MB CSV → ~1.5GB)      | Phase 1a에서는 최적화 안 함  | 16GB RAM 충분. 문제 시 chunksize 대응                 |
+| 메모리 (319MB CSV → ~1.8GB)      | Phase 1a에서는 최적화 안 함  | 16GB RAM 충분. 문제 시 chunksize 대응                 |
 
 #### excel_reader.py
 
@@ -139,7 +173,7 @@ ws.merged_cells.ranges 순회 → unmerge → 좌상단 값을 모든 셀에 복
 - 텍스트 파일일 때만 `encoding_override`를 text_reader에 전달 (Excel/Parquet은 무시)
 - 미지원 확장자 → `ValueError` (정상적으로는 file_validator에서 이미 걸림)
 
-**테스트:** [24개 통과](../../tests/test_ingest/test-results/ingest-file-reader.md) (excel 8 + text 7 + parquet 3 + reader_api 6)
+**테스트:** [24개 통과](../../tests/test_ingest/test-results/ingest-all-results.md#5-2-file-reader-24-tests) (excel 8 + text 7 + parquet 3 + reader_api 6)
 
 ---
 
@@ -150,6 +184,24 @@ src/ingest/
 ├── header_detector.py    # detect_header_row() + detect_headers() 퍼사드
 ├── _header_scoring.py    # 구조적 스코어 함수 3개 (type_diversity, uniqueness, null_density)
 └── models.py             # HeaderDetectionResult 추가
+```
+
+#### 이 모듈이 하는 일
+
+raw DataFrame에서 **헤더(컬럼명)가 위치한 행 번호**를 자동으로 찾아낸다.
+
+```
+문제:
+  Excel 파일의 1행이 항상 헤더인 것은 아니다.
+  ERP 출력물은 상단에 회사명·기간·제목 등 메타 행이 붙어 있는 경우가 많고,
+  헤더가 3행, 5행, 심지어 10행 이후에 나타나기도 한다.
+  → 헤더 위치를 잘못 잡으면 이후 컬럼 매핑이 전부 실패한다.
+
+해결:
+  상위 20행을 스캔하며 5가지 구조적 신호(타입 다양성, 고유성, 결측 밀도,
+  키워드 매칭, 문자열 비율)의 가중합으로 각 행을 스코어링한다.
+  가장 높은 점수를 받은 행을 헤더로 판정하고, confidence를 함께 반환하여
+  확신이 낮을 때 사용자에게 확인을 요청할 수 있도록 한다.
 ```
 
 **스코어 공식 (v2 — 구조적 신호 기반):**
@@ -199,6 +251,25 @@ src/ingest/
 ├── column_mapper.py    # auto_map_columns() + map_columns() 퍼사드
 ├── _type_compat.py     # infer_column_type + validate_type_compatibility (B1 타입 검증)
 └── models.py           # MappingResult + ReviewItem 추가
+```
+
+#### 이 모듈이 하는 일
+
+원본 파일의 컬럼명(예: "전표번호", "Belnr", "Doc No.")을 **표준 스키마 컬럼명**
+(예: `document_number`)에 자동으로 대응시킨다.
+
+```
+문제:
+  ERP마다 동일한 데이터를 다른 이름으로 내보낸다.
+  SAP는 "BELNR", 더존은 "전표번호", 영문 시스템은 "Document Number".
+  → 다운스트림(타입 캐스팅, 피처 생성, 탐지 룰)이
+    매번 원본 컬럼명에 맞춰 분기하면 유지보수가 불가능하다.
+
+해결:
+  정확 일치(keywords.yaml 별칭) → fuzzy 매칭(rapidfuzz) + 타입 호환성 검증의
+  2단계로 자동 매핑하고, confidence에 따라 3-tier로 분류한다.
+  (>=80% 자동확정 / 40~80% 사용자 확인 / <40% 수동 선택)
+  한 번 확정된 매핑은 프로파일로 저장되어 동일 ERP 파일에 재사용된다.
 ```
 
 **알고리즘 (Exact → Fuzzy+타입검증 2단계):**
@@ -259,6 +330,24 @@ src/ingest/
 └── models.py         # CastingResult 추가
 ```
 
+#### 이 모듈이 하는 일
+
+매핑 완료된 DataFrame의 각 컬럼을 **스키마가 요구하는 데이터 타입으로 변환**한다.
+
+```
+문제:
+  Excel에서 읽은 금액은 "1,234,567원" 같은 문자열이고,
+  날짜는 "2024.03.15", "20240315", Excel serial number(45000) 등 형식이 뒤섞여 있다.
+  → 탐지 룰이 금액 비교(>= threshold)나 날짜 연산(기말 ±N일)을 하려면
+    반드시 float/datetime으로 변환되어 있어야 한다.
+
+해결:
+  스키마 정의(schema.yaml)에 따라 float/date/int/bool/str 캐스터를 자동 디스패치하고,
+  금액은 통화기호→괄호음수→쉼표 순서로 정제, 날짜는 5단계 포맷 폴백으로 처리한다.
+  차변/대변이 분리되지 않은 경우 DC indicator나 부호 기반으로 자동 분리(unify)한다.
+  필수 컬럼 변환 실패는 error, 권장 컬럼은 warning으로 구분한다.
+```
+
 **알고리즘:**
 ```
 1. cast_dataframe(df, schema) 진입
@@ -310,6 +399,23 @@ src/ingest/
 └── mapping_profile.py   # save_profile/load_profile/list_profiles/delete_profile
 ```
 
+#### 이 모듈이 하는 일
+
+확정된 컬럼 매핑 결과를 **JSON으로 저장하여 동일 ERP 파일에 재사용**한다.
+
+```
+문제:
+  감사 현장에서는 동일 ERP에서 매월/매분기 동일한 형태의 파일을 반복 업로드한다.
+  매번 fuzzy 매핑 → 사용자 확인을 거치면 비효율적이고,
+  같은 ERP인데 이전과 다른 매핑이 적용될 위험도 있다.
+
+해결:
+  원본 컬럼명 집합의 SHA-256 해시(fingerprint)로 ERP를 식별하고,
+  한 번 확정된 매핑을 프로파일로 저장한다.
+  다음 업로드 시 fingerprint가 일치하면 프로파일을 자동 로드하여
+  fuzzy 매핑 단계와 사용자 확인 UI를 건너뛸 수 있다.
+```
+
 **매칭 전략:** 원본 컬럼명 집합의 SHA-256 해시(fingerprint, 앞 12자)로 프로파일 식별.
 순서·대소문자 무관 → 동일 ERP면 동일 fingerprint.
 
@@ -339,7 +445,7 @@ data/profiles/
 - `list_profiles()` → list[dict] (최신 순)
 - `delete_profile(fingerprint)` → bool
 
-**테스트:** [26개 통과](../../tests/test_ingest/test-results/ingest-mapping-profile.md) (fingerprint 6 + save 5 + log 3 + load 5 + list 3 + delete 3 + 통합 1)
+**테스트:** [26개 통과](../../tests/test_ingest/test-results/ingest-all-results.md#5-5-mapping-profile-26-tests) (fingerprint 6 + save 5 + log 3 + load 5 + list 3 + delete 3 + 통합 1)
 
 ---
 
@@ -775,7 +881,7 @@ class IngestState(str, Enum):
 
 ### 미해결 이슈 (발견 → 해결 교차 참조)
 
-> 출처: [ingest-column-mapper.md](../../tests/test_ingest/test-results/ingest-column-mapper.md), [ingest-validation-datasets.md](../../tests/test_ingest/test-results/ingest-validation-datasets.md), [e2e-sap-merged.md](../../tests/test_feature/test-results/e2e-sap-merged.md)
+> 출처: [ingest-all-results.md](../../tests/test_ingest/test-results/ingest-all-results.md#5-4-column-mapper-38-tests), [ingest-validation-datasets.md](../../tests/test_ingest/test-results/ingest-validation-datasets.md), [e2e-sap-merged.md](../../tests/test_feature/test-results/e2e-sap-merged.md)
 
 | Phase | 문제                         | 현상                                                              | 해결 위치                                                                 |
 |:------|:-----------------------------|:------------------------------------------------------------------|:--------------------------------------------------------------------------|
@@ -786,3 +892,46 @@ class IngestState(str, Enum):
 | 1c    | fiscal_period_mismatch NaN   | sap-merged에서 전체 NaN 출력                                       | [07-dashboard §미해결과제](07-dashboard.md#phase-1a에서-넘어온-미해결-과제-ux-1단계-잔여) — 매핑 리뷰 UI에서 원인 확인 |
 | 1c    | sap-merged debit/credit 미매핑 | amount 카테고리 전체 스킵                                        | [07-dashboard §미해결과제](07-dashboard.md#phase-1a에서-넘어온-미해결-과제-ux-1단계-잔여) — 수동 매핑 조정 |
 | 1c~3  | 데이터셋 필수 컬럼 미매핑    | bpi2019 등 8개 필수 컬럼 미매핑                                    | Fuzzy 정확도 개선 + 매핑 프로파일 누적                                    |
+| 1c    | fiscal_period 필수 추가 영향 | 외부 ERP에 fiscal_period 없으면 필수 미매핑 +1 (sap-merged MONAT은 keywords.yaml 별칭 추가로 해결 가능) | [07-dashboard](07-dashboard.md) — 수동 매핑 UI에서 처리 |
+
+---
+
+## DataSynth v1.2.0 컬럼 현황
+
+> DataSynth Rust 엔진에서 생성하는 39개 컬럼. 전체 명세: `data/journal/primary/datasynth/PREVIEW.md`
+> 생성 원칙: `data/journal/primary/datasynth/generation_principles.md`
+> schema.yaml에 39개 전부 반영 완료.
+
+### DataSynth 생성 컬럼 vs 감사기준서 갭
+
+DataSynth v1.2.0에서 **생성하는** 승인/SoD/세금 관련 컬럼:
+
+| 컬럼명              | 타입   | 설명                    | 탐지 활용                 |
+|---------------------|--------|-------------------------|---------------------------|
+| `approved_by`       | str    | 승인자 ID (USNAM)       | B06 자기승인, 통제 위반    |
+| `approval_date`     | date   | 승인일                  | 승인 지연 탐지             |
+| `sod_violation`     | bool   | 직무분리 위반 여부       | B07 SoD 탐지 레이블        |
+| `sod_conflict_type` | str    | SoD 충돌 유형           | preparer_approver 등 분류  |
+| `tax_code`          | str    | 세금코드 (nullable)     | 부가세 검증                |
+| `tax_amount`        | float  | 세금액 (nullable)       | 부가세 10% 검증            |
+| `trading_partner`   | str    | IC 거래처 (nullable)    | B10 관계사 거래 탐지       |
+| `lettrage`          | str    | 대사 그룹 (nullable)    | 미소거 탐지                |
+| `lettrage_date`     | date   | 대사일 (nullable)       | C05 가수금 장기체류 탐지   |
+
+### DuckDB 파생 컬럼 (DataSynth 미생성 → 적재 시 생성)
+
+| 컬럼명              | 산출 방식                                | 탐지 활용            |
+|---------------------|------------------------------------------|----------------------|
+| `approval_level`    | 금액 기준 CASE WHEN (전결규정 6단계)      | 레벨 건너뜀 탐지     |
+
+### 미구현 컬럼 (Phase 3 이후 DataSynth 확장 시 추가 예정)
+
+감사기준서 갭 분석에서 도출되었으나 DataSynth v1.2.0에 미포함된 컬럼.
+실제 ERP 데이터 업로드 시에는 ingest 파이프라인에서 매핑 가능.
+
+| 카테고리    | 컬럼명                                                    | 사유                          |
+|------------|-----------------------------------------------------------|-------------------------------|
+| 증빙       | has_attachment, supporting_doc_type, invoice_amount/date   | ERP 증빙 연동 필요 (외부 API) |
+| 증빙       | delivery_date, supply_amount                               | 컷오프·부가세 검증용           |
+| 변경 이력  | changed_by, change_date, changed_field                     | SAP Change Document 연동 필요 |
+| 기타       | document_number (순차번호), ip_address, reversal_reason     | ERP 로그 연동 필요            |

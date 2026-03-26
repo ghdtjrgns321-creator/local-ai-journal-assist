@@ -1,185 +1,551 @@
-# 10. 가상 GL 데이터 생성기 및 Excel 템플릿 [Phase 0 — 사전 준비]
+# 10. 샘플 데이터 전략 [Phase 0 — 사전 준비]
 
-> **DataSynth로 대체됨**: 메인 데이터는 DataSynth(`data/journal/primary/datasynth/`)에서 생성.
-> 이 모듈은 ingest 파이프라인 테스트용 소규모 ERP 샘플 생성 용도로만 유지.
-> 이상 전표 유형은 22개 룰(A01~C09) 체계를 반영하되, 테스트용이므로 주요 유형만 포함.
+> 메인 데이터: DataSynth v1.2.0 (`data/journal/primary/datasynth/`)
+> 테스트 데이터: `data/sample/generate_sample.py` (소규모 ingest 테스트용)
 
-## 목적
-전체 파이프라인을 테스트할 수 있는 가상 GL(General Ledger) 데이터를 자동 생성한다.
-정상 전표(80%)와 의도적 이상 전표(20%)를 혼합하여 탐지 검증에 활용.
+---
 
-## 관련 파일
+## 1. DataSynth — 메인 데이터
+
+> DataSynth v1.2.0 | seed: 2024 | 설정: `config/datasynth.yaml`
+> 상세 원칙: `data/journal/primary/datasynth/generation_principles.md`
+> 컬럼 사전: `data/journal/primary/datasynth/PREVIEW.md`
+
+### 1.1 개요
+
+| 항목              | 값                                          |
+|-------------------|---------------------------------------------|
+| 시나리오          | K-IFRS 적용 한국 중견 제조 그룹사(3법인)    |
+| 법인              | C001(본사, 서울), C002(울산공장), C003(천안공장) |
+| 통화              | KRW (단일)                                  |
+| 회계연도          | 2022년 1~12월                               |
+| 전표 건수         | 106,489건                                   |
+| 라인아이템        | 1,106,356건                                 |
+| GL 계정           | 430개                                       |
+| 사용자            | 152명 (5개 페르소나)                        |
+| 컬럼              | 39개 (Header 24 + Line 15)                  |
+| 파일 크기         | 319 MB (CSV)                                |
+| 시드              | 2024 (재현성 보장)                          |
+
+### 1.2 컬럼 사전 (39개)
+
+#### Header fields — 전표 단위 (document_id별 동일)
+
+| 컬럼              | 타입     | 설명                          | 예시                          |
+|-------------------|----------|-------------------------------|-------------------------------|
+| document_id       | UUID     | 전표 고유 식별자              | 82f7648e-8dc1-...             |
+| company_code      | str      | 회사코드                      | C001, C002, C003              |
+| fiscal_year       | int      | 회계연도                      | 2022                          |
+| fiscal_period     | int      | 회계기간                      | 1~12                          |
+| posting_date      | datetime | 전기일시 (시분초 포함)        | 2022-01-19 05:08:33           |
+| document_date     | date     | 증빙일                        | 2022-01-19                    |
+| document_type     | str      | SAP 전표유형 코드             | SA, KR, KZ, DR, DZ, WE, AA, HR |
+| currency          | str      | 통화                          | KRW                           |
+| exchange_rate     | float    | 환율 (KRW 단일 → 항상 1.0)   | 1                             |
+| reference         | str      | 참조번호 (PO/GR/Invoice)     | GR:GR-C001-0000000001        |
+| header_text       | str      | 전표 헤더 적요                | Goods Receipt GR-C001-...     |
+| created_by        | str      | 작성자 ID                     | SYSTEM, USR-JA-001            |
+| user_persona      | str      | 사용자 유형                   | automated_system, junior_accountant |
+| source            | str      | 전표 소스                     | Automated, Manual, Recurring, Adjustment |
+| business_process  | str      | 비즈니스 프로세스             | P2P, O2C, R2R, H2R, TRE, A2R |
+| ledger            | str      | 원장 (Leading Ledger)         | 0L                            |
+| is_fraud          | bool     | 부정 전표 여부                | true/false                    |
+| fraud_type        | str      | 부정 유형 (nullable)          | DuplicatePayment, SelfApproval |
+| is_anomaly        | bool     | 이상징후 여부                 | true/false                    |
+| anomaly_type      | str      | 이상징후 유형 (nullable)      | NewCounterparty, CircularTransaction |
+| approved_by       | str      | 승인자 ID                     | USR-MG-001                    |
+| approval_date     | date     | 승인일                        | 2022-01-20                    |
+| sod_violation     | bool     | 직무분리 위반 여부            | true/false                    |
+| sod_conflict_type | str      | SoD 충돌 유형 (nullable)     | preparer_approver             |
+
+#### Line fields — 라인아이템 단위
+
+| 컬럼                      | 타입  | 설명                    | 예시              |
+|---------------------------|-------|-------------------------|-------------------|
+| line_number               | int   | 라인 번호               | 1, 2, 3          |
+| gl_account                | str   | GL 계정 코드            | 1200, 2900, 2000  |
+| debit_amount              | int   | 차변 금액 (KRW, 정수)   | 814636            |
+| credit_amount             | int   | 대변 금액 (KRW, 정수)   | 814636            |
+| local_amount              | int   | 현지 통화 금액          | 814636            |
+| cost_center               | str   | 코스트센터 (nullable)   | CC-C001-P2P       |
+| profit_center             | str   | 프로핏센터              | PC-C001-P2P       |
+| line_text                 | str   | 라인 적요               | Goods Receipt GR-... |
+| tax_code                  | str   | 세금코드 (nullable)     |                   |
+| tax_amount                | float | 세금액 (nullable)       |                   |
+| trading_partner           | str   | 거래처 (IC용, nullable) | C002              |
+| auxiliary_account_number  | str   | 보조원장 계정번호 (nullable) | V-000001     |
+| auxiliary_account_label   | str   | 보조원장 라벨 (nullable)| V-000001          |
+| lettrage                  | str   | 대사 그룹 (nullable)    |                   |
+| lettrage_date             | date  | 대사일 (nullable)       |                   |
+
+### 1.3 비즈니스 프로세스별 거래 흐름
+
+#### P2P (Procure-to-Pay) — 23.3%
+
+구매 요청부터 대금 지급까지의 전체 흐름.
+
+```
+구매발주(PO) → 입고(GR) → 매입전표(VI) → 대금 지급(AP)
+                WE          KR              KZ
+```
+
+| 단계     | 전표유형 | 차변 계정        | 대변 계정       | 설명                     |
+|----------|---------|-----------------|----------------|--------------------------|
+| 입고(GR) | WE      | 1200 (재고)      | 2900 (GR/IR정리)| 물품 수령 시 재고 인식    |
+| 송장(VI) | KR      | 2900 (GR/IR정리) | 2000 (매입채무) | 세금계산서 수령·3-way 매칭 |
+| 지급(AP) | KZ      | 2000 (매입채무)   | 1010 (은행예금) | 거래처 대금 이체          |
+
+- 3-Way Matching: PO 금액 = GR 수량×단가 = Invoice 금액 (95% 매칭 성공)
+- 가격 차이 허용: ±5%
+- 지급 일정: Invoice → Payment 평균 30일 (50% 정상, 25% 7일 지연, 15% 14일 지연)
+- 지급 수단: 은행이체 60%, 수표 25%, 전신송금 10%, 카드 5%
+
+#### O2C (Order-to-Cash) — 25.9%
+
+수주부터 수금까지의 전체 흐름.
+
+```
+수주(SO) → 출고(GI) → 매출전표(CI) → 수금(CR)
+            WL          DR              DZ
+```
+
+| 단계       | 전표유형 | 차변 계정       | 대변 계정      | 설명                       |
+|------------|---------|----------------|---------------|----------------------------|
+| 출고(GI)   | WL      | 5000 (매출원가) | 1200 (재고)    | 출하 시 재고 → 매출원가 대체 |
+| 매출인식   | DR      | 1100 (매출채권) | 4000 (매출)    | 출하 완료 → 수익 인식       |
+| 수금       | DZ      | 1010 (은행예금) | 1100 (매출채권) | 고객 입금 소거              |
+
+- 부분 출하율: 8%
+- 매출 반품율: 3% (4020 매출반품 계정)
+- 매출 할인: 4010 매출할인 계정
+- 대손율: 2% (6900 대손상각비)
+- 연체 수금: 15%
+- 단기 수금(미적용 공제): 3%
+- 가수금(미소거 입금): 2% → C05 가수금 장기체류 탐지 대상
+
+#### R2R (Record-to-Report) — 26.5%
+
+수동/자동 분개 입력, 결산 조정, 재무제표 작성.
+
+```
+일상 전표 입력(SA) → 결산 조정(SA) → IC 소거(IC) → 재무제표
+```
+
+- R2R에 일부 IC(내부거래 소거) 전표 포함 (0.7%)
+- controller가 87.2% 담당 — 결산 마감 집중
+- manager가 76.0% 담당 — 대규모 조정 승인
+
+#### H2R (Hire-to-Retire) — 8.9%
+
+급여 계산부터 비용 인식까지.
+
+```
+급여 계산 → 급여 전표(HR) → 사회보험료/퇴직급여 전표(HR)
+```
+
+| 전표유형 | 차변 계정         | 대변 계정          | 설명                  |
+|---------|------------------|--------------------|-----------------------|
+| HR      | 6100 (급여)       | 2210 (미지급급여)   | 급여 비용 인식         |
+| HR      | 6200 (복리후생)    | 2220 (미지급복리)   | 4대보험 사업주 부담분  |
+
+- automated_system(9.9%): 급여 자동 전기
+- junior_accountant(11.8%): 경비 정산 수기 입력
+- junior는 TRE 접근 불가 (0%) — 자금 집행 권한 없음
+
+#### TRE (Treasury) — 8.5%
+
+현금 관리, 은행 이체, 차입/상환.
+
+```
+자금 집행/이체(KZ) → 이자 비용 인식(SA) → 차입금 상환(KZ)
+```
+
+| 전표유형 | 차변 계정         | 대변 계정          | 설명              |
+|---------|------------------|--------------------|--------------------|
+| KZ      | 1000 (운전자금)   | 1010 (은행예금)    | 은행 간 자금 이체  |
+| SA      | 7100 (이자비용)   | 2400 (단기차입금)  | 이자 비용 인식     |
+| KZ      | 2600 (장기차입금)  | 1010 (은행예금)    | 원금 상환          |
+
+- Senior/Controller/Manager만 배정 (Junior 접근 불가)
+- 담당: senior(11.2%), automated_system(10.0%), manager(8.4%), controller(4.1%)
+
+#### A2R (Acquire-to-Retire) — 6.9%
+
+고정자산 취득, 감가상각, 처분.
+
+```
+자산 취득(AA) → 월별 감가상각(AA) → 자산 처분/폐기(AA)
+```
+
+| 전표유형 | 차변 계정          | 대변 계정           | 설명           |
+|---------|-------------------|--------------------|----------------|
+| AA      | 1500 (유형자산)    | 1010 (은행예금)     | 자산 취득      |
+| AA      | 6000 (감가상각비)  | 1510 (감가상각누계) | 월별 감가상각  |
+
+- 자산 등록: 60건 (3법인 합산)
+
+### 1.4 전표유형 ↔ 프로세스 매핑
+
+| document_type | 정식명칭         | 프로세스 | 용도                      |
+|---------------|-----------------|----------|---------------------------|
+| SA            | G/L Account Doc | R2R      | 일반 분개, 결산 조정 전표  |
+| KR            | Vendor Invoice  | P2P      | 매입세금계산서 전기        |
+| KZ            | Vendor Payment  | P2P/TRE  | 거래처 대금 지급           |
+| DR            | Customer Invoice| O2C      | 매출세금계산서 전기        |
+| DZ            | Customer Payment| O2C      | 고객 수금 전기            |
+| WE            | Goods Receipt   | P2P      | 입고 전표                 |
+| WL            | Goods Issue     | O2C      | 출고 전표 (재고→매출원가)  |
+| AA            | Asset Posting   | A2R      | 자산 취득·감가상각·처분   |
+| HR            | Payroll Doc     | H2R      | 급여·복리후생 전표        |
+| IC            | Intercompany    | R2R      | 내부거래 소거 전표         |
+
+### 1.5 계정과목 체계
+
+총 430개 GL 계정. K-IFRS / SAP 한국 표준 구조 기반.
+
+```
+자산       1000~1999    현금(1000~1030), 채권(1100~1160), 재고(1200), 자산(1500~1600)
+부채       2000~2999    채무(2000~2050), 세금(2100~2120), 미지급(2200~2300), 차입(2400~2700), GR/IR정리(2900)
+자본       3000~3999    자본금(3000), APIC(3100), 이익잉여금(3200~3300)
+매출/수익  4000~4999    매출(4000~4020), 용역(4100), IC매출(4500)
+매출원가   5000~5999    원재료(5100), 직접노무(5200), 제조간접(5300)
+판관비     6000~6999    감가상각(6000), 급여(6100~6200), 임차(6300~6900)
+영업외     7000~7999    이자(7100), 외환(7500)
+세금       8000         법인세비용
+```
+
+#### 프로세스별 핵심 계정
+
+```
+P2P:  2000(AP) ↔ 2900(GR/IR) ↔ 1200(재고) ↔ 1010(은행)
+O2C:  1100(AR) ↔ 4000(매출) ↔ 1010(은행) ↔ 4010/4020(할인/반품)
+R2R:  전 계정 사용 (결산 조정)
+H2R:  6100(급여) ↔ 2210(미지급급여) ↔ 6200(복리) ↔ 2220(미지급복리)
+TRE:  1000(현금) ↔ 1010(은행) ↔ 2400/2600(차입금) ↔ 7100(이자)
+A2R:  1500(유형자산) ↔ 1510(상각누계) ↔ 6000(감가상각비)
+IC:   1150(IC채권) ↔ 2050(IC채무) ↔ 4500(IC매출) ↔ 2700(IC미지급)
+```
+
+### 1.6 사용자 페르소나 및 권한
+
+#### 페르소나 풀
+
+| 페르소나           | 인원 | 전표 비율 | source         | 역할                     |
+|--------------------|------|----------|----------------|--------------------------|
+| automated_system   | 40   | 68.0%    | Automated 100% | ERP 자동 전기, 배치 처리  |
+| junior_accountant  | 60   | 12.8%    | Manual 40%     | 일상 수기 전표, 경비 정산 |
+| senior_accountant  | 30   | 9.6%     | Manual 30%     | 결산 조정, 복합 전표      |
+| controller         | 10   | 4.9%     | Manual 15%     | 결산 마감, 연결 조정      |
+| manager            | 10   | 4.8%     | Manual 15%     | 승인, 대규모 조정         |
+
+총 152명. Recurring(6.2%)은 automated_system 전용.
+
+#### 페르소나별 프로세스 접근 권한 (실측 %)
+
+```
+                   A2R    H2R    O2C    P2P    R2R    TRE
+automated_system   4.9    9.9   29.9   25.2   20.1   10.0    ← 전 프로세스 무제한
+junior_accountant 15.5   11.8   32.0   24.1   16.6    0.0    ← TRE 접근 불가
+senior_accountant 15.0    6.6   13.3   24.9   29.0   11.2    ← 전 프로세스, R2R 집중
+controller         4.0    0.0    0.0    4.7   87.2    4.1    ← R2R 87% 집중
+manager            0.0    0.0    5.6   10.0   76.0    8.4    ← R2R 76% 집중
+```
+
+#### 프로세스 배정 정책
+
+- **Junior Accountant** — 단일 프로세스 전담 (1인 1프로세스, 겸직 불가)
+- **Senior Accountant** — 기본 1프로세스 + 관련 프로세스 1개 겸직 허용 (7%)
+- **Controller / Manager** — R2R 중심 + 전 프로세스 검토
+- **Automated System** — 전 프로세스 무제한
+
+Senior Accountant 허용 겸직 쌍:
+
+```
+기본 프로세스 → 겸직 가능 프로세스        사유
+R2R           → A2R                      GL + 자산 통제
+R2R           → TRE                      GL + 자금 관리
+TRE           → R2R                      자금 → GL 결산
+P2P           → R2R                      매입 → GL 정산
+O2C           → R2R                      매출 → GL 정산
+```
+
+#### SoD 위반 — 감사 탐지 대상
+
+위반율: 1,080건 / 106,489건 = 1.0%
+
+**SoD 충돌 유형별 건수 (실측):**
+
+| 충돌 유형              | 건수 | 설명                            |
+|------------------------|------|---------------------------------|
+| preparer_approver      | 531  | 전표 작성자 = 승인자 (자기승인) |
+| requester_approver     | 165  | 요청자 = 승인자                 |
+| payment_releaser       | 120  | 지급 실행과 승인 겸직           |
+| reconciler_poster      | 92   | 대사자 = 전기자                 |
+| journal_entry_poster   | 86   | JE 작성과 승인 겸직             |
+| master_data_maintainer | 83   | 마스터 관리와 거래 실행 겸직    |
+
+**비현실적 겸직 쌍 (Senior 이상, 7% 배정) — 탐지 대상:**
+
+| 겸직 쌍   | 부정 시나리오                | 관련 탐지 룰 |
+|-----------|------------------------------|-------------|
+| H2R + O2C | 유령직원 생성 → 가공매출     | B03, B07    |
+| H2R + P2P | 급여 조작 → 리베이트 수수    | B04, B07    |
+| O2C + P2P | 순환거래(round-tripping)     | B10, B07    |
+| TRE + P2P | 자금 집행 → 거래처 결제 우회 | B06, B09    |
+| TRE + O2C | 현금 전기 → 가공 수금        | B06, B09    |
+
+### 1.7 거래 생성 파라미터
+
+#### 금액 분포
+
+- 분포: LogNormal(mu=14.0, sigma=2.5) → 중앙값 ~120만원, 평균 ~2,900만원
+- 범위: 100 ~ 100,000,000,000 KRW
+- 소수점: 0자리 (원화 정수)
+- 라운드넘버 비율: 25%
+- Nice number 비율: 15%
+
+#### 차대변 균형
+
+- 차대 일치: 99.96% (실측)
+- 불일치: 44건 (A01 탐지 테스트용)
+
+#### 전표 소스 분포
+
+| 소스       | 비율  | 페르소나                        | 용도          |
+|------------|------|---------------------------------|---------------|
+| Automated  | 61.8% | automated_system 100%          | ERP 자동 전기 |
+| Manual     | 29.4% | junior 40%, senior 30%, 나머지 | 수기 입력     |
+| Recurring  | 6.2%  | automated_system 100%          | 반복 전표     |
+| Adjustment | 2.6%  | junior 41%, senior 29%, 나머지 | 결산 조정     |
+
+### 1.8 시계열 패턴
+
+#### 월별 전표 건수 (실측)
+
+```
+ 1월   8,436    5월   8,862    9월   9,624
+ 2월   7,601    6월   9,813   10월   8,399
+ 3월   9,895    7월   7,441   11월   8,060
+ 4월   7,571    8월   8,957   12월  11,830  ← 최대 (연말 결산)
+```
+
+분기말(3, 6, 9, 12월)에 건수 증가 패턴. 12월이 최대(×1.4).
+
+#### 시간대별 분포 (실측)
+
+```
+시간대              구간          설정 배수    실측 비율
+late_night         00:00~06:00     0.02       0.8%     ← C03 심야 전기 탐지 대상
+early_morning      06:00~08:30     0.15       4.2%
+morning_spike      08:30~11:30     1.8       36.8%     ← 업무 피크
+lunch_dip          11:30~13:00     0.3        2.0%
+afternoon          13:00~16:00     1.2       25.2%
+eod_rush           16:00~18:30     1.5       22.1%     ← 마감 전 러시
+overtime           18:30~22:00     0.3        8.1%
+midnight           22:00~23:59     0.05       0.8%     ← 심야 (고위험)
+```
+
+#### 요일 패턴 (실측)
+
+- 주말 전표: 9.5% (10,098건) — C02 주말 집중 기표 탐지 가능
+- 공휴일: ~5% (KR 캘린더, 대체공휴일 포함)
+- 요일별 가중치: 월(1.3) > 화(1.1) > 수·목(1.0) > 금(0.85)
+
+#### 스파이크 배수
+
+| 시점   | 배수 | 리드 일수 | 설명                  |
+|--------|------|-----------|----------------------|
+| 월말   | ×2.5 | 5일       | 마감 전 전표 집중     |
+| 분기말 | ×4.0 | —         | 분기 결산             |
+| 연말   | ×6.0 | —         | 연말 결산 (최대 볼륨) |
+
+### 1.9 이상징후 주입 전략
+
+#### 주입 비율
+
+| 카테고리 | 전표 건수 | 비율 | 설명             |
+|----------|----------|------|------------------|
+| 이상징후 | 7,959    | 7.5% | 총 이상 전표     |
+| 부정     | 2,008    | 1.9% | 의도적 부정 전표 |
+| SoD 위반 | 1,080    | 1.0% | 직무분리 위반    |
+
+#### 부정 유형별 건수 (실측)
+
+| 유형                         | 건수 | 비율  | 대응 탐지 룰       |
+|------------------------------|------|-------|---------------------|
+| DuplicatePayment             | 385  | 19.2% | B04 중복 지급       |
+| FictitiousTransaction        | 370  | 18.4% | B03 가공 거래       |
+| RevenueManipulation          | 314  | 15.6% | B01 수익 조작       |
+| SplitTransaction             | 282  | 14.0% | B02 분할 승인회피   |
+| TimingAnomaly                | 173  | 8.6%  | C04 소급 전기       |
+| UnauthorizedAccess           | 168  | 8.4%  | B06~B09 통제 위반   |
+| SuspenseAccountAbuse         | 102  | 5.1%  | C10 가수금 장기체류 |
+| ExpenseCapitalization        | 90   | 4.5%  | B11 비용 자산화     |
+| RoundDollarManipulation      | 26   | 1.3%  | C07 Benford 위반    |
+| ExceededApprovalLimit        | 23   | 1.1%  | B03 승인한도 초과   |
+| JustBelowThreshold           | 22   | 1.1%  | B02 임계값 직하     |
+| SelfApproval                 | 21   | 1.0%  | B06 자기승인        |
+| SegregationOfDutiesViolation | 12   | 0.6%  | B07 SoD 위반        |
+
+#### 이상징후 유형별 건수 Top 10 (실측)
+
+| 유형                   | 건수  | 설명               |
+|------------------------|-------|--------------------|
+| NewCounterparty        | 1,312 | 신규 거래처 거래   |
+| UnusualAccountPair     | 1,048 | 비정상 계정 조합   |
+| MissingRelationship    | 897   | 관계 누락 거래     |
+| DormantAccountActivity | 868   | 휴면 계정 사용     |
+| UnmatchedIntercompany  | 699   | IC 미매칭          |
+| CircularTransaction    | 447   | 순환 거래          |
+| TransferPricingAnomaly | 425   | 이전가격 이상      |
+| CentralityAnomaly      | 421   | 네트워크 중심성 이상 |
+| CircularIntercompany   | 211   | IC 순환 거래       |
+| UnusualTiming          | 200   | 비정상 시점 거래   |
+
+### 1.10 내부거래 (Intercompany)
+
+#### 거래 구조
+
+```
+C001 (본사, 서울) ←→ C002 (울산공장)
+C001 (본사, 서울) ←→ C003 (천안공장)
+C002 (울산공장)   ←→ C003 (천안공장)
+```
+
+#### IC 거래 유형
+
+| 유형            | 비중 | 금액 범위          |
+|-----------------|------|--------------------|
+| GoodsSale       | 35%  | 100만~5억          |
+| ServiceProvided | 20%  | 500만~2억          |
+| ManagementFee   | 15%  | 1,000만~1억        |
+| Royalty         | 10%  | 500만~1.5억        |
+| CostSharing     | 10%  | 200만~5,000만      |
+| LoanInterest    | 5%   | 100만~5,000만      |
+| ExpenseRecharge | 5%   | 50만~2,000만       |
+
+- 매칭 쌍: 98쌍 (매수/매도 양측 전표 동시 생성)
+- 정산 주기: 월별 네팅
+- 이전가격: Cost-Plus 방식 (5% 마크업)
+- 정산 계정: 1150(IC채권) ↔ 2050(IC채무)
+
+### 1.11 내부통제
+
+- SoD 위반율: 1.0% (1,080건)
+- 내부통제 마스터: 18건
+- COSO 프레임워크: 활성 (5구성요소 17원칙)
+- Benford 법칙: 허용 오차 5%, 제외 소스: recurring, payroll
+
+#### 승인 한도 체계 (6단계)
+
+| Level | 한도            | 승인 권한 | 설명                 |
+|-------|-----------------|-----------|----------------------|
+| 1     | 10,000,000      | 자동 승인 | 1천만원 이하 자동 처리 |
+| 2     | 100,000,000     | 담당자    | 1억 이하             |
+| 3     | 1,000,000,000   | 팀장      | 10억 이하            |
+| 4     | 5,000,000,000   | 본부장    | 50억 이하            |
+| 5     | 10,000,000,000  | CFO       | 100억 이하           |
+| 6     | 50,000,000,000  | 이사회    | 500억 이하           |
+
+---
+
+## 2. 테스트용 샘플 생성기 (소규모)
+
+> ingest 파이프라인 테스트 전용. 메인 분석에는 DataSynth 사용.
+
+### 관련 파일
+
 ```
 data/sample/
 ├── generate_sample.py    # 가상 GL 데이터 자동 생성기
 └── gl_template.xlsx      # 수동 작성 Excel 템플릿 (50건)
 ```
 
-## 핵심 클래스/함수
+### generate_sample.py
 
-### `generate_sample.py` — 데이터 생성기
 ```python
 def generate_gl_data(
     n: int = 10_000,
     anomaly_ratio: float = 0.20,
     seed: int = 42
 ) -> DataFrame:
-    """가상 GL 전표 데이터 생성.
-
-    Args:
-        n: 생성할 전표 수 (기본 10,000건)
-        anomaly_ratio: 이상 전표 비율 (기본 20%)
-        seed: 랜덤 시드 (재현성 보장)
-
-    Returns:
-        표준 스키마에 맞는 DataFrame (schema.yaml 컬럼 구조)
-    """
-
-def _generate_normal_entries(n: int) -> DataFrame:
-    """정상 전표 생성 (80%).
-    - 평일 09~18시
-    - 일반 금액 범위 (10만~5,000만)
-    - 자동 전표 (source_type='자동')
-    - 일반 계정과목 (매출, 매입, 급여 등)
-    - 의미 있는 적요
-    """
-
-def _generate_anomaly_entries(n: int) -> DataFrame:
-    """이상 전표 생성 (20%). 22개 룰 주요 유형 포함.
-    각 이상 유형별 균등 배분."""
-
-def _generate_b02_entries(n: int) -> DataFrame:
-    """B02: 승인한도 직하 금액 (4,900~4,999만원대).
-    감사 관점: 5,000만원 승인 한도 회피 의도."""
-
-def _generate_c02_entries(n: int) -> DataFrame:
-    """C02: 주말(토/일) 전표.
-    감사 관점: 비업무일 처리는 통제 우회 가능성."""
-
-def _generate_c03_entries(n: int) -> DataFrame:
-    """C03: 심야(22시~06시) 전표.
-    감사 관점: 야간 처리는 승인 절차 우회."""
-
-def _generate_c01_entries(n: int) -> DataFrame:
-    """C01: 기말(월말 5일 이내) 대규모 매출.
-    감사 관점: 실적 조정 목적의 기말 매출 집중."""
-
-# ReversedAmount → Phase 2 ML 확장으로 이동, 테스트 생성기에서 제외
-
-def _generate_b08_entries(n: int) -> DataFrame:
-    """B08: 수기 전표 (source_type='수동').
-    감사 관점: 자동화 통제 우회."""
-
-def _generate_c06_entries(n: int) -> DataFrame:
-    """C06: 위험 적요 키워드 포함 ('상품권', '가계정', '가수금' 등).
-    감사 관점: 자금 유용 관련 계정."""
-
-def _generate_b10_entries(n: int) -> DataFrame:
-    """B10: 관계사/특수관계자 거래.
-    감사 관점: 이전가격 조작 위험."""
-
-def _generate_benford_violation(df: DataFrame) -> DataFrame:
-    """Benford 위반 데이터 삽입.
-    특정 첫째 자릿수(예: 1, 5)를 과도하게 집중시켜
-    MAD > 0.015가 되도록 조정."""
-
-def save_to_excel(df: DataFrame, output_path: Path) -> Path:
-    """생성된 데이터를 Excel 파일로 저장."""
+    """가상 GL 전표 데이터 생성."""
 ```
 
-## 데이터 스키마
+- 정상 전표 80% + 이상 전표 20% 혼합
+- 이상 유형: B02(승인한도 직하), C02(주말), C03(심야), C01(기말 매출), B08(수기), C06(위험 적요), B10(관계사)
+- Benford 위반 데이터 삽입 (MAD > 0.015)
+- 동일 seed → 동일 데이터 (재현성 보장)
 
-생성되는 DataFrame의 컬럼 구조 (schema.yaml 일치):
+### gl_template.xlsx
 
-| 컬럼          | 타입     | 예시 값             |
-|---------------|----------|---------------------|
-| journal_id    | str      | "JE-2025-00001"     |
-| entry_date    | datetime | 2025-01-15 09:30:00 |
-| account_code  | str      | "411000"            |
-| account_name  | str      | "매출"              |
-| debit_amount  | float    | 15,000,000          |
-| credit_amount | float    | 0                   |
-| description   | str      | "1월 제품 매출"     |
-| department    | str      | "영업부"            |
-| created_by    | str      | "김영희"            |
-| source_type   | str      | "자동" / "수동"     |
-| counterparty  | str      | "ABC상사"           |
+50건의 수동 작성 전표 (정상 40 + 이상 10):
+- 상단 3행에 회사명/기간 등 제목
+- 4행이 실제 헤더 (한글 컬럼명)
+- 일부 셀 병합, 차변/대변이 하나의 '금액' 컬럼 + '차대구분' 형태
+- 용도: header_detector, column_mapper의 실전 테스트
 
-## 이상 전표 유형별 상세
+---
 
-| 룰   | 생성 비율 | 핵심 특성                | 검증 기대                      |
-|------|-----------|--------------------------|--------------------------------|
-| B02  | ~2.8%     | 금액 4,900~4,999만원     | `is_near_threshold=True`       |
-| C02  | ~2.8%     | 토/일 일자               | `is_weekend=True`              |
-| C03  | ~2.8%     | 22~06시 시간             | `is_midnight=True`             |
-| C01  | ~2.8%     | 월말 5일 + 1억 이상 매출 | `is_period_end=True` + 고액    |
-| B08  | ~2.8%     | source_type='수동'       | `is_manual_je=True`            |
-| C06  | ~2.8%     | 적요에 '상품권' 등       | `has_risk_keyword!=none`       |
-| B10  | ~2.8%     | 거래처='관계사'          | `is_intercompany=True`         |
+## 3. 데이터 흐름도
 
-**합계:** ~20% 이상 전표 (anomaly_ratio 파라미터로 조절)
-
-## gl_template.xlsx — 수동 Excel 템플릿
-
-50건의 수동 작성 전표:
-- 정상 전표 40건 + 이상 전표 10건
-- **실제 ERP 엑셀과 유사한 형태:**
-  - 상단 3행에 회사명/기간 등 제목
-  - 4행이 실제 헤더 (한글 컬럼명)
-  - 일부 셀 병합
-  - 차변/대변이 하나의 '금액' 컬럼 + '차대구분' 형태
-- **용도:** header_detector, column_mapper의 실전 테스트
-
-## 데이터 흐름
 ```
-generate_gl_data(n=10000, anomaly_ratio=0.20)
-       ↓
-  ├── _generate_normal_entries(8000)
-  └── _generate_anomaly_entries(2000)
-       ├── _generate_b02_entries(285)
-       ├── _generate_c02_entries(285)
-       ├── ... (7개 룰 균등)
-       └── _generate_benford_violation()
-       ↓
-save_to_excel(df, "data/sample/sample_gl.xlsx")
-       ↓
-[sample_gl.xlsx] → ingest/ → feature/ → validation/ → detection/ → db/
+[DataSynth CSV 319MB]                    [generate_sample.py]   [gl_template.xlsx]
+  journal_entries.csv                      sample_gl.xlsx          50건
+  106,489건 / 1,106,356 라인                10,000건
+         ↓                                       ↓                    ↓
+    ┌─────────────────────────────────────────────────────────────────────┐
+    │  ingest/  (02-ingest.md)                                          │
+    │  file_reader → header_detector → column_mapper → type_caster      │
+    └────────────────────────────────┬────────────────────────────────────┘
+                                     ↓
+    ┌────────────────────────────────────────────────────────────────────┐
+    │  feature/  (03-feature.md)                                        │
+    │  18개 파생 피처 생성 (시간·금액·통계·텍스트)                      │
+    └────────────────────────────────┬───────────────────────────────────┘
+                                     ↓
+    ┌────────────────────────────────────────────────────────────────────┐
+    │  validation/  (04-validation.md)                                   │
+    │  L1 구조 → L2 회계 → L3 통계 (Pandera)                           │
+    └────────────────────────────────┬───────────────────────────────────┘
+                                     ↓
+    ┌────────────────────────────────────────────────────────────────────┐
+    │  detection/  (05-detection.md)                                     │
+    │  Layer A 무결성 + Layer B 부정 + Layer C 징후 (24개 룰)           │
+    └────────────────────────────────┬───────────────────────────────────┘
+                                     ↓
+    ┌────────────────────────────────────────────────────────────────────┐
+    │  db/  (06-db.md)                                                   │
+    │  DuckDB 저장 → Streamlit 대시보드                                 │
+    └───────────────────────────────────────────────────────────────────┘
 ```
 
-## 구현 순서
-1. `generate_sample.py` — 정상 전표 생성기
-2. 각 룰별 이상 전표 생성 함수 (B02, C02, C03, C01, B08, C06, B10)
-3. Benford 위반 데이터 삽입
-4. `save_to_excel()` — Excel 저장
-5. `gl_template.xlsx` — 수동 작성 (openpyxl로 제목/병합셀 포함)
+---
 
-## 의존성
-- **선행:** `01-project-setup` (settings — 임계값, 키워드 참조)
-- **외부 패키지:** `pandas`, `numpy`, `openpyxl`
-- **후행:** `02-ingest` (생성된 파일을 입력으로 사용)
+## 4. 의존성 및 Phase 구분
 
-## 테스트 전략
-- **생성 건수 확인:** `len(df) == n`
-- **이상 비율 확인:** 이상 전표가 `anomaly_ratio ± 1%` 범위
-- **각 룰 커버리지:** B02/C02/C03/C01/B08/C06/B10 모든 유형 최소 1건 이상 존재
-- **대차일치:** 전표 단위 debit_amount + credit_amount 합이 쌍으로 일치
-- **Benford 위반:** 생성 데이터의 첫째 자릿수 분포가 Benford와 유의미하게 다름 (MAD > 0.015)
-- **재현성:** 동일 seed → 동일 데이터
+### 의존성
 
-## Phase 구분
-| 항목                                     | Phase          |
-|------------------------------------------|----------------|
-| generate_sample.py                       | MVP (Phase 1a) |
-| gl_template.xlsx                         | MVP (Phase 1a) |
+- **선행**: `01-project-setup` (settings — 임계값, 키워드 참조)
+- **외부 패키지**: `pandas`, `numpy`, `openpyxl` (core dependency-group)
+- **후행**: `02-ingest` (생성된 파일을 입력으로 사용)
+
+### Phase 구분
+
+| 항목                                    | Phase          |
+|-----------------------------------------|----------------|
+| DataSynth 데이터 생성 및 검증           | Phase 0 (완료) |
+| generate_sample.py                      | MVP (Phase 1a) |
+| gl_template.xlsx                        | MVP (Phase 1a) |
 | 생성기 파라미터 확장 (Phase 2 이상 유형) | Phase 2        |
 
-## 구현 시 주의사항
-- **재현성:** `seed` 파라미터로 동일 결과 재현 가능 → 테스트 안정성
-- **현실성:** 정상 전표도 실제 패턴 반영 (금액 분포, 영업일 집중 등)
-- **대차일치:** 각 전표의 차변/대변 합이 일치하도록 생성 (회계 기본 원칙)
-- **계정과목 코드:** 실제 K-IFRS 계정 체계 참고하여 현실적 코드 사용
-- **한글 데이터:** 적요, 부서, 작성자 등은 한글로 생성 (실제 환경 반영)
-- **Benford 위반 삽입:** 기존 금액을 조정하는 방식(예: 첫 자리를 5로 변경)이 아니라,
-  특정 첫 자리가 과도한 새 데이터를 삽입하는 방식 사용
-- **gl_template.xlsx의 ERP 유사성:** 상단 제목, 병합셀, 한글 헤더, 차대 통합 컬럼 등
-  실제 ERP 엑셀 형태를 최대한 모방 → ingest 모듈의 실전 테스트 가치 극대화
+### 교차 참조
+
+| 문서                                                                | 관계                            |
+|---------------------------------------------------------------------|---------------------------------|
+| [00-dataset.md](00-dataset.md)                                      | DataSynth 선택 근거, 데이터 전략 |
+| [02-ingest.md](02-ingest.md)                                        | 데이터 입수 파이프라인           |
+| [03-feature.md](03-feature.md)                                      | 파생 피처 생성                   |
+| [05-detection.md](05-detection.md)                                  | 24개 탐지 룰 정의               |
+| [docs/datasynth-detection-gap-analysis.md](../datasynth-detection-gap-analysis.md) | DataSynth ↔ 탐지 룰 격차 분석   |
+| [docs/AUDIT_DOMAIN_FINAL.md](../AUDIT_DOMAIN_FINAL.md)             | A/B/C 3레이어 24개 룰 도메인    |

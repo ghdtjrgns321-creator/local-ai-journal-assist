@@ -1,0 +1,193 @@
+"""DuckDB DDL 정의 — 4개 테이블 + 1 VIEW.
+
+Source of truth: config/schema.yaml (DataSynth v1.2.0 PREVIEW 39개)
++ approval_level 파생 + 피처 18종 + 탐지 결과 3종.
+"""
+
+from __future__ import annotations
+
+import logging
+
+import duckdb
+
+logger = logging.getLogger(__name__)
+
+# ── DDL ──────────────────────────────────────────────────────
+
+SCHEMA_DDL: dict[str, str] = {
+    "general_ledger": """
+        CREATE TABLE IF NOT EXISTS general_ledger (
+            -- 원본 — Header (config/schema.yaml 기준 39개)
+            document_id VARCHAR NOT NULL,
+            company_code VARCHAR,
+            fiscal_year INTEGER,
+            fiscal_period INTEGER NOT NULL,
+            posting_date TIMESTAMP NOT NULL,
+            document_date TIMESTAMP,
+            document_type VARCHAR,
+            currency VARCHAR,
+            exchange_rate DOUBLE,
+            reference VARCHAR,
+            header_text VARCHAR,
+            created_by VARCHAR,
+            user_persona VARCHAR,
+            source VARCHAR,
+            business_process VARCHAR,
+            ledger VARCHAR,
+            approved_by VARCHAR,
+            approval_date TIMESTAMP,
+            -- 원본 — 레이블 (DataSynth 전용)
+            is_fraud BOOLEAN,
+            fraud_type VARCHAR,
+            is_anomaly BOOLEAN,
+            anomaly_type VARCHAR,
+            sod_violation BOOLEAN,
+            sod_conflict_type VARCHAR,
+            -- 원본 — Line
+            line_number INTEGER,
+            gl_account VARCHAR NOT NULL,
+            debit_amount DOUBLE DEFAULT 0,
+            credit_amount DOUBLE DEFAULT 0,
+            local_amount DOUBLE,
+            cost_center VARCHAR,
+            profit_center VARCHAR,
+            line_text VARCHAR,
+            tax_code VARCHAR,
+            tax_amount DOUBLE,
+            trading_partner VARCHAR,
+            auxiliary_account_number VARCHAR,
+            auxiliary_account_label VARCHAR,
+            lettrage VARCHAR,
+            lettrage_date TIMESTAMP,
+            -- 파생 — DB 적재 시 생성
+            approval_level INTEGER,
+            -- 파생변수 (18종, from feature/engine.py EXPECTED_COLUMNS)
+            is_weekend BOOLEAN,
+            is_after_hours BOOLEAN,
+            is_period_end BOOLEAN,
+            days_backdated INTEGER,
+            fiscal_period_mismatch BOOLEAN,
+            is_holiday BOOLEAN,
+            is_near_threshold BOOLEAN,
+            exceeds_threshold BOOLEAN,
+            amount_zscore DOUBLE,
+            amount_magnitude DOUBLE,
+            is_round_number BOOLEAN,
+            is_manual_je BOOLEAN,
+            is_intercompany BOOLEAN,
+            is_revenue_account BOOLEAN,
+            first_digit INTEGER,
+            is_suspense_account BOOLEAN,
+            description_quality VARCHAR,
+            has_risk_keyword VARCHAR,
+            -- 이상탐지 결과 (3종, from score_aggregator)
+            anomaly_score DOUBLE,
+            risk_level VARCHAR,
+            flagged_rules VARCHAR,
+            -- 메타
+            upload_batch_id VARCHAR,
+            created_at TIMESTAMP DEFAULT current_timestamp
+        )
+    """,
+    "anomaly_flags": """
+        CREATE TABLE IF NOT EXISTS anomaly_flags (
+            upload_batch_id VARCHAR,
+            document_id VARCHAR NOT NULL,
+            line_number INTEGER,
+            track_name VARCHAR NOT NULL,
+            rule_code VARCHAR NOT NULL,
+            score DOUBLE NOT NULL,
+            created_at TIMESTAMP DEFAULT current_timestamp
+        )
+    """,
+    "benford_summary": """
+        CREATE TABLE IF NOT EXISTS benford_summary (
+            upload_batch_id VARCHAR NOT NULL,
+            sample_size INTEGER,
+            mad DOUBLE,
+            mad_conformity VARCHAR,
+            chi2_statistic DOUBLE,
+            chi2_p_value DOUBLE,
+            ks_statistic DOUBLE,
+            ks_p_value DOUBLE,
+            is_conforming BOOLEAN,
+            confidence VARCHAR,
+            created_at TIMESTAMP DEFAULT current_timestamp
+        )
+    """,
+    "benford_digits": """
+        CREATE TABLE IF NOT EXISTS benford_digits (
+            upload_batch_id VARCHAR NOT NULL,
+            digit INTEGER NOT NULL,
+            observed_freq DOUBLE,
+            expected_freq DOUBLE,
+            deviation DOUBLE,
+            created_at TIMESTAMP DEFAULT current_timestamp
+        )
+    """,
+    "anomaly_flag_summary": """
+        CREATE VIEW IF NOT EXISTS anomaly_flag_summary AS
+        SELECT
+            upload_batch_id,
+            track_name,
+            rule_code,
+            COUNT(*) AS flagged_count,
+            AVG(score) AS avg_score,
+            MAX(score) AS max_score
+        FROM anomaly_flags
+        GROUP BY upload_batch_id, track_name, rule_code
+    """,
+}
+
+# ── 컬럼 상수 (loader.py reindex용, created_at 제외) ────────
+
+GENERAL_LEDGER_COLUMNS: list[str] = [
+    "document_id", "company_code", "fiscal_year", "fiscal_period",
+    "posting_date", "document_date", "document_type", "currency",
+    "exchange_rate", "reference", "header_text", "created_by",
+    "user_persona", "source", "business_process", "ledger",
+    "approved_by", "approval_date",
+    "is_fraud", "fraud_type", "is_anomaly", "anomaly_type",
+    "sod_violation", "sod_conflict_type",
+    "line_number", "gl_account", "debit_amount", "credit_amount",
+    "local_amount", "cost_center", "profit_center", "line_text",
+    "tax_code", "tax_amount", "trading_partner",
+    "auxiliary_account_number", "auxiliary_account_label",
+    "lettrage", "lettrage_date",
+    "approval_level",
+    "is_weekend", "is_after_hours", "is_period_end",
+    "days_backdated", "fiscal_period_mismatch", "is_holiday",
+    "is_near_threshold", "exceeds_threshold", "amount_zscore",
+    "amount_magnitude", "is_round_number",
+    "is_manual_je", "is_intercompany", "is_revenue_account",
+    "first_digit", "is_suspense_account",
+    "description_quality", "has_risk_keyword",
+    "anomaly_score", "risk_level", "flagged_rules",
+    "upload_batch_id",
+]
+
+ANOMALY_FLAGS_COLUMNS: list[str] = [
+    "upload_batch_id", "document_id", "line_number",
+    "track_name", "rule_code", "score",
+]
+
+BENFORD_SUMMARY_COLUMNS: list[str] = [
+    "upload_batch_id", "sample_size", "mad", "mad_conformity",
+    "chi2_statistic", "chi2_p_value", "ks_statistic", "ks_p_value",
+    "is_conforming", "confidence",
+]
+
+BENFORD_DIGITS_COLUMNS: list[str] = [
+    "upload_batch_id", "digit", "observed_freq",
+    "expected_freq", "deviation",
+]
+
+
+# ── 초기화 ───────────────────────────────────────────────────
+
+
+def initialize_schema(conn: duckdb.DuckDBPyConnection) -> None:
+    """모든 테이블 DDL + VIEW 실행. 멱등성 보장."""
+    for name, ddl in SCHEMA_DDL.items():
+        conn.execute(ddl)
+    logger.info("DuckDB 스키마 초기화 완료 (%d개 오브젝트)", len(SCHEMA_DDL))

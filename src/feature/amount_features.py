@@ -82,22 +82,33 @@ def _zscore_with_fallback(
 def add_is_near_threshold(
     df: pd.DataFrame,
     base: pd.Series,
-    threshold: float,
+    thresholds: list[int | float],
     ratio: float,
 ) -> pd.DataFrame:
-    """B02: 승인한도 직하 여부. threshold*ratio ≤ base < threshold."""
-    lower = threshold * ratio
-    df["is_near_threshold"] = (base >= lower) & (base < threshold)
+    """B02: 다단계 승인한도 직하 여부.
+
+    각 레벨별 threshold * ratio ≤ base < threshold 구간에 하나라도 해당하면 True.
+    예: thresholds=[10M, 100M, 1B] → 9M~10M, 90M~100M, 900M~1B 중 하나에 속하면 플래그.
+    """
+    if not thresholds:
+        df["is_near_threshold"] = False
+        return df
+    near = pd.Series(False, index=df.index)
+    for t in sorted(thresholds):
+        lower = t * ratio
+        near = near | ((base >= lower) & (base < t))
+    df["is_near_threshold"] = near
     return df
 
 
 def add_exceeds_threshold(
     df: pd.DataFrame,
     base: pd.Series,
-    threshold: float,
+    thresholds: list[int | float],
 ) -> pd.DataFrame:
-    """B03: 승인한도 초과 여부. base >= threshold."""
-    df["exceeds_threshold"] = base >= threshold
+    """B03: 최고 승인한도 초과 여부. base >= max(thresholds)."""
+    max_threshold = max(thresholds) if thresholds else 0
+    df["exceeds_threshold"] = base >= max_threshold
     return df
 
 
@@ -130,10 +141,11 @@ def add_is_round_number(
 ) -> pd.DataFrame:
     """B04: 라운드넘버 여부. 0원은 제외(False).
 
-    Note: ingest에서 float 캐스팅된 금액은 정수값이므로 % 연산 안전.
-    소수점 금액(외화 등)은 Phase 2에서 round() 전처리 추가 예정.
+    Why: DataSynth 등 외부 생성 데이터에서 float 소수점 꼬리(예: 10000000.000001)가
+    발생할 수 있으므로 round(0) 후 나머지 연산으로 허용 오차 적용.
+    허용 범위: 0.5원 미만 (원 단위 감사에서 실무적으로 무의미한 차이).
     """
-    df["is_round_number"] = (base > 0) & (base % unit == 0)
+    df["is_round_number"] = (base > 0) & (base.round(0) % unit == 0)
     return df
 
 
@@ -148,8 +160,8 @@ def add_all_amount_features(
     s = settings or get_settings()
     base = _compute_base_amount(df)
 
-    add_is_near_threshold(df, base, s.approval_threshold, s.near_threshold_ratio)
-    add_exceeds_threshold(df, base, s.approval_threshold)
+    add_is_near_threshold(df, base, s.approval_thresholds, s.near_threshold_ratio)
+    add_exceeds_threshold(df, base, s.approval_thresholds)
     add_amount_zscore(df, base)
     add_amount_magnitude(df, base)
     add_is_round_number(df, base, s.round_unit)

@@ -3,27 +3,65 @@
 # Phase 1c에서 Streamlit UI로 편집 가능, 고객사 프로파일에 저장됨
 
 patterns:
-  # B08: 수기 전표 식별 코드 (ERP마다 다름)
-  # SAP: SA, Oracle: Manual, 국내 ERP: 수기 등
+  # B08: 수기 전표 식별 코드 (source 컬럼 기준)
+  # DataSynth v1.2.0 source 값: automated, manual, recurring, adjustment
+  # SA는 document_type이므로 제거, Adjustment(결산 조정 수기) 추가
   manual_source_codes:
-    - "SA"
     - "Manual"
-    - "수기"
+    - "Adjustment"
 
   # B01: 매출 계정 접두사 (K-IFRS 기준 4xxx가 표준)
   # 영업외수익(9), 글로벌 본사 기준(5) 등 추가 가능
   revenue_account_prefixes:
     - "4"
 
-  # B10: 관계사 식별 기준 (계정코드 또는 거래처 코드)
-  # 회사마다 관계사 식별 방법이 다름 — UI에서 입력 필수
-  intercompany_identifiers: []
+  # B10: 관계사 식별 기준 (GL 계정 prefix 목록)
+  # DataSynth v1.2.0 실측: IC 계정에 "C" 접미사 없음
+  # 관계사 채권/채무/매출/미지급 전용 계정 prefix
+  intercompany_identifiers:
+    - "1150"    # IC Receivable (관계사 채권)
+    - "2050"    # IC Payable (관계사 채무)
+    - "4500"    # IC Revenue (관계사 매출)
+    - "2700"    # IC Accrued (관계사 미지급)
+
+  # B07: 직무분리(SoD) 위반 — 하이브리드 로직
+  # Rule B: 프로세스 간 상충 쌍 (직급 불문, 즉시 Critical)
+  # Why: generation_principles §3.4 — 비현실적 겸직 쌍, 횡령 루트
+  sod_toxic_pairs:
+    - ["TRE", "P2P"]    # 자금 집행 + 매입 → 가짜 AP + 직접 이체
+    - ["TRE", "O2C"]    # 자금 집행 + 수금 → 입금 가로채기 + 대손 세탁
+    - ["O2C", "P2P"]    # 매출 + 매입 → 순환거래(Round-tripping)
+    - ["H2R", "O2C"]    # 급여 + 매출 → 유령직원 + 가공 커미션
+    - ["H2R", "P2P"]    # 급여 + 매입 → 리베이트 + 급여 세탁
+
+  # Rule A: 직급별 프로세스 수 임계값 (toxic pair 미해당 시 적용)
+  # value = 초과 시 위반 (예: junior 1 → 2개 이상이면 위반)
+  sod_role_thresholds:
+    junior_accountant: 1     # 1인 1프로세스 전담
+    senior_accountant: 3     # 기본 1 + 겸직 2까지 허용
+    # controller, manager, automated_system: 제한 없음 (toxic pair만 감시)
 
   # B11/C06: 가계정/미결산계정 키워드 (정규식 지원)
-  # ".*임시.*" 형태로 와일드카드 매칭 가능
+  # 한글 키워드: 정확 포함 일치 / 영문 키워드: [Xx] 형태로 대소문자 무관 매칭
+  # DataSynth v1.2.0 적요가 영문이므로 영문 키워드 병기
   suspense_keywords:
     - "가수금"
     - "가지급"
     - "가계정"
     - "미결산"
     - "임시"
+    - "[Ss]uspense"
+    - "[Cc]learing"
+    - "[Tt]emporary"
+    - "[Uu]nallocated"
+    - "[Mm]iscellaneous"
+
+  # B11/C06: 가계정/청산계정 GL 코드 prefix (gl_account 기반 판별)
+  # 텍스트 키워드 매칭과 OR 결합 — 실무에서는 GL 코드가 1순위 탐지 기준
+  # K-IFRS 기준 가계정/청산계정 대역, 회사 CoA에 맞춰 조정
+  suspense_account_codes:
+    - "1190"    # 가지급금 (Suspense Receivable)
+    - "1290"    # 선급금 미정리
+    - "2190"    # 가수금 (Suspense Payable)
+    - "2900"    # GR/IR 청산계정
+    - "9990"    # 임시/잡계정

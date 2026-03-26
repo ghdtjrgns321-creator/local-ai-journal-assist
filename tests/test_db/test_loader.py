@@ -1,0 +1,190 @@
+"""loader.py 단위 테스트.
+
+테스트 그룹:
+  - load_general_ledger: 적재 행 수, approval_level 파생
+  - load_anomaly_flags: details melt, score > 0 필터
+  - load_benford: summary 1행 + digits 9행
+  - load_all: 트랜잭션 원자성
+  - approval_level: 6단계 한도 정확성
+"""
+
+import pandas as pd
+import pytest
+
+from src.db.loader import (
+    LoadResult,
+    _derive_approval_level,
+    load_all,
+    load_anomaly_flags,
+    load_benford,
+    load_general_ledger,
+)
+
+
+class TestLoadGeneralLedger:
+    """general_ledger 테이블 적재."""
+
+    def test_row_count(self, db_conn, db_sample_df):
+        """적재 행 수 == DataFrame 행 수."""
+        rows = load_general_ledger(db_conn, db_sample_df, "batch_001")
+        assert rows == 3
+
+    def test_query_after_load(self, db_conn, db_sample_df):
+        """적재 후 조회 결과 일치."""
+        load_general_ledger(db_conn, db_sample_df, "batch_001")
+        result = db_conn.execute(
+            "SELECT COUNT(*) FROM general_ledger WHERE upload_batch_id = 'batch_001'"
+        ).fetchone()
+        assert result[0] == 3
+
+    def test_approval_level_derived(self, db_conn, db_sample_df):
+        """approval_level 파생 컬럼 자동 생성."""
+        load_general_ledger(db_conn, db_sample_df, "batch_001")
+        result = db_conn.execute(
+            "SELECT DISTINCT approval_level FROM general_ledger"
+        ).fetchdf()
+        assert not result.empty
+        assert result["approval_level"].notna().all()
+
+    def test_risk_level_as_string(self, db_conn, db_sample_df):
+        """risk_level이 VARCHAR로 정상 적재."""
+        load_general_ledger(db_conn, db_sample_df, "batch_001")
+        result = db_conn.execute(
+            "SELECT DISTINCT risk_level FROM general_ledger ORDER BY risk_level"
+        ).fetchdf()
+        assert set(result["risk_level"]) == {"Medium", "Normal"}
+
+
+class TestLoadAnomalyFlags:
+    """anomaly_flags 테이블 적재."""
+
+    def test_melt_and_filter(self, db_conn, db_sample_df, db_detection_results):
+        """details melt 후 score > 0만 적재."""
+        rows = load_anomaly_flags(db_conn, db_detection_results, db_sample_df, "batch_001")
+        assert rows > 0
+
+    def test_correct_scores(self, db_conn, db_sample_df, db_detection_results):
+        """score 값 정합 확인."""
+        load_anomaly_flags(db_conn, db_detection_results, db_sample_df, "batch_001")
+        result = db_conn.execute(
+            "SELECT DISTINCT score FROM anomaly_flags ORDER BY score"
+        ).fetchdf()
+        scores = set(result["score"])
+        assert scores == {0.6, 0.8}
+
+    def test_empty_results(self, db_conn, db_sample_df):
+        """빈 results → 0행 적재."""
+        rows = load_anomaly_flags(db_conn, [], db_sample_df, "batch_001")
+        assert rows == 0
+
+    def test_document_id_mapped(self, db_conn, db_sample_df, db_detection_results):
+        """document_id가 원본 DataFrame에서 정확히 매핑."""
+        load_anomaly_flags(db_conn, db_detection_results, db_sample_df, "batch_001")
+        result = db_conn.execute(
+            "SELECT DISTINCT document_id FROM anomaly_flags ORDER BY document_id"
+        ).fetchdf()
+        assert set(result["document_id"]) <= set(db_sample_df["document_id"])
+
+
+class TestLoadBenford:
+    """benford_summary + benford_digits 적재."""
+
+    def test_summary_1_row(self, db_conn, db_benford_results):
+        """benford_summary 배치당 1행."""
+        s_rows, d_rows, warnings = load_benford(db_conn, db_benford_results, "batch_001")
+        assert s_rows == 1
+
+    def test_digits_9_rows(self, db_conn, db_benford_results):
+        """benford_digits 자릿수별 9행."""
+        s_rows, d_rows, warnings = load_benford(db_conn, db_benford_results, "batch_001")
+        assert d_rows == 9
+
+    def test_no_benford_result(self, db_conn):
+        """BenfordResult 없으면 0행 + 경고."""
+        s_rows, d_rows, warnings = load_benford(db_conn, [], "batch_001")
+        assert s_rows == 0
+        assert d_rows == 0
+        assert len(warnings) > 0
+
+    def test_deviation_calc(self, db_conn, db_benford_results):
+        """deviation = observed - expected 검증."""
+        load_benford(db_conn, db_benford_results, "batch_001")
+        result = db_conn.execute(
+            "SELECT digit, observed_freq, expected_freq, deviation "
+            "FROM benford_digits ORDER BY digit"
+        ).fetchdf()
+        for _, row in result.iterrows():
+            assert abs(row["deviation"] - (row["observed_freq"] - row["expected_freq"])) < 1e-10
+
+
+class TestLoadAll:
+    """load_all 트랜잭션 원자성."""
+
+    def test_returns_load_result(self, db_conn, db_sample_df):
+        """LoadResult 반환."""
+        result = load_all(db_conn, db_sample_df, batch_id="batch_001")
+        assert isinstance(result, LoadResult)
+        assert result.is_success is True
+        assert result.general_ledger_rows == 3
+
+    def test_batch_id_consistency(self, db_conn, db_sample_df):
+        """4개 테이블에 동일 batch_id."""
+        load_all(db_conn, db_sample_df, batch_id="test_batch")
+        gl = db_conn.execute(
+            "SELECT DISTINCT upload_batch_id FROM general_ledger"
+        ).fetchdf()
+        assert gl["upload_batch_id"].iloc[0] == "test_batch"
+
+    def test_two_batches_isolated(self, db_conn, db_sample_df):
+        """2개 배치 적재 후 분리 조회."""
+        load_all(db_conn, db_sample_df, batch_id="batch_A")
+        load_all(db_conn, db_sample_df, batch_id="batch_B")
+        a = db_conn.execute(
+            "SELECT COUNT(*) FROM general_ledger WHERE upload_batch_id = 'batch_A'"
+        ).fetchone()[0]
+        b = db_conn.execute(
+            "SELECT COUNT(*) FROM general_ledger WHERE upload_batch_id = 'batch_B'"
+        ).fetchone()[0]
+        assert a == 3
+        assert b == 3
+
+
+class TestApprovalLevel:
+    """전결규정 6단계 파생 정확성."""
+
+    def test_six_levels(self, db_large_df):
+        """6단계 금액 범위 → 레벨 1~6 정확 산출."""
+        levels = _derive_approval_level(db_large_df)
+        expected = [1, 2, 3, 4, 5, 6]
+        assert list(levels) == expected
+
+    def test_boundary_10m(self):
+        """경계값: 정확히 1천만원 → Level 1."""
+        df = pd.DataFrame({
+            "document_id": ["JE-001"],
+            "debit_amount": [10_000_000.0],
+            "credit_amount": [0.0],
+        })
+        level = _derive_approval_level(df)
+        assert level.iloc[0] == 1
+
+    def test_boundary_10m_plus_1(self):
+        """경계값: 1천만원 + 1 → Level 2."""
+        df = pd.DataFrame({
+            "document_id": ["JE-001"],
+            "debit_amount": [10_000_001.0],
+            "credit_amount": [0.0],
+        })
+        level = _derive_approval_level(df)
+        assert level.iloc[0] == 2
+
+    def test_multi_line_document(self):
+        """전표 내 여러 라인 → 최대 금액 기준."""
+        df = pd.DataFrame({
+            "document_id": ["JE-001", "JE-001"],
+            "debit_amount": [5_000_000.0, 200_000_000.0],
+            "credit_amount": [0.0, 0.0],
+        })
+        levels = _derive_approval_level(df)
+        # Why: 전표 최대 금액 200M → Level 3 (≤10억)
+        assert list(levels) == [3, 3]

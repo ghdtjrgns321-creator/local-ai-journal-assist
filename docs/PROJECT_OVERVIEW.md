@@ -15,7 +15,7 @@ MindBridge, KPMG Clara의 핵심 로직을 오픈소스(Python)로 재현하는 
 | 컬럼 매핑   | rapidfuzz                          | fuzzy string matching                       |
 | 설정        | pydantic-settings, pyyaml          | 환경변수 + YAML                             |
 | 통계        | scipy.stats, numpy                 | Benford, KS 검정, Runs test                |
-| 지도학습    | xgboost, scikit-learn, shap        | Phase 2                                     |
+| 지도학습    | xgboost, lightgbm, scikit-learn, shap | LR baseline + cv_selector 자동 비교 (Phase 2) |
 | 비지도학습  | pytorch (VAE), scikit-learn (IF)   | Phase 2                                     |
 | 한국어 NLP  | kiwipiepy                          | JVM 의존성 없음 (Phase 3)                  |
 | DB          | duckdb                             | OLAP 최적화                                 |
@@ -43,6 +43,7 @@ local-ai-assist/
 │   ├── feature/                # 감사 파생변수
 │   ├── eda/                    # EDA 프로파일링 (품질·분포·이상치)
 │   ├── validation/             # 계층적 검증 (L1~L3)
+│   ├── preprocessing/          # ML 전처리 파이프라인 (Phase 2)
 │   ├── detection/              # 3-Layer 이상탐지 (A무결성/B부정/C징후)
 │   ├── db/                     # DuckDB
 │   ├── llm/                    # LLM 연동 (Phase 3)
@@ -57,7 +58,7 @@ local-ai-assist/
 │   └── components/
 ├── tests/
 ├── data/journal/               # 전표 데이터 (.gitignore)
-│   ├── primary/datasynth/     # 메인: EY-ASU 합성 전표 (1,068K건)
+│   ├── primary/datasynth/     # 메인: EY-ASU 합성 전표 (1,106K건)
 │   └── validation/            # 검증: sap-merged, schreyer-fraud, bpi2019 등
 ├── tools/datasynth/            # EY-ASU DataSynth (Rust, 합성 전표 생성기)
 └── docs/
@@ -75,8 +76,9 @@ local-ai-assist/
 | 1  | [01-project-setup.md](pre-plan/01-project-setup.md)      | pyproject.toml, uv, AuditSettings, YAML 설정                 | MVP    |
 | 2  | [02-ingest.md](pre-plan/02-ingest.md)                    | 파일 검증, Excel 읽기, 헤더 탐지, 컬럼 매핑, 타입 캐스팅     | MVP    |
 | 3  | [03-feature.md](pre-plan/03-feature.md)                  | 감사 파생변수 11개 (time/amount/pattern/text)                 | MVP    |
+| 3a | [03a-preprocessing.md](pre-plan/03a-preprocessing.md)    | ML 전처리 파이프라인, VAE 래퍼, 라벨 전략                     | P2     |
 | 4  | [04-validation.md](pre-plan/04-validation.md)            | L1 Pandera + L2 회계 + L3 통계 검증 + 리포트                 | MVP+P2 |
-| 5  | [05-detection.md](pre-plan/05-detection.md)              | BaseDetector, 3레이어 22개 룰(A/B/C), Benford(C07), ML 16개, NLP 5개 | MVP~P3 |
+| 5  | [05-detection.md](pre-plan/05-detection.md)              | BaseDetector, 3레이어 24개 룰(A/B/C), Benford(C07), ML 16개, NLP 5개 | MVP~P3 |
 | 6  | [06-db.md](pre-plan/06-db.md)                            | DuckDB 커넥션, 스키마, 로더, 프리셋 쿼리                     | MVP    |
 | 7  | [07-dashboard.md](pre-plan/07-dashboard.md)              | Streamlit 5탭, 컴포넌트, 차트, 필터                          | MVP+P3 |
 | 8  | [08-llm.md](pre-plan/08-llm.md)                          | Ollama, Vanna AI 2.0, SQL 검증, 프리셋, 인사이트             | P3     |
@@ -88,24 +90,44 @@ local-ai-assist/
 ```
 00-dataset → 01-project-setup → 10-sample-data → 02-ingest → 03-feature → 04-validation
                                                                     ↓
-                                                              05-detection → 06-db
-                                                                               ↓
-                                                                         07-dashboard
-                                                                               ↓
-                                                                    08-llm → 09-export
+                                                              05-detection → 03a-preprocessing → ML 탐지
+                                                                                                    ↓
+                                                                                                  06-db
+                                                                                                    ↓
+                                                                                              07-dashboard
+                                                                                                    ↓
+                                                                                         08-llm → 09-export
 ```
+
+## 합성 데이터 (DataSynth)
+
+EY-ASU DataSynth(Rust)로 생성한 K-IFRS 적용 한국 중견 제조 그룹사 시뮬레이션.
+
+| 항목           | 값                                                    |
+|----------------|-------------------------------------------------------|
+| 법인           | C001 본사(서울), C002 울산공장, C003 천안공장 — 전체 KRW |
+| 회계연도       | 2022-01 ~ 2022-12                                     |
+| 전표 규모      | 106,489건 / 1,106,356 라인아이템                      |
+| 금액 분포      | LogNormal(14.0, 2.5) — 중앙값 ~120만원                |
+| 승인 한도      | 6단계 전결규정 (자동→담당자→팀장→본부장→CFO→이사회)    |
+| 사용자 풀      | 152명 (5개 페르소나), SoD 위반 1%                     |
+| 시간 패턴      | 한국 근무 문화 반영 (심야 0.02, 오전 피크 1.8, 야근 0.3) |
+| 이상 주입      | fraud 2% + error 2% + process 1%, 8가지 부정 유형     |
+| Benford        | 첫째 자릿수 적합 (tolerance 5%, payroll/recurring 제외) |
 
 ## 데이터 흐름
 
 ```
-DataSynth (tools/datasynth/) → config/datasynth.yaml → journal_entries.csv (1,068K건)
+DataSynth (tools/datasynth/) → config/datasynth.yaml → journal_entries.csv (1,106K건)
   ↓
 Excel/CSV → file_validator → excel_reader → header_detector → column_mapper → type_caster
   ↑ UX 1단계: 자동 헤더/매핑 + 애매한 부분 사용자 위임 + 판단 근거 투명 노출 (ReviewItem)
   → 표준 DataFrame → feature/engine (감사 파생변수 18개)
   → eda/profiler (EDAProfile JSON) → eda/report (대시보드 요약)
   ↑ UX 2단계: 감사 룰 조종석(Control Panel) + 파생변수 자동 생성 + audit_rules 프로파일 저장
-  → validation (3-Level) → detection (3-Layer: A무결성 3개 + B부정 10개 + C징후 9개, 22개 룰)
+  → validation (3-Level) → detection (3-Layer: A무결성 3개 + B부정 11개 + C징후 10개, 24개 룰)
+  → preprocessing (Phase 2: pipeline_builder → cv_selector → 최적 모델 자동 선택)
+    → ML 탐지 (XGBoost 이상치 + VAE+IF 특이치)
     → score_aggregator → DuckDB → 프리셋 SQL / Text-to-SQL (Phase 3)
       → Streamlit 대시보드
   ↑ UX 3단계: EDA 프로파일링 + 전처리 투명성 (Phase 1a EDA + Phase 2 ML Pipeline)

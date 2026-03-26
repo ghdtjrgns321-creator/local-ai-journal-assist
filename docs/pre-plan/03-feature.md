@@ -2,7 +2,7 @@
 
 ## 목적
 표준 DataFrame에 감사 관점의 파생변수 18개를 추가하여, 이상탐지 룰과 ML 모델의 입력 피처로 활용한다.
-각 파생변수는 AUDIT_DOMAIN_FINAL.md §5의 22개 룰(A01~C09)에 대응.
+각 파생변수는 AUDIT_DOMAIN_FINAL.md §5의 24개 룰(A01~C10)에 대응.
 
 > **선행 모듈**: ingest에서 타입 캐스팅·Null 처리 완료된 표준 DataFrame을 입력으로 받는다.
 > 컬럼 타입(float, datetime 등)이 보장된 상태이므로 별도 타입 검증 없이 연산에 집중.
@@ -31,7 +31,27 @@ engine.generate_all_features(df, settings)
 ### engine.py — ✅ 구현 완료 (14 tests passed)
 
 4개 서브모듈을 순서대로 호출하여 18개 파생변수를 일괄 생성하는 오케스트레이터.
-[테스트 결과](../../tests/test_feature/test-results/engine-test-results.md)
+[테스트 결과](../../tests/test_feature/test-results/feature-test-summary.md#5-엔진-오케스트레이터-14-cases)
+
+#### 이 모듈이 하는 일
+
+파생변수 생성은 4개 서브모듈(time/amount/pattern/text)로 분리되어 있다.
+각 서브모듈을 개별 호출하면 호출 순서·설정 주입·에러 처리를 매번 반복해야 한다.
+
+engine.py는 이 **"조립 과정"을 단일 진입점으로 캡슐화**하는 역할을 한다.
+
+```
+문제:
+  detection이나 dashboard에서 파생변수가 필요할 때마다
+  time_features → amount_features → pattern_features → text_features를
+  직접 순서대로 호출하고, settings와 audit_rules를 각각 주입해야 한다.
+  → 호출부가 늘어날수록 누락·순서 오류 위험이 커진다.
+
+해결:
+  engine.generate_all_features(df, settings)를 호출하면
+  4개 서브모듈을 정해진 순서로 실행하고, 설정·룰을 자동 주입한다.
+  호출부는 engine만 알면 되므로 서브모듈 내부 변경에 영향받지 않는다.
+```
 
 ```
 src/feature/
@@ -47,6 +67,23 @@ src/feature/
 ---
 
 ### time_features.py — ✅ 구현 완료 (6개 변수, 47 tests passed)
+
+#### 이 모듈이 하는 일
+
+전표의 날짜·시간 정보를 감사 관점의 플래그로 변환한다.
+
+```
+문제:
+  부정 전표는 정상 업무 시간 외(주말·심야·공휴일)에 입력되거나,
+  기말에 집중 처리되거나, 문서일자보다 한참 뒤에 전기되는 패턴을 보인다.
+  원본 DataFrame의 posting_date, document_date는 날짜 값일 뿐,
+  이런 "감사적 의미"를 직접 담고 있지 않다.
+
+해결:
+  날짜 컬럼으로부터 is_weekend, is_after_hours, is_period_end,
+  days_backdated, fiscal_period_mismatch, is_holiday 6개 bool/int 변수를 산출한다.
+  detection Layer C(C01~C05)가 이 변수를 직접 참조하여 이상 여부를 판정한다.
+```
 
 시간/날짜 기반 파생변수. `posting_date`(datetime), `document_date`(datetime), `fiscal_period`(int)를 입력으로 사용.
 
@@ -70,12 +107,31 @@ src/feature/
 | days_backdated — document_date 누락            | skip + warning (NaN 반환), dtype=Int64(nullable)               |
 | fiscal_period_mismatch — 비표준 회계연도       | `(month - fiscal_year_start) % 12 + 1` modulo 연산            |
 | fiscal_period_mismatch — NaN 함정              | 결측치 마스크 → pd.NA 덮어씌움 (오탐 방지), dtype=boolean      |
+| fiscal_period_mismatch — K4 variant 검증       | DataSynth v1.2.0 실측: `fiscal_year_variant: K4`이나 실제 매핑은 1월=period 1 (표준). fiscal_period = posting_date month 정확히 1:1. `fiscal_year_start=1` 유지 |
 
-**테스트**: [test_time_features.py](../../tests/test_feature/test_time_features.py) — 49 케이스 | [테스트 결과](../../tests/test_feature/test-results/time-features.md)
+**테스트**: [test_time_features.py](../../tests/test_feature/test_time_features.py) — 49 케이스 | [테스트 결과](../../tests/test_feature/test-results/feature-test-summary.md#time_features-49-cases)
 
 ---
 
 ### amount_features.py — ✅ 구현 완료 (5개 변수, 27 tests passed)
+
+#### 이 모듈이 하는 일
+
+전표의 차변·대변 금액을 감사 관점의 통계·임계치 변수로 변환한다.
+
+```
+문제:
+  부정 전표는 승인한도 직전 금액(한도 우회), 정확히 떨어지는 라운드 금액(가공전표),
+  통계적으로 극단적인 금액(이상치) 패턴을 보인다.
+  원본 debit_amount, credit_amount는 단순 숫자이므로
+  "이 금액이 비정상적인가?"를 판단할 수 없다.
+
+해결:
+  base_amount(=max(debit, credit))를 기준으로
+  is_near_threshold, exceeds_threshold, amount_zscore,
+  amount_magnitude, is_round_number 5개 변수를 산출한다.
+  detection Layer B(B02~B04)와 Layer C(C08)가 이 변수로 부정·이상 여부를 판정한다.
+```
 
 금액 기반 파생변수. `debit_amount`(float), `credit_amount`(float)를 입력으로 사용.
 `base_amount = max(debit, credit).fillna(0)` 중간 Series로 산출 후 각 피처에 전달 (컬럼 미추가).
@@ -93,7 +149,8 @@ src/feature/
 | 이슈                                    | 결정                                                                       |
 |:----------------------------------------|:---------------------------------------------------------------------------|
 | base_amount 산출                         | `max(debit, credit).fillna(0)` — 복식부기 한 라인은 차/대 중 하나만 양수    |
-| threshold 값이 회사마다 다름             | settings.approval_threshold로 외부화 (기본값 5천만)                          |
+| threshold 값이 회사마다 다름             | `settings.approval_thresholds: list[int]`로 외부화. 6단계 `[10M, 100M, 1B, 5B, 10B, 50B]` |
+| ✅ 다단계 threshold 확장 완료            | `is_near_threshold`·`exceeds_threshold`가 `thresholds: list[int]`를 수용하여 각 레벨별 near/exceeds 판정. 가장 가까운 상위 한도 기준으로 판정 |
 | near/exceeds 경계 gap                   | `ratio*threshold ≤ x < threshold` / `x ≥ threshold` — 겹침·gap 없음 보장   |
 | amount_zscore 계산 단위                  | gl_account별 groupby — n≥30 그룹별, n<30 전체 fallback, n<10 전체 NaN       |
 | Z-score std==0                           | 0.0 반환 (ZeroDivisionError 방지)                                          |
@@ -103,11 +160,29 @@ src/feature/
 | float % 연산 안전성                      | ingest에서 정수값 보장 → 안전. 외화 소수점은 Phase 2 round() 전처리 예정    |
 | gl_account 컬럼 누락                     | zscore NaN + warning 로깅 (에러 미발생)                                     |
 
-**테스트**: [test_amount_features.py](../../tests/test_feature/test_amount_features.py) — 27 케이스 | [테스트 결과](../../tests/test_feature/test-results/amount-features.md)
+**테스트**: [test_amount_features.py](../../tests/test_feature/test_amount_features.py) — 27 케이스 | [테스트 결과](../../tests/test_feature/test-results/feature-test-summary.md#amount_features-27-cases)
 
 ---
 
 ### pattern_features.py — ✅ 구현 완료 (5개 변수, 41 tests passed)
+
+#### 이 모듈이 하는 일
+
+전표의 속성(전기원천·계정코드·금액)을 감사 업무 룰과 매칭하여 패턴 플래그를 생성한다.
+
+```
+문제:
+  부정 전표는 수기 입력(자동화 통제 우회), 관계사 간 순환거래,
+  매출계정 집중 조작, 가계정 장기 미정리 등 특정 속성 패턴을 보인다.
+  원본 source, gl_account 컬럼은 코드 값이므로
+  "이 전표가 수기인지", "매출계정인지"를 바로 알 수 없다.
+
+해결:
+  audit_rules.yaml에 정의된 업무 룰(수기전표 코드, 매출계정 prefix,
+  가계정 키워드 등)과 매칭하여 is_manual_je, is_intercompany,
+  is_revenue_account, first_digit, is_suspense_account 5개 변수를 산출한다.
+  detection Layer B(B01, B08, B10, B11)와 Layer C(C06, C07)가 이 변수를 참조한다.
+```
 
 전표 속성 기반 패턴 매칭. `source`(str), `company_code`(str), `gl_account`(Int64), 금액·텍스트 컬럼 사용.
 감사 업무 룰(키워드/코드)은 `config/audit_rules.yaml`에서 로드 — 함수 인자로 주입 (테스트 용이).
@@ -132,12 +207,33 @@ src/feature/
 | is_suspense_account 매칭 대상                  | `_SUSPENSE_TEXT_COLS` 상수. MVP: line_text + header_text                    |
 | 정규식 키워드 안전성                           | `re.compile` 실패 시 `re.escape()` 폴백 + warning                          |
 | 함수 인자 vs settings 직접 참조                | 함수 인자로 받기 (테스트 용이, engine.py에서 audit_rules 주입)              |
+| ✅ IC identifiers 수정 완료                     | audit_rules.yaml `["1150", "2050", "4500", "2700"]`으로 변경. "C" 접미사 제거 + IC Revenue/Accrued prefix 추가 |
+| ✅ manual_source_codes 수정 완료                | `["Manual", "Adjustment"]`으로 변경. `SA`(document_type 오매칭) 제거, `Adjustment`(결산 조정 수기) 추가 |
+| ✅ suspense 하이브리드 방식 적용                | 텍스트 키워드(한글+영문) OR gl_account prefix(`1190`, `2190` 등 5개) 매칭. DataSynth 영문 적요에서도 GL 코드로 탐지 가능 |
 
-**테스트**: [test_pattern_features.py](../../tests/test_feature/test_pattern_features.py) — 42 케이스 | [테스트 결과](../../tests/test_feature/test-results/pattern-features.md)
+**테스트**: [test_pattern_features.py](../../tests/test_feature/test_pattern_features.py) — 42 케이스 | [테스트 결과](../../tests/test_feature/test-results/feature-test-summary.md#pattern_features-42-cases)
 
 ---
 
 ### text_features.py — ✅ 구현 완료 (2개 변수, 38 tests passed)
+
+#### 이 모듈이 하는 일
+
+전표 적요(description)의 텍스트를 분석하여 위험 키워드 매칭과 품질 등급을 산출한다.
+
+```
+문제:
+  부정 전표는 적요에 '상품권', '가계정' 등 위험 키워드가 포함되거나,
+  반대로 적요가 비어 있거나 1~2글자로 극히 빈약한 경우가 많다.
+  숫자·날짜 기반 탐지로는 이런 텍스트 패턴을 포착할 수 없다.
+
+해결:
+  line_text + header_text를 결합한 뒤,
+  has_risk_keyword(위험 키워드 매칭 결과)와
+  description_quality(missing/poor/normal 3단계 품질 등급)를 산출한다.
+  detection Layer C(C06)가 이 변수로 적요 관련 이상 여부를 판정한다.
+  Phase 2~3에서 형태소 분석(kiwipiepy)과 LLM 기반 의미 이상 탐지로 확장 예정.
+```
 
 적요(description) 텍스트 분석. `line_text`(str), `header_text`(str)를 입력으로 사용.
 
@@ -158,7 +254,7 @@ src/feature/
 | description_quality 등급           | NaN→missing, noise→poor, len<min_length→poor, else→normal (3단계)            |
 | Phase 2/3 stubs                   | `add_semantic_similarity`, `add_semantic_anomaly` — no-op + logger.info      |
 
-**테스트**: [test_text_features.py](../../tests/test_feature/test_text_features.py) — 38 케이스 | [테스트 결과](../../tests/test_feature/test-results/text-features.md)
+**테스트**: [test_text_features.py](../../tests/test_feature/test_text_features.py) — 38 케이스 | [테스트 결과](../../tests/test_feature/test-results/feature-test-summary.md#text_features-38-cases)
 
 #### Phase 2/3 텍스트 피처 확장 로드맵
 
@@ -233,18 +329,35 @@ src/feature/
 
 ## E2E 테스트 (ingest → feature)
 
-실 데이터로 전체 파이프라인을 검증하는 통합 테스트. 단위 테스트 170개와 별도.
+실 데이터로 전체 파이프라인을 검증하는 통합 테스트. 단위 테스트 172개와 별도.
 
 | 데이터셋                | 행수      | 피처 생성 | 소요시간 | 결과                                                                           |
 |:------------------------|----------:|:---------:|:--------:|:-------------------------------------------------------------------------------|
-| datasynth (1,068K건)    | 1,068,119 | 18/18     | ~6.5s    | [e2e-datasynth.md](../../tests/test_feature/test-results/e2e-datasynth.md)     |
+| datasynth (1,106K건)    | 1,106,356 | 18/18     | ~7.7s    | [e2e-datasynth.md](../../tests/test_feature/test-results/e2e-datasynth.md)     |
 | sap-merged (331K건)     |   331,934 | 13/18     | ~0.8s    | [e2e-sap-merged.md](../../tests/test_feature/test-results/e2e-sap-merged.md) — graceful degradation |
 
 **engine.py 개선**: `_run_category()` try/except(KeyError) 추가 — 필수 컬럼 누락 시 해당 카테고리만 스킵, 나머지 정상 실행.
 
-**발견된 데이터 특성** (datasynth):
-- `is_after_hours`, `is_near_threshold`, `is_round_number`, `is_intercompany`, `is_suspense_account` — 합성 데이터 특성상 all-False
-- `fiscal_period_mismatch` — nullable `boolean` dtype (all-True)
+**피처별 실측 분포** (datasynth v1.2.0, 2026-03-25):
+
+| 피처                     | True 비율 | 비고                                                                       |
+|:-------------------------|----------:|:---------------------------------------------------------------------------|
+| `is_weekend`             |    10.0%  | 주말 전기 — C02 탐지 대상                                                   |
+| `is_after_hours`         |     1.1%  | 심야(22-06) 전기 — C03 탐지 대상                                            |
+| `is_period_end`          |    52.6%  | 기말 양방향 margin=5일 — 분기말·연말 집중 반영                               |
+| `is_holiday`             |     5.6%  | 법정공휴일 + 커스텀                                                         |
+| `is_near_threshold`      |     0.4%  | 다단계 6레벨 near 구간 합산 (v1.2.0에서 다단계 확장)                         |
+| `exceeds_threshold`      |     0.0%  | max threshold(50B) 초과 없음                                                |
+| `is_round_number`        |     0.0%  | `base.round(0) % unit` 적용으로 float 꼬리 허용 (DataSynth 재생성 시 확인 필요) |
+| `is_manual_je`           |    25.8%  | source `manual` + `adjustment` 매칭 (v1.2.0에서 Adjustment 추가)            |
+| `is_intercompany`        |     1.3%  | IC identifiers `[1150,2050,4500,2700]` 매칭 (v1.2.0에서 "C" 접미사 제거 + 확장) |
+| `is_revenue_account`     |    20.2%  | gl_account prefix "4" 매칭                                                  |
+| `is_suspense_account`    |     0.0%→TBD | 하이브리드 방식 적용: 텍스트 키워드 OR gl_account 코드 prefix 매칭 (2026-03-26) |
+| `fiscal_period_mismatch` |     (2값) | fiscal_period = posting_date month 1:1 대응. K4 variant이나 1월=period 1     |
+
+**잔존 이슈**:
+- `is_round_number` 0%: 파이프라인에 `base.round(0)` float tolerance 적용 완료 (2026-03-26). DataSynth Rust 금액 생성기의 클램핑 로직 확인 필요 (범위 외)
+- `is_suspense_account` 0%→해결 중: 하이브리드 방식 적용 완료 (2026-03-26) — 텍스트 키워드 OR `suspense_account_codes` GL prefix 매칭. DataSynth 적요에 ~30% 키워드 주입은 범위 외
 
 ```bash
 # E2E 빠른 실행 (리포트 제외)
@@ -260,8 +373,8 @@ uv run pytest tests/test_feature/test_e2e_datasynth.py -v -k slow
 - **각 피처 함수 단위 테스트:**
   - 토요일 날짜 → `is_weekend=True` 확인
   - 23시 전표 → `is_after_hours=True` 확인
-  - 45,000,000원 → `is_near_threshold=True` 확인 (5천만 × 0.90 = 4,500만)
-  - 55,000,000원 → `exceeds_threshold=True` 확인
+  - 9,500,000원 → `is_near_threshold=True` 확인 (Level 1: 1천만 × 0.90 = 900만)
+  - 15,000,000원 → `exceeds_threshold=True` 확인 (Level 1: 1천만 초과)
   - posting_date - document_date = 30일 → `days_backdated=30` 확인
   - gl_account '4100' → `is_revenue_account=True` 확인
   - 10,000,000원 → `is_round_number=True` 확인
@@ -275,7 +388,7 @@ uv run pytest tests/test_feature/test_e2e_datasynth.py -v -k slow
 ## 구현 시 주의사항
 - **days_backdated:** document_date가 없는 ERP 대비 → skip 또는 warning
 - **is_period_end 판정:** 회계기간(fiscal year)이 1~12월이 아닌 경우 대비 → settings에서 설정 가능하게
-- **is_near_threshold/exceeds_threshold:** threshold는 회사마다 다름 → settings.approval_threshold로 외부화
+- **is_near_threshold/exceeds_threshold:** threshold는 회사마다 다름 → settings.approval_thresholds (6단계 리스트)로 외부화
 - **amount_zscore:** Phase 1부터 gl_account별 groupby Z-score 적용 (fallback: n≥30 계정별 → n<30 상위그룹 → n<10 NaN)
 - **risk_keywords:** YAML에서 로드하여 하드코딩 방지 → 사용자 커스터마이징 지원
 - **컬럼 의존성:** is_after_hours는 posting_date에 시간 정보가 있어야 작동 → 시간 없으면 skip 또는 warning
@@ -370,8 +483,8 @@ def add_is_manual_je(df: DataFrame, manual_codes: list[str]) -> DataFrame:
     감사 관점: 수기 전표는 자동화 통제 우회. codes는 audit_rules.yaml에서 주입."""
 
 def add_is_intercompany(df: DataFrame, identifiers: list[str]) -> DataFrame:
-    """gl_account OR company_code에서 관계사 식별자 매칭. (B10 대응)
-    감사 관점: 관계사 거래는 순환거래·이전가격 위험."""
+    """gl_account에서 IC 전용 계정 prefix 매칭. (B10 대응)
+    감사 관점: 관계사 거래는 순환거래·이전가격 위험. identifiers는 GL prefix 목록."""
 
 def add_is_revenue_account(df: DataFrame, prefixes: list[str]) -> DataFrame:
     """gl_account가 매출 계정 prefix에 해당하면 True. (B01 대응)
@@ -573,7 +686,7 @@ Phase 1c 대시보드에서 `config/audit_rules.yaml`의 업무 룰을 UI로 편
 [Streamlit UI] — 감사인이 고객사별 커스터마이징
   ├── manual_source_codes: SAP→SA, Oracle→Manual, ...
   ├── revenue_account_prefixes: 4 (+ 필요 시 9 추가)
-  ├── intercompany_identifiers: 관계사 코드 직접 입력
+  ├── intercompany_identifiers: IC 전용 GL 계정 prefix 입력
   └── suspense_keywords: 고객사 특수 키워드 추가
         ↓ 저장
 [data/profiles/customer_A.json] ← mapping_profile + audit_rules 통합
@@ -582,7 +695,7 @@ Phase 1c 대시보드에서 `config/audit_rules.yaml`의 업무 룰을 UI로 편
 ```
 
 **UX 원칙** ([ux-flow.md → 3가지 원칙](ux-flow.md#3가지-ux-디자인-원칙)):
-- **스마트 디폴트**: 기본값만으로 분석 가능 (intercompany_identifiers만 빈 리스트)
+- **스마트 디폴트**: 기본값만으로 분석 가능 (intercompany_identifiers는 IC GL prefix)
 - **점진적 공개**: 기본 모드(디폴트 사용) / 전문가 모드(직접 편집)
 - **프로파일 재사용**: 결정 피로 해소 — "이번 설정은 내년 감사에 자동 적용"
 
@@ -629,11 +742,12 @@ GridSearchCV로 최적 모델/파라미터 동시 선택
 
 ### G. 미해결 이슈 (발견 → 해결 교차 참조)
 
-> 출처: [unit test-results](../../tests/test_feature/test-results/), [e2e-datasynth.md](../../tests/test_feature/test-results/e2e-datasynth.md), [e2e-sap-merged.md](../../tests/test_feature/test-results/e2e-sap-merged.md)
+> 출처: [feature-test-summary.md](../../tests/test_feature/test-results/feature-test-summary.md), [e2e-datasynth.md](../../tests/test_feature/test-results/e2e-datasynth.md), [e2e-sap-merged.md](../../tests/test_feature/test-results/e2e-sap-merged.md)
 
 | Phase | 모듈           | 문제                                  | 현상                                            | 해결 위치                                                                      |
 |:------|:---------------|:--------------------------------------|:------------------------------------------------|:-------------------------------------------------------------------------------|
 | ~~2~~ | ~~engine~~     | ~~FeatureResult 상세 로그~~           | ~~경고/스킵 사유 미기록~~                       | ✅ **해결됨** — `warnings` 필드 추가 완료                                      |
+| ~~1b~~ | ~~engine~~         | ~~rules 전달 형식 불일치~~            | ~~`get_audit_rules()` 중첩 dict 전달 시 pattern 피처 전부 False~~ | ✅ **해결됨** — `engine.py:117-119` 자동 언래핑 추가. [발견](../../tests/test_detection/test-results/e2e-detection-datasynth.md) |
 | ~~1c~~ | ~~time_features~~ | ~~is_after_hours 날짜 경계~~       | ✅ **버그 아님** — `dt.hour` 기반 자정 걸침 정확 처리 확인 | —                                                                             |
 | 1c    | time_features  | fiscal_period_mismatch NaN (SAP)      | sap-merged에서 전체 NaN                         | [07-dashboard §미해결과제](07-dashboard.md#phase-1a에서-넘어온-미해결-과제-ux-1단계-잔여) |
 | 2     | amount_features| Z-score 소그룹 fallback 왜곡          | n<30 그룹이 전체 분포에 의존                    | [05-detection](05-detection.md) — Phase 2 ML 파이프라인에서 CoA 상위그룹 fallback |
@@ -643,3 +757,44 @@ GridSearchCV로 최적 모델/파라미터 동시 선택
 | 2     | engine         | 순차 실행 성능                        | 대용량 시 병목                                  | 자체 수정 — concurrent.futures 병렬 실행 옵션                                  |
 | 2~3   | pattern + text | 은어/동의어 미탐지                    | 키워드 정확 매칭만 지원                         | [08-llm §미해결과제](08-llm.md#phase-1a에서-넘어온-미해결-과제-ux-1단계-잔여) — NLP 임베딩 유사도 |
 | 2~3   | text_features  | semantic stub 미구현                  | no-op 상태                                      | [08-llm §미해결과제](08-llm.md#phase-1a에서-넘어온-미해결-과제-ux-1단계-잔여) — Ollama 임베딩 연동 |
+
+---
+
+## 신규 파생변수 후보 (audit_domain_additional.md 기반)
+
+> DataSynth 확장 컬럼 및 기존 컬럼 조합에서 생성하는 추가 피처.
+
+### 시간대 분석
+
+| 피처명                    | 산출 로직                                         | 탐지 활용          |
+|--------------------------|--------------------------------------------------|-------------------|
+| `is_late_night`          | posting_date 시간 22:00~06:00                     | 심야 전표 (C03 확장) |
+| `is_overtime`            | posting_date 시간 18:30~22:00                     | 야근 구간 구분      |
+| `user_night_ratio`       | created_by별 심야 전표 비율                        | 입력자 집중 분석    |
+| `user_night_zscore`      | user_night_ratio의 Z-score (전체 사용자 대비)       | 3σ 이상치 탐지     |
+
+### 역분개 분석
+
+| 피처명                    | 산출 로직                                         | 탐지 활용          |
+|--------------------------|--------------------------------------------------|-------------------|
+| `is_reversal_pair`       | 동일 gl_account + 금액 + 반대방향 ±1일 매칭         | 1:1 역분개         |
+| `rolling_net_7d`         | gl_account × created_by 7일 윈도우 순액             | N:M 분할 역분개     |
+| `is_correcting_entry`    | source='manual' + line_text 키워드("수정","정정")    | 수정 전표 구분      |
+
+### Top-side JE 점수
+
+| 피처명                    | 산출 로직                                         | 탐지 활용          |
+|--------------------------|--------------------------------------------------|-------------------|
+| `topside_score`          | manual + 기말 + 자기승인 + 비정상계정 + 고액 + 적요부실 각 1점 합산 | 경영진 조정 전표   |
+
+### 승인 분석 (DataSynth v1.2.0: approved_by, approval_date 생성 완료)
+
+> **DataSynth 변경 반영** (2026-03-25):
+> - `approval_timestamp` → `approval_date` (date, 시분초 없음)
+> - `approval_level` → DuckDB 파생 컬럼 (loader.py CASE WHEN, 전결규정 6단계)
+
+| 피처명                    | 산출 로직                                         | 탐지 활용          |
+|--------------------------|--------------------------------------------------|-------------------|
+| `approval_delay_days`    | approval_date - posting_date (일수)                | 승인 지연          |
+| `is_level_skip`          | 금액 대비 required_approval_level 부족 여부 (DuckDB 파생) | 레벨 건너뜀  |
+| `approval_speed_ratio`   | 입력-승인 일수 차이 / 평균                          | 부실 검토 의심      |

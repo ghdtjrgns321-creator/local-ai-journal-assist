@@ -53,30 +53,44 @@ class TestBaseAmount:
 
 
 class TestIsNearThreshold:
-    """B02: threshold*ratio ≤ base < threshold."""
+    """B02: 다단계 승인한도 직하. 각 레벨별 threshold*ratio ≤ base < threshold."""
 
-    THRESHOLD = 50_000_000
+    THRESHOLDS = [10_000_000, 100_000_000, 1_000_000_000]
     RATIO = 0.90
 
     def test_exact_lower_bound(self):
-        """threshold*ratio 정확히 → True."""
-        base = pd.Series([self.THRESHOLD * self.RATIO])
+        """첫 번째 레벨(10M)의 lower bound(9M) 정확히 → True."""
+        base = pd.Series([self.THRESHOLDS[0] * self.RATIO])
         df = pd.DataFrame({"x": [0]})
-        add_is_near_threshold(df, base, self.THRESHOLD, self.RATIO)
+        add_is_near_threshold(df, base, self.THRESHOLDS, self.RATIO)
         assert df["is_near_threshold"].iloc[0] == True
 
     def test_below_lower_bound(self):
-        """threshold*ratio 미만 → False."""
-        base = pd.Series([self.THRESHOLD * self.RATIO - 1])
+        """모든 레벨의 near 구간 밖 → False."""
+        base = pd.Series([self.THRESHOLDS[0] * self.RATIO - 1])
         df = pd.DataFrame({"x": [0]})
-        add_is_near_threshold(df, base, self.THRESHOLD, self.RATIO)
+        add_is_near_threshold(df, base, self.THRESHOLDS, self.RATIO)
         assert df["is_near_threshold"].iloc[0] == False
 
     def test_at_threshold_is_false(self):
-        """threshold 정확히 → False (exceeds 영역)."""
-        base = pd.Series([self.THRESHOLD])
+        """threshold 정확히 → False (그 레벨의 near 구간 상한)."""
+        base = pd.Series([self.THRESHOLDS[0]])
         df = pd.DataFrame({"x": [0]})
-        add_is_near_threshold(df, base, self.THRESHOLD, self.RATIO)
+        add_is_near_threshold(df, base, self.THRESHOLDS, self.RATIO)
+        assert df["is_near_threshold"].iloc[0] == False
+
+    def test_multi_level_near(self):
+        """두 번째 레벨(100M)의 near 구간(90M~100M) → True."""
+        base = pd.Series([95_000_000])
+        df = pd.DataFrame({"x": [0]})
+        add_is_near_threshold(df, base, self.THRESHOLDS, self.RATIO)
+        assert df["is_near_threshold"].iloc[0] == True
+
+    def test_between_levels_not_near(self):
+        """레벨 사이 (20M) — 어떤 near 구간에도 미해당 → False."""
+        base = pd.Series([20_000_000])
+        df = pd.DataFrame({"x": [0]})
+        add_is_near_threshold(df, base, self.THRESHOLDS, self.RATIO)
         assert df["is_near_threshold"].iloc[0] == False
 
 
@@ -84,31 +98,31 @@ class TestIsNearThreshold:
 
 
 class TestExceedsThreshold:
-    """B03: base >= threshold."""
+    """B03: 최고 승인한도 초과. base >= max(thresholds)."""
 
-    THRESHOLD = 50_000_000
+    THRESHOLDS = [10_000_000, 100_000_000, 1_000_000_000]
 
     def test_exact_threshold(self):
-        """threshold 정확히 → True."""
-        base = pd.Series([self.THRESHOLD])
+        """최고 한도(1B) 정확히 → True."""
+        base = pd.Series([self.THRESHOLDS[-1]])
         df = pd.DataFrame({"x": [0]})
-        add_exceeds_threshold(df, base, self.THRESHOLD)
+        add_exceeds_threshold(df, base, self.THRESHOLDS)
         assert df["exceeds_threshold"].iloc[0] == True
 
     def test_below_threshold(self):
-        base = pd.Series([self.THRESHOLD - 1])
+        """최고 한도 미만 → False."""
+        base = pd.Series([self.THRESHOLDS[-1] - 1])
         df = pd.DataFrame({"x": [0]})
-        add_exceeds_threshold(df, base, self.THRESHOLD)
+        add_exceeds_threshold(df, base, self.THRESHOLDS)
         assert df["exceeds_threshold"].iloc[0] == False
 
     def test_no_gap_with_near(self):
-        """near과 exceeds 사이에 gap이 없어야 한다."""
+        """최고 한도 정확히 → near=False, exceeds=True (gap 없음)."""
         ratio = 0.90
-        # threshold 정확히 → near=False, exceeds=True
-        base = pd.Series([self.THRESHOLD])
+        base = pd.Series([self.THRESHOLDS[-1]])
         df = pd.DataFrame({"x": [0]})
-        add_is_near_threshold(df, base, self.THRESHOLD, ratio)
-        add_exceeds_threshold(df, base, self.THRESHOLD)
+        add_is_near_threshold(df, base, self.THRESHOLDS, ratio)
+        add_exceeds_threshold(df, base, self.THRESHOLDS)
         assert df["is_near_threshold"].iloc[0] == False
         assert df["exceeds_threshold"].iloc[0] == True
 
@@ -224,6 +238,21 @@ class TestIsRoundNumber:
         add_is_round_number(df, base, self.UNIT)
         assert df["is_round_number"].iloc[0] == False
 
+    def test_float_tail_tolerance(self):
+        """float 소수점 꼬리(미세)가 있어도 round 후 배수 판정."""
+        base = pd.Series([10_000_000.000001, 5_000_000.4])
+        df = pd.DataFrame({"x": [0, 0]})
+        add_is_round_number(df, base, self.UNIT)
+        # .000001 → round → 10M (배수), .4 → round → 5M (배수)
+        assert df["is_round_number"].tolist() == [True, True]
+
+    def test_near_but_not_round(self):
+        """반올림해도 배수가 아닌 경우 → False."""
+        base = pd.Series([10_500_000.3])
+        df = pd.DataFrame({"x": [0]})
+        add_is_round_number(df, base, self.UNIT)
+        assert df["is_round_number"].iloc[0] == False
+
 
 # ── TestAddAllAmountFeatures ─────────────────────────────────────
 
@@ -248,14 +277,16 @@ class TestAddAllAmountFeatures:
         assert "base_amount" not in result.columns
 
     def test_custom_settings(self, af_basic_df):
-        """settings 파라미터가 정상 동작하는지 확인."""
+        """approval_thresholds 커스텀 주입이 피처에 반영되는지 확인."""
         custom = AuditSettings(
-            approval_threshold=10_000_000,
+            approval_thresholds=[10_000_000],
             near_threshold_ratio=0.80,
             round_unit=500_000,
         )
         result = add_all_amount_features(af_basic_df.copy(), settings=custom)
         assert self.EXPECTED_COLS.issubset(result.columns)
+        # 10M 초과 금액은 exceeds=True 여야 함
+        assert result["exceeds_threshold"].any()
 
     def test_edge_cases(self, af_edge_df):
         """NaN/0 포함 데이터에서 에러 없이 완료."""

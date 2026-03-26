@@ -1,6 +1,6 @@
 """텍스트 리더 — CSV/TSV/TXT/DAT 파일을 ReadResult로 변환.
 
-DataSynth CSV(232MB)가 메인 데이터이므로 이 경로가 가장 빈번하게 사용된다.
+DataSynth CSV(319MB)가 메인 데이터이므로 이 경로가 가장 빈번하게 사용된다.
 인코딩 자동 감지(charset_normalizer) + 구분자 자동 감지(csv.Sniffer)를 수행하고,
 모든 컬럼을 dtype=str로 읽어 type_caster에 타입 변환을 위임한다.
 """

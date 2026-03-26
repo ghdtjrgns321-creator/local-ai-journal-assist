@@ -51,40 +51,25 @@ def add_is_intercompany(
     df: pd.DataFrame,
     identifiers: list[str],
 ) -> pd.DataFrame:
-    """B10: 관계사 거래 여부. gl_account 또는 company_code에서 식별자 매칭.
+    """B10: 관계사 거래 여부. gl_account에서 IC 전용 계정 prefix 매칭.
 
     감사 관점: 관계사 거래는 순환거래·이전가격 위험.
-    identifiers는 회사별 관계사 코드 목록 — UI에서 입력.
+    identifiers는 관계사 채권/채무 GL 계정 prefix 목록 — UI에서 입력.
     """
     if not identifiers:
         logger.warning("intercompany_identifiers 비어있음 — is_intercompany를 전체 False로 설정")
         df["is_intercompany"] = False
         return df
 
-    has_gl = "gl_account" in df.columns
-    has_cc = "company_code" in df.columns
-
-    if not has_gl and not has_cc:
-        logger.warning(
-            "gl_account, company_code 컬럼 모두 없음 — is_intercompany를 전체 False로 설정",
-        )
+    if "gl_account" not in df.columns:
+        logger.warning("gl_account 컬럼 없음 — is_intercompany를 전체 False로 설정")
         df["is_intercompany"] = False
         return df
 
-    result = pd.Series(False, index=df.index)
-    prefix_tuple = tuple(identifiers)
-
-    # gl_account(Int64 가능) → str 변환 후 startswith 매칭
-    if has_gl:
-        gl_str = df["gl_account"].astype(str).str.strip()
-        result = result | gl_str.str.startswith(prefix_tuple).fillna(False)
-
-    # company_code(str)에서도 startswith 매칭 (contains는 오탐 위험)
-    if has_cc:
-        cc_str = df["company_code"].astype(str).str.strip()
-        result = result | cc_str.str.startswith(prefix_tuple).fillna(False)
-
-    df["is_intercompany"] = result
+    # Why: company_code 매칭은 모든 행이 True가 되는 과탐 유발
+    #      GL 계정 prefix(IC Receivable/Payable)만으로 관계사 거래 식별
+    gl_str = df["gl_account"].astype(str).str.strip()
+    df["is_intercompany"] = gl_str.str.startswith(tuple(identifiers)).fillna(False)
     return df
 
 
@@ -141,43 +126,45 @@ def add_first_digit(df: pd.DataFrame) -> pd.DataFrame:
 def add_is_suspense_account(
     df: pd.DataFrame,
     keywords: list[str],
+    account_codes: list[str] | None = None,
 ) -> pd.DataFrame:
-    """B11/C06: 가계정·미결산 계정 키워드 매칭.
+    """B11/C06: 가계정·미결산 계정 하이브리드 판별.
 
-    감사 관점: 가수금/가지급/미결산 등은 장기 미정리 시 부정 은폐 수단.
-    keywords를 단일 정규식으로 컴파일하여 성능 최적화.
+    감사 관점: 실무에서는 GL 코드가 1순위 탐지 기준 — 횡령범은 적요를 위장하지만
+    계정 코드는 변경할 수 없음. 텍스트 키워드 매칭과 OR 결합하여 양쪽 모두 커버.
     """
-    if not keywords:
-        logger.warning("suspense_keywords 비어있음 — is_suspense_account를 전체 False로 설정")
-        df["is_suspense_account"] = False
-        return df
-
-    # 키워드 → 정규식 컴파일 (실패 시 escape 폴백)
-    safe_patterns = []
-    for kw in keywords:
-        try:
-            re.compile(kw)
-            safe_patterns.append(kw)
-        except re.error:
-            escaped = re.escape(kw)
-            logger.warning("정규식 컴파일 실패: '%s' → re.escape 폴백: '%s'", kw, escaped)
-            safe_patterns.append(escaped)
-
-    combined = "|".join(safe_patterns)
-
-    # 존재하는 텍스트 컬럼에서만 매칭 (OR 결합)
-    existing_cols = [c for c in _SUSPENSE_TEXT_COLS if c in df.columns]
-    if not existing_cols:
-        logger.warning(
-            "검사 대상 컬럼(%s) 없음 — is_suspense_account를 전체 False로 설정",
-            _SUSPENSE_TEXT_COLS,
-        )
+    # Why: keywords와 account_codes 둘 다 비어야 early return
+    if not keywords and not account_codes:
+        logger.warning("suspense_keywords·account_codes 모두 비어있음 — 전체 False")
         df["is_suspense_account"] = False
         return df
 
     result = pd.Series(False, index=df.index)
-    for col in existing_cols:
-        result = result | df[col].astype(str).str.contains(combined, na=False, regex=True)
+
+    # ── 1) 텍스트 키워드 매칭 ──
+    if keywords:
+        safe_patterns = []
+        for kw in keywords:
+            try:
+                re.compile(kw)
+                safe_patterns.append(kw)
+            except re.error:
+                escaped = re.escape(kw)
+                logger.warning("정규식 컴파일 실패: '%s' → re.escape 폴백: '%s'", kw, escaped)
+                safe_patterns.append(escaped)
+
+        combined = "|".join(safe_patterns)
+        existing_cols = [c for c in _SUSPENSE_TEXT_COLS if c in df.columns]
+        for col in existing_cols:
+            result = result | df[col].astype(str).str.contains(
+                combined, na=False, regex=True,
+            )
+
+    # ── 2) GL 계정 코드 prefix 매칭 (is_intercompany 패턴 동일) ──
+    if account_codes and "gl_account" in df.columns:
+        gl_str = df["gl_account"].astype(str).str.strip()
+        code_match = gl_str.str.startswith(tuple(account_codes)).fillna(False)
+        result = result | code_match
 
     df["is_suspense_account"] = result
     return df
@@ -202,6 +189,10 @@ def add_all_pattern_features(
     add_is_intercompany(df, rules.get("intercompany_identifiers", []))
     add_is_revenue_account(df, rules.get("revenue_account_prefixes", []))
     add_first_digit(df)
-    add_is_suspense_account(df, rules.get("suspense_keywords", []))
+    add_is_suspense_account(
+        df,
+        rules.get("suspense_keywords", []),
+        account_codes=rules.get("suspense_account_codes", []),
+    )
 
     return df
