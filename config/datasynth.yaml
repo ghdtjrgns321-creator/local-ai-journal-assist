@@ -19,16 +19,16 @@ companies:
     annual_transaction_volume: hundred_k
     volume_weight: 1.0
   - code: "C002"
-    name: "US Manufacturing"
+    name: "KR Manufacturing Ulsan"
     currency: KRW
-    country: US
+    country: KR
     fiscal_year_variant: K4
     annual_transaction_volume: ten_k
     volume_weight: 0.3
   - code: "C003"
-    name: "EU Manufacturing"
+    name: "KR Manufacturing Cheonan"
     currency: KRW
-    country: DE
+    country: KR
     fiscal_year_variant: K4
     annual_transaction_volume: ten_k
     volume_weight: 0.3
@@ -71,7 +71,30 @@ intercompany:
 # KRW 금액 스케일 — 한국 중견 제조업 기준
 # LogNormal(14.0, 2.5) → 중앙값 ~120만원, 평균 ~2,900만원
 # B02 승인한도 직하 탐지: split_transaction이 threshold×0.9~threshold 구간 생성
+# A01 차대변 균형 — ERP ITAC 반영 (99.8% 일치, 불일치는 A01 탐지 테스트용 극소수)
+# debit_credit_distribution은 차변/대변 라인 수 분포 (금액 균형은 JE 생성 시 항상 보장)
 transactions:
+  # 주말/공휴일 전표 비율 — C02/C03 주말 탐지 테스트용
+  seasonality:
+    weekend_activity: 1.0    # 주말 가중치 (1.0 = 평일과 동등, 월말 스파이크로 자연 감소 → ~10%)
+    holiday_activity: 0.05
+    month_end_spike: true
+    month_end_multiplier: 2.5
+    month_end_lead_days: 5
+    quarter_end_spike: true
+    quarter_end_multiplier: 4.0
+    year_end_spike: true
+    year_end_multiplier: 6.0
+    day_of_week_patterns: true
+    monday_multiplier: 1.3
+    tuesday_multiplier: 1.1
+    wednesday_multiplier: 1.0
+    thursday_multiplier: 1.0
+    friday_multiplier: 0.85
+  debit_credit_distribution:
+    equal: 0.998
+    more_debit: 0.001
+    more_credit: 0.001
   amounts:
     min_amount: 100
     max_amount: 100000000000    # 1,000억원 (대기업 단일 전표 상한)

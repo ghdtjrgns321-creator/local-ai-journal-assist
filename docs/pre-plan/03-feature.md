@@ -2,7 +2,7 @@
 
 ## 목적
 표준 DataFrame에 감사 관점의 파생변수 18개를 추가하여, 이상탐지 룰과 ML 모델의 입력 피처로 활용한다.
-각 파생변수는 AUDIT_DOMAIN_FINAL.md §5의 22개 룰(A01~C09)에 대응.
+각 파생변수는 AUDIT_DOMAIN_FINAL.md §5의 24개 룰(A01~C10)에 대응.
 
 > **선행 모듈**: ingest에서 타입 캐스팅·Null 처리 완료된 표준 DataFrame을 입력으로 받는다.
 > 컬럼 타입(float, datetime 등)이 보장된 상태이므로 별도 타입 검증 없이 연산에 집중.
@@ -107,6 +107,7 @@ src/feature/
 | days_backdated — document_date 누락            | skip + warning (NaN 반환), dtype=Int64(nullable)               |
 | fiscal_period_mismatch — 비표준 회계연도       | `(month - fiscal_year_start) % 12 + 1` modulo 연산            |
 | fiscal_period_mismatch — NaN 함정              | 결측치 마스크 → pd.NA 덮어씌움 (오탐 방지), dtype=boolean      |
+| fiscal_period_mismatch — K4 variant 검증       | DataSynth v1.2.0 실측: `fiscal_year_variant: K4`이나 실제 매핑은 1월=period 1 (표준). fiscal_period = posting_date month 정확히 1:1. `fiscal_year_start=1` 유지 |
 
 **테스트**: [test_time_features.py](../../tests/test_feature/test_time_features.py) — 49 케이스 | [테스트 결과](../../tests/test_feature/test-results/feature-test-summary.md#time_features-49-cases)
 
@@ -148,7 +149,8 @@ src/feature/
 | 이슈                                    | 결정                                                                       |
 |:----------------------------------------|:---------------------------------------------------------------------------|
 | base_amount 산출                         | `max(debit, credit).fillna(0)` — 복식부기 한 라인은 차/대 중 하나만 양수    |
-| threshold 값이 회사마다 다름             | settings.approval_threshold로 외부화 (기본값 5천만)                          |
+| threshold 값이 회사마다 다름             | `settings.approval_thresholds: list[int]`로 외부화. 6단계 `[10M, 100M, 1B, 5B, 10B, 50B]` |
+| ✅ 다단계 threshold 확장 완료            | `is_near_threshold`·`exceeds_threshold`가 `thresholds: list[int]`를 수용하여 각 레벨별 near/exceeds 판정. 가장 가까운 상위 한도 기준으로 판정 |
 | near/exceeds 경계 gap                   | `ratio*threshold ≤ x < threshold` / `x ≥ threshold` — 겹침·gap 없음 보장   |
 | amount_zscore 계산 단위                  | gl_account별 groupby — n≥30 그룹별, n<30 전체 fallback, n<10 전체 NaN       |
 | Z-score std==0                           | 0.0 반환 (ZeroDivisionError 방지)                                          |
@@ -205,6 +207,9 @@ src/feature/
 | is_suspense_account 매칭 대상                  | `_SUSPENSE_TEXT_COLS` 상수. MVP: line_text + header_text                    |
 | 정규식 키워드 안전성                           | `re.compile` 실패 시 `re.escape()` 폴백 + warning                          |
 | 함수 인자 vs settings 직접 참조                | 함수 인자로 받기 (테스트 용이, engine.py에서 audit_rules 주입)              |
+| ✅ IC identifiers 수정 완료                     | audit_rules.yaml `["1150", "2050", "4500", "2700"]`으로 변경. "C" 접미사 제거 + IC Revenue/Accrued prefix 추가 |
+| ✅ manual_source_codes 수정 완료                | `["Manual", "Adjustment"]`으로 변경. `SA`(document_type 오매칭) 제거, `Adjustment`(결산 조정 수기) 추가 |
+| ✅ suspense 하이브리드 방식 적용                | 텍스트 키워드(한글+영문) OR gl_account prefix(`1190`, `2190` 등 5개) 매칭. DataSynth 영문 적요에서도 GL 코드로 탐지 가능 |
 
 **테스트**: [test_pattern_features.py](../../tests/test_feature/test_pattern_features.py) — 42 케이스 | [테스트 결과](../../tests/test_feature/test-results/feature-test-summary.md#pattern_features-42-cases)
 
@@ -324,19 +329,35 @@ src/feature/
 
 ## E2E 테스트 (ingest → feature)
 
-실 데이터로 전체 파이프라인을 검증하는 통합 테스트. 단위 테스트 170개와 별도.
+실 데이터로 전체 파이프라인을 검증하는 통합 테스트. 단위 테스트 172개와 별도.
 
 | 데이터셋                | 행수      | 피처 생성 | 소요시간 | 결과                                                                           |
 |:------------------------|----------:|:---------:|:--------:|:-------------------------------------------------------------------------------|
-| datasynth (1,106K건)    | 1,105,510 | 18/18     | ~6.5s    | [e2e-datasynth.md](../../tests/test_feature/test-results/e2e-datasynth.md)     |
+| datasynth (1,106K건)    | 1,106,356 | 18/18     | ~7.7s    | [e2e-datasynth.md](../../tests/test_feature/test-results/e2e-datasynth.md)     |
 | sap-merged (331K건)     |   331,934 | 13/18     | ~0.8s    | [e2e-sap-merged.md](../../tests/test_feature/test-results/e2e-sap-merged.md) — graceful degradation |
 
 **engine.py 개선**: `_run_category()` try/except(KeyError) 추가 — 필수 컬럼 누락 시 해당 카테고리만 스킵, 나머지 정상 실행.
 
-**발견된 데이터 특성** (datasynth):
-- `is_after_hours`, `is_near_threshold`, `is_round_number`, `is_suspense_account` — 합성 데이터 특성상 all-False
-- `is_intercompany` — IC 전용 GL 계정 prefix(`1150C`/`2050C`) 매칭, ~196건 True
-- `fiscal_period_mismatch` — nullable `boolean` dtype (all-True)
+**피처별 실측 분포** (datasynth v1.2.0, 2026-03-25):
+
+| 피처                     | True 비율 | 비고                                                                       |
+|:-------------------------|----------:|:---------------------------------------------------------------------------|
+| `is_weekend`             |    10.0%  | 주말 전기 — C02 탐지 대상                                                   |
+| `is_after_hours`         |     1.1%  | 심야(22-06) 전기 — C03 탐지 대상                                            |
+| `is_period_end`          |    52.6%  | 기말 양방향 margin=5일 — 분기말·연말 집중 반영                               |
+| `is_holiday`             |     5.6%  | 법정공휴일 + 커스텀                                                         |
+| `is_near_threshold`      |     0.4%  | 다단계 6레벨 near 구간 합산 (v1.2.0에서 다단계 확장)                         |
+| `exceeds_threshold`      |     0.0%  | max threshold(50B) 초과 없음                                                |
+| `is_round_number`        |     0.0%  | `base.round(0) % unit` 적용으로 float 꼬리 허용 (DataSynth 재생성 시 확인 필요) |
+| `is_manual_je`           |    25.8%  | source `manual` + `adjustment` 매칭 (v1.2.0에서 Adjustment 추가)            |
+| `is_intercompany`        |     1.3%  | IC identifiers `[1150,2050,4500,2700]` 매칭 (v1.2.0에서 "C" 접미사 제거 + 확장) |
+| `is_revenue_account`     |    20.2%  | gl_account prefix "4" 매칭                                                  |
+| `is_suspense_account`    |     0.0%→TBD | 하이브리드 방식 적용: 텍스트 키워드 OR gl_account 코드 prefix 매칭 (2026-03-26) |
+| `fiscal_period_mismatch` |     (2값) | fiscal_period = posting_date month 1:1 대응. K4 variant이나 1월=period 1     |
+
+**잔존 이슈**:
+- `is_round_number` 0%: 파이프라인에 `base.round(0)` float tolerance 적용 완료 (2026-03-26). DataSynth Rust 금액 생성기의 클램핑 로직 확인 필요 (범위 외)
+- `is_suspense_account` 0%→해결 중: 하이브리드 방식 적용 완료 (2026-03-26) — 텍스트 키워드 OR `suspense_account_codes` GL prefix 매칭. DataSynth 적요에 ~30% 키워드 주입은 범위 외
 
 ```bash
 # E2E 빠른 실행 (리포트 제외)
@@ -352,8 +373,8 @@ uv run pytest tests/test_feature/test_e2e_datasynth.py -v -k slow
 - **각 피처 함수 단위 테스트:**
   - 토요일 날짜 → `is_weekend=True` 확인
   - 23시 전표 → `is_after_hours=True` 확인
-  - 45,000,000원 → `is_near_threshold=True` 확인 (5천만 × 0.90 = 4,500만)
-  - 55,000,000원 → `exceeds_threshold=True` 확인
+  - 9,500,000원 → `is_near_threshold=True` 확인 (Level 1: 1천만 × 0.90 = 900만)
+  - 15,000,000원 → `exceeds_threshold=True` 확인 (Level 1: 1천만 초과)
   - posting_date - document_date = 30일 → `days_backdated=30` 확인
   - gl_account '4100' → `is_revenue_account=True` 확인
   - 10,000,000원 → `is_round_number=True` 확인
@@ -367,7 +388,7 @@ uv run pytest tests/test_feature/test_e2e_datasynth.py -v -k slow
 ## 구현 시 주의사항
 - **days_backdated:** document_date가 없는 ERP 대비 → skip 또는 warning
 - **is_period_end 판정:** 회계기간(fiscal year)이 1~12월이 아닌 경우 대비 → settings에서 설정 가능하게
-- **is_near_threshold/exceeds_threshold:** threshold는 회사마다 다름 → settings.approval_threshold로 외부화
+- **is_near_threshold/exceeds_threshold:** threshold는 회사마다 다름 → settings.approval_thresholds (6단계 리스트)로 외부화
 - **amount_zscore:** Phase 1부터 gl_account별 groupby Z-score 적용 (fallback: n≥30 계정별 → n<30 상위그룹 → n<10 NaN)
 - **risk_keywords:** YAML에서 로드하여 하드코딩 방지 → 사용자 커스터마이징 지원
 - **컬럼 의존성:** is_after_hours는 posting_date에 시간 정보가 있어야 작동 → 시간 없으면 skip 또는 warning
@@ -766,10 +787,14 @@ GridSearchCV로 최적 모델/파라미터 동시 선택
 |--------------------------|--------------------------------------------------|-------------------|
 | `topside_score`          | manual + 기말 + 자기승인 + 비정상계정 + 고액 + 적요부실 각 1점 합산 | 경영진 조정 전표   |
 
-### 승인 분석 (approval 컬럼 활성화 시)
+### 승인 분석 (DataSynth v1.2.0: approved_by, approval_date 생성 완료)
+
+> **DataSynth 변경 반영** (2026-03-25):
+> - `approval_timestamp` → `approval_date` (date, 시분초 없음)
+> - `approval_level` → DuckDB 파생 컬럼 (loader.py CASE WHEN, 전결규정 6단계)
 
 | 피처명                    | 산출 로직                                         | 탐지 활용          |
 |--------------------------|--------------------------------------------------|-------------------|
-| `approval_delay_hours`   | approval_timestamp - posting_date (시간)           | 승인 지연          |
-| `is_level_skip`          | 금액 대비 approval_level 부족 여부                  | 레벨 건너뜀        |
-| `approval_speed_ratio`   | 입력-승인 시간 차이 / 평균                          | 부실 검토 의심      |
+| `approval_delay_days`    | approval_date - posting_date (일수)                | 승인 지연          |
+| `is_level_skip`          | 금액 대비 required_approval_level 부족 여부 (DuckDB 파생) | 레벨 건너뜀  |
+| `approval_speed_ratio`   | 입력-승인 일수 차이 / 평균                          | 부실 검토 의심      |

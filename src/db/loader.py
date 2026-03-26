@@ -1,0 +1,259 @@
+"""DataFrame → DuckDB 적재 — 4개 테이블 트랜잭션 적재.
+
+Why: detection 파이프라인 출력물(DataFrame + DetectionResult + BenfordResult)을
+     DuckDB 4개 테이블에 원자적으로 적재하여 대시보드·Text-to-SQL이 조회한다.
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+from dataclasses import dataclass, field
+
+import pandas as pd
+
+from src.db.schema import (
+    ANOMALY_FLAGS_COLUMNS,
+    BENFORD_DIGITS_COLUMNS,
+    BENFORD_SUMMARY_COLUMNS,
+    GENERAL_LEDGER_COLUMNS,
+)
+
+logger = logging.getLogger(__name__)
+
+# ── 승인 레벨 파생 (generation_principles.md §11 기준) ───────
+
+_APPROVAL_THRESHOLDS = [
+    (10_000_000, 1),       # 자동 승인
+    (100_000_000, 2),      # 담당자
+    (1_000_000_000, 3),    # 팀장
+    (5_000_000_000, 4),    # 본부장
+    (10_000_000_000, 5),   # CFO
+]
+
+
+def _derive_approval_level(df: pd.DataFrame) -> pd.Series:
+    """전표 단위 최대 금액 → 전결규정 승인 레벨 (1~6)."""
+    amount = df[["debit_amount", "credit_amount"]].max(axis=1)
+    doc_max = amount.groupby(df["document_id"]).transform("max")
+    level = pd.Series(6, index=df.index)
+    for threshold, lv in reversed(_APPROVAL_THRESHOLDS):
+        level = level.where(doc_max > threshold, lv)
+    return level
+
+
+# ── 결과 dataclass ───────────────────────────────────────────
+
+
+@dataclass
+class LoadResult:
+    """4개 테이블 적재 결과 통합."""
+
+    batch_id: str
+    general_ledger_rows: int
+    anomaly_flags_rows: int
+    benford_summary_rows: int
+    benford_digits_rows: int
+    elapsed_seconds: float
+    warnings: list[str] = field(default_factory=list)
+
+    @property
+    def total_rows(self) -> int:
+        return (
+            self.general_ledger_rows + self.anomaly_flags_rows
+            + self.benford_summary_rows + self.benford_digits_rows
+        )
+
+    @property
+    def is_success(self) -> bool:
+        return self.general_ledger_rows > 0
+
+
+# ── 적재 함수 ────────────────────────────────────────────────
+
+
+def load_all(
+    conn,
+    df: pd.DataFrame,
+    batch_id: str,
+    results: list | None = None,
+) -> LoadResult:
+    """4개 테이블 원자적 적재 (트랜잭션).
+
+    Why: general_ledger만 적재되고 나머지 실패 시 불일치 방지.
+    """
+    if results is None:
+        results = []
+
+    start = time.monotonic()
+    warnings: list[str] = []
+
+    conn.execute("BEGIN TRANSACTION")
+    try:
+        gl_rows = load_general_ledger(conn, df, batch_id)
+        af_rows = load_anomaly_flags(conn, results, df, batch_id)
+        bs_rows, bd_rows, bf_warnings = load_benford(conn, results, batch_id)
+        warnings.extend(bf_warnings)
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+
+    elapsed = time.monotonic() - start
+    return LoadResult(
+        batch_id=batch_id,
+        general_ledger_rows=gl_rows,
+        anomaly_flags_rows=af_rows,
+        benford_summary_rows=bs_rows,
+        benford_digits_rows=bd_rows,
+        elapsed_seconds=elapsed,
+        warnings=warnings,
+    )
+
+
+def load_general_ledger(conn, df: pd.DataFrame, batch_id: str) -> int:
+    """DataFrame을 general_ledger 테이블에 적재.
+
+    1. approval_level 파생 (전결규정 6단계)
+    2. reindex로 DDL 컬럼 순서 정합성 보장
+    3. StrEnum risk_level → str 명시적 변환
+    """
+    df = df.copy()
+    df["upload_batch_id"] = batch_id
+
+    # Why: approval_level은 DataSynth에 없는 파생 컬럼
+    if "approval_level" not in df.columns:
+        df["approval_level"] = _derive_approval_level(df)
+
+    # Why: StrEnum → VARCHAR 자동 변환 미보장
+    if "risk_level" in df.columns:
+        df["risk_level"] = df["risk_level"].astype(str)
+
+    gl_df = df.reindex(columns=GENERAL_LEDGER_COLUMNS)
+    col_list = ", ".join(GENERAL_LEDGER_COLUMNS)
+    conn.execute(
+        f"INSERT INTO general_ledger ({col_list}) SELECT * FROM gl_df"
+    )
+    return len(gl_df)
+
+
+def load_anomaly_flags(
+    conn, results: list, df: pd.DataFrame, batch_id: str,
+) -> int:
+    """DetectionResult.details를 melt하여 anomaly_flags 테이블에 적재."""
+    flags_df = _build_anomaly_flags_df(results, df, batch_id)
+    if flags_df.empty:
+        return 0
+    af_cols = ", ".join(ANOMALY_FLAGS_COLUMNS)
+    conn.execute(
+        f"INSERT INTO anomaly_flags ({af_cols}) SELECT * FROM flags_df"
+    )
+    return len(flags_df)
+
+
+def load_benford(
+    conn, results: list, batch_id: str,
+) -> tuple[int, int, list[str]]:
+    """Benford 분석 결과를 benford_summary + benford_digits에 적재."""
+    warnings: list[str] = []
+    benford = _extract_benford(results)
+
+    if benford is None:
+        warnings.append("BenfordResult 없음 — benford 테이블 0행 적재")
+        return 0, 0, warnings
+
+    summary_df = _build_benford_summary_df(benford, batch_id)
+    bs_cols = ", ".join(BENFORD_SUMMARY_COLUMNS)
+    conn.execute(
+        f"INSERT INTO benford_summary ({bs_cols}) SELECT * FROM summary_df"
+    )
+
+    digits_df = _build_benford_digits_df(benford, batch_id)
+    bd_cols = ", ".join(BENFORD_DIGITS_COLUMNS)
+    conn.execute(
+        f"INSERT INTO benford_digits ({bd_cols}) SELECT * FROM digits_df"
+    )
+
+    return len(summary_df), len(digits_df), warnings
+
+
+# ── 내부 헬퍼 ────────────────────────────────────────────────
+
+
+def _build_anomaly_flags_df(
+    results: list, df: pd.DataFrame, batch_id: str,
+) -> pd.DataFrame:
+    """DetectionResult.details → anomaly_flags DataFrame 변환."""
+    empty = pd.DataFrame(columns=ANOMALY_FLAGS_COLUMNS)
+    if not results:
+        return empty
+
+    chunks: list[pd.DataFrame] = []
+    for result in results:
+        if not hasattr(result, "details") or result.details.empty:
+            continue
+        melted = result.details.melt(
+            ignore_index=False, var_name="rule_code", value_name="score",
+        )
+        melted = melted[melted["score"] > 0].copy()
+        if melted.empty:
+            continue
+        melted["document_id"] = df.loc[melted.index, "document_id"]
+        melted["line_number"] = (
+            df.loc[melted.index, "line_number"]
+            if "line_number" in df.columns
+            else None
+        )
+        melted["track_name"] = result.track_name
+        melted["upload_batch_id"] = batch_id
+        chunks.append(melted)
+
+    if not chunks:
+        return empty
+    combined = pd.concat(chunks, ignore_index=True)
+    return combined.reindex(columns=ANOMALY_FLAGS_COLUMNS)
+
+
+def _extract_benford(results: list):
+    """results에서 layer_c의 BenfordResult를 추출."""
+    for r in results:
+        if (
+            hasattr(r, "track_name")
+            and r.track_name == "layer_c"
+            and hasattr(r, "metadata")
+            and "benford_result" in r.metadata
+        ):
+            return r.metadata["benford_result"]
+    return None
+
+
+def _build_benford_summary_df(br, batch_id: str) -> pd.DataFrame:
+    """BenfordResult → benford_summary DataFrame (배치당 1행)."""
+    return pd.DataFrame([{
+        "upload_batch_id": batch_id,
+        "sample_size": br.sample_size,
+        "mad": br.mad,
+        "mad_conformity": br.mad_conformity,
+        "chi2_statistic": br.chi2_statistic,
+        "chi2_p_value": br.chi2_p_value,
+        "ks_statistic": br.ks_statistic,
+        "ks_p_value": br.ks_p_value,
+        "is_conforming": br.is_conforming,
+        "confidence": br.confidence,
+    }]).reindex(columns=BENFORD_SUMMARY_COLUMNS)
+
+
+def _build_benford_digits_df(br, batch_id: str) -> pd.DataFrame:
+    """BenfordResult → benford_digits DataFrame (자릿수별 9행)."""
+    rows = []
+    for digit in range(1, 10):
+        obs = br.observed.get(digit, 0.0)
+        exp = br.expected.get(digit, 0.0)
+        rows.append({
+            "upload_batch_id": batch_id,
+            "digit": digit,
+            "observed_freq": obs,
+            "expected_freq": exp,
+            "deviation": obs - exp,
+        })
+    return pd.DataFrame(rows).reindex(columns=BENFORD_DIGITS_COLUMNS)

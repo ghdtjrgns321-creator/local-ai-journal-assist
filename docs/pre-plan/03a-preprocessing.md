@@ -27,7 +27,7 @@ Phase별로 전처리 범위·구현 방식·UX 투명성을 계획한다.
        ↓
 ingest (02) → 표준 DataFrame (타입 캐스팅 완료)
        ↓
-feature (03) → 15개 파생변수 추가
+feature (03) → 18개 파생변수 추가
        ↓
 ① EDA 프로파일링 (profiler.py)        → EDAProfile(JSON)
        ↓
@@ -35,7 +35,7 @@ feature (03) → 15개 파생변수 추가
        ↓
 validation (04) → L1 구조 / L2 회계 검증
        ↓
-detection (05) → 3레이어 22개 룰 탐지 (Phase 1b)
+detection (05) → 3레이어 24개 룰 탐지 (Phase 1b)
        ↓
   ┌──────────────────────────────────────────────────┐
   │ Phase 2: sklearn Pipeline                        │
@@ -255,7 +255,7 @@ src/preprocessing/
 | **구간화** (선택) | amount_magnitude → 구간 범주  | —                                | —                    |
 
 > **gl_account 고카디널리티 처리:**
-> 계정코드(4000+종)는 OneHotEncoder 시 차원 폭발 → TargetEncoder 사용.
+> 계정코드(430개)는 OneHotEncoder 시 차원 폭발 → TargetEncoder 사용.
 > TargetEncoder는 타겟 누출 방지를 위해 cross-fitting 적용 (sklearn 기본).
 
 #### 모델별 Pipeline 정의
@@ -519,14 +519,14 @@ best_pipeline = max(results, key=lambda k: results[k]["mean_f1"])
 │ EDA 탭                                          │
 ├─────────────────────────────────────────────────┤
 │ [데이터 개요]                                    │
-│   행: 1,105,510 | 컬럼: 24 | 메모리: 210MB      │
+│   행: 1,106,356 | 컬럼: 39 | 메모리: ~300MB     │
 │   중복행: 0 | 결측률: 2.3%                       │
 │                                                  │
 │ [컬럼별 프로파일]                                 │
 │   ┌──────────────────────────────────────┐       │
-│   │ debit_amount (float64)               │       │
-│   │ 결측: 0.1% | min: 0 | max: 9.9B     │       │
-│   │ mean: 2.1M | std: 15.3M             │       │
+│   │ debit_amount (int64)                 │       │
+│   │ 결측: 0% | min: 0 | max: 100B       │       │
+│   │ mean: 29M | median: 1.2M            │       │
 │   │ skew: 8.7 | kurtosis: 102.3         │       │
 │   │ [히스토그램]  [박스플롯]              │       │
 │   └──────────────────────────────────────┘       │
@@ -572,7 +572,7 @@ best_pipeline = max(results, key=lambda k: results[k]["mean_f1"])
 ### 라벨 전략 자동 전환
 label_strategy.py에서 양성 비율/건수 체크 → 기준 미달 시 자동 비지도(VAE+IF) 전환.
 - 임계값: min_positive=50, min_positive_rate=0.01
-- DataSynth: fraud_rate 2% (~21K건) → 지도학습 충분
+- DataSynth: fraud_rate 1.9% (~2,008건/106,489전표) → 지도학습 충분
 - 실무 데이터: 라벨 없음 → 비지도 자동 전환
 
 ### VAE 학습 데이터 모드 분리
@@ -598,18 +598,22 @@ label_strategy.py에서 양성 비율/건수 체크 → 기준 미달 시 자동
 
 ## 감사기준서 갭 분석 반영 (audit_domain_additional.md 기반)
 
-### DataSynth 확장 컬럼 → 전처리 파이프라인 영향
+### DataSynth v1.2.0 컬럼 → 전처리 파이프라인 영향
 
-DataSynth에 추가되는 컬럼은 ingest(02) 단계에서 매핑된 후, 전처리 파이프라인에서 다음과 같이 처리:
+DataSynth v1.2.0 기준 39개 컬럼 (PREVIEW.md 참조). 전처리 파이프라인에서의 처리:
 
-- **승인 관련** (`approved_by`, `approval_timestamp`, `approval_level`): 결측치 처리 (승인 없음 = NULL → 승인 누락 플래그). 피처 파생: `approval_delay_hours`, `is_level_skip`
-- **증빙 관련** (`has_attachment`, `invoice_amount` 등): 결측치 = 증빙 없음. 피처 파생: `amount_mismatch = |debit_amount - invoice_amount|`, `tax_error = |tax_amount - supply_amount * 0.1|`
-- **변경 이력** (`changed_by`, `change_date`): 변경 없는 전표는 NULL. 피처 파생: `is_modified`, `days_since_posting_to_change`
-- **IP** (`ip_address`): 사내/VPN/외부 대역 분류. 피처 파생: `ip_category`, `is_unusual_ip`
+- **승인 관련** (`approved_by`, `approval_date`): 결측치 = 승인 없음 → 승인 누락 플래그. 피처 파생: `approval_delay_days = approval_date - posting_date`
+- **라벨 컬럼** (`is_fraud`, `fraud_type`, `is_anomaly`, `anomaly_type`, `sod_violation`, `sod_conflict_type`): ML 학습 타겟으로 사용. 피처에서 제외 (data leakage 방지). label_strategy.py에서 라벨 전략 결정
+- **범주형** (`user_persona`, `business_process`, `document_type`, `source`): 저카디널리티(5~9개) → OrdinalEncoder
+- **세금** (`tax_code`, `tax_amount`): nullable. 결측치 = 세금 비해당
+- **IC 거래** (`trading_partner`): nullable. IC 전표만 값 존재
+- **대사** (`lettrage`, `lettrage_date`): nullable. 대사 완료 건만 값 존재
+- **보조원장** (`auxiliary_account_number`, `auxiliary_account_label`): nullable
+- **단일값 컬럼** (`currency`=KRW, `exchange_rate`=1.0, `ledger`=0L): 정보량 없음 → drop 후보
 
 ### White Box 원칙 유지
 
-확장 컬럼에서 파생되는 모든 피처는 기존 White Box 원칙을 따른다:
+모든 피처는 기존 White Box 원칙을 따른다:
 - 감사인이 해석 가능한 피처만 생성
 - 블랙박스 변환(PCA, 임베딩) 금지
 - 각 피처에 감사기준서 근거 태그 부여

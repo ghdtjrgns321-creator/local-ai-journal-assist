@@ -11,18 +11,19 @@ from src.validation.models import AccountingResult, SchemaResult
 
 
 def _make_required_columns(n: int = 5) -> dict:
-    """필수 9개 컬럼의 정상 데이터 생성."""
+    """필수 10개 컬럼의 정상 데이터 생성."""
     return {
         "document_id": [f"JE{i:04d}" for i in range(n)],
         "company_code": ["1000"] * n,
         "fiscal_year": pd.array([2025] * n, dtype="Int64"),
+        "fiscal_period": pd.array([1] * n, dtype="Int64"),
         "posting_date": pd.to_datetime(
             [f"2025-01-{i + 1:02d}" for i in range(n)]
         ),
         "document_date": pd.to_datetime(
             [f"2025-01-{i + 1:02d}" for i in range(n)]
         ),
-        "gl_account": pd.array([1110, 2110, 1110, 4100, 5200], dtype="Int64")[:n],
+        "gl_account": ["1110", "2110", "1110", "4100", "5200"][:n],
         "debit_amount": [100_000.0, 0.0, 50_000.0, 0.0, 200_000.0][:n],
         "credit_amount": [0.0, 100_000.0, 0.0, 50_000.0, 0.0][:n],
         "document_type": ["SA", "SA", "RE", "AB", "SA"][:n],
@@ -30,12 +31,16 @@ def _make_required_columns(n: int = 5) -> dict:
 
 
 def _make_optional_columns(n: int = 5) -> dict:
-    """권장 컬럼 중 주요 4개."""
+    """권장 컬럼 중 주요 6개 — DataSynth v1.2.0 라벨·승인 컬럼 포함."""
     return {
         "created_by": ["USER01", "USER02", "USER01", None, "USER03"][:n],
         "source": ["manual", "automated", "manual", None, "recurring"][:n],
         "line_text": ["사무용품", "매출입금", None, "복리후생", "교통비"][:n],
         "line_number": pd.array([1, 2, 3, 4, 5], dtype="Int64")[:n],
+        "sod_violation": pd.array([False, True, False, None, False], dtype="boolean")[:n],
+        "approval_date": pd.to_datetime(
+            ["2025-01-02", "2025-01-03", None, "2025-01-05", "2025-01-06"]
+        )[:n],
     }
 
 
@@ -66,7 +71,7 @@ def _make_feature_columns(n: int = 5) -> dict:
 
 @pytest.fixture()
 def sv_valid_df() -> pd.DataFrame:
-    """필수 9개 + 권장 4개 + 피처 18개 — 정상 DataFrame."""
+    """필수 10개 + 권장 4개 + 피처 18개 — 정상 DataFrame."""
     n = 5
     data = {
         **_make_required_columns(n),
@@ -78,7 +83,7 @@ def sv_valid_df() -> pd.DataFrame:
 
 @pytest.fixture()
 def sv_minimal_df() -> pd.DataFrame:
-    """필수 9개만 포함된 최소 DataFrame."""
+    """필수 10개만 포함된 최소 DataFrame."""
     return pd.DataFrame(_make_required_columns(5))
 
 
@@ -105,7 +110,7 @@ def av_balanced_df() -> pd.DataFrame:
         ]),
         "debit_amount": [100_000.0, 0.0, 50_000.0, 0.0, 200_000.0, 0.0],
         "credit_amount": [0.0, 100_000.0, 0.0, 50_000.0, 0.0, 200_000.0],
-        "gl_account": pd.array([1110, 2110, 1110, 4100, 5200, 1110], dtype="Int64"),
+        "gl_account": ["1110", "2110", "1110", "4100", "5200", "1110"],
         "document_type": ["SA"] * 6,
         "company_code": ["1000"] * 6,
         "fiscal_year": pd.array([2025] * 6, dtype="Int64"),
@@ -124,7 +129,7 @@ def av_unbalanced_df() -> pd.DataFrame:
         ]),
         "debit_amount": [100_000.0, 0.0, 50_100.0, 0.0],
         "credit_amount": [0.0, 100_000.0, 0.0, 50_000.0],
-        "gl_account": pd.array([1110, 2110, 1110, 4100], dtype="Int64"),
+        "gl_account": ["1110", "2110", "1110", "4100"],
         "document_type": ["SA"] * 4,
         "company_code": ["1000"] * 4,
         "fiscal_year": pd.array([2025] * 4, dtype="Int64"),
@@ -142,7 +147,7 @@ def av_continuous_df() -> pd.DataFrame:
         "posting_date": dates,
         "debit_amount": [10_000.0] * n,
         "credit_amount": [10_000.0] * n,
-        "gl_account": pd.array([1110] * n, dtype="Int64"),
+        "gl_account": ["1110"] * n,
         "document_type": ["SA"] * n,
         "company_code": ["1000"] * n,
         "fiscal_year": pd.array([2025] * n, dtype="Int64"),
@@ -160,7 +165,7 @@ def av_gap_df() -> pd.DataFrame:
         "posting_date": dates,
         "debit_amount": [10_000.0] * n,
         "credit_amount": [10_000.0] * n,
-        "gl_account": pd.array([1110] * n, dtype="Int64"),
+        "gl_account": ["1110"] * n,
         "document_type": ["SA"] * n,
         "company_code": ["1000"] * n,
         "fiscal_year": pd.array([2025] * n, dtype="Int64"),
@@ -176,7 +181,7 @@ def av_duplicate_df() -> pd.DataFrame:
         "posting_date": pd.to_datetime(["2025-01-06"] * 4),
         "debit_amount": [100_000.0, 50_000.0, 100_000.0, 50_000.0],
         "credit_amount": [0.0, 0.0, 0.0, 0.0],
-        "gl_account": pd.array([1110, 2110, 1110, 2110], dtype="Int64"),
+        "gl_account": ["1110", "2110", "1110", "2110"],
         "document_type": ["SA", "RE", "SA", "RE"],
         "company_code": ["1000"] * 4,
         "fiscal_year": pd.array([2025] * 4, dtype="Int64"),
@@ -239,7 +244,7 @@ def av_with_features_df() -> pd.DataFrame:
         "posting_date": pd.to_datetime(["2025-01-06", "2025-01-06"]),
         "debit_amount": [100_000.0, 100_000.0],
         "credit_amount": [0.0, 0.0],
-        "gl_account": pd.array([1110, 1110], dtype="Int64"),
+        "gl_account": ["1110", "1110"],
         "document_type": ["SA", "SA"],
         "company_code": ["1000", "1000"],
         "fiscal_year": pd.array([2025, 2025], dtype="Int64"),
@@ -267,10 +272,9 @@ def vr_sample_df() -> pd.DataFrame:
                          200_000.0, 0.0, 0.0],
         "credit_amount": [0.0, 60_000.0, 40_000.0, 0.0, 30_000.0, 20_000.0, 0.0,
                           0.0, 100_000.0, 100_000.0],
-        "gl_account": pd.array(
-            [1110, 2110, 4100, 1110, 2110, 4100, 5200, 1110, 2110, 4100],
-            dtype="Int64",
-        ),
+        "gl_account": [
+            "1110", "2110", "4100", "1110", "2110", "4100", "5200", "1110", "2110", "4100",
+        ],
     })
 
 

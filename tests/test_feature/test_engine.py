@@ -179,13 +179,13 @@ class TestSettingsInjection:
     """설정/룰 주입 검증."""
 
     def test_custom_settings(self, en_full_df: pd.DataFrame) -> None:
-        """approval_threshold 변경 → is_near_threshold 결과 달라짐."""
-        # 기본: 50M → 45M은 near (45M >= 50M*0.9=45M)
+        """approval_thresholds 변경 → is_near_threshold 결과 달라짐."""
+        # 기본 thresholds=[10M,100M,1B,...] → 45M은 near 구간 밖
         result_default = generate_all_features(en_full_df.copy())
         default_near = result_default.data["is_near_threshold"].tolist()
 
-        # threshold를 100M으로 올리면 → 45M은 near 아님 (45M < 100M*0.9=90M)
-        custom = AuditSettings(approval_threshold=100_000_000)
+        # thresholds=[50M]으로 변경 → 45M은 near (45M >= 50M*0.9=45M)
+        custom = AuditSettings(approval_thresholds=[50_000_000])
         result_custom = generate_all_features(en_full_df.copy(), settings=custom)
         custom_near = result_custom.data["is_near_threshold"].tolist()
 

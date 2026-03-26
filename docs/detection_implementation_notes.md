@@ -15,7 +15,7 @@
 
 ### 2. 구현 범위
 
-- **전체 한 번에 계획**: 룰 기반(22개) + SupervisedDetector(XGBoost) + VAEDetector(Basic FC + IF) + score_aggregator
+- **전체 한 번에 계획**: 룰 기반(24개) + SupervisedDetector(XGBoost) + VAEDetector(Basic FC + IF) + score_aggregator
 - **구현 순서**: 룰 기반 → XGBoost → VAE+IF → score_aggregator(5트랙)
 - **Phase 2 나머지 3종(DuplicateDetector, TimeseriesDetector, IntercompanyMatcher)은 별도 계획으로 분리**
 
@@ -30,7 +30,7 @@
 |:-------------------|:-----------------|:---------------------------------|
 | 모델 성능 검증     | XGBoost(지도)    | 개발 중 DataSynth로 F1/AUROC 측정 |
 | 실전 탐지          | VAE+IF(비지도)   | 실무 데이터 투입 시 (라벨 없음)   |
-| 실전 탐지          | 룰 기반 22개     | 항상 (라벨 유무 무관)            |
+| 실전 탐지          | 룰 기반 24개     | 항상 (라벨 유무 무관)            |
 
 - **XGBoost**: "우리 시스템이 부정을 잡는다"를 증명하는 벤치마크 도구.
   포트폴리오에서 성능 지표를 보여줄 수 있음.
@@ -340,7 +340,7 @@ src/preprocessing/          src/detection/
 
 **구현 순서:**
 ```
-1단계: src/detection/ 룰 기반 (22개) — preprocessing 불필요
+1단계: src/detection/ 룰 기반 (24개) — preprocessing 불필요
 2단계: src/preprocessing/ (11개 모듈) — 독립 구현 + 테스트
 3단계: src/detection/ ML 탐지기 — preprocessing import해서 사용
 ```

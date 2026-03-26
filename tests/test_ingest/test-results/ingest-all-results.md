@@ -1,23 +1,29 @@
 # Ingest 모듈 테스트 결과 통합
 
-> 최종 갱신: 2026-03-21 | **184 tests passed** + **5 E2E datasets passed**
+> 최종 갱신: 2026-03-25 | **240 tests passed** (단위 215 + DataSynth 통합 25) + **5 E2E validation datasets passed**
 
 ---
 
 ## 1. 전체 요약
 
 ```
-모듈               테스트   상태     핵심 기능
-─────────────────  ─────  ──────   ──────────────────────────────
-File Validator        32   PASS    경로/확장자/크기/무결성 5단계 검증
-File Reader           24   PASS    Excel/CSV/TSV/Parquet 읽기 + 인코딩 감지
-Header Detector       20   PASS    구조 기반 헤더 행 탐지 (v2)
-Column Mapper         38   PASS    Fuzzy 매핑 + 타입 호환성 검증 (v2)
-Mapping Profile       26   PASS    매핑 결과 저장/로드/삭제
-Type Caster           44   PASS    금액/날짜/정수/문자열/불린 캐스팅 (v2)
-─────────────────  ─────  ──────
-합계                 184   PASS
-E2E 데이터셋           5   PASS    실데이터 파이프라인 전체 통과
+모듈                    테스트   상태     핵심 기능
+──────────────────────  ─────  ──────   ──────────────────────────────
+File Validator             32   PASS    경로/확장자/크기/무결성 5단계 검증
+File Reader                24   PASS    Excel/CSV/TSV/Parquet 읽기 + 인코딩 감지
+Header Detector            20   PASS    구조 기반 헤더 행 탐지 (v2)
+Column Mapper              38   PASS    Fuzzy 매핑 + 타입 호환성 검증 (v2)
+Mapping Profile            26   PASS    매핑 결과 저장/로드/삭제
+Type Caster                44   PASS    금액/날짜/정수/문자열/불린 캐스팅 (v2)
+Sheet Scorer                8   PASS    멀티시트 품질 순위 매기기
+Text Reader (추가)         12   PASS    인코딩 감지/오버라이드/구분자
+DataSynth 통합             25   PASS    319MB CSV 39컬럼 E2E (v1.2.0)
+──────────────────────  ─────  ──────
+단위 테스트 합계          215   PASS
+DataSynth 통합             25   PASS    39컬럼 매핑·캐스팅·데이터 품질
+E2E Validation              6   PASS    5종 실데이터셋 + 리포트 생성
+──────────────────────  ─────  ──────
+총합                      240   PASS
 ```
 
 ---
@@ -87,6 +93,23 @@ financial-anomaly   AccountID→gl_account        타입 검증 차단 → unmap
 
 ## 3. E2E 데이터셋 검증
 
+### 3-1. DataSynth v1.2.0 통합 검증 (25 tests)
+
+DataSynth CSV (319MB, 39컬럼, 1,106,356 라인아이템)에 대한 전체 파이프라인 검증.
+
+```
+데이터셋            형식   크기    rows         cols  매핑  필수 미매핑
+──────────────────  ─────  ──────  ───────────  ────  ────  ──────────
+DataSynth v1.2.0    CSV    319MB   1,106,356     39    36    0
+```
+
+- **fast path 활성화**: 필수 10컬럼 정확 일치 → 매핑 스킵
+- **비레이블 36컬럼 매핑**: bool 레이블(is_fraud, is_anomaly, sod_violation) 3개는 의도적 제외
+- **타입 캐스팅 성공**: debit/credit→float64, posting_date→datetime64, fiscal_period→Int64, gl_account→str
+- **데이터 품질 검증**: 3법인, 9+전표유형, 6프로세스, 5페르소나, 106,489전표, 2,008부정
+
+### 3-2. 외부 Validation 데이터셋 (5종)
+
 5종 실데이터셋에 대해 전체 파이프라인(검증→읽기→헤더→매핑→캐스팅) 통과.
 
 ```
@@ -103,11 +126,12 @@ schreyer-fraud      CSV        27MB      533,009    10     4    6
 
 | 데이터셋          | 비고                                                        |
 |:------------------|:------------------------------------------------------------|
+| DataSynth v1.2.0  | 메인 데이터. 39컬럼 fast path 검증. 319MB 13초 처리          |
 | bpi2019           | SAP P2P 이벤트 로그. latin-1 인코딩. 회계 전표가 아닌 프로세스 로그라 필수 미매핑 다수 |
 | financial-anomaly | 금융 이상치 데이터. 범용 컬럼명(Amount, Merchant) → 매핑 한계 |
 | general-ledger    | 교육용 총계정원장 6시트. GL 시트 자동 선택                    |
 | sap-merged        | SAP FICO 60컬럼. 14개 확정 매핑 — 가장 높은 매핑률           |
-| schreyer-fraud    | SAP 합성 벤치마크. HKONT(익명화 str)→gl_account(int) 오매핑 의심 경고 정상 작동 |
+| schreyer-fraud    | SAP 합성 벤치마크. HKONT(익명화 str)→gl_account 매핑        |
 
 ---
 
@@ -199,6 +223,16 @@ Parquet 헤더 탐지 스킵   불필요한 탐지 시도 (동작 무영향)    
 | CastDataframe      |  6  | 전체/Parquet 스킵/필수 실패/결측 경고/빈 DF/debit-credit |
 | NullDemote (v2)    |  5  | 유령 컬럼 분리, 오매핑 감지, 정상 미감지, 90% 경계, 분류 구분 |
 
+### 5-7. DataSynth 통합 (25 tests)
+
+| 그룹                 | 수  | 검증 포인트                                          |
+|:---------------------|:---:|:-----------------------------------------------------|
+| 파일 검증             |  1  | 319MB CSV 파일 검증 통과                              |
+| 파일 읽기             |  3  | source_format=csv, 인코딩 감지, 1,106,356행           |
+| 컬럼 매핑             |  5  | fast path 활성, 필수 미매핑 0, 비레이블 36개 매핑, 39컬럼 |
+| 타입 캐스팅           |  8  | 성공, 에러 0, float64/datetime/bool/Int64/str 확인, 최종 shape |
+| 데이터 품질           |  8  | 3법인, 9+전표유형, 6프로세스, 5페르소나, 106,489전표, 2,008부정, 2022년, KRW |
+
 ---
 
 ## 6. 소스 바로가기
@@ -230,6 +264,7 @@ Parquet 헤더 탐지 스킵   불필요한 탐지 시도 (동작 무영향)    
   tests/test_ingest/test_mapping_profile.py
   tests/test_ingest/test_type_caster.py
   tests/test_ingest/test_validation_datasets.py
+  tests/test_ingest/test_datasynth_integration.py
 ```
 
 ## 7. 실행 명령어

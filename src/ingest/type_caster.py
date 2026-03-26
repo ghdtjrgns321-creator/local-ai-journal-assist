@@ -37,7 +37,7 @@ def _is_already_correct_type(series: pd.Series, expected: str) -> bool:
     dtype = series.dtype
     if expected == "float":
         return pd.api.types.is_float_dtype(dtype)
-    if expected == "date":
+    if expected in ("date", "datetime"):
         return pd.api.types.is_datetime64_any_dtype(dtype)
     if expected == "int":
         return pd.api.types.is_integer_dtype(dtype)
@@ -260,6 +260,7 @@ def unify_debit_credit(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
 _CASTER_MAP: dict[str, Callable[[pd.Series], pd.Series]] = {
     "float": cast_amount,
     "date": cast_date,
+    "datetime": cast_date,  # schema.yaml posting_date 등 시분초 포함 날짜
     "int": _cast_int,
     "bool": _cast_bool,
     "str": _cast_str,

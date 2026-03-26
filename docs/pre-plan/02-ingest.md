@@ -4,8 +4,8 @@
 다양한 형태의 Excel/CSV 원본 전표 데이터를 읽어 표준 DataFrame으로 변환한다.
 ERP마다 다른 헤더 위치, 컬럼명, 병합셀 등을 자동으로 처리하는 것이 핵심.
 
-> **메인 데이터**: DataSynth CSV (`data/journal/primary/datasynth/journal_entries.csv`)는
-> 표준 스키마와 동일한 컬럼명을 사용하므로 매핑 없이 직접 로드 가능.
+> **메인 데이터**: DataSynth CSV (`data/journal/primary/datasynth/journal_entries.csv`, 319MB)는
+> 표준 스키마(schema.yaml)의 슈퍼셋(39개 컬럼 ⊇ 스키마 필수 10개)을 사용하므로 매핑 없이 직접 로드 가능.
 > ingest 파이프라인은 **외부 ERP 엑셀 업로드 시** 필요한 모듈이다.
 
 ---
@@ -133,10 +133,10 @@ src/ingest/
 |----------------------------------|----------------------------|----------------------------------------------------|
 | `read_only=True` vs 병합셀 충돌   | **`read_only=False`** 사용  | read_only에서 merged_cells 접근 불가. 100MB 제한이 안전장치 |
 | Multi-format 지원                 | 포맷별 리더 분리 + 퍼사드    | xlsx/xls/xlsb/csv/parquet API가 모두 다름             |
-| CSV fast path                    | `pd.read_csv` 직접 호출     | DataSynth 247MB CSV가 메인 데이터                     |
+| CSV fast path                    | `pd.read_csv` 직접 호출     | DataSynth 319MB CSV가 메인 데이터                     |
 | 통합 반환 타입                    | `ReadResult` (WorkbookInfo 대체) | CSV/Parquet에는 시트 개념 없음 → 정규화 필요          |
 | 인코딩 감지 중복                  | text_reader에서 재감지       | integrity_checkers 시그니처 변경 시 32개 기존 테스트 영향 |
-| 메모리 (247MB CSV → ~1.5GB)      | Phase 1a에서는 최적화 안 함  | 16GB RAM 충분. 문제 시 chunksize 대응                 |
+| 메모리 (319MB CSV → ~1.8GB)      | Phase 1a에서는 최적화 안 함  | 16GB RAM 충분. 문제 시 chunksize 대응                 |
 
 #### excel_reader.py
 
@@ -892,45 +892,46 @@ class IngestState(str, Enum):
 | 1c    | fiscal_period_mismatch NaN   | sap-merged에서 전체 NaN 출력                                       | [07-dashboard §미해결과제](07-dashboard.md#phase-1a에서-넘어온-미해결-과제-ux-1단계-잔여) — 매핑 리뷰 UI에서 원인 확인 |
 | 1c    | sap-merged debit/credit 미매핑 | amount 카테고리 전체 스킵                                        | [07-dashboard §미해결과제](07-dashboard.md#phase-1a에서-넘어온-미해결-과제-ux-1단계-잔여) — 수동 매핑 조정 |
 | 1c~3  | 데이터셋 필수 컬럼 미매핑    | bpi2019 등 8개 필수 컬럼 미매핑                                    | Fuzzy 정확도 개선 + 매핑 프로파일 누적                                    |
+| 1c    | fiscal_period 필수 추가 영향 | 외부 ERP에 fiscal_period 없으면 필수 미매핑 +1 (sap-merged MONAT은 keywords.yaml 별칭 추가로 해결 가능) | [07-dashboard](07-dashboard.md) — 수동 매핑 UI에서 처리 |
 
 ---
 
-## DataSynth 확장 컬럼 (audit_domain_additional.md 기반)
+## DataSynth v1.2.0 컬럼 현황
 
-> 감사기준서 갭 분석에서 도출된 추가 컬럼. DataSynth에서 생성 후 ingest 파이프라인에서 매핑.
+> DataSynth Rust 엔진에서 생성하는 39개 컬럼. 전체 명세: `data/journal/primary/datasynth/PREVIEW.md`
+> 생성 원칙: `data/journal/primary/datasynth/generation_principles.md`
+> schema.yaml에 39개 전부 반영 완료.
 
-### 승인 관련 (approval.rs 활성화)
+### DataSynth 생성 컬럼 vs 감사기준서 갭
 
-| 컬럼명               | 타입      | SAP 참고    | 설명               | 탐지 활용         |
-|---------------------|-----------|------------|--------------------|--------------------|
-| `approved_by`       | str       | USNAM      | 승인자 ID          | B06 정밀화, 자기승인 |
-| `approval_timestamp`| datetime  | —          | 승인 시각          | 승인 지연 탐지      |
-| `approval_level`    | int       | —          | 승인 레벨 (1~5)     | 레벨 건너뜀 탐지    |
+DataSynth v1.2.0에서 **생성하는** 승인/SoD/세금 관련 컬럼:
 
-### 증빙 관련
+| 컬럼명              | 타입   | 설명                    | 탐지 활용                 |
+|---------------------|--------|-------------------------|---------------------------|
+| `approved_by`       | str    | 승인자 ID (USNAM)       | B06 자기승인, 통제 위반    |
+| `approval_date`     | date   | 승인일                  | 승인 지연 탐지             |
+| `sod_violation`     | bool   | 직무분리 위반 여부       | B07 SoD 탐지 레이블        |
+| `sod_conflict_type` | str    | SoD 충돌 유형           | preparer_approver 등 분류  |
+| `tax_code`          | str    | 세금코드 (nullable)     | 부가세 검증                |
+| `tax_amount`        | float  | 세금액 (nullable)       | 부가세 10% 검증            |
+| `trading_partner`   | str    | IC 거래처 (nullable)    | B10 관계사 거래 탐지       |
+| `lettrage`          | str    | 대사 그룹 (nullable)    | 미소거 탐지                |
+| `lettrage_date`     | date   | 대사일 (nullable)       | C05 가수금 장기체류 탐지   |
 
-| 컬럼명                 | 타입   | 설명                                    | 탐지 활용                |
-|-----------------------|--------|----------------------------------------|--------------------------|
-| `has_attachment`      | bool   | 증빙 첨부 여부                           | 증빙 누락 탐지            |
-| `supporting_doc_type` | str    | 세금계산서/카드/현금영수증/간이영수증/없음   | 적격증빙 검증 (3만원 기준) |
-| `invoice_amount`      | float  | 증빙(세금계산서) 금액                     | 전표-증빙 금액 불일치      |
-| `invoice_date`        | date   | 증빙 일자                               | 기간귀속 검증             |
-| `delivery_date`       | date   | 출하일/서비스완료일                       | 컷오프 검증               |
-| `tax_amount`          | float  | 부가세 금액                              | 부가세 10% 검증           |
-| `supply_amount`       | float  | 공급가액                                | 부가세 계산 기초           |
+### DuckDB 파생 컬럼 (DataSynth 미생성 → 적재 시 생성)
 
-### 변경 이력 관련
+| 컬럼명              | 산출 방식                                | 탐지 활용            |
+|---------------------|------------------------------------------|----------------------|
+| `approval_level`    | 금액 기준 CASE WHEN (전결규정 6단계)      | 레벨 건너뜀 탐지     |
 
-| 컬럼명          | 타입      | SAP 참고        | 설명           | 탐지 활용         |
-|----------------|-----------|----------------|----------------|-------------------|
-| `changed_by`   | str       | AENAM          | 변경자 ID       | 무단 수정 탐지    |
-| `change_date`  | datetime  | AEDAT          | 변경 일시       | 기말 수정 집중도  |
-| `changed_field`| str       | CDPOS.FNAME    | 변경된 필드명    | 고위험 변경 필터  |
+### 미구현 컬럼 (Phase 3 이후 DataSynth 확장 시 추가 예정)
 
-### 기타
+감사기준서 갭 분석에서 도출되었으나 DataSynth v1.2.0에 미포함된 컬럼.
+실제 ERP 데이터 업로드 시에는 ingest 파이프라인에서 매핑 가능.
 
-| 컬럼명              | 타입   | 설명                        | 탐지 활용          |
-|--------------------|--------|----------------------------|--------------------|
-| `document_number`  | int    | 순차 전표번호 (SAP BELNR)    | 전표번호 갭 탐지    |
-| `ip_address`       | str    | 접속 IP 주소                | 비정상 접근 탐지    |
-| `reversal_reason`  | str    | SAP Reversal Reason Code    | 역분개 사유 구분    |
+| 카테고리    | 컬럼명                                                    | 사유                          |
+|------------|-----------------------------------------------------------|-------------------------------|
+| 증빙       | has_attachment, supporting_doc_type, invoice_amount/date   | ERP 증빙 연동 필요 (외부 API) |
+| 증빙       | delivery_date, supply_amount                               | 컷오프·부가세 검증용           |
+| 변경 이력  | changed_by, change_date, changed_field                     | SAP Change Document 연동 필요 |
+| 기타       | document_number (순차번호), ip_address, reversal_reason     | ERP 로그 연동 필요            |

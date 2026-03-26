@@ -1,6 +1,7 @@
 # Validation 모듈 테스트 결과 통합
 
-> 최종 갱신: 2026-03-21 | **89 tests passed** (0.81s)
+> 최종 갱신: 2026-03-25 | **90 tests passed** (1.34s)
+> DataSynth v1.2.0 반영: gl_account str, schema.yaml 39컬럼 동기화
 
 ---
 
@@ -9,7 +10,7 @@
 ```
 모듈                    테스트   상태     핵심 기능
 ──────────────────────  ─────  ──────   ──────────────────────────────
-Schema Validator (L1)      14   PASS    Pandera 구조·타입·제약조건 검증
+Schema Validator (L1)      15   PASS    Pandera 구조·타입·제약조건 검증 + YAML 동기화
 Accounting Validator (L2)  20   PASS    대차일치·일자 연속성·중복 탐지
 Benford Analyzer            9   PASS    Benford's Law 적합도 (Chi²/KS)
 Statistical Validator (L3)  7   PASS    월별 급변·분포·Benford 통합 리포트
@@ -17,14 +18,14 @@ Temporal Stats              6   PASS    주말비율·기말집중·YoY 패턴
 Volatility                 16   PASS    월별 변동·분포 정규성·계정 집중도
 Report Generator           17   PASS    L1+L2 종합 리포트·score·직렬화
 ──────────────────────  ─────  ──────
-합계                       89   PASS
+합계                       90   PASS
 ```
 
 ---
 
 ## 2. 모듈별 검증 포인트
 
-### 2-1. Schema Validator — L1 구조 검증 (14 tests)
+### 2-1. Schema Validator — L1 구조 검증 (15 tests)
 
 | 그룹                    | 수  | 검증 포인트                                               |
 |:------------------------|:---:|:----------------------------------------------------------|
@@ -38,7 +39,8 @@ Report Generator           17   PASS    L1+L2 종합 리포트·score·직렬화
 | column_stats            |  1  | null 비율, 유니크 수 등 통계 수집                         |
 | null 비율 경고          |  1  | 높은 결측률 → warning                                    |
 | 빈 DataFrame            |  1  | 0행 → 정상 처리                                          |
-| Int64 nullable 호환     |  1  | pandas nullable Int64 타입 호환                           |
+| Int64/str dtype 호환    |  1  | fiscal_year/period→Int64, gl_account→str 타입 호환        |
+| YAML↔Model 동기화      |  1  | schema.yaml 39컬럼과 GeneralLedgerSchema 필드 일치 검증   |
 
 ### 2-2. Accounting Validator — L2 회계 검증 (20 tests)
 

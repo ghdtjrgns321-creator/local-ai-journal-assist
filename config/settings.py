@@ -10,7 +10,7 @@ import functools
 from pathlib import Path
 
 import yaml
-from pydantic import field_validator
+from pydantic import computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # 프로젝트 루트 = config/ 의 부모
@@ -55,7 +55,18 @@ class AuditSettings(BaseSettings):
 
     # --- 감사 룰 관련 (⚠️ 예시값 — 실제 감사 기준에 맞춰 조정) ---
     balance_tolerance: float = 1.0         # A01: 차대변 불일치 허용 오차 (원)
-    approval_threshold: float = 1_000_000_000  # B02/B03: 승인한도 직하/초과 (팀장 전결 10억원, 제조업)
+    # 다단계 승인한도 — 한국 중견 제조업 전결규정 반영 (DataSynth v1.2.0)
+    # Level 1~6: 자동승인(10M) → 담당자(100M) → 팀장(1B) → 본부장(5B) → CFO(10B) → 이사회(50B)
+    approval_thresholds: list[int] = [
+        10_000_000, 100_000_000, 1_000_000_000,
+        5_000_000_000, 10_000_000_000, 50_000_000_000,
+    ]
+    @computed_field
+    @property
+    def approval_threshold(self) -> int:
+        """레거시 호환용. approval_thresholds의 최고 한도 반환."""
+        return max(self.approval_thresholds)
+
     near_threshold_ratio: float = 0.90  # 한도의 90% 이상이면 플래그
     round_unit: int = 1_000_000           # B04: 정수 단위 판정 기준 (100만원)
     zscore_threshold: float = 3.0         # C08: 이상치 기준 (detection에서 사용)

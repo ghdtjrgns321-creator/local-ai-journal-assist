@@ -1,6 +1,7 @@
 # Preprocessing Pipeline 테스트 결과 통합 리포트
 
-> 실행일: 2026-03-21 | 총 62 passed, 0 failed in 4.61s
+> 최종 갱신: 2026-03-26 | **62 passed**, 0 failed in 7.22s
+> __pycache__ 바이트코드에서 소스 복원 후 재실행 통과 (11개 구현 모듈, 8개 테스트 파일)
 
 ---
 
@@ -17,9 +18,8 @@ cv_selector                7   ✅ PASS   0.52s
 transparency               4   ✅ PASS   0.06s
 model_registry            10   ✅ PASS   0.14s
 vae_wrapper                8   ✅ PASS   1.82s
-회귀 테스트 (eda+feature) 236  ✅ PASS  37.14s
 ─────────────────────────────────────────────────
-합계                      62   ALL PASS  4.61s
+합계                      62   ALL PASS  7.22s
 ```
 
 ---

@@ -23,7 +23,9 @@ class TestAuditSettings:
         s = AuditSettings()
         assert s.max_file_size_mb == 100
         assert s.fuzzy_threshold == 80
-        assert s.approval_threshold == 50_000_000
+        assert s.approval_thresholds == [10_000_000, 100_000_000, 1_000_000_000, 5_000_000_000, 10_000_000_000, 50_000_000_000]
+        # computed_field: 최고 한도와 자동 동기화
+        assert s.approval_threshold == 50_000_000_000
         assert s.midnight_start == 22
         assert s.midnight_end == 6
         assert s.period_end_margin_days == 5

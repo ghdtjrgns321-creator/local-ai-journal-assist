@@ -15,7 +15,7 @@ import pandas as pd
 import pandera as pa
 from pandera.typing import Series
 
-from config.settings import get_schema
+from config.settings import get_schema, get_settings
 from src.validation.models import SchemaResult
 
 logger = logging.getLogger(__name__)
@@ -44,36 +44,60 @@ def _load_column_sets() -> tuple[frozenset[str], frozenset[str]]:
 class GeneralLedgerSchema(pa.DataFrameModel):
     """표준 GL DataFrame의 L1 구조 스키마.
 
-    필수 9개: nullable=False, dtype 강제
-    권장 13개: Optional → df에 없어도 에러 아님, nullable=True
+    필수 10개: nullable=False, dtype 강제
+    선택 29개 (=39-10): Optional → df에 없어도 에러 아님, nullable=True
     Config.strict=False → 피처 컬럼 등 추가 컬럼 허용
     """
 
     # ── 필수 컬럼 ──
     document_id: Series[str] = pa.Field(nullable=False)
     company_code: Series[str] = pa.Field(nullable=False)
-    fiscal_year: Series[pd.Int64Dtype] = pa.Field(nullable=False)
+    fiscal_year: Series[pd.Int64Dtype] = pa.Field(ge=2000, le=2099, nullable=False)
+    fiscal_period: Series[pd.Int64Dtype] = pa.Field(ge=1, le=12, nullable=False)
     posting_date: Series[pa.DateTime] = pa.Field(nullable=False)
+    # Why: schema.yaml type: date이나, type_caster가 datetime64[ns]로 통일 변환
     document_date: Series[pa.DateTime] = pa.Field(nullable=False)
-    gl_account: Series[pd.Int64Dtype] = pa.Field(nullable=False)
+    gl_account: Series[str] = pa.Field(nullable=False)
     debit_amount: Series[float] = pa.Field(ge=0, nullable=False)
     credit_amount: Series[float] = pa.Field(ge=0, nullable=False)
     document_type: Series[str] = pa.Field(nullable=False)
 
-    # ── 권장 컬럼 (Optional → df에 없어도 통과) ──
+    # ── 선택 컬럼 — Header (Optional → df에 없어도 통과) ──
+    currency: Optional[Series[str]] = pa.Field(nullable=True)
+    exchange_rate: Optional[Series[float]] = pa.Field(nullable=True)
+    reference: Optional[Series[str]] = pa.Field(nullable=True)
+    header_text: Optional[Series[str]] = pa.Field(nullable=True)
     created_by: Optional[Series[str]] = pa.Field(nullable=True)
+    user_persona: Optional[Series[str]] = pa.Field(nullable=True)
     source: Optional[Series[str]] = pa.Field(nullable=True)
     business_process: Optional[Series[str]] = pa.Field(nullable=True)
+    ledger: Optional[Series[str]] = pa.Field(nullable=True)
+    approved_by: Optional[Series[str]] = pa.Field(nullable=True)
+    # Why: schema.yaml type: date → type_caster가 datetime64[ns]로 변환
+    approval_date: Optional[Series[pa.DateTime]] = pa.Field(nullable=True)
+
+    # ── 선택 컬럼 — 레이블 (DataSynth 전용) ──
+    is_fraud: Optional[Series[bool]] = pa.Field(nullable=True)
+    fraud_type: Optional[Series[str]] = pa.Field(nullable=True)
+    is_anomaly: Optional[Series[bool]] = pa.Field(nullable=True)
+    anomaly_type: Optional[Series[str]] = pa.Field(nullable=True)
+    sod_violation: Optional[Series[bool]] = pa.Field(nullable=True)
+    sod_conflict_type: Optional[Series[str]] = pa.Field(nullable=True)
+
+    # ── 선택 컬럼 — Line ──
     line_number: Optional[Series[pd.Int64Dtype]] = pa.Field(nullable=True)
     local_amount: Optional[Series[float]] = pa.Field(nullable=True)
-    currency: Optional[Series[str]] = pa.Field(nullable=True)
     cost_center: Optional[Series[str]] = pa.Field(nullable=True)
     profit_center: Optional[Series[str]] = pa.Field(nullable=True)
     line_text: Optional[Series[str]] = pa.Field(nullable=True)
-    header_text: Optional[Series[str]] = pa.Field(nullable=True)
-    dc_indicator: Optional[Series[str]] = pa.Field(nullable=True)
-    is_fraud: Optional[Series[bool]] = pa.Field(nullable=True)
-    is_anomaly: Optional[Series[bool]] = pa.Field(nullable=True)
+    tax_code: Optional[Series[str]] = pa.Field(nullable=True)
+    tax_amount: Optional[Series[float]] = pa.Field(nullable=True)
+    trading_partner: Optional[Series[str]] = pa.Field(nullable=True)
+    auxiliary_account_number: Optional[Series[str]] = pa.Field(nullable=True)
+    auxiliary_account_label: Optional[Series[str]] = pa.Field(nullable=True)
+    lettrage: Optional[Series[str]] = pa.Field(nullable=True)
+    # Why: schema.yaml type: date → type_caster가 datetime64[ns]로 변환
+    lettrage_date: Optional[Series[pa.DateTime]] = pa.Field(nullable=True)
 
     class Config:
         strict = False  # 피처 컬럼 등 스키마 외 컬럼 허용
@@ -144,8 +168,8 @@ def _classify_failures(
 
 # ── 공개 API ──────────────────────────────────────────────────
 
-# Why: 오매핑 의심 임계값 — type_caster의 casting_null_demote_threshold와 동일
-_HIGH_NULL_THRESHOLD = 0.9
+# Why: 오매핑 의심 임계값 — type_caster와 단일 소스로 관리
+_HIGH_NULL_THRESHOLD = get_settings().casting_null_demote_threshold
 
 
 def validate_schema(df: pd.DataFrame) -> SchemaResult:

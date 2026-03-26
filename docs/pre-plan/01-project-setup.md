@@ -9,7 +9,7 @@
 |------------------------|---------------------------------------------------------|
 | `pyproject.toml`       | uv 패키지 관리 + dependency-groups로 Phase별 선택 설치    |
 | `config/settings.py`   | Pydantic Settings 기반 전역 설정 (환경변수 > .env > YAML) |
-| `config/schema.yaml`   | DataSynth 출력 기준 표준 컬럼 스키마 (29개 컬럼)           |
+| `config/schema.yaml`   | DataSynth 출력 기준 표준 컬럼 스키마 (39개 컬럼)           |
 | `config/keywords.yaml` | ERP별 헤더 키워드 사전 (컬럼 자동 매핑용)                  |
 | `config/risk_keywords.yaml` | 감사 위험 적요 키워드 사전 (C06 룰 판정용)            |
 | `tools/datasynth/`     | EY-ASU DataSynth (Rust, 합성 전표 생성기)                |
@@ -124,30 +124,36 @@ local-ai-assist/
 ## 핵심 클래스/함수 레퍼런스
 
 ### `config/settings.py` — AuditSettings
+
+> 현재 구현은 `config/settings.py` 참조. 아래는 초기 설계 스냅샷으로, 실제 코드에는
+> 헤더 탐지, 타입 캐스팅, Detection Layer B/C, L3 통계 검증, 텍스트 피처 등 필드가 추가됨.
+
 ```python
 class AuditSettings(BaseSettings):
-    """프로젝트 전역 설정. 환경변수 > .env > YAML 기본값 순 우선."""
+    """프로젝트 전역 설정. 환경변수 > .env > 코드 기본값 순 우선."""
 
-    # 파일 관련
-    max_file_size_mb: int = 500            # DataSynth CSV 247MB 대응
-    allowed_extensions: list[str] = [".csv", ".parquet", ".xlsx"]
+    # 파일 관련 (카테고리별 크기 제한은 src/ingest/file_categories.py에 정의)
+    max_file_size_mb: int = 100
+    allowed_extensions: list[str] = [".xlsx", ".xls", ".xlsb", ".csv", ".tsv", ".txt", ".dat", ".parquet"]
 
     # 매핑 관련
     fuzzy_threshold: int = 80              # rapidfuzz 매칭 임계값
 
-    # 감사 룰 관련 (DataSynth FraudTypeConfig 참고)
-    # B02: 승인한도 직하 (JustBelowThreshold) — DataSynth에서 approval threshold 기반으로 주입
-    approval_threshold: float = 50_000_000
+    # 감사 룰 관련 — 한국 중견 제조업 전결규정 6단계 (DataSynth v1.2.0)
+    approval_thresholds: list[int] = [
+        10_000_000, 100_000_000, 1_000_000_000,
+        5_000_000_000, 10_000_000_000, 50_000_000_000,
+    ]
     near_threshold_ratio: float = 0.90     # 한도의 90% 이상이면 플래그
 
-    # C03: 심야 전기 (AfterHoursPosting) — DataSynth weekend_activity/holiday_activity 설정 참고
+    # C03: 심야 전기 (AfterHoursPosting)
     midnight_start: int = 22               # 심야 시작
     midnight_end: int = 6                  # 심야 종료
 
-    # C01: 기말 대규모 (RushedPeriodEnd) — DataSynth month_end_lead_days=5 참고
-    period_end_days: int = 5               # 기말 n영업일
+    # C01: 기말 대규모 (RushedPeriodEnd)
+    period_end_margin_days: int = 5        # 기말 판정 마진 (월말 전후 n일)
 
-    # Benford — DataSynth threshold_mad=0.015 참고
+    # Benford
     benford_mad_threshold: float = 0.012   # MAD 부적합 기준
 
     # DB 관련
@@ -160,19 +166,23 @@ class AuditSettings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_prefix="AUDIT_",
-        yaml_file="config/settings.yaml",
+        extra="ignore",
     )
 ```
 
 ### `config/schema.yaml` — 표준 컬럼 스키마
 
-DataSynth `journal_entries.csv` 출력 29개 컬럼 기준.
+DataSynth `journal_entries.csv` 출력 39개 컬럼 기준 (Header 24 + Line 15).
 ACDOCA 필드명과의 매핑은 `docs/AUDIT_DOMAIN_FINAL.md` 참조.
+현재 구현은 `config/schema.yaml` 참조.
 
 ```yaml
 # DataSynth journal_entries.csv 출력 기준 (tools/datasynth/ v1.2.0)
 # ACDOCA 매핑: crates/datasynth-core/src/models/acdoca.rs
+# 컬럼 39개: Header 24 + Line 15
 columns:
+  # === Header fields — 전표 단위 (document_id별 동일) ===
+
   # --- 필수 (전표 식별 + 핵심 회계 정보) ---
   - name: document_id          # ACDOCA: belnr
     type: str
@@ -183,45 +193,91 @@ columns:
   - name: fiscal_year          # ACDOCA: gjahr
     type: int
     required: true
-  - name: posting_date         # ACDOCA: budat
-    type: date
-    required: true
-  - name: document_date        # ACDOCA: bldat
-    type: date
-    required: true
-  - name: gl_account           # ACDOCA: racct
+  - name: fiscal_period        # ACDOCA: monat — 회계기간 (1~12)
     type: int
     required: true
-  - name: debit_amount         # ACDOCA: wsl (drcrk='S')
-    type: float
+  - name: posting_date         # ACDOCA: budat — 전기일시 (시분초 포함)
+    type: datetime
     required: true
-  - name: credit_amount        # ACDOCA: wsl (drcrk='H')
-    type: float
+  - name: document_date        # ACDOCA: bldat — 증빙일
+    type: date
     required: true
-  - name: document_type        # ACDOCA: blart
+  - name: document_type        # ACDOCA: blart — SA/KR/KZ/DR/DZ/WE/AA/HR/IC
     type: str
+    required: true
+  - name: gl_account           # ACDOCA: racct
+    type: str
+    required: true
+  - name: debit_amount         # ACDOCA: wsl (drcrk='S') — KRW 정수
+    type: int
+    required: true
+  - name: credit_amount        # ACDOCA: wsl (drcrk='H') — KRW 정수
+    type: int
     required: true
 
   # --- 권장 (감사 룰에 필요) ---
+  - name: currency             # ACDOCA: rwcur — KRW 단일
+    type: str
+    required: false
+  - name: exchange_rate        # 환율 (KRW 단일이므로 항상 1.0)
+    type: float
+    required: false
+  - name: reference            # 참조번호 (PO/GR/Invoice 번호)
+    type: str
+    required: false
+  - name: header_text          # ACDOCA: bktxt — 전표 헤더 적요
+    type: str
+    required: false
   - name: created_by           # ACDOCA: usnam — B06~B09(통제 위반) 판정용
     type: str
     required: false
-  - name: source               # automated/manual/recurring/adjustment — B08(수기전표) 판정용
+  - name: user_persona         # automated_system/junior_accountant/senior_accountant/controller/manager
+    type: str
+    required: false
+  - name: source               # Automated/Manual/Recurring/Adjustment — B08(수기전표) 판정용
     type: str
     required: false
   - name: business_process     # P2P/O2C/R2R/H2R/TRE/A2R
     type: str
     required: false
-  - name: line_number          # ACDOCA: docln
-    type: int
-    required: false
-  - name: local_amount         # ACDOCA: hsl
-    type: float
-    required: false
-  - name: currency             # ACDOCA: rwcur
+  - name: ledger               # 원장 (Leading Ledger: 0L)
     type: str
     required: false
-  - name: cost_center          # ACDOCA: rcntr
+  - name: approved_by          # 승인자 ID — B06(자기승인) 탐지용
+    type: str
+    required: false
+  - name: approval_date        # 승인일
+    type: date
+    required: false
+
+  # --- 레이블 (DataSynth 전용) ---
+  - name: is_fraud             # 부정 전표 여부
+    type: bool
+    required: false
+  - name: fraud_type           # 부정 유형 (nullable) — DuplicatePayment, SelfApproval 등
+    type: str
+    required: false
+  - name: is_anomaly           # 이상징후 여부
+    type: bool
+    required: false
+  - name: anomaly_type         # 이상징후 유형 (nullable) — NewCounterparty, CircularTransaction 등
+    type: str
+    required: false
+  - name: sod_violation        # 직무분리 위반 여부 — B07 SoD 탐지용
+    type: bool
+    required: false
+  - name: sod_conflict_type    # SoD 충돌 유형 (nullable) — preparer_approver 등
+    type: str
+    required: false
+
+  # === Line fields — 라인아이템 단위 ===
+  - name: line_number          # ACDOCA: docln — 라인 번호
+    type: int
+    required: false
+  - name: local_amount         # ACDOCA: hsl — 현지 통화 금액
+    type: int
+    required: false
+  - name: cost_center          # ACDOCA: rcntr (nullable)
     type: str
     required: false
   - name: profit_center        # ACDOCA: prctr
@@ -230,16 +286,26 @@ columns:
   - name: line_text            # ACDOCA: sgtxt — C06(위험 적요) 판정용
     type: str
     required: false
-  - name: header_text          # ACDOCA: bktxt
+  - name: tax_code             # 세금코드 (nullable)
     type: str
     required: false
-
-  # --- 레이블 (DataSynth 전용) ---
-  - name: is_fraud             # DataSynth sim_is_fraud
-    type: bool
+  - name: tax_amount           # 세금액 (nullable)
+    type: float
     required: false
-  - name: is_anomaly           # DataSynth 파생
-    type: bool
+  - name: trading_partner      # 거래처 (IC 거래용, nullable) — B10 관계사 탐지용
+    type: str
+    required: false
+  - name: auxiliary_account_number  # 보조원장 계정번호 (nullable)
+    type: str
+    required: false
+  - name: auxiliary_account_label   # 보조원장 라벨 (nullable)
+    type: str
+    required: false
+  - name: lettrage             # 대사 그룹 (nullable)
+    type: str
+    required: false
+  - name: lettrage_date        # 대사일 (nullable)
+    type: date
     required: false
 ```
 

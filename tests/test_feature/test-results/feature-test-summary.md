@@ -1,6 +1,6 @@
 # Feature Engine 테스트 결과 통합 리포트
 
-> 실행일: 2026-03-21 | 총 184 passed, 0 failed
+> 실행일: 2026-03-25 | 총 193 passed, 0 failed (DataSynth v1.2.0 반영)
 
 ---
 
@@ -10,31 +10,32 @@
 모듈              테스트 수   결과     소요시간
 ─────────────────────────────────────────────
 time_features          49   ✅ PASS   0.46s
-amount_features        27   ✅ PASS   0.17s
+amount_features        29   ✅ PASS   0.17s   ← +2 (다단계 threshold)
 pattern_features       42   ✅ PASS   0.19s
 text_features          38   ✅ PASS   0.18s
 engine (오케스트레이터) 14   ✅ PASS   0.64s
-회귀 테스트 (전체)    170   ✅ PASS   0.80s
+회귀 테스트 (전체)    172   ✅ PASS   0.96s
+settings 테스트          7   ✅ PASS   0.01s
 ─────────────────────────────────────────────
-합계                  184   ALL PASS
+합계                  193   ALL PASS
 ```
 
 ---
 
 ## 2. E2E 테스트 (실제 데이터)
 
-### DataSynth (풀 스펙)
+### DataSynth v1.2.0 (풀 스펙)
 
 ```
-입력: 1,101,677행 | 피처: 18/18 생성 | 소요: 8.02s
+입력: 1,106,356행 | 피처: 18/18 생성 | 소요: 7.67s
 ```
 
 | 카테고리 | 소요(s) | 피처 수 | 상태 |
 |:---------|--------:|--------:|:----:|
-| time     |   1.110 |       6 | 성공 |
-| amount   |   0.328 |       5 | 성공 |
-| pattern  |   2.953 |       5 | 성공 |
-| text     |   3.625 |       2 | 성공 |
+| time     |   0.640 |       6 | 성공 |
+| amount   |   0.297 |       5 | 성공 |
+| pattern  |   3.625 |       5 | 성공 |
+| text     |   3.110 |       2 | 성공 |
 
 ### SAP-Merged (Graceful Degradation)
 
@@ -57,26 +58,26 @@ engine (오케스트레이터) 14   ✅ PASS   0.64s
 ## 3. 18개 피처 현황
 
 ```
-피처                     카테고리   dtype     DataSynth         SAP-Merged
+피처                     카테고리   dtype     DataSynth v1.2.0  SAP-Merged
 ────────────────────────────────────────────────────────────────────────────
-is_weekend               time      bool      True 0.1%         True 19.6%
-is_after_hours           time      bool      True 42.8%        all-False(*)
-is_period_end            time      bool      True 52.2%        True 36.7%
-days_backdated           time      Int64     [-18, 32]         [-730, 365]
-fiscal_period_mismatch   time      boolean   all-True(*)       all-NaN(**)
-is_holiday               time      bool      True 4.9%         True 2.8%
-is_near_threshold        amount    bool      all-False(*)      — 스킵
+is_weekend               time      bool      True 10.0%        True 19.6%
+is_after_hours           time      bool      True 1.1%         all-False(*)
+is_period_end            time      bool      True 52.6%        True 36.7%
+days_backdated           time      Int64     [-32, 32]         [-730, 365]
+fiscal_period_mismatch   time      boolean   2값               all-NaN(**)
+is_holiday               time      bool      True 5.6%         True 2.8%
+is_near_threshold        amount    bool      True 0.4%         — 스킵
 exceeds_threshold        amount    bool      True 0.0%         — 스킵
-amount_zscore            amount    float64   [-0.64, 64.58]    — 스킵
-amount_magnitude         amount    float64   [0.0, 7.93]       — 스킵
+amount_zscore            amount    float64   [-0.98, 63.90]    — 스킵
+amount_magnitude         amount    float64   [0.0, 10.90]      — 스킵
 is_round_number          amount    bool      all-False(*)      — 스킵
-is_manual_je             pattern   bool      True 21.2%        all-False(*)
-is_intercompany          pattern   bool      all-False(*)      all-False(*)
-is_revenue_account       pattern   bool      True 20.3%        True 7.1%
-first_digit              pattern   Int64     [1-9], null 2.1%  all-NaN
+is_manual_je             pattern   bool      True 25.8%        all-False(*)
+is_intercompany          pattern   bool      True 1.3%         all-False(*)
+is_revenue_account       pattern   bool      True 20.2%        True 7.1%
+first_digit              pattern   Int64     [1-9]             all-NaN
 is_suspense_account      pattern   bool      all-False(*)      all-False(*)
 description_quality      text      object    2 levels          2 levels
-has_risk_keyword         text      object    all-low           all-low
+has_risk_keyword         text      object    1 level           all-low
 ```
 
 (*) 데이터 특성 — 코드 정상, 해당 패턴이 데이터에 부재
@@ -98,12 +99,13 @@ has_risk_keyword         text      object    all-low           all-low
 | document_date 컬럼 부재      | 전체 NaN + warning                       |
 | 비표준 회계연도 (4월 결산)   | modulo 연산으로 범용 대응                |
 
-### amount_features (27 cases)
+### amount_features (29 cases)
 
 | edge case                    | 처리 방식                                |
 |:-----------------------------|:-----------------------------------------|
 | debit/credit 모두 NaN        | fillna(0) → base_amount=0               |
-| threshold 정확히 경계값      | near=False, exceeds=True (gap 없음)     |
+| 다단계 threshold 경계값      | 각 레벨별 near/exceeds gap 없음 보장     |
+| 레벨 사이 금액               | 어떤 near 구간에도 미해당 → False        |
 | std==0 (모든 금액 동일)      | 0.0 반환 (ZeroDivisionError 방지)       |
 | 전체 n<10                    | Z-score 전부 NaN                        |
 | gl_account 컬럼 누락         | NaN + warning (에러 미발생)             |

@@ -1,13 +1,13 @@
 # SAP-Merged (Graceful Degradation) E2E 테스트 결과 (ingest → feature)
 
-> 실행일: 2026-03-22 14:08
+> 실행일: 2026-03-25 23:14
 
 ## 1. 요약
 
 | 항목           | 값                          |
 |:---------------|:----------------------------|
 | 입력 행수      | 331,934               |
-| 소요시간       | 0.97s              |
+| 소요시간       | 1.09s              |
 | 생성 피처      | 13/18 |
 | 성공 카테고리  | time, pattern, text |
 | 실패 카테고리  | amount |
@@ -21,7 +21,7 @@
 | is_after_hours          | bool    |      0.0 |      1 | True 0.0%     |
 | is_period_end           | bool    |      0.0 |      2 | True 36.7%    |
 | days_backdated          | Int64   |      0.0 |     31 | [-730, 365]   |
-| fiscal_period_mismatch  | boolean |    100.0 |      0 |               |
+| fiscal_period_mismatch  | boolean |      0.0 |      1 |               |
 | is_holiday              | bool    |      0.0 |      2 | True 2.8%     |
 | is_near_threshold       | —       |       — |    — | 의도된 스킵   |
 | exceeds_threshold       | —       |       — |    — | 의도된 스킵   |
@@ -38,9 +38,9 @@
 
 ## 3. 분석
 
-### 코드 버그 (조사 필요)
+### 코드 버그
 
-- **fiscal_period_mismatch**: 전체 NaN — 입력 데이터 또는 로직 확인 필요
+없음.
 
 ### Graceful Degradation (정상 — 필수 컬럼 미매핑)
 
@@ -58,6 +58,7 @@
 ### 데이터 특성 (코드 정상, 데이터에 해당 패턴 부재)
 
 - `is_after_hours`: all-False
+- `fiscal_period_mismatch`: all-False
 - `is_manual_je`: all-False
 - `is_intercompany`: all-False
 - `is_suspense_account`: all-False
@@ -68,6 +69,6 @@
 |:---------|:------:|------------:|--------:|
 | time     | 성공     |      0.219 |       6 |
 | amount   | 스킵     |      0.000 |       5 |
-| pattern  | 성공     |      0.359 |       5 |
-| text     | 성공     |      0.391 |       2 |
-| **합계** |        |      0.969 |      13 |
+| pattern  | 성공     |      0.485 |       5 |
+| text     | 성공     |      0.390 |       2 |
+| **합계** |        |      1.094 |      13 |

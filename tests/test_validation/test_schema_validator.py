@@ -14,7 +14,24 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.validation.schema_validator import validate_schema
+from src.validation.schema_validator import (
+    GeneralLedgerSchema,
+    _load_column_sets,
+    validate_schema,
+)
+
+
+class TestSchemaYamlSync:
+    """schema.yaml ↔ GeneralLedgerSchema 컬럼 동기화 검증."""
+
+    def test_schema_model_columns_match_yaml(self) -> None:
+        """GeneralLedgerSchema 필드 목록이 schema.yaml 전체 컬럼과 일치."""
+        # Why: 이중 관리(정적 클래스 + YAML) 불일치 자동 감지
+        _, yaml_columns = _load_column_sets()
+        model_fields = set(GeneralLedgerSchema.__fields__.keys())
+        assert model_fields == yaml_columns, (
+            f"불일치 컬럼: {model_fields ^ yaml_columns}"
+        )
 
 
 class TestValidateSchema:
@@ -30,7 +47,7 @@ class TestValidateSchema:
         assert len(result.column_stats) > 0
 
     def test_minimal_dataframe(self, sv_minimal_df: pd.DataFrame) -> None:
-        """필수 9개만 → is_valid=True, 권장 컬럼 없어도 통과."""
+        """필수 10개만 → is_valid=True, 권장 컬럼 없어도 통과."""
         result = validate_schema(sv_minimal_df)
 
         assert result.is_valid is True
@@ -138,13 +155,15 @@ class TestValidateSchema:
         assert result.errors == []
 
     def test_int64_nullable_compat(self, sv_minimal_df: pd.DataFrame) -> None:
-        """Int64 dtype(pandas nullable integer) 호환성 확인."""
-        # Why: type_caster는 fiscal_year, gl_account를 Int64로 변환
+        """Int64/str dtype 호환성 확인."""
+        # Why: type_caster는 fiscal_year/fiscal_period를 Int64, gl_account를 str로 변환
         assert sv_minimal_df["fiscal_year"].dtype == pd.Int64Dtype()
-        assert sv_minimal_df["gl_account"].dtype == pd.Int64Dtype()
+        assert sv_minimal_df["fiscal_period"].dtype == pd.Int64Dtype()
+        assert sv_minimal_df["gl_account"].dtype == object  # str
 
         result = validate_schema(sv_minimal_df)
         assert result.is_valid is True
+        assert result.errors == []  # dtype 수용 확인
 
     def test_feature_columns_excluded_from_stats(
         self, sv_valid_df: pd.DataFrame

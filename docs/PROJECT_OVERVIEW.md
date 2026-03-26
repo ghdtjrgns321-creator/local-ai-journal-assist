@@ -78,7 +78,7 @@ local-ai-assist/
 | 3  | [03-feature.md](pre-plan/03-feature.md)                  | 감사 파생변수 11개 (time/amount/pattern/text)                 | MVP    |
 | 3a | [03a-preprocessing.md](pre-plan/03a-preprocessing.md)    | ML 전처리 파이프라인, VAE 래퍼, 라벨 전략                     | P2     |
 | 4  | [04-validation.md](pre-plan/04-validation.md)            | L1 Pandera + L2 회계 + L3 통계 검증 + 리포트                 | MVP+P2 |
-| 5  | [05-detection.md](pre-plan/05-detection.md)              | BaseDetector, 3레이어 22개 룰(A/B/C), Benford(C07), ML 16개, NLP 5개 | MVP~P3 |
+| 5  | [05-detection.md](pre-plan/05-detection.md)              | BaseDetector, 3레이어 24개 룰(A/B/C), Benford(C07), ML 16개, NLP 5개 | MVP~P3 |
 | 6  | [06-db.md](pre-plan/06-db.md)                            | DuckDB 커넥션, 스키마, 로더, 프리셋 쿼리                     | MVP    |
 | 7  | [07-dashboard.md](pre-plan/07-dashboard.md)              | Streamlit 5탭, 컴포넌트, 차트, 필터                          | MVP+P3 |
 | 8  | [08-llm.md](pre-plan/08-llm.md)                          | Ollama, Vanna AI 2.0, SQL 검증, 프리셋, 인사이트             | P3     |
@@ -99,6 +99,22 @@ local-ai-assist/
                                                                                          08-llm → 09-export
 ```
 
+## 합성 데이터 (DataSynth)
+
+EY-ASU DataSynth(Rust)로 생성한 K-IFRS 적용 한국 중견 제조 그룹사 시뮬레이션.
+
+| 항목           | 값                                                    |
+|----------------|-------------------------------------------------------|
+| 법인           | C001 본사(서울), C002 울산공장, C003 천안공장 — 전체 KRW |
+| 회계연도       | 2022-01 ~ 2022-12                                     |
+| 전표 규모      | 106,489건 / 1,106,356 라인아이템                      |
+| 금액 분포      | LogNormal(14.0, 2.5) — 중앙값 ~120만원                |
+| 승인 한도      | 6단계 전결규정 (자동→담당자→팀장→본부장→CFO→이사회)    |
+| 사용자 풀      | 152명 (5개 페르소나), SoD 위반 1%                     |
+| 시간 패턴      | 한국 근무 문화 반영 (심야 0.02, 오전 피크 1.8, 야근 0.3) |
+| 이상 주입      | fraud 2% + error 2% + process 1%, 8가지 부정 유형     |
+| Benford        | 첫째 자릿수 적합 (tolerance 5%, payroll/recurring 제외) |
+
 ## 데이터 흐름
 
 ```
@@ -109,7 +125,7 @@ Excel/CSV → file_validator → excel_reader → header_detector → column_map
   → 표준 DataFrame → feature/engine (감사 파생변수 18개)
   → eda/profiler (EDAProfile JSON) → eda/report (대시보드 요약)
   ↑ UX 2단계: 감사 룰 조종석(Control Panel) + 파생변수 자동 생성 + audit_rules 프로파일 저장
-  → validation (3-Level) → detection (3-Layer: A무결성 3개 + B부정 10개 + C징후 9개, 22개 룰)
+  → validation (3-Level) → detection (3-Layer: A무결성 3개 + B부정 11개 + C징후 10개, 24개 룰)
   → preprocessing (Phase 2: pipeline_builder → cv_selector → 최적 모델 자동 선택)
     → ML 탐지 (XGBoost 이상치 + VAE+IF 특이치)
     → score_aggregator → DuckDB → 프리셋 SQL / Text-to-SQL (Phase 3)

@@ -52,19 +52,19 @@
 - **도구 최신성**: DataSynth 레포 2025-01경 최종 활동(v1.2.0, 506커밋). 우리 데이터는 2026-03-17 직접 빌드·생성 → 최신 코드 기반 출력물 보장
 - **대안 검토**: 실제 SAP 데이터(sap-merged 332K)는 이상치 레이블 1%뿐, Schreyer(533K)는 날짜 없음+전부 익명화, BPI 2019(1.6M)는 전표가 아닌 이벤트 로그
 - **생성 설정**: `config/datasynth.yaml` (seed 2024, 12개월, 3회사, fraud 2%)
-- **결과**: 1,105,510건, 29컬럼, fraud 2.1%, anomaly 7.7%
+- **결과**: 1,106,356건(106,489전표), 39컬럼, fraud 1.9%, anomaly 7.5%
 
-### D011: 22개 룰 3레이어 탐지 체계 확정 (R001~R008 → A/B/C 레이어)
-- **결정**: 기존 R001~R008(8개 룰 + Benford) 체계를 폐기하고, DataSynth 52개 anomaly 유형에서 3축 평가(법규 근거 × FSS 실증 × 데이터 가용성)로 선별한 22개 룰 3레이어 체계로 전면 재설계
+### D011: 24개 룰 3레이어 탐지 체계 확정 (R001~R008 → A/B/C 레이어)
+- **결정**: 기존 R001~R008(8개 룰 + Benford) 체계를 폐기하고, DataSynth 52개 anomaly 유형에서 3축 평가(법규 근거 × FSS 실증 × 데이터 가용성)로 선별한 24개 룰 3레이어 체계로 전면 재설계
 - **이유**:
   - 기존 R001~R008은 감사기준서 240호만 참조한 탐색적 설계. 법규 근거·실증 빈도·데이터 적합도의 체계적 평가 부재
   - FSS 감리지적사례 189건 전수 읽기 분석 → 6대 부정 패턴(가공전표 53%, 결산수정 29%, 횡령은폐 26% 등) 도출
   - 3축 평가로 Must(7~9점)/Should(4~6)/Could(2~3)/Drop(0~1) 판정 → Phase별 명확한 구현 범위
 - **구조**:
   - Layer A (데이터 무결성 3개): A01 차대변 균형, A02 필수필드 누락, A03 무효 계정
-  - Layer B (부정 탐지 10개): B01~B10 (매출이상, 승인한도, 중복, 자기승인, 직무분리, 수기전표, 승인생략, 관계사 등)
-  - Layer C (이상 징후 9개): C01~C09 (기말대규모, 주말, 심야, 소급, 기간불일치, 위험적요, Benford, 이상고액, 비정상계정조합)
-- **Phase별 확장**: Phase 1(22개 룰) → Phase 2(+16개 ML) → Phase 3(+5개 NLP/그래프) = 총 41개 유형
+  - Layer B (부정 탐지 11개): B01~B11 (매출이상, 승인한도, 중복, 자기승인, 직무분리, 수기전표, 승인생략, 관계사, 비용자산화 등)
+  - Layer C (이상 징후 10개): C01~C10 (기말대규모, 주말, 심야, 소급, 기간불일치, 위험적요, Benford, 이상고액, 비정상계정조합, 가수금장기체류)
+- **Phase별 확장**: Phase 1(24개 룰) → Phase 2(+16개 ML) → Phase 3(+5개 NLP/그래프) = 총 41개 유형
 - **외부 검증**: CAQ 15개 시나리오 93% 커버, PCAOB AS 2401 §61 11개 특성 91% 커버
 
 ### D012: FSS 감리지적사례 189건 기반 실증 분석
@@ -118,7 +118,7 @@
 - **이유**:
   - `read_only=True`와 `merged_cells.ranges`는 openpyxl에서 양립 불가. ERP 엑셀의 병합셀은 매우 흔함
   - xlsx/xls/xlsb/csv/tsv/txt/dat/parquet 10개 확장자가 모두 다른 라이브러리·API 사용 → 단일 파일로 불가 (SRP 위반, 100줄 초과)
-  - DataSynth CSV(247MB)가 메인 데이터인데 openpyxl 경로를 타면 안 됨 → CSV fast path 필수
+  - DataSynth CSV(319MB)가 메인 데이터인데 openpyxl 경로를 타면 안 됨 → CSV fast path 필수
   - CSV/Parquet은 "시트" 개념이 없으므로 WorkbookInfo 대신 통합 `ReadResult` 타입 필요
 - **구조**: `models.py`(ReadResult) + `excel_reader.py`(xlsx/xls/xlsb) + `text_reader.py`(csv/tsv) + `parquet_reader.py` + `reader_api.py`(퍼사드)
 - **메모리 안전장치**: file_validator의 100MB 제한이 read_only=False의 메모리 위험을 상쇄 (16GB RAM)
@@ -161,7 +161,7 @@
 ### D025: preprocessing/detection 단방향 의존
 - **결정**: 디렉토리 분리 + detection → preprocessing 단방향 import
 - **이유**: 전처리는 "데이터를 모델이 먹기 좋게 요리", 탐지는 "요리를 먹고 판단". 결합도 최소화, 순환 의존 없음
-- **구현 순서**: 1단계 detection 룰(22개) → 2단계 preprocessing(11개 모듈) → 3단계 detection ML
+- **구현 순서**: 1단계 detection 룰(24개) → 2단계 preprocessing(11개 모듈) → 3단계 detection ML
 
 ### D026: VAE 학습 데이터 — 검증/실전 모드 분리
 - **결정**: 검증 모드(DataSynth)는 is_fraud=False만 필터링, 실전 모드(라벨 없음)는 전체 데이터 투입

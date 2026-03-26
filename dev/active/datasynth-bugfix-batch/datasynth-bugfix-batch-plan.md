@@ -21,7 +21,7 @@ amount <= threshold(2000) 일 때:
   → 자기승인
 ```
 
-log-normal(mu=7.0, sigma=2.5)에서 중심값 ≈ $1,096. threshold=$2,000 이하 비중이 약 60~65%.
+v1.2.0 이전 기준: log-normal(mu=7.0, sigma=2.5)에서 중심값 ≈ $1,096, threshold=$2,000 이하 비중 약 60~65%. (v1.2.0: mu=14.0, KRW 6단계 승인한도로 전환)
 여기에 threshold 초과 전표 중 `sod_violation_rate=0.10` 주입분이 추가되어 총 ~64%.
 
 **수정 방향**: auto-approve된 전표의 `approved_by`에 creator가 아닌 **Senior 이상 approver**를 배정해야 한다. generation_principles.md 4.3절: "JuniorAccountant는 전결 권한이 없다. Maker/Checker 분리 필수."
