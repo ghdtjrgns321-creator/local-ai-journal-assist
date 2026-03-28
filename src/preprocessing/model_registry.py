@@ -14,7 +14,12 @@ from pathlib import Path
 
 import joblib
 
+from config.settings import PROJECT_ROOT
+
 logger = logging.getLogger(__name__)
+
+# Why: CWD 의존 상대경로 대신 프로젝트 루트 기준 고정 경로 사용
+_DEFAULT_MODELS_DIR = PROJECT_ROOT / "models"
 
 
 @dataclass
@@ -33,7 +38,7 @@ class ModelMetadata:
 class ModelRegistry:
     """Pipeline 직렬화 + 버전 관리 (joblib + registry.json)."""
 
-    def __init__(self, registry_dir: Path = Path("models")):
+    def __init__(self, registry_dir: Path = _DEFAULT_MODELS_DIR):
         self._dir = Path(registry_dir)
         self._dir.mkdir(parents=True, exist_ok=True)
         self._index_path = self._dir / "registry.json"
@@ -98,8 +103,17 @@ class ModelRegistry:
             entry = max(entries, key=lambda e: e["version"])
 
         path = Path(entry["file_path"])
-        # 경로 순회 방지: registry_dir 하위인지 검증
-        path.resolve().relative_to(self._dir.resolve())
+        # Why: registry.json 조작으로 경로 순회 시 임의 파일 로드 방지
+        try:
+            path.resolve().relative_to(self._dir.resolve())
+        except ValueError:
+            raise ValueError(
+                f"경로 순회 차단: '{path}'는 레지스트리 디렉토리 외부입니다."
+            )
+        if not path.exists():
+            raise FileNotFoundError(
+                f"모델 파일 없음: '{path}'. 레지스트리 인덱스가 손상되었을 수 있습니다."
+            )
         return joblib.load(path)
 
     def list_models(self) -> list[ModelMetadata]:

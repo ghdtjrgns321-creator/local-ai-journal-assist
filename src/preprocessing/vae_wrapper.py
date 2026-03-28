@@ -13,6 +13,7 @@ import logging
 import numpy as np
 import torch
 from sklearn.base import BaseEstimator
+from sklearn.utils.validation import check_is_fitted
 
 from src.preprocessing.vae_model import AuditVAE, vae_loss
 
@@ -92,12 +93,15 @@ class VAEDetector(BaseEstimator):
         return np.concatenate(errors)
 
     def predict(self, X) -> np.ndarray:
+        # Why: fit() 전 호출 시 model_/threshold_ 없어 cryptic 에러 → 명확한 안내
+        check_is_fitted(self, ["model_", "threshold_"])
         device = self._resolve_device()
         errors = self._compute_errors(np.array(X, dtype=np.float32), device)
         return (errors > self.threshold_).astype(int)
 
     def predict_proba(self, X) -> np.ndarray:
         """sigmoid((error - threshold) / scale) → [P(정상), P(이상)]."""
+        check_is_fitted(self, ["model_", "threshold_"])
         device = self._resolve_device()
         errors = self._compute_errors(np.array(X, dtype=np.float32), device)
         scale = max(self.threshold_ * 0.1, 1e-8)

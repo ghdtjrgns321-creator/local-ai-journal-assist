@@ -108,6 +108,13 @@ def _hybrid(
         pseudo_result = _from_pseudo(df, detection_scores, threshold)
         pseudo_result.strategy = "hybrid"
         pseudo_result.label_source = "pseudo_fallback"
+        # Why: pseudo도 양성 0이면 사실상 비지도 강제 — 사용자/로그에 알려야 함
+        if pseudo_result.positive_rate == 0:
+            logger.warning(
+                "pseudo 폴백도 양성 0건 (threshold=%.2f). "
+                "비지도 모드와 동일하게 동작합니다. threshold 하향 검토 필요.",
+                threshold,
+            )
         return pseudo_result
 
     # 3) 양쪽 모두 불가 → 비지도 모드

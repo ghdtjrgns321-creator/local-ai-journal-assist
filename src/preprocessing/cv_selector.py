@@ -55,7 +55,9 @@ def compare_pipelines(
     results: dict[str, CVResult] = {}
 
     for name, pipe in pipelines.items():
-        scores = cross_val_score(pipe, X, y, cv=skf, scoring=scoring)
+        # Why: VAE(torch CUDA) + joblib fork → CUDA context 충돌 방지
+        n_jobs = 1  # 전체 직렬. 비-VAE 병렬화는 Phase 2c에서 검토
+        scores = cross_val_score(pipe, X, y, cv=skf, scoring=scoring, n_jobs=n_jobs)
         results[name] = CVResult(
             pipeline_name=name,
             mean_f1=float(scores.mean()),
@@ -100,6 +102,26 @@ def _count_combinations(param_grid: dict) -> int:
     if not param_grid:
         return 0
     return reduce(lambda a, b: a * b, (len(v) for v in param_grid.values()), 1)
+
+
+def _has_vae(pipe) -> bool:
+    """Pipeline 내부에 VAEDetector 스텝이 있는지 검사.
+
+    Why: VAEDetector는 torch CUDA를 사용하므로 joblib 병렬(fork)시
+    CUDA context가 복제되어 충돌한다. 감지 시 n_jobs=1 강제 필요.
+    """
+    # Why: core-only 환경(torch 미설치)에서 ImportError 방지
+    try:
+        from src.preprocessing.vae_wrapper import VAEDetector
+    except ImportError:
+        return False
+
+    if isinstance(pipe, VAEDetector):
+        return True
+    # sklearn Pipeline: named_steps 순회
+    if hasattr(pipe, "named_steps"):
+        return any(isinstance(s, VAEDetector) for s in pipe.named_steps.values())
+    return False
 
 
 def _cleanup_gpu_if_needed(pipe) -> None:
