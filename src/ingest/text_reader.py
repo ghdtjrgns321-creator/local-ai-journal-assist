@@ -8,6 +8,7 @@ DataSynth CSV(319MB)가 메인 데이터이므로 이 경로가 가장 빈번하
 from __future__ import annotations
 
 import csv
+import io
 import logging
 from pathlib import Path
 
@@ -24,6 +25,9 @@ _ENCODING_SAMPLE_BYTES = 64 * 1024
 
 # 구분자 감지용 샘플 크기
 _SNIFFER_SAMPLE_BYTES = 8 * 1024
+
+# prescan 전용 샘플 크기 (메타데이터 행이 길어도 데이터 행에 도달해야 함)
+_PRESCAN_SAMPLE_BYTES = 64 * 1024
 
 # 확장자 기반 구분자 폴백
 _FALLBACK_SEPARATORS: dict[str, str] = {
@@ -68,20 +72,85 @@ def _detect_encoding(path: Path) -> tuple[str, float | None]:
     return detected, confidence
 
 
+def _count_cols_csv(text_lines: list[str], sep: str) -> int:
+    """csv.reader 기반 최대 컬럼 수 — 따옴표 내 구분자를 무시한다."""
+    max_count = 1
+    for line in text_lines:
+        try:
+            row = next(csv.reader(io.StringIO(line), delimiter=sep))
+            max_count = max(max_count, len(row))
+        except (StopIteration, csv.Error):
+            pass
+    return max_count
+
+
 def _detect_separator(path: Path, encoding: str) -> str:
     """csv.Sniffer로 실제 구분자를 감지한다.
 
     감지 실패 시 확장자 기반 폴백을 사용한다.
+
+    Why: (1) 메타데이터 행(제목, 작성일 등)이 파일 앞부분에 있으면
+    Sniffer가 줄바꿈(\\r)이나 비데이터 문자를 구분자로 오판한다.
+    (2) 감지된 구분자와 확장자 폴백을 비교하여 더 많은 컬럼을
+    생성하는 쪽을 선택한다.
     """
     ext = path.suffix.lower()
+    fallback = _FALLBACK_SEPARATORS.get(ext, ",")
 
     try:
         raw = path.read_bytes()[:_SNIFFER_SAMPLE_BYTES]
         text = raw.decode(encoding, errors="replace")
         dialect = csv.Sniffer().sniff(text)
-        return dialect.delimiter
+        detected = dialect.delimiter
+
+        # 줄바꿈 문자는 구분자가 될 수 없음
+        if detected in ("\r", "\n"):
+            logger.info(
+                "Sniffer가 줄바꿈 '%s'를 구분자로 감지 — "
+                "확장자 폴백 '%s' 사용: %s",
+                repr(detected), fallback, path.name,
+            )
+            return fallback
+
+        # 폴백과 다른 구분자를 감지했으면, 둘을 비교하여 더 나은 쪽 선택
+        if detected != fallback:
+            lines = text.strip().splitlines()[:20]
+            non_empty = [ln.rstrip("\r") for ln in lines if ln.strip()]
+
+            det_max = _count_cols_csv(non_empty, detected)
+            fb_max = _count_cols_csv(non_empty, fallback)
+
+            if fb_max > det_max:
+                logger.info(
+                    "Sniffer '%s'(최대 %d컬럼) < 폴백 '%s'(최대 %d컬럼) — "
+                    "폴백 사용: %s",
+                    repr(detected), det_max, fallback, fb_max, path.name,
+                )
+                return fallback
+
+        return detected
     except csv.Error:
-        return _FALLBACK_SEPARATORS.get(ext, ",")
+        return fallback
+
+
+def _prescan_max_columns(path: Path, encoding: str, separator: str) -> int:
+    """파일의 처음 50줄에서 최대 컬럼 수를 파악한다.
+
+    Why: 메타데이터 행(제목 등)이 1컬럼이고 데이터 행이 11컬럼이면
+    pd.read_csv(header=None)가 1컬럼 기준으로 나머지를 skip한다.
+    최대 컬럼 수를 names 파라미터로 전달하면 모든 행이 파싱된다.
+    """
+    try:
+        raw = path.read_bytes()[:_PRESCAN_SAMPLE_BYTES]
+        text = raw.decode(encoding, errors="replace")
+        lines = text.splitlines()[:50]
+        non_empty = [ln.rstrip("\r") for ln in lines if ln.strip()]
+        return _count_cols_csv(non_empty, separator)
+    except Exception as exc:
+        logger.warning(
+            "prescan 실패, names 파라미터 없이 진행: %s (%s)", path.name, exc,
+        )
+        return 0
 
 
 def read_text(path: Path, *, encoding_override: str | None = None) -> ReadResult:
@@ -94,11 +163,10 @@ def read_text(path: Path, *, encoding_override: str | None = None) -> ReadResult
             틀릴 때 사용자가 직접 교정할 수 있게 한다.
 
     Raises:
-        OSError: 파일 읽기 실패 시.
+        OSError: 파일 읽기 실패 시, 또는 C/python 파서 모두 실패 시.
         LookupError: encoding_override가 잘못된 인코딩명일 때.
     """
     if encoding_override is not None:
-        # 수동 지정 시 자동 감지 스킵, confidence=None
         encoding = encoding_override
         encoding_confidence = None
     else:
@@ -107,14 +175,37 @@ def read_text(path: Path, *, encoding_override: str | None = None) -> ReadResult
     separator = _detect_separator(path, encoding)
     ext = path.suffix.lower()
 
-    df = pd.read_csv(
-        path,
+    # Why: 메타데이터 행(제목, 작성일 등)이 있으면 첫 행의 컬럼 수가 1이고,
+    # 실제 데이터 행(11컬럼 등)이 bad line으로 skip된다.
+    # 사전에 최대 컬럼 수를 파악하여 names 파라미터로 전달하면 해결된다.
+    max_cols = _prescan_max_columns(path, encoding, separator)
+    names = list(range(max_cols)) if max_cols > 0 else None
+
+    # C 파서는 EOF inside unclosed quote 등 토큰화 에러에서
+    # ParserError를 던진다. python 엔진은 더 관대하므로 폴백.
+    csv_kwargs: dict = dict(
         sep=separator,
         encoding=encoding,
         header=None,
         dtype=str,
         on_bad_lines="warn",
     )
+    if names is not None:
+        csv_kwargs["names"] = names
+
+    try:
+        df = pd.read_csv(path, **csv_kwargs)
+    except pd.errors.ParserError:
+        logger.warning(
+            "C 파서 실패, python 엔진으로 재시도: %s", path.name,
+        )
+        csv_kwargs["engine"] = "python"
+        try:
+            df = pd.read_csv(path, **csv_kwargs)
+        except pd.errors.ParserError as exc:
+            raise OSError(
+                f"C/python 파서 모두 실패: {path.name}",
+            ) from exc
 
     return ReadResult(
         sheets=[_DEFAULT_SHEET],

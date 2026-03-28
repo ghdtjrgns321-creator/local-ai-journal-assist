@@ -24,6 +24,12 @@ logger = logging.getLogger(__name__)
 _CURRENCY_RE = re.compile(r"[₩$¥€]|원|USD|KRW|JPY|EUR")
 # 괄호 음수 표기: (1,234) → -1234
 _PAREN_NEG_RE = re.compile(r"^\((.+)\)$")
+# 제로 폭 문자 제거용 (ZWSP, ZWNJ, ZWJ, BOM 등)
+# Why: Excel 복사-붙여넣기 시 눈에 보이지 않는 유니코드 문자가 삽입되어
+# "350\u200B000"처럼 숫자 변환을 방해한다.
+# \u00ad(Soft Hyphen)는 렌더링 아티팩트로 간주하여 제거함.
+# 만약 "-금액" 패턴에서 음수 부호가 사라지는 오류 발생 시 이 라인을 먼저 의심할 것.
+_ZERO_WIDTH_RE = re.compile(r"[\u200b\u200c\u200d\u200e\u200f\ufeff\u00ad]")
 # 한국어 날짜: 2025년 3월 19일
 _KOREAN_DATE_RE = re.compile(r"(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일")
 # 8자리 숫자: 20250319
@@ -67,6 +73,8 @@ def cast_amount(series: pd.Series) -> pd.Series:
 
     s = series.astype(str)
 
+    # 제로 폭 문자 제거 (ZWSP 등 — 눈에 안 보이지만 to_numeric 차단)
+    s = s.str.replace(_ZERO_WIDTH_RE, "", regex=True)
     # 통화 기호·단위 제거
     s = s.str.replace(_CURRENCY_RE, "", regex=True)
     # 공백 제거
