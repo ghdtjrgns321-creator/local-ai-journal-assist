@@ -55,6 +55,7 @@ class AuditSettings(BaseSettings):
 
     # --- 감사 룰 관련 (⚠️ 예시값 — 실제 감사 기준에 맞춰 조정) ---
     balance_tolerance: float = 1.0         # A01: 차대변 불일치 허용 오차 (원)
+    chart_of_accounts_path: str = "config/chart_of_accounts.csv"  # A03: CoA 파일 경로
     # 다단계 승인한도 — 한국 중견 제조업 전결규정 반영 (DataSynth v1.2.0)
     # Level 1~6: 자동승인(10M) → 담당자(100M) → 팀장(1B) → 본부장(5B) → CFO(10B) → 이사회(50B)
     approval_thresholds: list[int] = [
@@ -79,11 +80,45 @@ class AuditSettings(BaseSettings):
     # --- Detection Layer B 관련 ---
     duplicate_payment_window_days: int = 30   # B04: 중복 지급 판정 기간 (일)
     sod_process_threshold: int = 3            # B07: 직무분리 위반 프로세스 수 임계
+    topside_threshold: int = 2               # B19: Top-side JE 가점 임계 (5점 만점, 수기 전제)
 
     # --- Detection Layer C 관련 ---
     backdated_threshold_days: int = 30          # C04: 소급 임계 일수
     account_pair_rare_percentile: float = 0.01  # C09: 희소 쌍 하위 백분위
     period_end_amount_quantile: float = 0.75    # C01: 기말 대규모 금액 분위수 (Q3)
+
+    # --- Detection Layer C: C11 역분개 ---
+    reversal_match_window_days: int = 1          # S1: 1:1 매칭 허용 일수
+    reversal_rolling_window_days: int = 7        # S2: N:M 롤링 윈도우 (일)
+    reversal_zero_threshold: float = 1000.0      # S2: 순액 0 수렴 허용 오차 (KRW)
+    reversal_score_threshold: float = 0.3        # 종합 점수 플래그 임계값
+
+    # --- Detection Layer C: C12 비정상 시간대 집중 분석 ---
+    normal_hours_start: float = 8.5             # 정상 업무시간 시작 (08:30)
+    normal_hours_end: float = 18.5              # 정상 업무시간 종료 (18:30)
+    settlement_start_mmdd: str = "1220"         # 결산 집중기간 시작 (12월 20일)
+    settlement_end_mmdd: str = "0115"           # 결산 집중기간 종료 (1월 15일)
+
+    @field_validator("settlement_start_mmdd", "settlement_end_mmdd")
+    @classmethod
+    def _check_mmdd_format(cls, v: str) -> str:
+        """MMDD 형식 검증 — 잘못된 값은 silent 오탐 유발."""
+        if len(v) != 4 or not v.isdigit():
+            raise ValueError(f"MMDD 형식이어야 합니다 (예: '1220'): {v!r}")
+        m, d = int(v[:2]), int(v[2:])
+        if not (1 <= m <= 12 and 1 <= d <= 31):
+            raise ValueError(f"유효하지 않은 월/일: month={m}, day={d}")
+        return v
+
+    abnormal_sigma_threshold: float = 3.0       # 사용자별 이상치 판정 σ
+    rapid_approval_minutes: int = 5             # 부실 검토 의심 임계 (분)
+    min_abnormal_ratio: float = 0.1             # σ 이상치여도 절대 비율 10% 미만이면 미플래그
+    min_midnight_entries: int = 3               # 소수 인원 폴백 시 최소 심야 건수
+    min_user_entries: int = 10                  # C12: 사용자별 최소 전표 건수 (미달 시 분석 제외)
+    auto_entry_sources: list[str] = [           # 자동 전기 소스 (급속 승인 검증 제외 대상)
+        "batch", "interface", "system",
+        "BATCH", "IF", "SYS",
+    ]
 
     # --- L3 통계 검증 (statistical_validator) ---
     monthly_volatility_zscore: float = 2.0      # 월별 변동률 이상 판정 Z-score

@@ -1,0 +1,6 @@
+[server]
+# 대용량 감사 데이터(DataSynth CSV 등) 업로드 허용
+# maxUploadSize: 파일 선택 UI 제한 (MB)
+# maxMessageSize: WebSocket 메시지 제한 (MB) — 이것도 올려야 실제 전송 가능
+maxUploadSize = 1024
+maxMessageSize = 1024

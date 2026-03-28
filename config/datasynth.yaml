@@ -103,12 +103,14 @@ transactions:
     decimal_places: 0           # 원화는 소수점 없음
     round_number_probability: 0.25
     nice_number_probability: 0.15
+    round_number_unit: 1000000      # KRW: 100만원 단위 (Python round_unit과 정합)
+    nice_number_unit: 100000        # KRW: 10만원 단위
   benford:
     enabled: true
     tolerance: 0.05
     exempt_sources: [recurring, payroll]
 
-# C02/C03 시간대 탐지용 — audit_domain_additional.md §4-3 반영
+# C02/C03 시간대 탐지용 — DETECTION_REFERENCE.md §6.5 반영
 # 한국 야근 문화: 18:30~22:00은 결산기 정상, 22:00~06:00이 심야(고위험)
 temporal_patterns:
   enabled: true
@@ -167,6 +169,70 @@ fraud:
     unauthorized_access: 0.10
     suspense_account_abuse: 0.05
     expense_capitalization: 0.05
+
+# ═══════════════════════════════════════════════════════════════
+# Anomaly Strategy Parameters — 전략별 임계값/파라미터 직접 제어
+# Why: strategies.rs가 Default 대신 이 값을 읽어 YAML 변경이 실제 반영됨.
+# ═══════════════════════════════════════════════════════════════
+anomaly_strategies:
+  approval:
+    # B02/B03/B09 승인한도 (KRW, 오름차순)
+    thresholds: [10000000, 100000000, 1000000000, 5000000000, 10000000000, 50000000000]
+    buffer: 500000
+  amount:
+    min_multiplier: 2.0
+    max_multiplier: 10.0
+  date:
+    max_backdate_days: 90
+    max_future_days: 7
+  split_transaction:
+    threshold: 10000000
+    buffer: 500000
+  unbalanced:
+    min_delta: 100     # A01 불균형 최소 금액 (KRW)
+    max_delta: 1000    # A01 불균형 최대 금액 (KRW)
+  invalid_account:
+    codes: ["888888", "777777"]   # A03 무효 GL 코드
+  revenue_manipulation:
+    revenue_prefixes: ["4000", "4100", "4200", "4300", "4400", "4500", "4600"]
+    min_zscore_multiplier: 3.0
+    max_zscore_multiplier: 6.0
+    floor_krw: 700000000     # high_amount와 동일 근거
+    ceil_krw: 1500000000
+  expense_capitalization:
+    asset_accounts: ["1500", "1510", "1520", "1530", "1540", "1560", "1570", "1590"]
+    expense_accounts: ["6000", "6100", "6200", "6300", "6400", "6500", "6600", "6700"]
+  duplicate_payment:
+    window_days: 30
+  after_hours:
+    start_hour: 22     # KST 심야 시작
+    end_hour: 6        # KST 심야 종료
+  high_amount:
+    min_multiplier: 3.0
+    max_multiplier: 6.0
+    # Why: LogNormal(14.0, 2.5)의 mean+3σ ≈ 627M. floor/ceil은 Z>3σ 보장 범위.
+    #      분포 파라미터(lognormal_mu/sigma) 변경 시 이 값도 재계산 필요.
+    floor_krw: 700000000     # 7억원 (mean+3σ 약간 상회)
+    ceil_krw: 2000000000     # 20억원
+  dormant_account:
+    accounts: ["199999", "299999", "399999", "999999"]
+  description:
+    # Why: detection C06은 risk_keywords.yaml의 high/medium 키워드로 판정.
+    #      여기 목록은 risk_keywords.yaml과 동기화 필수.
+    #      "Other", "Misc" 등 영어는 risk_keywords에 없어 미탐지됨.
+    vague_descriptions:
+      - "가계정"      # high_risk
+      - "가수금"      # high_risk
+      - "가지급"      # high_risk
+      - "대여금"      # high_risk
+      - "선급금"      # high_risk
+      - "상품권"      # high_risk
+      - "기타"        # medium_risk
+      - "임시"        # medium_risk
+      - "잡손실"      # medium_risk
+      - "잡이익"      # medium_risk
+      - "."           # description_quality=poor (noise)
+      - "x"           # description_quality=poor (noise)
 
 output:
   mode: flat_file

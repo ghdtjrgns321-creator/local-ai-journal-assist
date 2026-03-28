@@ -1,0 +1,6 @@
+name: "결산기 모드"
+description: "12월/3월 결산 집중기간용 완화된 기준"
+overrides:
+  midnight_start: 2
+  zscore_threshold: 4.0
+  period_end_margin_days: 10

@@ -56,6 +56,35 @@ patterns:
     - "[Uu]nallocated"
     - "[Mm]iscellaneous"
 
+  # C11: 정상 청산/반제 계정 — 역분개 탐지 제외 (S1/S2에서 필터링)
+  # GR/IR 청산, IC 정산 등 동일 금액 반대 전표가 정상 프로세스인 계정
+  reversal_exclude_accounts:
+    - "2900"    # GR/IR 청산계정 (Goods Receipt / Invoice Receipt)
+    - "1150"    # IC Receivable 정산
+    - "2050"    # IC Payable 정산
+
+  # C11: 역분개 적요 키워드 (한/영)
+  # line_text에서 매칭 → S4 서브 신호
+  reversal_keywords:
+    - "수정"
+    - "정정"
+    - "오류"
+    - "역분개"
+    - "결산조정"
+    - "취소"
+    - "원복"
+    - "대체"
+    - "재전기"
+    - "환입"
+    - "[Rr]eversal"
+    - "[Cc]ancel"
+    - "[Cc]orrect"
+    - "[Aa]djust"
+    - "[Rr]estate"
+    - "[Ee]rror"
+    - "[Vv]oid"
+    - "[Ww]rite.off"
+
   # B11/C06: 가계정/청산계정 GL 코드 prefix (gl_account 기반 판별)
   # 텍스트 키워드 매칭과 OR 결합 — 실무에서는 GL 코드가 1순위 탐지 기준
   # K-IFRS 기준 가계정/청산계정 대역, 회사 CoA에 맞춰 조정

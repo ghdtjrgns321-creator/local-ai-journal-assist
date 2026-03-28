@@ -1,0 +1,5 @@
+name: "건설업 모드"
+description: "건설/조선 대형 프로젝트 특화"
+overrides:
+  period_end_margin_days: 10
+  round_unit: 10000000
