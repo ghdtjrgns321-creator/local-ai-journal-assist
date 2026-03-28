@@ -255,7 +255,7 @@ src/preprocessing/
 | **구간화** (선택) | amount_magnitude → 구간 범주  | —                                | —                    |
 
 > **gl_account 고카디널리티 처리:**
-> 계정코드(430개)는 OneHotEncoder 시 차원 폭발 → TargetEncoder 사용.
+> 계정코드(402개)는 OneHotEncoder 시 차원 폭발 → TargetEncoder 사용.
 > TargetEncoder는 타겟 누출 방지를 위해 cross-fitting 적용 (sklearn 기본).
 
 #### 모델별 Pipeline 정의
@@ -519,7 +519,7 @@ best_pipeline = max(results, key=lambda k: results[k]["mean_f1"])
 │ EDA 탭                                          │
 ├─────────────────────────────────────────────────┤
 │ [데이터 개요]                                    │
-│   행: 1,106,356 | 컬럼: 39 | 메모리: ~300MB     │
+│   행: 1,104,914 | 컬럼: 39 | 메모리: ~300MB     │
 │   중복행: 0 | 결측률: 2.3%                       │
 │                                                  │
 │ [컬럼별 프로파일]                                 │
@@ -572,7 +572,7 @@ best_pipeline = max(results, key=lambda k: results[k]["mean_f1"])
 ### 라벨 전략 자동 전환
 label_strategy.py에서 양성 비율/건수 체크 → 기준 미달 시 자동 비지도(VAE+IF) 전환.
 - 임계값: min_positive=50, min_positive_rate=0.01
-- DataSynth: fraud_rate 1.9% (~2,008건/106,489전표) → 지도학습 충분
+- DataSynth: fraud_rate 1.9% (~2,046건/106,489전표) → 지도학습 충분
 - 실무 데이터: 라벨 없음 → 비지도 자동 전환
 
 ### VAE 학습 데이터 모드 분리
@@ -596,7 +596,7 @@ label_strategy.py에서 양성 비율/건수 체크 → 기준 미달 시 자동
 
 ---
 
-## 감사기준서 갭 분석 반영 (audit_domain_additional.md 기반)
+## 감사기준서 갭 분석 반영 (DETECTION_RULES.md §3.3 기반)
 
 ### DataSynth v1.2.0 컬럼 → 전처리 파이프라인 영향
 

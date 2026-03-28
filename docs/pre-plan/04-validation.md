@@ -400,7 +400,7 @@ def validate_statistics(df: DataFrame) -> StatisticalResult:
 
 ---
 
-## L3 검증 확장 후보 (audit_domain_additional.md 기반)
+## L3 검증 확장 후보 (DETECTION_RULES.md §3.3 기반)
 
 ### 통제 운영 효과성 검증 (approved_by, approval_date — schema.yaml 포함 확인됨)
 

@@ -97,14 +97,14 @@ fraud:
 
 | 지표              | 기존 최선 (sap-merged) | DataSynth 생성 결과    |
 |-------------------|----------------------|----------------------|
-| 행수              | 332K (고정)           | 1,106,356 (조절 가능)  |
+| 행수              | 332K (고정)           | 1,104,914 (조절 가능)  |
 | 컬럼수            | 12 (SAP 필드)         | 39 (ACDOCA 매핑)      |
 | 부정 레이블        | 없음 (IF/LOF 1%)     | fraud 1.9% + anomaly 7.5% |
 | 부정 시나리오      | 0종                   | 132개 내장 중 프로젝트 대상 52개 (8종 비율 지정) |
 | 복식부기 보장      | 원본 의존             | 생성 시 강제           |
 | Benford 분포      | 원본 의존             | 생성 시 준수           |
 | 재현성             | 불가                  | seed 2024 고정         |
-| GL 계정            | 가변                  | 430개                   |
+| GL 계정            | 가변                  | 402개                   |
 | 입력자             | 가변                  | 152명                  |
 
 Ingest 파이프라인 5종 실데이터셋 테스트: **197 tests passed, 통과.**
@@ -241,7 +241,7 @@ DataSynth 생성 데이터 사이에 계약(contract)이 없었다.
 **핵심: 설정의 전제 조건과 데이터의 실태가 불일치한다.**
 
 ```
-AUDIT_DOMAIN_FINAL.md (뿌리: 한국 감사기준서 기반 22개 룰)
+DETECTION_RULES.md (뿌리: 한국 감사기준서 기반 22개 룰)
   ↓ 도출
 settings.py + audit_rules.yaml (설정: 한국 실무 기준)
   ↓ 참조
@@ -265,7 +265,7 @@ DataSynth 데이터 (검증: KR 3법인 재생성 완료)
 1. **기준서 전면 재탐색**
    - 감사기준서 240호만이 아닌 **330호·500호·520호·550호·1100호 + IT감사 기준서(KLCA, KICPA JET, 금융권 가이드라인)** 전체를 전표감사 관점에서 조사.
    - 9가지 전표 단위 공통 체크항목 도출 (존재·발생, 완전성, 계정분류, 컷오프, 승인·권한, 증빙 적정성, 경제적 실질, 관련당사자, 역분개).
-   - → `docs/audit_domain_additional.md`에 기록.
+   - → `docs/DETECTION_REFERENCE.md`에 기록.
 
 2. **22개 룰과의 갭 분석 — 39건 식별**
    - 기준서 갭 7건, 체크항목 갭 8건, 절차 갭 7건, IT감사 갭 7건, 참조출처 갭 10건.
@@ -289,7 +289,7 @@ DataSynth 데이터 (검증: KR 3법인 재생성 완료)
 | 판정 | 건수 | 내용 |
 |------|------|------|
 | **구현 가능** | 18건 | 39컬럼으로 즉시 가능(3건) + DataSynth 컬럼 추가(7건) + Phase 2~3(8건) |
-| **문서 보완** | 14건 | AUDIT_DOMAIN_FINAL.md 기준서 매핑·출처 추가 |
+| **문서 보완** | 14건 | DETECTION_RULES.md 기준서 매핑·출처 추가 |
 | **불필요** | 5건 | 전수조사 프로젝트 특성상 (표본추출, 감사조서 등) |
 | **범위외** | 2건 | 배치 실패 로그(작업 단위), 관련자 질문(대면 활동) |
 
@@ -324,7 +324,7 @@ DataSynth 데이터 (검증: KR 3법인 재생성 완료)
 
 | 파일 | 추가 내용 |
 |------|----------|
-| AUDIT_DOMAIN_FINAL.md | §2.8~2.11 기준서 4개 섹션 + 부록 출처 + 프로젝트 범위 섹션 |
+| DETECTION_RULES.md    | §2.8~2.11 기준서 4개 섹션 + 부록 출처 + 프로젝트 범위 섹션 |
 | pre-plan/05-detection.md | 신규 탐지 룰 후보 (Phase 1~3) |
 | pre-plan/02-ingest.md | 확장 컬럼 매핑 (16개) |
 | pre-plan/03-feature.md | 신규 파생변수 (11개) |
@@ -345,12 +345,12 @@ DataSynth 데이터 (검증: KR 3법인 재생성 완료)
 | Recall             | 100% (8,022건)                | 100% 유지 목표                | |
 | Precision          | 7.5%                          | 개선 목표 (과탐 해소)          | |
 
-데이터 재생성 완료 (2026-03-25). E2E 재테스트는 미실행.
+데이터 재생성 완료 (2026-03-26). E2E 재테스트는 미실행.
 
 #### 다음 단계
 
 1. ~~DataSynth Rust 코드 수정 (approval.rs 한국식 + 확장 컬럼 CSV 출력)~~ → 완료
-2. ~~데이터 재생성~~ → 완료 (2026-03-25, KR 3법인 통일 + seasonality + debit_credit_distribution)
+2. ~~데이터 재생성~~ → 완료 (2026-03-26, auxiliary_account_number·MCAR·Benford 위반·적요 키워드 등 재생성)
 3. E2E 재테스트 (재생성 데이터 기준)
 4. Phase 1b 확장 3건 구현 (역분개, Top-side JE, 시간대 입력자 집중)
 5. 신규 탐지 룰의 성능 평가
@@ -371,4 +371,4 @@ DataSynth 데이터 (검증: KR 3법인 재생성 완료)
 - **한국 실무 맥락을 빠뜨리면 false positive가 폭증한다.**
   18시 이후를 비정상으로 잡으면 야근 문화에서 과탐. 심야(22시~06시)가 실제 비정상 기준.
 
-**관련 문서**: [AUDIT_DOMAIN_FINAL.md](AUDIT_DOMAIN_FINAL.md) | [audit_domain_additional.md](audit_domain_additional.md) | [generation_principles.md](../data/journal/primary/datasynth/generation_principles.md) | [DECISION.md D011~D013](DECISION.md) | [갭 분석](datasynth-detection-gap-analysis.md) | [E2E 테스트 결과](../tests/test_detection/test-results/e2e-detection-datasynth.md)
+**관련 문서**: [DETECTION_RULES.md](DETECTION_RULES.md) | [DETECTION_REFERENCE.md](DETECTION_REFERENCE.md) | [generation_principles.md](../data/journal/primary/datasynth/generation_principles.md) | [DECISION.md D011~D013](DECISION.md) | [DETECTION_RULES §6 갭 분석](DETECTION_RULES.md) | [E2E 테스트 결과](../tests/test_detection/test-results/e2e-detection-datasynth.md)

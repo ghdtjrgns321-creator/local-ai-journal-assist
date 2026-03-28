@@ -837,11 +837,11 @@ class IngestState(str, Enum):
   - `needs_review=True` 트리거: suggestions 존재, missing_required, 중복 헤더 감지
 - **FAILED**: 에러 메시지 표시 → 다른 파일 업로드 유도
 
-> Phase 1c 구현 시 구체화 예정. 현재는 개념 정의만 기록.
+> WU7(2026-03-28)에서 구현 완료. data_uploader.py 3단계 스테이지 머신(UPLOAD→REVIEW→PIPELINE) + mapping_review.py.
 
-### Phase 1c UI 스펙 — 피드백 반영 (4건)
+### Phase 1c UI 스펙 — 피드백 반영 (4건) ✅ WU7에서 전부 구현 완료
 
-#### UI-1. 인코딩 수동 오버라이드 드롭다운
+#### UI-1. 인코딩 수동 오버라이드 드롭다운 ✅
 
 - **트리거**: `ReadResult.encoding_confidence < 0.7` 시 자동 노출
 - **옵션**: UTF-8, CP949, EUC-KR, Shift_JIS, Latin-1, 직접 입력
@@ -849,7 +849,7 @@ class IngestState(str, Enum):
 - **백엔드**: `text_reader.read_text(encoding_override=)`, `ReadResult.encoding_confidence` (1-chaos 기반)
 - **Why**: 한국 ERP 덤프에서 CP949/EUC-KR 오인 실제 발생
 
-#### UI-2. 시트 선택 UI (SheetScore 테이블)
+#### UI-2. 시트 선택 UI (SheetScore 테이블) ✅
 
 - **트리거**: 멀티시트 Excel 업로드 시 항상 노출
 - **표시**: 시트별 행 수, 열 수, 헤더 신뢰도, 총점 테이블
@@ -859,7 +859,7 @@ class IngestState(str, Enum):
 - **가중치**: 행 수(0.3) + 열 수(0.2) + 헤더 신뢰도(0.5)
 - **Why**: 메모/표지 시트 오탐 방지 — 실무 Excel 80%가 멀티시트
 
-#### UI-3. Fuzzy threshold 슬라이더
+#### UI-3. Fuzzy threshold 슬라이더 ✅
 
 - **위치**: 매핑 확인 UI 상단
 - **범위**: 30~70 (기본 40, `settings.fuzzy_low_threshold`)
@@ -868,7 +868,7 @@ class IngestState(str, Enum):
 - **백엔드**: 이미 구현됨 (`settings_override` 파라미터)
 - **Why**: ERP별로 컬럼명 유사도 분포가 달라 고정 threshold 비적합
 
-#### UI-4. 중복 금액 퀵픽스 버튼
+#### UI-4. 중복 금액 퀵픽스 버튼 ✅
 
 - **트리거**: `_suggest_amount_split()`이 ReviewItem 2건 생성 시
 - **표시**: "인접 '금액' 2개 감지 → 차변/대변으로 분리?" + [수락] 버튼
@@ -883,16 +883,16 @@ class IngestState(str, Enum):
 
 > 출처: [ingest-all-results.md](../../tests/test_ingest/test-results/ingest-all-results.md#5-4-column-mapper-38-tests), [ingest-validation-datasets.md](../../tests/test_ingest/test-results/ingest-validation-datasets.md), [e2e-sap-merged.md](../../tests/test_feature/test-results/e2e-sap-merged.md)
 
-| Phase | 문제                         | 현상                                                              | 해결 위치                                                                 |
-|:------|:-----------------------------|:------------------------------------------------------------------|:--------------------------------------------------------------------------|
-| 1c    | Fuzzy 추천 부정확            | monat→debit_amount 등 오추천                                      | [07-dashboard §미해결과제](07-dashboard.md#phase-1a에서-넘어온-미해결-과제-ux-1단계-잔여) — ReviewItem UI |
-| 1c    | 차단 vs unmapped 미구분      | ReviewItem에서 타입 차단 사유 미표시                               | [07-dashboard §미해결과제](07-dashboard.md#phase-1a에서-넘어온-미해결-과제-ux-1단계-잔여) — ReviewItem.reason 세분화 |
-| 1c    | Parquet 헤더 탐지 스킵       | Parquet도 불필요한 헤더 탐지 시도                                  | [07-dashboard §미해결과제](07-dashboard.md#phase-1a에서-넘어온-미해결-과제-ux-1단계-잔여) — 오케스트레이터 분기 |
-| 1c    | 멀티시트 UI 선택             | active_sheet가 데이터 양 무관                                      | [07-dashboard §미해결과제](07-dashboard.md#phase-1a에서-넘어온-미해결-과제-ux-1단계-잔여) — data_uploader UI |
-| 1c    | fiscal_period_mismatch NaN   | sap-merged에서 전체 NaN 출력                                       | [07-dashboard §미해결과제](07-dashboard.md#phase-1a에서-넘어온-미해결-과제-ux-1단계-잔여) — 매핑 리뷰 UI에서 원인 확인 |
-| 1c    | sap-merged debit/credit 미매핑 | amount 카테고리 전체 스킵                                        | [07-dashboard §미해결과제](07-dashboard.md#phase-1a에서-넘어온-미해결-과제-ux-1단계-잔여) — 수동 매핑 조정 |
-| 1c~3  | 데이터셋 필수 컬럼 미매핑    | bpi2019 등 8개 필수 컬럼 미매핑                                    | Fuzzy 정확도 개선 + 매핑 프로파일 누적                                    |
-| 1c    | fiscal_period 필수 추가 영향 | 외부 ERP에 fiscal_period 없으면 필수 미매핑 +1 (sap-merged MONAT은 keywords.yaml 별칭 추가로 해결 가능) | [07-dashboard](07-dashboard.md) — 수동 매핑 UI에서 처리 |
+| Phase | 문제                         | 현상                                                              | 해결 위치                                                                 | 상태 |
+|:------|:-----------------------------|:------------------------------------------------------------------|:--------------------------------------------------------------------------|:-----|
+| 1c    | Fuzzy 추천 부정확            | monat→debit_amount 등 오추천                                      | [07-dashboard §미해결과제](07-dashboard.md#미해결-이슈-phase-1c에서-해결--발견-위치-교차-참조) — Fuzzy 슬라이더 UI-3 | ✅ WU7 |
+| 1c    | 차단 vs unmapped 미구분      | ReviewItem에서 타입 차단 사유 미표시                               | [07-dashboard §미해결과제](07-dashboard.md#미해결-이슈-phase-1c에서-해결--발견-위치-교차-참조) — mapping_review.py 필수 미매핑 사유 안내 | ✅ WU7 |
+| 1c    | Parquet 헤더 탐지 스킵       | Parquet도 불필요한 헤더 탐지 시도                                  | [07-dashboard §미해결과제](07-dashboard.md#미해결-이슈-phase-1c에서-해결--발견-위치-교차-참조) — pipeline.py source_format 분기 | ✅ WU7 |
+| 1c    | 멀티시트 UI 선택             | active_sheet가 데이터 양 무관                                      | [07-dashboard §미해결과제](07-dashboard.md#미해결-이슈-phase-1c에서-해결--발견-위치-교차-참조) — 시트 선택 UI-2 | ✅ WU7 |
+| 1c    | fiscal_period_mismatch NaN   | sap-merged에서 전체 NaN 출력                                       | [07-dashboard §미해결과제](07-dashboard.md#미해결-이슈-phase-1c에서-해결--발견-위치-교차-참조) — 매핑 리뷰 UI | ✅ WU7 |
+| 1c    | sap-merged debit/credit 미매핑 | amount 카테고리 전체 스킵                                        | [07-dashboard §미해결과제](07-dashboard.md#미해결-이슈-phase-1c에서-해결--발견-위치-교차-참조) — 중복 금액 퀵픽스 UI-4 | ✅ WU7 |
+| 1c~3  | 데이터셋 필수 컬럼 미매핑    | bpi2019 등 8개 필수 컬럼 미매핑                                    | Fuzzy 정확도 개선 + 매핑 프로파일 누적                                    | ⬜ 후속 |
+| 1c    | fiscal_period 필수 추가 영향 | 외부 ERP에 fiscal_period 없으면 필수 미매핑 +1 (sap-merged MONAT은 keywords.yaml 별칭 추가로 해결 가능) | [07-dashboard](07-dashboard.md) — 수동 매핑 UI에서 처리 | ✅ WU7 |
 
 ---
 

@@ -27,7 +27,7 @@ DataSynth(EY Switzerland + ASU 공동 개발)를 선택한 이유:
    SAP S/4HANA Universal Journal과 동일한 필드명(`rbukrs`, `belnr`, `racct`, `budat`, `drcrk` 등)을 사용
 2. **감사 기준 내장**: PCAOB, ISA, COSO 2013, SOX 302/404를 직접 구현.
    감사인이 정의한 fraud 시나리오가 코드 레벨에서 보장됨
-3. **anomaly 유형 52개** (AUDIT_DOMAIN_FINAL.md §4 기준).
+3. **anomaly 유형 52개** (DETECTION_RULES.md §4 기준).
    → `is_fraud`, `is_anomaly` 컬럼으로 출력되어 지도학습에 바로 사용 가능
 4. **복식부기 보장**: `JournalEntry`가 생성 시점에 차변 합 = 대변 합을 강제
 5. **Benford 준수**: 금액 분포가 Benford's Law를 따르도록 생성
@@ -47,7 +47,7 @@ DataSynth(EY Switzerland + ASU 공동 개발)를 선택한 이유:
 DataSynth (tools/datasynth/)
   │  config/datasynth.yaml → seed 2024, 12개월, 3회사, fraud 2%
   ▼
-data/journal/primary/datasynth/journal_entries.csv (1,106K rows)
+data/journal/primary/datasynth/journal_entries.csv (1,105K rows)
   │
   ▼
 .env / 환경변수
@@ -173,7 +173,7 @@ class AuditSettings(BaseSettings):
 ### `config/schema.yaml` — 표준 컬럼 스키마
 
 DataSynth `journal_entries.csv` 출력 39개 컬럼 기준 (Header 24 + Line 15).
-ACDOCA 필드명과의 매핑은 `docs/AUDIT_DOMAIN_FINAL.md` 참조.
+ACDOCA 필드명과의 매핑은 `docs/DETECTION_RULES.md` 참조.
 현재 구현은 `config/schema.yaml` 참조.
 
 ```yaml

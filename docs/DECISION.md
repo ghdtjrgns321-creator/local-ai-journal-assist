@@ -49,10 +49,10 @@
   - **PCAOB AS 2401 / ISA 240 / COSO 2013 / SOX 302·404**: 실무 감사기준 코드 구현
   - **Schreyer & Sattarov 연구** (arXiv 1709.05254, 1908.00734): 전표 이상치 분류 학술 표준
   - 이 세 프레임워크의 교차 설계로 132개 유형 정의, 우리 데이터에 52개 유형 · 8,044건 주입
-- **도구 최신성**: DataSynth 레포 2025-01경 최종 활동(v1.2.0, 506커밋). 우리 데이터는 2026-03-17 직접 빌드·생성 → 최신 코드 기반 출력물 보장
+- **도구 최신성**: DataSynth 레포 2025-01경 최종 활동(v1.2.0, 506커밋). 우리 데이터는 2026-03-26 직접 빌드·생성 → 최신 코드 기반 출력물 보장
 - **대안 검토**: 실제 SAP 데이터(sap-merged 332K)는 이상치 레이블 1%뿐, Schreyer(533K)는 날짜 없음+전부 익명화, BPI 2019(1.6M)는 전표가 아닌 이벤트 로그
 - **생성 설정**: `config/datasynth.yaml` (seed 2024, 12개월, 3회사, fraud 2%)
-- **결과**: 1,106,356건(106,489전표), 39컬럼, fraud 1.9%, anomaly 7.5%
+- **결과**: 1,104,914건(106,489전표), 39컬럼, fraud 1.9%, anomaly 7.5%
 
 ### D011: 24개 룰 3레이어 탐지 체계 확정 (R001~R008 → A/B/C 레이어)
 - **결정**: 기존 R001~R008(8개 룰 + Benford) 체계를 폐기하고, DataSynth 52개 anomaly 유형에서 3축 평가(법규 근거 × FSS 실증 × 데이터 가용성)로 선별한 24개 룰 3레이어 체계로 전면 재설계
@@ -181,3 +181,45 @@
 - **승인한도 변경**: 기존 [1M~100M] → [10M~50B] KRW (제조업 전결규정 반영)
 - **트레이드오프**: seed 재현성 breaking change (프로세스 배정 로직 변경으로 기존 seed 출력 달라짐)
 - **근거**: generation_principles.md §2, FSS 189건 분석, 한국 중견 제조업 실무 피드백
+
+### D029: 데이터 분할 전략 — Stratified 60/20/20 + Holdout 유형
+- **결정**: DataSynth 1.1M건을 train 60% / val 20% / test 20%로 분할. `fraud_type` 기준 층화추출(StratifiedSplit)
+- **이유**:
+  - 양성 2%(~22K건) 극단 불균형 → 단순 랜덤 분할 시 일부 유형이 특정 셋에 편중 위험
+  - 8개 fraud_type별 비율 유지가 모델 평가 신뢰도의 핵심
+  - 60/20/20은 1.1M건 규모에서 val/test 각 ~220K건으로 통계적 안정성 충분
+- **Holdout 정책**:
+  - test set은 최초 분할 후 **동결** (모델 개발 중 절대 사용 금지)
+  - val set으로 하이퍼파라미터 튜닝 + 모델 선택
+  - test set은 최종 보고용 1회 평가만 허용
+- **Hold-out Fraud Type** (D027 연계):
+  - 8개 유형 중 suspense_account_abuse(5%), expense_capitalization(5%)은 train에서 제외
+  - test set에서 이 2개 유형의 VAE 탐지율로 zero-day 능력 검증
+- **구현**: `sklearn.model_selection.train_test_split` 2회 체이닝 (60→20/20), `stratify=fraud_type`
+- **실무 데이터**: 라벨 없음 → label_strategy.py가 자동으로 비지도 전환 (D023). 분할 불필요, 전체 데이터로 VAE+IF 학습
+
+### D030: WU5 설정 컴포넌트 — 재탐지 분리 + 커스텀 프리셋 정책
+- **결정**: 설정 변경 후 재탐지 시 `_generate_features`를 건너뛰고 `_run_detection` + `aggregate_scores`만 실행. 커스텀 프리셋은 디스크 미저장(session_state 전용)
+- **이유**:
+  - `PipelineResult.data`에는 이미 파생 피처가 포함되어 있어 재입력 시 컬럼 충돌(`_x`, `_y`) 발생
+  - `PipelineResult.featured_data`에 피처 생성 직후 클린 DF를 스냅샷하여 재탐지 출발점 보장
+  - Docker/클라우드 환경에서 파일 시스템 Read-only 또는 다중 사용자 Race Condition 방지
+- **주요 설계**:
+  - `AuditPipeline.redetect(df, weights, thresholds)` 공개 메서드 추가
+  - "적용" 버튼 패턴 — 매 슬라이더 변경마다 재실행 대신 일괄 실행으로 효율화
+  - 비활성 룰은 `details` 0 마스킹 + `flagged_rules` 문자열 정규식 치환 2단계 처리 (`deepcopy`로 원본 보호)
+  - 가중치 합≠1.0이면 적용 버튼 `disabled=True` — 잘못된 score 원천 차단
+  - `aggregate_scores`, `classify_risk_level`, `_apply_topside_escalation`에 `settings`/`thresholds` 선택적 파라미터 추가 (기존 호환)
+- **구현 파일**: `_redetect.py`, `preset_selector.py`, `threshold_sidebar.py`, `rule_panel.py`, `pipeline.py`, `score_aggregator.py`
+- **트레이드오프**: `featured_data` 스냅샷으로 메모리 사용량 ~2배 증가 (대규모 데이터에서 고려 필요)
+
+### D031: WU6 EDA 탭 + 메인 앱 통합 — Lazy Loading + 필터 독립
+- **결정**: EDA 프로파일을 업로드 시 동기 계산이 아닌, EDA 탭 최초 렌더 시 Lazy Loading으로 계산. 사이드바 필터와 무관하게 업로드 원본 전체 데이터 기준으로 프로파일링
+- **이유**:
+  - 100만 건 데이터에서 `profile_dataframe()` 동기 호출 시 업로드 대기 시간이 2배 이상 체감 증가
+  - EDA는 원시 데이터의 구조적 품질 진단 목적. 필터링된 부분집합의 프로파일은 감사 의미가 없음
+  - 재탐지(임계값/가중치 변경) 시 EDA 재계산 불필요 — 데이터 자체가 변하지 않으므로
+- **캐싱 전략**: `@st.cache_data`의 키를 `(upload_key, total_rows, total_columns)` 스칼라로 제한. EDAProfile 객체를 직접 해시하면 UnhashableType 위험
+- **사이드바 UX**: 업로드 후 파일명+행수 1줄 요약만 표시, 필터와 설정은 각각 `st.expander`로 접어 13인치 노트북 스크롤 최소화
+- **탭 순서**: EDA → Summary → Benford → Explorer (데이터 품질 확인이 분석보다 선행)
+- **구현 파일**: `app.py`(신규), `tab_eda.py`(신규), `eda_charts.py`(신규), `_state.py`(수정), `data_uploader.py`(수정)

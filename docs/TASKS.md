@@ -9,19 +9,21 @@
 | Phase              | 완료 | 전체 | 진행률 |
 |--------------------|------|------|--------|
 | 1a 데이터 파이프라인 | 20   | 20   | 100%   |
-| 1b 이상탐지+DB       |  8   | 18   |  44%   |
+| 1b 이상탐지+DB       | 18   | 18   | 100%   |
 | 1c 대시보드           |  0   | 12   |   0%   |
 | 2a ML 전처리          | 10   | 10   | 100%   |
-| 2a-ext 신규탐지       |  0   |  7   |   0%   |
-| 2b ML 탐지기          |  1   | 10   |  10%   |
-| 2c 추가 탐지기        |  0   |  3   |   0%   |
-| 2-ext 확장            |  0   |  6   |   0%   |
+| 2 WU-00 전처리 수정   |  5   |  5   | 100%   |
+| 2 WU-01~04 ML 핵심    |  0   |  4   |   0%   |
+| 2 WU-05~08 추가탐지   |  0   |  4   |   0%   |
+| 2 WU-09~13 고도화     |  0   |  5   |   0%   |
+| 2 WU-14~16 DataSynth  |  0   |  3   |   0%   |
+| 2 WU-17 대시보드ML    |  0   |  1   |   0%   |
 | 3 NLQ+Graph+Polish    |  0   | 22   |   0%   |
-| **합계**              | 39   | 98   |  40%   |
+| **합계**              | 53   | 104  |  51%   |
 
 **상태 범례**: ✅ 완료 / ⬜ 미착수
 **블로커**: Phase 섹션 상단 blockquote로 표기 (🚫 BLOCKER)
-**번호 미부여**: 문서 보완 (1건) + DataSynth 확장 (8건) = 9건은 Phase 간 보조 작업으로 요약표 집계에서 제외
+**번호 미부여**: DataSynth 확장 (8건) = Phase 간 보조 작업으로 요약표 집계에서 제외
 
 ---
 
@@ -33,7 +35,7 @@
 |-----|---------------------|-----------------------------------------------------------------|---------------------------------------------------|------|
 | 0   | 데이터셋 수집·선정  | `data/journal/`, 32개 검토                                      | [00-dataset](pre-plan/00-dataset.md)              | ✅   |
 | 0a  | DataSynth 빌드      | `tools/datasynth/` (Rust, EY-ASU)                               | [00-dataset](pre-plan/00-dataset.md)              | ✅   |
-| 0b  | 메인 데이터 생성    | `data/journal/primary/datasynth/` (1,106K건)                    | [00-dataset](pre-plan/00-dataset.md)              | ✅   |
+| 0b  | 메인 데이터 생성    | `data/journal/primary/datasynth/` (1,105K건)                    | [00-dataset](pre-plan/00-dataset.md)              | ✅   |
 | 1   | 프로젝트 초기화     | `pyproject.toml`, `.gitignore`, `.env.example`                  | [01-project-setup](pre-plan/01-project-setup.md)  | ✅   |
 | 2   | 설정 레이어         | `config/settings.py`, YAML 3종 + `datasynth.yaml`              | [01-project-setup](pre-plan/01-project-setup.md)  | ✅   |
 | 3   | 샘플 데이터 생성기  | DataSynth로 대체 (10-sample-data 불필요)                        | -                                                 | ✅   |
@@ -66,20 +68,21 @@
 | 16  | Layer A 무결성                   | `src/detection/integrity_layer.py` (A01~A03)                         | [05-detection](pre-plan/05-detection.md)   | ✅   |
 | 17  | Layer B 부정탐지                 | `src/detection/fraud_layer.py` (B01~B11, 42 tests)                   | [05-detection](pre-plan/05-detection.md)   | ✅   |
 | 18  | Layer C 이상징후                 | `src/detection/anomaly_layer.py` (C01~C10, 41 tests)                 | [05-detection](pre-plan/05-detection.md)   | ✅   |
-| 19  | 점수 집계                        | `src/detection/score_aggregator.py` (3레이어+Benford, 12 tests)      | [05-detection](pre-plan/05-detection.md)   | ✅   |
-| 19a | 역분개 패턴 탐지 (1:1 + N:M)    | `src/detection/anomaly_layer.py` (확장)                              | [05-detection](pre-plan/05-detection.md)   | ⬜   |
-| 19b | Top-side JE 조합 탐지            | `src/detection/score_aggregator.py` (확장)                           | [05-detection](pre-plan/05-detection.md)   | ⬜   |
-| 19c | 비정상 시간대 입력자 집중         | `src/feature/time_features.py` (확장)                                | [03-feature](pre-plan/03-feature.md)       | ⬜   |
-| 19d | IC identifiers 불일치 수정       | `src/feature/pattern_features.py` — `["1150C","2050C"]` → `["1150","2050","4500","2700"]` | [03-feature](pre-plan/03-feature.md) §210 | ⬜   |
-| 19e | manual_source_codes 오매칭 수정  | `src/feature/pattern_features.py` — SA는 document_type, source 아님   | [03-feature](pre-plan/03-feature.md) §211 | ⬜   |
-| 19f | suspense_keywords 언어 불일치    | `src/feature/text_features.py` — DataSynth 영문 vs 현재 한국어 키워드 | [03-feature](pre-plan/03-feature.md) §212 | ⬜   |
+| 19  | 점수 집계                        | `src/detection/score_aggregator.py` (3레이어+Benford+B19, 21 tests)  | [05-detection](pre-plan/05-detection.md)   | ✅   |
+| 19a | 역분개 패턴 탐지 (1:1 + N:M)    | `src/detection/anomaly_rules_reversal.py` + `anomaly_layer.py`       | [05-detection](pre-plan/05-detection.md)   | ✅   |
+| 19b | Top-side JE 조합 탐지 (B19)      | `src/detection/score_aggregator.py` (확장, 9 tests)                  | [05-detection](pre-plan/05-detection.md)   | ✅   |
+| 19c | 비정상 시간대 입력자 집중 (C12)   | `src/detection/anomaly_rules_simple.py` + `src/feature/time_features.py` (46 tests) | [03-feature](pre-plan/03-feature.md), [05-detection](pre-plan/05-detection.md) | ✅   |
+| 19d | IC identifiers 불일치 수정       | `src/feature/pattern_features.py` — `["1150C","2050C"]` → `["1150","2050","4500","2700"]` | [03-feature](pre-plan/03-feature.md) §210 | ✅   |
+| 19e | manual_source_codes 오매칭 수정  | `src/feature/pattern_features.py` — SA는 document_type, source 아님   | [03-feature](pre-plan/03-feature.md) §211 | ✅   |
+| 19f | suspense_keywords 언어 불일치    | `src/feature/text_features.py` — DataSynth 영문 vs 현재 한국어 키워드 | [03-feature](pre-plan/03-feature.md) §212 | ✅   |
+| 19g | B06 자기승인 정밀화             | automated 제외 + 소액(10M) 제외. 111K→1.5K (98.6% 감소)              | [05-detection](pre-plan/05-detection.md)   | ✅   |
 | 20  | DuckDB core                      | `src/db/connection.py`, `schema.py`, `loader.py`, `queries.py`       | [06-db](pre-plan/06-db.md)                | ✅   |
-| 20a | DuckDB ML 확장 스키마 (Phase 2 대비 예약 선언만) | `src/db/schema.py` — supervised/unsupervised_score nullable 예약 | [06-db](pre-plan/06-db.md) | ⬜ |
-| 20b | loader.py approval_level 파생    | `src/db/loader.py` — CASE WHEN 전결규정 6단계                        | [06-db](pre-plan/06-db.md)                | ⬜   |
-| 21  | 파이프라인 오케스트레이터        | `src/pipeline.py`                                                    | 05-detection + 06-db 통합                  | ⬜   |
+| 20a | DuckDB ML 확장 스키마 (Phase 2 대비 예약 선언만) | `src/db/schema.py` — 7컬럼 nullable 예약 + ml_model_metadata(PK, JSON) | [06-db](pre-plan/06-db.md) | ✅ |
+| 20b | loader.py approval_level 파생    | `src/db/loader.py` — debit SUM + settings 동적 참조 + N level 캡     | [06-db](pre-plan/06-db.md)                | ✅   |
+| 21  | 파이프라인 오케스트레이터        | `src/pipeline.py` — AuditPipeline(ingest→validate→feature→detection→db) | 05-detection + 06-db 통합              | ✅   |
 | 22  | detection 단위테스트             | `tests/test_detection/` (120+ tests)                                 | 각 가이드 "테스트 전략" 섹션               | ✅   |
 | 22a | DB 단위테스트                    | `tests/test_db/`                                                     | [06-db](pre-plan/06-db.md)                | ✅   |
-| 22b | 파이프라인 E2E 통합테스트        | `tests/` — ingest→feature→validation→detection→DB 전체 흐름           | 05-detection + 06-db 통합                  | ⬜   |
+| 22b | 파이프라인 E2E 통합테스트        | `tests/test_pipeline/` — 13개 pytest + DataSynth 1M행 E2E            | 05-detection + 06-db 통합                  | ✅   |
 
 **완료 기준**: `AuditPipeline.run("datasynth.csv")` → 24개 룰 3레이어 탐지 → DuckDB 적재 → 프리셋 쿼리 정상
 
@@ -92,32 +95,84 @@
 > - `02-ingest.md` §36, §41 (인제스트 오케스트레이터 + IngestResult 인터페이스)
 > - `02-ingest.md` §271 (3-tier 매핑 확인 UI: auto/review/blocked)
 
-| #   | 태스크                     | 파일                                         | 가이드                                     | 상태 |
-|-----|----------------------------|----------------------------------------------|--------------------------------------------|------|
-| 23  | UI 컴포넌트                | `dashboard/components/`                      | [07-dashboard](pre-plan/07-dashboard.md)   | ⬜   |
-| 24  | Tab 1: Summary             | `dashboard/tab_summary.py`                   | [07-dashboard](pre-plan/07-dashboard.md)   | ⬜   |
-| 25  | Tab 2: Benford             | `dashboard/tab_benford.py`                   | [07-dashboard](pre-plan/07-dashboard.md)   | ⬜   |
-| 26  | Tab 3: Explorer            | `dashboard/tab_explorer.py`                  | [07-dashboard](pre-plan/07-dashboard.md)   | ⬜   |
-| 27  | 메인 앱                    | `dashboard/app.py`                           | [07-dashboard](pre-plan/07-dashboard.md)   | ⬜   |
-| 28  | 임계값 튜닝 슬라이더       | `dashboard/components/threshold_sidebar.py`  | [ux-flow §4A](pre-plan/ux-flow.md)        | ⬜   |
-| 29  | 프리셋 드롭다운            | `dashboard/components/preset_selector.py`    | [ux-flow §4C](pre-plan/ux-flow.md)        | ⬜   |
-| 30  | HITL 예외 처리 (whitelist) | `src/db/schema.py` + `tab_explorer.py`       | [ux-flow §4B](pre-plan/ux-flow.md)        | ⬜   |
-| 30a | EDA 시각화 탭              | `dashboard/tab_eda.py` — `src/eda/` 프로파일링 결과 시각화 | [03a-preprocessing](pre-plan/03a-preprocessing.md), [ux-flow](pre-plan/ux-flow.md) UX Stage 3 | ⬜ |
-| 30b | 룰 컨트롤 패널 UI         | `dashboard/components/rule_panel.py` — 감사규칙 가중치/임계값 조정 | [ux-flow](pre-plan/ux-flow.md) UX Stage 2 §④ | ⬜ |
-| 30c | 인제스트 오케스트레이터    | `src/pipeline.py` 또는 `dashboard/` — `run_ingest_pipeline()` 단일 진입점 + 매핑 확인 UI | [02-ingest](pre-plan/02-ingest.md) §36 | ⬜ |
-| 30d | 미해결 이슈 UI 반영       | ReviewItem UI, 매핑 프로파일 학습, multi-sheet 선택 등 15건 | [07-dashboard](pre-plan/07-dashboard.md) §580-599 | ⬜ |
+**실행 순서 및 의존 관계:**
 
-**완료 기준**: `streamlit run dashboard/app.py` → 3탭 정상 렌더링 + 슬라이더 변경 시 탐지 결과 갱신 + 프리셋 전환 + 예외 처리 저장/제외
+```
+WU1 (기반 컴포넌트) ──── 반드시 최초 실행
+ │
+ ├── WU2 (Summary)  ──┐
+ ├── WU3 (Benford)  ──┼── 4개 병렬 가능 (독립)
+ ├── WU4 (Explorer) ──┤
+ └── WU5 (설정)     ──┘
+                       │
+                       ▼
+               WU6 (EDA + app.py 통합) ── WU1~5 전부 완료 후
+                       │
+                       ▼
+               WU7 (인제스트 + 미해결) ── 기본 동작 확인 후 고급 기능
+```
 
----
+#### WU1: 기반 컴포넌트 (Foundation) — 1단계
 
-### 문서 보완: AUDIT_DOMAIN_FINAL 기준서 매핑 완성
+> session_state 키 네이밍, 필터 dict 구조를 한 대화에서 통일
 
-> `audit_domain_additional.md` §3 "문서 보완 14건" 기반. 코드 변경 없음, 문서만 수정.
+| #   | 태스크             | 파일                                    | 가이드                                   | 상태 |
+|-----|--------------------|-----------------------------------------|------------------------------------------|------|
+| 23a | 패키지 초기화      | `dashboard/__init__.py`, `dashboard/_state.py`, `dashboard/components/__init__.py`, `dashboard/components/charts/__init__.py` | —                              | ✅   |
+| 23b | 파일 업로드 위젯   | `dashboard/components/data_uploader.py` | [07-dashboard](pre-plan/07-dashboard.md) | ✅   |
+| 23c | Plotly 차트 래퍼   | `dashboard/components/charts/` — 11종 6모듈 (DataFrame → go.Figure) | [07-dashboard](pre-plan/07-dashboard.md) | ✅   |
+| 23d | 사이드바 필터      | `dashboard/components/filters.py` — 기본4 + 차원6 + 개발2 | [07-dashboard](pre-plan/07-dashboard.md) | ✅   |
 
-| 태스크                                                                  | 파일                          | 가이드                                                   | 상태 |
-|-------------------------------------------------------------------------|-------------------------------|----------------------------------------------------------|------|
-| AUDIT_DOMAIN_FINAL 기준서 매핑 추가 (5건) + 참조 출처 (8건) + 범위 섹션 (1건) | `docs/AUDIT_DOMAIN_FINAL.md` | [audit_domain_additional](audit_domain_additional.md) §3 | ⬜   |
+#### WU2: Tab 1 — Summary — 2단계 (WU1 완료 후, WU3~5와 병렬 가능)
+
+| #   | 태스크             | 파일                         | 가이드                                   | 상태 |
+|-----|--------------------|-----------------------------|------------------------------------------|------|
+| 24  | Tab 1: Summary     | `dashboard/tab_summary.py` + `_kpi.py` + `charts/rule_charts.py` — KPI 6개 + 차트 7종 + 3-Row 레이아웃 | [07-dashboard](pre-plan/07-dashboard.md) | ✅   |
+
+#### WU3: Tab 2 — Benford — 2단계 (WU1 완료 후, WU2/4/5와 병렬 가능)
+
+| #   | 태스크             | 파일                         | 가이드                                   | 상태 |
+|-----|--------------------|-----------------------------|------------------------------------------|------|
+| 25  | Tab 2: Benford     | `dashboard/tab_benford.py` — Benford 오버레이 + MAD/KS + 분리 분석 | [07-dashboard](pre-plan/07-dashboard.md) | ✅   |
+
+#### WU4: Tab 3 — Explorer + HITL — 2단계 (WU1 완료 후, WU2/3/5와 병렬 가능)
+
+> AgGrid 체크박스 → whitelist INSERT → 재탐지 ANTI JOIN 흐름을 한 대화에서 end-to-end 구현
+
+| #   | 태스크                     | 파일                                         | 가이드                              | 상태 |
+|-----|----------------------------|----------------------------------------------|-------------------------------------|------|
+| 26  | Tab 3: Explorer            | `dashboard/tab_explorer.py` — AgGrid 27컬럼 + 조건부 서식 + 행 상세 패널 | [07-dashboard](pre-plan/07-dashboard.md) | ✅   |
+| 30  | HITL 예외 처리 (whitelist) | `src/db/schema.py` (DDL 추가) + `tab_explorer.py` (HITL UI) | [ux-flow §4B](pre-plan/ux-flow.md) | ✅   |
+
+#### WU5: 설정 컴포넌트 — 2단계 (WU1 완료 후, WU2/3/4와 병렬 가능)
+
+> 3개 모두 AuditSettings를 조작하며 session_state 갱신 순서 설계 필수
+
+| #   | 태스크                 | 파일                                            | 가이드                              | 상태 |
+|-----|------------------------|-------------------------------------------------|-------------------------------------|------|
+| 28  | 임계값 튜닝 슬라이더   | `dashboard/components/threshold_sidebar.py` — AuditSettings 23필드 슬라이더 | [ux-flow §4A](pre-plan/ux-flow.md) | ✅   |
+| 29  | 프리셋 드롭다운        | `dashboard/components/preset_selector.py` + `config/presets/*.yaml` | [ux-flow §4C](pre-plan/ux-flow.md) | ✅   |
+| 30b | 룰 컨트롤 패널 UI     | `dashboard/components/rule_panel.py` — 감사규칙 가중치/임계값 조정 | [ux-flow](pre-plan/ux-flow.md) UX Stage 2 §④ | ✅ |
+
+#### WU6: EDA 탭 + 메인 앱 통합 — 3단계 (WU1~5 전부 완료 후)
+
+> app.py가 모든 탭/컴포넌트를 import하므로 통합 단계
+
+| #   | 태스크             | 파일                         | 가이드                                   | 상태 |
+|-----|--------------------|-----------------------------|------------------------------------------|------|
+| 30a | EDA 시각화 탭      | `dashboard/tab_eda.py` — `src/eda/` EDAProfile 시각화 | [03a-preprocessing](pre-plan/03a-preprocessing.md), [ux-flow](pre-plan/ux-flow.md) UX Stage 3 | ✅ |
+| 27  | 메인 앱            | `dashboard/app.py` — 4탭 통합 + session_state 관리 + 개발 모드 토글 | [07-dashboard](pre-plan/07-dashboard.md) | ✅   |
+
+#### WU7: 인제스트 오케스트레이터 + 미해결 이슈 — 4단계 (WU6 완료 후)
+
+> 기본 동작 확인 후 고급 기능 추가 (수정 위주)
+
+| #   | 태스크                  | 파일                                         | 가이드                              | 상태 |
+|-----|-------------------------|----------------------------------------------|-------------------------------------|------|
+| 30c | 인제스트 오케스트레이터 | `src/pipeline.py` (수정) — full ingest pipeline (_ingest: read_file → detect_headers → score_sheets → auto_map_columns → cast_dataframe) + file_validator 5단계 검증 + Parquet 헤더 탐지 스킵 | [02-ingest](pre-plan/02-ingest.md) §36 | ✅ |
+| 30d | 미해결 이슈 UI 반영     | `data_uploader.py` 3단계 스테이지 머신(UPLOAD→REVIEW→PIPELINE) 재작성 + `mapping_review.py` 신규 — UI-1~4 구현 + 필수/권장 미매핑 사유 안내 | [07-dashboard](pre-plan/07-dashboard.md) §580-599 | ✅ |
+
+**완료 기준**: `streamlit run dashboard/app.py` → 4탭 정상 렌더링 + 슬라이더 변경 시 탐지 결과 갱신 + 프리셋 전환 + 예외 처리 저장/제외
 
 ---
 
@@ -127,18 +182,66 @@
 
 | 태스크                             | 파일                                                              | 가이드                                                               | 상태 |
 |------------------------------------|-------------------------------------------------------------------|----------------------------------------------------------------------|------|
-| approval.rs 한국식 전결규정 적용   | `tools/datasynth/crates/*/approval.rs, je_generator.rs, user.rs`  | [audit_domain_additional](audit_domain_additional.md) §4-4           | ✅   |
-| 증빙/컷오프/변경이력 컬럼 추가     | `tools/datasynth/crates/*/journal_entry.rs`                       | [audit_domain_additional](audit_domain_additional.md) §2-1,2-4,4-1   | ⬜   |
-| 전표번호 순차 생성                 | `tools/datasynth/crates/*/je_generator.rs`                        | [audit_domain_additional](audit_domain_additional.md) §2-2           | ⬜   |
-| IP 주소 생성                       | `tools/datasynth/crates/*/je_generator.rs`                        | [audit_domain_additional](audit_domain_additional.md) §4-2           | ⬜   |
-| datasynth.yaml approval 섹션      | `config/datasynth.yaml`                                           | [audit_domain_additional](audit_domain_additional.md) §4-4           | ✅   |
+| approval.rs 한국식 전결규정 적용   | `tools/datasynth/crates/*/approval.rs, je_generator.rs, user.rs`  | [DETECTION_RULES](DETECTION_RULES.md) §3.3                          | ✅   |
+| 증빙/컷오프/변경이력 컬럼 추가     | `tools/datasynth/crates/*/journal_entry.rs`                       | [DETECTION_RULES](DETECTION_RULES.md) §3.3                          | ⬜   |
+| 전표번호 순차 생성                 | `tools/datasynth/crates/*/je_generator.rs`                        | [DETECTION_RULES](DETECTION_RULES.md) §3.3                          | ⬜   |
+| IP 주소 생성                       | `tools/datasynth/crates/*/je_generator.rs`                        | [DETECTION_RULES](DETECTION_RULES.md) §3.3                          | ⬜   |
+| datasynth.yaml approval 섹션      | `config/datasynth.yaml`                                           | [DETECTION_RULES](DETECTION_RULES.md) §3.3                          | ✅   |
 | SuspenseAccountAbuse keyword 주입 | `tools/datasynth/` — 적요에 ~30% keyword 삽입                     | [03-feature](pre-plan/03-feature.md) §212                            | ⬜   |
 | Round number clamping 검증        | `tools/datasynth/` — 라운드 넘버 클램핑 로직 확인                  | [03-feature](pre-plan/03-feature.md) §154                            | ⬜   |
+| 다기간 시계열 데이터 생성 (2~3개년)  | `tools/datasynth/` — 복수 회계연도 생성                          | TrendBreak (#54) 선행 의존                                        | ⬜   |
 | 데이터 재생성 + 파이프라인 호환 확인 | `data/journal/primary/datasynth/`                                | 신규 컬럼 포함 데이터로 기존 파이프라인 호환 확인                     | ⬜   |
 
 ---
 
 ## Phase 2: Core AI (ML 모델 + 추가 탐지 유형)
+
+> **실행 순서**: Work Unit(WU) 단위로 관리. 의존 관계는 다이어그램 참조.
+> **크리티컬 패스**: WU-00 → WU-01 → WU-02 → WU-03 → WU-04
+
+```
+                         ┌──────────────┐
+                         │   WU-00 (S)  │  전처리 코드리뷰 수정
+                         │     ✅       │  + 데이터 분할 전략
+                         └──────┬───────┘
+                                │
+         ┌──────────────────────┼──────────────────────────────┐
+         │                      │                              │
+  ┌──────▼──────┐  ┌───────────▼───────────┐    ┌─────────────▼──────────────┐
+  │  WU-01 (L)  │  │ WU-05 (M) Duplicate   │    │ WU-06 (S) TimeSeries      │
+  │ Supervised  │  │ WU-07 (M) IC Match    │    │ WU-08 (M) Relational      │
+  │ Detector    │  │                        │    │ WU-09 (S) C01+Batch       │
+  └──────┬──────┘  └───────────┬───────────┘    │ WU-10 (S) EUR+Holiday     │
+         │                      │                │ WU-11 (S) Approval+Entropy│
+  ┌──────▼──────┐              │                │ WU-13 (M) TB 대사         │
+  │  WU-02 (M)  │              │                └────────────────────────────┘
+  │ VAE+IF      │              │                  (TIER 2/3 병렬)
+  └──────┬──────┘              │
+         │                      │
+         ▼                      │
+  ┌─────────────┐              │
+  │  WU-03 (M)  │◄─────────────┘
+  │ score_agg   │
+  │ 5-track     │
+  └──────┬──────┘
+         │
+  ┌──────▼──────┐   ┌──────────┐
+  │  WU-04 (M)  │──►│ WU-12(S) │
+  │ Pipeline    │   │ DuckDB   │
+  │ Integration │   │ ALTER    │
+  └──────┬──────┘   └──────────┘
+         │
+    ─────┼──── 외부 블로커 ─────
+         │
+    DataSynth Rust    Phase 1c
+    ┌────▼────┐      ┌────▼────┐
+    │WU-14 (M)│      │WU-17 (M)│
+    │WU-15 (M)│      │SHAP+    │
+    │WU-16 (L)│      │Tooltips │
+    └─────────┘      └─────────┘
+```
+
+**복잡도**: S = 1대화 소형 / M = 1대화 중형 / L = 1대화 대형
 
 ### Phase 2a: ML 전처리 파이프라인
 
@@ -155,65 +258,250 @@
 | 39  | 파이프라인 설명기           | `src/preprocessing/explainer.py`              | [03a-preprocessing](pre-plan/03a-preprocessing.md)  | ✅   |
 | 40  | 단위 테스트 (preprocessing) | `tests/test_preprocessing/` (62 tests passed) | 03a-preprocessing "테스트 전략"                     | ✅   |
 
-### Phase 2a 확장: 신규 컬럼 탐지 룰 (DataSynth 확장 컬럼 활용)
+### WU-00: 전처리 코드리뷰 수정 + 데이터 분할 전략 `[S]` ✅
 
-> [audit_domain_additional.md](audit_domain_additional.md) 기반. DataSynth 확장 완료 후 구현 가능.
+> 해소된 블로커: 데이터 분할 전략 결정 (D029), preprocessing 코드리뷰 미해결 5건
 
-| #   | 태스크                            | 파일                                          | 가이드                                                     | 상태 |
-|-----|-----------------------------------|-----------------------------------------------|------------------------------------------------------------|------|
-| 41  | 증빙 존재 확인 + 적격증빙 미수취  | `src/detection/` (신규 또는 fraud_layer 확장)  | [audit_domain_additional](audit_domain_additional.md) §2-1 | ⬜   |
-| 42  | 컷오프 검증 (납품일 vs 전기일)    | `src/detection/` (신규 또는 anomaly_layer 확장)| [audit_domain_additional](audit_domain_additional.md) §2-4 | ⬜   |
-| 43  | 증빙 금액 불일치 + 부가세 검증    | `src/detection/` (신규 또는 anomaly_layer 확장)| [audit_domain_additional](audit_domain_additional.md) §2-5 | ⬜   |
-| 44  | 전표 수정 이력 탐지               | `src/detection/` (신규)                        | [audit_domain_additional](audit_domain_additional.md) §4-1 | ⬜   |
-| 45  | IP 주소 비정상 접근 탐지          | `src/detection/` (신규)                        | [audit_domain_additional](audit_domain_additional.md) §4-2 | ⬜   |
-| 46  | 전표번호 연속성 갭 탐지           | `src/detection/` (신규)                        | [audit_domain_additional](audit_domain_additional.md) §2-2 | ⬜   |
-| 47  | 승인 프로세스·TOE 검증            | `src/detection/` (신규)                        | [audit_domain_additional](audit_domain_additional.md) §4-4,3-3 | ⬜ |
+| 태스크                               | 파일                                       | 상태 |
+|--------------------------------------|--------------------------------------------|------|
+| model_registry path traversal 방어   | `src/preprocessing/model_registry.py`      | ✅   |
+| model_registry 상대경로 → PROJECT_ROOT | `src/preprocessing/model_registry.py`    | ✅   |
+| vae_wrapper check_is_fitted 추가     | `src/preprocessing/vae_wrapper.py`         | ✅   |
+| label_strategy hybrid fallback warning | `src/preprocessing/label_strategy.py`    | ✅   |
+| cv_selector VAE n_jobs=1 강제        | `src/preprocessing/cv_selector.py`         | ✅   |
+| 데이터 분할 전략 문서화 (D029)       | `docs/DECISION.md`                         | ✅   |
 
-### Phase 2b: ML 탐지기
+### WU-01: SupervisedDetector `[L]` — #48
 
-> 🚫 **BLOCKER**: Phase 2b 착수 전 데이터 분할 전략 결정 필요
-> - train/val/test split 비율, holdout 정책, DataSynth vs 실무데이터 분할
-> - ref: `03a-preprocessing.md` §57, `05a-detection-ml.md` §12
+> **의존**: WU-00 ✅
+> XGBoost/RF/LR/LGBM GridSearchCV 지도학습 탐지기
+> **입력**: 18 피처 + 24 룰 결과 = 42차원. DataSynth GT 또는 pseudo-label 사용
+> **불균형 처리**: XGB→scale_pos_weight, RF→class_weight="balanced", LGBM→is_unbalance=True
+> **전이학습**: DataSynth 학습 모델 → 실무 데이터 보조 점수 (Phase 3에서 피드백 루프 재학습)
 
-> **pre-plan 참조**: Phase 2b 착수 시 확인할 교차 참조
-> - `05a-detection-ml.md` §654-665 (preprocessing 코드리뷰 미해결 6건: registry path traversal, VAE check_is_fitted, label_strategy hybrid fallback 등)
-> - `05-detection.md` §185 (C01 account-group별 Q3 확장)
-> - `05-detection.md` §369 (Phase 1 룰 결과 → pseudo-label로 활용)
-> - `06-db.md` §580 (ALTER TABLE 마이그레이션 — ML 피처 컬럼 추가)
+| #   | 태스크                  | 파일                                                               | 가이드                                           | 상태 |
+|-----|-------------------------|--------------------------------------------------------------------|--------------------------------------------------|------|
+| 48  | SupervisedDetector      | `src/detection/supervised_detector.py` (신규)                      | [05a-detection-ml](pre-plan/05a-detection-ml.md) §164 | ⬜ |
+|     | LightGBM 파이프라인 추가 | `src/preprocessing/pipeline_builder.py` (확장)                    | [03a-preprocessing](pre-plan/03a-preprocessing.md) | ⬜ |
+|     | SMOTE-ENN 선택적 적용    | train set only (data leakage 방지)                                 | [05a-detection-ml](pre-plan/05a-detection-ml.md) §200 | ⬜ |
+|     | 단위 테스트              | `tests/test_detection/test_supervised_detector.py` (신규)          | 05a-detection-ml "테스트 전략"                   | ⬜   |
 
-| #   | 태스크                             | 파일                                        | 가이드                                                         | 상태 |
-|-----|------------------------------------|---------------------------------------------|----------------------------------------------------------------|------|
-| 48  | SupervisedDetector                 | `src/detection/supervised_detector.py`      | [05a-detection-ml](pre-plan/05a-detection-ml.md)               | ⬜   |
-| 49  | VAEDetector + IF 앙상블            | `src/detection/vae_detector.py`             | [05a-detection-ml](pre-plan/05a-detection-ml.md)               | ⬜   |
-| 50  | score_aggregator 3→5트랙 확장      | `src/detection/score_aggregator.py` — A/B/C + supervised + unsupervised | [05-detection](pre-plan/05-detection.md) + 05a   | ⬜   |
-| 51  | L3 통계 검증                       | `src/validation/statistical_validator.py`   | [04-validation](pre-plan/04-validation.md)                     | ✅ (Phase 1a 선행 구현) |
-| 52  | SHAP 시각화                        | `dashboard/tab_explorer.py`                 | [07-dashboard](pre-plan/07-dashboard.md)                       | ⬜   |
-| 53  | 단위 테스트 (ML detection)         | `tests/test_detection/test_ml_*.py`         | [05a-detection-ml](pre-plan/05a-detection-ml.md)               | ⬜   |
-| 54  | TrendBreak (회계추정치 편의, ML 기반) | `src/detection/timeseries_detector.py`   | [05a-detection-ml](pre-plan/05a-detection-ml.md) §TrendBreak   | ⬜   |
-| 55  | 재무제표-장부 대사 (TB 교차검증)   | `src/validation/tb_reconciliation.py`       | [04-validation](pre-plan/04-validation.md) §재무제표-장부 대사 | ⬜   |
-| 56  | 배치 전표 이상 패턴                | `src/detection/` (anomaly_layer 확장)       | [05a-detection-ml](pre-plan/05a-detection-ml.md) §배치 전표    | ⬜   |
-| 57  | C01 account-group별 Q3 확장        | `src/detection/anomaly_layer.py` — 글로벌 Q3 → 계정그룹별 Q3 | [05-detection](pre-plan/05-detection.md) §185    | ⬜   |
+### WU-02: VAEDetector + IF 앙상블 `[M]` — #49
 
-### Phase 2c: 추가 탐지기 (별도 계획)
+> **의존**: WU-00 ✅
+> VAE + Isolation Forest 비지도 앙상블 탐지기
+> **실증 근거**: C09 recall=10% (1,039건 중 105건). 전수조사 결과 라벨 ~56%가 빈도 상위의 흔한 GL 조합.
+> 통계 룰(하위 1%)로는 "흔하지만 도메인상 비정상"인 조합을 구조적으로 탐지 불가.
+> VAE 잠재공간에서 정상 GL 조합 패턴을 학습하면 빈도와 무관하게 재구성 오차로 탐지 가능.
+> **아키텍처**: Basic FC — Input(n)→Hidden(64)→Hidden(32)→Latent(8)→Hidden(32)→Hidden(64)→Output(n)
+> **학습 데이터**: 검증모드=is_fraud=False only, 실전모드=전체(contamination tolerance <2%)
+> **Phase 3 교체**: vae_model.py를 BiLSTM+Attention으로 내부 교체 (wrapper 외부 인터페이스 유지)
 
-| #   | 태스크              | 파일                                    | 가이드                                     | 상태 |
-|-----|---------------------|-----------------------------------------|--------------------------------------------|------|
-| 58  | DuplicateDetector   | `src/detection/duplicate_detector.py`   | [05-detection](pre-plan/05-detection.md)   | ⬜   |
-| 59  | 시계열 분석 (Rule 기반) | `src/detection/timeseries_rule.py`  | [05-detection](pre-plan/05-detection.md)   | ⬜   |
-| 60  | 내부거래 매칭       | `src/detection/intercompany_matcher.py` | [05-detection](pre-plan/05-detection.md)   | ⬜   |
+| #   | 태스크                  | 파일                                                               | 가이드                                           | 상태 |
+|-----|-------------------------|--------------------------------------------------------------------|--------------------------------------------------|------|
+| 49  | VAEDetector + IF 앙상블  | `src/detection/vae_detector.py` (신규)                             | [05a-detection-ml](pre-plan/05a-detection-ml.md) §236 | ⬜ |
+|     | t-SNE/UMAP 잠재공간 시각화 | 학습 후 latent space 품질 검증 유틸리티                           | [05a-detection-ml](pre-plan/05a-detection-ml.md) §450 | ⬜ |
+|     | 단위 테스트              | `tests/test_detection/test_vae_detector.py` (신규)                 | 05a-detection-ml "테스트 전략"                   | ⬜   |
 
-### Phase 2 확장: 기존 모듈 고도화 (pre-plan 교차 참조)
+### WU-03: score_aggregator 5-track 확장 `[M]` — #50
 
-> Phase 2 범위 내에서 기존 모듈을 확장하는 태스크. Phase 2a/2b 완료 후 순차 진행.
+> **의존**: WU-01 + WU-02 + WU-05
+> 4트랙(A/B/C/Benford) → 5트랙(rule/supervised/unsupervised/benford/duplicate)
+> **정규화**: Percentile Ranking (분포 무관, 극단값 강건) — D024 참조
+> **가중치**: rule(0.20) + supervised(0.25) + vae(0.20) + benford(0.15) + duplicate(0.20) — 실측 후 튜닝
+> **스케일 통일**: XGB 0~1, IF -0.5~0.5, VAE 0~∞ → percentile 0~1로 변환 후 가중합
 
-| #   | 태스크                              | 파일                                          | 가이드                                              | 상태 |
-|-----|-------------------------------------|-----------------------------------------------|-----------------------------------------------------|------|
-| 61  | 유럽 금액 포맷 지원                 | `src/ingest/type_caster.py` — `1.234,56` 스타일 | [02-ingest](pre-plan/02-ingest.md) §374            | ⬜   |
-| 62  | 한국 공휴일 연동 (holidays.KR)      | `src/feature/time_features.py`                | [04-validation](pre-plan/04-validation.md) §128     | ⬜   |
-| 63  | approval_threshold 다단계 확장      | `src/feature/amount_features.py` — 단일 → 6단계 (10M~50B) | [03-feature](pre-plan/03-feature.md) §154 | ⬜   |
-| 64  | DuckDB ALTER TABLE 마이그레이션 (Phase 2 실행) | `src/db/schema.py` — ML 피처 컬럼 실제 추가 | [06-db](pre-plan/06-db.md) §580 | ⬜ |
-| 65  | 텍스트 정보량(Entropy) 분석         | `src/feature/text_features.py` — 적요 엔트로피·패턴 수학적 분석 | [03-feature](pre-plan/03-feature.md) §249 | ⬜   |
-| 66  | Dashboard ML 지표 설명 (툴팁)       | `dashboard/` — AUPRC, F2-score, DR@FAR=5% 설명 | [07-dashboard](pre-plan/07-dashboard.md) §607      | ⬜   |
+| #   | 태스크                    | 파일                                                | 가이드                                              | 상태 |
+|-----|---------------------------|-----------------------------------------------------|-----------------------------------------------------|------|
+| 50  | score_aggregator 5트랙    | `src/detection/score_aggregator.py`, `constants.py` | [05-detection](pre-plan/05-detection.md) + 05a      | ⬜   |
+|     | Percentile Ranking 정규화 추가 | 가중합 전 스케일 통일                              | [05a-detection-ml](pre-plan/05a-detection-ml.md) §329 | ⬜ |
+|     | 단위 테스트 갱신           | `tests/test_detection/test_score_aggregator.py`     | 05-detection "테스트 전략"                           | ⬜   |
+
+### WU-04: Pipeline 통합 + ML 통합 테스트 `[M]` — #53
+
+> **의존**: WU-03
+> pipeline.py에 ML 탐지기 연결 + E2E 테스트
+
+| #   | 태스크                         | 파일                                                    | 가이드                                | 상태 |
+|-----|--------------------------------|---------------------------------------------------------|-----------------------------------------|------|
+| 53  | ML Pipeline 통합               | `src/pipeline.py`, `config/settings.py`                 | 05-detection + 06-db 통합              | ⬜   |
+|     | ML 통합 테스트                  | `tests/test_detection/test_ml_integration.py` (신규)     | 05a-detection-ml "테스트 전략"        | ⬜   |
+|     | Hold-out fraud type 검증        | test set에서 미지 유형 2종 VAE 탐지율 검증               | [05a-detection-ml](pre-plan/05a-detection-ml.md) §450 | ⬜ |
+|     | Feature perturbation 강건성 테스트 | 노이즈 주입 후 VAE 반응 검증                           | [05a-detection-ml](pre-plan/05a-detection-ml.md) §450 | ⬜ |
+|     | 피처 병렬 실행 옵션             | `src/feature/engine.py` — concurrent.futures 스레드풀    | [03-feature](pre-plan/03-feature.md) §Engine | ⬜ |
+
+### WU-05: DuplicateDetector `[M]` — #58
+
+> **의존**: WU-00 ✅
+> Exact + Fuzzy 중복 전표 탐지
+> **실증 근거**: B05 recall=9% (134건 중 12건). 샘플 20건 중 18건(90%)이 exact match 쌍 부재.
+> 실무에서도 유사 금액 중복(100만→99.8만), 분할 거래(100만→50만+50만), 시차 중복을 잡으려면
+> fuzzy matching + 금액 합산 분석 + embedding similarity 필요.
+
+| #   | 태스크           | 파일                                              | 가이드                                   | 상태 |
+|-----|------------------|---------------------------------------------------|------------------------------------------|------|
+| 58  | DuplicateDetector | `src/detection/duplicate_detector.py` (신규)      | [05-detection](pre-plan/05-detection.md) | ⬜   |
+|     | 단위 테스트       | `tests/test_detection/test_duplicate_detector.py` (신규) | 05-detection "테스트 전략"          | ⬜   |
+
+### WU-06: 시계열 Rule-Based `[S]` — #59
+
+> **의존**: WU-00 ✅
+> TransactionBurst + UnusualFrequency
+
+| #   | 태스크                 | 파일                                          | 가이드                                   | 상태 |
+|-----|------------------------|-----------------------------------------------|------------------------------------------|------|
+| 59  | 시계열 Rule-Based      | `src/detection/timeseries_rule.py` (신규)     | [05-detection](pre-plan/05-detection.md) | ⬜   |
+|     | 단위 테스트             | `tests/test_detection/test_timeseries_rule.py` (신규) | 05-detection "테스트 전략"          | ⬜   |
+
+### WU-07: 내부거래 매칭 `[M]` — #60, #60c
+
+> **의존**: WU-00 ✅
+> IC 전표 대응 거래 매칭 + UnmatchedIntercompany
+
+| #   | 태스크                      | 파일                                                | 가이드                                   | 상태 |
+|-----|-----------------------------|-----------------------------------------------------|------------------------------------------|------|
+| 60  | 내부거래 매칭               | `src/detection/intercompany_matcher.py` (신규)      | [05-detection](pre-plan/05-detection.md) | ⬜   |
+| 60c | UnmatchedIntercompany       | (위 파일 내 포함)                                    | [05-detection](pre-plan/05-detection.md) | ⬜   |
+|     | 단위 테스트                  | `tests/test_detection/test_intercompany_matcher.py` (신규) | 05-detection "테스트 전략"          | ⬜   |
+
+### WU-08: Relational 탐지기 `[M]` — #60a, #60b, #60d, #60e
+
+> **의존**: WU-00 ✅
+> NewCounterparty / DormantAccount / TransferPricing / MissingRelationship
+
+| #   | 태스크                     | 파일                                             | 가이드                                   | 상태 |
+|-----|----------------------------|--------------------------------------------------|------------------------------------------|------|
+| 60a | NewCounterparty            | `src/detection/relational_detector.py` (신규)    | [05-detection](pre-plan/05-detection.md) | ⬜   |
+| 60b | DormantAccountActivity     | (위 파일 내 포함)                                 | [05-detection](pre-plan/05-detection.md) | ⬜   |
+| 60d | TransferPricingAnomaly     | (위 파일 내 포함)                                 | [05-detection](pre-plan/05-detection.md) | ⬜   |
+| 60e | MissingRelationship        | (위 파일 내 포함)                                 | [05-detection](pre-plan/05-detection.md) | ⬜   |
+|     | 단위 테스트                 | `tests/test_detection/test_relational_detector.py` (신규) | 05-detection "테스트 전략"          | ⬜   |
+
+### WU-09: C01 Q3 확장 + 배치 패턴 + 경고 하드코딩 제거 `[S]` — #56, #57
+
+> **의존**: 없음 (기존 모듈 개선)
+
+| #   | 태스크                              | 파일                                        | 가이드                                                       | 상태 |
+|-----|-------------------------------------|---------------------------------------------|--------------------------------------------------------------|------|
+| 57  | C01 계정그룹별 Q3 확장              | `src/detection/anomaly_rules_simple.py`     | [05-detection](pre-plan/05-detection.md) §185                | ⬜   |
+| 56  | 배치 전표 이상 패턴                 | `src/detection/anomaly_layer.py` (확장)     | [05a-detection-ml](pre-plan/05a-detection-ml.md) §배치 전표  | ⬜   |
+|     | `_generate_warnings` 하드코딩 제거  | `src/detection/` — "A02 rule" 문자열 → `constants.py` 참조 | [05-detection](pre-plan/05-detection.md) §1293 | ⬜ |
+
+### WU-10: 유럽 금액 포맷 + 한국 공휴일 + 외화 소수점 `[S]` — #61, #62
+
+> **의존**: 없음. 패키지 추가: `holidays`
+
+| #   | 태스크                          | 파일                                        | 가이드                                                | 상태 |
+|-----|---------------------------------|---------------------------------------------|-------------------------------------------------------|------|
+| 61  | 유럽 금액 포맷 지원             | `src/ingest/type_caster.py`                 | [02-ingest](pre-plan/02-ingest.md) §374              | ⬜   |
+| 62  | 한국 공휴일 연동                | `src/feature/time_features.py`              | [04-validation](pre-plan/04-validation.md) §128      | ⬜   |
+|     | 외화 소수점 처리 (is_round_number) | `src/feature/amount_features.py`          | [03-feature](pre-plan/03-feature.md) §537            | ⬜   |
+|     | currency_decimals YAML 설정     | `config/audit_rules.yaml` — KRW:0, USD:2, EUR:2, JPY:0 | [03-feature](pre-plan/03-feature.md) §537 | ⬜ |
+
+### WU-11: 다단계 승인한도 + 피처 고도화 `[M]` — #63, #65
+
+> **의존**: 없음
+> pre-plan 03-feature에서 이관된 Phase 2 피처 개선 항목 포함
+
+| #   | 태스크                             | 파일                                | 가이드                                          | 상태 |
+|-----|------------------------------------|-------------------------------------|-------------------------------------------------|------|
+| 63  | approval_threshold 6단계           | `src/feature/amount_features.py`    | [03-feature](pre-plan/03-feature.md) §154      | ⬜   |
+| 65  | description_quality 3단계 고도화   | `src/feature/text_features.py` — regex패턴 + TTR(어휘다양성) + Shannon entropy | [03-feature](pre-plan/03-feature.md) §541-601 | ⬜ |
+|     | Z-score CoA 상위계정 fallback      | `src/feature/amount_features.py` — n<30 소그룹 → 자산/부채/수익/비용 상위그룹 | [03-feature](pre-plan/03-feature.md) §536 | ⬜ |
+|     | is_suspense_account 대상 컬럼 확장 | `src/feature/pattern_features.py` — `gl_account_name` 추가 | [03-feature](pre-plan/03-feature.md) §538 | ⬜ |
+
+### WU-12: DuckDB ALTER TABLE 마이그레이션 `[S]` — #64
+
+> **의존**: WU-03 (ML 컬럼 확정 후)
+
+| #   | 태스크                        | 파일                          | 가이드                                 | 상태 |
+|-----|-------------------------------|-------------------------------|----------------------------------------|------|
+| 64  | DuckDB ALTER TABLE (ML 컬럼)  | `src/db/schema.py`           | [06-db](pre-plan/06-db.md) §580      | ⬜   |
+
+### WU-13: 재무제표-장부 대사 `[M]` — #55
+
+> **의존**: 없음
+
+| #   | 태스크                    | 파일                                                              | 가이드                                                         | 상태 |
+|-----|---------------------------|-------------------------------------------------------------------|----------------------------------------------------------------|------|
+| 55  | TB 교차검증               | `src/validation/tb_reconciliation.py` (신규)                      | [04-validation](pre-plan/04-validation.md) §재무제표-장부 대사 | ⬜   |
+|     | Trial Balance DuckDB 테이블 DDL | `src/db/schema.py` — PK(batch_id, account_code, fiscal_period) | [06-db](pre-plan/06-db.md) §1238                              | ⬜   |
+|     | 단위 테스트                | `tests/test_validation/test_tb_reconciliation.py` (신규)          | 04-validation "테스트 전략"                                    | ⬜   |
+
+### WU-14: 증빙/컷오프/금액 탐지 `[M]` — #41, #42, #43
+
+> 🚫 **BLOCKER**: DataSynth Rust 확장 완료 후 (증빙/컷오프 컬럼)
+
+| #   | 태스크                          | 파일                                       | 가이드                                     | 상태 |
+|-----|---------------------------------|--------------------------------------------|--------------------------------------------|------|
+| 41  | 증빙 존재 확인 + 적격증빙       | `src/detection/evidence_rules.py` (신규)   | [DETECTION_RULES](DETECTION_RULES.md) §3.3 | ⬜   |
+| 42  | 컷오프 검증 (납품일 vs 전기일)  | (위 파일 내 포함)                           | [DETECTION_RULES](DETECTION_RULES.md) §3.3 | ⬜   |
+| 43  | 증빙 금액 불일치 + 부가세 검증  | (위 파일 내 포함)                           | [DETECTION_RULES](DETECTION_RULES.md) §3.3 | ⬜   |
+
+### WU-15: 수정이력/IP/전표번호/승인 탐지 `[M]` — #44, #45, #46, #47
+
+> 🚫 **BLOCKER**: DataSynth Rust 확장 완료 후 (이력/IP/순번 컬럼)
+
+| #   | 태스크                 | 파일                                            | 가이드                                     | 상태 |
+|-----|------------------------|-------------------------------------------------|--------------------------------------------|------|
+| 44  | 전표 수정 이력 탐지    | `src/detection/access_audit_rules.py` (신규)    | [DETECTION_RULES](DETECTION_RULES.md) §3.3 | ⬜   |
+| 45  | IP 비정상 접근 탐지    | (위 파일 내 포함)                                | [DETECTION_RULES](DETECTION_RULES.md) §3.3 | ⬜   |
+| 46  | 전표번호 연속성 갭     | (위 파일 내 포함)                                | [DETECTION_RULES](DETECTION_RULES.md) §3.3 | ⬜   |
+| 47  | 승인 프로세스·TOE 검증 | (위 파일 내 포함)                                | [DETECTION_RULES](DETECTION_RULES.md) §3.3 | ⬜   |
+
+### WU-16: TrendBreak ML `[L]` — #54
+
+> 🚫 **BLOCKER**: DataSynth 다기간(2~3개년) 데이터 생성 완료 후
+
+| #   | 태스크                     | 파일                                          | 가이드                                                                              | 상태 |
+|-----|----------------------------|-----------------------------------------------|--------------------------------------------------------------------------------------|------|
+| 54  | TrendBreak (회계추정치 편의) | `src/detection/timeseries_detector.py` (신규) | [05a-detection-ml](pre-plan/05a-detection-ml.md) §TrendBreak                        | ⬜   |
+
+### WU-17: SHAP 시각화 + ML 툴팁 `[M]` — #52, #66
+
+> 🚫 **BLOCKER**: Phase 1c 대시보드 + WU-01 완료 후
+
+| #   | 태스크                    | 파일                                            | 가이드                                        | 상태 |
+|-----|---------------------------|-------------------------------------------------|-----------------------------------------------|------|
+| 52  | SHAP 시각화               | `dashboard/tab_explorer.py` (확장)              | [07-dashboard](pre-plan/07-dashboard.md)      | ⬜   |
+| 66  | ML 지표 설명 (툴팁)       | `dashboard/components/ml_tooltips.py` (신규)    | [07-dashboard](pre-plan/07-dashboard.md) §607 | ⬜   |
+
+### 추천 실행 순서 (Sprint 단위)
+
+| Sprint | Work Unit                      | 복잡도    | 비고                      |
+|--------|--------------------------------|-----------|---------------------------|
+| **1**  | WU-00                          | S         | ✅ 완료                   |
+| **2**  | WU-01, WU-05, WU-06, WU-09, WU-10 | L+M+S+S+S | 크리티컬패스 + 병렬 4건 |
+| **3**  | WU-02, WU-07, WU-11, WU-13    | M+M+S+M  | 크리티컬패스 + 병렬 3건  |
+| **4**  | WU-03, WU-08                   | M+M      | score_agg 확장 + 병렬    |
+| **5**  | WU-04, WU-12                   | M+S      | Pipeline 통합 + DB 마이그 |
+| **6**  | WU-14, WU-15, WU-16           | M+M+L    | DataSynth 블로커 해소 후  |
+| **7**  | WU-17                          | M        | Phase 1c 블로커 해소 후   |
+
+**Phase 2 완료 기준**: ML Pipeline E2E 동작 + 5-track 점수 집계 + DuckDB ML 컬럼 적재 + 추가 탐지기 8종 동작
+
+> **DETECTION_RULES §3.2 유형→모듈 매핑** (모듈별 관리, 16개 유형 커버):
+>
+> | 모듈 (WU)                    | 커버 유형                                                                                       |
+> |------------------------------|-------------------------------------------------------------------------------------------------|
+> | SupervisedDetector (WU-01)   | ImproperCapitalization, FictitiousVendor, RoundDollarManipulation, MisclassifiedAccount, FutureDatedEntry, CurrencyError (6개) |
+> | VAEDetector + IF (WU-02)     | FictitiousEntry, ReversedAmount, TransposedDigits, StatisticalOutlier, **UnusualAccountPair** (5개) |
+> | DuplicateDetector (WU-05)    | ExactDuplicateAmount (1개)                                                                      |
+> | 시계열 분석 (WU-06)          | TransactionBurst, UnusualFrequency (2개)                                                        |
+> | 내부거래 매칭 (WU-07)        | UnmatchedIntercompany (1개)                                                                     |
+> | Relational (WU-08)           | NewCounterparty, DormantAccountActivity (2개)                                                   |
+>
+> **실증 근거 (2026-03-28 E2E 전수조사, v7)**:
+>
+> | 룰   | Recall | 라벨 | TP  | 룰 한계                                            | ML/DL 보완 전략                    | Phase |
+> |------|-------:|-----:|----:|-----------------------------------------------------|-------------------------------------|:------|
+> | B05  |     9% |  134 |  12 | exact match만 → 유사 금액·분할 거래 미탐            | DuplicateDetector (fuzzy+split+embedding) | 2 (WU-05) |
+> | B10  |     7% |  643 |  48 | 2-hop만, 640건 trading_partner NULL, cycle 0건      | GraphDetector DFS/BFS N-hop         | 3 (#72) |
+> | C09  |    10% | 1039 | 105 | 빈도 기반만 → 흔하지만 도메인상 이상한 조합 미탐(~56%) | VAE/GNN 잠재공간 학습               | 2 (WU-02) |
+> | C07  |    34% |  154 |  53 | 행 단위 탐지 vs 문서 단위 라벨 기준 불일치           | 문서 단위 집계 로직 개선 (Phase 2)  | 2 (WU-09) |
+>
+> B05/C09는 "규칙으로 정의할 수 없는 패턴"이므로 ML 필수.
+> B10은 그래프 알고리즘 필수. C07은 집계 단위 통일로 개선 가능.
 
 ---
 
@@ -233,7 +521,7 @@
 | 69  | SQL 검증                            | `src/llm/sql_validator.py`                    | [08-llm](pre-plan/08-llm.md)                              | ⬜   |
 | 70  | 감사 프리셋 6종                     | `src/llm/prompt_presets.py`                   | [08-llm](pre-plan/08-llm.md)                              | ⬜   |
 | 71  | 적요 NLP                            | `src/detection/nlp_analyzer.py`               | [05-detection](pre-plan/05-detection.md)                   | ⬜   |
-| 72  | 그래프 순환 탐지                    | `src/detection/graph_detector.py`             | [05-detection](pre-plan/05-detection.md)                   | ⬜   |
+| 72  | 그래프 순환 탐지                    | `src/detection/graph_detector.py` — CircularTransaction + CentralityAnomaly (Relational 2유형). **실증(v7)**: B10 recall=7% (643건 중 48건), 640건 trading_partner NULL, cycle 0건 → N-hop DFS/BFS 필수 | [05-detection](pre-plan/05-detection.md) | ⬜   |
 | 73  | Chat UI 탭                          | `dashboard/tab_chat.py`                       | [07-dashboard](pre-plan/07-dashboard.md)                   | ⬜   |
 | 74  | Export 탭                           | `dashboard/tab_export.py`                     | [07-dashboard](pre-plan/07-dashboard.md)                   | ⬜   |
 | 75  | 감사조서 Excel/PDF                  | `src/export/`                                 | [09-export](pre-plan/09-export.md)                         | ⬜   |
@@ -242,7 +530,7 @@
 | 78  | 인사이트 생성                       | `src/llm/insight_generator.py`                | [08-llm](pre-plan/08-llm.md)                              | ⬜   |
 | 79  | 경제적 실질 판단 (NLP)              | `src/detection/nlp_analyzer.py` (확장)        | [08-llm](pre-plan/08-llm.md) §경제적 실질                  | ⬜   |
 | 80  | 유의적 거래 합리성 평가 (LLM)       | `src/llm/insight_generator.py` (확장)         | [08-llm](pre-plan/08-llm.md) §유의적 거래                  | ⬜   |
-| 81  | TransferPricingAnomaly (이전가격)    | `src/detection/graph_detector.py` (확장)      | [AUDIT_DOMAIN_FINAL](AUDIT_DOMAIN_FINAL.md) §4.4          | ⬜   |
+| 81  | TransferPricingAnomaly (이전가격)    | `src/detection/graph_detector.py` (확장)      | [DETECTION_RULES](DETECTION_RULES.md) §4.4                 | ⬜   |
 | 82  | LLM 기반 헤더 탐지 고도화           | `src/ingest/header_detector.py` (확장)        | [02-ingest](pre-plan/02-ingest.md) §848                    | ⬜   |
 | 83  | LLM 전처리 제안 모듈                | `src/llm/` — EDAProfile → 전처리 전략 추천    | [03a-preprocessing](pre-plan/03a-preprocessing.md) §47     | ⬜   |
 | 84  | kiwipiepy 형태소 분석               | `src/feature/text_features.py` (확장)         | [03-feature](pre-plan/03-feature.md) §287                  | ⬜   |

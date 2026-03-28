@@ -36,7 +36,11 @@ local-ai-assist/
 │   ├── datasynth.yaml          # DataSynth 생성 설정 (seed, 회사, fraud 비율)
 │   ├── schema.yaml             # 표준 컬럼 스키마 (DataSynth 출력 기준)
 │   ├── keywords.yaml           # ERP별 헤더 키워드
-│   └── risk_keywords.yaml      # 감사 위험 적요 키워드
+│   ├── risk_keywords.yaml      # 감사 위험 적요 키워드
+│   └── presets/                # 환경 프리셋 (산업별/시즌별 임계값 세트)
+│       ├── default.yaml        # 평시 모드
+│       ├── closing.yaml        # 결산기 모드
+│       └── construction.yaml   # 건설업 모드
 ├── src/
 │   ├── pipeline.py             # 전체 오케스트레이터
 │   ├── ingest/                 # 수집·평탄화
@@ -49,16 +53,33 @@ local-ai-assist/
 │   ├── llm/                    # LLM 연동 (Phase 3)
 │   └── export/                 # 내보내기 (Phase 3)
 ├── dashboard/                  # Streamlit
-│   ├── app.py
-│   ├── tab_summary.py          # Tab 1: Executive Summary
-│   ├── tab_benford.py          # Tab 2: Benford Analysis
-│   ├── tab_explorer.py         # Tab 3: Anomaly Explorer
-│   ├── tab_chat.py             # Tab 4: Text-to-SQL (Phase 3)
-│   ├── tab_export.py           # Tab 5: Export (Phase 3)
+│   ├── __init__.py
+│   ├── _state.py               # session_state 키 상수 + FilterState + init_state()
+│   ├── _kpi.py                 # KPI 6개 + 데이터 품질 계산 (순수 pandas)
+│   ├── app.py                  # 메인 앱 (WU6) ✅
+│   ├── tab_eda.py              # Tab 0: EDA 프로파일 (WU6) ✅
+│   ├── tab_summary.py          # Tab 1: Executive Summary (WU2) ✅
+│   ├── tab_benford.py          # Tab 2: Benford Analysis (WU3) ✅
+│   ├── tab_explorer.py         # Tab 3: Anomaly Explorer (WU4) ✅
+│   ├── tab_chat.py             # Tab 5: Text-to-SQL (Phase 3)
+│   ├── tab_export.py           # Tab 6: Export (Phase 3)
 │   └── components/
+│       ├── data_uploader.py    # 파일 업로드 + 파이프라인 실행
+│       ├── filters.py          # 사이드바 필터 12개 + apply_filters
+│       ├── preset_selector.py  # 환경 프리셋 드롭다운 (WU5)
+│       ├── threshold_sidebar.py # 임계값 튜닝 슬라이더 23개 (WU5)
+│       ├── rule_panel.py       # 룰 컨트롤 패널 — 가중치/임계값/토글 (WU5)
+│       ├── _redetect.py        # 설정 변경 후 재탐지 헬퍼 + 적용 버튼 (WU5)
+│       ├── mapping_review.py   # 매핑 리뷰 3-tier UI (WU7) — UI-1~4 + 필수/권장 미매핑 안내
+│       ├── explorer_grid.py    # AgGrid 27컬럼 + JsCode 조건부 서식
+│       ├── explorer_detail.py  # 행 상세 패널 (룰 점수 차트 + 라인아이템)
+│       ├── explorer_whitelist.py # HITL 예외 처리 (whitelist CRUD + 메모리 동기화)
+│       └── charts/             # Plotly 차트 래퍼 17종 (8모듈)
+├── .streamlit/
+│   └── config.toml             # maxUploadSize/maxMessageSize 1GB
 ├── tests/
 ├── data/journal/               # 전표 데이터 (.gitignore)
-│   ├── primary/datasynth/     # 메인: EY-ASU 합성 전표 (1,106K건)
+│   ├── primary/datasynth/     # 메인: EY-ASU 합성 전표 (1,105K건)
 │   └── validation/            # 검증: sap-merged, schreyer-fraud, bpi2019 등
 ├── tools/datasynth/            # EY-ASU DataSynth (Rust, 합성 전표 생성기)
 └── docs/
@@ -107,28 +128,32 @@ EY-ASU DataSynth(Rust)로 생성한 K-IFRS 적용 한국 중견 제조 그룹사
 |----------------|-------------------------------------------------------|
 | 법인           | C001 본사(서울), C002 울산공장, C003 천안공장 — 전체 KRW |
 | 회계연도       | 2022-01 ~ 2022-12                                     |
-| 전표 규모      | 106,489건 / 1,106,356 라인아이템                      |
+| 전표 규모      | 106,489건 / 1,104,914 라인아이템                      |
 | 금액 분포      | LogNormal(14.0, 2.5) — 중앙값 ~120만원                |
 | 승인 한도      | 6단계 전결규정 (자동→담당자→팀장→본부장→CFO→이사회)    |
-| 사용자 풀      | 152명 (5개 페르소나), SoD 위반 1%                     |
+| 사용자 풀      | 152명 (5개 페르소나), SoD 위반 11.7%                  |
 | 시간 패턴      | 한국 근무 문화 반영 (심야 0.02, 오전 피크 1.8, 야근 0.3) |
-| 이상 주입      | fraud 2% + error 2% + process 1%, 8가지 부정 유형     |
+| 이상 주입      | fraud 2% + error 2% + process 1%, 16가지 부정 유형    |
 | Benford        | 첫째 자릿수 적합 (tolerance 5%, payroll/recurring 제외) |
 
 ## 데이터 흐름
 
 ```
-DataSynth (tools/datasynth/) → config/datasynth.yaml → journal_entries.csv (1,106K건)
+DataSynth (tools/datasynth/) → config/datasynth.yaml → journal_entries.csv (1,105K건)
   ↓
 Excel/CSV → file_validator → excel_reader → header_detector → column_mapper → type_caster
   ↑ UX 1단계: 자동 헤더/매핑 + 애매한 부분 사용자 위임 + 판단 근거 투명 노출 (ReviewItem)
   → 표준 DataFrame → feature/engine (감사 파생변수 18개)
   → eda/profiler (EDAProfile JSON) → eda/report (대시보드 요약)
   ↑ UX 2단계: 감사 룰 조종석(Control Panel) + 파생변수 자동 생성 + audit_rules 프로파일 저장
-  → validation (3-Level) → detection (3-Layer: A무결성 3개 + B부정 11개 + C징후 10개, 24개 룰)
+  → validation (3-Level: L1 구조 게이트 + L2 회계 경고)
+  → detection (3-Layer: A무결성 3개 + B부정 11개 + C징후 10개, 24개 룰)
+  → score_aggregator (가중합 + risk_level 분류 + B19 Top-side JE)
+  ↑ 오케스트레이터: src/pipeline.py — AuditPipeline.run(path) 단일 진입점
+  → DuckDB (4테이블 + 1VIEW 원자적 적재)
   → preprocessing (Phase 2: pipeline_builder → cv_selector → 최적 모델 자동 선택)
     → ML 탐지 (XGBoost 이상치 + VAE+IF 특이치)
-    → score_aggregator → DuckDB → 프리셋 SQL / Text-to-SQL (Phase 3)
+    → 프리셋 SQL / Text-to-SQL (Phase 3)
       → Streamlit 대시보드
   ↑ UX 3단계: EDA 프로파일링 + 전처리 투명성 (Phase 1a EDA + Phase 2 ML Pipeline)
 

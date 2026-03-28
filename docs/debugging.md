@@ -142,3 +142,50 @@ uv run pytest tests/test_feature/ tests/test_detection/ -v
 **해결**: 벌크 커밋 그대로 유지. 머지 시 충돌은 ours(최신본) 기준으로 해결. 파일 손실 없음 확인 완료. 이후 feature 브랜치 전부 삭제하고 develop+main 2-branch 체제로 전환.
 
 **교훈**: 1인 프로젝트에서 phase별 feature 브랜치는 오버엔지니어링. 작업이 phase 간 교차되면 브랜치 전환 시 미커밋 변경 분실 위험이 높아진다. 단순한 브랜치 전략(develop+main)이 안전하다.
+
+---
+
+### Phase 1c WU1: 대시보드 기반 컴포넌트 구현 시 교훈 (2026-03-27)
+
+**1. tempfile 디스크 I/O 불필요**
+- 증상: `st.file_uploader` → tempfile 저장 → `pipeline.run(path)` 방식은 디스크 I/O + 임시 파일 관리 부담
+- 해결: UploadedFile은 file-like object이므로 `pd.read_csv(uploaded)` 직접 읽기 + `run_from_dataframe()` 호출
+- 교훈: Streamlit UploadedFile의 인터페이스를 먼저 확인할 것
+
+**2. flagged_rules CSV 필터 성능**
+- 증상: `.apply(lambda s: set(s.split(",")) & target)` 방식은 1M행에서 Python 루프 오버헤드
+- 해결: `str.contains("|".join(codes), regex=True)` 벡터화 매칭으로 ~10× 성능 개선
+- 교훈: pandas에서 행 단위 `.apply()`는 최후 수단. 벡터화 연산 우선 검토
+
+**3. 산점도 이상치 탈락**
+- 증상: `df.sample(5000)` 단순 랜덤 샘플링 시 High/Medium 이상치가 무작위 탈락
+- 해결: `_priority_sample()` — High/Medium 전수 보존, Normal 위주 다운샘플링
+- 교훈: 감사 데이터 시각화에서 이상치는 핵심 관심 대상. 샘플링 시 도메인 우선순위 반영 필수
+
+---
+
+### Phase 1c WU7: 인제스트 오케스트레이터 + 미해결 이슈 UI 반영 (2026-03-28)
+
+**1. ModuleNotFoundError: No module named 'dashboard'**
+- 증상: `streamlit run dashboard/app.py` 실행 시 dashboard 패키지 import 실패
+- 원인: Streamlit이 실행 파일의 상위 디렉토리를 sys.path에 자동 추가하지 않음
+- 해결: `sys.path` 에 프로젝트 루트 경로 명시 추가
+- 교훈: Streamlit 앱을 서브디렉토리에 배치할 경우 sys.path 설정 필수
+
+**2. AxiosError: Network Error (Streamlit 대용량 업로드)**
+- 증상: 50MB 이상 파일 업로드 시 브라우저에서 AxiosError 발생, 서버 응답 없음
+- 원인: Streamlit 기본 `maxMessageSize`(200MB)가 server↔browser 통신 제한. 대용량 DataFrame 직렬화 시 초과
+- 해결: `.streamlit/config.toml`에 `maxUploadSize=1024`, `maxMessageSize=1024` 설정
+- 교훈: `maxUploadSize`만으로는 부족. `maxMessageSize`도 함께 올려야 대용량 파일 파이프라인이 정상 동작
+
+**3. utf-8 codec error (인코딩 폴백)**
+- 증상: CP949/EUC-KR 인코딩 파일 업로드 시 `UnicodeDecodeError: 'utf-8' codec can't decode`
+- 원인: 인코딩 자동 감지 실패 시 기본 utf-8로 읽기 시도
+- 해결: UI-1 인코딩 드롭다운 구현 — confidence < 0.7 시 사용자에게 인코딩 선택 selectbox 노출 + 선택 값으로 파일 재읽기
+- 교훈: 한국 ERP 덤프는 CP949/EUC-KR 비율이 높으므로 인코딩 수동 오버라이드는 필수 UI
+
+**4. 탐색기 탭 브라우저 멈춤 (대용량 DataFrame)**
+- 증상: 1M행 DataFrame을 AgGrid에 직접 전달 시 브라우저 탭 무응답
+- 원인: AgGrid가 전체 행을 브라우저 메모리에 로드 시도
+- 해결: `explorer_grid.py`에서 10K행 제한 적용 (필터 후 상위 10,000건만 표시)
+- 교훈: 브라우저 기반 그리드 컴포넌트는 10K행 이하로 제한해야 안정적 렌더링 가능

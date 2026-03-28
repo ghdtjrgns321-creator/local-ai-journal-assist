@@ -20,8 +20,8 @@
 | 통화              | KRW (단일)                                  |
 | 회계연도          | 2022년 1~12월                               |
 | 전표 건수         | 106,489건                                   |
-| 라인아이템        | 1,106,356건                                 |
-| GL 계정           | 430개                                       |
+| 라인아이템        | 1,104,914건                                 |
+| GL 계정           | 402개                                       |
 | 사용자            | 152명 (5개 페르소나)                        |
 | 컬럼              | 39개 (Header 24 + Line 15)                  |
 | 파일 크기         | 319 MB (CSV)                                |
@@ -201,7 +201,7 @@
 
 ### 1.5 계정과목 체계
 
-총 430개 GL 계정. K-IFRS / SAP 한국 표준 구조 기반.
+총 402개 GL 계정. K-IFRS / SAP 한국 표준 구조 기반.
 
 ```
 자산       1000~1999    현금(1000~1030), 채권(1100~1160), 재고(1200), 자산(1500~1600)
@@ -271,18 +271,19 @@ O2C           → R2R                      매출 → GL 정산
 
 #### SoD 위반 — 감사 탐지 대상
 
-위반율: 1,080건 / 106,489건 = 1.0%
+위반율: 12,419건 / 106,489건 = 11.7%
 
-**SoD 충돌 유형별 건수 (실측):**
+**SoD 충돌 유형별 건수 (실측, 전표 기준):**
 
-| 충돌 유형              | 건수 | 설명                            |
-|------------------------|------|---------------------------------|
-| preparer_approver      | 531  | 전표 작성자 = 승인자 (자기승인) |
-| requester_approver     | 165  | 요청자 = 승인자                 |
-| payment_releaser       | 120  | 지급 실행과 승인 겸직           |
-| reconciler_poster      | 92   | 대사자 = 전기자                 |
-| journal_entry_poster   | 86   | JE 작성과 승인 겸직             |
-| master_data_maintainer | 83   | 마스터 관리와 거래 실행 겸직    |
+| 충돌 유형              | 건수   | 설명                            |
+|------------------------|--------|---------------------------------|
+| preparer_approver      | 10,842 | 전표 작성자 = 승인자 (자기승인) |
+| system_access_conflict | 1,040  | 시스템 접근 권한 충돌           |
+| requester_approver     | 175    | 요청자 = 승인자                 |
+| payment_releaser       | 140    | 지급 실행과 승인 겸직           |
+| journal_entry_poster   | 74     | JE 작성과 승인 겸직             |
+| master_data_maintainer | 72     | 마스터 관리와 거래 실행 겸직    |
+| reconciler_poster      | 71     | 대사자 = 전기자                 |
 
 **비현실적 겸직 쌍 (Senior 이상, 7% 배정) — 탐지 대상:**
 
@@ -365,42 +366,45 @@ midnight           22:00~23:59     0.05       0.8%     ← 심야 (고위험)
 
 | 카테고리 | 전표 건수 | 비율 | 설명             |
 |----------|----------|------|------------------|
-| 이상징후 | 7,959    | 7.5% | 총 이상 전표     |
-| 부정     | 2,008    | 1.9% | 의도적 부정 전표 |
-| SoD 위반 | 1,080    | 1.0% | 직무분리 위반    |
+| 이상징후 | 8,001    | 7.5% | 총 이상 전표     |
+| 부정     | 2,046    | 1.9% | 의도적 부정 전표 |
+| SoD 위반 | 12,419   | 11.7%| 직무분리 위반    |
 
-#### 부정 유형별 건수 (실측)
+#### 부정 유형별 건수 (실측, 전표 기준)
 
 | 유형                         | 건수 | 비율  | 대응 탐지 룰       |
 |------------------------------|------|-------|---------------------|
-| DuplicatePayment             | 385  | 19.2% | B04 중복 지급       |
-| FictitiousTransaction        | 370  | 18.4% | B03 가공 거래       |
-| RevenueManipulation          | 314  | 15.6% | B01 수익 조작       |
-| SplitTransaction             | 282  | 14.0% | B02 분할 승인회피   |
-| TimingAnomaly                | 173  | 8.6%  | C04 소급 전기       |
-| UnauthorizedAccess           | 168  | 8.4%  | B06~B09 통제 위반   |
-| SuspenseAccountAbuse         | 102  | 5.1%  | C10 가수금 장기체류 |
-| ExpenseCapitalization        | 90   | 4.5%  | B11 비용 자산화     |
-| RoundDollarManipulation      | 26   | 1.3%  | C07 Benford 위반    |
-| ExceededApprovalLimit        | 23   | 1.1%  | B03 승인한도 초과   |
-| JustBelowThreshold           | 22   | 1.1%  | B02 임계값 직하     |
-| SelfApproval                 | 21   | 1.0%  | B06 자기승인        |
-| SegregationOfDutiesViolation | 12   | 0.6%  | B07 SoD 위반        |
+| DuplicatePayment             | 397  | 19.4% | B04 중복 지급       |
+| FictitiousTransaction        | 351  | 17.2% | B03 가공 거래       |
+| RevenueManipulation          | 299  | 14.6% | B01 수익 조작       |
+| SplitTransaction             | 294  | 14.4% | B02 분할 승인회피   |
+| TimingAnomaly                | 196  | 9.6%  | C04 소급 전기       |
+| UnauthorizedAccess           | 178  | 8.7%  | B06~B09 통제 위반   |
+| ExpenseCapitalization        | 105  | 5.1%  | B11 비용 자산화     |
+| SuspenseAccountAbuse         | 100  | 4.9%  | C10 가수금 장기체류 |
+| JustBelowThreshold           | 29   | 1.4%  | B02 임계값 직하     |
+| RoundDollarManipulation      | 28   | 1.4%  | C07 Benford 위반    |
+| ExceededApprovalLimit        | 20   | 1.0%  | B03 승인한도 초과   |
+| SelfApproval                 | 19   | 0.9%  | B06 자기승인        |
+| ImproperCapitalization       | 11   | 0.5%  | B11 비용 자산화     |
+| SegregationOfDutiesViolation | 10   | 0.5%  | B07 SoD 위반        |
+| FictitiousEntry              | 7    | 0.3%  | Phase 2 ML          |
+| FictitiousVendor             | 2    | 0.1%  | Phase 2 ML          |
 
-#### 이상징후 유형별 건수 Top 10 (실측)
+#### 이상징후 유형별 건수 Top 10 (실측, anomaly_labels.csv 기준)
 
 | 유형                   | 건수  | 설명               |
 |------------------------|-------|--------------------|
 | NewCounterparty        | 1,312 | 신규 거래처 거래   |
-| UnusualAccountPair     | 1,048 | 비정상 계정 조합   |
-| MissingRelationship    | 897   | 관계 누락 거래     |
-| DormantAccountActivity | 868   | 휴면 계정 사용     |
-| UnmatchedIntercompany  | 699   | IC 미매칭          |
-| CircularTransaction    | 447   | 순환 거래          |
-| TransferPricingAnomaly | 425   | 이전가격 이상      |
-| CentralityAnomaly      | 421   | 네트워크 중심성 이상 |
-| CircularIntercompany   | 211   | IC 순환 거래       |
-| UnusualTiming          | 200   | 비정상 시점 거래   |
+| UnusualAccountPair     | 1,086 | 비정상 계정 조합   |
+| MissingRelationship    | 896   | 관계 누락 거래     |
+| DormantAccountActivity | 826   | 휴면 계정 사용     |
+| UnmatchedIntercompany  | 704   | IC 미매칭          |
+| TransferPricingAnomaly | 472   | 이전가격 이상      |
+| CentralityAnomaly      | 444   | 네트워크 중심성 이상 |
+| CircularTransaction    | 416   | 순환 거래          |
+| CircularIntercompany   | 233   | IC 순환 거래       |
+| UnusualTiming          | 183   | 비정상 시점 거래   |
 
 ### 1.10 내부거래 (Intercompany)
 
@@ -431,7 +435,7 @@ C002 (울산공장)   ←→ C003 (천안공장)
 
 ### 1.11 내부통제
 
-- SoD 위반율: 1.0% (1,080건)
+- SoD 위반율: 11.7% (12,419건)
 - 내부통제 마스터: 18건
 - COSO 프레임워크: 활성 (5구성요소 17원칙)
 - Benford 법칙: 허용 오차 5%, 제외 소스: recurring, payroll
@@ -492,7 +496,7 @@ def generate_gl_data(
 ```
 [DataSynth CSV 319MB]                    [generate_sample.py]   [gl_template.xlsx]
   journal_entries.csv                      sample_gl.xlsx          50건
-  106,489건 / 1,106,356 라인                10,000건
+  106,489건 / 1,104,914 라인                10,000건
          ↓                                       ↓                    ↓
     ┌─────────────────────────────────────────────────────────────────────┐
     │  ingest/  (02-ingest.md)                                          │
@@ -547,5 +551,5 @@ def generate_gl_data(
 | [02-ingest.md](02-ingest.md)                                        | 데이터 입수 파이프라인           |
 | [03-feature.md](03-feature.md)                                      | 파생 피처 생성                   |
 | [05-detection.md](05-detection.md)                                  | 24개 탐지 룰 정의               |
-| [docs/datasynth-detection-gap-analysis.md](../datasynth-detection-gap-analysis.md) | DataSynth ↔ 탐지 룰 격차 분석   |
-| [docs/AUDIT_DOMAIN_FINAL.md](../AUDIT_DOMAIN_FINAL.md)             | A/B/C 3레이어 24개 룰 도메인    |
+| [docs/DETECTION_RULES.md §6](../DETECTION_RULES.md)                                | DataSynth ↔ 탐지 룰 격차 분석   |
+| [docs/DETECTION_RULES.md](../DETECTION_RULES.md)                   | A/B/C 3레이어 24개 룰 도메인    |
