@@ -50,6 +50,7 @@ EXPECTED_COLUMNS: dict[FeatureCategory, list[str]] = {
         "days_backdated",
         "fiscal_period_mismatch",
         "is_holiday",
+        "time_zone_category",
     ],
     FeatureCategory.AMOUNT: [
         "is_near_threshold",

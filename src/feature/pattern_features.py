@@ -111,8 +111,10 @@ def add_first_digit(df: pd.DataFrame) -> pd.DataFrame:
         df["first_digit"] = pd.array([pd.NA] * len(df), dtype="Int64")
         return df
 
-    # 차변/대변 중 큰 절대값을 대표 금액으로
-    amount = df[["debit_amount", "credit_amount"]].fillna(0).abs().max(axis=1)
+    # Why: DataSynth int64 초과 금액 → pandas가 object로 추론하는 경우 방어
+    debit = pd.to_numeric(df["debit_amount"], errors="coerce").fillna(0)
+    credit = pd.to_numeric(df["credit_amount"], errors="coerce").fillna(0)
+    amount = pd.concat([debit.abs(), credit.abs()], axis=1).max(axis=1)
 
     # 0원 마스킹: Benford 분석에서 0은 의미 없음
     amount = amount.where(amount > 0)

@@ -24,8 +24,14 @@ _MIN_TOTAL_SIZE = 10   # 미만이면 Z-score 포기 → NaN
 
 
 def _compute_base_amount(df: pd.DataFrame) -> pd.Series:
-    """차변/대변 중 큰 값을 대표 금액으로 산출. 둘 다 NaN이면 0."""
-    return df[["debit_amount", "credit_amount"]].max(axis=1).fillna(0)
+    """차변/대변 중 큰 값을 대표 금액으로 산출. 둘 다 NaN이면 0.
+
+    Why: DataSynth가 int64 범위 초과 금액(예: 9.4e18)을 생성하면
+    pandas가 전체 컬럼을 object로 추론. to_numeric으로 float64 보장.
+    """
+    debit = pd.to_numeric(df["debit_amount"], errors="coerce").fillna(0)
+    credit = pd.to_numeric(df["credit_amount"], errors="coerce").fillna(0)
+    return pd.concat([debit, credit], axis=1).max(axis=1)
 
 
 def _zscore_with_fallback(
@@ -106,9 +112,29 @@ def add_exceeds_threshold(
     base: pd.Series,
     thresholds: list[int | float],
 ) -> pd.DataFrame:
-    """B03: 최고 승인한도 초과 여부. base >= max(thresholds)."""
-    max_threshold = max(thresholds) if thresholds else 0
-    df["exceeds_threshold"] = base >= max_threshold
+    """B03: 승인한도 초과 여부 + 해당 한도 레벨.
+
+    Why: 6단계 한도(10M~50B) 중 최저 한도를 초과하면 True.
+         이전 로직(max 전용)은 50B 이상만 4행 탐지 → 실무 무의미.
+         approval_level은 초과한 가장 낮은 한도의 인덱스(1~6). 미초과=0.
+    """
+    if not thresholds:
+        df["exceeds_threshold"] = False
+        df["approval_level"] = 0
+        return df
+
+    sorted_t = sorted(thresholds)
+    min_threshold = sorted_t[0]
+
+    # Why: 최저 한도 미만이면 어떤 레벨도 초과하지 않음 → False
+    df["exceeds_threshold"] = base >= min_threshold
+
+    # Why: 행별로 초과한 가장 높은 한도의 레벨을 기록 (B09 등에서 활용 가능)
+    level = pd.Series(0, index=df.index, dtype=int)
+    for i, t in enumerate(sorted_t, 1):
+        level = level.where(base < t, i)
+    df["approval_level"] = level
+
     return df
 
 

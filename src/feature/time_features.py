@@ -204,6 +204,83 @@ def add_is_holiday(
     return df
 
 
+def add_time_zone_category(
+    df: pd.DataFrame,
+    normal_start: float = 8.5,
+    normal_end: float = 18.5,
+    midnight_start: int = 22,
+    midnight_end: int = 6,
+    settlement_start_mmdd: str = "1220",
+    settlement_end_mmdd: str = "0115",
+) -> pd.DataFrame:
+    """C12: posting_date 시각을 3단계(normal/overtime/midnight)로 분류.
+
+    Why: C02/C03은 건별 플래그만 수행. C12 입력자 집중 분석에는
+         시간대 분류 피처가 필요하다. (KLCA IT 체크리스트)
+
+    분류 기준 (한국 실무, >= / < 일관):
+      midnight:  hour_frac >= 22.0  OR  hour_frac < 6.0
+      normal:    hour_frac >= 8.5   AND hour_frac < 18.5
+      overtime:  나머지 (6.0~8.5, 18.5~22.0)
+
+    보정:
+      결산 집중기간(12/20~1/15): overtime → normal 재분류
+      주말/공휴일: midnight 아닌 한 최소 overtime 유지
+    """
+    if not _has_time_info(df["posting_date"]):
+        logger.warning("posting_date에 시간정보 없음 — time_zone_category를 전체 'unknown'으로 설정")
+        df["time_zone_category"] = "unknown"
+        return df
+
+    hour = df["posting_date"].dt.hour
+    minute = df["posting_date"].dt.minute
+    second = df["posting_date"].dt.second
+    # Why: 초 단위 포함으로 18:30:30 등 경계값 정밀 분류
+    hour_frac = hour + minute / 60.0 + second / 3600.0
+
+    # Why: midnight를 먼저 판정 (자정 걸침 구간)
+    is_midnight = (hour_frac >= midnight_start) | (hour_frac < midnight_end)
+    is_normal = (hour_frac >= normal_start) & (hour_frac < normal_end)
+
+    # 기본값 overtime → midnight/normal 덮어쓰기
+    category = pd.Series("overtime", index=df.index)
+    category = category.where(~is_normal, "normal")
+    category = category.where(~is_midnight, "midnight")
+
+    # Why: 결산 집중기간(12/20~1/15)만 overtime→normal 보정
+    #      12월 초·1월 하순 야근은 여전히 overtime 유지 → 부정 탐지 누락 방지
+    settle_start_m = int(settlement_start_mmdd[:2])
+    settle_start_d = int(settlement_start_mmdd[2:])
+    settle_end_m = int(settlement_end_mmdd[:2])
+    settle_end_d = int(settlement_end_mmdd[2:])
+
+    month = df["posting_date"].dt.month
+    day = df["posting_date"].dt.day
+    in_settlement = (
+        (month == settle_start_m) & (day >= settle_start_d)
+    ) | (
+        (month == settle_end_m) & (day <= settle_end_d)
+    )
+    category = category.where(
+        ~(in_settlement & (category == "overtime")), "normal"
+    )
+
+    # Why: 주말/공휴일에 근무하면 midnight 아닌 한 최소 overtime
+    is_non_business = (
+        df.get("is_weekend", pd.Series(False, index=df.index)).fillna(False)
+        | df.get("is_holiday", pd.Series(False, index=df.index)).fillna(False)
+    )
+    category = category.where(
+        ~(is_non_business & (category == "normal")), "overtime"
+    )
+
+    # Why: posting_date NaT → 판정 불가
+    category = category.where(df["posting_date"].notna(), "unknown")
+
+    df["time_zone_category"] = category
+    return df
+
+
 # ── Orchestrator ─────────────────────────────────────────────────
 
 
@@ -211,7 +288,7 @@ def add_all_time_features(
     df: pd.DataFrame,
     settings: AuditSettings | None = None,
 ) -> pd.DataFrame:
-    """시간 파생변수 6개를 한번에 추가. engine.py 진입점.
+    """시간 파생변수 7개를 한번에 추가. engine.py 진입점.
 
     Warning: df를 in-place로 수정하고 동일 객체를 반환한다.
     복사본이 필요하면 add_all_time_features(df.copy())로 호출할 것.
@@ -224,5 +301,15 @@ def add_all_time_features(
     add_days_backdated(df)
     add_fiscal_period_mismatch(df, fiscal_year_start=s.fiscal_year_start)
     add_is_holiday(df, custom=s.custom_holidays)
+    # Why: is_weekend, is_holiday 생성 후 호출해야 주말/공휴일 보정 가능
+    add_time_zone_category(
+        df,
+        normal_start=s.normal_hours_start,
+        normal_end=s.normal_hours_end,
+        midnight_start=s.midnight_start,
+        midnight_end=s.midnight_end,
+        settlement_start_mmdd=s.settlement_start_mmdd,
+        settlement_end_mmdd=s.settlement_end_mmdd,
+    )
 
     return df
