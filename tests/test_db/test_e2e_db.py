@@ -22,6 +22,7 @@ from src.db.queries import PRESET_QUERIES, execute_preset
 from src.db.schema import initialize_schema
 from src.detection.anomaly_layer import AnomalyDetector
 from src.detection.base import DetectionResult
+from src.detection.benford_detector import BenfordDetector
 from src.detection.fraud_layer import FraudLayer
 from src.detection.integrity_layer import IntegrityDetector
 from src.detection.score_aggregator import aggregate_scores
@@ -74,6 +75,10 @@ def run_detection(df: pd.DataFrame) -> dict:
     timings["layer_c"] = time.perf_counter() - t0
 
     t0 = time.perf_counter()
+    results["benford"] = BenfordDetector().detect(df)
+    timings["benford"] = time.perf_counter() - t0
+
+    t0 = time.perf_counter()
     agg_df = aggregate_scores(df, list(results.values()))
     timings["aggregator"] = time.perf_counter() - t0
 
@@ -91,7 +96,7 @@ def run_db_load(
     batch_id: str,
 ) -> LoadResult:
     """DB 적재 --load_all()."""
-    return load_all(conn, agg_df, list(results.values()), batch_id)
+    return load_all(conn, agg_df, batch_id, results=list(results.values()))
 
 
 def run_queries(

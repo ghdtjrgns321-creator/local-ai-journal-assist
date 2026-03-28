@@ -1,6 +1,6 @@
 # Feature Engine 테스트 결과 통합 리포트
 
-> 실행일: 2026-03-25 | 총 193 passed, 0 failed (DataSynth v1.2.0 반영)
+> 실행일: 2026-03-26 | 총 195 passed, 0 failed (C12 time_zone_category 추가)
 
 ---
 
@@ -9,7 +9,7 @@
 ```
 모듈              테스트 수   결과     소요시간
 ─────────────────────────────────────────────
-time_features          49   ✅ PASS   0.46s
+time_features          49   ✅ PASS   0.46s   ← +1 (time_zone_category)
 amount_features        29   ✅ PASS   0.17s   ← +2 (다단계 threshold)
 pattern_features       42   ✅ PASS   0.19s
 text_features          38   ✅ PASS   0.18s
@@ -17,7 +17,7 @@ engine (오케스트레이터) 14   ✅ PASS   0.64s
 회귀 테스트 (전체)    172   ✅ PASS   0.96s
 settings 테스트          7   ✅ PASS   0.01s
 ─────────────────────────────────────────────
-합계                  193   ALL PASS
+합계                  195   ALL PASS
 ```
 
 ---
@@ -27,14 +27,14 @@ settings 테스트          7   ✅ PASS   0.01s
 ### DataSynth v1.2.0 (풀 스펙)
 
 ```
-입력: 1,106,356행 | 피처: 18/18 생성 | 소요: 7.67s
+입력: 1,106,356행 | 피처: 19/19 생성 | 소요: ~9s
 ```
 
 | 카테고리 | 소요(s) | 피처 수 | 상태 |
 |:---------|--------:|--------:|:----:|
-| time     |   0.640 |       6 | 성공 |
+| time     |   1.500 |       7 | 성공 |
 | amount   |   0.297 |       5 | 성공 |
-| pattern  |   3.625 |       5 | 성공 |
+| pattern  |   3.937 |       5 | 성공 |
 | text     |   3.110 |       2 | 성공 |
 
 ### SAP-Merged (Graceful Degradation)

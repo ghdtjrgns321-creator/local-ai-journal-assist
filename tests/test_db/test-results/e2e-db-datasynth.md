@@ -1,6 +1,6 @@
-# DB E2E 테스트 결과 (DataSynth 1,103,464행)
+# DB E2E 테스트 결과 (DataSynth 1,104,914행)
 
-> 실행일: 2026-03-22 13:14 | **12/12 검증 통과**
+> 실행일: 2026-03-27 12:17 | **12/12 검증 통과**
 
 ---
 
@@ -8,14 +8,14 @@
 
 | 항목                       |                    값 |
 |:------------------------|--------------------:|
-| 입력 행 수                   |            1,103,464 |
-| GL 적재                    |            1,103,464 |
-| AF 적재                    |            3,193,095 |
+| 입력 행 수                   |            1,104,914 |
+| GL 적재                    |            1,104,914 |
+| AF 적재                    |              975,226 |
 | Benford summary          |                    1 |
 | Benford digits           |                    9 |
-| 총 적재 행                   |            4,296,569 |
-| 적재 소요                    |                3.17s |
-| 전체 소요 (적재+쿼리)            |               22.43s |
+| 총 적재 행                   |            2,080,429 |
+| 적재 소요                    |                3.81s |
+| 전체 소요 (적재+쿼리)            |               51.03s |
 
 ---
 
@@ -24,13 +24,13 @@
 ```
 단계                         소요(s)
 ────────────────────  ──────────
-data_load                  3.463
-feature                    6.739
-detection                  5.721
-db_load                    3.180
-queries                    3.324
+data_load                  5.785
+feature                    9.681
+detection                 28.640
+db_load                    3.817
+queries                    3.111
 ────────────────────  ──────────
-합계                        22.427
+합계                        51.034
 ```
 
 ---
@@ -39,18 +39,18 @@ queries                    3.324
 
 |  # | 검증 항목                            |                   기대 |                   실제 | 결과   |
 |---:|:--------------------------------|--------------------:|--------------------:|:----:|
-|  1 | GL 행 수 일치                        |              1103464 |              1103464 | PASS |
-|  2 | AF 행 수 > 0                       |                  > 0 |              3193095 | PASS |
-|  3 | AF 적재 수 == 조회 수                  |              3193095 |              3193095 | PASS |
+|  1 | GL 행 수 일치                        |              1105193 |              1105193 | PASS |
+|  2 | AF 행 수 > 0                       |                  > 0 |               975226 | PASS |
+|  3 | AF 적재 수 == 조회 수                  |               975226 |               975226 | PASS |
 |  4 | Benford summary 1행               |                    1 |                    1 | PASS |
 |  5 | Benford digits 9행                |                    9 |                    9 | PASS |
 |  6 | Benford deviation 정합             |            obs - exp |                   일치 | PASS |
-|  7 | VIEW 쿼리 행 > 0                    |                  > 0 |                   17 | PASS |
-|  8 | VIEW flagged_count 합 == AF 행 수   |              3193095 |              3193095 | PASS |
-|  9 | risk_level 분포                    |                1+ 등급 | {'Low', 'Medium', 'High'} | PASS |
-| 10 | anomaly_score 범위 [0,1]           |           [0.0, 1.0] |     [0.3600, 0.7500] | PASS |
-| 11 | 드릴다운 쿼리 결과 > 0                   | > 0 (doc=d99f8271-0e72-4d84-a82b-a7c50c87b1a7) |                   15 | PASS |
-| 12 | 드릴다운 컬럼 정합                       | {'rule_code', 'track_name', 'score'} | {'rule_code', 'track_name', 'score'} | PASS |
+|  7 | VIEW 쿼리 행 > 0                    |                  > 0 |                   26 | PASS |
+|  8 | VIEW flagged_count 합 == AF 행 수   |               975226 |               975226 | PASS |
+|  9 | risk_level 분포                    |                1+ 등급 | {'High', 'Medium', 'Low', 'Normal'} | PASS |
+| 10 | anomaly_score 범위 [0,1]           |           [0.0, 1.0] |     [0.0000, 0.7700] | PASS |
+| 11 | 드릴다운 쿼리 결과 > 0                   | > 0 (doc=744d4109-a306-49fa-b6c0-30567899e060) |                  431 | PASS |
+| 12 | 드릴다운 컬럼 정합                       | {'track_name', 'score', 'rule_code'} | {'track_name', 'score', 'rule_code'} | PASS |
 
 ---
 
@@ -59,12 +59,12 @@ queries                    3.324
 ```
 쿼리명                              행 수      컬럼 수
 ────────────────────────  ──────────  ────────
-batch_ledger               1,103,464        17
-batch_flags                3,193,095         5
+batch_ledger               1,104,914        29
+batch_flags                  975,226         5
 benford_summary                    1         9
 benford_digits                     9         4
-rule_violation_stats              17         5
-document_rule_detail              15         3
+rule_violation_stats              26         5
+document_rule_detail             431         3
 ```
 
 ---
@@ -73,10 +73,10 @@ document_rule_detail              15         3
 
 | 등급         |         건수 |       비율 |
 |:----------|----------:|--------:|
-| High       |         64 |    0.01% |
-| Medium     |    591,780 |   53.63% |
-| Low        |    511,620 |   46.36% |
-| Normal     |          0 |    0.00% |
+| High       |     12,575 |    1.14% |
+| Medium     |     64,353 |    5.82% |
+| Low        |    123,346 |   11.16% |
+| Normal     |    904,919 |   81.88% |
 
 ---
 
@@ -84,9 +84,10 @@ document_rule_detail              15         3
 
 | 트랙           |        행 수 |  avg_score |  max_score |
 |:------------|----------:|----------:|----------:|
-| layer_a      |         64 |     1.0000 |     1.0000 |
-| layer_b      |  2,492,550 |     0.7772 |     1.0000 |
-| layer_c      |    700,481 |     0.4357 |     0.8000 |
+| benford      |    357,887 |     0.4000 |     0.4000 |
+| layer_a      |     64,229 |     0.4716 |     1.0000 |
+| layer_b      |    189,166 |     0.6828 |     1.0000 |
+| layer_c      |    363,944 |     0.4762 |     0.8000 |
 
 ---
 
@@ -94,16 +95,16 @@ document_rule_detail              15         3
 
 | 트랙         | 룰        |         건수 |  avg_score |  max_score |
 |:----------|:--------|----------:|----------:|----------:|
-| layer_b    | B10      |  1,103,464 |     0.8000 |     0.8000 |
-| layer_b    | B07      |  1,103,041 |     0.8000 |     0.8000 |
-| layer_c    | C03      |    470,530 |     0.4000 |     0.4000 |
-| layer_b    | B06      |    236,442 |     0.6000 |     0.6000 |
-| layer_c    | C01      |    143,341 |     0.6000 |     0.6000 |
-| layer_c    | C02      |     51,903 |     0.4000 |     0.4000 |
-| layer_b    | B05      |     48,615 |     0.6000 |     0.6000 |
-| layer_c    | C06      |     25,404 |     0.2000 |     0.2000 |
-| layer_c    | C08      |      4,741 |     0.6000 |     0.6000 |
-| layer_c    | C09      |      3,421 |     0.4000 |     0.4000 |
+| benford    | C07      |    357,887 |     0.4000 |     0.4000 |
+| layer_c    | C02      |    154,259 |     0.4000 |     0.4000 |
+| layer_c    | C01      |    145,645 |     0.6000 |     0.6000 |
+| layer_b    | B05      |     54,433 |     0.6000 |     0.6000 |
+| layer_b    | B03      |     50,144 |     0.6000 |     0.6000 |
+| layer_b    | B07      |     44,072 |     0.8000 |     0.8000 |
+| layer_a    | A02      |     42,001 |     0.4000 |     0.4000 |
+| layer_c    | C06      |     25,110 |     0.2000 |     0.2000 |
+| layer_a    | A03      |     21,845 |     0.6000 |     0.6000 |
+| layer_c    | C03      |     18,846 |     0.4000 |     0.4000 |
 
 ---
 
@@ -111,37 +112,453 @@ document_rule_detail              15         3
 
 | 항목                   |                값 |
 |:--------------------|----------------:|
-| sample_size          |        1,080,205 |
-| MAD                  |         0.001411 |
+| sample_size          |        1,054,705 |
+| MAD                  |         0.004087 |
 | MAD conformity       |            close |
-| Chi² statistic       |         240.7119 |
+| Chi² statistic       |        1867.7993 |
 | Chi² p-value         |           0.0000 |
-| KS statistic         |           0.0061 |
+| KS statistic         |           0.0181 |
 | KS p-value           |           0.0000 |
 | is_conforming        |            False |
 | confidence           |             high |
 
 ---
 
-## 9. 드릴다운 예시 (document_id=d99f8271-0e72-4d84-a82b-a7c50c87b1a7)
+## 9. 드릴다운 예시 (document_id=744d4109-a306-49fa-b6c0-30567899e060)
 
 | 트랙           | 룰        |    score |
 |:------------|:--------|--------:|
 | layer_a      | A01      |   1.0000 |
 | layer_a      | A01      |   1.0000 |
-| layer_b      | B01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
+| layer_a      | A01      |   1.0000 |
 | layer_b      | B10      |   0.8000 |
 | layer_b      | B10      |   0.8000 |
-| layer_b      | B07      |   0.8000 |
-| layer_b      | B07      |   0.8000 |
-| layer_c      | C08      |   0.6000 |
-| layer_c      | C08      |   0.6000 |
-| layer_b      | B06      |   0.6000 |
-| layer_b      | B06      |   0.6000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
+| layer_c      | C11      |   0.8000 |
 | layer_c      | C01      |   0.6000 |
 | layer_c      | C01      |   0.6000 |
-| layer_c      | C06      |   0.2000 |
-| layer_c      | C06      |   0.2000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_c      | C01      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_b      | B05      |   0.6000 |
+| layer_a      | A03      |   0.6000 |
+| layer_a      | A03      |   0.6000 |
+| layer_a      | A03      |   0.6000 |
+| layer_a      | A03      |   0.6000 |
+| benford      | C07      |   0.4000 |
+| benford      | C07      |   0.4000 |
+| benford      | C07      |   0.4000 |
+| benford      | C07      |   0.4000 |
+| benford      | C07      |   0.4000 |
+| benford      | C07      |   0.4000 |
+| benford      | C07      |   0.4000 |
+| benford      | C07      |   0.4000 |
+| benford      | C07      |   0.4000 |
+| layer_a      | A02      |   0.4000 |
+| layer_a      | A02      |   0.4000 |
+| layer_a      | A02      |   0.4000 |
+| layer_a      | A02      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
+| layer_c      | C09      |   0.4000 |
 
 ---
 

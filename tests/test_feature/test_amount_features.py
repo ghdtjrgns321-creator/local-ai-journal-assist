@@ -98,23 +98,33 @@ class TestIsNearThreshold:
 
 
 class TestExceedsThreshold:
-    """B03: 최고 승인한도 초과. base >= max(thresholds)."""
+    """B03: 다단계 승인한도 초과. base >= min(thresholds)."""
 
     THRESHOLDS = [10_000_000, 100_000_000, 1_000_000_000]
 
     def test_exact_threshold(self):
-        """최고 한도(1B) 정확히 → True."""
+        """최고 한도(1B) 정확히 → True, level=3."""
         base = pd.Series([self.THRESHOLDS[-1]])
         df = pd.DataFrame({"x": [0]})
         add_exceeds_threshold(df, base, self.THRESHOLDS)
         assert df["exceeds_threshold"].iloc[0] == True
+        assert df["approval_level"].iloc[0] == 3
 
-    def test_below_threshold(self):
-        """최고 한도 미만 → False."""
-        base = pd.Series([self.THRESHOLDS[-1] - 1])
+    def test_below_all_thresholds(self):
+        """최저 한도(10M) 미만 → False, level=0."""
+        base = pd.Series([self.THRESHOLDS[0] - 1])
         df = pd.DataFrame({"x": [0]})
         add_exceeds_threshold(df, base, self.THRESHOLDS)
         assert df["exceeds_threshold"].iloc[0] == False
+        assert df["approval_level"].iloc[0] == 0
+
+    def test_mid_level_exceeds(self):
+        """최저 한도(10M) 초과, 중간 한도(100M) 미만 → True, level=1."""
+        base = pd.Series([50_000_000])
+        df = pd.DataFrame({"x": [0]})
+        add_exceeds_threshold(df, base, self.THRESHOLDS)
+        assert df["exceeds_threshold"].iloc[0] == True
+        assert df["approval_level"].iloc[0] == 1
 
     def test_no_gap_with_near(self):
         """최고 한도 정확히 → near=False, exceeds=True (gap 없음)."""

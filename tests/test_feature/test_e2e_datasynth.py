@@ -60,10 +60,10 @@ class TestDataSynthE2E:
         result = generate_all_features(ingested_df)
         return (ingested_df, result, row_count_before)
 
-    def test_all_18_features_generated(self, pipeline_result):
-        """18개 피처 전부 생성되어야 한다."""
+    def test_all_19_features_generated(self, pipeline_result):
+        """19개 피처 전부 생성되어야 한다."""
         _, result, _ = pipeline_result
-        assert len(result.added_columns) == 18, (
+        assert len(result.added_columns) == 19, (
             f"생성: {len(result.added_columns)}, missing: {result.missing_columns}"
         )
         assert result.missing_columns == []
@@ -97,8 +97,8 @@ class TestDataSynthE2E:
         expected_float = {"amount_zscore", "amount_magnitude"}
         # Why: days_backdated는 정수 일수(Int64), first_digit도 Int64
         expected_int = {"first_digit", "days_backdated"}
-        # Why: has_risk_keyword는 "low"/"medium"/"high" str, description_quality도 str
-        expected_str = {"has_risk_keyword", "description_quality"}
+        # Why: has_risk_keyword는 "low"/"medium"/"high" str, description_quality·time_zone_category도 str
+        expected_str = {"has_risk_keyword", "description_quality", "time_zone_category"}
 
         for col in expected_bool:
             if col in df.columns:
@@ -123,6 +123,26 @@ class TestDataSynthE2E:
             pytest.skip("first_digit 미생성")
         valid = df["first_digit"].dropna()
         assert valid.between(1, 9).all(), f"범위 밖: {valid[~valid.between(1, 9)].unique()}"
+
+    def test_time_zone_category_valid_values(self, pipeline_result):
+        """time_zone_category는 4가지 값만 허용."""
+        df, _, _ = pipeline_result
+        if "time_zone_category" not in df.columns:
+            pytest.skip("time_zone_category 미생성")
+        valid_values = {"normal", "overtime", "midnight", "unknown"}
+        actual = set(df["time_zone_category"].dropna().unique())
+        assert actual.issubset(valid_values), f"허용 외 값: {actual - valid_values}"
+
+    def test_time_zone_category_has_variation(self, pipeline_result):
+        """DataSynth 1M건에서 normal/overtime/midnight 모두 존재해야 함."""
+        df, _, _ = pipeline_result
+        if "time_zone_category" not in df.columns:
+            pytest.skip("time_zone_category 미생성")
+        actual = set(df["time_zone_category"].unique())
+        # Why: DataSynth temporal_patterns에 심야·야근·정상 모두 포함
+        assert {"normal", "overtime", "midnight"}.issubset(actual), (
+            f"시간대 분류 변동 부족: {actual}"
+        )
 
     def test_row_count_preserved(self, pipeline_result):
         """피처 생성 후 행 수 불변."""

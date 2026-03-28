@@ -15,16 +15,53 @@ from src.detection.fraud_rules_access import (
 
 
 class TestB06:
-    def test_same_creator_approver_flagged(self) -> None:
-        """created_by == approved_by → flagged."""
+    def test_human_high_amount_flagged(self) -> None:
+        """TP: 일반 사용자 + 1천만 초과 + 자기 승인 → flagged."""
         df = pd.DataFrame({
-            "created_by": ["User1", "User2", "User1"],
-            "approved_by": ["User1", "User3", "User1"],
+            "created_by": ["USR-JA-001"],
+            "approved_by": ["USR-JA-001"],
+            "user_persona": ["junior_accountant"],
+            "debit_amount": [50_000_000.0],  # 5천만
+            "credit_amount": [0.0],
         })
-        result = b06_self_approval(df)
+        result = b06_self_approval(df, min_amount=10_000_000)
         assert result[0]
-        assert not result[1]
-        assert result[2]
+
+    def test_automated_system_excluded(self) -> None:
+        """TN: automated_system 자기승인 → not flagged."""
+        df = pd.DataFrame({
+            "created_by": ["SYSTEM"],
+            "approved_by": ["SYSTEM"],
+            "user_persona": ["automated_system"],
+            "debit_amount": [100_000_000.0],  # 1억 (고액이어도 제외)
+            "credit_amount": [0.0],
+        })
+        result = b06_self_approval(df, min_amount=10_000_000)
+        assert not result[0]
+
+    def test_small_amount_excluded(self) -> None:
+        """TN: 일반 사용자 + 1천만 이하 정상 전결 → not flagged."""
+        df = pd.DataFrame({
+            "created_by": ["USR-JA-002"],
+            "approved_by": ["USR-JA-002"],
+            "user_persona": ["junior_accountant"],
+            "debit_amount": [5_000_000.0],  # 5백만
+            "credit_amount": [0.0],
+        })
+        result = b06_self_approval(df, min_amount=10_000_000)
+        assert not result[0]
+
+    def test_credit_only_amount_evaluated(self) -> None:
+        """대변 전용 전표: max(debit, credit)로 금액 평가."""
+        df = pd.DataFrame({
+            "created_by": ["USR-SA-001"],
+            "approved_by": ["USR-SA-001"],
+            "user_persona": ["senior_accountant"],
+            "debit_amount": [0.0],
+            "credit_amount": [50_000_000.0],  # 대변 5천만
+        })
+        result = b06_self_approval(df, min_amount=10_000_000)
+        assert result[0]
 
     def test_fallback_manual_source(self) -> None:
         """approved_by 없음, source='manual' + created_by 존재 → flagged."""
@@ -40,15 +77,17 @@ class TestB06:
         df = pd.DataFrame({"debit_amount": [100.0]})
         assert not b06_self_approval(df).any()
 
-    def test_null_created_by_not_flagged(self) -> None:
-        """created_by가 NaN이면 자기승인 판정 불가 → not flagged."""
+    def test_null_persona_still_evaluated(self) -> None:
+        """user_persona NULL → automated 제외 안 됨 → 평가 대상."""
         df = pd.DataFrame({
-            "created_by": [None, "User1"],
-            "approved_by": [None, "User1"],
+            "created_by": ["User1"],
+            "approved_by": ["User1"],
+            "user_persona": [None],
+            "debit_amount": [50_000_000.0],
+            "credit_amount": [0.0],
         })
-        result = b06_self_approval(df)
-        assert not result[0]
-        assert result[1]
+        result = b06_self_approval(df, min_amount=10_000_000)
+        assert result[0]
 
 
 # ── B07 직무분리 위반 ─────────────────────────────────────

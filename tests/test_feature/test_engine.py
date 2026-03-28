@@ -37,7 +37,7 @@ class TestGenerateAllFeatures:
         result = generate_all_features(en_full_df)
 
         assert isinstance(result, FeatureResult)
-        assert len(result.added_columns) == 18
+        assert len(result.added_columns) == 19
         assert result.missing_columns == []
         assert set(result.categories_run) == {"time", "amount", "pattern", "text"}
         assert len(result.execution_times) == 4
@@ -129,11 +129,11 @@ class TestIdempotency:
         assert col_count_1 == col_count_2
 
     def test_run_twice_metadata_consistent(self, en_full_df: pd.DataFrame) -> None:
-        """2회째에도 added_columns=18개 유지."""
+        """2회째에도 added_columns=19개 유지."""
         generate_all_features(en_full_df)
         result2 = generate_all_features(en_full_df)
 
-        assert len(result2.added_columns) == 18
+        assert len(result2.added_columns) == 19
         assert result2.missing_columns == []
 
 

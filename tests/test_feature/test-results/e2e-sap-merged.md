@@ -1,14 +1,14 @@
 # SAP-Merged (Graceful Degradation) E2E 테스트 결과 (ingest → feature)
 
-> 실행일: 2026-03-25 23:14
+> 실행일: 2026-03-28 14:08
 
 ## 1. 요약
 
 | 항목           | 값                          |
 |:---------------|:----------------------------|
 | 입력 행수      | 331,934               |
-| 소요시간       | 1.09s              |
-| 생성 피처      | 13/18 |
+| 소요시간       | 1.45s              |
+| 생성 피처      | 14/18 |
 | 성공 카테고리  | time, pattern, text |
 | 실패 카테고리  | amount |
 | 필수 미매핑    | credit_amount, debit_amount |
@@ -23,6 +23,7 @@
 | days_backdated          | Int64   |      0.0 |     31 | [-730, 365]   |
 | fiscal_period_mismatch  | boolean |      0.0 |      1 |               |
 | is_holiday              | bool    |      0.0 |      2 | True 2.8%     |
+| time_zone_category      | object  |      0.0 |      1 |               |
 | is_near_threshold       | —       |       — |    — | 의도된 스킵   |
 | exceeds_threshold       | —       |       — |    — | 의도된 스킵   |
 | amount_zscore           | —       |       — |    — | 의도된 스킵   |
@@ -67,8 +68,8 @@
 
 | 카테고리 | 상태   | 소요시간(s) | 피처 수 |
 |:---------|:------:|------------:|--------:|
-| time     | 성공     |      0.219 |       6 |
+| time     | 성공     |      0.406 |       7 |
 | amount   | 스킵     |      0.000 |       5 |
-| pattern  | 성공     |      0.485 |       5 |
-| text     | 성공     |      0.390 |       2 |
-| **합계** |        |      1.094 |      13 |
+| pattern  | 성공     |      0.547 |       5 |
+| text     | 성공     |      0.500 |       2 |
+| **합계** |        |      1.453 |      14 |

@@ -15,6 +15,7 @@ from src.db.schema import (
     BENFORD_DIGITS_COLUMNS,
     BENFORD_SUMMARY_COLUMNS,
     GENERAL_LEDGER_COLUMNS,
+    ML_MODEL_METADATA_COLUMNS,
     SCHEMA_DDL,
     initialize_schema,
 )
@@ -23,14 +24,18 @@ from src.db.schema import (
 class TestInitializeSchema:
     """DDL 실행 및 테이블 생성."""
 
-    def test_creates_4_tables(self, db_raw_conn):
-        """4개 테이블 생성 확인."""
+    def test_creates_5_tables(self, db_raw_conn):
+        """5개 테이블 생성 확인."""
         initialize_schema(db_raw_conn)
         tables = db_raw_conn.execute(
             "SELECT table_name FROM information_schema.tables "
             "WHERE table_schema = 'main'"
         ).fetchdf()
-        expected = {"general_ledger", "anomaly_flags", "benford_summary", "benford_digits"}
+        expected = {
+            "general_ledger", "anomaly_flags",
+            "benford_summary", "benford_digits",
+            "ml_model_metadata",
+        }
         # Why: DuckDB에서 VIEW도 information_schema.tables에 포함될 수 있음
         assert expected <= set(tables["table_name"])
 
@@ -43,9 +48,9 @@ class TestInitializeSchema:
         ).fetchdf()
         assert "anomaly_flag_summary" in set(views["view_name"])
 
-    def test_schema_ddl_has_5_objects(self):
-        """SCHEMA_DDL dict에 5개 오브젝트 정의."""
-        assert len(SCHEMA_DDL) == 5
+    def test_schema_ddl_has_8_objects(self):
+        """SCHEMA_DDL dict에 8개 오브젝트 정의 (4 table + 2 sequence + 1 view + 1 whitelist)."""
+        assert len(SCHEMA_DDL) == 8
 
     def test_idempotent(self, db_raw_conn):
         """2회 실행해도 에러 없음 (멱등성)."""
@@ -122,6 +127,41 @@ class TestColumnConstants:
             "WHERE table_name = 'general_ledger'"
         ).fetchdf()
         assert "approval_level" in set(cols["column_name"])
+
+    def test_ml_columns_in_gl(self, db_conn):
+        """ML 예약 7개 컬럼이 general_ledger DDL에 존재."""
+        cols = db_conn.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'general_ledger'"
+        ).fetchdf()
+        ddl_cols = set(cols["column_name"])
+        ml_cols = [
+            "supervised_score", "unsupervised_score", "duplicate_score",
+            "supervised_model_id", "unsupervised_model_id", "duplicate_model_id",
+            "ml_scored_at",
+        ]
+        for col in ml_cols:
+            assert col in ddl_cols, f"ML 예약 컬럼 '{col}'이 DDL에 없음"
+
+    def test_ml_model_metadata_columns(self, db_conn):
+        """ML_MODEL_METADATA_COLUMNS 전부 ml_model_metadata DDL에 존재."""
+        cols = db_conn.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'ml_model_metadata'"
+        ).fetchdf()
+        ddl_cols = set(cols["column_name"])
+        for col in ML_MODEL_METADATA_COLUMNS:
+            assert col in ddl_cols, f"ML_MODEL_METADATA_COLUMNS의 '{col}'이 DDL에 없음"
+
+    def test_ml_model_metadata_pk(self, db_conn):
+        """ml_model_metadata.model_id가 PRIMARY KEY."""
+        # Why: DuckDB의 table_constraints에서 PK 확인
+        result = db_conn.execute(
+            "SELECT constraint_type FROM information_schema.table_constraints "
+            "WHERE table_name = 'ml_model_metadata' "
+            "AND constraint_type = 'PRIMARY KEY'"
+        ).fetchdf()
+        assert len(result) == 1
 
     def test_view_empty_query(self, db_conn):
         """anomaly_flag_summary VIEW 빈 상태 정상 조회."""

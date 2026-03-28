@@ -5,7 +5,7 @@
   - load_anomaly_flags: details melt, score > 0 필터
   - load_benford: summary 1행 + digits 9행
   - load_all: 트랜잭션 원자성
-  - approval_level: 6단계 한도 정확성
+  - approval_level: 6단계 한도 정확성 (debit SUM + N threshold = N level)
 """
 
 import pandas as pd
@@ -19,6 +19,12 @@ from src.db.loader import (
     load_benford,
     load_general_ledger,
 )
+
+# Why: settings 의존 없이 결정적 테스트를 위한 고정 임계값
+_TEST_THRESHOLDS = [
+    10_000_000, 100_000_000, 1_000_000_000,
+    5_000_000_000, 10_000_000_000, 50_000_000_000,
+]
 
 
 class TestLoadGeneralLedger:
@@ -150,11 +156,11 @@ class TestLoadAll:
 
 
 class TestApprovalLevel:
-    """전결규정 6단계 파생 정확성."""
+    """전결규정 6단계 파생 정확성 (debit SUM + N threshold = N level)."""
 
     def test_six_levels(self, db_large_df):
         """6단계 금액 범위 → 레벨 1~6 정확 산출."""
-        levels = _derive_approval_level(db_large_df)
+        levels = _derive_approval_level(db_large_df, thresholds=_TEST_THRESHOLDS)
         expected = [1, 2, 3, 4, 5, 6]
         assert list(levels) == expected
 
@@ -165,7 +171,7 @@ class TestApprovalLevel:
             "debit_amount": [10_000_000.0],
             "credit_amount": [0.0],
         })
-        level = _derive_approval_level(df)
+        level = _derive_approval_level(df, thresholds=_TEST_THRESHOLDS)
         assert level.iloc[0] == 1
 
     def test_boundary_10m_plus_1(self):
@@ -175,16 +181,84 @@ class TestApprovalLevel:
             "debit_amount": [10_000_001.0],
             "credit_amount": [0.0],
         })
-        level = _derive_approval_level(df)
+        level = _derive_approval_level(df, thresholds=_TEST_THRESHOLDS)
         assert level.iloc[0] == 2
 
     def test_multi_line_document(self):
-        """전표 내 여러 라인 → 최대 금액 기준."""
+        """전표 내 여러 라인 → 차변 합산 기준."""
         df = pd.DataFrame({
             "document_id": ["JE-001", "JE-001"],
             "debit_amount": [5_000_000.0, 200_000_000.0],
             "credit_amount": [0.0, 0.0],
         })
-        levels = _derive_approval_level(df)
-        # Why: 전표 최대 금액 200M → Level 3 (≤10억)
+        levels = _derive_approval_level(df, thresholds=_TEST_THRESHOLDS)
+        # Why: 차변 합산 5M + 200M = 205M ≤ 1B → Level 3
         assert list(levels) == [3, 3]
+
+    def test_sum_vs_max_difference(self):
+        """합산과 최대값이 다른 레벨을 산출하는 케이스 — SUM 기준 검증."""
+        df = pd.DataFrame({
+            "document_id": ["JE-001", "JE-001"],
+            "debit_amount": [60_000_000.0, 60_000_000.0],
+            "credit_amount": [0.0, 0.0],
+        })
+        levels = _derive_approval_level(df, thresholds=_TEST_THRESHOLDS)
+        # Why: 차변 합산 60M + 60M = 120M → Level 3 (≤1B)
+        #       MAX였다면 60M → Level 2 (≤100M) — 오류
+        assert list(levels) == [3, 3]
+
+    def test_custom_thresholds(self):
+        """커스텀 임계값 파라미터 — N threshold = N level, 초과분 캡."""
+        df = pd.DataFrame({
+            "document_id": ["A", "B", "C"],
+            "debit_amount": [50.0, 150.0, 350.0],
+            "credit_amount": [0.0, 0.0, 0.0],
+        })
+        levels = _derive_approval_level(df, thresholds=[100, 200, 300])
+        # 50≤100 → Level 1, 150≤200 → Level 2, 350>300 → Level 3 (최고 레벨 캡)
+        assert list(levels) == [1, 2, 3]
+
+    def test_exceeds_all_thresholds_capped(self):
+        """모든 임계값 초과 시 최고 레벨(N)에 캡."""
+        df = pd.DataFrame({
+            "document_id": ["JE-001"],
+            "debit_amount": [100_000_000_000.0],
+            "credit_amount": [0.0],
+        })
+        levels = _derive_approval_level(df, thresholds=_TEST_THRESHOLDS)
+        # Why: 1000억 > 50B(마지막 threshold) → Level 6 (최고 레벨 캡)
+        assert levels.iloc[0] == 6
+
+
+class TestMLVarcharNanToNull:
+    """ML 예약 컬럼 NaN→NULL 안전 변환."""
+
+    def test_ml_varchar_nan_to_null(self, db_conn, db_sample_df):
+        """Phase 1 DataFrame에 ML 컬럼 없을 때 VARCHAR가 NULL이지 'nan'이 아님."""
+        load_general_ledger(db_conn, db_sample_df, "batch_ml")
+        result = db_conn.execute(
+            "SELECT supervised_model_id, unsupervised_model_id, duplicate_model_id "
+            "FROM general_ledger WHERE upload_batch_id = 'batch_ml' LIMIT 1"
+        ).fetchone()
+        # Why: reindex NaN이 DuckDB INSERT 시 'nan' 문자열로 들어가면 안 됨
+        for val in result:
+            assert val is None, f"VARCHAR 컬럼이 NULL이 아님: {val!r}"
+
+    def test_ml_double_null(self, db_conn, db_sample_df):
+        """Phase 1 DataFrame에 ML score 컬럼 없을 때 DOUBLE이 NULL."""
+        load_general_ledger(db_conn, db_sample_df, "batch_ml2")
+        result = db_conn.execute(
+            "SELECT supervised_score, unsupervised_score, duplicate_score "
+            "FROM general_ledger WHERE upload_batch_id = 'batch_ml2' LIMIT 1"
+        ).fetchone()
+        for val in result:
+            assert val is None, f"DOUBLE 컬럼이 NULL이 아님: {val!r}"
+
+    def test_ml_timestamp_null(self, db_conn, db_sample_df):
+        """Phase 1 DataFrame에 ml_scored_at 없을 때 TIMESTAMP이 NULL."""
+        load_general_ledger(db_conn, db_sample_df, "batch_ml3")
+        result = db_conn.execute(
+            "SELECT ml_scored_at FROM general_ledger "
+            "WHERE upload_batch_id = 'batch_ml3' LIMIT 1"
+        ).fetchone()
+        assert result[0] is None

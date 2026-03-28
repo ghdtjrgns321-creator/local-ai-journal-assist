@@ -48,7 +48,7 @@ class TestYamlLoaders:
         assert len(schema["columns"]) > 0
 
     def test_schema_required_fields(self):
-        """필수 컬럼(AUDIT_DOMAIN_FINAL §8 기준)이 존재해야 한다."""
+        """필수 컬럼(DETECTION_RULES.md 부록 B 기준)이 존재해야 한다."""
         schema = get_schema()
         names = [col["name"] for col in schema["columns"]]
         for required in ["document_id", "posting_date", "gl_account", "debit_amount", "credit_amount"]:

@@ -14,17 +14,19 @@ from src.detection.fraud_rules_groupby import (
 
 @pytest.fixture
 def dup_payment_df() -> pd.DataFrame:
-    """B04 테스트: 동일 거래처+금액, 9일/50일 간격."""
+    """B04 테스트: P2P 프로세스, 동일 거래처+금액, reference 있음/없음."""
     return pd.DataFrame({
         "auxiliary_account_number": ["V001", "V001", "V001", "V002"],
         "debit_amount": [1e6, 1e6, 1e6, 2e6],
         "credit_amount": [0.0, 0.0, 0.0, 0.0],
         "posting_date": pd.to_datetime([
-            "2025-01-01",  # V001 첫 번째
-            "2025-01-10",  # V001 9일 후 → 30일 윈도우 내 중복
-            "2025-03-01",  # V001 50일 후 → 윈도우 초과 비중복
-            "2025-01-05",  # V002 단독
+            "2025-01-01",
+            "2025-01-10",  # 9일 후
+            "2025-03-01",  # 50일 후
+            "2025-01-05",
         ]),
+        "business_process": ["P2P", "P2P", "P2P", "P2P"],
+        # reference NULL → fallback 경로
     })
 
 
@@ -74,12 +76,13 @@ class TestB04:
         assert not b04_duplicate_payment(df).any()
 
     def test_triple_duplicate_all_flagged(self) -> None:
-        """3건 중복 → 3건 모두 flagged."""
+        """3건 중복 (P2P, NULL reference) → 3건 모두 flagged."""
         df = pd.DataFrame({
             "auxiliary_account_number": ["V001"] * 3,
             "debit_amount": [1e6] * 3,
             "credit_amount": [0.0] * 3,
             "posting_date": pd.to_datetime(["2025-01-01", "2025-01-05", "2025-01-20"]),
+            "business_process": ["P2P"] * 3,
         })
         result = b04_duplicate_payment(df, window_days=30)
         assert result.all()
@@ -91,9 +94,48 @@ class TestB04:
             "debit_amount": [1e6, 1e6],
             "credit_amount": [0.0, 0.0],
             "posting_date": pd.to_datetime(["2025-01-01", "2025-01-31"]),
+            "business_process": ["P2P", "P2P"],
         })
         result = b04_duplicate_payment(df, window_days=30)
         assert result.all()
+
+    def test_o2c_excluded(self) -> None:
+        """O2C 반복 매출은 B04 대상 아님."""
+        df = pd.DataFrame({
+            "auxiliary_account_number": ["C001", "C001"],
+            "debit_amount": [1e6, 1e6],
+            "credit_amount": [0.0, 0.0],
+            "posting_date": pd.to_datetime(["2025-01-01", "2025-01-05"]),
+            "business_process": ["O2C", "O2C"],
+        })
+        assert not b04_duplicate_payment(df).any()
+
+    def test_same_reference_different_doc_flagged(self) -> None:
+        """같은 reference + 다른 document_id → 이중 지급 의심."""
+        df = pd.DataFrame({
+            "auxiliary_account_number": ["V001", "V001"],
+            "debit_amount": [5e6, 5e6],
+            "credit_amount": [0.0, 0.0],
+            "posting_date": pd.to_datetime(["2025-01-01", "2025-01-15"]),
+            "business_process": ["P2P", "P2P"],
+            "reference": ["INV-2025-001", "INV-2025-001"],
+            "document_id": ["D001", "D002"],
+        })
+        result = b04_duplicate_payment(df)
+        assert result.all()
+
+    def test_same_reference_same_doc_not_flagged(self) -> None:
+        """같은 reference + 같은 document_id → 같은 전표의 라인 (정상)."""
+        df = pd.DataFrame({
+            "auxiliary_account_number": ["V001", "V001"],
+            "debit_amount": [5e6, 0.0],
+            "credit_amount": [0.0, 5e6],
+            "posting_date": pd.to_datetime(["2025-01-01", "2025-01-01"]),
+            "business_process": ["P2P", "P2P"],
+            "reference": ["INV-2025-001", "INV-2025-001"],
+            "document_id": ["D001", "D001"],
+        })
+        assert not b04_duplicate_payment(df).any()
 
 
 # ── B05 중복 전표 ─────────────────────────────────────────

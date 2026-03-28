@@ -168,8 +168,10 @@ class TestA03InvalidAccount:
         assert result.details["A03"].iloc[0] == pytest.approx(expected_score)
 
     def test_no_coa_skips_with_warning(self, dt_balanced_df):
-        """CoA=None → A03 skipped."""
-        detector = IntegrityDetector(chart_of_accounts=None)
+        """CoA=None + settings 경로 비활성 → A03 skipped."""
+        from config.settings import AuditSettings
+        settings = AuditSettings(chart_of_accounts_path="")
+        detector = IntegrityDetector(settings=settings, chart_of_accounts=None)
         result = detector.detect(dt_balanced_df)
         assert "A03" in result.metadata["skipped_rules"]
 
@@ -208,8 +210,10 @@ class TestDetectIntegration:
         assert result.scores.iloc[2] == pytest.approx(max(a01_score, a03_score))
 
     def test_skipped_rules_in_metadata(self, dt_balanced_df):
-        """CoA=None → A03 skipped, metadata에 기록."""
-        detector = IntegrityDetector()
+        """CoA=None + settings 경로 비활성 → A03 skipped, metadata에 기록."""
+        from config.settings import AuditSettings
+        settings = AuditSettings(chart_of_accounts_path="")
+        detector = IntegrityDetector(settings=settings)
         result = detector.detect(dt_balanced_df)
         assert "skipped_rules" in result.metadata
         assert "A03" in result.metadata["skipped_rules"]

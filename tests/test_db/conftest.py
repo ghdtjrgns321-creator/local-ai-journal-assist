@@ -65,12 +65,12 @@ def db_sample_df() -> pd.DataFrame:
 def db_large_df() -> pd.DataFrame:
     """승인 레벨 파생 테스트용 — 6단계 금액 범위 커버."""
     amounts = [
-        5_000_000,        # Level 1 (≤1천만)
-        50_000_000,       # Level 2 (≤1억)
-        500_000_000,      # Level 3 (≤10억)
-        3_000_000_000,    # Level 4 (≤50억)
-        8_000_000_000,    # Level 5 (≤100억)
-        50_000_000_000,   # Level 6 (>100억)
+        5_000_000,          # Level 1 (≤1천만)
+        50_000_000,         # Level 2 (≤1억)
+        500_000_000,        # Level 3 (≤10억)
+        3_000_000_000,      # Level 4 (≤50억)
+        8_000_000_000,      # Level 5 (≤100억)
+        100_000_000_000,    # Level 6 (>500억 — 최고 레벨 캡)
     ]
     return pd.DataFrame({
         "document_id": [f"JE-{i:03d}" for i in range(6)],

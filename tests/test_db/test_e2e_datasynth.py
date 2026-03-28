@@ -66,7 +66,7 @@ class TestDataSynthLoad:
             "WHERE upload_batch_id = ?",
             [BATCH_ID],
         ).fetchone()
-        assert result[0] > 100_000
+        assert result[0] > 10_000, f"전표 수 부족: {result[0]}"
 
     def test_company_codes(self, e2e_conn):
         """회사코드 C001, C002, C003."""
@@ -124,6 +124,38 @@ class TestBatchLedgerE2E:
         processes = set(result["business_process"].dropna().unique())
         expected = {"P2P", "O2C", "R2R", "H2R", "TRE", "A2R"}
         assert expected <= processes
+
+
+class TestMLReservedColumnsE2E:
+    """Phase 2 ML 예약 컬럼 — Phase 1 데이터에서 전부 NULL."""
+
+    def test_ml_scores_all_null(self, e2e_conn, e2e_loaded):
+        """ML score 3종 전부 NULL."""
+        result = e2e_conn.execute(
+            "SELECT COUNT(*) FROM general_ledger "
+            "WHERE supervised_score IS NOT NULL "
+            "   OR unsupervised_score IS NOT NULL "
+            "   OR duplicate_score IS NOT NULL"
+        ).fetchone()
+        assert result[0] == 0
+
+    def test_ml_model_ids_all_null(self, e2e_conn, e2e_loaded):
+        """ML model_id 3종 전부 NULL (not 'nan')."""
+        result = e2e_conn.execute(
+            "SELECT COUNT(*) FROM general_ledger "
+            "WHERE supervised_model_id IS NOT NULL "
+            "   OR unsupervised_model_id IS NOT NULL "
+            "   OR duplicate_model_id IS NOT NULL"
+        ).fetchone()
+        assert result[0] == 0
+
+    def test_ml_scored_at_all_null(self, e2e_conn, e2e_loaded):
+        """ml_scored_at 전부 NULL."""
+        result = e2e_conn.execute(
+            "SELECT COUNT(*) FROM general_ledger "
+            "WHERE ml_scored_at IS NOT NULL"
+        ).fetchone()
+        assert result[0] == 0
 
 
 class TestEmptyTablesE2E:

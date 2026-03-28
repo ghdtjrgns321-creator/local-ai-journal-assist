@@ -15,10 +15,10 @@ from src.detection.constants import (
 
 
 class TestRuleCodesIntegrity:
-    """RULE_CODES 22개 룰 ID·이름 무결성."""
+    """RULE_CODES 27개 룰 ID·이름 무결성."""
 
     def test_rule_count(self) -> None:
-        assert len(RULE_CODES) == 22
+        assert len(RULE_CODES) == 27
 
     def test_layer_a_ids(self) -> None:
         for rid in ("A01", "A02", "A03"):

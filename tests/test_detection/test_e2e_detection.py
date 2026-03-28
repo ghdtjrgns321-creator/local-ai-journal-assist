@@ -210,16 +210,71 @@ def generate_report(
         md.append(_rule_table(r, n))
         md.append("")
 
-    # §3 위험등급 분포
-    md.append("\n## 3. 위험등급 분포\n")
+    # §3 B19 Top-side JE 복합 탐지
+    md.append("\n## 3. B19 Top-side JE 복합 탐지\n")
+    if "topside_score" in agg_df.columns:
+        b19_mask = agg_df["flagged_rules"].str.contains("B19", na=False)
+        b19_count = int(b19_mask.sum())
+        manual_count = int(df["is_manual_je"].sum()) if "is_manual_je" in df.columns else 0
+
+        md.append(f"| {'항목':24s} | {'값':>20s} |")
+        md.append(f"|:{'-'*24}|{'-'*20}:|")
+        md.append(f"| {'수기 전표':24s} | {manual_count:>12,d} ({manual_count/n*100:.1f}%) |")
+        md.append(f"| {'B19 플래그':24s} | {b19_count:>12,d} ({b19_count/n*100:.2f}%) |")
+
+        # 게이트키퍼 검증
+        if b19_count > 0 and "is_manual_je" in df.columns:
+            all_manual = bool(df.loc[b19_mask, "is_manual_je"].all())
+            all_high = bool((agg_df.loc[b19_mask, "risk_level"] == "High").all())
+            md.append(f"| {'게이트키퍼 (전부 수기?)':24s} | {'✅ True' if all_manual else '❌ False':>20s} |")
+            md.append(f"| {'전부 High 승격?':24s} | {'✅ True' if all_high else '❌ False':>20s} |")
+
+        # 역검증
+        if "is_manual_je" in df.columns:
+            auto_b19 = int(agg_df.loc[~df["is_manual_je"].fillna(False), "flagged_rules"].str.contains("B19", na=False).sum())
+            md.append(f"| {'자동 전표 중 B19 (0=정상)':24s} | {auto_b19:>20d} |")
+
+        # 가점 조건별 분포
+        if b19_count > 0:
+            md.append("\n### 가점 조건별 분포\n")
+            md.append(f"| {'조건':16s} | {'건수':>10s} | {'비율':>8s} |")
+            md.append(f"|:{'-'*16}|{'-'*10}:|{'-'*8}:|")
+            b19_idx = b19_mask[b19_mask].index
+            for label, track, rule_id in [
+                ("C01 기말", "layer_c", "C01"), ("B06 자기승인", "layer_b", "B06"),
+                ("B09 승인생략", "layer_b", "B09"), ("A03 무효계정", "layer_a", "A03"),
+                ("C09 희소쌍", "layer_c", "C09"), ("C08 고액", "layer_c", "C08"),
+                ("C06 위험적요", "layer_c", "C06"),
+            ]:
+                r = results.get(track)
+                if r and rule_id in r.details.columns:
+                    v = int((r.details[rule_id].reindex(b19_idx, fill_value=0) > 0).sum())
+                else:
+                    v = 0
+                md.append(f"| {label:16s} | {v:>10,d} | {v/b19_count*100:>6.1f}% |")
+
+        # topside_score 분포
+        md.append("\n### topside_score 분포\n")
+        md.append(f"| {'점수':>6s} | {'건수':>10s} |")
+        md.append(f"|{'-'*6}:|{'-'*10}:|")
+        ts = agg_df["topside_score"]
+        for v in sorted(ts.unique()):
+            cnt = int((ts == v).sum())
+            if cnt > 0:
+                md.append(f"| {v:>6.1f} | {cnt:>10,d} |")
+    else:
+        md.append("topside_score 컬럼 없음 — score_aggregator 미적용.\n")
+
+    # §4 위험등급 분포
+    md.append("\n## 4. 위험등급 분포\n")
     md.append(f"| {'risk_level':12s} | {'건수':>12s} | {'비율':>8s} |")
     md.append(f"|:{'-'*12}|{'-'*12}:|{'-'*8}:|")
     for level in ["High", "Medium", "Low", "Normal"]:
         cnt = int(risk_counts.get(level, 0))
         md.append(f"| {level:12s} | {cnt:>12,d} | {cnt/n*100:.2f}% |")
 
-    # §4 label 대조 분석
-    md.append("\n## 4. anomaly label 대조 분석\n")
+    # §5 label 대조 분석
+    md.append("\n## 5. anomaly label 대조 분석\n")
     if label_analysis["available"]:
         la = label_analysis
         md.append(f"| {'지표':20s} | {'값':>20s} |")
@@ -240,8 +295,8 @@ def generate_report(
     else:
         md.append("anomaly_labels.csv 미존재 — 대조 분석 생략.")
 
-    # §5 레이어별 성능
-    md.append("\n## 5. 레이어별 성능\n")
+    # §6 레이어별 성능
+    md.append("\n## 6. 레이어별 성능\n")
     md.append(f"| {'단계':20s} | {'소요시간(s)':>12s} | {'실행 룰':>8s} | {'skipped':>12s} |")
     md.append(f"|:{'-'*20}|{'-'*12}:|{'-'*8}:|:{'-'*12}|")
     for track, title in [("layer_a", "Layer A"), ("layer_b", "Layer B"), ("layer_c", "Layer C"), ("benford", "Benford"), ("aggregator", "Score Aggregator")]:
@@ -254,8 +309,8 @@ def generate_report(
         else:
             md.append(f"| {title:20s} | {t:>12.3f} | {'—':>8s} | {'—':>12s} |")
 
-    # §6 분석
-    md.append("\n## 6. 분석\n")
+    # §7 분석
+    md.append("\n## 7. 분석\n")
     md.append("### 코드 버그\n")
 
     # Why: all-False 룰 체크 (데이터 특성 or 코드 문제 판별)
@@ -284,8 +339,8 @@ def generate_report(
     else:
         md.append("모든 룰에서 1건 이상 탐지됨.\n")
 
-    # §7 남은 문제점
-    md.append("\n## 7. 남은 문제점\n")
+    # §8 남은 문제점
+    md.append("\n## 8. 남은 문제점\n")
     md.append("| 항목 | 설명 | 해결 시점 |")
     md.append("|:-----|:-----|:---------|")
     md.append("| `src/pipeline.py` | 전체 오케스트레이터 미구현 — 수동 조립으로 테스트 | Phase 1b #21 |")

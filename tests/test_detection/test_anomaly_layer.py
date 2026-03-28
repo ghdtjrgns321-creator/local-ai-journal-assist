@@ -13,7 +13,7 @@ from src.detection.base import DetectionResult
 
 @pytest.fixture
 def full_anomaly_df() -> pd.DataFrame:
-    """Layer C 9개 룰 모두 테스트 가능한 종합 DataFrame (10행)."""
+    """Layer C 룰 모두 테스트 가능한 종합 DataFrame (10행)."""
     n = 10
     # Why: Benford 분석에 최소 표본 필요 → first_digit 포함
     digits = []
@@ -39,6 +39,15 @@ def full_anomaly_df() -> pd.DataFrame:
                               "medium", "low", "low", "low", "low"],
         "amount_zscore": [1.0, 0.5, 0.3, 3.5, 0.2, 0.8, 0.1, 0.4, -4.0, 0.6],
         "first_digit": pd.array(digits, dtype=pd.Int64Dtype()),
+        # Why: C11 역분개 + C12 비정상시간대에 필요
+        "posting_date": pd.to_datetime([
+            "2025-06-01", "2025-06-02", "2025-06-03", "2025-06-04", "2025-06-05",
+            "2025-06-06", "2025-06-07", "2025-06-08", "2025-06-09", "2025-06-10",
+        ]),
+        "source": ["manual", "automated", "manual", "automated", "manual",
+                    "automated", "manual", "automated", "manual", "automated"],
+        "created_by": ["user_a", "user_b", "user_a", "user_b", "user_a",
+                        "user_b", "user_a", "user_b", "user_a", "user_b"],
     })
 
 
@@ -80,7 +89,7 @@ class TestAnomalyDetectorIntegration:
         """rule_flags 수는 실행된 룰 수와 일치 (C07은 BenfordDetector로 분리)."""
         result = AnomalyDetector().detect(full_anomaly_df)
         skipped = result.metadata.get("skipped_rules", [])
-        expected_count = 9 - len(skipped)  # C01~C06, C08~C10 (C07 제외)
+        expected_count = 11 - len(skipped)  # C01~C06, C08~C12 (C07 제외)
         assert len(result.rule_flags) == expected_count
 
     def test_flagged_indices_valid(self, full_anomaly_df: pd.DataFrame) -> None:

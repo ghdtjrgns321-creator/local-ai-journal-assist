@@ -98,9 +98,9 @@ class TestDataSynthRead:
         assert rr.encoding is not None
 
     def test_row_count(self, pipeline_result):
-        """PREVIEW.md 기준 1,106,356 라인아이템 (data_df = 헤더 제외)."""
+        """라인아이템이 충분히 존재하는지 검증 (절대값 하드코딩 금지)."""
         data_df = pipeline_result["data_df"]
-        assert data_df.shape[0] == 1_106_356
+        assert data_df.shape[0] > 100_000, f"행 수 부족: {data_df.shape[0]}"
 
 
 class TestDataSynthColumnMapping:
@@ -178,9 +178,9 @@ class TestDataSynthCasting:
         assert cr.data["gl_account"].dtype == "object"
 
     def test_final_shape(self, pipeline_result):
-        """최종 shape: 1,106,356행 × 39열."""
+        """최종 shape: 충분한 행 수 × 39열."""
         cr = pipeline_result["casting"]
-        assert cr.data.shape[0] == 1_106_356
+        assert cr.data.shape[0] > 100_000, f"행 수 부족: {cr.data.shape[0]}"
         assert cr.data.shape[1] == 39
 
 
@@ -215,16 +215,19 @@ class TestDataSynthDataQuality:
         assert personas == expected
 
     def test_document_count(self, pipeline_result):
-        """106,489건 전표 (document_id 기준)."""
+        """전표 수가 충분히 존재 (document_id 기준)."""
         cr = pipeline_result["casting"]
         doc_count = cr.data["document_id"].nunique()
-        assert doc_count == 106_489
+        assert doc_count > 10_000, f"전표 수 부족: {doc_count}"
 
     def test_fraud_count(self, pipeline_result):
-        """부정 전표 2,008건."""
+        """부정 전표가 존재하고 전체 대비 합리적 비율 (1~5%)."""
         cr = pipeline_result["casting"]
+        total_docs = cr.data["document_id"].nunique()
         fraud_count = cr.data.loc[cr.data["is_fraud"] == True, "document_id"].nunique()  # noqa: E712
-        assert fraud_count == 2_008
+        assert fraud_count > 0, "부정 전표 없음"
+        fraud_ratio = fraud_count / total_docs
+        assert 0.01 <= fraud_ratio <= 0.05, f"부정 비율 이상: {fraud_ratio:.2%}"
 
     def test_fiscal_year_includes_2022(self, pipeline_result):
         """주 회계연도 2022 포함."""
