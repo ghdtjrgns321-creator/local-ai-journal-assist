@@ -1,7 +1,15 @@
-"""DuckDB DDL 정의 — 4개 테이블 + 1 VIEW.
+"""DuckDB DDL 정의 — 5개 테이블 + 1 VIEW.
 
 Source of truth: config/schema.yaml (DataSynth v1.2.0 PREVIEW 39개)
-+ approval_level 파생 + 피처 18종 + 탐지 결과 3종.
++ approval_level 파생 + 피처 18종 + 탐지 결과 3종 + ML 예약 7종.
+
+Phase 2 예약 컬럼 (7개, nullable):
+  - supervised_score, unsupervised_score, duplicate_score (ML 모델 출력)
+  - supervised_model_id, unsupervised_model_id, duplicate_model_id (모델 추적)
+  - ml_scored_at (점수 산출 시점)
+
+  Phase 2b score_aggregator 확장에서 채워질 예정.
+  Phase 1 데이터는 NULL 유지 (하위 호환성).
 """
 
 from __future__ import annotations
@@ -45,7 +53,7 @@ SCHEMA_DDL: dict[str, str] = {
             sod_conflict_type VARCHAR,
             -- 원본 — Line
             line_number INTEGER,
-            gl_account VARCHAR NOT NULL,
+            gl_account VARCHAR,
             debit_amount DOUBLE DEFAULT 0,
             credit_amount DOUBLE DEFAULT 0,
             local_amount DOUBLE,
@@ -68,6 +76,7 @@ SCHEMA_DDL: dict[str, str] = {
             days_backdated INTEGER,
             fiscal_period_mismatch BOOLEAN,
             is_holiday BOOLEAN,
+            time_zone_category VARCHAR,
             is_near_threshold BOOLEAN,
             exceeds_threshold BOOLEAN,
             amount_zscore DOUBLE,
@@ -84,6 +93,14 @@ SCHEMA_DDL: dict[str, str] = {
             anomaly_score DOUBLE,
             risk_level VARCHAR,
             flagged_rules VARCHAR,
+            -- ML 탐지 결과 (7종, Phase 2 예약 — nullable, Phase 1에서는 NULL)
+            supervised_score DOUBLE,
+            unsupervised_score DOUBLE,
+            duplicate_score DOUBLE,
+            supervised_model_id VARCHAR,
+            unsupervised_model_id VARCHAR,
+            duplicate_model_id VARCHAR,
+            ml_scored_at TIMESTAMP,
             -- 메타
             upload_batch_id VARCHAR,
             created_at TIMESTAMP DEFAULT current_timestamp
@@ -125,6 +142,33 @@ SCHEMA_DDL: dict[str, str] = {
             created_at TIMESTAMP DEFAULT current_timestamp
         )
     """,
+    "ml_model_metadata": """
+        CREATE TABLE IF NOT EXISTS ml_model_metadata (
+            model_id VARCHAR PRIMARY KEY NOT NULL,
+            model_type VARCHAR NOT NULL,
+            model_version VARCHAR,
+            train_batch_id VARCHAR,
+            train_rows INTEGER,
+            train_metrics JSON,
+            hyperparameters JSON,
+            created_at TIMESTAMP DEFAULT current_timestamp
+        )
+    """,
+    # ── Whitelist (HITL 예외 처리) ──
+    "whitelist_seq": """
+        CREATE SEQUENCE IF NOT EXISTS whitelist_id_seq START 1
+    """,
+    "whitelist": """
+        CREATE TABLE IF NOT EXISTS whitelist (
+            id INTEGER DEFAULT nextval('whitelist_id_seq') PRIMARY KEY,
+            batch_id VARCHAR NOT NULL,
+            document_id VARCHAR NOT NULL,
+            rule_code VARCHAR NOT NULL,
+            reason VARCHAR,
+            created_by VARCHAR DEFAULT 'auditor',
+            created_at TIMESTAMP DEFAULT current_timestamp
+        )
+    """,
     "anomaly_flag_summary": """
         CREATE VIEW IF NOT EXISTS anomaly_flag_summary AS
         SELECT
@@ -157,12 +201,17 @@ GENERAL_LEDGER_COLUMNS: list[str] = [
     "approval_level",
     "is_weekend", "is_after_hours", "is_period_end",
     "days_backdated", "fiscal_period_mismatch", "is_holiday",
+    "time_zone_category",
     "is_near_threshold", "exceeds_threshold", "amount_zscore",
     "amount_magnitude", "is_round_number",
     "is_manual_je", "is_intercompany", "is_revenue_account",
     "first_digit", "is_suspense_account",
     "description_quality", "has_risk_keyword",
     "anomaly_score", "risk_level", "flagged_rules",
+    # ML Phase 2 예약 (nullable)
+    "supervised_score", "unsupervised_score", "duplicate_score",
+    "supervised_model_id", "unsupervised_model_id", "duplicate_model_id",
+    "ml_scored_at",
     "upload_batch_id",
 ]
 
@@ -180,6 +229,23 @@ BENFORD_SUMMARY_COLUMNS: list[str] = [
 BENFORD_DIGITS_COLUMNS: list[str] = [
     "upload_batch_id", "digit", "observed_freq",
     "expected_freq", "deviation",
+]
+
+ML_MODEL_METADATA_COLUMNS: list[str] = [
+    "model_id", "model_type", "model_version",
+    "train_batch_id", "train_rows", "train_metrics",
+    "hyperparameters",
+]
+
+# Why: loader.py에서 reindex 후 NaN→None 변환 대상 (Phase 1에서 항상 NULL)
+WHITELIST_COLUMNS: list[str] = [
+    "batch_id", "document_id", "rule_code", "reason", "created_by",
+]
+
+ML_RESERVED_COLUMNS: list[str] = [
+    "supervised_score", "unsupervised_score", "duplicate_score",
+    "supervised_model_id", "unsupervised_model_id", "duplicate_model_id",
+    "ml_scored_at",
 ]
 
 

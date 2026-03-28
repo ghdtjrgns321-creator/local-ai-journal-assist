@@ -17,28 +17,40 @@ from src.db.schema import (
     BENFORD_DIGITS_COLUMNS,
     BENFORD_SUMMARY_COLUMNS,
     GENERAL_LEDGER_COLUMNS,
+    ML_RESERVED_COLUMNS,
 )
 
 logger = logging.getLogger(__name__)
 
 # ── 승인 레벨 파생 (generation_principles.md §11 기준) ───────
 
-_APPROVAL_THRESHOLDS = [
-    (10_000_000, 1),       # 자동 승인
-    (100_000_000, 2),      # 담당자
-    (1_000_000_000, 3),    # 팀장
-    (5_000_000_000, 4),    # 본부장
-    (10_000_000_000, 5),   # CFO
-]
 
+def _derive_approval_level(
+    df: pd.DataFrame,
+    thresholds: list[int] | None = None,
+) -> pd.Series:
+    """전표 단위 차변 합산 → 전결규정 승인 레벨 (1~N).
 
-def _derive_approval_level(df: pd.DataFrame) -> pd.Series:
-    """전표 단위 최대 금액 → 전결규정 승인 레벨 (1~6)."""
-    amount = df[["debit_amount", "credit_amount"]].max(axis=1)
-    doc_max = amount.groupby(df["document_id"]).transform("max")
-    level = pd.Series(6, index=df.index)
-    for threshold, lv in reversed(_APPROVAL_THRESHOLDS):
-        level = level.where(doc_max > threshold, lv)
+    Why: 복식부기에서 sum(debit) = sum(credit)이므로 한쪽만 합산하면
+         전표의 총 거래 금액(Total Transaction Value)을 구할 수 있다.
+
+    경계 규칙: doc_amount <= thresholds[i] 이면 레벨 i+1.
+               모든 임계값 초과 시 max_level(N)에 캡.
+    """
+    if thresholds is None:
+        from config.settings import get_settings
+        thresholds = get_settings().approval_thresholds
+
+    if not thresholds:
+        raise ValueError("approval_thresholds가 비어 있습니다.")
+
+    # Why: 복식부기 — 차변 합계 = 대변 합계이므로 debit만 합산
+    doc_amount = df.groupby("document_id")["debit_amount"].transform("sum")
+
+    max_level = len(thresholds)
+    level = pd.Series(max_level, index=df.index)
+    for i in range(max_level - 1, -1, -1):
+        level = level.where(doc_amount > thresholds[i], i + 1)
     return level
 
 
@@ -130,6 +142,13 @@ def load_general_ledger(conn, df: pd.DataFrame, batch_id: str) -> int:
         df["risk_level"] = df["risk_level"].astype(str)
 
     gl_df = df.reindex(columns=GENERAL_LEDGER_COLUMNS)
+
+    # Why: reindex가 누락 ML 예약 컬럼에 NaN을 넣으면
+    # VARCHAR는 'nan' 문자열 삽입, DOUBLE/TIMESTAMP도 방어적으로 None 통일
+    for col in ML_RESERVED_COLUMNS:
+        if col in gl_df.columns:
+            gl_df[col] = gl_df[col].where(gl_df[col].notna(), None)
+
     col_list = ", ".join(GENERAL_LEDGER_COLUMNS)
     conn.execute(
         f"INSERT INTO general_ledger ({col_list}) SELECT * FROM gl_df"
@@ -215,7 +234,21 @@ def _build_anomaly_flags_df(
 
 
 def _extract_benford(results: list):
-    """results에서 layer_c의 BenfordResult를 추출."""
+    """results에서 BenfordResult를 추출.
+
+    Why: Benford 독립 트랙(track_name='benford') 또는
+         layer_c 내장 benford_result 두 경로 모두 지원.
+    """
+    # 1순위: 독립 benford 트랙
+    for r in results:
+        if (
+            hasattr(r, "track_name")
+            and r.track_name == "benford"
+            and hasattr(r, "metadata")
+            and "benford_result" in r.metadata
+        ):
+            return r.metadata["benford_result"]
+    # 2순위: layer_c 내장 (레거시)
     for r in results:
         if (
             hasattr(r, "track_name")
