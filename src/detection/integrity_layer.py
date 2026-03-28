@@ -25,7 +25,7 @@ class IntegrityDetector(BaseDetector):
     Args:
         settings: 감사 설정 (None이면 기본 싱글톤)
         tolerance: A01 차대변 불일치 허용 오차 (기본 1.0원)
-        chart_of_accounts: A03 유효 계정 집합 (None이면 A03 skip)
+        chart_of_accounts: A03 유효 계정 집합 (None이면 설정/데이터에서 자동 로드)
     """
 
     def __init__(
@@ -35,9 +35,31 @@ class IntegrityDetector(BaseDetector):
         chart_of_accounts: set[str] | None = None,
     ) -> None:
         super().__init__(settings)
-        # Why: 명시적 tolerance 우선, 없으면 settings에서 읽기
         self._tolerance = tolerance if tolerance is not None else self._settings.balance_tolerance
-        self._coa = chart_of_accounts
+        self._coa = chart_of_accounts or self._load_coa()
+
+    def _load_coa(self) -> set[str] | None:
+        """settings.chart_of_accounts_path에서 CoA 로드. 없으면 None."""
+        path = self._settings.chart_of_accounts_path
+        if not path:
+            return None
+        from pathlib import Path
+        p = Path(path)
+        if not p.exists():
+            self._logger.warning("CoA 파일 미존재: %s — A03 skip", path)
+            return None
+        # Why: 1열 텍스트 파일 또는 CSV (gl_account 컬럼) 지원
+        try:
+            if p.suffix == ".csv":
+                import pandas as pd
+                coa_df = pd.read_csv(p, dtype=str)
+                col = "gl_account" if "gl_account" in coa_df.columns else coa_df.columns[0]
+                return set(coa_df[col].dropna().astype(str))
+            else:
+                return set(line.strip() for line in p.read_text().splitlines() if line.strip())
+        except Exception as e:
+            self._logger.warning("CoA 로드 실패: %s — A03 skip", e)
+            return None
 
     @property
     def track_name(self) -> str:

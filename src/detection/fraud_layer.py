@@ -82,7 +82,7 @@ class FraudLayer(BaseDetector):
             ("B03", b03_exceeds_threshold, {}),
             ("B04", b04_duplicate_payment, {"window_days": s.duplicate_payment_window_days}),
             ("B05", b05_duplicate_entry, {}),
-            ("B06", b06_self_approval, {}),
+            ("B06", b06_self_approval, {"min_amount": s.approval_thresholds[0]}),
             ("B07", b07_segregation_of_duties, {"sod_threshold": s.sod_process_threshold}),
             ("B08", b08_manual_override, {}),
             ("B09", b09_skipped_approval, {}),

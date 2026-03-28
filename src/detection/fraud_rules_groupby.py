@@ -22,33 +22,72 @@ def b04_duplicate_payment(
     df: pd.DataFrame,
     window_days: int = 30,
 ) -> pd.Series:
-    """B04 중복 지급: 동일 거래처 + 금액 + 기간 내 2건 이상.
+    """B04 중복 지급: P2P 내 동일 거래처 + 금액 + 기간 내 정밀 탐지.
 
     Why: PCAOB AS 2401 §32 — 동일 건 이중 지급은 부정 은닉 수단.
-    알고리즘: sort → groupby → 양방향 diff (forward + backward).
-             첫 행 NaT 문제를 backward diff로 보완하여 모든 중복 행 포착.
+
+    하이브리드 전략 (A+B):
+      A) 프로세스 필터: P2P만 대상. O2C 반복 매출, TRE 정기 이체는 제외.
+      B) 고유키 대조: 같은 reference인데 document_id가 다르면 이중 지급 의심.
+         reference가 NULL이면 금액+거래처+기간으로 fallback (송장번호 은닉 의심).
     """
     required = ["auxiliary_account_number", "posting_date", "debit_amount", "credit_amount"]
     missing = [c for c in required if c not in df.columns]
     if missing:
         return pd.Series(False, index=df.index)
 
-    base_amount = _compute_base_amount(df)
-    # Why: 원본 인덱스 보존을 위해 임시 컬럼 사용
-    work = df[["auxiliary_account_number", "posting_date"]].copy()
-    work["_base_amt"] = base_amount
-    work = work.sort_values(["auxiliary_account_number", "_base_amt", "posting_date"])
+    result = pd.Series(False, index=df.index)
 
-    grouped = work.groupby(["auxiliary_account_number", "_base_amt"])
-    window = pd.Timedelta(days=window_days)
+    # ── A) 프로세스 필터: P2P만 대상 ──
+    # Why: O2C 반복 매출(82K건), TRE 정기 이체(37K건)는 정상 반복거래
+    if "business_process" in df.columns:
+        p2p_mask = df["business_process"] == "P2P"
+    else:
+        p2p_mask = pd.Series(True, index=df.index)
 
-    # Why: 단방향 diff만 쓰면 그룹 첫 행(NaT)이 누락 → 양방향으로 보완
-    diff_forward = grouped["posting_date"].diff()
-    diff_backward = grouped["posting_date"].diff(-1).abs()
-    is_dup = (diff_forward <= window) | (diff_backward <= window)
+    target = df[p2p_mask]
+    if target.empty:
+        return result
 
-    # Why: sort로 인덱스 순서가 바뀌었으므로 원본 인덱스 기준으로 정렬 복원
-    return is_dup.reindex(df.index).fillna(False)
+    base_amount = _compute_base_amount(target)
+
+    # ── B-1) 고유키 대조: 같은 reference + 같은 금액 + 다른 document_id ──
+    # Why: 횡령범이 같은 송장으로 두 번 지급할 때 reference가 동일
+    if "reference" in target.columns and "document_id" in target.columns:
+        has_ref = target["reference"].notna() & (target["reference"] != "")
+        ref_target = target[has_ref].copy()
+
+        if not ref_target.empty:
+            ref_target["_base_amt"] = base_amount[has_ref]
+            # Why: 같은 reference+금액인데 document_id가 다르면 이중 지급
+            ref_groups = ref_target.groupby(["auxiliary_account_number", "reference", "_base_amt"])
+            n_unique_docs = ref_groups["document_id"].transform("nunique")
+            ref_dups = n_unique_docs > 1
+            result.loc[ref_dups[ref_dups].index] = True
+
+    # ── B-2) NULL reference fallback: 금액 + 거래처 + 기간 ──
+    # Why: 송장번호를 슬쩍 비우거나 바꿔서 탐지를 회피하는 패턴
+    if "reference" in target.columns:
+        has_null_ref = target["reference"].isna() | (target["reference"] == "")
+        null_ref_target = target[has_null_ref]
+    else:
+        # Why: reference 컬럼 자체가 없으면 전체를 fallback 대상으로
+        null_ref_target = target
+    if not null_ref_target.empty:
+        work = null_ref_target[["auxiliary_account_number", "posting_date"]].copy()
+        work["_base_amt"] = _compute_base_amount(null_ref_target)
+        work = work.sort_values(["auxiliary_account_number", "_base_amt", "posting_date"])
+
+        grouped = work.groupby(["auxiliary_account_number", "_base_amt"])
+        window = pd.Timedelta(days=window_days)
+
+        diff_forward = grouped["posting_date"].diff()
+        diff_backward = grouped["posting_date"].diff(-1).abs()
+        is_dup = (diff_forward <= window) | (diff_backward <= window)
+        is_dup = is_dup.reindex(null_ref_target.index).fillna(False)
+        result.loc[is_dup[is_dup].index] = True
+
+    return result
 
 
 def b05_duplicate_entry(df: pd.DataFrame) -> pd.Series:

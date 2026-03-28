@@ -1,4 +1,4 @@
-"""Benford 독립 트랙 — AUDIT_DOMAIN_FINAL §7 가중치 0.15.
+"""Benford 독립 트랙 — DETECTION_RULES.md §2.3 Benford 독립 트랙 가중치 0.15.
 
 Why: Benford는 전체 분포 검정이라 행별 룰(C01~C09)과 성격이 다르다.
      Layer C 내부가 아닌 독립 트랙으로 분리하여 score_aggregator가

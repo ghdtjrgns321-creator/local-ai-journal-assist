@@ -21,27 +21,46 @@ def _get_manual_codes() -> tuple[str, ...]:
     return tuple(c.lower() for c in raw)
 
 
-def b06_self_approval(df: pd.DataFrame) -> pd.Series:
-    """B06 자기 승인: 입력자 = 승인자 또는 수기 + 단일 사용자.
+def b06_self_approval(
+    df: pd.DataFrame,
+    min_amount: int = 0,
+) -> pd.Series:
+    """B06 자기 승인: 인간 사용자의 고액 자기 승인만 플래그.
 
     Why: 외감법 §8①5호 — 업무 분장 위반.
          오스템임플란트(2021) 사례: 1인이 입력·승인·이체 전부 수행 → 2,215억 횡령.
-    Case A: approved_by 존재 → created_by == approved_by
-    Case B: approved_by 부재 → 수기 소스 + created_by 존재 = 자기 승인 추정
+
+    정밀화 (이전 111K건 10.08% 과탐 → ~5K건 예상):
+      1. automated_system 제외 — ERP 자동 전기는 인간 SoD 대상 아님
+      2. 소액 제외 — approval_thresholds Level 1 이하는 전결규정상 자동승인 범위
+      3. Case A: approved_by 존재 → created_by == approved_by
+      4. Case B: approved_by 부재 → 수기 소스 + created_by 존재 = 자기 승인 추정
     """
     if "created_by" not in df.columns:
         return pd.Series(False, index=df.index)
 
-    # Case A: approved_by 컬럼이 있으면 직접 비교
+    # ── 자기 승인 판정 ──
     if "approved_by" in df.columns:
-        return (df["created_by"] == df["approved_by"]) & df["created_by"].notna()
-
-    # Case B: approved_by 없으면 수기 전표 + 사용자 존재 = 자기 승인 추정
-    if "source" in df.columns:
+        same_person = (df["created_by"] == df["approved_by"]) & df["created_by"].notna()
+    elif "source" in df.columns:
         is_manual = df["source"].astype(str).str.lower().isin(_get_manual_codes())
-        return is_manual & df["created_by"].notna()
+        same_person = is_manual & df["created_by"].notna()
+    else:
+        return pd.Series(False, index=df.index)
 
-    return pd.Series(False, index=df.index)
+    # ── automated_system 제외 ──
+    # Why: 시스템이 시스템을 자동 승인하는 건 정상 ERP 동작 (71% 과탐 원인)
+    if "user_persona" in df.columns:
+        same_person = same_person & (df["user_persona"].fillna("") != "automated_system")
+
+    # ── 소액 제외 ──
+    # Why: max(debit, credit)로 대표 금액 산출 — 대변 전용/역분개 전표 대응
+    #      Level 1(1천만) 이하는 전결규정상 자동승인 범위 (23% 과탐 원인)
+    if min_amount > 0 and "debit_amount" in df.columns and "credit_amount" in df.columns:
+        base = df[["debit_amount", "credit_amount"]].fillna(0).max(axis=1)
+        same_person = same_person & (base > min_amount)
+
+    return same_person
 
 
 @functools.lru_cache(maxsize=1)
@@ -140,9 +159,10 @@ def b07_segregation_of_duties(
 
 
 def b09_skipped_approval(df: pd.DataFrame) -> pd.Series:
-    """B09 승인 생략: 한도 초과 + 비자동 소스.
+    """B09 승인 생략: 한도 초과 + 비자동 소스 + 승인자 부재.
 
-    Why: 외감법 §8② — 승인 절차 없이 처리된 한도 초과 전표는 내회관 우회.
+    Why: 외감법 §8② — 승인 절차 없이 처리된 한도 초과 전표는 내부통제 우회.
+         approved_by IS NULL이어야 실제 '승인 생략'. 승인이 존재하면 정상.
     """
     if "exceeds_threshold" not in df.columns or "source" not in df.columns:
         return pd.Series(False, index=df.index)
@@ -150,7 +170,11 @@ def b09_skipped_approval(df: pd.DataFrame) -> pd.Series:
     exceeds = df["exceeds_threshold"].fillna(False)
     # Why: 자동 처리(automated)는 시스템 통제 하에 있으므로 제외
     not_automated = df["source"].astype(str).str.lower() != "automated"
-    return exceeds & not_automated
+    # Why: approved_by가 비어있어야 '승인 생략'. 값이 있으면 승인 절차 이행됨
+    no_approval = pd.Series(True, index=df.index)
+    if "approved_by" in df.columns:
+        no_approval = df["approved_by"].isna() | (df["approved_by"].astype(str).str.strip() == "")
+    return exceeds & not_automated & no_approval
 
 
 def b10_circular_intercompany(df: pd.DataFrame) -> pd.Series:

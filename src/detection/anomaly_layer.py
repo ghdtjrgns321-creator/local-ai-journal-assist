@@ -1,8 +1,8 @@
-"""Layer C: 이상 징후 오케스트레이터 — C01~C06, C08~C10.
+"""Layer C: 이상 징후 오케스트레이터 — C01~C06, C08~C12.
 
 룰 레지스트리를 순회하며 try/except로 격리 실행.
 한 룰 실패해도 나머지 계속 진행, 실패 룰은 skipped + warning 기록.
-C07(Benford)은 BenfordDetector 독립 트랙으로 분리됨 (AUDIT_DOMAIN_FINAL §7).
+C07(Benford)은 BenfordDetector 독립 트랙으로 분리됨 (DETECTION_RULES.md §2.4 점수 체계).
 """
 
 from __future__ import annotations
@@ -21,7 +21,9 @@ from src.detection.anomaly_rules_simple import (
     c06_risky_description,
     c08_amount_outlier,
     c10_suspense_account,
+    c12_abnormal_hours_concentration,
 )
+from src.detection.anomaly_rules_reversal import c11_reversal_entry
 from src.detection.anomaly_rules_statistical import c09_rare_account_pair
 from src.detection.base import BaseDetector, validate_input
 from src.detection.constants import SEVERITY_MAP
@@ -36,7 +38,7 @@ _REQUIRED_COLUMNS = ["debit_amount", "credit_amount"]
 
 
 class AnomalyDetector(BaseDetector):
-    """C01~C06, C08~C09 이상 징후 탐지. 보조 레이어 (가중치 0.25).
+    """C01~C06, C08~C12 이상 징후 탐지. 보조 레이어 (가중치 0.25).
 
     C07(Benford)은 BenfordDetector 독립 트랙으로 분리.
     """
@@ -46,7 +48,7 @@ class AnomalyDetector(BaseDetector):
         return "layer_c"
 
     def detect(self, df: pd.DataFrame) -> DetectionResult:
-        """C01~C06, C08~C09 순차 실행. 각 룰은 try/except로 격리."""
+        """C01~C06, C08~C12 순차 실행. 각 룰은 try/except로 격리."""
         start = time.perf_counter()
         warnings: list[str] = []
 
@@ -83,6 +85,20 @@ class AnomalyDetector(BaseDetector):
             ("C08", c08_amount_outlier, {"zscore_threshold": s.zscore_threshold}),
             ("C09", c09_rare_account_pair, {"percentile": s.account_pair_rare_percentile}),
             ("C10", c10_suspense_account, {}),
+            ("C11", c11_reversal_entry, {
+                "match_window_days": s.reversal_match_window_days,
+                "rolling_window_days": s.reversal_rolling_window_days,
+                "zero_threshold": s.reversal_zero_threshold,
+                "score_threshold": s.reversal_score_threshold,
+            }),
+            ("C12", c12_abnormal_hours_concentration, {
+                "sigma_threshold": s.abnormal_sigma_threshold,
+                "rapid_approval_minutes": s.rapid_approval_minutes,
+                "min_abnormal_ratio": s.min_abnormal_ratio,
+                "min_midnight_entries": s.min_midnight_entries,
+                "min_user_entries": s.min_user_entries,
+                "auto_entry_sources": s.auto_entry_sources,
+            }),
         ]
 
     def _build_result(
