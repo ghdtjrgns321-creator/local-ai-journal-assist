@@ -15,8 +15,8 @@ MindBridge, KPMG Clara의 핵심 로직을 오픈소스(Python)로 재현하는 
 | 컬럼 매핑   | rapidfuzz                          | fuzzy string matching                       |
 | 설정        | pydantic-settings, pyyaml          | 환경변수 + YAML                             |
 | 통계        | scipy.stats, numpy                 | Benford, KS 검정, Runs test                |
-| 지도학습    | xgboost, lightgbm, scikit-learn, shap | LR baseline + cv_selector 자동 비교 (Phase 2) |
-| 비지도학습  | pytorch (VAE), scikit-learn (IF)   | Phase 2                                     |
+| 지도학습    | xgboost, lightgbm, scikit-learn, shap | 파이프라인 인프라 (고객사 실데이터 fine-tuning용, Phase 2) |
+| 비지도학습  | pytorch (VAE), scikit-learn (IF)   | **핵심 탐지기** — 합성 데이터 적합도 높음 (Phase 2)  |
 | 한국어 NLP  | kiwipiepy                          | JVM 의존성 없음 (Phase 3)                  |
 | DB          | duckdb                             | OLAP 최적화                                 |
 | LLM         | ollama + Qwen3-8B (Q4_K_M)        | Phase 3                                     |
@@ -37,6 +37,7 @@ local-ai-assist/
 │   ├── schema.yaml             # 표준 컬럼 스키마 (DataSynth 출력 기준)
 │   ├── keywords.yaml           # ERP별 헤더 키워드
 │   ├── risk_keywords.yaml      # 감사 위험 적요 키워드
+│   ├── cleaning.yaml           # 타입 캐스팅 전처리 규칙 (통화·null·불리언·날짜·DC 지시자)
 │   └── presets/                # 환경 프리셋 (산업별/시즌별 임계값 세트)
 │       ├── default.yaml        # 평시 모드
 │       ├── closing.yaml        # 결산기 모드
@@ -136,12 +137,29 @@ EY-ASU DataSynth(Rust)로 생성한 K-IFRS 적용 한국 중견 제조 그룹사
 | 이상 주입      | fraud 2% + error 2% + process 1%, 16가지 부정 유형    |
 | Benford        | 첫째 자릿수 적합 (tolerance 5%, payroll/recurring 제외) |
 
+## ML 학습 전략
+
+비지도학습 중심 + 지도학습 파이프라인 인프라 구축.
+
+| 접근법 | 모델 | 역할 | 합성 데이터 적합도 |
+|:-------|:-----|:-----|:-----------------:|
+| 비지도학습 | VAE + Isolation Forest | **핵심 탐지기** — 정상 분포 이탈 탐지 | 높음 |
+| 지도학습 | XGBoost, FT-Transformer, BiLSTM | 파이프라인 인프라 — 고객사 실데이터 유입 시 활성화 | 중간 |
+| 앙상블 | Stacking Meta-Learner (LR Ridge) | 6개 모델 출력 결합 | 높음 |
+
+**배경**: DataSynth 합성 데이터의 이상치는 룰 기반으로 주입되므로, 지도학습 시 순환 학습(Circular Learning) 문제 발생.
+비지도학습(VAE+IF)은 정상 분포를 학습하므로 합성 데이터에서도 유효.
+지도학습 파이프라인(cv_selector, SMOTE-ENN, PR-AUC 평가)은 인프라로 구축하여,
+향후 고객사별 실데이터 유입 시 fine-tuning으로 즉시 활성화 가능.
+
+상세: [CONSTRAINTS.md §ML 학습 전략](CONSTRAINTS.md) | [TROUBLESHOOT.md §TS-3](TROUBLESHOOT.md)
+
 ## 데이터 흐름
 
 ```
 DataSynth (tools/datasynth/) → config/datasynth.yaml → journal_entries.csv (1,105K건)
   ↓
-Excel/CSV → file_validator → excel_reader → header_detector → column_mapper → type_caster
+Excel/CSV → file_validator → excel_reader → header_detector → column_mapper → type_caster(←cleaning.yaml)
   ↑ UX 1단계: 자동 헤더/매핑 + 애매한 부분 사용자 위임 + 판단 근거 투명 노출 (ReviewItem)
   → 표준 DataFrame → feature/engine (감사 파생변수 18개)
   → eda/profiler (EDAProfile JSON) → eda/report (대시보드 요약)
@@ -152,7 +170,7 @@ Excel/CSV → file_validator → excel_reader → header_detector → column_map
   ↑ 오케스트레이터: src/pipeline.py — AuditPipeline.run(path) 단일 진입점
   → DuckDB (4테이블 + 1VIEW 원자적 적재)
   → preprocessing (Phase 2: pipeline_builder → cv_selector → 최적 모델 자동 선택)
-    → ML 탐지 (XGBoost 이상치 + VAE+IF 특이치)
+    → ML 탐지 (XGBoost + VAE+IF + FT-Transformer + BiLSTM+Attention → Stacking 앙상블)
     → 프리셋 SQL / Text-to-SQL (Phase 3)
       → Streamlit 대시보드
   ↑ UX 3단계: EDA 프로파일링 + 전처리 투명성 (Phase 1a EDA + Phase 2 ML Pipeline)

@@ -13,13 +13,13 @@
 | 1c 대시보드           |  0   | 12   |   0%   |
 | 2a ML 전처리          | 10   | 10   | 100%   |
 | 2 WU-00 전처리 수정   |  5   |  5   | 100%   |
-| 2 WU-01~04 ML 핵심    |  0   |  4   |   0%   |
+| 2 WU-01~04 ML 핵심    |  0   |  6   |   0%   |
 | 2 WU-05~08 추가탐지   |  0   |  4   |   0%   |
 | 2 WU-09~13 고도화     |  0   |  5   |   0%   |
 | 2 WU-14~16 DataSynth  |  0   |  3   |   0%   |
 | 2 WU-17 대시보드ML    |  0   |  1   |   0%   |
 | 3 NLQ+Graph+Polish    |  0   | 22   |   0%   |
-| **합계**              | 53   | 104  |  51%   |
+| **합계**              | 53   | 106  |  50%   |
 
 **상태 범례**: ✅ 완료 / ⬜ 미착수
 **블로커**: Phase 섹션 상단 blockquote로 표기 (🚫 BLOCKER)
@@ -44,7 +44,7 @@
 | 6   | Excel 읽기          | `src/ingest/excel_reader.py`                                    | [02-ingest](pre-plan/02-ingest.md)                | ✅   |
 | 7   | 헤더 탐지           | `src/ingest/header_detector.py`                                 | [02-ingest](pre-plan/02-ingest.md)                | ✅   |
 | 8   | 컬럼 매핑           | `src/ingest/column_mapper.py`                                   | [02-ingest](pre-plan/02-ingest.md)                | ✅   |
-| 9   | 타입 캐스팅         | `src/ingest/type_caster.py`                                     | [02-ingest](pre-plan/02-ingest.md)                | ✅   |
+| 9   | 타입 캐스팅         | `src/ingest/type_caster.py` + `config/cleaning.yaml`            | [02-ingest](pre-plan/02-ingest.md)                | ✅   |
 | 10  | 매핑 프로파일       | `src/ingest/mapping_profile.py`                                 | [02-ingest](pre-plan/02-ingest.md)                | ✅   |
 | 10a | **UX 1단계**        | 구조적 헤더탐지 + 타입검증 + ReviewItem + Null분기 + latin-1 폴백 | [02-ingest](pre-plan/02-ingest.md)               | ✅   |
 | 10b | **피드백 반영**     | 인코딩 오버라이드+confidence, 시트 스코어링, 금액 퀵픽스, Phase 1c UI 스펙 | [02-ingest](pre-plan/02-ingest.md)      | ✅   |
@@ -196,8 +196,15 @@ WU1 (기반 컴포넌트) ──── 반드시 최초 실행
 
 ## Phase 2: Core AI (ML 모델 + 추가 탐지 유형)
 
+> **ML 전략: 비지도학습 중심** (TS-3, 2026-04-01 결정)
+> DataSynth 합성 데이터의 지도학습 순환 문제(룰로 주입한 이상치를 ML이 재학습)로 인해,
+> **비지도학습(VAE+IF)을 핵심 탐지기**로, **지도학습(XGBoost 등)은 파이프라인 인프라 구축**으로 위치 설정.
+> 지도학습 파이프라인은 향후 고객사별 실데이터 유입 시 fine-tuning으로 활성화.
+> 상세: [CONSTRAINTS.md §ML 학습 전략](CONSTRAINTS.md) | [TROUBLESHOOT.md §TS-3](TROUBLESHOOT.md)
+>
 > **실행 순서**: Work Unit(WU) 단위로 관리. 의존 관계는 다이어그램 참조.
-> **크리티컬 패스**: WU-00 → WU-01 → WU-02 → WU-03 → WU-04
+> **크리티컬 패스**: WU-00 → WU-01 → WU-02 → WU-01b → WU-01c → WU-03 → WU-04
+> **D032~D034 반영**: BiLSTM+Attention(WU-01c), FT-Transformer(WU-01b), Stacking(WU-03) 추가
 
 ```
                          ┌──────────────┐
@@ -218,11 +225,21 @@ WU1 (기반 컴포넌트) ──── 반드시 최초 실행
   │ VAE+IF      │              │                  (TIER 2/3 병렬)
   └──────┬──────┘              │
          │                      │
+  ┌──────▼───────┐             │
+  │  WU-01b (M)  │             │
+  │ FT-Transform │             │
+  └──────┬───────┘             │
+         │                      │
+  ┌──────▼───────┐             │
+  │  WU-01c (M)  │             │
+  │ BiLSTM+Attn  │             │
+  └──────┬───────┘             │
+         │                      │
          ▼                      │
   ┌─────────────┐              │
   │  WU-03 (M)  │◄─────────────┘
-  │ score_agg   │
-  │ 5-track     │
+  │ Stacking    │
+  │ Meta-Learner│
   └──────┬──────┘
          │
   ┌──────▼──────┐   ┌──────────┐
@@ -274,10 +291,11 @@ WU1 (기반 컴포넌트) ──── 반드시 최초 실행
 ### WU-01: SupervisedDetector `[L]` — #48
 
 > **의존**: WU-00 ✅
+> **역할**: 파이프라인 인프라 구축 (합성 데이터 순환 학습 한계로 실탐지 성능은 제한적)
 > XGBoost/RF/LR/LGBM GridSearchCV 지도학습 탐지기
 > **입력**: 18 피처 + 24 룰 결과 = 42차원. DataSynth GT 또는 pseudo-label 사용
 > **불균형 처리**: XGB→scale_pos_weight, RF→class_weight="balanced", LGBM→is_unbalance=True
-> **전이학습**: DataSynth 학습 모델 → 실무 데이터 보조 점수 (Phase 3에서 피드백 루프 재학습)
+> **확장 경로**: 고객사별 실데이터 유입 시 fine-tuning으로 활성화 (Semi-supervised 인터페이스 포함)
 
 | #   | 태스크                  | 파일                                                               | 가이드                                           | 상태 |
 |-----|-------------------------|--------------------------------------------------------------------|--------------------------------------------------|------|
@@ -289,13 +307,14 @@ WU1 (기반 컴포넌트) ──── 반드시 최초 실행
 ### WU-02: VAEDetector + IF 앙상블 `[M]` — #49
 
 > **의존**: WU-00 ✅
+> **역할**: 핵심 탐지기 — 비지도학습은 합성 데이터 적합도가 가장 높음 (순환 학습 문제 없음)
 > VAE + Isolation Forest 비지도 앙상블 탐지기
 > **실증 근거**: C09 recall=10% (1,039건 중 105건). 전수조사 결과 라벨 ~56%가 빈도 상위의 흔한 GL 조합.
 > 통계 룰(하위 1%)로는 "흔하지만 도메인상 비정상"인 조합을 구조적으로 탐지 불가.
 > VAE 잠재공간에서 정상 GL 조합 패턴을 학습하면 빈도와 무관하게 재구성 오차로 탐지 가능.
 > **아키텍처**: Basic FC — Input(n)→Hidden(64)→Hidden(32)→Latent(8)→Hidden(32)→Hidden(64)→Output(n)
 > **학습 데이터**: 검증모드=is_fraud=False only, 실전모드=전체(contamination tolerance <2%)
-> **Phase 3 교체**: vae_model.py를 BiLSTM+Attention으로 내부 교체 (wrapper 외부 인터페이스 유지)
+> **참고**: BiLSTM+Attention은 D032에 따라 WU-01c에서 독립 탐지기로 구현 (VAE 교체 아닌 병렬 운용)
 
 | #   | 태스크                  | 파일                                                               | 가이드                                           | 상태 |
 |-----|-------------------------|--------------------------------------------------------------------|--------------------------------------------------|------|
@@ -303,19 +322,54 @@ WU1 (기반 컴포넌트) ──── 반드시 최초 실행
 |     | t-SNE/UMAP 잠재공간 시각화 | 학습 후 latent space 품질 검증 유틸리티                           | [05a-detection-ml](pre-plan/05a-detection-ml.md) §450 | ⬜ |
 |     | 단위 테스트              | `tests/test_detection/test_vae_detector.py` (신규)                 | 05a-detection-ml "테스트 전략"                   | ⬜   |
 
-### WU-03: score_aggregator 5-track 확장 `[M]` — #50
+### WU-01b: FT-Transformer Tabular 탐지기 `[M]` — D033
 
-> **의존**: WU-01 + WU-02 + WU-05
-> 4트랙(A/B/C/Benford) → 5트랙(rule/supervised/unsupervised/benford/duplicate)
-> **정규화**: Percentile Ranking (분포 무관, 극단값 강건) — D024 참조
-> **가중치**: rule(0.20) + supervised(0.25) + vae(0.20) + benford(0.15) + duplicate(0.20) — 실측 후 튜닝
-> **스케일 통일**: XGB 0~1, IF -0.5~0.5, VAE 0~∞ → percentile 0~1로 변환 후 가중합
+> **의존**: WU-02 (VAE 래퍼 패턴 재사용)
+> FT-Transformer: 모든 피처를 토큰화 → self-attention으로 피처 간 상호작용 학습
+> **아키텍처**: 42 features → Feature Tokenizer(64-dim) + [CLS] → Transformer Encoder(2L, 4H, d=64, ff=128) → FC(64→2)
+> **VRAM**: ~300MB (batch=256). RTX 3070 Ti 8GB 여유 충분
+> **핵심 이점**: 24개 룰 결과 간 조합 패턴을 attention이 자동 학습 (수동 B19 Top-side 룰의 학습 버전)
 
-| #   | 태스크                    | 파일                                                | 가이드                                              | 상태 |
-|-----|---------------------------|-----------------------------------------------------|-----------------------------------------------------|------|
-| 50  | score_aggregator 5트랙    | `src/detection/score_aggregator.py`, `constants.py` | [05-detection](pre-plan/05-detection.md) + 05a      | ⬜   |
-|     | Percentile Ranking 정규화 추가 | 가중합 전 스케일 통일                              | [05a-detection-ml](pre-plan/05a-detection-ml.md) §329 | ⬜ |
-|     | 단위 테스트 갱신           | `tests/test_detection/test_score_aggregator.py`     | 05-detection "테스트 전략"                           | ⬜   |
+| #    | 태스크                       | 파일                                                          | 가이드                                           | 상태 |
+|------|------------------------------|---------------------------------------------------------------|--------------------------------------------------|------|
+| 49b  | FT-Transformer PyTorch 모듈  | `src/preprocessing/ft_model.py` (신규)                        | [05a-detection-ml](pre-plan/05a-detection-ml.md) | ⬜   |
+|      | FT-Transformer sklearn 래퍼  | `src/preprocessing/ft_wrapper.py` (신규)                      | vae_wrapper.py 패턴 동일                         | ⬜   |
+|      | TransformerDetector          | `src/detection/tabular_transformer.py` (신규)                 | BaseDetector 계약 준수                           | ⬜   |
+|      | pipeline_builder 확장        | `src/preprocessing/pipeline_builder.py` — build_ft_pipeline() | [03a-preprocessing](pre-plan/03a-preprocessing.md) | ⬜ |
+|      | 단위 테스트                   | `tests/test_detection/test_tabular_transformer.py` (신규)     | 05a-detection-ml "테스트 전략"                   | ⬜   |
+
+### WU-01c: BiLSTM + Attention 시퀀스 탐지기 `[M]` — D032
+
+> **의존**: WU-01b (래퍼 패턴 확립 후)
+> 사용자-시간 윈도우 기반 시퀀스 탐지. ISA 240 "경영진 override" 반복 패턴 포착
+> **시퀀스 구성**: `created_by` 그룹 → `posting_date` 정렬 → seq_len=16 슬라이딩 윈도우(stride=1)
+> **아키텍처**: BiLSTM(hidden=64, bidir) → Additive Attention → FC(128→64→2). VRAM ~100MB
+> **sklearn 통합**: 외부 2D API 유지, 내부에서 sequence_builder로 3D 변환
+
+| #    | 태스크                       | 파일                                                         | 가이드                                           | 상태 |
+|------|------------------------------|--------------------------------------------------------------|--------------------------------------------------|------|
+| 49c  | 시퀀스 빌더 (2D→3D 윈도우)   | `src/preprocessing/sequence_builder.py` (신규)               | [05a-detection-ml](pre-plan/05a-detection-ml.md) | ⬜   |
+|      | BiLSTM+Attention PyTorch 모듈 | `src/preprocessing/bilstm_model.py` (신규)                   | [05a-detection-ml](pre-plan/05a-detection-ml.md) | ⬜   |
+|      | BiLSTM sklearn 래퍼          | `src/preprocessing/bilstm_wrapper.py` (신규)                 | vae_wrapper.py 패턴 동일                         | ⬜   |
+|      | SequenceDetector             | `src/detection/sequence_detector.py` (신규)                  | BaseDetector 계약 준수                           | ⬜   |
+|      | 단위 테스트                   | `tests/test_detection/test_sequence_detector.py` (신규)      | 05a-detection-ml "테스트 전략"                   | ⬜   |
+
+### WU-03: Stacking Meta-Learner 앙상블 `[M]` — #50, D034
+
+> **의존**: WU-01 + WU-02 + WU-01b + WU-01c + WU-05
+> 기존 고정 가중합(D024) → Stacking meta-learner(LR Ridge)로 대체
+> **Level 0**: 6개 base model (룰 24개, XGBoost, VAE, IF, BiLSTM, FT-Transformer)
+> **Level 1**: Logistic Regression (L2) — 6개 확률값 → 최종 anomaly_score
+> **Leakage 방지**: 5-fold out-of-fold prediction 프로토콜
+> **Fallback**: 라벨 부족 시 기존 Percentile Ranking 가중합으로 폴백
+
+| #   | 태스크                         | 파일                                                          | 가이드                                              | 상태 |
+|-----|--------------------------------|---------------------------------------------------------------|-----------------------------------------------------|------|
+| 50  | StackingEnsemble sklearn 래퍼  | `src/preprocessing/stacking.py` (신규)                        | [05a-detection-ml](pre-plan/05a-detection-ml.md)    | ⬜   |
+|     | EnsembleDetector               | `src/detection/ensemble_detector.py` (신규)                   | BaseDetector 계약 준수                              | ⬜   |
+|     | score_aggregator stacking 확장 | `src/detection/score_aggregator.py`, `constants.py`           | [05-detection](pre-plan/05-detection.md) + 05a      | ⬜   |
+|     | Percentile Ranking 정규화      | 가중합 전 스케일 통일 (fallback 모드)                          | [05a-detection-ml](pre-plan/05a-detection-ml.md)    | ⬜   |
+|     | 단위 테스트                     | `tests/test_detection/test_ensemble_detector.py` (신규)       | 05a-detection-ml "테스트 전략"                      | ⬜   |
 
 ### WU-04: Pipeline 통합 + ML 통합 테스트 `[M]` — #53
 
@@ -393,7 +447,7 @@ WU1 (기반 컴포넌트) ──── 반드시 최초 실행
 
 | #   | 태스크                          | 파일                                        | 가이드                                                | 상태 |
 |-----|---------------------------------|---------------------------------------------|-------------------------------------------------------|------|
-| 61  | 유럽 금액 포맷 지원             | `src/ingest/type_caster.py`                 | [02-ingest](pre-plan/02-ingest.md) §374              | ⬜   |
+| 61  | 유럽 금액 포맷 지원             | `config/cleaning.yaml` + `src/ingest/type_caster.py` | [02-ingest](pre-plan/02-ingest.md) §374      | ⬜   |
 | 62  | 한국 공휴일 연동                | `src/feature/time_features.py`              | [04-validation](pre-plan/04-validation.md) §128      | ⬜   |
 |     | 외화 소수점 처리 (is_round_number) | `src/feature/amount_features.py`          | [03-feature](pre-plan/03-feature.md) §537            | ⬜   |
 |     | currency_decimals YAML 설정     | `config/audit_rules.yaml` — KRW:0, USD:2, EUR:2, JPY:0 | [03-feature](pre-plan/03-feature.md) §537 | ⬜ |
@@ -468,17 +522,19 @@ WU1 (기반 컴포넌트) ──── 반드시 최초 실행
 
 ### 추천 실행 순서 (Sprint 단위)
 
-| Sprint | Work Unit                      | 복잡도    | 비고                      |
-|--------|--------------------------------|-----------|---------------------------|
-| **1**  | WU-00                          | S         | ✅ 완료                   |
-| **2**  | WU-01, WU-05, WU-06, WU-09, WU-10 | L+M+S+S+S | 크리티컬패스 + 병렬 4건 |
-| **3**  | WU-02, WU-07, WU-11, WU-13    | M+M+S+M  | 크리티컬패스 + 병렬 3건  |
-| **4**  | WU-03, WU-08                   | M+M      | score_agg 확장 + 병렬    |
-| **5**  | WU-04, WU-12                   | M+S      | Pipeline 통합 + DB 마이그 |
-| **6**  | WU-14, WU-15, WU-16           | M+M+L    | DataSynth 블로커 해소 후  |
-| **7**  | WU-17                          | M        | Phase 1c 블로커 해소 후   |
+| Sprint | Work Unit                              | 복잡도       | 비고                              |
+|--------|----------------------------------------|--------------|-----------------------------------|
+| **1**  | WU-00                                  | S            | ✅ 완료                           |
+| **2**  | WU-01, WU-05, WU-06, WU-09, WU-10     | L+M+S+S+S   | 크리티컬패스 + 병렬 4건           |
+| **3**  | WU-02, WU-07, WU-11, WU-13            | M+M+S+M     | 크리티컬패스 + 병렬 3건           |
+| **4**  | WU-01b, WU-08                          | M+M         | FT-Transformer + 병렬            |
+| **5**  | WU-01c                                 | M           | BiLSTM+Attention 시퀀스 탐지      |
+| **6**  | WU-03                                  | M           | Stacking meta-learner 앙상블      |
+| **7**  | WU-04, WU-12                           | M+S         | Pipeline 통합 + DB 마이그         |
+| **8**  | WU-14, WU-15, WU-16                   | M+M+L       | DataSynth 블로커 해소 후          |
+| **9**  | WU-17                                  | M           | Phase 1c 블로커 해소 후           |
 
-**Phase 2 완료 기준**: ML Pipeline E2E 동작 + 5-track 점수 집계 + DuckDB ML 컬럼 적재 + 추가 탐지기 8종 동작
+**Phase 2 완료 기준**: ML Pipeline E2E 동작 + Stacking 6-model 앙상블 + DuckDB ML 컬럼 적재 + 추가 탐지기 8종 동작
 
 > **DETECTION_RULES §3.2 유형→모듈 매핑** (모듈별 관리, 16개 유형 커버):
 >
