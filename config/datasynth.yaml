@@ -103,8 +103,8 @@ transactions:
     decimal_places: 0           # 원화는 소수점 없음
     round_number_probability: 0.25
     nice_number_probability: 0.15
-    round_number_unit: 1000000      # KRW: 100만원 단위 (Python round_unit과 정합)
-    nice_number_unit: 100000        # KRW: 10만원 단위
+    round_number_unit: 100000        # WU-DS-02: 10만원 단위로 하향 (목표 15~25%)
+    nice_number_unit: 10000          # WU-DS-02: 1만원 단위로 하향 (목표 10~20%)
   benford:
     enabled: true
     tolerance: 0.05
