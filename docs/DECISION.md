@@ -213,6 +213,40 @@
 - **구현 파일**: `_redetect.py`, `preset_selector.py`, `threshold_sidebar.py`, `rule_panel.py`, `pipeline.py`, `score_aggregator.py`
 - **트레이드오프**: `featured_data` 스냅샷으로 메모리 사용량 ~2배 증가 (대규모 데이터에서 고려 필요)
 
+### D032: BiLSTM + Attention 시퀀스 탐지 추가 (Phase 2b)
+- **결정**: Phase 2b에 BiLSTM + Attention 시퀀스 탐지기 추가. 기존 행 단위(row-level) 탐지의 한계를 사용자-시간 시퀀스 컨텍스트로 보완
+- **시퀀스 구성 전략**: `created_by` 기준 그룹 → `posting_date` 정렬 → seq_len=16 슬라이딩 윈도우(stride=1). 3건 미만 사용자는 제로 패딩 + attention 마스킹
+- **아키텍처**: BiLSTM(hidden=64, layers=1, bidirectional) → Additive Attention → FC(128→64→2). VRAM ~100MB (batch=256)
+- **이유**:
+  - ISA 240 "경영진 override" — 부정은 사용자 중심 반복 패턴. 행 단위 모델은 이 시간적 의존성 미포착
+  - 회계 전표는 독립 행이지만, 같은 사용자의 연속 입력에서 시퀀스 패턴(점진적 금액 증가, 반복적 수기 입력 등) 존재
+- **sklearn 통합**: `BiLSTMDetector(BaseEstimator)` 래퍼가 외부 2D API 유지, 내부에서 `sequence_builder`로 3D 변환
+- **근거**: vae_wrapper.py 패턴 재사용. RTX 3070 Ti 8GB에서 ~100MB로 여유 충분
+- **D020 변경**: "Phase 3에서 BiLSTM+Attention으로 교체 실험" → Phase 2b에서 독립 탐지기로 즉시 구현
+
+### D033: FT-Transformer Tabular 탐지 추가 (Phase 2b)
+- **결정**: Phase 2b에 FT-Transformer(Feature Tokenizer + Transformer) 추가. 42차원 정형 데이터의 피처 간 상호작용을 self-attention으로 학습
+- **모델 선택**: TabTransformer(범주형만 attention) / TabNet(벤치마크 열세) 대신 FT-Transformer 채택
+- **아키텍처**: 42 features → Feature Tokenizer(각 64-dim embedding) + [CLS] token → Transformer Encoder(2 layers, 4 heads, dim=64, ff=128) → FC(64→2). VRAM ~300MB (batch=256)
+- **이유**:
+  - 24개 룰 결과 간 조합 패턴(예: weekend AND manual AND period_end AND high_amount)을 attention이 자동 학습 → 수동 B19 Top-side 룰의 학습 버전
+  - Gorishniy et al. (2021) "Revisiting Deep Learning Models for Tabular Data" — FT-Transformer가 medium-size tabular에서 XGBoost와 경쟁적
+  - 어떤 데이터가 올지 모르므로, tree 모델과 다른 관점(attention 기반)의 탐지기 확보 가치
+- **D019 변경**: "DNN 보류" → FT-Transformer로 구체화하여 Phase 2b에 포함
+- **sklearn 통합**: `FTTransformerDetector(BaseEstimator)` 래퍼, vae_wrapper.py 패턴 동일
+
+### D034: Stacking Meta-Learner로 가중합 대체 (Phase 2b)
+- **결정**: 기존 고정 가중합(D024: rule 0.20 + supervised 0.25 + vae 0.20 + benford 0.15 + duplicate 0.20)을 Stacking meta-learner(Logistic Regression, L2)로 대체
+- **구조**:
+  - Level 0: 6개 base model (24개 룰, XGBoost, VAE, IF, BiLSTM, FT-Transformer)
+  - Level 1: LR(Ridge) meta-learner — 6개 확률값 입력 → 최종 anomaly_score 출력
+- **이유**:
+  - 기존 가중치 5개에 근거 없음 (D013, D024 모두 "실측 후 튜닝 예정"이라 명시)
+  - LR 계수가 곧 데이터 기반 가중치 → 각 모델의 실제 기여도를 자동 학습
+  - 입력 6개에 복잡한 meta-learner(XGBoost 등)는 과적합 + self-amplification 위험
+- **Leakage 방지**: 5-fold out-of-fold prediction 프로토콜. base model은 train folds로만 학습, OOF prediction으로 meta-learner 학습 데이터 생성
+- **Fallback**: stacking 학습 불가 시(라벨 부족) 기존 Percentile Ranking 가중합으로 폴백
+
 ### D031: WU6 EDA 탭 + 메인 앱 통합 — Lazy Loading + 필터 독립
 - **결정**: EDA 프로파일을 업로드 시 동기 계산이 아닌, EDA 탭 최초 렌더 시 Lazy Loading으로 계산. 사이드바 필터와 무관하게 업로드 원본 전체 데이터 기준으로 프로파일링
 - **이유**:
@@ -223,3 +257,17 @@
 - **사이드바 UX**: 업로드 후 파일명+행수 1줄 요약만 표시, 필터와 설정은 각각 `st.expander`로 접어 13인치 노트북 스크롤 최소화
 - **탭 순서**: EDA → Summary → Benford → Explorer (데이터 품질 확인이 분석보다 선행)
 - **구현 파일**: `app.py`(신규), `tab_eda.py`(신규), `eda_charts.py`(신규), `_state.py`(수정), `data_uploader.py`(수정)
+
+### D036: DataSynth v21 확정 — Phase 1 룰 기반 탐지 수렴 판정
+- **결정**: DataSynth v21(1,106,056행)을 Phase 1 최종 데이터로 확정. 추가 수정 중단.
+- **이유**:
+  - Phase 1 Recall 91.4%, Normal 85.2%, B07 1.9% — 21회 반복 수렴 확인
+  - 잔여 FN 19건은 소수 라벨 룰의 난수 진동 (매 생성마다 변동)
+  - 구조적 한계 FN ~1,822건(B05/B10/C09/C07)은 Phase 2 ML 영역
+  - 추가 수정 시 Recall +0.7%p 상한 — 비용 대비 효익 미미
+- **상세**: [rule-label-gap-analysis.md](../tests/phase1_rulebase/test-results/rule-label-gap-analysis.md)
+
+### D035: type_caster 정규화 규칙 외부화 — cleaning.yaml
+- **결정**: `type_caster.py`에 하드코딩된 통화 기호·null 값·불리언·Excel serial 범위·DC 지시자를 `config/cleaning.yaml`로 분리. 과학적 표기법(2E+11) 감지/복원과 한국 ERP null 표현(`미정`, `해당없음`) 지원 추가
+- **이유**: 새 ERP 포맷 대응 시 코드 변경 없이 YAML만 편집. 기존에 `keywords.yaml`, `schema.yaml`, `audit_rules.yaml` 패턴이 있으므로 동일 구조 채택
+- **구현 파일**: `config/cleaning.yaml`(신규), `config/settings.py`(`get_cleaning_config()` 추가), `src/ingest/type_caster.py`(리팩토링)

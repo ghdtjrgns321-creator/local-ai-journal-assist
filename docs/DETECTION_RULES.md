@@ -12,13 +12,14 @@
 ERP에서 추출한 전표 CSV 데이터에 대한 **전수 검사(CAATs)** 자동화.
 감사인이 후속 수작업을 수행할 때의 우선순위 추천을 제공한다.
 
-### 1.2 탐지 아키텍처 — 3레이어 + Benford
+### 1.2 탐지 아키텍처 — 4레이어 + Benford
 
 ```
-Layer A (데이터 무결성)  ─ 전표 품질 게이트, 이 검증 통과 후 이후 탐지가 의미있음
-Layer B (부정 탐지)      ─ 핵심 탐지 레이어, 부정 시나리오 직접 대응
-Layer C (이상 징후)      ─ 보조 징후, 부정의 간접 지표
-Benford (독립 트랙)      ─ C07을 별도 가중치로 분리, 분포 수준 검정
+Layer A (데이터 무결성)     ─ 전표 품질 게이트, 이 검증 통과 후 이후 탐지가 의미있음
+Layer B (부정 탐지)         ─ 핵심 탐지 레이어, 부정 시나리오 직접 대응
+Layer C (이상 징후)         ─ 보조 징후, 부정의 간접 지표
+Benford (독립 트랙)         ─ C07을 별도 가중치로 분리, 분포 수준 검정
+Layer D (전기 대비 변동)    ─ 기존회사 전용, 전기 engagement 대비 급변 탐지
 ```
 
 ### 1.3 52개 유형 → 채택 판정
@@ -287,7 +288,8 @@ Drop      11개    —         제외                              —
 - **탐지 로직**: `is_suspense_account == True` (하이브리드 — 텍스트 키워드 OR GL 코드 prefix)
 - **구현**: `anomaly_rules_simple.py` → `c10_suspense_account()`
 - **필요 피처**: `is_suspense_account` (파생)
-- **DataSynth 상태**: ⚠️ 적요에 가계정 키워드 미주입 (~30% 확률 목표)
+- **DataSynth 상태**: GL 코드 강제 배정으로 탐지 정상 작동. 적요 키워드 주입은 30% 확률이나 전체 확률 체인(0.5%×5%×30%) 상 극소수만 생성됨 — 이는 정상 동작.
+- **Phase 3 이관**: 적요 의미 분석은 키워드 매칭의 근본 한계(우회 표현, 동의어, 은어)로 인해 Phase 3 LLM(#71 적요 NLP + #84 kiwipiepy + #88 semantic_similarity)에서 해결
 
 #### C11 — 역분개 패턴 (ReversalEntry)
 
@@ -303,6 +305,47 @@ Drop      11개    —         제외                              —
 - **필요 피처**: `gl_account`, `debit_amount`, `credit_amount`, `posting_date`, `document_id`
   - 보조: `created_by`, `source`, `line_text`, `header_text`, `cost_center`, `trading_partner`
 - **성능**: S1 self-merge 세분화 키(cost_center/trading_partner)로 Cartesian 폭발 방지
+
+---
+
+### 2.5 Layer D: 전기 대비 변동 (2개, 기존회사 전용)
+
+전기(fiscal_year - 1) engagement 데이터가 있는 기존회사에서만 실행.
+신규회사(anonymous) 또는 전기 engagement 미존재 시 자동 스킵 (graceful degradation).
+
+| Rule ID | 룰 이름                    | Severity | 감사기준서                    | 구현 파일                                |
+|---------|----------------------------|:--------:|-------------------------------|------------------------------------------|
+| D01     | 계정과목 집계 급변         | 4        | ISA 520 §5, PCAOB AS 2305    | `src/detection/variance_rules.py`        |
+| D02     | 월별 분포 패턴 변화        | 3        | ISA 520 §5                    | `src/detection/variance_rules.py`        |
+
+#### D01 — 계정과목 집계 급변 (AccountAggregateVariance)
+
+- **입력**: 당기 DataFrame + `PriorSummary.account_aggregates`
+- **판정 로직**:
+  - 당기/전기 `gl_account`별 집계 비교 (total_amount, count, avg_amount)
+  - 가중평균 변동률 = `total_var × 0.5 + count_var × 0.3 + avg_var × 0.2`
+  - 임계값: `variance_threshold` (기본 0.5 = 50%) 초과 시 해당 계정의 모든 행 플래그
+  - 신규 계정(전기 미존재): 자동 플래그 (변동률 = 1.0)
+
+#### D02 — 월별 분포 패턴 변화 (MonthlyPatternVariance)
+
+- **입력**: 당기 DataFrame + `PriorSummary.monthly_patterns`
+- **판정 로직**:
+  - Jensen-Shannon Divergence(JSD)로 전기/당기 월별 금액 분포 비교
+  - 임계값: `monthly_pattern_threshold` (기본 0.3) 초과 시 해당 계정의 모든 행 플래그
+  - 전기/당기 모두 3개월 이상 데이터 존재해야 비교 수행, 미만이면 스킵
+
+#### Layer D 가중치 (기존회사 트랙)
+
+Layer D가 활성화되면 전체 가중치가 재배분된다.
+
+| 레이어          | 신규회사 | 기존회사 |
+|-----------------|:--------:|:--------:|
+| A (무결성)      | 0.15     | 0.12     |
+| B (부정)        | 0.45     | 0.38     |
+| C (이상징후)    | 0.25     | 0.20     |
+| Benford         | 0.15     | 0.12     |
+| **D (전기 변동)** | **—**  | **0.18** |
 
 ---
 
@@ -552,21 +595,31 @@ Phase 1의 24개 룰 결과를 pseudo-label로, DataSynth `is_fraud`/`is_anomaly
 | 유의적 거래 합리성 | 탐지된 이상 전표를 LLM 분석 → 보조 의견 | 240§32(c) |
 | 비정상 시간대 입력자 집중 | 사용자별 심야/비근무일 비율 통계 | KLCA IT 체크리스트 |
 
-### 3.4 Phase 2 점수 체계 (5트랙)
+### 3.4 Phase 2 점수 체계 — Stacking Meta-Learner (D034)
+
+**기존 고정 가중합 → Stacking 앙상블로 대체** (D034, 2026-03-30 결정)
 
 ```
-rule(0.20) + xgboost(0.25) + vae(0.20) + benford(0.15) + duplicate(0.20)
+Level 0 (6개 Base Models):
+  [1] 룰 기반 24개 aggregate    → 1개 점수 (0~1)
+  [2] XGBoost (cv_selector)     → predict_proba (0~1)
+  [3] VAE 재구성 오차           → normalized (0~∞ → 0~1)
+  [4] Isolation Forest          → normalized (-0.5~0.5 → 0~1)
+  [5] FT-Transformer (D033)    → predict_proba (0~1)
+  [6] BiLSTM+Attention (D032)  → predict_proba (0~1)
+
+Level 1 (Meta-Learner):
+  Logistic Regression (L2 Ridge)
+  Input: 6개 확률값 → 최종 anomaly_score
+  계수 = 데이터 기반 가중치 (고정 비율 대체)
+
+Leakage 방지: 5-fold out-of-fold prediction
+Fallback: 라벨 부족 시 Percentile Ranking 가중합
 ```
 
-각 모델의 원시 점수 단위가 다르므로, 가중합 전 Percentile Ranking으로 0~1 정규화.
+각 모델의 원시 점수 단위가 다르므로, fallback 시 Percentile Ranking으로 0~1 정규화.
 
 ```
-원시 점수 범위:
-  XGBoost predict_proba:     0.0 ~ 1.0     (확률)
-  Isolation Forest:         -0.5 ~ 0.5     (고립도)
-  VAE reconstruction error:  0.0 ~ ∞       (오차)
-  룰 기반:                   0.0 ~ 1.0     (정규화 완료)
-
 정규화: scipy.stats.rankdata → 백분위수 0~1 변환
   → 분포 무관, 극단값에 강건 (Min-Max/Z-score 대비 우수)
 ```
@@ -622,7 +675,7 @@ rule(0.15) + xgboost(0.20) + vae(0.15) + benford(0.10) + duplicate(0.15) + nlp(0
 
 ## 6. DataSynth 갭 현황
 
-> 갱신일: 2026-03-26 | DataSynth v1.2.0, 1M행
+> 갱신일: 2026-04-02 | DataSynth v21 확정 | 1,106,056행 | Phase 1 Recall 91.4% | Normal 85.2%
 
 ### 의존 관계
 
@@ -660,11 +713,24 @@ DataSynth 데이터 (검증)
 | `is_suspense_account` all-False | 한글 키워드만 매칭 | 하이브리드: 텍스트 키워드 OR GL 코드 prefix | `pattern_features.py`, `audit_rules.yaml` |
 | `is_round_number` all-False | float 소수점 꼬리 | `base.round(0) % unit` 허용 | `amount_features.py` |
 
+### v21 확정 결과 (2026-04-02)
+
+| 항목 | 값 |
+|:-----|:---|
+| Phase 1 Recall | 91.4% (2,408 / 2,636) |
+| 전체 Recall | 92.0% (7,197 / 7,827) |
+| 100% Recall 룰 | 10개 (A01, A02, A03, B01, B04, C02, C03, C05, C06, C11) |
+| B07 flagged | 1.9% (정상) |
+| Normal 등급 | 85.2% |
+| 구조적 한계 (ML 필요) | B05(10%), B10(4%), C09(9%), C07(29%) — Phase 2 대상 |
+
+상세: [test-results/rule-label-gap-analysis.md](../tests/phase1_rulebase/test-results/rule-label-gap-analysis.md)
+
 ### 미해결 (경미 — Phase 2 이후)
 
 | 항목 | 원인 | 현재 상태 | 대상 |
 |:-----|:-----|:---------|:-----|
-| C10 적요 키워드 부족 | 가수금 GL(29xx) 4,436건 중 적요 키워드 63건 (목표 ~30%) | GL prefix 기반 탐지는 정상 작동 | DataSynth Rust |
+| C10 적요 키워드 부족 | 확률 체인(0.5%×5%×30%)으로 키워드 주입 건수 극소 — 정상 동작 | GL prefix 기반 탐지 정상 작동. 적요 의미 분석은 Phase 3 LLM 영역(#71, #84, #88) | Phase 3 이관 |
 | trading_partner | 99.9% NULL (784건) | B10 IC GL prefix 매칭으로 대체 | DataSynth Rust |
 | cost_center | 81.2% NULL | C11 세분화 키 활용도 제한 | DataSynth Rust |
 

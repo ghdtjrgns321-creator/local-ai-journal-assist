@@ -328,6 +328,8 @@ conf < 40%         → 수동 선택 (빨강)   → unmapped
 src/ingest/
 ├── type_caster.py    # cast_amount/cast_date/_cast_int/_cast_bool/unify_debit_credit + cast_dataframe() 퍼사드
 └── models.py         # CastingResult 추가
+config/
+└── cleaning.yaml     # 통화 기호·null 값·불리언·날짜 범위·DC 지시자·과학적 표기법 규칙 (코드 변경 없이 확장 가능)
 ```
 
 #### 이 모듈이 하는 일
@@ -343,7 +345,9 @@ src/ingest/
 
 해결:
   스키마 정의(schema.yaml)에 따라 float/date/int/bool/str 캐스터를 자동 디스패치하고,
+  정규화 규칙은 config/cleaning.yaml에 외부화하여 코드 변경 없이 확장 가능하다.
   금액은 통화기호→괄호음수→쉼표 순서로 정제, 날짜는 5단계 포맷 폴백으로 처리한다.
+  문자열 ID의 Excel 과학적 표기법(2E+11) 감지 및 best-effort 복원을 지원한다.
   차변/대변이 분리되지 않은 경우 DC indicator나 부호 기반으로 자동 분리(unify)한다.
   필수 컬럼 변환 실패는 error, 권장 컬럼은 warning으로 구분한다.
 ```
@@ -368,10 +372,14 @@ src/ingest/
 | int/bool 캐스팅         | `_cast_int()`/`_cast_bool()` 추가 — fiscal_year, is_fraud 등  |
 | str 캐스팅              | `_cast_str()` 추가 — Excel int64→str 변환, NaN 보존           |
 | Parquet fast path       | `_is_already_correct_type()` — 이미 올바른 dtype이면 스킵     |
+| 정규화 규칙 외부화      | `config/cleaning.yaml` — 통화·null·불리언·날짜·DC 지시자 규칙  |
 | 금액 처리 순서          | 통화기호→괄호음수→쉼표 제거 후 `pd.to_numeric(coerce)`         |
+| 금액 null 확장          | 한국 ERP null 표현(`미정`,`해당없음`,`없음`,`N/A`) 지원        |
+| 백슬래시 통화 기호      | `\`(₩ 인코딩 아티팩트) 제거 지원                               |
+| 과학적 표기법           | `_cast_str()`에서 `2E+11` 감지 → `int(float())` 복원 + 경고   |
 | 날짜 5단계 폴백         | ISO8601→한국어→8자리→Excel serial→dayfirst 폴백               |
 | 차대변 통합 3케이스     | Case A(이미 분리), B(DC indicator), C(부호 기반)              |
-| 유럽 금액 포맷          | MVP 범위 외 — Phase 2에서 확장                                 |
+| 유럽 금액 포맷          | MVP 범위 외 — `cleaning.yaml`에 locale 추가로 확장 가능        |
 
 **반환 타입:** `CastingResult(data, errors, warnings, cast_summary, skipped_columns, high_null_columns, empty_columns, success)`
 
@@ -382,11 +390,12 @@ src/ingest/
 캐스팅 후 >10% NaN → warnings (일반 경고)
 ```
 
-**테스트:** 44개 통과 (cast_amount 9 + cast_date 8 + cast_int 4 + cast_str 5 + cast_bool 3 + unify 4 + 퍼사드 6 + null_demote 5)
+**테스트:** 50개 통과 (cast_amount 13 + cast_date 8 + cast_int 4 + cast_str 7 + cast_bool 3 + unify 4 + 퍼사드 6 + null_demote 5)
 
 **부수 변경:**
 - `models.py`: `CastingResult` dataclass에 `high_null_columns`, `empty_columns` 추가
-- `settings.py`: `casting_null_warn_threshold`, `casting_date_dayfirst`, `casting_null_demote_threshold` 추가
+- `settings.py`: `casting_null_warn_threshold`, `casting_date_dayfirst`, `casting_null_demote_threshold` 추가, `get_cleaning_config()` 로더 추가
+- `config/cleaning.yaml`: 모든 정규화 규칙 외부화 (통화 기호·null 값·불리언·Excel serial 범위·DC 지시자·과학적 표기법)
 - `__init__.py`: `cast_dataframe`, `CastingResult` export 추가
 - `text_reader.py`: ascii→latin-1 폴백 (charset_normalizer 64KB 샘플 오탐 대응)
 

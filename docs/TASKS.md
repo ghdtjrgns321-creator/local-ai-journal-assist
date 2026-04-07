@@ -6,20 +6,21 @@
 
 ## 진행 현황 요약
 
-| Phase              | 완료 | 전체 | 진행률 |
-|--------------------|------|------|--------|
-| 1a 데이터 파이프라인 | 20   | 20   | 100%   |
-| 1b 이상탐지+DB       | 18   | 18   | 100%   |
-| 1c 대시보드           |  0   | 12   |   0%   |
-| 2a ML 전처리          | 10   | 10   | 100%   |
-| 2 WU-00 전처리 수정   |  5   |  5   | 100%   |
-| 2 WU-01~04 ML 핵심    |  0   |  6   |   0%   |
-| 2 WU-05~08 추가탐지   |  0   |  4   |   0%   |
-| 2 WU-09~13 고도화     |  0   |  5   |   0%   |
-| 2 WU-14~16 DataSynth  |  0   |  3   |   0%   |
-| 2 WU-17 대시보드ML    |  0   |  1   |   0%   |
-| 3 NLQ+Graph+Polish    |  0   | 22   |   0%   |
-| **합계**              | 53   | 106  |  50%   |
+| Phase                           | 완료 | 전체 | 진행률 |
+|---------------------------------|------|------|--------|
+| 1a 데이터 파이프라인             | 20   | 20   | 100%   |
+| 1b 이상탐지+DB+Layer D           | 21   | 21   | 100%   |
+| 1c 대시보드                      | 12   | 12   | 100%   |
+| RC 재설계 (Company-Centric)      | 41   | 41   | 100%   |
+| 2a ML 전처리                     | 10   | 10   | 100%   |
+| 2 WU-00 전처리 수정              |  5   |  5   | 100%   |
+| 2 WU-01~04 ML 핵심               |  0   |  6   |   0%   |
+| 2 WU-05~08 추가탐지              |  0   |  4   |   0%   |
+| 2 WU-09~13 고도화                |  0   |  5   |   0%   |
+| 2 WU-14~16 DataSynth             |  0   |  3   |   0%   |
+| 2 WU-17 대시보드ML               |  0   |  1   |   0%   |
+| 3 NLQ+Graph+Polish               |  0   | 22   |   0%   |
+| **합계**                         | 109  | 150  |  73%   |
 
 **상태 범례**: ✅ 완료 / ⬜ 미착수
 **블로커**: Phase 섹션 상단 blockquote로 표기 (🚫 BLOCKER)
@@ -27,7 +28,7 @@
 
 ---
 
-## Phase 1: MVP (Python Only 파이프라인 + 기본 UI)
+## Phase 1: MVP (Python Only 파이프라인 + 기본 UI) ✅
 
 ### Phase 1a: 데이터 파이프라인
 
@@ -35,7 +36,7 @@
 |-----|---------------------|-----------------------------------------------------------------|---------------------------------------------------|------|
 | 0   | 데이터셋 수집·선정  | `data/journal/`, 32개 검토                                      | [00-dataset](pre-plan/00-dataset.md)              | ✅   |
 | 0a  | DataSynth 빌드      | `tools/datasynth/` (Rust, EY-ASU)                               | [00-dataset](pre-plan/00-dataset.md)              | ✅   |
-| 0b  | 메인 데이터 생성    | `data/journal/primary/datasynth/` (1,105K건)                    | [00-dataset](pre-plan/00-dataset.md)              | ✅   |
+| 0b  | 메인 데이터 생성    | `data/journal/primary/datasynth/` (1,106K건, v21 확정)          | [00-dataset](pre-plan/00-dataset.md)              | ✅   |
 | 1   | 프로젝트 초기화     | `pyproject.toml`, `.gitignore`, `.env.example`                  | [01-project-setup](pre-plan/01-project-setup.md)  | ✅   |
 | 2   | 설정 레이어         | `config/settings.py`, YAML 3종 + `datasynth.yaml`              | [01-project-setup](pre-plan/01-project-setup.md)  | ✅   |
 | 3   | 샘플 데이터 생성기  | DataSynth로 대체 (10-sample-data 불필요)                        | -                                                 | ✅   |
@@ -54,7 +55,7 @@
 | 13  | 전처리 리포트       | `src/validation/report_generator.py` (17 tests passed)          | [04-validation](pre-plan/04-validation.md)        | ✅   |
 | 14  | 단위 테스트 (1a)    | `tests/test_ingest/`, `test_feature/`                           | 각 가이드 "테스트 전략" 섹션                       | ✅   |
 
-**완료 기준**: DataSynth CSV → ingest → feature → validation 파이프라인 통과
+**완료 기준**: DataSynth CSV → ingest → feature → validation 파이프라인 통과 ✅
 
 ### Phase 1b: 이상탐지 + DB
 
@@ -83,8 +84,11 @@
 | 22  | detection 단위테스트             | `tests/test_detection/` (120+ tests)                                 | 각 가이드 "테스트 전략" 섹션               | ✅   |
 | 22a | DB 단위테스트                    | `tests/test_db/`                                                     | [06-db](pre-plan/06-db.md)                | ✅   |
 | 22b | 파이프라인 E2E 통합테스트        | `tests/test_pipeline/` — 13개 pytest + DataSynth 1M행 E2E            | 05-detection + 06-db 통합                  | ✅   |
+| 22c | Layer D 인프라 (Batch 1)         | `constants.py`, `settings.py`, `prior_data_loader.py`                | [RULEBASE_UPDATE.md](RULEBASE_UPDATE.md)   | ✅   |
+| 22d | Layer D 룰+오케스트레이터 (Batch 2) | `variance_rules.py`, `variance_layer.py`, `__init__.py`           | [RULEBASE_UPDATE.md](RULEBASE_UPDATE.md)   | ✅   |
+| 22e | Layer D 파이프라인 통합 (Batch 3) | `pipeline.py`, `context.py`, dashboard 호출부, 통합 테스트 8개       | [RULEBASE_UPDATE.md](RULEBASE_UPDATE.md)   | ✅   |
 
-**완료 기준**: `AuditPipeline.run("datasynth.csv")` → 24개 룰 3레이어 탐지 → DuckDB 적재 → 프리셋 쿼리 정상
+**완료 기준**: `AuditPipeline.run("datasynth.csv")` → 24개 룰 4레이어 + Layer D(기존회사) 탐지 → DuckDB 적재 → 프리셋 쿼리 정상 ✅
 
 ### Phase 1c: 대시보드
 
@@ -172,25 +176,50 @@ WU1 (기반 컴포넌트) ──── 반드시 최초 실행
 | 30c | 인제스트 오케스트레이터 | `src/pipeline.py` (수정) — full ingest pipeline (_ingest: read_file → detect_headers → score_sheets → auto_map_columns → cast_dataframe) + file_validator 5단계 검증 + Parquet 헤더 탐지 스킵 | [02-ingest](pre-plan/02-ingest.md) §36 | ✅ |
 | 30d | 미해결 이슈 UI 반영     | `data_uploader.py` 3단계 스테이지 머신(UPLOAD→REVIEW→PIPELINE) 재작성 + `mapping_review.py` 신규 — UI-1~4 구현 + 필수/권장 미매핑 사유 안내 | [07-dashboard](pre-plan/07-dashboard.md) §580-599 | ✅ |
 
-**완료 기준**: `streamlit run dashboard/app.py` → 4탭 정상 렌더링 + 슬라이더 변경 시 탐지 결과 갱신 + 프리셋 전환 + 예외 처리 저장/제외
+**완료 기준**: `streamlit run dashboard/app.py` → 4탭 정상 렌더링 + 슬라이더 변경 시 탐지 결과 갱신 + 프리셋 전환 + 예외 처리 저장/제외 ✅
+
+---
+
+## RC: Company-Centric 아키텍처 재설계 ✅
+
+> **전체 완료** (41/41 태스크). 상세: [NEW_TASKS.MD](NEW_TASKS.MD)
+>
+> 글로벌 싱글톤 설정 → 회사별 독립 파이프라인(CompanyContext + ContextFactory)으로 전면 전환.
+> Phase 2 ML 탐지기는 CompanyContext 기반으로 구현한다.
+
+| Phase                              | 태스크 | 완료 | 상태 |
+|------------------------------------|--------|------|------|
+| RC-0 Company 인프라                | 7      | 7    | ✅   |
+| RC-1 파이프라인 Context 주입       | 7      | 7    | ✅   |
+| RC-2 싱글톤 직접 호출 제거         | 8      | 8    | ✅   |
+| RC-3 DB 격리 + ConnectionManager   | 6      | 6    | ✅   |
+| RC-4 대시보드 재설계               | 8      | 8    | ✅   |
+| RC-5 매핑 프로파일 + 고급 기능     | 5      | 5    | ✅   |
+
+**핵심 변경점**:
+- `CompanyContext` 불변 객체 + `ContextFactory.create(company_id, engagement_id)`
+- Engagement별 독립 DuckDB (`data/companies/{id}/engagements/{year}/audit.duckdb`)
+- `ConnectionManager` 경로별 커넥션 관리 (스레드 안전)
+- 대시보드: 회사 선택 → Engagement 선택 → 업로드/분석 플로우 + 연도 비교 탭
+- 매핑 프로파일 회사별 격리 + 키워드 자동 학습
 
 ---
 
 ### Phase 2 준비: DataSynth 확장 (한국 실무 맞춤 컬럼 추가)
 
-> DataSynth Rust 코드 수정 + YAML 설정 추가. Phase 2 탐지 룰의 **선행 의존**.
+> DataSynth v21 확정 (Phase 1 Recall 91.4%, Normal 85.2%). 아래는 Phase 2 탐지 룰의 **선행 의존**.
 
 | 태스크                             | 파일                                                              | 가이드                                                               | 상태 |
 |------------------------------------|-------------------------------------------------------------------|----------------------------------------------------------------------|------|
 | approval.rs 한국식 전결규정 적용   | `tools/datasynth/crates/*/approval.rs, je_generator.rs, user.rs`  | [DETECTION_RULES](DETECTION_RULES.md) §3.3                          | ✅   |
-| 증빙/컷오프/변경이력 컬럼 추가     | `tools/datasynth/crates/*/journal_entry.rs`                       | [DETECTION_RULES](DETECTION_RULES.md) §3.3                          | ⬜   |
-| 전표번호 순차 생성                 | `tools/datasynth/crates/*/je_generator.rs`                        | [DETECTION_RULES](DETECTION_RULES.md) §3.3                          | ⬜   |
-| IP 주소 생성                       | `tools/datasynth/crates/*/je_generator.rs`                        | [DETECTION_RULES](DETECTION_RULES.md) §3.3                          | ⬜   |
+| 증빙/컷오프/변경이력 컬럼 추가     | `tools/datasynth/crates/*/journal_entry.rs`                       | [DETECTION_RULES](DETECTION_RULES.md) §3.3                          | ✅   |
+| 전표번호 순차 생성                 | `tools/datasynth/crates/*/enhanced_orchestrator.rs` Phase 9a      | [DETECTION_RULES](DETECTION_RULES.md) §3.3                          | ✅   |
+| IP 주소 생성                       | `tools/datasynth/crates/*/je_generator.rs`                        | [DETECTION_RULES](DETECTION_RULES.md) §3.3                          | ✅   |
 | datasynth.yaml approval 섹션      | `config/datasynth.yaml`                                           | [DETECTION_RULES](DETECTION_RULES.md) §3.3                          | ✅   |
-| SuspenseAccountAbuse keyword 주입 | `tools/datasynth/` — 적요에 ~30% keyword 삽입                     | [03-feature](pre-plan/03-feature.md) §212                            | ⬜   |
-| Round number clamping 검증        | `tools/datasynth/` — 라운드 넘버 클램핑 로직 확인                  | [03-feature](pre-plan/03-feature.md) §154                            | ⬜   |
-| 다기간 시계열 데이터 생성 (2~3개년)  | `tools/datasynth/` — 복수 회계연도 생성                          | TrendBreak (#54) 선행 의존                                        | ⬜   |
-| 데이터 재생성 + 파이프라인 호환 확인 | `data/journal/primary/datasynth/`                                | 신규 컬럼 포함 데이터로 기존 파이프라인 호환 확인                     | ⬜   |
+| SuspenseAccountAbuse keyword 주입 | GL 코드 탐지 정상 작동. 적요 의미 분석은 키워드 한계로 Phase 3 이관 (#71, #84, #88) | [03-feature](pre-plan/03-feature.md) §212, [DETECTION_RULES](DETECTION_RULES.md) §C10 | N/A  |
+| Round number clamping 검증        | `tools/datasynth/` — 라운드 넘버 클램핑 로직 확인                  | [03-feature](pre-plan/03-feature.md) §154                            | ✅   |
+| 다기간 시계열 데이터 생성 (2~3개년)  | `tools/datasynth/` — 복수 회계연도 생성                          | TrendBreak (#54) 선행 의존                                        | ✅   |
+| 데이터 재생성 + 파이프라인 호환 확인 | `data/journal/primary/datasynth/`                                | 신규 컬럼 포함 데이터로 기존 파이프라인 호환 확인                     | ✅   |
 
 ---
 
@@ -202,6 +231,7 @@ WU1 (기반 컴포넌트) ──── 반드시 최초 실행
 > 지도학습 파이프라인은 향후 고객사별 실데이터 유입 시 fine-tuning으로 활성화.
 > 상세: [CONSTRAINTS.md §ML 학습 전략](CONSTRAINTS.md) | [TROUBLESHOOT.md §TS-3](TROUBLESHOOT.md)
 >
+> **전제**: RC 재설계 완료 — 모든 ML 탐지기는 `CompanyContext` 기반으로 구현. 회사별 모델 저장: `ctx.model_dir`
 > **실행 순서**: Work Unit(WU) 단위로 관리. 의존 관계는 다이어그램 참조.
 > **크리티컬 패스**: WU-00 → WU-01 → WU-02 → WU-01b → WU-01c → WU-03 → WU-04
 > **D032~D034 반영**: BiLSTM+Attention(WU-01c), FT-Transformer(WU-01b), Stacking(WU-03) 추가
@@ -250,7 +280,7 @@ WU1 (기반 컴포넌트) ──── 반드시 최초 실행
          │
     ─────┼──── 외부 블로커 ─────
          │
-    DataSynth Rust    Phase 1c
+    DataSynth Rust    WU-01 완료
     ┌────▼────┐      ┌────▼────┐
     │WU-14 (M)│      │WU-17 (M)│
     │WU-15 (M)│      │SHAP+    │
@@ -513,7 +543,7 @@ WU1 (기반 컴포넌트) ──── 반드시 최초 실행
 
 ### WU-17: SHAP 시각화 + ML 툴팁 `[M]` — #52, #66
 
-> 🚫 **BLOCKER**: Phase 1c 대시보드 + WU-01 완료 후
+> 🚫 **BLOCKER**: ~~Phase 1c 대시보드~~ ✅ + WU-01 완료 후
 
 | #   | 태스크                    | 파일                                            | 가이드                                        | 상태 |
 |-----|---------------------------|-------------------------------------------------|-----------------------------------------------|------|
@@ -569,6 +599,7 @@ WU1 (기반 컴포넌트) ──── 반드시 최초 실행
 > - `03-feature.md` §759 (text_features semantic stub → Ollama 임베딩 연동)
 > - `01-project-setup.md` §84 (LLM 설정 필드 활성화: ollama_model, ollama_base_url)
 > - `03a-preprocessing.md` §119 (VRAM 순차 실행: LLM + VAE 동시 사용 방지)
+> - C10 SuspenseAccount 적요 탐지: 키워드 매칭 한계(우회 표현·동의어·은어)로 Phase 3 이관 → #71 + #84 + #88로 해결
 
 | #   | 태스크                              | 파일                                          | 가이드                                                     | 상태 |
 |-----|-------------------------------------|-----------------------------------------------|------------------------------------------------------------|------|

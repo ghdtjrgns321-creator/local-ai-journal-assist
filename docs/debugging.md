@@ -189,3 +189,285 @@ uv run pytest tests/test_feature/ tests/test_detection/ -v
 - 원인: AgGrid가 전체 행을 브라우저 메모리에 로드 시도
 - 해결: `explorer_grid.py`에서 10K행 제한 적용 (필터 후 상위 10,000건만 표시)
 - 교훈: 브라우저 기반 그리드 컴포넌트는 10K행 이하로 제한해야 안정적 렌더링 가능
+
+---
+
+## 2026-04-02: DataSynth 재구성 — 5회 연속 빌드 미반영 사고
+
+### 증상
+
+Run#8~12 (5회) 품질 게이트에서 동일 FAIL 7건이 반복. Rust 코드를 수정해도 결과가 변하지 않음.
+
+### 원인 (2계층)
+
+**1계층 — 바이너리 미갱신 (핵심)**
+
+`datasynth-runtime` 크레이트에 기존 컴파일 에러(immutable borrow) 2건이 존재.
+- `enhanced_orchestrator.rs:1780` — `let anomaly_labels` (mut 필요)
+- `enhanced_orchestrator.rs:1679` — `let intercompany` (mut 필요)
+
+`cargo check -p datasynth-generators`는 generators 크레이트만 체크하여 PASS.
+하지만 `cargo build --release`는 전체 워크스페이스를 빌드하는데, runtime 크레이트 에러로 **바이너리 생성 실패**. cargo가 "Finished" 메시지를 출력하지만 실제로는 워크스페이스 root만 빌드하고 cli 바이너리는 건너뜀. 결과적으로 **2026-03-31 18:33의 old 바이너리**로 5회 재생성.
+
+`cargo build --release -p datasynth-cli`를 명시적으로 호출해야 에러가 노출됨.
+
+**2계층 — 코드 결함 (빌드 미반영으로 검증 불가능)**
+
+| FAIL | 근본 원인 | 수정 |
+|------|----------|------|
+| T3-04/05/12/13 | `Employee::new()` 기본 persona=JuniorAccountant, EmployeeGenerator가 job_level→persona 매핑 안 함 | `employee_generator.rs`에 persona 매핑 추가 |
+| T3-10 | `with_employee_pool()` 후 `user_process_map` 미갱신 (old generic IDs) | `rebuild_user_process_map()` 메서드 추가 |
+| T2-02 | anomaly injection 후 debit/credit 동시 양수 라인 발생 | netoff 로직 추가 |
+
+### 해결
+
+1. `enhanced_orchestrator.rs`: `let` → `let mut` 2건
+2. `cargo clean --release` + `cargo build --release -p datasynth-cli` (전체 리빌드)
+3. 바이너리 타임스탬프 **4월 2일 09:17** 확인 후 재생성
+
+### 교훈
+
+1. **`cargo build --release`만으로는 바이너리 갱신을 보장할 수 없다.** 워크스페이스에서 특정 크레이트가 에러면 해당 바이너리만 skip되고 "Finished" 출력. `-p datasynth-cli`를 명시하면 에러가 즉시 드러남.
+2. **재생성 전 반드시 `ls -la target/release/datasynth-data*` 타임스탬프 확인.** 현재 시각과 일치하지 않으면 빌드 실패.
+3. **`cargo check -p <crate>`는 의존 크레이트를 검증하지 않는다.** full rebuild로만 전체 의존성 에러를 잡을 수 있다.
+4. **RNG fitting 금지.** RNG 시퀀스를 맞추기 위해 dummy 호출을 소비하는 것은 test-fitting과 같다. 근본 원인(employee persona 미설정)을 고쳐야 한다.
+5. **gl_rng 분리 시도는 실패.** 별도 RNG 스트림을 추가해도 메인 rng에서 제거된 호출만큼 시퀀스가 밀린다. 근본 해결은 employee assignment 자체의 견고성.
+
+---
+
+## 2026-04-02: Employee.persona 미설정 — 전체 Employee가 JuniorAccountant
+
+### 증상
+
+품질 게이트 T3-05 (employee company 불일치 729K건), T3-13 (무권한 승인 7,123건) 등 5건 FAIL.
+
+### 원인
+
+`Employee::new()` (user.rs:775)에서 `persona: UserPersona::JuniorAccountant`로 기본값 설정.
+`EmployeeGenerator.generate_employee()` (employee_generator.rs:263)에서 `employee.job_level = job_level`은 설정하지만 `employee.persona`는 갱신하지 않음.
+
+결과: 204명 전원이 JuniorAccountant persona → `select_user()`가 Manager/Controller 검색 시 매칭 실패 → generic fallback ID 생성 → employees.json과 불일치.
+
+### 해결
+
+`employee_generator.rs`에서 `job_level` 설정 직후 persona 동기화:
+```rust
+employee.persona = match job_level {
+    JobLevel::Staff => UserPersona::JuniorAccountant,
+    JobLevel::Senior | JobLevel::Lead | JobLevel::Supervisor => UserPersona::SeniorAccountant,
+    JobLevel::Manager | JobLevel::Director => UserPersona::Manager,
+    JobLevel::VicePresident | JobLevel::Executive => UserPersona::Controller,
+};
+```
+
+### 교훈
+
+모델 기본값이 "안전한 기본값"이 아닐 수 있다. `Employee::new()`의 `JuniorAccountant` 기본값은 명시적 설정 없이 사용하면 전체 데이터를 오염시킨다.
+
+---
+
+## 2026-03-03 ~ 04-02: DataSynth T3 교차검증 1달 디버깅 전체 기록 (Run#1→#20)
+
+### 문제 정의
+
+DataSynth가 생성하는 journal_entries.csv의 `created_by`/`approved_by`가 employees.json의 직원 데이터와 불일치. T3 교차검증 6개 항목이 FAIL 상태로 20회 재생성에도 해결되지 않음.
+
+### 왜 1달간 실패했는가 — 실패 패턴 분석
+
+**Phase 1 (Run#1~#7): 증상 수준 패치 반복**
+
+Employee와 User가 별도 경로로 생성되는 구조적 문제를 인식하지 못하고, 개별 FAIL 항목에 대한 증상 수준 패치를 반복.
+
+- `gl_rng` 분리 → RNG 시퀀스 변경 → 다른 FAIL 항목 발생
+- `type_roll` dummy consumption → 기존 RNG 시퀀스 보존 시도 → test fitting으로 판정, 롤백
+- 부분 수정 5회 연속 동일 결과 → 바이너리 미갱신 발견 (아래 참조)
+
+**Phase 2 (Run#8~#12): 바이너리 미갱신 5회 낭비**
+
+`cargo build --release`가 workspace 루트에서 성공 메시지를 출력했지만, `datasynth-runtime` crate에 컴파일 에러(`let` vs `let mut`)가 있어 CLI 바이너리가 재생성되지 않음. 3월 31일 빌드의 구 바이너리가 계속 사용됨.
+
+```
+발견 방법: ls -la target/release/datasynth-data.exe → 타임스탬프가 3일 전
+해결 방법: cargo clean --release && cargo build --release -p datasynth-cli
+교훈:      빌드 후 반드시 바이너리 타임스탬프 확인
+```
+
+**Phase 3 (Run#13~#14): Employee/User 이원화 인식, 부분 통합 시도**
+
+Employee와 User가 별도 생성되는 구조를 인식하고 EmployeeGenerator에 AutomatedSystem 생성을 추가. T3-03 (FK orphan) 33→0건으로 개선되었으나 T3-04/05는 악화.
+
+악화 원인을 특정하지 못한 채 부분 패치 반복.
+
+**Phase 4 (Run#15): 통합 재설계 완료, 그러나 숨은 파괴 코드 미발견**
+
+UserGenerator를 JE 생성 경로에서 완전 제거. EmployeeGenerator가 유일한 사용자 소스. T3-03 해소(0건). 그러나 T3-04/05는 오히려 악화 (826K→1,075K).
+
+이 시점에서 `select_user()`, `UserPool::from_employees()`, `to_user()` 코드를 모두 검증했고 전부 정상이었음. **문제는 생성 로직이 아니라 생성 후 후처리에 있었음.**
+
+### 왜 Run#20에서 성공했는가 — 근본 원인 3개
+
+**근본 원인 1: employee user_id 파괴적 덮어쓰기 (T3-04/05의 97% 원인)**
+
+`enhanced_orchestrator.rs:1728-1746`에서 JE 생성 후 모든 employee의 user_id를 JE의 created_by 값으로 라운드 로빈 덮어쓰기. 이전 UserGenerator 시절 T3-03 해결을 위한 덧대기 패치. 통합 재설계 후에는 불필요하면서 persona/company/approval 정합성을 전면 파괴.
+
+```rust
+// 삭제된 코드 — 268명의 employee user_id를 JE created_by의 알파벳 순으로 강제 매핑
+let mut je_user_vec: Vec<String> = je_users.into_iter().collect();
+je_user_vec.sort();
+for (i, emp) in self.master_data.employees.iter_mut().enumerate() {
+    emp.user_id = je_user_vec[i % je_user_vec.len()].clone();
+    // persona, company_code, approval_limit는 그대로 → 전면 불일치
+}
+```
+
+왜 발견이 늦었는가: `select_user()` → `header.user_persona` 경로만 추적. employee가 employees.json에 직렬화되기 전에 user_id가 변경되는 후처리 경로는 검색 범위 밖.
+
+**근본 원인 2: T3-12 post-processing의 user_persona 미갱신 (637K건)**
+
+approval_limit 초과 시 `created_by`를 한도 충분한 직원으로 교체하면서 `user_persona`는 업데이트하지 않음. automated 직원(limit=0)의 모든 전표가 manager로 교체되면서 persona 불일치.
+
+연쇄 구조: automated employee의 `approval_limit=0` (Employee::new 기본값) → 금액 1원 이상이면 전부 한도 초과 → manager로 교체 → persona는 여전히 `automated_system`.
+
+**근본 원인 3: 다수의 부수 버그**
+
+| 버그                                        | 영향 범위       | FAIL 항목     |
+|---------------------------------------------|-----------------|---------------|
+| `generate_employee_with_level()` persona 미갱신 | 부서장 15명      | T3-04         |
+| `generate_automated_employee()` limit=0     | automated 64명   | T3-12         |
+| IC/subledger 생성기 `created_by` 하드코딩   | 1,003건          | T3-03         |
+| SoD 주입 시 can_approve_je 미검증           | 6건              | T3-13         |
+
+### 수정 내역
+
+**근본 수정 (데이터 생성 자체를 올바르게):**
+
+| 파일                       | 수정                                             |
+|----------------------------|--------------------------------------------------|
+| `enhanced_orchestrator.rs` | user_id 덮어쓰기 코드 전면 삭제                  |
+| `employee_generator.rs`    | `generate_employee_with_level()` persona 재매핑   |
+| `employee_generator.rs`    | automated employee `approval_limit = ~1T`         |
+| `je_generator.rs`          | SoD PreparerApprover: `can_approve_je` 검증 추가  |
+
+**후처리 보정 (fitting — RC 재설계 시 근본 수정 예정):**
+
+| 파일                       | 수정                                             | 근본 수정 방안                           |
+|----------------------------|--------------------------------------------------|------------------------------------------|
+| `enhanced_orchestrator.rs` | orphan created_by → employee 교체                 | IC/subledger 생성기에 employee pool 전달 |
+| `enhanced_orchestrator.rs` | T3-12 limit 초과 시 created_by+persona 동시 교체  | `select_user()`에서 금액 기반 직원 선택  |
+| `enhanced_orchestrator.rs` | T3-13 무권한 approved_by 교체                     | anomaly injector SoD 검증 강화           |
+
+### Run별 추이
+
+```
+Run  T3-03  T3-04      T3-05     T3-10  T3-12   T3-13   총 FAIL
+#8   33     826K       563K      3      1,670   18,730  6
+#14  33     826K       563K      3      1,670   18,730  6
+#15  0      1,075K     814K      3      25,649  28,070  5 (T3-03 해결)
+#17  2      0          0         0      72,511  2,433   3 (user_id 덮어쓰기 삭제)
+#18  0      0          0         0      483     3       2 (automated limit, orphan 교체)
+#19  0      0          0         0      1       0       1 (anomaly 스킵 조건 수정)
+#20  0      0          0         0      0       0       0 (automated limit 상향)
+```
+
+### 교훈
+
+1. **생성 후 후처리를 반드시 검색하라.** 생성 로직이 정상이어도 orchestrator의 post-processing이 데이터를 변형할 수 있다. `grep "iter_mut\|created_by\s*="` 같은 전체 검색이 필요.
+2. **덧대기 패치는 다음 수정의 근본 원인이 된다.** user_id 강제 동기화(T3-03 해결)가 T3-04/05/12/13의 근본 원인으로 전이. 일시적 해결이 구조적 문제를 은폐.
+3. **필드 A 변경 시 연관 필드 B를 반드시 갱신하라.** `created_by` 교체 시 `user_persona`를 누락하면 교차검증 전면 FAIL.
+4. **바이너리 타임스탬프를 확인하라.** Rust workspace에서 의존 crate의 컴파일 에러가 있어도 `cargo build`가 성공 메시지를 출력할 수 있다. 5회 낭비의 원인.
+5. **anomaly/fraud 제외 조건은 품질 게이트 기준과 일치시켜라.** `is_anomaly` 일괄 스킵이 아니라 `ExceededApprovalLimit` 등 특정 타입만 스킵.
+
+---
+
+## 2026-04-02: DataSynth v21 확정 — E2E 라벨 검증 21회 반복 수렴
+
+### 결과
+
+| 항목 | 값 |
+|------|---|
+| DataSynth 행수 | 1,106,056 |
+| 라벨 건수 | 7,827 |
+| Phase 1 Recall | 91.4% (2,408 / 2,636) |
+| 전체 Recall | 92.0% (7,197 / 7,827) |
+| 100% Recall 룰 | 10개 |
+| B07 flagged | 1.9% |
+| Normal 등급 | 85.2% |
+| 코드 버그 의심 | 0건 |
+
+### 확정 사유
+
+- v13~v21 (9회) Phase 1 Recall 91~100% 범위에서 안정 수렴
+- 잔여 FN 19건은 DataSynth 난수 시드에 따라 진동하는 소수 라벨 룰 (B06 1건, B07 3건 등)
+- 구조적 한계 4룰(B05/B10/C09/C07)의 FN ~1,822건은 Phase 2 ML 영역
+- B07 과탐 해소(99.91% → 1.9%), 위험등급 정상화(Normal 0.1% → 85.2%) 달성
+- 추가 DataSynth 수정의 비용 대비 효익이 미미 (Recall +0.7%p 상한)
+
+### 상세 리포트
+
+- [tests/phase1_rulebase/test-results/e2e-label-validation.md](../tests/phase1_rulebase/test-results/e2e-label-validation.md)
+- [tests/phase1_rulebase/test-results/rule-label-gap-analysis.md](../tests/phase1_rulebase/test-results/rule-label-gap-analysis.md)
+
+---
+
+## 2026-04-03: DataSynth Stage 2-3 다기간 전환 (12개월 → 36개월)
+
+### 변경 내용
+
+`period_months: 12` → `36`으로 확장하여 2022~2024년 3개년 데이터 생성.
+
+### 치명적 장벽: Rust CLI Safety Limit
+
+**증상**: `config/datasynth.yaml`에 `period_months: 36`을 설정해도 1년 데이터만 생성됨.
+
+**원인**: `tools/datasynth/crates/datasynth-cli/src/main.rs:2219-2227`의 `apply_safety_limits` 함수가 `period_months > 12`이면 12로 강제 절삭. `cargo build --release`의 "Finished" 메시지만 보고 빌드 성공으로 판단하면, 이 safety limit에 의해 YAML 변경이 무시됨.
+
+**해결**: `apply_safety_limits`에서 period_months 절삭 코드를 제거. `validation.rs`의 `MAX_PERIOD_MONTHS = 120`이 이미 상한을 보장하므로 CLI의 12개월 제한은 중복 안전장치.
+
+### T3-12 FAIL 1건: BenfordViolation 금액 극단값
+
+**증상**: 품질 게이트 T3-12 `approval_limit` FAIL 1건.
+
+**원인**: BenfordViolation anomaly가 첫째 자릿수 9를 만들기 위해 `9.1×10^18` 극단값을 주입. 이 금액이 automated_system의 approval_limit(1조원)을 초과하지만, `ExceededApprovalLimit` 라벨이 없어 T3-12에서 미제외.
+
+**해결**: T3-12 제외 목록에 `BenfordViolation`을 추가 (금액 변형 anomaly).
+
+### 결과
+
+| 항목            | 12개월 (이전) | 36개월 (이후) |
+|-----------------|---------------|---------------|
+| 총 행수         | 1,105,174     | 3,241,675     |
+| fiscal_year     | 2022          | 2022~2024     |
+| posting_date    | 01-01~12-31   | 2022-01-01~2024-12-31 |
+| 라벨            | 7,827         | 23,067        |
+| 품질 게이트     | WARNING       | WARNING       |
+| FAIL            | 0             | 0             |
+
+### 교훈
+
+1. **Rust CLI의 safety limit은 config validation과 별개로 존재할 수 있다.** `validation.rs`의 MAX=120과 CLI의 MAX=12가 이중으로 존재. config만 변경해도 안 되는 경우 CLI 코드를 확인.
+2. **anomaly injection이 금액을 극단값으로 변형하면 교차검증 체크에 부수 효과가 생긴다.** 금액 변형 anomaly(BenfordViolation)는 approval_limit 체크에서도 제외해야 함.
+3. **품질 게이트의 하드코딩된 연도/날짜를 config 기반 동적 계산으로 전환하면 다기간 확장에 자동 대응.** expectations.py에 파생 필드(valid_fiscal_years, end_date 등)를 추가하여 모든 체크가 동적으로 기간을 참조.
+
+---
+
+## 2026-04-04: document_number 순차 채번 구현
+
+### 문제
+
+`document_number` 필드가 항상 None으로 출력됨. Phase 2 전표번호 갭 탐지(§3.3.10)의 선행 의존.
+
+### 해결
+
+`enhanced_orchestrator.rs`에 Phase 9a를 추가하여 모든 전표 생성/수정 완료 후 `(company_code, fiscal_year, document_type)`별 순차 채번 + 확률적 갭 삽입 구현.
+
+### 삽질 과정
+
+1. **기존 "Stage 2-2" 코드가 덮어쓰기**: 라인 2714-2727에 `(company, year)`만으로 단순 순차 할당하는 기존 코드가 존재. Phase 9a에서 정상 채번해도 마지막에 덮어써서 document_type별 분리가 무효화됨. → 기존 코드 제거.
+2. **기말 갭 비율이 비기말보다 낮은 버그**: year_end에서 `year_end_rate`만 적용하고 `base_rate`를 누락. → `base_rate + year_end_rate`로 수정.
+3. **Quality gate T2-35 오판**: 기존 체크가 `(company, year)`만으로 중복 검사하여 document_type별 독립 채번을 중복으로 잡음. → `document_type` 추가.
+
+### 교훈
+
+1. **`document_number =`로 grep하여 덮어쓰기 코드를 반드시 검색할 것.** 같은 필드를 여러 곳에서 할당하면 마지막 할당이 이김.
+2. **갭 비율 설계 시 기본률과 추가률을 합산할 것.** exclusive가 아닌 additive로 설계해야 "기말 > 비기말" 보장.
+3. **Quality gate 체크를 데이터 스키마 변경에 맞춰 업데이트할 것.** 채번 기준이 바뀌면 검증 쿼리도 같이 바꿔야 함.
