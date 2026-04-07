@@ -1,0 +1,387 @@
+{
+  "meta": {
+    "generated_at": "2026-04-04T23:21:33.637634",
+    "data_file": "C:\\Users\\ghdtj\\workspace\\portfolio\\local-ai-assist\\data\\journal\\primary\\datasynth\\journal_entries.csv",
+    "total_rows": 3255597,
+    "total_documents": 319102,
+    "elapsed_seconds": 10.4
+  },
+  "overall_verdict": "PASS",
+  "tiers": [
+    {
+      "tier": 1,
+      "name": "Feature Leakage",
+      "verdict": "PASS",
+      "pass": 6,
+      "fail": 0,
+      "warning": 0,
+      "checks": [
+        {
+          "check_id": "L1-01",
+          "name": "categorical leakage scan",
+          "status": "PASS",
+          "expected": "비정상 전용 카테고리 값 = 0",
+          "actual": "leakage 0건",
+          "detail": null,
+          "elapsed_ms": 389.5
+        },
+        {
+          "check_id": "L1-02",
+          "name": "GL account prefix leakage",
+          "status": "PASS",
+          "expected": "비정상 전용 GL prefix = 0",
+          "actual": "leakage 0건",
+          "detail": null,
+          "elapsed_ms": 71.3
+        },
+        {
+          "check_id": "L1-03",
+          "name": "keyword leakage",
+          "status": "PASS",
+          "expected": "비정상 전용 키워드 = 0",
+          "actual": "leakage 0건",
+          "detail": null,
+          "elapsed_ms": 3301.4
+        },
+        {
+          "check_id": "L1-04",
+          "name": "amount range separation",
+          "status": "PASS",
+          "expected": "금액 구간별 비정상 비율 < 평균의 7배",
+          "actual": "과집중 구간 0건",
+          "detail": null,
+          "elapsed_ms": 36.8
+        },
+        {
+          "check_id": "L1-05",
+          "name": "time separation",
+          "status": "PASS",
+          "expected": "시간대별 비정상 비율 < 평균의 3배 (3개 초과 시 WARNING)",
+          "actual": "과집중 시간대 1건",
+          "detail": {
+            "separated": [
+              {
+                "hour": 5,
+                "abnormal_rate": "47.0%",
+                "avg_rate": "15.4%",
+                "ratio": "3.0x"
+              }
+            ]
+          },
+          "elapsed_ms": 34.7
+        },
+        {
+          "check_id": "L1-06",
+          "name": "extreme values",
+          "status": "PASS",
+          "expected": "1조원 초과 금액 = 0",
+          "actual": "0건 (max_dr=0e+00, max_cr=0e+00)",
+          "detail": null,
+          "elapsed_ms": 20.6
+        }
+      ]
+    },
+    {
+      "tier": 2,
+      "name": "Distribution Realism",
+      "verdict": "PASS",
+      "pass": 4,
+      "fail": 0,
+      "warning": 0,
+      "checks": [
+        {
+          "check_id": "L2-01",
+          "name": "amount overlap",
+          "status": "PASS",
+          "expected": "IQR 겹침 > 30%",
+          "actual": "겹침 100.0% (normal=[1,657,249,624], abnormal=[1,329,381,078])",
+          "detail": null,
+          "elapsed_ms": 107.0
+        },
+        {
+          "check_id": "L2-02",
+          "name": "fraud rate temporal variation",
+          "status": "PASS",
+          "expected": "월별 fraud율 변동계수(CV) > 0.1",
+          "actual": "CV=0.381, mean=0.0117, std=0.0045",
+          "detail": null,
+          "elapsed_ms": 20.4
+        },
+        {
+          "check_id": "L2-03",
+          "name": "GL-amount joint distribution",
+          "status": "PASS",
+          "expected": "GL그룹별 중앙값 최대/최소 비율 >= 2",
+          "actual": "비율=2.7x (max=32,461, min=12,162)",
+          "detail": {
+            "groups": [
+              {
+                "gl": "1",
+                "median": "20,000",
+                "count": 705939
+              },
+              {
+                "gl": "2",
+                "median": "18,637",
+                "count": 224599
+              },
+              {
+                "gl": "3",
+                "median": "32,461",
+                "count": 1874
+              },
+              {
+                "gl": "4",
+                "median": "12,162",
+                "count": 4416
+              },
+              {
+                "gl": "5",
+                "median": "19,193",
+                "count": 349649
+              },
+              {
+                "gl": "6",
+                "median": "19,434",
+                "count": 26511
+              },
+              {
+                "gl": "7",
+                "median": "21,970",
+                "count": 6071
+              },
+              {
+                "gl": "8",
+                "median": "28,000",
+                "count": 3095
+              },
+              {
+                "gl": "9",
+                "median": "23,383",
+                "count": 15616
+              }
+            ]
+          },
+          "elapsed_ms": 54.4
+        },
+        {
+          "check_id": "L2-04",
+          "name": "has_attachment fraud bias",
+          "status": "PASS",
+          "expected": "fraud false비율 < normal의 3배",
+          "actual": "fraud=18.3%, normal=18.0%, ratio=1.0x",
+          "detail": null,
+          "elapsed_ms": 20.1
+        }
+      ]
+    },
+    {
+      "tier": 3,
+      "name": "Cross-field Consistency",
+      "verdict": "PASS",
+      "pass": 4,
+      "fail": 0,
+      "warning": 0,
+      "checks": [
+        {
+          "check_id": "L3-01",
+          "name": "persona-GL correlation",
+          "status": "PASS",
+          "expected": "persona별 GL 집중도 차이 존재",
+          "actual": "저집중도 persona 0개",
+          "detail": null,
+          "elapsed_ms": 37.6
+        },
+        {
+          "check_id": "L3-02",
+          "name": "process-time correlation",
+          "status": "PASS",
+          "expected": "프로세스별 시간대 분포 차이 > 5%p",
+          "actual": "morning 비율 spread=5.4%",
+          "detail": {
+            "ratios": [
+              {
+                "process": "H2R",
+                "morning_ratio": 0.4063247547642365,
+                "total": 249148
+              },
+              {
+                "process": "P2P",
+                "morning_ratio": 0.4231068104343091,
+                "total": 528909
+              },
+              {
+                "process": "A2R",
+                "morning_ratio": 0.3687655776446332,
+                "total": 185763
+              },
+              {
+                "process": "O2C",
+                "morning_ratio": 0.4021801752408205,
+                "total": 682147
+              },
+              {
+                "process": "TRE",
+                "morning_ratio": 0.36948083454633673,
+                "total": 222588
+              },
+              {
+                "process": "R2R",
+                "morning_ratio": 0.39882022046225374,
+                "total": 884233
+              }
+            ]
+          },
+          "elapsed_ms": 36.7
+        },
+        {
+          "check_id": "L3-03",
+          "name": "recurring pattern",
+          "status": "PASS",
+          "expected": "3개월+ 반복 GL+금액 쌍 > 0",
+          "actual": "recurring 패턴 1862건 (total recurring=0)",
+          "detail": null,
+          "elapsed_ms": 53.7
+        },
+        {
+          "check_id": "L3-04",
+          "name": "normal data completeness",
+          "status": "PASS",
+          "expected": "필수 시나리오 누락 0",
+          "actual": "모두 존재",
+          "detail": null,
+          "elapsed_ms": 80.0
+        }
+      ]
+    },
+    {
+      "tier": 4,
+      "name": "Reverse Leakage (Normal Perfection)",
+      "verdict": "PASS",
+      "pass": 4,
+      "fail": 0,
+      "warning": 0,
+      "checks": [
+        {
+          "check_id": "L4-01",
+          "name": "normal text missing rate",
+          "status": "PASS",
+          "expected": "정상 line_text 결측 2~30%",
+          "actual": "4.3% (119,026/2,752,788)",
+          "detail": null,
+          "elapsed_ms": 12.7
+        },
+        {
+          "check_id": "L4-02",
+          "name": "normal approval delay",
+          "status": "PASS",
+          "expected": "approval 지연(>0일) >= 3%",
+          "actual": "4.9% (4,210/86,098)",
+          "detail": null,
+          "elapsed_ms": 17.0
+        },
+        {
+          "check_id": "L4-03",
+          "name": "normal recurring amounts",
+          "status": "PASS",
+          "expected": "동일 GL+금액 3회+ 반복 > 0",
+          "actual": "반복 패턴 16,265건",
+          "detail": null,
+          "elapsed_ms": 45.9
+        },
+        {
+          "check_id": "L4-04",
+          "name": "normal description diversity",
+          "status": "PASS",
+          "expected": "고유 적요 비율 >= 20%",
+          "actual": "23.5% (618,477/2,633,762)",
+          "detail": null,
+          "elapsed_ms": 59.0
+        }
+      ]
+    },
+    {
+      "tier": 5,
+      "name": "Compound Feature Leakage",
+      "verdict": "PASS",
+      "pass": 2,
+      "fail": 0,
+      "warning": 0,
+      "checks": [
+        {
+          "check_id": "L5-01",
+          "name": "2-feature combo leakage",
+          "status": "PASS",
+          "expected": "90%+ fraud 조합 = 0",
+          "actual": "고위험 조합 0건",
+          "detail": null,
+          "elapsed_ms": 273.5
+        },
+        {
+          "check_id": "L5-02",
+          "name": "GL x amount separation",
+          "status": "PASS",
+          "expected": "정상=0 GL+금액 조합 = 0",
+          "actual": "분리 조합 0건",
+          "detail": null,
+          "elapsed_ms": 31.0
+        }
+      ]
+    },
+    {
+      "tier": 6,
+      "name": "Line-level GL Pair Structure",
+      "verdict": "PASS",
+      "pass": 2,
+      "fail": 0,
+      "warning": 0,
+      "checks": [
+        {
+          "check_id": "L6-01",
+          "name": "GL pair leakage",
+          "status": "PASS",
+          "expected": "fraud 전용 GL쌍 (15건+) = 0",
+          "actual": "leakage GL쌍 0건",
+          "detail": null,
+          "elapsed_ms": 1835.3
+        },
+        {
+          "check_id": "L6-02",
+          "name": "process GL pair realism",
+          "status": "PASS",
+          "expected": "프로세스별 예상 GL쌍 >= 50%",
+          "actual": "모두 충족",
+          "detail": {
+            "processes": [
+              {
+                "process": "P2P",
+                "expected_dr": "1,2,5,6",
+                "expected_cr": "1,2,5,6",
+                "matched": 1326658,
+                "total": 2295769,
+                "rate": "57.8%"
+              },
+              {
+                "process": "O2C",
+                "expected_dr": "1,2",
+                "expected_cr": "1,2,4",
+                "matched": 1975406,
+                "total": 2501716,
+                "rate": "79.0%"
+              },
+              {
+                "process": "H2R",
+                "expected_dr": "1,5,6",
+                "expected_cr": "1,2",
+                "matched": 1159329,
+                "total": 1522944,
+                "rate": "76.1%"
+              }
+            ]
+          },
+          "elapsed_ms": 483.3
+        }
+      ]
+    }
+  ]
+}

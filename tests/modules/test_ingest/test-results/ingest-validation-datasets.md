@@ -1,6 +1,6 @@
 # Validation 데이터셋 Ingest 파이프라인 검증 결과
 
-> 실행일: 2026-04-04 12:54 | 5종 실데이터셋
+> 실행일: 2026-03-30 21:55 | 5종 실데이터셋
 
 ## 1. 테스트 요약
 
@@ -56,20 +56,20 @@
 
 **SAP ERP P2P 이벤트 로그 (527MB, latin-1)**
 
-**✅ ① 파일 검증** (0.17s)
+**✅ ① 파일 검증** (0.15s)
   category=text
 
-**✅ ② 파일 읽기** (8.15s)
+**✅ ② 파일 읽기** (5.74s)
   sheets=['Sheet1'], selected=Sheet1, rows=1595924, cols=22, format=csv, encoding=latin-1
 
-**✅ ③ 헤더 탐지** (0.02s)
+**✅ ③ 헤더 탐지** (0.01s)
   header_row=0, confidence=0.85, matched=[]
 
-**✅ ④ 컬럼 매핑** (2.09s)
-  mapping=3개, suggestions=6개, unmapped=13개, needs_review=True
+**✅ ④ 컬럼 매핑** (1.90s)
+  mapping=3개, suggestions=5개, unmapped=14개, needs_review=True
   WARN: 필수 컬럼 미매핑: ['credit_amount', 'debit_amount', 'document_date', 'document_id', 'document_type', 'fiscal_period', 'fiscal_year', 'gl_account', 'posting_date']
 
-**✅ ⑤ 타입 캐스팅** (0.13s)
+**✅ ⑤ 타입 캐스팅** (0.11s)
   cast=0개, skipped=3개
 
 | 원본 | 표준 | 구분 |
@@ -79,12 +79,11 @@
 | event User | created_by | 확정 |
 | case Document Type | document_type | 추천 |
 | case GR-Based Inv. Verif. | gl_account | 추천 |
-| case Item Type | supporting_doc_type | 추천 |
 | case Purchasing Document | document_id | 추천 |
 | case Spend classification text | line_text | 추천 |
 | case Vendor | cost_center | 추천 |
 
-미매핑: event org:resource, case Item Category, case Purch. Doc. Category name, eventID, case Spend area text, case Sub spend area text, case Name, case Item, case concept:name, event concept:name 외 3개
+미매핑: event org:resource, case Item Category, case Purch. Doc. Category name, eventID, case Spend area text, case Sub spend area text, case Item Type, case Name, case Item, case concept:name 외 4개
 
 필수 미매핑: credit_amount, debit_amount, document_date, document_id, document_type, fiscal_period, fiscal_year, gl_account, posting_date
 
@@ -99,17 +98,17 @@
 **✅ ① 파일 검증** (0.01s)
   category=text
 
-**✅ ② 파일 읽기** (0.36s)
+**✅ ② 파일 읽기** (0.29s)
   sheets=['Sheet1'], selected=Sheet1, rows=217442, cols=7, format=csv, encoding=latin-1
 
-**✅ ③ 헤더 탐지** (0.01s)
+**✅ ③ 헤더 탐지** (0.00s)
   header_row=0, confidence=0.85, matched=[]
 
-**✅ ④ 컬럼 매핑** (0.12s)
+**✅ ④ 컬럼 매핑** (0.09s)
   mapping=2개, suggestions=3개, unmapped=2개, needs_review=True
   WARN: 필수 컬럼 미매핑: ['company_code', 'credit_amount', 'document_date', 'document_id', 'document_type', 'fiscal_period', 'fiscal_year', 'gl_account', 'posting_date']
 
-**✅ ⑤ 타입 캐스팅** (0.43s)
+**✅ ⑤ 타입 캐스팅** (0.34s)
   cast=1개, skipped=1개
 
 | 원본 | 표준 | 구분 |
@@ -118,7 +117,7 @@
 | Amount | debit_amount | 확정 |
 | Timestamp | created_by | 추천 |
 | TransactionID | line_text | 추천 |
-| TransactionType | supporting_doc_type | 추천 |
+| TransactionType | document_type | 추천 |
 
 미매핑: Merchant, Location
 
@@ -139,17 +138,17 @@
 **✅ ① 파일 검증** (0.03s)
   category=excel
 
-**✅ ② 파일 읽기** (2.65s)
+**✅ ② 파일 읽기** (2.00s)
   sheets=['GL', 'Chart of Accounts', 'Calendar', 'Territory', 'CashFlow_St', 'SoCE_St'], selected=GL, rows=27910, cols=12, format=xlsx
 
-**✅ ③ 헤더 탐지** (0.01s)
+**✅ ③ 헤더 탐지** (0.00s)
   header_row=0, confidence=0.77, matched=[]
 
 **✅ ④ 컬럼 매핑** (0.02s)
   mapping=2개, suggestions=2개, unmapped=2개, needs_review=True
   WARN: 필수 컬럼 미매핑: ['company_code', 'credit_amount', 'document_date', 'document_id', 'document_type', 'fiscal_period', 'fiscal_year', 'gl_account', 'posting_date']
 
-**✅ ⑤ 타입 캐스팅** (0.05s)
+**✅ ⑤ 타입 캐스팅** (0.04s)
   cast=1개, skipped=1개
 
 | 원본 | 표준 | 구분 |
@@ -175,20 +174,20 @@
 
 **SAP ERP 통합 전표 (8.5MB, parquet)**
 
-**✅ ① 파일 검증** (0.00s)
+**✅ ① 파일 검증** (0.02s)
   category=columnar
 
-**✅ ② 파일 읽기** (0.23s)
+**✅ ② 파일 읽기** (0.20s)
   sheets=['Sheet1'], selected=Sheet1, rows=331934, cols=60, format=parquet
 
 **✅ ③ 헤더 탐지** (0.00s)
   Parquet — 컬럼명이 메타데이터에 포함, 헤더 탐지 불필요
 
-**✅ ④ 컬럼 매핑** (0.32s)
-  mapping=19개, suggestions=6개, unmapped=35개, needs_review=True
+**✅ ④ 컬럼 매핑** (0.26s)
+  mapping=19개, suggestions=4개, unmapped=37개, needs_review=True
   WARN: 필수 컬럼 미매핑: ['credit_amount']
 
-**✅ ⑤ 타입 캐스팅** (1.00s)
+**✅ ⑤ 타입 캐스팅** (0.79s)
   cast=4개, skipped=14개
 
 | 원본 | 표준 | 구분 |
@@ -212,14 +211,12 @@
 | sgtxt | line_text | 확정 |
 | usnam | created_by | 확정 |
 | wrbtr | debit_amount | 확정 |
-| FE_AmountDeviationFromAccountMean | supply_amount | 추천 |
-| FE_DocTypeFrequency | supporting_doc_type | 추천 |
 | FE_IsWeekend | tax_amount | 추천 |
 | IF_Label | auxiliary_account_label | 추천 |
 | LOF_Score | source | 추천 |
 | valut | lettrage_date | 추천 |
 
-미매핑: monat, waers, shkzg, dmbtr, kostl, hkont, lifnr, segment, cpudt, usnam_bkpf 외 25개
+미매핑: monat, waers, shkzg, dmbtr, kostl, hkont, lifnr, segment, cpudt, usnam_bkpf 외 27개
 
 필수 미매핑: credit_amount
 
@@ -241,17 +238,17 @@
 **✅ ① 파일 검증** (0.01s)
   category=text
 
-**✅ ② 파일 읽기** (0.77s)
+**✅ ② 파일 읽기** (0.68s)
   sheets=['Sheet1'], selected=Sheet1, rows=533010, cols=10, format=csv, encoding=latin-1
 
 **✅ ③ 헤더 탐지** (0.00s)
   header_row=0, confidence=1.00, matched=['BELNR', 'WAERS', 'BUKRS', 'PRCTR', 'HKONT', 'DMBTR']
 
-**✅ ④ 컬럼 매핑** (0.12s)
+**✅ ④ 컬럼 매핑** (0.10s)
   mapping=9개, suggestions=0개, unmapped=1개, needs_review=True
   WARN: 필수 컬럼 미매핑: ['credit_amount', 'document_date', 'document_type', 'fiscal_period', 'fiscal_year', 'posting_date']
 
-**✅ ⑤ 타입 캐스팅** (1.70s)
+**✅ ⑤ 타입 캐스팅** (1.54s)
   cast=2개, skipped=7개
 
 | 원본 | 표준 | 구분 |
