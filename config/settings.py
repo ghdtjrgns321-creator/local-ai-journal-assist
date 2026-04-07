@@ -120,6 +120,11 @@ class AuditSettings(BaseSettings):
         "BATCH", "IF", "SYS",
     ]
 
+    # --- Detection Layer D: 전기 대비 변동 ---
+    variance_threshold: float = 0.5           # D01: 계정 집계 변동률 플래그 임계 (50%)
+    monthly_pattern_threshold: float = 0.3    # D02: JSD 플래그 임계
+    min_monthly_data_months: int = 3          # D02: 비교 수행 최소 월수
+
     # --- L3 통계 검증 (statistical_validator) ---
     monthly_volatility_zscore: float = 2.0      # 월별 변동률 이상 판정 Z-score
     shapiro_alpha: float = 0.05                  # 정규성 검정 유의수준
@@ -199,6 +204,12 @@ def get_keywords() -> dict:
 def get_risk_keywords() -> dict:
     """위험 적요 키워드 사전 로드."""
     return _load_yaml("risk_keywords.yaml")
+
+
+@functools.lru_cache
+def get_cleaning_config() -> dict:
+    """타입 캐스팅 전처리 규칙 로드. config/cleaning.yaml."""
+    return _load_yaml("cleaning.yaml")
 
 
 @functools.lru_cache

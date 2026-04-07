@@ -6,7 +6,7 @@ global:
   seed: 2024
   industry: manufacturing
   start_date: "2022-01-01"
-  period_months: 12
+  period_months: 36
   group_currency: KRW
   parallel: true
 
@@ -103,8 +103,8 @@ transactions:
     decimal_places: 0           # 원화는 소수점 없음
     round_number_probability: 0.25
     nice_number_probability: 0.15
-    round_number_unit: 100000        # WU-DS-02: 10만원 단위로 하향 (목표 15~25%)
-    nice_number_unit: 10000          # WU-DS-02: 1만원 단위로 하향 (목표 10~20%)
+    round_number_unit: 10000         # T4-11: 1만원 단위 (100000→10000, 목표 15~35%)
+    nice_number_unit: 1000           # T4-12: 천원 단위 (10000→1000, 목표 10~25%)
   benford:
     enabled: true
     tolerance: 0.05
@@ -114,6 +114,25 @@ transactions:
 # 한국 야근 문화: 18:30~22:00은 결산기 정상, 22:00~06:00이 심야(고위험)
 temporal_patterns:
   enabled: true
+  # T4-03/14/21: 12월 스파이크 해소 — PeriodEndDynamics 명시 활성화
+  # 한국 중견 제조업 결산기: 12월 마감 20일전부터 야근, 전표 폭증
+  period_end:
+    model: exponential
+    month_end:
+      start_day: -5
+      base_multiplier: 1.0
+      peak_multiplier: 2.5
+      decay_rate: 0.3
+    quarter_end:
+      start_day: -10
+      base_multiplier: 1.0
+      peak_multiplier: 4.0
+      decay_rate: 0.3
+    year_end:
+      start_day: -25
+      base_multiplier: 2.0
+      peak_multiplier: 18.0
+      decay_rate: 0.8
   intraday:
     enabled: true
     segments:
@@ -151,7 +170,7 @@ anomaly_injection:
 internal_controls:
   enabled: true
   sod_violation_rate: 0.01
-  anomalous_assignment_rate: 0.07   # 비현실적 프로세스 겸직 비율 (감사 탐지 대상)
+  anomalous_assignment_rate: 0.015  # T4-17: 0.07→0.015 하향 (SoD 위반률 ≤2.0% 목표)
   compatible_extension_rate: 0.25   # 현실적 프로세스 겸직 확장 비율 (Senior 이상)
 
 fraud:
