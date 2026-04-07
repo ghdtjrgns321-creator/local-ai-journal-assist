@@ -172,7 +172,13 @@ def detect_header_row(
             best_row = idx
 
     # 최소 신뢰도 미달 → 실패
-    if best_confidence < settings.min_header_confidence:
+    # Why: 키워드 매칭 없이 구조적 신호만으로는 데이터 행과 헤더 행 구분이 어렵다.
+    #      키워드 0개면 threshold를 0.7로 높여 거짓 양성을 방지한다.
+    effective_threshold = settings.min_header_confidence
+    if not best_matched:
+        effective_threshold = max(effective_threshold, 0.7)
+
+    if best_confidence < effective_threshold:
         best_row = None
         best_matched = []
 

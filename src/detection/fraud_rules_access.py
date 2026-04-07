@@ -6,17 +6,19 @@
 
 from __future__ import annotations
 
-import functools
-
 import pandas as pd
 
 from config.settings import get_audit_rules
 
 
-@functools.lru_cache(maxsize=1)
-def _get_manual_codes() -> tuple[str, ...]:
-    """수기 전표 소스 코드 목록 (소문자 정규화). lru_cache로 스레드 안전."""
-    rules = get_audit_rules()
+def _get_manual_codes(audit_rules: dict | None = None) -> tuple[str, ...]:
+    """수기 전표 소스 코드 목록 (소문자 정규화).
+
+    Why: @lru_cache 제거 — dict 파라미터는 해시 불가.
+         상위 get_audit_rules() 자체가 lru_cache이므로 이중 캐시 불필요.
+         호출자(FraudLayer)가 __init__에서 1회 호출 후 인스턴스 변수로 보관.
+    """
+    rules = audit_rules or get_audit_rules()
     raw = rules.get("patterns", {}).get("manual_source_codes", ["SA", "Manual", "수기"])
     return tuple(c.lower() for c in raw)
 
@@ -24,6 +26,7 @@ def _get_manual_codes() -> tuple[str, ...]:
 def b06_self_approval(
     df: pd.DataFrame,
     min_amount: int = 0,
+    audit_rules: dict | None = None,
 ) -> pd.Series:
     """B06 자기 승인: 인간 사용자의 고액 자기 승인만 플래그.
 
@@ -43,7 +46,7 @@ def b06_self_approval(
     if "approved_by" in df.columns:
         same_person = (df["created_by"] == df["approved_by"]) & df["created_by"].notna()
     elif "source" in df.columns:
-        is_manual = df["source"].astype(str).str.lower().isin(_get_manual_codes())
+        is_manual = df["source"].astype(str).str.lower().isin(_get_manual_codes(audit_rules))
         same_person = is_manual & df["created_by"].notna()
     else:
         return pd.Series(False, index=df.index)
@@ -63,10 +66,12 @@ def b06_self_approval(
     return same_person
 
 
-@functools.lru_cache(maxsize=1)
-def _get_sod_config() -> tuple[list[frozenset[str]], dict[str, int]]:
-    """SoD 설정 로드: toxic_pairs + role_thresholds. lru_cache로 1회 로드."""
-    rules = get_audit_rules()
+def _get_sod_config(audit_rules: dict | None = None) -> tuple[list[frozenset[str]], dict[str, int]]:
+    """SoD 설정 로드: toxic_pairs + role_thresholds.
+
+    Why: @lru_cache 제거 — dict 파라미터 해시 불가. 호출자가 캐싱 담당.
+    """
+    rules = audit_rules or get_audit_rules()
     patterns = rules.get("patterns", {})
 
     raw_pairs = patterns.get("sod_toxic_pairs", [
@@ -86,6 +91,7 @@ def _get_sod_config() -> tuple[list[frozenset[str]], dict[str, int]]:
 def b07_segregation_of_duties(
     df: pd.DataFrame,
     sod_threshold: int = 3,
+    audit_rules: dict | None = None,
 ) -> pd.Series:
     """B07 직무분리 위반 — 하이브리드 3단계 로직.
 
@@ -102,7 +108,7 @@ def b07_segregation_of_duties(
     if missing:
         return pd.Series(False, index=df.index)
 
-    toxic_pairs, role_thresholds = _get_sod_config()
+    toxic_pairs, role_thresholds = _get_sod_config(audit_rules)
     result = pd.Series(False, index=df.index)
 
     # Why: automated_system은 ERP 자동 전기 — 인간 SoD 판정 대상 아님

@@ -37,6 +37,7 @@ def read_file(
     path: Path | str,
     *,
     encoding_override: str | None = None,
+    progress_cb: Callable[[float, str], None] | None = None,
 ) -> ReadResult:
     """검증 통과된 파일을 읽어 ReadResult로 반환한다.
 
@@ -44,6 +45,7 @@ def read_file(
         path: 읽을 파일 경로.
         encoding_override: 텍스트 파일 인코딩 수동 지정.
             Excel/Parquet은 인코딩 개념이 없으므로 무시된다.
+        progress_cb: (pct, msg) 형태의 진행률 콜백. 텍스트 파일만 지원.
 
     Raises:
         ValueError: 지원하지 않는 확장자일 때.
@@ -57,8 +59,14 @@ def read_file(
         msg = f"지원하지 않는 파일 형식입니다: {ext}"
         raise ValueError(msg)
 
-    # 텍스트 파일일 때만 encoding_override 전달
-    if encoding_override is not None and ext in _TEXT_EXTENSIONS:
-        return read_text(path, encoding_override=encoding_override)
+    # 텍스트 파일 → encoding_override / progress_cb 전달
+    if ext in _TEXT_EXTENSIONS:
+        kwargs: dict = {}
+        if encoding_override is not None:
+            kwargs["encoding_override"] = encoding_override
+        if progress_cb is not None:
+            kwargs["progress_cb"] = progress_cb
+        if kwargs:
+            return read_text(path, **kwargs)
 
     return reader(path)

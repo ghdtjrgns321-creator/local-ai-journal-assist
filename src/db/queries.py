@@ -7,6 +7,10 @@ Why: SQL 사전 집계는 대시보드 필터와 충돌.
 from __future__ import annotations
 
 import logging
+import re
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Generator
 
 import duckdb
 import pandas as pd
@@ -174,3 +178,75 @@ def execute_write(
             raise QueryExecutionError(
                 f"쿼리 '{query_name}' 실행 실패: {exc}"
             ) from exc
+
+
+# ── ATTACH 헬퍼 (RC-3: 연도 비교) ──────────────────────────
+
+
+@contextmanager
+def attached_engagement(
+    conn: duckdb.DuckDBPyConnection,
+    other_db_path: str | Path,
+    alias: str = "other",
+) -> Generator[str, None, None]:
+    """DuckDB ATTACH로 다른 engagement DB를 READ_ONLY 연결.
+
+    Why: 연도 비교(YoY) 시 현재 DB에서 이전 연도 DB를 참조해야 한다.
+         컨텍스트 매니저로 DETACH를 강제하여 파일 락 누수를 방지.
+
+    Usage::
+
+        with attached_engagement(conn, "path/to/prior.duckdb", "y2024") as alias:
+            conn.execute(f"SELECT * FROM {alias}.general_ledger")
+
+    Yields:
+        sanitize된 alias 문자열 (SQL 스키마 접두사로 사용).
+    """
+    # Why: alias에 특수문자가 들어가면 SQL injection 위험
+    safe_alias = re.sub(r"[^a-zA-Z0-9_]", "_", alias)
+
+    # Why: 상대 경로를 넘기면 Streamlit CWD에 따라 파일을 못 찾거나
+    #      빈 DB를 엉뚱한 곳에 생성하는 참사 발생 — 절대 경로 강제
+    # Why: Windows에서 resolve()가 \\?\ 접두사를 붙일 수 있으므로 as_posix()는 사용하지 않고
+    #      str()로 변환 후 DuckDB가 처리하도록 함
+    abs_path = str(Path(other_db_path).resolve())
+    # Why: 경로에 single-quote가 포함되면 SQL 문법이 깨짐 (UNC 경로 등)
+    safe_path = abs_path.replace("'", "''")
+
+    conn.execute(f"ATTACH '{safe_path}' AS {safe_alias} (READ_ONLY)")
+    try:
+        yield safe_alias
+    finally:
+        try:
+            conn.execute(f"DETACH {safe_alias}")
+        except duckdb.Error:
+            logger.warning("DETACH 실패: %s", safe_alias, exc_info=True)
+
+
+def compare_engagements(
+    conn: duckdb.DuckDBPyConnection,
+    current_batch: str,
+    prior_batch: str,
+    alias: str,
+) -> pd.DataFrame:
+    """연도 비교 통계 — 건수·금액·위험 분포.
+
+    Why: 감사인이 전기 대비 당기의 이상치 증감을 한눈에 파악할 수 있어야 한다.
+         ATTACH된 상태에서 호출해야 함 (attached_engagement 내부에서 사용).
+    """
+    sql = f"""
+        SELECT 'current' AS period,
+               COUNT(*)           AS row_count,
+               SUM(debit_amount)  AS total_debit,
+               AVG(anomaly_score) AS avg_anomaly_score
+        FROM general_ledger
+        WHERE upload_batch_id = ?
+        UNION ALL
+        SELECT 'prior',
+               COUNT(*),
+               SUM(debit_amount),
+               AVG(anomaly_score)
+        FROM {alias}.general_ledger
+        WHERE upload_batch_id = ?
+    """
+    return conn.execute(sql, [current_batch, prior_batch]).fetchdf()

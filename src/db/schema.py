@@ -169,6 +169,16 @@ SCHEMA_DDL: dict[str, str] = {
             created_at TIMESTAMP DEFAULT current_timestamp
         )
     """,
+    # ── Engagement 메타 (RC-3: DB 격리) ──
+    "engagement_meta": """
+        CREATE TABLE IF NOT EXISTS engagement_meta (
+            company_id     VARCHAR NOT NULL,
+            engagement_id  VARCHAR NOT NULL,
+            created_at     TIMESTAMP DEFAULT current_timestamp,
+            schema_version INTEGER DEFAULT 1,
+            UNIQUE (company_id, engagement_id)
+        )
+    """,
     "anomaly_flag_summary": """
         CREATE VIEW IF NOT EXISTS anomaly_flag_summary AS
         SELECT
@@ -240,6 +250,10 @@ ML_MODEL_METADATA_COLUMNS: list[str] = [
 # Why: loader.py에서 reindex 후 NaN→None 변환 대상 (Phase 1에서 항상 NULL)
 WHITELIST_COLUMNS: list[str] = [
     "batch_id", "document_id", "rule_code", "reason", "created_by",
+]
+
+ENGAGEMENT_META_COLUMNS: list[str] = [
+    "company_id", "engagement_id", "created_at", "schema_version",
 ]
 
 ML_RESERVED_COLUMNS: list[str] = [

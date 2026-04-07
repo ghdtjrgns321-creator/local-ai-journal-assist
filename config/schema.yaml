@@ -1,6 +1,6 @@
 # DataSynth journal_entries.csv 출력 기준 (tools/datasynth/ v1.2.0)
 # ACDOCA 매핑: crates/datasynth-core/src/models/acdoca.rs
-# 컬럼 39개: Header 24 + Line 15
+# 컬럼 46개: Header 31 + Line 15
 columns:
   # === Header fields — 전표 단위 (document_id별 동일) ===
 
@@ -89,6 +89,29 @@ columns:
     required: false
   - name: sod_conflict_type    # SoD 충돌 유형 (nullable) — preparer_approver 등
     type: str
+    required: false
+
+  # --- Stage 2 확장 (증빙/감사추적) ---
+  - name: has_attachment        # 증빙 첨부 여부 — WU-14 증빙 검증용
+    type: bool
+    required: false
+  - name: supporting_doc_type   # 증빙 유형 (발주서/세금계산서/내부결의서 등)
+    type: str
+    required: false
+  - name: delivery_date         # 납품일 (WE 전표만) — 컷오프 검증용
+    type: date
+    required: false
+  - name: invoice_amount        # 세금계산서 금액 (supply_amount × 1.1)
+    type: float
+    required: false
+  - name: supply_amount         # 공급가액 (부가세 제외)
+    type: float
+    required: false
+  - name: ip_address            # 접근 IP — WU-15 IP 이상 탐지용
+    type: str
+    required: false
+  - name: document_number       # 순차 문서번호 (company+year+seq)
+    type: int
     required: false
 
   # === Line fields — 라인아이템 단위 ===

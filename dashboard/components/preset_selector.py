@@ -12,7 +12,12 @@ import streamlit as st
 import yaml
 
 from config.settings import AuditSettings, CONFIG_DIR, get_settings
-from dashboard._state import KEY_PRESET, KEY_SETTINGS, KEY_SETTINGS_DIRTY
+from dashboard._state import (
+    KEY_COMPANY_CONTEXT,
+    KEY_PRESET,
+    KEY_SETTINGS,
+    KEY_SETTINGS_DIRTY,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -54,9 +59,19 @@ def list_presets() -> dict[str, str]:
     return presets
 
 
+# Why: RC-4-6 — 회사 context가 있으면 프리셋 목록 맨 앞에 "회사 기본값" 삽입
+_COMPANY_KEY = "_company"
+
+
 def render_preset_selector() -> None:
     """사이드바에 프리셋 드롭다운 렌더링."""
     presets = list_presets()
+
+    # Why: 회사 context의 settings를 "회사 기본값" 프리셋으로 제공
+    ctx = st.session_state.get(KEY_COMPANY_CONTEXT)
+    if ctx is not None and not ctx.is_anonymous:
+        presets = {_COMPANY_KEY: "회사 기본값", **presets}
+
     keys = list(presets.keys())
     labels = list(presets.values())
 
@@ -72,7 +87,12 @@ def render_preset_selector() -> None:
     selected_key = keys[labels.index(selected_label)]
 
     # Why: 프리셋이 변경된 경우에만 설정 갱신 (불필요한 rerun 방지)
-    if selected_key != current and selected_key != _CUSTOM_KEY:
+    if selected_key != current and selected_key == _COMPANY_KEY:
+        # Why: ctx.settings는 3계층(글로벌+회사+연도) 머지 완료된 값
+        st.session_state[KEY_SETTINGS] = ctx.settings
+        st.session_state[KEY_PRESET] = _COMPANY_KEY
+        st.session_state[KEY_SETTINGS_DIRTY] = True
+    elif selected_key != current and selected_key != _CUSTOM_KEY:
         overrides = load_preset(selected_key)
         new_settings = get_settings().model_copy(update=overrides)
         st.session_state[KEY_SETTINGS] = new_settings

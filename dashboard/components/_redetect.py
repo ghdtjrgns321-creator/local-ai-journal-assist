@@ -12,6 +12,7 @@ import streamlit as st
 
 from dashboard._state import (
     KEY_BATCH_ID,
+    KEY_COMPANY_CONTEXT,
     KEY_DISABLED_RULES,
     KEY_FEATURED_DATA,
     KEY_LAYER_WEIGHTS,
@@ -68,7 +69,16 @@ def rerun_detection() -> bool:
     thresholds = st.session_state.get(KEY_RISK_THRESHOLDS)
     batch_id = st.session_state.get(KEY_BATCH_ID, "")
 
-    pipeline = AuditPipeline(settings=settings, skip_db=True)
+    # Why: RC-4-5 — CompanyContext 우선, 슬라이더 변경분은 clone_with_settings 반영
+    ctx = st.session_state.get(KEY_COMPANY_CONTEXT)
+    repo = st.session_state.get("_company_repo")
+    if ctx is not None and settings is not None:
+        ctx = ctx.clone_with_settings(settings)
+        pipeline = AuditPipeline(context=ctx, skip_db=True, repo=repo)
+    elif ctx is not None:
+        pipeline = AuditPipeline(context=ctx, skip_db=True, repo=repo)
+    else:
+        pipeline = AuditPipeline(settings=settings, skip_db=True)
     result = pipeline.redetect(
         featured_df,
         batch_id=batch_id,

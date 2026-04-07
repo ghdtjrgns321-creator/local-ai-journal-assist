@@ -37,6 +37,10 @@ class ReadResult:
     # 원본 파일 포맷 (예: "xlsx", "csv", "parquet")
     source_format: str = ""
 
+    # 데이터 품질 경고 — 자동 복구 가능한 문제 목록
+    # Why: 사용자에게 문제를 보여주고 "자동 복구" 확인을 받기 위해 분리
+    data_warnings: list[str] = field(default_factory=list)
+
 
 @dataclass
 class SheetScore:

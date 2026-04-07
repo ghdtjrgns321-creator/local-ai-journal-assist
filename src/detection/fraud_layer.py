@@ -34,6 +34,7 @@ from src.detection.fraud_rules_groupby import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from config.settings import AuditSettings
     from src.detection.base import DetectionResult
 
 # Why: 최소한 금액 컬럼은 있어야 Layer B 실행 의미가 있음
@@ -42,6 +43,14 @@ _REQUIRED_COLUMNS = ["debit_amount", "credit_amount"]
 
 class FraudLayer(BaseDetector):
     """B01~B10 부정 탐지. 핵심 레이어 (가중치 0.45)."""
+
+    def __init__(
+        self,
+        settings: AuditSettings | None = None,
+        audit_rules: dict | None = None,
+    ) -> None:
+        super().__init__(settings)
+        self._audit_rules = audit_rules
 
     @property
     def track_name(self) -> str:
@@ -82,8 +91,8 @@ class FraudLayer(BaseDetector):
             ("B03", b03_exceeds_threshold, {}),
             ("B04", b04_duplicate_payment, {"window_days": s.duplicate_payment_window_days}),
             ("B05", b05_duplicate_entry, {}),
-            ("B06", b06_self_approval, {"min_amount": s.approval_thresholds[0]}),
-            ("B07", b07_segregation_of_duties, {"sod_threshold": s.sod_process_threshold}),
+            ("B06", b06_self_approval, {"min_amount": s.approval_thresholds[0], "audit_rules": self._audit_rules}),
+            ("B07", b07_segregation_of_duties, {"sod_threshold": s.sod_process_threshold, "audit_rules": self._audit_rules}),
             ("B08", b08_manual_override, {}),
             ("B09", b09_skipped_approval, {}),
             ("B10", b10_circular_intercompany, {}),

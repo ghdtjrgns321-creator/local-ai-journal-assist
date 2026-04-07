@@ -33,6 +33,11 @@ KEY_RISK_THRESHOLDS = "audit_risk_thresholds"   # dict[str, float] | None
 KEY_SETTINGS_DIRTY = "audit_settings_dirty"     # bool: 설정 변경됨 but 미적용
 KEY_FEATURED_DATA = "audit_featured_data"       # pd.DataFrame | None (피처 완료 클린 DF)
 
+# RC-4: 회사/Engagement 컨텍스트
+KEY_COMPANY_ID = "audit_company_id"           # str | None
+KEY_ENGAGEMENT_ID = "audit_engagement_id"     # str | None
+KEY_COMPANY_CONTEXT = "audit_company_context" # CompanyContext | None
+
 # WU7: Ingest 스테이지 관리
 KEY_INGEST_STAGE = "audit_ingest_stage"              # "UPLOAD" | "REVIEW" | "PIPELINE"
 KEY_INGEST_READ_RESULT = "audit_ingest_read_result"  # ReadResult | None
@@ -89,6 +94,10 @@ _DEFAULTS: dict[str, object] = {
     KEY_SETTINGS_DIRTY: False,
     KEY_FEATURED_DATA: None,
     KEY_EDA_PROFILE: None,
+    # RC-4: Company/Engagement
+    KEY_COMPANY_ID: None,
+    KEY_ENGAGEMENT_ID: None,
+    KEY_COMPANY_CONTEXT: None,
     # WU7: Ingest
     KEY_INGEST_STAGE: "UPLOAD",
     KEY_INGEST_READ_RESULT: None,

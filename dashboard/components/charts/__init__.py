@@ -25,6 +25,13 @@ from dashboard.components.charts.special_charts import (
     fraud_type_treemap,
     layer_score_radar,
 )
+from dashboard.components.charts.comparison_charts import (
+    new_accounts_table,
+    risk_distribution_comparison,
+    rule_violation_delta,
+    yoy_amount_bar,
+    yoy_count_bar,
+)
 from dashboard.components.charts.trend_charts import hourly_heatmap, monthly_trend
 
 __all__ = [
@@ -45,4 +52,10 @@ __all__ = [
     "risk_donut",
     "risk_heatmap",
     "rule_violation_bar",
+    # comparison (RC-4-7)
+    "new_accounts_table",
+    "risk_distribution_comparison",
+    "rule_violation_delta",
+    "yoy_amount_bar",
+    "yoy_count_bar",
 ]
