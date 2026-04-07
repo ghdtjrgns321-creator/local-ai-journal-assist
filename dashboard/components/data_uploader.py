@@ -20,8 +20,10 @@ import streamlit as st
 
 from dashboard._state import (
     KEY_BATCH_ID,
+    KEY_COMPANY_CONTEXT,
     KEY_DEV_MODE,
     KEY_EDA_PROFILE,
+    KEY_ENGAGEMENT_ID,
     KEY_FEATURED_DATA,
     KEY_INGEST_DATA_DF,
     KEY_INGEST_MAPPING_RESULT,
@@ -37,23 +39,17 @@ from dashboard._state import (
 
 logger = logging.getLogger(__name__)
 
-_ALLOWED_TYPES = ["csv", "xlsx", "xls", "xlsb"]
+_ALLOWED_TYPES = ["csv", "xlsx", "xls", "xlsb", "tsv", "txt", "dat", "parquet"]
 
 
 # ── Progress 팩토리 ──────────────────────────────────────
 
 
 def _make_progress_cb(progress_bar):
-    """ETA 계산 포함 progress callback 팩토리."""
-    t0 = time.monotonic()
+    """progress callback 팩토리. 퍼센트 + 단계 메시지만 표시."""
 
     def _update(pct: float, msg: str) -> None:
         pct = min(pct, 1.0)
-        elapsed = time.monotonic() - t0
-        if 0.02 < pct < 1.0 and elapsed > 1:
-            remaining = elapsed / pct * (1 - pct)
-            eta = f"약 {remaining / 60:.0f}분 남음" if remaining >= 60 else f"약 {remaining:.0f}초 남음"
-            msg = f"{msg} ({eta})"
         progress_bar.progress(pct, text=msg)
 
     return _update
@@ -82,16 +78,62 @@ def _render_upload_stage() -> None:
     st.title("AI Audit Assistant")
     st.markdown("감사 데이터를 업로드하면 자동으로 컬럼 매핑과 탐지 분석이 진행됩니다.")
 
-    uploaded = st.file_uploader(
-        "감사 데이터 업로드", type=_ALLOWED_TYPES,
-        help="Excel(.xlsx/.xls/.xlsb) 또는 CSV 파일",
-    )
+    # Why: Streamlit file_uploader는 대용량 파일(300MB+)을 브라우저→서버로
+    # HTTP 전송하므로 수 분이 소요된다. 로컬 파일 경로를 직접 입력하면
+    # 디스크에서 바로 읽어 전송 시간을 완전히 건너뛴다.
+    tab_upload, tab_path = st.tabs(["파일 업로드", "파일 경로 입력 (대용량)"])
 
-    if uploaded is None:
-        st.info("파일을 업로드하면 감사 분석이 시작됩니다.")
+    with tab_upload:
+        # Why: 함정1 방어 — engagement 전환 시 이전 파일 잔존 방지
+        current_eid = st.session_state.get(KEY_ENGAGEMENT_ID, "anonymous")
+        uploaded = st.file_uploader(
+            "감사 데이터 업로드", type=_ALLOWED_TYPES,
+            help="Excel(.xlsx/.xls/.xlsb) 또는 CSV 파일",
+            key=f"uploader_{current_eid}",
+        )
+
+    with tab_path:
+        st.caption("300MB 이상 파일은 경로 입력이 훨씬 빠릅니다.")
+        file_path_input = st.text_input(
+            "파일 경로",
+            placeholder=r"C:\data\journal_entries.csv",
+            help="로컬 파일의 전체 경로를 입력하세요.",
+        )
+        path_submit = st.button("분석 시작", type="primary")
+
+    # ── 경로 입력 모드 ──
+    if file_path_input and path_submit:
+        local_path = Path(file_path_input.strip().strip('"').strip("'"))
+        if not local_path.exists():
+            st.error(f"파일을 찾을 수 없습니다: {local_path}")
+            return
+        ext = local_path.suffix.lower()
+        if ext.lstrip(".") not in _ALLOWED_TYPES:
+            st.error(f"지원하지 않는 형식: {ext}")
+            return
+
+        file_key = f"{local_path.name}_{local_path.stat().st_size}"
+        if file_key == st.session_state.get(KEY_UPLOAD_COUNT, ""):
+            return
+        st.session_state["_ingest_file_key"] = file_key
+
+        try:
+            progress_bar = st.progress(0, text="파일 분석 중...")
+            _run_ingest_from_path(local_path, _make_progress_cb(progress_bar))
+            progress_bar.empty()
+            st.rerun()
+        except Exception as e:
+            logger.exception("인제스트 분석 실패")
+            st.error(f"인제스트 분석 실패: {e}")
+            if st.session_state.get(KEY_DEV_MODE):
+                st.exception(e)
         return
 
-    # Why: 파일명+크기 해시로 동일 파일 재업로드 방지
+    # ── 파일 업로드 모드 ──
+    if uploaded is None:
+        st.info("파일을 업로드하거나, 대용량 파일은 '파일 경로 입력' 탭을 이용하세요.")
+        return
+
     file_key = f"{uploaded.name}_{uploaded.size}"
     if file_key == st.session_state.get(KEY_UPLOAD_COUNT, ""):
         return
@@ -118,8 +160,12 @@ def _render_review_with_preview() -> None:
     """왼쪽: 컬럼 매핑 확인 / 오른쪽: 데이터 미리보기(Top 10)."""
     data_df = st.session_state.get(KEY_INGEST_DATA_DF)
     source_columns = st.session_state.get(KEY_INGEST_SOURCE_COLUMNS, [])
+    read_result = st.session_state.get(KEY_INGEST_READ_RESULT)
 
     st.title("데이터 미리보기 & 컬럼 매핑")
+
+    # ── 데이터 품질 경고 + 자동 복구 버튼 ──
+    _render_data_warnings(read_result, data_df, source_columns)
 
     col_left, col_right = st.columns([1, 1])
 
@@ -145,6 +191,382 @@ def _render_review_with_preview() -> None:
             st.caption(f"전체 {len(data_df):,}행 × {len(source_columns)}열")
         else:
             st.info("미리보기 데이터가 없습니다.")
+
+
+def _detect_column_mismatch(read_result) -> str | None:
+    """헤더 이후 데이터 행만 대상으로 열 수 불일치를 재계산한다.
+
+    Why: raw_df 전체를 진단하면 메타데이터 행이 오탐으로 잡힌다.
+    헤더 이후 행만 검사. 대용량(10만행+)은 상위 1000행 샘플 사용.
+    인크리멘탈 진단에서 이미 전체 검사했으므로 여기서는 UI 보충용.
+    """
+    import pandas as pd
+
+    if read_result is None:
+        return None
+    sheet = read_result.active_sheet
+    raw_df = read_result.raw_data.get(sheet)
+    if raw_df is None or raw_df.shape[0] <= 1:
+        return None
+
+    from src.ingest.header_detector import detect_headers
+
+    header_results = detect_headers(read_result)
+    hr = header_results.get(sheet)
+    header_row = hr.header_row if hr and hr.header_row is not None else 0
+
+    data_slice = raw_df.iloc[header_row + 1:].reset_index(drop=True)
+    if data_slice.shape[0] <= 1:
+        return None
+
+    header_cols = int(raw_df.iloc[header_row].notna().sum())
+
+    if data_slice.shape[1] <= header_cols:
+        return None
+
+    # Why: 1.1M행에서 .notna().sum(axis=1)은 33초 소요.
+    # 상위 1000행 샘플로 충분 (인크리멘탈 진단이 전체 커버)
+    sample = data_slice.head(1000)
+
+    non_null_counts = sample.notna().sum(axis=1)
+    non_empty = non_null_counts[non_null_counts > 0]
+    if len(non_empty) <= 1:
+        return None
+
+    mode_cols = int(non_empty.mode().iloc[0])
+    short_mask = non_empty < mode_cols
+    long_mask = non_empty > mode_cols
+    if not short_mask.any() and not long_mask.any():
+        return None
+
+    lines = [f"열 수 불일치 (기준 {mode_cols}열) — 원본 파일 확인 필요"]
+    problem_idxs = non_null_counts.index[short_mask | long_mask]
+    for row_idx in problem_idxs:
+        cnt = int(non_null_counts.loc[row_idx])
+        row_id = sample.iloc[row_idx, 0]
+        if cnt < mode_cols:
+            missing = mode_cols - cnt
+            lines.append(
+                f"  행 {row_idx + 1} ({row_id}): "
+                f"{cnt}열만 존재 → {missing}열 누락(NaN)"
+            )
+        elif cnt > mode_cols:
+            extra_vals = [
+                str(v) for v in sample.iloc[row_idx, mode_cols:].dropna()
+            ]
+            lines.append(
+                f"  행 {row_idx + 1} ({row_id}): "
+                f"{cnt}열 → 초과 값 [{', '.join(extra_vals)}] 버려짐"
+            )
+    return "\n".join(lines)
+
+
+def _detect_scientific_notation(data_df, source_columns: list[str]) -> str | None:
+    """지수 표기법(Excel 손상) 셀을 감지한다.
+
+    Why: Excel에서 CSV를 열었다 저장하면 긴 숫자가 "2E+11",
+    큰 금액이 "1.5E+07" 등으로 변환된다.
+    대용량 파일은 상위 1000행 샘플로 검사 (패턴이 있다면 상위에서 발견됨).
+    """
+    import re
+
+    pattern = re.compile(r"^\d+\.?\d*[eE]\+\d+$")
+    hits: list[str] = []
+
+    # Why: 1.1M행 전체에 regex.apply() → 수 분 소요. 상위 1000행이면 즉시.
+    sample = data_df.head(1000)
+
+    col_names = list(source_columns[:data_df.shape[1]])
+    for col_idx, col in enumerate(sample.columns):
+        col_name = col_names[col_idx] if col_idx < len(col_names) else str(col)
+        if sample[col].dtype != object:
+            continue
+        matches = sample[col].dropna().apply(
+            lambda v: bool(pattern.match(str(v)))
+        )
+        cnt = int(matches.sum())
+        if cnt > 0:
+            examples = sample[col][matches.values[:len(sample[col])]].head(2).tolist()
+            hits.append(f"{col_name}: {cnt}건 (예: {', '.join(str(e) for e in examples)})")
+
+    if not hits:
+        return None
+    return "\n".join(hits)
+
+
+def _render_data_warnings(read_result, data_df, source_columns) -> None:
+    """데이터 품질 경고를 2그룹(복구 가능 / 정보 제공)으로 분리하여 표시한다.
+
+    Why: 모든 경고에 "무엇이 문제 → 어떻게 처리됨 → 사용자가 할 일"
+    3요소를 갖춰야 감사인이 상황을 이해하고 판단할 수 있다.
+    """
+    if read_result is None or data_df is None:
+        return
+
+    # ── 1) 경고 수집: action(복구 가능) vs info(자동 처리) ──
+    action_warnings: list[str] = []
+    info_warnings: list[str] = []
+
+    # 복구 가능 여부를 먼저 확인 (dry-run) — 샘플로 수행
+    from src.ingest.text_reader import repair_dataframe
+
+    tmp_path = st.session_state.get("_ingest_tmp_path")
+    _repair_path = Path(tmp_path) if tmp_path else None
+    # Why: repair dry-run에 1.1M행 복사본을 넘기면 느리다.
+    # 상위 1000행 샘플로 복구 가능 여부만 판단.
+    _sample_for_repair = data_df.head(1000).copy()
+    _, _dry_repairs = repair_dataframe(_sample_for_repair, read_result, path=_repair_path)
+    _has_repairs = len(_dry_repairs) > 0
+
+    # 빈 행 — read_result.data_warnings에서 이미 진단된 결과 활용
+    raw_warnings = getattr(read_result, "data_warnings", [])
+    _empty_row_warning = next((w for w in raw_warnings if "빈 행" in w), None)
+    if _empty_row_warning:
+        if _has_repairs:
+            action_warnings.append(_empty_row_warning)
+        else:
+            info_warnings.append(_empty_row_warning)
+
+    # raw_df 기준 경고 — repair가 하나라도 가능하면 action 그룹
+    _ACTION_KEYWORDS = ("혼합 구분자", "미닫힌 따옴표")
+    for w in raw_warnings:
+        if any(kw in w for kw in _ACTION_KEYWORDS):
+            if _has_repairs:
+                action_warnings.append(w)
+            else:
+                info_warnings.append(w)
+
+    # 열 수 불일치 → 헤더 이후 행 기준 재계산 (오탐 방지)
+    # Why: 혼합 구분자/미닫힌 따옴표 복구 시 열 수 문제도 함께 해소되므로
+    # action 경고가 있으면 info 경고를 숨긴다
+    if not action_warnings:
+        mismatch = _detect_column_mismatch(read_result)
+        if mismatch:
+            info_warnings.append(mismatch)
+
+    # 지수 표기법 감지 (Excel 손상)
+    sci_notation = _detect_scientific_notation(data_df, source_columns)
+    if sci_notation:
+        info_warnings.append(f"__sci_notation__\n{sci_notation}")
+
+    total = len(action_warnings) + len(info_warnings)
+    if total == 0:
+        return
+
+    # ── 2) 렌더링 ──
+    with st.expander(f"데이터 품질 경고 ({total}건)", expanded=True):
+        # 복구 가능 경고 (사용자 액션 필요) — 먼저 표시
+        for w in action_warnings:
+            if "빈 행" in w:
+                st.warning(f"{w} — 자동 복구로 제거할 수 있습니다.")
+            elif "혼합 구분자" in w:
+                st.warning(f"{w}\n\n자동 복구로 구분자를 통일할 수 있습니다.")
+            elif "미닫힌 따옴표" in w:
+                st.warning(
+                    f"{w}\n\n자동 복구로 따옴표를 무시하고 재파싱을 시도할 수 있습니다."
+                )
+
+        # 복구 미리보기 + 버튼
+        if action_warnings:
+            has_repairs = _render_repair_preview(
+                read_result, data_df, source_columns,
+            )
+            if has_repairs:
+                if st.button("자동 복구", type="primary"):
+                    _apply_auto_repair(read_result, data_df, source_columns)
+
+        # 정보 경고 (자동 처리됨 또는 복구 불가, 참고용)
+        for w in info_warnings:
+            if "열 수 불일치" in w:
+                _render_column_mismatch_warning(w, read_result, source_columns)
+            elif w.startswith("__sci_notation__"):
+                _render_scientific_notation_warning(w.removeprefix("__sci_notation__\n"))
+            elif "미닫힌 따옴표" in w:
+                st.info(
+                    f"{w}\n\n"
+                    "정상 멀티라인 필드가 포함되어 있어 자동 복구가 불가능합니다. "
+                    "원본 파일을 직접 확인하세요."
+                )
+            elif "혼합 구분자" in w:
+                st.info(f"{w}\n\n자동 복구가 불가능합니다. 원본 파일을 확인하세요.")
+            elif "빈 행" in w:
+                st.info(f"{w}")
+            else:
+                st.info(w)
+
+
+def _render_column_mismatch_warning(
+    warning_text: str, read_result, source_columns: list[str],
+) -> None:
+    """열 수 불일치 경고: 설명 + 접힌 상세 테이블(하이라이트).
+
+    Why: raw_data에서 초과 열까지 포함한 원본을 가져와야 "여분" 값이 보인다.
+    data_df는 prepare_dataframe에서 빈 컬럼명 열을 제거하므로 초과 열이 누락됨.
+    """
+    import re
+
+    import pandas as pd
+
+    lines = warning_text.strip().split("\n")
+    summary_line = lines[0]
+
+    # 경고 텍스트에서 문제 행 인덱스 파싱 (1-based → 0-based)
+    problem_rows: list[int] = []
+    short_count, long_count = 0, 0
+    for line in lines[1:]:
+        m = re.match(r"\s*행 (\d+)", line)
+        if not m:
+            continue
+        problem_rows.append(int(m.group(1)) - 1)
+        if "누락" in line:
+            short_count += 1
+        elif "초과" in line:
+            long_count += 1
+
+    m_mode = re.search(r"기준 (\d+)열", summary_line)
+    mode_cols = int(m_mode.group(1)) if m_mode else len(source_columns)
+
+    # ── 설명 블록: 무엇이 문제 + 어떻게 처리됨 + 사용자 액션 ──
+    desc_parts = [f"일부 행의 열 수가 기준({mode_cols}열)과 다릅니다."]
+    if short_count:
+        desc_parts.append(f"  · 누락 {short_count}건: 부족한 열은 빈 값으로 채워집니다")
+    if long_count:
+        desc_parts.append(f"  · 초과 {long_count}건: 넘치는 값은 자동으로 무시됩니다")
+    desc_parts.append("별도 조치가 필요하지 않습니다.")
+    st.info("\n\n".join(desc_parts))
+
+    # ── 상세 테이블 (접힌 상태, 참고용) ──
+    if not problem_rows or read_result is None:
+        return
+
+    sheet = read_result.active_sheet
+    raw_df = read_result.raw_data.get(sheet)
+    if raw_df is None:
+        return
+
+    from src.ingest.header_detector import detect_headers
+
+    header_results = detect_headers(read_result)
+    hr = header_results.get(sheet)
+    header_offset = (hr.header_row + 1) if hr and hr.header_row is not None else 0
+
+    raw_idxs = [
+        i + header_offset
+        for i in problem_rows
+        if (i + header_offset) < len(raw_df)
+    ]
+    if not raw_idxs:
+        return
+
+    with st.expander("상세 내역", expanded=False):
+        subset = raw_df.iloc[raw_idxs].copy()
+
+        # 컬럼명: 기준 열은 source_columns, 초과 열은 "여분N"
+        col_labels = list(source_columns[:mode_cols])
+        for i in range(mode_cols, subset.shape[1]):
+            col_labels.append(f"여분{i - mode_cols + 1}")
+        subset.columns = col_labels[:subset.shape[1]]
+
+        subset.index = [f"행 {i + 1}" for i in problem_rows[:len(raw_idxs)]]
+
+        # NaN(누락) → 노란 배경, 초과 열 → 빨간 배경
+        yellow = "background-color: #fff3cd"
+        red = "background-color: #f8d7da"
+
+        def _highlight_issues(row: pd.Series) -> list[str]:
+            return [
+                yellow if pd.isna(val)
+                else red if col_idx >= mode_cols
+                else ""
+                for col_idx, val in enumerate(row)
+            ]
+
+        styled = subset.style.apply(_highlight_issues, axis=1)
+        st.dataframe(styled, use_container_width=True)
+
+
+def _render_scientific_notation_warning(detail: str) -> None:
+    """지수 표기법(Excel 손상) 경고를 렌더링한다."""
+    st.warning(
+        "지수 표기법이 감지되었습니다.\n\n"
+        "Excel에서 CSV를 열었다 저장하면 긴 숫자가 `2E+11`, "
+        "큰 금액이 `1.5E+07` 등으로 변환됩니다.\n\n"
+        "  · **금액 컬럼**: 파이프라인에서 자동 변환됩니다 (`1.5E+07` → `15,000,000`)\n\n"
+        "  · **전표번호 등 텍스트 컬럼**: 원본 값 복구가 불가능합니다. "
+        "원본 ERP 데이터를 다시 추출하세요.",
+    )
+    with st.expander("상세 내역", expanded=False):
+        for line in detail.strip().split("\n"):
+            st.text(f"  {line}")
+
+
+def _render_repair_preview(read_result, data_df, source_columns) -> bool:
+    """현재 모습(왼쪽) vs 복구 후 모습(오른쪽) 비교. 복구 가능 여부를 반환."""
+    import pandas as pd
+    from src.ingest.text_reader import repair_dataframe
+
+    if data_df is None or len(source_columns) == 0:
+        return False
+
+    tmp_path = st.session_state.get("_ingest_tmp_path")
+    path = Path(tmp_path) if tmp_path else None
+    repaired_df, repairs = repair_dataframe(data_df.copy(), read_result, path=path)
+    if not repairs:
+        return False
+
+    n = min(5, len(data_df), len(repaired_df))
+    col_before, col_after = st.columns(2)
+
+    with col_before:
+        st.caption("현재")
+        preview = data_df.head(n).copy()
+        preview.columns = source_columns[:preview.shape[1]]
+        st.dataframe(preview, use_container_width=True, hide_index=True)
+        st.caption(f"{len(data_df):,}행 × {data_df.shape[1]}열")
+
+    with col_after:
+        st.caption("복구 후")
+        cols_after = source_columns[:repaired_df.shape[1]]
+        if len(cols_after) < repaired_df.shape[1]:
+            cols_after = [str(c) for c in repaired_df.columns]
+        preview_r = repaired_df.head(n).copy()
+        preview_r.columns = cols_after[:preview_r.shape[1]]
+        st.dataframe(preview_r, use_container_width=True, hide_index=True)
+        st.caption(f"{len(repaired_df):,}행 × {repaired_df.shape[1]}열")
+
+    return True
+
+
+def _apply_auto_repair(read_result, data_df, source_columns) -> None:
+    """사용자가 자동 복구를 승인한 경우 실행."""
+    from src.ingest.column_mapper import auto_map_columns, prepare_dataframe
+    from src.ingest.header_detector import detect_headers
+    from src.ingest.text_reader import repair_dataframe
+
+    tmp_path = st.session_state.get("_ingest_tmp_path")
+    path = Path(tmp_path) if tmp_path else None
+    repaired_df, repairs = repair_dataframe(data_df, read_result, path=path)
+
+    if not repairs:
+        st.info("복구할 항목이 없습니다.")
+        return
+
+    # 복구 후 헤더 재탐지 + 매핑 재실행
+    source_columns_new = [str(c) for c in repaired_df.columns]
+
+    st.session_state[KEY_INGEST_DATA_DF] = repaired_df
+    st.session_state[KEY_INGEST_SOURCE_COLUMNS] = source_columns_new
+
+    # 매핑 재실행
+    mapping_result = auto_map_columns(
+        source_columns_new, data_df=repaired_df,
+    )
+    st.session_state[KEY_INGEST_MAPPING_RESULT] = mapping_result
+
+    # 경고 갱신 (복구 완료 표시)
+    read_result.data_warnings = [f"[복구됨] {r}" for r in repairs]
+
+    st.rerun()
 
 
 # ── PIPELINE 스테이지 ────────────────────────────────────
@@ -182,14 +604,22 @@ def _render_pipeline_stage() -> None:
 
 
 def _run_ingest(uploaded, progress_cb) -> None:
-    """파일 → read_file → header detect → column map → 스테이지 결정."""
+    """UploadedFile → tempfile → read → ingest 공통 로직."""
+    def _file_read_cb(pct: float, msg: str) -> None:
+        overall = 0.05 + pct * 0.80
+        progress_cb(overall, msg)
+
+    progress_cb(0.05, "파일 읽는 중...")
+    read_result = _read_via_ingest(uploaded, progress_cb=_file_read_cb)
+    _run_ingest_common(read_result, progress_cb)
+
+
+def _run_ingest_common(read_result, progress_cb) -> None:
+    """ReadResult → header detect → column map → 세션 저장. 공통 로직."""
     from src.ingest.column_mapper import auto_map_columns, prepare_dataframe
     from src.ingest.header_detector import detect_headers
     from src.ingest.mapping_profile import load_profile
     from src.ingest.sheet_scorer import score_sheets
-
-    progress_cb(0.05, "파일 읽는 중...")
-    read_result = _read_via_ingest(uploaded)
 
     if read_result.source_format == "parquet":
         sheet_name = read_result.active_sheet
@@ -198,7 +628,7 @@ def _run_ingest(uploaded, progress_cb) -> None:
         matched_keywords: list[str] = []
         sheet_scores = []
     else:
-        progress_cb(0.10, "헤더 탐지 중...")
+        progress_cb(0.88, "헤더 탐지 중...")
         header_results = detect_headers(read_result)
         sheet_scores = score_sheets(read_result, header_results)
 
@@ -216,9 +646,13 @@ def _run_ingest(uploaded, progress_cb) -> None:
             data_df = raw_df
             matched_keywords = []
 
-    progress_cb(0.15, "컬럼 매핑 중...")
+    progress_cb(0.94, "컬럼 매핑 중...")
 
-    profile = load_profile(source_columns)
+    # Why: RC-5-1 — 회사별 프로파일 디렉토리 우선, 없으면 글로벌 폴백
+    _ctx = st.session_state.get(KEY_COMPANY_CONTEXT)
+    _pdir = _ctx.profile_dir if _ctx and not _ctx.is_anonymous else None
+
+    profile = load_profile(source_columns, profile_dir=_pdir)
     if profile is not None and not profile.needs_review:
         mapping_result = profile
     else:
@@ -233,13 +667,39 @@ def _run_ingest(uploaded, progress_cb) -> None:
     st.session_state[KEY_INGEST_DATA_DF] = data_df
     st.session_state[KEY_INGEST_MAPPING_RESULT] = mapping_result
 
-    if not mapping_result.needs_review and not mapping_result.missing_required:
-        st.session_state[KEY_INGEST_STAGE] = "PIPELINE"
-    else:
-        st.session_state[KEY_INGEST_STAGE] = "REVIEW"
+    st.session_state[KEY_INGEST_STAGE] = "REVIEW"
 
 
-def _read_via_ingest(uploaded):
+def _run_ingest_from_path(local_path: Path, progress_cb) -> None:
+    """로컬 파일 경로 → 검증 → ingest. 브라우저 업로드를 건너뛴다.
+
+    Why: 321MB 파일을 Streamlit file_uploader로 올리면 브라우저→서버
+    HTTP 전송에 수 분이 소요. 로컬 경로 직접 읽기는 디스크 I/O만으로 즉시 시작.
+    """
+    from src.ingest.file_validator import validate_file
+
+    progress_cb(0.02, "파일 검증 중...")
+    validation = validate_file(local_path)
+    if not validation.is_valid:
+        raise ValueError("; ".join(validation.errors))
+
+    # 원본 파일 경로를 세션에 보관 (복구 시 재읽기용)
+    st.session_state["_ingest_tmp_path"] = str(local_path)
+    st.session_state["_ingest_is_user_path"] = True  # 사용자 파일은 삭제 방지
+
+    def _file_read_cb(pct: float, msg: str) -> None:
+        overall = 0.05 + pct * 0.80
+        progress_cb(overall, msg)
+
+    progress_cb(0.05, "파일 읽는 중...")
+    from src.ingest.reader_api import read_file
+    read_result = read_file(local_path, progress_cb=_file_read_cb)
+
+    # 이후 로직은 _run_ingest와 동일
+    _run_ingest_common(read_result, progress_cb)
+
+
+def _read_via_ingest(uploaded, *, progress_cb=None):
     """UploadedFile → ReadResult. tempfile 경유로 검증 + 읽기."""
     from src.ingest.file_validator import validate_file
     from src.ingest.reader_api import read_file
@@ -249,13 +709,15 @@ def _read_via_ingest(uploaded):
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
         f.write(uploaded.read())
         tmp_path = Path(f.name)
-    try:
-        validation = validate_file(tmp_path)
-        if not validation.is_valid:
-            raise ValueError("; ".join(validation.errors))
-        return read_file(tmp_path)
-    finally:
+
+    validation = validate_file(tmp_path)
+    if not validation.is_valid:
         tmp_path.unlink(missing_ok=True)
+        raise ValueError("; ".join(validation.errors))
+
+    result = read_file(tmp_path, progress_cb=progress_cb)
+    st.session_state["_ingest_tmp_path"] = str(tmp_path)
+    return result
 
 
 def _run_pipeline_from_mapped(file_key: str, progress_cb):
@@ -269,7 +731,21 @@ def _run_pipeline_from_mapped(file_key: str, progress_cb):
     source_columns = st.session_state.get(KEY_INGEST_SOURCE_COLUMNS, [])
     read_result = st.session_state.get(KEY_INGEST_READ_RESULT)
 
-    df = data_df.rename(columns=mapping_result.mapping)
+    # Why: 헤더 없는 파일은 columns가 정수(0,1,2)인데 mapping 키는 문자열("0","1","2").
+    #      rename 전에 키 타입을 DataFrame의 실제 컬럼 타입에 맞춘다.
+    rename_map = {}
+    for src, tgt in mapping_result.mapping.items():
+        if src in data_df.columns:
+            rename_map[src] = tgt
+        else:
+            # 문자열 키 → 정수 컬럼 변환 시도
+            try:
+                int_key = int(src)
+                if int_key in data_df.columns:
+                    rename_map[int_key] = tgt
+            except (ValueError, TypeError):
+                rename_map[src] = tgt
+    df = data_df.rename(columns=rename_map)
 
     progress_cb(0.20, "타입 캐스팅 중...")
     cast_result = cast_dataframe(df)
@@ -279,10 +755,18 @@ def _run_pipeline_from_mapped(file_key: str, progress_cb):
         warns.extend(cast_result.errors)
 
     progress_cb(0.25, "파이프라인 시작...")
+    # Why: RC-4-5 — CompanyContext 우선, 없으면 settings 폴백
+    ctx = st.session_state.get(KEY_COMPANY_CONTEXT)
     settings = st.session_state.get(KEY_SETTINGS)
-    result = AuditPipeline(
-        settings=settings, progress_callback=progress_cb,
-    ).run_from_dataframe(df)
+    repo = st.session_state.get("_company_repo")
+    if ctx is not None:
+        result = AuditPipeline(
+            context=ctx, progress_callback=progress_cb, repo=repo,
+        ).run_from_dataframe(df)
+    else:
+        result = AuditPipeline(
+            settings=settings, progress_callback=progress_cb,
+        ).run_from_dataframe(df)
 
     result.warnings = warns + result.warnings
 
@@ -298,11 +782,14 @@ def _run_pipeline_from_mapped(file_key: str, progress_cb):
             if hr and hr.header_row is not None:
                 header_row = hr.header_row
 
+            # Why: RC-5-1 — 회사별 프로파일 디렉토리로 저장
+            _pdir = ctx.profile_dir if ctx and not ctx.is_anonymous else None
             save_profile(
                 mapping_result, source_columns,
                 source_name=file_key.rsplit("_", 1)[0],
                 source_format=read_result.source_format if read_result else "",
                 header_row=header_row,
+                profile_dir=_pdir,
             )
         except Exception:
             logger.warning("프로파일 저장 실패", exc_info=True)
@@ -323,6 +810,12 @@ def _run_pipeline_from_mapped(file_key: str, progress_cb):
 
 def _clear_ingest_state() -> None:
     """인제스트 중간 상태 정리."""
+    # tempfile 삭제 (경로 모드에서 직접 지정한 파일은 삭제하지 않음)
+    tmp = st.session_state.pop("_ingest_tmp_path", None)
+    is_user_file = st.session_state.pop("_ingest_is_user_path", False)
+    if tmp and not is_user_file:
+        Path(tmp).unlink(missing_ok=True)
+
     for key in [
         KEY_INGEST_READ_RESULT, KEY_INGEST_MAPPING_RESULT,
         KEY_INGEST_SHEET_SCORES, KEY_INGEST_SELECTED_SHEET,

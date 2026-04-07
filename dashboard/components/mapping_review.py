@@ -13,10 +13,15 @@ UX 1단계 스펙 (ux-flow.md):
 
 from __future__ import annotations
 
+import logging
+
 import streamlit as st
 
-from config.settings import get_schema
+from config.settings import get_keywords, get_schema
+
+logger = logging.getLogger(__name__)
 from dashboard._state import (
+    KEY_COMPANY_CONTEXT,
     KEY_INGEST_DATA_DF,
     KEY_INGEST_MAPPING_RESULT,
     KEY_INGEST_READ_RESULT,
@@ -233,6 +238,10 @@ def render_mapping_review() -> None:
             }
             updated = dc_replace(mapping_result, mapping=final_mapping)
             st.session_state[KEY_INGEST_MAPPING_RESULT] = updated
+
+            # RC-5-2: 사용자 수동 매핑 → 회사 키워드 학습
+            _try_learn_keywords(user_overrides)
+
             st.session_state[KEY_INGEST_STAGE] = "PIPELINE"
             st.rerun()
     with col2:
@@ -522,15 +531,18 @@ def _sort_options(
     return req + rec + etc
 
 
+
 def _render_mapping_unified(
     mapping_result,
     all_standard: list[str],
     required_cols: set[str],
 ) -> dict[str, str]:
-    """통합 매핑 리스트 — Green/Yellow/Red 구분 없이 모든 원본 컬럼을 드롭다운으로 표시.
+    """통합 매핑 리스트 — 모든 원본 컬럼을 드롭다운으로 표시.
 
-    드롭다운 정렬: 필수 → 권장 → 나머지 (알파벳순).
-    이미 매핑된 컬럼은 다른 드롭다운에서 제외.
+    추천 우선순위:
+    1. auto_map_columns 결과 (exact/fuzzy match)
+    2. LLM 추천 (Ollama 실행 중이면)
+    3. (무시) 기본값
     """
     schema = get_schema()
     recommended_cols = _get_recommended_columns(schema)
@@ -539,17 +551,12 @@ def _render_mapping_unified(
     user_overrides: dict[str, str] = {}
     taken: set[str] = set()
 
-    # 모든 원본 컬럼 수집 (매핑된 것 + 추천된 것 + 미매핑)
+    # 모든 원본 컬럼을 원본 열 순서대로 수집
+    source_columns = st.session_state.get(KEY_INGEST_SOURCE_COLUMNS, [])
+    merged = {**mapping_result.mapping, **mapping_result.suggestions}
     all_sources: list[tuple[str, str | None]] = []
-
-    for src, tgt in mapping_result.mapping.items():
-        all_sources.append((src, tgt))
-    for src, tgt in mapping_result.suggestions.items():
-        if src not in dict(all_sources):
-            all_sources.append((src, tgt))
-    for src in mapping_result.unmapped:
-        if src not in dict(all_sources):
-            all_sources.append((src, None))
+    for src in source_columns:
+        all_sources.append((src, merged.get(src)))
 
     total = len(all_sources)
     st.caption(f"원본 컬럼 {total}개")
@@ -573,11 +580,12 @@ def _render_mapping_unified(
             if fmt_suggested in fmt_options:
                 default_idx = fmt_options.index(fmt_suggested)
 
-        label = f"{sample} {src} →" if sample else f"{src} →"
+        # 라벨: 샘플값 + 신뢰도 (help 제거)
+        conf_text = f" (신뢰도 {conf:.0%})" if conf > 0 else ""
+        label = f"{sample}{conf_text}" if sample else f"컬럼 {src}{conf_text}"
         chosen_fmt = st.selectbox(
             label, fmt_options, index=default_idx,
             key=f"map_{src}",
-            help=f"신뢰도: {conf:.0%}" if conf > 0 else "매핑 불가",
         )
         chosen = _parse_option(chosen_fmt)
         if chosen != "(무시)":
@@ -588,6 +596,42 @@ def _render_mapping_unified(
 
 
 # ── 헬퍼 ────────────────────────────────────────────────
+
+
+def _try_learn_keywords(user_overrides: dict[str, str]) -> None:
+    """사용자 수동 매핑에서 새 별칭을 추출하여 회사 keywords.yaml에 저장.
+
+    Why: RC-5-2 — 다음 업로드 시 auto_map_columns Phase 1에서 즉시 매칭되도록
+    회사별 키워드를 자동 학습한다. anonymous 모드에서는 실행하지 않는다.
+    """
+    if not user_overrides:
+        return
+
+    ctx = st.session_state.get(KEY_COMPANY_CONTEXT)
+    if ctx is None or ctx.is_anonymous:
+        return
+
+    try:
+        from src.ingest.keyword_learner import learn_from_mapping
+
+        # Why: app.py의 _repo와 동일 인스턴스를 session_state에서 공유
+        repo = st.session_state.get("_company_repo")
+        if repo is None:
+            return
+
+        company_kw = repo.load_company_keywords(ctx.company_id)
+        new_kw = learn_from_mapping(user_overrides, company_kw, get_keywords())
+
+        if new_kw is not None:
+            repo.save_company_keywords(ctx.company_id, new_kw)
+            # has_custom_keywords 플래그 갱신
+            profile = repo.get_company(ctx.company_id)
+            if not profile.has_custom_keywords:
+                profile.has_custom_keywords = True
+                repo.update_company(profile)
+            st.toast(f"키워드 학습 완료: {len(user_overrides)}개 매핑 반영")
+    except Exception:
+        logger.warning("키워드 학습 실패", exc_info=True)
 
 
 def _clear_and_reset() -> None:
