@@ -1,4 +1,4 @@
-"""Detection 모듈 — 3레이어 22개 룰 이상탐지.
+"""Detection 모듈 — 4레이어(A/B/C/D + Benford) 29개 룰 이상탐지.
 
 Public API: BaseDetector(ABC), DetectionResult, RuleFlag, validate_input,
             Layer, RiskLevel, RULE_CODES, SEVERITY_MAP, LAYER_WEIGHTS, RISK_THRESHOLDS,
@@ -24,6 +24,7 @@ from src.detection.benford_detector import BenfordDetector
 from src.detection.fraud_layer import FraudLayer
 from src.detection.integrity_layer import IntegrityDetector
 from src.detection.score_aggregator import aggregate_scores, classify_risk_level
+from src.detection.variance_layer import VarianceDetector
 
 __all__ = [
     "AnomalyDetector",
@@ -42,4 +43,5 @@ __all__ = [
     "RuleFlag",
     "SEVERITY_MAP",
     "validate_input",
+    "VarianceDetector",
 ]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -10,6 +11,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from src.context import CompanyContext, ContextFactory
 from src.detection.base import DetectionResult
 
 logger = logging.getLogger(__name__)
@@ -35,15 +37,39 @@ class AuditPipeline:
     """감사 파이프라인 오케스트레이터."""
 
     def __init__(
-        self, settings=None, *, skip_db: bool = False, conn=None,
+        self,
+        context: CompanyContext | None = None,
+        settings=None,
+        *,
+        skip_db: bool = False,
+        conn=None,
         progress_callback=None,
+        repo=None,
     ) -> None:
-        from config.settings import get_settings
-        self._settings = settings or get_settings()
+        # Why: context 우선 → settings 폴백 → anonymous 폴백 (하위 호환)
+        if context is not None:
+            self._ctx = context
+        elif settings is not None:
+            self._ctx = ContextFactory.from_settings(settings)
+        else:
+            self._ctx = ContextFactory.create_anonymous()
+        self._settings = self._ctx.settings
         self._skip_db = skip_db
         self._conn = conn
         # Why: 대시보드에서 st.progress 연동용. (pct: float, msg: str) → None
         self._progress = progress_callback or (lambda pct, msg: None)
+        # Why: Layer D(전기 대비 변동 탐지)에서 전기 engagement 탐색용.
+        #      None이면 Layer D 자동 스킵 (하위 호환).
+        self._repo = repo
+
+    def _make_batch_id(self) -> str:
+        """engagement 접두사 포함 batch_id 생성."""
+        eid = self._ctx.engagement_id
+        if self._ctx.is_anonymous:
+            return uuid.uuid4().hex[:8]
+        # Why: engagement_id에 "-", "/" 등 특수문자 → 파일 경로/SQL 에러 방지
+        safe_eid = re.sub(r"[^a-zA-Z0-9]", "_", eid)
+        return f"{safe_eid}_{uuid.uuid4().hex[:8]}"
 
     def run(self, path: str | Path) -> PipelineResult:
         """파일 경로 → 전체 파이프라인 실행."""
@@ -51,14 +77,14 @@ class AuditPipeline:
         warns: list[str] = []
         df, w = self._ingest(path)
         warns.extend(w)
-        return self._execute(df, uuid.uuid4().hex[:12], start, warns)
+        return self._execute(df, self._make_batch_id(), start, warns)
 
     def run_from_dataframe(self, df: pd.DataFrame) -> PipelineResult:
         """DataFrame 직접 입력 (ingest 생략).
 
         Why: 외부 df 원본 보호를 위해 copy() 후 파이프라인 진입.
         """
-        return self._execute(df.copy(), uuid.uuid4().hex[:12], time.monotonic(), [])
+        return self._execute(df.copy(), self._make_batch_id(), time.monotonic(), [])
 
     def redetect(
         self,
@@ -76,6 +102,13 @@ class AuditPipeline:
         df = df.copy()
         results, warns = self._run_detection(df)
 
+        # Why: weights 미지정 시 Layer D 유무에 따라 가중치 자동 선택
+        if weights is None:
+            has_variance = any(r.track_name == "layer_d" for r in results)
+            if has_variance:
+                from src.detection.constants import LAYER_WEIGHTS_WITH_PRIOR
+                weights = LAYER_WEIGHTS_WITH_PRIOR
+
         from src.detection.score_aggregator import aggregate_scores
         agg_df = aggregate_scores(
             df, results, weights=weights, thresholds=thresholds, settings=self._settings,
@@ -85,7 +118,7 @@ class AuditPipeline:
 
         risk_summary = df["risk_level"].value_counts().to_dict() if "risk_level" in df.columns else {}
         elapsed = time.monotonic() - start
-        bid = batch_id or uuid.uuid4().hex[:12]
+        bid = batch_id or self._make_batch_id()
         logger.info("재탐지 완료: %.2fs, batch=%s", elapsed, bid)
         return PipelineResult(
             data=df, results=results, risk_summary=risk_summary,
@@ -113,8 +146,12 @@ class AuditPipeline:
 
         self._progress(0.80, "점수 집계 중...")
         # Why: aggregate_scores는 별도 DF 반환. .values로 인덱스 불일치 방어.
+        from src.detection.constants import LAYER_WEIGHTS_WITH_PRIOR
         from src.detection.score_aggregator import aggregate_scores
-        agg_df = aggregate_scores(df, results)
+        # Why: Layer D 결과가 있으면 기존회사 가중치(5레이어) 사용, 없으면 기본(4레이어)
+        has_variance = any(r.track_name == "layer_d" for r in results)
+        weights = LAYER_WEIGHTS_WITH_PRIOR if has_variance else None
+        agg_df = aggregate_scores(df, results, weights=weights)
         for col in agg_df.columns:
             df[col] = agg_df[col].values
 
@@ -188,6 +225,8 @@ class AuditPipeline:
         self._progress(0.12, "컬럼 매핑 중...")
         mapping_result = auto_map_columns(
             source_columns, matched_keywords, data_df=data_df,
+            schema=self._ctx.schema,
+            keywords=self._ctx.keywords,
         )
 
         if mapping_result.missing_required:
@@ -198,7 +237,12 @@ class AuditPipeline:
         df = data_df.rename(columns=all_mapping)
 
         self._progress(0.15, "타입 캐스팅 중...")
-        cast_result = cast_dataframe(df)
+        cast_result = cast_dataframe(
+            df,
+            schema=self._ctx.schema,
+            settings=self._ctx.settings,
+            cleaning_config=self._ctx.cleaning_config,
+        )
         df = cast_result.data
         warns.extend(cast_result.warnings)
         if cast_result.errors:
@@ -209,9 +253,31 @@ class AuditPipeline:
     def _validate(self, df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
         from src.validation import validate_accounting, validate_schema
         warns: list[str] = []
-        sr = validate_schema(df)
+        sr = validate_schema(df, schema=self._ctx.schema, settings=self._ctx.settings)
         if not sr.is_valid:
-            raise ValueError(f"L1 구조 검증 실패: {[e.get('check', str(e)) for e in sr.errors]}")
+            # Why: 열 수 불일치 등으로 필수 컬럼에 NaN이 생긴 행을 드롭하고
+            #      경고로 표시. 정상 행은 파이프라인을 계속 진행한다.
+            not_null_errors = [e for e in sr.errors if e.get("check") == "not_nullable"]
+            other_errors = [e for e in sr.errors if e.get("check") != "not_nullable"]
+
+            if not_null_errors and not other_errors:
+                # NaN 행만 드롭하여 복구 시도
+                required_cols = [col for col in df.columns
+                                 if col in {"document_id", "posting_date", "debit_amount",
+                                            "credit_amount", "gl_account", "document_type",
+                                            "fiscal_year", "fiscal_period", "document_date",
+                                            "company_code"}]
+                before = len(df)
+                df = df.dropna(subset=required_cols, how="any").reset_index(drop=True)
+                dropped = before - len(df)
+                if dropped > 0:
+                    warns.append(f"필수 컬럼 결측 {dropped}행 제거 (원본 {before}행 → {len(df)}행)")
+                if len(df) == 0:
+                    raise ValueError("L1 구조 검증 실패: 모든 행이 필수 컬럼 결측")
+            else:
+                raise ValueError(
+                    f"L1 구조 검증 실패: {[e.get('check', str(e)) for e in sr.errors]}",
+                )
         if sr.warnings:
             warns.extend(w.get("issue", str(w)) for w in sr.warnings)
         acct = validate_accounting(df)
@@ -222,9 +288,13 @@ class AuditPipeline:
         return df, warns
 
     def _generate_features(self, df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
-        from config.settings import get_audit_rules
         from src.feature.engine import generate_all_features
-        feat = generate_all_features(df, settings=self._settings, rules=get_audit_rules())
+        feat = generate_all_features(
+            df,
+            settings=self._ctx.settings,
+            rules=self._ctx.audit_rules,
+            risk_keywords=self._ctx.risk_keywords,
+        )
         warns = [f"피처 미생성: {feat.missing_columns}"] if feat.missing_columns else []
         return feat.data, warns
 
@@ -235,29 +305,102 @@ class AuditPipeline:
         from src.detection.integrity_layer import IntegrityDetector
         warns: list[str] = []
         results: list[DetectionResult] = []
-        for det in [IntegrityDetector(self._settings), FraudLayer(self._settings),
-                     AnomalyDetector(self._settings), BenfordDetector(self._settings)]:
+        for det in [
+            IntegrityDetector(self._ctx.settings, chart_of_accounts=self._ctx.chart_of_accounts, schema=self._ctx.schema),
+            FraudLayer(self._ctx.settings, audit_rules=self._ctx.audit_rules),
+            AnomalyDetector(self._ctx.settings),
+            BenfordDetector(self._ctx.settings),
+        ]:
             try:
                 results.append(det.detect(df))
             except Exception:
                 logger.warning("탐지 실패: %s", det.track_name, exc_info=True)
                 warns.append(f"탐지 실패: {det.track_name}")
+
+        # Why: Layer D는 기존회사 전용 — 조건 불충족 시 None 반환으로 graceful 스킵
+        variance_result = self._try_variance_detection(df)
+        if variance_result is not None:
+            results.append(variance_result)
+
         return results, warns
+
+    def _try_variance_detection(self, df: pd.DataFrame) -> DetectionResult | None:
+        """Layer D(전기 대비 변동) 실행 시도. 조건 불충족 시 None."""
+        if self._ctx.is_anonymous:
+            return None
+        if self._ctx.fiscal_year is None:
+            return None
+        if self._repo is None:
+            logger.debug("repo 미주입 — Layer D 스킵")
+            return None
+
+        try:
+            from src.detection.prior_data_loader import find_prior_engagement, load_prior_summary
+            from src.detection.variance_layer import VarianceDetector
+
+            prior = find_prior_engagement(
+                self._repo, self._ctx.company_id, self._ctx.fiscal_year,
+            )
+            if prior is None:
+                logger.info("전기 engagement 없음 — Layer D 스킵")
+                return None
+
+            prior_db_path = self._repo.db_path(self._ctx.company_id, prior.engagement_id)
+
+            # Why: _run_detection은 _load_db 이전에 호출되므로 self._conn이 None일 수 있음.
+            #      ConnectionManager 캐시를 통해 당기 DB 커넥션을 확보하여 ATTACH 기반으로 사용.
+            conn = self._conn
+            if conn is None:
+                from src.db.connection import get_connection
+                conn = get_connection(path=str(self._ctx.db_path))
+
+            prior_summary = load_prior_summary(conn, prior_db_path, prior.fiscal_year)
+            if prior_summary is None:
+                return None
+
+            det = VarianceDetector(self._ctx.settings, prior_summary=prior_summary)
+            return det.detect(df)
+
+        except Exception:
+            logger.warning("Layer D 실행 실패 — 스킵", exc_info=True)
+            return None
 
     def _load_db(self, df, batch_id, results) -> tuple[object | None, list[str]]:
         conn, own_conn = self._conn, self._conn is None
         try:
             if own_conn:
                 from src.db.connection import get_connection
-                conn = get_connection()
+                # Why: 회사 프로파일 없는 폴백(anonymous/legacy) → :memory: 사용
+                #      동일 파일에 동시 쓰기 시 DuckDB File Lock 방지
+                if self._ctx.is_anonymous:
+                    conn = get_connection(path=":memory:")
+                else:
+                    conn = get_connection(path=str(self._ctx.db_path))
             from src.db.loader import load_all
-            return load_all(conn, df, batch_id, results), []
+            lr = load_all(conn, df, batch_id, results)
+
+            # Why: engagement_meta에 현재 engagement 기록 (named만)
+            if not self._ctx.is_anonymous:
+                self._upsert_engagement_meta(conn)
+
+            return lr, []
         except Exception:
             logger.warning("DB 적재 실패", exc_info=True)
             return None, ["DB 적재 실패"]
         finally:
-            # Why: 자체 생성 커넥션만 close. 주입된 커넥션(own_conn=False)은 호출자 관리.
-            # close_connection()은 전역 싱글톤 리셋 → 다음 get_connection()이 재생성.
-            if own_conn and conn is not None:
-                from src.db.connection import close_connection
-                close_connection()
+            # Why: anonymous :memory: 커넥션만 직접 close.
+            #      named DB 커넥션은 ConnectionManager 캐시가 관리.
+            if own_conn and conn is not None and self._ctx.is_anonymous:
+                conn.close()
+
+    def _upsert_engagement_meta(self, conn) -> None:
+        """engagement_meta 테이블에 현재 engagement 기록 (중복 방지)."""
+        # Why: UNIQUE(company_id, engagement_id) 제약으로 DB 레벨 중복 방어
+        conn.execute(
+            """
+            INSERT INTO engagement_meta (company_id, engagement_id, schema_version)
+            VALUES (?, ?, 1)
+            ON CONFLICT DO NOTHING
+            """,
+            [self._ctx.company_id, self._ctx.engagement_id],
+        )

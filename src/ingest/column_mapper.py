@@ -1,17 +1,21 @@
-"""컬럼 자동 매핑 모듈 — Exact + Fuzzy 2단계 전략.
+"""컬럼 자동 매핑 모듈 — Exact + Fuzzy + Pattern 3단계 전략.
 
 ERP마다 "전표번호/belnr/Doc No" 등 표현이 다르므로,
 별칭 사전(keywords.yaml) + rapidfuzz로 원본 컬럼명을 표준 스키마에 매핑한다.
+헤더 없는 파일(숫자 인덱스 컬럼)은 데이터 패턴 기반 휴리스틱으로 추론한다.
 
 알고리즘:
   1. fast path: 필수 9컬럼 정확 일치 → 동일 매핑 즉시 반환
   2. Phase 1 (Exact): keywords 별칭 + header_detector matched_keywords로 정확 일치
   3. Phase 2 (Fuzzy): 미매칭 컬럼만 rapidfuzz.process.extractOne
-  4. greedy assign: 스코어 내림차순 1:1 할당 (충돌 해결)
-  5. 3-tier 분류: mapping(>=80) / suggestions(40~80) / unmapped(<40)
+  4. Phase 3 (Pattern): 미매칭 + 숫자 컬럼명 → 데이터 값 패턴으로 표준 컬럼 추론
+  5. greedy assign: 스코어 내림차순 1:1 할당 (충돌 해결)
+  6. 3-tier 분류: mapping(>=80) / suggestions(40~80) / unmapped(<40)
 """
 
 from __future__ import annotations
+
+import re
 
 import pandas as pd
 from rapidfuzz import process as fuzz_process
@@ -149,6 +153,194 @@ def _fuzzy_match(
                         continue
 
             result[col] = (standard_name, score)
+
+    return result
+
+
+# ── Phase 3: 데이터 패턴 기반 휴리스틱 ────────────────────
+
+# Why: 헤더 없는 파일은 컬럼명이 "0","1","2"라 fuzzy match 불가능.
+#      샘플 데이터의 값 패턴(날짜, 금액, 코드 등)으로 표준 컬럼을 추론한다.
+
+_DATE_RE = re.compile(r"^\d{4}[-/]\d{1,2}[-/]\d{1,2}$")
+_YEAR_RE = re.compile(r"^(19|20)\d{2}$")
+_DOC_ID_RE = re.compile(r"^[A-Z]{1,3}\d{4}[-]?\d+$")
+_ACCOUNT_RE = re.compile(r"^\d{4,6}$")
+_COMPANY_RE = re.compile(r"^[A-Z]\d{3,4}$")
+# Why: document_type은 SAP 전표유형 코드 2~3자리 영문 대문자
+_DOC_TYPE_RE = re.compile(r"^[A-Z]{2,3}$")
+
+
+def _data_pattern_suggest(
+    unmatched: list[str],
+    data_df: pd.DataFrame,
+    already_assigned: set[str],
+) -> dict[str, tuple[str, float]]:
+    """데이터 값 패턴으로 표준 컬럼을 추론한다.
+
+    각 미매핑 컬럼의 상위 100행 샘플을 분석하여
+    가장 적합한 표준 컬럼을 confidence와 함께 반환한다.
+
+    Returns: {원본컬럼명: (표준컬럼명, 스코어 0~100)}
+    """
+    result: dict[str, tuple[str, float]] = {}
+    assigned = set(already_assigned)
+
+    # 각 컬럼의 패턴 분석 결과를 수집
+    column_profiles: list[tuple[str, str, float]] = []
+
+    for col in unmatched:
+        if col not in data_df.columns:
+            # 숫자 인덱스 컬럼 — 위치로 접근
+            try:
+                idx = int(col)
+                if idx < data_df.shape[1]:
+                    series = data_df.iloc[:, idx]
+                else:
+                    continue
+            except (ValueError, IndexError):
+                continue
+        else:
+            series = data_df[col]
+
+        suggestion = _classify_series(series)
+        if suggestion:
+            std_col, score = suggestion
+            column_profiles.append((col, std_col, score))
+
+    # 스코어 내림차순 정렬 후 1:1 할당 (중복 방지)
+    column_profiles.sort(key=lambda x: x[2], reverse=True)
+    for col, std_col, score in column_profiles:
+        if std_col not in assigned:
+            result[col] = (std_col, score)
+            assigned.add(std_col)
+
+    return result
+
+
+def _classify_series(series: pd.Series) -> tuple[str, float] | None:
+    """단일 컬럼의 샘플 값을 분석하여 (표준컬럼명, 스코어)를 반환."""
+    sample = series.dropna().head(100)
+    if len(sample) == 0:
+        return None
+
+    str_vals = sample.astype(str).str.strip()
+    unique_vals = str_vals.unique()
+    n = len(str_vals)
+
+    # 1) 날짜 패턴 — YYYY-MM-DD / YYYY/MM/DD
+    date_rate = sum(1 for v in str_vals if _DATE_RE.match(v)) / n
+    if date_rate > 0.7:
+        return ("posting_date", 75)  # 두 번째 날짜 컬럼은 greedy에서 document_date로
+
+    # 2) 전표번호 패턴 — JE2025-0001, SA20250105 등
+    docid_rate = sum(1 for v in str_vals if _DOC_ID_RE.match(v)) / n
+    if docid_rate > 0.7:
+        return ("document_id", 85)
+
+    # 3) 4자리 연도
+    year_rate = sum(1 for v in str_vals if _YEAR_RE.match(v)) / n
+    if year_rate > 0.7:
+        return ("fiscal_year", 80)
+
+    # 4) 회사코드 — C001, A1234 등
+    company_rate = sum(1 for v in str_vals if _COMPANY_RE.match(v)) / n
+    if company_rate > 0.7:
+        return ("company_code", 80)
+
+    # 5) 전표유형 — SA, KR, KZ, DR 등 2~3자리 영문 대문자
+    doctype_rate = sum(1 for v in str_vals if _DOC_TYPE_RE.match(v)) / n
+    if doctype_rate > 0.7:
+        return ("document_type", 75)
+
+    # 6) 숫자 분석 — 금액, 계정코드, 기간 등
+    numeric = pd.to_numeric(sample, errors="coerce")
+    numeric_rate = numeric.notna().sum() / n
+    if numeric_rate > 0.7:
+        non_null = numeric.dropna()
+        abs_vals = non_null.abs()
+        median_val = abs_vals.median()
+        max_val = abs_vals.max()
+        n_unique = non_null.nunique()
+
+        # 6a) 소수 정수 (1~12) — fiscal_period
+        if max_val <= 12 and n_unique <= 12 and (non_null % 1 == 0).all():
+            return ("fiscal_period", 70)
+
+        # 6b) 계정코드 — 4~6자리 정수, unique 다수
+        acct_rate = sum(1 for v in str_vals if _ACCOUNT_RE.match(v)) / n
+        if acct_rate > 0.7 and n_unique >= 3:
+            return ("gl_account", 80)
+
+        # 6c) 금액 — 큰 수 + 0 혼재
+        # Why: 차변/대변은 한쪽이 0인 패턴이 많음
+        has_zeros = (non_null == 0).any()
+        if median_val >= 10000 or (has_zeros and max_val >= 10000):
+            return ("debit_amount", 70)  # 두 번째 금액 컬럼은 greedy에서 credit_amount로
+
+    # 7) 한글 텍스트 — 적요(line_text)
+    korean_rate = sum(1 for v in str_vals if re.search(r"[가-힣]", v)) / n
+    if korean_rate > 0.5:
+        return ("line_text", 75)
+
+    return None
+
+
+def _data_pattern_suggest_second_pass(
+    result: dict[str, tuple[str, float]],
+    unmatched: list[str],
+    data_df: pd.DataFrame,
+    already_assigned: set[str],
+) -> dict[str, tuple[str, float]]:
+    """1차 패턴 매칭에서 중복된 타입의 두 번째 컬럼을 처리.
+
+    Why: posting_date/document_date, debit/credit처럼
+    동일 패턴이 2개 컬럼에 나타나는 경우를 해결한다.
+    1차에서 posting_date로 잡힌 것 다음에 오는 날짜 컬럼은 document_date로,
+    debit_amount 다음의 금액 컬럼은 credit_amount로 할당한다.
+    """
+    assigned = already_assigned | {std for std, _ in result.values()}
+    remaining = [c for c in unmatched if c not in result]
+
+    for col in remaining:
+        try:
+            idx = int(col)
+            if idx < data_df.shape[1]:
+                series = data_df.iloc[:, idx]
+            else:
+                continue
+        except (ValueError, IndexError):
+            if col in data_df.columns:
+                series = data_df[col]
+            else:
+                continue
+
+        sample = series.dropna().head(100)
+        if len(sample) == 0:
+            continue
+
+        str_vals = sample.astype(str).str.strip()
+        n = len(str_vals)
+
+        # 날짜 → document_date (posting_date가 이미 할당된 경우)
+        date_rate = sum(1 for v in str_vals if _DATE_RE.match(v)) / n
+        if date_rate > 0.7 and "posting_date" in assigned and "document_date" not in assigned:
+            result[col] = ("document_date", 75)
+            assigned.add("document_date")
+            continue
+
+        # 금액 → credit_amount (debit_amount가 이미 할당된 경우)
+        numeric = pd.to_numeric(sample, errors="coerce")
+        numeric_rate = numeric.notna().sum() / n
+        if numeric_rate > 0.7:
+            non_null = numeric.dropna()
+            abs_vals = non_null.abs()
+            max_val = abs_vals.max()
+            has_zeros = (non_null == 0).any()
+            if (abs_vals.median() >= 10000 or (has_zeros and max_val >= 10000)):
+                if "debit_amount" in assigned and "credit_amount" not in assigned:
+                    result[col] = ("credit_amount", 70)
+                    assigned.add("credit_amount")
 
     return result
 
@@ -448,6 +640,31 @@ def auto_map_columns(
         all_candidates[src] = (std, 100.0)  # exact → score 100
     for src, (std, score) in fuzzy_results.items():
         all_candidates[src] = (std, score)
+
+    # Phase 3: 데이터 패턴 기반 추론 (헤더 없는 파일용)
+    # Why: 컬럼명이 "0","1","2" 같은 숫자 인덱스면 fuzzy match 불가.
+    #      데이터 값 패턴(날짜, 금액, 코드)으로 표준 컬럼을 추론한다.
+    #      score=0인 fuzzy 결과는 무의미하므로 "매칭됨"으로 취급하지 않는다.
+    if data_df is not None:
+        meaningful_sources = {
+            src for src, (_, score) in all_candidates.items() if score > 0
+        }
+        still_unmatched = [c for c in source_columns if c not in meaningful_sources]
+        if still_unmatched:
+            # Why: score=0인 fuzzy 결과의 표준 컬럼은 실질적 할당이 아님
+            assigned_standards = {
+                std for std, score in all_candidates.values() if score > 0
+            }
+            pattern_results = _data_pattern_suggest(
+                still_unmatched, data_df, assigned_standards,
+            )
+            # 2차 패스: 동일 패턴 중복(날짜↔날짜, 금액↔금액) 해결
+            pattern_results = _data_pattern_suggest_second_pass(
+                pattern_results, still_unmatched, data_df,
+                assigned_standards,
+            )
+            for src, (std, score) in pattern_results.items():
+                all_candidates[src] = (std, score)
 
     # greedy 1:1 할당 + 3-tier 분류
     mapping, suggestions, confidence, unmapped_list = _greedy_assign(

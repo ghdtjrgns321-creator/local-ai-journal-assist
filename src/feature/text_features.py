@@ -163,6 +163,7 @@ def add_semantic_anomaly(df: pd.DataFrame) -> pd.DataFrame:
 def add_all_text_features(
     df: pd.DataFrame,
     settings: AuditSettings | None = None,
+    risk_kw: dict | None = None,
 ) -> pd.DataFrame:
     """텍스트 파생변수 2개를 한번에 추가. engine.py 진입점.
 
@@ -171,6 +172,6 @@ def add_all_text_features(
     s = settings or get_settings()
 
     add_description_quality(df, min_length=s.min_description_length)
-    add_has_risk_keyword(df)
+    add_has_risk_keyword(df, risk_kw=risk_kw)
 
     return df

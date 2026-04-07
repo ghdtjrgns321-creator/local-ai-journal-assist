@@ -33,10 +33,12 @@ class IntegrityDetector(BaseDetector):
         settings: AuditSettings | None = None,
         tolerance: float | None = None,
         chart_of_accounts: set[str] | None = None,
+        schema: dict | None = None,
     ) -> None:
         super().__init__(settings)
         self._tolerance = tolerance if tolerance is not None else self._settings.balance_tolerance
         self._coa = chart_of_accounts or self._load_coa()
+        self._schema = schema or get_schema()
 
     def _load_coa(self) -> set[str] | None:
         """settings.chart_of_accounts_path에서 CoA 로드. 없으면 None."""
@@ -51,7 +53,6 @@ class IntegrityDetector(BaseDetector):
         # Why: 1열 텍스트 파일 또는 CSV (gl_account 컬럼) 지원
         try:
             if p.suffix == ".csv":
-                import pandas as pd
                 coa_df = pd.read_csv(p, dtype=str)
                 col = "gl_account" if "gl_account" in coa_df.columns else coa_df.columns[0]
                 return set(coa_df[col].dropna().astype(str))
@@ -164,9 +165,8 @@ class IntegrityDetector(BaseDetector):
              정상 흐름에서 A02 플래그 = 0이 기대값.
         """
         try:
-            schema = get_schema()
             required_cols = [
-                col["name"] for col in schema.get("columns", []) if col.get("required")
+                col["name"] for col in self._schema.get("columns", []) if col.get("required")
             ]
         except Exception as e:
             self._logger.warning("schema.yaml 로드 실패: %s — 기본 필수 컬럼 사용", e)

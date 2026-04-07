@@ -28,6 +28,7 @@ class Layer(StrEnum):
     LAYER_B = "layer_b"
     LAYER_C = "layer_c"
     BENFORD = "benford"  # C07과 별도, 전체 분포 판정 (가중치 0.15 독립)
+    LAYER_D = "layer_d"  # 전기 대비 변동 탐지 (기존회사 전용)
 
 
 # ── 27개 룰 메타데이터 ────────────────────────────────────────
@@ -66,6 +67,9 @@ RULE_CODES: dict[str, str] = {
     "C10": "가수금 장기체류",
     "C11": "역분개 패턴",
     "C12": "비정상시간 집중입력",
+    # Layer D: 전기 대비 변동
+    "D01": "계정과목 집계 급변",
+    "D02": "월별 분포 패턴 변화",
 }
 
 SEVERITY_MAP: dict[str, int] = {
@@ -74,6 +78,7 @@ SEVERITY_MAP: dict[str, int] = {
     "B06": 3, "B07": 4, "B08": 4, "B09": 4, "B10": 4, "B11": 4, "B19": 5,
     "C01": 3, "C02": 2, "C03": 2, "C04": 3, "C05": 4,
     "C06": 1, "C07": 2, "C08": 3, "C09": 2, "C10": 3, "C11": 4, "C12": 3,
+    "D01": 4, "D02": 3,
 }
 
 
@@ -84,6 +89,16 @@ LAYER_WEIGHTS: dict[Layer, float] = {
     Layer.LAYER_B: 0.45,
     Layer.LAYER_C: 0.25,
     Layer.BENFORD: 0.15,
+}
+
+# Why: 기존회사 트랙에서 Layer D 추가 시 가중치 재배분.
+#      Layer B(부정) 비중이 가장 높되, Layer D에 0.18 할당.
+LAYER_WEIGHTS_WITH_PRIOR: dict[Layer, float] = {
+    Layer.LAYER_A: 0.12,
+    Layer.LAYER_B: 0.38,
+    Layer.LAYER_C: 0.20,
+    Layer.BENFORD: 0.12,
+    Layer.LAYER_D: 0.18,
 }
 
 # Why: 0.7 이상 High, 0.4 이상 Medium, 0.2 이상 Low, 나머지 Normal.

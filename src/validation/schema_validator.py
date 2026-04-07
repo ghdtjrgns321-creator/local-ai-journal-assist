@@ -7,7 +7,6 @@ Why: type_caster가 보장한 dtype을 재확인하고, 값 범위(ge=0 등)와
 
 from __future__ import annotations
 
-import functools
 import logging
 from typing import Optional
 
@@ -15,7 +14,7 @@ import pandas as pd
 import pandera as pa
 from pandera.typing import Series
 
-from config.settings import get_schema, get_settings
+from config.settings import AuditSettings, get_schema, get_settings
 from src.validation.models import SchemaResult
 
 logger = logging.getLogger(__name__)
@@ -23,15 +22,14 @@ logger = logging.getLogger(__name__)
 # ── schema.yaml에서 필수/전체 컬럼 목록 추출 ──────────────────
 
 
-@functools.lru_cache(maxsize=1)
-def _load_column_sets() -> tuple[frozenset[str], frozenset[str]]:
-    """schema.yaml 기반 필수 컬럼·전체 컬럼 집합 반환 (캐싱).
+def _load_column_sets(schema: dict | None = None) -> tuple[frozenset[str], frozenset[str]]:
+    """schema.yaml 기반 필수 컬럼·전체 컬럼 집합 반환.
 
-    Why: validate_schema() 호출마다 set 재생성 방지.
-    get_schema()도 lru_cache이므로 YAML 재로드는 없지만,
-    set comprehension 비용을 아끼기 위해 frozenset으로 캐싱.
+    Why: @lru_cache 제거 — dict 파라미터 해시 불가.
+         get_schema() 자체가 lru_cache이므로 YAML 재로드 없음.
+         validate_schema()에서 1회 호출.
     """
-    schema = get_schema()
+    schema = schema or get_schema()
     columns = schema.get("columns", [])
     required = frozenset(c["name"] for c in columns if c.get("required", False))
     all_cols = frozenset(c["name"] for c in columns)
@@ -170,20 +168,24 @@ def _classify_failures(
 
 # ── 공개 API ──────────────────────────────────────────────────
 
-# Why: 오매핑 의심 임계값 — type_caster와 단일 소스로 관리
-_HIGH_NULL_THRESHOLD = get_settings().casting_null_demote_threshold
-
-
-def validate_schema(df: pd.DataFrame) -> SchemaResult:
+def validate_schema(
+    df: pd.DataFrame,
+    schema: dict | None = None,
+    settings: AuditSettings | None = None,
+) -> SchemaResult:
     """L1 구조 검증 — Pandera lazy=True로 모든 에러 수집.
 
     Args:
         df: type_caster 완료 + feature 추가된 DataFrame
+        schema: 스키마 dict (None이면 글로벌 폴백)
+        settings: 감사 설정 (None이면 글로벌 폴백)
 
     Returns:
         SchemaResult: is_valid=False이면 파이프라인 중단
     """
-    required_columns, all_schema_columns = _load_column_sets()
+    settings = settings or get_settings()
+    high_null_threshold = settings.casting_null_demote_threshold
+    required_columns, all_schema_columns = _load_column_sets(schema)
     errors: list[dict] = []
     warnings: list[dict] = []
 
@@ -205,7 +207,7 @@ def validate_schema(df: pd.DataFrame) -> SchemaResult:
     optional_columns = all_schema_columns - required_columns
     for col in sorted(optional_columns & set(df.columns)):
         null_rate = column_stats.get(col, {}).get("null_rate", 0.0)
-        if null_rate >= _HIGH_NULL_THRESHOLD:
+        if null_rate >= high_null_threshold:
             warnings.append({
                 "column": col,
                 "issue": "high_null_rate",

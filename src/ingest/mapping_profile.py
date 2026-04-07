@@ -3,8 +3,8 @@
 동일 ERP 파일 재업로드 시 이전 매핑을 자동 적용하여 UX를 향상한다.
 매칭 전략: 원본 컬럼명 집합의 SHA-256 해시(fingerprint)로 프로파일 식별.
 
-2계층 저장 구조:
-  data/profiles/
+2계층 저장 구조 (회사별 격리 지원):
+  {profile_dir}/                       ← 회사별 또는 글로벌
   ├── {fingerprint}.json              ← 확정 매핑 프로파일
   └── logs/
       └── {fingerprint}_{ts}.json     ← 메타데이터 로그 (suggestions, unmapped)
@@ -42,20 +42,31 @@ def column_fingerprint(columns: list[str]) -> str:
 # ── 내부 경로 헬퍼 ──────────────────────────────────────
 
 
-def _profile_dir() -> Path:
-    """프로파일 저장 디렉토리 경로 반환."""
+def _global_profile_dir() -> Path:
+    """글로벌 프로파일 저장 디렉토리 경로 반환."""
     settings = get_settings()
     return PROJECT_ROOT / settings.profile_dir
 
 
-def _log_dir() -> Path:
-    """메타데이터 로그 저장 디렉토리 경로 반환."""
-    return _profile_dir() / "logs"
+def _resolve_dir(profile_dir: Path | None) -> Path:
+    """외부 주입 profile_dir 우선, 없으면 글로벌 폴백.
+
+    Why: RC-5-1 회사별 격리 — CompanyContext.profile_dir을 전달받으면
+    회사 전용 디렉토리를 사용하고, None이면 기존 글로벌 경로로 폴백.
+    """
+    if profile_dir is not None:
+        return Path(profile_dir)
+    return _global_profile_dir()
 
 
-def _profile_path(fingerprint: str) -> Path:
+def _resolve_log_dir(profile_dir: Path | None) -> Path:
+    """프로파일 디렉토리 하위 logs/ 경로."""
+    return _resolve_dir(profile_dir) / "logs"
+
+
+def _resolve_profile_path(fingerprint: str, profile_dir: Path | None) -> Path:
     """fingerprint → 프로파일 JSON 경로."""
-    return _profile_dir() / f"{fingerprint}.json"
+    return _resolve_dir(profile_dir) / f"{fingerprint}.json"
 
 
 # ── save ─────────────────────────────────────────────────
@@ -68,6 +79,7 @@ def save_profile(
     source_name: str = "",
     source_format: str = "",
     header_row: int = 0,
+    profile_dir: Path | None = None,
 ) -> Path:
     """확정 매핑 → JSON 프로파일 저장 + 메타데이터 로그 생성.
 
@@ -77,6 +89,7 @@ def save_profile(
         source_name: 원본 파일명 (예: "gl_export.xlsx")
         source_format: 원본 포맷 (예: "xlsx")
         header_row: 헤더 행 인덱스
+        profile_dir: 회사별 프로파일 디렉토리 (None이면 글로벌 폴백)
 
     Returns:
         저장된 프로파일 JSON 경로
@@ -99,7 +112,7 @@ def save_profile(
     }
 
     # 기존 프로파일이 있으면 created_at 유지, updated_at만 갱신
-    dest = _profile_path(fp)
+    dest = _resolve_profile_path(fp, profile_dir)
     if dest.exists():
         try:
             existing = json.loads(dest.read_text(encoding="utf-8"))
@@ -118,7 +131,7 @@ def save_profile(
 
     # 메타데이터 로그 — suggestions/unmapped 등 별도 저장
     if result.suggestions or result.unmapped or result.missing_required:
-        _save_mapping_log(result, fp)
+        _save_mapping_log(result, fp, profile_dir=profile_dir)
 
     return dest
 
@@ -126,6 +139,8 @@ def save_profile(
 def _save_mapping_log(
     result: MappingResult,
     fingerprint: str,
+    *,
+    profile_dir: Path | None = None,
 ) -> Path:
     """suggestions/unmapped → 메타데이터 로그 저장.
 
@@ -150,7 +165,7 @@ def _save_mapping_log(
         "suggestion_confidence": suggestion_confidence,
     }
 
-    log_dir = _log_dir()
+    log_dir = _resolve_log_dir(profile_dir)
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / f"{fingerprint}_{ts}.json"
     log_path.write_text(
@@ -165,17 +180,25 @@ def _save_mapping_log(
 # ── load ─────────────────────────────────────────────────
 
 
-def load_profile(source_columns: list[str]) -> MappingResult | None:
+def load_profile(
+    source_columns: list[str],
+    *,
+    profile_dir: Path | None = None,
+) -> MappingResult | None:
     """fingerprint로 프로파일 검색 → MappingResult 복원.
 
     Why: 동일 ERP 재업로드 시 이전 확정 매핑을 자동 적용하여
     사용자가 반복 매핑 작업을 하지 않아도 된다.
 
+    Args:
+        source_columns: 원본 컬럼명 리스트
+        profile_dir: 회사별 프로파일 디렉토리 (None이면 글로벌 폴백)
+
     Returns:
         저장된 프로파일이 있으면 MappingResult, 없으면 None
     """
     fp = column_fingerprint(source_columns)
-    dest = _profile_path(fp)
+    dest = _resolve_profile_path(fp, profile_dir)
 
     if not dest.exists():
         return None
@@ -206,18 +229,21 @@ def load_profile(source_columns: list[str]) -> MappingResult | None:
 # ── list / delete ────────────────────────────────────────
 
 
-def list_profiles() -> list[dict]:
+def list_profiles(*, profile_dir: Path | None = None) -> list[dict]:
     """저장된 프로파일 목록 반환.
+
+    Args:
+        profile_dir: 회사별 프로파일 디렉토리 (None이면 글로벌 폴백)
 
     Returns:
         각 프로파일의 핵심 메타데이터 리스트 (최신 updated_at 순)
     """
-    profile_dir = _profile_dir()
-    if not profile_dir.exists():
+    resolved = _resolve_dir(profile_dir)
+    if not resolved.exists():
         return []
 
     profiles: list[dict] = []
-    for path in profile_dir.glob("*.json"):
+    for path in resolved.glob("*.json"):
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             # profile_version 없으면 프로파일이 아닌 파일 → 스킵
@@ -239,13 +265,21 @@ def list_profiles() -> list[dict]:
     return profiles
 
 
-def delete_profile(fingerprint: str) -> bool:
+def delete_profile(
+    fingerprint: str,
+    *,
+    profile_dir: Path | None = None,
+) -> bool:
     """프로파일 + 관련 로그 삭제.
+
+    Args:
+        fingerprint: 삭제할 프로파일의 fingerprint
+        profile_dir: 회사별 프로파일 디렉토리 (None이면 글로벌 폴백)
 
     Returns:
         삭제 성공 여부 (프로파일이 존재하지 않으면 False)
     """
-    dest = _profile_path(fingerprint)
+    dest = _resolve_profile_path(fingerprint, profile_dir)
     if not dest.exists():
         return False
 
@@ -253,7 +287,7 @@ def delete_profile(fingerprint: str) -> bool:
     dest.unlink()
 
     # 관련 로그 삭제
-    log_dir = _log_dir()
+    log_dir = _resolve_log_dir(profile_dir)
     if log_dir.exists():
         for log_path in log_dir.glob(f"{fingerprint}_*.json"):
             log_path.unlink()

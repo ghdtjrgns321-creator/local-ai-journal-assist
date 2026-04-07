@@ -101,6 +101,7 @@ def generate_all_features(
     df: pd.DataFrame,
     settings: AuditSettings | None = None,
     rules: dict | None = None,
+    risk_keywords: dict | None = None,
     categories: list[FeatureCategory] | None = None,
 ) -> FeatureResult:
     """18개 파생변수를 일괄 생성하는 단일 진입점.
@@ -110,6 +111,7 @@ def generate_all_features(
     df : 입력 DataFrame (in-place 수정)
     settings : AuditSettings 주입. None이면 자동 로드.
     rules : audit_rules dict. {"patterns": {...}} 또는 평탄 dict 모두 허용.
+    risk_keywords : 위험 키워드 dict. None이면 자동 로드.
     categories : 실행할 카테고리 목록. None이면 전체 4개.
     """
     s = settings or get_settings()
@@ -132,7 +134,7 @@ def generate_all_features(
     for cat in ordered_targets:
         t0 = time.monotonic()
         cat_warnings: list[str] = []
-        success = _run_category(df, cat, settings=s, rules=rules, warnings_out=cat_warnings)
+        success = _run_category(df, cat, settings=s, rules=rules, risk_keywords=risk_keywords, warnings_out=cat_warnings)
         elapsed = time.monotonic() - t0
         execution_times[cat.value] = round(elapsed, 6)
         if success:
@@ -176,6 +178,7 @@ def _run_category(
     *,
     settings: AuditSettings,
     rules: dict | None,
+    risk_keywords: dict | None = None,
     warnings_out: list[str] | None = None,
 ) -> bool:
     """카테고리별 서브모듈 디스패치. 성공 시 True, 실패 시 False.
@@ -192,7 +195,7 @@ def _run_category(
         elif cat == FeatureCategory.PATTERN:
             add_all_pattern_features(df, rules=rules)
         elif cat == FeatureCategory.TEXT:
-            add_all_text_features(df, settings=settings)
+            add_all_text_features(df, settings=settings, risk_kw=risk_keywords)
     except KeyError as e:
         msg = f"필수 컬럼 누락으로 스킵: {e}"
         logger.warning("카테고리 %s 스킵 — %s", cat.value, msg)
