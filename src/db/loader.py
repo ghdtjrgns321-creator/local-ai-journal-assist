@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import pandas as pd
 
@@ -18,6 +19,7 @@ from src.db.schema import (
     BENFORD_SUMMARY_COLUMNS,
     GENERAL_LEDGER_COLUMNS,
     ML_RESERVED_COLUMNS,
+    TRIAL_BALANCE_COLUMNS,
 )
 
 logger = logging.getLogger(__name__)
@@ -59,7 +61,7 @@ def _derive_approval_level(
 
 @dataclass
 class LoadResult:
-    """4개 테이블 적재 결과 통합."""
+    """코어 + 보조 테이블 적재 결과 통합."""
 
     batch_id: str
     general_ledger_rows: int
@@ -67,6 +69,8 @@ class LoadResult:
     benford_summary_rows: int
     benford_digits_rows: int
     elapsed_seconds: float
+    trial_balance_rows: int = 0
+    supplementary_counts: dict[str, int] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
 
     @property
@@ -74,6 +78,8 @@ class LoadResult:
         return (
             self.general_ledger_rows + self.anomaly_flags_rows
             + self.benford_summary_rows + self.benford_digits_rows
+            + self.trial_balance_rows
+            + sum(self.supplementary_counts.values())
         )
 
     @property
@@ -89,16 +95,23 @@ def load_all(
     df: pd.DataFrame,
     batch_id: str,
     results: list | None = None,
+    *,
+    file_name: str = "",
+    tb_df: pd.DataFrame | None = None,
+    datasynth_dir: Path | None = None,
 ) -> LoadResult:
-    """4개 테이블 원자적 적재 (트랜잭션).
+    """코어 + 보조 테이블 원자적 적재 (트랜잭션).
 
     Why: general_ledger만 적재되고 나머지 실패 시 불일치 방지.
+         upload_batches에 배치 메타를 기록하여 재시작 후 이력 조회 지원.
+         datasynth_dir가 제공되면 보조 데이터(document_flows, master_data 등)도 적재.
     """
     if results is None:
         results = []
 
     start = time.monotonic()
     warnings: list[str] = []
+    sup_counts: dict[str, int] = {}
 
     conn.execute("BEGIN TRANSACTION")
     try:
@@ -106,6 +119,22 @@ def load_all(
         af_rows = load_anomaly_flags(conn, results, df, batch_id)
         bs_rows, bd_rows, bf_warnings = load_benford(conn, results, batch_id)
         warnings.extend(bf_warnings)
+        tb_rows = load_trial_balance(conn, tb_df, batch_id) if tb_df is not None else 0
+
+        # Why: DataSynth 보조 데이터 적재 (document_flows, master_data, labels 등)
+        if datasynth_dir is not None:
+            from src.db.loader_supplementary import load_supplementary
+            sup_counts = load_supplementary(conn, datasynth_dir, batch_id)
+
+        # Why: 배치 메타 기록 — Streamlit 재시작 후 이력 조회/복원용
+        high_count = int(df["risk_level"].eq("High").sum()) if "risk_level" in df.columns else 0
+        conn.execute(
+            "INSERT INTO upload_batches "
+            "(upload_batch_id, file_name, row_count, anomaly_count, high_risk_count, warnings) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            [batch_id, file_name, gl_rows, af_rows, high_count, ";".join(bf_warnings)],
+        )
+
         conn.execute("COMMIT")
     except Exception:
         conn.execute("ROLLBACK")
@@ -119,6 +148,8 @@ def load_all(
         benford_summary_rows=bs_rows,
         benford_digits_rows=bd_rows,
         elapsed_seconds=elapsed,
+        trial_balance_rows=tb_rows,
+        supplementary_counts=sup_counts,
         warnings=warnings,
     )
 
@@ -194,6 +225,24 @@ def load_benford(
     )
 
     return len(summary_df), len(digits_df), warnings
+
+
+def load_trial_balance(conn, tb_df: pd.DataFrame | None, batch_id: str) -> int:
+    """Trial Balance를 trial_balance 테이블에 적재.
+
+    Why: WU-13 TB 교차검증에서 생성된 계정별 집계 결과를 DB에 보존.
+         대시보드 조회 및 YoY 비교용.
+    """
+    if tb_df is None or tb_df.empty:
+        return 0
+    tb_df = tb_df.copy()
+    tb_df["upload_batch_id"] = batch_id
+    tb_load = tb_df.reindex(columns=TRIAL_BALANCE_COLUMNS)
+    col_list = ", ".join(TRIAL_BALANCE_COLUMNS)
+    conn.execute(
+        f"INSERT INTO trial_balance ({col_list}) SELECT * FROM tb_load"
+    )
+    return len(tb_load)
 
 
 # ── 내부 헬퍼 ────────────────────────────────────────────────

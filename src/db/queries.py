@@ -29,7 +29,11 @@ PRESET_QUERIES: dict[str, str] = {
                approval_level, reference,
                is_fraud, fraud_type, is_anomaly, anomaly_type,
                sod_violation, sod_conflict_type,
-               anomaly_score, risk_level, flagged_rules
+               anomaly_score, risk_level, flagged_rules,
+               first_digit,
+               supervised_score, unsupervised_score, duplicate_score,
+               supervised_model_id, unsupervised_model_id, duplicate_model_id,
+               ml_scored_at
         FROM general_ledger
         WHERE upload_batch_id = ?
         ORDER BY anomaly_score DESC
@@ -66,6 +70,19 @@ PRESET_QUERIES: dict[str, str] = {
         WHERE upload_batch_id = ? AND document_id = ?
         ORDER BY score DESC
     """,
+    # ── 배치 이력 (Batch History Loader) ──
+    "list_batches": """
+        SELECT upload_batch_id, file_name, row_count,
+               anomaly_count, high_risk_count, created_at
+        FROM upload_batches
+        ORDER BY created_at DESC
+    """,
+    "batch_meta": """
+        SELECT upload_batch_id, file_name, row_count,
+               anomaly_count, high_risk_count, created_at, warnings
+        FROM upload_batches
+        WHERE upload_batch_id = ?
+    """,
     # ── Whitelist (HITL 예외 처리) ──
     "insert_whitelist": """
         INSERT INTO whitelist (batch_id, document_id, rule_code, reason, created_by)
@@ -79,6 +96,114 @@ PRESET_QUERIES: dict[str, str] = {
     """,
     "delete_whitelist": """
         DELETE FROM whitelist WHERE id = ?
+    """,
+    # ── Audit Log (감사증적) ──
+    "insert_audit_log": """
+        INSERT INTO audit_log
+        (action, actor, company_id, engagement_id, batch_id, target_id, details)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """,
+    "list_audit_log": """
+        SELECT id, action, actor, company_id, engagement_id,
+               batch_id, target_id, details, created_at
+        FROM audit_log
+        ORDER BY created_at DESC
+        LIMIT ?
+    """,
+    "audit_log_by_batch": """
+        SELECT id, action, actor, target_id, details, created_at
+        FROM audit_log
+        WHERE batch_id = ?
+        ORDER BY created_at DESC
+    """,
+    "audit_log_by_engagement": """
+        SELECT id, action, actor, batch_id, target_id, details, created_at
+        FROM audit_log
+        WHERE company_id = ? AND engagement_id = ?
+        ORDER BY created_at DESC
+    """,
+    # ── Document Flow 조회 ──
+    "document_flow_chain": """
+        SELECT source_doc_type, source_doc_id,
+               target_doc_type, target_doc_id,
+               reference_type, reference_amount, reference_date
+        FROM document_references
+        WHERE upload_batch_id = ?
+        ORDER BY reference_date
+    """,
+    "three_way_match": """
+        WITH batch AS (SELECT ? AS bid)
+        SELECT
+            poh.document_id   AS po_id,
+            grh.document_id   AS gr_id,
+            vih.document_id   AS vi_id,
+            poh.vendor_id,
+            pol.material_id,
+            pol.net_amount    AS po_amount,
+            grl.net_amount    AS gr_amount,
+            vil.net_amount    AS vi_amount,
+            ABS(pol.net_amount - vil.net_amount) AS price_variance
+        FROM batch, purchase_order_headers poh
+        JOIN purchase_order_lines pol
+          ON poh.document_id = pol.document_id
+        LEFT JOIN goods_receipt_headers grh
+          ON grh.purchase_order_id = poh.document_id
+          AND grh.upload_batch_id = batch.bid
+        LEFT JOIN goods_receipt_lines grl
+          ON grh.document_id = grl.document_id
+          AND pol.line_number = grl.line_number
+        LEFT JOIN vendor_invoice_headers vih
+          ON vih.purchase_order_id = poh.document_id
+          AND vih.upload_batch_id = batch.bid
+        LEFT JOIN vendor_invoice_lines vil
+          ON vih.document_id = vil.document_id
+          AND pol.line_number = vil.line_number
+        WHERE poh.upload_batch_id = batch.bid
+    """,
+    "gl_document_link": """
+        SELECT gl.document_id AS journal_entry_id,
+               gl.posting_date, gl.debit_amount, gl.credit_amount,
+               dr.source_doc_type, dr.source_doc_id
+        FROM general_ledger gl
+        JOIN document_references dr
+          ON gl.document_id = dr.target_doc_id
+          AND gl.upload_batch_id = dr.upload_batch_id
+        WHERE gl.upload_batch_id = ?
+    """,
+    # ── Master Data 조회 ──
+    "vendor_details": """
+        SELECT vendor_id, name, vendor_type, is_one_time,
+               is_intercompany, payment_terms, is_active, country
+        FROM vendors
+        WHERE upload_batch_id = ?
+    """,
+    "employee_details": """
+        SELECT employee_id, user_id, display_name, persona,
+               job_level, approval_limit, status, company_code,
+               can_approve_je, can_approve_po, can_release_payment
+        FROM employees
+        WHERE upload_batch_id = ?
+    """,
+    # ── Labels 검증 ──
+    "anomaly_label_stats": """
+        SELECT anomaly_category, anomaly_subtype,
+               COUNT(*) AS cnt, AVG(confidence) AS avg_conf,
+               AVG(severity) AS avg_sev
+        FROM anomaly_labels
+        WHERE upload_batch_id = ?
+        GROUP BY anomaly_category, anomaly_subtype
+        ORDER BY cnt DESC
+    """,
+    "detection_accuracy": """
+        SELECT al.anomaly_subtype,
+               COUNT(DISTINCT al.document_id) AS labeled,
+               COUNT(DISTINCT af.document_id) AS detected
+        FROM anomaly_labels al
+        LEFT JOIN anomaly_flags af
+          ON al.document_id = af.document_id
+          AND al.upload_batch_id = af.upload_batch_id
+        WHERE al.upload_batch_id = ?
+        GROUP BY al.anomaly_subtype
     """,
 }
 

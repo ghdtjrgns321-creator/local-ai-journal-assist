@@ -1,7 +1,7 @@
 """DuckDB DDL 정의 — 5개 테이블 + 1 VIEW.
 
 Source of truth: config/schema.yaml (DataSynth v1.2.0 PREVIEW 39개)
-+ approval_level 파생 + 피처 18종 + 탐지 결과 3종 + ML 예약 7종.
++ approval_level 파생 + 피처 19종 + 탐지 결과 3종 + ML 예약 7종.
 
 Phase 2 예약 컬럼 (7개, nullable):
   - supervised_score, unsupervised_score, duplicate_score (ML 모델 출력)
@@ -31,6 +31,7 @@ SCHEMA_DDL: dict[str, str] = {
             fiscal_year INTEGER,
             fiscal_period INTEGER NOT NULL,
             posting_date TIMESTAMP NOT NULL,
+            posting_time TIME,                  -- DataSynth created_at의 시:분:초 (BiLSTM 시퀀스 정렬용)
             document_date TIMESTAMP,
             document_type VARCHAR,
             currency VARCHAR,
@@ -69,7 +70,8 @@ SCHEMA_DDL: dict[str, str] = {
             lettrage_date TIMESTAMP,
             -- 파생 — DB 적재 시 생성
             approval_level INTEGER,
-            -- 파생변수 (18종, from feature/engine.py EXPECTED_COLUMNS)
+            document_number VARCHAR,    -- SAP 순차 전표번호 (선행0/알파벳 혼합 대비 VARCHAR)
+            -- 파생변수 (19종, from feature/engine.py EXPECTED_COLUMNS, morpheme_tokens 제외)
             is_weekend BOOLEAN,
             is_after_hours BOOLEAN,
             is_period_end BOOLEAN,
@@ -169,6 +171,18 @@ SCHEMA_DDL: dict[str, str] = {
             created_at TIMESTAMP DEFAULT current_timestamp
         )
     """,
+    # ── 업로드 배치 메타 (배치 이력 조회/복원) ──
+    "upload_batches": """
+        CREATE TABLE IF NOT EXISTS upload_batches (
+            upload_batch_id VARCHAR PRIMARY KEY NOT NULL,
+            file_name       VARCHAR,
+            row_count       INTEGER NOT NULL,
+            anomaly_count   INTEGER DEFAULT 0,
+            high_risk_count INTEGER DEFAULT 0,
+            created_at      TIMESTAMP DEFAULT current_timestamp,
+            warnings        VARCHAR
+        )
+    """,
     # ── Engagement 메타 (RC-3: DB 격리) ──
     "engagement_meta": """
         CREATE TABLE IF NOT EXISTS engagement_meta (
@@ -177,6 +191,50 @@ SCHEMA_DDL: dict[str, str] = {
             created_at     TIMESTAMP DEFAULT current_timestamp,
             schema_version INTEGER DEFAULT 1,
             UNIQUE (company_id, engagement_id)
+        )
+    """,
+    # ── Trial Balance (WU-13: TB 교차검증) ──
+    # NOTE: closing_balance는 기말 잔액이 아닌 '당기 순증감액(Net Change)'
+    #       이월 기초전표(Opening Entry) 미포함 (Phase 1 제약)
+    "trial_balance": """
+        CREATE TABLE IF NOT EXISTS trial_balance (
+            upload_batch_id VARCHAR NOT NULL,
+            fiscal_year     INTEGER,
+            fiscal_period   INTEGER,
+            gl_account      VARCHAR,
+            account_name    VARCHAR,
+            opening_balance DOUBLE DEFAULT 0,
+            debit_total     DOUBLE DEFAULT 0,
+            credit_total    DOUBLE DEFAULT 0,
+            closing_balance DOUBLE DEFAULT 0,
+            created_at      TIMESTAMP DEFAULT current_timestamp,
+            PRIMARY KEY (upload_batch_id, gl_account, fiscal_period)
+        )
+    """,
+    # ── Audit Log (감사증적 — ISO 27001 / SOC 2 대응) ──
+    # Why: "누가·언제·어떤 액션으로" 시스템을 변경했는지 감사 조서(workpaper)에
+    #      증거로 제출하기 위한 단일 로그 테이블. 파이프라인 실행, whitelist 변경,
+    #      검증 실패 등 모든 라이프사이클 이벤트를 단일 스키마로 누적한다.
+    "audit_log_seq": """
+        CREATE SEQUENCE IF NOT EXISTS audit_log_id_seq START 1
+    """,
+    "audit_log": """
+        CREATE TABLE IF NOT EXISTS audit_log (
+            id            BIGINT DEFAULT nextval('audit_log_id_seq') PRIMARY KEY,
+            action        VARCHAR NOT NULL,
+            -- system (src/db/audit_log.py::record_event 직접 호출):
+            --   'detection_run' | 'whitelist_add' | 'whitelist_remove'
+            --   | 'pipeline_validate_fail' | 'rule_config_change'
+            -- user   (src/export/audit_trail.py::AuditTrail.log, WU-23):
+            --   'upload' | 'validate' | 'analysis' | 'query' | 'filter' | 'export'
+            --   details JSON 에 user_action(사람이 읽을 설명) 키가 포함됨
+            actor         VARCHAR DEFAULT 'auditor',
+            company_id    VARCHAR,
+            engagement_id VARCHAR,
+            batch_id      VARCHAR,
+            target_id     VARCHAR,    -- document_id, rule_code, whitelist row id 등
+            details       JSON,        -- 액션별 세부 파라미터 (설정 스냅샷, before/after)
+            created_at    TIMESTAMP DEFAULT current_timestamp
         )
     """,
     "anomaly_flag_summary": """
@@ -197,7 +255,7 @@ SCHEMA_DDL: dict[str, str] = {
 
 GENERAL_LEDGER_COLUMNS: list[str] = [
     "document_id", "company_code", "fiscal_year", "fiscal_period",
-    "posting_date", "document_date", "document_type", "currency",
+    "posting_date", "posting_time", "document_date", "document_type", "currency",
     "exchange_rate", "reference", "header_text", "created_by",
     "user_persona", "source", "business_process", "ledger",
     "approved_by", "approval_date",
@@ -256,6 +314,22 @@ ENGAGEMENT_META_COLUMNS: list[str] = [
     "company_id", "engagement_id", "created_at", "schema_version",
 ]
 
+UPLOAD_BATCHES_COLUMNS: list[str] = [
+    "upload_batch_id", "file_name", "row_count",
+    "anomaly_count", "high_risk_count", "warnings",
+]
+
+TRIAL_BALANCE_COLUMNS: list[str] = [
+    "upload_batch_id", "fiscal_year", "fiscal_period",
+    "gl_account", "account_name", "opening_balance",
+    "debit_total", "credit_total", "closing_balance",
+]
+
+AUDIT_LOG_COLUMNS: list[str] = [
+    "action", "actor", "company_id", "engagement_id",
+    "batch_id", "target_id", "details",
+]
+
 ML_RESERVED_COLUMNS: list[str] = [
     "supervised_score", "unsupervised_score", "duplicate_score",
     "supervised_model_id", "unsupervised_model_id", "duplicate_model_id",
@@ -270,4 +344,10 @@ def initialize_schema(conn: duckdb.DuckDBPyConnection) -> None:
     """모든 테이블 DDL + VIEW 실행. 멱등성 보장."""
     for name, ddl in SCHEMA_DDL.items():
         conn.execute(ddl)
-    logger.info("DuckDB 스키마 초기화 완료 (%d개 오브젝트)", len(SCHEMA_DDL))
+
+    # Why: DataSynth 보조 데이터(document_flows, master_data 등) 테이블도 함께 생성
+    from src.db.schema_supplementary import initialize_supplementary_schema
+    initialize_supplementary_schema(conn)
+
+    total = len(SCHEMA_DDL)
+    logger.info("DuckDB 스키마 초기화 완료 (%d개 코어 + 보조 오브젝트)", total)
