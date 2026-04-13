@@ -4,6 +4,219 @@
 
 ---
 
+## 2026-04-11 (오후): Phase 2 잔여 과제 4묶음 해결 (코드 독립 작업)
+
+**배경**: 오전 세션에서 4대 결함(P0-1 / P0-2 / P1-1 / P1-2)을 해결한 뒤, 남은 14개
+항목을 **데이터 재생성 없이 해결 가능한 묶음 4개**로 분할하여 처리. 재생성은 마지막
+세션으로 분리 예정.
+
+### 묶음 1 — 설명력 기반 (4개 / 35 tests 신규)
+
+- **BiLSTM `get_attention_weights()` 노출** (`bilstm_wrapper.py`)
+  - `AuditBiLSTM.forward()`가 이미 계산·저장하던 `_attn_weights`를 public API로 노출
+  - `(n_windows, seq_len)` 반환, 소프트맥스 후 각 행 합 ≈ 1, 마스킹 위치는 0
+- **FT-Transformer attention 추출** (`ft_model.py`, `ft_wrapper.py`)
+  - `AuditFTTransformer.forward_with_attention()` 신규 — `nn.TransformerEncoder`의
+    fast-path 최적화 우회하기 위해 각 layer의 `self_attn`을 수동 실행하여 weights 추출
+  - `FTTransformerClassifier.get_attention_weights()` 신규 — `[CLS] → 피처` 토큰
+    attention을 `(n_samples, n_features)` 로 반환
+- **`drift_detector.py` + PSI 함수** (신규 파일)
+  - `compute_psi_numeric` (가우시안 bin 기반, baseline_mean/std만으로 작동)
+  - `compute_psi_categorical` (baseline top-N + `_OTHER_` 버킷)
+  - `compute_drift_report` (`ModelMetadata` + `current_df` → `DriftReport`)
+  - 임계값: `DRIFT_THRESHOLD_WARN=0.1`, `DRIFT_THRESHOLD_CRITICAL=0.25`
+- **risk_level 분위수 전환** (`score_aggregator.py`, `config/settings.py`)
+  - `classify_risk_level(mode="absolute"|"quantile", quantiles=...)` 모드 분기
+  - `settings.risk_classification_mode` + `risk_quantile_high/medium/low`
+  - score=0인 행은 rank가 높아도 NORMAL 보존 (실제 위험 없음)
+
+### 묶음 2 — 파이프라인 관측성 (3개 / 11 tests)
+
+- **탐지기 병렬 실행 헬퍼** (`pipeline.py`)
+  - `_run_detectors_parallel(detectors, df, max_workers, progress_callback)`
+  - ThreadPoolExecutor (pandas/numpy GIL 해제 활용 — ProcessPool은 DataFrame
+    pickle 비용 과다)
+  - `max_workers=None|1`이면 순차 (테스트/디버깅)
+  - 결과 순서는 입력 detector 순서로 정렬 (병렬 완료 순 아님)
+  - progress_callback 예외는 격리 — UI 오류가 탐지 막지 않음
+- **탐지기별 프로파일링** (`pipeline.py`)
+  - `collect_detection_profile(results)` — `metadata["elapsed"]` 수집
+  - `format_detection_profile(profile)` — 마크다운 표 + `share%` 포맷
+- **진행률 상세도** — 병렬 헬퍼의 `progress_callback`으로 자연스럽게 지원.
+  Streamlit 측에서 `pipeline._detection_progress_callback = lambda c, t, n: ...` 주입
+- 검증: 3개 × 0.1초 sleep 탐지기 → 순차 0.3초 vs 병렬 ≤ 0.15초 (2배 단축)
+
+### 묶음 3 — 감사 증거 + 대시보드 UI (3개 / 23 tests)
+
+- **`src/export/audit_evidence.py`** 신규
+  - `RULE_LEGAL_BASIS` dict — 주요 룰 ID → 감사기준서/ISA/PCAOB 근거 매핑
+  - `AuditEvidence` dataclass — document_id / score / risk / rules / top_features / narrative
+  - `format_narrative(...)` — "전표 D001은 위험도 'High' (anomaly_score=0.850)로 분류...
+    위반 룰: C01(기말 대규모) [ISA 240 §32]... VAE 재구성 오차 주요 기여 피처: amount(0.430)..."
+  - `build_evidence_report(df, min_score)` — 파이프라인 결과 DataFrame 일괄 변환
+- **`dashboard/components/shap_waterfall.py`** 확장
+  - `render_vae_waterfall(row, top_k=3)` 신규 — P0-1의 `ML02_top_feature_{1..3}`
+    컬럼 소비. SHAP과 달리 양수(MSE) 전용 Waterfall
+- **`dashboard/components/drift_banner.py`** 신규
+  - `render_drift_banner(current_df, model_metadatas, max_show=5)` — 상단 고정 배너
+  - 4단계 상태 분류: critical(🚨) / warn(⚠️) / stable(✅) / skip(메타 없음)
+  - 드리프트 상세 expander — DataFrame 표로 모델·PSI·스키마 불일치 목록
+
+### 묶음 4 — 문서·선택 작업 (2개 / 5 tests)
+
+- **FT-T Ablation Study 스크립트** (`tools/scripts/ft_ablation_study.py`)
+  - `classify_conclusion(f1_with, f1_without, threshold=0.005)` → "keep"/"remove"/"inconclusive"
+  - `write_report(result)` → 마크다운 리포트 (`tests/datasynth_quality_gate/results/`)
+  - `--dry-run` 모드로 리포트 포맷 검증 가능. 실제 학습은 데이터 재생성 이후 단계
+- **`docs/DECISION.md`에 D037·D038 추가**
+  - D037: 모델 드리프트 재학습 정책 (PSI ≥ 0.25 자동 트리거 + 분기별 주기 재학습)
+  - D038: FT-T 유지 + ablation 기반 판정 정책
+
+### 종합
+
+- 전체 스코프 내 누적 **234/234 테스트 통과** (오전 139개 + 오후 95개 신규)
+- 14개 잔여 항목 중 13개 코드 완료. 나머지 1개는 "데이터 재생성 후 실제 FT-T ablation 실행"
+- 묶음 간 파일 중복 없음 — 각 묶음 완료 시점에서 회귀 테스트 실행으로 원인 범위 최소화
+- 다음 세션: DataSynth 재빌드 + 데이터 재생성 + 모델 재학습 1회 → §2 BiLSTM 효과 + ablation 실측
+
+---
+
+## 2026-04-11: Phase 2 ML 4대 결함 해결 (P0-1 / P0-2 / P1-1 / P1-2)
+
+**배경**: `docs/phase2_ml_feasibility.md` 검토에서 Phase 2 ML 파이프라인의 4가지 구조적 결함이 확정됨.
+감사 산업 납품 가능 상태 진입을 위한 선결 조건.
+
+### P0-1: VAE 피처별 재구성 오차 분해
+
+**증상**: `_score_vae`가 전체 MSE 스칼라만 반환 → 감사조서에 "왜 이상인지" 정량 증거 제시 불가.
+주력 비지도 탐지기(VAE+IF)가 감사 실무에서 채택 불가능한 상태.
+
+**해결**:
+- `src/preprocessing/vae_wrapper.py`: `_compute_errors_per_feature(X) → (N, D)` 추가. 기존 `_compute_errors`는 행 평균으로 위임. public API `score_samples_per_feature` 추가.
+- `src/detection/vae_detector.py`: `_score_vae_per_feature()` + `_build_topk_columns()` 추가. `detect()`가 `details`에 `ML02_top_feature_1~3` + `_contrib` 6개 컬럼을 첨부.
+- Top-K 선택은 `np.argpartition`으로 O(N·D) (정렬 비용 없음).
+
+**검증**: `test_vae_wrapper` 11개, `test_vae_detector` 28개 통과. `per_feature.mean(axis=1) ≈ score_samples` rtol 1e-5 일치.
+
+### P0-2: GroupKFold 기반 OOF Stacking (User-Leakage 방어)
+
+**증상**: `train_from_results`가 이미 학습된 base 모델의 predict 결과를 그대로 meta-learner에 주입 → ML_SUPERVISED/TRANSFORMER/SEQUENCE 3개 모델에 data leakage. 검증 F1이 허위 상승.
+
+**핵심 결정**:
+- **GroupKFold(n_splits=3, groups=user_ids)**: 단순 random split은 "User A는 일단 이상치"라는 사용자 ID memorization 과적합을 유발 → 한 사용자 전표는 한 fold에만 속하도록 보장. BiLSTM의 `GroupShuffleSplit` 패턴과 일관성 유지.
+- **3-fold (MVP)**: 파이프라인에 무거운 딥러닝 모델(FT-T, BiLSTM) 포함. `settings.stacking_cv_folds`로 노출하여 안정화 후 5로 승격 가능.
+- **joblib.Parallel(n_jobs=-1, backend="loky")**: fold 학습은 독립적 → 프로세스 격리 병렬 학습으로 wall-clock 1× 학습 시간에 근접.
+
+**해결**:
+- `src/detection/ensemble_detector.py`: `train_oof()` 신규 진입점. `_train_fold_worker()` 모듈 최상위 함수로 분리(loky pickle 호환). `_build_score_matrix_from_oof()` 헬퍼.
+- leakage-prone 트랙만 fold마다 재학습. 룰 4개 + VAE는 `non_leakage_results`로 한 번만 실행.
+- 기존 `train_from_results()`는 라벨 부족/리소스 부족 시 fallback 경로로 유지.
+- `config/settings.py`: `stacking_cv_folds=3`, `stacking_oof_n_jobs=-1` 기본값 추가.
+
+**검증**: `test_ensemble_detector` 24개 통과 (OOF 5개 신규). User-leakage 차단은 `set(users[train]) ∩ set(users[val]) == ∅` 직접 검증.
+
+### P1-1: BiLSTM 시퀀스에 시간(시:분:초) 도입
+
+**증상**: `posting_date`만으로 시퀀스 정렬 → 같은 날 수백 건 배치에서 ERP 입력 순서가 뒤섞여 "30분 내 3건 연속 입력" 같은 ISA 240 패턴 포착 불가.
+
+**원인**:
+- DataSynth `je_generator.rs`가 `created_at = posting_date.and_time(time).and_utc()`로 시간을 **이미 생성** 중이나, `csv_sink.rs` 헤더에 `posting_date`만 출력 → **시간 정보가 CSV에 미노출**.
+
+**해결**:
+- **Rust**: `tools/datasynth/crates/datasynth-output/src/csv_sink.rs` 헤더에 `posting_time` 컬럼 추가. `item.header.created_at.format("%H:%M:%S")`로 시:분:초만 출력 (하위호환: `posting_date`는 그대로 date).
+- **Python**:
+  - `src/db/schema.py`: `general_ledger`에 `posting_time TIME` + `GENERAL_LEDGER_COLUMNS` 추가.
+  - `src/detection/sequence_detector.py`: `_build_timestamps()` 헬퍼 — `posting_date + to_timedelta(posting_time)` 조합으로 완전한 타임스탬프. 부재 시 기존 동작(date only) fallback.
+
+**결정사항 (플랜 승인 시)**:
+- stride 학습-추론 일치는 **채택 안 함** — stride는 윈도우 샘플링 간격일 뿐 입력 텐서 분포와 무관. 학습 stride=4(메모리·속도) / 추론 stride=1(전수 커버리지)는 의도된 설계.
+
+**검증**: `cargo test -p datasynth-output --test csv_output_integration` 4/4 통과. `test_sequence_detector` 31개 통과 (TestPostingTime 4개 신규).
+
+### P1-2: 모델 드리프트 메타데이터
+
+**증상**: `ModelMetadata`에 학습 시점의 데이터 분포(mean/std/nunique)가 없음 → PSI 계산·재학습 트리거 불가. SOC 2 "AI 모델 거버넌스" 부적합.
+
+**해결**:
+- `src/preprocessing/model_registry.py`: `ModelMetadata`에 `training_data_stats`, `feature_schema_version`, `class_imbalance_ratio`, `n_train_samples` 4개 필드 추가. `list_models()`는 구버전 `registry.json`도 로드 가능 (default 값 채움).
+- `src/preprocessing/data_stats.py` (신규): `compute_training_stats`, `compute_class_imbalance`, `compute_feature_schema_version` 유틸.
+- 모든 detector (`supervised/transformer/sequence/vae/ensemble`)의 `train()`이 `self._train_stats` 보존 → `save_model()`이 registry에 전달.
+- **버그 수정**: `ensemble_detector.save_model()`이 `feature_count`를 누락하던 이슈 수정 (`feature_count=len(STACKING_BASE_MODELS)`).
+
+**본 작업 범위 외(다음 스프린트)**: `drift_detector.py` (PSI 계산), 대시보드 드리프트 배너, 재학습 정책 문서화.
+
+**검증**: `test_model_registry` 14개 (DriftMetadata 4개 신규), `test_data_stats` 14개 (신규 모듈) 통과. 구버전 registry.json 하위호환 로드 검증 포함.
+
+### 종합
+
+- 본 스프린트로 Phase 2 완료 선언의 가장 큰 장애물 4개가 제거됨.
+- 스코프 내 단위 테스트 139개(신규 27개) 모두 통과.
+- 본 브랜치(feature/wu14)의 기존 선행 실패(pipeline test_results_count stale, schema_yaml_sync, test_feature/e2e_datasynth)는 내 변경 스코프 밖 — `git stash` 검증으로 사전 존재 확인.
+
+---
+
+## 2026-04-10: DataSynth 한국 부가세(Tax) 전면 구현 + QG3 품질 개선
+
+**증상**:
+1. `journal_entries.csv`의 `tax_code`/`tax_amount` 컬럼이 전부 NaN (Phase 20 스킵)
+2. QG3 전수검사 후 LLM 판정: 12월 34.9% 편중, 주말 10.1%, 월요일 27%, 세금계산서 매칭 81.3%, VAT-ZERO-KR 0건, R2R 프로세스에 tax_code 편중
+
+**원인**:
+- `config/datasynth.yaml`에 `tax:` 섹션 없음 → `TaxConfig.enabled` 기본값 `false` → Phase 20 전체 스킵
+- `tax_code_generator.rs` `COUNTRY_RATES`에 KR 미포함 (DE/GB/FR 등 12개국만)
+- Phase 20의 `TaxLine`이 `JournalEntryLine`에 **역매핑되는 코드가 전혀 없음** (document_id 매칭만으로 하면 1:N 중복 함정)
+- `je_generator.rs`의 `supporting_doc_type` 로직이 O2C → "세금계산서"를 하드코딩해서, 매출채권 회수/선수금 전표(Revenue 라인 없음)에도 세금계산서 부착
+- `period_end.year_end.peak_multiplier: 18.0` 과도 설정 → 12월 전표 폭증
+- `seasonality.weekend_activity: 1.0` (평일과 동등) → 주말 10% 초과
+
+**해결**:
+
+### Rust 코드 수정
+1. **`tax_code_generator.rs` COUNTRY_RATES에 KR 추가**: `("KR", "South Korea", "vat", "0.10", None)`
+2. **`enhanced_orchestrator.rs` Phase 20b `backfill_je_tax_codes` 신규 함수** (핵심):
+   - **1:N 중복 방지**: 전표당 첫 번째 Revenue/Expense base line에만 `tax_code`/`tax_amount` 부여 (AR/AP/부가세예수금 라인 NaN)
+   - **business_process 필터**: O2C/P2P + `supporting_doc_type='세금계산서'` 전표만 대상 (R2R/H2R/A2R/TRE 제외)
+   - **면세 판정**: `AccountSubType::InterestIncome/InterestExpense/DividendIncome/Investments` → VAT-EX-KR
+   - **영세율**: O2C 매출 전표 중 `document_id` FNV 해시 기반 deterministic 15%를 VAT-ZERO-KR로 분류 (수출 모사)
+3. **`je_generator.rs` `supporting_doc_type` 로직 수정** (근본 해결):
+   - O2C 전표는 **실제 Revenue(4xxx) 라인이 있을 때만** "세금계산서"
+   - P2P 전표는 Expense(5xxx/6xxx) 라인이 있을 때만 "세금계산서"
+   - 매출채권 회수/선수금 전표는 "기타증빙"으로 분기
+4. **`csv_sink.rs`**: tax_code/tax_amount 컬럼 헤더/행 추가 (CLI는 output_writer 경로라 실효는 없지만 일관성 유지)
+
+### YAML 설정 수정 (`config/datasynth.yaml`)
+- `tax:` 섹션 신규 추가: KR VAT 10%, 면세 4개 카테고리(financial_services/insurance/healthcare/education), 법인세 실효세율 24.2%
+- `period_end.year_end.peak_multiplier: 18.0 → 4.0`, `start_day: -25 → -15`
+- `seasonality.weekend_activity: 1.0 → 0.2`, `year_end_multiplier: 6.0 → 3.0`
+- `seasonality.monday_multiplier: 1.3 → 1.1`
+- `temporal_patterns.intraday`에 `deep_night(00-03) 0.005` 세그먼트 추가, `late_night 0.02 → 0.005`
+
+**검증 (1,192,404 라인 / 319,061 전표 기준)**:
+
+| 지표 | 수정 전 | 수정 후 |
+|------|--------|--------|
+| tax_code 채움(Revenue/Expense base line) | 0 | 109,078 |
+| 과세 10% 정확도 | — | 99,697/99,697 = 100.00% |
+| 1:N 중복 (전표당 최대 tax_code 수) | — | 1 |
+| VAT-STD-KR / VAT-EX-KR / VAT-ZERO-KR | 0/0/0 | 99,697 / 612 / 8,769 |
+| 세금계산서 전표 tax_code 매칭률 | 81.3% | 96.48% |
+| R2R 프로세스 tax_code 부여 | 75,276건 | 0건 |
+| 12월 전표 비중 | 34.9% | 12.4% |
+| 주말 전표 비중 | 10.1% | 2.7% |
+| 월요일 전표 비중 | 27.0% | 24.0% |
+| 심야(22~06) 비중 | 2.1% | 1.01% |
+| 03시 단독 피크 | 1,475건 | 190건 |
+| 차대변 불균형 | 0.125% | 0.085% |
+
+**교훈**:
+1. **1:N 역매핑 함정**: 한 전표(document_id)에 여러 라인이 있을 때, `document_id`만 키로 데이터를 복사하면 `groupby.sum()` 시 N배 중복 계산된다. 반드시 **base line(Revenue/Expense)에만 단일 부여**하고 나머지는 NaN 유지. `COA.get_account(gl).account_type`으로 필터.
+2. **VAT 대상 판별은 계정만으로 부족**: `AccountType::Revenue/Expense`는 필요조건이지만 충분조건 아님. R2R(결산조정), H2R(급여), A2R(자산취득), TRE(차입금이자)에도 Revenue/Expense 라인이 있지만 부가세와 무관. `business_process` + `supporting_doc_type` 필터 필수.
+3. **"데이터에 맞추지 말고 데이터를 올바르게 생성"**: 세금계산서 매칭 81% 문제는 backfill 로직이 아니라 je_generator가 회수 전표에도 "세금계산서"를 붙이는 하드코딩 때문. 탐지 쪽을 고치면 fitting, 생성 쪽을 고치면 근본 해결.
+4. **config 중복 설정 주의**: `seasonality.year_end_multiplier: 6.0`과 `temporal_patterns.period_end.year_end.peak_multiplier: 18.0`이 동시에 존재. 실제 효력은 후자. 분포 편중 디버깅 시 두 경로 모두 확인.
+5. **QG3 extract_profile 활용**: 규칙/임계값 없이 전수 집계 → LLM 정성/정량 판정 흐름이 현실성 검증에 효과적. 고정된 체크리스트로 못 잡는 distribution skew를 사람이 읽으면 한 번에 보임.
+
+---
+
 ## 작성 가이드
 
 ```

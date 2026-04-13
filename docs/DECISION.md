@@ -271,3 +271,37 @@
 - **결정**: `type_caster.py`에 하드코딩된 통화 기호·null 값·불리언·Excel serial 범위·DC 지시자를 `config/cleaning.yaml`로 분리. 과학적 표기법(2E+11) 감지/복원과 한국 ERP null 표현(`미정`, `해당없음`) 지원 추가
 - **이유**: 새 ERP 포맷 대응 시 코드 변경 없이 YAML만 편집. 기존에 `keywords.yaml`, `schema.yaml`, `audit_rules.yaml` 패턴이 있으므로 동일 구조 채택
 - **구현 파일**: `config/cleaning.yaml`(신규), `config/settings.py`(`get_cleaning_config()` 추가), `src/ingest/type_caster.py`(리팩토링)
+
+### D037: 모델 드리프트 재학습 정책 (SOC 2 / ISO 27001 대응)
+- **결정**: ML 모델 재학습 트리거를 PSI 기반 자동 감지 + 분기별 주기 재학습으로 이원화
+  - **자동 트리거**: `drift_detector.compute_drift_report()` 의 `max_psi ≥ 0.25` (critical) 또는 `schema_mismatch=True` 시 즉시 재학습 큐 등록
+  - **주기 트리거**: 매 감사 사이클(분기/연)마다 base 모델 재학습 및 OOF Stacking 재실행
+  - **모니터링 트리거**: `max_psi ∈ [0.1, 0.25)` (warn) 시 재학습은 하지 않되 대시보드 배너 + 감사 로그 기록
+- **이유**:
+  - 감사 사이클은 연 1회가 일반적이어서 학습 모델이 1년 이상 재사용될 위험
+  - 신규 자회사 인수, 회계정책 변경, ERP 업그레이드로 인한 분포 변화에 선제 대응 필요
+  - SOC 2 / ISO 27001 "AI 모델 거버넌스" 항목에 "재학습 정책 문서" 필수
+- **임계값 근거**:
+  - PSI < 0.10 → 분포 안정 (실무 업계 관행)
+  - 0.10 ≤ PSI < 0.25 → 약한 드리프트, 모니터링 강화
+  - PSI ≥ 0.25 → 강한 드리프트, 재학습 필수
+- **구현 파일**:
+  - `src/preprocessing/drift_detector.py` — PSI 계산 유틸 (numeric 가우시안 bin + categorical Top-N)
+  - `src/preprocessing/data_stats.py` — 학습 시점 분포 메타데이터 저장
+  - `src/preprocessing/model_registry.py` — `ModelMetadata.training_data_stats` 필드
+  - `dashboard/components/drift_banner.py` — 상단 경고 배너 + 드리프트 상세 expander
+- **관련 결정**: D013(Stacking), D034(LR Ridge meta), D036(DataSynth 수렴)
+- **향후 확장**: `tools/scripts/retrain_all_models.py` 스크립트 (CI/CD cron 연동), Slack/이메일 알림 통합
+
+### D038: FT-Transformer 유지 + Ablation 정책 (Phase 2b)
+- **결정**: FT-Transformer(ML03)는 당분간 8-model Stacking에 유지. 단 `tools/scripts/ft_ablation_study.py`로 분기별 ablation 실측 후 유지/제거 판단.
+- **이유**:
+  - 42차원 입력에서 XGBoost 대비 FT-T의 self-attention 이득이 합성 데이터 환경에서 실증 불가
+  - 그러나 Ridge(positive=True) meta-learner가 기여도 낮은 모델 계수를 자동으로 0에 수렴시키므로 유지 비용이 낮음
+  - 제거는 되돌릴 수 없는 결정이므로 "데이터로 증명된 뒤 제거"가 안전
+- **판정 기준** (ft_ablation_study.py): Δ F1-macro (8-model vs 7-model)
+  - `Δ ≥ +0.5%` → keep (유지)
+  - `|Δ| < 0.5%` → inconclusive (보류, seed 반복)
+  - `Δ < -0.5%` → remove (제거 검토)
+- **구현 파일**: `tools/scripts/ft_ablation_study.py` (골격), `tests/modules/test_tools/test_ft_ablation_study.py`
+- **관련 결정**: D033(FT-T 추가), D034(Stacking)
