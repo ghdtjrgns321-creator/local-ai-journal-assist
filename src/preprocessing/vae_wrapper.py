@@ -45,11 +45,10 @@ class VAEDetector(BaseEstimator):
         return self.device
 
     def fit(self, X, y=None):
+        # Why: 비지도 학습기는 y에 눈을 가려야 한다.
+        #      contamination + 오토인코딩 병목이 자체적으로 이상치를 튕겨냄.
+        #      y는 외부(UnsupervisedDetector)에서 평가 전용으로만 사용.
         X = np.array(X, dtype=np.float32)
-        # 지도 모드: 정상 데이터(y==0)만으로 학습
-        if y is not None:
-            y = np.asarray(y)
-            X = X[y == 0]
 
         device = self._resolve_device()
         self.model_ = AuditVAE(X.shape[1], self.latent_dim).to(device)
@@ -73,24 +72,35 @@ class VAEDetector(BaseEstimator):
         self.classes_ = np.array([0, 1])
         return self
 
-    def _compute_errors(self, X: np.ndarray, device: str) -> np.ndarray:
-        """배치 단위 MSE 재구성 오차 계산.
+    def _compute_errors_per_feature(self, X: np.ndarray, device: str) -> np.ndarray:
+        """배치 단위 피처별 MSE 재구성 오차 계산. 결과 shape=(N, D).
 
-        Why: forward()의 reparameterize는 랜덤 샘플링이므로 추론마다 결과가 달라진다.
-        deterministic 추론을 위해 encode → mu → decode 경로를 직접 사용한다.
+        Why: 감사 도메인에서 "이 전표가 왜 비정상인가"를 설명하려면
+             전체 MSE만으로는 부족하고, 어느 피처에서 오차가 컸는지가 필요하다.
+             VAE forward에서 이미 recon과 x 모두 가지고 있으므로 mean 직전 단계에서
+             분기하여 (N, D) 행렬로 반환한다.
         """
         self.model_.eval()
         self.model_.to(device)
-        errors = []
+        per_feature: list[np.ndarray] = []
         tensor = torch.from_numpy(np.array(X, dtype=np.float32)).to(device)
         with torch.no_grad():
             for start in range(0, len(tensor), self.batch_size):
                 batch = tensor[start : start + self.batch_size]
                 mu, _ = self.model_.encode(batch)
                 recon = self.model_.decode(mu)
-                mse = ((recon - batch) ** 2).mean(dim=1)
-                errors.append(mse.cpu().numpy())
-        return np.concatenate(errors)
+                # Why: mean(dim=1)을 적용하지 않고 (batch, D) 그대로 보관
+                sq = (recon - batch) ** 2
+                per_feature.append(sq.cpu().numpy())
+        return np.concatenate(per_feature, axis=0)
+
+    def _compute_errors(self, X: np.ndarray, device: str) -> np.ndarray:
+        """배치 단위 MSE 재구성 오차 계산 (행 평균).
+
+        Why: 기존 호출자(threshold/score_samples)와의 호환을 위해 유지.
+             내부적으로는 _compute_errors_per_feature를 행 평균하여 위임.
+        """
+        return self._compute_errors_per_feature(X, device).mean(axis=1)
 
     def predict(self, X) -> np.ndarray:
         # Why: fit() 전 호출 시 model_/threshold_ 없어 cryptic 에러 → 명확한 안내
@@ -98,6 +108,32 @@ class VAEDetector(BaseEstimator):
         device = self._resolve_device()
         errors = self._compute_errors(np.array(X, dtype=np.float32), device)
         return (errors > self.threshold_).astype(int)
+
+    def score_samples(self, X) -> np.ndarray:
+        """재구성 오차(MSE) 배열 반환 — 앙상블 결합용 public API.
+
+        Why: UnsupervisedDetector가 raw 오차로 ECDF 정규화하므로
+             predict_proba(sigmoid 적용)가 아닌 원시 MSE가 필요.
+        """
+        check_is_fitted(self, ["model_", "threshold_"])
+        device = self._resolve_device()
+        return self._compute_errors(np.array(X, dtype=np.float32), device)
+
+    def score_samples_per_feature(self, X) -> np.ndarray:
+        """피처별 재구성 오차 행렬 반환 — 설명력(Explainability) 용 public API.
+
+        Why: 감사 도메인에서 "왜 이 전표가 비정상인지"를 정량적 증거로 제시하려면
+             전체 MSE 스칼라가 아닌 피처별 기여도가 필요하다.
+             score_samples()는 본 함수의 row-wise mean과 동일하다.
+
+        Returns:
+            (N, D) ndarray. N=입력 행 수, D=전처리 후 피처 수.
+        """
+        check_is_fitted(self, ["model_", "threshold_"])
+        device = self._resolve_device()
+        return self._compute_errors_per_feature(
+            np.array(X, dtype=np.float32), device,
+        )
 
     def predict_proba(self, X) -> np.ndarray:
         """sigmoid((error - threshold) / scale) → [P(정상), P(이상)]."""

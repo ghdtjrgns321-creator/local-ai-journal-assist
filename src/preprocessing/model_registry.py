@@ -24,7 +24,13 @@ _DEFAULT_MODELS_DIR = PROJECT_ROOT / "models"
 
 @dataclass
 class ModelMetadata:
-    """저장된 모델의 메타데이터."""
+    """저장된 모델의 메타데이터.
+
+    Why: 모델 드리프트 감지 + 재학습 트리거의 기반.
+         training_data_stats는 학습 시점의 데이터 분포(mean/std/nunique 등)를 보존하여
+         향후 PSI(Population Stability Index) 계산에 사용한다.
+         feature_schema_version은 컬럼 set 변경 감지용.
+    """
 
     model_name: str
     version: int
@@ -33,6 +39,11 @@ class ModelMetadata:
     feature_count: int = 0
     params: dict = field(default_factory=dict)
     saved_at: str = ""
+    # ── 드리프트 감지용 메타데이터 (P1-2) ─────────────────────
+    training_data_stats: dict = field(default_factory=dict)
+    feature_schema_version: int = 1
+    class_imbalance_ratio: float = 0.0
+    n_train_samples: int = 0
 
 
 class ModelRegistry:
@@ -67,8 +78,16 @@ class ModelRegistry:
         mean_f1: float,
         feature_count: int = 0,
         params: dict | None = None,
+        training_data_stats: dict | None = None,
+        feature_schema_version: int = 1,
+        class_imbalance_ratio: float = 0.0,
+        n_train_samples: int = 0,
     ) -> ModelMetadata:
-        """Pipeline을 .pkl로 저장하고 레지스트리에 등록."""
+        """Pipeline을 .pkl로 저장하고 레지스트리에 등록.
+
+        Why: training_data_stats 등은 향후 드리프트 감지의 베이스라인.
+             모두 optional이므로 기존 호출자 하위호환 유지.
+        """
         version = self._next_version(model_name)
         filename = f"{model_name}_v{version}.pkl"
         file_path = self._dir / filename
@@ -83,6 +102,10 @@ class ModelRegistry:
             feature_count=feature_count,
             params=params or {},
             saved_at=datetime.now(timezone.utc).isoformat(),
+            training_data_stats=training_data_stats or {},
+            feature_schema_version=feature_schema_version,
+            class_imbalance_ratio=class_imbalance_ratio,
+            n_train_samples=n_train_samples,
         )
         self._index.append(asdict(meta))
         self._save_index()
@@ -117,8 +140,16 @@ class ModelRegistry:
         return joblib.load(path)
 
     def list_models(self) -> list[ModelMetadata]:
-        """등록된 전체 모델 메타데이터 목록."""
-        return [ModelMetadata(**e) for e in self._index]
+        """등록된 전체 모델 메타데이터 목록.
+
+        Why: 구버전 registry.json에는 신규 필드가 없을 수 있어 dataclass의 default를
+             활용하기 위해 known field만 골라 전달한다 (하위호환).
+        """
+        known_fields = {f.name for f in ModelMetadata.__dataclass_fields__.values()}
+        return [
+            ModelMetadata(**{k: v for k, v in e.items() if k in known_fields})
+            for e in self._index
+        ]
 
     def compare_versions(self, model_name: str) -> list[dict]:
         """동일 모델의 버전별 성능 비교."""
