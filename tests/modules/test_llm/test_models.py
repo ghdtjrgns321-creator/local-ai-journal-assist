@@ -179,7 +179,7 @@ class TestPreprocessingAdvice:
             )
 
     def test_json_schema_generation(self):
-        """model_json_schema()가 Ollama Structured Output용 스키마를 생성하는지 확인."""
+        """model_json_schema()가 OpenAI Structured Output용 스키마를 생성하는지 확인."""
         schema = PreprocessingAdvice.model_json_schema()
         assert "properties" in schema
         assert "columns" in schema["properties"]

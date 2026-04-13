@@ -86,3 +86,72 @@ class TestModelRegistry:
         models = new_registry.list_models()
         assert len(models) == 1
         assert models[0].model_name == "test_model"
+
+
+class TestDriftMetadata:
+    """드리프트 감지용 메타데이터 보존 검증."""
+
+    def test_save_with_training_stats(self, registry, dummy_pipeline):
+        # Why: 신규 필드(training_data_stats, schema_version 등)가 정상 저장되는지
+        meta = registry.save(
+            dummy_pipeline,
+            "drift_model",
+            mean_f1=0.9,
+            training_data_stats={"n_samples": 100, "columns": {"x": {"mean": 0.5}}},
+            feature_schema_version=42,
+            class_imbalance_ratio=0.1,
+            n_train_samples=100,
+        )
+        assert meta.training_data_stats["n_samples"] == 100
+        assert meta.feature_schema_version == 42
+        assert meta.class_imbalance_ratio == 0.1
+        assert meta.n_train_samples == 100
+
+    def test_save_without_drift_fields_default(self, registry, dummy_pipeline):
+        # Why: 하위호환 — drift 필드 없이 저장해도 default 값으로 채워짐
+        meta = registry.save(dummy_pipeline, "old_caller", mean_f1=0.8)
+        assert meta.training_data_stats == {}
+        assert meta.feature_schema_version == 1
+        assert meta.class_imbalance_ratio == 0.0
+        assert meta.n_train_samples == 0
+
+    def test_legacy_registry_json_loadable(self, tmp_path):
+        # Why: 구버전 registry.json (신규 필드 없음) 로드 시 default로 보강
+        import json
+        legacy_dir = tmp_path / "legacy"
+        legacy_dir.mkdir()
+        legacy_index = [{
+            "model_name": "legacy",
+            "version": 1,
+            "file_path": str(legacy_dir / "legacy_v1.pkl"),
+            "mean_f1": 0.7,
+            "feature_count": 5,
+            "params": {},
+            "saved_at": "2025-01-01T00:00:00+00:00",
+        }]
+        (legacy_dir / "registry.json").write_text(
+            json.dumps(legacy_index), encoding="utf-8",
+        )
+        registry = ModelRegistry(legacy_dir)
+        models = registry.list_models()
+        assert len(models) == 1
+        # 신규 필드는 default 값이 채워져야 함
+        assert models[0].training_data_stats == {}
+        assert models[0].feature_schema_version == 1
+        assert models[0].n_train_samples == 0
+
+    def test_drift_fields_persisted_to_json(self, registry, dummy_pipeline, tmp_path):
+        registry.save(
+            dummy_pipeline,
+            "persisted_model",
+            mean_f1=0.95,
+            training_data_stats={"n_samples": 500, "columns": {}},
+            feature_schema_version=99,
+            n_train_samples=500,
+        )
+        new_registry = ModelRegistry(tmp_path / "models")
+        models = new_registry.list_models()
+        assert len(models) == 1
+        assert models[0].training_data_stats["n_samples"] == 500
+        assert models[0].feature_schema_version == 99
+        assert models[0].n_train_samples == 500

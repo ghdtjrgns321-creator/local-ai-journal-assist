@@ -1,0 +1,2486 @@
+{
+  "axis_1_temporal_granularity": {
+    "midnight_rate": 0.0,
+    "hour_histogram": {
+      "0": 3988,
+      "1": 2610,
+      "2": 5194,
+      "3": 2665,
+      "4": 2603,
+      "5": 2192,
+      "6": 8163,
+      "7": 7197,
+      "8": 75381,
+      "9": 125284,
+      "10": 127442,
+      "11": 80689,
+      "12": 20103,
+      "13": 75612,
+      "14": 81310,
+      "15": 94646,
+      "16": 117923,
+      "17": 121926,
+      "18": 73693,
+      "19": 30233,
+      "20": 19707,
+      "21": 20924,
+      "22": 3002,
+      "23": 3655
+    },
+    "second_is_zero_rate": 0.017358,
+    "same_minute_multi_entries": 318623,
+    "after_hours_docs": 7946,
+    "top_after_hours_users": {
+      "SYSTEM-C001-0001": 1027,
+      "SYSTEM-C002-0001": 346,
+      "SYSTEM-C003-0001": 316,
+      "JKANG390": 219,
+      "HLEE252": 158,
+      "YCHO104": 156,
+      "YMOON191": 85,
+      "JSUNG179": 80,
+      "JJEON186": 78,
+      "MHEO096": 66
+    }
+  },
+  "axis_2_user_sequence": {
+    "docs_per_user_percentiles": {
+      "min": 67.0,
+      "P10": 107.0,
+      "P25": 117.0,
+      "P50": 130.0,
+      "P75": 300.0,
+      "P90": 420.0,
+      "P99": 759.4399999999996,
+      "max": 14156.0
+    },
+    "users_with_seq_len_16_pct": 1.0,
+    "total_unique_users": 1365,
+    "singleton_users": 0,
+    "avg_docs_per_persona": {
+      "automated_system": 979.98,
+      "controller": 538.1,
+      "senior_accountant": 305.59,
+      "junior_accountant": 119.17,
+      "manager": 119.02,
+      "automated_systejm": 2.0,
+      "autemated_system": 2.0,
+      "automayed_system": 2.0,
+      "automated_sYstem": 1.88,
+      "automated_systen": 1.88,
+      "automated_systme": 1.71,
+      "autmoated_system": 1.67,
+      "automated_sstem": 1.67,
+      "autoated_system": 1.67,
+      "c0ntroller": 1.67,
+      "automatd_system": 1.64,
+      "automAted_system": 1.6,
+      "autmated_system": 1.59,
+      "automatEd_system": 1.57,
+      "aUtomated_system": 1.56,
+      "automatted_system": 1.56,
+      "automated_systemm": 1.55,
+      "autimated_system": 1.5,
+      "auTomated_system": 1.5,
+      "aut0mated_system": 1.5,
+      "automated_sgstem": 1.5,
+      "seniot_accountant": 1.5,
+      "automtaed_system": 1.5,
+      "automaed_system": 1.47,
+      "autoamted_system": 1.43,
+      "automated_sysem": 1.43,
+      "automatde_system": 1.43,
+      "automated_syatem": 1.43,
+      "automat3d_system": 1.43,
+      "automated_ystem": 1.42,
+      "sutomated_system": 1.4,
+      "automated_systej": 1.4,
+      "uatomated_system": 1.38,
+      "automated_sytsem": 1.37,
+      "auomated_system": 1.37,
+      "automaetd_system": 1.35,
+      "auotmated_system": 1.35,
+      "atomated_system": 1.35,
+      "manage": 1.33,
+      "senior_accoun5ant": 1.33,
+      "automatcd_system": 1.33,
+      "automated_ysstem": 1.33,
+      "autommated_system": 1.33,
+      "automated_syStem": 1.33,
+      "automate_system": 1.33,
+      "automatsd_system": 1.33,
+      "wutomated_system": 1.33,
+      "autokated_system": 1.33,
+      "autojated_system": 1.33,
+      "automated_sysetm": 1.31,
+      "automated_systeM": 1.3,
+      "automaTed_system": 1.3,
+      "automateD_system": 1.29,
+      "automated_sytem": 1.29,
+      "automated_eystem": 1.29,
+      "seni0r_accountant": 1.29,
+      "automated_systEm": 1.29,
+      "autoomated_system": 1.27,
+      "automated_ssystem": 1.27,
+      "automated_ssytem": 1.27,
+      "senior_accoun5tant": 1.25,
+      "automat4d_system": 1.25,
+      "automated_sys6em": 1.25,
+      "automqted_system": 1.25,
+      "ajtomated_system": 1.25,
+      "automatdd_system": 1.25,
+      "controlker": 1.25,
+      "automat4ed_system": 1.25,
+      "automated_syztem": 1.25,
+      "auutomated_system": 1.25,
+      "automated_syst3m": 1.25,
+      "automaged_system": 1.25,
+      "automatedd_system": 1.23,
+      "aautomated_system": 1.22,
+      "automafed_system": 1.22,
+      "automated_syste": 1.21,
+      "utomated_system": 1.21,
+      "autlmated_system": 1.2,
+      "Automated_system": 1.2,
+      "automates_system": 1.2,
+      "Controller": 1.2,
+      "auttomated_system": 1.2,
+      "controLler": 1.2,
+      "nunior_accountant": 1.2,
+      "controlldr": 1.2,
+      "automated_wystem": 1.2,
+      "automated_systm": 1.19,
+      "automated_syystem": 1.18,
+      "autoMated_system": 1.18,
+      "atuomated_system": 1.17,
+      "senior_zccountant": 1.17,
+      "ontroller": 1.17,
+      "controoller": 1.17,
+      "senior_acc0untant": 1.17,
+      "automateed_system": 1.17,
+      "aut9mated_system": 1.17,
+      "senior_accountanr": 1.17,
+      "aufomated_system": 1.17,
+      "automted_system": 1.16,
+      "cotroller": 1.15,
+      "controler": 1.15,
+      "ocntroller": 1.15,
+      "senior_accounttant": 1.15,
+      "automated_systtem": 1.15,
+      "automater_system": 1.14,
+      "automated_zystem": 1.14,
+      "contrOller": 1.14,
+      "automared_system": 1.14,
+      "automated_sys5em": 1.14,
+      "seniro_accountant": 1.13,
+      "senior_accountnt": 1.13,
+      "automwted_system": 1.12,
+      "automated_System": 1.12,
+      "automaated_system": 1.12,
+      "controllEr": 1.12,
+      "autOmated_system": 1.12,
+      "contrloler": 1.12,
+      "contRoller": 1.12,
+      "contorller": 1.12,
+      "senoir_accountant": 1.12,
+      "senior_acountant": 1.12,
+      "senior_accoutant": 1.12,
+      "senior_acocuntant": 1.12,
+      "mnaager": 1.11,
+      "senior_wccountant": 1.11,
+      "senior_acCountant": 1.11,
+      "zutomated_system": 1.11,
+      "senior_acconutant": 1.1,
+      "cohtroller": 1.1,
+      "senIor_accountant": 1.1,
+      "automated_systeem": 1.1,
+      "senior_ccountant": 1.1,
+      "senior_accoutnant": 1.1,
+      "junior_accountnat": 1.1,
+      "amnager": 1.09,
+      "seior_accountant": 1.09,
+      "sEnior_accountant": 1.09,
+      "senior_accountamt": 1.09,
+      "mangaer": 1.09,
+      "automated_sysstem": 1.09,
+      "controllr": 1.09,
+      "senior_accountqnt": 1.09,
+      "senior_accounatnt": 1.09,
+      "esnior_accountant": 1.09,
+      "contoller": 1.08,
+      "controlle": 1.08,
+      "automated_systek": 1.08,
+      "contrller": 1.08,
+      "junior_accountwnt": 1.08,
+      "senior_accountatn": 1.08,
+      "senior_accountat": 1.07,
+      "senior_accountaNt": 1.07,
+      "junior_accouNtant": 1.07,
+      "senior_accuontant": 1.06,
+      "junir_accountant": 1.06,
+      "seniior_accountant": 1.06,
+      "senior_accOuntant": 1.06,
+      "junior_cacountant": 1.06,
+      "senior_accountan": 1.06,
+      "senior_acccountant": 1.05,
+      "junior_acocuntant": 1.05,
+      "juinor_accountant": 1.05,
+      "junior_ccountant": 1.04,
+      "seinor_accountant": 1.04,
+      "ujnior_accountant": 1.04,
+      "senir_accountant": 1.04,
+      "junior_acountant": 1.04,
+      "senio_accountant": 1.03,
+      "enior_accountant": 1.03,
+      "jnuior_accountant": 1.03,
+      "snior_accountant": 1.03,
+      "junior_accountnt": 1.03,
+      "sneior_accountant": 1.03,
+      "automated_5ystem": 1.0,
+      "seniotr_accountant": 1.0,
+      "mAnager": 1.0,
+      "manoger": 1.0,
+      "senior_adcountant": 1.0,
+      "controlIer": 1.0,
+      "junior_accoountant": 1.0,
+      "autpomated_system": 1.0,
+      "junior_accoutnant": 1.0,
+      "junior_accourtant": 1.0,
+      "junioor_accountant": 1.0,
+      "senior_dccountant": 1.0,
+      "seniorr_accountant": 1.0,
+      "automated_syzstem": 1.0,
+      "junior_acconutant": 1.0,
+      "automa6ed_system": 1.0,
+      "manag4r": 1.0,
+      "junior_accohntant": 1.0,
+      "serior_accountant": 1.0,
+      "junior_zccountant": 1.0,
+      "ssnior_accountant": 1.0,
+      "junior_axcountant": 1.0,
+      "junior_accoUntant": 1.0,
+      "asenior_accountant": 1.0,
+      "senior_accountanf": 1.0,
+      "juniior_accountant": 1.0,
+      "juni0r_accountant": 1.0,
+      "ccontroller": 1.0,
+      "junior_accouuntant": 1.0,
+      "senipr_accountant": 1.0,
+      "jvnior_accountant": 1.0,
+      "automsted_system": 1.0,
+      "junior_accountabnt": 1.0,
+      "controllser": 1.0,
+      "cont5oller": 1.0,
+      "sdenior_accountant": 1.0,
+      "managee": 1.0,
+      "senior_accoungtant": 1.0,
+      "controllwer": 1.0,
+      "congtroller": 1.0,
+      "manaber": 1.0,
+      "junkior_accoutnant": 1.0,
+      "senoor_accountant": 1.0,
+      "conttoller": 1.0,
+      "junior_accoutant": 1.0,
+      "junior_acCountant": 1.0,
+      "controllder": 1.0,
+      "juNior_accountant": 1.0,
+      "manater": 1.0,
+      "cantroller": 1.0,
+      "contrkller": 1.0,
+      "managwr": 1.0,
+      "seniofr_accountant": 1.0,
+      "seni9r_accountant": 1.0,
+      "ahutomated_system": 1.0,
+      "mwnager": 1.0,
+      "junior_acc0uuntant": 1.0,
+      "automated_sysTem": 1.0,
+      "contfoller": 1.0,
+      "c0ontroller": 1.0,
+      "junior_zaccountant": 1.0,
+      "senior_accouNtant": 1.0,
+      "senoior_accountant": 1.0,
+      "cotrollre": 1.0,
+      "automated_s7stem": 1.0,
+      "senior_accountannt": 1.0,
+      "ssenior_accountant": 1.0,
+      "junior_qccountant": 1.0,
+      "conrtroller": 1.0,
+      "senior_acco8ntanf": 1.0,
+      "autometed_system": 1.0,
+      "junior_accounyant": 1.0,
+      "senior_accountznt": 1.0,
+      "senior_acdcountant": 1.0,
+      "junior_accounlant": 1.0,
+      "junio5r_accountant": 1.0,
+      "uunior_accountant": 1.0,
+      "automated_syetem": 1.0,
+      "juniot_accountant": 1.0,
+      "senikor_accountant": 1.0,
+      "junor_accountant": 1.0,
+      "ujunior_accountant": 1.0,
+      "contnoller": 1.0,
+      "sejior_accountant": 1.0,
+      "automatexd_system": 1.0,
+      "senior_accuntant": 1.0,
+      "junoior_accountant": 1.0,
+      "senior_accountan6": 1.0,
+      "coontroller": 1.0,
+      "junior_accountamnt": 1.0,
+      "senior_accountan5": 1.0,
+      "automated_svstem": 1.0,
+      "cortroller": 1.0,
+      "senior_accoujntant": 1.0,
+      "sen1or_accountant": 1.0,
+      "a8utomated_system": 1.0,
+      "junior_accountdnt": 1.0,
+      "controlledr": 1.0,
+      "junior_accoungtant": 1.0,
+      "junioer_accountant": 1.0,
+      "contdoller": 1.0,
+      "junior_accountent": 1.0,
+      "manag3r": 1.0,
+      "senio4r_accountant": 1.0,
+      "junior_accountaht": 1.0,
+      "s3enior_accountant": 1.0,
+      "automated_wsystem": 1.0,
+      "ajutomated_system": 1.0,
+      "jubnior_accountant": 1.0,
+      "junior_accountqant": 1.0,
+      "congroller": 1.0,
+      "seni9or_accountant": 1.0,
+      "juniodr_accountant": 1.0,
+      "vontroller": 1.0,
+      "junior_saccountant": 1.0,
+      "junior_accountwant": 1.0,
+      "dsenior_accountant": 1.0,
+      "senior_accountamnt": 1.0,
+      "juniofr_accountant": 1.0,
+      "junior_accojntant": 1.0,
+      "senier_accountant": 1.0,
+      "junior_waccountant": 1.0,
+      "senior_accountang": 1.0,
+      "zenior_accountant": 1.0,
+      "xenior_accountant": 1.0,
+      "automa6ted_system": 1.0,
+      "controlled": 1.0,
+      "senior_accountan5t": 1.0,
+      "senior_acckountant": 1.0,
+      "junion_accountant": 1.0,
+      "junior_accountany": 1.0,
+      "senior_accountaant": 1.0,
+      "senior_accountent": 1.0,
+      "mqanager": 1.0,
+      "autkomated_system": 1.0,
+      "junior_avcountant": 1.0,
+      "sen8or_accounant": 1.0,
+      "junior_acco7ntant": 1.0,
+      "autommated_esystem": 1.0,
+      "mwanager": 1.0,
+      "controlpler": 1.0,
+      "junior_aceountant": 1.0,
+      "mansager": 1.0,
+      "senio5_accountant": 1.0,
+      "sanior_accountant": 1.0,
+      "senior_cacontant": 1.0,
+      "automated_sysgtem": 1.0,
+      "vcontroller": 1.0,
+      "automa5ted_system": 1.0,
+      "jnior_accpuntant": 1.0,
+      "cobntroller": 1.0,
+      "junior_accoiuntant": 1.0,
+      "automatefd_system": 1.0,
+      "senior_accojuntant": 1.0,
+      "conftroller": 1.0,
+      "junior_accauntant": 1.0,
+      "automayted_system": 1.0,
+      "senier_accounTant": 1.0,
+      "junior_accoyuNtant": 1.0,
+      "automated_sysftem": 1.0,
+      "senior_accounant": 1.0,
+      "senikr_accountant": 1.0,
+      "junikr_accountant": 1.0,
+      "junior_aocOuntant": 1.0,
+      "juhior_accountant": 1.0,
+      "automa+ed_system": 1.0,
+      "senior_accountdnt": 1.0,
+      "cpontroller": 1.0,
+      "comtroller": 1.0,
+      "augomated_system": 1.0,
+      "jjnior_accountant": 1.0,
+      "managerr": 1.0,
+      "junior_accoun+ant": 1.0,
+      "junior_accountannt": 1.0,
+      "mamager": 1.0,
+      "senior_accoubtant": 1.0,
+      "seniOr_accountant": 1.0,
+      "xcontroller": 1.0,
+      "seniro_accountznt": 1.0,
+      "junior_accountaant": 1.0,
+      "senior_aCcountant": 1.0,
+      "senior_accountAnt": 1.0,
+      "junoor_accountant": 1.0,
+      "senior_a(countant": 1.0,
+      "junior_acvountant": 1.0,
+      "jnior_accountant": 1.0,
+      "controlller": 1.0,
+      "senior_acciountant": 1.0,
+      "srnior_accountant": 1.0,
+      "automated_sysgem": 1.0,
+      "senkor_accountant": 1.0,
+      "managEr": 1.0,
+      "qutomated_system": 1.0,
+      "junior_accountanyt": 1.0,
+      "sonior_accountant": 1.0,
+      "contropller": 1.0,
+      "senior_accountanrt": 1.0,
+      "junior_accounrant": 1.0,
+      "junior_accountsant": 1.0,
+      "contdroller": 1.0,
+      "zsenior_accountant": 1.0,
+      "junior_wccounant": 1.0,
+      "senior_accoumtant": 1.0,
+      "cintroller": 1.0,
+      "junior_axccountant": 1.0,
+      "senior_acco8ntant": 1.0,
+      "senior_accountanl": 1.0,
+      "automwted_eystem": 1.0,
+      "j8unior_accountant": 1.0,
+      "sejnior_accountant": 1.0,
+      "senor_accountant": 1.0,
+      "automated_systcm": 1.0,
+      "msanager": 1.0,
+      "senior_acclountant": 1.0,
+      "automated_systwm": 1.0,
+      "outomated_aystem": 1.0,
+      "junoir_axcountant": 1.0,
+      "junior_avccountant": 1.0,
+      "controllrr": 1.0,
+      "denior_accountant": 1.0,
+      "automatded_system": 1.0,
+      "senioR_accountant": 1.0,
+      "automzated_system": 1.0,
+      "contokler": 1.0,
+      "jjunior_accountant": 1.0,
+      "junior_acconu5tant": 1.0,
+      "ijunior_accountant": 1.0,
+      "junior_accountanT": 1.0,
+      "junior_accountamt": 1.0,
+      "senior_accojntant": 1.0,
+      "j7nior_accountant": 1.0,
+      "antomated_system": 1.0,
+      "senior_acc9ountant": 1.0,
+      "seNior_accountant": 1.0,
+      "senior_accouuntant": 1.0,
+      "junior_afcountant": 1.0,
+      "senior_accauntant": 1.0,
+      "junior_accoumtant": 1.0,
+      "senior_afccountant": 1.0,
+      "senior_accountsnt": 1.0,
+      "junior_acxountant": 1.0,
+      "junior_accounytant": 1.0,
+      "automatad_system": 1.0,
+      "automatee_system": 1.0,
+      "confroller": 1.0,
+      "automdted_system": 1.0,
+      "manageR": 1.0,
+      "automated_sysfem": 1.0,
+      "jinior_accountant": 1.0,
+      "controll4r": 1.0,
+      "anager": 1.0,
+      "automated_systrm": 1.0,
+      "automatec_system": 1.0,
+      "autokmated_system": 1.0,
+      "junikor_accountant": 1.0,
+      "jwnior_accountant": 1.0,
+      "5enior_accountant": 1.0,
+      "senior_accouhntant": 1.0,
+      "senion_acfountant": 1.0,
+      "senior_accountabt": 1.0,
+      "automatted_5ystem": 1.0,
+      "junior_acountnat": 1.0,
+      "junio4_accountant": 1.0,
+      "srnikr_accountant": 1.0,
+      "junuor_accountant": 1.0,
+      "kunior_accountant": 1.0,
+      "manwager": 1.0,
+      "dcontroller": 1.0,
+      "autamated_system": 1.0,
+      "manafer": 1.0,
+      "junio_accountant": 1.0,
+      "junior_accoujtant": 1.0,
+      "senior_accovntant": 1.0,
+      "junior_wccountant": 1.0,
+      "senior_ac(ountant": 1.0,
+      "controlle4": 1.0,
+      "automaTed_systemm": 1.0,
+      "automated_sgystem": 1.0,
+      "automatwed_system": 1.0,
+      "automated_s6stem": 1.0,
+      "junior_accountznt": 1.0,
+      "srnior_accoutant": 1.0,
+      "junior_acco8ntant": 1.0,
+      "controlletr": 1.0,
+      "junIor_accountant": 1.0,
+      "senior_accountzat": 1.0,
+      "senior_occountant": 1.0,
+      "senior_accoUntant": 1.0,
+      "awtomated_system": 1.0,
+      "senlor_accountant": 1.0,
+      "junior_acc0ountant": 1.0,
+      "senior_accoungant": 1.0,
+      "unior_accOuntant": 1.0,
+      "seniir_accountant": 1.0,
+      "senior_accountwant": 1.0,
+      "au5omated_system": 1.0,
+      "automafted_system": 1.0,
+      "junior_accluntant": 1.0,
+      "auyomated_system": 1.0,
+      "senior_qccountant": 1.0,
+      "junior_accojtnant": 1.0,
+      "manwger": 1.0,
+      "automated_systenm": 1.0,
+      "junior_acc9untant": 1.0,
+      "automated_systekm": 1.0,
+      "scnior_accountant": 1.0,
+      "senior_accountanyt": 1.0,
+      "contrlller": 1.0,
+      "controllwr": 1.0,
+      "junior_accountatn": 1.0,
+      "junior_accointant": 1.0,
+      "senior_accountont": 1.0,
+      "fontroller": 1.0,
+      "senior_avcountant": 1.0,
+      "automated_shstem": 1.0,
+      "iuinor_accountant": 1.0,
+      "junjor_accountant": 1.0,
+      "automated_sstyem": 1.0,
+      "automated_dystem": 1.0,
+      "kjunior_accountant": 1.0,
+      "managr": 1.0,
+      "junior_accoujntant": 1.0,
+      "junior_acco7untant": 1.0,
+      "junior_accounttant": 1.0,
+      "(ontroller": 1.0,
+      "junlor_accountant": 1.0,
+      "autorated_system": 1.0,
+      "junior_accountanr": 1.0,
+      "junior_ac(ountant": 1.0,
+      "autojaated_system": 1.0,
+      "sautomated_system": 1.0,
+      "control1er": 1.0,
+      "automated_shystem": 1.0,
+      "controlelr": 1.0,
+      "automated_systrem": 1.0,
+      "controllrer": 1.0,
+      "senior_acckunant": 1.0,
+      "juniro_accountant": 1.0,
+      "juior_accountant": 1.0,
+      "senior_caocuntant": 1.0,
+      "controllor": 1.0,
+      "manaqer": 1.0,
+      "senuior_accountant": 1.0,
+      "senior_acco8untant": 1.0,
+      "automoted_system": 1.0,
+      "njunior_accountant": 1.0,
+      "juniir_accountant": 1.0,
+      "automated_sydtem": 1.0,
+      "manage4": 1.0,
+      "junior_accoun6tant": 1.0,
+      "junior_acdountant": 1.0,
+      "mannager": 1.0,
+      "senior_acconntant": 1.0,
+      "esnior_accounntant": 1.0,
+      "seenior_accountant": 1.0,
+      "junior_accounant": 1.0,
+      "senior_cacountant": 1.0,
+      "junior_accouhntant": 1.0,
+      "automated_zsystem": 1.0,
+      "Manager": 1.0,
+      "munior_accountant": 1.0,
+      "junior_accoubntant": 1.0,
+      "senior_axcountant": 1.0,
+      "sennior_accountant": 1.0,
+      "senior_accountany": 1.0,
+      "junior_accpuntant": 1.0,
+      "a8tomated_system": 1.0,
+      "cojtroller": 1.0,
+      "senior_cacluntant": 1.0,
+      "au6tomated_system": 1.0,
+      "junior_accountaNt": 1.0,
+      "mmanager": 1.0,
+      "senioe_accountant": 1.0,
+      "aitomated_system": 1.0,
+      "ckntroller": 1.0,
+      "autonated_system": 1.0,
+      "automated_sywtem": 1.0,
+      "controkler": 1.0,
+      "autojmated_system": 1.0,
+      "aytomated_system": 1.0,
+      "junior_accoyuntant": 1.0,
+      "senior_acc0ountant": 1.0,
+      "junio4r_accountant": 1.0,
+      "au5tomated_system": 1.0,
+      "junior_accounrtant": 1.0,
+      "managed": 1.0,
+      "auftomated_system": 1.0,
+      "senior_cac9ountant": 1.0,
+      "seniorr_accountang": 1.0,
+      "controlle5r": 1.0,
+      "junior_ccountan": 1.0,
+      "controkller": 1.0,
+      "automated_dsystem": 1.0,
+      "controlper": 1.0,
+      "sebior_accountant": 1.0,
+      "junior_aecountant": 1.0,
+      "mznager": 1.0,
+      "manaer": 1.0,
+      "senior_accoyntant": 1.0,
+      "automatesd_system": 1.0,
+      "automatef_system": 1.0,
+      "controlleer": 1.0,
+      "junior_acfountant": 1.0,
+      "c9ntroller": 1.0,
+      "junior_accountqnt": 1.0,
+      "automated_systsm": 1.0,
+      "junior_accountsnt": 1.0,
+      "junior_acccountant": 1.0,
+      "senior_accoun6ant": 1.0,
+      "senior_adccountant": 1.0,
+      "xontroller": 1.0,
+      "auttpmated_system": 1.0,
+      "senioor_accountant": 1.0,
+      "autkmated_system": 1.0,
+      "conroller": 1.0,
+      "contrroller": 1.0,
+      "controloer": 1.0,
+      "automated_syst3em": 1.0,
+      "nanager": 1.0,
+      "junipor_accountant": 1.0,
+      "senior_acdountant": 1.0,
+      "Senior_accountant": 1.0,
+      "hunior_acCountant": 1.0,
+      "cpntroller": 1.0,
+      "unior_accountant": 1.0,
+      "automated_systom": 1.0,
+      "automated_syastem": 1.0,
+      "a7tomated_system": 1.0,
+      "auromated_system": 1.0,
+      "senior_accoiuntant": 1.0,
+      "automated_syxtem": 1.0,
+      "au+omated_system": 1.0,
+      "con6roller": 1.0,
+      "junior_accountanrt": 1.0,
+      "seniodr_accountant": 1.0,
+      "outomated_system": 1.0,
+      "managre": 1.0,
+      "junior_aCcountant": 1.0,
+      "autlomated_system": 1.0,
+      "mabager": 1.0,
+      "automated_sys6tem": 1.0,
+      "automated_syster": 1.0,
+      "junior_accowntant": 1.0,
+      "sehoor_accountant": 1.0,
+      "senior_accoyuntant": 1.0,
+      "junior_accohuntant": 1.0,
+      "senior_accounyant": 1.0,
+      "mandger": 1.0,
+      "eutomated_system": 1.0,
+      "senio5r_accountant": 1.0,
+      "jmanager": 1.0,
+      "junior_acclountant": 1.0,
+      "Junior_accountnat": 1.0,
+      "wsenior_accountant": 1.0,
+      "nmanager": 1.0,
+      "automated_sysyem": 1.0,
+      "c9ontroller": 1.0,
+      "junior_accountanl": 1.0,
+      "controll3r": 1.0,
+      "automated_sys+em": 1.0,
+      "senior_acoountant": 1.0,
+      "jubior_accountant": 1.0,
+      "juniOr_accountant": 1.0,
+      "junnior_accountant": 1.0,
+      "sehior_accountant": 1.0,
+      "managef": 1.0,
+      "senior_aaccountant": 1.0,
+      "junior_accoumntant": 1.0,
+      "senior_acfountant": 1.0,
+      "autonmated_system": 1.0,
+      "manaver": 1.0,
+      "junior_accounntant": 1.0,
+      "juniorr_accountant": 1.0,
+      "junior_aocountant": 1.0,
+      "junior_accuntant": 1.0,
+      "controoler": 1.0,
+      "controllef": 1.0,
+      "junoir_accountant": 1.0,
+      "junkor_accountant": 1.0,
+      "manayer": 1.0,
+      "junior_accountajnt": 1.0,
+      "senior_axccountaNt": 1.0,
+      "xsenior_accountant": 1.0,
+      "junior_accountanf": 1.0,
+      "senior_accountabnt": 1.0,
+      "senior_zaccountant": 1.0,
+      "junior_aaccountant": 1.0,
+      "contr0ller": 1.0,
+      "swnior_accountant": 1.0,
+      "maanager": 1.0,
+      "jumior_accountant": 1.0,
+      "senioer_accountant": 1.0,
+      "mnager": 1.0,
+      "junior_dccountant": 1.0,
+      "controll3er": 1.0,
+      "junior_accounTant": 1.0,
+      "junior_accoungant": 1.0,
+      "a7utomated_system": 1.0,
+      "sen9or_accountant": 1.0,
+      "conrtoller": 1.0,
+      "junior_acceuntant": 1.0,
+      "jun8ior_accountant": 1.0,
+      "ranager": 1.0,
+      "mamnager": 1.0,
+      "Junior_accountant": 1.0,
+      "controllee": 1.0,
+      "junior_acdcountant": 1.0,
+      "junior_accoun6ant": 1.0,
+      "senior_sccountant": 1.0,
+      "a7tomated_systme": 1.0,
+      "kmanager": 1.0,
+      "maanger": 1.0,
+      "manage5": 1.0,
+      "junior_acvcountant": 1.0,
+      "jnnior_accountant": 1.0,
+      "junior_acciountant": 1.0,
+      "senilor_accountant": 1.0,
+      "ahtomated_system": 1.0,
+      "autpmated_system": 1.0,
+      "contropler": 1.0,
+      "senior_accourtant": 1.0,
+      "junior_accountahnt": 1.0,
+      "con5roller": 1.0,
+      "senior_accountajnt": 1.0,
+      "junior_occountant": 1.0,
+      "junior_accoyntant": 1.0,
+      "automatrd_system": 1.0,
+      "automated_ysztem": 1.0,
+      "seni0or_accountant": 1.0,
+      "automzted_system": 1.0,
+      "dontroller": 1.0,
+      "coNtroller": 1.0,
+      "junior_eccountant": 1.0,
+      "senior_Accountant": 1.0,
+      "junior_accountat": 1.0,
+      "oontroller": 1.0,
+      "junior_acoountant": 1.0,
+      "automated_s6ystem": 1.0,
+      "junior_accountan6t": 1.0,
+      "controllsr": 1.0,
+      "cnotroller": 1.0,
+      "controll4er": 1.0,
+      "junior_accontant": 1.0,
+      "senior_accountaht": 1.0,
+      "junior_accountzant": 1.0,
+      "maNager": 1.0,
+      "junior_accountang": 1.0,
+      "automqated_system": 1.0,
+      "juni0or_accountant": 1.0,
+      "jurior_accountant": 1.0,
+      "junior_adcountant": 1.0,
+      "automa5ed_system": 1.0,
+      "junior_accountan+": 1.0,
+      "managger": 1.0,
+      "senior_saccountant": 1.0,
+      "senior_accountwnt": 1.0,
+      "junior_accountan6": 1.0,
+      "senior_accohuntant": 1.0,
+      "sdnior_accountant": 1.0,
+      "jUnior_accountant": 1.0,
+      "conytroller": 1.0,
+      "jun8or_accountant": 1.0,
+      "jumnior_accountant": 1.0,
+      "senior_accoun6tant": 1.0,
+      "sen9ior_accountant": 1.0,
+      "automated_syxstem": 1.0,
+      "juniod_accountant": 1.0,
+      "senior_accontant": 1.0,
+      "junuior_accountant": 1.0,
+      "automated_sustem": 1.0,
+      "junior_accountabt": 1.0,
+      "senior_accoumntant": 1.0,
+      "junior_acckuntant": 1.0,
+      "senior_acvcountant": 1.0,
+      "manaager": 1.0,
+      "automated_xsystem": 1.0,
+      "automateo_system": 1.0,
+      "junior_accountAnt": 1.0,
+      "srenior_accountant": 1.0,
+      "jun1or_accountant": 1.0,
+      "automated_systdem": 1.0,
+      "junioe_accountant": 1.0,
+      "j7unior_accountant": 1.0,
+      "aenior_accountant": 1.0,
+      "junior_accOuntant": 1.0,
+      "manageer": 1.0,
+      "senior_axccountant": 1.0,
+      "automated_syst4m": 1.0,
+      "senior_waccountant": 1.0,
+      "jiunior_accountant": 1.0,
+      "mdnager": 1.0,
+      "eontroller": 1.0,
+      "senior_accoun+ant": 1.0,
+      "senior_accountanft": 1.0,
+      "senior_accowntant": 1.0,
+      "cont4oller": 1.0,
+      "uatomated_aystem": 1.0,
+      "managder": 1.0,
+      "automated_asystem": 1.0,
+      "managdr": 1.0,
+      "autorated_sytem": 1.0,
+      "Automated_systtem": 1.0,
+      "automated_aystem": 1.0,
+      "amanger": 1.0,
+      "senior_acc9untant": 1.0,
+      "contrpller": 1.0,
+      "comntroller": 1.0,
+      "junior_acoounrant": 1.0,
+      "mzanager": 1.0,
+      "conrroller": 1.0,
+      "contrloller": 1.0,
+      "controlkler": 1.0,
+      "junior_a(countant": 1.0,
+      "cobtroller": 1.0,
+      "senior_accpountant": 1.0,
+      "seniod_accountant": 1.0,
+      "sen8or_accountant": 1.0,
+      "manger": 1.0,
+      "controllen": 1.0,
+      "senior_accounntant": 1.0,
+      "ujnior_acc0untant": 1.0,
+      "junier_accountant": 1.0,
+      "automated_systsem": 1.0,
+      "junior_accountantt": 1.0,
+      "senior_eccountant": 1.0,
+      "jhnior_accountant": 1.0,
+      "con6troller": 1.0,
+      "junior_accovntant": 1.0,
+      "automated_sjstem": 1.0,
+      "controlleR": 1.0,
+      "junior_accoun5ant": 1.0,
+      "s4nior_accountant": 1.0,
+      "junior_accounatnt": 1.0,
+      "aulomated_system": 1.0,
+      "wenior_accountant": 1.0,
+      "cntroller": 1.0,
+      "senior_avccountant": 1.0,
+      "senior_qaccountant": 1.0,
+      "centroller": 1.0,
+      "senior_acxcountant": 1.0,
+      "junior_sccountant": 1.0,
+      "junior_accounfant": 1.0,
+      "junior_qaccountant": 1.0,
+      "automatsed_system": 1.0,
+      "controlle5": 1.0,
+      "ayutomated_system": 1.0,
+      "aiutomated_system": 1.0,
+      "junior_accojuntant": 1.0,
+      "s4enior_accountant": 1.0,
+      "junior_accuontant": 1.0,
+      "junior_acc9ountant": 1.0,
+      "junior_accountangt": 1.0,
+      "semnior_accountant": 1.0,
+      "junio5_accountant": 1.0,
+      "junior_accountajt": 1.0,
+      "junior_accuontnat": 1.0,
+      "junilor_accounant": 1.0,
+      "utaomated_system": 1.0,
+      "automated_sysrem": 1.0,
+      "manAger": 1.0,
+      "sen8ior_accountant": 1.0,
+      "hjunior_accountant": 1.0,
+      "juni9r_accountant": 1.0,
+      "automated_stystem": 1.0,
+      "senior_acco7untant": 1.0,
+      "mansger": 1.0,
+      "senior_acciuntant": 1.0,
+      "managrer": 1.0,
+      "manzger": 1.0,
+      "automat3ed_system": 1.0,
+      "manatger": 1.0,
+      "manaher": 1.0,
+      "managcr": 1.0,
+      "junior_accountsnT": 1.0,
+      "senior_accoountant": 1.0,
+      "auytomated_system": 1.0,
+      "senior_accountantt": 1.0,
+      "esenior_accountant": 1.0,
+      "maager": 1.0,
+      "jun9or_accountant": 1.0,
+      "conttroller": 1.0,
+      "senir_accountanr": 1.0,
+      "cotnroller": 1.0,
+      "senior_accountangt": 1.0,
+      "conyroller": 1.0,
+      "junior_accountan": 1.0,
+      "janager": 1.0,
+      "senior_accpuntant": 1.0,
+      "automated_esystem": 1.0,
+      "jujnior_accountant": 1.0,
+      "sebnior_accountant": 1.0,
+      "automated_systam": 1.0,
+      "senuor_accountant": 1.0,
+      "automated_xystem": 1.0,
+      "senior_accointant": 1.0,
+      "augtomated_system": 1.0,
+      "junior_accouhtant": 1.0,
+      "senior_afcountant": 1.0,
+      "junior_acxcountant": 1.0,
+      "jujior_accountant": 1.0,
+      "senior_accountsant": 1.0,
+      "senior_acco7ntant": 1.0,
+      "wautomated_system": 1.0,
+      "controllre": 1.0,
+      "juniotr_accountant": 1.0,
+      "senior_accoubntant": 1.0,
+      "manaegr": 1.0,
+      "iunior_accountant": 1.0,
+      "juunior_accountant": 1.0,
+      "hunior_accountant": 1.0,
+      "senjior_accountant": 1.0,
+      "automated_ststem": 1.0,
+      "senilr_accountant": 1.0,
+      "senior_accountanT": 1.0,
+      "semior_accountant": 1.0,
+      "jynior_accountant": 1.0,
+      "conlroller": 1.0,
+      "kanager": 1.0,
+      "senior_accohntant": 1.0,
+      "automated_syslem": 1.0,
+      "j8nior_accountant": 1.0,
+      "automarted_system": 1.0,
+      "junior_afccountant": 1.0,
+      "automatecd_system": 1.0,
+      "con5troller": 1.0,
+      "senior_accounrant": 1.0,
+      "automated_syst4em": 1.0,
+      "ciontroller": 1.0,
+      "swenior_accountant": 1.0,
+      "augtomated_syxtem": 1.0,
+      "senior_aocountant": 1.0,
+      "mahnager": 1.0,
+      "automated_sysym": 1.0,
+      "msnager": 1.0,
+      "controlLer": 1.0,
+      "junior_acontant": 1.0,
+      "conTroller": 1.0,
+      "senior_accouhtant": 1.0,
+      "senior_accluntant": 1.0,
+      "juniof_accountant": 1.0,
+      "senior_accounfant": 1.0,
+      "automatwd_system": 1.0,
+      "automated_systdm": 1.0,
+      "senior_accountqant": 1.0,
+      "senior_acckuntant": 1.0,
+      "senjor_accountant": 1.0,
+      "cOntroller": 1.0,
+      "controloler": 1.0,
+      "aut9omated_system": 1.0,
+      "senior_accounTant": 1.0,
+      "senior_accounrtant": 1.0,
+      "s3nior_accountant": 1.0,
+      "senior_acxountant": 1.0,
+      "mabnager": 1.0,
+      "senior_accountnat": 1.0,
+      "junior_accountanft": 1.0,
+      "senior_acvountant": 1.0,
+      "junior_Accountant": 1.0,
+      "seniof_accountant": 1.0,
+      "manabger": 1.0,
+      "automated_systwem": 1.0,
+      "junior_accountan5": 1.0,
+      "senior_accountahnt": 1.0,
+      "junior_accountart": 1.0,
+      "mahager": 1.0,
+      "managser": 1.0,
+      "sehnior_accountant": 1.0,
+      "junIor_acxountant": 1.0,
+      "senior_accoujtant": 1.0,
+      "junioR_accountant": 1.0,
+      "automatex_system": 1.0,
+      "junipr_accountant": 1.0,
+      "avtomated_system": 1.0,
+      "junior_acfcountant": 1.0,
+      "junior_accoubtant": 1.0,
+      "senio4_accountant": 1.0,
+      "junio4r_accountaant": 1.0,
+      "junior_accoonutant": 1.0,
+      "junilr_accountant": 1.0,
+      "senior_accountzant": 1.0,
+      "au6omated_system": 1.0,
+      "controllerr": 1.0,
+      "manqger": 1.0,
+      "junior_accountont": 1.0,
+      "sEnior_accounant": 1.0,
+      "automated_sywstem": 1.0,
+      "junior_acccoujtant": 1.0,
+      "eenior_accountant": 1.0,
+      "automsated_system": 1.0,
+      "senion_accountant": 1.0,
+      "junior_acc0untant": 1.0,
+      "senior_acfcountant": 1.0,
+      "manaaer": 1.0,
+      "managrr": 1.0,
+      "managet": 1.0,
+      "senior_accounftant": 1.0,
+      "senior_cacouNtant": 1.0,
+      "junior_acciuntant": 1.0,
+      "aut0omated_system": 1.0,
+      "senipor_accountant": 1.0,
+      "senior_accountan6t": 1.0,
+      "senior_accountajt": 1.0
+    }
+  },
+  "axis_3_label_quality": {
+    "fraud_or_anomaly_doc_count": 2654,
+    "fraud_or_anomaly_rate": 0.008315,
+    "user_positive_rate_bins": {
+      "0_clean": 1142,
+      "1_low_<=5%": 101,
+      "2_med_<=25%": 122
+    },
+    "fraud_contamination_per_user": 124,
+    "fraud_user_overlap_rate": 0.090842
+  },
+  "axis_4_amount_geometry": {
+    "first_digit_raw": {
+      "1": 340200,
+      "2": 194906,
+      "3": 138630,
+      "4": 106177,
+      "5": 86537,
+      "6": 73193,
+      "7": 61739,
+      "8": 54917,
+      "9": 49732
+    },
+    "benford_mad": 0.001575,
+    "benford_expected": {
+      "1": 0.30103,
+      "2": 0.176091,
+      "3": 0.124939,
+      "4": 0.09691,
+      "5": 0.079181,
+      "6": 0.066947,
+      "7": 0.057992,
+      "8": 0.051153,
+      "9": 0.045757
+    },
+    "log10_amount_bins": {
+      "0": 2365,
+      "1": 5797,
+      "2": 66907,
+      "3": 107575,
+      "4": 210862,
+      "5": 311336,
+      "6": 262175,
+      "7": 113581,
+      "8": 23079,
+      "9": 2255,
+      "10": 95,
+      "11": 4
+    },
+    "round_number_rate": 0.139183,
+    "amount_median_by_label": {
+      "positive": 560413.5,
+      "negative": 335399.0
+    }
+  },
+  "axis_5_drift_baseline": {
+    "monthly_mean_amount": {
+      "1": 18522213.86,
+      "2": 23008620.66,
+      "3": 12637179.05,
+      "4": 15923301.84,
+      "5": 18916948.69,
+      "6": 14626962.39,
+      "7": 29318387.2,
+      "8": 17193155.6,
+      "9": 14471474.16,
+      "10": 15223158.91,
+      "11": 15201845.78,
+      "12": 16392309.42
+    },
+    "monthly_std_amount": {
+      "1": 313256144.51,
+      "2": 793456594.88,
+      "3": 106082690.64,
+      "4": 331392727.81,
+      "5": 475695016.52,
+      "6": 150257677.78,
+      "7": 1139238947.15,
+      "8": 266436992.24,
+      "9": 141211597.45,
+      "10": 154732609.28,
+      "11": 184748790.67,
+      "12": 199443005.92
+    },
+    "company_doctype_share": {
+      "C001": {
+        "SA": 255332,
+        "DR": 141085,
+        "KR": 136865,
+        "KZ": 50984,
+        "HR": 47579,
+        "AA": 46510,
+        "null": 13327,
+        "IC": 681,
+        "WE": 40,
+        "WL": 18,
+        "DZ": 16
+      },
+      "C002": {
+        "SA": 76176,
+        "DR": 46310,
+        "KR": 39987,
+        "HR": 14436,
+        "KZ": 13233,
+        "AA": 11353,
+        "null": 3494,
+        "IC": 363,
+        "WE": 38,
+        "DZ": 16,
+        "WL": 14
+      },
+      "C003": {
+        "SA": 73668,
+        "KR": 44917,
+        "DR": 35779,
+        "HR": 22512,
+        "AA": 15397,
+        "KZ": 11739,
+        "null": 3879,
+        "IC": 322,
+        "WE": 40,
+        "DZ": 18,
+        "WL": 14
+      }
+    },
+    "yearly_fraud_rate": {
+      "2022": 0.001261,
+      "2023": 0.00106,
+      "2024": 0.000995
+    }
+  },
+  "axis_6_sod_persona": {
+    "sod_violation_count": 10468,
+    "persona_sod_cross": {
+      "Senior_accountant": {
+        "reconciler_poster": 2
+      },
+      "amnager": {
+        "preparer_approver": 1
+      },
+      "autlomated_system": {
+        "preparer_approver": 1
+      },
+      "automAted_system": {
+        "preparer_approver": 1
+      },
+      "automaated_system": {
+        "preparer_approver": 1
+      },
+      "automaed_system": {
+        "payment_releaser": 1
+      },
+      "automatd_system": {
+        "master_data_maintainer": 1
+      },
+      "automated_sysfem": {
+        "master_data_maintainer": 1
+      },
+      "automated_sysstem": {
+        "preparer_approver": 1
+      },
+      "automated_syste": {
+        "preparer_approver": 1
+      },
+      "automated_system": {
+        "preparer_approver": 339,
+        "requester_approver": 144,
+        "payment_releaser": 85,
+        "journal_entry_poster": 80,
+        "master_data_maintainer": 61,
+        "reconciler_poster": 60,
+        "system_access_conflict": 30
+      },
+      "automated_systemm": {
+        "payment_releaser": 1,
+        "reconciler_poster": 1
+      },
+      "automated_systme": {
+        "payment_releaser": 1
+      },
+      "automated_systtem": {
+        "preparer_approver": 1
+      },
+      "automatted_system": {
+        "preparer_approver": 1
+      },
+      "automzted_system": {
+        "preparer_approver": 1
+      },
+      "auttomated_system": {
+        "reconciler_poster": 1
+      },
+      "c9ontroller": {
+        "preparer_approver": 1
+      },
+      "cOntroller": {
+        "preparer_approver": 1
+      },
+      "cnotroller": {
+        "preparer_approver": 1
+      },
+      "cntroller": {
+        "preparer_approver": 1
+      },
+      "cojtroller": {
+        "preparer_approver": 1
+      },
+      "con5roller": {
+        "preparer_approver": 2
+      },
+      "con6troller": {
+        "preparer_approver": 1
+      },
+      "conroller": {
+        "preparer_approver": 2
+      },
+      "contdroller": {
+        "preparer_approver": 1
+      },
+      "contfoller": {
+        "preparer_approver": 1
+      },
+      "contoller": {
+        "preparer_approver": 2,
+        "reconciler_poster": 1
+      },
+      "contorller": {
+        "preparer_approver": 3
+      },
+      "contr0ller": {
+        "preparer_approver": 1
+      },
+      "contrller": {
+        "preparer_approver": 1
+      },
+      "contrlller": {
+        "preparer_approver": 1
+      },
+      "contrloler": {
+        "preparer_approver": 1
+      },
+      "controLler": {
+        "preparer_approver": 1
+      },
+      "controlIer": {
+        "preparer_approver": 1
+      },
+      "controlelr": {
+        "preparer_approver": 2
+      },
+      "controler": {
+        "preparer_approver": 2,
+        "reconciler_poster": 1
+      },
+      "controll4r": {
+        "preparer_approver": 1
+      },
+      "controllEr": {
+        "preparer_approver": 2
+      },
+      "controlle4": {
+        "preparer_approver": 1
+      },
+      "controllee": {
+        "preparer_approver": 1
+      },
+      "controller": {
+        "preparer_approver": 3038,
+        "journal_entry_poster": 79,
+        "reconciler_poster": 79,
+        "payment_releaser": 16,
+        "master_data_maintainer": 5,
+        "requester_approver": 3
+      },
+      "controlller": {
+        "preparer_approver": 1
+      },
+      "controllr": {
+        "preparer_approver": 2
+      },
+      "controllre": {
+        "preparer_approver": 1
+      },
+      "controllsr": {
+        "preparer_approver": 1
+      },
+      "controloler": {
+        "preparer_approver": 1
+      },
+      "controlper": {
+        "preparer_approver": 1
+      },
+      "contropler": {
+        "preparer_approver": 1
+      },
+      "conttoller": {
+        "preparer_approver": 1
+      },
+      "conttroller": {
+        "preparer_approver": 2
+      },
+      "cotroller": {
+        "preparer_approver": 2
+      },
+      "dcontroller": {
+        "journal_entry_poster": 1
+      },
+      "enior_accountant": {
+        "system_access_conflict": 1
+      },
+      "jmanager": {
+        "system_access_conflict": 1
+      },
+      "jun9or_accountant": {
+        "preparer_approver": 1
+      },
+      "junior_Accountant": {
+        "preparer_approver": 1
+      },
+      "junior_accojntant": {
+        "preparer_approver": 1
+      },
+      "junior_accounTant": {
+        "preparer_approver": 1
+      },
+      "junior_accountanf": {
+        "preparer_approver": 1
+      },
+      "junior_accountannt": {
+        "requester_approver": 1
+      },
+      "junior_accountant": {
+        "preparer_approver": 387,
+        "requester_approver": 167,
+        "master_data_maintainer": 100,
+        "payment_releaser": 83,
+        "journal_entry_poster": 48,
+        "reconciler_poster": 47
+      },
+      "junior_accountatn": {
+        "payment_releaser": 1
+      },
+      "junior_accountont": {
+        "preparer_approver": 1
+      },
+      "junior_accountwnt": {
+        "requester_approver": 1,
+        "reconciler_poster": 1
+      },
+      "junior_afcountant": {
+        "preparer_approver": 1
+      },
+      "junior_aocountant": {
+        "preparer_approver": 1
+      },
+      "junior_sccountant": {
+        "requester_approver": 1
+      },
+      "junior_waccountant": {
+        "requester_approver": 1
+      },
+      "junnior_accountant": {
+        "preparer_approver": 1
+      },
+      "mabager": {
+        "preparer_approver": 1
+      },
+      "mabnager": {
+        "preparer_approver": 1
+      },
+      "manaber": {
+        "preparer_approver": 1
+      },
+      "manaegr": {
+        "preparer_approver": 1
+      },
+      "manaer": {
+        "preparer_approver": 1
+      },
+      "manafer": {
+        "preparer_approver": 1
+      },
+      "manag4r": {
+        "preparer_approver": 1
+      },
+      "managcr": {
+        "preparer_approver": 1
+      },
+      "manageR": {
+        "journal_entry_poster": 1
+      },
+      "managee": {
+        "preparer_approver": 1
+      },
+      "manager": {
+        "preparer_approver": 2925,
+        "system_access_conflict": 511,
+        "journal_entry_poster": 83,
+        "reconciler_poster": 77,
+        "payment_releaser": 7,
+        "requester_approver": 6,
+        "master_data_maintainer": 2
+      },
+      "managger": {
+        "preparer_approver": 1
+      },
+      "managr": {
+        "preparer_approver": 1,
+        "system_access_conflict": 1
+      },
+      "managrr": {
+        "preparer_approver": 1
+      },
+      "mangaer": {
+        "preparer_approver": 1
+      },
+      "manwger": {
+        "preparer_approver": 1
+      },
+      "mmanager": {
+        "preparer_approver": 2
+      },
+      "mnager": {
+        "preparer_approver": 1
+      },
+      "ocntroller": {
+        "preparer_approver": 1
+      },
+      "ontroller": {
+        "preparer_approver": 2
+      },
+      "seinor_accountant": {
+        "system_access_conflict": 1
+      },
+      "seior_accountant": {
+        "reconciler_poster": 1,
+        "journal_entry_poster": 1
+      },
+      "sen9ior_accountant": {
+        "system_access_conflict": 1
+      },
+      "seniior_accountant": {
+        "journal_entry_poster": 1
+      },
+      "senio_accountant": {
+        "reconciler_poster": 1
+      },
+      "senior_aCcountant": {
+        "reconciler_poster": 1,
+        "requester_approver": 1
+      },
+      "senior_accOuntant": {
+        "preparer_approver": 1
+      },
+      "senior_acccountant": {
+        "system_access_conflict": 2
+      },
+      "senior_acciountant": {
+        "system_access_conflict": 1
+      },
+      "senior_accointant": {
+        "preparer_approver": 1
+      },
+      "senior_accontant": {
+        "reconciler_poster": 1
+      },
+      "senior_acconutant": {
+        "preparer_approver": 1
+      },
+      "senior_accoumtant": {
+        "preparer_approver": 1
+      },
+      "senior_accoun5ant": {
+        "master_data_maintainer": 1
+      },
+      "senior_accountaant": {
+        "system_access_conflict": 1
+      },
+      "senior_accountajt": {
+        "payment_releaser": 1
+      },
+      "senior_accountamt": {
+        "system_access_conflict": 1
+      },
+      "senior_accountan5": {
+        "requester_approver": 1
+      },
+      "senior_accountan6": {
+        "payment_releaser": 1
+      },
+      "senior_accountant": {
+        "system_access_conflict": 885,
+        "preparer_approver": 482,
+        "payment_releaser": 129,
+        "requester_approver": 119,
+        "reconciler_poster": 104,
+        "journal_entry_poster": 95,
+        "master_data_maintainer": 43
+      },
+      "senior_accountat": {
+        "payment_releaser": 1
+      },
+      "senior_accountnat": {
+        "preparer_approver": 1
+      },
+      "senior_accoutnant": {
+        "system_access_conflict": 1
+      },
+      "senior_acountant": {
+        "system_access_conflict": 1
+      },
+      "senior_acvountant": {
+        "preparer_approver": 1
+      },
+      "senior_acxcountant": {
+        "master_data_maintainer": 1
+      },
+      "senior_afccountant": {
+        "payment_releaser": 1
+      },
+      "senior_eccountant": {
+        "system_access_conflict": 1
+      },
+      "senior_qaccountant": {
+        "payment_releaser": 1
+      },
+      "seniro_accountant": {
+        "preparer_approver": 1,
+        "system_access_conflict": 1
+      },
+      "senjior_accountant": {
+        "payment_releaser": 1
+      },
+      "senjor_accountant": {
+        "reconciler_poster": 1
+      },
+      "senoir_accountant": {
+        "system_access_conflict": 2
+      },
+      "senuor_accountant": {
+        "preparer_approver": 1
+      },
+      "serior_accountant": {
+        "preparer_approver": 1
+      },
+      "sneior_accountant": {
+        "system_access_conflict": 1
+      },
+      "snior_accountant": {
+        "preparer_approver": 1
+      },
+      "ssenior_accountant": {
+        "system_access_conflict": 1
+      },
+      "utomated_system": {
+        "payment_releaser": 1
+      },
+      "xenior_accountant": {
+        "system_access_conflict": 1
+      }
+    },
+    "self_approval_with_sod": 5819,
+    "top3_approver_share": 0.3794
+  },
+  "axis_7_data_quality": {
+    "total_rows": 1106142,
+    "null_rate_by_col": {
+      "document_id": 0.0,
+      "posting_date": 0.0,
+      "gl_account": 0.019971,
+      "debit_amount": 0.0,
+      "credit_amount": 0.0,
+      "created_by": 0.0,
+      "approved_by": 0.300135,
+      "fiscal_year": 0.0,
+      "business_process": 0.0,
+      "user_persona": 0.0,
+      "source": 0.0,
+      "document_type": 0.018714
+    },
+    "full_duplicate_rows": 0,
+    "docs_with_gap_in_line_number": 0,
+    "gl_account_digit_variance": {
+      "4": 178348,
+      "6": 905703
+    }
+  },
+  "axis_8_fraud_signature": {
+    "fraud_by_hour": {
+      "DuplicatePayment": {
+        "10": 7,
+        "16": 5,
+        "14": 5,
+        "8": 5,
+        "15": 4,
+        "9": 4,
+        "11": 3,
+        "4": 2,
+        "3": 1,
+        "13": 1,
+        "12": 1,
+        "20": 1,
+        "0": 1,
+        "19": 1,
+        "2": 1,
+        "5": 1,
+        "17": 1
+      },
+      "ExceededApprovalLimit": {
+        "20": 1,
+        "11": 1,
+        "15": 1,
+        "3": 1,
+        "14": 1
+      },
+      "ExpenseCapitalization": {
+        "16": 6,
+        "9": 6,
+        "17": 3,
+        "19": 3,
+        "8": 3,
+        "18": 2,
+        "10": 2,
+        "13": 2,
+        "14": 2,
+        "11": 1,
+        "5": 1,
+        "4": 1,
+        "15": 1,
+        "22": 1,
+        "21": 1,
+        "1": 1,
+        "20": 1
+      },
+      "FictitiousEntry": {
+        "10": 1,
+        "16": 1
+      },
+      "FictitiousTransaction": {
+        "13": 9,
+        "14": 8,
+        "9": 7,
+        "17": 5,
+        "15": 5,
+        "16": 5,
+        "10": 4,
+        "18": 4,
+        "19": 2,
+        "8": 2,
+        "11": 2,
+        "12": 1,
+        "5": 1
+      },
+      "FictitiousVendor": {
+        "9": 1
+      },
+      "ImproperCapitalization": {
+        "14": 1,
+        "8": 1
+      },
+      "JustBelowThreshold": {
+        "17": 2,
+        "9": 2,
+        "8": 1,
+        "13": 1,
+        "15": 1,
+        "10": 1,
+        "14": 1
+      },
+      "RevenueManipulation": {
+        "9": 17,
+        "16": 10,
+        "11": 9,
+        "17": 9,
+        "19": 8,
+        "10": 8,
+        "15": 5,
+        "8": 5,
+        "14": 5,
+        "13": 3,
+        "18": 2,
+        "20": 2,
+        "23": 1,
+        "2": 1,
+        "21": 1
+      },
+      "RoundDollarManipulation": {
+        "8": 1,
+        "20": 1,
+        "15": 1,
+        "9": 1,
+        "13": 1,
+        "19": 1,
+        "7": 1,
+        "10": 1
+      },
+      "SegregationOfDutiesViolation": {
+        "13": 1,
+        "12": 1
+      },
+      "SplitTransaction": {
+        "9": 4,
+        "18": 4,
+        "10": 4,
+        "16": 3,
+        "13": 3,
+        "15": 3,
+        "17": 3,
+        "1": 1,
+        "8": 1,
+        "19": 1,
+        "14": 1,
+        "11": 1
+      },
+      "SuspenseAccountAbuse": {
+        "15": 4,
+        "17": 3,
+        "16": 3,
+        "9": 2,
+        "13": 2,
+        "19": 1
+      },
+      "TimingAnomaly": {
+        "10": 5,
+        "16": 3,
+        "11": 2,
+        "14": 2,
+        "13": 1,
+        "5": 1,
+        "9": 1,
+        "4": 1,
+        "6": 1,
+        "15": 1,
+        "8": 1,
+        "19": 1
+      },
+      "UnauthorizedAccess": {
+        "9": 6,
+        "11": 4,
+        "10": 4,
+        "16": 3,
+        "19": 3,
+        "18": 3,
+        "8": 3,
+        "17": 2,
+        "13": 2,
+        "14": 2,
+        "15": 2,
+        "23": 1,
+        "7": 1,
+        "12": 1,
+        "3": 1
+      }
+    },
+    "fraud_median_amount": {
+      "ExceededApprovalLimit": 1243381983.0,
+      "JustBelowThreshold": 81764482.0,
+      "RoundDollarManipulation": 50000000.0,
+      "SegregationOfDutiesViolation": 8131850.5,
+      "TimingAnomaly": 1885920.0,
+      "FictitiousEntry": 1850044.5,
+      "ImproperCapitalization": 1425301.5,
+      "SuspenseAccountAbuse": 658900.0,
+      "RevenueManipulation": 451600.0,
+      "ExpenseCapitalization": 440381.5,
+      "FictitiousTransaction": 335000.0,
+      "FictitiousVendor": 245375.0,
+      "DuplicatePayment": 113964.5,
+      "UnauthorizedAccess": 65697.0,
+      "SplitTransaction": 37243.0
+    },
+    "fraud_month_concentration": {
+      "DuplicatePayment": {
+        "12": 9,
+        "6": 6,
+        "2": 5,
+        "9": 4,
+        "7": 4,
+        "8": 4,
+        "3": 3,
+        "4": 3,
+        "1": 2,
+        "11": 2,
+        "10": 1,
+        "5": 1
+      },
+      "ExceededApprovalLimit": {
+        "12": 2,
+        "6": 1,
+        "3": 1,
+        "1": 1
+      },
+      "ExpenseCapitalization": {
+        "12": 5,
+        "7": 5,
+        "9": 5,
+        "2": 3,
+        "4": 3,
+        "5": 3,
+        "6": 3,
+        "10": 2,
+        "11": 2,
+        "8": 2,
+        "1": 2,
+        "3": 2
+      },
+      "FictitiousEntry": {
+        "12": 1,
+        "6": 1
+      },
+      "FictitiousTransaction": {
+        "12": 10,
+        "6": 8,
+        "2": 6,
+        "7": 6,
+        "4": 5,
+        "9": 3,
+        "11": 3,
+        "5": 3,
+        "8": 3,
+        "10": 3,
+        "3": 3,
+        "1": 2
+      },
+      "FictitiousVendor": {
+        "12": 1
+      },
+      "ImproperCapitalization": {
+        "7": 1,
+        "12": 1
+      },
+      "JustBelowThreshold": {
+        "12": 5,
+        "9": 3,
+        "10": 1
+      },
+      "RevenueManipulation": {
+        "12": 14,
+        "9": 12,
+        "10": 10,
+        "6": 8,
+        "3": 7,
+        "4": 7,
+        "11": 6,
+        "1": 5,
+        "2": 5,
+        "7": 5,
+        "8": 4,
+        "5": 3
+      },
+      "RoundDollarManipulation": {
+        "6": 3,
+        "12": 2,
+        "1": 1,
+        "11": 1,
+        "9": 1
+      },
+      "SegregationOfDutiesViolation": {
+        "2": 1,
+        "1": 1
+      },
+      "SplitTransaction": {
+        "9": 5,
+        "3": 5,
+        "12": 4,
+        "7": 4,
+        "6": 3,
+        "2": 3,
+        "8": 2,
+        "10": 1,
+        "11": 1,
+        "5": 1
+      },
+      "SuspenseAccountAbuse": {
+        "3": 3,
+        "8": 3,
+        "10": 2,
+        "12": 2,
+        "5": 2,
+        "6": 1,
+        "1": 1,
+        "7": 1
+      },
+      "TimingAnomaly": {
+        "6": 5,
+        "12": 4,
+        "3": 2,
+        "5": 2,
+        "4": 2,
+        "2": 2,
+        "8": 1,
+        "11": 1,
+        "10": 1
+      },
+      "UnauthorizedAccess": {
+        "3": 6,
+        "12": 6,
+        "7": 5,
+        "1": 5,
+        "5": 4,
+        "11": 4,
+        "9": 2,
+        "4": 2,
+        "2": 1,
+        "8": 1,
+        "10": 1,
+        "6": 1
+      }
+    },
+    "skipped_approval_fraud_rate": 0.00042,
+    "self_approval_fraud_rate": 0.001203
+  },
+  "axis_9_gl_integrity": {
+    "by_account_class": {
+      "1_자산": {
+        "debit_lines": 273184,
+        "credit_lines": 100544,
+        "debit_amount": 5450983647021.0,
+        "credit_amount": 1453449703585.0,
+        "debit_ratio": 0.731
+      },
+      "2_부채": {
+        "debit_lines": 49174,
+        "credit_lines": 263129,
+        "debit_amount": 732690701720.0,
+        "credit_amount": 4635745413398.0,
+        "debit_ratio": 0.1575
+      },
+      "3_자본": {
+        "debit_lines": 736,
+        "credit_lines": 955,
+        "debit_amount": 10968101718.0,
+        "credit_amount": 20191704650.0,
+        "debit_ratio": 0.4352
+      },
+      "4_매출수익": {
+        "debit_lines": 3226,
+        "credit_lines": 177515,
+        "debit_amount": 50209102400.0,
+        "credit_amount": 3143452540797.0,
+        "debit_ratio": 0.0178
+      },
+      "5_비용_원가판관": {
+        "debit_lines": 190933,
+        "credit_lines": 8714,
+        "debit_amount": 2852127872438.0,
+        "credit_amount": 87626076943.0,
+        "debit_ratio": 0.9564
+      },
+      "7_영업외수익": {
+        "debit_lines": 2669,
+        "credit_lines": 1997,
+        "debit_amount": 47358415306.0,
+        "credit_amount": 21347752413.0,
+        "debit_ratio": 0.572
+      },
+      "8_영업외비용": {
+        "debit_lines": 1422,
+        "credit_lines": 1,
+        "debit_amount": 38830192476.0,
+        "credit_amount": 40000.0,
+        "debit_ratio": 0.9993
+      },
+      "9_기타_임시": {
+        "debit_lines": 6995,
+        "credit_lines": 2747,
+        "debit_amount": 229215637616.0,
+        "credit_amount": 24324037503.0,
+        "debit_ratio": 0.718
+      }
+    },
+    "direction_violations": {
+      "1_자산": {
+        "expected_debit_ratio": 0.85,
+        "actual_debit_ratio": 0.731,
+        "gap": 0.119
+      },
+      "2_부채": {
+        "expected_credit_ratio": 0.85,
+        "actual_credit_ratio": 0.8425,
+        "gap": 0.0075
+      },
+      "3_자본": {
+        "expected_credit_ratio": 0.8,
+        "actual_credit_ratio": 0.5648,
+        "gap": 0.2352
+      },
+      "7_영업외수익": {
+        "expected_credit_ratio": 0.9,
+        "actual_credit_ratio": 0.428,
+        "gap": 0.472
+      }
+    }
+  },
+  "axis_10_journal_logic": {
+    "top_combinations": {
+      "D_자산 / C_부채": 58682,
+      "D_원가판관 / C_부채": 53160,
+      "D_자산 / C_매출수익": 51890,
+      "D_자산 / C_자산": 20886,
+      "D_원가판관 / C_매출수익": 20391,
+      "D_원가판관 / C_자산": 15077,
+      "D_부채 / C_부채": 9597,
+      "D_자산 / C_매출수익|C_부채": 9516,
+      "D_부채 / C_매출수익": 9248,
+      "D_원가판관 / C_부채|C_자산": 8326,
+      "D_원가판관|D_자산 / C_매출수익|C_부채": 7191,
+      "D_원가판관|D_자산 / C_부채": 5073,
+      "D_원가판관|D_자산 / C_부채|C_자산": 4242,
+      "D_부채|D_자산 / C_매출수익": 3179,
+      "D_원가판관 / C_매출수익|C_부채": 3064,
+      "D_부채|D_자산 / C_매출수익|C_부채": 2866,
+      "D_부채 / C_자산": 2494,
+      "D_기타_임시 / C_부채": 1706,
+      "D_자산 / C_부채|C_자산": 1614,
+      "D_원가판관|D_자산 / C_매출수익": 1502
+    },
+    "revenue_on_debit_docs": 2212,
+    "expense_on_credit_docs": 5159,
+    "same_class_only_docs": 40618,
+    "same_class_samples": [
+      {
+        "document_id": "db37ec89-d4be-4b0d-ba09-2da86e445b75",
+        "lines": [
+          {
+            "gl": "2300",
+            "text": "자산손상차손 인식 - Q4 2024",
+            "debit": 80388.0,
+            "credit": 0.0
+          },
+          {
+            "gl": "200340",
+            "text": "자산손상차손 인식 - Q4 2024",
+            "debit": 0.0,
+            "credit": 80388.0
+          }
+        ]
+      },
+      {
+        "document_id": "fcdf7cb4-088a-4aa2-9576-7df70bbb7137",
+        "lines": [
+          {
+            "gl": "100070",
+            "text": "외화 현금 환전",
+            "debit": 151300.0,
+            "credit": 0.0
+          },
+          {
+            "gl": null,
+            "text": "용역 선수금",
+            "debit": 0.0,
+            "credit": 151300.0
+          }
+        ]
+      },
+      {
+        "document_id": "167796da-6266-4623-beeb-4d2c05ef114f",
+        "lines": [
+          {
+            "gl": null,
+            "text": "연불수입금융 상환 - 퀵인력(유)",
+            "debit": 20000.0,
+            "credit": 0.0
+          },
+          {
+            "gl": "100030",
+            "text": "계좌 간 이체 - 퀵인력(유) GL100030-5659",
+            "debit": 0.0,
+            "credit": 20000.0
+          }
+        ]
+      },
+      {
+        "document_id": "a6c58caa-aca4-4d58-96d9-19af771c76aa",
+        "lines": [
+          {
+            "gl": "200330",
+            "text": "당좌차월 사용",
+            "debit": 65001.0,
+            "credit": 0.0
+          },
+          {
+            "gl": "200320",
+            "text": "운전자금 일시 차입",
+            "debit": 0.0,
+            "credit": 65001.0
+          }
+        ]
+      },
+      {
+        "document_id": "019d7f75-15f2-7471-9ea0-420155dd70ef",
+        "lines": [
+          {
+            "gl": null,
+            "text": "",
+            "debit": 46011.0,
+            "credit": 0.0
+          },
+          {
+            "gl": "1599",
+            "text": "",
+            "debit": 0.0,
+            "credit": 46011.0
+          }
+        ]
+      }
+    ]
+  },
+  "axis_11_text_account_match": {
+    "keyword_classes": {
+      "매출": {
+        "수익": 77145,
+        "자산": 25562,
+        "부채": 9819,
+        "비용": 5244,
+        "기타": 275,
+        "자본": 25
+      },
+      "매출채권": {
+        "자산": 18181,
+        "부채": 10,
+        "기타": 2,
+        "비용": 1
+      },
+      "매입": {
+        "부채": 20943,
+        "자산": 6100,
+        "수익": 1414,
+        "비용": 1389,
+        "기타": 79,
+        "자본": 3
+      },
+      "매입채무": {
+        "부채": 13539,
+        "자산": 958,
+        "수익": 699,
+        "비용": 617,
+        "기타": 42,
+        "자본": 2
+      },
+      "급여": {
+        "비용": 5798,
+        "부채": 4106,
+        "자산": 886,
+        "수익": 660,
+        "기타": 41,
+        "자본": 1
+      },
+      "감가상각": {
+        "자산": 15406,
+        "비용": 10573,
+        "부채": 2459,
+        "수익": 1444,
+        "기타": 90,
+        "자본": 11
+      },
+      "법인세": {
+        "부채": 9647,
+        "비용": 2270,
+        "자산": 607,
+        "기타": 489,
+        "수익": 1,
+        "자본": 1
+      },
+      "차입금": {
+        "부채": 16997,
+        "비용": 1564,
+        "자산": 660,
+        "수익": 497,
+        "기타": 267,
+        "자본": 6
+      },
+      "대여금": {
+        "수익": 926,
+        "자산": 351,
+        "비용": 2,
+        "부채": 2
+      },
+      "가수금": {
+        "부채": 866,
+        "기타": 825,
+        "자산": 374,
+        "수익": 1,
+        "자본": 1,
+        "비용": 1
+      },
+      "가지급": {
+        "자산": 930,
+        "기타": 554,
+        "부채": 6,
+        "비용": 1
+      },
+      "미지급": {
+        "부채": 43133,
+        "자산": 4468,
+        "수익": 3426,
+        "비용": 3002,
+        "기타": 185,
+        "자본": 23
+      },
+      "선급": {
+        "자산": 20810,
+        "비용": 449,
+        "부채": 11,
+        "기타": 2
+      },
+      "선수": {
+        "부채": 44073,
+        "비용": 14,
+        "수익": 3,
+        "자본": 3,
+        "자산": 2,
+        "기타": 2
+      },
+      "이자수익": {
+        "수익": 4481,
+        "기타": 320,
+        "자산": 121
+      },
+      "이자비용": {
+        "비용": 3384,
+        "부채": 2926,
+        "기타": 1209,
+        "자본": 2,
+        "자산": 2,
+        "수익": 1
+      },
+      "배당": {
+        "자산": 132,
+        "수익": 39
+      }
+    },
+    "keyword_mismatches": {
+      "매출": {
+        "expected": [
+          "자산",
+          "매출수익"
+        ],
+        "actual_distribution": {
+          "수익": 77145,
+          "자산": 25562,
+          "부채": 9819,
+          "비용": 5244,
+          "기타": 275,
+          "자본": 25
+        },
+        "match_rate": 0.2165,
+        "mismatched_lines": 92508
+      },
+      "급여": {
+        "expected": [
+          "원가판관",
+          "부채"
+        ],
+        "actual_distribution": {
+          "비용": 5798,
+          "부채": 4106,
+          "자산": 886,
+          "수익": 660,
+          "기타": 41,
+          "자본": 1
+        },
+        "match_rate": 0.3573,
+        "mismatched_lines": 7386
+      },
+      "감가상각": {
+        "expected": [
+          "원가판관",
+          "자산"
+        ],
+        "actual_distribution": {
+          "자산": 15406,
+          "비용": 10573,
+          "부채": 2459,
+          "수익": 1444,
+          "기타": 90,
+          "자본": 11
+        },
+        "match_rate": 0.5138,
+        "mismatched_lines": 14577
+      },
+      "대여금": {
+        "expected": [
+          "자산"
+        ],
+        "actual_distribution": {
+          "수익": 926,
+          "자산": 351,
+          "비용": 2,
+          "부채": 2
+        },
+        "match_rate": 0.274,
+        "mismatched_lines": 930
+      },
+      "가수금": {
+        "expected": [
+          "부채",
+          "기타_임시"
+        ],
+        "actual_distribution": {
+          "부채": 866,
+          "기타": 825,
+          "자산": 374,
+          "수익": 1,
+          "자본": 1,
+          "비용": 1
+        },
+        "match_rate": 0.4188,
+        "mismatched_lines": 1202
+      },
+      "가지급": {
+        "expected": [
+          "자산",
+          "기타_임시"
+        ],
+        "actual_distribution": {
+          "자산": 930,
+          "기타": 554,
+          "부채": 6,
+          "비용": 1
+        },
+        "match_rate": 0.6237,
+        "mismatched_lines": 561
+      },
+      "이자수익": {
+        "expected": [
+          "영업외수익",
+          "매출수익",
+          "기타_임시"
+        ],
+        "actual_distribution": {
+          "수익": 4481,
+          "기타": 320,
+          "자산": 121
+        },
+        "match_rate": 0.0,
+        "mismatched_lines": 4922
+      },
+      "이자비용": {
+        "expected": [
+          "영업외비용",
+          "원가판관"
+        ],
+        "actual_distribution": {
+          "비용": 3384,
+          "부채": 2926,
+          "기타": 1209,
+          "자본": 2,
+          "자산": 2,
+          "수익": 1
+        },
+        "match_rate": 0.0,
+        "mismatched_lines": 7524
+      },
+      "배당": {
+        "expected": [
+          "자본",
+          "영업외수익",
+          "원가판관"
+        ],
+        "actual_distribution": {
+          "자산": 132,
+          "수익": 39
+        },
+        "match_rate": 0.0,
+        "mismatched_lines": 171
+      }
+    },
+    "sample_anomalies": [
+      {
+        "type": "매입채무_자산사용",
+        "document_id": "51caa311-e82e-4445-a786-7e89de46155c",
+        "line_text": "매입채무 일괄지급 - 1월 2022",
+        "gl_account": "100460",
+        "debit": "72030",
+        "credit": "0"
+      },
+      {
+        "type": "매입채무_자산사용",
+        "document_id": "d01ad0b1-9668-479a-b342-691c6a97f8df",
+        "line_text": "매입채무 일괄지급 - 1월 2022",
+        "gl_account": "1510",
+        "debit": "4627106",
+        "credit": "0"
+      },
+      {
+        "type": "매입채무_자산사용",
+        "document_id": "c69acd3b-909b-4936-aea3-b3a6185bf074",
+        "line_text": "매입채무 일괄지급 - 1월 2022",
+        "gl_account": "100200",
+        "debit": "102522808",
+        "credit": "0"
+      },
+      {
+        "type": "매출_부채사용",
+        "document_id": "8b12224f-780c-42f9-8713-bf8755ec6413",
+        "line_text": "가수금 확인 후 매출 대체",
+        "gl_account": "2190",
+        "debit": "0",
+        "credit": "5767216"
+      },
+      {
+        "type": "매출_부채사용",
+        "document_id": "88464b0e-628a-4aac-b03d-dcda57eb54ea",
+        "line_text": "가수금 확인 후 매출 대체",
+        "gl_account": "2190",
+        "debit": "0",
+        "credit": "7273"
+      },
+      {
+        "type": "매출_부채사용",
+        "document_id": "99a6698b-23aa-47c7-bce1-a1d42cfb30e2",
+        "line_text": "가수금 확인 후 매출 대체",
+        "gl_account": "2190",
+        "debit": "0",
+        "credit": "49455066"
+      },
+      {
+        "type": "급여_수익사용",
+        "document_id": "ace2f7eb-2909-4f6a-8263-a074d3ff4a95",
+        "line_text": "급여 지급 - 1월 2022",
+        "gl_account": "400550",
+        "debit": "0",
+        "credit": "28729550"
+      },
+      {
+        "type": "급여_수익사용",
+        "document_id": "6485a3ce-31e1-4e88-80ff-0910fc962680",
+        "line_text": "급여 지급 - 1월 2022",
+        "gl_account": "400610",
+        "debit": "0",
+        "credit": "54389"
+      },
+      {
+        "type": "급여_수익사용",
+        "document_id": "b2d9e02f-f96f-469e-ba1e-d95476460fdb",
+        "line_text": "퇴직급여 충당부채 전입 - 1월",
+        "gl_account": "400060",
+        "debit": "0",
+        "credit": "4292107"
+      }
+    ]
+  }
+}

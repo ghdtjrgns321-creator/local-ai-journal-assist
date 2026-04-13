@@ -5,6 +5,7 @@ aggregate_scores / classify_risk_level / auto_escalation / flagged_rules / topsi
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -122,6 +123,47 @@ class TestClassifyRiskLevel:
 
     def test_normal(self):
         assert classify_risk_level(pd.Series([0.1])).iloc[0] == RiskLevel.NORMAL
+
+
+class TestClassifyRiskLevelQuantile:
+    """분위수 기반 risk_level 분류 (묶음 1 — risk_classification_mode='quantile')."""
+
+    def test_top_quantile_is_high(self):
+        # Why: 100개 score 중 상위 10%는 HIGH (quantile 기본값 high=0.9)
+        scores = pd.Series(np.linspace(0.01, 1.0, 100))
+        levels = classify_risk_level(scores, mode="quantile")
+        # 상위 10개 = HIGH
+        assert (levels.iloc[-10:] == RiskLevel.HIGH).all()
+
+    def test_bottom_quantile_is_normal(self):
+        # Why: 하위 50%는 NORMAL
+        scores = pd.Series(np.linspace(0.01, 1.0, 100))
+        levels = classify_risk_level(scores, mode="quantile")
+        assert (levels.iloc[:50] == RiskLevel.NORMAL).all()
+
+    def test_zero_scores_always_normal(self):
+        # Why: score=0인 행은 rank가 높더라도 NORMAL (실제 위험 없음)
+        scores = pd.Series([0.0] * 50 + [0.9] * 50)
+        levels = classify_risk_level(scores, mode="quantile")
+        assert (levels.iloc[:50] == RiskLevel.NORMAL).all()
+
+    def test_all_zero_returns_all_normal(self):
+        scores = pd.Series([0.0] * 20)
+        levels = classify_risk_level(scores, mode="quantile")
+        assert (levels == RiskLevel.NORMAL).all()
+
+    def test_custom_quantiles(self):
+        # Why: 커스텀 분위수 — 상위 50%만 HIGH
+        scores = pd.Series(np.linspace(0.01, 1.0, 100))
+        levels = classify_risk_level(
+            scores, mode="quantile",
+            quantiles={
+                RiskLevel.HIGH: 0.5,
+                RiskLevel.MEDIUM: 0.3,
+                RiskLevel.LOW: 0.1,
+            },
+        )
+        assert (levels.iloc[-50:] == RiskLevel.HIGH).all()
 
 
 # ── TestAutoEscalation ────────────────────────────────────
@@ -335,3 +377,45 @@ class TestTopsideDetection:
         result = aggregate_scores(df, [layer_a, layer_b, layer_c, benford])
         assert result["risk_level"].iloc[0] == RiskLevel.HIGH
         assert "B19" in result["flagged_rules"].iloc[0]
+
+
+# ── TestMLWeights ────────────────────────────────────────
+
+
+class TestMLWeights:
+    """ML 트랙 포함 가중합."""
+
+    def test_ml_weights_sum_to_one(self):
+        """LAYER_WEIGHTS_WITH_ML 합계 = 1.0."""
+        from src.detection.constants import LAYER_WEIGHTS_WITH_ML
+        assert sum(LAYER_WEIGHTS_WITH_ML.values()) == pytest.approx(1.0)
+
+    def test_ml_tracks_included(self, base_df):
+        """ML 트랙 결과가 가중합에 반영."""
+        from src.detection.constants import LAYER_WEIGHTS_WITH_ML
+        layer_a = _make_result("layer_a", [0.5] * 5, {"A01": [0.5] * 5})
+        ml_unsup = _make_result("ml_unsupervised", [0.8] * 5, {"ML02": [0.8] * 5})
+        result = aggregate_scores(
+            base_df, [layer_a, ml_unsup],
+            weights=LAYER_WEIGHTS_WITH_ML,
+        )
+        # 0.5×0.10 + 0.8×0.17 = 0.186
+        assert result["anomaly_score"].iloc[0] == pytest.approx(0.05 + 0.136)
+
+    def test_ml_tracks_ignored_without_ml_weights(self, base_df):
+        """기본 LAYER_WEIGHTS 사용 시 ML 트랙 0점 처리."""
+        layer_a = _make_result("layer_a", [0.5] * 5, {"A01": [0.5] * 5})
+        ml_unsup = _make_result("ml_unsupervised", [0.8] * 5, {"ML02": [0.8] * 5})
+        result = aggregate_scores(base_df, [layer_a, ml_unsup])
+        # ML 트랙은 기본 가중치에 없으므로 무시됨
+        assert result["anomaly_score"].iloc[0] == pytest.approx(0.5 * 0.15)
+
+    def test_cold_start_no_ml_results(self, base_df, four_layer_results):
+        """ML 결과 없이 LAYER_WEIGHTS_WITH_ML 적용 → ML 트랙 0점, 에러 없음."""
+        from src.detection.constants import LAYER_WEIGHTS_WITH_ML
+        result = aggregate_scores(
+            base_df, four_layer_results,
+            weights=LAYER_WEIGHTS_WITH_ML,
+        )
+        assert (result["anomaly_score"] >= 0).all()
+        assert (result["anomaly_score"] <= 1).all()

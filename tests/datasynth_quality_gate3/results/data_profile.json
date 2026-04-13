@@ -1,0 +1,1220 @@
+{
+  "total_rows": 1193020,
+  "total_docs": 319061,
+  "lines_per_doc_avg": 3.74,
+  "lines_per_doc_percentiles": {
+    "P25": 2.0,
+    "P50": 2.0,
+    "P75": 4.0,
+    "P90": 4.0,
+    "P99": 10.0
+  },
+  "by_company": {
+    "C001": {
+      "docs": 199530,
+      "rows": 738061
+    },
+    "C002": {
+      "docs": 59834,
+      "rows": 226974
+    },
+    "C003": {
+      "docs": 59697,
+      "rows": 227985
+    }
+  },
+  "line_amount": {
+    "min": 1.0,
+    "P1": 100.0,
+    "P5": 407.0,
+    "P25": 28000.0,
+    "median": 307241.0,
+    "P75": 2518459.0,
+    "P95": 42980000.0,
+    "P99": 326885679.0,
+    "max": 988890671107.0,
+    "mean": 31826088.294725917,
+    "std": 2382061738.4795303
+  },
+  "doc_amount": {
+    "median": 1336955.0,
+    "mean": 59494463.3253265,
+    "P95": 95840268.0,
+    "P99": 739334112.2000024,
+    "max": 988890671107.0
+  },
+  "balance": {
+    "total_docs": 319061.0,
+    "unbalanced": 270.0,
+    "max_diff": 758039017.0
+  },
+  "monthly_docs": {
+    "1": 24983,
+    "2": 22288,
+    "3": 29708,
+    "4": 22981,
+    "5": 25274,
+    "6": 28670,
+    "7": 23800,
+    "8": 24906,
+    "9": 28721,
+    "10": 24365,
+    "11": 23782,
+    "12": 39583
+  },
+  "dow_docs": {
+    "일": 4386,
+    "월": 76728,
+    "화": 63856,
+    "수": 58804,
+    "목": 58333,
+    "금": 52661,
+    "토": 4293
+  },
+  "hourly_docs": {
+    "0": 211,
+    "1": 229,
+    "2": 213,
+    "3": 190,
+    "4": 1136,
+    "5": 223,
+    "6": 2044,
+    "7": 2047,
+    "8": 20452,
+    "9": 37985,
+    "10": 38042,
+    "11": 22511,
+    "12": 6205,
+    "13": 25040,
+    "14": 25715,
+    "15": 27415,
+    "16": 33751,
+    "17": 33522,
+    "18": 20609,
+    "19": 7546,
+    "20": 6467,
+    "21": 6472,
+    "22": 527,
+    "23": 509
+  },
+  "gl_category": {
+    "1_자산": 423159,
+    "2_부채": 326353,
+    "3_자본": 2752,
+    "4_수익": 194626,
+    "5_비용": 204361,
+    "9_기타": 17586,
+    "NaN": 24183
+  },
+  "top_gl_accounts": {
+    "100010": 11938,
+    "100100": 11914,
+    "100110": 11890,
+    "100080": 11877,
+    "100000": 11828,
+    "100040": 11813,
+    "100020": 11800,
+    "1000": 11758,
+    "100090": 11758,
+    "1020": 11751,
+    "100070": 11698,
+    "100030": 11663,
+    "1010": 11663,
+    "100050": 11660,
+    "100060": 11429,
+    "2900": 6489,
+    "2000": 6077,
+    "9990": 5985,
+    "200510": 5795,
+    "200520": 5787,
+    "200500": 5764,
+    "200570": 5701,
+    "200530": 5696,
+    "200540": 5666,
+    "200590": 5660,
+    "200580": 5628,
+    "200550": 5627,
+    "2300": 5619,
+    "200560": 5591,
+    "1100": 4655
+  },
+  "by_process": {
+    "R2R": 100352,
+    "O2C": 77522,
+    "P2P": 61080,
+    "H2R": 27669,
+    "A2R": 26834,
+    "TRE": 25604
+  },
+  "by_persona": {
+    "automated_system": 204979,
+    "senior_accountant": 45131,
+    "junior_accountant": 38125,
+    "manager": 15414,
+    "controller": 15412
+  },
+  "by_source": {
+    "automated": 195011,
+    "manual": 96050,
+    "recurring": 19572,
+    "adjustment": 8428
+  },
+  "by_doc_type": {
+    "SA": 97680,
+    "DR": 75941,
+    "KR": 59715,
+    "HR": 27121,
+    "AA": 26302,
+    "KZ": 25144,
+    "null": 6403,
+    "IC": 647,
+    "WE": 61,
+    "WL": 24,
+    "DZ": 23
+  },
+  "fraud_total": 4040,
+  "anomaly_total": 30224,
+  "fraud_by_type": {
+    "FictitiousTransaction": 721,
+    "DuplicatePayment": 711,
+    "SplitTransaction": 599,
+    "RevenueManipulation": 553,
+    "UnauthorizedAccess": 393,
+    "TimingAnomaly": 323,
+    "SuspenseAccountAbuse": 182,
+    "ExpenseCapitalization": 170,
+    "JustBelowThreshold": 107,
+    "RoundDollarManipulation": 85,
+    "ExceededApprovalLimit": 74,
+    "ImproperCapitalization": 44,
+    "FictitiousEntry": 37,
+    "FictitiousVendor": 20,
+    "SegregationOfDutiesViolation": 16,
+    "SelfApproval": 5
+  },
+  "anomaly_by_type": {
+    "NewCounterparty": 4935,
+    "UnusualAccountPair": 4118,
+    "DormantAccountActivity": 3349,
+    "MissingRelationship": 3338,
+    "UnmatchedIntercompany": 2647,
+    "CircularTransaction": 1708,
+    "CentralityAnomaly": 1660,
+    "TransferPricingAnomaly": 1654,
+    "CircularIntercompany": 849,
+    "UnusualTiming": 728,
+    "BenfordViolation": 628,
+    "UnusualFrequency": 491,
+    "StatisticalOutlier": 488,
+    "UnusuallyHighAmount": 473,
+    "ExactDuplicateAmount": 466,
+    "TransactionBurst": 348,
+    "RepeatingAmount": 340,
+    "UnusuallyLowAmount": 310,
+    "TrendBreak": 247,
+    "DuplicateEntry": 116
+  },
+  "fraud_by_month": {
+    "1": {
+      "total": 24983,
+      "fraud": 344,
+      "rate": 0.0138
+    },
+    "2": {
+      "total": 22288,
+      "fraud": 152,
+      "rate": 0.0068
+    },
+    "3": {
+      "total": 29708,
+      "fraud": 480,
+      "rate": 0.0162
+    },
+    "4": {
+      "total": 22981,
+      "fraud": 208,
+      "rate": 0.0091
+    },
+    "5": {
+      "total": 25274,
+      "fraud": 245,
+      "rate": 0.0097
+    },
+    "6": {
+      "total": 28670,
+      "fraud": 495,
+      "rate": 0.0173
+    },
+    "7": {
+      "total": 23800,
+      "fraud": 165,
+      "rate": 0.0069
+    },
+    "8": {
+      "total": 24906,
+      "fraud": 171,
+      "rate": 0.0069
+    },
+    "9": {
+      "total": 28721,
+      "fraud": 453,
+      "rate": 0.0158
+    },
+    "10": {
+      "total": 24365,
+      "fraud": 249,
+      "rate": 0.0102
+    },
+    "11": {
+      "total": 23782,
+      "fraud": 220,
+      "rate": 0.0093
+    },
+    "12": {
+      "total": 39583,
+      "fraud": 858,
+      "rate": 0.0217
+    }
+  },
+  "sod_violations": 6463,
+  "sod_types": {
+    "preparer_approver": 3982,
+    "system_access_conflict": 773,
+    "requester_approver": 527,
+    "payment_releaser": 349,
+    "reconciler_poster": 312,
+    "journal_entry_poster": 311,
+    "master_data_maintainer": 206,
+    "skipped_approval": 3
+  },
+  "self_approval": 2473,
+  "top_approvers": {
+    "HSHIM019": 3918,
+    "SWOO001": 3862,
+    "MHAN002": 3862,
+    "HPARK067": 3862,
+    "JKWAK040": 3850,
+    "BKANG004": 3844,
+    "MKIM061": 3836,
+    "HCHO003": 3820,
+    "SSEO029": 3794,
+    "DCHO056": 3793
+  },
+  "user_id_sample": [
+    "ESEO003",
+    "MYIM044",
+    "SOH018",
+    "JJUNG020",
+    "SNOH016",
+    "JOH051",
+    "JBAE067",
+    "CBYUN050",
+    "CHONG042",
+    "SOH014",
+    "CJO060",
+    "SCHO013",
+    "JJOO050",
+    "HNOH026",
+    "BHONG038",
+    "DRYU026",
+    "HSHIM052",
+    "GKO063",
+    "SDONG035",
+    "HCHO036"
+  ],
+  "top_headers": {
+    "은행 계정 조정": 17526,
+    "수동 조정 분개 - 재무팀": 17336,
+    "Treasury 거래": 15116,
+    "판매수수료 미지급비용 설정 - Q1": 5899,
+    "판매수수료 미지급비용 설정 - Q3": 5891,
+    "판매수수료 미지급비용 설정 - Q2": 5849,
+    "판매수수료 미지급비용 설정 - Q4": 5827,
+    "내부거래 배부 - 12월": 3405,
+    "P2P 거래": 3332,
+    "A2R 거래": 3297,
+    "출장비 정산 - 직원": 2359,
+    "결산 조정 분개 - 12월 2024": 1526,
+    "내부거래 배부 - 9월": 1490,
+    "내부거래 배부 - 3월": 1443,
+    "결산 조정 분개 - 12월 2022": 1429,
+    "내부거래 배부 - 6월": 1405,
+    "내부거래 배부 - 5월": 1346,
+    "결산 조정 분개 - 12월 2023": 1285,
+    "내부거래 배부 - 1월": 1281,
+    "내부거래 배부 - 7월": 1237,
+    "내부거래 배부 - 8월": 1177,
+    "내부거래 배부 - 10월": 1171,
+    "내부거래 배부 - 4월": 1168,
+    "내부거래 배부 - 11월": 1145,
+    "내부거래 배부 - 2월": 1110,
+    "매출 에누리 - 운송다이나믹스(주)": 809,
+    "매출 에누리 - 전력시스템(주)": 768,
+    "매출 에누리 - (주)제조파트너스": 755,
+    "결산 조정 분개 - 03월 2023": 726,
+    "자본적 지출 프로젝트 - 보안 강화": 704
+  },
+  "top_line_texts": {
+    "계좌 간 이체": 15570,
+    "현금 인출": 15565,
+    "은행 입금": 15554,
+    "현금 수령": 15524,
+    "선수금 수령": 10104,
+    "선수수익 계상": 10072,
+    "매입채무 결제": 9704,
+    "상품 매출": 9654,
+    "제품 매출": 9643,
+    "매입채무 송장 대사": 9538,
+    "거래처 대금 지급": 9458,
+    "완제품 매출": 9423,
+    "사무용 비품 취득": 9331,
+    "전산장비 취득": 9125,
+    "유형자산 취득": 9034,
+    "임차시설물 개량": 9024,
+    "급여 비용": 8495,
+    "매출채권 대사": 8440,
+    "통신비": 8370,
+    "매출채권 회수": 8345,
+    "임차료": 8313,
+    "입금 반제 처리": 8300,
+    "복리후생비": 8267,
+    "감가상각누계액": 7883,
+    "감가상각 누계": 7752,
+    "단기차입금 차입": 7305,
+    "장기차입금 상환": 7178,
+    "장기차입금 차입": 7141,
+    "미지급급여 설정": 7094,
+    "미지급상여 설정": 7076
+  },
+  "reference_prefixes": {
+    "DOC-": 97664,
+    "SO-": 75891,
+    "PO-": 59651,
+    "EXP-": 27117,
+    "FA-": 26259,
+    "PAY-": 25118,
+    "": 867
+  },
+  "supporting_doc_types": {
+    "세금계산서": 106611,
+    "기타증빙": 68936,
+    "내부결의서": 30109,
+    "급여명세서": 13743,
+    "고정자산대장": 13404,
+    "자금결의서": 12826,
+    "발주서": 10239,
+    "수입장": 7197
+  },
+  "ip_prefixes_by_company": {
+    "C001": {
+      "172.16": 3918
+    },
+    "C002": {
+      "172.16": 1144
+    },
+    "C003": {
+      "172.16": 1117
+    }
+  },
+  "top_trading_partners": {
+    "전력시스템(주)": 9862,
+    "운송다이나믹스(주)": 8987,
+    "(주)제조파트너스": 8315,
+    "(주)건설솔루션 제2": 7919,
+    "(주)소비자브랜드": 7515,
+    "소프트웨어시스템(주)": 7442,
+    "(주)오피스사무용품 그룹": 7191,
+    "임상서비스(주)": 7161,
+    "(주)디지털네트웍스": 7092,
+    "(유)팩토리솔루션": 7050,
+    "물류시스템(주)": 6866,
+    "로직테크놀로지(주)": 6792,
+    "생산시스템(주) 제2": 6784,
+    "전국재무 홀딩스": 6692,
+    "(주)금융서비스": 6656
+  },
+  "field_fill_rate": {
+    "document_id": 100.0,
+    "company_code": 100.0,
+    "fiscal_year": 100.0,
+    "fiscal_period": 100.0,
+    "posting_date": 100.0,
+    "document_date": 100.0,
+    "document_type": 97.97,
+    "currency": 100.0,
+    "exchange_rate": 100.0,
+    "reference": 98.11,
+    "header_text": 97.89,
+    "created_by": 100.0,
+    "user_persona": 100.0,
+    "source": 100.0,
+    "business_process": 100.0,
+    "ledger": 100.0,
+    "is_fraud": 100.0,
+    "fraud_type": 1.38,
+    "is_anomaly": 100.0,
+    "anomaly_type": 9.58,
+    "approved_by": 28.51,
+    "approval_date": 28.51,
+    "sod_violation": 100.0,
+    "sod_conflict_type": 1.81,
+    "has_attachment": 100.0,
+    "supporting_doc_type": 82.35,
+    "delivery_date": 0.01,
+    "invoice_amount": 100.0,
+    "supply_amount": 100.0,
+    "ip_address": 100.0,
+    "document_number": 100.0,
+    "line_number": 100.0,
+    "gl_account": 97.97,
+    "debit_amount": 100.0,
+    "credit_amount": 100.0,
+    "local_amount": 100.0,
+    "cost_center": 16.97,
+    "profit_center": 99.87,
+    "line_text": 97.97,
+    "tax_code": 9.14,
+    "tax_amount": 9.14,
+    "trading_partner": 50.56,
+    "auxiliary_account_number": 50.46,
+    "auxiliary_account_label": 50.46,
+    "lettrage": 0.0,
+    "lettrage_date": 0.0
+  },
+  "local_amount_mismatch": 2629,
+  "local_amount_negative": 0,
+  "invoice_supply_ratio": {
+    "vat10": 1193016,
+    "tax_free": 0,
+    "other": 4
+  },
+  "gl_digit_distribution": {
+    "4": 194951,
+    "6": 973886
+  },
+  "process_gl_cross": {
+    "A2R": {
+      "기타": 802,
+      "부채": 3995,
+      "비용": 2751,
+      "수익": 2461,
+      "자본": 216,
+      "자산": 85585
+    },
+    "H2R": {
+      "기타": 796,
+      "부채": 32902,
+      "비용": 45555,
+      "수익": 1266,
+      "자본": 223,
+      "자산": 19331
+    },
+    "O2C": {
+      "기타": 2917,
+      "부채": 65609,
+      "비용": 4747,
+      "수익": 115134,
+      "자본": 758,
+      "자산": 103461
+    },
+    "P2P": {
+      "기타": 1984,
+      "부채": 63939,
+      "비용": 75114,
+      "수익": 2145,
+      "자본": 502,
+      "자산": 80182
+    },
+    "R2R": {
+      "기타": 8607,
+      "부채": 110083,
+      "비용": 66769,
+      "수익": 72657,
+      "자본": 797,
+      "자산": 99660
+    },
+    "TRE": {
+      "기타": 2480,
+      "부채": 49825,
+      "비용": 9425,
+      "수익": 963,
+      "자본": 256,
+      "자산": 34940
+    }
+  },
+  "persona_source_cross": {
+    "automated_system": {
+      "adjustment": 777,
+      "automated": 195011,
+      "manual": 9191
+    },
+    "controller": {
+      "adjustment": 1052,
+      "manual": 11979,
+      "recurring": 2381
+    },
+    "junior_accountant": {
+      "adjustment": 2466,
+      "manual": 28444,
+      "recurring": 7215
+    },
+    "manager": {
+      "adjustment": 1034,
+      "manual": 11899,
+      "recurring": 2481
+    },
+    "senior_accountant": {
+      "adjustment": 3099,
+      "manual": 34537,
+      "recurring": 7495
+    }
+  },
+  "linetext_gl_cross": {
+    "매출채권": {
+      "자산": 46659,
+      "부채": 163,
+      "비용": 119,
+      "기타": 39,
+      "자본": 30,
+      "수익": 1
+    },
+    "매입채무": {
+      "부채": 52084,
+      "자산": 400,
+      "비용": 375,
+      "수익": 288,
+      "자본": 42,
+      "기타": 41
+    },
+    "급여": {
+      "비용": 19962,
+      "부채": 12896,
+      "자산": 509,
+      "수익": 329,
+      "기타": 43,
+      "자본": 32
+    },
+    "감가상각": {
+      "자산": 27892,
+      "비용": 6095,
+      "부채": 1282,
+      "수익": 721,
+      "기타": 73,
+      "자본": 24
+    },
+    "배당": {
+      "수익": 13321,
+      "비용": 52,
+      "자산": 24,
+      "자본": 12,
+      "기타": 11,
+      "부채": 3
+    },
+    "리스": {
+      "부채": 8
+    },
+    "재고": {
+      "자산": 7294,
+      "기타": 548,
+      "비용": 21,
+      "부채": 21,
+      "자본": 5,
+      "수익": 1
+    },
+    "미지급": {
+      "부채": 53576,
+      "자산": 2252,
+      "수익": 1546,
+      "비용": 1472,
+      "기타": 119,
+      "자본": 60
+    },
+    "선급": {
+      "자산": 20705,
+      "비용": 605,
+      "부채": 90,
+      "자본": 14,
+      "기타": 13,
+      "수익": 5
+    },
+    "차입금": {
+      "부채": 73847,
+      "비용": 5551,
+      "기타": 1089,
+      "자산": 419,
+      "수익": 222,
+      "자본": 62
+    },
+    "법인세": {
+      "부채": 13440,
+      "비용": 2525,
+      "자산": 1584,
+      "기타": 563,
+      "자본": 16,
+      "수익": 11
+    }
+  },
+  "header_gl_presence": {
+    "감가상각": {
+      "total": 579,
+      "has_비용": 579,
+      "has_자산": 13,
+      "has_부채": 337,
+      "has_수익": 221
+    },
+    "자산손상": {
+      "total": 658,
+      "has_비용": 658,
+      "has_자산": 10,
+      "has_부채": 392,
+      "has_수익": 243
+    },
+    "매출채권 회수": {
+      "total": 0,
+      "has_비용": null,
+      "has_자산": null,
+      "has_부채": null,
+      "has_수익": null
+    },
+    "급여": {
+      "total": 4118,
+      "has_비용": 3421,
+      "has_자산": 2293,
+      "has_부채": 2588,
+      "has_수익": 334
+    },
+    "외화평가": {
+      "total": 7571,
+      "has_비용": 7571,
+      "has_자산": 2477,
+      "has_부채": 5363,
+      "has_수익": 4017
+    },
+    "이연수익": {
+      "total": 3606,
+      "has_비용": 377,
+      "has_자산": 1175,
+      "has_부채": 3081,
+      "has_수익": 2885
+    },
+    "법인세": {
+      "total": 0,
+      "has_비용": null,
+      "has_자산": null,
+      "has_부채": null,
+      "has_수익": null
+    }
+  },
+  "sample_entries": {
+    "P2P": [
+      {
+        "process": "P2P",
+        "header": "매입 세금계산서 - 롯데글로벌로지스",
+        "created_by": "SYSTEM-C001-0013",
+        "persona": "automated_system",
+        "source": "automated",
+        "lines": [
+          {
+            "gl": "500070",
+            "debit": 25192.0,
+            "credit": 0.0,
+            "text": "원재료 소비 - 롯데글로벌로지스"
+          },
+          {
+            "gl": "6100",
+            "debit": 102044.0,
+            "credit": 0.0,
+            "text": null
+          },
+          {
+            "gl": "200110",
+            "debit": 0.0,
+            "credit": 66967.0,
+            "text": "매입채무 결제 - 2024/1월 롯데글로벌로지스"
+          },
+          {
+            "gl": "200110",
+            "debit": 0.0,
+            "credit": 60269.0,
+            "text": "매입채무 송장 대사 - 2024/1월 롯데글로벌로지스"
+          }
+        ]
+      },
+      {
+        "process": "P2P",
+        "header": "거래처 대금 지급 - 한진택배",
+        "created_by": "SYSTEM-C001-0014",
+        "persona": "automated_system",
+        "source": "automated",
+        "lines": [
+          {
+            "gl": "500130",
+            "debit": 3020000.0,
+            "credit": 0.0,
+            "text": "매출원가 인식"
+          },
+          {
+            "gl": "500380",
+            "debit": 860000.0,
+            "credit": 0.0,
+            "text": "급여 비용 - 한진택배"
+          },
+          {
+            "gl": "500080",
+            "debit": 1203528.0,
+            "credit": 0.0,
+            "text": "원재료 소비 - GL500080-4370"
+          },
+          {
+            "gl": null,
+            "debit": 0.0,
+            "credit": 1392000.0,
+            "text": "현금 인출"
+          },
+          {
+            "gl": "1000",
+            "debit": 0.0,
+            "credit": 3520000.0,
+            "text": "현금 수령"
+          },
+          {
+            "gl": "200000",
+            "debit": 0.0,
+            "credit": 171528.0,
+            "text": "매입채무 결제 - 한진택배"
+          }
+        ]
+      }
+    ],
+    "O2C": [
+      {
+        "process": "O2C",
+        "header": "매출 에누리 - 의료용품(주)",
+        "created_by": "SYSTEM-C003-0006",
+        "persona": "automated_system",
+        "source": "automated",
+        "lines": [
+          {
+            "gl": "100160",
+            "debit": 4025368.0,
+            "credit": 0.0,
+            "text": "매출채권 대사 - 2024/1월 의료용품(주)"
+          },
+          {
+            "gl": "400740",
+            "debit": 0.0,
+            "credit": 4025368.0,
+            "text": "기타 영업외 수익 - 2024/1월"
+          }
+        ]
+      },
+      {
+        "process": "O2C",
+        "header": "판매수수료 미지급비용 설정 - Q1",
+        "created_by": "SKO057",
+        "persona": "senior_accountant",
+        "source": "adjustment",
+        "lines": [
+          {
+            "gl": "200540",
+            "debit": 319714.0,
+            "credit": 0.0,
+            "text": "선수금 수령"
+          },
+          {
+            "gl": "200560",
+            "debit": 2120000.0,
+            "credit": 0.0,
+            "text": "선수수익 계상 - 운송다이나믹스(주)"
+          },
+          {
+            "gl": "100170",
+            "debit": 4171270.0,
+            "credit": 0.0,
+            "text": "매출채권 대사 - 2024/1월"
+          },
+          {
+            "gl": "200570",
+            "debit": 2726216.0,
+            "credit": 0.0,
+            "text": "선수수익 계상 - 2024/1월 운송다이나믹스(주)"
+          },
+          {
+            "gl": "400150",
+            "debit": 0.0,
+            "credit": 2339617.0,
+            "text": "완제품 매출 - 2024/1월"
+          },
+          {
+            "gl": "200530",
+            "debit": 0.0,
+            "credit": 1824300.0,
+            "text": "선수금 수령 - 운송다이나믹스(주) GL200530-8390"
+          },
+          {
+            "gl": "400450",
+            "debit": 0.0,
+            "credit": 2288228.0,
+            "text": "용역 매출"
+          },
+          {
+            "gl": "400750",
+            "debit": 0.0,
+            "credit": 2885055.0,
+            "text": "기타 영업외 수익 - 운송다이나믹스(주)"
+          }
+        ]
+      }
+    ],
+    "R2R": [
+      {
+        "process": "R2R",
+        "header": "내부거래 경영관리 수수료 수익 - C003",
+        "created_by": "SYSTEM-C001-0001",
+        "persona": "automated_system",
+        "source": "automated",
+        "lines": [
+          {
+            "gl": "1150C0",
+            "debit": 51098.0,
+            "credit": 0.0,
+            "text": "내부거래 미수금 - 경영관리 수수료 수익 2022년 1분기"
+          },
+          {
+            "gl": "4500",
+            "debit": 0.0,
+            "credit": 60115.0,
+            "text": "경영관리 수수료 수익 - 2022년 1분기"
+          },
+          {
+            "gl": null,
+            "debit": 9017.0,
+            "credit": 0.0,
+            "text": null
+          }
+        ]
+      },
+      {
+        "process": "R2R",
+        "header": "내부거래 내부매입 - C003",
+        "created_by": "SYSTEM-C001-0001",
+        "persona": "automated_system",
+        "source": "automated",
+        "lines": [
+          {
+            "gl": "5000",
+            "debit": 397275.0,
+            "credit": 0.0,
+            "text": "내부매입 - 2022년 1분기"
+          },
+          {
+            "gl": "2050C0",
+            "debit": 0.0,
+            "credit": 397275.0,
+            "text": "내부거래 미지급금 - 내부매입 2022년 1분기"
+          }
+        ]
+      }
+    ],
+    "H2R": [
+      {
+        "process": "H2R",
+        "header": "퇴직연금 부담금 납입 - 1월 2024",
+        "created_by": "SYSTEM-C002-0010",
+        "persona": "automated_system",
+        "source": "automated",
+        "lines": [
+          {
+            "gl": "500280",
+            "debit": 3578005.0,
+            "credit": 0.0,
+            "text": "급여 비용"
+          },
+          {
+            "gl": "100030",
+            "debit": 0.0,
+            "credit": 3578005.0,
+            "text": "계좌 간 이체"
+          }
+        ]
+      },
+      {
+        "process": "H2R",
+        "header": "주식보상비용 인식 - 1월 2024",
+        "created_by": "SYSTEM-C002-0008",
+        "persona": "automated_system",
+        "source": "automated",
+        "lines": [
+          {
+            "gl": "500560",
+            "debit": 82000.0,
+            "credit": 0.0,
+            "text": "출장비 - GL500560-0643"
+          },
+          {
+            "gl": "200640",
+            "debit": 0.0,
+            "credit": 82000.0,
+            "text": "원천세 예수금 - 2024/1월"
+          }
+        ]
+      }
+    ],
+    "TRE": [
+      {
+        "process": "TRE",
+        "header": "Treasury 거래",
+        "created_by": "SYSTEM-C003-0009",
+        "persona": "automated_system",
+        "source": "automated",
+        "lines": [
+          {
+            "gl": "2600",
+            "debit": 431555.0,
+            "credit": 0.0,
+            "text": "장기차입금 상환 - 테크시스템즈(주)"
+          },
+          {
+            "gl": "200480",
+            "debit": 0.0,
+            "credit": 431555.0,
+            "text": "장기차입금 차입 - 테크시스템즈(주)"
+          }
+        ]
+      },
+      {
+        "process": "TRE",
+        "header": "Treasury 거래",
+        "created_by": "SYSTEM-C003-0005",
+        "persona": "automated_system",
+        "source": "automated",
+        "lines": [
+          {
+            "gl": "100060",
+            "debit": 284000.0,
+            "credit": 0.0,
+            "text": "현금 인출"
+          },
+          {
+            "gl": "2600",
+            "debit": 0.0,
+            "credit": 284000.0,
+            "text": "장기차입금 차입 - 2022/1월"
+          }
+        ]
+      }
+    ],
+    "A2R": [
+      {
+        "process": "A2R",
+        "header": "자본적 지출 프로젝트 - 디지털 전환",
+        "created_by": "SYSTEM-C003-0003",
+        "persona": "automated_system",
+        "source": "automated",
+        "lines": [
+          {
+            "gl": "100630",
+            "debit": 610000.0,
+            "credit": 0.0,
+            "text": "임차시설물 개량"
+          },
+          {
+            "gl": "100680",
+            "debit": 0.0,
+            "credit": 610000.0,
+            "text": "감가상각누계액"
+          }
+        ]
+      },
+      {
+        "process": "A2R",
+        "header": "자본적 지출 프로젝트 - 데이터센터 증설",
+        "created_by": "SYSTEM-C003-0007",
+        "persona": "automated_system",
+        "source": "automated",
+        "lines": [
+          {
+            "gl": "100630",
+            "debit": 961197.0,
+            "credit": 0.0,
+            "text": "임차시설물 개량"
+          },
+          {
+            "gl": "100670",
+            "debit": 0.0,
+            "credit": 961197.0,
+            "text": "유형자산 취득"
+          }
+        ]
+      }
+    ]
+  },
+  "fraud_samples": {
+    "SplitTransaction": {
+      "header": "A2R 거래",
+      "lines": [
+        {
+          "gl": "100720",
+          "debit": 17700.0,
+          "credit": 0.0,
+          "text": "감가상각누계액"
+        },
+        {
+          "gl": "100100",
+          "debit": 0.0,
+          "credit": 9109.0,
+          "text": "계좌 간 이체"
+        },
+        {
+          "gl": "100000",
+          "debit": 0.0,
+          "credit": 8591.0,
+          "text": "현금 인출"
+        }
+      ]
+    },
+    "ImproperCapitalization": {
+      "header": "수익 인식 - 3월 2022",
+      "lines": [
+        {
+          "gl": "1510",
+          "debit": 2490000.0,
+          "credit": 0.0,
+          "text": "현금 수령"
+        },
+        {
+          "gl": null,
+          "debit": 0.0,
+          "credit": 2490000.0,
+          "text": "이자 수익 - GL400670-0133"
+        }
+      ]
+    },
+    "SuspenseAccountAbuse": {
+      "header": "유형자산 취득 - 보안 시스템",
+      "lines": [
+        {
+          "gl": "2900",
+          "debit": 220000.0,
+          "credit": 0.0,
+          "text": "GR/IR 클리어링"
+        },
+        {
+          "gl": "2190",
+          "debit": 0.0,
+          "credit": 220000.0,
+          "text": "부가가치세 미지급 - GL2190-1181"
+        }
+      ]
+    },
+    "UnauthorizedAccess": {
+      "header": "유형자산 처분 - 연구실 장비",
+      "lines": [
+        {
+          "gl": "1510",
+          "debit": 212252.0,
+          "credit": 0.0,
+          "text": "감가상각 누계 - 2022/1월"
+        },
+        {
+          "gl": "1510",
+          "debit": 287748.0,
+          "credit": 0.0,
+          "text": "감가상각 누계 - GL1510-3088"
+        },
+        {
+          "gl": "100580",
+          "debit": 0.0,
+          "credit": 271414.0,
+          "text": "유형자산 취득"
+        },
+        {
+          "gl": null,
+          "debit": 0.0,
+          "credit": 228586.0,
+          "text": "전산장비 취득"
+        }
+      ]
+    },
+    "RoundDollarManipulation": {
+      "header": "자본적 지출 프로젝트 - 사무실 확장",
+      "lines": [
+        {
+          "gl": "100520",
+          "debit": 100000000.0,
+          "credit": 0.0,
+          "text": "유형자산 취득"
+        },
+        {
+          "gl": "100550",
+          "debit": 0.0,
+          "credit": 100000000.0,
+          "text": "전산장비 취득"
+        }
+      ]
+    },
+    "FictitiousVendor": {
+      "header": "자본적 지출 프로젝트 - 사무실 확장",
+      "lines": [
+        {
+          "gl": "500260",
+          "debit": 3329236.0,
+          "credit": 0.0,
+          "text": "자본적 지출 프로젝트 - 사무실 확장"
+        },
+        {
+          "gl": "400590",
+          "debit": 0.0,
+          "credit": 3329236.0,
+          "text": "자본적 지출 프로젝트 - 사무실 확장"
+        }
+      ]
+    },
+    "SelfApproval": {
+      "header": "내부거래 배부 - 12월",
+      "lines": [
+        {
+          "gl": "500170",
+          "debit": 12210000.0,
+          "credit": 0.0,
+          "text": "직접노무비"
+        },
+        {
+          "gl": "500520",
+          "debit": 3093408.0,
+          "credit": 0.0,
+          "text": "출장비"
+        },
+        {
+          "gl": "200030",
+          "debit": 0.0,
+          "credit": 2258515.0,
+          "text": "매입채무 송장 대사"
+        },
+        {
+          "gl": "200010",
+          "debit": 0.0,
+          "credit": 13044893.0,
+          "text": "거래처 대금 지급"
+        }
+      ]
+    },
+    "JustBelowThreshold": {
+      "header": "유형자산 대체 - 서버 장비",
+      "lines": [
+        {
+          "gl": "100530",
+          "debit": 9999499959.0,
+          "credit": 0.0,
+          "text": "전산장비 취득 - 2022/7월"
+        },
+        {
+          "gl": "100650",
+          "debit": 0.0,
+          "credit": 9999499959.0,
+          "text": "유형자산 취득 - 2022/7월"
+        }
+      ]
+    }
+  }
+}

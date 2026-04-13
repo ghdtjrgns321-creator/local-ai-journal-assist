@@ -49,9 +49,12 @@ class TestInitializeSchema:
         ).fetchdf()
         assert "anomaly_flag_summary" in set(views["view_name"])
 
-    def test_schema_ddl_has_9_objects(self):
-        """SCHEMA_DDL dict에 9개 오브젝트 정의 (5 table + engagement_meta + sequence + whitelist + view)."""
-        assert len(SCHEMA_DDL) == 9
+    def test_schema_ddl_has_13_objects(self):
+        """SCHEMA_DDL 13개: general_ledger, anomaly_flags, benford_summary,
+        benford_digits, ml_model_metadata, upload_batches, whitelist_seq,
+        whitelist, engagement_meta, trial_balance, audit_log_seq, audit_log,
+        anomaly_flag_summary(VIEW)."""
+        assert len(SCHEMA_DDL) == 13
 
     def test_idempotent(self, db_raw_conn):
         """2회 실행해도 에러 없음 (멱등성)."""
@@ -109,8 +112,15 @@ class TestColumnConstants:
             assert col in ddl_cols
 
     def test_feature_columns_in_gl(self, db_conn):
-        """Feature EXPECTED_COLUMNS 18개 전부 general_ledger DDL에 존재."""
+        """Feature EXPECTED_COLUMNS 19개 전부 general_ledger DDL에 존재.
+
+        Why: morpheme_tokens는 WU-21 NLP 전처리용 임시 리스트라 DB 저장 대상이 아님.
+             감사 파생변수 19개만 DDL과 동기화됨 (feature/engine.py 모듈 docstring 참조).
+        """
         from src.feature.engine import EXPECTED_COLUMNS
+
+        # Why: NLP 전처리용 임시 컬럼은 DB 적재 제외
+        _DB_EXCLUDED = {"morpheme_tokens"}
 
         cols = db_conn.execute(
             "SELECT column_name FROM information_schema.columns "
@@ -119,6 +129,8 @@ class TestColumnConstants:
         ddl_cols = set(cols["column_name"])
         for category_cols in EXPECTED_COLUMNS.values():
             for col in category_cols:
+                if col in _DB_EXCLUDED:
+                    continue
                 assert col in ddl_cols, f"피처 '{col}'이 DDL에 없음"
 
     def test_approval_level_in_gl(self, db_conn):

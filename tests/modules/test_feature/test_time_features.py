@@ -47,6 +47,46 @@ class TestBuildHolidaySet:
         result = _build_holiday_set({2025}, ["not-a-date", "2025-12-25"])
         assert date(2025, 12, 25) in result
 
+    def test_substitute_holiday_included(self):
+        """2025년 설날 대체공휴일(1/30)이 포함되어야 한다.
+
+        Why: holidays.KR는 대체공휴일을 자동 계산하므로 이를 검증.
+        설날 연휴: 1/28(화)~1/30(목).
+        """
+        result = _build_holiday_set({2025}, [])
+        # 설날 본 연휴 (1/28, 1/29) + 1/30 대체공휴일 검증
+        assert date(2025, 1, 28) in result
+        assert date(2025, 1, 29) in result
+        assert date(2025, 1, 30) in result
+
+    def test_multi_year_union(self):
+        """다년도 요청 시 모든 연도의 공휴일이 병합된다."""
+        result = _build_holiday_set({2024, 2025, 2026}, [])
+        assert date(2024, 1, 1) in result  # 2024 신정
+        assert date(2025, 1, 1) in result  # 2025 신정
+        assert date(2026, 1, 1) in result  # 2026 신정
+
+    def test_import_error_fallback(self, monkeypatch):
+        """holidays 패키지 import 차단 시 custom만 반환 + 경고."""
+        import builtins
+        real_import = builtins.__import__
+
+        def _block_holidays(name, *args, **kwargs):
+            if name == "holidays":
+                raise ImportError("mocked")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _block_holidays)
+        with pytest.warns(UserWarning, match="holidays 패키지 미설치"):
+            result = _build_holiday_set({2025}, ["2025-07-01"])
+        # 법정공휴일 없이 custom만 존재
+        assert result == {date(2025, 7, 1)}
+
+    def test_empty_years_returns_empty(self):
+        """빈 years 집합 → custom 없으면 빈 set 반환."""
+        result = _build_holiday_set(set(), [])
+        assert result == set()
+
 
 class TestHasTimeInfo:
     """_has_time_info 헬퍼 테스트."""

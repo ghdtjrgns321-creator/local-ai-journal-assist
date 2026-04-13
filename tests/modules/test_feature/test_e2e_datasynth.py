@@ -1,4 +1,4 @@
-"""Tier A E2E: datasynth(1M건) → ingest → feature 18개 전체 검증.
+"""Tier A E2E: datasynth(1M건) → ingest → feature 20개 전체 검증.
 
 journal_entries.csv는 표준 컬럼명과 동일 → identity mapping fast path.
 """
@@ -60,10 +60,10 @@ class TestDataSynthE2E:
         result = generate_all_features(ingested_df)
         return (ingested_df, result, row_count_before)
 
-    def test_all_19_features_generated(self, pipeline_result):
-        """19개 피처 전부 생성되어야 한다."""
+    def test_all_20_features_generated(self, pipeline_result):
+        """20개 피처 전부 생성되어야 한다 (WU-19: morpheme_tokens 추가)."""
         _, result, _ = pipeline_result
-        assert len(result.added_columns) == 19, (
+        assert len(result.added_columns) == 20, (
             f"생성: {len(result.added_columns)}, missing: {result.missing_columns}"
         )
         assert result.missing_columns == []

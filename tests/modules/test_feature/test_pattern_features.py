@@ -358,7 +358,7 @@ class TestAddAllPatternFeatures:
     RULES = {
         "manual_source_codes": ["SA", "Manual", "수기"],
         "revenue_account_prefixes": ["4"],
-        "intercompany_identifiers": [],
+        "intercompany": {"pairs": []},
         "suspense_keywords": ["가수금", "가지급", "미결산", "임시"],
         "suspense_account_codes": ["2190", "2900"],
     }

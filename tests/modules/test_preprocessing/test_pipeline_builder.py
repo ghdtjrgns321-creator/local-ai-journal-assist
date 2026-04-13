@@ -1,4 +1,4 @@
-"""Pipeline 조립 테스트 — XGB / VAE / IF."""
+"""Pipeline 조립 테스트 — XGB / VAE / IF / LightGBM / 지도학습 4종."""
 
 from __future__ import annotations
 
@@ -10,6 +10,8 @@ from src.preprocessing.feature_groups import FeatureGroups
 from src.preprocessing.pipeline_builder import (
     build_all_pipelines,
     build_if_pipeline,
+    build_lgbm_pipeline,
+    build_supervised_pipelines,
     build_xgb_pipeline,
 )
 
@@ -84,3 +86,41 @@ class TestBuildAllPipelines:
         result = build_all_pipelines(simple_groups)
         for name, pipe in result.items():
             assert "preprocessor" in pipe.named_steps, f"{name} has no preprocessor"
+
+
+class TestBuildLgbmPipeline:
+    """LightGBM Pipeline 조립 검증."""
+
+    def test_builds_successfully(self, simple_groups):
+        pipe = build_lgbm_pipeline(simple_groups)
+        assert isinstance(pipe, Pipeline)
+
+    def test_fit_predict(self, simple_groups, simple_data):
+        pipe = build_lgbm_pipeline(simple_groups)
+        X, y = simple_data
+        pipe.fit(X, y)
+        preds = pipe.predict(X)
+        assert set(preds).issubset({0, 1})
+
+
+class TestBuildSupervisedPipelines:
+    """지도학습 4개 Pipeline 일괄 생성 검증."""
+
+    def test_returns_four_pipelines(self, simple_groups):
+        result = build_supervised_pipelines(simple_groups)
+        assert len(result) == 4
+        assert {"lr", "rf", "xgb", "lgbm"} == set(result.keys())
+
+    def test_all_have_preprocessor(self, simple_groups):
+        result = build_supervised_pipelines(simple_groups)
+        for name, pipe in result.items():
+            assert "preprocessor" in pipe.named_steps, f"{name} has no preprocessor"
+
+    def test_all_fit_predict(self, simple_groups, simple_data):
+        """4개 모델 모두 fit/predict 정상 동작."""
+        pipelines = build_supervised_pipelines(simple_groups)
+        X, y = simple_data
+        for name, pipe in pipelines.items():
+            pipe.fit(X, y)
+            preds = pipe.predict(X)
+            assert set(preds).issubset({0, 1}), f"{name} predict failed"

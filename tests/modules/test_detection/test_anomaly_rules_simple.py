@@ -61,6 +61,44 @@ class TestC01:
         df = pd.DataFrame({"debit_amount": [100.0], "credit_amount": [0.0]})
         assert not c01_period_end_large(df).any()
 
+    def test_grouped_q3_per_account_group(self) -> None:
+        """account_group별 Q3 적용 — 그룹 내 상대적 고액만 플래그."""
+        # Why: expense [10, 20, 30, 100] → Q3=47.5, revenue [1000, 2000, 3000, 10000] → Q3=4750
+        df = pd.DataFrame({
+            "debit_amount":  [10, 20, 30, 100, 1000, 2000, 3000, 10000],
+            "credit_amount": [0] * 8,
+            "is_period_end": [True] * 8,
+            "account_group": ["expense"] * 4 + ["revenue"] * 4,
+        })
+        result = c01_period_end_large(df, quantile=0.75, min_group_size=3)
+        # expense: 100 > Q3(47.5) → True
+        assert result[3]
+        # expense: 10, 20, 30 ≤ Q3 → False
+        assert not result[0] and not result[1] and not result[2]
+        # revenue: 10000 > Q3(4750) → True
+        assert result[7]
+        # revenue: 1000, 2000, 3000 ≤ Q3 → False
+        assert not result[4] and not result[5]
+
+    def test_small_group_fallback_to_global(self) -> None:
+        """n < min_group_size인 그룹은 전체 Q3로 fallback."""
+        df = pd.DataFrame({
+            "debit_amount":  [10, 20, 80, 90, 9000],
+            "credit_amount": [0] * 5,
+            "is_period_end": [True] * 5,
+            # Why: 'rare' 그룹은 1건뿐 → 전체 Q3 fallback
+            "account_group": ["expense"] * 4 + ["rare"],
+        })
+        result = c01_period_end_large(df, quantile=0.75, min_group_size=3)
+        # rare(idx=4): 9000 > 전체 Q3(≈86.25) → True
+        assert result[4]
+
+    def test_no_account_group_uses_global(self, anomaly_feature_df: pd.DataFrame) -> None:
+        """account_group 미존재 시 기존 전체 Q3 동작과 동일."""
+        result_with_param = c01_period_end_large(anomaly_feature_df, quantile=0.75, min_group_size=30)
+        result_without = c01_period_end_large(anomaly_feature_df, quantile=0.75)
+        pd.testing.assert_series_equal(result_with_param, result_without)
+
 
 # ── C02 주말 전기 ──────────────────────────────────────────
 
@@ -102,6 +140,29 @@ class TestC03:
     def test_missing_feature_returns_false(self) -> None:
         df = pd.DataFrame({"debit_amount": [100.0]})
         assert not c03_after_hours_entry(df).any()
+
+    def test_time_zone_category_fallback(self) -> None:
+        """is_after_hours 미생성 시 time_zone_category로 대체 동작."""
+        df = pd.DataFrame({
+            "debit_amount": [100.0, 100.0, 100.0, 100.0],
+            "time_zone_category": ["normal", "overtime", "midnight", "unknown"],
+        })
+        result = c03_after_hours_entry(df)
+        # Why: overtime/midnight만 비정상 시간대 — fallback 신호
+        assert result.tolist() == [False, True, True, False]
+
+    def test_time_zone_category_or_combined(self) -> None:
+        """is_after_hours와 time_zone_category가 모두 있으면 OR 결합."""
+        df = pd.DataFrame({
+            "debit_amount": [100.0, 100.0, 100.0, 100.0],
+            # is_after_hours만 보면 0번만 True
+            "is_after_hours": [True, False, False, False],
+            # time_zone_category로는 2번이 추가로 midnight
+            "time_zone_category": ["normal", "normal", "midnight", "normal"],
+        })
+        result = c03_after_hours_entry(df)
+        # Why: is_after_hours=True (0번) OR time_zone_category in {midnight,overtime} (2번)
+        assert result.tolist() == [True, False, True, False]
 
 
 # ── C04 소급 전기 ──────────────────────────────────────────

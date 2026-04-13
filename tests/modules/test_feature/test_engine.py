@@ -16,7 +16,7 @@ from src.feature.engine import (
     generate_all_features,
 )
 
-# 전체 18개 기대 컬럼 평탄화
+# 전체 20개 기대 컬럼 평탄화 (time 7 + amount 5 + pattern 5 + text 3)
 _ALL_EXPECTED = [col for cols in EXPECTED_COLUMNS.values() for col in cols]
 
 
@@ -26,8 +26,8 @@ _ALL_EXPECTED = [col for cols in EXPECTED_COLUMNS.values() for col in cols]
 class TestGenerateAllFeatures:
     """풀 스펙 df → 전체 카테고리 실행 검증."""
 
-    def test_all_18_columns_present(self, en_full_df: pd.DataFrame) -> None:
-        """18개 피처 컬럼이 모두 생성되는지 확인."""
+    def test_all_20_columns_present(self, en_full_df: pd.DataFrame) -> None:
+        """20개 피처 컬럼이 모두 생성되는지 확인 (WU-19: morpheme_tokens 추가)."""
         result = generate_all_features(en_full_df)
         for col in _ALL_EXPECTED:
             assert col in result.data.columns, f"{col} 컬럼 누락"
@@ -37,7 +37,7 @@ class TestGenerateAllFeatures:
         result = generate_all_features(en_full_df)
 
         assert isinstance(result, FeatureResult)
-        assert len(result.added_columns) == 19
+        assert len(result.added_columns) == 20
         assert result.missing_columns == []
         assert set(result.categories_run) == {"time", "amount", "pattern", "text"}
         assert len(result.execution_times) == 4
@@ -69,6 +69,14 @@ class TestGenerateAllFeatures:
         # str/object 타입 피처
         assert df["description_quality"].dtype == "object"
         assert df["has_risk_keyword"].dtype == "object"
+
+        # WU-19: morpheme_tokens는 object dtype이되 셀값이 반드시 list여야 함
+        # Why: dtype만으로는 문자열 직렬화·None 섞임을 잡을 수 없다. WU-21에서
+        # len(tokens)·tokens[0] 등을 쓰므로 값 타입 불일치를 여기서 조기 차단.
+        assert df["morpheme_tokens"].dtype == "object"
+        assert all(isinstance(v, list) for v in df["morpheme_tokens"]), (
+            "morpheme_tokens 셀값은 전부 list여야 함"
+        )
 
 
 # ── TestSelectiveCategories ──────────────────────────────────────
@@ -129,11 +137,11 @@ class TestIdempotency:
         assert col_count_1 == col_count_2
 
     def test_run_twice_metadata_consistent(self, en_full_df: pd.DataFrame) -> None:
-        """2회째에도 added_columns=19개 유지."""
+        """2회째에도 added_columns=20개 유지."""
         generate_all_features(en_full_df)
         result2 = generate_all_features(en_full_df)
 
-        assert len(result2.added_columns) == 19
+        assert len(result2.added_columns) == 20
         assert result2.missing_columns == []
 
 
@@ -196,7 +204,7 @@ class TestSettingsInjection:
         # 기본 rules에 "SA" 포함 → 첫 행 True
         rules_with_sa = {
             "manual_source_codes": ["SA"],
-            "intercompany_identifiers": [],
+            "intercompany": {"pairs": []},
             "revenue_account_prefixes": ["41"],
             "suspense_keywords": ["가수금"],
         }
@@ -205,7 +213,7 @@ class TestSettingsInjection:
         # "UNKNOWN"만 → 모두 False
         rules_no_match = {
             "manual_source_codes": ["UNKNOWN"],
-            "intercompany_identifiers": [],
+            "intercompany": {"pairs": []},
             "revenue_account_prefixes": ["41"],
             "suspense_keywords": ["가수금"],
         }

@@ -34,6 +34,98 @@ def db_raw_conn():
     conn.close()
 
 
+# Why: v1 스키마는 ML 예약 7개 컬럼이 없던 레거시 상태를 재현
+#      마이그레이션 테스트에서 ALTER TABLE ADD COLUMN 동작을 검증하기 위함
+_V1_GENERAL_LEDGER_DDL = """
+    CREATE TABLE IF NOT EXISTS general_ledger (
+        document_id VARCHAR NOT NULL,
+        company_code VARCHAR,
+        fiscal_year INTEGER,
+        fiscal_period INTEGER NOT NULL,
+        posting_date TIMESTAMP NOT NULL,
+        document_date TIMESTAMP,
+        document_type VARCHAR,
+        currency VARCHAR,
+        exchange_rate DOUBLE,
+        reference VARCHAR,
+        header_text VARCHAR,
+        created_by VARCHAR,
+        user_persona VARCHAR,
+        source VARCHAR,
+        business_process VARCHAR,
+        ledger VARCHAR,
+        approved_by VARCHAR,
+        approval_date TIMESTAMP,
+        is_fraud BOOLEAN,
+        fraud_type VARCHAR,
+        is_anomaly BOOLEAN,
+        anomaly_type VARCHAR,
+        sod_violation BOOLEAN,
+        sod_conflict_type VARCHAR,
+        line_number INTEGER,
+        gl_account VARCHAR,
+        debit_amount DOUBLE DEFAULT 0,
+        credit_amount DOUBLE DEFAULT 0,
+        local_amount DOUBLE,
+        cost_center VARCHAR,
+        profit_center VARCHAR,
+        line_text VARCHAR,
+        tax_code VARCHAR,
+        tax_amount DOUBLE,
+        trading_partner VARCHAR,
+        auxiliary_account_number VARCHAR,
+        auxiliary_account_label VARCHAR,
+        lettrage VARCHAR,
+        lettrage_date TIMESTAMP,
+        approval_level INTEGER,
+        is_weekend BOOLEAN,
+        is_after_hours BOOLEAN,
+        is_period_end BOOLEAN,
+        days_backdated INTEGER,
+        fiscal_period_mismatch BOOLEAN,
+        is_holiday BOOLEAN,
+        time_zone_category VARCHAR,
+        is_near_threshold BOOLEAN,
+        exceeds_threshold BOOLEAN,
+        amount_zscore DOUBLE,
+        amount_magnitude DOUBLE,
+        is_round_number BOOLEAN,
+        is_manual_je BOOLEAN,
+        is_intercompany BOOLEAN,
+        is_revenue_account BOOLEAN,
+        first_digit INTEGER,
+        is_suspense_account BOOLEAN,
+        description_quality VARCHAR,
+        has_risk_keyword VARCHAR,
+        anomaly_score DOUBLE,
+        risk_level VARCHAR,
+        flagged_rules VARCHAR,
+        upload_batch_id VARCHAR,
+        created_at TIMESTAMP DEFAULT current_timestamp
+    )
+"""
+
+_V1_ENGAGEMENT_META_DDL = """
+    CREATE TABLE IF NOT EXISTS engagement_meta (
+        company_id     VARCHAR NOT NULL,
+        engagement_id  VARCHAR NOT NULL,
+        created_at     TIMESTAMP DEFAULT current_timestamp,
+        schema_version INTEGER DEFAULT 1,
+        UNIQUE (company_id, engagement_id)
+    )
+"""
+
+
+@pytest.fixture()
+def db_v1_conn():
+    """ML 컬럼 없는 v1 레거시 general_ledger + engagement_meta."""
+    conn = duckdb.connect(":memory:")
+    conn.execute(_V1_GENERAL_LEDGER_DDL)
+    conn.execute(_V1_ENGAGEMENT_META_DDL)
+    yield conn
+    conn.close()
+
+
 # ── 샘플 DataFrame 픽스처 ────────────────────────────────────
 
 
