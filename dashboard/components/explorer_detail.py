@@ -1,7 +1,8 @@
-"""행 상세 패널 — 선택 전표의 룰별 점수 차트 + 라인아이템.
+"""행 상세 패널 — 선택 전표의 룰별 점수 차트 + 라인아이템 + SHAP 기여도.
 
 Why: Explorer 그리드에서 행 선택 시 해당 전표의 탐지 근거를
      시각적으로 확인할 수 있도록 드릴다운 패널 제공.
+     WU-17: ML 모델이 학습되어 있으면 SHAP waterfall로 피처 기여도까지 표시.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from dashboard.components.charts._theme import (
     LAYER_LABELS,
     empty_figure,
 )
+from dashboard.components.shap_waterfall import render_shap_waterfall
 
 if TYPE_CHECKING:
     import duckdb
@@ -28,6 +30,8 @@ def render_detail(
     result_data: pd.DataFrame,
     conn: "duckdb.DuckDBPyConnection | None",
     batch_id: str,
+    shap_contributions: dict[str, dict[str, float]] | None = None,
+    shap_base_value: float | None = None,
 ) -> None:
     """선택된 전표의 상세 정보 패널 렌더링.
 
@@ -36,9 +40,19 @@ def render_detail(
         result_data: PipelineResult.data (인메모리 DataFrame).
         conn: DuckDB 연결 (None이면 인메모리 전용).
         batch_id: 현재 배치 식별자.
+        shap_contributions: SHAP 기여도 매핑 (ML 모델 없을 시 None).
+        shap_base_value: SHAP Waterfall 시작점 (None이면 SHAP 미표시).
     """
+    # Why: SHAP 데이터 존재 여부에 따라 2컬럼 ↔ 3컬럼 동적 전환.
+    #      Cold Start(ML 미학습)에서는 기존 2컬럼 레이아웃 유지.
+    has_shap = shap_contributions is not None and shap_base_value is not None
+
     with st.expander(f"문서 상세: {doc_id}", expanded=True):
-        col_chart, col_lines = st.columns([3, 2])
+        if has_shap:
+            col_chart, col_lines, col_shap = st.columns([3, 2, 3])
+        else:
+            col_chart, col_lines = st.columns([3, 2])
+            col_shap = None
 
         # ── 좌측: 룰별 점수 바 차트 ──
         with col_chart:
@@ -50,7 +64,7 @@ def render_detail(
                 fig = _build_rule_chart(rule_df)
                 st.plotly_chart(fig, use_container_width=True)
 
-        # ── 우측: 해당 전표 라인아이템 ──
+        # ── 중앙: 해당 전표 라인아이템 ──
         with col_lines:
             st.subheader("라인아이템")
             doc_lines = result_data[result_data["document_id"] == doc_id]
@@ -68,6 +82,11 @@ def render_detail(
                     use_container_width=True,
                     hide_index=True,
                 )
+
+        # ── 우측: SHAP 피처 기여도 (ML 학습된 경우에만) ──
+        if col_shap is not None:
+            with col_shap:
+                render_shap_waterfall(doc_id, shap_contributions, shap_base_value)
 
 
 def _get_rule_detail(

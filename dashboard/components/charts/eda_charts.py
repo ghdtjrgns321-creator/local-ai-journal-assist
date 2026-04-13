@@ -23,7 +23,7 @@ def missing_rate_bar(missing_data: dict[str, float]) -> go.Figure:
     sorted_items = sorted(missing_data.items(), key=lambda x: x[1], reverse=True)
     cols = [item[0] for item in sorted_items]
     rates = [item[1] for item in sorted_items]
-    colors = ["#FF4B4B" if r >= _MISSING_WARN else "#00CC96" for r in rates]
+    colors = ["#DC2626" if r >= _MISSING_WARN else "#6B7280" for r in rates]
 
     fig = go.Figure(go.Bar(
         x=rates, y=cols, orientation="h",
@@ -54,7 +54,7 @@ def outlier_ratio_bar(numeric_stats: list[dict], total_rows: int) -> go.Figure:
 
     cols = [s["column"] for s in valid]
     ratios = [s["outlier_count"] / total_rows for s in valid]
-    colors = ["#FF4B4B" if r >= 0.05 else "#636EFA" for r in ratios]
+    colors = ["#DC2626" if r >= 0.05 else "#2563EB" for r in ratios]
 
     fig = go.Figure(go.Bar(
         x=ratios, y=cols, orientation="h",
@@ -93,7 +93,7 @@ def numeric_box_plots(numeric_stats: list[dict]) -> go.Figure:
             median=[s.get("median", 0)],
             q3=[q3],
             upperfence=[upper],
-            marker_color="#636EFA",
+            marker_color="#2563EB",
         ))
 
     fig.update_layout(
@@ -107,6 +107,51 @@ def numeric_box_plots(numeric_stats: list[dict]) -> go.Figure:
     return fig
 
 
+# Why: 금액 컬럼만 개별 서브플롯으로 분리 — 스케일 차이 문제 해결
+_AMOUNT_COLUMNS = {
+    "debit_amount", "credit_amount", "local_amount",
+    "invoice_amount", "supply_amount", "tax_amount",
+}
+
+
+def amount_box_plot(numeric_stats: list[dict]) -> go.Figure:
+    """금액 컬럼 전용 박스플롯 — 컬럼별 독립 서브플롯."""
+    amount_stats = [s for s in numeric_stats if s["column"] in _AMOUNT_COLUMNS]
+    if not amount_stats:
+        return empty_figure("금액 컬럼 없음")
+
+    from plotly.subplots import make_subplots
+
+    n = len(amount_stats)
+    fig = make_subplots(rows=n, cols=1, subplot_titles=[s["column"] for s in amount_stats])
+
+    for i, s in enumerate(amount_stats, 1):
+        q1 = s.get("q1", 0) or 0
+        q3 = s.get("q3", 0) or 0
+        iqr = q3 - q1
+        lower = max(s.get("min", 0) or 0, q1 - 1.5 * iqr)
+        upper = min(s.get("max", 0) or 0, q3 + 1.5 * iqr)
+        fig.add_trace(
+            go.Box(
+                lowerfence=[lower], q1=[q1],
+                median=[s.get("median", 0)],
+                q3=[q3], upperfence=[upper],
+                marker_color="#2563EB",
+                name=s["column"],
+                showlegend=False,
+            ),
+            row=i, col=1,
+        )
+
+    fig.update_layout(
+        **DEFAULT_LAYOUT,
+        title="금액 컬럼 분포",
+        height=max(300, n * 180),
+        showlegend=False,
+    )
+    return fig
+
+
 def quality_gauge(score: float) -> go.Figure:
     """데이터 품질 점수 게이지 차트 (0~100)."""
     fig = go.Figure(go.Indicator(
@@ -115,11 +160,11 @@ def quality_gauge(score: float) -> go.Figure:
         title={"text": "데이터 품질 점수"},
         gauge={
             "axis": {"range": [0, 100]},
-            "bar": {"color": "#636EFA"},
+            "bar": {"color": "#2563EB"},
             "steps": [
-                {"range": [0, 60], "color": "#FFCCCC"},
-                {"range": [60, 80], "color": "#FFF3CD"},
-                {"range": [80, 100], "color": "#D4EDDA"},
+                {"range": [0, 60], "color": "#FEF2F2"},
+                {"range": [60, 80], "color": "#FFFBEB"},
+                {"range": [80, 100], "color": "#ECFDF5"},
             ],
             # Why: threshold line은 bar 색상과 시각적으로 중복되므로 제거
             #      gauge bar 자체가 현재 값을 충분히 표시

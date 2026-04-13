@@ -188,9 +188,6 @@ def render_mapping_review() -> None:
         _render_encoding_selector(read_result)
         _render_sheet_selector(read_result)
 
-    # ── UI-3: Fuzzy 엄격도 슬라이더 ──
-    _render_fuzzy_slider()
-
     # ── UI-4: 중복 금액 퀵픽스 ──
     quickfix_overrides = _render_amount_quickfix(mapping_result)
 
@@ -242,8 +239,10 @@ def render_mapping_review() -> None:
             # RC-5-2: 사용자 수동 매핑 → 회사 키워드 학습
             _try_learn_keywords(user_overrides)
 
+            # Why: rerun으로 PIPELINE 스테이지 전환 시 빈 화면 문제 방지
+            # 같은 페이지에서 바로 진행률 표시 후 파이프라인 실행
             st.session_state[KEY_INGEST_STAGE] = "PIPELINE"
-            st.rerun()
+            _run_pipeline_inline()
     with col2:
         if st.button("취소"):
             _clear_and_reset()
@@ -541,7 +540,7 @@ def _render_mapping_unified(
 
     추천 우선순위:
     1. auto_map_columns 결과 (exact/fuzzy match)
-    2. LLM 추천 (Ollama 실행 중이면)
+    2. LLM 추천 (OpenAI 가용 시)
     3. (무시) 기본값
     """
     schema = get_schema()
@@ -580,9 +579,9 @@ def _render_mapping_unified(
             if fmt_suggested in fmt_options:
                 default_idx = fmt_options.index(fmt_suggested)
 
-        # 라벨: 샘플값 + 신뢰도 (help 제거)
+        # 라벨: 원본 컬럼명 + 신뢰도
         conf_text = f" (신뢰도 {conf:.0%})" if conf > 0 else ""
-        label = f"{sample}{conf_text}" if sample else f"컬럼 {src}{conf_text}"
+        label = f"[{src}]{conf_text}"
         chosen_fmt = st.selectbox(
             label, fmt_options, index=default_idx,
             key=f"map_{src}",
@@ -632,6 +631,31 @@ def _try_learn_keywords(user_overrides: dict[str, str]) -> None:
             st.toast(f"키워드 학습 완료: {len(user_overrides)}개 매핑 반영")
     except Exception:
         logger.warning("키워드 학습 실패", exc_info=True)
+
+
+def _run_pipeline_inline() -> None:
+    """매핑 확인 직후 같은 페이지에서 파이프라인 실행.
+
+    Why: PIPELINE 스테이지로 rerun하면 빈 화면이 먼저 보여서
+    사용자가 에러로 오인. 여기서 직접 실행하면 매핑 화면 아래에
+    진행률 바가 즉시 표시된다.
+    """
+    from dashboard.components.data_uploader import (
+        _make_progress_cb,
+        _run_pipeline_from_mapped,
+    )
+
+    st.caption("분석 중... 잠시 기다려 주세요.")
+    file_key = st.session_state.get("_ingest_file_key", "")
+
+    try:
+        progress_bar = st.progress(0, text="파이프라인 시작...")
+        _run_pipeline_from_mapped(file_key, _make_progress_cb(progress_bar))
+        progress_bar.empty()
+        st.rerun()
+    except Exception as e:
+        logger.exception("파이프라인 실행 실패")
+        st.error(f"파이프라인 실행 실패: {e}")
 
 
 def _clear_and_reset() -> None:

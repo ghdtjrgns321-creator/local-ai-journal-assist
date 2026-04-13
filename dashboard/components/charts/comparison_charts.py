@@ -17,7 +17,7 @@ from dashboard.components.charts._theme import (
 )
 
 # Why: 당기/전기 색상을 일관되게 적용
-_CURRENT_COLOR = "#636EFA"
+_CURRENT_COLOR = "#2563EB"
 _PRIOR_COLOR = "#B0BEC5"
 
 
@@ -99,7 +99,7 @@ def rule_violation_delta(
     merged["증감"] = merged["당기"] - merged["전기"]
     merged = merged.sort_values("증감")
 
-    colors = ["#FF4B4B" if v > 0 else "#00CC96" for v in merged["증감"]]
+    colors = ["#DC2626" if v > 0 else "#6B7280" for v in merged["증감"]]
     fig = go.Figure(
         go.Bar(x=merged["증감"], y=merged["rule_code"], orientation="h",
                marker_color=colors),

@@ -585,6 +585,7 @@ def _render_pipeline_stage() -> None:
     file_key = st.session_state.get("_ingest_file_key", "")
 
     try:
+        st.info("분석을 시작합니다. 데이터 크기에 따라 수십 초가 소요될 수 있습니다.")
         progress_bar = st.progress(0, text="파이프라인 시작...")
         result, warns = _run_pipeline_from_mapped(file_key, _make_progress_cb(progress_bar))
         progress_bar.empty()
@@ -592,6 +593,16 @@ def _render_pipeline_stage() -> None:
         # 파이프라인 완료 → 결과 탭 화면으로 전환
         st.rerun()
 
+    except ValueError as e:
+        # Why: L1/L2 검증 fatal — 회계 근본 위반(대차불일치 등)은 일반 예외와 분리하여
+        #      사용자에게 명확한 차단 사유를 표시. 감사조서 추적은 audit_log에 이미 기록됨.
+        logger.warning("파이프라인 검증 차단: %s", e)
+        st.error(f"검증 단계 차단: {e}")
+        st.warning(
+            "데이터 무결성 위반(예: 차변 ≠ 대변)이 임계를 초과했습니다. "
+            "원본 GL 파일을 확인 후 다시 업로드해 주세요."
+        )
+        _clear_ingest_state()
     except Exception as e:
         logger.exception("파이프라인 실행 실패")
         st.error(f"파이프라인 실행 실패: {e}")
@@ -759,15 +770,16 @@ def _run_pipeline_from_mapped(file_key: str, progress_cb):
     ctx = st.session_state.get(KEY_COMPANY_CONTEXT)
     settings = st.session_state.get(KEY_SETTINGS)
     repo = st.session_state.get("_company_repo")
+    # Why: DB upload_batches 메타에 파일명 기록 (PipelineResult.file_name 경유)
+    fname = file_key.rsplit("_", 1)[0] if file_key else ""
     if ctx is not None:
         result = AuditPipeline(
             context=ctx, progress_callback=progress_cb, repo=repo,
-        ).run_from_dataframe(df)
+        ).run_from_dataframe(df, file_name=fname)
     else:
         result = AuditPipeline(
             settings=settings, progress_callback=progress_cb,
-        ).run_from_dataframe(df)
-
+        ).run_from_dataframe(df, file_name=fname)
     result.warnings = warns + result.warnings
 
     if source_columns:

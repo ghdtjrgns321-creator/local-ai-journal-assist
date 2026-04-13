@@ -1,0 +1,59 @@
+"""이상 항목 탭 — 탐지된 전표 목록 탐색 + HITL 예외처리.
+
+감사인 관점: "어디에 있나?" → AgGrid 드릴다운.
+기존 tab_explorer.py의 컴포넌트를 재활용.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+import streamlit as st
+
+from dashboard._state import KEY_DEV_MODE, KEY_FILTERS
+from dashboard.components.filters import apply_filters
+
+if TYPE_CHECKING:
+    from src.pipeline import PipelineResult
+
+
+def _render_filter_summary(df_filtered, df_original) -> None:
+    """적용된 필터 결과 한 줄 요약."""
+    total = len(df_original)
+    filtered = len(df_filtered)
+
+    if "risk_level" in df_filtered.columns:
+        risk_counts = df_filtered["risk_level"].value_counts()
+        high = risk_counts.get("High", 0)
+        medium = risk_counts.get("Medium", 0)
+        st.caption(
+            f"전체 {total:,}건 중 {filtered:,}건 표시 · "
+            f"High {high:,} · Medium {medium:,}"
+        )
+    else:
+        st.caption(f"전체 {total:,}건 중 {filtered:,}건 표시")
+
+
+def render(result: PipelineResult) -> None:
+    """이상 항목 탭 메인 렌더."""
+    filters = st.session_state.get(KEY_FILTERS, {})
+    df = apply_filters(result.data, filters)
+
+    _render_filter_summary(df, result.data)
+
+    # ── AgGrid 테이블 ──
+    from dashboard.components.explorer_grid import build_grid
+    dev_mode = st.session_state.get(KEY_DEV_MODE, False)
+    grid_response = build_grid(df, dev_mode=dev_mode)
+
+    # ── 상세 패널 (행 선택 시) ──
+    selected = grid_response.selected_rows
+    if selected is not None and len(selected) > 0:
+        from dashboard.components.explorer_detail import render_detail
+        render_detail(selected, result.data)
+
+    # ── HITL 예외 저장 (DB 연결 시) ──
+    dev_mode = st.session_state.get(KEY_DEV_MODE, False)
+    if selected is not None and len(selected) > 0:
+        from dashboard.components.explorer_whitelist import render_whitelist
+        render_whitelist(selected, dev_mode=dev_mode)

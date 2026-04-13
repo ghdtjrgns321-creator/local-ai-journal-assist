@@ -48,15 +48,19 @@ def render_engagement_selector(company_id: str, repo: CompanyRepository) -> None
 
     engagements = repo.list_engagements(company_id)
     if engagements:
-        _render_engagement_list(engagements)
+        _render_engagement_list(engagements, company_id, repo)
     else:
         st.info("등록된 감사 연도가 없습니다. 아래에서 새 연도를 생성하세요.")
 
     _render_create_form(company_id, repo)
 
 
-def _render_engagement_list(engagements: list[EngagementProfile]) -> None:
-    """연도 목록 — 연도/상태/기간 표시."""
+def _render_engagement_list(
+    engagements: list[EngagementProfile],
+    company_id: str,
+    repo: CompanyRepository,
+) -> None:
+    """연도 목록 — 연도/상태/기간 표시 + 삭제."""
     cols = st.columns(3)
     for idx, eng in enumerate(engagements):
         with cols[idx % 3]:
@@ -68,10 +72,30 @@ def _render_engagement_list(engagements: list[EngagementProfile]) -> None:
                     period = f"{eng.period_start} ~ {eng.period_end}"
                 st.caption(f"상태: {status_label}" + (f" · {period}" if period else ""))
 
-                if st.button("선택", key=f"sel_eng_{eng.engagement_id}"):
-                    # Why: 함정2 방어 — rerun 전 state에 ID 즉시 저장
-                    st.session_state[KEY_ENGAGEMENT_ID] = eng.engagement_id
-                    st.rerun()
+                btn_col, del_col = st.columns([2, 1])
+                with btn_col:
+                    if st.button("선택", key=f"sel_eng_{eng.engagement_id}"):
+                        st.session_state[KEY_ENGAGEMENT_ID] = eng.engagement_id
+                        st.rerun()
+                with del_col:
+                    # Why: 2단계 확인 — 실수로 삭제 방지. session_state 토글 방식.
+                    confirm_key = f"_del_confirm_{eng.engagement_id}"
+                    if st.session_state.get(confirm_key, False):
+                        if st.button(
+                            "정말 삭제",
+                            key=f"del2_{eng.engagement_id}",
+                            type="primary",
+                        ):
+                            repo.delete_engagement(company_id, eng.engagement_id)
+                            st.session_state.pop(confirm_key, None)
+                            st.rerun()
+                    else:
+                        if st.button(
+                            "삭제",
+                            key=f"del1_{eng.engagement_id}",
+                        ):
+                            st.session_state[confirm_key] = True
+                            st.rerun()
 
 
 def _render_create_form(company_id: str, repo: CompanyRepository) -> None:
@@ -82,21 +106,22 @@ def _render_create_form(company_id: str, repo: CompanyRepository) -> None:
             fiscal_year = st.number_input(
                 "회계연도", min_value=2000, max_value=2099, value=current_year,
             )
-            eid = st.text_input(
-                "Engagement ID (영소문자, 숫자, 밑줄)",
-                value=f"fy{fiscal_year}",
-            )
+
             col1, col2 = st.columns(2)
             with col1:
-                p_start = st.date_input("감사 시작일", value=date(fiscal_year, 1, 1))
+                p_start = st.date_input(
+                    "감사 대상기간 시작일", value=date(current_year, 1, 1),
+                )
             with col2:
-                p_end = st.date_input("감사 종료일", value=date(fiscal_year, 12, 31))
+                p_end = st.date_input(
+                    "감사 대상기간 종료일", value=date(current_year, 12, 31),
+                )
+
+            # Why: Engagement ID 자동 생성 — 오타/중복 방지
+            eid = f"fy{fiscal_year}"
 
             submitted = st.form_submit_button("생성", type="primary")
             if submitted:
-                if not eid:
-                    st.error("Engagement ID는 필수입니다.")
-                    return
                 try:
                     profile = EngagementProfile(
                         engagement_id=eid,
@@ -106,7 +131,6 @@ def _render_create_form(company_id: str, repo: CompanyRepository) -> None:
                         period_end=p_end,
                     )
                     repo.create_engagement(company_id, profile)
-                    # Why: 함정2 방어 — rerun 전 state 업데이트
                     st.session_state[KEY_ENGAGEMENT_ID] = profile.engagement_id
                     st.rerun()
                 except FileExistsError:

@@ -11,17 +11,23 @@ from typing import TYPE_CHECKING
 import pandas as pd
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, JsCode
 
+from dashboard.components.ml_tooltips import ML_TOOLTIPS
+
 if TYPE_CHECKING:
     pass
 
 # ── JsCode 조건부 서식 ────────────────────────────────────────
 
 # Why: RISK_COLORS를 JS 내부에 하드코딩 (JsCode는 Python 변수 참조 불가)
+#      _theme.py RISK_COLORS와 동일한 muted 톤 유지.
 RISK_CELL_STYLE = JsCode("""
 function(params) {
-    var colors = {High:'#FF4B4B', Medium:'#FFA500', Low:'#FFD700', Normal:'#00CC96'};
+    var colors = {High:'#EF4444', Medium:'#F59E0B', Low:'#60A5FA', Normal:'#CBD5E1'};
+    var textColors = {High:'#fff', Medium:'#fff', Low:'#1E293B', Normal:'#475569'};
     var bg = colors[params.value] || 'transparent';
-    return {backgroundColor: bg, color: '#fff', fontWeight: 'bold', textAlign: 'center'};
+    var fg = textColors[params.value] || '#111827';
+    return {backgroundColor: bg, color: fg, fontWeight: '600', textAlign: 'center',
+            borderRadius: '4px', margin: '2px 0'};
 }
 """)
 
@@ -76,7 +82,12 @@ class SodRenderer {
 
 _PINNED_COLS = ["document_id", "risk_level", "anomaly_score"]
 
+# Why: ML 점수 컬럼을 최상단 visible에 배치 → 감사인이 룰 기반 점수와 ML 점수를
+#      한눈에 비교 가능. DataFrame에 없으면 available 필터로 자동 제외.
+_ML_SCORE_COLS = ["supervised_score", "unsupervised_score"]
+
 _VISIBLE_COLS = [
+    *_ML_SCORE_COLS,
     "company_code", "posting_date", "document_type", "business_process",
     "gl_account", "debit_amount", "credit_amount", "created_by",
     "user_persona", "source", "flagged_rules",
@@ -94,7 +105,10 @@ _DEV_COLS = ["is_fraud", "fraud_type", "is_anomaly", "anomaly_type"]
 
 _HEADER_KR: dict[str, str] = {
     "document_id": "전표번호", "risk_level": "위험등급",
-    "anomaly_score": "이상점수", "company_code": "회사코드",
+    "anomaly_score": "이상점수",
+    "supervised_score": "ML(지도)",
+    "unsupervised_score": "ML(비지도)",
+    "company_code": "회사코드",
     "posting_date": "전기일", "document_type": "전표유형",
     "business_process": "업무프로세스", "gl_account": "계정코드",
     "debit_amount": "차변", "credit_amount": "대변",
@@ -167,6 +181,9 @@ def build_grid(
         if col not in show_df.columns:
             continue
         opts: dict = {"pinned": "left", "headerName": _HEADER_KR.get(col, col)}
+        # Why: 핵심 지표 컬럼은 headerTooltip으로 한글 설명 제공
+        if col in ML_TOOLTIPS:
+            opts["headerTooltip"] = ML_TOOLTIPS[col]
         if col == "risk_level":
             opts["cellStyle"] = RISK_CELL_STYLE
             opts["width"] = 100
@@ -182,7 +199,18 @@ def build_grid(
     for col in _VISIBLE_COLS:
         if col not in show_df.columns:
             continue
-        gb.configure_column(col, headerName=_HEADER_KR.get(col, col))
+        # Why: ML 점수 컬럼은 anomaly_score와 동일한 바 렌더러로 시각 일관성 유지.
+        #      headerTooltip에 한글 설명을 넣어 감사인 친화적 UX 제공.
+        if col in _ML_SCORE_COLS:
+            gb.configure_column(
+                col,
+                headerName=_HEADER_KR.get(col, col),
+                headerTooltip=ML_TOOLTIPS.get(col, ""),
+                cellRenderer=SCORE_RENDERER,
+                width=110,
+            )
+        else:
+            gb.configure_column(col, headerName=_HEADER_KR.get(col, col))
 
     # hidden 컬럼
     for col in _HIDDEN_COLS:
