@@ -3,7 +3,7 @@
 Why: Benford는 전체 분포 검정이라 행별 룰(C01~C09)과 성격이 다르다.
      Layer C 내부가 아닌 독립 트랙으로 분리하여 score_aggregator가
      LAYER_WEIGHTS[Layer.BENFORD] = 0.15를 별도 적용할 수 있게 한다.
-     C07 행별 선별 로직은 anomaly_rules_statistical.py를 재사용.
+     C07 행별 선별 로직 + deviation 비례 스코어는 anomaly_rules_statistical.py를 재사용.
 """
 
 from __future__ import annotations
@@ -15,10 +15,12 @@ import pandas as pd
 
 from src.detection.anomaly_rules_statistical import c07_benford_violation
 from src.detection.base import BaseDetector, validate_input
-from src.detection.constants import SEVERITY_MAP
 
 if TYPE_CHECKING:
     from src.detection.base import DetectionResult
+
+
+_RULE_ID = "C07"
 
 
 class BenfordDetector(BaseDetector):
@@ -39,23 +41,23 @@ class BenfordDetector(BaseDetector):
             return self._empty_result(df, warnings, time.perf_counter() - start)
 
         try:
-            flagged, meta = c07_benford_violation(df, settings=self._settings)
+            scores, meta = c07_benford_violation(df, settings=self._settings)
         except Exception as exc:
-            warnings.append(f"C07 실행 실패: {exc}")
-            self._logger.warning("C07 실행 실패: %s", exc)
+            warnings.append(f"{_RULE_ID} 실행 실패: {exc}")
+            self._logger.warning("%s 실행 실패: %s", _RULE_ID, exc)
             return self._empty_result(df, warnings, time.perf_counter() - start)
 
         elapsed = time.perf_counter() - start
 
-        # Why: C07 단일 룰이므로 details는 1컬럼
-        severity_score = SEVERITY_MAP["C07"] / 5.0
-        scores = flagged.astype(float) * severity_score
+        # Why: c07_benford_violation이 이미 deviation 비례 [0, 0.8] 점수를 반환하므로
+        #      여기서 추가 가중 없이 그대로 사용 (이전 0.4 고정값 → 차등화 완료)
+        scores = scores.astype(float)
         flagged_indices = scores[scores > 0].index.tolist()
 
         rule_flags = [
             self._create_rule_flag(
-                rule_id="C07",
-                flagged_count=int(flagged.sum()),
+                rule_id=_RULE_ID,
+                flagged_count=int((scores > 0).sum()),
                 total_count=len(df),
             )
         ]
@@ -67,7 +69,7 @@ class BenfordDetector(BaseDetector):
             flagged_indices=flagged_indices,
             scores=scores,
             rule_flags=rule_flags,
-            details=pd.DataFrame({"C07": scores}, index=df.index),
+            details=pd.DataFrame({_RULE_ID: scores}, index=df.index),
             metadata=metadata,
             warnings=warnings,
         )

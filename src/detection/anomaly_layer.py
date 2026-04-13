@@ -1,4 +1,4 @@
-"""Layer C: 이상 징후 오케스트레이터 — C01~C06, C08~C12.
+"""Layer C: 이상 징후 오케스트레이터 — C01~C06, C08~C13.
 
 룰 레지스트리를 순회하며 try/except로 격리 실행.
 한 룰 실패해도 나머지 계속 진행, 실패 룰은 skipped + warning 기록.
@@ -23,6 +23,7 @@ from src.detection.anomaly_rules_simple import (
     c10_suspense_account,
     c12_abnormal_hours_concentration,
 )
+from src.detection.anomaly_rules_batch import c13_batch_anomaly
 from src.detection.anomaly_rules_reversal import c11_reversal_entry
 from src.detection.anomaly_rules_statistical import c09_rare_account_pair
 from src.detection.base import BaseDetector, validate_input
@@ -75,7 +76,10 @@ class AnomalyDetector(BaseDetector):
         """룰 레지스트리: (rule_id, callable, kwargs)."""
         s = self._settings
         return [
-            ("C01", c01_period_end_large, {"quantile": s.period_end_amount_quantile}),
+            ("C01", c01_period_end_large, {
+                "quantile": s.period_end_amount_quantile,
+                "min_group_size": s.c01_min_group_size,
+            }),
             ("C02", c02_weekend_entry, {}),
             ("C03", c03_after_hours_entry, {}),
             ("C04", c04_backdated_entry, {"threshold_days": s.backdated_threshold_days}),
@@ -98,6 +102,12 @@ class AnomalyDetector(BaseDetector):
                 "min_midnight_entries": s.min_midnight_entries,
                 "min_user_entries": s.min_user_entries,
                 "auto_entry_sources": s.auto_entry_sources,
+            }),
+            ("C13", c13_batch_anomaly, {
+                "batch_sources": s.batch_source_values,
+                "period_end_ratio": s.batch_period_end_ratio,
+                "simultaneous_threshold": s.batch_simultaneous_threshold,
+                "amount_zscore": s.batch_amount_zscore,
             }),
         ]
 
