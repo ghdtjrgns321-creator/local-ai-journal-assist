@@ -7,6 +7,10 @@ JSON 직렬화 가능하도록 numpy 타입 대신 Python 네이티브만 사용
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 
 @dataclass
@@ -147,3 +151,32 @@ class StatisticalResult:
     temporal_patterns: TemporalPatternStats
     warnings: list[str] = field(default_factory=list)
     flags: list[dict[str, str]] = field(default_factory=list)
+
+
+# ── TB 교차검증 결과 (WU-13) ────────────────────────────────
+
+
+@dataclass
+class ReconciliationItem:
+    """개별 대사 항목 결과 — 계정 유형별 GL vs TB 잔액 비교."""
+
+    recon_type: str              # "AR" | "AP" | "FA" | "TOTAL"
+    gl_balance: float            # GL 라인아이템 합계 (debit - credit)
+    tb_balance: float            # TB closing_balance(당기 순증감액) 합계
+    difference: float            # gl_balance - tb_balance (round(2) 적용 후)
+    is_within_materiality: bool  # |difference| <= materiality
+    account_filter: str          # 사용된 계정 접두사 (예: "11,12")
+
+
+@dataclass
+class ReconciliationResult:
+    """TB 교차검증 종합 결과 — validate_tb_reconciliation()이 반환."""
+
+    items: list[ReconciliationItem] = field(default_factory=list)
+    total_differences: float = 0.0       # sum(|diff|)
+    all_reconciled: bool = True          # 전체 대사 통과 여부
+    trial_balance_rows: int = 0          # TB 행 수
+    materiality_amount: float = 0.0
+    warnings: list[str] = field(default_factory=list)
+    # Why: pipeline._load_db()에서 DB 적재용으로 재사용 — 이중 생성 방지
+    trial_balance_df: pd.DataFrame | None = field(default=None, repr=False)

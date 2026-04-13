@@ -1,7 +1,7 @@
 """LLM 전처리 제안 오케스트레이터 — EDAProfile → 전처리 추천 → Pipeline 옵션 변환.
 
-Why: Ollama Structured Output(JSON Schema 강제)으로 LLM 응답 신뢰성을 확보하고,
-Ollama 미실행 시 rule_based_fallback으로 graceful degradation한다.
+Why: OpenAI Structured Output(JSON Schema 강제)으로 LLM 응답 신뢰성을 확보하고,
+LLM 미가용 시 rule_based_fallback으로 graceful degradation한다.
 tree_model/distance_model 분기로 1회 LLM 호출에 전 모델 전략을 수령한다.
 """
 
@@ -13,6 +13,7 @@ from typing import Literal
 
 from config.settings import get_settings
 from src.eda.models import EDAProfile
+from src.llm.api_client import ChatClient, get_chat_client
 from src.llm.models import (
     ColumnPreprocessing,
     EncoderStrategy,
@@ -23,7 +24,6 @@ from src.llm.models import (
     PreprocessingAdvice,
     ScalerStrategy,
 )
-from src.llm.ollama_client import OllamaClient
 from src.llm.prompt_templates import build_preprocessing_prompt, profile_to_llm_context
 
 logger = logging.getLogger(__name__)
@@ -34,11 +34,21 @@ _MAX_RETRIES = 1  # Structured Output으로 1회 재시도면 충분
 class PreprocessingAdvisor:
     """LLM 기반 전처리 전략 추천기.
 
-    Ollama 미실행 시 규칙 기반 폴백 자동 전환.
+    LLM 미가용(키 미설정/연결 실패) 시 규칙 기반 폴백 자동 전환.
+    전처리 제안은 일상 호출 → light 티어 사용.
     """
 
-    def __init__(self, client: OllamaClient | None = None) -> None:
-        self.client = client or OllamaClient()
+    def __init__(self, client: ChatClient | None = None) -> None:
+        # Why: get_chat_client()는 is_available=False 시 RuntimeError를 raise한다.
+        # 로컬/CI 환경(키 미설정)에서도 PreprocessingAdvisor() 생성은 성공해야 하므로
+        # RuntimeError를 흡수하고 client=None으로 두어 advise() 진입 시 rule 폴백.
+        if client is not None:
+            self.client: ChatClient | None = client
+        else:
+            try:
+                self.client = get_chat_client("light")
+            except RuntimeError:
+                self.client = None
 
     def advise(self, profile: EDAProfile) -> PreprocessingAdvice:
         """EDAProfile → 전처리 추천.
@@ -47,8 +57,8 @@ class PreprocessingAdvisor:
         2. 검증 실패 → 실패 응답 피드백 후 1회 재시도 → rule_based_fallback
         3. LLM 불가 → rule_based_fallback + warning 로그
         """
-        if not self.client.is_available():
-            logger.warning("Ollama 미실행 — 규칙 기반 폴백으로 전환")
+        if self.client is None or not self.client.is_available():
+            logger.warning("LLM 미가용 — 규칙 기반 폴백으로 전환")
             return self.rule_based_fallback(profile)
 
         profile_context = profile_to_llm_context(profile)

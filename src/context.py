@@ -58,6 +58,8 @@ class CompanyContext:
     model_dir: Path
     # Why: Layer D(전기 대비 변동 탐지)에서 fiscal_year-1 engagement를 찾기 위해 필요
     fiscal_year: int | None = None
+    # Why: WU-13 TB 교차검증에서 대사 허용 차이 기준 (EngagementProfile.materiality_amount)
+    materiality_amount: float = 0.0
 
     @property
     def is_anonymous(self) -> bool:
@@ -227,6 +229,7 @@ class ContextFactory:
             db_path=self._repo.db_path(company_id, engagement_id),
             model_dir=self._repo.model_dir(company_id, engagement_id),
             fiscal_year=engagement.fiscal_year,
+            materiality_amount=getattr(engagement, "materiality_amount", 0.0) or 0.0,
         )
 
 

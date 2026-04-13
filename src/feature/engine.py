@@ -1,13 +1,17 @@
 """피처 엔진 — 4개 서브모듈 오케스트레이터.
 
-generate_all_features() 하나로 18개 파생변수를 일괄 생성.
+generate_all_features() 하나로 19개 감사 파생변수 + 1개 NLP 임시 컬럼(morpheme_tokens)을 일괄 생성.
 후행 모듈(validation, detection, pipeline)의 단일 진입점.
+
+Why "19개": DB(`general_ledger`)에 적재되는 파생 컬럼은 19개.
+            morpheme_tokens는 WU-21 NLP 전처리용 임시 리스트라 DB 저장 대상이 아님.
 """
 
 from __future__ import annotations
 
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from enum import StrEnum
 
@@ -41,6 +45,14 @@ _EXECUTION_ORDER: list[FeatureCategory] = [
     FeatureCategory.TEXT,
 ]
 
+# Why: 병렬 실행 시 전체 df.copy() 대신 필요 컬럼만 thin copy (OOM 방지)
+_INPUT_COLUMNS: dict[FeatureCategory, list[str]] = {
+    FeatureCategory.TIME: ["posting_date", "document_date", "fiscal_period", "fiscal_year"],
+    FeatureCategory.AMOUNT: ["debit_amount", "credit_amount", "gl_account", "currency"],
+    FeatureCategory.PATTERN: ["source", "gl_account", "line_text", "header_text", "debit_amount", "credit_amount"],
+    FeatureCategory.TEXT: ["line_text", "header_text"],
+}
+
 # 카테고리별 기대 컬럼 — 서브모듈이 추가하는 컬럼명과 1:1 대응
 EXPECTED_COLUMNS: dict[FeatureCategory, list[str]] = {
     FeatureCategory.TIME: [
@@ -69,6 +81,7 @@ EXPECTED_COLUMNS: dict[FeatureCategory, list[str]] = {
     FeatureCategory.TEXT: [
         "description_quality",
         "has_risk_keyword",
+        "morpheme_tokens",  # WU-19: kiwipiepy 형태소 토큰 리스트 (WU-21 전처리)
     ],
 }
 
@@ -103,8 +116,10 @@ def generate_all_features(
     rules: dict | None = None,
     risk_keywords: dict | None = None,
     categories: list[FeatureCategory] | None = None,
+    parallel: bool = False,
+    max_workers: int | None = None,
 ) -> FeatureResult:
-    """18개 파생변수를 일괄 생성하는 단일 진입점.
+    """19개 감사 파생변수(+1 NLP 임시)를 일괄 생성하는 단일 진입점.
 
     Parameters
     ----------
@@ -113,11 +128,14 @@ def generate_all_features(
     rules : audit_rules dict. {"patterns": {...}} 또는 평탄 dict 모두 허용.
     risk_keywords : 위험 키워드 dict. None이면 자동 로드.
     categories : 실행할 카테고리 목록. None이면 전체 4개.
+    parallel : True이면 ThreadPoolExecutor로 카테고리 병렬 실행.
+    max_workers : 병렬 실행 시 최대 스레드 수. None이면 카테고리 수.
     """
     s = settings or get_settings()
 
-    # Why: get_audit_rules()는 {"patterns": {...}} 중첩 구조를 반환하지만
-    #      pattern_features는 평탄 dict를 기대. 호출자가 어느 형태로 넘기든 안전 처리.
+    # Why: get_audit_rules()는 {"patterns": {...}, "currency_decimals": {...}} 중첩 구조.
+    #      pattern_features는 평탄 dict를 기대. amount_features는 원본(currency_decimals)이 필요.
+    raw_rules = rules  # 원본 보존 (currency_decimals 등 비-patterns 키 접근용)
     if rules is not None and "patterns" in rules:
         rules = rules["patterns"]
 
@@ -125,24 +143,22 @@ def generate_all_features(
     target_set = set(categories) if categories else set(_EXECUTION_ORDER)
     ordered_targets = [c for c in _EXECUTION_ORDER if c in target_set]
 
-    execution_times: dict[str, float] = {}
-    categories_run: list[str] = []
-    failed_categories: list[str] = []
-    warnings_map: dict[str, list[str]] = {}
-
-    # 카테고리별 실행 + 소요 시간 측정 + 경고 수집
-    for cat in ordered_targets:
-        t0 = time.monotonic()
-        cat_warnings: list[str] = []
-        success = _run_category(df, cat, settings=s, rules=rules, risk_keywords=risk_keywords, warnings_out=cat_warnings)
-        elapsed = time.monotonic() - t0
-        execution_times[cat.value] = round(elapsed, 6)
-        if success:
-            categories_run.append(cat.value)
-        else:
-            failed_categories.append(cat.value)
-        if cat_warnings:
-            warnings_map[cat.value] = cat_warnings
+    if parallel:
+        execution_times, categories_run, failed_categories, warnings_map = (
+            _run_categories_parallel(
+                df, ordered_targets,
+                settings=s, rules=rules, raw_rules=raw_rules,
+                risk_keywords=risk_keywords, max_workers=max_workers,
+            )
+        )
+    else:
+        execution_times, categories_run, failed_categories, warnings_map = (
+            _run_categories_sequential(
+                df, ordered_targets,
+                settings=s, rules=rules, raw_rules=raw_rules,
+                risk_keywords=risk_keywords,
+            )
+        )
 
     # 메타데이터 산출: 실행 대상 카테고리의 기대 컬럼만 검사
     all_expected = [
@@ -157,8 +173,8 @@ def generate_all_features(
         logger.warning("기대 컬럼 중 미생성: %s", missing)
 
     logger.info(
-        "피처 생성 완료: %d/%d 컬럼, %.3fs",
-        len(added), len(all_expected), sum(execution_times.values()),
+        "피처 생성 완료: %d/%d 컬럼, %.3fs (parallel=%s)",
+        len(added), len(all_expected), sum(execution_times.values()), parallel,
     )
 
     return FeatureResult(
@@ -172,12 +188,120 @@ def generate_all_features(
     )
 
 
+def _run_categories_sequential(
+    df: pd.DataFrame,
+    targets: list[FeatureCategory],
+    *,
+    settings: AuditSettings,
+    rules: dict | None,
+    raw_rules: dict | None,
+    risk_keywords: dict | None,
+) -> tuple[dict[str, float], list[str], list[str], dict[str, list[str]]]:
+    """순차 실행 — 기존 로직을 함수로 분리."""
+    execution_times: dict[str, float] = {}
+    categories_run: list[str] = []
+    failed_categories: list[str] = []
+    warnings_map: dict[str, list[str]] = {}
+
+    for cat in targets:
+        t0 = time.monotonic()
+        cat_warnings: list[str] = []
+        success = _run_category(
+            df, cat, settings=settings, rules=rules,
+            raw_rules=raw_rules, risk_keywords=risk_keywords,
+            warnings_out=cat_warnings,
+        )
+        elapsed = time.monotonic() - t0
+        execution_times[cat.value] = round(elapsed, 6)
+        if success:
+            categories_run.append(cat.value)
+        else:
+            failed_categories.append(cat.value)
+        if cat_warnings:
+            warnings_map[cat.value] = cat_warnings
+
+    return execution_times, categories_run, failed_categories, warnings_map
+
+
+def _run_categories_parallel(
+    df: pd.DataFrame,
+    targets: list[FeatureCategory],
+    *,
+    settings: AuditSettings,
+    rules: dict | None,
+    raw_rules: dict | None,
+    risk_keywords: dict | None,
+    max_workers: int | None = None,
+) -> tuple[dict[str, float], list[str], list[str], dict[str, list[str]]]:
+    """병렬 실행 — Thin Copy + Series 반환 패턴으로 OOM 방지.
+
+    Why: 전체 df.copy() × N 대신, 각 카테고리가 필요한 입력 컬럼만 thin copy.
+         실행 후 새로 생성된 컬럼(Series)만 추출하여 원본에 일괄 병합.
+         GIL 환경에서 CPU-bound pandas 연산은 실질적 속도 향상이 제한적.
+         주 목적: 카테고리 독립 실행 + 타임아웃 격리. 순수 속도 목적이면
+         ProcessPoolExecutor 검토 필요 (단 DataFrame pickle 비용 발생).
+    """
+    execution_times: dict[str, float] = {}
+    categories_run: list[str] = []
+    failed_categories: list[str] = []
+    warnings_map: dict[str, list[str]] = {}
+
+    def _run_one(cat: FeatureCategory):
+        # 필요 입력 컬럼만 thin copy (OOM 방지)
+        input_cols = [c for c in _INPUT_COLUMNS.get(cat, []) if c in df.columns]
+        thin_df = df[input_cols].copy()
+
+        t0 = time.monotonic()
+        cat_warnings: list[str] = []
+        success = _run_category(
+            thin_df, cat, settings=settings, rules=rules,
+            raw_rules=raw_rules, risk_keywords=risk_keywords,
+            warnings_out=cat_warnings,
+        )
+        elapsed = time.monotonic() - t0
+
+        # 새로 생성된 컬럼만 추출
+        new_cols = {
+            c: thin_df[c] for c in EXPECTED_COLUMNS[cat] if c in thin_df.columns
+        }
+        return cat, success, new_cols, round(elapsed, 6), cat_warnings
+
+    with ThreadPoolExecutor(max_workers=max_workers or len(targets)) as pool:
+        futures = {pool.submit(_run_one, cat): cat for cat in targets}
+        all_new_cols: dict[str, pd.Series] = {}
+
+        for future in as_completed(futures):
+            try:
+                cat, success, new_cols, elapsed, cat_warnings = future.result()
+            except Exception as exc:
+                cat = futures[future]
+                logger.warning("카테고리 %s 병렬 실행 예외: %s", cat.value, exc)
+                failed_categories.append(cat.value)
+                execution_times[cat.value] = 0.0
+                continue
+            execution_times[cat.value] = elapsed
+            if success:
+                categories_run.append(cat.value)
+            else:
+                failed_categories.append(cat.value)
+            if cat_warnings:
+                warnings_map[cat.value] = cat_warnings
+            all_new_cols.update(new_cols)
+
+    # 새 컬럼 일괄 병합 (.values로 index 정렬 이슈 방지)
+    for col_name, series in all_new_cols.items():
+        df[col_name] = series.values
+
+    return execution_times, categories_run, failed_categories, warnings_map
+
+
 def _run_category(
     df: pd.DataFrame,
     cat: FeatureCategory,
     *,
     settings: AuditSettings,
     rules: dict | None,
+    raw_rules: dict | None = None,
     risk_keywords: dict | None = None,
     warnings_out: list[str] | None = None,
 ) -> bool:
@@ -185,13 +309,14 @@ def _run_category(
 
     Why: 필수 컬럼이 누락된 데이터셋에서도 나머지 카테고리는 정상 실행해야 한다.
     KeyError(컬럼 미존재)만 잡고, 로직 버그(TypeError 등)는 전파시킨다.
+    raw_rules: 평탄화 전 원본 audit_rules (currency_decimals 등 비-patterns 키 접근).
     warnings_out: 카테고리 실행 중 발생한 경고/스킵 사유를 수집하는 리스트.
     """
     try:
         if cat == FeatureCategory.TIME:
             add_all_time_features(df, settings=settings)
         elif cat == FeatureCategory.AMOUNT:
-            add_all_amount_features(df, settings=settings)
+            add_all_amount_features(df, settings=settings, audit_rules=raw_rules)
         elif cat == FeatureCategory.PATTERN:
             add_all_pattern_features(df, rules=rules)
         elif cat == FeatureCategory.TEXT:

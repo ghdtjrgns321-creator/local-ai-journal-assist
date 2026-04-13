@@ -65,6 +65,7 @@ class EngagementProfile(BaseModel):
     )
     company_id: str = Field(..., min_length=1)
     fiscal_year: int = Field(..., ge=2000, le=2099)
+    materiality_amount: int = Field(default=0, ge=0)
     period_start: date | None = None
     period_end: date | None = None
     settings_overrides: dict[str, Any] = Field(default_factory=dict)

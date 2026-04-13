@@ -100,11 +100,15 @@ def _safe_sci_to_int(val: str) -> str:
 def cast_amount(series: pd.Series, cleaning_config: dict | None = None) -> pd.Series:
     """금액 컬럼 → float64 변환.
 
-    처리 순서: 통화기호 제거 → 대시/빈값 → 괄호음수 → 쉼표 제거 → to_numeric.
+    처리 순서: 통화기호 제거 → 대시/빈값 → 괄호음수 → 천단위/소수점 정규화 → to_numeric.
+    decimal_format 설정: "period"(미국/한국, 기본) | "comma"(유럽식 1.234,56).
     """
     # 이미 numeric이면 float64로만 변환 (Parquet fast path)
     if pd.api.types.is_numeric_dtype(series.dtype):
         return series.astype("float64")
+
+    cfg = cleaning_config or get_cleaning_config()
+    amount_cfg = cfg["amount"]
 
     s = series.astype(str)
 
@@ -118,10 +122,17 @@ def cast_amount(series: pd.Series, cleaning_config: dict | None = None) -> pd.Se
     s = s.str.replace(
         _PAREN_NEG_RE, lambda m: "-" + m.group(1), regex=True,
     )
-    # 쉼표 제거
-    s = s.str.replace(",", "", regex=False)
+    # 천단위 구분자·소수점 정규화 (locale별 분기)
+    decimal_fmt = amount_cfg.get("decimal_format", "period")
+    if decimal_fmt == "comma":
+        # 유럽식: 점(천단위) 제거 → 쉼표(소수점)를 점으로 치환
+        s = s.str.replace(".", "", regex=False)
+        s = s.str.replace(",", ".", regex=False)
+    else:
+        # 미국/한국식 (기본): 쉼표(천단위) 제거
+        s = s.str.replace(",", "", regex=False)
     # null 값 치환 (cleaning.yaml 기반)
-    null_mask = s.isin(_get_amount_null_values(cleaning_config))
+    null_mask = s.isin(frozenset(amount_cfg["null_values"]))
     s = s.where(~null_mask, np.nan)
 
     return pd.to_numeric(s, errors="coerce").astype("float64")

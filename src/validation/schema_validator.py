@@ -2,7 +2,7 @@
 
 Why: type_caster가 보장한 dtype을 재확인하고, 값 범위(ge=0 등)와
 필수 컬럼 존재 여부를 검증하여 detection 진입 전 데이터 품질 게이트를 세운다.
-피처 컬럼(is_weekend 등 18개)은 검증 대상 외.
+피처 컬럼(is_weekend 등 19개)은 검증 대상 외.
 """
 
 from __future__ import annotations

@@ -21,9 +21,14 @@ from src.validation.models import (
     TemporalPatternStats,
     ValidationReport,
 )
+from src.validation.models import ReconciliationItem, ReconciliationResult
 from src.validation.report_generator import generate_report, report_to_dict
 from src.validation.schema_validator import validate_schema
 from src.validation.statistical_validator import validate_statistics
+from src.validation.tb_reconciliation import (
+    build_trial_balance,
+    validate_tb_reconciliation,
+)
 
 __all__ = [
     "AccountingResult",
@@ -40,4 +45,8 @@ __all__ = [
     "validate_accounting",
     "validate_schema",
     "validate_statistics",
+    "build_trial_balance",
+    "validate_tb_reconciliation",
+    "ReconciliationItem",
+    "ReconciliationResult",
 ]
