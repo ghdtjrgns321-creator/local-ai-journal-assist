@@ -38,22 +38,36 @@ chart_of_accounts:
   industry_specific: true
 
 master_data:
+  # 세션 A (2026-04-12): vendors/customers 증량 (main.rs 배선 수정으로 실제 반영)
+  # Why: Phase 3 LLM 감사조서에 거래처 다양성 필수. 실전 한국 중견 제조업은 vendors 수백~수천 거래.
   vendors:
-    count: 500
+    count: 800      # 회사당 약 270개 (실제 중견 제조업 수준)
   customers:
-    count: 300
+    count: 400      # 회사당 약 130개
+  materials:
+    count: 600      # 제품/원자재 다양성
+  fixed_assets:
+    count: 300      # 유형자산
+  # Iteration 2 (2026-04-11): 300 → 1500
+  # Iteration 4 (2026-04-11): 1500 → 2500
+  # Why: employee_generator.rs::generate_company_pool_scaled 추가 (Iter 3) 후에도
+  #      volume_weight 평균(0.53)으로 862명만 생성됨. 2500으로 올려 총 1,500명 목표.
   employees:
-    count: 300
+    count: 2500
 
-# B07 SOD 과탐 해소: JE 작성자 풀 150명 (기본 40명 → 전원 위반 문제)
-# K-IFRS 적용 중견 제조 그룹사(3법인) 기준
+# Iteration 1 (2026-04-11): 사용자 수 1,500명 확대 + 승인 집중도 현실화
+# Why: Phase 2 GroupKFold 실증, top3_approver_share 20~50% 목표
+# 증량 근거 — 한국 중견 제조 3법인 실무:
+#   - 회계·재무·원가 담당자 500~800명 (sr.+jr.)
+#   - 프로세스 오너·매니저 100~200명
+#   - 자동 전표 ERP/RPA 40명대 유지 (시스템 수 결정)
 user_personas:
   users_per_persona:
-    junior_accountant: 60
-    senior_accountant: 30
-    controller: 10
-    manager: 10
-    automated_system: 40
+    junior_accountant: 800
+    senior_accountant: 400
+    controller: 50
+    manager: 200
+    automated_system: 50
 
 # B04 중복 지급 탐지용 document flow 활성화
 document_flows:
@@ -74,9 +88,36 @@ intercompany:
 # A01 차대변 균형 — ERP ITAC 반영 (99.8% 일치, 불일치는 A01 탐지 테스트용 극소수)
 # debit_credit_distribution은 차변/대변 라인 수 분포 (금액 균형은 JE 생성 시 항상 보장)
 transactions:
+  # Iter 7 (2026-04-11): source_distribution 추가 — automated 70% default → 25%로 하향
+  # Why: automated_system_share=83.2% 과다 문제. Phase 3 LLM이 감사조서를 생성할 때
+  #      실제 인간 맥락이 필요하므로 manual 비중을 우선.
+  source_distribution:
+    manual: 0.60        # 사람 수기 입력 (default 0.20 → 0.60)
+    automated: 0.25     # 시스템 자동 (default 0.70 → 0.25)
+    recurring: 0.10     # 반복 전표 (default 0.07)
+    adjustment: 0.05    # 결산 조정 (default 0.03)
+  # 라인 수 분포 — 논문 기본값(Table III) 대비 고라인 구간 축소
+  # Why: 10~999 구간(7.1%)이 전표당 평균 10.2라인으로 끌어올림.
+  #       감소분을 2라인에 재배분 → 기대 평균 ~3.5라인, T5-11 WARNING 해소.
+  # #18 수정: 짝수 라인 편향 해소 — 3라인(1:2 분개) 비율 상향 + 100라인+ 축소
+  # #21 수정: 998라인 문서 방지 — hundred+ 비율 0.0으로
+  line_item_distribution:
+    two_items: 0.6669
+    three_items: 0.0577
+    four_items: 0.1663
+    five_items: 0.0306
+    six_items: 0.0332
+    seven_items: 0.0113
+    eight_items: 0.0188
+    nine_items: 0.0042
+    ten_to_ninety_nine: 0.01
+    hundred_to_nine_ninety_nine: 0.001
+    thousand_plus: 0.0
   # 주말/공휴일 전표 비율 — C02/C03 주말 탐지 테스트용
+  # Iteration 1 (2026-04-11): 12월 100% fraud 집중 → year_end_multiplier 추가 하향
+  #                           심야 실사용자 확보 → after_hours_activity 추가
   seasonality:
-    weekend_activity: 1.0    # 주말 가중치 (1.0 = 평일과 동등, 월말 스파이크로 자연 감소 → ~10%)
+    weekend_activity: 0.2    # 평일 대비 20% (실무: 주말 2~3% 수준 목표)
     holiday_activity: 0.05
     month_end_spike: true
     month_end_multiplier: 2.5
@@ -84,13 +125,14 @@ transactions:
     quarter_end_spike: true
     quarter_end_multiplier: 4.0
     year_end_spike: true
-    year_end_multiplier: 6.0
+    year_end_multiplier: 1.5    # 3.0→1.5 (모든 fraud_type 12월 집중 해소)
     day_of_week_patterns: true
-    monday_multiplier: 1.3
-    tuesday_multiplier: 1.1
+    # W8 수정: 월요일 42% → 주중 균등(~20%) 목표
+    monday_multiplier: 1.0
+    tuesday_multiplier: 1.0
     wednesday_multiplier: 1.0
     thursday_multiplier: 1.0
-    friday_multiplier: 0.85
+    friday_multiplier: 0.95
   debit_credit_distribution:
     equal: 0.998
     more_debit: 0.001
@@ -101,10 +143,11 @@ transactions:
     lognormal_mu: 14.0          # ln(1,200,000) ≈ 14.0 → 중앙값 ~120만원
     lognormal_sigma: 2.5
     decimal_places: 0           # 원화는 소수점 없음
-    round_number_probability: 0.25
-    nice_number_probability: 0.15
-    round_number_unit: 10000         # T4-11: 1만원 단위 (100000→10000, 목표 15~35%)
-    nice_number_unit: 1000           # T4-12: 천원 단위 (10000→1000, 목표 10~25%)
+    # #17 수정: 반올림 23% → 15% 목표. 한국 실무 10~15%.
+    round_number_probability: 0.12
+    nice_number_probability: 0.08
+    round_number_unit: 10000         # T4-11: 1만원 단위
+    nice_number_unit: 1000           # T4-12: 천원 단위
   benford:
     enabled: true
     tolerance: 0.05
@@ -116,28 +159,34 @@ temporal_patterns:
   enabled: true
   # T4-03/14/21: 12월 스파이크 해소 — PeriodEndDynamics 명시 활성화
   # 한국 중견 제조업 결산기: 12월 마감 20일전부터 야근, 전표 폭증
+  # QG3 판정(2026-04-10): 12월 34.9% 편중 → peak_multiplier 18→4 하향, start_day 축소
   period_end:
     model: exponential
     month_end:
       start_day: -5
       base_multiplier: 1.0
-      peak_multiplier: 2.5
+      peak_multiplier: 2.0
       decay_rate: 0.3
     quarter_end:
       start_day: -10
       base_multiplier: 1.0
-      peak_multiplier: 4.0
+      peak_multiplier: 3.0
       decay_rate: 0.3
     year_end:
-      start_day: -25
-      base_multiplier: 2.0
-      peak_multiplier: 18.0
-      decay_rate: 0.8
+      start_day: -15          # -25→-15 (12월 후반 집중, 한국 실무)
+      base_multiplier: 1.5
+      peak_multiplier: 4.0    # 18→4 (12월 비율 목표 15~20%)
+      decay_rate: 0.5
+  # QG3 판정(2026-04-10): 심야(00~06) 6,670건 (2.1%), 03시 피크 1,475건 → 추가 하향
+  # Iteration 8 (2026-04-11): 심야 multiplier 상향
+  # Why: after_hours_real_users=14건 < 목표 200건. 극한 deep_night 0.005 → 0.03 상향.
+  #      ISA 240 C03(심야 전기)/C12(비정상 시간 집중) 룰 탐지 타겟 확보.
   intraday:
     enabled: true
     segments:
-      - { name: late_night,     start: "00:00", end: "06:00", multiplier: 0.02 }
-      - { name: early_morning,  start: "06:00", end: "08:30", multiplier: 0.15 }
+      - { name: deep_night,     start: "00:00", end: "03:00", multiplier: 0.03 }
+      - { name: late_night,     start: "03:00", end: "06:00", multiplier: 0.03 }
+      - { name: early_morning,  start: "06:00", end: "08:30", multiplier: 0.10 }
       - { name: morning_spike,  start: "08:30", end: "11:30", multiplier: 1.8 }
       - { name: lunch_dip,      start: "11:30", end: "13:00", multiplier: 0.3 }
       - { name: afternoon,      start: "13:00", end: "16:00", multiplier: 1.2 }
@@ -148,13 +197,50 @@ temporal_patterns:
     regions: [KR]
 
 # A02 필수필드 누락 탐지용 — 결측값 주입
+# 세션 A (2026-04-12): typos + format_variations 활성화
+# Why: 실전 감사 데이터는 수기 입력 시 오탈자·표기 변형이 자연스럽게 존재.
+#      CLAUDE.md 원칙 — 정상/비정상 무관하게 동일 비율 적용 (MCAR).
+#      ML 지름길 학습·합성 아티팩트 방지.
 data_quality:
   enabled: true
   missing_values:
     enabled: true
     rate: 0.02
     strategy: mcar
-    protected_fields: [document_id, company_code, posting_date]
+    protected_fields: [document_id, company_code, posting_date, gl_account, document_type]
+  typos:
+    enabled: true
+    char_error_rate: 0.0015     # 0.15% 문자 오류율 (수기 입력 현실 수준)
+    # Why: 라벨 필드는 절대 오염되면 안 됨 (ground truth 무결성).
+    #      typos는 text/description 계열(header_text, line_text, reference, vendor_name)에만 적용.
+    protected_fields:
+      - document_id
+      - company_code
+      - posting_date
+      - gl_account
+      - fiscal_year
+      - fiscal_period
+      - is_fraud
+      - fraud_type
+      - is_anomaly
+      - anomaly_type
+      - sod_violation
+      - sod_conflict_type
+      - debit_amount
+      - credit_amount
+      - local_amount
+      - tax_code
+      - tax_amount
+      - line_number
+      - approved_by
+      - created_by
+      - document_type
+      - currency
+      - business_process
+      - user_persona
+      - source
+  format_variations:
+    enabled: false   # 세션 A: date/amount 포맷 변형은 CSV 파싱 호환성 이슈 가능 → 추후 재검토
   generate_labels: true
 
 # C07 Benford 위반 등 통계적 이상 주입
@@ -177,17 +263,24 @@ fraud:
   enabled: true
   fraud_rate: 0.02
   # B02/B08: KRW 승인한도 — 한국 중견 제조업 전결규정 반영
-  # Level 1: 10M(자동) → Level 3: 1B(팀장) → Level 4: 5B(본부장) → Level 5: 10B(CFO) → Level 6: 50B(이사회)
-  approval_thresholds: [10000000, 100000000, 1000000000, 5000000000, 10000000000, 50000000000]
+  # Iteration 7 (2026-04-11): 상한 10B → 3B로 추가 하향
+  # Why: ExceededApprovalLimit 중앙값 11B원(110억) 여전히 비현실적.
+  #      중견기업 전결 최대는 이사회 결의 3B 이내가 현실적.
+  #      Level 1: 10M(자동) → Level 3: 300M(팀장) → Level 4: 1B(본부장) → Level 5: 3B(CFO/이사회)
+  approval_thresholds: [10000000, 100000000, 300000000, 1000000000, 3000000000]
   fraud_type_distribution:
-    duplicate_payment: 0.20
-    fictitious_transaction: 0.20
-    revenue_manipulation: 0.15
-    split_transaction: 0.15
-    timing_anomaly: 0.10
-    unauthorized_access: 0.10
-    suspense_account_abuse: 0.05
-    expense_capitalization: 0.05
+    # Iter 8 (2026-04-11): StatisticallyImprobable(큰 금액) 비중 상향 (양성 금액 차별화)
+    # positive_negative_amount_ratio 목표 ≥ 1.3x. Normal 패턴 감소 + Improbable 확대.
+    # 합계 = 1.00 정확히 일치 필수 (validation)
+    revenue_manipulation: 0.24       # StatisticallyImprobable (상향)
+    expense_capitalization: 0.13     # StatisticallyImprobable (상향)
+    unauthorized_access: 0.11        # StatisticallyImprobable
+    fictitious_transaction: 0.18     # ObviousRoundNumbers
+    split_transaction: 0.12          # ThresholdAdjacent (적당한 크기)
+    suspense_account_abuse: 0.05     # ObviousRoundNumbers
+    duplicate_payment: 0.12          # Normal (하향)
+    timing_anomaly: 0.05             # Normal (하향)
+    # 합계 = 1.00
 
 # ═══════════════════════════════════════════════════════════════
 # Anomaly Strategy Parameters — 전략별 임계값/파라미터 직접 제어
@@ -196,7 +289,8 @@ fraud:
 anomaly_strategies:
   approval:
     # B02/B03/B09 승인한도 (KRW, 오름차순)
-    thresholds: [10000000, 100000000, 1000000000, 5000000000, 10000000000, 50000000000]
+    # Iteration 7: fraud.approval_thresholds와 동기화 (상한 3B)
+    thresholds: [10000000, 100000000, 300000000, 1000000000, 3000000000]
     buffer: 500000
   amount:
     min_multiplier: 2.0
@@ -252,6 +346,39 @@ anomaly_strategies:
       - "잡이익"      # medium_risk
       - "."           # description_quality=poor (noise)
       - "x"           # description_quality=poor (noise)
+
+# ═══════════════════════════════════════════════════════════════
+# 한국 부가세(VAT) 설정 — KR 10% 표준세율 + 면세 카테고리
+# Why: journal_entries.csv의 tax_code/tax_amount 컬럼이 채워지도록 Phase 20 활성화.
+#      Phase 20b(backfill)는 JE의 Revenue/Expense 라인에만 적용 → 1:N 중복 방지.
+# ═══════════════════════════════════════════════════════════════
+tax:
+  enabled: true
+  jurisdictions:
+    countries: ["KR"]
+    include_subnational: false
+  vat_gst:
+    enabled: true
+    standard_rates:
+      KR: 0.10
+    # 면세 카테고리 — K-IFRS/한국 부가세법 면세 대상
+    exempt_categories:
+      - financial_services   # 금융/보험 용역
+      - insurance
+      - healthcare           # 의료 용역
+      - education            # 교육 용역
+    reverse_charge: false    # 한국은 EU식 역과세 없음
+  sales_tax:
+    enabled: false
+  withholding:
+    enabled: false
+  provisions:
+    enabled: true
+    statutory_rate: 0.242    # 한국 법인세 실효세율 (표준 22% + 지방소득세 2.2%)
+    uncertain_positions: false
+  payroll_tax:
+    enabled: false
+  anomaly_rate: 0.03
 
 output:
   mode: flat_file

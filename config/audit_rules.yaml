@@ -15,14 +15,15 @@ patterns:
   revenue_account_prefixes:
     - "4"
 
-  # B10: 관계사 식별 기준 (GL 계정 prefix 목록)
-  # DataSynth v1.2.0 실측: IC 계정에 "C" 접미사 없음
-  # 관계사 채권/채무/매출/미지급 전용 계정 prefix
-  intercompany_identifiers:
-    - "1150"    # IC Receivable (관계사 채권)
-    - "2050"    # IC Payable (관계사 채무)
-    - "4500"    # IC Revenue (관계사 매출)
-    - "2700"    # IC Accrued (관계사 미지급)
+  # B10 + WU-07: 관계사 식별 — IC 계정 쌍 (receivable <-> payable)
+  # Why: 클라이언트별 CoA 체계가 다르므로 코드 하드코딩 금지, YAML에서 관리
+  # 매칭 로직: receivable 쪽 sum(debit) vs payable 쪽 sum(credit) 그룹 대사
+  intercompany:
+    pairs:
+      - receivable: "1150"    # IC Receivable (관계사 채권)
+        payable: "2050"       # IC Payable (관계사 채무)
+      - receivable: "4500"    # IC Revenue (관계사 매출)
+        payable: "2700"       # IC Accrued (관계사 미지급)
 
   # B07: 직무분리(SoD) 위반 — 하이브리드 로직
   # Rule B: 프로세스 간 상충 쌍 (직급 불문, 즉시 Critical)
@@ -94,3 +95,109 @@ patterns:
     - "2190"    # 가수금 (Suspense Payable)
     - "2900"    # GR/IR 청산계정
     - "9990"    # 임시/잡계정
+
+# WU-16: TrendBreak — 회계추정치 편의(bias) 탐지 대상 계정
+# ISA 540 소급 검토 대상: 충당금, 감가상각, 보증 관련 추정치 계정
+# K-IFRS 기준, 회사 CoA에 맞춰 조정 필요
+# sign: 정상 잔액 방향 (credit_normal=대변정상, debit_normal=차변정상)
+estimation_accounts:
+  # 자산 차감 계정 (대변 정상)
+  - account: "1020"
+    name: "대손충당금"
+    sign: "credit_normal"
+  - account: "1599"
+    name: "감가상각누계액"
+    sign: "credit_normal"
+  - account: "100660"
+    name: "대손충당금(유동)"
+    sign: "credit_normal"
+  - account: "100670"
+    name: "유동자산 평가충당금"
+    sign: "credit_normal"
+  # 부채 계정 (대변 정상)
+  - account: "2200"
+    name: "퇴직급여충당부채"
+    sign: "credit_normal"
+  - account: "2300"
+    name: "장기충당부채"
+    sign: "credit_normal"
+  - account: "200380"
+    name: "단기충당부채"
+    sign: "credit_normal"
+  - account: "200390"
+    name: "판매보증충당부채(유동)"
+    sign: "credit_normal"
+  - account: "200400"
+    name: "공사손실충당부채(유동)"
+    sign: "credit_normal"
+  - account: "200410"
+    name: "반품충당부채"
+    sign: "credit_normal"
+  - account: "200420"
+    name: "하자보수충당부채(유동)"
+    sign: "credit_normal"
+  - account: "200430"
+    name: "소송충당부채(유동)"
+    sign: "credit_normal"
+  - account: "200440"
+    name: "복구충당부채(유동)"
+    sign: "credit_normal"
+
+# WU-15: Access Audit — 접근감사/감사추적 (AA01~AA04)
+access_audit:
+  # AA01: 기말 수정 감시 대상 필드 (change_log.changed_field 기준)
+  modification_watched_fields:
+    - "line_text"
+    - "header_text"
+    - "gl_account"
+    - "debit_amount"
+    - "credit_amount"
+
+  # AA03: 전표번호 갭 적법 사유 제외 전표유형
+  gap_exclude_doc_types:
+    - "ST"     # Storno (역분개)
+    - "MG"     # Migration
+
+  # AA04: 승인 지연 임계 (영업일)
+  approval_delay_days: 3
+
+# WU-13: TB 교차검증 — 계정 유형별 GL 접두사 (재무제표-장부 대사)
+# 회사 CoA 체계에 맞춰 조정 필요, 회사별 audit_rules.yaml에서 오버라이드 가능
+reconciliation_account_prefixes:
+  AR: ["11"]       # 매출채권 (1100번대)
+  AP: ["21"]       # 매입채무 (2100번대)
+  FA: ["15"]       # 고정자산 (1500번대)
+
+# GL 계정 코드 → CoA 상위그룹 매핑 (K-IFRS 기준)
+# Z-score 소그룹(n<30) fallback 시 상위그룹 통계 사용
+# 회사 CoA 체계에 맞춰 조정 필요
+coa_category_prefixes:
+  asset: ["1"]       # 1xxx = 자산
+  liability: ["2"]   # 2xxx = 부채
+  equity: ["3"]      # 3xxx = 자본
+  revenue: ["4"]     # 4xxx = 수익
+  expense: ["5"]     # 5xxx = 비용
+
+# Evidence: 증빙/컷오프/금액 탐지 (WU-14)
+evidence:
+  # EV01: 한국 세법 적격증빙 유형
+  # 3만원 초과 거래는 아래 유형 중 하나가 있어야 적격
+  qualified_doc_types:
+    - "tax_invoice"          # 세금계산서
+    - "credit_card"          # 신용카드 매출전표
+    - "cash_receipt"         # 현금영수증
+    - "electronic_invoice"   # 전자세금계산서
+  # EV02: 비용 계정 접두사 (컷오프 비용 대상)
+  expense_account_prefixes:
+    - "5"
+
+# 통화별 소수점 자릿수 — is_round_number 판정에 사용
+# Why: 외화 거래에서 USD $10,000,000.00은 라운드넘버지만
+#      round(0) 적용 시 소수점 이하가 무시되어 판정 왜곡 발생
+currency_decimals:
+  KRW: 0    # 한국원: 정수
+  USD: 2    # 미국달러: 센트 (2자리)
+  EUR: 2    # 유로: 센트 (2자리)
+  JPY: 0    # 일본엔: 정수
+  GBP: 2    # 영국파운드: 펜스 (2자리)
+  CNY: 2    # 중국위안: 펀 (2자리)
