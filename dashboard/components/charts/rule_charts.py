@@ -45,33 +45,33 @@ def rule_violation_bar(df: pd.DataFrame) -> go.Figure:
     # Why: 알파벳순 정렬로 A01→C12 일관된 시각적 순서 보장.
     counts = counts.reindex(sorted(counts.index))
 
+    # Why: Y축 라벨을 "C12 (비정상시간 집중입력)" 형태로 → 코드 암기 부담 제거.
+    label_map = {code: f"{code} ({RULE_CODES.get(code, code)})" for code in counts.index}
+
     fig = go.Figure()
-    # Why: _PREFIX_TO_LAYER 기준으로 순회. LAYER_LABELS에 benford 키가 있지만
-    #      룰 코드에 benford 접두사는 없으므로 _PREFIX_TO_LAYER만 사용하여 오매핑 방지.
     for prefix, layer_key in _PREFIX_TO_LAYER.items():
         label = LAYER_LABELS[layer_key]
         mask = [code for code in counts.index if code.startswith(prefix)]
         if not mask:
             continue
         subset = counts[mask]
-        # Why: hover에 한글 룰 이름 표시 → 감사인이 코드 외워야 하는 부담 제거.
-        hover_names = [RULE_CODES.get(c, c) for c in subset.index]
+        y_labels = [label_map[c] for c in subset.index]
         fig.add_trace(go.Bar(
-            y=subset.index,
+            y=y_labels,
             x=subset.values,
             orientation="h",
             name=label,
             marker_color=LAYER_COLORS[layer_key],
-            hovertemplate="%{y} %{customdata}<br>%{x}건<extra></extra>",
-            customdata=hover_names,
+            hovertemplate="%{y}<br>%{x:,}건<extra></extra>",
         ))
 
     fig.update_layout(
-        **DEFAULT_LAYOUT,
+        **{**DEFAULT_LAYOUT, "margin": {"l": 180, "r": 20, "t": 40, "b": 40}},
         title="룰별 위반 건수",
-        xaxis_title="위반 건수",
-        yaxis={"categoryorder": "category ascending"},
         barmode="stack",
         legend={"orientation": "h", "y": -0.15},
     )
+    # Why: update_layout에서 xaxis/yaxis 중복 키워드 방지 → 별도 호출.
+    fig.update_xaxes(title_text="위반 건수 (log scale)", type="log")
+    fig.update_yaxes(categoryorder="category ascending")
     return fig

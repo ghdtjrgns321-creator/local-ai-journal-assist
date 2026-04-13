@@ -5,6 +5,7 @@
 
 from dashboard.components.charts.benford_charts import benford_facet, benford_overlay
 from dashboard.components.charts.eda_charts import (
+    amount_box_plot,
     missing_rate_bar,
     numeric_box_plots,
     outlier_ratio_bar,
@@ -35,6 +36,7 @@ from dashboard.components.charts.comparison_charts import (
 from dashboard.components.charts.trend_charts import hourly_heatmap, monthly_trend
 
 __all__ = [
+    "amount_box_plot",
     "anomaly_scatter",
     "benford_facet",
     "benford_overlay",

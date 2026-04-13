@@ -34,6 +34,7 @@ def render_whitelist(
     Returns:
         True이면 whitelist 변경됨 → 호출측에서 st.rerun() 필요.
     """
+    from src.db.audit_log import record_event
     from src.db.queries import execute_preset, execute_write
 
     modified = False
@@ -62,6 +63,7 @@ def render_whitelist(
             st.warning("예외 처리할 탐지 룰이 없습니다.")
         else:
             saved_count = 0
+            saved_rules: list[str] = []
             for rule_code in rule_codes:
                 try:
                     execute_write(
@@ -70,10 +72,19 @@ def render_whitelist(
                         (batch_id, doc_id, rule_code, reason, "auditor"),
                     )
                     saved_count += 1
+                    saved_rules.append(rule_code)
                 except Exception as exc:
                     st.error(f"저장 실패 ({rule_code}): {exc}")
 
             if saved_count > 0:
+                # Why: ISO 27001 / SOC 2 감사증적 — HITL 예외 처리 이벤트 기록
+                record_event(
+                    conn,
+                    action="whitelist_add",
+                    batch_id=batch_id,
+                    target_id=doc_id,
+                    details={"rule_codes": saved_rules, "reason": reason},
+                )
                 # Why: DB 저장 후 인메모리 DataFrame도 동기화
                 #      다른 탭(Summary 등) 집계에 즉시 반영
                 _sync_memory(result_data, doc_id, rule_codes)
@@ -106,6 +117,17 @@ def render_whitelist(
                 if st.button("삭제", key=f"wl_del_{row['id']}"):
                     try:
                         execute_write(conn, "delete_whitelist", (int(row["id"]),))
+                        # Why: 감사증적 — 예외 처리 취소 이벤트 기록
+                        record_event(
+                            conn,
+                            action="whitelist_remove",
+                            batch_id=batch_id,
+                            target_id=str(row["id"]),
+                            details={
+                                "document_id": row.get("document_id"),
+                                "rule_code": row.get("rule_code"),
+                            },
+                        )
                         return True  # Why: 삭제 즉시 rerun하여 목록 불일치 방지
                     except Exception as exc:
                         st.error(f"삭제 실패: {exc}")

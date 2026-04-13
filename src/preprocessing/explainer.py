@@ -44,8 +44,17 @@ class PipelineExplainer:
         # 마지막 단계를 모델로 간주
         return self.pipeline.steps[-1][1]
 
-    def explain_batch(self, X, top_k: int = 5) -> list[dict]:
-        """배치 데이터에 대한 SHAP 기여도 산출."""
+    def explain_batch(self, X, top_k: int = 5) -> tuple[list[dict], float]:
+        """배치 데이터에 대한 SHAP 기여도 산출.
+
+        Returns:
+            (contributions, base_value) 튜플.
+            contributions: 각 행의 top-k 피처 기여도 dict 리스트.
+            base_value: 모델의 평균 예측값(expected_value). Waterfall 차트 시작점.
+
+        Why: Waterfall 시각화는 base_value에서 시작해 피처 기여도를 누적하여
+             최종 예측값까지 계단으로 표현 → base_value 없으면 의미 없는 차트.
+        """
         preprocessor = self._get_preprocessor()
         model = self._get_model()
 
@@ -62,18 +71,30 @@ class PipelineExplainer:
         if isinstance(shap_values, list):
             shap_values = shap_values[1]  # 양성 클래스
 
+        # Why: expected_value는 scalar 또는 [neg, pos] array → 양성 클래스 값 추출
+        expected = explainer.expected_value
+        if hasattr(expected, "__len__") and len(expected) > 1:
+            base_value = float(expected[1])
+        else:
+            base_value = float(expected)
+
         results = []
         for i in range(len(X_transformed)):
             row_vals = shap_values[i]
             top_idx = np.argsort(np.abs(row_vals))[-top_k:][::-1]
             contributions = {labels[j]: float(row_vals[j]) for j in top_idx}
             results.append(contributions)
-        return results
+        return results, base_value
 
-    def explain_single(self, X_row, top_k: int = 5) -> dict:
-        """단일 행에 대한 SHAP 기여도."""
+    def explain_single(self, X_row, top_k: int = 5) -> tuple[dict, float]:
+        """단일 행에 대한 SHAP 기여도.
+
+        Returns:
+            (contributions, base_value) 튜플.
+        """
         X_row = np.atleast_2d(X_row)
-        return self.explain_batch(X_row, top_k=top_k)[0]
+        results, base_value = self.explain_batch(X_row, top_k=top_k)
+        return results[0], base_value
 
     def _resolve_feature_labels(self, n_features_out: int) -> list[str]:
         """전처리 후 피처명 결정. 매핑 불가 시 인덱스 라벨."""

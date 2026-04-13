@@ -12,11 +12,134 @@ from pathlib import Path
 import pandas as pd
 
 from src.context import CompanyContext, ContextFactory
-from src.detection.base import DetectionResult
+from src.detection.base import BaseDetector, DetectionResult
 
 logger = logging.getLogger(__name__)
 _TEXT_EXT = frozenset({".csv", ".tsv", ".txt", ".dat"})
 _EXCEL_EXT = frozenset({".xlsx", ".xls", ".xlsb"})
+
+
+def _run_detectors_parallel(
+    detectors: list[BaseDetector],
+    df: pd.DataFrame,
+    max_workers: int | None = None,
+    progress_callback=None,
+) -> tuple[list[DetectionResult], list[str]]:
+    """독립 탐지기 집합을 병렬 실행 + 탐지기별 elapsed 수집 + 진행 콜백 호출.
+
+    Why:
+    - pandas/numpy 내부 연산은 C 레벨에서 GIL 해제 → ThreadPoolExecutor로 충분.
+      ProcessPool은 DataFrame pickle 비용(100만 행 기준 수 초)으로 오히려 느림.
+    - max_workers=None 또는 1이면 순차 실행 (테스트/디버깅 모드).
+    - 각 탐지기의 metadata["elapsed"]는 탐지기 스스로 기록 중이므로 별도 수집 불필요.
+    - progress_callback(completed, total, track_name)로 Streamlit st.progress 연동 가능.
+    - 한 탐지기 실패가 전체를 막지 않도록 per-detector try/except로 격리.
+    - 결과 순서는 입력 `detectors` 순서로 정렬 (병렬 완료 순 아님) — downstream
+      로직이 detector 순서에 의존하는 경우 안전성 확보.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    results: list[DetectionResult | None] = [None] * len(detectors)
+    warns: list[str] = []
+    total = len(detectors)
+
+    def _run_one(idx: int, det: BaseDetector) -> tuple[int, DetectionResult | None, str | None]:
+        t0 = time.perf_counter()
+        try:
+            result = det.detect(df)
+            # Why: 탐지기가 metadata에 elapsed를 안 넣은 경우만 보강
+            if result.metadata is None:
+                result.metadata = {}
+            result.metadata.setdefault("elapsed", time.perf_counter() - t0)
+            return idx, result, None
+        except Exception as exc:
+            logger.warning("탐지 실패: %s (%s)", det.track_name, exc, exc_info=True)
+            return idx, None, f"탐지 실패: {det.track_name}"
+
+    # Why: max_workers가 None/1이거나 탐지기 1개 이하면 순차 — 오버헤드 회피
+    if not max_workers or max_workers <= 1 or total <= 1:
+        for idx, det in enumerate(detectors):
+            _, res, warn = _run_one(idx, det)
+            if res is not None:
+                results[idx] = res
+            if warn is not None:
+                warns.append(warn)
+            if progress_callback is not None:
+                try:
+                    progress_callback(idx + 1, total, det.track_name)
+                except Exception:
+                    logger.debug("progress_callback 호출 실패", exc_info=True)
+    else:
+        # 병렬 실행
+        completed = 0
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            futures = {
+                ex.submit(_run_one, idx, det): (idx, det)
+                for idx, det in enumerate(detectors)
+            }
+            for fut in as_completed(futures):
+                idx, res, warn = fut.result()
+                if res is not None:
+                    results[idx] = res
+                if warn is not None:
+                    warns.append(warn)
+                completed += 1
+                if progress_callback is not None:
+                    try:
+                        progress_callback(
+                            completed, total, detectors[idx].track_name,
+                        )
+                    except Exception:
+                        logger.debug("progress_callback 호출 실패", exc_info=True)
+
+    # Why: None(실패) 제거하고 원본 순서 유지
+    return [r for r in results if r is not None], warns
+
+
+def collect_detection_profile(
+    results: list[DetectionResult],
+) -> dict[str, float]:
+    """탐지기별 elapsed 수집 — 병렬화 이득 프로파일링용.
+
+    Why: DetectionResult.metadata["elapsed"]를 track_name으로 집계하여
+         "어느 탐지기가 병목인지" 정량 파악. ThreadPoolExecutor 병렬화 이득은
+         Amdahl's law에 따라 가장 느린 탐지기에 수렴하므로 프로파일링이 필수.
+
+    Returns:
+        {track_name: elapsed_seconds}. elapsed 누락 시 0.0.
+    """
+    profile: dict[str, float] = {}
+    for r in results:
+        meta = r.metadata or {}
+        profile[r.track_name] = float(meta.get("elapsed", 0.0))
+    return profile
+
+
+def format_detection_profile(profile: dict[str, float]) -> str:
+    """프로파일 딕셔너리 → 사람이 읽을 수 있는 표 문자열.
+
+    예시:
+        | track_name        | elapsed(s) | share |
+        | ----------------- | ---------- | ----- |
+        | ml_sequence       |     12.45  |  48%  |
+        | layer_b           |      5.30  |  21%  |
+        ...
+    """
+    if not profile:
+        return "(탐지기 프로파일 없음)"
+    total = sum(profile.values()) or 1.0
+    rows = sorted(profile.items(), key=lambda kv: kv[1], reverse=True)
+    lines = [
+        "| track_name          | elapsed(s) | share |",
+        "| ------------------- | ---------- | ----- |",
+    ]
+    for name, elapsed in rows:
+        share = elapsed / total * 100
+        lines.append(
+            f"| {name:<19} | {elapsed:>10.3f} | {share:>4.1f}% |",
+        )
+    lines.append(f"**Total**: {total:.3f}s")
+    return "\n".join(lines)
 
 
 @dataclass
@@ -31,6 +154,14 @@ class PipelineResult:
     warnings: list[str] = field(default_factory=list)
     # Why: 재탐지 시 피처 생성 단계를 건너뛰기 위해 피처 완료 시점 DF 캐싱
     featured_data: pd.DataFrame | None = field(default=None, repr=False)
+    # Why: DB upload_batches 메타 적재 시 파일명 전달 (리뷰 피드백 #3 — 시그니처 오염 방지)
+    file_name: str = ""
+    # Why: SHAP 기여도 — flagged rows(anomaly_score ≥ threshold)만 계산.
+    #      key: document_id, value: {feature_name: shap_value} top-5.
+    #      ML 모델 없음/Cold Start 시 None.
+    shap_contributions: dict[str, dict[str, float]] | None = field(default=None, repr=False)
+    # Why: Waterfall 차트 시작점 — 모델의 expected_value. None이면 SHAP 미산출.
+    shap_base_value: float | None = None
 
 
 class AuditPipeline:
@@ -61,6 +192,8 @@ class AuditPipeline:
         # Why: Layer D(전기 대비 변동 탐지)에서 전기 engagement 탐색용.
         #      None이면 Layer D 자동 스킵 (하위 호환).
         self._repo = repo
+        # Why: WU-13 TB 교차검증 — _validate()에서 생성, _load_db()에서 적재
+        self._tb_df: pd.DataFrame | None = None
 
     def _make_batch_id(self) -> str:
         """engagement 접두사 포함 batch_id 생성."""
@@ -77,14 +210,26 @@ class AuditPipeline:
         warns: list[str] = []
         df, w = self._ingest(path)
         warns.extend(w)
-        return self._execute(df, self._make_batch_id(), start, warns)
+        fname = Path(path).name
+        result = self._execute(
+            df, self._make_batch_id(), start, warns, file_name=fname,
+        )
+        result.file_name = fname
+        return result
 
-    def run_from_dataframe(self, df: pd.DataFrame) -> PipelineResult:
+    def run_from_dataframe(
+        self, df: pd.DataFrame, *, file_name: str = "",
+    ) -> PipelineResult:
         """DataFrame 직접 입력 (ingest 생략).
 
         Why: 외부 df 원본 보호를 위해 copy() 후 파이프라인 진입.
         """
-        return self._execute(df.copy(), self._make_batch_id(), time.monotonic(), [])
+        result = self._execute(
+            df.copy(), self._make_batch_id(), time.monotonic(), [],
+            file_name=file_name,
+        )
+        result.file_name = file_name
+        return result
 
     def redetect(
         self,
@@ -102,19 +247,21 @@ class AuditPipeline:
         df = df.copy()
         results, warns = self._run_detection(df)
 
-        # Why: weights 미지정 시 Layer D 유무에 따라 가중치 자동 선택
+        # Why: weights 미지정 시 ML/Layer D 유무에 따라 가중치 자동 선택
         if weights is None:
-            has_variance = any(r.track_name == "layer_d" for r in results)
-            if has_variance:
-                from src.detection.constants import LAYER_WEIGHTS_WITH_PRIOR
-                weights = LAYER_WEIGHTS_WITH_PRIOR
+            weights = self._select_weights(results)
 
         from src.detection.score_aggregator import aggregate_scores
+        stacking_scores = self._try_stacking_ensemble(results, df)
         agg_df = aggregate_scores(
-            df, results, weights=weights, thresholds=thresholds, settings=self._settings,
+            df, results, weights=weights, thresholds=thresholds,
+            settings=self._settings, stacking_scores=stacking_scores,
         )
         for col in agg_df.columns:
             df[col] = agg_df[col].values
+
+        # Why: 재탐지에서도 SHAP 재산출 — 설정 변경 시 flagged rows가 달라질 수 있음
+        shap_contributions, shap_base_value = self._try_shap_explanation(df)
 
         risk_summary = df["risk_level"].value_counts().to_dict() if "risk_level" in df.columns else {}
         elapsed = time.monotonic() - start
@@ -123,10 +270,12 @@ class AuditPipeline:
         return PipelineResult(
             data=df, results=results, risk_summary=risk_summary,
             batch_id=bid, load_result=None, elapsed=elapsed, warnings=warns,
+            shap_contributions=shap_contributions, shap_base_value=shap_base_value,
         )
 
     def _execute(
         self, df: pd.DataFrame, batch_id: str, start: float, warns: list[str],
+        *, file_name: str = "",
     ) -> PipelineResult:
         """validate → feature → detection → aggregate → db."""
         self._progress(0.30, "데이터 검증 중...")
@@ -146,19 +295,22 @@ class AuditPipeline:
 
         self._progress(0.80, "점수 집계 중...")
         # Why: aggregate_scores는 별도 DF 반환. .values로 인덱스 불일치 방어.
-        from src.detection.constants import LAYER_WEIGHTS_WITH_PRIOR
         from src.detection.score_aggregator import aggregate_scores
-        # Why: Layer D 결과가 있으면 기존회사 가중치(5레이어) 사용, 없으면 기본(4레이어)
-        has_variance = any(r.track_name == "layer_d" for r in results)
-        weights = LAYER_WEIGHTS_WITH_PRIOR if has_variance else None
-        agg_df = aggregate_scores(df, results, weights=weights)
+        stacking_scores = self._try_stacking_ensemble(results, df)
+        weights = self._select_weights(results)
+        agg_df = aggregate_scores(
+            df, results, weights=weights, stacking_scores=stacking_scores,
+        )
         for col in agg_df.columns:
             df[col] = agg_df[col].values
+
+        # Why: anomaly_score 산출 이후 SHAP 계산 — flagged rows만 대상으로 하기 위함
+        shap_contributions, shap_base_value = self._try_shap_explanation(df)
 
         load_result = None
         if not self._skip_db:
             self._progress(0.90, "DB 적재 중...")
-            load_result, w = self._load_db(df, batch_id, results)
+            load_result, w = self._load_db(df, batch_id, results, file_name=file_name)
             warns.extend(w)
 
         risk_summary = df["risk_level"].value_counts().to_dict() if "risk_level" in df.columns else {}
@@ -169,6 +321,7 @@ class AuditPipeline:
             data=df, results=results, risk_summary=risk_summary,
             batch_id=batch_id, load_result=load_result, elapsed=elapsed, warnings=warns,
             featured_data=featured_snapshot,
+            shap_contributions=shap_contributions, shap_base_value=shap_base_value,
         )
 
     def _ingest(self, path: str | Path) -> tuple[pd.DataFrame, list[str]]:
@@ -282,9 +435,72 @@ class AuditPipeline:
             warns.extend(w.get("issue", str(w)) for w in sr.warnings)
         acct = validate_accounting(df)
         if not acct.balance_check:
-            warns.append(f"대차불일치 {len(acct.unbalanced_docs)}건 (차이 {acct.balance_diff:.2f})")
+            # Why: 회계 복식부기 근본 위반 — 비율 기반 임계로 fatal/warning 분기.
+            #      단일 행 불일치만으로 중단하지 않되, materiality 수준을 넘으면 차단.
+            total_debit = float(
+                df["debit_amount"].fillna(0).sum()
+                if "debit_amount" in df.columns else 0.0
+            )
+            diff_ratio = (
+                acct.balance_diff / total_debit
+                if total_debit > 0 else float("inf")
+            )
+            unique_docs = (
+                df["document_id"].nunique()
+                if "document_id" in df.columns else 0
+            )
+            doc_ratio = (
+                len(acct.unbalanced_docs) / unique_docs
+                if unique_docs > 0 else 0.0
+            )
+
+            msg = (
+                f"대차불일치 {len(acct.unbalanced_docs)}건, "
+                f"차이 {acct.balance_diff:.2f} ({diff_ratio:.2%}), "
+                f"불일치 전표 비중 {doc_ratio:.1%}"
+            )
+
+            s = self._ctx.settings
+            is_fatal = (
+                diff_ratio > s.balance_fatal_ratio
+                or doc_ratio > s.balance_fatal_doc_ratio
+            )
+            if is_fatal:
+                # Why: detection 진입 차단. audit_log에 사유 기록 후 예외 발생.
+                self._record_validate_failure(msg)
+                raise ValueError(f"L2 대차불일치 치명: {msg}")
+            warns.append(msg)
         if acct.duplicate_entries > 0:
             warns.append(f"중복 행 {acct.duplicate_entries}건")
+
+        # Why: WU-13 TB 교차검증 — GL 계정별 집계 무결성 + 유형별 잔액 대사
+        from src.validation.tb_reconciliation import validate_tb_reconciliation
+        recon = validate_tb_reconciliation(
+            df,
+            materiality=self._ctx.materiality_amount,
+            account_prefixes=self._ctx.audit_rules.get("reconciliation_account_prefixes"),
+        )
+        # Why: 오케스트레이터 내부에서 생성한 TB를 재사용 — 이중 생성 방지
+        self._tb_df = recon.trial_balance_df
+        if not recon.all_reconciled:
+            warns.extend(recon.warnings)
+
+        # Why: L3 통계 검증 — 분포/Benford/월별 변동성/계정 집중도 사전 경고.
+        #      detection 진입 전에 데이터 건전성 신호를 warns에 누적하여 대시보드에 노출.
+        #      validate_statistics()는 170줄 완전 구현되어 있었으나 호출이 누락된 Dead Code였음.
+        try:
+            from src.validation import validate_statistics
+            stat = validate_statistics(df, settings=self._ctx.settings)
+            warns.extend(stat.warnings)
+            # flags는 dict[str, str] → "L3 type: detail" 포맷으로 평탄화
+            warns.extend(f"L3 {f['type']}: {f['detail']}" for f in stat.flags)
+            # Why: 후속 단계(_load_db, 대시보드 EDA 탭)에서 재사용 가능
+            self._stat_result = stat
+        except Exception:
+            logger.warning("L3 통계 검증 실패 — graceful 스킵", exc_info=True)
+            warns.append("L3 통계 검증 스킵 (예외)")
+            self._stat_result = None
+
         return df, warns
 
     def _generate_features(self, df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
@@ -301,26 +517,62 @@ class AuditPipeline:
     def _run_detection(self, df: pd.DataFrame) -> tuple[list[DetectionResult], list[str]]:
         from src.detection.anomaly_layer import AnomalyDetector
         from src.detection.benford_detector import BenfordDetector
+        from src.detection.duplicate_detector import DuplicateDetector
         from src.detection.fraud_layer import FraudLayer
+        from src.detection.intercompany_matcher import IntercompanyMatcher
         from src.detection.integrity_layer import IntegrityDetector
         warns: list[str] = []
-        results: list[DetectionResult] = []
-        for det in [
+
+        # Why: base 6개 탐지기는 서로 독립적 — 병렬 실행 + elapsed 수집
+        base_detectors = [
             IntegrityDetector(self._ctx.settings, chart_of_accounts=self._ctx.chart_of_accounts, schema=self._ctx.schema),
             FraudLayer(self._ctx.settings, audit_rules=self._ctx.audit_rules),
             AnomalyDetector(self._ctx.settings),
             BenfordDetector(self._ctx.settings),
-        ]:
-            try:
-                results.append(det.detect(df))
-            except Exception:
-                logger.warning("탐지 실패: %s", det.track_name, exc_info=True)
-                warns.append(f"탐지 실패: {det.track_name}")
+            DuplicateDetector(self._ctx.settings),
+            IntercompanyMatcher(self._ctx.settings, audit_rules=self._ctx.audit_rules),
+        ]
+        results, base_warns = _run_detectors_parallel(
+            base_detectors,
+            df,
+            max_workers=getattr(self._ctx.settings, "detection_parallel_workers", None),
+            progress_callback=getattr(self, "_detection_progress_callback", None),
+        )
+        warns.extend(base_warns)
 
         # Why: Layer D는 기존회사 전용 — 조건 불충족 시 None 반환으로 graceful 스킵
         variance_result = self._try_variance_detection(df)
         if variance_result is not None:
             results.append(variance_result)
+
+        # Why: Relational 탐지기는 document_flows DB 접근 필요 — 조건부 실행
+        relational_result = self._try_relational_detection(df)
+        if relational_result is not None:
+            results.append(relational_result)
+
+        # Why: Graph 탐지기(WU-22)는 networkx 기반 순환/이전가격 — graceful 스킵
+        graph_result = self._try_graph_detection(df)
+        if graph_result is not None:
+            results.append(graph_result)
+
+        # Why: Access Audit 탐지기는 change_log DB 접근 필요 — 조건부 실행
+        access_audit_result = self._try_access_audit_detection(df)
+        if access_audit_result is not None:
+            results.append(access_audit_result)
+
+        # Why: Evidence 탐지기는 증빙 컬럼(has_attachment 등) 존재 시만 유의미
+        evidence_result = self._try_evidence_detection(df)
+        if evidence_result is not None:
+            results.append(evidence_result)
+
+        # Why: ML 탐지기는 학습 이력이 필요 — Cold Start 시 graceful 스킵
+        ml_results = self._try_ml_detection(df)
+        results.extend(ml_results)
+
+        # Why: TrendBreak는 3개년 이상 engagement가 있는 기존회사에서만 실행
+        trendbreak_result = self._try_trendbreak_detection(df)
+        if trendbreak_result is not None:
+            results.append(trendbreak_result)
 
         return results, warns
 
@@ -365,7 +617,357 @@ class AuditPipeline:
             logger.warning("Layer D 실행 실패 — 스킵", exc_info=True)
             return None
 
-    def _load_db(self, df, batch_id, results) -> tuple[object | None, list[str]]:
+    def _try_relational_detection(self, df: pd.DataFrame) -> DetectionResult | None:
+        """Relational 탐지기 실행. R01~R03 항상, R04는 document_flows 존재 시만.
+
+        Why: R04(문서 흐름 누락)는 DuckDB에 적재된 document_references 테이블 필요.
+             conn이 없거나 테이블 미적재 시 R04만 graceful 스킵 (R01~R03는 정상 실행).
+        """
+        try:
+            from src.detection.relational_detector import RelationalDetector
+            from src.detection.relational_rules import build_doc_flow_df
+
+            doc_flow_df = None
+            if self._conn is not None:
+                try:
+                    doc_flow_df = build_doc_flow_df(self._conn)
+                except Exception:
+                    logger.debug("document_flows 쿼리 실패 — R04 스킵")
+
+            det = RelationalDetector(
+                self._ctx.settings,
+                audit_rules=self._ctx.audit_rules,
+                doc_flow_df=doc_flow_df,
+            )
+            return det.detect(df)
+        except Exception:
+            logger.warning("Relational 탐지 실패 — 스킵", exc_info=True)
+            return None
+
+    def _try_graph_detection(self, df: pd.DataFrame) -> DetectionResult | None:
+        """Graph 탐지기 실행(WU-22). networkx 미설치 또는 예외 시 graceful 스킵.
+
+        Why: GR01(N-hop 순환) + GR03(양방향 IC 가격 asymmetry). 사전 필터 +
+             from_pandas_edgelist로 OOM 방어.
+        """
+        try:
+            from src.detection.graph_detector import GraphDetector
+
+            det = GraphDetector(self._ctx.settings)
+            return det.detect(df)
+        except Exception:
+            logger.warning("Graph 탐지 실패 — 스킵", exc_info=True)
+            return None
+
+    def _try_access_audit_detection(self, df: pd.DataFrame) -> DetectionResult | None:
+        """Access Audit 탐지기 실행. change_log 없으면 AA01만 graceful 스킵.
+
+        Why: AA01(전표 수정이력)은 change_log 테이블 JOIN 필요.
+             _try_relational_detection의 doc_flow_df 패턴과 동일한 외부 DF 주입.
+        """
+        try:
+            from src.detection.access_audit_layer import AccessAuditDetector
+
+            change_log_df = None
+            if self._conn is not None:
+                try:
+                    change_log_df = self._conn.execute(
+                        "SELECT document_id, changed_by, changed_field, change_date "
+                        "FROM change_log"
+                    ).fetchdf()
+                except Exception:
+                    logger.debug("change_log 미존재 — AA01 스킵")
+
+            det = AccessAuditDetector(
+                self._ctx.settings,
+                change_log_df=change_log_df,
+                audit_rules=self._ctx.audit_rules,
+            )
+            return det.detect(df)
+        except Exception:
+            logger.warning("Access Audit 탐지 실패 — 스킵", exc_info=True)
+            return None
+
+    def _try_evidence_detection(self, df: pd.DataFrame) -> DetectionResult | None:
+        """Evidence 탐지기 실행 (EV01~EV03).
+
+        Why: 증빙 컬럼(has_attachment 등)이 없어도 EV03(금액 불일치)은 실행 가능.
+             개별 룰이 컬럼 부재 시 graceful 스킵하므로 무조건 시도.
+        """
+        try:
+            from src.detection.evidence_detector import EvidenceDetector
+
+            det = EvidenceDetector(
+                self._ctx.settings,
+                audit_rules=self._ctx.audit_rules,
+            )
+            return det.detect(df)
+        except Exception:
+            logger.warning("Evidence 탐지 실패 — 스킵", exc_info=True)
+            return None
+
+    def _try_trendbreak_detection(self, df: pd.DataFrame) -> DetectionResult | None:
+        """TrendBreak(회계추정치 편의) 실행 시도. 조건 불충족 시 None.
+
+        Why: ISA 540 소급 검토. 3개년 이상 engagement + estimation_accounts 설정 필요.
+             _try_variance_detection() 패턴과 동일한 조건부 실행.
+        """
+        if self._ctx.is_anonymous:
+            return None
+        if self._ctx.fiscal_year is None:
+            return None
+        if self._repo is None:
+            logger.debug("repo 미주입 — TrendBreak 스킵")
+            return None
+
+        # Why: audit_rules.yaml에서 estimation_accounts 설정 확인
+        estimation_config = self._ctx.audit_rules.get("estimation_accounts")
+        if not estimation_config:
+            logger.debug("estimation_accounts 미설정 — TrendBreak 스킵")
+            return None
+
+        try:
+            from src.detection.multi_year_loader import (
+                find_multi_year_engagements,
+                load_multi_year_estimates,
+            )
+            from src.detection.trendbreak_detector import TrendBreakDetector
+
+            # Why: YAML에서 계정별 부호 규칙 추출
+            account_sign_convention = {
+                item["account"]: item.get("sign", "credit_normal")
+                for item in estimation_config
+            }
+
+            engagements = find_multi_year_engagements(
+                self._repo,
+                self._ctx.company_id,
+                self._ctx.fiscal_year,
+                max_years=self._ctx.settings.trendbreak_max_years,
+                min_years=self._ctx.settings.trendbreak_min_years,
+            )
+            if engagements is None:
+                logger.info("다기간 engagement 부족 — TrendBreak 스킵")
+                return None
+
+            # Why: _try_variance_detection과 동일한 커넥션 확보 패턴
+            conn = self._conn
+            if conn is None:
+                from src.db.connection import get_connection
+                conn = get_connection(path=str(self._ctx.db_path))
+
+            estimates = load_multi_year_estimates(
+                conn=conn,
+                repo=self._repo,
+                company_id=self._ctx.company_id,
+                engagements=engagements,
+                current_df=df,
+                current_fiscal_year=self._ctx.fiscal_year,
+                estimation_config=estimation_config,
+                account_sign_convention=account_sign_convention,
+            )
+            if estimates is None:
+                return None
+
+            det = TrendBreakDetector(
+                self._ctx.settings,
+                multi_year_estimates=estimates,
+            )
+            return det.detect(df)
+
+        except Exception:
+            logger.warning("TrendBreak 실행 실패 — 스킵", exc_info=True)
+            return None
+
+    @staticmethod
+    def _select_weights(results: list[DetectionResult]) -> dict[str, float] | None:
+        """탐지 결과에 따라 적절한 가중치 딕셔너리 선택.
+
+        Why: ML 트랙/Layer D/TrendBreak 유무에 따라 가중치 재배분이 필요.
+             ML > (D+TB) > TB > D > 기본 순서로 우선순위 적용.
+        """
+        has_ml = any(r.track_name.startswith("ml_") for r in results)
+        has_variance = any(r.track_name == "layer_d" for r in results)
+        has_trendbreak = any(r.track_name == "trendbreak" for r in results)
+
+        if has_ml:
+            from src.detection.constants import LAYER_WEIGHTS_WITH_ML
+            return LAYER_WEIGHTS_WITH_ML
+        if has_variance and has_trendbreak:
+            from src.detection.constants import LAYER_WEIGHTS_WITH_PRIOR_AND_TRENDBREAK
+            return LAYER_WEIGHTS_WITH_PRIOR_AND_TRENDBREAK
+        if has_trendbreak:
+            from src.detection.constants import LAYER_WEIGHTS_WITH_TRENDBREAK
+            return LAYER_WEIGHTS_WITH_TRENDBREAK
+        if has_variance:
+            from src.detection.constants import LAYER_WEIGHTS_WITH_PRIOR
+            return LAYER_WEIGHTS_WITH_PRIOR
+        return None  # 기본 LAYER_WEIGHTS (4레이어)
+
+    def _try_ml_detection(self, df: pd.DataFrame) -> list[DetectionResult]:
+        """학습된 ML 모델 로드 → 탐지 실행. 모델 없으면 빈 리스트 (Cold Start 방어).
+
+        Why: ML 모델은 train() 후에만 사용 가능. 최초 배포/새 회사에서는
+             학습 이력이 없으므로 ModelRegistry 로드 실패 시 graceful 스킵.
+        """
+        results: list[DetectionResult] = []
+        # Why: SHAP 단계에서 재사용하기 위해 Supervised detector 인스턴스 캐싱
+        self._ml_supervised_detector = None
+        if self._ctx.is_anonymous:
+            return results
+
+        try:
+            from src.preprocessing.model_registry import ModelRegistry
+            registry = ModelRegistry()
+        except Exception:
+            return results
+
+        # Supervised (ML01)
+        try:
+            from src.detection.supervised_detector import SupervisedDetector
+            det = SupervisedDetector(self._settings, model_registry=registry)
+            det.load_model("supervised")
+            results.append(det.detect(df))
+            # Why: SHAP은 sklearn pipeline이 필요 → 로드된 detector 참조 보관
+            self._ml_supervised_detector = det
+        except FileNotFoundError:
+            logger.debug("SupervisedDetector 모델 없음 — 스킵")
+        except Exception:
+            logger.warning("SupervisedDetector 탐지 실패", exc_info=True)
+
+        # Unsupervised (ML02)
+        try:
+            from src.detection.vae_detector import UnsupervisedDetector
+            det = UnsupervisedDetector(self._settings, model_registry=registry)
+            det.load_model("unsupervised")
+            results.append(det.detect(df))
+        except FileNotFoundError:
+            logger.debug("UnsupervisedDetector 모델 없음 — 스킵")
+        except Exception:
+            logger.warning("UnsupervisedDetector 탐지 실패", exc_info=True)
+
+        return results
+
+    def _try_stacking_ensemble(
+        self,
+        results: list[DetectionResult],
+        df: pd.DataFrame,
+    ) -> pd.Series | None:
+        """학습된 Stacking meta-learner 로드 → 추론. 없으면 None.
+
+        Why: meta-learner 미학습 시 None을 반환하여 기존 가중합 경로를 타게 한다.
+             Cold Start 시나리오에서 graceful degradation.
+        """
+        if self._ctx.is_anonymous:
+            return None
+
+        try:
+            from src.preprocessing.model_registry import ModelRegistry
+            registry = ModelRegistry()
+        except Exception:
+            return None
+
+        try:
+            from src.detection.ensemble_detector import EnsembleDetector
+            det = EnsembleDetector(self._settings, model_registry=registry)
+            det.load_model("stacking_meta")
+            result = det.detect_from_results(results, df.index)
+            logger.info("Stacking meta-learner 추론 완료 (mode=%s)", result.metadata.get("mode"))
+            return result.scores
+        except FileNotFoundError:
+            logger.debug("Stacking meta-learner 모델 없음 — 기존 가중합 사용")
+            return None
+        except Exception:
+            logger.warning("Stacking meta-learner 추론 실패", exc_info=True)
+            return None
+
+    def _try_shap_explanation(
+        self,
+        df: pd.DataFrame,
+    ) -> tuple[dict[str, dict[str, float]] | None, float | None]:
+        """flagged rows(anomaly_score ≥ threshold)만 SHAP 기여도 산출.
+
+        Why: SHAP은 연산량이 무거움(TreeSHAP/KernelSHAP 모두) — 10만 행 전체에
+             돌리면 수십 분 소요. 감사인이 설명을 필요로 하는 건 '이상 전표'뿐이므로
+             정상 전표는 스킵. 안전 상한(shap_max_rows)으로 OOM 방어.
+
+        Returns:
+            (contributions, base_value) 튜플.
+            contributions: {document_id: {feature: shap_value}} 또는 None (Cold Start).
+            base_value: 모델의 expected_value 또는 None.
+        """
+        # Why: _try_ml_detection 호출 후 detector가 캐싱됨 — 없으면 ML 모델 자체가 없는 상태
+        det = getattr(self, "_ml_supervised_detector", None)
+        if det is None or not hasattr(det, "pipeline_"):
+            return None, None
+
+        # Why: anomaly_score 컬럼이 없으면 파이프라인 순서 오류 — 방어
+        if "anomaly_score" not in df.columns:
+            logger.warning("SHAP 산출 스킵 — anomaly_score 컬럼 부재")
+            return None, None
+
+        threshold = getattr(self._settings, "shap_threshold", 0.7)
+        max_rows = getattr(self._settings, "shap_max_rows", 500)
+
+        # Why: flagged rows만 필터 → 상위 max_rows건으로 안전 상한
+        flagged_mask = df["anomaly_score"] >= threshold
+        flagged_df = df[flagged_mask]
+        if flagged_df.empty:
+            logger.debug("SHAP 산출 스킵 — flagged rows 없음 (threshold=%.2f)", threshold)
+            return None, None
+
+        if len(flagged_df) > max_rows:
+            flagged_df = flagged_df.nlargest(max_rows, "anomaly_score")
+            logger.info(
+                "SHAP 대상 축소: %d → %d건 (shap_max_rows 적용)",
+                int(flagged_mask.sum()), max_rows,
+            )
+
+        try:
+            from src.preprocessing.explainer import PipelineExplainer
+            explainer = PipelineExplainer(
+                pipeline=det.pipeline_,
+                feature_names=list(flagged_df.columns),
+            )
+            contributions_list, base_value = explainer.explain_batch(flagged_df, top_k=5)
+        except Exception:
+            logger.warning("SHAP 산출 실패 — graceful 스킵", exc_info=True)
+            return None, None
+
+        # Why: document_id 기준으로 딕셔너리 매핑 — UI에서 doc_id로 빠른 조회
+        if "document_id" not in flagged_df.columns:
+            logger.warning("SHAP 산출 스킵 — document_id 컬럼 부재")
+            return None, None
+
+        doc_ids = flagged_df["document_id"].tolist()
+        shap_map = {
+            str(doc_id): contrib
+            for doc_id, contrib in zip(doc_ids, contributions_list)
+        }
+        logger.info("SHAP 산출 완료: %d건 (base_value=%.4f)", len(shap_map), base_value)
+        return shap_map, base_value
+
+    @staticmethod
+    def _detect_datasynth_dir(file_name: str) -> Path | None:
+        """journal_entries 파일 경로에서 DataSynth 보조 데이터 디렉토리 감지.
+
+        Why: DataSynth 출력 디렉토리에 document_flows/, master_data/ 등이
+             함께 존재하면 보조 데이터를 자동 적재한다.
+        """
+        if not file_name:
+            return None
+        p = Path(file_name).resolve()
+        parent = p.parent
+        if not parent.exists():
+            return None
+        # Why: document_flows 디렉토리 존재 여부로 DataSynth 출력인지 판별
+        if (parent / "document_flows").is_dir():
+            return parent
+        return None
+
+    def _load_db(
+        self, df, batch_id, results, *, file_name: str = "",
+    ) -> tuple[object | None, list[str]]:
         conn, own_conn = self._conn, self._conn is None
         try:
             if own_conn:
@@ -377,11 +979,23 @@ class AuditPipeline:
                 else:
                     conn = get_connection(path=str(self._ctx.db_path))
             from src.db.loader import load_all
-            lr = load_all(conn, df, batch_id, results)
+            # Why: WU-13 — _validate()에서 캐싱한 TB DataFrame을 DB에 적재
+            tb_df = getattr(self, "_tb_df", None)
+            datasynth_dir = self._detect_datasynth_dir(file_name)
+            lr = load_all(
+                conn, df, batch_id, results,
+                file_name=file_name, tb_df=tb_df, datasynth_dir=datasynth_dir,
+            )
 
             # Why: engagement_meta에 현재 engagement 기록 (named만)
             if not self._ctx.is_anonymous:
                 self._upsert_engagement_meta(conn)
+
+            # Why: ISO 27001 / SOC 2 감사증적 — 파이프라인 실행 이벤트 기록.
+            #      락 충돌 시 execute_write 내부 재시도, 영구 실패 시 graceful.
+            self._record_detection_run(
+                conn, batch_id=batch_id, results=results, df=df, file_name=file_name,
+            )
 
             return lr, []
         except Exception:
@@ -392,6 +1006,71 @@ class AuditPipeline:
             #      named DB 커넥션은 ConnectionManager 캐시가 관리.
             if own_conn and conn is not None and self._ctx.is_anonymous:
                 conn.close()
+
+    def _record_detection_run(
+        self,
+        conn,
+        *,
+        batch_id: str,
+        results: list[DetectionResult],
+        df: pd.DataFrame,
+        file_name: str,
+    ) -> None:
+        """audit_log에 detection_run 이벤트 기록 — settings 스냅샷 + 통계 포함."""
+        from src.db.audit_log import record_event
+
+        # Why: settings 전체 dump는 노이즈가 크므로 핵심 임계값만 추출
+        s = self._ctx.settings
+        settings_snapshot = {
+            "balance_tolerance": getattr(s, "balance_tolerance", None),
+            "balance_fatal_ratio": getattr(s, "balance_fatal_ratio", None),
+            "balance_fatal_doc_ratio": getattr(s, "balance_fatal_doc_ratio", None),
+            "zscore_threshold": getattr(s, "zscore_threshold", None),
+            "approval_thresholds": getattr(s, "approval_thresholds", None),
+        }
+        anomaly_count = 0
+        if "risk_level" in df.columns:
+            anomaly_count = int((df["risk_level"] != "Normal").sum())
+
+        record_event(
+            conn,
+            action="detection_run",
+            company_id=None if self._ctx.is_anonymous else self._ctx.company_id,
+            engagement_id=None if self._ctx.is_anonymous else self._ctx.engagement_id,
+            batch_id=batch_id,
+            target_id=file_name or None,
+            details={
+                "row_count": int(len(df)),
+                "rule_track_count": len(results),
+                "rule_tracks": [r.track_name for r in results],
+                "anomaly_count": anomaly_count,
+                "settings_snapshot": settings_snapshot,
+            },
+        )
+
+    def _record_validate_failure(self, msg: str) -> None:
+        """audit_log에 pipeline_validate_fail 이벤트 기록.
+
+        Why: L2 대차불일치 fatal 등 검증 단계 차단 사유를 감사증적에 남긴다.
+             _validate() 단계에서는 _conn이 없을 수 있으므로 ConnectionManager로 확보.
+             anonymous 컨텍스트는 영속 DB가 없으므로 skip.
+        """
+        if self._ctx.is_anonymous:
+            return
+        try:
+            from src.db.audit_log import record_event
+            from src.db.connection import get_connection
+            conn = self._conn or get_connection(path=str(self._ctx.db_path))
+            record_event(
+                conn,
+                action="pipeline_validate_fail",
+                company_id=self._ctx.company_id,
+                engagement_id=self._ctx.engagement_id,
+                details={"reason": "balance_check_fatal", "message": msg},
+            )
+        except Exception:
+            # Why: 검증 실패 차단 흐름은 audit_log 실패와 무관하게 진행
+            logger.warning("validate_failure 기록 실패", exc_info=True)
 
     def _upsert_engagement_meta(self, conn) -> None:
         """engagement_meta 테이블에 현재 engagement 기록 (중복 방지)."""

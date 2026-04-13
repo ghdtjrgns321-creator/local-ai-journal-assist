@@ -17,12 +17,13 @@ from config.settings import get_settings
 from src.detection.constants import (
     LAYER_WEIGHTS,
     RISK_THRESHOLDS,
+    TOPSIDE_BONUS_RULES,
     Layer,
     RiskLevel,
 )
 
-# Why: Top-side JE 가점 조건 수 (정규화 분모). 게이트키퍼(수기)는 제외.
-_TOPSIDE_CONDITIONS = 5
+# Why: Top-side JE 가점 조건 수 (정규화 분모). ���이트키퍼(수기)는 제���.
+_TOPSIDE_CONDITIONS = len(TOPSIDE_BONUS_RULES)
 
 logger = logging.getLogger(__name__)
 
@@ -36,61 +37,150 @@ def aggregate_scores(
     weights: dict[str, float] | None = None,
     thresholds: dict[str, float] | None = None,
     settings: object | None = None,
+    *,
+    stacking_scores: pd.Series | None = None,
 ) -> pd.DataFrame:
     """여러 트랙의 DetectionResult를 종합하여 최종 anomaly_score 산출.
 
     Args:
         settings: AuditSettings 인스턴스. None이면 get_settings() 싱글톤 사용.
+        stacking_scores: Stacking meta-learner가 산출한 최종 점수.
+            제공되면 기존 가중합을 건너뛰고 이 점수를 anomaly_score로 사용.
 
     Returns:
         DataFrame(anomaly_score, risk_level, flagged_rules), index=df.index.
     """
     if settings is None:
         settings = get_settings()
-    # Why: Layer enum 값(.value)과 track_name 문자열 통일
-    w = {k.value if isinstance(k, Layer) else k: v
-         for k, v in (weights or LAYER_WEIGHTS).items()}
 
-    result_map = {r.track_name: r for r in results}
+    # Why: stacking_scores가 있으면 meta-learner 점수를 직접 사용.
+    #      없으면 기존 레이어별 가중합 로직 유지 (하위 호환).
+    if stacking_scores is not None:
+        anomaly_score = stacking_scores.reindex(df.index, fill_value=0.0).clip(0.0, 1.0)
+    else:
+        # Why: Layer enum 값(.value)과 track_name 문자열 통일
+        w = {k.value if isinstance(k, Layer) else k: v
+             for k, v in (weights or LAYER_WEIGHTS).items()}
 
-    # Why: 각 레이어별 scores × weight 가중합. 에러 격리로 한 레이어 실패해도 계속 진행.
-    score_acc = pd.Series(0.0, index=df.index)
-    for track_name, weight in w.items():
-        if track_name not in result_map:
-            logger.warning("트랙 '%s' 결과 없음 — 0점 처리", track_name)
-            continue
-        try:
-            layer_scores = result_map[track_name].scores.reindex(df.index, fill_value=0.0)
-            score_acc = score_acc + layer_scores * weight
-        except Exception:
-            logger.warning("트랙 '%s' 점수 합산 실패 — 0점 처리", track_name, exc_info=True)
+        result_map = {r.track_name: r for r in results}
 
-    anomaly_score = score_acc.clip(0.0, 1.0)
+        # Why: 각 레이어별 scores × weight 가중합. 에러 격리로 한 레이어 실패해도 계속 진행.
+        score_acc = pd.Series(0.0, index=df.index)
+        for track_name, weight in w.items():
+            if track_name not in result_map:
+                logger.warning("트랙 '%s' 결과 없음 — 0점 처리", track_name)
+                continue
+            try:
+                layer_scores = result_map[track_name].scores.reindex(df.index, fill_value=0.0)
+                score_acc = score_acc + layer_scores * weight
+            except Exception:
+                logger.warning("트랙 '%s' 점수 합산 실패 — 0점 처리", track_name, exc_info=True)
+
+        anomaly_score = score_acc.clip(0.0, 1.0)
+
+    # Why: settings의 classification mode를 해석하여 quantile/absolute 분기
+    mode = getattr(settings, "risk_classification_mode", "absolute")
+    quantiles = None
+    if mode == "quantile":
+        quantiles = {
+            RiskLevel.HIGH: getattr(settings, "risk_quantile_high", 0.90),
+            RiskLevel.MEDIUM: getattr(settings, "risk_quantile_medium", 0.75),
+            RiskLevel.LOW: getattr(settings, "risk_quantile_low", 0.50),
+        }
 
     agg_df = pd.DataFrame({
         "anomaly_score": anomaly_score,
-        "risk_level": classify_risk_level(anomaly_score, thresholds),
+        "risk_level": classify_risk_level(
+            anomaly_score, thresholds, mode=mode, quantiles=quantiles,
+        ),
         "flagged_rules": _collect_flagged_rules(results, df.index),
     }, index=df.index)
+
+    # Why: ML 개별 트랙 점수를 전용 컬럼으로 주입 → 대시보드/DB에서 분리 표시 가능.
+    #      트랙 미존재(Cold Start) 시 컬럼 자체를 생성하지 않아 하위 호환 유지.
+    _inject_ml_track_scores(agg_df, results)
 
     agg_df = _apply_auto_escalation(agg_df, results)
     return _apply_topside_escalation(agg_df, df, results, settings=settings)
 
 
+def _inject_ml_track_scores(
+    agg_df: pd.DataFrame,
+    results: list[DetectionResult],
+) -> None:
+    """ml_supervised/ml_unsupervised 트랙 점수를 DB 적재용 컬럼에 주입.
+
+    Why: DB schema에 예약된 supervised_score, unsupervised_score 컬럼을 채운다.
+         대시보드 Explorer Grid가 두 점수를 별도 바 렌더러로 표시하기 위함.
+    """
+    track_to_col = {
+        "ml_supervised": "supervised_score",
+        "ml_unsupervised": "unsupervised_score",
+    }
+    for r in results:
+        col = track_to_col.get(r.track_name)
+        if col is None:
+            continue
+        agg_df[col] = r.scores.reindex(agg_df.index)
+
+
 def classify_risk_level(
     scores: pd.Series,
     thresholds: dict[str, float] | None = None,
+    mode: str = "absolute",
+    quantiles: dict[str, float] | None = None,
 ) -> pd.Series:
     """anomaly_score → risk_level 변환 (4등급).
 
     Normal→Low→Medium→High 순서로 덮어쓰기하여 최종 등급 결정.
-    thresholds가 None이면 모듈 상수 RISK_THRESHOLDS 사용.
+
+    Args:
+        scores: anomaly_score 시리즈
+        thresholds: 절대값 임계값 (mode="absolute"). None이면 RISK_THRESHOLDS 사용
+        mode: "absolute" (고정 임계값) 또는 "quantile" (분위수 기반)
+        quantiles: 분위수 딕셔너리 (mode="quantile"). 예: {high:0.9, medium:0.75, low:0.5}
+
+    Why (quantile 모드): Stacking Ridge 출력은 진짜 확률이 아니므로 절대값 기준은
+    오해 유발. 분위수 기반은 "상위 10%를 HIGH"로 분류하여 감사 실무 워크플로우
+    (Top-N 조사)에 정렬된다.
     """
+    if mode == "quantile":
+        return _classify_by_quantile(scores, quantiles)
+
     t = thresholds or RISK_THRESHOLDS
     levels = pd.Series(RiskLevel.NORMAL, index=scores.index)
     levels[scores > t[RiskLevel.LOW]] = RiskLevel.LOW
     levels[scores > t[RiskLevel.MEDIUM]] = RiskLevel.MEDIUM
     levels[scores > t[RiskLevel.HIGH]] = RiskLevel.HIGH
+    return levels
+
+
+def _classify_by_quantile(
+    scores: pd.Series,
+    quantiles: dict[str, float] | None,
+) -> pd.Series:
+    """분위수 기반 risk_level 분류.
+
+    Why: 절대 확률 가정이 깨져도 "상위 N%"는 항상 의미 있다.
+         동일 score가 여러 행에 있을 때 stable ordering을 위해 rank(method='max') 사용.
+    """
+    q = quantiles or {
+        RiskLevel.HIGH: 0.90,
+        RiskLevel.MEDIUM: 0.75,
+        RiskLevel.LOW: 0.50,
+    }
+    # Why: 모든 score가 0.0인 경우(결과 없음) quantile 계산 의미 없음 → NORMAL
+    if scores.empty or scores.max() <= 0:
+        return pd.Series(RiskLevel.NORMAL, index=scores.index)
+
+    # Why: 동일 값의 묶음 처리를 위해 percentile rank 사용 (0~1)
+    pct_rank = scores.rank(method="max", pct=True)
+    levels = pd.Series(RiskLevel.NORMAL, index=scores.index)
+    levels[pct_rank > q[RiskLevel.LOW]] = RiskLevel.LOW
+    levels[pct_rank > q[RiskLevel.MEDIUM]] = RiskLevel.MEDIUM
+    levels[pct_rank > q[RiskLevel.HIGH]] = RiskLevel.HIGH
+    # Why: score=0인 행은 언제나 NORMAL 보존 (rank가 높아도 실제 위험 없음)
+    levels[scores <= 0] = RiskLevel.NORMAL
     return levels
 
 
@@ -175,27 +265,15 @@ def _compute_topside_score(
     """
     result_map = {r.track_name: r for r in results}
     idx = df.index
-    la, lb, lc = Layer.LAYER_A.value, Layer.LAYER_B.value, Layer.LAYER_C.value
     score = pd.Series(0, index=idx, dtype=int)
 
-    # 가점 1: 기말 시점 (C01)
-    score += _get_rule_flag(result_map, "C01", lc, idx).astype(int)
-
-    # 가점 2: 자기승인(B06) 또는 승인 생략(B09)
-    cond_b06 = _get_rule_flag(result_map, "B06", lb, idx)
-    cond_b09 = _get_rule_flag(result_map, "B09", lb, idx)
-    score += (cond_b06 | cond_b09).astype(int)
-
-    # 가점 3: 비정상 계정 — 무효(A03) 또는 희소 쌍(C09)
-    cond_a03 = _get_rule_flag(result_map, "A03", la, idx)
-    cond_c09 = _get_rule_flag(result_map, "C09", lc, idx)
-    score += (cond_a03 | cond_c09).astype(int)
-
-    # 가점 4: 이상 고액 (C08)
-    score += _get_rule_flag(result_map, "C08", lc, idx).astype(int)
-
-    # 가점 5: 위험 적요 (C06)
-    score += _get_rule_flag(result_map, "C06", lc, idx).astype(int)
+    # Why: TOPSIDE_BONUS_RULES를 순회하여 하드코딩 제거.
+    #      각 그룹 내 룰은 OR 결합 (하나라도 True면 가점 1).
+    for _label, rule_pairs in TOPSIDE_BONUS_RULES:
+        group_flag = pd.Series(False, index=idx)
+        for rule_id, layer_name in rule_pairs:
+            group_flag = group_flag | _get_rule_flag(result_map, rule_id, layer_name, idx)
+        score += group_flag.astype(int)
 
     # Why: 게이트키퍼 — 수기 전표가 아니면 가점 전체를 0으로 초기화.
     #      자동 배치 전표가 우연히 다른 조건에 걸려도 Top-side JE로 과탐되지 않음.

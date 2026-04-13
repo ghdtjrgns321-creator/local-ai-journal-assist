@@ -26,12 +26,12 @@ def monthly_trend(df: pd.DataFrame) -> go.Figure:
     fig.add_trace(go.Scatter(
         x=monthly.index, y=monthly["total"],
         mode="lines+markers", name="전체",
-        line={"color": "#636EFA"},
+        line={"color": "#2563EB"},
     ))
     fig.add_trace(go.Scatter(
         x=monthly.index, y=monthly["abnormal"],
         mode="lines+markers", name="이상",
-        line={"color": "#EF553B"},
+        line={"color": "#DC2626"},
     ))
 
     # Why: 분기말은 결산 집중 기간 → 시각적 구분으로 패턴 인식 지원.
@@ -74,16 +74,16 @@ def hourly_heatmap(df: pd.DataFrame) -> go.Figure:
     # Why: 심야(22~6) 영역 — 두 구간으로 분리 (0~6시 + 22~23시). C03 탐지 연계.
     fig.add_shape(
         type="rect", x0=-0.5, x1=6.5, y0=-0.5, y1=6.5,
-        line={"dash": "dash", "color": "#FF4B4B", "width": 2},
+        line={"dash": "dash", "color": "#DC2626", "width": 2},
     )
     fig.add_shape(
         type="rect", x0=21.5, x1=23.5, y0=-0.5, y1=6.5,
-        line={"dash": "dash", "color": "#FF4B4B", "width": 2},
+        line={"dash": "dash", "color": "#DC2626", "width": 2},
     )
     # Why: 주말(토·일) 영역 점선 박스 — C02 탐지 영역 시각화.
     fig.add_shape(
         type="rect", x0=-0.5, x1=23.5, y0=4.5, y1=6.5,
-        line={"dash": "dash", "color": "#FFA500", "width": 2},
+        line={"dash": "dash", "color": "#D97706", "width": 2},
     )
 
     fig.update_layout(

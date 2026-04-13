@@ -1,6 +1,7 @@
 """통계 기반 이상 징후 룰 — C07 Benford, C09 비정상 계정조합.
 
 C07: validation/benford.py의 analyze_benford() 재사용. 편차 큰 자릿수만 선별 플래그.
+     반환값은 [0, 1] float Series — deviation 비례 차등 스코어 적용.
 C09: merge 기반 Cartesian Product로 복합 분개(N:M) 계정 쌍 빈도 분석.
 """
 
@@ -14,10 +15,37 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 from config.settings import AuditSettings, get_settings
+from src.detection.constants import SEVERITY_MAP
 from src.validation.benford import BENFORD_EXPECTED, analyze_benford
 
 
 _MIN_GROUP_FOR_BENFORD = 100  # 계정별 최소 표본 수 (미만이면 검정 무의미)
+
+# Why: C07 deviation 비례 스코어 파라미터.
+#      base = SEVERITY_MAP["C07"]/5 = 0.4 (3등급 / 5등급 만점).
+#      위반 자릿수의 (|observed-expected| / threshold) 비율을 [0.5, 2.0]으로 클립한 후
+#      base와 곱해 최종 행 점수를 [0.2, 0.8] 범위로 차등화한다.
+_C07_BASE_SCORE = SEVERITY_MAP["C07"] / 5.0
+_C07_MULT_MIN = 0.5
+_C07_MULT_MAX = 2.0
+
+
+def _digit_deviation(observed: dict[int, float], digit: int) -> float:
+    """단일 자릿수의 절대 편차 — Benford 기댓값과 관측값의 차이."""
+    return abs(observed.get(digit, 0.0) - BENFORD_EXPECTED[digit])
+
+
+def _deviation_to_score(deviation: float, threshold: float) -> float:
+    """편차 → [0.2, 0.8] 점수 변환.
+
+    deviation == threshold (보더라인) → base(0.4) 그대로.
+    deviation == 2 × threshold → base × 2.0 = 0.8 (캡).
+    deviation == 0.5 × threshold → base × 0.5 = 0.2 (플로어).
+    """
+    if threshold <= 0:
+        return _C07_BASE_SCORE
+    multiplier = max(_C07_MULT_MIN, min(deviation / threshold, _C07_MULT_MAX))
+    return _C07_BASE_SCORE * multiplier
 
 
 def c07_benford_violation(
@@ -35,16 +63,35 @@ def c07_benford_violation(
              → 위반 계정의 편차 큰 자릿수 행만 플래그
       2단계: 전체 데이터 검정 (기존 로직) → 계정별에서 놓친 전역 패턴 보완
 
+    스코어링 (deviation 비례 차등):
+      - 위반 행의 점수 = 0.4 × clip(deviation/threshold, 0.5, 2.0) → [0.2, 0.8]
+      - 같은 (전표·계정) 단위에서 발생한 여러 위반 자릿수 중 max deviation 사용
+      - document_id 기준으로 max 전파 (복식부기 — 전표 내 다른 행도 동일 점수)
+
     Returns:
-        (bool Series, metadata dict) — metadata에 benford_results 포함.
+        (float Series, metadata dict) — 각 행 [0.0, 0.8], 0.0이면 미위반.
     """
     s = settings or get_settings()
     meta: dict[str, Any] = {}
 
     if "first_digit" not in df.columns:
-        return pd.Series(False, index=df.index), meta
+        return pd.Series(0.0, index=df.index), meta
 
-    flagged = pd.Series(False, index=df.index)
+    threshold = s.benford_mad_threshold
+    # Why: 행별 스코어 누적 — 동일 행에 여러 위반이 매핑되면 max 적용
+    scores = pd.Series(0.0, index=df.index)
+
+    def _apply_score(row_mask: pd.Series, score: float) -> None:
+        """행 마스크에 스코어 적용 (기존값 대비 max)."""
+        if score <= 0:
+            return
+        # Why: document_id 단위로 전파하여 복식부기 맥락 반영
+        if "document_id" in df.columns:
+            doc_ids = df.loc[row_mask, "document_id"].unique()
+            full_mask = df["document_id"].isin(doc_ids)
+        else:
+            full_mask = row_mask
+        scores.loc[full_mask] = scores.loc[full_mask].clip(lower=score)
 
     # ── 1단계: 계정별 분리 검정 ──
     # Why: 특정 계정에서만 찌그러진 분포를 잡아내는 정밀 탐지
@@ -59,14 +106,20 @@ def c07_benford_violation(
                 # Why: 위반 계정 내에서 편차 큰 자릿수만 선별 (전체 행 플래그 방지)
                 bad_digits = {
                     d for d in range(1, 10)
-                    if abs(result.observed.get(d, 0.0) - BENFORD_EXPECTED[d]) > s.benford_mad_threshold
+                    if _digit_deviation(result.observed, d) > threshold
                 }
                 if bad_digits:
-                    mask = (df["gl_account"] == gl_account) & df["first_digit"].isin(bad_digits)
-                    flagged = flagged | mask
+                    # Why: 위반 자릿수 중 최대 deviation을 대표값으로 사용
+                    max_dev = max(_digit_deviation(result.observed, d) for d in bad_digits)
+                    digit_score = _deviation_to_score(max_dev, threshold)
+
+                    digit_mask = (df["gl_account"] == gl_account) & df["first_digit"].isin(bad_digits)
+                    _apply_score(digit_mask, digit_score)
                     group_results[str(gl_account)] = {
                         "mad": result.mad,
                         "flagged_digits": sorted(bad_digits),
+                        "max_deviation": max_dev,
+                        "row_score": digit_score,
                         "sample_size": len(group_digits),
                     }
 
@@ -80,12 +133,17 @@ def c07_benford_violation(
     if not result.is_conforming:
         flagged_digits = {
             d for d in range(1, 10)
-            if abs(result.observed.get(d, 0.0) - BENFORD_EXPECTED[d]) > s.benford_mad_threshold
+            if _digit_deviation(result.observed, d) > threshold
         }
         if flagged_digits:
-            flagged = flagged | df["first_digit"].isin(flagged_digits).fillna(False)
+            max_dev = max(_digit_deviation(result.observed, d) for d in flagged_digits)
+            global_score = _deviation_to_score(max_dev, threshold)
+            digit_mask = df["first_digit"].isin(flagged_digits).fillna(False)
+            _apply_score(digit_mask, global_score)
+            meta["benford_global_max_deviation"] = max_dev
+            meta["benford_global_row_score"] = global_score
 
-    return flagged, meta
+    return scores, meta
 
 
 def c09_rare_account_pair(

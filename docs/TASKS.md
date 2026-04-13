@@ -14,13 +14,18 @@
 | RC 재설계 (Company-Centric)      | 41   | 41   | 100%   |
 | 2a ML 전처리                     | 10   | 10   | 100%   |
 | 2 WU-00 전처리 수정              |  5   |  5   | 100%   |
-| 2 WU-01~04 ML 핵심               |  0   |  6   |   0%   |
+| 2 WU-01~04 ML 핵심               |  2   |  6   |  33%   |
 | 2 WU-05~08 추가탐지              |  0   |  4   |   0%   |
-| 2 WU-09~13 고도화                |  0   |  5   |   0%   |
-| 2 WU-14~16 DataSynth             |  0   |  3   |   0%   |
-| 2 WU-17 대시보드ML               |  0   |  1   |   0%   |
-| 3 NLQ+Graph+Polish               |  0   | 22   |   0%   |
-| **합계**                         | 109  | 150  |  73%   |
+| 2 WU-09~13 고도화                |  1   |  5   |  20%   |
+| 2 WU-14~16 DataSynth             |  1   |  3   |  33%   |
+| 2 WU-17 대시보드ML               |  1   |  1   | 100%   |
+| 3 WU-18~19 API+NLP기초           |  1   |  2   |  50%   |
+| 3 WU-20 Text-to-SQL              |  0   |  1   |   0%   |
+| 3 WU-21~22 NLP탐지+그래프        |  0   |  2   |   0%   |
+| 3 WU-23~24 Audit+감사조서        |  1   |  2   |  50%   |
+| 3 WU-25~27 인사이트+UI           |  0   |  3   |   0%   |
+| 3 WU-28~30 고도화                |  1   |  3   |  33%   |
+| **합계**                         | 114  | 150  |  76%   |
 
 **상태 범례**: ✅ 완료 / ⬜ 미착수
 **블로커**: Phase 섹션 상단 blockquote로 표기 (🚫 BLOCKER)
@@ -247,9 +252,9 @@ WU1 (기반 컴포넌트) ──── 반드시 최초 실행
   ┌──────▼──────┐  ┌───────────▼───────────┐    ┌─────────────▼──────────────┐
   │  WU-01 (L)  │  │ WU-05 (M) Duplicate   │    │ WU-06 (S) TimeSeries      │
   │ Supervised  │  │ WU-07 (M) IC Match    │    │ WU-08 (M) Relational      │
-  │ Detector    │  │                        │    │ WU-09 (S) C01+Batch       │
-  └──────┬──────┘  └───────────┬───────────┘    │ WU-10 (S) EUR+Holiday     │
-         │                      │                │ WU-11 (S) Approval+Entropy│
+  │ Detector    │  │                        │    │ WU-09 (S) C01+Batch  ✅   │
+  └──────┬──────┘  └───────────┬───────────┘    │ WU-10 (S) EUR+Holiday ✅  │
+         │                      │                │ WU-11 (S) Approval+Ent ✅│
   ┌──────▼──────┐              │                │ WU-13 (M) TB 대사         │
   │  WU-02 (M)  │              │                └────────────────────────────┘
   │ VAE+IF      │              │                  (TIER 2/3 병렬)
@@ -318,23 +323,24 @@ WU1 (기반 컴포넌트) ──── 반드시 최초 실행
 | cv_selector VAE n_jobs=1 강제        | `src/preprocessing/cv_selector.py`         | ✅   |
 | 데이터 분할 전략 문서화 (D029)       | `docs/DECISION.md`                         | ✅   |
 
-### WU-01: SupervisedDetector `[L]` — #48
+### WU-01: SupervisedDetector `[L]` — #48 ✅
 
 > **의존**: WU-00 ✅
 > **역할**: 파이프라인 인프라 구축 (합성 데이터 순환 학습 한계로 실탐지 성능은 제한적)
 > XGBoost/RF/LR/LGBM GridSearchCV 지도학습 탐지기
-> **입력**: 18 피처 + 24 룰 결과 = 42차원. DataSynth GT 또는 pseudo-label 사용
+> **입력**: 19 피처 + 24 룰 결과 = 43차원. DataSynth GT 또는 pseudo-label 사용
 > **불균형 처리**: XGB→scale_pos_weight, RF→class_weight="balanced", LGBM→is_unbalance=True
 > **확장 경로**: 고객사별 실데이터 유입 시 fine-tuning으로 활성화 (Semi-supervised 인터페이스 포함)
+> **코드리뷰 반영**: preprocessor 공유 버그, threshold hold-out 분리, 양성0건 차단, XGB deprecated 제거
 
 | #   | 태스크                  | 파일                                                               | 가이드                                           | 상태 |
 |-----|-------------------------|--------------------------------------------------------------------|--------------------------------------------------|------|
-| 48  | SupervisedDetector      | `src/detection/supervised_detector.py` (신규)                      | [05a-detection-ml](pre-plan/05a-detection-ml.md) §164 | ⬜ |
-|     | LightGBM 파이프라인 추가 | `src/preprocessing/pipeline_builder.py` (확장)                    | [03a-preprocessing](pre-plan/03a-preprocessing.md) | ⬜ |
-|     | SMOTE-ENN 선택적 적용    | train set only (data leakage 방지)                                 | [05a-detection-ml](pre-plan/05a-detection-ml.md) §200 | ⬜ |
-|     | 단위 테스트              | `tests/test_detection/test_supervised_detector.py` (신규)          | 05a-detection-ml "테스트 전략"                   | ⬜   |
+| 48  | SupervisedDetector      | `src/detection/supervised_detector.py`                             | [05a-detection-ml](pre-plan/05a-detection-ml.md) §164 | ✅ |
+|     | LightGBM 파이프라인 추가 | `src/preprocessing/pipeline_builder.py` (확장)                    | [03a-preprocessing](pre-plan/03a-preprocessing.md) | ✅ |
+|     | SMOTE-ENN 선택적 적용    | imblearn Pipeline 내부 스텝 (CV fold별 train에만 적용)             | [05a-detection-ml](pre-plan/05a-detection-ml.md) §200 | ✅ |
+|     | 단위 테스트              | `tests/modules/test_detection/test_supervised_detector.py` (17 tests) | 05a-detection-ml "테스트 전략"                | ✅   |
 
-### WU-02: VAEDetector + IF 앙상블 `[M]` — #49
+### WU-02: VAEDetector + IF 앙상블 `[M]` — #49 ✅
 
 > **의존**: WU-00 ✅
 > **역할**: 핵심 탐지기 — 비지도학습은 합성 데이터 적합도가 가장 높음 (순환 학습 문제 없음)
@@ -342,17 +348,21 @@ WU1 (기반 컴포넌트) ──── 반드시 최초 실행
 > **실증 근거**: C09 recall=10% (1,039건 중 105건). 전수조사 결과 라벨 ~56%가 빈도 상위의 흔한 GL 조합.
 > 통계 룰(하위 1%)로는 "흔하지만 도메인상 비정상"인 조합을 구조적으로 탐지 불가.
 > VAE 잠재공간에서 정상 GL 조합 패턴을 학습하면 빈도와 무관하게 재구성 오차로 탐지 가능.
-> **아키텍처**: Basic FC — Input(n)→Hidden(64)→Hidden(32)→Latent(8)→Hidden(32)→Hidden(64)→Output(n)
-> **학습 데이터**: 검증모드=is_fraud=False only, 실전모드=전체(contamination tolerance <2%)
+> **아키텍처**: Basic FC — Input(n)→Hidden(32)→Latent(8)→Hidden(32)→Output(n)
+> **학습 데이터**: 순수 비지도 — X 전체 학습 (y 라벨 학습 배제, 평가 전용)
+> **앙상블**: ECDF 기반 Percentile Ranking + 균등 가중합 (배치 크기 무관 안정성)
 > **참고**: BiLSTM+Attention은 D032에 따라 WU-01c에서 독립 탐지기로 구현 (VAE 교체 아닌 병렬 운용)
 
-| #   | 태스크                  | 파일                                                               | 가이드                                           | 상태 |
-|-----|-------------------------|--------------------------------------------------------------------|--------------------------------------------------|------|
-| 49  | VAEDetector + IF 앙상블  | `src/detection/vae_detector.py` (신규)                             | [05a-detection-ml](pre-plan/05a-detection-ml.md) §236 | ⬜ |
-|     | t-SNE/UMAP 잠재공간 시각화 | 학습 후 latent space 품질 검증 유틸리티                           | [05a-detection-ml](pre-plan/05a-detection-ml.md) §450 | ⬜ |
-|     | 단위 테스트              | `tests/test_detection/test_vae_detector.py` (신규)                 | 05a-detection-ml "테스트 전략"                   | ⬜   |
+| #   | 태스크                    | 파일                                                                    | 가이드                                            | 상태 |
+|-----|---------------------------|-------------------------------------------------------------------------|---------------------------------------------------|------|
+| 49  | VAEDetector + IF 앙상블    | `src/detection/vae_detector.py`                                         | [05a-detection-ml](pre-plan/05a-detection-ml.md) §236 | ✅ |
+|     | t-SNE/UMAP 잠재공간 시각화 | `src/detection/latent_visualizer.py`                                    | [05a-detection-ml](pre-plan/05a-detection-ml.md) §450 | ✅ |
+|     | Layer enum + ML 가중치     | `src/detection/constants.py` — `ML_SUPERVISED/ML_UNSUPERVISED` + `LAYER_WEIGHTS_WITH_ML` | score_aggregator 통합                  | ✅ |
+|     | Pipeline Cold Start 방어   | `src/pipeline.py` — `_try_ml_detection()` + `_select_weights()`         | Layer D 패턴 동일                                 | ✅ |
+|     | score_aggregator ML 테스트 | `tests/modules/test_detection/test_score_aggregator.py` (4 tests 추가)  | ML 가중치 합계/반영/무시/Cold Start               | ✅ |
+|     | 단위 테스트                | `tests/modules/test_detection/test_vae_detector.py` (23 tests)          | 05a-detection-ml "테스트 전략"                    | ✅   |
 
-### WU-01b: FT-Transformer Tabular 탐지기 `[M]` — D033
+### WU-01b: FT-Transformer Tabular 탐지기 `[M]` — D033 ✅
 
 > **의존**: WU-02 (VAE 래퍼 패턴 재사용)
 > FT-Transformer: 모든 피처를 토큰화 → self-attention으로 피처 간 상호작용 학습
@@ -362,13 +372,13 @@ WU1 (기반 컴포넌트) ──── 반드시 최초 실행
 
 | #    | 태스크                       | 파일                                                          | 가이드                                           | 상태 |
 |------|------------------------------|---------------------------------------------------------------|--------------------------------------------------|------|
-| 49b  | FT-Transformer PyTorch 모듈  | `src/preprocessing/ft_model.py` (신규)                        | [05a-detection-ml](pre-plan/05a-detection-ml.md) | ⬜   |
-|      | FT-Transformer sklearn 래퍼  | `src/preprocessing/ft_wrapper.py` (신규)                      | vae_wrapper.py 패턴 동일                         | ⬜   |
-|      | TransformerDetector          | `src/detection/tabular_transformer.py` (신규)                 | BaseDetector 계약 준수                           | ⬜   |
-|      | pipeline_builder 확장        | `src/preprocessing/pipeline_builder.py` — build_ft_pipeline() | [03a-preprocessing](pre-plan/03a-preprocessing.md) | ⬜ |
-|      | 단위 테스트                   | `tests/test_detection/test_tabular_transformer.py` (신규)     | 05a-detection-ml "테스트 전략"                   | ⬜   |
+| 49b  | FT-Transformer PyTorch 모듈  | `src/preprocessing/ft_model.py` (신규)                        | [05a-detection-ml](pre-plan/05a-detection-ml.md) | ✅   |
+|      | FT-Transformer sklearn 래퍼  | `src/preprocessing/ft_wrapper.py` (신규)                      | vae_wrapper.py 패턴 동일                         | ✅   |
+|      | TransformerDetector          | `src/detection/tabular_transformer.py` (신규)                 | BaseDetector 계약 준수                           | ✅   |
+|      | pipeline_builder 확장        | `src/preprocessing/pipeline_builder.py` — build_ft_pipeline() | [03a-preprocessing](pre-plan/03a-preprocessing.md) | ✅ |
+|      | 단위 테스트                   | `tests/modules/test_detection/test_tabular_transformer.py` + `tests/modules/test_preprocessing/test_ft_wrapper.py` (신규) | 05a-detection-ml "테스트 전략" | ✅ |
 
-### WU-01c: BiLSTM + Attention 시퀀스 탐지기 `[M]` — D032
+### WU-01c: BiLSTM + Attention 시퀀스 탐지기 `[M]` — D032 ✅
 
 > **의존**: WU-01b (래퍼 패턴 확립 후)
 > 사용자-시간 윈도우 기반 시퀀스 탐지. ISA 240 "경영진 override" 반복 패턴 포착
@@ -378,43 +388,45 @@ WU1 (기반 컴포넌트) ──── 반드시 최초 실행
 
 | #    | 태스크                       | 파일                                                         | 가이드                                           | 상태 |
 |------|------------------------------|--------------------------------------------------------------|--------------------------------------------------|------|
-| 49c  | 시퀀스 빌더 (2D→3D 윈도우)   | `src/preprocessing/sequence_builder.py` (신규)               | [05a-detection-ml](pre-plan/05a-detection-ml.md) | ⬜   |
-|      | BiLSTM+Attention PyTorch 모듈 | `src/preprocessing/bilstm_model.py` (신규)                   | [05a-detection-ml](pre-plan/05a-detection-ml.md) | ⬜   |
-|      | BiLSTM sklearn 래퍼          | `src/preprocessing/bilstm_wrapper.py` (신규)                 | vae_wrapper.py 패턴 동일                         | ⬜   |
-|      | SequenceDetector             | `src/detection/sequence_detector.py` (신규)                  | BaseDetector 계약 준수                           | ⬜   |
-|      | 단위 테스트                   | `tests/test_detection/test_sequence_detector.py` (신규)      | 05a-detection-ml "테스트 전략"                   | ⬜   |
+| 49c  | 시퀀스 빌더 (2D→3D 윈도우)   | `src/preprocessing/sequence_builder.py` (신규)               | [05a-detection-ml](pre-plan/05a-detection-ml.md) | ✅   |
+|      | BiLSTM+Attention PyTorch 모듈 | `src/preprocessing/bilstm_model.py` (신규)                   | [05a-detection-ml](pre-plan/05a-detection-ml.md) | ✅   |
+|      | BiLSTM sklearn 래퍼          | `src/preprocessing/bilstm_wrapper.py` (신규)                 | vae_wrapper.py 패턴 동일                         | ✅   |
+|      | SequenceDetector             | `src/detection/sequence_detector.py` (신규)                  | BaseDetector 계약 준수                           | ✅   |
+|      | constants/settings 확장      | `src/detection/constants.py` — ML_SEQUENCE, ML04 + `config/settings.py` — bilstm_* | —                                    | ✅   |
+|      | 단위 테스트 (27개)           | `tests/modules/test_detection/test_sequence_detector.py` (신규) | 05a-detection-ml "테스트 전략"                | ✅   |
 
-### WU-03: Stacking Meta-Learner 앙상블 `[M]` — #50, D034
+### WU-03: Stacking Meta-Learner 앙상블 `[M]` — #50, D034 ✅
 
 > **의존**: WU-01 + WU-02 + WU-01b + WU-01c + WU-05
 > 기존 고정 가중합(D024) → Stacking meta-learner(LR Ridge)로 대체
+> **TODO**: `LAYER_WEIGHTS_WITH_ML` 수동 가중치(룰 0.68/ML 0.32)를 데이터 기반 동적 학습으로 대체
 > **Level 0**: 6개 base model (룰 24개, XGBoost, VAE, IF, BiLSTM, FT-Transformer)
 > **Level 1**: Logistic Regression (L2) — 6개 확률값 → 최종 anomaly_score
-> **Leakage 방지**: 5-fold out-of-fold prediction 프로토콜
+> **Leakage 방지**: ✅ `train_oof()` — GroupKFold(n_splits=settings.stacking_cv_folds=3, groups=user_ids) + joblib n_jobs=-1 병렬 OOF 프로토콜. User-Leakage 방어. `train_from_results()`는 라벨 부족 시 fallback 경로로 유지.
 > **Fallback**: 라벨 부족 시 기존 Percentile Ranking 가중합으로 폴백
 
 | #   | 태스크                         | 파일                                                          | 가이드                                              | 상태 |
 |-----|--------------------------------|---------------------------------------------------------------|-----------------------------------------------------|------|
-| 50  | StackingEnsemble sklearn 래퍼  | `src/preprocessing/stacking.py` (신규)                        | [05a-detection-ml](pre-plan/05a-detection-ml.md)    | ⬜   |
-|     | EnsembleDetector               | `src/detection/ensemble_detector.py` (신규)                   | BaseDetector 계약 준수                              | ⬜   |
-|     | score_aggregator stacking 확장 | `src/detection/score_aggregator.py`, `constants.py`           | [05-detection](pre-plan/05-detection.md) + 05a      | ⬜   |
-|     | Percentile Ranking 정규화      | 가중합 전 스케일 통일 (fallback 모드)                          | [05a-detection-ml](pre-plan/05a-detection-ml.md)    | ⬜   |
-|     | 단위 테스트                     | `tests/test_detection/test_ensemble_detector.py` (신규)       | 05a-detection-ml "테스트 전략"                      | ⬜   |
+| 50  | StackingEnsemble sklearn 래퍼  | `src/preprocessing/stacking.py` (신규)                        | [05a-detection-ml](pre-plan/05a-detection-ml.md)    | ✅   |
+|     | EnsembleDetector               | `src/detection/ensemble_detector.py` (신규)                   | BaseDetector 계약 준수                              | ✅   |
+|     | score_aggregator stacking 확장 | `src/detection/score_aggregator.py`, `constants.py`           | [05-detection](pre-plan/05-detection.md) + 05a      | ✅   |
+|     | Percentile Ranking 정규화      | 가중합 전 스케일 통일 (fallback 모드)                          | [05a-detection-ml](pre-plan/05a-detection-ml.md)    | ✅   |
+|     | 단위 테스트                     | `tests/modules/test_detection/test_stacking.py`, `test_ensemble_detector.py` (신규) | 05a-detection-ml "테스트 전략"        | ✅   |
 
-### WU-04: Pipeline 통합 + ML 통합 테스트 `[M]` — #53
+### WU-04: Pipeline 통합 + ML 통합 테스트 `[M]` — #53 ✅
 
 > **의존**: WU-03
 > pipeline.py에 ML 탐지기 연결 + E2E 테스트
 
-| #   | 태스크                         | 파일                                                    | 가이드                                | 상태 |
-|-----|--------------------------------|---------------------------------------------------------|-----------------------------------------|------|
-| 53  | ML Pipeline 통합               | `src/pipeline.py`, `config/settings.py`                 | 05-detection + 06-db 통합              | ⬜   |
-|     | ML 통합 테스트                  | `tests/test_detection/test_ml_integration.py` (신규)     | 05a-detection-ml "테스트 전략"        | ⬜   |
-|     | Hold-out fraud type 검증        | test set에서 미지 유형 2종 VAE 탐지율 검증               | [05a-detection-ml](pre-plan/05a-detection-ml.md) §450 | ⬜ |
-|     | Feature perturbation 강건성 테스트 | 노이즈 주입 후 VAE 반응 검증                           | [05a-detection-ml](pre-plan/05a-detection-ml.md) §450 | ⬜ |
-|     | 피처 병렬 실행 옵션             | `src/feature/engine.py` — concurrent.futures 스레드풀    | [03-feature](pre-plan/03-feature.md) §Engine | ⬜ |
+| #   | 태스크                           | 파일                                                                      | 가이드                                                | 상태 |
+|-----|----------------------------------|---------------------------------------------------------------------------|-------------------------------------------------------|------|
+| 53  | ML Pipeline 통합                 | `src/pipeline.py`, `config/settings.py`                                   | 05-detection + 06-db 통합                             | ✅ (WU-02에서 선행 구현) |
+|     | ML 통합 테스트                   | `tests/modules/test_detection/test_ml_integration.py` (신규, 8개 통과)    | 05a-detection-ml "테스트 전략"                        | ✅   |
+|     | Hold-out fraud type 검증         | `tests/modules/test_detection/test_holdout_fraud.py` (신규, 5개 통과)     | [05a-detection-ml](pre-plan/05a-detection-ml.md) §615 | ✅   |
+|     | Feature perturbation 강건성 테스트 | `tests/modules/test_detection/test_perturbation.py` (신규, 5개 통과)     | [05a-detection-ml](pre-plan/05a-detection-ml.md) §639 | ✅   |
+|     | 피처 병렬 실행 옵션              | `src/feature/engine.py`, `tests/modules/test_feature/test_engine_parallel.py` (6개 통과) | [03-feature](pre-plan/03-feature.md) §Engine | ✅   |
 
-### WU-05: DuplicateDetector `[M]` — #58
+### WU-05: DuplicateDetector `[M]` — #58 ✅
 
 > **의존**: WU-00 ✅
 > Exact + Fuzzy 중복 전표 탐지
@@ -424,138 +436,154 @@ WU1 (기반 컴포넌트) ──── 반드시 최초 실행
 
 | #   | 태스크           | 파일                                              | 가이드                                   | 상태 |
 |-----|------------------|---------------------------------------------------|------------------------------------------|------|
-| 58  | DuplicateDetector | `src/detection/duplicate_detector.py` (신규)      | [05-detection](pre-plan/05-detection.md) | ⬜   |
-|     | 단위 테스트       | `tests/test_detection/test_duplicate_detector.py` (신규) | 05-detection "테스트 전략"          | ⬜   |
+| 58  | DuplicateDetector | `src/detection/duplicate_detector.py`, `duplicate_rules.py` (신규) | [05-detection](pre-plan/05-detection.md) | ✅   |
+|     | 단위 테스트       | `tests/modules/test_detection/test_duplicate_detector.py` (신규, 15개 통과) | 05-detection "테스트 전략" | ✅   |
 
-### WU-06: 시계열 Rule-Based `[S]` — #59
+### WU-06: 시계열 Rule-Based `[S]` — #59 ✅
 
 > **의존**: WU-00 ✅
 > TransactionBurst + UnusualFrequency
 
-| #   | 태스크                 | 파일                                          | 가이드                                   | 상태 |
-|-----|------------------------|-----------------------------------------------|------------------------------------------|------|
-| 59  | 시계열 Rule-Based      | `src/detection/timeseries_rule.py` (신규)     | [05-detection](pre-plan/05-detection.md) | ⬜   |
-|     | 단위 테스트             | `tests/test_detection/test_timeseries_rule.py` (신규) | 05-detection "테스트 전략"          | ⬜   |
+| #   | 태스크                 | 파일                                                                          | 가이드                                   | 상태 |
+|-----|------------------------|-------------------------------------------------------------------------------|------------------------------------------|------|
+| 59  | 시계열 Rule-Based      | `src/detection/timeseries_rules.py`, `timeseries_detector.py` (신규)          | [05-detection](pre-plan/05-detection.md) | ✅   |
+|     | 단위 테스트             | `tests/modules/test_detection/test_timeseries_rule.py` (신규, 15개 통과)      | 05-detection "테스트 전략"               | ✅   |
 
-### WU-07: 내부거래 매칭 `[M]` — #60, #60c
+### WU-07: 내부거래 매칭 `[M]` — #60, #60c ✅
 
 > **의존**: WU-00 ✅
 > IC 전표 대응 거래 매칭 + UnmatchedIntercompany
 
-| #   | 태스크                      | 파일                                                | 가이드                                   | 상태 |
-|-----|-----------------------------|-----------------------------------------------------|------------------------------------------|------|
-| 60  | 내부거래 매칭               | `src/detection/intercompany_matcher.py` (신규)      | [05-detection](pre-plan/05-detection.md) | ⬜   |
-| 60c | UnmatchedIntercompany       | (위 파일 내 포함)                                    | [05-detection](pre-plan/05-detection.md) | ⬜   |
-|     | 단위 테스트                  | `tests/test_detection/test_intercompany_matcher.py` (신규) | 05-detection "테스트 전략"          | ⬜   |
+| #   | 태스크                      | 파일                                                                         | 가이드                                   | 상태 |
+|-----|-----------------------------|------------------------------------------------------------------------------|------------------------------------------|------|
+| 60  | 내부거래 매칭               | `src/detection/intercompany_matcher.py`, `intercompany_rules.py` (신규)      | [05-detection](pre-plan/05-detection.md) | ✅   |
+| 60c | UnmatchedIntercompany       | (위 파일 내 IC01/IC02/IC03 서브룰)                                            | [05-detection](pre-plan/05-detection.md) | ✅   |
+|     | 단위 테스트                  | `tests/modules/test_detection/test_intercompany_matcher.py` (신규, 22개 통과) | 05-detection "테스트 전략"               | ✅   |
 
-### WU-08: Relational 탐지기 `[M]` — #60a, #60b, #60d, #60e
+### WU-08: Relational 탐지기 `[M]` — #60a, #60b, #60d, #60e ✅
 
 > **의존**: WU-00 ✅
 > NewCounterparty / DormantAccount / TransferPricing / MissingRelationship
 
-| #   | 태스크                     | 파일                                             | 가이드                                   | 상태 |
-|-----|----------------------------|--------------------------------------------------|------------------------------------------|------|
-| 60a | NewCounterparty            | `src/detection/relational_detector.py` (신규)    | [05-detection](pre-plan/05-detection.md) | ⬜   |
-| 60b | DormantAccountActivity     | (위 파일 내 포함)                                 | [05-detection](pre-plan/05-detection.md) | ⬜   |
-| 60d | TransferPricingAnomaly     | (위 파일 내 포함)                                 | [05-detection](pre-plan/05-detection.md) | ⬜   |
-| 60e | MissingRelationship        | (위 파일 내 포함)                                 | [05-detection](pre-plan/05-detection.md) | ⬜   |
-|     | 단위 테스트                 | `tests/test_detection/test_relational_detector.py` (신규) | 05-detection "테스트 전략"          | ⬜   |
+| #   | 태스크                     | 파일                                                                                | 가이드                                   | 상태 |
+|-----|----------------------------|-------------------------------------------------------------------------------------|------------------------------------------|------|
+| 60a | NewCounterparty (R01)      | `src/detection/relational_rules.py`, `relational_detector.py` (신규)                | [05-detection](pre-plan/05-detection.md) | ✅   |
+| 60b | DormantAccountActivity (R02) | (위 파일 내 포함, 연좌 플래깅 윈도우 적용)                                          | [05-detection](pre-plan/05-detection.md) | ✅   |
+| 60d | TransferPricingAnomaly (R03) | (위 파일 내 포함, IC 거래 통계적 근사)                                              | [05-detection](pre-plan/05-detection.md) | ✅   |
+| 60e | MissingRelationship (R04)  | (위 파일 내 포함, document_flows P2P/O2C 체인 검증)                                 | [05-detection](pre-plan/05-detection.md) | ✅   |
+|     | 단위 테스트                 | `tests/modules/test_detection/test_relational_rules.py` (23개), `test_relational_detector.py` (15개) | 05-detection "테스트 전략" | ✅   |
 
-### WU-09: C01 Q3 확장 + 배치 패턴 + 경고 하드코딩 제거 `[S]` — #56, #57
+### WU-09: C01 Q3 확장 + 배치 패턴 + 경고 하드코딩 제거 `[S]` — #56, #57 ✅
 
 > **의존**: 없음 (기존 모듈 개선)
 
 | #   | 태스크                              | 파일                                        | 가이드                                                       | 상태 |
 |-----|-------------------------------------|---------------------------------------------|--------------------------------------------------------------|------|
-| 57  | C01 계정그룹별 Q3 확장              | `src/detection/anomaly_rules_simple.py`     | [05-detection](pre-plan/05-detection.md) §185                | ⬜   |
-| 56  | 배치 전표 이상 패턴                 | `src/detection/anomaly_layer.py` (확장)     | [05a-detection-ml](pre-plan/05a-detection-ml.md) §배치 전표  | ⬜   |
-|     | `_generate_warnings` 하드코딩 제거  | `src/detection/` — "A02 rule" 문자열 → `constants.py` 참조 | [05-detection](pre-plan/05-detection.md) §1293 | ⬜ |
+| 57  | C01 계정그룹별 Q3 확장              | `src/detection/anomaly_rules_simple.py`     | [05-detection](pre-plan/05-detection.md) §185                | ✅   |
+| 56  | 배치 전표 이상 패턴 (C13)           | `src/detection/anomaly_rules_batch.py` (신규) | [05a-detection-ml](pre-plan/05a-detection-ml.md) §배치 전표  | ✅   |
+|     | 경고 하드코딩 제거 + C07 문서단위   | `src/detection/constants.py`, `score_aggregator.py`, `anomaly_rules_statistical.py` | [05-detection](pre-plan/05-detection.md) §1293 | ✅ |
 
-### WU-10: 유럽 금액 포맷 + 한국 공휴일 + 외화 소수점 `[S]` — #61, #62
+### WU-10: 유럽 금액 포맷 + 한국 공휴일 + 외화 소수점 `[S]` — #61, #62 ✅
 
-> **의존**: 없음. 패키지 추가: `holidays`
+> **의존**: 없음. 패키지: `holidays` (이미 등록됨)
 
 | #   | 태스크                          | 파일                                        | 가이드                                                | 상태 |
 |-----|---------------------------------|---------------------------------------------|-------------------------------------------------------|------|
-| 61  | 유럽 금액 포맷 지원             | `config/cleaning.yaml` + `src/ingest/type_caster.py` | [02-ingest](pre-plan/02-ingest.md) §374      | ⬜   |
-| 62  | 한국 공휴일 연동                | `src/feature/time_features.py`              | [04-validation](pre-plan/04-validation.md) §128      | ⬜   |
-|     | 외화 소수점 처리 (is_round_number) | `src/feature/amount_features.py`          | [03-feature](pre-plan/03-feature.md) §537            | ⬜   |
-|     | currency_decimals YAML 설정     | `config/audit_rules.yaml` — KRW:0, USD:2, EUR:2, JPY:0 | [03-feature](pre-plan/03-feature.md) §537 | ⬜ |
+| 61  | 유럽 금액 포맷 지원             | `config/cleaning.yaml` + `src/ingest/type_caster.py` | [02-ingest](pre-plan/02-ingest.md) §374      | ✅   |
+| 62  | 한국 공휴일 연동                | `src/feature/time_features.py`              | [04-validation](pre-plan/04-validation.md) §128      | ✅   |
+|     | 외화 소수점 처리 (is_round_number) | `src/feature/amount_features.py` + `engine.py` | [03-feature](pre-plan/03-feature.md) §537        | ✅   |
+|     | currency_decimals YAML 설정     | `config/audit_rules.yaml` — KRW:0, USD:2, EUR:2, JPY:0, GBP:2, CNY:2 | [03-feature](pre-plan/03-feature.md) §537 | ✅ |
 
-### WU-11: 다단계 승인한도 + 피처 고도화 `[M]` — #63, #65
+### WU-11: 다단계 승인한도 + 피처 고도화 `[M]` — #63, #65 ✅
 
 > **의존**: 없음
 > pre-plan 03-feature에서 이관된 Phase 2 피처 개선 항목 포함
 
 | #   | 태스크                             | 파일                                | 가이드                                          | 상태 |
 |-----|------------------------------------|-------------------------------------|-------------------------------------------------|------|
-| 63  | approval_threshold 6단계           | `src/feature/amount_features.py`    | [03-feature](pre-plan/03-feature.md) §154      | ⬜   |
-| 65  | description_quality 3단계 고도화   | `src/feature/text_features.py` — regex패턴 + TTR(어휘다양성) + Shannon entropy | [03-feature](pre-plan/03-feature.md) §541-601 | ⬜ |
-|     | Z-score CoA 상위계정 fallback      | `src/feature/amount_features.py` — n<30 소그룹 → 자산/부채/수익/비용 상위그룹 | [03-feature](pre-plan/03-feature.md) §536 | ⬜ |
-|     | is_suspense_account 대상 컬럼 확장 | `src/feature/pattern_features.py` — `gl_account_name` 추가 | [03-feature](pre-plan/03-feature.md) §538 | ⬜ |
+| 63  | approval_threshold 6단계           | `src/feature/amount_features.py`    | [03-feature](pre-plan/03-feature.md) §154      | ✅   |
+| 65  | description_quality 3단계 고도화   | `src/feature/text_features.py` — regex패턴 + TTR(어휘다양성) + Shannon entropy | [03-feature](pre-plan/03-feature.md) §541-601 | ✅ |
+|     | Z-score CoA 상위계정 fallback      | `src/feature/amount_features.py` — n<30 소그룹 → 자산/부채/수익/비용 상위그룹 | [03-feature](pre-plan/03-feature.md) §536 | ✅ |
+|     | is_suspense_account 대상 컬럼 확장 | `src/feature/pattern_features.py` — `gl_account_name` 추가 | [03-feature](pre-plan/03-feature.md) §538 | ✅ |
 
-### WU-12: DuckDB ALTER TABLE 마이그레이션 `[S]` — #64
+### WU-12: DuckDB ALTER TABLE 마이그레이션 `[S]` — #64 ✅
 
 > **의존**: WU-03 (ML 컬럼 확정 후)
 
 | #   | 태스크                        | 파일                          | 가이드                                 | 상태 |
 |-----|-------------------------------|-------------------------------|----------------------------------------|------|
-| 64  | DuckDB ALTER TABLE (ML 컬럼)  | `src/db/schema.py`           | [06-db](pre-plan/06-db.md) §580      | ⬜   |
+| 64  | DuckDB ALTER TABLE (ML 컬럼)  | `src/db/migration.py`        | [06-db](pre-plan/06-db.md) §580      | ✅   |
 
-### WU-13: 재무제표-장부 대사 `[M]` — #55
+### WU-13: 재무제표-장부 대사 `[M]` — #55 ✅
 
 > **의존**: 없음
 
-| #   | 태스크                    | 파일                                                              | 가이드                                                         | 상태 |
-|-----|---------------------------|-------------------------------------------------------------------|----------------------------------------------------------------|------|
-| 55  | TB 교차검증               | `src/validation/tb_reconciliation.py` (신규)                      | [04-validation](pre-plan/04-validation.md) §재무제표-장부 대사 | ⬜   |
-|     | Trial Balance DuckDB 테이블 DDL | `src/db/schema.py` — PK(batch_id, account_code, fiscal_period) | [06-db](pre-plan/06-db.md) §1238                              | ⬜   |
-|     | 단위 테스트                | `tests/test_validation/test_tb_reconciliation.py` (신규)          | 04-validation "테스트 전략"                                    | ⬜   |
+| #   | 태스크                          | 파일                                                                       | 가이드                                                         | 상태 |
+|-----|---------------------------------|----------------------------------------------------------------------------|----------------------------------------------------------------|------|
+| 55  | TB 교차검증                     | `src/validation/tb_reconciliation.py` (신규)                               | [04-validation](pre-plan/04-validation.md) §재무제표-장부 대사 | ✅   |
+|     | Trial Balance DuckDB 테이블 DDL | `src/db/schema.py` — PK(upload_batch_id, gl_account, fiscal_period)        | [06-db](pre-plan/06-db.md) §1238                              | ✅   |
+|     | ReconciliationResult dataclass  | `src/validation/models.py` — ReconciliationItem + ReconciliationResult      |                                                                | ✅   |
+|     | CompanyContext materiality 전달 | `src/context.py` — materiality_amount 필드 추가                             |                                                                | ✅   |
+|     | TB 적재 함수                    | `src/db/loader.py` — load_trial_balance() + load_all() 통합                |                                                                | ✅   |
+|     | 파이프라인 통합                 | `src/pipeline.py` — _validate() + _load_db() 통합                          |                                                                | ✅   |
+|     | 계정 접두사 설정                | `config/audit_rules.yaml` — reconciliation_account_prefixes                |                                                                | ✅   |
+|     | 단위 테스트                     | `tests/modules/test_validation/test_tb_reconciliation.py` (신규, 16개)     | 04-validation "테스트 전략"                                    | ✅   |
 
 ### WU-14: 증빙/컷오프/금액 탐지 `[M]` — #41, #42, #43
 
-> 🚫 **BLOCKER**: DataSynth Rust 확장 완료 후 (증빙/컷오프 컬럼)
-
 | #   | 태스크                          | 파일                                       | 가이드                                     | 상태 |
 |-----|---------------------------------|--------------------------------------------|--------------------------------------------|------|
-| 41  | 증빙 존재 확인 + 적격증빙       | `src/detection/evidence_rules.py` (신규)   | [DETECTION_RULES](DETECTION_RULES.md) §3.3 | ⬜   |
-| 42  | 컷오프 검증 (납품일 vs 전기일)  | (위 파일 내 포함)                           | [DETECTION_RULES](DETECTION_RULES.md) §3.3 | ⬜   |
-| 43  | 증빙 금액 불일치 + 부가세 검증  | (위 파일 내 포함)                           | [DETECTION_RULES](DETECTION_RULES.md) §3.3 | ⬜   |
+| 41  | 증빙 존재 확인 + 적격증빙       | `src/detection/evidence_rules.py`          | [DETECTION_RULES](DETECTION_RULES.md) §3.3 | ✅   |
+| 42  | 컷오프 검증 (납품일 vs 전기일)  | `src/detection/evidence_rules.py`          | [DETECTION_RULES](DETECTION_RULES.md) §3.3 | ✅   |
+| 43  | 증빙 금액 불일치 + 부가세 검증  | `src/detection/evidence_rules.py`          | [DETECTION_RULES](DETECTION_RULES.md) §3.3 | ✅   |
 
 ### WU-15: 수정이력/IP/전표번호/승인 탐지 `[M]` — #44, #45, #46, #47
 
-> 🚫 **BLOCKER**: DataSynth Rust 확장 완료 후 (이력/IP/순번 컬럼)
+> ⚠️ **BLOCKER 부분 해소**: #45(IP)만 ip_address 컬럼 미존재로 스켈레톤. 나머지 구현 완료.
 
 | #   | 태스크                 | 파일                                            | 가이드                                     | 상태 |
 |-----|------------------------|-------------------------------------------------|--------------------------------------------|------|
-| 44  | 전표 수정 이력 탐지    | `src/detection/access_audit_rules.py` (신규)    | [DETECTION_RULES](DETECTION_RULES.md) §3.3 | ⬜   |
-| 45  | IP 비정상 접근 탐지    | (위 파일 내 포함)                                | [DETECTION_RULES](DETECTION_RULES.md) §3.3 | ⬜   |
-| 46  | 전표번호 연속성 갭     | (위 파일 내 포함)                                | [DETECTION_RULES](DETECTION_RULES.md) §3.3 | ⬜   |
-| 47  | 승인 프로세스·TOE 검증 | (위 파일 내 포함)                                | [DETECTION_RULES](DETECTION_RULES.md) §3.3 | ⬜   |
+| 44  | 전표 수정 이력 탐지    | `src/detection/access_audit_rules.py` (AA01)    | [DETECTION_RULES](DETECTION_RULES.md) §3.3 | ✅   |
+| 45  | IP 비정상 접근 탐지    | `src/detection/access_audit_rules.py` (AA02)    | [DETECTION_RULES](DETECTION_RULES.md) §3.3 | 🔲   |
+| 46  | 전표번호 연속성 갭     | `src/detection/access_audit_rules.py` (AA03)    | [DETECTION_RULES](DETECTION_RULES.md) §3.3 | ✅   |
+| 47  | 승인 프로세스·TOE 검증 | `src/detection/access_audit_rules.py` (AA04)    | [DETECTION_RULES](DETECTION_RULES.md) §3.3 | ✅   |
+|     | 오케스트레이터         | `src/detection/access_audit_layer.py`           |                                            | ✅   |
+|     | 파이프라인 통합        | `src/pipeline.py` — `_try_access_audit_detection` |                                          | ✅   |
+|     | 단위 테스트 (22건)     | `tests/modules/test_detection/test_access_audit_rules.py` |                                  | ✅   |
 
 ### WU-16: TrendBreak ML `[L]` — #54
 
-> 🚫 **BLOCKER**: DataSynth 다기간(2~3개년) 데이터 생성 완료 후
+> ✅ DataSynth 다기간(2~3개년) 데이터 생성 완료
 
-| #   | 태스크                     | 파일                                          | 가이드                                                                              | 상태 |
-|-----|----------------------------|-----------------------------------------------|--------------------------------------------------------------------------------------|------|
-| 54  | TrendBreak (회계추정치 편의) | `src/detection/timeseries_detector.py` (신규) | [05a-detection-ml](pre-plan/05a-detection-ml.md) §TrendBreak                        | ⬜   |
+| #   | 태스크                          | 파일                                              | 가이드                                                       | 상태 |
+|-----|---------------------------------|---------------------------------------------------|--------------------------------------------------------------|------|
+| 54  | TrendBreak (회계추정치 편의)     | `src/detection/trendbreak_detector.py` (신규)     | [05a-detection-ml](pre-plan/05a-detection-ml.md) §TrendBreak | ✅   |
+|     | TB01 부호 편향 + TB02 범위 극단  | `src/detection/trendbreak_rules.py` (신규)        |                                                              | ✅   |
+|     | 다기간 로더                     | `src/detection/multi_year_loader.py` (신규)       |                                                              | ✅   |
+|     | 파이프라인 통합                  | `src/pipeline.py` — `_try_trendbreak_detection`   |                                                              | ✅   |
+|     | 단위 테스트 (35건)               | `tests/modules/test_detection/test_trendbreak_*`  |                                                              | ✅   |
 
 ### WU-17: SHAP 시각화 + ML 툴팁 `[M]` — #52, #66
 
-> 🚫 **BLOCKER**: ~~Phase 1c 대시보드~~ ✅ + WU-01 완료 후
+> ✅ **완료**: Phase 2 ML 파이프라인과 대시보드 연결. flagged rows(anomaly_score ≥ shap_threshold)만 SHAP 계산하여 성능 최적화.
 
-| #   | 태스크                    | 파일                                            | 가이드                                        | 상태 |
-|-----|---------------------------|-------------------------------------------------|-----------------------------------------------|------|
-| 52  | SHAP 시각화               | `dashboard/tab_explorer.py` (확장)              | [07-dashboard](pre-plan/07-dashboard.md)      | ⬜   |
-| 66  | ML 지표 설명 (툴팁)       | `dashboard/components/ml_tooltips.py` (신규)    | [07-dashboard](pre-plan/07-dashboard.md) §607 | ⬜   |
+| #   | 태스크                    | 파일                                                       | 가이드                                        | 상태 |
+|-----|---------------------------|------------------------------------------------------------|-----------------------------------------------|------|
+| 52  | SHAP 시각화               | `dashboard/components/shap_waterfall.py` (신규)            | [07-dashboard](pre-plan/07-dashboard.md)      | ✅   |
+|     | SHAP 파이프라인 통합      | `src/pipeline.py::_try_shap_explanation`                   |                                               | ✅   |
+|     | explainer base_value 반환 | `src/preprocessing/explainer.py`                           |                                               | ✅   |
+|     | Explorer 3컬럼 레이아웃   | `dashboard/components/explorer_detail.py`                  |                                               | ✅   |
+|     | ML 개별 점수 DB 컬럼 주입 | `src/detection/score_aggregator.py::_inject_ml_track_scores` |                                             | ✅   |
+|     | Grid ML 컬럼 추가         | `dashboard/components/explorer_grid.py` (`_ML_SCORE_COLS`) |                                               | ✅   |
+| 66  | ML 지표 설명 (툴팁)       | `dashboard/components/ml_tooltips.py` (신규)               | [07-dashboard](pre-plan/07-dashboard.md) §607 | ✅   |
+|     | Grid headerTooltip 연결   | `dashboard/components/explorer_grid.py` (ML_TOOLTIPS)      |                                               | ✅   |
 
 ### 추천 실행 순서 (Sprint 단위)
 
 | Sprint | Work Unit                              | 복잡도       | 비고                              |
 |--------|----------------------------------------|--------------|-----------------------------------|
 | **1**  | WU-00                                  | S            | ✅ 완료                           |
-| **2**  | WU-01, WU-05, WU-06, WU-09, WU-10     | L+M+S+S+S   | 크리티컬패스 + 병렬 4건           |
+| **2**  | WU-01, WU-05, WU-06, WU-09, WU-10     | L+M+S+S+S   | 크리티컬패스 + 병렬 4건 (WU-09✅, WU-10✅) |
 | **3**  | WU-02, WU-07, WU-11, WU-13            | M+M+S+M     | 크리티컬패스 + 병렬 3건           |
 | **4**  | WU-01b, WU-08                          | M+M         | FT-Transformer + 병렬            |
 | **5**  | WU-01c                                 | M           | BiLSTM+Attention 시퀀스 탐지      |
@@ -593,35 +621,295 @@ WU1 (기반 컴포넌트) ──── 반드시 최초 실행
 
 ## Phase 3: NLQ + Graph + Polish (NLP·그래프 5개 유형 + LLM + 내보내기)
 
-> **pre-plan 참조**: Phase 3 착수 시 확인할 교차 참조
+> **아키텍처 변경 (2026-04-09)**: 로컬 LLM(Ollama + Qwen3-8B) → **상용 API(Gemini, Claude 등) 하이브리드**로 전환.
+> 로컬 환경(RTX 3070 Ti 8GB)에서 8B 양자화 모델의 한국어 회계 도메인 이해력 부족 + VRAM 병목 문제.
+> 원본 데이터는 로컬에서 처리하고, API에는 위험 스코어·통계 지표 등 비식별 정보만 전달.
+> 비식별화 모듈은 현재 범위 외 (필요성 인지, [CONSTRAINTS.md §비식별화](CONSTRAINTS.md) 참조).
+> 기존 `ollama_client.py`, `preprocessing_advisor.py`는 폴백으로 유지.
+>
+> **전제**: RC 재설계 완료 — 모든 모듈은 `CompanyContext` 기반으로 구현. `BaseDetector(ABC)` 상속 → `detect()` → `DetectionResult` 패턴 준수.
+> **실행 순서**: Work Unit(WU) 단위로 관리. 의존 관계는 다이어그램 참조.
+> **크리티컬 패스**: WU-18 → WU-20 → WU-26 → WU-27
+>
+> **pre-plan 참조**: Phase 3 착수 시 확인할 교차 참조 (아키텍쳐 변경은 적용 안되어있음, 아키텍쳐 변경(04-09 내용이 맞음))
 > - `08-llm.md` §590-622 (Phase 1a에서 이관된 미해결 이슈 5건: header-account mismatch, process-account mismatch, vague descriptions, IC anomalies, synonym bypass)
 > - `08-llm.md` §711-736 (감사기준서 갭 분석 3건: 경제적 실질, 유의적 거래, 이전가격)
-> - `03-feature.md` §759 (text_features semantic stub → Ollama 임베딩 연동)
-> - `01-project-setup.md` §84 (LLM 설정 필드 활성화: ollama_model, ollama_base_url)
-> - `03a-preprocessing.md` §119 (VRAM 순차 실행: LLM + VAE 동시 사용 방지)
+> - `03-feature.md` §759 (text_features semantic stub → 상용 API 임베딩 연동)
+> - `01-project-setup.md` §84 (LLM 설정 필드 활성화: api_provider, api_key, api_model)
 > - C10 SuspenseAccount 적요 탐지: 키워드 매칭 한계(우회 표현·동의어·은어)로 Phase 3 이관 → #71 + #84 + #88로 해결
 
-| #   | 태스크                              | 파일                                          | 가이드                                                     | 상태 |
-|-----|-------------------------------------|-----------------------------------------------|------------------------------------------------------------|------|
-| 67  | Ollama 클라이언트                   | `src/llm/ollama_client.py`                    | [08-llm](pre-plan/08-llm.md)                              | ⬜   |
-| 68  | Vanna Text-to-SQL                   | `src/llm/text_to_sql.py`                     | [08-llm](pre-plan/08-llm.md)                              | ⬜   |
-| 69  | SQL 검증                            | `src/llm/sql_validator.py`                    | [08-llm](pre-plan/08-llm.md)                              | ⬜   |
-| 70  | 감사 프리셋 6종                     | `src/llm/prompt_presets.py`                   | [08-llm](pre-plan/08-llm.md)                              | ⬜   |
-| 71  | 적요 NLP                            | `src/detection/nlp_analyzer.py`               | [05-detection](pre-plan/05-detection.md)                   | ⬜   |
-| 72  | 그래프 순환 탐지                    | `src/detection/graph_detector.py` — CircularTransaction + CentralityAnomaly (Relational 2유형). **실증(v7)**: B10 recall=7% (643건 중 48건), 640건 trading_partner NULL, cycle 0건 → N-hop DFS/BFS 필수 | [05-detection](pre-plan/05-detection.md) | ⬜   |
-| 73  | Chat UI 탭                          | `dashboard/tab_chat.py`                       | [07-dashboard](pre-plan/07-dashboard.md)                   | ⬜   |
-| 74  | Export 탭                           | `dashboard/tab_export.py`                     | [07-dashboard](pre-plan/07-dashboard.md)                   | ⬜   |
-| 75  | 감사조서 Excel/PDF                  | `src/export/`                                 | [09-export](pre-plan/09-export.md)                         | ⬜   |
-| 76  | audit_trail 테이블 DDL              | `src/db/schema.py` — audit_trail 테이블 추가  | [09-export](pre-plan/09-export.md) §31                     | ⬜   |
-| 77  | Audit Trail 기록기                  | `src/export/audit_trail.py`                   | [09-export](pre-plan/09-export.md)                         | ⬜   |
-| 78  | 인사이트 생성                       | `src/llm/insight_generator.py`                | [08-llm](pre-plan/08-llm.md)                              | ⬜   |
-| 79  | 경제적 실질 판단 (NLP)              | `src/detection/nlp_analyzer.py` (확장)        | [08-llm](pre-plan/08-llm.md) §경제적 실질                  | ⬜   |
-| 80  | 유의적 거래 합리성 평가 (LLM)       | `src/llm/insight_generator.py` (확장)         | [08-llm](pre-plan/08-llm.md) §유의적 거래                  | ⬜   |
-| 81  | TransferPricingAnomaly (이전가격)    | `src/detection/graph_detector.py` (확장)      | [DETECTION_RULES](DETECTION_RULES.md) §4.4                 | ⬜   |
-| 82  | LLM 기반 헤더 탐지 고도화           | `src/ingest/header_detector.py` (확장)        | [02-ingest](pre-plan/02-ingest.md) §848                    | ⬜   |
-| 83  | LLM 전처리 제안 모듈                | `src/llm/` — EDAProfile → 전처리 전략 추천    | [03a-preprocessing](pre-plan/03a-preprocessing.md) §47     | ⬜   |
-| 84  | kiwipiepy 형태소 분석               | `src/feature/text_features.py` (확장)         | [03-feature](pre-plan/03-feature.md) §287                  | ⬜   |
-| 85  | LLM 계정명 의미 분석                | `src/feature/text_features.py` (확장)         | [03-feature](pre-plan/03-feature.md) §423                  | ⬜   |
-| 86  | XAI Narrative Report                | `src/llm/` — 위험 설명 자동 생성              | [08-llm](pre-plan/08-llm.md) §626                         | ⬜   |
-| 87  | 감사규칙 피드백 루프                | `src/llm/` — audit_rules.yaml 자동 개선 제안  | [08-llm](pre-plan/08-llm.md) §626                         | ⬜   |
-| 88  | semantic_similarity (임베딩)        | `src/llm/` — Ollama 임베딩 동의어 매칭        | [08-llm](pre-plan/08-llm.md) §626                         | ⬜   |
+```
+                         ┌──────────────┐
+                         │  WU-18 (M)   │  API 클라이언트 Foundation
+                         │  #67         │  + settings 확장
+                         └──────┬───────┘
+                                │
+         ┌──────────────────────┼──────────────────────┐
+         │                      │                      │
+  ┌──────▼──────┐    ┌─────────▼─────────┐    ┌───────▼───────┐
+  │  WU-21 (M)  │    │    WU-20 (L)      │    │  WU-28 (S)    │
+  │  NLP 탐지   │    │  Text-to-SQL      │    │  헤더탐지 LLM │
+  │  + 임베딩   │    │  + 검증 + 프리셋  │    │  #82          │
+  │  #71,79,    │    │  #68, #69, #70    │    ├───────────────┤
+  │  85,88      │    └─────────┬─────────┘    │  WU-29 (S)    │
+  │  의존:      │              │              │  전처리 확장   │
+  │  WU-18+19   │    ┌─────────▼─────────┐    │  #83          │
+  └──────┬──────┘    │    WU-26 (M)      │    └───────────────┘
+         │           │  Chat UI 탭       │
+         │           │  #73              │
+  ┌──────▼──────┐    └─────────┬─────────┘
+  │  WU-25 (M)  │              │
+  │  인사이트   │    ┌─────────▼─────────┐
+  │  + XAI      │    │    WU-27 (M)      │
+  │  #78,80,86  │    │  Export 탭 통합   │
+  └──────┬──────┘    │  #74              │
+         │           │  의존: WU-24+26   │
+  ┌──────▼──────┐    └───────────────────┘
+  │  WU-30 (M)  │
+  │  피드백 루프│
+  │  #87        │
+  └─────────────┘
+
+  ── WU-18과 독립 (Sprint 1에서 병렬 착수) ──
+
+  ┌──────────────┐   ┌──────────────┐   ┌──────────────┐
+  │  WU-19 (S)   │   │  WU-22 (S)   │   │  WU-23 (S)   │
+  │  NLP 기초    │   │  그래프 탐지  │   │  Audit Trail │
+  │  kiwipiepy   │   │  #72, #81    │   │  DDL + 기록기│
+  │  #84         │   │  (LLM 불필요) │   │  #76, #77    │
+  └──────┬───────┘   └──────────────┘   └──────┬───────┘
+         │                                      │
+         │ WU-21 입력                   ┌───────▼───────┐
+         └──────────────────────────►   │  WU-24 (L)    │
+                                        │  감사조서      │
+                                        │  Excel/PDF    │
+                                        │  #75          │
+                                        └───────┬───────┘
+                                                │
+                                                └──► WU-27 입력
+```
+
+**복잡도**: S = 1대화 소형 / M = 1대화 중형 / L = 1대화 대형
+
+### WU-18: API 클라이언트 Foundation `[M]` — #67 ✅
+
+> Phase 3 전체의 기초. OpenAI API(gpt-5.4 / gpt-5.4-mini 2티어) 추상화 레이어 + settings.py 교체.
+> `ChatClient` / `EmbeddingClient` Protocol(ISP) + `OpenAIClient` 단일 구현체. 팩토리는 `get_chat_client(tier)` / `get_embedding_client()` 2종.
+> OllamaClient 및 관련 의존성 완전 제거(WU-29 흡수).
+> OpenAI Structured Outputs `strict: True` 호환을 위해 `_enforce_strict_schema()` 헬퍼로 `additionalProperties=False` + `required` 재귀 주입.
+
+| #   | 태스크                                                    | 파일                                                                                                                                                                            | 가이드                                               | 상태 |
+|-----|-----------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------|------|
+| 67  | LLM API 클라이언트 (Protocol + OpenAIClient + 티어 팩토리) | `src/llm/api_client.py` (신규) — `ChatClient`/`EmbeddingClient` Protocol + `OpenAIClient` + `_enforce_strict_schema` 헬퍼 + `get_chat_client(tier)` / `get_embedding_client()`   | [08-llm](pre-plan/08-llm.md)                         | ✅   |
+|     | OllamaClient 제거 + preprocessing_advisor 교체 (WU-29 흡수) | `src/llm/ollama_client.py` 삭제 / `src/llm/preprocessing_advisor.py` `OllamaClient` → `get_chat_client("light")` / `src/llm/__init__.py` lazy export 정리                      | —                                                    | ✅   |
+|     | settings.py LLM 필드 교체                                  | `config/settings.py` — `ollama_*` 삭제, `openai_api_key`/`openai_light_model`/`openai_reasoning_model`/`openai_embedding_model`/`openai_temperature`/`openai_timeout` 추가 + 빈 키 경고 validator | [01-project-setup](pre-plan/01-project-setup.md) §84 | ✅   |
+|     | pyproject.toml + CLAUDE.md 의존성 교체                     | `pyproject.toml` llm 그룹 `openai>=1.50` 추가 + `ollama`/`vanna[…ollama…]` 제거 / `CLAUDE.md` Quick Reference + dependency-groups + Skill 맵 동기화                            | —                                                    | ✅   |
+|     | 단위 테스트                                                | `tests/modules/test_llm/test_api_client.py` (신규, 33 케이스) — Protocol/OpenAIClient/strict schema/팩토리/티어 mock 기반 / `test_ollama_client.py` 삭제 / `test_preprocessing_advisor.py` ollama mock 제거 | —                                                    | ✅   |
+
+### WU-19: NLP 기초 (kiwipiepy 형태소 분석) `[S]` — #84 ✅
+
+> WU-18과 독립 (로컬 NLP 라이브러리만 사용). Sprint 1에서 병렬 착수.
+> 한국어 텍스트 분석의 기초 인프라. WU-21(NLP 탐지)의 전처리 단계.
+> DataSynth 영문 적요에서는 kiwipiepy 불필요 → `_has_korean(text)` 분기로 한국어에만 적용.
+> 구현 완료: `morpheme_tokens` (list[str]) 컬럼, Kiwi iterable 배치 호출로 C++ 멀티스레딩 활용.
+
+| #   | 태스크                        | 파일                                                                        | 가이드                                    | 상태 |
+|-----|-------------------------------|-----------------------------------------------------------------------------|-------------------------------------------|------|
+| 84  | kiwipiepy 형태소 분석기       | `src/feature/text_features.py` (확장) — `_tokenize_kiwi()`, `add_morpheme_features(df)` | [03-feature](pre-plan/03-feature.md) §287 | ✅   |
+|     | Kiwi 인스턴스 싱글톤 + 배치   | `src/feature/text_features.py` — `_get_kiwi` lazy 싱글톤 + iterable 배치 토큰화 | —                                     | ✅   |
+|     | 단위 테스트                    | `tests/modules/test_feature/test_text_kiwi.py` (신규, 31건 통과)            | —                                         | ✅   |
+
+### WU-20: Text-to-SQL 파이프라인 `[L]` — #68, #69, #70 ⬜
+
+> **의존**: WU-18 ✅ (API 클라이언트)
+> 자연어 → SQL 변환 + 검증 + 감사 프리셋 12종. Chat UI(WU-26)의 백엔드.
+> DuckDB `general_ledger` DDL + 도메인 용어를 컨텍스트로 주입.
+> SQL 검증 2단계: (1) 프롬프트에 "SELECT만 허용" (2) `sql_validator`로 DML/DDL 차단.
+> ChromaDB는 RAG 컨텍스트 저장소로 선택적 활용.
+
+| #   | 태스크                        | 파일                                                                          | 가이드                            | 상태 |
+|-----|-------------------------------|-------------------------------------------------------------------------------|-----------------------------------|------|
+| 69  | SQL 검증기                    | `src/llm/sql_validator.py` (신규) — DML 차단, 테이블 화이트리스트, 서브쿼리 깊이 제한, 자동 LIMIT | [08-llm](pre-plan/08-llm.md) | ⬜   |
+| 70  | 감사 프리셋 12종              | `src/llm/prompt_presets.py` (신규) — 기본 6종 + 프로세스별 6종 + 카테고리 분류 | [08-llm](pre-plan/08-llm.md)     | ⬜   |
+| 68  | Text-to-SQL 엔진              | `src/llm/text_to_sql.py` (신규) — DDL 컨텍스트 주입 + LLM SQL 생성 + sql_validator 연동 + DuckDB 실행 + DataFrame 반환 | [08-llm](pre-plan/08-llm.md)     | ⬜   |
+|     | ChromaDB 스키마 학습 (선택)   | `src/llm/schema_trainer.py` (신규) — DDL + 도메인 용어 + 샘플 Q&A RAG 저장    | [08-llm](pre-plan/08-llm.md) §697 | ⬜  |
+|     | 단위 테스트                    | `tests/modules/test_llm/test_text_to_sql.py`, `test_sql_validator.py`, `test_prompt_presets.py` (신규) | — | ⬜   |
+
+### WU-21: NLP 탐지 + 임베딩 `[M]` — #71, #79, #85, #88 ⬜
+
+> **의존**: WU-18 (API embed) + WU-19 (kiwipiepy)
+> 적요 NLP 분석기 + 경제적 실질 판단 + 계정명 의미 분석 + 임베딩 동의어 매칭.
+> `NLPDetector(BaseDetector)` — 5개 서브룰: NLP01~NLP05.
+> Phase 1a 미해결 이슈 5건(08-llm §590-622)을 NLP로 해결.
+> 비식별화: 임베딩 API에 토큰화 키워드만 전달, 원본 적요 전문 전송 금지.
+
+| #   | 태스크                        | 파일                                                                      | 가이드                                                                                 | 상태 |
+|-----|-------------------------------|---------------------------------------------------------------------------|----------------------------------------------------------------------------------------|------|
+| 71  | 적요 NLP 분석기               | `src/detection/nlp_analyzer.py` (신규) — NLP01(header-account 불일치), NLP02(process-account 불일치), NLP03(비정형 적요), NLP04(IC 이상), NLP05(동의어 우회) | [05-detection](pre-plan/05-detection.md), [08-llm](pre-plan/08-llm.md) §590-622       | ⬜   |
+| 79  | 경제적 실질 판단              | `src/detection/nlp_analyzer.py` (확장) — NLP01/NLP02에 ISA 315/240호 로직 통합 | [08-llm](pre-plan/08-llm.md) §715-722                                                 | ⬜   |
+| 88  | semantic_similarity 구현      | `src/llm/embedding_service.py` (신규) — API 임베딩 + 코사인 유사도 + ChromaDB 캐시. `text_features.py` stub 교체 | [03-feature](pre-plan/03-feature.md) §759, [08-llm](pre-plan/08-llm.md) §610-622      | ⬜   |
+| 85  | LLM 계정명 의미 분석          | `src/feature/text_features.py` (확장) — `add_account_semantic(df)`: GL 계정명 LLM 카테고리 분류 + 적요 교차 검증 | [03-feature](pre-plan/03-feature.md) §423                                              | ⬜   |
+|     | constants.py NLP 룰 등록      | `src/detection/constants.py` — `NLP01`~`NLP05` + `Layer.NLP = "nlp"` + SEVERITY_MAP | —                                                                                      | ⬜   |
+|     | 단위 테스트                    | `tests/modules/test_detection/test_nlp_analyzer.py`, `tests/modules/test_llm/test_embedding_service.py` (신규) | —                                                                                      | ⬜   |
+
+### WU-22: 그래프 순환 탐지 `[S]` — #72, #81 ✅ (2026-04-11)
+
+> WU-18과 독립 (networkx 기반, LLM 불필요). Sprint 1에서 병렬 착수.
+> B10 recall=7% (643건 중 48건) 개선 목표. trading_partner NULL 640건 → N-hop DFS/BFS + implicit 엣지 추론.
+> `GraphDetector(BaseDetector)` — 2개 서브룰: GR01, GR03.
+> R03(relational_rules.py) 통계 기반과 GR03 그래프 토폴로지 기반 차별화.
+> CentralityAnomaly(GR02)는 제외 — DataSynth 그래프 규모(회사 3개, 거래처 수십 개)에서 centrality 분석 무의미. 실데이터 유입 후 재검토.
+> **OOM 방어 3중 장치**: pandas 사전 필터(is_intercompany + min_amount ≥ 1천만원) → `nx.from_pandas_edgelist` 벡터화 구축(add_edge 루프 금지) → max_edges 자동 상향. 100k 행 벤치마크 1.3초.
+
+| #   | 태스크                           | 파일                                                                                  | 가이드                                         | 상태 |
+|-----|----------------------------------|---------------------------------------------------------------------------------------|------------------------------------------------|------|
+| 72  | 그래프 순환 탐지                 | `src/detection/graph_rules.py` + `graph_detector.py` (신규) — GR01(DFS N-hop, length_bound=5) | [05-detection](pre-plan/05-detection.md)       | ✅   |
+| 81  | TransferPricingAnomaly 그래프    | `src/detection/graph_rules.py` (확장) — GR03: 양방향 IC 엣지 가격 asymmetry (R03과 구조적 차별화) | [DETECTION_RULES](DETECTION_RULES.md) §4.4     | ✅   |
+|     | pyproject.toml networkx 추가     | `pyproject.toml` — core 그룹에 `networkx>=3.2` 추가                                   | —                                              | ✅   |
+|     | constants.py 그래프 룰 등록      | `src/detection/constants.py` — `GR01`, `GR03` + `Layer.GRAPH = "graph"` + SEVERITY_MAP | —                                             | ✅   |
+|     | settings.py 파라미터             | `config/settings.py` — graph_gr01_* 4개 + graph_gr03_* 2개 (OOM 방어 포함)            | —                                              | ✅   |
+|     | pipeline.py 통합                 | `src/pipeline.py` — `_try_graph_detection()` 신규 (RelationalDetector 직후 실행)      | —                                              | ✅   |
+|     | 단위 테스트 (16건)               | `tests/modules/test_detection/test_graph_detector.py` (신규) — Basic 3 + GR01 6 + GR03 2 + OOM 3 + Edge 2 | —                                              | ✅   |
+
+### WU-23: Audit Trail 인프라 `[S]` — #76, #77 ✅
+
+> WU-18과 독립. Sprint 1에서 병렬 착수.
+> Export(WU-24)의 전제 조건. 이벤트 6종: upload, validate, analysis, query, filter, export.
+> **구현 결정**: 새 `audit_trail` 테이블 대신 기존 `audit_log` 테이블 재사용. `AuditTrail`은 `src/db/audit_log.py::record_event`의 OOP 래퍼. `user_action`은 `details` JSON에 병합 저장하고 조회 시 DuckDB `->>` 연산자로 독립 컬럼 노출.
+
+| #   | 태스크                        | 파일                                                                             | 가이드                                         | 상태 |
+|-----|-------------------------------|----------------------------------------------------------------------------------|------------------------------------------------|------|
+| 76  | audit_log action 허용값 확장  | `src/db/schema.py` (주석만) — `action` 컬럼 주석에 user 이벤트 6종 추가. DDL 변경 없음 | [09-export](pre-plan/09-export.md) §31         | ✅   |
+| 77  | Audit Trail 기록기            | `src/export/audit_trail.py` (신규) — `AuditEvent` dataclass + `AuditTrail`: `log()`, `export_trail()`, `get_trail()` | [09-export](pre-plan/09-export.md) §371-396    | ✅   |
+|     | export 패키지 초기화          | `src/export/__init__.py` (신규)                                                  | —                                              | ✅   |
+|     | 단위 테스트                    | `tests/modules/test_export/test_audit_trail.py` (신규) — 14개 테스트 (5 클래스)   | —                                              | ✅   |
+
+### WU-24: 감사조서 Excel/PDF `[L]` — #75 ⬜ -> 감사조서 생성은 이번 프로젝트에서 안하기로 함, 대신 감사조서가 아니라 데이터분석 조서를 쓰는걸로
+
+> **의존**: WU-23 (audit_trail 기록기)
+> Excel 6시트 + PDF 8섹션 감사조서 생성.
+> 데이터 볼륨 대응: 1.1M 라인아이템 → document_id 단위 집계(106K행). 50만행 초과 시 시트 분할.
+> PII 마스킹: created_by, approved_by SHA-256 해싱 + auxiliary_account 부분 치환.
+>
+> **⚠️ audit_log 조회 시**: 데이터분석 조서에 활동 로그 시트를 포함할 경우 `AuditTrail.get_trail()` 사용. `queries.py::audit_log_by_batch` 프리셋은 시스템 이벤트가 섞이므로 금지. 상세 비교는 WU-27 주의 블록 참조.
+
+| #   | 태스크                        | 파일                                                                          | 가이드                                         | 상태 |
+|-----|-------------------------------|-------------------------------------------------------------------------------|------------------------------------------------|------|
+| 75  | ExcelExporter                 | `src/export/excel_exporter.py` (신규) — 6시트: Summary, Anomalies, Benford, Rules, SoD, Raw Data + ExportFilter + 마스킹 | [09-export](pre-plan/09-export.md) §127-200    | ⬜   |
+|     | PDFExporter                   | `src/export/pdf_exporter.py` (신규) — 8섹션: 표지, 요약, 프로세스, Benford, Top N, 룰통계, 부정/SoD, 감사의견. NanumGothic TTF | [09-export](pre-plan/09-export.md) §201-370    | ⬜   |
+|     | ExportFilter + ExportConfig   | `src/export/models.py` (신규) — 필터 dataclass + 설정 (마스킹, 포맷 등)       | [09-export](pre-plan/09-export.md) §416-427    | ⬜   |
+|     | 마스킹 유틸                    | `src/export/masking.py` (신규) — SHA-256 해싱 + 부분 치환                     | [09-export](pre-plan/09-export.md) §112-121    | ⬜   |
+|     | 단위 테스트                    | `tests/modules/test_export/test_excel_exporter.py`, `test_pdf_exporter.py` (신규) | [09-export](pre-plan/09-export.md) §492-505    | ⬜   |
+
+### WU-25: LLM 인사이트 + XAI `[M]` — #78, #80, #86 ⬜
+
+> **의존**: WU-18 (API 클라이언트) + WU-21 (NLP 결과 활용)
+> 인사이트 자동 생성 + 유의적 거래 평가 + XAI Narrative Report.
+> 비식별화: `sanitizer.py`로 원본 데이터 제거 후 통계 지표만 LLM에 전달.
+> XAI 호출 조건: `anomaly_score > 0 AND risk_level IN ('High', 'Critical')` — 50건 단위 배치.
+
+| #   | 태스크                        | 파일                                                                        | 가이드                                  | 상태 |
+|-----|-------------------------------|-----------------------------------------------------------------------------|-----------------------------------------|------|
+| 78  | 인사이트 생성기               | `src/llm/insight_generator.py` (신규) — `generate_batch_insight(stats)`, `generate_entry_insight(entry)` | [08-llm](pre-plan/08-llm.md) §587-588  | ⬜   |
+| 80  | 유의적 거래 합리성 평가       | `src/llm/insight_generator.py` (확장) — C08+B01 플래그 전표 사업상 합리성 LLM 보조 의견 | [08-llm](pre-plan/08-llm.md) §724-738  | ⬜   |
+| 86  | XAI Narrative Report          | `src/llm/narrative_report.py` (신규) — 파생변수 19종 + 탐지결과 → LLM 위험 사유서. 50건 배치 | [08-llm](pre-plan/08-llm.md) §630-662  | ⬜   |
+|     | 비식별화 필터                  | `src/llm/sanitizer.py` (신규) — API 전송 전 원본 데이터 제거, 통계 지표만 추출 | —                                       | ⬜   |
+|     | 단위 테스트                    | `tests/modules/test_llm/test_insight_generator.py`, `test_narrative_report.py` (신규) | —                                       | ⬜   |
+
+### WU-26: Chat UI 탭 `[M]` — #73 ⬜
+
+> **의존**: WU-20 (Text-to-SQL)
+> Streamlit Chat UI + 프리셋 버튼 12종 + 스트리밍 응답.
+> `st.chat_input` + `st.chat_message` + SQL 결과 `st.dataframe` + `st.code` 패턴.
+> AuditTrail.log(event_type="query") 자동 호출.
+
+| #   | 태스크                        | 파일                                                             | 가이드                                         | 상태 |
+|-----|-------------------------------|------------------------------------------------------------------|------------------------------------------------|------|
+| 73  | Chat UI 탭                    | `dashboard/tab_chat.py` (신규) — chat_input + chat_message + 프리셋 버튼 + SQL 결과 표시 + 스트리밍 | [07-dashboard](pre-plan/07-dashboard.md)       | ⬜   |
+|     | 대화 히스토리 관리            | `dashboard/_state.py` (확장) — `chat_history: list[dict]` session_state 키 | —                                              | ⬜   |
+|     | app.py 탭 등록                | `dashboard/app.py` (수정) — Chat 탭 추가                        | —                                              | ⬜   |
+|     | 단위 테스트                    | `tests/modules/test_dashboard/test_tab_chat.py` (신규)          | —                                              | ⬜   |
+
+### WU-27: Export 탭 (통합) `[M]` — #74 ⬜
+
+> **의존**: WU-24 (감사조서) + WU-26 (Chat UI, 선택적) + WU-23 (audit_trail)
+> 대시보드 Export 탭 — 포맷 선택(Excel/PDF/CSV), ExportFilter UI, 다운로드 버튼.
+> pipeline.py 각 단계에 AuditTrail.log() 주입.
+>
+> **⚠️ audit_log 조회 경로 주의 (WU-23 구현 이후 추가)**:
+> `audit_log` 테이블을 조회하는 경로가 두 가지라 **용도가 다르다**. 혼용 금지.
+>
+> | 경로                                                         | 반환 범위                                       | 정렬                      | 용도                                |
+> |--------------------------------------------------------------|-------------------------------------------------|---------------------------|-------------------------------------|
+> | `src/db/queries.py::PRESET_QUERIES["audit_log_by_batch"]`    | **모든 action** (시스템 이벤트 포함)            | `created_at DESC`         | 대시보드 감사 로그 뷰어 (최신순)    |
+> | `src/export/audit_trail.py::AuditTrail.get_trail(batch_id)`  | **user 이벤트 6종만** (upload/validate/analysis/query/filter/export) | `created_at ASC, id ASC` | Export/CSV 다운로드 (시간순)        |
+>
+> 차이점:
+> 1. **필터링**: 프리셋은 `detection_run`/`whitelist_*`/`pipeline_validate_fail` 같은 시스템 이벤트가 함께 반환됨. `AuditTrail.get_trail()`은 사용자 이벤트만 반환.
+> 2. **컬럼**: `AuditTrail.get_trail()`은 `details->>'user_action'`을 독립 컬럼으로 추출. 프리셋은 `details` 원본 JSON만 제공.
+> 3. **정렬 방향**: 프리셋 DESC(최신 우선), 트레일 ASC(시간순).
+>
+> **WU-27 가이드**: Export CSV/감사 증적 다운로드에는 반드시 `AuditTrail.get_trail()`을 사용한다. `audit_log_by_batch` 프리셋을 재사용하면 `detection_run` 같은 시스템 이벤트가 다운로드 파일에 섞여 감사인에게 혼동을 준다. 프리셋은 대시보드 내부 뷰어(최신 로그 조회) 전용.
+
+| #   | 태스크                        | 파일                                                                      | 가이드                                                               | 상태 |
+|-----|-------------------------------|---------------------------------------------------------------------------|----------------------------------------------------------------------|------|
+| 74  | Export 탭                     | `dashboard/tab_export.py` (신규) — 포맷 선택 + ExportFilter UI + st.download_button + 진행 표시 | [07-dashboard](pre-plan/07-dashboard.md), [09-export](pre-plan/09-export.md) §470-476 | ⬜   |
+|     | pipeline.py audit_trail 주입  | `src/pipeline.py` (수정) — 각 단계(ingest/validate/detect/load)에서 AuditTrail.log() | —                                                                    | ⬜   |
+|     | app.py 탭 등록                | `dashboard/app.py` (수정) — Export 탭 추가                                | —                                                                    | ⬜   |
+|     | 단위 테스트                    | `tests/modules/test_dashboard/test_tab_export.py` (신규)                  | —                                                                    | ⬜   |
+
+### WU-28: LLM 헤더 탐지 고도화 `[S]` — #82 ⬜
+
+> **의존**: WU-18 (API 클라이언트)
+> 기존 5-factor 스코어링(header_detector.py)은 유지. confidence < `min_header_confidence`(0.3)일 때만 LLM 보조 판단.
+
+| #   | 태스크                        | 파일                                                                   | 가이드                                      | 상태 |
+|-----|-------------------------------|------------------------------------------------------------------------|---------------------------------------------|------|
+| 82  | LLM 헤더 탐지 고도화          | `src/ingest/header_detector.py` (확장) — `_llm_header_check(row_data) -> float` confidence 보정 | [02-ingest](pre-plan/02-ingest.md) §848     | ⬜   |
+|     | 단위 테스트                    | `tests/modules/test_ingest/test_header_llm.py` (신규)                  | —                                           | ⬜   |
+
+### WU-29: LLM 전처리 제안 확장 `[S]` — #83 ✅ (WU-18에 흡수)
+
+> WU-18에서 `preprocessing_advisor.py`의 `OllamaClient` → `get_chat_client("light")` 교체를 함께 수행. `rule_based_fallback`은 `RuntimeError` 흡수 + `self.client=None` 패턴으로 유지. 본 태스크는 독립 작업으로 남기지 않는다.
+
+### WU-30: 감사규칙 피드백 루프 `[M]` — #87 ⬜
+
+> **의존**: WU-25 (인사이트 생성기)
+> LLM이 새 데이터 패턴 분석 → audit_rules.yaml 개선 제안 → 사용자 승인.
+> 제안 카테고리: manual_source_codes, suspense_keywords, suspense_account_codes, revenue_account_prefixes, intercompany_identifiers.
+> 안전장치: LLM 제안은 항상 사용자 승인 필요 (자동 반영 금지).
+
+| #   | 태스크                        | 파일                                                                           | 가이드                                  | 상태 |
+|-----|-------------------------------|--------------------------------------------------------------------------------|-----------------------------------------|------|
+| 87  | 피드백 루프                   | `src/llm/rule_feedback.py` (신규) — 데이터 N건 샘플링 → LLM 패턴 분석 → 신규 룰/파라미터 제안 | [08-llm](pre-plan/08-llm.md) §664-691  | ⬜   |
+|     | 대시보드 UI                   | `dashboard/components/rule_feedback_panel.py` (신규) — 제안 목록 + 근거 + 승인/거부 | —                                       | ⬜   |
+|     | 단위 테스트                    | `tests/modules/test_llm/test_rule_feedback.py` (신규)                          | —                                       | ⬜   |
+
+### 추천 실행 순서 (Sprint 단위)
+
+| Sprint | Work Unit                                          | 복잡도     | 비고                                                  |
+|--------|----------------------------------------------------|------------|-------------------------------------------------------|
+| **1**  | WU-18, WU-19, WU-22, WU-23                        | M+S+S+S    | 4개 동시 착수. WU-19/22/23은 WU-18과 독립             |
+| **2**  | WU-20                                              | L          | 크리티컬 패스. WU-18 완료 필수                        |
+| **3**  | WU-21, WU-24                                       | M+L        | WU-21: WU-18+19 완료 후. WU-24: WU-23 완료 후. 병렬  |
+| **4**  | WU-25, WU-26                                       | M+M        | WU-25: WU-18+21 후. WU-26: WU-20 후. 병렬            |
+| **5**  | WU-27, WU-28, WU-29                               | M+S+S      | WU-27: WU-24+26 후. WU-28/29: WU-18 후 언제든. 병렬  |
+| **6**  | WU-30                                              | M          | WU-25 완료 후                                         |
+
+> **DETECTION_RULES Phase 3 유형→모듈 매핑**:
+>
+> | 모듈 (WU)                       | 커버 유형                                                                                        |
+> |---------------------------------|--------------------------------------------------------------------------------------------------|
+> | NLPDetector (WU-21)             | NLP01~NLP05: header-account 불일치, process-account 불일치, 비정형 적요, IC 이상, 동의어 우회 (5개) |
+> | GraphDetector (WU-22)           | GR01(CircularTransaction), GR03(TransferPricingAnomaly) (2개)                                    |
+> | TrendBreak (WU-16, Phase 2)     | 시계열 추세 이탈 — Phase 2 DataSynth 블로커 해소 후 구현 (#54)                                    |
+
+**Phase 3 완료 기준**:
+1. API 클라이언트: Gemini/Claude 중 1개 이상 정상 동작 + Ollama 폴백 확인
+2. Text-to-SQL: 자연어 질의 → SQL → DuckDB 실행 → DataFrame E2E 동작. 프리셋 12종 정상 실행
+3. NLP 탐지: NLPDetector 5개 서브룰(NLP01~05) + constants 등록 + pipeline 연동
+4. 그래프 탐지: GraphDetector 2개 서브룰(GR01, GR03) 동작. B10 recall 7% → 20%+ 개선
+6. Audit Trail: 이벤트 6종 기록 + CSV 내보내기 동작
+7. Chat UI: 프리셋 버튼 + 자유 질의 + 스트리밍 + SQL 표시 동작
+8. Export 탭: 포맷 선택 + 필터 + 다운로드 동작
+9. 인사이트: High 위험 전표 자동 위험 사유서 생성 동작

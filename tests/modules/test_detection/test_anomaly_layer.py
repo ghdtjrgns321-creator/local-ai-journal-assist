@@ -89,7 +89,7 @@ class TestAnomalyDetectorIntegration:
         """rule_flags 수는 실행된 룰 수와 일치 (C07은 BenfordDetector로 분리)."""
         result = AnomalyDetector().detect(full_anomaly_df)
         skipped = result.metadata.get("skipped_rules", [])
-        expected_count = 11 - len(skipped)  # C01~C06, C08~C12 (C07 제외)
+        expected_count = 12 - len(skipped)  # C01~C06, C08~C13 (C07 제외)
         assert len(result.rule_flags) == expected_count
 
     def test_flagged_indices_valid(self, full_anomaly_df: pd.DataFrame) -> None:

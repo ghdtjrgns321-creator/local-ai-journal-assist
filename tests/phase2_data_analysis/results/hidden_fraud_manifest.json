@@ -1,0 +1,996 @@
+{
+  "source_csv": "C:\\Users\\ghdtj\\workspace\\portfolio\\local-ai-assist\\data\\journal\\primary\\datasynth\\journal_entries.csv",
+  "masked_csv": "C:\\Users\\ghdtj\\workspace\\portfolio\\local-ai-assist\\data\\journal\\primary\\datasynth\\journal_entries_masked.csv",
+  "mask_ratio": 0.7,
+  "seed": 42,
+  "total_rows": 1106142,
+  "total_fraud_docs": 353,
+  "hidden_fraud_docs": 246,
+  "visible_fraud_docs": 107,
+  "hidden_fraud_ids": [
+    {
+      "document_id": "004dc4d4-872e-4435-b74b-3233600da3ca",
+      "fraud_type": "FictitiousTransaction"
+    },
+    {
+      "document_id": "019d366f-c20a-4857-b55e-8879e95eba68",
+      "fraud_type": "TimingAnomaly"
+    },
+    {
+      "document_id": "01fabfb6-c8ef-45c0-b7f3-aeab9eea143c",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "03302cfe-055e-4a78-b6f6-d152c7e931fb",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "055096d3-e149-4472-8579-fdae9cad8bad",
+      "fraud_type": "ExpenseCapitalization"
+    },
+    {
+      "document_id": "05681aba-f371-4370-94f4-390b713f7372",
+      "fraud_type": "SplitTransaction"
+    },
+    {
+      "document_id": "057dbf53-6d2c-440c-8f56-d1d6ea3760e7",
+      "fraud_type": "DuplicatePayment"
+    },
+    {
+      "document_id": "05f4cde3-19c5-4b7b-b3d7-b06854c06cff",
+      "fraud_type": "RoundDollarManipulation"
+    },
+    {
+      "document_id": "06edab3b-9914-4e1b-b8bc-555472667597",
+      "fraud_type": "SplitTransaction"
+    },
+    {
+      "document_id": "0843ebd6-5e14-4682-844f-8ec47cb01bab",
+      "fraud_type": "FictitiousTransaction"
+    },
+    {
+      "document_id": "0a934321-937e-427a-b49f-d1b10617e50c",
+      "fraud_type": "DuplicatePayment"
+    },
+    {
+      "document_id": "0b79ac8c-29e3-422b-8323-0a69ea298ebf",
+      "fraud_type": "ExpenseCapitalization"
+    },
+    {
+      "document_id": "0bf43221-5d91-4e94-b407-3eee88a47db1",
+      "fraud_type": "ExpenseCapitalization"
+    },
+    {
+      "document_id": "0c64451c-ca69-4a0b-a82a-cd9327042247",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "0d10c6cf-b063-4e04-9670-d9fbec4dd22b",
+      "fraud_type": "SuspenseAccountAbuse"
+    },
+    {
+      "document_id": "0e46a1f3-2370-4a58-8f79-fd467f0ba100",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "1045a337-fb1e-4301-9419-4679a439d30f",
+      "fraud_type": "ExpenseCapitalization"
+    },
+    {
+      "document_id": "105ba459-d999-4482-940f-c20b795b3513",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "11f62d73-7e2e-4808-85f3-7c280a7e33ea",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "12779781-b350-4486-a19f-8c105a039f2f",
+      "fraud_type": "SegregationOfDutiesViolation"
+    },
+    {
+      "document_id": "12f9fb47-bc0f-4cc6-a2d9-59e7fc83d322",
+      "fraud_type": "FictitiousTransaction"
+    },
+    {
+      "document_id": "14246c5d-fa55-408c-ac1e-5e6b049dd40d",
+      "fraud_type": "DuplicatePayment"
+    },
+    {
+      "document_id": "160ce34c-4c26-44e7-b1dc-c615d672a893",
+      "fraud_type": "UnauthorizedAccess"
+    },
+    {
+      "document_id": "16e2532c-1278-4200-8bdd-b1f216b0fc16",
+      "fraud_type": "DuplicatePayment"
+    },
+    {
+      "document_id": "188c7e50-efd5-4224-942d-d54eee8884c1",
+      "fraud_type": "SuspenseAccountAbuse"
+    },
+    {
+      "document_id": "1988d089-296d-44d4-bc93-0b5c4729cd8f",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "1a17fe2f-f6de-4e1d-a8cc-8c65a4dd2668",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "1a4846d9-5e2f-4d4e-aee3-f4ebee6857aa",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "1a8846f1-9b8b-4c11-aada-2e3f95a9a412",
+      "fraud_type": "DuplicatePayment"
+    },
+    {
+      "document_id": "1acb4d0e-bf54-4eed-99f2-75f9c56eb324",
+      "fraud_type": "FictitiousTransaction"
+    },
+    {
+      "document_id": "1afd7d0f-8d5b-478c-882a-ee96c01fc90a",
+      "fraud_type": "FictitiousTransaction"
+    },
+    {
+      "document_id": "1bfb2628-4637-4363-ae07-ccdfccb05c81",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "1cd9ff3e-f429-42d7-a4d1-18228f2e834d",
+      "fraud_type": "UnauthorizedAccess"
+    },
+    {
+      "document_id": "1e38abd1-3383-4f0a-8a87-89294151aa10",
+      "fraud_type": "ExpenseCapitalization"
+    },
+    {
+      "document_id": "1eebab7f-bdcd-4a6a-82d4-8c796a004c74",
+      "fraud_type": "ExpenseCapitalization"
+    },
+    {
+      "document_id": "1f20f0a5-2475-431a-ab96-ac8574dc8589",
+      "fraud_type": "SplitTransaction"
+    },
+    {
+      "document_id": "204d6550-cbac-47d0-a231-4834c23821fa",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "21305e20-1c8e-4f91-ae68-2445dafb8cae",
+      "fraud_type": "FictitiousTransaction"
+    },
+    {
+      "document_id": "21e7013a-f9a8-42e5-97fb-fa427510da81",
+      "fraud_type": "TimingAnomaly"
+    },
+    {
+      "document_id": "21ee44d3-04c3-4935-a1b2-c906959b10d7",
+      "fraud_type": "ExpenseCapitalization"
+    },
+    {
+      "document_id": "21f28c83-a1bf-48c6-90fd-19bf27972ced",
+      "fraud_type": "FictitiousTransaction"
+    },
+    {
+      "document_id": "2287ce5c-aa0d-415b-b2ca-2a0d4d589507",
+      "fraud_type": "FictitiousTransaction"
+    },
+    {
+      "document_id": "28a617e8-2a2e-4d6d-ace3-85516b00c324",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "2e509483-14a3-40bf-af8e-30c008dea574",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "2e8537a7-95b8-49fa-99bc-a4f2c78e5e19",
+      "fraud_type": "UnauthorizedAccess"
+    },
+    {
+      "document_id": "304a395d-fc80-42c9-beaf-8ad8f230d432",
+      "fraud_type": "SplitTransaction"
+    },
+    {
+      "document_id": "33fc86ba-ccd1-489a-83d7-7f74be8fccd1",
+      "fraud_type": "UnauthorizedAccess"
+    },
+    {
+      "document_id": "34261c2c-b6bd-46cf-96fa-ed80660d295f",
+      "fraud_type": "FictitiousTransaction"
+    },
+    {
+      "document_id": "3496c921-9008-4236-97d8-e181cc37011d",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "35ca8b6d-436b-4a0a-ae81-c3aa220bc123",
+      "fraud_type": "TimingAnomaly"
+    },
+    {
+      "document_id": "36b5cb02-c63c-45a6-8b85-8d0183c4f1b4",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "3a347890-586e-4586-86c6-c6d858f60950",
+      "fraud_type": "FictitiousTransaction"
+    },
+    {
+      "document_id": "3a842710-4915-4592-a499-5a3ef3357ec3",
+      "fraud_type": "RoundDollarManipulation"
+    },
+    {
+      "document_id": "3b85e899-848b-40fc-9b0f-aea52f689786",
+      "fraud_type": "SplitTransaction"
+    },
+    {
+      "document_id": "3c2114fe-6200-4074-b28a-007f1587556b",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "40a354cf-3828-47bb-a1dc-1a4ac06d49cb",
+      "fraud_type": "FictitiousTransaction"
+    },
+    {
+      "document_id": "40d065ec-4ec2-4685-98e5-b5bf19c0f4e1",
+      "fraud_type": "TimingAnomaly"
+    },
+    {
+      "document_id": "40d9c859-ea92-43ac-994e-6948e7d691c3",
+      "fraud_type": "UnauthorizedAccess"
+    },
+    {
+      "document_id": "42370197-3362-434b-9c6d-929067503b7d",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "4754fe7c-a1ee-4716-bdc6-d8e99b3794cf",
+      "fraud_type": "TimingAnomaly"
+    },
+    {
+      "document_id": "476af92e-ce92-4728-925a-b82cb33bd817",
+      "fraud_type": "DuplicatePayment"
+    },
+    {
+      "document_id": "4a76993b-b083-4777-b8fd-34cc843c805e",
+      "fraud_type": "DuplicatePayment"
+    },
+    {
+      "document_id": "4aedf398-9465-49c1-9a9e-0da51c7216c1",
+      "fraud_type": "FictitiousVendor"
+    },
+    {
+      "document_id": "4b2af418-fbbe-4833-8750-f7ab4b7288d3",
+      "fraud_type": "ExpenseCapitalization"
+    },
+    {
+      "document_id": "4cdd6e11-1c95-44e7-bf86-a73a9ae0f659",
+      "fraud_type": "DuplicatePayment"
+    },
+    {
+      "document_id": "4df1fb23-c7b1-4dc1-a290-2629083ff46b",
+      "fraud_type": "DuplicatePayment"
+    },
+    {
+      "document_id": "4e152a62-ff9e-489b-a606-4a4bf80c7064",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "4fbe404d-bfd8-402d-901f-f359f9f91878",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "50e6358e-beb0-4226-b362-a608c01ad821",
+      "fraud_type": "FictitiousTransaction"
+    },
+    {
+      "document_id": "50ee03c2-1fc2-44ad-b2d0-92ba44ee4dc0",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "5264839c-b4b6-4826-ac47-0992d819b591",
+      "fraud_type": "DuplicatePayment"
+    },
+    {
+      "document_id": "52ee14fe-7564-4a85-8094-d4955dec5047",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "54394818-9579-4572-bac6-f36882282e14",
+      "fraud_type": "ExceededApprovalLimit"
+    },
+    {
+      "document_id": "5577f112-bbdf-4807-99fc-07757a822f94",
+      "fraud_type": "SplitTransaction"
+    },
+    {
+      "document_id": "559fb88a-df4d-4033-ae5c-93fd9aaf309f",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "5821a078-000b-4623-9662-04c28fbcfd14",
+      "fraud_type": "UnauthorizedAccess"
+    },
+    {
+      "document_id": "58fa182c-bb39-43bb-913e-8091952b3059",
+      "fraud_type": "UnauthorizedAccess"
+    },
+    {
+      "document_id": "5a36e6fe-e00e-47ec-a80b-0af988af8a03",
+      "fraud_type": "JustBelowThreshold"
+    },
+    {
+      "document_id": "5a657f16-4528-41a2-b2f6-c4b925f1456b",
+      "fraud_type": "DuplicatePayment"
+    },
+    {
+      "document_id": "5a69e162-b4dd-4845-a3eb-f84308c76b28",
+      "fraud_type": "FictitiousTransaction"
+    },
+    {
+      "document_id": "5c2a8a38-9527-42bc-b0c0-4f0b718449ec",
+      "fraud_type": "UnauthorizedAccess"
+    },
+    {
+      "document_id": "5d646649-90fd-434d-a7c9-ad3fb4eefed7",
+      "fraud_type": "ExpenseCapitalization"
+    },
+    {
+      "document_id": "5f083174-d75d-4719-8006-37fb642aacd1",
+      "fraud_type": "FictitiousTransaction"
+    },
+    {
+      "document_id": "5fa25b2c-435e-4a81-9490-eacc47a42146",
+      "fraud_type": "FictitiousTransaction"
+    },
+    {
+      "document_id": "5fb3f141-4114-48c7-8aa8-9123f1c7f517",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "604a760c-8bb9-460a-82f6-a94b4a077c07",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "60b3e3cb-4df1-44ae-acfe-e574943522c4",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "61515d64-f38a-4d2e-9812-e88ecb84abd3",
+      "fraud_type": "ExpenseCapitalization"
+    },
+    {
+      "document_id": "626f7f87-ecc0-48d9-8b4d-8b86360533a2",
+      "fraud_type": "TimingAnomaly"
+    },
+    {
+      "document_id": "6293a387-08ea-4531-bee4-10334a8b98b3",
+      "fraud_type": "SplitTransaction"
+    },
+    {
+      "document_id": "62d966e7-53c6-490d-bc7a-81e7260ff7ee",
+      "fraud_type": "TimingAnomaly"
+    },
+    {
+      "document_id": "6360f626-f433-4cb7-b65d-4dbaa1a21619",
+      "fraud_type": "SplitTransaction"
+    },
+    {
+      "document_id": "6391542c-688b-4179-a555-37086afaffeb",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "650e54d8-fe30-4faa-b375-046e961584b2",
+      "fraud_type": "RoundDollarManipulation"
+    },
+    {
+      "document_id": "65c377a5-eedb-4846-b320-753cf6dacbcb",
+      "fraud_type": "ExpenseCapitalization"
+    },
+    {
+      "document_id": "67b9a604-85e9-4346-97c2-081bc73c5d37",
+      "fraud_type": "FictitiousTransaction"
+    },
+    {
+      "document_id": "68f84821-5d79-4555-a433-19125812b226",
+      "fraud_type": "ExpenseCapitalization"
+    },
+    {
+      "document_id": "699d9890-bc6b-4150-afee-1f6ba1aaf165",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "6a7bbb68-fabf-4f43-9813-10fee7bcfbf7",
+      "fraud_type": "UnauthorizedAccess"
+    },
+    {
+      "document_id": "6bffc9ea-c81a-41ad-9d5a-5485385ac2e1",
+      "fraud_type": "UnauthorizedAccess"
+    },
+    {
+      "document_id": "6ddf333b-5441-4430-bc5a-a709e118b623",
+      "fraud_type": "UnauthorizedAccess"
+    },
+    {
+      "document_id": "6f8e2050-ac4d-4416-8e47-991c0c481e29",
+      "fraud_type": "JustBelowThreshold"
+    },
+    {
+      "document_id": "707f3199-ed8e-4d93-93ee-0de71f3342b0",
+      "fraud_type": "SplitTransaction"
+    },
+    {
+      "document_id": "70afdc4e-430b-403c-b3a0-90195bc9297a",
+      "fraud_type": "UnauthorizedAccess"
+    },
+    {
+      "document_id": "71da5088-da81-42f2-80fc-f6cc76f4b9a2",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "7265da90-1cba-4409-8f9e-85bdcd00d37d",
+      "fraud_type": "DuplicatePayment"
+    },
+    {
+      "document_id": "72ab076b-e7fb-45e2-b5cf-af21a86940ab",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "73a27b19-f7d7-402d-a9dc-3f79a2f0c980",
+      "fraud_type": "FictitiousTransaction"
+    },
+    {
+      "document_id": "75d74712-0ef7-41d0-b006-50804a7bf80d",
+      "fraud_type": "DuplicatePayment"
+    },
+    {
+      "document_id": "768d5c3f-988a-4186-a4ba-db443500f480",
+      "fraud_type": "TimingAnomaly"
+    },
+    {
+      "document_id": "769e7b13-f7ce-4e49-8ba8-b9cb69ec1492",
+      "fraud_type": "ExpenseCapitalization"
+    },
+    {
+      "document_id": "787df587-8449-43ad-bcbf-8f076d3584ce",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "797ef4e0-abdc-47f9-a3ac-6987f136549f",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "79dd523d-d748-4c12-9f7c-ddd711305616",
+      "fraud_type": "ExpenseCapitalization"
+    },
+    {
+      "document_id": "7abbdb09-1d87-41a1-ad46-e713c910be92",
+      "fraud_type": "UnauthorizedAccess"
+    },
+    {
+      "document_id": "7b5aa076-c046-4b85-8d0d-6b4c5cb14794",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "7be755a9-bd70-4d2a-9bd3-865be70cb35c",
+      "fraud_type": "TimingAnomaly"
+    },
+    {
+      "document_id": "7c219bf0-5033-4b5f-a474-53de08990f93",
+      "fraud_type": "FictitiousTransaction"
+    },
+    {
+      "document_id": "7d894310-af84-445f-a45b-c063d8471705",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "7f4ca3f2-1715-433b-aae0-c3d4c0c2c9ec",
+      "fraud_type": "UnauthorizedAccess"
+    },
+    {
+      "document_id": "8014e954-38df-453e-834e-88a3f5f7424b",
+      "fraud_type": "UnauthorizedAccess"
+    },
+    {
+      "document_id": "807b5a47-82e0-4a37-99a1-76931c274d37",
+      "fraud_type": "SuspenseAccountAbuse"
+    },
+    {
+      "document_id": "80df0d44-0605-415b-836f-f7b0970a52f6",
+      "fraud_type": "DuplicatePayment"
+    },
+    {
+      "document_id": "80f0996c-222e-4117-a2d1-d0ad84ccfd72",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "81c7228f-9e4a-4eaa-abf3-0db49627b568",
+      "fraud_type": "FictitiousTransaction"
+    },
+    {
+      "document_id": "82b1386e-82ac-4607-9137-08e453be1f48",
+      "fraud_type": "ExpenseCapitalization"
+    },
+    {
+      "document_id": "84bb4276-bdcb-477f-9308-913408cc700d",
+      "fraud_type": "FictitiousTransaction"
+    },
+    {
+      "document_id": "85354f58-a185-4b64-a0fa-b10f4eb0df76",
+      "fraud_type": "DuplicatePayment"
+    },
+    {
+      "document_id": "85f235a1-1068-406b-85f3-cfead3105f9d",
+      "fraud_type": "DuplicatePayment"
+    },
+    {
+      "document_id": "86a8acce-e9fc-4345-9760-fdb5a6e97aa0",
+      "fraud_type": "FictitiousTransaction"
+    },
+    {
+      "document_id": "881feb74-4d06-4fc3-863d-5f492ae21154",
+      "fraud_type": "ExceededApprovalLimit"
+    },
+    {
+      "document_id": "88a7af50-f9f7-4b14-86c5-26f4ea65758b",
+      "fraud_type": "ExpenseCapitalization"
+    },
+    {
+      "document_id": "89abd537-6d89-4407-b5fd-01359f210797",
+      "fraud_type": "DuplicatePayment"
+    },
+    {
+      "document_id": "8a8fc6fe-7590-4e9c-b467-ced134b4c58c",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "8d26b591-4049-4d27-bd4d-99fec62eff1e",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "906131e4-e8c9-45d0-8965-48387297abaf",
+      "fraud_type": "SplitTransaction"
+    },
+    {
+      "document_id": "916e32fb-2d8f-482f-9b92-9b4929febff1",
+      "fraud_type": "DuplicatePayment"
+    },
+    {
+      "document_id": "91dfeb63-4691-4619-8537-69f8beef34ee",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "92b37bbf-04b1-4366-a238-2ec27c18e53a",
+      "fraud_type": "FictitiousTransaction"
+    },
+    {
+      "document_id": "92ce1bb8-c968-4a98-a088-64a83c4a27a3",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "947abbac-8569-40ed-9941-093a0049f8e5",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "95a4977a-006c-41f5-9f3a-8723c1884766",
+      "fraud_type": "FictitiousTransaction"
+    },
+    {
+      "document_id": "96a124ea-ea11-48ae-a872-52e745c93b87",
+      "fraud_type": "DuplicatePayment"
+    },
+    {
+      "document_id": "987d1061-0e33-4e85-9a05-a4cd01067ade",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "989c23c8-745a-46a2-9451-2ea0463a4319",
+      "fraud_type": "UnauthorizedAccess"
+    },
+    {
+      "document_id": "99de1f8f-79ac-43f4-a2ce-0cecd283d92f",
+      "fraud_type": "FictitiousTransaction"
+    },
+    {
+      "document_id": "9b429dd6-4490-41d4-bb60-8c080a0468ca",
+      "fraud_type": "ExpenseCapitalization"
+    },
+    {
+      "document_id": "9cab62af-9d0d-4cbf-b0e2-11e6ae4ae120",
+      "fraud_type": "DuplicatePayment"
+    },
+    {
+      "document_id": "9e13f828-4a0d-45d3-ac99-7089ff2f3e96",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "9e3adfaf-072f-4a40-acd8-c25aa8e7a698",
+      "fraud_type": "FictitiousTransaction"
+    },
+    {
+      "document_id": "9e80e1df-3d5c-417d-964c-2d637e1e430c",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "9eac013a-a24c-4a18-bfb8-1796e0a20961",
+      "fraud_type": "JustBelowThreshold"
+    },
+    {
+      "document_id": "9eb0031d-c0a7-478d-8e63-6f4c759856a2",
+      "fraud_type": "DuplicatePayment"
+    },
+    {
+      "document_id": "a027fdb1-441a-4abb-a408-9e8aca750a35",
+      "fraud_type": "TimingAnomaly"
+    },
+    {
+      "document_id": "a0f3f89e-29b2-44c5-9847-030e505a0694",
+      "fraud_type": "TimingAnomaly"
+    },
+    {
+      "document_id": "a355fc3d-1704-40d6-a504-5f9cbc08c074",
+      "fraud_type": "SuspenseAccountAbuse"
+    },
+    {
+      "document_id": "a83aa5ec-741a-4526-b9d0-0691390317f3",
+      "fraud_type": "DuplicatePayment"
+    },
+    {
+      "document_id": "a8dd7084-a53a-4ec6-bbf3-9b083f313589",
+      "fraud_type": "DuplicatePayment"
+    },
+    {
+      "document_id": "a96e0868-5bd6-48f2-b338-ff56a997dd43",
+      "fraud_type": "FictitiousTransaction"
+    },
+    {
+      "document_id": "acf91443-466a-4ce5-8c80-174b39601f70",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "ad3d6046-51b0-4e5b-b547-74173016831c",
+      "fraud_type": "UnauthorizedAccess"
+    },
+    {
+      "document_id": "ad66d516-e0c9-42a4-b18e-bbc7e46f3900",
+      "fraud_type": "UnauthorizedAccess"
+    },
+    {
+      "document_id": "b1943f2b-c7ec-466d-99c3-69777e41d716",
+      "fraud_type": "FictitiousTransaction"
+    },
+    {
+      "document_id": "b267f810-4ef0-42a6-8641-cf9c1d1609c1",
+      "fraud_type": "TimingAnomaly"
+    },
+    {
+      "document_id": "b27d48fe-b60f-4590-ac56-1866ec7dbd01",
+      "fraud_type": "DuplicatePayment"
+    },
+    {
+      "document_id": "b28ab8c3-3d28-491d-8e32-903c6f63d341",
+      "fraud_type": "UnauthorizedAccess"
+    },
+    {
+      "document_id": "b2b7c458-af92-4904-8042-bba35e1dbac7",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "b2c20c01-b91d-461a-bb8f-9aae73f84d78",
+      "fraud_type": "UnauthorizedAccess"
+    },
+    {
+      "document_id": "b5cbe500-829a-47f3-83f1-972ad68a5307",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "b9dd848b-ee9c-45c0-8044-310c1044c81d",
+      "fraud_type": "FictitiousTransaction"
+    },
+    {
+      "document_id": "bace2b8a-ce7f-4eea-99c0-ff832a008c36",
+      "fraud_type": "SplitTransaction"
+    },
+    {
+      "document_id": "bbf4852b-8a25-4c6f-b17a-1d4ce6fc785e",
+      "fraud_type": "ExpenseCapitalization"
+    },
+    {
+      "document_id": "bc552734-921a-4b66-a41d-50330412490f",
+      "fraud_type": "UnauthorizedAccess"
+    },
+    {
+      "document_id": "bce7da2d-aa9d-400e-8122-03d71bc1f0a1",
+      "fraud_type": "FictitiousTransaction"
+    },
+    {
+      "document_id": "be4aaa39-f79d-4ee0-80d7-48d6b485ef35",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "beff9ded-06fb-4973-acf0-dd3d94fa066c",
+      "fraud_type": "FictitiousEntry"
+    },
+    {
+      "document_id": "c04ea3a8-a780-4d2a-83bd-350757f2d400",
+      "fraud_type": "ExpenseCapitalization"
+    },
+    {
+      "document_id": "c0b5bab8-51ba-4ec5-b897-1ddc2493e9ef",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "c0fd9865-6971-4fe1-8372-524dece5850e",
+      "fraud_type": "DuplicatePayment"
+    },
+    {
+      "document_id": "c1e59cc5-2877-460e-846c-7afbf5c87992",
+      "fraud_type": "UnauthorizedAccess"
+    },
+    {
+      "document_id": "c21f611b-c803-46c0-b37a-abc43c982bae",
+      "fraud_type": "FictitiousTransaction"
+    },
+    {
+      "document_id": "c2cf147f-3506-4619-abbe-05df2faa8197",
+      "fraud_type": "SplitTransaction"
+    },
+    {
+      "document_id": "c53352aa-babd-45a5-9ce1-3ccae74edf5a",
+      "fraud_type": "TimingAnomaly"
+    },
+    {
+      "document_id": "c62a6fb9-6e7e-42e8-b25c-66add64b74bb",
+      "fraud_type": "SplitTransaction"
+    },
+    {
+      "document_id": "c67a3adc-ac1d-40e2-8f96-3d1d46270493",
+      "fraud_type": "FictitiousTransaction"
+    },
+    {
+      "document_id": "c6b0554b-17b4-443a-9884-4c838ef41dbe",
+      "fraud_type": "FictitiousTransaction"
+    },
+    {
+      "document_id": "c7d8e317-e9a0-43ce-ae97-3ce1eee3a657",
+      "fraud_type": "SuspenseAccountAbuse"
+    },
+    {
+      "document_id": "c89802f7-0427-4df2-848d-3c8159bd45af",
+      "fraud_type": "SplitTransaction"
+    },
+    {
+      "document_id": "c99a5d2c-ab97-451e-8659-5629afad18f4",
+      "fraud_type": "ExpenseCapitalization"
+    },
+    {
+      "document_id": "c9fe0a52-a372-4867-ac11-e56e8a4f71a0",
+      "fraud_type": "ExpenseCapitalization"
+    },
+    {
+      "document_id": "ca455b09-088b-4993-aba7-d5b216b60962",
+      "fraud_type": "DuplicatePayment"
+    },
+    {
+      "document_id": "cc987063-187b-4c63-bf55-2a0f9b092333",
+      "fraud_type": "SuspenseAccountAbuse"
+    },
+    {
+      "document_id": "cdd58870-13e6-4c63-9d9d-61a533285c76",
+      "fraud_type": "ImproperCapitalization"
+    },
+    {
+      "document_id": "d0524d4e-5240-4a4d-bddb-61752a2f9114",
+      "fraud_type": "FictitiousTransaction"
+    },
+    {
+      "document_id": "d082ee16-c62f-4f6b-926b-0e8886d1c97f",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "d16dd242-645c-4d31-9467-542bc18bdc47",
+      "fraud_type": "DuplicatePayment"
+    },
+    {
+      "document_id": "d20ed997-f30c-4791-95f1-25c3cfb76218",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "d247e126-b7b5-4022-af32-dd0a350fc219",
+      "fraud_type": "DuplicatePayment"
+    },
+    {
+      "document_id": "d2d1790f-7746-43e6-8f9c-b0346412f49a",
+      "fraud_type": "ExpenseCapitalization"
+    },
+    {
+      "document_id": "d3ec6a8d-46fa-4f30-a36d-a8eca6c86546",
+      "fraud_type": "FictitiousTransaction"
+    },
+    {
+      "document_id": "d483e35d-4bac-4b67-ba35-6587346df159",
+      "fraud_type": "FictitiousTransaction"
+    },
+    {
+      "document_id": "d54f8082-830a-4359-8360-7b7b31f43b01",
+      "fraud_type": "DuplicatePayment"
+    },
+    {
+      "document_id": "d57a438d-2a47-4f4a-bf20-a8d401863572",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "d6b79c20-2f95-41fe-a545-d474a8003393",
+      "fraud_type": "FictitiousTransaction"
+    },
+    {
+      "document_id": "d8aebf3f-59f5-4e25-8981-a7e4230ad5ba",
+      "fraud_type": "FictitiousTransaction"
+    },
+    {
+      "document_id": "db34b179-34f6-4003-91d5-332e9f3d0b68",
+      "fraud_type": "DuplicatePayment"
+    },
+    {
+      "document_id": "dbacafac-6d34-4d89-b212-744a51049c42",
+      "fraud_type": "SplitTransaction"
+    },
+    {
+      "document_id": "dcab5c44-4e97-4205-bea1-303c0ab8e002",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "dd36b201-b4a0-46f2-a140-cc6c768851e0",
+      "fraud_type": "FictitiousTransaction"
+    },
+    {
+      "document_id": "ddb21e6f-8ae7-4296-843f-d345f841758c",
+      "fraud_type": "FictitiousTransaction"
+    },
+    {
+      "document_id": "dde0a06a-b53e-4bb6-a782-d21cc9be8113",
+      "fraud_type": "JustBelowThreshold"
+    },
+    {
+      "document_id": "de081778-77cd-47f6-9d2f-97c915333902",
+      "fraud_type": "DuplicatePayment"
+    },
+    {
+      "document_id": "de289614-f913-41d7-8a56-b45241479967",
+      "fraud_type": "ExpenseCapitalization"
+    },
+    {
+      "document_id": "de91813f-89f2-49ec-8030-15c87c93033a",
+      "fraud_type": "DuplicatePayment"
+    },
+    {
+      "document_id": "e11049cc-a811-4afd-a4f2-08ee01457881",
+      "fraud_type": "ExpenseCapitalization"
+    },
+    {
+      "document_id": "e1783704-ddaf-4587-a11a-8953f60294da",
+      "fraud_type": "SplitTransaction"
+    },
+    {
+      "document_id": "e304bcd8-ef70-45a9-93e3-dfe414dc1a2a",
+      "fraud_type": "DuplicatePayment"
+    },
+    {
+      "document_id": "e343b38c-1629-40a7-9ca2-0a86076d0a7c",
+      "fraud_type": "ExceededApprovalLimit"
+    },
+    {
+      "document_id": "e36be1d9-deb3-4d83-b347-e0cfd8bb921e",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "e4788b4e-c40f-404d-8929-371bd2d14132",
+      "fraud_type": "ExpenseCapitalization"
+    },
+    {
+      "document_id": "e49dffb1-ffe9-439e-b3a9-5c15b9a09b27",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "e51c63e4-683e-49d5-a915-09b73b7cd47e",
+      "fraud_type": "JustBelowThreshold"
+    },
+    {
+      "document_id": "e5366ff7-0e13-44fe-b1ee-3499a6a81143",
+      "fraud_type": "UnauthorizedAccess"
+    },
+    {
+      "document_id": "e6369f94-3118-4311-9435-09f297d24b06",
+      "fraud_type": "UnauthorizedAccess"
+    },
+    {
+      "document_id": "e6c9589a-ba85-4611-9647-0b0765f9a86e",
+      "fraud_type": "FictitiousTransaction"
+    },
+    {
+      "document_id": "e9535af8-8dfc-44a4-af29-ea4f9f8c96a8",
+      "fraud_type": "ExpenseCapitalization"
+    },
+    {
+      "document_id": "e9b782cd-67fb-4172-92db-85ee9f6badb0",
+      "fraud_type": "TimingAnomaly"
+    },
+    {
+      "document_id": "e9ce57de-6cab-4dbf-934e-0178e6ff9557",
+      "fraud_type": "ExceededApprovalLimit"
+    },
+    {
+      "document_id": "ea15802a-7fd5-421c-ba00-c68d2dec17b4",
+      "fraud_type": "UnauthorizedAccess"
+    },
+    {
+      "document_id": "eb62a4fa-ffff-4674-a338-e0ad7b46df8d",
+      "fraud_type": "SplitTransaction"
+    },
+    {
+      "document_id": "ec1a4fc8-7bcb-4fd4-b158-1895a5828c2f",
+      "fraud_type": "UnauthorizedAccess"
+    },
+    {
+      "document_id": "f0766008-fccd-4165-a89e-9042867c3bec",
+      "fraud_type": "RoundDollarManipulation"
+    },
+    {
+      "document_id": "f1499492-9a7d-4129-a776-713f015cfd21",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "f2f960c0-143f-4024-b539-bbfb91435322",
+      "fraud_type": "ExpenseCapitalization"
+    },
+    {
+      "document_id": "f3861e4d-c066-41a9-a934-36cef6683a32",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "f3a41775-a499-43a6-abe3-f201dce688fa",
+      "fraud_type": "FictitiousTransaction"
+    },
+    {
+      "document_id": "f44bd9df-79f7-4bf3-acbe-5a406feae1e2",
+      "fraud_type": "UnauthorizedAccess"
+    },
+    {
+      "document_id": "f4a2d307-13d7-4a7a-b782-57c3d3ada0cf",
+      "fraud_type": "UnauthorizedAccess"
+    },
+    {
+      "document_id": "f521e8a2-52fd-40d0-a433-14fceb76eb68",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "f6754641-39b8-45ca-a5e3-b3b69526ade4",
+      "fraud_type": "SegregationOfDutiesViolation"
+    },
+    {
+      "document_id": "f7d589e7-7b66-491c-9c15-fb29c94a708d",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "f86a45bb-f232-4f0a-b154-0c32bb0bf651",
+      "fraud_type": "UnauthorizedAccess"
+    },
+    {
+      "document_id": "fb0f9276-8b3a-4dba-ad32-de0791d234c9",
+      "fraud_type": "SplitTransaction"
+    },
+    {
+      "document_id": "fbf0fa28-d666-4324-b10b-e991043a072e",
+      "fraud_type": "DuplicatePayment"
+    },
+    {
+      "document_id": "fcbf71e5-fdf0-43f5-9859-39350676cc3d",
+      "fraud_type": "RevenueManipulation"
+    },
+    {
+      "document_id": "fface992-3488-423f-94ad-cab6f1709847",
+      "fraud_type": "DuplicatePayment"
+    }
+  ]
+}

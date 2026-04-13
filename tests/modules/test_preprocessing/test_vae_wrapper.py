@@ -76,3 +76,27 @@ class TestVAEDetector:
         preds = loaded.predict(X)
         assert preds.shape == (len(X),)
         assert set(np.unique(preds)).issubset({0, 1})
+
+    # ── 피처별 재구성 오차 분해 (Explainability) ────────────────
+
+    def test_score_samples_per_feature_shape(self, small_data):
+        X, _ = small_data
+        det = VAEDetector(latent_dim=4, epochs=3, device="cpu").fit(X)
+        per_feature = det.score_samples_per_feature(X)
+        assert per_feature.shape == X.shape
+
+    def test_score_samples_per_feature_mean_matches_score_samples(self, small_data):
+        # Why: 피처별 오차의 행 평균 = 전체 score_samples 일치 보장 (회귀 방어)
+        X, _ = small_data
+        det = VAEDetector(latent_dim=4, epochs=3, device="cpu").fit(X)
+        per_feature = det.score_samples_per_feature(X)
+        per_row_mean = per_feature.mean(axis=1)
+        score_samples = det.score_samples(X)
+        np.testing.assert_allclose(per_row_mean, score_samples, rtol=1e-5)
+
+    def test_score_samples_per_feature_non_negative(self, small_data):
+        X, _ = small_data
+        det = VAEDetector(latent_dim=4, epochs=3, device="cpu").fit(X)
+        per_feature = det.score_samples_per_feature(X)
+        # Why: (recon - x)^2 → 항상 0 이상
+        assert (per_feature >= 0).all()

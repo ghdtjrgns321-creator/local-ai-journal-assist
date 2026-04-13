@@ -49,8 +49,12 @@ def render(result: "PipelineResult") -> None:
         doc_id = selected.iloc[0]["document_id"]
         st.session_state[KEY_SELECTED_DOC] = doc_id
 
-        # 7. 상세 패널
-        render_detail(doc_id, result.data, conn, result.batch_id)
+        # 7. 상세 패널 — SHAP 데이터가 있으면 피처 기여도 패널도 함께 렌더
+        render_detail(
+            doc_id, result.data, conn, result.batch_id,
+            shap_contributions=result.shap_contributions,
+            shap_base_value=result.shap_base_value,
+        )
 
         # 8. HITL 예외 저장 UI (DB 연결 시에만 활성)
         if conn is not None:

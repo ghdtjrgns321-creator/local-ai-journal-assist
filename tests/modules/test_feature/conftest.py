@@ -110,6 +110,32 @@ def af_uniform_df() -> pd.DataFrame:
     })
 
 
+@pytest.fixture
+def af_coa_fallback_df() -> pd.DataFrame:
+    """CoA fallback 테스트: 큰 그룹 A(35건, 1xxx=자산), 작은 그룹 B(5건, 1xxx=자산), 작은 그룹 C(5건, 4xxx=수익).
+
+    B그룹은 A그룹과 같은 CoA(자산, 총 40건) → CoA 통계 fallback.
+    C그룹은 CoA(수익) 내에서도 5건뿐 → 전체 데이터 fallback.
+    """
+    rng = np.random.default_rng(42)
+    large_a = pd.DataFrame({
+        "debit_amount": rng.normal(10_000_000, 2_000_000, 35).clip(0),
+        "credit_amount": np.zeros(35),
+        "gl_account": ["1000"] * 35,
+    })
+    small_b = pd.DataFrame({
+        "debit_amount": [5_000_000, 6_000_000, 7_000_000, 8_000_000, 9_000_000],
+        "credit_amount": np.zeros(5),
+        "gl_account": ["1200"] * 5,
+    })
+    small_c = pd.DataFrame({
+        "debit_amount": [50_000_000, 60_000_000, 70_000_000, 80_000_000, 90_000_000],
+        "credit_amount": np.zeros(5),
+        "gl_account": ["4100"] * 5,
+    })
+    return pd.concat([large_a, small_b, small_c], ignore_index=True)
+
+
 # ── Pattern features fixtures (pf_) ─────────────────────────────
 
 

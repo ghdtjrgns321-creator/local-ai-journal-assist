@@ -27,14 +27,14 @@ def process_distribution_bar(df: pd.DataFrame) -> go.Figure:
 
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     fig.add_trace(
-        go.Bar(x=stats.index, y=stats["count"], name="건수", marker_color="#636EFA"),
+        go.Bar(x=stats.index, y=stats["count"], name="건수", marker_color="#2563EB"),
         secondary_y=False,
     )
     fig.add_trace(
         go.Scatter(
             x=stats.index, y=stats["abnormal_rate"],
             mode="lines+markers", name="이상 비율(%)",
-            line={"color": "#EF553B", "width": 2},
+            line={"color": "#DC2626", "width": 2},
         ),
         secondary_y=True,
     )
@@ -85,11 +85,11 @@ def company_comparison(df: pd.DataFrame) -> go.Figure:
     # Why: 건수와 점수(0~1)는 스케일이 다르므로 이중축으로 분리.
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     fig.add_trace(
-        go.Bar(x=companies, y=stats["total"], name="전표수", marker_color="#636EFA"),
+        go.Bar(x=companies, y=stats["total"], name="전표수", marker_color="#2563EB"),
         secondary_y=False,
     )
     fig.add_trace(
-        go.Bar(x=companies, y=stats["abnormal"], name="이상수", marker_color="#EF553B"),
+        go.Bar(x=companies, y=stats["abnormal"], name="이상수", marker_color="#DC2626"),
         secondary_y=False,
     )
     fig.add_trace(

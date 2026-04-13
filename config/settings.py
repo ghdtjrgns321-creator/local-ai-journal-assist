@@ -55,6 +55,12 @@ class AuditSettings(BaseSettings):
 
     # --- 감사 룰 관련 (⚠️ 예시값 — 실제 감사 기준에 맞춰 조정) ---
     balance_tolerance: float = 1.0         # A01: 차대변 불일치 허용 오차 (원)
+    # --- L2 검증 fatal 정책 ---
+    # Why: 대차불일치는 회계 복식부기 근본 위반 → 일정 비율 초과 시 파이프라인 중단.
+    #      단순히 1행이라도 불일치하면 중단하는 정책은 노이즈 큰 실제 데이터에서 위험하므로
+    #      "전체 차변 대비 차이 비율" + "불일치 전표 비중" 두 축으로 판정한다.
+    balance_fatal_ratio: float = 0.01      # 전체 차변 대비 절대 차이 비율 임계 (1%)
+    balance_fatal_doc_ratio: float = 0.10  # 불일치 전표 비중 임계 (10%)
     chart_of_accounts_path: str = "config/chart_of_accounts.csv"  # A03: CoA 파일 경로
     # 다단계 승인한도 — 한국 중견 제조업 전결규정 반영 (DataSynth v1.2.0)
     # Level 1~6: 자동승인(10M) → 담당자(100M) → 팀장(1B) → 본부장(5B) → CFO(10B) → 이사회(50B)
@@ -82,16 +88,55 @@ class AuditSettings(BaseSettings):
     sod_process_threshold: int = 3            # B07: 직무분리 위반 프로세스 수 임계
     topside_threshold: int = 2               # B19: Top-side JE 가점 임계 (5점 만점, 수기 전제)
 
+    # --- DuplicateDetector (WU-05) ---
+    duplicate_fuzzy_threshold: int = 80          # B05b: 적요 유사도 임계 (rapidfuzz 0~100)
+    duplicate_amount_tolerance: float = 0.02     # B05b/c: 금액 허용 오차 (2%)
+    duplicate_split_window_days: int = 3         # B05c: 분할 거래 윈도우 (일)
+    duplicate_time_window_days: int = 7          # B05d: 시차 중복 윈도우 (일)
+    duplicate_max_group_size: int = 1000         # 그룹 크기 제한 (초과 시 스킵)
+
     # --- Detection Layer C 관련 ---
     backdated_threshold_days: int = 30          # C04: 소급 임계 일수
     account_pair_rare_percentile: float = 0.01  # C09: 희소 쌍 하위 백분위
     period_end_amount_quantile: float = 0.75    # C01: 기말 대규모 금액 분위수 (Q3)
+    c01_min_group_size: int = 30                 # C01: 계정그룹별 Q3 최소 표본 수
+
+    # --- Detection Layer C: C13 배치 전표 이상 ---
+    batch_source_values: list[str] = ["batch", "BATCH"]  # source 컬럼 배치 식별 값
+    batch_period_end_ratio: float = 0.5                   # 기말 집중 비율 임계
+    batch_simultaneous_threshold: int = 50                # 동일일자 동시 생성 건수 임계
+    batch_amount_zscore: float = 3.0                      # 배치 내 금액 Z-score 임계
 
     # --- Detection Layer C: C11 역분개 ---
     reversal_match_window_days: int = 1          # S1: 1:1 매칭 허용 일수
     reversal_rolling_window_days: int = 7        # S2: N:M 롤링 윈도우 (일)
     reversal_zero_threshold: float = 1000.0      # S2: 순액 0 수렴 허용 오차 (KRW)
     reversal_score_threshold: float = 0.3        # 종합 점수 플래그 임계값
+
+    # --- RelationalDetector (WU-08) ---
+    rel_new_cp_large_quantile: float = 0.90        # R01: 대액 기준 분위수
+    rel_new_cp_lookback_days: int = 90              # R01: 신규 거래처 판정 기간 (일)
+    rel_dormant_inactive_days: int = 180            # R02: 휴면 계정 판정 기간 (일)
+    rel_dormant_reactivation_window_days: int = 7   # R02: 연좌 플래깅 윈도우 (일)
+    rel_dormant_reactivation_min_amount: float = 0.0  # R02: 재활성화 최소 금액 (0=제한없음)
+    rel_tp_ic_deviation_threshold: float = 0.15     # R03: IC 가격 편차 허용 (15%)
+    rel_tp_min_ic_pairs: int = 3                    # R03: 최소 비교 쌍 수
+
+    # --- GraphDetector (WU-22) — networkx 기반 순환/이전가격 탐지 ---
+    # Why: 회계 장부 100만+ 행을 graph에 올리면 OOM. pandas 사전 필터 + from_pandas_edgelist 강제.
+    graph_gr01_max_cycle_length: int = 5            # GR01: simple_cycles length_bound (Johnson 폭주 방지)
+    graph_gr01_min_amount: float = 10_000_000.0     # GR01: 엣지 최소 금액 (materiality 추정치, 1천만원)
+    graph_gr01_max_edges: int = 50_000              # GR01: 엣지 수 상한 (초과 시 min_amount 자동 상향)
+    graph_gr01_max_component_size: int = 500        # GR01: weakly_connected_component 노드 임계 (초과 시 skip)
+    graph_gr03_min_path_length: int = 2             # GR03: 경로 최소 노드 수
+    graph_gr03_price_deviation_threshold: float = 0.20  # GR03: 양방향 가격 편차 허용 (20%)
+
+    # --- IntercompanyMatcher (WU-07) ---
+    ic_amount_tolerance: float = 0.02       # IC01/IC02: 금액 허용 오차 (2%)
+    ic_max_diff_ratio: float = 0.10         # IC02: 최대 비율 (10% → score 1.0)
+    ic_date_window_days: int = 5            # IC03: 정상 시차 허용 (일)
+    ic_max_day_diff: int = 30               # IC03: 최대 시차 (30일 → score 1.0)
+    ic_min_ic_rows: int = 2                 # 최소 IC 행 수 (미달 시 스킵 + warning)
 
     # --- Detection Layer C: C12 비정상 시간대 집중 분석 ---
     normal_hours_start: float = 8.5             # 정상 업무시간 시작 (08:30)
@@ -125,6 +170,36 @@ class AuditSettings(BaseSettings):
     monthly_pattern_threshold: float = 0.3    # D02: JSD 플래그 임계
     min_monthly_data_months: int = 3          # D02: 비교 수행 최소 월수
 
+    # --- Detection Access Audit (WU-15) ---
+    aa01_high_amount_quantile: float = 0.90   # AA01: 고액 판정 분위수
+    aa04_max_delay_days: int = 3              # AA04: 승인 지연 임계 (영업일)
+
+    # --- Detection Evidence (WU-14) ---
+    ev_tax_threshold: float = 30_000           # EV01: 적격증빙 필요 금액 (원, 한국 세법 기준)
+    ev_split_max_amount: float = 29_000        # EV01: 분할 의심 건당 상한
+    ev_split_min_count: int = 3                # EV01: 분할 의심 최소 건수
+    ev_revenue_cutoff_days: int = 5            # EV02: 매출 컷오프 허용 일수
+    ev_expense_cutoff_days: int = 7            # EV02: 비용 컷오프 허용 일수
+    ev_cutoff_period_end_weight: float = 1.5   # EV02: 기말 가중 계수
+    ev_cutoff_max_day_diff: int = 30           # EV02: 최대 차이일수 (score=1.0 상한)
+    ev_cutoff_use_business_days: bool = True   # EV02: 영업일 계산 사용 여부
+    ev_amount_tolerance: float = 1.0           # EV03: 3-way matching 허용 오차 (원)
+    ev_vat_rate: float = 0.10                  # EV03: 부가세율 (한국 표준 10%)
+    ev_vat_tolerance: float = 1.0              # EV03: 부가세 검증 허용 오차 (원)
+
+    # --- Detection TrendBreak (WU-16) ---
+    trendbreak_min_periods: int = 2            # TB01/TB02: 최소 비교 기간 수 (3개년 잔액 = 2개 error)
+    trendbreak_bias_ratio: float = 0.8         # TB01: 동일 부호 비율 임계
+    trendbreak_extremity_quantile: float = 0.1  # TB02: 극단 영역 분위수 (상/하위 10%)
+    trendbreak_max_years: int = 5              # 다기간 로더: 최대 조회 연도 수
+    trendbreak_min_years: int = 3              # 다기간 로더: 최소 유효 연도 수
+
+    # --- Detection Timeseries (TS01/TS02) ---
+    burst_window_days: int = 7                # TS01: 롤링 윈도우 (일)
+    burst_sigma: float = 3.0                  # TS01: 급증 판정 σ 배수
+    frequency_window_days: int = 7            # TS02: 빈도 집중 윈도우 (일)
+    frequency_min_count: int = 5              # TS02: 윈도우 내 최소 거래 건수
+
     # --- L3 통계 검증 (statistical_validator) ---
     monthly_volatility_zscore: float = 2.0      # 월별 변동률 이상 판정 Z-score
     shapiro_alpha: float = 0.05                  # 정규성 검정 유의수준
@@ -136,6 +211,8 @@ class AuditSettings(BaseSettings):
 
     # --- 텍스트 피처 관련 ---
     min_description_length: int = 3  # C06: poor/normal 경계 글자수
+    ttr_threshold: float = 0.3       # C06: TTR(어휘다양성) < 0.3 → poor
+    entropy_threshold: float = 1.0   # C06: Shannon entropy < 1.0 → poor
 
     # --- 매핑 프로파일 관련 ---
     profile_dir: str = "data/profiles"    # 프로파일 저장 디렉토리
@@ -148,14 +225,77 @@ class AuditSettings(BaseSettings):
     cv_folds: int = 5
     cv_scoring: str = "f1_macro"
 
+    # --- FT-Transformer (WU-01b) ---
+    ft_d_token: int = 64           # 피처 토큰 임베딩 차원
+    ft_n_layers: int = 2           # Transformer 인코더 레이어 수
+    ft_n_heads: int = 4            # Multi-head attention 헤드 수
+    ft_d_ff: int = 128             # Feed-forward 은닉 차원
+    ft_dropout: float = 0.1        # Dropout 비율
+    ft_epochs: int = 50            # 학습 에폭 수
+    ft_batch_size: int = 256       # 배치 크기 (~300MB VRAM)
+    ft_lr: float = 1e-3            # 학습률 (Adam)
+
+    # --- BiLSTM Sequence (WU-01c) ---
+    bilstm_hidden_size: int = 64       # BiLSTM 은닉 차원 (bidirectional → 출력 128)
+    bilstm_seq_len: int = 16           # 시퀀스 윈도우 길이
+    bilstm_stride: int = 1             # 슬라이딩 윈도우 보폭
+    bilstm_epochs: int = 50            # 학습 에폭 수
+    bilstm_batch_size: int = 256       # 배치 크기 (~100MB VRAM)
+    bilstm_lr: float = 1e-3            # 학습률 (Adam)
+    bilstm_dropout: float = 0.3        # Dropout 비율
+    bilstm_num_layers: int = 1         # LSTM 레이어 수
+
+    # --- Stacking Meta-Learner (WU-03) ---
+    # Why: MVP는 3-fold + 병렬화로 학습 시간 페널티 상쇄 (BiLSTM/FT-T 5번 재학습 부담).
+    #      Phase 3 안정화 후 5로 승격 권장 (통계적 표준).
+    stacking_cv_folds: int = 3              # OOF fold 수 (GroupKFold)
+    stacking_oof_n_jobs: int = -1           # OOF fold 병렬 학습 (joblib n_jobs)
+    stacking_min_positive: int = 50         # fallback 판정: 양성 최소 건수
+    stacking_fallback_threshold: float = 0.01  # fallback 판정: 양성 비율 미만
+    stacking_alpha: float = 1.0             # Ridge 규제 강도
+
+    # --- Risk Level Classification ---
+    # Why: Stacking Ridge 출력은 진짜 확률이 아니므로 "HIGH=0.9 = 90% 확률" 해석은
+    #      오해. 분위수 모드는 score 분포 기준 상위 N% 를 HIGH로 분류한다.
+    #      "absolute" = 기존 동작 (RISK_THRESHOLDS 절대값), "quantile" = 분위수.
+    risk_classification_mode: str = "absolute"
+    risk_quantile_high: float = 0.90    # 상위 10% → HIGH
+    risk_quantile_medium: float = 0.75  # 상위 25% → MEDIUM 이상
+    risk_quantile_low: float = 0.50     # 상위 50% → LOW 이상
+
+    # --- Detection Parallelism (묶음 2) ---
+    # Why: pandas/numpy 내부 연산은 GIL 해제 → ThreadPoolExecutor로 독립 탐지기
+    #      병렬화. ProcessPool은 DataFrame pickle 비용(1M 행 기준 수 초)이 커서
+    #      오히려 느림. None이면 순차 실행(테스트/디버깅용).
+    detection_parallel_workers: int | None = 4
+
+    # --- SHAP Explainer (WU-17) ---
+    # Why: SHAP 연산은 무거움(10만 건 → 수십 분). 이상 전표만 설명하면 충분.
+    shap_threshold: float = 0.7    # anomaly_score 하한 — 이 이상인 전표만 SHAP 계산
+    shap_max_rows: int = 500       # 안전 상한 — flagged rows가 많아도 상위 N건만
+
     # --- DB ---
     duckdb_path: str = "data/audit.duckdb"
 
-    # --- LLM (Phase 3) ---
-    ollama_model: str = "qwen3:8b"
-    ollama_base_url: str = "http://localhost:11434"
-    ollama_keep_alive: str = "5m"          # 모델 자동 언로드 시간
-    ollama_temperature: float = 0.1        # 감사 분석은 정확성 우선 → 낮은 temperature
+    # --- LLM API (Phase 3 OpenAI) ---
+    # 2티어 분리: light(gpt-5.4-mini)=일상 호출, reasoning(gpt-5.4)=심층 추론·최종 보고서
+    openai_api_key: str = ""                                # AUDIT_OPENAI_API_KEY 환경변수 주입
+    openai_light_model: str = "gpt-5.4-mini"                # 경량 호출용 (전처리 제안, Text-to-SQL, NLP 등)
+    openai_reasoning_model: str = "gpt-5.4"                 # 심층 추론용 (최종 보고서, XAI 내러티브)
+    openai_embedding_model: str = "text-embedding-3-small"  # RAG 임베딩
+    openai_temperature: float = 0.1                         # 감사 분석은 정확성 우선 → 낮은 temperature
+    openai_timeout: float = 60.0                            # 초
+
+    @field_validator("openai_api_key")
+    @classmethod
+    def _warn_empty_openai_api_key(cls, v: str) -> str:
+        """키 미설정 시 경고만 — 로컬/CI 환경에서 import가 죽으면 안 되므로 raise 금지."""
+        if not v:
+            import logging
+            logging.getLogger(__name__).warning(
+                "openai_api_key 미설정 — LLM 기능 사용 시 get_chat_client()가 RuntimeError 발생"
+            )
+        return v
 
     # --- 전처리 판정 기준 (Heuristics) ---
     heuristic_skewness_threshold: float = 2.0      # |skewness| 초과 시 고왜도 판정 (imputer 분기)

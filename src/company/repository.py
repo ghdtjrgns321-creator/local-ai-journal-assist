@@ -211,6 +211,15 @@ class CompanyRepository:
                 logger.warning("Engagement 로드 실패 (스킵): %s", entry.name)
         return results
 
+    def delete_engagement(self, company_id: str, engagement_id: str) -> bool:
+        """Engagement 디렉토리 전체 삭제. 미존재 시 False."""
+        edir = self.engagement_dir(company_id, engagement_id)
+        if not edir.exists():
+            return False
+        shutil.rmtree(edir)
+        logger.info("Engagement 삭제: %s/%s", company_id, engagement_id)
+        return True
+
     def update_engagement(
         self, company_id: str, profile: EngagementProfile
     ) -> Path:

@@ -10,6 +10,7 @@ import pytest
 from config.settings import AuditSettings
 from src.feature.amount_features import (
     _compute_base_amount,
+    _map_coa_category,
     _zscore_with_fallback,
     add_all_amount_features,
     add_amount_magnitude,
@@ -137,6 +138,53 @@ class TestExceedsThreshold:
         assert df["exceeds_threshold"].iloc[0] == True
 
 
+# ── TestMapCoaCategory ───────────────────────────────────────────
+
+
+class TestMapCoaCategory:
+    """GL 계정 코드 → CoA 상위그룹 매핑."""
+
+    COA_PREFIXES = {
+        "asset": ["1"],
+        "liability": ["2"],
+        "equity": ["3"],
+        "revenue": ["4"],
+        "expense": ["5"],
+    }
+
+    def test_standard_mapping(self):
+        """1xxx→asset, 2xxx→liability, 4xxx→revenue 등."""
+        gl = pd.Series(["1000", "2100", "3000", "4100", "5200"])
+        result = _map_coa_category(gl, self.COA_PREFIXES)
+        assert result.tolist() == ["asset", "liability", "equity", "revenue", "expense"]
+
+    def test_unknown_prefix_returns_other(self):
+        """9xxx 등 비표준 계정 → "other"."""
+        gl = pd.Series(["9990", "8000", "0100"])
+        result = _map_coa_category(gl, self.COA_PREFIXES)
+        assert (result == "other").all()
+
+    def test_none_prefixes_returns_all_other(self):
+        """coa_prefixes=None → 전부 "other"."""
+        gl = pd.Series(["1000", "4100"])
+        result = _map_coa_category(gl, None)
+        assert (result == "other").all()
+
+    def test_int64_gl_account(self):
+        """int64로 캐스팅된 gl_account도 정상 매핑."""
+        gl = pd.Series([1000, 4100, 9990])
+        result = _map_coa_category(gl, self.COA_PREFIXES)
+        assert result.tolist() == ["asset", "revenue", "other"]
+
+    def test_nullable_int64(self):
+        """nullable Int64 (pandas NA 포함) 안전 처리."""
+        gl = pd.array([1000, None, 4100], dtype="Int64")
+        result = _map_coa_category(pd.Series(gl), self.COA_PREFIXES)
+        assert result.iloc[0] == "asset"
+        assert result.iloc[1] == "other"  # NA → "<NA>" → 어떤 prefix와도 미매칭
+        assert result.iloc[2] == "revenue"
+
+
 # ── TestAmountZscore ─────────────────────────────────────────────
 
 
@@ -187,6 +235,59 @@ class TestAmountZscore:
         base = _compute_base_amount(df)
         add_amount_zscore(df, base)
         assert df["amount_zscore"].isna().all()
+
+    # ── CoA 상위계정 fallback (WU-11) ────────────────────────
+
+    COA_PREFIXES = {
+        "asset": ["1"],
+        "liability": ["2"],
+        "revenue": ["4"],
+        "expense": ["5"],
+    }
+
+    def test_coa_fallback_same_category(self, af_coa_fallback_df):
+        """소그룹 B(1200, n=5)가 같은 CoA(자산=A+B, n=40) 통계로 fallback.
+
+        CoA fallback 없이 전체 데이터 fallback을 했을 때와 다른 값이어야 한다.
+        """
+        df = af_coa_fallback_df.copy()
+        base = _compute_base_amount(df)
+
+        # CoA fallback 없는 기존 방식
+        df_no_coa = df.copy()
+        add_amount_zscore(df_no_coa, base.copy())
+        z_no_coa = df_no_coa.loc[df_no_coa["gl_account"] == "1200", "amount_zscore"]
+
+        # CoA fallback 사용
+        df_coa = df.copy()
+        add_amount_zscore(df_coa, base.copy(), coa_prefixes=self.COA_PREFIXES)
+        z_coa = df_coa.loc[df_coa["gl_account"] == "1200", "amount_zscore"]
+
+        # 둘 다 NaN이 아니어야 함
+        assert z_no_coa.notna().all()
+        assert z_coa.notna().all()
+        # CoA fallback(자산 그룹)과 전체 fallback 값은 달라야 함
+        assert not np.allclose(z_no_coa.values, z_coa.values)
+
+    def test_coa_fallback_small_coa_uses_total(self, af_coa_fallback_df):
+        """소그룹 C(4100, n=5) + CoA(수익, n=5) → CoA도 소그룹 → 전체 fallback."""
+        df = af_coa_fallback_df.copy()
+        base = _compute_base_amount(df)
+
+        # CoA fallback 없는 기존 방식
+        df_no_coa = df.copy()
+        add_amount_zscore(df_no_coa, base.copy())
+        z_no_coa = df_no_coa.loc[df_no_coa["gl_account"] == "4100", "amount_zscore"]
+
+        # CoA fallback 사용 — revenue 그룹도 5건이므로 전체 fallback과 동일해야 함
+        df_coa = df.copy()
+        add_amount_zscore(df_coa, base.copy(), coa_prefixes=self.COA_PREFIXES)
+        z_coa = df_coa.loc[df_coa["gl_account"] == "4100", "amount_zscore"]
+
+        assert z_no_coa.notna().all()
+        assert z_coa.notna().all()
+        # CoA도 소그룹이므로 전체 fallback과 동일
+        assert np.allclose(z_no_coa.values, z_coa.values)
 
 
 # ── TestAmountMagnitude ──────────────────────────────────────────
@@ -263,6 +364,46 @@ class TestIsRoundNumber:
         add_is_round_number(df, base, self.UNIT)
         assert df["is_round_number"].iloc[0] == False
 
+    # ── 외화 소수점 처리 (currency_decimals) ──────────────────
+
+    _CURR_DEC = {"KRW": 0, "USD": 2, "EUR": 2, "JPY": 0}
+
+    def test_usd_round_with_decimals(self):
+        """USD $10,000,000.00 → round(2) → %1M==0 → True."""
+        base = pd.Series([10_000_000.00])
+        df = pd.DataFrame({"x": [0], "currency": ["USD"]})
+        add_is_round_number(df, base, self.UNIT, currency_decimals=self._CURR_DEC)
+        assert df["is_round_number"].iloc[0] == True  # noqa: E712
+
+    def test_mixed_currency(self):
+        """KRW + USD 혼합: 둘 다 10M → 둘 다 True."""
+        base = pd.Series([10_000_000, 10_000_000.00])
+        df = pd.DataFrame({"x": [0, 0], "currency": ["KRW", "USD"]})
+        add_is_round_number(df, base, self.UNIT, currency_decimals=self._CURR_DEC)
+        assert df["is_round_number"].tolist() == [True, True]
+
+    def test_no_currency_column_fallback(self):
+        """currency 컬럼 없으면 기존 로직(round(0)) 폴백."""
+        base = pd.Series([10_000_000.00])
+        df = pd.DataFrame({"x": [0]})
+        add_is_round_number(df, base, self.UNIT, currency_decimals=self._CURR_DEC)
+        assert df["is_round_number"].iloc[0] == True  # noqa: E712
+
+    def test_unknown_currency_defaults_to_round0(self):
+        """currency_decimals에 없는 통화 → round(0) 폴백."""
+        base = pd.Series([10_000_000.00])
+        df = pd.DataFrame({"x": [0], "currency": ["CHF"]})
+        add_is_round_number(df, base, self.UNIT, currency_decimals=self._CURR_DEC)
+        assert df["is_round_number"].iloc[0] == True  # noqa: E712
+
+    def test_nan_currency_fallback(self):
+        """currency가 NaN인 행 → round(0) 폴백. groupby NaN 제외 버그 방지."""
+        base = pd.Series([10_000_000.0, 5_000_000.0])
+        df = pd.DataFrame({"x": [0, 0], "currency": ["USD", None]})
+        add_is_round_number(df, base, self.UNIT, currency_decimals=self._CURR_DEC)
+        assert df["is_round_number"].iloc[0] == True   # noqa: E712 — USD round(2)
+        assert df["is_round_number"].iloc[1] == True   # noqa: E712 — NaN round(0)
+
 
 # ── TestAddAllAmountFeatures ─────────────────────────────────────
 
@@ -302,3 +443,11 @@ class TestAddAllAmountFeatures:
         """NaN/0 포함 데이터에서 에러 없이 완료."""
         result = add_all_amount_features(af_edge_df.copy())
         assert self.EXPECTED_COLS.issubset(result.columns)
+
+    def test_currency_decimals_via_audit_rules(self, af_basic_df):
+        """audit_rules 주입 시 currency_decimals가 is_round_number에 반영."""
+        df = af_basic_df.copy()
+        df["currency"] = "USD"
+        rules = {"currency_decimals": {"USD": 2, "KRW": 0}}
+        result = add_all_amount_features(df, audit_rules=rules)
+        assert "is_round_number" in result.columns

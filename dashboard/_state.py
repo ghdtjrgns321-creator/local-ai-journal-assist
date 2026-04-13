@@ -19,7 +19,7 @@ KEY_FILTERS = "audit_filters"                   # FilterState dict
 KEY_DEV_MODE = "audit_dev_mode"                 # bool
 KEY_SETTINGS = "audit_settings"                 # AuditSettings | None (WU5 슬라이더용)
 KEY_BATCH_ID = "audit_batch_id"                 # str | None
-KEY_UPLOAD_COUNT = "audit_upload_count"         # int (파일 변경 감지)
+KEY_UPLOAD_COUNT = "audit_upload_count"         # str (file_key — 파일 변경 감지 + 파일명 표시)
 KEY_SELECTED_DOC = "audit_selected_doc"         # str | None (Explorer 선택 행, rerun 복원용)
 KEY_GRID_PAGE = "audit_grid_page"               # int (Explorer AgGrid 페이지, rerun 복원용)
 KEY_WHITELIST_IDS = "audit_whitelist_ids"       # set[str] (현재 배치 whitelist document_id 집합)
@@ -46,6 +46,9 @@ KEY_INGEST_SHEET_SCORES = "audit_ingest_sheets"      # list[SheetScore] | None
 KEY_INGEST_SELECTED_SHEET = "audit_ingest_sheet"     # str | None
 KEY_INGEST_SOURCE_COLUMNS = "audit_ingest_src_cols"  # list[str] | None
 KEY_INGEST_DATA_DF = "audit_ingest_data_df"          # pd.DataFrame | None
+
+# Batch History Loader: DB에서 로드한 결과 구분 (읽기 전용 모드)
+KEY_LOADED_FROM_DB = "audit_loaded_from_db"          # bool
 
 
 # ── 필터 상태 타입 ──────────────────────────────────────────────
@@ -83,7 +86,7 @@ _DEFAULTS: dict[str, object] = {
     KEY_DEV_MODE: False,
     KEY_SETTINGS: None,
     KEY_BATCH_ID: None,
-    KEY_UPLOAD_COUNT: 0,
+    KEY_UPLOAD_COUNT: "",
     KEY_SELECTED_DOC: None,
     KEY_GRID_PAGE: 0,
     KEY_WHITELIST_IDS: set(),
@@ -106,6 +109,8 @@ _DEFAULTS: dict[str, object] = {
     KEY_INGEST_SELECTED_SHEET: None,
     KEY_INGEST_SOURCE_COLUMNS: None,
     KEY_INGEST_DATA_DF: None,
+    # Batch History Loader
+    KEY_LOADED_FROM_DB: False,
 }
 
 

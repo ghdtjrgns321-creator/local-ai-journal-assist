@@ -55,6 +55,8 @@ class ConnectionManager:
             conn = duckdb.connect(":memory:")
             from src.db.schema import initialize_schema
             initialize_schema(conn)
+            from src.db.migration import run_migrations
+            run_migrations(conn)
             return conn
 
         with self._lock:
@@ -74,6 +76,9 @@ class ConnectionManager:
             # Why: 순환 import 방지 — schema 모듈이 connection을 참조하지 않도록 지연 import
             from src.db.schema import initialize_schema
             initialize_schema(conn)
+
+            from src.db.migration import run_migrations
+            run_migrations(conn)
 
             self._connections[key] = conn
             logger.info("DuckDB 커넥션 생성: %s", key)

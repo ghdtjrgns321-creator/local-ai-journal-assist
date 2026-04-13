@@ -9,6 +9,8 @@ import pytest
 from src.feature.text_features import (
     _clean_for_keyword,
     _combine_text,
+    _compute_entropy,
+    _compute_ttr,
     _is_noise_pattern,
     _match_risk_level,
     add_all_text_features,
@@ -116,6 +118,19 @@ class TestIsNoisePattern:
         """동일 문자 3회+ 반복."""
         assert _is_noise_pattern(text) is True
 
+    @pytest.mark.parametrize("text", ["비품비품비품", "ABCABCABC"])
+    def test_repeat_word(self, text):
+        """다문자 패턴 3회+ 반복."""
+        assert _is_noise_pattern(text) is True
+
+    def test_two_repeat_not_noise(self):
+        """2회 반복은 허용 (실무 오타/복붙 가능)."""
+        assert _is_noise_pattern("비품비품") is False
+
+    def test_mixed_repeat_normal(self):
+        """반복이 아닌 비슷한 텍스트는 정상."""
+        assert _is_noise_pattern("비품구매비품") is False
+
     def test_normal_text(self):
         """정상 텍스트는 False."""
         assert _is_noise_pattern("일반 매출") is False
@@ -123,6 +138,64 @@ class TestIsNoisePattern:
     def test_empty_string(self):
         """빈 문자열은 False (NaN 판정은 상위 함수)."""
         assert _is_noise_pattern("") is False
+
+
+# ── _compute_ttr ─────────────────────────────────────────────────
+
+
+class TestComputeTtr:
+    """어휘 다양성 (Type-Token Ratio)."""
+
+    def test_all_unique(self):
+        """모든 토큰이 고유 → TTR=1.0."""
+        assert _compute_ttr("가 나 다 라") == 1.0
+
+    def test_all_same(self):
+        """모든 토큰 동일(4개) → TTR=1/4=0.25."""
+        assert _compute_ttr("가 가 가 가") == 0.25
+
+    def test_empty_string(self):
+        """빈 문자열 → 0.0."""
+        assert _compute_ttr("") == 0.0
+
+    def test_single_token(self):
+        """토큰 1개 → TTR=1.0."""
+        assert _compute_ttr("매출") == 1.0
+
+    def test_below_threshold(self):
+        """동일 단어 5회 반복 → TTR=0.2 < 0.3."""
+        assert _compute_ttr("비품 비품 비품 비품 비품") == pytest.approx(0.2)
+
+    def test_whitespace_only(self):
+        """공백만 → split() 결과 빈 리스트 → 0.0."""
+        assert _compute_ttr("   ") == 0.0
+
+
+# ── _compute_entropy ─────────────────────────────────────────────
+
+
+class TestComputeEntropy:
+    """문자 단위 Shannon Entropy."""
+
+    def test_single_char_repeat(self):
+        """동일 문자 반복 → entropy=0.0."""
+        assert _compute_entropy("aaaa") == 0.0
+
+    def test_empty_string(self):
+        """빈 문자열 → 0.0."""
+        assert _compute_entropy("") == 0.0
+
+    def test_high_entropy(self):
+        """다양한 문자 → entropy > 1.0."""
+        assert _compute_entropy("abcdefgh") > 1.0
+
+    def test_two_chars_equal(self):
+        """2종 문자 균등 분포 → entropy=1.0."""
+        assert _compute_entropy("aabb") == pytest.approx(1.0)
+
+    def test_single_char(self):
+        """단일 문자 → entropy=0.0."""
+        assert _compute_entropy("a") == 0.0
 
 
 # ── _match_risk_level ────────────────────────────────────────────
@@ -208,6 +281,44 @@ class TestDescriptionQuality:
         # "A B" → strip → len=3 → normal (cleaned면 "AB" len=2 → poor)
         result = add_description_quality(df, min_length=3)
         assert result["description_quality"].iloc[0] == "normal"
+
+    # ── Phase 2: TTR + Entropy 고도화 (WU-11) ────────────────
+
+    def test_low_ttr_is_poor(self):
+        """동일 단어 반복 → TTR < 0.3 → poor."""
+        df = pd.DataFrame({
+            "line_text": ["비품 비품 비품 비품 비품"],
+            "header_text": [None],
+        })
+        result = add_description_quality(df, ttr_threshold=0.3)
+        assert result["description_quality"].iloc[0] == "poor"
+
+    def test_low_entropy_is_poor(self):
+        """저엔트로피 텍스트 → poor."""
+        df = pd.DataFrame({
+            "line_text": ["aaab"],
+            "header_text": [None],
+        })
+        result = add_description_quality(df, entropy_threshold=1.0)
+        assert result["description_quality"].iloc[0] == "poor"
+
+    def test_normal_ttr_and_entropy(self):
+        """정상 적요는 TTR/entropy 체크를 통과하여 여전히 normal."""
+        df = pd.DataFrame({
+            "line_text": ["3월 영업부 법인카드 결산 정리"],
+            "header_text": [None],
+        })
+        result = add_description_quality(df)
+        assert result["description_quality"].iloc[0] == "normal"
+
+    def test_multi_char_repeat_noise_is_poor(self):
+        """다문자 반복 → noise → poor."""
+        df = pd.DataFrame({
+            "line_text": ["비품비품비품"],
+            "header_text": [None],
+        })
+        result = add_description_quality(df)
+        assert result["description_quality"].iloc[0] == "poor"
 
 
 # ── add_has_risk_keyword ─────────────────────────────────────────

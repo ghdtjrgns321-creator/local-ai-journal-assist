@@ -31,7 +31,7 @@ def benford_overlay(
     deviation = (df["observed_freq"] - df["expected_freq"]).abs()
     # Why: MAD 초과 digit만 빨간색으로 강조하여 이상 분포 직관적 식별.
     bar_colors = [
-        "#EF553B" if d > mad_threshold else "#636EFA"
+        "#DC2626" if d > mad_threshold else "#2563EB"
         for d in deviation
     ]
 
@@ -44,7 +44,7 @@ def benford_overlay(
     fig.add_trace(go.Scatter(
         x=df["digit"], y=df["expected_freq"],
         mode="lines+markers", name="기대 빈도 (Benford)",
-        line={"color": "#00CC96", "width": 2, "dash": "dash"},
+        line={"color": "#6B7280", "width": 2, "dash": "dash"},
         hovertemplate="숫자: %{x}<br>기대: %{y:.4f}<extra></extra>",
     ))
 
@@ -117,7 +117,7 @@ def benford_facet(
         freq = counts / total
         deviation = (freq - pd.Series(expected_freq, index=freq.index)).abs()
         bar_colors = [
-            "#EF553B" if d > mad_threshold else "#636EFA" for d in deviation
+            "#DC2626" if d > mad_threshold else "#2563EB" for d in deviation
         ]
 
         fig.add_trace(
@@ -127,7 +127,7 @@ def benford_facet(
         )
         fig.add_trace(
             go.Scatter(x=list(_DIGITS), y=expected_freq, mode="lines+markers",
-                       line={"color": "#00CC96", "width": 1.5, "dash": "dash"},
+                       line={"color": "#6B7280", "width": 1.5, "dash": "dash"},
                        showlegend=False, hovertemplate="기대: %{y:.4f}<extra></extra>"),
             row=row, col=col,
         )

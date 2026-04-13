@@ -188,7 +188,9 @@ def add_all_pattern_features(
         rules = get_audit_rules()["patterns"]
 
     add_is_manual_je(df, rules.get("manual_source_codes", []))
-    add_is_intercompany(df, rules.get("intercompany_identifiers", []))
+    # Why: intercompany.pairs 구조에서 flat prefix 리스트 추출 (WU-07 YAML 구조화)
+    from src.detection.intercompany_rules import extract_ic_prefixes
+    add_is_intercompany(df, extract_ic_prefixes(rules))
     add_is_revenue_account(df, rules.get("revenue_account_prefixes", []))
     add_first_digit(df)
     add_is_suspense_account(

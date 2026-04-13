@@ -1,20 +1,25 @@
-"""Pipeline 조립 — XGB / VAE / IF 3개 Pipeline 생성.
+"""Pipeline 조립 — 지도학습 4종(LR/RF/XGB/LGBM) + 비지도 2종(VAE/IF).
 
 Why: 모델 특성에 따라 전처리가 달라진다.
-XGBoost는 스케일링 불필요+TargetEncoder, VAE/IF는 StandardScaler+고카디널리티 DROP.
+지도학습은 스케일링 불필요+TargetEncoder, VAE/IF는 StandardScaler+고카디널리티 DROP.
 """
 
 from __future__ import annotations
 
+import logging
+
 from sklearn.compose import ColumnTransformer
-from sklearn.ensemble import IsolationForest
+from sklearn.ensemble import IsolationForest, RandomForestClassifier
 from sklearn.impute import SimpleImputer
+from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OrdinalEncoder, StandardScaler
 
 from src.preprocessing.feature_groups import FeatureGroups
 from src.preprocessing.transformers import SafePowerTransformer
 from src.preprocessing.vae_wrapper import VAEDetector
+
+logger = logging.getLogger(__name__)
 
 try:
     from sklearn.preprocessing import TargetEncoder
@@ -26,9 +31,14 @@ try:
 except ImportError:
     XGBClassifier = None  # type: ignore[assignment,misc]
 
+try:
+    from lightgbm import LGBMClassifier
+except ImportError:
+    LGBMClassifier = None  # type: ignore[assignment,misc]
 
-def build_xgb_pipeline(groups: FeatureGroups) -> Pipeline:
-    """XGBoost 지도학습 Pipeline 조립."""
+
+def _build_supervised_preprocessor(groups: FeatureGroups) -> ColumnTransformer:
+    """XGB/LightGBM/LR/RF 공용 전처리기 — 스케일링 불필요, TargetEncoder 사용."""
     transformers = []
     if groups.numeric:
         transformers.append(("num", SimpleImputer(strategy="median"), groups.numeric))
@@ -47,11 +57,71 @@ def build_xgb_pipeline(groups: FeatureGroups) -> Pipeline:
         transformers.append(("bool", "passthrough", groups.boolean))
     if groups.ordinal:
         transformers.append(("ord", _build_ordinal_encoder(groups.ordinal), groups.ordinal))
+    return ColumnTransformer(transformers, remainder="drop")
 
-    preprocessor = ColumnTransformer(transformers, remainder="drop")
+
+def build_xgb_pipeline(groups: FeatureGroups) -> Pipeline:
+    """XGBoost 지도학습 Pipeline 조립."""
     return Pipeline([
+        ("preprocessor", _build_supervised_preprocessor(groups)),
+        ("classifier", XGBClassifier(eval_metric="logloss")),
+    ])
+
+
+def build_lgbm_pipeline(groups: FeatureGroups) -> Pipeline:
+    """LightGBM 지도학습 Pipeline 조립."""
+    if LGBMClassifier is None:
+        raise ImportError("lightgbm 미설치. pip install lightgbm")
+    return Pipeline([
+        ("preprocessor", _build_supervised_preprocessor(groups)),
+        ("classifier", LGBMClassifier(is_unbalance=True, verbosity=-1, random_state=42)),
+    ])
+
+
+def build_supervised_pipelines(
+    groups: FeatureGroups, use_smote: bool = False,
+) -> dict[str, Pipeline]:
+    """지도학습 4개 Pipeline: lr, rf, xgb, lgbm.
+
+    Why: cv_selector.compare_pipelines()로 자동 비교하여 최적 모델 선택.
+    use_smote=True이면 imblearn Pipeline으로 감싸서 CV 내부 train fold에만 SMOTE-ENN 적용.
+    """
+    classifiers = {
+        "lr": LogisticRegression(class_weight="balanced", max_iter=1000, random_state=42),
+        "rf": RandomForestClassifier(
+            class_weight="balanced", n_estimators=100, random_state=42,
+        ),
+    }
+    if XGBClassifier is not None:
+        classifiers["xgb"] = XGBClassifier(eval_metric="logloss", random_state=42)
+    if LGBMClassifier is not None:
+        classifiers["lgbm"] = LGBMClassifier(
+            is_unbalance=True, verbosity=-1, random_state=42,
+        )
+
+    # Why: 각 파이프라인에 독립적인 preprocessor 인스턴스 — fit 상태 교차 오염 방지
+    pipelines: dict[str, Pipeline] = {}
+    for name, clf in classifiers.items():
+        pipelines[name] = _wrap_pipeline(
+            _build_supervised_preprocessor(groups), clf, use_smote,
+        )
+    return pipelines
+
+
+def _wrap_pipeline(preprocessor: ColumnTransformer, clf, use_smote: bool) -> Pipeline:
+    """use_smote 여부에 따라 sklearn 또는 imblearn Pipeline 반환."""
+    if not use_smote:
+        return Pipeline([("preprocessor", preprocessor), ("classifier", clf)])
+    try:
+        from imblearn.combine import SMOTEENN
+        from imblearn.pipeline import Pipeline as ImbPipeline
+    except ImportError:
+        logger.warning("imbalanced-learn 미설치. SMOTE 없이 진행.")
+        return Pipeline([("preprocessor", preprocessor), ("classifier", clf)])
+    return ImbPipeline([
         ("preprocessor", preprocessor),
-        ("classifier", XGBClassifier(use_label_encoder=False, eval_metric="logloss")),
+        ("smote", SMOTEENN(random_state=42)),
+        ("classifier", clf),
     ])
 
 
@@ -70,8 +140,23 @@ def build_if_pipeline(groups: FeatureGroups) -> Pipeline:
     ])
 
 
+def build_ft_pipeline(groups: FeatureGroups) -> Pipeline:
+    """FT-Transformer 지도학습 Pipeline 조립.
+
+    Why: self-attention으로 피처 간 상호작용을 학습하는 지도학습 모델.
+    lazy import로 torch 미설치 환경에서 다른 파이프라인에 영향 없음.
+    """
+    from src.preprocessing.ft_wrapper import FTTransformerClassifier
+
+    preprocessor = _build_supervised_preprocessor(groups)
+    return Pipeline([
+        ("preprocessor", preprocessor),
+        ("classifier", FTTransformerClassifier()),
+    ])
+
+
 def build_all_pipelines(groups: FeatureGroups) -> dict[str, Pipeline]:
-    """3개 Pipeline 일괄 생성."""
+    """xgb/vae/if Pipeline 일괄 생성. FT-Transformer는 별도 build_ft_pipeline() 사용."""
     return {
         "xgb": build_xgb_pipeline(groups),
         "vae": build_vae_pipeline(groups),
@@ -98,6 +183,10 @@ def _build_cat_low_transformer() -> Pipeline:
             unknown_value=-1,
         )),
     ])
+
+
+# Why: SequenceDetector가 2D 전처리기를 직접 호출하기 위한 public alias
+build_supervised_preprocessor = _build_supervised_preprocessor
 
 
 def _build_unsupervised_preprocessor(groups: FeatureGroups) -> ColumnTransformer:

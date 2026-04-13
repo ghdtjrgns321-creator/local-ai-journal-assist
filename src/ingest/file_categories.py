@@ -21,7 +21,7 @@ class FileCategory:
 # --- 카테고리 상수 ---
 # 크기 제한은 파일 포맷의 물리적 특성에 따른 값
 # Excel: 시트당 104만 행 → 꽉 채워도 ~80MB이므로 100MB 충분
-# Text:  CSV 대용량 덤프 가능 → 800MB (16GB RAM 기준, Phase 2/3 Ollama 동시 실행 감안)
+# Text:  CSV 대용량 덤프 가능 → 800MB (16GB RAM 기준, Phase 2 ML/DL 병행 감안)
 # Columnar: 압축 효율이 높아 1GB 원본이 메모리에서 훨씬 작음
 
 EXCEL = FileCategory("excel", 100, frozenset({".xlsx", ".xls", ".xlsb"}))

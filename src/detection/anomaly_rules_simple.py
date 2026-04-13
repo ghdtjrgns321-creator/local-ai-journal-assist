@@ -10,21 +10,50 @@ import numpy as np
 import pandas as pd
 
 
-def c01_period_end_large(df: pd.DataFrame, quantile: float = 0.75) -> pd.Series:
-    """C01 기말 대규모: 월말 근접 + 금액 > Q3.
+def c01_period_end_large(
+    df: pd.DataFrame,
+    quantile: float = 0.75,
+    min_group_size: int = 30,
+) -> pd.Series:
+    """C01 기말 대규모: 월말 근접 + 금액 > Q3 (계정그룹별).
 
     Why: PCAOB AS 240 §32(b), FSS 결산 수정 조작 패턴.
          기말에 집중되는 고액 전표는 결산 조정 조작 가능성.
+         계정그룹별 Q3로 계정 특성(매출 vs 비용 금액 규모) 반영 → 오탐 감소.
     """
     if "is_period_end" not in df.columns:
         return pd.Series(False, index=df.index)
     # Why: max(debit, credit)로 대표 금액 산출 — fraud_rules_groupby 패턴 동일
     base = df[["debit_amount", "credit_amount"]].fillna(0).max(axis=1)
-    # Why: 전체 모집단 Q3 기준 — 기말 행이 '전체 대비 고액'인지 판단.
-    #      기말 내부 분포 기준으로 바꾸려면 base[period_end_mask].quantile() 사용.
-    #      Phase 2에서 계정그룹별 Q3로 확장 예정.
-    threshold = base.quantile(quantile)
+
+    # Why: account_group 존재 시 그룹별 Q3 — 계정 특성 반영
+    #      미존재 시 전체 단일 Q3 (Phase 1 하위 호환)
+    if "account_group" in df.columns:
+        threshold = _grouped_quantile(base, df["account_group"], quantile, min_group_size)
+    else:
+        threshold = base.quantile(quantile)
+
     return df["is_period_end"].fillna(False) & (base > threshold)
+
+
+def _grouped_quantile(
+    base: pd.Series,
+    groups: pd.Series,
+    quantile: float,
+    min_size: int,
+) -> pd.Series:
+    """그룹별 quantile 계산. 소그룹(n < min_size)은 전체 Q3 fallback.
+
+    Why: n이 너무 작으면 분위수 추정이 불안정 → 전체 Q3가 더 신뢰성 있음.
+         groupby().quantile() + map() 패턴으로 transform보다 빠르게 처리.
+    """
+    global_q = base.quantile(quantile)
+    # Why: transform("quantile")은 Python 루프 → groupby().quantile()+map()이 빠름
+    group_q_map = base.groupby(groups).quantile(quantile)
+    group_size_map = base.groupby(groups).size()
+    mapped_q = groups.map(group_q_map)
+    mapped_size = groups.map(group_size_map)
+    return mapped_q.where(mapped_size >= min_size, global_q)
 
 
 def c02_weekend_entry(df: pd.DataFrame) -> pd.Series:
@@ -41,10 +70,30 @@ def c03_after_hours_entry(df: pd.DataFrame) -> pd.Series:
     """C03 심야 전기: 업무시간(09~18시) 외 전기.
 
     Why: PCAOB AS 240 A49(c) — 심야 전기는 감시 부재 시점 악용 가능.
+
+    신호 소스 (우선순위):
+      1) is_after_hours boolean (피처 엔진 1차 신호)
+      2) time_zone_category in {"overtime", "midnight"} — 결산 보정·결산기 가중 반영된
+         정밀 분류 (feature/time_features.py add_time_zone_category 참조).
+         is_after_hours 미생성 환경에서도 동작하도록 fallback로 사용.
+      두 신호는 OR 결합 — 한쪽이라도 비정상이면 플래그.
     """
-    if "is_after_hours" not in df.columns:
+    has_bool = "is_after_hours" in df.columns
+    has_cat = "time_zone_category" in df.columns
+    if not has_bool and not has_cat:
         return pd.Series(False, index=df.index)
-    return df["is_after_hours"].fillna(False)
+
+    bool_mask = (
+        df["is_after_hours"].fillna(False)
+        if has_bool else pd.Series(False, index=df.index)
+    )
+    # Why: time_zone_category로 결산기 보정/주말 가중을 반영한 비정상 시간대 캡처.
+    #      is_after_hours만으로는 결산기 야근(정상)과 평상시 야근(비정상)을 구분 못함.
+    cat_mask = (
+        df["time_zone_category"].isin(["overtime", "midnight"])
+        if has_cat else pd.Series(False, index=df.index)
+    )
+    return bool_mask | cat_mask
 
 
 def c04_backdated_entry(

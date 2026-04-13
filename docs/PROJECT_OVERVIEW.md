@@ -19,9 +19,9 @@ MindBridge, KPMG Clara의 핵심 로직을 오픈소스(Python)로 재현하는 
 | 비지도학습  | pytorch (VAE), scikit-learn (IF)   | **핵심 탐지기** — 합성 데이터 적합도 높음 (Phase 2)  |
 | 한국어 NLP  | kiwipiepy                          | JVM 의존성 없음 (Phase 3)                  |
 | DB          | duckdb                             | OLAP 최적화                                 |
-| LLM         | ollama + Qwen3-8B (Q4_K_M)        | Phase 3                                     |
-| Text-to-SQL | Vanna AI 2.0                       | Phase 3                                     |
-| 벡터 DB     | ChromaDB                           | Vanna 학습 스토리지 (Phase 3)              |
+| LLM         | 상용 API (Gemini, Claude 등)       | Phase 3 — 로컬 LLM 대신 상용 API 사용      |
+| Text-to-SQL | 상용 LLM API 기반                  | Phase 3                                     |
+| 벡터 DB     | ChromaDB                           | RAG 스토리지 (Phase 3)                     |
 | 대시보드    | streamlit, plotly, streamlit-aggrid |                                             |
 | PDF         | fpdf2                              | Phase 3                                     |
 
@@ -52,7 +52,7 @@ local-ai-assist/
 │   │   ├── merger.py           # 3계층 deep_merge
 │   │   └── migration.py        # 레거시 DB 마이그레이션
 │   ├── ingest/                 # 수집·평탄화
-│   ├── feature/                # 감사 파생변수 18개
+│   ├── feature/                # 감사 파생변수 19개
 │   ├── eda/                    # EDA 프로파일링
 │   ├── validation/             # 계층적 검증 (L1~L3)
 │   ├── preprocessing/          # ML 전처리 파이프라인 (Phase 2)
@@ -142,12 +142,12 @@ EY-ASU DataSynth(Rust)로 생성한 K-IFRS 적용 한국 중견 제조 그룹사
 |----------------|-------------------------------------------------------|
 | 법인           | C001 본사(서울), C002 울산공장, C003 천안공장 — 전체 KRW |
 | 회계연도       | 2022-01 ~ 2024-12 (3개년)                             |
-| 전표 규모      | 319,028건 / 3,241,687 라인아이템                      |
-| 금액 분포      | LogNormal(14.0, 2.5) — 중앙값 ~120만원                |
+| 전표 규모      | 319,135건 / 1,191,825 라인아이템 (전표당 3.73행)      |
+| 금액 분포      | LogNormal(14.0, 2.5) — 중앙값(전표) ~140만원, 중앙값(라인) ~31.6만원 |
 | 승인 한도      | 6단계 전결규정 (자동→담당자→팀장→본부장→CFO→이사회)    |
-| 사용자 풀      | 259명 (5개 페르소나), SoD 위반 ~11.7%                 |
+| 사용자 풀      | 195명 (5개 페르소나, 한국식 로마자 ID), SoD 위반 2.1% |
 | 시간 패턴      | 한국 근무 문화 반영 (심야 0.02, 오전 피크 1.8, 야근 0.3) |
-| 이상 주입      | fraud 1.8% + anomaly 7.2%, 25,614 라벨 (3개년 합산)   |
+| 이상 주입      | fraud 1.5% (4,909건, 16종) + anomaly 14.7% (47,074건, 53종) |
 | Benford        | 첫째 자릿수 적합 (tolerance 5%, payroll/recurring 제외) |
 
 ## ML 학습 전략
@@ -183,8 +183,8 @@ EY-ASU DataSynth(Rust)로 생성한 K-IFRS 적용 한국 중견 제조 그룹사
   ↑ UX 1단계: 자동 헤더/매핑 + 사용자 위임 + 판단 근거 투명 노출
 
 [파이프라인 실행] — AuditPipeline(context=ctx).run(path)
-  → 표준 DataFrame → feature/engine(←ctx.settings, ctx.audit_rules) — 파생변수 18개
-  → validation (L1 구조 + L2 회계)
+  → 표준 DataFrame → feature/engine(←ctx.settings, ctx.audit_rules) — 파생변수 19개
+  → validation (L1 구조 + L2 회계 + L3 통계)
   → detection (A무결성 + B부정 + C징후, 24개 룰, ←ctx.settings, ctx.chart_of_accounts)
   → score_aggregator (가중합 + risk_level + B19)
   → DuckDB 적재 (ctx.db_path — Engagement별 격리 DB)
@@ -195,8 +195,12 @@ EY-ASU DataSynth(Rust)로 생성한 K-IFRS 적용 한국 중견 제조 그룹사
   → 연도 비교 탭 (ATTACH 교차 쿼리)
   ↑ UX 3단계: EDA 프로파일링 + 전처리 투명성
 
-[Phase 2+]
+[Phase 2: ML/DL — 로컬 실행]
   → preprocessing (pipeline_builder → cv_selector)
   → ML 탐지 (VAE+IF + Stacking) — 모델 저장: ctx.model_dir
-  → Phase 3: Text-to-SQL, NLP, Export
+
+[Phase 3: LLM — 상용 API (하이브리드)]
+  → 로컬: 위험 스코어·통계 지표 추출
+  → API: Text-to-SQL, NLP 의미 분석, 인사이트 생성, Export
+  → 비식별화 레이어: 현재 범위 외, 필요성 인지 (CONSTRAINTS.md 참조)
 ```

@@ -83,6 +83,75 @@ class TestC07:
         assert isinstance(result[0], pd.Series)
         assert isinstance(result[1], dict)
 
+    def test_document_level_flagging(self, benford_settings: AuditSettings) -> None:
+        """위반 자릿수 행이 포함된 전표 → 전표 내 모든 행 플래그 (복식부기)."""
+        df = self._make_nonconforming_df(300)
+        # Why: 전표 3개로 묶기 — 전표당 100행
+        doc_ids = (["DOC-A"] * 100) + (["DOC-B"] * 100) + (["DOC-C"] * 100)
+        df["document_id"] = doc_ids
+        scores, _ = c07_benford_violation(df, settings=benford_settings)
+        # Why: 이제 float Series이므로 mask는 scores > 0으로 변환
+        flagged_mask = scores > 0
+        flagged_docs = set(df.loc[flagged_mask, "document_id"].unique())
+        for doc_id in flagged_docs:
+            doc_mask = df["document_id"] == doc_id
+            # Why: 전표에 속한 모든 행이 플래그 — 일부만 빠지면 안 됨
+            assert (scores[doc_mask] > 0).all(), f"{doc_id}의 일부 행만 플래그됨"
+
+    def test_no_document_id_falls_back_to_row_level(self, benford_settings: AuditSettings) -> None:
+        """document_id 미존재 → 기존 행 단위 동작 유지 (에러 없이 정상 반환)."""
+        df = self._make_nonconforming_df(300)
+        assert "document_id" not in df.columns
+        result, _ = c07_benford_violation(df, settings=benford_settings)
+        # Why: 균등분포는 모든 자릿수 위반 → 전체 플래그되지만, 에러 없이 반환되면 OK
+        assert result.any()
+        assert isinstance(result, pd.Series)
+        assert len(result) == len(df)
+
+    def test_returns_float_scores_in_range(self, benford_settings: AuditSettings) -> None:
+        """반환값이 float [0, 0.8] 범위 — deviation 비례 차등 스코어."""
+        df = self._make_nonconforming_df(300)
+        scores, _ = c07_benford_violation(df, settings=benford_settings)
+        # Why: dtype 검증 — bool이 아닌 float여야 함
+        assert scores.dtype == float
+        # Why: 위반 행은 [0.2, 0.8] 범위, 미위반 행은 0.0
+        assert scores.min() >= 0.0
+        assert scores.max() <= 0.8 + 1e-9
+        nonzero = scores[scores > 0]
+        if not nonzero.empty:
+            assert nonzero.min() >= 0.2 - 1e-9
+
+    def test_higher_deviation_higher_score(self, benford_settings: AuditSettings) -> None:
+        """편차가 큰 분포가 작은 분포보다 높은 점수를 받는다.
+
+        Why: 동일한 nonconforming 판정이라도 'MAD 0.02' vs 'MAD 0.10'은
+             이상도가 다르므로 점수가 차등되어야 한다 (이전 0.4 고정값 회귀 방지).
+        """
+        # 약한 편차: 1번 자릿수만 살짝 부풀림
+        weak = []
+        for d in range(1, 10):
+            target_freq = math.log10(1 + 1 / d)
+            count = round(300 * target_freq)
+            weak.extend([d] * count)
+        weak += [1] * 30  # 1번 약 10% 추가 부풀림
+        df_weak = pd.DataFrame({
+            "first_digit": pd.array(weak[:300], dtype=pd.Int64Dtype()),
+            "debit_amount": [100.0] * 300,
+            "credit_amount": [0.0] * 300,
+        })
+        scores_weak, meta_weak = c07_benford_violation(df_weak, settings=benford_settings)
+
+        # 강한 편차: 균등 분포 (Benford에서 가장 멀리 떨어짐)
+        df_strong = self._make_nonconforming_df(300)
+        scores_strong, meta_strong = c07_benford_violation(df_strong, settings=benford_settings)
+
+        # 양쪽 다 위반이라면, 균등 분포가 더 높은 max 점수를 받아야 함
+        if scores_weak.max() > 0 and scores_strong.max() > 0:
+            assert scores_strong.max() >= scores_weak.max(), (
+                f"강한 편차가 더 낮은 점수: weak={scores_weak.max():.3f}, "
+                f"strong={scores_strong.max():.3f}"
+            )
+
 
 # ── C09 비정상 계정조합 ──────────────────────────────────
 

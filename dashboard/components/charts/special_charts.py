@@ -54,8 +54,8 @@ def layer_score_radar(scores: dict[str, float]) -> go.Figure:
         r=values + [values[0]],  # Why: 방사형 차트 닫기 위해 첫 값 반복.
         theta=labels + [labels[0]],
         fill="toself",
-        fillcolor="rgba(99, 110, 250, 0.15)",
-        line={"color": "#636EFA"},
+        fillcolor="rgba(37, 99, 235, 0.15)",
+        line={"color": "#2563EB"},
         hovertemplate="%{theta}: %{r:.3f}<extra></extra>",
     ))
 

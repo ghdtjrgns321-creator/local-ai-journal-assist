@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import json
-import sys
-from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -20,17 +18,6 @@ from src.llm.models import (
     ScalerStrategy,
 )
 from src.llm.preprocessing_advisor import PreprocessingAdvisor
-
-
-# ── ollama mock ──
-
-
-@pytest.fixture(autouse=True)
-def _inject_ollama_mock():
-    """ollama 패키지 미설치 환경용 mock."""
-    mock_module = MagicMock()
-    with patch.dict(sys.modules, {"ollama": mock_module}):
-        yield
 
 
 # ── Fixtures ──

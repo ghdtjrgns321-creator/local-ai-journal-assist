@@ -59,16 +59,12 @@ def _get_required_columns(schema: dict) -> set[str]:
 
 
 def _get_all_standard_columns(schema: dict) -> set[str]:
-    """schema.yaml의 전체 표준 컬럼명 set (label 컬럼 제외).
+    """schema.yaml의 전체 표준 컬럼명 set.
 
-    Why: is_label=true인 컬럼(is_fraud, is_anomaly)은 DataSynth 전용이므로
-    매핑 대상에서 제외. schema에 is_label 필드가 없으면 type=bool을 폴백으로 사용.
+    Why: boolean 컬럼(is_fraud, is_anomaly 등)도 ML/DL 레이블로
+    사용되므로 매핑 대상에 포함한다.
     """
-    return {
-        col["name"]
-        for col in schema.get("columns", [])
-        if not col.get("is_label", col.get("type") == "bool")
-    }
+    return {col["name"] for col in schema.get("columns", [])}
 
 
 def _is_standard_schema(

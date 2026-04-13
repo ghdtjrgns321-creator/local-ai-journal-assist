@@ -97,6 +97,48 @@ class TestCastAmount:
         result = cast_amount(s)
         assert result.tolist() == [-1000.0, 0.0]
 
+    # ── 유럽 금액 포맷 (decimal_format: "comma") ──────────────
+
+    _EUR_CFG: dict = {
+        "amount": {
+            "decimal_format": "comma",
+            "currency_symbols": ["₩", "$", "¥", "€", "\\"],
+            "currency_words": ["원", "USD", "KRW", "JPY", "EUR"],
+            "null_values": ["", "-", "nan"],
+        },
+    }
+
+    def test_european_comma_decimal(self):
+        """유럽식 1.234,56 → 1234.56."""
+        s = pd.Series(["1.234,56", "10.000,00", "999,99"])
+        result = cast_amount(s, cleaning_config=self._EUR_CFG)
+        assert result.tolist() == [1234.56, 10000.0, 999.99]
+
+    def test_european_with_currency_symbol(self):
+        """유럽식 + 통화기호: €10.000,00 → 10000.0."""
+        s = pd.Series(["€10.000,00", "$1.500,25"])
+        result = cast_amount(s, cleaning_config=self._EUR_CFG)
+        assert result.tolist() == [10000.0, 1500.25]
+
+    def test_european_parenthesis_negative(self):
+        """유럽식 + 괄호음수: (2.500,50) → -2500.5."""
+        s = pd.Series(["(2.500,50)", "(100,00)"])
+        result = cast_amount(s, cleaning_config=self._EUR_CFG)
+        assert result.tolist() == [-2500.5, -100.0]
+
+    def test_default_period_format_unchanged(self):
+        """decimal_format 미지정 시 기본(period) 하위 호환 — 기존 동작 유지."""
+        cfg_no_fmt = {
+            "amount": {
+                "currency_symbols": ["₩"],
+                "currency_words": ["원"],
+                "null_values": [""],
+            },
+        }
+        s = pd.Series(["1,234.56", "10,000"])
+        result = cast_amount(s, cleaning_config=cfg_no_fmt)
+        assert result.tolist() == [1234.56, 10000.0]
+
 
 # ── TestCastDate ─────────────────────────────────────────────
 
