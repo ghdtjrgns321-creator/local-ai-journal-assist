@@ -1,0 +1,201 @@
+"""Service-layer orchestration around pipeline execution."""
+
+from __future__ import annotations
+
+from collections.abc import MutableMapping
+from typing import Any, Callable
+
+from dashboard._state import (
+    KEY_BATCH_ID,
+    KEY_COMPANY_CONTEXT,
+    KEY_DISABLED_RULES,
+    KEY_FEATURED_DATA,
+    KEY_LAYER_WEIGHTS,
+    KEY_PHASE1_RESULT,
+    KEY_PHASE2_RESULT,
+    KEY_PIPELINE_RESULT,
+    KEY_PREP_RESULT,
+    KEY_RISK_THRESHOLDS,
+    KEY_SETTINGS,
+    KEY_SETTINGS_DIRTY,
+)
+def make_phase_settings(
+    base_settings,
+    *,
+    phase: str,
+    settings_factory: Callable[[], Any] | None = None,
+):
+    """Build phase-specific detector settings from the current baseline settings."""
+    settings = base_settings
+    if settings is None:
+        factory = settings_factory
+        if factory is None:
+            from config.settings import get_settings
+
+            factory = get_settings
+        settings = factory()
+
+    updates = {
+        "enable_variance_detection": False,
+        "enable_relational_detection": False,
+        "enable_graph_detection": False,
+        "enable_nlp_detection": False,
+        "enable_access_audit_detection": False,
+        "enable_evidence_detection": False,
+        "enable_trendbreak_detection": False,
+        "enable_ml_detection": False,
+    }
+    if phase == "phase2":
+        updates["enable_ml_detection"] = True
+    return settings.model_copy(update=updates)
+
+
+def build_audit_trail(ctx):
+    """Create an engagement-bound AuditTrail if the current context supports it."""
+    if ctx is None or getattr(ctx, "is_anonymous", True):
+        return None
+    try:
+        from src.db.connection import get_connection
+        from src.export.audit_trail import AuditTrail
+
+        return AuditTrail(get_connection(str(ctx.db_path)))
+    except Exception:  # pragma: no cover - defensive UI fallback
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "AuditTrail 생성 실패 -> 증적 기록 없이 진행", exc_info=True,
+        )
+        return None
+
+
+def run_phase_analysis(
+    state: MutableMapping[str, Any],
+    *,
+    phase: str,
+    pipeline_cls=None,
+    settings_factory: Callable[[], Any] | None = None,
+):
+    """Execute a phase-specific redetect flow and persist the result into state."""
+    if pipeline_cls is None:
+        from src.pipeline import AuditPipeline
+
+        pipeline_cls = AuditPipeline
+
+    prep_result = state.get(KEY_PREP_RESULT)
+    if prep_result is None:
+        raise RuntimeError("준비 결과가 없습니다.")
+
+    featured_df = (
+        prep_result.featured_data
+        if prep_result.featured_data is not None
+        else prep_result.data
+    )
+    ctx = state.get(KEY_COMPANY_CONTEXT)
+    repo = state.get("_company_repo")
+    conn_mgr = state.get("_conn_mgr")
+    settings = make_phase_settings(
+        state.get(KEY_SETTINGS),
+        phase=phase,
+        settings_factory=settings_factory,
+    )
+
+    if ctx is not None:
+        ctx = ctx.clone_with_settings(settings)
+        conn = conn_mgr.get(str(ctx.db_path)) if conn_mgr is not None else None
+        pipeline = pipeline_cls(context=ctx, skip_db=False, repo=repo, conn=conn)
+    else:
+        pipeline = pipeline_cls(settings=settings, skip_db=False)
+
+    result = pipeline.redetect(
+        featured_df,
+        batch_id="",
+        file_name=prep_result.file_name,
+    )
+    result.file_name = prep_result.file_name
+
+    if phase == "phase1":
+        state[KEY_PHASE1_RESULT] = result
+    else:
+        state[KEY_PHASE2_RESULT] = result
+
+    state[KEY_BATCH_ID] = result.batch_id
+    state[KEY_PIPELINE_RESULT] = result
+    state[KEY_FEATURED_DATA] = featured_df
+    return result
+
+
+def rerun_detection(
+    state: MutableMapping[str, Any],
+    *,
+    pipeline_cls=None,
+) -> bool:
+    """Rerun detection from featured data using current interactive dashboard settings."""
+    if pipeline_cls is None:
+        from src.pipeline import AuditPipeline
+
+        pipeline_cls = AuditPipeline
+
+    featured_df = state.get(KEY_FEATURED_DATA)
+    if featured_df is None:
+        return False
+
+    settings = state.get(KEY_SETTINGS)
+    weights = state.get(KEY_LAYER_WEIGHTS)
+    thresholds = state.get(KEY_RISK_THRESHOLDS)
+    batch_id = state.get(KEY_BATCH_ID, "")
+
+    ctx = state.get(KEY_COMPANY_CONTEXT)
+    repo = state.get("_company_repo")
+    audit_trail = build_audit_trail(ctx)
+    if ctx is not None and settings is not None:
+        ctx = ctx.clone_with_settings(settings)
+        pipeline = pipeline_cls(
+            context=ctx, skip_db=True, repo=repo, audit_trail=audit_trail,
+        )
+    elif ctx is not None:
+        pipeline = pipeline_cls(
+            context=ctx, skip_db=True, repo=repo, audit_trail=audit_trail,
+        )
+    else:
+        pipeline = pipeline_cls(
+            settings=settings, skip_db=True, audit_trail=audit_trail,
+        )
+    result = pipeline.redetect(
+        featured_df,
+        batch_id=batch_id,
+        weights=weights,
+        thresholds=thresholds,
+    )
+
+    disabled = state.get(KEY_DISABLED_RULES, [])
+    if disabled:
+        _filter_disabled_rules(result, disabled)
+
+    state[KEY_PIPELINE_RESULT] = result
+    state[KEY_SETTINGS_DIRTY] = False
+    return True
+
+
+def _filter_disabled_rules(result, disabled: list[str]) -> None:
+    """Remove disabled rule effects from result details and aggregate strings."""
+    from copy import deepcopy
+
+    new_results = []
+    for detection_result in result.results:
+        new_result = deepcopy(detection_result)
+        for code in disabled:
+            if code in new_result.details.columns:
+                new_result.details[code] = 0.0
+        new_results.append(new_result)
+    result.results = new_results
+
+    if "flagged_rules" in result.data.columns and disabled:
+        import re
+
+        pattern = "|".join(re.escape(rule_code) for rule_code in disabled)
+        result.data["flagged_rules"] = (
+            result.data["flagged_rules"]
+            .str.replace(rf"\b({pattern})\b,?\s*", "", regex=True)
+            .str.strip(",")
+            .str.strip()
+        )
