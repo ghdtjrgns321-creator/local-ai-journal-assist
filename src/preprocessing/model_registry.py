@@ -44,6 +44,16 @@ class ModelMetadata:
     feature_schema_version: int = 1
     class_imbalance_ratio: float = 0.0
     n_train_samples: int = 0
+    evaluation_policy: str = "unknown"
+    evaluation_confidence: str = "unknown"
+    train_years: tuple[int, ...] = field(default_factory=tuple)
+    test_years: tuple[int, ...] = field(default_factory=tuple)
+    label_source: str = "unknown"
+    positive_count: int = 0
+    positive_rate: float = 0.0
+    gate_status: str = "unknown"
+    gate_reason: str | None = None
+    feature_quality_profile: dict = field(default_factory=dict)
 
 
 class ModelRegistry:
@@ -82,6 +92,16 @@ class ModelRegistry:
         feature_schema_version: int = 1,
         class_imbalance_ratio: float = 0.0,
         n_train_samples: int = 0,
+        evaluation_policy: str = "unknown",
+        evaluation_confidence: str = "unknown",
+        train_years: tuple[int, ...] | list[int] | None = None,
+        test_years: tuple[int, ...] | list[int] | None = None,
+        label_source: str = "unknown",
+        positive_count: int = 0,
+        positive_rate: float = 0.0,
+        gate_status: str = "unknown",
+        gate_reason: str | None = None,
+        feature_quality_profile: dict | None = None,
     ) -> ModelMetadata:
         """Pipeline을 .pkl로 저장하고 레지스트리에 등록.
 
@@ -106,6 +126,16 @@ class ModelRegistry:
             feature_schema_version=feature_schema_version,
             class_imbalance_ratio=class_imbalance_ratio,
             n_train_samples=n_train_samples,
+            evaluation_policy=evaluation_policy,
+            evaluation_confidence=evaluation_confidence,
+            train_years=tuple(train_years or ()),
+            test_years=tuple(test_years or ()),
+            label_source=label_source,
+            positive_count=positive_count,
+            positive_rate=positive_rate,
+            gate_status=gate_status,
+            gate_reason=gate_reason,
+            feature_quality_profile=feature_quality_profile or {},
         )
         self._index.append(asdict(meta))
         self._save_index()
@@ -154,7 +184,12 @@ class ModelRegistry:
     def compare_versions(self, model_name: str) -> list[dict]:
         """동일 모델의 버전별 성능 비교."""
         return [
-            {"version": e["version"], "mean_f1": e["mean_f1"]}
+            {
+                "version": e["version"],
+                "mean_f1": e["mean_f1"],
+                "evaluation_policy": e.get("evaluation_policy", "unknown"),
+                "evaluation_confidence": e.get("evaluation_confidence", "unknown"),
+            }
             for e in self._index
             if e["model_name"] == model_name
         ]

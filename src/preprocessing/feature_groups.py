@@ -10,13 +10,14 @@ import logging
 from dataclasses import dataclass, field
 
 from src.eda.models import ColumnProfile, EDAProfile
+from src.preprocessing.constants import LABEL_COLUMNS
 
 logger = logging.getLogger(__name__)
 
 # 자동 제외 대상 컬럼명 패턴
 _EXCLUDE_NAMES = {"document_id", "doc_id", "row_id", "id"}
-_LABEL_NAMES = {"is_fraud", "is_anomaly", "label", "target"}
 _HIGH_MISSING_THRESHOLD = 0.90
+_LOW_CARD_DOMAIN_COLUMNS = {"user_persona"}
 
 
 @dataclass
@@ -59,7 +60,7 @@ def classify_features(
             continue
 
         # ID·label·datetime 자동 제외
-        if col_name.lower() in _EXCLUDE_NAMES | _LABEL_NAMES:
+        if col_name.lower() in _EXCLUDE_NAMES | LABEL_COLUMNS:
             _assign_to_group(groups, col_name, "excluded")
             continue
         if cp.dtype_group == "datetime":
@@ -75,6 +76,9 @@ def classify_features(
         # 도메인 오버라이드 (ordinal, categorical_high 등 수동 지정)
         if domain_overrides and col_name in domain_overrides:
             _assign_to_group(groups, col_name, domain_overrides[col_name])
+            continue
+        if col_name in _LOW_CARD_DOMAIN_COLUMNS:
+            _assign_to_group(groups, col_name, "categorical_low")
             continue
 
         # dtype 기반 자동 분류

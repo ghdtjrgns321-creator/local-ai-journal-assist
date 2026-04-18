@@ -15,6 +15,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OrdinalEncoder, StandardScaler
 
+from src.preprocessing.feature_quality import apply_feature_quality_policy
 from src.preprocessing.feature_groups import FeatureGroups
 from src.preprocessing.transformers import SafePowerTransformer
 from src.preprocessing.vae_wrapper import VAEDetector
@@ -37,6 +38,20 @@ except ImportError:
     LGBMClassifier = None  # type: ignore[assignment,misc]
 
 
+def drop_label_columns(df):
+    """Drop DataSynth label columns and normalize inference-time persona values."""
+    cleaned, _, _ = apply_feature_quality_policy(df, for_training=False)
+    return cleaned
+
+
+def prepare_training_features(
+    df,
+    groups: FeatureGroups,
+):
+    """Normalize unstable features and exclude sparse training-only columns."""
+    return apply_feature_quality_policy(df, groups, for_training=True)
+
+
 def _build_supervised_preprocessor(groups: FeatureGroups) -> ColumnTransformer:
     """XGB/LightGBM/LR/RF 공용 전처리기 — 스케일링 불필요, TargetEncoder 사용."""
     transformers = []
@@ -57,7 +72,10 @@ def _build_supervised_preprocessor(groups: FeatureGroups) -> ColumnTransformer:
         transformers.append(("bool", "passthrough", groups.boolean))
     if groups.ordinal:
         transformers.append(("ord", _build_ordinal_encoder(groups.ordinal), groups.ordinal))
-    return ColumnTransformer(transformers, remainder="drop")
+    preprocessor = ColumnTransformer(transformers, remainder="drop")
+    if hasattr(preprocessor, "set_output"):
+        preprocessor.set_output(transform="default")
+    return preprocessor
 
 
 def build_xgb_pipeline(groups: FeatureGroups) -> Pipeline:
@@ -210,4 +228,7 @@ def _build_unsupervised_preprocessor(groups: FeatureGroups) -> ColumnTransformer
     if groups.ordinal:
         transformers.append(("ord", _build_ordinal_encoder(groups.ordinal), groups.ordinal))
 
-    return ColumnTransformer(transformers, remainder="drop")
+    preprocessor = ColumnTransformer(transformers, remainder="drop")
+    if hasattr(preprocessor, "set_output"):
+        preprocessor.set_output(transform="default")
+    return preprocessor
