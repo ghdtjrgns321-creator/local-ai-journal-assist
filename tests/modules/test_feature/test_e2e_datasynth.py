@@ -167,7 +167,7 @@ class TestGenerateDataSynthReport:
         if not DATASYNTH_CSV.exists():
             pytest.skip(f"데이터 파일 없음: {DATASYNTH_CSV}")
 
-        from tests.test_feature.e2e_report_builder import build_report
+        from tests.modules.test_feature.e2e_report_builder import build_report
 
         ingested_df = _run_ingest_pipeline(DATASYNTH_CSV)
         row_count = len(ingested_df)

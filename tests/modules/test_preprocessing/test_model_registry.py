@@ -101,11 +101,29 @@ class TestDriftMetadata:
             feature_schema_version=42,
             class_imbalance_ratio=0.1,
             n_train_samples=100,
+            evaluation_policy="temporal_holdout",
+            evaluation_confidence="benchmark",
+            train_years=(2022, 2023),
+            test_years=(2024,),
+            label_source="ground_truth",
+            positive_count=24,
+            positive_rate=0.24,
+            gate_status="eligible",
+            feature_quality_profile={"normalized_persona": True},
         )
         assert meta.training_data_stats["n_samples"] == 100
         assert meta.feature_schema_version == 42
         assert meta.class_imbalance_ratio == 0.1
         assert meta.n_train_samples == 100
+        assert meta.evaluation_policy == "temporal_holdout"
+        assert meta.evaluation_confidence == "benchmark"
+        assert meta.train_years == (2022, 2023)
+        assert meta.test_years == (2024,)
+        assert meta.label_source == "ground_truth"
+        assert meta.positive_count == 24
+        assert meta.positive_rate == 0.24
+        assert meta.gate_status == "eligible"
+        assert meta.feature_quality_profile["normalized_persona"] is True
 
     def test_save_without_drift_fields_default(self, registry, dummy_pipeline):
         # Why: 하위호환 — drift 필드 없이 저장해도 default 값으로 채워짐
@@ -114,6 +132,11 @@ class TestDriftMetadata:
         assert meta.feature_schema_version == 1
         assert meta.class_imbalance_ratio == 0.0
         assert meta.n_train_samples == 0
+        assert meta.evaluation_policy == "unknown"
+        assert meta.evaluation_confidence == "unknown"
+        assert meta.label_source == "unknown"
+        assert meta.positive_count == 0
+        assert meta.gate_status == "unknown"
 
     def test_legacy_registry_json_loadable(self, tmp_path):
         # Why: 구버전 registry.json (신규 필드 없음) 로드 시 default로 보강
@@ -139,6 +162,10 @@ class TestDriftMetadata:
         assert models[0].training_data_stats == {}
         assert models[0].feature_schema_version == 1
         assert models[0].n_train_samples == 0
+        assert models[0].evaluation_policy == "unknown"
+        assert models[0].evaluation_confidence == "unknown"
+        assert models[0].label_source == "unknown"
+        assert models[0].gate_status == "unknown"
 
     def test_drift_fields_persisted_to_json(self, registry, dummy_pipeline, tmp_path):
         registry.save(
@@ -155,3 +182,5 @@ class TestDriftMetadata:
         assert models[0].training_data_stats["n_samples"] == 500
         assert models[0].feature_schema_version == 99
         assert models[0].n_train_samples == 500
+        assert models[0].evaluation_policy == "unknown"
+        assert models[0].label_source == "unknown"

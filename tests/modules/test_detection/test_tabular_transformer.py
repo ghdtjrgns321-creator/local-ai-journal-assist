@@ -31,6 +31,8 @@ def ft_train_data() -> tuple[pd.DataFrame, LabelResult]:
     rng = np.random.default_rng(42)
     n = 200
     df = pd.DataFrame({
+        "document_id": [f"D2022_{i}" for i in range(n // 2)] + [f"D2023_{i}" for i in range(n // 4)] + [f"D2024_{i}" for i in range(n // 4)],
+        "fiscal_year": ([2022] * (n // 2)) + ([2023] * (n // 4)) + ([2024] * (n // 4)),
         "f1": rng.normal(0, 1, n),
         "f2": rng.normal(0, 1, n),
         "f3": rng.normal(0, 1, n),
@@ -101,6 +103,8 @@ class TestTrain:
         rng = np.random.default_rng(42)
         n = 100
         df = pd.DataFrame({
+            "document_id": [f"D2022_{i}" for i in range(n // 2)] + [f"D2023_{i}" for i in range(n // 4)] + [f"D2024_{i}" for i in range(n // 4)],
+            "fiscal_year": ([2022] * (n // 2)) + ([2023] * (n // 4)) + ([2024] * (n // 4)),
             "f1": rng.normal(0, 1, n),
             "f2": rng.normal(0, 1, n),
             "f3": rng.normal(0, 1, n),

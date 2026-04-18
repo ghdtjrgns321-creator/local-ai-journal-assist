@@ -15,8 +15,11 @@ from src.db.schema import (
     BENFORD_DIGITS_COLUMNS,
     BENFORD_SUMMARY_COLUMNS,
     ENGAGEMENT_META_COLUMNS,
+    FEEDBACK_EVENTS_COLUMNS,
     GENERAL_LEDGER_COLUMNS,
     ML_MODEL_METADATA_COLUMNS,
+    PERFORMANCE_REPORTS_COLUMNS,
+    PERFORMANCE_RULE_METRICS_COLUMNS,
     SCHEMA_DDL,
     initialize_schema,
 )
@@ -36,6 +39,8 @@ class TestInitializeSchema:
             "general_ledger", "anomaly_flags",
             "benford_summary", "benford_digits",
             "ml_model_metadata", "engagement_meta",
+            "performance_reports", "performance_rule_metrics",
+            "feedback_events",
         }
         # Why: DuckDB에서 VIEW도 information_schema.tables에 포함될 수 있음
         assert expected <= set(tables["table_name"])
@@ -49,12 +54,14 @@ class TestInitializeSchema:
         ).fetchdf()
         assert "anomaly_flag_summary" in set(views["view_name"])
 
-    def test_schema_ddl_has_13_objects(self):
-        """SCHEMA_DDL 13개: general_ledger, anomaly_flags, benford_summary,
-        benford_digits, ml_model_metadata, upload_batches, whitelist_seq,
-        whitelist, engagement_meta, trial_balance, audit_log_seq, audit_log,
-        anomaly_flag_summary(VIEW)."""
-        assert len(SCHEMA_DDL) == 13
+    def test_schema_ddl_has_15_objects(self):
+        """SCHEMA_DDL 오브젝트 수와 신규 feedback 테이블 포함 여부."""
+        assert len(SCHEMA_DDL) == 19
+        assert "llm_narratives" in SCHEMA_DDL
+        assert "llm_narratives_idx" in SCHEMA_DDL
+        assert "performance_reports" in SCHEMA_DDL
+        assert "performance_rule_metrics" in SCHEMA_DDL
+        assert "feedback_events" in SCHEMA_DDL
 
     def test_idempotent(self, db_raw_conn):
         """2회 실행해도 에러 없음 (멱등성)."""
@@ -222,3 +229,38 @@ class TestEngagementMeta:
         db_conn.execute(sql, ["acme", "2025"])  # 중복 → 무시됨
         count = db_conn.execute("SELECT COUNT(*) FROM engagement_meta").fetchone()[0]
         assert count == 1
+
+
+class TestPerformanceReportTables:
+    """성능 평가 리포트 스키마."""
+
+    def test_performance_reports_columns(self, db_conn):
+        """PERFORMANCE_REPORTS_COLUMNS가 DDL에 존재."""
+        cols = db_conn.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'performance_reports'"
+        ).fetchdf()
+        ddl_cols = set(cols["column_name"])
+        for col in PERFORMANCE_REPORTS_COLUMNS:
+            assert col in ddl_cols, f"'{col}'가 performance_reports DDL에 없음"
+
+    def test_performance_rule_metrics_columns(self, db_conn):
+        """PERFORMANCE_RULE_METRICS_COLUMNS가 DDL에 존재."""
+        cols = db_conn.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'performance_rule_metrics'"
+        ).fetchdf()
+        ddl_cols = set(cols["column_name"])
+        for col in PERFORMANCE_RULE_METRICS_COLUMNS:
+            assert col in ddl_cols, f"'{col}'가 performance_rule_metrics DDL에 없음"
+
+
+class TestFeedbackEventsTable:
+    def test_feedback_events_columns(self, db_conn):
+        cols = db_conn.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'feedback_events'"
+        ).fetchdf()
+        ddl_cols = set(cols["column_name"])
+        for col in FEEDBACK_EVENTS_COLUMNS:
+            assert col in ddl_cols, f"'{col}'가 feedback_events DDL에 없음"

@@ -7,9 +7,11 @@
   - results 리스트: anomaly_flags → Pseudo DetectionResult 역산
 """
 
+import pandas as pd
 import pytest
 
-from src.db.batch_reader import list_batches, load_batch
+from src.db.batch_reader import _build_detector_statuses, list_batches, load_batch
+from src.detection.base import DetectionResult
 from src.db.loader import load_all
 
 
@@ -37,6 +39,15 @@ class TestLoadBatch:
         # Why: db_sample_df에 "Medium" 2행, "Normal" 1행
         assert "Medium" in result.risk_summary
         assert "Normal" in result.risk_summary
+
+    def test_restore_performance_report(self, db_conn, db_sample_df, db_detection_results):
+        """복원 배치에 performance_report가 연결된다."""
+        load_all(db_conn, db_sample_df, "batch_perf_01", db_detection_results)
+
+        result = load_batch(db_conn, "batch_perf_01")
+
+        assert result.performance_report is not None
+        assert result.performance_report.upload_batch_id == "batch_perf_01"
 
     def test_not_found_raises(self, db_conn):
         """존재하지 않는 batch_id → ValueError."""
@@ -108,3 +119,37 @@ class TestPseudoDetectionResults:
                 assert (dr.details > 0).any().any(), (
                     f"{dr.track_name} details에 0보다 큰 점수가 없음"
                 )
+
+
+class TestDetectorStatuses:
+    """DB 복원용 detector_statuses 생성."""
+
+    def test_restored_core_tracks_default_to_executed(self):
+        statuses = _build_detector_statuses(results=[])
+        status_map = {row["track_name"]: row for row in statuses}
+
+        assert status_map["layer_a"]["run_status"] == "executed"
+        assert status_map["layer_a"]["reason"] == "restored_without_flag_rows"
+        assert status_map["duplicate"]["run_status"] == "executed"
+
+    def test_optional_tracks_remain_unknown_without_snapshot(self):
+        statuses = _build_detector_statuses(results=[])
+        status_map = {row["track_name"]: row for row in statuses}
+
+        assert status_map["nlp"]["run_status"] == "unknown"
+        assert status_map["graph"]["run_status"] == "unknown"
+
+    def test_existing_result_is_preserved(self):
+        result = DetectionResult(
+            track_name="layer_b",
+            flagged_indices=[0],
+            scores=pd.Series([0.8]),
+            rule_flags=[],
+            details=pd.DataFrame({"B01": [0.8]}),
+            metadata={"elapsed": 0.0, "run_status": "executed"},
+        )
+        statuses = _build_detector_statuses(results=[result])
+        status_map = {row["track_name"]: row for row in statuses}
+
+        assert status_map["layer_b"]["run_status"] == "executed"
+        assert status_map["layer_b"]["flagged_docs"] == 1

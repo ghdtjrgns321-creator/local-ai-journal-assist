@@ -6,8 +6,8 @@ import pandas as pd
 import pytest
 
 from src.export.audit_evidence import (
-    AuditEvidence,
     RULE_LEGAL_BASIS,
+    AuditEvidence,
     build_evidence_report,
     build_evidence_row,
     format_narrative,

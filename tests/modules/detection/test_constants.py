@@ -15,10 +15,11 @@ from src.detection.constants import (
 
 
 class TestRuleCodesIntegrity:
-    """RULE_CODES 29개 룰 ID·이름 무결성 (24+B19+B11+D01+D02)."""
+    """RULE_CODES 룰 ID·이름 무결성. 신규 룰 추가 시 카운트 갱신."""
 
     def test_rule_count(self) -> None:
-        assert len(RULE_CODES) == 29
+        # Why: WU-21 NLP01~NLP05 추가로 64. 이전 값(WU-22까지) 59 + NLP 5 = 64.
+        assert len(RULE_CODES) == 64
 
     def test_layer_a_ids(self) -> None:
         for rid in ("A01", "A02", "A03"):
@@ -81,4 +82,13 @@ class TestEnums:
         assert set(RiskLevel) == {"High", "Medium", "Low", "Normal"}
 
     def test_layer_values(self) -> None:
-        assert set(Layer) == {"layer_a", "layer_b", "layer_c", "benford", "layer_d"}
+        # Why: 신규 트랙 추가 시 갱신. 기본 5종 + Phase 2/3 확장(duplicate, timeseries, intercompany,
+        #      relational, ml_*, ensemble, access_audit, evidence, trendbreak, graph, nlp)
+        expected = {
+            "layer_a", "layer_b", "layer_c", "benford", "layer_d",
+            "duplicate", "timeseries", "intercompany", "relational",
+            "ml_supervised", "ml_unsupervised", "ml_transformer", "ml_sequence",
+            "ensemble", "access_audit", "evidence", "trendbreak",
+            "graph", "nlp",
+        }
+        assert set(Layer) == expected

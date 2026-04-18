@@ -180,7 +180,7 @@ def _create_v2_db() -> duckdb.DuckDBPyConnection:
     conn = duckdb.connect(":memory:")
     # Why: schema_supplementary는 audit_log와 무관하므로 일단 core만 생성
     for name, ddl in SCHEMA_DDL.items():
-        if name in ("audit_log", "audit_log_seq"):
+        if name in ("audit_log", "audit_log_seq", "feedback_events", "feedback_events_seq"):
             continue
         conn.execute(ddl)
     return conn

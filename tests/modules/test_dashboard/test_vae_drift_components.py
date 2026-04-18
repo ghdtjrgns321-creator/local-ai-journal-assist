@@ -120,3 +120,104 @@ class TestDriftBannerReport:
         # Why: _render_report_table은 streamlit에 의존하지만 import는 가능해야 함
         #      실제 렌더는 Streamlit runtime 없이는 테스트 불가 — import만 확인
         assert callable(_render_report_table)
+
+
+class TestPhase2ModelEvaluation:
+    def test_build_model_evaluation_frame_formats_policy(self):
+        from dashboard.tab_phase2 import _build_model_evaluation_frame
+        from src.preprocessing.model_registry import ModelMetadata
+
+        df = _build_model_evaluation_frame([
+            ModelMetadata(
+                model_name="supervised",
+                version=2,
+                file_path="/tmp/supervised.pkl",
+                mean_f1=0.91,
+                evaluation_policy="temporal_holdout",
+                evaluation_confidence="benchmark",
+                train_years=(2022, 2023),
+                test_years=(2024,),
+            ),
+        ])
+
+        assert list(df.columns) == [
+            "model",
+            "version",
+            "eval_policy",
+            "eval_grade",
+            "train_years",
+            "test_years",
+            "mean_f1",
+        ]
+        assert df.iloc[0]["eval_policy"] == "temporal_holdout"
+        assert df.iloc[0]["eval_grade"] == "benchmark"
+        assert df.iloc[0]["train_years"] == "2022, 2023"
+        assert df.iloc[0]["test_years"] == "2024"
+
+    def test_build_feature_quality_frame_formats_profile(self):
+        from dashboard.tab_phase2 import _build_feature_quality_frame
+        from src.preprocessing.model_registry import ModelMetadata
+
+        df = _build_feature_quality_frame([
+            ModelMetadata(
+                model_name="supervised",
+                version=3,
+                file_path="/tmp/supervised.pkl",
+                mean_f1=0.88,
+                feature_quality_profile={
+                    "normalized_persona": True,
+                    "unknown_persona_count": 12,
+                    "sparse_dropped_columns": ["cost_center", "tax_code"],
+                    "family_statuses": {
+                        "persona": {"active": True},
+                        "tax": {"active": False},
+                        "auxiliary": {"active": True},
+                    },
+                    "ablation_plan": [
+                        {"variant": "baseline_core"},
+                        {"variant": "plus_persona"},
+                        {"variant": "full_active"},
+                    ],
+                },
+            ),
+        ])
+
+        assert list(df.columns) == [
+            "model",
+            "version",
+            "persona_normalized",
+            "unknown_persona_count",
+            "sparse_dropped",
+            "active_families",
+            "ablation_variants",
+        ]
+        assert df.iloc[0]["persona_normalized"] == "yes"
+        assert df.iloc[0]["unknown_persona_count"] == 12
+        assert df.iloc[0]["sparse_dropped"] == "cost_center, tax_code"
+        assert df.iloc[0]["active_families"] == "persona, auxiliary"
+        assert df.iloc[0]["ablation_variants"] == "baseline_core, plus_persona, full_active"
+
+
+class TestDataSynthMetadataNotice:
+    def test_build_datasynth_metadata_notice_lines(self):
+        from dashboard.components.data_uploader import _build_datasynth_metadata_notice_lines
+
+        df = pd.DataFrame({"document_id": ["D1"]})
+        df.attrs.update(
+            {
+                "datasynth_metadata_status": "fail",
+                "datasynth_metadata_path": "data/journal/primary/datasynth/validated_metadata_2024.json",
+                "datasynth_metadata_critical_mismatches": [
+                    "total_entries: reported=0, observed=2",
+                ],
+                "datasynth_metadata_warning_mismatches": [
+                    "duplicates.total_duplicates: reported=0, observed=1",
+                ],
+            }
+        )
+
+        lines = _build_datasynth_metadata_notice_lines(df)
+
+        assert lines[0] == "DataSynth metadata status: `fail`"
+        assert "validated_metadata_2024.json" in lines[1]
+        assert "total_entries: reported=0, observed=2" in lines[2]

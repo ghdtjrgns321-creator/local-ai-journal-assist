@@ -69,3 +69,52 @@ class TestDetectionResult:
             metadata={"elapsed": 0.123},
         )
         assert result.elapsed_seconds == pytest.approx(0.123)
+
+    def test_detector_profile_fallback(self):
+        """등록된 track_name이면 운영 메타를 기본값으로 읽는다."""
+        result = DetectionResult(
+            track_name="layer_a",
+            flagged_indices=[],
+            scores=pd.Series(dtype=float),
+            rule_flags=[],
+            details=pd.DataFrame(),
+            metadata={"elapsed": 0.01},
+        )
+        assert result.display_name == "Layer A"
+        assert result.maturity == "production"
+        assert result.default_enabled is True
+        assert result.activation_requirements == []
+        assert "기본 통제 계층" in result.explanation_summary
+        assert "debit_amount" in result.used_columns
+        assert "ISA 315" in result.references
+
+    def test_metadata_can_override_profile_defaults(self):
+        """metadata에 명시된 운영 상태 값이 우선한다."""
+        result = DetectionResult(
+            track_name="nlp",
+            flagged_indices=[],
+            scores=pd.Series(dtype=float),
+            rule_flags=[],
+            details=pd.DataFrame(),
+            metadata={
+                "elapsed": 0.01,
+                "display_name": "NLP Custom",
+                "maturity": "experimental",
+                "default_enabled": False,
+                "activation_requirements": ["external_api"],
+                "run_status": "skipped",
+                "skip_reason": "disabled_by_settings",
+                "explanation_summary": "사용자 정의 설명",
+                "used_columns": ["line_text"],
+                "references": ["커스텀 근거"],
+            },
+        )
+        assert result.display_name == "NLP Custom"
+        assert result.maturity == "experimental"
+        assert result.default_enabled is False
+        assert result.activation_requirements == ["external_api"]
+        assert result.run_status == "skipped"
+        assert result.skip_reason == "disabled_by_settings"
+        assert result.explanation_summary == "사용자 정의 설명"
+        assert result.used_columns == ["line_text"]
+        assert result.references == ["커스텀 근거"]

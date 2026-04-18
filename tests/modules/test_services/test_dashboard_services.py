@@ -1,0 +1,139 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from types import SimpleNamespace
+
+import pandas as pd
+
+from dashboard._state import (
+    KEY_BATCH_ID,
+    KEY_COMPANY_CONTEXT,
+    KEY_COMPANY_ID,
+    KEY_FEATURED_DATA,
+    KEY_INGEST_STAGE,
+    KEY_PHASE1_RESULT,
+    KEY_PHASE2_RESULT,
+    KEY_PIPELINE_RESULT,
+    KEY_PREP_RESULT,
+    KEY_SETTINGS,
+)
+from src.services.analysis_service import make_phase_settings, run_phase_analysis
+from src.services.batch_service import load_batch_into_state
+from src.services.session_service import clear_company_selection, restore_loaded_result
+
+
+@dataclass
+class _FakeSettings:
+    enable_variance_detection: bool = True
+    enable_relational_detection: bool = True
+    enable_graph_detection: bool = True
+    enable_nlp_detection: bool = True
+    enable_access_audit_detection: bool = True
+    enable_evidence_detection: bool = True
+    enable_trendbreak_detection: bool = True
+    enable_ml_detection: bool = True
+
+    def model_copy(self, update: dict):
+        data = self.__dict__.copy()
+        data.update(update)
+        return _FakeSettings(**data)
+
+
+class _FakePipeline:
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+    def redetect(self, featured_df, batch_id: str, file_name: str):
+        return SimpleNamespace(
+            data=featured_df.copy(),
+            featured_data=featured_df.copy(),
+            batch_id="phase_batch",
+            file_name=file_name,
+        )
+
+
+def test_clear_company_selection_resets_dashboard_state():
+    state = {
+        KEY_COMPANY_ID: "acme",
+        KEY_PHASE1_RESULT: object(),
+        KEY_PIPELINE_RESULT: object(),
+        KEY_INGEST_STAGE: "PIPELINE",
+    }
+
+    clear_company_selection(state)
+
+    assert KEY_COMPANY_ID not in state
+    assert KEY_PHASE1_RESULT not in state
+    assert KEY_PIPELINE_RESULT not in state
+    assert state[KEY_INGEST_STAGE] == "UPLOAD"
+
+
+def test_restore_loaded_result_sets_pipeline_slots_for_analyzed_batch():
+    result = SimpleNamespace(
+        data=pd.DataFrame({"risk_level": ["High"]}),
+        featured_data=pd.DataFrame({"x": [1]}),
+        file_name="saved.csv",
+    )
+    state = {}
+
+    restore_loaded_result(state, result, "batch_001")
+
+    assert state[KEY_PREP_RESULT] is result
+    assert state[KEY_PHASE1_RESULT] is result
+    assert state[KEY_PIPELINE_RESULT] is result
+    assert state[KEY_BATCH_ID] == "batch_001"
+
+
+def test_load_batch_into_state_uses_batch_reader(monkeypatch):
+    loaded = SimpleNamespace(
+        data=pd.DataFrame({"risk_level": ["Normal"]}),
+        featured_data=pd.DataFrame({"x": [1]}),
+        file_name="loaded.csv",
+    )
+
+    monkeypatch.setattr("src.services.batch_service.load_batch", lambda conn, batch_id: loaded)
+
+    state = {}
+    result = load_batch_into_state(state, object(), "batch_777")
+
+    assert result is loaded
+    assert state[KEY_PREP_RESULT] is loaded
+    assert state[KEY_BATCH_ID] == "batch_777"
+
+
+def test_make_phase_settings_enables_ml_only_for_phase2():
+    base = _FakeSettings()
+
+    phase1 = make_phase_settings(base, phase="phase1")
+    phase2 = make_phase_settings(base, phase="phase2")
+
+    assert phase1.enable_ml_detection is False
+    assert phase2.enable_ml_detection is True
+    assert phase1.enable_graph_detection is False
+
+
+def test_run_phase_analysis_uses_service_pipeline():
+    prep = SimpleNamespace(
+        data=pd.DataFrame({"document_id": ["D1"]}),
+        featured_data=None,
+        file_name="journal.csv",
+    )
+    ctx = SimpleNamespace(
+        db_path="engagement.duckdb",
+        clone_with_settings=lambda settings: SimpleNamespace(db_path="engagement.duckdb"),
+    )
+    conn_mgr = SimpleNamespace(get=lambda path: f"conn:{path}")
+    state = {
+        KEY_PREP_RESULT: prep,
+        KEY_COMPANY_CONTEXT: ctx,
+        KEY_SETTINGS: _FakeSettings(),
+        "_company_repo": object(),
+        "_conn_mgr": conn_mgr,
+    }
+
+    result = run_phase_analysis(state, phase="phase1", pipeline_cls=_FakePipeline)
+
+    assert result.batch_id == "phase_batch"
+    assert state[KEY_PHASE1_RESULT] is result
+    assert state[KEY_PIPELINE_RESULT] is result
+    assert isinstance(state[KEY_FEATURED_DATA], pd.DataFrame)

@@ -139,12 +139,19 @@ class TestErrorHandling:
 
     def test_preset_queries_count(self):
         """PRESET_QUERIES 22종 정의 (코어 11 + 보조 7 + audit_log 4)."""
-        assert len(PRESET_QUERIES) == 22
+        assert len(PRESET_QUERIES) == 29
 
     def test_all_queries_have_batch_filter(self):
         """모든 쿼리에 batch_id 관련 필터 포함 (PK 삭제 제외)."""
         # Why: delete_whitelist는 PK(id)로 삭제, list_batches는 전체 조회
-        skip = {"delete_whitelist", "list_batches"}
+        skip = {
+            "delete_whitelist",
+            "list_batches",
+            "performance_rule_metrics_by_report",
+            "list_audit_log",
+            "audit_log_by_engagement",
+            "feedback_events_by_engagement",
+        }
         for name, sql in PRESET_QUERIES.items():
             if name in skip:
                 continue

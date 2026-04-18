@@ -48,6 +48,7 @@ def seq_train_data() -> tuple[pd.DataFrame, LabelResult]:
     df = pd.DataFrame({
         "created_by": users,
         "posting_date": pd.to_datetime(dates),
+        "fiscal_year": [2025] * n,
         "f1": rng.normal(0, 1, n),
         "f2": rng.normal(0, 1, n),
         "f3": rng.normal(0, 1, n),
@@ -210,6 +211,7 @@ class TestTrain:
         assert "optimal_threshold" in meta
         assert "n_train_sequences" in meta
         assert "n_val_sequences" in meta
+        assert meta["split_policy"] == "document_group_holdout"
 
     def test_sets_preprocessor_and_classifier(self, trained_seq_detector):
         assert hasattr(trained_seq_detector, "preprocessor_")

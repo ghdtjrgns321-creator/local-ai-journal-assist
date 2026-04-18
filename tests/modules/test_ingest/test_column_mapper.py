@@ -625,10 +625,11 @@ class TestSuggestAmountSplit:
                 message="OK",
             ),
         }
-        results = map_columns(
-            read_result, header_results,
-            schema=sample_schema, keywords=sample_keywords,
-        )
+        with pytest.warns(UserWarning, match="중복 컬럼명 감지"):
+            results = map_columns(
+                read_result, header_results,
+                schema=sample_schema, keywords=sample_keywords,
+            )
         mr = results["Sheet1"]
         # 금액 추천 ReviewItem이 포함되어야 함
         amount_items = [r for r in mr.review_items if "인접 중복" in r.reason]

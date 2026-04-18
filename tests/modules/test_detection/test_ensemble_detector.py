@@ -77,12 +77,12 @@ def labels_insufficient() -> np.ndarray:
 class TestBuildScoreMatrix:
     def test_full_results_shape(self, full_results, df_index):
         matrix = EnsembleDetector._build_score_matrix(full_results, df_index)
-        assert matrix.shape == (100, 8)
+        assert matrix.shape == (100, len(STACKING_BASE_MODELS))
 
     def test_partial_results_fills_zero(self, partial_results, df_index):
         """누락 모델 열은 0.0으로 채워져야 한다."""
         matrix = EnsembleDetector._build_score_matrix(partial_results, df_index)
-        assert matrix.shape == (100, 8)
+        assert matrix.shape == (100, len(STACKING_BASE_MODELS))
         # ml_supervised(인덱스 4)는 누락 → 전부 0
         assert np.all(matrix[:, 4] == 0.0)
 
@@ -263,7 +263,7 @@ class TestOOFBuildScoreMatrix:
             oof_scores=oof,
             df_index=df_index,
         )
-        assert matrix.shape == (100, 8)
+        assert matrix.shape == (100, len(STACKING_BASE_MODELS))
         # 각 leakage-prone 컬럼이 OOF 값으로 채워짐
         sup_idx = STACKING_BASE_MODELS.index("ml_supervised")
         tfm_idx = STACKING_BASE_MODELS.index("ml_transformer")

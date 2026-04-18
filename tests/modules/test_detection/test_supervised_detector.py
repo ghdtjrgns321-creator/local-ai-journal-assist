@@ -8,7 +8,7 @@ import pytest
 from sklearn.exceptions import NotFittedError
 
 from src.detection.base import DetectionResult
-from src.detection.supervised_detector import SupervisedDetector
+from src.detection.supervised_detector import SupervisedDetector, SupervisedGateError
 from src.preprocessing.feature_groups import FeatureGroups
 from src.preprocessing.label_strategy import LabelResult
 from src.preprocessing.model_registry import ModelRegistry
@@ -26,17 +26,19 @@ def sv_groups() -> FeatureGroups:
 
 @pytest.fixture()
 def sv_train_data() -> tuple[pd.DataFrame, LabelResult]:
-    """학습용 합성 데이터 (200행, 양성 ~15%)."""
+    """학습용 합성 데이터 (200행, 양성 ~35%)."""
     rng = np.random.default_rng(42)
     n = 200
     df = pd.DataFrame({
+        "document_id": [f"D2022_{i}" for i in range(n // 2)] + [f"D2023_{i}" for i in range(n // 4)] + [f"D2024_{i}" for i in range(n // 4)],
+        "fiscal_year": ([2022] * (n // 2)) + ([2023] * (n // 4)) + ([2024] * (n // 4)),
         "f1": rng.normal(0, 1, n),
         "f2": rng.normal(0, 1, n),
         "f3": rng.normal(0, 1, n),
         "cat1": rng.choice(["A", "B", "C"], n),
         "flag1": rng.choice([0, 1], n),
     })
-    y = rng.choice([0, 1], n, p=[0.85, 0.15])
+    y = rng.choice([0, 1], n, p=[0.65, 0.35])
     label = LabelResult(
         y=y,
         strategy="datasynth",
@@ -71,10 +73,18 @@ class TestTrain:
     def test_returns_metadata(self, sv_train_data, sv_groups):
         det = SupervisedDetector()
         df, label = sv_train_data
+        df["user_persona"] = ["senior_accoutant"] * len(df)
+        df["cost_center"] = [None] * (len(df) - 1) + ["CC100"]
+        df["tax_code"] = [None] * len(df)
+        sv_groups.categorical_low.extend(["user_persona", "cost_center", "tax_code"])
         meta = det.train(df, label, sv_groups)
         assert "best_model" in meta
         assert "mean_f1" in meta
         assert "optimal_threshold" in meta
+        assert meta["gate_status"] == "eligible"
+        assert meta["label_source"] == "ground_truth"
+        assert meta["feature_quality_profile"]["normalized_persona"] is True
+        assert "cost_center" in meta["feature_quality_profile"]["sparse_dropped_columns"]
 
     def test_sets_pipeline(self, sv_train_data, sv_groups):
         det = SupervisedDetector()
@@ -88,11 +98,13 @@ class TestTrain:
         det.train(df, label, sv_groups)
         assert 0.1 <= det.optimal_threshold_ <= 0.9
 
-    def test_low_positive_warns(self, sv_groups):
-        """양성 < 50건 시 warning 포함."""
+    def test_low_positive_blocks(self, sv_groups):
+        """양성 < 50건이면 hard gate로 차단."""
         rng = np.random.default_rng(42)
         n = 200
         df = pd.DataFrame({
+            "document_id": [f"D2022_{i}" for i in range(n // 2)] + [f"D2023_{i}" for i in range(n // 4)] + [f"D2024_{i}" for i in range(n // 4)],
+            "fiscal_year": ([2022] * (n // 2)) + ([2023] * (n // 4)) + ([2024] * (n // 4)),
             "f1": rng.normal(0, 1, n),
             "f2": rng.normal(0, 1, n),
             "f3": rng.normal(0, 1, n),
@@ -107,14 +119,17 @@ class TestTrain:
             label_source="ground_truth", positive_rate=10 / n,
         )
         det = SupervisedDetector()
-        meta = det.train(df, label, sv_groups)
-        assert any("양성" in w for w in meta["warnings"])
+        with pytest.raises(SupervisedGateError) as exc_info:
+            det.train(df, label, sv_groups)
+        assert exc_info.value.reason == "insufficient_positive_count"
 
     def test_zero_positive_raises(self, sv_groups):
         """양성 0건이면 ValueError."""
         rng = np.random.default_rng(42)
         n = 100
         df = pd.DataFrame({
+            "document_id": [f"D2022_{i}" for i in range(n // 2)] + [f"D2023_{i}" for i in range(n // 4)] + [f"D2024_{i}" for i in range(n // 4)],
+            "fiscal_year": ([2022] * (n // 2)) + ([2023] * (n // 4)) + ([2024] * (n // 4)),
             "f1": rng.normal(0, 1, n),
             "f2": rng.normal(0, 1, n),
             "f3": rng.normal(0, 1, n),
@@ -127,8 +142,29 @@ class TestTrain:
             label_source="ground_truth", positive_rate=0.0,
         )
         det = SupervisedDetector()
-        with pytest.raises(ValueError, match="양성 샘플이 0건"):
+        with pytest.raises(SupervisedGateError) as exc_info:
             det.train(df, label, sv_groups)
+        assert exc_info.value.reason == "no_positive_labels"
+
+    def test_pseudo_label_source_blocked(self, sv_train_data, sv_groups):
+        df, _ = sv_train_data
+        y = np.zeros(len(df), dtype=int)
+        y[:80] = 1
+        label = LabelResult(
+            y=y,
+            strategy="pseudo",
+            label_source="detection_scores",
+            positive_rate=float(y.mean()),
+            positive_count=int(y.sum()),
+            label_quality="circular_risk",
+            gate_status="fallback_to_unsupervised",
+            gate_reason="circular_label_risk",
+            is_supervised_eligible=False,
+        )
+        det = SupervisedDetector()
+        with pytest.raises(SupervisedGateError) as exc_info:
+            det.train(df, label, sv_groups)
+        assert exc_info.value.reason == "circular_label_risk"
 
 
 class TestDetect:
@@ -189,6 +225,9 @@ class TestModelPersistence:
         det2.load_model("supervised")
         assert hasattr(det2, "pipeline_")
         assert det2.optimal_threshold_ == saved_threshold
+        gate = det2.get_training_gate_snapshot()
+        assert gate["label_source"] == "ground_truth"
+        assert gate["gate_status"] == "eligible"
 
         # detect 일관성
         df, _ = sv_train_data

@@ -64,6 +64,16 @@ class TestRunDetectorsParallel:
         assert [r.track_name for r in results] == ["a", "b", "c"]
         assert warns == []
 
+    def test_parallel_runner_sets_detector_profile_metadata(self, sample_df):
+        detectors = [_FakeDetector("layer_a")]
+        results, _ = _run_detectors_parallel(detectors, sample_df, max_workers=None)
+        result = results[0]
+        assert result.metadata["display_name"] == "Layer A"
+        assert result.metadata["maturity"] == "production"
+        assert result.metadata["default_enabled"] is True
+        assert result.metadata["activation_requirements"] == []
+        assert result.metadata["run_status"] == "executed"
+
     def test_parallel_mode_preserves_input_order(self, sample_df):
         # Why: 병렬 완료 순서가 달라도 입력 순서를 보장해야 downstream 로직이 안전
         detectors = [

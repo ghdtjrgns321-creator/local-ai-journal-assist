@@ -17,11 +17,11 @@ from config.settings import get_audit_rules, get_settings
 from src.detection.anomaly_layer import AnomalyDetector
 from src.detection.base import DetectionResult
 from src.detection.benford_detector import BenfordDetector
-from src.detection.constants import SEVERITY_MAP
 from src.detection.fraud_layer import FraudLayer
 from src.detection.integrity_layer import IntegrityDetector
 from src.detection.score_aggregator import aggregate_scores
 from src.feature.engine import generate_all_features
+from src.metrics import ground_truth_evaluator as gt_eval
 
 # ── 경로 상수 ──────────────────────────────────────────────
 
@@ -514,9 +514,9 @@ def main() -> None:
         print("      → anomaly_labels.csv 없음 — 중단")
         return
 
-    per_rule = per_rule_label_analysis(df, det["results"], det["agg_df"], labels)
-    overall = overall_label_analysis(df, det["agg_df"], labels)
-    uncovered = uncovered_label_analysis(labels)
+    per_rule = gt_eval.per_rule_label_analysis(df, det["results"], labels)
+    overall = gt_eval.overall_label_analysis(df, det["agg_df"], labels)
+    uncovered = gt_eval.uncovered_label_analysis(labels)
 
     # 요약 출력
     print(f"      → Phase 1 Recall: {overall['phase1_recall']:.1%} ({overall['phase1_tp']}/{overall['phase1_labeled']})")

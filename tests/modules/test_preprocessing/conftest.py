@@ -40,7 +40,11 @@ def pp_sample_df() -> pd.DataFrame:
         "amount_zscore": rng.normal(0, 1, n),
         "is_round_number": rng.choice([True, False], n, p=[0.3, 0.7]),
         "is_fraud": rng.choice([True, False], n, p=[0.05, 0.95]),
+        "fraud_type": rng.choice(["DuplicatePayment", "SelfApproval", None], n),
         "is_anomaly": rng.choice([True, False], n, p=[0.10, 0.90]),
+        "anomaly_type": rng.choice(["TimingAnomaly", "NewCounterparty", None], n),
+        "sod_violation": rng.choice([True, False], n, p=[0.03, 0.97]),
+        "sod_conflict_type": rng.choice(["preparer_approver", "requester_approver", None], n),
         "description_quality": rng.choice(["high", "medium", "low"], n),
         "has_risk_keyword": rng.choice([True, False], n, p=[0.1, 0.9]),
     })

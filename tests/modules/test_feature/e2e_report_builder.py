@@ -15,6 +15,17 @@ _AMOUNT_DEPENDENT = {
 }
 
 
+def _safe_nunique(series: pd.Series) -> int:
+    """Count uniques even when object values include lists."""
+    try:
+        return int(series.nunique())
+    except TypeError:
+        normalized = series.map(
+            lambda value: tuple(value) if isinstance(value, list) else value
+        )
+        return int(normalized.nunique())
+
+
 def build_report(
     df: pd.DataFrame,
     result: FeatureResult,
@@ -66,7 +77,7 @@ def build_report(
         s = df[col]
         dtype = str(s.dtype)
         null_pct = s.isna().mean() * 100
-        unique = s.nunique()
+        unique = _safe_nunique(s)
         if s.dtype == "bool":
             true_pct = s.mean() * 100
             note = f"True {true_pct:.1f}%"

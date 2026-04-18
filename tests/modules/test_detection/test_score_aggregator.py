@@ -10,7 +10,7 @@ import pandas as pd
 import pytest
 
 from src.detection.base import DetectionResult, RuleFlag
-from src.detection.constants import Layer, RiskLevel
+from src.detection.constants import LAYER_WEIGHTS, LAYER_WEIGHTS_WITH_ML, Layer, RiskLevel
 from src.detection.score_aggregator import aggregate_scores, classify_risk_level
 
 
@@ -76,12 +76,17 @@ class TestAggregateScores:
         """4개 레이어 가중합 = 수동 계산값."""
         result = aggregate_scores(base_df, four_layer_results)
 
-        # 행 0: A=1.0×0.15 + B=0.6×0.45 + C=0.4×0.25 + Ben=0.3×0.15
-        expected_row0 = 1.0 * 0.15 + 0.6 * 0.45 + 0.4 * 0.25 + 0.3 * 0.15
+        # 행 0: 현재 기본 가중치(LAYER_WEIGHTS) 기준.
+        expected_row0 = (
+            1.0 * LAYER_WEIGHTS[Layer.LAYER_A]
+            + 0.6 * LAYER_WEIGHTS[Layer.LAYER_B]
+            + 0.4 * LAYER_WEIGHTS[Layer.LAYER_C]
+            + 0.3 * LAYER_WEIGHTS[Layer.BENFORD]
+        )
         assert result["anomaly_score"].iloc[0] == pytest.approx(expected_row0)
 
         # 행 4: 모든 레이어 0 (Benford만 0.3)
-        expected_row4 = 0.3 * 0.15
+        expected_row4 = 0.3 * LAYER_WEIGHTS[Layer.BENFORD]
         assert result["anomaly_score"].iloc[4] == pytest.approx(expected_row4)
 
         assert list(result.columns) == ["anomaly_score", "risk_level", "flagged_rules", "topside_score"]
@@ -94,8 +99,12 @@ class TestAggregateScores:
         # benford 누락
 
         result = aggregate_scores(base_df, [layer_a, layer_b, layer_c])
-        # 0.5×0.15 + 0.5×0.45 + 0.5×0.25 + 0(누락)×0.15 = 0.425
-        assert result["anomaly_score"].iloc[0] == pytest.approx(0.425)
+        expected = 0.5 * (
+            LAYER_WEIGHTS[Layer.LAYER_A]
+            + LAYER_WEIGHTS[Layer.LAYER_B]
+            + LAYER_WEIGHTS[Layer.LAYER_C]
+        )
+        assert result["anomaly_score"].iloc[0] == pytest.approx(expected)
 
     def test_custom_weights(self, base_df):
         """weights 파라미터 오버라이드."""
@@ -387,20 +396,21 @@ class TestMLWeights:
 
     def test_ml_weights_sum_to_one(self):
         """LAYER_WEIGHTS_WITH_ML 합계 = 1.0."""
-        from src.detection.constants import LAYER_WEIGHTS_WITH_ML
         assert sum(LAYER_WEIGHTS_WITH_ML.values()) == pytest.approx(1.0)
 
     def test_ml_tracks_included(self, base_df):
         """ML 트랙 결과가 가중합에 반영."""
-        from src.detection.constants import LAYER_WEIGHTS_WITH_ML
         layer_a = _make_result("layer_a", [0.5] * 5, {"A01": [0.5] * 5})
         ml_unsup = _make_result("ml_unsupervised", [0.8] * 5, {"ML02": [0.8] * 5})
         result = aggregate_scores(
             base_df, [layer_a, ml_unsup],
             weights=LAYER_WEIGHTS_WITH_ML,
         )
-        # 0.5×0.10 + 0.8×0.17 = 0.186
-        assert result["anomaly_score"].iloc[0] == pytest.approx(0.05 + 0.136)
+        expected = (
+            0.5 * LAYER_WEIGHTS_WITH_ML[Layer.LAYER_A]
+            + 0.8 * LAYER_WEIGHTS_WITH_ML[Layer.ML_UNSUPERVISED]
+        )
+        assert result["anomaly_score"].iloc[0] == pytest.approx(expected)
 
     def test_ml_tracks_ignored_without_ml_weights(self, base_df):
         """기본 LAYER_WEIGHTS 사용 시 ML 트랙 0점 처리."""
@@ -408,7 +418,9 @@ class TestMLWeights:
         ml_unsup = _make_result("ml_unsupervised", [0.8] * 5, {"ML02": [0.8] * 5})
         result = aggregate_scores(base_df, [layer_a, ml_unsup])
         # ML 트랙은 기본 가중치에 없으므로 무시됨
-        assert result["anomaly_score"].iloc[0] == pytest.approx(0.5 * 0.15)
+        assert result["anomaly_score"].iloc[0] == pytest.approx(
+            0.5 * LAYER_WEIGHTS[Layer.LAYER_A]
+        )
 
     def test_cold_start_no_ml_results(self, base_df, four_layer_results):
         """ML 결과 없이 LAYER_WEIGHTS_WITH_ML 적용 → ML 트랙 0점, 에러 없음."""

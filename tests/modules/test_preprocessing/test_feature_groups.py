@@ -42,11 +42,27 @@ class TestClassifyFeatures:
         groups = classify_features(pp_sample_profile)
         assert "document_id" in groups.excluded
         assert "posting_date" in groups.excluded
+        assert "fraud_type" in groups.excluded
+        assert "anomaly_type" in groups.excluded
+        assert "sod_violation" in groups.excluded
+        assert "sod_conflict_type" in groups.excluded
 
     def test_low_cardinality_categorical(self, pp_sample_profile):
         groups = classify_features(pp_sample_profile)
         for col in ("source", "company_code"):
             assert col in groups.categorical_low, f"{col} not in categorical_low"
+
+    def test_user_persona_forced_to_low_cardinality(self):
+        profile = EDAProfile(total_rows=100, total_columns=1, memory_bytes=1000, duplicate_rows=0)
+        profile.columns["user_persona"] = ColumnProfile(
+            name="user_persona",
+            dtype="object",
+            dtype_group="categorical",
+            missing_rate=0.0,
+            unique_count=984,
+        )
+        groups = classify_features(profile)
+        assert "user_persona" in groups.categorical_low
 
     def test_high_missing_rate_excluded(self):
         """결측률 95% 컬럼 → excluded 자동 배치."""

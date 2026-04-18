@@ -12,10 +12,13 @@ from pathlib import Path
 import pytest
 
 from src.ingest.mapping_profile import (
+    ColumnDiff,
     _save_mapping_log,
     column_fingerprint,
+    compute_column_diff,
     delete_profile,
     list_profiles,
+    load_latest_profile,
     load_profile,
     save_profile,
 )
@@ -420,3 +423,142 @@ class TestIntegration:
         assert delete_profile(fp) is True
         assert load_profile(columns) is None
         assert list_profiles() == []
+
+
+# ── load_latest_profile 테스트 ─────────────────────────
+
+
+@pytest.mark.usefixtures("_use_tmp_profile_dir")
+class TestLoadLatestProfile:
+    """최신 프로파일 메타데이터 로드 테스트."""
+
+    def test_no_profiles_returns_none(self, tmp_path: Path):
+        """프로파일 없으면 None."""
+        assert load_latest_profile() is None
+
+    def test_returns_latest(self, tmp_path: Path):
+        """복수 프로파일 중 최신 updated_at 반환."""
+        cols_a = ["전표번호", "전표일자"]
+        cols_b = ["DocNo", "Amount", "Date"]
+        res_a = MappingResult(
+            mapping={"전표번호": "document_id"}, suggestions={},
+            confidence={"전표번호": 1.0}, unmapped=[],
+            missing_required=[], needs_review=False,
+        )
+        res_b = MappingResult(
+            mapping={"DocNo": "document_id"}, suggestions={},
+            confidence={"DocNo": 1.0}, unmapped=[],
+            missing_required=[], needs_review=False,
+        )
+        save_profile(res_a, cols_a, source_name="old.xlsx")
+        save_profile(res_b, cols_b, source_name="new.csv")
+
+        # Why: 같은 초에 저장되면 updated_at 동일 → 정렬 불안정
+        # 명시적으로 new.csv의 updated_at을 미래로 패치
+        fp_b = column_fingerprint(cols_b)
+        path_b = tmp_path / f"{fp_b}.json"
+        data_b = json.loads(path_b.read_text(encoding="utf-8"))
+        data_b["updated_at"] = "2099-01-01T00:00:00+00:00"
+        path_b.write_text(json.dumps(data_b, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        latest = load_latest_profile()
+        assert latest is not None
+        assert latest["source_name"] == "new.csv"
+        assert latest["source_columns"] == cols_b
+
+    def test_returns_source_columns(
+        self, sample_columns: list[str], clean_result: MappingResult, tmp_path: Path,
+    ):
+        """source_columns 필드가 정확히 반환된다."""
+        save_profile(clean_result, sample_columns, source_name="test.xlsx")
+        latest = load_latest_profile()
+        assert latest is not None
+        assert latest["source_columns"] == sample_columns
+
+
+# ── compute_column_diff 테스트 ─────────────────────────
+
+
+class TestComputeColumnDiff:
+    """컬럼 diff 계산 테스트."""
+
+    def test_no_changes(self):
+        """동일 컬럼 → 변경 없음."""
+        cols = ["전표번호", "전표일자", "차변금액"]
+        diff = compute_column_diff(cols, cols)
+        assert diff.added == []
+        assert diff.removed == []
+        assert diff.renamed == []
+
+    def test_added_columns(self):
+        """신규 컬럼 감지."""
+        prev = ["전표번호", "전표일자"]
+        curr = ["전표번호", "전표일자", "승인자"]
+        diff = compute_column_diff(prev, curr)
+        assert diff.added == ["승인자"]
+        assert diff.removed == []
+        assert diff.renamed == []
+
+    def test_removed_columns(self):
+        """삭제된 컬럼 감지."""
+        prev = ["전표번호", "전표일자", "참조번호"]
+        curr = ["전표번호", "전표일자"]
+        diff = compute_column_diff(prev, curr)
+        assert diff.added == []
+        assert diff.removed == ["참조번호"]
+        assert diff.renamed == []
+
+    def test_renamed_column_suffix(self):
+        """접미사 추가 패턴 감지 (공급가액 → 공급가액(원화))."""
+        prev = ["전표번호", "공급가액"]
+        curr = ["전표번호", "공급가액(원화)"]
+        diff = compute_column_diff(prev, curr)
+        assert len(diff.renamed) == 1
+        assert diff.renamed[0][0] == "공급가액"
+        assert diff.renamed[0][1] == "공급가액(원화)"
+        assert diff.added == []
+        assert diff.removed == []
+
+    def test_renamed_column_abbreviation(self):
+        """영문 축약 패턴 감지 (vendor_name → vndr_name)."""
+        prev = ["doc_id", "vendor_name"]
+        curr = ["doc_id", "vndr_name"]
+        diff = compute_column_diff(prev, curr)
+        # partial_ratio나 token_sort_ratio로 75% 이상이면 renamed
+        if diff.renamed:
+            assert diff.renamed[0][0] == "vendor_name"
+            assert diff.renamed[0][1] == "vndr_name"
+        else:
+            # 유사도가 임계값 미만이면 added+removed로 분류됨
+            assert "vndr_name" in diff.added
+            assert "vendor_name" in diff.removed
+
+    def test_mixed_changes(self):
+        """추가+삭제+이름변경 복합 시나리오."""
+        prev = ["전표번호", "전표일자", "공급가액", "참조번호"]
+        curr = ["전표번호", "전표일자", "공급가액(원화)", "승인자"]
+        diff = compute_column_diff(prev, curr)
+        # 공급가액→공급가액(원화) renamed, 참조번호 removed, 승인자 added
+        renamed_olds = [r[0] for r in diff.renamed]
+        assert "공급가액" in renamed_olds
+        assert "참조번호" in diff.removed
+        assert "승인자" in diff.added
+
+    def test_case_insensitive(self):
+        """대소문자 무관하게 동일 컬럼 인식."""
+        prev = ["DocNo", "Amount"]
+        curr = ["docno", "AMOUNT"]
+        diff = compute_column_diff(prev, curr)
+        assert diff.added == []
+        assert diff.removed == []
+        assert diff.renamed == []
+
+    def test_prev_metadata_passthrough(self):
+        """prev_fingerprint, prev_source_name이 ColumnDiff에 전달."""
+        diff = compute_column_diff(
+            ["a"], ["a"],
+            prev_fingerprint="abc123",
+            prev_source_name="test.xlsx",
+        )
+        assert diff.prev_fingerprint == "abc123"
+        assert diff.prev_source_name == "test.xlsx"

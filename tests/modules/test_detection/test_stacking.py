@@ -1,4 +1,4 @@
-"""StackingEnsemble 단위 테스트 — Ridge(positive=True) meta-learner."""
+"""StackingEnsemble unit tests for the Ridge(positive=True) meta-learner."""
 
 from __future__ import annotations
 
@@ -6,19 +6,20 @@ import numpy as np
 import pytest
 from sklearn.utils.validation import check_is_fitted
 
+from src.detection.constants import STACKING_BASE_MODELS
 from src.preprocessing.stacking import StackingEnsemble
 
 
 @pytest.fixture()
 def score_matrix() -> np.ndarray:
-    """(100, 8) 합성 점수 행렬 — 0~1 범위."""
+    """(100, len(STACKING_BASE_MODELS)) synthetic score matrix in [0, 1]."""
     rng = np.random.default_rng(42)
-    return rng.uniform(0, 1, size=(100, 8))
+    return rng.uniform(0, 1, size=(100, len(STACKING_BASE_MODELS)))
 
 
 @pytest.fixture()
 def labels() -> np.ndarray:
-    """100건 이진 라벨 — 양성 20%."""
+    """100 binary labels with 20 positive samples."""
     rng = np.random.default_rng(42)
     y = np.zeros(100, dtype=int)
     y[rng.choice(100, 20, replace=False)] = 1
@@ -27,7 +28,7 @@ def labels() -> np.ndarray:
 
 @pytest.fixture()
 def fitted_ensemble(score_matrix, labels) -> StackingEnsemble:
-    """학습 완료된 StackingEnsemble."""
+    """A fitted StackingEnsemble instance."""
     ens = StackingEnsemble(alpha=1.0, random_state=42)
     ens.fit(score_matrix, labels)
     return ens
@@ -43,7 +44,7 @@ class TestFit:
         check_is_fitted(fitted_ensemble, "meta_")
 
     def test_n_features_in(self, fitted_ensemble):
-        assert fitted_ensemble.n_features_in_ == 8
+        assert fitted_ensemble.n_features_in_ == len(STACKING_BASE_MODELS)
 
 
 class TestPredictProba:
@@ -57,22 +58,21 @@ class TestPredictProba:
         assert np.all(proba <= 1.0)
 
     def test_columns_sum_to_1(self, fitted_ensemble, score_matrix):
-        """P(정상) + P(이상) = 1."""
         proba = fitted_ensemble.predict_proba(score_matrix)
         np.testing.assert_allclose(proba.sum(axis=1), 1.0)
 
     def test_not_fitted_raises(self, score_matrix):
         from sklearn.exceptions import NotFittedError
+
         ens = StackingEnsemble()
         with pytest.raises(NotFittedError):
             ens.predict_proba(score_matrix)
 
     def test_wrong_column_count_raises(self, labels):
-        """열 수가 STACKING_BASE_MODELS와 다르면 ValueError."""
         ens = StackingEnsemble()
-        wrong_X = np.random.default_rng(42).uniform(0, 1, size=(100, 5))
-        with pytest.raises(ValueError, match="열 수 불일치"):
-            ens.fit(wrong_X, labels)
+        wrong_x = np.random.default_rng(42).uniform(0, 1, size=(100, 5))
+        with pytest.raises(ValueError, match="불일치"):
+            ens.fit(wrong_x, labels)
 
 
 class TestPredict:
@@ -87,17 +87,15 @@ class TestPredict:
 
 class TestFeatureWeights:
     def test_all_non_negative(self, fitted_ensemble):
-        """Ridge(positive=True) → 모든 가중치 ≥ 0."""
         weights = fitted_ensemble.feature_weights
-        for name, w in weights.items():
-            assert w >= 0.0, f"{name} 가중치가 음수: {w}"
+        for name, weight in weights.items():
+            assert weight >= 0.0, f"{name} weight was negative: {weight}"
 
     def test_length_matches_base_models(self, fitted_ensemble):
         weights = fitted_ensemble.feature_weights
-        assert len(weights) == 8
+        assert len(weights) == len(STACKING_BASE_MODELS)
 
     def test_keys_are_track_names(self, fitted_ensemble):
-        from src.detection.constants import STACKING_BASE_MODELS
         weights = fitted_ensemble.feature_weights
         assert list(weights.keys()) == list(STACKING_BASE_MODELS)
 
@@ -105,6 +103,7 @@ class TestFeatureWeights:
 class TestSerialization:
     def test_joblib_roundtrip(self, fitted_ensemble, score_matrix, tmp_path):
         import joblib
+
         path = tmp_path / "stacking.pkl"
         joblib.dump(fitted_ensemble, path)
         loaded = joblib.load(path)

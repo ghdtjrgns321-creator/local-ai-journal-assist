@@ -109,7 +109,7 @@ class TestGenerateSapMergedReport:
         if not SAP_MERGED.exists():
             pytest.skip(f"데이터 파일 없음: {SAP_MERGED}")
 
-        from tests.test_feature.e2e_report_builder import build_report
+        from tests.modules.test_feature.e2e_report_builder import build_report
 
         ingested_df, missing_required = _run_ingest_pipeline(SAP_MERGED)
         row_count = len(ingested_df)

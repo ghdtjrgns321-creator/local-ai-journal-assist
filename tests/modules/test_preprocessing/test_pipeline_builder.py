@@ -11,8 +11,10 @@ from src.preprocessing.pipeline_builder import (
     build_all_pipelines,
     build_if_pipeline,
     build_lgbm_pipeline,
+    prepare_training_features,
     build_supervised_pipelines,
     build_xgb_pipeline,
+    drop_label_columns,
 )
 
 
@@ -124,3 +126,62 @@ class TestBuildSupervisedPipelines:
             pipe.fit(X, y)
             preds = pipe.predict(X)
             assert set(preds).issubset({0, 1}), f"{name} predict failed"
+
+
+class TestDropLabelColumns:
+    def test_drops_all_datasynth_label_columns(self):
+        import pandas as pd
+
+        df = pd.DataFrame({
+            "feature_a": [1, 2],
+            "is_fraud": [True, False],
+            "fraud_type": ["DuplicatePayment", None],
+            "is_anomaly": [True, False],
+            "anomaly_type": ["TimingAnomaly", None],
+            "sod_violation": [False, True],
+            "sod_conflict_type": [None, "preparer_approver"],
+            "target": [1, 0],
+        })
+
+        cleaned = drop_label_columns(df)
+
+        assert list(cleaned.columns) == ["feature_a"]
+
+    def test_normalizes_user_persona_variants(self):
+        import pandas as pd
+
+        df = pd.DataFrame({
+            "feature_a": [1, 2],
+            "user_persona": ["senior_accoutant", "utomated_system"],
+        })
+
+        cleaned = drop_label_columns(df)
+
+        assert cleaned["user_persona"].tolist() == [
+            "senior_accountant",
+            "automated_system",
+        ]
+
+
+class TestPrepareTrainingFeatures:
+    def test_excludes_sparse_feature_columns_from_groups(self, simple_groups):
+        import pandas as pd
+
+        groups = FeatureGroups(
+            numeric=["f1"],
+            categorical_low=["user_persona", "cost_center", "tax_code"],
+        )
+        df = pd.DataFrame({
+            "f1": [1.0, 2.0, 3.0, 4.0],
+            "user_persona": ["maanger", "controller", "utomated_system", "manager"],
+            "cost_center": [None, None, None, "CC100"],
+            "tax_code": [None, None, None, None],
+        })
+
+        cleaned, adjusted_groups, report = prepare_training_features(df, groups)
+
+        assert adjusted_groups is not None
+        assert adjusted_groups.categorical_low == ["user_persona"]
+        assert "cost_center" not in cleaned.columns
+        assert "tax_code" not in cleaned.columns
+        assert report.sparse_dropped_columns == ["cost_center", "tax_code"]
