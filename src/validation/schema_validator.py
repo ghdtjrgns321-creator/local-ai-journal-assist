@@ -11,8 +11,8 @@ import logging
 from typing import Optional
 
 import pandas as pd
-import pandera as pa
-from pandera.typing import Series
+import pandera.pandas as pa
+from pandera.typing.pandas import Series
 
 from config.settings import AuditSettings, get_schema, get_settings
 from src.validation.models import SchemaResult
@@ -83,6 +83,15 @@ class GeneralLedgerSchema(pa.DataFrameModel):
     anomaly_type: Optional[Series[str]] = pa.Field(nullable=True)
     sod_violation: Optional[Series[bool]] = pa.Field(nullable=True)
     sod_conflict_type: Optional[Series[str]] = pa.Field(nullable=True)
+
+    # ── 선택 컬럼 ── Stage 2 확장
+    has_attachment: Optional[Series[bool]] = pa.Field(nullable=True)
+    supporting_doc_type: Optional[Series[str]] = pa.Field(nullable=True)
+    delivery_date: Optional[Series[pa.DateTime]] = pa.Field(nullable=True)
+    invoice_amount: Optional[Series[float]] = pa.Field(nullable=True)
+    supply_amount: Optional[Series[float]] = pa.Field(nullable=True)
+    ip_address: Optional[Series[str]] = pa.Field(nullable=True)
+    document_number: Optional[Series[pd.Int64Dtype]] = pa.Field(nullable=True)
 
     # ── 선택 컬럼 — Line ──
     line_number: Optional[Series[pd.Int64Dtype]] = pa.Field(nullable=True)

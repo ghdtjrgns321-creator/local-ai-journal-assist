@@ -32,6 +32,22 @@ _PROFILERS = {
 }
 
 
+def _to_hashable(value):
+    if isinstance(value, list):
+        return tuple(_to_hashable(item) for item in value)
+    if isinstance(value, dict):
+        return tuple(sorted((str(k), _to_hashable(v)) for k, v in value.items()))
+    if isinstance(value, set):
+        return tuple(sorted(_to_hashable(item) for item in value))
+    if isinstance(value, tuple):
+        return tuple(_to_hashable(item) for item in value)
+    return value
+
+
+def _normalize_for_hashing(series: pd.Series) -> pd.Series:
+    return series.map(_to_hashable) if series.dtype == "object" else series
+
+
 def profile_dataframe(df: pd.DataFrame) -> EDAProfile:
     """DataFrame → EDAProfile 산출. 단일 진입점.
 
@@ -42,7 +58,10 @@ def profile_dataframe(df: pd.DataFrame) -> EDAProfile:
     total_rows = len(df)
     total_columns = len(df.columns)
     memory_bytes = int(df.memory_usage(deep=True).sum())
-    duplicate_rows = int(df.duplicated().sum()) if total_rows > 0 else 0
+    duplicate_rows = (
+        int(df.apply(_normalize_for_hashing).duplicated().sum())
+        if total_rows > 0 else 0
+    )
 
     # 샘플링 판정
     sampled = total_rows > _SAMPLING_THRESHOLD
@@ -63,8 +82,9 @@ def profile_dataframe(df: pd.DataFrame) -> EDAProfile:
 
         # 공통 통계 (원본 기준)
         missing_rate = float(orig_series.isna().mean()) if total_rows > 0 else 0.0
-        unique_count = int(orig_series.nunique())
-        mode_val = _safe_mode(orig_series)
+        normalized_series = _normalize_for_hashing(orig_series)
+        unique_count = int(normalized_series.nunique())
+        mode_val = _safe_mode(normalized_series)
 
         # 타입별 상세 (샘플 기준)
         profiler_fn = _PROFILERS[dtype_group]

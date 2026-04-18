@@ -1,8 +1,4 @@
-"""Company/Engagement 프로파일 Pydantic 모델.
-
-YAML 직렬화를 위해 BaseModel 사용 (ingest/models.py의 @dataclass와 다름).
-company.yaml, engagement.yaml 스키마를 정의한다.
-"""
+"""Pydantic models for company and engagement profiles."""
 
 from __future__ import annotations
 
@@ -12,9 +8,11 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
+from src.company.merger import normalize_settings_overrides
+
 
 class EngagementStatus(StrEnum):
-    """감사 진행 상태."""
+    """Audit engagement lifecycle status."""
 
     DRAFT = "draft"
     IN_PROGRESS = "in_progress"
@@ -23,11 +21,7 @@ class EngagementStatus(StrEnum):
 
 
 class CompanyProfile(BaseModel):
-    """회사 프로파일 — company.yaml 스키마.
-
-    company_id는 파일시스템 경로로 사용되므로 영소문자+숫자+밑줄만 허용.
-    display_name에서 사람이 읽는 이름을 관리한다.
-    """
+    """Company profile persisted in `company.yaml`."""
 
     company_id: str = Field(
         ..., min_length=1, max_length=64, pattern=r"^[a-z0-9_]+$"
@@ -37,11 +31,7 @@ class CompanyProfile(BaseModel):
     erp_system: str = ""
     fiscal_year_start: int = Field(default=1, ge=1, le=12)
     currency: str = Field(default="KRW", max_length=3)
-
-    # Why: AuditSettings 71개 필드 중 일부만 오버라이드하므로 plain dict 사용.
-    # deep_merge 시점에서 AuditSettings.model_validate로 최종 검증.
     settings_overrides: dict[str, Any] = Field(default_factory=dict)
-
     has_custom_coa: bool = False
     has_custom_keywords: bool = False
     has_custom_rules: bool = False
@@ -52,13 +42,17 @@ class CompanyProfile(BaseModel):
     def _normalize_company_id(cls, v: str) -> str:
         return v.strip().lower()
 
+    @field_validator("settings_overrides", mode="before")
+    @classmethod
+    def _normalize_settings_overrides(cls, value: Any) -> dict[str, Any]:
+        raw = value or {}
+        if not isinstance(raw, dict):
+            raise TypeError("settings_overrides must be a dict")
+        return normalize_settings_overrides(raw, scope="company")
+
 
 class EngagementProfile(BaseModel):
-    """감사 연도 프로파일 — engagement.yaml 스키마.
-
-    fiscal_year와 period_start/end로 감사 기간을 정의한다.
-    period_start/end가 None이면 fiscal_year + fiscal_year_start로 기간을 유추.
-    """
+    """Engagement profile persisted in `engagement.yaml`."""
 
     engagement_id: str = Field(
         ..., min_length=1, max_length=64, pattern=r"^[a-z0-9_]+$"
@@ -76,6 +70,13 @@ class EngagementProfile(BaseModel):
     def _check_period_order(cls, v: date | None, info) -> date | None:
         start = info.data.get("period_start")
         if v is not None and start is not None and v < start:
-            msg = f"period_end({v})가 period_start({start})보다 앞섭니다"
-            raise ValueError(msg)
+            raise ValueError(f"period_end({v}) must not be earlier than {start}")
         return v
+
+    @field_validator("settings_overrides", mode="before")
+    @classmethod
+    def _normalize_settings_overrides(cls, value: Any) -> dict[str, Any]:
+        raw = value or {}
+        if not isinstance(raw, dict):
+            raise TypeError("settings_overrides must be a dict")
+        return normalize_settings_overrides(raw, scope="engagement")

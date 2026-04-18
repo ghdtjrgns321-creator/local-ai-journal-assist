@@ -87,6 +87,7 @@ class CompanyRepository:
 
     def create_company(self, profile: CompanyProfile) -> Path:
         """회사 디렉토리 + company.yaml 생성. 이미 존재 시 FileExistsError."""
+        profile = CompanyProfile.model_validate(profile.model_dump(mode="json"))
         cdir = self.company_dir(profile.company_id)
         if cdir.exists():
             msg = f"회사 디렉토리가 이미 존재합니다: {profile.company_id}"
@@ -133,6 +134,7 @@ class CompanyRepository:
 
     def update_company(self, profile: CompanyProfile) -> Path:
         """company.yaml 원자적 덮어쓰기. 미존재 시 FileNotFoundError."""
+        profile = CompanyProfile.model_validate(profile.model_dump(mode="json"))
         cdir = self.company_dir(profile.company_id)
         if not cdir.exists():
             msg = f"회사를 찾을 수 없습니다: {profile.company_id}"
@@ -157,10 +159,12 @@ class CompanyRepository:
         self, company_id: str, profile: EngagementProfile
     ) -> Path:
         """engagements/{engagement_id}/ 디렉토리 + engagement.yaml 생성."""
+        profile = EngagementProfile.model_validate(profile.model_dump(mode="json"))
         if not self.company_dir(company_id).exists():
             msg = f"회사를 찾을 수 없습니다: {company_id}"
             raise FileNotFoundError(msg)
 
+        profile = EngagementProfile.model_validate(profile.model_dump(mode="json"))
         edir = self.engagement_dir(company_id, profile.engagement_id)
         if edir.exists():
             msg = f"Engagement가 이미 존재합니다: {profile.engagement_id}"
@@ -266,6 +270,7 @@ class CompanyRepository:
             raise FileNotFoundError(msg)
         path = cdir / safe_filename
         _atomic_yaml_write(path, data)
+        self._sync_custom_yaml_flag(company_id, safe_filename)
         return path
 
     def save_company_keywords(
@@ -282,6 +287,22 @@ class CompanyRepository:
 
     def load_company_risk_keywords(self, company_id: str) -> dict[str, Any] | None:
         return self.load_company_yaml(company_id, "risk_keywords.yaml")
+
+    def _sync_custom_yaml_flag(self, company_id: str, filename: str) -> None:
+        flag_map = {
+            "keywords.yaml": "has_custom_keywords",
+            "audit_rules.yaml": "has_custom_rules",
+            "risk_keywords.yaml": "has_custom_risk_keywords",
+        }
+        flag_name = flag_map.get(filename)
+        if flag_name is None:
+            return
+
+        profile = self.get_company(company_id)
+        if getattr(profile, flag_name):
+            return
+        updated = profile.model_copy(update={flag_name: True})
+        self.update_company(updated)
 
     # ── export / import ────────────────────────────────
 
@@ -400,3 +421,24 @@ class CompanyRepository:
 
     def model_dir(self, company_id: str, engagement_id: str) -> Path:
         return self.engagement_dir(company_id, engagement_id) / "models"
+
+    def list_feedback_events(
+        self,
+        company_id: str,
+        engagement_id: str,
+        *,
+        batch_id: str | None = None,
+        document_id: str | None = None,
+    ):
+        """Engagement DB에서 normalized feedback events를 읽는다."""
+        from src.db.connection import get_connection
+        from src.hitl.feedback_store import list_feedback_events
+
+        conn = get_connection(str(self.db_path(company_id, engagement_id)))
+        if batch_id is not None:
+            return list_feedback_events(conn, batch_id=batch_id, document_id=document_id)
+        return list_feedback_events(
+            conn,
+            company_id=company_id,
+            engagement_id=engagement_id,
+        )

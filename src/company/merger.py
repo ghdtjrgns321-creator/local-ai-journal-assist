@@ -1,12 +1,4 @@
-"""3계층 설정 해소(Resolution) — deep_merge + AuditSettings 생성.
-
-해소 체인:
-  글로벌 기본값 (AuditSettings 기본값)
-    → deep_merge(회사 settings_overrides)
-    → deep_merge(연도 settings_overrides)
-    → model_copy(update=preset/runtime overrides)
-    = 최종 AuditSettings 인스턴스
-"""
+"""Settings/YAML merge helpers for company-specific configuration."""
 
 from __future__ import annotations
 
@@ -18,20 +10,75 @@ from config.settings import AuditSettings
 
 logger = logging.getLogger(__name__)
 
+_GLOBAL_ONLY_OVERRIDE_FIELDS = {
+    "max_file_size_mb",
+    "allowed_extensions",
+    "datasynth_label_mode",
+    "datasynth_metadata_enforcement",
+    "profile_dir",
+    "duckdb_path",
+    "vae_latent_dim",
+    "vae_epochs",
+    "vae_batch_size",
+    "if_contamination",
+    "cv_folds",
+    "cv_scoring",
+    "supervised_min_positive",
+    "supervised_min_positive_rate",
+    "supervised_allowed_label_sources",
+    "ft_d_token",
+    "ft_n_layers",
+    "ft_n_heads",
+    "ft_d_ff",
+    "ft_dropout",
+    "ft_epochs",
+    "ft_batch_size",
+    "ft_lr",
+    "bilstm_hidden_size",
+    "bilstm_seq_len",
+    "bilstm_stride",
+    "bilstm_epochs",
+    "bilstm_batch_size",
+    "bilstm_lr",
+    "bilstm_dropout",
+    "bilstm_num_layers",
+    "stacking_cv_folds",
+    "stacking_oof_n_jobs",
+    "stacking_min_positive",
+    "stacking_fallback_threshold",
+    "stacking_alpha",
+    "detection_parallel_workers",
+    "shap_threshold",
+    "shap_max_rows",
+    "openai_api_key",
+    "openai_light_model",
+    "openai_reasoning_model",
+    "openai_embedding_model",
+    "openai_temperature",
+    "openai_timeout",
+    "narrative_batch_size",
+    "narrative_max_retries",
+    "narrative_risk_levels",
+    "insight_significant_tx_top_n",
+}
+_ENGAGEMENT_BLOCKED_FIELDS = {
+    "enable_llm_header_fallback",
+}
+_LEGACY_ALIAS_MAP = {
+    "approval_amount_threshold": "approval_thresholds",
+    "approval_threshold": "approval_thresholds",
+}
 
-def deep_merge(
-    base: dict[str, Any], override: dict[str, Any]
-) -> dict[str, Any]:
-    """딕셔너리 재귀 병합. 리스트는 replace (append 아님).
+COMPANY_OVERRIDE_ALLOWED_FIELDS = (
+    set(AuditSettings.model_fields) - _GLOBAL_ONLY_OVERRIDE_FIELDS
+)
+ENGAGEMENT_OVERRIDE_ALLOWED_FIELDS = (
+    COMPANY_OVERRIDE_ALLOWED_FIELDS - _ENGAGEMENT_BLOCKED_FIELDS
+)
 
-    규칙:
-      - override에 키 존재 & 양쪽 dict → 재귀 merge
-      - override에 키 존재 & 그 외 → 전체 교체 (리스트 포함)
-      - override에 키 없음 → base 값 유지
 
-    Returns:
-        새 딕셔너리 (base, override 모두 불변)
-    """
+def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """Deep-merge dictionaries. Lists are replaced, not extended."""
     result = copy.deepcopy(base)
     for key, val in override.items():
         if key in result and isinstance(result[key], dict) and isinstance(val, dict):
@@ -48,26 +95,22 @@ def resolve_settings(
     preset_overrides: dict[str, Any] | None = None,
     runtime_overrides: dict[str, Any] | None = None,
 ) -> AuditSettings:
-    """3+1 계층 설정 해소 → 최종 AuditSettings 인스턴스.
-
-    Layer 1: AuditSettings() 기본값 (env 포함)
-    Layer 2: company_overrides (deep_merge)
-    Layer 3: engagement_overrides (deep_merge)
-    Layer 4: preset + runtime (model_copy, 비영속)
-    """
+    """Resolve global defaults + company/engagement overrides + runtime edits."""
     base = AuditSettings()
     base_dict = base.model_dump()
 
     if company_overrides:
-        _warn_unknown_keys(company_overrides, base_dict, "company")
-        base_dict = deep_merge(base_dict, company_overrides)
+        base_dict = deep_merge(
+            base_dict,
+            normalize_settings_overrides(company_overrides, scope="company"),
+        )
 
     if engagement_overrides:
-        _warn_unknown_keys(engagement_overrides, base_dict, "engagement")
-        base_dict = deep_merge(base_dict, engagement_overrides)
+        base_dict = deep_merge(
+            base_dict,
+            normalize_settings_overrides(engagement_overrides, scope="engagement"),
+        )
 
-    # Why: Layer 1~3은 model_validate로 전체 검증. Layer 4는 model_copy로
-    # env_file 재로드 등 부작용 없이 비영속 오버라이드만 적용.
     merged = AuditSettings.model_validate(base_dict)
 
     runtime = {}
@@ -85,25 +128,70 @@ def resolve_yaml_config(
     global_config: dict[str, Any],
     company_config: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """YAML 설정 파일(keywords, audit_rules, risk_keywords) 머지.
-
-    회사별 파일이 None이면 글로벌 그대로 반환.
-    """
+    """Merge global YAML config with company-specific YAML config."""
     if company_config is None:
         return copy.deepcopy(global_config)
     return deep_merge(global_config, company_config)
 
 
-def _warn_unknown_keys(
+def normalize_settings_overrides(
     overrides: dict[str, Any],
-    base: dict[str, Any],
-    source: str,
-) -> None:
-    """AuditSettings에 없는 키 감지 → 경고 로그 (오타 방지)."""
-    unknown = set(overrides.keys()) - set(base.keys())
-    if unknown:
+    *,
+    scope: str,
+) -> dict[str, Any]:
+    """Normalize legacy aliases and filter disallowed keys before persistence/use."""
+    normalized = _normalize_legacy_aliases(overrides, scope)
+    allowed = (
+        COMPANY_OVERRIDE_ALLOWED_FIELDS
+        if scope == "company"
+        else ENGAGEMENT_OVERRIDE_ALLOWED_FIELDS
+    )
+    _warn_ignored_keys(normalized, allowed, scope)
+    return {
+        key: copy.deepcopy(value)
+        for key, value in normalized.items()
+        if key in allowed
+    }
+
+
+def _normalize_legacy_aliases(
+    overrides: dict[str, Any],
+    scope: str,
+) -> dict[str, Any]:
+    normalized = copy.deepcopy(overrides)
+    for legacy_key, current_key in _LEGACY_ALIAS_MAP.items():
+        if legacy_key not in normalized or current_key in normalized:
+            continue
+        normalized[current_key] = _coerce_legacy_value(
+            current_key,
+            normalized.pop(legacy_key),
+        )
         logger.warning(
-            "%s settings_overrides에 알 수 없는 키: %s (무시됨)",
-            source,
-            sorted(unknown),
+            "%s settings_overrides legacy key '%s' -> '%s'로 정규화",
+            scope,
+            legacy_key,
+            current_key,
+        )
+    return normalized
+
+
+def _coerce_legacy_value(current_key: str, raw_value: Any) -> Any:
+    if current_key == "approval_thresholds":
+        if isinstance(raw_value, list):
+            return [int(v) for v in raw_value]
+        return [int(raw_value)]
+    return raw_value
+
+
+def _warn_ignored_keys(
+    overrides: dict[str, Any],
+    allowed: set[str],
+    scope: str,
+) -> None:
+    ignored = set(overrides) - allowed
+    if ignored:
+        logger.warning(
+            "%s settings_overrides에서 허용되지 않는 키 %s 무시",
+            scope,
+            sorted(ignored),
         )

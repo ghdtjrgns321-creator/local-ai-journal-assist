@@ -278,25 +278,284 @@ def add_morpheme_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# ── Phase 2/3 stubs ─────────────────────────────────────────────
+# ── WU-21: 임베딩 기반 의미 피처 ─────────────────────────────────
 
 
-def add_semantic_similarity(df: pd.DataFrame) -> pd.DataFrame:
-    """Phase 2: kiwipiepy + 임베딩 벡터 유사도 (미구현).
+def add_semantic_similarity(
+    df: pd.DataFrame,
+    embedding_service: object | None = None,
+    *,
+    min_group_size: int = 5,
+) -> pd.DataFrame:
+    """WU-21 #88: gl_account 그룹 내 적요 임베딩 코사인 유사도.
 
-    TODO Phase 2: add_all_text_features에 연결.
+    추가 컬럼:
+      - semantic_similarity (float, 0.0~1.0): 그룹 centroid와 각 행의 코사인 유사도.
+        값이 낮을수록 같은 계정 내에서 적요가 이질적 → 계정 오분류·위장거래 의심.
+
+    동작:
+      - morpheme_tokens(있으면) → 비식별화 입력 → 임베딩
+      - gl_account별 그룹 centroid → 각 행과의 cosine
+      - min_group_size 미만 그룹은 NaN (신뢰도 부족)
+      - 임베딩 서비스 불가 시 NaN 컬럼 + warning (graceful)
+
+    Why: ISA 315 사업체와 환경 이해 — 같은 계정에서 적요 패턴이 급변하면
+         경제적 실질이 다른 거래 의심.
     """
-    logger.info("add_semantic_similarity: Phase 2 stub — no-op")
+    if "gl_account" not in df.columns:
+        logger.warning("add_semantic_similarity: gl_account 컬럼 없음 — 스킵")
+        df["semantic_similarity"] = np.nan
+        return df
+
+    svc = _resolve_embedding_service(embedding_service)
+    if svc is None:
+        df["semantic_similarity"] = np.nan
+        return df
+
+    # 비식별화 입력 준비
+    sanitized = _sanitize_rows(df)
+    valid_mask = sanitized.str.len() > 0
+    if not valid_mask.any():
+        df["semantic_similarity"] = np.nan
+        return df
+
+    try:
+        valid_texts = sanitized[valid_mask].tolist()
+        embeddings = svc.embed_texts(valid_texts)
+    except Exception as exc:
+        logger.warning("add_semantic_similarity 임베딩 실패 — 스킵: %s", exc)
+        df["semantic_similarity"] = np.nan
+        return df
+
+    if embeddings.size == 0:
+        df["semantic_similarity"] = np.nan
+        return df
+
+    # gl_account별 centroid 거리 → 유사도
+    similarity = pd.Series(np.nan, index=df.index, dtype=float)
+    valid_idx = df.index[valid_mask]
+    valid_groups = df.loc[valid_idx, "gl_account"].astype(str)
+
+    for account, positions in _group_positions(valid_groups).items():
+        if len(positions) < min_group_size:
+            continue
+        # Why: positions는 valid_texts(=embeddings) 내 위치
+        group_emb = embeddings[positions]
+        # centroid는 정규화 깨지므로 재정규화 후 dot
+        centroid = group_emb.mean(axis=0)
+        norm = np.linalg.norm(centroid) + 1e-12
+        centroid = centroid / norm
+        sims = group_emb @ centroid  # (G,) 1회 행렬 곱
+        # valid_idx[positions] → 원본 df index 매핑
+        target_idx = valid_idx[positions]
+        similarity.loc[target_idx] = sims.astype(float)
+
+    df["semantic_similarity"] = similarity
     return df
 
 
-def add_semantic_anomaly(df: pd.DataFrame) -> pd.DataFrame:
-    """Phase 3: OpenAI LLM 문맥 이상 탐지 (미구현).
+def add_account_semantic(
+    df: pd.DataFrame,
+    chat_client: object | None = None,
+    *,
+    max_accounts: int = 200,
+) -> pd.DataFrame:
+    """WU-21 #85: GL 계정명 LLM 카테고리 분류 + 적요 교차 검증.
 
-    TODO Phase 3: add_all_text_features에 연결.
+    추가 컬럼:
+      - account_category (str): revenue/expense/asset/liability/equity/suspense/payroll/...
+      - account_desc_match (bool): 적요(combined_text)에 카테고리 시그널이 있는가
+
+    비용 최적화:
+      - 고유 gl_account 수만큼만 LLM 호출 (max_accounts 상한)
+      - LLM 결과는 dict 캐시 → DataFrame.map으로 일괄 적용
+
+    LLM 불가 시 graceful skip: 컬럼 NaN/False, warning.
     """
-    logger.info("add_semantic_anomaly: Phase 3 stub — no-op")
+    if "gl_account" not in df.columns:
+        logger.warning("add_account_semantic: gl_account 컬럼 없음 — 스킵")
+        df["account_category"] = pd.NA
+        df["account_desc_match"] = False
+        return df
+
+    unique_accounts = df["gl_account"].dropna().astype(str).unique().tolist()
+    if not unique_accounts:
+        df["account_category"] = pd.NA
+        df["account_desc_match"] = False
+        return df
+
+    # Why: 비용 상한 — 너무 많은 계정 수면 사용자 확인 후 수동 확장
+    if len(unique_accounts) > max_accounts:
+        logger.warning(
+            "add_account_semantic: 고유 gl_account %d개 > max_accounts %d — 상위 %d개만 처리",
+            len(unique_accounts), max_accounts, max_accounts,
+        )
+        unique_accounts = unique_accounts[:max_accounts]
+
+    client = _resolve_chat_client(chat_client)
+    if client is None:
+        df["account_category"] = pd.NA
+        df["account_desc_match"] = False
+        return df
+
+    try:
+        category_map = _classify_accounts_via_llm(client, unique_accounts)
+    except Exception as exc:
+        logger.warning("add_account_semantic LLM 호출 실패 — 스킵: %s", exc)
+        df["account_category"] = pd.NA
+        df["account_desc_match"] = False
+        return df
+
+    df["account_category"] = df["gl_account"].astype(str).map(category_map)
+
+    # 적요-카테고리 교차 검증 (가벼운 키워드 매칭으로 1차 시그널만)
+    combined = _combine_text(df).fillna("").astype(str).str.lower()
+    df["account_desc_match"] = [
+        _category_in_text(cat, txt) if pd.notna(cat) else False
+        for cat, txt in zip(df["account_category"], combined)
+    ]
     return df
+
+
+# ── WU-21 헬퍼 ──────────────────────────────────────────────────
+
+
+def _resolve_embedding_service(svc: object | None):
+    """주입받은 임베딩 서비스 또는 싱글톤. 실패 시 None + warning."""
+    if svc is not None:
+        return svc
+    try:
+        from src.llm.embedding_service import get_embedding_service
+
+        return get_embedding_service()
+    except Exception as exc:  # pragma: no cover - 환경 의존
+        logger.warning("EmbeddingService 초기화 실패 — semantic_similarity 스킵: %s", exc)
+        return None
+
+
+def _resolve_chat_client(client: object | None):
+    """주입받은 chat client 또는 light 티어. 실패 시 None + warning."""
+    if client is not None:
+        return client
+    try:
+        from src.llm.api_client import get_chat_client
+
+        return get_chat_client("light")
+    except Exception as exc:  # pragma: no cover - 환경 의존
+        logger.warning("ChatClient 초기화 실패 — account_semantic 스킵: %s", exc)
+        return None
+
+
+def _sanitize_rows(df: pd.DataFrame) -> pd.Series:
+    """각 행의 임베딩 입력 문자열 — 비식별화 보장.
+
+    morpheme_tokens 있으면 우선 사용, 없으면 combined_text(영문) 토큰화.
+    """
+    from src.llm.embedding_service import sanitize_for_embedding
+
+    combined = _combine_text(df).fillna("")
+    if "morpheme_tokens" in df.columns:
+        return pd.Series(
+            [
+                sanitize_for_embedding(text, morpheme_tokens=tokens)
+                for text, tokens in zip(combined, df["morpheme_tokens"])
+            ],
+            index=df.index,
+            dtype="string",
+        )
+    return pd.Series(
+        [sanitize_for_embedding(text) for text in combined],
+        index=df.index,
+        dtype="string",
+    )
+
+
+def _group_positions(group_series: pd.Series) -> dict[str, np.ndarray]:
+    """그룹 키 → 해당 행의 0-based positional index 배열.
+
+    Why: embeddings 배열이 valid_texts 순서로 정렬되어 있으므로,
+         원본 df index가 아닌 positional index로 슬라이싱해야 함.
+    """
+    out: dict[str, list[int]] = {}
+    for pos, key in enumerate(group_series.tolist()):
+        out.setdefault(str(key), []).append(pos)
+    return {k: np.asarray(v, dtype=np.int64) for k, v in out.items()}
+
+
+# 카테고리 → 시그널 키워드 (account_desc_match 1차 매칭용)
+_CATEGORY_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "revenue": ("매출", "수익", "sales", "revenue", "income"),
+    "expense": ("비용", "expense", "cost", "fee"),
+    "asset": ("자산", "asset", "investment"),
+    "liability": ("부채", "liability", "loan", "차입"),
+    "equity": ("자본", "equity", "capital"),
+    "suspense": ("가수금", "가지급", "임시", "suspense", "temp", "tbd"),
+    "payroll": ("급여", "임금", "payroll", "salary", "wage"),
+    "tax": ("세금", "부가세", "tax", "vat"),
+    "cash": ("현금", "예금", "cash", "bank"),
+}
+
+
+def _category_in_text(category: object, text: str) -> bool:
+    """카테고리 시그널 키워드가 적요에 있으면 True.
+
+    Why: LLM 분류 결과가 적요와 의미적으로 정합인지 1차 키워드 매칭 검증.
+         최종 임베딩 유사도 검증은 NLP01 룰이 담당 — 여기는 빠른 보조 신호.
+    """
+    cat = str(category).lower() if pd.notna(category) else ""
+    keywords = _CATEGORY_KEYWORDS.get(cat, ())
+    if not keywords:
+        return False
+    return any(kw in text for kw in keywords)
+
+
+def _classify_accounts_via_llm(client: object, accounts: list[str]) -> dict[str, str]:
+    """LLM으로 GL 계정 코드/명을 카테고리로 분류.
+
+    Returns:
+        {account_str: category} 매핑. 실패 분만 누락.
+    """
+    schema = {
+        "type": "object",
+        "properties": {
+            "classifications": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "account": {"type": "string"},
+                        "category": {
+                            "type": "string",
+                            "enum": list(_CATEGORY_KEYWORDS.keys()) + ["other"],
+                        },
+                    },
+                },
+            }
+        },
+    }
+    prompt = (
+        "You classify accounting GL account codes/names into one of these categories: "
+        f"{', '.join(_CATEGORY_KEYWORDS.keys())}, other. "
+        "Return JSON {classifications: [{account, category}, ...]} for every input account.\n\n"
+        f"Accounts: {accounts}"
+    )
+    raw = client.chat(
+        messages=[
+            {"role": "system", "content": "You are an audit assistant. Reply with strict JSON."},
+            {"role": "user", "content": prompt},
+        ],
+        format=schema,
+    )
+    import json
+
+    parsed = json.loads(raw)
+    out: dict[str, str] = {}
+    for item in parsed.get("classifications", []):
+        acc = item.get("account")
+        cat = item.get("category")
+        if acc and cat:
+            out[str(acc)] = str(cat)
+    return out
 
 
 # ── Orchestrator ─────────────────────────────────────────────────

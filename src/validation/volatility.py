@@ -105,10 +105,13 @@ def analyze_distribution(
         sample = clean
         if len(clean) > _SHAPIRO_MAX_N:
             sample = clean.sample(n=_SHAPIRO_MAX_N, random_state=_SHAPIRO_RANDOM_STATE)
-        stat, p = stats.shapiro(sample)
-        shapiro_stat = round(float(stat), 6)
-        shapiro_p = round(float(p), 6)
-        is_normal = bool(p > settings.shapiro_alpha)
+        if sample.nunique() <= 1:
+            warnings.append("Shapiro-Wilk skipped: constant-value sample")
+        else:
+            stat, p = stats.shapiro(sample)
+            shapiro_stat = round(float(stat), 6)
+            shapiro_p = round(float(p), 6)
+            is_normal = bool(p > settings.shapiro_alpha)
     else:
         warnings.append(f"Shapiro-Wilk 스킵: n={len(clean)} < 최소 {_SHAPIRO_MIN_N}")
 
