@@ -378,7 +378,7 @@ class EnsembleDetector(BaseDetector):
     def save_model(self, mean_f1: float = 0.0):
         """meta-learner를 ModelRegistry로 저장.
 
-        Why: feature_count는 8(STACKING_BASE_MODELS 개수). 학습 분포 메타는
+        Why: feature_count는 len(STACKING_BASE_MODELS). 학습 분포 메타는
              ensemble의 입력이 score_matrix(N×8)이므로 별도 컬럼 통계는 의미가 적어
              메타 등록만 수행한다.
         """
@@ -418,7 +418,7 @@ class EnsembleDetector(BaseDetector):
         results: list[DetectionResult],
         index: pd.Index,
     ) -> np.ndarray:
-        """DetectionResult 리스트 → (N, 8) 점수 행렬.
+        """DetectionResult 리스트 → (N, len(STACKING_BASE_MODELS)) 점수 행렬.
 
         Why: STACKING_BASE_MODELS 순서로 열을 조립.
              누락 모델은 0.0으로 채워 Cold Start에 대응한다.
@@ -442,7 +442,7 @@ class EnsembleDetector(BaseDetector):
     ) -> np.ndarray:
         """OOF fallback 경로용 score_matrix 빌더.
 
-        Why: train_oof()가 fallback으로 빠질 때도 동일한 (N, 8) 형식이 필요하다.
+        Why: train_oof()가 fallback으로 빠질 때도 동일한 (N, len(STACKING_BASE_MODELS)) 형식이 필요하다.
              non_leakage_results만으로 채우고 나머지는 0.
         """
         return EnsembleDetector._build_score_matrix(
@@ -455,7 +455,7 @@ class EnsembleDetector(BaseDetector):
         oof_scores: dict[str, np.ndarray],
         df_index: pd.Index,
     ) -> np.ndarray:
-        """non-leakage 결과 + leakage-prone 모델의 OOF score → (N, 8) 행렬 조립.
+        """non-leakage 결과 + leakage-prone 모델의 OOF score → (N, len(STACKING_BASE_MODELS)) 행렬 조립.
 
         Why: STACKING_BASE_MODELS 순서를 그대로 따르되, leakage-prone 트랙은
              oof_scores 딕셔너리에서, 나머지는 non_leakage_results에서 가져온다.

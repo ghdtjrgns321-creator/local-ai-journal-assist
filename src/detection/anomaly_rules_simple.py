@@ -162,7 +162,7 @@ def c10_suspense_account(df: pd.DataFrame) -> pd.Series:
     """
     if "is_suspense_account" not in df.columns:
         return pd.Series(False, index=df.index)
-    return df["is_suspense_account"].fillna(False)
+    return df["is_suspense_account"].astype("boolean").fillna(False)
 
 
 # ── C12: 비정상 시간대 입력자 집중 분석 ─────────────────────────

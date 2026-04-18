@@ -12,8 +12,6 @@ import numpy as np
 import pandas as pd
 from sklearn.exceptions import NotFittedError
 from sklearn.metrics import f1_score
-from sklearn.model_selection import train_test_split
-
 from src.detection.base import BaseDetector, DetectionResult
 from src.preprocessing.data_stats import (
     compute_class_imbalance,
@@ -23,7 +21,12 @@ from src.preprocessing.data_stats import (
 from src.preprocessing.feature_groups import FeatureGroups
 from src.preprocessing.label_strategy import LabelResult
 from src.preprocessing.model_registry import ModelRegistry
-from src.preprocessing.pipeline_builder import build_ft_pipeline
+from src.preprocessing.pipeline_builder import (
+    build_ft_pipeline,
+    drop_label_columns,
+    prepare_training_features,
+)
+from src.preprocessing.split_strategy import choose_train_validation_split
 
 _RULE_ID = "ML03"
 _MIN_POSITIVE_COUNT = 50
@@ -55,12 +58,18 @@ class TransformerDetector(BaseDetector):
         groups: FeatureGroups,
     ) -> dict:
         """FT-Transformer 학습 + 동적 threshold 탐색."""
+        X, groups, feature_quality = prepare_training_features(X, groups)
         warnings = self._validate_labels(label_result)
+        if feature_quality.sparse_dropped_columns:
+            warnings = warnings + [
+                "sparse feature columns excluded: "
+                + ", ".join(feature_quality.sparse_dropped_columns)
+            ]
         y = label_result.y
 
-        X_tr, X_val, y_tr, y_val = train_test_split(
-            X, y, test_size=_THRESHOLD_VAL_RATIO, random_state=42, stratify=y,
-        )
+        split = choose_train_validation_split(X)
+        X_tr, X_val = X.iloc[split.train_idx], X.iloc[split.test_idx]
+        y_tr, y_val = y[split.train_idx], y[split.test_idx]
 
         self.pipeline_ = build_ft_pipeline(groups)
         # Why: settings에서 하이퍼파라미터를 주입하여 환경변수 오버라이드 가능
@@ -84,12 +93,20 @@ class TransformerDetector(BaseDetector):
         self._schema_version = compute_feature_schema_version(X_tr)
         self._class_imbalance = compute_class_imbalance(y_tr)
         self._n_train = int(len(X_tr))
+        self._split_policy = split.policy
+        self._train_years = split.train_years
+        self._validation_years = split.test_years
+        self._feature_quality_profile = feature_quality.to_dict()
 
         return {
             "optimal_threshold": self.optimal_threshold_,
             "n_train": len(X_tr),
             "n_val": len(X_val),
+            "train_years": split.train_years,
+            "validation_years": split.test_years,
+            "split_policy": split.policy,
             "warnings": warnings,
+            "feature_quality_profile": self._feature_quality_profile,
         }
 
     # -- 탐지 --
@@ -99,7 +116,8 @@ class TransformerDetector(BaseDetector):
         self._check_fitted()
         start = time.perf_counter()
 
-        proba = self.pipeline_.predict_proba(df)[:, 1]
+        X = drop_label_columns(df)
+        proba = self.pipeline_.predict_proba(X)[:, 1]
         scores = pd.Series(proba, index=df.index, name=_RULE_ID)
 
         flagged_mask = scores > self.optimal_threshold_
@@ -137,6 +155,11 @@ class TransformerDetector(BaseDetector):
             feature_schema_version=getattr(self, "_schema_version", 1),
             class_imbalance_ratio=getattr(self, "_class_imbalance", 0.0),
             n_train_samples=getattr(self, "_n_train", 0),
+            evaluation_policy=getattr(self, "_split_policy", "unknown"),
+            evaluation_confidence=_evaluation_confidence(getattr(self, "_split_policy", "unknown")),
+            train_years=getattr(self, "_train_years", ()),
+            test_years=getattr(self, "_validation_years", ()),
+            feature_quality_profile=getattr(self, "_feature_quality_profile", {}),
         )
 
     def load_model(
@@ -194,3 +217,11 @@ class TransformerDetector(BaseDetector):
                 best_f1, best_t = score, float(t)
         self._logger.info("최적 threshold: %.3f (F1-macro=%.4f)", best_t, best_f1)
         return best_t
+
+
+def _evaluation_confidence(split_policy: str) -> str:
+    if split_policy == "temporal_holdout":
+        return "benchmark"
+    if split_policy == "document_group_holdout":
+        return "development_only"
+    return "unknown"

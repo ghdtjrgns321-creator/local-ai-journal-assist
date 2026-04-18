@@ -13,8 +13,6 @@ import numpy as np
 import pandas as pd
 from sklearn.exceptions import NotFittedError
 from sklearn.metrics import f1_score
-from sklearn.model_selection import GroupShuffleSplit
-
 from src.detection.base import BaseDetector, DetectionResult
 from src.preprocessing.bilstm_wrapper import BiLSTMClassifier
 from src.preprocessing.data_stats import (
@@ -25,8 +23,13 @@ from src.preprocessing.data_stats import (
 from src.preprocessing.feature_groups import FeatureGroups
 from src.preprocessing.label_strategy import LabelResult
 from src.preprocessing.model_registry import ModelRegistry
-from src.preprocessing.pipeline_builder import build_supervised_preprocessor
+from src.preprocessing.pipeline_builder import (
+    build_supervised_preprocessor,
+    drop_label_columns,
+    prepare_training_features,
+)
 from src.preprocessing.sequence_builder import build_sequences
+from src.preprocessing.split_strategy import choose_train_validation_split
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +70,13 @@ class SequenceDetector(BaseDetector):
         groups: FeatureGroups,
     ) -> dict:
         """BiLSTM 학습: 전처리 → 시퀀스 변환 → 학습 + threshold 탐색."""
+        X, groups, feature_quality = prepare_training_features(X, groups)
         warnings = self._validate_labels(label_result)
+        if feature_quality.sparse_dropped_columns:
+            warnings = warnings + [
+                "sparse feature columns excluded: "
+                + ", ".join(feature_quality.sparse_dropped_columns)
+            ]
         y = label_result.y
 
         # 1. 시퀀스 메타데이터 추출 (전처리 전 원본에서)
@@ -81,10 +90,12 @@ class SequenceDetector(BaseDetector):
         # 2. GroupShuffleSplit — 입력자 단위 완전 분리 (시퀀스 누수 방지)
         # Why: 동일 사용자의 전표가 Train/Valid 양쪽에 걸리면
         #      윈도우 오버랩으로 데이터 누수 발생 → 낙관적 threshold
-        gss = GroupShuffleSplit(
-            n_splits=1, test_size=_THRESHOLD_VAL_RATIO, random_state=42,
+        split = choose_train_validation_split(
+            X,
+            group_column=_SEQ_USER_COL,
+            test_size=_THRESHOLD_VAL_RATIO,
         )
-        train_idx, val_idx = next(gss.split(X, y, groups=user_ids))
+        train_idx, val_idx = split.train_idx, split.test_idx
 
         X_tr, X_val = X.iloc[train_idx], X.iloc[val_idx]
         y_tr, y_val = y[train_idx], y[val_idx]
@@ -151,6 +162,10 @@ class SequenceDetector(BaseDetector):
         self._schema_version = compute_feature_schema_version(X_tr)
         self._class_imbalance = compute_class_imbalance(y_tr)
         self._n_train = int(len(X_tr))
+        self._split_policy = split.policy
+        self._train_years = split.train_years
+        self._validation_years = split.test_years
+        self._feature_quality_profile = feature_quality.to_dict()
 
         return {
             "optimal_threshold": self.optimal_threshold_,
@@ -158,7 +173,11 @@ class SequenceDetector(BaseDetector):
             "n_val_sequences": len(val_seq.X_seq),
             "n_train_rows": len(X_tr),
             "n_val_rows": len(X_val),
+            "train_years": split.train_years,
+            "validation_years": split.test_years,
+            "split_policy": split.policy,
             "warnings": warnings,
+            "feature_quality_profile": self._feature_quality_profile,
         }
 
     # -- 탐지 --
@@ -169,6 +188,7 @@ class SequenceDetector(BaseDetector):
         start = time.perf_counter()
 
         # 1. 메타데이터 추출
+        df = drop_label_columns(df)
         user_ids = df[_SEQ_USER_COL].values
         timestamps = self._build_timestamps(df)
 
@@ -238,6 +258,11 @@ class SequenceDetector(BaseDetector):
             feature_schema_version=getattr(self, "_schema_version", 1),
             class_imbalance_ratio=getattr(self, "_class_imbalance", 0.0),
             n_train_samples=getattr(self, "_n_train", 0),
+            evaluation_policy=getattr(self, "_split_policy", "unknown"),
+            evaluation_confidence=_evaluation_confidence(getattr(self, "_split_policy", "unknown")),
+            train_years=getattr(self, "_train_years", ()),
+            test_years=getattr(self, "_validation_years", ()),
+            feature_quality_profile=getattr(self, "_feature_quality_profile", {}),
         )
 
     def load_model(
@@ -325,3 +350,11 @@ class SequenceDetector(BaseDetector):
                 best_f1, best_t = score, float(t)
         self._logger.info("최적 threshold: %.3f (F1-macro=%.4f)", best_t, best_f1)
         return best_t
+
+
+def _evaluation_confidence(split_policy: str) -> str:
+    if split_policy == "temporal_holdout":
+        return "benchmark"
+    if split_policy == "document_group_holdout":
+        return "development_only"
+    return "unknown"

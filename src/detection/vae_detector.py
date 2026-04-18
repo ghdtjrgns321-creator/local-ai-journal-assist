@@ -22,7 +22,12 @@ from src.preprocessing.data_stats import (
 )
 from src.preprocessing.feature_groups import FeatureGroups
 from src.preprocessing.model_registry import ModelRegistry
-from src.preprocessing.pipeline_builder import build_if_pipeline, build_vae_pipeline
+from src.preprocessing.pipeline_builder import (
+    build_if_pipeline,
+    prepare_training_features,
+    build_vae_pipeline,
+    drop_label_columns,
+)
 
 _RULE_ID = "ML02"
 # Why: 감사조서에 첨부할 상위 기여 피처 개수. 너무 많으면 가독성 저하.
@@ -62,6 +67,7 @@ class UnsupervisedDetector(BaseDetector):
              자체적으로 소수의 이상치를 튕겨냄. y로 필터링하면 룰 엔진 편향 답습.
         """
         start = time.perf_counter()
+        X, groups, feature_quality = prepare_training_features(X, groups)
 
         # VAE Pipeline: X 전체로 학습
         self.vae_pipeline_ = build_vae_pipeline(groups)
@@ -104,12 +110,14 @@ class UnsupervisedDetector(BaseDetector):
         self._schema_version = compute_feature_schema_version(X)
         self._class_imbalance = compute_class_imbalance(y)
         self._n_train = int(len(X))
+        self._feature_quality_profile = feature_quality.to_dict()
 
         return {
             "ensemble_threshold": self.threshold_,
             "n_train_samples": len(X),
             "n_features": X.shape[1],
             "elapsed": elapsed,
+            "feature_quality_profile": self._feature_quality_profile,
         }
 
     # -- 탐지 --
@@ -119,12 +127,13 @@ class UnsupervisedDetector(BaseDetector):
         self._check_fitted()
         start = time.perf_counter()
 
-        vae_raw = self._score_vae(df)
-        if_raw = self._score_if(df)
+        X = drop_label_columns(df)
+        vae_raw = self._score_vae(X)
+        if_raw = self._score_if(X)
         scores = self._combine_scores(vae_raw, if_raw, df.index)
 
         # Why: 감사조서 정량 증거용 — 어느 피처에서 재구성 실패가 컸는지 Top-K 분해
-        per_feature, feature_names = self._score_vae_per_feature(df)
+        per_feature, feature_names = self._score_vae_per_feature(X)
         topk_columns = self._build_topk_columns(
             per_feature, feature_names, df.index,
         )
@@ -173,6 +182,7 @@ class UnsupervisedDetector(BaseDetector):
             feature_schema_version=getattr(self, "_schema_version", 1),
             class_imbalance_ratio=getattr(self, "_class_imbalance", 0.0),
             n_train_samples=getattr(self, "_n_train", 0),
+            feature_quality_profile=getattr(self, "_feature_quality_profile", {}),
         )
 
     def load_model(

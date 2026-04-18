@@ -19,7 +19,14 @@ from dataclasses import dataclass, field
 import pandas as pd
 
 from config.settings import AuditSettings, get_settings
-from src.detection.constants import RULE_CODES, SEVERITY_MAP
+from src.detection.constants import (
+    RULE_CODES,
+    SEVERITY_MAP,
+    DetectorExplanationProfile,
+    DetectorProfile,
+    get_detector_explanation_profile,
+    get_detector_profile,
+)
 
 
 # ── 결과 dataclass ───────────────────────────────────────────
@@ -78,6 +85,40 @@ class DetectionResult:
         return self.metadata.get("elapsed", 0.0)
 
     @property
+    def detector_profile(self) -> DetectorProfile:
+        """탐지기 운영 메타데이터."""
+        return get_detector_profile(self.track_name)
+
+    @property
+    def display_name(self) -> str:
+        return str(self.metadata.get("display_name", self.detector_profile.display_name))
+
+    @property
+    def maturity(self) -> str:
+        return str(self.metadata.get("maturity", self.detector_profile.maturity))
+
+    @property
+    def default_enabled(self) -> bool:
+        return bool(self.metadata.get("default_enabled", self.detector_profile.default_enabled))
+
+    @property
+    def activation_requirements(self) -> list[str]:
+        reqs = self.metadata.get(
+            "activation_requirements",
+            list(self.detector_profile.activation_requirements),
+        )
+        return [str(req) for req in reqs]
+
+    @property
+    def run_status(self) -> str:
+        return str(self.metadata.get("run_status", "executed"))
+
+    @property
+    def skip_reason(self) -> str | None:
+        value = self.metadata.get("skip_reason")
+        return None if value in (None, "") else str(value)
+
+    @property
     def flagged_count(self) -> int:
         """플래그된 행 수."""
         return len(self.flagged_indices)
@@ -86,6 +127,55 @@ class DetectionResult:
     def total_rules_run(self) -> int:
         """실행된 룰 수."""
         return len(self.rule_flags)
+
+    @property
+    def detector_explanation_profile(self) -> DetectorExplanationProfile:
+        """탐지기 설명 메타데이터."""
+        return get_detector_explanation_profile(self.track_name)
+
+    @property
+    def explanation_summary(self) -> str:
+        return str(
+            self.metadata.get("explanation_summary", self.detector_explanation_profile.summary)
+        )
+
+    @property
+    def why_it_flagged(self) -> str:
+        return str(
+            self.metadata.get("why_it_flagged", self.detector_explanation_profile.why_it_flagged)
+        )
+
+    @property
+    def used_columns(self) -> list[str]:
+        values = self.metadata.get(
+            "used_columns",
+            list(self.detector_explanation_profile.used_columns),
+        )
+        return [str(value) for value in values]
+
+    @property
+    def false_positive_risks(self) -> list[str]:
+        values = self.metadata.get(
+            "false_positive_risks",
+            list(self.detector_explanation_profile.false_positive_risks),
+        )
+        return [str(value) for value in values]
+
+    @property
+    def auditor_checks(self) -> list[str]:
+        values = self.metadata.get(
+            "auditor_checks",
+            list(self.detector_explanation_profile.auditor_checks),
+        )
+        return [str(value) for value in values]
+
+    @property
+    def references(self) -> list[str]:
+        values = self.metadata.get(
+            "references",
+            list(self.detector_explanation_profile.references),
+        )
+        return [str(value) for value in values]
 
 
 # ── 입력 검증 유틸 ───────────────────────────────────────────
@@ -137,13 +227,27 @@ class BaseDetector(ABC):
         """DetectionResult 생성. track_name 자동 설정 + numpy.int64 방어."""
         # Why: df[cond].index.tolist()가 numpy.int64를 반환할 수 있어 JSON 직렬화 실패 방지
         clean_indices = [int(idx) for idx in flagged_indices]
+        meta = dict(metadata or {})
+        profile = get_detector_profile(self.track_name)
+        meta.setdefault("display_name", profile.display_name)
+        meta.setdefault("maturity", str(profile.maturity))
+        meta.setdefault("default_enabled", profile.default_enabled)
+        meta.setdefault("activation_requirements", list(profile.activation_requirements))
+        meta.setdefault("run_status", "executed")
+        explanation = get_detector_explanation_profile(self.track_name)
+        meta.setdefault("explanation_summary", explanation.summary)
+        meta.setdefault("why_it_flagged", explanation.why_it_flagged)
+        meta.setdefault("used_columns", list(explanation.used_columns))
+        meta.setdefault("false_positive_risks", list(explanation.false_positive_risks))
+        meta.setdefault("auditor_checks", list(explanation.auditor_checks))
+        meta.setdefault("references", list(explanation.references))
         return DetectionResult(
             track_name=self.track_name,
             flagged_indices=clean_indices,
             scores=scores,
             rule_flags=rule_flags,
             details=details,
-            metadata=metadata,
+            metadata=meta,
             warnings=warnings,
         )
 

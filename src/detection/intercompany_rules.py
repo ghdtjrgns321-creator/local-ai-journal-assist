@@ -341,12 +341,12 @@ def ic02_amount_mismatch(
         return pd.Series(0.0, index=df.index)
 
     scores = pd.Series(0.0, index=df.index)
-    has_cp = match_df["has_counterpart"].fillna(False).astype(bool)
+    has_cp = match_df["has_counterpart"].astype("boolean").fillna(False).astype(bool)
     over_tol = match_df["diff_ratio"].fillna(0.0) > amount_tolerance
 
     # Why: 이종 통화 추정 시 점수 억제
     if "cross_currency" in match_df.columns:
-        xc = match_df["cross_currency"].fillna(False).astype(bool)
+        xc = match_df["cross_currency"].astype("boolean").fillna(False).astype(bool)
     else:
         xc = pd.Series(False, index=match_df.index)
     target = has_cp & over_tol & ~xc

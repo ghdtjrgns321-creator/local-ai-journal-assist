@@ -13,7 +13,6 @@ import numpy as np
 import pandas as pd
 from sklearn.exceptions import NotFittedError
 from sklearn.metrics import f1_score
-from sklearn.model_selection import train_test_split
 
 from src.detection.base import BaseDetector, DetectionResult
 from src.preprocessing.cv_selector import compare_pipelines
@@ -25,12 +24,24 @@ from src.preprocessing.data_stats import (
 from src.preprocessing.feature_groups import FeatureGroups
 from src.preprocessing.label_strategy import LabelResult
 from src.preprocessing.model_registry import ModelRegistry
-from src.preprocessing.pipeline_builder import build_supervised_pipelines
+from src.preprocessing.pipeline_builder import (
+    build_supervised_pipelines,
+    drop_label_columns,
+    prepare_training_features,
+)
+from src.preprocessing.split_strategy import choose_train_validation_split
 
 _RULE_ID = "ML01"
-_MIN_POSITIVE_COUNT = 50
-_MIN_POSITIVE_RATE = 0.01
 _THRESHOLD_VAL_RATIO = 0.2
+
+
+class SupervisedGateError(ValueError):
+    """Raised when supervised training labels do not satisfy the gate policy."""
+
+    def __init__(self, reason: str, snapshot: dict):
+        super().__init__(reason)
+        self.reason = reason
+        self.snapshot = snapshot
 
 
 class SupervisedDetector(BaseDetector):
@@ -62,13 +73,20 @@ class SupervisedDetector(BaseDetector):
         groups: FeatureGroups,
     ) -> dict:
         """모델 학습 + CV 비교 + 최적 모델 선택 + 동적 threshold."""
-        warnings = self._validate_labels(label_result)
+        X, groups, feature_quality = prepare_training_features(X, groups)
+        gate_snapshot = self._validate_labels(label_result)
+        warnings = gate_snapshot["warnings"]
+        if feature_quality.sparse_dropped_columns:
+            warnings = warnings + [
+                "sparse feature columns excluded: "
+                + ", ".join(feature_quality.sparse_dropped_columns)
+            ]
         y = label_result.y
 
         # Why: threshold 탐색용 hold-out 분리 — train 데이터로 탐색하면 과적합 누수
-        X_tr, X_val, y_tr, y_val = train_test_split(
-            X, y, test_size=_THRESHOLD_VAL_RATIO, random_state=42, stratify=y,
-        )
+        split = choose_train_validation_split(X)
+        X_tr, X_val = X.iloc[split.train_idx], X.iloc[split.test_idx]
+        y_tr, y_val = y[split.train_idx], y[split.test_idx]
 
         # 후보 Pipeline 생성 (SMOTE는 imblearn Pipeline 내부에서 fold별 적용)
         pipelines = build_supervised_pipelines(groups, use_smote=self._use_smote)
@@ -98,13 +116,33 @@ class SupervisedDetector(BaseDetector):
         self._schema_version = compute_feature_schema_version(X_tr)
         self._class_imbalance = compute_class_imbalance(y_tr)
         self._n_train = int(len(X_tr))
+        self._split_policy = split.policy
+        self._train_years = split.train_years
+        self._validation_years = split.test_years
+        self._feature_quality_profile = feature_quality.to_dict()
+        self._label_gate_snapshot = {
+            **gate_snapshot,
+            "gate_status": "eligible",
+            "gate_reason": None,
+        }
 
         return {
             "best_model": best_name,
             "mean_f1": cv_result.results[best_name].mean_f1,
             "optimal_threshold": self.optimal_threshold_,
+            "train_years": split.train_years,
+            "validation_years": split.test_years,
+            "split_policy": split.policy,
+            "n_train": len(X_tr),
+            "n_val": len(X_val),
             "cv_results": cv_result.comparison_table.to_dict(),
             "warnings": warnings,
+            "gate_status": self._label_gate_snapshot["gate_status"],
+            "gate_reason": self._label_gate_snapshot["gate_reason"],
+            "label_source": self._label_gate_snapshot["label_source"],
+            "positive_count": self._label_gate_snapshot["positive_count"],
+            "positive_rate": self._label_gate_snapshot["positive_rate"],
+            "feature_quality_profile": self._feature_quality_profile,
         }
 
     # -- 탐지 --
@@ -114,7 +152,8 @@ class SupervisedDetector(BaseDetector):
         self._check_fitted()
         start = time.perf_counter()
 
-        proba = self.pipeline_.predict_proba(df)[:, 1]
+        X = drop_label_columns(df)
+        proba = self.pipeline_.predict_proba(X)[:, 1]
         scores = pd.Series(proba, index=df.index, name=_RULE_ID)
 
         flagged_mask = scores > self.optimal_threshold_
@@ -152,6 +191,16 @@ class SupervisedDetector(BaseDetector):
             feature_schema_version=getattr(self, "_schema_version", 1),
             class_imbalance_ratio=getattr(self, "_class_imbalance", 0.0),
             n_train_samples=getattr(self, "_n_train", 0),
+            evaluation_policy=getattr(self, "_split_policy", "unknown"),
+            evaluation_confidence=_evaluation_confidence(getattr(self, "_split_policy", "unknown")),
+            train_years=getattr(self, "_train_years", ()),
+            test_years=getattr(self, "_validation_years", ()),
+            label_source=getattr(self, "_label_gate_snapshot", {}).get("label_source", "unknown"),
+            positive_count=getattr(self, "_label_gate_snapshot", {}).get("positive_count", 0),
+            positive_rate=getattr(self, "_label_gate_snapshot", {}).get("positive_rate", 0.0),
+            gate_status=getattr(self, "_label_gate_snapshot", {}).get("gate_status", "unknown"),
+            gate_reason=getattr(self, "_label_gate_snapshot", {}).get("gate_reason"),
+            feature_quality_profile=getattr(self, "_feature_quality_profile", {}),
         )
 
     def load_model(self, model_name: str = "supervised", version: int | None = None) -> None:
@@ -166,9 +215,12 @@ class SupervisedDetector(BaseDetector):
         if target_ver is not None:
             matched = [m for m in matched if m.version == target_ver]
         if matched:
-            self.optimal_threshold_ = matched[-1].params.get("optimal_threshold", 0.5)
+            latest = matched[-1]
+            self.optimal_threshold_ = latest.params.get("optimal_threshold", 0.5)
+            self._loaded_model_metadata = latest
         else:
             self.optimal_threshold_ = 0.5
+            self._loaded_model_metadata = None
         self.classes_ = np.array([0, 1])
 
     # -- private --
@@ -180,22 +232,76 @@ class SupervisedDetector(BaseDetector):
                 f"{type(self).__name__}은 아직 학습되지 않았습니다. train()을 먼저 호출하세요."
             )
 
-    def _validate_labels(self, label_result: LabelResult) -> list[str]:
-        """양성 건수/비율 최소 요건 검증. 양성 0건이면 ValueError."""
-        pos_count = int(label_result.y.sum())
-        if pos_count == 0:
-            raise ValueError("양성 샘플이 0건입니다. 지도학습 불가.")
+    def _validate_labels(self, label_result: LabelResult) -> dict:
+        """양성 건수/비율 및 출처 요건을 검증하고 gate snapshot을 반환한다."""
+        settings = self._settings
+        min_positive = int(getattr(settings, "supervised_min_positive", 50))
+        min_positive_rate = float(getattr(settings, "supervised_min_positive_rate", 0.01))
+        allowed_sources = set(getattr(settings, "supervised_allowed_label_sources", ["ground_truth"]))
 
-        warnings = []
-        if pos_count < _MIN_POSITIVE_COUNT:
-            msg = f"양성 {pos_count}건 < 최소 {_MIN_POSITIVE_COUNT}건. 학습 품질 저하 가능."
-            self._logger.warning(msg)
-            warnings.append(msg)
-        if label_result.positive_rate < _MIN_POSITIVE_RATE:
-            msg = f"양성 비율 {label_result.positive_rate:.4f} < {_MIN_POSITIVE_RATE}. 극단 불균형."
-            self._logger.warning(msg)
-            warnings.append(msg)
-        return warnings
+        pos_count = int(label_result.positive_count or int(label_result.y.sum()))
+        positive_rate = float(label_result.positive_rate)
+        label_source = str(label_result.label_source)
+
+        snapshot = {
+            "label_source": label_source,
+            "positive_count": pos_count,
+            "positive_rate": positive_rate,
+            "label_quality": getattr(label_result, "label_quality", "unknown"),
+            "gate_status": getattr(label_result, "gate_status", "unknown"),
+            "gate_reason": getattr(label_result, "gate_reason", None),
+            "warnings": [],
+        }
+
+        if label_source not in allowed_sources:
+            snapshot["gate_status"] = "fallback_to_unsupervised"
+            snapshot["gate_reason"] = getattr(label_result, "gate_reason", None) or "untrusted_label_source"
+            raise SupervisedGateError(snapshot["gate_reason"], snapshot)
+        if (
+            not getattr(label_result, "is_supervised_eligible", False)
+            and (
+                getattr(label_result, "gate_status", "unknown") not in {"unknown", "eligible"}
+                or getattr(label_result, "gate_reason", None) is not None
+            )
+        ):
+            snapshot["gate_status"] = getattr(label_result, "gate_status", "fallback_to_unsupervised")
+            snapshot["gate_reason"] = getattr(label_result, "gate_reason", None) or "ineligible_label_source"
+            raise SupervisedGateError(snapshot["gate_reason"], snapshot)
+        if pos_count == 0:
+            snapshot["gate_status"] = "blocked"
+            snapshot["gate_reason"] = "no_positive_labels"
+            raise SupervisedGateError(snapshot["gate_reason"], snapshot)
+        if pos_count < min_positive:
+            snapshot["gate_status"] = "blocked"
+            snapshot["gate_reason"] = "insufficient_positive_count"
+            raise SupervisedGateError(snapshot["gate_reason"], snapshot)
+        if positive_rate < min_positive_rate:
+            snapshot["gate_status"] = "blocked"
+            snapshot["gate_reason"] = "low_positive_rate"
+            raise SupervisedGateError(snapshot["gate_reason"], snapshot)
+        return snapshot
+
+    def get_training_gate_snapshot(self) -> dict:
+        """Return saved or loaded gate metadata for UI/pipeline status decisions."""
+        if hasattr(self, "_label_gate_snapshot"):
+            return dict(self._label_gate_snapshot)
+        meta = getattr(self, "_loaded_model_metadata", None)
+        if meta is None:
+            return {
+                "label_source": "unknown",
+                "positive_count": 0,
+                "positive_rate": 0.0,
+                "gate_status": "unknown",
+                "gate_reason": "unknown_training_gate",
+            }
+        return {
+            "label_source": getattr(meta, "label_source", "unknown"),
+            "positive_count": int(getattr(meta, "positive_count", 0)),
+            "positive_rate": float(getattr(meta, "positive_rate", 0.0)),
+            "gate_status": str(getattr(meta, "gate_status", "unknown")),
+            "gate_reason": getattr(meta, "gate_reason", None),
+            "evaluation_confidence": getattr(meta, "evaluation_confidence", "unknown"),
+        }
 
     def _find_optimal_threshold(self, X, y: np.ndarray) -> float:
         """F1-macro 최대화 threshold 탐색 (validation 데이터 기반)."""
@@ -212,3 +318,11 @@ class SupervisedDetector(BaseDetector):
                 best_f1, best_t = score, float(t)
         self._logger.info("최적 threshold: %.3f (F1-macro=%.4f)", best_t, best_f1)
         return best_t
+
+
+def _evaluation_confidence(split_policy: str) -> str:
+    if split_policy == "temporal_holdout":
+        return "benchmark"
+    if split_policy == "document_group_holdout":
+        return "development_only"
+    return "unknown"
