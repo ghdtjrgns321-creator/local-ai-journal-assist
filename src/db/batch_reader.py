@@ -13,11 +13,26 @@ import logging
 import duckdb
 import pandas as pd
 
+from src.db.performance_store import load_latest_report
 from src.db.queries import execute_preset
 from src.detection.base import DetectionResult, RuleFlag
-from src.detection.constants import RULE_CODES, SEVERITY_MAP
+from src.detection.constants import (
+    DETECTOR_DISPLAY_ORDER,
+    RULE_CODES,
+    SEVERITY_MAP,
+    get_detector_profile,
+)
 
 logger = logging.getLogger(__name__)
+
+_RESTORED_CORE_TRACKS: frozenset[str] = frozenset({
+    "layer_a",
+    "layer_b",
+    "layer_c",
+    "benford",
+    "duplicate",
+    "intercompany",
+})
 
 
 def list_batches(conn: duckdb.DuckDBPyConnection) -> pd.DataFrame:
@@ -54,6 +69,13 @@ def load_batch(conn: duckdb.DuckDBPyConnection, batch_id: str):
     # 4. 메타 조회 — file_name 복원
     meta = execute_preset(conn, "batch_meta", params=(batch_id,))
     file_name = meta.iloc[0]["file_name"] if not meta.empty else ""
+    performance_report = load_latest_report(conn, batch_id)
+    if performance_report is None:
+        from src.metrics.operational_evaluator import evaluate_operational_report_from_db
+        performance_report = evaluate_operational_report_from_db(
+            conn,
+            upload_batch_id=batch_id,
+        )
 
     return PipelineResult(
         data=data,
@@ -64,6 +86,8 @@ def load_batch(conn: duckdb.DuckDBPyConnection, batch_id: str):
         elapsed=0.0,
         featured_data=None,
         file_name=file_name,
+        detector_statuses=_build_detector_statuses(results),
+        performance_report=performance_report,
     )
 
 
@@ -122,7 +146,66 @@ def _reconstruct_detection_results(
             scores=track_scores,
             rule_flags=rule_flags,
             details=details,
-            metadata={"elapsed": 0.0, "restored_from_db": True},
+            metadata={
+                "elapsed": 0.0,
+                "restored_from_db": True,
+                "display_name": get_detector_profile(track_name).display_name,
+                "maturity": str(get_detector_profile(track_name).maturity),
+                "default_enabled": get_detector_profile(track_name).default_enabled,
+                "activation_requirements": list(get_detector_profile(track_name).activation_requirements),
+                "run_status": "executed",
+            },
         ))
 
     return results
+
+
+def _build_detector_statuses(results: list[DetectionResult]) -> list[dict]:
+    """DB 복원 배치용 탐지기 상태 스냅샷 생성."""
+    result_map = {result.track_name: result for result in results}
+    statuses: list[dict] = []
+    for track_name in DETECTOR_DISPLAY_ORDER:
+        track_name = str(track_name)
+        profile = get_detector_profile(track_name)
+        result = result_map.get(track_name)
+        if result is None:
+            if track_name in _RESTORED_CORE_TRACKS:
+                statuses.append({
+                    "track_name": track_name,
+                    "display_name": profile.display_name,
+                    "maturity": str(profile.maturity),
+                    "default_enabled": profile.default_enabled,
+                    "activation_requirements": list(profile.activation_requirements),
+                    "run_status": "executed",
+                    "reason": "restored_without_flag_rows",
+                    "flagged_docs": 0,
+                    "rules_run": 0,
+                    "elapsed_sec": 0.0,
+                })
+                continue
+            statuses.append({
+                "track_name": track_name,
+                "display_name": profile.display_name,
+                "maturity": str(profile.maturity),
+                "default_enabled": profile.default_enabled,
+                "activation_requirements": list(profile.activation_requirements),
+                "run_status": "unknown",
+                "reason": "restored batch without runtime snapshot",
+                "flagged_docs": 0,
+                "rules_run": 0,
+                "elapsed_sec": 0.0,
+            })
+            continue
+        statuses.append({
+            "track_name": track_name,
+            "display_name": result.display_name,
+            "maturity": result.maturity,
+            "default_enabled": result.default_enabled,
+            "activation_requirements": result.activation_requirements,
+            "run_status": result.run_status,
+            "reason": result.skip_reason,
+            "flagged_docs": result.flagged_count,
+            "rules_run": result.total_rules_run,
+            "elapsed_sec": round(result.elapsed_seconds, 3),
+        })
+    return statuses

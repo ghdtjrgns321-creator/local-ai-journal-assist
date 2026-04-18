@@ -184,6 +184,42 @@ SCHEMA_DDL: dict[str, str] = {
         )
     """,
     # ── Engagement 메타 (RC-3: DB 격리) ──
+    "performance_reports": """
+        CREATE TABLE IF NOT EXISTS performance_reports (
+            report_id              VARCHAR PRIMARY KEY NOT NULL,
+            upload_batch_id        VARCHAR NOT NULL,
+            source_kind            VARCHAR NOT NULL,
+            phase_scope            VARCHAR NOT NULL,
+            metric_confidence      VARCHAR DEFAULT 'complete',
+            total_docs             INTEGER DEFAULT 0,
+            flagged_docs           INTEGER DEFAULT 0,
+            high_risk_docs         INTEGER DEFAULT 0,
+            high_risk_ratio        DOUBLE,
+            precision              DOUBLE,
+            recall                 DOUBLE,
+            f1                     DOUBLE,
+            whitelist_removed_docs INTEGER DEFAULT 0,
+            false_positive_docs    INTEGER DEFAULT 0,
+            confirmed_issue_docs   INTEGER DEFAULT 0,
+            created_at             TIMESTAMP DEFAULT current_timestamp
+        )
+    """,
+    "performance_rule_metrics": """
+        CREATE TABLE IF NOT EXISTS performance_rule_metrics (
+            report_id     VARCHAR NOT NULL,
+            track_name    VARCHAR NOT NULL,
+            rule_code     VARCHAR NOT NULL,
+            label_docs    INTEGER DEFAULT 0,
+            flagged_docs  INTEGER DEFAULT 0,
+            tp_docs       INTEGER DEFAULT 0,
+            fp_docs       INTEGER DEFAULT 0,
+            fn_docs       INTEGER DEFAULT 0,
+            precision     DOUBLE,
+            recall        DOUBLE,
+            f1            DOUBLE,
+            created_at    TIMESTAMP DEFAULT current_timestamp
+        )
+    """,
     "engagement_meta": """
         CREATE TABLE IF NOT EXISTS engagement_meta (
             company_id     VARCHAR NOT NULL,
@@ -236,6 +272,42 @@ SCHEMA_DDL: dict[str, str] = {
             details       JSON,        -- 액션별 세부 파라미터 (설정 스냅샷, before/after)
             created_at    TIMESTAMP DEFAULT current_timestamp
         )
+    """,
+    "feedback_events_seq": """
+        CREATE SEQUENCE IF NOT EXISTS feedback_event_id_seq START 1
+    """,
+    "feedback_events": """
+        CREATE TABLE IF NOT EXISTS feedback_events (
+            id            BIGINT DEFAULT nextval('feedback_event_id_seq') PRIMARY KEY,
+            company_id    VARCHAR,
+            engagement_id VARCHAR,
+            batch_id      VARCHAR,
+            document_id   VARCHAR,
+            track_name    VARCHAR,
+            rule_code     VARCHAR,
+            event_type    VARCHAR NOT NULL,
+            decision      VARCHAR NOT NULL,
+            reason        VARCHAR,
+            payload_json  JSON,
+            created_by    VARCHAR DEFAULT 'auditor',
+            created_at    TIMESTAMP DEFAULT current_timestamp
+        )
+    """,
+    # ── LLM Narrative Report (WU-25: XAI 사유서 캐시) ──
+    # Why: 동일 문서(document_id) 사유서 재생성 비용(light 모델 기준 수 초 + 토큰)을
+    #      방지. entry 단위 PK + generated_at 인덱스로 최신 N건 조회 및 stale 정책 지원.
+    "llm_narratives": """
+        CREATE TABLE IF NOT EXISTS llm_narratives (
+            document_id    VARCHAR PRIMARY KEY NOT NULL,
+            narrative_text VARCHAR NOT NULL,
+            cited_rules    VARCHAR,
+            model_tier     VARCHAR NOT NULL,
+            generated_at   TIMESTAMP DEFAULT current_timestamp
+        )
+    """,
+    "llm_narratives_idx": """
+        CREATE INDEX IF NOT EXISTS idx_llm_narratives_generated
+            ON llm_narratives(generated_at DESC)
     """,
     "anomaly_flag_summary": """
         CREATE VIEW IF NOT EXISTS anomaly_flag_summary AS
@@ -319,6 +391,18 @@ UPLOAD_BATCHES_COLUMNS: list[str] = [
     "anomaly_count", "high_risk_count", "warnings",
 ]
 
+PERFORMANCE_REPORTS_COLUMNS: list[str] = [
+    "report_id", "upload_batch_id", "source_kind", "phase_scope",
+    "metric_confidence", "total_docs", "flagged_docs", "high_risk_docs",
+    "high_risk_ratio", "precision", "recall", "f1",
+    "whitelist_removed_docs", "false_positive_docs", "confirmed_issue_docs",
+]
+
+PERFORMANCE_RULE_METRICS_COLUMNS: list[str] = [
+    "report_id", "track_name", "rule_code", "label_docs", "flagged_docs",
+    "tp_docs", "fp_docs", "fn_docs", "precision", "recall", "f1",
+]
+
 TRIAL_BALANCE_COLUMNS: list[str] = [
     "upload_batch_id", "fiscal_year", "fiscal_period",
     "gl_account", "account_name", "opening_balance",
@@ -328,6 +412,12 @@ TRIAL_BALANCE_COLUMNS: list[str] = [
 AUDIT_LOG_COLUMNS: list[str] = [
     "action", "actor", "company_id", "engagement_id",
     "batch_id", "target_id", "details",
+]
+
+FEEDBACK_EVENTS_COLUMNS: list[str] = [
+    "company_id", "engagement_id", "batch_id", "document_id",
+    "track_name", "rule_code", "event_type", "decision",
+    "reason", "payload_json", "created_by",
 ]
 
 ML_RESERVED_COLUMNS: list[str] = [

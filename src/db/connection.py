@@ -69,9 +69,21 @@ class ConnectionManager:
 
             try:
                 conn = duckdb.connect(key)
-            except duckdb.IOException as exc:
-                logger.error("DuckDB 파일 잠금 — 다른 프로세스가 %s를 사용 중", key)
-                raise RuntimeError(f"DuckDB 파일 잠금: {key}") from exc
+            except duckdb.IOException:
+                # Why: 이전 프로세스가 비정상 종료하면 WAL 파일이 잠금을 잡고 있음.
+                #      WAL 삭제 후 1회 재시도. 프로세스가 살아있으면 재시도도 실패 → raise.
+                wal = Path(f"{key}.wal")
+                if wal.exists():
+                    logger.warning("DuckDB WAL 잠금 감지 — %s 삭제 후 재시도", wal)
+                    try:
+                        wal.unlink()
+                    except OSError:
+                        pass
+                try:
+                    conn = duckdb.connect(key)
+                except duckdb.IOException as exc2:
+                    logger.error("DuckDB 파일 잠금 재시도 실패: %s", key)
+                    raise RuntimeError(f"DuckDB 파일 잠금: {key}") from exc2
 
             # Why: 순환 import 방지 — schema 모듈이 connection을 참조하지 않도록 지연 import
             from src.db.schema import initialize_schema

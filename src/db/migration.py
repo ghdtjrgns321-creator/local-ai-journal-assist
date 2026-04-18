@@ -16,7 +16,7 @@ import duckdb
 logger = logging.getLogger(__name__)
 
 # Why: 새 마이그레이션 추가 시 이 값을 올리고 _MIGRATIONS에 함수 등록
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 
 # Why: v2에서 general_ledger에 추가할 ML 예약 7개 컬럼
 #      schema.py의 ML_RESERVED_COLUMNS와 동일 집합이어야 함.
@@ -33,6 +33,11 @@ _V2_COLUMNS: dict[str, str] = {
 
 # Why: v3에서 추가할 audit_log 테이블명. _get_schema_version()의 추론 분기에서 사용.
 _V3_TABLE = "audit_log"
+_V4_TABLE = "feedback_events"
+_V4_PERFORMANCE_COLUMNS = {
+    "false_positive_docs": "INTEGER DEFAULT 0",
+    "confirmed_issue_docs": "INTEGER DEFAULT 0",
+}
 
 
 # ── 공개 API ───────────────────────────────────────────────
@@ -43,6 +48,7 @@ _V3_TABLE = "audit_log"
 _MIGRATIONS: dict[int, str] = {
     2: "_migrate_v1_to_v2",
     3: "_migrate_v2_to_v3",
+    4: "_migrate_v3_to_v4",
 }
 
 
@@ -110,7 +116,35 @@ def _get_schema_version(conn: duckdb.DuckDBPyConnection) -> int:
             [_V3_TABLE],
         ).fetchone()
     )
-    return CURRENT_SCHEMA_VERSION if has_audit_log else 2
+    if not has_audit_log:
+        return 2
+
+    has_feedback_events = bool(
+        conn.execute(
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE table_name = ?",
+            [_V4_TABLE],
+        ).fetchone()
+    )
+    has_performance_reports = bool(
+        conn.execute(
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE table_name = 'performance_reports'"
+        ).fetchone()
+    )
+    if has_feedback_events and not has_performance_reports:
+        return CURRENT_SCHEMA_VERSION
+
+    existing_perf_cols = set(
+        conn.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'performance_reports'"
+        ).fetchdf()["column_name"]
+    )
+    has_v4_perf = _V4_PERFORMANCE_COLUMNS.keys() <= existing_perf_cols
+    if has_feedback_events and has_v4_perf:
+        return CURRENT_SCHEMA_VERSION
+    return 3
 
 
 def _set_schema_version(conn: duckdb.DuckDBPyConnection, version: int) -> None:
@@ -170,3 +204,37 @@ def _migrate_v2_to_v3(conn: duckdb.DuckDBPyConnection) -> None:
     conn.execute(SCHEMA_DDL["audit_log_seq"])
     conn.execute(SCHEMA_DDL["audit_log"])
     logger.info("v2→v3: audit_log 테이블 + 시퀀스 생성 완료")
+
+
+def _migrate_v3_to_v4(conn: duckdb.DuckDBPyConnection) -> None:
+    """feedback_events 및 performance_reports HITL 지표 컬럼 추가."""
+    from src.db.schema import SCHEMA_DDL
+
+    conn.execute(SCHEMA_DDL["feedback_events_seq"])
+    conn.execute(SCHEMA_DDL["feedback_events"])
+
+    has_performance_reports = bool(
+        conn.execute(
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE table_name = 'performance_reports'"
+        ).fetchone()
+    )
+    if not has_performance_reports:
+        logger.info("v3→v4: feedback_events 생성, performance_reports 없음 -> 컬럼 추가 skip")
+        return
+
+    existing_perf_cols = set(
+        conn.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'performance_reports'"
+        ).fetchdf()["column_name"]
+    )
+    added = []
+    for col, dtype in _V4_PERFORMANCE_COLUMNS.items():
+        if col not in existing_perf_cols:
+            conn.execute(f"ALTER TABLE performance_reports ADD COLUMN {col} {dtype}")
+            added.append(col)
+    logger.info(
+        "v3→v4: feedback_events 생성, performance_reports 추가 컬럼=%s",
+        ", ".join(added) if added else "none",
+    )

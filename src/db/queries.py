@@ -84,6 +84,34 @@ PRESET_QUERIES: dict[str, str] = {
         WHERE upload_batch_id = ?
     """,
     # ── Whitelist (HITL 예외 처리) ──
+    "performance_reports_by_batch": """
+        SELECT report_id, upload_batch_id, source_kind, phase_scope,
+               metric_confidence, total_docs, flagged_docs, high_risk_docs,
+               high_risk_ratio, precision, recall, f1,
+               whitelist_removed_docs, false_positive_docs,
+               confirmed_issue_docs, created_at
+        FROM performance_reports
+        WHERE upload_batch_id = ?
+        ORDER BY created_at DESC
+    """,
+    "latest_performance_report": """
+        SELECT report_id, upload_batch_id, source_kind, phase_scope,
+               metric_confidence, total_docs, flagged_docs, high_risk_docs,
+               high_risk_ratio, precision, recall, f1,
+               whitelist_removed_docs, false_positive_docs,
+               confirmed_issue_docs, created_at
+        FROM performance_reports
+        WHERE upload_batch_id = ?
+        ORDER BY created_at DESC
+        LIMIT 1
+    """,
+    "performance_rule_metrics_by_report": """
+        SELECT report_id, track_name, rule_code, label_docs, flagged_docs,
+               tp_docs, fp_docs, fn_docs, precision, recall, f1, created_at
+        FROM performance_rule_metrics
+        WHERE report_id = ?
+        ORDER BY track_name, rule_code
+    """,
     "insert_whitelist": """
         INSERT INTO whitelist (batch_id, document_id, rule_code, reason, created_by)
         VALUES (?, ?, ?, ?, ?)
@@ -121,6 +149,38 @@ PRESET_QUERIES: dict[str, str] = {
         FROM audit_log
         WHERE company_id = ? AND engagement_id = ?
         ORDER BY created_at DESC
+    """,
+    "insert_feedback_event": """
+        INSERT INTO feedback_events (
+            company_id, engagement_id, batch_id, document_id,
+            track_name, rule_code, event_type, decision,
+            reason, payload_json, created_by
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """,
+    "feedback_events_by_batch": """
+        SELECT id, company_id, engagement_id, batch_id, document_id,
+               track_name, rule_code, event_type, decision,
+               reason, payload_json, created_by, created_at
+        FROM feedback_events
+        WHERE batch_id = ?
+        ORDER BY created_at DESC, id DESC
+    """,
+    "feedback_events_by_document": """
+        SELECT id, company_id, engagement_id, batch_id, document_id,
+               track_name, rule_code, event_type, decision,
+               reason, payload_json, created_by, created_at
+        FROM feedback_events
+        WHERE batch_id = ? AND document_id = ?
+        ORDER BY created_at DESC, id DESC
+    """,
+    "feedback_events_by_engagement": """
+        SELECT id, company_id, engagement_id, batch_id, document_id,
+               track_name, rule_code, event_type, decision,
+               reason, payload_json, created_by, created_at
+        FROM feedback_events
+        WHERE company_id = ? AND engagement_id = ?
+        ORDER BY created_at DESC, id DESC
     """,
     # ── Document Flow 조회 ──
     "document_flow_chain": """
