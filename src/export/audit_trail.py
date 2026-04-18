@@ -24,7 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, get_args
+from typing import TYPE_CHECKING, Literal, Protocol, get_args, runtime_checkable
 
 import pandas as pd
 
@@ -65,6 +65,24 @@ class AuditEvent:
     company_id: str | None = None
     engagement_id: str | None = None
     timestamp: datetime = field(default_factory=datetime.now)
+
+
+@runtime_checkable
+class AuditTrailProtocol(Protocol):
+    """AuditTrail 구현체가 만족해야 하는 최소 인터페이스.
+
+    Why:
+        WU-27에서 `AuditPipeline.audit_trail`로 주입되는 객체는 실제 ``AuditTrail``
+        뿐 아니라 테스트용 fake/스파이, 파이프라인 내부 ``_NullAuditTrail`` 폴백 등
+        여러 변종이 존재한다. 공통 Protocol로 타입 시그니처를 통일해 mypy/타입
+        체커가 불일치를 컴파일 타임에 잡도록 한다.
+
+        ``runtime_checkable``은 ``isinstance(x, AuditTrailProtocol)`` 검사를 허용
+        하지만 Protocol 특성상 메서드 이름만 본다 — 런타임 의존은 피하고 타입
+        힌트 목적으로만 사용한다.
+    """
+
+    def log(self, event: AuditEvent) -> None: ...
 
 
 class AuditTrail:
