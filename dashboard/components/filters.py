@@ -38,7 +38,7 @@ def _get_filter_options(df: pd.DataFrame) -> dict[str, list]:
 
 
 def render_filters(df: pd.DataFrame) -> None:
-    """사이드바에 12개 필터 위젯 렌더링 → session_state[KEY_FILTERS] 갱신."""
+    """사이드바에 결과 탐색용 필터 위젯 렌더링 → session_state[KEY_FILTERS] 갱신."""
     options = _get_filter_options(df)
     filters: FilterState = {}
 
@@ -83,10 +83,8 @@ def render_filters(df: pd.DataFrame) -> None:
                     filters[filter_key] = selected  # type: ignore[literal-required]
 
     # ── 개발 모드 필터 2개 ────────────────────────────────
-    dev_mode = st.checkbox("개발 모드", value=st.session_state.get(KEY_DEV_MODE, False))
-    st.session_state[KEY_DEV_MODE] = dev_mode
-
-    if dev_mode:
+    if st.session_state.get(KEY_DEV_MODE, False):
+        st.caption("개발 모드 전용 필터")
         for filter_key, col_name, label in _DEV_FILTERS:
             if col_name in options:
                 selected = st.multiselect(label, options[col_name])

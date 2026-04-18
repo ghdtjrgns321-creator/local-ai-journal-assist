@@ -1,8 +1,4 @@
-"""연도(Engagement) 선택 컴포넌트 (RC-4-3).
-
-회사 선택 후 연도 목록 표시 + 새 연도 생성 UI.
-ID 설정만 담당하고, Context 생성은 app.py에서 수행한다 (SRP).
-"""
+"""Engagement selection component."""
 
 from __future__ import annotations
 
@@ -10,41 +6,65 @@ from datetime import date
 from typing import TYPE_CHECKING
 
 import streamlit as st
-
-from dashboard._state import KEY_COMPANY_ID, KEY_ENGAGEMENT_ID
 from pydantic import ValidationError
 
+from dashboard._state import KEY_COMPANY_ID, KEY_ENGAGEMENT_ID
 from src.company.models import EngagementProfile, EngagementStatus
 
 if TYPE_CHECKING:
     from src.company.repository import CompanyRepository
 
-# Why: 상태 라벨 한국어 매핑
+
 _STATUS_LABELS: dict[EngagementStatus, str] = {
-    EngagementStatus.DRAFT: "초안",
-    EngagementStatus.IN_PROGRESS: "진행 중",
-    EngagementStatus.COMPLETED: "완료",
-    EngagementStatus.ARCHIVED: "보관",
+    EngagementStatus.DRAFT: "Draft",
+    EngagementStatus.IN_PROGRESS: "In Progress",
+    EngagementStatus.COMPLETED: "Completed",
+    EngagementStatus.ARCHIVED: "Archived",
 }
 
 
-def render_engagement_selector(company_id: str, repo: CompanyRepository) -> None:
-    """연도 선택 화면. company_id 설정 후, engagement_id 미설정일 때 호출."""
+def render_engagement_selector(
+    company_id: str | None,
+    repo: CompanyRepository,
+) -> None:
+    """Render the engagement selection page for a chosen company."""
+    if company_id is None:
+        st.info("먼저 회사를 선택하세요.")
+        st.session_state.pop(KEY_COMPANY_ID, None)
+        st.session_state.pop(KEY_ENGAGEMENT_ID, None)
+        return
+
     try:
         profile = repo.get_company(company_id)
     except FileNotFoundError:
         st.error(f"회사 '{company_id}'를 찾을 수 없습니다.")
         st.session_state.pop(KEY_COMPANY_ID, None)
+        st.session_state.pop(KEY_ENGAGEMENT_ID, None)
         return
 
-    st.title(f"{profile.display_name}")
-    st.caption(f"ID: {company_id} · 산업: {profile.industry or '-'}")
+    # Why: Streamlit 기본 gap(약 1rem)으로 title/caption/button/divider 사이가
+    #      지나치게 비어 보여 한 HTML 블록으로 묶어 margin을 직접 제어한다.
+    st.markdown(
+        f"<div style='padding-bottom:0.25rem;'>"
+        f"<h1 style='margin:0 0 0.2rem; font-size:1.875rem; font-weight:700; "
+        f"color:#111827; letter-spacing:-0.025em;'>{profile.display_name}</h1>"
+        f"<div style='color:#6B7280; font-size:0.82rem;'>"
+        f"ID: {company_id} | 업종: {profile.industry or '-'}</div>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
 
-    if st.button("← 회사 선택으로 돌아가기"):
+    if st.button("회사 선택으로 돌아가기"):
         st.session_state.pop(KEY_COMPANY_ID, None)
+        st.session_state.pop(KEY_ENGAGEMENT_ID, None)
         st.rerun()
 
-    st.divider()
+    # Why: st.divider 기본 여백(상하 ~1rem씩)이 과도 → 얇은 inline hr + 작은 margin.
+    st.markdown(
+        "<hr style='margin:0.75rem 0 0.5rem; border:none; "
+        "border-top:1px solid #E2E5E9;'>",
+        unsafe_allow_html=True,
+    )
 
     engagements = repo.list_engagements(company_id)
     if engagements:
@@ -60,7 +80,7 @@ def _render_engagement_list(
     company_id: str,
     repo: CompanyRepository,
 ) -> None:
-    """연도 목록 — 연도/상태/기간 표시 + 삭제."""
+    """Show available engagements with select and delete actions."""
     cols = st.columns(3)
     for idx, eng in enumerate(engagements):
         with cols[idx % 3]:
@@ -70,7 +90,7 @@ def _render_engagement_list(
                 period = ""
                 if eng.period_start and eng.period_end:
                     period = f"{eng.period_start} ~ {eng.period_end}"
-                st.caption(f"상태: {status_label}" + (f" · {period}" if period else ""))
+                st.caption(f"상태: {status_label}" + (f" | {period}" if period else ""))
 
                 btn_col, del_col = st.columns([2, 1])
                 with btn_col:
@@ -78,11 +98,10 @@ def _render_engagement_list(
                         st.session_state[KEY_ENGAGEMENT_ID] = eng.engagement_id
                         st.rerun()
                 with del_col:
-                    # Why: 2단계 확인 — 실수로 삭제 방지. session_state 토글 방식.
                     confirm_key = f"_del_confirm_{eng.engagement_id}"
                     if st.session_state.get(confirm_key, False):
                         if st.button(
-                            "정말 삭제",
+                            "확인 삭제",
                             key=f"del2_{eng.engagement_id}",
                             type="primary",
                         ):
@@ -90,41 +109,42 @@ def _render_engagement_list(
                             st.session_state.pop(confirm_key, None)
                             st.rerun()
                     else:
-                        if st.button(
-                            "삭제",
-                            key=f"del1_{eng.engagement_id}",
-                        ):
+                        if st.button("삭제", key=f"del1_{eng.engagement_id}"):
                             st.session_state[confirm_key] = True
                             st.rerun()
 
 
 def _render_create_form(company_id: str, repo: CompanyRepository) -> None:
-    """새 감사 연도 생성 폼."""
+    """Render the create-engagement form."""
     with st.expander("새 감사 연도 생성"):
         with st.form("create_engagement"):
             current_year = date.today().year
             fiscal_year = st.number_input(
-                "회계연도", min_value=2000, max_value=2099, value=current_year,
+                "회계연도",
+                min_value=2000,
+                max_value=2099,
+                value=current_year,
             )
 
             col1, col2 = st.columns(2)
             with col1:
                 p_start = st.date_input(
-                    "감사 대상기간 시작일", value=date(current_year, 1, 1),
+                    "감사 대상기간 시작일",
+                    value=date(current_year, 1, 1),
                 )
             with col2:
                 p_end = st.date_input(
-                    "감사 대상기간 종료일", value=date(current_year, 12, 31),
+                    "감사 대상기간 종료일",
+                    value=date(current_year, 12, 31),
                 )
 
-            # Why: Engagement ID 자동 생성 — 오타/중복 방지
-            eid = f"fy{fiscal_year}"
+            engagement_id = f"fy{fiscal_year}"
 
             submitted = st.form_submit_button("생성", type="primary")
             if submitted:
                 try:
                     profile = EngagementProfile(
-                        engagement_id=eid,
+                        engagement_id=engagement_id,
                         company_id=company_id,
                         fiscal_year=fiscal_year,
                         period_start=p_start,
@@ -134,9 +154,9 @@ def _render_create_form(company_id: str, repo: CompanyRepository) -> None:
                     st.session_state[KEY_ENGAGEMENT_ID] = profile.engagement_id
                     st.rerun()
                 except FileExistsError:
-                    st.error(f"'{eid}' ID의 연도가 이미 존재합니다.")
-                except ValidationError as e:
-                    first = e.errors()[0]
-                    st.error(f"입력값 오류 — {first['loc'][0]}: {first['msg']}")
-                except Exception as e:
-                    st.error(f"생성 실패: {e}")
+                    st.error(f"'{engagement_id}' ID의 연도가 이미 존재합니다.")
+                except ValidationError as exc:
+                    first = exc.errors()[0]
+                    st.error(f"입력값 오류 - {first['loc'][0]}: {first['msg']}")
+                except Exception as exc:
+                    st.error(f"생성 실패: {exc}")

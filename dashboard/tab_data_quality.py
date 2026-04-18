@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import streamlit as st
+from src.eda import profile_to_dict
 
 from dashboard._state import KEY_EDA_PROFILE, KEY_FILTERS, KEY_UPLOAD_COUNT
 from dashboard.components.charts import (
@@ -38,7 +39,12 @@ def render(result: PipelineResult) -> None:
         return
 
     upload_key = st.session_state.get(KEY_UPLOAD_COUNT, "")
-    summary = _cached_summary(upload_key, profile.total_rows, profile.total_columns)
+    summary = _cached_summary(
+        upload_key,
+        profile.total_rows,
+        profile.total_columns,
+        profile_to_dict(profile),
+    )
 
     _render_metrics(summary)
     _render_missing(summary)
@@ -70,9 +76,28 @@ def _get_or_compute_profile(result: PipelineResult) -> EDAProfile | None:
 
 
 @st.cache_data(show_spinner=False)
-def _cached_summary(_upload_key: str, _total_rows: int, _total_columns: int) -> dict:
+def _cached_summary(
+    _upload_key: str,
+    _total_rows: int,
+    _total_columns: int,
+    profile_data: dict,
+) -> dict:
     from src.eda.report import summarize_for_dashboard
-    profile = st.session_state[KEY_EDA_PROFILE]
+    from src.eda.models import ColumnProfile, EDAProfile
+
+    columns = {
+        name: ColumnProfile(**column_data)
+        for name, column_data in profile_data["columns"].items()
+    }
+    profile = EDAProfile(
+        total_rows=profile_data["total_rows"],
+        total_columns=profile_data["total_columns"],
+        memory_bytes=profile_data["memory_bytes"],
+        duplicate_rows=profile_data["duplicate_rows"],
+        sampled=profile_data["sampled"],
+        sample_size=profile_data["sample_size"],
+        columns=columns,
+    )
     return summarize_for_dashboard(profile)
 
 

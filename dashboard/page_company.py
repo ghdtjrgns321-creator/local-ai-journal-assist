@@ -58,10 +58,7 @@ def render_company_page(repo: CompanyRepository) -> None:
     """회사 선택 메인 화면. company_id=None일 때 호출."""
     st.title("AI Audit Assistant")
 
-    tab_register, tab_existing = st.tabs(["새 회사 등록", "기존 회사 분석"])
-
-    with tab_register:
-        _render_register_form(repo)
+    tab_existing, tab_register = st.tabs(["기존 회사 분석", "새 회사 등록"])
 
     with tab_existing:
         companies = repo.list_companies()
@@ -69,6 +66,9 @@ def render_company_page(repo: CompanyRepository) -> None:
             _render_company_cards(companies, repo)
         else:
             st.info("등록된 회사가 없습니다. '새 회사 등록' 탭에서 먼저 회사를 등록하세요.")
+
+    with tab_register:
+        _render_register_form(repo)
 
 
 def _render_company_cards(

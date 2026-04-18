@@ -25,8 +25,12 @@ from dashboard._state import (
     KEY_EDA_PROFILE,
     KEY_ENGAGEMENT_ID,
     KEY_FEATURED_DATA,
+    KEY_INGEST_COLUMN_DIFF,
+    KEY_INGEST_CONFIRMED,
     KEY_INGEST_DATA_DF,
     KEY_INGEST_MAPPING_RESULT,
+    KEY_INGEST_PREPARED_DF,
+    KEY_INGEST_PREP_WARNINGS,
     KEY_INGEST_READ_RESULT,
     KEY_INGEST_SELECTED_SHEET,
     KEY_INGEST_SHEET_SCORES,
@@ -36,6 +40,7 @@ from dashboard._state import (
     KEY_SETTINGS,
     KEY_UPLOAD_COUNT,
 )
+from src.services.analysis_service import build_audit_trail
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +121,7 @@ def _render_upload_stage() -> None:
         if file_key == st.session_state.get(KEY_UPLOAD_COUNT, ""):
             return
         st.session_state["_ingest_file_key"] = file_key
+        st.session_state["_ingest_source_hint"] = str(local_path)
 
         try:
             progress_bar = st.progress(0, text="파일 분석 중...")
@@ -139,6 +145,7 @@ def _render_upload_stage() -> None:
         return
 
     st.session_state["_ingest_file_key"] = file_key
+    st.session_state["_ingest_source_hint"] = uploaded.name
 
     try:
         progress_bar = st.progress(0, text="파일 분석 중...")
@@ -164,33 +171,109 @@ def _render_review_with_preview() -> None:
 
     st.title("데이터 미리보기 & 컬럼 매핑")
 
+    # ── 상단: 작년 컬럼매핑과 비교 ──
+    _render_column_diff_section()
+
     # ── 데이터 품질 경고 + 자동 복구 버튼 ──
     _render_data_warnings(read_result, data_df, source_columns)
 
-    col_left, col_right = st.columns([1, 1])
+    # ── 좌우 분할: 왼쪽 매핑 에디터 / 오른쪽 sticky 미리보기 ──
+    # Why: 단일 컬럼 내 position:sticky는 Streamlit DOM 구조상 안정적이지 않다.
+    #      column 레이아웃에서는 우측 컬럼 내부의 element가 확실히 sticky로 작동.
+    col_map, col_preview = st.columns([4, 6], gap="large")
 
-    # ── 왼쪽: 매핑 리뷰 ──
-    with col_left:
-        from dashboard.components.mapping_review import render_mapping_review
-        render_mapping_review()
-
-    # ── 오른쪽: 미리보기 테이블 ──
-    with col_right:
+    with col_preview:
         if data_df is not None and len(source_columns) > 0:
-            import pandas as pd
-            n_preview = min(10, len(data_df))
+            n_preview = min(5, len(data_df))
             preview = data_df.head(n_preview).copy()
             preview.columns = source_columns[:preview.shape[1]]
 
+            # marker는 sticky 타겟 식별용 (CSS :has에서 사용)
+            st.markdown(
+                '<div class="sticky-preview-marker"></div>',
+                unsafe_allow_html=True,
+            )
             st.subheader(f"원본 데이터 (상위 {n_preview}행)")
             st.dataframe(
                 preview,
                 use_container_width=True,
                 hide_index=True,
+                height=min(240, (n_preview + 1) * 38),
             )
-            st.caption(f"전체 {len(data_df):,}행 × {len(source_columns)}열")
+            st.caption(f"{len(data_df):,}행 × {len(source_columns)}열")
         else:
             st.info("미리보기 데이터가 없습니다.")
+
+    with col_map:
+        from dashboard.components.mapping_review import render_mapping_review
+        render_mapping_review()
+
+    # ── 풀 폭 푸터: 매핑 요약 + 확인/취소 + 준비 단계 progress ──
+    st.divider()
+    from dashboard.components.mapping_review import render_mapping_footer
+    render_mapping_footer()
+
+
+def _render_column_diff_section() -> None:
+    """작년 컬럼매핑 프로파일과의 컬럼 변경 요약을 렌더링한다.
+
+    세 가지 상태를 구분한다:
+      1) 이전 프로파일 없음 → "첫 업로드" 안내
+      2) 프로파일 있음 + 컬럼 동일 → "변경 없음" 안내
+      3) 프로파일 있음 + 변경 발생 → 추가/삭제/이름변경 상세
+    """
+    diff = st.session_state.get(KEY_INGEST_COLUMN_DIFF)
+
+    st.subheader("작년 컬럼매핑과 비교")
+
+    if diff is None:
+        st.info(
+            "이 회사의 첫 업로드입니다. 다음 연도 업로드부터 컬럼 구성 변화(추가/삭제/이름변경)를 자동으로 비교해 표시합니다."
+        )
+        return
+
+    total = len(diff.added) + len(diff.removed) + len(diff.renamed)
+    prev_label = diff.prev_source_name or "작년 업로드"
+
+    if total == 0:
+        st.success(
+            f"작년 컬럼매핑과 구성이 동일합니다. (비교 기준: {prev_label})"
+        )
+        return
+
+    # 변경 요약 KPI
+    k1, k2, k3 = st.columns(3)
+    with k1:
+        st.metric("추가", len(diff.added))
+    with k2:
+        st.metric("삭제", len(diff.removed))
+    with k3:
+        st.metric("이름 변경", len(diff.renamed))
+
+    st.caption(f"비교 기준: {prev_label}")
+
+    # 상세: 각 카테고리 expander
+    if diff.renamed:
+        with st.expander(f"이름 변경 {len(diff.renamed)}건", expanded=True):
+            for old, new, sim in diff.renamed:
+                st.markdown(f"- `{old}` → `{new}`  (유사도 {sim:.0f}%)")
+            st.caption(
+                "ERP 접미사/약어 변경으로 추정되는 컬럼입니다. 매핑이 이전과 동일한지 왼쪽 패널에서 확인해 주세요."
+            )
+
+    if diff.added:
+        with st.expander(f"추가된 컬럼 {len(diff.added)}건", expanded=False):
+            for col in diff.added:
+                st.markdown(f"- `{col}`")
+            st.caption("이전에 없던 새 컬럼입니다. 표준 컬럼으로 매핑 가능한지 검토하세요.")
+
+    if diff.removed:
+        with st.expander(f"사라진 컬럼 {len(diff.removed)}건", expanded=False):
+            for col in diff.removed:
+                st.markdown(f"- `{col}`")
+            st.caption(
+                "이전 업로드에 있었지만 이번엔 제공되지 않은 컬럼입니다. 관련 감사 검사가 누락될 수 있습니다."
+            )
 
 
 def _detect_column_mismatch(read_result) -> str | None:
@@ -303,6 +386,8 @@ def _render_data_warnings(read_result, data_df, source_columns) -> None:
     if read_result is None or data_df is None:
         return
 
+    _render_datasynth_metadata_notice(data_df)
+
     # ── 1) 경고 수집: action(복구 가능) vs info(자동 처리) ──
     action_warnings: list[str] = []
     info_warnings: list[str] = []
@@ -393,6 +478,44 @@ def _render_data_warnings(read_result, data_df, source_columns) -> None:
                 st.info(f"{w}")
             else:
                 st.info(w)
+
+
+def _build_datasynth_metadata_notice_lines(data_df) -> list[str]:
+    """Extract validated DataSynth metadata notice lines from dataframe attrs."""
+    if data_df is None:
+        return []
+
+    status = data_df.attrs.get("datasynth_metadata_status")
+    critical = list(data_df.attrs.get("datasynth_metadata_critical_mismatches", []))
+    warning = list(data_df.attrs.get("datasynth_metadata_warning_mismatches", []))
+    metadata_path = data_df.attrs.get("datasynth_metadata_path")
+    if not status:
+        return []
+
+    lines = [f"DataSynth metadata status: `{status}`"]
+    if metadata_path:
+        lines.append(f"validated file: `{metadata_path}`")
+    if critical:
+        lines.append("critical: " + "; ".join(critical[:3]))
+    if warning:
+        lines.append("warning: " + "; ".join(warning[:3]))
+    return lines
+
+
+def _render_datasynth_metadata_notice(data_df) -> None:
+    """Render validated DataSynth metadata status near ingest warnings."""
+    lines = _build_datasynth_metadata_notice_lines(data_df)
+    if not lines:
+        return
+
+    status = data_df.attrs.get("datasynth_metadata_status", "unknown")
+    message = "\n\n".join(lines)
+    if status == "fail":
+        st.error(message)
+    elif status == "warning":
+        st.warning(message)
+    else:
+        st.info(message)
 
 
 def _render_column_mismatch_warning(
@@ -671,12 +794,40 @@ def _run_ingest_common(read_result, progress_cb) -> None:
             source_columns, matched_keywords, data_df=data_df,
         )
 
+    # Why: 이전 업로드 프로파일이 존재하면 "항상" diff를 계산한다.
+    #      fingerprint가 같아도(컬럼 동일) UI에서 "변경 없음"을 명시해야
+    #      사용자가 연도 간 비교 기능이 작동했음을 확인할 수 있다.
+    from src.ingest.mapping_profile import (
+        column_fingerprint,
+        compute_column_diff,
+        load_latest_profile,
+    )
+    prev = load_latest_profile(profile_dir=_pdir)
+    if prev is not None and prev.get("fingerprint") != column_fingerprint(source_columns):
+        st.session_state[KEY_INGEST_COLUMN_DIFF] = compute_column_diff(
+            prev["source_columns"], source_columns,
+            prev_fingerprint=prev["fingerprint"],
+            prev_source_name=prev["source_name"],
+        )
+    elif prev is not None:
+        # 같은 fingerprint — 빈 diff로 "변경 없음" 명시
+        from src.ingest.mapping_profile import ColumnDiff
+        st.session_state[KEY_INGEST_COLUMN_DIFF] = ColumnDiff(
+            prev_fingerprint=prev.get("fingerprint", ""),
+            prev_source_name=prev.get("source_name", ""),
+        )
+    else:
+        st.session_state[KEY_INGEST_COLUMN_DIFF] = None
+
     st.session_state[KEY_INGEST_READ_RESULT] = read_result
     st.session_state[KEY_INGEST_SHEET_SCORES] = sheet_scores
     st.session_state[KEY_INGEST_SELECTED_SHEET] = sheet_name
     st.session_state[KEY_INGEST_SOURCE_COLUMNS] = source_columns
     st.session_state[KEY_INGEST_DATA_DF] = data_df
     st.session_state[KEY_INGEST_MAPPING_RESULT] = mapping_result
+    st.session_state[KEY_INGEST_CONFIRMED] = False
+    st.session_state[KEY_INGEST_PREPARED_DF] = None
+    st.session_state[KEY_INGEST_PREP_WARNINGS] = []
 
     st.session_state[KEY_INGEST_STAGE] = "REVIEW"
 
@@ -731,7 +882,42 @@ def _read_via_ingest(uploaded, *, progress_cb=None):
     return result
 
 
-def _run_pipeline_from_mapped(file_key: str, progress_cb):
+def _build_audit_trail(ctx):
+    """CompanyContext로부터 AuditTrail 생성. 조건 불충족 시 None.
+
+    Why: WU-27 — 파이프라인 각 단계(upload/validate/analysis/DB load)를
+         engagement DB의 audit_log에 기록. anonymous ctx나 DB 미연결 시에는
+         None을 반환하고 AuditPipeline은 _NullAuditTrail 폴백으로 동작.
+    """
+    if ctx is None or ctx.is_anonymous:
+        return None
+    try:
+        from src.db.connection import get_connection
+        from src.export.audit_trail import AuditTrail
+        conn = get_connection(str(ctx.db_path))
+        return AuditTrail(conn)
+    except Exception:  # pragma: no cover — 방어적
+        logger.warning("AuditTrail 생성 실패 — 증적 기록 없이 진행", exc_info=True)
+        return None
+
+
+def _build_mapped_dataframe(mapping_result, data_df):
+    """확정 매핑을 현재 DataFrame 컬럼에 반영."""
+    rename_map = {}
+    for src, tgt in mapping_result.mapping.items():
+        if src in data_df.columns:
+            rename_map[src] = tgt
+        else:
+            try:
+                int_key = int(src)
+                if int_key in data_df.columns:
+                    rename_map[int_key] = tgt
+            except (ValueError, TypeError):
+                rename_map[src] = tgt
+    return data_df.rename(columns=rename_map)
+
+
+def _run_pipeline_from_mapped(file_key: str, progress_cb, *, prepare_only: bool = False):
     """확정 매핑 적용 → cast → AuditPipeline 실행 → 결과 저장."""
     from src.ingest.mapping_profile import save_profile
     from src.ingest.type_caster import cast_dataframe
@@ -771,15 +957,27 @@ def _run_pipeline_from_mapped(file_key: str, progress_cb):
     settings = st.session_state.get(KEY_SETTINGS)
     repo = st.session_state.get("_company_repo")
     # Why: DB upload_batches 메타에 파일명 기록 (PipelineResult.file_name 경유)
-    fname = file_key.rsplit("_", 1)[0] if file_key else ""
+    fname = st.session_state.get("_ingest_source_hint") or (file_key.rsplit("_", 1)[0] if file_key else "")
+    source_path = st.session_state.get("_ingest_tmp_path")
+    if source_path and not st.session_state.get("_ingest_source_hint"):
+        fname = source_path
+    # Why: WU-27 — engagement DB 커넥션으로 AuditTrail 생성하여 각 단계 증적 기록.
+    #      ctx 없는 폴백 경로(anonymous)에서는 AuditTrail 연결 대상 DB가 없으므로 생략.
+    audit_trail = build_audit_trail(ctx)
     if ctx is not None:
-        result = AuditPipeline(
+        pipeline = AuditPipeline(
             context=ctx, progress_callback=progress_cb, repo=repo,
-        ).run_from_dataframe(df, file_name=fname)
+            audit_trail=audit_trail,
+        )
     else:
-        result = AuditPipeline(
+        pipeline = AuditPipeline(
             settings=settings, progress_callback=progress_cb,
-        ).run_from_dataframe(df, file_name=fname)
+            audit_trail=audit_trail,
+        )
+    if prepare_only:
+        result = pipeline.prepare_from_dataframe(df, file_name=fname)
+    else:
+        result = pipeline.run_from_dataframe(df, file_name=fname)
     result.warnings = warns + result.warnings
 
     if source_columns:
@@ -806,13 +1004,14 @@ def _run_pipeline_from_mapped(file_key: str, progress_cb):
         except Exception:
             logger.warning("프로파일 저장 실패", exc_info=True)
 
-    st.session_state[KEY_PIPELINE_RESULT] = result
-    st.session_state[KEY_BATCH_ID] = result.batch_id
-    st.session_state[KEY_UPLOAD_COUNT] = file_key
-    st.session_state.pop(KEY_EDA_PROFILE, None)
-    st.session_state[KEY_FEATURED_DATA] = result.featured_data
+    if not prepare_only:
+        st.session_state[KEY_PIPELINE_RESULT] = result
+        st.session_state[KEY_BATCH_ID] = result.batch_id
+        st.session_state[KEY_UPLOAD_COUNT] = file_key
+        st.session_state.pop(KEY_EDA_PROFILE, None)
+        st.session_state[KEY_FEATURED_DATA] = result.featured_data
 
-    _clear_ingest_state()
+        _clear_ingest_state()
 
     return result, warns
 
@@ -832,7 +1031,8 @@ def _clear_ingest_state() -> None:
         KEY_INGEST_READ_RESULT, KEY_INGEST_MAPPING_RESULT,
         KEY_INGEST_SHEET_SCORES, KEY_INGEST_SELECTED_SHEET,
         KEY_INGEST_SOURCE_COLUMNS, KEY_INGEST_DATA_DF,
-        "_ingest_file_key",
+        KEY_INGEST_CONFIRMED, KEY_INGEST_PREPARED_DF, KEY_INGEST_PREP_WARNINGS,
+        "_ingest_file_key", "_ingest_source_hint",
     ]:
         st.session_state.pop(key, None)
     st.session_state[KEY_INGEST_STAGE] = "UPLOAD"

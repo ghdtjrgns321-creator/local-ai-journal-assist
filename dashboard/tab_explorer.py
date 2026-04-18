@@ -1,8 +1,10 @@
-"""Tab 3: Anomaly Explorer — 이상 전표 상세 탐색 + HITL 예외 처리.
+"""Legacy anomaly explorer.
 
 Why: 감사인이 AgGrid 테이블에서 이상 전표를 탐색하고,
      행 선택 시 룰별 점수를 확인하며, 오탐을 예외 처리하는
      end-to-end 워크플로우의 오케스트레이터.
+
+현재 메인 UX는 `tab_findings.py`를 사용한다. 이 모듈은 legacy 경로 호환용으로 유지된다.
 """
 
 from __future__ import annotations
@@ -52,6 +54,7 @@ def render(result: "PipelineResult") -> None:
         # 7. 상세 패널 — SHAP 데이터가 있으면 피처 기여도 패널도 함께 렌더
         render_detail(
             doc_id, result.data, conn, result.batch_id,
+            results=result.results,
             shap_contributions=result.shap_contributions,
             shap_base_value=result.shap_base_value,
         )

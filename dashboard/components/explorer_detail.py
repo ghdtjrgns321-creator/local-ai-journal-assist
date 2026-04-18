@@ -1,9 +1,4 @@
-"""행 상세 패널 — 선택 전표의 룰별 점수 차트 + 라인아이템 + SHAP 기여도.
-
-Why: Explorer 그리드에서 행 선택 시 해당 전표의 탐지 근거를
-     시각적으로 확인할 수 있도록 드릴다운 패널 제공.
-     WU-17: ML 모델이 학습되어 있으면 SHAP waterfall로 피처 기여도까지 표시.
-"""
+"""Detail panel for a selected document."""
 
 from __future__ import annotations
 
@@ -20,73 +15,127 @@ from dashboard.components.charts._theme import (
     empty_figure,
 )
 from dashboard.components.shap_waterfall import render_shap_waterfall
+from src.detection.explanations import build_document_explanation
 
 if TYPE_CHECKING:
     import duckdb
+    from src.detection.base import DetectionResult
 
 
 def render_detail(
     doc_id: str,
     result_data: pd.DataFrame,
-    conn: "duckdb.DuckDBPyConnection | None",
-    batch_id: str,
+    conn: "duckdb.DuckDBPyConnection | None" = None,
+    batch_id: str = "",
+    results: "list[DetectionResult] | None" = None,
     shap_contributions: dict[str, dict[str, float]] | None = None,
     shap_base_value: float | None = None,
 ) -> None:
-    """선택된 전표의 상세 정보 패널 렌더링.
-
-    Args:
-        doc_id: 선택된 document_id.
-        result_data: PipelineResult.data (인메모리 DataFrame).
-        conn: DuckDB 연결 (None이면 인메모리 전용).
-        batch_id: 현재 배치 식별자.
-        shap_contributions: SHAP 기여도 매핑 (ML 모델 없을 시 None).
-        shap_base_value: SHAP Waterfall 시작점 (None이면 SHAP 미표시).
-    """
-    # Why: SHAP 데이터 존재 여부에 따라 2컬럼 ↔ 3컬럼 동적 전환.
-    #      Cold Start(ML 미학습)에서는 기존 2컬럼 레이아웃 유지.
+    """Render the document detail panel."""
     has_shap = shap_contributions is not None and shap_base_value is not None
 
     with st.expander(f"문서 상세: {doc_id}", expanded=True):
+        explanation = build_document_explanation(doc_id, result_data, results)
+        _render_explanation_block(explanation)
+        _render_feedback_history(doc_id, conn, batch_id)
+
         if has_shap:
             col_chart, col_lines, col_shap = st.columns([3, 2, 3])
         else:
             col_chart, col_lines = st.columns([3, 2])
             col_shap = None
 
-        # ── 좌측: 룰별 점수 바 차트 ──
         with col_chart:
             st.subheader("탐지 룰 점수")
             rule_df = _get_rule_detail(doc_id, conn, batch_id)
             if rule_df.empty:
                 st.plotly_chart(empty_figure("탐지 결과 없음"), use_container_width=True)
             else:
-                fig = _build_rule_chart(rule_df)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(_build_rule_chart(rule_df), use_container_width=True)
 
-        # ── 중앙: 해당 전표 라인아이템 ──
         with col_lines:
             st.subheader("라인아이템")
             doc_lines = result_data[result_data["document_id"] == doc_id]
             if doc_lines.empty:
                 st.info("라인아이템 없음")
             else:
-                # Why: 상세 패널에서 핵심 컬럼만 표시하여 가독성 확보
                 display_cols = [
-                    "line_number", "gl_account", "debit_amount",
-                    "credit_amount", "line_text",
+                    "line_number",
+                    "gl_account",
+                    "debit_amount",
+                    "credit_amount",
+                    "line_text",
                 ]
-                available = [c for c in display_cols if c in doc_lines.columns]
+                visible = [col for col in display_cols if col in doc_lines.columns]
                 st.dataframe(
-                    doc_lines[available].reset_index(drop=True),
+                    doc_lines[visible].reset_index(drop=True),
                     use_container_width=True,
                     hide_index=True,
                 )
 
-        # ── 우측: SHAP 피처 기여도 (ML 학습된 경우에만) ──
         if col_shap is not None:
             with col_shap:
                 render_shap_waterfall(doc_id, shap_contributions, shap_base_value)
+
+
+def _render_explanation_block(explanation: dict) -> None:
+    st.markdown("**탐지 설명**")
+    st.write(explanation.get("headline", "-"))
+
+    triggered_rules = explanation.get("triggered_rules", [])
+    for rule in triggered_rules:
+        ref_text = ""
+        if rule.get("references"):
+            ref_text = f" · 근거: {', '.join(rule['references'])}"
+        st.caption(f"{rule['rule_id']} {rule['plain_reason']}{ref_text}")
+
+    if explanation.get("auditor_focus_points"):
+        st.markdown("**감사자 확인 포인트**")
+        for item in explanation["auditor_focus_points"]:
+            st.write(f"- {item}")
+
+    if explanation.get("false_positive_risks"):
+        st.markdown("**오탐 가능성**")
+        for item in explanation["false_positive_risks"]:
+            st.write(f"- {item}")
+
+    if explanation.get("used_columns"):
+        st.caption("사용 컬럼: " + ", ".join(explanation["used_columns"]))
+
+
+def _render_feedback_history(
+    doc_id: str,
+    conn: "duckdb.DuckDBPyConnection | None",
+    batch_id: str,
+) -> None:
+    """Render recent HITL feedback for this document."""
+    if conn is None or not batch_id:
+        return
+    try:
+        from src.hitl.feedback_store import list_feedback_events
+
+        feedback_df = list_feedback_events(conn, batch_id=batch_id, document_id=doc_id)
+    except Exception:
+        return
+
+    if feedback_df.empty:
+        return
+
+    st.markdown("**HITL 피드백 이력**")
+    preview = feedback_df.head(3).copy()
+    if "created_at" in preview.columns:
+        preview["created_at"] = preview["created_at"].astype(str).str[:19]
+    if "payload_json" in preview.columns:
+        preview["payload_json"] = preview["payload_json"].apply(
+            lambda payload: ", ".join(f"{key}={value}" for key, value in payload.items())
+            if payload else "-"
+        )
+    visible = [
+        col
+        for col in ["decision", "rule_code", "reason", "created_by", "created_at", "payload_json"]
+        if col in preview.columns
+    ]
+    st.dataframe(preview[visible], use_container_width=True, hide_index=True)
 
 
 def _get_rule_detail(
@@ -94,7 +143,6 @@ def _get_rule_detail(
     conn: "duckdb.DuckDBPyConnection | None",
     batch_id: str,
 ) -> pd.DataFrame:
-    """document_rule_detail 쿼리 실행. DB 없으면 빈 DataFrame."""
     if conn is None:
         return pd.DataFrame()
 
@@ -107,22 +155,22 @@ def _get_rule_detail(
 
 
 def _build_rule_chart(rule_df: pd.DataFrame) -> go.Figure:
-    """룰별 점수 수평 바 차트 생성."""
     fig = go.Figure()
 
-    # Why: track_name별로 그룹핑하여 레이어 색상 구분
-    for track, group in rule_df.groupby("track_name"):
-        color = LAYER_COLORS.get(track, "#999")
-        label = LAYER_LABELS.get(track, track)
-        fig.add_trace(go.Bar(
-            y=group["rule_code"],
-            x=group["score"],
-            orientation="h",
-            name=label,
-            marker_color=color,
-            text=group["score"].apply(lambda v: f"{v:.3f}"),
-            textposition="outside",
-        ))
+    for track_name, group in rule_df.groupby("track_name"):
+        color = LAYER_COLORS.get(track_name, "#999")
+        label = LAYER_LABELS.get(track_name, track_name)
+        fig.add_trace(
+            go.Bar(
+                y=group["rule_code"],
+                x=group["score"],
+                orientation="h",
+                name=label,
+                marker_color=color,
+                text=group["score"].apply(lambda value: f"{value:.3f}"),
+                textposition="outside",
+            )
+        )
 
     fig.update_layout(
         **DEFAULT_LAYOUT,

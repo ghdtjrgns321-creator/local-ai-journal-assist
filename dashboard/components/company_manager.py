@@ -1,19 +1,18 @@
-"""회사 CRUD 컴포넌트 (RC-4-2, RC-5-3 확장).
-
-사이드바에서 회사 설정 편집, CoA 업로드/편집, 삭제를 제공한다.
-RC-5-3: CoA 테이블 편집 + 검증 + export/import 추가.
-"""
+"""Company CRUD sidebar component."""
 
 from __future__ import annotations
 
 import csv
 import io
 import re
+import tempfile
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pandas as pd
 import streamlit as st
 
+from config.settings import get_settings
 from dashboard._state import (
     KEY_COMPANY_CONTEXT,
     KEY_COMPANY_ID,
@@ -21,8 +20,10 @@ from dashboard._state import (
     KEY_INGEST_STAGE,
     KEY_PIPELINE_RESULT,
 )
+from src.company.merger import normalize_settings_overrides, resolve_settings
 
 if TYPE_CHECKING:
+    from src.company.models import CompanyProfile
     from src.company.repository import CompanyRepository
     from src.context import ContextFactory
 
@@ -32,11 +33,11 @@ def render_company_manager(
     repo: CompanyRepository,
     factory: ContextFactory,
 ) -> None:
-    """회사 관리 패널 — 사이드바 expander에서 호출."""
+    """Render company management controls in the sidebar."""
     try:
         profile = repo.get_company(company_id)
     except FileNotFoundError:
-        st.warning("회사 프로파일을 찾을 수 없습니다.")
+        st.warning("회사 프로필을 찾을 수 없습니다.")
         return
 
     _render_settings_editor(profile, repo, factory)
@@ -46,56 +47,121 @@ def render_company_manager(
 
 
 def _render_settings_editor(
-    profile, repo: CompanyRepository, factory: ContextFactory
+    profile: CompanyProfile,
+    repo: CompanyRepository,
+    factory: ContextFactory,
 ) -> None:
-    """핵심 settings_overrides 편집 (5개 필드)."""
+    """Edit the small, high-signal subset of company-specific settings."""
     st.markdown("**설정 오버라이드**")
-    overrides = dict(profile.settings_overrides)
 
-    # Why: 가장 빈번하게 회사별로 달라지는 5개 필드만 노출
-    approval = st.number_input(
-        "승인 금액 임계값",
-        min_value=0,
-        value=overrides.get("approval_amount_threshold", 50_000_000),
-        step=1_000_000,
-        key="cm_approval",
+    defaults = get_settings()
+    resolved = resolve_settings(company_overrides=profile.settings_overrides)
+    thresholds = list(resolved.approval_thresholds)
+    threshold_df = pd.DataFrame(
+        {
+            "Level": range(1, len(thresholds) + 1),
+            "금액": thresholds,
+        }
     )
+
+    edited_thresholds = st.data_editor(
+        threshold_df,
+        key=f"cm_thresholds_{profile.company_id}",
+        hide_index=True,
+        num_rows="fixed",
+        use_container_width=True,
+        disabled=["Level"],
+    )
+
     zscore = st.slider(
         "Z-Score 임계값",
-        min_value=1.0, max_value=5.0,
-        value=float(overrides.get("zscore_threshold", 2.5)),
+        min_value=1.0,
+        max_value=5.0,
+        value=float(resolved.zscore_threshold),
         step=0.1,
         key="cm_zscore",
     )
     benford_mad = st.slider(
         "Benford MAD 임계값",
-        min_value=0.001, max_value=0.05,
-        value=float(overrides.get("benford_mad_threshold", 0.015)),
-        step=0.001, format="%.3f",
+        min_value=0.001,
+        max_value=0.05,
+        value=float(resolved.benford_mad_threshold),
+        step=0.001,
+        format="%.3f",
         key="cm_benford",
     )
+    period_margin = st.slider(
+        "기말 마감 마진(일)",
+        min_value=1,
+        max_value=30,
+        value=int(resolved.period_end_margin_days),
+        step=1,
+        key="cm_period_margin",
+    )
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        enable_nlp = st.checkbox(
+            "NLP 탐지",
+            value=bool(resolved.enable_nlp_detection),
+            key="cm_enable_nlp",
+        )
+    with col2:
+        enable_graph = st.checkbox(
+            "Graph 탐지",
+            value=bool(resolved.enable_graph_detection),
+            key="cm_enable_graph",
+        )
+    with col3:
+        enable_ml = st.checkbox(
+            "ML 탐지",
+            value=bool(resolved.enable_ml_detection),
+            key="cm_enable_ml",
+        )
 
     if st.button("설정 저장", key="cm_save_settings"):
-        new_overrides = {
-            "approval_amount_threshold": approval,
+        amounts = (
+            edited_thresholds["금액"]
+            .fillna(0)
+            .astype(int)
+            .tolist()
+        )
+        amounts = [amount for amount in amounts if amount > 0]
+        if not amounts:
+            st.error("승인 한도는 최소 1개 이상 필요합니다.")
+            return
+
+        overrides = {
+            "approval_thresholds": amounts,
             "zscore_threshold": zscore,
             "benford_mad_threshold": benford_mad,
+            "period_end_margin_days": period_margin,
+            "enable_nlp_detection": enable_nlp,
+            "enable_graph_detection": enable_graph,
+            "enable_ml_detection": enable_ml,
         }
-        profile.settings_overrides.update(new_overrides)
-        repo.update_company(profile)
+        merged_overrides = dict(profile.settings_overrides)
+        merged_overrides.update(overrides)
+        normalized = normalize_settings_overrides(merged_overrides, scope="company")
+        updated = profile.model_copy(update={"settings_overrides": normalized})
+        repo.update_company(updated)
         factory.invalidate(profile.company_id)
         st.success("설정이 저장되었습니다.")
+        st.caption(
+            "전역 기본값과 다른 회사별 설정만 저장합니다. "
+            f"기본 승인한도 개수: {len(defaults.approval_thresholds)}"
+        )
 
 
 def _render_coa_uploader(
-    company_id: str, repo: CompanyRepository, factory: ContextFactory
+    company_id: str,
+    repo: CompanyRepository,
+    factory: ContextFactory,
 ) -> None:
-    """계정과목표(CoA) 업로드 + 편집 + 검증."""
-    st.markdown("**계정과목표 (CoA)**")
+    """Upload and edit a company-specific chart of accounts."""
+    st.markdown("**계정과목표(CoA)**")
 
-    # CSV 업로드
     uploaded = st.file_uploader(
-        "CSV 업로드 (첫 열: 계정코드)",
+        "CSV 업로드 (첫 열 = 계정코드)",
         type=["csv"],
         key=f"cm_coa_{company_id}",
     )
@@ -104,19 +170,18 @@ def _render_coa_uploader(
         reader = csv.reader(io.StringIO(content))
         rows = list(reader)
         if len(rows) < 2:
-            st.error("헤더 + 최소 1행의 데이터가 필요합니다.")
+            st.error("헤더와 최소 1개 이상의 계정코드가 필요합니다.")
             return
 
         coa_path = repo.company_dir(company_id) / "chart_of_accounts.csv"
         coa_path.write_text(content, encoding="utf-8")
 
         profile = repo.get_company(company_id)
-        profile.has_custom_coa = True
-        repo.update_company(profile)
+        updated = profile.model_copy(update={"has_custom_coa": True})
+        repo.update_company(updated)
         factory.invalidate(company_id)
         st.success(f"CoA 저장 완료 ({len(rows) - 1}개 계정)")
 
-    # RC-5-3: 기존 CoA 테이블 편집
     coa = repo.load_company_coa(company_id)
     if coa:
         _render_coa_editor(company_id, coa, repo, factory)
@@ -128,7 +193,7 @@ def _render_coa_editor(
     repo: CompanyRepository,
     factory: ContextFactory,
 ) -> None:
-    """CoA 테이블 편집 UI — st.data_editor + 저장 버튼."""
+    """Edit company CoA via `st.data_editor`."""
     coa_df = pd.DataFrame(sorted(coa), columns=["계정코드"])
 
     edited_df = st.data_editor(
@@ -148,44 +213,31 @@ def _render_coa_editor(
                 st.error(err)
             return
 
-        # CSV 저장
         coa_path = repo.company_dir(company_id) / "chart_of_accounts.csv"
-        coa_path.write_text(
-            "account_code\n" + "\n".join(codes),
-            encoding="utf-8",
-        )
+        coa_path.write_text("account_code\n" + "\n".join(codes), encoding="utf-8")
         factory.invalidate(company_id)
         st.success(f"CoA 저장 완료 ({len(codes)}개 계정)")
 
 
 def validate_coa_codes(codes: list[str]) -> list[str]:
-    """계정코드 리스트 검증.
-
-    Returns:
-        에러 메시지 리스트 (빈 리스트면 통과)
-    """
+    """Validate a list of chart-of-account codes."""
     errors: list[str] = []
-
     if not codes:
         errors.append("최소 1개 이상의 계정코드가 필요합니다.")
         return errors
 
-    # 형식 검증: 3~8자리 숫자 (한국 계정과목 범위)
     invalid = [c for c in codes if not re.match(r"^\d{3,8}$", c)]
     if invalid:
-        samples = invalid[:5]
-        errors.append(
-            f"계정코드는 3~8자리 숫자여야 합니다: {', '.join(samples)}"
-            + (f" 외 {len(invalid) - 5}건" if len(invalid) > 5 else "")
-        )
+        sample = ", ".join(invalid[:5])
+        suffix = f" 외 {len(invalid) - 5}건" if len(invalid) > 5 else ""
+        errors.append(f"계정코드는 3~8자리 숫자여야 합니다: {sample}{suffix}")
 
-    # 중복 검출
     seen: set[str] = set()
     dupes: set[str] = set()
-    for c in codes:
-        if c in seen:
-            dupes.add(c)
-        seen.add(c)
+    for code in codes:
+        if code in seen:
+            dupes.add(code)
+        seen.add(code)
     if dupes:
         errors.append(f"중복 계정코드: {', '.join(sorted(dupes))}")
 
@@ -193,17 +245,16 @@ def validate_coa_codes(codes: list[str]) -> list[str]:
 
 
 def _render_export_import(
-    company_id: str, repo: CompanyRepository, factory: ContextFactory,
+    company_id: str,
+    repo: CompanyRepository,
+    factory: ContextFactory,
 ) -> None:
-    """회사 설정 export/import UI."""
+    """Render company export/import controls."""
     st.markdown("**설정 내보내기/가져오기**")
     col1, col2 = st.columns(2)
 
     with col1:
         if st.button("설정 내보내기", key="cm_export"):
-            import tempfile
-            from pathlib import Path
-
             try:
                 dest = Path(tempfile.mkdtemp())
                 zip_path = repo.export_company(company_id, dest)
@@ -220,20 +271,16 @@ def _render_export_import(
 
     with col2:
         uploaded_zip = st.file_uploader(
-            "설정 가져오기 (ZIP)", type=["zip"], key="cm_import_zip",
+            "설정 가져오기(ZIP)",
+            type=["zip"],
+            key="cm_import_zip",
         )
         if uploaded_zip is not None:
             overwrite = st.checkbox("기존 설정 덮어쓰기", key="cm_import_overwrite")
             if st.button("가져오기 실행", key="cm_import_btn"):
-                import tempfile
-                from pathlib import Path
-
-                tmp = None
+                tmp: Path | None = None
                 try:
-                    # Why: mktemp()는 TOCTOU 취약점 → NamedTemporaryFile 사용
-                    with tempfile.NamedTemporaryFile(
-                        suffix=".zip", delete=False,
-                    ) as f:
+                    with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as f:
                         f.write(uploaded_zip.read())
                         tmp = Path(f.name)
                     imported_id = repo.import_company(tmp, overwrite=overwrite)
@@ -241,31 +288,34 @@ def _render_export_import(
                     st.success(f"설정 가져오기 완료: {imported_id}")
                 except FileExistsError:
                     st.error(
-                        "동일 회사 ID가 이미 존재합니다. "
-                        "'기존 설정 덮어쓰기'를 체크하세요."
+                        "같은 회사 ID가 이미 존재합니다. "
+                        "'기존 설정 덮어쓰기'를 켜고 다시 시도하세요."
                     )
-                except ValueError as e:
-                    st.error(f"ZIP 파일 오류: {e}")
+                except ValueError as exc:
+                    st.error(f"ZIP 파일 오류: {exc}")
                 finally:
                     if tmp is not None:
                         tmp.unlink(missing_ok=True)
 
 
 def _render_delete_confirm(company_id: str, repo: CompanyRepository) -> None:
-    """회사 삭제 — 이중 확인."""
+    """Render destructive company deletion control with confirmation text."""
     st.markdown("---")
     with st.expander("회사 삭제", expanded=False):
-        st.warning("이 작업은 되돌릴 수 없습니다. 모든 데이터가 삭제됩니다.")
+        st.warning("이 작업은 되돌릴 수 없습니다. 모든 회사 데이터가 삭제됩니다.")
         confirm = st.text_input(
-            f"삭제하려면 '{company_id}'를 입력하세요",
+            f"삭제하려면 '{company_id}'를 입력하세요.",
             key="cm_delete_confirm",
         )
         if st.button("삭제", type="primary", key="cm_delete_btn"):
             if confirm == company_id:
                 repo.delete_company(company_id)
-                # Why: state 전체 리셋하여 회사 선택 화면으로 복귀
-                for key in [KEY_COMPANY_ID, KEY_ENGAGEMENT_ID,
-                            KEY_COMPANY_CONTEXT, KEY_PIPELINE_RESULT]:
+                for key in [
+                    KEY_COMPANY_ID,
+                    KEY_ENGAGEMENT_ID,
+                    KEY_COMPANY_CONTEXT,
+                    KEY_PIPELINE_RESULT,
+                ]:
                     st.session_state.pop(key, None)
                 st.session_state[KEY_INGEST_STAGE] = "UPLOAD"
                 st.rerun()

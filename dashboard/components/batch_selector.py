@@ -10,15 +10,7 @@ import logging
 
 import streamlit as st
 
-from dashboard._state import (
-    KEY_BATCH_ID,
-    KEY_EDA_PROFILE,
-    KEY_FEATURED_DATA,
-    KEY_LOADED_FROM_DB,
-    KEY_PIPELINE_RESULT,
-    KEY_UPLOAD_COUNT,
-)
-from src.db.batch_reader import list_batches, load_batch
+from src.services.batch_service import list_saved_batches, load_batch_into_state
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +21,7 @@ def render_batch_selector(conn) -> bool:
     Returns:
         True이면 배치가 1개 이상 표시됨, False이면 표시 없음.
     """
-    batches = list_batches(conn)
+    batches = list_saved_batches(conn)
     if batches.empty:
         return False
 
@@ -58,13 +50,7 @@ def render_batch_selector(conn) -> bool:
 def _load_and_restore(conn, batch_id: str) -> None:
     """DB에서 배치 로드 → session_state 복원 → rerun."""
     try:
-        result = load_batch(conn, batch_id)
-        st.session_state[KEY_PIPELINE_RESULT] = result
-        st.session_state[KEY_BATCH_ID] = batch_id
-        st.session_state[KEY_UPLOAD_COUNT] = result.file_name or ""
-        st.session_state[KEY_LOADED_FROM_DB] = True
-        st.session_state[KEY_FEATURED_DATA] = None
-        st.session_state.pop(KEY_EDA_PROFILE, None)
+        load_batch_into_state(st.session_state, conn, batch_id)
         st.rerun()
     except ValueError as exc:
         st.error(f"배치 로드 실패: {exc}")

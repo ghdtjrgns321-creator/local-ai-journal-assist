@@ -15,6 +15,9 @@ if TYPE_CHECKING:
 # Why: 'audit_' 접두사로 Streamlit 내장 위젯 키와 네임스페이스 분리.
 
 KEY_PIPELINE_RESULT = "audit_pipeline_result"   # PipelineResult | None
+KEY_PREP_RESULT = "audit_prep_result"           # PipelineResult | None
+KEY_PHASE1_RESULT = "audit_phase1_result"       # PipelineResult | None
+KEY_PHASE2_RESULT = "audit_phase2_result"       # PipelineResult | None
 KEY_FILTERS = "audit_filters"                   # FilterState dict
 KEY_DEV_MODE = "audit_dev_mode"                 # bool
 KEY_SETTINGS = "audit_settings"                 # AuditSettings | None (WU5 슬라이더용)
@@ -46,9 +49,31 @@ KEY_INGEST_SHEET_SCORES = "audit_ingest_sheets"      # list[SheetScore] | None
 KEY_INGEST_SELECTED_SHEET = "audit_ingest_sheet"     # str | None
 KEY_INGEST_SOURCE_COLUMNS = "audit_ingest_src_cols"  # list[str] | None
 KEY_INGEST_DATA_DF = "audit_ingest_data_df"          # pd.DataFrame | None
+KEY_INGEST_COLUMN_DIFF = "audit_ingest_column_diff"  # ColumnDiff | None
+KEY_INGEST_CONFIRMED = "audit_ingest_confirmed"      # bool
+KEY_INGEST_PREPARED_DF = "audit_ingest_prepared_df"  # pd.DataFrame | None
+KEY_INGEST_PREP_WARNINGS = "audit_ingest_prep_warns" # list[str]
 
 # Batch History Loader: DB에서 로드한 결과 구분 (읽기 전용 모드)
 KEY_LOADED_FROM_DB = "audit_loaded_from_db"          # bool
+
+# WU-26: Chat UI
+# Why: chat 결과를 rerun에도 유지 — DataFrame은 반드시 head(100) 프리뷰만 저장해 OOM 방지.
+KEY_CHAT_HISTORY = "audit_chat_history"              # list[dict]
+KEY_CHAT_LLM_ENABLED = "audit_chat_llm_enabled"      # bool: 자유 질의 LLM 사용 toggle
+KEY_CHAT_ENGINE = "audit_chat_engine"                # AuditTextToSQL | None (ctx당 1개 캐싱)
+KEY_CHAT_ENGINE_KEY = "audit_chat_engine_key"        # str: 캐시 무효화 키 (ctx.db_path)
+
+# WU-27: Export 탭 (2-Step 캐싱)
+# Why: st.download_button에 _export_to_bytes()를 직접 바인딩하면 위젯 재렌더마다
+#      수십초 걸리는 Excel/PDF 생성이 헛돌아 메모리 폭주. "생성" 버튼 클릭 시에만
+#      바이트를 굽고 세션에 캐싱하며, 다운로드 버튼은 캐시를 서빙한다.
+#      설정(필터·옵션·포맷) 해시 불일치 시 캐시 무효화.
+KEY_EXPORT_FORMAT = "audit_export_format"            # "Excel" | "PDF" | "CSV"
+KEY_EXPORT_READY_DATA = "audit_export_ready_data"    # bytes | None (캐시된 생성물)
+KEY_EXPORT_READY_NAME = "audit_export_ready_name"    # str | None (파일명)
+KEY_EXPORT_READY_MIME = "audit_export_ready_mime"    # str | None (MIME 타입)
+KEY_EXPORT_READY_HASH = "audit_export_ready_hash"    # str | None (stale 판정용)
 
 
 # ── 필터 상태 타입 ──────────────────────────────────────────────
@@ -82,6 +107,9 @@ class FilterState(TypedDict, total=False):
 
 _DEFAULTS: dict[str, object] = {
     KEY_PIPELINE_RESULT: None,
+    KEY_PREP_RESULT: None,
+    KEY_PHASE1_RESULT: None,
+    KEY_PHASE2_RESULT: None,
     KEY_FILTERS: {},
     KEY_DEV_MODE: False,
     KEY_SETTINGS: None,
@@ -109,8 +137,23 @@ _DEFAULTS: dict[str, object] = {
     KEY_INGEST_SELECTED_SHEET: None,
     KEY_INGEST_SOURCE_COLUMNS: None,
     KEY_INGEST_DATA_DF: None,
+    KEY_INGEST_COLUMN_DIFF: None,
+    KEY_INGEST_CONFIRMED: False,
+    KEY_INGEST_PREPARED_DF: None,
+    KEY_INGEST_PREP_WARNINGS: [],
     # Batch History Loader
     KEY_LOADED_FROM_DB: False,
+    # WU-26: Chat UI
+    KEY_CHAT_HISTORY: [],
+    KEY_CHAT_LLM_ENABLED: False,
+    KEY_CHAT_ENGINE: None,
+    KEY_CHAT_ENGINE_KEY: "",
+    # WU-27: Export 탭
+    KEY_EXPORT_FORMAT: "Excel",
+    KEY_EXPORT_READY_DATA: None,
+    KEY_EXPORT_READY_NAME: None,
+    KEY_EXPORT_READY_MIME: None,
+    KEY_EXPORT_READY_HASH: None,
 }
 
 

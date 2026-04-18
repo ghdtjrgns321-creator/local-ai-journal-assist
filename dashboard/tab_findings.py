@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 import streamlit as st
 
-from dashboard._state import KEY_DEV_MODE, KEY_FILTERS
+from dashboard._state import KEY_DEV_MODE, KEY_FILTERS, KEY_SELECTED_DOC
 from dashboard.components.filters import apply_filters
 
 if TYPE_CHECKING:
@@ -40,20 +40,48 @@ def render(result: PipelineResult) -> None:
     df = apply_filters(result.data, filters)
 
     _render_filter_summary(df, result.data)
+    if df.empty:
+        st.info("필터 조건에 해당하는 전표가 없습니다.")
+        return
 
     # ── AgGrid 테이블 ──
     from dashboard.components.explorer_grid import build_grid
     dev_mode = st.session_state.get(KEY_DEV_MODE, False)
-    grid_response = build_grid(df, dev_mode=dev_mode)
+    prev_selected = st.session_state.get(KEY_SELECTED_DOC)
+    grid_response = build_grid(df, dev_mode=dev_mode, selected_doc=prev_selected)
 
     # ── 상세 패널 (행 선택 시) ──
     selected = grid_response.selected_rows
+    conn = None
     if selected is not None and len(selected) > 0:
+        doc_id = selected.iloc[0]["document_id"]
+        st.session_state[KEY_SELECTED_DOC] = doc_id
+        conn = _get_connection(result)
         from dashboard.components.explorer_detail import render_detail
-        render_detail(selected, result.data)
+        render_detail(
+            doc_id,
+            result.data,
+            conn=conn,
+            batch_id=result.batch_id,
+            results=result.results,
+            shap_contributions=result.shap_contributions,
+            shap_base_value=result.shap_base_value,
+        )
 
     # ── HITL 예외 저장 (DB 연결 시) ──
-    dev_mode = st.session_state.get(KEY_DEV_MODE, False)
-    if selected is not None and len(selected) > 0:
+    if conn is not None and selected is not None and len(selected) > 0:
         from dashboard.components.explorer_whitelist import render_whitelist
-        render_whitelist(selected, dev_mode=dev_mode)
+        modified = render_whitelist(doc_id, conn, result.batch_id, result.data)
+        if modified:
+            st.rerun()
+
+
+def _get_connection(result: "PipelineResult"):
+    """DB 적재 완료 시 싱글톤 DuckDB 커넥션 반환, 아니면 None."""
+    if result.load_result is None:
+        return None
+    try:
+        from src.db.connection import get_connection
+        return get_connection()
+    except Exception:
+        return None

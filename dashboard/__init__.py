@@ -1,5 +1,7 @@
-"""AI Audit Assistant 대시보드 — Streamlit 4탭 시각화 플랫폼."""
+"""AI Audit Assistant 대시보드 패키지.
 
-from dashboard import tab_benford, tab_eda
+메인 UX는 app.py에서 `tab_overview`, `tab_data_quality`, `tab_phase1`,
+`tab_phase2`, `tab_export`를 조합해 사용한다.
+"""
 
-__all__ = ["tab_benford", "tab_eda"]
+__all__: list[str] = []

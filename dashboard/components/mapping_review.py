@@ -1,69 +1,33 @@
-"""3-tier 컬럼 매핑 확인 UI — Green(자동) / Yellow(확인) / Red(수동).
-
-Why: 외부 ERP 데이터 업로드 시 auto_map_columns의 매핑 결과를
-     감사인이 시각적으로 검토·수정할 수 있는 인터페이스 제공.
-     필수 컬럼 미매핑 시 파이프라인 진행을 차단.
-
-UX 1단계 스펙 (ux-flow.md):
-  UI-1: 인코딩 드롭다운 (confidence < 0.7)
-  UI-2: 시트 선택 테이블 (멀티시트 Excel)
-  UI-3: Fuzzy 엄격도 슬라이더
-  UI-4: 중복 금액 퀵픽스 버튼
-"""
-
 from __future__ import annotations
 
 import logging
+from dataclasses import replace as dc_replace
 
 import streamlit as st
 
 from config.settings import get_keywords, get_schema
-
-logger = logging.getLogger(__name__)
 from dashboard._state import (
     KEY_COMPANY_CONTEXT,
+    KEY_INGEST_COLUMN_DIFF,
+    KEY_INGEST_CONFIRMED,
     KEY_INGEST_DATA_DF,
     KEY_INGEST_MAPPING_RESULT,
+    KEY_INGEST_PREP_WARNINGS,
     KEY_INGEST_READ_RESULT,
     KEY_INGEST_SELECTED_SHEET,
     KEY_INGEST_SHEET_SCORES,
     KEY_INGEST_SOURCE_COLUMNS,
     KEY_INGEST_STAGE,
+    KEY_PHASE1_RESULT,
+    KEY_PHASE2_RESULT,
+    KEY_PIPELINE_RESULT,
+    KEY_PREP_RESULT,
+    KEY_UPLOAD_COUNT,
 )
+from src.preprocessing.constants import LABEL_COLUMNS
 
+logger = logging.getLogger(__name__)
 
-# ── 스키마 헬퍼 ──────────────────────────────────────────
-
-
-def _get_required_columns(schema: dict) -> set[str]:
-    """schema.yaml에서 required=true 컬럼명 set 추출."""
-    return {
-        col["name"] for col in schema.get("columns", [])
-        if col.get("required", False)
-    }
-
-
-def _get_all_standard_columns(schema: dict) -> list[str]:
-    """schema.yaml의 전체 표준 컬럼명 (label 컬럼 제외, 정렬)."""
-    return sorted(
-        col["name"] for col in schema.get("columns", [])
-        if not col.get("is_label", col.get("type") == "bool")
-    )
-
-
-def _get_recommended_columns(schema: dict) -> set[str]:
-    """schema.yaml에서 권장 컬럼(required=false, label 아닌) 추출."""
-    return {
-        col["name"] for col in schema.get("columns", [])
-        if not col.get("required", False)
-        and not col.get("is_label", col.get("type") == "bool")
-    }
-
-
-# ── 드롭다운 라벨링 ────────────────────────────────────────
-
-# Why: 영문 키만으로는 비개발자 감사인이 의미를 파악하기 어렵다.
-#      한글 설명 + 영문 키 + 필수 여부를 조합하여 가독성 향상.
 _COLUMN_LABELS: dict[str, str] = {
     "document_id": "전표번호",
     "company_code": "회사코드",
@@ -78,7 +42,7 @@ _COLUMN_LABELS: dict[str, str] = {
     "currency": "통화",
     "exchange_rate": "환율",
     "reference": "참조번호",
-    "header_text": "적요",
+    "header_text": "전표헤더적요",
     "created_by": "작성자",
     "user_persona": "사용자유형",
     "source": "전표출처",
@@ -87,523 +51,411 @@ _COLUMN_LABELS: dict[str, str] = {
     "approved_by": "승인자",
     "approval_date": "승인일자",
     "line_number": "라인번호",
-    "local_amount": "현지금액",
+    "local_amount": "원화금액",
     "cost_center": "코스트센터",
-    "profit_center": "손익센터",
+    "profit_center": "이익센터",
     "line_text": "라인적요",
     "tax_code": "세금코드",
-    "tax_amount": "세금액",
+    "tax_amount": "세금금액",
     "trading_partner": "거래처",
     "auxiliary_account_number": "보조계정번호",
     "auxiliary_account_label": "보조계정명",
-    "lettrage": "대사그룹",
-    "lettrage_date": "대사일자",
+    "lettrage": "반제그룹",
+    "lettrage_date": "반제일자",
     "anomaly_type": "이상유형",
     "fraud_type": "부정유형",
     "is_fraud": "부정여부",
     "is_anomaly": "이상여부",
     "sod_violation": "SoD위반",
     "sod_conflict_type": "SoD충돌유형",
+    "has_attachment": "증빙첨부여부",
+    "supporting_doc_type": "증빙유형",
+    "delivery_date": "납품일",
+    "invoice_amount": "세금계산서금액",
+    "supply_amount": "공급가액",
+    "ip_address": "접근IP",
+    "document_number": "문서번호",
+}
+
+# Why: 권장 컬럼 미매핑 시 어떤 감사 검사가 누락되는지 사용자가 바로 알 수 있도록
+#      schema.yaml 주석 + DETECTION_RULES.md를 기반으로 요약한다.
+_COLUMN_IMPACT: dict[str, str] = {
+    "currency": "다통화 전표·환율 이상 탐지 불가",
+    "exchange_rate": "환율 검증·재환산 정합성 확인 불가",
+    "reference": "매입/매출 매칭·순환 거래 탐지 약화",
+    "header_text": "위험 적요 키워드·취소 전표 탐지 약화 (C06/C10)",
+    "created_by": "자기승인·SoD·권한 위반 탐지 불가 (B06/B07/B08)",
+    "user_persona": "Junior 권한 초과·수기전표 판정 약화 (B08)",
+    "source": "수기/자동 전표 구분 불가 → B08 수기전표 탐지 약화",
+    "business_process": "프로세스별(P2P/O2C/R2R) 위험 룰 적용 불가",
+    "ledger": "원장 구분 없이 전체 집계 → 보조원장 분리 불가",
+    "approved_by": "자기승인·승인자 SoD 충돌 탐지 불가 (B06)",
+    "approval_date": "승인 지연·야간 승인 이상 탐지 불가",
+    "line_number": "라인 단위 검증(부분 분개) 약화",
+    "local_amount": "외화 전표 재환산 정합성 검증 불가",
+    "cost_center": "부서별 권한·집계 이상 탐지 약화",
+    "profit_center": "세그먼트 분석·이익센터 간 거래 탐지 불가",
+    "line_text": "위험 적요(C06)·키워드 탐지(C10) 불가",
+    "tax_code": "부가세·면세/영세율 구분 검증 불가",
+    "tax_amount": "부가세 정합성(공급가액 ×10%) 검증 불가",
+    "trading_partner": "관계사 거래(B10)·순환 거래 탐지 불가",
+    "auxiliary_account_number": "보조원장 대사·세부 계정 분석 불가",
+    "auxiliary_account_label": "보조원장 라벨 분석 불가",
+    "lettrage": "반제(대사) 미완결 거래 탐지 불가",
+    "lettrage_date": "반제 지연 이상 탐지 불가",
+    "has_attachment": "증빙 누락 전표 탐지 불가 (WU-14)",
+    "supporting_doc_type": "증빙 유형별(세금계산서/발주서 등) 검증 불가",
+    "delivery_date": "컷오프(기말 매출/매입) 검증 약화",
+    "invoice_amount": "세금계산서 금액 정합성 검증 불가",
+    "supply_amount": "공급가액-부가세 정합성 검증 불가",
+    "ip_address": "접근 IP 이상·비인가 접속 탐지 불가 (WU-15)",
+    "document_number": "전표번호 순서·누락 검사 불가",
+    "document_date": "증빙일-전기일 시간차 이상 탐지 불가",
+    "fiscal_period": "회계기간 집계·기말 분개 탐지 약화",
 }
 
 
-def _format_option(col_name: str, required_cols: set[str]) -> str:
-    """드롭다운 선택지를 '한글명 (영문키) *필수*' 형식으로 포매팅."""
-    label = _COLUMN_LABELS.get(col_name, "")
-    tag = " ★필수" if col_name in required_cols else ""
+def _get_required_columns(schema: dict) -> set[str]:
+    return {
+        col["name"]
+        for col in schema.get("columns", [])
+        if col.get("required", False)
+    }
+
+
+def _get_recommended_columns(schema: dict) -> set[str]:
+    return {
+        col["name"]
+        for col in schema.get("columns", [])
+        if not col.get("required", False)
+        and not col.get("is_label", col.get("type") == "bool")
+    }
+
+
+def _get_all_standard_columns(schema: dict) -> list[str]:
+    return sorted(
+        col["name"]
+        for col in schema.get("columns", [])
+        if not col.get("is_label", col.get("type") == "bool")
+    )
+
+
+def _split_visible_and_hidden_mappings(
+    source_columns: list[str],
+    mapping_result,
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Split editable mappings from auto-preserved label mappings."""
+    combined = {**mapping_result.mapping, **mapping_result.suggestions}
+    visible: dict[str, str] = {}
+    hidden: dict[str, str] = {}
+
+    for source in source_columns:
+        target = combined.get(source)
+        if target is None:
+            continue
+        if str(target) in LABEL_COLUMNS:
+            hidden[source] = target
+        else:
+            visible[source] = target
+
+    return visible, hidden
+
+
+def _display_name(column_name: str) -> str:
+    label = _COLUMN_LABELS.get(column_name)
     if label:
-        return f"{label} ({col_name}){tag}"
-    return f"{col_name}{tag}"
+        return f"{label} ({column_name})"
+    return column_name
 
 
-def _parse_option(formatted: str) -> str:
-    """포매팅된 선택지에서 원본 영문 키를 추출."""
-    if formatted == "(무시)":
-        return "(무시)"
-    # "한글명 (영문키) ★필수" → "영문키"
-    if "(" in formatted and ")" in formatted:
-        start = formatted.index("(") + 1
-        end = formatted.index(")")
-        return formatted[start:end]
-    # "영문키" 또는 "영문키 ★필수"
-    return formatted.split(" ★필수")[0].strip()
+def _refresh_taken(
+    source_columns: list[str],
+    selected_map: dict[str, str],
+    current_source: str,
+) -> set[str]:
+    return {
+        target
+        for source, target in selected_map.items()
+        if source != current_source and source in source_columns and target != "(무시)"
+    }
 
 
-# ── 미매핑 사유 + 영향 범위 매핑 ────────────────────────
-
-# Why: 필수 컬럼별 미매핑 시 구체적 사유 안내 (ux-flow.md §175)
-_REQUIRED_REASONS: dict[str, str] = {
-    "document_id": "전표 식별 불가 → 모든 분석 불가능",
-    "company_code": "법인 구분 불가 → 법인별 분석 불가능",
-    "fiscal_year": "회계연도 식별 불가 → 기간별 분석 불가능",
-    "fiscal_period": "회계기간 식별 불가 → 결산기 탐지(C01) 불가능",
-    "posting_date": "전기일 없이 시계열 분석 불가 → 주말(C02)·심야(C03)·백데이팅(C04) 전부 비활성",
-    "document_date": "증빙일 없이 백데이팅(C04) 탐지 불가능",
-    "gl_account": "계정과목 없이 매출조작(B01)·가수금(C09) 탐지 불가능",
-    "debit_amount": "차변 금액 없이 차대균형(A01) 검증 불가능",
-    "credit_amount": "대변 금액 없이 차대균형(A01) 검증 불가능",
-    "document_type": "전표유형 없이 수기전표(B08) 판정 불가능",
-}
-
-# Why: 권장 컬럼별 미매핑 시 비활성화되는 탐지 룰 안내 (ux-flow.md §176)
-_RECOMMENDED_IMPACT: dict[str, str] = {
-    "created_by": "B06 자기승인 · B07 SoD 위반 · B09 권한 탈취 탐지 비활성화",
-    "approved_by": "B06 자기승인(작성자=승인자) 탐지 비활성화",
-    "source": "B08 수기전표 비율 탐지 비활성화",
-    "user_persona": "B10 Junior 심야 · B11 자동화 예외 탐지 비활성화",
-    "business_process": "프로세스별 분석·대시보드 그룹화 비활성화",
-    "reference": "A02 참조번호 누락 검증 비활성화",
-    "header_text": "C06 위험 키워드 탐지 (헤더 적요) 비활성화",
-    "currency": "다통화 환산 검증 비활성화",
-    "exchange_rate": "환율 이상 탐지 비활성화",
-    "approval_date": "승인 지연 분석 비활성화",
-    "ledger": "원장별 분석 비활성화",
-}
-
-
-# ── 메인 렌더 ────────────────────────────────────────────
+# Why: 컬럼 diff 렌더링은 data_uploader._render_column_diff_section()으로 이동.
+#      매핑 리뷰 UI는 "지금 매핑" 상태에만 집중하고, 이전 업로드와의 비교는
+#      데이터 미리보기 아래 별도 섹션으로 분리한다.
 
 
 def render_mapping_review() -> None:
-    """매핑 리뷰 메인 렌더 함수. REVIEW 스테이지에서 호출."""
+    """왼쪽 column 전용 — 제목 + selectbox 에디터만 렌더링.
+
+    요약/버튼/진행률은 좌우 분할 바깥 풀 폭에서 render_mapping_footer()가 담당.
+    """
     mapping_result = st.session_state.get(KEY_INGEST_MAPPING_RESULT)
     read_result = st.session_state.get(KEY_INGEST_READ_RESULT)
+    source_columns = st.session_state.get(KEY_INGEST_SOURCE_COLUMNS, [])
 
-    if mapping_result is None:
+    if mapping_result is None or not source_columns:
         st.warning("매핑 결과가 없습니다. 파일을 다시 업로드해 주세요.")
-        if st.button("돌아가기"):
-            st.session_state[KEY_INGEST_STAGE] = "UPLOAD"
-            st.rerun()
+        if st.button("업로드로 돌아가기"):
+            _clear_and_reset()
         return
 
     schema = get_schema()
+    required_cols = _get_required_columns(schema)
+    recommended_cols = _get_recommended_columns(schema)
     all_standard = _get_all_standard_columns(schema)
+
+    st.subheader("컬럼 매핑 확인")
+    if read_result is not None:
+        st.caption(
+            f"형식: {read_result.source_format.upper()} | "
+            f"시트: {st.session_state.get(KEY_INGEST_SELECTED_SHEET, read_result.active_sheet) or '-'}"
+        )
+
+    visible_map, hidden_label_map = _split_visible_and_hidden_mappings(
+        source_columns,
+        mapping_result,
+    )
+    editable_sources = [src for src in source_columns if src not in hidden_label_map]
+    selected_map = {
+        src: visible_map.get(src, "(무시)")
+        for src in editable_sources
+    }
+
+    _render_mapping_editor(
+        source_columns=editable_sources,
+        selected_map=selected_map,
+        all_standard=all_standard,
+        required_cols=required_cols,
+        recommended_cols=recommended_cols,
+    )
+
+    # footer가 동일 rerun 사이클 내에서 읽어 요약·버튼을 렌더
+    st.session_state["_pending_mapping_selection"] = selected_map
+    st.session_state["_pending_hidden_label_map"] = hidden_label_map
+
+
+def render_mapping_footer() -> None:
+    """풀 폭 영역 — 매핑 요약 + 확인/취소 버튼 + 준비 단계 progress.
+
+    Why: 좌우 분할의 왼쪽 column(30%)은 좁아 요약/버튼/spinner 텍스트가 두 줄로
+         잘린다. 좌우 분할 바깥 풀 폭 영역에서 렌더하여 한 줄에 담기도록 한다.
+    """
+    mapping_result = st.session_state.get(KEY_INGEST_MAPPING_RESULT)
+    source_columns = st.session_state.get(KEY_INGEST_SOURCE_COLUMNS, [])
+    selected_map = st.session_state.get("_pending_mapping_selection")
+    hidden_label_map = st.session_state.get("_pending_hidden_label_map", {}) or {}
+    if mapping_result is None or not source_columns or selected_map is None:
+        return
+
+    schema = get_schema()
     required_cols = _get_required_columns(schema)
     recommended_cols = _get_recommended_columns(schema)
 
-    st.subheader("컬럼 매핑 확인")
+    final_mapping = {
+        source: target
+        for source, target in selected_map.items()
+        if target != "(무시)"
+    }
+    final_mapping.update(hidden_label_map)
+    mapped_targets = set(final_mapping.values())
+    still_missing = sorted(required_cols - mapped_targets)
+    missing_recommended = sorted(recommended_cols - mapped_targets)
 
-    # ── UI-1: 인코딩 드롭다운 + UI-2: 시트 선택 ──
-    if read_result:
-        _render_encoding_selector(read_result)
-        _render_sheet_selector(read_result)
-
-    # ── UI-4: 중복 금액 퀵픽스 ──
-    quickfix_overrides = _render_amount_quickfix(mapping_result)
-
-    # ── 통합 매핑 리스트 (Green/Yellow/Red 구분 없이) ──
-    user_overrides = _render_mapping_unified(
-        mapping_result, all_standard, required_cols,
+    _render_mapping_summary(
+        final_mapping=final_mapping,
+        still_missing=still_missing,
+        missing_recommended=missing_recommended,
     )
-    user_overrides.update(quickfix_overrides)
 
-    # ── 미매핑 시 분석 불가 항목 (필수 + 권장 통합 expander) ──
-    effective = {**mapping_result.mapping, **user_overrides}
-    mapped_standards = set(effective.values()) - {"(무시)"}
-    still_missing = required_cols - mapped_standards
+    prep_warns = st.session_state.get(KEY_INGEST_PREP_WARNINGS, [])
+    btn_confirm, btn_cancel, _spacer = st.columns([1, 1, 6])
 
-    missing_recommended = recommended_cols - mapped_standards
-    impacted = {col: _RECOMMENDED_IMPACT[col] for col in missing_recommended
-                if col in _RECOMMENDED_IMPACT}
+    # Why: spinner/progress를 버튼 column 안에서 렌더하면 1/8 폭에 갇혀 텍스트가
+    #      여러 줄로 잘린다. st.columns 바깥에 placeholder를 먼저 만들어 두고,
+    #      버튼 클릭 시 그 풀 폭 placeholder에 렌더한다.
+    progress_area = st.empty()
 
-    total_issues = len(still_missing) + len(impacted)
-    if total_issues > 0:
-        with st.expander(
-            f"미매핑 시 분석 불가 항목 ({total_issues}건)", expanded=False,
-        ):
-            if still_missing:
-                st.markdown("**필수 컬럼**")
-                for col in sorted(still_missing):
-                    label = _COLUMN_LABELS.get(col, col)
-                    reason = _REQUIRED_REASONS.get(col, "필수 컬럼 미매핑")
-                    st.error(f"**{label} ({col})** — {reason}")
+    with btn_confirm:
+        confirm_clicked = st.button(
+            "매핑 확인",
+            type="primary",
+            disabled=bool(still_missing),
+            use_container_width=True,
+            key="mapping_confirm_btn",
+        )
 
-            if impacted:
-                st.markdown("**권장 컬럼**")
-                for col, impact in sorted(impacted.items()):
-                    label = _COLUMN_LABELS.get(col, col)
-                    st.warning(f"**{label} ({col})** — {impact}")
-
-    # ── 확인 / 취소 ──
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("매핑 확인", disabled=bool(still_missing), type="primary"):
-            from dataclasses import replace as dc_replace
-            final_mapping = {
-                k: v for k, v in {**mapping_result.mapping, **user_overrides}.items()
-                if v != "(무시)"
-            }
-            updated = dc_replace(mapping_result, mapping=final_mapping)
-            st.session_state[KEY_INGEST_MAPPING_RESULT] = updated
-
-            # RC-5-2: 사용자 수동 매핑 → 회사 키워드 학습
-            _try_learn_keywords(user_overrides)
-
-            # Why: rerun으로 PIPELINE 스테이지 전환 시 빈 화면 문제 방지
-            # 같은 페이지에서 바로 진행률 표시 후 파이프라인 실행
-            st.session_state[KEY_INGEST_STAGE] = "PIPELINE"
-            _run_pipeline_inline()
-    with col2:
-        if st.button("취소"):
+    with btn_cancel:
+        if st.button("취소", use_container_width=True, key="mapping_cancel_btn"):
             _clear_and_reset()
 
+    if confirm_clicked:
+        updated = dc_replace(mapping_result, mapping=final_mapping)
+        st.session_state[KEY_INGEST_MAPPING_RESULT] = updated
+        _save_mapping_profile(updated)
+        _try_learn_keywords(final_mapping)
 
-# ── UI-1: 인코딩 드롭다운 ────────────────────────────────
+        file_key = st.session_state.get("_ingest_file_key", "")
+        with progress_area.container():
+            with st.spinner("매핑 확인 후 준비 단계를 실행하는 중..."):
+                from dashboard.components.mapping_finalize import prepare_mapped_data
 
+                progress = st.progress(0, text="준비 작업 시작...")
 
-_ENCODING_OPTIONS = ["utf-8", "cp949", "euc-kr", "latin-1", "ascii", "utf-16"]
+                def _progress_cb(pct: float, msg: str) -> None:
+                    progress.progress(int(max(0.0, min(pct, 1.0)) * 100), text=msg)
 
-
-def _render_encoding_selector(read_result) -> None:
-    """인코딩 정보 + 저신뢰 시 수동 선택 드롭다운."""
-    enc = read_result.encoding or "N/A"
-    conf = read_result.encoding_confidence
-    fmt = read_result.source_format
-
-    info_parts = [f"포맷: {fmt.upper()}"]
-    if read_result.encoding:
-        info_parts.append(f"인코딩: {enc}")
-        if conf is not None:
-            info_parts.append(f"신뢰도: {conf:.0%}")
-    st.caption(" · ".join(info_parts))
-
-    # Why: ux-flow.md UI-1 — confidence < 0.7 시 인코딩 수동 선택 드롭다운 노출
-    if conf is not None and conf < 0.7:
-        st.warning(f"인코딩 감지 신뢰도가 낮습니다 ({conf:.0%}).")
-        current_enc = enc.lower() if enc else "utf-8"
-        default_idx = _ENCODING_OPTIONS.index(current_enc) if current_enc in _ENCODING_OPTIONS else 0
-        new_enc = st.selectbox(
-            "인코딩 수동 선택", _ENCODING_OPTIONS,
-            index=default_idx, key="encoding_override_select",
-        )
-        if new_enc != current_enc:
-            if st.button("이 인코딩으로 다시 읽기", key="btn_reread_encoding"):
-                _reread_with_encoding(read_result, new_enc)
-                st.rerun()
-
-
-def _reread_with_encoding(read_result, encoding: str) -> None:
-    """인코딩 오버라이드로 파일 재읽기 + 재매핑.
-
-    Why: read_result에 원본 파일 경로가 없으므로 session_state의
-         UploadedFile 바이트를 tempfile로 재생성하여 read_file(encoding_override=) 호출.
-    """
-    import tempfile
-    from pathlib import Path
-
-    from src.ingest.column_mapper import auto_map_columns, prepare_dataframe
-    from src.ingest.header_detector import detect_headers
-    from src.ingest.reader_api import read_file
-    from src.ingest.sheet_scorer import score_sheets
-
-    # Why: _ingest_file_key에서 파일명 복원, suffix로 reader 디스패치
-    file_key = st.session_state.get("_ingest_file_key", "file.csv")
-    suffix = Path(file_key.rsplit("_", 1)[0]).suffix or ".csv"
-
-    # Why: UploadedFile 원본은 Streamlit rerun 시 사라지므로
-    #      기존 read_result의 raw_data를 CSV로 재직렬화하여 tempfile 생성
-    sheet_name = st.session_state.get(KEY_INGEST_SELECTED_SHEET, read_result.active_sheet)
-    raw_df = read_result.raw_data[sheet_name]
-
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
-        # Why: raw_data를 원본 그대로 재읽기하려면 바이트가 필요하지만
-        #      read_result에 원본 바이트가 없으므로, 텍스트 포맷만 인코딩 재시도
-        raw_df.to_csv(f, index=False, header=False)
-        tmp_path = Path(f.name)
-
-    try:
-        new_read = read_file(tmp_path, encoding_override=encoding)
-    finally:
-        tmp_path.unlink(missing_ok=True)
-
-    header_results = detect_headers(new_read)
-    sheet_scores = score_sheets(new_read, header_results)
-    new_sheet = new_read.active_sheet
-
-    header_result = header_results.get(new_sheet)
-    new_raw = new_read.raw_data[new_sheet]
-
-    if header_result and header_result.header_row is not None:
-        source_columns, data_df = prepare_dataframe(new_raw, header_result.header_row)
-        matched_kw = header_result.matched_keywords
-    else:
-        source_columns = [str(c) for c in new_raw.columns]
-        data_df = new_raw
-        matched_kw = []
-
-    mapping_result = auto_map_columns(source_columns, matched_kw, data_df=data_df)
-
-    st.session_state[KEY_INGEST_READ_RESULT] = new_read
-    st.session_state[KEY_INGEST_SHEET_SCORES] = sheet_scores
-    st.session_state[KEY_INGEST_SELECTED_SHEET] = new_sheet
-    st.session_state[KEY_INGEST_SOURCE_COLUMNS] = source_columns
-    st.session_state[KEY_INGEST_DATA_DF] = data_df
-    st.session_state[KEY_INGEST_MAPPING_RESULT] = mapping_result
-
-
-# ── UI-2: 시트 선택 ──────────────────────────────────────
-
-
-def _render_sheet_selector(read_result) -> None:
-    """멀티시트 Excel: 시트 선택 UI. 변경 시 매핑 재실행."""
-    if len(read_result.sheets) < 2:
-        return
-
-    sheet_scores = st.session_state.get(KEY_INGEST_SHEET_SCORES)
-    current = st.session_state.get(KEY_INGEST_SELECTED_SHEET, read_result.active_sheet)
-
-    if sheet_scores:
-        import pandas as pd
-        score_df = pd.DataFrame([
-            {"시트": s.sheet_name, "행수": s.row_count, "열수": s.col_count,
-             "헤더신뢰도": f"{s.header_confidence:.0%}", "총점": f"{s.total_score:.2f}",
-             "추천": "★" if s.recommended else ""}
-            for s in sheet_scores
-        ])
-        with st.expander("시트 품질 점수"):
-            st.dataframe(score_df, hide_index=True, use_container_width=True)
-
-    new_sheet = st.selectbox(
-        "분석 대상 시트", read_result.sheets,
-        index=read_result.sheets.index(current) if current in read_result.sheets else 0,
-        key="mapping_sheet_select",
-    )
-
-    if new_sheet != current:
-        _rerun_mapping_for_sheet(read_result, new_sheet)
+                prepare_mapped_data(file_key, progress_cb=_progress_cb)
+                progress.progress(100, text="준비 완료")
         st.rerun()
 
-
-def _rerun_mapping_for_sheet(read_result, sheet_name: str) -> None:
-    """시트 변경 시 데이터 재로드 + 매핑 재실행."""
-    from src.ingest.column_mapper import auto_map_columns, prepare_dataframe
-    from src.ingest.header_detector import detect_headers
-
-    header_results = detect_headers(read_result)
-    header_result = header_results.get(sheet_name)
-    raw_df = read_result.raw_data[sheet_name]
-
-    if header_result and header_result.header_row is not None:
-        source_columns, data_df = prepare_dataframe(raw_df, header_result.header_row)
-        matched_kw = header_result.matched_keywords
-    else:
-        source_columns = [str(c) for c in raw_df.columns]
-        data_df = raw_df
-        matched_kw = []
-
-    mapping_result = auto_map_columns(source_columns, matched_kw, data_df=data_df)
-
-    st.session_state[KEY_INGEST_SELECTED_SHEET] = sheet_name
-    st.session_state[KEY_INGEST_SOURCE_COLUMNS] = source_columns
-    st.session_state[KEY_INGEST_DATA_DF] = data_df
-    st.session_state[KEY_INGEST_MAPPING_RESULT] = mapping_result
+    if st.session_state.get(KEY_INGEST_CONFIRMED, False):
+        st.success("매핑이 확정되었습니다. 다음 화면에서 데이터 개요와 EDA를 확인할 수 있습니다.")
+    for warn in prep_warns:
+        st.caption(f"- {warn}")
 
 
-# ── UI-3: Fuzzy 엄격도 슬라이더 ──────────────────────────
+def _render_mapping_editor(
+    *,
+    source_columns: list[str],
+    selected_map: dict[str, str],
+    all_standard: list[str],
+    required_cols: set[str],
+    recommended_cols: set[str],
+) -> None:
+    """원본 컬럼별 selectbox를 1열로 나열. 샘플값은 우측 sticky 미리보기에서 참조."""
+    st.caption(f"원본 컬럼 {len(source_columns)}개")
 
+    for source in source_columns:
+        taken = _refresh_taken(source_columns, selected_map, source)
+        current_value = selected_map.get(source, "(무시)")
+        candidates = [
+            column for column in all_standard
+            if column not in taken or column == current_value
+        ]
+        ordered_candidates = _sort_candidates(candidates, required_cols, recommended_cols)
+        options = ["(무시)"] + ordered_candidates
+        if current_value not in options:
+            options.append(current_value)
 
-def _render_fuzzy_slider() -> None:
-    """매핑 엄격도 슬라이더. 변경 시 auto_map_columns 재실행.
-
-    Why: ux-flow.md UI-3 — 확정 임계값(기본 80)과 추천 경계(기본 40)를
-         사용자가 조정하여 매핑 민감도를 제어.
-    """
-    from config.settings import get_settings
-    settings = get_settings()
-
-    with st.expander("매핑 엄격도 조정"):
-        col1, col2 = st.columns(2)
-        with col1:
-            new_threshold = st.slider(
-                "확정 임계값", min_value=50, max_value=100,
-                value=st.session_state.get("_fuzzy_threshold", settings.fuzzy_threshold),
-                step=5, key="fuzzy_threshold_slider",
-                help="이 값 이상이면 자동 확정 (Green)",
-            )
-        with col2:
-            new_low = st.slider(
-                "추천 경계", min_value=10, max_value=70,
-                value=st.session_state.get("_fuzzy_low_threshold", settings.fuzzy_low_threshold),
-                step=5, key="fuzzy_low_slider",
-                help="이 값 이상이면 추천 (Yellow), 미만이면 수동 (Red)",
-            )
-
-        prev_threshold = st.session_state.get("_fuzzy_threshold", settings.fuzzy_threshold)
-        prev_low = st.session_state.get("_fuzzy_low_threshold", settings.fuzzy_low_threshold)
-
-        if new_threshold != prev_threshold or new_low != prev_low:
-            st.session_state["_fuzzy_threshold"] = new_threshold
-            st.session_state["_fuzzy_low_threshold"] = new_low
-            if st.button("엄격도 적용", key="btn_apply_fuzzy"):
-                _rerun_mapping_with_settings(new_threshold, new_low)
-                st.rerun()
-
-
-def _rerun_mapping_with_settings(threshold: int, low_threshold: int) -> None:
-    """엄격도 변경 시 auto_map_columns 재실행."""
-    from src.ingest.column_mapper import auto_map_columns
-
-    source_columns = st.session_state.get(KEY_INGEST_SOURCE_COLUMNS, [])
-    data_df = st.session_state.get(KEY_INGEST_DATA_DF)
-
-    if not source_columns or data_df is None:
-        return
-
-    mapping_result = auto_map_columns(
-        source_columns, data_df=data_df,
-        settings_override={
-            "fuzzy_threshold": threshold,
-            "fuzzy_low_threshold": low_threshold,
-        },
-    )
-    st.session_state[KEY_INGEST_MAPPING_RESULT] = mapping_result
-
-
-# ── UI-4: 중복 금액 퀵픽스 ───────────────────────────────
-
-
-def _render_amount_quickfix(mapping_result) -> dict[str, str]:
-    """중복 금액 ReviewItem 감지 시 퀵픽스 버튼 노출.
-
-    Why: ux-flow.md UI-4 — "금액", "금액_2" 인접 패턴 감지 시
-         원클릭으로 차변/대변 분리 매핑 적용.
-    """
-    overrides: dict[str, str] = {}
-
-    # Why: ReviewItem에서 target_type이 debit_amount/credit_amount인 쌍을 찾음
-    amount_items = [
-        item for item in mapping_result.review_items
-        if item.target_type in ("debit_amount", "credit_amount")
-    ]
-
-    if len(amount_items) < 2:
-        return overrides
-
-    # 차변/대변 쌍 추출
-    debit_item = next((i for i in amount_items if i.target_type == "debit_amount"), None)
-    credit_item = next((i for i in amount_items if i.target_type == "credit_amount"), None)
-
-    if debit_item and credit_item:
-        st.info(
-            f"중복 금액 컬럼 감지: **{debit_item.column}** + **{credit_item.column}**\n\n"
-            f"차변(debit) / 대변(credit)으로 분리하시겠습니까?"
+        default_index = options.index(current_value) if current_value in options else 0
+        chosen = st.selectbox(
+            source,
+            options,
+            index=default_index,
+            format_func=_display_name,
+            key=f"mapping_select_{source}",
         )
-        if st.button("차변/대변 분리 적용", key="btn_amount_quickfix"):
-            overrides[debit_item.column] = "debit_amount"
-            overrides[credit_item.column] = "credit_amount"
-            st.success(
-                f"{debit_item.column} → debit_amount, "
-                f"{credit_item.column} → credit_amount 적용"
-            )
-
-    return overrides
+        selected_map[source] = chosen
 
 
-# ── 3-tier 매핑 테이블 ───────────────────────────────────
-
-
-def _get_sample_values(src: str, n: int = 3) -> str:
-    """원본 컬럼의 상위 N개 고유값을 쉼표로 연결."""
-    data_df = st.session_state.get(KEY_INGEST_DATA_DF)
-    source_columns = st.session_state.get(KEY_INGEST_SOURCE_COLUMNS, [])
-    if data_df is None or src not in source_columns:
-        return ""
-    idx = source_columns.index(src)
-    if idx >= data_df.shape[1]:
-        return ""
-    series = data_df.iloc[:, idx].dropna().astype(str)
-    uniques = series.unique()[:n]
-    if len(uniques) == 0:
-        return ""
-    preview = ", ".join(str(v)[:20] for v in uniques)
-    suffix = "…" if len(series.unique()) > n else ""
-    return f"[{preview}{suffix}]"
-
-
-def _sort_options(
-    available: list[str], required_cols: set[str], recommended_cols: set[str],
+def _sort_candidates(
+    candidates: list[str],
+    required_cols: set[str],
+    recommended_cols: set[str],
 ) -> list[str]:
-    """드롭다운 선택지를 필수 → 권장 → 나머지 순으로 정렬."""
-    req = sorted(c for c in available if c in required_cols)
-    rec = sorted(c for c in available if c in recommended_cols and c not in required_cols)
-    etc = sorted(c for c in available if c not in required_cols and c not in recommended_cols)
+    req = sorted(col for col in candidates if col in required_cols)
+    rec = sorted(col for col in candidates if col in recommended_cols and col not in required_cols)
+    etc = sorted(col for col in candidates if col not in required_cols and col not in recommended_cols)
     return req + rec + etc
 
 
-
-def _render_mapping_unified(
-    mapping_result,
-    all_standard: list[str],
-    required_cols: set[str],
-) -> dict[str, str]:
-    """통합 매핑 리스트 — 모든 원본 컬럼을 드롭다운으로 표시.
-
-    추천 우선순위:
-    1. auto_map_columns 결과 (exact/fuzzy match)
-    2. LLM 추천 (OpenAI 가용 시)
-    3. (무시) 기본값
-    """
-    schema = get_schema()
-    recommended_cols = _get_recommended_columns(schema)
-    confidence = mapping_result.confidence
-
-    user_overrides: dict[str, str] = {}
-    taken: set[str] = set()
-
-    # 모든 원본 컬럼을 원본 열 순서대로 수집
+def _sample_values(source: str, limit: int = 3) -> str:
+    data_df = st.session_state.get(KEY_INGEST_DATA_DF)
     source_columns = st.session_state.get(KEY_INGEST_SOURCE_COLUMNS, [])
-    merged = {**mapping_result.mapping, **mapping_result.suggestions}
-    all_sources: list[tuple[str, str | None]] = []
-    for src in source_columns:
-        all_sources.append((src, merged.get(src)))
+    if data_df is None or source not in source_columns:
+        return ""
 
-    total = len(all_sources)
-    st.caption(f"원본 컬럼 {total}개")
+    idx = source_columns.index(source)
+    if idx >= data_df.shape[1]:
+        return ""
 
-    for src, suggested_tgt in all_sources:
-        sample = _get_sample_values(src)
-        conf = confidence.get(src, 0)
+    series = data_df.iloc[:, idx].dropna()
+    if series.empty:
+        return ""
 
-        available = [c for c in all_standard if c not in taken]
-        if suggested_tgt and suggested_tgt not in available:
-            available.insert(0, suggested_tgt)
-
-        sorted_available = _sort_options(available, required_cols, recommended_cols)
-        fmt_options = ["(무시)"] + [
-            _format_option(c, required_cols) for c in sorted_available
-        ]
-
-        default_idx = 0
-        if suggested_tgt:
-            fmt_suggested = _format_option(suggested_tgt, required_cols)
-            if fmt_suggested in fmt_options:
-                default_idx = fmt_options.index(fmt_suggested)
-
-        # 라벨: 원본 컬럼명 + 신뢰도
-        conf_text = f" (신뢰도 {conf:.0%})" if conf > 0 else ""
-        label = f"[{src}]{conf_text}"
-        chosen_fmt = st.selectbox(
-            label, fmt_options, index=default_idx,
-            key=f"map_{src}",
-        )
-        chosen = _parse_option(chosen_fmt)
-        if chosen != "(무시)":
-            user_overrides[src] = chosen
-            taken.add(chosen)
-
-    return user_overrides
+    values = [str(value)[:30] for value in series.astype(str).unique()[:limit]]
+    return ", ".join(values)
 
 
-# ── 헬퍼 ────────────────────────────────────────────────
+def _render_mapping_summary(
+    *,
+    final_mapping: dict[str, str],
+    still_missing: list[str],
+    missing_recommended: list[str],
+) -> None:
+    """매핑 요약 — 확정 개수 1줄 + 상태 배지 + 접기식 상세.
 
-
-def _try_learn_keywords(user_overrides: dict[str, str]) -> None:
-    """사용자 수동 매핑에서 새 별칭을 추출하여 회사 keywords.yaml에 저장.
-
-    Why: RC-5-2 — 다음 업로드 시 auto_map_columns Phase 1에서 즉시 매칭되도록
-    회사별 키워드를 자동 학습한다. anonymous 모드에서는 실행하지 않는다.
+    Why: 필수/권장이 모두 충족된 경우에도 metric 3개가 나열되어 UI가 지저분했다.
+         상태는 하나의 배지로, 세부 누락은 expander로 모아 시각적 잡음을 줄인다.
     """
-    if not user_overrides:
+    st.caption(f"확정 매핑 **{len(final_mapping)}개**")
+
+    # ── 상태 배지: 필수 누락 > 권장 미매핑 > 완벽 ──
+    if still_missing:
+        st.error(f"필수 컬럼 누락 {len(still_missing)}건 — 매핑 후 진행해 주세요")
+        with st.expander(f"필수 누락 {len(still_missing)}건", expanded=True):
+            _render_missing_columns_with_impact(still_missing, level="required")
+    elif missing_recommended:
+        st.info(f"필수 컬럼 모두 매핑 완료 · 권장 컬럼 미매핑 {len(missing_recommended)}건")
+        with st.expander(f"권장 컬럼 미매핑 {len(missing_recommended)}건", expanded=False):
+            st.caption("미매핑 시 아래 검사가 누락/약화됩니다. 원본에 해당 컬럼이 있다면 좌측에서 매핑해 주세요.")
+            _render_missing_columns_with_impact(missing_recommended, level="recommended")
+    else:
+        st.success("필수·권장 컬럼이 모두 매핑되었습니다.")
+
+
+def _render_missing_columns_with_impact(
+    columns: list[str], *, level: str = "recommended",
+) -> None:
+    """누락 컬럼을 "컬럼명 | 영향 검사" 2열 표 형태로 렌더링."""
+    if not columns:
+        return
+
+    # Why: st.dataframe은 폭을 맞춰 주지만 개별 셀 강조가 어렵고,
+    #      markdown 표는 컬럼명 특수문자(`_`) 이스케이프 번거로움.
+    #      columns([2, 3])로 그리드처럼 정렬 + 가독성 확보.
+    header_col, impact_col = st.columns([2, 3])
+    with header_col:
+        st.markdown("**컬럼**")
+    with impact_col:
+        st.markdown("**영향받는 검사**")
+
+    for column in columns:
+        left, right = st.columns([2, 3])
+        with left:
+            st.markdown(f"- {_display_name(column)}")
+        with right:
+            impact = _COLUMN_IMPACT.get(column, "연관 검사 정보 없음")
+            st.caption(impact)
+
+
+def _save_mapping_profile(mapping_result) -> None:
+    source_columns = st.session_state.get(KEY_INGEST_SOURCE_COLUMNS, [])
+    read_result = st.session_state.get(KEY_INGEST_READ_RESULT)
+    if not source_columns:
+        return
+
+    try:
+        from src.ingest.mapping_profile import save_profile
+
+        ctx = st.session_state.get(KEY_COMPANY_CONTEXT)
+        profile_dir = ctx.profile_dir if ctx and not ctx.is_anonymous else None
+        save_profile(
+            mapping_result,
+            source_columns,
+            source_name=st.session_state.get(KEY_UPLOAD_COUNT, "")
+            or st.session_state.get("_ingest_file_key", ""),
+            source_format=read_result.source_format if read_result is not None else "",
+            header_row=0,
+            profile_dir=profile_dir,
+        )
+    except Exception:
+        logger.warning("mapping profile save failed", exc_info=True)
+
+
+def _try_learn_keywords(final_mapping: dict[str, str]) -> None:
+    if not final_mapping:
         return
 
     ctx = st.session_state.get(KEY_COMPANY_CONTEXT)
@@ -613,58 +465,42 @@ def _try_learn_keywords(user_overrides: dict[str, str]) -> None:
     try:
         from src.ingest.keyword_learner import learn_from_mapping
 
-        # Why: app.py의 _repo와 동일 인스턴스를 session_state에서 공유
         repo = st.session_state.get("_company_repo")
         if repo is None:
             return
 
-        company_kw = repo.load_company_keywords(ctx.company_id)
-        new_kw = learn_from_mapping(user_overrides, company_kw, get_keywords())
+        company_keywords = repo.load_company_keywords(ctx.company_id)
+        updated_keywords = learn_from_mapping(final_mapping, company_keywords, get_keywords())
+        if updated_keywords is None:
+            return
 
-        if new_kw is not None:
-            repo.save_company_keywords(ctx.company_id, new_kw)
-            # has_custom_keywords 플래그 갱신
-            profile = repo.get_company(ctx.company_id)
-            if not profile.has_custom_keywords:
-                profile.has_custom_keywords = True
-                repo.update_company(profile)
-            st.toast(f"키워드 학습 완료: {len(user_overrides)}개 매핑 반영")
+        repo.save_company_keywords(ctx.company_id, updated_keywords)
+        profile = repo.get_company(ctx.company_id)
+        if not profile.has_custom_keywords:
+            profile.has_custom_keywords = True
+            repo.update_company(profile)
     except Exception:
-        logger.warning("키워드 학습 실패", exc_info=True)
-
-
-def _run_pipeline_inline() -> None:
-    """매핑 확인 직후 같은 페이지에서 파이프라인 실행.
-
-    Why: PIPELINE 스테이지로 rerun하면 빈 화면이 먼저 보여서
-    사용자가 에러로 오인. 여기서 직접 실행하면 매핑 화면 아래에
-    진행률 바가 즉시 표시된다.
-    """
-    from dashboard.components.data_uploader import (
-        _make_progress_cb,
-        _run_pipeline_from_mapped,
-    )
-
-    st.caption("분석 중... 잠시 기다려 주세요.")
-    file_key = st.session_state.get("_ingest_file_key", "")
-
-    try:
-        progress_bar = st.progress(0, text="파이프라인 시작...")
-        _run_pipeline_from_mapped(file_key, _make_progress_cb(progress_bar))
-        progress_bar.empty()
-        st.rerun()
-    except Exception as e:
-        logger.exception("파이프라인 실행 실패")
-        st.error(f"파이프라인 실행 실패: {e}")
+        logger.warning("keyword learning failed", exc_info=True)
 
 
 def _clear_and_reset() -> None:
-    """인제스트 상태 초기화 + UPLOAD 스테이지로 복귀."""
     for key in [
-        KEY_INGEST_READ_RESULT, KEY_INGEST_MAPPING_RESULT,
-        KEY_INGEST_SHEET_SCORES, KEY_INGEST_SELECTED_SHEET,
-        KEY_INGEST_SOURCE_COLUMNS, KEY_INGEST_DATA_DF,
-        "_ingest_file_key", "_fuzzy_threshold", "_fuzzy_low_threshold",
+        KEY_INGEST_READ_RESULT,
+        KEY_INGEST_MAPPING_RESULT,
+        KEY_INGEST_SHEET_SCORES,
+        KEY_INGEST_SELECTED_SHEET,
+        KEY_INGEST_SOURCE_COLUMNS,
+        KEY_INGEST_DATA_DF,
+        KEY_INGEST_COLUMN_DIFF,
+        KEY_INGEST_CONFIRMED,
+        KEY_INGEST_PREP_WARNINGS,
+        KEY_PREP_RESULT,
+        KEY_PHASE1_RESULT,
+        KEY_PHASE2_RESULT,
+        KEY_PIPELINE_RESULT,
+        "_ingest_file_key",
+        "_ingest_tmp_path",
+        "_ingest_is_user_path",
     ]:
         st.session_state.pop(key, None)
     st.session_state[KEY_INGEST_STAGE] = "UPLOAD"
