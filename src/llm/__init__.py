@@ -5,6 +5,9 @@ Phase 3 모듈:
 - models: LLM 응답 Pydantic 스키마
 - prompt_templates: EDAProfile → 프롬프트 변환
 - preprocessing_advisor: 전처리 전략 추천 오케스트레이터
+- sql_validator: LLM 생성 SQL 5단계 보안 검증
+- prompt_presets: 감사 프리셋 12종 (Text-to-SQL 템플릿)
+- text_to_sql: 하이브리드 Text-to-SQL 엔진 (프리셋 + LLM)
 """
 
 from src.llm.models import PreprocessingAdvice
@@ -32,4 +35,37 @@ def __getattr__(name: str):
         from src.llm import api_client
 
         return getattr(api_client, name)
+    if name in {"validate_sql", "ValidationResult"}:
+        from src.llm import sql_validator
+
+        return getattr(sql_validator, name)
+    if name in {
+        "AuditPreset",
+        "AUDIT_PRESETS",
+        "match_preset",
+        "get_presets_by_category",
+    }:
+        from src.llm import prompt_presets
+
+        return getattr(prompt_presets, name)
+    if name in {"SQLResult", "AuditTextToSQL", "create_text_to_sql"}:
+        from src.llm import text_to_sql
+
+        return getattr(text_to_sql, name)
+    if name in {"EmbeddingService", "get_embedding_service", "sanitize_for_embedding"}:
+        from src.llm import embedding_service
+
+        return getattr(embedding_service, name)
+    if name == "InsightGenerator":
+        from src.llm.insight_generator import InsightGenerator
+
+        return InsightGenerator
+    if name == "NarrativeReporter":
+        from src.llm.narrative_report import NarrativeReporter
+
+        return NarrativeReporter
+    if name == "RuleFeedbackEngine":
+        from src.llm.rule_feedback import RuleFeedbackEngine
+
+        return RuleFeedbackEngine
     raise AttributeError(f"module 'src.llm' has no attribute {name!r}")
