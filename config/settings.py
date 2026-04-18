@@ -32,9 +32,14 @@ class AuditSettings(BaseSettings):
     ]
 
     # --- 헤더 탐지 관련 ---
-    min_expected_headers: int = 4        # 키워드 스코어 정규화 분모
-    max_header_scan_rows: int = 20       # 상위 N행만 탐색
-    min_header_confidence: float = 0.3   # 이하면 탐지 실패 → UI 개입
+    min_expected_headers: int = 4            # 키워드 스코어 정규화 분모
+    max_header_scan_rows: int = 20           # 상위 N행만 탐색
+    min_header_confidence: float = 0.3       # 이하면 탐지 실패 → UI 개입
+    # WU-28: 구조 스코어 미달(< min_header_confidence) 시 LLM(gpt-5.4-mini)에 보조 판단 요청.
+    # False면 기존 동작(구조 스코어만) — 오프라인/CI 결정론적 테스트용.
+    enable_llm_header_fallback: bool = True
+    datasynth_label_mode: str = "hidden"
+    datasynth_metadata_enforcement: str = "warn"
 
     @field_validator("min_expected_headers")
     @classmethod
@@ -131,6 +136,17 @@ class AuditSettings(BaseSettings):
     graph_gr03_min_path_length: int = 2             # GR03: 경로 최소 노드 수
     graph_gr03_price_deviation_threshold: float = 0.20  # GR03: 양방향 가격 편차 허용 (20%)
 
+    # --- NLPDetector (WU-21) — 적요 임베딩 기반 의미 탐지 ---
+    # Why: ISA 315/240 경제적 실질 검증. OpenAI 임베딩 + kiwipiepy morpheme_tokens.
+    #      비식별화 — 원본 적요 전송 금지, 형태소 join만 API 전달.
+    nlp_header_account_threshold: float = 0.30      # NLP01: header-account 코사인 유사도 미만 → 불일치
+    nlp_process_account_threshold: float = 0.30     # NLP02: process-account 코사인 유사도 미만 → 불일치
+    nlp_anomaly_percentile: float = 0.95            # NLP03: gl_account 그룹 centroid 거리 상위 분위수
+    nlp_ic_similarity_threshold: float = 0.50       # NLP04: IC 클러스터 평균 거리 기준
+    nlp_synonym_threshold: float = 0.70             # NLP05: risk keyword 임베딩 유사도 임계
+    nlp_embedding_batch_size: int = 100             # 임베딩 API 배치 크기
+    nlp_min_group_size: int = 5                     # NLP03/NLP04: centroid 산출 최소 표본 (소규모 그룹 스킵)
+
     # --- IntercompanyMatcher (WU-07) ---
     ic_amount_tolerance: float = 0.02       # IC01/IC02: 금액 허용 오차 (2%)
     ic_max_diff_ratio: float = 0.10         # IC02: 최대 비율 (10% → score 1.0)
@@ -224,6 +240,15 @@ class AuditSettings(BaseSettings):
     if_contamination: float = 0.01          # IsolationForest
     cv_folds: int = 5
     cv_scoring: str = "f1_macro"
+    supervised_min_positive: int = 50
+    supervised_min_positive_rate: float = 0.01
+    supervised_allowed_label_sources: list[str] = [
+        "ground_truth",
+        "synthetic",
+        "holdout_test",
+        "train_oof",
+        "oof_fold",
+    ]
 
     # --- FT-Transformer (WU-01b) ---
     ft_d_token: int = 64           # 피처 토큰 임베딩 차원
@@ -269,6 +294,20 @@ class AuditSettings(BaseSettings):
     #      오히려 느림. None이면 순차 실행(테스트/디버깅용).
     detection_parallel_workers: int | None = 4
 
+    # --- Detection execution scope ---
+    # Why: 현재 제품의 기본 경로는 Phase 1 룰 기반 + Phase 2 비지도 설명이다.
+    #      그래프/NLP/관계형/증빙/접근감사/다기간 추세 탐지는 구현되어 있어도
+    #      기본 UX에서 항상 돌리는 핵심 경로가 아니다. 특히 NLP는 외부 API timeout,
+    #      Graph/TrendBreak는 데이터 규모에 따라 긴 실행 시간을 유발할 수 있다.
+    enable_relational_detection: bool = False
+    enable_graph_detection: bool = False
+    enable_nlp_detection: bool = False
+    enable_access_audit_detection: bool = False
+    enable_evidence_detection: bool = False
+    enable_trendbreak_detection: bool = False
+    enable_variance_detection: bool = False
+    enable_ml_detection: bool = False
+
     # --- SHAP Explainer (WU-17) ---
     # Why: SHAP 연산은 무거움(10만 건 → 수십 분). 이상 전표만 설명하면 충분.
     shap_threshold: float = 0.7    # anomaly_score 하한 — 이 이상인 전표만 SHAP 계산
@@ -285,6 +324,32 @@ class AuditSettings(BaseSettings):
     openai_embedding_model: str = "text-embedding-3-small"  # RAG 임베딩
     openai_temperature: float = 0.1                         # 감사 분석은 정확성 우선 → 낮은 temperature
     openai_timeout: float = 60.0                            # 초
+
+    # --- WU-25: LLM 인사이트 + XAI Narrative ---
+    # Why: 긴 JSON 배열을 한 번에 생성하면 GPT가 Laziness(중간 생략/max_tokens 잘림)로
+    #      항목을 누락한다(예: 50건 요청 → 34건 반환). 복잡 스키마에서는 10~20 권장.
+    narrative_batch_size: int = 15                          # Laziness 방어: 10~20 권장, 50 금지
+    narrative_max_retries: int = 2                          # 누락 응답 재귀 재시도 횟수
+    narrative_risk_levels: list[str] = ["High", "Critical"]  # 사유서 생성 대상 risk_level
+    insight_significant_tx_top_n: int = 20                  # C08 AND B01 유의적 거래 Top N
+
+    @field_validator("datasynth_label_mode")
+    @classmethod
+    def _check_datasynth_label_mode(cls, v: str) -> str:
+        normalized = v.lower()
+        if normalized not in {"hidden", "visible", "auto"}:
+            raise ValueError("datasynth_label_mode must be one of: hidden, visible, auto")
+        return normalized
+
+    @field_validator("datasynth_metadata_enforcement")
+    @classmethod
+    def _check_datasynth_metadata_enforcement(cls, v: str) -> str:
+        normalized = v.lower()
+        if normalized not in {"off", "warn", "strict"}:
+            raise ValueError(
+                "datasynth_metadata_enforcement must be one of: off, warn, strict",
+            )
+        return normalized
 
     @field_validator("openai_api_key")
     @classmethod

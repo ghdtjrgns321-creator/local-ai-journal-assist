@@ -4,8 +4,8 @@ maxUploadSize = 1024
 maxMessageSize = 1024
 
 [theme]
-# shadcn/Tailwind gray + blue-600 시스템
-primaryColor = "#2563EB"
+# shadcn/Linear 스타일 — slate-700 CTA + subtle blue accent
+primaryColor = "#374151"
 backgroundColor = "#FFFFFF"
 secondaryBackgroundColor = "#F8F9FA"
 textColor = "#111827"

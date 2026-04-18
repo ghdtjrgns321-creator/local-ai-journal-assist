@@ -62,12 +62,50 @@ master_data:
 #   - 프로세스 오너·매니저 100~200명
 #   - 자동 전표 ERP/RPA 40명대 유지 (시스템 수 결정)
 user_personas:
+  surface_noise:
+    enabled: true
+    level: low
+    rate: 0.03
   users_per_persona:
     junior_accountant: 800
     senior_accountant: 400
     controller: 50
     manager: 200
     automated_system: 50
+
+company_year_profiles:
+  enabled: true
+  profiles:
+    - name: conservative_controls_2022
+      narrative: "보수적 통제 환경, 낮은 이상 비율, 수동 입력 비중 낮음"
+      start_year: 2022
+      end_year: 2022
+      fraud_rate: { min: 0.010, max: 0.016 }
+      anomaly_total_rate: { min: 0.018, max: 0.026 }
+      anomaly_fraud_rate: { min: 0.18, max: 0.24 }
+      anomaly_error_rate: { min: 0.46, max: 0.54 }
+      anomaly_process_rate: { min: 0.22, max: 0.30 }
+      sod_violation_rate: { min: 0.006, max: 0.012 }
+    - name: growth_expansion_2023
+      narrative: "거래량 증가, 거래처 확장, 프로세스 복잡도 상승"
+      start_year: 2023
+      end_year: 2023
+      fraud_rate: { min: 0.016, max: 0.024 }
+      anomaly_total_rate: { min: 0.028, max: 0.038 }
+      anomaly_fraud_rate: { min: 0.22, max: 0.30 }
+      anomaly_error_rate: { min: 0.40, max: 0.48 }
+      anomaly_process_rate: { min: 0.28, max: 0.36 }
+      sod_violation_rate: { min: 0.010, max: 0.018 }
+    - name: workflow_change_2024
+      narrative: "신규 워크플로우 도입, 운영 이질성 증가, 프로세스 이슈 증가"
+      start_year: 2024
+      end_year: 2024
+      fraud_rate: { min: 0.022, max: 0.032 }
+      anomaly_total_rate: { min: 0.040, max: 0.055 }
+      anomaly_fraud_rate: { min: 0.24, max: 0.34 }
+      anomaly_error_rate: { min: 0.30, max: 0.40 }
+      anomaly_process_rate: { min: 0.34, max: 0.46 }
+      sod_violation_rate: { min: 0.014, max: 0.024 }
 
 # B04 중복 지급 탐지용 document flow 활성화
 document_flows:

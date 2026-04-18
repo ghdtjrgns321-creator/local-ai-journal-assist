@@ -47,3 +47,13 @@ Thumbs.db
 
 # 외부 도구 (별도 클론)
 tools/datasynth/
+
+# 임시/로그 파일
+streamlit_*.log
+.tmp/
+.tmp-*/
+.tmp_*/
+.pytest_tmp/
+tmp*/
+tools/tmp_*.py
+.manual-model-registry-check/
