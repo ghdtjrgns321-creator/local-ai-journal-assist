@@ -65,6 +65,7 @@ class HeaderDetectionResult:
     """헤더 행 탐지 결과 — detect_header_row()가 반환하는 통합 타입.
 
     header_row가 None이면 자동 탐지 실패 → UI에서 사용자 개입 필요.
+    llm_assisted가 True면 구조 스코어 미달 상태에서 WU-28 LLM 보조로 복원된 결과.
     """
 
     header_row: int | None        # None = 탐지 실패, UI 개입 필요
@@ -72,6 +73,7 @@ class HeaderDetectionResult:
     matched_keywords: list[str]   # 매칭된 키워드 원본명 (예: ["전표일자", "차변"])
     total_columns: int            # 해당 행의 전체 컬럼 수
     message: str                  # 사용자 안내 메시지
+    llm_assisted: bool = False    # WU-28: LLM 보조로 복원되었는지 (UI 메시지 구분용)
 
 
 @dataclass

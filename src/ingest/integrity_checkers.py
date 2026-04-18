@@ -79,10 +79,17 @@ def check_text(path: Path) -> tuple[list[str], list[str]]:
     detection = charset_normalizer.from_bytes(raw_sample).best()
 
     if detection is None:
-        errors.append("파일 인코딩을 감지할 수 없습니다.")
-        return errors, warnings
-
-    encoding = detection.encoding
+        # Why: ASCII 비율이 높은 UTF-8 파일은 charset_normalizer가 None 반환.
+        #      샘플 경계에서 멀티바이트가 잘릴 수 있으므로 끝 3바이트까지 허용.
+        try:
+            raw_sample.decode("utf-8", errors="ignore")
+            # ignore로 디코딩 가능하면 UTF-8 파일로 판단
+            encoding = "utf-8"
+        except Exception:
+            errors.append("파일 인코딩을 감지할 수 없습니다.")
+            return errors, warnings
+    else:
+        encoding = detection.encoding
 
     # UTF-8이 아닌 인코딩은 경고
     if encoding.lower() not in ("utf-8", "ascii"):

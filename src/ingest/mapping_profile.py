@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -294,3 +295,114 @@ def delete_profile(
 
     logger.info("프로파일 삭제: %s", fingerprint)
     return True
+
+
+# ── column diff ─────────────────────────────────────────
+
+
+@dataclass
+class ColumnDiff:
+    """기존 프로파일 대비 컬럼 변경 정보."""
+
+    added: list[str] = field(default_factory=list)
+    removed: list[str] = field(default_factory=list)
+    renamed: list[tuple[str, str, float]] = field(default_factory=list)  # (old, new, score)
+    prev_fingerprint: str = ""
+    prev_source_name: str = ""
+
+
+def load_latest_profile(*, profile_dir: Path | None = None) -> dict | None:
+    """최신 프로파일 1개의 메타데이터(source_columns, fingerprint, source_name) 반환.
+
+    Why: fingerprint 불일치 시 diff 계산을 위해 가장 최근 프로파일의
+    컬럼 목록이 필요하다. 프로파일이 없으면 None(첫 업로드).
+    """
+    resolved = _resolve_dir(profile_dir)
+    if not resolved.exists():
+        return None
+
+    latest: dict | None = None
+    latest_ts = ""
+
+    for path in resolved.glob("*.json"):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if "profile_version" not in data or "source_columns" not in data:
+                continue
+            ts = data.get("updated_at", "")
+            if ts > latest_ts:
+                latest_ts = ts
+                latest = data
+        except (json.JSONDecodeError, OSError):
+            continue
+
+    if latest is None:
+        return None
+
+    return {
+        "source_columns": latest["source_columns"],
+        "fingerprint": latest.get("fingerprint", ""),
+        "source_name": latest.get("source_name", ""),
+    }
+
+
+def compute_column_diff(
+    prev_columns: list[str],
+    curr_columns: list[str],
+    *,
+    rename_threshold: float = 75.0,
+    prev_fingerprint: str = "",
+    prev_source_name: str = "",
+) -> ColumnDiff:
+    """두 컬럼 리스트 간 추가/삭제/이름변경 diff 계산.
+
+    Why: ERP 컬럼명은 접두사/접미사 변경이나 축약이 잦으므로
+    ratio, partial_ratio, token_sort_ratio 3종 중 최대값으로 매칭.
+    """
+    from rapidfuzz import fuzz
+
+    # 정규화: strip + lower
+    prev_norm = {c.strip().lower(): c for c in prev_columns}
+    curr_norm = {c.strip().lower(): c for c in curr_columns}
+
+    prev_set = set(prev_norm.keys())
+    curr_set = set(curr_norm.keys())
+
+    only_prev = prev_set - curr_set  # 삭제 후보
+    only_curr = curr_set - prev_set  # 추가 후보
+
+    # 이름변경 추정: only_prev × only_curr 교차 매칭
+    scores: list[tuple[str, str, float]] = []
+    for old_k in only_prev:
+        for new_k in only_curr:
+            score = max(
+                fuzz.ratio(old_k, new_k),
+                fuzz.partial_ratio(old_k, new_k),
+                fuzz.token_sort_ratio(old_k, new_k),
+            )
+            if score >= rename_threshold:
+                scores.append((old_k, new_k, score))
+
+    # 그리디 1:1 할당 (점수 내림차순)
+    scores.sort(key=lambda x: x[2], reverse=True)
+    used_old: set[str] = set()
+    used_new: set[str] = set()
+    renamed: list[tuple[str, str, float]] = []
+
+    for old_k, new_k, score in scores:
+        if old_k in used_old or new_k in used_new:
+            continue
+        renamed.append((prev_norm[old_k], curr_norm[new_k], score))
+        used_old.add(old_k)
+        used_new.add(new_k)
+
+    added = [curr_norm[k] for k in sorted(only_curr - used_new)]
+    removed = [prev_norm[k] for k in sorted(only_prev - used_old)]
+
+    return ColumnDiff(
+        added=added,
+        removed=removed,
+        renamed=renamed,
+        prev_fingerprint=prev_fingerprint,
+        prev_source_name=prev_source_name,
+    )
