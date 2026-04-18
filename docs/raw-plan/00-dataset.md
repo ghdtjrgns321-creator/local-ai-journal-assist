@@ -19,7 +19,7 @@ data/journal/
 ├── primary/
 │   └── datasynth/                   # 메인: EY-ASU 합성 전표 (1,105K건, 319MB)
 │       ├── journal_entries.csv
-│       ├── chart_of_accounts.json   # 402개 계정과목
+│       ├── chart_of_accounts.json   # 431개 계정과목 정의 (414개 사용)
 │       ├── master_data/             # 벤더·고객·사원
 │       ├── document_flows/          # P2P/O2C 문서 흐름
 │       ├── labels/                  # fraud 레이블 상세
@@ -39,11 +39,11 @@ data/journal/
 |---------------------|----------------------------------------|---------------------------|
 | 차변/대변           | O (debit_amount/credit_amount)         | O (drcrk, shkzg)          |
 | 금액                | O (debit/credit/local_amount)          | O (hsl, dmbtr, wrbtr)     |
-| GL 계정             | O (gl_account, 402개)                  | O (racct, hkont)          |
+| GL 계정             | O (gl_account, 414개 사용/431개 정의)  | O (racct, hkont)          |
 | 날짜                | O (posting_date, document_date)        | O (budat, cpudt)          |
-| 입력자              | O (created_by, 152명)                   | O (usnam)                 |
-| **이상치 레이블**   | **O (fraud 1.9% + anomaly 7.5%)**     | 1%만 (IF/LOF)             |
-| **fraud 시나리오**  | **52개 anomaly 유형 (Must 20 / Should 16 / Could 5 / Drop 11)**         | 없음                      |
+| 입력자              | O (created_by, 1,365명 사용)            | O (usnam)                 |
+| **이상치 레이블**   | **O (fraud 1.96% + anomaly 2.60% + labels.csv 8,337건)** | 1%만 (IF/LOF) |
+| **fraud 시나리오**  | **46개 anomaly 유형 + 15개 fraud 유형 (2026-04-14 실측)** | 없음             |
 | 복식부기 보장       | O (생성 시 강제)                       | 원본 의존                 |
 | Benford 분포        | O (생성 시 준수)                       | 원본 의존                 |
 | 규모 조절           | 1만~1억건 파라미터                     | 고정 332K                 |
@@ -74,18 +74,18 @@ fraud:
 
 ### 생성 결과
 
-| 항목         | 값                                                                    |
+| 항목         | 값 (2026-04-14 실측)                                                  |
 |--------------|-----------------------------------------------------------------------|
-| 라인아이템   | 1,104,914                                                             |
-| 전표 건수    | 106,489                                                               |
-| 컬럼수       | 39                                                                    |
-| 크기         | 319MB (CSV)                                                           |
-| fraud 비율   | 1.9% (2,046건)                                                        |
-| anomaly 비율 | 7.5% (8,001건)                                                        |
-| SoD 위반     | 11.7% (12,419건)                                                      |
-| 프로세스     | O2C(26.5%), R2R(25.3%), P2P(24.2%), TRE(9.4%), H2R(8.6%), A2R(6.0%) |
-| 입력자       | 152명 (5개 페르소나)                                                   |
-| GL 계정      | 402개                                                                  |
+| 라인아이템   | 1,107,720                                                             |
+| 전표 건수    | 319,204 (3년)                                                         |
+| 컬럼수       | 44                                                                    |
+| 크기         | 389MB (통합 CSV)                                                      |
+| fraud 비율   | 1.96% (6,262건)                                                       |
+| anomaly 비율 | 2.60% (8,294건) + anomaly_labels.csv 8,337건 별도                      |
+| SoD 위반     | 3.32% (10,595건)                                                      |
+| 프로세스     | R2R(38.9%), O2C(19.9%), P2P(19.6%), H2R(7.7%), TRE(7.1%), A2R(6.8%) |
+| 입력자       | 1,365명 사용 / 1,422명 마스터 (5개 페르소나)                          |
+| GL 계정      | 414개 사용 / 431개 정의                                                |
 
 ### 핵심 컬럼 (39개)
 

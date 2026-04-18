@@ -4,6 +4,252 @@
 
 ---
 
+## 2026-04-18: Streamlit UI 리팩터링 중 반복 실수 정리
+
+대시보드 개요 탭 Before/After 재구성 + KPI 카드·차트 레이아웃 작업 중 여러 차례 시행착오. 같은 실수를 반복하지 않기 위한 기록.
+
+### 1. `position: sticky` 불안정 — Streamlit DOM에서 시행착오 반복
+
+**상황**: 원본 데이터 미리보기 테이블을 컬럼 매핑 스크롤 시 상단에 고정하려 `position: sticky` 여러 번 시도.
+
+**실패 원인**:
+- Streamlit `stMain`, `stMainBlockContainer`, `stVerticalBlockBorderWrapper` 등 scroll container 체인이 복잡해 sticky가 안정적으로 작동하지 않음.
+- `:has()` selector로 marker 기반 scope를 시도했으나 DOM 구조가 버전마다 달라 예측 불가.
+
+**치명 실수**: sticky를 억지로 작동시키려 `html, body, stMain, stMainBlockContainer` 전체에 `overflow: visible !important`를 강제 → **페이지 스크롤 자체가 막힘**.
+
+**교훈**:
+- Streamlit 전역 컨테이너의 `overflow`를 건드리지 말 것. Streamlit의 스크롤 메커니즘은 이들 컨테이너에 의존.
+- 단일 컬럼 내 sticky는 포기. `st.columns` 레이아웃에서 **좌우 분할 + `stColumn` 자체를 sticky로**가 유일하게 안정적.
+- 근본적으로 안 되는 패턴은 대체 UX(접을 수 있는 expander, inline 샘플값)로 전환하는 판단이 필요.
+
+### 2. Streamlit `container(border=True)` 내부 flex center가 안 먹는 원인
+
+**상황**: KPI 카드 내부에 `display:flex; justify-content:center`로 content를 중앙 정렬했는데 **항상 상단으로 치우침**.
+
+**근본 원인**:
+```
+stVerticalBlock[data-has-border="true"]  ← flex column
+  └ stElementContainer                     ← flex item, 기본은 flex:0 (content 크기)
+     └ stMarkdown / stMarkdownContainer   ← 상하 비대칭 padding 기본값
+        └ 내 HTML div (height:100% flex center)
+```
+
+- `stElementContainer`에 `flex: 1`이 없으면 **content 크기**로만 계산됨. 내 `height:100%`는 content 크기 안에서만 작동.
+- `stMarkdown` 계열 wrapper가 숨겨진 상하 비대칭 padding을 추가해 시각적으로 상단에 쏠림.
+
+**해결**:
+```css
+[data-has-border="true"] {
+    display: flex !important;
+    flex-direction: column !important;
+}
+[data-has-border="true"] > [data-testid="stElementContainer"] {
+    padding: 0 !important;
+    margin: 0 !important;
+}
+[data-has-border="true"] > [data-testid="stElementContainer"]:only-child {
+    flex: 1 !important;
+    height: 100% !important;
+}
+[data-has-border="true"] [data-testid="stMarkdown"],
+[data-has-border="true"] [data-testid="stMarkdownContainer"] {
+    padding: 0 !important;
+    margin: 0 !important;
+    height: 100% !important;
+}
+```
+
+자식이 여러 개(헤더+차트)면 `:only-child` 대신 명시적 height로 관리. `:last-child` 만 flex:1로 하면 마지막 요소(footer)가 엄청 늘어나므로 주의.
+
+**교훈**:
+- `height: 100%`는 **부모가 확정 높이**일 때만 작동. flex 체인을 완전히 연결해야 함.
+- Streamlit wrapper(`stElementContainer`, `stMarkdown`, `stMarkdownContainer`)의 숨겨진 기본 padding을 명시적으로 리셋해야 함.
+
+### 3. 전역 CSS scope 미적용 — 다른 페이지 레이아웃까지 망가뜨림
+
+**상황**: KPI 카드 flex center를 위해 `[data-has-border="true"]`에 전역 CSS 규칙(`padding:0`, `overflow:hidden`, `display:flex`)을 강제 → **engagement selector**, **기타 모든 `container(border=True)` 페이지** 레이아웃 붕괴.
+
+**해결**: marker class 기반 scope 제한.
+- tab_overview의 모든 카드 내부 HTML에 `<div class="tab-overview-scoped">` 삽입.
+- CSS selector를 `:has(.tab-overview-scoped)`로 한정.
+
+```css
+[data-has-border="true"]:has(.tab-overview-scoped) {
+    padding: 0 !important;
+    ...
+}
+```
+
+**교훈**:
+- Streamlit 전역 CSS는 **처음부터 scope를 제한**할 것. 추상적 testid(`data-has-border`)는 모든 페이지에 공통이라 전역 적용 = 모든 페이지 영향.
+- 특정 탭/페이지 전용 스타일은 marker class로 감싸고 `:has()` / descendant selector로 한정.
+
+### 4. Plotly chart 이중 border
+
+**상황**: `st.container(border=True)` 안에 Plotly chart를 넣으면 **카드 border + Plotly 자체 border**로 이중 테두리.
+
+**원인**: `styles.py`에 `[data-testid="stPlotlyChart"] { border: 1px solid; padding: 0.5rem; background: var(--c-bg); }` 전역 카드 스타일이 있었음.
+
+**해결**: Plotly 자체 카드 스타일을 전역 제거. 필요한 곳만 `container(border=True)`로 감쌈.
+```css
+[data-testid="stPlotlyChart"] {
+    background: transparent !important;
+    border: none !important;
+    padding: 0 !important;
+}
+```
+
+**교훈**: Plotly/다른 위젯에 "카드 효과"를 전역으로 주면 container와 겹침. UI 일관성은 **container 래핑**으로 통일하고 위젯 자체 스타일은 투명하게 두는 것이 안전.
+
+### 5. `st.markdown` triple-quoted HTML이 코드블록으로 렌더됨
+
+**상황**: `st.markdown("""<div>...</div>""", unsafe_allow_html=True)`에서 들여쓰기 4칸 + 빈 줄 조합이 있으면 **HTML이 그대로 문자열로 노출**.
+
+**원인**: Streamlit markdown은 들여쓰기 4칸+빈 줄을 **코드블록 시작 신호**로 오인.
+
+**해결**: HTML을 단일 라인 concat으로 작성.
+```python
+html = (
+    "<div style='...'>"
+    f"<div>{label}</div>"
+    f"<div>{value}</div>"
+    "</div>"
+)
+st.markdown(html, unsafe_allow_html=True)
+```
+
+**교훈**: `st.markdown` + triple-quoted HTML은 **들여쓰기 없이** 또는 **textwrap.dedent()** 로 정규화할 것. 빈 줄은 절대 섞지 말 것.
+
+### 6. 파일명 추출 `rsplit('_', 1)` 버그
+
+**상황**: `journal_entries_2022.csv` 같은 파일명이 **`journal_entries`**로 잘려 표시됨.
+
+**원인**: `upload_key.rsplit("_", 1)[0]`로 size를 제거하려 했으나 파일명 자체에 `_`가 있으면 잘못 잘림. DB 재로드 경로에선 size 없이 절대경로만 저장되어 더 심각.
+
+**해결**: 정규식으로 **뒤에 붙은 `_숫자`만** 선택 제거.
+```python
+def _extract_file_name(upload_key: str) -> str:
+    if not upload_key:
+        return "데이터"
+    name = Path(upload_key).name or upload_key
+    m = re.match(r"^(.+)_(\d+)$", name)
+    return m.group(1) if m else name
+```
+
+**교훈**: 문자열 파싱 시 **delimiter가 content에 포함될 가능성**을 반드시 고려. 가능하면 정규식으로 제약.
+
+### 7. Round 반올림으로 "불일치 있는데 100% 일치" 표시
+
+**상황**: 불일치 2건 / 106,163건 → `rate = 99.998%`를 `f"{rate:.2f}%"`로 포맷 → **"100.00% 일치 · 불일치 2건"** 모순 메시지.
+
+**해결**: `math.floor`로 내림.
+```python
+rate = math.floor((total - mismatches) / total * 10000) / 100
+```
+
+**교훈**: 부정합 감지 메시지에서 **100% 표기는 0건 일치 때만 허용**. 표시 목적의 rate 계산은 항상 **round보다 floor**가 의미 보존 측면에서 안전.
+
+### 8. `st.columns` 내부에서 `st.spinner` + `st.progress` 실행 시 텍스트 두 줄 잘림
+
+**상황**: 매핑 확인 버튼을 `st.columns([1, 1, 6])`의 첫 column에 두고 그 안에서 spinner/progress 실행 → **1/8 폭에 갇혀 텍스트 두 줄**.
+
+**해결**: `st.empty()` placeholder를 column **바깥 풀 폭**에 생성, 버튼 클릭 시 placeholder에 렌더.
+```python
+progress_area = st.empty()        # 풀 폭
+btn_col, _, _ = st.columns([1,1,6])
+with btn_col:
+    clicked = st.button("실행")
+if clicked:
+    with progress_area.container():
+        with st.spinner("..."): ...
+```
+
+**교훈**: Streamlit에서 **진행률/스피너는 폭이 좁은 column 안에서 실행하지 말 것**. placeholder는 column 바깥에서 선언하고 나중에 채움.
+
+### 9. `st.container(border=True)` 내부 다중 자식일 때 `:last-child`에 `flex:1` 주면 footer가 늘어남
+
+**상황**: 차트 카드에 헤더 + 차트 + footer 3자식 구조. `:last-child` (footer)에 `flex:1`이 적용되어 **footer가 거대하게 늘어나고 차트가 찌그러짐**.
+
+**해결**: `:only-child`만 `flex:1` 적용. 자식 여럿이면 각 자식은 content 크기, 차트는 명시적 height.
+
+**교훈**: CSS `:last-child`는 자식 수 조건을 검증하지 않음. **자식 1개**만 flex stretch하려면 `:only-child` 사용.
+
+### 10. 공통 교훈 — Streamlit 레이아웃 작업 체크리스트
+
+| 항목 | 확인 |
+|------|------|
+| 전역 CSS를 추상적 testid에 적용 | 절대 금지. 반드시 marker scope. |
+| Plotly 차트에 전역 border/padding | 금지. container 래핑으로 통일. |
+| `position: sticky` | 단일 컬럼 내는 불안정. 좌우 분할 + `stColumn` sticky만 사용. |
+| `overflow: visible` 전역 강제 | 페이지 스크롤 파괴. 절대 금지. |
+| `st.markdown` + triple-quoted HTML | 들여쓰기/빈 줄 금지. 한 줄 concat. |
+| `st.columns` 내부 spinner/progress | 금지. 풀 폭 `st.empty()` placeholder 사용. |
+| 파일명 파싱 | delimiter를 content에 포함 가능성 고려. regex 우선. |
+| 불일치 rate 계산 | `round` 대신 `floor`로 100% 표기 회피. |
+| `container(border=True)` flex center | `display:flex + flex-direction:column` 전파 + `:only-child`에 `flex:1` 필수. |
+
+---
+
+## 2026-04-14: DataSynth 두 핵심 버그 근본 수정 (Rust)
+
+**배경**: 전수조사에서 ML 학습 불가 수준의 두 버그 발견.
+1. **라벨-entry 동기화 실패**: `anomaly_labels.csv` 8,337건 vs `journal_entries.csv` `is_fraud=true` 339건 (1/18 미달)
+2. **reference 컬럼 MCAR 위반**: 정상 2.40% vs 비정상 10.55% NULL (차이 8.15%p) → ML 지름길 학습 위험
+
+### 근본 원인
+
+**버그 1 — T5-31 / T5-27 역방향 라벨 entry 마킹 누락**
+(`crates/datasynth-runtime/src/enhanced_orchestrator.rs` 2585-2666)
+- SelfApproval 패턴(`created_by == approved_by`) 발견 시 라벨만 `anomaly_labels.labels.push()`
+- entry의 `is_fraud`/`is_anomaly`/`fraud_type`/`anomaly_type` 마킹 **누락**
+- Fraud 라벨 5,968건 중 **5,931건이 REV-SA prefix** (역방향 라벨) → CSV 미반영
+- UnbalancedEntry도 동일한 구조적 누락 (T5-27)
+
+**버그 2 — DocumentationStrategy의 reference NULL화**
+(`crates/datasynth-generators/src/anomaly/strategies.rs` 1884-1891)
+- `MissingDocumentation` anomaly가 `entry.header.reference = None` 설정
+- `reference`는 문서 체인 FK인데 비정상에서만 NULL화 → MCAR 규칙 위반
+- 이후 data_quality MCAR(전역 2%)이 추가로 적용되어 비정상 10.55% vs 정상 2.40%
+
+### 수정 내용
+
+**Fix 1: T5-31 SelfApproval 역방향 라벨 + entry 마킹**
+- `entries.iter()` → `entries.iter_mut()` 변경
+- 라벨 push와 동시에 entry.header에 is_fraud=true, is_anomaly=true, fraud_type=SelfApproval, anomaly_type="SelfApproval", anomaly_id 마킹
+
+**Fix 2: T5-27 UnbalancedEntry 역방향 라벨 + entry 마킹**
+- target_docs HashSet 먼저 추출 → entries.iter_mut() 별도 루프에서 is_anomaly/anomaly_type 마킹
+- 중복 라벨 방지 (doc_id 기준 dedupe)
+
+**Fix 3: DocumentationStrategy 근본 변경**
+- `reference = None` 제거 (FK 보호)
+- `header_text = None` 제거 (MCAR 편향 방지)
+- `has_attachment = false` + `supporting_doc_type = None`만 유지 (도메인 의미상 정확)
+
+### 검증 결과 (재생성 후)
+
+| 항목 | 이전 | 이후 | 판정 |
+|------|------|------|:----:|
+| Fraud 라벨 → is_fraud=true | 0.7% | **100.0%** | PASS |
+| Fraud 라벨 → is_anomaly=true | 1.1% | **100.0%** | PASS |
+| Relational/Statistical/Error/ProcessIssue → is_anomaly=true | ~100% | **100%** | PASS |
+| is_fraud 전체 비율 | 0.11% | **1.96%** (설정 2% 근접) | PASS |
+| reference MCAR 차이 | 8.15%p | **1.97%p** (<2%p) | PASS |
+| header_text MCAR 차이 | 0.23%p | **0.25%p** | PASS |
+| SelfApproval: created=approved vs fraud_type=SelfApproval | 5,932 vs 1 | **5,932 vs 5,932** | PASS |
+
+### 잔여 이슈 (부차)
+- `tax_code` MCAR 차이 4.32%p: 도메인 특성(비정상 데이터의 과세 대상 거래 비율이 낮음)으로 해석. MCAR 대상이 아닌 결정론적 필드이므로 ML 지름길 학습 유발 가능성 낮음.
+
+### 파일
+- `tools/datasynth/crates/datasynth-runtime/src/enhanced_orchestrator.rs` (T5-27, T5-31 수정)
+- `tools/datasynth/crates/datasynth-generators/src/anomaly/strategies.rs` (DocumentationStrategy 수정)
+- 빌드: `cd tools/datasynth && cargo build --release -p datasynth-cli` (13분)
+- 재생성: `./target/release/datasynth-data.exe generate -c ../../config/datasynth.yaml -o ../../data/journal/primary/datasynth --seed 2024`
+
+---
+
 ## 2026-04-11 (오후): Phase 2 잔여 과제 4묶음 해결 (코드 독립 작업)
 
 **배경**: 오전 세션에서 4대 결함(P0-1 / P0-2 / P1-1 / P1-2)을 해결한 뒤, 남은 14개

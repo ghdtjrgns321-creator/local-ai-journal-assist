@@ -171,7 +171,7 @@ Drop      11개    —         제외                              —
   3. **Role-based 프로세스 수 제한**: junior=1, senior=3 (역할별 한도)
 - **구현**: `fraud_rules_access.py` → `b07_segregation_of_duties()`
 - **필요 피처**: `created_by`, `business_process`
-- **DataSynth**: 150명 규모, SOD 위반률 11.7% (preparer_approver 87%, v1.2.0)
+- **DataSynth**: 1,365명 규모 (마스터 1,422), SOD 위반률 3.32% (10,595건, 2026-04-14 실측)
 
 #### B08 — 수기 전표 (ManualOverride)
 
@@ -808,7 +808,7 @@ DataSynth 데이터 (검증)
 | 거래처 식별    | `auxiliary_account_number` | B04에서 사용                                                               | 59% 유효 (652K건)                               | ✅ 해결   |
 | 심야 기준      | 22시~06시                | `midnight_start: 22`                                                       | posting_date datetime (시분초 포함)             | ✅ 해결   |
 | 관계사 식별    | GL 계정 prefix 매칭       | `intercompany_identifiers: ['1150', '2050', '4500', '2700']`               | IC GL 1150/2050/4500/2700 존재                  | ✅ 해결   |
-| 직무분리 임계  | 하이브리드 3단계 SoD      | `sod_toxic_pairs` + `sod_role_thresholds`                                   | 152명, automated 제외 + Toxic Pair + Role-based | ✅ 해결   |
+| 직무분리 임계  | 하이브리드 3단계 SoD      | `sod_toxic_pairs` + `sod_role_thresholds`                                   | 1,365명, automated 제외 + Toxic Pair + Role-based | ✅ 해결   |
 | Benford 위반   | MAD > 0.012              | `benford_mad_threshold: 0.012`                                              | BenfordViolation 157건 라벨 주입                | ✅ 해결   |
 | 필수필드 누락  | 9컬럼 NULL 검사           | schema.yaml 참조                                                           | MCAR 2% (gl_account, document_type)             | ✅ 해결   |
 
@@ -817,7 +817,7 @@ DataSynth 데이터 (검증)
 | 항목 | 원인 | 조치 | 파일 |
 |:-----|:-----|:-----|:-----|
 | B02/B08 승인한도 불일치 | 단일 한도 + USD 금액 범위 | KRW 6단계 승인한도 + lognormal mu=14.0 | `settings.py`, `datasynth.yaml` |
-| B07 SOD 과탐 | 41명 소규모 시뮬레이션 | 150명 확대, SOD 위반률 11.7% | `datasynth.yaml` |
+| B07 SOD 과탐 | 41명 소규모 시뮬레이션 | 1,365명 확대, SOD 위반률 3.32% (2026-04-14 실측) | `datasynth.yaml` |
 | B10 관계사 미식별 | `intercompany_identifiers: []` | IC GL prefix 4개 등록 | `audit_rules.yaml` |
 | C03 심야 미탐지 | posting_date 시간정보 없음 | datetime 전환 | `schema.yaml`, DataSynth |
 | `is_suspense_account` all-False | 한글 키워드만 매칭 | 하이브리드: 텍스트 키워드 OR GL 코드 prefix | `pattern_features.py`, `audit_rules.yaml` |

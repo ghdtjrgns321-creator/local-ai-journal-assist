@@ -13,21 +13,21 @@
 
 ### 1.1 개요
 
-| 항목              | 값                                          |
+| 항목              | 값 (2026-04-14 실측)                        |
 |-------------------|---------------------------------------------|
 | 시나리오          | K-IFRS 적용 한국 중견 제조 그룹사(3법인)    |
 | 법인              | C001(본사, 서울), C002(울산공장), C003(천안공장) |
 | 통화              | KRW (단일)                                  |
-| 회계연도          | 2022년 1~12월                               |
-| 전표 건수         | 106,489건                                   |
-| 라인아이템        | 1,104,914건                                 |
-| GL 계정           | 402개                                       |
-| 사용자            | 152명 (5개 페르소나)                        |
-| 컬럼              | 39개 (Header 24 + Line 15)                  |
-| 파일 크기         | 319 MB (CSV)                                |
+| 회계연도          | 2022~2024 (3개년)                           |
+| 전표 건수         | 319,204건                                   |
+| 라인아이템        | 1,107,720건                                 |
+| GL 계정           | 414개 사용 / 431개 정의                      |
+| 사용자            | 1,365명 사용 / 1,422명 마스터 (5개 페르소나) |
+| 컬럼              | 44개 (Header 31 + Line 13)                  |
+| 파일 크기         | 389 MB (통합 CSV)                            |
 | 시드              | 2024 (재현성 보장)                          |
 
-### 1.2 컬럼 사전 (39개)
+### 1.2 컬럼 사전 (44개)
 
 #### Header fields — 전표 단위 (document_id별 동일)
 
@@ -201,7 +201,7 @@
 
 ### 1.5 계정과목 체계
 
-총 402개 GL 계정. K-IFRS / SAP 한국 표준 구조 기반.
+총 431개 GL 계정 정의(실제 사용 414개). K-IFRS / SAP 한국 표준 구조 기반.
 
 ```
 자산       1000~1999    현금(1000~1030), 채권(1100~1160), 재고(1200), 자산(1500~1600)
@@ -238,7 +238,7 @@ IC:   1150(IC채권) ↔ 2050(IC채무) ↔ 4500(IC매출) ↔ 2700(IC미지급)
 | controller         | 10   | 4.9%     | Manual 15%     | 결산 마감, 연결 조정      |
 | manager            | 10   | 4.8%     | Manual 15%     | 승인, 대규모 조정         |
 
-총 152명. Recurring(6.2%)은 automated_system 전용.
+총 1,365명 사용자 (마스터 1,422명, 2026-04-14 실측). recurring(7.4%)은 automated_system 전용.
 
 #### 페르소나별 프로세스 접근 권한 (실측 %)
 
@@ -271,7 +271,7 @@ O2C           → R2R                      매출 → GL 정산
 
 #### SoD 위반 — 감사 탐지 대상
 
-위반율: 12,419건 / 106,489건 = 11.7%
+위반율: 10,595건 / 319,204건 = 3.32% (2026-04-14 실측, 3년 전체 기준)
 
 **SoD 충돌 유형별 건수 (실측, 전표 기준):**
 
@@ -335,22 +335,22 @@ O2C           → R2R                      매출 → GL 정산
 #### 시간대별 분포 (실측)
 
 ```
-시간대              구간          설정 배수    실측 비율
-late_night         00:00~06:00     0.02       0.8%     ← C03 심야 전기 탐지 대상
-early_morning      06:00~08:30     0.15       4.2%
-morning_spike      08:30~11:30     1.8       36.8%     ← 업무 피크
-lunch_dip          11:30~13:00     0.3        2.0%
-afternoon          13:00~16:00     1.2       25.2%
-eod_rush           16:00~18:30     1.5       22.1%     ← 마감 전 러시
-overtime           18:30~22:00     0.3        8.1%
-midnight           22:00~23:59     0.05       0.8%     ← 심야 (고위험)
+시간대              구간          설정 배수    실측 비율 (2026-04-14)
+late_night         00:00~06:00     0.02       1.5%     ← C03 심야 전기 탐지 대상
+early_morning      06:00~08:30     0.15       1.2%
+morning_spike      08:30~11:00     1.8       29.7%     ← 업무 피크
+lunch_dip          11:00~13:00     0.3        8.9%
+afternoon          13:00~16:00     1.2       23.5%
+eod_rush           16:00~18:00     1.5       21.4%     ← 마감 전 러시
+overtime           18:00~22:00     0.3       13.1%
+midnight           22:00~23:59     0.05       0.7%     ← 심야 (고위험)
 ```
 
 #### 요일 패턴 (실측)
 
-- 주말 전표: 9.5% (10,098건) — C02 주말 집중 기표 탐지 가능
+- 주말 전표: 2.8% (30,756건) — C02 주말 집중 기표 탐지 가능 (2026-04-14 실측)
 - 공휴일: ~5% (KR 캘린더, 대체공휴일 포함)
-- 요일별 가중치: 월(1.3) > 화(1.1) > 수·목(1.0) > 금(0.85)
+- 요일별 가중치: 월~목(1.0) > 금(0.95) > 토·일(0.2)
 
 #### 스파이크 배수
 
@@ -366,45 +366,45 @@ midnight           22:00~23:59     0.05       0.8%     ← 심야 (고위험)
 
 | 카테고리 | 전표 건수 | 비율 | 설명             |
 |----------|----------|------|------------------|
-| 이상징후 | 8,001    | 7.5% | 총 이상 전표     |
-| 부정     | 2,046    | 1.9% | 의도적 부정 전표 |
-| SoD 위반 | 12,419   | 11.7%| 직무분리 위반    |
+| 이상징후(is_anomaly) | 8,294 | 2.60% | 총 이상 전표 (T5 역방향 라벨 포함) |
+| 부정(is_fraud)       | 6,262 | 1.96% | 의도적 부정 + T5-31 자기승인 역방향 라벨 |
+| SoD 위반             | 10,595 | 3.32% | 직무분리 위반 |
+| anomaly_labels.csv   | 8,337 | —     | 별도 라벨 마스터 (5 카테고리) |
 
-#### 부정 유형별 건수 (실측, 전표 기준)
+#### 부정 유형별 건수 (2026-04-14 실측, 전표 기준)
 
-| 유형                         | 건수 | 비율  | 대응 탐지 룰       |
-|------------------------------|------|-------|---------------------|
-| DuplicatePayment             | 397  | 19.4% | B04 중복 지급       |
-| FictitiousTransaction        | 351  | 17.2% | B03 가공 거래       |
-| RevenueManipulation          | 299  | 14.6% | B01 수익 조작       |
-| SplitTransaction             | 294  | 14.4% | B02 분할 승인회피   |
-| TimingAnomaly                | 196  | 9.6%  | C04 소급 전기       |
-| UnauthorizedAccess           | 178  | 8.7%  | B06~B09 통제 위반   |
-| ExpenseCapitalization        | 105  | 5.1%  | B11 비용 자산화     |
-| SuspenseAccountAbuse         | 100  | 4.9%  | C10 가수금 장기체류 |
-| JustBelowThreshold           | 29   | 1.4%  | B02 임계값 직하     |
-| RoundDollarManipulation      | 28   | 1.4%  | C07 Benford 위반    |
-| ExceededApprovalLimit        | 20   | 1.0%  | B03 승인한도 초과   |
-| SelfApproval                 | 19   | 0.9%  | B06 자기승인        |
-| ImproperCapitalization       | 11   | 0.5%  | B11 비용 자산화     |
-| SegregationOfDutiesViolation | 10   | 0.5%  | B07 SoD 위반        |
-| FictitiousEntry              | 7    | 0.3%  | Phase 2 ML          |
-| FictitiousVendor             | 2    | 0.1%  | Phase 2 ML          |
+| 유형                         | 건수  | 비율    | 대응 탐지 룰       |
+|------------------------------|-------|---------|---------------------|
+| SelfApproval                 | 5,932 | 94.7%   | B06 자기승인 (T5-31 역방향) |
+| RevenueManipulation          | 86    | 1.4%    | B01 수익 조작       |
+| UnauthorizedAccess           | 46    | 0.7%    | B06~B09 통제 위반   |
+| FictitiousTransaction        | 45    | 0.7%    | B03 가공 거래       |
+| DuplicatePayment             | 36    | 0.6%    | B04 중복 지급       |
+| ExpenseCapitalization        | 36    | 0.6%    | B11 비용 자산화     |
+| SplitTransaction             | 29    | 0.5%    | B02 분할 승인회피   |
+| SuspenseAccountAbuse         | 18    | 0.3%    | C10 가수금 장기체류 |
+| TimingAnomaly                | 12    | 0.2%    | C04 소급 전기       |
+| JustBelowThreshold           | 10    | 0.2%    | B02 임계값 직하     |
+| RoundDollarManipulation      | 7     | 0.1%    | C07 Benford 위반    |
+| ExceededApprovalLimit        | 7     | 0.1%    | B03 승인한도 초과   |
+| ImproperCapitalization       | 4     | 0.1%    | B11 비용 자산화     |
+| FictitiousEntry              | 1     | <0.1%   | Phase 2 ML          |
+| SegregationOfDutiesViolation | 1     | <0.1%   | B07 SoD 위반        |
 
-#### 이상징후 유형별 건수 Top 10 (실측, anomaly_labels.csv 기준)
+#### 이상징후 유형별 건수 Top 10 (anomaly_labels.csv 기준, 2026-04-14 실측)
 
 | 유형                   | 건수  | 설명               |
 |------------------------|-------|--------------------|
-| NewCounterparty        | 1,312 | 신규 거래처 거래   |
-| UnusualAccountPair     | 1,086 | 비정상 계정 조합   |
-| MissingRelationship    | 896   | 관계 누락 거래     |
-| DormantAccountActivity | 826   | 휴면 계정 사용     |
-| UnmatchedIntercompany  | 704   | IC 미매칭          |
-| TransferPricingAnomaly | 472   | 이전가격 이상      |
-| CentralityAnomaly      | 444   | 네트워크 중심성 이상 |
-| CircularTransaction    | 416   | 순환 거래          |
-| CircularIntercompany   | 233   | IC 순환 거래       |
-| UnusualTiming          | 183   | 비정상 시점 거래   |
+| NewCounterparty        | 413   | 신규 거래처 거래   |
+| UnusualAccountPair     | 313   | 비정상 계정 조합   |
+| MissingRelationship    | 271   | 관계 누락 거래     |
+| DormantAccountActivity | 247   | 휴면 계정 사용     |
+| UnmatchedIntercompany  | 215   | IC 미매칭          |
+| CircularTransaction    | 140   | 순환 거래          |
+| CentralityAnomaly      | 125   | 네트워크 중심성 이상 |
+| TransferPricingAnomaly | 120   | 이전가격 이상      |
+| UnusualTiming          | 76    | 비정상 시점 거래   |
+| CircularIntercompany   | 73    | IC 순환 거래       |
 
 ### 1.10 내부거래 (Intercompany)
 
@@ -428,14 +428,14 @@ C002 (울산공장)   ←→ C003 (천안공장)
 | LoanInterest    | 5%   | 100만~5,000만      |
 | ExpenseRecharge | 5%   | 50만~2,000만       |
 
-- 매칭 쌍: 98쌍 (매수/매도 양측 전표 동시 생성)
+- 매칭 쌍: 328쌍 (매수/매도 양측 전표 동시 생성, 2026-04-14 실측)
 - 정산 주기: 월별 네팅
 - 이전가격: Cost-Plus 방식 (5% 마크업)
 - 정산 계정: 1150(IC채권) ↔ 2050(IC채무)
 
 ### 1.11 내부통제
 
-- SoD 위반율: 11.7% (12,419건)
+- SoD 위반율: 3.32% (10,595건, 2026-04-14 실측)
 - 내부통제 마스터: 18건
 - COSO 프레임워크: 활성 (5구성요소 17원칙)
 - Benford 법칙: 허용 오차 5%, 제외 소스: recurring, payroll
@@ -494,9 +494,9 @@ def generate_gl_data(
 ## 3. 데이터 흐름도
 
 ```
-[DataSynth CSV 319MB]                    [generate_sample.py]   [gl_template.xlsx]
+[DataSynth CSV 389MB]                    [generate_sample.py]   [gl_template.xlsx]
   journal_entries.csv                      sample_gl.xlsx          50건
-  106,489건 / 1,104,914 라인                10,000건
+  319,204건 / 1,107,720 라인                10,000건
          ↓                                       ↓                    ↓
     ┌─────────────────────────────────────────────────────────────────────┐
     │  ingest/  (02-ingest.md)                                          │

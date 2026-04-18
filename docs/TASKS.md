@@ -21,11 +21,11 @@
 | 2 WU-17 대시보드ML               |  1   |  1   | 100%   |
 | 3 WU-18~19 API+NLP기초           |  1   |  2   |  50%   |
 | 3 WU-20 Text-to-SQL              |  0   |  1   |   0%   |
-| 3 WU-21~22 NLP탐지+그래프        |  0   |  2   |   0%   |
+| 3 WU-21~22 NLP탐지+그래프        |  2   |  2   | 100%   |
 | 3 WU-23~24 Audit+감사조서        |  1   |  2   |  50%   |
-| 3 WU-25~27 인사이트+UI           |  0   |  3   |   0%   |
-| 3 WU-28~30 고도화                |  1   |  3   |  33%   |
-| **합계**                         | 114  | 150  |  76%   |
+| 3 WU-25~27 인사이트+UI           |  2   |  3   |  67%   |
+| 3 WU-28~30 고도화                |  2   |  3   |  67%   |
+| **합계**                         | 119  | 150  |  79%   |
 
 **상태 범례**: ✅ 완료 / ⬜ 미착수
 **블로커**: Phase 섹션 상단 blockquote로 표기 (🚫 BLOCKER)
@@ -719,7 +719,7 @@ WU1 (기반 컴포넌트) ──── 반드시 최초 실행
 |     | Kiwi 인스턴스 싱글톤 + 배치   | `src/feature/text_features.py` — `_get_kiwi` lazy 싱글톤 + iterable 배치 토큰화 | —                                     | ✅   |
 |     | 단위 테스트                    | `tests/modules/test_feature/test_text_kiwi.py` (신규, 31건 통과)            | —                                         | ✅   |
 
-### WU-20: Text-to-SQL 파이프라인 `[L]` — #68, #69, #70 ⬜
+### WU-20: Text-to-SQL 파이프라인 `[L]` — #68, #69, #70 ✅
 
 > **의존**: WU-18 ✅ (API 클라이언트)
 > 자연어 → SQL 변환 + 검증 + 감사 프리셋 12종. Chat UI(WU-26)의 백엔드.
@@ -729,28 +729,32 @@ WU1 (기반 컴포넌트) ──── 반드시 최초 실행
 
 | #   | 태스크                        | 파일                                                                          | 가이드                            | 상태 |
 |-----|-------------------------------|-------------------------------------------------------------------------------|-----------------------------------|------|
-| 69  | SQL 검증기                    | `src/llm/sql_validator.py` (신규) — DML 차단, 테이블 화이트리스트, 서브쿼리 깊이 제한, 자동 LIMIT | [08-llm](pre-plan/08-llm.md) | ⬜   |
-| 70  | 감사 프리셋 12종              | `src/llm/prompt_presets.py` (신규) — 기본 6종 + 프로세스별 6종 + 카테고리 분류 | [08-llm](pre-plan/08-llm.md)     | ⬜   |
-| 68  | Text-to-SQL 엔진              | `src/llm/text_to_sql.py` (신규) — DDL 컨텍스트 주입 + LLM SQL 생성 + sql_validator 연동 + DuckDB 실행 + DataFrame 반환 | [08-llm](pre-plan/08-llm.md)     | ⬜   |
-|     | ChromaDB 스키마 학습 (선택)   | `src/llm/schema_trainer.py` (신규) — DDL + 도메인 용어 + 샘플 Q&A RAG 저장    | [08-llm](pre-plan/08-llm.md) §697 | ⬜  |
-|     | 단위 테스트                    | `tests/modules/test_llm/test_text_to_sql.py`, `test_sql_validator.py`, `test_prompt_presets.py` (신규) | — | ⬜   |
+| 69  | SQL 검증기                    | `src/llm/sql_validator.py` (신규) — DML 차단, 테이블 화이트리스트, 서브쿼리 깊이 제한, 자동 LIMIT | [08-llm](pre-plan/08-llm.md) | ✅   |
+| 70  | 감사 프리셋 12종              | `src/llm/prompt_presets.py` (신규) — 기본 6종 + 프로세스별 6종 + 카테고리 분류 | [08-llm](pre-plan/08-llm.md)     | ✅   |
+| 68  | Text-to-SQL 엔진              | `src/llm/text_to_sql.py` (신규) — DDL 컨텍스트 주입 + LLM SQL 생성 + sql_validator 연동 + DuckDB 실행 + DataFrame 반환 | [08-llm](pre-plan/08-llm.md)     | ✅   |
+|     | ChromaDB 스키마 학습 (선택)   | `src/llm/schema_trainer.py` (신규) — DDL + 도메인 용어 + 샘플 Q&A RAG 저장    | [08-llm](pre-plan/08-llm.md) §697 | ✅  |
+|     | 단위 테스트                    | `tests/modules/test_llm/test_text_to_sql.py`, `test_sql_validator.py`, `test_prompt_presets.py` (신규) | — | ✅   |
 
-### WU-21: NLP 탐지 + 임베딩 `[M]` — #71, #79, #85, #88 ⬜
+### WU-21: NLP 탐지 + 임베딩 `[M]` — #71, #79, #85, #88 ✅
 
-> **의존**: WU-18 (API embed) + WU-19 (kiwipiepy)
+> **의존**: WU-18 ✅ (API embed) + WU-19 ✅ (kiwipiepy)
 > 적요 NLP 분석기 + 경제적 실질 판단 + 계정명 의미 분석 + 임베딩 동의어 매칭.
 > `NLPDetector(BaseDetector)` — 5개 서브룰: NLP01~NLP05.
 > Phase 1a 미해결 이슈 5건(08-llm §590-622)을 NLP로 해결.
-> 비식별화: 임베딩 API에 토큰화 키워드만 전달, 원본 적요 전문 전송 금지.
+> 비식별화: morpheme_tokens(한글) join 또는 영문 stopword 제거 결과만 임베딩 API에 전달, 원본 적요 전문 전송 금지.
+> **성능**: O(U) 캐시(중복 텍스트 API 1회) + numpy 행렬 곱 코사인(루프 금지). dict 인메모리 캐시(ChromaDB 미사용 — 대상 소규모).
+> **graceful**: API 키 미설정/연결 실패 시 NLPDetector 빈 결과 + warning, 파이프라인 중단 없음.
 
 | #   | 태스크                        | 파일                                                                      | 가이드                                                                                 | 상태 |
 |-----|-------------------------------|---------------------------------------------------------------------------|----------------------------------------------------------------------------------------|------|
-| 71  | 적요 NLP 분석기               | `src/detection/nlp_analyzer.py` (신규) — NLP01(header-account 불일치), NLP02(process-account 불일치), NLP03(비정형 적요), NLP04(IC 이상), NLP05(동의어 우회) | [05-detection](pre-plan/05-detection.md), [08-llm](pre-plan/08-llm.md) §590-622       | ⬜   |
-| 79  | 경제적 실질 판단              | `src/detection/nlp_analyzer.py` (확장) — NLP01/NLP02에 ISA 315/240호 로직 통합 | [08-llm](pre-plan/08-llm.md) §715-722                                                 | ⬜   |
-| 88  | semantic_similarity 구현      | `src/llm/embedding_service.py` (신규) — API 임베딩 + 코사인 유사도 + ChromaDB 캐시. `text_features.py` stub 교체 | [03-feature](pre-plan/03-feature.md) §759, [08-llm](pre-plan/08-llm.md) §610-622      | ⬜   |
-| 85  | LLM 계정명 의미 분석          | `src/feature/text_features.py` (확장) — `add_account_semantic(df)`: GL 계정명 LLM 카테고리 분류 + 적요 교차 검증 | [03-feature](pre-plan/03-feature.md) §423                                              | ⬜   |
-|     | constants.py NLP 룰 등록      | `src/detection/constants.py` — `NLP01`~`NLP05` + `Layer.NLP = "nlp"` + SEVERITY_MAP | —                                                                                      | ⬜   |
-|     | 단위 테스트                    | `tests/modules/test_detection/test_nlp_analyzer.py`, `tests/modules/test_llm/test_embedding_service.py` (신규) | —                                                                                      | ⬜   |
+| 71  | 적요 NLP 분석기               | `src/detection/nlp_analyzer.py` + `nlp_rules.py` (신규) — NLP01(header-account 불일치), NLP02(process-account 불일치), NLP03(비정형 적요), NLP04(IC 이상), NLP05(동의어 우회). graph_detector + graph_rules 컨벤션 미러링 | [05-detection](pre-plan/05-detection.md), [08-llm](pre-plan/08-llm.md) §590-622       | ✅   |
+| 79  | 경제적 실질 판단              | `src/detection/nlp_rules.py` — NLP01/NLP02에서 임베딩 유사도 + account_category 교차 검증으로 ISA 315/240 로직 반영 | [08-llm](pre-plan/08-llm.md) §715-722                                                 | ✅   |
+| 88  | semantic_similarity 구현      | `src/llm/embedding_service.py` (신규) — `EmbeddingService`: O(U) dict 캐시 + L2 정규화 가정 행렬 곱 코사인 + centroid 거리 + find_nearest. `text_features.add_semantic_similarity` stub 교체 | [03-feature](pre-plan/03-feature.md) §759, [08-llm](pre-plan/08-llm.md) §610-622      | ✅   |
+| 85  | LLM 계정명 의미 분석          | `src/feature/text_features.py` (확장) — `add_account_semantic(df)`: 고유 gl_account만 LLM 카테고리 분류 + 적요 교차 검증 컬럼 | [03-feature](pre-plan/03-feature.md) §423                                              | ✅   |
+|     | constants.py NLP 룰 등록      | `src/detection/constants.py` — `NLP01`~`NLP05` + `Layer.NLP = "nlp"` + SEVERITY_MAP (4/3/2/3/3) | —                                                                                      | ✅   |
+|     | settings.py NLP 파라미터       | `config/settings.py` — `nlp_*` 7종(threshold·percentile·batch_size 등)    | —                                                                                      | ✅   |
+|     | pipeline.py 통합              | `src/pipeline.py` — `_try_nlp_detection()` 추가, Graph 탐지 직후 호출      | —                                                                                      | ✅   |
+|     | 단위 테스트 (29건)             | `tests/modules/test_detection/test_nlp_analyzer.py` (15건), `tests/modules/test_llm/test_embedding_service.py` (14건) — Mock EmbeddingClient + 룰별 단위 + 에러 격리 + graceful skip | —                                                                                      | ✅   |
 
 ### WU-22: 그래프 순환 탐지 `[S]` — #72, #81 ✅ (2026-04-11)
 
@@ -784,53 +788,64 @@ WU1 (기반 컴포넌트) ──── 반드시 최초 실행
 |     | export 패키지 초기화          | `src/export/__init__.py` (신규)                                                  | —                                              | ✅   |
 |     | 단위 테스트                    | `tests/modules/test_export/test_audit_trail.py` (신규) — 14개 테스트 (5 클래스)   | —                                              | ✅   |
 
-### WU-24: 감사조서 Excel/PDF `[L]` — #75 ⬜ -> 감사조서 생성은 이번 프로젝트에서 안하기로 함, 대신 감사조서가 아니라 데이터분석 조서를 쓰는걸로
+### WU-24: 데이터분석 보고서 Excel/PDF `[L]` — #75 ✅
 
-> **의존**: WU-23 (audit_trail 기록기)
-> Excel 6시트 + PDF 8섹션 감사조서 생성.
-> 데이터 볼륨 대응: 1.1M 라인아이템 → document_id 단위 집계(106K행). 50만행 초과 시 시트 분할.
-> PII 마스킹: created_by, approved_by SHA-256 해싱 + auxiliary_account 부분 치환.
+> **방향 전환**: 원래 "감사조서(Audit Working Paper)" 산출이었으나, 감사조서는 ISA 230에 따라
+> 감사인이 직접 작성하는 법적 문서이므로 **데이터분석 보고서(Data Analysis Report)** 로 재정의.
+> 감사인이 자신의 감사조서에 첨부/참조할 수 있는 보조 자료를 생성한다.
 >
-> **⚠️ audit_log 조회 시**: 데이터분석 조서에 활동 로그 시트를 포함할 경우 `AuditTrail.get_trail()` 사용. `queries.py::audit_log_by_batch` 프리셋은 시스템 이벤트가 섞이므로 금지. 상세 비교는 WU-27 주의 블록 참조.
+> **의존**: WU-23 (audit_trail 기록기) ✅
+> Excel 5~6시트 + PDF 6섹션 데이터분석 보고서.
+> 메모리 대응: openpyxl `write_only=True` + `WriteOnlyCell` (사후 셀 접근 불가 회피).
+> PII 마스킹: created_by, approved_by SHA-256 해싱 + auxiliary_account 부분 치환 (원본 불변).
+> 차트 hang 방지: kaleido `to_image()` ThreadPoolExecutor + timeout(10s) + 표 fallback.
+>
+> **⚠️ audit_log 조회 시**: `AuditTrail.get_trail()` 사용. `queries.py::audit_log_by_batch` 프리셋은
+> 시스템 이벤트가 섞이므로 금지. 상세 비교는 WU-27 주의 블록 참조.
 
 | #   | 태스크                        | 파일                                                                          | 가이드                                         | 상태 |
 |-----|-------------------------------|-------------------------------------------------------------------------------|------------------------------------------------|------|
-| 75  | ExcelExporter                 | `src/export/excel_exporter.py` (신규) — 6시트: Summary, Anomalies, Benford, Rules, SoD, Raw Data + ExportFilter + 마스킹 | [09-export](pre-plan/09-export.md) §127-200    | ⬜   |
-|     | PDFExporter                   | `src/export/pdf_exporter.py` (신규) — 8섹션: 표지, 요약, 프로세스, Benford, Top N, 룰통계, 부정/SoD, 감사의견. NanumGothic TTF | [09-export](pre-plan/09-export.md) §201-370    | ⬜   |
-|     | ExportFilter + ExportConfig   | `src/export/models.py` (신규) — 필터 dataclass + 설정 (마스킹, 포맷 등)       | [09-export](pre-plan/09-export.md) §416-427    | ⬜   |
-|     | 마스킹 유틸                    | `src/export/masking.py` (신규) — SHA-256 해싱 + 부분 치환                     | [09-export](pre-plan/09-export.md) §112-121    | ⬜   |
-|     | 단위 테스트                    | `tests/modules/test_export/test_excel_exporter.py`, `test_pdf_exporter.py` (신규) | [09-export](pre-plan/09-export.md) §492-505    | ⬜   |
+| 75  | ExcelExporter                 | `src/export/excel_exporter.py` (신규) — 5~6시트: 분석 요약, 이상 전표, Benford, 탐지 규칙 통계, 직무분리 분석, 원본 데이터 + ExportFilter + 마스킹 | 계획서: `~/.claude/plans/vectorized-sauteeing-squirrel.md` | ✅ |
+|     | PDFExporter                   | `src/export/pdf_exporter.py` (신규) — 6섹션: 표지(면책조항), 요약, 프로세스 분포, Benford, 이상 전표 Top N, 탐지 규칙+SoD. malgun.ttf 우선 한글 폰트 탐색 | 계획서 참조 | ✅ |
+|     | ExportFilter + ExportConfig   | `src/export/models.py` (신규) — 필터/설정 dataclass + 컬럼 매핑 상수 + 면책조항 | 계획서 참조 | ✅ |
+|     | 마스킹 유틸                    | `src/export/masking.py` (신규) — SHA-256 해싱 + 부분 치환 (원본 불변)         | 계획서 참조 | ✅ |
+|     | 단위 테스트                    | `tests/modules/test_export/test_models.py` (10), `test_masking.py` (10), `test_excel_exporter.py` (8), `test_pdf_exporter.py` (5) — 33개 신규 테스트 통과 | — | ✅ |
 
-### WU-25: LLM 인사이트 + XAI `[M]` — #78, #80, #86 ⬜
+### WU-25: LLM 인사이트 + XAI `[M]` — #78, #80, #86 ✅
 
-> **의존**: WU-18 (API 클라이언트) + WU-21 (NLP 결과 활용)
-> 인사이트 자동 생성 + 유의적 거래 평가 + XAI Narrative Report.
-> 비식별화: `sanitizer.py`로 원본 데이터 제거 후 통계 지표만 LLM에 전달.
-> XAI 호출 조건: `anomaly_score > 0 AND risk_level IN ('High', 'Critical')` — 50건 단위 배치.
+> **의존**: WU-18 (API 클라이언트) ✅ + WU-21 (NLP 결과 활용) ✅
+> 배치 인사이트 + C08 AND B01 유의적 거래 합리성 평가 + 엔트리 XAI Narrative Report.
+> 비식별화는 본 프로젝트 범위 외(TS-6). `sanitizer.py` 생성하지 않음.
+> XAI 호출 조건: `risk_level IN ('High','Critical') AND anomaly_score > 0`.
+> Laziness 방어: `settings.narrative_batch_size=15` + 누락 검증·재귀 재시도.
+> 호출 주체: 대시보드 On-Demand. 결과는 `llm_narratives` 테이블에 캐시 (document_id PK).
 
 | #   | 태스크                        | 파일                                                                        | 가이드                                  | 상태 |
 |-----|-------------------------------|-----------------------------------------------------------------------------|-----------------------------------------|------|
-| 78  | 인사이트 생성기               | `src/llm/insight_generator.py` (신규) — `generate_batch_insight(stats)`, `generate_entry_insight(entry)` | [08-llm](pre-plan/08-llm.md) §587-588  | ⬜   |
-| 80  | 유의적 거래 합리성 평가       | `src/llm/insight_generator.py` (확장) — C08+B01 플래그 전표 사업상 합리성 LLM 보조 의견 | [08-llm](pre-plan/08-llm.md) §724-738  | ⬜   |
-| 86  | XAI Narrative Report          | `src/llm/narrative_report.py` (신규) — 파생변수 19종 + 탐지결과 → LLM 위험 사유서. 50건 배치 | [08-llm](pre-plan/08-llm.md) §630-662  | ⬜   |
-|     | 비식별화 필터                  | `src/llm/sanitizer.py` (신규) — API 전송 전 원본 데이터 제거, 통계 지표만 추출 | —                                       | ⬜   |
-|     | 단위 테스트                    | `tests/modules/test_llm/test_insight_generator.py`, `test_narrative_report.py` (신규) | —                                       | ⬜   |
+| 78  | 인사이트 생성기(배치)         | `src/llm/insight_generator.py` (신규) — `generate_batch_insight()` + DuckDB 집계 + reasoning 티어 | [08-llm](raw-plan/08-llm.md) §587-588  | ✅   |
+| 80  | 유의적 거래 합리성 평가       | `src/llm/insight_generator.py` — `_query_significant_tx()` C08 AND B01 → audit_flag 의견 | [08-llm](raw-plan/08-llm.md) §724-738  | ✅   |
+| 86  | XAI Narrative Report          | `src/llm/narrative_report.py` (신규) — 파생변수 18종 + 탐지결과 → 1~3문장 사유서. batch=15 + 재귀 재시도 + 캐시 UPSERT | [08-llm](raw-plan/08-llm.md) §630-662  | ✅   |
+|     | 응답 스키마                    | `src/llm/models.py` (확장) — BatchInsight, SignificantTxOpinion, EntryNarrative, NarrativeBatch | —                                       | ✅   |
+|     | DDL + settings                 | `src/db/schema.py` llm_narratives 테이블/인덱스 + `config/settings.py` WU-25 4개 필드        | —                                       | ✅   |
+|     | 단위 테스트                    | `tests/modules/test_llm/test_insight_generator.py` (6), `test_narrative_report.py` (10) — 16건 통과 | —                                       | ✅   |
 
-### WU-26: Chat UI 탭 `[M]` — #73 ⬜
+### WU-26: Chat UI 탭 `[M]` — #73 ✅
 
 > **의존**: WU-20 (Text-to-SQL)
 > Streamlit Chat UI + 프리셋 버튼 12종 + 스트리밍 응답.
 > `st.chat_input` + `st.chat_message` + SQL 결과 `st.dataframe` + `st.code` 패턴.
 > AuditTrail.log(event_type="query") 자동 호출.
+> **Streamlit 함정 대응**: `st.write_stream` 반환값 즉시 history append(rerun 유실 방지),
+> `df_preview=head(100)`만 session 저장(OOM 방지), `CHAT_HISTORY_MAX=20` FIFO.
 
 | #   | 태스크                        | 파일                                                             | 가이드                                         | 상태 |
 |-----|-------------------------------|------------------------------------------------------------------|------------------------------------------------|------|
-| 73  | Chat UI 탭                    | `dashboard/tab_chat.py` (신규) — chat_input + chat_message + 프리셋 버튼 + SQL 결과 표시 + 스트리밍 | [07-dashboard](pre-plan/07-dashboard.md)       | ⬜   |
-|     | 대화 히스토리 관리            | `dashboard/_state.py` (확장) — `chat_history: list[dict]` session_state 키 | —                                              | ⬜   |
-|     | app.py 탭 등록                | `dashboard/app.py` (수정) — Chat 탭 추가                        | —                                              | ⬜   |
-|     | 단위 테스트                    | `tests/modules/test_dashboard/test_tab_chat.py` (신규)          | —                                              | ⬜   |
+| 73  | Chat UI 탭                    | `dashboard/tab_chat.py` (신규) — 프리셋 2서브탭(기본/프로세스) × columns(3)×2행 + chat_input + 프리뷰 ≤100행 | [07-dashboard](pre-plan/07-dashboard.md)       | ✅   |
+|     | 대화 히스토리 관리            | `dashboard/_state.py` (확장) — `KEY_CHAT_HISTORY`, `KEY_CHAT_LLM_ENABLED` | —                                              | ✅   |
+|     | app.py 탭 등록                | `dashboard/app.py` (수정) — 5번째 "Chat" 탭 추가                | —                                              | ✅   |
+|     | 단위 테스트                    | `tests/modules/test_dashboard/test_tab_chat.py` (17 tests) — preview 컷/FIFO/audit event/run_query graceful | —                                              | ✅   |
 
-### WU-27: Export 탭 (통합) `[M]` — #74 ⬜
+### WU-27: Export 탭 (통합) `[M]` — #74 ✅
 
 > **의존**: WU-24 (감사조서) + WU-26 (Chat UI, 선택적) + WU-23 (audit_trail)
 > 대시보드 Export 탭 — 포맷 선택(Excel/PDF/CSV), ExportFilter UI, 다운로드 버튼.
@@ -853,37 +868,39 @@ WU1 (기반 컴포넌트) ──── 반드시 최초 실행
 
 | #   | 태스크                        | 파일                                                                      | 가이드                                                               | 상태 |
 |-----|-------------------------------|---------------------------------------------------------------------------|----------------------------------------------------------------------|------|
-| 74  | Export 탭                     | `dashboard/tab_export.py` (신규) — 포맷 선택 + ExportFilter UI + st.download_button + 진행 표시 | [07-dashboard](pre-plan/07-dashboard.md), [09-export](pre-plan/09-export.md) §470-476 | ⬜   |
-|     | pipeline.py audit_trail 주입  | `src/pipeline.py` (수정) — 각 단계(ingest/validate/detect/load)에서 AuditTrail.log() | —                                                                    | ⬜   |
-|     | app.py 탭 등록                | `dashboard/app.py` (수정) — Export 탭 추가                                | —                                                                    | ⬜   |
-|     | 단위 테스트                    | `tests/modules/test_dashboard/test_tab_export.py` (신규)                  | —                                                                    | ⬜   |
+| 74  | Export 탭                     | `dashboard/tab_export.py` (신규) — 2-Step 패턴(생성 버튼 → session 캐싱 → download_button), 포맷 radio(Excel/PDF/감사 증적 CSV) + ExportFilter UI(사이드바 FilterState 어댑트) + ExportConfig 폼 + 해시 기반 stale 캐시 무효화 | [07-dashboard](pre-plan/07-dashboard.md), [09-export](pre-plan/09-export.md) §470-476, 계획서: `~/.claude/plans/declarative-finding-toast.md` | ✅   |
+|     | pipeline.py audit_trail 주입  | `src/pipeline.py` (수정) — `AuditPipeline.__init__(audit_trail=None)` 선택 주입 + `_NullAuditTrail` no-op 폴백 + upload/validate/analysis(탐지)/analysis(DB 적재)/재탐지 5개 지점 로깅, graceful 래퍼로 로깅 실패가 파이프라인 차단 안 함 | —                                                                    | ✅   |
+|     | app.py 탭 등록                | `dashboard/app.py` (수정) — Export 탭 추가                                | —                                                                    | ✅   |
+|     | _state.py 세션 키 추가        | `dashboard/_state.py` (수정) — KEY_EXPORT_FORMAT + 2-Step 캐싱용 READY_DATA/NAME/MIME/HASH 5개 | — | ✅ |
+|     | 단위 테스트                    | `tests/modules/test_dashboard/test_tab_export.py` (신규, 22 tests) — 헬퍼 단위(`_build_filter` / `_build_config_from_form` / `_settings_hash` / `_sanitize_filename` / `_make_filename` / `_build_audit_event` / `_parse_date`) + 캐시 무효화 + Excel/PDF/CSV bytes 시그니처 검증. `tests/modules/test_pipeline/test_pipeline.py` 확장(+5 tests) — audit_trail 호환성/단계별 로깅(3·4이벤트)/redetect/로깅 실패 격리 | —                                                                    | ✅   |
 
-### WU-28: LLM 헤더 탐지 고도화 `[S]` — #82 ⬜
+### WU-28: LLM 헤더 탐지 고도화 `[S]` — #82 ✅
 
 > **의존**: WU-18 (API 클라이언트)
-> 기존 5-factor 스코어링(header_detector.py)은 유지. confidence < `min_header_confidence`(0.3)일 때만 LLM 보조 판단.
+> 기존 5-factor 스코어링(header_detector.py)은 유지. 구조 confidence가 effective_threshold 미만일 때 LLM(gpt-5.4-mini)에 재검증 요청 → max() 합성으로 복원.
+> 환각 방지: `_serialize_context()`에서 NaN → "" 치환 + `[Row N]` 라벨 강제. LLM 미가용/JSON 파싱 실패/설정 off 시 기존 동작 폴백.
 
 | #   | 태스크                        | 파일                                                                   | 가이드                                      | 상태 |
 |-----|-------------------------------|------------------------------------------------------------------------|---------------------------------------------|------|
-| 82  | LLM 헤더 탐지 고도화          | `src/ingest/header_detector.py` (확장) — `_llm_header_check(row_data) -> float` confidence 보정 | [02-ingest](pre-plan/02-ingest.md) §848     | ⬜   |
-|     | 단위 테스트                    | `tests/modules/test_ingest/test_header_llm.py` (신규)                  | —                                           | ⬜   |
+| 82  | LLM 헤더 탐지 고도화          | `src/ingest/header_detector.py` (확장) — `_llm_header_check`/`_try_llm_boost`/`_serialize_context` + `HeaderLLMResponse` 스키마 + `enable_llm_header_fallback` 설정 | [02-ingest](pre-plan/02-ingest.md) §848     | ✅   |
+|     | 단위 테스트                    | `tests/modules/test_ingest/test_header_llm.py` (신규) — 10 케이스 PASS | —                                           | ✅   |
 
 ### WU-29: LLM 전처리 제안 확장 `[S]` — #83 ✅ (WU-18에 흡수)
 
 > WU-18에서 `preprocessing_advisor.py`의 `OllamaClient` → `get_chat_client("light")` 교체를 함께 수행. `rule_based_fallback`은 `RuntimeError` 흡수 + `self.client=None` 패턴으로 유지. 본 태스크는 독립 작업으로 남기지 않는다.
 
-### WU-30: 감사규칙 피드백 루프 `[M]` — #87 ⬜
+### WU-30: 감사규칙 피드백 루프 `[M]` — #87 ✅
 
 > **의존**: WU-25 (인사이트 생성기)
 > LLM이 새 데이터 패턴 분석 → audit_rules.yaml 개선 제안 → 사용자 승인.
 > 제안 카테고리: manual_source_codes, suspense_keywords, suspense_account_codes, revenue_account_prefixes, intercompany_identifiers.
-> 안전장치: LLM 제안은 항상 사용자 승인 필요 (자동 반영 금지).
+> 안전장치: LLM 제안은 항상 사용자 승인 필요 (자동 반영 금지). 회사별 오버라이드에만 저장 (전역 yaml 불변). 감사 로그 `rule_feedback_log.jsonl` append-only.
 
 | #   | 태스크                        | 파일                                                                           | 가이드                                  | 상태 |
 |-----|-------------------------------|--------------------------------------------------------------------------------|-----------------------------------------|------|
-| 87  | 피드백 루프                   | `src/llm/rule_feedback.py` (신규) — 데이터 N건 샘플링 → LLM 패턴 분석 → 신규 룰/파라미터 제안 | [08-llm](pre-plan/08-llm.md) §664-691  | ⬜   |
-|     | 대시보드 UI                   | `dashboard/components/rule_feedback_panel.py` (신규) — 제안 목록 + 근거 + 승인/거부 | —                                       | ⬜   |
-|     | 단위 테스트                    | `tests/modules/test_llm/test_rule_feedback.py` (신규)                          | —                                       | ⬜   |
+| 87  | 피드백 루프                   | `src/llm/rule_feedback.py` — 카테고리별 Top-K 집계 + 1회 LLM 호출 + 3-way 중복검사 + 회사 override 저장 | [08-llm](pre-plan/08-llm.md) §664-691  | ✅   |
+|     | 대시보드 UI                   | `dashboard/components/rule_feedback_panel.py` + app.py "룰 제안" 탭 — 카테고리별 expander + 근거 전표 + 승인/거부 | —                                       | ✅   |
+|     | 단위 테스트                    | `tests/modules/test_llm/test_rule_feedback.py` — 8건 통과 (중복/머지/IC왕복/감사로그/graceful) | —                                       | ✅   |
 
 ### 추천 실행 순서 (Sprint 단위)
 

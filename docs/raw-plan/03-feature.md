@@ -335,7 +335,7 @@ src/feature/
 
 | 데이터셋                | 행수      | 피처 생성 | 소요시간 | 결과                                                                           |
 |:------------------------|----------:|:---------:|:--------:|:-------------------------------------------------------------------------------|
-| datasynth (1,105K건)    | 1,104,914 | 18/18     | ~7.7s    | [e2e-datasynth.md](../../tests/test_feature/test-results/e2e-datasynth.md)     |
+| datasynth (1,108K건)    | 1,107,720 | 18/18     | ~7.7s    | [e2e-datasynth.md](../../tests/test_feature/test-results/e2e-datasynth.md)     |
 | sap-merged (331K건)     |   331,934 | 13/18     | ~0.8s    | [e2e-sap-merged.md](../../tests/test_feature/test-results/e2e-sap-merged.md) — graceful degradation |
 
 **engine.py 개선**: `_run_category()` try/except(KeyError) 추가 — 필수 컬럼 누락 시 해당 카테고리만 스킵, 나머지 정상 실행.
