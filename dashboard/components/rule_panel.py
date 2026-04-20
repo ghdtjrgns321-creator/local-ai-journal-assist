@@ -23,16 +23,15 @@ from src.detection.constants import (
     RiskLevel,
 )
 
-_LAYER_LABELS = {
-    Layer.LAYER_A: "Layer A (무결성)",
-    Layer.LAYER_B: "Layer B (부정)",
-    Layer.LAYER_C: "Layer C (이상)",
-    Layer.BENFORD: "Benford",
+_TRACK_LABELS = {
+    Layer.LAYER_A: "L1",
+    Layer.LAYER_B: "L2",
+    Layer.LAYER_C: "L3/L4",
+    Layer.BENFORD: "L4-02 Benford",
 }
 
-# Why: Benford는 별도 레이어(가중치 독립)이지만 룰 코드 C07로 Layer C 열에 표시.
-#      C07 비활성화 시 details 0 마스킹되지만 benford 레이어 점수는 가중치 슬라이더로 별도 제어.
-_PREFIX_MAP = {"A": Layer.LAYER_A, "B": Layer.LAYER_B, "C": Layer.LAYER_C}
+# Why: 내부 detector track은 유지하되, 사용자 패널에서는 L1/L2/L3/L4 기준으로 그룹핑한다.
+_RULE_GROUPS = ("L1", "L2", "L3", "L4")
 
 
 def _render_layer_weights() -> None:
@@ -43,7 +42,7 @@ def _render_layer_weights() -> None:
         current = {k.value: v for k, v in LAYER_WEIGHTS.items()}
 
     weights: dict[str, float] = {}
-    for layer, label in _LAYER_LABELS.items():
+    for layer, label in _TRACK_LABELS.items():
         weights[layer.value] = st.slider(
             label, 0.0, 1.0,
             value=current.get(layer.value, LAYER_WEIGHTS[layer]),
@@ -95,10 +94,10 @@ def _render_rule_toggles() -> None:
     disabled: list[str] = list(st.session_state.get(KEY_DISABLED_RULES, []))
     new_disabled: list[str] = []
 
-    cols = st.columns(3)
-    for i, (prefix, layer) in enumerate(_PREFIX_MAP.items()):
+    cols = st.columns(4)
+    for i, prefix in enumerate(_RULE_GROUPS):
         with cols[i]:
-            st.caption(_LAYER_LABELS[layer])
+            st.caption(prefix)
             for code, name in RULE_CODES.items():
                 if not code.startswith(prefix):
                     continue

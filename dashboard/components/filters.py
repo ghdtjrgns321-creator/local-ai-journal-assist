@@ -71,7 +71,7 @@ def render_filters(df: pd.DataFrame) -> None:
     rule_opts = [f"{k} ({v})" for k, v in RULE_CODES.items()]
     selected_rules = st.multiselect("위반 룰", rule_opts)
     if selected_rules:
-        # Why: "A01 (차대변 균형)" → "A01" 추출.
+        # Why: "L1-01 (차대변 균형)" → "L1-01" 추출.
         filters["rule_codes"] = [r.split(" ")[0] for r in selected_rules]
 
     # ── 차원 필터 6개 (st.expander) ───────────────────────

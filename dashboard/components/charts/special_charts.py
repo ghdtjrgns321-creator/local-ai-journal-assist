@@ -37,7 +37,7 @@ def fraud_type_treemap(df: pd.DataFrame) -> go.Figure:
 
 
 def layer_score_radar(scores: dict[str, float]) -> go.Figure:
-    """선택 전표의 Layer A/B/C/Benford 점수 방사형 차트.
+    """선택 전표의 L1/L2/L3/L4/Benford 점수 방사형 차트.
 
     Args:
         scores: {"layer_a": 0.3, "layer_b": 0.8, ...} 형태.

@@ -50,9 +50,9 @@ def test_amount_range_filter(sample_df):
 
 def test_rule_codes_filter(sample_df):
     """flagged_rules CSV 문자열에서 set intersection으로 필터."""
-    result = apply_filters(sample_df, {"rule_codes": ["B02"]})
+    result = apply_filters(sample_df, {"rule_codes": ["L2-01"]})
     assert len(result) > 0
-    assert all(result["flagged_rules"].str.contains("B02"))
+    assert all(result["flagged_rules"].str.contains("L2-01"))
 
 
 # ── 차원 필터 ──────────────────────────────────────────────────
@@ -109,10 +109,10 @@ def test_single_row_filter(single_row_df):
 
 def test_rule_codes_filter_multiple(sample_df):
     """여러 룰 코드 동시 필터 — 벡터화 정규식 매칭 검증."""
-    result = apply_filters(sample_df, {"rule_codes": ["B02", "A01"]})
+    result = apply_filters(sample_df, {"rule_codes": ["L2-01", "L1-01"]})
     assert len(result) > 0
     assert all(
-        result["flagged_rules"].str.contains("B02") | result["flagged_rules"].str.contains("A01")
+        result["flagged_rules"].str.contains("L2-01") | result["flagged_rules"].str.contains("L1-01")
     )
 
 
@@ -120,7 +120,7 @@ def test_large_df_filter_performance(large_df):
     """10,000행 필터 — 벡터화 성능 확인 (에러 없이 완료)."""
     result = apply_filters(large_df, {
         "risk_levels": ["High", "Medium"],
-        "rule_codes": ["B02", "C01"],
+        "rule_codes": ["L2-01", "L3-04"],
         "company_codes": ["C001"],
     })
     assert all(result["risk_level"].isin(["High", "Medium"]))

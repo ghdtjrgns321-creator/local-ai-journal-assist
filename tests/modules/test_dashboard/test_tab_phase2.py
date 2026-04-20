@@ -33,7 +33,7 @@ def test_build_performance_rule_frame_returns_dataframe():
         rule_metrics=[
             RuleMetric(
                 track_name="layer_a",
-                rule_code="A01",
+                rule_code="L1-01",
                 label_docs=3,
                 flagged_docs=2,
                 tp_docs=1,
@@ -48,5 +48,5 @@ def test_build_performance_rule_frame_returns_dataframe():
 
     df = tab_phase2._build_performance_rule_frame(report)
 
-    assert list(df["rule_code"]) == ["A01"]
+    assert list(df["rule_code"]) == ["L1-01"]
     assert list(df["precision"]) == ["50.0%"]

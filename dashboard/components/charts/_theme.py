@@ -44,10 +44,10 @@ LAYER_COLORS: dict[str, str] = {
 }
 
 LAYER_LABELS: dict[str, str] = {
-    "layer_a": "Layer A (무결성)",
-    "layer_b": "Layer B (부정)",
-    "layer_c": "Layer C (징후)",
-    "benford": "Benford",
+    "layer_a": "L1",
+    "layer_b": "L2",
+    "layer_c": "L3/L4",
+    "benford": "L4-02 Benford",
 }
 
 # ── 범용 차트 시퀀스 색상 (8색) ────────────────────────────────

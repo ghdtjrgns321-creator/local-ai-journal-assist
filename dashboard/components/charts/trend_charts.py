@@ -49,7 +49,7 @@ def monthly_trend(df: pd.DataFrame) -> go.Figure:
 def hourly_heatmap(df: pd.DataFrame) -> go.Figure:
     """요일(월~일) x 시간(0~23) 전표 건수 히트맵.
 
-    심야(22~6) / 주말 영역에 점선 박스 오버레이 → C02/C03 탐지 연계.
+    심야(22~6) / 주말 영역에 점선 박스 오버레이 → L3-05/L3-06 탐지 연계.
     """
     if df.empty or "posting_date" not in df.columns:
         return empty_figure("시간대별 데이터가 없습니다")
@@ -71,7 +71,7 @@ def hourly_heatmap(df: pd.DataFrame) -> go.Figure:
         hovertemplate="시간: %{x}시<br>요일: %{y}<br>건수: %{z}<extra></extra>",
     ))
 
-    # Why: 심야(22~6) 영역 — 두 구간으로 분리 (0~6시 + 22~23시). C03 탐지 연계.
+    # Why: 심야(22~6) 영역 — 두 구간으로 분리 (0~6시 + 22~23시). L3-06 탐지 연계.
     fig.add_shape(
         type="rect", x0=-0.5, x1=6.5, y0=-0.5, y1=6.5,
         line={"dash": "dash", "color": "#DC2626", "width": 2},
@@ -80,7 +80,7 @@ def hourly_heatmap(df: pd.DataFrame) -> go.Figure:
         type="rect", x0=21.5, x1=23.5, y0=-0.5, y1=6.5,
         line={"dash": "dash", "color": "#DC2626", "width": 2},
     )
-    # Why: 주말(토·일) 영역 점선 박스 — C02 탐지 영역 시각화.
+    # Why: 주말(토·일) 영역 점선 박스 — L3-05 탐지 영역 시각화.
     fig.add_shape(
         type="rect", x0=-0.5, x1=23.5, y0=4.5, y1=6.5,
         line={"dash": "dash", "color": "#D97706", "width": 2},

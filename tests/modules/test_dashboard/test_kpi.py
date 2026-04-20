@@ -55,7 +55,7 @@ def test_anomaly_amount_no_duplicate_counting():
         "document_id": ["D1", "D1", "D2"],
         "risk_level": ["High", "High", "Medium"],
         "debit_amount": [1000, 2000, 500],
-        "flagged_rules": ["B02", "B02", "B06"],
+        "flagged_rules": ["L2-01", "L2-01", "L1-05"],
     })
     kpis = compute_kpis(df)
     # D1: 1000+2000=3000 (전표 합계), D2: 500 → 총 3500
@@ -70,7 +70,7 @@ def test_anomaly_amount_low_excluded():
         "document_id": ["D1", "D2", "D3"],
         "risk_level": ["Low", "Normal", "High"],
         "debit_amount": [10000, 20000, 500],
-        "flagged_rules": ["C01", "", "B02"],
+        "flagged_rules": ["L3-04", "", "L2-01"],
     })
     kpis = compute_kpis(df)
     # High인 D3만 포함
@@ -86,10 +86,10 @@ def test_fraud_suspect_counts_b_layer():
         "document_id": ["D1", "D1", "D2", "D3"],
         "risk_level": ["High", "High", "Medium", "Normal"],
         "debit_amount": [100, 200, 300, 400],
-        "flagged_rules": ["B02,C01", "B02", "A01", "B08"],
+        "flagged_rules": ["L2-01,L3-04", "L2-01", "L1-01", "L3-02"],
     })
     kpis = compute_kpis(df)
-    # Why: D1(B02 2라인이지만 전표 1건), D3(B08) → 전표 단위 2건
+    # Why: D1(L2-01 2라인이지만 전표 1건), D3(L3-02) → 전표 단위 2건
     assert kpis["fraud_suspect"] == 2
 
 

@@ -42,10 +42,10 @@ def rule_violation_bar(df: pd.DataFrame) -> go.Figure:
         return empty_figure("위반된 룰이 없습니다")
 
     counts = rules.value_counts()
-    # Why: 알파벳순 정렬로 A01→C12 일관된 시각적 순서 보장.
+    # Why: 알파벳순 정렬로 L1-01→L4-05 일관된 시각적 순서 보장.
     counts = counts.reindex(sorted(counts.index))
 
-    # Why: Y축 라벨을 "C12 (비정상시간 집중입력)" 형태로 → 코드 암기 부담 제거.
+    # Why: Y축 라벨을 "L4-05 (비정상시간 집중입력)" 형태로 → 코드 암기 부담 제거.
     label_map = {code: f"{code} ({RULE_CODES.get(code, code)})" for code in counts.index}
 
     fig = go.Figure()

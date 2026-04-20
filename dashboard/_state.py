@@ -88,7 +88,7 @@ class FilterState(TypedDict, total=False):
     date_range: tuple[str, str]         # ISO ("2022-01-01", "2022-12-31")
     risk_levels: list[str]              # ["High", "Medium", ...]
     amount_range: tuple[float, float]   # (min_amount, max_amount)
-    rule_codes: list[str]               # ["A01", "B03", ...]
+    rule_codes: list[str]               # ["L1-01", "L1-04", ...]
 
     # 차원 필터 6개 (st.expander 내부)
     business_processes: list[str]
