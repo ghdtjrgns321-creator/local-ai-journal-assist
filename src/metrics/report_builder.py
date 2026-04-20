@@ -43,11 +43,12 @@ def build_markdown_report(report: PerformanceReport) -> str:
 
     if report.rule_metrics:
         lines.append("\n## Rule Metrics\n")
-        lines.append("| Track | Rule | Labels | Flagged | TP | FP | FN | Precision | Recall | F1 |")
-        lines.append("|:--|:--|--:|--:|--:|--:|--:|--:|--:|--:|")
+        lines.append("| Layer | Detector | Rule | Status | Labels | Flagged | TP | FP | FN | Precision | Recall | F1 |")
+        lines.append("|:--|:--|:--|:--|--:|--:|--:|--:|--:|--:|--:|--:|")
         for metric in report.rule_metrics:
+            status = "N/A" if metric.evaluation_status == "no_label" else "OK"
             lines.append(
-                f"| {metric.track_name} | {metric.rule_code} | {metric.label_docs:,} | "
+                f"| {metric.action_layer or '-'} | {metric.track_name} | {metric.rule_code} | {status} | {metric.label_docs:,} | "
                 f"{metric.flagged_docs:,} | {metric.tp_docs:,} | {metric.fp_docs:,} | "
                 f"{metric.fn_docs:,} | {_fmt_pct(metric.precision)} | "
                 f"{_fmt_pct(metric.recall)} | {_fmt_pct(metric.f1)} |"

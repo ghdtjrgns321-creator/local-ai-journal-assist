@@ -1090,9 +1090,9 @@ class AuditPipeline:
             return None
 
     def _try_access_audit_detection(self, df: pd.DataFrame) -> DetectionResult | None:
-        """Access Audit 탐지기 실행. change_log 없으면 AA01만 graceful 스킵.
+        """Access Audit 탐지기 실행. change_log 없으면 AL1-01만 graceful 스킵.
 
-        Why: AA01(전표 수정이력)은 change_log 테이블 JOIN 필요.
+        Why: AL1-01(전표 수정이력)은 change_log 테이블 JOIN 필요.
              _try_relational_detection의 doc_flow_df 패턴과 동일한 외부 DF 주입.
         """
         if not getattr(self._ctx.settings, "enable_access_audit_detection", False):
@@ -1110,7 +1110,7 @@ class AuditPipeline:
                         "FROM change_log"
                     ).fetchdf()
                 except Exception:
-                    logger.debug("change_log 미존재 — AA01 스킵")
+                    logger.debug("change_log 미존재 — AL1-01 스킵")
 
             det = AccessAuditDetector(
                 self._ctx.settings,

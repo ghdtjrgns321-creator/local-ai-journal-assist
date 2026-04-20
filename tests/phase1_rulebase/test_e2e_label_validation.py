@@ -37,45 +37,45 @@ OUTPUT_MD = OUTPUT_DIR / "e2e-label-validation.md"
 #      라벨에만 존재하는 타입(Phase 2/3)은 coverage_only로 분류.
 
 RULE_TO_LABEL: dict[str, list[str]] = {
-    "A01": ["UnbalancedEntry"],
-    "A02": ["MissingField"],
-    "A03": ["InvalidAccount"],
-    "B01": ["RevenueManipulation"],
-    "B02": ["JustBelowThreshold"],
-    "B03": ["ExceededApprovalLimit"],
-    "B04": ["DuplicatePayment"],
-    "B05": ["DuplicateEntry", "ExactDuplicateAmount"],
-    "B06": ["SelfApproval"],
-    "B07": ["SegregationOfDutiesViolation"],
-    "B08": ["ManualOverride"],
-    "B09": ["SkippedApproval"],
-    "B10": ["CircularIntercompany", "CircularTransaction"],
-    "B11": ["ImproperCapitalization"],
-    "C01": ["RushedPeriodEnd"],
-    "C02": ["WeekendPosting"],
-    "C03": ["AfterHoursPosting", "UnusualTiming"],
-    "C04": ["BackdatedEntry", "LatePosting"],
-    "C05": ["WrongPeriod"],
-    "C06": ["VagueDescription"],
-    "C07": ["BenfordViolation"],
-    "C08": ["UnusuallyHighAmount", "StatisticalOutlier"],
-    "C09": ["UnusualAccountPair"],
-    "C10": [],  # SuspenseAccount — 라벨에 대응 타입 없음
-    "C11": ["ReversedAmount"],
-    "C12": [],  # AbnormalHoursConcentration — 라벨에 대응 타입 없음
+    "L1-01": ["UnbalancedEntry"],
+    "L1-02": ["MissingField"],
+    "L1-03": ["InvalidAccount"],
+    "L4-01": ["RevenueManipulation"],
+    "L2-01": ["JustBelowThreshold"],
+    "L1-04": ["ExceededApprovalLimit"],
+    "L2-02": ["DuplicatePayment"],
+    "L2-03": ["DuplicateEntry", "ExactDuplicateAmount"],
+    "L1-05": ["SelfApproval"],
+    "L1-06": ["SegregationOfDutiesViolation"],
+    "L3-02": ["ManualOverride"],
+    "L1-07": ["SkippedApproval"],
+    "L3-03": ["CircularIntercompany", "CircularTransaction"],
+    "L2-04": ["ImproperCapitalization"],
+    "L3-04": ["RushedPeriodEnd"],
+    "L3-05": ["WeekendPosting"],
+    "L3-06": ["AfterHoursPosting", "UnusualTiming"],
+    "L3-07": ["BackdatedEntry", "LatePosting"],
+    "L1-08": ["WrongPeriod"],
+    "L3-08": ["VagueDescription"],
+    "L4-02": ["BenfordViolation"],
+    "L4-03": ["UnusuallyHighAmount", "StatisticalOutlier"],
+    "L4-04": ["UnusualAccountPair"],
+    "L3-09": [],  # SuspenseAccount — 라벨에 대응 타입 없음
+    "L2-06": ["ReversedAmount"],
+    "L4-05": [],  # AbnormalHoursConcentration — 라벨에 대응 타입 없음
 }
 
 # Why: 룰이 속한 레이어 (details 컬럼에서 조회할 트랙명)
 RULE_TO_LAYER: dict[str, str] = {
-    "A01": "layer_a", "A02": "layer_a", "A03": "layer_a",
-    "B01": "layer_b", "B02": "layer_b", "B03": "layer_b",
-    "B04": "layer_b", "B05": "layer_b", "B06": "layer_b",
-    "B07": "layer_b", "B08": "layer_b", "B09": "layer_b",
-    "B10": "layer_b", "B11": "layer_b",
-    "C01": "layer_c", "C02": "layer_c", "C03": "layer_c",
-    "C04": "layer_c", "C05": "layer_c", "C06": "layer_c",
-    "C07": "benford", "C08": "layer_c", "C09": "layer_c",
-    "C10": "layer_c", "C11": "layer_c", "C12": "layer_c",
+    "L1-01": "layer_a", "L1-02": "layer_a", "L1-03": "layer_a",
+    "L4-01": "layer_b", "L2-01": "layer_b", "L1-04": "layer_b",
+    "L2-02": "layer_b", "L2-03": "layer_b", "L1-05": "layer_b",
+    "L1-06": "layer_b", "L3-02": "layer_b", "L1-07": "layer_b",
+    "L3-03": "layer_b", "L2-04": "layer_b",
+    "L3-04": "layer_c", "L3-05": "layer_c", "L3-06": "layer_c",
+    "L3-07": "layer_c", "L1-08": "layer_c", "L3-08": "layer_c",
+    "L4-02": "benford", "L4-03": "layer_c", "L4-04": "layer_c",
+    "L3-09": "layer_c", "L2-06": "layer_c", "L4-05": "layer_c",
 }
 
 
@@ -105,7 +105,7 @@ def run_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def run_detection(df: pd.DataFrame) -> dict:
-    """3레이어 + Benford 독립 트랙 탐지 + 점수 집계."""
+    """L1/L2/L3/L4 + Benford 독립 트랙 탐지 + 점수 집계."""
     results: dict[str, DetectionResult] = {}
     timings: dict[str, float] = {}
 
@@ -414,10 +414,10 @@ def generate_report(
     md.append(f"| {'단계':20s} | {'소요(s)':>10s} | {'룰 수':>6s} |")
     md.append(f"|:{'-'*20}|{'-'*10}:|{'-'*6}:|")
     for track, title in [
-        ("layer_a", "Layer A (무결성)"),
-        ("layer_b", "Layer B (부정)"),
-        ("layer_c", "Layer C (이상징후)"),
-        ("benford", "Benford (독립)"),
+        ("layer_a", "L1"),
+        ("layer_b", "L2"),
+        ("layer_c", "L3/L4"),
+        ("benford", "L4-02 Benford"),
         ("aggregator", "Score Aggregator"),
     ]:
         t = timings.get(track, 0.0)
@@ -427,10 +427,10 @@ def generate_report(
     # ── §8 레이어별 룰 상세 ──
     md.append("\n## 8. 레이어별 룰 탐지 결과\n")
     for track, title in [
-        ("layer_a", "Layer A (무결성)"),
-        ("layer_b", "Layer B (부정)"),
-        ("layer_c", "Layer C (이상징후)"),
-        ("benford", "Benford (독립)"),
+        ("layer_a", "L1"),
+        ("layer_b", "L2"),
+        ("layer_c", "L3/L4"),
+        ("benford", "L4-02 Benford"),
     ]:
         r = results[track]
         md.append(f"### {title}\n")

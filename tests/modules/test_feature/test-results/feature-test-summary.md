@@ -1,6 +1,6 @@
 # Feature Engine 테스트 결과 통합 리포트
 
-> 실행일: 2026-03-26 | 총 195 passed, 0 failed (C12 time_zone_category 추가)
+> 실행일: 2026-03-26 | 총 195 passed, 0 failed (L4-05 time_zone_category 추가)
 
 ---
 

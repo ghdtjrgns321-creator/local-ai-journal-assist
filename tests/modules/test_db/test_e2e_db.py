@@ -58,7 +58,7 @@ def run_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def run_detection(df: pd.DataFrame) -> dict:
-    """3레이어 탐지 + 점수 집계."""
+    """L1/L2/L3/L4 탐지 + 점수 집계."""
     results: dict[str, DetectionResult] = {}
     timings: dict[str, float] = {}
 
@@ -429,7 +429,7 @@ def main():
     print(f"  → 피처 생성 완료 ({timings['feature']:.2f}s)")
 
     # Step 3: 탐지 + 점수 집계
-    print("[3/6] Detection 3레이어 + score_aggregator...")
+    print("[3/6] Detection L1/L2/L3/L4 + score_aggregator...")
     t0 = time.perf_counter()
     det = run_detection(df)
     timings["detection"] = time.perf_counter() - t0

@@ -1,7 +1,7 @@
-"""groupby 기반 부정 탐지 룰 — B04, B05, B11.
+"""groupby 기반 부정 탐지 룰 — L2-02, L2-03, L2-04.
 
 원본 컬럼에 직접 접근하는 연산 집약 룰.
-B04는 양방향 diff로 첫 번째 거래 누락을 방지한다.
+L2-02는 양방향 diff로 첫 번째 거래 누락을 방지한다.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ def b04_duplicate_payment(
     df: pd.DataFrame,
     window_days: int = 30,
 ) -> pd.Series:
-    """B04 중복 지급: P2P 내 동일 거래처 + 금액 + 기간 내 정밀 탐지.
+    """L2-02 중복 지급: P2P 내 동일 거래처 + 금액 + 기간 내 정밀 탐지.
 
     Why: PCAOB AS 2401 §32 — 동일 건 이중 지급은 부정 은닉 수단.
 
@@ -91,10 +91,10 @@ def b04_duplicate_payment(
 
 
 def b05_duplicate_entry(df: pd.DataFrame) -> pd.Series:
-    """B05 중복 전표: 동일 GL계정 + 금액 + 전기일 exact match.
+    """L2-03 중복 전표: 동일 GL계정 + 금액 + 전기일 exact match.
 
     Why: 외감법 §8①4호 — 동일 전표 반복은 가공 전표(위조) 징후.
-    B04와 차별점: B04=기간 내 유사, B05=정확 중복.
+    L2-02와 차별점: L2-02=기간 내 유사, L2-03=정확 중복.
     """
     required = ["gl_account", "posting_date", "debit_amount", "credit_amount"]
     missing = [c for c in required if c not in df.columns]
@@ -110,7 +110,7 @@ def b05_duplicate_entry(df: pd.DataFrame) -> pd.Series:
 
 
 def b11_expense_capitalization(df: pd.DataFrame) -> pd.Series:
-    """B11 비용 자산화: 동일 전표 내 차변=자산(15xx) + 대변=비용(6xxx) 조합.
+    """L2-04 비용 자산화: 동일 전표 내 차변=자산(15xx) + 대변=비용(6xxx) 조합.
 
     Why: 240호 §32, FSS 분식회계 사례 — 비용을 자산으로 이전하여 이익을 부풀리는 패턴.
     알고리즘: 차변 자산 뷰 × 대변 비용 뷰를 document_id 기준 inner merge.

@@ -1,6 +1,6 @@
 """전표 속성 기반 패턴 매칭 파생변수 5개 생성 모듈.
 
-B01(매출계정), B08(수기전표), B10(관계사), B11/C06(가계정), C07(Benford) 룰 대응.
+L4-01(매출계정), L3-02(수기전표), L3-03(관계사), L2-04/L3-08(가계정), L4-02(Benford) 룰 대응.
 감사 업무 룰(키워드/코드)은 config/audit_rules.yaml에서 로드 — 함수 인자로 주입.
 """
 
@@ -25,7 +25,7 @@ def add_is_manual_je(
     df: pd.DataFrame,
     manual_codes: list[str],
 ) -> pd.DataFrame:
-    """B08: source 컬럼이 수기 전표 코드와 매칭되면 True.
+    """L3-02: source 컬럼이 수기 전표 코드와 매칭되면 True.
 
     감사 관점: 수기 전표는 자동화 통제 우회 — 부정 전표 가능성.
     manual_codes는 ERP마다 다름 (SAP: SA, Oracle: Manual 등).
@@ -51,7 +51,7 @@ def add_is_intercompany(
     df: pd.DataFrame,
     identifiers: list[str],
 ) -> pd.DataFrame:
-    """B10: 관계사 거래 여부. gl_account에서 IC 전용 계정 prefix 매칭.
+    """L3-03: 관계사 거래 여부. gl_account에서 IC 전용 계정 prefix 매칭.
 
     감사 관점: 관계사 거래는 순환거래·이전가격 위험.
     identifiers는 관계사 채권/채무 GL 계정 prefix 목록 — UI에서 입력.
@@ -77,7 +77,7 @@ def add_is_revenue_account(
     df: pd.DataFrame,
     prefixes: list[str],
 ) -> pd.DataFrame:
-    """B01: gl_account가 매출 계정(prefix 매칭)이면 True.
+    """L4-01: gl_account가 매출 계정(prefix 매칭)이면 True.
 
     감사 관점: 매출 계정 이상 변동 탐지의 기준 필터.
     K-IFRS 기준 4xxx가 표준이나, 회사마다 다를 수 있음.
@@ -98,7 +98,7 @@ def add_is_revenue_account(
 
 
 def add_first_digit(df: pd.DataFrame) -> pd.DataFrame:
-    """C07: 금액의 첫 번째 유효숫자(1~9) 추출 — Benford 분석 입력.
+    """L4-02: 금액의 첫 번째 유효숫자(1~9) 추출 — Benford 분석 입력.
 
     str.extract(r"([1-9])") 사용 — 과학표기법, 소수, 음수 모두 안전 처리.
     0원 → NaN (Benford 분석 대상 외).
@@ -130,7 +130,7 @@ def add_is_suspense_account(
     keywords: list[str],
     account_codes: list[str] | None = None,
 ) -> pd.DataFrame:
-    """B11/C06: 가계정·미결산 계정 하이브리드 판별.
+    """L2-04/L3-08: 가계정·미결산 계정 하이브리드 판별.
 
     감사 관점: 실무에서는 GL 코드가 1순위 탐지 기준 — 횡령범은 적요를 위장하지만
     계정 코드는 변경할 수 없음. 텍스트 키워드 매칭과 OR 결합하여 양쪽 모두 커버.

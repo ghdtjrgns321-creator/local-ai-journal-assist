@@ -1,4 +1,4 @@
-"""C01~C06, C08, C10 피처 기반 이상 징후 룰 단위 테스트."""
+"""L3-04~L3-08, L4-03, L3-09 피처 기반 이상 징후 룰 단위 테스트."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from src.detection.anomaly_rules_simple import (
 
 @pytest.fixture
 def anomaly_feature_df() -> pd.DataFrame:
-    """Layer C 피처가 사전 포함된 테스트 DataFrame (8행)."""
+    """L3/L4 피처가 사전 포함된 테스트 DataFrame (8행)."""
     return pd.DataFrame({
         "debit_amount": [100e6, 50e6, 10e6, 80e6, 5e6, 200e6, 30e6, 60e6],
         "credit_amount": [0.0] * 8,
@@ -35,10 +35,10 @@ def anomaly_feature_df() -> pd.DataFrame:
     })
 
 
-# ── C01 기말 대규모 ──────────────────────────────────────────
+# ── L3-04 기말 대규모 ──────────────────────────────────────────
 
 
-class TestC01:
+class TestL3-04:
     def test_period_end_high_amount_flagged(self, anomaly_feature_df: pd.DataFrame) -> None:
         """월말 + 금액 > Q3 → flagged."""
         result = c01_period_end_large(anomaly_feature_df, quantile=0.75)
@@ -100,10 +100,10 @@ class TestC01:
         pd.testing.assert_series_equal(result_with_param, result_without)
 
 
-# ── C02 주말 전기 ──────────────────────────────────────────
+# ── L3-05 주말 전기 ──────────────────────────────────────────
 
 
-class TestC02:
+class TestL3-05:
     def test_weekend_flagged(self, anomaly_feature_df: pd.DataFrame) -> None:
         """토/일 → flagged."""
         result = c02_weekend_entry(anomaly_feature_df)
@@ -122,10 +122,10 @@ class TestC02:
         assert not result[7]
 
 
-# ── C03 심야 전기 ──────────────────────────────────────────
+# ── L3-06 심야 전기 ──────────────────────────────────────────
 
 
-class TestC03:
+class TestL3-06:
     def test_after_hours_flagged(self, anomaly_feature_df: pd.DataFrame) -> None:
         """업무시간 외 → flagged."""
         result = c03_after_hours_entry(anomaly_feature_df)
@@ -165,10 +165,10 @@ class TestC03:
         assert result.tolist() == [True, False, True, False]
 
 
-# ── C04 소급 전기 ──────────────────────────────────────────
+# ── L3-07 소급 전기 ──────────────────────────────────────────
 
 
-class TestC04:
+class TestL3-07:
     def test_backdated_over_threshold_flagged(self, anomaly_feature_df: pd.DataFrame) -> None:
         """abs(days_backdated) > 30 → flagged."""
         result = c04_backdated_entry(anomaly_feature_df, threshold_days=30)
@@ -187,10 +187,10 @@ class TestC04:
         assert not c04_backdated_entry(df).any()
 
 
-# ── C05 기간 불일치 ────────────────────────────────────────
+# ── L1-08 기간 불일치 ────────────────────────────────────────
 
 
-class TestC05:
+class TestL1-08:
     def test_mismatch_flagged(self, anomaly_feature_df: pd.DataFrame) -> None:
         result = c05_fiscal_period_mismatch(anomaly_feature_df)
         assert result[2]
@@ -201,10 +201,10 @@ class TestC05:
         assert not result[0]
 
 
-# ── C06 위험 적요 ──────────────────────────────────────────
+# ── L3-08 위험 적요 ──────────────────────────────────────────
 
 
-class TestC06:
+class TestL3-08:
     def test_missing_quality_flagged(self, anomaly_feature_df: pd.DataFrame) -> None:
         """description_quality=missing → flagged."""
         result = c06_risky_description(anomaly_feature_df)
@@ -229,10 +229,10 @@ class TestC06:
         assert not result[4]
 
 
-# ── C08 이상 고액 ──────────────────────────────────────────
+# ── L4-03 이상 고액 ──────────────────────────────────────────
 
 
-class TestC08:
+class TestL4-03:
     def test_high_zscore_flagged(self, anomaly_feature_df: pd.DataFrame) -> None:
         """abs(zscore) > 3.0 → flagged."""
         result = c08_amount_outlier(anomaly_feature_df, zscore_threshold=3.0)
@@ -250,10 +250,10 @@ class TestC08:
         assert not c08_amount_outlier(df).any()
 
 
-# ── C10 가수금 장기체류 ──────────────────────────────────────
+# ── L3-09 가수금 장기체류 ──────────────────────────────────────
 
 
-class TestC10:
+class TestL3-09:
     def test_suspense_flagged(self) -> None:
         """is_suspense_account=True → flagged."""
         df = pd.DataFrame({

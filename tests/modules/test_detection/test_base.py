@@ -14,7 +14,7 @@ class TestValidateInput:
     def test_empty_df_raises(self):
         """빈 DataFrame → ValueError."""
         df = pd.DataFrame()
-        with pytest.raises(ValueError, match="비어"):
+        with pytest.raises(ValueError, match="empty"):
             validate_input(df, ["col_a"])
 
     def test_returns_missing_columns(self):
@@ -34,12 +34,12 @@ class TestRuleFlag:
 
     def test_flag_rate_normal(self):
         """플래그 비율 계산."""
-        flag = RuleFlag("A01", "차대변 균형", 5, flagged_count=10, total_count=100)
+        flag = RuleFlag("L1-01", "차대변 균형", 5, flagged_count=10, total_count=100)
         assert flag.flag_rate == pytest.approx(0.1)
 
     def test_flag_rate_zero_total(self):
         """total_count=0 → 0.0 (ZeroDivisionError 방지)."""
-        flag = RuleFlag("A01", "차대변 균형", 5, flagged_count=0, total_count=0)
+        flag = RuleFlag("L1-01", "차대변 균형", 5, flagged_count=0, total_count=0)
         assert flag.flag_rate == 0.0
 
 
@@ -80,13 +80,13 @@ class TestDetectionResult:
             details=pd.DataFrame(),
             metadata={"elapsed": 0.01},
         )
-        assert result.display_name == "Layer A"
+        assert result.display_name == "L1"
         assert result.maturity == "production"
         assert result.default_enabled is True
         assert result.activation_requirements == []
-        assert "기본 통제 계층" in result.explanation_summary
+        assert "structural integrity" in result.explanation_summary
         assert "debit_amount" in result.used_columns
-        assert "ISA 315" in result.references
+        assert result.references == []
 
     def test_metadata_can_override_profile_defaults(self):
         """metadata에 명시된 운영 상태 값이 우선한다."""

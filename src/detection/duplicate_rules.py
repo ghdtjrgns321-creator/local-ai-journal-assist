@@ -1,6 +1,6 @@
 """DuplicateDetector 서브룰 — Exact / Fuzzy / Split / TimeShift.
 
-Why: 기존 B05 exact match recall 9%. 유사 금액, 분할 거래, 시차 중복을 잡기 위해
+Why: 기존 L2-03 exact match recall 9%. 유사 금액, 분할 거래, 시차 중복을 잡기 위해
      4가지 전략을 독립 함수로 분리. 각 함수는 pd.Series[float] (0.0~1.0) 반환.
 """
 
@@ -30,13 +30,13 @@ def _normalize_text(s: str) -> str:
     return " ".join(s.split())
 
 
-# ── B05a: Exact Duplicate ────────────────────────────────────
+# ── L2-03a: Exact Duplicate ────────────────────────────────────
 
 
 def b05a_exact_duplicate(df: pd.DataFrame) -> pd.Series:
     """gl_account + 금액 + posting_date 정확 일치 → 1.0, 아니면 0.0.
 
-    Why: 기존 B05 로직 재사용. keep=False로 원본·중복 양쪽 모두 플래그.
+    Why: 기존 L2-03 로직 재사용. keep=False로 원본·중복 양쪽 모두 플래그.
     """
     required = ["gl_account", "posting_date", "debit_amount", "credit_amount"]
     if any(c not in df.columns for c in required):
@@ -48,7 +48,7 @@ def b05a_exact_duplicate(df: pd.DataFrame) -> pd.Series:
     return duped.astype(float)
 
 
-# ── B05b: Fuzzy Duplicate ────────────────────────────────────
+# ── L2-03b: Fuzzy Duplicate ────────────────────────────────────
 
 
 def b05b_fuzzy_duplicate(
@@ -114,7 +114,7 @@ def b05b_fuzzy_duplicate(
     return scores
 
 
-# ── B05c: Split Transaction ──────────────────────────────────
+# ── L2-03c: Split Transaction ──────────────────────────────────
 
 
 def b05c_split_transaction(
@@ -177,7 +177,7 @@ def b05c_split_transaction(
     return scores
 
 
-# ── B05d: Time-Shifted Duplicate ─────────────────────────────
+# ── L2-03d: Time-Shifted Duplicate ─────────────────────────────
 
 
 def b05d_time_shifted_duplicate(
@@ -189,7 +189,7 @@ def b05d_time_shifted_duplicate(
 
     Why: 같은 거래를 다른 날짜에 중복 입력하는 패턴 포착.
     점수: 1 - (day_diff / window_days). 가까울수록 높은 점수.
-    B05a(같은 날짜)와 겹치는 건은 제외.
+    L2-03a(같은 날짜)와 겹치는 건은 제외.
     """
     scores = pd.Series(0.0, index=df.index)
 
@@ -218,7 +218,7 @@ def b05d_time_shifted_duplicate(
                 day_diff = abs(
                     (grp_dates[i] - grp_dates[j]) / np.timedelta64(1, "D")
                 )
-                # Why: 같은 날짜(day_diff=0)는 B05a에서 처리 → 여기선 제외
+                # Why: 같은 날짜(day_diff=0)는 L2-03a에서 처리 → 여기선 제외
                 if day_diff == 0 or day_diff > window_days:
                     continue
 

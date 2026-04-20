@@ -1,6 +1,6 @@
 """금액 기반 파생변수 5개 생성 모듈.
 
-B02/B03(승인한도), B04(라운드넘버), C08(Z-score) 룰 대응 피처.
+L2-01/L1-04(승인한도), L2-02(라운드넘버), L4-03(Z-score) 룰 대응 피처.
 ingest 완료된 표준 DataFrame을 입력으로 받는다.
 """
 
@@ -152,7 +152,7 @@ def add_is_near_threshold(
     thresholds: list[int | float],
     ratio: float,
 ) -> pd.DataFrame:
-    """B02: 다단계 승인한도 직하 여부.
+    """L2-01: 다단계 승인한도 직하 여부.
 
     각 레벨별 threshold * ratio ≤ base < threshold 구간에 하나라도 해당하면 True.
     예: thresholds=[10M, 100M, 1B] → 9M~10M, 90M~100M, 900M~1B 중 하나에 속하면 플래그.
@@ -173,7 +173,7 @@ def add_exceeds_threshold(
     base: pd.Series,
     thresholds: list[int | float],
 ) -> pd.DataFrame:
-    """B03: 승인한도 초과 여부 + 해당 한도 레벨.
+    """L1-04: 승인한도 초과 여부 + 해당 한도 레벨.
 
     Why: 6단계 한도(10M~50B) 중 최저 한도를 초과하면 True.
          이전 로직(max 전용)은 50B 이상만 4행 탐지 → 실무 무의미.
@@ -190,7 +190,7 @@ def add_exceeds_threshold(
     # Why: 최저 한도 미만이면 어떤 레벨도 초과하지 않음 → False
     df["exceeds_threshold"] = base >= min_threshold
 
-    # Why: 행별로 초과한 가장 높은 한도의 레벨을 기록 (B09 등에서 활용 가능)
+    # Why: 행별로 초과한 가장 높은 한도의 레벨을 기록 (L1-07 등에서 활용 가능)
     level = pd.Series(0, index=df.index, dtype=int)
     for i, t in enumerate(sorted_t, 1):
         level = level.where(base < t, i)
@@ -204,7 +204,7 @@ def add_amount_zscore(
     base: pd.Series,
     coa_prefixes: dict[str, list[str]] | None = None,
 ) -> pd.DataFrame:
-    """C08: 금액 Z-score. gl_account 컬럼이 없으면 NaN + 경고.
+    """L4-03: 금액 Z-score. gl_account 컬럼이 없으면 NaN + 경고.
 
     coa_prefixes 전달 시 소그룹(n<30) fallback에 CoA 상위그룹 통계 사용.
     """
@@ -233,7 +233,7 @@ def add_is_round_number(
     unit: int,
     currency_decimals: dict[str, int] | None = None,
 ) -> pd.DataFrame:
-    """B04: 라운드넘버 여부. 0원은 제외(False).
+    """L2-02: 라운드넘버 여부. 0원은 제외(False).
 
     Why: DataSynth 등 외부 생성 데이터에서 float 소수점 꼬리(예: 10000000.000001)가
     발생할 수 있으므로 round 후 나머지 연산으로 허용 오차 적용.

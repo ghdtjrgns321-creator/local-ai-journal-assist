@@ -37,15 +37,15 @@ def conn() -> duckdb.DuckDBPyConnection:
     # (doc_id, company, account, amount, header, line, process, source, creator, risk, rules)
     rows = [
         ("D001", "C001", "4100", 85_000_000, "Revenue Adj Year End",
-         None, "O2C", "Adjustment", "SA-005", "Critical", "C08,B01"),
+         None, "O2C", "Adjustment", "SA-005", "Critical", "L4-03,L4-01"),
         ("D002", "C001", "4100", 120_000_000, "Revenue Adj",
-         None, "O2C", "Adjustment", "SA-005", "High", "C08,B01"),
+         None, "O2C", "Adjustment", "SA-005", "High", "L4-03,L4-01"),
         ("D003", "C002", "6100", 50_000_000, "Salary",
-         None, "H2R", "Payroll", "U-010", "Medium", "C03"),
+         None, "H2R", "Payroll", "U-010", "Medium", "L3-06"),
         ("D004", "C001", "4100", 30_000_000, "Normal Sales",
          None, "O2C", "Standard", "U-001", "Low", ""),
         ("D005", "C001", "4100", 200_000_000, "Year-End Revenue Booking",
-         None, "O2C", "Adjustment", "SA-005", "Critical", "C08,B01,B02"),
+         None, "O2C", "Adjustment", "SA-005", "Critical", "L4-03,L4-01,L2-01"),
         ("D006", "C001", "6100", 10_000_000, "Regular Payroll",
          None, "H2R", "Payroll", "U-011", None, None),
     ]
@@ -60,10 +60,10 @@ def mock_client() -> MagicMock:
     payload = BatchInsight(
         summary=(
             "배치에 Critical 2건, High 1건이 식별되었습니다. "
-            "C08과 B01 동시 플래그 전표가 3건으로 매출 기말 조정 위험이 높습니다."
+            "L4-03과 L4-01 동시 플래그 전표가 3건으로 매출 기말 조정 위험이 높습니다."
         ),
         top_risks=[
-            "C08 AND B01 동시 플래그 매출 기말 조정 전표 3건",
+            "L4-03 AND L4-01 동시 플래그 매출 기말 조정 전표 3건",
             "SA-005 한 사용자가 Critical 전표 다수 기표",
         ],
         significant_tx_opinions=[
@@ -73,7 +73,7 @@ def mock_client() -> MagicMock:
                 "amount": 200_000_000,
                 "business_rationale": (
                     "기말 Revenue Booking은 사업상 타당 가능하나 Adjustment 소스와 "
-                    "Senior 단독 기표는 추가 검토 필요합니다(C08, B01)."
+                    "Senior 단독 기표는 추가 검토 필요합니다(L4-03, L4-01)."
                 ),
                 "audit_flag": "high_risk",
             },
@@ -102,18 +102,18 @@ def test_aggregate_rule_counts_topn(conn):
     gen = InsightGenerator(conn, client=MagicMock())
     counts = gen._aggregate_rule_counts(top_n=10)
     by_code = {c["rule_code"]: c["n"] for c in counts}
-    assert by_code["C08"] == 3
-    assert by_code["B01"] == 3
-    assert by_code["B02"] == 1
+    assert by_code["L4-03"] == 3
+    assert by_code["L4-01"] == 3
+    assert by_code["L2-01"] == 1
 
 
 def test_query_significant_tx_filters_c08_and_b01(conn):
-    """C08 AND B01 둘 다 포함된 전표만 반환, 금액 내림차순."""
+    """L4-03 AND L4-01 둘 다 포함된 전표만 반환, 금액 내림차순."""
     gen = InsightGenerator(conn, client=MagicMock())
     sig = gen._query_significant_tx(limit=20)
     doc_ids = [r["document_id"] for r in sig]
     assert doc_ids == ["D005", "D002", "D001"]  # 200M > 120M > 85M
-    assert "D003" not in doc_ids  # C03만 있음
+    assert "D003" not in doc_ids  # L3-06만 있음
     assert "D004" not in doc_ids  # 플래그 없음
 
 
@@ -140,7 +140,7 @@ def test_generate_batch_insight_happy_path(conn, mock_client):
     call_args = mock_client.chat.call_args
     messages = call_args[0][0] if call_args[0] else call_args.kwargs["messages"]
     user_content = messages[-1]["content"]
-    assert "C08" in user_content and "B01" in user_content
+    assert "L4-03" in user_content and "L4-01" in user_content
 
 
 def test_generate_batch_insight_empty_data_graceful():

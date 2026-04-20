@@ -1,4 +1,4 @@
-"""Layer D variance pipeline integration tests."""
+"""Variance pipeline integration tests."""
 
 from __future__ import annotations
 

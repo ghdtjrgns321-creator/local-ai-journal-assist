@@ -21,7 +21,7 @@ def test_build_markdown_report_contains_summary_and_rule_metrics():
         rule_metrics=[
             RuleMetric(
                 track_name="layer_a",
-                rule_code="A01",
+                rule_code="L1-01",
                 label_docs=3,
                 flagged_docs=2,
                 tp_docs=1,
@@ -38,4 +38,4 @@ def test_build_markdown_report_contains_summary_and_rule_metrics():
 
     assert "# Performance Evaluation Report" in rendered
     assert "| Total docs | 10 |" in rendered
-    assert "| layer_a | A01 | 3 | 2 | 1 | 1 | 2 | 50.0% | 33.3% | 40.0% |" in rendered
+    assert "| - | layer_a | L1-01 | OK | 3 | 2 | 1 | 1 | 2 | 50.0% | 33.3% | 40.0% |" in rendered

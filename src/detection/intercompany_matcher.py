@@ -1,11 +1,11 @@
 """IntercompanyMatcher — 내부거래 매칭 독립 트랙 (WU-07).
 
-Why: B10(MVP)은 is_intercompany bool만 flag하여 recall 7%.
+Why: L3-03(MVP)은 is_intercompany bool만 flag하여 recall 7%.
      양측 거래 대사(group-level matching)로 미매칭/금액불일치/시차이상 탐지.
      N:M 다대다 매칭 + 이종 통화 방어 적용.
 
 Note: LAYER_WEIGHTS에 의도적 미등록 — 성능 평가 후 가중치 배분 예정 (WU-03 Stacking).
-      FraudLayer의 기존 B10(IC 전표 존재 감지)은 하위 호환 목적으로 병존 유지.
+      FraudLayer의 기존 L3-03(IC 전표 존재 감지)은 하위 호환 목적으로 병존 유지.
 """
 
 from __future__ import annotations
@@ -96,15 +96,15 @@ class IntercompanyMatcher(BaseDetector):
         """서브룰 레지스트리 — 사전 계산된 match_df를 공유."""
         s = self._settings
         return [
-            ("IC01", ic01_unmatched_intercompany, {
+            ("IL3-04", ic01_unmatched_intercompany, {
                 "match_df": match_df,
             }),
-            ("IC02", ic02_amount_mismatch, {
+            ("IL3-05", ic02_amount_mismatch, {
                 "match_df": match_df,
                 "amount_tolerance": s.ic_amount_tolerance,
                 "max_diff_ratio": s.ic_max_diff_ratio,
             }),
-            ("IC03", ic03_timing_gap, {
+            ("IL3-06", ic03_timing_gap, {
                 "match_df": match_df,
                 "date_window_days": s.ic_date_window_days,
                 "max_day_diff": s.ic_max_day_diff,

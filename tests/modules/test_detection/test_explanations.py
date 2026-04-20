@@ -17,14 +17,14 @@ def _make_result(track_name: str, flagged_indices: list[int]) -> DetectionResult
         track_name=track_name,
         flagged_indices=flagged_indices,
         scores=pd.Series([0.2, 0.9], index=[0, 1], dtype=float),
-        rule_flags=[RuleFlag("C01", "기말 대규모", 3, 1, 2)],
-        details=pd.DataFrame({"C01": [0.0, 1.0]}, index=[0, 1]),
+        rule_flags=[RuleFlag("L3-04", "기말 대규모", 3, 1, 2)],
+        details=pd.DataFrame({"L3-04": [0.0, 1.0]}, index=[0, 1]),
         metadata={"elapsed": 0.01},
     )
 
 
 def test_parse_flagged_rules_handles_csv_and_empty():
-    assert parse_flagged_rules("B02,C01") == ["B02", "C01"]
+    assert parse_flagged_rules("L2-01,L3-04") == ["L2-01", "L3-04"]
     assert parse_flagged_rules("") == []
     assert parse_flagged_rules(None) == []
 
@@ -34,8 +34,8 @@ def test_build_track_explanation_uses_result_defaults():
 
     explanation = build_track_explanation(result)
 
-    assert explanation["display_name"] == "Layer A"
-    assert "기본 통제 계층" in explanation["summary"]
+    assert explanation["display_name"] == "L1"
+    assert "structural integrity" in explanation["summary"]
     assert "debit_amount" in explanation["used_columns"]
 
 
@@ -43,8 +43,8 @@ def test_build_rule_explanation_returns_fallback_for_unknown():
     explanation = build_rule_explanation("ZZ99")
 
     assert explanation["rule_id"] == "ZZ99"
-    assert explanation["rule_name"] == "미등록 룰"
-    assert "미등록 룰" in explanation["plain_reason"]
+    assert explanation["rule_name"] == "Unknown Rule"
+    assert "ZZ99" in explanation["plain_reason"]
 
 
 def test_build_document_explanation_aggregates_rules_and_tracks():
@@ -53,7 +53,7 @@ def test_build_document_explanation_aggregates_rules_and_tracks():
             "document_id": ["DOC1", "DOC1", "DOC2"],
             "risk_level": ["High", "High", "Low"],
             "anomaly_score": [0.91, 0.91, 0.1],
-            "flagged_rules": ["B02,C01", "B02,C01", ""],
+            "flagged_rules": ["L2-01,L3-04", "L2-01,L3-04", ""],
             "line_text": ["manual adjustment", "manual adjustment", "normal"],
         },
         index=[0, 1, 2],
@@ -63,9 +63,9 @@ def test_build_document_explanation_aggregates_rules_and_tracks():
     explanation = build_document_explanation("DOC1", df, [result])
 
     assert "DOC1" in explanation["headline"]
-    assert {item["rule_id"] for item in explanation["triggered_rules"]} == {"B02", "C01"}
-    assert explanation["auditor_focus_points"]
-    assert explanation["track_explanations"][0]["display_name"] == "Layer B"
+    assert {item["rule_id"] for item in explanation["triggered_rules"]} == {"L2-01", "L3-04"}
+    assert explanation["track_explanations"]
+    assert explanation["track_explanations"][0]["display_name"] == "L2"
 
 
 def test_build_export_narrative_includes_rule_and_auditor_check():
@@ -73,11 +73,11 @@ def test_build_export_narrative_includes_rule_and_auditor_check():
         document_id="DOC9",
         score=0.88,
         risk="High",
-        rules=["B04"],
+        rules=["L2-02"],
         top_features=[("amount", 0.42)],
     )
 
     assert "DOC9" in text
-    assert "B04" in text
-    assert "감사자 확인 포인트" in text
+    assert "L2-02" in text
+    assert "Top feature contributions" in text
     assert "amount" in text

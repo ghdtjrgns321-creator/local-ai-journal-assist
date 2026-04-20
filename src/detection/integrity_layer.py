@@ -1,4 +1,4 @@
-"""Layer A: 데이터 무결성 탐지 (A01~A03).
+"""Layer A: 데이터 무결성 탐지 (L1-01~L1-03).
 
 Why: 후속 탐지(B·C 레이어)의 전제조건 검증.
      차대변 균형·필수필드 존재·계정 유효성을 행 단위 score로 산출.
@@ -20,12 +20,12 @@ from src.detection.constants import SEVERITY_MAP
 
 
 class IntegrityDetector(BaseDetector):
-    """A01~A03: 전표 데이터 자체의 신뢰성 확보.
+    """L1-01~L1-03: 전표 데이터 자체의 신뢰성 확보.
 
     Args:
         settings: 감사 설정 (None이면 기본 싱글톤)
-        tolerance: A01 차대변 불일치 허용 오차 (기본 1.0원)
-        chart_of_accounts: A03 유효 계정 집합 (None이면 설정/데이터에서 자동 로드)
+        tolerance: L1-01 차대변 불일치 허용 오차 (기본 1.0원)
+        chart_of_accounts: L1-03 유효 계정 집합 (None이면 설정/데이터에서 자동 로드)
     """
 
     def __init__(
@@ -48,7 +48,7 @@ class IntegrityDetector(BaseDetector):
         from pathlib import Path
         p = Path(path)
         if not p.exists():
-            self._logger.warning("CoA 파일 미존재: %s — A03 skip", path)
+            self._logger.warning("CoA 파일 미존재: %s — L1-03 skip", path)
             return None
         # Why: 1열 텍스트 파일 또는 CSV (gl_account 컬럼) 지원
         try:
@@ -59,7 +59,7 @@ class IntegrityDetector(BaseDetector):
             else:
                 return set(line.strip() for line in p.read_text().splitlines() if line.strip())
         except Exception as e:
-            self._logger.warning("CoA 로드 실패: %s — A03 skip", e)
+            self._logger.warning("CoA 로드 실패: %s — L1-03 skip", e)
             return None
 
     @property
@@ -69,7 +69,7 @@ class IntegrityDetector(BaseDetector):
     # ── 오케스트레이션 ─────────────────────────────────────────
 
     def detect(self, df: pd.DataFrame) -> DetectionResult:
-        """A01~A03 순차 실행, 결과 통합."""
+        """L1-01~L1-03 순차 실행, 결과 통합."""
         t0 = time.monotonic()
         warnings: list[str] = []
         n = len(df)
@@ -81,9 +81,9 @@ class IntegrityDetector(BaseDetector):
 
         # Why: 룰별 try/except 격리 — 한 룰 실패해도 나머지 계속
         rules = [
-            ("A01", self._a01_unbalanced_entry),
-            ("A02", self._a02_missing_required),
-            ("A03", self._a03_invalid_account),
+            ("L1-01", self._a01_unbalanced_entry),
+            ("L1-02", self._a02_missing_required),
+            ("L1-03", self._a03_invalid_account),
         ]
         rule_results: dict[str, pd.Series] = {}
         skipped: list[str] = []
@@ -136,12 +136,12 @@ class IntegrityDetector(BaseDetector):
             warnings=warnings,
         )
 
-    # ── A01: 차대변 균형 ──────────────────────────────────────
+    # ── L1-01: 차대변 균형 ──────────────────────────────────────
 
     def _a01_unbalanced_entry(self, df: pd.DataFrame) -> pd.Series | None:
         """document_id별 차대변 합 비교. 불일치 전표의 모든 행을 플래그."""
         if "document_id" not in df.columns:
-            self._logger.info("document_id 컬럼 부재 — A01 건너뜀")
+            self._logger.info("document_id 컬럼 부재 — L1-01 건너뜀")
             return None
 
         diff = df["debit_amount"].fillna(0.0) - df["credit_amount"].fillna(0.0)
@@ -156,13 +156,13 @@ class IntegrityDetector(BaseDetector):
         doc_diff = diff.groupby(safe_doc_id).transform("sum")
         return (doc_diff.abs() > self._tolerance).astype(float)
 
-    # ── A02: 필수필드 누락 ────────────────────────────────────
+    # ── L1-02: 필수필드 누락 ────────────────────────────────────
 
     def _a02_missing_required(self, df: pd.DataFrame) -> pd.Series:
         """schema.yaml required=true 컬럼 중 NULL 존재 시 플래그.
 
-        Why: L1은 파이프라인 gate (컬럼 존재·타입), A02는 행 단위 NULL fallback.
-             정상 흐름에서 A02 플래그 = 0이 기대값.
+        Why: L1은 파이프라인 gate (컬럼 존재·타입), L1-02는 행 단위 NULL fallback.
+             정상 흐름에서 L1-02 플래그 = 0이 기대값.
         """
         try:
             required_cols = [
@@ -183,16 +183,16 @@ class IntegrityDetector(BaseDetector):
         null_count = df[check_cols].isnull().sum(axis=1)
         return (null_count > 0).astype(float)
 
-    # ── A03: 무효 계정 ────────────────────────────────────────
+    # ── L1-03: 무효 계정 ────────────────────────────────────────
 
     def _a03_invalid_account(self, df: pd.DataFrame) -> pd.Series | None:
         """gl_account가 CoA에 없으면 플래그. CoA 미제공 시 skip."""
         if self._coa is None:
-            self._logger.info("CoA 미제공 — A03 무효 계정 검사 건너뜀")
+            self._logger.info("CoA 미제공 — L1-03 무효 계정 검사 건너뜀")
             return None
 
         if "gl_account" not in df.columns:
-            self._logger.info("gl_account 컬럼 부재 — A03 건너뜀")
+            self._logger.info("gl_account 컬럼 부재 — L1-03 건너뜀")
             return None
 
         # Why: astype(str)로 int/str 타입 통일 — schema는 int, CoA는 str일 수 있음

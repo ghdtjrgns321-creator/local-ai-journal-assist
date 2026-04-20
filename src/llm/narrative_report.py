@@ -4,7 +4,7 @@ Why
 ---
 파생변수 19종 + 탐지결과 조합은 감사인에게 수치 나열로는 의미 전달이 어렵다.
 "왜 위험한가"를 1~3문장 자연어로 번역해 감사조서(ISA 230) 첨부 가능한
-근거 자료를 생성한다. 룰 ID(B02, C03 등)를 사유서에 인용하여 추적성 확보.
+근거 자료를 생성한다. 룰 ID(L2-01, L3-06 등)를 사유서에 인용하여 추적성 확보.
 
 Laziness 방어
 -------------
@@ -49,7 +49,7 @@ FEATURE_COLUMNS: list[str] = [
 
 _SYSTEM_PROMPT = (
     "You are an audit XAI assistant. For each journal entry, write a 1~3 sentence "
-    "risk narrative in Korean (한국어). Cite triggered rule IDs (e.g., B02, C03) in "
+    "risk narrative in Korean (한국어). Cite triggered rule IDs (e.g., L2-01, L3-06) in "
     "parentheses. Be concise, evidence-based, and avoid speculation. "
     "Return one object per requested document_id."
 )

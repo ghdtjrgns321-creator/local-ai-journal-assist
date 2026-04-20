@@ -138,7 +138,7 @@ class TestRetryOnLockConflict:
                 db_conn,
                 action="whitelist_add",
                 target_id="JE-001",
-                details={"rule_codes": ["B01"]},
+                details={"rule_codes": ["L4-01"]},
             )
             mock_write.assert_called_once()
             # Why: 첫 인자는 conn, 두 번째는 'insert_audit_log' 프리셋명

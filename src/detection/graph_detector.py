@@ -1,6 +1,6 @@
 """GraphDetector — 그래프 기반 순환/이전가격 탐지 독립 트랙 (WU-22).
 
-Why: B10 MVP(is_intercompany 플래그)의 recall 7% 한계 개선. networkx 기반
+Why: L3-03 MVP(is_intercompany 플래그)의 recall 7% 한계 개선. networkx 기반
      Johnson N-hop 순환(GR01) + 양방향 IC 엣지 price asymmetry(GR03).
 
 Note: LAYER_WEIGHTS에 의도적 미등록 — RelationalDetector 선례 준수. 성능 평가 후

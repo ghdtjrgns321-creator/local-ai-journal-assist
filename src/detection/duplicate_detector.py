@@ -1,11 +1,11 @@
 """DuplicateDetector — Exact + Fuzzy 중복 전표 탐지 독립 트랙 (WU-05).
 
-Why: 기존 B05 exact match recall 9%. 4가지 서브룰(Exact/Fuzzy/Split/TimeShift)로
+Why: 기존 L2-03 exact match recall 9%. 4가지 서브룰(Exact/Fuzzy/Split/TimeShift)로
      유사 금액, 분할 거래, 시차 중복까지 포착. BenfordDetector와 동일한 독립 트랙 패턴.
 
 Note: LAYER_WEIGHTS에 의도적 미등록 — 성능 평가 후 가중치 배분 예정 (WU-03 Stacking).
-      flagged_rules에는 B05a~d가 표시되지만 anomaly_score 가중합에는 미참여.
-      FraudLayer의 기존 B05(exact match)는 하위 호환 목적으로 병존 유지.
+      flagged_rules에는 L2-03a~d가 표시되지만 anomaly_score 가중합에는 미참여.
+      FraudLayer의 기존 L2-03(exact match)는 하위 호환 목적으로 병존 유지.
 """
 
 from __future__ import annotations
@@ -70,18 +70,18 @@ class DuplicateDetector(BaseDetector):
         """서브룰 레지스트리: (rule_id, callable, kwargs)."""
         s = self._settings
         return [
-            ("B05a", b05a_exact_duplicate, {}),
-            ("B05b", b05b_fuzzy_duplicate, {
+            ("L2-03a", b05a_exact_duplicate, {}),
+            ("L2-03b", b05b_fuzzy_duplicate, {
                 "fuzzy_threshold": s.duplicate_fuzzy_threshold,
                 "amount_tolerance": s.duplicate_amount_tolerance,
                 "max_group_size": s.duplicate_max_group_size,
             }),
-            ("B05c", b05c_split_transaction, {
+            ("L2-03c", b05c_split_transaction, {
                 "window_days": s.duplicate_split_window_days,
                 "amount_tolerance": s.duplicate_amount_tolerance,
                 "max_group_size": s.duplicate_max_group_size,
             }),
-            ("B05d", b05d_time_shifted_duplicate, {
+            ("L2-03d", b05d_time_shifted_duplicate, {
                 "window_days": s.duplicate_time_window_days,
             }),
         ]

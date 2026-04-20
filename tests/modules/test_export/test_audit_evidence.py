@@ -20,13 +20,13 @@ class TestFormatNarrative:
             document_id="D001",
             score=0.85,
             risk="High",
-            rules=["C01"],
+            rules=["L3-04"],
             top_features=[("amount", 0.4), ("gl_account", 0.2)],
         )
         assert "D001" in text
         assert "High" in text
         assert "0.850" in text
-        assert "C01" in text
+        assert "L3-04" in text
         # 법규 근거가 포함됨
         assert "ISA 240" in text
         # Top-K 피처 표시
@@ -49,12 +49,12 @@ class TestFormatNarrative:
             document_id="D003",
             score=0.4,
             risk="Low",
-            rules=["B04"],
+            rules=["L2-02"],
             top_features=[],
         )
         # top_features 섹션이 나오지 않아야 함
         assert "VAE 재구성 오차" not in text
-        assert "B04" in text
+        assert "L2-02" in text
 
     def test_unknown_rule_id(self):
         text = format_narrative(
@@ -74,7 +74,7 @@ class TestBuildEvidenceRow:
             "document_id": "D100",
             "anomaly_score": 0.92,
             "risk_level": "High",
-            "flagged_rules": "C01,B19",
+            "flagged_rules": "L3-04,L2-05",
             "ML02_top_feature_1": "amount",
             "ML02_top_feature_1_contrib": 0.5,
             "ML02_top_feature_2": "gl_account",
@@ -86,7 +86,7 @@ class TestBuildEvidenceRow:
         assert isinstance(ev, AuditEvidence)
         assert ev.document_id == "D100"
         assert ev.anomaly_score == 0.92
-        assert ev.violated_rules == ["C01", "B19"]
+        assert ev.violated_rules == ["L3-04", "L2-05"]
         assert len(ev.top_features) == 3
         assert ev.top_features[0] == ("amount", 0.5)
 
@@ -96,11 +96,11 @@ class TestBuildEvidenceRow:
             "document_id": "D200",
             "anomaly_score": 0.3,
             "risk_level": "Low",
-            "flagged_rules": "C02",
+            "flagged_rules": "L3-05",
         })
         ev = build_evidence_row(row)
         assert ev.top_features == []
-        assert "C02" in ev.narrative
+        assert "L3-05" in ev.narrative
 
     def test_empty_flagged_rules(self):
         row = pd.Series({
@@ -118,7 +118,7 @@ class TestBuildEvidenceRow:
             "document_id": "D400",
             "anomaly_score": 0.7,
             "risk_level": "Medium",
-            "flagged_rules": "B04",
+            "flagged_rules": "L2-02",
             "ML02_top_feature_1": "amount",
             "ML02_top_feature_1_contrib": 0.5,
             "ML02_top_feature_2": None,
@@ -134,7 +134,7 @@ class TestBuildEvidenceReport:
             "document_id": ["D1", "D2", "D3"],
             "anomaly_score": [0.1, 0.5, 0.9],
             "risk_level": ["Normal", "Medium", "High"],
-            "flagged_rules": ["", "B04", "C01"],
+            "flagged_rules": ["", "L2-02", "L3-04"],
         })
         evidences = build_evidence_report(df, min_score=0.5)
         assert len(evidences) == 2
@@ -157,7 +157,7 @@ class TestBuildEvidenceReport:
 class TestLegalBasisCoverage:
     """RULE_LEGAL_BASIS가 핵심 룰 ID를 커버하는지."""
 
-    @pytest.mark.parametrize("rule_id", ["A01", "B04", "B19", "C01", "C07", "ML02", "EN01"])
+    @pytest.mark.parametrize("rule_id", ["L1-01", "L2-02", "L2-05", "L3-04", "L4-02", "ML02", "EN01"])
     def test_core_rules_have_basis(self, rule_id):
         assert rule_id in RULE_LEGAL_BASIS
         assert len(RULE_LEGAL_BASIS[rule_id]) > 0

@@ -1,4 +1,4 @@
-"""접근통제 기반 부정 탐지 룰 — B06, B07, B09, B10.
+"""접근통제 기반 부정 탐지 룰 — L1-05, L1-06, L1-07, L3-03.
 
 권장 컬럼(created_by, business_process, source, company_code) 의존.
 해당 컬럼 미존재 시 Series(False) 반환 → 오케스트레이터가 warning 기록.
@@ -28,7 +28,7 @@ def b06_self_approval(
     min_amount: int = 0,
     audit_rules: dict | None = None,
 ) -> pd.Series:
-    """B06 자기 승인: 인간 사용자의 고액 자기 승인만 플래그.
+    """L1-05 자기 승인: 인간 사용자의 고액 자기 승인만 플래그.
 
     Why: 외감법 §8①5호 — 업무 분장 위반.
          오스템임플란트(2021) 사례: 1인이 입력·승인·이체 전부 수행 → 2,215억 횡령.
@@ -93,7 +93,7 @@ def b07_segregation_of_duties(
     sod_threshold: int = 3,
     audit_rules: dict | None = None,
 ) -> pd.Series:
-    """B07 직무분리 위반 — 하이브리드 3단계 로직.
+    """L1-06 직무분리 위반 — 하이브리드 3단계 로직.
 
     Why: K-SOX COSO 2013 — 직무분리는 내부통제의 핵심 원칙.
          단순 프로세스 수 세기는 74% 과탐 유발 → 3단계 정밀 판정.
@@ -165,7 +165,7 @@ def b07_segregation_of_duties(
 
 
 def b09_skipped_approval(df: pd.DataFrame) -> pd.Series:
-    """B09 승인 생략: 한도 초과 + 비자동 소스 + 승인자 부재.
+    """L1-07 승인 생략: 한도 초과 + 비자동 소스 + 승인자 부재.
 
     Why: 외감법 §8② — 승인 절차 없이 처리된 한도 초과 전표는 내부통제 우회.
          approved_by IS NULL이어야 실제 '승인 생략'. 승인이 존재하면 정상.
@@ -184,7 +184,7 @@ def b09_skipped_approval(df: pd.DataFrame) -> pd.Series:
 
 
 def b10_circular_intercompany(df: pd.DataFrame) -> pd.Series:
-    """B10 관계사 거래 탐지 (MVP: GL prefix로 식별된 IC 전표를 flag).
+    """L3-03 관계사 거래 탐지 (MVP: GL prefix로 식별된 IC 전표를 flag).
 
     Why: 감사기준서 550호 §23 — 합리적 사업 근거 없는 특수관계자 거래.
     MVP 한계: IC 전용 GL 계정(채권/채무)에 해당하는 전표를 flag.

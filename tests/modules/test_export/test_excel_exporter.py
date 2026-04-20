@@ -54,13 +54,13 @@ def _seed_sample_data(c: duckdb.DuckDBPyConnection) -> None:
     """5건 전표(High 2, Medium 1, Low 1, Normal 1) + Benford + flags."""
     rows = [
         ("D001", "C001", 2026, 1, "2026-01-15 10:00:00", "SA", "P2P",
-         "alice", "manager1", 1000.0, 0.0, "4100", 0.85, "High", "B05,C08"),
+         "alice", "manager1", 1000.0, 0.0, "4100", 0.85, "High", "L2-03,L4-03"),
         ("D002", "C001", 2026, 1, "2026-01-16 23:00:00", "SA", "O2C",
-         "bob", "manager1", 0.0, 500.0, "1100", 0.72, "High", "C03"),
+         "bob", "manager1", 0.0, 500.0, "1100", 0.72, "High", "L3-06"),
         ("D003", "C002", 2026, 2, "2026-02-10 11:00:00", "KR", "TRE",
-         "alice", None, 2000.0, 0.0, "2100", 0.50, "Medium", "B09"),
+         "alice", None, 2000.0, 0.0, "2100", 0.50, "Medium", "L1-07"),
         ("D004", "C002", 2026, 3, "2026-03-01 14:00:00", "DR", "R2R",
-         "carol", "manager2", 0.0, 300.0, "5100", 0.25, "Low", "B08"),
+         "carol", "manager2", 0.0, 300.0, "5100", 0.25, "Low", "L3-02"),
         ("D005", "C001", 2026, 4, "2026-04-05 09:00:00", "SA", "P2P",
          "alice", "manager1", 100.0, 0.0, "1100", 0.05, "Normal", ""),
     ]
@@ -77,13 +77,13 @@ def _seed_sample_data(c: duckdb.DuckDBPyConnection) -> None:
             """,
             [*r, 1, BATCH],
         )
-    # anomaly_flags: B05 + C08 + B07 (SoD)
+    # anomaly_flags: L2-03 + L4-03 + L1-06 (SoD)
     flags = [
-        ("D001", "layer_b", "B05", 0.9),
-        ("D001", "layer_c", "C08", 0.85),
-        ("D002", "layer_c", "C03", 0.72),
-        ("D003", "layer_b", "B09", 0.5),
-        ("D003", "layer_b", "B07", 0.6),
+        ("D001", "layer_b", "L2-03", 0.9),
+        ("D001", "layer_c", "L4-03", 0.85),
+        ("D002", "layer_c", "L3-06", 0.72),
+        ("D003", "layer_b", "L1-07", 0.5),
+        ("D003", "layer_b", "L1-06", 0.6),
     ]
     for f in flags:
         c.execute(

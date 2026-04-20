@@ -90,13 +90,13 @@ class TestPseudoDetectionResults:
 
         result = load_batch(db_conn, "batch_det_02")
 
-        # Why: db_detection_results에 layer_b → B01, B03 룰
+        # Why: db_detection_results에 layer_b → L4-01, L1-04 룰
         all_rule_ids = set()
         for dr in result.results:
             for rf in dr.rule_flags:
                 all_rule_ids.add(rf.rule_id)
 
-        assert "B01" in all_rule_ids or "B03" in all_rule_ids
+        assert "L4-01" in all_rule_ids or "L1-04" in all_rule_ids
 
     def test_flagged_indices_not_empty(self, db_conn, db_sample_df, db_detection_results):
         """역산된 DetectionResult의 flagged_indices가 비어있지 않음."""
@@ -145,7 +145,7 @@ class TestDetectorStatuses:
             flagged_indices=[0],
             scores=pd.Series([0.8]),
             rule_flags=[],
-            details=pd.DataFrame({"B01": [0.8]}),
+            details=pd.DataFrame({"L4-01": [0.8]}),
             metadata={"elapsed": 0.0, "run_status": "executed"},
         )
         statuses = _build_detector_statuses(results=[result])

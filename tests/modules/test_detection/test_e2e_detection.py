@@ -54,26 +54,26 @@ def run_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def run_detection(df: pd.DataFrame) -> dict:
-    """3레이어 + Benford 독립 트랙 탐지 + 점수 집계."""
+    """L1/L2/L3/L4 + Benford 독립 트랙 탐지 + 점수 집계."""
     results: dict[str, DetectionResult] = {}
     timings: dict[str, float] = {}
 
-    # Layer A
+    # L1
     t0 = time.perf_counter()
     results["layer_a"] = IntegrityDetector().detect(df)
     timings["layer_a"] = time.perf_counter() - t0
 
-    # Layer B
+    # L2
     t0 = time.perf_counter()
     results["layer_b"] = FraudLayer().detect(df)
     timings["layer_b"] = time.perf_counter() - t0
 
-    # Layer C (C01~C06, C08~C09 — C07 제외)
+    # L3/L4 (L3-04~L3-08, L4-03~L4-04 — L4-02 제외)
     t0 = time.perf_counter()
     results["layer_c"] = AnomalyDetector().detect(df)
     timings["layer_c"] = time.perf_counter() - t0
 
-    # Benford 독립 트랙 (C07)
+    # Benford 독립 트랙 (L4-02)
     t0 = time.perf_counter()
     results["benford"] = BenfordDetector().detect(df)
     timings["benford"] = time.perf_counter() - t0
@@ -199,10 +199,10 @@ def generate_report(
     md.append("\n## 2. 레이어별 결과\n")
 
     layer_info = [
-        ("layer_a", "Layer A (무결성)"),
-        ("layer_b", "Layer B (부정)"),
-        ("layer_c", "Layer C (이상 징후)"),
-        ("benford", "Benford (독립 트랙)"),
+        ("layer_a", "L1"),
+        ("layer_b", "L2"),
+        ("layer_c", "L3/L4"),
+        ("benford", "L4-02 Benford"),
     ]
     for track, title in layer_info:
         r = results[track]
@@ -210,17 +210,17 @@ def generate_report(
         md.append(_rule_table(r, n))
         md.append("")
 
-    # §3 B19 Top-side JE 복합 탐지
-    md.append("\n## 3. B19 Top-side JE 복합 탐지\n")
+    # §3 L2-05 Top-side JE 복합 탐지
+    md.append("\n## 3. L2-05 Top-side JE 복합 탐지\n")
     if "topside_score" in agg_df.columns:
-        b19_mask = agg_df["flagged_rules"].str.contains("B19", na=False)
+        b19_mask = agg_df["flagged_rules"].str.contains("L2-05", na=False)
         b19_count = int(b19_mask.sum())
         manual_count = int(df["is_manual_je"].sum()) if "is_manual_je" in df.columns else 0
 
         md.append(f"| {'항목':24s} | {'값':>20s} |")
         md.append(f"|:{'-'*24}|{'-'*20}:|")
         md.append(f"| {'수기 전표':24s} | {manual_count:>12,d} ({manual_count/n*100:.1f}%) |")
-        md.append(f"| {'B19 플래그':24s} | {b19_count:>12,d} ({b19_count/n*100:.2f}%) |")
+        md.append(f"| {'L2-05 플래그':24s} | {b19_count:>12,d} ({b19_count/n*100:.2f}%) |")
 
         # 게이트키퍼 검증
         if b19_count > 0 and "is_manual_je" in df.columns:
@@ -231,8 +231,8 @@ def generate_report(
 
         # 역검증
         if "is_manual_je" in df.columns:
-            auto_b19 = int(agg_df.loc[~df["is_manual_je"].fillna(False), "flagged_rules"].str.contains("B19", na=False).sum())
-            md.append(f"| {'자동 전표 중 B19 (0=정상)':24s} | {auto_b19:>20d} |")
+            auto_b19 = int(agg_df.loc[~df["is_manual_je"].fillna(False), "flagged_rules"].str.contains("L2-05", na=False).sum())
+            md.append(f"| {'자동 전표 중 L2-05 (0=정상)':24s} | {auto_b19:>20d} |")
 
         # 가점 조건별 분포
         if b19_count > 0:
@@ -241,10 +241,10 @@ def generate_report(
             md.append(f"|:{'-'*16}|{'-'*10}:|{'-'*8}:|")
             b19_idx = b19_mask[b19_mask].index
             for label, track, rule_id in [
-                ("C01 기말", "layer_c", "C01"), ("B06 자기승인", "layer_b", "B06"),
-                ("B09 승인생략", "layer_b", "B09"), ("A03 무효계정", "layer_a", "A03"),
-                ("C09 희소쌍", "layer_c", "C09"), ("C08 고액", "layer_c", "C08"),
-                ("C06 위험적요", "layer_c", "C06"),
+                ("L3-04 기말", "layer_c", "L3-04"), ("L1-05 자기승인", "layer_b", "L1-05"),
+                ("L1-07 승인생략", "layer_b", "L1-07"), ("L1-03 무효계정", "layer_a", "L1-03"),
+                ("L4-04 희소쌍", "layer_c", "L4-04"), ("L4-03 고액", "layer_c", "L4-03"),
+                ("L3-08 위험적요", "layer_c", "L3-08"),
             ]:
                 r = results.get(track)
                 if r and rule_id in r.details.columns:
@@ -299,7 +299,7 @@ def generate_report(
     md.append("\n## 6. 레이어별 성능\n")
     md.append(f"| {'단계':20s} | {'소요시간(s)':>12s} | {'실행 룰':>8s} | {'skipped':>12s} |")
     md.append(f"|:{'-'*20}|{'-'*12}:|{'-'*8}:|:{'-'*12}|")
-    for track, title in [("layer_a", "Layer A"), ("layer_b", "Layer B"), ("layer_c", "Layer C"), ("benford", "Benford"), ("aggregator", "Score Aggregator")]:
+    for track, title in [("layer_a", "L1"), ("layer_b", "L2"), ("layer_c", "L3/L4"), ("benford", "L4-02 Benford"), ("aggregator", "Score Aggregator")]:
         t = timings.get(track, 0.0)
         if track in results:
             r = results[track]
@@ -344,7 +344,7 @@ def generate_report(
     md.append("| 항목 | 설명 | 해결 시점 |")
     md.append("|:-----|:-----|:---------|")
     md.append("| `src/pipeline.py` | 전체 오케스트레이터 미구현 — 수동 조립으로 테스트 | Phase 1b #21 |")
-    md.append("| Benford 독립 트랙 | C07이 Layer C 내부에 통합, Layer.BENFORD 독립 가중치 미적용 | score_aggregator 확장 |")
+    md.append("| Benford 독립 트랙 | L4-02은 별도 독립 트랙으로 가중치 적용 | score_aggregator 확장 |")
 
     return "\n".join(md) + "\n"
 
@@ -371,9 +371,9 @@ def main() -> None:
     # 3~5. Detection
     print("[3/6] Detection 실행 중 (A→B→C→집계)...")
     det = run_detection(df)
-    print(f"      → Layer A: {det['timings']['layer_a']:.2f}s")
-    print(f"      → Layer B: {det['timings']['layer_b']:.2f}s")
-    print(f"      → Layer C: {det['timings']['layer_c']:.2f}s")
+    print(f"      → L1: {det['timings']['layer_a']:.2f}s")
+    print(f"      → L2: {det['timings']['layer_b']:.2f}s")
+    print(f"      → L3/L4: {det['timings']['layer_c']:.2f}s")
     print(f"      → Aggregator: {det['timings']['aggregator']:.2f}s")
 
     # 6. Label 대조

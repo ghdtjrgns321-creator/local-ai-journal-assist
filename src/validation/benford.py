@@ -1,4 +1,4 @@
-"""Benford's Law 분석 — C07 detection의 통계적 기반.
+"""Benford's Law 분석 — L4-02 detection의 통계적 기반.
 
 판정 기준: MAD(주, Nigrini 2012) + Chi-square(주) + KS(보조).
 KS는 이산 분포에 엄밀하지 않으므로 참고 지표로만 사용.

@@ -1,4 +1,4 @@
-"""B01, B02, B03, B08 피처 기반 룰 단위 테스트."""
+"""L4-01, L2-01, L1-04, L3-02 피처 기반 룰 단위 테스트."""
 
 from __future__ import annotations
 
@@ -27,10 +27,10 @@ def feature_df() -> pd.DataFrame:
     })
 
 
-# ── B01 매출 이상 변동 ────────────────────────────────────
+# ── L4-01 매출 이상 변동 ────────────────────────────────────
 
 
-class TestB01:
+class TestL4-01:
     def test_revenue_high_zscore_flagged(self, feature_df: pd.DataFrame) -> None:
         """매출 계정 + zscore > 3.0 → flagged."""
         result = b01_revenue_manipulation(feature_df, zscore_threshold=3.0)
@@ -57,10 +57,10 @@ class TestB01:
         assert not result.any()
 
 
-# ── B02 승인한도 직하 ─────────────────────────────────────
+# ── L2-01 승인한도 직하 ─────────────────────────────────────
 
 
-class TestB02:
+class TestL2-01:
     def test_near_threshold_flagged(self, feature_df: pd.DataFrame) -> None:
         result = b02_near_threshold(feature_df)
         assert result[1]  # is_near_threshold=True
@@ -75,10 +75,10 @@ class TestB02:
         assert not b02_near_threshold(df).any()
 
 
-# ── B03 승인한도 초과 ─────────────────────────────────────
+# ── L1-04 승인한도 초과 ─────────────────────────────────────
 
 
-class TestB03:
+class TestL1-04:
     def test_exceeds_flagged(self, feature_df: pd.DataFrame) -> None:
         result = b03_exceeds_threshold(feature_df)
         assert result[0]
@@ -90,10 +90,10 @@ class TestB03:
         assert not result[1]
 
 
-# ── B08 수기 전표 ─────────────────────────────────────────
+# ── L3-02 수기 전표 ─────────────────────────────────────────
 
 
-class TestB08:
+class TestL3-02:
     def test_manual_and_exceeds_flagged(self, feature_df: pd.DataFrame) -> None:
         """수기 + 한도 초과 → flagged."""
         result = b08_manual_override(feature_df)

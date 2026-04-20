@@ -224,7 +224,7 @@ class ExcelExporter:
     def _write_sod_sheet(
         self, wb: Workbook, batch_id: str, where_sql: str, params: list[Any]
     ) -> None:
-        """시트 5: 직무분리(SoD) 위반 상세 — B06/B07/B09 룰.
+        """시트 5: 직무분리(SoD) 위반 상세 — L1-05/L1-06/L1-07 룰.
 
         Why:
             CTE로 일반 원장 필터를 먼저 적용하여 ``_build_where_clause``의
@@ -245,7 +245,7 @@ class ExcelExporter:
             FROM anomaly_flags af
             JOIN filtered_gl gl USING (document_id, upload_batch_id)
             WHERE af.upload_batch_id = ?
-              AND af.rule_code IN ('B06', 'B07', 'B09')
+              AND af.rule_code IN ('L1-05', 'L1-06', 'L1-07')
             ORDER BY af.score DESC
         """
         df = self._safe_query(sql, [*params, batch_id])

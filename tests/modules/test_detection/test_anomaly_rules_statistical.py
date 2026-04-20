@@ -1,4 +1,4 @@
-"""C07 Benford 위반, C09 비정상 계정조합 단위 테스트."""
+"""L4-02 Benford 위반, L4-04 비정상 계정조합 단위 테스트."""
 
 from __future__ import annotations
 
@@ -20,10 +20,10 @@ def benford_settings() -> AuditSettings:
     return AuditSettings(benford_min_sample=10)
 
 
-# ── C07 Benford 위반 ─────────────────────────────────────
+# ── L4-02 Benford 위반 ─────────────────────────────────────
 
 
-class TestC07:
+class TestL4-02:
     def _make_conforming_df(self, n: int = 200) -> pd.DataFrame:
         """Benford 법칙에 적합한 first_digit 분포 생성."""
         digits = []
@@ -153,10 +153,10 @@ class TestC07:
             )
 
 
-# ── C09 비정상 계정조합 ──────────────────────────────────
+# ── L4-04 비정상 계정조합 ──────────────────────────────────
 
 
-class TestC09:
+class TestL4-04:
     @pytest.fixture
     def pair_df(self) -> pd.DataFrame:
         """계정 쌍 테스트 — 빈번한 쌍 + 희소 쌍.

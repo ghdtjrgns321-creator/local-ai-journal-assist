@@ -86,13 +86,13 @@ class TestFraudLayerDetect:
         assert len(result.rule_flags) <= 11
 
     def test_b01_flags_revenue_outlier(self, full_df: pd.DataFrame) -> None:
-        """B01: 매출+zscore>3 행이 flagged."""
+        """L4-01: 매출+zscore>3 행이 flagged."""
         layer = FraudLayer()
         result = layer.detect(full_df)
-        # 행0: revenue=True, zscore=4.0 → B01 flagged
-        assert result.details.loc[0, "B01"] > 0
-        # 행2: revenue=False → B01 not flagged
-        assert result.details.loc[2, "B01"] == 0.0
+        # 행0: revenue=True, zscore=4.0 → L4-01 flagged
+        assert result.details.loc[0, "L4-01"] > 0
+        # 행2: revenue=False → L4-01 not flagged
+        assert result.details.loc[2, "L4-01"] == 0.0
 
     def test_details_columns_are_rule_ids(self, full_df: pd.DataFrame) -> None:
         """details DataFrame의 컬럼이 룰 ID."""

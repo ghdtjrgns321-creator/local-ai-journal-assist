@@ -1,6 +1,6 @@
 """GraphDetector 룰 함수 — WU-22 (GR01 순환거래 / GR03 이전가격).
 
-Why: B10 MVP는 `is_intercompany` 플래그만 반환(recall 7%). 실제 A→B→C→A
+Why: L3-03 MVP는 `is_intercompany` 플래그만 반환(recall 7%). 실제 A→B→C→A
      N-hop 순환, 양방향 IC 엣지 가격 asymmetry는 그래프 토폴로지 없이 탐지 불가.
 
 OOM 방어 원칙:

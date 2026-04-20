@@ -22,7 +22,7 @@ class TestRuleCodesIntegrity:
         assert len(RULE_CODES) == 64
 
     def test_layer_a_ids(self) -> None:
-        for rid in ("A01", "A02", "A03"):
+        for rid in ("L1-01", "L1-02", "L1-03"):
             assert rid in RULE_CODES
 
     def test_layer_b_ids(self) -> None:
@@ -50,7 +50,7 @@ class TestSeverityMap:
 
     @pytest.mark.parametrize(
         "rule_id, expected",
-        [("A01", 5), ("C06", 1), ("B07", 4)],
+        [("L1-01", 5), ("L3-08", 1), ("L1-06", 4)],
     )
     def test_specific_severities(self, rule_id: str, expected: int) -> None:
         assert SEVERITY_MAP[rule_id] == expected

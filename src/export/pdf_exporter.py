@@ -238,7 +238,7 @@ class PDFExporter:
             """
             SELECT rule_code AS SoD규칙, COUNT(*) AS 위반건수
             FROM anomaly_flags
-            WHERE upload_batch_id = ? AND rule_code IN ('B06', 'B07', 'B09')
+            WHERE upload_batch_id = ? AND rule_code IN ('L1-05', 'L1-06', 'L1-07')
             GROUP BY rule_code
             ORDER BY rule_code
             """,

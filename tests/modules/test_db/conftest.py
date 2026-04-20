@@ -149,7 +149,7 @@ def db_sample_df() -> pd.DataFrame:
         "business_process": ["R2R", "R2R", "P2P"],
         "anomaly_score": [0.6, 0.6, 0.3],
         "risk_level": ["Medium", "Medium", "Normal"],
-        "flagged_rules": ["A01,B03", "A01,B03", ""],
+        "flagged_rules": ["L1-01,L1-04", "L1-01,L1-04", ""],
     })
 
 
@@ -201,7 +201,7 @@ class MockDetectionResult:
 def db_detection_results(db_sample_df) -> list[MockDetectionResult]:
     """샘플 DetectionResult 리스트 (layer_b 1개)."""
     details = pd.DataFrame(
-        {"B01": [0.0, 0.0, 0.6], "B03": [0.8, 0.8, 0.0]},
+        {"L4-01": [0.0, 0.0, 0.6], "L1-04": [0.8, 0.8, 0.0]},
         index=db_sample_df.index,
     )
     return [MockDetectionResult(track_name="layer_b", details=details)]
@@ -236,7 +236,7 @@ class MockBenfordResult:
 @pytest.fixture()
 def db_benford_results() -> list[MockDetectionResult]:
     """BenfordResult 포함 DetectionResult (layer_c)."""
-    details = pd.DataFrame({"C07": [0.0, 0.0, 0.0]})
+    details = pd.DataFrame({"L4-02": [0.0, 0.0, 0.0]})
     return [
         MockDetectionResult(
             track_name="layer_c",

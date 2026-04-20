@@ -1,4 +1,4 @@
-"""IntegrityDetector 단위·통합 테스트 — A01, A02, A03."""
+"""IntegrityDetector 단위·통합 테스트 — L1-01, L1-02, L1-03."""
 
 from __future__ import annotations
 
@@ -10,11 +10,11 @@ from src.detection.constants import SEVERITY_MAP
 from src.detection.integrity_layer import IntegrityDetector
 
 
-# ── A01: 차대변 균형 ──────────────────────────────────────────
+# ── L1-01: 차대변 균형 ──────────────────────────────────────────
 
 
 class TestA01UnbalancedEntry:
-    """A01 차대변 균형 검사."""
+    """L1-01 차대변 균형 검사."""
 
     def test_balanced_all_zero_scores(self, dt_balanced_df):
         """균형 전표 → 모든 score = 0."""
@@ -96,7 +96,7 @@ class TestA01UnbalancedEntry:
         assert result.scores.iloc[2] == 0.0
 
     def test_no_document_id_skips(self):
-        """document_id 컬럼 없는 DF → A01 skipped."""
+        """document_id 컬럼 없는 DF → L1-01 skipped."""
         df = pd.DataFrame({
             "debit_amount": [100.0],
             "credit_amount": [100.0],
@@ -109,52 +109,52 @@ class TestA01UnbalancedEntry:
         })
         detector = IntegrityDetector()
         result = detector.detect(df)
-        assert "A01" in result.metadata["skipped_rules"]
+        assert "L1-01" in result.metadata["skipped_rules"]
 
 
-# ── A02: 필수필드 누락 ────────────────────────────────────────
+# ── L1-02: 필수필드 누락 ────────────────────────────────────────
 
 
 class TestA02MissingRequired:
-    """A02 필수필드 누락 검사."""
+    """L1-02 필수필드 누락 검사."""
 
     def test_no_nulls_all_zero(self, dt_balanced_df):
         """필수 필드 모두 채움 → 0.0."""
         detector = IntegrityDetector()
         result = detector.detect(dt_balanced_df)
-        # A02 score (severity=2 → 2/5=0.4 if flagged)
-        a02_scores = result.details.get("A02", pd.Series(0.0, index=dt_balanced_df.index))
+        # L1-02 score (severity=2 → 2/5=0.4 if flagged)
+        a02_scores = result.details.get("L1-02", pd.Series(0.0, index=dt_balanced_df.index))
         assert (a02_scores == 0.0).all()
 
     def test_null_gl_account_flagged(self, dt_missing_fields_df):
         """gl_account NULL → 해당 행 플래그."""
         detector = IntegrityDetector()
         result = detector.detect(dt_missing_fields_df)
-        # idx 1: gl_account=None → A02 플래그
-        assert result.details["A02"].iloc[1] > 0.0
+        # idx 1: gl_account=None → L1-02 플래그
+        assert result.details["L1-02"].iloc[1] > 0.0
         # idx 0: 정상
-        assert result.details["A02"].iloc[0] == 0.0
+        assert result.details["L1-02"].iloc[0] == 0.0
 
     def test_multiple_nulls_still_binary(self, dt_missing_fields_df):
         """여러 필수 필드 NULL도 binary (0.0 또는 severity/5)."""
         detector = IntegrityDetector()
         result = detector.detect(dt_missing_fields_df)
-        expected_score = SEVERITY_MAP["A02"] / 5
+        expected_score = SEVERITY_MAP["L1-02"] / 5
         # idx 1: posting_date NaT + gl_account None → 여전히 단일 score
-        assert result.details["A02"].iloc[1] == pytest.approx(expected_score)
+        assert result.details["L1-02"].iloc[1] == pytest.approx(expected_score)
 
 
-# ── A03: 무효 계정 ────────────────────────────────────────────
+# ── L1-03: 무효 계정 ────────────────────────────────────────────
 
 
 class TestA03InvalidAccount:
-    """A03 무효 계정 검사."""
+    """L1-03 무효 계정 검사."""
 
     def test_valid_accounts_not_flagged(self, dt_balanced_df, dt_coa):
         """CoA에 있는 계정 → 0.0."""
         detector = IntegrityDetector(chart_of_accounts=dt_coa)
         result = detector.detect(dt_balanced_df)
-        a03_scores = result.details.get("A03", pd.Series(0.0, index=dt_balanced_df.index))
+        a03_scores = result.details.get("L1-03", pd.Series(0.0, index=dt_balanced_df.index))
         assert (a03_scores == 0.0).all()
 
     def test_invalid_account_flagged(self, dt_balanced_df, dt_coa):
@@ -164,22 +164,22 @@ class TestA03InvalidAccount:
         df.loc[0, "gl_account"] = 9999
         detector = IntegrityDetector(chart_of_accounts=dt_coa)
         result = detector.detect(df)
-        expected_score = SEVERITY_MAP["A03"] / 5
-        assert result.details["A03"].iloc[0] == pytest.approx(expected_score)
+        expected_score = SEVERITY_MAP["L1-03"] / 5
+        assert result.details["L1-03"].iloc[0] == pytest.approx(expected_score)
 
     def test_no_coa_skips_with_warning(self, dt_balanced_df):
-        """CoA=None + settings 경로 비활성 → A03 skipped."""
+        """CoA=None + settings 경로 비활성 → L1-03 skipped."""
         from config.settings import AuditSettings
         settings = AuditSettings(chart_of_accounts_path="")
         detector = IntegrityDetector(settings=settings, chart_of_accounts=None)
         result = detector.detect(dt_balanced_df)
-        assert "A03" in result.metadata["skipped_rules"]
+        assert "L1-03" in result.metadata["skipped_rules"]
 
     def test_int_str_type_mismatch(self, dt_balanced_df, dt_coa):
         """gl_account=1000(int), CoA={"1000"}(str) → 정상 매칭."""
         detector = IntegrityDetector(chart_of_accounts=dt_coa)
         result = detector.detect(dt_balanced_df)
-        a03_scores = result.details.get("A03", pd.Series(0.0, index=dt_balanced_df.index))
+        a03_scores = result.details.get("L1-03", pd.Series(0.0, index=dt_balanced_df.index))
         assert (a03_scores == 0.0).all()
 
 
@@ -198,25 +198,25 @@ class TestDetectIntegration:
 
     def test_scores_max_of_rules(self, dt_unbalanced_df, dt_coa):
         """여러 룰 위반 시 max score 적용."""
-        # D002 불균형(A01) + 9999 무효계정(A03) 동시 위반
+        # D002 불균형(L1-01) + 9999 무효계정(L1-03) 동시 위반
         df = dt_unbalanced_df.copy()
         df.loc[2, "gl_account"] = 9999
         detector = IntegrityDetector(chart_of_accounts=dt_coa)
         result = detector.detect(df)
 
-        a01_score = SEVERITY_MAP["A01"] / 5  # 1.0
-        a03_score = SEVERITY_MAP["A03"] / 5  # 0.6
-        # idx 2: A01+A03 동시 위반 → max(1.0, 0.6) = 1.0
+        a01_score = SEVERITY_MAP["L1-01"] / 5  # 1.0
+        a03_score = SEVERITY_MAP["L1-03"] / 5  # 0.6
+        # idx 2: L1-01+L1-03 동시 위반 → max(1.0, 0.6) = 1.0
         assert result.scores.iloc[2] == pytest.approx(max(a01_score, a03_score))
 
     def test_skipped_rules_in_metadata(self, dt_balanced_df):
-        """CoA=None + settings 경로 비활성 → A03 skipped, metadata에 기록."""
+        """CoA=None + settings 경로 비활성 → L1-03 skipped, metadata에 기록."""
         from config.settings import AuditSettings
         settings = AuditSettings(chart_of_accounts_path="")
         detector = IntegrityDetector(settings=settings)
         result = detector.detect(dt_balanced_df)
         assert "skipped_rules" in result.metadata
-        assert "A03" in result.metadata["skipped_rules"]
+        assert "L1-03" in result.metadata["skipped_rules"]
 
     def test_elapsed_in_metadata(self, dt_balanced_df):
         """elapsed 시간 기록."""

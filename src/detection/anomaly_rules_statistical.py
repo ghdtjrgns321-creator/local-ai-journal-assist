@@ -1,8 +1,8 @@
-"""통계 기반 이상 징후 룰 — C07 Benford, C09 비정상 계정조합.
+"""통계 기반 이상 징후 룰 — L4-02 Benford, L4-04 비정상 계정조합.
 
-C07: validation/benford.py의 analyze_benford() 재사용. 편차 큰 자릿수만 선별 플래그.
+L4-02: validation/benford.py의 analyze_benford() 재사용. 편차 큰 자릿수만 선별 플래그.
      반환값은 [0, 1] float Series — deviation 비례 차등 스코어 적용.
-C09: merge 기반 Cartesian Product로 복합 분개(N:M) 계정 쌍 빈도 분석.
+L4-04: merge 기반 Cartesian Product로 복합 분개(N:M) 계정 쌍 빈도 분석.
 """
 
 from __future__ import annotations
@@ -21,13 +21,13 @@ from src.validation.benford import BENFORD_EXPECTED, analyze_benford
 
 _MIN_GROUP_FOR_BENFORD = 100  # 계정별 최소 표본 수 (미만이면 검정 무의미)
 
-# Why: C07 deviation 비례 스코어 파라미터.
-#      base = SEVERITY_MAP["C07"]/5 = 0.4 (3등급 / 5등급 만점).
+# Why: L4-02 deviation 비례 스코어 파라미터.
+#      base = SEVERITY_MAP["L4-02"]/5 = 0.4 (3등급 / 5등급 만점).
 #      위반 자릿수의 (|observed-expected| / threshold) 비율을 [0.5, 2.0]으로 클립한 후
 #      base와 곱해 최종 행 점수를 [0.2, 0.8] 범위로 차등화한다.
-_C07_BASE_SCORE = SEVERITY_MAP["C07"] / 5.0
-_C07_MULT_MIN = 0.5
-_C07_MULT_MAX = 2.0
+_L4-02_BASE_SCORE = SEVERITY_MAP["L4-02"] / 5.0
+_L4-02_MULT_MIN = 0.5
+_L4-02_MULT_MAX = 2.0
 
 
 def _digit_deviation(observed: dict[int, float], digit: int) -> float:
@@ -43,16 +43,16 @@ def _deviation_to_score(deviation: float, threshold: float) -> float:
     deviation == 0.5 × threshold → base × 0.5 = 0.2 (플로어).
     """
     if threshold <= 0:
-        return _C07_BASE_SCORE
-    multiplier = max(_C07_MULT_MIN, min(deviation / threshold, _C07_MULT_MAX))
-    return _C07_BASE_SCORE * multiplier
+        return _L4-02_BASE_SCORE
+    multiplier = max(_L4-02_MULT_MIN, min(deviation / threshold, _L4-02_MULT_MAX))
+    return _L4-02_BASE_SCORE * multiplier
 
 
 def c07_benford_violation(
     df: pd.DataFrame,
     settings: AuditSettings | None = None,
 ) -> tuple[pd.Series, dict[str, Any]]:
-    """C07 Benford 위반: 계정별 분리 검정 + 전체 검정 하이브리드.
+    """L4-02 Benford 위반: 계정별 분리 검정 + 전체 검정 하이브리드.
 
     Why: 감사기준서 520호 §5, PCAOB AS 240 A45(e).
          전체 데이터에서는 정상이지만 특정 계정(여비교통비, 접대비 등)에서만
@@ -150,7 +150,7 @@ def c09_rare_account_pair(
     df: pd.DataFrame,
     percentile: float = 0.01,
 ) -> pd.Series:
-    """C09 비정상 계정조합: 차변-대변 계정 쌍 빈도 하위 N%.
+    """L4-04 비정상 계정조합: 차변-대변 계정 쌍 빈도 하위 N%.
 
     Why: PCAOB AS 240 A49(a), ISA 315 — 희소한 계정 조합은 비정상 거래 의심.
          복합 분개(N:M)를 merge 기반 Cartesian Product로 처리하여
@@ -177,7 +177,7 @@ def c09_rare_account_pair(
     bloated = doc_sizes[doc_sizes > _MAX_LINES_PER_DOC].index
     if not bloated.empty:
         logger.warning(
-            "C09: %d개 전표가 %d행 초과 — Cartesian Product 제한으로 제외",
+            "L4-04: %d개 전표가 %d행 초과 — Cartesian Product 제한으로 제외",
             len(bloated), _MAX_LINES_PER_DOC,
         )
         debits = debits[~debits["document_id"].isin(bloated)]

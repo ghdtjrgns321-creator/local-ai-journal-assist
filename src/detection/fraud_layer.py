@@ -1,13 +1,9 @@
-"""Layer B: 부정 탐지 오케스트레이터 — B01~B11.
-
-룰 레지스트리를 순회하며 try/except로 격리 실행.
-한 룰 실패해도 나머지 계속 진행, 실패 룰은 skipped + warning 기록.
-"""
+"""Layer B fraud detector."""
 
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
@@ -26,6 +22,7 @@ from src.detection.fraud_rules_feature import (
     b08_manual_override,
 )
 from src.detection.fraud_rules_groupby import (
+    _resolve_b04_partner_key,
     b04_duplicate_payment,
     b05_duplicate_entry,
     b11_expense_capitalization,
@@ -37,12 +34,29 @@ if TYPE_CHECKING:
     from config.settings import AuditSettings
     from src.detection.base import DetectionResult
 
-# Why: 최소한 금액 컬럼은 있어야 Layer B 실행 의미가 있음
+
 _REQUIRED_COLUMNS = ["debit_amount", "credit_amount"]
+_L2_02_PARTNER_COLUMNS = (
+    "auxiliary_account_number",
+    "trading_partner",
+    "auxiliary_account_label",
+    "vendor_name",
+    "customer_name",
+    "counterparty_code",
+    "counterparty_name",
+)
+
+
+def _populated_mask(series: pd.Series) -> pd.Series:
+    """Return a non-empty value mask."""
+
+    if series.dtype == "O":
+        return series.notna() & series.astype(str).str.strip().ne("")
+    return series.notna()
 
 
 class FraudLayer(BaseDetector):
-    """B01~B10 부정 탐지. 핵심 레이어 (가중치 0.45)."""
+    """Fraud and control-circumvention detector."""
 
     def __init__(
         self,
@@ -57,46 +71,150 @@ class FraudLayer(BaseDetector):
         return "layer_b"
 
     def detect(self, df: pd.DataFrame) -> DetectionResult:
-        """B01~B10 순차 실행. 각 룰은 try/except로 격리."""
+        """Execute Layer B rules."""
+
         start = time.perf_counter()
         warnings: list[str] = []
 
-        # Why: 빈 DataFrame이면 validate_input에서 ValueError → 빈 결과 반환
         missing = validate_input(df, _REQUIRED_COLUMNS)
         if missing:
-            warnings.append(f"필수 컬럼 누락: {missing}")
+            warnings.append(f"missing required columns: {missing}")
             return self._empty_result(df, warnings, time.perf_counter() - start)
 
         rule_results: dict[str, pd.Series] = {}
         skipped: list[str] = []
+        coverage_issues: list[dict[str, Any]] = []
 
         for rule_id, func, kwargs in self._build_registry():
+            missing_inputs = self._missing_inputs(rule_id, df)
+            if missing_inputs:
+                skipped.append(rule_id)
+                warnings.append(f"{rule_id} skipped: missing inputs {missing_inputs}")
+                coverage_issues.append(
+                    {
+                        "rule_id": rule_id,
+                        "kind": "missing_prerequisites",
+                        "severity": "high",
+                        "affected_rows": int(len(df)),
+                        "missing_inputs": missing_inputs,
+                    }
+                )
+                continue
+
             try:
-                result = func(df, **kwargs)
-                rule_results[rule_id] = result
+                rule_results[rule_id] = func(df, **kwargs)
+                coverage_issues.extend(self._coverage_issues(rule_id, df))
             except Exception as exc:
                 skipped.append(rule_id)
-                warnings.append(f"{rule_id} 실행 실패: {exc}")
-                self._logger.warning("%s 실행 실패: %s", rule_id, exc)
+                warnings.append(f"{rule_id} failed: {exc}")
+                self._logger.warning("%s failed: %s", rule_id, exc)
 
         elapsed = time.perf_counter() - start
-        return self._build_result(df, rule_results, skipped, warnings, elapsed)
+        return self._build_result(
+            df=df,
+            rule_results=rule_results,
+            skipped=skipped,
+            warnings=warnings,
+            elapsed=elapsed,
+            coverage_issues=coverage_issues,
+        )
 
     def _build_registry(self) -> list[tuple[str, Callable, dict]]:
-        """룰 레지스트리: (rule_id, callable, kwargs)."""
+        """Return the rule registry for Layer B."""
+
         s = self._settings
         return [
-            ("B01", b01_revenue_manipulation, {"zscore_threshold": s.zscore_threshold}),
-            ("B02", b02_near_threshold, {}),
-            ("B03", b03_exceeds_threshold, {}),
-            ("B04", b04_duplicate_payment, {"window_days": s.duplicate_payment_window_days}),
-            ("B05", b05_duplicate_entry, {}),
-            ("B06", b06_self_approval, {"min_amount": s.approval_thresholds[0], "audit_rules": self._audit_rules}),
-            ("B07", b07_segregation_of_duties, {"sod_threshold": s.sod_process_threshold, "audit_rules": self._audit_rules}),
-            ("B08", b08_manual_override, {}),
-            ("B09", b09_skipped_approval, {}),
-            ("B10", b10_circular_intercompany, {}),
-            ("B11", b11_expense_capitalization, {}),
+            ("L4-01", b01_revenue_manipulation, {"zscore_threshold": s.zscore_threshold}),
+            ("L2-01", b02_near_threshold, {}),
+            ("L1-04", b03_exceeds_threshold, {}),
+            ("L2-02", b04_duplicate_payment, {"window_days": s.duplicate_payment_window_days}),
+            ("L2-03", b05_duplicate_entry, {}),
+            (
+                "L1-05",
+                b06_self_approval,
+                {"min_amount": s.approval_thresholds[0], "audit_rules": self._audit_rules},
+            ),
+            (
+                "L1-06",
+                b07_segregation_of_duties,
+                {"sod_threshold": s.sod_process_threshold, "audit_rules": self._audit_rules},
+            ),
+            ("L3-02", b08_manual_override, {}),
+            ("L1-07", b09_skipped_approval, {}),
+            ("L3-03", b10_circular_intercompany, {}),
+            ("L2-04", b11_expense_capitalization, {}),
+        ]
+
+    def _missing_inputs(self, rule_id: str, df: pd.DataFrame) -> list[str]:
+        """Return missing prerequisite columns or features for a rule."""
+
+        required_by_rule = {
+            "L4-01": ["is_revenue_account", "amount_zscore"],
+            "L2-01": ["is_near_threshold"],
+            "L1-04": ["exceeds_threshold"],
+            "L2-03": ["gl_account", "posting_date", "debit_amount", "credit_amount"],
+            "L1-06": ["created_by", "business_process"],
+            "L3-02": ["is_manual_je", "exceeds_threshold"],
+            "L1-07": ["exceeds_threshold", "source"],
+            "L3-03": ["is_intercompany"],
+            "L2-04": ["document_id", "gl_account", "debit_amount", "credit_amount"],
+        }
+        if rule_id == "L1-05":
+            missing: list[str] = []
+            if "created_by" not in df.columns:
+                missing.append("created_by")
+            if "approved_by" not in df.columns and "source" not in df.columns:
+                missing.append("approved_by|source")
+            return missing
+        if rule_id == "L2-02":
+            return [
+                column
+                for column in ["posting_date", "debit_amount", "credit_amount"]
+                if column not in df.columns
+            ]
+        return [column for column in required_by_rule.get(rule_id, []) if column not in df.columns]
+
+    def _coverage_issues(self, rule_id: str, df: pd.DataFrame) -> list[dict[str, Any]]:
+        """Return coverage metadata for rules with fallback inputs."""
+
+        if rule_id != "L2-02":
+            return []
+
+        partner_key = _resolve_b04_partner_key(df)
+        if partner_key is None:
+            return [
+                {
+                    "rule_id": "L2-02",
+                    "kind": "missing_prerequisites",
+                    "severity": "high",
+                    "affected_rows": int(len(df)),
+                    "missing_inputs": ["|".join(_L2_02_PARTNER_COLUMNS)],
+                }
+            ]
+
+        populated = _populated_mask(partner_key)
+        populated_rows = int(populated.sum())
+        if populated_rows == len(df):
+            return []
+
+        sparse_inputs = [
+            column
+            for column in _L2_02_PARTNER_COLUMNS
+            if column in df.columns and not _populated_mask(df[column]).all()
+        ]
+        if not sparse_inputs:
+            sparse_inputs = ["|".join(_L2_02_PARTNER_COLUMNS)]
+
+        return [
+            {
+                "rule_id": "L2-02",
+                "kind": "partial_input_coverage",
+                "severity": "medium",
+                "affected_rows": int(len(df) - populated_rows),
+                "available_rows": populated_rows,
+                "coverage_ratio": float(populated.mean()),
+                "low_coverage_inputs": sparse_inputs,
+            }
         ]
 
     def _build_result(
@@ -106,21 +224,32 @@ class FraudLayer(BaseDetector):
         skipped: list[str],
         warnings: list[str],
         elapsed: float,
+        coverage_issues: list[dict[str, Any]],
     ) -> DetectionResult:
-        """룰별 bool Series → scores, details, RuleFlag 통합."""
-        if not rule_results:
-            return self._empty_result(df, warnings, elapsed)
+        """Build a DetectionResult from rule outputs."""
 
-        # Why: details는 행×룰 매트릭스 (severity/5 정규화)
+        if not rule_results:
+            index = df.index if not df.empty else pd.RangeIndex(0)
+            return self._make_result(
+                flagged_indices=[],
+                scores=pd.Series(0.0, index=index),
+                rule_flags=[],
+                details=pd.DataFrame(index=index),
+                metadata={
+                    "elapsed": elapsed,
+                    "skipped_rules": skipped,
+                    "coverage_issues": coverage_issues,
+                    "analysis_degraded": bool(coverage_issues),
+                },
+                warnings=warnings,
+            )
+
         details = pd.DataFrame(index=df.index)
         for rule_id, flagged in rule_results.items():
-            severity_score = SEVERITY_MAP[rule_id] / 5.0
-            details[rule_id] = flagged.astype(float) * severity_score
+            details[rule_id] = flagged.astype(float) * (SEVERITY_MAP[rule_id] / 5.0)
 
-        # Why: 행별 최대 severity 점수 사용 (합산 아닌 최대값)
         scores = details.max(axis=1).fillna(0.0)
         flagged_indices = scores[scores > 0].index.tolist()
-
         rule_flags = [
             self._create_rule_flag(
                 rule_id=rule_id,
@@ -135,7 +264,12 @@ class FraudLayer(BaseDetector):
             scores=scores,
             rule_flags=rule_flags,
             details=details,
-            metadata={"elapsed": elapsed, "skipped_rules": skipped},
+            metadata={
+                "elapsed": elapsed,
+                "skipped_rules": skipped,
+                "coverage_issues": coverage_issues,
+                "analysis_degraded": bool(coverage_issues),
+            },
             warnings=warnings,
         )
 
@@ -145,12 +279,19 @@ class FraudLayer(BaseDetector):
         warnings: list[str],
         elapsed: float,
     ) -> DetectionResult:
-        """빈 결과 생성 — 필수 컬럼 누락 또는 모든 룰 실패 시."""
+        """Build an empty result with warning metadata."""
+
+        index = df.index if not df.empty else pd.RangeIndex(0)
         return self._make_result(
             flagged_indices=[],
-            scores=pd.Series(0.0, index=df.index if not df.empty else pd.RangeIndex(0)),
+            scores=pd.Series(0.0, index=index),
             rule_flags=[],
-            details=pd.DataFrame(index=df.index if not df.empty else pd.RangeIndex(0)),
-            metadata={"elapsed": elapsed, "skipped_rules": []},
+            details=pd.DataFrame(index=index),
+            metadata={
+                "elapsed": elapsed,
+                "skipped_rules": [],
+                "coverage_issues": [],
+                "analysis_degraded": False,
+            },
             warnings=warnings,
         )

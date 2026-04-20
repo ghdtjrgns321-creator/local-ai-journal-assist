@@ -4,7 +4,7 @@ Why
 ---
 탐지 파이프라인이 산출한 수치(risk_level 카운트, flagged_rules 등)만으로는
 감사인이 "이 배치에서 무엇이 가장 위험한가"를 즉각 파악하기 어렵다.
-LLM reasoning 티어로 수치를 자연어 요약 + C08(이상고액) AND B01(매출이상)
+LLM reasoning 티어로 수치를 자연어 요약 + L4-03(이상고액) AND L4-01(매출이상)
 동시 플래그 전표에 대한 사업상 합리성 보조 의견(ISA 240 §32(c))을 생성.
 
 호출 주체: 대시보드 On-Demand (파이프라인에서 자동 호출하지 않음).
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = (
     "You are a senior audit analyst. Input accounting data is in English (SAP format); "
-    "respond entirely in Korean (한국어). Always cite rule IDs (e.g., C08, B01) in rationales. "
+    "respond entirely in Korean (한국어). Always cite rule IDs (e.g., L4-03, L4-01) in rationales. "
     "Focus on material risk. temperature=0.1."
 )
 
@@ -44,7 +44,7 @@ class InsightGenerator:
     # ── 퍼블릭 ──────────────────────────────────────────────
 
     def generate_batch_insight(self) -> BatchInsight:
-        """배치 전체 요약 + C08 AND B01 유의적 거래 평가."""
+        """배치 전체 요약 + L4-03 AND L4-01 유의적 거래 평가."""
         stats = self._aggregate_stats()
         rule_stats = self._aggregate_rule_counts()
         sig_tx = self._query_significant_tx()
@@ -78,7 +78,7 @@ class InsightGenerator:
 
     def _aggregate_rule_counts(self, top_n: int = 10) -> list[dict]:
         """flagged_rules CSV를 unnest하여 룰 코드별 플래그 건수 Top N."""
-        # Why: 공백 혼입(" C08")과 빈 토큰 방어 위해 trim + NULLIF 필터
+        # Why: 공백 혼입(" L4-03")과 빈 토큰 방어 위해 trim + NULLIF 필터
         rows = self.conn.execute(
             """
             SELECT rule_code, COUNT(*) AS n
@@ -97,9 +97,9 @@ class InsightGenerator:
         return [{"rule_code": r[0], "n": int(r[1])} for r in rows]
 
     def _query_significant_tx(self, limit: int | None = None) -> list[dict]:
-        """C08 AND B01 동시 플래그 전표 Top N (금액 내림차순).
+        """L4-03 AND L4-01 동시 플래그 전표 Top N (금액 내림차순).
 
-        Why: LIKE '%C08%'는 'C080', 'C08A' 등 미래 룰 코드와 False positive
+        Why: LIKE '%L4-03%'는 'C080', 'C08A' 등 미래 룰 코드와 False positive
              발생. list_contains + string_split로 정확 매칭.
 
         PII 방어: created_by(작성자 ID)는 외부 API에 전달하면 개인정보 유출이므로
@@ -114,8 +114,8 @@ class InsightGenerator:
                    COALESCE(header_text, line_text, '') AS description,
                    business_process, source, flagged_rules
             FROM general_ledger
-            WHERE list_contains(string_split(flagged_rules, ','), 'C08')
-              AND list_contains(string_split(flagged_rules, ','), 'B01')
+            WHERE list_contains(string_split(flagged_rules, ','), 'L4-03')
+              AND list_contains(string_split(flagged_rules, ','), 'L4-01')
             ORDER BY debit_amount DESC NULLS LAST
             LIMIT ?
             """,
@@ -140,7 +140,7 @@ class InsightGenerator:
             "감사 배치 분석 결과입니다.\n\n"
             f"[위험도별 집계]\n{json.dumps(stats, ensure_ascii=False, default=str)}\n\n"
             f"[탐지 룰 Top]\n{json.dumps(rule_stats, ensure_ascii=False)}\n\n"
-            f"[C08 AND B01 유의적 거래 Top {len(sig_tx)}건]\n"
+            f"[L4-03 AND L4-01 유의적 거래 Top {len(sig_tx)}건]\n"
             f"{json.dumps(sig_tx, ensure_ascii=False, default=str)}\n\n"
             "요구사항:\n"
             "1. summary: 배치 전체 이상 프로필을 3~5문장으로 요약\n"

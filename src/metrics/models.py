@@ -11,6 +11,9 @@ class RuleMetric:
 
     track_name: str
     rule_code: str
+    action_layer: str = ""
+    evaluation_status: str = "ok"
+    evaluation_reason: str = ""
     label_docs: int = 0
     flagged_docs: int = 0
     tp_docs: int = 0

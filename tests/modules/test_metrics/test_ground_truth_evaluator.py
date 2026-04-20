@@ -35,12 +35,12 @@ def _make_result(track_name: str, details: pd.DataFrame) -> DetectionResult:
 
 class TestNormalizeResultsByTrack:
     def test_accepts_list(self):
-        result = _make_result("layer_a", pd.DataFrame({"A01": [1.0]}))
+        result = _make_result("layer_a", pd.DataFrame({"L1-01": [1.0]}))
         normalized = normalize_results_by_track([result])
         assert normalized["layer_a"] is result
 
     def test_accepts_mapping(self):
-        result = _make_result("layer_a", pd.DataFrame({"A01": [1.0]}))
+        result = _make_result("layer_a", pd.DataFrame({"L1-01": [1.0]}))
         normalized = normalize_results_by_track({"layer_a": result})
         assert normalized["layer_a"] is result
 
@@ -54,7 +54,7 @@ class TestGroundTruthEvaluator:
         )
         result = _make_result(
             "layer_a",
-            pd.DataFrame({"A01": [1.0, 0.0, 1.0]}, index=df.index),
+            pd.DataFrame({"L1-01": [1.0, 0.0, 1.0]}, index=df.index),
         )
         labels = pd.DataFrame(
             {
@@ -64,7 +64,7 @@ class TestGroundTruthEvaluator:
         )
 
         analysis = per_rule_label_analysis(df, {"layer_a": result}, labels)
-        a01 = next(item for item in analysis if item["rule_id"] == "A01")
+        a01 = next(item for item in analysis if item["rule_id"] == "L1-01")
 
         assert a01["tp_docs"] == 1
         assert a01["fp_docs"] == 1
@@ -79,7 +79,7 @@ class TestGroundTruthEvaluator:
         )
 
         analysis = per_rule_label_analysis(df, {}, labels)
-        a01 = next(item for item in analysis if item["rule_id"] == "A01")
+        a01 = next(item for item in analysis if item["rule_id"] == "L1-01")
 
         assert a01["status"] == "skipped"
         assert a01["reason"] == "rule missing in track layer_a"
@@ -134,7 +134,7 @@ class TestGroundTruthEvaluator:
         )
         result = _make_result(
             "layer_a",
-            pd.DataFrame({"A01": [1.0, 0.0, 1.0]}, index=df.index),
+            pd.DataFrame({"L1-01": [1.0, 0.0, 1.0]}, index=df.index),
         )
         labels = pd.DataFrame(
             {
@@ -154,5 +154,5 @@ class TestGroundTruthEvaluator:
         assert report.source_kind == "ground_truth"
         assert report.flagged_docs == 2
         assert report.high_risk_docs == 1
-        assert report.rule_metrics[0].rule_code == "A01"
+        assert report.rule_metrics[0].rule_code == "L1-01"
         assert report.rule_metrics[0].precision == 0.5

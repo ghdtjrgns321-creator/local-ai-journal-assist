@@ -1,6 +1,6 @@
 """텍스트 기반 감사 파생변수 생성 모듈.
 
-C06 룰 + WU-19 NLP 기초 — description_quality, has_risk_keyword, morpheme_tokens.
+L3-08 룰 + WU-19 NLP 기초 — description_quality, has_risk_keyword, morpheme_tokens.
 ingest 완료된 표준 DataFrame을 입력으로 받는다.
 
 핵심 설계 — 같은 원본 텍스트를 **2가지 버전**으로 정제:
@@ -210,7 +210,7 @@ def add_description_quality(
     ttr_threshold: float = 0.3,
     entropy_threshold: float = 1.0,
 ) -> pd.DataFrame:
-    """C06: 적요 품질 3단계 — missing / poor / normal.
+    """L3-08: 적요 품질 3단계 — missing / poor / normal.
 
     combined_text(strip 버전) 사용 — 공백 포함 원본 길이로 판정.
     판정 흐름: NaN→missing → noise→poor → 짧음→poor → TTR<0.3→poor → entropy<1.0→poor → normal.
@@ -240,7 +240,7 @@ def add_has_risk_keyword(
     df: pd.DataFrame,
     risk_kw: dict[str, list[str]] | None = None,
 ) -> pd.DataFrame:
-    """C06: 위험 키워드 등급 — high / medium / low.
+    """L3-08: 위험 키워드 등급 — high / medium / low.
 
     cleaned_text(완전 정제 버전) 사용 — 은폐 패턴 관통.
     risk_kw 직접 주입 가능 (테스트 용이), 미지정 시 YAML 로드.
@@ -569,8 +569,8 @@ def add_all_text_features(
     """텍스트 파생변수를 한번에 추가. engine.py 진입점.
 
     생성 컬럼:
-      - description_quality : missing / poor / normal (C06)
-      - has_risk_keyword    : high / medium / low (C06)
+      - description_quality : missing / poor / normal (L3-08)
+      - has_risk_keyword    : high / medium / low (L3-08)
       - morpheme_tokens     : list[str] — WU-19 형태소 토큰 (WU-21 전처리)
 
     Warning: df를 in-place로 수정하고 동일 객체를 반환한다.

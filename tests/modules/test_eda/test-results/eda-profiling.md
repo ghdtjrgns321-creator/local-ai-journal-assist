@@ -49,7 +49,7 @@
 |----|---------------------------------------------------------------|------------------------|--------------------------|-----------------------------------------------------------------------------------|
 | 1  | `datetime_profiler` `.values` → `.array` 전환 (타임존 보존)   | datetime_profiler.py   | Phase 1c 타임존 지원 시  | [07-dashboard §미해결](../../docs/pre-plan/07-dashboard.md#미해결-이슈-phase-1c에서-해결--발견-위치-교차-참조) |
 | 2  | `top_values` tuple→list 변환 계약 문서화                      | category_profiler.py   | Phase 1c 대시보드 연동 시 | [07-dashboard §미해결](../../docs/pre-plan/07-dashboard.md#미해결-이슈-phase-1c에서-해결--발견-위치-교차-참조) |
-| 3  | `_generate_warnings` 룰 코드 상수화 (A02 등)                  | report.py              | Phase 1b detection 연동 시 | [05-detection §선행이슈](../../docs/pre-plan/05-detection.md#선행-모듈에서-넘어온-미해결-이슈-교차-참조) |
+| 3  | `_generate_warnings` 룰 코드 상수화 (L1-02 등)                  | report.py              | Phase 1b detection 연동 시 | [05-detection §선행이슈](../../docs/pre-plan/05-detection.md#선행-모듈에서-넘어온-미해결-이슈-교차-참조) |
 
 ## 개선 방안 (후속 Phase)
 

@@ -13,7 +13,7 @@ from src.detection.base import DetectionResult
 
 @pytest.fixture
 def full_anomaly_df() -> pd.DataFrame:
-    """Layer C 룰 모두 테스트 가능한 종합 DataFrame (10행)."""
+    """L3/L4 룰 모두 테스트 가능한 종합 DataFrame (10행)."""
     n = 10
     # Why: Benford 분석에 최소 표본 필요 → first_digit 포함
     digits = []
@@ -39,7 +39,7 @@ def full_anomaly_df() -> pd.DataFrame:
                               "medium", "low", "low", "low", "low"],
         "amount_zscore": [1.0, 0.5, 0.3, 3.5, 0.2, 0.8, 0.1, 0.4, -4.0, 0.6],
         "first_digit": pd.array(digits, dtype=pd.Int64Dtype()),
-        # Why: C11 역분개 + C12 비정상시간대에 필요
+        # Why: L2-06 역분개 + L4-05 비정상시간대에 필요
         "posting_date": pd.to_datetime([
             "2025-06-01", "2025-06-02", "2025-06-03", "2025-06-04", "2025-06-05",
             "2025-06-06", "2025-06-07", "2025-06-08", "2025-06-09", "2025-06-10",
@@ -86,10 +86,10 @@ class TestAnomalyDetectorIntegration:
             assert col.startswith("C"), f"컬럼 {col}은 C prefix가 아님"
 
     def test_rule_flags_count(self, full_anomaly_df: pd.DataFrame) -> None:
-        """rule_flags 수는 실행된 룰 수와 일치 (C07은 BenfordDetector로 분리)."""
+        """rule_flags 수는 실행된 룰 수와 일치 (L4-02은 BenfordDetector로 분리)."""
         result = AnomalyDetector().detect(full_anomaly_df)
         skipped = result.metadata.get("skipped_rules", [])
-        expected_count = 12 - len(skipped)  # C01~C06, C08~C13 (C07 제외)
+        expected_count = 12 - len(skipped)  # L3-04~L3-08, L4-03~L4-06 (L4-02 제외)
         assert len(result.rule_flags) == expected_count
 
     def test_flagged_indices_valid(self, full_anomaly_df: pd.DataFrame) -> None:
@@ -117,7 +117,7 @@ class TestAnomalyDetectorIntegration:
             AnomalyDetector().detect(df)
 
     def test_benford_not_in_anomaly_detector(self, full_anomaly_df: pd.DataFrame) -> None:
-        """C07은 BenfordDetector로 분리 — AnomalyDetector에 포함되지 않음."""
+        """L4-02은 BenfordDetector로 분리 — AnomalyDetector에 포함되지 않음."""
         result = AnomalyDetector().detect(full_anomaly_df)
-        assert "C07" not in result.details.columns
+        assert "L4-02" not in result.details.columns
         assert "benford_result" not in result.metadata

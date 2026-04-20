@@ -273,11 +273,11 @@ def hd_mid_confidence_xlsx(tmp_path: Path) -> Path:
     wb = openpyxl.Workbook()
     ws = wb.active
     # 행0: 헤더처럼 보이지만 숫자도 섞여있어 type_diversity 낮음
-    ws.append(["A01", 100, "B02", 200])
+    ws.append(["L1-01", 100, "L2-01", 200])
     # 행1~3: 데이터도 비슷한 패턴
-    ws.append(["A03", 300, "B04", 400])
-    ws.append(["A05", 500, "B06", 600])
-    ws.append(["A07", 700, "B08", 800])
+    ws.append(["L1-03", 300, "L2-02", 400])
+    ws.append(["A05", 500, "L1-05", 600])
+    ws.append(["A07", 700, "L3-02", 800])
     wb.save(filepath)
     return filepath
 

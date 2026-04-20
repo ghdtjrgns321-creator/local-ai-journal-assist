@@ -1,4 +1,4 @@
-"""B06, B07, B09, B10 접근통제 룰 단위 테스트."""
+"""L1-05, L1-06, L1-07, L3-03 접근통제 룰 단위 테스트."""
 
 from __future__ import annotations
 
@@ -11,10 +11,10 @@ from src.detection.fraud_rules_access import (
     b10_circular_intercompany,
 )
 
-# ── B06 자기 승인 ─────────────────────────────────────────
+# ── L1-05 자기 승인 ─────────────────────────────────────────
 
 
-class TestB06:
+class TestL1-05:
     def test_human_high_amount_flagged(self) -> None:
         """TP: 일반 사용자 + 1천만 초과 + 자기 승인 → flagged."""
         df = pd.DataFrame({
@@ -90,11 +90,11 @@ class TestB06:
         assert result[0]
 
 
-# ── B07 직무분리 위반 ─────────────────────────────────────
+# ── L1-06 직무분리 위반 ─────────────────────────────────────
 
 
-class TestB07:
-    """B07 하이브리드 SoD: Toxic Pair + In-Process + Role-based."""
+class TestL1-06:
+    """L1-06 하이브리드 SoD: Toxic Pair + In-Process + Role-based."""
 
     def test_toxic_pair_flagged(self) -> None:
         """TRE+P2P 겸직 → 직급 불문 즉시 flagged."""
@@ -175,10 +175,10 @@ class TestB07:
         assert not b07_segregation_of_duties(df).any()
 
 
-# ── B09 승인 생략 ─────────────────────────────────────────
+# ── L1-07 승인 생략 ─────────────────────────────────────────
 
 
-class TestB09:
+class TestL1-07:
     def test_exceeds_non_automated_flagged(self) -> None:
         df = pd.DataFrame({
             "exceeds_threshold": [True, True, False],
@@ -194,10 +194,10 @@ class TestB09:
         assert not b09_skipped_approval(df).any()
 
 
-# ── B10 관계사 순환거래 ───────────────────────────────────
+# ── L3-03 관계사 순환거래 ───────────────────────────────────
 
 
-class TestB10:
+class TestL3-03:
     def test_intercompany_flagged(self) -> None:
         """관계사 전표 + 복수 회사 → flagged."""
         df = pd.DataFrame({

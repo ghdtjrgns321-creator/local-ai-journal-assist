@@ -1,7 +1,7 @@
 """pattern_features 단위 테스트.
 
 계층: 개별 피처 → orchestrator 순서로 검증.
-B01(매출계정), B08(수기전표), B10(관계사), B11/C06(가계정), C07(Benford) 룰 대응.
+L4-01(매출계정), L3-02(수기전표), L3-03(관계사), L2-04/L3-08(가계정), L4-02(Benford) 룰 대응.
 """
 
 import numpy as np
@@ -22,7 +22,7 @@ from src.feature.pattern_features import (
 
 
 class TestAddIsManualJe:
-    """B08: 수기 전표 식별."""
+    """L3-02: 수기 전표 식별."""
 
     CODES = ["SA", "Manual", "수기"]
 
@@ -76,7 +76,7 @@ class TestAddIsManualJe:
 
 
 class TestAddIsIntercompany:
-    """B10: 관계사 거래 식별."""
+    """L3-03: 관계사 거래 식별."""
 
     IDENTIFIERS = ["INTER", "99"]
 
@@ -129,7 +129,7 @@ class TestAddIsIntercompany:
 
 
 class TestAddIsRevenueAccount:
-    """B01: 매출 계정 판별."""
+    """L4-01: 매출 계정 판별."""
 
     def test_single_prefix(self, pf_basic_df):
         """prefix '4' → 4100, 4200 매칭."""
@@ -172,7 +172,7 @@ class TestAddIsRevenueAccount:
 
 
 class TestAddFirstDigit:
-    """C07: Benford용 첫 번째 유효숫자 추출."""
+    """L4-02: Benford용 첫 번째 유효숫자 추출."""
 
     def test_positive_integer(self):
         """양수 정수 → 첫 자리 추출."""
@@ -248,7 +248,7 @@ class TestAddFirstDigit:
 
 
 class TestAddIsSuspenseAccount:
-    """B11/C06: 가계정·미결산 키워드 매칭."""
+    """L2-04/L3-08: 가계정·미결산 키워드 매칭."""
 
     KEYWORDS = ["가수금", "가지급", "미결산", "임시"]
 

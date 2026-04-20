@@ -1,4 +1,4 @@
-"""C12 비정상 시간대 입력자 집중 분석 — 피처 + 룰 테스트.
+"""L4-05 비정상 시간대 입력자 집중 분석 — 피처 + 룰 테스트.
 
 피처: add_time_zone_category() 경계값·결산기 보정·주말 보정
 룰: c12_abnormal_hours_concentration() 3σ·폴백·급속승인
@@ -371,7 +371,7 @@ class TestC12RapidApproval:
         assert not result.iloc[0]
 
     def test_self_approval_not_flagged(self):
-        """자기 승인(B06 영역) → C12에서 미플래그."""
+        """자기 승인(L1-05 영역) → L4-05에서 미플래그."""
         df = self._make_approval_df(
             time="23:00", approval_offset_min=2, same_approver=True,
         )
@@ -400,7 +400,7 @@ class TestC12FlagTargeting:
     """#6 보완: 이상치 사용자의 비정상 시간대 행만 플래그."""
 
     def test_outlier_user_normal_entries_not_flagged(self):
-        """이상치 사용자의 정상 시간(10:00) 전표는 C12 미플래그."""
+        """이상치 사용자의 정상 시간(10:00) 전표는 L4-05 미플래그."""
         entries = {"userA": ["23:00"] * 8 + ["10:00"] * 2}
         for name in ["userB", "userC", "userD", "userE", "userF"]:
             entries[name] = ["10:00"] * 20
@@ -413,7 +413,7 @@ class TestC12FlagTargeting:
         user_a_mask = df["created_by"] == "userA"
         normal_mask = df["time_zone_category"] == "normal"
         flagged_normal = result[user_a_mask & normal_mask]
-        assert not flagged_normal.any(), "정상 시간 전표에 C12 플래그 발생"
+        assert not flagged_normal.any(), "정상 시간 전표에 L4-05 플래그 발생"
 
     def test_outlier_user_midnight_entries_flagged(self):
         """이상치 사용자의 심야 전표만 플래그."""
@@ -560,16 +560,16 @@ class TestC12Integration:
     """AnomalyDetector 레지스트리 통합 테스트."""
 
     def test_c12_in_anomaly_detector(self):
-        """AnomalyDetector._build_registry()에 C12 포함 확인."""
+        """AnomalyDetector._build_registry()에 L4-05 포함 확인."""
         from src.detection.anomaly_layer import AnomalyDetector
 
         detector = AnomalyDetector()
         registry = detector._build_registry()
         rule_ids = [r[0] for r in registry]
-        assert "C12" in rule_ids
+        assert "L4-05" in rule_ids
 
     def test_c12_detect_runs_without_error(self):
-        """AnomalyDetector.detect()에서 C12 포함 실행 — 에러 없음."""
+        """AnomalyDetector.detect()에서 L4-05 포함 실행 — 에러 없음."""
         from src.detection.anomaly_layer import AnomalyDetector
 
         df = _make_rule_df({
@@ -578,7 +578,7 @@ class TestC12Integration:
         })
         detector = AnomalyDetector()
         result = detector.detect(df)
-        assert "C12" not in result.metadata.get("skipped_rules", [])
+        assert "L4-05" not in result.metadata.get("skipped_rules", [])
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -611,7 +611,7 @@ def _load_datasynth_with_features() -> pd.DataFrame:
 
 
 class TestC12DataSynthE2E:
-    """DataSynth 1M건 기반 C12 E2E 검증."""
+    """DataSynth 1M건 기반 L4-05 E2E 검증."""
 
     @pytest.fixture(scope="class")
     def datasynth_df(self) -> pd.DataFrame:
@@ -620,29 +620,29 @@ class TestC12DataSynthE2E:
         return _load_datasynth_with_features()
 
     def test_c12_not_skipped(self, datasynth_df):
-        """DataSynth에서 C12가 skip 없이 실행."""
+        """DataSynth에서 L4-05가 skip 없이 실행."""
         from src.detection.anomaly_layer import AnomalyDetector
 
         detector = AnomalyDetector()
         result = detector.detect(datasynth_df)
-        assert "C12" in [rf.rule_id for rf in result.rule_flags], "C12 결과 누락"
-        assert "C12" not in result.metadata.get("skipped_rules", [])
+        assert "L4-05" in [rf.rule_id for rf in result.rule_flags], "L4-05 결과 누락"
+        assert "L4-05" not in result.metadata.get("skipped_rules", [])
 
     def test_c12_flag_rate_reasonable(self, datasynth_df):
-        """DataSynth C12 플래그율이 0.1%~20% 범위 — 극단적 과탐/미탐 방지."""
+        """DataSynth L4-05 플래그율이 0.1%~20% 범위 — 극단적 과탐/미탐 방지."""
         from src.detection.anomaly_layer import AnomalyDetector
 
         detector = AnomalyDetector()
         result = detector.detect(datasynth_df)
 
-        c12_flag = next(rf for rf in result.rule_flags if rf.rule_id == "C12")
+        c12_flag = next(rf for rf in result.rule_flags if rf.rule_id == "L4-05")
         flag_rate = c12_flag.flagged_count / c12_flag.total_count
 
-        assert flag_rate > 0.001, f"C12 미탐 의심: {flag_rate:.4%} (0.1% 미만)"
-        assert flag_rate < 0.20, f"C12 과탐 의심: {flag_rate:.4%} (20% 초과)"
+        assert flag_rate > 0.001, f"L4-05 미탐 의심: {flag_rate:.4%} (0.1% 미만)"
+        assert flag_rate < 0.20, f"L4-05 과탐 의심: {flag_rate:.4%} (20% 초과)"
 
     def test_c12_flags_only_abnormal_time(self, datasynth_df):
-        """C12 플래그 행은 비정상 시간대(midnight/overtime)여야 함."""
+        """L4-05 플래그 행은 비정상 시간대(midnight/overtime)여야 함."""
         result = c12_abnormal_hours_concentration(
             datasynth_df,
             sigma_threshold=3.0,
@@ -651,10 +651,10 @@ class TestC12DataSynthE2E:
         )
         flagged = datasynth_df.loc[result]
         if len(flagged) == 0:
-            pytest.skip("C12 플래그 0건 — 데이터 특성")
+            pytest.skip("L4-05 플래그 0건 — 데이터 특성")
         # Why: 이상치 사용자의 정상 시간 행은 미플래그
         normal_in_flagged = flagged[flagged["time_zone_category"] == "normal"]
         normal_rate = len(normal_in_flagged) / len(flagged)
         assert normal_rate < 0.05, (
-            f"C12 플래그 중 normal 시간대 비율 {normal_rate:.1%} — 과탐 가능성"
+            f"L4-05 플래그 중 normal 시간대 비율 {normal_rate:.1%} — 과탐 가능성"
         )

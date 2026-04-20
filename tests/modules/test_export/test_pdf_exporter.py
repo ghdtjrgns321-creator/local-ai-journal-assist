@@ -45,8 +45,8 @@ def conn(tmp_path):
 
 def _seed(c: duckdb.DuckDBPyConnection) -> None:
     rows = [
-        ("D001", "C001", "P2P", "2026-01-01 10:00:00", 0.85, "High", "B05"),
-        ("D002", "C001", "O2C", "2026-01-02 11:00:00", 0.50, "Medium", "C03"),
+        ("D001", "C001", "P2P", "2026-01-01 10:00:00", 0.85, "High", "L2-03"),
+        ("D002", "C001", "O2C", "2026-01-02 11:00:00", 0.50, "Medium", "L3-06"),
         ("D003", "C002", "TRE", "2026-01-03 14:00:00", 0.10, "Normal", ""),
     ]
     for r in rows:
@@ -78,7 +78,7 @@ def _seed(c: duckdb.DuckDBPyConnection) -> None:
         "INSERT INTO anomaly_flags "
         "(upload_batch_id, document_id, line_number, track_name, rule_code, score) "
         "VALUES (?,?,?,?,?,?)",
-        [BATCH, "D001", 1, "layer_b", "B05", 0.9],
+        [BATCH, "D001", 1, "layer_b", "L2-03", 0.9],
     )
 
 

@@ -53,10 +53,10 @@ class TestBenfordDetector:
         assert "benford_result" in result.metadata
 
     def test_rule_flags_c07(self, benford_df: pd.DataFrame) -> None:
-        """rule_flags에 C07 포함."""
+        """rule_flags에 L4-02 포함."""
         result = BenfordDetector().detect(benford_df)
         assert len(result.rule_flags) == 1
-        assert result.rule_flags[0].rule_id == "C07"
+        assert result.rule_flags[0].rule_id == "L4-02"
 
     def test_missing_first_digit_graceful(self) -> None:
         """first_digit 미존재 → 0점."""

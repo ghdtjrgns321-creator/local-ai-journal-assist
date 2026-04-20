@@ -108,7 +108,7 @@ class PreprocessingAdvice(BaseModel):
 
 
 class SignificantTxOpinion(BaseModel):
-    """유의적 거래(C08 AND B01) 1건에 대한 LLM 보조 의견 (ISA 240 §32(c))."""
+    """유의적 거래(L4-03 AND L4-01) 1건에 대한 LLM 보조 의견 (ISA 240 §32(c))."""
 
     document_id: str
     account: str

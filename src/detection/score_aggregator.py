@@ -2,7 +2,7 @@
 
 Why: 탐지 트랙(Layer A/B/C, Benford, Phase 2 ML)별 점수를
      하나의 anomaly_score로 합산하여 risk_level 분류.
-     B19 Top-side JE는 기존 룰 플래그를 조합하는 후처리로 여기서 산출.
+     L2-05 Top-side JE는 기존 룰 플래그를 조합하는 후처리로 여기서 산출.
      BaseDetector를 상속하지 않는 순수 함수 모듈.
 """
 
@@ -224,8 +224,8 @@ def _collect_flagged_rules(
     if not details_list:
         return pd.Series("", index=index)
 
-    # Why: 동일 rule_id가 여러 트랙에 존재할 수 있음 (예: C07이 layer_c와 benford 양쪽).
-    #      중복 컬럼을 max로 합쳐서 "C07,C07" 이중 출력 방지.
+    # Why: 동일 rule_id가 여러 트랙에 존재할 수 있음 (예: L4-02이 layer_c와 benford 양쪽).
+    #      중복 컬럼을 max로 합쳐서 "L4-02,L4-02" 이중 출력 방지.
     combined = pd.concat(details_list, axis=1).reindex(index).fillna(0.0)
     if combined.columns.duplicated().any():
         combined = combined.T.groupby(level=0).max().T
@@ -235,7 +235,7 @@ def _collect_flagged_rules(
     return flagged_str.str.rstrip(",")
 
 
-# ── B19 Top-side JE 복합 탐지 ────────────────────────────
+# ── L2-05 Top-side JE 복합 탐지 ────────────────────────────
 
 
 def _get_rule_flag(
@@ -258,10 +258,10 @@ def _compute_topside_score(
     df: pd.DataFrame,
     results: list[DetectionResult],
 ) -> pd.Series:
-    """B19 Top-side JE 가중 점수 산출.
+    """L2-05 Top-side JE 가중 점수 산출.
 
     Why: 수기 전표(is_manual_je)가 게이트키퍼. 자동 전표는 가점이 만점이어도 0점.
-         게이트 통과 시 5개 가점 조건(C01, B06/B09, A03/C09, C08, C06) 합산.
+         게이트 통과 시 5개 가점 조건(L3-04, L1-05/L1-07, L1-03/L4-04, L4-03, L3-08) 합산.
     """
     result_map = {r.track_name: r for r in results}
     idx = df.index
@@ -292,10 +292,10 @@ def _apply_topside_escalation(
     results: list[DetectionResult],
     settings: object | None = None,
 ) -> pd.DataFrame:
-    """B19 Top-side JE 탐지 결과를 agg_df에 반영.
+    """L2-05 Top-side JE 탐지 결과를 agg_df에 반영.
 
     Why: 수기 전표이면서 가점 ≥ threshold인 행을 High로 승격하고
-         flagged_rules에 B19을 추가. topside_score 컬럼도 항상 생성.
+         flagged_rules에 L2-05을 추가. topside_score 컬럼도 항상 생성.
     """
     if settings is None:
         settings = get_settings()
@@ -314,11 +314,11 @@ def _apply_topside_escalation(
     # Why: _collect_flagged_rules의 벡터화(mask.dot) 패턴과 일관되게 apply 회피.
     existing = agg_df.loc[topside_mask, "flagged_rules"]
     non_empty = existing != ""
-    agg_df.loc[topside_mask & non_empty.reindex(topside_mask.index, fill_value=False), "flagged_rules"] = existing[non_empty] + ",B19"
-    agg_df.loc[topside_mask & ~non_empty.reindex(topside_mask.index, fill_value=True), "flagged_rules"] = "B19"
+    agg_df.loc[topside_mask & non_empty.reindex(topside_mask.index, fill_value=False), "flagged_rules"] = existing[non_empty] + ",L2-05"
+    agg_df.loc[topside_mask & ~non_empty.reindex(topside_mask.index, fill_value=True), "flagged_rules"] = "L2-05"
 
     logger.info(
-        "B19 Top-side JE: %d/%d건 플래그 (임계값 %d/%d)",
+        "L2-05 Top-side JE: %d/%d건 플래그 (임계값 %d/%d)",
         topside_mask.sum(), len(df), settings.topside_threshold, _TOPSIDE_CONDITIONS,
     )
 

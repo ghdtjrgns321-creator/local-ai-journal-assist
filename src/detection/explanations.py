@@ -1,8 +1,4 @@
-"""탐지 결과 설명 builder.
-
-Why: UI와 export가 같은 설명 메타를 소비하도록 track/rule/document 단위
-     explanation 조립을 한 곳에 모은다.
-"""
+"""Shared explanation builders for UI and export paths."""
 
 from __future__ import annotations
 
@@ -16,7 +12,8 @@ from src.detection.constants import RULE_CODES, get_rule_explanation
 
 
 def parse_flagged_rules(value: Any) -> list[str]:
-    """CSV flagged_rules 문자열을 룰 코드 리스트로 변환."""
+    """Parse a CSV or list value into rule codes."""
+
     if value is None:
         return []
     if isinstance(value, list):
@@ -28,7 +25,8 @@ def parse_flagged_rules(value: Any) -> list[str]:
 
 
 def build_track_explanation(result: DetectionResult) -> dict[str, Any]:
-    """DetectionResult 기준 track-level 설명 블록 생성."""
+    """Build track-level explanation metadata."""
+
     return {
         "track_name": result.track_name,
         "display_name": result.display_name,
@@ -38,16 +36,17 @@ def build_track_explanation(result: DetectionResult) -> dict[str, Any]:
         "false_positive_risks": result.false_positive_risks,
         "auditor_checks": result.auditor_checks,
         "references": result.references,
-        "warnings": [str(w) for w in result.warnings],
+        "warnings": [str(warning) for warning in result.warnings],
     }
 
 
 def build_rule_explanation(rule_id: str) -> dict[str, Any]:
-    """룰별 구조화 설명 반환."""
+    """Build rule-level explanation metadata."""
+
     rule = get_rule_explanation(rule_id)
     return {
         "rule_id": rule_id,
-        "rule_name": RULE_CODES.get(rule_id, "미등록 룰"),
+        "rule_name": RULE_CODES.get(rule_id, "Unknown Rule"),
         "plain_reason": rule.plain_reason,
         "used_columns": [str(value) for value in rule.used_columns],
         "false_positive_risks": [str(value) for value in rule.false_positive_risks],
@@ -61,20 +60,14 @@ def build_document_explanation(
     result_data: pd.DataFrame,
     results: list[DetectionResult] | None = None,
 ) -> dict[str, Any]:
-    """문서 단위 설명 블록 생성."""
-    doc_lines = result_data[result_data.get("document_id") == doc_id].copy()
+    """Build a document-level explanation block."""
+
+    if "document_id" not in result_data.columns:
+        return _empty_document_explanation(doc_id)
+
+    doc_lines = result_data[result_data["document_id"] == doc_id].copy()
     if doc_lines.empty:
-        return {
-            "document_id": doc_id,
-            "headline": f"전표 {doc_id} 설명 정보를 찾을 수 없습니다.",
-            "triggered_rules": [],
-            "auditor_focus_points": [],
-            "used_columns": [],
-            "false_positive_risks": [],
-            "references": [],
-            "track_explanations": [],
-            "narrative": f"전표 {doc_id}에 대한 설명 정보를 찾을 수 없습니다.",
-        }
+        return _empty_document_explanation(doc_id)
 
     first_row = doc_lines.iloc[0]
     rule_ids = parse_flagged_rules(first_row.get("flagged_rules"))
@@ -82,12 +75,10 @@ def build_document_explanation(
 
     track_explanations: list[dict[str, Any]] = []
     if results:
-        active_tracks = []
-        doc_indices = set(int(idx) for idx in doc_lines.index.tolist())
+        doc_indices = set(int(index) for index in doc_lines.index.tolist())
         for result in results:
-            if doc_indices.intersection(set(int(idx) for idx in result.flagged_indices)):
-                active_tracks.append(build_track_explanation(result))
-        track_explanations = active_tracks
+            if doc_indices.intersection(int(index) for index in result.flagged_indices):
+                track_explanations.append(build_track_explanation(result))
 
     used_columns = _merge_unique(
         item
@@ -109,6 +100,7 @@ def build_document_explanation(
         for block in [*rule_explanations, *track_explanations]
         for item in block.get("references", [])
     )
+    transaction_details = _build_transaction_details(doc_lines, rule_ids)
 
     risk_level = str(first_row.get("risk_level", "Unknown"))
     anomaly_score = float(first_row.get("anomaly_score", 0.0) or 0.0)
@@ -117,13 +109,13 @@ def build_document_explanation(
             f"{item['rule_id']}({item['rule_name']})" for item in rule_explanations[:3]
         )
         headline = (
-            f"전표 {doc_id}은 위험도 {risk_level}, 점수 {anomaly_score:.3f}로 평가되었고 "
-            f"{top_reasons} 신호가 확인되었습니다."
+            f"Document {doc_id} was rated {risk_level} with anomaly_score={anomaly_score:.3f}. "
+            f"Top signals: {top_reasons}."
         )
     else:
         headline = (
-            f"전표 {doc_id}은 위험도 {risk_level}, 점수 {anomaly_score:.3f}로 평가되었고 "
-            "규칙 기반 신호는 없지만 추가 검토가 권고됩니다."
+            f"Document {doc_id} was rated {risk_level} with anomaly_score={anomaly_score:.3f}. "
+            "No rule-level signal was attached."
         )
 
     return {
@@ -131,11 +123,20 @@ def build_document_explanation(
         "headline": headline,
         "triggered_rules": rule_explanations,
         "auditor_focus_points": auditor_focus_points,
+        "auditor_action_guides": auditor_focus_points,
+        "transaction_details": transaction_details,
         "used_columns": used_columns,
         "false_positive_risks": false_positive_risks,
         "references": references,
         "track_explanations": track_explanations,
-        "narrative": _build_narrative(doc_id, risk_level, anomaly_score, rule_explanations, auditor_focus_points),
+        "narrative": _build_narrative(
+            doc_id,
+            risk_level,
+            anomaly_score,
+            rule_explanations,
+            transaction_details,
+            auditor_focus_points,
+        ),
     }
 
 
@@ -146,34 +147,175 @@ def build_export_narrative(
     rules: list[str],
     top_features: list[tuple[str, float]],
 ) -> str:
-    """export용 간결 narrative 생성."""
+    """Build a short export narrative."""
+
     rule_explanations = [build_rule_explanation(rule_id) for rule_id in rules]
     parts = [
-        f"전표 {document_id}은 위험도 '{risk}' (anomaly_score={score:.3f})로 분류되었습니다.",
+        f"Document {document_id} was classified as {risk} (anomaly_score={score:.3f})."
     ]
     if rule_explanations:
         rule_text = ", ".join(
             _format_rule_export_text(rule["rule_id"], rule["rule_name"], rule["references"])
             for rule in rule_explanations
         )
-        parts.append(f"위반 룰: {rule_text}.")
+        parts.append(f"Triggered rules: {rule_text}.")
     else:
-        parts.append("위반 룰: 없음 (ML 모델 단독 판정).")
+        parts.append("No rule-based trigger was attached.")
 
     if top_features:
-        feat_text = ", ".join(
-            f"{name}(기여도 {contrib:.3f})" for name, contrib in top_features
-        )
-        parts.append(f"VAE 재구성 오차 주요 기여 피처: {feat_text}.")
+        feature_text = ", ".join(f"{name} (contribution={value:.3f})" for name, value in top_features)
+        parts.append(f"Top feature contributions: {feature_text}.")
 
     auditor_checks = _merge_unique(
         item for rule in rule_explanations for item in rule.get("auditor_checks", [])
     )
     if auditor_checks:
-        parts.append(f"감사인 재검토 권고. 감사자 확인 포인트: {auditor_checks[0]}.")
-    else:
-        parts.append("감사인 재검토 권고.")
+        parts.append(f"Recommended audit follow-up: {auditor_checks[0]}.")
+
     return " ".join(parts)
+
+
+def _empty_document_explanation(doc_id: str) -> dict[str, Any]:
+    """Return an empty explanation payload."""
+
+    return {
+        "document_id": doc_id,
+        "headline": f"No explanation metadata was found for document {doc_id}.",
+        "triggered_rules": [],
+        "auditor_focus_points": [],
+        "auditor_action_guides": [],
+        "transaction_details": [],
+        "used_columns": [],
+        "false_positive_risks": [],
+        "references": [],
+        "track_explanations": [],
+        "narrative": f"No explanation metadata was found for document {doc_id}.",
+    }
+
+
+def _build_transaction_details(
+    doc_lines: pd.DataFrame,
+    rule_ids: list[str],
+) -> list[dict[str, Any]]:
+    """Build line-level transaction details."""
+
+    top_rules = rule_ids[:3]
+    details: list[dict[str, Any]] = []
+    for _, row in doc_lines.iterrows():
+        amount = _coalesce_amount(row)
+        details.append(
+            {
+                "document_id": str(row.get("document_id", "")),
+                "line_number": _scalar_or_none(row.get("line_number")),
+                "posting_date": _format_scalar(row.get("posting_date")),
+                "gl_account": _format_scalar(row.get("gl_account")),
+                "amount": amount,
+                "amount_display": _format_amount(amount),
+                "trigger_value": _build_trigger_value(row, doc_lines, top_rules),
+            }
+        )
+    return details
+
+
+def _build_trigger_value(
+    row: pd.Series,
+    doc_lines: pd.DataFrame,
+    rule_ids: list[str],
+) -> str:
+    """Build a concise trigger summary."""
+
+    if not rule_ids:
+        return "No specific rule explanation is attached."
+
+    triggers = []
+    for rule_id in rule_ids:
+        text = _rule_trigger_text(rule_id, row, doc_lines)
+        if text:
+            triggers.append(text)
+
+    if triggers:
+        return " / ".join(_merge_unique(triggers))
+    return f"Rules {', '.join(rule_ids)} were triggered."
+
+
+def _rule_trigger_text(rule_id: str, row: pd.Series, doc_lines: pd.DataFrame) -> str:
+    """Build a trigger sentence for one rule."""
+
+    amount = _coalesce_amount(row)
+    gl_account = _format_scalar(row.get("gl_account"))
+    creator = _format_scalar(row.get("created_by"))
+    approver = _format_scalar(row.get("approved_by"))
+    source = _format_scalar(row.get("source"))
+    business_process = _format_scalar(row.get("business_process"))
+    line_text = _format_scalar(row.get("line_text"))
+    header_text = _format_scalar(row.get("header_text"))
+
+    if rule_id == "L1-01":
+        debit_total = float(doc_lines.get("debit_amount", pd.Series(dtype=float)).fillna(0).sum())
+        credit_total = float(doc_lines.get("credit_amount", pd.Series(dtype=float)).fillna(0).sum())
+        return (
+            f"Document is unbalanced: debit={debit_total:,.0f}, "
+            f"credit={credit_total:,.0f}, diff={debit_total - credit_total:,.0f}"
+        )
+    if rule_id == "L1-02":
+        missing = [
+            field
+            for field in ("document_id", "posting_date", "gl_account")
+            if _is_missing(row.get(field))
+        ]
+        if missing:
+            return f"Missing required fields: {', '.join(missing)}"
+    if rule_id == "L1-03" and gl_account:
+        return f"Invalid GL account {gl_account}"
+    if rule_id == "L3-01" and gl_account and business_process:
+        return f"Account {gl_account} is unusual for process {business_process}"
+    if rule_id == "L2-01":
+        return f"Amount is just below approval threshold ({_format_amount(amount)})"
+    if rule_id == "L1-04":
+        return f"Amount exceeds approval threshold ({_format_amount(amount)})"
+    if rule_id == "L2-02":
+        return f"Duplicate-payment pattern on amount {_format_amount(amount)}"
+    if rule_id == "L2-03":
+        return f"Duplicate-entry pattern on account {gl_account or '-'}"
+    if rule_id == "L1-05" and creator and approver:
+        return f"Self approval: preparer={creator}, approver={approver}"
+    if rule_id == "L1-06":
+        return f"SoD violation for user {creator or '-'} in process {business_process or '-'}"
+    if rule_id == "L3-02":
+        return f"Manual entry path source={source or '-'}"
+    if rule_id == "L1-07":
+        return f"Approval missing or skipped (approver={approver or 'NULL'})"
+    if rule_id == "L3-03":
+        return "Intercompany circularity signal"
+    if rule_id == "L2-05":
+        return "Composite top-side journal-entry risk signal"
+    if rule_id == "L3-04":
+        return f"Period-end large posting on {_format_scalar(row.get('posting_date'))}"
+    if rule_id == "L3-05":
+        return "Weekend or holiday posting"
+    if rule_id == "L3-06":
+        return "After-hours posting"
+    if rule_id == "L3-07":
+        return "Backdated posting"
+    if rule_id == "L1-08":
+        return "Fiscal period mismatch"
+    if rule_id == "L3-08":
+        text = line_text or header_text
+        return f"Vague description '{text[:60]}'" if text else "Vague description"
+    if rule_id == "L4-01":
+        return f"Revenue outlier on account {gl_account or '-'}"
+    if rule_id == "L4-02":
+        return "Benford first-digit deviation"
+    if rule_id == "L4-03":
+        return f"High amount outlier {_format_amount(amount)}"
+    if rule_id == "L4-04":
+        return "Rare debit-credit account pair"
+    if rule_id == "L3-09":
+        return "Suspense-account usage pattern"
+    if rule_id == "L2-06":
+        return "Reversal-pattern signal"
+
+    return build_rule_explanation(rule_id)["plain_reason"]
 
 
 def _build_narrative(
@@ -181,33 +323,91 @@ def _build_narrative(
     risk_level: str,
     anomaly_score: float,
     rule_explanations: list[dict[str, Any]],
+    transaction_details: list[dict[str, Any]],
     auditor_focus_points: list[str],
 ) -> str:
+    """Build a compact human-readable narrative."""
+
     if rule_explanations:
         reasons = ", ".join(
             f"{item['rule_id']} {item['plain_reason']}" for item in rule_explanations[:3]
         )
         text = (
-            f"전표 {doc_id}은 위험도 {risk_level}, 점수 {anomaly_score:.3f}로 평가되었습니다. "
-            f"주요 탐지 사유는 {reasons}입니다."
+            f"Document {doc_id} was rated {risk_level} with anomaly_score={anomaly_score:.3f}. "
+            f"Primary reasons: {reasons}."
         )
     else:
         text = (
-            f"전표 {doc_id}은 위험도 {risk_level}, 점수 {anomaly_score:.3f}로 평가되었습니다. "
-            "규칙 기반 신호는 없지만 추가 검토가 권고됩니다."
+            f"Document {doc_id} was rated {risk_level} with anomaly_score={anomaly_score:.3f}. "
+            "No rule-level explanation is attached."
         )
+
+    if transaction_details:
+        text += f" Trigger detail: {transaction_details[0]['trigger_value']}."
     if auditor_focus_points:
-        text += f" 감사자 확인 포인트: {auditor_focus_points[0]}."
+        text += f" Recommended follow-up: {auditor_focus_points[0]}."
     return text
 
 
+def _coalesce_amount(row: pd.Series) -> float | None:
+    """Return the dominant signed-line amount magnitude."""
+
+    debit = row.get("debit_amount")
+    credit = row.get("credit_amount")
+    candidates = [value for value in (debit, credit) if pd.notna(value)]
+    if not candidates:
+        return None
+    return float(max(candidates, key=lambda value: abs(float(value))))
+
+
 def _format_rule_export_text(rule_id: str, rule_name: str, references: list[str]) -> str:
+    """Format a rule token for export text."""
+
     if references:
         return f"{rule_id}({rule_name}) [{references[0]}]"
     return f"{rule_id}({rule_name})"
 
 
+def _format_amount(value: float | None) -> str:
+    """Format amount for human-readable output."""
+
+    if value is None:
+        return "-"
+    return f"{value:,.0f}"
+
+
+def _format_scalar(value: Any) -> str:
+    """Format a scalar value for explanation output."""
+
+    if _is_missing(value):
+        return ""
+    if isinstance(value, pd.Timestamp):
+        return value.strftime("%Y-%m-%d %H:%M:%S")
+    return str(value).strip()
+
+
+def _scalar_or_none(value: Any) -> Any:
+    """Return None for missing values, else the original value."""
+
+    if _is_missing(value):
+        return None
+    return value
+
+
+def _is_missing(value: Any) -> bool:
+    """Return True when a scalar should be treated as missing."""
+
+    if value is None:
+        return True
+    try:
+        return bool(pd.isna(value))
+    except TypeError:
+        return False
+
+
 def _merge_unique(values) -> list[str]:
+    """Merge values while preserving order and removing blanks."""
+
     merged = OrderedDict()
     for value in values:
         text = str(value).strip()

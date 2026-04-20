@@ -48,38 +48,38 @@ class TestRuleFlag:
 
     def test_creation(self) -> None:
         flag = RuleFlag(
-            rule_id="A01",
+            rule_id="L1-01",
             rule_name="차대변 균형",
             severity=5,
             flagged_count=3,
             total_count=100,
         )
-        assert flag.rule_id == "A01"
+        assert flag.rule_id == "L1-01"
         assert flag.severity == 5
 
     def test_flag_rate(self) -> None:
-        flag = RuleFlag("B02", "승인한도 직하", 3, 25, 100)
+        flag = RuleFlag("L2-01", "승인한도 직하", 3, 25, 100)
         assert flag.flag_rate == pytest.approx(0.25)
 
     def test_flag_rate_zero_total(self) -> None:
-        flag = RuleFlag("C06", "위험 적요", 1, 0, 0)
+        flag = RuleFlag("L3-08", "위험 적요", 1, 0, 0)
         assert flag.flag_rate == 0.0
 
     def test_detail_default_none(self) -> None:
-        flag = RuleFlag("A02", "필수필드 누락", 2, 1, 10)
+        flag = RuleFlag("L1-02", "필수필드 누락", 2, 1, 10)
         assert flag.detail is None
 
     def test_detail_custom(self) -> None:
-        flag = RuleFlag("A03", "무효 계정", 3, 5, 50, detail="CoA 미제공")
+        flag = RuleFlag("L1-03", "무효 계정", 3, 5, 50, detail="CoA 미제공")
         assert flag.detail == "CoA 미제공"
 
     def test_negative_flagged_count_raises(self) -> None:
         with pytest.raises(ValueError, match="음수"):
-            RuleFlag("A01", "차대변 균형", 5, -1, 10)
+            RuleFlag("L1-01", "차대변 균형", 5, -1, 10)
 
     def test_flagged_exceeds_total_raises(self) -> None:
         with pytest.raises(ValueError, match="초과"):
-            RuleFlag("A01", "차대변 균형", 5, 11, 10)
+            RuleFlag("L1-01", "차대변 균형", 5, 11, 10)
 
 
 # ── DetectionResult ──────────────────────────────────────────
@@ -95,11 +95,11 @@ class TestDetectionResult:
             flagged_indices=[0, 3, 7],
             scores=pd.Series([0.5, 0.0, 0.0, 0.8, 0.0, 0.0, 0.0, 0.3]),
             rule_flags=[
-                RuleFlag("A01", "차대변 균형", 5, 2, 8),
-                RuleFlag("A02", "필수필드 누락", 2, 1, 8),
+                RuleFlag("L1-01", "차대변 균형", 5, 2, 8),
+                RuleFlag("L1-02", "필수필드 누락", 2, 1, 8),
             ],
             details=pd.DataFrame(
-                {"A01": [1.0, 0, 0, 1.0, 0, 0, 0, 0], "A02": [0, 0, 0, 0, 0, 0, 0, 0.4]},
+                {"L1-01": [1.0, 0, 0, 1.0, 0, 0, 0, 0], "L1-02": [0, 0, 0, 0, 0, 0, 0, 0.4]},
             ),
             metadata={"elapsed": 0.123, "skipped_rules": []},
         )
@@ -184,8 +184,8 @@ class TestBaseDetector:
 
     def test_create_rule_flag(self) -> None:
         detector = _StubDetector()
-        flag = detector._create_rule_flag("B07", 10, 200, detail="테스트")
-        assert flag.rule_id == "B07"
+        flag = detector._create_rule_flag("L1-06", 10, 200, detail="테스트")
+        assert flag.rule_id == "L1-06"
         assert flag.rule_name == "직무분리 위반"
         assert flag.severity == 4
         assert flag.flagged_count == 10

@@ -72,7 +72,7 @@ class ValidationReport:
 
 @dataclass
 class BenfordResult:
-    """Benford's Law 분석 결과. C07 detection 입력.
+    """Benford's Law 분석 결과. L4-02 detection 입력.
 
     판정 기준: MAD(주) + Chi-square(주) + KS(보조).
     Nigrini(2012) MAD 판정 기준: close≤0.006, acceptable≤0.012,

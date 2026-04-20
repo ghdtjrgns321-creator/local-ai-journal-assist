@@ -96,7 +96,7 @@ def _generate_warnings(profile: EDAProfile) -> list[str]:
     dup_rate = profile.duplicate_rows / profile.total_rows
     if dup_rate >= _DUPLICATE_WARN_THRESHOLD:
         warnings.append(
-            f"중복행 {profile.duplicate_rows}건 ({dup_rate:.1%}) — A02 룰 확인 필요"
+            f"중복행 {profile.duplicate_rows}건 ({dup_rate:.1%}) — L1-02 룰 확인 필요"
         )
 
     for col, cp in profile.columns.items():

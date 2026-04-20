@@ -31,7 +31,7 @@ class TestOperationalEvaluator:
             }
         )
         whitelist_df = pd.DataFrame(
-            {"document_id": ["D2", "D2", "D3"], "rule_code": ["A01", "B01", "C01"]}
+            {"document_id": ["D2", "D2", "D3"], "rule_code": ["L1-01", "L4-01", "L3-04"]}
         )
         feedback_events_df = pd.DataFrame(
             [
@@ -70,7 +70,7 @@ class TestOperationalEvaluator:
         db_conn.execute(
             """
             INSERT INTO whitelist (batch_id, document_id, rule_code, reason, created_by)
-            VALUES ('batch_001', 'D2', 'A01', 'expected false positive', 'auditor')
+            VALUES ('batch_001', 'D2', 'L1-01', 'expected false positive', 'auditor')
             """
         )
         db_conn.execute(
@@ -81,7 +81,7 @@ class TestOperationalEvaluator:
                 reason, payload_json, created_by
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?::JSON, ?)
             """,
-            ["acme", "2026", "batch_001", "D2", None, "A01", "document_feedback", "false_positive", "expected", "{}", "auditor"],
+            ["acme", "2026", "batch_001", "D2", None, "L1-01", "document_feedback", "false_positive", "expected", "{}", "auditor"],
         )
         db_conn.execute(
             """
@@ -91,7 +91,7 @@ class TestOperationalEvaluator:
                 reason, payload_json, created_by
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?::JSON, ?)
             """,
-            ["acme", "2026", "batch_001", "D1", None, "A01", "document_feedback", "confirmed_issue", "confirmed", "{}", "auditor"],
+            ["acme", "2026", "batch_001", "D1", None, "L1-01", "document_feedback", "confirmed_issue", "confirmed", "{}", "auditor"],
         )
 
         report = evaluate_operational_report_from_db(db_conn, upload_batch_id="batch_001")
@@ -125,7 +125,7 @@ class TestPerformanceStore:
             rule_metrics=[
                 RuleMetric(
                     track_name="layer_a",
-                    rule_code="A01",
+                    rule_code="L1-01",
                     label_docs=3,
                     flagged_docs=2,
                     tp_docs=1,
@@ -146,7 +146,7 @@ class TestPerformanceStore:
         assert loaded.total_docs == 10
         assert loaded.false_positive_docs == 1
         assert loaded.confirmed_issue_docs == 2
-        assert loaded.rule_metrics[0].rule_code == "A01"
+        assert loaded.rule_metrics[0].rule_code == "L1-01"
 
     def test_list_reports_by_batch_returns_rows(self, db_conn):
         report = PerformanceReport(

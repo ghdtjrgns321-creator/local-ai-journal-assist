@@ -1,4 +1,4 @@
-"""Ground-truth based performance evaluation helpers."""
+﻿"""Ground-truth based performance evaluation helpers."""
 
 from __future__ import annotations
 
@@ -8,7 +8,12 @@ import pandas as pd
 
 from src.detection.base import DetectionResult
 from src.metrics.models import PerformanceReport, RuleMetric
-from src.metrics.rule_mapping import RULE_TO_LABEL, RULE_TO_TRACK, covered_label_types
+from src.metrics.rule_mapping import (
+    RULE_TO_LABEL,
+    RULE_TO_TRACK,
+    covered_label_types,
+    get_action_layer,
+)
 
 
 def normalize_results_by_track(
@@ -56,11 +61,7 @@ def per_rule_label_analysis(
         flagged_rows = int(rule_mask.sum())
         flagged_doc_set = set(df.loc[rule_mask, "document_id"].dropna().unique())
 
-        if label_types:
-            label_mask = labels["anomaly_type"].isin(label_types)
-            label_doc_set = set(labels.loc[label_mask, "document_id"].dropna().unique())
-        else:
-            label_doc_set = set()
+        label_doc_set = _label_doc_set_for_rule(rule_id, df, labels)
 
         tp_docs = flagged_doc_set & label_doc_set
         fp_docs = flagged_doc_set - label_doc_set
@@ -91,6 +92,40 @@ def per_rule_label_analysis(
         })
 
     return analysis
+
+
+def _label_doc_set_for_rule(
+    rule_id: str,
+    df: pd.DataFrame,
+    labels: pd.DataFrame,
+) -> set[str]:
+    """Return rule-specific ground-truth document ids.
+
+    Why: L1-01 is a balance gate. DataSynth includes multiple anomaly labels that may
+    or may not end up as a document-level imbalance after generation/tolerance, so
+    L1-01 ground truth should use the actual journal sums, not label type alone.
+    """
+    label_types = RULE_TO_LABEL.get(rule_id, [])
+    if not label_types:
+        return set()
+
+    label_mask = labels["anomaly_type"].isin(label_types)
+    label_doc_set = set(labels.loc[label_mask, "document_id"].dropna().unique())
+    if rule_id != "L1-01":
+        return label_doc_set
+
+    required = {"document_id", "debit_amount", "credit_amount"}
+    if not required.issubset(df.columns):
+        return label_doc_set
+
+    candidate_df = df[df["document_id"].isin(label_doc_set)].copy()
+    if candidate_df.empty:
+        return set()
+
+    diff = candidate_df["debit_amount"].fillna(0.0) - candidate_df["credit_amount"].fillna(0.0)
+    doc_diff = diff.groupby(candidate_df["document_id"]).sum()
+    imbalance_docs = set(doc_diff[doc_diff.abs() > 1.0].index)
+    return label_doc_set & imbalance_docs
 
 
 def overall_label_analysis(
@@ -189,7 +224,10 @@ def build_ground_truth_report(
         rule_metrics=[
             RuleMetric(
                 track_name=RULE_TO_TRACK[item["rule_id"]],
+                action_layer=get_action_layer(item["rule_id"]),
                 rule_code=item["rule_id"],
+                evaluation_status=str(item["status"]),
+                evaluation_reason=str(item["reason"]),
                 label_docs=int(item["label_docs"]),
                 flagged_docs=int(item["flagged_docs"]),
                 tp_docs=int(item["tp_docs"]),
@@ -209,3 +247,4 @@ def _calc_f1(precision: float | None, recall: float | None) -> float | None:
     if precision is None or recall is None or (precision + recall) == 0:
         return None
     return 2 * precision * recall / (precision + recall)
+

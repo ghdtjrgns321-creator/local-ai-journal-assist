@@ -1,9 +1,9 @@
 """Benford 독립 트랙 — DETECTION_RULES.md §2.3 Benford 독립 트랙 가중치 0.15.
 
-Why: Benford는 전체 분포 검정이라 행별 룰(C01~C09)과 성격이 다르다.
+Why: Benford는 전체 분포 검정이라 행별 룰(L3-04~L4-04)과 성격이 다르다.
      Layer C 내부가 아닌 독립 트랙으로 분리하여 score_aggregator가
      LAYER_WEIGHTS[Layer.BENFORD] = 0.15를 별도 적용할 수 있게 한다.
-     C07 행별 선별 로직 + deviation 비례 스코어는 anomaly_rules_statistical.py를 재사용.
+     L4-02 행별 선별 로직 + deviation 비례 스코어는 anomaly_rules_statistical.py를 재사용.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from src.detection.base import DetectionResult
 
 
-_RULE_ID = "C07"
+_RULE_ID = "L4-02"
 
 
 class BenfordDetector(BaseDetector):

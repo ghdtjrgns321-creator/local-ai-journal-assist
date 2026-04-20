@@ -11,7 +11,7 @@ from src.detection.base import DetectionResult, RuleFlag
 
 @pytest.fixture
 def dt_balanced_df() -> pd.DataFrame:
-    """균형 전표 2건 — A01 정상 케이스."""
+    """균형 전표 2건 — L1-01 정상 케이스."""
     return pd.DataFrame({
         "document_id": ["D001", "D001", "D002", "D002"],
         "debit_amount": [100.0, 0.0, 50.0, 0.0],
@@ -27,7 +27,7 @@ def dt_balanced_df() -> pd.DataFrame:
 
 @pytest.fixture
 def dt_unbalanced_df() -> pd.DataFrame:
-    """D001 균형 + D002 불균형 (차변 100 vs 대변 50) — A01 위반."""
+    """D001 균형 + D002 불균형 (차변 100 vs 대변 50) — L1-01 위반."""
     return pd.DataFrame({
         "document_id": ["D001", "D001", "D002", "D002"],
         "debit_amount": [100.0, 0.0, 100.0, 0.0],
@@ -43,7 +43,7 @@ def dt_unbalanced_df() -> pd.DataFrame:
 
 @pytest.fixture
 def dt_missing_fields_df() -> pd.DataFrame:
-    """gl_account NULL 1건, posting_date NaT 1건 — A02 위반."""
+    """gl_account NULL 1건, posting_date NaT 1건 — L1-02 위반."""
     return pd.DataFrame({
         "document_id": ["D001", "D002", "D003"],
         "debit_amount": [100.0, 200.0, 300.0],

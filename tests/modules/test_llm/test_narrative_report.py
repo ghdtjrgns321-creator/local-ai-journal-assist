@@ -26,7 +26,7 @@ def conn() -> duckdb.DuckDBPyConnection:
         "document_id": "",
         "risk_level": "High",
         "anomaly_score": 0.8,
-        "flagged_rules": "B02,C03",
+        "flagged_rules": "L2-01,L3-06",
         "debit_amount": 50_000_000,
         "credit_amount": 0,
         "gl_account": "4100",
@@ -62,8 +62,8 @@ def _make_client(narratives_by_call: list[list[EntryNarrative]]) -> MagicMock:
 def _narrative(doc_id: str) -> EntryNarrative:
     return EntryNarrative(
         document_id=doc_id,
-        rationale=f"{doc_id} 위험 사유: B02/C03 플래그.",
-        cited_rules=["B02", "C03"],
+        rationale=f"{doc_id} 위험 사유: L2-01/L3-06 플래그.",
+        cited_rules=["L2-01", "L3-06"],
     )
 
 
@@ -102,7 +102,7 @@ def test_generate_for_high_critical_happy_path(conn, monkeypatch):
         "SELECT document_id, narrative_text FROM llm_narratives ORDER BY document_id"
     ).fetchall()
     assert [r[0] for r in cached] == ["D001", "D002", "D003"]
-    assert all("B02" in r[1] or "위험" in r[1] for r in cached)
+    assert all("L2-01" in r[1] or "위험" in r[1] for r in cached)
 
 
 def test_batch_size_splits_calls(conn, monkeypatch):
@@ -229,7 +229,7 @@ def test_upsert_overwrites_existing(conn):
         "INSERT INTO llm_narratives (document_id, narrative_text, model_tier) "
         "VALUES ('D001', 'old', 'light')"
     )
-    new_narr = EntryNarrative(document_id="D001", rationale="new rationale", cited_rules=["B02"])
+    new_narr = EntryNarrative(document_id="D001", rationale="new rationale", cited_rules=["L2-01"])
     client = _make_client([[]])
     reporter = NarrativeReporter(conn, client=client)
     reporter._upsert_cache([new_narr])
@@ -247,14 +247,14 @@ def test_validate_cited_rules_removes_hallucinated():
     """cited_rules에 flagged_rules에 없는 룰이 포함되면 제거 + 경고 라벨 부착."""
     import pandas as pd
 
-    rows = pd.DataFrame([{"document_id": "D001", "flagged_rules": "B02,C03"}])
+    rows = pd.DataFrame([{"document_id": "D001", "flagged_rules": "L2-01,L3-06"}])
     narr = EntryNarrative(
         document_id="D001",
         rationale="위험 사유",
-        cited_rules=["B02", "X99"],
+        cited_rules=["L2-01", "X99"],
     )
     result = NarrativeReporter._validate_cited_rules([narr], rows)
-    assert result[0].cited_rules == ["B02"]
+    assert result[0].cited_rules == ["L2-01"]
     assert "[경고:" in result[0].rationale
     assert "X99" in result[0].rationale
 
@@ -263,14 +263,14 @@ def test_validate_cited_rules_no_hallucination_passthrough():
     """Hallucination이 없으면 원본 그대로 반환."""
     import pandas as pd
 
-    rows = pd.DataFrame([{"document_id": "D001", "flagged_rules": "B02,C03"}])
+    rows = pd.DataFrame([{"document_id": "D001", "flagged_rules": "L2-01,L3-06"}])
     narr = EntryNarrative(
         document_id="D001",
         rationale="정상 사유",
-        cited_rules=["B02"],
+        cited_rules=["L2-01"],
     )
     result = NarrativeReporter._validate_cited_rules([narr], rows)
-    assert result[0].cited_rules == ["B02"]
+    assert result[0].cited_rules == ["L2-01"]
     assert "[경고:" not in result[0].rationale
     assert result[0].rationale == "정상 사유"
 
@@ -279,7 +279,7 @@ def test_validate_cited_rules_all_hallucinated():
     """cited_rules 전부 허위이면 빈 리스트로 반환 + 경고."""
     import pandas as pd
 
-    rows = pd.DataFrame([{"document_id": "D001", "flagged_rules": "B02"}])
+    rows = pd.DataFrame([{"document_id": "D001", "flagged_rules": "L2-01"}])
     narr = EntryNarrative(
         document_id="D001",
         rationale="사유서",
@@ -299,7 +299,7 @@ def test_validate_cited_rules_missing_column_passthrough():
     narr = EntryNarrative(
         document_id="D001",
         rationale="사유서",
-        cited_rules=["B02"],
+        cited_rules=["L2-01"],
     )
     result = NarrativeReporter._validate_cited_rules([narr], rows)
-    assert result[0].cited_rules == ["B02"]
+    assert result[0].cited_rules == ["L2-01"]

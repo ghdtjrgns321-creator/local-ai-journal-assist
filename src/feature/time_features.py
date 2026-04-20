@@ -1,6 +1,6 @@
 """시간/날짜 기반 감사 파생변수 6개 생성 모듈.
 
-C01(기말), C02(주말/공휴일), C03(심야), C04(소급전기), C05(기간귀속오류) 룰 대응.
+L3-04(기말), L3-05(주말/공휴일), L3-06(심야), L3-07(소급전기), L1-08(기간귀속오류) 룰 대응.
 ingest 완료된 표준 DataFrame을 입력으로 받는다.
 """
 
@@ -66,7 +66,7 @@ def _has_time_info(series: pd.Series) -> bool:
 
 
 def add_is_weekend(df: pd.DataFrame) -> pd.DataFrame:
-    """C02: posting_date 요일이 토(5)/일(6)이면 True.
+    """L3-05: posting_date 요일이 토(5)/일(6)이면 True.
 
     감사 관점: 주말 전기는 정상 업무 외 처리로 부정 가능성.
     """
@@ -79,7 +79,7 @@ def add_is_after_hours(
     start: int = 22,
     end: int = 6,
 ) -> pd.DataFrame:
-    """C03: posting_date 시간이 심야 구간이면 True.
+    """L3-06: posting_date 시간이 심야 구간이면 True.
 
     start>end (예: 22~6): 자정 걸침 → (h>=start) | (h<end)
     start<end (예: 1~5):  단순 구간 → (h>=start) & (h<end)
@@ -112,7 +112,7 @@ def add_is_period_end(
     df: pd.DataFrame,
     margin: int = 5,
 ) -> pd.DataFrame:
-    """C01: posting_date가 월말 근접(양방향)이면 True.
+    """L3-04: posting_date가 월말 근접(양방향)이면 True.
 
     양방향 탐지: 월말 전 margin일 + 익월 초 margin일.
     예) margin=5 → 26~31일(월말 전) + 1~5일(익월 초) 모두 포착.
@@ -136,7 +136,7 @@ def add_is_period_end(
 
 
 def add_days_backdated(df: pd.DataFrame) -> pd.DataFrame:
-    """C04: posting_date - document_date 일수 차이 (부호 유지).
+    """L3-07: posting_date - document_date 일수 차이 (부호 유지).
 
     양수(+): 지연전기(Late Recording) — posting이 document보다 나중.
     음수(-): 선전기(Forward Recording) — 시스템 조작 의심.
@@ -161,7 +161,7 @@ def add_fiscal_period_mismatch(
     df: pd.DataFrame,
     fiscal_year_start: int = 1,
 ) -> pd.DataFrame:
-    """C05: fiscal_period ≠ 기대 기수이면 True (비표준 회계연도 대응).
+    """L1-08: fiscal_period ≠ 기대 기수이면 True (비표준 회계연도 대응).
 
     modulo 연산: expected = (month - fiscal_year_start) % 12 + 1
     예) fiscal_year_start=4 → 4월=기수1, 5월=기수2, ..., 3월=기수12
@@ -187,7 +187,7 @@ def add_is_holiday(
     df: pd.DataFrame,
     custom: list[str] | None = None,
 ) -> pd.DataFrame:
-    """C02: posting_date가 공휴일(법정+회사지정)이면 True.
+    """L3-05: posting_date가 공휴일(법정+회사지정)이면 True.
 
     holidays.KR 자동 + custom_holidays 수동 하이브리드.
     감사 관점: 공휴일 전기는 비영업일 부정 탐지.
@@ -213,9 +213,9 @@ def add_time_zone_category(
     settlement_start_mmdd: str = "1220",
     settlement_end_mmdd: str = "0115",
 ) -> pd.DataFrame:
-    """C12: posting_date 시각을 3단계(normal/overtime/midnight)로 분류.
+    """L4-05: posting_date 시각을 3단계(normal/overtime/midnight)로 분류.
 
-    Why: C02/C03은 건별 플래그만 수행. C12 입력자 집중 분석에는
+    Why: L3-05/L3-06은 건별 플래그만 수행. L4-05 입력자 집중 분석에는
          시간대 분류 피처가 필요하다. (KLCA IT 체크리스트)
 
     분류 기준 (한국 실무, >= / < 일관):

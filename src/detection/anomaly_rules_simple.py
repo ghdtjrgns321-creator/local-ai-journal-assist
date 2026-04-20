@@ -1,4 +1,4 @@
-"""피처 기반 이상 징후 룰 — C01~C06, C08, C10, C12.
+"""피처 기반 이상 징후 룰 — L3-04~L3-08, L4-03, L3-09, L4-05.
 
 피처 엔진(src/feature/)이 미리 생성한 bool/float 컬럼을 조합하는 마스크 연산.
 피처 미존재 시 Series(False) 반환 → 오케스트레이터가 warning 기록.
@@ -15,7 +15,7 @@ def c01_period_end_large(
     quantile: float = 0.75,
     min_group_size: int = 30,
 ) -> pd.Series:
-    """C01 기말 대규모: 월말 근접 + 금액 > Q3 (계정그룹별).
+    """L3-04 기말 대규모: 월말 근접 + 금액 > Q3 (계정그룹별).
 
     Why: PCAOB AS 240 §32(b), FSS 결산 수정 조작 패턴.
          기말에 집중되는 고액 전표는 결산 조정 조작 가능성.
@@ -57,7 +57,7 @@ def _grouped_quantile(
 
 
 def c02_weekend_entry(df: pd.DataFrame) -> pd.Series:
-    """C02 주말 전기: 토/일 또는 공휴일 전기.
+    """L3-05 주말 전기: 토/일 또는 공휴일 전기.
 
     Why: PCAOB AS 240 A49(c) — 비정상 시점 거래는 승인 우회 의심.
     """
@@ -67,7 +67,7 @@ def c02_weekend_entry(df: pd.DataFrame) -> pd.Series:
 
 
 def c03_after_hours_entry(df: pd.DataFrame) -> pd.Series:
-    """C03 심야 전기: 업무시간(09~18시) 외 전기.
+    """L3-06 심야 전기: 업무시간(09~18시) 외 전기.
 
     Why: PCAOB AS 240 A49(c) — 심야 전기는 감시 부재 시점 악용 가능.
 
@@ -100,7 +100,7 @@ def c04_backdated_entry(
     df: pd.DataFrame,
     threshold_days: int = 30,
 ) -> pd.Series:
-    """C04 소급 전기: 전기일-전표일 차이가 임계 초과.
+    """L3-07 소급 전기: 전기일-전표일 차이가 임계 초과.
 
     Why: PCAOB AS 240 A49(c), FSS 횡령 은폐 — 과도한 소급은 기록 조작 의심.
     """
@@ -110,7 +110,7 @@ def c04_backdated_entry(
 
 
 def c05_fiscal_period_mismatch(df: pd.DataFrame) -> pd.Series:
-    """C05 기간 불일치: 회계기간 ≠ 전기월.
+    """L1-08 기간 불일치: 회계기간 ≠ 전기월.
 
     Why: PCAOB AS 240 §32(b) — 기간 귀속 오류는 의도적 기간 이동 가능성.
     """
@@ -120,7 +120,7 @@ def c05_fiscal_period_mismatch(df: pd.DataFrame) -> pd.Series:
 
 
 def c06_risky_description(df: pd.DataFrame) -> pd.Series:
-    """C06 위험 적요: 적요 품질 불량 또는 위험 키워드 포함.
+    """L3-08 위험 적요: 적요 품질 불량 또는 위험 키워드 포함.
 
     Why: PCAOB AS 240 A49(c), K-SOX §8①1호 — 적요 미비는 전표 추적 방해.
     """
@@ -145,7 +145,7 @@ def c08_amount_outlier(
     df: pd.DataFrame,
     zscore_threshold: float = 3.0,
 ) -> pd.Series:
-    """C08 이상 고액: Z-score 기준 통계적 이상치.
+    """L4-03 이상 고액: Z-score 기준 통계적 이상치.
 
     Why: PCAOB AS 240 §33(b), ISA 315 — 3σ 초과 금액은 조작 가능성.
     """
@@ -155,7 +155,7 @@ def c08_amount_outlier(
 
 
 def c10_suspense_account(df: pd.DataFrame) -> pd.Series:
-    """C10 가수금 장기체류: 가수금·가지급 등 가계정 사용 전표.
+    """L3-09 가수금 장기체류: 가수금·가지급 등 가계정 사용 전표.
 
     Why: 외감법 §8①2호, FSS 횡령 은폐 사례 — 가계정 장기 체류는
          자금 유용을 숨기는 수단으로 사용될 수 있다.
@@ -165,7 +165,7 @@ def c10_suspense_account(df: pd.DataFrame) -> pd.Series:
     return df["is_suspense_account"].astype("boolean").fillna(False)
 
 
-# ── C12: 비정상 시간대 입력자 집중 분석 ─────────────────────────
+# ── L4-05: 비정상 시간대 입력자 집중 분석 ─────────────────────────
 
 _MIN_USERS_FOR_SIGMA = 3  # σ 통계가 유의미한 최소 사용자 수
 _FALLBACK_MIDNIGHT_RATIO = 0.2  # 소수 인원 폴백 시 심야 비율 임계
@@ -180,9 +180,9 @@ def c12_abnormal_hours_concentration(
     min_user_entries: int = 10,
     auto_entry_sources: list[str] | None = None,
 ) -> pd.Series:
-    """C12 비정상 시간대 입력자 집중: 사용자별 비정상 비율 3σ + 급속 승인.
+    """L4-05 비정상 시간대 입력자 집중: 사용자별 비정상 비율 3σ + 급속 승인.
 
-    Why: KLCA IT 체크리스트 — C02/C03은 건별 플래그만 수행.
+    Why: KLCA IT 체크리스트 — L3-05/L3-06은 건별 플래그만 수행.
          특정 사용자가 심야/주말에 집중적으로 전표를 입력하는 행동 패턴은
          조직적 부정의 징후일 수 있다.
 
@@ -330,7 +330,7 @@ def _check_rapid_approval(
     if "user_persona" in df.columns:
         manual_mask = manual_mask & (df["user_persona"] != "automated_system")
 
-    # Why: 자기 승인은 B06에서 이미 탐지 → 여기서 중복 플래그 불필요
+    # Why: 자기 승인은 L1-05에서 이미 탐지 → 여기서 중복 플래그 불필요
     diff_approver = df["created_by"] != df["approved_by"]
     manual_mask = manual_mask & diff_approver
 

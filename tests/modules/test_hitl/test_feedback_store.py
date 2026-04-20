@@ -24,7 +24,7 @@ def test_record_and_list_feedback_events() -> None:
             engagement_id="2026",
             batch_id="batch_001",
             document_id="DOC001",
-            rule_code="A01",
+            rule_code="L1-01",
             reason="expected posting",
             payload={"source": "whitelist_add"},
         ),
@@ -49,7 +49,7 @@ def test_document_feedback_frame_uses_latest_effective_event() -> None:
             decision="false_positive",
             batch_id="batch_001",
             document_id="DOC001",
-            rule_code="A01",
+            rule_code="L1-01",
         ),
     )
     record_feedback_event(
@@ -59,7 +59,7 @@ def test_document_feedback_frame_uses_latest_effective_event() -> None:
             decision="whitelist_revoked",
             batch_id="batch_001",
             document_id="DOC001",
-            rule_code="A01",
+            rule_code="L1-01",
         ),
     )
     record_feedback_event(
@@ -69,7 +69,7 @@ def test_document_feedback_frame_uses_latest_effective_event() -> None:
             decision="confirmed_issue",
             batch_id="batch_001",
             document_id="DOC002",
-            rule_code="B02",
+            rule_code="L2-01",
         ),
     )
 
@@ -91,7 +91,7 @@ def test_document_feedback_frame_ignores_rule_feedback_events() -> None:
             decision="false_positive",
             batch_id="batch_001",
             document_id="DOC001",
-            rule_code="A01",
+            rule_code="L1-01",
         ),
     )
     record_feedback_event(
@@ -101,7 +101,7 @@ def test_document_feedback_frame_ignores_rule_feedback_events() -> None:
             decision="approved",
             batch_id="batch_001",
             document_id="DOC001",
-            rule_code="A01",
+            rule_code="L1-01",
         ),
     )
 

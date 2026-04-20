@@ -55,8 +55,8 @@ class GeneralLedgerSchema(pa.DataFrameModel):
     posting_date: Series[pa.DateTime] = pa.Field(nullable=False)
     # Why: schema.yaml type: date이나, type_caster가 datetime64[ns]로 통일 변환
     document_date: Series[pa.DateTime] = pa.Field(nullable=False)
-    # Why: DataSynth A02(MissingField) 라벨 데이터가 의도적으로 NULL 포함.
-    #      NULL 행은 A02 탐지 룰에서 플래그하므로 파이프라인 통과 허용.
+    # Why: DataSynth L1-02(MissingField) 라벨 데이터가 의도적으로 NULL 포함.
+    #      NULL 행은 L1-02 탐지 룰에서 플래그하므로 파이프라인 통과 허용.
     gl_account: Series[str] = pa.Field(nullable=True)
     debit_amount: Series[float] = pa.Field(ge=0, nullable=False)
     credit_amount: Series[float] = pa.Field(ge=0, nullable=False)

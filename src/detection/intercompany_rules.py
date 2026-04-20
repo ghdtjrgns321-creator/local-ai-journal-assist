@@ -1,6 +1,6 @@
 """내부거래 매칭 룰 함수 — IC 그룹 대사 + 3개 서브룰 (WU-07).
 
-Why: B10(MVP)은 is_intercompany bool만 flag. 양측 거래 대사 없이 recall 7%.
+Why: L3-03(MVP)은 is_intercompany bool만 flag. 양측 거래 대사 없이 recall 7%.
      그룹 단위 집계 비교로 N:M 다대다 매칭 대응 + 이종 통화 방어.
 """
 
@@ -316,7 +316,7 @@ def ic01_unmatched_intercompany(
     *,
     match_df: pd.DataFrame,
 ) -> pd.Series:
-    """IC01: 미매칭 내부거래 — 대응 그룹 없는 IC 전표 탐지.
+    """IL3-04: 미매칭 내부거래 — 대응 그룹 없는 IC 전표 탐지.
 
     Why: 감사기준서 550호 §23. 관계사 간 거래는 양측 대사가 필수.
     """
@@ -333,7 +333,7 @@ def ic02_amount_mismatch(
     amount_tolerance: float = 0.02,
     max_diff_ratio: float = 0.10,
 ) -> pd.Series:
-    """IC02: 금액 불일치 — 매칭됐으나 합계 차이 초과.
+    """IL3-05: 금액 불일치 — 매칭됐으나 합계 차이 초과.
 
     Why: IC 거래는 양측 금액 일치가 원칙. 차이는 부정/오류 징후.
     """
@@ -366,7 +366,7 @@ def ic03_timing_gap(
     date_window_days: int = 5,
     max_day_diff: int = 30,
 ) -> pd.Series:
-    """IC03: 시차 이상 — 매칭됐으나 전기일 차이 과대.
+    """IL3-06: 시차 이상 — 매칭됐으나 전기일 차이 과대.
 
     Why: 동시 기표가 원칙인 IC 거래에서 시차는 기간귀속 오류 징후.
     """

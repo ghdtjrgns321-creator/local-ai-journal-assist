@@ -1,4 +1,4 @@
-"""B04, B05, B11 groupby 기반 룰 단위 테스트."""
+"""L2-02, L2-03, L2-04 groupby 기반 룰 단위 테스트."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from src.detection.fraud_rules_groupby import (
 
 @pytest.fixture
 def dup_payment_df() -> pd.DataFrame:
-    """B04 테스트: P2P 프로세스, 동일 거래처+금액, reference 있음/없음."""
+    """L2-02 테스트: P2P 프로세스, 동일 거래처+금액, reference 있음/없음."""
     return pd.DataFrame({
         "auxiliary_account_number": ["V001", "V001", "V001", "V002"],
         "debit_amount": [1e6, 1e6, 1e6, 2e6],
@@ -32,7 +32,7 @@ def dup_payment_df() -> pd.DataFrame:
 
 @pytest.fixture
 def dup_entry_df() -> pd.DataFrame:
-    """B05 테스트: 동일 GL+금액+날짜 exact match."""
+    """L2-03 테스트: 동일 GL+금액+날짜 exact match."""
     return pd.DataFrame({
         "gl_account": [1000, 1000, 1000, 2000],
         "debit_amount": [500.0, 500.0, 500.0, 500.0],
@@ -46,10 +46,10 @@ def dup_entry_df() -> pd.DataFrame:
     })
 
 
-# ── B04 중복 지급 ─────────────────────────────────────────
+# ── L2-02 중복 지급 ─────────────────────────────────────────
 
 
-class TestB04:
+class TestL2-02:
     def test_within_window_flagged(self, dup_payment_df: pd.DataFrame) -> None:
         """30일 내 동일 거래처+금액 → 양쪽 모두 flagged."""
         result = b04_duplicate_payment(dup_payment_df, window_days=30)
@@ -100,7 +100,7 @@ class TestB04:
         assert result.all()
 
     def test_o2c_excluded(self) -> None:
-        """O2C 반복 매출은 B04 대상 아님."""
+        """O2C 반복 매출은 L2-02 대상 아님."""
         df = pd.DataFrame({
             "auxiliary_account_number": ["C001", "C001"],
             "debit_amount": [1e6, 1e6],
@@ -138,10 +138,10 @@ class TestB04:
         assert not b04_duplicate_payment(df).any()
 
 
-# ── B05 중복 전표 ─────────────────────────────────────────
+# ── L2-03 중복 전표 ─────────────────────────────────────────
 
 
-class TestB05:
+class TestL2-03:
     def test_exact_match_flagged(self, dup_entry_df: pd.DataFrame) -> None:
         """GL+금액+날짜 동일 → 양쪽 flagged."""
         result = b05_duplicate_entry(dup_entry_df)
@@ -163,10 +163,10 @@ class TestB05:
         assert not b05_duplicate_entry(df).any()
 
 
-# ── B11 비용 자산화 ──────────────────────────────────────────
+# ── L2-04 비용 자산화 ──────────────────────────────────────────
 
 
-class TestB11:
+class TestL2-04:
     def test_expense_to_asset_flagged(self) -> None:
         """동일 전표 내 차변=자산(15xx) + 대변=비용(6xxx) → 전표 전체 flagged."""
         df = pd.DataFrame({

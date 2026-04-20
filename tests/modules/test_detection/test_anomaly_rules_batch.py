@@ -1,4 +1,4 @@
-"""C13 배치 전표 이상 패턴 단위 테스트."""
+"""L4-06 배치 전표 이상 패턴 단위 테스트."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import pandas as pd
 from src.detection.anomaly_rules_batch import c13_batch_anomaly
 
 
-class TestC13:
+class TestL4-06:
     def test_batch_period_end_concentration(self) -> None:
         """배치 전표 중 기말 비율 > 임계 → 배치 전체 플래그."""
         df = pd.DataFrame({

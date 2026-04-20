@@ -54,7 +54,7 @@ class TestBaseAmount:
 
 
 class TestIsNearThreshold:
-    """B02: 다단계 승인한도 직하. 각 레벨별 threshold*ratio ≤ base < threshold."""
+    """L2-01: 다단계 승인한도 직하. 각 레벨별 threshold*ratio ≤ base < threshold."""
 
     THRESHOLDS = [10_000_000, 100_000_000, 1_000_000_000]
     RATIO = 0.90
@@ -99,7 +99,7 @@ class TestIsNearThreshold:
 
 
 class TestExceedsThreshold:
-    """B03: 다단계 승인한도 초과. base >= min(thresholds)."""
+    """L1-04: 다단계 승인한도 초과. base >= min(thresholds)."""
 
     THRESHOLDS = [10_000_000, 100_000_000, 1_000_000_000]
 
@@ -189,7 +189,7 @@ class TestMapCoaCategory:
 
 
 class TestAmountZscore:
-    """C08: 그룹별 Z-score + fallback."""
+    """L4-03: 그룹별 Z-score + fallback."""
 
     def test_large_group_has_values(self, af_zscore_df):
         """30건+ 그룹은 Z-score 값이 존재해야 한다."""
@@ -319,7 +319,7 @@ class TestAmountMagnitude:
 
 
 class TestIsRoundNumber:
-    """B04: 라운드넘버 판정."""
+    """L2-02: 라운드넘버 판정."""
 
     UNIT = 1_000_000
 

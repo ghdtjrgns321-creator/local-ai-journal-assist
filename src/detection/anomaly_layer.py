@@ -1,8 +1,8 @@
-"""Layer C: 이상 징후 오케스트레이터 — C01~C06, C08~C13.
+"""Layer C: 이상 징후 오케스트레이터 — L3-04~L3-08, L4-03~L4-06.
 
 룰 레지스트리를 순회하며 try/except로 격리 실행.
 한 룰 실패해도 나머지 계속 진행, 실패 룰은 skipped + warning 기록.
-C07(Benford)은 BenfordDetector 독립 트랙으로 분리됨 (DETECTION_RULES.md §2.4 점수 체계).
+L4-02(Benford)은 BenfordDetector 독립 트랙으로 분리됨 (DETECTION_RULES.md §2.4 점수 체계).
 """
 
 from __future__ import annotations
@@ -39,9 +39,9 @@ _REQUIRED_COLUMNS = ["debit_amount", "credit_amount"]
 
 
 class AnomalyDetector(BaseDetector):
-    """C01~C06, C08~C12 이상 징후 탐지. 보조 레이어 (가중치 0.25).
+    """L3-04~L3-08, L4-03~L4-05 이상 징후 탐지. 보조 레이어 (가중치 0.25).
 
-    C07(Benford)은 BenfordDetector 독립 트랙으로 분리.
+    L4-02(Benford)은 BenfordDetector 독립 트랙으로 분리.
     """
 
     @property
@@ -49,7 +49,7 @@ class AnomalyDetector(BaseDetector):
         return "layer_c"
 
     def detect(self, df: pd.DataFrame) -> DetectionResult:
-        """C01~C06, C08~C12 순차 실행. 각 룰은 try/except로 격리."""
+        """L3-04~L3-08, L4-03~L4-05 순차 실행. 각 룰은 try/except로 격리."""
         start = time.perf_counter()
         warnings: list[str] = []
 
@@ -76,26 +76,26 @@ class AnomalyDetector(BaseDetector):
         """룰 레지스트리: (rule_id, callable, kwargs)."""
         s = self._settings
         return [
-            ("C01", c01_period_end_large, {
+            ("L3-04", c01_period_end_large, {
                 "quantile": s.period_end_amount_quantile,
                 "min_group_size": s.c01_min_group_size,
             }),
-            ("C02", c02_weekend_entry, {}),
-            ("C03", c03_after_hours_entry, {}),
-            ("C04", c04_backdated_entry, {"threshold_days": s.backdated_threshold_days}),
-            ("C05", c05_fiscal_period_mismatch, {}),
-            ("C06", c06_risky_description, {}),
-            # C07(Benford)은 BenfordDetector 독립 트랙으로 분리
-            ("C08", c08_amount_outlier, {"zscore_threshold": s.zscore_threshold}),
-            ("C09", c09_rare_account_pair, {"percentile": s.account_pair_rare_percentile}),
-            ("C10", c10_suspense_account, {}),
-            ("C11", c11_reversal_entry, {
+            ("L3-05", c02_weekend_entry, {}),
+            ("L3-06", c03_after_hours_entry, {}),
+            ("L3-07", c04_backdated_entry, {"threshold_days": s.backdated_threshold_days}),
+            ("L1-08", c05_fiscal_period_mismatch, {}),
+            ("L3-08", c06_risky_description, {}),
+            # L4-02(Benford)은 BenfordDetector 독립 트랙으로 분리
+            ("L4-03", c08_amount_outlier, {"zscore_threshold": s.zscore_threshold}),
+            ("L4-04", c09_rare_account_pair, {"percentile": s.account_pair_rare_percentile}),
+            ("L3-09", c10_suspense_account, {}),
+            ("L2-06", c11_reversal_entry, {
                 "match_window_days": s.reversal_match_window_days,
                 "rolling_window_days": s.reversal_rolling_window_days,
                 "zero_threshold": s.reversal_zero_threshold,
                 "score_threshold": s.reversal_score_threshold,
             }),
-            ("C12", c12_abnormal_hours_concentration, {
+            ("L4-05", c12_abnormal_hours_concentration, {
                 "sigma_threshold": s.abnormal_sigma_threshold,
                 "rapid_approval_minutes": s.rapid_approval_minutes,
                 "min_abnormal_ratio": s.min_abnormal_ratio,
@@ -103,7 +103,7 @@ class AnomalyDetector(BaseDetector):
                 "min_user_entries": s.min_user_entries,
                 "auto_entry_sources": s.auto_entry_sources,
             }),
-            ("C13", c13_batch_anomaly, {
+            ("L4-06", c13_batch_anomaly, {
                 "batch_sources": s.batch_source_values,
                 "period_end_ratio": s.batch_period_end_ratio,
                 "simultaneous_threshold": s.batch_simultaneous_threshold,
