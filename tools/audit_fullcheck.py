@@ -45,7 +45,7 @@ n_imbalanced = (bal["diff"] > 1.0).sum()
 n_total_docs = len(bal)
 pct = (n_total_docs - n_imbalanced) / n_total_docs * 100
 print(f"  균형(diff<=1): {n_total_docs - n_imbalanced:,} / {n_total_docs:,} ({pct:.2f}%)")
-print(f"  불균형(diff>1): {n_imbalanced} (A01 테스트 데이터)")
+print(f"  불균형(diff>1): {n_imbalanced} (L1-01 테스트 데이터)")
 if n_imbalanced > 0:
     worst = bal.nlargest(3, "diff")
     for did, row in worst.iterrows():

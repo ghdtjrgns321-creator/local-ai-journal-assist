@@ -37,7 +37,7 @@
   - 목표: 12월 1순위 fraud_type ≤ 60% (현실적 분산)
   - 실제: 56% (5/9)
 - ✅ **after_hours_real_users**
-  - 목표: 실사용자 심야 전표 ≥ 200건 (C03/C12 탐지 타겟)
+  - 목표: 실사용자 심야 전표 ≥ 200건 (L3-06/L4-05 탐지 타겟)
   - 실제: 849건
 - ✅ **exceeded_approval_realistic**
   - 목표: ExceededApprovalLimit 중앙값 ≤ 3,000,000,000 (30억, 중견기업 상한)

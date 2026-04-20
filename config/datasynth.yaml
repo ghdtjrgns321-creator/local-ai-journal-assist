@@ -107,14 +107,14 @@ company_year_profiles:
       anomaly_process_rate: { min: 0.34, max: 0.46 }
       sod_violation_rate: { min: 0.014, max: 0.024 }
 
-# B04 중복 지급 탐지용 document flow 활성화
+# L2-02 중복 지급 탐지용 document flow 활성화
 document_flows:
   p2p:
     enabled: true
   o2c:
     enabled: true
 
-# B10 관계사 순환거래 탐지용
+# L3-03 관계사 순환거래 탐지용
 intercompany:
   enabled: true
   ic_transaction_rate: 0.10
@@ -122,8 +122,8 @@ intercompany:
 
 # KRW 금액 스케일 — 한국 중견 제조업 기준
 # LogNormal(14.0, 2.5) → 중앙값 ~120만원, 평균 ~2,900만원
-# B02 승인한도 직하 탐지: split_transaction이 threshold×0.9~threshold 구간 생성
-# A01 차대변 균형 — ERP ITAC 반영 (99.8% 일치, 불일치는 A01 탐지 테스트용 극소수)
+# L2-01 승인한도 직하 탐지: split_transaction이 threshold×0.9~threshold 구간 생성
+# L1-01 차대변 균형 — ERP ITAC 반영 (99.8% 일치, 불일치는 L1-01 탐지 테스트용 극소수)
 # debit_credit_distribution은 차변/대변 라인 수 분포 (금액 균형은 JE 생성 시 항상 보장)
 transactions:
   # Iter 7 (2026-04-11): source_distribution 추가 — automated 70% default → 25%로 하향
@@ -151,7 +151,7 @@ transactions:
     ten_to_ninety_nine: 0.01
     hundred_to_nine_ninety_nine: 0.001
     thousand_plus: 0.0
-  # 주말/공휴일 전표 비율 — C02/C03 주말 탐지 테스트용
+  # 주말/공휴일 전표 비율 — L3-05/L3-06 주말 탐지 테스트용
   # Iteration 1 (2026-04-11): 12월 100% fraud 집중 → year_end_multiplier 추가 하향
   #                           심야 실사용자 확보 → after_hours_activity 추가
   seasonality:
@@ -191,7 +191,7 @@ transactions:
     tolerance: 0.05
     exempt_sources: [recurring, payroll]
 
-# C02/C03 시간대 탐지용 — DETECTION_REFERENCE.md §6.5 반영
+# L3-05/L3-06 시간대 탐지용 — DETECTION_REFERENCE.md §6.5 반영
 # 한국 야근 문화: 18:30~22:00은 결산기 정상, 22:00~06:00이 심야(고위험)
 temporal_patterns:
   enabled: true
@@ -218,7 +218,7 @@ temporal_patterns:
   # QG3 판정(2026-04-10): 심야(00~06) 6,670건 (2.1%), 03시 피크 1,475건 → 추가 하향
   # Iteration 8 (2026-04-11): 심야 multiplier 상향
   # Why: after_hours_real_users=14건 < 목표 200건. 극한 deep_night 0.005 → 0.03 상향.
-  #      ISA 240 C03(심야 전기)/C12(비정상 시간 집중) 룰 탐지 타겟 확보.
+  #      ISA 240 L3-06(심야 전기)/L4-05(비정상 시간 집중) 룰 탐지 타겟 확보.
   intraday:
     enabled: true
     segments:
@@ -234,7 +234,7 @@ temporal_patterns:
   calendars:
     regions: [KR]
 
-# A02 필수필드 누락 탐지용 — 결측값 주입
+# L1-02 필수필드 누락 탐지용 — 결측값 주입
 # 세션 A (2026-04-12): typos + format_variations 활성화
 # Why: 실전 감사 데이터는 수기 입력 시 오탈자·표기 변형이 자연스럽게 존재.
 #      CLAUDE.md 원칙 — 정상/비정상 무관하게 동일 비율 적용 (MCAR).
@@ -281,7 +281,7 @@ data_quality:
     enabled: false   # 세션 A: date/amount 포맷 변형은 CSV 파싱 호환성 이슈 가능 → 추후 재검토
   generate_labels: true
 
-# C07 Benford 위반 등 통계적 이상 주입
+# L4-02 Benford 위반 등 통계적 이상 주입
 anomaly_injection:
   enabled: true
   rates:
@@ -300,7 +300,7 @@ internal_controls:
 fraud:
   enabled: true
   fraud_rate: 0.02
-  # B02/B08: KRW 승인한도 — 한국 중견 제조업 전결규정 반영
+  # L2-01/L3-02: KRW 승인한도 — 한국 중견 제조업 전결규정 반영
   # Iteration 7 (2026-04-11): 상한 10B → 3B로 추가 하향
   # Why: ExceededApprovalLimit 중앙값 11B원(110억) 여전히 비현실적.
   #      중견기업 전결 최대는 이사회 결의 3B 이내가 현실적.
@@ -326,7 +326,7 @@ fraud:
 # ═══════════════════════════════════════════════════════════════
 anomaly_strategies:
   approval:
-    # B02/B03/B09 승인한도 (KRW, 오름차순)
+    # L2-01/L1-04/L1-07 승인한도 (KRW, 오름차순)
     # Iteration 7: fraud.approval_thresholds와 동기화 (상한 3B)
     thresholds: [10000000, 100000000, 300000000, 1000000000, 3000000000]
     buffer: 500000
@@ -340,10 +340,10 @@ anomaly_strategies:
     threshold: 10000000
     buffer: 500000
   unbalanced:
-    min_delta: 100     # A01 불균형 최소 금액 (KRW)
-    max_delta: 1000    # A01 불균형 최대 금액 (KRW)
+    min_delta: 100     # L1-01 불균형 최소 금액 (KRW)
+    max_delta: 1000    # L1-01 불균형 최대 금액 (KRW)
   invalid_account:
-    codes: ["888888", "777777"]   # A03 무효 GL 코드
+    codes: ["888888", "777777"]   # L1-03 무효 GL 코드
   revenue_manipulation:
     revenue_prefixes: ["4000", "4100", "4200", "4300", "4400", "4500", "4600"]
     min_zscore_multiplier: 3.0
@@ -368,7 +368,7 @@ anomaly_strategies:
   dormant_account:
     accounts: ["199999", "299999", "399999", "999999"]
   description:
-    # Why: detection C06은 risk_keywords.yaml의 high/medium 키워드로 판정.
+    # Why: detection L3-08은 risk_keywords.yaml의 high/medium 키워드로 판정.
     #      여기 목록은 risk_keywords.yaml과 동기화 필수.
     #      "Other", "Misc" 등 영어는 risk_keywords에 없어 미탐지됨.
     vague_descriptions:

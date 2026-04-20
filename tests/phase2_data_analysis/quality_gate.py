@@ -127,7 +127,7 @@ def check_all(profile: dict) -> GateReport:
         target="12월 1순위 fraud_type ≤ 60% (현실적 분산)",
         actual=f"{dec_dominance*100:.0f}% ({dec_first_count}/{total_types})",
         passed=dec_dominance <= 0.6,
-        why="모든 fraud_type이 12월에 몰리면 C01(기말 대규모) 룰 과적합 유발",
+        why="모든 fraud_type이 12월에 몰리면 L3-04(기말 대규모) 룰 과적합 유발",
     ))
 
     # P1-3: 심야 fraud 존재 — 실사용자 기반
@@ -137,10 +137,10 @@ def check_all(profile: dict) -> GateReport:
     report.checks.append(GateCheck(
         phase="P1",
         name="after_hours_real_users",
-        target="실사용자 심야 전표 ≥ 200건 (C03/C12 탐지 타겟)",
+        target="실사용자 심야 전표 ≥ 200건 (L3-06/L4-05 탐지 타겟)",
         actual=f"{non_system_ahs}건",
         passed=non_system_ahs >= 200,
-        why="SYSTEM 계정 제외한 실사용자 심야 입력이 없으면 C03(심야 전기) 룰 미작동",
+        why="SYSTEM 계정 제외한 실사용자 심야 입력이 없으면 L3-06(심야 전기) 룰 미작동",
     ))
 
     # P1-4: ExceededApprovalLimit 금액 현실성 — 중견기업 상한 30억 이내

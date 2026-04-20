@@ -237,25 +237,25 @@ def t5_09(con: duckdb.DuckDBPyConnection) -> CheckResult:
 def t5_10(con: duckdb.DuckDBPyConnection) -> CheckResult:
     s = _t()
     n = _v(con, "SELECT COUNT(*) FROM je WHERE fiscal_period IS NULL")
-    return _cr("T5-10", "fiscal_period NULL (C05 위험)", "WARNING" if n else "PASS", "0", f"{n}건", ms=_ms(s))
+    return _cr("T5-10", "fiscal_period NULL (L1-08 위험)", "WARNING" if n else "PASS", "0", f"{n}건", ms=_ms(s))
 
 def t5_11(con: duckdb.DuckDBPyConnection) -> CheckResult:
     s = _t()
     n = _v(con, "SELECT COUNT(*) FROM (SELECT document_id FROM je GROUP BY 1 HAVING COUNT(*)>100)")
-    return _cr("T5-11", "대형 전표 line>100 (C09 제외 위험)", "WARNING" if n else "PASS", "0", f"{n}건", ms=_ms(s))
+    return _cr("T5-11", "대형 전표 line>100 (L4-04 제외 위험)", "WARNING" if n else "PASS", "0", f"{n}건", ms=_ms(s))
 
 def t5_12(con: duckdb.DuckDBPyConnection) -> CheckResult:
     s = _t()
     n = _v(con, "SELECT COUNT(*) FROM je WHERE reference IS NOT NULL AND TRIM(reference)=''")
-    return _cr("T5-12", "reference 공백 (B04 오탐 위험)", "WARNING" if n else "PASS", "0", f"{n}건", ms=_ms(s))
+    return _cr("T5-12", "reference 공백 (L2-02 오탐 위험)", "WARNING" if n else "PASS", "0", f"{n}건", ms=_ms(s))
 
 def t5_13(con: duckdb.DuckDBPyConnection) -> CheckResult:
-    """posting_date 시간 다양성 — 00:00 > 99%이면 C03 무력화."""
+    """posting_date 시간 다양성 — 00:00 > 99%이면 L3-06 무력화."""
     s = _t()
     tot = _v(con, "SELECT COUNT(*) FROM je WHERE posting_date IS NOT NULL")
     mid = _v(con, "SELECT COUNT(*) FROM je WHERE EXTRACT(hour FROM CAST(posting_date AS TIMESTAMP))=0 AND EXTRACT(minute FROM CAST(posting_date AS TIMESTAMP))=0")
     rate = mid / tot if tot else 0
-    return _cr("T5-13", "posting_date 시간=00:00 비율 (C03 위험)",
+    return _cr("T5-13", "posting_date 시간=00:00 비율 (L3-06 위험)",
                "WARNING" if rate > 0.99 else "PASS", "<99%", f"{rate:.1%} ({mid}/{tot})", ms=_ms(s))
 
 def t5_14(con: duckdb.DuckDBPyConnection) -> CheckResult:

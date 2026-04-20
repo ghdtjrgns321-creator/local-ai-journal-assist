@@ -406,7 +406,7 @@ def t2_18(con: duckdb.DuckDBPyConnection, labels_con) -> CheckResult:
     return CheckResult(
         check_id="T2-18", tier=2, name="junior 1억 초과",
         status="PASS" if bad == 0 else "WARNING",
-        expected="junior 1억 초과=0 (전결규정은 승인 한도, 작성 한도 아님. 승인 한도 검증은 B02/B03에서 수행)",
+        expected="junior 1억 초과=0 (전결규정은 승인 한도, 작성 한도 아님. 승인 한도 검증은 L2-01/L1-04에서 수행)",
         actual=f"violations={bad:,}",
         elapsed_ms=_elapsed(start),
     )

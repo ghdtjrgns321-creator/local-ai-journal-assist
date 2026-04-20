@@ -428,7 +428,7 @@ def axis_fraud_signature(con) -> dict:
     """탐지 룰이 잡을 수 있는 fraud 시그니처 — 사전 실사."""
     out = {}
 
-    # fraud_type별 시간대 분포 (C03 심야, C02 주말 대응성)
+    # fraud_type별 시간대 분포 (L3-06 심야, L3-05 주말 대응성)
     out["fraud_by_hour"] = {}
     for r in _q(con, """
         SELECT fraud_type,
@@ -440,7 +440,7 @@ def axis_fraud_signature(con) -> dict:
     """):
         out["fraud_by_hour"].setdefault(r[0], {})[int(r[1])] = r[2]
 
-    # fraud_type별 평균 금액 (C08 이상 고액 대응성)
+    # fraud_type별 평균 금액 (L4-03 이상 고액 대응성)
     out["fraud_median_amount"] = dict(_q(con, """
         SELECT fraud_type, MEDIAN(amt) FROM (
             SELECT fraud_type, CASE WHEN CAST(debit_amount AS DOUBLE) > 0
@@ -451,7 +451,7 @@ def axis_fraud_signature(con) -> dict:
         ) GROUP BY 1 ORDER BY 2 DESC
     """))
 
-    # fraud_type별 월별 집중도 (C01 기말 대규모 대응성)
+    # fraud_type별 월별 집중도 (L3-04 기말 대규모 대응성)
     out["fraud_month_concentration"] = {}
     for r in _q(con, """
         SELECT fraud_type, EXTRACT(MONTH FROM CAST(posting_date AS TIMESTAMP)) m,

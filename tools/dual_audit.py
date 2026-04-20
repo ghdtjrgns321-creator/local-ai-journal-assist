@@ -2,7 +2,7 @@
 Dual-direction data quality audit on DataSynth journal entries.
 PART 1: 비정상 라벨 검증 - 라벨 문서가 실제 이상 특성을 보이는지
 PART 2: 정상 데이터 오염 검사 - is_fraud=False AND is_anomaly=False 행
-PART 3: B07 sod_violation 심층 분석
+PART 3: L1-06 sod_violation 심층 분석
 """
 from __future__ import annotations
 
@@ -70,18 +70,18 @@ def record(rule, total, verified, note=""):
     results_p1.append({"rule": rule, "total": total, "verified": verified, "note": note})
 
 
-# ── A01: 불균형 전표 ─────────────────────────────────────────────────────────
+# ── L1-01: 불균형 전표 ─────────────────────────────────────────────────────────
 d = label_docs(["UnbalancedEntry"])
 if d:
     grp = je[je["document_id"].isin(d)].groupby("document_id").agg(
         sum_dr=("debit_amount", "sum"), sum_cr=("credit_amount", "sum")
     )
     ver = int((abs(grp["sum_dr"] - grp["sum_cr"]) > 0.01).sum())
-    record("A01", len(d), ver, "sum(debit) != sum(credit)")
+    record("L1-01", len(d), ver, "sum(debit) != sum(credit)")
 else:
-    record("A01", 0, 0, "라벨 없음")
+    record("L1-01", 0, 0, "라벨 없음")
 
-# ── A02: 필수 필드 NULL ──────────────────────────────────────────────────────
+# ── L1-02: 필수 필드 NULL ──────────────────────────────────────────────────────
 d = label_docs(["MissingField"])
 if d:
     req = ["gl_account", "document_type", "posting_date"]
@@ -91,73 +91,73 @@ if d:
         lambda g: g[req].isnull().any().any()
     )
     ver = int(has_null.sum())
-    record("A02", len(d), ver, "NULL in gl_account / document_type / posting_date")
+    record("L1-02", len(d), ver, "NULL in gl_account / document_type / posting_date")
 else:
-    record("A02", 0, 0, "라벨 없음")
+    record("L1-02", 0, 0, "라벨 없음")
 
-# ── A03: CoA 외 GL ───────────────────────────────────────────────────────────
+# ── L1-03: CoA 외 GL ───────────────────────────────────────────────────────────
 d = label_docs(["InvalidAccount"])
 if d:
     sub = je[je["document_id"].isin(d)]
     invalid_rows = ~sub["_gl_str"].isin(coa_set)
     ver = len(set(sub.loc[invalid_rows, "document_id"].unique()))
-    record("A03", len(d), ver, "GL not in CoA")
+    record("L1-03", len(d), ver, "GL not in CoA")
 else:
-    record("A03", 0, 0, "라벨 없음")
+    record("L1-03", 0, 0, "라벨 없음")
 
-# ── B01: 수익 GL(4xxx) ───────────────────────────────────────────────────────
+# ── L4-01: 수익 GL(4xxx) ───────────────────────────────────────────────────────
 d = label_docs(["RevenueManipulation"])
 if d:
     sub = je[je["document_id"].isin(d)]
     rev_docs = set(sub.loc[sub["_gl_str"].str.startswith("4"), "document_id"].unique())
-    record("B01", len(d), len(rev_docs), "GL starts with '4' (revenue)")
+    record("L4-01", len(d), len(rev_docs), "GL starts with '4' (revenue)")
 else:
-    record("B01", 0, 0, "라벨 없음")
+    record("L4-01", 0, 0, "라벨 없음")
 
-# ── B06: 자기승인 ────────────────────────────────────────────────────────────
+# ── L1-05: 자기승인 ────────────────────────────────────────────────────────────
 d = label_docs(["SelfApproval"])
 if d:
     sub = je[je["document_id"].isin(d)]
     self_appr = sub[sub["created_by"] == sub["approved_by"]]
     ver = len(set(self_appr["document_id"].unique()))
-    record("B06", len(d), ver, "created_by == approved_by")
+    record("L1-05", len(d), ver, "created_by == approved_by")
 else:
-    record("B06", 0, 0, "라벨 없음")
+    record("L1-05", 0, 0, "라벨 없음")
 
-# ── B07: SoD 위반 ────────────────────────────────────────────────────────────
+# ── L1-06: SoD 위반 ────────────────────────────────────────────────────────────
 d = label_docs(["SegregationOfDutiesViolation"])
 if d:
     sub = je[je["document_id"].isin(d)]
     if "sod_violation" in sub.columns:
         sod_docs = set(sub.loc[sub["sod_violation"] == True, "document_id"].unique())
         ver = len(sod_docs)
-        record("B07", len(d), ver, "sod_violation == True")
+        record("L1-06", len(d), ver, "sod_violation == True")
     else:
-        record("B07", len(d), 0, "sod_violation 컬럼 없음")
+        record("L1-06", len(d), 0, "sod_violation 컬럼 없음")
 else:
-    record("B07", 0, 0, "라벨 없음")
+    record("L1-06", 0, 0, "라벨 없음")
 
-# ── B08: 수동 입력 ───────────────────────────────────────────────────────────
+# ── L3-02: 수동 입력 ───────────────────────────────────────────────────────────
 d = label_docs(["ManualOverride"])
 if d:
     sub = je[je["document_id"].isin(d)]
     manual = sub[sub["source"].str.lower().str.contains("manual", na=False)]
     ver = len(set(manual["document_id"].unique()))
-    record("B08", len(d), ver, "source contains 'manual'")
+    record("L3-02", len(d), ver, "source contains 'manual'")
 else:
-    record("B08", 0, 0, "라벨 없음")
+    record("L3-02", 0, 0, "라벨 없음")
 
-# ── B09: 승인자 NULL ─────────────────────────────────────────────────────────
+# ── L1-07: 승인자 NULL ─────────────────────────────────────────────────────────
 d = label_docs(["SkippedApproval"])
 if d:
     sub = je[je["document_id"].isin(d)]
     null_appr = sub[sub["approved_by"].isna()]
     ver = len(set(null_appr["document_id"].unique()))
-    record("B09", len(d), ver, "approved_by is NULL")
+    record("L1-07", len(d), ver, "approved_by is NULL")
 else:
-    record("B09", 0, 0, "라벨 없음")
+    record("L1-07", 0, 0, "라벨 없음")
 
-# ── B11: 자산+비용 GL 혼재 ───────────────────────────────────────────────────
+# ── L2-04: 자산+비용 GL 혼재 ───────────────────────────────────────────────────
 d = label_docs(["ImproperCapitalization"])
 if d:
     sub = je[je["document_id"].isin(d)]
@@ -170,40 +170,40 @@ if d:
 
     grp_check = sub.groupby("document_id").apply(has_asset_and_expense)
     ver = int(grp_check.sum())
-    record("B11", len(d), ver, "asset GL(15xx) AND expense GL(5-8xxx) both present")
+    record("L2-04", len(d), ver, "asset GL(15xx) AND expense GL(5-8xxx) both present")
 else:
-    record("B11", 0, 0, "라벨 없음")
+    record("L2-04", 0, 0, "라벨 없음")
 
-# ── C02: 주말 전기 ───────────────────────────────────────────────────────────
+# ── L3-05: 주말 전기 ───────────────────────────────────────────────────────────
 d = label_docs(["WeekendPosting"])
 if d:
     sub = je[je["document_id"].isin(d)]
     wkend_docs = set(sub.loc[sub["_dow"].isin([5, 6]), "document_id"].unique())
-    record("C02", len(d), len(wkend_docs), "posting_date is Saturday or Sunday")
+    record("L3-05", len(d), len(wkend_docs), "posting_date is Saturday or Sunday")
 else:
-    record("C02", 0, 0, "라벨 없음")
+    record("L3-05", 0, 0, "라벨 없음")
 
-# ── C03: 야간 전기(22:00~06:59) ──────────────────────────────────────────────
+# ── L3-06: 야간 전기(22:00~06:59) ──────────────────────────────────────────────
 d = label_docs(["AfterHoursPosting", "UnusualTiming"])
 if d:
     sub = je[je["document_id"].isin(d)]
     night_hours = list(range(22, 24)) + list(range(0, 7))
     night_docs = set(sub.loc[sub["_posting_hour"].isin(night_hours), "document_id"].unique())
-    record("C03", len(d), len(night_docs), "posting_hour in 22:00~06:59")
+    record("L3-06", len(d), len(night_docs), "posting_hour in 22:00~06:59")
 else:
-    record("C03", 0, 0, "라벨 없음")
+    record("L3-06", 0, 0, "라벨 없음")
 
-# ── C04: 역일(|posting_date - document_date| > 30일) ─────────────────────────
+# ── L3-07: 역일(|posting_date - document_date| > 30일) ─────────────────────────
 d = label_docs(["BackdatedEntry", "LatePosting"])
 if d:
     sub = je[je["document_id"].isin(d)]
     # Why: 절댓값 기준 - 미래/과거 양방향 30일 초과 모두 탐지
     late_docs = set(sub.loc[abs(sub["_day_diff"]) > 30, "document_id"].unique())
-    record("C04", len(d), len(late_docs), "|posting_date - document_date| > 30 days")
+    record("L3-07", len(d), len(late_docs), "|posting_date - document_date| > 30 days")
 else:
-    record("C04", 0, 0, "라벨 없음")
+    record("L3-07", 0, 0, "라벨 없음")
 
-# ── C06: 설명 부실 ───────────────────────────────────────────────────────────
+# ── L3-08: 설명 부실 ───────────────────────────────────────────────────────────
 d = label_docs(["VagueDescription"])
 if d:
     sub = je[je["document_id"].isin(d)]
@@ -221,11 +221,11 @@ if d:
 
     vague_rows = sub[sub["line_text"].apply(is_vague)]
     ver = len(set(vague_rows["document_id"].unique()))
-    record("C06", len(d), ver, "blank / <3 chars / vague keywords in line_text")
+    record("L3-08", len(d), ver, "blank / <3 chars / vague keywords in line_text")
 else:
-    record("C06", 0, 0, "라벨 없음")
+    record("L3-08", 0, 0, "라벨 없음")
 
-# ── C11: 역분개 쌍 ──────────────────────────────────────────────────────────
+# ── L2-06: 역분개 쌍 ──────────────────────────────────────────────────────────
 d = label_docs(["ReversedAmount"])
 if d:
     sub = je[je["document_id"].isin(d)].copy()
@@ -243,9 +243,9 @@ if d:
 
     grp_check = sub.groupby("document_id").apply(has_reversal)
     ver = int(grp_check.sum())
-    record("C11", len(d), ver, "DR/CR reversal pairs (same GL, same amount)")
+    record("L2-06", len(d), ver, "DR/CR reversal pairs (same GL, same amount)")
 else:
-    record("C11", 0, 0, "라벨 없음")
+    record("L2-06", 0, 0, "라벨 없음")
 
 # ── 요약 ────────────────────────────────────────────────────────────────────
 total_labels   = sum(r["total"]    for r in results_p1)
@@ -282,75 +282,75 @@ def p2_row(label, count, total, note="", is_contamination=True):
     print(f"  {label:<38}  {count:>6,} ({pct:>5.2f}%)  {status}  {note}")
 
 
-# A01: 불균형 전표
+# L1-01: 불균형 전표
 grp_normal = normal_je.groupby("document_id").agg(
     sum_dr=("debit_amount", "sum"), sum_cr=("credit_amount", "sum")
 )
 unbal = int((abs(grp_normal["sum_dr"] - grp_normal["sum_cr"]) > 0.01).sum())
-p2_row("A01: 불균형 전표 문서 수", unbal, len(normal_docs))
+p2_row("L1-01: 불균형 전표 문서 수", unbal, len(normal_docs))
 
-# A03: CoA 외 GL
+# L1-03: CoA 외 GL
 invalid_normal = ~normal_je["_gl_str"].isin(coa_set)
 invalid_rows_n = int(invalid_normal.sum())
-p2_row("A03: CoA 외 GL 행 수", invalid_rows_n, len(normal_je))
+p2_row("L1-03: CoA 외 GL 행 수", invalid_rows_n, len(normal_je))
 if invalid_rows_n > 0:
     sample_gls = normal_je.loc[invalid_normal, "_gl_str"].value_counts().head(5)
     print(f"       샘플 GL: {dict(sample_gls)}")
 
-# B09: 승인자 NULL
+# L1-07: 승인자 NULL
 null_appr_normal = normal_je["approved_by"].isna()
-p2_row("B09: approved_by NULL 행 수", int(null_appr_normal.sum()), len(normal_je),
+p2_row("L1-07: approved_by NULL 행 수", int(null_appr_normal.sum()), len(normal_je),
        f"({normal_je.loc[null_appr_normal, 'document_id'].nunique()} docs)")
 
-# C04: 역일 (절댓값 기준)
+# L3-07: 역일 (절댓값 기준)
 late_normal = abs(normal_je["_day_diff"]) > 30
-p2_row("C04: |posting-doc_date| > 30일 행 수", int(late_normal.sum()), len(normal_je),
+p2_row("L3-07: |posting-doc_date| > 30일 행 수", int(late_normal.sum()), len(normal_je),
        f"({normal_je.loc[late_normal, 'document_id'].nunique()} docs)")
 
 print()
 print("  [ 허용 가능 패턴 - 비율이 비정상적으로 높으면 DataSynth 파라미터 점검 ]")
 
-# B06: 자기승인
+# L1-05: 자기승인
 self_appr_n = normal_je["created_by"] == normal_je["approved_by"]
-p2_row("B06: 자기승인 행 수", int(self_appr_n.sum()), len(normal_je),
+p2_row("L1-05: 자기승인 행 수", int(self_appr_n.sum()), len(normal_je),
        "승인 정책상 허용 가능", is_contamination=False)
 
-# B07: SoD 위반 - CRITICAL CHECK
+# L1-06: SoD 위반 - CRITICAL CHECK
 if "sod_violation" in normal_je.columns:
     sod_n = normal_je["sod_violation"] == True
     sod_cnt = int(sod_n.sum())
     sod_pct = sod_cnt / len(normal_je) * 100
     flag = " ← ★ CRITICAL: DataSynth 버그 의심" if sod_pct > 5 else ""
-    p2_row("B07: sod_violation=True 행 수", sod_cnt, len(normal_je),
+    p2_row("L1-06: sod_violation=True 행 수", sod_cnt, len(normal_je),
            f"정책상 허용 가능{flag}", is_contamination=False)
 
-# B08: 수동 입력
+# L3-02: 수동 입력
 manual_n = normal_je["source"].str.lower().str.contains("manual", na=False)
-p2_row("B08: source='manual' 행 수", int(manual_n.sum()), len(normal_je),
+p2_row("L3-02: source='manual' 행 수", int(manual_n.sum()), len(normal_je),
        "승인된 수동 입력 가능", is_contamination=False)
 
-# C02: 주말
+# L3-05: 주말
 wkend_n = normal_je["_dow"].isin([5, 6])
-p2_row("C02: 주말 전기 행 수", int(wkend_n.sum()), len(normal_je),
+p2_row("L3-05: 주말 전기 행 수", int(wkend_n.sum()), len(normal_je),
        "허용 운영 가능", is_contamination=False)
 
-# C03: 야간 - posting_date가 date-only면 hour=0, 별도 안내
+# L3-06: 야간 - posting_date가 date-only면 hour=0, 별도 안내
 night_hours_n = list(range(22, 24)) + list(range(0, 7))
 sample_hours = normal_je["_posting_hour"].value_counts().head(5).to_dict()
 if set(normal_je["_posting_hour"].unique()) == {0}:
-    print(f"  {'C03: 야간 전기':<38}  N/A  [참고]  posting_date date-only, 시간 정보 없음")
+    print(f"  {'L3-06: 야간 전기':<38}  N/A  [참고]  posting_date date-only, 시간 정보 없음")
 else:
     night_n = normal_je["_posting_hour"].isin(night_hours_n)
-    p2_row("C03: 야간(22-06) 전기 행 수", int(night_n.sum()), len(normal_je),
+    p2_row("L3-06: 야간(22-06) 전기 행 수", int(night_n.sum()), len(normal_je),
            "허용 운영 가능", is_contamination=False)
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# PART 3: B07 sod_violation 심층 분석
+# PART 3: L1-06 sod_violation 심층 분석
 # ════════════════════════════════════════════════════════════════════════════
 print()
 print("=" * 78)
-print("PART 3: B07 sod_violation 심층 분석")
+print("PART 3: L1-06 sod_violation 심층 분석")
 print("=" * 78)
 
 sod_total = int(je["sod_violation"].sum())
@@ -367,7 +367,7 @@ print()
 print(f"  탐지 사용 컬럼    : sod_violation (bool)")
 print(f"  전체 sod=True     : {sod_total:>8,} / {total_rows:,} ({sod_pct_total:.2f}%)")
 print(f"  정상 데이터 sod=True: {sod_normal_cnt:>8,} / {len(normal_je_b07):,} ({sod_normal_pct:.2f}%)")
-print(f"  B07 anomaly_labels: {al_b07_cnt:>8,} 건")
+print(f"  L1-06 anomaly_labels: {al_b07_cnt:>8,} 건")
 
 print()
 print("  [ is_fraud x is_anomaly 조합별 sod_violation=True 비율 ]")
@@ -393,11 +393,11 @@ null_conflict = int(sod_true_rows["sod_conflict_type"].isnull().sum())
 print(f"  sod=True 중 conflict_type=NaN : {null_conflict:,} / {len(sod_true_rows):,} "
       f"({null_conflict/len(sod_true_rows)*100:.1f}%)")
 
-# B07 라벨 vs sod=True 문서
+# L1-06 라벨 vs sod=True 문서
 docs_b07_lbl = label_docs(["SegregationOfDutiesViolation"])
 docs_sod_true = set(je[je["sod_violation"] == True]["document_id"].unique())
 print()
-print(f"  B07 라벨 문서            : {len(docs_b07_lbl):>8,}")
+print(f"  L1-06 라벨 문서            : {len(docs_b07_lbl):>8,}")
 print(f"  sod=True 문서 (전체 JE)  : {len(docs_sod_true):>8,}")
 overlap = len(docs_b07_lbl & docs_sod_true)
 print(f"  교집합 (라벨 ∩ sod=True) : {overlap:>8,}")
@@ -408,8 +408,8 @@ if sod_pct_total > 90:
     print(f"  ★ CRITICAL BUG: sod_violation=True 비율 {sod_pct_total:.1f}%")
     print("    DataSynth이 sod_violation 컬럼을 anomaly_labels 주입과 독립적으로")
     print("    생성하면서 대부분의 행에 True를 할당하는 버그로 추정.")
-    print("    B07 탐지기가 이 컬럼을 직접 사용하면 False Positive 폭발.")
-    print(f"    → 권고: sod_violation 컬럼 재생성 또는 B07 탐지 로직 수정 필요")
+    print("    L1-06 탐지기가 이 컬럼을 직접 사용하면 False Positive 폭발.")
+    print(f"    → 권고: sod_violation 컬럼 재생성 또는 L1-06 탐지 로직 수정 필요")
 elif sod_pct_total > 10:
     print(f"  WARNING: sod_violation=True 비율 {sod_pct_total:.1f}% - 파라미터 재검토 권장")
 else:

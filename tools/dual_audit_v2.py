@@ -2,7 +2,7 @@
 Dual-direction DataSynth quality audit v2.
 PART 1: 비정상 라벨 검증 (15개 룰)
 PART 2: 정상 데이터 오염 검사
-PART 3: B02 FN 원인 분석
+PART 3: L2-01 FN 원인 분석
 """
 import sys
 import io
@@ -83,18 +83,18 @@ def record(rule, total, verified, note="", fn_note=""):
     results_p1.append({"rule": rule, "total": total, "verified": verified, "pct": pct})
 
 
-# ── A01: 불균형 전표 ─────────────────────────────────────────────────────────
+# ── L1-01: 불균형 전표 ─────────────────────────────────────────────────────────
 d = label_docs(["UnbalancedEntry"])
 if d:
     grp = je[je["document_id"].isin(d)].groupby("document_id").agg(
         sum_dr=("debit_amount", "sum"), sum_cr=("credit_amount", "sum")
     )
     ver = int((abs(grp["sum_dr"] - grp["sum_cr"]) > 0.01).sum())
-    record("A01", len(d), ver, "sum(debit) != sum(credit)")
+    record("L1-01", len(d), ver, "sum(debit) != sum(credit)")
 else:
-    record("A01", 0, 0, "라벨 없음")
+    record("L1-01", 0, 0, "라벨 없음")
 
-# ── A02: 필수 필드 NULL ──────────────────────────────────────────────────────
+# ── L1-02: 필수 필드 NULL ──────────────────────────────────────────────────────
 d = label_docs(["MissingField"])
 if d:
     req = ["gl_account", "document_type", "posting_date"]
@@ -104,30 +104,30 @@ if d:
         .apply(lambda g: g.isnull().any().any())
     )
     ver = int(has_null.sum())
-    record("A02", len(d), ver, "NULL in gl_account / document_type / posting_date")
+    record("L1-02", len(d), ver, "NULL in gl_account / document_type / posting_date")
 else:
-    record("A02", 0, 0, "라벨 없음")
+    record("L1-02", 0, 0, "라벨 없음")
 
-# ── A03: CoA 외 GL ───────────────────────────────────────────────────────────
+# ── L1-03: CoA 외 GL ───────────────────────────────────────────────────────────
 d = label_docs(["InvalidAccount"])
 if d:
     sub = je[je["document_id"].isin(d)]
     bad_mask = ~sub["_gl_str"].isin(coa_set)
     ver = len(sub.loc[bad_mask, "document_id"].unique())
-    record("A03", len(d), ver, "GL not in CoA")
+    record("L1-03", len(d), ver, "GL not in CoA")
 else:
-    record("A03", 0, 0, "라벨 없음")
+    record("L1-03", 0, 0, "라벨 없음")
 
-# ── B01: 수익 GL(4xxx) ───────────────────────────────────────────────────────
+# ── L4-01: 수익 GL(4xxx) ───────────────────────────────────────────────────────
 d = label_docs(["RevenueManipulation"])
 if d:
     sub = je[je["document_id"].isin(d)]
     ver_docs = sub.loc[sub["_gl_str"].str.startswith("4"), "document_id"].unique()
-    record("B01", len(d), len(ver_docs), "GL starts with '4' (revenue account)")
+    record("L4-01", len(d), len(ver_docs), "GL starts with '4' (revenue account)")
 else:
-    record("B01", 0, 0, "라벨 없음")
+    record("L4-01", 0, 0, "라벨 없음")
 
-# ── B02: 결재한도 90~99.99% ───────────────────────────────────────────────────
+# ── L2-01: 결재한도 90~99.99% ───────────────────────────────────────────────────
 d = label_docs(["JustBelowThreshold"])
 if d:
     b02_lbl = lbl[lbl["anomaly_type"] == "JustBelowThreshold"].copy()
@@ -145,11 +145,11 @@ if d:
     fn_note = ""
     if not fn_docs.empty:
         fn_note = f"{len(fn_docs)}건 범위 밖 — ratio: {fn_docs['_ratio'].tolist()}"
-    record("B02", len(d), ver, "amount in 90~99.99% of label threshold", fn_note)
+    record("L2-01", len(d), ver, "amount in 90~99.99% of label threshold", fn_note)
 else:
-    record("B02", 0, 0, "라벨 없음")
+    record("L2-01", 0, 0, "라벨 없음")
 
-# ── B06: 자기승인 ────────────────────────────────────────────────────────────
+# ── L1-05: 자기승인 ────────────────────────────────────────────────────────────
 d = label_docs(["SelfApproval"])
 if d:
     sub = je[je["document_id"].isin(d)]
@@ -164,29 +164,29 @@ if d:
             for _, r in fn_sub[["document_id", "created_by", "approved_by"]].head(3).iterrows()
         ]
         fn_note = "; ".join(rows)
-    record("B06", len(d), ver, "created_by == approved_by", fn_note)
+    record("L1-05", len(d), ver, "created_by == approved_by", fn_note)
 else:
-    record("B06", 0, 0, "라벨 없음")
+    record("L1-05", 0, 0, "라벨 없음")
 
-# ── B07: SoD 위반 ────────────────────────────────────────────────────────────
+# ── L1-06: SoD 위반 ────────────────────────────────────────────────────────────
 d = label_docs(["SegregationOfDutiesViolation"])
 if d:
     sub = je[je["document_id"].isin(d)]
     sod_docs = sub.loc[sub["sod_violation"] == True, "document_id"].unique()
-    record("B07", len(d), len(sod_docs), "sod_violation == True")
+    record("L1-06", len(d), len(sod_docs), "sod_violation == True")
 else:
-    record("B07", 0, 0, "라벨 없음")
+    record("L1-06", 0, 0, "라벨 없음")
 
-# ── B09: 승인자 NULL ─────────────────────────────────────────────────────────
+# ── L1-07: 승인자 NULL ─────────────────────────────────────────────────────────
 d = label_docs(["SkippedApproval"])
 if d:
     sub = je[je["document_id"].isin(d)]
     null_docs = sub.loc[sub["approved_by"].isna(), "document_id"].unique()
-    record("B09", len(d), len(null_docs), "approved_by is NULL")
+    record("L1-07", len(d), len(null_docs), "approved_by is NULL")
 else:
-    record("B09", 0, 0, "라벨 없음")
+    record("L1-07", 0, 0, "라벨 없음")
 
-# ── B11: 자산+비용 GL 혼재 ───────────────────────────────────────────────────
+# ── L2-04: 자산+비용 GL 혼재 ───────────────────────────────────────────────────
 d = label_docs(["ImproperCapitalization"])
 if d:
     sub = je[je["document_id"].isin(d)]
@@ -200,20 +200,20 @@ if d:
     grp = sub.groupby("document_id")["_gl_str"].apply(
         lambda s: has_asset_and_expense(sub.loc[s.index])
     )
-    record("B11", len(d), int(grp.sum()), "asset GL(15xx) AND expense GL(5-8xxx) co-exist")
+    record("L2-04", len(d), int(grp.sum()), "asset GL(15xx) AND expense GL(5-8xxx) co-exist")
 else:
-    record("B11", 0, 0, "라벨 없음")
+    record("L2-04", 0, 0, "라벨 없음")
 
-# ── C02: 주말 전기 ───────────────────────────────────────────────────────────
+# ── L3-05: 주말 전기 ───────────────────────────────────────────────────────────
 d = label_docs(["WeekendPosting"])
 if d:
     sub = je[je["document_id"].isin(d)]
     wkend_docs = sub.loc[sub["_dow"].isin([5, 6]), "document_id"].unique()
-    record("C02", len(d), len(wkend_docs), "posting_date is Saturday(5) or Sunday(6)")
+    record("L3-05", len(d), len(wkend_docs), "posting_date is Saturday(5) or Sunday(6)")
 else:
-    record("C02", 0, 0, "라벨 없음")
+    record("L3-05", 0, 0, "라벨 없음")
 
-# ── C03: 야간 전기(22:00~06:59) ──────────────────────────────────────────────
+# ── L3-06: 야간 전기(22:00~06:59) ──────────────────────────────────────────────
 d = label_docs(["AfterHoursPosting", "UnusualTiming"])
 if d:
     sub = je[je["document_id"].isin(d)]
@@ -225,11 +225,11 @@ if d:
         fn_sub = sub[sub["document_id"].isin(fn_ids)].drop_duplicates("document_id")
         hours = fn_sub["_posting_hour"].tolist()[:5]
         fn_note = f"{len(fn_ids)}건 — 전기 시간 샘플: {hours}"
-    record("C03", len(d), ver, "posting_hour in 22:00~06:59", fn_note)
+    record("L3-06", len(d), ver, "posting_hour in 22:00~06:59", fn_note)
 else:
-    record("C03", 0, 0, "라벨 없음")
+    record("L3-06", 0, 0, "라벨 없음")
 
-# ── C04: |posting_date - document_date| > 30일 ───────────────────────────────
+# ── L3-07: |posting_date - document_date| > 30일 ───────────────────────────────
 d = label_docs(["BackdatedEntry", "LatePosting"])
 if d:
     sub = je[je["document_id"].isin(d)]
@@ -244,11 +244,11 @@ if d:
             for _, r in fn_sub[["document_id", "_day_diff"]].head(3).iterrows()
         ]
         fn_note = "; ".join(rows)
-    record("C04", len(d), ver, "|posting_date - document_date| > 30 days", fn_note)
+    record("L3-07", len(d), ver, "|posting_date - document_date| > 30 days", fn_note)
 else:
-    record("C04", 0, 0, "라벨 없음")
+    record("L3-07", 0, 0, "라벨 없음")
 
-# ── C05: 기간 불일치 (fiscal_period != posting month) ─────────────────────────
+# ── L1-08: 기간 불일치 (fiscal_period != posting month) ─────────────────────────
 d = label_docs(["WrongPeriod"])
 if d:
     sub = je[je["document_id"].isin(d)].copy()
@@ -264,11 +264,11 @@ if d:
             for _, r in fn_sub[["document_id", "fiscal_period", "_post_month"]].head(3).iterrows()
         ]
         fn_note = "; ".join(rows)
-    record("C05", len(d), ver, "fiscal_period != posting_date.month", fn_note)
+    record("L1-08", len(d), ver, "fiscal_period != posting_date.month", fn_note)
 else:
-    record("C05", 0, 0, "라벨 없음")
+    record("L1-08", 0, 0, "라벨 없음")
 
-# ── C06: 설명 부실 ───────────────────────────────────────────────────────────
+# ── L3-08: 설명 부실 ───────────────────────────────────────────────────────────
 d = label_docs(["VagueDescription"])
 if d:
     sub = je[je["document_id"].isin(d)]
@@ -304,14 +304,14 @@ if d:
         ]
         fn_note = "; ".join(rows)
     record(
-        "C06", len(d), ver,
+        "L3-08", len(d), ver,
         "blank/≤2chars/vague keywords in line_text or header_text",
         fn_note,
     )
 else:
-    record("C06", 0, 0, "라벨 없음")
+    record("L3-08", 0, 0, "라벨 없음")
 
-# ── C11: 역분개 ─────────────────────────────────────────────────────────────
+# ── L2-06: 역분개 ─────────────────────────────────────────────────────────────
 d = label_docs(["ReversedAmount"])
 if d:
     sub = je[je["document_id"].isin(d)].copy()
@@ -323,7 +323,7 @@ if d:
             "document_id"
         ].unique()
     )
-    # 패턴2: 별도 reversal 복제 문서 ("Reversal duplicate for C11 detection")
+    # 패턴2: 별도 reversal 복제 문서 ("Reversal duplicate for L2-06 detection")
     p2_doc_ids = set(
         c11_lbl[c11_lbl["description"].str.contains("Reversal duplicate", na=False)][
             "document_id"
@@ -364,10 +364,10 @@ if d:
             f" | P1 FN {p1_fn}건: DR/CR 한쪽에만 있어 교집합 없음"
             f" (DataSynth 불균형 구조)"
         )
-    record("C11", len(d), total_ver,
+    record("L2-06", len(d), total_ver,
            "intra-doc DR↔CR swap OR reversal-duplicate pair", fn_note)
 else:
-    record("C11", 0, 0, "라벨 없음")
+    record("L2-06", 0, 0, "라벨 없음")
 
 # ── 합계 ─────────────────────────────────────────────────────────────────────
 total_lbl = sum(r["total"] for r in results_p1)
@@ -400,52 +400,52 @@ def p2_row(label, count, total, judgment, extra=""):
     print(f"  {label:<48}  {count:>8,}  {pct:>7.2f}%  {judgment}  {extra}")
 
 
-# A01: 불균형 전표
+# L1-01: 불균형 전표
 grp_n = normal.groupby("document_id").agg(
     sum_dr=("debit_amount", "sum"), sum_cr=("credit_amount", "sum")
 )
 unbal = int((abs(grp_n["sum_dr"] - grp_n["sum_cr"]) > 0.01).sum())
-p2_row("A01: 불균형 전표 (문서 기준)", unbal, n_docs,
+p2_row("L1-01: 불균형 전표 (문서 기준)", unbal, n_docs,
        "★ 오염" if unbal > 0 else "정상")
 
-# B09: approved_by NULL
+# L1-07: approved_by NULL
 null_mask = normal["approved_by"].isna()
 null_cnt  = int(null_mask.sum())
 null_docs = normal.loc[null_mask, "document_id"].nunique()
-p2_row("B09: approved_by NULL (행 기준)", null_cnt, n_rows,
+p2_row("L1-07: approved_by NULL (행 기준)", null_cnt, n_rows,
        "★ 오염" if null_cnt > 0 else "정상", f"({null_docs}개 문서)")
 
-# B07: sod_violation=True — 정상 데이터에서 높으면 DataSynth 파라미터 문제
+# L1-06: sod_violation=True — 정상 데이터에서 높으면 DataSynth 파라미터 문제
 if "sod_violation" in normal.columns:
     sod_mask = normal["sod_violation"] == True
     sod_cnt  = int(sod_mask.sum())
     sod_docs = normal.loc[sod_mask, "document_id"].nunique()
     sod_pct  = sod_cnt / n_rows * 100
     flag = "★ 높음 — DataSynth 파라미터 점검" if sod_pct > 5 else "허용 범위"
-    p2_row("B07: sod_violation=True (행 기준)", sod_cnt, n_rows,
+    p2_row("L1-06: sod_violation=True (행 기준)", sod_cnt, n_rows,
            f"[참고] {flag}", f"({sod_docs}개 문서)")
 
 print()
 print(f"  [허용 가능 패턴 — 비율이 이상하게 높으면 DataSynth 파라미터 재검토]")
-# B06: 자기승인
+# L1-05: 자기승인
 self_cnt = int((normal["created_by"] == normal["approved_by"]).sum())
-p2_row("B06: 자기승인 (행 기준)", self_cnt, n_rows, "[참고]", "내부 정책상 허용")
+p2_row("L1-05: 자기승인 (행 기준)", self_cnt, n_rows, "[참고]", "내부 정책상 허용")
 
-# C02: 주말
+# L3-05: 주말
 wkend_cnt = int(normal["_dow"].isin([5, 6]).sum())
-p2_row("C02: 주말 전기 (행 기준)", wkend_cnt, n_rows, "[참고]", "24/7 운영 허용")
+p2_row("L3-05: 주말 전기 (행 기준)", wkend_cnt, n_rows, "[참고]", "24/7 운영 허용")
 
-# C03: 야간
+# L3-06: 야간
 night_cnt = int(normal["_posting_hour"].isin(NIGHT_HOURS).sum())
-p2_row("C03: 야간(22-06) 전기 (행 기준)", night_cnt, n_rows, "[참고]", "야간 배치 허용")
+p2_row("L3-06: 야간(22-06) 전기 (행 기준)", night_cnt, n_rows, "[참고]", "야간 배치 허용")
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# PART 3: B02 FN 원인 분석 (recall 78%)
+# PART 3: L2-01 FN 원인 분석 (recall 78%)
 # ════════════════════════════════════════════════════════════════════════════
 print()
 print("=" * 95)
-print("PART 3: B02 FN 원인 분석 — 탐지기가 놓친 문서 근본 원인")
+print("PART 3: L2-01 FN 원인 분석 — 탐지기가 놓친 문서 근본 원인")
 print("=" * 95)
 
 b02_lbl = lbl[lbl["anomaly_type"] == "JustBelowThreshold"].copy()
@@ -495,7 +495,7 @@ if not missed.empty:
 
 print()
 print("  [결론]")
-print("  - B02 FN 근본 원인: employees.json user_id와 JE created_by 네이밍 불일치")
+print("  - L2-01 FN 근본 원인: employees.json user_id와 JE created_by 네이밍 불일치")
 print("    → approval_limit 조회 실패로 탐지기가 금액 비율 계산 불가")
 print("  - 해결 방안: DataSynth 재생성 시 created_by를 employees user_id에 맞추거나")
 print("    user_id → created_by 매핑 테이블 별도 생성 후 탐지기에 적용")

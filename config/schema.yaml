@@ -49,13 +49,13 @@ columns:
   - name: header_text          # ACDOCA: bktxt — 전표 헤더 적요
     type: str
     required: false
-  - name: created_by           # ACDOCA: usnam — B06~B09(통제 위반) 판정용
+  - name: created_by           # ACDOCA: usnam — L1-05~L1-07(통제 위반) 판정용
     type: str
     required: false
   - name: user_persona         # automated_system/junior_accountant/senior_accountant/controller/manager
     type: str
     required: false
-  - name: source               # Automated/Manual/Recurring/Adjustment — B08(수기전표) 판정용
+  - name: source               # Automated/Manual/Recurring/Adjustment — L3-02(수기전표) 판정용
     type: str
     required: false
   - name: business_process     # P2P/O2C/R2R/H2R/TRE/A2R
@@ -64,7 +64,7 @@ columns:
   - name: ledger               # 원장 (Leading Ledger: 0L)
     type: str
     required: false
-  - name: approved_by          # 승인자 ID — B06(자기승인) 탐지용
+  - name: approved_by          # 승인자 ID — L1-05(자기승인) 탐지용
     type: str
     required: false
   - name: approval_date        # 승인일
@@ -84,7 +84,7 @@ columns:
   - name: anomaly_type         # 이상징후 유형 (nullable) — NewCounterparty, CircularTransaction 등
     type: str
     required: false
-  - name: sod_violation        # 직무분리 위반 여부 — B07 SoD 탐지용
+  - name: sod_violation        # 직무분리 위반 여부 — L1-06 SoD 탐지용
     type: bool
     required: false
   - name: sod_conflict_type    # SoD 충돌 유형 (nullable) — preparer_approver 등
@@ -127,7 +127,7 @@ columns:
   - name: profit_center        # ACDOCA: prctr
     type: str
     required: false
-  - name: line_text            # ACDOCA: sgtxt — C06(위험 적요) 판정용
+  - name: line_text            # ACDOCA: sgtxt — L3-08(위험 적요) 판정용
     type: str
     required: false
   - name: tax_code             # 세금코드 (nullable)
@@ -136,7 +136,7 @@ columns:
   - name: tax_amount           # 세금액 (nullable)
     type: float
     required: false
-  - name: trading_partner      # 거래처 (IC 거래용, nullable) — B10 관계사 탐지용
+  - name: trading_partner      # 거래처 (IC 거래용, nullable) — L3-03 관계사 탐지용
     type: str
     required: false
   - name: auxiliary_account_number  # 보조원장 계정번호 (nullable)

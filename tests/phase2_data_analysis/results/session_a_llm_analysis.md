@@ -145,7 +145,7 @@ top3_approver_share = 37.98%  ✅ Pareto 20/80 근사
 **해석**:
 - Top 3 승인자가 전체의 38% 처리 — sticky_approvers 로직 정상 작동
 - 10,471건 SOD 위반이 controller/manager/senior 직급에 집중
-- B06(자기 승인) + B07(직무분리) 학습 타겟 풍부
+- L1-05(자기 승인) + L1-06(직무분리) 학습 타겟 풍부
 
 **Phase 1 B-계열 룰**: ⭐⭐⭐⭐⭐
 
@@ -266,7 +266,7 @@ DataSynth의 CoA는 7xxx를 **영업외 손익 공통**으로 사용 (한국 실
 
 1. **한국어 line_text 어휘 다양성** — DescriptionGenerator 템플릿 한정 (세션 B 예정)
 2. **Vendor behavior profile** (shell company lifecycle) — 세션 C 예정
-3. **Benford 부분 위반 케이스** — 정상 분포가 너무 완벽해 C07 positive 케이스 부족
+3. **Benford 부분 위반 케이스** — 정상 분포가 너무 완벽해 L4-02 positive 케이스 부족
 
 ---
 
@@ -275,15 +275,15 @@ DataSynth의 CoA는 7xxx를 **영업외 손익 공통**으로 사용 (한국 실
 ### Phase 1 (룰 기반 탐지) — ⭐⭐⭐⭐⭐ 준비 완료
 
 모든 주요 룰의 학습·검증 타겟 확보:
-- **C01 기말 대규모**: 12월 분산 (편향 해소 상태)
-- **C02/C03 주말·심야**: 실사용자 705+건 확보
-- **C06 위험 적요**: risk_keywords YAML 기반
-- **C07 Benford**: MAD 0.0016 normal 케이스
-- **C08 이상 고액**: approval_thresholds 3B 현실화
-- **B06 자기 승인**: self_approval_with_sod
-- **B07 직무분리**: 10,471 SOD 위반
-- **B04 중복 지급**: document_flows 활성화
-- **A01/A03 무결성**: 차대 균형 완전 + 무효 계정 주입
+- **L3-04 기말 대규모**: 12월 분산 (편향 해소 상태)
+- **L3-05/L3-06 주말·심야**: 실사용자 705+건 확보
+- **L3-08 위험 적요**: risk_keywords YAML 기반
+- **L4-02 Benford**: MAD 0.0016 normal 케이스
+- **L4-03 이상 고액**: approval_thresholds 3B 현실화
+- **L1-05 자기 승인**: self_approval_with_sod
+- **L1-06 직무분리**: 10,471 SOD 위반
+- **L2-02 중복 지급**: document_flows 활성화
+- **L1-01/L1-03 무결성**: 차대 균형 완전 + 무효 계정 주입
 
 ### Phase 2 (ML/시퀀스/드리프트) — ⭐⭐⭐⭐⭐ 준비 완료
 

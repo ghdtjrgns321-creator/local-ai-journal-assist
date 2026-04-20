@@ -24,7 +24,7 @@
 
 1. **부정/이상 주입률 심각한 미달**: 설정 vs 실측이 7~18배 차이. ML 학습 시 클래스 불균형 극심.
 2. **reference 컬럼 MCAR 위반**: 비정상 데이터의 NULL률(10.55%)이 정상(2.40%)의 4.4배 → ML 지름길 학습 위험.
-3. **B04(중복지급) 탐지 커버리지 41%**: auxiliary_account_number 59% NULL.
+3. **L2-02(중복지급) 탐지 커버리지 41%**: auxiliary_account_number 59% NULL.
 4. **DZ(수금) 50건 / WE(입고) 60건**: O2C·P2P 핵심 프로세스 데이터 부족.
 5. **결산기 패턴 약함**: 12월 야근 비율(7.05%)이 평월(6.90%)과 거의 동일.
 
@@ -181,7 +181,7 @@
 
 ### S3-4. 승인 프로세스
 - 승인된 전표: 235,579 / 319,204 (73.8%)
-- 자기승인(B06): 5,932건 (2.52%) — 합리적 범위
+- 자기승인(L1-05): 5,932건 (2.52%) — 합리적 범위
 - **페르소나 분포 (정상 + typo 변형)**:
   - senior_accountant: 91,540 (정상 + 수십 종 typo)
   - automated_system: 78,855
@@ -189,7 +189,7 @@
   - manager: 32,420
   - controller: 32,050
 
-⚠️ **typo 변형 대량 발생**: `junior_acountant`, `senoir_accountant`, `automatd_system` 등 수백 종. 페르소나 컬럼이 `data_quality.typos.protected_fields`에 포함되지 않은 듯. **B07(SoD) 분석 시 페르소나 정규화 필수**.
+⚠️ **typo 변형 대량 발생**: `junior_acountant`, `senoir_accountant`, `automatd_system` 등 수백 종. 페르소나 컬럼이 `data_quality.typos.protected_fields`에 포함되지 않은 듯. **L1-06(SoD) 분석 시 페르소나 정규화 필수**.
 
 - **source 분포**:
   - manual: 70.1% ← 설정(automated 76.6%)과 큰 차이 → **WARNING**
@@ -225,10 +225,10 @@
 ### S4-1. 룰별 필수 컬럼 NULL률
 | 룰 | 상태 | 병목 컬럼 | NULL% |
 |----|:----:|----------|------:|
-| A01~A03, B01~B05, B07~B08, B10~B11, C01~C11 | PASS | - | < 5% |
-| **B04(중복지급)** | **RISK** | auxiliary_account_number | **59.1%** |
-| B06(자기승인) | WARNING | approved_by | 29.8% |
-| B09(승인생략) | WARNING | approved_by | 29.8% |
+| L1-01~L1-03, L4-01~L2-03, L1-06~L3-02, L3-03~L2-04, L3-04~L2-06 | PASS | - | < 5% |
+| **L2-02(중복지급)** | **RISK** | auxiliary_account_number | **59.1%** |
+| L1-05(자기승인) | WARNING | approved_by | 29.8% |
+| L1-07(승인생략) | WARNING | approved_by | 29.8% |
 
 ### S4-2. anomaly_labels.csv 분포
 - 총 라벨: **8,337건** (CSV의 is_anomaly=true 2,394건의 3.5배)
@@ -250,9 +250,9 @@
 | SelfApproval | **1** | 5,932 (created=approved) | 매우 적음 |
 
 ### S4-4. 탐지 위험 시나리오
-1. **B04(중복지급)**: auxiliary_account_number 59% NULL → 41% 표본만 탐지 가능
-2. **B10(IC거래)**: reference 2.5% NULL — 영향 미미
-3. **C06/C11(적요 분석)**: line_text 2.1% NULL — 영향 미미
+1. **L2-02(중복지급)**: auxiliary_account_number 59% NULL → 41% 표본만 탐지 가능
+2. **L3-03(IC거래)**: reference 2.5% NULL — 영향 미미
+3. **L3-08/L2-06(적요 분석)**: line_text 2.1% NULL — 영향 미미
 4. **DZ(수금) 25건 / WE(입고) 60건**: O2C 수금 + P2P 3-way matching 데이터 부족
 
 ---
@@ -288,7 +288,7 @@
 | sod_conflict_type | 96.84% | 3.2% SoD 라벨 |
 | tax_code/tax_amount | 91.44% | 부가세 거래 8.6% |
 | cost_center | 82.04% | 18% 거래만 부서 할당 |
-| auxiliary_account_number | 59.05% | B04 탐지 영향 |
+| auxiliary_account_number | 59.05% | L2-02 탐지 영향 |
 | approved_by/approval_date | 29.75% | 무승인 거래 30% |
 | supporting_doc_type | 18.75% | 증빙 81% |
 
@@ -328,7 +328,7 @@
 | S1. 구조 | 5 | 1 | 0 | 컬럼 2개 누락 |
 | S2. 정량 | 4 | 2 | **1** | 부정 주입률 1/18 |
 | S3. 정성 | 4 | 2 | 0 | KZ/IC 차대변 방향 |
-| S4. 탐지 | 22 | 2 | **1** | 라벨↔CSV 미동기화, B04 RISK |
+| S4. 탐지 | 22 | 2 | **1** | 라벨↔CSV 미동기화, L2-02 RISK |
 | S5. 품질 | 9 | 0 | **1** | reference MCAR 위반 |
 | S6. 마스터 | 3 | 1 | 0 | CoA 27개 미정의 |
 
@@ -339,7 +339,7 @@
 2. **reference 컬럼 MCAR 보장**: data_quality.missing_values.protected_fields 또는 균등 적용 로직 점검. 비정상 그룹에 NULL이 4.4배 집중되어 ML 지름길 위험.
 
 #### 🟡 Major (개선 권장)
-3. **user_persona/created_by typo 보호**: data_quality.typos.protected_fields에 추가하거나, B07 SoD 탐지 측에서 정규화 매핑 적용.
+3. **user_persona/created_by typo 보호**: data_quality.typos.protected_fields에 추가하거나, L1-06 SoD 탐지 측에서 정규화 매핑 적용.
 4. **DZ(수금) / WE(입고) 거래 증량**: 현재 25/60건 → P2P 3-way matching 및 O2C 수금 탐지 룰 검증 불가.
 5. **결산기 야근 패턴 강화**: intraday multiplier 또는 12월 overtime 가중치 상향. 현재 12월/평월 야근 비율 1.02배에 불과.
 
