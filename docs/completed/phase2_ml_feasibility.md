@@ -359,7 +359,7 @@ def train_from_results(self, results, y, df_index):
 >
 > **Leakage 경로 구분** (실제 영향도 분석):
 > - ✅ **Leakage 있음**: `ML_SUPERVISED`, `ML_TRANSFORMER`, `ML_SEQUENCE` (3개 모델) — `y`로 학습 후 동일 데이터 predict → meta-learner가 훈련 정확도 기반 과적합
-> - ✅ **Leakage 없음**: `ML_UNSUPERVISED` (VAE+IF), 룰 4개 (Layer A/B/C/Benford) — `y` 미사용
+> - ✅ **Leakage 없음**: `ML_UNSUPERVISED` (VAE+IF), 룰 4개 (L1/B/C/Benford) — `y` 미사용
 >
 > **실무 피해 추정**:
 > - 검증 환경(DataSynth GT 사용)에서 **validation F1이 허위로 높게 나옴** → 모델 성능 비교 판단 왜곡
@@ -400,7 +400,7 @@ def train_from_results(self, results, y, df_index):
 > - `RULE_LEGAL_BASIS` dict — 룰 ID → ISA/PCAOB/K-IFRS 근거 매핑
 > - `build_evidence_row(row, top_feature_k=3)` → `AuditEvidence` dataclass
 > - `format_narrative(...)` → "전표 D001은 위험도 'High' (anomaly_score=0.85)로 분류...
->   위반 룰: C01(기말 대규모) [ISA 240 §32]... VAE 재구성 오차 주요 기여 피처: amount(0.43)..."
+>   위반 룰: L3-04(기말 대규모) [ISA 240 §32]... VAE 재구성 오차 주요 기여 피처: amount(0.43)..."
 >
 > **VAE Waterfall UI (오후)**:
 > - `dashboard/components/shap_waterfall.py::render_vae_waterfall(row, top_k=3)` 신규
@@ -473,7 +473,7 @@ def _score_vae(self, df):
 >
 > **왜 가장 심각한가**:
 > - VAE+IF는 **실전 주력 탐지기** — 라벨 없는 고객사에서 거의 유일한 ML 탐지 수단
-> - 규칙 24개는 설명이 **룰 이름·근거 법규로 내재** ("C01: 기말 대규모 전표", ISA 240 §32)
+> - 규칙 24개는 설명이 **룰 이름·근거 법규로 내재** ("L3-04: 기말 대규모 전표", ISA 240 §32)
 > - 지도학습 모델은 `dashboard/components/shap_waterfall.py`로 설명 가능
 > - **주력 탐지기만 설명 0건** — 역설적 구조
 >
@@ -562,7 +562,7 @@ results.append(det.detect(df))
 | 항목 | 현재 | 누락 |
 |------|------|------|
 | 병렬 라이브러리 | 0건 | `concurrent.futures`, `joblib.Parallel` 미사용 |
-| 계층 병렬화 | 없음 | Layer A/B/C/Benford/Duplicate/IC는 서로 독립적인데 순차 실행 |
+| 계층 병렬화 | 없음 | L1/B/C/Benford/Duplicate/IC는 서로 독립적인데 순차 실행 |
 | ML 병렬화 | 없음 | Supervised/Unsupervised/Transformer/Sequence 4개 모델 순차 로드+추론 |
 | 진행률 상세도 | 낮음 | `st.progress(0.65, "탐지 룰 실행 중...")` — 6개 탐지기 중 어디에 있는지 모름 |
 

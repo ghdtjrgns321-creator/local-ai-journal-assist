@@ -158,7 +158,7 @@ Stage 1에서 확인된 라벨 이슈:
 
 | 룰   | 상태                            | 조치                                    |
 |------|---------------------------------|----------------------------------------|
-| B08  | ManualOverride 라벨 0건        | anomaly_injection rates 증가 필요       |
-| C10  | SuspenseAccountAbuse 라벨 0건  | fraud_type_distribution에 추가          |
-| C12  | AbnormalHoursConc. 라벨 0건    | 사용자별 시간 집중도 라벨 로직 추가 필요 |
-| C03  | AfterHours 31건 FN             | CSV 시간 필드 직렬화 확인 필요           |
+| L3-02  | ManualOverride 라벨 0건        | anomaly_injection rates 증가 필요       |
+| L3-09  | SuspenseAccountAbuse 라벨 0건  | fraud_type_distribution에 추가          |
+| L4-05  | AbnormalHoursConc. 라벨 0건    | 사용자별 시간 집중도 라벨 로직 추가 필요 |
+| L3-06  | AfterHours 31건 FN             | CSV 시간 필드 직렬화 확인 필요           |

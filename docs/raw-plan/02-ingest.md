@@ -917,15 +917,15 @@ DataSynth v1.2.0에서 **생성하는** 승인/SoD/세금 관련 컬럼:
 
 | 컬럼명              | 타입   | 설명                    | 탐지 활용                 |
 |---------------------|--------|-------------------------|---------------------------|
-| `approved_by`       | str    | 승인자 ID (USNAM)       | B06 자기승인, 통제 위반    |
+| `approved_by`       | str    | 승인자 ID (USNAM)       | L1-05 자기승인, 통제 위반    |
 | `approval_date`     | date   | 승인일                  | 승인 지연 탐지             |
-| `sod_violation`     | bool   | 직무분리 위반 여부       | B07 SoD 탐지 레이블        |
+| `sod_violation`     | bool   | 직무분리 위반 여부       | L1-06 SoD 탐지 레이블        |
 | `sod_conflict_type` | str    | SoD 충돌 유형           | preparer_approver 등 분류  |
 | `tax_code`          | str    | 세금코드 (nullable)     | 부가세 검증                |
 | `tax_amount`        | float  | 세금액 (nullable)       | 부가세 10% 검증            |
-| `trading_partner`   | str    | IC 거래처 (nullable)    | B10 관계사 거래 탐지       |
+| `trading_partner`   | str    | IC 거래처 (nullable)    | L3-03 관계사 거래 탐지       |
 | `lettrage`          | str    | 대사 그룹 (nullable)    | 미소거 탐지                |
-| `lettrage_date`     | date   | 대사일 (nullable)       | C05 가수금 장기체류 탐지   |
+| `lettrage_date`     | date   | 대사일 (nullable)       | L1-08 가수금 장기체류 탐지   |
 
 ### DuckDB 파생 컬럼 (DataSynth 미생성 → 적재 시 생성)
 

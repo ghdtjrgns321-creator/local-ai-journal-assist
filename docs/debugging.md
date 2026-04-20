@@ -298,7 +298,7 @@ if clicked:
   - `RULE_LEGAL_BASIS` dict — 주요 룰 ID → 감사기준서/ISA/PCAOB 근거 매핑
   - `AuditEvidence` dataclass — document_id / score / risk / rules / top_features / narrative
   - `format_narrative(...)` — "전표 D001은 위험도 'High' (anomaly_score=0.850)로 분류...
-    위반 룰: C01(기말 대규모) [ISA 240 §32]... VAE 재구성 오차 주요 기여 피처: amount(0.430)..."
+    위반 룰: L3-04(기말 대규모) [ISA 240 §32]... VAE 재구성 오차 주요 기여 피처: amount(0.430)..."
   - `build_evidence_report(df, min_score)` — 파이프라인 결과 DataFrame 일괄 변환
 - **`dashboard/components/shap_waterfall.py`** 확장
   - `render_vae_waterfall(row, top_k=3)` 신규 — P0-1의 `ML02_top_feature_{1..3}`
@@ -516,7 +516,7 @@ if clicked:
 
 ### 증상
 
-Detection E2E 테스트(DataSynth 1M행)에서 B01(매출 이상 변동), B08(수기 전표) 등이 0건.
+Detection E2E 테스트(DataSynth 1M행)에서 L4-01(매출 이상 변동), L3-02(수기 전표) 등이 0건.
 `is_revenue_account`, `is_manual_je`, `is_intercompany`, `is_suspense_account` 피처가 전부 False.
 
 ### 원인
@@ -558,10 +558,10 @@ patterns:                      {"patterns": {
 pattern 피처 4개가 전부 False (first_digit은 rules 미사용이라 영향 없음):
 
 ```
-is_revenue_account  → B01 매출 이상 변동 미탐지
-is_manual_je        → B08 수기 전표 미탐지
-is_intercompany     → B10 관계사 순환거래 미탐지
-is_suspense_account → C06 가계정 키워드 미탐지
+is_revenue_account  → L4-01 매출 이상 변동 미탐지
+is_manual_je        → L3-02 수기 전표 미탐지
+is_intercompany     → L3-03 관계사 순환거래 미탐지
+is_suspense_account → L3-08 가계정 키워드 미탐지
 ```
 
 기존 feature 단위 테스트는 `rules=None` 또는 평탄 dict로 호출하여 이 버그를 미포착.
@@ -576,7 +576,7 @@ if rules is not None and "patterns" in rules:
     rules = rules["patterns"]
 ```
 
-적용 후 E2E 재실행 결과: B01 0→1,069건, B08 0→2건 정상 탐지.
+적용 후 E2E 재실행 결과: L4-01 0→1,069건, L3-02 0→2건 정상 탐지.
 
 ### 회귀 테스트
 
@@ -849,16 +849,16 @@ Run  T3-03  T3-04      T3-05     T3-10  T3-12   T3-13   총 FAIL
 | Phase 1 Recall | 91.4% (2,408 / 2,636) |
 | 전체 Recall | 92.0% (7,197 / 7,827) |
 | 100% Recall 룰 | 10개 |
-| B07 flagged | 1.9% |
+| L1-06 flagged | 1.9% |
 | Normal 등급 | 85.2% |
 | 코드 버그 의심 | 0건 |
 
 ### 확정 사유
 
 - v13~v21 (9회) Phase 1 Recall 91~100% 범위에서 안정 수렴
-- 잔여 FN 19건은 DataSynth 난수 시드에 따라 진동하는 소수 라벨 룰 (B06 1건, B07 3건 등)
-- 구조적 한계 4룰(B05/B10/C09/C07)의 FN ~1,822건은 Phase 2 ML 영역
-- B07 과탐 해소(99.91% → 1.9%), 위험등급 정상화(Normal 0.1% → 85.2%) 달성
+- 잔여 FN 19건은 DataSynth 난수 시드에 따라 진동하는 소수 라벨 룰 (L1-05 1건, L1-06 3건 등)
+- 구조적 한계 4룰(L2-03/L3-03/L4-04/L4-02)의 FN ~1,822건은 Phase 2 ML 영역
+- L1-06 과탐 해소(99.91% → 1.9%), 위험등급 정상화(Normal 0.1% → 85.2%) 달성
 - 추가 DataSynth 수정의 비용 대비 효익이 미미 (Recall +0.7%p 상한)
 
 ### 상세 리포트

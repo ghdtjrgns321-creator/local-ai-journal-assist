@@ -53,7 +53,7 @@ scope (선택):
   feat(detection): Benford 판정 모듈 구현
   fix(ingest): 컬럼 매핑 fuzzy threshold 버그 수정
   refactor(feature): engine.py rules 전달 형식 정규화
-  docs: DETECTION_RULES.md C04 소급전기 설명 보강
+  docs: DETECTION_RULES.md L3-07 소급전기 설명 보강
   chore: ruff 설정 추가
   test(validation): L3 통계 검증 엣지케이스 추가
 ```

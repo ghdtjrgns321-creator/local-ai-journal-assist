@@ -35,7 +35,7 @@ feature (03) → 18개 파생변수 추가
        ↓
 validation (04) → L1 구조 / L2 회계 검증
        ↓
-detection (05) → 3레이어 24개 룰 탐지 (Phase 1b)
+detection (05) → L1/L2/L3/L4 24개 룰 탐지 (Phase 1b)
        ↓
   ┌──────────────────────────────────────────────────┐
   │ Phase 2: sklearn Pipeline                        │
@@ -125,7 +125,7 @@ src/eda/
 | 행 수        | `len(df)`                    | 데이터 규모 파악              |
 | 컬럼 수      | `len(df.columns)`           | 스키마 확인                   |
 | 메모리       | `df.memory_usage(deep=True)` | 리소스 제약 판단              |
-| 중복행 수    | `df.duplicated().sum()`      | 데이터 품질 (A02 연계)        |
+| 중복행 수    | `df.duplicated().sum()`      | 데이터 품질 (L1-02 연계)        |
 
 #### 컬럼별 공통
 

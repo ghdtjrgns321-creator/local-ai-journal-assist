@@ -425,7 +425,7 @@ RC-4-8 (state 키)
 | RC-5-2 | 사용자 매핑 → 회사 키워드 학습   | `src/ingest/keyword_learner.py` + `repository.py` | ✅   |
 |        | — 수동 매핑 → keywords.yaml 자동 추가 |  | |
 | RC-5-3 | 회사별 CoA 관리 UI               | `dashboard/components/company_manager.py`          | ✅   |
-|        | — CSV 업로드 + 편집 + A03 자동 반영 |  | |
+|        | — CSV 업로드 + 편집 + L1-03 자동 반영 |  | |
 | RC-5-4 | 회사 설정 export/import           | `src/company/repository.py`                       | ✅   |
 |        | — ZIP 아카이브 (company.yaml + CoA + keywords + rules + profiles) |  | |
 | RC-5-5 | "B회사 3년차" E2E 시나리오 테스트 | `tests/test_company/`                              | ✅   |

@@ -155,7 +155,7 @@ L1(구조) 검증을 통과한 DataFrame이 **복식부기 원칙**을 준수하
 
 - **대차일치 (`check_balance`)**: document_id별 + 전체 차변-대변 차이를 단일 diff Series로
   groupby 1회 처리. 허용오차(0.01) 초과 시 불일치 전표 ID 목록 반환.
-  DataSynth v1.2.0 기준 44건 의도적 불일치 존재 (A01 탐지 테스트용)
+  DataSynth v1.2.0 기준 44건 의도적 불일치 존재 (L1-01 탐지 테스트용)
 - **일자 연속성 (`check_date_continuity`)**: `pandas.bdate_range`로 영업일 기준
   누락 날짜 식별 (한국 공휴일은 Phase 2에서 holidays.KR 연동 예정)
 - **중복 행 탐지 (`check_duplicates`)**: schema.yaml 원본 컬럼만 추출하여 중복 판정
@@ -291,7 +291,7 @@ def generate_report(
 #### 이 모듈이 하는 일
 
 L1(구조) + L2(회계) 검증을 넘어, **통계적 관점에서 데이터의 이상 징후**를 사전 탐지한다.
-detection Layer C의 기반 데이터를 제공하는 역할을 한다.
+detection L3/L4의 기반 데이터를 제공하는 역할을 한다.
 
 ```
 문제:
@@ -303,13 +303,13 @@ detection Layer C의 기반 데이터를 제공하는 역할을 한다.
 해결:
   5개 서브모듈(benford, volatility, distribution, account_stats, temporal_patterns)을
   오케스트레이션하여 통계적 이상 징후를 수집하고,
-  detection Layer C(C01 기말집중, C07 Benford 등)에 입력 데이터를 제공한다.
+  detection L3/L4(L3-04 기말집중, L4-02 Benford 등)에 입력 데이터를 제공한다.
 ```
 
 5가지 통계 분석을 조합한다:
 
-- **Benford 분석**: 첫째 자릿수 분포가 Benford 법칙과 부합하는지 검정 → C07 detection 입력
-- **월별 변동성**: Z-score > 2인 급변 월 식별 → C01 기말집중 detection 입력
+- **Benford 분석**: 첫째 자릿수 분포가 Benford 법칙과 부합하는지 검정 → L4-02 detection 입력
+- **월별 변동성**: Z-score > 2인 급변 월 식별 → L3-04 기말집중 detection 입력
 - **분포 분석**: 정규성 검정(Shapiro-Wilk), 이상치 비율 산출
 - **계정별 통계**: CV(변동계수), HHI(집중도 지수) 등 계정 단위 요약
 - **시간 패턴**: 요일별·기말·전년 대비(YoY) 패턴 분석

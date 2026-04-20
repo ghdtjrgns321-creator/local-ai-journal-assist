@@ -113,7 +113,7 @@ local-ai-assist/
 | 3  | [03-feature.md](pre-plan/03-feature.md)                  | 감사 파생변수 11개 (time/amount/pattern/text)                 | MVP    |
 | 3a | [03a-preprocessing.md](pre-plan/03a-preprocessing.md)    | ML 전처리 파이프라인, VAE 래퍼, 라벨 전략                     | P2     |
 | 4  | [04-validation.md](pre-plan/04-validation.md)            | L1 Pandera + L2 회계 + L3 통계 검증 + 리포트                 | MVP+P2 |
-| 5  | [05-detection.md](pre-plan/05-detection.md)              | BaseDetector, 3레이어 24개 룰(A/B/C), Benford(C07), ML 16개, NLP 5개 | MVP~P3 |
+| 5  | [05-detection.md](pre-plan/05-detection.md)              | BaseDetector, L1/L2/L3/L4 기준 24개 룰(A/B/C), Benford(L4-02), ML 16개, NLP 5개 | MVP~P3 |
 | 6  | [06-db.md](pre-plan/06-db.md)                            | DuckDB 커넥션, 스키마, 로더, 프리셋 쿼리                     | MVP    |
 | 7  | [07-dashboard.md](pre-plan/07-dashboard.md)              | Streamlit 5탭, 컴포넌트, 차트, 필터                          | MVP+P3 |
 | 8  | [08-llm.md](pre-plan/08-llm.md)                          | Ollama, Vanna AI 2.0, SQL 검증, 프리셋, 인사이트             | P3     |
@@ -186,7 +186,7 @@ EY-ASU DataSynth(Rust)로 생성한 K-IFRS 적용 한국 중견 제조 그룹사
   → 표준 DataFrame → feature/engine(←ctx.settings, ctx.audit_rules) — 파생변수 19개
   → validation (L1 구조 + L2 회계 + L3 통계)
   → detection (A무결성 + B부정 + C징후, 24개 룰, ←ctx.settings, ctx.chart_of_accounts)
-  → score_aggregator (가중합 + risk_level + B19)
+  → score_aggregator (가중합 + risk_level + L2-05)
   → DuckDB 적재 (ctx.db_path — Engagement별 격리 DB)
   ↑ UX 2단계: 룰 컨트롤 패널 + 재탐지
 

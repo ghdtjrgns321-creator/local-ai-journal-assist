@@ -107,7 +107,7 @@ Export 모듈은 DuckDB 테이블에서 데이터를 조회한다.
 |----------------|----------|-------------------------------------------|
 | anomaly_score  | 위험점수  | 0.0~1.0 (종합 이상 점수)                  |
 | risk_level     | 위험등급  | High / Medium / Low / Normal              |
-| flagged_rules  | 위반룰    | CSV 문자열 (예: "B01,C07")                |
+| flagged_rules  | 위반룰    | CSV 문자열 (예: "L4-01,L4-02")                |
 
 ### 마스킹 정책
 
@@ -195,7 +195,7 @@ class ExcelExporter:
 
 | 컬럼        | 데이터 소스                | 내용                         |
 |-------------|---------------------------|-----------------------------|
-| rule_code   | `anomaly_flag_summary`    | A01~A03, B01~B11, C01~C10  |
+| rule_code   | `anomaly_flag_summary`    | L1-01~L1-03, L4-01~L2-04, L3-04~L3-09  |
 | rule_name   | config/audit_rules.yaml   | 한글 룰명                    |
 | layer       | —                         | A(무결성) / B(부정) / C(징후) |
 | flagged_count| `anomaly_flag_summary`   | 위반 건수                    |
@@ -317,19 +317,19 @@ A2R  ███████                        6.9%
 - 24개 룰을 Layer별로 그룹화:
 
 ```
-Layer A — 데이터 무결성 (3개 룰)
-  A01 차대변균형    A02 필수필드누락    A03 무효계정
+L1 — 데이터 무결성 (3개 룰)
+  L1-01 차대변균형    L1-02 필수필드누락    L1-03 무효계정
 
-Layer B — 부정 탐지 (10개 룰)
-  B01 매출이상변동  B02 승인한도직하    B03 승인한도초과
-  B04 중복지급      B05 중복전표        B06 자기승인
-  B07 직무분리위반  B08 수기전표        B09 승인생략
-  B10 관계사순환
+L2 — 부정 탐지 (10개 룰)
+  L4-01 매출이상변동  L2-01 승인한도직하    L1-04 승인한도초과
+  L2-02 중복지급      L2-03 중복전표        L1-05 자기승인
+  L1-06 직무분리위반  L3-02 수기전표        L1-07 승인생략
+  L3-03 관계사순환
 
-Layer C — 이상징후 탐지 (9개 룰)
-  C01 기말대규모    C02 주말전기        C03 심야전기
-  C04 소급전기      C05 기간불일치      C06 위험적요
-  C07 Benford위반   C08 이상고액        C09 비정상계정조합
+L3/L4 — 이상징후 탐지 (9개 룰)
+  L3-04 기말대규모    L3-05 주말전기        L3-06 심야전기
+  L3-07 소급전기      L1-08 기간불일치      L3-08 위험적요
+  L4-02 Benford위반   L4-03 이상고액        L4-04 비정상계정조합
 ```
 
 - 룰별 위반 건수, 비율, 평균 점수 테이블
@@ -340,14 +340,14 @@ Layer C — 이상징후 탐지 (9개 룰)
 
 | 유형                    | 예상 건수 | 대응 룰 |
 |-------------------------|----------|---------|
-| DuplicatePayment        | ~385     | B04     |
-| FictitiousTransaction   | ~370     | B03     |
-| RevenueManipulation     | ~314     | B01     |
-| SplitTransaction        | ~282     | B02     |
-| TimingAnomaly           | ~173     | C04     |
-| UnauthorizedAccess      | ~168     | B06~B09 |
-| SuspenseAccountAbuse    | ~102     | C10     |
-| ExpenseCapitalization   | ~90      | B11     |
+| DuplicatePayment        | ~385     | L2-02     |
+| FictitiousTransaction   | ~370     | L1-04     |
+| RevenueManipulation     | ~314     | L4-01     |
+| SplitTransaction        | ~282     | L2-01     |
+| TimingAnomaly           | ~173     | L3-07     |
+| UnauthorizedAccess      | ~168     | L1-05~L1-07 |
+| SuspenseAccountAbuse    | ~102     | L3-09     |
+| ExpenseCapitalization   | ~90      | L2-04     |
 | 기타 5종               | ~124     | —       |
 
 - SoD 충돌 유형별 건수 (6개 유형):

@@ -288,8 +288,8 @@ PYTHONPATH=. uv run python tests/phase1_rulebase/test_e2e_label_validation.py
 # 목표: Phase 1 Recall > 95%
 
 # 3. 분산 검증 — 동일 값 클러스터링 없는지 확인
-# B02 amounts가 전부 같은 비율이면 실패
-# C04 date diff가 전부 같은 일수이면 실패
+# L2-01 amounts가 전부 같은 비율이면 실패
+# L3-07 date diff가 전부 같은 일수이면 실패
 
 # 4. 기존 테스트 회귀
 uv run pytest tests/ -v --timeout=120

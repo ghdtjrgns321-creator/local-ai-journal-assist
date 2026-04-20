@@ -1,4 +1,4 @@
-# 룰 기반 탐지 투 트랙 분리: Layer D (전기 대비 변동 탐지) 구현 계획
+# 룰 기반 탐지 투 트랙 분리: Variance (전기 대비 변동 탐지) 구현 계획
 
 ## 1. 배경 및 목적
 
@@ -10,13 +10,13 @@ Phase 1 룰 기반 탐지(24개 룰)는 **단일 기간 데이터만 분석**한
 | 트랙       | 대상                 | 탐지 방식                                     |
 |------------|----------------------|-----------------------------------------------|
 | 신규회사   | 과거 engagement 없음 | 기존 24개 룰 그대로 (변경 없음)               |
-| 기존회사   | 과거 engagement 존재 | 기존 24개 룰 + **Layer D (전기 대비 변동 탐지)** |
+| 기존회사   | 과거 engagement 존재 | 기존 24개 룰 + **Variance (전기 대비 변동 탐지)** |
 
 ### 분기 판단 기준
 
 1. `CompanyContext.is_anonymous == True` → 신규회사 트랙
 2. `CompanyRepository.list_engagements(company_id)`에서 `fiscal_year == 현재 - 1`인 engagement 존재 → 기존회사 트랙
-3. 전기 engagement DB 파일 존재 + `general_ledger` 테이블에 데이터 존재 → Layer D 실행
+3. 전기 engagement DB 파일 존재 + `general_ledger` 테이블에 데이터 존재 → Variance 실행
 4. 위 조건 불충족 시 → 신규회사 트랙으로 graceful fallback
 
 ---
@@ -119,7 +119,7 @@ src/detection/
 ├── (기존 파일 유지)
 ├── prior_data_loader.py     # 전기 데이터 로딩 + 집계 (신규, ~70줄)
 ├── variance_rules.py        # D01, D02 순수 함수 (신규, ~90줄)
-└── variance_layer.py        # Layer D 오케스트레이터 (신규, ~80줄)
+└── variance_layer.py        # Variance 오케스트레이터 (신규, ~80줄)
 ```
 
 ### 3.2 PriorSummary 데이터 모델
@@ -224,7 +224,7 @@ def load_prior_summary(
             prior_fiscal_year=prior_fiscal_year,
         )
     except Exception:
-        logger.warning("전기 데이터 로드 실패 — Layer D 스킵", exc_info=True)
+        logger.warning("전기 데이터 로드 실패 — Variance 스킵", exc_info=True)
         return None
 ```
 
@@ -236,7 +236,7 @@ AnomalyDetector (`src/detection/anomaly_layer.py`)와 동일한 패턴:
 
 ```python
 class VarianceDetector(BaseDetector):
-    """Layer D: 전기 대비 변동 탐지. 기존회사 전용.
+    """Variance: 전기 대비 변동 탐지. 기존회사 전용.
 
     Why: 과거 데이터가 있는 회사에서만 실행되어
          계정과목별 급변(D01)과 월별 패턴 변화(D02)를 탐지.
@@ -257,7 +257,7 @@ class VarianceDetector(BaseDetector):
     def detect(self, df: pd.DataFrame) -> DetectionResult:
         """D01, D02 순차 실행. prior_summary 없으면 빈 결과."""
         if self._prior is None:
-            return self._empty_result(df, ["전기 데이터 없음 — Layer D 스킵"], 0.0)
+            return self._empty_result(df, ["전기 데이터 없음 — Variance 스킵"], 0.0)
 
         # _build_registry() → 룰 순회 → _build_result()
         # (AnomalyDetector와 동일한 패턴)
@@ -295,8 +295,8 @@ def find_prior_engagement(
 
 ### 4.1 가중치 재배분
 
-기존회사 트랙에서 Layer D가 추가되면 가중치를 재배분한다.
-Layer B(부정)의 비중이 가장 높은 것은 동일하나, Layer D에 0.18을 할당하여 전기 변동의 중요성을 반영.
+기존회사 트랙에서 Variance가 추가되면 가중치를 재배분한다.
+L2(부정)의 비중이 가장 높은 것은 동일하나, Variance에 0.18을 할당하여 전기 변동의 중요성을 반영.
 
 | 레이어              | 신규회사 (현행) | 기존회사 (제안) |
 |---------------------|:---------------:|:---------------:|
@@ -326,7 +326,7 @@ LAYER_WEIGHTS_WITH_PRIOR: dict[Layer, float] = {
 **파일**: `src/pipeline.py` (`_execute` 내 aggregate 호출부)
 
 ```python
-# Layer D 결과가 있으면 기존회사 가중치 사용
+# Variance 결과가 있으면 기존회사 가중치 사용
 has_variance = any(r.track_name == "layer_d" for r in results)
 weights = LAYER_WEIGHTS_WITH_PRIOR if has_variance else None  # None → 기본 LAYER_WEIGHTS
 agg_df = aggregate_scores(df, results, weights=weights)
@@ -352,15 +352,15 @@ agg_df = aggregate_scores(df, results, weights=weights)
 |-----------------------------------|----------------------------------------------------------|:------:|
 | `src/detection/constants.py`      | Layer.LAYER_D 추가, RULE_CODES D01/D02, SEVERITY_MAP, LAYER_WEIGHTS_WITH_PRIOR | 낮음   |
 | `config/settings.py`              | AuditSettings에 variance_threshold 등 3개 필드 추가      | 낮음   |
-| `src/pipeline.py`                 | `_run_detection`에 Layer D 분기, `_execute`에 가중치 선택 | 중간   |
+| `src/pipeline.py`                 | `_run_detection`에 Variance 분기, `_execute`에 가중치 선택 | 중간   |
 | `src/detection/__init__.py`       | VarianceDetector export 추가                             | 낮음   |
 
 ### 5.3 문서 업데이트 (구현 완료 후)
 
 | 문서                         | 변경 내용                                  |
 |------------------------------|--------------------------------------------|
-| `docs/DETECTION_RULES.md`    | Layer D 섹션 추가 (D01, D02 룰 상세)       |
-| `docs/TASKS.md`              | Layer D 완료 상태 업데이트                  |
+| `docs/DETECTION_RULES.md`    | Variance 섹션 추가 (D01, D02 룰 상세)       |
+| `docs/TASKS.md`              | Variance 완료 상태 업데이트                  |
 
 ---
 
@@ -390,7 +390,7 @@ agg_df = aggregate_scores(df, results, weights=weights)
 
 ### Batch 1: 인프라 + 데이터 로더 (신규 모듈 기반 구축)
 
-**목표**: Layer D가 동작하기 위한 기반 — 상수, 설정, 전기 데이터 로딩
+**목표**: Variance가 동작하기 위한 기반 — 상수, 설정, 전기 데이터 로딩
 
 **산출물**: 3개 파일 수정 + 1개 신규 생성 + 단위 테스트
 
@@ -434,7 +434,7 @@ agg_df = aggregate_scores(df, results, weights=weights)
 
 ### Batch 3: 파이프라인 통합 + 문서 + 회귀 검증
 
-**목표**: pipeline에 Layer D 분기 삽입 + 가중치 전환 + 문서 + 전체 테스트
+**목표**: pipeline에 Variance 분기 삽입 + 가중치 전환 + 문서 + 전체 테스트
 
 **산출물**: 1개 수정 + 문서 2개 업데이트 + 통합 테스트
 
@@ -442,15 +442,15 @@ agg_df = aggregate_scores(df, results, weights=weights)
 
 ```
 [수정] src/pipeline.py               ← _run_detection 분기, _execute 가중치 선택
-[수정] docs/DETECTION_RULES.md       ← Layer D 섹션 추가 (D01, D02)
-[수정] docs/TASKS.md                 ← Layer D 완료 상태 업데이트
+[수정] docs/DETECTION_RULES.md       ← Variance 섹션 추가 (D01, D02)
+[수정] docs/TASKS.md                 ← Variance 완료 상태 업데이트
 [테스트] tests/test_detection/test_pipeline_variance.py  ← 통합 테스트
 ```
 
 **검증 기준**:
-- 신규회사(anonymous) → Layer D 미실행, 기존 4레이어만
+- 신규회사(anonymous) → Variance 미실행, 기존 L1/L2/L3/L4만
 - 기존회사(전기 존재) → 5레이어 실행, LAYER_WEIGHTS_WITH_PRIOR 적용
-- 기존회사(전기 미존재) → 4레이어만, LAYER_WEIGHTS 적용 (graceful fallback)
+- 기존회사(전기 미존재) → L1/L2/L3/L4만, LAYER_WEIGHTS 적용 (graceful fallback)
 - `uv run pytest tests/ -v` 전체 통과 (회귀 확인)
 
 ---
@@ -460,9 +460,9 @@ agg_df = aggregate_scores(df, results, weights=weights)
 | 위험                              | 대응                                                                       |
 |-----------------------------------|----------------------------------------------------------------------------|
 | DuckDB ATTACH 파일 락 충돌        | `attached_engagement()`가 READ_ONLY + finally DETACH 보장                  |
-| 전기 DB 스키마 불일치 (구버전)    | SQL 실패 시 `load_prior_summary()` → None 반환, Layer D 스킵              |
+| 전기 DB 스키마 불일치 (구버전)    | SQL 실패 시 `load_prior_summary()` → None 반환, Variance 스킵              |
 | 전기 데이터 대규모 (100만 행+)    | GROUP BY 집계 SQL만 실행, 전체 원장을 메모리에 올리지 않음                 |
-| Phase 2 ML 확장 시 가중치 충돌    | Layer D는 독립 track_name 사용, 가중치 딕셔너리만 확장하면 됨              |
+| Phase 2 ML 확장 시 가중치 충돌    | Variance는 독립 track_name 사용, 가중치 딕셔너리만 확장하면 됨              |
 | scipy 의존성                      | core 그룹에 이미 포함 (scipy)                                              |
 | fiscal_period 컬럼 부재           | D02에서 컬럼 없으면 해당 룰만 스킵 (D01은 정상 실행)                       |
 
@@ -486,9 +486,9 @@ agg_df = aggregate_scores(df, results, weights=weights)
 
 ### 9.2 통합 테스트
 
-- 신규회사(anonymous) → Layer D 미실행, 기존 4레이어만
+- 신규회사(anonymous) → Variance 미실행, 기존 L1/L2/L3/L4만
 - 기존회사(전기 존재) → 5레이어 실행, 가중치 LAYER_WEIGHTS_WITH_PRIOR 적용
-- 기존회사(전기 미존재) → 4레이어만, 가중치 LAYER_WEIGHTS 적용
+- 기존회사(전기 미존재) → L1/L2/L3/L4만, 가중치 LAYER_WEIGHTS 적용
 
 ### 9.3 회귀 테스트
 

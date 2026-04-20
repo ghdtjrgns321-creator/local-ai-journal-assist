@@ -121,7 +121,7 @@
 - 대손율: 2% (6900 대손상각비)
 - 연체 수금: 15%
 - 단기 수금(미적용 공제): 3%
-- 가수금(미소거 입금): 2% → C05 가수금 장기체류 탐지 대상
+- 가수금(미소거 입금): 2% → L1-08 가수금 장기체류 탐지 대상
 
 #### R2R (Record-to-Report) — 26.5%
 
@@ -289,11 +289,11 @@ O2C           → R2R                      매출 → GL 정산
 
 | 겸직 쌍   | 부정 시나리오                | 관련 탐지 룰 |
 |-----------|------------------------------|-------------|
-| H2R + O2C | 유령직원 생성 → 가공매출     | B03, B07    |
-| H2R + P2P | 급여 조작 → 리베이트 수수    | B04, B07    |
-| O2C + P2P | 순환거래(round-tripping)     | B10, B07    |
-| TRE + P2P | 자금 집행 → 거래처 결제 우회 | B06, B09    |
-| TRE + O2C | 현금 전기 → 가공 수금        | B06, B09    |
+| H2R + O2C | 유령직원 생성 → 가공매출     | L1-04, L1-06    |
+| H2R + P2P | 급여 조작 → 리베이트 수수    | L2-02, L1-06    |
+| O2C + P2P | 순환거래(round-tripping)     | L3-03, L1-06    |
+| TRE + P2P | 자금 집행 → 거래처 결제 우회 | L1-05, L1-07    |
+| TRE + O2C | 현금 전기 → 가공 수금        | L1-05, L1-07    |
 
 ### 1.7 거래 생성 파라미터
 
@@ -308,7 +308,7 @@ O2C           → R2R                      매출 → GL 정산
 #### 차대변 균형
 
 - 차대 일치: 99.96% (실측)
-- 불일치: 44건 (A01 탐지 테스트용)
+- 불일치: 44건 (L1-01 탐지 테스트용)
 
 #### 전표 소스 분포
 
@@ -336,7 +336,7 @@ O2C           → R2R                      매출 → GL 정산
 
 ```
 시간대              구간          설정 배수    실측 비율 (2026-04-14)
-late_night         00:00~06:00     0.02       1.5%     ← C03 심야 전기 탐지 대상
+late_night         00:00~06:00     0.02       1.5%     ← L3-06 심야 전기 탐지 대상
 early_morning      06:00~08:30     0.15       1.2%
 morning_spike      08:30~11:00     1.8       29.7%     ← 업무 피크
 lunch_dip          11:00~13:00     0.3        8.9%
@@ -348,7 +348,7 @@ midnight           22:00~23:59     0.05       0.7%     ← 심야 (고위험)
 
 #### 요일 패턴 (실측)
 
-- 주말 전표: 2.8% (30,756건) — C02 주말 집중 기표 탐지 가능 (2026-04-14 실측)
+- 주말 전표: 2.8% (30,756건) — L3-05 주말 집중 기표 탐지 가능 (2026-04-14 실측)
 - 공휴일: ~5% (KR 캘린더, 대체공휴일 포함)
 - 요일별 가중치: 월~목(1.0) > 금(0.95) > 토·일(0.2)
 
@@ -375,21 +375,21 @@ midnight           22:00~23:59     0.05       0.7%     ← 심야 (고위험)
 
 | 유형                         | 건수  | 비율    | 대응 탐지 룰       |
 |------------------------------|-------|---------|---------------------|
-| SelfApproval                 | 5,932 | 94.7%   | B06 자기승인 (T5-31 역방향) |
-| RevenueManipulation          | 86    | 1.4%    | B01 수익 조작       |
-| UnauthorizedAccess           | 46    | 0.7%    | B06~B09 통제 위반   |
-| FictitiousTransaction        | 45    | 0.7%    | B03 가공 거래       |
-| DuplicatePayment             | 36    | 0.6%    | B04 중복 지급       |
-| ExpenseCapitalization        | 36    | 0.6%    | B11 비용 자산화     |
-| SplitTransaction             | 29    | 0.5%    | B02 분할 승인회피   |
-| SuspenseAccountAbuse         | 18    | 0.3%    | C10 가수금 장기체류 |
-| TimingAnomaly                | 12    | 0.2%    | C04 소급 전기       |
-| JustBelowThreshold           | 10    | 0.2%    | B02 임계값 직하     |
-| RoundDollarManipulation      | 7     | 0.1%    | C07 Benford 위반    |
-| ExceededApprovalLimit        | 7     | 0.1%    | B03 승인한도 초과   |
-| ImproperCapitalization       | 4     | 0.1%    | B11 비용 자산화     |
+| SelfApproval                 | 5,932 | 94.7%   | L1-05 자기승인 (T5-31 역방향) |
+| RevenueManipulation          | 86    | 1.4%    | L4-01 수익 조작       |
+| UnauthorizedAccess           | 46    | 0.7%    | L1-05~L1-07 통제 위반   |
+| FictitiousTransaction        | 45    | 0.7%    | L1-04 가공 거래       |
+| DuplicatePayment             | 36    | 0.6%    | L2-02 중복 지급       |
+| ExpenseCapitalization        | 36    | 0.6%    | L2-04 비용 자산화     |
+| SplitTransaction             | 29    | 0.5%    | L2-01 분할 승인회피   |
+| SuspenseAccountAbuse         | 18    | 0.3%    | L3-09 가수금 장기체류 |
+| TimingAnomaly                | 12    | 0.2%    | L3-07 소급 전기       |
+| JustBelowThreshold           | 10    | 0.2%    | L2-01 임계값 직하     |
+| RoundDollarManipulation      | 7     | 0.1%    | L4-02 Benford 위반    |
+| ExceededApprovalLimit        | 7     | 0.1%    | L1-04 승인한도 초과   |
+| ImproperCapitalization       | 4     | 0.1%    | L2-04 비용 자산화     |
 | FictitiousEntry              | 1     | <0.1%   | Phase 2 ML          |
-| SegregationOfDutiesViolation | 1     | <0.1%   | B07 SoD 위반        |
+| SegregationOfDutiesViolation | 1     | <0.1%   | L1-06 SoD 위반        |
 
 #### 이상징후 유형별 건수 Top 10 (anomaly_labels.csv 기준, 2026-04-14 실측)
 
@@ -477,7 +477,7 @@ def generate_gl_data(
 ```
 
 - 정상 전표 80% + 이상 전표 20% 혼합
-- 이상 유형: B02(승인한도 직하), C02(주말), C03(심야), C01(기말 매출), B08(수기), C06(위험 적요), B10(관계사)
+- 이상 유형: L2-01(승인한도 직하), L3-05(주말), L3-06(심야), L3-04(기말 매출), L3-02(수기), L3-08(위험 적요), L3-03(관계사)
 - Benford 위반 데이터 삽입 (MAD > 0.015)
 - 동일 seed → 동일 데이터 (재현성 보장)
 
@@ -515,7 +515,7 @@ def generate_gl_data(
                                      ↓
     ┌────────────────────────────────────────────────────────────────────┐
     │  detection/  (05-detection.md)                                     │
-    │  Layer A 무결성 + Layer B 부정 + Layer C 징후 (24개 룰)           │
+    │  L1 무결성 + L2 부정 + L3/L4 징후 (24개 룰)           │
     └────────────────────────────────┬───────────────────────────────────┘
                                      ↓
     ┌────────────────────────────────────────────────────────────────────┐
@@ -552,4 +552,4 @@ def generate_gl_data(
 | [03-feature.md](03-feature.md)                                      | 파생 피처 생성                   |
 | [05-detection.md](05-detection.md)                                  | 24개 탐지 룰 정의               |
 | [docs/DETECTION_RULES.md §6](../DETECTION_RULES.md)                                | DataSynth ↔ 탐지 룰 격차 분석   |
-| [docs/DETECTION_RULES.md](../DETECTION_RULES.md)                   | A/B/C 3레이어 24개 룰 도메인    |
+| [docs/DETECTION_RULES.md](../DETECTION_RULES.md)                   | A/B/C L1/L2/L3/L4 24개 룰 도메인    |

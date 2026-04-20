@@ -11,7 +11,7 @@
 | `config/settings.py`   | Pydantic Settings 기반 전역 설정 (환경변수 > .env > YAML) |
 | `config/schema.yaml`   | DataSynth 출력 기준 표준 컬럼 스키마 (39개 컬럼)           |
 | `config/keywords.yaml` | ERP별 헤더 키워드 사전 (컬럼 자동 매핑용)                  |
-| `config/risk_keywords.yaml` | 감사 위험 적요 키워드 사전 (C06 룰 판정용)            |
+| `config/risk_keywords.yaml` | 감사 위험 적요 키워드 사전 (L3-08 룰 판정용)            |
 | `tools/datasynth/`     | EY-ASU DataSynth (Rust, 합성 전표 생성기)                |
 
 ## 왜 이렇게 설계했는가
@@ -126,7 +126,7 @@ local-ai-assist/
 ### `config/settings.py` — AuditSettings
 
 > 현재 구현은 `config/settings.py` 참조. 아래는 초기 설계 스냅샷으로, 실제 코드에는
-> 헤더 탐지, 타입 캐스팅, Detection Layer B/C, L3 통계 검증, 텍스트 피처 등 필드가 추가됨.
+> 헤더 탐지, 타입 캐스팅, Detection L2/C, L3 통계 검증, 텍스트 피처 등 필드가 추가됨.
 
 ```python
 class AuditSettings(BaseSettings):
@@ -146,11 +146,11 @@ class AuditSettings(BaseSettings):
     ]
     near_threshold_ratio: float = 0.90     # 한도의 90% 이상이면 플래그
 
-    # C03: 심야 전기 (AfterHoursPosting)
+    # L3-06: 심야 전기 (AfterHoursPosting)
     midnight_start: int = 22               # 심야 시작
     midnight_end: int = 6                  # 심야 종료
 
-    # C01: 기말 대규모 (RushedPeriodEnd)
+    # L3-04: 기말 대규모 (RushedPeriodEnd)
     period_end_margin_days: int = 5        # 기말 판정 마진 (월말 전후 n일)
 
     # Benford
@@ -228,13 +228,13 @@ columns:
   - name: header_text          # ACDOCA: bktxt — 전표 헤더 적요
     type: str
     required: false
-  - name: created_by           # ACDOCA: usnam — B06~B09(통제 위반) 판정용
+  - name: created_by           # ACDOCA: usnam — L1-05~L1-07(통제 위반) 판정용
     type: str
     required: false
   - name: user_persona         # automated_system/junior_accountant/senior_accountant/controller/manager
     type: str
     required: false
-  - name: source               # Automated/Manual/Recurring/Adjustment — B08(수기전표) 판정용
+  - name: source               # Automated/Manual/Recurring/Adjustment — L3-02(수기전표) 판정용
     type: str
     required: false
   - name: business_process     # P2P/O2C/R2R/H2R/TRE/A2R
@@ -243,7 +243,7 @@ columns:
   - name: ledger               # 원장 (Leading Ledger: 0L)
     type: str
     required: false
-  - name: approved_by          # 승인자 ID — B06(자기승인) 탐지용
+  - name: approved_by          # 승인자 ID — L1-05(자기승인) 탐지용
     type: str
     required: false
   - name: approval_date        # 승인일
@@ -263,7 +263,7 @@ columns:
   - name: anomaly_type         # 이상징후 유형 (nullable) — NewCounterparty, CircularTransaction 등
     type: str
     required: false
-  - name: sod_violation        # 직무분리 위반 여부 — B07 SoD 탐지용
+  - name: sod_violation        # 직무분리 위반 여부 — L1-06 SoD 탐지용
     type: bool
     required: false
   - name: sod_conflict_type    # SoD 충돌 유형 (nullable) — preparer_approver 등
@@ -283,7 +283,7 @@ columns:
   - name: profit_center        # ACDOCA: prctr
     type: str
     required: false
-  - name: line_text            # ACDOCA: sgtxt — C06(위험 적요) 판정용
+  - name: line_text            # ACDOCA: sgtxt — L3-08(위험 적요) 판정용
     type: str
     required: false
   - name: tax_code             # 세금코드 (nullable)
@@ -292,7 +292,7 @@ columns:
   - name: tax_amount           # 세금액 (nullable)
     type: float
     required: false
-  - name: trading_partner      # 거래처 (IC 거래용, nullable) — B10 관계사 탐지용
+  - name: trading_partner      # 거래처 (IC 거래용, nullable) — L3-03 관계사 탐지용
     type: str
     required: false
   - name: auxiliary_account_number  # 보조원장 계정번호 (nullable)
@@ -325,7 +325,7 @@ company_code:   ["회사코드", "법인", "company", "company_code", "bukrs"]
 
 ### `config/risk_keywords.yaml` — 위험 적요 키워드
 ```yaml
-# C06: 위험 적요 판정에 사용
+# L3-08: 위험 적요 판정에 사용
 # DataSynth ProcessIssueType::VagueDescription, FraudType::SuspenseAccountAbuse 참고
 high_risk:
   - "상품권"

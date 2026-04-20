@@ -288,7 +288,7 @@ VAEDetector는 정상 전표의 잠재 분포를 학습하여 reconstruction err
 Isolation Forest와 앙상블하여 false positive를 감소시킨다.
 
 **실증 근거 (2026-03-28 E2E 전수조사, v7)**:
-C09(비정상 계정조합) recall=10% (1,039건 중 105건). 전수조사 결과 라벨 중 ~56%가
+L4-04(비정상 계정조합) recall=10% (1,039건 중 105건). 전수조사 결과 라벨 중 ~56%가
 실제로는 흔한 GL 조합(빈도 상위, 통계적 하위 1% 밖). 통계 룰의 구조적 한계:
 - 룰이 잡는 것: GL 쌍 빈도 하위 1% (예: 빈도 3회 이하)
 - 룰이 못 잡는 것: 빈도 4,700회이지만 도메인상 비정상인 조합
@@ -380,12 +380,12 @@ pipeline_builder → 2D array → vae_wrapper.fit(X_2d)
 
 ```
 src/detection/
-└── score_aggregator.py    # Phase 1: 3레이어+Benford → Phase 2: 5트랙 가중합
+└── score_aggregator.py    # Phase 1: L1/L2/L3/L4+Benford → Phase 2: 5트랙 가중합
 ```
 
 #### 이 모듈이 하는 일
 
-Phase 1에서 3레이어(A/B/C) + Benford 4트랙 가중합을 구현한 score_aggregator를
+Phase 1에서 L1/L2/L3/L4(A/B/C) + Benford 4트랙 가중합을 구현한 score_aggregator를
 Phase 2에서 5트랙(rule + supervised + vae + benford + duplicate)으로 확장한다.
 
 각 모델의 점수 단위(Scale)가 다르므로, 가중합 전 0~1로 통일이 필요하다.
@@ -559,7 +559,7 @@ Phase 2c (DuplicateDetector, TimeseriesDetector, IntercompanyMatcher)는 별도 
 | 모듈                  | 상태     | 비고                                           |
 |:----------------------|:---------|:-----------------------------------------------|
 | src/feature/          | ✅ 완료   | 18개 피처, generate_all_features() → FeatureResult |
-| src/validation/       | ✅ 완료   | benford.py의 analyze_benford() C07에서 재사용    |
+| src/validation/       | ✅ 완료   | benford.py의 analyze_benford() L4-02에서 재사용    |
 | config/settings.py    | ✅ 완료   | 모든 detection 임계값 구성 완료                  |
 | config/audit_rules.yaml | ✅ 완료 | manual_source_codes, revenue_account_prefixes 등 |
 | src/detection/ (룰)   | ⬜ 미구현 | Phase 1b — ML 탐지기의 입력(룰 결과)             |
@@ -815,7 +815,7 @@ RTX 3070 Ti 8GB에서 여유 충분.
 
 24개 룰 결과가 ML 피처로 들어갈 때, FT-Transformer의 self-attention은
 "어떤 룰 조합이 고위험인가"를 자동 학습한다.
-수동으로 설계한 B19 Top-side JE 복합 룰의 학습 버전에 해당한다.
+수동으로 설계한 L2-05 Top-side JE 복합 룰의 학습 버전에 해당한다.
 
 ---
 

@@ -54,16 +54,17 @@
 - **생성 설정**: `config/datasynth.yaml` (seed 2024, 36개월, 3회사, fraud 2%)
 - **결과**: 1,107,720라인(319,204전표), 44컬럼, fraud 1.96%, anomaly 2.60% + anomaly_labels.csv 8,337건
 
-### D011: 24개 룰 3레이어 탐지 체계 확정 (R001~R008 → A/B/C 레이어)
-- **결정**: 기존 R001~R008(8개 룰 + Benford) 체계를 폐기하고, DataSynth 52개 anomaly 유형에서 3축 평가(법규 근거 × FSS 실증 × 데이터 가용성)로 선별한 24개 룰 3레이어 체계로 전면 재설계
+### D011: 24개 룰 L1/L2/L3/L4 체계 확정
+- **결정**: 기존 R001~R008(8개 룰 + Benford) 체계를 폐기하고, DataSynth 52개 anomaly 유형에서 3축 평가(법규 근거 × FSS 실증 × 데이터 가용성)로 선별한 24개 룰 L1/L2/L3/L4 체계로 전면 재설계
 - **이유**:
   - 기존 R001~R008은 감사기준서 240호만 참조한 탐색적 설계. 법규 근거·실증 빈도·데이터 적합도의 체계적 평가 부재
   - FSS 감리지적사례 189건 전수 읽기 분석 → 6대 부정 패턴(가공전표 53%, 결산수정 29%, 횡령은폐 26% 등) 도출
   - 3축 평가로 Must(7~9점)/Should(4~6)/Could(2~3)/Drop(0~1) 판정 → Phase별 명확한 구현 범위
 - **구조**:
-  - Layer A (데이터 무결성 3개): A01 차대변 균형, A02 필수필드 누락, A03 무효 계정
-  - Layer B (부정 탐지 11개): B01~B11 (매출이상, 승인한도, 중복, 자기승인, 직무분리, 수기전표, 승인생략, 관계사, 비용자산화 등)
-  - Layer C (이상 징후 10개): C01~C10 (기말대규모, 주말, 심야, 소급, 기간불일치, 위험적요, Benford, 이상고액, 비정상계정조합, 가수금장기체류)
+  - L1 (확정 오류/위반): L1-01~L1-08
+  - L2 (강한 부정 정황): L2-01~L2-06
+  - L3 (검토 필요 이상징후): L3-02~L3-09
+  - L4 (통계적 이상치): L4-01~L4-06
 - **Phase별 확장**: Phase 1(24개 룰) → Phase 2(+16개 ML) → Phase 3(+5개 NLP/그래프) = 총 41개 유형
 - **외부 검증**: CAQ 15개 시나리오 93% 커버, PCAOB AS 2401 §61 11개 특성 91% 커버
 
@@ -73,10 +74,10 @@
 - **결과**: 전표 관련 94건(50%), 6대 패턴(가공전표 50, 결산수정 27, 횡령은폐 24, 순환거래 10, 승인/SoD위반 5, 비정상시점 4)
 - **활용**: 3축 평가의 "축2: 실증 빈도" 점수 산정 근거
 
-### D013: 점수 체계 3레이어 가중치 설계
-- **결정**: MVP 점수 = Layer_A(0.15) + Layer_B(0.45) + Layer_C(0.25) + Benford(0.15). 기존 rule(0.6)+benford(0.4) 폐기
-- **이유**: Layer A 위반 시 다른 점수 신뢰도 자체가 하락, Layer B가 핵심 부정 탐지이므로 가중치 최대
-- **위험등급**: High(>0.7 또는 A위반+B 2개+), Medium(>0.4), Low(>0.2), Normal(≤0.2)
+### D013: 점수 체계 재설계
+- **결정**: MVP 점수는 내부 detector track 가중합(`layer_a`, `layer_b`, `layer_c`, `benford`)을 유지하고, 사용자 문서/화면은 L1/L2/L3/L4 기준으로 해석한다.
+- **이유**: 실행 엔진의 track 구조와 사용자 액션 레이어를 분리해야 운영과 해석이 덜 꼬인다.
+- **위험등급**: High(>0.7 또는 L1 위반+L2 2개+), Medium(>0.4), Low(>0.2), Normal(≤0.2)
 - **참고**: 가중치·임계값은 근거 없는 초기 설계값. Phase 1 완료 후 back-testing으로 튜닝 예정
 
 ### D014: 파일 카테고리별 검증 전략 (file_validator 3분류)
@@ -229,7 +230,7 @@
 - **모델 선택**: TabTransformer(범주형만 attention) / TabNet(벤치마크 열세) 대신 FT-Transformer 채택
 - **아키텍처**: 42 features → Feature Tokenizer(각 64-dim embedding) + [CLS] token → Transformer Encoder(2 layers, 4 heads, dim=64, ff=128) → FC(64→2). VRAM ~300MB (batch=256)
 - **이유**:
-  - 24개 룰 결과 간 조합 패턴(예: weekend AND manual AND period_end AND high_amount)을 attention이 자동 학습 → 수동 B19 Top-side 룰의 학습 버전
+  - 24개 룰 결과 간 조합 패턴(예: weekend AND manual AND period_end AND high_amount)을 attention이 자동 학습 → 수동 L2-05 Top-side 룰의 학습 버전
   - Gorishniy et al. (2021) "Revisiting Deep Learning Models for Tabular Data" — FT-Transformer가 medium-size tabular에서 XGBoost와 경쟁적
   - 어떤 데이터가 올지 모르므로, tree 모델과 다른 관점(attention 기반)의 탐지기 확보 가치
 - **D019 변경**: "DNN 보류" → FT-Transformer로 구체화하여 Phase 2b에 포함
@@ -261,9 +262,9 @@
 ### D036: DataSynth v21 확정 — Phase 1 룰 기반 탐지 수렴 판정
 - **결정**: DataSynth v21(1,106,056행)을 Phase 1 최종 데이터로 확정. 추가 수정 중단.
 - **이유**:
-  - Phase 1 Recall 91.4%, Normal 85.2%, B07 1.9% — 21회 반복 수렴 확인
+  - Phase 1 Recall 91.4%, Normal 85.2%, L1-06 1.9% — 21회 반복 수렴 확인
   - 잔여 FN 19건은 소수 라벨 룰의 난수 진동 (매 생성마다 변동)
-  - 구조적 한계 FN ~1,822건(B05/B10/C09/C07)은 Phase 2 ML 영역
+  - 구조적 한계 FN ~1,822건(L2-03/L3-03/L4-04/L4-02)은 Phase 2 ML 영역
   - 추가 수정 시 Recall +0.7%p 상한 — 비용 대비 효익 미미
 - **상세**: [rule-label-gap-analysis.md](../tests/phase1_rulebase/test-results/rule-label-gap-analysis.md)
 

@@ -2,7 +2,7 @@
 
 ## 목적
 표준 DataFrame에 감사 관점의 파생변수 18개를 추가하여, 이상탐지 룰과 ML 모델의 입력 피처로 활용한다.
-각 파생변수는 DETECTION_RULES.md §5의 24개 룰(A01~C10)에 대응.
+각 파생변수는 DETECTION_RULES.md §5의 24개 룰(L1-01~L3-09)에 대응.
 
 > **선행 모듈**: ingest에서 타입 캐스팅·Null 처리 완료된 표준 DataFrame을 입력으로 받는다.
 > 컬럼 타입(float, datetime 등)이 보장된 상태이므로 별도 타입 검증 없이 연산에 집중.
@@ -82,20 +82,20 @@ src/feature/
 해결:
   날짜 컬럼으로부터 is_weekend, is_after_hours, is_period_end,
   days_backdated, fiscal_period_mismatch, is_holiday 6개 bool/int 변수를 산출한다.
-  detection Layer C(C01~C05)가 이 변수를 직접 참조하여 이상 여부를 판정한다.
+  detection L3/L4(L3-04~L1-08)가 이 변수를 직접 참조하여 이상 여부를 판정한다.
 ```
 
 시간/날짜 기반 파생변수. `posting_date`(datetime), `document_date`(datetime), `fiscal_period`(int)를 입력으로 사용.
 
 | 변수명                   | 타입    | 대응 룰 | 감사 관점                                                  |
 |:-------------------------|:--------|:--------|:----------------------------------------------------------|
-| `is_weekend`             | bool    | C02     | 주말 전기 — 정상 업무 외 처리, 부정 가능성                  |
-| `is_after_hours`         | bool    | C03     | 심야 전기(22~06시) — 승인 우회 가능성                       |
-| `is_period_end`          | bool    | C01     | 기말 양방향 탐지(월말 전 + 익월 초 margin일) — 실적 조정    |
-| `days_backdated`         | Int64   | C04     | posting − document 일수 **부호 유지** — +지연/−선전기       |
-| `fiscal_period_mismatch` | boolean | C05     | **modulo 연산** — 비표준 회계연도(4월 결산 등) 대응         |
-| `is_holiday`             | bool    | C02     | **holidays.KR + custom** 하이브리드 — 법정+회사 지정 병합   |
-| `time_zone_category`     | str     | C12     | 3단계 시간대 분류(normal/overtime/midnight) — 결산기(12/20~1/15)·주말 보정, 초 단위 정밀도 |
+| `is_weekend`             | bool    | L3-05     | 주말 전기 — 정상 업무 외 처리, 부정 가능성                  |
+| `is_after_hours`         | bool    | L3-06     | 심야 전기(22~06시) — 승인 우회 가능성                       |
+| `is_period_end`          | bool    | L3-04     | 기말 양방향 탐지(월말 전 + 익월 초 margin일) — 실적 조정    |
+| `days_backdated`         | Int64   | L3-07     | posting − document 일수 **부호 유지** — +지연/−선전기       |
+| `fiscal_period_mismatch` | boolean | L1-08     | **modulo 연산** — 비표준 회계연도(4월 결산 등) 대응         |
+| `is_holiday`             | bool    | L3-05     | **holidays.KR + custom** 하이브리드 — 법정+회사 지정 병합   |
+| `time_zone_category`     | str     | L4-05     | 3단계 시간대 분류(normal/overtime/midnight) — 결산기(12/20~1/15)·주말 보정, 초 단위 정밀도 |
 
 **설계 결정:**
 
@@ -131,7 +131,7 @@ src/feature/
   base_amount(=max(debit, credit))를 기준으로
   is_near_threshold, exceeds_threshold, amount_zscore,
   amount_magnitude, is_round_number 5개 변수를 산출한다.
-  detection Layer B(B02~B04)와 Layer C(C08)가 이 변수로 부정·이상 여부를 판정한다.
+  detection L2(L2-01~L2-02)와 L3/L4(L4-03)가 이 변수로 부정·이상 여부를 판정한다.
 ```
 
 금액 기반 파생변수. `debit_amount`(float), `credit_amount`(float)를 입력으로 사용.
@@ -139,11 +139,11 @@ src/feature/
 
 | 변수명              | 타입  | 대응 룰  | 감사 관점                                           |
 |:--------------------|:------|:---------|:---------------------------------------------------|
-| `is_near_threshold` | bool  | B02      | 승인한도 × 0.90 이상 ~ 한도 미만 — 승인 우회 의도   |
-| `exceeds_threshold` | bool  | B03      | 승인한도 초과 — 승인 절차 확인 필요                  |
-| `amount_zscore`     | float | C08      | 금액 Z-score > 3 — 통계적 이상치                    |
+| `is_near_threshold` | bool  | L2-01      | 승인한도 × 0.90 이상 ~ 한도 미만 — 승인 우회 의도   |
+| `exceeds_threshold` | bool  | L1-04      | 승인한도 초과 — 승인 절차 확인 필요                  |
+| `amount_zscore`     | float | L4-03      | 금액 Z-score > 3 — 통계적 이상치                    |
 | `amount_magnitude`  | float | — (ML)   | 금액 자릿수(log10) — ML 피처용                      |
-| `is_round_number`   | bool  | B04      | 백만/천만 단위 round 금액 — 가공전표/횡령 탐지       |
+| `is_round_number`   | bool  | L2-02      | 백만/천만 단위 round 금액 — 가공전표/횡령 탐지       |
 
 **설계 결정:**
 
@@ -182,7 +182,7 @@ src/feature/
   audit_rules.yaml에 정의된 업무 룰(수기전표 코드, 매출계정 prefix,
   가계정 키워드 등)과 매칭하여 is_manual_je, is_intercompany,
   is_revenue_account, first_digit, is_suspense_account 5개 변수를 산출한다.
-  detection Layer B(B01, B08, B10, B11)와 Layer C(C06, C07)가 이 변수를 참조한다.
+  detection L2(L4-01, L3-02, L3-03, L2-04)와 L3/L4(L3-08, L4-02)가 이 변수를 참조한다.
 ```
 
 전표 속성 기반 패턴 매칭. `source`(str), `company_code`(str), `gl_account`(Int64), 금액·텍스트 컬럼 사용.
@@ -190,11 +190,11 @@ src/feature/
 
 | 변수명                 | 타입  | 대응 룰  | 감사 관점                                         |
 |:-----------------------|:------|:---------|:--------------------------------------------------|
-| `is_manual_je`         | bool  | B08      | source 수기전표 코드 매칭 — 자동화 통제 우회       |
-| `is_intercompany`      | bool  | B10      | 관계사 거래 패턴 — 순환거래 위험                   |
-| `is_revenue_account`   | bool  | B01      | gl_account 매출계정 prefix 매칭                    |
-| `first_digit`          | Int64 | C07      | 금액 첫 유효숫자(1~9) — Benford 분석 입력          |
-| `is_suspense_account`  | bool  | B11/C06  | 가계정·미결산 키워드 매칭 — 장기미정리 부정 은폐    |
+| `is_manual_je`         | bool  | L3-02      | source 수기전표 코드 매칭 — 자동화 통제 우회       |
+| `is_intercompany`      | bool  | L3-03      | 관계사 거래 패턴 — 순환거래 위험                   |
+| `is_revenue_account`   | bool  | L4-01      | gl_account 매출계정 prefix 매칭                    |
+| `first_digit`          | Int64 | L4-02      | 금액 첫 유효숫자(1~9) — Benford 분석 입력          |
+| `is_suspense_account`  | bool  | L2-04/L3-08  | 가계정·미결산 키워드 매칭 — 장기미정리 부정 은폐    |
 
 **설계 결정:**
 
@@ -232,7 +232,7 @@ src/feature/
   line_text + header_text를 결합한 뒤,
   has_risk_keyword(위험 키워드 매칭 결과)와
   description_quality(missing/poor/normal 3단계 품질 등급)를 산출한다.
-  detection Layer C(C06)가 이 변수로 적요 관련 이상 여부를 판정한다.
+  detection L3/L4(L3-08)가 이 변수로 적요 관련 이상 여부를 판정한다.
   Phase 2~3에서 형태소 분석(kiwipiepy)과 LLM 기반 의미 이상 탐지로 확장 예정.
 ```
 
@@ -240,8 +240,8 @@ src/feature/
 
 | 변수명                  | 타입 | 대응 룰 | 감사 관점                                           |
 |:------------------------|:-----|:--------|:---------------------------------------------------|
-| `has_risk_keyword`       | str  | C06     | '상품권', '가계정' 등 위험 키워드 — 자금 유용 가능성 |
-| `description_quality`   | str  | C06     | 적요 품질 등급: missing(NaN/빈값) / poor(1~2글자) / normal(3글자+) |
+| `has_risk_keyword`       | str  | L3-08     | '상품권', '가계정' 등 위험 키워드 — 자금 유용 가능성 |
+| `description_quality`   | str  | L3-08     | 적요 품질 등급: missing(NaN/빈값) / poor(1~2글자) / normal(3글자+) |
 
 **설계 결정:**
 
@@ -286,25 +286,25 @@ src/feature/
 
 | #  | 변수명                    | 타입  | 대응 룰  | 카테고리 |
 |----|---------------------------|-------|----------|----------|
-| 1  | `is_weekend`              | bool  | C02      | time     |
-| 2  | `is_after_hours`          | bool  | C03      | time     |
-| 3  | `is_period_end`           | bool  | C01      | time     |
-| 4  | `days_backdated`          | Int64 | C04      | time     |
-| 5  | `fiscal_period_mismatch`  | bool  | C05      | time     |
-| 6  | `is_holiday`              | bool  | C02      | time     |
-| 7  | `time_zone_category`      | str   | C12      | time     |
-| 8  | `is_near_threshold`       | bool  | B02      | amount   |
-| 9  | `exceeds_threshold`       | bool  | B03      | amount   |
-| 10 | `amount_zscore`           | float | C08      | amount   |
+| 1  | `is_weekend`              | bool  | L3-05      | time     |
+| 2  | `is_after_hours`          | bool  | L3-06      | time     |
+| 3  | `is_period_end`           | bool  | L3-04      | time     |
+| 4  | `days_backdated`          | Int64 | L3-07      | time     |
+| 5  | `fiscal_period_mismatch`  | bool  | L1-08      | time     |
+| 6  | `is_holiday`              | bool  | L3-05      | time     |
+| 7  | `time_zone_category`      | str   | L4-05      | time     |
+| 8  | `is_near_threshold`       | bool  | L2-01      | amount   |
+| 9  | `exceeds_threshold`       | bool  | L1-04      | amount   |
+| 10 | `amount_zscore`           | float | L4-03      | amount   |
 | 11 | `amount_magnitude`        | float | — (ML)   | amount   |
-| 12 | `is_round_number`         | bool  | B04      | amount   |
-| 13 | `is_manual_je`            | bool  | B08      | pattern  |
-| 14 | `is_intercompany`         | bool  | B10      | pattern  |
-| 15 | `is_revenue_account`      | bool  | B01      | pattern  |
-| 16 | `first_digit`             | Int64 | C07      | pattern  |
-| 17 | `is_suspense_account`     | bool  | B11/C06  | pattern  |
-| 18 | `has_risk_keyword`        | str   | C06      | text     |
-| 19 | `description_quality`     | str   | C06      | text     |
+| 12 | `is_round_number`         | bool  | L2-02      | amount   |
+| 13 | `is_manual_je`            | bool  | L3-02      | pattern  |
+| 14 | `is_intercompany`         | bool  | L3-03      | pattern  |
+| 15 | `is_revenue_account`      | bool  | L4-01      | pattern  |
+| 16 | `first_digit`             | Int64 | L4-02      | pattern  |
+| 17 | `is_suspense_account`     | bool  | L2-04/L3-08  | pattern  |
+| 18 | `has_risk_keyword`        | str   | L3-08      | text     |
+| 19 | `description_quality`     | str   | L3-08      | text     |
 
 ## 구현 순서
 1. `time_features.py` — 가장 단순 (날짜 기반 계산)
@@ -344,8 +344,8 @@ src/feature/
 
 | 피처                     | True 비율 | 비고                                                                       |
 |:-------------------------|----------:|:---------------------------------------------------------------------------|
-| `is_weekend`             |    10.0%  | 주말 전기 — C02 탐지 대상                                                   |
-| `is_after_hours`         |     1.1%  | 심야(22-06) 전기 — C03 탐지 대상                                            |
+| `is_weekend`             |    10.0%  | 주말 전기 — L3-05 탐지 대상                                                   |
+| `is_after_hours`         |     1.1%  | 심야(22-06) 전기 — L3-06 탐지 대상                                            |
 | `is_period_end`          |    52.6%  | 기말 양방향 margin=5일 — 분기말·연말 집중 반영                               |
 | `is_holiday`             |     5.6%  | 법정공휴일 + 커스텀                                                         |
 | `is_near_threshold`      |     0.4%  | 다단계 6레벨 near 구간 합산 (v1.2.0에서 다단계 확장)                         |
@@ -424,27 +424,27 @@ def generate_all_features(
 ### time_features.py
 ```python
 def add_is_weekend(df: DataFrame) -> DataFrame:
-    """posting_date의 요일이 토/일이면 True. (C02 대응)
+    """posting_date의 요일이 토/일이면 True. (L3-05 대응)
     감사 관점: 주말 전기는 정상 업무 외 처리로 부정 가능성."""
 
 def add_is_after_hours(df: DataFrame, start: int = 22, end: int = 6) -> DataFrame:
-    """posting_date의 시간이 22~06시이면 True. (C03 대응)
+    """posting_date의 시간이 22~06시이면 True. (L3-06 대응)
     감사 관점: 심야 전기는 승인 우회 가능성."""
 
 def add_is_period_end(df: DataFrame, days: int = 5) -> DataFrame:
-    """posting_date가 월말/분기말/연말 n일 이내이면 True. (C01 대응)
+    """posting_date가 월말/분기말/연말 n일 이내이면 True. (L3-04 대응)
     감사 관점: 기말 집중 전표는 실적 조정 가능성."""
 
 def add_days_backdated(df: DataFrame) -> DataFrame:
-    """posting_date - document_date 일수 차이. (C04 대응)
+    """posting_date - document_date 일수 차이. (L3-07 대응)
     감사 관점: 큰 양수 = 소급 전기, 통제 우회."""
 
 def add_fiscal_period_mismatch(df: DataFrame) -> DataFrame:
-    """fiscal_period ≠ month(posting_date)이면 True. (C05 대응)
+    """fiscal_period ≠ month(posting_date)이면 True. (L1-08 대응)
     감사 관점: 기간 귀속 오류."""
 
 def add_is_holiday(df: DataFrame, holidays: list[str]) -> DataFrame:
-    """posting_date가 settings.holidays 목록에 포함되면 True. (C02 대응)
+    """posting_date가 settings.holidays 목록에 포함되면 True. (L3-05 대응)
     감사 관점: 공휴일 전기는 비영업일 부정 가능성."""
 ```
 
@@ -455,18 +455,18 @@ def add_is_near_threshold(
     threshold: float = 50_000_000,
     ratio: float = 0.90
 ) -> DataFrame:
-    """금액이 승인 한도의 ratio% 이상이고 한도 미만이면 True. (B02 대응)
+    """금액이 승인 한도의 ratio% 이상이고 한도 미만이면 True. (L2-01 대응)
     감사 관점: 한도 직하 금액은 승인 우회 의도 가능성."""
 
 def add_exceeds_threshold(
     df: DataFrame,
     threshold: float = 50_000_000
 ) -> DataFrame:
-    """금액이 승인 한도 초과이면 True. (B03 대응)
+    """금액이 승인 한도 초과이면 True. (L1-04 대응)
     감사 관점: 한도 초과 전표의 승인 절차 확인 필요."""
 
 def add_amount_zscore(df: DataFrame, group_col: str = "gl_account") -> DataFrame:
-    """gl_account별 groupby Z-score. > 3이면 이상 고액 후보. (C08 대응)
+    """gl_account별 groupby Z-score. > 3이면 이상 고액 후보. (L4-03 대응)
     fallback: n≥30 계정별 → n<30 상위그룹(자산/부채/수익/비용) → n<10 NaN.
     감사 관점: 통계적 이상치."""
 
@@ -474,30 +474,30 @@ def add_amount_magnitude(df: DataFrame) -> DataFrame:
     """금액의 자릿수(log10)를 피처로 추가. (ML용)"""
 
 def add_is_round_number(df: DataFrame, unit: int = 1_000_000) -> DataFrame:
-    """금액이 unit 단위로 딱 떨어지면 True. (B04 대응)
+    """금액이 unit 단위로 딱 떨어지면 True. (L2-02 대응)
     감사 관점: round 금액은 가공전표/횡령 가능성."""
 ```
 
 ### pattern_features.py
 ```python
 def add_is_manual_je(df: DataFrame, manual_codes: list[str]) -> DataFrame:
-    """source 컬럼이 수기 전표 코드와 매칭되면 True. (B08 대응)
+    """source 컬럼이 수기 전표 코드와 매칭되면 True. (L3-02 대응)
     감사 관점: 수기 전표는 자동화 통제 우회. codes는 audit_rules.yaml에서 주입."""
 
 def add_is_intercompany(df: DataFrame, identifiers: list[str]) -> DataFrame:
-    """gl_account에서 IC 전용 계정 prefix 매칭. (B10 대응)
+    """gl_account에서 IC 전용 계정 prefix 매칭. (L3-03 대응)
     감사 관점: 관계사 거래는 순환거래·이전가격 위험. identifiers는 GL prefix 목록."""
 
 def add_is_revenue_account(df: DataFrame, prefixes: list[str]) -> DataFrame:
-    """gl_account가 매출 계정 prefix에 해당하면 True. (B01 대응)
+    """gl_account가 매출 계정 prefix에 해당하면 True. (L4-01 대응)
     감사 관점: 매출 이상 변동 탐지의 기준. audit_rules.yaml에서 주입."""
 
 def add_first_digit(df: DataFrame) -> DataFrame:
-    """금액의 첫 유효숫자(1~9) 추출. str.extract(r"([1-9])") 사용. (C07 대응)
+    """금액의 첫 유효숫자(1~9) 추출. str.extract(r"([1-9])") 사용. (L4-02 대응)
     전처리: abs() → str → regex. 0원 → NaN. 과학표기법/소수 안전."""
 
 def add_is_suspense_account(df: DataFrame, keywords: list[str]) -> DataFrame:
-    """line_text/header_text에서 가계정·미결산 키워드 매칭. (B11/C06 대응)
+    """line_text/header_text에서 가계정·미결산 키워드 매칭. (L2-04/L3-08 대응)
     감사 관점: 가수금/가지급/미결산 장기 미정리 시 부정 은폐 수단.
     keywords는 정규식 지원, audit_rules.yaml에서 주입."""
 ```
@@ -508,7 +508,7 @@ def add_has_risk_keyword(
     df: DataFrame,
     keywords: dict[str, list[str]]  # risk_keywords.yaml
 ) -> DataFrame:
-    """적요(description)에 위험 키워드가 포함되면 risk_level 반환. (C06 대응)
+    """적요(description)에 위험 키워드가 포함되면 risk_level 반환. (L3-08 대응)
     감사 관점: '상품권', '가계정' 등은 자금 유용 가능성."""
 
 def add_description_quality(df: DataFrame, min_length: int = 3) -> DataFrame:
@@ -770,7 +770,7 @@ GridSearchCV로 최적 모델/파라미터 동시 선택
 
 | 피처명                    | 산출 로직                                         | 탐지 활용          |
 |--------------------------|--------------------------------------------------|-------------------|
-| `is_late_night`          | posting_date 시간 22:00~06:00                     | 심야 전표 (C03 확장) |
+| `is_late_night`          | posting_date 시간 22:00~06:00                     | 심야 전표 (L3-06 확장) |
 | `is_overtime`            | posting_date 시간 18:30~22:00                     | 야근 구간 구분      |
 | `user_night_ratio`       | created_by별 심야 전표 비율                        | 입력자 집중 분석    |
 | `user_night_zscore`      | user_night_ratio의 Z-score (전체 사용자 대비)       | 3σ 이상치 탐지     |
@@ -783,10 +783,10 @@ GridSearchCV로 최적 모델/파라미터 동시 선택
 | `rolling_net_7d`         | gl_account × created_by 7일 윈도우 순액             | N:M 분할 역분개     |
 | `is_correcting_entry`    | source='manual' + line_text 키워드("수정","정정")    | 수정 전표 구분      |
 
-### Top-side JE 점수 (B19 — 후처리 복합 점수)
+### Top-side JE 점수 (L2-05 — 후처리 복합 점수)
 
 > `topside_score`는 피처 엔진이 아닌 `score_aggregator.py::_compute_topside_score()`에서 산출.
-> 기존 피처(`is_manual_je`)와 기존 룰 플래그(C01, B06, B09, A03, C09, C08, C06)를 조합.
+> 기존 피처(`is_manual_je`)와 기존 룰 플래그(L3-04, L1-05, L1-07, L1-03, L4-04, L4-03, L3-08)를 조합.
 
 | 컬럼명             | 산출 위치                          | 산출 로직                                                     |
 |--------------------|------------------------------------|--------------------------------------------------------------|

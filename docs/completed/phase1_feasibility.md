@@ -6,7 +6,7 @@
 > 완료 상태: Phase 1 = ✅ 53/53 (100%), RC = ✅ 41/41 (100%)
 
 ## 분석 대상
-1. 룰 기반 탐지 (4레이어 + Benford + B19 복합)
+1. 룰 기반 탐지 (L1/L2/L3/L4 + Benford + L2-05 복합)
 2. 데이터 파이프라인 (Ingest → Feature → Validation → EDA)
 3. 데이터베이스 (DuckDB 스키마 + Engagement 격리)
 4. 대시보드 + HITL 워크플로우
@@ -20,15 +20,15 @@
 
 | 레이어 | 룰 수 | 파일 | 심각도 | 역할 |
 |--------|-------|------|--------|------|
-| Layer A (무결성) | 3 (A01~A03) | `integrity_layer.py` | 2~5 | 차대변 균형, 필수필드, 무효계정 |
-| Layer B (부정탐지) | 11 (B01~B11) | `fraud_layer.py` | 3~5 | 의도적 부정 패턴 |
-| Layer C (이상징후) | 10+ (C01~C13) | `anomaly_layer.py` | 1~4 | 통계·시간·패턴 이상 |
-| Benford (독립) | 1 (C07) | `benford_detector.py` | 2 | 첫자리 분포 이상 |
-| Layer D (전기변동) | 2 (D01~D02) | `variance_layer.py` | 3~4 | YoY 집계 급변 |
-| B19 (복합) | 1 | `score_aggregator.py` | 5 | Top-side JE (기말+우회+비정상) |
+| L1 (확정 오류/위반) | 3 (L1-01~L1-03) | `integrity_layer.py` | 2~5 | 차대변 균형, 필수필드, 무효계정 |
+| L2 (강한 부정 정황) | 11 (L4-01~L2-04) | `fraud_layer.py` | 3~5 | 의도적 부정 패턴 |
+| L3/L4 (검토·통계) | 10+ (L3-04~L4-06) | `anomaly_layer.py` | 1~4 | 통계·시간·패턴 이상 |
+| Benford (독립) | 1 (L4-02) | `benford_detector.py` | 2 | 첫자리 분포 이상 |
+| Variance (전기변동) | 2 (D01~D02) | `variance_layer.py` | 3~4 | YoY 집계 급변 |
+| L2-05 (복합) | 1 | `score_aggregator.py` | 5 | Top-side JE (기말+우회+비정상) |
 | **합계** | **28** | | | |
 
-> TASKS.md에는 "24개 룰"로 명시되나, 실제 구현은 C11(역분개), C12(시간대), C13(배치) 추가로 **28개**. 문서 업데이트 필요.
+> TASKS.md에는 "24개 룰"로 명시되나, 실제 구현은 L2-06(역분개), L4-05(시간대), L4-06(배치) 추가로 **28개**. 문서 업데이트 필요.
 
 ### 1-2. 강점: 설정 외부화 완성도
 
@@ -46,8 +46,8 @@
 ### 1-3. 약점 1: 레이어 직교성 70%
 
 **B (부정) vs C (이상징후) 경계 모호**
-- B01 매출 이상 변동 ↔ C08 이상 고액 — 동일 전표가 양쪽 플래그
-- B05 중복 전표 ↔ C 레이어 패턴 룰과 중복 가능
+- L4-01 매출 이상 변동 ↔ L4-03 이상 고액 — 동일 전표가 양쪽 플래그
+- L2-03 중복 전표 ↔ C 레이어 패턴 룰과 중복 가능
 - 현재는 max() 집계로 중복 가중 효과 없음 → 심각도가 정확히 반영되지 않을 수 있음
 
 **권장**:
@@ -60,7 +60,7 @@
 - 같은 digit 내에서도 실제 이상도 차이 반영 불가
 - 1M행 중 digit=1이 수십만 건이면, 모든 행이 플래그되어 세분화 무의미
 
-**권장**: digit별 이상도를 금액/빈도 기반으로 가중하거나, B19처럼 "다른 룰과 결합 시만 점수 반영"으로 조정
+**권장**: digit별 이상도를 금액/빈도 기반으로 가중하거나, L2-05처럼 "다른 룰과 결합 시만 점수 반영"으로 조정
 
 ### 1-5. 감사기준 매핑 평가: **95% 충족** 🟢
 
@@ -68,12 +68,12 @@
 
 | ISA 240 원문 | 매핑된 룰 | 평가 |
 |-------------|----------|------|
-| §32(a)(ii) 보고기간 말 분개 | C01 | ✅ |
-| §32(c) 비정상 거래 | B01, C08 | ✅ |
-| A45(a) 비경상·저사용 계정 | A03, C09 | ✅ |
-| A45(b) 비인가자 입력 | B08 | ✅ |
-| A45(c) 말미+설명 없음 | C01~C04, C06 | ✅ |
-| A45(e) 단수/끝자리 | B02, C07 | ✅ |
+| §32(a)(ii) 보고기간 말 분개 | L3-04 | ✅ |
+| §32(c) 비정상 거래 | L4-01, L4-03 | ✅ |
+| A45(a) 비경상·저사용 계정 | L1-03, L4-04 | ✅ |
+| A45(b) 비인가자 입력 | L3-02 | ✅ |
+| A45(c) 말미+설명 없음 | L3-04~L3-07, L3-08 | ✅ |
+| A45(e) 단수/끝자리 | L2-01, L4-02 | ✅ |
 | A46 CAATs 활용 | 전체 | ✅ |
 
 **한계**: `CONSTRAINTS.md:195-217`에 명시 — "파라미터는 실무 경험이 아닌 학술 문헌 + 초기 설계값". 실제 FSS 189건 사례로 선별은 했으나, 임계값 자체의 실무 검증 부족.
@@ -85,24 +85,24 @@
 > #### 1-1 룰 개수 28개 — ✅ 정확
 >
 > `src/detection/constants.py:50-120` 의 `RULE_CODES` 전수 카운트:
-> - Layer A: A01~A03 = **3개**
-> - Layer B: B01~B11 + B19 = **12개** (B05 하위 B05a/b/c/d는 내부 세분화이므로 1개로 카운트)
-> - Layer C: C01~C13 = **13개**
+> - L1: L1-01~L1-03 = **3개**
+> - L2: L4-01~L2-04 + L2-05 = **12개** (L2-03 하위 L2-03a/b/c/d는 내부 세분화이므로 1개로 카운트)
+> - L3/L4: L3-04~L4-06 = **13개**
 > - **합: 28개** ✅
 >
-> Layer D(D01, D02)는 기존 회사 조건부 → 기본 28개에서 제외한 문서 계산 타당.
+> Variance(D01, D02)는 기존 회사 조건부 → 기본 28개에서 제외한 문서 계산 타당.
 >
-> **단, TASKS.md 업데이트 권장사항 동의**: "24개" 기록은 C11/C12/C13 추가 전 숫자.
+> **단, TASKS.md 업데이트 권장사항 동의**: "24개" 기록은 L2-06/L4-05/L4-06 추가 전 숫자.
 >
 > #### 1-3 B vs C 중복 — ✅ 타당, 그러나 과장 요소 있음
 >
-> **B01 매출 이상 변동 vs C08 이상 고액**: 코드상 두 룰의 로직 확인
-> - B01: `fraud_rules_*.py` (매출 계정 특화 + 전년 대비 변동)
-> - C08: `anomaly_rules_simple.py` (전체 `amount_zscore > 3.0`, 계정 무관)
+> **L4-01 매출 이상 변동 vs L4-03 이상 고액**: 코드상 두 룰의 로직 확인
+> - L4-01: `fraud_rules_*.py` (매출 계정 특화 + 전년 대비 변동)
+> - L4-03: `anomaly_rules_simple.py` (전체 `amount_zscore > 3.0`, 계정 무관)
 >
-> → **대상 행이 겹칠 수는 있으나 탐지 근거는 다름**. 매출 대규모 전표는 두 룰 모두 플래그되지만 B01은 "매출 특화 맥락", C08은 "통계적 이상치" 근거로 구분됨. 문서 주장처럼 "동일 전표가 양쪽에서 플래그"될 수는 있으나 **중복 카운트 문제보다는 해석 가능성 문제**에 가까움.
+> → **대상 행이 겹칠 수는 있으나 탐지 근거는 다름**. 매출 대규모 전표는 두 룰 모두 플래그되지만 L4-01은 "매출 특화 맥락", L4-03은 "통계적 이상치" 근거로 구분됨. 문서 주장처럼 "동일 전표가 양쪽에서 플래그"될 수는 있으나 **중복 카운트 문제보다는 해석 가능성 문제**에 가까움.
 >
-> **max() 집계 주장은 부정확**: `score_aggregator.py`는 레이어별 가중합(`LAYER_WEIGHTS`)이지 rule-level max가 아님. B와 C가 다른 레이어이므로 **중복 플래그 시 실제로는 가산 효과 발생** (Layer B 점수 + Layer C 점수). 문서가 "중복 가중 효과 없음"이라고 한 건 코드 확인 부족.
+> **max() 집계 주장은 부정확**: `score_aggregator.py`는 레이어별 가중합(`LAYER_WEIGHTS`)이지 rule-level max가 아님. B와 C가 다른 레이어이므로 **중복 플래그 시 실제로는 가산 효과 발생** (L2 점수 + L3/L4 점수). 문서가 "중복 가중 효과 없음"이라고 한 건 코드 확인 부족.
 >
 > → 권장사항 방향은 맞지만 근거가 약간 틀림.
 >
@@ -210,13 +210,13 @@
 
 ### 3-2. 강점
 
-- **감사 용도와 명시적 매핑**: 각 피처가 특정 룰의 입력으로 사용됨 (예: `is_near_threshold` → B02)
+- **감사 용도와 명시적 매핑**: 각 피처가 특정 룰의 입력으로 사용됨 (예: `is_near_threshold` → L2-01)
 - **병렬 실행 옵션**: `engine.py`의 `parallel=True`로 카테고리별 병렬 처리
 - **Graceful Degradation**: 필수 컬럼 부재 시 해당 카테고리 skip + warning
 
 ### 3-3. 약점: 활용되지 않는 피처 존재
 
-- `time_zone_category`: 생성은 되지만 C12(비정상 시간대) 외 룰에서 미사용 → 저활용
+- `time_zone_category`: 생성은 되지만 L4-05(비정상 시간대) 외 룰에서 미사용 → 저활용
 - `description_quality`: Phase 2 WU-11에서 고도화(TTR + Shannon entropy) 완료되었으나, 현재 룰은 단순 길이 기반만 사용 → 고도화된 신호가 탐지 파이프라인에 미반영
 
 **권장**: 피처-룰 매핑 매트릭스를 `docs/DETECTION_RULES.md`에 추가하여 "쓰이지 않는 피처" 가시화
@@ -245,9 +245,9 @@
 >
 > Grep 결과 (`src/detection/`):
 > ```
-> anomaly_rules_simple.py:178, 217, 237, 319  (C12 전용)
+> anomaly_rules_simple.py:178, 217, 237, 319  (L4-05 전용)
 > ```
-> → **C12 이외 사용 0건 확정**. 문서 지적 정확.
+> → **L4-05 이외 사용 0건 확정**. 문서 지적 정확.
 >
 > 단, `time_features.py`에서 이 컬럼을 생성하는 비용은 매우 낮으므로 "제거" 권장이 아니라 "다른 룰과 연결" 권장이 맞음. 문서 판단 동의.
 >
@@ -255,7 +255,7 @@
 >
 > Grep 결과 (`src/detection/`):
 > ```python
-> anomaly_rules_simple.py:108-113 (C06 위험 적요)
+> anomaly_rules_simple.py:108-113 (L3-08 위험 적요)
 > df["description_quality"].isin(["missing", "poor"])
 > ```
 >
@@ -306,7 +306,7 @@ data/companies/{company_id}/engagements/{fiscal_year}/audit.duckdb
 ```
 - 회사별·연도별 완전 격리 → 멀티 테넌시 기반
 - ConnectionManager가 경로별 커넥션 캐시 + `threading.Lock()`
-- 회귀 분석(Phase 2 Layer D) 시 전년도 DB 로드 구조 확립됨
+- 회귀 분석(Phase 2 Variance) 시 전년도 DB 로드 구조 확립됨
 
 > ### 🔍 검증 의견 (2026-04-10)
 >
@@ -361,7 +361,7 @@ data/companies/{company_id}/engagements/{fiscal_year}/audit.duckdb
 ### 5-3. L3 누락의 실질적 영향
 
 L3 통계 검증이 파이프라인에서 분리되어 있음:
-- Benford는 detection 단계(C07)에서만 실행 → 사전 데이터 건전성 검증 아님
+- Benford는 detection 단계(L4-02)에서만 실행 → 사전 데이터 건전성 검증 아님
 - 분포 KS-test, 결측 패턴 MCAR 검증 등 **사전 경고 기능 없음**
 - 결과: 품질 문제 있는 데이터가 feature 생성 → detection까지 흘러감
 
@@ -443,7 +443,7 @@ L3 통계 검증이 파이프라인에서 분리되어 있음:
 | Benford | `tab_benford.py` | MAD/KS + 오버레이 |
 | Explorer | `tab_explorer.py` | 필터 + 격자 + HITL |
 | Findings | `tab_findings.py` | 발견사항 요약 |
-| Comparison | `tab_comparison.py` | 연도 비교 (Layer D) |
+| Comparison | `tab_comparison.py` | 연도 비교 (Variance) |
 
 ### 6-2. HITL 워크플로우 — ✅ 구현 완료
 
@@ -507,7 +507,7 @@ L3 통계 검증이 파이프라인에서 분리되어 있음:
 > **단, 부분적 대체물 존재**:
 > - `upload_batches` 테이블: 배치별 업로드 이력 (file_name, row_count, created_at) — **누가·언제는 없음**
 > - `whitelist` 테이블: HITL 변경 이력 일부 기록 (created_by, created_at)
-> - `AA01 전표 수정/삭제 이력` 룰: 이건 **고객사 데이터의 change_log** 탐지용이지 본 시스템의 감사증적이 아님
+> - `AL1-01 전표 수정/삭제 이력` 룰: 이건 **고객사 데이터의 change_log** 탐지용이지 본 시스템의 감사증적이 아님
 >
 > **설계 권장**:
 > ```sql
@@ -615,7 +615,7 @@ class CompanyContext:
 
 **강점**:
 1. 감사기준 매핑 95% 충족 — PCAOB/ISA/K-SOX 포괄
-2. 28개 룰 + 4레이어 완전 구현
+2. 28개 룰 + L1/L2/L3/L4 완전 구현
 3. 임계값 완전 외부화 → 실무 튜닝 가능
 4. HITL 워크플로우 구현 완료 (당초 우려와 달리)
 5. CompanyContext 기반 멀티 테넌시 기반 확립
@@ -630,8 +630,8 @@ class CompanyContext:
 | 🔴 P0 | 실무 검증 | 실제 중견기업 GL 1~2건 E2E 테스트 | 4~6h | ⏳ 미해결 (실무 데이터 접근 필요) |
 | 🟡 P1 | L2 fatal | 대차불일치 비율 임계 초과 시 ValueError 차단 + 대시보드 배너 | 2h | ✅ 완료 (2026-04-11) |
 | 🟡 P1 | 문서 정합성 | "18개 피처" → "19개" 전역 수정 (CLAUDE.md/TASKS.md/PROJECT_OVERVIEW.md/feature engine·DB·validator 주석) | 30분 | ✅ 완료 (2026-04-11) |
-| 🟢 P2 | Benford 스코어 | C07 deviation 비례 차등 ([0.2, 0.8] 범위) | 2h | ✅ 완료 (2026-04-11) |
-| 🟢 P2 | time_zone_category | C03에 fallback + 보강 신호로 연결 (overtime/midnight OR is_after_hours) | 2h | ✅ 완료 (2026-04-11) |
+| 🟢 P2 | Benford 스코어 | L4-02 deviation 비례 차등 ([0.2, 0.8] 범위) | 2h | ✅ 완료 (2026-04-11) |
+| 🟢 P2 | time_zone_category | L3-06에 fallback + 보강 신호로 연결 (overtime/midnight OR is_after_hours) | 2h | ✅ 완료 (2026-04-11) |
 | 🟢 P3 | 레이어 직교성 | B/C 경계 정의 + 중복 플래그 처리 방침 + 해석 가이드 문서화 | 1h | ✅ 완료 (2026-04-11) |
 
 > **2026-04-11 처리 이력**: P0 3건 중 2건(audit_log, L3 Dead Code), P1 2건(L2 fatal, 문서 정합성), P2 2건(Benford 스코어, time_zone_category), P3 1건(레이어 직교성) 완료. 남은 항목: P0 실무 데이터 검증 1건뿐.
@@ -640,7 +640,7 @@ class CompanyContext:
 > - 인프라: `src/db/schema.py`, `src/db/migration.py` (v3), `src/db/queries.py` (프리셋 4종), `src/db/audit_log.py` (신규), `src/db/__init__.py`
 > - 파이프라인: `src/pipeline.py`, `config/settings.py`
 > - 대시보드: `dashboard/components/explorer_whitelist.py`, `dashboard/components/data_uploader.py`
-> - 탐지 룰: `src/detection/anomaly_rules_statistical.py` (Benford 차등화), `src/detection/benford_detector.py`, `src/detection/anomaly_rules_simple.py` (C03 time_zone_category 연결), `src/detection/__init__.py` (joblib graceful)
+> - 탐지 룰: `src/detection/anomaly_rules_statistical.py` (Benford 차등화), `src/detection/benford_detector.py`, `src/detection/anomaly_rules_simple.py` (L3-06 time_zone_category 연결), `src/detection/__init__.py` (joblib graceful)
 > - 피처 카운트 정정: `src/feature/engine.py`, `src/db/schema.py`, `src/validation/schema_validator.py`, `docs/PROJECT_OVERVIEW.md`, `docs/TASKS.md`
 > - 문서: `docs/DETECTION_RULES.md` (§1.2.1 B vs C 경계 신설), `docs/phase1_feasibility.md`
 >
@@ -649,7 +649,7 @@ class CompanyContext:
 > - `tests/modules/test_pipeline/test_pipeline_l2_fatal.py` (5건): L2 fatal 분기
 > - `tests/modules/test_pipeline/test_pipeline_l3_wired.py` (4건): L3 호출 검증
 > - `tests/modules/test_detection/test_anomaly_rules_statistical.py` (+2건): Benford 차등 스코어
-> - `tests/modules/test_detection/test_anomaly_rules_simple.py` (+2건): C03 fallback / OR 결합
+> - `tests/modules/test_detection/test_anomaly_rules_simple.py` (+2건): L3-06 fallback / OR 결합
 >
 > 모두 통과.
 
@@ -685,8 +685,8 @@ class CompanyContext:
 > | # | 주장 | 검증 결과 |
 > |---|------|----------|
 > | 1-1 | 28개 룰 | ✅ `RULE_CODES` 전수 카운트 확인 |
-> | 1-4 | Benford 동일 스코어 | ✅ `SEVERITY_MAP[C07]/5.0 = 0.4` 고정 |
-> | 3-3 | time_zone_category 저활용 | ✅ C12 외 사용 0건 |
+> | 1-4 | Benford 동일 스코어 | ✅ `SEVERITY_MAP[L4-02]/5.0 = 0.4` 고정 |
+> | 3-3 | time_zone_category 저활용 | ✅ L4-05 외 사용 0건 |
 > | 5-4 | 검증 실패 graceful | ✅ 대차불일치 warning만, 중단 없음 |
 > | **6-3** | **audit_log 부재** | ✅ **오히려 약하게 표현됨. 테이블조차 없음** |
 > | 8-1 | DuckDB 선택 합리적 | ✅ 동의 |
@@ -733,11 +733,11 @@ class CompanyContext:
 
 | 역할 | 경로 |
 |------|------|
-| Layer A 무결성 | `src/detection/integrity_layer.py` |
-| Layer B 부정탐지 | `src/detection/fraud_layer.py` + `fraud_rules_*.py` |
-| Layer C 이상징후 | `src/detection/anomaly_layer.py` + `anomaly_rules_*.py` |
+| L1 무결성 | `src/detection/integrity_layer.py` |
+| L2 부정탐지 | `src/detection/fraud_layer.py` + `fraud_rules_*.py` |
+| L3/L4 이상징후 | `src/detection/anomaly_layer.py` + `anomaly_rules_*.py` |
 | Benford | `src/detection/benford_detector.py` |
-| Layer D 전기변동 | `src/detection/variance_layer.py` + `variance_rules.py` |
+| Variance 전기변동 | `src/detection/variance_layer.py` + `variance_rules.py` |
 | 점수 집계 | `src/detection/score_aggregator.py` |
 | 상수/가중치 | `src/detection/constants.py` |
 | 피처 엔진 | `src/feature/engine.py` + 4 서브모듈 |
