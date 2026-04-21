@@ -19,6 +19,9 @@ def format_phase2_provenance(result) -> str | None:
     inference_mode = getattr(result, "phase2_inference_mode", None)
     contract = getattr(result, "phase2_inference_contract", None) or {}
     selection_mode = contract.get("selection_mode")
+    required_model_count = len(list(contract.get("required_models", []) or []))
+    family_sub_detectors = contract.get("family_sub_detectors", {}) or {}
+    sub_detector_count = sum(len(list(items or [])) for items in family_sub_detectors.values())
 
     parts: list[str] = []
     if report_id:
@@ -27,6 +30,10 @@ def format_phase2_provenance(result) -> str | None:
         parts.append(f"mode={inference_mode}")
     if selection_mode:
         parts.append(f"select={selection_mode}")
+    if required_model_count:
+        parts.append(f"families={required_model_count}")
+    if sub_detector_count:
+        parts.append(f"subdetectors={sub_detector_count}")
     if not parts:
         return None
     return "Phase 2 provenance: " + " | ".join(parts)

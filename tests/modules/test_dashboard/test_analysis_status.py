@@ -48,10 +48,17 @@ def test_format_phase2_provenance_returns_contract_summary() -> None:
         detector_statuses=[],
         phase2_training_report_id="train_001",
         phase2_inference_mode="training_contract",
-        phase2_inference_contract={"selection_mode": "best_per_family"},
+        phase2_inference_contract={
+            "selection_mode": "best_per_family",
+            "required_models": ["unsupervised", "timeseries"],
+            "family_sub_detectors": {
+                "timeseries": ["transaction_burst", "unusual_frequency"],
+            },
+        },
     )
 
     assert format_phase2_provenance(result) == (
         "Phase 2 provenance: train=train_001 | "
-        "mode=training_contract | select=best_per_family"
+        "mode=training_contract | select=best_per_family | "
+        "families=2 | subdetectors=2"
     )

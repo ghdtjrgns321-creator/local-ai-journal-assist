@@ -39,12 +39,20 @@ def summarize_export_analysis_status(pr: PipelineResult) -> dict[str, Any]:
 
     phase2_contract = getattr(pr, "phase2_inference_contract", None) or {}
     promoted_versions = dict(phase2_contract.get("promoted_versions") or {})
+    required_models = list(phase2_contract.get("required_models") or [])
+    family_sub_detectors = {
+        str(key): [str(item) for item in value]
+        for key, value in dict(phase2_contract.get("family_sub_detectors") or {}).items()
+    }
     phase2_summary = {
         "training_report_id": getattr(pr, "phase2_training_report_id", None),
         "inference_mode": getattr(pr, "phase2_inference_mode", None),
         "selection_mode": phase2_contract.get("selection_mode"),
+        "required_model_count": len(required_models),
         "promoted_model_count": len(promoted_versions),
+        "required_models": required_models,
         "promoted_versions": promoted_versions,
+        "family_sub_detectors": family_sub_detectors,
     }
     phase3_insight = getattr(pr, "phase3_insight", None)
     phase3_summary = {
@@ -75,12 +83,17 @@ def build_phase_provenance_lines(pr: PipelineResult) -> list[str]:
 
     lines: list[str] = []
     if phase2.get("training_report_id") or phase2.get("inference_mode"):
+        sub_detector_count = sum(
+            len(items) for items in phase2.get("family_sub_detectors", {}).values()
+        )
         lines.append(
             "Phase 2 provenance: "
             f"train={phase2.get('training_report_id') or '-'} | "
             f"mode={phase2.get('inference_mode') or '-'} | "
             f"select={phase2.get('selection_mode') or '-'} | "
-            f"promoted={phase2.get('promoted_model_count', 0)}"
+            f"promoted={phase2.get('promoted_model_count', 0)} | "
+            f"families={phase2.get('required_model_count', 0)} | "
+            f"subdetectors={sub_detector_count}"
         )
     if phase3.get("available"):
         lines.append(
