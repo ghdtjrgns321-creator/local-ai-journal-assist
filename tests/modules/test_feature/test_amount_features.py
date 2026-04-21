@@ -8,6 +8,7 @@ import pandas as pd
 import pytest
 
 from config.settings import AuditSettings
+from src.ingest.datasynth_labels import set_source_path
 from src.feature.amount_features import (
     _compute_base_amount,
     _map_coa_category,
@@ -139,6 +140,89 @@ class TestExceedsThreshold:
 
 
 # ── TestMapCoaCategory ───────────────────────────────────────────
+
+
+class TestExceedsThresholdDocumentLevel:
+    """L1-04 additional coverage for document-level totals."""
+
+    THRESHOLDS = [10_000_000, 100_000_000, 1_000_000_000]
+
+    def test_document_total_exceeds_even_when_each_line_is_below_threshold(self):
+        df = pd.DataFrame({
+            "document_id": ["A", "A", "A", "A"],
+            "debit_amount": [6_627_172, 4_372_828, 0, 0],
+            "credit_amount": [0, 0, 7_523_745, 3_476_255],
+        })
+        base = _compute_base_amount(df)
+
+        add_exceeds_threshold(df, base, self.THRESHOLDS)
+
+        assert df["exceeds_threshold"].all()
+        assert (df["approval_level"] == 1).all()
+
+
+class TestExceedsThresholdApproverLimit:
+    THRESHOLDS = [10_000_000, 100_000_000, 1_000_000_000]
+
+    def test_uses_approver_limit_when_employee_master_exists(self, tmp_path):
+        datasynth_dir = tmp_path / "datasynth"
+        master_dir = datasynth_dir / "master_data"
+        master_dir.mkdir(parents=True)
+        employees_path = master_dir / "employees.json"
+        source_csv = datasynth_dir / "journal_entries_2024.csv"
+        employees_path.write_text(
+            """
+[
+  {"user_id": "APR-001", "approval_limit": "10000000", "can_approve_je": true},
+  {"user_id": "APR-002", "approval_limit": "50000000", "can_approve_je": true}
+]
+            """.strip(),
+            encoding="utf-8",
+        )
+        source_csv.write_text("document_id\nA\n", encoding="utf-8")
+
+        df = pd.DataFrame({
+            "document_id": ["A", "A", "B", "B"],
+            "approved_by": ["APR-001", "APR-001", "APR-002", "APR-002"],
+            "debit_amount": [6_000_000, 5_000_000, 30_000_000, 10_000_000],
+            "credit_amount": [0, 0, 0, 0],
+        })
+        df = set_source_path(df, source_csv)
+        base = _compute_base_amount(df)
+
+        add_exceeds_threshold(df, base, self.THRESHOLDS)
+
+        assert df.loc[df["document_id"] == "A", "exceeds_threshold"].all()
+        assert not df.loc[df["document_id"] == "B", "exceeds_threshold"].any()
+
+    def test_can_approve_je_false_behaves_like_zero_limit(self, tmp_path):
+        datasynth_dir = tmp_path / "datasynth"
+        master_dir = datasynth_dir / "master_data"
+        master_dir.mkdir(parents=True)
+        employees_path = master_dir / "employees.json"
+        source_csv = datasynth_dir / "journal_entries_2024.csv"
+        employees_path.write_text(
+            """
+[
+  {"user_id": "APR-001", "approval_limit": "50000000", "can_approve_je": false}
+]
+            """.strip(),
+            encoding="utf-8",
+        )
+        source_csv.write_text("document_id\nA\n", encoding="utf-8")
+
+        df = pd.DataFrame({
+            "document_id": ["A", "A"],
+            "approved_by": ["APR-001", "APR-001"],
+            "debit_amount": [1_000_000, 2_000_000],
+            "credit_amount": [0, 0],
+        })
+        df = set_source_path(df, source_csv)
+        base = _compute_base_amount(df)
+
+        add_exceeds_threshold(df, base, self.THRESHOLDS)
+
+        assert df["exceeds_threshold"].all()
 
 
 class TestMapCoaCategory:

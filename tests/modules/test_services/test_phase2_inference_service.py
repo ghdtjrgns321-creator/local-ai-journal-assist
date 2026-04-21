@@ -93,6 +93,13 @@ def test_run_phase2_inference_attaches_training_contract_snapshot():
                     "metadata": {
                         "inference_contract": {
                             "promoted_versions": {"supervised": 11},
+                            "required_models": ["supervised", "timeseries"],
+                            "family_sub_detectors": {
+                                "timeseries": [
+                                    "transaction_burst",
+                                    "unusual_frequency",
+                                ],
+                            },
                         },
                         "promotion_policy": {
                             "selection_mode": "best_per_family",
@@ -114,6 +121,14 @@ def test_run_phase2_inference_attaches_training_contract_snapshot():
 
         assert result.phase2_training_report_id == "train_001"
         assert result.phase2_inference_contract["promoted_versions"]["supervised"] == 11
+        assert result.phase2_inference_contract["required_models"] == [
+            "supervised",
+            "timeseries",
+        ]
+        assert result.phase2_inference_contract["family_sub_detectors"]["timeseries"] == [
+            "transaction_burst",
+            "unusual_frequency",
+        ]
         assert result.phase2_promotion_policy["selection_mode"] == "best_per_family"
         assert result.phase2_inference_mode == "training_contract"
     finally:

@@ -17,6 +17,7 @@ from src.services.phase2_training_models import (
     Phase2TrialResult,
 )
 from src.services.phase2_training_service import (
+    _eligible_promotion_trials,
     build_phase2_label_summary,
     build_phase2_search_presets,
     build_phase2_training_paths,
@@ -226,6 +227,10 @@ def test_build_phase2_training_report_skips_supervised_families_without_labels()
     assert all(trial.status == Phase2TrainingStatus.PENDING for trial in unsupervised_trials)
     assert supervised_trials
     assert all(trial.status == Phase2TrainingStatus.SKIPPED for trial in supervised_trials)
+    assert any(trial.model_family == "timeseries" for trial in report.leaderboard)
+    assert any(trial.model_family == "relational" for trial in report.leaderboard)
+    assert any(trial.model_family == "duplicate" for trial in report.leaderboard)
+    assert any(trial.model_family == "intercompany" for trial in report.leaderboard)
 
 
 def test_build_phase2_training_report_enables_supervised_families_with_ground_truth():
@@ -399,7 +404,11 @@ def test_run_phase2_training_executes_trials_with_injected_detectors():
         assert "best_overall_model" in report.metadata
         assert report.metadata["promotion_policy"]["selection_mode"] == "best_per_family"
         assert report.metadata["promotion_policy"]["requires_registry_version"] is True
-        assert report.metadata["promotion_policy"]["min_completed_trials_per_family"] == 1
+        assert report.metadata["promotion_policy"]["min_completed_trials_per_family"] == 2
+        assert report.metadata["promotion_policy"]["family_min_completed_trials"]["timeseries"] == 2
+        assert report.metadata["promotion_policy"]["family_min_metric"]["timeseries"] == 0.05
+        assert report.metadata["promotion_policy"]["family_min_search_variants"]["timeseries"] == 2
+        assert report.metadata["promotion_policy"]["family_max_failed_trial_ratio"]["timeseries"] == 0.5
         assert report.metadata["promotion_policy"]["tie_break_policy"]["primary"] == "metric_value_desc"
         assert (
             report.metadata["inference_contract"]["promoted_versions"]["unsupervised"] >= 1
@@ -419,6 +428,27 @@ def test_run_phase2_training_executes_trials_with_injected_detectors():
         assert (
             report.metadata["feature_variant_summaries"]["plus_persona"]["trial_count"] > 0
         )
+        assert (
+            report.metadata["sub_detector_summaries"]["timeseries"]["sub_detector_keys"]
+            == ["transaction_burst", "unusual_frequency"]
+        )
+        assert (
+            report.metadata["promotion_policy"]["rule_style_metric_policy"]["metric_name"]
+            == "rule_proxy_score"
+        )
+        assert report.metadata["family_promotion_decisions"]["timeseries"]["eligible_for_promotion"] is True
+        assert (
+            report.metadata["family_promotion_decisions"]["timeseries"]["required_completed_trials"]
+            == 2
+        )
+        assert (
+            report.metadata["sub_detector_summaries"]["duplicate"]["sub_detector_keys"][0]
+            == "exact_duplicate_amount"
+        )
+        assert (
+            report.metadata["inference_contract"]["family_sub_detectors"]["timeseries"]
+            == ["transaction_burst", "unusual_frequency"]
+        )
         stacking_trials = [
             trial for trial in report.leaderboard if trial.model_family == "stacking"
         ]
@@ -436,3 +466,78 @@ def test_run_phase2_training_executes_trials_with_injected_detectors():
         ).exists()
     finally:
         shutil.rmtree(root, ignore_errors=True)
+
+
+def test_eligible_promotion_trials_require_search_diversity_and_control_failure_ratio():
+    policy = {
+        "eligible_statuses": [Phase2TrainingStatus.COMPLETED.value],
+        "requires_registry_version": False,
+        "requires_metric_value": True,
+        "min_completed_trials_per_family": 2,
+        "family_min_completed_trials": {"timeseries": 2},
+        "family_min_metric": {"timeseries": 0.05},
+        "family_min_search_variants": {"timeseries": 2},
+        "family_max_failed_trial_ratio": {"timeseries": 0.5},
+        "artifactless_families": ["timeseries"],
+    }
+
+    one_search_trials = [
+        Phase2TrialResult(
+            model_family="timeseries",
+            variant="baseline_core__balanced",
+            status=Phase2TrainingStatus.COMPLETED,
+            metric_name="rule_proxy_score",
+            metric_value=0.2,
+            metadata={"search_name": "balanced"},
+        ),
+        Phase2TrialResult(
+            model_family="timeseries",
+            variant="plus_persona__balanced",
+            status=Phase2TrainingStatus.COMPLETED,
+            metric_name="rule_proxy_score",
+            metric_value=0.21,
+            metadata={"search_name": "balanced"},
+        ),
+    ]
+    assert _eligible_promotion_trials(one_search_trials, policy) == []
+
+    high_failure_trials = [
+        Phase2TrialResult(
+            model_family="timeseries",
+            variant="baseline_core__balanced",
+            status=Phase2TrainingStatus.COMPLETED,
+            metric_name="rule_proxy_score",
+            metric_value=0.2,
+            metadata={"search_name": "balanced"},
+        ),
+        Phase2TrialResult(
+            model_family="timeseries",
+            variant="baseline_core__sensitive",
+            status=Phase2TrainingStatus.COMPLETED,
+            metric_name="rule_proxy_score",
+            metric_value=0.21,
+            metadata={"search_name": "sensitive"},
+        ),
+        Phase2TrialResult(
+            model_family="timeseries",
+            variant="plus_persona__strict",
+            status=Phase2TrainingStatus.FAILED,
+            metric_name="rule_proxy_score",
+            metadata={"search_name": "strict"},
+        ),
+        Phase2TrialResult(
+            model_family="timeseries",
+            variant="baseline_core__strict",
+            status=Phase2TrainingStatus.FAILED,
+            metric_name="rule_proxy_score",
+            metadata={"search_name": "strict"},
+        ),
+        Phase2TrialResult(
+            model_family="timeseries",
+            variant="plus_persona__balanced",
+            status=Phase2TrainingStatus.FAILED,
+            metric_name="rule_proxy_score",
+            metadata={"search_name": "balanced"},
+        ),
+    ]
+    assert _eligible_promotion_trials(high_failure_trials, policy) == []

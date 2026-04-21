@@ -179,6 +179,11 @@ SCHEMA_DDL: dict[str, str] = {
             row_count       INTEGER NOT NULL,
             anomaly_count   INTEGER DEFAULT 0,
             high_risk_count INTEGER DEFAULT 0,
+            phase2_training_report_id VARCHAR,
+            phase2_inference_contract JSON,
+            phase2_promotion_policy JSON,
+            phase2_inference_mode VARCHAR,
+            detector_statuses_json JSON,
             created_at      TIMESTAMP DEFAULT current_timestamp,
             warnings        VARCHAR
         )

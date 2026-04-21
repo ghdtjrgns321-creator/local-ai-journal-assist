@@ -47,6 +47,7 @@ def run_phase2_inference(
         "phase2_inference_mode",
         _determine_phase2_inference_mode(snapshot=snapshot, result=result),
     )
+    _persist_phase2_batch_snapshot(conn=conn, result=result)
     result.file_name = file_name
     return result
 
@@ -67,7 +68,7 @@ def run_phase2_inference_analysis(
         KEY_PREP_RESULT,
         KEY_SETTINGS,
     )
-    from src.services.analysis_service import _resolve_reference_df, make_phase_settings
+    from src.services.analysis_service import make_phase_settings
 
     if inference_runner is None:
         inference_runner = run_phase2_inference
@@ -122,6 +123,13 @@ def run_phase2_inference_analysis(
     return result
 
 
+def _resolve_reference_df(state, prep_result):
+    reference_df = getattr(prep_result, "reference_data", None)
+    if reference_df is not None:
+        return reference_df
+    return state.get("reference_data")
+
+
 def _attach_phase2_training_contract(result, *, ctx=None, snapshot=None) -> None:
     if snapshot is None:
         snapshot = load_latest_phase2_training_snapshot(ctx)
@@ -130,6 +138,28 @@ def _attach_phase2_training_contract(result, *, ctx=None, snapshot=None) -> None
     setattr(result, "phase2_training_report_id", snapshot.get("report_id"))
     setattr(result, "phase2_inference_contract", snapshot.get("inference_contract"))
     setattr(result, "phase2_promotion_policy", snapshot.get("promotion_policy"))
+
+
+def _persist_phase2_batch_snapshot(*, conn=None, result=None) -> None:
+    batch_id = getattr(result, "batch_id", "") if result is not None else ""
+    load_result = getattr(result, "load_result", None) if result is not None else None
+    if conn is None or not batch_id or load_result is None:
+        return
+    try:
+        from src.db.loader import update_upload_batch_meta
+
+        update_upload_batch_meta(
+            conn,
+            batch_id,
+            phase2_training_report_id=getattr(result, "phase2_training_report_id", None),
+            phase2_inference_contract=getattr(result, "phase2_inference_contract", None),
+            phase2_promotion_policy=getattr(result, "phase2_promotion_policy", None),
+            phase2_inference_mode=getattr(result, "phase2_inference_mode", None),
+            detector_statuses=getattr(result, "detector_statuses", None),
+        )
+    except Exception:
+        # Persisted provenance is best-effort and must not break inference.
+        return
 
 
 def _with_phase2_bootstrap_policy(settings, *, allow_cold_start_bootstrap: bool):

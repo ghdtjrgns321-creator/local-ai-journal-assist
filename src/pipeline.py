@@ -317,6 +317,14 @@ class AuditPipeline:
             status["flagged_docs"] = result.flagged_count
             status["rules_run"] = result.total_rules_run
             status["elapsed_sec"] = round(result.elapsed_seconds, 3)
+            for key in (
+                "registry_version",
+                "saved_model_name",
+                "model_name",
+                "sub_detector_keys",
+            ):
+                if key in result.metadata:
+                    status[key] = result.metadata.get(key)
             result.metadata["run_status"] = run_status
             if reason is not None:
                 result.metadata["skip_reason"] = reason
@@ -925,6 +933,7 @@ class AuditPipeline:
         _ext_timings: list[tuple[str, float]] = []
         for _name, _func in [
             ("variance", self._try_variance_detection),
+            ("timeseries", self._try_timeseries_detection),
             ("relational", self._try_relational_detection),
             ("graph", self._try_graph_detection),
             ("nlp", self._try_nlp_detection),
@@ -947,6 +956,24 @@ class AuditPipeline:
             results.append(trendbreak_result)
 
         return results, warns
+
+    def _try_timeseries_detection(self, df: pd.DataFrame) -> DetectionResult | None:
+        """Timeseries detector execution for TS01/TS02."""
+        if not getattr(self._ctx.settings, "enable_timeseries_detection", True):
+            logger.debug("timeseries detection disabled by settings")
+            self._record_detector_status("timeseries", run_status="skipped", reason="disabled_by_settings")
+            return None
+        try:
+            from src.detection.timeseries_detector import TimeseriesDetector
+
+            det = TimeseriesDetector(self._ctx.settings)
+            result = det.detect(df)
+            self._record_detector_status("timeseries", run_status="executed", result=result)
+            return result
+        except Exception:
+            logger.warning("Timeseries detection failed and will be skipped", exc_info=True)
+            self._record_detector_status("timeseries", run_status="failed", reason="detector_exception")
+            return None
 
     def _try_variance_detection(self, df: pd.DataFrame) -> DetectionResult | None:
         """Layer D(전기 대비 변동) 실행 시도. 조건 불충족 시 None."""

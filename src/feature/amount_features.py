@@ -6,12 +6,16 @@ ingest 완료된 표준 DataFrame을 입력으로 받는다.
 
 from __future__ import annotations
 
+import functools
+import json
 import logging
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 from config.settings import AuditSettings, get_settings
+from src.ingest.datasynth_labels import get_source_path
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +60,68 @@ def _compute_base_amount(df: pd.DataFrame) -> pd.Series:
     debit = pd.to_numeric(df["debit_amount"], errors="coerce").fillna(0)
     credit = pd.to_numeric(df["credit_amount"], errors="coerce").fillna(0)
     return pd.concat([debit, credit], axis=1).max(axis=1)
+
+
+def _compute_document_amount(df: pd.DataFrame, base: pd.Series) -> pd.Series:
+    """Return document-level total when possible, else fall back to line-level base."""
+    if "document_id" not in df.columns or "debit_amount" not in df.columns:
+        return base
+
+    debit = pd.to_numeric(df["debit_amount"], errors="coerce").fillna(0)
+    return debit.groupby(df["document_id"]).transform("sum")
+
+
+def _resolve_employee_master_path(df: pd.DataFrame) -> Path | None:
+    source_path = get_source_path(df)
+    if source_path is None:
+        return None
+    candidate = Path(source_path).parent / "master_data" / "employees.json"
+    return candidate if candidate.exists() else None
+
+
+@functools.lru_cache(maxsize=16)
+def _load_employee_approval_map(path_str: str) -> dict[str, tuple[float | None, bool | None]]:
+    records = json.loads(Path(path_str).read_text(encoding="utf-8"))
+    result: dict[str, tuple[float | None, bool | None]] = {}
+    for row in records:
+        user_id = str(row.get("user_id", "")).strip()
+        if not user_id:
+            continue
+        raw_limit = row.get("approval_limit")
+        approval_limit = None if raw_limit in (None, "", "nan") else float(raw_limit)
+        can_approve = row.get("can_approve_je")
+        result[user_id] = (approval_limit, bool(can_approve) if can_approve is not None else None)
+    return result
+
+
+def _compute_approver_limit(df: pd.DataFrame) -> pd.Series | None:
+    if "approved_by" not in df.columns:
+        return None
+
+    master_path = _resolve_employee_master_path(df)
+    if master_path is None:
+        return None
+
+    try:
+        approval_map = _load_employee_approval_map(str(master_path.resolve()))
+    except (OSError, ValueError, json.JSONDecodeError):
+        logger.warning("employees.json 로드 실패 — approver limit fallback", exc_info=True)
+        return None
+
+    approver = df["approved_by"].fillna("").astype(str).str.strip()
+    limits = pd.Series(np.nan, index=df.index, dtype="float64")
+    for idx, user_id in approver.items():
+        if not user_id:
+            continue
+        approval_info = approval_map.get(user_id)
+        if approval_info is None:
+            continue
+        approval_limit, can_approve_je = approval_info
+        if can_approve_je is False:
+            limits.at[idx] = 0.0
+        elif approval_limit is not None:
+            limits.at[idx] = approval_limit
+    return limits
 
 
 def _zscore_with_fallback(
@@ -186,14 +252,19 @@ def add_exceeds_threshold(
 
     sorted_t = sorted(thresholds)
     min_threshold = sorted_t[0]
+    threshold_amount = _compute_document_amount(df, base)
+    approver_limit = _compute_approver_limit(df)
 
     # Why: 최저 한도 미만이면 어떤 레벨도 초과하지 않음 → False
-    df["exceeds_threshold"] = base >= min_threshold
+    if approver_limit is not None:
+        df["exceeds_threshold"] = approver_limit.notna() & (threshold_amount > approver_limit)
+    else:
+        df["exceeds_threshold"] = threshold_amount >= min_threshold
 
     # Why: 행별로 초과한 가장 높은 한도의 레벨을 기록 (L1-07 등에서 활용 가능)
     level = pd.Series(0, index=df.index, dtype=int)
     for i, t in enumerate(sorted_t, 1):
-        level = level.where(base < t, i)
+        level = level.where(threshold_amount < t, i)
     df["approval_level"] = level
 
     return df

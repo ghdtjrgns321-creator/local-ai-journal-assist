@@ -6,6 +6,7 @@ Why: detection 파이프라인 출력물(DataFrame + DetectionResult + BenfordRe
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from dataclasses import dataclass, field
@@ -99,6 +100,11 @@ def load_all(
     file_name: str = "",
     tb_df: pd.DataFrame | None = None,
     datasynth_dir: Path | None = None,
+    phase2_training_report_id: str | None = None,
+    phase2_inference_contract: dict | None = None,
+    phase2_promotion_policy: dict | None = None,
+    phase2_inference_mode: str | None = None,
+    detector_statuses: list[dict] | None = None,
 ) -> LoadResult:
     """코어 + 보조 테이블 원자적 적재 (트랜잭션).
 
@@ -130,9 +136,25 @@ def load_all(
         high_count = int(df["risk_level"].eq("High").sum()) if "risk_level" in df.columns else 0
         conn.execute(
             "INSERT INTO upload_batches "
-            "(upload_batch_id, file_name, row_count, anomaly_count, high_risk_count, warnings) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            [batch_id, file_name, gl_rows, af_rows, high_count, ";".join(bf_warnings)],
+            "("
+            "upload_batch_id, file_name, row_count, anomaly_count, high_risk_count, "
+            "phase2_training_report_id, phase2_inference_contract, phase2_promotion_policy, "
+            "phase2_inference_mode, detector_statuses_json, warnings"
+            ") "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                batch_id,
+                file_name,
+                gl_rows,
+                af_rows,
+                high_count,
+                phase2_training_report_id,
+                _serialize_json_value(phase2_inference_contract),
+                _serialize_json_value(phase2_promotion_policy),
+                phase2_inference_mode,
+                _serialize_json_value(detector_statuses),
+                ";".join(bf_warnings),
+            ],
         )
 
         conn.execute("COMMIT")
@@ -152,6 +174,45 @@ def load_all(
         supplementary_counts=sup_counts,
         warnings=warnings,
     )
+
+
+def update_upload_batch_meta(
+    conn,
+    batch_id: str,
+    *,
+    phase2_training_report_id: str | None = None,
+    phase2_inference_contract: dict | None = None,
+    phase2_promotion_policy: dict | None = None,
+    phase2_inference_mode: str | None = None,
+    detector_statuses: list[dict] | None = None,
+) -> None:
+    """Update persisted batch-level analysis metadata after inference completes."""
+    conn.execute(
+        """
+        UPDATE upload_batches
+        SET
+            phase2_training_report_id = ?,
+            phase2_inference_contract = ?,
+            phase2_promotion_policy = ?,
+            phase2_inference_mode = ?,
+            detector_statuses_json = ?
+        WHERE upload_batch_id = ?
+        """,
+        [
+            phase2_training_report_id,
+            _serialize_json_value(phase2_inference_contract),
+            _serialize_json_value(phase2_promotion_policy),
+            phase2_inference_mode,
+            _serialize_json_value(detector_statuses),
+            batch_id,
+        ],
+    )
+
+
+def _serialize_json_value(value):
+    if value is None:
+        return None
+    return json.dumps(value, ensure_ascii=False)
 
 
 def load_general_ledger(conn, df: pd.DataFrame, batch_id: str) -> int:

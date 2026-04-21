@@ -12,10 +12,14 @@ import pandas as pd
 from sklearn.metrics import f1_score
 
 from config.settings import PROJECT_ROOT, get_settings
+from src.detection.duplicate_detector import DuplicateDetector
 from src.detection.ensemble_detector import EnsembleDetector
+from src.detection.intercompany_matcher import IntercompanyMatcher
+from src.detection.relational_detector import RelationalDetector
 from src.detection.sequence_detector import SequenceDetector
 from src.detection.supervised_detector import SupervisedDetector
 from src.detection.tabular_transformer import TransformerDetector
+from src.detection.timeseries_detector import TimeseriesDetector
 from src.detection.vae_detector import UnsupervisedDetector
 from src.eda.profiler import profile_dataframe
 from src.preprocessing.feature_groups import classify_features
@@ -39,15 +43,93 @@ _DEFAULT_MODEL_FAMILIES = (
     "supervised",
     "transformer",
     "sequence",
+    "timeseries",
+    "relational",
+    "duplicate",
+    "intercompany",
     "stacking",
 )
 _SUPERVISED_FAMILIES = {"supervised", "transformer", "sequence", "stacking"}
+_RULE_STYLE_FAMILIES = {"timeseries", "relational", "duplicate", "intercompany"}
 _SEQUENCE_CONTEXT_COLUMNS = ("document_id", "created_by", "posting_date", "posting_time")
+_RULE_STYLE_REQUIRED_COLUMNS = {
+    "timeseries": ("posting_date", "auxiliary_account_number"),
+    "relational": (
+        "trading_partner",
+        "posting_date",
+        "debit_amount",
+        "credit_amount",
+        "gl_account",
+        "is_intercompany",
+        "document_id",
+    ),
+    "duplicate": (
+        "gl_account",
+        "posting_date",
+        "debit_amount",
+        "credit_amount",
+        "line_text",
+    ),
+    "intercompany": (
+        "is_intercompany",
+        "gl_account",
+        "debit_amount",
+        "credit_amount",
+        "posting_date",
+        "trading_partner",
+    ),
+}
+_RULE_STYLE_SUB_DETECTORS = {
+    "timeseries": ("transaction_burst", "unusual_frequency"),
+    "relational": (
+        "new_counterparty",
+        "dormant_account_activity",
+        "transfer_pricing_anomaly",
+        "missing_relationship",
+    ),
+    "duplicate": (
+        "exact_duplicate_amount",
+        "fuzzy_duplicate",
+        "split_transaction",
+        "time_shifted_duplicate",
+    ),
+    "intercompany": (
+        "unmatched_intercompany",
+        "amount_mismatch",
+        "timing_gap",
+    ),
+}
+_DEFAULT_FAMILY_MIN_COMPLETED_TRIALS = {
+    "unsupervised": 2,
+    "supervised": 2,
+    "transformer": 2,
+    "sequence": 2,
+    "timeseries": 2,
+    "relational": 2,
+    "duplicate": 2,
+    "intercompany": 2,
+    "stacking": 2,
+}
+_DEFAULT_FAMILY_MIN_METRIC = {
+    "unsupervised": 0.10,
+    "supervised": 0.10,
+    "transformer": 0.10,
+    "sequence": 0.10,
+    "timeseries": 0.05,
+    "relational": 0.05,
+    "duplicate": 0.05,
+    "intercompany": 0.05,
+    "stacking": 0.10,
+}
 _DEFAULT_DETECTOR_FACTORIES = {
     "unsupervised": UnsupervisedDetector,
     "supervised": SupervisedDetector,
     "transformer": TransformerDetector,
     "sequence": SequenceDetector,
+    "timeseries": TimeseriesDetector,
+    "relational": RelationalDetector,
+    "duplicate": DuplicateDetector,
+    "intercompany": IntercompanyMatcher,
     "stacking": EnsembleDetector,
 }
 _PROMOTED_TRACK_MAP = {
@@ -55,6 +137,10 @@ _PROMOTED_TRACK_MAP = {
     "unsupervised": "ml_unsupervised",
     "ft_transformer": "ml_transformer",
     "bilstm_sequence": "ml_sequence",
+    "timeseries": "timeseries",
+    "relational": "relational",
+    "duplicate": "duplicate",
+    "intercompany": "intercompany",
     "stacking_meta": "ensemble",
 }
 _FAMILY_TO_CANONICAL_MODEL = {
@@ -62,6 +148,10 @@ _FAMILY_TO_CANONICAL_MODEL = {
     "supervised": "supervised",
     "transformer": "ft_transformer",
     "sequence": "bilstm_sequence",
+    "timeseries": "timeseries",
+    "relational": "relational",
+    "duplicate": "duplicate",
+    "intercompany": "intercompany",
     "stacking": "stacking_meta",
 }
 _DEFAULT_SEARCH_PRESETS = {
@@ -128,6 +218,76 @@ _DEFAULT_SEARCH_PRESETS = {
             "settings_updates": {
                 "bilstm_seq_len": 16,
                 "bilstm_hidden_size": 128,
+            },
+        },
+    ),
+    "timeseries": (
+        {
+            "name": "balanced",
+            "settings_updates": {
+                "burst_window_days": 7,
+                "burst_sigma": 3.0,
+                "frequency_window_days": 7,
+                "frequency_min_count": 5,
+            },
+        },
+        {
+            "name": "sensitive",
+            "settings_updates": {
+                "burst_window_days": 14,
+                "burst_sigma": 2.0,
+                "frequency_window_days": 10,
+                "frequency_min_count": 4,
+            },
+        },
+    ),
+    "relational": (
+        {
+            "name": "balanced",
+            "settings_updates": {
+                "rel_new_cp_lookback_days": 90,
+                "rel_new_cp_large_quantile": 0.90,
+                "rel_dormant_inactive_days": 180,
+            },
+        },
+        {
+            "name": "strict",
+            "settings_updates": {
+                "rel_new_cp_lookback_days": 60,
+                "rel_new_cp_large_quantile": 0.95,
+                "rel_dormant_inactive_days": 240,
+            },
+        },
+    ),
+    "duplicate": (
+        {
+            "name": "balanced",
+            "settings_updates": {
+                "duplicate_fuzzy_threshold": 80,
+                "duplicate_time_window_days": 7,
+            },
+        },
+        {
+            "name": "strict",
+            "settings_updates": {
+                "duplicate_fuzzy_threshold": 88,
+                "duplicate_time_window_days": 3,
+            },
+        },
+    ),
+    "intercompany": (
+        {
+            "name": "balanced",
+            "settings_updates": {
+                "ic_amount_tolerance": 0.03,
+                "ic_max_day_diff": 7,
+            },
+        },
+        {
+            "name": "strict",
+            "settings_updates": {
+                "ic_amount_tolerance": 0.01,
+                "ic_max_day_diff": 3,
             },
         },
     ),
@@ -464,6 +624,18 @@ def run_phase2_training(
                 detector_factory=factories[family],
                 trained_results=trained_results,
             )
+        elif family in _RULE_STYLE_FAMILIES:
+            _execute_rule_style_trial(
+                trial=trial,
+                trial_df=variant_df,
+                label_result=label_result,
+                registry=registry,
+                settings=settings,
+                detector_factory=factories[family],
+                family=family,
+                ctx=ctx,
+                trained_results=trained_results,
+            )
         else:
             _execute_model_trial(
                 trial=trial,
@@ -488,10 +660,15 @@ def run_phase2_training(
         report.metadata["best_overall_model"] = report.promoted_models[0].to_dict()
     report.metadata.update(_build_trial_report_metadata(report.leaderboard))
     report.metadata["promotion_policy"] = promotion_policy
+    report.metadata["family_promotion_decisions"] = _build_family_promotion_decisions(
+        report.leaderboard,
+        promotion_policy,
+    )
     report.metadata["inference_contract"] = _build_inference_contract(
         report_id=report.report_id,
         promoted_models=report.promoted_models,
         promotion_policy=promotion_policy,
+        trials=report.leaderboard,
     )
     report.status = _finalize_report_status(report.leaderboard)
     if save_report:
@@ -537,9 +714,12 @@ def _build_trial_queue(
                             "family_role": (
                                 "core"
                                 if family == "unsupervised"
+                                else "extended"
+                                if family in _RULE_STYLE_FAMILIES
                                 else "optional"
                             ),
                             "search_name": str(preset["name"]),
+                            "sub_detector_keys": list(_RULE_STYLE_SUB_DETECTORS.get(family, ())),
                         },
                     )
                 )
@@ -705,9 +885,71 @@ def _execute_stacking_trial(
         trial.elapsed_sec = time.perf_counter() - start
 
 
+def _execute_rule_style_trial(
+    *,
+    trial: Phase2TrialResult,
+    trial_df,
+    label_result,
+    registry: ModelRegistry,
+    settings,
+    detector_factory,
+    family: str,
+    ctx,
+    trained_results: dict[str, list[dict[str, Any]]],
+) -> None:
+    start = time.perf_counter()
+    trial_settings = _build_trial_settings(settings, trial)
+    detector = _build_detector(
+        detector_factory,
+        settings=trial_settings,
+        registry=registry,
+        detector_kwargs=_build_rule_style_detector_kwargs(
+            family,
+            ctx=ctx,
+            detector_kwargs=trial.params.get("detector_kwargs", {}),
+        ),
+    )
+    try:
+        detect_result = detector.detect(trial_df)
+        metric_name, metric_value = _compute_rule_style_metric(detect_result, label_result.y)
+        trial.status = Phase2TrainingStatus.COMPLETED
+        trial.metric_name = metric_name
+        trial.metric_value = metric_value
+        trial.metadata.update(
+            {
+                "settings_updates": dict(trial.params.get("settings_updates", {})),
+                "saved_model_name": _canonical_phase2_model_name(family),
+                "registry_version": None,
+                "registry_path": None,
+                "track_name": getattr(detector, "track_name", family),
+                "sub_detector_keys": list(_RULE_STYLE_SUB_DETECTORS.get(family, ())),
+                "rule_flag_ids": [flag.rule_id for flag in detect_result.rule_flags],
+                "flagged_count": int(len(detect_result.flagged_indices)),
+            }
+        )
+        trained_results.setdefault(family, []).append(
+            {
+                "trial_variant": trial.variant,
+                "metric_name": metric_name,
+                "metric_value": metric_value,
+                "detector": detector,
+                "detect_result": detect_result,
+                "save_meta": None,
+                "train_info": {"mode": "rule_style_detect_only"},
+            }
+        )
+    except Exception as exc:
+        trial.status = Phase2TrainingStatus.FAILED
+        trial.gate_reason = trial.gate_reason or type(exc).__name__
+        trial.warnings.append(str(exc))
+    finally:
+        trial.elapsed_sec = time.perf_counter() - start
+
+
 def _compute_trial_metric(detect_result, y_true) -> tuple[str, float | None]:
     if len(y_true) == 0:
-        return "flagged_ratio", None
+        flagged_ratio = float(len(detect_result.flagged_indices) / max(len(detect_result.scores), 1))
+        return "flagged_ratio", flagged_ratio
     positives = int((pd.Series(y_true) == 1).sum())
     if positives > 0:
         flagged = set(int(idx) for idx in detect_result.flagged_indices)
@@ -715,6 +957,15 @@ def _compute_trial_metric(detect_result, y_true) -> tuple[str, float | None]:
         return "f1_macro", float(f1_score(y_true, y_pred, average="macro", zero_division=0))
     flagged_ratio = float(len(detect_result.flagged_indices) / max(len(detect_result.scores), 1))
     return "flagged_ratio", flagged_ratio
+
+
+def _compute_rule_style_metric(detect_result, y_true) -> tuple[str, float | None]:
+    if len(y_true) > 0 and int((pd.Series(y_true) == 1).sum()) > 0:
+        return _compute_trial_metric(detect_result, y_true)
+    flagged_ratio = float(len(detect_result.flagged_indices) / max(len(detect_result.scores), 1))
+    score_mean = float(pd.Series(detect_result.scores).fillna(0.0).mean())
+    proxy_metric = min((flagged_ratio * 0.7) + (score_mean * 0.3), 1.0)
+    return "rule_proxy_score", proxy_metric
 
 
 def _compact_train_info(train_info: dict[str, Any]) -> dict[str, Any]:
@@ -737,6 +988,12 @@ def build_phase2_search_presets(
 
 
 def _build_variant_frame(cleaned_df, trial: Phase2TrialResult, family: str):
+    if family in _RULE_STYLE_FAMILIES:
+        required = list(cleaned_df.columns)
+        for col in _RULE_STYLE_REQUIRED_COLUMNS.get(family, ()):
+            if col in cleaned_df.columns and col not in required:
+                required.append(col)
+        return cleaned_df.loc[:, [col for col in required if col in cleaned_df.columns]].copy()
     selected = list(trial.params.get("feature_columns", []))
     required = list(selected)
     if family in {"sequence", "stacking"}:
@@ -762,7 +1019,27 @@ def _build_detector(detector_factory, *, settings, registry, detector_kwargs: di
     try:
         return detector_factory(settings=settings, model_registry=registry, **kwargs)
     except TypeError:
-        return detector_factory(settings=settings, model_registry=registry)
+        try:
+            return detector_factory(settings=settings, **kwargs)
+        except TypeError:
+            try:
+                return detector_factory(settings=settings, model_registry=registry)
+            except TypeError:
+                return detector_factory(settings=settings)
+
+
+def _build_rule_style_detector_kwargs(
+    family: str,
+    *,
+    ctx,
+    detector_kwargs: dict[str, Any],
+) -> dict[str, Any]:
+    kwargs = dict(detector_kwargs or {})
+    if family in {"relational", "intercompany"}:
+        audit_rules = getattr(ctx, "audit_rules", None)
+        if audit_rules:
+            kwargs.setdefault("audit_rules", audit_rules)
+    return kwargs
 
 
 def _subset_feature_groups(groups, columns) -> Any:
@@ -867,23 +1144,47 @@ def _build_trial_report_metadata(
         "family_summaries": _build_family_summaries(trials),
         "search_summaries": _build_search_summaries(trials),
         "feature_variant_summaries": _build_feature_variant_summaries(trials),
+        "sub_detector_summaries": _build_sub_detector_summaries(trials),
     }
 
 
 def _build_promotion_policy(trials: list[Phase2TrialResult]) -> dict[str, Any]:
     completed = [trial for trial in trials if trial.status == Phase2TrainingStatus.COMPLETED]
+    failed = [trial for trial in trials if trial.status == Phase2TrainingStatus.FAILED]
     family_completed_counts: dict[str, int] = {}
     for trial in completed:
         family_completed_counts[trial.model_family] = (
             family_completed_counts.get(trial.model_family, 0) + 1
         )
+    family_failed_counts: dict[str, int] = {}
+    for trial in failed:
+        family_failed_counts[trial.model_family] = (
+            family_failed_counts.get(trial.model_family, 0) + 1
+        )
+    family_search_diversity: dict[str, int] = {}
+    for family in {trial.model_family for trial in completed}:
+        search_names = {
+            str(trial.metadata.get("search_name") or trial.params.get("search_name") or trial.variant)
+            for trial in completed
+            if trial.model_family == family
+        }
+        family_search_diversity[family] = len(search_names)
     metric_names = sorted({trial.metric_name for trial in completed if trial.metric_name})
     return {
         "selection_mode": "best_per_family",
         "eligible_statuses": [Phase2TrainingStatus.COMPLETED.value],
         "requires_registry_version": True,
         "requires_metric_value": True,
-        "min_completed_trials_per_family": 1,
+        "min_completed_trials_per_family": 2,
+        "family_min_completed_trials": dict(_DEFAULT_FAMILY_MIN_COMPLETED_TRIALS),
+        "family_min_metric": dict(_DEFAULT_FAMILY_MIN_METRIC),
+        "family_min_search_variants": {
+            family: 2 for family in set(_DEFAULT_FAMILY_MIN_COMPLETED_TRIALS)
+        },
+        "family_max_failed_trial_ratio": {
+            family: 0.5 for family in set(_DEFAULT_FAMILY_MIN_COMPLETED_TRIALS)
+        },
+        "artifactless_families": sorted(_RULE_STYLE_FAMILIES),
         "sort_priority": [
             "metric_value_desc",
             "elapsed_sec_asc",
@@ -897,6 +1198,15 @@ def _build_promotion_policy(trials: list[Phase2TrialResult]) -> dict[str, Any]:
         "metric_names_seen": metric_names,
         "completed_trial_count": len(completed),
         "family_completed_counts": family_completed_counts,
+        "family_failed_counts": family_failed_counts,
+        "family_search_diversity": family_search_diversity,
+        "rule_style_metric_policy": {
+            "metric_name": "rule_proxy_score",
+            "components": {
+                "flagged_ratio": 0.7,
+                "score_mean": 0.3,
+            },
+        },
     }
 
 
@@ -905,21 +1215,24 @@ def _build_inference_contract(
     report_id: str,
     promoted_models: list[Phase2PromotedModel],
     promotion_policy: dict[str, Any],
+    trials: list[Phase2TrialResult],
 ) -> dict[str, Any]:
     promoted_versions = {
         model.model_name: model.registry_version
         for model in promoted_models
         if model.registry_version is not None
     }
+    required_models = [model.model_name for model in promoted_models]
     return {
         "source_report_id": report_id,
         "selection_mode": promotion_policy.get("selection_mode", "best_per_family"),
-        "required_models": [model.model_name for model in promoted_models],
+        "required_models": required_models,
         "promoted_versions": promoted_versions,
+        "family_sub_detectors": _build_promoted_sub_detector_map(promoted_models, trials),
         "track_map": {
             model_name: track_name
             for model_name, track_name in _PROMOTED_TRACK_MAP.items()
-            if model_name in promoted_versions
+            if model_name in required_models
         },
     }
 
@@ -972,6 +1285,111 @@ def _build_feature_variant_summaries(
     }
 
 
+def _build_sub_detector_summaries(
+    trials: list[Phase2TrialResult],
+) -> dict[str, dict[str, Any]]:
+    summaries: dict[str, dict[str, Any]] = {}
+    for family in _RULE_STYLE_FAMILIES:
+        family_trials = [trial for trial in trials if trial.model_family == family]
+        if not family_trials:
+            continue
+        keys: list[str] = []
+        for trial in family_trials:
+            for key in trial.metadata.get("sub_detector_keys", []):
+                text = str(key)
+                if text not in keys:
+                    keys.append(text)
+        best = _select_best_metric_trial(family_trials)
+        summaries[family] = {
+            "sub_detector_keys": keys,
+            "trial_count": len(family_trials),
+            "best_variant": best.variant if best is not None else None,
+            "best_metric_name": best.metric_name if best is not None else None,
+            "best_metric_value": best.metric_value if best is not None else None,
+        }
+    return summaries
+
+
+def _build_promoted_sub_detector_map(
+    promoted_models: list[Phase2PromotedModel],
+    trials: list[Phase2TrialResult],
+) -> dict[str, list[str]]:
+    by_family_variant = {
+        (trial.model_family, trial.variant): trial
+        for trial in trials
+    }
+    reverse_family_map = {
+        canonical_name: family_name
+        for family_name, canonical_name in _FAMILY_TO_CANONICAL_MODEL.items()
+    }
+    mapping: dict[str, list[str]] = {}
+    for model in promoted_models:
+        family_name = reverse_family_map.get(model.model_name, model.model_name)
+        trial = by_family_variant.get((family_name, model.source_trial_variant))
+        mapping[model.model_name] = [
+            str(key)
+            for key in (trial.metadata.get("sub_detector_keys", []) if trial is not None else [])
+        ]
+    return mapping
+
+
+def _build_family_promotion_decisions(
+    trials: list[Phase2TrialResult],
+    policy: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    decisions: dict[str, dict[str, Any]] = {}
+    grouped: dict[str, list[Phase2TrialResult]] = {}
+    for trial in trials:
+        grouped.setdefault(trial.model_family, []).append(trial)
+    family_min_completed = {
+        str(key): int(value)
+        for key, value in dict(policy.get("family_min_completed_trials", {})).items()
+    }
+    family_min_metric = {
+        str(key): float(value)
+        for key, value in dict(policy.get("family_min_metric", {})).items()
+    }
+    eligible = _eligible_promotion_trials(trials, policy)
+    eligible_keys = {(trial.model_family, trial.variant) for trial in eligible}
+
+    for family, family_trials in grouped.items():
+        completed_trials = [
+            trial for trial in family_trials if trial.status == Phase2TrainingStatus.COMPLETED
+        ]
+        best = _select_best_metric_trial(family_trials)
+        min_completed = family_min_completed.get(
+            family,
+            int(policy.get("min_completed_trials_per_family", 1) or 1),
+        )
+        min_metric = family_min_metric.get(family)
+        eligible_variants = [
+            trial.variant
+            for trial in completed_trials
+            if (trial.model_family, trial.variant) in eligible_keys
+        ]
+        reasons: list[str] = []
+        if len(completed_trials) < min_completed:
+            reasons.append("insufficient_completed_trials")
+        if best is None:
+            reasons.append("no_completed_trial")
+        elif min_metric is not None and (best.metric_value or 0.0) < min_metric:
+            reasons.append("metric_below_family_threshold")
+        if best is not None and not eligible_variants and not reasons:
+            reasons.append("registry_or_metric_gate")
+        decisions[family] = {
+            "completed_trial_count": len(completed_trials),
+            "required_completed_trials": min_completed,
+            "family_min_metric": min_metric,
+            "best_variant": best.variant if best is not None else None,
+            "best_metric_name": best.metric_name if best is not None else None,
+            "best_metric_value": best.metric_value if best is not None else None,
+            "eligible_variants": eligible_variants,
+            "eligible_for_promotion": bool(eligible_variants),
+            "reasons": reasons,
+        }
+    return decisions
+
+
 def _build_group_summary(trials: list[Phase2TrialResult]) -> dict[str, Any]:
     status_counts = _count_trial_statuses(trials)
     best = _select_best_metric_trial(trials)
@@ -1015,22 +1433,69 @@ def _eligible_promotion_trials(
     }
     requires_registry_version = bool(policy.get("requires_registry_version", True))
     requires_metric_value = bool(policy.get("requires_metric_value", True))
+    artifactless_families = {str(value) for value in policy.get("artifactless_families", [])}
     min_completed_trials_per_family = int(policy.get("min_completed_trials_per_family", 1) or 1)
+    family_min_completed_trials = {
+        str(key): int(value)
+        for key, value in dict(policy.get("family_min_completed_trials", {})).items()
+    }
+    family_min_metric = {
+        str(key): float(value)
+        for key, value in dict(policy.get("family_min_metric", {})).items()
+    }
+    family_min_search_variants = {
+        str(key): int(value)
+        for key, value in dict(policy.get("family_min_search_variants", {})).items()
+    }
+    family_max_failed_trial_ratio = {
+        str(key): float(value)
+        for key, value in dict(policy.get("family_max_failed_trial_ratio", {})).items()
+    }
     completed_by_family: dict[str, int] = {}
+    failed_by_family: dict[str, int] = {}
+    search_variants_by_family: dict[str, set[str]] = {}
     for trial in trials:
         if trial.status == Phase2TrainingStatus.COMPLETED:
             completed_by_family[trial.model_family] = (
                 completed_by_family.get(trial.model_family, 0) + 1
             )
+            search_variants_by_family.setdefault(trial.model_family, set()).add(
+                str(trial.metadata.get("search_name") or trial.params.get("search_name") or trial.variant)
+            )
+        elif trial.status == Phase2TrainingStatus.FAILED:
+            failed_by_family[trial.model_family] = (
+                failed_by_family.get(trial.model_family, 0) + 1
+            )
     eligible: list[Phase2TrialResult] = []
     for trial in trials:
         if trial.status.value not in eligible_statuses:
             continue
-        if completed_by_family.get(trial.model_family, 0) < min_completed_trials_per_family:
+        family_min_completed = family_min_completed_trials.get(
+            trial.model_family,
+            min_completed_trials_per_family,
+        )
+        if completed_by_family.get(trial.model_family, 0) < family_min_completed:
             continue
+        family_search_count = len(search_variants_by_family.get(trial.model_family, set()))
+        if family_search_count < family_min_search_variants.get(trial.model_family, 1):
+            continue
+        failed_count = failed_by_family.get(trial.model_family, 0)
+        total_attempts = completed_by_family.get(trial.model_family, 0) + failed_count
+        if total_attempts > 0:
+            failed_ratio = failed_count / total_attempts
+            if failed_ratio > family_max_failed_trial_ratio.get(trial.model_family, 1.0):
+                continue
         if requires_metric_value and trial.metric_value is None:
             continue
-        if requires_registry_version and trial.metadata.get("registry_version") is None:
+        if (trial.metric_value is not None) and (
+            (min_metric := family_min_metric.get(trial.model_family)) is not None
+        ) and trial.metric_value < min_metric:
+            continue
+        if (
+            requires_registry_version
+            and trial.model_family not in artifactless_families
+            and trial.metadata.get("registry_version") is None
+        ):
             continue
         eligible.append(trial)
     return eligible

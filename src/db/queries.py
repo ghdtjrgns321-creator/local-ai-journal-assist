@@ -79,7 +79,10 @@ PRESET_QUERIES: dict[str, str] = {
     """,
     "batch_meta": """
         SELECT upload_batch_id, file_name, row_count,
-               anomaly_count, high_risk_count, created_at, warnings
+               anomaly_count, high_risk_count,
+               phase2_training_report_id, phase2_inference_contract,
+               phase2_promotion_policy, phase2_inference_mode,
+               detector_statuses_json, created_at, warnings
         FROM upload_batches
         WHERE upload_batch_id = ?
     """,

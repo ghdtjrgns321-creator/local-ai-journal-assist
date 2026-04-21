@@ -1,22 +1,15 @@
-"""upload_batches 메타 적재 단위 테스트.
+"""Tests for persisted upload_batches metadata."""
 
-테스트 그룹:
-  - load_all → upload_batches에 메타 삽입 + 필드값 검증
-  - 동일 batch_id 중복 삽입 시 PK 위반
-  - file_name 빈 문자열 시 정상 동작
-"""
+from __future__ import annotations
 
 import duckdb
 import pytest
 
-from src.db.loader import load_all
+from src.db.loader import load_all, update_upload_batch_meta
 
 
 class TestUploadBatchesMeta:
-    """upload_batches 테이블 메타 적재."""
-
     def test_meta_inserted_after_load(self, db_conn, db_sample_df):
-        """load_all() 후 upload_batches에 1행 삽입, 필드값 정확."""
         lr = load_all(db_conn, db_sample_df, "batch_meta_01", file_name="test.xlsx")
 
         meta = db_conn.execute(
@@ -27,18 +20,15 @@ class TestUploadBatchesMeta:
         row = meta.iloc[0]
         assert row["file_name"] == "test.xlsx"
         assert row["row_count"] == lr.general_ledger_rows
-        # Why: db_sample_df에 risk_level="Medium" 2행, "Normal" 1행 → High 0건
         assert row["high_risk_count"] == 0
 
     def test_duplicate_batch_id_raises(self, db_conn, db_sample_df):
-        """동일 batch_id 재삽입 시 PK 위반."""
         load_all(db_conn, db_sample_df, "batch_dup_01", file_name="a.csv")
 
         with pytest.raises(duckdb.ConstraintException):
             load_all(db_conn, db_sample_df, "batch_dup_01", file_name="b.csv")
 
     def test_empty_file_name(self, db_conn, db_sample_df):
-        """file_name 빈 문자열 — 정상 동작."""
         load_all(db_conn, db_sample_df, "batch_empty_fn")
 
         meta = db_conn.execute(
@@ -47,3 +37,47 @@ class TestUploadBatchesMeta:
 
         assert len(meta) == 1
         assert meta.iloc[0]["file_name"] == ""
+
+    def test_phase2_meta_update_persists_contract_snapshot(self, db_conn, db_sample_df):
+        load_all(db_conn, db_sample_df, "batch_phase2_meta", file_name="phase2.csv")
+
+        update_upload_batch_meta(
+            db_conn,
+            "batch_phase2_meta",
+            phase2_training_report_id="train_001",
+            phase2_inference_contract={
+                "required_models": ["unsupervised", "timeseries"],
+                "family_sub_detectors": {
+                    "timeseries": ["transaction_burst", "unusual_frequency"],
+                },
+            },
+            phase2_promotion_policy={"selection_mode": "best_per_family"},
+            phase2_inference_mode="training_contract",
+            detector_statuses=[
+                {
+                    "track_name": "timeseries",
+                    "run_status": "executed",
+                    "reason": None,
+                    "flagged_docs": 1,
+                    "rules_run": 2,
+                    "elapsed_sec": 0.12,
+                },
+            ],
+        )
+
+        meta = db_conn.execute(
+            """
+            SELECT phase2_training_report_id, phase2_inference_contract,
+                   phase2_promotion_policy, phase2_inference_mode, detector_statuses_json
+            FROM upload_batches
+            WHERE upload_batch_id = 'batch_phase2_meta'
+            """
+        ).fetchdf()
+
+        assert len(meta) == 1
+        row = meta.iloc[0]
+        assert row["phase2_training_report_id"] == "train_001"
+        assert "timeseries" in row["phase2_inference_contract"]
+        assert "best_per_family" in row["phase2_promotion_policy"]
+        assert row["phase2_inference_mode"] == "training_contract"
+        assert "timeseries" in row["detector_statuses_json"]

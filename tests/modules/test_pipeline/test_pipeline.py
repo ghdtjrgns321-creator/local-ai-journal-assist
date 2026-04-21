@@ -256,6 +256,92 @@ class TestRunFromDataframe:
         assert statuses["ml_supervised"]["run_status"] == "executed"
         assert statuses["ml_supervised"]["reason"] == "unknown_training_gate"
 
+    def test_detector_status_carries_phase2_provenance_fields(self, monkeypatch, small_gl_df):
+        class DummyRegistry:
+            pass
+
+        class DummySupervisedDetector:
+            def __init__(self, settings=None, model_registry=None):
+                self.model_registry = model_registry
+
+            def load_model(self, model_name="supervised", version=None):
+                raise FileNotFoundError
+
+        class DummyUnsupervisedDetector:
+            def __init__(self, settings=None, model_registry=None):
+                self.model_registry = model_registry
+
+            def load_model(self, model_name="unsupervised", version=None):
+                return None
+
+            def detect(self, df):
+                scores = pd.Series(0.2, index=df.index, name="ML02")
+                details = pd.DataFrame({"ML02": scores}, index=df.index)
+                return DetectionResult(
+                    track_name="ml_unsupervised",
+                    flagged_indices=[],
+                    scores=scores,
+                    rule_flags=[RuleFlag("ML02", "ML02", 3, 0, len(df))],
+                    details=details,
+                    metadata={
+                        "elapsed": 0.01,
+                        "skipped_rules": [],
+                        "registry_version": 7,
+                        "saved_model_name": "unsupervised",
+                        "sub_detector_keys": ["transaction_burst", "unusual_frequency"],
+                    },
+                    warnings=[],
+                )
+
+        monkeypatch.setattr("src.preprocessing.model_registry.ModelRegistry", DummyRegistry)
+        monkeypatch.setattr("src.detection.supervised_detector.SupervisedDetector", DummySupervisedDetector)
+        monkeypatch.setattr("src.detection.vae_detector.UnsupervisedDetector", DummyUnsupervisedDetector)
+        monkeypatch.setattr("src.context.CompanyContext.is_anonymous", property(lambda self: False))
+        monkeypatch.setattr("src.pipeline.load_document_labels", lambda source_path: None)
+
+        result = AuditPipeline(
+            settings=AuditSettings(enable_ml_detection=True),
+            skip_db=True,
+        ).run_from_dataframe(small_gl_df, file_name="journal_entries_2022.csv")
+
+        statuses = {status["track_name"]: status for status in result.detector_statuses}
+        assert statuses["ml_unsupervised"]["registry_version"] == 7
+        assert statuses["ml_unsupervised"]["saved_model_name"] == "unsupervised"
+        assert statuses["ml_unsupervised"]["sub_detector_keys"] == [
+            "transaction_burst",
+            "unusual_frequency",
+        ]
+
+    def test_executes_timeseries_detector_when_enabled(self, monkeypatch, small_gl_df):
+        class DummyTimeseriesDetector:
+            def __init__(self, settings=None):
+                self.settings = settings
+
+            def detect(self, df):
+                scores = pd.Series([0.0, 0.7, 0.0, 0.9][: len(df)], index=df.index, name="TS01")
+                return DetectionResult(
+                    track_name="timeseries",
+                    flagged_indices=list(scores[scores > 0].index),
+                    scores=scores,
+                    rule_flags=[RuleFlag("TS01", "TS01", 4, int((scores > 0).sum()), len(df))],
+                    details=pd.DataFrame({"TS01": scores}, index=df.index),
+                    metadata={"elapsed": 0.02, "sub_detector_keys": ["transaction_burst"]},
+                    warnings=[],
+                )
+
+        monkeypatch.setattr("src.detection.timeseries_detector.TimeseriesDetector", DummyTimeseriesDetector)
+
+        result = AuditPipeline(
+            settings=AuditSettings(enable_timeseries_detection=True),
+            skip_db=True,
+        ).run_from_dataframe(small_gl_df)
+
+        track_names = {r.track_name for r in result.results}
+        statuses = {status["track_name"]: status for status in result.detector_statuses}
+        assert "timeseries" in track_names
+        assert statuses["timeseries"]["run_status"] == "executed"
+        assert statuses["timeseries"]["sub_detector_keys"] == ["transaction_burst"]
+
 
 class TestRunCsv:
     def test_run_csv(self, tmp_path, small_gl_df):
