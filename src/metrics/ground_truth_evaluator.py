@@ -101,31 +101,29 @@ def _label_doc_set_for_rule(
 ) -> set[str]:
     """Return rule-specific ground-truth document ids.
 
-    Why: L1-01 is a balance gate. DataSynth includes multiple anomaly labels that may
-    or may not end up as a document-level imbalance after generation/tolerance, so
-    L1-01 ground truth should use the actual journal sums, not label type alone.
+    Why: L1-01 is a structural balance gate. Its ground truth should be every document
+    whose debit-credit sum is actually unbalanced, regardless of sidecar label type.
     """
+    if rule_id == "L1-01":
+        required = {"document_id", "debit_amount", "credit_amount"}
+        if not required.issubset(df.columns):
+            return set()
+
+        candidate_df = df.dropna(subset=["document_id"]).copy()
+        if candidate_df.empty:
+            return set()
+
+        diff = candidate_df["debit_amount"].fillna(0.0) - candidate_df["credit_amount"].fillna(0.0)
+        doc_diff = diff.groupby(candidate_df["document_id"]).sum()
+        return set(doc_diff[doc_diff.abs() > 1.0].index)
+
     label_types = RULE_TO_LABEL.get(rule_id, [])
     if not label_types:
         return set()
 
     label_mask = labels["anomaly_type"].isin(label_types)
     label_doc_set = set(labels.loc[label_mask, "document_id"].dropna().unique())
-    if rule_id != "L1-01":
-        return label_doc_set
-
-    required = {"document_id", "debit_amount", "credit_amount"}
-    if not required.issubset(df.columns):
-        return label_doc_set
-
-    candidate_df = df[df["document_id"].isin(label_doc_set)].copy()
-    if candidate_df.empty:
-        return set()
-
-    diff = candidate_df["debit_amount"].fillna(0.0) - candidate_df["credit_amount"].fillna(0.0)
-    doc_diff = diff.groupby(candidate_df["document_id"]).sum()
-    imbalance_docs = set(doc_diff[doc_diff.abs() > 1.0].index)
-    return label_doc_set & imbalance_docs
+    return label_doc_set
 
 
 def overall_label_analysis(

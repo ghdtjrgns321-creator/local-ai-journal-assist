@@ -23,8 +23,9 @@ def full_df() -> pd.DataFrame:
         "auxiliary_account_number": ["V001", "V002", "V001", "V001", "V003"],
         "company_code": ["A", "B", "A", "B", "A"],
         "created_by": ["Kim", "Kim", "Kim", "Lee", "Lee"],
+        "approved_by": ["Kim", "Kim", "Park", "Lee", "SYS"],
         "source": ["Manual", "automated", "SA", "Manual", "automated"],
-        "business_process": ["입력", "승인", "이체", "입력", "승인"],
+        "business_process": ["O2C", "R2R", "TRE", "A2R", "R2R"],
         # 피처 컬럼
         "is_revenue_account": [True, True, False, True, False],
         "amount_zscore": [4.0, 1.5, 0.2, 3.5, 0.1],
@@ -74,7 +75,7 @@ class TestFraudLayerDetect:
     def test_empty_df_raises(self) -> None:
         """빈 DataFrame → ValueError."""
         layer = FraudLayer()
-        with pytest.raises(ValueError, match="비어"):
+        with pytest.raises(ValueError, match="empty"):
             layer.detect(pd.DataFrame())
 
     def test_rule_flags_count(self, full_df: pd.DataFrame) -> None:
@@ -99,7 +100,19 @@ class TestFraudLayerDetect:
         layer = FraudLayer()
         result = layer.detect(full_df)
         for col in result.details.columns:
-            assert col.startswith("B")
+            assert "-" in col
+
+    def test_l105_breakdown_metadata_exposes_immediate_and_review(self, full_df: pd.DataFrame) -> None:
+        layer = FraudLayer()
+        result = layer.detect(full_df)
+
+        breakdown = result.metadata["rule_breakdowns"]["L1-05"]
+        assert breakdown["immediate_rows"] == 1
+        assert breakdown["review_rows"] == 1
+        assert breakdown["override_counts"]["escalated_rows"] == 0
+
+        l105_flag = next(flag for flag in result.rule_flags if flag.rule_id == "L1-05")
+        assert l105_flag.detail == "immediate=1, review=1"
 
     def test_flagged_indices_match_scores(self, full_df: pd.DataFrame) -> None:
         """flagged_indices와 scores > 0 일치 확인."""

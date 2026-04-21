@@ -49,12 +49,14 @@ class TestGroundTruthEvaluator:
     def test_per_rule_label_analysis_counts_tp_fp_fn(self):
         df = pd.DataFrame(
             {
-                "document_id": ["D1", "D2", "D3"],
+                "document_id": ["D1", "D1", "D2", "D2", "D3", "D3"],
+                "debit_amount": [100.0, 0.0, 50.0, 0.0, 100.0, 0.0],
+                "credit_amount": [0.0, 90.0, 0.0, 50.0, 0.0, 0.0],
             }
         )
         result = _make_result(
             "layer_a",
-            pd.DataFrame({"L1-01": [1.0, 0.0, 1.0]}, index=df.index),
+            pd.DataFrame({"L1-01": [1.0, 1.0, 0.0, 0.0, 1.0, 1.0]}, index=df.index),
         )
         labels = pd.DataFrame(
             {
@@ -66,11 +68,43 @@ class TestGroundTruthEvaluator:
         analysis = per_rule_label_analysis(df, {"layer_a": result}, labels)
         a01 = next(item for item in analysis if item["rule_id"] == "L1-01")
 
-        assert a01["tp_docs"] == 1
-        assert a01["fp_docs"] == 1
-        assert a01["fn_docs"] == 1
-        assert a01["precision"] == 0.5
-        assert a01["recall"] == 0.5
+        assert a01["tp_docs"] == 2
+        assert a01["fp_docs"] == 0
+        assert a01["fn_docs"] == 0
+        assert a01["precision"] == 1.0
+        assert a01["recall"] == 1.0
+
+    def test_l1_01_uses_actual_imbalance_ground_truth(self):
+        df = pd.DataFrame(
+            {
+                "document_id": ["D1", "D1", "D2", "D2", "D3", "D3"],
+                "debit_amount": [100.0, 0.0, 50.0, 0.0, 200.0, 0.0],
+                "credit_amount": [0.0, 90.0, 0.0, 50.0, 0.0, 20.0],
+            }
+        )
+        result = _make_result(
+            "layer_a",
+            pd.DataFrame({"L1-01": [1.0, 1.0, 0.0, 0.0, 1.0, 1.0]}, index=df.index),
+        )
+        labels = pd.DataFrame(
+            {
+                "document_id": ["D1", "D2", "D3"],
+                "anomaly_type": [
+                    "UnbalancedEntry",
+                    "RoundingError",
+                    "FuturePhaseLabel",
+                ],
+            }
+        )
+
+        analysis = per_rule_label_analysis(df, {"layer_a": result}, labels)
+        a01 = next(item for item in analysis if item["rule_id"] == "L1-01")
+
+        assert a01["label_types"] == ["UnbalancedEntry"]
+        assert a01["label_docs"] == 2
+        assert a01["tp_docs"] == 2
+        assert a01["fp_docs"] == 0
+        assert a01["fn_docs"] == 0
 
     def test_per_rule_label_analysis_marks_missing_rule_as_skipped(self):
         df = pd.DataFrame({"document_id": ["D1"]})
@@ -125,16 +159,22 @@ class TestGroundTruthEvaluator:
         assert uncovered == [{"anomaly_type": "FuturePhaseLabel", "count": 2}]
 
     def test_build_ground_truth_report_returns_rule_metrics(self):
-        df = pd.DataFrame({"document_id": ["D1", "D2", "D3"]})
+        df = pd.DataFrame(
+            {
+                "document_id": ["D1", "D1", "D2", "D2", "D3", "D3"],
+                "debit_amount": [100.0, 0.0, 50.0, 0.0, 100.0, 0.0],
+                "credit_amount": [0.0, 90.0, 0.0, 50.0, 0.0, 0.0],
+            }
+        )
         agg_df = pd.DataFrame(
             {
-                "anomaly_score": [0.8, 0.0, 0.7],
-                "risk_level": ["High", "Normal", "Medium"],
+                "anomaly_score": [0.8, 0.8, 0.0, 0.0, 0.7, 0.7],
+                "risk_level": ["High", "High", "Normal", "Normal", "Medium", "Medium"],
             }
         )
         result = _make_result(
             "layer_a",
-            pd.DataFrame({"L1-01": [1.0, 0.0, 1.0]}, index=df.index),
+            pd.DataFrame({"L1-01": [1.0, 1.0, 0.0, 0.0, 1.0, 1.0]}, index=df.index),
         )
         labels = pd.DataFrame(
             {
@@ -155,4 +195,4 @@ class TestGroundTruthEvaluator:
         assert report.flagged_docs == 2
         assert report.high_risk_docs == 1
         assert report.rule_metrics[0].rule_code == "L1-01"
-        assert report.rule_metrics[0].precision == 0.5
+        assert report.rule_metrics[0].precision == 1.0

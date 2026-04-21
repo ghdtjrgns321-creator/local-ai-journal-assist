@@ -132,7 +132,7 @@ class FraudLayer(BaseDetector):
             (
                 "L1-05",
                 b06_self_approval,
-                {"min_amount": s.approval_thresholds[0], "audit_rules": self._audit_rules},
+                {"audit_rules": self._audit_rules},
             ),
             (
                 "L1-06",
@@ -163,8 +163,8 @@ class FraudLayer(BaseDetector):
             missing: list[str] = []
             if "created_by" not in df.columns:
                 missing.append("created_by")
-            if "approved_by" not in df.columns and "source" not in df.columns:
-                missing.append("approved_by|source")
+            if "approved_by" not in df.columns:
+                missing.append("approved_by")
             return missing
         if rule_id == "L2-02":
             return [
@@ -245,8 +245,16 @@ class FraudLayer(BaseDetector):
             )
 
         details = pd.DataFrame(index=df.index)
+        rule_breakdowns: dict[str, Any] = {}
         for rule_id, flagged in rule_results.items():
-            details[rule_id] = flagged.astype(float) * (SEVERITY_MAP[rule_id] / 5.0)
+            score_series = flagged.attrs.get("score_series") if hasattr(flagged, "attrs") else None
+            if score_series is not None:
+                details[rule_id] = pd.Series(score_series, index=df.index).fillna(0.0).astype(float)
+            else:
+                details[rule_id] = flagged.astype(float) * (SEVERITY_MAP[rule_id] / 5.0)
+            breakdown = flagged.attrs.get("breakdown") if hasattr(flagged, "attrs") else None
+            if breakdown:
+                rule_breakdowns[rule_id] = breakdown
 
         scores = details.max(axis=1).fillna(0.0)
         flagged_indices = scores[scores > 0].index.tolist()
@@ -255,6 +263,12 @@ class FraudLayer(BaseDetector):
                 rule_id=rule_id,
                 flagged_count=int(flagged.sum()),
                 total_count=len(df),
+                detail=(
+                    f"immediate={flagged.attrs['breakdown']['immediate_rows']}, "
+                    f"review={flagged.attrs['breakdown']['review_rows']}"
+                    if hasattr(flagged, "attrs") and flagged.attrs.get("breakdown")
+                    else None
+                ),
             )
             for rule_id, flagged in rule_results.items()
         ]
@@ -269,6 +283,7 @@ class FraudLayer(BaseDetector):
                 "skipped_rules": skipped,
                 "coverage_issues": coverage_issues,
                 "analysis_degraded": bool(coverage_issues),
+                "rule_breakdowns": rule_breakdowns,
             },
             warnings=warnings,
         )

@@ -464,8 +464,8 @@ RULE_EXPLANATIONS: dict[str, RuleExplanation] = {
     ),
     "L1-06": RuleExplanation(
         rule_id="L1-06",
-        plain_reason="The entry violates segregation-of-duties controls.",
-        used_columns=("created_by", "business_process", "sod_conflict_type"),
+        plain_reason="The entry shows a segregation-of-duties conflict across processes, within a process, or via IT super-user posting.",
+        used_columns=("created_by", "business_process", "sod_conflict_type", "user_persona"),
     ),
     "L1-07": RuleExplanation(
         rule_id="L1-07",

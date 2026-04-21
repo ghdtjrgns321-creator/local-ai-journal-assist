@@ -25,9 +25,9 @@ _MIN_GROUP_FOR_BENFORD = 100  # 계정별 최소 표본 수 (미만이면 검정
 #      base = SEVERITY_MAP["L4-02"]/5 = 0.4 (3등급 / 5등급 만점).
 #      위반 자릿수의 (|observed-expected| / threshold) 비율을 [0.5, 2.0]으로 클립한 후
 #      base와 곱해 최종 행 점수를 [0.2, 0.8] 범위로 차등화한다.
-_L4-02_BASE_SCORE = SEVERITY_MAP["L4-02"] / 5.0
-_L4-02_MULT_MIN = 0.5
-_L4-02_MULT_MAX = 2.0
+_L4_02_BASE_SCORE = SEVERITY_MAP["L4-02"] / 5.0
+_L4_02_MULT_MIN = 0.5
+_L4_02_MULT_MAX = 2.0
 
 
 def _digit_deviation(observed: dict[int, float], digit: int) -> float:
@@ -43,9 +43,9 @@ def _deviation_to_score(deviation: float, threshold: float) -> float:
     deviation == 0.5 × threshold → base × 0.5 = 0.2 (플로어).
     """
     if threshold <= 0:
-        return _L4-02_BASE_SCORE
-    multiplier = max(_L4-02_MULT_MIN, min(deviation / threshold, _L4-02_MULT_MAX))
-    return _L4-02_BASE_SCORE * multiplier
+        return _L4_02_BASE_SCORE
+    multiplier = max(_L4_02_MULT_MIN, min(deviation / threshold, _L4_02_MULT_MAX))
+    return _L4_02_BASE_SCORE * multiplier
 
 
 def c07_benford_violation(

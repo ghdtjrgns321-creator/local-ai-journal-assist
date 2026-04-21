@@ -7,6 +7,7 @@ Why: 후속 탐지(B·C 레이어)의 전제조건 검증.
 
 from __future__ import annotations
 
+import re
 import time
 
 import pandas as pd
@@ -14,6 +15,22 @@ import pandas as pd
 from config.settings import AuditSettings, get_schema
 from src.detection.base import BaseDetector, DetectionResult, RuleFlag, validate_input
 from src.detection.constants import SEVERITY_MAP
+
+
+_INTEGERISH_ACCOUNT_RE = re.compile(r"^[+-]?\d+\.0+$")
+
+
+def _normalize_account_code(value: object) -> str:
+    """Normalize account-code formatting artifacts before CoA checks."""
+    if pd.isna(value):
+        return ""
+
+    text = str(value).strip()
+    if not text or text.lower() == "nan":
+        return ""
+    if _INTEGERISH_ACCOUNT_RE.fullmatch(text):
+        return text.split(".", 1)[0]
+    return text
 
 
 # ── IntegrityDetector ──────────────────────────────────────────
@@ -37,7 +54,14 @@ class IntegrityDetector(BaseDetector):
     ) -> None:
         super().__init__(settings)
         self._tolerance = tolerance if tolerance is not None else self._settings.balance_tolerance
-        self._coa = chart_of_accounts or self._load_coa()
+        if chart_of_accounts is not None:
+            self._coa = {
+                normalized
+                for normalized in (_normalize_account_code(code) for code in chart_of_accounts)
+                if normalized
+            }
+        else:
+            self._coa = self._load_coa()
         self._schema = schema or get_schema()
 
     def _load_coa(self) -> set[str] | None:
@@ -55,9 +79,13 @@ class IntegrityDetector(BaseDetector):
             if p.suffix == ".csv":
                 coa_df = pd.read_csv(p, dtype=str)
                 col = "gl_account" if "gl_account" in coa_df.columns else coa_df.columns[0]
-                return set(coa_df[col].dropna().astype(str))
+                return {code for code in coa_df[col].map(_normalize_account_code) if code}
             else:
-                return set(line.strip() for line in p.read_text().splitlines() if line.strip())
+                return {
+                    code
+                    for code in (_normalize_account_code(line) for line in p.read_text().splitlines())
+                    if code
+                }
         except Exception as e:
             self._logger.warning("CoA 로드 실패: %s — L1-03 skip", e)
             return None
@@ -196,4 +224,6 @@ class IntegrityDetector(BaseDetector):
             return None
 
         # Why: astype(str)로 int/str 타입 통일 — schema는 int, CoA는 str일 수 있음
-        return (~df["gl_account"].astype(str).isin(self._coa)).astype(float)
+        normalized = df["gl_account"].map(_normalize_account_code)
+        has_account = normalized.ne("")
+        return (has_account & ~normalized.isin(self._coa)).astype(float)

@@ -5,14 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 RULE_TO_LABEL: dict[str, list[str]] = {
-    "L1-01": [
-        "UnbalancedEntry",
-        "RoundingError",
-        "DecimalError",
-        "TransposedDigits",
-        "CurrencyError",
-        "ReversedAmount",
-    ],
+    "L1-01": ["UnbalancedEntry"],
     "L1-02": ["MissingField"],
     "L1-03": ["InvalidAccount"],
     "L3-01": ["MisclassifiedAccount"],

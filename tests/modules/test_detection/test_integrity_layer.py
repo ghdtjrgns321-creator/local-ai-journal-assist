@@ -112,6 +112,7 @@ class TestA01UnbalancedEntry:
         assert "L1-01" in result.metadata["skipped_rules"]
 
 
+
 # ── L1-02: 필수필드 누락 ────────────────────────────────────────
 
 
@@ -186,6 +187,36 @@ class TestA03InvalidAccount:
 # ── 통합 테스트 ────────────────────────────────────────────────
 
 
+    def test_decimal_string_account_matches_coa(self, dt_balanced_df):
+        """CSV ingest의 '.0' 포맷 계정도 CoA와 동일 취급."""
+        df = dt_balanced_df.copy()
+        df["gl_account"] = ["1000.0", "2000.0", "1000.0", "2000.0"]
+        detector = IntegrityDetector(chart_of_accounts={"1000", "2000"})
+        result = detector.detect(df)
+        a03_scores = result.details.get("L1-03", pd.Series(0.0, index=df.index))
+        assert (a03_scores == 0.0).all()
+
+    def test_decimal_string_invalid_account_still_flagged(self, dt_balanced_df):
+        """정규화 이후에도 실제 미등록 계정은 계속 검출."""
+        df = dt_balanced_df.copy()
+        df["gl_account"] = df["gl_account"].astype(object)
+        df.loc[0, "gl_account"] = "9999.0"
+        detector = IntegrityDetector(chart_of_accounts={"1000", "2000"})
+        result = detector.detect(df)
+        expected_score = SEVERITY_MAP["L1-03"] / 5
+        assert result.details["L1-03"].iloc[0] == pytest.approx(expected_score)
+
+    def test_blank_account_is_not_l103(self, dt_balanced_df):
+        """빈 계정은 L1-03이 아니라 L1-02에서 처리한다."""
+        df = dt_balanced_df.copy()
+        df["gl_account"] = df["gl_account"].astype(object)
+        df.loc[0, "gl_account"] = None
+        detector = IntegrityDetector(chart_of_accounts={"1000", "2000"})
+        result = detector.detect(df)
+        assert result.details["L1-03"].iloc[0] == 0.0
+        assert result.details["L1-02"].iloc[0] > 0.0
+
+
 class TestDetectIntegration:
     """detect() 오케스트레이션 통합 테스트."""
 
@@ -227,5 +258,5 @@ class TestDetectIntegration:
     def test_empty_df_raises(self):
         """빈 DF → ValueError."""
         detector = IntegrityDetector()
-        with pytest.raises(ValueError, match="비어"):
+        with pytest.raises(ValueError, match="empty"):
             detector.detect(pd.DataFrame())

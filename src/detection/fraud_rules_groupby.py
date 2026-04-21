@@ -18,6 +18,34 @@ def _compute_base_amount(df: pd.DataFrame) -> pd.Series:
     )
 
 
+def _resolve_b04_partner_key(df: pd.DataFrame) -> pd.Series | None:
+    """Resolve the best available counterparty key for L2-02 coverage checks."""
+    candidate_columns = [
+        "auxiliary_account_number",
+        "trading_partner",
+        "auxiliary_account_label",
+        "vendor_name",
+        "customer_name",
+        "counterparty_code",
+        "counterparty_name",
+    ]
+
+    resolved: pd.Series | None = None
+    for column in candidate_columns:
+        if column not in df.columns:
+            continue
+        current = df[column].copy()
+        if resolved is None:
+            resolved = current
+            continue
+        empty_mask = resolved.isna()
+        if resolved.dtype == "O":
+            empty_mask = empty_mask | resolved.astype(str).str.strip().eq("")
+        resolved.loc[empty_mask] = current.loc[empty_mask]
+
+    return resolved
+
+
 def b04_duplicate_payment(
     df: pd.DataFrame,
     window_days: int = 30,
