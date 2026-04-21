@@ -1,5 +1,7 @@
 # DataSynth 3년치 전수조사 분석 리포트
 
+> 역사 문서. 현재 실사용 기준본은 `data/journal/primary/datasynth/`의 `v20.3` freeze다. 아래 수치는 2026-04-14 당시 점검 기준을 기록한 것이다.
+
 > **대상**: `data/journal/primary/datasynth/journal_entries.csv`
 > **규모**: 1,107,734행 / 319,204전표 / 3법인 / 36개월
 > **기간**: 2022-01-01 ~ 2024-12-31

@@ -15,11 +15,14 @@
 1. `phase2-train`
 - feature variant, search preset, model family trial을 실행한다.
 - leaderboard, promoted model, promotion policy, inference contract를 저장한다.
+- 현재 기본 family는 `unsupervised`, `supervised`, `transformer`, `sequence`, `timeseries`, `relational`, `duplicate`, `intercompany`, `stacking`이다.
+- rule-style family는 `sub_detector_keys`와 `sub_detector_summaries`를 같이 남긴다.
 
 2. `phase2-infer`
 - promoted model contract를 우선 사용한다.
 - cold-start가 필요한 경우에만 bootstrap이 허용된다.
 - 결과에는 `phase2_inference_mode`가 함께 기록된다.
+- inference contract에는 `required_models`, `promoted_versions`, `track_map`, `family_sub_detectors`가 함께 남는다.
 
 3. `phase3`
 - LLM batch insight 생성 시 phase2 contract snapshot을 prompt에 주입한다.
@@ -32,6 +35,13 @@
 - `phase2_inference_mode`
 - `phase2_promotion_policy`
 - `phase3_insight_json`
+
+`phase2_inference_contract` 안에는 다음이 포함된다.
+- `selection_mode`
+- `required_models`
+- `promoted_versions`
+- `track_map`
+- `family_sub_detectors`
 
 ## 현재 운영 모드
 
@@ -50,6 +60,7 @@
 
 1. `Phase 1` 규칙 기반 탐지로 기본 이상 징후를 찾는다.
 2. `Phase 2-train`에서 모델 후보와 trial을 비교하고 promoted model을 만든다.
+   - 이때 시계열, novelty, duplicate, intercompany 계열도 같은 contract 안에 같이 들어간다.
 3. `Phase 2-infer`는 그 promoted contract를 사용해 재현 가능한 추론을 수행한다.
 4. `Phase 3`는 그 추론 계약을 알고 LLM 요약을 생성한다.
 5. 결과를 저장하고 다시 불러와도 같은 provenance가 복원된다.

@@ -109,18 +109,61 @@ Drop      11개    —         제외                              —
 #### L1-04 — 승인한도 초과 (ExceededApprovalLimit)
 
 - **심각도**: 3
-- **근거**: K-SOX 승인체계, 240§32
-- **탐지 로직**: `금액 > threshold` — L2-01의 보완 룰
-- **구현**: `fraud_rules_feature.py` → `b03_exceeds_threshold()`
-- **필요 피처**: `debit_amount`, `credit_amount`, `exceeds_threshold` (파생)
+- **의미**: 전표 총액이 실제 승인자(`approved_by`)의 승인한도(`approval_limit`)를 초과한 경우를 탐지한다.
+- **근거**: K-SOX 승인체계, ISA 240 §32. 승인권자가 자기 권한 범위를 넘는 금액을 승인했다면 통제 실패 또는 승인권한 위반 가능성이 있다.
+- **판정 방식**
+  - 같은 `document_id`의 차변 금액 합계로 전표 총액을 계산한다.
+  - 전표의 `approved_by`를 직원 마스터(`employees.json`)와 연결해 해당 승인자의 `approval_limit`를 조회한다.
+  - `전표 총액 > approved_by의 approval_limit`이면 `ExceededApprovalLimit`로 판정한다.
+- **한 줄 규칙**: `SUM(debit_amount) BY document_id > approval_limit(approved_by)`
+- **구현**
+  - 피처 생성: `src/feature/amount_features.py` → `add_exceeds_threshold()`
+  - 직원 한도 조회: `employees.json`의 `user_id`, `approval_limit`, `can_approve_je`
+- **필요 컬럼**: `document_id`, `debit_amount`, `approved_by`, `approval_limit`(직원 마스터), `exceeds_threshold`(파생)
 
 #### L1-05 — 자기 승인 (SelfApproval)
 
 - **심각도**: 3
-- **근거**: K-SOX 직무분리(외감법§8①5호). **FSS 오스템임플란트** — 1인 입력·승인·이체, 2,215억 횡령
-- **탐지 로직**: 2가지 케이스
-  - Case A: `approved_by == created_by` (직접 비교)
-  - Case B: `source='manual'` + 사용자 = 자기승인 추정
+- **근거**: K-SOX 직무분리(외감법 §8①5호). FSS 오스템임플란트 사례처럼 1인이 입력, 승인, 자금 집행까지 이어서 수행하는 통제 우회 패턴을 직접 포착한다.
+- **탐지 로직**
+  - `created_by`와 `approved_by`가 모두 있을 때만 L1-05를 판정한다.
+  - `approved_by == created_by`이면 자기승인으로 탐지한다.
+  - `approved_by`가 없을 때는 `source='manual'`이라는 이유만으로 자기승인으로 추정하지 않는다.
+  - 승인 누락이나 승인 생략은 **L1-07**에서 별도로 탐지한다.
+- **기본 예외는 시스템 자동처리만 둔다**
+  - 배치, 인터페이스, 반복 분개, 자동전표처럼 시스템이 스스로 생성하고 승인 로그까지 남긴 전표는 L1-05에서 제외한다.
+  - 이것은 사람이 자기 전표를 자기 승인한 경우가 아니라 시스템 자동 처리로 보기 때문이다.
+  - 기본 설정은 `user_persona == automated_system` 또는 `source == automated`일 때 제외하는 방식이다.
+- **사람의 자기승인은 전부 탐지하되 결과를 두 단계로 나눈다**
+  - **즉시 위반**: 원칙적으로 바로 통제 위반으로 볼 수 있는 자기승인
+  - **검토 필요**: 자기승인 자체는 맞지만, 결산 조정이나 자산 조정처럼 회사 운영 방식에 따라 예외 전결이나 책임자 직접 처리 가능성이 있어 추가 확인이 필요한 경우
+- **기본 분류 기준**
+  - `R2R`, `A2R` 업무의 자기승인은 기본적으로 **검토 필요**로 둔다.
+  - 그 외 사람 자기승인은 기본적으로 **즉시 위반**으로 둔다.
+- **검토 필요라도 바로 즉시 위반으로 올리는 경우**
+  - **금액이 너무 큰 수기 전표**
+    - 결산(R2R)이나 자산조정(A2R)이라도, 사람이 직접 처리한 자기승인 전표가 수행중요성 금액을 넘으면 단순 검토 대상으로 두지 않는다.
+    - 현재 `1,000,000,000`원은 어디까지나 **임시 기본값**이다. 모든 회사에 공통으로 맞는 적정값이 아니라, 실제 감사 착수 후 정한 **수행중요성 금액**으로 반드시 바꿔야 한다.
+    - 즉 이 숫자는 "정답"이 아니라, 고객사별 중요성 산정 전까지 고위험 전표를 너무 늦게 보지 않기 위한 임시 안전장치에 가깝다.
+    - 실제로는 회사 규모, 매출액, 자산 규모, 손익 변동성, 감사 목적에 따라 적정 금액이 크게 달라진다. 그래서 engagement별로 따로 관리하는 것이 맞다.
+  - **주말 또는 심야에 처리된 자기승인**
+    - 결산조정이라도 주말, 공휴일, 심야 시간대에 자기승인이 발생하면 통제 회피 가능성이 커지므로 바로 즉시 위반으로 올린다.
+    - 구현상 `is_weekend`, `is_holiday`, `is_after_hours`, `time_zone_category`, `posting_time` 중 사용 가능한 시간 신호를 함께 본다.
+  - **민감한 고위험 계정을 건드린 자기승인**
+    - 현금성 자산, 가지급금, 가수금처럼 자기승인이 특히 위험한 계정은 결산 프로세스 안에 있더라도 즉시 위반으로 본다.
+    - 기본 예시는 `1190(가지급금)`, `2190(가수금)`, 그리고 현금/예금 계열로 자주 쓰이는 `111`, `112`, `113` 접두사다.
+    - 다만 계정체계는 회사마다 다르므로 실제 고객사 CoA에 맞게 반드시 수정해야 한다.
+- **왜 이렇게 설계했는가**
+  - 사람 기반 예외를 세세하게 많이 넣기 시작하면 룰 의미가 흐려지고, 나중에는 무엇을 잡는 룰인지 불명확해진다.
+  - 그래서 L1-05는 먼저 사람 자기승인 사실을 빠짐없이 포착하고, 그 다음 단계에서 결과를 `즉시 위반`과 `검토 필요`로 나눠 보여주는 구조로 단순화했다.
+  - 그리고 검토 대상으로 남겨도 안 되는 고위험 상황은 위 세 가지 승격 조건으로 다시 즉시 위반으로 끌어올리도록 했다.
+- **어디서 수정하는가**
+  - 시스템 자동처리 예외는 [config/audit_rules.yaml](/abs/path/C:/Users/ghdtj/workspace/portfolio/local-ai-assist/config/audit_rules.yaml)의 `patterns.self_approval_allow`에서 수정한다.
+  - `즉시 위반`과 `검토 필요` 기본 구분은 같은 파일의 `patterns.self_approval_review`에서 수정한다.
+  - 검토 대상을 다시 즉시 위반으로 승격시키는 조건은 `patterns.self_approval_immediate_override`에서 수정한다.
+  - 여기서 수행중요성 금액(`materiality_amount`), 수기 소스(`manual_sources`), 고위험 계정(`high_risk_accounts`), 고위험 계정 접두사(`high_risk_account_prefixes`)를 바꿀 수 있다.
+  - 회사별로 다르게 운영하려면 `data/companies/{company_id}/audit_rules.yaml`에서 같은 키를 오버라이드하면 된다.
+  - 특히 `materiality_amount`는 전역 고정값으로 오래 두지 말고, 감사 계약별 수행중요성 금액이 정해지는 즉시 engagement 기준으로 덮어쓰는 것이 맞다.
 - **구현**: `fraud_rules_access.py` → `b06_self_approval()`
 - **필요 피처**: `created_by`, `approved_by`, `source`
 
@@ -451,229 +494,328 @@ per-track: 행별 점수 × LAYER_WEIGHT     → 가중합
 
 ---
 
-## 3. Phase 2: ML 확장 (16개 유형, 미구현)
+## 3. Phase 2: ML / DL 보조 분석
 
-### 3.1 ML 모델 전략
+Phase 2는 Phase 1의 룰 기반 탐지를 대체하는 단계가 아니라, **룰만으로 놓치기 쉬운 패턴형 이상거래를 보완**하는 계층이다.
+특히 금액 분포, 시계열 패턴, 신규 거래관계, 중복·유사 반복, 법인 간 상호작용처럼 단일 룰로 정의하기 어려운 신호를 구조적으로 포착한다.
 
-- **지도학습 (분류)**: 다수 모델 후보군 → GridSearchCV로 최적 모델·하이퍼파라미터 선택
-- **비지도학습 (이상탐지)**: VAE (+ Isolation Forest 앙상블)
-- **별도 로직**: DuplicateDetector, 시계열 분석, 내부거래 매칭 등은 전용 로직 유지
+구현은 두 단계로 분리한다.
 
-Phase 1의 24개 룰 결과를 pseudo-label로, DataSynth `is_fraud`/`is_anomaly`를 ground truth로 활용.
+- `phase2-train`: 전처리, feature variant 생성, family별 trial 실행, leaderboard 정리, promoted model 선정
+- `phase2-infer`: 학습 결과에서 승격된 모델과 계약 정보를 읽어 실제 배치에 추론 적용
 
-상세 설계: [pre-plan/05a-detection-ml.md](pre-plan/05a-detection-ml.md) 참조.
+핵심 구현 파일:
+- `src/services/phase2_training_service.py`
+- `src/services/phase2_inference_service.py`
+- `src/pipeline.py`
+- `src/db/loader.py`, `src/db/batch_reader.py`
 
-### 3.2 추가 탐지 유형 (16개)
+### 3.1 목적
 
-| DataSynth 유형           | 카테고리    | Sev | ML 활용 방식                                       | 상태 |
-|--------------------------|------------|-----|----------------------------------------------------|------|
-| ImproperCapitalization   | Fraud      | 4   | GridSearch 지도학습 (비용→자산 계정 전환 패턴)       | ⬜   |
-| FictitiousEntry          | Fraud      | 4   | VAE 이상탐지 (비경상 패턴)                           | ⬜   |
-| FictitiousVendor         | Fraud      | 5   | GridSearch 지도학습 (마스터 데이터 교차 검증)         | ⬜   |
-| RoundDollarManipulation  | Fraud      | 2   | GridSearch 지도학습 (금액 끝자리 분포)               | ⬜   |
-| MisclassifiedAccount     | Error      | 3   | GridSearch 지도학습 (계정-프로세스 불일치)            | ⬜   |
-| ReversedAmount           | Error      | 3   | VAE (차대 반전 쌍)                                   | ⬜   |
-| TransposedDigits         | Error      | 2   | VAE (금액 자릿수 이상)                               | ⬜   |
-| FutureDatedEntry         | Error      | 3   | GridSearch 지도학습 (날짜 이상)                      | ⬜   |
-| CurrencyError            | Error      | 4   | GridSearch 지도학습 (환율 불일치)                     | ⬜   |
-| StatisticalOutlier       | Statistical | 3  | VAE + IF 앙상블                                      | ⬜   |
-| ExactDuplicateAmount     | Statistical | 3  | DuplicateDetector                                    | ⬜   |
-| TransactionBurst         | Statistical | 4  | 시계열 밀도 분석                                     | ⬜   |
-| UnusualFrequency         | Statistical | 2  | 시계열 분석                                          | ⬜   |
-| DormantAccountActivity   | Relational | 2   | GridSearch 지도학습 (계정 사용 이력)                  | ⬜   |
-| NewCounterparty          | Relational | 1   | GridSearch 지도학습 (신규 거래처 패턴)                | ⬜   |
-| UnmatchedIntercompany    | Relational | 3   | 내부거래 매칭 로직                                   | ⬜   |
+Phase 2의 목적은 다음 네 가지다.
 
-### 3.3 신규 컬럼 기반 룰 (DataSynth 확장 후 구현)
+1. **룰 기반 정탐 보완**: L2/L3/L4 규칙만으로는 설명되지 않는 거래 패턴을 확장 포착
+2. **구조적 이상 탐지**: 연속 발생, 군집 발생, 관계형 이상, 신규성 이상 탐지
+3. **모델 계약 기반 운영**: 어떤 모델이 학습되고 승격되었는지 추적 가능하게 운영
+4. **Phase 3 입력 강화**: 이후 요약·설명 단계가 어떤 모델과 어떤 계약 위에서 생성됐는지 남김
 
-현재 39개 컬럼에는 없지만, DataSynth에 컬럼 추가 시 구현 가능한 18건.
+즉 Phase 2는 “DataSynth 유형을 1:1로 각각 분리 구현하는 단계”가 아니라, **여러 이상 신호를 family 단위 모델 계층으로 흡수하는 구조**를 목표로 한다.
 
-#### 3.3.1 역분개(Reversal) 패턴 탐지
+### 3.2 전처리
 
-→ **L2-06로 구현 완료** (§2.3 참조)
+Phase 2는 공통 feature frame을 만든 뒤, 여러 family가 이를 공유해서 사용한다.
 
-- **기준서**: 감사기준서 240호
-- **현재 상태**: 도메인 용어에 `is_reversal` 매핑만 있고 룰 없음
-- **구현 로직** (Audit Sight/Arbutus 표준):
-  1. **1:1 매칭**: 동일 `gl_account` + 동일 금액 + 반대 방향(차↔대) ±1일 이내
-  2. **N:M 분할 역분개 (Rolling Sum Zero-Out)**: 특정 `gl_account` + `created_by` 조합에서 일정 기간(7일/30일) 내 `SUM(debit) - SUM(credit) ≈ 0`에 수렴하는 부분합을 DuckDB 윈도우 함수로 탐지
-     ```sql
-     SELECT gl_account, created_by, posting_date,
-            SUM(debit_amount - credit_amount)
-              OVER (PARTITION BY gl_account, created_by
-                    ORDER BY posting_date
-                    ROWS BETWEEN 6 PRECEDING AND CURRENT ROW) AS rolling_net
-     FROM journal_entries
-     WHERE ABS(rolling_net) < threshold
-     ```
-  3. **Reversing vs Correcting 구분** (SAP Reversal Reason Code):
-     - RRC 05(Accrual Reversal) + 기초(1월) + `source='auto'` = 정상 역분개
-     - RRC 01(당기 역분개) + `source='manual'` + 임의 시점 = 수정 전표 → 검토 대상
-     - RRC 02(타 기간 역분개) = 결산 후 수정 → 고위험
-  4. 적요 키워드 탐지: "수정", "정정", "오류", "역분개", "결산조정" 등
-  5. 기말 30일 이내 역분개 집중도 가중
-- **필요 컬럼**: 현재 39컬럼으로 구현 가능
+#### 공통 전처리
 
-#### 3.3.2 Top-side Journal Entries (경영진 조정 전표) — L2-05 ✅
+- 금액 컬럼 정규화: 차변·대변·절대금액·로그금액 기반 수치화
+- 날짜/시간 파생: 월말 여부, 주말 여부, 심야 여부, posting 간격, 문서 생성 순서
+- 사용자/조직 컨텍스트: `created_by`, `approved_by`, `company_code`, `business_process`
+- 텍스트/레퍼런스 보조: `line_text`, `header_text`, `reference`, 거래처·계정 관련 reference feature
+- 품질 프로파일: 결측률, cardinality, usable ratio를 요약하여 family별 사용 가능 feature를 판정
 
-- **룰 ID**: L2-05, 심각도 5
-- **기준서**: 감사기준서 240호 §32(a)(ii), PCAOB AS 2401
-- **구현 파일**: `src/detection/score_aggregator.py` (후처리 복합 탐지)
-- **구현 로직** (게이트키퍼 + 가점):
-  - **게이트키퍼**: `is_manual_je == True` 필수 (자동 전표 원천 차단)
-  - **가점** (각 1점, 최대 5점):
+#### Feature Variant
 
-    | # | 조건           | 참조 소스                            |
-    |---|----------------|--------------------------------------|
-    | 1 | 기말 시점       | `layer_c.details["L3-04"] > 0`        |
-    | 2 | 자기승인/승인누락 | `layer_b.details["L1-05"or"L1-07"] > 0` |
-    | 3 | 비정상 계정     | `layer_a["L1-03"] or layer_c["L4-04"]`   |
-    | 4 | 이상 고액       | `layer_c.details["L4-03"] > 0`        |
-    | 5 | 위험 적요       | `layer_c.details["L3-08"] > 0`        |
+동일 데이터셋에 대해 여러 전처리 variant를 만든다.
 
-  - **판정**: 수기 AND 가점 ≥ `topside_threshold`(기본 2) → L2-05 플래그, High 승격
-  - **정규화**: `topside_score = raw / 5.0` (0.0~1.0)
-- **설정**: `config/settings.py::AuditSettings.topside_threshold`
-- **테스트**: 9개 (`tests/test_detection/test_score_aggregator.py::TestTopsideDetection`)
+- `baseline_core`: 금액, 계정, 날짜, 기본 사용자 정보 중심
+- `plus_persona`: 사용자·승인자·프로세스·회사/부문 맥락 추가
+- `plus_reference`: reference, 적요, counterparty, auxiliary 식별자 등 확장 feature 포함
 
-#### 3.3.3 비정상 시간대 입력자 집중 분석
+이 variant들은 단순 편의 기능이 아니라, **같은 모델 family라도 어떤 feature 묶음이 실제로 더 잘 작동하는지 비교**하기 위한 탐색 단위다.
 
-- **기준서**: KLCA IT 체크리스트
-- **현재 상태**: 구현 완료 (`anomaly_rules_simple.py::c12_abnormal_hours_concentration`)
-- **구현 로직** (Greenskies Analytics):
-  1. 비정상 시간대 정의 (한국 실무 반영):
-     - 정상: 08:30~18:30 (`hour_frac = hour + minute/60 + second/3600`, `>=/<` 일관)
-     - 야근(저위험): 18:30~22:00 — 결산 집중기간(12/20~1/15, `settings.py` 설정 가능)에는 정상 취급
-     - 심야(고위험): 22:00~06:00 — 감사 플래그 대상
-  2. 사용자별 심야/비근무일 전표 비율 산출 (`min_user_entries` 미만 사용자 제외)
-  3. 전체 사용자 평균 대비 3σ 이상 → 이상치 (단순 비율 0~1로 판정, 가중치는 별도 위험점수)
-  4. 이상치 사용자의 **비정상 시간대 행만** 플래그 (정상 시간 전표 미포함)
-  5. 입력자-승인자 간 시간 차이가 극히 짧은 경우 (부실 검토 의심, 자동 전표 제외)
-- **설계 원칙 — 2계층 분리**:
-  - Layer 1 (통계 판정): 단순 비율(0~1)로 3σ 수행 → 분포 가정 위반 방지
-  - Layer 2 (위험 점수): 이상치에 대해 심야 가중 등을 적용 → score_aggregator severity 조정
-  - 심야 가중 weighted_ratio(최대 2.0)를 3σ에 직접 대입하면 통계적 왜곡 발생하므로 분리 필수
-- **DataSynth 시간대 multiplier**:
-  ```
-  심야(00~06)=0.02 / 이른출근(06~08:30)=0.15 / 오전피크(08:30~11:30)=1.8
-  점심(11:30~13)=0.3 / 오후(13~16)=1.2 / 마감러시(16~18:30)=1.5
-  야근(18:30~22)=0.3(평상시), 0.7(결산기) / 심야야근(22~24)=0.05
-  ```
+#### Rule-Style Family용 입력
 
-#### 3.3.4 승인 프로세스·승인자 계층
+일부 family는 일반 tabular embedding보다 구조화 집계 입력이 더 중요하다.
 
-- **기준서**: 감사기준서 315호/330호 (ITGC 통제)
-- **현재 상태**: L1-05/L1-07가 결과만 추론. 승인 컬럼 없음
-- **구현 로직**:
-  - 승인 누락률: `approved_by` IS NULL + 한도 초과 전표 비율
-  - 승인 지연: `approval_date - posting_date` > N일
-  - 레벨 건너뜀: 금액 대비 `required_approval_level` (DuckDB CASE WHEN 전결규정 6단계)
-  - 자기승인 정밀화: `created_by == approved_by` (L1-05 개선)
-- **DataSynth 수정 필요**: approval.rs 활성화 + 원화 기준 전환
+- `timeseries`: 사용자/계정/거래처 단위 빈도, burst, 간격, 직전 대비 변화량
+- `relational`: 신규 거래쌍, dormant 재활성, 희귀 관계 조합
+- `duplicate`: exact duplicate, near duplicate, 반복 금액/설명 패턴
+- `intercompany`: 법인 간 쌍방향, unmatched pair, 비정상 offset 패턴
 
-#### 3.3.5 증빙 존재 확인
+### 3.3 모델 Family 구성
 
-- **기준서**: 감사기준서 240호, 500호
-- **구현 로직**:
-  - `has_attachment=False` + 수기 + 고액 → 증빙 누락 의심
-  - 한국 세법 적격증빙: 3만원 초과 → 세금계산서/카드/현금영수증 필요
-  - 3만원 직하 분할 탐지: 동일 거래처 + 동일일 + 29,000원 이하 × N건
-- **DataSynth 확장**: `has_attachment`(bool), `supporting_doc_type`(str)
+Phase 2는 하나의 모델이 아니라 여러 family를 병렬로 비교하고, 각 family에서 가장 나은 trial만 승격 대상으로 삼는다.
 
-#### 3.3.6 컷오프 (납품일 vs 전기일)
+#### 1. Unsupervised Family
 
-- **기준서**: 감사기준서 315호, 330호 (K-IFRS 15 수익인식)
-- **구현 로직**:
-  - 매출: `|posting_date - delivery_date|` > N 영업일 → 조기/지연 인식 의심
-  - 비용: `|posting_date - invoice_date|` > N 영업일 → 기간귀속 오류 의심
-  - 기말 전후 5~10 영업일 구간 집중 분석
-- **DataSynth 확장**: `delivery_date`(date), `invoice_amount`(float), `tax_amount`(float), `supply_amount`(float)
+- 목적: 라벨 부족 환경에서 전반적 이상 score 생성
+- 대표 모델: VAE 계열 + Isolation Forest 조합
+- 강점:
+  - 금액 분포가 유난히 튀는 거래
+  - 기존 군집과 멀리 떨어진 전표
+  - 여러 feature가 동시에 약하게 이상한 복합 신호
+- 잘 잡는 예시:
+  - 비정상 고액 전표
+  - 평소 거의 안 쓰던 조합으로 입력된 전표
+  - 여러 약한 red flag가 겹친 전표
 
-#### 3.3.7 증빙 금액 불일치
+#### 2. Supervised Family
 
-- **기준서**: 감사기준서 500호
-- **구현 로직**: 3-way matching 간소화
-  - `|debit_amount - invoice_amount|` > 허용오차(1% 또는 절대금액) → 불일치 플래그
-  - 부가세 검증: `tax_amount ≠ round(supply_amount × 0.1)` → 부가세 오류
-- **DataSynth 확장**: `invoice_amount`, `invoice_date`, `tax_amount`, `supply_amount`
+- 목적: 신뢰 가능한 라벨이 있을 때 명시적 fraud/anomaly 구분 성능 강화
+- 대표 모델: 기존 지도학습 detector와 CV 기반 후보 선택기
+- 강점:
+  - 이미 관측된 부정 패턴의 재발 탐지
+  - feature importance 기반 설명 가능성 확보
+- 잘 잡는 예시:
+  - 승인 우회 + 특정 사용자 + 특정 금액대 조합
+  - 과거 확정 라벨과 유사한 분식/은폐 패턴
 
-#### 3.3.8 전표 수정/삭제 이력
+#### 3. Transformer Family
 
-- **기준서**: KLCA IT 체크리스트 (변경관리 4.3~4.5)
-- **구현 로직** (SAP CDHDR/CDPOS):
-  - 한국 SAP: 전기된 전표는 직접 수정 불가 → 역분개(FL3-02) + 재전기 방식
-  - 텍스트 변경: `change_type='UPDATE'` + `changed_field IN ('line_text','header_text')` + 기말 → 적요 수정 의심
-  - `created_by ≠ changed_by` + 고액 → 무단 수정 의심
-  - 상법 제33조: 장부 10년, 전표류 5년 보존 의무. 삭제 원칙적 불가
-- **DataSynth 확장**: `changed_by`, `change_date`, `changed_field`, `old_value`, `new_value`
+- 목적: tabular feature 간 비선형 상호작용 포착
+- 대표 모델: FT-Transformer 계열
+- 강점:
+  - 계정, 사용자, 회사, 프로세스가 복합적으로 얽힌 패턴
+  - 단일 룰로 표현하기 어려운 조건 결합
+- 잘 잡는 예시:
+  - 특정 회사·특정 사용자·특정 계정대에서만 발생하는 복합 이상
+  - reference와 금액, 시점이 함께 이상한 경우
 
-#### 3.3.9 IP 주소 추적
+#### 4. Sequence Family
 
-- **기준서**: KLCA IT 체크리스트
-- **구현 로직**: 사용자별 평소 IP 풀 대비 이탈 IP + 고액/심야 → 비정상 접근 의심
-- **DataSynth 확장**: `ip_address`(str). 한국 대기업 IP 구조 반영:
-  ```
-  사내(본사): 10.1.x.x    사내(공장): 10.2.x.x
-  VPN/재택:   10.10.x.x   외부(공인): 203.x.x.x 등
-  ```
-  - VPN 접속 자체는 정상 (재택근무 ~34%). 심야+VPN+고액은 가중
+- 목적: 시간 순서와 사용자의 연속 행동 패턴 반영
+- 대표 모델: sequence detector / BiLSTM 계열
+- 강점:
+  - 직전 거래와의 연속성, burst, reversal-like 흐름 탐지
+  - 시계열 문맥이 있어야 드러나는 이상 포착
+- 잘 잡는 예시:
+  - 짧은 시간에 같은 사용자가 반복 입력한 전표 묶음
+  - 직전 패턴과 급격히 다른 posting 흐름
+  - 월말·마감 직전의 비정상 연쇄 입력
 
-#### 3.3.10 전표번호 연속성
+#### 5. Timeseries Family
 
-- **기준서**: 감사기준서 240호, 315호
-- **현재 상태**: document_id가 UUID이므로 불가
-- **구현 로직** (zapliance SAP 표준):
-  - 회사코드 + 회계연도 + 전표유형별 분할하여 번호범위 내 갭 탐지
-  - `LEAD(document_number) - document_number > 1` → 갭
-  - 갭의 적법 사유(취소 전표, 마이그레이션) 제외 필터
-- **DataSynth 확장**: UUID와 별도로 순차 `document_number`(int). SAP 표준 Document Type:
-  ```
-  SA=일반분개  KR=매입전표  KZ=매입지급  DR=매출전표  DZ=매출수취  AA=자산전기
-  ```
+- 목적: burst, frequency, cadence 이상을 명시적으로 포착
+- 대표 탐지 축:
+  - `TransactionBurst`
+  - `UnusualFrequency`
+- 강점:
+  - 평소 드문 사용자가 특정 시점에 갑자기 몰아서 입력하는 패턴
+  - 특정 계정/거래처 조합의 빈도 급등
+- 잘 잡는 예시:
+  - 결산 직전 이례적으로 같은 사용자가 동일 유형 전표를 집중 입력
+  - 평소 월 1~2건이던 거래가 며칠 내 수십 건으로 급증
 
-#### 3.3.11 기타 (8건)
+#### 6. Relational / Novelty Family
 
-| 항목 | 내용 | 기준서 |
-|------|------|--------|
-| 통제테스트(TOE) 데이터 기반 검증 | 승인 누락률, 평균 승인 지연, 레벨 우회율 | 330호, 1100호 |
-| 계정분류 적정성 (K-IFRS) | 계정-거래유형 매핑 마스터 → ML 접근 | 315호, 330호 |
-| 경제적 실질 (실질우선) | 계정-거래유형 불일치 + NLP(적요) → Phase 2~3 | 315호, 240호 |
-| 회계추정치 편의(bias) | 전기 추정치 vs 실제 차이 시계열, 이익 방향 편향 | 240§32(b), ISA 540 |
-| 재무제표-장부 대사 | GL 잔액 vs 보조원장 합계, Trial Balance 교차검증 | 330호 |
-| 배치 전표 이상 패턴 | `source='batch'` 기말 집중, 대량 동시 생성 | 금융권 IT 감사 가이드라인 |
-| 유의적 거래 합리성 | 탐지된 이상 전표를 LLM 분석 → 보조 의견 | 240§32(c) |
-| 비정상 시간대 입력자 집중 | 사용자별 심야/비근무일 비율 통계 | KLCA IT 체크리스트 |
+- 목적: 관계 기반 신규성, 휴면 후 재활성, 익숙하지 않은 counterpart를 탐지
+- 대표 탐지 축:
+  - `DormantAccountActivity`
+  - `NewCounterparty`
+- 강점:
+  - 과거 맥락을 기준으로 새롭거나 오래 쉬었다가 다시 나타난 상대방 탐지
+- 잘 잡는 예시:
+  - 장기간 사용하지 않던 계정/거래처가 갑자기 큰 금액으로 재등장
+  - 기존 거래 이력이 거의 없는 counterparty와의 최초 대규모 거래
 
-### 3.4 Phase 2 점수 체계 — Stacking Meta-Learner (D034)
+#### 7. Duplicate Family
 
-**기존 고정 가중합 → Stacking 앙상블로 대체** (D034, 2026-03-30 결정)
+- 목적: exact/near duplicate 패턴을 ML 계약 안에서 운영
+- 대표 탐지 축:
+  - `ExactDuplicateAmount`
+  - 반복 금액·적요·사용자 조합
+- 강점:
+  - 단순 룰 중복 탐지를 학습/계약 체계와 연결
+  - duplicate 관련 family도 leaderboard와 promoted contract에 포함
+- 잘 잡는 예시:
+  - 같은 금액·같은 상대방·유사 적요로 반복된 전표
+  - 약간의 시차만 두고 재발행된 동일 패턴 전표
 
-```
-Level 0 (6개 Base Models):
-  [1] 룰 기반 24개 aggregate    → 1개 점수 (0~1)
-  [2] XGBoost (cv_selector)     → predict_proba (0~1)
-  [3] VAE 재구성 오차           → normalized (0~∞ → 0~1)
-  [4] Isolation Forest          → normalized (-0.5~0.5 → 0~1)
-  [5] FT-Transformer (D033)    → predict_proba (0~1)
-  [6] BiLSTM+Attention (D032)  → predict_proba (0~1)
+#### 8. Intercompany Family
 
-Level 1 (Meta-Learner):
-  Logistic Regression (L2 Ridge)
-  Input: 6개 확률값 → 최종 anomaly_score
-  계수 = 데이터 기반 가중치 (고정 비율 대체)
+- 목적: 법인 간 거래의 비대칭, 미정합, 비정상 상계 흐름 탐지
+- 대표 탐지 축:
+  - `UnmatchedIntercompany`
+- 강점:
+  - 한쪽 법인엔 있는데 반대편 법인엔 정합되는 거래가 없는 경우 포착
+  - 상계 타이밍과 금액 불일치 탐지
+- 잘 잡는 예시:
+  - C001→C002 거래는 있는데 반대 기록이 누락된 경우
+  - 유사 거래가 상호 법인에 비대칭 금액으로 반복되는 경우
 
-Leakage 방지: 5-fold out-of-fold prediction
-Fallback: 라벨 부족 시 Percentile Ranking 가중합
-```
+#### 9. Stacking Family
 
-각 모델의 원시 점수 단위가 다르므로, fallback 시 Percentile Ranking으로 0~1 정규화.
+- 목적: 여러 family score를 다시 메타 레벨에서 결합
+- 대표 모델: OOF 기반 ensemble detector
+- 강점:
+  - 개별 family가 놓친 약한 신호를 결합해 최종 score 안정화
+  - unsupervised + supervised + transformer + sequence + rule-style family를 함께 활용
 
-```
-정규화: scipy.stats.rankdata → 백분위수 0~1 변환
-  → 분포 무관, 극단값에 강건 (Min-Max/Z-score 대비 우수)
-```
+### 3.4 어떤 부정을 잡는가
 
----
+Phase 2는 특정 유형 이름을 1:1로 직접 매핑하기보다, 다음과 같은 부정 패턴군을 포착한다.
+
+#### 금액·분포 이상
+
+- 비정상 고액
+- 분포상 극단치
+- 평소와 다른 금액대의 반복 입력
+- 특정 digit/round pattern이 비정상적으로 몰린 거래군
+
+#### 반복·빈도 이상
+
+- 짧은 시간에 몰아 입력된 거래
+- 비정상적 반복 빈도
+- exact/near duplicate 전표
+- reversal 또는 cancel-repost처럼 보이는 연쇄 흐름
+
+#### 관계·신규성 이상
+
+- 처음 등장한 counterparty와의 큰 거래
+- 장기간 휴면 후 재활성된 계정 또는 관계
+- 평소 쓰지 않던 관계 조합
+- 회사 간 비정상 상호작용 또는 미정합
+
+#### 복합 조건형 이상
+
+- 특정 사용자 + 특정 계정 + 특정 시점이 겹칠 때만 드러나는 패턴
+- 룰 단독으론 약하지만 여러 신호가 겹치며 강해지는 거래
+- Phase 1에서 약하게 표시된 전표 중, ML score가 추가로 높게 나오는 경우
+
+### 3.5 하이퍼파라미터와 탐색 방식
+
+Phase 2는 “모든 모델 × 모든 하이퍼파라미터의 exhaustive search”를 수행하지 않는다.
+대신 **family별 preset search + variant 비교 + 승격 정책**으로 운영 가능한 탐색 구조를 만든다.
+
+#### 탐색 단위
+
+- feature variant
+- search preset
+- model family
+
+즉 하나의 trial은 대략 다음 조합으로 정의된다.
+
+- `family × feature_variant × search_preset`
+
+#### Family별 조정 예시
+
+- `unsupervised`
+  - contamination
+  - latent dimension
+  - hidden width
+  - epoch / learning rate
+- `supervised`
+  - class weight
+  - sampling 정책(SMOTE 여부 등)
+  - estimator 후보와 CV 설정
+- `transformer`
+  - hidden size
+  - head 수
+  - dropout
+  - epoch / batch size
+- `sequence`
+  - sequence length
+  - hidden size
+  - recurrent depth
+  - stride / context column 사용 여부
+- `timeseries / relational / duplicate / intercompany`
+  - window size
+  - min frequency
+  - tolerance
+  - matching threshold
+  - proxy scoring weight
+- `stacking`
+  - base family selection
+  - OOF 사용 여부
+  - meta learner 입력 조합
+
+#### 승격 정책
+
+각 family의 최고 점수 trial을 무조건 승격하지 않고, 다음 조건을 함께 본다.
+
+- 최소 completed trial 수
+- 최소 metric 기준
+- 최소 search 다양성
+- 최대 failed trial 비율
+- registry version 또는 artifact 존재 여부
+
+즉 “한 번 우연히 잘 나온 trial”은 승격에서 제외될 수 있다.
+
+Rule-style family는 일반 AUC 대신 `rule_proxy_score` 성격의 정규화 점수를 사용해 leaderboard에 올린다.
+
+### 3.6 Train / Infer 계약
+
+#### Train (`phase2-train`)
+
+1. 라벨 가용성 판정
+2. feature frame 생성
+3. feature variant 생성
+4. family별 trial queue 구성
+5. trial 실행
+6. leaderboard 정렬
+7. promoted model 선정
+8. training report / promotion policy / inference contract 저장
+
+#### Infer (`phase2-infer`)
+
+1. 최신 또는 지정된 training report 확인
+2. promoted model 및 required family 확인
+3. family별 detector 실행
+4. detector status, registry version, sub detector 정보 기록
+5. 최종 phase2 score 생성
+
+이 구조 덕분에 추론 시점에는 “그때그때 가장 최근 모델을 대충 불러오는 방식”이 아니라, **학습 리포트에서 승격된 정확한 버전**을 기준으로 운영할 수 있다.
+
+### 3.7 Provenance
+
+Phase 2는 결과만 남기지 않고, 어떤 계약으로 돌았는지까지 남긴다.
+
+핵심 메타데이터:
+- `phase2_training_report_id`
+- `phase2_inference_contract`
+- `phase2_promotion_policy`
+- `phase2_inference_mode`
+- `detector_statuses_json`
+
+추론 모드 예시:
+- `training_contract`: 승격 모델 기반 정상 운영
+- `cold_start_bootstrap`: 초기 모델 부재 시 예외적 cold-start 실행
+- `untrained_contract_only`: 학습 계약은 있으나 실제 추론 승격 모델이 없는 상태
+
+이 provenance는 DB 저장, 복원, export, Phase 3 insight prompt까지 연결된다.
+
+### 3.8 해석 기준
+
+Phase 2 결과는 “유형 A detector가 유형 A만 잡는다”는 의미로 해석하지 않는다.
+대신 다음처럼 해석한다.
+
+- 특정 family가 높다: 그 family가 잘 포착하는 구조적 이상 신호가 강하다
+- 여러 family가 동시에 높다: 단일 룰보다 더 강한 복합 이상 정황일 수 있다
+- stacking이 높다: 개별 family 신호가 메타 레벨에서 일관되게 위험하다고 본 경우다
+
+즉 Phase 2는 **룰 기반 판단을 보완하는 모델 계층**이며, 감사인의 후속 검토 우선순위를 정밀화하는 역할을 한다.
+
+### 3.9 후속 고도화
+
+향후 확장 방향은 다음과 같다.
+
+- family 내부 탐색 공간 확대
+- feature variant 세분화
+- promotion policy 추가 강화
+- 도메인 특화 reference / counterparty feature 확장
+- 실제 운영 데이터 기준 재학습 정책 고도화
+
+현재 구현의 목표는 “완전 탐색 AutoML”이 아니라, **설명 가능하고 추적 가능한 Phase 2 운영 구조**를 만드는 데 있다.
 
 ## 4. Phase 3: NLP + 그래프 (5개 유형, 미구현)
 

@@ -41,7 +41,7 @@
 |-----|---------------------|-----------------------------------------------------------------|---------------------------------------------------|------|
 | 0   | 데이터셋 수집·선정  | `data/journal/`, 32개 검토                                      | [00-dataset](pre-plan/00-dataset.md)              | ✅   |
 | 0a  | DataSynth 빌드      | `tools/datasynth/` (Rust, EY-ASU)                               | [00-dataset](pre-plan/00-dataset.md)              | ✅   |
-| 0b  | 메인 데이터 생성    | `data/journal/primary/datasynth/` (1,106K건, v21 확정)          | [00-dataset](pre-plan/00-dataset.md)              | ✅   |
+| 0b  | 메인 데이터 생성    | `data/journal/primary/datasynth/` (1,109K건, v20.4 운영 기준본) | [00-dataset](pre-plan/00-dataset.md)              | ✅   |
 | 1   | 프로젝트 초기화     | `pyproject.toml`, `.gitignore`, `.env.example`                  | [01-project-setup](pre-plan/01-project-setup.md)  | ✅   |
 | 2   | 설정 레이어         | `config/settings.py`, YAML 3종 + `datasynth.yaml`              | [01-project-setup](pre-plan/01-project-setup.md)  | ✅   |
 | 3   | 샘플 데이터 생성기  | DataSynth로 대체 (10-sample-data 불필요)                        | -                                                 | ✅   |
@@ -212,7 +212,7 @@ WU1 (기반 컴포넌트) ──── 반드시 최초 실행
 
 ### Phase 2 준비: DataSynth 확장 (한국 실무 맞춤 컬럼 추가)
 
-> DataSynth v21 확정 (Phase 1 Recall 91.4%, Normal 85.2%). 아래는 Phase 2 탐지 룰의 **선행 의존**.
+> 현재 운영 기준본은 DataSynth `v20.4`이다. 아래는 Phase 2 탐지 룰의 **선행 의존**이다.
 
 | 태스크                             | 파일                                                              | 가이드                                                               | 상태 |
 |------------------------------------|-------------------------------------------------------------------|----------------------------------------------------------------------|------|

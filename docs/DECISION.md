@@ -48,11 +48,11 @@
   - **ACFE Fraud Tree**: 49개 부정 scheme → 디지털 전표 환경으로 확장
   - **PCAOB AS 2401 / ISA 240 / COSO 2013 / SOX 302·404**: 실무 감사기준 코드 구현
   - **Schreyer & Sattarov 연구** (arXiv 1709.05254, 1908.00734): 전표 이상치 분류 학술 표준
-  - 이 세 프레임워크의 교차 설계로 132개 유형 정의, 우리 데이터에 61개 유형(fraud 15 + anomaly 46) · 8,337건 labels.csv + entry 14,556건(fraud+anomaly) 주입
-- **도구 최신성**: DataSynth 레포 2025-01경 최종 활동(v1.2.0, 506커밋). 우리 데이터는 2026-04-14 최종 재빌드·생성 (라벨-entry 동기화 + MCAR 근본 수정 반영) → 최신 코드 기반 출력물 보장
+  - 이 세 프레임워크의 교차 설계를 바탕으로 현재 운영 기준본에서도 fraud/anomaly/SoD와 별도 `anomaly_labels.csv`를 함께 유지한다. 세부 주입 수치는 freeze 메모 기준으로 관리한다.
+- **도구 최신성**: DataSynth 레포 기반 프로젝트 fork를 계속 보정 중이며, 현재 실사용 기준본은 2026-04-21 동결 `v20.4`이다. 라벨/CoA/approval join/문서번호/approval-limit 정합성까지 반영한 운영 기준본을 유지한다.
 - **대안 검토**: 실제 SAP 데이터(sap-merged 332K)는 이상치 레이블 1%뿐, Schreyer(533K)는 날짜 없음+전부 익명화, BPI 2019(1.6M)는 전표가 아닌 이벤트 로그
 - **생성 설정**: `config/datasynth.yaml` (seed 2024, 36개월, 3회사, fraud 2%)
-- **결과**: 1,107,720라인(319,204전표), 44컬럼, fraud 1.96%, anomaly 2.60% + anomaly_labels.csv 8,337건
+- **현재 기준 결과**: 1,109,221라인(319,226전표), 44컬럼, `anomaly_labels.csv` 1,912건, `accounts_count` 437, `employee_count` 246
 
 ### D011: 24개 룰 L1/L2/L3/L4 체계 확정
 - **결정**: 기존 R001~R008(8개 룰 + Benford) 체계를 폐기하고, DataSynth 52개 anomaly 유형에서 3축 평가(법규 근거 × FSS 실증 × 데이터 가용성)로 선별한 24개 룰 L1/L2/L3/L4 체계로 전면 재설계
@@ -259,14 +259,15 @@
 - **탭 순서**: EDA → Summary → Benford → Explorer (데이터 품질 확인이 분석보다 선행)
 - **구현 파일**: `app.py`(신규), `tab_eda.py`(신규), `eda_charts.py`(신규), `_state.py`(수정), `data_uploader.py`(수정)
 
-### D036: DataSynth v21 확정 — Phase 1 룰 기반 탐지 수렴 판정
-- **결정**: DataSynth v21(1,106,056행)을 Phase 1 최종 데이터로 확정. 추가 수정 중단.
+### D036: DataSynth v20.4 운영 기준 확정
+- **결정**: `data/journal/primary/datasynth/`를 현재 운영 기준본 `v20.4`로 확정. Phase 1/2/3 기본 데이터는 이 경로를 따른다.
 - **이유**:
-  - Phase 1 Recall 91.4%, Normal 85.2%, L1-06 1.9% — 21회 반복 수렴 확인
-  - 잔여 FN 19건은 소수 라벨 룰의 난수 진동 (매 생성마다 변동)
-  - 구조적 한계 FN ~1,822건(L2-03/L3-03/L4-04/L4-02)은 Phase 2 ML 영역
-  - 추가 수정 시 Recall +0.7%p 상한 — 비용 대비 효익 미미
-- **상세**: [rule-label-gap-analysis.md](../tests/phase1_rulebase/test-results/rule-label-gap-analysis.md)
+  - V20: A04/B04/B10 및 IC CoA 정합성 보정
+  - V20.1: MisclassifiedAccount가 InvalidAccount를 오염시키던 비CoA 계정 치환 문제 제거
+  - v20.3: `created_by`/`approved_by`와 `employees.user_id` 조인 복구
+  - v20.4: `ExceededApprovalLimit`를 `approved_by.approval_limit` 기준으로 정정
+  - `document_number` 100% 문자열 채움, approval violation `0`, B04 JE 지급쌍 복원 가능
+- **상세**: [FREEZE_V20.md](../data/journal/primary/datasynth/FREEZE_V20.md)
 
 ### D035: type_caster 정규화 규칙 외부화 — cleaning.yaml
 - **결정**: `type_caster.py`에 하드코딩된 통화 기호·null 값·불리언·Excel serial 범위·DC 지시자를 `config/cleaning.yaml`로 분리. 과학적 표기법(2E+11) 감지/복원과 한국 ERP null 표현(`미정`, `해당없음`) 지원 추가

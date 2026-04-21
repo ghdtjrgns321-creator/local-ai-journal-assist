@@ -1,5 +1,7 @@
 # DataSynth 양방향 품질 감사 결과
 
+> 역사 문서. 현재 실사용 기준본은 `data/journal/primary/datasynth/`의 `v20.3` freeze다. 아래 수치는 2026-04-01 당시의 DataSynth 상태를 기록한 것이다.
+
 > 실행일: 2026-04-01  
 > 스크립트: `tools/dual_audit_v2.py`  
 > 데이터: `data/journal/primary/datasynth/journal_entries.csv` (1,134,339행 / 106,547개 문서)  

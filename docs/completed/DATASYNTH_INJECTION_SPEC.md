@@ -39,7 +39,9 @@ fn apply_strategy(&self, entry: &mut JournalEntry, anomaly_type: AnomalyType, rn
 
 ```
 BackdatedEntry           9/9     diff>30d
-ExceededApprovalLimit   20/20    threshold_match
+ExceededApprovalLimit   historical threshold_match
+
+> 2026-04-21 이후 운영 기준본(`v20.4`)에서는 `ExceededApprovalLimit`를 threshold 기반이 아니라 `document amount > approved_by.approval_limit`로 정정했다.
 ImproperCapitalization  11/11    15xx+6xx (Python 후처리로 수정된 상태 → Rust에서 해결 필요)
 InvalidAccount           2/2     invalid_gl (Python 후처리 → Rust)
 JustBelowThreshold      29/29    threshold_match

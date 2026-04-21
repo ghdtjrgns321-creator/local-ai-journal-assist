@@ -328,7 +328,7 @@ def t3_11(con: duckdb.DuckDBPyConnection) -> CheckResult:
 
 
 def t3_12(con: duckdb.DuckDBPyConnection) -> CheckResult:
-    """employee approval_limit — 전표 금액 > limit (금액 변형 anomaly 제외)."""
+    """approved_by approval_limit — 전표 금액 > 승인권자 limit (금액 변형 anomaly 제외)."""
     s = time.perf_counter()
     try:
         con.execute("SELECT 1 FROM _employees LIMIT 1")
@@ -338,22 +338,23 @@ def t3_12(con: duckdb.DuckDBPyConnection) -> CheckResult:
     # Why: BenfordViolation 등 금액 변형 anomaly는 의도적 극단값이므로 제외
     excl = _get_excluded_doc_ids(con, ["ExceededApprovalLimit", "BenfordViolation"])
     _register_exclusion(con, "_excl_limit", excl)
-    # 전표별 최대금액 vs 작성자 limit
+    # 전표별 최대금액 vs 승인권자 limit
     violated = con.execute("""
         SELECT COUNT(*) FROM (
             SELECT j.document_id
             FROM je j
-            JOIN _employees e ON j.created_by = e.user_id
+            JOIN _employees e ON j.approved_by = e.user_id
             WHERE j.document_id NOT IN (SELECT document_id FROM _excl_limit)
+              AND j.approved_by IS NOT NULL
               AND e.approval_limit IS NOT NULL
             GROUP BY j.document_id, e.approval_limit
-            HAVING MAX(j.debit_amount + j.credit_amount) > CAST(e.approval_limit AS BIGINT)
+              HAVING MAX(j.debit_amount + j.credit_amount) > CAST(e.approval_limit AS BIGINT)
         )
     """).fetchone()[0]
     return CheckResult(
         check_id="T3-12", tier=3, name="approval_limit",
         status="PASS" if violated == 0 else "FAIL",
-        expected="초과=0 (금액변형 anomaly 제외)", actual=f"{violated:,}건",
+        expected="승인권자 한도 초과=0 (금액변형 anomaly 제외)", actual=f"{violated:,}건",
         elapsed_ms=_elapsed(s),
     )
 

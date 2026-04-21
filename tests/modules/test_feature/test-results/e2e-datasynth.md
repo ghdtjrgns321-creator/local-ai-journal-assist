@@ -1,5 +1,7 @@
 # DataSynth E2E 테스트 결과 (ingest → feature)
 
+> 역사 문서. 현재 실사용 기준본은 `data/journal/primary/datasynth/`의 `v20.3` freeze다. 아래 수치는 2026-03-30 당시의 DataSynth 상태를 기록한 것이다.
+
 > 실행일: 2026-03-30 17:02
 
 ## 1. 요약

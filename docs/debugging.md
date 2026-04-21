@@ -2,6 +2,8 @@
 
 트러블슈팅 히스토리. 발생한 문제와 해결 과정을 기록하여 같은 실수를 반복하지 않기 위한 문서.
 
+> 이 문서는 시점별 디버깅 기록이다. 현재 실사용 DataSynth 기준본은 `data/journal/primary/datasynth/`의 `v20.3` freeze이며, 과거 DataSynth 수치와 핫픽스 설명은 기록 시점 기준일 수 있다.
+
 ---
 
 ## 2026-04-18: Streamlit UI 리팩터링 중 반복 실수 정리
