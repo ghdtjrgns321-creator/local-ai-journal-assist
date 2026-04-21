@@ -2,10 +2,13 @@
 from __future__ import annotations
 import pandas as pd
 import numpy as np
+import json
 
 PROJECT = "C:/Users/ghdtj/workspace/portfolio/local-ai-assist"
 df = pd.read_csv(f"{PROJECT}/data/journal/primary/datasynth/journal_entries.csv", low_memory=False)
 labels = pd.read_csv(f"{PROJECT}/data/journal/primary/datasynth/labels/anomaly_labels.csv")
+employees = json.load(open(f"{PROJECT}/data/journal/primary/datasynth/master_data/employees.json", encoding="utf-8"))
+employee_by_user = {str(e["user_id"]): e for e in employees}
 coa_raw = pd.read_csv(f"{PROJECT}/config/chart_of_accounts.csv")["gl_account"].dropna()
 coa = set()
 for g in coa_raw:
@@ -211,18 +214,32 @@ for atype in sorted(labels["anomaly_type"].unique()):
                 ok += 1
         check = f"future={ok}/{n}"
 
-    elif atype in ("JustBelowThreshold", "ExceededApprovalLimit"):
+    elif atype == "JustBelowThreshold":
         thresholds = [10e6, 100e6, 1e9, 5e9, 10e9, 50e9]
         for did in docs:
             d = sub[sub["document_id"] == did]
             base = d[["debit_amount", "credit_amount"]].max(axis=1).max()
-            if atype == "JustBelowThreshold":
-                if any(t * 0.9 <= base < t for t in thresholds):
-                    ok += 1
-            else:
-                if base >= 10e6:
-                    ok += 1
+            if any(t * 0.9 <= base < t for t in thresholds):
+                ok += 1
         check = f"threshold_match={ok}/{n}"
+
+    elif atype == "ExceededApprovalLimit":
+        for did in docs:
+            d = sub[sub["document_id"] == did]
+            if d.empty:
+                continue
+            approver = str(d["approved_by"].iloc[0]) if pd.notna(d["approved_by"].iloc[0]) else ""
+            employee = employee_by_user.get(approver)
+            if not approver or employee is None:
+                continue
+            try:
+                approval_limit = float(employee.get("approval_limit") or 0)
+            except (TypeError, ValueError):
+                continue
+            base = (d["debit_amount"].fillna(0) + d["credit_amount"].fillna(0)).max()
+            if base > approval_limit:
+                ok += 1
+        check = f"approved_by_limit={ok}/{n}"
 
     elif atype == "UnusualAccountPair":
         ok = -1

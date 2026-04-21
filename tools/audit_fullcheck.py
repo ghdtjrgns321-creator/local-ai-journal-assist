@@ -3,10 +3,13 @@ from __future__ import annotations
 
 import pandas as pd
 import numpy as np
+import json
 
 PROJECT = "C:/Users/ghdtj/workspace/portfolio/local-ai-assist"
 df = pd.read_csv(f"{PROJECT}/data/journal/primary/datasynth/journal_entries.csv", low_memory=False)
 labels = pd.read_csv(f"{PROJECT}/data/journal/primary/datasynth/labels/anomaly_labels.csv")
+employees = json.load(open(f"{PROJECT}/data/journal/primary/datasynth/master_data/employees.json", encoding="utf-8"))
+employee_by_user = {str(e["user_id"]): e for e in employees}
 
 try:
     coa_raw = pd.read_csv(f"{PROJECT}/config/chart_of_accounts.csv")["gl_account"].dropna()
@@ -191,10 +194,20 @@ for atype in sorted(label_map.keys()):
     elif atype == "ExceededApprovalLimit":
         for did in docs:
             d = sub[sub["document_id"] == did]
-            amt = d[["debit_amount", "credit_amount"]].max(axis=1).max()
-            if amt >= thresholds[0]:
+            if d.empty:
+                continue
+            approver = str(d["approved_by"].iloc[0]) if pd.notna(d["approved_by"].iloc[0]) else ""
+            employee = employee_by_user.get(approver)
+            if not approver or employee is None:
+                continue
+            try:
+                approval_limit = float(employee.get("approval_limit") or 0)
+            except (TypeError, ValueError):
+                continue
+            amt = (d["debit_amount"].fillna(0) + d["credit_amount"].fillna(0)).max()
+            if amt > approval_limit:
                 ok += 1
-        check = f"exceeds_10M={ok}/{n}"
+        check = f"approved_by_limit={ok}/{n}"
 
     elif atype == "BackdatedEntry":
         for did in docs:
