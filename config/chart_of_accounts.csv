@@ -1,4 +1,4 @@
-gl_account,account_name_kr
+﻿gl_account,account_name_kr
 1000,현금
 100000,현금 및 현금성자산
 100010,보통예금
@@ -85,6 +85,9 @@ gl_account,account_name_kr
 1030,재고자산
 1100,단기투자자산
 1150,단기대여금
+115001,IC Receivable - C001
+115002,IC Receivable - C002
+115003,IC Receivable - C003
 1150C0,대손충당금(단기대여금)
 1160,미수금
 1190,기타유동자산
@@ -174,6 +177,9 @@ gl_account,account_name_kr
 200650,유동부채 합계조정
 200660,이연수익(유동)
 2050,단기차입금
+205001,IC Payable - C001
+205002,IC Payable - C002
+205003,IC Payable - C003
 2050C0,유동성장기부채
 2100,장기차입금
 2110,사채
@@ -189,8 +195,52 @@ gl_account,account_name_kr
 2700,금융리스부채(비유동)
 2900,기타비유동부채
 299999,부채총계조정
+3000,Common Stock
+300000,Common Stock 1
+300010,Common Stock 2
+300020,Common Stock 3
+300030,Common Stock 4
+300040,Common Stock 5
+300050,Common Stock 6
+300060,Common Stock 7
+300070,Common Stock 8
+300080,Retained Earnings 1
+300090,Retained Earnings 2
+300100,Retained Earnings 3
+300110,Retained Earnings 4
+300120,Retained Earnings 5
+300130,Retained Earnings 6
+300140,Retained Earnings 7
+300150,Retained Earnings 8
+300160,Retained Earnings 9
+300170,Retained Earnings 10
+300180,Retained Earnings 11
+300190,Retained Earnings 12
+300200,APIC 1
+300210,APIC 2
+300220,APIC 3
+300230,APIC 4
+300240,APIC 5
+300250,APIC 6
+300260,APIC 7
+300270,APIC 8
+300280,OCI 1
+300290,OCI 2
+300300,OCI 3
+300310,OCI 4
+300320,OCI 5
+300330,OCI 6
+300340,OCI 7
+300350,OCI 8
+300360,OCI 9
+300370,OCI 10
+300380,OCI 11
+300390,OCI 12
 3100,자본금
 3200,이익잉여금
+3300,Current Year Earnings
+3400,Treasury Stock
+3500,Currency Translation Adjustment
 399999,자본총계조정
 4000,매출
 400000,제품매출

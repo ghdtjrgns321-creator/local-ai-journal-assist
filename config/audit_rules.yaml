@@ -10,6 +10,50 @@ patterns:
     - "Manual"
     - "Adjustment"
 
+  # L1-05: only system-driven self-approval is allowed by default.
+  # Approval omission is handled by L1-07, so this section only defines explicit allow cases.
+  self_approval_allow:
+    user_personas:
+      - "automated_system"
+    company_codes: []
+    sources:
+      - "automated"
+
+  # L1-05: human self-approval is always detected, but some areas default to review-required
+  # instead of immediate violation. Adjust these buckets per client policy.
+  self_approval_review:
+    company_codes: []
+    document_types: []
+    business_processes:
+      - "R2R"
+      - "A2R"
+
+  # L1-05: even in review-eligible processes, escalate to immediate violation
+  # when the self-approval is too large, happens in abnormal time, or touches
+  # accounts that should not be self-approved.
+  self_approval_immediate_override:
+    # Performance materiality placeholder.
+    # 1,000,000,000 KRW is not a universal "correct" threshold.
+    # Replace this with the engagement-specific performance materiality
+    # as soon as the audit team finalizes it.
+    materiality_amount: 1000000000
+    # "Large manual JE" escalation applies only to manual/adjustment sources.
+    manual_sources:
+      - "manual"
+      - "adjustment"
+    # Exact high-risk accounts. These are conservative starter defaults only.
+    # Customize to the client's CoA.
+    high_risk_accounts:
+      - "1190"   # 가지급금
+      - "2190"   # 가수금
+    # Prefix-based high-risk accounts. Conservative starter defaults for
+    # cash / cash-equivalent style accounts in common KR CoA layouts.
+    # Customize to the client's CoA.
+    high_risk_account_prefixes:
+      - "111"
+      - "112"
+      - "113"
+
   # L4-01: 매출 계정 접두사 (K-IFRS 기준 4xxx가 표준)
   # 영업외수익(9), 글로벌 본사 기준(5) 등 추가 가능
   revenue_account_prefixes:
@@ -37,6 +81,16 @@ patterns:
 
   # Rule A: 직급별 프로세스 수 임계값 (toxic pair 미해당 시 적용)
   # value = 초과 시 위반 (예: junior 1 → 2개 이상이면 위반)
+  # 운영 기본값은 교과서적 SoD 4기능
+  # (승인/기록/자산보관/조정)을 현재 프로세스 체계에 매핑한 6쌍을 사용한다.
+  sod_toxic_pairs:
+    - ["TRE", "P2P"]    # 지급 실행 + 매입/지급 처리
+    - ["TRE", "O2C"]    # 자금 이동/수납 통제 + 매출채권/수금 처리
+    - ["TRE", "H2R"]    # 급여 처리 + 실제 지급/은행 통제
+    - ["R2R", "TRE"]    # 총계정원장/분개 + 자금/은행 통제
+    - ["R2R", "P2P"]    # 총계정원장/분개 + 매입채무 처리
+    - ["R2R", "O2C"]    # 총계정원장/분개 + 매출채권/수금 처리
+
   sod_role_thresholds:
     junior_accountant: 1     # 1인 1프로세스 전담
     senior_accountant: 3     # 기본 1 + 겸직 2까지 허용
