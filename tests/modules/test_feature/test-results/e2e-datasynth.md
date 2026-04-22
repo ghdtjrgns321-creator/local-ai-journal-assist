@@ -52,3 +52,4 @@
 | pattern  | 성공     |      4.734 |       5 |
 | text     | 성공     |      3.969 |       2 |
 | **합계** |        |     10.344 |      19 |
+> Historical report. Current production DataSynth baseline is `data/journal/primary/datasynth/` freeze `v23` as of 2026-04-22.

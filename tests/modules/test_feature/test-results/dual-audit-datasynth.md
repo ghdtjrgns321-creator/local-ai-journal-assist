@@ -138,3 +138,4 @@ DataSynth가 JE를 생성할 때 사용한 `created_by` 식별자 포맷이 `emp
 | 정상 데이터 오염            | L1-01 8건(문서), L1-07 1,005행(488 문서)               |
 | 주요 DataSynth 설계 결함    | L2-01 user_id 불일치, L3-07/L1-08 날짜 동시수정, L2-06 패턴1 |
 | L3-08/L2-06 낮은 검증률         | 코드 버그 아님 — DataSynth 주입 방식과 탐지 로직 간 갭 |
+> Historical report. Current production DataSynth baseline is `data/journal/primary/datasynth/` freeze `v23` as of 2026-04-22.

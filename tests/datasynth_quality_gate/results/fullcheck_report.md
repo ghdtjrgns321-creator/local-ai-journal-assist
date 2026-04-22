@@ -368,3 +368,4 @@
 ## 부록: 기존 품질게이트 비교
 - `tests/datasynth_quality_gate/results/quality_report.md` (T1~T6, 2026-04-07): 본 리포트와 일관성 확인됨
 - 본 리포트는 감사인 관점의 6개 영역(구조/정량/정성/탐지/품질/마스터) 종합 분석
+> Historical report. Current production DataSynth baseline is `data/journal/primary/datasynth/` freeze `v23` as of 2026-04-22.
