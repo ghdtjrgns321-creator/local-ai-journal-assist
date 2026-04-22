@@ -84,7 +84,7 @@ class TestFraudLayerDetect:
         result = layer.detect(full_df)
         # 11개 룰 중 일부는 피처/컬럼 부재로 skip될 수 있음
         assert len(result.rule_flags) > 0
-        assert len(result.rule_flags) <= 11
+        assert len(result.rule_flags) <= 10
 
     def test_b01_flags_revenue_outlier(self, full_df: pd.DataFrame) -> None:
         """L4-01: 매출+zscore>3 행이 flagged."""
@@ -110,9 +110,35 @@ class TestFraudLayerDetect:
         assert breakdown["immediate_rows"] == 1
         assert breakdown["review_rows"] == 1
         assert breakdown["override_counts"]["escalated_rows"] == 0
+        assert breakdown["observed_summary"]["group_key"] == [
+            "created_by",
+            "business_process",
+            "posting_month",
+        ]
+        assert isinstance(breakdown["observed_summary"]["top_groups"], list)
 
         l105_flag = next(flag for flag in result.rule_flags if flag.rule_id == "L1-05")
         assert l105_flag.detail == "immediate=1, review=1"
+
+    def test_l107_breakdown_metadata_exposes_immediate_and_review(self) -> None:
+        layer = FraudLayer()
+        df = pd.DataFrame({
+            "debit_amount": [20_000_000.0, 20_000_000.0],
+            "credit_amount": [0.0, 0.0],
+            "exceeds_threshold": [True, True],
+            "source": ["Manual", "recurring"],
+            "approved_by": ["", ""],
+            "approval_date": [None, None],
+        })
+
+        result = layer.detect(df)
+        breakdown = result.metadata["rule_breakdowns"]["L1-07"]
+        assert breakdown["immediate_rows"] == 1
+        assert breakdown["review_rows"] == 1
+
+        l107_flag = next(flag for flag in result.rule_flags if flag.rule_id == "L1-07")
+        assert l107_flag.detail == "immediate=1, review=1"
+        assert result.details["L1-07"].tolist() == [0.8, 0.4]
 
     def test_flagged_indices_match_scores(self, full_df: pd.DataFrame) -> None:
         """flagged_indices와 scores > 0 일치 확인."""
@@ -120,3 +146,40 @@ class TestFraudLayerDetect:
         result = layer.detect(full_df)
         expected = result.scores[result.scores > 0].index.tolist()
         assert sorted(result.flagged_indices) == sorted(expected)
+
+    def test_l203_row_annotations_expose_reason_code_and_confidence(self) -> None:
+        layer = FraudLayer()
+        df = pd.DataFrame({
+            "document_id": ["D100", "D101"],
+            "auxiliary_account_number": ["V001", "V001"],
+            "reference": ["INV-2025-001", "INV-2025-001"],
+            "gl_account": [5100, 5100],
+            "debit_amount": [5_000_000.0, 5_020_000.0],
+            "credit_amount": [0.0, 0.0],
+            "posting_date": pd.to_datetime(["2025-01-01", "2025-01-04"]),
+        })
+
+        result = layer.detect(df)
+        annotations = result.metadata["row_annotations"]["L2-03"]
+        assert annotations[0]["reason_code"] == "reference_duplicate"
+        assert annotations[0]["confidence"] >= 0.9
+        assert annotations[0]["confidence_band"] == "high"
+        assert result.details["L2-03"].iloc[0] >= 0.9
+
+    def test_l204_breakdown_and_annotations_expose_review_queue(self) -> None:
+        layer = FraudLayer()
+        df = pd.DataFrame({
+            "document_id": ["D001", "D001"],
+            "gl_account": ["1500", "6100"],
+            "debit_amount": [5_000_000.0, 0.0],
+            "credit_amount": [0.0, 5_000_000.0],
+        })
+
+        result = layer.detect(df)
+        breakdown = result.metadata["rule_breakdowns"]["L2-04"]
+        assert breakdown["immediate_rows"] == 0
+        assert breakdown["review_rows"] == 2
+        annotations = result.metadata["row_annotations"]["L2-04"]
+        assert annotations[0]["reason_code"] == "line_amount_match"
+        assert annotations[0]["queue_label"] == "review"
+        assert result.details["L2-04"].iloc[0] == pytest.approx(0.65)

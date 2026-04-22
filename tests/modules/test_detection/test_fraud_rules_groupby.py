@@ -1,4 +1,4 @@
-"""L2-02, L2-03, L2-04 groupby 기반 룰 단위 테스트."""
+"""Unit tests for groupby-based rules."""
 
 from __future__ import annotations
 
@@ -14,60 +14,60 @@ from src.detection.fraud_rules_groupby import (
 
 @pytest.fixture
 def dup_payment_df() -> pd.DataFrame:
-    """L2-02 테스트: P2P 프로세스, 동일 거래처+금액, reference 있음/없음."""
+    """Baseline L2-02 fixture with same partner and amount."""
+
     return pd.DataFrame({
+        "document_id": ["D001", "D002", "D003", "D004"],
+        "document_type": ["KZ", "KZ", "KZ", "KZ"],
         "auxiliary_account_number": ["V001", "V001", "V001", "V002"],
         "debit_amount": [1e6, 1e6, 1e6, 2e6],
         "credit_amount": [0.0, 0.0, 0.0, 0.0],
         "posting_date": pd.to_datetime([
             "2025-01-01",
-            "2025-01-10",  # 9일 후
-            "2025-03-01",  # 50일 후
+            "2025-01-10",
+            "2025-03-01",
             "2025-01-05",
         ]),
         "business_process": ["P2P", "P2P", "P2P", "P2P"],
-        # reference NULL → fallback 경로
     })
 
 
 @pytest.fixture
 def dup_entry_df() -> pd.DataFrame:
-    """L2-03 테스트: 동일 GL+금액+날짜 exact match."""
+    """Baseline L2-03 fixture."""
+
     return pd.DataFrame({
+        "document_id": ["D001", "D002", "D003", "D004"],
+        "auxiliary_account_number": ["V001", "V001", "V001", "V002"],
+        "line_text": ["Laptop purchase", "Laptop purchase", "Office chair", "Office chair"],
+        "reference": ["REF-1", "REF-1", "", ""],
         "gl_account": [1000, 1000, 1000, 2000],
         "debit_amount": [500.0, 500.0, 500.0, 500.0],
         "credit_amount": [0.0, 0.0, 0.0, 0.0],
         "posting_date": pd.to_datetime([
-            "2025-01-01",  # 중복 1
-            "2025-01-01",  # 중복 2
-            "2025-01-02",  # 날짜 다름 → 비중복
-            "2025-01-01",  # GL 다름 → 비중복
+            "2025-01-01",
+            "2025-01-01",
+            "2025-01-02",
+            "2025-01-01",
         ]),
     })
 
 
-# ── L2-02 중복 지급 ─────────────────────────────────────────
-
-
-class TestL2-02:
+class TestL2_02:
     def test_within_window_flagged(self, dup_payment_df: pd.DataFrame) -> None:
-        """30일 내 동일 거래처+금액 → 양쪽 모두 flagged."""
-        result = b04_duplicate_payment(dup_payment_df, window_days=30)
-        assert result[0]   # 첫 번째 (backward diff로 포착)
-        assert result[1]   # 두 번째 (forward diff로 포착)
+        result = b04_duplicate_payment(dup_payment_df, window_days=45)
+        assert result[1]
+        assert not result[0]
 
     def test_outside_window_not_flagged(self, dup_payment_df: pd.DataFrame) -> None:
-        """30일 초과 간격 → not flagged."""
-        result = b04_duplicate_payment(dup_payment_df, window_days=30)
-        assert not result[2]  # 45일 간격
+        result = b04_duplicate_payment(dup_payment_df, window_days=45)
+        assert not result[2]
 
     def test_different_vendor_not_flagged(self, dup_payment_df: pd.DataFrame) -> None:
-        """다른 거래처 → not flagged."""
-        result = b04_duplicate_payment(dup_payment_df, window_days=30)
-        assert not result[3]  # V002 단독
+        result = b04_duplicate_payment(dup_payment_df, window_days=45)
+        assert not result[3]
 
-    def test_missing_column_skip(self) -> None:
-        """auxiliary_account_number 미존재 → 모두 False."""
+    def test_missing_partner_columns_skip(self) -> None:
         df = pd.DataFrame({
             "debit_amount": [100.0],
             "credit_amount": [0.0],
@@ -76,32 +76,38 @@ class TestL2-02:
         assert not b04_duplicate_payment(df).any()
 
     def test_triple_duplicate_all_flagged(self) -> None:
-        """3건 중복 (P2P, NULL reference) → 3건 모두 flagged."""
         df = pd.DataFrame({
+            "document_id": ["D001", "D002", "D003"],
+            "document_type": ["KZ"] * 3,
             "auxiliary_account_number": ["V001"] * 3,
             "debit_amount": [1e6] * 3,
             "credit_amount": [0.0] * 3,
             "posting_date": pd.to_datetime(["2025-01-01", "2025-01-05", "2025-01-20"]),
             "business_process": ["P2P"] * 3,
         })
-        result = b04_duplicate_payment(df, window_days=30)
-        assert result.all()
+        result = b04_duplicate_payment(df, window_days=45)
+        assert not result[0]
+        assert result[1]
+        assert result[2]
 
     def test_exactly_window_boundary_flagged(self) -> None:
-        """정확히 30일 간격 → flagged (<= 이므로 경계 포함)."""
         df = pd.DataFrame({
+            "document_id": ["D001", "D002"],
+            "document_type": ["KZ", "KZ"],
             "auxiliary_account_number": ["V001", "V001"],
             "debit_amount": [1e6, 1e6],
             "credit_amount": [0.0, 0.0],
-            "posting_date": pd.to_datetime(["2025-01-01", "2025-01-31"]),
+            "posting_date": pd.to_datetime(["2025-01-01", "2025-02-15"]),
             "business_process": ["P2P", "P2P"],
         })
-        result = b04_duplicate_payment(df, window_days=30)
-        assert result.all()
+        result = b04_duplicate_payment(df, window_days=45)
+        assert not result[0]
+        assert result[1]
 
     def test_o2c_excluded(self) -> None:
-        """O2C 반복 매출은 L2-02 대상 아님."""
         df = pd.DataFrame({
+            "document_id": ["D001", "D002"],
+            "document_type": ["KZ", "KZ"],
             "auxiliary_account_number": ["C001", "C001"],
             "debit_amount": [1e6, 1e6],
             "credit_amount": [0.0, 0.0],
@@ -111,22 +117,23 @@ class TestL2-02:
         assert not b04_duplicate_payment(df).any()
 
     def test_same_reference_different_doc_flagged(self) -> None:
-        """같은 reference + 다른 document_id → 이중 지급 의심."""
         df = pd.DataFrame({
+            "document_type": ["KZ", "KZ"],
             "auxiliary_account_number": ["V001", "V001"],
-            "debit_amount": [5e6, 5e6],
+            "debit_amount": [5_000_000, 5_020_000],
             "credit_amount": [0.0, 0.0],
             "posting_date": pd.to_datetime(["2025-01-01", "2025-01-15"]),
             "business_process": ["P2P", "P2P"],
             "reference": ["INV-2025-001", "INV-2025-001"],
             "document_id": ["D001", "D002"],
         })
-        result = b04_duplicate_payment(df)
-        assert result.all()
+        result = b04_duplicate_payment(df, reference_amount_tolerance=0.01)
+        assert not result[0]
+        assert result[1]
 
     def test_same_reference_same_doc_not_flagged(self) -> None:
-        """같은 reference + 같은 document_id → 같은 전표의 라인 (정상)."""
         df = pd.DataFrame({
+            "document_type": ["KZ", "KZ"],
             "auxiliary_account_number": ["V001", "V001"],
             "debit_amount": [5e6, 0.0],
             "credit_amount": [0.0, 5e6],
@@ -137,38 +144,157 @@ class TestL2-02:
         })
         assert not b04_duplicate_payment(df).any()
 
+    def test_trading_partner_fallback_used(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D001", "D002"],
+            "document_type": ["KZ", "KZ"],
+            "trading_partner": ["VEND-A", "VEND-A"],
+            "debit_amount": [1e6, 1e6],
+            "credit_amount": [0.0, 0.0],
+            "posting_date": pd.to_datetime(["2025-01-03", "2025-01-25"]),
+            "business_process": ["P2P", "P2P"],
+        })
+        result = b04_duplicate_payment(df, window_days=45)
+        assert not result[0]
+        assert result[1]
 
-# ── L2-03 중복 전표 ─────────────────────────────────────────
+    def test_monthly_recurring_payments_suppressed(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D001", "D002", "D003"],
+            "document_type": ["KZ", "KZ", "KZ"],
+            "auxiliary_account_number": ["V001", "V001", "V001"],
+            "debit_amount": [2_500_000, 2_500_000, 2_500_000],
+            "credit_amount": [0.0, 0.0, 0.0],
+            "posting_date": pd.to_datetime(["2025-01-31", "2025-02-28", "2025-03-31"]),
+            "business_process": ["P2P", "P2P", "P2P"],
+            "reference": [None, None, None],
+        })
+        assert not b04_duplicate_payment(df, window_days=45).any()
+
+    def test_reference_variant_normalization_flagged(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D001", "D002"],
+            "document_type": ["KZ", "KZ"],
+            "auxiliary_account_number": ["V001", "V001"],
+            "debit_amount": [2_950_000, 2_950_000],
+            "credit_amount": [0.0, 0.0],
+            "posting_date": pd.to_datetime(["2025-01-10", "2025-01-16"]),
+            "business_process": ["P2P", "P2P"],
+            "reference": ["PAY:PAY-C001-2025-001", "PAY / PAY-C001-2025-001"],
+        })
+        result = b04_duplicate_payment(df, reference_amount_tolerance=0.01)
+        assert not result[0]
+        assert result[1]
+
+    def test_blank_reference_duplicate_flagged_against_original_reference(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D001", "D002"],
+            "document_type": ["KZ", "KZ"],
+            "auxiliary_account_number": ["V001", "V001"],
+            "debit_amount": [636_680, 636_680],
+            "credit_amount": [0.0, 0.0],
+            "posting_date": pd.to_datetime(["2025-01-05", "2025-01-09"]),
+            "business_process": ["P2P", "P2P"],
+            "reference": ["PAY:PAY-C001-2025-002", ""],
+        })
+        result = b04_duplicate_payment(df, window_days=45)
+        assert not result[0]
+        assert result[1]
+
+    def test_non_kz_documents_excluded(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D001", "D002"],
+            "document_type": ["KR", "KR"],
+            "auxiliary_account_number": ["V001", "V001"],
+            "debit_amount": [1e6, 1e6],
+            "credit_amount": [0.0, 0.0],
+            "posting_date": pd.to_datetime(["2025-01-01", "2025-01-10"]),
+            "business_process": ["P2P", "P2P"],
+            "reference": ["INV-1", "INV-1"],
+        })
+        assert not b04_duplicate_payment(df).any()
 
 
-class TestL2-03:
+class TestL2_03:
     def test_exact_match_flagged(self, dup_entry_df: pd.DataFrame) -> None:
-        """GL+금액+날짜 동일 → 양쪽 flagged."""
         result = b05_duplicate_entry(dup_entry_df)
         assert result[0]
         assert result[1]
+        assert result.attrs["row_annotations"][0]["reason_code"] in {
+            "exact_duplicate",
+            "reference_duplicate",
+        }
+        assert result.attrs["row_annotations"][0]["confidence"] >= 0.9
 
     def test_different_date_not_flagged(self, dup_entry_df: pd.DataFrame) -> None:
-        """날짜만 다름 → not flagged."""
         result = b05_duplicate_entry(dup_entry_df)
         assert not result[2]
 
     def test_different_gl_not_flagged(self, dup_entry_df: pd.DataFrame) -> None:
-        """GL 다름 → not flagged."""
         result = b05_duplicate_entry(dup_entry_df)
         assert not result[3]
+
+    def test_same_document_same_day_not_flagged(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D001", "D001"],
+            "gl_account": [1000, 1000],
+            "debit_amount": [500.0, 500.0],
+            "credit_amount": [0.0, 0.0],
+            "posting_date": pd.to_datetime(["2025-01-01", "2025-01-01"]),
+        })
+        assert not b05_duplicate_entry(df).any()
+
+    def test_same_reference_different_documents_flagged(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D100", "D101"],
+            "auxiliary_account_number": ["V001", "V001"],
+            "reference": ["INV-2025-001", "INV-2025-001"],
+            "gl_account": [5100, 5100],
+            "debit_amount": [5_000_000, 5_020_000],
+            "credit_amount": [0.0, 0.0],
+            "posting_date": pd.to_datetime(["2025-01-01", "2025-01-04"]),
+        })
+        result = b05_duplicate_entry(df, amount_tolerance=0.01)
+        assert result.all()
+        assert result.attrs["row_annotations"][0]["reason_code"] == "reference_duplicate"
+        assert result.attrs["row_annotations"][0]["confidence_band"] == "high"
+
+    def test_fuzzy_text_within_window_flagged(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D200", "D201"],
+            "auxiliary_account_number": ["V001", "V001"],
+            "line_text": ["Cloud hosting Jan invoice", "Invoice for January cloud hosting"],
+            "gl_account": [6200, 6200],
+            "debit_amount": [1_000_000, 1_010_000],
+            "credit_amount": [0.0, 0.0],
+            "posting_date": pd.to_datetime(["2025-01-01", "2025-01-05"]),
+        })
+        result = b05_duplicate_entry(df, amount_tolerance=0.02, fuzzy_threshold=80, window_days=7)
+        assert result.all()
+        assert result.attrs["row_annotations"][0]["reason_code"] == "near_duplicate"
+        assert result.attrs["row_annotations"][0]["confidence_band"] in {"medium", "low"}
+
+    def test_split_entries_flagged(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D300", "D301", "D302"],
+            "auxiliary_account_number": ["V001", "V001", "V001"],
+            "gl_account": [7000, 7000, 7000],
+            "debit_amount": [1_000_000, 600_000, 400_000],
+            "credit_amount": [0.0, 0.0, 0.0],
+            "posting_date": pd.to_datetime(["2025-01-02", "2025-01-03", "2025-01-03"]),
+        })
+        result = b05_duplicate_entry(df, split_window_days=3, amount_tolerance=0.02)
+        assert result.all()
+        assert result.attrs["row_annotations"][0]["reason_code"] == "split_duplicate"
+        assert result.attrs["row_annotations"][0]["confidence"] == pytest.approx(0.75)
 
     def test_missing_column_skip(self) -> None:
         df = pd.DataFrame({"debit_amount": [100.0], "credit_amount": [0.0]})
         assert not b05_duplicate_entry(df).any()
 
 
-# ── L2-04 비용 자산화 ──────────────────────────────────────────
-
-
-class TestL2-04:
+class TestL2_04:
     def test_expense_to_asset_flagged(self) -> None:
-        """동일 전표 내 차변=자산(15xx) + 대변=비용(6xxx) → 전표 전체 flagged."""
         df = pd.DataFrame({
             "document_id": ["D001", "D001", "D002", "D002"],
             "gl_account": ["1500", "6100", "1010", "2000"],
@@ -176,15 +302,22 @@ class TestL2-04:
             "credit_amount": [0.0, 5e6, 0.0, 1e6],
         })
         result = b11_expense_capitalization(df)
-        # D001: 차변 1500(자산) + 대변 6100(비용) → flagged
         assert result[0]
         assert result[1]
-        # D002: 1010(은행) + 2000(매입채무) → not flagged
         assert not result[2]
         assert not result[3]
 
+    def test_expense_prefixes_broadened_beyond_6xxx(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D001", "D001"],
+            "gl_account": ["1520", "5200"],
+            "debit_amount": [3_000_000.0, 0.0],
+            "credit_amount": [0.0, 3_000_000.0],
+        })
+        result = b11_expense_capitalization(df)
+        assert result.all()
+
     def test_no_match_not_flagged(self) -> None:
-        """자산↔비용 조합 없음 → 전체 False."""
         df = pd.DataFrame({
             "document_id": ["D001", "D001"],
             "gl_account": ["1010", "2000"],
@@ -194,7 +327,6 @@ class TestL2-04:
         assert not b11_expense_capitalization(df).any()
 
     def test_asset_debit_only_not_flagged(self) -> None:
-        """차변 자산만 있고 대변 비용 없음 → not flagged."""
         df = pd.DataFrame({
             "document_id": ["D001", "D001"],
             "gl_account": ["1500", "1010"],
@@ -204,7 +336,6 @@ class TestL2-04:
         assert not b11_expense_capitalization(df).any()
 
     def test_expense_credit_only_not_flagged(self) -> None:
-        """대변 비용만 있고 차변 자산 없음 → not flagged."""
         df = pd.DataFrame({
             "document_id": ["D001", "D001"],
             "gl_account": ["6100", "1010"],
@@ -213,30 +344,75 @@ class TestL2-04:
         })
         assert not b11_expense_capitalization(df).any()
 
+    def test_large_amount_gap_not_flagged(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D001", "D001"],
+            "gl_account": ["1500", "6100"],
+            "debit_amount": [5_000_000.0, 0.0],
+            "credit_amount": [0.0, 3_000_000.0],
+        })
+        assert not b11_expense_capitalization(df).any()
+
+    def test_split_expense_lines_flagged_by_subtotal_match(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D001", "D001", "D001"],
+            "gl_account": ["1500", "6100", "6300"],
+            "debit_amount": [5_000_000.0, 0.0, 0.0],
+            "credit_amount": [0.0, 2_000_000.0, 3_000_000.0],
+        })
+        result = b11_expense_capitalization(df)
+        assert result.all()
+
+    def test_custom_account_prefix_config_used(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D001", "D001"],
+            "gl_account": ["1600", "9100"],
+            "debit_amount": [1_500_000.0, 0.0],
+            "credit_amount": [0.0, 1_500_000.0],
+        })
+        audit_rules = {
+            "patterns": {
+                "expense_capitalization": {
+                    "asset_account_prefixes": ["16"],
+                    "expense_account_prefixes": ["9"],
+                }
+            }
+        }
+        result = b11_expense_capitalization(df, audit_rules=audit_rules)
+        assert result.all()
+
+    def test_normal_capex_context_suppresses_flag(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D001", "D001"],
+            "gl_account": ["1500", "6100"],
+            "debit_amount": [5_000_000.0, 0.0],
+            "credit_amount": [0.0, 5_000_000.0],
+            "document_type": ["AA", "AA"],
+            "line_text": ["software development project", "software development project"],
+            "header_text": ["capital project", "capital project"],
+        })
+        assert not b11_expense_capitalization(df).any()
+
+    def test_manual_expense_context_elevates_to_immediate(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D001", "D001"],
+            "gl_account": ["1500", "6100"],
+            "debit_amount": [5_000_000.0, 0.0],
+            "credit_amount": [0.0, 5_000_000.0],
+            "source": ["manual", "manual"],
+            "business_process": ["P2P", "P2P"],
+            "line_text": ["office repair expense", "office repair expense"],
+        })
+        result = b11_expense_capitalization(df)
+        assert result.all()
+        assert result.attrs["row_annotations"][0]["confidence_band"] == "high"
+        assert result.attrs["row_annotations"][0]["queue_label"] == "immediate"
+        assert result.attrs["breakdown"]["immediate_rows"] == 2
+
     def test_missing_column_skip(self) -> None:
-        """document_id 미존재 → 전체 False."""
         df = pd.DataFrame({
             "gl_account": ["1500"],
             "debit_amount": [1e6],
             "credit_amount": [0.0],
         })
         assert not b11_expense_capitalization(df).any()
-
-    def test_multiple_docs_partial_flag(self) -> None:
-        """여러 전표 중 일부만 해당 → 해당 전표만 flagged."""
-        df = pd.DataFrame({
-            "document_id": ["D001", "D001", "D002", "D002", "D003", "D003"],
-            "gl_account": ["1500", "6200", "4000", "1100", "1510", "6000"],
-            "debit_amount": [10e6, 0.0, 0.0, 5e6, 3e6, 0.0],
-            "credit_amount": [0.0, 10e6, 5e6, 0.0, 0.0, 3e6],
-        })
-        result = b11_expense_capitalization(df)
-        # D001: 1500(자산)+6200(비용) → flagged
-        assert result[0]
-        assert result[1]
-        # D002: 4000(매출)+1100(채권) → not
-        assert not result[2]
-        assert not result[3]
-        # D003: 1510(자산)+6000(비용) → flagged
-        assert result[4]
-        assert result[5]

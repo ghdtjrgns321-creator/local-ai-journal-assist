@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import pandas as pd
 
+from src.detection.fraud_rules_access import manual_override_signal_mask
+
 
 def _check_features(df: pd.DataFrame, required: list[str]) -> list[str]:
     """필요 피처 존재 확인. 누락 컬럼 리스트 반환."""
@@ -57,7 +59,7 @@ def b08_manual_override(df: pd.DataFrame) -> pd.Series:
     Why: 감사기준서 240호 A45(b) + 외감법 §8② — 자동 프로세스 우회.
          수기 입력 자체는 정상이나, 고액 + 수기 조합은 부정 위험.
     """
-    missing = _check_features(df, ["is_manual_je", "exceeds_threshold"])
-    if missing:
+    missing = _check_features(df, ["is_manual_je"])
+    if missing and "source" not in df.columns:
         return pd.Series(False, index=df.index)
-    return df["is_manual_je"].fillna(False) & df["exceeds_threshold"].fillna(False)
+    return manual_override_signal_mask(df)

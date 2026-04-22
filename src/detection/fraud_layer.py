@@ -19,7 +19,6 @@ from src.detection.fraud_rules_feature import (
     b01_revenue_manipulation,
     b02_near_threshold,
     b03_exceeds_threshold,
-    b08_manual_override,
 )
 from src.detection.fraud_rules_groupby import (
     _resolve_b04_partner_key,
@@ -128,7 +127,17 @@ class FraudLayer(BaseDetector):
             ("L2-01", b02_near_threshold, {}),
             ("L1-04", b03_exceeds_threshold, {}),
             ("L2-02", b04_duplicate_payment, {"window_days": s.duplicate_payment_window_days}),
-            ("L2-03", b05_duplicate_entry, {}),
+            (
+                "L2-03",
+                b05_duplicate_entry,
+                {
+                    "amount_tolerance": s.duplicate_amount_tolerance,
+                    "fuzzy_threshold": s.duplicate_fuzzy_threshold,
+                    "window_days": s.duplicate_time_window_days,
+                    "split_window_days": s.duplicate_split_window_days,
+                    "max_group_size": s.duplicate_max_group_size,
+                },
+            ),
             (
                 "L1-05",
                 b06_self_approval,
@@ -139,10 +148,19 @@ class FraudLayer(BaseDetector):
                 b07_segregation_of_duties,
                 {"sod_threshold": s.sod_process_threshold, "audit_rules": self._audit_rules},
             ),
-            ("L3-02", b08_manual_override, {}),
-            ("L1-07", b09_skipped_approval, {}),
+            ("L1-07", b09_skipped_approval, {"audit_rules": self._audit_rules}),
             ("L3-03", b10_circular_intercompany, {}),
-            ("L2-04", b11_expense_capitalization, {}),
+            (
+                "L2-04",
+                b11_expense_capitalization,
+                {
+                    "audit_rules": self._audit_rules,
+                    "amount_tolerance": s.expense_capitalization_amount_tolerance,
+                    "min_amount": s.expense_capitalization_min_amount,
+                    "review_threshold": s.expense_capitalization_review_threshold,
+                    "immediate_threshold": s.expense_capitalization_immediate_threshold,
+                },
+            ),
         ]
 
     def _missing_inputs(self, rule_id: str, df: pd.DataFrame) -> list[str]:
@@ -154,7 +172,6 @@ class FraudLayer(BaseDetector):
             "L1-04": ["exceeds_threshold"],
             "L2-03": ["gl_account", "posting_date", "debit_amount", "credit_amount"],
             "L1-06": ["created_by", "business_process"],
-            "L3-02": ["is_manual_je", "exceeds_threshold"],
             "L1-07": ["exceeds_threshold", "source"],
             "L3-03": ["is_intercompany"],
             "L2-04": ["document_id", "gl_account", "debit_amount", "credit_amount"],
@@ -246,6 +263,7 @@ class FraudLayer(BaseDetector):
 
         details = pd.DataFrame(index=df.index)
         rule_breakdowns: dict[str, Any] = {}
+        row_annotations: dict[str, Any] = {}
         for rule_id, flagged in rule_results.items():
             score_series = flagged.attrs.get("score_series") if hasattr(flagged, "attrs") else None
             if score_series is not None:
@@ -255,6 +273,9 @@ class FraudLayer(BaseDetector):
             breakdown = flagged.attrs.get("breakdown") if hasattr(flagged, "attrs") else None
             if breakdown:
                 rule_breakdowns[rule_id] = breakdown
+            annotations = flagged.attrs.get("row_annotations") if hasattr(flagged, "attrs") else None
+            if annotations:
+                row_annotations[rule_id] = annotations
 
         scores = details.max(axis=1).fillna(0.0)
         flagged_indices = scores[scores > 0].index.tolist()
@@ -263,12 +284,7 @@ class FraudLayer(BaseDetector):
                 rule_id=rule_id,
                 flagged_count=int(flagged.sum()),
                 total_count=len(df),
-                detail=(
-                    f"immediate={flagged.attrs['breakdown']['immediate_rows']}, "
-                    f"review={flagged.attrs['breakdown']['review_rows']}"
-                    if hasattr(flagged, "attrs") and flagged.attrs.get("breakdown")
-                    else None
-                ),
+                detail=self._format_rule_detail(flagged),
             )
             for rule_id, flagged in rule_results.items()
         ]
@@ -284,6 +300,7 @@ class FraudLayer(BaseDetector):
                 "coverage_issues": coverage_issues,
                 "analysis_degraded": bool(coverage_issues),
                 "rule_breakdowns": rule_breakdowns,
+                "row_annotations": row_annotations,
             },
             warnings=warnings,
         )
@@ -310,3 +327,18 @@ class FraudLayer(BaseDetector):
             },
             warnings=warnings,
         )
+
+    def _format_rule_detail(self, flagged: pd.Series) -> str | None:
+        """Render optional rule detail text from rule breakdown metadata."""
+
+        if not hasattr(flagged, "attrs"):
+            return None
+        breakdown = flagged.attrs.get("breakdown")
+        if not breakdown:
+            return None
+        if "immediate_rows" in breakdown and "review_rows" in breakdown:
+            return f"immediate={breakdown['immediate_rows']}, review={breakdown['review_rows']}"
+        if "reason_counts" in breakdown:
+            parts = [f"{key}={value}" for key, value in sorted(breakdown["reason_counts"].items())]
+            return ", ".join(parts) if parts else None
+        return None

@@ -58,6 +58,60 @@ patterns:
   # 영업외수익(9), 글로벌 본사 기준(5) 등 추가 가능
   revenue_account_prefixes:
     - "4"
+  # L2-04: 비용 자산화 탐지용 계정 분류.
+  # 기본값은 보수적인 시작점일 뿐이며, 회사별 CoA에 맞게 조정해야 한다.
+  expense_capitalization:
+    asset_account_prefixes:
+      - "15"
+    expense_account_prefixes:
+      - "5"
+      - "6"
+      - "7"
+      - "8"
+    normal_capitalization_keywords:
+      - "capex"
+      - "capital"
+      - "project"
+      - "development"
+      - "construction"
+      - "software"
+      - "license"
+      - "설비"
+      - "투자"
+      - "개발"
+      - "건설"
+      - "구축"
+      - "자본적"
+      - "프로젝트"
+    suspicious_expense_keywords:
+      - "rent"
+      - "repair"
+      - "maintenance"
+      - "travel"
+      - "welfare"
+      - "fee"
+      - "utility"
+      - "office"
+      - "training"
+      - "광고"
+      - "복리후생"
+      - "여비"
+      - "수선"
+      - "지급수수료"
+      - "소모품"
+      - "통신"
+      - "수도광열"
+    normal_document_types:
+      - "AA"
+      - "FA"
+    suspicious_sources:
+      - "manual"
+      - "adjustment"
+    suspicious_processes:
+      - "P2P"
+      - "O2C"
+      - "R2R"
+      - "H2R"
 
   # L3-03 + WU-07: 관계사 식별 — IC 계정 쌍 (receivable <-> payable)
   # Why: 클라이언트별 CoA 체계가 다르므로 코드 하드코딩 금지, YAML에서 관리

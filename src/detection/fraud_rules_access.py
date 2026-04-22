@@ -25,6 +25,12 @@ def _normalized_process(series: pd.Series) -> pd.Series:
     return series.fillna("").astype(str).str.strip().str.upper()
 
 
+def _normalized_actor(series: pd.Series) -> pd.Series:
+    """Return normalized actor/account identifiers."""
+
+    return _normalized_text(series).str.replace(" ", "_", regex=False)
+
+
 def _get_self_approval_allow_config(audit_rules: dict | None = None) -> dict[str, tuple[str, ...]]:
     """Load editable allowlist defaults for system-approved self-approval."""
 
@@ -72,6 +78,25 @@ def _get_self_approval_immediate_override_config(
             str(v).strip().lower()
             for v in override.get("high_risk_account_prefixes", ["111", "112", "113"])
         ),
+    }
+
+
+def _get_skipped_approval_immediate_config(
+    audit_rules: dict | None = None,
+) -> dict[str, tuple[str, ...] | int]:
+    """Load immediate-violation corroboration policy for L1-07."""
+
+    rules = audit_rules or get_audit_rules()
+    patterns = rules.get("patterns", {})
+    cfg = patterns.get("skipped_approval_immediate", {})
+    manual_sources = cfg.get("manual_sources", patterns.get("manual_source_codes", ["manual", "adjustment"]))
+    return {
+        "manual_sources": tuple(str(v).strip().lower() for v in manual_sources),
+        "business_processes": tuple(
+            str(v).strip().upper()
+            for v in cfg.get("business_processes", ["TRE", "P2P", "O2C", "H2R"])
+        ),
+        "min_evidence_count": int(cfg.get("min_evidence_count", 2)),
     }
 
 
@@ -182,6 +207,132 @@ def _self_approval_immediate_override_mask(
     return escalated, reason_counts
 
 
+def _posting_month(df: pd.DataFrame) -> pd.Series:
+    """Return posting month in YYYY-MM form, or 'unknown' when unavailable."""
+
+    if "posting_date" not in df.columns:
+        return pd.Series("unknown", index=df.index)
+    posting_date = pd.to_datetime(df["posting_date"], errors="coerce")
+    return posting_date.dt.strftime("%Y-%m").fillna("unknown")
+
+
+def _display_text(series: pd.Series, fallback: str = "unknown") -> pd.Series:
+    """Return stripped strings for display, replacing blanks with fallback."""
+
+    text = series.fillna("").astype(str).str.strip()
+    return text.mask(text.eq(""), fallback)
+
+
+def _build_self_approval_group_summary(
+    df: pd.DataFrame,
+    *,
+    flagged: pd.Series,
+    immediate: pd.Series,
+    review: pd.Series,
+    high_amount: pd.Series,
+    abnormal_time: pd.Series,
+    high_risk_account: pd.Series,
+    sensitive_process: pd.Series,
+) -> dict[str, object]:
+    """Build grouped L1-05 output for queue-style review without narrowing recall."""
+
+    if not flagged.any():
+        return {
+            "group_key": ["created_by", "business_process", "posting_month"],
+            "queue_counts": {},
+            "top_groups": [],
+        }
+
+    doc_key = (
+        _display_text(df["document_id"], fallback="row")
+        if "document_id" in df.columns
+        else df.index.astype(str).to_series(index=df.index)
+    )
+    created_by = _display_text(df["created_by"], fallback="unknown")
+    business_process = (
+        _display_text(df["business_process"], fallback="UNKNOWN")
+        if "business_process" in df.columns
+        else pd.Series("UNKNOWN", index=df.index)
+    )
+    posting_month = _posting_month(df)
+    amount = _line_amount(df)
+
+    grouped = pd.DataFrame({
+        "document_id": doc_key,
+        "created_by": created_by,
+        "business_process": business_process,
+        "posting_month": posting_month,
+        "amount": amount,
+        "level": pd.Series("review", index=df.index).mask(immediate, "immediate"),
+        "high_amount": high_amount,
+        "abnormal_time": abnormal_time,
+        "high_risk_account": high_risk_account,
+        "sensitive_process": sensitive_process,
+    }, index=df.index).loc[flagged].copy()
+
+    grouped["additional_signal_count"] = grouped[
+        ["high_amount", "abnormal_time", "high_risk_account", "sensitive_process"]
+    ].astype(int).sum(axis=1)
+    grouped["multi_signal_2plus"] = grouped["additional_signal_count"] >= 2
+    grouped["other_self_approval"] = grouped["additional_signal_count"] == 0
+
+    doc_level = grouped.groupby(
+        ["created_by", "business_process", "posting_month", "document_id"],
+        as_index=False,
+        dropna=False,
+    ).agg(
+        level=("level", lambda s: "immediate" if (s == "immediate").any() else "review"),
+        amount=("amount", "max"),
+        high_amount=("high_amount", "max"),
+        abnormal_time=("abnormal_time", "max"),
+        high_risk_account=("high_risk_account", "max"),
+        sensitive_process=("sensitive_process", "max"),
+        multi_signal_2plus=("multi_signal_2plus", "max"),
+        other_self_approval=("other_self_approval", "max"),
+    )
+
+    immediate_sensitive = doc_level["level"].eq("immediate") & doc_level["sensitive_process"]
+    review_closing = doc_level["level"].eq("review") & doc_level["business_process"].isin(["R2R", "A2R"])
+    doc_level["queue_bucket"] = "general_review"
+    doc_level.loc[doc_level["level"].eq("immediate"), "queue_bucket"] = "general_immediate"
+    doc_level.loc[review_closing, "queue_bucket"] = "closing_review"
+    doc_level.loc[immediate_sensitive, "queue_bucket"] = "operational_immediate"
+
+    group_summary = doc_level.groupby(
+        ["created_by", "business_process", "posting_month", "queue_bucket"],
+        as_index=False,
+        dropna=False,
+    ).agg(
+        total_docs=("document_id", "nunique"),
+        total_amount=("amount", "sum"),
+        immediate_docs=("level", lambda s: int((s == "immediate").sum())),
+        review_docs=("level", lambda s: int((s == "review").sum())),
+        multi_signal_2plus=("multi_signal_2plus", "sum"),
+        high_amount=("high_amount", "sum"),
+        abnormal_time=("abnormal_time", "sum"),
+        high_risk_account=("high_risk_account", "sum"),
+        sensitive_process=("sensitive_process", "sum"),
+        other_self_approval=("other_self_approval", "sum"),
+    )
+    group_summary = group_summary.sort_values(
+        ["total_docs", "total_amount", "immediate_docs"],
+        ascending=[False, False, False],
+    )
+
+    queue_counts = (
+        group_summary.groupby("queue_bucket")["total_docs"]
+        .sum()
+        .sort_values(ascending=False)
+        .to_dict()
+    )
+    top_groups = group_summary.head(20).to_dict(orient="records")
+    return {
+        "group_key": ["created_by", "business_process", "posting_month"],
+        "queue_counts": queue_counts,
+        "top_groups": top_groups,
+    }
+
+
 def b06_self_approval(
     df: pd.DataFrame,
     audit_rules: dict | None = None,
@@ -215,8 +366,44 @@ def b06_self_approval(
     flagged = same_person & ~allowed
     review_base = flagged & _self_approval_review_mask(df, audit_rules)
     override_immediate, override_counts = _self_approval_immediate_override_mask(df, audit_rules)
+    high_amount = pd.Series(False, index=df.index)
+    if float(_get_self_approval_immediate_override_config(audit_rules)["materiality_amount"]) > 0:
+        override_cfg = _get_self_approval_immediate_override_config(audit_rules)
+        high_amount = _is_manual_source(df, override_cfg["manual_sources"]) & (
+            _line_amount(df) >= float(override_cfg["materiality_amount"])
+        )
+        abnormal_time = _is_abnormal_self_approval_time(df)
+        high_risk_account = _is_high_risk_account(
+            df,
+            exact_accounts=override_cfg["high_risk_accounts"],
+            account_prefixes=override_cfg["high_risk_account_prefixes"],
+        )
+    else:
+        override_cfg = _get_self_approval_immediate_override_config(audit_rules)
+        abnormal_time = _is_abnormal_self_approval_time(df)
+        high_risk_account = _is_high_risk_account(
+            df,
+            exact_accounts=override_cfg["high_risk_accounts"],
+            account_prefixes=override_cfg["high_risk_account_prefixes"],
+        )
     review = review_base & ~override_immediate
     immediate = flagged & ~review
+    process_series = (
+        _normalized_process(df["business_process"])
+        if "business_process" in df.columns
+        else pd.Series("", index=df.index)
+    )
+    sensitive_process = process_series.isin(["TRE", "P2P", "H2R"])
+    observed_summary = _build_self_approval_group_summary(
+        df,
+        flagged=flagged,
+        immediate=immediate,
+        review=review,
+        high_amount=high_amount,
+        abnormal_time=abnormal_time,
+        high_risk_account=high_risk_account,
+        sensitive_process=sensitive_process,
+    )
 
     flagged.attrs["score_series"] = flagged.astype(float) * 0.6
     flagged.attrs["breakdown"] = {
@@ -227,6 +414,7 @@ def b06_self_approval(
         "immediate_label": "immediate",
         "review_label": "review",
         "override_counts": override_counts,
+        "observed_summary": observed_summary,
     }
     return flagged
 
@@ -285,6 +473,61 @@ def _get_sod_it_admin_config(audit_rules: dict | None = None) -> dict[str, tuple
     }
 
 
+def _get_sod_human_filter_config(audit_rules: dict | None = None) -> dict[str, tuple[str, ...]]:
+    """Load system-account filters that should be excluded from human SoD logic."""
+
+    rules = audit_rules or get_audit_rules()
+    cfg = rules.get("patterns", {}).get("sod_human_filter", {})
+    return {
+        "system_sources": tuple(
+            str(v).strip().lower()
+            for v in cfg.get("system_sources", ["automated", "interface", "system", "batch"])
+        ),
+        "system_actor_tokens": tuple(
+            str(v).strip().lower()
+            for v in cfg.get(
+                "system_actor_tokens",
+                ["batch", "system", "auto", "interface", "if_", "svc_", "_svc"],
+            )
+        ),
+    }
+
+
+def _get_sod_mitigating_roles(audit_rules: dict | None = None) -> tuple[str, ...]:
+    """Load roles that mitigate review-only R2R SoD findings."""
+
+    rules = audit_rules or get_audit_rules()
+    cfg = rules.get("patterns", {}).get("sod_mitigating_roles", {})
+    return tuple(
+        str(v).strip().lower()
+        for v in cfg.get("user_personas", ["controller", "manager"])
+    )
+
+
+def _human_sod_mask(df: pd.DataFrame, audit_rules: dict | None = None) -> pd.Series:
+    """Return rows treated as human activity for SoD analysis."""
+
+    mask = pd.Series(True, index=df.index)
+    cfg = _get_sod_human_filter_config(audit_rules)
+
+    if "user_persona" in df.columns:
+        persona_norm = _normalized_persona(df["user_persona"])
+        mask = mask & (persona_norm != "automated_system")
+
+    if "source" in df.columns and cfg["system_sources"]:
+        mask = mask & ~_normalized_text(df["source"]).isin(cfg["system_sources"])
+
+    if "created_by" in df.columns and cfg["system_actor_tokens"]:
+        actor_norm = _normalized_actor(df["created_by"])
+        system_actor = pd.Series(False, index=df.index)
+        for token in cfg["system_actor_tokens"]:
+            if token:
+                system_actor = system_actor | actor_norm.str.contains(token, regex=False)
+        mask = mask & ~system_actor
+
+    return mask
+
+
 def _split_sod_pairs(
     toxic_pairs: list[frozenset[str]],
 ) -> tuple[list[frozenset[str]], list[frozenset[str]]]:
@@ -305,21 +548,96 @@ def _split_sod_pairs(
     return immediate_pairs, review_pairs
 
 
+def _self_approval_mask(df: pd.DataFrame) -> pd.Series:
+    """Return rows where preparer and approver are the same human user."""
+
+    if "created_by" not in df.columns or "approved_by" not in df.columns:
+        return pd.Series(False, index=df.index)
+    created = _normalized_actor(df["created_by"])
+    approved = _normalized_actor(df["approved_by"])
+    return (created != "") & (created == approved)
+
+
+def manual_override_signal_mask(
+    df: pd.DataFrame,
+    audit_rules: dict | None = None,
+) -> pd.Series:
+    """Return L3-02 manual-entry control-circumvention signal rows."""
+
+    rules = audit_rules or get_audit_rules()
+    patterns = rules.get("patterns", {})
+    manual_sources = tuple(
+        str(v).strip().lower()
+        for v in patterns.get("manual_source_codes", ["manual", "adjustment"])
+    )
+
+    if "is_manual_je" in df.columns:
+        manual_entry = df["is_manual_je"].fillna(False).astype(bool)
+    elif "source" in df.columns:
+        manual_entry = _is_manual_source(df, manual_sources)
+    else:
+        return pd.Series(False, index=df.index)
+
+    no_approver = pd.Series(False, index=df.index)
+    if "approved_by" in df.columns:
+        no_approver = _normalized_text(df["approved_by"]).eq("")
+
+    no_approval_date = pd.Series(False, index=df.index)
+    if "approval_date" in df.columns:
+        no_approval_date = _normalized_text(df["approval_date"]).eq("")
+
+    abnormal_time = _is_abnormal_self_approval_time(df)
+    period_end = (
+        df["is_period_end"].fillna(False).astype(bool)
+        if "is_period_end" in df.columns
+        else pd.Series(False, index=df.index)
+    )
+    suspense_account = (
+        df["is_suspense_account"].fillna(False).astype(bool)
+        if "is_suspense_account" in df.columns
+        else pd.Series(False, index=df.index)
+    )
+    poor_description = (
+        _normalized_text(df["description_quality"]).isin(("missing", "poor"))
+        if "description_quality" in df.columns
+        else pd.Series(False, index=df.index)
+    )
+    override_cfg = _get_self_approval_immediate_override_config(audit_rules)
+    high_risk_account = _is_high_risk_account(
+        df,
+        exact_accounts=override_cfg["high_risk_accounts"],
+        account_prefixes=override_cfg["high_risk_account_prefixes"],
+    )
+
+    corroborating_signal = (
+        no_approver
+        | no_approval_date
+        | abnormal_time
+        | period_end
+        | suspense_account
+        | poor_description
+        | high_risk_account
+    )
+    return manual_entry & corroborating_signal
+
+
 def b07_segregation_of_duties(
     df: pd.DataFrame,
     sod_threshold: int = 3,
     audit_rules: dict | None = None,
 ) -> pd.Series:
-    """L1-06 segregation-of-duties signal with immediate/review split.
+    """L1-06 segregation-of-duties signal with candidate/review/immediate split.
 
     Immediate violation:
       - direct within-process SoD conflict markers
       - configured toxic pairs outside R2R review scope
       - IT super-user monetary postings in protected processes
+      - review signals corroborated by self-approval or skipped approval
 
     Review required:
       - configured R2R-related SoD pairs
       - role-threshold excess by persona
+      - manual-override overlap as a supporting signal only
     """
 
     required = ["created_by", "business_process"]
@@ -332,12 +650,12 @@ def b07_segregation_of_duties(
     immediate_pairs, review_pairs = _split_sod_pairs(toxic_pairs)
     result = pd.Series(False, index=df.index)
 
-    if "user_persona" in df.columns:
-        persona_norm = _normalized_persona(df["user_persona"])
-        human_mask = persona_norm != "automated_system"
-    else:
-        persona_norm = pd.Series("", index=df.index)
-        human_mask = pd.Series(True, index=df.index)
+    persona_norm = (
+        _normalized_persona(df["user_persona"])
+        if "user_persona" in df.columns
+        else pd.Series("", index=df.index)
+    )
+    human_mask = _human_sod_mask(df, audit_rules)
 
     human_df = df[human_mask]
     if human_df.empty:
@@ -365,9 +683,9 @@ def b07_segregation_of_duties(
     immediate_mask = pd.Series(False, index=df.index)
     review_mask = pd.Series(False, index=df.index)
     if immediate_users:
-        immediate_mask = df["created_by"].isin(immediate_users)
+        immediate_mask = human_mask & df["created_by"].isin(immediate_users)
     if review_users:
-        review_mask = df["created_by"].isin(review_users)
+        review_mask = human_mask & df["created_by"].isin(review_users)
 
     within_process_conflict = pd.Series(False, index=df.index)
     if "sod_conflict_type" in df.columns:
@@ -408,12 +726,26 @@ def b07_segregation_of_duties(
             if persona and persona in role_thresholds and count > role_thresholds[persona]:
                 role_violators.add(user)
         if role_violators:
-            review_mask = review_mask | df["created_by"].isin(role_violators)
+            review_mask = review_mask | (human_mask & df["created_by"].isin(role_violators))
     else:
         counts = human_df.groupby("created_by")["business_process"].nunique()
         violators = counts[counts >= sod_threshold].index
-        review_mask = review_mask | df["created_by"].isin(violators)
+        review_mask = review_mask | (human_mask & df["created_by"].isin(violators))
 
+    if "exceeds_threshold" in df.columns:
+        review_mask = review_mask & df["exceeds_threshold"].fillna(False).astype(bool)
+
+    mitigating_roles = _get_sod_mitigating_roles(audit_rules)
+    if mitigating_roles and "user_persona" in df.columns:
+        review_mask = review_mask & ~persona_norm.isin(mitigating_roles)
+
+    self_approval = human_mask & _self_approval_mask(df)
+    skipped_approval = human_mask & b09_skipped_approval(df, audit_rules=audit_rules)
+    manual_override = human_mask & manual_override_signal_mask(df, audit_rules=audit_rules)
+    corroboration_mask = self_approval | skipped_approval | manual_override
+    corroborated_review = review_mask & corroboration_mask
+
+    immediate_mask = immediate_mask | corroborated_review
     review_mask = review_mask & ~immediate_mask
     result = immediate_mask | review_mask
     score_series = pd.Series(0.0, index=df.index)
@@ -430,22 +762,87 @@ def b07_segregation_of_duties(
         "review_pairs": [sorted(pair) for pair in review_pairs],
         "within_process_conflict_rows": int(within_process_conflict.sum()),
         "it_admin_high_risk_rows": int(it_admin_high_risk.sum()),
+        "corroborated_review_rows": int(corroborated_review.sum()),
+        "self_approval_rows": int(self_approval.sum()),
+        "skipped_approval_rows": int(skipped_approval.sum()),
+        "manual_override_rows": int(manual_override.sum()),
     }
     return result
 
 
-def b09_skipped_approval(df: pd.DataFrame) -> pd.Series:
+def b09_skipped_approval(
+    df: pd.DataFrame,
+    audit_rules: dict | None = None,
+) -> pd.Series:
     """L1-07 skipped approval: approval required but approver missing."""
 
     if "exceeds_threshold" not in df.columns or "source" not in df.columns:
         return pd.Series(False, index=df.index)
 
-    exceeds = df["exceeds_threshold"].fillna(False)
-    not_automated = df["source"].astype(str).str.lower() != "automated"
-    no_approval = pd.Series(True, index=df.index)
+    cfg = _get_skipped_approval_immediate_config(audit_rules)
+    exceeds = df["exceeds_threshold"].fillna(False).astype(bool)
+    source_norm = _normalized_text(df["source"])
+    not_automated = source_norm.ne("automated")
+    no_approval = pd.Series(True, index=df.index, dtype=bool)
     if "approved_by" in df.columns:
         no_approval = df["approved_by"].isna() | (df["approved_by"].astype(str).str.strip() == "")
-    return exceeds & not_automated & no_approval
+    candidate = exceeds & not_automated & no_approval
+
+    manual_source = source_norm.isin(cfg["manual_sources"])
+    no_approval_date = pd.Series(False, index=df.index, dtype=bool)
+    if "approval_date" in df.columns:
+        no_approval_date = df["approval_date"].isna() | (
+            df["approval_date"].astype(str).str.strip() == ""
+        )
+    manual_entry = (
+        df["is_manual_je"].fillna(False).astype(bool)
+        if "is_manual_je" in df.columns
+        else pd.Series(False, index=df.index, dtype=bool)
+    )
+    abnormal_time = _is_abnormal_self_approval_time(df)
+    high_risk_process = (
+        _normalized_process(df["business_process"]).isin(cfg["business_processes"])
+        if "business_process" in df.columns
+        else pd.Series(False, index=df.index, dtype=bool)
+    )
+    high_approval_level = (
+        pd.to_numeric(df["approval_level"], errors="coerce").fillna(0).astype(int).ge(2)
+        if "approval_level" in df.columns
+        else pd.Series(False, index=df.index, dtype=bool)
+    )
+
+    evidence_count = (
+        manual_source.astype(int)
+        + no_approval_date.astype(int)
+        + manual_entry.astype(int)
+        + abnormal_time.astype(int)
+        + high_risk_process.astype(int)
+        + high_approval_level.astype(int)
+    )
+    immediate = candidate & manual_source & evidence_count.ge(int(cfg["min_evidence_count"]))
+    review = candidate & ~immediate
+
+    score_series = pd.Series(0.0, index=df.index)
+    score_series.loc[review] = 0.4
+    score_series.loc[immediate] = 0.8
+
+    candidate.attrs["score_series"] = score_series
+    candidate.attrs["breakdown"] = {
+        "immediate_rows": int(immediate.sum()),
+        "review_rows": int(review.sum()),
+        "immediate_indices": [int(idx) for idx in immediate[immediate].index],
+        "review_indices": [int(idx) for idx in review[review].index],
+        "immediate_label": "immediate",
+        "review_label": "review",
+        "manual_source_rows": int((candidate & manual_source).sum()),
+        "no_approval_date_rows": int((candidate & no_approval_date).sum()),
+        "manual_entry_rows": int((candidate & manual_entry).sum()),
+        "abnormal_time_rows": int((candidate & abnormal_time).sum()),
+        "high_risk_process_rows": int((candidate & high_risk_process).sum()),
+        "high_approval_level_rows": int((candidate & high_approval_level).sum()),
+        "min_evidence_count": int(cfg["min_evidence_count"]),
+    }
+    return candidate
 
 
 def b10_circular_intercompany(df: pd.DataFrame) -> pd.Series:
