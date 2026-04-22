@@ -21,6 +21,7 @@ class TestContextFactory:
         assert isinstance(ctx.settings, AuditSettings)
         assert isinstance(ctx.keywords, dict)
         assert isinstance(ctx.schema, dict)
+        assert isinstance(ctx.phase1_case, dict)
 
     def test_create_settings_merged(self, cx_populated_repo: CompanyRepository):
         """3계층 머지 결과 settings 값 확인."""
@@ -39,6 +40,16 @@ class TestContextFactory:
             preset_overrides={"fuzzy_threshold": 90},
         )
         assert ctx.settings.fuzzy_threshold == 90
+
+    def test_create_merges_company_phase1_case_override(self, cx_populated_repo: CompanyRepository):
+        phase1_path = cx_populated_repo.company_dir("acme_corp") / "phase1_case.yaml"
+        phase1_path.write_text(
+            "phase1_case:\n  top_n_cases: 7\n",
+            encoding="utf-8",
+        )
+        factory = ContextFactory(cx_populated_repo)
+        ctx = factory.create("acme_corp", "acme_corp_2025")
+        assert ctx.phase1_case["phase1_case"]["top_n_cases"] == 7
 
     def test_create_company_not_found(self, cx_repo: CompanyRepository):
         """미존재 회사 → FileNotFoundError."""

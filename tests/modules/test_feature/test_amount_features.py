@@ -6,9 +6,11 @@
 import numpy as np
 import pandas as pd
 import pytest
+from pathlib import Path
 
 from config.settings import AuditSettings
 from src.ingest.datasynth_labels import set_source_path
+from src.feature import amount_features as amount_features_module
 from src.feature.amount_features import (
     _compute_base_amount,
     _map_coa_category,
@@ -55,43 +57,107 @@ class TestBaseAmount:
 
 
 class TestIsNearThreshold:
-    """L2-01: 다단계 승인한도 직하. 각 레벨별 threshold*ratio ≤ base < threshold."""
+    """L2-01: 승인권자 한도 우선, 미확인 시 공통 threshold fallback."""
 
     THRESHOLDS = [10_000_000, 100_000_000, 1_000_000_000]
     RATIO = 0.90
 
-    def test_exact_lower_bound(self):
-        """첫 번째 레벨(10M)의 lower bound(9M) 정확히 → True."""
-        base = pd.Series([self.THRESHOLDS[0] * self.RATIO])
-        df = pd.DataFrame({"x": [0]})
-        add_is_near_threshold(df, base, self.THRESHOLDS, self.RATIO)
-        assert df["is_near_threshold"].iloc[0] == True
+    def test_uses_approver_limit_on_document_total(self, monkeypatch):
+        """실제 approval_limit가 있으면 문서 총액 기준으로 near 판정."""
+        monkeypatch.setattr(
+            amount_features_module,
+            "_resolve_employee_master_path",
+            lambda df: Path("dummy-employees.json"),
+        )
+        monkeypatch.setattr(
+            amount_features_module,
+            "_load_employee_approval_map",
+            lambda path: {"APR-001": (100_000_000.0, True)},
+        )
 
-    def test_below_lower_bound(self):
-        """모든 레벨의 near 구간 밖 → False."""
-        base = pd.Series([self.THRESHOLDS[0] * self.RATIO - 1])
-        df = pd.DataFrame({"x": [0]})
-        add_is_near_threshold(df, base, self.THRESHOLDS, self.RATIO)
-        assert df["is_near_threshold"].iloc[0] == False
+        df = pd.DataFrame({
+            "document_id": ["A", "A"],
+            "approved_by": ["APR-001", "APR-001"],
+            "debit_amount": [45_000_000, 50_000_000],
+            "credit_amount": [0, 0],
+        })
+        base = _compute_base_amount(df)
 
-    def test_at_threshold_is_false(self):
-        """threshold 정확히 → False (그 레벨의 near 구간 상한)."""
-        base = pd.Series([self.THRESHOLDS[0]])
-        df = pd.DataFrame({"x": [0]})
         add_is_near_threshold(df, base, self.THRESHOLDS, self.RATIO)
-        assert df["is_near_threshold"].iloc[0] == False
 
-    def test_multi_level_near(self):
-        """두 번째 레벨(100M)의 near 구간(90M~100M) → True."""
+        assert df["is_near_threshold"].all()
+
+    def test_below_approver_limit_lower_bound_is_false(self, monkeypatch):
+        """실제 approval_limit의 90% 미만이면 near가 아니다."""
+        monkeypatch.setattr(
+            amount_features_module,
+            "_resolve_employee_master_path",
+            lambda df: Path("dummy-employees.json"),
+        )
+        monkeypatch.setattr(
+            amount_features_module,
+            "_load_employee_approval_map",
+            lambda path: {"APR-001": (100_000_000.0, True)},
+        )
+
+        df = pd.DataFrame({
+            "document_id": ["A", "A"],
+            "approved_by": ["APR-001", "APR-001"],
+            "debit_amount": [40_000_000, 45_000_000],
+            "credit_amount": [0, 0],
+        })
+        base = _compute_base_amount(df)
+
+        add_is_near_threshold(df, base, self.THRESHOLDS, self.RATIO)
+
+        assert not df["is_near_threshold"].any()
+
+    def test_at_approver_limit_is_false(self, monkeypatch):
+        """실제 approval_limit 정확히는 near 상한 밖이다."""
+        monkeypatch.setattr(
+            amount_features_module,
+            "_resolve_employee_master_path",
+            lambda df: Path("dummy-employees.json"),
+        )
+        monkeypatch.setattr(
+            amount_features_module,
+            "_load_employee_approval_map",
+            lambda path: {"APR-001": (100_000_000.0, True)},
+        )
+
+        df = pd.DataFrame({
+            "document_id": ["A", "A"],
+            "approved_by": ["APR-001", "APR-001"],
+            "debit_amount": [40_000_000, 60_000_000],
+            "credit_amount": [0, 0],
+        })
+        base = _compute_base_amount(df)
+
+        add_is_near_threshold(df, base, self.THRESHOLDS, self.RATIO)
+
+        assert not df["is_near_threshold"].any()
+
+    def test_fallback_to_common_threshold_when_approver_limit_missing(self):
+        """approval_limit를 알 수 없으면 공통 thresholds로 fallback."""
         base = pd.Series([95_000_000])
-        df = pd.DataFrame({"x": [0]})
+        df = pd.DataFrame({
+            "document_id": ["A"],
+            "approved_by": ["APR-UNKNOWN"],
+            "debit_amount": [95_000_000],
+            "credit_amount": [0],
+        })
         add_is_near_threshold(df, base, self.THRESHOLDS, self.RATIO)
         assert df["is_near_threshold"].iloc[0] == True
 
-    def test_between_levels_not_near(self):
-        """레벨 사이 (20M) — 어떤 near 구간에도 미해당 → False."""
+    def test_between_levels_not_near_under_fallback(self):
+        """fallback 공통 thresholds에서도 어떤 구간에도 안 들어가면 False."""
         base = pd.Series([20_000_000])
-        df = pd.DataFrame({"x": [0]})
+        df = pd.DataFrame({
+            "document_id": ["A"],
+            "approved_by": ["APR-UNKNOWN"],
+            "debit_amount": [20_000_000],
+            "credit_amount": [0],
+        })
         add_is_near_threshold(df, base, self.THRESHOLDS, self.RATIO)
         assert df["is_near_threshold"].iloc[0] == False
 
@@ -164,22 +230,20 @@ class TestExceedsThresholdDocumentLevel:
 class TestExceedsThresholdApproverLimit:
     THRESHOLDS = [10_000_000, 100_000_000, 1_000_000_000]
 
-    def test_uses_approver_limit_when_employee_master_exists(self, tmp_path):
-        datasynth_dir = tmp_path / "datasynth"
-        master_dir = datasynth_dir / "master_data"
-        master_dir.mkdir(parents=True)
-        employees_path = master_dir / "employees.json"
-        source_csv = datasynth_dir / "journal_entries_2024.csv"
-        employees_path.write_text(
-            """
-[
-  {"user_id": "APR-001", "approval_limit": "10000000", "can_approve_je": true},
-  {"user_id": "APR-002", "approval_limit": "50000000", "can_approve_je": true}
-]
-            """.strip(),
-            encoding="utf-8",
+    def test_uses_approver_limit_when_employee_master_exists(self, monkeypatch):
+        monkeypatch.setattr(
+            amount_features_module,
+            "_resolve_employee_master_path",
+            lambda df: Path("dummy-employees.json"),
         )
-        source_csv.write_text("document_id\nA\n", encoding="utf-8")
+        monkeypatch.setattr(
+            amount_features_module,
+            "_load_employee_approval_map",
+            lambda path: {
+                "APR-001": (10_000_000.0, True),
+                "APR-002": (50_000_000.0, True),
+            },
+        )
 
         df = pd.DataFrame({
             "document_id": ["A", "A", "B", "B"],
@@ -187,7 +251,6 @@ class TestExceedsThresholdApproverLimit:
             "debit_amount": [6_000_000, 5_000_000, 30_000_000, 10_000_000],
             "credit_amount": [0, 0, 0, 0],
         })
-        df = set_source_path(df, source_csv)
         base = _compute_base_amount(df)
 
         add_exceeds_threshold(df, base, self.THRESHOLDS)
@@ -195,21 +258,17 @@ class TestExceedsThresholdApproverLimit:
         assert df.loc[df["document_id"] == "A", "exceeds_threshold"].all()
         assert not df.loc[df["document_id"] == "B", "exceeds_threshold"].any()
 
-    def test_can_approve_je_false_behaves_like_zero_limit(self, tmp_path):
-        datasynth_dir = tmp_path / "datasynth"
-        master_dir = datasynth_dir / "master_data"
-        master_dir.mkdir(parents=True)
-        employees_path = master_dir / "employees.json"
-        source_csv = datasynth_dir / "journal_entries_2024.csv"
-        employees_path.write_text(
-            """
-[
-  {"user_id": "APR-001", "approval_limit": "50000000", "can_approve_je": false}
-]
-            """.strip(),
-            encoding="utf-8",
+    def test_can_approve_je_false_behaves_like_zero_limit(self, monkeypatch):
+        monkeypatch.setattr(
+            amount_features_module,
+            "_resolve_employee_master_path",
+            lambda df: Path("dummy-employees.json"),
         )
-        source_csv.write_text("document_id\nA\n", encoding="utf-8")
+        monkeypatch.setattr(
+            amount_features_module,
+            "_load_employee_approval_map",
+            lambda path: {"APR-001": (50_000_000.0, False)},
+        )
 
         df = pd.DataFrame({
             "document_id": ["A", "A"],
@@ -217,7 +276,6 @@ class TestExceedsThresholdApproverLimit:
             "debit_amount": [1_000_000, 2_000_000],
             "credit_amount": [0, 0],
         })
-        df = set_source_path(df, source_csv)
         base = _compute_base_amount(df)
 
         add_exceeds_threshold(df, base, self.THRESHOLDS)

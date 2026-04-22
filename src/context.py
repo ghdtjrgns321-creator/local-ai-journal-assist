@@ -21,6 +21,7 @@ from config.settings import (
     get_audit_rules,
     get_cleaning_config,
     get_keywords,
+    get_phase1_case,
     get_risk_keywords,
     get_schema,
     get_settings,
@@ -50,6 +51,7 @@ class CompanyContext:
     schema: dict
     keywords: dict
     audit_rules: dict
+    phase1_case: dict
     risk_keywords: dict
     cleaning_config: dict
     chart_of_accounts: set[str] | None
@@ -154,6 +156,7 @@ class ContextFactory:
             schema=get_schema(),
             keywords=get_keywords(),
             audit_rules=get_audit_rules(),
+            phase1_case=get_phase1_case(),
             risk_keywords=get_risk_keywords(),
             cleaning_config=get_cleaning_config(),
             chart_of_accounts=_load_global_coa(),
@@ -175,6 +178,7 @@ class ContextFactory:
             schema=get_schema(),
             keywords=get_keywords(),
             audit_rules=get_audit_rules(),
+            phase1_case=get_phase1_case(),
             risk_keywords=get_risk_keywords(),
             cleaning_config=get_cleaning_config(),
             chart_of_accounts=_load_global_coa(),
@@ -205,10 +209,12 @@ class ContextFactory:
 
         company_kw = self._repo.load_company_keywords(company_id)
         company_rules = self._repo.load_company_audit_rules(company_id)
+        company_phase1_case = self._repo.load_company_phase1_case(company_id)
         company_risk = self._repo.load_company_risk_keywords(company_id)
 
         keywords = resolve_yaml_config(get_keywords(), company_kw)
         audit_rules = resolve_yaml_config(get_audit_rules(), company_rules)
+        phase1_case = resolve_yaml_config(get_phase1_case(), company_phase1_case)
         risk_keywords = resolve_yaml_config(get_risk_keywords(), company_risk)
 
         coa = self._repo.load_company_coa(company_id)
@@ -222,6 +228,7 @@ class ContextFactory:
             schema=get_schema(),
             keywords=keywords,
             audit_rules=audit_rules,
+            phase1_case=phase1_case,
             risk_keywords=risk_keywords,
             cleaning_config=get_cleaning_config(),
             chart_of_accounts=coa,

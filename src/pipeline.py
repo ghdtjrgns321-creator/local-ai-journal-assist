@@ -14,6 +14,7 @@ import pandas as pd
 from src.context import CompanyContext, ContextFactory
 from src.detection.base import BaseDetector, DetectionResult
 from src.detection.constants import DETECTOR_DISPLAY_ORDER, get_detector_profile
+from src.models.phase1_case import Phase1CaseResult
 from src.export.audit_trail import AuditEvent, AuditTrailProtocol
 from src.ingest.datasynth_labels import (
     apply_datasynth_label_mode,
@@ -197,6 +198,11 @@ class PipelineResult:
     shap_base_value: float | None = None
     detector_statuses: list[dict] = field(default_factory=list, repr=False)
     performance_report: PerformanceReport | None = field(default=None, repr=False)
+    phase1_case_result: Phase1CaseResult | None = field(default=None, repr=False)
+    phase1_case_path: str | None = None
+    phase1_case_run_id: str | None = None
+    phase1_case_count: int = 0
+    phase1_top_theme_ids: list[str] = field(default_factory=list)
 
 
 class AuditPipeline:
@@ -519,6 +525,11 @@ class AuditPipeline:
             results=results,
             batch_id=bid,
         )
+        phase1_case_result, phase1_case_ref = self._build_phase1_case_artifact(
+            df,
+            results,
+            batch_id=bid,
+        )
 
         load_result = None
         if not self._skip_db:
@@ -549,6 +560,11 @@ class AuditPipeline:
             shap_contributions=shap_contributions, shap_base_value=shap_base_value,
             detector_statuses=self._get_detector_statuses(),
             performance_report=performance_report,
+            phase1_case_result=phase1_case_result,
+            phase1_case_path=phase1_case_ref.get("phase1_case_path"),
+            phase1_case_run_id=phase1_case_ref.get("phase1_case_run_id"),
+            phase1_case_count=int(phase1_case_ref.get("phase1_case_count", 0)),
+            phase1_top_theme_ids=list(phase1_case_ref.get("top_theme_ids", [])),
         )
 
     def _execute(
@@ -622,6 +638,11 @@ class AuditPipeline:
             results=results,
             batch_id=batch_id,
         )
+        phase1_case_result, phase1_case_ref = self._build_phase1_case_artifact(
+            df,
+            results,
+            batch_id=batch_id,
+        )
 
         load_result = None
         if not self._skip_db:
@@ -658,7 +679,42 @@ class AuditPipeline:
             shap_contributions=shap_contributions, shap_base_value=shap_base_value,
             detector_statuses=self._get_detector_statuses(),
             performance_report=performance_report,
+            phase1_case_result=phase1_case_result,
+            phase1_case_path=phase1_case_ref.get("phase1_case_path"),
+            phase1_case_run_id=phase1_case_ref.get("phase1_case_run_id"),
+            phase1_case_count=int(phase1_case_ref.get("phase1_case_count", 0)),
+            phase1_top_theme_ids=list(phase1_case_ref.get("top_theme_ids", [])),
         )
+
+    def _build_phase1_case_artifact(
+        self,
+        df: pd.DataFrame,
+        results: list[DetectionResult],
+        *,
+        batch_id: str,
+    ) -> tuple[Phase1CaseResult | None, dict[str, object]]:
+        try:
+            from src.detection.phase1_case_builder import (
+                annotate_detection_results_with_phase1_refs,
+                build_phase1_case_reference,
+                build_phase1_case_result,
+                save_phase1_case_result,
+            )
+
+            phase1_result = build_phase1_case_result(
+                df,
+                results,
+                company_id=self._ctx.company_id,
+                batch_id=batch_id,
+                dataset_id=batch_id,
+                phase1_case_config=self._ctx.phase1_case,
+            )
+            artifact_path = save_phase1_case_result(phase1_result)
+            annotate_detection_results_with_phase1_refs(results, phase1_result, artifact_path)
+            return phase1_result, build_phase1_case_reference(phase1_result, artifact_path)
+        except Exception:
+            logger.warning("PHASE1 case artifact build failed — skip", exc_info=True)
+            return None, {}
 
     def _ingest(self, path: str | Path) -> tuple[pd.DataFrame, list[str]]:
         """Full ingest pipeline: read → header detect → map → cast.

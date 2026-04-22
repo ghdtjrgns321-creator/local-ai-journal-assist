@@ -218,19 +218,37 @@ def add_is_near_threshold(
     thresholds: list[int | float],
     ratio: float,
 ) -> pd.DataFrame:
-    """L2-01: 다단계 승인한도 직하 여부.
+    """L2-01: 승인권자 실제 한도 직하 여부.
 
-    각 레벨별 threshold * ratio ≤ base < threshold 구간에 하나라도 해당하면 True.
-    예: thresholds=[10M, 100M, 1B] → 9M~10M, 90M~100M, 900M~1B 중 하나에 속하면 플래그.
+    우선순위:
+    1. 직원 마스터에서 approved_by의 approval_limit를 조회할 수 있으면
+       document total 기준으로 approval_limit * ratio ≤ amount < approval_limit 판정
+    2. approval_limit를 알 수 없는 행만 공통 thresholds 구간으로 fallback
     """
-    if not thresholds:
-        df["is_near_threshold"] = False
-        return df
+    threshold_amount = _compute_document_amount(df, base)
+    approver_limit = _compute_approver_limit(df)
+
     near = pd.Series(False, index=df.index)
-    for t in sorted(thresholds):
-        lower = t * ratio
-        near = near | ((base >= lower) & (base < t))
-    df["is_near_threshold"] = near
+    unresolved = pd.Series(True, index=df.index)
+
+    if approver_limit is not None:
+        resolved = approver_limit.notna()
+        near = resolved & (
+            (threshold_amount >= approver_limit * ratio)
+            & (threshold_amount < approver_limit)
+        )
+        unresolved = ~resolved
+
+    if thresholds:
+        for t in sorted(thresholds):
+            lower = t * ratio
+            near = near | (
+                unresolved
+                & (threshold_amount >= lower)
+                & (threshold_amount < t)
+            )
+
+    df["is_near_threshold"] = near.fillna(False)
     return df
 
 

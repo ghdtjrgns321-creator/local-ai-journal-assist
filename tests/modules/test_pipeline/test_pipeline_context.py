@@ -34,6 +34,14 @@ class TestBackwardCompat:
         assert isinstance(result, PipelineResult)
         assert result.data is not None
 
+    def test_pipeline_result_exposes_phase1_case_reference(self, small_gl_df):
+        result = AuditPipeline(skip_db=True).run_from_dataframe(small_gl_df)
+        assert result.phase1_case_result is not None
+        assert result.phase1_case_path is not None
+        assert result.phase1_case_run_id is not None
+        assert result.phase1_case_count == len(result.phase1_case_result.cases)
+        assert isinstance(result.phase1_top_theme_ids, list)
+
 
 # ── Context 주입 ─────────────────────────────────────────────
 

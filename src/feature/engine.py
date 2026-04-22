@@ -48,7 +48,14 @@ _EXECUTION_ORDER: list[FeatureCategory] = [
 # Why: 병렬 실행 시 전체 df.copy() 대신 필요 컬럼만 thin copy (OOM 방지)
 _INPUT_COLUMNS: dict[FeatureCategory, list[str]] = {
     FeatureCategory.TIME: ["posting_date", "document_date", "fiscal_period", "fiscal_year"],
-    FeatureCategory.AMOUNT: ["debit_amount", "credit_amount", "gl_account", "currency"],
+    FeatureCategory.AMOUNT: [
+        "document_id",
+        "debit_amount",
+        "credit_amount",
+        "gl_account",
+        "currency",
+        "approved_by",
+    ],
     FeatureCategory.PATTERN: ["source", "gl_account", "line_text", "header_text", "debit_amount", "credit_amount"],
     FeatureCategory.TEXT: ["line_text", "header_text"],
 }

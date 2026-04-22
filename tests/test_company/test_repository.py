@@ -148,6 +148,15 @@ class TestResourceLoaders:
     def test_load_keywords_missing(self, cx_populated_repo: CompanyRepository):
         assert cx_populated_repo.load_company_keywords("acme_corp") is None
 
+    def test_load_phase1_case(self, cx_populated_repo: CompanyRepository):
+        phase1_path = cx_populated_repo.company_dir("acme_corp") / "phase1_case.yaml"
+        phase1_path.write_text(
+            yaml.safe_dump({"phase1_case": {"top_n_cases": 7}}, allow_unicode=True),
+            encoding="utf-8",
+        )
+        result = cx_populated_repo.load_company_phase1_case("acme_corp")
+        assert result["phase1_case"]["top_n_cases"] == 7
+
     def test_save_company_yaml_sets_custom_flags(
         self,
         cx_populated_repo: CompanyRepository,

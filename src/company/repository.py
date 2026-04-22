@@ -285,6 +285,9 @@ class CompanyRepository:
     def load_company_audit_rules(self, company_id: str) -> dict[str, Any] | None:
         return self.load_company_yaml(company_id, "audit_rules.yaml")
 
+    def load_company_phase1_case(self, company_id: str) -> dict[str, Any] | None:
+        return self.load_company_yaml(company_id, "phase1_case.yaml")
+
     def load_company_risk_keywords(self, company_id: str) -> dict[str, Any] | None:
         return self.load_company_yaml(company_id, "risk_keywords.yaml")
 
@@ -312,6 +315,7 @@ class CompanyRepository:
         "chart_of_accounts.csv",
         "keywords.yaml",
         "audit_rules.yaml",
+        "phase1_case.yaml",
         "risk_keywords.yaml",
     ]
 
