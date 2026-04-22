@@ -1,6 +1,7 @@
 # Detection Parameters
 
 감사인이 룰 탐지 민감도, 예외 범위, 키워드, 승인 권한 기준을 조정할 때 참고하는 문서다.
+문서 저장 인코딩은 `UTF-8`을 기준으로 유지한다.
 
 ## 어디서 고치나
 
@@ -31,6 +32,164 @@
 - 예외, 허용 범위, 키워드, 계정 목록은 보통 `config/audit_rules.yaml`에서 조정한다.
 - `L1-04 승인한도 초과`는 공통 threshold보다 `approved_by`별 승인 한도가 더 중요하다.
 - 회사별 차이는 전역 기본값을 직접 바꾸기보다 회사별/engagement별 override로 관리하는 게 맞다.
+
+## PHASE1 리모델링 파라미터
+
+이 섹션은 개별 룰 민감도와 별개로, **PHASE1 결과를 케이스 중심으로 묶고 우선순위화할 때 사람이 조정할 수 있는 값**을 정리한다.
+
+### 설정 파일 소속 원칙
+
+- PHASE1 케이스화와 우선순위화에 필요한 전용 설정은 **신설 예정인** `config/phase1_case.yaml` 소속으로 본다.
+- 이유:
+  - `config/settings.py`는 전역 수치 threshold와 공통 계산 파라미터에 가깝다.
+  - `config/audit_rules.yaml`은 개별 탐지 룰의 허용/예외/분기 규칙에 가깝다.
+  - `phase1_case.*`는 룰 계산 이후의 case grouping, scoring, exposure 정책이라 별도 파일로 분리하는 편이 가장 명확하다.
+- 단, 기존 공통 키와 의미가 완전히 같은 값은 중복 신설하지 않고 기존 키를 재사용한다.
+
+### 기존 키 재사용 vs PHASE1 전용 키
+
+- `period_end_window_days`
+  - 방침: **기존 `period_end_margin_days` 재사용**
+  - 이유: 둘 다 월말/기말 윈도우를 뜻하므로 중복 정의를 피하는 편이 낫다.
+  - 문서상 `phase1_case.period_end_window_days`는 개념 설명용 이름이며, 실제 구현은 기존 키를 우선 single source of truth로 둔다.
+
+- `near_period_days`
+  - 방침: **`phase1_case` 전용 키 신설**
+  - 이유: 중복/유출 case grouping용 근접기간은 기존 공통 설정과 직접 대응되는 키가 없다.
+
+- `top_n_cases`
+  - 방침: **`phase1_case` 전용 키 신설**
+  - 이유: 탐지 로직이 아니라 UI/리포트 노출 정책이므로 기존 룰 threshold와 분리하는 편이 맞다.
+
+- `top_n_per_theme`
+  - 방침: **`phase1_case` 전용 키 신설**
+  - 이유: theme queue 노출 정책은 PHASE1 case presentation에만 해당한다.
+
+### Theme / Secondary Tag
+
+- 감사인이 조정하는 값: secondary tag 부여 최소 점수
+  - 권장 키: `phase1_case.secondary_tag_min_score`
+  - 기본값: `0.40`
+  - 의미: primary가 아닌 evidence type score가 이 값 이상일 때만 secondary tag 부여
+  - 현재 문서 기준값: [DETECTION_RULES.md](DETECTION_RULES.md) `2.0.2`
+
+### Theme별 Case Key 템플릿
+
+- 감사인이 조정하는 값: 거래처 식별 우선순위
+  - 권장 키: `phase1_case.counterparty_columns`
+  - 기본값: `auxiliary_account_number`, `vendor_name`, `customer_name`
+  - 의미: 지급/중복/유출 테마에서 어떤 컬럼을 거래처 대표값으로 쓸지
+  - fallback 순서:
+    - `auxiliary_account_number`가 있으면 사용
+    - 없으면 `vendor_name`
+    - 없으면 `customer_name`
+    - 전부 없으면 `UNKNOWN_COUNTERPARTY`
+
+- 감사인이 조정하는 값: 계정군 파생 기준
+  - 권장 키: `phase1_case.account_family_strategy`
+  - 기본값: `first_digit`
+  - 의미: `gl_account`를 어떤 규칙으로 계정군(account family)으로 묶을지
+  - fallback 순서:
+    - `account_family` 파생 컬럼이 있으면 우선 사용
+    - 없으면 `gl_account`의 `first_digit`
+    - 그것도 불가하면 `gl_account` prefix 2~3자리
+    - 전부 불가하면 `UNKNOWN_ACCOUNT_FAMILY`
+
+- 감사인이 조정하는 값: 근접기간 윈도우
+  - 권장 키: `phase1_case.near_period_days`
+  - 기본값: `7`
+  - 의미: `posting_date ± n일`에서 같은 묶음으로 볼 기간 범위
+
+- 감사인이 조정하는 값: 월말 윈도우
+  - 권장 키: `phase1_case.period_end_window_days`
+  - 기본값: `5`
+  - 의미: 결산/기말 조정 테마에서 월말 ± 며칠을 같은 윈도우로 볼지
+  - 실제 구현 우선 키: `period_end_margin_days` (`config/settings.py`)
+  - 비고: 중복 키를 신설하지 않고 기존 공통 키를 재사용하는 것을 기본 방침으로 둔다.
+
+- 감사인이 조정하는 값: 관계사 회사쌍 식별 컬럼
+  - 권장 키: `phase1_case.intercompany_pair_columns`
+  - 기본값: `company_code`, `trading_partner`
+  - 의미: 관계사/연결 구조 이상 테마에서 회사쌍을 어떤 컬럼 조합으로 정의할지
+
+- 감사인이 조정하는 값: 적재배치 식별 컬럼
+  - 권장 키: `phase1_case.load_batch_columns`
+  - 기본값: `upload_batch_id`
+  - 의미: 데이터 무결성 붕괴 테마에서 적재배치를 어떤 컬럼으로 식별할지
+  - fallback: 적재배치 컬럼이 없으면 실행 단위 배치 식별자를 사용
+
+### Case Priority
+
+- 감사인이 조정하는 값: control 가중치
+  - 권장 키: `phase1_case.priority_weights.control`
+  - 기본값: `0.35`
+
+- 감사인이 조정하는 값: amount 가중치
+  - 권장 키: `phase1_case.priority_weights.amount`
+  - 기본값: `0.30`
+
+- 감사인이 조정하는 값: logic 가중치
+  - 권장 키: `phase1_case.priority_weights.logic`
+  - 기본값: `0.20`
+
+- 감사인이 조정하는 값: behavior 가중치
+  - 권장 키: `phase1_case.priority_weights.behavior`
+  - 기본값: `0.15`
+
+- 원칙
+  - 각 component score는 `0~1`로 정규화한다.
+  - `repeat_score`는 직접 가산하지 않고 보정용으로만 쓴다.
+
+### Priority Band
+
+- 감사인이 조정하는 값: high cutoff
+  - 권장 키: `phase1_case.priority_band.high`
+  - 기본값: `0.75`
+
+- 감사인이 조정하는 값: medium cutoff
+  - 권장 키: `phase1_case.priority_band.medium`
+  - 기본값: `0.45`
+
+- 의미
+  - `case_priority >= 0.75` → `high`
+  - `case_priority >= 0.45` → `medium`
+  - 그 외 → `low`
+
+### Repeat 보정
+
+- 감사인이 조정하는 값: repeat score 승격 기준
+  - 권장 키: `phase1_case.repeat_score_promote`
+  - 기본값: `0.70`
+  - 의미: 이 값 이상이면 priority band를 한 단계 상향 가능
+
+- 감사인이 조정하는 값: 반복 개월수 tie-breaker 기준
+  - 권장 키: `phase1_case.repeat_months_tiebreak`
+  - 기본값: `3`
+  - 의미: 동일 case key가 3개월 이상 반복되면 같은 band 내 우선 정렬
+
+### Evidence Type 상한
+
+- 감사인이 조정하는 값: 동일 evidence type 최대 반영치
+  - 권장 키: `phase1_case.evidence_type_cap`
+  - 기본값: `1.0`
+  - 의미: 한 케이스에서 같은 evidence type이 여러 번 나와도 최대 기여도는 1.0까지만 인정
+
+- 감사인이 조정하는 값: 동일 룰 반복 완화 스케일
+  - 권장 키: `phase1_case.rule_repeat_scale`
+  - 기본값: `sqrt`
+  - 의미: 동일 룰 반복을 선형 합산하지 않고 `sqrt` 또는 `log`로 완화
+
+### 사용자 노출
+
+- 감사인이 조정하는 값: 1차 화면 노출 case 수
+  - 권장 키: `phase1_case.top_n_cases`
+  - 기본값: `50`
+  - 의미: 사용자 첫 화면에 보여줄 설정 가능한 상위 N개 케이스
+
+- 감사인이 조정하는 값: theme별 노출 case 수
+  - 권장 키: `phase1_case.top_n_per_theme`
+  - 기본값: `10`
+  - 의미: 각 theme queue에서 먼저 보여줄 case 개수
 
 ## L1 파라미터
 

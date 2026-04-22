@@ -204,3 +204,6 @@ EY-ASU DataSynth(Rust)로 생성한 K-IFRS 적용 한국 중견 제조 그룹사
   → API: Text-to-SQL, NLP 의미 분석, 인사이트 생성, Export
   → 비식별화 레이어: 현재 범위 외, 필요성 인지 (CONSTRAINTS.md 참조)
 ```
+> Current DataSynth production baseline: `data/journal/primary/datasynth/` = `v23` freeze (2026-04-22).  
+> `B04 DuplicatePayment`는 `P2P + KZ` pair/negative-control 구조로 승격되었고, `v20.4`는 백업본 `datasynth_backup_v20_4_20260422`로 보존된다.
+> Current production DataSynth baseline: `data/journal/primary/datasynth/` freeze `v23` as of 2026-04-22. Older `v20.x` references below are historical notes.

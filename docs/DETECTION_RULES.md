@@ -1,4 +1,4 @@
-# Detection Rules — 전표 부정 탐지 룰 전체 목록
+﻿# Detection Rules — 전표 부정 탐지 룰 전체 목록
 
 한국 감사기준서(240호, K-SOX, PCAOB AS 2401)를 근거로 도출한 전표 부정 탐지 룰의 단일 참조 문서.
 법규·기준서 근거는 [DETECTION_REFERENCE.md](DETECTION_REFERENCE.md) 참조.
@@ -70,11 +70,211 @@ Drop      11개    —         제외                              —
 
 ## 2. Phase 1: 룰 기반 탐지 (24개, 구현 완료)
 
+### 2.0 PHASE1 리모델링 원칙
+
+PHASE1은 계속 **전수 탐지(recall 우선)** 성격을 유지한다. 즉, 룰 자체를 좁혀서 과탐을 줄이는 단계가 아니라, 먼저 가능한 신호를 넓게 포착하는 단계다.
+
+다만 사용자에게는 더 이상 `L1-05`, `L1-06`, `L3-04`처럼 **룰별 결과를 그대로 보여주지 않는 방향**으로 리모델링한다. 개별 룰은 내부 엔진의 증거 조각으로 남기고, 실제 화면과 보고서는 **연관 룰을 묶은 케이스(case/theme)** 중심으로 구성한다.
+
+#### 2.0.1 왜 바꾸는가
+
+- PHASE1 룰을 하나씩 직접 노출하면, 룰 수가 늘수록 결과가 끝없이 많아진다.
+- 같은 전표가 여러 룰에 동시에 걸리는 것이 정상인데, 이를 룰 리스트로 그대로 보여주면 사람은 같은 이상행위를 여러 번 보게 된다.
+- 감사자가 실제로 보고 싶은 것은 `L1-05 = 1건`이 아니라, `승인 통제 우회`, `결산 조정 집중`, `지급 프로세스 반복 위반`처럼 **설명 가능한 이상 시나리오**다.
+
+#### 2.0.2 Primary Theme / Secondary Tag 원칙
+
+- 하나의 케이스에는 **primary theme 1개만** 부여한다.
+- 같은 케이스가 여러 Theme Queue에 중복 노출되지 않도록, 메인 정렬과 집계는 항상 `primary theme` 기준으로 한다.
+- 대신 다른 관점은 `secondary tags`로 추가 허용한다.
+- 예: `지급·중복·자금 유출 위험`이 primary인 케이스에 `결산·기말 조정 이상` 태그가 secondary로 붙을 수 있다.
+- `secondary tag`는 **primary가 아닌 evidence type score가 `0.40` 이상**일 때만 부여한다.
+
+#### 2.0.3 Rule → Evidence Type → Theme 매핑
+
+개별 룰을 바로 Theme에 연결하지 않고, 중간에 **evidence type** 계층을 둔다. 룰은 엔진용, evidence type은 해석용, theme는 사용자용이다.
+
+- 아래 표의 `기본 Primary Theme`가 공식 기준이다.
+- 하나의 룰은 기본적으로 1개의 primary theme만 가진다.
+- 다른 테마와의 연관성은 `secondary tags`로만 표현한다.
+- 예: `L2-06`은 기본 primary는 `지급·중복·자금 유출 위험`에 두고, 결산 맥락에서 보이면 `결산·기말 조정 이상`을 secondary tag로만 붙인다.
+
+| Evidence Type | 포함 룰 | 기본 Primary Theme |
+|---|---|---|
+| `control_failure` | L1-04, L1-05, L1-06, L1-07, L3-02 | 승인·권한 통제 우회 |
+| `timing_anomaly` | L3-04, L3-05, L3-06, L3-07, L3-08 | 결산·기말 조정 이상 |
+| `duplicate_or_outflow` | L2-01, L2-02, L2-03, L2-06 | 지급·중복·자금 유출 위험 |
+| `logic_mismatch` | L1-03, L2-04, L3-09, L4-04 | 계정 사용 논리 이상 |
+| `statistical_outlier` | L4-01, L4-02, L4-03, L4-06 | 수익·금액·통계 이상 |
+| `data_integrity_failure` | L1-01, L1-02, L1-08 | 데이터 무결성 붕괴 |
+| `intercompany_structure` | L3-03 | 관계사·연결 구조 이상 |
+
+#### 2.0.4 PHASE1의 새 출력 단위
+
+PHASE1의 개별 룰은 계속 유지하되, 최종 출력은 아래 3단계로 바꾼다.
+
+1. **Theme Queue**
+   - 연관 룰을 하나의 이상 시나리오로 묶은 상위 큐
+   - 예: `승인·권한 통제 우회`, `결산·기말 조정 이상`, `지급·중복·자금 유출 위험`
+2. **Case Group**
+   - Theme별 key template을 따로 둔다.
+   - 공통 키 하나를 전역 적용하지 않는다.
+3. **Drill-down**
+   - 실제 전표 목록
+   - 룰 번호 나열보다 `왜 이상한지` 태그를 중심으로 설명
+
+#### 2.0.5 Theme별 Case Key Template
+
+| Primary Theme | 기본 Case Key |
+|---|---|
+| 승인·권한 통제 우회 | `사용자 / 프로세스 / 월` |
+| 결산·기말 조정 이상 | `사용자 / 계정군 / 월말 윈도우` |
+| 지급·중복·자금 유출 위험 | `거래처 / 금액밴드 / 근접기간` |
+| 관계사·연결 구조 이상 | `회사쌍 / 거래상대 / 월` |
+| 수익·금액·통계 이상 | `프로세스 / 계정군 / 월` |
+| 계정 사용 논리 이상 | `계정군 / 문서유형 / 월` |
+| 데이터 무결성 붕괴 | `회사 / 전표유형 / 적재배치` |
+
+실제 스키마 매핑 기준:
+
+- `사용자` → `created_by`
+- `프로세스` → `business_process`
+- `월` → `posting_date`에서 `YYYY-MM` 파생
+- `거래처` → `auxiliary_account_number` 우선, 없으면 `vendor_name` 또는 `customer_name`
+- `금액밴드` → `max(debit_amount, credit_amount)`를 기준으로 파생
+- `근접기간` → `posting_date ± n일` 윈도우
+- `계정군` → `gl_account`의 접두사(`first_digit`) 또는 파생 `account_family`
+- `월말 윈도우` → `is_period_end == True` 또는 `posting_date` 기준 월말 ± n일
+- `회사쌍` → `company_code + trading_partner`
+- `문서유형` → `document_type`
+- `적재배치` → `upload_batch_id`가 있으면 사용하고, 없으면 실행 단위 배치 식별자 사용
+
+#### 2.0.6 PHASE1에서 보여줄 상위 Theme
+
+이 절은 공식 매핑표를 반복하는 곳이 아니라, **각 Theme가 무엇을 의미하는지**를 설명하는 요약 섹션이다.
+
+- **데이터 무결성 붕괴**
+  - 의미: 장부 자체가 성립하지 않거나 회계 귀속이 깨진 경우
+- **승인·권한 통제 우회**
+  - 의미: 승인권한, 역할분리, 수기 우회가 한 시나리오 안에서 연결되는 경우
+- **지급·중복·자금 유출 위험**
+  - 의미: 실제 현금 유출, 이중 지급, 분할/은폐 가능성이 있는 경우
+- **결산·기말 조정 이상**
+  - 의미: 기말에 몰리거나 나중에 맞춘 흔적이 강한 조정성 전표
+- **계정 사용 논리 이상**
+  - 의미: 경제적 실질과 계정 구조가 맞지 않는 경우
+- **수익·금액·통계 이상**
+  - 의미: 금액, 빈도, 분포, 배치 패턴이 통계적으로 비정상인 경우
+- **관계사·연결 구조 이상**
+  - 의미: 관계사나 내부거래 흐름이 비정상적으로 보이는 경우
+
+#### 2.0.7 “진짜 이상한 데이터”의 정의
+
+PHASE1 리모델링에서 최종적으로 위에 올릴 케이스는 단순히 `룰이 많이 걸린 건`이 아니다. 아래 다섯 축을 함께 본다.
+
+- **금액상 이상**
+  - 절대 금액이 크다
+  - 중요성 금액에 가깝거나 초과한다
+  - 짧은 기간에 누적 금액이 크다
+- **통제상 이상**
+  - 자기승인, 승인생략, SoD, 승인한도 초과, 수기 우회처럼 직접적인 통제 실패가 있다
+- **논리상 이상**
+  - 결산조정인데 현금성 계정을 건드린다
+  - 지급 프로세스인데 자기승인이 반복된다
+  - 설명, 계정, 시점, 처리흐름이 서로 잘 맞지 않는다
+- **행동상 이상**
+  - 같은 사용자에게 집중된다
+  - 같은 월이나 결산기에 몰린다
+  - 같은 패턴이 비정상적으로 군집된다
+- **반복상 이상**
+  - 동일 case key가 여러 달 반복된다
+  - 같은 조합이 짧은 기간 내 과도하게 재발한다
+
+즉 최종 화면은 `룰 개수 순`이 아니라, **금액 + 통제 위반 강도 + 업무 논리상 부자연스러움 + 행동 집중도 + 반복성**이 높은 케이스를 먼저 보여주도록 설계한다.
+
+#### 2.0.8 Case Priority Score 공식
+
+케이스 우선순위는 감으로 구현하지 않고 아래 공식을 기본값으로 문서화한다.
+
+- `amount_score`
+  - 절대 금액, 중요성 금액 대비 비율, 근접기간 누적금액을 반영
+- `control_score`
+  - `control_failure` evidence의 강도와 직접 위반성 반영
+- `logic_score`
+  - `logic_mismatch`, `intercompany_structure`, 비정상 계정군 결합 등을 반영
+- `behavior_score`
+  - 사용자 집중도, 월말 집중도, 시간대 이상, 시점 군집을 반영
+- `repeat_score`
+  - 동일 case key에서 반복 발생한 횟수와 반복 개월 수를 반영
+
+정규화 원칙:
+
+- 각 component score(`amount_score`, `control_score`, `logic_score`, `behavior_score`, `repeat_score`)는 **0~1 범위로 정규화**한다.
+
+기본 점수식:
+
+`case_priority = 0.35*control_score + 0.30*amount_score + 0.20*logic_score + 0.15*behavior_score`
+
+보정 규칙:
+
+- `repeat_score`는 위 가중합에 직접 더하지 않고, tie-breaker와 상/중/하 priority band 보정에 사용한다.
+- `repeat_score >= 0.7`이면 priority band를 한 단계 상향할 수 있다.
+- `repeat_months >= 3`이면 같은 priority band 안에서 tie-breaker 우선순위를 높인다.
+- 룰 개수 자체는 직접 점수항이 아니라 **보조 지표**로만 사용한다.
+- 동일 케이스에 증거가 많아도, **같은 evidence type 기여도는 case당 최대 `1.0`까지만 반영**한다.
+- 같은 룰의 반복 발생은 선형 합산하지 않고 `log` 또는 `sqrt` 스케일로 완화한다.
+
+Priority band 기본값:
+
+- `high`: `case_priority >= 0.75`
+- `medium`: `case_priority >= 0.45`
+- `low`: 그 외
+
+#### 2.0.9 Case Explanation Template
+
+Drill-down과 리포트에는 룰 번호 나열 대신 아래 템플릿으로 대표 설명문을 만든다.
+
+- `자기승인 + 승인생략 + 고액 전표`
+- `기말 집중 + 수기 입력 + 설명 부실`
+- `동일 거래처 반복 지급 + 근접일자 중복`
+- `결산 계정과 현금성 계정의 비정상 결합`
+- `승인권한 초과 + 역할분리 위반`
+- `관계사 거래 집중 + 순환 구조 의심`
+
+설명문 구성 원칙:
+
+- 1문장 첫머리는 **무엇이 이상한가**
+- 2문장 이후는 **왜 감사적으로 중요한가**
+- 대표 설명문은 `control_failure > amount > logic_mismatch > timing_anomaly > statistical_outlier` 순으로 우선 선택한다.
+- 룰 ID는 기본적으로 숨기고 개발자용 상세 화면에서만 노출한다.
+
+#### 2.0.10 엔진 출력 vs 사용자 노출 분리
+
+- **내부 엔진**
+  - 모든 Phase 1 룰을 전부 계산한다.
+  - 모든 evidence type을 전부 계산한다.
+  - primary theme, secondary tags, case group, case priority를 전부 저장한다.
+- **사용자 화면 1차**
+  - `case_priority` 기준의 **설정 가능한 상위 N개 케이스**만 노출한다.
+- **사용자 화면 2차**
+  - Theme별 상위 케이스를 노출한다.
+- **Drill-down**
+  - 전표 목록 + 증거 태그 + 대표 설명문을 보여준다.
+- **룰 raw output**
+  - 기본 화면에서는 숨기고, 개발자/검증 모드에서만 노출한다.
+
+#### 2.0.11 구현 원칙
+
+- 개별 룰은 삭제하지 않는다.
+- PHASE1의 미탐 방지를 위해 룰 자체는 넓게 유지한다.
+- 과탐은 `탐지 조건 축소`로 해결하지 않고, `theme 묶음`, `case group`, `priority score`, `drill-down` 구조로 해결한다.
+- 따라서 PHASE1의 성격은 `룰 기반 전수 탐지`로 유지하되, 사용자 경험은 `케이스 기반 감사 리뷰 큐`로 리모델링한다.
+
 ### 2.1 L1: 확정 오류/명시 위반 (8개)
 
 전표테스트의 전제조건. 이 검증을 통과해야 이후 탐지가 의미있음.
 
-#### L1-01 — 차대변 균형 (UnbalancedEntry)
+#### L1-01 — 차대변 균형 (UnbalancedEntry) ✅
 
 - **심각도**: 5
 - **근거**: 240§32 복식부기 원칙. FSS 횡령은폐 수법(차대 불일치)
@@ -84,7 +284,7 @@ Drop      11개    —         제외                              —
   - NaN document_id는 개별 더미 키로 처리
 - **필요 피처**: `debit_amount`, `credit_amount`, `document_id`
 
-#### L1-02 — 필수필드 누락 (MissingField)
+#### L1-02 — 필수필드 누락 (MissingField) ✅
 
 - **심각도**: 2
 - **근거**: 240-A45(d) 계정번호 없이 입력. K-SOX 전표기록 통제
@@ -93,7 +293,7 @@ Drop      11개    —         제외                              —
 - **구현**: `integrity_layer.py` → `_a02_missing_required()`
 - **DataSynth 상태**: MCAR 2% 주입 추가됨, E2E 재검증 필요
 
-#### L1-03 — 무효 계정 (InvalidAccount)
+#### L1-03 — 무효 계정 (InvalidAccount) ✅
 
 - **심각도**: 3
 - **근거**: 240-A45(a) 비경상·저사용 계정 + 315호 비정상계정. FSS 가공전표(미사용계정 악용)
@@ -106,7 +306,7 @@ Drop      11개    —         제외                              —
 
 #### 추가 L1 룰
 
-#### L1-04 — 승인한도 초과 (ExceededApprovalLimit)
+#### L1-04 — 승인한도 초과 (ExceededApprovalLimit) ✅
 
 - **심각도**: 3
 - **의미**: 전표 총액이 실제 승인자(`approved_by`)의 승인한도(`approval_limit`)를 초과한 경우를 탐지한다.
@@ -121,7 +321,8 @@ Drop      11개    —         제외                              —
   - 직원 한도 조회: `employees.json`의 `user_id`, `approval_limit`, `can_approve_je`
 - **필요 컬럼**: `document_id`, `debit_amount`, `approved_by`, `approval_limit`(직원 마스터), `exceeds_threshold`(파생)
 
-#### L1-05 — 자기 승인 (SelfApproval)
+
+#### L1-05 — 자기 승인 (SelfApproval) ✅
 
 - **심각도**: 3
 - **근거**: K-SOX 직무분리(외감법 §8①5호). FSS 오스템임플란트 사례처럼 1인이 입력, 승인, 자금 집행까지 이어서 수행하는 통제 우회 패턴을 직접 포착한다.
@@ -167,7 +368,7 @@ Drop      11개    —         제외                              —
 - **구현**: `fraud_rules_access.py` → `b06_self_approval()`
 - **필요 피처**: `created_by`, `approved_by`, `source`
 
-#### L1-06 — 직무분리 위반 (SegregationOfDutiesViolation)
+#### L1-06 — 직무분리 위반 (SegregationOfDutiesViolation) ✅
 
 - **심각도**: 4
 - **근거**: K-SOX 직무분리. FSS 오스템: 동일인 전프로세스 수행
@@ -175,67 +376,242 @@ Drop      11개    —         제외                              —
   1. **Toxic Pair 즉시 탐지**: `sod_toxic_pairs` (audit_rules.yaml)에 정의된 프로세스 쌍
   2. **In-process conflict**: `sod_conflict_type` 컬럼 기반 충돌 검출
   3. **Role-based 프로세스 수 제한**: junior=1, senior=3 (역할별 한도)
+- **결과 해석 방식**
+  - **Candidate**: 사람 기준으로 SoD 구조 신호가 보이면 우선 후보로 계산한다. 여기에는 configured toxic pair, `sod_conflict_type`, 역할 과다 겸직, IT super-user 거래 개입 가능성이 모두 포함된다.
+  - **즉시 위반**: `TRE + P2P`, `TRE + O2C`, `TRE + H2R`, `sod_conflict_type` 직접 충돌, IT super-user의 금액 전표 개입, 그리고 review 후보가 `L1-05/L1-07` 성격의 강한 보강 신호와 겹치는 경우다.
+  - **검토 필요**: `R2R + TRE`, `R2R + P2P`, `R2R + O2C`, 역할 과다 겸직처럼 구조상 위험하지만 추가 증거 확인이 필요한 경우다.
+- **운영 예외와 보완 통제**
+  - **사람(Human) 전제 필터**: L1-06은 사람의 권한 남용을 보는 룰이므로 `automated_system` persona, `automated/interface/system/batch` source, `BATCH/SYSTEM/AUTO/IF_/SVC_`류 시스템 계정명은 기본적으로 제외한다.
+  - **즉시 위반 vs 검토 필요 분리**: `TRE + P2P`, `TRE + O2C`, `TRE + H2R`, `sod_conflict_type` 직접 충돌, IT super-user의 실금액 전표 개입은 `즉시 위반`으로 본다. `R2R + TRE`, `R2R + P2P`, `R2R + O2C`, 역할 과다 겸직은 `검토 필요`로 내린다.
+  - **중요성 금액 적용 범위**: `검토 필요` 범주는 `exceeds_threshold == True`일 때만 유지한다. 즉시 위반은 금액과 무관하게 유지한다.
+  - **기본 중요성 기준**: 별도 고객사 override가 없으면 `exceeds_threshold`는 승인한도 피처를 따르며, 기본 최소 승인한도는 `10,000,000원`이다. 승인자별 한도가 있으면 그 한도 초과 여부를 우선 사용한다.
+  - **직급 기반 보완 통제 인정**: `controller`, `manager`는 업무 특성상 `R2R` 관련 review를 기본 면제한다. 다만 `TRE`가 얽힌 강한 충돌이나 `sod_conflict_type` 직접 충돌은 계속 즉시 위반으로 본다.
+  - **IT Super-user 예외 처리**: IT 관리자 계정은 일반 SoD review에서 넓게 잡지 않고, 실제 금액 전표를 `TRE/P2P/O2C/H2R`에서 생성한 경우에만 고위험 즉시 위반으로 승격한다.
+- **이번 패치로 추가된 동작**
+  - `L1-06`은 이제 review 후보를 그대로 끝내지 않고, 같은 행에 `자기승인`, `승인생략` 신호가 겹치면 즉시 위반으로 승격한다.
+  - `L3-02 ManualOverride`는 `수기전표 + 통제우회 정황`을 보여주는 보강 신호로 남기고, 독립 위반으로 바로 보고하지 않는다.
+  - 목적은 Phase 1의 범위를 줄이지 않으면서, 구조적 SoD 신호 중 실제 통제 실패 징후가 동반된 케이스를 먼저 올려 보는 것이다.
 - **구현**: `fraud_rules_access.py` → `b07_segregation_of_duties()`
 - **필요 피처**: `created_by`, `business_process`
 - **DataSynth**: 1,365명 규모 (마스터 1,422), SOD 위반률 3.32% (10,595건, 2026-04-14 실측)
 
-#### L1-07 — 승인 생략 (SkippedApproval)
+#### Cross-Rule Corroboration — 통제위반 결합 신호
+
+- **목적**: 구조 신호만으로는 과탐이 큰 룰에 대해, 같은 행의 직접적인 통제 실패 신호를 보강 근거로 사용한다.
+- **강한 보강 신호**
+  - `L1-05 SelfApproval`: `created_by == approved_by`
+  - `L1-07 SkippedApproval`: `exceeds_threshold == True` 이면서 승인 흔적 없음
+- **약한 보강 신호**
+  - `L3-02 ManualOverride`: `is_manual_je == True` 이면서 승인누락, 승인일 누락, 비정상 시간, 기말, 가계정/민감계정, 빈약한 적요 같은 통제우회 정황이 동반된 경우
+- **현재 L1-06 적용 원칙**
+  - `L1-05`, `L1-07`은 review SoD를 즉시 위반으로 승격할 수 있다.
+  - `L3-02`는 review 우선순위를 설명하는 보강 신호이며, 다른 통제 룰과 결합될 때만 승격 근거로 사용한다.
+  - SoD와 직접 상관없는 다른 Phase 1 룰이 많이 걸렸다는 이유만으로 자동 승격하지는 않는다.
+
+
+
+#### L1-07 — 승인 생략 (SkippedApproval) ✅
 
 - **심각도**: 4
 - **근거**: K-SOX 승인절차(외감법§8②). FSS 오스템: 한도초과+승인없음 = §8② 직접 위반
 - **탐지 로직**: 승인한도 초과 + 비자동(source != 'automated') + 승인 없음
+- **판정 결과 구분**
+  - **즉시위반**: 승인 한도 초과 + `source in {'manual', 'adjustment'}` + `approved_by` 없음
+    - `approval_date`도 없으면 승인 흔적이 전혀 없는 것으로 보고 즉시위반 확신을 더 높인다.
+    - 해석: 사람이 직접 넣은 고액 전표인데 승인 흔적이 없어, 승인 생략으로 바로 볼 근거가 충분한 경우.
+  - **검토필요**: 승인 한도 초과 + `source != 'automated'` + `approved_by` 없음이지만 즉시위반 조건까지는 못 미치는 경우
+    - 예: `recurring` 등 반복/배치 성격 source, `approved_by`는 없지만 `approval_date`는 있는 경우, source 의미가 애매한 경우
+    - 해석: 승인 누락 가능성은 높지만 시스템 처리인지 실제 생략인지 추가 확인이 필요한 경우.
+- **운영 원칙**
+  - L1-07 룰 자체는 하나로 유지한다.
+  - 다만 결과 표시는 `즉시위반`과 `검토필요`로 나눠, 확실한 승인 생략과 추가 확인이 필요한 건을 구분한다.
+  - 목적은 예외로 숨기는 것이 아니라, 과탐을 검토 큐로 분리해 룰 신뢰도와 실무 사용성을 함께 확보하는 것이다.
 - **구현**: `fraud_rules_access.py` → `b09_skipped_approval()`
 - **필요 피처**: 금액, `source`, `created_by`, `approved_by`
 
-#### L1-08 — 기간 불일치 (WrongPeriod)
+#### L1-08 — 기간 불일치 (WrongPeriod) ✅
 
 - **심각도**: 4
 - **근거**: 240§32(b) 기간귀속 적정성
-- **탐지 로직**: `fiscal_period ≠ month(posting_date)`
+- **현재 코드 기준 탐지 로직**
+  - 최종 룰은 `fiscal_period_mismatch == True`일 때만 `WrongPeriod`로 탐지한다.
+  - 이 플래그는 단순히 `month(posting_date)`와 바로 비교하지 않고, 회사 회계연도 시작월 `fiscal_year_start`를 반영해 기대 기수를 먼저 계산한 뒤 비교한다.
+  - 계산식은 `expected_period = (posting_month - fiscal_year_start) % 12 + 1` 이다.
+  - 즉 표준 회계연도(`fiscal_year_start=1`)에서는 사실상 `fiscal_period ≠ month(posting_date)`와 같고, 4월 시작 회계연도처럼 비표준 회계연도에서는 4월=기수1, 5월=기수2, ..., 3월=기수12로 본다.
+- **사람이 이해할 수 있는 판정 기준**
+  - 전기일이 속한 달을 회사의 회계기간 체계로 환산했을 때, 그 전표에 적힌 `fiscal_period`와 다르면 기간 불일치다.
+  - 예: `fiscal_year_start=1`에서 `posting_date=2025-01-15`, `fiscal_period=5`이면 불일치다.
+  - 예: `fiscal_year_start=4`에서 `posting_date=2025-04-15`, `fiscal_period=1`이면 정상이다.
+  - 예: `fiscal_year_start=4`에서 `posting_date=2025-03-15`, `fiscal_period=12`이면 정상이다.
+  - 예: `fiscal_year_start=4`에서 `posting_date=2025-01-15`, `fiscal_period=5`이면 불일치다.
+- **현재 코드가 실제로 잡는 것**
+  - 잘못된 회계기간 귀속, 월경 전표 처리 오류, 회계연도 시작월 설정과 맞지 않는 period 기입을 잡는다.
+  - 반대로 `posting_date` 또는 `fiscal_period`가 비어 있어 비교 자체가 불가능한 건은 `pd.NA`로 두고, 최종 룰에서는 탐지하지 않는다. 즉 "비교 불가"와 "불일치"를 구분한다.
+- **예외 가능성과 현재 한계**
+  - 실무에서는 결산조정 전표, 특수기수(`13~16`), reopen period, closing entry처럼 `posting_date`의 일반 월과 다른 period를 의도적으로 쓰는 경우가 있다.
+  - 현재 Phase 1 구현은 이런 예외를 별도 컬럼으로 받지 않으므로, 결산/특수기수 상황까지 자동 면제하지는 않는다.
+  - 따라서 이 룰은 현재 기준으로 "기본 기간귀속 이상 신호"로 해석하는 것이 맞고, 결산조정 여부는 후속 검토에서 확인해야 한다.
+- **운영 원칙**
+  - Phase 1에서는 룰을 단순하고 설명 가능하게 유지하기 위해 기본 불일치 신호만 잡는다.
+  - 결산/특수기수 예외는 데이터에 `special_period`, `closing_entry`, `adjustment_type`, `posting_period_status` 같은 맥락 컬럼이 확보되면 후속 단계에서 분기하는 것이 맞다.
 - **구현**: `anomaly_rules_simple.py` → `c05_fiscal_period_mismatch()`
+- **피처 생성**: `time_features.py` → `add_fiscal_period_mismatch()`
 - **필요 피처**: `fiscal_period`, `posting_date`
 
 ---
 
 ### 2.2 L2: 강한 부정 정황 (5개)
 
-#### L2-01 — 승인한도 직하 (JustBelowThreshold)
+#### L2-01 — 승인한도 직하 (JustBelowThreshold) -> datasynth 재생성 필요
 
 - **심각도**: 3
 - **근거**: 240-A45(e) 단수/끝자리, K-SOX 승인체계
-- **탐지 로직**: `금액 ∈ [threshold × 0.9, threshold)` — 6단계 승인한도
-  - `approval_thresholds: [10M, 100M, 1B, 5B, 10B, 50B]` (KRW)
-- **구현**: `fraud_rules_feature.py` → `b02_near_threshold()`
-  - 피처 엔진에서 `is_near_threshold` 사전 계산
-- **필요 피처**: `debit_amount`, `credit_amount`, `is_near_threshold` (파생)
+- **의미**: 승인 대상 금액이 결재권자의 승인 한도에 근접해 있을 때, 우연한 분포라기보다 승인 기준을 의식해 금액이 맞춰졌을 가능성을 살펴보는 룰이다. 이 룰 하나만으로 우회라고 단정하지 않고, 승인 정책과 업무 맥락을 함께 본다.
+- **판정 방식**
+  - 같은 `document_id`의 차변 금액 합계로 전표 총액을 계산한다.
+  - 전표의 `approved_by`를 직원 마스터(`employees.json`)와 연결해 해당 승인자의 `approval_limit`를 조회한다.
+  - 전표 총액이 그 승인자의 한도에 충분히 가깝지만 아직 넘지 않은 경우, 즉 `approval_limit × near_threshold_ratio <= 전표 총액 < approval_limit` 이면 `JustBelowThreshold`로 본다.
+  - 기본 `near_threshold_ratio`는 `0.90`이다. 실무 해석으로는 "승인 한도의 90% 이상 100% 미만 구간"이다.
+- **Fallback 원칙**
+  - `approved_by`가 없거나 직원 마스터 조인에 실패해 실제 `approval_limit`를 알 수 없는 행은 PHASE1 recall 유지를 위해 공통 `approval_thresholds` 구간으로 fallback할 수 있다.
+  - 이 fallback은 실제 전결 규정을 직접 검증한 결과가 아니라, "한도 근처 금액대"를 넓게 보는 보조 신호로 해석한다.
+- **한 줄 규칙**: `approval_limit(approved_by) × 0.9 <= SUM(debit_amount) BY document_id < approval_limit(approved_by)`
+- **구현**
+  - 피처 생성: `src/feature/amount_features.py` → `add_is_near_threshold()`
+  - 룰 적용: `src/detection/fraud_rules_feature.py` → `b02_near_threshold()`
+- **필요 컬럼**: `document_id`, `debit_amount`, `approved_by`, `approval_limit`(직원 마스터), `is_near_threshold` (파생)
 
 #### L2-02 — 중복 지급 (DuplicatePayment)
 
+
 - **심각도**: 3
 - **근거**: 240§32 적정성. FSS 횡령은폐: 동일건 이중지급
-- **탐지 로직**: 동일 벤더 + 동일 금액 + 기간 내 2건 이상
-  - Bilateral diff (forward + backward)로 first-in-group도 포착
+- **한 줄 설명**: 같은 매입처에 같은 돈을 또 보냈는지 찾는 룰
+- **PHASE1 탐지 순서**
+  1. `business_process == 'P2P'` 인 지급성 거래만 본다.
+  2. 거래처 키는 `auxiliary_account_number`를 우선 사용하고, 없으면 `trading_partner`, `vendor_name` 등 대체 컬럼으로 보완한다.
+  3. `reference`가 있으면 더 강한 신호로 본다.
+     - 같은 거래처 + 같은 `reference` + 거의 같은 금액(기본 1% 이내) + 다른 `document_id`
+     - 이 경우는 "같은 청구/증빙을 다른 전표로 다시 지급"한 가능성이 높다.
+  4. `reference`가 없으면 보수적으로 fallback 한다.
+     - 같은 거래처 + 같은 금액 + 기준 기간 내 재지급이면 후보로 올린다.
+     - 기준 기간 기본값은 **45일**이다.
+     - 날짜 차이는 forward/backward 둘 다 봐서 첫 지급과 두 번째 지급을 함께 잡는다.
+  5. 단, 같은 거래처/같은 금액이 월 단위로 규칙적으로 3번 이상 반복되면 정기성 지급 가능성이 높다고 보고 fallback 과탐을 줄인다.
+- **왜 이렇게 보나**
+  - `reference`가 같은데 전표번호만 다르면 실무상 가장 강한 중복 지급 신호다.
+  - `reference`가 비어 있는 실제 데이터가 많아서, PHASE1에서는 거래처·금액·기간 기준 fallback 이 필요하다.
+  - 대신 45일로 기간을 넓히면 월 정기 지급, 관리비, 임차료 같은 정상 반복 거래가 섞일 수 있어 정기성 예외를 같이 둔다.
+- **해석 기준**
+  - 이 룰은 PHASE1에서 "확정 판정"이 아니라 "검토 후보 추출" 용도다.
+  - `reference` 일치 케이스가 fallback 케이스보다 신뢰도가 높다.
 - **구현**: `fraud_rules_groupby.py` → `b04_duplicate_payment()`
-- **필요 피처**: `auxiliary_account_number`, 금액, 날짜
-- **DataSynth 상태**: ✅ auxiliary_account_number 59% 유효 (652K건, V-000xxx 형식)
+- **필요 피처**: 거래처 식별자(`auxiliary_account_number` 우선, 없으면 거래처 대체 컬럼), 금액, `posting_date`
+- **DataSynth 상태**:
+  - 현재 운영 기준본 `v23`에서는 `DuplicatePayment`가 `P2P + KZ` 지급쌍 기준으로 재구성되었다.
+  - pair lineage: `labels/duplicate_payment_pairs.json`
+  - negative controls: `labels/duplicate_payment_negative_controls.json`
+  - 운영 기준 정합도: labeled duplicate `33`, detected `28`, false negative `5`, false positive `6`
 
-#### L2-03 — 중복 전표 (DuplicateEntry)
+#### L2-03 — 중복 전표 (DuplicateEntry) -> 진행 중 
 
 - **심각도**: 3
 - **근거**: 240§32, FSS 가공전표: 동일 전표 반복 = 가공
-- **탐지 로직**: 동일 금액 + 계정 + 일자 매칭
-  - `keep=False`로 원본·복제 양쪽 모두 플래그
-- **구현**: `fraud_rules_groupby.py` → `b05_duplicate_entry()`
-- **필요 피처**: `gl_account`, 금액, `posting_date`
+- **실무 해석**
+  - 실무에서 "중복 전표"는 단순히 같은 행이 두 번 들어온 경우만 뜻하지 않는다.
+  - 보통은 같은 거래를 다시 입력했거나, 날짜·적요·금액을 조금 바꿔 재기표했거나, 승인 회피를 위해 분할 입력한 경우까지 함께 본다.
+  - 따라서 이 룰은 "확정 판정"보다 "중복 가능성이 높은 전표 후보를 우선 추출"하는 용도로 해석하는 것이 맞다.
+- **현재 PHASE1 구현**
+  - 현재 기본 룰은 `동일 GL 계정 + 동일 대표금액(max(debit, credit)) + 동일 posting_date` 일치만 본다.
+  - 구현상 `keep=False`를 사용하므로 원본·복제 양쪽 모두 플래그된다.
+  - 장점: 규칙이 단순하고 설명이 쉽다.
+  - 한계: 날짜만 다른 재입력, 유사 적요, 분할 입력, 거래처/참조번호 기반 중복은 놓친다.
+- **실무형 보강 방향**
+  - 아래 신호를 함께 봐야 실무 기준에 더 가깝다.
+  1. `Exact duplicate`
+     - 같은 `gl_account + amount + posting_date`
+     - 가장 보수적인 강한 신호라 유지한다.
+  2. `Reference-based duplicate`
+     - 같은 거래처, 같은 `reference`, 거의 같은 금액, 서로 다른 `document_id`
+     - 실무상 가장 설명력이 높은 중복 신호다.
+  3. `Near duplicate`
+     - 같은 거래처 또는 같은 계정군 안에서
+     - 금액 차이가 작고, 날짜 차이가 짧고, 적요(`line_text`)가 유사하면 후보로 본다.
+  4. `Split duplicate`
+     - 같은 계정/거래처, 짧은 기간 내, 두 건 이상 합이 원래 금액과 거의 같으면 분할 입력 후보로 본다.
+- **PHASE1에서 현실적으로 바로 넣을 조건**
+  - `document_id`가 다를 것: 같은 문서 내부의 정상 라인 반복과 구분
+  - `reference` 일치 여부: 가장 강한 실무 신호
+  - 거래처 식별자 일치: `auxiliary_account_number`, `trading_partner`, `vendor_name`, `customer_name` 등 사용 가능 컬럼 우선
+  - 날짜 윈도우: 같은 날만이 아니라 `3~7일` 내 재입력 허용
+  - 금액 허용오차: exact only 대신 `1~2%` 범위 허용
+  - 적요 유사도: `line_text` fuzzy 비교
+  - 정기 반복거래 제외: 월세·관리비·리스료 같은 정상 recurring pattern 억제
+- **권장 운영 방식**
+  - 외부 설명은 계속 `L2-03 중복 전표` 하나로 유지한다.
+  - 내부 구현은 `Exact / Fuzzy / Split / Time-shift` 서브 신호로 쪼개 관리하는 편이 튜닝과 설명에 유리하다.
+  - 즉 PHASE1 기본 exact rule은 남기되, 운영 판정은 점차 `DuplicateDetector`의 확장 신호를 함께 반영하는 구조가 바람직하다.
+- **현재 구현**
+  - `fraud_rules_groupby.py` → `b05_duplicate_entry()`
+  - 현재 PHASE1의 `L2-03`은 더 이상 exact-only가 아니다.
+  - 내부적으로 아래 4개 reason code를 사용해 confidence를 계산한다.
+    - `exact_duplicate`
+    - `reference_duplicate`
+    - `near_duplicate`
+    - `split_duplicate`
+  - 각 행은 `가장 강한 신호 1개`를 primary `reason_code`로 갖고, 함께 걸린 신호는 `matched_reason_codes`로 남긴다.
+  - 최종 confidence는 행 단위로 계산되며, `high / medium / low` band로도 함께 구분한다.
+  - 이 정보는 detection metadata의 row-level annotation으로 보관하므로, 이후 UI/리포트/export에서 바로 재사용할 수 있다.
+- **확장 구현(병행 가능)**: `duplicate_detector.py` → `L2-03a~d (Exact / Fuzzy / Split / Time-shift)`
+- **UI는 이렇게 보여주는 것이 좋다**
+  - 화면의 메인 라벨은 계속 `L2-03 중복 전표` 하나로 유지한다.
+  - 대신 상세 화면에서는 아래 3가지를 같이 보여주는 편이 좋다.
+  1. `reason_code`
+     - 예: `reference_duplicate`, `near_duplicate`
+  2. `confidence`
+     - 예: `0.90 (high)`, `0.76 (medium)`
+  3. `설명 문장`
+     - 예: `같은 거래처·같은 reference·유사 금액의 다른 전표가 3일 내 반복 입력됨`
+  - 사용자는 룰 이름보다 `왜 잡혔는지`를 먼저 이해해야 하므로, UI는 rule ID 나열보다 `근거 문장 + confidence + 관련 필드` 중심이 더 적합하다.
+  - 추천 노출 순서는 `reason_code → confidence → 핵심 근거 필드(reference / 거래처 / 금액 / 날짜 / 적요)`이다.
+  - export나 감사 리뷰 큐에도 같은 형식을 유지하면, 분석 화면과 보고서 간 해석 차이를 줄일 수 있다.
+- **필요 피처**
+  - 최소: `gl_account`, `debit_amount`, `credit_amount`, `posting_date`
+  - 실무형 보강: `document_id`, `reference`, 거래처 식별자, `line_text`
 
-#### L2-04 — 비용 자산화 (ExpenseCapitalization)
+#### L2-04 — 비용 자산화 (ExpenseCapitalization) ✅
 
 - **심각도**: 4
 - **근거**: 240§32, FSS 분식회계: 개발비 과대자산화
-- **탐지 로직**: 동일 document 내 차변=자산(15xx) + 대변=비용(6xxx)
-  - Cartesian product 로직으로 N:M 전표 처리
+- **한 줄 설명**
+  - 비용으로 나가야 할 금액이 자산으로 넘어간 것처럼 보이는 전표를 찾는 룰이다.
+- **현재 판정 기준**
+  - 회사 설정(`audit_rules.yaml`)의 `자산 계정 prefix`와 `비용 계정 prefix`를 사용한다.
+  - 같은 `document_id` 안에서 `자산 차변`과 `비용 대변`이 금액상 거의 맞으면 탐지한다.
+  - 1:1 매칭이 안 되어도 자산 차변 합계와 비용 대변 합계가 거의 같으면 분할 전표로 보고 탐지한다.
+  - 전표 전체가 아니라 실제로 매칭된 자산/비용 라인만 올린다.
+- **우선순위 조정 로직**
+  - `개발`, `구축`, `software`, `project`처럼 정상 자산화 맥락이 강하면 감점한다.
+  - `수선`, `복리후생`, `지급수수료`, `office`, `repair`처럼 일반 비용성 적요가 보이면 가점한다.
+  - `manual`, `adjustment` 같은 수기성 source와 `P2P`, `O2C`, `R2R`, `H2R` 같은 일반 운영 프로세스는 가점한다.
+  - `AA`, `FA` 같은 자산 관련 문서유형은 감점한다.
+- **출력 방식**
+  - `0.75 이상`은 `즉시 검토(immediate)`, `0.45 이상`은 `검토 필요(review)`로 본다.
+  - 따라서 같은 L2-04라도 전표 맥락에 따라 우선순위가 달라질 수 있다.
+- **해석**
+  - 이 룰은 `비용 자산화 확정`이 아니라 `비용 자산화 가능성이 높은 전표 후보`를 먼저 보여주는 룰이다.
+  - 즉 확정 판정용이 아니라 우선 검토 큐용이다.
+- **실무 해석 시 주의점**
+  - 회사마다 CoA가 다르므로 prefix는 회사 기준으로 조정해야 한다.
+  - 정상적인 자산 취득/자본적 지출도 비슷한 모양이 나올 수 있으므로 적요, 문서유형, 프로세스를 함께 봐야 한다.
+  - 현재 감점/가점 키워드는 시작점일 뿐이고, 회사별 자산화 정책을 반영해 계속 튜닝해야 한다.
+- **합성데이터 평가 (`out_v20`, 2022~2024)**
+  - 가족 라벨 기준(`ExpenseCapitalization + ImproperCapitalization`)으로 보면 `flagged 535 docs / label 459 docs / TP 438 / FP 97 / FN 21`, precision `81.9%`, recall `95.4%`였다.
+  - 연도별로는 2022 precision/recall `80.7% / 95.3%`, 2023 `84.4% / 97.3%`, 2024 `80.6% / 93.8%`였다.
+  - 반면 현재 프로젝트의 엄격 매핑(`ImproperCapitalization` 단독) 기준으로 보면 precision이 크게 낮아진다. 즉 이 룰은 합성라벨의 세부 subtype 하나에만 맞춘 룰이라기보다, `비용 자산화 family`를 넓게 잡는 실무형 우선검토 룰로 해석하는 편이 맞다.
+  - 상세 표와 FP/FN 샘플은 `tests/phase1_rulebase/test-results/l2-04-synth-2022-2024.md` 참조.
 - **구현**: `fraud_rules_groupby.py` → `b11_expense_capitalization()`
-- **필요 피처**: `gl_account`, `debit_amount`, `credit_amount`
+- **필요 피처**: `document_id`, `gl_account`, `debit_amount`, `credit_amount`
 
 #### L2-06 — 역분개 패턴 (ReversalEntry)
 
@@ -260,9 +636,10 @@ Drop      11개    —         제외                              —
 
 - **심각도**: 4
 - **근거**: 240-A45(b) 비인가자 입력, K-SOX 우회금지(외감법§8②). FSS 가공전표: 자동 프로세스 우회
-- **탐지 로직**: `source == 'manual'` + 승인한도 초과
+- **탐지 로직**: `is_manual_je == True` 이면서 승인누락, 비정상 시간, 기말, 가계정/민감계정, 빈약한 적요 같은 통제우회 정황이 동반된 경우
 - **구현**: `fraud_rules_feature.py` → `b08_manual_override()`
-- **필요 피처**: `source`, 금액, `exceeds_threshold` (파생)
+- **필요 피처**: `is_manual_je` 또는 `source`, 그리고 통제우회 보강 피처
+- **처리 방식**: 독립 룰위반으로 바로 보고하지 않고, `L1-05/L1-06/L1-07` 등 다른 통제 룰의 보강 신호로 사용
 
 #### L3-03 — 관계사 순환거래 (CircularIntercompany)
 
@@ -1111,7 +1488,7 @@ DataSynth `journal_entries.csv` 39개 컬럼 기준.
 
 | 컬럼명           | 타입   | ACDOCA  | 설명             | 탐지 활용              |
 |------------------|--------|---------|------------------|------------------------|
-| `document_id`    | str    | `belnr` | 전표 ID (UUID)    | L1-01, L2-02, L2-03          |
+| `document_id`    | str    | `belnr` | 전표 ID (UUID)    | L1-01, L2-02, L2-03(실무형 보강 시 중요)          |
 | `company_code`   | str    | `rbukrs`| 회사코드          | L3-03                    |
 | `fiscal_year`    | int    | `gjahr` | 회계연도          | L1-08                    |
 | `posting_date`   | date   | `budat` | 전기일            | L3-04~L1-08                |

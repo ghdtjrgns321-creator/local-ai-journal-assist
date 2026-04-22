@@ -930,3 +930,6 @@ WU1 (기반 컴포넌트) ──── 반드시 최초 실행
 7. Chat UI: 프리셋 버튼 + 자유 질의 + 스트리밍 + SQL 표시 동작
 8. Export 탭: 포맷 선택 + 필터 + 다운로드 동작
 9. 인사이트: High 위험 전표 자동 위험 사유서 생성 동작
+> Current DataSynth production baseline: `data/journal/primary/datasynth/` = `v23` freeze (2026-04-22).  
+> `B04 DuplicatePayment`는 `P2P + KZ` 지급쌍과 pair/negative-control sidecar 기준으로 승격되었고, `v20.4`는 백업본 `datasynth_backup_v20_4_20260422`로 보존된다.
+> Current production DataSynth baseline: `data/journal/primary/datasynth/` freeze `v23` as of 2026-04-22. Older `v20.x` references below are historical task notes.

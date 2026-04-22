@@ -49,7 +49,7 @@
   - **PCAOB AS 2401 / ISA 240 / COSO 2013 / SOX 302·404**: 실무 감사기준 코드 구현
   - **Schreyer & Sattarov 연구** (arXiv 1709.05254, 1908.00734): 전표 이상치 분류 학술 표준
   - 이 세 프레임워크의 교차 설계를 바탕으로 현재 운영 기준본에서도 fraud/anomaly/SoD와 별도 `anomaly_labels.csv`를 함께 유지한다. 세부 주입 수치는 freeze 메모 기준으로 관리한다.
-- **도구 최신성**: DataSynth 레포 기반 프로젝트 fork를 계속 보정 중이며, 현재 실사용 기준본은 2026-04-21 동결 `v20.4`이다. 라벨/CoA/approval join/문서번호/approval-limit 정합성까지 반영한 운영 기준본을 유지한다.
+- **도구 최신성**: DataSynth 레포 기반 프로젝트 fork를 계속 보정 중이며, 현재 실사용 기준본은 2026-04-22 동결 `v23`이다. `B04 DuplicatePayment`를 `P2P + KZ` 기준으로 재구성했고, pair lineage / negative control까지 포함한 운영 기준본을 유지한다.
 - **대안 검토**: 실제 SAP 데이터(sap-merged 332K)는 이상치 레이블 1%뿐, Schreyer(533K)는 날짜 없음+전부 익명화, BPI 2019(1.6M)는 전표가 아닌 이벤트 로그
 - **생성 설정**: `config/datasynth.yaml` (seed 2024, 36개월, 3회사, fraud 2%)
 - **현재 기준 결과**: 1,109,221라인(319,226전표), 44컬럼, `anomaly_labels.csv` 1,912건, `accounts_count` 437, `employee_count` 246
@@ -268,6 +268,19 @@
   - v20.4: `ExceededApprovalLimit`를 `approved_by.approval_limit` 기준으로 정정
   - `document_number` 100% 문자열 채움, approval violation `0`, B04 JE 지급쌍 복원 가능
 - **상세**: [FREEZE_V20.md](../data/journal/primary/datasynth/FREEZE_V20.md)
+
+### D039: DataSynth v23 운영 기준 승격
+- **결정**: `data/journal/primary/datasynth/`를 현재 운영 기준본 `v23`로 승격. `v20.4`는 백업본으로 유지하고, Phase 1/2/3 기본 데이터는 이제 `v23` 기준을 따른다.
+- **이유**:
+  - `v22_candidate`의 `B04`는 `미탐 0 / 과탐 0`으로 benchmark 정렬이 너무 강했음
+  - `v23`은 `P2P + KZ` duplicate payment pair를 유지하면서도 일부 미탐/과탐을 남겨 test fitting을 완화
+  - `pair lineage`와 `negative control`을 함께 제공해 설명성과 실무 유사성을 확보
+- **운영 수치**:
+  - `DuplicatePayment` labeled docs: `33`
+  - `L2-02` 기준 detected docs: `28`
+  - false negatives: `5`
+  - false positives: `6`
+- **상세**: [FREEZE_V23.md](../data/journal/primary/datasynth/FREEZE_V23.md)
 
 ### D035: type_caster 정규화 규칙 외부화 — cleaning.yaml
 - **결정**: `type_caster.py`에 하드코딩된 통화 기호·null 값·불리언·Excel serial 범위·DC 지시자를 `config/cleaning.yaml`로 분리. 과학적 표기법(2E+11) 감지/복원과 한국 ERP null 표현(`미정`, `해당없음`) 지원 추가

@@ -932,3 +932,4 @@ Run  T3-03  T3-04      T3-05     T3-10  T3-12   T3-13   총 FAIL
 1. **`document_number =`로 grep하여 덮어쓰기 코드를 반드시 검색할 것.** 같은 필드를 여러 곳에서 할당하면 마지막 할당이 이김.
 2. **갭 비율 설계 시 기본률과 추가률을 합산할 것.** exclusive가 아닌 additive로 설계해야 "기말 > 비기말" 보장.
 3. **Quality gate 체크를 데이터 스키마 변경에 맞춰 업데이트할 것.** 채번 기준이 바뀌면 검증 쿼리도 같이 바꿔야 함.
+> Historical debugging log. Current production DataSynth baseline is `data/journal/primary/datasynth/` freeze `v23` as of 2026-04-22. Older `v20.x` references below are point-in-time notes.
