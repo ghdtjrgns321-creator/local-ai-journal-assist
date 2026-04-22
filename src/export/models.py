@@ -56,6 +56,7 @@ class ExportConfig:
     mask_pii: bool = False
     top_n: int = 50  # PDF 이상 전표 테이블 건수 + Excel anomalies 정렬 제한 안내
     include_raw_data: bool = True  # Excel 원본 데이터 시트 포함 여부
+    include_phase1_cases: bool = True  # PHASE1 case queue 요약 포함 여부
     report_title: str = DEFAULT_REPORT_TITLE
     analyst_name: str = ""  # 표지 표시용 (마스킹 대상 아님)
     extra_meta: dict = field(default_factory=dict)  # 회사명·기간 등 자유 메타

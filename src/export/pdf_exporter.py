@@ -28,6 +28,7 @@ from src.export.models import (
     ExportConfig,
     ExportFilter,
 )
+from src.export.phase1_case_view import build_phase1_case_queue, summarize_phase1_case_result
 from src.export.query_helper import build_where_clause, safe_query
 
 if TYPE_CHECKING:
@@ -92,7 +93,7 @@ class PDFExporter:
         where_sql, params = build_where_clause(filters, pipeline_result.batch_id)
 
         self._render_cover(pdf, pipeline_result, config)
-        self._render_summary(pdf, pipeline_result)
+        self._render_summary(pdf, pipeline_result, config)
         self._render_process_distribution(pdf, where_sql, params)
         self._render_benford(pdf, pipeline_result.batch_id)
         self._render_top_anomalies(pdf, where_sql, params, config.top_n)
@@ -125,7 +126,7 @@ class PDFExporter:
         # multi_cell로 줄바꿈 자동 처리
         pdf.multi_cell(0, 6, DISCLAIMER, align="L")
 
-    def _render_summary(self, pdf: FPDF, pr: PipelineResult) -> None:
+    def _render_summary(self, pdf: FPDF, pr: PipelineResult, config: ExportConfig) -> None:
         pdf.add_page()
         self._section_title(pdf, "1. 분석 요약")
 
@@ -133,6 +134,33 @@ class PDFExporter:
         for risk in ("High", "Medium", "Low", "Normal"):
             rows.append((risk, str(pr.risk_summary.get(risk, 0))))
         self._render_table(pdf, rows, col_widths=[60, 40])
+        phase1_summary = summarize_phase1_case_result(pr)
+        if config.include_phase1_cases and phase1_summary.get("available"):
+            pdf.ln(6)
+            pdf.set_font(_FONT_NAME, size=11, style="B")
+            pdf.cell(0, 7, "PHASE1 Case Queue", new_x="LMARGIN", new_y="NEXT")
+            pdf.set_font(_FONT_NAME, size=10)
+            pdf.cell(0, 7, f"Case 수: {phase1_summary['case_count']}", new_x="LMARGIN", new_y="NEXT")
+            pdf.cell(
+                0,
+                7,
+                f"Top Themes: {', '.join(phase1_summary.get('top_theme_labels', []))}",
+                new_x="LMARGIN",
+                new_y="NEXT",
+            )
+            top_cases = build_phase1_case_queue(pr, top_n=3)
+            if top_cases:
+                phase1_rows = [("Case ID", "Theme", "Band", "Amount")]
+                phase1_rows.extend(
+                    (
+                        str(case["case_id"]),
+                        str(case["primary_theme_label"]),
+                        str(case["priority_band"]),
+                        f"{case['total_amount']:,.0f}",
+                    )
+                    for case in top_cases
+                )
+                self._render_table(pdf, phase1_rows, col_widths=[45, 45, 25, 35])
 
     def _render_process_distribution(
         self, pdf: FPDF, where_sql: str, params: list[Any]

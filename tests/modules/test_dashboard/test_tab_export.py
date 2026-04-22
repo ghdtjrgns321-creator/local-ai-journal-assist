@@ -78,6 +78,7 @@ def test_build_config_from_empty_form_uses_dataclass_defaults() -> None:
     assert cfg.mask_pii is True   # UI 폼 기본 True
     assert cfg.top_n == 50
     assert cfg.include_raw_data is True
+    assert cfg.include_phase1_cases is True
 
 
 def test_build_config_from_full_form_maps_all_fields() -> None:
@@ -85,12 +86,14 @@ def test_build_config_from_full_form_maps_all_fields() -> None:
         "mask_pii": False,
         "top_n": 100,
         "include_raw_data": False,
+        "include_phase1_cases": False,
         "report_title": "Q1 분석",
         "analyst_name": "김감사",
     })
     assert cfg.mask_pii is False
     assert cfg.top_n == 100
     assert cfg.include_raw_data is False
+    assert cfg.include_phase1_cases is False
     assert cfg.report_title == "Q1 분석"
     assert cfg.analyst_name == "김감사"
 

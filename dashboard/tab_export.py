@@ -123,6 +123,7 @@ def _build_config_from_form(form: dict[str, Any]) -> ExportConfig:
         mask_pii=bool(form.get("mask_pii", True)),
         top_n=int(form.get("top_n", 50)),
         include_raw_data=bool(form.get("include_raw_data", True)),
+        include_phase1_cases=bool(form.get("include_phase1_cases", True)),
         report_title=str(form.get("report_title") or DEFAULT_REPORT_TITLE),
         analyst_name=str(form.get("analyst_name") or ""),
     )
@@ -311,10 +312,14 @@ def _render_config_form() -> ExportConfig:
             include_raw_data = st.checkbox(
                 "원본 데이터 시트 포함 (Excel)", value=True, key="export_include_raw",
             )
+            include_phase1_cases = st.checkbox(
+                "PHASE1 case 요약 포함", value=True, key="export_include_phase1",
+            )
     return _build_config_from_form({
         "mask_pii": mask_pii,
         "top_n": top_n,
         "include_raw_data": include_raw_data,
+        "include_phase1_cases": include_phase1_cases,
         "report_title": report_title,
         "analyst_name": analyst_name,
     })

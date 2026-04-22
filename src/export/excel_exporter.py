@@ -34,6 +34,7 @@ from src.export.models import (
     ExportConfig,
     ExportFilter,
 )
+from src.export.phase1_case_view import build_phase1_case_queue, summarize_phase1_case_result
 from src.export.query_helper import build_where_clause, safe_query
 
 if TYPE_CHECKING:
@@ -133,6 +134,35 @@ class ExcelExporter:
             count = pr.risk_summary.get(risk, 0)
             cell_a = self._cell(ws, risk, fill=_FILLS.get(risk))
             ws.append([cell_a, count])
+
+        phase1_summary = summarize_phase1_case_result(pr)
+        if config.include_phase1_cases and phase1_summary.get("available"):
+            ws.append([])
+            ws.append([self._header_cell(ws, "PHASE1 Case Queue"), self._header_cell(ws, "값")])
+            ws.append(["Case 수", phase1_summary["case_count"]])
+            ws.append(["Top Themes", ", ".join(phase1_summary.get("top_theme_labels", []))])
+            top_cases = build_phase1_case_queue(pr, top_n=5)
+            if top_cases:
+                ws.append([])
+                ws.append(
+                    [
+                        self._header_cell(ws, "Case ID"),
+                        self._header_cell(ws, "Theme"),
+                        self._header_cell(ws, "Band"),
+                        self._header_cell(ws, "Amount"),
+                        self._header_cell(ws, "Explanation"),
+                    ]
+                )
+                for case in top_cases:
+                    ws.append(
+                        [
+                            case["case_id"],
+                            case["primary_theme_label"],
+                            case["priority_band"],
+                            case["total_amount"],
+                            case["representative_explanation"],
+                        ]
+                    )
 
     def _write_anomalies_sheet(
         self,

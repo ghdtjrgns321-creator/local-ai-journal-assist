@@ -20,6 +20,7 @@ from openpyxl import load_workbook
 from src.db.schema import initialize_schema
 from src.export.excel_exporter import ExcelExporter
 from src.export.models import ExportConfig, ExportFilter
+from src.models.phase1_case import CaseDocumentRef, CaseGroupResult, Phase1CaseResult, ThemeSummary
 
 BATCH = "TEST_BATCH_001"
 
@@ -35,6 +36,11 @@ class _StubPipelineResult:
     elapsed: float = 1.23
     load_result: object | None = None
     warnings: list = None  # type: ignore[assignment]
+    phase1_case_result: object | None = None
+    phase1_case_path: str | None = None
+    phase1_case_run_id: str | None = None
+    phase1_case_count: int = 0
+    phase1_top_theme_ids: list | None = None
 
 
 @pytest.fixture
@@ -113,12 +119,62 @@ def _seed_sample_data(c: duckdb.DuckDBPyConnection) -> None:
 @pytest.fixture
 def pipeline_result():
     df = pd.DataFrame({"document_id": ["D001"], "anomaly_score": [0.85]})
+    phase1 = Phase1CaseResult(
+        run_id="phase1case_test",
+        company_id="C001",
+        batch_id=BATCH,
+        generated_at=pd.Timestamp("2026-04-22T03:15:22Z").to_pydatetime(),
+        top_n_cases=10,
+        top_n_per_theme=5,
+        theme_summaries=[
+            ThemeSummary(
+                theme_id="control_failure",
+                theme_label="승인·권한 통제 우회",
+                case_count=1,
+                high_count=1,
+                medium_count=0,
+                low_count=0,
+                total_amount=1000.0,
+                top_case_ids=["case_control_failure_00001"],
+                secondary_tag_case_count=0,
+            )
+        ],
+        cases=[
+            CaseGroupResult(
+                case_id="case_control_failure_00001",
+                primary_theme="control_failure",
+                case_key="alice / P2P / 2026-01",
+                priority_score=0.9,
+                priority_band="high",
+                document_count=1,
+                row_count=1,
+                rule_count=2,
+                total_amount=1000.0,
+                representative_explanation="자기승인 + 승인 생략이 함께 발생했습니다.",
+                documents=[
+                    CaseDocumentRef(
+                        document_id="D001",
+                        posting_date="2026-01-15",
+                        created_by="alice",
+                        business_process="P2P",
+                        gl_account="4100",
+                        counterparty="V001",
+                        amount=1000.0,
+                    )
+                ],
+            )
+        ],
+    )
     return _StubPipelineResult(
         data=df,
         results=[],
         risk_summary={"High": 2, "Medium": 1, "Low": 1, "Normal": 1},
         batch_id=BATCH,
         warnings=[],
+        phase1_case_result=phase1,
+        phase1_case_run_id=phase1.run_id,
+        phase1_case_count=len(phase1.cases),
+        phase1_top_theme_ids=["control_failure"],
     )
 
 
@@ -160,6 +216,19 @@ class TestBasicExport:
         assert "감사 의견" in all_text  # 면책조항 키워드
         assert "데이터 분석" in all_text
         assert pipeline_result.batch_id in all_text
+
+
+    def test_summary_sheet_contains_phase1_case_queue_section(self, conn, pipeline_result, tmp_path):
+        out = tmp_path / "report.xlsx"
+        ExcelExporter(conn).export(pipeline_result, out)
+
+        wb = load_workbook(out, read_only=True)
+        ws = wb["분석 요약"]
+        all_text = "\n".join(
+            str(c.value) for row in ws.iter_rows() for c in row if c.value is not None
+        )
+        assert "PHASE1 Case Queue" in all_text
+        assert "case_control_failure_00001" in all_text
 
 
 class TestFilters:
