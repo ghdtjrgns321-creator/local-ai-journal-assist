@@ -89,9 +89,13 @@ class AuditSettings(BaseSettings):
     custom_holidays: list[str] = []  # 회사 지정 휴일 ["2025-07-01"]
 
     # --- Detection Layer B 관련 ---
-    duplicate_payment_window_days: int = 30   # B04: 중복 지급 판정 기간 (일)
+    duplicate_payment_window_days: int = 45   # B04: 중복 지급 판정 기간 (일)
     sod_process_threshold: int = 3            # B07: 직무분리 위반 프로세스 수 임계
     topside_threshold: int = 2               # B19: Top-side JE 가점 임계 (5점 만점, 수기 전제)
+    expense_capitalization_amount_tolerance: float = 0.02  # B11: 자산/비용 금액 허용 오차 (2%)
+    expense_capitalization_min_amount: float = 0.0         # B11: 소액 라인 제외 기준 (0=미적용)
+    expense_capitalization_review_threshold: float = 0.45  # B11: 검토 필요 점수 임계
+    expense_capitalization_immediate_threshold: float = 0.75  # B11: 즉시 검토 점수 임계
 
     # --- DuplicateDetector (WU-05) ---
     duplicate_fuzzy_threshold: int = 80          # B05b: 적요 유사도 임계 (rapidfuzz 0~100)
@@ -422,3 +426,9 @@ def get_cleaning_config() -> dict:
 def get_audit_rules() -> dict:
     """감사 업무 룰(패턴/키워드) 로드. config/audit_rules.yaml."""
     return _load_yaml("audit_rules.yaml")
+
+
+@functools.lru_cache
+def get_phase1_case() -> dict:
+    """PHASE1 케이스 그룹화/우선순위 설정 로드. config/phase1_case.yaml."""
+    return _load_yaml("phase1_case.yaml")

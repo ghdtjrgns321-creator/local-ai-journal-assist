@@ -2,6 +2,7 @@
 
 from config.settings import (
     AuditSettings,
+    get_phase1_case,
     get_keywords,
     get_risk_keywords,
     get_schema,
@@ -67,3 +68,14 @@ class TestYamlLoaders:
         assert "high_risk" in rk
         assert "medium_risk" in rk
         assert len(rk["high_risk"]) > 0
+
+    def test_phase1_case_has_required_sections(self):
+        """phase1_case.yaml 기본 구조가 존재해야 한다."""
+        cfg = get_phase1_case()
+        assert "phase1_case" in cfg
+        phase1 = cfg["phase1_case"]
+        assert phase1["secondary_tag_min_score"] == 0.40
+        assert phase1["priority_band"]["high"] == 0.75
+        assert phase1["priority_band"]["medium"] == 0.45
+        assert phase1["counterparty_columns"][0] == "auxiliary_account_number"
+        assert phase1["priority_weights"]["control"] == 0.35
