@@ -53,7 +53,11 @@ streamlit_*.log
 .tmp/
 .tmp-*/
 .tmp_*/
+.tmp_*.md
 .pytest_tmp/
 tmp*/
 tools/tmp_*.py
 .manual-model-registry-check/
+
+# 런타임 생성물 (케이스/리포트 등)
+artifacts/
