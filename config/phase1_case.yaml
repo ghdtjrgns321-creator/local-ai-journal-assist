@@ -1,0 +1,46 @@
+# config/phase1_case.yaml
+# PHASE1 결과를 rule list가 아니라 case/theme queue로 묶고 우선순위화할 때 쓰는 전용 설정
+
+phase1_case:
+  secondary_tag_min_score: 0.40
+
+  counterparty_columns:
+    - auxiliary_account_number
+    - vendor_name
+    - customer_name
+  counterparty_fallback: UNKNOWN_COUNTERPARTY
+
+  account_family_strategy: first_digit
+  account_family_fallback_order:
+    - account_family
+    - first_digit
+    - gl_account_prefix_2
+    - gl_account_prefix_3
+  account_family_fallback: UNKNOWN_ACCOUNT_FAMILY
+
+  near_period_days: 7
+  period_end_window_days: 5
+  intercompany_pair_columns:
+    - company_code
+    - trading_partner
+  load_batch_columns:
+    - upload_batch_id
+
+  priority_weights:
+    control: 0.35
+    amount: 0.30
+    logic: 0.20
+    behavior: 0.15
+
+  priority_band:
+    high: 0.75
+    medium: 0.45
+
+  repeat_score_promote: 0.70
+  repeat_months_tiebreak: 3
+
+  evidence_type_cap: 1.0
+  rule_repeat_scale: sqrt
+
+  top_n_cases: 50
+  top_n_per_theme: 10
