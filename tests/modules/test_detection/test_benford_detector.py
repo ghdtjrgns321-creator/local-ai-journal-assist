@@ -57,6 +57,28 @@ class TestBenfordDetector:
         result = BenfordDetector().detect(benford_df)
         assert len(result.rule_flags) == 1
         assert result.rule_flags[0].rule_id == "L4-02"
+        assert result.rule_flags[0].flagged_count == 0
+
+    def test_nonconforming_is_finding_first_not_row_flag(self) -> None:
+        """Benford 비적합 → finding/drill-down 후보만 남기고 행별 점수는 0점."""
+        n = 900
+        digits = [d for d in range(1, 10) for _ in range(n // 9)]
+        df = pd.DataFrame({
+            "document_id": [f"D{i // 2:04d}" for i in range(n)],
+            "gl_account": ["4000"] * n,
+            "first_digit": pd.array(digits[:n], dtype=pd.Int64Dtype()),
+            "debit_amount": [100.0] * n,
+            "credit_amount": [0.0] * n,
+        })
+
+        result = BenfordDetector().detect(df)
+
+        assert result.flagged_count == 0
+        assert (result.scores == 0.0).all()
+        assert (result.details["L4-02"] == 0.0).all()
+        assert result.metadata["benford_row_scoring_mode"] == "finding_first_drilldown_only"
+        assert result.metadata["benford_candidate_count"] > 0
+        assert result.metadata["benford_findings"]
 
     def test_missing_first_digit_graceful(self) -> None:
         """first_digit 미존재 → 0점."""

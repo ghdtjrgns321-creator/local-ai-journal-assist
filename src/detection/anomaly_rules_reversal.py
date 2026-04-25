@@ -1,4 +1,4 @@
-"""Reversal-pattern rule helpers for L2-06."""
+"""Reversal-pattern rule helpers for L2-05."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import logging
 import re
 import time
 
+import duckdb
 import numpy as np
 import pandas as pd
 
@@ -14,7 +15,8 @@ from config.settings import get_audit_rules
 logger = logging.getLogger(__name__)
 
 _W_S1 = 0.35
-_W_S2 = 0.25
+_W_S0 = 0.60
+_W_S2 = 0.30
 _W_S2B = _W_S1
 _W_S3 = 0.15
 _W_S4 = 0.10
@@ -23,6 +25,15 @@ _NET_GROSS_RATIO_THRESHOLD = 0.05
 _LINE_SWAP_TOLERANCE = 1.0
 _LARGE_GROUP_WARN = 500
 _CORE_COLUMNS = ["gl_account", "debit_amount", "credit_amount", "posting_date", "document_id"]
+_STRUCTURAL_REFERENCE_COLUMNS = [
+    "original_document_id",
+    "reversal_document_id",
+    "reference_document_id",
+    "reversed_document_id",
+    "reverse_document_id",
+]
+_REVERSAL_REASON_COLUMNS = ["reversal_reason", "reversal_reason_code"]
+_CONTEXT_TEXT_PATTERN = re.compile(r"[^0-9A-Za-z가-힣]+")
 
 _FALLBACK_REVERSAL_KEYWORDS = [
     "reversal",
@@ -50,6 +61,8 @@ _FALLBACK_REVERSAL_KEYWORDS = [
 ]
 
 _FALLBACK_EXCLUDE_ACCOUNTS = ["2900", "1150", "2050"]
+
+_SIGNAL_PRIORITY = ("S0", "S2b", "S1", "S2")
 
 
 def _load_reversal_keywords() -> list[str]:
@@ -82,6 +95,201 @@ _REVERSAL_PATTERN = re.compile(
 _EXCLUDE_ACCOUNTS = _load_exclude_accounts()
 
 
+def _has_value(series: pd.Series) -> pd.Series:
+    """Return True for meaningful non-empty ERP reference values."""
+
+    normalized = series.fillna("").astype(str).str.strip().str.lower()
+    return normalized.ne("") & ~normalized.isin(["nan", "none", "null"])
+
+
+def _normalize_value(value: object) -> str:
+    """Return a lowercase stripped string for context comparisons."""
+
+    normalized = str(value).strip().lower() if value is not None else ""
+    return "" if normalized in {"", "nan", "none", "null"} else normalized
+
+
+def _normalize_text(value: object) -> str:
+    """Return a compact normalized text string for similarity checks."""
+
+    normalized = _normalize_value(value)
+    if not normalized:
+        return ""
+    normalized = _CONTEXT_TEXT_PATTERN.sub(" ", normalized)
+    return " ".join(normalized.split())
+
+
+def _pair_context_score(left: dict[str, object], right: dict[str, object]) -> int:
+    """Score contextual consistency between two candidate reversal rows."""
+
+    score = 0
+
+    left_created_by = str(left.get("created_by_norm", ""))
+    right_created_by = str(right.get("created_by_norm", ""))
+    if left_created_by and left_created_by == right_created_by:
+        score += 1
+
+    left_reference = str(left.get("reference_norm", ""))
+    right_reference = str(right.get("reference_norm", ""))
+    if left_reference and left_reference == right_reference:
+        score += 2
+
+    left_doc_type = str(left.get("document_type_norm", ""))
+    right_doc_type = str(right.get("document_type_norm", ""))
+    if left_doc_type and left_doc_type == right_doc_type:
+        score += 1
+
+    left_line = str(left.get("line_text_norm", ""))
+    right_line = str(right.get("line_text_norm", ""))
+    if left_line and left_line == right_line:
+        score += 1
+
+    left_header = str(left.get("header_text_norm", ""))
+    right_header = str(right.get("header_text_norm", ""))
+    if left_header and left_header == right_header:
+        score += 1
+
+    left_keyword = bool(left.get("line_keyword", False))
+    right_keyword = bool(right.get("line_keyword", False))
+    if left_keyword or right_keyword:
+        score += 1
+
+    return score
+
+
+def _window_context_score(window: pd.DataFrame) -> int:
+    """Score whether a rolling zero-out window looks like a reversal context."""
+
+    score = 0
+
+    if "reference" in window.columns:
+        references = window["reference"].map(_normalize_value)
+        references = references[references.ne("")]
+        if not references.empty and references.nunique() < len(references):
+            score += 2
+
+    if "document_type" in window.columns:
+        doc_types = window["document_type"].map(_normalize_value)
+        doc_types = doc_types[doc_types.ne("")]
+        if not doc_types.empty and doc_types.nunique() == 1:
+            score += 1
+
+    if "source" in window.columns:
+        sources = window["source"].map(_normalize_value)
+        if sources.isin(["manual", "adjustment"]).any():
+            score += 1
+
+    if "line_text" in window.columns:
+        line_text = window["line_text"].map(_normalize_text)
+        line_text = line_text[line_text.ne("")]
+        if not line_text.empty and line_text.nunique() < len(line_text):
+            score += 1
+        if (
+            window["line_text"]
+            .fillna("")
+            .astype(str)
+            .str.contains(_REVERSAL_PATTERN, na=False)
+            .any()
+        ):
+            score += 1
+
+    return score
+
+
+def _has_possible_s1_context(positives: pd.DataFrame, negatives: pd.DataFrame) -> bool:
+    """Return True when a group has any plausible contextual bridge for S1."""
+
+    def _shared_nonempty(column: str) -> bool:
+        left = set(positives[column]) - {""}
+        right = set(negatives[column]) - {""}
+        return bool(left & right)
+
+    if _shared_nonempty("reference_norm"):
+        return True
+
+    shared_count = sum(
+        [
+            _shared_nonempty("created_by_norm"),
+            _shared_nonempty("document_type_norm"),
+            _shared_nonempty("line_text_norm"),
+            _shared_nonempty("header_text_norm"),
+        ]
+    )
+    if shared_count >= 2:
+        return True
+
+    keyword_any = bool(positives["line_keyword"].any() or negatives["line_keyword"].any())
+    return keyword_any and shared_count >= 1
+
+
+def _group_context_upper_bound(group: pd.DataFrame) -> int:
+    """Return a cheap upper-bound context score for an S2 group."""
+
+    score = 0
+
+    if "reference" in group.columns:
+        references = group["reference"].map(_normalize_value)
+        references = references[references.ne("")]
+        if not references.empty and references.nunique() < len(references):
+            score += 2
+
+    if "document_type" in group.columns:
+        doc_types = group["document_type"].map(_normalize_value)
+        doc_types = doc_types[doc_types.ne("")]
+        if not doc_types.empty and doc_types.nunique() == 1:
+            score += 1
+
+    if "source" in group.columns:
+        sources = group["source"].map(_normalize_value)
+        if sources.isin(["manual", "adjustment"]).any():
+            score += 1
+
+    if "line_text" in group.columns:
+        line_text = group["line_text"].map(_normalize_text)
+        line_text = line_text[line_text.ne("")]
+        if not line_text.empty and line_text.nunique() < len(line_text):
+            score += 1
+        if (
+            group["line_text"]
+            .fillna("")
+            .astype(str)
+            .str.contains(_REVERSAL_PATTERN, na=False)
+            .any()
+        ):
+            score += 1
+
+    return score
+
+
+def _s0_structural_reversal_reference(df: pd.DataFrame) -> pd.Series:
+    """Return True when ERP fields explicitly link original/reversal documents."""
+
+    if "document_id" not in df.columns:
+        return pd.Series(False, index=df.index)
+
+    result = pd.Series(False, index=df.index)
+    doc_ids = df["document_id"].fillna("").astype(str).str.strip()
+    referenced_ids: set[str] = set()
+
+    for column in _STRUCTURAL_REFERENCE_COLUMNS:
+        if column not in df.columns:
+            continue
+        values = df[column].fillna("").astype(str).str.strip()
+        value_mask = _has_value(values)
+        result |= value_mask
+        referenced_ids.update(values[value_mask].tolist())
+
+    for column in _REVERSAL_REASON_COLUMNS:
+        if column in df.columns:
+            result |= _has_value(df[column])
+
+    referenced_ids.discard("")
+    if referenced_ids:
+        result |= doc_ids.isin(referenced_ids)
+
+    return result
+
+
 def _s1_one_to_one_match(
     df: pd.DataFrame,
     match_window_days: int = 1,
@@ -100,46 +308,113 @@ def _s1_one_to_one_match(
         pd.to_numeric(df["debit_amount"], errors="coerce").fillna(0.0)
         - pd.to_numeric(df["credit_amount"], errors="coerce").fillna(0.0)
     )
-    work["abs_amt"] = work["net"].abs().round(2)
-    work["orig_idx"] = df.index
+    for column in ["created_by", "reference", "document_type", "line_text", "header_text"]:
+        work[column] = df[column] if column in df.columns else ""
 
-    nonzero_mask = work["net"].ne(0.0)
+    def _first_nonempty(series: pd.Series) -> str:
+        for value in series:
+            normalized = _normalize_value(value)
+            if normalized:
+                return str(value)
+        return ""
+
+    doc_work = (
+        work.groupby(["document_id", "gl_account"], sort=False)
+        .agg(
+            posting_date=("posting_date", "min"),
+            net=("net", "sum"),
+            created_by=("created_by", _first_nonempty),
+            reference=("reference", _first_nonempty),
+            document_type=("document_type", _first_nonempty),
+            line_text=("line_text", _first_nonempty),
+            header_text=("header_text", _first_nonempty),
+        )
+        .reset_index()
+    )
+    doc_work["abs_amt"] = doc_work["net"].abs().round(2)
+    doc_work["created_by_norm"] = doc_work["created_by"].map(_normalize_value)
+    doc_work["reference_norm"] = doc_work["reference"].map(_normalize_value)
+    doc_work["document_type_norm"] = doc_work["document_type"].map(_normalize_value)
+    doc_work["line_text_norm"] = doc_work["line_text"].map(_normalize_text)
+    doc_work["header_text_norm"] = doc_work["header_text"].map(_normalize_text)
+    doc_work["line_keyword"] = doc_work["line_text"].fillna("").astype(str).str.contains(
+        _REVERSAL_PATTERN,
+        na=False,
+    )
+
+    nonzero_mask = doc_work["net"].ne(0.0)
     if _EXCLUDE_ACCOUNTS:
-        nonzero_mask &= ~work["gl_account"].apply(
+        nonzero_mask &= ~doc_work["gl_account"].apply(
             lambda value: any(value.startswith(prefix) for prefix in _EXCLUDE_ACCOUNTS)
         )
-    work = work.loc[nonzero_mask].dropna(subset=["posting_date"])
-    if len(work) < 2:
+    doc_work = doc_work.loc[nonzero_mask].dropna(subset=["posting_date"])
+    if len(doc_work) < 2:
         return pd.Series(False, index=df.index)
 
-    group_sizes = work.groupby(["gl_account", "abs_amt"]).size()
+    group_sizes = doc_work.groupby(["gl_account", "abs_amt"]).size()
     large_groups = int((group_sizes > _LARGE_GROUP_WARN).sum())
     if large_groups:
         logger.warning(
-            "L2-06 S1 found %d large groups above %d rows",
+            "L2-05 S1 found %d large groups above %d rows",
             large_groups,
             _LARGE_GROUP_WARN,
         )
 
-    matched_indices: set[int] = set()
-    for (_, _), group in work.groupby(["gl_account", "abs_amt"], sort=False):
-        positives = group[group["net"] > 0].sort_values("posting_date")
-        negatives = group[group["net"] < 0].sort_values("posting_date")
-        if positives.empty or negatives.empty:
+    candidate_sql = f"""
+        SELECT
+            p.document_id AS pos_document_id,
+            n.document_id AS neg_document_id
+        FROM doc_work p
+        JOIN doc_work n
+          ON p.gl_account = n.gl_account
+         AND p.abs_amt = n.abs_amt
+         AND p.net > 0
+         AND n.net < 0
+         AND p.document_id < n.document_id
+         AND ABS(date_diff('day', p.posting_date, n.posting_date)) <= {int(match_window_days)}
+    """
+    try:
+        con = duckdb.connect(":memory:")
+        con.register("doc_work", doc_work)
+        candidate_pairs = con.execute(candidate_sql).fetchdf()
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+
+    if candidate_pairs.empty:
+        return pd.Series(False, index=df.index)
+
+    row_by_key = {
+        (str(row["document_id"]), str(row["gl_account"])): row
+        for row in doc_work.to_dict("records")
+    }
+    matched_doc_ids: set[str] = set()
+    for pair in candidate_pairs.itertuples(index=False):
+        pos_document_id = str(pair.pos_document_id)
+        neg_document_id = str(pair.neg_document_id)
+        pos_rows = doc_work[doc_work["document_id"].astype(str) == pos_document_id]
+        neg_rows = doc_work[doc_work["document_id"].astype(str) == neg_document_id]
+        if pos_rows.empty or neg_rows.empty:
             continue
+        shared_accounts = set(pos_rows["gl_account"].astype(str)) & set(
+            neg_rows["gl_account"].astype(str)
+        )
+        for gl_account in shared_accounts:
+            pos = row_by_key.get((pos_document_id, str(gl_account)))
+            neg = row_by_key.get((neg_document_id, str(gl_account)))
+            if pos is None or neg is None:
+                continue
+            if pos["abs_amt"] != neg["abs_amt"] or not (pos["net"] > 0 and neg["net"] < 0):
+                continue
+            if _pair_context_score(pos, neg) < 2:
+                continue
+            matched_doc_ids.add(pos_document_id)
+            matched_doc_ids.add(neg_document_id)
+            break
 
-        negative_rows = list(negatives.itertuples(index=False))
-        for pos in positives.itertuples(index=False):
-            for neg in negative_rows:
-                if pos.document_id == neg.document_id:
-                    continue
-                day_gap = abs((pos.posting_date - neg.posting_date).days)
-                if day_gap > match_window_days:
-                    continue
-                matched_indices.add(int(pos.orig_idx))
-                matched_indices.add(int(neg.orig_idx))
-
-    return pd.Series(df.index.isin(matched_indices), index=df.index)
+    return pd.Series(df["document_id"].astype(str).isin(matched_doc_ids), index=df.index)
 
 
 def _s2_rolling_zero_out(
@@ -155,6 +430,7 @@ def _s2_rolling_zero_out(
 
     work = pd.DataFrame(index=df.index)
     work["gl_account"] = df["gl_account"].astype(str)
+    work["document_id"] = df.get("document_id", pd.Series("", index=df.index)).astype(str)
     work["created_by"] = df["created_by"].astype(str)
     work["posting_date"] = pd.to_datetime(df["posting_date"], errors="coerce")
     work["net"] = (
@@ -165,26 +441,54 @@ def _s2_rolling_zero_out(
         pd.to_numeric(df["debit_amount"], errors="coerce").fillna(0.0)
         + pd.to_numeric(df["credit_amount"], errors="coerce").fillna(0.0)
     )
+    for column in ["reference", "document_type", "source", "line_text"]:
+        work[column] = df[column] if column in df.columns else ""
     if _EXCLUDE_ACCOUNTS:
         work = work[
-            ~work["gl_account"].apply(lambda value: any(value.startswith(prefix) for prefix in _EXCLUDE_ACCOUNTS))
+            ~work["gl_account"].apply(
+                lambda value: any(value.startswith(prefix) for prefix in _EXCLUDE_ACCOUNTS)
+            )
         ]
     work = work.dropna(subset=["posting_date"])
     if len(work) < 2:
         return pd.Series(False, index=df.index)
 
-    result = pd.Series(False, index=df.index)
+    def _first_nonempty(series: pd.Series) -> str:
+        for value in series:
+            normalized = _normalize_value(value)
+            if normalized:
+                return str(value)
+        return ""
+
+    doc_work = (
+        work.groupby(["gl_account", "created_by", "document_id"], sort=False)
+        .agg(
+            posting_date=("posting_date", "min"),
+            net=("net", "sum"),
+            gross=("gross", "sum"),
+            reference=("reference", _first_nonempty),
+            document_type=("document_type", _first_nonempty),
+            source=("source", _first_nonempty),
+            line_text=("line_text", _first_nonempty),
+        )
+        .reset_index()
+    )
+    if len(doc_work) < 2:
+        return pd.Series(False, index=df.index)
+
+    matched_doc_ids: set[str] = set()
     delta = pd.Timedelta(days=rolling_window_days)
 
-    for (_, _), group in work.groupby(["gl_account", "created_by"], sort=False):
+    for (_, _), group in doc_work.groupby(["gl_account", "created_by"], sort=False):
         group = group.sort_values("posting_date")
         if len(group) < 2:
             continue
         if not ((group["net"] > 0).any() and (group["net"] < 0).any()):
             continue
+        if _group_context_upper_bound(group) < 2:
+            continue
 
         dates = group["posting_date"].tolist()
-        rows = list(group.index)
         left = 0
         for right in range(len(group)):
             while dates[right] - dates[left] > delta:
@@ -192,14 +496,23 @@ def _s2_rolling_zero_out(
             window = group.iloc[left : right + 1]
             if len(window) < 2:
                 continue
+            if window["document_id"].nunique() < 2:
+                continue
+            if _window_context_score(window) < 2:
+                continue
             window_net = float(window["net"].sum())
             window_gross = float(window["gross"].sum())
             if window_gross <= 0:
                 continue
-            if abs(window_net) < zero_threshold and abs(window_net) / window_gross < _NET_GROSS_RATIO_THRESHOLD:
-                result.loc[rows[left : right + 1]] = True
+            if (
+                abs(window_net) < zero_threshold
+                and abs(window_net) / window_gross < _NET_GROSS_RATIO_THRESHOLD
+            ):
+                matched_doc_ids.update(window["document_id"].astype(str).tolist())
 
-    return result
+    if not matched_doc_ids:
+        return pd.Series(False, index=df.index)
+    return pd.Series(df["document_id"].astype(str).isin(matched_doc_ids), index=df.index)
 
 
 def _s2b_line_swap_signature(
@@ -271,6 +584,68 @@ def _s5_period_end_boost(df: pd.DataFrame) -> pd.Series:
     return result
 
 
+def _build_row_annotations(
+    flagged: pd.Series,
+    *,
+    s0: pd.Series,
+    s1: pd.Series,
+    s2: pd.Series,
+    s2b: pd.Series,
+    s4: pd.Series,
+) -> dict[int, dict[str, object]]:
+    """Build row-level interpretation metadata for surfaced L2-05 hits."""
+
+    annotations: dict[int, dict[str, object]] = {}
+    signal_series = {
+        "S0": s0,
+        "S1": s1,
+        "S2": s2,
+        "S2b": s2b,
+    }
+    signal_text = {
+        "S0": "ERP reversal reference fields link the original and reversal entries",
+        "S2b": "a single swapped line can explain the document imbalance",
+        "S1": "an opposite-signed document pair matched on account and amount",
+        "S2": "multiple documents net to near zero in a short rolling window",
+    }
+
+    for index in flagged[flagged].index.tolist():
+        trigger_signals = [
+            signal for signal in _SIGNAL_PRIORITY if bool(signal_series[signal].loc[index])
+        ]
+        if not trigger_signals:
+            continue
+
+        high_confidence = "S0" in trigger_signals or "S2b" in trigger_signals
+        interpretation_code = (
+            "high_confidence_reversal"
+            if high_confidence
+            else "candidate_reversal_clearing_reclass"
+        )
+        interpretation_label = (
+            "High-confidence reversal"
+            if high_confidence
+            else "Candidate reversal / clearing / reclass"
+        )
+        primary_signal = next(
+            (signal for signal in _SIGNAL_PRIORITY if signal in trigger_signals),
+            trigger_signals[0],
+        )
+        reason_parts = [signal_text[primary_signal]]
+        if bool(s4.loc[index]):
+            reason_parts.append("line text includes a reversal keyword")
+
+        annotations[int(index)] = {
+            "interpretation_code": interpretation_code,
+            "interpretation_label": interpretation_label,
+            "primary_signal": primary_signal,
+            "trigger_signals": trigger_signals,
+            "reason_text": "; ".join(reason_parts),
+        }
+
+    return annotations
+
+
 def c11_reversal_entry(
     df: pd.DataFrame,
     *,
@@ -279,17 +654,23 @@ def c11_reversal_entry(
     zero_threshold: float = 1000.0,
     score_threshold: float = 0.3,
 ) -> pd.Series:
-    """Composite reversal-pattern detector used for rule L2-06."""
+    """Composite reversal-pattern detector used for rule L2-05."""
 
     missing = [column for column in _CORE_COLUMNS if column not in df.columns]
     if missing or len(df) < 2:
         if missing:
-            logger.warning("L2-06 missing required columns: %s", missing)
+            logger.warning("L2-05 missing required columns: %s", missing)
         return pd.Series(False, index=df.index)
 
     start = time.perf_counter()
+    s0 = _s0_structural_reversal_reference(df)
+
     s1 = _s1_one_to_one_match(df, match_window_days=match_window_days)
-    logger.warning("[TIMING] layer_c.L2-06.S1: %.2fs (rows=%d)", time.perf_counter() - start, len(df))
+    logger.warning(
+        "[TIMING] layer_c.L2-05.S1: %.2fs (rows=%d)",
+        time.perf_counter() - start,
+        len(df),
+    )
 
     start = time.perf_counter()
     s2 = _s2_rolling_zero_out(
@@ -297,33 +678,69 @@ def c11_reversal_entry(
         rolling_window_days=rolling_window_days,
         zero_threshold=zero_threshold,
     )
-    logger.warning("[TIMING] layer_c.L2-06.S2: %.2fs (rows=%d)", time.perf_counter() - start, len(df))
+    logger.warning(
+        "[TIMING] layer_c.L2-05.S2: %.2fs (rows=%d)",
+        time.perf_counter() - start,
+        len(df),
+    )
 
     start = time.perf_counter()
     s2b = _s2b_line_swap_signature(df)
-    logger.warning("[TIMING] layer_c.L2-06.S2b: %.2fs (rows=%d)", time.perf_counter() - start, len(df))
+    logger.warning(
+        "[TIMING] layer_c.L2-05.S2b: %.2fs (rows=%d)",
+        time.perf_counter() - start,
+        len(df),
+    )
 
     start = time.perf_counter()
     s3 = _s3_reversal_type(df)
-    logger.warning("[TIMING] layer_c.L2-06.S3: %.2fs (rows=%d)", time.perf_counter() - start, len(df))
+    logger.warning(
+        "[TIMING] layer_c.L2-05.S3: %.2fs (rows=%d)",
+        time.perf_counter() - start,
+        len(df),
+    )
 
     start = time.perf_counter()
     s4 = _s4_keyword_match(df)
-    logger.warning("[TIMING] layer_c.L2-06.S4: %.2fs (rows=%d)", time.perf_counter() - start, len(df))
+    logger.warning(
+        "[TIMING] layer_c.L2-05.S4: %.2fs (rows=%d)",
+        time.perf_counter() - start,
+        len(df),
+    )
 
     start = time.perf_counter()
     s5 = _s5_period_end_boost(df)
-    logger.warning("[TIMING] layer_c.L2-06.S5: %.2fs (rows=%d)", time.perf_counter() - start, len(df))
+    logger.warning(
+        "[TIMING] layer_c.L2-05.S5: %.2fs (rows=%d)",
+        time.perf_counter() - start,
+        len(df),
+    )
 
-    s1_contextual = s1 & s4
     base_score = (
-        s1_contextual.astype(float) * _W_S1
+        s0.astype(float) * _W_S0
+        + s1.astype(float) * _W_S1
         + s2.astype(float) * _W_S2
         + s2b.astype(float) * _W_S2B
         + s4.astype(float) * _W_S4
     )
+    evidence_score = (base_score * s5).clip(0.0, 1.0)
     adjusted = (base_score + s3) * s5
     final_score = adjusted.clip(0.0, 1.0)
 
-    has_amount_pattern = s1_contextual | s2.astype(bool) | s2b.astype(bool)
-    return (final_score >= score_threshold) & has_amount_pattern
+    has_reversal_pattern = s0.astype(bool) | s1.astype(bool) | s2.astype(bool) | s2b.astype(bool)
+    flagged = (
+        (final_score >= score_threshold) | (evidence_score >= score_threshold)
+    ) & has_reversal_pattern
+    flagged.attrs["breakdown"] = {
+        "high_confidence_count": int((flagged & (s0 | s2b)).sum()),
+        "candidate_count": int((flagged & ~(s0 | s2b)).sum()),
+    }
+    flagged.attrs["row_annotations"] = _build_row_annotations(
+        flagged,
+        s0=s0,
+        s1=s1,
+        s2=s2,
+        s2b=s2b,
+        s4=s4,
+    )
+    return flagged

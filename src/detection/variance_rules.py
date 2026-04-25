@@ -1,7 +1,7 @@
-"""Layer D 룰 함수 — D01 계정과목 집계 급변, D02 월별 분포 패턴 변화.
+"""Layer D rule functions: D01 account activity shift, D02 monthly pattern shift.
 
-Why: 전기 대비 변동을 탐지하는 순수 함수.
-     PriorSummary 객체 의존 없이 dict만 받아 테스트 용이성 확보.
+Why: These pure functions compare current-period journal activity against prior-period
+     summaries without depending directly on PriorSummary objects.
 """
 
 from __future__ import annotations
@@ -24,22 +24,22 @@ _W_AVG = 0.2
 _MIN_MONTHS = 3
 
 
-def d01_account_aggregate_variance(
+def d01_account_activity_variance(
     df: pd.DataFrame,
     prior_aggregates: dict[str, dict[str, float]],
     variance_threshold: float = 0.5,
 ) -> pd.Series:
-    """D01 계정과목 집계 급변: 전기 대비 50% 초과 변동 계정 플래그.
+    """D01 account activity shift: flag accounts with large YoY activity changes.
 
-    Why: ISA 520 §5 분석적 절차 — 계정과목별 총액·건수·평균의
-         가중 변동률이 임계값을 초과하면 급변으로 판정.
+    Why: This is an ISA 520 analytical-procedure screening signal. It compares
+         debit+credit activity by account, using total amount, count, and average amount.
     """
     if "gl_account" not in df.columns:
         return pd.Series(False, index=df.index)
     if not prior_aggregates:
         return pd.Series(False, index=df.index)
 
-    # 당기 계정별 집계
+    # Current-period activity by account.
     amount = df[["debit_amount", "credit_amount"]].fillna(0).sum(axis=1)
     current_agg = (
         df.assign(_amount=amount)
@@ -47,17 +47,19 @@ def d01_account_aggregate_variance(
         .agg(total_amount="sum", count="count", avg_amount="mean")
     )
 
-    # 계정별 가중 변동률 산출
+    # Weighted year-over-year activity variance by account.
     flagged_accounts: set[str] = set()
     for acct, row in current_agg.iterrows():
         prior = prior_aggregates.get(acct)
         if prior is None:
-            # Why: 전기에 없던 신규 계정 → 자동 플래그
+            # Why: Accounts that did not exist in the prior period need review.
             flagged_accounts.add(acct)
             continue
 
         # Why: abs() 필수 — 증가/감소 모두 "급변"으로 탐지
-        total_var = abs(row["total_amount"] - prior["total_amount"]) / max(prior["total_amount"], _EPSILON)
+        total_var = abs(row["total_amount"] - prior["total_amount"]) / max(
+            prior["total_amount"], _EPSILON
+        )
         count_var = abs(row["count"] - prior["count"]) / max(prior["count"], _EPSILON)
         avg_var = abs(row["avg_amount"] - prior["avg_amount"]) / max(prior["avg_amount"], _EPSILON)
 
@@ -68,10 +70,16 @@ def d01_account_aggregate_variance(
     return df["gl_account"].isin(flagged_accounts)
 
 
+# Backward-compatible alias for older imports/tests. The rule compares account-level
+# debit+credit activity, not ending balances.
+d01_account_aggregate_variance = d01_account_activity_variance
+
+
 def d02_monthly_pattern_variance(
     df: pd.DataFrame,
     prior_patterns: dict[str, dict[int, float]],
     jsd_threshold: float = 0.3,
+    min_months: int = _MIN_MONTHS,
 ) -> pd.Series:
     """D02 월별 분포 패턴 변화: JSD로 전기/당기 월별 분포 비교.
 
@@ -82,6 +90,7 @@ def d02_monthly_pattern_variance(
         return pd.Series(False, index=df.index)
     if not prior_patterns:
         return pd.Series(False, index=df.index)
+    min_months = max(int(min_months), 1)
 
     # 당기 계정×월별 금액 합계
     amount = df[["debit_amount", "credit_amount"]].fillna(0).sum(axis=1)
@@ -111,9 +120,9 @@ def d02_monthly_pattern_variance(
                 current_vec[month_idx] = amt
 
         # Why: 비교 의미 있으려면 전기/당기 모두 3개월 이상 데이터 필요
-        if np.count_nonzero(prior_vec) < _MIN_MONTHS:
+        if np.count_nonzero(prior_vec) < min_months:
             continue
-        if np.count_nonzero(current_vec) < _MIN_MONTHS:
+        if np.count_nonzero(current_vec) < min_months:
             continue
 
         # Why: JSD는 확률분포 비교 → 합이 1.0이 되도록 정규화

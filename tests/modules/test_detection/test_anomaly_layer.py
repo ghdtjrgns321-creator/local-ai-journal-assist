@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import math
-
 import pandas as pd
 import pytest
 
@@ -32,14 +30,16 @@ def full_anomaly_df() -> pd.DataFrame:
         "is_holiday": [False, False, False, False, False, False, False, False, False, False],
         "is_after_hours": [False, True, False, False, False, False, False, False, True, False],
         "days_backdated": [0, 45, 0, 0, 0, 0, -35, 0, 0, 31],
-        "fiscal_period_mismatch": [False, False, True, False, False, False, False, False, False, True],
-        "description_quality": ["normal", "missing", "normal", "poor", "normal",
+        "fiscal_period_mismatch": [
+            False, False, True, False, False, False, False, False, False, True,
+        ],
+        "description_quality": ["normal", "missing", "normal", "corrupted", "normal",
                                  "normal", "normal", "normal", "normal", "normal"],
         "has_risk_keyword": ["low", "high", "low", "low", "low",
                               "medium", "low", "low", "low", "low"],
         "amount_zscore": [1.0, 0.5, 0.3, 3.5, 0.2, 0.8, 0.1, 0.4, -4.0, 0.6],
         "first_digit": pd.array(digits, dtype=pd.Int64Dtype()),
-        # Why: L2-06 역분개 + L4-05 비정상시간대에 필요
+        # Why: L2-05 역분개 + L4-05 비정상시간대에 필요
         "posting_date": pd.to_datetime([
             "2025-06-01", "2025-06-02", "2025-06-03", "2025-06-04", "2025-06-05",
             "2025-06-06", "2025-06-07", "2025-06-08", "2025-06-09", "2025-06-10",
@@ -79,11 +79,11 @@ class TestAnomalyDetectorIntegration:
         result = AnomalyDetector().detect(full_anomaly_df)
         assert not result.scores.isna().any()
 
-    def test_details_columns_c_prefix(self, full_anomaly_df: pd.DataFrame) -> None:
-        """details 컬럼이 C prefix."""
+    def test_details_columns_rule_ids(self, full_anomaly_df: pd.DataFrame) -> None:
+        """details columns use canonical rule IDs."""
         result = AnomalyDetector().detect(full_anomaly_df)
         for col in result.details.columns:
-            assert col.startswith("C"), f"컬럼 {col}은 C prefix가 아님"
+            assert col.startswith(("L1-", "L2-", "L3-", "L4-")), f"Unexpected rule id {col}"
 
     def test_rule_flags_count(self, full_anomaly_df: pd.DataFrame) -> None:
         """rule_flags 수는 실행된 룰 수와 일치 (L4-02은 BenfordDetector로 분리)."""
@@ -91,6 +91,36 @@ class TestAnomalyDetectorIntegration:
         skipped = result.metadata.get("skipped_rules", [])
         expected_count = 12 - len(skipped)  # L3-04~L3-08, L4-03~L4-06 (L4-02 제외)
         assert len(result.rule_flags) == expected_count
+
+    def test_l307_rule_flag_detail_summarizes_direction(
+        self,
+        full_anomaly_df: pd.DataFrame,
+    ) -> None:
+        """L3-07 summary distinguishes delayed and forward-date gaps."""
+        result = AnomalyDetector().detect(full_anomaly_df)
+        flag = next(item for item in result.rule_flags if item.rule_id == "L3-07")
+
+        assert flag.detail == "late_posting=2, forward_date_gap=1, threshold_days=30"
+
+    def test_l309_surfaces_threshold_metadata(self) -> None:
+        """L3-09 fixed threshold info is surfaced in metadata and rule detail."""
+        df = pd.DataFrame({
+            "document_id": ["D001", "D002"],
+            "debit_amount": [100.0, 100.0],
+            "credit_amount": [0.0, 0.0],
+            "gl_account": ["2190", "2190"],
+            "posting_date": pd.to_datetime(["2025-01-01", "2025-03-25"]),
+            "amount_open": [100000.0, 100000.0],
+            "is_suspense_account": [True, True],
+        })
+        result = AnomalyDetector().detect(df)
+        flag = next(item for item in result.rule_flags if item.rule_id == "L3-09")
+
+        assert flag.detail == "threshold_days=30"
+        breakdown = result.metadata["rule_breakdowns"]["L3-09"]
+        assert breakdown["base_threshold_days"] == 30
+        ann = result.metadata["row_annotations"]["L3-09"][0]
+        assert ann["threshold_days"] == 30
 
     def test_flagged_indices_valid(self, full_anomaly_df: pd.DataFrame) -> None:
         """flagged_indices가 원본 인덱스 범위 내."""
@@ -121,3 +151,30 @@ class TestAnomalyDetectorIntegration:
         result = AnomalyDetector().detect(full_anomaly_df)
         assert "L4-02" not in result.details.columns
         assert "benford_result" not in result.metadata
+
+    def test_l304_sensitive_account_bonus_does_not_create_flags(self) -> None:
+        """민감 계정 가중은 기존 L3-04 플래그에만 점수를 더한다."""
+        df = pd.DataFrame({
+            "debit_amount": [1000.0, 10.0, 900.0, 20.0],
+            "credit_amount": [0.0, 0.0, 0.0, 0.0],
+            "is_period_end": [True, True, False, True],
+            "is_manual_je": [False, False, False, False],
+            "gl_account": ["4000", "4000", "4000", "1200"],
+            "account_group": ["revenue", "revenue", "revenue", "inventory"],
+        })
+        detector = AnomalyDetector(
+            audit_rules={
+                "patterns": {
+                    "period_end_sensitive_accounts": {
+                        "account_groups": ["revenue", "inventory"],
+                    },
+                    "period_end_whitelist": [],
+                },
+            },
+        )
+
+        result = detector.detect(df)
+
+        assert result.details["L3-04"].iloc[0] > 0.6
+        assert result.details["L3-04"].iloc[2] == 0.0
+        assert result.details["L3-04"].iloc[3] == 0.0

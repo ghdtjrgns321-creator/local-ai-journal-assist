@@ -232,6 +232,30 @@ class TestGR03TransferPricing:
 # ── OOM 방어 검증 (3개) ───────────────────────────────────────
 
 
+    def test_reference_pair_asymmetry_with_different_ic_gl_flagged(self):
+        df = _make_df([
+            {"document_id": "D_A", "company_code": "C001", "trading_partner": "C002",
+             "reference": "IC-REF-1", "gl_account": "1150", "debit_amount": 13_600_000,
+             "is_intercompany": True, "posting_date": "2024-03-01"},
+            {"document_id": "D_A", "company_code": "C001", "trading_partner": "C002",
+             "reference": "IC-REF-1", "gl_account": "4900", "credit_amount": 15_100_000,
+             "is_intercompany": False, "posting_date": "2024-03-01"},
+            {"document_id": "D_A", "company_code": "C001", "trading_partner": None,
+             "reference": "IC-REF-1", "gl_account": "2100", "debit_amount": 1_500_000,
+             "is_intercompany": False, "posting_date": "2024-03-01"},
+            {"document_id": "D_B", "company_code": "C002", "trading_partner": "C001",
+             "reference": "IC-REF-1", "gl_account": "2050", "credit_amount": 11_400_000,
+             "is_intercompany": True, "posting_date": "2024-03-01"},
+            {"document_id": "D_B", "company_code": "C002", "trading_partner": "C001",
+             "reference": "IC-REF-1", "gl_account": "6300", "debit_amount": 11_400_000,
+             "is_intercompany": False, "posting_date": "2024-03-01"},
+        ])
+        result = GraphDetector().detect(df)
+        gr03 = result.details.get("GR03")
+        assert gr03 is not None
+        assert (gr03.loc[df["document_id"].isin(["D_A", "D_B"])] > 0).any()
+
+
 class TestOOMDefense:
     """OOM Trap 방어 3중 장치 검증."""
 
@@ -298,6 +322,63 @@ class TestOOMDefense:
         assert any("엣지 수" in w or "edges" in w.lower() for w in result.warnings), (
             "엣지 수 초과 warning 미발생"
         )
+
+    def test_sparse_large_component_not_skipped_by_node_count_only(self):
+        """Large sparse components are processed unless both caps are exceeded."""
+        rows = [
+            {"document_id": "D_AB", "company_code": "A", "trading_partner": "B",
+             "gl_account": "4500", "credit_amount": 20_000_000,
+             "is_intercompany": True, "posting_date": "2024-03-01"},
+            {"document_id": "D_BA", "company_code": "B", "trading_partner": "A",
+             "gl_account": "4500", "credit_amount": 20_000_000,
+             "is_intercompany": True, "posting_date": "2024-03-02"},
+        ]
+        rows.extend(
+            {
+                "document_id": f"D_CHAIN_{i}",
+                "company_code": f"N{i}",
+                "trading_partner": f"N{i + 1}",
+                "gl_account": "4500",
+                "credit_amount": 20_000_000,
+                "is_intercompany": True,
+                "posting_date": "2024-03-03",
+            }
+            for i in range(20)
+        )
+        rows.append({
+            "document_id": "D_CONNECT",
+            "company_code": "B",
+            "trading_partner": "N0",
+            "gl_account": "4500",
+            "credit_amount": 20_000_000,
+            "is_intercompany": True,
+            "posting_date": "2024-03-03",
+        })
+        df = _make_df(rows)
+        settings = _settings_override(
+            graph_gr01_max_component_size=5,
+            graph_gr01_max_component_edges=100,
+        )
+        result = GraphDetector(settings).detect(df)
+        assert result.metadata.get("gr01_skipped_components", 0) == 0
+        assert result.details["GR01"].loc[[0, 1]].gt(0).all()
+
+    def test_dense_large_component_still_skipped(self):
+        """Components that exceed both node and edge caps are still skipped."""
+        df = _make_df([
+            {"document_id": f"D{i}", "company_code": f"C{i % 8}",
+             "trading_partner": f"C{(i + 1) % 8}", "gl_account": "4500",
+             "credit_amount": 20_000_000, "is_intercompany": True,
+             "posting_date": "2024-03-01"}
+            for i in range(40)
+        ])
+        settings = _settings_override(
+            graph_gr01_max_component_size=5,
+            graph_gr01_max_component_edges=10,
+        )
+        result = GraphDetector(settings).detect(df)
+        assert result.metadata.get("gr01_skipped_components", 0) == 1
+        assert result.scores.sum() == 0.0
 
     @pytest.mark.slow
     def test_large_dataset_memory_bounded(self):

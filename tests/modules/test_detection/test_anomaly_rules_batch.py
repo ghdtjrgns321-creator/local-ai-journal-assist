@@ -7,7 +7,7 @@ import pandas as pd
 from src.detection.anomaly_rules_batch import c13_batch_anomaly
 
 
-class TestL4-06:
+class TestL4_06:
     def test_batch_period_end_concentration(self) -> None:
         """배치 전표 중 기말 비율 > 임계 → 배치 전체 플래그."""
         df = pd.DataFrame({
@@ -65,6 +65,18 @@ class TestL4-06:
         })
         result = c13_batch_anomaly(df)
         assert not result.any()
+
+    def test_interface_source_is_batch_like_case_insensitive(self) -> None:
+        """interface/IF 계열 source도 배치성 자동 전표로 취급."""
+        df = pd.DataFrame({
+            "source": ["INTERFACE"] * 3 + ["if"] * 3,
+            "is_period_end": [True] * 6,
+            "debit_amount": [100.0] * 6,
+            "credit_amount": [0.0] * 6,
+            "posting_date": pd.date_range("2025-12-25", periods=6),
+        })
+        result = c13_batch_anomaly(df, period_end_ratio=0.5)
+        assert result.all()
 
     def test_no_source_column_returns_false(self) -> None:
         """source 컬럼 미존재 시 graceful skip."""

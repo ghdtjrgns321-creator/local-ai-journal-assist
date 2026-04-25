@@ -186,6 +186,34 @@ class TestL2_02:
         assert not result[0]
         assert result[1]
 
+    def test_same_reference_near_amount_flagged_by_default(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D001", "D002"],
+            "document_type": ["KZ", "KZ"],
+            "auxiliary_account_number": ["V001", "V001"],
+            "debit_amount": [2_334_000, 2_366_676],
+            "credit_amount": [0.0, 0.0],
+            "posting_date": pd.to_datetime(["2025-01-11", "2025-01-21"]),
+            "business_process": ["P2P", "P2P"],
+            "reference": ["PAY:PAY-C001-2025-005", "PAY:PAY-C001-2025-005"],
+        })
+        result = b04_duplicate_payment(df)
+        assert not result[0]
+        assert result[1]
+
+    def test_same_reference_near_amount_cap_prevents_large_gap(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D001", "D002"],
+            "document_type": ["KZ", "KZ"],
+            "auxiliary_account_number": ["V001", "V001"],
+            "debit_amount": [1_000_000_000, 1_010_000_000],
+            "credit_amount": [0.0, 0.0],
+            "posting_date": pd.to_datetime(["2025-01-11", "2025-01-21"]),
+            "business_process": ["P2P", "P2P"],
+            "reference": ["PAY:PAY-C001-2025-005", "PAY:PAY-C001-2025-005"],
+        })
+        assert not b04_duplicate_payment(df).any()
+
     def test_blank_reference_duplicate_flagged_against_original_reference(self) -> None:
         df = pd.DataFrame({
             "document_id": ["D001", "D002"],
@@ -256,7 +284,8 @@ class TestL2_03:
         })
         result = b05_duplicate_entry(df, amount_tolerance=0.01)
         assert result.all()
-        assert result.attrs["row_annotations"][0]["reason_code"] == "reference_duplicate"
+        assert result.attrs["row_annotations"][0]["reason_code"] == "document_duplicate"
+        assert "reference_duplicate" in result.attrs["row_annotations"][0]["matched_reason_codes"]
         assert result.attrs["row_annotations"][0]["confidence_band"] == "high"
 
     def test_fuzzy_text_within_window_flagged(self) -> None:
@@ -272,7 +301,74 @@ class TestL2_03:
         result = b05_duplicate_entry(df, amount_tolerance=0.02, fuzzy_threshold=80, window_days=7)
         assert result.all()
         assert result.attrs["row_annotations"][0]["reason_code"] == "near_duplicate"
+        assert "near_duplicate" in result.attrs["row_annotations"][0]["matched_reason_codes"]
         assert result.attrs["row_annotations"][0]["confidence_band"] in {"medium", "low"}
+
+    def test_document_reference_variant_flagged(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D001", "D001", "D002", "D002"],
+            "document_type": ["SA", "SA", "SA", "SA"],
+            "business_process": ["R2R", "R2R", "R2R", "R2R"],
+            "company_code": ["C003", "C003", "C003", "C003"],
+            "reference": [
+                "DOC-C003-2022-001188",
+                "DOC-C003-2022-001188",
+                "DOC / C003-2022-001188",
+                "DOC / C003-2022-001188",
+            ],
+            "line_text": ["원가 배부 - Q1 2022", "원가 배부 - Q1 2022"] * 2,
+            "gl_account": [500230, 200240, 500230, 200240],
+            "debit_amount": [9_774_584.0, 0.0, 9_774_584.0, 0.0],
+            "credit_amount": [0.0, 9_774_584.0, 0.0, 9_774_584.0],
+            "posting_date": pd.to_datetime([
+                "2022-01-01",
+                "2022-01-01",
+                "2022-01-03",
+                "2022-01-03",
+            ]),
+        })
+        result = b05_duplicate_entry(df)
+        assert result.all()
+        assert result.attrs["row_annotations"][2]["reason_code"] == "document_duplicate"
+
+    def test_document_line_text_variant_flagged_beyond_row_window(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D001", "D001", "D002", "D002"],
+            "document_type": ["SA", "SA", "SA", "SA"],
+            "business_process": ["R2R", "R2R", "R2R", "R2R"],
+            "company_code": ["C003", "C003", "C003", "C003"],
+            "reference": ["DOC-C003-2022-001068"] * 4,
+            "line_text": ["이자수익 계상", "판관비 재분류", "이자수익 계상 - 재전기", "판관비 재분류 - 재전기"],
+            "gl_account": [7100, 6300, 7100, 6300],
+            "debit_amount": [71_339.0, 0.0, 71_339.0, 0.0],
+            "credit_amount": [0.0, 71_339.0, 0.0, 71_339.0],
+            "posting_date": pd.to_datetime([
+                "2022-01-01",
+                "2022-01-01",
+                "2022-01-12",
+                "2022-01-12",
+            ]),
+        })
+        result = b05_duplicate_entry(df, window_days=7)
+        assert result.all()
+        assert result.attrs["row_annotations"][2]["reason_code"] == "document_duplicate"
+
+    def test_document_duplicate_accepts_string_posting_dates(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D010", "D010", "D011", "D011"],
+            "document_type": ["SA", "SA", "SA", "SA"],
+            "business_process": ["R2R", "R2R", "R2R", "R2R"],
+            "company_code": ["C003", "C003", "C003", "C003"],
+            "reference": ["DOC-C003-2022-009999"] * 4,
+            "line_text": ["interest accrual", "accrued revenue"] * 2,
+            "gl_account": [7100, 2200, 7100, 2200],
+            "debit_amount": [125_000.0, 0.0, 125_000.0, 0.0],
+            "credit_amount": [0.0, 125_000.0, 0.0, 125_000.0],
+            "posting_date": ["2022-01-01", "2022-01-01", "2022-01-11", "2022-01-11"],
+        })
+        result = b05_duplicate_entry(df, window_days=7)
+        assert result.all()
+        assert result.attrs["row_annotations"][2]["reason_code"] == "document_duplicate"
 
     def test_split_entries_flagged(self) -> None:
         df = pd.DataFrame({

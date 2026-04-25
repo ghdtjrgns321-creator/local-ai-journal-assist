@@ -88,6 +88,15 @@ def _normalize_reference(value: object) -> str:
     return _RE_ALNUM.sub("", str(value).upper())
 
 
+def _normalize_duplicate_text(value: object) -> str:
+    """Normalize line text for duplicate-entry document signature matching."""
+
+    text = _normalize_text(value)
+    for token in ("재전기", "재기표", "duplicate", "dup"):
+        text = text.replace(token, " ")
+    return " ".join(text.split())
+
+
 def _documents_differ(group: pd.DataFrame) -> pd.Series:
     """Return rows that belong to a group with at least two document IDs."""
 
@@ -109,6 +118,7 @@ def _prepare_duplicate_entry_work(df: pd.DataFrame) -> pd.DataFrame:
     """Build a normalized working frame for L2-03 matching."""
 
     work = df[["gl_account", "posting_date"]].copy()
+    work["_posting_ts"] = pd.to_datetime(df["posting_date"], errors="coerce")
     work["_base_amt"] = _compute_base_amount(df)
 
     if "document_id" in df.columns:
@@ -122,7 +132,7 @@ def _prepare_duplicate_entry_work(df: pd.DataFrame) -> pd.DataFrame:
         work["_partner_key"] = partner_key.fillna("").astype(str).str.strip()
 
     if "line_text" in df.columns:
-        work["_line_text"] = df["line_text"].fillna("").map(_normalize_text)
+        work["_line_text"] = df["line_text"].fillna("").map(_normalize_duplicate_text)
 
     return work
 
@@ -131,13 +141,14 @@ def _flag_exact_duplicate_entries(work: pd.DataFrame) -> pd.Series:
     """Flag exact same-day duplicates while suppressing same-document repeats."""
 
     result = pd.Series(0.0, index=work.index)
-    grouped = work.groupby(["gl_account", "_base_amt", "posting_date"], group_keys=False)
-    for _, group in grouped:
-        if len(group) < 2:
-            continue
-        doc_mask = _documents_differ(group)
-        if bool(doc_mask.iloc[0]):
-            result.loc[group.index] = 0.95
+    target = work.loc[work["_document_id"].ne(""), ["gl_account", "_base_amt", "_posting_ts", "_document_id"]]
+    if target.empty:
+        return result
+
+    group_doc_counts = target.groupby(["gl_account", "_base_amt", "_posting_ts"], sort=False)["_document_id"].transform(
+        "nunique"
+    )
+    result.loc[target.index[group_doc_counts >= 2]] = 0.95
     return result
 
 
@@ -158,6 +169,7 @@ def _flag_reference_duplicate_entries(
         work["_partner_key"].ne("")
         & work["_reference"].ne("")
         & work["_document_id"].ne("")
+        & work["_posting_ts"].notna()
     ].copy()
     if target.empty:
         return result
@@ -166,12 +178,12 @@ def _flag_reference_duplicate_entries(
     for _, group in target.groupby(["_partner_key", "_reference", "gl_account"], group_keys=False):
         if len(group) < 2 or group["_document_id"].nunique() < 2:
             continue
-        ordered = group.sort_values("posting_date")
+        ordered = group.sort_values("_posting_ts")
         amounts = ordered["_base_amt"]
         tolerance = amounts.max() * amount_tolerance
         if (amounts.max() - amounts.min()) > tolerance:
             continue
-        if (ordered["posting_date"].max() - ordered["posting_date"].min()) > window:
+        if (ordered["_posting_ts"].max() - ordered["_posting_ts"].min()) > window:
             continue
         result.loc[group.index] = 0.90
 
@@ -198,6 +210,7 @@ def _flag_near_duplicate_entries(
         work["_partner_key"].ne("")
         & work["_line_text"].ne("")
         & work["_document_id"].ne("")
+        & work["_posting_ts"].notna()
     ].copy()
     if target.empty:
         return result
@@ -206,11 +219,11 @@ def _flag_near_duplicate_entries(
         if len(group) < 2 or len(group) > max_group_size:
             continue
 
-        ordered = group.sort_values("posting_date").reset_index(names="_row_index")
+        ordered = group.sort_values("_posting_ts").reset_index(names="_row_index")
         rows = ordered.to_dict("records")
         for left_idx, left_row in enumerate(rows):
             for right_row in rows[left_idx + 1:]:
-                day_gap = abs((right_row["posting_date"] - left_row["posting_date"]).days)
+                day_gap = abs((right_row["_posting_ts"] - left_row["_posting_ts"]).days)
                 if day_gap > window_days:
                     break
                 if left_row["_document_id"] == right_row["_document_id"]:
@@ -244,6 +257,7 @@ def _flag_split_duplicate_entries(
     target = work.loc[
         work["_partner_key"].ne("")
         & work["_document_id"].ne("")
+        & work["_posting_ts"].notna()
     ].copy()
     if target.empty:
         return result
@@ -252,7 +266,7 @@ def _flag_split_duplicate_entries(
         if len(group) < 3 or len(group) > max_group_size:
             continue
 
-        ordered = group.sort_values("posting_date").reset_index(names="_row_index")
+        ordered = group.sort_values("_posting_ts").reset_index(names="_row_index")
         rows = ordered.to_dict("records")
         for target_row in rows:
             if target_row["_base_amt"] <= 0:
@@ -266,7 +280,7 @@ def _flag_split_duplicate_entries(
                     continue
                 if candidate_row["_base_amt"] <= 0 or candidate_row["_base_amt"] >= target_row["_base_amt"]:
                     continue
-                day_gap = abs((candidate_row["posting_date"] - target_row["posting_date"]).days)
+                day_gap = abs((candidate_row["_posting_ts"] - target_row["_posting_ts"]).days)
                 if day_gap > split_window_days:
                     continue
                 candidates.append(candidate_row)
@@ -286,17 +300,204 @@ def _flag_split_duplicate_entries(
     return result
 
 
+def _document_line_signature(group: pd.DataFrame) -> tuple[tuple[str, str, float], ...]:
+    """Return a stable document-level GL/side/amount signature."""
+
+    rows: list[tuple[str, str, float]] = []
+    for row in group.itertuples(index=False):
+        debit = float(getattr(row, "debit_amount", 0.0) or 0.0)
+        credit = float(getattr(row, "credit_amount", 0.0) or 0.0)
+        side = "D" if debit >= credit else "C"
+        amount = max(abs(debit), abs(credit))
+        rows.append((str(getattr(row, "gl_account", "")).strip(), side, amount))
+    return tuple(sorted(rows))
+
+
+def _amount_signatures_close(
+    left: tuple[tuple[str, str, float], ...],
+    right: tuple[tuple[str, str, float], ...],
+    amount_tolerance: float,
+) -> bool:
+    """Compare same-shape document signatures with per-line amount tolerance."""
+
+    if len(left) != len(right):
+        return False
+    for left_row, right_row in zip(left, right, strict=True):
+        if left_row[:2] != right_row[:2]:
+            return False
+        if not _is_amount_close(left_row[2], right_row[2], amount_tolerance):
+            return False
+    return True
+
+
+def _build_document_duplicate_signatures(work: pd.DataFrame, df: pd.DataFrame) -> pd.DataFrame:
+    """Build document-level signatures used by L2-03 document duplicate matching."""
+
+    if "_document_id" not in work.columns:
+        return pd.DataFrame()
+
+    source = pd.DataFrame({
+        "_document_id": work["_document_id"],
+        "_posting_ts": work["_posting_ts"],
+        "_reference_norm": (
+            work["_reference"].map(_normalize_reference)
+            if "_reference" in work.columns
+            else pd.Series("", index=work.index)
+        ),
+        "_partner_key": (
+            work["_partner_key"]
+            if "_partner_key" in work.columns
+            else pd.Series("", index=work.index)
+        ),
+        "_line_text_norm": (
+            work["_line_text"]
+            if "_line_text" in work.columns
+            else pd.Series("", index=work.index)
+        ),
+        "company_code": (
+            df["company_code"].fillna("").astype(str).str.strip()
+            if "company_code" in df.columns
+            else pd.Series("", index=df.index)
+        ),
+        "business_process": (
+            df["business_process"].fillna("").astype(str).str.strip()
+            if "business_process" in df.columns
+            else pd.Series("", index=df.index)
+        ),
+        "document_type": (
+            df["document_type"].fillna("").astype(str).str.strip()
+            if "document_type" in df.columns
+            else pd.Series("", index=df.index)
+        ),
+        "gl_account": df["gl_account"].fillna("").astype(str).str.strip(),
+        "debit_amount": df["debit_amount"].fillna(0.0),
+        "credit_amount": df["credit_amount"].fillna(0.0),
+    }, index=df.index)
+
+    source = source.loc[source["_document_id"].ne("")].copy()
+    if source.empty:
+        return pd.DataFrame()
+
+    source["_side"] = source["debit_amount"] >= source["credit_amount"]
+    source["_side"] = source["_side"].map({True: "D", False: "C"})
+    source["_line_amount"] = source[["debit_amount", "credit_amount"]].abs().max(axis=1)
+    source["_line_signature_row"] = list(
+        zip(
+            source["gl_account"],
+            source["_side"],
+            source["_line_amount"],
+        )
+    )
+
+    grouped = source.groupby("_document_id", sort=False)
+    docs = grouped.agg(
+        posting_date=("_posting_ts", "min"),
+        company_code=("company_code", "first"),
+        business_process=("business_process", "first"),
+        document_type=("document_type", "first"),
+        reference_norm=("_reference_norm", "first"),
+        partner_key=("_partner_key", "first"),
+        row_indices=("_document_id", lambda s: s.index.tolist()),
+        text_parts=("_line_text_norm", list),
+        line_signature_parts=("_line_signature_row", list),
+        line_count=("_document_id", "size"),
+    ).reset_index(names="document_id")
+
+    docs["text_signature"] = docs["text_parts"].map(
+        lambda parts: _normalize_duplicate_text(" ".join(str(part) for part in parts if str(part)))
+    )
+    docs["line_signature"] = docs["line_signature_parts"].map(lambda parts: tuple(sorted(parts)))
+    return docs.drop(columns=["text_parts", "line_signature_parts"])
+
+
+def _flag_document_duplicate_entries(
+    work: pd.DataFrame,
+    df: pd.DataFrame,
+    *,
+    amount_tolerance: float,
+    fuzzy_threshold: int,
+    window_days: int,
+    max_group_size: int,
+) -> pd.Series:
+    """Flag duplicate documents using document-level shape, reference, and text evidence."""
+
+    result = pd.Series(0.0, index=work.index)
+    docs = _build_document_duplicate_signatures(work, df)
+    if docs.empty:
+        return result
+
+    doc_window_days = max(window_days, 15)
+    window = pd.Timedelta(days=doc_window_days)
+
+    docs["_line_signature_key"] = docs["line_signature"].map(repr)
+    ref_docs = docs.loc[docs["reference_norm"].astype(str).ne("")].copy()
+    blank_docs = docs.loc[docs["reference_norm"].astype(str).eq("") & docs["partner_key"].astype(str).ne("")].copy()
+
+    groups: list[pd.DataFrame] = []
+    ref_grouping_cols = ["company_code", "business_process", "document_type", "reference_norm"]
+    for _, group in ref_docs.groupby(ref_grouping_cols, dropna=False, sort=False):
+        groups.append(group)
+
+    blank_grouping_cols = [
+        "company_code",
+        "business_process",
+        "document_type",
+        "partner_key",
+        "_line_signature_key",
+    ]
+    for _, group in blank_docs.groupby(blank_grouping_cols, dropna=False, sort=False):
+        groups.append(group)
+
+    for group in groups:
+        if len(group) < 2 or len(group) > max_group_size:
+            continue
+        ordered = group.sort_values("posting_date").reset_index(drop=True)
+        records = ordered.to_dict("records")
+        for left_pos, left in enumerate(records):
+            for right in records[left_pos + 1:]:
+                day_gap = right["posting_date"] - left["posting_date"]
+                if day_gap > window:
+                    break
+                if left["document_id"] == right["document_id"]:
+                    continue
+                if not _amount_signatures_close(
+                    left["line_signature"],
+                    right["line_signature"],
+                    amount_tolerance,
+                ):
+                    continue
+
+                same_reference = bool(left["reference_norm"]) and left["reference_norm"] == right["reference_norm"]
+                same_partner = bool(left["partner_key"]) and left["partner_key"] == right["partner_key"]
+                text_similarity = fuzz.token_sort_ratio(left["text_signature"], right["text_signature"])
+                text_match = text_similarity >= max(70, fuzzy_threshold - 10)
+
+                if same_reference:
+                    pair_score = 0.92 if text_match else 0.88
+                elif same_partner and text_match:
+                    pair_score = 0.82
+                else:
+                    continue
+
+                target_indices = list(left["row_indices"]) + list(right["row_indices"])
+                result.loc[target_indices] = result.loc[target_indices].clip(lower=pair_score)
+
+    return result
+
+
 def b04_duplicate_payment(
     df: pd.DataFrame,
     window_days: int = 45,
-    reference_amount_tolerance: float = 0.01,
+    reference_amount_tolerance: float = 0.02,
+    reference_amount_cap: float = 100_000.0,
 ) -> pd.Series:
     """L2-02 duplicate payment rule for P2P disbursements.
 
     Phase 1 logic:
     - Scope to P2P transactions to avoid recurring O2C activity.
     - Strong signal: same partner + same reference + near-same amount across
-      different document IDs.
+      different document IDs. The default 2% amount tolerance catches small
+      fee, rounding, or FX differences, capped at KRW 100,000 by default.
     - Fallback signal: same partner + same amount within the time window when
       reference is missing, while suppressing stable monthly recurring payments.
     """
@@ -375,7 +576,8 @@ def b04_duplicate_payment(
         seen: list[tuple[pd.Timestamp, float]] = []
         for _, row in ordered.iterrows():
             amount = float(row["_base_amt"])
-            tolerance = max(abs(amount) * reference_amount_tolerance, 1.0)
+            ratio_tolerance = abs(amount) * reference_amount_tolerance
+            tolerance = max(min(ratio_tolerance, reference_amount_cap), 1.0)
             if any(
                 abs(amount - prev_amount) <= tolerance and (row["posting_date"] - prev_date) <= window
                 for prev_date, prev_amount in seen
@@ -428,6 +630,14 @@ def b05_duplicate_entry(
         return pd.Series(False, index=df.index)
 
     work = _prepare_duplicate_entry_work(df)
+    document_scores = _flag_document_duplicate_entries(
+        work,
+        df,
+        amount_tolerance=amount_tolerance,
+        fuzzy_threshold=fuzzy_threshold,
+        window_days=window_days,
+        max_group_size=max_group_size,
+    )
     exact_scores = _flag_exact_duplicate_entries(work)
     reference_scores = _flag_reference_duplicate_entries(
         work,
@@ -448,6 +658,7 @@ def b05_duplicate_entry(
         max_group_size=max_group_size,
     )
     score_frame = pd.DataFrame({
+        "document_duplicate": document_scores,
         "exact_duplicate": exact_scores,
         "reference_duplicate": reference_scores,
         "near_duplicate": near_scores,

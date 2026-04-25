@@ -74,11 +74,21 @@ def build_document_explanation(
     rule_explanations = [build_rule_explanation(rule_id) for rule_id in rule_ids]
 
     track_explanations: list[dict[str, Any]] = []
+    row_annotations_by_rule: dict[str, dict[int, dict[str, Any]]] = {}
     if results:
         doc_indices = set(int(index) for index in doc_lines.index.tolist())
         for result in results:
             if doc_indices.intersection(int(index) for index in result.flagged_indices):
                 track_explanations.append(build_track_explanation(result))
+            annotations = (result.metadata or {}).get("row_annotations", {})
+            for rule_id, rule_annotations in annotations.items():
+                filtered = {
+                    int(index): value
+                    for index, value in rule_annotations.items()
+                    if int(index) in doc_indices
+                }
+                if filtered:
+                    row_annotations_by_rule[rule_id] = filtered
 
     used_columns = _merge_unique(
         item
@@ -100,7 +110,7 @@ def build_document_explanation(
         for block in [*rule_explanations, *track_explanations]
         for item in block.get("references", [])
     )
-    transaction_details = _build_transaction_details(doc_lines, rule_ids)
+    transaction_details = _build_transaction_details(doc_lines, rule_ids, row_annotations_by_rule)
 
     risk_level = str(first_row.get("risk_level", "Unknown"))
     anomaly_score = float(first_row.get("anomaly_score", 0.0) or 0.0)
@@ -196,6 +206,7 @@ def _empty_document_explanation(doc_id: str) -> dict[str, Any]:
 def _build_transaction_details(
     doc_lines: pd.DataFrame,
     rule_ids: list[str],
+    row_annotations_by_rule: dict[str, dict[int, dict[str, Any]]],
 ) -> list[dict[str, Any]]:
     """Build line-level transaction details."""
 
@@ -211,7 +222,7 @@ def _build_transaction_details(
                 "gl_account": _format_scalar(row.get("gl_account")),
                 "amount": amount,
                 "amount_display": _format_amount(amount),
-                "trigger_value": _build_trigger_value(row, doc_lines, top_rules),
+                "trigger_value": _build_trigger_value(row, doc_lines, top_rules, row_annotations_by_rule),
             }
         )
     return details
@@ -221,6 +232,7 @@ def _build_trigger_value(
     row: pd.Series,
     doc_lines: pd.DataFrame,
     rule_ids: list[str],
+    row_annotations_by_rule: dict[str, dict[int, dict[str, Any]]],
 ) -> str:
     """Build a concise trigger summary."""
 
@@ -229,7 +241,9 @@ def _build_trigger_value(
 
     triggers = []
     for rule_id in rule_ids:
-        text = _rule_trigger_text(rule_id, row, doc_lines)
+        rule_annotations = row_annotations_by_rule.get(rule_id, {})
+        row_annotation = rule_annotations.get(int(row.name))
+        text = _rule_trigger_text(rule_id, row, doc_lines, row_annotation)
         if text:
             triggers.append(text)
 
@@ -238,7 +252,12 @@ def _build_trigger_value(
     return f"Rules {', '.join(rule_ids)} were triggered."
 
 
-def _rule_trigger_text(rule_id: str, row: pd.Series, doc_lines: pd.DataFrame) -> str:
+def _rule_trigger_text(
+    rule_id: str,
+    row: pd.Series,
+    doc_lines: pd.DataFrame,
+    row_annotation: dict[str, Any] | None = None,
+) -> str:
     """Build a trigger sentence for one rule."""
 
     amount = _coalesce_amount(row)
@@ -286,17 +305,15 @@ def _rule_trigger_text(rule_id: str, row: pd.Series, doc_lines: pd.DataFrame) ->
     if rule_id == "L1-07":
         return f"Approval missing or skipped (approver={approver or 'NULL'})"
     if rule_id == "L3-03":
-        return "Intercompany circularity signal"
-    if rule_id == "L2-05":
-        return "Composite top-side journal-entry risk signal"
+        return "Related-party account review signal"
     if rule_id == "L3-04":
-        return f"Period-end large posting on {_format_scalar(row.get('posting_date'))}"
+        return f"Period-start/end large or manual posting on {_format_scalar(row.get('posting_date'))}"
     if rule_id == "L3-05":
         return "Weekend or holiday posting"
     if rule_id == "L3-06":
         return "After-hours posting"
     if rule_id == "L3-07":
-        return "Backdated posting"
+        return _l307_trigger_text(row)
     if rule_id == "L1-08":
         return "Fiscal period mismatch"
     if rule_id == "L3-08":
@@ -311,11 +328,37 @@ def _rule_trigger_text(rule_id: str, row: pd.Series, doc_lines: pd.DataFrame) ->
     if rule_id == "L4-04":
         return "Rare debit-credit account pair"
     if rule_id == "L3-09":
-        return "Suspense-account usage pattern"
-    if rule_id == "L2-06":
-        return "Reversal-pattern signal"
+        return "Long-open suspense-account balance"
+    if rule_id == "L2-05":
+        if row_annotation:
+            label = str(row_annotation.get("interpretation_label", "")).strip()
+            reason = str(row_annotation.get("reason_text", "")).strip()
+            if label and reason:
+                return f"{label}: {reason}"
+            if label:
+                return label
+        return "Candidate reversal / clearing / reclass pattern"
 
     return build_rule_explanation(rule_id)["plain_reason"]
+
+
+def _l307_trigger_text(row: pd.Series) -> str:
+    """Explain L3-07 with direction and day gap when available."""
+    raw_days = row.get("days_backdated")
+    if _is_missing(raw_days):
+        return "Posting-document date gap"
+
+    try:
+        days = int(raw_days)
+    except (TypeError, ValueError):
+        return "Posting-document date gap"
+
+    abs_days = abs(days)
+    if days > 0:
+        return f"Long-delayed posting: posting date is {abs_days} days after document date"
+    if days < 0:
+        return f"Forward-date gap: posting date is {abs_days} days before document date"
+    return "Posting-document date gap"
 
 
 def _build_narrative(

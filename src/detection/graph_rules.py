@@ -182,6 +182,7 @@ def gr01_circular_transaction(
     min_amount: float = 10_000_000.0,
     max_edges: int = 50_000,
     max_component_size: int = 500,
+    max_component_edges: int = 5_000,
     metadata: dict | None = None,
 ) -> pd.Series:
     """GR01: Johnson 알고리즘 기반 N-hop 순환 탐지.
@@ -207,16 +208,19 @@ def gr01_circular_transaction(
     skipped_components = 0
 
     for component in nx.weakly_connected_components(graph):
-        if len(component) > max_component_size:
+        subgraph = graph.subgraph(component)
+        component_edges = subgraph.number_of_edges()
+        if len(component) > max_component_size and component_edges > max_component_edges:
             skipped_components += 1
             logger.warning(
-                "GR01 component skip: size=%d > max=%d",
+                "GR01 component skip: size=%d > max=%d and edges=%d > max=%d",
                 len(component),
                 max_component_size,
+                component_edges,
+                max_component_edges,
             )
             continue
 
-        subgraph = graph.subgraph(component)
         try:
             for cycle in nx.simple_cycles(subgraph, length_bound=max_cycle_length):
                 cycles_found += 1
@@ -233,6 +237,8 @@ def gr01_circular_transaction(
 
     metadata["gr01_cycles_found"] = cycles_found
     metadata["gr01_skipped_components"] = skipped_components
+    metadata["gr01_max_component_size"] = max_component_size
+    metadata["gr01_max_component_edges"] = max_component_edges
     return scores
 
 
@@ -267,10 +273,23 @@ def gr03_transfer_pricing_graph(
         return scores
 
     ic_df = df.loc[ic_mask].copy()
+    ic_df["_orig_idx"] = ic_df.index
     ic_df["_amount"] = ic_df[["debit_amount", "credit_amount"]].fillna(0).max(axis=1)
+    if "document_id" in df.columns:
+        doc_amount = df[["debit_amount", "credit_amount"]].fillna(0).max(axis=1)
+        ic_df["_doc_amount"] = doc_amount.groupby(df["document_id"]).transform("max").reindex(ic_df.index)
     ic_df = ic_df[(ic_df["_amount"] > 0) & ic_df["trading_partner"].notna()]
     if ic_df.empty:
         return scores
+
+    reference_scores = _gr03_reference_pair_scores(
+        ic_df,
+        deviation_threshold=deviation_threshold,
+    )
+    if not reference_scores.empty:
+        for orig_idx, score in reference_scores.items():
+            scores.at[orig_idx] = max(scores.at[orig_idx], float(score))
+        metadata["gr03_reference_rows"] = int(reference_scores.gt(0).sum())
 
     # Why: 방향성 — credit이면 (company→partner), debit이면 (partner→company)
     is_credit = ic_df["credit_amount"].fillna(0) > 0
@@ -338,3 +357,69 @@ def gr03_transfer_pricing_graph(
     for orig_idx, score in zip(joined["_orig_idx"].values, score_vec.values):
         scores.at[orig_idx] = max(scores.at[orig_idx], float(score))
     return scores
+
+
+def _gr03_reference_pair_scores(
+    ic_df: pd.DataFrame,
+    *,
+    deviation_threshold: float,
+) -> pd.Series:
+    """Score reciprocal IC document pairs that share a reference."""
+    if "reference" not in ic_df.columns or "document_id" not in ic_df.columns:
+        return pd.Series(dtype=float)
+
+    work = ic_df.copy()
+    work["_reference"] = work["reference"].fillna("").astype(str).str.strip()
+    work = work[work["_reference"].ne("")]
+    if work.empty:
+        return pd.Series(dtype=float)
+
+    amount_col = "_doc_amount" if "_doc_amount" in work.columns else "_amount"
+    doc_pairs = (
+        work.groupby(["_reference", "document_id", "company_code", "trading_partner"], dropna=False)
+        .agg(
+            amount=(amount_col, "max"),
+            row_indices=("_orig_idx", list),
+        )
+        .reset_index()
+    )
+    if doc_pairs.empty:
+        return pd.Series(dtype=float)
+
+    reverse = doc_pairs.rename(columns={
+        "company_code": "trading_partner",
+        "trading_partner": "company_code",
+        "document_id": "_counterpart_document_id",
+        "amount": "_counterpart_amount",
+        "row_indices": "_counterpart_row_indices",
+    })
+    joined = doc_pairs.merge(
+        reverse,
+        on=["_reference", "company_code", "trading_partner"],
+        how="inner",
+    )
+    if joined.empty:
+        return pd.Series(dtype=float)
+
+    joined = joined[joined["document_id"].astype(str) != joined["_counterpart_document_id"].astype(str)]
+    if joined.empty:
+        return pd.Series(dtype=float)
+
+    min_vals = joined[["amount", "_counterpart_amount"]].min(axis=1).clip(lower=1e-10)
+    joined["_deviation"] = (joined["amount"] - joined["_counterpart_amount"]).abs() / min_vals
+    flagged = joined[joined["_deviation"] > deviation_threshold]
+    if flagged.empty:
+        return pd.Series(dtype=float)
+
+    out: dict[int, float] = {}
+    for row_indices, counterpart_indices, deviation in flagged[
+        ["row_indices", "_counterpart_row_indices", "_deviation"]
+    ].itertuples(index=False, name=None):
+        score = float(min(1.0, deviation / (deviation_threshold * 3)))
+        for idx in row_indices:
+            idx = int(idx)
+            out[idx] = max(out.get(idx, 0.0), score)
+        for idx in counterpart_indices:
+            idx = int(idx)
+            out[idx] = max(out.get(idx, 0.0), score)
+    return pd.Series(out, dtype=float)

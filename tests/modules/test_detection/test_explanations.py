@@ -47,6 +47,16 @@ def test_build_rule_explanation_returns_fallback_for_unknown():
     assert "ZZ99" in explanation["plain_reason"]
 
 
+def test_build_rule_explanation_includes_d02_limits_and_checks():
+    explanation = build_rule_explanation("D02")
+
+    assert explanation["rule_id"] == "D02"
+    assert "monthly amount distribution" in explanation["plain_reason"]
+    assert "fiscal_period" in explanation["used_columns"]
+    assert explanation["false_positive_risks"]
+    assert any("period-end" in item for item in explanation["auditor_checks"])
+
+
 def test_build_document_explanation_aggregates_rules_and_tracks():
     df = pd.DataFrame(
         {
@@ -66,6 +76,76 @@ def test_build_document_explanation_aggregates_rules_and_tracks():
     assert {item["rule_id"] for item in explanation["triggered_rules"]} == {"L2-01", "L3-04"}
     assert explanation["track_explanations"]
     assert explanation["track_explanations"][0]["display_name"] == "L2"
+
+
+def test_build_document_explanation_describes_l307_direction():
+    df = pd.DataFrame(
+        {
+            "document_id": ["DOC1", "DOC2"],
+            "risk_level": ["High", "High"],
+            "anomaly_score": [0.91, 0.88],
+            "flagged_rules": ["L3-07", "L3-07"],
+            "line_text": ["late", "forward"],
+            "days_backdated": [45, -35],
+        },
+        index=[0, 1],
+    )
+
+    late = build_document_explanation("DOC1", df, [])
+    forward = build_document_explanation("DOC2", df, [])
+
+    assert "45 days after document date" in late["transaction_details"][0]["trigger_value"]
+    assert "35 days before document date" in forward["transaction_details"][0]["trigger_value"]
+
+
+def test_build_document_explanation_splits_l205_interpretation():
+    df = pd.DataFrame(
+        {
+            "document_id": ["DOC1", "DOC2"],
+            "risk_level": ["High", "Medium"],
+            "anomaly_score": [0.91, 0.61],
+            "flagged_rules": ["L2-05", "L2-05"],
+            "line_text": ["system reverse", "reclass accrual"],
+        },
+        index=[0, 1],
+    )
+    result = DetectionResult(
+        track_name="layer_c",
+        flagged_indices=[0, 1],
+        scores=pd.Series([0.9, 0.6], index=[0, 1], dtype=float),
+        rule_flags=[RuleFlag("L2-05", "Reversal Pattern", 4, 2, 2)],
+        details=pd.DataFrame({"L2-05": [0.8, 0.8]}, index=[0, 1]),
+        metadata={
+            "elapsed": 0.01,
+            "row_annotations": {
+                "L2-05": {
+                    0: {
+                        "interpretation_label": "High-confidence reversal",
+                        "reason_text": (
+                            "ERP reversal reference fields link "
+                            "the original and reversal entries"
+                        ),
+                    },
+                    1: {
+                        "interpretation_label": "Candidate reversal / clearing / reclass",
+                        "reason_text": (
+                            "an opposite-signed document pair "
+                            "matched on account and amount"
+                        ),
+                    },
+                }
+            },
+        },
+    )
+
+    high = build_document_explanation("DOC1", df, [result])
+    candidate = build_document_explanation("DOC2", df, [result])
+
+    assert "High-confidence reversal" in high["transaction_details"][0]["trigger_value"]
+    assert (
+        "Candidate reversal / clearing / reclass"
+        in candidate["transaction_details"][0]["trigger_value"]
+    )
 
 
 def test_build_export_narrative_includes_rule_and_auditor_check():

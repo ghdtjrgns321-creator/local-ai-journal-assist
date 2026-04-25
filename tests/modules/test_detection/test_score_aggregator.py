@@ -9,8 +9,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.detection.base import DetectionResult, RuleFlag
 from src.detection.constants import LAYER_WEIGHTS, LAYER_WEIGHTS_WITH_ML, Layer, RiskLevel
+from src.detection.base import DetectionResult, RuleFlag
 from src.detection.score_aggregator import aggregate_scores, classify_risk_level
 
 
@@ -89,7 +89,14 @@ class TestAggregateScores:
         expected_row4 = 0.3 * LAYER_WEIGHTS[Layer.BENFORD]
         assert result["anomaly_score"].iloc[4] == pytest.approx(expected_row4)
 
-        assert list(result.columns) == ["anomaly_score", "risk_level", "flagged_rules", "topside_score"]
+        assert list(result.columns) == [
+            "anomaly_score",
+            "risk_level",
+            "flagged_rules",
+            "batch_combo_score",
+            "batch_combo_reasons",
+            "topside_score",
+        ]
 
     def test_missing_layer(self, base_df):
         """3개만 전달 → 누락 레이어 0점 처리, 에러 없음."""
@@ -205,6 +212,58 @@ class TestAutoEscalation:
         assert result["risk_level"].iloc[0] == RiskLevel.LOW
 
 
+class TestBatchCorroboration:
+    """L4-06 batch 신호는 결합될 때만 우선순위를 올린다."""
+
+    def test_l406_only_stays_low_priority(self, base_df):
+        layer_c = _make_result(
+            "layer_c",
+            [0.4, 0.0, 0.0, 0.0, 0.0],
+            {"L4-06": [0.4, 0.0, 0.0, 0.0, 0.0]},
+        )
+        result = aggregate_scores(base_df, [layer_c])
+        assert result["batch_combo_score"].iloc[0] == pytest.approx(0.0)
+        assert result["risk_level"].iloc[0] == RiskLevel.NORMAL
+
+    def test_l406_plus_two_groups_promotes_medium(self, base_df):
+        layer_b = _make_result(
+            "layer_b",
+            [0.6, 0.0, 0.0, 0.0, 0.0],
+            {"L1-07": [0.6, 0.0, 0.0, 0.0, 0.0]},
+        )
+        layer_c = _make_result(
+            "layer_c",
+            [0.4, 0.0, 0.0, 0.0, 0.0],
+            {
+                "L4-06": [0.4, 0.0, 0.0, 0.0, 0.0],
+                "L3-04": [0.6, 0.0, 0.0, 0.0, 0.0],
+            },
+        )
+        result = aggregate_scores(base_df, [layer_b, layer_c])
+        assert result["batch_combo_score"].iloc[0] == pytest.approx(0.4)
+        assert result["risk_level"].iloc[0] == RiskLevel.MEDIUM
+        assert result["batch_combo_reasons"].iloc[0] == "closing_or_cutoff,control_failure"
+
+    def test_l406_plus_three_groups_promotes_high(self, base_df):
+        layer_b = _make_result(
+            "layer_b",
+            [0.6, 0.0, 0.0, 0.0, 0.0],
+            {"L1-07": [0.6, 0.0, 0.0, 0.0, 0.0]},
+        )
+        layer_c = _make_result(
+            "layer_c",
+            [0.6, 0.0, 0.0, 0.0, 0.0],
+            {
+                "L4-06": [0.4, 0.0, 0.0, 0.0, 0.0],
+                "L3-04": [0.6, 0.0, 0.0, 0.0, 0.0],
+                "L4-03": [0.6, 0.0, 0.0, 0.0, 0.0],
+            },
+        )
+        result = aggregate_scores(base_df, [layer_b, layer_c])
+        assert result["batch_combo_score"].iloc[0] == pytest.approx(0.6)
+        assert result["risk_level"].iloc[0] == RiskLevel.HIGH
+
+
 # ── TestFlaggedRules ──────────────────────────────────────
 
 
@@ -284,30 +343,29 @@ def _topside_layers(
 
 
 class TestTopsideDetection:
-    """L2-05 Top-side JE 복합 탐지 — 게이트키퍼(수기) + 5개 가점."""
+    """Top-side JE internal score feature."""
 
     def test_all_conditions_met(self):
-        """수기 + 5개 가점 전부 → L2-05 플래그, risk_level=High."""
+        """수기 + 5개 가점 전부 → topside_score 만점."""
         df = pd.DataFrame({"is_manual_je": [True] * 5})
         layers = _topside_layers(
             c01=[0.6] * 5, b06=[0.6] * 5,
             a03=[0.6] * 5, c08=[0.6] * 5, c06=[0.2] * 5,
         )
         result = aggregate_scores(df, layers)
-        assert result["risk_level"].iloc[0] == RiskLevel.HIGH
-        assert "L2-05" in result["flagged_rules"].iloc[0]
+        assert "L2-05" not in result["flagged_rules"].iloc[0]
         assert result["topside_score"].iloc[0] == pytest.approx(1.0)
 
     def test_threshold_boundary(self):
-        """수기 + 정확히 2개 가점 → L2-05 플래그 (임계값 기본 2)."""
+        """수기 + 정확히 2개 가점 → topside_score 0.4."""
         df = pd.DataFrame({"is_manual_je": [True, False, True, True, True]})
         layers = _topside_layers(
             c01=[0.6, 0.0, 0.6, 0.0, 0.0],
             c08=[0.6, 0.0, 0.6, 0.0, 0.0],
         )
         result = aggregate_scores(df, layers)
-        # 행 0: 수기 + L3-04 + L4-03 = 2점 → 플래그
-        assert "L2-05" in result["flagged_rules"].iloc[0]
+        assert "L2-05" not in result["flagged_rules"].iloc[0]
+        assert result["topside_score"].iloc[0] == pytest.approx(0.4)
         # 행 1: 자동 + L3-04 + L4-03 = 0점 (게이트키퍼) → 미플래그
         assert "L2-05" not in result["flagged_rules"].iloc[1]
 
@@ -350,8 +408,8 @@ class TestTopsideDetection:
         })
         benford = _make_result("benford", [0.0] * 3, {"L4-02": [0.0] * 3})
         result = aggregate_scores(df, [layer_c, benford])
-        # L3-04 + L4-03 + L3-08 = 3점 → 2점 이상이므로 L2-05
-        assert "L2-05" in result["flagged_rules"].iloc[0]
+        assert "L2-05" not in result["flagged_rules"].iloc[0]
+        assert result["topside_score"].iloc[0] == pytest.approx(0.6)
 
     def test_topside_score_column(self):
         """결과에 topside_score 컬럼 존재 (0.0~1.0 범위)."""
@@ -361,8 +419,8 @@ class TestTopsideDetection:
         assert "topside_score" in result.columns
         assert result["topside_score"].between(0.0, 1.0).all()
 
-    def test_flagged_rules_appended(self):
-        """기존 flagged_rules에 L2-05 정상 추가."""
+    def test_flagged_rules_not_appended(self):
+        """Top-side score does not append L2-05 to flagged_rules."""
         df = pd.DataFrame({"is_manual_je": [True] * 5})
         # L1-03 + L3-04 + L4-03 → 기존 플래그 + L2-05
         layers = _topside_layers(
@@ -370,9 +428,8 @@ class TestTopsideDetection:
         )
         result = aggregate_scores(df, layers)
         rules = result["flagged_rules"].iloc[0]
-        # 기존 룰(L1-03, L3-04, L4-03)과 L2-05 모두 포함
         assert "L1-03" in rules
-        assert "L2-05" in rules
+        assert "L2-05" not in rules
 
     def test_combined_with_auto_escalation(self):
         """auto_escalation과 topside 동시 적용 시 충돌 없음."""
@@ -385,7 +442,7 @@ class TestTopsideDetection:
         benford = _make_result("benford", [0.0] * 5, {"L4-02": [0.0] * 5})
         result = aggregate_scores(df, [layer_a, layer_b, layer_c, benford])
         assert result["risk_level"].iloc[0] == RiskLevel.HIGH
-        assert "L2-05" in result["flagged_rules"].iloc[0]
+        assert "L2-05" not in result["flagged_rules"].iloc[0]
 
 
 # ── TestMLWeights ────────────────────────────────────────

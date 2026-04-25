@@ -45,6 +45,11 @@ class CaseGroupResult(BaseModel):
     case_key: str
     case_key_parts: dict[str, Any] = Field(default_factory=dict)
     priority_score: float = 0.0
+    base_priority_score: float = 0.0
+    topside_bonus: float = 0.0
+    batch_combo_bonus: float = 0.0
+    weak_evidence_bonus: float = 0.0
+    priority_adjustment_reasons: list[str] = Field(default_factory=list)
     priority_band: str = "low"
     amount_score: float = 0.0
     control_score: float = 0.0
@@ -60,6 +65,10 @@ class CaseGroupResult(BaseModel):
     last_posting_date: str | None = None
     repeat_months: int = 0
     representative_explanation: str = ""
+    review_focus: list[str] = Field(default_factory=list)
+    risk_narrative: str = ""
+    recommended_audit_actions: list[str] = Field(default_factory=list)
+    rule_evidence_summary: list[dict[str, Any]] = Field(default_factory=list)
     evidence_tags: list[str] = Field(default_factory=list)
     documents: list[CaseDocumentRef] = Field(default_factory=list)
     raw_rule_hits: list[RawRuleHitRef] = Field(default_factory=list)
@@ -100,4 +109,3 @@ class Phase1CaseResult(BaseModel):
     cases: list[CaseGroupResult] = Field(default_factory=list)
     raw_rule_reference: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
-

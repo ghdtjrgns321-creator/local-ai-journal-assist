@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 import pytest
 
 from src.detection.variance_rules import (
-    d01_account_aggregate_variance,
+    d01_account_activity_variance,
     d02_monthly_pattern_variance,
 )
-
 
 # ── 공용 fixture ───────────────────────────────────────────
 
@@ -29,14 +27,14 @@ def base_df() -> pd.DataFrame:
 # ── D01: 계정과목별 집계 급변 ──────────────────────────────
 
 
-class TestD01AccountAggregateVariance:
+class TestD01AccountActivityVariance:
     """D01 룰 함수 — 변동률 기반 플래그."""
 
     def test_high_variance_flagged(self, base_df: pd.DataFrame):
         """변동률 50% 초과 → 해당 계정 행 전체 True."""
         # 전기: 1000 계정 총액 200, 당기: 800 → 변동률 3.0
         prior = {"1000": {"total_amount": 200.0, "count": 2, "avg_amount": 100.0}}
-        result = d01_account_aggregate_variance(base_df, prior, variance_threshold=0.5)
+        result = d01_account_activity_variance(base_df, prior, variance_threshold=0.5)
 
         # 1000 계정 8건 모두 플래그
         assert result[base_df["gl_account"] == "1000"].all()
@@ -48,14 +46,14 @@ class TestD01AccountAggregateVariance:
             "1000": {"total_amount": 800.0, "count": 8, "avg_amount": 100.0},
             "2000": {"total_amount": 400.0, "count": 4, "avg_amount": 100.0},
         }
-        result = d01_account_aggregate_variance(base_df, prior, variance_threshold=0.5)
+        result = d01_account_activity_variance(base_df, prior, variance_threshold=0.5)
         assert not result.any()
 
     def test_new_account_auto_flagged(self, base_df: pd.DataFrame):
         """전기에 없던 계정 → 자동 플래그."""
         # 전기에 1000만 있고, 2000은 신규
         prior = {"1000": {"total_amount": 800.0, "count": 8, "avg_amount": 100.0}}
-        result = d01_account_aggregate_variance(base_df, prior, variance_threshold=0.5)
+        result = d01_account_activity_variance(base_df, prior, variance_threshold=0.5)
 
         # 2000 계정 4건만 플래그
         assert result[base_df["gl_account"] == "2000"].all()
@@ -67,19 +65,19 @@ class TestD01AccountAggregateVariance:
             "1000": {"total_amount": 800.0, "count": 8, "avg_amount": 100.0},
             "2000": {"total_amount": 400.0, "count": 4, "avg_amount": 100.0},
         }
-        result = d01_account_aggregate_variance(base_df, prior, variance_threshold=0.5)
+        result = d01_account_activity_variance(base_df, prior, variance_threshold=0.5)
         assert not result.any()
 
     def test_missing_gl_account_column(self):
         """gl_account 컬럼 없으면 전체 False."""
         df = pd.DataFrame({"debit_amount": [100.0], "credit_amount": [0.0]})
         prior = {"1000": {"total_amount": 100.0, "count": 1, "avg_amount": 100.0}}
-        result = d01_account_aggregate_variance(df, prior)
+        result = d01_account_activity_variance(df, prior)
         assert not result.any()
 
     def test_empty_prior_returns_false(self, base_df: pd.DataFrame):
         """prior_aggregates가 빈 dict → 전체 False."""
-        result = d01_account_aggregate_variance(base_df, {})
+        result = d01_account_activity_variance(base_df, {})
         assert not result.any()
 
     def test_prior_zero_values_no_division_error(self):
@@ -91,7 +89,7 @@ class TestD01AccountAggregateVariance:
         })
         prior = {"1000": {"total_amount": 0.0, "count": 0, "avg_amount": 0.0}}
         # 에러 없이 실행되어야 함
-        result = d01_account_aggregate_variance(df, prior, variance_threshold=0.5)
+        result = d01_account_activity_variance(df, prior, variance_threshold=0.5)
         assert isinstance(result, pd.Series)
 
 
@@ -145,6 +143,25 @@ class TestD02MonthlyPatternVariance:
         })
         prior = {"1000": {1: 0.5, 2: 0.5}}  # 2개월만
         result = d02_monthly_pattern_variance(df, prior, jsd_threshold=0.3)
+        assert not result.any()
+
+    def test_min_months_parameter_allows_stricter_skip(self):
+        """min_months 인자를 높이면 3개월 데이터도 비교하지 않는다."""
+        df = pd.DataFrame({
+            "gl_account": ["1000"] * 3,
+            "debit_amount": [10.0, 10.0, 500.0],
+            "credit_amount": [0.0, 0.0, 0.0],
+            "fiscal_period": [1, 2, 3],
+        })
+        prior = {"1000": {m: 1 / 12 for m in range(1, 13)}}
+
+        result = d02_monthly_pattern_variance(
+            df,
+            prior,
+            jsd_threshold=0.3,
+            min_months=4,
+        )
+
         assert not result.any()
 
     def test_missing_fiscal_period_column(self):

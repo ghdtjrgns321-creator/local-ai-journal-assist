@@ -431,8 +431,8 @@ class TestC12FlagTargeting:
 class TestC12MinUserEntries:
     """#4 보완: 소수 표본(Small N) 오탐 방지."""
 
-    def test_few_entries_user_excluded(self):
-        """전표 3건 사용자 100% 심야 → min_user_entries=10에 의해 미플래그."""
+    def test_few_midnight_entries_user_flagged(self):
+        """전표 수가 적어도 심야 3건 반복이면 플래그."""
         entries = {"userA": ["23:00"] * 3}
         for name in ["userB", "userC", "userD"]:
             entries[name] = ["10:00"] * 20
@@ -442,7 +442,20 @@ class TestC12MinUserEntries:
             df, sigma_threshold=2.0, min_user_entries=10,
         )
         user_flags = df.loc[result, "created_by"].unique()
-        assert "userA" not in user_flags, "소수 표본 사용자가 오탐됨"
+        assert "userA" in user_flags
+
+    def test_few_overtime_entries_user_not_flagged(self):
+        """Low-volume users are not flagged for overtime-only repetition."""
+        entries = {"userA": ["19:00"] * 3}
+        for name in ["userB", "userC", "userD"]:
+            entries[name] = ["10:00"] * 20
+
+        df = _make_rule_df(entries)
+        result = c12_abnormal_hours_concentration(
+            df, sigma_threshold=2.0, min_user_entries=10,
+        )
+        user_flags = df.loc[result, "created_by"].unique()
+        assert "userA" not in user_flags
 
     def test_sufficient_entries_user_flagged(self):
         """전표 15건 사용자 80% 심야 → min_user_entries=10 통과 + 플래그.

@@ -9,7 +9,6 @@ from src.detection.base import DetectionResult
 from src.detection.constants import SEVERITY_MAP
 from src.detection.integrity_layer import IntegrityDetector
 
-
 # ── L1-01: 차대변 균형 ──────────────────────────────────────────
 
 
@@ -215,6 +214,162 @@ class TestA03InvalidAccount:
         result = detector.detect(df)
         assert result.details["L1-03"].iloc[0] == 0.0
         assert result.details["L1-02"].iloc[0] > 0.0
+
+
+class TestL301MisclassifiedAccount:
+    def _rules(self) -> dict:
+        return {
+            "l3_01_misclassified_account": {
+                "enabled": True,
+                "strict_allowed_categories": False,
+                "account_category_prefixes": {
+                    "asset": ["1"],
+                    "liability": ["2"],
+                    "equity": ["3"],
+                    "revenue": ["4"],
+                    "expense": ["5", "6", "7", "8"],
+                    "payroll": ["54"],
+                },
+                "process_disallowed_categories": {
+                    "O2C": ["expense"],
+                    "P2P": ["revenue"],
+                    "TRE": ["inventory"],
+                },
+                "process_denied_accounts": {
+                    "O2C": ["5000"],
+                    "P2P": ["4100"],
+                },
+                "process_allowed_keywords": {
+                    "O2C": ["판매수수료", "rebate"],
+                },
+            }
+        }
+
+    def test_o2c_expense_account_flagged(self):
+        df = pd.DataFrame({
+            "document_id": ["D1"],
+            "debit_amount": [100.0],
+            "credit_amount": [100.0],
+            "gl_account": ["5000"],
+            "business_process": ["O2C"],
+            "company_code": ["C1"],
+            "fiscal_year": [2025],
+            "posting_date": pd.to_datetime(["2025-01-01"]),
+            "document_date": pd.to_datetime(["2025-01-01"]),
+            "document_type": ["SA"],
+        })
+        detector = IntegrityDetector(
+            chart_of_accounts={"5000"},
+            audit_rules=self._rules(),
+        )
+        result = detector.detect(df)
+        expected_score = SEVERITY_MAP["L3-01"] / 5
+        assert result.details["L3-01"].iloc[0] == pytest.approx(expected_score)
+
+    def test_p2p_non_denied_revenue_account_not_flagged_when_exact_list_exists(self):
+        df = pd.DataFrame({
+            "document_id": ["D1"],
+            "debit_amount": [100.0],
+            "credit_amount": [100.0],
+            "gl_account": ["4000"],
+            "account_category": ["revenue"],
+            "business_process": ["P2P"],
+            "company_code": ["C1"],
+            "fiscal_year": [2025],
+            "posting_date": pd.to_datetime(["2025-01-01"]),
+            "document_date": pd.to_datetime(["2025-01-01"]),
+            "document_type": ["SA"],
+        })
+        detector = IntegrityDetector(
+            chart_of_accounts={"5000"},
+            audit_rules=self._rules(),
+        )
+        result = detector.detect(df)
+        assert result.details["L3-01"].iloc[0] == 0.0
+
+    def test_exact_denied_account_flags_p2p(self):
+        df = pd.DataFrame({
+            "document_id": ["D1"],
+            "debit_amount": [100.0],
+            "credit_amount": [100.0],
+            "gl_account": ["4100"],
+            "account_category": ["revenue"],
+            "business_process": ["P2P"],
+            "company_code": ["C1"],
+            "fiscal_year": [2025],
+            "posting_date": pd.to_datetime(["2025-01-01"]),
+            "document_date": pd.to_datetime(["2025-01-01"]),
+            "document_type": ["SA"],
+        })
+        detector = IntegrityDetector(
+            chart_of_accounts={"4100"},
+            audit_rules=self._rules(),
+        )
+        result = detector.detect(df)
+        assert result.details["L3-01"].iloc[0] > 0.0
+
+    def test_category_fallback_applies_when_process_has_no_exact_account_list(self):
+        df = pd.DataFrame({
+            "document_id": ["D1"],
+            "debit_amount": [100.0],
+            "credit_amount": [100.0],
+            "gl_account": ["1200"],
+            "account_category": ["inventory"],
+            "business_process": ["TRE"],
+            "company_code": ["C1"],
+            "fiscal_year": [2025],
+            "posting_date": pd.to_datetime(["2025-01-01"]),
+            "document_date": pd.to_datetime(["2025-01-01"]),
+            "document_type": ["SA"],
+        })
+        detector = IntegrityDetector(
+            chart_of_accounts={"1200"},
+            audit_rules=self._rules(),
+        )
+        result = detector.detect(df)
+        assert result.details["L3-01"].iloc[0] > 0.0
+
+    def test_invalid_account_owned_by_l103_not_l301(self):
+        df = pd.DataFrame({
+            "document_id": ["D1"],
+            "debit_amount": [100.0],
+            "credit_amount": [100.0],
+            "gl_account": ["5000"],
+            "business_process": ["O2C"],
+            "company_code": ["C1"],
+            "fiscal_year": [2025],
+            "posting_date": pd.to_datetime(["2025-01-01"]),
+            "document_date": pd.to_datetime(["2025-01-01"]),
+            "document_type": ["SA"],
+        })
+        detector = IntegrityDetector(
+            chart_of_accounts={"1000"},
+            audit_rules=self._rules(),
+        )
+        result = detector.detect(df)
+        assert result.details["L1-03"].iloc[0] > 0.0
+        assert result.details["L3-01"].iloc[0] == 0.0
+
+    def test_allowed_keyword_suppresses_l301(self):
+        df = pd.DataFrame({
+            "document_id": ["D1"],
+            "debit_amount": [100.0],
+            "credit_amount": [100.0],
+            "gl_account": ["5000"],
+            "business_process": ["O2C"],
+            "header_text": ["판매수수료 미지급비용 설정"],
+            "company_code": ["C1"],
+            "fiscal_year": [2025],
+            "posting_date": pd.to_datetime(["2025-01-01"]),
+            "document_date": pd.to_datetime(["2025-01-01"]),
+            "document_type": ["SA"],
+        })
+        detector = IntegrityDetector(
+            chart_of_accounts={"5000"},
+            audit_rules=self._rules(),
+        )
+        result = detector.detect(df)
+        assert result.details["L3-01"].iloc[0] == 0.0
 
 
 class TestDetectIntegration:

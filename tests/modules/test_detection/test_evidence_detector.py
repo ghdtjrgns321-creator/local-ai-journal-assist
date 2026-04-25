@@ -55,7 +55,7 @@ class TestEvidenceDetector:
         det = EvidenceDetector(audit_rules=audit_rules)
         result = det.detect(full_evidence_df)
         assert "EV01" in result.details.columns
-        assert "EV02" in result.details.columns
+        assert "L3-11" in result.details.columns
         assert "EV03" in result.details.columns
 
     def test_track_name(self):
@@ -69,7 +69,7 @@ class TestEvidenceDetector:
             "debit_amount": [110_000.0],
             "credit_amount": [0.0],
             "invoice_amount": [100_000.0],
-            # has_attachment, delivery_date 없음 → EV01.S1, EV02 비활성
+            # has_attachment, delivery_date 없음 → EV01.S1, L3-11 비활성
         })
         det = EvidenceDetector(audit_rules=audit_rules)
         result = det.detect(df)

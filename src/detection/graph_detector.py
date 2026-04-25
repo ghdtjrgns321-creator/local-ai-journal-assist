@@ -95,6 +95,7 @@ class GraphDetector(BaseDetector):
                 "min_amount": s.graph_gr01_min_amount,
                 "max_edges": s.graph_gr01_max_edges,
                 "max_component_size": s.graph_gr01_max_component_size,
+                "max_component_edges": s.graph_gr01_max_component_edges,
             }),
             ("GR03", gr03_transfer_pricing_graph, {
                 "min_path_length": s.graph_gr03_min_path_length,

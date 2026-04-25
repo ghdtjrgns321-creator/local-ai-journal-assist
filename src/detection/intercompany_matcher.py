@@ -96,15 +96,15 @@ class IntercompanyMatcher(BaseDetector):
         """서브룰 레지스트리 — 사전 계산된 match_df를 공유."""
         s = self._settings
         return [
-            ("IL3-04", ic01_unmatched_intercompany, {
+            ("IC01", ic01_unmatched_intercompany, {
                 "match_df": match_df,
             }),
-            ("IL3-05", ic02_amount_mismatch, {
+            ("IC02", ic02_amount_mismatch, {
                 "match_df": match_df,
                 "amount_tolerance": s.ic_amount_tolerance,
                 "max_diff_ratio": s.ic_max_diff_ratio,
             }),
-            ("IL3-06", ic03_timing_gap, {
+            ("IC03", ic03_timing_gap, {
                 "match_df": match_df,
                 "date_window_days": s.ic_date_window_days,
                 "max_day_diff": s.ic_max_day_diff,

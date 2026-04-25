@@ -2,7 +2,7 @@
 
 Why: 탐지 트랙(Layer A/B/C, Benford, Phase 2 ML)별 점수를
      하나의 anomaly_score로 합산하여 risk_level 분류.
-     L2-05 Top-side JE는 기존 룰 플래그를 조합하는 후처리로 여기서 산출.
+     Top-side JE score는 기존 룰 플래그를 조합하는 후처리로 여기서 산출.
      BaseDetector를 상속하지 않는 순수 함수 모듈.
 """
 
@@ -12,9 +12,10 @@ import logging
 
 import pandas as pd
 
-from src.detection.base import DetectionResult
 from config.settings import get_settings
+from src.detection.base import DetectionResult
 from src.detection.constants import (
+    BATCH_CORROBORATION_RULES,
     LAYER_WEIGHTS,
     RISK_THRESHOLDS,
     TOPSIDE_BONUS_RULES,
@@ -24,6 +25,7 @@ from src.detection.constants import (
 
 # Why: Top-side JE 가점 조건 수 (정규화 분모). ���이트키퍼(수기)는 제���.
 _TOPSIDE_CONDITIONS = len(TOPSIDE_BONUS_RULES)
+_BATCH_CORROBORATION_CONDITIONS = len(BATCH_CORROBORATION_RULES)
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +103,8 @@ def aggregate_scores(
     _inject_ml_track_scores(agg_df, results)
 
     agg_df = _apply_auto_escalation(agg_df, results)
-    return _apply_topside_escalation(agg_df, df, results, settings=settings)
+    agg_df = _apply_batch_corroboration(agg_df, results)
+    return _inject_topside_score(agg_df, df, results)
 
 
 def _inject_ml_track_scores(
@@ -235,7 +238,7 @@ def _collect_flagged_rules(
     return flagged_str.str.rstrip(",")
 
 
-# ── L2-05 Top-side JE 복합 탐지 ────────────────────────────
+# ── Top-side JE 복합 점수 ────────────────────────────
 
 
 def _get_rule_flag(
@@ -258,7 +261,7 @@ def _compute_topside_score(
     df: pd.DataFrame,
     results: list[DetectionResult],
 ) -> pd.Series:
-    """L2-05 Top-side JE 가중 점수 산출.
+    """Top-side JE 가중 점수 산출.
 
     Why: 수기 전표(is_manual_je)가 게이트키퍼. 자동 전표는 가점이 만점이어도 0점.
          게이트 통과 시 5개 가점 조건(L3-04, L1-05/L1-07, L1-03/L4-04, L4-03, L3-08) 합산.
@@ -286,40 +289,58 @@ def _compute_topside_score(
     return score
 
 
-def _apply_topside_escalation(
+def _inject_topside_score(
     agg_df: pd.DataFrame,
     df: pd.DataFrame,
     results: list[DetectionResult],
-    settings: object | None = None,
 ) -> pd.DataFrame:
-    """L2-05 Top-side JE 탐지 결과를 agg_df에 반영.
-
-    Why: 수기 전표이면서 가점 ≥ threshold인 행을 High로 승격하고
-         flagged_rules에 L2-05을 추가. topside_score 컬럼도 항상 생성.
-    """
-    if settings is None:
-        settings = get_settings()
+    """Top-side JE score를 내부 case-priority feature로 추가한다."""
     raw_score = _compute_topside_score(df, results)
 
     # Why: topside_score 컬럼은 항상 추가 (하류 코드 컬럼 보장)
     agg_df["topside_score"] = raw_score / _TOPSIDE_CONDITIONS
+    return agg_df
 
-    topside_mask = raw_score >= settings.topside_threshold
-    if not topside_mask.any():
-        return agg_df
 
-    # risk_level 승격
-    agg_df.loc[topside_mask, "risk_level"] = RiskLevel.HIGH
+def _apply_batch_corroboration(
+    agg_df: pd.DataFrame,
+    results: list[DetectionResult],
+) -> pd.DataFrame:
+    """L4-06 단독은 보조 신호로 두고, 결합 신호가 있을 때만 우선순위를 올린다.
 
-    # Why: _collect_flagged_rules의 벡터화(mask.dot) 패턴과 일관되게 apply 회피.
-    existing = agg_df.loc[topside_mask, "flagged_rules"]
-    non_empty = existing != ""
-    agg_df.loc[topside_mask & non_empty.reindex(topside_mask.index, fill_value=False), "flagged_rules"] = existing[non_empty] + ",L2-05"
-    agg_df.loc[topside_mask & ~non_empty.reindex(topside_mask.index, fill_value=True), "flagged_rules"] = "L2-05"
+    Why: 자동 배치 전표는 정상 대량 처리도 많다. 따라서 L4-06만으로 High를 만들지 않고,
+         결산/cutoff, 통제 실패, 고액/계정 이상, 부실 적요, 역분개/중복 중
+         복수 신호가 함께 있을 때 감사 검토 우선순위를 높인다.
+    """
+    result_map = {r.track_name: r for r in results}
+    idx = agg_df.index
+    batch_flag = _get_rule_flag(result_map, "L4-06", Layer.LAYER_C.value, idx)
 
-    logger.info(
-        "L2-05 Top-side JE: %d/%d건 플래그 (임계값 %d/%d)",
-        topside_mask.sum(), len(df), settings.topside_threshold, _TOPSIDE_CONDITIONS,
-    )
+    raw_score = pd.Series(0, index=idx, dtype=int)
+    reason_parts = pd.Series("", index=idx, dtype="string")
+    for label, rule_pairs in BATCH_CORROBORATION_RULES:
+        group_flag = pd.Series(False, index=idx)
+        for rule_id, layer_name in rule_pairs:
+            group_flag = group_flag | _get_rule_flag(result_map, rule_id, layer_name, idx)
+        group_flag = group_flag & batch_flag
+        raw_score += group_flag.astype(int)
+        reason_parts = reason_parts.mask(
+            group_flag,
+            reason_parts.where(reason_parts == "", reason_parts + ",") + label,
+        )
+
+    if _BATCH_CORROBORATION_CONDITIONS == 0:
+        agg_df["batch_combo_score"] = 0.0
+    else:
+        agg_df["batch_combo_score"] = raw_score / _BATCH_CORROBORATION_CONDITIONS
+    agg_df["batch_combo_reasons"] = reason_parts.fillna("")
+
+    high_mask = batch_flag & (raw_score >= 3)
+    medium_mask = batch_flag & (raw_score >= 2) & ~high_mask
+    if high_mask.any():
+        agg_df.loc[high_mask, "risk_level"] = RiskLevel.HIGH
+    if medium_mask.any():
+        current_high = agg_df["risk_level"].eq(RiskLevel.HIGH)
+        agg_df.loc[medium_mask & ~current_high, "risk_level"] = RiskLevel.MEDIUM
 
     return agg_df

@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pandas as pd
 
@@ -14,8 +16,9 @@ def c01_period_end_large(
     df: pd.DataFrame,
     quantile: float = 0.75,
     min_group_size: int = 30,
+    whitelist_patterns: list[dict[str, Any]] | None = None,
 ) -> pd.Series:
-    """L3-04 기말 대규모: 월말 근접 + 금액 > Q3 (계정그룹별).
+    """L3-04 기말/기초 대규모: 월말/월초 근접 + 금액 > Q3 또는 수기 전표.
 
     Why: PCAOB AS 240 §32(b), FSS 결산 수정 조작 패턴.
          기말에 집중되는 고액 전표는 결산 조정 조작 가능성.
@@ -33,7 +36,104 @@ def c01_period_end_large(
     else:
         threshold = base.quantile(quantile)
 
-    return df["is_period_end"].fillna(False) & (base > threshold)
+    period_end = df["is_period_end"].fillna(False)
+    high_amount = base > threshold
+    manual_entry = (
+        df["is_manual_je"].fillna(False).astype(bool)
+        if "is_manual_je" in df.columns
+        else pd.Series(False, index=df.index)
+    )
+    flagged = period_end & (high_amount | manual_entry)
+    if whitelist_patterns:
+        flagged = flagged & ~_matches_period_end_whitelist(df, whitelist_patterns)
+    return flagged
+
+
+def c01_period_end_sensitive_account(
+    df: pd.DataFrame,
+    sensitive_config: dict[str, Any] | None = None,
+) -> pd.Series:
+    """Return rows touching L3-04-sensitive closing accounts.
+
+    Why: sensitive accounts should raise review priority only after L3-04 triggers.
+    This helper intentionally does not create additional L3-04 flags.
+    """
+    if not sensitive_config:
+        return pd.Series(False, index=df.index)
+
+    result = pd.Series(False, index=df.index)
+
+    groups = _normalize_list(sensitive_config.get("account_groups"))
+    if groups and "account_group" in df.columns:
+        result = result | df["account_group"].astype(str).str.strip().str.lower().isin(groups)
+
+    accounts = _normalize_list(sensitive_config.get("accounts"))
+    prefixes = _normalize_list(sensitive_config.get("account_prefixes"))
+    if (accounts or prefixes) and "gl_account" in df.columns:
+        gl = df["gl_account"].astype(str).str.strip().str.lower()
+        if accounts:
+            result = result | gl.isin(accounts)
+        if prefixes:
+            result = result | gl.str.startswith(tuple(prefixes), na=False)
+
+    return result.fillna(False)
+
+
+def _matches_period_end_whitelist(
+    df: pd.DataFrame,
+    patterns: list[dict[str, Any]],
+) -> pd.Series:
+    """Match auditor-approved recurring closing-entry whitelist patterns."""
+    result = pd.Series(False, index=df.index)
+    for pattern in patterns:
+        if not isinstance(pattern, dict):
+            continue
+        mask = pd.Series(True, index=df.index)
+        has_condition = False
+
+        for key in ("source", "created_by", "document_type", "account_group"):
+            values = _normalize_list(pattern.get(key))
+            if not values:
+                continue
+            has_condition = True
+            if key not in df.columns:
+                mask = mask & False
+            else:
+                series = df[key].astype(str).str.strip().str.lower()
+                mask = mask & series.isin(values)
+
+        desc_values = _normalize_list(pattern.get("description_contains"))
+        if desc_values:
+            has_condition = True
+            mask = mask & _description_contains_any(df, desc_values)
+
+        if has_condition:
+            result = result | mask
+    return result.fillna(False)
+
+
+def _description_contains_any(df: pd.DataFrame, needles: list[str]) -> pd.Series:
+    text = pd.Series("", index=df.index, dtype="object")
+    for col in ("line_text", "header_text", "description"):
+        if col in df.columns:
+            text = text.str.cat(df[col].fillna("").astype(str), sep=" ")
+    normalized = text.str.lower()
+    mask = pd.Series(False, index=df.index)
+    for needle in needles:
+        mask = mask | normalized.str.contains(needle, regex=False, na=False)
+    return mask
+
+
+def _normalize_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        values = [value]
+    elif isinstance(value, (list, tuple, set)):
+        values = list(value)
+    else:
+        values = [value]
+    return [str(item).strip().lower() for item in values if str(item).strip()]
 
 
 def _grouped_quantile(
@@ -67,42 +167,26 @@ def c02_weekend_entry(df: pd.DataFrame) -> pd.Series:
 
 
 def c03_after_hours_entry(df: pd.DataFrame) -> pd.Series:
-    """L3-06 심야 전기: 업무시간(09~18시) 외 전기.
+    """L3-06 심야 전기: 감사인이 설정한 심야 시간대 전기.
 
     Why: PCAOB AS 240 A49(c) — 심야 전기는 감시 부재 시점 악용 가능.
-
-    신호 소스 (우선순위):
-      1) is_after_hours boolean (피처 엔진 1차 신호)
-      2) time_zone_category in {"overtime", "midnight"} — 결산 보정·결산기 가중 반영된
-         정밀 분류 (feature/time_features.py add_time_zone_category 참조).
-         is_after_hours 미생성 환경에서도 동작하도록 fallback로 사용.
-      두 신호는 OR 결합 — 한쪽이라도 비정상이면 플래그.
+    L3-05(주말/공휴일)와 L4-05(비정상 시간대 집중)와 중복되지 않도록
+    L3-06은 is_after_hours만 사용한다.
     """
-    has_bool = "is_after_hours" in df.columns
-    has_cat = "time_zone_category" in df.columns
-    if not has_bool and not has_cat:
+    if "is_after_hours" not in df.columns:
         return pd.Series(False, index=df.index)
 
-    bool_mask = (
-        df["is_after_hours"].fillna(False)
-        if has_bool else pd.Series(False, index=df.index)
-    )
-    # Why: time_zone_category로 결산기 보정/주말 가중을 반영한 비정상 시간대 캡처.
-    #      is_after_hours만으로는 결산기 야근(정상)과 평상시 야근(비정상)을 구분 못함.
-    cat_mask = (
-        df["time_zone_category"].isin(["overtime", "midnight"])
-        if has_cat else pd.Series(False, index=df.index)
-    )
-    return bool_mask | cat_mask
+    return df["is_after_hours"].fillna(False).astype(bool)
 
 
 def c04_backdated_entry(
     df: pd.DataFrame,
     threshold_days: int = 30,
 ) -> pd.Series:
-    """L3-07 소급 전기: 전기일-전표일 차이가 임계 초과.
+    """L3-07 전기일-문서일 장기 괴리: 두 날짜 차이의 절댓값이 임계 초과.
 
-    Why: PCAOB AS 240 A49(c), FSS 횡령 은폐 — 과도한 소급은 기록 조작 의심.
+    Why: PCAOB AS 240 A49(c), FSS 횡령 은폐 — 과도한 지연/선전기성 날짜
+    괴리는 기록 조작 또는 기간귀속 왜곡 검토 신호.
     """
     if "days_backdated" not in df.columns:
         return pd.Series(False, index=df.index)
@@ -119,50 +203,159 @@ def c05_fiscal_period_mismatch(df: pd.DataFrame) -> pd.Series:
     return df["fiscal_period_mismatch"].fillna(False)
 
 
-def c06_risky_description(df: pd.DataFrame) -> pd.Series:
-    """L3-08 위험 적요: 적요 품질 불량 또는 위험 키워드 포함.
+def c06_missing_or_corrupted_description(df: pd.DataFrame) -> pd.Series:
+    """L3-08 적요 결손/파손: 설명 필드가 비었거나 명백히 깨진 경우.
 
     Why: PCAOB AS 240 A49(c), K-SOX §8①1호 — 적요 미비는 전표 추적 방해.
     """
-    # Why: OR 조건 — 적요가 부실하거나 위험 키워드가 있으면 플래그
-    if "description_quality" not in df.columns and "has_risk_keyword" not in df.columns:
+    if "description_quality" not in df.columns:
         return pd.Series(False, index=df.index)
 
-    poor_quality = (
-        df["description_quality"].isin(["missing", "poor"])
-        if "description_quality" in df.columns
-        else pd.Series(False, index=df.index)
-    )
-    high_risk = (
-        df["has_risk_keyword"].isin(["high", "medium"])
-        if "has_risk_keyword" in df.columns
-        else pd.Series(False, index=df.index)
-    )
-    return poor_quality | high_risk
+    # "poor"는 기존 저장 데이터/테스트 fixture 호환용 별칭이다.
+    return df["description_quality"].isin(["missing", "corrupted", "poor"])
+
+
+# Backward-compatible alias for older imports/tests.
+c06_risky_description = c06_missing_or_corrupted_description
 
 
 def c08_amount_outlier(
     df: pd.DataFrame,
     zscore_threshold: float = 3.0,
+    min_amount_quantile: float = 0.90,
 ) -> pd.Series:
-    """L4-03 이상 고액: Z-score 기준 통계적 이상치.
+    """L4-03 이상 고액: 양의 Z-score + 전역 상위 금액 분위수.
 
     Why: PCAOB AS 240 §33(b), ISA 315 — 3σ 초과 금액은 조작 가능성.
+         Phase1에서는 무거운 계정별 whitelist 대신 최소 금액 분위수 가드만 적용해
+         저액 방향 이상치와 낮은 금액의 통계적 흔들림을 줄인다.
     """
-    if "amount_zscore" not in df.columns:
+    required = {"amount_zscore", "debit_amount", "credit_amount"}
+    if not required.issubset(df.columns):
         return pd.Series(False, index=df.index)
-    return df["amount_zscore"].fillna(0.0).abs() > zscore_threshold
+
+    debit = pd.to_numeric(df["debit_amount"], errors="coerce").fillna(0.0)
+    credit = pd.to_numeric(df["credit_amount"], errors="coerce").fillna(0.0)
+    base_amount = pd.concat([debit, credit], axis=1).max(axis=1)
+
+    if 0.0 < min_amount_quantile <= 1.0:
+        amount_threshold = base_amount.quantile(min_amount_quantile)
+        high_amount = base_amount >= amount_threshold
+    else:
+        high_amount = pd.Series(True, index=df.index)
+
+    high_zscore = df["amount_zscore"].fillna(0.0) > zscore_threshold
+    return high_zscore & high_amount
 
 
-def c10_suspense_account(df: pd.DataFrame) -> pd.Series:
-    """L3-09 가수금 장기체류: 가수금·가지급 등 가계정 사용 전표.
+def c10_suspense_account(
+    df: pd.DataFrame,
+    threshold_days: int = 30,
+    min_open_amount: float = 0.0,
+) -> pd.Series:
+    """L3-09 가수금 장기체류: 가계정이 장기간 미정리(open) 상태로 남아 있는 전표.
 
-    Why: 외감법 §8①2호, FSS 횡령 은폐 사례 — 가계정 장기 체류는
-         자금 유용을 숨기는 수단으로 사용될 수 있다.
+    Why: 외감법 §8①2호, FSS 횡령 은폐 사례 — 가수금·임시계정은 단순 사용 자체보다
+         일정 기간 내 정리되지 않고 잔존하는 상태가 더 실질적인 검토 대상이다.
     """
-    if "is_suspense_account" not in df.columns:
+    if "is_suspense_account" not in df.columns or "posting_date" not in df.columns:
         return pd.Series(False, index=df.index)
-    return df["is_suspense_account"].astype("boolean").fillna(False)
+
+    suspense = df["is_suspense_account"].astype("boolean").fillna(False)
+    if not suspense.any():
+        return suspense.astype(bool)
+
+    posting = pd.to_datetime(df["posting_date"], errors="coerce")
+    if posting.notna().sum() == 0:
+        return pd.Series(False, index=df.index)
+
+    dataset_end = posting.max()
+    if pd.isna(dataset_end):
+        return pd.Series(False, index=df.index)
+
+    unresolved = pd.Series(False, index=df.index)
+    resolution_signal_present = pd.Series(False, index=df.index)
+
+    if "amount_open" in df.columns:
+        amount_open = pd.to_numeric(df["amount_open"], errors="coerce")
+        amount_present = amount_open.notna()
+        resolution_signal_present = resolution_signal_present | amount_present
+        unresolved = unresolved | (amount_present & (amount_open.abs() > min_open_amount))
+
+    if "is_cleared" in df.columns:
+        cleared = df["is_cleared"].astype("boolean")
+        cleared_present = cleared.notna()
+        resolution_signal_present = resolution_signal_present | cleared_present
+        unresolved = unresolved | (cleared_present & ~cleared.fillna(True))
+
+    if "settlement_status" in df.columns:
+        status = df["settlement_status"].astype("string").str.strip().str.lower()
+        status_present = status.notna() & status.ne("")
+        resolution_signal_present = resolution_signal_present | status_present
+        closed_status = {"settled", "cleared", "closed", "resolved", "matched"}
+        unresolved = unresolved | (status_present & ~status.isin(closed_status))
+
+    if not resolution_signal_present.any():
+        if "settlement_date" in df.columns:
+            settlement_date = pd.to_datetime(df["settlement_date"], errors="coerce")
+            resolution_signal_present = (
+                resolution_signal_present | settlement_date.notna() | posting.notna()
+            )
+            unresolved = unresolved | settlement_date.isna()
+        elif "lettrage_date" in df.columns:
+            lettrage_date = pd.to_datetime(df["lettrage_date"], errors="coerce")
+            resolution_signal_present = (
+                resolution_signal_present | lettrage_date.notna() | posting.notna()
+            )
+            unresolved = unresolved | lettrage_date.isna()
+        elif "lettrage" in df.columns:
+            lettrage = df["lettrage"].astype("string").str.strip()
+            resolution_signal_present = resolution_signal_present | lettrage.notna()
+            unresolved = unresolved | lettrage.isna() | lettrage.eq("")
+        else:
+            return pd.Series(False, index=df.index)
+
+    resolution_date = pd.Series(pd.NaT, index=df.index, dtype="datetime64[ns]")
+    if "settlement_date" in df.columns:
+        resolution_date = pd.to_datetime(df["settlement_date"], errors="coerce")
+    elif "lettrage_date" in df.columns:
+        resolution_date = pd.to_datetime(df["lettrage_date"], errors="coerce")
+
+    aging_end = resolution_date.fillna(dataset_end)
+    aging_days = (aging_end - posting).dt.days
+
+    amount_mask = pd.Series(True, index=df.index)
+    if "amount_open" in df.columns:
+        amount_open = pd.to_numeric(df["amount_open"], errors="coerce")
+        amount_mask = amount_open.abs().fillna(0.0) > min_open_amount
+    elif min_open_amount > 0:
+        debit = pd.to_numeric(df.get("debit_amount", 0.0), errors="coerce").fillna(0.0)
+        credit = pd.to_numeric(df.get("credit_amount", 0.0), errors="coerce").fillna(0.0)
+        gross = pd.concat([debit.abs(), credit.abs()], axis=1).max(axis=1)
+        amount_mask = gross > min_open_amount
+
+    result = (
+        suspense
+        & resolution_signal_present
+        & unresolved
+        & aging_days.fillna(-1).ge(threshold_days)
+        & amount_mask
+    ).astype(bool)
+    result.attrs["breakdown"] = {
+        "base_threshold_days": int(threshold_days),
+        "flagged_rows": int(result.sum()),
+    }
+    row_annotations: dict[int, dict[str, object]] = {}
+    if "gl_account" in df.columns:
+        gl_account = df["gl_account"].astype("string").str.strip()
+        for idx in result[result].index:
+            row_annotations[int(idx)] = {
+                "gl_account": None if pd.isna(gl_account.loc[idx]) else str(gl_account.loc[idx]),
+                "aging_days": None if pd.isna(aging_days.loc[idx]) else int(aging_days.loc[idx]),
+                "threshold_days": int(threshold_days),
+            }
+    result.attrs["row_annotations"] = row_annotations
+    return result
 
 
 # ── L4-05: 비정상 시간대 입력자 집중 분석 ─────────────────────────
@@ -208,6 +401,10 @@ def c12_abnormal_hours_concentration(
     if not user_stats.empty:
         # Why: 전표 수가 극소한 사용자(1~2건)는 비율이 급등하여 오탐 유발
         qualified_stats = user_stats[user_stats["total_count"] >= min_user_entries]
+        low_volume_midnight_users = user_stats[
+            (user_stats["total_count"] < min_user_entries)
+            & (user_stats["midnight_count"] >= min_midnight_entries)
+        ].index
 
         # ── (c) 3σ 이상치 판정 ──
         if not qualified_stats.empty:
@@ -222,6 +419,12 @@ def c12_abnormal_hours_concentration(
             if outlier_users:
                 is_outlier_user = df["created_by"].isin(outlier_users)
                 result = result | (is_outlier_user & is_abnormal)
+        if len(low_volume_midnight_users) > 0:
+            is_low_volume_midnight_user = df["created_by"].isin(
+                low_volume_midnight_users,
+            )
+            is_midnight = df["time_zone_category"] == "midnight"
+            result = result | (is_low_volume_midnight_user & is_midnight)
 
     # ── (d) 급속 승인 검증 ──
     rapid_flags = _check_rapid_approval(

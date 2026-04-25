@@ -75,19 +75,18 @@ class TestL1_04:
 
 
 class TestL3_02:
-    def test_manual_with_control_bypass_signal_flagged(self, feature_df: pd.DataFrame) -> None:
-        feature_df["approved_by"] = ["", "APR", "APR", "APR", "APR", "APR"]
+    def test_manual_entry_flagged(self, feature_df: pd.DataFrame) -> None:
         result = b08_manual_override(feature_df)
         assert result[0]
+        assert result[3]
+        assert result[4]
 
-    def test_manual_without_circumvention_signal_not_flagged(self, feature_df: pd.DataFrame) -> None:
-        feature_df["approved_by"] = ["APR"] * len(feature_df)
+    def test_non_manual_not_flagged(self, feature_df: pd.DataFrame) -> None:
         result = b08_manual_override(feature_df)
-        assert not result[3]
-        assert not result[4]
-
-    def test_non_manual_with_bypass_signal_not_flagged(self, feature_df: pd.DataFrame) -> None:
-        feature_df["approved_by"] = ["APR", "APR", "", "APR", "APR", ""]
-        result = b08_manual_override(feature_df)
+        assert not result[1]
         assert not result[2]
         assert not result[5]
+
+    def test_source_fallback_uses_manual_source_codes(self) -> None:
+        df = pd.DataFrame({"source": ["Manual", "Adjustment", "automated", None]})
+        assert b08_manual_override(df).tolist() == [True, True, False, False]

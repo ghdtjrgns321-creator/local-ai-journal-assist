@@ -121,7 +121,7 @@ def ev01_missing_evidence(
     return scores.fillna(0.0)
 
 
-# ── EV02: 컷오프 검증 ────────────────────────────────────────
+# ── L3-11: 컷오프 검증 (legacy function name: ev02_cutoff_violation) ─────────────
 
 
 def ev02_cutoff_violation(
@@ -136,7 +136,7 @@ def ev02_cutoff_violation(
     revenue_account_prefixes: list[str] | None = None,
     expense_account_prefixes: list[str] | None = None,
 ) -> pd.Series:
-    """EV02 컷오프 검증.
+    """L3-11 컷오프 검증.
 
     Why: 감사기준서 315호/330호 — K-IFRS 15 수익인식 기준.
          posting_date와 delivery_date 간 차이가 임계 초과 시 기간귀속 오류 의심.

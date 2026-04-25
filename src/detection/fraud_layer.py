@@ -13,12 +13,15 @@ from src.detection.fraud_rules_access import (
     b06_self_approval,
     b07_segregation_of_duties,
     b09_skipped_approval,
-    b10_circular_intercompany,
+    b10_intercompany_review_signal,
+    b12_missing_approval_date,
+    b13_high_risk_account_use,
 )
 from src.detection.fraud_rules_feature import (
     b01_revenue_manipulation,
     b02_near_threshold,
     b03_exceeds_threshold,
+    b08_manual_override,
 )
 from src.detection.fraud_rules_groupby import (
     _resolve_b04_partner_key,
@@ -148,8 +151,11 @@ class FraudLayer(BaseDetector):
                 b07_segregation_of_duties,
                 {"sod_threshold": s.sod_process_threshold, "audit_rules": self._audit_rules},
             ),
+            ("L3-02", b08_manual_override, {}),
             ("L1-07", b09_skipped_approval, {"audit_rules": self._audit_rules}),
-            ("L3-03", b10_circular_intercompany, {}),
+            ("L1-09", b12_missing_approval_date, {}),
+            ("L3-10", b13_high_risk_account_use, {"audit_rules": self._audit_rules}),
+            ("L3-03", b10_intercompany_review_signal, {}),
             (
                 "L2-04",
                 b11_expense_capitalization,
@@ -173,9 +179,15 @@ class FraudLayer(BaseDetector):
             "L2-03": ["gl_account", "posting_date", "debit_amount", "credit_amount"],
             "L1-06": ["created_by", "business_process"],
             "L1-07": ["exceeds_threshold", "source"],
+            "L1-09": ["approved_by", "approval_date"],
+            "L3-10": ["gl_account"],
             "L3-03": ["is_intercompany"],
             "L2-04": ["document_id", "gl_account", "debit_amount", "credit_amount"],
         }
+        if rule_id == "L3-02":
+            if "is_manual_je" in df.columns or "source" in df.columns:
+                return []
+            return ["is_manual_je|source"]
         if rule_id == "L1-05":
             missing: list[str] = []
             if "created_by" not in df.columns:

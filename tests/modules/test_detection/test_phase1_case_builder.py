@@ -146,6 +146,103 @@ def test_build_phase1_case_result_collects_secondary_tags_from_same_rows():
     assert "statistical_outlier" in control_case.secondary_tags
 
 
+def test_build_phase1_case_result_maps_l3_10_into_logic_mismatch():
+    df = pd.DataFrame(
+        {
+            "document_id": ["DOC-1"],
+            "posting_date": pd.to_datetime(["2026-04-30"]),
+            "created_by": ["kim"],
+            "business_process": ["R2R"],
+            "gl_account": ["111000"],
+            "debit_amount": [15_000_000.0],
+            "credit_amount": [0.0],
+            "company_code": ["kr01"],
+            "document_type": ["SA"],
+        }
+    )
+    details = pd.DataFrame({"L3-10": [0.6]}, index=df.index)
+    detection_result = DetectionResult(
+        track_name="layer_b",
+        flagged_indices=[0],
+        scores=details.max(axis=1),
+        rule_flags=[RuleFlag("L3-10", "High-risk Account Use", 3, 1, len(df))],
+        details=details,
+        metadata={
+            "row_annotations": {
+                "L3-10": {
+                    0: {
+                        "match_type": "prefix",
+                        "matched_value": "111",
+                        "matched_group": "cash_equivalent",
+                        "signal_category": "priority_case",
+                        "category_reason": "manual_or_adjustment",
+                    }
+                }
+            }
+        },
+    )
+
+    result = build_phase1_case_result(
+        df,
+        [detection_result],
+        company_id="kr01",
+        batch_id="batch42",
+        dataset_id=None,
+        phase1_case_config={"phase1_case": {"top_n_cases": 50, "top_n_per_theme": 10}},
+        generated_at=datetime(2026, 4, 22, 3, 15, 22, tzinfo=UTC),
+    )
+
+    case = next(case for case in result.cases if case.primary_theme == "logic_mismatch")
+    assert case.evidence_types == ["logic_mismatch"]
+    assert case.raw_rule_hits[0].rule_id == "L3-10"
+    assert case.raw_rule_hits[0].detail == (
+        "prefix=111; group=cash_equivalent; "
+        "result=priority_case; reason=manual_or_adjustment"
+    )
+    assert case.rule_evidence_summary[0]["summary"].endswith(
+        "result=priority_case; reason=manual_or_adjustment"
+    )
+
+
+def test_build_phase1_case_result_maps_l1_09_into_control_failure():
+    df = pd.DataFrame(
+        {
+            "document_id": ["DOC-1"],
+            "posting_date": pd.to_datetime(["2026-04-30"]),
+            "created_by": ["kim"],
+            "business_process": ["P2P"],
+            "gl_account": ["111000"],
+            "debit_amount": [15_000_000.0],
+            "credit_amount": [0.0],
+            "company_code": ["kr01"],
+            "document_type": ["KR"],
+        }
+    )
+    details = pd.DataFrame({"L1-09": [0.6]}, index=df.index)
+    detection_result = DetectionResult(
+        track_name="layer_b",
+        flagged_indices=[0],
+        scores=details.max(axis=1),
+        rule_flags=[RuleFlag("L1-09", "Approval Date Missing", 3, 1, len(df))],
+        details=details,
+        metadata={},
+    )
+
+    result = build_phase1_case_result(
+        df,
+        [detection_result],
+        company_id="kr01",
+        batch_id="batch42",
+        dataset_id=None,
+        phase1_case_config={"phase1_case": {"top_n_cases": 50, "top_n_per_theme": 10}},
+        generated_at=datetime(2026, 4, 22, 3, 15, 22, tzinfo=UTC),
+    )
+
+    case = next(case for case in result.cases if case.primary_theme == "control_failure")
+    assert case.evidence_types == ["control_failure"]
+    assert case.raw_rule_hits[0].rule_id == "L1-09"
+
+
 def test_build_phase1_case_result_uses_configured_fallback_columns():
     df = pd.DataFrame(
         {
@@ -278,6 +375,310 @@ def test_representative_explanation_uses_timing_template_when_only_timing_exists
     assert "결산 시점" in case.representative_explanation
 
 
+def test_l304_only_case_is_downgraded_but_combo_case_is_promoted():
+    df = pd.DataFrame(
+        {
+            "document_id": ["DOC-1", "DOC-2"],
+            "posting_date": pd.to_datetime(["2026-04-30", "2026-04-30"]),
+            "created_by": ["kim", "lee"],
+            "business_process": ["R2R", "R2R"],
+            "gl_account": ["610000", "410000"],
+            "debit_amount": [100_000.0, 50_000_000.0],
+            "credit_amount": [0.0, 0.0],
+            "company_code": ["kr01", "kr01"],
+            "document_type": ["SA", "SA"],
+            "source": ["manual", "manual"],
+        }
+    )
+    details = pd.DataFrame({"L3-04": [0.6, 0.75], "L3-07": [0.0, 0.6]}, index=df.index)
+    detection_result = DetectionResult(
+        track_name="layer_c",
+        flagged_indices=[0, 1],
+        scores=details.max(axis=1),
+        rule_flags=[
+            RuleFlag("L3-04", "Period-start/end Large or Manual Posting", 3, 2, len(df)),
+            RuleFlag("L3-07", "BackdatedEntry", 3, 1, len(df)),
+        ],
+        details=details,
+        metadata={},
+    )
+    result = build_phase1_case_result(
+        df,
+        [detection_result],
+        company_id="kr01",
+        batch_id="batch42",
+        dataset_id=None,
+        phase1_case_config={"phase1_case": {"top_n_cases": 50, "top_n_per_theme": 10}},
+        generated_at=datetime(2026, 4, 22, 3, 15, 22, tzinfo=UTC),
+    )
+
+    timing_cases = [case for case in result.cases if case.primary_theme == "timing_anomaly"]
+    plain_case = next(case for case in timing_cases if case.documents[0].document_id == "DOC-1")
+    combo_case = next(case for case in timing_cases if case.documents[0].document_id == "DOC-2")
+
+    assert plain_case.priority_band == "low"
+    assert combo_case.priority_band in {"medium", "high"}
+    assert combo_case.priority_score > plain_case.priority_score
+
+
+def test_l304_repeat_pattern_case_caps_repeat_promotion():
+    df = pd.DataFrame(
+        {
+            "document_id": ["DOC-1", "DOC-2", "DOC-3"],
+            "posting_date": pd.to_datetime(["2026-01-31", "2026-02-28", "2026-03-31"]),
+            "created_by": ["kim", "kim", "kim"],
+            "business_process": ["R2R", "R2R", "R2R"],
+            "gl_account": ["610000", "610000", "610000"],
+            "debit_amount": [1_000_000.0, 1_020_000.0, 980_000.0],
+            "credit_amount": [0.0, 0.0, 0.0],
+            "company_code": ["kr01", "kr01", "kr01"],
+            "document_type": ["SA", "SA", "SA"],
+            "source": ["manual", "manual", "manual"],
+        }
+    )
+    details = pd.DataFrame({"L3-04": [0.6, 0.6, 0.6]}, index=df.index)
+    detection_result = DetectionResult(
+        track_name="layer_c",
+        flagged_indices=[0, 1, 2],
+        scores=details.max(axis=1),
+        rule_flags=[RuleFlag("L3-04", "Period-start/end Large or Manual Posting", 3, 3, len(df))],
+        details=details,
+        metadata={},
+    )
+    result = build_phase1_case_result(
+        df,
+        [detection_result],
+        company_id="kr01",
+        batch_id="batch42",
+        dataset_id=None,
+        phase1_case_config={"phase1_case": {"top_n_cases": 50, "top_n_per_theme": 10}},
+        generated_at=datetime(2026, 4, 22, 3, 15, 22, tzinfo=UTC),
+    )
+
+    case = next(case for case in result.cases if case.primary_theme == "timing_anomaly")
+
+    assert case.has_repeat_pattern is True
+    assert case.repeat_score <= 0.30
+    assert case.priority_band == "low"
+
+
+def test_topside_bonus_increases_case_priority():
+    df = pd.DataFrame(
+        {
+            "document_id": ["DOC-1"],
+            "posting_date": pd.to_datetime(["2026-04-30"]),
+            "created_by": ["kim"],
+            "business_process": ["R2R"],
+            "gl_account": ["410000"],
+            "debit_amount": [100_000_000.0],
+            "credit_amount": [0.0],
+            "company_code": ["kr01"],
+            "document_type": ["SA"],
+            "is_manual_je": [True],
+        }
+    )
+    details = pd.DataFrame(
+        {"L3-04": [0.7], "L1-05": [0.8], "L4-03": [0.8]},
+        index=df.index,
+    )
+    detection_result = DetectionResult(
+        track_name="layer_b",
+        flagged_indices=[0],
+        scores=details.max(axis=1),
+        rule_flags=[
+            RuleFlag("L3-04", "PeriodEnd", 3, 1, len(df)),
+            RuleFlag("L1-05", "SelfApproval", 4, 1, len(df)),
+            RuleFlag("L4-03", "LargeAmount", 4, 1, len(df)),
+        ],
+        details=details,
+        metadata={},
+    )
+
+    result = build_phase1_case_result(
+        df,
+        [detection_result],
+        company_id="kr01",
+        batch_id="batch42",
+        dataset_id=None,
+        phase1_case_config={"phase1_case": {"top_n_cases": 50, "top_n_per_theme": 10}},
+        generated_at=datetime(2026, 4, 22, 3, 15, 22, tzinfo=UTC),
+    )
+
+    case = next(case for case in result.cases if case.primary_theme == "control_failure")
+    assert case.topside_bonus == 0.20
+    assert "topside_score=0.60" in case.priority_adjustment_reasons
+    assert case.priority_score > case.base_priority_score
+
+
+def test_batch_combo_bonus_requires_l406_and_corroboration():
+    df = pd.DataFrame(
+        {
+            "document_id": ["DOC-1"],
+            "posting_date": pd.to_datetime(["2026-04-30"]),
+            "created_by": ["kim"],
+            "business_process": ["R2R"],
+            "gl_account": ["410000"],
+            "debit_amount": [80_000_000.0],
+            "credit_amount": [0.0],
+            "company_code": ["kr01"],
+            "document_type": ["SA"],
+        }
+    )
+    details = pd.DataFrame(
+        {"L4-06": [0.6], "L3-04": [0.6], "L1-05": [0.8], "L4-03": [0.8]},
+        index=df.index,
+    )
+    detection_result = DetectionResult(
+        track_name="layer_c",
+        flagged_indices=[0],
+        scores=details.max(axis=1),
+        rule_flags=[
+            RuleFlag("L4-06", "BatchAnomaly", 3, 1, len(df)),
+            RuleFlag("L3-04", "PeriodEnd", 3, 1, len(df)),
+            RuleFlag("L1-05", "SelfApproval", 4, 1, len(df)),
+            RuleFlag("L4-03", "LargeAmount", 4, 1, len(df)),
+        ],
+        details=details,
+        metadata={},
+    )
+
+    result = build_phase1_case_result(
+        df,
+        [detection_result],
+        company_id="kr01",
+        batch_id="batch42",
+        dataset_id=None,
+        phase1_case_config={"phase1_case": {"top_n_cases": 50, "top_n_per_theme": 10}},
+        generated_at=datetime(2026, 4, 22, 3, 15, 22, tzinfo=UTC),
+    )
+
+    case = next(case for case in result.cases if case.primary_theme == "statistical_outlier")
+    assert case.batch_combo_bonus == 0.15
+    assert case.behavior_score == 1.0
+    assert "batch_combo_groups=3" in case.priority_adjustment_reasons
+
+
+def test_l406_alone_does_not_create_high_priority_case():
+    df = pd.DataFrame(
+        {
+            "document_id": ["DOC-1"],
+            "posting_date": pd.to_datetime(["2026-04-30"]),
+            "created_by": ["batch_user"],
+            "business_process": ["R2R"],
+            "gl_account": ["410000"],
+            "debit_amount": [80_000_000.0],
+            "credit_amount": [0.0],
+            "company_code": ["kr01"],
+            "document_type": ["SA"],
+        }
+    )
+    details = pd.DataFrame({"L4-06": [0.6]}, index=df.index)
+    detection_result = DetectionResult(
+        track_name="layer_c",
+        flagged_indices=[0],
+        scores=details.max(axis=1),
+        rule_flags=[RuleFlag("L4-06", "BatchAnomaly", 3, 1, len(df))],
+        details=details,
+        metadata={},
+    )
+
+    result = build_phase1_case_result(
+        df,
+        [detection_result],
+        company_id="kr01",
+        batch_id="batch42",
+        dataset_id=None,
+        phase1_case_config={"phase1_case": {"top_n_cases": 50, "top_n_per_theme": 10}},
+        generated_at=datetime(2026, 4, 22, 3, 15, 22, tzinfo=UTC),
+    )
+
+    case = result.cases[0]
+    assert case.primary_theme == "statistical_outlier"
+    assert case.priority_band != "high"
+    assert case.batch_combo_bonus == 0.0
+
+
+def test_macro_findings_do_not_enter_transaction_queue():
+    df = pd.DataFrame(
+        {
+            "document_id": ["DOC-1"],
+            "posting_date": pd.to_datetime(["2026-04-30"]),
+            "created_by": ["kim"],
+            "business_process": ["R2R"],
+            "gl_account": ["410000"],
+            "debit_amount": [80_000_000.0],
+            "credit_amount": [0.0],
+            "company_code": ["kr01"],
+            "document_type": ["SA"],
+        }
+    )
+    details = pd.DataFrame({"L4-02": [0.8], "D01": [0.9], "D02": [0.7]}, index=df.index)
+    detection_result = DetectionResult(
+        track_name="benford",
+        flagged_indices=[0],
+        scores=details.max(axis=1),
+        rule_flags=[
+            RuleFlag("L4-02", "Benford", 2, 1, len(df)),
+            RuleFlag("D01", "AccountActivityShift", 4, 1, len(df)),
+            RuleFlag("D02", "MonthlyPatternShift", 3, 1, len(df)),
+        ],
+        details=details,
+        metadata={},
+    )
+
+    result = build_phase1_case_result(
+        df,
+        [detection_result],
+        company_id="kr01",
+        batch_id="batch42",
+        dataset_id=None,
+        phase1_case_config={"phase1_case": {"top_n_cases": 50, "top_n_per_theme": 10}},
+        generated_at=datetime(2026, 4, 22, 3, 15, 22, tzinfo=UTC),
+    )
+
+    assert result.cases == []
+
+
+def test_weak_evidence_bonus_requires_strong_evidence():
+    df = pd.DataFrame(
+        {
+            "document_id": ["DOC-1"],
+            "posting_date": pd.to_datetime(["2026-04-30"]),
+            "created_by": ["kim"],
+            "business_process": ["P2P"],
+            "gl_account": ["111000"],
+            "debit_amount": [10_000_000.0],
+            "credit_amount": [0.0],
+            "company_code": ["kr01"],
+            "document_type": ["KR"],
+            "is_round_number": [True],
+        }
+    )
+    details = pd.DataFrame({"L1-05": [0.8]}, index=df.index)
+    detection_result = DetectionResult(
+        track_name="layer_b",
+        flagged_indices=[0],
+        scores=details.max(axis=1),
+        rule_flags=[RuleFlag("L1-05", "SelfApproval", 4, 1, len(df))],
+        details=details,
+        metadata={},
+    )
+
+    result = build_phase1_case_result(
+        df,
+        [detection_result],
+        company_id="kr01",
+        batch_id="batch42",
+        dataset_id=None,
+        phase1_case_config={"phase1_case": {"top_n_cases": 50, "top_n_per_theme": 10}},
+        generated_at=datetime(2026, 4, 22, 3, 15, 22, tzinfo=UTC),
+    )
+
+    case = next(case for case in result.cases if case.primary_theme == "control_failure")
+    assert case.weak_evidence_bonus == 0.03
+    assert "weak_evidence=is_round_number" in case.priority_adjustment_reasons
+
+
 def test_save_and_load_phase1_case_result_roundtrip(monkeypatch):
     df = pd.DataFrame(
         {
@@ -311,7 +712,9 @@ def test_save_and_load_phase1_case_result_roundtrip(monkeypatch):
         phase1_case_config={"phase1_case": {"top_n_cases": 50, "top_n_per_theme": 10}},
         generated_at=datetime(2026, 4, 22, 3, 15, 22, tzinfo=UTC),
     )
-    artifact_root = Path("C:/Users/ghdtj/workspace/portfolio/local-ai-assist/.tmp_phase1_case_tests")
+    artifact_root = Path(
+        "C:/Users/ghdtj/workspace/portfolio/local-ai-assist/.tmp_phase1_case_tests"
+    )
     monkeypatch.setattr("src.detection.phase1_case_builder.PROJECT_ROOT", artifact_root)
 
     artifact_path = save_phase1_case_result(result)

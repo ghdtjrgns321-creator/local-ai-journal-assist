@@ -8,8 +8,113 @@ from src.detection.fraud_rules_access import (
     b06_self_approval,
     b07_segregation_of_duties,
     b09_skipped_approval,
-    b10_circular_intercompany,
+    b10_intercompany_review_signal,
+    b12_missing_approval_date,
+    b13_high_risk_account_use,
 )
+
+
+class TestL1_09:
+    def test_approver_present_but_approval_date_missing_flagged(self) -> None:
+        df = pd.DataFrame({
+            "approved_by": ["APR1", "APR2", "", "APR4"],
+            "approval_date": [None, "2025-01-02", None, ""],
+        })
+        assert b12_missing_approval_date(df).tolist() == [True, False, False, True]
+
+    def test_missing_columns_returns_false(self) -> None:
+        df = pd.DataFrame({"approved_by": ["APR1"]})
+        assert not b12_missing_approval_date(df).any()
+
+
+class TestL3_10:
+    def test_high_risk_account_exact_and_prefix_flagged(self) -> None:
+        df = pd.DataFrame({"gl_account": ["1190", "1115", "5100", None]})
+        rules = {
+            "patterns": {
+                "high_risk_account_use": {
+                    "accounts": ["1190"],
+                    "account_prefixes": ["111"],
+                }
+            }
+        }
+        assert b13_high_risk_account_use(df, audit_rules=rules).tolist() == [
+            True,
+            True,
+            False,
+            False,
+        ]
+
+    def test_high_risk_account_includes_match_annotations(self) -> None:
+        df = pd.DataFrame({"gl_account": ["1190", "1115", "5100"]}, index=[10, 11, 12])
+        rules = {
+            "patterns": {
+                "high_risk_account_use": {
+                    "accounts": ["1190"],
+                    "account_prefixes": ["111"],
+                    "sensitive_account_groups": {
+                        "cash_equivalent": {"accounts": [], "account_prefixes": ["111"]},
+                        "suspense_clearing": {"accounts": ["1190"], "account_prefixes": []},
+                    },
+                }
+            }
+        }
+
+        result = b13_high_risk_account_use(df, audit_rules=rules)
+
+        assert result.attrs["breakdown"]["reason_counts"] == {
+            "exact": 1,
+            "prefix": 1,
+            "category_counts": {"raw_signal": 2},
+        }
+        assert result.attrs["row_annotations"] == {
+            10: {
+                "match_type": "exact",
+                "matched_value": "1190",
+                "matched_group": "suspense_clearing",
+                "signal_category": "raw_signal",
+                "category_reason": "sensitive_account_touch",
+            },
+            11: {
+                "match_type": "prefix",
+                "matched_value": "111",
+                "matched_group": "cash_equivalent",
+                "signal_category": "raw_signal",
+                "category_reason": "sensitive_account_touch",
+            },
+        }
+
+    def test_high_risk_account_splits_signal_categories(self) -> None:
+        df = pd.DataFrame(
+            {
+                "gl_account": ["1190", "1190", "1190"],
+                "source": ["manual", "automated", "recurring"],
+                "exceeds_threshold": [False, False, True],
+            },
+            index=[1, 2, 3],
+        )
+        rules = {
+            "patterns": {
+                "high_risk_account_use": {
+                    "accounts": ["1190"],
+                    "account_prefixes": [],
+                }
+            }
+        }
+
+        result = b13_high_risk_account_use(df, audit_rules=rules)
+        annotations = result.attrs["row_annotations"]
+
+        assert annotations[1]["signal_category"] == "priority_case"
+        assert annotations[1]["category_reason"] == "manual_or_adjustment"
+        assert annotations[2]["signal_category"] == "normal_control_candidate"
+        assert annotations[2]["category_reason"] == "routine_source"
+        assert annotations[3]["signal_category"] == "priority_case"
+        assert annotations[3]["category_reason"] == "high_amount"
+
+    def test_missing_gl_account_returns_false(self) -> None:
+        df = pd.DataFrame({"debit_amount": [1.0]})
+        assert not b13_high_risk_account_use(df).any()
 
 
 class TestL1_05:
@@ -423,25 +528,25 @@ class TestL1_07:
 
 
 class TestL3_03:
-    def test_intercompany_flagged(self) -> None:
+    def test_intercompany_account_flagged_for_review(self) -> None:
         df = pd.DataFrame({
             "is_intercompany": [True, True, False],
             "company_code": ["A", "B", "A"],
         })
-        result = b10_circular_intercompany(df)
+        result = b10_intercompany_review_signal(df)
         assert result[0]
         assert result[1]
         assert not result[2]
 
-    def test_single_company_still_flagged(self) -> None:
+    def test_single_company_intercompany_account_still_flagged(self) -> None:
         df = pd.DataFrame({
             "is_intercompany": [True, False],
             "company_code": ["A", "A"],
         })
-        result = b10_circular_intercompany(df)
+        result = b10_intercompany_review_signal(df)
         assert result[0]
         assert not result[1]
 
     def test_missing_columns_skip(self) -> None:
         df = pd.DataFrame({"debit_amount": [100.0]})
-        assert not b10_circular_intercompany(df).any()
+        assert not b10_intercompany_review_signal(df).any()

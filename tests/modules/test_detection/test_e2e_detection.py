@@ -1,4 +1,4 @@
-"""Detection E2E 테스트 — DataSynth 1M행 전체 파이프라인.
+﻿"""Detection E2E 테스트 — DataSynth 1M행 전체 파이프라인.
 
 독립 실행 스크립트 (pytest 아님). 1M행 처리에 수십 초 소요.
 실행: uv run python tests/test_detection/test_e2e_detection.py
@@ -210,29 +210,27 @@ def generate_report(
         md.append(_rule_table(r, n))
         md.append("")
 
-    # §3 L2-05 Top-side JE 복합 탐지
-    md.append("\n## 3. L2-05 Top-side JE 복합 탐지\n")
+    # §3 Top-side JE internal score
+    md.append("\n## 3. Top-side JE internal score\n")
     if "topside_score" in agg_df.columns:
-        b19_mask = agg_df["flagged_rules"].str.contains("L2-05", na=False)
+        b19_mask = agg_df["topside_score"] > 0
         b19_count = int(b19_mask.sum())
         manual_count = int(df["is_manual_je"].sum()) if "is_manual_je" in df.columns else 0
 
         md.append(f"| {'항목':24s} | {'값':>20s} |")
         md.append(f"|:{'-'*24}|{'-'*20}:|")
         md.append(f"| {'수기 전표':24s} | {manual_count:>12,d} ({manual_count/n*100:.1f}%) |")
-        md.append(f"| {'L2-05 플래그':24s} | {b19_count:>12,d} ({b19_count/n*100:.2f}%) |")
+        md.append(f"| {'topside_score > 0':24s} | {b19_count:>12,d} ({b19_count/n*100:.2f}%) |")
 
         # 게이트키퍼 검증
         if b19_count > 0 and "is_manual_je" in df.columns:
             all_manual = bool(df.loc[b19_mask, "is_manual_je"].all())
-            all_high = bool((agg_df.loc[b19_mask, "risk_level"] == "High").all())
             md.append(f"| {'게이트키퍼 (전부 수기?)':24s} | {'✅ True' if all_manual else '❌ False':>20s} |")
-            md.append(f"| {'전부 High 승격?':24s} | {'✅ True' if all_high else '❌ False':>20s} |")
 
         # 역검증
         if "is_manual_je" in df.columns:
-            auto_b19 = int(agg_df.loc[~df["is_manual_je"].fillna(False), "flagged_rules"].str.contains("L2-05", na=False).sum())
-            md.append(f"| {'자동 전표 중 L2-05 (0=정상)':24s} | {auto_b19:>20d} |")
+            auto_b19 = int((agg_df.loc[~df["is_manual_je"].fillna(False), "topside_score"] > 0).sum())
+            md.append(f"| {'자동 전표 중 topside_score>0':24s} | {auto_b19:>20d} |")
 
         # 가점 조건별 분포
         if b19_count > 0:

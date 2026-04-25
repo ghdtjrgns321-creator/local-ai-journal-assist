@@ -5,9 +5,9 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
+from config.settings import AuditSettings
 from src.detection.prior_data_loader import PriorSummary
 from src.detection.variance_layer import VarianceDetector
-
 
 # ── fixture ────────────────────────────────────────────────
 
@@ -130,6 +130,30 @@ class TestVarianceDetectorEdgeCases:
         assert "D01" in rule_ids
         assert "D02" in rule_ids
 
+    def test_d02_uses_min_monthly_data_months_setting(
+        self, sample_df: pd.DataFrame, prior_summary_normal: PriorSummary
+    ):
+        """settings.min_monthly_data_months를 D02에 전달한다."""
+        settings = AuditSettings(min_monthly_data_months=9)
+        detector = VarianceDetector(settings=settings, prior_summary=prior_summary_normal)
+
+        result = detector.detect(sample_df)
+
+        d02_flag = next(rf for rf in result.rule_flags if rf.rule_id == "D02")
+        assert d02_flag.flagged_count == 0
+
+    def test_result_metadata_documents_operational_limits(
+        self, sample_df: pd.DataFrame, prior_summary_normal: PriorSummary
+    ):
+        """Layer D 결과에는 단독 한계와 위험 조합 메타데이터를 포함한다."""
+        detector = VarianceDetector(prior_summary=prior_summary_normal)
+
+        result = detector.detect(sample_df)
+
+        assert result.metadata["operational_limitations"]
+        assert "D02" in result.metadata["high_risk_combinations"]
+        assert "L3-04" in result.metadata["high_risk_combinations"]["D02"]
+
     def test_result_scores_shape(
         self, sample_df: pd.DataFrame, prior_summary_normal: PriorSummary
     ):
@@ -144,5 +168,5 @@ class TestVarianceDetectorEdgeCases:
         """빈 DataFrame → ValueError (validate_input)."""
         df = pd.DataFrame(columns=["gl_account", "debit_amount", "credit_amount"])
         detector = VarianceDetector(prior_summary=prior_summary_normal)
-        with pytest.raises(ValueError, match="비어 있습니다"):
+        with pytest.raises(ValueError, match="input DataFrame is empty"):
             detector.detect(df)

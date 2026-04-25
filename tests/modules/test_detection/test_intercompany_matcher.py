@@ -275,6 +275,18 @@ class TestIC03TimingGap:
 # ── Graceful Degradation (4개) ─────────────────────────────────
 
 
+class TestIC01PracticalFilters:
+    def test_customer_vendor_partner_codes_are_not_unmatched_ic(self):
+        df = _make_ic_df([
+            {"gl_account": "1150", "debit_amount": 1_000_000, "credit_amount": 0,
+             "company_code": "A", "trading_partner": "C-000123"},
+            {"gl_account": "2050", "debit_amount": 0, "credit_amount": 1_000_000,
+             "company_code": "A", "trading_partner": "V-000123"},
+        ])
+        result = _detector().detect(df)
+        assert result.details["IC01"].sum() == 0.0
+
+
 class TestGracefulDegradation:
     """컬럼 부재·빈 데이터 시 안전한 동작."""
 

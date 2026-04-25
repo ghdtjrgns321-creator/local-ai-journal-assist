@@ -31,6 +31,12 @@ def _normalized_actor(series: pd.Series) -> pd.Series:
     return _normalized_text(series).str.replace(" ", "_", regex=False)
 
 
+def _normalized_account_code(series: pd.Series) -> pd.Series:
+    """Return normalized account codes while preserving leading zeroes."""
+
+    return _normalized_text(series).str.replace(r"\.0+$", "", regex=True)
+
+
 def _get_self_approval_allow_config(audit_rules: dict | None = None) -> dict[str, tuple[str, ...]]:
     """Load editable allowlist defaults for system-approved self-approval."""
 
@@ -148,13 +154,219 @@ def _is_high_risk_account(
 
     if "gl_account" not in df.columns:
         return pd.Series(False, index=df.index)
-    gl = _normalized_text(df["gl_account"])
+    gl = _normalized_account_code(df["gl_account"])
     mask = pd.Series(False, index=df.index)
     if exact_accounts:
         mask = mask | gl.isin(exact_accounts)
     if account_prefixes:
         mask = mask | gl.str.startswith(account_prefixes)
     return mask
+
+
+def _high_risk_account_match_annotations(
+    df: pd.DataFrame,
+    *,
+    exact_accounts: tuple[str, ...],
+    account_prefixes: tuple[str, ...],
+    sensitive_account_groups: dict[str, dict[str, tuple[str, ...]]],
+) -> tuple[pd.Series, dict[int, dict[str, str]], dict[str, object]]:
+    """Return L3-10 mask plus per-row match annotations."""
+
+    if "gl_account" not in df.columns:
+        return pd.Series(False, index=df.index), {}, {"exact": 0, "prefix": 0}
+
+    gl = _normalized_account_code(df["gl_account"])
+    exact_mask = gl.isin(exact_accounts) if exact_accounts else pd.Series(False, index=df.index)
+    prefix_mask = (
+        gl.str.startswith(account_prefixes) if account_prefixes else pd.Series(False, index=df.index)
+    )
+    mask = exact_mask | prefix_mask
+
+    annotations: dict[int, dict[str, str]] = {}
+    for row_index in df.index[mask]:
+        gl_value = gl.loc[row_index]
+        row = df.loc[row_index]
+        matched_group = _matched_high_risk_group(
+            gl_value,
+            exact_accounts=exact_accounts,
+            account_prefixes=account_prefixes,
+            sensitive_account_groups=sensitive_account_groups,
+        )
+        signal_category, category_reason = _high_risk_account_signal_category(row)
+        if exact_mask.loc[row_index]:
+            matched_value = next((account for account in exact_accounts if gl_value == account), "")
+            annotations[int(row_index)] = {
+                "match_type": "exact",
+                "matched_value": matched_value,
+                "matched_group": matched_group,
+                "signal_category": signal_category,
+                "category_reason": category_reason,
+            }
+            continue
+
+        matched_prefix = next(
+            (prefix for prefix in account_prefixes if gl_value.startswith(prefix)),
+            "",
+        )
+        annotations[int(row_index)] = {
+            "match_type": "prefix",
+            "matched_value": matched_prefix,
+            "matched_group": matched_group,
+            "signal_category": signal_category,
+            "category_reason": category_reason,
+        }
+
+    breakdown = {
+        "exact": int(exact_mask.sum()),
+        "prefix": int((prefix_mask & ~exact_mask).sum()),
+    }
+    category_counts: dict[str, int] = {}
+    for annotation in annotations.values():
+        category = annotation.get("signal_category", "raw_signal")
+        category_counts[category] = category_counts.get(category, 0) + 1
+    breakdown["category_counts"] = category_counts
+    return mask, annotations, breakdown
+
+
+def _high_risk_account_signal_category(row: pd.Series) -> tuple[str, str]:
+    """Classify L3-10 output without narrowing the raw signal."""
+
+    priority_reasons: list[str] = []
+
+    source = str(row.get("source", "")).strip().lower()
+    if source in {"manual", "adjustment"}:
+        priority_reasons.append("manual_or_adjustment")
+    if bool(row.get("is_manual_je", False)):
+        priority_reasons.append("manual_entry")
+
+    if bool(row.get("exceeds_threshold", False)):
+        priority_reasons.append("high_amount")
+    if bool(row.get("is_uncleared", False)):
+        priority_reasons.append("uncleared")
+    if "is_cleared" in row.index and not bool(row.get("is_cleared")):
+        priority_reasons.append("uncleared")
+
+    settlement_status = str(row.get("settlement_status", "")).strip().lower()
+    if settlement_status and settlement_status not in {"settled", "cleared", "closed", "resolved", "matched"}:
+        priority_reasons.append("uncleared")
+
+    if bool(row.get("has_missing_approval_date", False)):
+        priority_reasons.append("missing_approval_date")
+    if _row_missing_approval_date(row):
+        priority_reasons.append("missing_approval_date")
+
+    for column, reason in (
+        ("is_period_end", "period_end"),
+        ("is_after_hours", "after_hours"),
+        ("is_weekend", "weekend"),
+        ("is_holiday", "holiday"),
+    ):
+        if bool(row.get(column, False)):
+            priority_reasons.append(reason)
+
+    if priority_reasons:
+        return "priority_case", ",".join(sorted(set(priority_reasons)))
+
+    if source in {"automated", "recurring", "batch", "interface", "system"}:
+        return "normal_control_candidate", "routine_source"
+    return "raw_signal", "sensitive_account_touch"
+
+
+def _row_missing_approval_date(row: pd.Series) -> bool:
+    approved_by = str(row.get("approved_by", "")).strip().lower()
+    approval_date = str(row.get("approval_date", "")).strip().lower()
+    if approved_by in {"", "nan", "nat", "none"}:
+        return False
+    if approval_date in {"", "nan", "nat", "none"}:
+        return True
+    return False
+
+
+def _matched_high_risk_group(
+    gl_value: str,
+    *,
+    exact_accounts: tuple[str, ...],
+    account_prefixes: tuple[str, ...],
+    sensitive_account_groups: dict[str, dict[str, tuple[str, ...]]],
+) -> str:
+    """Return configured sensitive-account group name for a matched account."""
+
+    for group_name, group_cfg in sensitive_account_groups.items():
+        if gl_value in group_cfg.get("accounts", ()):
+            return group_name
+        prefixes = group_cfg.get("account_prefixes", ())
+        if prefixes and gl_value.startswith(prefixes):
+            return group_name
+
+    if gl_value in exact_accounts:
+        return "custom_exact_accounts"
+    if account_prefixes and gl_value.startswith(account_prefixes):
+        return "custom_prefix_accounts"
+    return ""
+
+
+def _get_high_risk_account_config(
+    audit_rules: dict | None = None,
+) -> dict[str, object]:
+    """Load standalone high-risk account policy, falling back to legacy config."""
+
+    rules = audit_rules or get_audit_rules()
+    patterns = rules.get("patterns", {})
+    standalone = patterns.get("high_risk_account_use", {})
+    legacy = patterns.get("self_approval_immediate_override", {})
+    groups_raw = standalone.get("sensitive_account_groups", {})
+    groups: dict[str, dict[str, tuple[str, ...]]] = {}
+    for group_name, group_cfg in groups_raw.items():
+        if not isinstance(group_cfg, dict):
+            continue
+        groups[str(group_name).strip().lower()] = {
+            "accounts": tuple(str(v).strip().lower() for v in group_cfg.get("accounts", [])),
+            "account_prefixes": tuple(
+                str(v).strip().lower() for v in group_cfg.get("account_prefixes", [])
+            ),
+        }
+    return {
+        "accounts": tuple(
+            str(v).strip().lower()
+            for v in standalone.get("accounts", legacy.get("high_risk_accounts", ["1190", "2190"]))
+        ),
+        "account_prefixes": tuple(
+            str(v).strip().lower()
+            for v in standalone.get(
+                "account_prefixes",
+                legacy.get("high_risk_account_prefixes", ["111", "112", "113"]),
+            )
+        ),
+        "sensitive_account_groups": groups,
+    }
+
+
+def b12_missing_approval_date(df: pd.DataFrame) -> pd.Series:
+    """L1-09 approval date missing while an approver is present."""
+
+    if "approved_by" not in df.columns or "approval_date" not in df.columns:
+        return pd.Series(False, index=df.index)
+    has_approver = _normalized_text(df["approved_by"]).ne("")
+    missing_date = _normalized_text(df["approval_date"]).eq("")
+    return has_approver & missing_date
+
+
+def b13_high_risk_account_use(
+    df: pd.DataFrame,
+    audit_rules: dict | None = None,
+) -> pd.Series:
+    """L3-10 standalone high-risk account usage."""
+
+    cfg = _get_high_risk_account_config(audit_rules)
+    result, annotations, reason_counts = _high_risk_account_match_annotations(
+        df,
+        exact_accounts=cfg["accounts"],
+        account_prefixes=cfg["account_prefixes"],
+        sensitive_account_groups=cfg["sensitive_account_groups"],
+    )
+    result.attrs["row_annotations"] = annotations
+    result.attrs["breakdown"] = {"reason_counts": reason_counts}
+    return result
 
 
 def _self_approval_review_mask(
@@ -562,7 +774,7 @@ def manual_override_signal_mask(
     df: pd.DataFrame,
     audit_rules: dict | None = None,
 ) -> pd.Series:
-    """Return L3-02 manual-entry control-circumvention signal rows."""
+    """Return manual-entry control-circumvention rows used as L1-06 corroboration."""
 
     rules = audit_rules or get_audit_rules()
     patterns = rules.get("patterns", {})
@@ -597,8 +809,8 @@ def manual_override_signal_mask(
         if "is_suspense_account" in df.columns
         else pd.Series(False, index=df.index)
     )
-    poor_description = (
-        _normalized_text(df["description_quality"]).isin(("missing", "poor"))
+    missing_or_corrupted_description = (
+        _normalized_text(df["description_quality"]).isin(("missing", "corrupted", "poor"))
         if "description_quality" in df.columns
         else pd.Series(False, index=df.index)
     )
@@ -615,7 +827,7 @@ def manual_override_signal_mask(
         | abnormal_time
         | period_end
         | suspense_account
-        | poor_description
+        | missing_or_corrupted_description
         | high_risk_account
     )
     return manual_entry & corroborating_signal
@@ -845,8 +1057,13 @@ def b09_skipped_approval(
     return candidate
 
 
-def b10_circular_intercompany(df: pd.DataFrame) -> pd.Series:
-    """L3-03 intercompany circularity signal (MVP)."""
+def b10_intercompany_review_signal(df: pd.DataFrame) -> pd.Series:
+    """L3-03 related-party transaction review signal.
+
+    Phase 1 only identifies entries posted to configured intercompany account
+    prefixes. It does not prove a circular transaction; N-hop circular flow is
+    handled by GR01 in GraphDetector.
+    """
 
     if "is_intercompany" not in df.columns:
         return pd.Series(False, index=df.index)
@@ -861,3 +1078,7 @@ def b10_circular_intercompany(df: pd.DataFrame) -> pd.Series:
             return ic_mask
 
     return ic_mask
+
+
+# Backward-compatible name retained for existing imports/tests.
+b10_circular_intercompany = b10_intercompany_review_signal

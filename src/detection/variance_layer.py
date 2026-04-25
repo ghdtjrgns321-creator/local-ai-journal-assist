@@ -15,7 +15,7 @@ from src.detection.base import BaseDetector, validate_input
 from src.detection.constants import SEVERITY_MAP
 from src.detection.prior_data_loader import PriorSummary
 from src.detection.variance_rules import (
-    d01_account_aggregate_variance,
+    d01_account_activity_variance,
     d02_monthly_pattern_variance,
 )
 
@@ -79,7 +79,7 @@ class VarianceDetector(BaseDetector):
         """룰 레지스트리: (rule_id, callable, kwargs)."""
         s = self._settings
         registry: list[tuple[str, Callable, dict]] = [
-            ("D01", d01_account_aggregate_variance, {
+            ("D01", d01_account_activity_variance, {
                 "prior_aggregates": self._prior.account_aggregates,
                 "variance_threshold": s.variance_threshold,
             }),
@@ -91,6 +91,7 @@ class VarianceDetector(BaseDetector):
             ("D02", d02_monthly_pattern_variance, {
                 "prior_patterns": self._prior.monthly_patterns,
                 "jsd_threshold": s.monthly_pattern_threshold,
+                "min_months": s.min_monthly_data_months,
             })
         )
 
@@ -125,7 +126,21 @@ class VarianceDetector(BaseDetector):
             for rule_id, flagged in rule_results.items()
         ]
 
-        metadata = {"elapsed": elapsed, "skipped_rules": skipped}
+        metadata = {
+            "elapsed": elapsed,
+            "skipped_rules": skipped,
+            "operational_limitations": [
+                "Layer D is an analytical-review screen, not a standalone fraud conclusion.",
+                "D01 and D02 flag all current-period rows for an account once the "
+                "account-level pattern shifts.",
+                "D02 compares monthly distribution shape, so it does not explain "
+                "which single journal line is wrong.",
+            ],
+            "high_risk_combinations": {
+                "D01": ["L4-03", "L4-04", "L3-04", "L3-10", "L1-05", "L1-06", "L1-07"],
+                "D02": ["L3-04", "L3-07", "L1-08", "L4-03", "L4-04", "L3-08", "L2-05"],
+            },
+        }
 
         return self._make_result(
             flagged_indices=flagged_indices,

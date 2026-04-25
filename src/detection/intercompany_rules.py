@@ -131,12 +131,18 @@ def match_ic_groups(
         "company_code" in ic_df.columns
         and ic_df["company_code"].nunique() > 1
     )
+    has_ref = (
+        "reference" in ic_df.columns
+        and ic_df["reference"].fillna("").astype(str).str.strip().ne("").any()
+    )
     has_cur = (
         "currency" in ic_df.columns
         and ic_df["currency"].notna().any()
     )
 
     group_cols: list[str] = []
+    if has_ref:
+        group_cols.append("reference")
     if has_cc:
         group_cols.append("company_code")
     if has_tp:
@@ -316,14 +322,32 @@ def ic01_unmatched_intercompany(
     *,
     match_df: pd.DataFrame,
 ) -> pd.Series:
-    """IL3-04: 미매칭 내부거래 — 대응 그룹 없는 IC 전표 탐지.
+    """IC01: 미매칭 내부거래 — 대응 그룹 없는 IC 전표 탐지.
 
     Why: 감사기준서 550호 §23. 관계사 간 거래는 양측 대사가 필수.
     """
     if match_df.empty or "has_counterpart" not in match_df.columns:
         return pd.Series(0.0, index=df.index)
-    has_cp = match_df["has_counterpart"].astype(bool)
-    return has_cp.map({True: 0.0, False: 1.0}).fillna(0.0)
+    has_cp = match_df["has_counterpart"].astype("boolean").fillna(False).astype(bool)
+    no_counterpart = ~has_cp
+
+    if "trading_partner" not in df.columns or "company_code" not in df.columns:
+        return no_counterpart.map({True: 1.0, False: 0.0}).fillna(0.0)
+
+    known_companies = set(
+        df["company_code"].dropna().astype(str).str.strip().loc[lambda s: s.ne("")]
+    )
+    partner = df["trading_partner"].fillna("").astype(str).str.strip()
+    has_partner = partner.ne("")
+    unknown_partner = has_partner & ~partner.isin(known_companies)
+    looks_like_company_partner = partner.str.endswith("-UNMATCHED") | ~partner.str.contains("-", regex=False)
+
+    # High-confidence IC01: a row has an explicit related-party code that does
+    # not exist as a company in the same dataset. Customer/vendor-style values
+    # such as C-000123 or V-000123 are not IC counterpart companies.
+    ic_rows = df.get("is_intercompany", pd.Series(False, index=df.index)).fillna(False).astype(bool)
+    target = ic_rows & no_counterpart & unknown_partner & looks_like_company_partner
+    return target.map({True: 1.0, False: 0.0}).fillna(0.0)
 
 
 def ic02_amount_mismatch(
@@ -333,7 +357,7 @@ def ic02_amount_mismatch(
     amount_tolerance: float = 0.02,
     max_diff_ratio: float = 0.10,
 ) -> pd.Series:
-    """IL3-05: 금액 불일치 — 매칭됐으나 합계 차이 초과.
+    """IC02: 금액 불일치 — 매칭됐으나 합계 차이 초과.
 
     Why: IC 거래는 양측 금액 일치가 원칙. 차이는 부정/오류 징후.
     """
@@ -366,7 +390,7 @@ def ic03_timing_gap(
     date_window_days: int = 5,
     max_day_diff: int = 30,
 ) -> pd.Series:
-    """IL3-06: 시차 이상 — 매칭됐으나 전기일 차이 과대.
+    """IC03: 시차 이상 — 매칭됐으나 전기일 차이 과대.
 
     Why: 동시 기표가 원칙인 IC 거래에서 시차는 기간귀속 오류 징후.
     """

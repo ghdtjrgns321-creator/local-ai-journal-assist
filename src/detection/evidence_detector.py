@@ -1,7 +1,7 @@
 """EvidenceDetector — 증빙/컷오프/금액 탐지 독립 트랙 (WU-14).
 
 Why: 감사기준서 240호/500호/315호/330호 근거.
-     EV01(증빙 존재) + EV02(컷오프) + EV03(금액 불일치).
+     EV01(증빙 존재) + L3-11(컷오프) + EV03(금액 불일치).
 
 Note: LAYER_WEIGHTS에 의도적 미등록 — 성능 평가 후 가중치 배분 예정 (WU-03 Stacking).
 """
@@ -73,7 +73,7 @@ class EvidenceDetector(BaseDetector):
                 "split_max_amount": s.ev_split_max_amount,
                 "split_min_count": s.ev_split_min_count,
             }),
-            ("EV02", ev02_cutoff_violation, {
+            ("L3-11", ev02_cutoff_violation, {
                 "revenue_cutoff_days": s.ev_revenue_cutoff_days,
                 "expense_cutoff_days": s.ev_expense_cutoff_days,
                 "period_end_weight": s.ev_cutoff_period_end_weight,

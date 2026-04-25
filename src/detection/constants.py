@@ -101,23 +101,24 @@ RULE_CODES: dict[str, str] = {
     "L1-06": "Segregation of Duties Violation",
     "L3-02": "Manual Entry Override",
     "L1-07": "Skipped Approval",
-    "L3-03": "Intercompany Circularity Signal",
+    "L1-09": "Approval Date Missing",
+    "L3-03": "Related Party Transaction Review Signal",
     "L2-04": "Expense Capitalization Signal",
-    "L2-05": "Top-side JE Composite",
-    "L3-04": "Period-end Rush",
+    "L2-05": "Reversal Pattern",
+    "L3-04": "Period-start/end Large or Manual Posting",
     "L3-05": "Weekend Posting",
     "L3-06": "After-hours Posting",
-    "L3-07": "Backdated Entry",
+    "L3-07": "Posting-Document Date Gap",
     "L1-08": "Wrong Fiscal Period",
-    "L3-08": "Vague Description",
+    "L3-08": "Missing or Corrupted Description",
     "L4-02": "Benford Violation",
     "L4-03": "High Amount Outlier",
-    "L4-04": "Unusual Account Pair",
-    "L3-09": "Suspense Account Use",
-    "L2-06": "Reversal Pattern",
+    "L4-04": "Rare Debit-Credit Account Pair",
+    "L3-09": "Suspense Aging",
+    "L3-10": "High-risk Account Use",
     "L4-05": "Abnormal Hours Cluster",
     "L4-06": "Batch Posting Outlier",
-    "D01": "Account Balance Shift",
+    "D01": "Account Activity Shift",
     "D02": "Ratio Distribution Shift",
     "TS01": "Transaction Burst",
     "TS02": "Unusual Periodicity",
@@ -138,7 +139,7 @@ RULE_CODES: dict[str, str] = {
     "AA03": "Sequential Document Numbering",
     "AA04": "Approval Process Validation",
     "EV01": "Evidence Presence Check",
-    "EV02": "Evidence OCR Check",
+    "L3-11": "Revenue Cutoff Mismatch",
     "EV03": "Evidence Amount Mismatch",
     "TB01": "Estimate Bias Drift",
     "TB02": "Estimate Range Extreme",
@@ -169,9 +170,10 @@ SEVERITY_MAP: dict[str, int] = {
     "L1-06": 4,
     "L3-02": 4,
     "L1-07": 4,
+    "L1-09": 3,
     "L3-03": 4,
     "L2-04": 4,
-    "L2-05": 5,
+    "L2-05": 4,
     "L3-04": 3,
     "L3-05": 2,
     "L3-06": 2,
@@ -182,9 +184,9 @@ SEVERITY_MAP: dict[str, int] = {
     "L4-03": 3,
     "L4-04": 2,
     "L3-09": 3,
-    "L2-06": 4,
+    "L3-10": 3,
     "L4-05": 3,
-    "L4-06": 3,
+    "L4-06": 2,
     "D01": 4,
     "D02": 3,
     "TS01": 4,
@@ -206,7 +208,7 @@ SEVERITY_MAP: dict[str, int] = {
     "AA03": 3,
     "AA04": 4,
     "EV01": 4,
-    "EV02": 3,
+    "L3-11": 3,
     "EV03": 3,
     "TB01": 4,
     "TB02": 3,
@@ -464,7 +466,11 @@ RULE_EXPLANATIONS: dict[str, RuleExplanation] = {
     ),
     "L1-06": RuleExplanation(
         rule_id="L1-06",
-        plain_reason="The entry shows a segregation-of-duties conflict across processes, within a process, via IT super-user posting, or with corroborating approval/manual-control failures.",
+        plain_reason=(
+            "The entry shows a segregation-of-duties conflict across processes, "
+            "within a process, via IT super-user posting, or with corroborating "
+            "approval/manual-control failures."
+        ),
         used_columns=(
             "created_by",
             "business_process",
@@ -480,6 +486,11 @@ RULE_EXPLANATIONS: dict[str, RuleExplanation] = {
         rule_id="L1-07",
         plain_reason="Approval appears to be missing despite approval being required.",
         used_columns=("approved_by", "source", "debit_amount", "credit_amount"),
+    ),
+    "L1-09": RuleExplanation(
+        rule_id="L1-09",
+        plain_reason="An approver is present but the approval date is missing.",
+        used_columns=("approved_by", "approval_date"),
     ),
     "L1-08": RuleExplanation(
         rule_id="L1-08",
@@ -503,17 +514,17 @@ RULE_EXPLANATIONS: dict[str, RuleExplanation] = {
     ),
     "L2-04": RuleExplanation(
         rule_id="L2-04",
-        plain_reason="The document mixes expense and asset patterns consistent with capitalization risk.",
+        plain_reason=(
+            "The document mixes expense and asset patterns consistent with "
+            "capitalization risk."
+        ),
         used_columns=("document_id", "gl_account", "debit_amount", "credit_amount"),
     ),
     "L2-05": RuleExplanation(
         rule_id="L2-05",
-        plain_reason="Multiple top-side journal-entry risk signals were triggered together.",
-        used_columns=("posting_date", "line_text", "created_by"),
-    ),
-    "L2-06": RuleExplanation(
-        rule_id="L2-06",
-        plain_reason="A reversal pattern suggests an elevated control or fraud signal.",
+        plain_reason=(
+            "A high-confidence reversal or a reversal-like clearing/reclass pattern was detected."
+        ),
     ),
     "L3-01": RuleExplanation(
         rule_id="L3-01",
@@ -527,13 +538,16 @@ RULE_EXPLANATIONS: dict[str, RuleExplanation] = {
     ),
     "L3-03": RuleExplanation(
         rule_id="L3-03",
-        plain_reason="The intercompany pattern requires additional review.",
+        plain_reason=(
+            "The entry uses an intercompany account and should be reviewed as a "
+            "related-party transaction candidate."
+        ),
         used_columns=("company_code", "trading_partner", "gl_account"),
     ),
     "L3-04": RuleExplanation(
         rule_id="L3-04",
-        plain_reason="A large entry was posted near period end.",
-        used_columns=("posting_date", "debit_amount", "credit_amount"),
+        plain_reason="A large or manual entry was posted near period start or period end.",
+        used_columns=("posting_date", "debit_amount", "credit_amount", "is_manual_je"),
     ),
     "L3-05": RuleExplanation(
         rule_id="L3-05",
@@ -547,18 +561,46 @@ RULE_EXPLANATIONS: dict[str, RuleExplanation] = {
     ),
     "L3-07": RuleExplanation(
         rule_id="L3-07",
-        plain_reason="The posting date trails the document date beyond the allowed threshold.",
+        plain_reason=(
+            "The posting date and document date differ beyond the allowed threshold."
+        ),
         used_columns=("posting_date", "document_date"),
     ),
     "L3-08": RuleExplanation(
         rule_id="L3-08",
-        plain_reason="The description is vague or matches a risky keyword pattern.",
+        plain_reason="The description is missing or clearly corrupted.",
         used_columns=("line_text", "header_text"),
     ),
     "L3-09": RuleExplanation(
         rule_id="L3-09",
-        plain_reason="A suspense-account usage pattern requires review.",
-        used_columns=("gl_account", "line_text"),
+        plain_reason="A suspense-account balance remained unresolved beyond the aging threshold.",
+        used_columns=("gl_account", "posting_date", "amount_open"),
+    ),
+    "L3-10": RuleExplanation(
+        rule_id="L3-10",
+        plain_reason="The entry uses an account configured as high risk.",
+        used_columns=("gl_account",),
+    ),
+    "L3-11": RuleExplanation(
+        rule_id="L3-11",
+        plain_reason=(
+            "The revenue or expense posting date differs from the available "
+            "recognition-basis event date beyond the allowed cutoff window."
+        ),
+        used_columns=("posting_date", "delivery_date", "gl_account", "is_revenue_account"),
+        false_positive_risks=(
+            "Delivery date may be only a proxy for the actual recognition basis.",
+            "Service, subscription, construction, acceptance-based, and installation-based "
+            "transactions require more specific source-event dates when available.",
+            "Missing source-event dates mean cutoff could not be tested, not that "
+            "cutoff is normal.",
+        ),
+        auditor_checks=(
+            "Confirm the applicable revenue recognition basis for the transaction type.",
+            "Tie posting date to delivery, acceptance, installation, service "
+            "confirmation, or billing plan evidence.",
+            "Review period-end manual adjustments and subsequent credit memos or reversals.",
+        ),
     ),
     "L4-01": RuleExplanation(
         rule_id="L4-01",
@@ -577,7 +619,11 @@ RULE_EXPLANATIONS: dict[str, RuleExplanation] = {
     ),
     "L4-04": RuleExplanation(
         rule_id="L4-04",
-        plain_reason="The debit-credit account pair is rare for this population.",
+        plain_reason=(
+            "The debit-credit account pair is rare in this population and should be "
+            "reviewed with other risk signals."
+        ),
+        used_columns=("document_id", "gl_account", "debit_amount", "credit_amount"),
     ),
     "L4-05": RuleExplanation(
         rule_id="L4-05",
@@ -585,7 +631,60 @@ RULE_EXPLANATIONS: dict[str, RuleExplanation] = {
     ),
     "L4-06": RuleExplanation(
         rule_id="L4-06",
-        plain_reason="The batch-posting pattern is statistically unusual.",
+        plain_reason=(
+            "The automated or batch-like posting pattern is a review signal, "
+            "especially when corroborated by cutoff, control, amount, account, "
+            "description, reversal, or duplicate indicators."
+        ),
+        used_columns=("source", "is_period_end", "posting_date", "debit_amount", "credit_amount"),
+        false_positive_risks=(
+            "Payroll, depreciation, allocations, and approved interfaces can create "
+            "normal high-volume postings.",
+            "Company-specific batch jobs may not be identifiable from source alone.",
+        ),
+    ),
+    "D01": RuleExplanation(
+        rule_id="D01",
+        plain_reason=(
+            "The account's current-period activity level changed materially from the "
+            "prior period."
+        ),
+        used_columns=("gl_account", "debit_amount", "credit_amount"),
+        false_positive_risks=(
+            "Business growth, restructuring, new product launches, ERP migration, or "
+            "chart-of-account changes can create legitimate activity shifts.",
+            "The rule flags the account's current rows, not a specific journal line "
+            "as definitively wrong.",
+        ),
+        auditor_checks=(
+            "Compare the shifted account with budget, trial balance movement, account "
+            "mapping changes, and management explanations.",
+            "Prioritize when combined with high amount, rare account-pair, period-end, "
+            "sensitive-account, or approval-control signals.",
+        ),
+        references=("ISA 520.5", "PCAOB AS 2305"),
+    ),
+    "D02": RuleExplanation(
+        rule_id="D02",
+        plain_reason=(
+            "The account's monthly amount distribution changed materially from the "
+            "prior period."
+        ),
+        used_columns=("gl_account", "fiscal_period", "debit_amount", "credit_amount"),
+        false_positive_risks=(
+            "Seasonality changes, project timing, policy changes, reorganizations, or "
+            "missing fiscal periods can create legitimate distribution shifts.",
+            "The rule detects account-level timing drift and does not identify the "
+            "specific abnormal journal line by itself.",
+        ),
+        auditor_checks=(
+            "Review the months that drive the concentration and tie them to cutoff "
+            "evidence, closing adjustments, reversals, and source documents.",
+            "Treat as higher risk when combined with period-end, posting-document date "
+            "gap, wrong fiscal period, high amount, rare account pair, missing or "
+            "corrupted description, or reversal signals.",
+        ),
+        references=("ISA 520.5",),
     ),
 }
 
@@ -594,7 +693,15 @@ TOPSIDE_BONUS_RULES: list[tuple[str, list[tuple[str, str]]]] = [
     ("approval_bypass", [("L1-05", "layer_b"), ("L1-07", "layer_b")]),
     ("invalid_accounting_pattern", [("L1-03", "layer_a"), ("L4-04", "layer_c")]),
     ("high_amount", [("L4-03", "layer_c")]),
-    ("vague_description", [("L3-08", "layer_c")]),
+    ("missing_or_corrupted_description", [("L3-08", "layer_c")]),
+]
+
+BATCH_CORROBORATION_RULES: list[tuple[str, list[tuple[str, str]]]] = [
+    ("closing_or_cutoff", [("L3-04", "layer_c"), ("L3-07", "layer_c"), ("L1-08", "layer_c")]),
+    ("control_failure", [("L1-05", "layer_b"), ("L1-06", "layer_b"), ("L1-07", "layer_b")]),
+    ("amount_or_account", [("L4-03", "layer_c"), ("L4-04", "layer_c"), ("L3-10", "layer_c")]),
+    ("missing_or_corrupted_description", [("L3-08", "layer_c")]),
+    ("reversal_or_duplicate", [("L2-05", "layer_c"), ("L2-02", "layer_b")]),
 ]
 
 RISK_THRESHOLDS: dict[str, float] = {

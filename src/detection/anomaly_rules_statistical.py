@@ -1,7 +1,8 @@
-"""통계 기반 이상 징후 룰 — L4-02 Benford, L4-04 비정상 계정조합.
+"""통계 기반 이상 징후 룰 — L4-02 Benford, L4-04 희소 차대 계정쌍.
 
-L4-02: validation/benford.py의 analyze_benford() 재사용. 편차 큰 자릿수만 선별 플래그.
-     반환값은 [0, 1] float Series — deviation 비례 차등 스코어 적용.
+L4-02: validation/benford.py의 analyze_benford() 재사용. 편차 큰 자릿수 전표를
+     drill-down 후보로 선별하고, 실제 행별 적발은 BenfordDetector에서 0점으로 격하한다.
+     반환값은 후보 점수 [0, 0.8] float Series + finding metadata.
 L4-04: merge 기반 Cartesian Product로 복합 분개(N:M) 계정 쌍 빈도 분석.
 """
 
@@ -12,11 +13,11 @@ from typing import Any
 
 import pandas as pd
 
-logger = logging.getLogger(__name__)
-
 from config.settings import AuditSettings, get_settings
 from src.detection.constants import SEVERITY_MAP
 from src.validation.benford import BENFORD_EXPECTED, analyze_benford
+
+logger = logging.getLogger(__name__)
 
 
 _MIN_GROUP_FOR_BENFORD = 100  # 계정별 최소 표본 수 (미만이면 검정 무의미)
@@ -63,13 +64,15 @@ def c07_benford_violation(
              → 위반 계정의 편차 큰 자릿수 행만 플래그
       2단계: 전체 데이터 검정 (기존 로직) → 계정별에서 놓친 전역 패턴 보완
 
-    스코어링 (deviation 비례 차등):
+    후보 스코어링 (deviation 비례 차등):
       - 위반 행의 점수 = 0.4 × clip(deviation/threshold, 0.5, 2.0) → [0.2, 0.8]
       - 같은 (전표·계정) 단위에서 발생한 여러 위반 자릿수 중 max deviation 사용
       - document_id 기준으로 max 전파 (복식부기 — 전표 내 다른 행도 동일 점수)
+      - 이 점수는 drill-down 후보 점수다. 최종 행별 L4-02 적발 점수는
+        BenfordDetector에서 기본 0으로 격하하고, 집계 finding을 우선 노출한다.
 
     Returns:
-        (float Series, metadata dict) — 각 행 [0.0, 0.8], 0.0이면 미위반.
+        (float Series, metadata dict) — 각 행 후보 점수 [0.0, 0.8], 0.0이면 후보 아님.
     """
     s = settings or get_settings()
     meta: dict[str, Any] = {}
@@ -80,18 +83,22 @@ def c07_benford_violation(
     threshold = s.benford_mad_threshold
     # Why: 행별 스코어 누적 — 동일 행에 여러 위반이 매핑되면 max 적용
     scores = pd.Series(0.0, index=df.index)
+    findings: list[dict[str, Any]] = []
 
-    def _apply_score(row_mask: pd.Series, score: float) -> None:
-        """행 마스크에 스코어 적용 (기존값 대비 max)."""
+    def _apply_score(row_mask: pd.Series, score: float) -> tuple[int, int | None]:
+        """행 마스크에 후보 스코어 적용 (기존값 대비 max)."""
         if score <= 0:
-            return
+            return 0, 0 if "document_id" in df.columns else None
         # Why: document_id 단위로 전파하여 복식부기 맥락 반영
         if "document_id" in df.columns:
             doc_ids = df.loc[row_mask, "document_id"].unique()
             full_mask = df["document_id"].isin(doc_ids)
+            doc_count: int | None = len(doc_ids)
         else:
             full_mask = row_mask
+            doc_count = None
         scores.loc[full_mask] = scores.loc[full_mask].clip(lower=score)
+        return int(full_mask.sum()), doc_count
 
     # ── 1단계: 계정별 분리 검정 ──
     # Why: 특정 계정에서만 찌그러진 분포를 잡아내는 정밀 탐지
@@ -113,8 +120,11 @@ def c07_benford_violation(
                     max_dev = max(_digit_deviation(result.observed, d) for d in bad_digits)
                     digit_score = _deviation_to_score(max_dev, threshold)
 
-                    digit_mask = (df["gl_account"] == gl_account) & df["first_digit"].isin(bad_digits)
-                    _apply_score(digit_mask, digit_score)
+                    digit_mask = (
+                        (df["gl_account"] == gl_account)
+                        & df["first_digit"].isin(bad_digits)
+                    )
+                    affected_rows, affected_docs = _apply_score(digit_mask, digit_score)
                     group_results[str(gl_account)] = {
                         "mad": result.mad,
                         "flagged_digits": sorted(bad_digits),
@@ -122,6 +132,18 @@ def c07_benford_violation(
                         "row_score": digit_score,
                         "sample_size": len(group_digits),
                     }
+                    findings.append({
+                        "scope": "gl_account",
+                        "gl_account": str(gl_account),
+                        "sample_size": len(group_digits),
+                        "mad": result.mad,
+                        "chi2_p_value": result.chi2_p_value,
+                        "flagged_digits": sorted(bad_digits),
+                        "max_deviation": max_dev,
+                        "candidate_score": digit_score,
+                        "candidate_rows": affected_rows,
+                        "candidate_documents": affected_docs,
+                    })
 
     meta["benford_group_results"] = group_results
 
@@ -139,9 +161,25 @@ def c07_benford_violation(
             max_dev = max(_digit_deviation(result.observed, d) for d in flagged_digits)
             global_score = _deviation_to_score(max_dev, threshold)
             digit_mask = df["first_digit"].isin(flagged_digits).fillna(False)
-            _apply_score(digit_mask, global_score)
+            affected_rows, affected_docs = _apply_score(digit_mask, global_score)
             meta["benford_global_max_deviation"] = max_dev
             meta["benford_global_row_score"] = global_score
+            findings.append({
+                "scope": "global",
+                "gl_account": None,
+                "sample_size": result.sample_size,
+                "mad": result.mad,
+                "chi2_p_value": result.chi2_p_value,
+                "flagged_digits": sorted(flagged_digits),
+                "max_deviation": max_dev,
+                "candidate_score": global_score,
+                "candidate_rows": affected_rows,
+                "candidate_documents": affected_docs,
+            })
+
+    meta["benford_findings"] = findings
+    meta["benford_candidate_count"] = int((scores > 0).sum())
+    meta["benford_candidate_indices"] = scores[scores > 0].index.tolist()
 
     return scores, meta
 
@@ -150,12 +188,14 @@ def c09_rare_account_pair(
     df: pd.DataFrame,
     percentile: float = 0.01,
 ) -> pd.Series:
-    """L4-04 비정상 계정조합: 차변-대변 계정 쌍 빈도 하위 N%.
+    """L4-04 희소 차대 계정쌍: 차변-대변 계정 쌍 빈도 하위 N%.
 
     Why: PCAOB AS 240 A49(a), ISA 315 — 희소한 계정 조합은 비정상 거래 의심.
          복합 분개(N:M)를 merge 기반 Cartesian Product로 처리하여
          반복문 없이 벡터화 연산으로 모든 (차변, 대변) 쌍 생성.
     """
+    # Phase 1 interpretation: rare debit-credit account-pair review signal.
+    # This rule does not try to maintain semantic allow/deny lists by account.
     required = ["document_id", "gl_account", "debit_amount", "credit_amount"]
     if any(c not in df.columns for c in required):
         return pd.Series(False, index=df.index)
@@ -208,5 +248,14 @@ def c09_rare_account_pair(
     )
     rare_docs = set(pairs.loc[pairs["_rare"] == True, "document_id"])  # noqa: E712
 
-    # 5. 원본 df에 매핑 → 해당 document의 모든 행 플래그
-    return df["document_id"].isin(rare_docs)
+    # 5. Flag every line in documents that contain at least one rare pair.
+    result = df["document_id"].isin(rare_docs)
+    result.attrs["breakdown"] = {
+        "interpretation": "rare_debit_credit_pair_review_signal",
+        "percentile": float(percentile),
+        "threshold_count": float(threshold),
+        "distinct_pair_count": int(len(pair_counts)),
+        "rare_pair_count": int(len(rare_idx)),
+        "candidate_document_count": int(len(rare_docs)),
+    }
+    return result

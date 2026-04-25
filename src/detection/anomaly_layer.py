@@ -12,19 +12,20 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from src.detection.anomaly_rules_batch import c13_batch_anomaly
+from src.detection.anomaly_rules_reversal import c11_reversal_entry
 from src.detection.anomaly_rules_simple import (
     c01_period_end_large,
+    c01_period_end_sensitive_account,
     c02_weekend_entry,
     c03_after_hours_entry,
     c04_backdated_entry,
     c05_fiscal_period_mismatch,
-    c06_risky_description,
+    c06_missing_or_corrupted_description,
     c08_amount_outlier,
     c10_suspense_account,
     c12_abnormal_hours_concentration,
 )
-from src.detection.anomaly_rules_batch import c13_batch_anomaly
-from src.detection.anomaly_rules_reversal import c11_reversal_entry
 from src.detection.anomaly_rules_statistical import c09_rare_account_pair
 from src.detection.base import BaseDetector, validate_input
 from src.detection.constants import SEVERITY_MAP
@@ -43,6 +44,13 @@ class AnomalyDetector(BaseDetector):
 
     L4-02(Benford)은 BenfordDetector 독립 트랙으로 분리.
     """
+
+    def __init__(self, settings=None, audit_rules: dict | None = None) -> None:
+        super().__init__(settings)
+        if audit_rules is None:
+            from config.settings import get_audit_rules
+            audit_rules = get_audit_rules()
+        self._audit_rules = audit_rules
 
     @property
     def track_name(self) -> str:
@@ -75,21 +83,29 @@ class AnomalyDetector(BaseDetector):
     def _build_registry(self) -> list[tuple[str, Callable, dict]]:
         """룰 레지스트리: (rule_id, callable, kwargs)."""
         s = self._settings
+        patterns = self._audit_rules.get("patterns", {})
         return [
             ("L3-04", c01_period_end_large, {
                 "quantile": s.period_end_amount_quantile,
                 "min_group_size": s.c01_min_group_size,
+                "whitelist_patterns": patterns.get("period_end_whitelist", []),
             }),
             ("L3-05", c02_weekend_entry, {}),
             ("L3-06", c03_after_hours_entry, {}),
             ("L3-07", c04_backdated_entry, {"threshold_days": s.backdated_threshold_days}),
             ("L1-08", c05_fiscal_period_mismatch, {}),
-            ("L3-08", c06_risky_description, {}),
+            ("L3-08", c06_missing_or_corrupted_description, {}),
             # L4-02(Benford)은 BenfordDetector 독립 트랙으로 분리
-            ("L4-03", c08_amount_outlier, {"zscore_threshold": s.zscore_threshold}),
+            ("L4-03", c08_amount_outlier, {
+                "zscore_threshold": s.zscore_threshold,
+                "min_amount_quantile": s.l403_min_amount_quantile,
+            }),
             ("L4-04", c09_rare_account_pair, {"percentile": s.account_pair_rare_percentile}),
-            ("L3-09", c10_suspense_account, {}),
-            ("L2-06", c11_reversal_entry, {
+            ("L3-09", c10_suspense_account, {
+                "threshold_days": s.suspense_aging_days,
+                "min_open_amount": s.suspense_min_open_amount,
+            }),
+            ("L2-05", c11_reversal_entry, {
                 "match_window_days": s.reversal_match_window_days,
                 "rolling_window_days": s.reversal_rolling_window_days,
                 "zero_threshold": s.reversal_zero_threshold,
@@ -124,9 +140,24 @@ class AnomalyDetector(BaseDetector):
             return self._empty_result(df, warnings, elapsed)
 
         details = pd.DataFrame(index=df.index)
+        rule_breakdowns: dict[str, object] = {}
+        row_annotations: dict[str, object] = {}
         for rule_id, flagged in rule_results.items():
             severity_score = SEVERITY_MAP[rule_id] / 5.0
-            details[rule_id] = flagged.astype(float) * severity_score
+            if rule_id == "L3-04":
+                details[rule_id] = self._score_l304(df, flagged, severity_score)
+            else:
+                details[rule_id] = flagged.astype(float) * severity_score
+            breakdown = flagged.attrs.get("breakdown") if hasattr(flagged, "attrs") else None
+            if breakdown:
+                rule_breakdowns[rule_id] = breakdown
+            annotations = (
+                flagged.attrs.get("row_annotations")
+                if hasattr(flagged, "attrs")
+                else None
+            )
+            if annotations:
+                row_annotations[rule_id] = annotations
 
         scores = details.max(axis=1).fillna(0.0)
         flagged_indices = scores[scores > 0].index.tolist()
@@ -136,11 +167,21 @@ class AnomalyDetector(BaseDetector):
                 rule_id=rule_id,
                 flagged_count=int(flagged.sum()),
                 total_count=len(df),
+                detail=(
+                    self._l307_detail(df, flagged)
+                    if rule_id == "L3-07"
+                    else self._format_rule_detail(rule_id, flagged)
+                ),
             )
             for rule_id, flagged in rule_results.items()
         ]
 
-        metadata = {"elapsed": elapsed, "skipped_rules": skipped}
+        metadata = {
+            "elapsed": elapsed,
+            "skipped_rules": skipped,
+            "rule_breakdowns": rule_breakdowns,
+            "row_annotations": row_annotations,
+        }
 
         return self._make_result(
             flagged_indices=flagged_indices,
@@ -150,6 +191,59 @@ class AnomalyDetector(BaseDetector):
             metadata=metadata,
             warnings=warnings,
         )
+
+    def _score_l304(
+        self,
+        df: pd.DataFrame,
+        flagged: pd.Series,
+        severity_score: float,
+    ) -> pd.Series:
+        """Apply sensitive-account priority bonus without creating new L3-04 flags."""
+        score = flagged.astype(float) * severity_score
+        patterns = self._audit_rules.get("patterns", {})
+        sensitive = c01_period_end_sensitive_account(
+            df,
+            patterns.get("period_end_sensitive_accounts", {}),
+        )
+        bonus = float(getattr(self._settings, "period_end_sensitive_bonus", 0.15))
+        return (score + (flagged & sensitive).astype(float) * bonus).clip(upper=1.0)
+
+    def _l307_detail(self, df: pd.DataFrame, flagged: pd.Series) -> str | None:
+        """Summarize L3-07 direction without changing score columns."""
+        if "days_backdated" not in df.columns:
+            return None
+
+        days = pd.to_numeric(df["days_backdated"], errors="coerce")
+        flagged_mask = flagged.reindex(df.index, fill_value=False).astype(bool)
+        flagged_days = days[flagged_mask]
+        if flagged_days.empty:
+            return None
+
+        late_count = int((flagged_days > 0).sum())
+        forward_count = int((flagged_days < 0).sum())
+        return (
+            f"late_posting={late_count}, "
+            f"forward_date_gap={forward_count}, "
+            f"threshold_days={self._settings.backdated_threshold_days}"
+        )
+
+    def _format_rule_detail(self, rule_id: str, flagged: pd.Series) -> str | None:
+        """Render optional rule detail from attrs for surfaced rules."""
+        if not hasattr(flagged, "attrs"):
+            return None
+        breakdown = flagged.attrs.get("breakdown")
+        if not breakdown:
+            return None
+        if rule_id == "L3-09":
+            return f"threshold_days={breakdown.get('base_threshold_days')}"
+        if rule_id == "L2-05":
+            return (
+                "high_confidence="
+                f"{breakdown.get('high_confidence_count', 0)}, "
+                "candidate="
+                f"{breakdown.get('candidate_count', 0)}"
+            )
+        return None
 
     def _empty_result(
         self,

@@ -25,8 +25,12 @@ def c13_batch_anomaly(
     if "source" not in df.columns:
         return pd.Series(False, index=df.index)
 
-    sources = batch_sources or ["batch", "BATCH"]
-    is_batch = df["source"].isin(sources)
+    sources = batch_sources or [
+        "batch", "interface", "system", "auto", "if", "sys",
+        "BATCH", "INTERFACE", "SYSTEM", "AUTO", "IF", "SYS",
+    ]
+    source_values = df["source"].astype("string").str.strip().str.lower()
+    is_batch = source_values.isin({str(source).strip().lower() for source in sources})
     if not is_batch.any():
         return pd.Series(False, index=df.index)
 

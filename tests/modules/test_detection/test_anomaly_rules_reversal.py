@@ -1,4 +1,4 @@
-"""Unit tests for the L2-06 reversal-pattern helpers."""
+"""Unit tests for the L2-05 reversal-pattern helpers."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 
 from src.detection.anomaly_rules_reversal import (
+    _s0_structural_reversal_reference,
     _s1_one_to_one_match,
     _s2_rolling_zero_out,
     _s2b_line_swap_signature,
@@ -37,6 +38,35 @@ def reversal_pair_df() -> pd.DataFrame:
             "is_period_end": [False, False, False, False],
         }
     )
+
+
+class TestS0StructuralReversalReference:
+    def test_reversal_reference_field_flagged(self) -> None:
+        df = pd.DataFrame(
+            {
+                "document_id": ["D001", "D002"],
+                "original_document_id": ["", "D001"],
+                "reversal_document_id": ["D002", ""],
+            }
+        )
+        result = _s0_structural_reversal_reference(df)
+        assert result.all()
+
+    def test_reversal_reason_field_flagged(self) -> None:
+        df = pd.DataFrame(
+            {
+                "document_id": ["D001", "D002"],
+                "reversal_reason": ["", "01"],
+            }
+        )
+        result = _s0_structural_reversal_reference(df)
+        assert not result.iloc[0]
+        assert result.iloc[1]
+
+    def test_missing_reference_columns_returns_false(self) -> None:
+        df = pd.DataFrame({"document_id": ["D001"]})
+        result = _s0_structural_reversal_reference(df)
+        assert not result.any()
 
 
 class TestS1OneToOneMatch:
@@ -123,6 +153,9 @@ class TestS2RollingZeroOut:
                 "credit_amount": [0.0, 60_000.0, 40_000.0],
                 "posting_date": pd.to_datetime(["2025-06-01", "2025-06-03", "2025-06-05"]),
                 "created_by": ["user_a", "user_a", "user_a"],
+                "document_type": ["SA", "SA", "SA"],
+                "source": ["manual", "manual", "manual"],
+                "line_text": ["reversal accrual", "reversal accrual", "reversal accrual"],
             }
         )
         result = _s2_rolling_zero_out(df, rolling_window_days=7, zero_threshold=1000)
@@ -167,6 +200,20 @@ class TestS2RollingZeroOut:
             }
         )
         result = _s2_rolling_zero_out(df)
+        assert not result.any()
+
+    def test_single_balanced_document_not_flagged(self) -> None:
+        df = pd.DataFrame(
+            {
+                "document_id": ["D001", "D001"],
+                "gl_account": ["1000", "1000"],
+                "debit_amount": [100_000.0, 0.0],
+                "credit_amount": [0.0, 100_000.0],
+                "posting_date": pd.to_datetime(["2025-06-01", "2025-06-01"]),
+                "created_by": ["user_a", "user_a"],
+            }
+        )
+        result = _s2_rolling_zero_out(df, rolling_window_days=7, zero_threshold=1000)
         assert not result.any()
 
 
@@ -297,6 +344,91 @@ class TestC11ReversalEntry:
         result = c11_reversal_entry(reversal_pair_df, score_threshold=0.3)
         assert result.iloc[0] or result.iloc[1]
 
+    def test_exact_pair_without_context_not_flagged(self) -> None:
+        df = pd.DataFrame(
+            {
+                "document_id": ["D001", "D002"],
+                "gl_account": ["1000", "1000"],
+                "debit_amount": [1_000_000.0, 0.0],
+                "credit_amount": [0.0, 1_000_000.0],
+                "posting_date": pd.to_datetime(["2025-06-15", "2025-06-16"]),
+                "source": ["automated", "automated"],
+                "line_text": ["ordinary accrual", "ordinary accrual clearing"],
+            }
+        )
+        result = c11_reversal_entry(df, score_threshold=0.3)
+        assert not result.any()
+
+    def test_exact_pair_with_context_flagged(self) -> None:
+        df = pd.DataFrame(
+            {
+                "document_id": ["D001", "D002"],
+                "gl_account": ["1000", "1000"],
+                "debit_amount": [1_000_000.0, 0.0],
+                "credit_amount": [0.0, 1_000_000.0],
+                "posting_date": pd.to_datetime(["2025-06-15", "2025-06-16"]),
+                "created_by": ["user_a", "user_a"],
+                "document_type": ["SA", "SA"],
+                "source": ["manual", "manual"],
+                "line_text": ["reclass accrual", "reclass accrual"],
+            }
+        )
+        result = c11_reversal_entry(df, score_threshold=0.3)
+        assert result.all()
+
+    def test_split_reversal_without_context_not_flagged(self) -> None:
+        df = pd.DataFrame(
+            {
+                "document_id": ["D001", "D002", "D003"],
+                "gl_account": ["1000", "1000", "1000"],
+                "debit_amount": [100_000.0, 0.0, 0.0],
+                "credit_amount": [0.0, 60_000.0, 40_000.0],
+                "posting_date": pd.to_datetime(["2025-06-01", "2025-06-03", "2025-06-05"]),
+                "created_by": ["user_a", "user_a", "user_a"],
+                "source": ["automated", "automated", "automated"],
+                "line_text": ["monthly accrual", "monthly clearing", "monthly clearing"],
+            }
+        )
+        result = c11_reversal_entry(df, score_threshold=0.3)
+        assert not result.any()
+
+    def test_split_reversal_with_context_flagged(self) -> None:
+        df = pd.DataFrame(
+            {
+                "document_id": ["D001", "D002", "D003"],
+                "gl_account": ["1000", "1000", "1000"],
+                "debit_amount": [100_000.0, 0.0, 0.0],
+                "credit_amount": [0.0, 60_000.0, 40_000.0],
+                "posting_date": pd.to_datetime(["2025-06-01", "2025-06-03", "2025-06-05"]),
+                "created_by": ["user_a", "user_a", "user_a"],
+                "document_type": ["SA", "SA", "SA"],
+                "source": ["manual", "manual", "manual"],
+                "line_text": ["reversal accrual", "reversal accrual", "reversal accrual"],
+            }
+        )
+        result = c11_reversal_entry(df, score_threshold=0.3)
+        assert result.all()
+
+    def test_structural_reference_flagged_even_without_amount_match(self) -> None:
+        df = pd.DataFrame(
+            {
+                "document_id": ["D001", "D002"],
+                "gl_account": ["1000", "2000"],
+                "debit_amount": [123.0, 456.0],
+                "credit_amount": [0.0, 0.0],
+                "posting_date": pd.to_datetime(["2025-06-01", "2025-06-02"]),
+                "original_document_id": ["", "D001"],
+                "reversal_document_id": ["D002", ""],
+                "source": ["automated", "automated"],
+                "line_text": ["system entry", "system entry"],
+            }
+        )
+        result = c11_reversal_entry(df, score_threshold=0.3)
+        assert result.all()
+        annotations = result.attrs["row_annotations"]
+        assert annotations[0]["interpretation_code"] == "high_confidence_reversal"
+        assert annotations[0]["primary_signal"] == "S0"
+
     def test_swapped_line_document_flagged_without_pair_match(self) -> None:
         df = pd.DataFrame(
             {
@@ -316,6 +448,28 @@ class TestC11ReversalEntry:
         )
         result = c11_reversal_entry(df, score_threshold=0.3)
         assert result.all()
+        annotations = result.attrs["row_annotations"]
+        assert annotations[0]["interpretation_code"] == "high_confidence_reversal"
+        assert annotations[0]["primary_signal"] == "S2b"
+
+    def test_contextual_pair_flagged_as_candidate_interpretation(self) -> None:
+        df = pd.DataFrame(
+            {
+                "document_id": ["D001", "D002"],
+                "gl_account": ["1000", "1000"],
+                "debit_amount": [1_000_000.0, 0.0],
+                "credit_amount": [0.0, 1_000_000.0],
+                "posting_date": pd.to_datetime(["2025-06-15", "2025-06-16"]),
+                "created_by": ["user_a", "user_a"],
+                "document_type": ["SA", "SA"],
+                "source": ["manual", "manual"],
+                "line_text": ["reclass accrual", "reclass accrual"],
+            }
+        )
+        result = c11_reversal_entry(df, score_threshold=0.3)
+        annotations = result.attrs["row_annotations"]
+        assert annotations[0]["interpretation_code"] == "candidate_reversal_clearing_reclass"
+        assert annotations[0]["primary_signal"] == "S1"
 
     def test_normal_entries_not_flagged(self) -> None:
         df = pd.DataFrame(

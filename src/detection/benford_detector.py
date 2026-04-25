@@ -49,16 +49,30 @@ class BenfordDetector(BaseDetector):
 
         elapsed = time.perf_counter() - start
 
-        # Why: c07_benford_violation이 이미 deviation 비례 [0, 0.8] 점수를 반환하므로
-        #      여기서 추가 가중 없이 그대로 사용 (이전 0.4 고정값 → 차등화 완료)
-        scores = scores.astype(float)
-        flagged_indices = scores[scores > 0].index.tolist()
+        # Why: Benford는 개별 전표 적발보다 모집단/계정 단위 분포 이상 finding이 본질이다.
+        #      c07_benford_violation()의 점수는 drill-down 후보 점수로 metadata에만 남기고,
+        #      최종 anomaly_score/anomaly_flags에는 단독 L4-02 행별 플래그를 반영하지 않는다.
+        candidate_scores = scores.astype(float)
+        candidate_count = int((candidate_scores > 0).sum())
+        meta["benford_candidate_count"] = candidate_count
+        meta["benford_candidate_indices"] = candidate_scores[candidate_scores > 0].index.tolist()
+        meta["benford_candidate_score_max"] = (
+            float(candidate_scores.max()) if not candidate_scores.empty else 0.0
+        )
+        meta["benford_row_scoring_mode"] = "finding_first_drilldown_only"
+
+        scores = pd.Series(0.0, index=df.index, dtype=float)
+        flagged_indices: list[int] = []
 
         rule_flags = [
             self._create_rule_flag(
                 rule_id=_RULE_ID,
-                flagged_count=int((scores > 0).sum()),
+                flagged_count=0,
                 total_count=len(df),
+                detail=(
+                    f"finding_count={len(meta.get('benford_findings', []))}; "
+                    f"candidate_rows={candidate_count}; row_flags_disabled=true"
+                ),
             )
         ]
 

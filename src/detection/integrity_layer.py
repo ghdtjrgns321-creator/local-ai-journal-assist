@@ -13,9 +13,8 @@ import time
 import pandas as pd
 
 from config.settings import AuditSettings, get_schema
-from src.detection.base import BaseDetector, DetectionResult, RuleFlag, validate_input
+from src.detection.base import BaseDetector, DetectionResult, validate_input
 from src.detection.constants import SEVERITY_MAP
-
 
 _INTEGERISH_ACCOUNT_RE = re.compile(r"^[+-]?\d+\.0+$")
 
@@ -51,6 +50,7 @@ class IntegrityDetector(BaseDetector):
         tolerance: float | None = None,
         chart_of_accounts: set[str] | None = None,
         schema: dict | None = None,
+        audit_rules: dict | None = None,
     ) -> None:
         super().__init__(settings)
         self._tolerance = tolerance if tolerance is not None else self._settings.balance_tolerance
@@ -63,6 +63,16 @@ class IntegrityDetector(BaseDetector):
         else:
             self._coa = self._load_coa()
         self._schema = schema or get_schema()
+        self._audit_rules = audit_rules or self._load_audit_rules()
+
+    def _load_audit_rules(self) -> dict:
+        try:
+            from config.settings import get_audit_rules
+
+            return get_audit_rules()
+        except Exception as exc:
+            self._logger.warning("audit_rules.yaml 로드 실패: %s — L3-01 skip 가능", exc)
+            return {}
 
     def _load_coa(self) -> set[str] | None:
         """settings.chart_of_accounts_path에서 CoA 로드. 없으면 None."""
@@ -83,7 +93,10 @@ class IntegrityDetector(BaseDetector):
             else:
                 return {
                     code
-                    for code in (_normalize_account_code(line) for line in p.read_text().splitlines())
+                    for code in (
+                        _normalize_account_code(line)
+                        for line in p.read_text().splitlines()
+                    )
                     if code
                 }
         except Exception as e:
@@ -112,6 +125,7 @@ class IntegrityDetector(BaseDetector):
             ("L1-01", self._a01_unbalanced_entry),
             ("L1-02", self._a02_missing_required),
             ("L1-03", self._a03_invalid_account),
+            ("L3-01", self._l301_misclassified_account),
         ]
         rule_results: dict[str, pd.Series] = {}
         skipped: list[str] = []
@@ -227,3 +241,243 @@ class IntegrityDetector(BaseDetector):
         normalized = df["gl_account"].map(_normalize_account_code)
         has_account = normalized.ne("")
         return (has_account & ~normalized.isin(self._coa)).astype(float)
+
+    def _l301_misclassified_account(self, df: pd.DataFrame) -> pd.Series | None:
+        """L3-01 계정-업무 프로세스 불일치 검토 신호."""
+        if "business_process" not in df.columns:
+            self._logger.info("business_process 컬럼 부재 — L3-01 건너뜀")
+            return None
+        if "gl_account" not in df.columns and not _has_any_column(
+            df, ("account_category", "account_group")
+        ):
+            self._logger.info("계정 분류 컬럼 부재 — L3-01 건너뜀")
+            return None
+
+        cfg = _l301_config(self._audit_rules)
+        if not cfg.get("enabled", True):
+            return None
+
+        process = df["business_process"].map(_normalize_key)
+        category = _resolve_account_category(df, cfg, self._audit_rules)
+        valid = process.ne("") & category.ne("")
+        normalized_account = pd.Series("", index=df.index, dtype="object")
+
+        if "gl_account" in df.columns:
+            normalized_account = df["gl_account"].map(_normalize_account_code)
+            valid = valid & normalized_account.ne("")
+            if self._coa is not None:
+                valid = valid & normalized_account.isin(self._coa)
+
+        denied_accounts = _process_account_match(
+            process,
+            normalized_account,
+            cfg.get("process_denied_accounts", {}),
+            default=False,
+        )
+        account_configured = _process_presence_match(
+            process,
+            cfg.get("process_denied_accounts", {}),
+        )
+        disallowed = _process_category_match(
+            process,
+            category,
+            cfg.get("process_disallowed_categories", {}),
+            default=False,
+        )
+        disallowed = denied_accounts | (~account_configured & disallowed)
+        allowed_keywords = _process_keyword_match(
+            process,
+            _combine_text_columns(df, ("line_text", "header_text")),
+            cfg.get("process_allowed_keywords", {}),
+        )
+        disallowed = disallowed & ~allowed_keywords
+
+        if bool(cfg.get("strict_allowed_categories", False)):
+            allowed = _process_category_match(
+                process,
+                category,
+                cfg.get("process_allowed_categories", {}),
+                default=True,
+            )
+            return (valid & (disallowed | ~allowed)).astype(float)
+
+        return (valid & disallowed).astype(float)
+
+
+def _has_any_column(df: pd.DataFrame, columns: tuple[str, ...]) -> bool:
+    return any(col in df.columns for col in columns)
+
+
+def _l301_config(audit_rules: dict | None) -> dict:
+    rules = audit_rules or {}
+    patterns = rules.get("patterns", {}) if isinstance(rules.get("patterns"), dict) else {}
+    cfg = rules.get("l3_01_misclassified_account")
+    if cfg is None:
+        cfg = patterns.get("l3_01_misclassified_account", {})
+    return cfg if isinstance(cfg, dict) else {}
+
+
+def _normalize_key(value: object) -> str:
+    if pd.isna(value):
+        return ""
+    text = str(value).strip().lower()
+    return re.sub(r"[^a-z0-9]+", "_", text).strip("_")
+
+
+def _normalize_text(value: object) -> str:
+    if pd.isna(value):
+        return ""
+    text = str(value).strip().lower()
+    return re.sub(r"\s+", " ", text)
+
+
+def _resolve_account_category(
+    df: pd.DataFrame,
+    cfg: dict,
+    audit_rules: dict | None,
+) -> pd.Series:
+    category = pd.Series("", index=df.index, dtype="object")
+    for col in ("account_category", "account_group"):
+        if col not in df.columns:
+            continue
+        normalized = df[col].map(_normalize_key)
+        category = category.where(category.ne(""), normalized)
+
+    if "gl_account" not in df.columns:
+        return category
+
+    prefixes = cfg.get("account_category_prefixes")
+    if not isinstance(prefixes, dict):
+        prefixes = (audit_rules or {}).get("coa_category_prefixes", {})
+    inferred = _infer_category_from_prefix(df["gl_account"], prefixes)
+    return category.where(category.ne(""), inferred)
+
+
+def _infer_category_from_prefix(accounts: pd.Series, prefixes: object) -> pd.Series:
+    if not isinstance(prefixes, dict) or not prefixes:
+        return pd.Series("", index=accounts.index, dtype="object")
+
+    normalized_prefixes = [
+        (_normalize_key(category), str(prefix))
+        for category, values in prefixes.items()
+        for prefix in _as_list(values)
+        if str(prefix)
+    ]
+    normalized_prefixes.sort(key=lambda item: len(item[1]), reverse=True)
+
+    def _match(value: object) -> str:
+        account = _normalize_account_code(value)
+        if not account:
+            return ""
+        for category, prefix in normalized_prefixes:
+            if account.startswith(prefix):
+                return category
+        return ""
+
+    return accounts.map(_match)
+
+
+def _as_list(value: object) -> list:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        return list(value)
+    return [value]
+
+
+def _process_category_match(
+    process: pd.Series,
+    category: pd.Series,
+    mapping: object,
+    *,
+    default: bool,
+) -> pd.Series:
+    result = pd.Series(default, index=process.index)
+    if not isinstance(mapping, dict):
+        return result
+
+    normalized_mapping = {
+        _normalize_key(proc): {_normalize_key(cat) for cat in _as_list(categories)}
+        for proc, categories in mapping.items()
+    }
+    for proc, categories in normalized_mapping.items():
+        if not proc or not categories:
+            continue
+        mask = process.eq(proc)
+        result.loc[mask] = category.loc[mask].isin(categories)
+    return result
+
+
+def _process_account_match(
+    process: pd.Series,
+    account: pd.Series,
+    mapping: object,
+    *,
+    default: bool,
+) -> pd.Series:
+    result = pd.Series(default, index=process.index)
+    if not isinstance(mapping, dict):
+        return result
+
+    normalized_mapping = {
+        _normalize_key(proc): {_normalize_account_code(value) for value in _as_list(accounts)}
+        for proc, accounts in mapping.items()
+    }
+    for proc, accounts in normalized_mapping.items():
+        if not proc or not accounts:
+            continue
+        mask = process.eq(proc)
+        result.loc[mask] = account.loc[mask].isin(accounts)
+    return result
+
+
+def _process_presence_match(process: pd.Series, mapping: object) -> pd.Series:
+    result = pd.Series(False, index=process.index)
+    if not isinstance(mapping, dict):
+        return result
+
+    configured_processes = {
+        _normalize_key(proc)
+        for proc, accounts in mapping.items()
+        if _normalize_key(proc) and _as_list(accounts)
+    }
+    if not configured_processes:
+        return result
+    return process.isin(configured_processes)
+
+
+def _combine_text_columns(df: pd.DataFrame, columns: tuple[str, ...]) -> pd.Series:
+    combined = pd.Series("", index=df.index, dtype="object")
+    for column in columns:
+        if column not in df.columns:
+            continue
+        normalized = df[column].map(_normalize_text)
+        combined = (combined + " " + normalized).str.strip()
+    return combined
+
+
+def _process_keyword_match(
+    process: pd.Series,
+    text: pd.Series,
+    mapping: object,
+) -> pd.Series:
+    result = pd.Series(False, index=process.index)
+    if not isinstance(mapping, dict):
+        return result
+
+    normalized_mapping = {
+        _normalize_key(proc): [_normalize_text(keyword) for keyword in _as_list(keywords)]
+        for proc, keywords in mapping.items()
+    }
+    for proc, keywords in normalized_mapping.items():
+        keywords = [keyword for keyword in keywords if keyword]
+        if not proc or not keywords:
+            continue
+        mask = process.eq(proc)
+        if not mask.any():
+            continue
+        proc_text = text.loc[mask]
+        result.loc[mask] = proc_text.map(
+            lambda value: any(keyword in value for keyword in keywords),
+        )
+    return result

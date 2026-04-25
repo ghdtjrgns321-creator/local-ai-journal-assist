@@ -84,7 +84,7 @@ class TestFraudLayerDetect:
         result = layer.detect(full_df)
         # 11개 룰 중 일부는 피처/컬럼 부재로 skip될 수 있음
         assert len(result.rule_flags) > 0
-        assert len(result.rule_flags) <= 10
+        assert len(result.rule_flags) <= 13
 
     def test_b01_flags_revenue_outlier(self, full_df: pd.DataFrame) -> None:
         """L4-01: 매출+zscore>3 행이 flagged."""
@@ -161,7 +161,8 @@ class TestFraudLayerDetect:
 
         result = layer.detect(df)
         annotations = result.metadata["row_annotations"]["L2-03"]
-        assert annotations[0]["reason_code"] == "reference_duplicate"
+        assert annotations[0]["reason_code"] == "document_duplicate"
+        assert "reference_duplicate" in annotations[0]["matched_reason_codes"]
         assert annotations[0]["confidence"] >= 0.9
         assert annotations[0]["confidence_band"] == "high"
         assert result.details["L2-03"].iloc[0] >= 0.9
