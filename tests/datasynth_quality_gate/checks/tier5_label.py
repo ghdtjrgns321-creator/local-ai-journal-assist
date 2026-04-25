@@ -70,10 +70,31 @@ _V: dict[str, str] = {
     # Why: 금요일 심야(DOW=5, hour>=22)도 주말 근무로 분류. 멀티라인 중 1건만 매칭하면 OK.
     "WeekendPosting":        "bool_or(EXTRACT(dow FROM CAST(j.posting_date AS TIMESTAMP)) IN (0,5,6))",
     # Why: Rust는 다양한 지연 기간 생성 (1일~수개월). posting > document_date면 지연.
-    "LatePosting":           "bool_or(CAST(j.posting_date AS DATE)>CAST(j.document_date AS DATE))",
+    "LatePosting":           "bool_or(DATE_DIFF('day',CAST(j.document_date AS DATE),CAST(j.posting_date AS DATE))>30)",
     # Why: 분기말뿐 아니라 모든 월말(26일 이후)에 발생
-    "RushedPeriodEnd":       "bool_or(EXTRACT(day FROM CAST(j.posting_date AS DATE))>=26)",
+    "RushedPeriodEnd":       """bool_or(
+        (
+            EXTRACT(day FROM CAST(j.posting_date AS DATE)) <= 5
+            OR EXTRACT(day FROM CAST(j.posting_date AS DATE)) >= EXTRACT(
+                day FROM date_trunc('month', CAST(j.posting_date AS DATE))
+                + INTERVAL '1 month' - INTERVAL '5 day'
+            )
+        )
+        AND COALESCE(
+            json_extract_string(l.metadata_json, '$.l304_reason'),
+            ''
+        ) IN ('manual', 'high_amount', 'manual_sensitive', 'high_amount_sensitive')
+    )""",
     "UnusualTiming":         "bool_or(EXTRACT(hour FROM CAST(j.posting_date AS TIMESTAMP))>=22 OR EXTRACT(hour FROM CAST(j.posting_date AS TIMESTAMP))<6 OR EXTRACT(dow FROM CAST(j.posting_date AS TIMESTAMP)) IN (0,6))",
+    "AbnormalHoursConcentration": """bool_or(
+        LOWER(COALESCE(j.source, '')) NOT IN ('automated', 'recurring')
+        AND j.created_by IS NOT NULL
+        AND (
+            EXTRACT(hour FROM CAST(j.posting_date AS TIMESTAMP)) >= 18
+            OR EXTRACT(hour FROM CAST(j.posting_date AS TIMESTAMP)) < 6
+            OR EXTRACT(dow FROM CAST(j.posting_date AS TIMESTAMP)) IN (0,6)
+        )
+    )""",
 
     # ── C. 금액 이상 (8개) ──
     "UnusuallyHighAmount":   "MAX(GREATEST(COALESCE(j.debit_amount,0),COALESCE(j.credit_amount,0)))>0",

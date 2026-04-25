@@ -352,16 +352,18 @@ def t2_15(con: duckdb.DuckDBPyConnection, labels_con) -> CheckResult:
 def t2_16(con: duckdb.DuckDBPyConnection, labels_con) -> CheckResult:
     """approved_by 있는데 approval_date 없는 쌍."""
     start = _timer()
-    bad = con.execute("""
+    excl = _excluded_docs(labels_con, ["ApprovalDateMissing"])
+    bad = con.execute(f"""
         SELECT COUNT(*) FROM je
         WHERE approved_by IS NOT NULL AND TRIM(approved_by) != ''
           AND (approval_date IS NULL OR TRIM(CAST(approval_date AS VARCHAR)) = '')
+          AND document_id NOT IN ({excl})
     """).fetchone()[0]
 
     return CheckResult(
         check_id="T2-16", tier=2, name="approved_by↔approval_date 쌍",
         status="PASS" if bad == 0 else "FAIL",
-        expected="approved_by 있는데 approval_date 없음=0",
+        expected="approved_by 있는데 approval_date 없음=0 (ApprovalDateMissing 제외)",
         actual=f"orphan_approval={bad:,}",
         elapsed_ms=_elapsed(start),
     )

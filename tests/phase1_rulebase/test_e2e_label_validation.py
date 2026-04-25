@@ -22,6 +22,12 @@ from src.detection.integrity_layer import IntegrityDetector
 from src.detection.score_aggregator import aggregate_scores
 from src.feature.engine import generate_all_features
 from src.metrics import ground_truth_evaluator as gt_eval
+from src.metrics.rule_mapping import (
+    covered_label_types,
+    get_evaluation_note,
+    get_truth_basis,
+    get_truth_display,
+)
 
 # ── 경로 상수 ──────────────────────────────────────────────
 
@@ -49,20 +55,20 @@ RULE_TO_LABEL: dict[str, list[str]] = {
     "L1-06": ["SegregationOfDutiesViolation"],
     "L3-02": ["ManualOverride"],
     "L1-07": ["SkippedApproval"],
-    "L3-03": ["CircularIntercompany", "CircularTransaction"],
+    "L3-03": ["CircularIntercompany"],
     "L2-04": ["ImproperCapitalization"],
     "L3-04": ["RushedPeriodEnd"],
     "L3-05": ["WeekendPosting"],
-    "L3-06": ["AfterHoursPosting", "UnusualTiming"],
+    "L3-06": ["AfterHoursPosting"],
     "L3-07": ["BackdatedEntry", "LatePosting"],
     "L1-08": ["WrongPeriod"],
-    "L3-08": ["VagueDescription"],
+    "L3-08": ["MissingOrCorruptedDescription"],
     "L4-02": ["BenfordViolation"],
     "L4-03": ["UnusuallyHighAmount", "StatisticalOutlier"],
     "L4-04": ["UnusualAccountPair"],
     "L3-09": [],  # SuspenseAccount — 라벨에 대응 타입 없음
-    "L2-06": ["ReversedAmount"],
-    "L4-05": [],  # AbnormalHoursConcentration — 라벨에 대응 타입 없음
+    "L2-05": ["ReversedAmount"],
+    "L4-05": ["AbnormalHoursConcentration"],
 }
 
 # Why: 룰이 속한 레이어 (details 컬럼에서 조회할 트랙명)
@@ -75,7 +81,7 @@ RULE_TO_LAYER: dict[str, str] = {
     "L3-04": "layer_c", "L3-05": "layer_c", "L3-06": "layer_c",
     "L3-07": "layer_c", "L1-08": "layer_c", "L3-08": "layer_c",
     "L4-02": "benford", "L4-03": "layer_c", "L4-04": "layer_c",
-    "L3-09": "layer_c", "L2-06": "layer_c", "L4-05": "layer_c",
+    "L3-09": "layer_c", "L2-05": "layer_c", "L4-05": "layer_c",
 }
 
 
@@ -154,6 +160,8 @@ def per_rule_label_analysis(
             analysis.append({
                 "rule_id": rule_id,
                 "label_types": label_types,
+                "truth_display": get_truth_display(rule_id),
+                "truth_basis": get_truth_basis(rule_id),
                 "status": "skipped",
                 "reason": f"룰 미실행 (레이어: {layer_name})",
                 "label_docs": 0,
@@ -175,11 +183,7 @@ def per_rule_label_analysis(
         flagged_doc_set = set(df.loc[rule_mask, "document_id"].dropna().unique())
 
         # Why: 라벨에서 해당 anomaly_type에 매칭되는 문서 추출
-        if label_types:
-            label_mask = labels["anomaly_type"].isin(label_types)
-            label_doc_set = set(labels.loc[label_mask, "document_id"].dropna().unique())
-        else:
-            label_doc_set = set()
+        label_doc_set = gt_eval._label_doc_set_for_rule(rule_id, df, labels)
 
         # Why: TP/FP/FN 계산 (문서 단위)
         tp_docs = flagged_doc_set & label_doc_set
@@ -202,8 +206,10 @@ def per_rule_label_analysis(
         analysis.append({
             "rule_id": rule_id,
             "label_types": label_types,
+            "truth_display": get_truth_display(rule_id),
+            "truth_basis": get_truth_basis(rule_id),
             "status": status,
-            "reason": "",
+            "reason": get_evaluation_note(rule_id),
             "label_docs": label_count,
             "flagged_rows": flagged_rows,
             "flagged_docs": len(flagged_doc_set),
@@ -226,6 +232,9 @@ def overall_label_analysis(
 ) -> dict:
     """전체 anomaly_score > 0 기준 문서 단위 recall/precision."""
     labeled_docs = set(labels["document_id"].dropna().unique())
+    labeled_docs.update(gt_eval._label_doc_set_for_rule("L1-01", df, labels))
+    labeled_docs.update(gt_eval._label_doc_set_for_rule("L3-02", df, labels))
+    labeled_docs.update(gt_eval._label_doc_set_for_rule("L3-03", df, labels))
     flagged_mask = agg_df["anomaly_score"] > 0
     flagged_docs = set(df.loc[flagged_mask, "document_id"].dropna().unique())
 
@@ -234,12 +243,12 @@ def overall_label_analysis(
     detected = len(flagged_docs)
 
     # Why: 라벨 중 Phase 1 룰에 매핑되는 것만 분리
-    phase1_types = set()
-    for types in RULE_TO_LABEL.values():
-        phase1_types.update(types)
-
+    phase1_types = covered_label_types()
     p1_mask = labels["anomaly_type"].isin(phase1_types)
     p1_docs = set(labels.loc[p1_mask, "document_id"].dropna().unique())
+    p1_docs.update(gt_eval._label_doc_set_for_rule("L1-01", df, labels))
+    p1_docs.update(gt_eval._label_doc_set_for_rule("L3-02", df, labels))
+    p1_docs.update(gt_eval._label_doc_set_for_rule("L3-03", df, labels))
     p1_tp = len(p1_docs & flagged_docs)
 
     # Why: Phase 2/3 전용 라벨 (현재 탐지 대상 아님)
@@ -263,9 +272,7 @@ def overall_label_analysis(
 
 def uncovered_label_analysis(labels: pd.DataFrame) -> list[dict]:
     """Phase 1 룰에 매핑되지 않는 라벨 타입 목록."""
-    covered_types = set()
-    for types in RULE_TO_LABEL.values():
-        covered_types.update(types)
+    covered_types = covered_label_types()
 
     all_types = labels["anomaly_type"].value_counts()
     uncovered = []
@@ -356,7 +363,7 @@ def generate_report(
     )
 
     for r in per_rule:
-        label_str = ",".join(r["label_types"]) if r["label_types"] else "(없음)"
+        label_str = r.get("truth_display") or (",".join(r["label_types"]) if r["label_types"] else "(없음)")
         if len(label_str) > 28:
             label_str = label_str[:25] + "..."
         recall_str = f"{r['recall']:.0%}" if r["recall"] is not None else "—"

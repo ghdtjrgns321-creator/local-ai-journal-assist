@@ -213,6 +213,21 @@ def l3_04_normal_data_completeness(con: duckdb.DuckDBPyConnection) -> CheckResul
     if night == 0:
         missing.append("night_posting(22~06)")
 
+    recurring_close = con.execute("""
+        SELECT COUNT(*) FROM je
+        WHERE is_fraud != 'true' AND is_anomaly != 'true'
+          AND LOWER(source) = 'recurring'
+          AND LOWER(user_persona) = 'automated_system'
+          AND (
+              LOWER(COALESCE(header_text, '')) LIKE '%depreciation%'
+              OR LOWER(COALESCE(header_text, '')) LIKE '%allocation%'
+              OR LOWER(COALESCE(header_text, '')) LIKE '%revaluation%'
+              OR LOWER(COALESCE(header_text, '')) LIKE '%close%'
+          )
+    """).fetchone()[0]
+    if recurring_close == 0:
+        missing.append("recurring_close_whitelist_pattern")
+
     status = "PASS" if len(missing) == 0 else "FAIL"
     return CheckResult(
         check_id="L3-04", tier=3, name="normal data completeness",
