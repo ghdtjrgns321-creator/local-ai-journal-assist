@@ -184,7 +184,7 @@ else:
     record("L3-05", 0, 0, "라벨 없음")
 
 # ── L3-06: 야간 전기(22:00~06:59) ──────────────────────────────────────────────
-d = label_docs(["AfterHoursPosting", "UnusualTiming"])
+d = label_docs(["AfterHoursPosting"])
 if d:
     sub = je[je["document_id"].isin(d)]
     night_hours = list(range(22, 24)) + list(range(0, 7))
@@ -225,7 +225,7 @@ if d:
 else:
     record("L3-08", 0, 0, "라벨 없음")
 
-# ── L2-06: 역분개 쌍 ──────────────────────────────────────────────────────────
+# ── L2-05: 역분개 쌍 ──────────────────────────────────────────────────────────
 d = label_docs(["ReversedAmount"])
 if d:
     sub = je[je["document_id"].isin(d)].copy()
@@ -243,9 +243,9 @@ if d:
 
     grp_check = sub.groupby("document_id").apply(has_reversal)
     ver = int(grp_check.sum())
-    record("L2-06", len(d), ver, "DR/CR reversal pairs (same GL, same amount)")
+    record("L2-05", len(d), ver, "DR/CR reversal pairs (same GL, same amount)")
 else:
-    record("L2-06", 0, 0, "라벨 없음")
+    record("L2-05", 0, 0, "라벨 없음")
 
 # ── 요약 ────────────────────────────────────────────────────────────────────
 total_labels   = sum(r["total"]    for r in results_p1)

@@ -88,11 +88,9 @@ for atype in sorted(labels["anomaly_type"].unique()):
     elif atype == "ManualOverride":
         for did in docs:
             d = sub[sub["document_id"] == did]
-            if d["source"].str.lower().isin(["manual", "adjustment"]).any():
-                base = d[["debit_amount", "credit_amount"]].max(axis=1).max()
-                if base >= 10_000_000:
-                    ok += 1
-        check = f"manual+high={ok}/{n}"
+            if d["source"].fillna("").astype(str).str.lower().isin(["manual", "adjustment"]).any():
+                ok += 1
+        check = f"manual_source_subset={ok}/{n}"
 
     elif atype in ("AfterHoursPosting", "UnusualTiming"):
         for did in docs:

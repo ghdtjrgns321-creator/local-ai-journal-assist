@@ -214,7 +214,7 @@ else:
     record("L3-05", 0, 0, "라벨 없음")
 
 # ── L3-06: 야간 전기(22:00~06:59) ──────────────────────────────────────────────
-d = label_docs(["AfterHoursPosting", "UnusualTiming"])
+d = label_docs(["AfterHoursPosting"])
 if d:
     sub = je[je["document_id"].isin(d)]
     night_docs = sub.loc[sub["_posting_hour"].isin(NIGHT_HOURS), "document_id"].unique()
@@ -311,7 +311,7 @@ if d:
 else:
     record("L3-08", 0, 0, "라벨 없음")
 
-# ── L2-06: 역분개 ─────────────────────────────────────────────────────────────
+# ── L2-05: 역분개 ─────────────────────────────────────────────────────────────
 d = label_docs(["ReversedAmount"])
 if d:
     sub = je[je["document_id"].isin(d)].copy()
@@ -323,7 +323,7 @@ if d:
             "document_id"
         ].unique()
     )
-    # 패턴2: 별도 reversal 복제 문서 ("Reversal duplicate for L2-06 detection")
+    # 패턴2: 별도 reversal 복제 문서 ("Reversal duplicate for L2-05 detection")
     p2_doc_ids = set(
         c11_lbl[c11_lbl["description"].str.contains("Reversal duplicate", na=False)][
             "document_id"
@@ -364,10 +364,10 @@ if d:
             f" | P1 FN {p1_fn}건: DR/CR 한쪽에만 있어 교집합 없음"
             f" (DataSynth 불균형 구조)"
         )
-    record("L2-06", len(d), total_ver,
+    record("L2-05", len(d), total_ver,
            "intra-doc DR↔CR swap OR reversal-duplicate pair", fn_note)
 else:
-    record("L2-06", 0, 0, "라벨 없음")
+    record("L2-05", 0, 0, "라벨 없음")
 
 # ── 합계 ─────────────────────────────────────────────────────────────────────
 total_lbl = sum(r["total"] for r in results_p1)

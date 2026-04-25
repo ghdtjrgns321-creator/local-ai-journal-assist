@@ -366,9 +366,9 @@ for atype in sorted(label_map.keys()):
     elif atype == "ManualOverride":
         for did in docs:
             d = sub[sub["document_id"] == did]
-            if not d.empty and str(d.iloc[0].get("source", "")).lower() in ("manual",):
+            if not d.empty and str(d.iloc[0].get("source", "")).lower() in ("manual", "adjustment"):
                 ok += 1
-        check = f"manual={ok}/{n}"
+        check = f"manual_source_subset={ok}/{n}"
 
     elif atype == "DuplicatePayment":
         # Why: vendor+금액 쌍 존재 여부 검증
