@@ -1,4 +1,4 @@
-"""Tier A E2E: datasynth(1M건) → ingest → feature 20개 전체 검증.
+"""Tier A E2E: datasynth(1M건) → ingest → feature 전체 검증.
 
 journal_entries.csv는 표준 컬럼명과 동일 → identity mapping fast path.
 """
@@ -60,10 +60,13 @@ class TestDataSynthE2E:
         result = generate_all_features(ingested_df)
         return (ingested_df, result, row_count_before)
 
-    def test_all_20_features_generated(self, pipeline_result):
-        """20개 피처 전부 생성되어야 한다 (WU-19: morpheme_tokens 추가)."""
+    def test_all_expected_features_generated(self, pipeline_result):
+        """기대 피처 전부 생성되어야 한다."""
         _, result, _ = pipeline_result
-        assert len(result.added_columns) == 20, (
+        from src.feature.engine import EXPECTED_COLUMNS
+
+        expected_count = sum(len(cols) for cols in EXPECTED_COLUMNS.values())
+        assert len(result.added_columns) == expected_count, (
             f"생성: {len(result.added_columns)}, missing: {result.missing_columns}"
         )
         assert result.missing_columns == []
@@ -93,11 +96,15 @@ class TestDataSynthE2E:
                          "fiscal_period_mismatch", "is_holiday",
                          "is_near_threshold", "exceeds_threshold", "is_round_number",
                          "is_manual_je", "is_intercompany", "is_revenue_account",
-                         "is_suspense_account"}
+                         "is_suspense_account",
+                         "description_line_missing", "description_header_missing",
+                         "description_both_missing",
+                         "description_line_missing_header_present",
+                         "description_is_missing_or_corrupted"}
         expected_float = {"amount_zscore", "amount_magnitude"}
         # Why: days_backdated는 정수 일수(Int64), first_digit도 Int64
         expected_int = {"first_digit", "days_backdated"}
-        # Why: has_risk_keyword는 "low"/"medium"/"high" str, description_quality·time_zone_category도 str
+        # Why: keyword/description/time-zone labels are categorical strings.
         expected_str = {"has_risk_keyword", "description_quality", "time_zone_category"}
 
         for col in expected_bool:

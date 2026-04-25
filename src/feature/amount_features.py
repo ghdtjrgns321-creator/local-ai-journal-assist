@@ -223,13 +223,12 @@ def add_is_near_threshold(
     우선순위:
     1. 직원 마스터에서 approved_by의 approval_limit를 조회할 수 있으면
        document total 기준으로 approval_limit * ratio ≤ amount < approval_limit 판정
-    2. approval_limit를 알 수 없는 행만 공통 thresholds 구간으로 fallback
+    2. approval_limit를 알 수 없으면 L2-01로 판정하지 않음
     """
     threshold_amount = _compute_document_amount(df, base)
     approver_limit = _compute_approver_limit(df)
 
     near = pd.Series(False, index=df.index)
-    unresolved = pd.Series(True, index=df.index)
 
     if approver_limit is not None:
         resolved = approver_limit.notna()
@@ -237,16 +236,6 @@ def add_is_near_threshold(
             (threshold_amount >= approver_limit * ratio)
             & (threshold_amount < approver_limit)
         )
-        unresolved = ~resolved
-
-    if thresholds:
-        for t in sorted(thresholds):
-            lower = t * ratio
-            near = near | (
-                unresolved
-                & (threshold_amount >= lower)
-                & (threshold_amount < t)
-            )
 
     df["is_near_threshold"] = near.fillna(False)
     return df

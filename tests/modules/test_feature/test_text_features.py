@@ -16,8 +16,8 @@ from src.feature.text_features import (
     add_all_text_features,
     add_description_quality,
     add_has_risk_keyword,
+    build_description_quality_profile,
 )
-
 
 # ── _combine_text ────────────────────────────────────────────────
 
@@ -121,6 +121,11 @@ class TestIsNoisePattern:
     @pytest.mark.parametrize("text", ["비품비품비품", "ABCABCABC"])
     def test_repeat_word(self, text):
         """다문자 패턴 3회+ 반복."""
+        assert _is_noise_pattern(text) is True
+
+    @pytest.mark.parametrize("text", ["x", "X", "n/a", "NA", "null"])
+    def test_placeholder_garbage(self, text):
+        """명백한 placeholder garbage."""
         assert _is_noise_pattern(text) is True
 
     def test_two_repeat_not_noise(self):
@@ -229,21 +234,21 @@ class TestMatchRiskLevel:
 
 
 class TestDescriptionQuality:
-    """적요 품질 3단계 판정."""
+    """적요 결손/파손 3단계 판정."""
 
     def test_basic_cases(self, xt_base_df):
-        """normal/missing/poor 기본 판정."""
+        """normal/missing/corrupted 기본 판정."""
         result = add_description_quality(xt_base_df)
         q = result["description_quality"]
         # idx 0: "상품권 구매 월말 정리" → normal
         assert q.iloc[0] == "normal"
         # idx 4: 둘 다 None → missing
         assert q.iloc[4] == "missing"
-        # idx 5: "AB" (len=2 < 3) → poor
-        assert q.iloc[5] == "poor"
+        # idx 5: "AB" → 의미 판단 대상이 아니므로 normal
+        assert q.iloc[5] == "normal"
 
     def test_concat_rescue(self, xt_base_df):
-        """line만으로는 poor이지만, header와 concat → normal로 구제."""
+        """line과 header를 concat해서 결손 여부를 판단."""
         result = add_description_quality(xt_base_df)
         q = result["description_quality"]
         # idx 6: "식대"(2글자) + "3월 영업부 법인카드" → concat → normal
@@ -257,23 +262,22 @@ class TestDescriptionQuality:
         assert q.iloc[3] == "normal"
 
     def test_noise_is_poor(self, xt_noise_df):
-        """노이즈 패턴은 poor로 분류."""
+        """노이즈 패턴은 corrupted로 분류."""
         result = add_description_quality(xt_noise_df)
         q = result["description_quality"]
-        # "ㅋㅋㅋ", "...", "aaa" → poor
-        assert q.iloc[0] == "poor"
-        assert q.iloc[1] == "poor"
-        assert q.iloc[2] == "poor"
-        # "ㅎㅎ" → jamo + len=2 → poor
-        assert q.iloc[3] == "poor"
+        # "ㅋㅋㅋ", "...", "aaa", "ㅎㅎ" → corrupted
+        assert q.iloc[0] == "corrupted"
+        assert q.iloc[1] == "corrupted"
+        assert q.iloc[2] == "corrupted"
+        assert q.iloc[3] == "corrupted"
         # "정상 적요" → normal
         assert q.iloc[4] == "normal"
 
     def test_custom_min_length(self):
-        """min_length 커스텀 값."""
+        """min_length는 과거 API 호환용이며 L3-08 판정에 쓰지 않는다."""
         df = pd.DataFrame({"line_text": ["ABCD"], "header_text": [None]})
         result = add_description_quality(df, min_length=5)
-        assert result["description_quality"].iloc[0] == "poor"
+        assert result["description_quality"].iloc[0] == "normal"
 
     def test_strip_length_not_cleaned(self):
         """strip 원본 길이 사용 — 공백 포함."""
@@ -282,25 +286,25 @@ class TestDescriptionQuality:
         result = add_description_quality(df, min_length=3)
         assert result["description_quality"].iloc[0] == "normal"
 
-    # ── Phase 2: TTR + Entropy 고도화 (WU-11) ────────────────
+    # ── Phase 1 scope: 의미적 충분성 판정 제외 ────────────────
 
-    def test_low_ttr_is_poor(self):
-        """동일 단어 반복 → TTR < 0.3 → poor."""
+    def test_low_ttr_is_not_flagged_by_phase1(self):
+        """동일 단어 반복은 Phase 1 L3-08에서 의미 판단하지 않는다."""
         df = pd.DataFrame({
             "line_text": ["비품 비품 비품 비품 비품"],
             "header_text": [None],
         })
         result = add_description_quality(df, ttr_threshold=0.3)
-        assert result["description_quality"].iloc[0] == "poor"
+        assert result["description_quality"].iloc[0] == "normal"
 
-    def test_low_entropy_is_poor(self):
-        """저엔트로피 텍스트 → poor."""
+    def test_low_entropy_is_not_flagged_by_phase1(self):
+        """저엔트로피라도 명백한 garbage가 아니면 normal."""
         df = pd.DataFrame({
             "line_text": ["aaab"],
             "header_text": [None],
         })
         result = add_description_quality(df, entropy_threshold=1.0)
-        assert result["description_quality"].iloc[0] == "poor"
+        assert result["description_quality"].iloc[0] == "normal"
 
     def test_normal_ttr_and_entropy(self):
         """정상 적요는 TTR/entropy 체크를 통과하여 여전히 normal."""
@@ -312,13 +316,48 @@ class TestDescriptionQuality:
         assert result["description_quality"].iloc[0] == "normal"
 
     def test_multi_char_repeat_noise_is_poor(self):
-        """다문자 반복 → noise → poor."""
+        """공백 없는 다문자 반복 → corrupted."""
         df = pd.DataFrame({
             "line_text": ["비품비품비품"],
             "header_text": [None],
         })
         result = add_description_quality(df)
-        assert result["description_quality"].iloc[0] == "poor"
+        assert result["description_quality"].iloc[0] == "corrupted"
+
+    def test_diagnostic_flags(self):
+        """line/header 결손 상태를 rule flag와 별도로 남긴다."""
+        df = pd.DataFrame({
+            "line_text": [None, None, "x", "정상"],
+            "header_text": [None, "헤더 설명", None, None],
+        })
+        result = add_description_quality(df)
+
+        assert result["description_both_missing"].tolist() == [True, False, False, False]
+        assert result["description_line_missing_header_present"].tolist() == [
+            False, True, False, False,
+        ]
+        assert result["description_is_missing_or_corrupted"].tolist() == [
+            True, False, True, False,
+        ]
+
+    def test_description_quality_profile(self):
+        """source/process/document_type별 결손률 프로파일 생성."""
+        df = pd.DataFrame({
+            "source": ["manual", "manual", "batch", "batch"],
+            "business_process": ["R2R", "R2R", "P2P", "P2P"],
+            "document_type": ["SA", "SA", "KR", "KR"],
+            "line_text": [None, "정상", None, None],
+            "header_text": [None, None, "헤더 설명", None],
+        })
+        add_description_quality(df)
+        profile = build_description_quality_profile(df)
+
+        manual = profile[profile["source"].eq("manual")].iloc[0]
+        batch = profile[profile["source"].eq("batch")].iloc[0]
+        assert manual["row_count"] == 2
+        assert manual["missing_or_corrupted_rows"] == 1
+        assert manual["missing_or_corrupted_rate"] == pytest.approx(0.5)
+        assert batch["line_missing_header_present_rows"] == 1
 
 
 # ── add_has_risk_keyword ─────────────────────────────────────────
@@ -377,9 +416,11 @@ class TestAddAllTextFeatures:
     """orchestrator — 2개 컬럼 동시 생성."""
 
     def test_creates_both_columns(self, xt_base_df):
-        """description_quality + has_risk_keyword 컬럼 생성."""
+        """description_quality + diagnostics + has_risk_keyword 컬럼 생성."""
         result = add_all_text_features(xt_base_df)
         assert "description_quality" in result.columns
+        assert "description_both_missing" in result.columns
+        assert "description_is_missing_or_corrupted" in result.columns
         assert "has_risk_keyword" in result.columns
 
     def test_no_text_columns(self, xt_no_text_cols_df):

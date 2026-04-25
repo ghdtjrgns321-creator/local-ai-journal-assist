@@ -53,7 +53,7 @@ def add_is_intercompany(
 ) -> pd.DataFrame:
     """L3-03: 관계사 거래 여부. gl_account에서 IC 전용 계정 prefix 매칭.
 
-    감사 관점: 관계사 거래는 순환거래·이전가격 위험.
+    감사 관점: 관계사 거래는 특수관계자 거래 검토, 대사, 이전가격 검토의 후보 신호.
     identifiers는 관계사 채권/채무 GL 계정 prefix 목록 — UI에서 입력.
     """
     if not identifiers:

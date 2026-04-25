@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import pandas as pd
-import pytest
 
 from config.settings import AuditSettings
 from src.feature.engine import (
@@ -16,7 +15,7 @@ from src.feature.engine import (
     generate_all_features,
 )
 
-# 전체 20개 기대 컬럼 평탄화 (time 7 + amount 5 + pattern 5 + text 3)
+# 전체 기대 컬럼 평탄화 (time 7 + amount 5 + pattern 5 + text 8)
 _ALL_EXPECTED = [col for cols in EXPECTED_COLUMNS.values() for col in cols]
 
 
@@ -26,8 +25,8 @@ _ALL_EXPECTED = [col for cols in EXPECTED_COLUMNS.values() for col in cols]
 class TestGenerateAllFeatures:
     """풀 스펙 df → 전체 카테고리 실행 검증."""
 
-    def test_all_20_columns_present(self, en_full_df: pd.DataFrame) -> None:
-        """20개 피처 컬럼이 모두 생성되는지 확인 (WU-19: morpheme_tokens 추가)."""
+    def test_all_expected_columns_present(self, en_full_df: pd.DataFrame) -> None:
+        """기대 피처 컬럼이 모두 생성되는지 확인."""
         result = generate_all_features(en_full_df)
         for col in _ALL_EXPECTED:
             assert col in result.data.columns, f"{col} 컬럼 누락"
@@ -37,7 +36,7 @@ class TestGenerateAllFeatures:
         result = generate_all_features(en_full_df)
 
         assert isinstance(result, FeatureResult)
-        assert len(result.added_columns) == 20
+        assert len(result.added_columns) == len(_ALL_EXPECTED)
         assert result.missing_columns == []
         assert set(result.categories_run) == {"time", "amount", "pattern", "text"}
         assert len(result.execution_times) == 4
@@ -137,11 +136,11 @@ class TestIdempotency:
         assert col_count_1 == col_count_2
 
     def test_run_twice_metadata_consistent(self, en_full_df: pd.DataFrame) -> None:
-        """2회째에도 added_columns=20개 유지."""
+        """2회째에도 added_columns 개수 유지."""
         generate_all_features(en_full_df)
         result2 = generate_all_features(en_full_df)
 
-        assert len(result2.added_columns) == 20
+        assert len(result2.added_columns) == len(_ALL_EXPECTED)
         assert result2.missing_columns == []
 
 
@@ -187,17 +186,15 @@ class TestSettingsInjection:
     """설정/룰 주입 검증."""
 
     def test_custom_settings(self, en_full_df: pd.DataFrame) -> None:
-        """approval_thresholds 변경 → is_near_threshold 결과 달라짐."""
-        # 기본 thresholds=[10M,100M,1B,...] → 45M은 near 구간 밖
+        """approval_thresholds 변경 → exceeds_threshold 결과 달라짐."""
         result_default = generate_all_features(en_full_df.copy())
-        default_near = result_default.data["is_near_threshold"].tolist()
+        default_exceeds = result_default.data["exceeds_threshold"].tolist()
 
-        # thresholds=[50M]으로 변경 → 45M은 near (45M >= 50M*0.9=45M)
-        custom = AuditSettings(approval_thresholds=[50_000_000])
+        custom = AuditSettings(approval_thresholds=[1_000])
         result_custom = generate_all_features(en_full_df.copy(), settings=custom)
-        custom_near = result_custom.data["is_near_threshold"].tolist()
+        custom_exceeds = result_custom.data["exceeds_threshold"].tolist()
 
-        assert default_near != custom_near
+        assert default_exceeds != custom_exceeds
 
     def test_custom_rules(self, en_full_df: pd.DataFrame) -> None:
         """manual_codes 변경 → is_manual_je 결과 달라짐."""

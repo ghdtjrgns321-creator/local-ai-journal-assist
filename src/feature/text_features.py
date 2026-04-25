@@ -4,7 +4,7 @@ L3-08 룰 + WU-19 NLP 기초 — description_quality, has_risk_keyword, morpheme
 ingest 완료된 표준 DataFrame을 입력으로 받는다.
 
 핵심 설계 — 같은 원본 텍스트를 **2가지 버전**으로 정제:
-  combined_text : strip()만 → description_quality (공백 포함 원본 길이)
+  combined_text : strip()만 → description_quality (결손/파손 여부)
   cleaned_text  : 한글+영숫자 외 제거 → has_risk_keyword (은폐 패턴 관통)
 
 WU-19: kiwipiepy 형태소 분석 — morpheme_tokens (list[str]).
@@ -33,6 +33,7 @@ _RE_SPECIAL_ONLY = re.compile(r"^[^가-힣a-zA-Z0-9]+$")
 _RE_REPEAT_CHAR = re.compile(r"^(.)\1{2,}$")
 # 한계: 공백 포함 반복("비품 비품 비품")은 TTR 체크에서 처리됨
 _RE_REPEAT_WORD = re.compile(r"^(.{2,})\1{2,}$")  # "비품비품비품" (2글자+가 3회+ 반복)
+_GARBAGE_TOKENS = frozenset({"x", "xx", "n/a", "na", "null", "none"})
 
 # 한글 음절 탐지 — _has_korean 분기용 (kiwipiepy 호출 회피)
 _RE_HANGUL = re.compile(r"[가-힣]")
@@ -62,6 +63,13 @@ def _combine_text(df: pd.DataFrame) -> pd.Series:
     return combined.replace("", pd.NA)
 
 
+def _text_field_missing(df: pd.DataFrame, column: str) -> pd.Series:
+    """Return True when a text field is absent, null, or blank."""
+    if column not in df.columns:
+        return pd.Series(True, index=df.index)
+    return df[column].isna() | df[column].astype(str).str.strip().eq("")
+
+
 def _clean_for_keyword(series: pd.Series) -> pd.Series:
     """키워드 매칭 전용 정제 — 한글+영숫자 외 제거.
 
@@ -79,7 +87,10 @@ def _is_noise_pattern(text: str) -> bool:
     """
     if not text:
         return False
+    normalized = text.strip().lower()
     return bool(
+        normalized in _GARBAGE_TOKENS
+        or
         _RE_JAMO_ONLY.match(text)
         or _RE_SPECIAL_ONLY.match(text)
         or _RE_REPEAT_CHAR.match(text)
@@ -181,22 +192,23 @@ def _tokenize_kiwi(texts: list[str]) -> list[list[str]]:
       - 한국어 없는 행은 미리 걸러내 Kiwi 호출 자체를 회피.
       - 원본 인덱스 보존을 위해 (idx, text) 쌍으로 필터링 → 결과 역매핑.
     """
-    # 1) 한글이 있는 행만 인덱스와 함께 추출
-    korean_indices: list[int] = []
-    korean_texts: list[str] = []
-    for i, text in enumerate(texts):
-        if _has_korean(text):
-            korean_indices.append(i)
-            korean_texts.append(text)
-
-    # 2) 전체 결과를 빈 리스트로 초기화 (영문/빈값 → [])
+    # 1) 전체 결과를 빈 리스트로 초기화 (영문/빈값 → [])
     results: list[list[str]] = [[] for _ in range(len(texts))]
 
+    # 2) 반복 적요가 많으므로 unique 텍스트 단위로만 Kiwi를 호출한다.
+    text_to_indices: dict[str, list[int]] = {}
+    for i, text in enumerate(texts):
+        if _has_korean(text):
+            text_to_indices.setdefault(text, []).append(i)
+
     # 3) 한국어가 하나라도 있을 때만 Kiwi 싱글톤 로드 + 배치 호출
-    if korean_texts:
+    if text_to_indices:
+        unique_texts = list(text_to_indices.keys())
         kiwi = _get_kiwi()
-        for idx, tokens in zip(korean_indices, kiwi.tokenize(korean_texts)):
-            results[idx] = [t.form for t in tokens if t.tag in _MORPHEME_TAGS]
+        for text, tokens in zip(unique_texts, kiwi.tokenize(unique_texts)):
+            forms = [t.form for t in tokens if t.tag in _MORPHEME_TAGS]
+            for idx in text_to_indices[text]:
+                results[idx] = forms
 
     return results
 
@@ -210,30 +222,114 @@ def add_description_quality(
     ttr_threshold: float = 0.3,
     entropy_threshold: float = 1.0,
 ) -> pd.DataFrame:
-    """L3-08: 적요 품질 3단계 — missing / poor / normal.
+    """L3-08: 적요 결손/파손 3단계 — missing / corrupted / normal.
 
-    combined_text(strip 버전) 사용 — 공백 포함 원본 길이로 판정.
-    판정 흐름: NaN→missing → noise→poor → 짧음→poor → TTR<0.3→poor → entropy<1.0→poor → normal.
+    Phase 1에서는 설명의 의미적 충분성을 판단하지 않는다.
+    공백/누락은 missing, 특수문자·자모·명백한 반복 문자열은 corrupted,
+    그 외는 normal로 둔다. min_length/ttr/entropy 인자는 과거 API 호환용으로만 유지한다.
     """
+    _ = (min_length, ttr_threshold, entropy_threshold)
     combined = _combine_text(df)
+    text_cols = [col for col in ("line_text", "header_text", "description") if col in df.columns]
 
     def _classify(text: object) -> str:
         if pd.isna(text):
             return "missing"
         s = str(text)
         if _is_noise_pattern(s):
-            return "poor"
-        if len(s) < min_length:
-            return "poor"
-        # Phase 2: TTR + Entropy 체크 (길이 통과한 텍스트만)
-        if _compute_ttr(s) < ttr_threshold:
-            return "poor"
-        if _compute_entropy(s) < entropy_threshold:
-            return "poor"
+            return "corrupted"
         return "normal"
 
     df["description_quality"] = combined.map(_classify)
+    if text_cols:
+        per_field_noise = pd.Series(False, index=df.index)
+        any_present = pd.Series(False, index=df.index)
+        all_present_noise = pd.Series(True, index=df.index)
+        for col in text_cols:
+            values = df[col]
+            present = values.notna() & values.astype(str).str.strip().ne("")
+            noise = values.fillna("").astype(str).map(
+                lambda value: _is_noise_pattern(value.strip())
+            )
+            any_present = any_present | present
+            all_present_noise = all_present_noise & (~present | noise)
+            per_field_noise = per_field_noise | (present & noise)
+        # Handles cases like line_text='x' and header_text='x'. The combined
+        # string is "x x", but every populated source field is still garbage.
+        df.loc[
+            any_present & per_field_noise & all_present_noise,
+            "description_quality",
+        ] = "corrupted"
+    add_description_diagnostics(df)
     return df
+
+
+def add_description_diagnostics(df: pd.DataFrame) -> pd.DataFrame:
+    """Add Phase 1 operational diagnostics for description coverage.
+
+    These columns do not make the L3-08 rule smarter. They explain whether the hit came
+    from both fields being empty, a line-only gap, or explicit corruption.
+    """
+    line_missing = _text_field_missing(df, "line_text")
+    header_missing = _text_field_missing(df, "header_text")
+
+    df["description_line_missing"] = line_missing
+    df["description_header_missing"] = header_missing
+    df["description_both_missing"] = line_missing & header_missing
+    df["description_line_missing_header_present"] = line_missing & ~header_missing
+    df["description_is_missing_or_corrupted"] = df["description_quality"].isin(
+        ["missing", "corrupted", "poor"]
+    )
+    return df
+
+
+def build_description_quality_profile(
+    df: pd.DataFrame,
+    group_cols: tuple[str, ...] = ("source", "business_process", "document_type"),
+) -> pd.DataFrame:
+    """Summarize description coverage by available operational dimensions.
+
+    Intended for Phase 1 diagnostics, not for changing L3-08 flags.
+    """
+    if "description_quality" not in df.columns:
+        add_description_quality(df)
+
+    available = [col for col in group_cols if col in df.columns]
+    if not available:
+        available = ["__all__"]
+        work = df.copy()
+        work["__all__"] = "all"
+    else:
+        work = df
+
+    metrics = [
+        "description_both_missing",
+        "description_line_missing_header_present",
+        "description_is_missing_or_corrupted",
+    ]
+    missing_metrics = [col for col in metrics if col not in work.columns]
+    if missing_metrics:
+        add_description_diagnostics(work)
+
+    grouped = work.groupby(available, dropna=False)
+    profile = grouped.agg(
+        row_count=("description_quality", "size"),
+        missing_or_corrupted_rows=("description_is_missing_or_corrupted", "sum"),
+        both_missing_rows=("description_both_missing", "sum"),
+        line_missing_header_present_rows=("description_line_missing_header_present", "sum"),
+    ).reset_index()
+
+    denominator = profile["row_count"].where(profile["row_count"] > 0, 1)
+    profile["missing_or_corrupted_rate"] = (
+        profile["missing_or_corrupted_rows"] / denominator
+    )
+    profile["both_missing_rate"] = profile["both_missing_rows"] / denominator
+    profile["line_missing_header_present_rate"] = (
+        profile["line_missing_header_present_rows"] / denominator
+    )
+    if "__all__" in profile.columns:
+        profile = profile.drop(columns=["__all__"])
+    return profile
 
 
 def add_has_risk_keyword(
@@ -569,8 +665,9 @@ def add_all_text_features(
     """텍스트 파생변수를 한번에 추가. engine.py 진입점.
 
     생성 컬럼:
-      - description_quality : missing / poor / normal (L3-08)
-      - has_risk_keyword    : high / medium / low (L3-08)
+      - description_quality : missing / corrupted / normal (L3-08)
+      - description_*        : L3-08 운영 진단용 결손/파손 coverage flags
+      - has_risk_keyword    : high / medium / low (NLP/semantic 보조 피처)
       - morpheme_tokens     : list[str] — WU-19 형태소 토큰 (WU-21 전처리)
 
     Warning: df를 in-place로 수정하고 동일 객체를 반환한다.

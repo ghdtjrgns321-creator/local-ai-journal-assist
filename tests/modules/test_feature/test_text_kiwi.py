@@ -248,12 +248,13 @@ class TestKiwiSingleton:
 class TestOrchestratorIntegration:
     """add_all_text_features에 morpheme_tokens가 함께 생성되는지 회귀 방지."""
 
-    def test_all_three_columns_created(self, xt_base_df):
-        """description_quality + has_risk_keyword + morpheme_tokens 3개 컬럼."""
+    def test_text_columns_created(self, xt_base_df):
+        """description diagnostics + has_risk_keyword + morpheme_tokens 생성."""
         from src.feature.text_features import add_all_text_features
 
         result = add_all_text_features(xt_base_df)
         assert "description_quality" in result.columns
+        assert "description_is_missing_or_corrupted" in result.columns
         assert "has_risk_keyword" in result.columns
         assert "morpheme_tokens" in result.columns
 

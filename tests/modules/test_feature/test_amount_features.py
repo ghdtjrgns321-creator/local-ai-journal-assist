@@ -57,7 +57,7 @@ class TestBaseAmount:
 
 
 class TestIsNearThreshold:
-    """L2-01: 승인권자 한도 우선, 미확인 시 공통 threshold fallback."""
+    """L2-01: 승인권자 한도가 확인되는 경우에만 판정."""
 
     THRESHOLDS = [10_000_000, 100_000_000, 1_000_000_000]
     RATIO = 0.90
@@ -137,8 +137,8 @@ class TestIsNearThreshold:
 
         assert not df["is_near_threshold"].any()
 
-    def test_fallback_to_common_threshold_when_approver_limit_missing(self):
-        """approval_limit를 알 수 없으면 공통 thresholds로 fallback."""
+    def test_missing_approver_limit_is_not_flagged(self):
+        """approval_limit를 알 수 없으면 L2-01로 판정하지 않는다."""
         base = pd.Series([95_000_000])
         df = pd.DataFrame({
             "document_id": ["A"],
@@ -147,10 +147,10 @@ class TestIsNearThreshold:
             "credit_amount": [0],
         })
         add_is_near_threshold(df, base, self.THRESHOLDS, self.RATIO)
-        assert df["is_near_threshold"].iloc[0] == True
+        assert df["is_near_threshold"].iloc[0] == False
 
-    def test_between_levels_not_near_under_fallback(self):
-        """fallback 공통 thresholds에서도 어떤 구간에도 안 들어가면 False."""
+    def test_common_thresholds_do_not_apply_without_approver_limit(self):
+        """공통 approval_thresholds는 L2-01 fallback으로 쓰지 않는다."""
         base = pd.Series([20_000_000])
         df = pd.DataFrame({
             "document_id": ["A"],

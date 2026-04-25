@@ -1,10 +1,10 @@
 """피처 엔진 — 4개 서브모듈 오케스트레이터.
 
-generate_all_features() 하나로 19개 감사 파생변수 + 1개 NLP 임시 컬럼(morpheme_tokens)을 일괄 생성.
+generate_all_features() 하나로 감사 파생변수 + NLP 임시 컬럼(morpheme_tokens)을 일괄 생성.
 후행 모듈(validation, detection, pipeline)의 단일 진입점.
 
-Why "19개": DB(`general_ledger`)에 적재되는 파생 컬럼은 19개.
-            morpheme_tokens는 WU-21 NLP 전처리용 임시 리스트라 DB 저장 대상이 아님.
+Why: 일부 텍스트 coverage 컬럼은 Phase 1 운영 진단용이며, morpheme_tokens는 WU-21
+     NLP 전처리용 임시 리스트라 DB 저장 대상이 아님.
 """
 
 from __future__ import annotations
@@ -56,7 +56,14 @@ _INPUT_COLUMNS: dict[FeatureCategory, list[str]] = {
         "currency",
         "approved_by",
     ],
-    FeatureCategory.PATTERN: ["source", "gl_account", "line_text", "header_text", "debit_amount", "credit_amount"],
+    FeatureCategory.PATTERN: [
+        "source",
+        "gl_account",
+        "line_text",
+        "header_text",
+        "debit_amount",
+        "credit_amount",
+    ],
     FeatureCategory.TEXT: ["line_text", "header_text"],
 }
 
@@ -87,6 +94,11 @@ EXPECTED_COLUMNS: dict[FeatureCategory, list[str]] = {
     ],
     FeatureCategory.TEXT: [
         "description_quality",
+        "description_line_missing",
+        "description_header_missing",
+        "description_both_missing",
+        "description_line_missing_header_present",
+        "description_is_missing_or_corrupted",
         "has_risk_keyword",
         "morpheme_tokens",  # WU-19: kiwipiepy 형태소 토큰 리스트 (WU-21 전처리)
     ],
@@ -126,7 +138,7 @@ def generate_all_features(
     parallel: bool = False,
     max_workers: int | None = None,
 ) -> FeatureResult:
-    """19개 감사 파생변수(+1 NLP 임시)를 일괄 생성하는 단일 진입점.
+    """감사 파생변수와 NLP 임시 컬럼을 일괄 생성하는 단일 진입점.
 
     Parameters
     ----------
