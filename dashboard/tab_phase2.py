@@ -98,6 +98,8 @@ def _build_performance_rule_frame(report: PerformanceReport) -> pd.DataFrame:
         {
             "track_name": metric.track_name,
             "rule_code": metric.rule_code,
+            "status": metric.evaluation_status,
+            "note": metric.evaluation_reason or "-",
             "label_docs": metric.label_docs,
             "flagged_docs": metric.flagged_docs,
             "tp_docs": metric.tp_docs,

@@ -1,6 +1,6 @@
 """시간 패턴 통계 — 요일/기말 집중도 + YoY 비교.
 
-L3-04(기말 대규모), L3-05(휴일 전기), L3-06(심야 전기) detection 보조.
+L3-04(기말/기초 대규모), L3-05(휴일 전기), L3-06(심야 전기) detection 보조.
 """
 
 from __future__ import annotations

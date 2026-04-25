@@ -98,7 +98,7 @@ _COLUMN_IMPACT: dict[str, str] = {
     "line_text": "위험 적요(L3-08)·키워드 탐지(L3-09) 불가",
     "tax_code": "부가세·면세/영세율 구분 검증 불가",
     "tax_amount": "부가세 정합성(공급가액 ×10%) 검증 불가",
-    "trading_partner": "관계사 거래(L3-03)·순환 거래 탐지 불가",
+    "trading_partner": "관계사 거래 검토(L3-03)·그래프 순환 탐지 약화",
     "auxiliary_account_number": "보조원장 대사·세부 계정 분석 불가",
     "auxiliary_account_label": "보조원장 라벨 분석 불가",
     "lettrage": "반제(대사) 미완결 거래 탐지 불가",

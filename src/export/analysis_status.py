@@ -55,13 +55,18 @@ def summarize_export_analysis_status(pr: PipelineResult) -> dict[str, Any]:
         "family_sub_detectors": family_sub_detectors,
     }
     phase3_insight = getattr(pr, "phase3_insight", None)
+    phase3_case_narratives = list(getattr(pr, "phase3_case_narratives", []) or [])
+    phase2_case_overlays = list(getattr(pr, "phase2_case_overlays", []) or [])
     phase3_summary = {
-        "available": phase3_insight is not None,
+        "available": phase3_insight is not None or bool(phase3_case_narratives),
         "top_risk_count": len(getattr(phase3_insight, "top_risks", []) or []),
         "significant_tx_count": len(
             getattr(phase3_insight, "significant_tx_opinions", []) or []
         ),
-        "phase2_linked": bool(getattr(phase3_insight, "phase2_context", {}) or {}),
+        "case_narrative_count": len(phase3_case_narratives),
+        "phase2_linked": bool(
+            getattr(phase3_insight, "phase2_context", {}) or phase2_case_overlays
+        ),
     }
 
     return {
@@ -100,6 +105,7 @@ def build_phase_provenance_lines(pr: PipelineResult) -> list[str]:
             "Phase 3 provenance: "
             f"insight=yes | top_risks={phase3.get('top_risk_count', 0)} | "
             f"significant_tx={phase3.get('significant_tx_count', 0)} | "
+            f"case_narratives={phase3.get('case_narrative_count', 0)} | "
             f"phase2_linked={'yes' if phase3.get('phase2_linked') else 'no'}"
         )
     return lines

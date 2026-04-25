@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """감사 파이프라인 오케스트레이터 — Ingest → Validate → Feature → Detection → DB."""
 
 from __future__ import annotations
@@ -14,7 +15,6 @@ import pandas as pd
 from src.context import CompanyContext, ContextFactory
 from src.detection.base import BaseDetector, DetectionResult
 from src.detection.constants import DETECTOR_DISPLAY_ORDER, get_detector_profile
-from src.models.phase1_case import Phase1CaseResult
 from src.export.audit_trail import AuditEvent, AuditTrailProtocol
 from src.ingest.datasynth_labels import (
     apply_datasynth_label_mode,
@@ -27,7 +27,10 @@ from src.ingest.datasynth_metadata import (
     build_validated_metadata_messages,
     load_validated_metadata_json,
 )
+from src.llm.models import CaseNarrative
 from src.metrics.models import PerformanceReport
+from src.models.phase1_case import Phase1CaseResult
+from src.services.phase2_case_contract import build_phase2_case_overlays
 
 logger = logging.getLogger(__name__)
 
@@ -203,6 +206,8 @@ class PipelineResult:
     phase1_case_run_id: str | None = None
     phase1_case_count: int = 0
     phase1_top_theme_ids: list[str] = field(default_factory=list)
+    phase2_case_overlays: list[dict] = field(default_factory=list, repr=False)
+    phase3_case_narratives: list[CaseNarrative] = field(default_factory=list, repr=False)
 
 
 class AuditPipeline:
@@ -530,6 +535,11 @@ class AuditPipeline:
             results,
             batch_id=bid,
         )
+        detector_statuses = self._get_detector_statuses()
+        phase2_case_overlays = self._build_phase2_case_overlays(
+            phase1_case_result,
+            detector_statuses=detector_statuses,
+        )
 
         load_result = None
         if not self._skip_db:
@@ -558,13 +568,14 @@ class AuditPipeline:
             batch_id=bid, load_result=load_result, elapsed=elapsed, warnings=warns,
             featured_data=df.copy(), file_name=file_name,
             shap_contributions=shap_contributions, shap_base_value=shap_base_value,
-            detector_statuses=self._get_detector_statuses(),
+            detector_statuses=detector_statuses,
             performance_report=performance_report,
             phase1_case_result=phase1_case_result,
             phase1_case_path=phase1_case_ref.get("phase1_case_path"),
             phase1_case_run_id=phase1_case_ref.get("phase1_case_run_id"),
             phase1_case_count=int(phase1_case_ref.get("phase1_case_count", 0)),
             phase1_top_theme_ids=list(phase1_case_ref.get("top_theme_ids", [])),
+            phase2_case_overlays=phase2_case_overlays,
         )
 
     def _execute(
@@ -643,6 +654,11 @@ class AuditPipeline:
             results,
             batch_id=batch_id,
         )
+        detector_statuses = self._get_detector_statuses()
+        phase2_case_overlays = self._build_phase2_case_overlays(
+            phase1_case_result,
+            detector_statuses=detector_statuses,
+        )
 
         load_result = None
         if not self._skip_db:
@@ -677,13 +693,14 @@ class AuditPipeline:
             batch_id=batch_id, load_result=load_result, elapsed=elapsed, warnings=warns,
             featured_data=featured_snapshot,
             shap_contributions=shap_contributions, shap_base_value=shap_base_value,
-            detector_statuses=self._get_detector_statuses(),
+            detector_statuses=detector_statuses,
             performance_report=performance_report,
             phase1_case_result=phase1_case_result,
             phase1_case_path=phase1_case_ref.get("phase1_case_path"),
             phase1_case_run_id=phase1_case_ref.get("phase1_case_run_id"),
             phase1_case_count=int(phase1_case_ref.get("phase1_case_count", 0)),
             phase1_top_theme_ids=list(phase1_case_ref.get("top_theme_ids", [])),
+            phase2_case_overlays=phase2_case_overlays,
         )
 
     def _build_phase1_case_artifact(
@@ -715,6 +732,17 @@ class AuditPipeline:
         except Exception:
             logger.warning("PHASE1 case artifact build failed — skip", exc_info=True)
             return None, {}
+
+    def _build_phase2_case_overlays(
+        self,
+        phase1_case_result: Phase1CaseResult | None,
+        *,
+        detector_statuses: list[dict],
+    ) -> list[dict]:
+        return build_phase2_case_overlays(
+            phase1_case_result,
+            detector_statuses=detector_statuses,
+        )
 
     def _ingest(self, path: str | Path) -> tuple[pd.DataFrame, list[str]]:
         """Full ingest pipeline: read → header detect → map → cast.
@@ -952,16 +980,21 @@ class AuditPipeline:
         from src.detection.benford_detector import BenfordDetector
         from src.detection.duplicate_detector import DuplicateDetector
         from src.detection.fraud_layer import FraudLayer
-        from src.detection.intercompany_matcher import IntercompanyMatcher
         from src.detection.integrity_layer import IntegrityDetector
+        from src.detection.intercompany_matcher import IntercompanyMatcher
         warns: list[str] = []
         self._reset_detector_statuses()
 
         # Why: base 6개 탐지기는 서로 독립적 — 병렬 실행 + elapsed 수집
         base_detectors = [
-            IntegrityDetector(self._ctx.settings, chart_of_accounts=self._ctx.chart_of_accounts, schema=self._ctx.schema),
+            IntegrityDetector(
+                self._ctx.settings,
+                chart_of_accounts=self._ctx.chart_of_accounts,
+                schema=self._ctx.schema,
+                audit_rules=self._ctx.audit_rules,
+            ),
             FraudLayer(self._ctx.settings, audit_rules=self._ctx.audit_rules),
-            AnomalyDetector(self._ctx.settings),
+            AnomalyDetector(self._ctx.settings, audit_rules=self._ctx.audit_rules),
             BenfordDetector(self._ctx.settings),
             DuplicateDetector(self._ctx.settings),
             IntercompanyMatcher(self._ctx.settings, audit_rules=self._ctx.audit_rules),

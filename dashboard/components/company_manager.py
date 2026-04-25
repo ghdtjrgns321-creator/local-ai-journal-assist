@@ -16,6 +16,7 @@ from config.settings import get_settings
 from dashboard._state import (
     KEY_COMPANY_CONTEXT,
     KEY_COMPANY_ID,
+    KEY_DEV_MODE,
     KEY_ENGAGEMENT_ID,
     KEY_INGEST_STAGE,
     KEY_PIPELINE_RESULT,
@@ -73,23 +74,6 @@ def _render_settings_editor(
         disabled=["Level"],
     )
 
-    zscore = st.slider(
-        "Z-Score 임계값",
-        min_value=1.0,
-        max_value=5.0,
-        value=float(resolved.zscore_threshold),
-        step=0.1,
-        key="cm_zscore",
-    )
-    benford_mad = st.slider(
-        "Benford MAD 임계값",
-        min_value=0.001,
-        max_value=0.05,
-        value=float(resolved.benford_mad_threshold),
-        step=0.001,
-        format="%.3f",
-        key="cm_benford",
-    )
     period_margin = st.slider(
         "기말 마감 마진(일)",
         min_value=1,
@@ -98,6 +82,26 @@ def _render_settings_editor(
         step=1,
         key="cm_period_margin",
     )
+    admin_overrides: dict[str, object] = {}
+    if st.session_state.get(KEY_DEV_MODE, False):
+        with st.expander("관리자 설정", expanded=False):
+            admin_overrides["zscore_threshold"] = st.slider(
+                "Z-Score 임계값",
+                min_value=1.0,
+                max_value=5.0,
+                value=float(resolved.zscore_threshold),
+                step=0.1,
+                key="cm_zscore",
+            )
+            admin_overrides["benford_mad_threshold"] = st.slider(
+                "Benford MAD 임계값",
+                min_value=0.001,
+                max_value=0.05,
+                value=float(resolved.benford_mad_threshold),
+                step=0.001,
+                format="%.3f",
+                key="cm_benford",
+            )
     col1, col2, col3 = st.columns(3)
     with col1:
         enable_nlp = st.checkbox(
@@ -132,13 +136,12 @@ def _render_settings_editor(
 
         overrides = {
             "approval_thresholds": amounts,
-            "zscore_threshold": zscore,
-            "benford_mad_threshold": benford_mad,
             "period_end_margin_days": period_margin,
             "enable_nlp_detection": enable_nlp,
             "enable_graph_detection": enable_graph,
             "enable_ml_detection": enable_ml,
         }
+        overrides.update(admin_overrides)
         merged_overrides = dict(profile.settings_overrides)
         merged_overrides.update(overrides)
         normalized = normalize_settings_overrides(merged_overrides, scope="company")

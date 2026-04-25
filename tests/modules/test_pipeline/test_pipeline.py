@@ -26,7 +26,7 @@ class TestRunFromDataframe:
         result = AuditPipeline(skip_db=True).run_from_dataframe(small_gl_df)
 
         track_names = {r.track_name for r in result.results}
-        assert {"layer_a", "layer_b", "layer_c", "benford"}.issubset(track_names)
+        assert {"layer_a", "layer_b", "layer_c", "benford", "evidence"}.issubset(track_names)
         assert "nlp" not in track_names
 
         detector_statuses = {

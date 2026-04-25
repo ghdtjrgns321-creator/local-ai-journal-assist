@@ -30,6 +30,7 @@ class TestAuditSettings:
         assert s.midnight_start == 22
         assert s.midnight_end == 6
         assert s.period_end_margin_days == 5
+        assert s.enable_evidence_detection is True
         assert ".xlsx" in s.allowed_extensions
 
     def test_env_prefix(self, monkeypatch):
@@ -79,3 +80,5 @@ class TestYamlLoaders:
         assert phase1["priority_band"]["medium"] == 0.45
         assert phase1["counterparty_columns"][0] == "auxiliary_account_number"
         assert phase1["priority_weights"]["control"] == 0.35
+        assert phase1["timing_priority"]["l304_only_penalty"] == 0.20
+        assert phase1["timing_priority"]["l304_repeat_pattern_min_months"] == 3

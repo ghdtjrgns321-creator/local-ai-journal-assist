@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def resolve_phase1_case_result(pr: "PipelineResult") -> Phase1CaseResult | None:
+def resolve_phase1_case_result(pr: PipelineResult) -> Phase1CaseResult | None:
     """Return an in-memory case result or load it from the saved artifact path."""
     if getattr(pr, "phase1_case_result", None) is not None:
         return pr.phase1_case_result
@@ -28,7 +28,7 @@ def resolve_phase1_case_result(pr: "PipelineResult") -> Phase1CaseResult | None:
         return None
 
 
-def summarize_phase1_case_result(pr: "PipelineResult") -> dict[str, Any]:
+def summarize_phase1_case_result(pr: PipelineResult) -> dict[str, Any]:
     """Build a compact summary contract for UI/report overview surfaces."""
     phase1 = resolve_phase1_case_result(pr)
     if phase1 is None:
@@ -65,7 +65,7 @@ def summarize_phase1_case_result(pr: "PipelineResult") -> dict[str, Any]:
 
 
 def build_phase1_case_queue(
-    pr: "PipelineResult",
+    pr: PipelineResult,
     *,
     theme_id: str | None = None,
     top_n: int | None = None,
@@ -83,7 +83,7 @@ def build_phase1_case_queue(
     return [_case_row(case, phase1) for case in items]
 
 
-def build_phase1_case_drilldown(pr: "PipelineResult", case_id: str) -> dict[str, Any] | None:
+def build_phase1_case_drilldown(pr: PipelineResult, case_id: str) -> dict[str, Any] | None:
     """Return a drill-down payload for a single case."""
     phase1 = resolve_phase1_case_result(pr)
     if phase1 is None:
@@ -134,6 +134,11 @@ def _case_row(case: CaseGroupResult, phase1: Phase1CaseResult) -> dict[str, Any]
         "case_key": case.case_key,
         "case_key_parts": dict(case.case_key_parts),
         "priority_score": case.priority_score,
+        "base_priority_score": case.base_priority_score,
+        "topside_bonus": case.topside_bonus,
+        "batch_combo_bonus": case.batch_combo_bonus,
+        "weak_evidence_bonus": case.weak_evidence_bonus,
+        "priority_adjustment_reasons": list(case.priority_adjustment_reasons),
         "priority_band": case.priority_band,
         "exposure_rank": case.exposure_rank,
         "theme_rank": case.theme_rank,
@@ -143,6 +148,10 @@ def _case_row(case: CaseGroupResult, phase1: Phase1CaseResult) -> dict[str, Any]
         "total_amount": case.total_amount,
         "repeat_months": case.repeat_months,
         "representative_explanation": case.representative_explanation,
+        "review_focus": list(case.review_focus),
+        "risk_narrative": case.risk_narrative,
+        "recommended_audit_actions": list(case.recommended_audit_actions),
+        "rule_evidence_summary": list(case.rule_evidence_summary),
         "evidence_tags": list(case.evidence_tags),
         "has_control_failure": case.has_control_failure,
         "has_high_materiality": case.has_high_materiality,

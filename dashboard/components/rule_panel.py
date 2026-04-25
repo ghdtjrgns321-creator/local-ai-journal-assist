@@ -1,7 +1,7 @@
-"""룰 컨트롤 패널 — 레이어 가중치 + 위험등급 임계값 + 27개 룰 토글.
+"""룰 컨트롤 패널.
 
-Why: 감사인이 탐지 룰 활성/비활성, 레이어 가중치, 위험 분류 기준을
-     코드 수정 없이 화면에서 직접 조정.
+Why: 감사인 기본 UI에는 룰 활성/비활성만 노출하고,
+     레이어 가중치와 위험등급 임계값은 개발 모드에서만 조정한다.
 """
 
 from __future__ import annotations
@@ -115,11 +115,15 @@ def _render_rule_toggles() -> None:
         st.session_state[KEY_SETTINGS_DIRTY] = True
 
 
-def render_rule_panel() -> None:
-    """st.expander 안에 3섹션 렌더링: 가중치 → 위험등급 → 룰 토글."""
-    with st.expander("📋 룰 컨트롤 패널", expanded=False):
+def render_rule_panel(*, show_admin: bool = False) -> None:
+    """룰 설정 패널 렌더링."""
+    with st.expander("📋 룰 선택", expanded=False):
+        _render_rule_toggles()
+
+    if not show_admin:
+        return
+
+    with st.expander("🛠 룰 관리자 설정", expanded=False):
         _render_layer_weights()
         st.divider()
         _render_risk_thresholds()
-        st.divider()
-        _render_rule_toggles()

@@ -10,9 +10,13 @@ from src.detection.base import DetectionResult
 from src.metrics.models import PerformanceReport, RuleMetric
 from src.metrics.rule_mapping import (
     RULE_TO_LABEL,
+    RULE_TO_POPULATION_TRUTH,
     RULE_TO_TRACK,
     covered_label_types,
     get_action_layer,
+    get_evaluation_note,
+    get_truth_basis,
+    get_truth_display,
 )
 
 
@@ -42,6 +46,8 @@ def per_rule_label_analysis(
             analysis.append({
                 "rule_id": rule_id,
                 "label_types": label_types,
+                "truth_display": get_truth_display(rule_id),
+                "truth_basis": get_truth_basis(rule_id),
                 "status": "skipped",
                 "reason": f"rule missing in track {track_name}",
                 "label_docs": 0,
@@ -74,11 +80,14 @@ def per_rule_label_analysis(
         recall = tp / label_count if label_count > 0 else None
         precision = tp / (tp + fp) if (tp + fp) > 0 else None
 
+        status = "population" if rule_id in RULE_TO_POPULATION_TRUTH else ("no_label" if not label_types else "ok")
         analysis.append({
             "rule_id": rule_id,
             "label_types": label_types,
-            "status": "no_label" if not label_types else "ok",
-            "reason": "",
+            "truth_display": get_truth_display(rule_id),
+            "truth_basis": get_truth_basis(rule_id),
+            "status": status,
+            "reason": get_evaluation_note(rule_id),
             "label_docs": label_count,
             "flagged_rows": flagged_rows,
             "flagged_docs": len(flagged_doc_set),
@@ -117,6 +126,31 @@ def _label_doc_set_for_rule(
         doc_diff = diff.groupby(candidate_df["document_id"]).sum()
         return set(doc_diff[doc_diff.abs() > 1.0].index)
 
+    if rule_id == "L3-02":
+        if not {"document_id", "source"}.issubset(df.columns):
+            return set()
+        source = df["source"].fillna("").astype(str).str.lower()
+        return set(df.loc[source.isin({"manual", "adjustment"}), "document_id"].dropna().unique())
+
+    if rule_id == "L3-03":
+        if "document_id" not in df.columns:
+            return set()
+        if "is_intercompany" in df.columns:
+            ic_mask = df["is_intercompany"].fillna(False).astype(bool)
+            return set(df.loc[ic_mask, "document_id"].dropna().unique())
+        if "gl_account" not in df.columns:
+            return set()
+        gl = df["gl_account"].fillna("").astype(str).str.replace(r"\.0$", "", regex=True)
+        ic_mask = gl.str.startswith(("1150", "2050", "4500", "2700"))
+        return set(df.loc[ic_mask, "document_id"].dropna().unique())
+
+    if rule_id == "L3-10":
+        if not {"document_id", "gl_account"}.issubset(df.columns):
+            return set()
+        gl = df["gl_account"].fillna("").astype(str).str.strip().str.lower().str.replace(r"\.0+$", "", regex=True)
+        high_risk_mask = gl.isin({"1190", "2190"}) | gl.str.startswith(("111", "112", "113"))
+        return set(df.loc[high_risk_mask, "document_id"].dropna().unique())
+
     label_types = RULE_TO_LABEL.get(rule_id, [])
     if not label_types:
         return set()
@@ -133,6 +167,10 @@ def overall_label_analysis(
 ) -> dict:
     """Compute overall document-level ground-truth metrics."""
     labeled_docs = set(labels["document_id"].dropna().unique())
+    labeled_docs.update(_label_doc_set_for_rule("L1-01", df, labels))
+    labeled_docs.update(_label_doc_set_for_rule("L3-02", df, labels))
+    labeled_docs.update(_label_doc_set_for_rule("L3-03", df, labels))
+    labeled_docs.update(_label_doc_set_for_rule("L3-10", df, labels))
     flagged_mask = agg_df["anomaly_score"] > 0
     flagged_docs = set(df.loc[flagged_mask, "document_id"].dropna().unique())
 
@@ -143,6 +181,10 @@ def overall_label_analysis(
     phase1_types = covered_label_types()
     phase1_mask = labels["anomaly_type"].isin(phase1_types)
     phase1_docs = set(labels.loc[phase1_mask, "document_id"].dropna().unique())
+    phase1_docs.update(_label_doc_set_for_rule("L1-01", df, labels))
+    phase1_docs.update(_label_doc_set_for_rule("L3-02", df, labels))
+    phase1_docs.update(_label_doc_set_for_rule("L3-03", df, labels))
+    phase1_docs.update(_label_doc_set_for_rule("L3-10", df, labels))
     phase23_docs = labeled_docs - phase1_docs
 
     phase1_tp = len(phase1_docs & flagged_docs)

@@ -146,8 +146,8 @@ with st.sidebar:
                 from dashboard.components.threshold_sidebar import render_threshold_sidebar
 
                 render_preset_selector()
-                render_threshold_sidebar()
-                render_rule_panel()
+                render_threshold_sidebar(show_admin=dev_mode)
+                render_rule_panel(show_admin=dev_mode)
 
             from dashboard.components._redetect import render_apply_button
 

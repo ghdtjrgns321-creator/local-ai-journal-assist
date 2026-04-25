@@ -18,21 +18,72 @@ RULE_TO_LABEL: dict[str, list[str]] = {
     "L1-06": ["SegregationOfDutiesViolation"],
     "L3-02": ["ManualOverride"],
     "L1-07": ["SkippedApproval"],
-    "L3-03": ["CircularIntercompany", "CircularTransaction"],
+    "L1-09": ["ApprovalDateMissing"],
+    "L3-03": ["CircularIntercompany"],
     "L2-04": ["ImproperCapitalization"],
     "L3-04": ["RushedPeriodEnd"],
     "L3-05": ["WeekendPosting"],
-    "L3-06": ["AfterHoursPosting", "UnusualTiming"],
+    "L3-06": ["AfterHoursPosting"],
     "L3-07": ["BackdatedEntry", "LatePosting"],
     "L1-08": ["WrongPeriod"],
-    "L3-08": ["VagueDescription"],
+    "L3-08": ["MissingOrCorruptedDescription"],
     "L4-02": ["BenfordViolation"],
     "L4-03": ["UnusuallyHighAmount", "StatisticalOutlier"],
     "L4-04": ["UnusualAccountPair"],
     "L3-09": [],
-    "L2-06": ["ReversedAmount"],
-    "L4-05": [],
+    "L3-10": [],
+    "L3-11": [],
+    "L2-05": ["ReversedAmount"],
+    "L4-05": ["AbnormalHoursConcentration"],
     "L4-06": [],
+    "IC01": ["UnmatchedIntercompany"],
+    "IC02": ["IntercompanyAmountMismatch"],
+    "IC03": ["IntercompanyTimingMismatch"],
+    "GR01": ["CircularTransaction", "CircularIntercompany"],
+    "GR03": ["TransferPricingAnomaly"],
+}
+
+# NOTE:
+# L3-02 and L3-03 are population rules in recent datasynth candidates.
+# Their anomaly labels remain for legacy anomaly evaluation, but preferred
+# datasynth truth is population coverage rather than strict anomaly precision.
+RULE_TO_POPULATION_TRUTH: dict[str, str] = {
+    "L3-02": "labels/manual_entry_population_truth.csv",
+    "L3-03": "labels/intercompany_population_truth.csv",
+    "L3-10": "labels/high_risk_account_review_population.csv",
+}
+
+RULE_TO_TRUTH_BASIS: dict[str, str] = {
+    "L1-01": "document imbalance population",
+    "L3-02": "manual/adjustment source population",
+    "L3-03": "intercompany account population",
+    "L3-10": "high-risk account review population; confirmed anomaly subset is HighRiskAccountUse",
+    "IC01": "confirmed unmatched intercompany labels",
+    "IC02": "amount-mismatch review candidates, evaluated against matching exception labels",
+    "IC03": "timing-gap review candidates, evaluated against matching exception labels",
+    "GR01": "confirmed graph anomaly labels; graph_gr01_review_population is coverage only",
+    "GR03": "transfer-pricing review candidates, evaluated against confirmed anomaly labels",
+    "L3-06": "after-hours-only anomaly labels",
+    "L4-05": "user-level abnormal-hours concentration labels",
+}
+
+RULE_TO_TRUTH_DISPLAY: dict[str, str] = {
+    "L3-02": "manual/adjustment population",
+    "L3-03": "intercompany population",
+    "L3-10": "high-risk account review population",
+    "IC01": "UnmatchedIntercompany",
+    "IC02": "IntercompanyAmountMismatch",
+    "IC03": "IntercompanyTimingMismatch",
+    "GR01": "confirmed graph anomalies",
+    "GR03": "TransferPricingAnomaly",
+}
+
+RULE_TO_EVALUATION_NOTE: dict[str, str] = {
+    "L3-03": "Population rule. Do not score against CircularIntercompany as fraud precision.",
+    "IC02": "Phase 1 review candidate. Preserve recall; precision is handled by case priority/Phase 2.",
+    "IC03": "Phase 1 review candidate. Preserve recall; precision is handled by case priority/Phase 2.",
+    "GR01": "Review population sidecar is not a confirmed-anomaly precision denominator.",
+    "GR03": "Graph review candidate. Preserve recall; confirmed judgement remains downstream.",
 }
 
 RULE_TO_TRACK: dict[str, str] = {
@@ -53,9 +104,11 @@ RULE_TO_TRACK: dict[str, str] = {
     "L1-06": "layer_b",
     "L3-02": "layer_b",
     "L1-07": "layer_b",
+    "L1-09": "layer_b",
     "L3-03": "layer_b",
     "L2-04": "layer_b",
-    "L2-05": "layer_b",
+    "L3-10": "layer_b",
+    "L3-11": "evidence",
     "L3-04": "layer_c",
     "L3-05": "layer_c",
     "L3-06": "layer_c",
@@ -66,9 +119,14 @@ RULE_TO_TRACK: dict[str, str] = {
     "L4-03": "layer_c",
     "L4-04": "layer_c",
     "L3-09": "layer_c",
-    "L2-06": "layer_c",
+    "L2-05": "layer_c",
     "L4-05": "layer_c",
     "L4-06": "layer_c",
+    "IC01": "intercompany",
+    "IC02": "intercompany",
+    "IC03": "intercompany",
+    "GR01": "graph",
+    "GR03": "graph",
 }
 
 
@@ -134,9 +192,9 @@ RULE_TO_ACTION_LAYER: dict[str, str] = {
     "L1-06": "confirmed_issue",
     "L3-02": "review_needed",
     "L1-07": "confirmed_issue",
+    "L1-09": "confirmed_issue",
     "L3-03": "review_needed",
     "L2-04": "fraud_signal",
-    "L2-05": "fraud_signal",
     "L3-04": "review_needed",
     "L3-05": "review_needed",
     "L3-06": "review_needed",
@@ -147,25 +205,56 @@ RULE_TO_ACTION_LAYER: dict[str, str] = {
     "L4-03": "stat_outlier",
     "L4-04": "stat_outlier",
     "L3-09": "review_needed",
-    "L2-06": "fraud_signal",
+    "L3-10": "review_needed",
+    "L3-11": "review_needed",
+    "L2-05": "fraud_signal",
     "L4-05": "stat_outlier",
     "L4-06": "stat_outlier",
+    "IC01": "review_needed",
+    "IC02": "review_needed",
+    "IC03": "review_needed",
+    "GR01": "review_needed",
+    "GR03": "review_needed",
 }
 
-PHASE1_TRACKS: tuple[str, ...] = ("layer_a", "layer_b", "layer_c", "benford")
+PHASE1_TRACKS: tuple[str, ...] = ("layer_a", "layer_b", "layer_c", "benford", "evidence")
 
 
 def covered_label_types() -> set[str]:
-    """Return all label types that are mapped to Phase 1 rules."""
+    """Return label types that are mapped to core Phase 1 tracks."""
     covered: set[str] = set()
-    for label_types in RULE_TO_LABEL.values():
-        covered.update(label_types)
+    for rule_id, label_types in RULE_TO_LABEL.items():
+        if RULE_TO_TRACK.get(rule_id) in PHASE1_TRACKS:
+            covered.update(label_types)
     return covered
 
 
 def get_action_layer(rule_id: str) -> str:
     """Return the user-action layer id for a rule code."""
     return RULE_TO_ACTION_LAYER.get(rule_id, "")
+
+
+def get_truth_basis(rule_id: str) -> str:
+    """Return the preferred ground-truth basis description for a rule."""
+    if rule_id in RULE_TO_TRUTH_BASIS:
+        return RULE_TO_TRUTH_BASIS[rule_id]
+    labels = RULE_TO_LABEL.get(rule_id, [])
+    if labels:
+        return "anomaly labels"
+    return "unmapped"
+
+
+def get_truth_display(rule_id: str) -> str:
+    """Return the user-facing truth label/basis string for a rule."""
+    if rule_id in RULE_TO_TRUTH_DISPLAY:
+        return RULE_TO_TRUTH_DISPLAY[rule_id]
+    labels = RULE_TO_LABEL.get(rule_id, [])
+    return ",".join(labels) if labels else "(none)"
+
+
+def get_evaluation_note(rule_id: str) -> str:
+    """Return user-facing evaluation caveat for review/population rules."""
+    return RULE_TO_EVALUATION_NOTE.get(rule_id, "")
 
 
 def get_action_layer_profile(layer_id: str) -> ActionLayerProfile | None:

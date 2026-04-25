@@ -1,7 +1,7 @@
 """AuditFTTransformer — FT-Transformer PyTorch 네트워크.
 
 Why: 모든 피처를 토큰화하여 self-attention으로 피처 간 상호작용을 학습한다.
-24개 룰 결과 간 조합 패턴을 attention이 자동 학습 (수동 L2-05 Top-side의 학습 버전).
+룰 결과 간 조합 패턴을 attention이 자동 학습한다.
 
 Note: 범주형 피처는 전처리기(TargetEncoder/OrdinalEncoder)에서 수치 변환 후 입력됨.
       향후 실데이터 fine-tuning 시 CategoricalFeatureTokenizer(nn.Embedding) 분리 검토.

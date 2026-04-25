@@ -3,15 +3,11 @@
 from __future__ import annotations
 
 import dataclasses
-from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 from config.settings import AuditSettings
-from src.context import CompanyContext, ContextFactory
+from src.context import ContextFactory
 from src.pipeline import AuditPipeline, PipelineResult
-
 
 # ── 하위 호환 ────────────────────────────────────────────────
 
@@ -41,6 +37,12 @@ class TestBackwardCompat:
         assert result.phase1_case_run_id is not None
         assert result.phase1_case_count == len(result.phase1_case_result.cases)
         assert isinstance(result.phase1_top_theme_ids, list)
+        assert result.phase3_case_narratives == []
+        assert len(result.phase2_case_overlays) == result.phase1_case_count
+        if result.phase2_case_overlays:
+            overlay = result.phase2_case_overlays[0]
+            assert overlay["phase1_case_id"]
+            assert overlay["precision_adjustment_reason"] == "phase2_not_applied"
 
 
 # ── Context 주입 ─────────────────────────────────────────────

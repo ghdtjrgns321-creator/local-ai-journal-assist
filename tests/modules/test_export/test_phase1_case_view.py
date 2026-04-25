@@ -60,7 +60,9 @@ def _make_pipeline_result() -> SimpleNamespace:
         phase1_case_config={"phase1_case": {"top_n_cases": 50, "top_n_per_theme": 10}},
         generated_at=datetime(2026, 4, 22, 3, 15, 22, tzinfo=UTC),
     )
-    artifact_root = Path("C:/Users/ghdtj/workspace/portfolio/local-ai-assist/.tmp_phase1_case_view_tests")
+    artifact_root = Path(
+        "C:/Users/ghdtj/workspace/portfolio/local-ai-assist/.tmp_phase1_case_view_tests"
+    )
     artifact_root.mkdir(parents=True, exist_ok=True)
     artifact_path = artifact_root / "phase1_case.json"
     artifact_path.write_text(phase1.model_dump_json(indent=2), encoding="utf-8")
@@ -94,6 +96,11 @@ def test_build_phase1_case_queue_and_drilldown_return_projection_rows() -> None:
     assert len(queue) == 1
     assert queue[0]["primary_theme_label"]
     assert queue[0]["representative_explanation"]
+    assert "base_priority_score" in queue[0]
+    assert "topside_bonus" in queue[0]
+    assert "batch_combo_bonus" in queue[0]
+    assert "weak_evidence_bonus" in queue[0]
+    assert "priority_adjustment_reasons" in queue[0]
     assert drilldown is not None
     assert drilldown["case"]["case_id"] == queue[0]["case_id"]
     assert drilldown["documents"]
