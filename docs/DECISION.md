@@ -1,5 +1,7 @@
 # Design Decisions
 
+> Current DataSynth production baseline: `data/journal/primary/datasynth/` freeze `v45` as of 2026-04-25. Older `v20.x` and `v23` entries are historical decision records.
+
 아키텍처·기술 선택 결정 로그. 새로운 결정 시 내용 추가.
 
 ---
@@ -49,10 +51,10 @@
   - **PCAOB AS 2401 / ISA 240 / COSO 2013 / SOX 302·404**: 실무 감사기준 코드 구현
   - **Schreyer & Sattarov 연구** (arXiv 1709.05254, 1908.00734): 전표 이상치 분류 학술 표준
   - 이 세 프레임워크의 교차 설계를 바탕으로 현재 운영 기준본에서도 fraud/anomaly/SoD와 별도 `anomaly_labels.csv`를 함께 유지한다. 세부 주입 수치는 freeze 메모 기준으로 관리한다.
-- **도구 최신성**: DataSynth 레포 기반 프로젝트 fork를 계속 보정 중이며, 현재 실사용 기준본은 2026-04-22 동결 `v23`이다. `B04 DuplicatePayment`를 `P2P + KZ` 기준으로 재구성했고, pair lineage / negative control까지 포함한 운영 기준본을 유지한다.
+- **도구 최신성**: DataSynth 레포 기반 프로젝트 fork를 계속 보정 중이며, 현재 실사용 기준본은 2026-04-25 동결 `v45`이다. `v23`의 B04 duplicate payment 보정 이후 L3-08/L3-09/L3-10 평가 계약과 정상 대조군을 누적 반영했다.
 - **대안 검토**: 실제 SAP 데이터(sap-merged 332K)는 이상치 레이블 1%뿐, Schreyer(533K)는 날짜 없음+전부 익명화, BPI 2019(1.6M)는 전표가 아닌 이벤트 로그
 - **생성 설정**: `config/datasynth.yaml` (seed 2024, 36개월, 3회사, fraud 2%)
-- **현재 기준 결과**: 1,109,221라인(319,226전표), 44컬럼, `anomaly_labels.csv` 1,912건, `accounts_count` 437, `employee_count` 246
+- **현재 기준 결과**: 1,109,435라인(319,193전표), 52컬럼, `anomaly_labels.csv` 2,269건
 
 ### D011: 24개 룰 L1/L2/L3/L4 체계 확정
 - **결정**: 기존 R001~R008(8개 룰 + Benford) 체계를 폐기하고, DataSynth 52개 anomaly 유형에서 3축 평가(법규 근거 × FSS 실증 × 데이터 가용성)로 선별한 24개 룰 L1/L2/L3/L4 체계로 전면 재설계
@@ -62,7 +64,7 @@
   - 3축 평가로 Must(7~9점)/Should(4~6)/Could(2~3)/Drop(0~1) 판정 → Phase별 명확한 구현 범위
 - **구조**:
   - L1 (확정 오류/위반): L1-01~L1-08
-  - L2 (강한 부정 정황): L2-01~L2-06
+  - L2 (강한 부정 정황): L2-01~L2-05
   - L3 (검토 필요 이상징후): L3-02~L3-09
   - L4 (통계적 이상치): L4-01~L4-06
 - **Phase별 확장**: Phase 1(24개 룰) → Phase 2(+16개 ML) → Phase 3(+5개 NLP/그래프) = 총 41개 유형
@@ -230,7 +232,7 @@
 - **모델 선택**: TabTransformer(범주형만 attention) / TabNet(벤치마크 열세) 대신 FT-Transformer 채택
 - **아키텍처**: 42 features → Feature Tokenizer(각 64-dim embedding) + [CLS] token → Transformer Encoder(2 layers, 4 heads, dim=64, ff=128) → FC(64→2). VRAM ~300MB (batch=256)
 - **이유**:
-  - 24개 룰 결과 간 조합 패턴(예: weekend AND manual AND period_end AND high_amount)을 attention이 자동 학습 → 수동 L2-05 Top-side 룰의 학습 버전
+  - 룰 결과 간 조합 패턴(예: weekend AND manual AND period_end AND high_amount)을 attention이 자동 학습 → Top-side 조합 점수의 학습 버전
   - Gorishniy et al. (2021) "Revisiting Deep Learning Models for Tabular Data" — FT-Transformer가 medium-size tabular에서 XGBoost와 경쟁적
   - 어떤 데이터가 올지 모르므로, tree 모델과 다른 관점(attention 기반)의 탐지기 확보 가치
 - **D019 변경**: "DNN 보류" → FT-Transformer로 구체화하여 Phase 2b에 포함
@@ -270,7 +272,7 @@
 - **상세**: [FREEZE_V20.md](../data/journal/primary/datasynth/FREEZE_V20.md)
 
 ### D039: DataSynth v23 운영 기준 승격
-- **결정**: `data/journal/primary/datasynth/`를 현재 운영 기준본 `v23`로 승격. `v20.4`는 백업본으로 유지하고, Phase 1/2/3 기본 데이터는 이제 `v23` 기준을 따른다.
+- **결정**: 당시 `data/journal/primary/datasynth/`를 운영 기준본 `v23`로 승격했다. 현재 기준본은 상단의 `v45` 메모를 따른다.
 - **이유**:
   - `v22_candidate`의 `B04`는 `미탐 0 / 과탐 0`으로 benchmark 정렬이 너무 강했음
   - `v23`은 `P2P + KZ` duplicate payment pair를 유지하면서도 일부 미탐/과탐을 남겨 test fitting을 완화

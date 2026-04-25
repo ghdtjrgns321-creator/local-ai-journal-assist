@@ -1,5 +1,7 @@
 # Project Overview
 
+> Current DataSynth baseline: `data/journal/primary/datasynth/` freeze `v45` as of 2026-04-25. Dataset size is `1,109,435` rows / `319,193` documents / `52` columns.
+
 ## 프로젝트 정의
 
 Local AI Audit Assistant v2.0 — 감사 실증절차 전표 테스트 자동화 도구.

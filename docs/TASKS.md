@@ -74,9 +74,9 @@
 | 16  | L1 무결성                   | `src/detection/integrity_layer.py` (L1-01~L1-03)                         | [05-detection](pre-plan/05-detection.md)   | ✅   |
 | 17  | L2 부정탐지                 | `src/detection/fraud_layer.py` (L4-01~L2-04, 42 tests)                   | [05-detection](pre-plan/05-detection.md)   | ✅   |
 | 18  | L3/L4 이상징후                 | `src/detection/anomaly_layer.py` (L3-04~L3-09, 41 tests)                 | [05-detection](pre-plan/05-detection.md)   | ✅   |
-| 19  | 점수 집계                        | `src/detection/score_aggregator.py` (L1/L2/L3/L4+Benford+L2-05, 21 tests)  | [05-detection](pre-plan/05-detection.md)   | ✅   |
+| 19  | 점수 집계                        | `src/detection/score_aggregator.py` (L1/L2/L3/L4+Benford+Top-side score, 21 tests)  | [05-detection](pre-plan/05-detection.md)   | ✅   |
 | 19a | 역분개 패턴 탐지 (1:1 + N:M)    | `src/detection/anomaly_rules_reversal.py` + `anomaly_layer.py`       | [05-detection](pre-plan/05-detection.md)   | ✅   |
-| 19b | Top-side JE 조합 탐지 (L2-05)      | `src/detection/score_aggregator.py` (확장, 9 tests)                  | [05-detection](pre-plan/05-detection.md)   | ✅   |
+| 19b | Top-side JE 조합 점수              | `src/detection/score_aggregator.py` (확장, 9 tests)                  | [05-detection](pre-plan/05-detection.md)   | ✅   |
 | 19c | 비정상 시간대 입력자 집중 (L4-05)   | `src/detection/anomaly_rules_simple.py` + `src/feature/time_features.py` (46 tests) | [03-feature](pre-plan/03-feature.md), [05-detection](pre-plan/05-detection.md) | ✅   |
 | 19d | IC identifiers 불일치 수정       | `src/feature/pattern_features.py` — `["1150C","2050C"]` → `["1150","2050","4500","2700"]` | [03-feature](pre-plan/03-feature.md) §210 | ✅   |
 | 19e | manual_source_codes 오매칭 수정  | `src/feature/pattern_features.py` — SA는 document_type, source 아님   | [03-feature](pre-plan/03-feature.md) §211 | ✅   |
@@ -368,7 +368,7 @@ WU1 (기반 컴포넌트) ──── 반드시 최초 실행
 > FT-Transformer: 모든 피처를 토큰화 → self-attention으로 피처 간 상호작용 학습
 > **아키텍처**: 42 features → Feature Tokenizer(64-dim) + [CLS] → Transformer Encoder(2L, 4H, d=64, ff=128) → FC(64→2)
 > **VRAM**: ~300MB (batch=256). RTX 3070 Ti 8GB 여유 충분
-> **핵심 이점**: 24개 룰 결과 간 조합 패턴을 attention이 자동 학습 (수동 L2-05 Top-side 룰의 학습 버전)
+> **핵심 이점**: 룰 결과 간 조합 패턴을 attention이 자동 학습 (Top-side 조합 점수의 학습 버전)
 
 | #    | 태스크                       | 파일                                                          | 가이드                                           | 상태 |
 |------|------------------------------|---------------------------------------------------------------|--------------------------------------------------|------|

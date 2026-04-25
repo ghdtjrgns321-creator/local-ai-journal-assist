@@ -36,8 +36,54 @@ phase1_case:
     high: 0.75
     medium: 0.45
 
+  priority_adjustments:
+    enabled: true
+    topside:
+      require_manual: true
+      medium_threshold: 0.40
+      medium_bonus: 0.10
+      high_threshold: 0.60
+      high_bonus: 0.20
+    batch_combo:
+      medium_group_count: 2
+      medium_bonus: 0.08
+      medium_behavior_floor: 0.70
+      high_group_count: 3
+      high_bonus: 0.15
+      high_behavior_floor: 1.00
+    weak_evidence:
+      require_strong_evidence: true
+      per_tag_bonus: 0.03
+      max_bonus: 0.09
+      boolean_columns:
+        - is_round_number
+        - is_rare_account
+        - significant_unusual_transaction
+        - is_period_end_manual
+        - sensitive_account_touch
+      include_l3_08_as_weak_description: true
+      derive_manual_period_end: true
+
   repeat_score_promote: 0.70
   repeat_months_tiebreak: 3
+
+  timing_priority:
+    l304_only_penalty: 0.20
+    l304_sensitive_bonus: 0.15
+    l304_high_amount_bonus: 0.10
+    l304_combo_bonus: 0.20
+    l304_repeat_pattern_penalty: 0.15
+    l304_repeat_pattern_repeat_cap: 0.30
+    l304_high_amount_case_score: 0.75
+    l304_repeat_pattern_min_months: 3
+    l304_repeat_pattern_max_amount_cv: 0.35
+    l304_repeat_pattern_min_signature_share: 0.60
+    l304_sensitive_account_prefixes:
+      - "4"
+      - "12"
+      - "1150"
+      - "2050"
+      - "2700"
 
   evidence_type_cap: 1.0
   rule_repeat_scale: sqrt

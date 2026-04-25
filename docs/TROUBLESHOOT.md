@@ -1,4 +1,4 @@
-# Troubleshooting
+﻿# Troubleshooting
 
 감사 전표 테스트 자동화 프로젝트(Local AI Audit Assistant)에서 발생한
 프로젝트 수준의 전략적 문제 해결 과정을 기록한다.
@@ -206,7 +206,7 @@ Case key는 전역 하나가 아니라 theme별 템플릿을 둔다.
 
 - `control_failure`: L1-04, L1-05, L1-06, L1-07, L3-02
 - `timing_anomaly`: L3-04, L3-05, L3-06, L3-07, L3-08
-- `duplicate_or_outflow`: L2-01, L2-02, L2-03, L2-06
+- `duplicate_or_outflow`: L2-01, L2-02, L2-03, L2-05
 - `logic_mismatch`: L1-03, L2-04, L3-09, L4-04
 - `statistical_outlier`: L4-01, L4-02, L4-03, L4-06
 

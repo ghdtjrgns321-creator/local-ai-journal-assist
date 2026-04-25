@@ -114,7 +114,7 @@ document_flows:
   o2c:
     enabled: true
 
-# L3-03 관계사 순환거래 탐지용
+# L3-03 관계사 거래 검토 신호용
 intercompany:
   enabled: true
   ic_transaction_rate: 0.10

@@ -41,7 +41,7 @@ fn apply_strategy(&self, entry: &mut JournalEntry, anomaly_type: AnomalyType, rn
 BackdatedEntry           9/9     diff>30d
 ExceededApprovalLimit   historical threshold_match
 
-> 2026-04-22 이후 운영 기준본(`v23`)에서는 `ExceededApprovalLimit`를 threshold 기반이 아니라 `document amount > approved_by.approval_limit`로 정정한 상태를 유지한다.
+> 2026-04-25 운영 기준본(`v45`)에서도 `ExceededApprovalLimit`는 threshold 기반이 아니라 `document amount > approved_by.approval_limit` 기준을 유지한다. `v23`은 이 정정을 처음 운영 기준으로 승격한 과거 freeze다.
 > 또한 `DuplicatePayment`는 `TRE-only` 복제 문서가 아니라 `P2P + KZ` 지급쌍 기준으로 재구성되었고, pair lineage / negative control sidecar가 함께 제공된다.
 ImproperCapitalization  11/11    15xx+6xx (Python 후처리로 수정된 상태 → Rust에서 해결 필요)
 InvalidAccount           2/2     invalid_gl (Python 후처리 → Rust)

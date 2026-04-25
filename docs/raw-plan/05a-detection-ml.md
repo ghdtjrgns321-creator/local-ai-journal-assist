@@ -815,7 +815,7 @@ RTX 3070 Ti 8GB에서 여유 충분.
 
 24개 룰 결과가 ML 피처로 들어갈 때, FT-Transformer의 self-attention은
 "어떤 룰 조합이 고위험인가"를 자동 학습한다.
-수동으로 설계한 L2-05 Top-side JE 복합 룰의 학습 버전에 해당한다.
+Top-side JE 복합 점수의 학습 버전에 해당한다.
 
 ---
 

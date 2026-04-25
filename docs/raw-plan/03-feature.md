@@ -783,7 +783,7 @@ GridSearchCV로 최적 모델/파라미터 동시 선택
 | `rolling_net_7d`         | gl_account × created_by 7일 윈도우 순액             | N:M 분할 역분개     |
 | `is_correcting_entry`    | source='manual' + line_text 키워드("수정","정정")    | 수정 전표 구분      |
 
-### Top-side JE 점수 (L2-05 — 후처리 복합 점수)
+### Top-side JE 점수 (후처리 복합 점수)
 
 > `topside_score`는 피처 엔진이 아닌 `score_aggregator.py::_compute_topside_score()`에서 산출.
 > 기존 피처(`is_manual_je`)와 기존 룰 플래그(L3-04, L1-05, L1-07, L1-03, L4-04, L4-03, L3-08)를 조합.

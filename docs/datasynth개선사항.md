@@ -1,5 +1,7 @@
 # DataSynth 2022~2024 전수조사 메모
 
+> 현재 운영 기준본은 `data/journal/primary/datasynth/` freeze `v45`(2026-04-25)다. 이 문서의 초기 전수조사 수치 중 일부는 과거 기준본 분석 기록이며, 최신 운영 수치는 `data/journal/primary/datasynth/PREVIEW.md`와 `data/journal/primary/datasynth/FREEZE_V45.md`를 우선한다.
+
 작성일: 2026-04-16
 대상 경로: `data/journal/primary/datasynth`
 분석 범위: `journal_entries_2022.csv`, `journal_entries_2023.csv`, `journal_entries_2024.csv`, 라벨/메타 파일

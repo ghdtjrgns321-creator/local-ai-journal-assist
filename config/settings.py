@@ -82,6 +82,7 @@ class AuditSettings(BaseSettings):
     near_threshold_ratio: float = 0.90  # 한도의 90% 이상이면 플래그
     round_unit: int = 1_000_000           # B04: 정수 단위 판정 기준 (100만원)
     zscore_threshold: float = 3.0         # C08: 이상치 기준 (detection에서 사용)
+    l403_min_amount_quantile: float = 0.90  # L4-03: 전역 상위 금액 분위수 가드
     midnight_start: int = 22  # C03: 심야 전기
     midnight_end: int = 6  # C03: 심야 전기
     period_end_margin_days: int = 5  # C01: 기말 판정 마진 (월말 전후 n일)
@@ -105,13 +106,19 @@ class AuditSettings(BaseSettings):
     duplicate_max_group_size: int = 1000         # 그룹 크기 제한 (초과 시 스킵)
 
     # --- Detection Layer C 관련 ---
-    backdated_threshold_days: int = 30          # C04: 소급 임계 일수
+    backdated_threshold_days: int = 30          # C04: 전기일-문서일 괴리 임계 일수
+    suspense_aging_days: int = 30               # C10: 가계정 장기체류 기본 임계 일수
+    suspense_min_open_amount: float = 0.0       # C10: 장기체류 판정 최소 미정리 금액
     account_pair_rare_percentile: float = 0.01  # C09: 희소 쌍 하위 백분위
-    period_end_amount_quantile: float = 0.75    # C01: 기말 대규모 금액 분위수 (Q3)
+    period_end_amount_quantile: float = 0.75    # C01: 기말/기초 대규모 금액 분위수 (Q3)
     c01_min_group_size: int = 30                 # C01: 계정그룹별 Q3 최소 표본 수
+    period_end_sensitive_bonus: float = 0.15      # C01: 민감 계정군 L3-04 점수 가산
 
     # --- Detection Layer C: C13 배치 전표 이상 ---
-    batch_source_values: list[str] = ["batch", "BATCH"]  # source 컬럼 배치 식별 값
+    batch_source_values: list[str] = [
+        "batch", "interface", "system", "auto", "if", "sys",
+        "BATCH", "INTERFACE", "SYSTEM", "AUTO", "IF", "SYS",
+    ]  # source 컬럼 배치/자동 전표 식별 값
     batch_period_end_ratio: float = 0.5                   # 기말 집중 비율 임계
     batch_simultaneous_threshold: int = 50                # 동일일자 동시 생성 건수 임계
     batch_amount_zscore: float = 3.0                      # 배치 내 금액 Z-score 임계
@@ -136,7 +143,8 @@ class AuditSettings(BaseSettings):
     graph_gr01_max_cycle_length: int = 5            # GR01: simple_cycles length_bound (Johnson 폭주 방지)
     graph_gr01_min_amount: float = 10_000_000.0     # GR01: 엣지 최소 금액 (materiality 추정치, 1천만원)
     graph_gr01_max_edges: int = 50_000              # GR01: 엣지 수 상한 (초과 시 min_amount 자동 상향)
-    graph_gr01_max_component_size: int = 500        # GR01: weakly_connected_component 노드 임계 (초과 시 skip)
+    graph_gr01_max_component_size: int = 500        # GR01: component 노드 임계 (엣지도 크면 skip)
+    graph_gr01_max_component_edges: int = 5_000     # GR01: component 엣지 임계 (노드도 크면 skip)
     graph_gr03_min_path_length: int = 2             # GR03: 경로 최소 노드 수
     graph_gr03_price_deviation_threshold: float = 0.20  # GR03: 양방향 가격 편차 허용 (20%)
 
@@ -175,7 +183,7 @@ class AuditSettings(BaseSettings):
             raise ValueError(f"유효하지 않은 월/일: month={m}, day={d}")
         return v
 
-    abnormal_sigma_threshold: float = 3.0       # 사용자별 이상치 판정 σ
+    abnormal_sigma_threshold: float = 2.5       # 사용자별 이상치 판정 σ
     rapid_approval_minutes: int = 5             # 부실 검토 의심 임계 (분)
     min_abnormal_ratio: float = 0.1             # σ 이상치여도 절대 비율 10% 미만이면 미플래그
     min_midnight_entries: int = 3               # 소수 인원 폴백 시 최소 심야 건수
@@ -186,7 +194,7 @@ class AuditSettings(BaseSettings):
     ]
 
     # --- Detection Layer D: 전기 대비 변동 ---
-    variance_threshold: float = 0.5           # D01: 계정 집계 변동률 플래그 임계 (50%)
+    variance_threshold: float = 0.5           # D01: 계정 거래 활동량 변동률 플래그 임계 (50%)
     monthly_pattern_threshold: float = 0.3    # D02: JSD 플래그 임계
     min_monthly_data_months: int = 3          # D02: 비교 수행 최소 월수
 
@@ -198,11 +206,11 @@ class AuditSettings(BaseSettings):
     ev_tax_threshold: float = 30_000           # EV01: 적격증빙 필요 금액 (원, 한국 세법 기준)
     ev_split_max_amount: float = 29_000        # EV01: 분할 의심 건당 상한
     ev_split_min_count: int = 3                # EV01: 분할 의심 최소 건수
-    ev_revenue_cutoff_days: int = 5            # EV02: 매출 컷오프 허용 일수
-    ev_expense_cutoff_days: int = 7            # EV02: 비용 컷오프 허용 일수
-    ev_cutoff_period_end_weight: float = 1.5   # EV02: 기말 가중 계수
-    ev_cutoff_max_day_diff: int = 30           # EV02: 최대 차이일수 (score=1.0 상한)
-    ev_cutoff_use_business_days: bool = True   # EV02: 영업일 계산 사용 여부
+    ev_revenue_cutoff_days: int = 5            # L3-11: 매출 컷오프 허용 일수
+    ev_expense_cutoff_days: int = 7            # L3-11: 비용 컷오프 허용 일수
+    ev_cutoff_period_end_weight: float = 1.5   # L3-11: 기말 가중 계수
+    ev_cutoff_max_day_diff: int = 30           # L3-11: 최대 차이일수 (score=1.0 상한)
+    ev_cutoff_use_business_days: bool = True   # L3-11: 영업일 계산 사용 여부
     ev_amount_tolerance: float = 1.0           # EV03: 3-way matching 허용 오차 (원)
     ev_vat_rate: float = 0.10                  # EV03: 부가세율 (한국 표준 10%)
     ev_vat_tolerance: float = 1.0              # EV03: 부가세 검증 허용 오차 (원)
@@ -308,7 +316,7 @@ class AuditSettings(BaseSettings):
     enable_graph_detection: bool = False
     enable_nlp_detection: bool = False
     enable_access_audit_detection: bool = False
-    enable_evidence_detection: bool = False
+    enable_evidence_detection: bool = True
     enable_trendbreak_detection: bool = False
     enable_variance_detection: bool = False
     enable_ml_detection: bool = False

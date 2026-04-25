@@ -1337,10 +1337,10 @@ Phase 2 detection/ML 구현 시 함께 해결해야 하는 선행 모듈 이슈.
 
 ### Phase 1 구현 후보 (현재 39컬럼으로 가능)
 
-#### 역분개 패턴 탐지 — ✅ L2-06 구현 완료
+#### 역분개 패턴 탐지 — ✅ L2-05 구현 완료
 
 - 근거: 감사기준서 240호 (기말 조정·재분개 중점 검사)
-- 룰 ID: **L2-06**, 심각도 4
+- 룰 ID: **L2-05**, 심각도 4
 - 구현 위치: `src/detection/anomaly_rules_reversal.py` → `c11_reversal_entry()`
 - 설정: `config/audit_rules.yaml` (`reversal_keywords` 18개, 기말 부스트 기간)
 - 로직 (5개 서브 신호 가중 합산, 임계값 0.3):
@@ -1349,9 +1349,9 @@ Phase 2 detection/ML 구현 시 함께 해결해야 하는 선행 모듈 이슈.
   3. S3(±0.15) 정상/수정 구분: auto + 월초(D≤5) = 감점, manual = 가중
   4. S4(0.10) 적요 키워드: config/audit_rules.yaml `reversal_keywords` 18개
   5. S5(×1.5) 기말 부스트: 12/20~12/31 + 1/1~1/5 결산 전후 15일
-- 상세 사양: [DETECTION_RULES.md §2.3 L2-06](../DETECTION_RULES.md) 참조
+- 상세 사양: [DETECTION_RULES.md §2.3 L2-05](../DETECTION_RULES.md) 참조
 
-#### Top-side JE (경영진 조정 전표) — L2-05 ✅
+#### Top-side JE (경영진 조정 전표) — 조합 점수 ✅
 
 - 근거: 감사기준서 240호 §32(a)(ii), PCAOB AS 2401
 - 룰 ID: **L2-05**, 심각도 5 (최고)
@@ -1364,7 +1364,7 @@ Phase 2 detection/ML 구현 시 함께 해결해야 하는 선행 모듈 이슈.
     3. 비정상 계정 (L1-03 > 0 OR L4-04 > 0)
     4. 이상 고액 (L4-03 > 0)
     5. 위험 적요 (L3-08 > 0)
-  - 판정: 수기 AND 가점 ≥ `topside_threshold`(기본 2) → L2-05 플래그, risk_level=High 승격
+  - 판정: 수기 전표에 대해 가점 합산 → `topside_score` 산출
   - 정규화: `topside_score = raw / 5.0` (0.0~1.0)
 - 설정: `config/settings.py::AuditSettings.topside_threshold`
 - 테스트: `tests/test_detection/test_score_aggregator.py::TestTopsideDetection` (9개)

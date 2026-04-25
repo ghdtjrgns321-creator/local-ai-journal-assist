@@ -10,6 +10,40 @@ patterns:
     - "Manual"
     - "Adjustment"
 
+  # L3-10: standalone high-risk account usage.
+  # Customize these per client CoA.
+  high_risk_account_use:
+    accounts:
+      - "1190"
+      - "2190"
+    account_prefixes:
+      - "111"
+      - "112"
+      - "113"
+    # User-adjustable sensitive account families for Phase 1 review queues.
+    # These group names are surfaced in L3-10 annotations and can be tuned per client CoA.
+    sensitive_account_groups:
+      cash_equivalent:
+        accounts: []
+        account_prefixes:
+          - "111"
+          - "112"
+          - "113"
+      suspense_clearing:
+        accounts:
+          - "1190"
+          - "2190"
+        account_prefixes: []
+      employee_advance_loan:
+        accounts: []
+        account_prefixes: []
+      prepaid_deferred:
+        accounts: []
+        account_prefixes: []
+      voucher_coupon:
+        accounts: []
+        account_prefixes: []
+
   # L1-05: only system-driven self-approval is allowed by default.
   # Approval omission is handled by L1-07, so this section only defines explicit allow cases.
   self_approval_allow:
@@ -58,6 +92,38 @@ patterns:
   # 영업외수익(9), 글로벌 본사 기준(5) 등 추가 가능
   revenue_account_prefixes:
     - "4"
+
+  # L3-04: 기말/기초 대규모 전표 운영 설정.
+  # 결산 일정(period_end_margin_days)은 config/settings.py에서 정하고,
+  # 정상 반복 마감전표 제외는 아래 whitelist 후보를 감사인이 승인한 뒤 입력한다.
+  # 예시:
+  # period_end_whitelist:
+  #   - name: "월말 감가상각 자동전표"
+  #     source: ["batch", "system"]
+  #     created_by: ["SAP_BATCH"]
+  #     document_type: ["AF"]
+  #     account_group: ["depreciation", "fixed_assets"]
+  #     description_contains: ["감가상각", "depreciation"]
+  period_end_whitelist: []
+
+  # L3-04: 결산 민감 계정군. 플래그 대상을 늘리지는 않고,
+  # 이미 L3-04에 걸린 전표의 우선순위/점수만 올린다.
+  period_end_sensitive_accounts:
+    account_groups:
+      - "revenue"
+      - "inventory"
+      - "allowance"
+      - "receivable"
+      - "payable"
+      - "impairment"
+    account_prefixes:
+      - "4"     # 매출/수익
+      - "12"    # 재고
+      - "1150"  # 미수/관계사 채권 예시
+      - "2050"  # 미지급/관계사 채무 예시
+      - "2700"  # 미지급/발생액 예시
+    accounts: []
+
   # L2-04: 비용 자산화 탐지용 계정 분류.
   # 기본값은 보수적인 시작점일 뿐이며, 회사별 CoA에 맞게 조정해야 한다.
   expense_capitalization:
@@ -165,14 +231,14 @@ patterns:
     - "[Uu]nallocated"
     - "[Mm]iscellaneous"
 
-  # L2-06: 정상 청산/반제 계정 — 역분개 탐지 제외 (S1/S2에서 필터링)
+  # L2-05: 정상 청산/반제 계정 — 역분개 탐지 제외 (S1/S2에서 필터링)
   # GR/IR 청산, IC 정산 등 동일 금액 반대 전표가 정상 프로세스인 계정
   reversal_exclude_accounts:
     - "2900"    # GR/IR 청산계정 (Goods Receipt / Invoice Receipt)
     - "1150"    # IC Receivable 정산
     - "2050"    # IC Payable 정산
 
-  # L2-06: 역분개 적요 키워드 (한/영)
+  # L2-05: 역분개 적요 키워드 (한/영)
   # line_text에서 매칭 → S4 서브 신호
   reversal_keywords:
     - "수정"
@@ -284,7 +350,95 @@ coa_category_prefixes:
   liability: ["2"]   # 2xxx = 부채
   equity: ["3"]      # 3xxx = 자본
   revenue: ["4"]     # 4xxx = 수익
-  expense: ["5"]     # 5xxx = 비용
+  expense: ["5", "6", "7", "8"]     # 5xxx~8xxx = 비용/원가/판관비
+
+# L3-01: 계정 분류 불일치. 확정 오류가 아니라 review-needed 신호.
+# 회사별 CoA가 다르면 회사 audit_rules.yaml에서 이 블록을 오버라이드한다.
+l3_01_misclassified_account:
+  enabled: true
+  strict_allowed_categories: false
+  # 운영 기본값은 보수적으로 유지한다.
+  # 1) process_denied_accounts가 있으면 exact account 기준으로 우선 판정
+  # 2) exact account가 없는 프로세스만 process_disallowed_categories fallback 사용
+  # 3) process_allowed_keywords는 정상 예외 적요를 보수적으로 완화한다
+  # 3) 이 값들은 고객사 CoA 기준으로 반드시 override 가능해야 한다
+  account_category_prefixes:
+    asset: ["1"]
+    liability: ["2"]
+    equity: ["3"]
+    revenue: ["4"]
+    expense: ["5", "6", "7", "8"]
+    payroll: ["54", "64", "74"]
+    inventory: ["12"]
+  process_denied_accounts:
+    O2C:
+      - "500000"
+      - "500060"
+      - "500070"
+      - "500120"
+      - "500150"
+      - "500160"
+      - "500230"
+      - "500270"
+      - "500380"
+      - "500410"
+      - "500480"
+      - "500500"
+      - "500590"
+      - "500600"
+      - "500670"
+      - "500680"
+      - "500720"
+      - "500830"
+      - "500920"
+      - "500960"
+      - "6800"
+    P2P:
+      - "400030"
+      - "400100"
+      - "400170"
+      - "400210"
+      - "400270"
+      - "400380"
+      - "400410"
+      - "400520"
+      - "400650"
+      - "400660"
+      - "400700"
+      - "400710"
+      - "400780"
+      - "4100"
+    H2R:
+      - "400030"
+      - "400260"
+      - "400440"
+      - "400490"
+      - "400570"
+      - "400710"
+      - "400730"
+    TRE: ["1200", "1290"]
+    A2R: ["6400"]
+  # Optional: 정상 예외 적요를 아주 보수적으로만 넣는다.
+  # 기본값은 비워 둔다. 기본 세팅에서 recall을 깎으면 안 되기 때문이다.
+  # 예시:
+  # process_allowed_keywords:
+  #   O2C: ["매출에누리", "판매수수료", "rebate"]
+  #   H2R: ["주식보상", "퇴직급여"]
+  #   TRE: ["clearing", "transfer"]
+  process_allowed_keywords: {}
+  process_disallowed_categories:
+    O2C: ["expense"]
+    P2P: ["revenue"]
+    H2R: ["revenue"]
+    TRE: ["inventory"]
+    A2R: ["payroll"]
+  process_allowed_categories:
+    O2C: ["revenue", "asset", "liability"]
+    P2P: ["expense", "asset", "liability", "inventory"]
+    H2R: ["payroll", "expense", "liability", "asset"]
+    TRE: ["asset", "liability", "equity"]
+    A2R: ["asset", "liability", "expense"]
+    R2R: ["asset", "liability", "equity", "revenue", "expense", "payroll", "inventory"]
 
 # Evidence: 증빙/컷오프/금액 탐지 (WU-14)
 evidence:
@@ -295,7 +449,7 @@ evidence:
     - "credit_card"          # 신용카드 매출전표
     - "cash_receipt"         # 현금영수증
     - "electronic_invoice"   # 전자세금계산서
-  # EV02: 비용 계정 접두사 (컷오프 비용 대상)
+  # L3-11: 비용 계정 접두사 (컷오프 비용 대상)
   expense_account_prefixes:
     - "5"
 
