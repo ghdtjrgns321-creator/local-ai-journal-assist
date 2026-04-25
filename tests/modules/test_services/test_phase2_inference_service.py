@@ -21,6 +21,7 @@ from src.services.phase2_inference_service import (
     run_phase2_inference,
     run_phase2_inference_analysis,
 )
+from tests.modules.test_services.test_phase2_case_contract import _phase1_result
 
 
 def _make_local_temp_dir() -> Path:
@@ -45,6 +46,19 @@ class _FakePipeline:
             warnings=[],
             detector_statuses=[],
         )
+
+
+class _FakePipelineWithPhase1Case(_FakePipeline):
+    def redetect(self, featured_df, batch_id: str, file_name: str, reference_df=None):
+        result = super().redetect(
+            featured_df,
+            batch_id=batch_id,
+            file_name=file_name,
+            reference_df=reference_df,
+        )
+        result.phase1_case_result = _phase1_result()
+        result.phase1_case_count = 1
+        return result
 
 
 class _FakeSettings:
@@ -176,6 +190,24 @@ def test_run_phase2_inference_marks_cold_start_bootstrap_when_statuses_indicate_
     )
 
     assert result.phase2_inference_mode == "cold_start_bootstrap"
+
+
+def test_run_phase2_inference_attaches_phase2_case_overlays_without_overwriting_phase1():
+    featured_df = pd.DataFrame({"document_id": ["D1"]})
+    result = run_phase2_inference(
+        featured_df,
+        file_name="journal.csv",
+        reference_df=featured_df,
+        settings=_FakeSettings(),
+        pipeline_cls=_FakePipelineWithPhase1Case,
+    )
+
+    assert len(result.phase2_case_overlays) == 1
+    overlay = result.phase2_case_overlays[0]
+    assert overlay["phase1_case_id"] == "case_control_failure_00001"
+    assert overlay["phase2_adjusted_priority"] is None
+    assert overlay["precision_adjustment_reason"] == "phase2_not_applied"
+    assert result.phase1_case_result.cases[0].priority_score == 0.8
 
 
 def test_run_phase2_inference_analysis_persists_state():

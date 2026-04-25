@@ -29,6 +29,10 @@ from src.preprocessing.feature_quality import (
 )
 from src.preprocessing.label_strategy import create_labels, create_labels_from_feedback
 from src.preprocessing.model_registry import ModelRegistry
+from src.services.phase2_case_contract import (
+    PROVENANCE_ONLY_FIELDS,
+    build_phase2_case_feature_frame,
+)
 from src.services.phase2_training_models import (
     Phase2LabelSummary,
     Phase2PromotedModel,
@@ -495,6 +499,7 @@ def build_phase2_training_report(
     feedback_labels=None,
     strategy: str = "hybrid",
     model_families: list[str] | tuple[str, ...] | None = None,
+    phase1_case_result=None,
 ) -> Phase2TrainingReport:
     """Create the initial Phase 2 training orchestration report."""
     report = initialize_phase2_training_report(
@@ -509,6 +514,7 @@ def build_phase2_training_report(
         strategy=strategy,
     )
     cleaned_df, _groups, feature_payload = prepare_phase2_feature_inputs(df)
+    phase1_case_contract = _build_phase1_case_contract_metadata(phase1_case_result)
 
     families = list(model_families or _DEFAULT_MODEL_FAMILIES)
     variants = feature_payload["feature_variants"]
@@ -524,6 +530,7 @@ def build_phase2_training_report(
             "search_preset_count": sum(len(presets) for presets in search_presets.values()),
             "feature_quality_profile": feature_payload["feature_quality_profile"],
             "adjusted_feature_groups": feature_payload["adjusted_groups"],
+            "phase1_case_contract": phase1_case_contract,
             "search_presets": search_presets,
         }
     )
@@ -551,6 +558,7 @@ def run_phase2_training(
     detector_factories: dict[str, Any] | None = None,
     base_dir: Path | None = None,
     save_report: bool = True,
+    phase1_case_result=None,
 ) -> Phase2TrainingReport:
     """Execute Phase 2 training trials and persist a training report."""
     report = initialize_phase2_training_report(
@@ -579,6 +587,7 @@ def run_phase2_training(
         strategy=strategy,
     )
     cleaned_df, groups, feature_payload = prepare_phase2_feature_inputs(df)
+    phase1_case_contract = _build_phase1_case_contract_metadata(phase1_case_result)
     families = list(model_families or _DEFAULT_MODEL_FAMILIES)
     variants = feature_payload["feature_variants"]
     search_presets = build_phase2_search_presets(families)
@@ -594,6 +603,7 @@ def run_phase2_training(
             "search_preset_count": sum(len(presets) for presets in search_presets.values()),
             "feature_quality_profile": feature_payload["feature_quality_profile"],
             "adjusted_feature_groups": feature_payload["adjusted_groups"],
+            "phase1_case_contract": phase1_case_contract,
             "registry_dir": str(registry_dir),
             "search_presets": search_presets,
         }
@@ -669,6 +679,7 @@ def run_phase2_training(
         promoted_models=report.promoted_models,
         promotion_policy=promotion_policy,
         trials=report.leaderboard,
+        phase1_case_contract=phase1_case_contract,
     )
     report.status = _finalize_report_status(report.leaderboard)
     if save_report:
@@ -948,7 +959,9 @@ def _execute_rule_style_trial(
 
 def _compute_trial_metric(detect_result, y_true) -> tuple[str, float | None]:
     if len(y_true) == 0:
-        flagged_ratio = float(len(detect_result.flagged_indices) / max(len(detect_result.scores), 1))
+        flagged_ratio = float(
+            len(detect_result.flagged_indices) / max(len(detect_result.scores), 1)
+        )
         return "flagged_ratio", flagged_ratio
     positives = int((pd.Series(y_true) == 1).sum())
     if positives > 0:
@@ -982,7 +995,10 @@ def build_phase2_search_presets(
     families: list[str] | tuple[str, ...],
 ) -> dict[str, list[dict[str, Any]]]:
     return {
-        family: [dict(preset) for preset in _DEFAULT_SEARCH_PRESETS.get(family, ({"name": "default"},))]
+        family: [
+            dict(preset)
+            for preset in _DEFAULT_SEARCH_PRESETS.get(family, ({"name": "default"},))
+        ]
         for family in families
     }
 
@@ -1164,7 +1180,11 @@ def _build_promotion_policy(trials: list[Phase2TrialResult]) -> dict[str, Any]:
     family_search_diversity: dict[str, int] = {}
     for family in {trial.model_family for trial in completed}:
         search_names = {
-            str(trial.metadata.get("search_name") or trial.params.get("search_name") or trial.variant)
+            str(
+                trial.metadata.get("search_name")
+                or trial.params.get("search_name")
+                or trial.variant
+            )
             for trial in completed
             if trial.model_family == family
         }
@@ -1216,6 +1236,7 @@ def _build_inference_contract(
     promoted_models: list[Phase2PromotedModel],
     promotion_policy: dict[str, Any],
     trials: list[Phase2TrialResult],
+    phase1_case_contract: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     promoted_versions = {
         model.model_name: model.registry_version
@@ -1223,7 +1244,7 @@ def _build_inference_contract(
         if model.registry_version is not None
     }
     required_models = [model.model_name for model in promoted_models]
-    return {
+    contract = {
         "source_report_id": report_id,
         "selection_mode": promotion_policy.get("selection_mode", "best_per_family"),
         "required_models": required_models,
@@ -1234,6 +1255,29 @@ def _build_inference_contract(
             for model_name, track_name in _PROMOTED_TRACK_MAP.items()
             if model_name in required_models
         },
+    }
+    if phase1_case_contract is not None:
+        contract["phase1_case_contract"] = phase1_case_contract
+    return contract
+
+
+def _build_phase1_case_contract_metadata(phase1_case_result) -> dict[str, Any]:
+    if phase1_case_result is None:
+        return {
+            "available": False,
+            "feature_index_name": "phase1_case_id",
+            "feature_columns": [],
+            "provenance_only_fields": list(PROVENANCE_ONLY_FIELDS),
+        }
+
+    feature_frame = build_phase2_case_feature_frame(phase1_case_result)
+    return {
+        "available": True,
+        "case_count": int(len(feature_frame)),
+        "feature_index_name": str(feature_frame.index.name or "phase1_case_id"),
+        "feature_columns": list(feature_frame.columns),
+        "feature_column_count": int(len(feature_frame.columns)),
+        "provenance_only_fields": list(PROVENANCE_ONLY_FIELDS),
     }
 
 
@@ -1261,7 +1305,9 @@ def _build_search_summaries(
 ) -> dict[str, dict[str, dict[str, Any]]]:
     grouped: dict[str, dict[str, list[Phase2TrialResult]]] = {}
     for trial in trials:
-        search_name = str(trial.metadata.get("search_name") or trial.params.get("search_name") or "-")
+        search_name = str(
+            trial.metadata.get("search_name") or trial.params.get("search_name") or "-"
+        )
         grouped.setdefault(trial.model_family, {}).setdefault(search_name, []).append(trial)
     return {
         family: {
@@ -1277,7 +1323,9 @@ def _build_feature_variant_summaries(
 ) -> dict[str, dict[str, Any]]:
     grouped: dict[str, list[Phase2TrialResult]] = {}
     for trial in trials:
-        feature_variant = str(trial.params.get("feature_variant") or _split_trial_variant(trial.variant)[0])
+        feature_variant = str(
+            trial.params.get("feature_variant") or _split_trial_variant(trial.variant)[0]
+        )
         grouped.setdefault(feature_variant, []).append(trial)
     return {
         feature_variant: _build_group_summary(variant_trials)
@@ -1460,7 +1508,11 @@ def _eligible_promotion_trials(
                 completed_by_family.get(trial.model_family, 0) + 1
             )
             search_variants_by_family.setdefault(trial.model_family, set()).add(
-                str(trial.metadata.get("search_name") or trial.params.get("search_name") or trial.variant)
+                str(
+                    trial.metadata.get("search_name")
+                    or trial.params.get("search_name")
+                    or trial.variant
+                )
             )
         elif trial.status == Phase2TrainingStatus.FAILED:
             failed_by_family[trial.model_family] = (

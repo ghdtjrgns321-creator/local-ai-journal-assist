@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
+
+from src.services.phase2_case_contract import build_phase2_case_overlays
 
 
 def run_phase2_inference(
@@ -47,6 +50,7 @@ def run_phase2_inference(
         "phase2_inference_mode",
         _determine_phase2_inference_mode(snapshot=snapshot, result=result),
     )
+    _attach_phase2_case_overlays(result)
     _persist_phase2_batch_snapshot(conn=conn, result=result)
     result.file_name = file_name
     return result
@@ -138,6 +142,17 @@ def _attach_phase2_training_contract(result, *, ctx=None, snapshot=None) -> None
     setattr(result, "phase2_training_report_id", snapshot.get("report_id"))
     setattr(result, "phase2_inference_contract", snapshot.get("inference_contract"))
     setattr(result, "phase2_promotion_policy", snapshot.get("promotion_policy"))
+
+
+def _attach_phase2_case_overlays(result) -> None:
+    phase1 = getattr(result, "phase1_case_result", None)
+    overlays = build_phase2_case_overlays(
+        phase1,
+        detector_statuses=getattr(result, "detector_statuses", None) or [],
+        phase2_inference_contract=getattr(result, "phase2_inference_contract", None),
+        phase2_training_report_id=getattr(result, "phase2_training_report_id", None),
+    )
+    setattr(result, "phase2_case_overlays", overlays)
 
 
 def _persist_phase2_batch_snapshot(*, conn=None, result=None) -> None:

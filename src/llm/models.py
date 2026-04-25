@@ -140,6 +140,22 @@ class NarrativeBatch(BaseModel):
     narratives: list[EntryNarrative]
 
 
+class CaseNarrative(BaseModel):
+    """PHASE3 selected-case explanation output."""
+
+    case_id: str
+    narrative: str
+    cited_rules: list[str] = Field(default_factory=list)
+    review_focus: list[str] = Field(default_factory=list)
+    evidence_limitations: list[str] = Field(default_factory=list)
+
+
+class CaseNarrativeBatch(BaseModel):
+    """Strict wrapper for selected-case PHASE3 narrative outputs."""
+
+    cases: list[CaseNarrative] = Field(default_factory=list)
+
+
 # ── WU-30: 감사규칙 피드백 루프 스키마 ──
 # Why: LLM이 새 데이터 패턴을 분석해 audit_rules.yaml 개선 제안을 생성하고,
 #      사용자 승인 후 회사별 오버라이드에 기록하는 Data Flywheel의 입구.

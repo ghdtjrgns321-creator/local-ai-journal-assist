@@ -7,8 +7,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pandas as pd
-from src.detection.base import DetectionResult
 
+from src.detection.base import DetectionResult
 from src.services.phase2_training_models import (
     Phase2LabelSummary,
     Phase2PromotedModel,
@@ -18,11 +18,11 @@ from src.services.phase2_training_models import (
 )
 from src.services.phase2_training_service import (
     _eligible_promotion_trials,
+    build_phase2_feature_variants,
     build_phase2_label_summary,
     build_phase2_search_presets,
     build_phase2_training_paths,
     build_phase2_training_report,
-    build_phase2_feature_variants,
     ensure_phase2_training_dirs,
     initialize_phase2_training_report,
     prepare_phase2_feature_inputs,
@@ -30,6 +30,7 @@ from src.services.phase2_training_service import (
     run_phase2_training,
     save_phase2_training_report,
 )
+from tests.modules.test_services.test_phase2_case_contract import _phase1_result
 
 
 def _make_local_temp_dir() -> Path:
@@ -233,6 +234,33 @@ def test_build_phase2_training_report_skips_supervised_families_without_labels()
     assert any(trial.model_family == "intercompany" for trial in report.leaderboard)
 
 
+def test_build_phase2_training_report_records_phase1_case_contract():
+    df = pd.DataFrame(
+        {
+            "document_id": ["d1", "d2", "d3"],
+            "amount": [100.0, 150.0, 80.0],
+            "gl_account": ["4000", "5000", "6000"],
+            "user_persona": ["manager", "controller", "junior_accountant"],
+            "posting_date": pd.to_datetime(["2024-01-01", "2024-01-02", "2024-01-03"]),
+        }
+    )
+
+    report = build_phase2_training_report(df, phase1_case_result=_phase1_result())
+
+    contract = report.metadata["phase1_case_contract"]
+    feature_columns = set(contract["feature_columns"])
+
+    assert contract["available"] is True
+    assert contract["case_count"] == 1
+    assert contract["feature_index_name"] == "phase1_case_id"
+    assert "rule_diversity_count" in feature_columns
+    assert "top_rule_ids" not in feature_columns
+    assert "primary_theme" not in feature_columns
+    assert "raw_rule_hits" not in feature_columns
+    assert "phase1_case_id" not in feature_columns
+    assert "top_rule_ids" in contract["provenance_only_fields"]
+
+
 def test_build_phase2_training_report_enables_supervised_families_with_ground_truth():
     df = pd.DataFrame(
         {
@@ -240,7 +268,9 @@ def test_build_phase2_training_report_enables_supervised_families_with_ground_tr
             "amount": [100.0, 150.0, 80.0, 175.0],
             "gl_account": ["4000", "5000", "6000", "7000"],
             "user_persona": ["manager", "controller", "junior_accountant", "manager"],
-            "posting_date": pd.to_datetime(["2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04"]),
+            "posting_date": pd.to_datetime(
+                ["2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04"]
+            ),
             "is_fraud": [0, 1, 0, 0],
             "is_anomaly": [0, 0, 1, 0],
         }
@@ -376,7 +406,9 @@ def test_run_phase2_training_executes_trials_with_injected_detectors():
                 "amount": [100.0, 150.0, 80.0, 175.0],
                 "gl_account": ["4000", "5000", "6000", "7000"],
                 "user_persona": ["manager", "controller", "junior_accountant", "manager"],
-                "posting_date": pd.to_datetime(["2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04"]),
+                "posting_date": pd.to_datetime(
+                    ["2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04"]
+                ),
                 "is_fraud": [0, 1, 0, 0],
                 "is_anomaly": [0, 0, 1, 0],
             }
@@ -408,8 +440,14 @@ def test_run_phase2_training_executes_trials_with_injected_detectors():
         assert report.metadata["promotion_policy"]["family_min_completed_trials"]["timeseries"] == 2
         assert report.metadata["promotion_policy"]["family_min_metric"]["timeseries"] == 0.05
         assert report.metadata["promotion_policy"]["family_min_search_variants"]["timeseries"] == 2
-        assert report.metadata["promotion_policy"]["family_max_failed_trial_ratio"]["timeseries"] == 0.5
-        assert report.metadata["promotion_policy"]["tie_break_policy"]["primary"] == "metric_value_desc"
+        assert (
+            report.metadata["promotion_policy"]["family_max_failed_trial_ratio"]["timeseries"]
+            == 0.5
+        )
+        assert (
+            report.metadata["promotion_policy"]["tie_break_policy"]["primary"]
+            == "metric_value_desc"
+        )
         assert (
             report.metadata["inference_contract"]["promoted_versions"]["unsupervised"] >= 1
         )
@@ -436,7 +474,10 @@ def test_run_phase2_training_executes_trials_with_injected_detectors():
             report.metadata["promotion_policy"]["rule_style_metric_policy"]["metric_name"]
             == "rule_proxy_score"
         )
-        assert report.metadata["family_promotion_decisions"]["timeseries"]["eligible_for_promotion"] is True
+        assert (
+            report.metadata["family_promotion_decisions"]["timeseries"]["eligible_for_promotion"]
+            is True
+        )
         assert (
             report.metadata["family_promotion_decisions"]["timeseries"]["required_completed_trials"]
             == 2
@@ -449,6 +490,9 @@ def test_run_phase2_training_executes_trials_with_injected_detectors():
             report.metadata["inference_contract"]["family_sub_detectors"]["timeseries"]
             == ["transaction_burst", "unusual_frequency"]
         )
+        case_contract = report.metadata["inference_contract"]["phase1_case_contract"]
+        assert case_contract["available"] is False
+        assert "top_rule_ids" in case_contract["provenance_only_fields"]
         stacking_trials = [
             trial for trial in report.leaderboard if trial.model_family == "stacking"
         ]
@@ -457,13 +501,70 @@ def test_run_phase2_training_executes_trials_with_injected_detectors():
             trial for trial in stacking_trials if trial.status == Phase2TrainingStatus.COMPLETED
         )
         assert completed_stacking.metadata["stacking_mode"] == "oof_stacking"
-        assert completed_stacking.metadata["base_input_variants"]["unsupervised"].endswith("sensitive")
-        assert completed_stacking.metadata["base_input_variants"]["supervised"] == completed_stacking.variant
-        assert completed_stacking.metadata["base_input_variants"]["transformer"] == completed_stacking.variant
-        assert completed_stacking.metadata["base_input_variants"]["sequence"] == completed_stacking.variant
+        assert completed_stacking.metadata["base_input_variants"]["unsupervised"].endswith(
+            "sensitive"
+        )
+        assert (
+            completed_stacking.metadata["base_input_variants"]["supervised"]
+            == completed_stacking.variant
+        )
+        assert (
+            completed_stacking.metadata["base_input_variants"]["transformer"]
+            == completed_stacking.variant
+        )
+        assert (
+            completed_stacking.metadata["base_input_variants"]["sequence"]
+            == completed_stacking.variant
+        )
         assert (
             root / "phase2_train" / report.report_id / "reports" / "training_report.json"
         ).exists()
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_run_phase2_training_propagates_phase1_case_contract_to_inference_contract():
+    root = _make_local_temp_dir()
+    try:
+        df = pd.DataFrame(
+            {
+                "document_id": ["d1", "d2", "d3", "d4"],
+                "created_by": ["u1", "u2", "u1", "u2"],
+                "amount": [100.0, 150.0, 80.0, 175.0],
+                "gl_account": ["4000", "5000", "6000", "7000"],
+                "user_persona": ["manager", "controller", "junior_accountant", "manager"],
+                "posting_date": pd.to_datetime(
+                    ["2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04"]
+                ),
+                "is_fraud": [0, 1, 0, 0],
+                "is_anomaly": [0, 0, 1, 0],
+            }
+        )
+        ctx = SimpleNamespace(model_dir=root / "models")
+
+        report = run_phase2_training(
+            df,
+            ctx=ctx,
+            strategy="datasynth",
+            detector_factories={
+                "unsupervised": _FakeUnsupervised,
+                "supervised": _FakeSupervised,
+                "transformer": _FakeTransformer,
+                "sequence": _FakeSequence,
+                "stacking": _FakeStacking,
+            },
+            base_dir=root / "phase2_train",
+            phase1_case_result=_phase1_result(),
+        )
+
+        metadata_contract = report.metadata["phase1_case_contract"]
+        inference_contract = report.metadata["inference_contract"]["phase1_case_contract"]
+
+        assert metadata_contract["available"] is True
+        assert inference_contract == metadata_contract
+        assert "rule_diversity_count" in inference_contract["feature_columns"]
+        assert "top_rule_ids" not in inference_contract["feature_columns"]
+        assert "top_rule_ids" in inference_contract["provenance_only_fields"]
     finally:
         shutil.rmtree(root, ignore_errors=True)
 

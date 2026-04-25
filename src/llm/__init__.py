@@ -64,6 +64,10 @@ def __getattr__(name: str):
         from src.llm.narrative_report import NarrativeReporter
 
         return NarrativeReporter
+    if name == "CaseNarrativeGenerator":
+        from src.llm.case_narrative_generator import CaseNarrativeGenerator
+
+        return CaseNarrativeGenerator
     if name == "RuleFeedbackEngine":
         from src.llm.rule_feedback import RuleFeedbackEngine
 

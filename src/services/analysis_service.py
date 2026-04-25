@@ -41,7 +41,7 @@ def make_phase_settings(
         "enable_graph_detection": False,
         "enable_nlp_detection": False,
         "enable_access_audit_detection": False,
-        "enable_evidence_detection": False,
+        "enable_evidence_detection": True,
         "enable_trendbreak_detection": False,
         "enable_ml_detection": False,
     }

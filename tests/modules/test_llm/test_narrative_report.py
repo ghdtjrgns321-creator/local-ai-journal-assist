@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import duckdb
+import pandas as pd
 import pytest
 
 from src.db.schema import initialize_schema
@@ -151,6 +152,27 @@ def test_get_narratives_mixes_cache_and_generation(conn):
     assert result["D001"] == "캐시된 사유서 D001"
     assert "D002" in result["D002"]
     assert client.chat.call_count == 1  # D001은 캐시 HIT
+
+
+def test_narrative_prompt_contains_fact_grounding_constraints():
+    rows = pd.DataFrame(
+        {
+            "document_id": ["D001"],
+            "flagged_rules": ["L1-05"],
+            "risk_level": ["High"],
+            "anomaly_score": [0.8],
+        }
+    )
+
+    messages = NarrativeReporter._build_prompt(rows)
+    system = messages[0]["content"]
+    user = messages[1]["content"]
+
+    assert "Use only the provided fields" in system
+    assert "Do not infer external accounting standards" in system
+    assert "Do not conclude fraud" in system
+    assert "입력에 없는 회계기준" in user
+    assert "부정·위반·조작을 단정하지 말고" in user
 
 
 def test_laziness_missing_triggers_retry(conn):

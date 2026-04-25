@@ -51,6 +51,11 @@ _SYSTEM_PROMPT = (
     "You are an audit XAI assistant. For each journal entry, write a 1~3 sentence "
     "risk narrative in Korean (한국어). Cite triggered rule IDs (e.g., L2-01, L3-06) in "
     "parentheses. Be concise, evidence-based, and avoid speculation. "
+    "Use only the provided fields, PHASE1 evidence, and PHASE2 provenance. "
+    "Do not infer external accounting standards, legal conclusions, company policies, "
+    "or facts that are not present in the input. Do not conclude fraud, violation, or "
+    "manipulation; use review-oriented wording such as 가능성, 검토 필요, 확인 필요. "
+    "If evidence is insufficient, explicitly say so. "
     "Return one object per requested document_id."
 )
 
@@ -308,6 +313,9 @@ class NarrativeReporter:
             f"다음 {len(payload)}건의 전표에 대해 각각 위험 사유서를 생성하세요.\n"
             "각 사유서는 1~3문장, 한국어, 트리거된 룰 ID를 인용하세요.\n"
             "응답은 narratives 배열에 각 document_id별로 하나씩 포함해야 합니다.\n\n"
+            "입력에 없는 회계기준/법규/회사정책/사실은 추가하지 마세요.\n"
+            "부정·위반·조작을 단정하지 말고 검토 필요 수준으로 표현하세요.\n"
+            "근거가 부족하면 근거 부족을 명시하세요.\n"
             f"{json.dumps(payload, ensure_ascii=False, default=str)}"
         )
         return [
