@@ -416,8 +416,8 @@ def generate_report(
     else:
         md.append("모든 라벨 타입이 Phase 1 룰에 매핑됨.\n")
 
-    # ── §7 레이어별 성능 ──
-    md.append("\n## 7. 레이어별 실행 성능\n")
+    # ── §7 L1~L4 성능 ──
+    md.append("\n## 7. L1~L4 실행 성능\n")
     md.append(f"| {'단계':20s} | {'소요(s)':>10s} | {'룰 수':>6s} |")
     md.append(f"|:{'-'*20}|{'-'*10}:|{'-'*6}:|")
     for track, title in [
@@ -431,8 +431,8 @@ def generate_report(
         rules_run = len(results[track].rule_flags) if track in results else 0
         md.append(f"| {title:20s} | {t:>10.3f} | {rules_run:>6d} |")
 
-    # ── §8 레이어별 룰 상세 ──
-    md.append("\n## 8. 레이어별 룰 탐지 결과\n")
+    # ── §8 L1~L4 룰 상세 ──
+    md.append("\n## 8. L1~L4 룰 탐지 결과\n")
     for track, title in [
         ("layer_a", "L1"),
         ("layer_b", "L2"),
