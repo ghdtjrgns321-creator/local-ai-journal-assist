@@ -661,6 +661,8 @@ def add_all_text_features(
     df: pd.DataFrame,
     settings: AuditSettings | None = None,
     risk_kw: dict | None = None,
+    *,
+    include_morpheme_tokens: bool = True,
 ) -> pd.DataFrame:
     """텍스트 파생변수를 한번에 추가. engine.py 진입점.
 
@@ -681,6 +683,7 @@ def add_all_text_features(
         entropy_threshold=s.entropy_threshold,
     )
     add_has_risk_keyword(df, risk_kw=risk_kw)
-    add_morpheme_features(df)
+    if include_morpheme_tokens:
+        add_morpheme_features(df)
 
     return df

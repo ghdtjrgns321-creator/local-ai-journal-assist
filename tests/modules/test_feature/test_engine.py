@@ -51,6 +51,8 @@ class TestGenerateAllFeatures:
         bool_cols = [
             "is_weekend", "is_after_hours", "is_period_end",
             "is_near_threshold", "exceeds_threshold", "is_round_number",
+            "near_threshold_limit_resolved", "approval_limit_resolved",
+            "approver_can_approve_je",
             "is_manual_je", "is_intercompany", "is_revenue_account",
             "is_suspense_account",
         ]
@@ -60,6 +62,15 @@ class TestGenerateAllFeatures:
         # float 타입 피처
         assert pd.api.types.is_float_dtype(df["amount_zscore"])
         assert pd.api.types.is_float_dtype(df["amount_magnitude"])
+        assert pd.api.types.is_float_dtype(df["document_approval_amount"])
+        assert pd.api.types.is_float_dtype(df["approver_limit_amount"])
+        assert pd.api.types.is_float_dtype(df["approval_excess_amount"])
+        assert pd.api.types.is_float_dtype(df["approval_excess_ratio"])
+        assert pd.api.types.is_float_dtype(df["near_threshold_amount"])
+        assert pd.api.types.is_float_dtype(df["near_threshold_limit_amount"])
+        assert pd.api.types.is_float_dtype(df["near_threshold_ratio_to_limit"])
+        assert pd.api.types.is_float_dtype(df["near_threshold_gap_amount"])
+        assert pd.api.types.is_float_dtype(df["near_threshold_gap_ratio"])
 
         # Int64(nullable) 타입 피처
         assert df["days_backdated"].dtype == "Int64"
@@ -68,6 +79,8 @@ class TestGenerateAllFeatures:
         # str/object 타입 피처
         assert df["description_quality"].dtype == "object"
         assert df["has_risk_keyword"].dtype == "object"
+        assert df["approval_excess_bucket"].dtype == "object"
+        assert df["near_threshold_bucket"].dtype == "object"
 
         # WU-19: morpheme_tokens는 object dtype이되 셀값이 반드시 list여야 함
         # Why: dtype만으로는 문자열 직렬화·None 섞임을 잡을 수 없다. WU-21에서

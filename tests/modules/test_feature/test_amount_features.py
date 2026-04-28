@@ -3,18 +3,18 @@
 계층: base_amount → 개별 피처 → orchestrator 순서로 검증.
 """
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
-from pathlib import Path
 
 from config.settings import AuditSettings
-from src.ingest.datasynth_labels import set_source_path
 from src.feature import amount_features as amount_features_module
 from src.feature.amount_features import (
     _compute_base_amount,
+    _compute_document_amount,
     _map_coa_category,
-    _zscore_with_fallback,
     add_all_amount_features,
     add_amount_magnitude,
     add_amount_zscore,
@@ -22,7 +22,6 @@ from src.feature.amount_features import (
     add_is_near_threshold,
     add_is_round_number,
 )
-
 
 # ── TestBaseAmount ───────────────────────────────────────────────
 
@@ -86,6 +85,10 @@ class TestIsNearThreshold:
         add_is_near_threshold(df, base, self.THRESHOLDS, self.RATIO)
 
         assert df["is_near_threshold"].all()
+        assert (df["near_threshold_limit_amount"] == 100_000_000.0).all()
+        assert (df["near_threshold_ratio_to_limit"] == 0.95).all()
+        assert (df["near_threshold_gap_amount"] == 5_000_000.0).all()
+        assert (df["near_threshold_bucket"] == "close_band").all()
 
     def test_below_approver_limit_lower_bound_is_false(self, monkeypatch):
         """실제 approval_limit의 90% 미만이면 near가 아니다."""
@@ -111,6 +114,7 @@ class TestIsNearThreshold:
         add_is_near_threshold(df, base, self.THRESHOLDS, self.RATIO)
 
         assert not df["is_near_threshold"].any()
+        assert (df["near_threshold_bucket"] == "none").all()
 
     def test_at_approver_limit_is_false(self, monkeypatch):
         """실제 approval_limit 정확히는 near 상한 밖이다."""
@@ -136,6 +140,7 @@ class TestIsNearThreshold:
         add_is_near_threshold(df, base, self.THRESHOLDS, self.RATIO)
 
         assert not df["is_near_threshold"].any()
+        assert (df["near_threshold_bucket"] == "none").all()
 
     def test_missing_approver_limit_is_not_flagged(self):
         """approval_limit를 알 수 없으면 L2-01로 판정하지 않는다."""
@@ -148,6 +153,7 @@ class TestIsNearThreshold:
         })
         add_is_near_threshold(df, base, self.THRESHOLDS, self.RATIO)
         assert df["is_near_threshold"].iloc[0] == False
+        assert df["near_threshold_bucket"].iloc[0] == "unresolved_limit"
 
     def test_common_thresholds_do_not_apply_without_approver_limit(self):
         """공통 approval_thresholds는 L2-01 fallback으로 쓰지 않는다."""
@@ -160,6 +166,62 @@ class TestIsNearThreshold:
         })
         add_is_near_threshold(df, base, self.THRESHOLDS, self.RATIO)
         assert df["is_near_threshold"].iloc[0] == False
+        assert df["near_threshold_bucket"].iloc[0] == "unresolved_limit"
+
+    def test_missing_document_id_does_not_use_line_level_fallback(self, monkeypatch):
+        """L2-01 requires document-level amount; line-level base must not create a hit."""
+        monkeypatch.setattr(
+            amount_features_module,
+            "_resolve_employee_master_path",
+            lambda df: Path("dummy-employees.json"),
+        )
+        monkeypatch.setattr(
+            amount_features_module,
+            "_load_employee_approval_map",
+            lambda path: {"APR-001": (100_000_000.0, True)},
+        )
+        base = pd.Series([95_000_000])
+        df = pd.DataFrame({
+            "approved_by": ["APR-001"],
+            "debit_amount": [95_000_000],
+            "credit_amount": [0],
+        })
+
+        add_is_near_threshold(df, base, self.THRESHOLDS, self.RATIO)
+
+        assert not bool(df["is_near_threshold"].iloc[0])
+        assert df["near_threshold_bucket"].iloc[0] == "unresolved_limit"
+
+    def test_near_threshold_bucket_uses_ratio_bands(self, monkeypatch):
+        monkeypatch.setattr(
+            amount_features_module,
+            "_resolve_employee_master_path",
+            lambda df: Path("dummy-employees.json"),
+        )
+        monkeypatch.setattr(
+            amount_features_module,
+            "_load_employee_approval_map",
+            lambda path: {
+                "APR-001": (100_000_000.0, True),
+                "APR-002": (100_000_000.0, True),
+                "APR-003": (100_000_000.0, True),
+            },
+        )
+        df = pd.DataFrame({
+            "document_id": ["A", "B", "C"],
+            "approved_by": ["APR-001", "APR-002", "APR-003"],
+            "debit_amount": [91_000_000, 96_000_000, 99_000_000],
+            "credit_amount": [0, 0, 0],
+        })
+        base = _compute_base_amount(df)
+
+        add_is_near_threshold(df, base, self.THRESHOLDS, self.RATIO)
+
+        assert df["near_threshold_bucket"].tolist() == [
+            "lower_band",
+            "close_band",
+            "razor_band",
+        ]
 
 
 # ── TestExceedsThreshold ─────────────────────────────────────────
@@ -175,7 +237,7 @@ class TestExceedsThreshold:
         base = pd.Series([self.THRESHOLDS[-1]])
         df = pd.DataFrame({"x": [0]})
         add_exceeds_threshold(df, base, self.THRESHOLDS)
-        assert df["exceeds_threshold"].iloc[0] == True
+        assert df["exceeds_threshold"].iloc[0] == False
         assert df["approval_level"].iloc[0] == 3
 
     def test_below_all_thresholds(self):
@@ -186,12 +248,19 @@ class TestExceedsThreshold:
         assert df["exceeds_threshold"].iloc[0] == False
         assert df["approval_level"].iloc[0] == 0
 
+    def test_at_min_threshold_is_not_exceeded(self):
+        """Equal to the fallback approval limit is not an exceedance."""
+        base = pd.Series([self.THRESHOLDS[0]])
+        df = pd.DataFrame({"x": [0]})
+        add_exceeds_threshold(df, base, self.THRESHOLDS)
+        assert not bool(df["exceeds_threshold"].iloc[0])
+
     def test_mid_level_exceeds(self):
         """최저 한도(10M) 초과, 중간 한도(100M) 미만 → True, level=1."""
         base = pd.Series([50_000_000])
         df = pd.DataFrame({"x": [0]})
         add_exceeds_threshold(df, base, self.THRESHOLDS)
-        assert df["exceeds_threshold"].iloc[0] == True
+        assert df["exceeds_threshold"].iloc[0] == False
         assert df["approval_level"].iloc[0] == 1
 
     def test_no_gap_with_near(self):
@@ -202,7 +271,7 @@ class TestExceedsThreshold:
         add_is_near_threshold(df, base, self.THRESHOLDS, ratio)
         add_exceeds_threshold(df, base, self.THRESHOLDS)
         assert df["is_near_threshold"].iloc[0] == False
-        assert df["exceeds_threshold"].iloc[0] == True
+        assert df["exceeds_threshold"].iloc[0] == False
 
 
 # ── TestMapCoaCategory ───────────────────────────────────────────
@@ -223,7 +292,22 @@ class TestExceedsThresholdDocumentLevel:
 
         add_exceeds_threshold(df, base, self.THRESHOLDS)
 
-        assert df["exceeds_threshold"].all()
+        assert not df["exceeds_threshold"].any()
+        assert (df["approval_level"] == 1).all()
+
+    def test_document_amount_uses_larger_debit_or_credit_side(self):
+        df = pd.DataFrame({
+            "document_id": ["A", "A"],
+            "debit_amount": [4_551_508.0, 0.0],
+            "credit_amount": [0.0, 45_515_080.0],
+        })
+        base = _compute_base_amount(df)
+
+        document_amount = _compute_document_amount(df, base)
+        add_exceeds_threshold(df, base, self.THRESHOLDS)
+
+        assert document_amount.tolist() == [45_515_080.0, 45_515_080.0]
+        assert (df["document_approval_amount"] == 45_515_080.0).all()
         assert (df["approval_level"] == 1).all()
 
 
@@ -257,6 +341,16 @@ class TestExceedsThresholdApproverLimit:
 
         assert df.loc[df["document_id"] == "A", "exceeds_threshold"].all()
         assert not df.loc[df["document_id"] == "B", "exceeds_threshold"].any()
+        assert df.loc[df["document_id"] == "A", "approval_limit_resolved"].all()
+        assert (
+            df.loc[df["document_id"] == "A", "approval_excess_amount"] == 1_000_000.0
+        ).all()
+        assert (
+            df.loc[df["document_id"] == "A", "approval_excess_bucket"] == "boundary"
+        ).all()
+        assert (
+            df.loc[df["document_id"] == "B", "approval_excess_bucket"] == "none"
+        ).all()
 
     def test_can_approve_je_false_behaves_like_zero_limit(self, monkeypatch):
         monkeypatch.setattr(
@@ -281,6 +375,69 @@ class TestExceedsThresholdApproverLimit:
         add_exceeds_threshold(df, base, self.THRESHOLDS)
 
         assert df["exceeds_threshold"].all()
+        assert (df["approver_limit_amount"] == 0.0).all()
+        assert (df["approval_excess_bucket"] == "non_approver").all()
+
+    def test_unresolved_approver_is_not_l104_hit(self, monkeypatch):
+        monkeypatch.setattr(
+            amount_features_module,
+            "_resolve_employee_master_path",
+            lambda df: Path("dummy-employees.json"),
+        )
+        monkeypatch.setattr(
+            amount_features_module,
+            "_load_employee_approval_map",
+            lambda path: {"APR-001": (100_000_000.0, True)},
+        )
+
+        df = pd.DataFrame({
+            "document_id": ["A", "B"],
+            "approved_by": ["APR-001", "APR-UNKNOWN"],
+            "debit_amount": [120_000_000, 20_000_000],
+            "credit_amount": [0, 0],
+        })
+        base = _compute_base_amount(df)
+
+        add_exceeds_threshold(df, base, self.THRESHOLDS)
+
+        assert df["exceeds_threshold"].tolist() == [True, False]
+        assert df["approval_limit_resolved"].tolist() == [True, False]
+        assert df["approval_excess_bucket"].tolist() == ["moderate", "none"]
+        assert pd.isna(df.loc[1, "approver_limit_amount"])
+        assert df.loc[1, "approval_excess_amount"] == 0.0
+
+    def test_excess_bucket_uses_ratio_bands(self, monkeypatch):
+        monkeypatch.setattr(
+            amount_features_module,
+            "_resolve_employee_master_path",
+            lambda df: Path("dummy-employees.json"),
+        )
+        monkeypatch.setattr(
+            amount_features_module,
+            "_load_employee_approval_map",
+            lambda path: {
+                "APR-001": (100_000_000.0, True),
+                "APR-002": (100_000_000.0, True),
+                "APR-003": (100_000_000.0, True),
+                "APR-004": (100_000_000.0, True),
+            },
+        )
+        df = pd.DataFrame({
+            "document_id": ["A", "B", "C", "D"],
+            "approved_by": ["APR-001", "APR-002", "APR-003", "APR-004"],
+            "debit_amount": [105_000_000, 125_000_000, 175_000_000, 250_000_000],
+            "credit_amount": [0, 0, 0, 0],
+        })
+        base = _compute_base_amount(df)
+
+        add_exceeds_threshold(df, base, self.THRESHOLDS)
+
+        assert df["approval_excess_bucket"].tolist() == [
+            "boundary",
+            "moderate",
+            "severe",
+            "critical",
+        ]
 
 
 class TestMapCoaCategory:
@@ -555,7 +712,21 @@ class TestAddAllAmountFeatures:
 
     EXPECTED_COLS = {
         "is_near_threshold",
+        "near_threshold_amount",
+        "near_threshold_limit_amount",
+        "near_threshold_limit_resolved",
+        "near_threshold_ratio_to_limit",
+        "near_threshold_gap_amount",
+        "near_threshold_gap_ratio",
+        "near_threshold_bucket",
         "exceeds_threshold",
+        "document_approval_amount",
+        "approver_limit_amount",
+        "approval_limit_resolved",
+        "approver_can_approve_je",
+        "approval_excess_amount",
+        "approval_excess_ratio",
+        "approval_excess_bucket",
         "amount_zscore",
         "amount_magnitude",
         "is_round_number",
@@ -578,8 +749,8 @@ class TestAddAllAmountFeatures:
         )
         result = add_all_amount_features(af_basic_df.copy(), settings=custom)
         assert self.EXPECTED_COLS.issubset(result.columns)
-        # 10M 초과 금액은 exceeds=True 여야 함
-        assert result["exceeds_threshold"].any()
+        assert not result["exceeds_threshold"].any()
+        assert result["approval_level"].max() == 1
 
     def test_edge_cases(self, af_edge_df):
         """NaN/0 포함 데이터에서 에러 없이 완료."""

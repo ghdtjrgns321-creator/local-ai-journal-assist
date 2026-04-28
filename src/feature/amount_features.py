@@ -63,12 +63,25 @@ def _compute_base_amount(df: pd.DataFrame) -> pd.Series:
 
 
 def _compute_document_amount(df: pd.DataFrame, base: pd.Series) -> pd.Series:
-    """Return document-level total when possible, else fall back to line-level base."""
-    if "document_id" not in df.columns or "debit_amount" not in df.columns:
+    """Return document-level approval amount when possible, else line-level base.
+
+    Approval controls need the economic size of the whole journal entry. In balanced
+    entries debit and credit totals match, but malformed synthetic or source data can
+    have the larger side on credit. Use the larger document-side total so approval
+    checks do not miss credit-heavy entries.
+    """
+    if (
+        "document_id" not in df.columns
+        or "debit_amount" not in df.columns
+        or "credit_amount" not in df.columns
+    ):
         return base
 
     debit = pd.to_numeric(df["debit_amount"], errors="coerce").fillna(0)
-    return debit.groupby(df["document_id"]).transform("sum")
+    credit = pd.to_numeric(df["credit_amount"], errors="coerce").fillna(0)
+    doc_debit = debit.groupby(df["document_id"]).transform("sum")
+    doc_credit = credit.groupby(df["document_id"]).transform("sum")
+    return pd.concat([doc_debit, doc_credit], axis=1).max(axis=1)
 
 
 def _resolve_employee_master_path(df: pd.DataFrame) -> Path | None:
@@ -95,6 +108,13 @@ def _load_employee_approval_map(path_str: str) -> dict[str, tuple[float | None, 
 
 
 def _compute_approver_limit(df: pd.DataFrame) -> pd.Series | None:
+    info = _compute_approver_info(df)
+    if info is None:
+        return None
+    return info["approval_limit"]
+
+
+def _compute_approver_info(df: pd.DataFrame) -> pd.DataFrame | None:
     if "approved_by" not in df.columns:
         return None
 
@@ -110,6 +130,7 @@ def _compute_approver_limit(df: pd.DataFrame) -> pd.Series | None:
 
     approver = df["approved_by"].fillna("").astype(str).str.strip()
     limits = pd.Series(np.nan, index=df.index, dtype="float64")
+    can_approve = pd.Series(pd.NA, index=df.index, dtype="boolean")
     for idx, user_id in approver.items():
         if not user_id:
             continue
@@ -117,11 +138,16 @@ def _compute_approver_limit(df: pd.DataFrame) -> pd.Series | None:
         if approval_info is None:
             continue
         approval_limit, can_approve_je = approval_info
+        if can_approve_je is not None:
+            can_approve.at[idx] = bool(can_approve_je)
         if can_approve_je is False:
             limits.at[idx] = 0.0
         elif approval_limit is not None:
             limits.at[idx] = approval_limit
-    return limits
+    return pd.DataFrame(
+        {"approval_limit": limits, "can_approve_je": can_approve},
+        index=df.index,
+    )
 
 
 def _zscore_with_fallback(
@@ -225,20 +251,67 @@ def add_is_near_threshold(
        document total 기준으로 approval_limit * ratio ≤ amount < approval_limit 판정
     2. approval_limit를 알 수 없으면 L2-01로 판정하지 않음
     """
-    threshold_amount = _compute_document_amount(df, base)
-    approver_limit = _compute_approver_limit(df)
+    can_compute_document_amount = "document_id" in df.columns and "debit_amount" in df.columns
+    threshold_amount = (
+        _compute_document_amount(df, base)
+        if can_compute_document_amount
+        else pd.Series(np.nan, index=df.index, dtype="float64")
+    )
+    approver_info = _compute_approver_info(df)
+    approver_limit = approver_info["approval_limit"] if approver_info is not None else None
 
     near = pd.Series(False, index=df.index)
+    limit = pd.Series(np.nan, index=df.index, dtype="float64")
 
     if approver_limit is not None:
-        resolved = approver_limit.notna()
+        limit = approver_limit
+        resolved = limit.notna() & can_compute_document_amount
         near = resolved & (
-            (threshold_amount >= approver_limit * ratio)
-            & (threshold_amount < approver_limit)
+            (threshold_amount >= limit * ratio)
+            & (threshold_amount < limit)
         )
+    else:
+        resolved = pd.Series(False, index=df.index)
+
+    ratio_denominator = limit.where(limit > 0)
+    ratio_to_limit = threshold_amount / ratio_denominator
+    gap_amount = (limit - threshold_amount).where(resolved)
+    gap_ratio = (gap_amount / ratio_denominator).where(resolved)
 
     df["is_near_threshold"] = near.fillna(False)
+    df["near_threshold_amount"] = threshold_amount
+    df["near_threshold_limit_amount"] = limit
+    df["near_threshold_limit_resolved"] = resolved
+    df["near_threshold_ratio_to_limit"] = ratio_to_limit.where(resolved)
+    df["near_threshold_gap_amount"] = gap_amount
+    df["near_threshold_gap_ratio"] = gap_ratio
+    df["near_threshold_bucket"] = _near_threshold_bucket(
+        near=near.fillna(False),
+        limit_resolved=resolved,
+        ratio_to_limit=ratio_to_limit,
+        lower_ratio=float(ratio),
+    )
     return df
+
+
+def _near_threshold_bucket(
+    *,
+    near: pd.Series,
+    limit_resolved: pd.Series,
+    ratio_to_limit: pd.Series,
+    lower_ratio: float,
+) -> pd.Series:
+    """Classify L2-01 threshold proximity without changing the Boolean hit."""
+
+    bucket = pd.Series("none", index=near.index, dtype="object")
+    bucket.loc[~limit_resolved.astype(bool)] = "unresolved_limit"
+
+    hit = near.astype(bool)
+    ratio = ratio_to_limit.fillna(0.0)
+    bucket.loc[hit & ratio.ge(lower_ratio) & ratio.lt(0.95)] = "lower_band"
+    bucket.loc[hit & ratio.ge(0.95) & ratio.lt(0.98)] = "close_band"
+    bucket.loc[hit & ratio.ge(0.98) & ratio.lt(1.00)] = "razor_band"
+    return bucket
 
 
 def add_exceeds_threshold(
@@ -255,26 +328,102 @@ def add_exceeds_threshold(
     if not thresholds:
         df["exceeds_threshold"] = False
         df["approval_level"] = 0
+        df["document_approval_amount"] = _compute_document_amount(df, base)
+        df["approver_limit_amount"] = np.nan
+        df["approval_limit_resolved"] = False
+        df["approver_can_approve_je"] = pd.Series(pd.NA, index=df.index, dtype="boolean")
+        df["approval_excess_amount"] = 0.0
+        df["approval_excess_ratio"] = np.nan
+        df["approval_excess_bucket"] = "none"
         return df
 
     sorted_t = sorted(thresholds)
-    min_threshold = sorted_t[0]
     threshold_amount = _compute_document_amount(df, base)
-    approver_limit = _compute_approver_limit(df)
+    approver_info = _compute_approver_info(df)
+    approver_limit = approver_info["approval_limit"] if approver_info is not None else None
 
     # Why: 최저 한도 미만이면 어떤 레벨도 초과하지 않음 → False
     if approver_limit is not None:
-        df["exceeds_threshold"] = approver_limit.notna() & (threshold_amount > approver_limit)
+        resolved = approver_limit.notna()
+        df["exceeds_threshold"] = resolved & (threshold_amount > approver_limit)
     else:
-        df["exceeds_threshold"] = threshold_amount >= min_threshold
+        resolved = pd.Series(False, index=df.index)
+        df["exceeds_threshold"] = False
 
     # Why: 행별로 초과한 가장 높은 한도의 레벨을 기록 (L1-07 등에서 활용 가능)
     level = pd.Series(0, index=df.index, dtype=int)
     for i, t in enumerate(sorted_t, 1):
         level = level.where(threshold_amount < t, i)
     df["approval_level"] = level
+    _add_approval_excess_details(
+        df,
+        threshold_amount=threshold_amount,
+        approver_info=approver_info,
+    )
 
     return df
+
+
+def _add_approval_excess_details(
+    df: pd.DataFrame,
+    *,
+    threshold_amount: pd.Series,
+    approver_info: pd.DataFrame | None,
+) -> None:
+    """Preserve L1-04 amount/limit context for banded reporting."""
+
+    if approver_info is None:
+        approver_limit = pd.Series(np.nan, index=df.index, dtype="float64")
+        can_approve = pd.Series(pd.NA, index=df.index, dtype="boolean")
+    else:
+        approver_limit = approver_info["approval_limit"]
+        can_approve = approver_info["can_approve_je"]
+    effective_limit = approver_limit
+
+    exceeds = df["exceeds_threshold"].fillna(False).astype(bool)
+    resolved = approver_limit.notna()
+    excess_amount = (threshold_amount - effective_limit).where(exceeds, 0.0)
+    ratio_denominator = effective_limit.where(effective_limit > 0)
+    excess_ratio = (excess_amount / ratio_denominator).where(exceeds)
+
+    df["document_approval_amount"] = threshold_amount
+    df["approver_limit_amount"] = approver_limit
+    df["approval_limit_resolved"] = resolved
+    df["approver_can_approve_je"] = can_approve
+    df["approval_excess_amount"] = excess_amount.fillna(0.0)
+    df["approval_excess_ratio"] = excess_ratio
+    df["approval_excess_bucket"] = _approval_excess_bucket(
+        exceeds=exceeds,
+        limit_resolved=resolved,
+        can_approve=can_approve,
+        excess_ratio=excess_ratio,
+    )
+
+
+def _approval_excess_bucket(
+    *,
+    exceeds: pd.Series,
+    limit_resolved: pd.Series,
+    can_approve: pd.Series,
+    excess_ratio: pd.Series,
+) -> pd.Series:
+    """Classify L1-04 hit severity while preserving the binary flag."""
+
+    bucket = pd.Series("none", index=exceeds.index, dtype="object")
+    hit = exceeds.astype(bool)
+    resolved = limit_resolved.astype(bool)
+    bucket.loc[hit & ~resolved] = "unresolved_limit"
+
+    non_approver = hit & resolved & can_approve.fillna(True).eq(False)
+    bucket.loc[non_approver] = "non_approver"
+
+    ratio_hit = hit & resolved & ~non_approver
+    ratio = excess_ratio.fillna(0.0)
+    bucket.loc[ratio_hit & ratio.le(0.10)] = "boundary"
+    bucket.loc[ratio_hit & ratio.gt(0.10) & ratio.le(0.50)] = "moderate"
+    bucket.loc[ratio_hit & ratio.gt(0.50) & ratio.le(1.00)] = "severe"
+    bucket.loc[ratio_hit & ratio.gt(1.00)] = "critical"
+    return bucket
 
 
 def add_amount_zscore(

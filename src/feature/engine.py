@@ -45,6 +45,70 @@ _EXECUTION_ORDER: list[FeatureCategory] = [
     FeatureCategory.TEXT,
 ]
 
+PHASE1_CORE_RULE_IDS: tuple[str, ...] = (
+    "L1",
+    "L2",
+    "L3",
+    "L4",
+    "D01",
+    "D02",
+)
+
+_RULE_FEATURE_CATEGORIES: dict[str, set[FeatureCategory]] = {
+    # Integrity rules use source columns only.
+    "L1-01": set(),
+    "L1-02": set(),
+    "L1-03": set(),
+    "L3-01": set(),
+    # Approval / amount-control rules.
+    "L2-01": {FeatureCategory.AMOUNT},
+    "L1-04": {FeatureCategory.AMOUNT},
+    "L1-05": set(),
+    "L1-06": set(),
+    "L1-07": {FeatureCategory.AMOUNT},
+    "L1-08": {FeatureCategory.TIME},
+    "L1-09": set(),
+    # Fraud and review signals.
+    "L2-02": set(),
+    "L2-03": set(),
+    "L2-04": set(),
+    "L2-05": {FeatureCategory.TIME, FeatureCategory.PATTERN, FeatureCategory.TEXT},
+    "L3-02": {FeatureCategory.PATTERN},
+    "L3-03": {FeatureCategory.PATTERN},
+    "L3-04": {FeatureCategory.TIME},
+    "L3-05": {FeatureCategory.TIME},
+    "L3-06": {FeatureCategory.TIME},
+    "L3-07": {FeatureCategory.TIME},
+    "L3-08": {FeatureCategory.TEXT},
+    "L3-09": {FeatureCategory.PATTERN},
+    "L3-10": set(),
+    "L4-01": {FeatureCategory.AMOUNT, FeatureCategory.PATTERN},
+    "L4-02": {FeatureCategory.PATTERN},
+    "L4-03": {FeatureCategory.AMOUNT},
+    "L4-04": set(),
+    "L4-05": {FeatureCategory.TIME},
+    "L4-06": {FeatureCategory.TIME, FeatureCategory.AMOUNT},
+    # Analytical review rules use raw account/amount/month columns.
+    "D01": set(),
+    "D02": set(),
+}
+
+
+def feature_categories_for_rules(rule_ids: list[str] | tuple[str, ...]) -> list[FeatureCategory]:
+    """Return the minimal feature categories needed by the requested rule IDs.
+
+    Rule-level filtering is intentionally conservative: family IDs such as
+    ``L1``/``L2`` expand to the currently registered PHASE1 rules in that family.
+    """
+
+    requested = {str(rule_id).upper() for rule_id in rule_ids}
+    categories: set[FeatureCategory] = set()
+    for rule_id, rule_categories in _RULE_FEATURE_CATEGORIES.items():
+        family = rule_id.split("-", 1)[0]
+        if rule_id in requested or family in requested:
+            categories.update(rule_categories)
+    return [category for category in _EXECUTION_ORDER if category in categories]
+
 # Why: 병렬 실행 시 전체 df.copy() 대신 필요 컬럼만 thin copy (OOM 방지)
 _INPUT_COLUMNS: dict[FeatureCategory, list[str]] = {
     FeatureCategory.TIME: ["posting_date", "document_date", "fiscal_period", "fiscal_year"],
@@ -80,7 +144,21 @@ EXPECTED_COLUMNS: dict[FeatureCategory, list[str]] = {
     ],
     FeatureCategory.AMOUNT: [
         "is_near_threshold",
+        "near_threshold_amount",
+        "near_threshold_limit_amount",
+        "near_threshold_limit_resolved",
+        "near_threshold_ratio_to_limit",
+        "near_threshold_gap_amount",
+        "near_threshold_gap_ratio",
+        "near_threshold_bucket",
         "exceeds_threshold",
+        "document_approval_amount",
+        "approver_limit_amount",
+        "approval_limit_resolved",
+        "approver_can_approve_je",
+        "approval_excess_amount",
+        "approval_excess_ratio",
+        "approval_excess_bucket",
         "amount_zscore",
         "amount_magnitude",
         "is_round_number",
@@ -137,6 +215,7 @@ def generate_all_features(
     categories: list[FeatureCategory] | None = None,
     parallel: bool = False,
     max_workers: int | None = None,
+    include_morpheme_tokens: bool = True,
 ) -> FeatureResult:
     """감사 파생변수와 NLP 임시 컬럼을 일괄 생성하는 단일 진입점.
 
@@ -168,6 +247,7 @@ def generate_all_features(
                 df, ordered_targets,
                 settings=s, rules=rules, raw_rules=raw_rules,
                 risk_keywords=risk_keywords, max_workers=max_workers,
+                include_morpheme_tokens=include_morpheme_tokens,
             )
         )
     else:
@@ -176,15 +256,17 @@ def generate_all_features(
                 df, ordered_targets,
                 settings=s, rules=rules, raw_rules=raw_rules,
                 risk_keywords=risk_keywords,
+                include_morpheme_tokens=include_morpheme_tokens,
             )
         )
 
     # 메타데이터 산출: 실행 대상 카테고리의 기대 컬럼만 검사
-    all_expected = [
-        col
-        for cat in ordered_targets
-        for col in EXPECTED_COLUMNS[cat]
-    ]
+    all_expected: list[str] = []
+    for cat in ordered_targets:
+        columns = EXPECTED_COLUMNS[cat]
+        if cat == FeatureCategory.TEXT and not include_morpheme_tokens:
+            columns = [col for col in columns if col != "morpheme_tokens"]
+        all_expected.extend(columns)
     added = [col for col in all_expected if col in df.columns]
     missing = [col for col in all_expected if col not in df.columns]
 
@@ -215,6 +297,7 @@ def _run_categories_sequential(
     rules: dict | None,
     raw_rules: dict | None,
     risk_keywords: dict | None,
+    include_morpheme_tokens: bool = True,
 ) -> tuple[dict[str, float], list[str], list[str], dict[str, list[str]]]:
     """순차 실행 — 기존 로직을 함수로 분리."""
     execution_times: dict[str, float] = {}
@@ -228,6 +311,7 @@ def _run_categories_sequential(
         success = _run_category(
             df, cat, settings=settings, rules=rules,
             raw_rules=raw_rules, risk_keywords=risk_keywords,
+            include_morpheme_tokens=include_morpheme_tokens,
             warnings_out=cat_warnings,
         )
         elapsed = time.monotonic() - t0
@@ -251,6 +335,7 @@ def _run_categories_parallel(
     raw_rules: dict | None,
     risk_keywords: dict | None,
     max_workers: int | None = None,
+    include_morpheme_tokens: bool = True,
 ) -> tuple[dict[str, float], list[str], list[str], dict[str, list[str]]]:
     """병렬 실행 — Thin Copy + Series 반환 패턴으로 OOM 방지.
 
@@ -275,14 +360,16 @@ def _run_categories_parallel(
         success = _run_category(
             thin_df, cat, settings=settings, rules=rules,
             raw_rules=raw_rules, risk_keywords=risk_keywords,
+            include_morpheme_tokens=include_morpheme_tokens,
             warnings_out=cat_warnings,
         )
         elapsed = time.monotonic() - t0
 
         # 새로 생성된 컬럼만 추출
-        new_cols = {
-            c: thin_df[c] for c in EXPECTED_COLUMNS[cat] if c in thin_df.columns
-        }
+        expected_columns = EXPECTED_COLUMNS[cat]
+        if cat == FeatureCategory.TEXT and not include_morpheme_tokens:
+            expected_columns = [c for c in expected_columns if c != "morpheme_tokens"]
+        new_cols = {c: thin_df[c] for c in expected_columns if c in thin_df.columns}
         return cat, success, new_cols, round(elapsed, 6), cat_warnings
 
     with ThreadPoolExecutor(max_workers=max_workers or len(targets)) as pool:
@@ -322,6 +409,7 @@ def _run_category(
     rules: dict | None,
     raw_rules: dict | None = None,
     risk_keywords: dict | None = None,
+    include_morpheme_tokens: bool = True,
     warnings_out: list[str] | None = None,
 ) -> bool:
     """카테고리별 서브모듈 디스패치. 성공 시 True, 실패 시 False.
@@ -339,7 +427,12 @@ def _run_category(
         elif cat == FeatureCategory.PATTERN:
             add_all_pattern_features(df, rules=rules)
         elif cat == FeatureCategory.TEXT:
-            add_all_text_features(df, settings=settings, risk_kw=risk_keywords)
+            add_all_text_features(
+                df,
+                settings=settings,
+                risk_kw=risk_keywords,
+                include_morpheme_tokens=include_morpheme_tokens,
+            )
     except KeyError as e:
         msg = f"필수 컬럼 누락으로 스킵: {e}"
         logger.warning("카테고리 %s 스킵 — %s", cat.value, msg)
@@ -349,7 +442,10 @@ def _run_category(
 
     # 기대 컬럼 중 미생성된 컬럼을 경고로 수집
     if warnings_out is not None:
-        for col in EXPECTED_COLUMNS[cat]:
+        expected_columns = EXPECTED_COLUMNS[cat]
+        if cat == FeatureCategory.TEXT and not include_morpheme_tokens:
+            expected_columns = [col for col in expected_columns if col != "morpheme_tokens"]
+        for col in expected_columns:
             if col not in df.columns:
                 warnings_out.append(f"기대 컬럼 미생성: {col}")
 

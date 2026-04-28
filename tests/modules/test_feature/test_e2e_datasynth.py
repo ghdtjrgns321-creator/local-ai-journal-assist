@@ -75,7 +75,19 @@ class TestDataSynthE2E:
     def test_no_all_null_features(self, pipeline_result):
         """각 피처의 null율이 100% 미만 — 전부 NaN이면 구현 오류."""
         df, result, _ = pipeline_result
-        all_null = [col for col in result.added_columns if df[col].isna().all()]
+        expected_all_null = {
+            "approver_limit_amount",
+            "approver_can_approve_je",
+            "near_threshold_limit_amount",
+            "near_threshold_ratio_to_limit",
+            "near_threshold_gap_amount",
+            "near_threshold_gap_ratio",
+        }
+        all_null = [
+            col
+            for col in result.added_columns
+            if df[col].isna().all() and col not in expected_all_null
+        ]
         assert all_null == [], f"전체 NaN 피처: {all_null}"
 
     def test_bool_features_have_variation(self, pipeline_result):
@@ -95,17 +107,29 @@ class TestDataSynthE2E:
         expected_bool = {"is_weekend", "is_after_hours", "is_period_end",
                          "fiscal_period_mismatch", "is_holiday",
                          "is_near_threshold", "exceeds_threshold", "is_round_number",
+                         "near_threshold_limit_resolved", "approval_limit_resolved",
+                         "approver_can_approve_je",
                          "is_manual_je", "is_intercompany", "is_revenue_account",
                          "is_suspense_account",
                          "description_line_missing", "description_header_missing",
                          "description_both_missing",
                          "description_line_missing_header_present",
                          "description_is_missing_or_corrupted"}
-        expected_float = {"amount_zscore", "amount_magnitude"}
+        expected_float = {
+            "amount_zscore", "amount_magnitude",
+            "document_approval_amount", "approver_limit_amount",
+            "approval_excess_amount", "approval_excess_ratio",
+            "near_threshold_amount", "near_threshold_limit_amount",
+            "near_threshold_ratio_to_limit", "near_threshold_gap_amount",
+            "near_threshold_gap_ratio",
+        }
         # Why: days_backdated는 정수 일수(Int64), first_digit도 Int64
         expected_int = {"first_digit", "days_backdated"}
         # Why: keyword/description/time-zone labels are categorical strings.
-        expected_str = {"has_risk_keyword", "description_quality", "time_zone_category"}
+        expected_str = {
+            "has_risk_keyword", "description_quality", "time_zone_category",
+            "approval_excess_bucket", "near_threshold_bucket",
+        }
 
         for col in expected_bool:
             if col in df.columns:
