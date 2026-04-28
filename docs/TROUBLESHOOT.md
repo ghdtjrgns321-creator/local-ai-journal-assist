@@ -1,4 +1,4 @@
-﻿# Troubleshooting
+# Troubleshooting
 
 감사 전표 테스트 자동화 프로젝트(Local AI Audit Assistant)에서 발생한
 프로젝트 수준의 전략적 문제 해결 과정을 기록한다.
@@ -229,11 +229,19 @@ Case key는 전역 하나가 아니라 theme별 템플릿을 둔다.
 
 `case_priority = 0.35*control_score + 0.30*amount_score + 0.20*logic_score + 0.15*behavior_score`
 
+이 공식에 들어가는 `control_score`, `logic_score` 등은 raw rule label을 직접 더한 값이 아니다. 현재 구현은 각 rule hit를 먼저 `src/detection/rule_scoring.py`에서 `display_label`, `signal_strength`, `evidence_strength`, `scoring_role`, `normalized_score`로 정규화한 뒤 evidence type별로 합산한다.
+
+정규화 공식:
+
+`normalized_score = signal_strength * (severity / 5) * evidence_strength_factor * scoring_role_factor`
+
 원칙:
 
 - `repeat_score`는 직접 가산하지 않고 tie-breaker 및 priority band 보정에 사용
 - 룰 개수는 직접 점수항이 아니라 보조 지표
 - 같은 evidence type 중복은 상한을 둠
+- `L3-08` 같은 booster 룰과 `L4-06` 같은 combo-only 룰은 단독 점수보다 결합 증거로 해석
+- `L4-02/D01/D02` 같은 macro finding은 transaction queue 점수에 직접 더하지 않음
 
 ### 8. Case Explanation Template
 
@@ -878,3 +886,250 @@ Phase 3에서 LLM에 전달하는 정보는 원본 데이터가 아니라 탐지
 - **포트폴리오에서 보여줄 가치는 "모든 것을 직접 구현"이 아니라 "올바른 아키텍처 판단"이다.**
 
 **관련 문서**: [CONSTRAINTS.md §하드웨어 제약](CONSTRAINTS.md) | [CONSTRAINTS.md §비식별화](CONSTRAINTS.md) | [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md)
+
+---
+
+## TS-7: DataSynth Phase 1 정답지 혼선 — 룰 정답과 주입 라벨 혼용
+
+**분류**: DataSynth / 평가 설계 | **상태**: 설계 고정 중 | **작성일**: 2026-04-27
+
+### 1. 증상
+
+Phase 1 평가에서 같은 유형의 문제가 반복됐다.
+
+| 사례 | 실제 상태 | 기존 평가 문제 |
+|------|----------|----------------|
+| L1-01 차대변 불균형 | `sum(debit) != sum(credit)` 문서가 `UnbalancedEntry` 외 `DecimalError`, `RoundingError`, `TransposedDigits` 등에서도 발생 | `UnbalancedEntry`만 정답으로 보아 실제 불균형 문서가 FP처럼 보임 |
+| L2-01 승인한도 직하 | 승인자 한도의 90~100% 구간 문서가 자동/반복 전표에서도 자연 발생 | `JustBelowThreshold` 라벨만 정답으로 보아 실제 룰 조건 충족 문서가 FP처럼 보임 |
+| L1-08 회계기간 불일치 | 실제 `fiscal_period != posting_date.month` 문서가 라벨보다 많음 | `WrongPeriod` 라벨이 없는 실제 불일치가 FP처럼 보임 |
+| L1-09 승인일 누락 | `approved_by`는 있는데 `approval_date`가 비어 있는 문서가 라벨보다 많음 | 라벨 없는 실제 필드 조건 충족 문서가 FP처럼 보임 |
+
+핵심 문제는 `anomaly_labels.csv` 하나를 다음 두 목적에 동시에 사용한 것이다.
+
+- 룰 정답: 해당 Phase 1 룰의 조건을 실제로 만족하는가?
+- 주입/감사 이슈 라벨: 생성기가 의도적으로 넣은 조작·오류·감사상 중요한 issue인가?
+
+### 2. 원인 분석
+
+Phase 1은 최종 부정 확정기가 아니라 후보 생성 룰 엔진이다.
+
+따라서 Phase 1 룰 평가는 먼저 다음 질문에 답해야 한다.
+
+> 이 문서가 실제로 해당 룰 조건을 만족하는가?
+
+예를 들어 L1-01은 차대변 산술 무결성 룰이다. 원인이 `DecimalError`든 우연한 금액 오류든 실제로 차대변이 불균형이면 L1-01 정답이다.
+
+반대로 `DecimalError` 같은 라벨은 “왜 불균형이 생겼는가”를 설명하는 원인/시나리오 라벨이지, L1-01 정답의 전체 집합이 아니다.
+
+### 3. 해결 원칙
+
+정답 레이어를 분리한다.
+
+| 레이어 | 의미 | 사용처 |
+|--------|------|--------|
+| `rule_truth` | 룰 조건을 실제로 만족하는 문서 | Phase 1 룰 구현/회귀 평가 |
+| `injected_issue_truth` | 생성기가 의도적으로 주입한 시나리오 | Phase 2/3 원인 분석, 설명 품질 |
+| `audit_issue_truth` | 감사상 실제 issue로 볼 subset | 포트폴리오용 benchmark, 우선순위 평가 |
+| `review_population` | 감사인이 검토할 수 있는 넓은 후보 | queue/coverage 평가 |
+| `normal_control` | 정상인데 룰과 비슷하게 생긴 hard negative | 현실성/오탐 해석 |
+
+규칙:
+
+- 룰 조건을 실제로 만족하면 의도 주입 여부와 무관하게 `rule_truth`에 포함한다.
+- Phase 1 룰이 검토 후보까지 잡도록 설계되어 있으면 review 사항도 해당 룰의 `rule_truth`에 포함한다.
+- 위반, 검토 후보, 낮은 우선순위, 정상 유사 케이스 구분은 DataSynth 정답지가 아니라 후단 탐지/스코어링/케이스 빌더가 담당한다.
+- `anomaly_labels.csv`만으로 Phase 1 룰 정답을 판단하지 않는다.
+- 원인 라벨은 유지하되, 룰별 정답은 별도 sidecar를 우선한다.
+- audit issue와 rule truth를 혼동하지 않는다.
+
+### 4. 적용 중인 구조
+
+현재 후보 체인에서는 다음 방향으로 정리 중이다.
+
+| 파일 | 역할 |
+|------|------|
+| `labels/rule_truth.csv` | 통합 Phase 1 룰 정답 후보. v73 목표 |
+| `labels/rule_truth_L1_XX.csv` | 룰별 정답. v73 목표 |
+| `labels/l101_unbalanced_truth.csv` | L1-01 산술 불균형 truth. v71에서 추가 |
+| `labels/l201_just_below_threshold_truth.csv` | L2-01 승인한도 직하 truth. v72에서 추가 |
+| `labels/field_contract_truth.csv` | L1 필드계약 truth 보관. v70에서 추가 |
+| `labels/l1_audit_issue_truth.csv` | L1 중 감사상 issue subset. v70에서 추가 |
+| `labels/l1_field_only_normal_or_review.csv` | 필드 조건은 맞지만 audit issue로 보지 않는 항목. v70에서 추가 |
+
+### 5. L1 초안 기준
+
+L1 룰은 우선 `rule_truth` 기준을 확정한 뒤 `audit_issue_truth`를 별도로 판단한다. 여기서 `rule_truth`는 즉시 위반만이 아니라 Phase 1 룰이 잡아야 하는 전체 후보를 뜻한다.
+
+| 룰 | rule truth 기준 | 비고 |
+|----|-----------------|------|
+| L1-01 차대변 불균형 | 실제 차변 합계와 대변 합계가 맞지 않으면 정답 | 원인 라벨이 무엇이든 실제 불균형이면 정답 |
+| L1-02 필수필드 누락 | `schema.yaml`에서 필수로 정한 값이 비어 있으면 정답 | 다른 해석은 붙이지 않음 |
+| L1-03 무효 계정 | CoA에 없는 계정을 쓰면 정답 | 원인 라벨이나 의도는 보지 않음 |
+| L1-04 승인한도 초과 | 승인자의 승인한도를 넘으면 정답 | boundary/review 구분은 후단 코드가 담당 |
+| L1-05 자기승인 | 작성자와 승인자가 같으면 정답 | 예외 처리는 후단 코드가 담당 |
+| L1-06 직무분리 위반 | 같은 사용자 또는 권한 주체가 같은 거래 흐름 안에서 분리돼야 하는 두 역할을 함께 수행하면 정답 | 단순히 여러 프로세스에 등장했다는 이유만으로는 정답 아님 |
+| L1-07 승인 생략 | 승인생략이면 정답 | 위반/검토 후보 구분은 후단 코드가 담당 |
+| L1-08 회계기간 불일치 | 회계기간이 불일치하면 정답 | fiscal calendar config 반영 필요 |
+| L1-09 승인일 누락 | 승인일이 없으면 정답 | 자동/반복 예외 판단은 후단 코드가 담당 |
+
+#### L1-06 기준
+
+L1-06은 direct SoD conflict만 정답으로 본다. `sod_violation=True`만 있고 `sod_conflict_type`이 없거나, 사용자 이력상 여러 업무를 했다는 이유만으로는 L1-06 정답 처리하지 않는다. 그런 넓은 사용자/권한 범위 신호는 L3-12 업무범위 집중 검토 또는 work-scope sidecar에서 다룬다.
+
+권장 기준은 두 층으로 나눈다.
+
+| 층 | 의미 | DataSynth truth 처리 |
+|----|------|---------------------|
+| L1-06 rule truth | direct SoD conflict marker가 있는 확정 후보 | 정답 |
+| L3-12 work-scope review | role threshold, review pair, process breadth 기반 검토 모집단 | 별도 sidecar |
+
+L1-06 rule truth는 "같은 거래 흐름 안에서 서로 견제해야 하는 역할 충돌이 문서/필드/권한 개입 근거로 직접 확인된 경우"로 본다.
+
+포함 예시는 다음과 같다.
+
+- 같은 사용자가 구매 요청, 발주, 검수, 지급처럼 서로 분리돼야 하는 P2P 단계를 함께 수행한 경우
+- 같은 사용자가 매출 입력, 청구, 수금, 대손/환입처럼 서로 견제해야 하는 O2C 단계를 함께 수행한 경우
+- 같은 사용자가 전표 작성, 승인, 수정, 반제를 같은 거래 흐름 안에서 함께 수행한 경우
+- 자금 담당자가 지급 생성과 지급 승인 또는 은행 이체 확정을 함께 처리한 경우
+- 급여 담당자가 인사 마스터 변경과 급여 지급/승인을 함께 처리한 경우
+- IT/admin 권한자가 일반 업무 전표를 직접 생성, 수정, 승인한 경우
+- 데이터에 `sod_conflict_type`이 있거나, `sod_violation=True`와 `sod_conflict_type`이 함께 있어 직무충돌 유형이 확인되는 경우
+
+제외 예시는 다음과 같다.
+
+- 한 사용자가 여러 업무 프로세스에 등장했다는 사실만 있는 경우
+- 관리자가 여러 프로세스를 승인했다는 사실만 있는 경우
+- 소규모 회사라 한 사람이 여러 역할을 맡았지만 같은 거래 흐름의 견제 역할 충돌이 확인되지 않는 경우
+- 자동 배치나 시스템 계정이 여러 프로세스에 등장한 경우
+
+위 제외 예시는 L1-06이 아니라 L3-12/work-scope review population으로 관리한다.
+
+### 6. L2 초안 기준
+
+L2 룰은 확정 부정만 맞히는 룰이 아니라 강한 부정 정황 후보를 올리는 룰이다. 따라서 `rule_truth`는 L2가 잡아야 하는 전체 후보를 뜻하고, 확정 부정인지 검토 후보인지 정상 유사 케이스인지는 후단 코드가 나눈다.
+
+| 룰 | rule truth 기준 | 비고 |
+|----|-----------------|------|
+| L2-01 승인한도 직하 | 승인자의 승인한도 바로 아래 금액이면 정답 | 한도 근접 정도는 후단 코드가 나눔 |
+| L2-02 중복 지급 | 같은 거래처에 같은 지급이 다시 나간 것으로 볼 수 있으면 정답 | 정기 반복 지급처럼 보여도 일단 rule truth에 포함 |
+| L2-03 중복 전표 | 같은 거래가 재입력, 복제, 유사입력, 분할입력된 후보면 정답 | 확실한 중복과 애매한 유사 중복 구분은 후단 코드가 담당 |
+| L2-04 비용 자산화 | 비용 성격 금액이 자산 계정으로 넘어간 모양이면 정답 | 정상 자산화 가능성 판단은 후단 코드가 담당 |
+| L2-05 역분개 패턴 | 역분개, 취소, 정정, 상계, 재분류로 볼 수 있는 반대분개 패턴이면 정답 | 확실한 역분개와 정산/재분류 후보 구분은 후단 코드가 담당 |
+
+### 7. L3 초안 기준
+
+L3 룰은 검토 필요 이상징후다. 따라서 `rule_truth`는 L3가 화면/큐에 올려야 하는 전체 후보를 뜻하고, 정상 맥락인지 높은 우선순위인지는 후단 코드가 나눈다.
+
+| 룰 | rule truth 기준 | 비고 |
+|----|-----------------|------|
+| L3-01 계정-프로세스 불일치 | 유효한 CoA 계정인데 업무 프로세스와 계정 성격이 맞지 않으면 정답 | CoA 밖 계정은 L1-03 |
+| L3-02 수기 전표 | 수기/조정 전표면 정답 | `ManualOverride`만 정답으로 보지 않음 |
+| L3-03 관계사 거래 | 관계사 거래 모집단이면 정답 | 순환거래 확정은 GR/IC 보조 finding |
+| L3-04 기말/기초 대규모 | 월말/월초 근처이고 고액 또는 수기 전표면 정답 | 반복 마감전표도 rule truth |
+| L3-05 주말/공휴일 전기 | 주말 또는 공휴일 전기면 정답 | 정상 주말 운영도 rule truth |
+| L3-06 심야 전기 | 설정된 심야/비근무시간 전기면 정답 | 야간 배치도 rule truth |
+| L3-07 전기일-문서일 장기 괴리 | 전기일과 문서일 차이가 기준일수를 넘으면 정답 | 정상 장기 지연은 후단에서 낮춤 |
+| L3-08 적요 결손/파손 | 적요가 비어 있거나 깨져 있으면 정답 | 의미상 모호한 적요는 Phase 3 |
+| L3-09 가계정 장기 미정리 | 가계정/미결 계정이 오래 미정리 상태면 정답 | 단순 가계정 사용은 아님 |
+| L3-10 민감 계정 사용 | 설정된 민감 계정을 쓰면 정답 | 정상 사용 여부는 후단 코드가 판단 |
+| L3-11 컷오프 불일치 | 인식일과 근거 이벤트일 차이가 허용범위를 넘으면 정답 | 근거 이벤트일 누락은 coverage gap |
+
+### 8. L4 초안 기준
+
+L4 룰은 통계적·행동적 검토 anchor다. 따라서 `rule_truth`는 L4가 올려야 하는 후보 또는 macro finding 전체를 뜻하고, 정상 대형거래·정상 배치·정상 야간운영 여부는 후단 코드가 나눈다.
+
+| 룰 | rule truth 기준 | 비고 |
+|----|-----------------|------|
+| L4-01 매출 이상 변동 | 매출 계정에서 금액 z-score가 기준을 넘으면 정답 | `RevenueManipulation` 전체가 아니라 고액 매출 이상치 anchor |
+| L4-02 Benford 위반 | 회사·계정·연도 단위 첫째자리 분포가 Benford 기준을 벗어나면 정답 | 전표 1건 정답이 아니라 group finding |
+| L4-03 이상 고액 | 금액 z-score와 상위 금액 기준을 넘으면 정답 | 정상 대형거래도 rule truth |
+| L4-04 희소 계정쌍 | 차변-대변 계정쌍이 희소쌍 모집단에 들어가면 정답 | 계정 누락은 L1-02/L1-03 |
+| L4-05 비정상 시간대 집중 | 사용자별 비정상 시간대 집중, 반복 심야, 급속 승인 조건을 만족하면 정답 | 정상 야간근무 여부는 후단 코드가 판단 |
+| L4-06 배치성 자동 전표 이상 | 배치성 source가 기말 집중, 대량 동시 생성, 배치 금액 이상 조건에 걸리면 정답 | 단독 고위험이 아니라 combo/booster 신호 |
+
+### 9. D01/D02 초안 기준
+
+D01/D02는 전표 단위 정답이 아니라 분석적 검토 macro finding이다. 평가 단위는 기본적으로 `fiscal_year + company_code + gl_account`다.
+
+| 룰 | rule truth 기준 | 비고 |
+|----|-----------------|------|
+| D01 계정 활동량 급변 | 전년 대비 같은 회사·같은 계정의 거래 활동량이 기준 이상 변하면 정답 | 정상 성장·가격상승·투자 확대도 rule truth |
+| D02 월별 분포 패턴 변화 | 전년 대비 같은 회사·같은 계정의 월별 발생 패턴이 기준 이상 변하면 정답 | 정상 계절성·프로젝트 집중도 rule truth |
+
+2022는 2021 baseline이 없으면 기본 평가 대상이 아니다. 2023은 2022와 비교하고, 2024는 2023과 비교한다. 표본 부족, 전기 없음, 계정 결측 등은 false negative가 아니라 exclusion으로 분리한다.
+
+### 10. 교훈
+
+- **룰 정답과 주입 라벨은 다르다.** 우연히 발생한 조건 충족도 룰 입장에서는 정답이다.
+- **Phase 1은 후보 생성 엔진이다.** 모든 룰 hit가 감사상 최종 issue는 아니지만, 룰 조건 충족 여부는 별도로 정확히 평가해야 한다.
+- **단일 `anomaly_labels.csv`로 모든 평가를 하면 FP/FN 해석이 무너진다.** 최소한 `rule_truth`, `audit_issue_truth`, `injected_issue_truth`를 분리해야 한다.
+- **100% 성능이 항상 test fitting은 아니다.** 산술/필드 계약 룰은 contract mode에서 100%가 자연스럽다. 다만 audit benchmark mode에서는 normal/review/control을 별도로 봐야 한다.
+
+**관련 문서**: [DATASYNTH_PHASE1_RULE_TRUTH_DRAFT.md](DATASYNTH_PHASE1_RULE_TRUTH_DRAFT.md) | [DATASYNTH_PATCH_WORKFLOW.md](DATASYNTH_PATCH_WORKFLOW.md) | [DATASYNTH_UPDATE_CHECKLIST.md](DATASYNTH_UPDATE_CHECKLIST.md)
+
+## TS-8. DataSynth Rule Truth Candidate Chain
+
+### 1. 현재 상태
+
+Phase 1 rule truth 분리 작업은 production이 아니라 후보 체인에서 진행 중이다.
+
+최신 후보:
+
+`data/journal/primary/datasynth_v81_candidate`
+
+체인:
+
+| 버전 | 기준 | 수정 내용 |
+|------|------|-----------|
+| v74 | v73 | DataSynth CoA와 `config/chart_of_accounts.csv` 정합성 보강 |
+| v75 | v74 | L2-03, L2-04, L2-05를 라벨 fallback이 아니라 실제 룰 후보 기준으로 재산출 |
+| v76 | v75 | L3-04, L4-01, L4-03을 feature-backed 실제 룰 후보 기준으로 재산출 |
+| v77 | v76 | 폐기된 broad L1-06/L1-07 review 후보 확장. v80 L1-06 평가에는 사용하지 않음 |
+| v78 | v77 | 폐기. 하드링크 후보에서 journal CSV를 수정해 이전 후보까지 오염될 수 있음 |
+| v79 | v77 metadata + v71 clean journals | broad L1 truth 후보. v80에서는 L1-06 role-threshold review 후보를 L3-12/work-scope sidecar로 분리 |
+| v80 | v79 | L1-06은 direct SoD만 남기고, 업무범위/프로세스 폭 검토 후보는 L3-12와 `work_scope_excess_review_population`으로 분리 |
+| v81 | v80 | 자동/반복 전표의 비현실적인 승인자·승인일 대량 결측을 시스템 승인 흔적으로 보강 |
+
+### 2. 왜 production에 바로 덮지 않았나
+
+이번 수정은 원장 재생성이 아니라 truth semantics 변경이다.
+
+따라서 production DataSynth를 바로 덮으면 다음 위험이 있다.
+
+- 기존 평가 코드가 `anomaly_labels.csv`를 정답으로 보는 상태에서 갑자기 지표가 크게 바뀐다.
+- L1-09, L3-04처럼 넓은 review population rule은 precision이 낮아진 것처럼 보일 수 있다.
+- production freeze 문서, preview, overview, dashboard snapshot을 동시에 바꿔야 한다.
+
+그래서 후보 디렉터리에서 먼저 `rule_truth.csv` 계약을 고정하고, 평가 코드가 이 계약을 읽도록 바꾼 뒤 승격해야 한다.
+
+### 3. 검증 결과
+
+`v81_candidate`에서 필수 truth 게이트를 실행했다.
+
+결과:
+
+`failures: []`
+
+주요 rule truth 건수:
+
+| 룰 | 건수 | 해석 |
+|----|----:|------|
+| L1-03 | 32 | CoA 밖 계정만 남음 |
+| L1-05 | 244 | 작성자와 승인자가 같은 모든 문서. 자동/시스템 자가승인 컨트롤 27건 포함 |
+| L1-06 | 19 | 직접 SoD marker 또는 직접 IT/admin 업무전표 개입 근거만 남김 |
+| L1-07 | 76 | 승인자가 비어 있는 모든 문서. v81에서 자동/반복 대량 결측은 시스템 승인 흔적으로 보강 |
+| L1-09 | 102 | 승인일이 비어 있는 모든 문서. 남은 후보는 manual/adjustment 중심 |
+| L2-03 | 96 | 실제 중복전표 룰 후보 |
+| L2-04 | 563 | 실제 비용 자산화 룰 후보 |
+| L2-05 | 113 | 실제 역분개/상계/정정 패턴 후보 |
+| L3-04 | 117,589 | 기말/기초 고액 또는 수기 review population |
+| L3-12 | 266,863 | 업무범위 집중 검토 모집단. 확정 SoD 위반이 아니라 review population |
+| L4-01 | 965 | 매출 계정 z-score review anchor |
+| L4-03 | 4,014 | 고액 z-score review anchor |
+
+### 4. 남은 주의점
+
+- L1-09는 현재 정책상 승인일이 없으면 모두 rule truth다. v81부터 자동/반복 전표의 정상 시스템 승인 흔적은 원천 데이터에 채워 둔다.
+- `anomaly_labels.csv`는 계속 audit/injected issue 의미로 남는다. Phase 1 rule truth로 단독 사용하면 안 된다.
+- `v81_candidate`는 아직 production 승격본이 아니다.
+- journal row를 수정하는 후보 빌더는 하드링크를 쓰면 안 된다. 반드시 물리 복사 후 수정해야 한다.

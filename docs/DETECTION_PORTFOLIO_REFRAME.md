@@ -1,5 +1,11 @@
 # Detection Portfolio Reframe
 
+> 최신 PHASE1 역할 기준: 이 포트폴리오는 "정답을 맞히는 분류기 목록"이 아니라 "감사인이 검토해야 할 후보 모집단을 빠짐없이 만들고, 그 후보를 감사 행동 단위로 재분류하는 체계"다. PHASE1 raw hit는 규칙 위반 후보를 넓게 올리는 1차 결과이며, 정상 예외·리뷰 대상·고위험 후보 구분은 materiality, evidence strength, case priority, 회사별 예외 정책, 룰 조합을 반영한 2차 분류에서 수행한다. 따라서 룰별 precision/recall은 개발 검증 지표일 수는 있지만, PHASE1의 운영 가치를 단독으로 판정하는 기준이 아니다.
+
+> Current PHASE1 scoring note (2026-04-27): 이 문서의 "룰은 감사 절차 단위"라는 원칙은 구현에서 `src/detection/rule_scoring.py`로 반영되었다. 룰별 표현값은 `display_label`로 보존하고, 합산에는 `signal_strength`, `evidence_strength`, `scoring_role`, `normalized_score`를 사용한다. 따라서 portfolio 평가는 raw rule hit 수보다 case-level evidence 결합과 auditor insight를 우선한다.
+
+> 2026-04-28 L3-12 note: `L3-12 WorkScopeExcessReview`는 L1-06 direct SoD 위반이 아니라 `access_scope_review` review signal이다. 단독으로 high 후보를 만들지 않고, `work_scope_combo_score`에서 수기·통제실패·민감계정·결산·중복/유출·매출/관계사 등 독립 보강 evidence group이 결합될 때만 Medium/High로 승격한다.
+
 이 문서는 [DETECTION_REFERENCE.md](DETECTION_REFERENCE.md)와 [DETECTION_RULES.md](DETECTION_RULES.md)를
 현재 포트폴리오의 목적에 맞게 다시 해석한 운영 문서다.
 
@@ -104,9 +110,9 @@ precision이 다소 낮아도 감사상 의미가 크면 유지해야 한다.
 - L3-04 기말 대규모
 - L3-05 주말 전기
 - L3-06 심야 전기
-- L3-07 소급 전기
+- L3-07 전기일-문서일 장기 괴리
 - L1-08 기간 불일치
-- L3-08 위험 적요
+- L3-08 적요 결손/파손
 - L4-02 Benford 위반
 - L4-03 이상 고액
 - L4-04 희소 차대 계정쌍
@@ -142,7 +148,7 @@ precision이 다소 낮아도 감사상 의미가 크면 유지해야 한다.
 | L3-06 | 심야 입력 포착 | 전표 | 우회/비정상 시간 신호 | 글로벌 타임존 처리 필요 |
 | L3-07 | 문서일자 소급 포착 | 전표 | 사후 조정 신호 | 단순 지연 입력과 구분 필요 |
 | L1-08 | 회계기간 불일치 포착 | 전표 | 귀속 왜곡 신호 | 결산 조정분과 업무상 이연 분리 필요 |
-| L3-08 | 설명 부실 또는 위험 적요 포착 | 전표 | 비설명성, 은폐성 신호 | 텍스트 품질과 언어 다양성 영향 큼 |
+| L3-08 | 적요 결손/파손 포착 | 전표 | 기록 추적 방해 신호 | 원천 적요 필드 누락·깨짐 여부 확인 필요 |
 | L4-02 | 숫자 분포 왜곡 포착 | 문서군/계정군 | 조작 패턴 스캐너 | 라벨 없는 경우 많아 평가불가로 다뤄야 함 |
 | L4-03 | 통계적 고액 포착 | 행/전표 | 극단치 신호 | 정상 대형거래와 혼재 |
 | L4-04 | 드문 계정조합 포착 | 전표 | 비정상 분개 구조 신호 | 업종별 정상 희소조합 반영 필요 |

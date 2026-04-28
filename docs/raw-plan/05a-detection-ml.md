@@ -1,5 +1,7 @@
 # 05a. ML 이상탐지 (Phase 2b — 의존: 03a-preprocessing, 05-detection)
 
+> Latest PHASE1 role note (2026-04-28): this raw plan predates the current PHASE1 contract. PHASE1 rule output is a candidate-generation and case-priority input, not a final fraud label. Phase 2 should not treat PHASE1 rule IDs or DataSynth `is_fraud` / `is_anomaly` as a clean final truth for PHASE1 success. Use PHASE1 structured case summaries, rule-truth sidecars, and provenance-safe features; preserve the distinction between review candidates and confirmed audit issues.
+
 ## 목적
 
 룰 기반 24개(Phase 1b)로 탐지할 수 없는 **복합 패턴**과 **미지 패턴**을 ML/DL로 보완한다.

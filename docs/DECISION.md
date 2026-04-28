@@ -1,6 +1,6 @@
 # Design Decisions
 
-> Current DataSynth production baseline: `data/journal/primary/datasynth/` freeze `v45` as of 2026-04-25. Older `v20.x` and `v23` entries are historical decision records.
+> Current DataSynth production baseline: `data/journal/primary/datasynth/` freeze `v59` as of 2026-04-27. Older `v20.x`, `v23`, and `v45` entries are historical decision records.
 
 아키텍처·기술 선택 결정 로그. 새로운 결정 시 내용 추가.
 
@@ -51,10 +51,10 @@
   - **PCAOB AS 2401 / ISA 240 / COSO 2013 / SOX 302·404**: 실무 감사기준 코드 구현
   - **Schreyer & Sattarov 연구** (arXiv 1709.05254, 1908.00734): 전표 이상치 분류 학술 표준
   - 이 세 프레임워크의 교차 설계를 바탕으로 현재 운영 기준본에서도 fraud/anomaly/SoD와 별도 `anomaly_labels.csv`를 함께 유지한다. 세부 주입 수치는 freeze 메모 기준으로 관리한다.
-- **도구 최신성**: DataSynth 레포 기반 프로젝트 fork를 계속 보정 중이며, 현재 실사용 기준본은 2026-04-25 동결 `v45`이다. `v23`의 B04 duplicate payment 보정 이후 L3-08/L3-09/L3-10 평가 계약과 정상 대조군을 누적 반영했다.
+- **도구 최신성**: DataSynth 레포 기반 프로젝트 fork를 계속 보정 중이며, 현재 실사용 기준본은 2026-04-27 동결 `v59`이다. `v23`의 B04 duplicate payment 보정, `v45`의 L3-10 평가 계약, `v52~v54`의 Benford group truth/holdout, `v55~v57`의 D01/D02 계정 단위 sidecar와 정상 대조군, `v58`의 L1-09/L2-02 필수 truth 복구, `v59`의 L1-03/L3-01 CoA 경계 보정을 누적 반영했다.
 - **대안 검토**: 실제 SAP 데이터(sap-merged 332K)는 이상치 레이블 1%뿐, Schreyer(533K)는 날짜 없음+전부 익명화, BPI 2019(1.6M)는 전표가 아닌 이벤트 로그
 - **생성 설정**: `config/datasynth.yaml` (seed 2024, 36개월, 3회사, fraud 2%)
-- **현재 기준 결과**: 1,109,435라인(319,193전표), 52컬럼, `anomaly_labels.csv` 2,269건
+- **현재 기준 결과**: 1,109,435라인(319,193전표), 52컬럼, `anomaly_labels.csv` 2,843건
 
 ### D011: 24개 룰 L1/L2/L3/L4 체계 확정
 - **결정**: 기존 R001~R008(8개 룰 + Benford) 체계를 폐기하고, DataSynth 52개 anomaly 유형에서 3축 평가(법규 근거 × FSS 실증 × 데이터 가용성)로 선별한 24개 룰 L1/L2/L3/L4 체계로 전면 재설계
@@ -65,10 +65,12 @@
 - **구조**:
   - L1 (확정 오류/위반): L1-01~L1-08
   - L2 (강한 부정 정황): L2-01~L2-05
-  - L3 (검토 필요 이상징후): L3-02~L3-09
+  - L3 (검토 필요 이상징후): L3-01~L3-11
   - L4 (통계적 이상치): L4-01~L4-06
 - **Phase별 확장**: Phase 1(24개 룰) → Phase 2(+16개 ML) → Phase 3(+5개 NLP/그래프) = 총 41개 유형
 - **외부 검증**: CAQ 15개 시나리오 93% 커버, PCAOB AS 2401 §61 11개 특성 91% 커버
+
+> Current note (2026-04-28): D011은 초기 체계 확정 기록이다. 현행 PHASE1 구현 범위는 32개 L1~L4 룰이며, L3는 L3-01~L3-12까지 포함한다. L3-12는 L1-06 direct SoD와 분리된 업무범위 review signal이다.
 
 ### D012: FSS 감리지적사례 189건 기반 실증 분석
 - **결정**: 금감원 회계포탈 개별 사례 189건(2011~2025)의 본문(HWP/PDF)을 직접 수집·분석하여 전표 조작 패턴 6종 분류
@@ -76,11 +78,17 @@
 - **결과**: 전표 관련 94건(50%), 6대 패턴(가공전표 50, 결산수정 27, 횡령은폐 24, 순환거래 10, 승인/SoD위반 5, 비정상시점 4)
 - **활용**: 3축 평가의 "축2: 실증 빈도" 점수 산정 근거
 
+#### D012 업데이트: PHASE1 점수 기준 정정 (2026-04-27)
+- **결정**: row-level 기본 점수는 더 이상 `layer_a/layer_b/layer_c/benford` 고정 가중합을 사용하지 않는다. 해당 이름은 detector 실행/저장 호환용 track name으로만 유지한다.
+- **현재 기준**: `RULE_LEVEL_WEIGHTS = L1 0.40 + L2 0.25 + L3 0.20 + L4 0.15`.
+- **위험등급**: `High >= 0.7`, `Medium >= 0.4`, `Low >= 0.2`, 그 외 `Normal`.
+- **보완**: `L1-05` immediate/escalated 자기승인, `L1-04`, `L1-06`, `L1-07` immediate 통제 위반은 row `risk_level`과 case `priority_score` 양쪽에 policy floor를 적용한다.
+
 ### D013: 점수 체계 재설계
-- **결정**: MVP 점수는 내부 detector track 가중합(`layer_a`, `layer_b`, `layer_c`, `benford`)을 유지하고, 사용자 문서/화면은 L1/L2/L3/L4 기준으로 해석한다.
-- **이유**: 실행 엔진의 track 구조와 사용자 액션 레이어를 분리해야 운영과 해석이 덜 꼬인다.
-- **위험등급**: High(>0.7 또는 L1 위반+L2 2개+), Medium(>0.4), Low(>0.2), Normal(≤0.2)
-- **참고**: 가중치·임계값은 근거 없는 초기 설계값. Phase 1 완료 후 back-testing으로 튜닝 예정
+- **결정**: MVP 점수는 L1/L2/L3/L4 rule-family 기준으로 계산한다. `layer_a`, `layer_b`, `layer_c`, `benford`는 실행 엔진 호환용 track name으로만 유지한다.
+- **이유**: 사용자 화면, 감사 정책, 코드의 최종 점수 기준을 L1~L4로 통일해야 "왜 고위험인데 큐에 없지?" 같은 설명 불일치를 줄일 수 있다.
+- **위험등급**: `High >= 0.7`, `Medium >= 0.4`, `Low >= 0.2`, `Normal < 0.2`
+- **정책 floor**: 심각한 통제 위반은 row-level `risk_level`과 case-level `priority_score` 양쪽에 최소 승격 기준을 적용한다.
 
 ### D014: 파일 카테고리별 검증 전략 (file_validator 3분류)
 - **결정**: 10개 확장자를 3개 카테고리(Excel/Text/Columnar)로 분류하여 각각 다른 크기 제한·검증 전략 적용. PDF/HWP는 프로젝트 범위 외로 거부
@@ -150,18 +158,30 @@
 - **결정**: 1차 AUPRC+F2-score, 2차 MCC+DR@FAR=5%, 3차 ROC-AUC(caveat 명시), 보고용 Precision/Recall/F1
 - **이유**: 극단적 불균형(<1%)에서 Accuracy/ROC-AUC 무의미. F2는 Recall 2배 가중(부정 놓치는 비용 > 오탐 비용). DR@FAR=5%는 감사인에게 가장 직관적
 - **UI 요구**: 대시보드에서 각 지표를 비전문가 친화적으로 tooltip 설명
+- **PHASE1 적용 주의**: 이 지표 체계는 모델 성능 비교와 개발 검증용이다. PHASE1 운영 결과는 최종 부정 분류가 아니라 후보 모집단과 case priority이므로, DataSynth `is_fraud` / `is_anomaly` 기준 precision/recall만으로 성공·실패를 판단하지 않는다. PHASE1에는 `rule_truth`, review population coverage, macro finding coverage, exception rate를 함께 사용한다.
 
 ### D023: 라벨링 전략 — 자동 학습 모드 전환
 - **결정**: label_strategy.py에서 양성 ≥50건 AND ≥1%이면 지도학습, 미달 시 자동으로 비지도(VAE+IF) 전환
 - **이유**: StratifiedKFold 5-fold 기준 각 fold 최소 양성 10건 필요. DataSynth는 2%(~21K건)로 충분하지만 실무 데이터는 부족할 수 있음
 - **전이 학습**: DataSynth로 학습한 XGBoost를 실무 데이터에 전이 적용 (보조 점수). Phase 3에서 감사인 피드백 루프로 재학습
 
-### D024: score_aggregator — 전략 패턴 + Percentile Ranking
-- **결정**: settings.py에 가중치 딕셔너리 정의, score_aggregator는 받은 딕셔너리로 합산. 가중합 전 Percentile Ranking으로 점수 스케일 통일
-- **이유**: 코드에 Phase 분기 없이 설정만 교체. 각 모델 점수 단위(XGBoost 0~1, IF -0.5~0.5, VAE 0~∞)가 달라 정규화 필수
-- **Percentile Ranking**: 분포 무관, 극단값에 강건. Min-Max(극단값 취약)/Z-score(정규분포 가정) 대비 우수
+### D024: score_aggregator — L1/L2/L3/L4 rule-family aggregation
+- **결정**: PHASE1 기본 row-level 점수는 L1/L2/L3/L4 rule family별 max score를 만든 뒤 `RULE_LEVEL_WEIGHTS`로 합산한다.
+- **현재 기준**: `L1 0.40`, `L2 0.25`, `L3 0.20`, `L4 0.15`.
+- **호환성**: `layer_a`, `layer_b`, `layer_c`, `benford` track name은 detector 실행/저장 호환용으로 유지한다. 명시적으로 legacy weight dict를 넘긴 경우에만 legacy track weighted sum을 사용한다.
+- **확장**: ML 또는 TrendBreak가 붙는 경우 `RULE_LEVEL_WEIGHTS_WITH_ML`, `RULE_LEVEL_WEIGHTS_WITH_TRENDBREAK`로 L1~L4 축을 유지한 채 extra track을 추가한다.
+- **위험등급**: threshold는 `>`가 아니라 `>=`로 적용한다.
+- **정책 floor**: 치명 통제 위반은 보조 룰 부족 때문에 Low/Medium에 머물지 않도록 row `risk_floor_reasons`와 case `priority_floor_reasons`를 남기고 승격한다.
+- **L3-12 보강**: `L3-12`는 `access_scope_review` weak/booster로 L3 family max에 약하게 반영한다. 단독으로 policy high floor를 만들지 않으며, `work_scope_combo_score`에서 독립 보강 evidence group 2개 이상이면 Medium, 3개 이상이면 High floor를 적용한다.
+- **Percentile Ranking 범위**: Percentile Ranking은 모델 점수처럼 스케일이 다른 외부 score를 합칠 때의 보조 정규화 개념이다. PHASE1 기본 룰 점수의 source of truth는 `RULE_LEVEL_WEIGHTS`다.
 
-### D025: preprocessing/detection 단방향 의존
+### D025: PHASE1 confirmed/review 룰 참조 분리 (2026-04-27)
+- **결정**: `flagged_rules`는 `DetectionResult.details > 0`인 confirmed/immediate 룰만 담고, `review_rules`는 `details == 0`이지만 `row_annotations.review_score` 등 annotation score가 있는 review-only 후보만 담는다.
+- **이유**: `flagged_rules`는 DB `anomaly_flags`, dashboard, export, LLM narrative에서 확정 위반 룰처럼 소비된다. review 후보를 같은 컬럼에 섞으면 DB에는 없는 위반 룰이 리포트에 인용될 수 있다.
+- **점수 기준**: row-level `anomaly_score`와 PHASE1 case priority는 confirmed와 review 후보를 모두 반영할 수 있다. 다만 위반 룰 집계와 `anomaly_flags` 적재 기준은 confirmed `flagged_rules`다.
+- **케이스 기준**: `RawRuleHitRef.signal_status`로 `confirmed`와 `review_candidate`를 구분한다.
+
+### D026: preprocessing/detection 단방향 의존
 - **결정**: 디렉토리 분리 + detection → preprocessing 단방향 import
 - **이유**: 전처리는 "데이터를 모델이 먹기 좋게 요리", 탐지는 "요리를 먹고 판단". 결합도 최소화, 순환 의존 없음
 - **구현 순서**: 1단계 detection 룰(24개) → 2단계 preprocessing(11개 모듈) → 3단계 detection ML
@@ -272,7 +292,7 @@
 - **상세**: [FREEZE_V20.md](../data/journal/primary/datasynth/FREEZE_V20.md)
 
 ### D039: DataSynth v23 운영 기준 승격
-- **결정**: 당시 `data/journal/primary/datasynth/`를 운영 기준본 `v23`로 승격했다. 현재 기준본은 상단의 `v45` 메모를 따른다.
+- **결정**: 당시 `data/journal/primary/datasynth/`를 운영 기준본 `v23`로 승격했다. 현재 기준본은 상단의 `v57` 메모를 따른다.
 - **이유**:
   - `v22_candidate`의 `B04`는 `미탐 0 / 과탐 0`으로 benchmark 정렬이 너무 강했음
   - `v23`은 `P2P + KZ` duplicate payment pair를 유지하면서도 일부 미탐/과탐을 남겨 test fitting을 완화

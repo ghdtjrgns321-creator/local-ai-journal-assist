@@ -41,7 +41,8 @@ fn apply_strategy(&self, entry: &mut JournalEntry, anomaly_type: AnomalyType, rn
 BackdatedEntry           9/9     diff>30d
 ExceededApprovalLimit   historical threshold_match
 
-> 2026-04-25 운영 기준본(`v45`)에서도 `ExceededApprovalLimit`는 threshold 기반이 아니라 `document amount > approved_by.approval_limit` 기준을 유지한다. `v23`은 이 정정을 처음 운영 기준으로 승격한 과거 freeze다.
+> 2026-04-27 운영 기준본(`v59`)에서도 `ExceededApprovalLimit`는 threshold 기반이 아니라 `document amount > approved_by.approval_limit` 기준을 유지한다. `v23`은 이 정정을 처음 운영 기준으로 승격한 과거 freeze다.
+> `v59`에서는 `MisclassifiedAccount`가 CoA 밖 GL을 쓰지 않도록 추가 보정했다. CoA 밖 GL은 `InvalidAccount`만 소유하고, `MisclassifiedAccount`는 유효 계정의 업무 프로세스 불일치만 표현한다.
 > 또한 `DuplicatePayment`는 `TRE-only` 복제 문서가 아니라 `P2P + KZ` 지급쌍 기준으로 재구성되었고, pair lineage / negative control sidecar가 함께 제공된다.
 ImproperCapitalization  11/11    15xx+6xx (Python 후처리로 수정된 상태 → Rust에서 해결 필요)
 InvalidAccount           2/2     invalid_gl (Python 후처리 → Rust)
@@ -91,7 +92,7 @@ DormantAccountActivity 811/826   dormant_gl (15건 미일치)
 | DecimalError | 9 | 자릿수 착오 (만원을 천원으로, ×10 or ÷10) | amount를 ×10 또는 ÷10. rebalance_entry=false (차대변 불일치 유발이 현실적) |
 | RoundingError | 29 | 반올림 오류 (끝자리 1~9원 추가/차감) | amount ± Uniform(1, 9). 소액이므로 차대변 1~9원 차이 허용 |
 | CurrencyError | 7 | 원화↔달러 환산 실수 (÷1,100~1,300 또는 ×1,100~1,300) | amount를 ÷ Uniform(1100, 1300). 환율 적용 오류 시뮬레이션 |
-| MisclassifiedAccount | 6 | 계정 분류 오류 (여비교통비→접대비, 같은 대분류 내) | gl_account를 같은 1st digit 다른 계정으로 교체. CoA에서 동일 그룹 내 랜덤 선택 |
+| MisclassifiedAccount | 6 | 계정 분류 오류 또는 업무 프로세스와 맞지 않는 유효 계정 사용 | gl_account를 CoA에 존재하는 다른 유효 계정으로 교체. CoA 밖 계정은 InvalidAccount 전용이므로 사용 금지 |
 | WrongCostCenter | 18 | 다른 법인/부서 코스트센터 입력 | cost_center를 다른 company_code의 CC로 교체 (예: CC-C001 → CC-C002) |
 | RoundDollarManipulation | 28 | 가공 전표 특유의 정확한 round number (100만, 500만, 1억) | amount를 round_number_unit(100만)의 정확한 배수로 설정. 끝자리 000,000 보장 |
 | UnusuallyLowAmount | 87 | 탐색적 소액 전기 (100~1,000원), 테스트 전표 | amount를 Uniform(100, 1000)으로 설정 |

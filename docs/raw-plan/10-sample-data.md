@@ -383,7 +383,7 @@ midnight           22:00~23:59     0.05       0.7%     ← 심야 (고위험)
 | ExpenseCapitalization        | 36    | 0.6%    | L2-04 비용 자산화     |
 | SplitTransaction             | 29    | 0.5%    | L2-01 분할 승인회피   |
 | SuspenseAccountAbuse         | 18    | 0.3%    | L3-09 가수금 장기체류 |
-| TimingAnomaly                | 12    | 0.2%    | L3-07 소급 전기       |
+| TimingAnomaly                | 12    | 0.2%    | L3-07 전기일-문서일 장기 괴리 |
 | JustBelowThreshold           | 10    | 0.2%    | L2-01 임계값 직하     |
 | RoundDollarManipulation      | 7     | 0.1%    | L4-02 Benford 위반    |
 | ExceededApprovalLimit        | 7     | 0.1%    | L1-04 승인한도 초과   |

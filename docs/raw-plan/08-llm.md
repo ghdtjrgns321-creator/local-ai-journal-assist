@@ -539,7 +539,7 @@ insight_generator → 자연어 해석 (한국어)
 
 ---
 
-## L3-08 위험 적요 LLM 보완 (Phase 3 확장)
+## 위험 적요 LLM 보완 (Phase 3 확장)
 
 Phase 1에서는 `audit_rules.yaml`의 `suspense_keywords` + `suspense_account_codes`로 L3-08을 탐지한다.
 Phase 3에서 LLM을 **보완 레이어**로 추가하여 키워드/GL 코드 매칭이 놓치는 케이스를 잡는다.

@@ -240,8 +240,8 @@ src/feature/
 
 | 변수명                  | 타입 | 대응 룰 | 감사 관점                                           |
 |:------------------------|:-----|:--------|:---------------------------------------------------|
-| `has_risk_keyword`       | str  | L3-08     | '상품권', '가계정' 등 위험 키워드 — 자금 유용 가능성 |
-| `description_quality`   | str  | L3-08     | 적요 품질 등급: missing(NaN/빈값) / poor(1~2글자) / normal(3글자+) |
+| `has_risk_keyword`       | str  | NLP/semantic 후보 | '상품권', '가계정' 등 위험 키워드 — Phase 1 L3-08 조건 아님 |
+| `description_quality`   | str  | L3-08     | 적요 품질 등급: missing(NaN/빈값) / corrupted(깨짐) / normal |
 
 **설계 결정:**
 
@@ -252,7 +252,7 @@ src/feature/
 | 노이즈 필터링 (MVP 타협)          | `_is_noise_pattern()` — 자음만/특수문자만/동일문자 반복 → poor에 병합         |
 | 위험 키워드 관리                   | risk_keywords.yaml에서 로드 + risk_kw 직접 주입 가능 (테스트 용이)           |
 | 키워드 매칭 우선순위               | high → medium → low 순서 (최고 등급 우선 반환)                               |
-| description_quality 등급           | NaN→missing, noise→poor, len<min_length→poor, else→normal (3단계)            |
+| description_quality 등급           | NaN→missing, noise→corrupted, else→normal. legacy `poor`는 하위 호환으로만 처리 |
 | Phase 2/3 stubs                   | `add_semantic_similarity`, `add_semantic_anomaly` — no-op + logger.info      |
 
 **테스트**: [test_text_features.py](../../tests/test_feature/test_text_features.py) — 38 케이스 | [테스트 결과](../../tests/test_feature/test-results/feature-test-summary.md#text_features-38-cases)
@@ -302,8 +302,8 @@ src/feature/
 | 14 | `is_intercompany`         | bool  | L3-03      | pattern  |
 | 15 | `is_revenue_account`      | bool  | L4-01      | pattern  |
 | 16 | `first_digit`             | Int64 | L4-02      | pattern  |
-| 17 | `is_suspense_account`     | bool  | L2-04/L3-08  | pattern  |
-| 18 | `has_risk_keyword`        | str   | L3-08      | text     |
+| 17 | `is_suspense_account`     | bool  | L3-09 보조  | pattern  |
+| 18 | `has_risk_keyword`        | str   | NLP/semantic 후보 | text     |
 | 19 | `description_quality`     | str   | L3-08      | text     |
 
 ## 구현 순서

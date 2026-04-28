@@ -1,6 +1,12 @@
 # Project Overview
 
-> Current DataSynth baseline: `data/journal/primary/datasynth/` freeze `v45` as of 2026-04-25. Dataset size is `1,109,435` rows / `319,193` documents / `52` columns.
+> PHASE1 operating role: PHASE1 is a rule-based full-population screening layer, not a final fraud classifier. Its first job is to surface all records, groups, and macro signals that violate configured rules or deserve review. The second step classifies those hits into normal exceptions, auditor review queues, and high-risk candidates using materiality, evidence strength, case priority, company exception policy, and rule combinations.
+
+> Current DataSynth baseline: `data/journal/primary/datasynth/` freeze `v59` as of 2026-04-27. Dataset size is `1,109,435` rows / `319,193` documents / `52` columns. Main label sidecar: `labels/anomaly_labels.csv` `2,843` rows.
+
+> PHASE1 scoring baseline: rule results are normalized through `src/detection/rule_scoring.py` before case aggregation. Dashboard/report priority is case-level `priority_score`, not a direct sum of raw rule labels or row-level `anomaly_score`.
+
+> Current PHASE1 rule scope: 32 L1~L4 implemented rules. L3-12 is an `access_scope_review` work-scope review signal, separated from L1-06 direct SoD violations and promoted only through `work_scope_combo_score` when corroborating rule groups are present.
 
 ## 프로젝트 정의
 
@@ -58,7 +64,7 @@ local-ai-assist/
 │   ├── eda/                    # EDA 프로파일링
 │   ├── validation/             # 계층적 검증 (L1~L3)
 │   ├── preprocessing/          # ML 전처리 파이프라인 (Phase 2)
-│   ├── detection/              # 3-Layer 24개 룰 (A/B/C + Benford)
+│   ├── detection/              # PHASE1 L1~L4 32개 룰 + 보조 findings
 │   ├── db/                     # DuckDB (ConnectionManager)
 │   ├── llm/                    # LLM 연동 (Phase 3)
 │   └── export/                 # 내보내기 (Phase 3)
@@ -115,7 +121,7 @@ local-ai-assist/
 | 3  | [03-feature.md](pre-plan/03-feature.md)                  | 감사 파생변수 11개 (time/amount/pattern/text)                 | MVP    |
 | 3a | [03a-preprocessing.md](pre-plan/03a-preprocessing.md)    | ML 전처리 파이프라인, VAE 래퍼, 라벨 전략                     | P2     |
 | 4  | [04-validation.md](pre-plan/04-validation.md)            | L1 Pandera + L2 회계 + L3 통계 검증 + 리포트                 | MVP+P2 |
-| 5  | [05-detection.md](pre-plan/05-detection.md)              | BaseDetector, L1/L2/L3/L4 기준 24개 룰(A/B/C), Benford(L4-02), ML 16개, NLP 5개 | MVP~P3 |
+| 5  | [05-detection.md](pre-plan/05-detection.md)              | 초기 24개 룰 설계 기록. 현행 기준은 L1/L2/L3/L4 32개 룰, Benford(L4-02), L3-12 work-scope review, ML 16개, NLP 5개 | MVP~P3 |
 | 6  | [06-db.md](pre-plan/06-db.md)                            | DuckDB 커넥션, 스키마, 로더, 프리셋 쿼리                     | MVP    |
 | 7  | [07-dashboard.md](pre-plan/07-dashboard.md)              | Streamlit 5탭, 컴포넌트, 차트, 필터                          | MVP+P3 |
 | 8  | [08-llm.md](pre-plan/08-llm.md)                          | Ollama, Vanna AI 2.0, SQL 검증, 프리셋, 인사이트             | P3     |
@@ -187,7 +193,7 @@ EY-ASU DataSynth(Rust)로 생성한 K-IFRS 적용 한국 중견 제조 그룹사
 [파이프라인 실행] — AuditPipeline(context=ctx).run(path)
   → 표준 DataFrame → feature/engine(←ctx.settings, ctx.audit_rules) — 파생변수 19개
   → validation (L1 구조 + L2 회계 + L3 통계)
-  → detection (A무결성 + B부정 + C징후, 24개 룰, ←ctx.settings, ctx.chart_of_accounts)
+  → detection (L1~L4 32개 룰 + 보조 findings, ←ctx.settings, ctx.chart_of_accounts)
   → score_aggregator (가중합 + risk_level + L2-05)
   → DuckDB 적재 (ctx.db_path — Engagement별 격리 DB)
   ↑ UX 2단계: 룰 컨트롤 패널 + 재탐지
@@ -206,6 +212,6 @@ EY-ASU DataSynth(Rust)로 생성한 K-IFRS 적용 한국 중견 제조 그룹사
   → API: Text-to-SQL, NLP 의미 분석, 인사이트 생성, Export
   → 비식별화 레이어: 현재 범위 외, 필요성 인지 (CONSTRAINTS.md 참조)
 ```
-> Current DataSynth production baseline: `data/journal/primary/datasynth/` = `v23` freeze (2026-04-22).  
+> Historical note. Current DataSynth production baseline is `data/journal/primary/datasynth/` freeze `v59` as of 2026-04-27. This section originally referenced `v23` freeze (2026-04-22).
 > `B04 DuplicatePayment`는 `P2P + KZ` pair/negative-control 구조로 승격되었고, `v20.4`는 백업본 `datasynth_backup_v20_4_20260422`로 보존된다.
-> Current production DataSynth baseline: `data/journal/primary/datasynth/` freeze `v23` as of 2026-04-22. Older `v20.x` references below are historical notes.
+> Historical sub-note. This section originally referenced `v23` as of 2026-04-22; current production is `v59`.

@@ -1,5 +1,7 @@
 # PHASE1 리모델링 계획
 
+> 최신 운영 원칙: PHASE1 리모델링의 목적은 탐지 대상을 줄여 precision을 높이는 것이 아니라, 규칙에 어긋난 후보를 1차로 넓게 포착한 뒤 case/theme 구조에서 2차 분류하는 것이다. PHASE1은 정답 라벨 또는 부정 확정 판정기가 아니며, raw hit를 정상 예외, 감사인 리뷰 대상, 고위험 후보로 나누는 기준은 중요성, 증거 강도, 고객사 예외 정책, 조합 신호, case priority다.
+
 갱신일: 2026-04-22
 상태: Draft
 목적: PHASE1을 `룰별 결과 나열` 구조에서 `케이스 중심 리뷰 큐` 구조로 리모델링하기 위한 고정 계획 문서
@@ -431,3 +433,40 @@
 ## 12. 변경 이력
 
 - 2026-04-22: 초안 생성
+- 2026-04-27: PHASE1 통합 점수 계약 구현 반영. `src/detection/rule_scoring.py`를 추가해 raw rule label/score를 `signal_strength`와 `normalized_score`로 표준화하고, `phase1_case_builder`의 evidence type score 합산 기준을 `severity / 5` 단순 합산에서 `normalized_score` 합산으로 변경했다.
+
+## 13. Current Implementation Addendum
+
+PHASE1 case remodeling is now partially implemented, not only planned. The current authoritative implementation points are:
+
+| 영역 | 구현 파일 |
+|---|---|
+| rule scoring registry / normalization | `src/detection/rule_scoring.py` |
+| case grouping / priority aggregation | `src/detection/phase1_case_builder.py` |
+| Pydantic result schema | `src/models/phase1_case.py` |
+| dashboard/export drill-down view | `src/export/phase1_case_view.py` |
+| case-level configurable parameters | `config/phase1_case.yaml` |
+
+현재 통합 점수 흐름:
+
+```text
+raw rule output
+  -> display_label
+  -> signal_strength
+  -> normalized_score
+  -> evidence_type score
+  -> case priority
+```
+
+`normalized_score`는 아래 공식으로 계산한다.
+
+```text
+signal_strength
+* (severity / 5)
+* evidence_strength_factor
+* scoring_role_factor
+```
+
+`RawRuleHitRef`는 원천 룰 참조 외에 `display_label`, `signal_strength`, `normalized_score`, `evidence_strength`, `scoring_role`을 저장한다. `CaseGroupResult`는 `priority_score`, `base_priority_score`, `topside_bonus`, `batch_combo_bonus`, `weak_evidence_bonus`, `priority_adjustment_reasons`, `review_focus`, `risk_narrative`, `recommended_audit_actions`, `rule_evidence_summary`를 포함한다. Row-level aggregate output은 별도로 `work_scope_combo_score`와 `work_scope_combo_reasons`를 제공한다.
+
+`L3-08`은 `booster`, `L3-12`는 `access_scope_review` evidence type의 weak/booster, `L4-06`은 `combo_only`, `L4-02/D01/D02`는 transaction queue 기준 `macro_only`로 본다. 따라서 룰별 `High/Medium/Low`, `상/중/하`, `검토 필요` 같은 표현값은 화면 설명용 `display_label`로 보존하되, PHASE1 합산에는 `normalized_score`만 사용한다. L3-12는 단독 High floor를 만들지 않고, `work_scope_combo_score`에서 독립 보강 evidence group 2개 이상일 때만 Medium/High 승격을 적용한다.

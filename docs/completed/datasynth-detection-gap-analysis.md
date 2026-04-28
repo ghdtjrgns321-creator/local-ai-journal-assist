@@ -38,7 +38,7 @@ DataSynth 데이터 (검증)
 | 거래처 식별    | `auxiliary_account_number` | L2-02에서 사용                                                               | 전부 NULL                                      | ❌ 미해결 (DataSynth Rust 수정 필요) |
 | 심야 기준      | 22시~06시                | `midnight_start: 22`                                                       | posting_date datetime (시분초 포함)             | ✅ 해결 (v1.2.0에서 timestamp 추가) |
 | 관계사 식별    | GL 계정 prefix 매칭       | `intercompany_identifiers: ['1150', '2050', '4500', '2700']`               | IC GL 1150/2050/4500/2700 존재                  | ✅ 해결 ("C" 접미사 제거 + 확장) |
-| 직무분리 임계  | 하이브리드 3단계 SoD      | `sod_toxic_pairs` + `sod_role_thresholds` (audit_rules.yaml)                | 1,365명(마스터 1,422명), automated 제외 + Toxic Pair + Role-based | ✅ 해결 (3.32% 위반률, 2026-04-14 실측) |
+| 직무분리 임계  | 과거 하이브리드 SoD 기준. v80에서는 L1-06 direct SoD와 L3-12 work-scope review로 분리 | `sod_conflict_type` + `work_scope_excess_review_population` | direct conflict는 L1-06, Toxic Pair/Role-based는 L3-12 sidecar | v80에서 재분류 |
 | Benford 위반   | MAD > 0.012              | `benford_mad_threshold: 0.012`                                              | 금액 분포가 Benford 적합                        | ⚠️ 미해결 (위반 데이터 미주입) |
 | 필수필드 누락  | 9컬럼 NULL 검사           | schema.yaml 참조                                                           | 결측 2% (MCAR 주입)                             | ⚠️ 미해결 (L1-02 탐지 결과 재검증 필요) |
 

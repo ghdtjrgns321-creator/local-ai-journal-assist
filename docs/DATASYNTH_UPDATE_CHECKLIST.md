@@ -1,179 +1,235 @@
 # DataSynth Update Checklist
 
-Current production baseline: `data/journal/primary/datasynth/` freeze `v45` as of 2026-04-25. Latest freeze note: `data/journal/primary/datasynth/FREEZE_V45.md`.
+Current production baseline: `data/journal/primary/datasynth/` freeze `v59` as of `2026-04-27`.
 
-DataSynth를 재생성하거나 핫픽스할 때, 같이 확인하거나 업데이트해야 하는 파일 목록이다.
+Latest freeze note: `data/journal/primary/datasynth/FREEZE_V59.md`.
 
-목적:
-- `data/journal/primary/datasynth/` 실사용 기준본과 문서가 어긋나지 않게 유지
-- 후보본(`datasynth_vXX_candidate`)과 운영본을 혼동하지 않게 관리
-- 라벨 의미 변경, sidecar 추가, 품질 수치 변경이 있을 때 누락 없이 반영
+This checklist is the required update path whenever DataSynth is regenerated, patched, promoted, or cleaned up.
 
-## 1. 운영 기준본 승격 시
+Patch execution workflow is defined in [DATASYNTH_PATCH_WORKFLOW.md](DATASYNTH_PATCH_WORKFLOW.md). For non-trivial changes, follow the manifest-first workflow there before materializing a candidate.
 
-실사용 기준본을 새 버전으로 올릴 때 반드시 확인:
+## 1. Production Promotion
 
-- 데이터 본문
-  - `data/journal/primary/datasynth/journal_entries.csv`
-  - `data/journal/primary/datasynth/journal_entries_2022.csv`
-  - `data/journal/primary/datasynth/journal_entries_2023.csv`
-  - `data/journal/primary/datasynth/journal_entries_2024.csv`
-- 라벨/sidecar
-  - `data/journal/primary/datasynth/labels/anomaly_labels.csv`
-  - `data/journal/primary/datasynth/labels/anomaly_labels.json`
-  - `data/journal/primary/datasynth/labels/anomaly_labels.jsonl`
-  - `data/journal/primary/datasynth/labels/anomaly_labels_summary.json`
-  - `data/journal/primary/datasynth/labels/document_labels_2022.csv`
-  - `data/journal/primary/datasynth/labels/document_labels_2023.csv`
-  - `data/journal/primary/datasynth/labels/document_labels_2024.csv`
-- 메타/검증
-  - `data/journal/primary/datasynth/generation_statistics.json`
-  - `data/journal/primary/datasynth/data_quality_stats.json`
-  - `data/journal/primary/datasynth/validated_metadata_2022.json`
-  - `data/journal/primary/datasynth/validated_metadata_2023.json`
-  - `data/journal/primary/datasynth/validated_metadata_2024.json`
-  - `data/journal/primary/datasynth/run_manifest.json`
-  - `data/journal/primary/datasynth/balance_validation.json`
-- 기준 문서
-  - `data/journal/primary/datasynth/FREEZE_VXX.md`
-  - `data/journal/primary/datasynth/PREVIEW.md`
-  - `data/journal/OVERVIEW.md`
-- 프로젝트 문서
-  - `docs/DECISION.md`
-  - `docs/PROJECT_OVERVIEW.md`
-  - `docs/TASKS.md`
-  - `docs/핵심기능.MD`
+When a candidate becomes the production baseline, update or verify:
 
-## 2. 후보본만 만들었을 때
+- `data/journal/primary/datasynth/journal_entries.csv`
+- `data/journal/primary/datasynth/journal_entries_2022.csv`
+- `data/journal/primary/datasynth/journal_entries_2023.csv`
+- `data/journal/primary/datasynth/journal_entries_2024.csv`
+- `data/journal/primary/datasynth/labels/anomaly_labels.csv`
+- `data/journal/primary/datasynth/labels/anomaly_labels.json`
+- `data/journal/primary/datasynth/labels/anomaly_labels.jsonl`
+- `data/journal/primary/datasynth/labels/anomaly_labels_summary.json`
+- `data/journal/primary/datasynth/generation_statistics.json`
+- `data/journal/primary/datasynth/data_quality_stats.json`
+- `data/journal/primary/datasynth/run_manifest.json`
+- `data/journal/primary/datasynth/balance_validation.json`
 
-운영본 승격 없이 `datasynth_v21_candidate`, `datasynth_v22_candidate` 같은 실험본만 만들었을 때:
+Required production docs:
 
-- 후보본 문서
-  - `data/journal/primary/datasynth_vXX_candidate/FREEZE_VXX_CANDIDATE.md`
-  - `data/journal/primary/datasynth_vXX_candidate/PREVIEW.md`
-- 현재 운영본과의 관계 명시
-  - `current production baseline = data/journal/primary/datasynth/ freeze vXX`
-- 운영본 문서는 바꾸지 않음
-  - `data/journal/primary/datasynth/FREEZE_V*.md`
-  - `data/journal/primary/datasynth/PREVIEW.md`
+- `data/journal/primary/datasynth/FREEZE_VXX.md`
+- `data/journal/primary/datasynth/PREVIEW.md`
+- `data/journal/OVERVIEW.md`
 
-## 3. 라벨 의미가 바뀌었을 때
+Required project docs:
 
-예:
-- `ExceededApprovalLimit := approved_by.approval_limit`
-- `JustBelowThreshold := approved_by.approval_limit * ratio <= document_amount < approved_by.approval_limit`
-- `DuplicatePayment := P2P + KZ duplicate payment pair`
+- `docs/DECISION.md`
+- `docs/PROJECT_OVERVIEW.md`
+- `docs/DETECTION_RULES.md`
+- `docs/핵심기능.MD`
 
-반드시 같이 수정:
+## 2. Candidate-Only Patch
 
-- 데이터/라벨
-  - `data/journal/primary/datasynth/labels/*`
-- 검증 코드
-  - `tools/audit_labels.py`
-  - `tools/audit_fullcheck.py`
-  - `tests/datasynth_quality_gate/checks/tier3_crossref.py`
-  - `tests/phase1_rulebase/test_e2e_label_validation.py`
-- 룰 문서
-  - `docs/DETECTION_RULES.md`
-  - `docs/completed/DATASYNTH_INJECTION_SPEC.md`
-- 필요 시 탐지 코드
-  - `src/detection/fraud_rules_groupby.py`
+If only `data/journal/primary/datasynth_vXX_candidate/` is created:
 
-## 4. sidecar가 추가되거나 구조가 바뀌었을 때
+- Add or update `data/journal/primary/datasynth_vXX_candidate/FREEZE_VXX_CANDIDATE.md`.
+- Declare the exact source baseline and included prior manifests.
+- Do not base a new candidate on an interrupted or unvalidated candidate.
+- Do not update `data/journal/primary/datasynth/PREVIEW.md`.
+- Do not update `data/journal/OVERVIEW.md`.
+- Mention the current production baseline in any candidate test result.
 
-예:
-- `labels/duplicate_payment_pairs.json`
-- `labels/duplicate_payment_negative_controls.json`
-- `labels/duplicate_entry_pairs.json`
+Recommended wording:
 
-반드시 같이 수정:
+`Current production DataSynth baseline is data/journal/primary/datasynth/ freeze v59 as of 2026-04-27. This report targets candidate datasynth_vXX_candidate.`
+
+## 3. Label Contract Changes
+
+When label meaning changes, update:
+
+- `data/journal/primary/datasynth/labels/*`
+- `docs/DETECTION_RULES.md`
+- `docs/completed/DATASYNTH_INJECTION_SPEC.md` if the generator/injection contract changed
+- relevant `tests/phase1_rulebase/test-results/*.md`
+- validation/audit scripts that consume labels
+
+Examples:
+
+- v70-style truth split: `anomaly_labels.csv` may be audit issue truth, while exact L1 field contracts live in `labels/field_contract_truth.csv`
+- `L1-01 := abs(sum(debit_amount)-sum(credit_amount)) > tolerance`, evaluated via `labels/l101_unbalanced_truth.csv`
+- `L2-01 := approval_limit * 0.9 <= max(sum(debit_amount),sum(credit_amount)) < approval_limit`, evaluated via `labels/l201_just_below_threshold_truth.csv`
+- L2 rule truth means the full candidate population that Phase 1 should surface, not only confirmed anomaly subsets
+- `ExceededApprovalLimit := document_amount > approved_by.approval_limit`
+- `SelfApproval := created_by == approved_by`; system/automated exceptions are handled later by detector/scoring logic
+- `SegregationOfDutiesViolation := the same user or authority holder performs two roles that should be separated within the same transaction flow`
+- `SkippedApproval := approval-required document with approved_by missing, including review-required candidates`
+- `DuplicatePayment := duplicate-payment candidate, including reference, fallback, and recurring-looking candidates that Phase 1 should surface`
+- `DuplicateEntry := exact, document-shape, reference, near, or split duplicate-entry candidate`
+- `ExpenseCapitalization := expense-to-asset capitalization candidate`
+- `ReversalEntry := reversal, cancellation, correction, clearing, offset, or reclassification candidate`
+- L3 rule truth means the full review-candidate population that Phase 1 should surface, not only confirmed anomaly labels
+- `MisclassifiedAccount/L3-01 := valid CoA account used in a mismatched business-process context`
+- `Manual Entry/L3-02 := manual or adjustment source population`
+- `Intercompany/L3-03 := related-party/intercompany transaction population`
+- `RushedPeriodEnd/L3-04 := period-end/start and high-amount or manual posting candidate`
+- `WeekendPosting/L3-05 := weekend or holiday posting candidate`
+- `AfterHoursPosting/L3-06 := configured after-hours posting candidate`
+- `BackdatedEntry/LatePosting/L3-07 := posting/document date gap above threshold`
+- `MissingOrCorruptedDescription/L3-08 := missing, blank, corrupted, or legacy poor description`
+- `SuspenseAccountAbuse/L3-09 := unresolved suspense/clearing account above aging threshold`
+- `HighRiskAccountUse/L3-10 := configured sensitive/high-risk account touch`
+- `RevenueCutoffMismatch/L3-11 := posting date and event date exceed cutoff tolerance`
+- `ApprovalDateMissing := approval_date missing`
+- automated/recurring missing approval-date cases are still rule truth; later code decides review/normal handling
+- `WrongPeriod := fiscal_period does not match posting_date.month`
+- `BenfordViolation` should not be used as document-level L4-02 truth
+- `MisclassifiedAccount := valid CoA account used in an unusual business_process context; it must not use unregistered GL codes`
+- `InvalidAccount := GL account outside the configured CoA`
+- D01/D02 should not be evaluated by document-level `is_anomaly`
+
+## 4. Sidecar Changes
+
+When sidecars are added, removed, or structurally changed, update:
 
 - `data/journal/primary/datasynth/PREVIEW.md`
 - `data/journal/OVERVIEW.md`
 - `docs/DETECTION_RULES.md`
 - `docs/핵심기능.MD`
-- sidecar를 실제로 읽는 검증/분석 스크립트
-  - `tools/analyze_datasynth.py`
-  - `tools/scripts/verify_data.py`
-  - 해당 후보/승격 빌드 스크립트
+- relevant test-result markdown under `tests/phase1_rulebase/test-results/`
+- scripts that read the sidecar files
 
-## 5. 소규모 핫픽스만 했을 때
+Current v59 high-priority sidecars:
 
-예:
-- `MisclassifiedAccount` invalid CoA 치환
-- JE user master 조인 복구
-- `ExceededApprovalLimit` 라벨 재판정
+- L1 audit split: `field_contract_truth*`, `l1_audit_issue_truth*`, `l1_field_only_normal_or_review*`
+- L1-01: `l101_unbalanced_truth*`
+- L2-01: `l201_just_below_threshold_truth*`
+- L1-09: `approval_date_missing_cases*`
+- L1-09 controls: `approval_date_present_normal_controls*`
+- L1-08: `wrong_period_confirmed_anomalies*`, `wrong_period_normal_controls*`
+- L2-02: `duplicate_payment_pairs*`, `duplicate_payment_negative_controls*`
+- L3-01: `misclassified_account_coa_fix_cases*`
+- D01: `account_activity_variance_truth*`, `account_activity_variance_normal_controls*`, `account_activity_variance_review_population*`
+- D02: `monthly_pattern_shift_confirmed_anomalies*`, `monthly_pattern_shift_normal_controls*`, `monthly_pattern_shift_review_population*`, `monthly_pattern_shift_exclusions*`
+- L4-02: `benford_finding_truth*`, `benford_adversarial_holdout*`
+- L4-04: `rare_account_pair_confirmed_anomalies*`, `rare_account_pair_normal_controls*`, `rare_account_pair_review_population*`
+- L3-10: `high_risk_account_confirmed_anomalies*`, `high_risk_account_normal_controls*`, `high_risk_account_review_population*`
 
-반드시 같이 수정:
+## 5. Hotfix-Only Patch
 
-- 핫픽스 기록 파일 생성
-  - 예: `V20_1_*.json`, `V20_2_*.json`, `V20_4_*.json`
-- `data/journal/primary/datasynth/FREEZE_VXX.md`
-  - 어떤 핫픽스가 누적되었는지
-- `data/journal/primary/datasynth/PREVIEW.md`
-  - 최신 수치 반영
-- 의미가 바뀐 경우 3번 항목도 같이 수행
+If the patch is a small data hotfix:
 
-## 6. 품질 수치가 바뀌었을 때
+- Create a patch manifest first unless the change is documentation-only.
+- Record the hotfix in `FREEZE_VXX.md` or `FREEZE_VXX_CANDIDATE.md`.
+- Update `PREVIEW.md` if production data changed.
+- Update affected rule docs if label meaning changed.
+- Verify row counts and relevant sidecar counts.
 
-예:
-- rows/documents 수
-- anomaly label 수
-- `DuplicatePayment` 개수
-- `accounts_count`, `employee_count`
+## 6. Numeric Snapshot Changes
 
-반드시 같이 수정:
+When row counts, document counts, label counts, or key sidecar counts change, update:
 
 - `data/journal/primary/datasynth/FREEZE_VXX.md`
 - `data/journal/primary/datasynth/PREVIEW.md`
 - `data/journal/OVERVIEW.md`
-- `docs/DECISION.md`
 - `docs/PROJECT_OVERVIEW.md`
 - `docs/핵심기능.MD`
 
-## 7. 역사 문서 처리 원칙
+Minimum snapshot:
 
-아래는 과거 결과 기록이다. 현재값으로 본문 전체를 갈아엎지 않는다.
-대신 상단에 현재 운영 기준본만 주석으로 적는다.
+- combined rows/documents
+- year-level rows/documents
+- `anomaly_labels.csv` rows
+- main sidecar rows
+- column count
+- company count
 
-- `docs/debugging.md`
-- `tests/datasynth_quality_gate/results/fullcheck_report.md`
-- `tests/modules/test_feature/test-results/e2e-datasynth.md`
-- `tests/modules/test_feature/test-results/dual-audit-datasynth.md`
-- 기타 과거 `test-results/*.md`
+## 7. Historical Reports
 
-권장 주석 형식:
+Historical reports do not need to be rewritten fully. Add or preserve a note that the report is historical when it references old candidate paths or old freeze versions.
 
-`Historical report. Current production DataSynth baseline is data/journal/primary/datasynth/ freeze vXX as of YYYY-MM-DD.`
+Recommended wording:
 
-## 8. 승격 전 최소 확인
+`Historical report. Current production DataSynth baseline is data/journal/primary/datasynth/ freeze v59 as of 2026-04-27.`
 
-운영본 승격 전 최소 체크:
+## 8. Promotion Verification
 
-1. 핵심 룰 회귀 테스트 통과
-2. `anomaly_labels.csv`와 sidecar 정합성 확인
-3. `validated_metadata_2022/2023/2024.json` 재생성
-4. `PREVIEW.md`, `FREEZE_VXX.md`, `OVERVIEW.md` 수치 반영
-5. `DECISION.md`에 승격 결정 기록
-6. 백업 디렉터리 생성
+Before saying a promotion is complete, verify:
 
-## 9. 이번 기준에서 특히 자주 놓친 파일
+1. `journal_entries.csv` row count.
+2. Year file row counts.
+3. `labels/anomaly_labels.csv` row count.
+4. New sidecar counts.
+5. Candidate lineage block declares source baseline and included manifests.
+6. Anti-fitting check is documented when the patch changes labels or truth sidecars.
+7. Year/company counts are intentionally varied or explicitly marked as fixture-only.
+8. `PREVIEW.md`, `FREEZE_VXX.md`, and `OVERVIEW.md` reflect the promoted version.
+9. `DETECTION_RULES.md` contains the current evaluation contract.
+10. Candidate cleanup did not remove the promoted `data/journal/primary/datasynth/` directory.
+11. `python tools/scripts/check_datasynth_required_truth.py data/journal/primary/datasynth` passes.
+12. For candidate-to-candidate promotion, the previous baseline regression gate passes:
+    `python tools/scripts/check_datasynth_required_truth.py data/journal/primary/datasynth_vXX_candidate --previous data/journal/primary/datasynth_vYY_candidate`.
+13. Field-contract labels such as L1-05 `SelfApproval`, L1-04 `ExceededApprovalLimit`, L1-06 `SegregationOfDutiesViolation`, and L1-07 `SkippedApproval` match their source journal fields exactly, not just minimum label counts.
 
-우선순위 높음:
+## 9. Storage Cleanup Policy
 
-- `data/journal/primary/datasynth/PREVIEW.md`
-- `data/journal/primary/datasynth/FREEZE_VXX.md`
-- `data/journal/OVERVIEW.md`
-- `docs/DECISION.md`
-- `docs/DETECTION_RULES.md`
-- `docs/completed/DATASYNTH_INJECTION_SPEC.md`
-- `tests/phase1_rulebase/test_e2e_label_validation.py`
-- `tools/audit_labels.py`
-- `tools/audit_fullcheck.py`
+To control local data size:
 
-## 10. 권장 운영 방식
+- Keep production: `data/journal/primary/datasynth/`
+- Keep recent candidates needed for rollback/debugging.
+- As of v59, candidates `datasynth_v50_candidate` through `datasynth_v59_candidate` are retained.
+- Remove older scratch directories such as old backups, drift checks, coverage checks, and candidates before the retention window after promotion verification.
 
-- 메인 운영본은 항상 `data/journal/primary/datasynth/`
-- 실험은 항상 `data/journal/primary/datasynth_vXX_candidate/`
-- 승격 전에는 메인 문서 건드리지 말고 후보본 문서만 수정
-- 승격 시에만 메인 문서와 결정 로그를 함께 갱신
+Never delete production `data/journal/primary/datasynth/` as part of cleanup.
+
+## 10. Current v59 Snapshot
+
+- Production path: `data/journal/primary/datasynth/`
+- Freeze: `v59`
+- Rows: `1,109,435`
+- Documents: `319,193`
+- Companies: `3`
+- Columns: `52`
+- `labels/anomaly_labels.csv`: `2,843`
+- MisclassifiedAccount rows patched to valid CoA accounts: `19`
+- MisclassifiedAccount rows still outside CoA: `0`
+- Unregistered GL docs without InvalidAccount label: `0`
+- L1-09 labels/cases: `26 / 26`
+- L2-02 labels/pairs/controls: `33 / 33 / 18`
+- D01 truth/control/review: `336 / 504 / 840`
+- D02 confirmed/control/review/exclusions: `346 / 194 / 497 / 2,059`
+- Benford group truth/holdout: `100 / 176`
+
+## 11. Current Rule-Truth Candidate Snapshot
+
+This is not production until explicitly promoted.
+
+- Latest candidate path: `data/journal/primary/datasynth_v81_candidate`
+- Lineage: `v74 CoA backfill -> v75 L2 rule truth -> v76 L3/L4 rule truth -> v77 L1 review truth -> v79 safe broad L1 truth -> v80 L1-06/L3-12 split -> v81 realistic approval metadata`
+- `v78_candidate` is superseded and should not be promoted because journal CSV patching happened on hardlinked candidate files.
+- Required truth gate: `python tools/scripts/check_datasynth_required_truth.py data/journal/primary/datasynth_v81_candidate`
+- Last gate result: `failures: []`
+
+Promotion checklist additions:
+
+- Confirm evaluation code reads `labels/rule_truth.csv` for Phase 1 contract metrics.
+- Confirm evaluation code does not use `anomaly_labels.csv` alone as Phase 1 truth.
+- Confirm broad review-population rules such as L1-09 and L3-04 are reported as candidate coverage, not audit issue precision.
+- Confirm broad L1 rules are reported correctly:
+  - L1-05: `created_by == approved_by`, including automated/system contexts.
+  - L1-06: direct SoD marker or direct IT/admin business posting evidence only.
+  - L1-07: `approved_by` missing. v81 should not be dominated by automated/recurring routine documents.
+  - L1-09: `approval_date` missing. v81 should retain only realistic manual/adjustment gaps plus confirmed cases.
+- Confirm L3-12 is reported as work-scope review population, not as confirmed SoD violation.
+- Preserve `anomaly_labels.csv` as audit/injection issue labels.
+- Do not delete `datasynth_v81_candidate` until production promotion or a later candidate supersedes it.
+- Any future builder that modifies journal CSVs must use physical copy, not hardlinks.

@@ -1,5 +1,7 @@
 # 07. Streamlit 대시보드 [Phase 1c — 의존: 06]
 
+> Latest PHASE1 UX note (2026-04-28): this raw plan is historical. Current dashboard copy must present PHASE1 as a rule-based full-population screening and review-queue builder, not a final fraud detector. DataSynth label columns are development-only, and user-facing PHASE1 screens should emphasize case priority, review focus, evidence summary, exception handling, and recommended audit actions rather than "정답", "부정 확정", or standalone precision/recall.
+
 ## 목적
 DuckDB에 적재된 감사 분석 결과를 5개 탭으로 시각화한다.
 파일 업로드 → 분석 실행 → 결과 탐색까지 원스톱 워크플로우 제공.
@@ -505,7 +507,7 @@ GROUP BY sod_conflict_type, user_persona;
 | 법인 간 거래 Chord  | 3개 노드(C001/C002/C003), 양방향 링크, 두께=거래금액         |
 | IC 유형별 비중      | GoodsSale(35%), ServiceProvided(20%), ManagementFee(15%) 등  |
 | 매칭/불일치 표      | lettrage 컬럼 기반 매칭 쌍 식별 → 미매칭 건수 표시           |
-| 탐지 연계           | L3-03(관계사 순환거래) 플래그 드릴다운                         |
+| 탐지 연계           | L3-03(관계사 거래 검토 신호) 플래그 드릴다운                    |
 
 - 데이터 소스: batch_ledger WHERE is_intercompany = true, trading_partner 컬럼
 - IC 매칭 쌍: 98쌍 (매수/매도 양측 전표 동시 생성, 월별 네팅)
