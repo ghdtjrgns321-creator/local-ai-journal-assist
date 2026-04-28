@@ -17,6 +17,12 @@ class RawRuleHitRef(BaseModel):
     row_index: int
     record_id: str | None = None
     score: float = 0.0
+    signal_strength: float = 0.0
+    normalized_score: float = 0.0
+    evidence_strength: str = ""
+    scoring_role: str = "primary"
+    display_label: str = ""
+    signal_status: str = "confirmed"
     detail: str | None = None
     evidence_type: str
 

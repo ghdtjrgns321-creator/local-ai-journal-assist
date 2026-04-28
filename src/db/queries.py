@@ -110,7 +110,8 @@ PRESET_QUERIES: dict[str, str] = {
     """,
     "performance_rule_metrics_by_report": """
         SELECT report_id, track_name, rule_code, label_docs, flagged_docs,
-               tp_docs, fp_docs, fn_docs, precision, recall, f1, created_at
+               tp_docs, fp_docs, fn_docs, precision, recall, f1,
+               breakdown_json, score_bands_json, created_at
         FROM performance_rule_metrics
         WHERE report_id = ?
         ORDER BY track_name, rule_code

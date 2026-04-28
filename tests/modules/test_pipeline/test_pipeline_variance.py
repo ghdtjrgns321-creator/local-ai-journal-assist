@@ -58,6 +58,7 @@ def named_ctx(tmp_path):
 @pytest.fixture
 def mock_conn():
     import duckdb
+
     from src.db.schema import initialize_schema
 
     conn = duckdb.connect(":memory:")
@@ -178,9 +179,7 @@ class TestWeightAutoSelection:
             weights = call_kwargs.kwargs.get("weights") or (
                 call_kwargs[0][2] if len(call_kwargs[0]) > 2 else None
             )
-            assert weights is not None
-            weight_keys = {k.value if hasattr(k, "value") else k for k in weights}
-            assert "layer_d" in weight_keys
+            assert weights is None
 
 
 class TestBackwardCompatNoRepo:

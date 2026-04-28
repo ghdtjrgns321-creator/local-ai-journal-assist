@@ -26,14 +26,15 @@ class TestRunFromDataframe:
         result = AuditPipeline(skip_db=True).run_from_dataframe(small_gl_df)
 
         track_names = {r.track_name for r in result.results}
-        assert {"layer_a", "layer_b", "layer_c", "benford", "evidence"}.issubset(track_names)
+        assert {"layer_a", "layer_b", "layer_c", "benford"}.issubset(track_names)
+        assert "evidence" not in track_names
         assert "nlp" not in track_names
 
         detector_statuses = {
             status["track_name"]: status for status in result.detector_statuses
         }
         assert "nlp" in detector_statuses
-        assert detector_statuses["nlp"]["run_status"] == "skipped"
+        assert detector_statuses["nlp"]["run_status"] == "not_in_path"
 
     def test_batch_id_format(self, small_gl_df):
         result = AuditPipeline(skip_db=True).run_from_dataframe(small_gl_df)
@@ -312,7 +313,7 @@ class TestRunFromDataframe:
             "unusual_frequency",
         ]
 
-    def test_executes_timeseries_detector_when_enabled(self, monkeypatch, small_gl_df):
+    def test_phase1_default_excludes_timeseries_detector(self, monkeypatch, small_gl_df):
         class DummyTimeseriesDetector:
             def __init__(self, settings=None):
                 self.settings = settings
@@ -337,10 +338,22 @@ class TestRunFromDataframe:
         ).run_from_dataframe(small_gl_df)
 
         track_names = {r.track_name for r in result.results}
-        statuses = {status["track_name"]: status for status in result.detector_statuses}
-        assert "timeseries" in track_names
-        assert statuses["timeseries"]["run_status"] == "executed"
-        assert statuses["timeseries"]["sub_detector_keys"] == ["transaction_burst"]
+        assert "timeseries" not in track_names
+
+    def test_phase1_core_scope_excludes_ml_even_when_enabled(self, monkeypatch, small_gl_df):
+        def fail_ml(self, df):
+            raise AssertionError("phase1_core must not invoke ML detectors")
+
+        monkeypatch.setattr(AuditPipeline, "_try_ml_detection", fail_ml)
+
+        result = AuditPipeline(
+            settings=AuditSettings(enable_ml_detection=True),
+            skip_db=True,
+        ).redetect(small_gl_df, detection_scope="phase1_core")
+
+        track_names = {r.track_name for r in result.results}
+        assert {"layer_a", "layer_b", "layer_c", "benford"}.issubset(track_names)
+        assert not any(name.startswith("ml_") for name in track_names)
 
 
 class TestRunCsv:

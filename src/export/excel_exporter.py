@@ -23,6 +23,7 @@ from openpyxl import Workbook
 from openpyxl.cell import WriteOnlyCell
 from openpyxl.styles import Alignment, Font, PatternFill
 
+from src.detection.constants import get_track_display_label
 from src.export.audit_evidence import build_evidence_row
 from src.export.masking import mask_dataframe
 from src.export.models import (
@@ -246,6 +247,20 @@ class ExcelExporter:
             ORDER BY track_name, rule_code
         """
         df = self._safe_query(sql, [batch_id])
+        if {"track_name", "rule_code"}.issubset(df.columns):
+            df.insert(
+                0,
+                "rule_group",
+                [
+                    get_track_display_label(track_name, rule_code)
+                    for track_name, rule_code in zip(
+                        df["track_name"],
+                        df["rule_code"],
+                        strict=True,
+                    )
+                ],
+            )
+            df = df.drop(columns=["track_name"])
         if df.empty:
             ws.append([self._cell(ws, "탐지된 규칙 없음")])
             return

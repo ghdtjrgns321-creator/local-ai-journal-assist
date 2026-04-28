@@ -46,8 +46,8 @@ def generate_report(result: PipelineResult) -> str:
         pct = count / total * 100 if total else 0
         lines.append(f"| {level:8s} | {count:>8,} | {pct:6.2f}% |")
 
-    # 레이어별 탐지 요약
-    lines.append("\n## 레이어별 탐지 요약\n")
+    # L1~L4 탐지 요약
+    lines.append("\n## L1~L4 탐지 요약\n")
     lines.append("| 트랙 | 플래그 행수 | 실행 룰 | 소요시간(초) |")
     lines.append("|------|-----------|---------|------------|")
     for r in result.results:

@@ -1,7 +1,7 @@
 """L3 통계 검증 오케스트레이터 — 서브모듈 조합 + flags 수집.
 
 Why: benford/volatility/temporal 서브모듈 결과를 StatisticalResult로 조립.
-detection Layer C (L3-04 기말집중, L4-02 Benford, L4-03 이상고액)의 통계적 기반 제공.
+detection L3/L4 rules (L3-04 기말집중, L4-02 Benford, L4-03 이상고액)의 통계적 기반 제공.
 """
 
 from __future__ import annotations

@@ -2,7 +2,7 @@
 
 Why: len(STACKING_BASE_MODELS)개 base model 점수를 Ridge(positive=True)로 결합하여 최종 anomaly_score 산출.
      Ridge 비음수 제약으로 다중공선성에 의한 음수 가중치 문제를 원천 차단.
-     (Layer B ↔ ML Supervised 상관관계가 높아 일반 LR은 음수 계수 생성 가능
+     (L1-L4 fraud-rule track ↔ ML Supervised 상관관계가 높아 일반 LR은 음수 계수 생성 가능
       → "ML이 부정이라 확신할수록 점수가 깎이는" 역설 방지)
 """
 

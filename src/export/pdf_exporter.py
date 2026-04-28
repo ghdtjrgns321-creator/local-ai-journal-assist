@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 import pandas as pd
 from fpdf import FPDF
 
+from src.detection.constants import get_track_display_label
 from src.export.models import (
     DISCLAIMER,
     ExportConfig,
@@ -140,7 +141,13 @@ class PDFExporter:
             pdf.set_font(_FONT_NAME, size=11, style="B")
             pdf.cell(0, 7, "PHASE1 Case Queue", new_x="LMARGIN", new_y="NEXT")
             pdf.set_font(_FONT_NAME, size=10)
-            pdf.cell(0, 7, f"Case 수: {phase1_summary['case_count']}", new_x="LMARGIN", new_y="NEXT")
+            pdf.cell(
+                0,
+                7,
+                f"Case 수: {phase1_summary['case_count']}",
+                new_x="LMARGIN",
+                new_y="NEXT",
+            )
             pdf.cell(
                 0,
                 7,
@@ -258,6 +265,20 @@ class PDFExporter:
         if rules.empty:
             pdf.cell(0, 8, "탐지 규칙 데이터 없음", new_x="LMARGIN", new_y="NEXT")
         else:
+            if {"track_name", "rule_code"}.issubset(rules.columns):
+                rules.insert(
+                    0,
+                    "rule_group",
+                    [
+                        get_track_display_label(track_name, rule_code)
+                        for track_name, rule_code in zip(
+                            rules["track_name"],
+                            rules["rule_code"],
+                            strict=True,
+                        )
+                    ],
+                )
+                rules = rules.drop(columns=["track_name"])
             rows = [tuple(str(c) for c in rules.columns)]
             rows.extend(tuple(str(v) for v in row) for _, row in rules.iterrows())
             self._render_table(pdf, rows, col_widths=[35, 30, 35, 35])

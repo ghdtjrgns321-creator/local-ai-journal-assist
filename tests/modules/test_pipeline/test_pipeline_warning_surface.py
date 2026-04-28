@@ -1,17 +1,9 @@
 from __future__ import annotations
 
 import pandas as pd
-import pytest
 
-# Why: pipeline 측 coverage warning 변환 및 format_phase1_rule_coverage 유틸이
-# 아직 구현되지 않아 해당 테스트는 기능 구현 후 활성화한다.
-pytest.skip(
-    "pipeline coverage warning 변환 + format_phase1_rule_coverage 미구현",
-    allow_module_level=True,
-)
-
-from src.detection.base import DetectionResult  # noqa: E402
-from src.pipeline import AuditPipeline, format_phase1_rule_coverage  # noqa: E402,F401
+from src.detection.base import DetectionResult
+from src.pipeline import AuditPipeline, format_phase1_rule_coverage
 
 
 def test_pipeline_surfaces_detector_coverage_warnings(monkeypatch, small_gl_df) -> None:
@@ -33,7 +25,7 @@ def test_pipeline_surfaces_detector_coverage_warnings(monkeypatch, small_gl_df) 
                 }
             ],
         },
-        warnings=["L4-01 실행 스킵: 필수 입력 누락 ['amount_zscore']"],
+        warnings=["L4-01 skipped: missing required input ['amount_zscore']"],
     )
 
     monkeypatch.setattr(
@@ -48,7 +40,7 @@ def test_pipeline_surfaces_detector_coverage_warnings(monkeypatch, small_gl_df) 
     )
 
     result = AuditPipeline(skip_db=True).redetect(small_gl_df)
-    assert any("L4-01 실행 스킵" in warning for warning in result.warnings)
+    assert any("L4-01 skipped" in warning for warning in result.warnings)
     assert any("[분석범위제한]" in warning for warning in result.warnings)
 
 
@@ -92,3 +84,31 @@ def test_format_phase1_rule_coverage_lists_skipped_and_partial_rules(small_gl_df
     assert "partial" in rendered
     assert "approval_date" in rendered
     assert "70.0%" in rendered
+
+
+def test_pipeline_surfaces_phase1_case_artifact_failure(monkeypatch, small_gl_df) -> None:
+    monkeypatch.setattr(
+        AuditPipeline,
+        "_run_detection",
+        lambda self, df: ([], []),
+    )
+    monkeypatch.setattr(
+        AuditPipeline,
+        "_generate_features",
+        lambda self, df: (df, []),
+    )
+
+    def _raise_case_build(*args, **kwargs):
+        raise RuntimeError("case build broke")
+
+    monkeypatch.setattr(
+        "src.detection.phase1_case_builder.build_phase1_case_result",
+        _raise_case_build,
+    )
+
+    result = AuditPipeline(skip_db=True).redetect(small_gl_df)
+    assert result.phase1_case_result is None
+    assert any(
+        "PHASE1 case artifact build failed: case build broke" in warning
+        for warning in result.warnings
+    )

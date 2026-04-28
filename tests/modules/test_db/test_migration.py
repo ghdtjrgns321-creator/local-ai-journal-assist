@@ -11,7 +11,7 @@ from unittest.mock import patch
 import duckdb
 import pytest
 
-from src.db.migration import CURRENT_SCHEMA_VERSION, run_migrations, _get_schema_version
+from src.db.migration import CURRENT_SCHEMA_VERSION, _get_schema_version, run_migrations
 
 # Why: 마이그레이션 후 존재해야 할 ML 예약 7개 컬럼
 _EXPECTED_ML_COLUMNS = {
@@ -23,6 +23,7 @@ _EXPECTED_ML_COLUMNS = {
     "duplicate_model_id",
     "ml_scored_at",
 }
+_EXPECTED_REVIEW_COLUMNS = {"review_rules"}
 
 
 def _get_gl_columns(conn: duckdb.DuckDBPyConnection) -> set[str]:

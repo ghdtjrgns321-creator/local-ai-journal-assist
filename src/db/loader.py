@@ -48,7 +48,14 @@ def _derive_approval_level(
         raise ValueError("approval_thresholds가 비어 있습니다.")
 
     # Why: 복식부기 — 차변 합계 = 대변 합계이므로 debit만 합산
-    doc_amount = df.groupby("document_id")["debit_amount"].transform("sum")
+    debit = pd.to_numeric(df["debit_amount"], errors="coerce").fillna(0)
+    if "credit_amount" in df.columns:
+        credit = pd.to_numeric(df["credit_amount"], errors="coerce").fillna(0)
+        doc_debit = debit.groupby(df["document_id"]).transform("sum")
+        doc_credit = credit.groupby(df["document_id"]).transform("sum")
+        doc_amount = pd.concat([doc_debit, doc_credit], axis=1).max(axis=1)
+    else:
+        doc_amount = debit.groupby(df["document_id"]).transform("sum")
 
     max_level = len(thresholds)
     level = pd.Series(max_level, index=df.index)

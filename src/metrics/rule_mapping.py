@@ -20,7 +20,7 @@ RULE_TO_LABEL: dict[str, list[str]] = {
     "L1-07": ["SkippedApproval"],
     "L1-09": ["ApprovalDateMissing"],
     "L3-03": ["CircularIntercompany"],
-    "L2-04": ["ImproperCapitalization"],
+    "L2-04": ["ExpenseCapitalization", "ImproperCapitalization"],
     "L3-04": ["RushedPeriodEnd"],
     "L3-05": ["WeekendPosting"],
     "L3-06": ["AfterHoursPosting"],
@@ -32,7 +32,8 @@ RULE_TO_LABEL: dict[str, list[str]] = {
     "L4-04": ["UnusualAccountPair"],
     "L3-09": [],
     "L3-10": [],
-    "L3-11": [],
+    "L3-11": ["RevenueCutoffMismatch", "ExpenseCutoffMismatch"],
+    "L3-12": ["WorkScopeExcessReview"],
     "L2-05": ["ReversedAmount"],
     "L4-05": ["AbnormalHoursConcentration"],
     "L4-06": [],
@@ -48,42 +49,205 @@ RULE_TO_LABEL: dict[str, list[str]] = {
 # Their anomaly labels remain for legacy anomaly evaluation, but preferred
 # datasynth truth is population coverage rather than strict anomaly precision.
 RULE_TO_POPULATION_TRUTH: dict[str, str] = {
+    "L1-01": "labels/l101_unbalanced_truth.csv",
+    "L2-01": "labels/l201_just_below_threshold_truth.csv",
+    "L4-01": "labels/revenue_manipulation_l401_direct_truth.csv",
     "L3-02": "labels/manual_entry_population_truth.csv",
     "L3-03": "labels/intercompany_population_truth.csv",
+    "L3-05": "labels/weekend_review_population.csv",
+    "L3-09": "labels/suspense_aging_review_population.csv",
     "L3-10": "labels/high_risk_account_review_population.csv",
+    "L3-11": "labels/cutoff_review_population.csv",
+    "L3-12": "labels/work_scope_excess_review_population.csv",
+    "L4-03": "labels/high_amount_review_population.csv",
+    "L4-04": "labels/rare_account_pair_review_population.csv",
 }
 
 RULE_TO_TRUTH_BASIS: dict[str, str] = {
     "L1-01": "document imbalance population",
+    "L4-01": (
+        "RevenueManipulation broad label with high_value_revenue_outlier "
+        "as direct L4-01 truth"
+    ),
+    "L2-01": "JustBelowThreshold labels with threshold-proximity bands",
+    "L2-02": "DuplicatePayment labels; detector evidence is document-pair based",
+    "L2-03": "DuplicateEntry/ExactDuplicateAmount labels with confidence-band review queue",
+    "L2-04": (
+        "expense-capitalization family labels; strict ImproperCapitalization "
+        "is an auxiliary confirmed subset"
+    ),
+    "L2-05": (
+        "confirmed ReversedAmount labels for high-confidence reversals; "
+        "clearing/reclass candidates are review population"
+    ),
+    "L1-06": (
+        "strict SegregationOfDutiesViolation labels are evaluated against "
+        "direct SoD findings only; role/process-breadth review signals are "
+        "excluded from L1-06 and belong to L3-12/work-scope review"
+    ),
     "L3-02": "manual/adjustment source population",
     "L3-03": "intercompany account population",
+    "L3-05": (
+        "weekend/holiday posting review population; confirmed anomaly subset "
+        "is WeekendPosting"
+    ),
+    "L3-09": (
+        "suspense account aging review population; confirmed anomaly subset "
+        "is SuspenseAccountAbuse"
+    ),
     "L3-10": "high-risk account review population; confirmed anomaly subset is HighRiskAccountUse",
+    "L4-03": "confirmed high-amount anomaly subset; high_amount_review_population is coverage only",
+    "L4-04": (
+        "confirmed unusual account-pair subset; rare_account_pair_review_population "
+        "is coverage only"
+    ),
     "IC01": "confirmed unmatched intercompany labels",
     "IC02": "amount-mismatch review candidates, evaluated against matching exception labels",
     "IC03": "timing-gap review candidates, evaluated against matching exception labels",
     "GR01": "confirmed graph anomaly labels; graph_gr01_review_population is coverage only",
     "GR03": "transfer-pricing review candidates, evaluated against confirmed anomaly labels",
     "L3-06": "after-hours-only anomaly labels",
-    "L4-05": "user-level abnormal-hours concentration labels",
+    "L4-05": (
+        "confirmed human abnormal-hours concentration subset; raw hits are "
+        "user-behavior review population"
+    ),
+    "L3-11": (
+        "cutoff review population; confirmed revenue/expense cutoff labels are "
+        "direct anomaly subset"
+    ),
+    "L3-12": (
+        "current-period user work-scope concentration review population; "
+        "explicit SoD or authorization-matrix violations remain L1-06"
+    ),
+    "L4-06": (
+        "auxiliary batch-processing review signal; no confirmed anomaly label "
+        "contract is defined yet"
+    ),
 }
 
 RULE_TO_TRUTH_DISPLAY: dict[str, str] = {
+    "L4-01": "RevenueManipulation/high-value outlier subset",
+    "L2-01": "JustBelowThreshold proximity bands",
+    "L2-02": "DuplicatePayment pair candidates",
+    "L2-03": "duplicate-entry confidence bands",
+    "L2-04": "ExpenseCapitalization family",
+    "L2-05": "ReversedAmount confirmed subset",
+    "L1-06": "SegregationOfDutiesViolation immediate subset",
     "L3-02": "manual/adjustment population",
     "L3-03": "intercompany population",
+    "L3-05": "weekend/holiday review population",
+    "L3-09": "suspense aging review population",
     "L3-10": "high-risk account review population",
+    "L4-03": "high-amount confirmed subset",
+    "L4-04": "rare account-pair review population",
     "IC01": "UnmatchedIntercompany",
     "IC02": "IntercompanyAmountMismatch",
     "IC03": "IntercompanyTimingMismatch",
     "GR01": "confirmed graph anomalies",
     "GR03": "TransferPricingAnomaly",
+    "L3-11": "cutoff review population",
+    "L3-12": "work-scope concentration review population",
+    "L4-05": "abnormal-hours behavior review",
+    "L4-06": "batch-processing auxiliary review",
 }
 
 RULE_TO_EVALUATION_NOTE: dict[str, str] = {
     "L3-03": "Population rule. Do not score against CircularIntercompany as fraud precision.",
-    "IC02": "Phase 1 review candidate. Preserve recall; precision is handled by case priority/Phase 2.",
-    "IC03": "Phase 1 review candidate. Preserve recall; precision is handled by case priority/Phase 2.",
+    "L3-05": (
+        "Weekend/holiday calendar screen. Raw hits are review population; "
+        "confirmed WeekendPosting labels are only the direct anomaly subset."
+    ),
+    "L3-09": (
+        "Suspense aging screen. Raw hits are unresolved suspense-account review "
+        "population; confirmed SuspenseAccountAbuse judgement remains downstream."
+    ),
+    "L4-01": (
+        "RevenueManipulation is broad. Score direct L4-01 recall only when "
+        "high_value_revenue_outlier direct-truth metadata or sidecars exist; "
+        "other revenue subtypes are combination or Phase 2/3 coverage."
+    ),
+    "L2-01": (
+        "Threshold-proximity screen. Interpret lower/close/razor bands separately; "
+        "unresolved approver limits are coverage issues, not hits."
+    ),
+    "L2-02": (
+        "Duplicate-payment screen is pair-oriented. Reference matches are stronger "
+        "evidence; blank-reference fallback hits are review candidates and should "
+        "not be read as confirmed duplicate payments without support."
+    ),
+    "L2-03": (
+        "Duplicate-entry screen mixes exact, reference, near, and split patterns. "
+        "Use high/medium/low confidence bands instead of reading every hit as a "
+        "confirmed duplicate."
+    ),
+    "L2-04": (
+        "Expense-capitalization review rule. Score family coverage separately from "
+        "strict ImproperCapitalization precision; review/immediate bands drive "
+        "queue priority."
+    ),
+    "L2-05": (
+        "Reversal-pattern review rule. High-confidence reversal is the confirmed "
+        "ReversedAmount subset; candidate clearing/reclass hits remain review "
+        "population."
+    ),
+    "L1-06": (
+        "Direct SoD rule. Score strict SegregationOfDutiesViolation "
+        "precision/recall against direct conflict findings only. "
+        "Role/process-breadth signals are L3-12 work-scope review candidates, "
+        "not L1-06 review or promotion signals. Self-approval, skipped "
+        "approval, and manual override are evaluated by L1-05, L1-07, and "
+        "L3-02."
+    ),
+    "IC02": (
+        "Phase 1 review candidate. Preserve recall; precision is handled by "
+        "case priority/Phase 2."
+    ),
+    "IC03": (
+        "Phase 1 review candidate. Preserve recall; precision is handled by "
+        "case priority/Phase 2."
+    ),
     "GR01": "Review population sidecar is not a confirmed-anomaly precision denominator.",
     "GR03": "Graph review candidate. Preserve recall; confirmed judgement remains downstream.",
+    "L3-11": (
+        "Cutoff review rule. Long but reasonable delay controls may appear as raw "
+        "hits and should be handled by case priority/Phase 2."
+    ),
+    "L3-12": (
+        "Work-scope concentration review rule. Do not evaluate it as an L1-06 "
+        "SoD violation; broad current-period activity is a review population "
+        "and should be escalated mainly when manual, sensitive-account, high-"
+        "amount, or period-end context is present."
+    ),
+    "L4-03": (
+        "High-amount review anchor. Score confirmed anomaly recall separately from "
+        "high_amount_review_population coverage; normal large business events are "
+        "not confirmed anomalies."
+    ),
+    "L4-04": (
+        "Rare account-pair review anchor. Score confirmed anomaly recall separately "
+        "from rare_account_pair_review_population coverage; normal rare pairs are "
+        "not confirmed anomalies."
+    ),
+    "L4-02": (
+        "Benford is a population-level account distribution finding. Do not read "
+        "legacy BenfordViolation document labels as row-level precision/recall. "
+        "Use benford_finding_truth, normal controls, drill-down size, and v54 "
+        "holdout sidecars."
+    ),
+    "L4-05": (
+        "User-behavior abnormal-hours screen. Confirmed "
+        "AbnormalHoursConcentration labels are the direct subset; raw sigma, "
+        "midnight, high-context, and rapid-approval hits form a review queue "
+        "that should be triaged with amount, account, period-end, and approval "
+        "signals."
+    ),
+    "L4-06": (
+        "Auxiliary batch-processing signal. L4-06 alone is not a confirmed "
+        "anomaly and should not be scored as strict precision/recall. Use "
+        "period-end concentration, simultaneous creation, and amount-outlier "
+        "bands as review context, and escalate only when independent "
+        "corroborating rule groups are present."
+    ),
 }
 
 RULE_TO_TRACK: dict[str, str] = {
@@ -109,6 +273,7 @@ RULE_TO_TRACK: dict[str, str] = {
     "L2-04": "layer_b",
     "L3-10": "layer_b",
     "L3-11": "evidence",
+    "L3-12": "layer_b",
     "L3-04": "layer_c",
     "L3-05": "layer_c",
     "L3-06": "layer_c",
@@ -138,6 +303,104 @@ class ActionLayerProfile:
     title: str
     caption: str
     user_action: str
+
+
+@dataclass(frozen=True)
+class RuleEvaluationProfile:
+    """User-facing rule evaluation metadata."""
+
+    rule_objective: str
+    broad_fraud_type: str = ""
+    expected_coverage: str = ""
+    status: str = "ok"
+    note: str = ""
+
+
+RULE_EVALUATION_PROFILES: dict[str, RuleEvaluationProfile] = {
+    "L2-02": RuleEvaluationProfile(
+        rule_objective="Potential duplicate payment pair",
+        broad_fraud_type="DuplicatePayment",
+        expected_coverage="pair/document review",
+        status="coverage_anchor",
+        note=RULE_TO_EVALUATION_NOTE["L2-02"],
+    ),
+    "L2-03": RuleEvaluationProfile(
+        rule_objective="Duplicate-entry candidate with confidence bands",
+        broad_fraud_type="DuplicateEntry",
+        expected_coverage="confidence-banded review",
+        status="coverage_anchor",
+        note=RULE_TO_EVALUATION_NOTE["L2-03"],
+    ),
+    "L2-04": RuleEvaluationProfile(
+        rule_objective="Expense-capitalization family review",
+        broad_fraud_type="ExpenseCapitalization",
+        expected_coverage="family coverage / queue bands",
+        status="coverage_anchor",
+        note=RULE_TO_EVALUATION_NOTE["L2-04"],
+    ),
+    "L2-05": RuleEvaluationProfile(
+        rule_objective="Reversal, clearing, or reclass pattern",
+        broad_fraud_type="ReversedAmount",
+        expected_coverage="confirmed subset plus review population",
+        status="coverage_anchor",
+        note=RULE_TO_EVALUATION_NOTE["L2-05"],
+    ),
+    "L1-06": RuleEvaluationProfile(
+        rule_objective="Segregation-of-duties structural conflict",
+        broad_fraud_type="SegregationOfDutiesViolation",
+        expected_coverage="direct conflict subset only",
+        status="coverage_anchor",
+        note=RULE_TO_EVALUATION_NOTE["L1-06"],
+    ),
+    "L4-01": RuleEvaluationProfile(
+        rule_objective="High-value revenue z-score outlier",
+        broad_fraud_type="RevenueManipulation",
+        expected_coverage="partial / anchor",
+        status="coverage_anchor",
+        note=(
+            "L4-01 is a high-value revenue outlier anchor, not a full "
+            "RevenueManipulation classifier. When direct L4-01 truth is absent, "
+            "do not fall back to broad RevenueManipulation labels; interpret "
+            "hits through overlap with cutoff, reversal, manual, period-end, "
+            "and approval signals."
+        ),
+    ),
+    "L4-02": RuleEvaluationProfile(
+        rule_objective="Company/account first-digit distribution finding",
+        broad_fraud_type="BenfordViolation",
+        expected_coverage="population finding / drill-down review",
+        status="population",
+        note=RULE_TO_EVALUATION_NOTE["L4-02"],
+    ),
+    "L4-03": RuleEvaluationProfile(
+        rule_objective="High-amount positive z-score review anchor",
+        broad_fraud_type="UnusuallyHighAmount",
+        expected_coverage="confirmed subset plus high-amount review population",
+        status="coverage_anchor",
+        note=RULE_TO_EVALUATION_NOTE["L4-03"],
+    ),
+    "L4-04": RuleEvaluationProfile(
+        rule_objective="Rare debit-credit account-pair review anchor",
+        broad_fraud_type="UnusualAccountPair",
+        expected_coverage="confirmed subset plus rare-pair review population",
+        status="coverage_anchor",
+        note=RULE_TO_EVALUATION_NOTE["L4-04"],
+    ),
+    "L4-05": RuleEvaluationProfile(
+        rule_objective="User-level abnormal-hours behavior concentration",
+        broad_fraud_type="AbnormalHoursConcentration",
+        expected_coverage="confirmed subset plus behavior review queue",
+        status="coverage_anchor",
+        note=RULE_TO_EVALUATION_NOTE["L4-05"],
+    ),
+    "L4-06": RuleEvaluationProfile(
+        rule_objective="Batch-processing anomaly auxiliary evidence",
+        broad_fraud_type="BatchAnomaly",
+        expected_coverage="auxiliary review signal / combo evidence",
+        status="coverage_anchor",
+        note=RULE_TO_EVALUATION_NOTE["L4-06"],
+    ),
+}
 
 
 ACTION_LAYER_PROFILES: dict[str, ActionLayerProfile] = {
@@ -207,6 +470,7 @@ RULE_TO_ACTION_LAYER: dict[str, str] = {
     "L3-09": "review_needed",
     "L3-10": "review_needed",
     "L3-11": "review_needed",
+    "L3-12": "review_needed",
     "L2-05": "fraud_signal",
     "L4-05": "stat_outlier",
     "L4-06": "stat_outlier",
@@ -254,7 +518,15 @@ def get_truth_display(rule_id: str) -> str:
 
 def get_evaluation_note(rule_id: str) -> str:
     """Return user-facing evaluation caveat for review/population rules."""
+    profile = RULE_EVALUATION_PROFILES.get(rule_id)
+    if profile and profile.note:
+        return profile.note
     return RULE_TO_EVALUATION_NOTE.get(rule_id, "")
+
+
+def get_rule_evaluation_profile(rule_id: str) -> RuleEvaluationProfile | None:
+    """Return metadata that explains how a rule should be evaluated."""
+    return RULE_EVALUATION_PROFILES.get(rule_id)
 
 
 def get_action_layer_profile(layer_id: str) -> ActionLayerProfile | None:

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import MutableMapping
-from typing import Any, Callable
+from collections.abc import Callable, MutableMapping
+from typing import Any
+
+import pandas as pd
 
 from dashboard._state import (
     KEY_BATCH_ID,
@@ -19,6 +21,8 @@ from dashboard._state import (
     KEY_SETTINGS,
     KEY_SETTINGS_DIRTY,
 )
+
+
 def make_phase_settings(
     base_settings,
     *,
@@ -36,7 +40,7 @@ def make_phase_settings(
         settings = factory()
 
     updates = {
-        "enable_variance_detection": False,
+        "enable_variance_detection": True,
         "enable_relational_detection": False,
         "enable_graph_detection": False,
         "enable_nlp_detection": False,
@@ -48,6 +52,30 @@ def make_phase_settings(
     if phase == "phase2":
         updates["enable_ml_detection"] = True
     return settings.model_copy(update=updates)
+
+
+def build_phase1_core_feature_frame(prep_result, settings, ctx=None) -> pd.DataFrame:
+    """Build only the feature categories required by PHASE1 L1-L4 + D01/D02."""
+
+    from config.settings import get_audit_rules, get_risk_keywords
+    from src.feature.engine import (
+        PHASE1_CORE_RULE_IDS,
+        feature_categories_for_rules,
+        generate_all_features,
+    )
+
+    base_df = prep_result.data.copy()
+    rules = getattr(ctx, "audit_rules", None) if ctx is not None else None
+    risk_keywords = getattr(ctx, "risk_keywords", None) if ctx is not None else None
+    feat = generate_all_features(
+        base_df,
+        settings=settings,
+        rules=rules or get_audit_rules(),
+        risk_keywords=risk_keywords or get_risk_keywords(),
+        categories=feature_categories_for_rules(PHASE1_CORE_RULE_IDS),
+        include_morpheme_tokens=False,
+    )
+    return feat.data
 
 
 def build_audit_trail(ctx):
@@ -85,11 +113,6 @@ def run_phase_analysis(
     if prep_result is None:
         raise RuntimeError("준비 결과가 없습니다.")
 
-    featured_df = (
-        prep_result.featured_data
-        if prep_result.featured_data is not None
-        else prep_result.data
-    )
     ctx = state.get(KEY_COMPANY_CONTEXT)
     repo = state.get("_company_repo")
     conn_mgr = state.get("_conn_mgr")
@@ -98,6 +121,14 @@ def run_phase_analysis(
         phase=phase,
         settings_factory=settings_factory,
     )
+    if phase == "phase1":
+        featured_df = build_phase1_core_feature_frame(prep_result, settings, ctx)
+    else:
+        featured_df = (
+            prep_result.featured_data
+            if prep_result.featured_data is not None
+            else prep_result.data
+        )
 
     if ctx is not None:
         ctx = ctx.clone_with_settings(settings)
@@ -110,6 +141,7 @@ def run_phase_analysis(
         featured_df,
         batch_id="",
         file_name=prep_result.file_name,
+        detection_scope="phase1_core" if phase == "phase1" else "default",
     )
     result.file_name = prep_result.file_name
 
@@ -189,13 +221,15 @@ def _filter_disabled_rules(result, disabled: list[str]) -> None:
         new_results.append(new_result)
     result.results = new_results
 
-    if "flagged_rules" in result.data.columns and disabled:
+    if disabled and {"flagged_rules", "review_rules"}.intersection(result.data.columns):
         import re
 
         pattern = "|".join(re.escape(rule_code) for rule_code in disabled)
-        result.data["flagged_rules"] = (
-            result.data["flagged_rules"]
-            .str.replace(rf"\b({pattern})\b,?\s*", "", regex=True)
-            .str.strip(",")
-            .str.strip()
-        )
+        for column in ("flagged_rules", "review_rules"):
+            if column in result.data.columns:
+                result.data[column] = (
+                    result.data[column]
+                    .str.replace(rf"\b({pattern})\b,?\s*", "", regex=True)
+                    .str.strip(",")
+                    .str.strip()
+                )

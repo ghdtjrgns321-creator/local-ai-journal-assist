@@ -12,7 +12,6 @@ from dashboard._state import (
     KEY_FEATURED_DATA,
     KEY_INGEST_STAGE,
     KEY_PHASE1_RESULT,
-    KEY_PHASE2_RESULT,
     KEY_PIPELINE_RESULT,
     KEY_PREP_RESULT,
     KEY_SETTINGS,
@@ -32,6 +31,9 @@ class _FakeSettings:
     enable_evidence_detection: bool = True
     enable_trendbreak_detection: bool = True
     enable_ml_detection: bool = True
+    min_description_length: int = 3
+    ttr_threshold: float = 0.3
+    entropy_threshold: float = 1.0
 
     def model_copy(self, update: dict):
         data = self.__dict__.copy()
@@ -43,12 +45,19 @@ class _FakePipeline:
     def __init__(self, **kwargs):
         self.kwargs = kwargs
 
-    def redetect(self, featured_df, batch_id: str, file_name: str):
+    def redetect(
+        self,
+        featured_df,
+        batch_id: str,
+        file_name: str,
+        detection_scope: str = "default",
+    ):
         return SimpleNamespace(
             data=featured_df.copy(),
             featured_data=featured_df.copy(),
             batch_id="phase_batch",
             file_name=file_name,
+            detection_scope=detection_scope,
         )
 
 
@@ -109,12 +118,14 @@ def test_make_phase_settings_enables_ml_only_for_phase2():
 
     assert phase1.enable_ml_detection is False
     assert phase2.enable_ml_detection is True
+    assert phase1.enable_variance_detection is True
+    assert phase2.enable_variance_detection is True
     assert phase1.enable_graph_detection is False
 
 
 def test_run_phase_analysis_uses_service_pipeline():
     prep = SimpleNamespace(
-        data=pd.DataFrame({"document_id": ["D1"]}),
+        data=pd.DataFrame({"document_id": ["D1"], "line_text": [""]}),
         featured_data=None,
         file_name="journal.csv",
     )
@@ -137,3 +148,42 @@ def test_run_phase_analysis_uses_service_pipeline():
     assert state[KEY_PHASE1_RESULT] is result
     assert state[KEY_PIPELINE_RESULT] is result
     assert isinstance(state[KEY_FEATURED_DATA], pd.DataFrame)
+    assert result.detection_scope == "phase1_core"
+
+
+def test_run_phase_analysis_phase1_rebuilds_only_core_features(monkeypatch):
+    calls = {}
+
+    def fake_generate_all_features(
+        df,
+        *,
+        settings,
+        rules,
+        risk_keywords,
+        categories,
+        include_morpheme_tokens,
+    ):
+        calls["categories"] = [category.value for category in categories]
+        calls["include_morpheme_tokens"] = include_morpheme_tokens
+        df = df.copy()
+        df["phase1_feature_marker"] = 1
+        return SimpleNamespace(data=df)
+
+    monkeypatch.setattr("src.feature.engine.generate_all_features", fake_generate_all_features)
+
+    prep = SimpleNamespace(
+        data=pd.DataFrame({"document_id": ["D1"], "line_text": [""]}),
+        featured_data=pd.DataFrame({"document_id": ["D1"], "heavy_feature": [999]}),
+        file_name="journal.csv",
+    )
+    state = {
+        KEY_PREP_RESULT: prep,
+        KEY_SETTINGS: _FakeSettings(),
+    }
+
+    result = run_phase_analysis(state, phase="phase1", pipeline_cls=_FakePipeline)
+
+    assert calls["categories"] == ["time", "amount", "pattern", "text"]
+    assert calls["include_morpheme_tokens"] is False
+    assert "phase1_feature_marker" in result.data.columns
+    assert "heavy_feature" not in result.data.columns

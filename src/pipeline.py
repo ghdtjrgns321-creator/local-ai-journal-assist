@@ -3,6 +3,9 @@
 
 from __future__ import annotations
 
+import copy
+import hashlib
+import json
 import logging
 import re
 import time
@@ -48,6 +51,7 @@ class _NullAuditTrail:
         return None
 _TEXT_EXT = frozenset({".csv", ".tsv", ".txt", ".dat"})
 _EXCEL_EXT = frozenset({".xlsx", ".xls", ".xlsb"})
+_INGEST_CACHE_SCHEMA_VERSION = "ingest-cache-v1"
 
 
 def _run_detectors_parallel(
@@ -177,6 +181,53 @@ def format_detection_profile(profile: dict[str, float]) -> str:
         )
     lines.append(f"**Total**: {total:.3f}s")
     return "\n".join(lines)
+
+
+def format_phase1_rule_coverage(results: list[DetectionResult]) -> str:
+    """Render detector metadata about skipped or partially covered PHASE1 checks."""
+
+    lines: list[str] = []
+    for result in results:
+        metadata = result.metadata or {}
+        skipped_rules = [str(rule_id) for rule_id in metadata.get("skipped_rules", [])]
+        coverage_issues = metadata.get("coverage_issues", [])
+        if skipped_rules:
+            lines.append(f"{result.track_name}: skipped {', '.join(skipped_rules)}")
+        if not isinstance(coverage_issues, list):
+            continue
+        for issue in coverage_issues:
+            if not isinstance(issue, dict):
+                continue
+            rule_id = str(issue.get("rule_id", "unknown_rule"))
+            kind = str(issue.get("kind", "coverage_issue"))
+            inputs = issue.get("missing_inputs") or issue.get("low_coverage_inputs") or []
+            input_text = ", ".join(str(value) for value in inputs) if inputs else "unknown_input"
+            if kind == "missing_prerequisites":
+                lines.append(f"{result.track_name}: {rule_id} skipped - missing {input_text}")
+                continue
+            if kind == "partial_input_coverage":
+                ratio = issue.get("coverage_ratio")
+                ratio_text = ""
+                if ratio is not None:
+                    ratio_text = f" ({float(ratio) * 100:.1f}%)"
+                subcheck = str(issue.get("subcheck", "")).strip()
+                subcheck_text = f" {subcheck}" if subcheck else ""
+                lines.append(
+                    f"{result.track_name}: {rule_id} partial{subcheck_text} - {input_text}{ratio_text}"
+                )
+                continue
+            lines.append(f"{result.track_name}: {rule_id} {kind} - {input_text}")
+    return "\n".join(lines)
+
+
+def _detector_result_warnings(results: list[DetectionResult]) -> list[str]:
+    warnings: list[str] = []
+    for result in results:
+        warnings.extend(str(warning) for warning in (result.warnings or []))
+    coverage = format_phase1_rule_coverage(results)
+    if coverage:
+        warnings.append(f"[분석범위제한]\n{coverage}")
+    return warnings
 
 
 @dataclass
@@ -498,6 +549,7 @@ class AuditPipeline:
         thresholds: dict[str, float] | None = None,
         *,
         file_name: str = "",
+        detection_scope: str = "default",
     ) -> PipelineResult:
         """피처 생성 완료 DF에서 detection + aggregate만 재실행.
 
@@ -506,7 +558,8 @@ class AuditPipeline:
         """
         start = time.monotonic()
         df = df.copy()
-        results, warns = self._run_detection(df)
+        results, warns = self._run_detection(df, detection_scope=detection_scope)
+        warns.extend(_detector_result_warnings(results))
 
         # Why: weights 미지정 시 ML/Layer D 유무에 따라 가중치 자동 선택
         if weights is None:
@@ -535,6 +588,8 @@ class AuditPipeline:
             results,
             batch_id=bid,
         )
+        if phase1_case_ref.get("phase1_case_warning"):
+            warns.append(str(phase1_case_ref["phase1_case_warning"]))
         detector_statuses = self._get_detector_statuses()
         phase2_case_overlays = self._build_phase2_case_overlays(
             phase1_case_result,
@@ -618,6 +673,7 @@ class AuditPipeline:
         self._progress(0.65, "탐지 룰 실행 중...")
         results, w = self._run_detection(df)
         warns.extend(w)
+        warns.extend(_detector_result_warnings(results))
         logger.warning("[TIMING] detection: %.1fs", time.monotonic() - _t)
         self._log_event(
             event_type="analysis",
@@ -654,6 +710,8 @@ class AuditPipeline:
             results,
             batch_id=batch_id,
         )
+        if phase1_case_ref.get("phase1_case_warning"):
+            warns.append(str(phase1_case_ref["phase1_case_warning"]))
         detector_statuses = self._get_detector_statuses()
         phase2_case_overlays = self._build_phase2_case_overlays(
             phase1_case_result,
@@ -718,20 +776,25 @@ class AuditPipeline:
                 save_phase1_case_result,
             )
 
+            phase1_case_config = copy.deepcopy(self._ctx.phase1_case)
+            phase1_case_config.setdefault("phase1_case", {}).setdefault(
+                "materiality_amount",
+                float(getattr(self._ctx, "materiality_amount", 0.0) or 0.0),
+            )
             phase1_result = build_phase1_case_result(
                 df,
                 results,
                 company_id=self._ctx.company_id,
                 batch_id=batch_id,
                 dataset_id=batch_id,
-                phase1_case_config=self._ctx.phase1_case,
+                phase1_case_config=phase1_case_config,
             )
             artifact_path = save_phase1_case_result(phase1_result)
             annotate_detection_results_with_phase1_refs(results, phase1_result, artifact_path)
             return phase1_result, build_phase1_case_reference(phase1_result, artifact_path)
-        except Exception:
+        except Exception as exc:
             logger.warning("PHASE1 case artifact build failed — skip", exc_info=True)
-            return None, {}
+            return None, {"phase1_case_warning": f"PHASE1 case artifact build failed: {exc}"}
 
     def _build_phase2_case_overlays(
         self,
@@ -767,7 +830,21 @@ class AuditPipeline:
         warns.extend(validation.warnings)
 
         self._progress(0.05, "파일 읽는 중...")
-        read_result = read_file(path)
+        cached_df = self._try_load_ingest_cache(path)
+        if cached_df is not None:
+            cached_df = set_source_path(cached_df, path)
+            cached_df = apply_datasynth_label_mode(
+                cached_df,
+                source_path=path,
+                mode=getattr(self._ctx.settings, "datasynth_label_mode", "hidden"),
+            )
+            warns.extend(self._apply_datasynth_metadata_policy(cached_df, path))
+            return cached_df, warns
+
+        read_result = read_file(
+            path,
+            progress_cb=lambda pct, msg: self._progress(0.05 + pct * 0.05, msg),
+        )
 
         # Why: Parquet은 타입이 이미 확정된 포맷이므로 헤더 탐지 불필요
         if read_result.source_format == "parquet":
@@ -828,8 +905,92 @@ class AuditPipeline:
             mode=getattr(self._ctx.settings, "datasynth_label_mode", "hidden"),
         )
         warns.extend(self._apply_datasynth_metadata_policy(df, path))
+        self._write_ingest_cache(path, df)
 
         return df, warns
+
+    def _ingest_cache_paths(self, path: Path) -> tuple[Path, Path]:
+        settings = self._ctx.settings
+        cache_dir = Path(getattr(settings, "ingest_cache_dir", "artifacts/ingest_cache"))
+        if not cache_dir.is_absolute():
+            from config.settings import PROJECT_ROOT
+
+            cache_dir = PROJECT_ROOT / cache_dir
+        stat = path.stat()
+        payload = {
+            "cache_schema": _INGEST_CACHE_SCHEMA_VERSION,
+            "path": str(path.resolve()),
+            "size": stat.st_size,
+            "mtime_ns": stat.st_mtime_ns,
+            "input_schema": self._ctx.schema,
+            "keywords": self._ctx.keywords,
+            "cleaning_config": self._ctx.cleaning_config,
+            "casting_date_dayfirst": getattr(
+                self._ctx.settings,
+                "casting_date_dayfirst",
+                False,
+            ),
+        }
+        key = hashlib.sha256(
+            json.dumps(
+                payload,
+                sort_keys=True,
+                default=str,
+                separators=(",", ":"),
+            ).encode("utf-8"),
+        ).hexdigest()
+        return cache_dir / f"{key}.parquet", cache_dir / f"{key}.json"
+
+    def _try_load_ingest_cache(self, path: Path) -> pd.DataFrame | None:
+        if not getattr(self._ctx.settings, "enable_ingest_cache", True):
+            return None
+        if path.suffix.lower() not in _TEXT_EXT:
+            return None
+        parquet_path, meta_path = self._ingest_cache_paths(path)
+        if not parquet_path.exists() or not meta_path.exists():
+            return None
+        try:
+            with open(meta_path, encoding="utf-8") as f:
+                meta = json.load(f)
+            stat = path.stat()
+            if (
+                meta.get("schema") != _INGEST_CACHE_SCHEMA_VERSION
+                or meta.get("source_size") != stat.st_size
+                or meta.get("source_mtime_ns") != stat.st_mtime_ns
+            ):
+                return None
+            df = pd.read_parquet(parquet_path)
+        except Exception:
+            logger.debug("ingest cache read failed: %s", parquet_path, exc_info=True)
+            return None
+        logger.info("ingest cache hit: %s", parquet_path)
+        return df
+
+    def _write_ingest_cache(self, path: Path, df: pd.DataFrame) -> None:
+        if not getattr(self._ctx.settings, "enable_ingest_cache", True):
+            return
+        if path.suffix.lower() not in _TEXT_EXT:
+            return
+        parquet_path, meta_path = self._ingest_cache_paths(path)
+        try:
+            parquet_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_df = df.copy()
+            cache_df.attrs.clear()
+            cache_df.to_parquet(parquet_path, index=False)
+            stat = path.stat()
+            metadata = {
+                "schema": _INGEST_CACHE_SCHEMA_VERSION,
+                "source_path": str(path.resolve()),
+                "source_size": stat.st_size,
+                "source_mtime_ns": stat.st_mtime_ns,
+                "rows": int(len(df)),
+                "columns": list(df.columns),
+            }
+            with open(meta_path, "w", encoding="utf-8") as f:
+                json.dump(metadata, f, ensure_ascii=False, sort_keys=True, indent=2)
+            logger.info("ingest cache saved: %s", parquet_path)
+        except Exception:
+            logger.debug("ingest cache write failed: %s", parquet_path, exc_info=True)
 
     def _apply_datasynth_metadata_policy(
         self,
@@ -965,27 +1126,59 @@ class AuditPipeline:
         return df, warns
 
     def _generate_features(self, df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+        settings = self._ctx.settings
+        rules = self._ctx.audit_rules
+        risk_keywords = self._ctx.risk_keywords
+        cache_key = None
+        if getattr(settings, "enable_feature_cache", True):
+            from src.feature.cache import load_feature_cache
+
+            cached, cache_key = load_feature_cache(
+                df,
+                settings=settings,
+                rules=rules,
+                risk_keywords=risk_keywords,
+            )
+            if cached is not None:
+                logger.info(
+                    "feature cache hit: key=%s source=%s rows=%d",
+                    cache_key.key[:12],
+                    cache_key.source_kind,
+                    len(cached),
+                )
+                return cached, []
+
         from src.feature.engine import generate_all_features
         feat = generate_all_features(
             df,
-            settings=self._ctx.settings,
-            rules=self._ctx.audit_rules,
-            risk_keywords=self._ctx.risk_keywords,
+            settings=settings,
+            rules=rules,
+            risk_keywords=risk_keywords,
+            include_morpheme_tokens=getattr(settings, "enable_nlp_detection", False),
         )
         warns = [f"피처 미생성: {feat.missing_columns}"] if feat.missing_columns else []
+        if getattr(settings, "enable_feature_cache", True) and cache_key is not None:
+            from src.feature.cache import save_feature_cache
+
+            saved = save_feature_cache(feat.data, settings=settings, cache_key=cache_key)
+            if saved is not None:
+                logger.info("feature cache saved: %s", saved)
         return feat.data, warns
 
-    def _run_detection(self, df: pd.DataFrame) -> tuple[list[DetectionResult], list[str]]:
+    def _run_detection(
+        self,
+        df: pd.DataFrame,
+        *,
+        detection_scope: str = "default",
+    ) -> tuple[list[DetectionResult], list[str]]:
         from src.detection.anomaly_layer import AnomalyDetector
         from src.detection.benford_detector import BenfordDetector
-        from src.detection.duplicate_detector import DuplicateDetector
         from src.detection.fraud_layer import FraudLayer
         from src.detection.integrity_layer import IntegrityDetector
-        from src.detection.intercompany_matcher import IntercompanyMatcher
         warns: list[str] = []
         self._reset_detector_statuses()
 
-        # Why: base 6개 탐지기는 서로 독립적 — 병렬 실행 + elapsed 수집
+        # Phase 1 core scope: L1-L4 rules plus D01/D02 when prior data exists.
         base_detectors = [
             IntegrityDetector(
                 self._ctx.settings,
@@ -996,8 +1189,6 @@ class AuditPipeline:
             FraudLayer(self._ctx.settings, audit_rules=self._ctx.audit_rules),
             AnomalyDetector(self._ctx.settings, audit_rules=self._ctx.audit_rules),
             BenfordDetector(self._ctx.settings),
-            DuplicateDetector(self._ctx.settings),
-            IntercompanyMatcher(self._ctx.settings, audit_rules=self._ctx.audit_rules),
         ]
         _t = time.monotonic()
         results, base_warns = _run_detectors_parallel(
@@ -1019,18 +1210,11 @@ class AuditPipeline:
                 )
         logger.warning("[TIMING] base_detectors_parallel: %.1fs", time.monotonic() - _t)
 
-        _ext_timings: list[tuple[str, float]] = []
-        for _name, _func in [
-            ("variance", self._try_variance_detection),
-            ("timeseries", self._try_timeseries_detection),
-            ("relational", self._try_relational_detection),
-            ("graph", self._try_graph_detection),
-            ("nlp", self._try_nlp_detection),
-            ("access_audit", self._try_access_audit_detection),
-            ("evidence", self._try_evidence_detection),
-            ("ml", lambda d: self._try_ml_detection(d)),
-            ("trendbreak", self._try_trendbreak_detection),
-        ]:
+        optional_detectors = [("variance", self._try_variance_detection)]
+        if detection_scope != "phase1_core":
+            optional_detectors.append(("ml", lambda d: self._try_ml_detection(d)))
+
+        for _name, _func in optional_detectors:
             _t = time.monotonic()
             _r = _func(df)
             _elapsed = time.monotonic() - _t
@@ -1039,10 +1223,6 @@ class AuditPipeline:
                 results.extend(_r)
             elif _r is not None:
                 results.append(_r)
-
-        trendbreak_result = None  # 이미 위에서 실행됨
-        if trendbreak_result is not None:
-            results.append(trendbreak_result)
 
         return results, warns
 
@@ -1066,7 +1246,7 @@ class AuditPipeline:
 
     def _try_variance_detection(self, df: pd.DataFrame) -> DetectionResult | None:
         """Layer D(전기 대비 변동) 실행 시도. 조건 불충족 시 None."""
-        if not getattr(self._ctx.settings, "enable_variance_detection", False):
+        if not getattr(self._ctx.settings, "enable_variance_detection", True):
             logger.debug("variance detection disabled by settings")
             self._record_detector_status("layer_d", run_status="skipped", reason="disabled_by_settings")
             return None
@@ -1357,25 +1537,18 @@ class AuditPipeline:
         """탐지 결과에 따라 적절한 가중치 딕셔너리 선택.
 
         Why: ML 트랙/Layer D/TrendBreak 유무에 따라 가중치 재배분이 필요.
-             ML > (D+TB) > TB > D > 기본 순서로 우선순위 적용.
+             ML > TrendBreak > default. Layer D does not alter row-level weights.
         """
         has_ml = any(r.track_name.startswith("ml_") for r in results)
-        has_variance = any(r.track_name == "layer_d" for r in results)
         has_trendbreak = any(r.track_name == "trendbreak" for r in results)
 
         if has_ml:
-            from src.detection.constants import LAYER_WEIGHTS_WITH_ML
-            return LAYER_WEIGHTS_WITH_ML
-        if has_variance and has_trendbreak:
-            from src.detection.constants import LAYER_WEIGHTS_WITH_PRIOR_AND_TRENDBREAK
-            return LAYER_WEIGHTS_WITH_PRIOR_AND_TRENDBREAK
+            from src.detection.constants import RULE_LEVEL_WEIGHTS_WITH_ML
+            return RULE_LEVEL_WEIGHTS_WITH_ML
         if has_trendbreak:
-            from src.detection.constants import LAYER_WEIGHTS_WITH_TRENDBREAK
-            return LAYER_WEIGHTS_WITH_TRENDBREAK
-        if has_variance:
-            from src.detection.constants import LAYER_WEIGHTS_WITH_PRIOR
-            return LAYER_WEIGHTS_WITH_PRIOR
-        return None  # 기본 LAYER_WEIGHTS (4레이어)
+            from src.detection.constants import RULE_LEVEL_WEIGHTS_WITH_TRENDBREAK
+            return RULE_LEVEL_WEIGHTS_WITH_TRENDBREAK
+        return None  # 기본 RULE_LEVEL_WEIGHTS (L1-L4)
 
     def _try_ml_detection(self, df: pd.DataFrame) -> list[DetectionResult]:
         """학습된 ML 모델 로드 → 탐지 실행. 모델 없으면 빈 리스트 (Cold Start 방어).

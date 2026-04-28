@@ -30,7 +30,8 @@ class TestAuditSettings:
         assert s.midnight_start == 22
         assert s.midnight_end == 6
         assert s.period_end_margin_days == 5
-        assert s.enable_evidence_detection is True
+        assert s.enable_evidence_detection is False
+        assert s.enable_variance_detection is True
         assert ".xlsx" in s.allowed_extensions
 
     def test_env_prefix(self, monkeypatch):

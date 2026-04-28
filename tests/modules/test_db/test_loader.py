@@ -207,6 +207,15 @@ class TestApprovalLevel:
         #       MAX였다면 60M → Level 2 (≤100M) — 오류
         assert list(levels) == [3, 3]
 
+    def test_credit_side_document_amount_can_drive_level(self):
+        df = pd.DataFrame({
+            "document_id": ["JE-001", "JE-001"],
+            "debit_amount": [4_551_508.0, 0.0],
+            "credit_amount": [0.0, 45_515_080.0],
+        })
+        levels = _derive_approval_level(df, thresholds=_TEST_THRESHOLDS)
+        assert list(levels) == [2, 2]
+
     def test_custom_thresholds(self):
         """커스텀 임계값 파라미터 — N threshold = N level, 초과분 캡."""
         df = pd.DataFrame({

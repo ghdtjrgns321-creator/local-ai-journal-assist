@@ -13,7 +13,6 @@ import pytest
 
 from src.db.schema import initialize_schema
 
-
 # ── 커넥션 픽스처 ────────────────────────────────────────────
 
 
@@ -86,7 +85,21 @@ _V1_GENERAL_LEDGER_DDL = """
         is_holiday BOOLEAN,
         time_zone_category VARCHAR,
         is_near_threshold BOOLEAN,
+        near_threshold_amount DOUBLE,
+        near_threshold_limit_amount DOUBLE,
+        near_threshold_limit_resolved BOOLEAN,
+        near_threshold_ratio_to_limit DOUBLE,
+        near_threshold_gap_amount DOUBLE,
+        near_threshold_gap_ratio DOUBLE,
+        near_threshold_bucket VARCHAR,
         exceeds_threshold BOOLEAN,
+        document_approval_amount DOUBLE,
+        approver_limit_amount DOUBLE,
+        approval_limit_resolved BOOLEAN,
+        approver_can_approve_je BOOLEAN,
+        approval_excess_amount DOUBLE,
+        approval_excess_ratio DOUBLE,
+        approval_excess_bucket VARCHAR,
         amount_zscore DOUBLE,
         amount_magnitude DOUBLE,
         is_round_number BOOLEAN,
@@ -96,6 +109,11 @@ _V1_GENERAL_LEDGER_DDL = """
         first_digit INTEGER,
         is_suspense_account BOOLEAN,
         description_quality VARCHAR,
+        description_line_missing BOOLEAN,
+        description_header_missing BOOLEAN,
+        description_both_missing BOOLEAN,
+        description_line_missing_header_present BOOLEAN,
+        description_is_missing_or_corrupted BOOLEAN,
         has_risk_keyword VARCHAR,
         anomaly_score DOUBLE,
         risk_level VARCHAR,
@@ -150,6 +168,7 @@ def db_sample_df() -> pd.DataFrame:
         "anomaly_score": [0.6, 0.6, 0.3],
         "risk_level": ["Medium", "Medium", "Normal"],
         "flagged_rules": ["L1-01,L1-04", "L1-01,L1-04", ""],
+        "review_rules": ["", "", ""],
     })
 
 
@@ -182,6 +201,7 @@ def db_large_df() -> pd.DataFrame:
         "anomaly_score": [0.0] * 6,
         "risk_level": ["Normal"] * 6,
         "flagged_rules": [""] * 6,
+        "review_rules": [""] * 6,
     })
 
 

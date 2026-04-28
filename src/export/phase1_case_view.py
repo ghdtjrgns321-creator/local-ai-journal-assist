@@ -117,6 +117,12 @@ def build_phase1_case_drilldown(pr: PipelineResult, case_id: str) -> dict[str, A
                 "row_index": hit.row_index,
                 "record_id": hit.record_id,
                 "score": hit.score,
+                "signal_strength": hit.signal_strength,
+                "normalized_score": hit.normalized_score,
+                "evidence_strength": hit.evidence_strength,
+                "scoring_role": hit.scoring_role,
+                "display_label": hit.display_label,
+                "signal_status": hit.signal_status,
                 "detail": hit.detail,
                 "evidence_type": hit.evidence_type,
             }

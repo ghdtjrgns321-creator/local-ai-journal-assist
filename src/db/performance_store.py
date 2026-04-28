@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pandas as pd
 
 from src.metrics.models import PerformanceReport, RuleMetric
@@ -28,6 +30,7 @@ def save_report(conn, report: PerformanceReport) -> None:
     }])
     conn.execute("DELETE FROM performance_rule_metrics WHERE report_id = ?", [report.report_id])
     conn.execute("DELETE FROM performance_reports WHERE report_id = ?", [report.report_id])
+    conn.register("report_df", report_df)
     conn.execute(
         """
         INSERT INTO performance_reports (
@@ -43,6 +46,8 @@ def save_report(conn, report: PerformanceReport) -> None:
     if not report.rule_metrics:
         return
 
+    _ensure_rule_metric_columns(conn)
+
     rules_df = pd.DataFrame([{
         "report_id": report.report_id,
         "track_name": metric.track_name,
@@ -55,12 +60,16 @@ def save_report(conn, report: PerformanceReport) -> None:
         "precision": metric.precision,
         "recall": metric.recall,
         "f1": metric.f1,
+        "breakdown_json": json.dumps(metric.breakdown, ensure_ascii=False),
+        "score_bands_json": json.dumps(metric.score_bands, ensure_ascii=False),
     } for metric in report.rule_metrics])
+    conn.register("rules_df", rules_df)
     conn.execute(
         """
         INSERT INTO performance_rule_metrics (
             report_id, track_name, rule_code, label_docs, flagged_docs,
-            tp_docs, fp_docs, fn_docs, precision, recall, f1
+            tp_docs, fp_docs, fn_docs, precision, recall, f1,
+            breakdown_json, score_bands_json
         )
         SELECT * FROM rules_df
         """
@@ -89,7 +98,8 @@ def load_latest_report(conn, upload_batch_id: str) -> PerformanceReport | None:
     metrics_df = conn.execute(
         """
         SELECT track_name, rule_code, label_docs, flagged_docs,
-               tp_docs, fp_docs, fn_docs, precision, recall, f1
+               tp_docs, fp_docs, fn_docs, precision, recall, f1,
+               breakdown_json, score_bands_json
         FROM performance_rule_metrics
         WHERE report_id = ?
         ORDER BY track_name, rule_code
@@ -108,6 +118,8 @@ def load_latest_report(conn, upload_batch_id: str) -> PerformanceReport | None:
             precision=_to_optional_float(metric["precision"]),
             recall=_to_optional_float(metric["recall"]),
             f1=_to_optional_float(metric["f1"]),
+            breakdown=_json_dict(metric.get("breakdown_json")),
+            score_bands={k: int(v) for k, v in _json_dict(metric.get("score_bands_json")).items()},
         )
         for _, metric in metrics_df.iterrows()
     ]
@@ -152,3 +164,29 @@ def _to_optional_float(value) -> float | None:
     if pd.isna(value):
         return None
     return float(value)
+
+
+def _json_dict(value) -> dict:
+    if pd.isna(value) or not value:
+        return {}
+    try:
+        parsed = json.loads(str(value))
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _ensure_rule_metric_columns(conn) -> None:
+    columns = set(
+        conn.execute(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_name = 'performance_rule_metrics'
+            """
+        ).fetchdf()["column_name"]
+    )
+    if "breakdown_json" not in columns:
+        conn.execute("ALTER TABLE performance_rule_metrics ADD COLUMN breakdown_json VARCHAR")
+    if "score_bands_json" not in columns:
+        conn.execute("ALTER TABLE performance_rule_metrics ADD COLUMN score_bands_json VARCHAR")

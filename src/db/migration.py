@@ -16,7 +16,7 @@ import duckdb
 logger = logging.getLogger(__name__)
 
 # Why: 새 마이그레이션 추가 시 이 값을 올리고 _MIGRATIONS에 함수 등록
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 5
 
 # Why: v2에서 general_ledger에 추가할 ML 예약 7개 컬럼
 #      schema.py의 ML_RESERVED_COLUMNS와 동일 집합이어야 함.
@@ -38,6 +38,9 @@ _V4_PERFORMANCE_COLUMNS = {
     "false_positive_docs": "INTEGER DEFAULT 0",
     "confirmed_issue_docs": "INTEGER DEFAULT 0",
 }
+_V5_COLUMNS = {
+    "review_rules": "VARCHAR",
+}
 
 
 # ── 공개 API ───────────────────────────────────────────────
@@ -49,6 +52,7 @@ _MIGRATIONS: dict[int, str] = {
     2: "_migrate_v1_to_v2",
     3: "_migrate_v2_to_v3",
     4: "_migrate_v3_to_v4",
+    5: "_migrate_v4_to_v5",
 }
 
 
@@ -104,6 +108,7 @@ def _get_schema_version(conn: duckdb.DuckDBPyConnection) -> int:
             "WHERE table_name = 'general_ledger'"
         ).fetchdf()["column_name"]
     )
+
     has_v2 = _V2_COLUMNS.keys() <= existing_cols
     if not has_v2:
         return 1
@@ -133,6 +138,9 @@ def _get_schema_version(conn: duckdb.DuckDBPyConnection) -> int:
         ).fetchone()
     )
     if has_feedback_events and not has_performance_reports:
+        has_v5 = _V5_COLUMNS.keys() <= existing_cols
+        if not has_v5:
+            return 4
         return CURRENT_SCHEMA_VERSION
 
     existing_perf_cols = set(
@@ -143,6 +151,9 @@ def _get_schema_version(conn: duckdb.DuckDBPyConnection) -> int:
     )
     has_v4_perf = _V4_PERFORMANCE_COLUMNS.keys() <= existing_perf_cols
     if has_feedback_events and has_v4_perf:
+        has_v5 = _V5_COLUMNS.keys() <= existing_cols
+        if not has_v5:
+            return 4
         return CURRENT_SCHEMA_VERSION
     return 3
 
@@ -236,5 +247,24 @@ def _migrate_v3_to_v4(conn: duckdb.DuckDBPyConnection) -> None:
             added.append(col)
     logger.info(
         "v3→v4: feedback_events 생성, performance_reports 추가 컬럼=%s",
+        ", ".join(added) if added else "none",
+    )
+
+
+def _migrate_v4_to_v5(conn: duckdb.DuckDBPyConnection) -> None:
+    """Add review-only rule references to general_ledger."""
+    existing = set(
+        conn.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'general_ledger'"
+        ).fetchdf()["column_name"]
+    )
+    added = []
+    for col, dtype in _V5_COLUMNS.items():
+        if col not in existing:
+            conn.execute(f"ALTER TABLE general_ledger ADD COLUMN {col} {dtype}")
+            added.append(col)
+    logger.info(
+        "v4_to_v5: general_ledger review columns=%s",
         ", ".join(added) if added else "none",
     )
