@@ -44,14 +44,38 @@ LAYER_COLORS: dict[str, str] = {
 }
 
 LAYER_LABELS: dict[str, str] = {
-    "layer_a": "L1",
-    "layer_b": "L2",
-    "layer_c": "L3/L4",
+    "layer_a": "L1/L3 Data Quality",
+    "layer_b": "L1-L4 Fraud Rules",
+    "layer_c": "L1-L4 Anomaly Rules",
     "benford": "L4-02 Benford",
 }
 
 # ── 범용 차트 시퀀스 색상 (8색) ────────────────────────────────
 # Why: 색상환 균등 배치, 인접색 명도차 확보, 색각 이상자 구분 가능.
+LAYER_COLORS.update({
+    "layer_b": "#0D9488",
+    "layer_c": "#F97316",
+    "L1": "#8B5CF6",
+    "L2": "#0D9488",
+    "L3": "#F97316",
+    "L4": "#6366F1",
+    "Analytical": "#64748B",
+    "Phase 2/3": "#2563EB",
+})
+
+LAYER_LABELS.update({
+    "layer_a": "L1/L3 Data Quality",
+    "layer_b": "L1-L4 Fraud Rules",
+    "layer_c": "L1-L4 Anomaly Rules",
+    "benford": "L4-02 Benford",
+    "L1": "L1",
+    "L2": "L2",
+    "L3": "L3",
+    "L4": "L4",
+    "Analytical": "Analytical",
+    "Phase 2/3": "Phase 2/3",
+})
+
 SEQUENCE_COLORS: list[str] = [
     "#2563EB", "#7C3AED", "#0891B2", "#059669",
     "#D97706", "#DC2626", "#DB2777", "#4B5563",

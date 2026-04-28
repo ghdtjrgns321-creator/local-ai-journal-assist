@@ -15,19 +15,21 @@ from dashboard.components.charts._theme import (
     empty_figure,
 )
 from dashboard.components.shap_waterfall import render_shap_waterfall
+from src.detection.constants import get_rule_level_label
 from src.detection.explanations import build_document_explanation
 
 if TYPE_CHECKING:
     import duckdb
+
     from src.detection.base import DetectionResult
 
 
 def render_detail(
     doc_id: str,
     result_data: pd.DataFrame,
-    conn: "duckdb.DuckDBPyConnection | None" = None,
+    conn: duckdb.DuckDBPyConnection | None = None,
     batch_id: str = "",
-    results: "list[DetectionResult] | None" = None,
+    results: list[DetectionResult] | None = None,
     shap_contributions: dict[str, dict[str, float]] | None = None,
     shap_base_value: float | None = None,
 ) -> None:
@@ -105,7 +107,7 @@ def _render_explanation_block(explanation: dict) -> None:
 
 def _render_feedback_history(
     doc_id: str,
-    conn: "duckdb.DuckDBPyConnection | None",
+    conn: duckdb.DuckDBPyConnection | None,
     batch_id: str,
 ) -> None:
     """Render recent HITL feedback for this document."""
@@ -140,7 +142,7 @@ def _render_feedback_history(
 
 def _get_rule_detail(
     doc_id: str,
-    conn: "duckdb.DuckDBPyConnection | None",
+    conn: duckdb.DuckDBPyConnection | None,
     batch_id: str,
 ) -> pd.DataFrame:
     if conn is None:
@@ -157,9 +159,11 @@ def _get_rule_detail(
 def _build_rule_chart(rule_df: pd.DataFrame) -> go.Figure:
     fig = go.Figure()
 
-    for track_name, group in rule_df.groupby("track_name"):
-        color = LAYER_COLORS.get(track_name, "#999")
-        label = LAYER_LABELS.get(track_name, track_name)
+    rule_df = rule_df.copy()
+    rule_df["rule_level"] = rule_df["rule_code"].map(get_rule_level_label)
+    for rule_level, group in rule_df.groupby("rule_level", sort=False):
+        color = LAYER_COLORS.get(rule_level, "#999")
+        label = LAYER_LABELS.get(rule_level, rule_level)
         fig.add_trace(
             go.Bar(
                 y=group["rule_code"],

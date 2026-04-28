@@ -49,4 +49,5 @@ def test_build_performance_rule_frame_returns_dataframe():
     df = tab_phase2._build_performance_rule_frame(report)
 
     assert list(df["rule_code"]) == ["L1-01"]
+    assert list(df["rule_group"]) == ["L1"]
     assert list(df["precision"]) == ["50.0%"]

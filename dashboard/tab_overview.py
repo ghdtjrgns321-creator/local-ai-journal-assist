@@ -22,6 +22,8 @@ _STATUS_LABELS: dict[str, str] = {
     "ok": "Evaluated",
     "no_label": "No Label",
     "skipped": "Skipped",
+    "coverage_anchor": "Coverage Anchor",
+    "population": "Population",
 }
 
 
@@ -47,6 +49,11 @@ def _build_metric_row(metric: RuleMetric) -> dict[str, object]:
         "Precision": _format_percent(metric.precision),
         "Recall": _format_percent(metric.recall),
         "F1": _format_percent(metric.f1),
+        "Objective": metric.rule_objective or "",
+        "Expected Coverage": metric.expected_coverage or "",
+        "Overlap Docs": metric.overlap_docs,
+        "Standalone Docs": metric.standalone_docs,
+        "Review Queue Docs": metric.review_queue_docs,
     }
 
 
@@ -69,7 +76,23 @@ def _build_datasynth_rule_tables(
 
     evaluated_df = pd.DataFrame(
         evaluated_rows,
-        columns=["Rule ID", "Status", "Labels", "Flagged", "TP", "FP", "FN", "Precision", "Recall", "F1"],
+        columns=[
+            "Rule ID",
+            "Status",
+            "Labels",
+            "Flagged",
+            "TP",
+            "FP",
+            "FN",
+            "Precision",
+            "Recall",
+            "F1",
+            "Objective",
+            "Expected Coverage",
+            "Overlap Docs",
+            "Standalone Docs",
+            "Review Queue Docs",
+        ],
     )
     separate_df = pd.DataFrame(
         separate_rows,

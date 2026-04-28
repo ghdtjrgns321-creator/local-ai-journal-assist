@@ -24,9 +24,9 @@ from src.detection.constants import (
 )
 
 _TRACK_LABELS = {
-    Layer.LAYER_A: "L1",
-    Layer.LAYER_B: "L2",
-    Layer.LAYER_C: "L3/L4",
+    Layer.LAYER_A: "L1/L3 Data Quality",
+    Layer.LAYER_B: "L1-L4 Fraud Rules",
+    Layer.LAYER_C: "L1-L4 Anomaly Rules",
     Layer.BENFORD: "L4-02 Benford",
 }
 
@@ -89,7 +89,7 @@ def _render_risk_thresholds() -> None:
 
 
 def _render_rule_toggles() -> None:
-    """27개 룰 활성/비활성 체크박스 (레이어별 그룹)."""
+    """27개 룰 활성/비활성 체크박스 (L1~L4 그룹)."""
     st.subheader("룰 활성/비활성")
     disabled: list[str] = list(st.session_state.get(KEY_DISABLED_RULES, []))
     new_disabled: list[str] = []

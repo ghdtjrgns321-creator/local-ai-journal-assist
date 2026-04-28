@@ -60,7 +60,7 @@ def layer_score_radar(scores: dict[str, float]) -> go.Figure:
     ))
 
     fig.update_layout(
-        **DEFAULT_LAYOUT, title="레이어별 점수",
+        **DEFAULT_LAYOUT, title="L1-L4 rule score",
         polar={"radialaxis": {"visible": True, "range": [0, 1]}},
         showlegend=False,
     )

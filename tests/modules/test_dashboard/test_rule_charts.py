@@ -27,7 +27,7 @@ def test_basic_violation_bar(sample_df):
     """sample_df에서 룰별 위반 건수 바 차트 정상 생성."""
     fig = rule_violation_bar(sample_df)
     assert isinstance(fig, go.Figure)
-    # Why: 최소 1개 이상 trace(레이어별 Bar)가 생성되어야 함.
+    # Why: 최소 1개 이상 trace(L1~L4 Bar)가 생성되어야 함.
     assert len(fig.data) >= 1
 
 

@@ -5,10 +5,12 @@ from typing import TYPE_CHECKING
 import pandas as pd
 import streamlit as st
 
+from src.detection.constants import get_track_display_label
+
 if TYPE_CHECKING:
-    from src.preprocessing.model_registry import ModelMetadata
     from src.metrics.models import PerformanceReport
     from src.pipeline import PipelineResult
+    from src.preprocessing.model_registry import ModelMetadata
 
 
 def render(prep_result, result: PipelineResult | None) -> None:
@@ -96,15 +98,21 @@ def _build_performance_cards(report: PerformanceReport) -> list[tuple[str, str]]
 def _build_performance_rule_frame(report: PerformanceReport) -> pd.DataFrame:
     rows = [
         {
-            "track_name": metric.track_name,
+            "rule_group": get_track_display_label(metric.track_name, metric.rule_code),
             "rule_code": metric.rule_code,
             "status": metric.evaluation_status,
             "note": metric.evaluation_reason or "-",
+            "objective": metric.rule_objective or "-",
+            "broad_fraud_type": metric.broad_fraud_type or "-",
+            "expected_coverage": metric.expected_coverage or "-",
             "label_docs": metric.label_docs,
             "flagged_docs": metric.flagged_docs,
             "tp_docs": metric.tp_docs,
             "fp_docs": metric.fp_docs,
             "fn_docs": metric.fn_docs,
+            "overlap_docs": metric.overlap_docs,
+            "standalone_docs": metric.standalone_docs,
+            "review_queue_docs": metric.review_queue_docs,
             "precision": _format_pct(metric.precision),
             "recall": _format_pct(metric.recall),
             "f1": _format_pct(metric.f1),
@@ -114,7 +122,7 @@ def _build_performance_rule_frame(report: PerformanceReport) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _build_model_evaluation_frame(models: list["ModelMetadata"]) -> pd.DataFrame:
+def _build_model_evaluation_frame(models: list[ModelMetadata]) -> pd.DataFrame:
     rows = []
     for model in models:
         rows.append(
@@ -131,7 +139,7 @@ def _build_model_evaluation_frame(models: list["ModelMetadata"]) -> pd.DataFrame
     return pd.DataFrame(rows)
 
 
-def _build_feature_quality_frame(models: list["ModelMetadata"]) -> pd.DataFrame:
+def _build_feature_quality_frame(models: list[ModelMetadata]) -> pd.DataFrame:
     rows = []
     for model in models:
         profile = model.feature_quality_profile or {}
@@ -173,12 +181,14 @@ def _render_track_status(result: PipelineResult) -> None:
         df["default_enabled"] = df["default_enabled"].map({True: "on", False: "off"})
     if "reason" in df.columns:
         df["reason"] = df["reason"].fillna("-")
+    if "track_name" in df.columns:
+        df["rule_group"] = df["track_name"].map(get_track_display_label)
 
     visible_cols = [
         col
         for col in [
+            "rule_group",
             "display_name",
-            "track_name",
             "maturity",
             "default_enabled",
             "run_status",

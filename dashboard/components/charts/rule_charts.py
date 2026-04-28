@@ -11,18 +11,14 @@ from dashboard.components.charts._theme import (
     LAYER_LABELS,
     empty_figure,
 )
-from src.detection.constants import RULE_CODES
+from src.detection.constants import RULE_CODES, get_rule_level_label
 
 # Why: 룰 접두사(A/B/C) → Layer enum 값 매핑. 차트 색상·범례에 사용.
-_PREFIX_TO_LAYER: dict[str, str] = {
-    "A": "layer_a",
-    "B": "layer_b",
-    "C": "layer_c",
-}
+_RULE_LEVEL_ORDER = ("L1", "L2", "L3", "L4", "Analytical", "Phase 2/3")
 
 
 def rule_violation_bar(df: pd.DataFrame) -> go.Figure:
-    """24개 룰별 위반 건수 가로 바 차트. 레이어별 색상 구분.
+    """24개 룰별 위반 건수 가로 바 차트. L1~L4 색상 구분.
 
     flagged_rules 컬럼(comma-separated)을 파싱하여 룰별 건수 집계.
     """
@@ -49,9 +45,9 @@ def rule_violation_bar(df: pd.DataFrame) -> go.Figure:
     label_map = {code: f"{code} ({RULE_CODES.get(code, code)})" for code in counts.index}
 
     fig = go.Figure()
-    for prefix, layer_key in _PREFIX_TO_LAYER.items():
-        label = LAYER_LABELS[layer_key]
-        mask = [code for code in counts.index if code.startswith(prefix)]
+    for rule_level in _RULE_LEVEL_ORDER:
+        label = LAYER_LABELS.get(rule_level, rule_level)
+        mask = [code for code in counts.index if get_rule_level_label(code) == rule_level]
         if not mask:
             continue
         subset = counts[mask]
@@ -61,7 +57,7 @@ def rule_violation_bar(df: pd.DataFrame) -> go.Figure:
             x=subset.values,
             orientation="h",
             name=label,
-            marker_color=LAYER_COLORS[layer_key],
+            marker_color=LAYER_COLORS.get(rule_level, "#64748B"),
             hovertemplate="%{y}<br>%{x:,}건<extra></extra>",
         ))
 
