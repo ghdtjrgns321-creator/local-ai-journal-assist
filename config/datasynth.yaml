@@ -301,11 +301,10 @@ fraud:
   enabled: true
   fraud_rate: 0.02
   # L2-01/L3-02: KRW 승인한도 — 한국 중견 제조업 전결규정 반영
-  # Iteration 7 (2026-04-11): 상한 10B → 3B로 추가 하향
-  # Why: ExceededApprovalLimit 중앙값 11B원(110억) 여전히 비현실적.
-  #      중견기업 전결 최대는 이사회 결의 3B 이내가 현실적.
-  #      Level 1: 10M(자동) → Level 3: 300M(팀장) → Level 4: 1B(본부장) → Level 5: 3B(CFO/이사회)
-  approval_thresholds: [10000000, 100000000, 300000000, 1000000000, 3000000000]
+  # v60: 앱 L1-04/L2-01 승인한도 계약과 동기화.
+  # Level 1~6: 10M(자동/담당자) → 100M(팀장) → 1B(본부장)
+  #            → 5B(CFO 위임) → 10B(CFO) → 50B(이사회/대표)
+  approval_thresholds: [10000000, 100000000, 1000000000, 5000000000, 10000000000, 50000000000]
   fraud_type_distribution:
     # Iter 8 (2026-04-11): StatisticallyImprobable(큰 금액) 비중 상향 (양성 금액 차별화)
     # positive_negative_amount_ratio 목표 ≥ 1.3x. Normal 패턴 감소 + Improbable 확대.
@@ -327,8 +326,8 @@ fraud:
 anomaly_strategies:
   approval:
     # L2-01/L1-04/L1-07 승인한도 (KRW, 오름차순)
-    # Iteration 7: fraud.approval_thresholds와 동기화 (상한 3B)
-    thresholds: [10000000, 100000000, 300000000, 1000000000, 3000000000]
+    # v60: 앱 L1-04/L2-01 승인한도 계약과 동기화.
+    thresholds: [10000000, 100000000, 1000000000, 5000000000, 10000000000, 50000000000]
     buffer: 500000
   amount:
     min_multiplier: 2.0
@@ -368,9 +367,9 @@ anomaly_strategies:
   dormant_account:
     accounts: ["199999", "299999", "399999", "999999"]
   description:
-    # Why: detection L3-08은 risk_keywords.yaml의 high/medium 키워드로 판정.
-    #      여기 목록은 risk_keywords.yaml과 동기화 필수.
-    #      "Other", "Misc" 등 영어는 risk_keywords에 없어 미탐지됨.
+    # Why: Phase 3 NLP/semantic signals use risk_keywords.yaml.
+    #      Phase 1 L3-08 only detects missing/corrupted descriptions.
+    #      "Other", "Misc" 등 영어는 L3-08 판정 대상이 아니라 의미 분석 후보임.
     vague_descriptions:
       - "가계정"      # high_risk
       - "가수금"      # high_risk

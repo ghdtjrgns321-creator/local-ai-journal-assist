@@ -40,6 +40,10 @@ class AuditSettings(BaseSettings):
     enable_llm_header_fallback: bool = True
     datasynth_label_mode: str = "hidden"
     datasynth_metadata_enforcement: str = "warn"
+    enable_ingest_cache: bool = True
+    ingest_cache_dir: str = "artifacts/ingest_cache"
+    enable_feature_cache: bool = True
+    feature_cache_dir: str = "artifacts/feature_cache"
 
     @field_validator("min_expected_headers")
     @classmethod
@@ -91,7 +95,7 @@ class AuditSettings(BaseSettings):
 
     # --- Detection Layer B 관련 ---
     duplicate_payment_window_days: int = 45   # B04: 중복 지급 판정 기간 (일)
-    sod_process_threshold: int = 3            # B07: 직무분리 위반 프로세스 수 임계
+    sod_process_threshold: int = 3            # L3-12: 업무범위 검토 fallback 프로세스 수 임계
     topside_threshold: int = 2               # B19: Top-side JE 가점 임계 (5점 만점, 수기 전제)
     expense_capitalization_amount_tolerance: float = 0.02  # B11: 자산/비용 금액 허용 오차 (2%)
     expense_capitalization_min_amount: float = 0.0         # B11: 소액 라인 제외 기준 (0=미적용)
@@ -116,8 +120,8 @@ class AuditSettings(BaseSettings):
 
     # --- Detection Layer C: C13 배치 전표 이상 ---
     batch_source_values: list[str] = [
-        "batch", "interface", "system", "auto", "if", "sys",
-        "BATCH", "INTERFACE", "SYSTEM", "AUTO", "IF", "SYS",
+        "batch", "interface", "system", "auto", "automated", "if", "sys",
+        "BATCH", "INTERFACE", "SYSTEM", "AUTO", "AUTOMATED", "IF", "SYS",
     ]  # source 컬럼 배치/자동 전표 식별 값
     batch_period_end_ratio: float = 0.5                   # 기말 집중 비율 임계
     batch_simultaneous_threshold: int = 50                # 동일일자 동시 생성 건수 임계
@@ -188,8 +192,11 @@ class AuditSettings(BaseSettings):
     min_abnormal_ratio: float = 0.1             # σ 이상치여도 절대 비율 10% 미만이면 미플래그
     min_midnight_entries: int = 3               # 소수 인원 폴백 시 최소 심야 건수
     min_user_entries: int = 10                  # C12: 사용자별 최소 전표 건수 (미달 시 분석 제외)
+    # C12: 실사용자 심야 다건 보조 조건
+    min_high_context_midnight_entries: int = 100
     auto_entry_sources: list[str] = [           # 자동 전기 소스 (급속 승인 검증 제외 대상)
         "batch", "interface", "system",
+        "automated", "recurring", "auto",
         "BATCH", "IF", "SYS",
     ]
 
@@ -197,6 +204,11 @@ class AuditSettings(BaseSettings):
     variance_threshold: float = 0.5           # D01: 계정 거래 활동량 변동률 플래그 임계 (50%)
     monthly_pattern_threshold: float = 0.3    # D02: JSD 플래그 임계
     min_monthly_data_months: int = 3          # D02: 비교 수행 최소 월수
+    d02_min_account_docs: int = 100           # D02: 계정 단위 최소 당기 문서 수
+    d02_min_annual_amount: float = 0.0        # D02: 계정 단위 최소 당기 활동금액
+    d02_min_top_month_delta: float = 0.25     # D02: 최대월 비중 변화 최소값
+    d02_review_score: float = 0.2             # D02: 단독 review signal 점수 상한
+    d02_group_keys: list[str] = ["company_code", "gl_account"]  # D02 평가 단위
 
     # --- Detection Access Audit (WU-15) ---
     aa01_high_amount_quantile: float = 0.90   # AA01: 고액 판정 분위수
@@ -304,21 +316,20 @@ class AuditSettings(BaseSettings):
     # Why: pandas/numpy 내부 연산은 GIL 해제 → ThreadPoolExecutor로 독립 탐지기
     #      병렬화. ProcessPool은 DataFrame pickle 비용(1M 행 기준 수 초)이 커서
     #      오히려 느림. None이면 순차 실행(테스트/디버깅용).
-    detection_parallel_workers: int | None = 4
+    detection_parallel_workers: int | None = None
 
     # --- Detection execution scope ---
-    # Why: 현재 제품의 기본 경로는 Phase 1 룰 기반 + Phase 2 비지도 설명이다.
-    #      그래프/NLP/관계형/증빙/접근감사/다기간 추세 탐지는 구현되어 있어도
-    #      기본 UX에서 항상 돌리는 핵심 경로가 아니다. 특히 NLP는 외부 API timeout,
-    #      Graph/TrendBreak는 데이터 규모에 따라 긴 실행 시간을 유발할 수 있다.
-    enable_timeseries_detection: bool = True
+    # Why: Phase 1 default path is L1-L4 plus D01/D02 when prior data exists.
+    #      Extension detectors remain available, but are not part of the default
+    #      portfolio run unless a dedicated caller invokes them.
+    enable_timeseries_detection: bool = False
     enable_relational_detection: bool = False
     enable_graph_detection: bool = False
     enable_nlp_detection: bool = False
     enable_access_audit_detection: bool = False
-    enable_evidence_detection: bool = True
+    enable_evidence_detection: bool = False
     enable_trendbreak_detection: bool = False
-    enable_variance_detection: bool = False
+    enable_variance_detection: bool = True
     enable_ml_detection: bool = False
 
     # --- SHAP Explainer (WU-17) ---

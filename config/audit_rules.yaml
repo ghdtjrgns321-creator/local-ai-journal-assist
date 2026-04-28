@@ -44,6 +44,55 @@ patterns:
         accounts: []
         account_prefixes: []
 
+  # L3-12: one-user work-scope concentration review.
+  # This does not define SoD/authorization violations; L1-06 owns explicit
+  # matrix conflicts. L3-12 only flags broad current-period activity and raises
+  # priority when manual, sensitive-account, high-amount, or period-end context
+  # is present.
+  work_scope_excess_review:
+    min_process_info: 3
+    min_company_combo: 2
+    manual_sources:
+      - "manual"
+      - "adjustment"
+    system_sources:
+      - "automated"
+      - "batch"
+      - "interface"
+      - "system"
+    automated_personas:
+      - "automated_system"
+      - "batch_user"
+    admin_personas:
+      - "admin"
+      - "superuser"
+      - "system_admin"
+    persona_thresholds:
+      junior:
+        process: 3
+        company: 2
+      staff:
+        process: 3
+        company: 2
+      clerk:
+        process: 3
+        company: 2
+      senior:
+        process: 4
+        company: 3
+      accountant:
+        process: 4
+        company: 3
+      manager:
+        process: 5
+        company: 4
+      controller:
+        process: 5
+        company: 4
+      default:
+        process: 4
+        company: 3
+
   # L1-05: only system-driven self-approval is allowed by default.
   # Approval omission is handled by L1-07, so this section only defines explicit allow cases.
   self_approval_allow:
@@ -87,6 +136,80 @@ patterns:
       - "111"
       - "112"
       - "113"
+
+  # L1-07: approval omission queue split.
+  # Confirmed rows require missing approved_by, a non-system manual/adjustment
+  # source, approval-required amount evidence, and enough corroborating evidence.
+  # Recurring entries stay in review by default because they may be covered by
+  # standing approval, automatic generation, or master-data approval controls.
+  # Automated/interface/batch/system context stays excluded.
+  skipped_approval_immediate:
+    manual_sources:
+      - "manual"
+      - "adjustment"
+    system_sources:
+      - "automated"
+      - "batch"
+      - "interface"
+      - "system"
+    business_processes:
+      - "TRE"
+      - "P2P"
+      - "O2C"
+      - "H2R"
+    min_evidence_count: 2
+
+  # L1-04: approval limit exceeded queue split.
+  # Small boundary breaches are useful review candidates but should not be
+  # treated as confirmed approval authority violations without client-specific
+  # tolerance, FX/rounding, delegation, or approval-matrix context.
+  approval_limit_exceeded_review:
+    review_buckets:
+      - "boundary"
+    review_sources:
+      - "automated"
+      - "batch"
+      - "interface"
+      - "system"
+      - "recurring"
+    review_user_personas:
+      - "automated_system"
+
+  # L1-09: approval date missing queue split.
+  # Confirmed rows require a human/manual context or another strong business
+  # reason. Routine system/recurring contexts stay in review because approval
+  # may be stored in workflow logs, master approval, or standing approval tables.
+  missing_approval_date_immediate:
+    manual_sources:
+      - "manual"
+      - "adjustment"
+    system_sources:
+      - "automated"
+      - "batch"
+      - "interface"
+      - "system"
+      - "recurring"
+    business_processes:
+      - "TRE"
+      - "P2P"
+      - "O2C"
+      - "H2R"
+
+  # L1-08: fiscal-period mismatch policy.
+  # Strict mode keeps the base rule unchanged: fiscal_period must match the
+  # posting_date month after fiscal_year_start conversion. Auditors can switch
+  # strict_mode off per client to allow documented special periods or alternate
+  # period bases for specific processes/sources.
+  fiscal_period_mismatch_policy:
+    fiscal_year_start: 1
+    strict_mode: true
+    allow_special_periods: false
+    special_periods: []
+    special_period_allowed_sources: []
+    special_period_allowed_document_types: []
+    special_period_allowed_business_processes: []
+    period_basis_by_process: {}
+    period_basis_by_source: {}
 
   # L4-01: 매출 계정 접두사 (K-IFRS 기준 4xxx가 표준)
   # 영업외수익(9), 글로벌 본사 기준(5) 등 추가 가능
@@ -192,7 +315,7 @@ patterns:
   # L1-06: 직무분리(SoD) 위반 — 하이브리드 로직
   # Rule B: 프로세스 간 상충 쌍 (직급 불문, 즉시 Critical)
   # Why: generation_principles §3.4 — 비현실적 겸직 쌍, 횡령 루트
-  sod_toxic_pairs:
+  sod_legacy_scenario_pairs:
     - ["TRE", "P2P"]    # 자금 집행 + 매입 → 가짜 AP + 직접 이체
     - ["TRE", "O2C"]    # 자금 집행 + 수금 → 입금 가로채기 + 대손 세탁
     - ["O2C", "P2P"]    # 매출 + 매입 → 순환거래(Round-tripping)
@@ -203,7 +326,7 @@ patterns:
   # value = 초과 시 위반 (예: junior 1 → 2개 이상이면 위반)
   # 운영 기본값은 교과서적 SoD 4기능
   # (승인/기록/자산보관/조정)을 현재 프로세스 체계에 매핑한 6쌍을 사용한다.
-  sod_toxic_pairs:
+  sod_legacy_review_pairs:
     - ["TRE", "P2P"]    # 지급 실행 + 매입/지급 처리
     - ["TRE", "O2C"]    # 자금 이동/수납 통제 + 매출채권/수금 처리
     - ["TRE", "H2R"]    # 급여 처리 + 실제 지급/은행 통제
@@ -211,6 +334,23 @@ patterns:
     - ["R2R", "P2P"]    # 총계정원장/분개 + 매입채무 처리
     - ["R2R", "O2C"]    # 총계정원장/분개 + 매출채권/수금 처리
 
+  # L3-12: SoD access/work-scope review pairs.
+  # These pairs are not document-level confirmed violations by themselves.
+  # They identify users whose access / process assignment should be reviewed.
+  # Direct L1-06 immediate findings require document-level evidence such as
+  # sod_violation=true with a populated sod_conflict_type, a populated
+  # sod_conflict_type, or IT/admin direct business posting evidence.
+  sod_review_pairs:
+    strong:
+      - ["TRE", "P2P"]    # cash disbursement + procure/payable processing
+      - ["TRE", "O2C"]    # bank/cash control + receivable/collection processing
+      - ["TRE", "H2R"]    # payroll processing + actual bank/payment control
+    weak:
+      - ["R2R", "TRE"]    # GL/journal close + treasury/bank control
+      - ["R2R", "P2P"]    # GL/journal close + AP processing
+      - ["R2R", "O2C"]    # GL/journal close + AR/collection processing
+
+  # L3-12 work-scope review thresholds. These do not score L1-06.
   sod_role_thresholds:
     junior_accountant: 1     # 1인 1프로세스 전담
     senior_accountant: 3     # 기본 1 + 겸직 2까지 허용

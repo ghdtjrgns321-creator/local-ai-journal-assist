@@ -32,9 +32,34 @@ phase1_case:
     logic: 0.20
     behavior: 0.15
 
+  materiality_amount: 0
+
   priority_band:
     high: 0.75
     medium: 0.45
+
+  priority_floors:
+    - rule_id: L1-05
+      labels:
+        - immediate
+        - escalated_materiality
+        - escalated_abnormal_time
+        - escalated_high_risk_account
+      min_priority_score: 0.80
+      reason: critical_self_approval
+    - rule_id: L1-04
+      min_raw_score: 0.80
+      min_priority_score: 0.75
+      reason: approval_limit_exceeded
+    - rule_id: L1-06
+      min_raw_score: 0.80
+      min_priority_score: 0.75
+      reason: immediate_sod_violation
+    - rule_id: L1-07
+      labels:
+        - immediate
+      min_priority_score: 0.75
+      reason: skipped_approval_immediate
 
   priority_adjustments:
     enabled: true
@@ -63,6 +88,16 @@ phase1_case:
         - sensitive_account_touch
       include_l3_08_as_weak_description: true
       derive_manual_period_end: true
+    rare_account_pair:
+      l404_only_penalty: 0.10
+      recurring_source_penalty: 0.08
+      recurring_source_ratio: 0.60
+      recurring_sources:
+        - recurring
+        - automated
+        - batch
+        - interface
+        - system
 
   repeat_score_promote: 0.70
   repeat_months_tiebreak: 3

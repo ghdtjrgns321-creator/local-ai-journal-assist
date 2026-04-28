@@ -1,5 +1,6 @@
 # ⚠️ 예시 키워드 — 실제 감사 매뉴얼·과거 감사조서를 참고하여 보강할 것
-# L3-08: 위험 적요 판정에 사용
+# Phase 3 NLP/semantic risk keyword candidates.
+# Phase 1 L3-08 does not use this file; it only checks missing/corrupted descriptions.
 high_risk:
   - "상품권"
   - "가계정"
