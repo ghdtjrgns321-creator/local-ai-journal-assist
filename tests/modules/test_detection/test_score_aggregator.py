@@ -9,10 +9,15 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.detection.constants import LAYER_WEIGHTS, LAYER_WEIGHTS_WITH_ML, Layer, RiskLevel
 from src.detection.base import DetectionResult, RuleFlag
+from src.detection.constants import (
+    LAYER_WEIGHTS_WITH_ML,
+    RULE_LEVEL_WEIGHTS,
+    Layer,
+    RiskLevel,
+)
+from src.detection.rule_scoring import normalize_rule_evidence
 from src.detection.score_aggregator import aggregate_scores, classify_risk_level
-
 
 # ── 테스트 헬퍼 ───────────────────────────────────────────
 
@@ -59,10 +64,29 @@ def base_df() -> pd.DataFrame:
 @pytest.fixture
 def four_layer_results() -> list[DetectionResult]:
     """4개 트랙 결과 — 행 5개, L1/L2/L3-L4 + Benford."""
-    layer_a = _make_result("layer_a", [1.0, 0.0, 0.0, 0.0, 0.0], {"L1-01": [1.0, 0.0, 0.0, 0.0, 0.0]})
-    layer_b = _make_result("layer_b", [0.6, 0.6, 0.0, 0.0, 0.0], {"L4-01": [0.6, 0.0, 0.0, 0.0, 0.0], "L1-04": [0.0, 0.6, 0.0, 0.0, 0.0]})
-    layer_c = _make_result("layer_c", [0.4, 0.0, 0.4, 0.0, 0.0], {"L3-04": [0.4, 0.0, 0.4, 0.0, 0.0]})
-    benford = _make_result("benford", [0.3, 0.3, 0.3, 0.3, 0.3], {"L4-02": [0.3, 0.3, 0.3, 0.3, 0.3]})
+    layer_a = _make_result(
+        "layer_a",
+        [1.0, 0.0, 0.0, 0.0, 0.0],
+        {"L1-01": [1.0, 0.0, 0.0, 0.0, 0.0]},
+    )
+    layer_b = _make_result(
+        "layer_b",
+        [0.6, 0.6, 0.0, 0.0, 0.0],
+        {
+            "L4-01": [0.6, 0.0, 0.0, 0.0, 0.0],
+            "L1-04": [0.0, 0.6, 0.0, 0.0, 0.0],
+        },
+    )
+    layer_c = _make_result(
+        "layer_c",
+        [0.4, 0.0, 0.4, 0.0, 0.0],
+        {"L3-04": [0.4, 0.0, 0.4, 0.0, 0.0]},
+    )
+    benford = _make_result(
+        "benford",
+        [0.3, 0.3, 0.3, 0.3, 0.3],
+        {"L4-02": [0.3, 0.3, 0.3, 0.3, 0.3]},
+    )
     return [layer_a, layer_b, layer_c, benford]
 
 
@@ -76,25 +100,43 @@ class TestAggregateScores:
         """4개 레이어 가중합 = 수동 계산값."""
         result = aggregate_scores(base_df, four_layer_results)
 
-        # 행 0: 현재 기본 가중치(LAYER_WEIGHTS) 기준.
+        # 행 0: 기본 집계는 legacy layer가 아니라 정규화된 L1/L2/L3/L4 룰 family 기준.
         expected_row0 = (
-            1.0 * LAYER_WEIGHTS[Layer.LAYER_A]
-            + 0.6 * LAYER_WEIGHTS[Layer.LAYER_B]
-            + 0.4 * LAYER_WEIGHTS[Layer.LAYER_C]
-            + 0.3 * LAYER_WEIGHTS[Layer.BENFORD]
+            normalize_rule_evidence(
+                rule_id="L1-01",
+                evidence_type="data_integrity_failure",
+                severity=3,
+                raw_value=1.0,
+            ).normalized_score * RULE_LEVEL_WEIGHTS["L1"]
+            + normalize_rule_evidence(
+                rule_id="L3-04",
+                evidence_type="timing_anomaly",
+                severity=3,
+                raw_value=0.4,
+            ).normalized_score * RULE_LEVEL_WEIGHTS["L3"]
+            + normalize_rule_evidence(
+                rule_id="L4-01",
+                evidence_type="statistical_outlier",
+                severity=3,
+                raw_value=0.6,
+            ).normalized_score * RULE_LEVEL_WEIGHTS["L4"]
         )
         assert result["anomaly_score"].iloc[0] == pytest.approx(expected_row0)
 
-        # 행 4: 모든 레이어 0 (Benford만 0.3)
-        expected_row4 = 0.3 * LAYER_WEIGHTS[Layer.BENFORD]
+        # 행 4: L4-02 Benford는 macro-only라 transaction anomaly_score에 직접 더하지 않음.
+        expected_row4 = 0.0
         assert result["anomaly_score"].iloc[4] == pytest.approx(expected_row4)
 
         assert list(result.columns) == [
             "anomaly_score",
             "risk_level",
             "flagged_rules",
+            "review_rules",
+            "risk_floor_reasons",
             "batch_combo_score",
             "batch_combo_reasons",
+            "work_scope_combo_score",
+            "work_scope_combo_reasons",
             "topside_score",
         ]
 
@@ -106,10 +148,25 @@ class TestAggregateScores:
         # benford 누락
 
         result = aggregate_scores(base_df, [layer_a, layer_b, layer_c])
-        expected = 0.5 * (
-            LAYER_WEIGHTS[Layer.LAYER_A]
-            + LAYER_WEIGHTS[Layer.LAYER_B]
-            + LAYER_WEIGHTS[Layer.LAYER_C]
+        expected = (
+            normalize_rule_evidence(
+                rule_id="L1-01",
+                evidence_type="data_integrity_failure",
+                severity=3,
+                raw_value=0.5,
+            ).normalized_score * RULE_LEVEL_WEIGHTS["L1"]
+            + normalize_rule_evidence(
+                rule_id="L3-04",
+                evidence_type="timing_anomaly",
+                severity=3,
+                raw_value=0.5,
+            ).normalized_score * RULE_LEVEL_WEIGHTS["L3"]
+            + normalize_rule_evidence(
+                rule_id="L4-01",
+                evidence_type="statistical_outlier",
+                severity=3,
+                raw_value=0.5,
+            ).normalized_score * RULE_LEVEL_WEIGHTS["L4"]
         )
         assert result["anomaly_score"].iloc[0] == pytest.approx(expected)
 
@@ -120,6 +177,74 @@ class TestAggregateScores:
 
         result = aggregate_scores(base_df, [layer_a], weights=custom_weights)
         assert result["anomaly_score"].iloc[0] == pytest.approx(0.5)
+
+    def test_rule_level_aggregation_uses_l1_rule_labels(self, base_df):
+        layer_b = _make_result(
+            "layer_b",
+            [0.4, 0.8, 0.0, 0.0, 0.0],
+            {"L1-05": [0.4, 0.8, 0.0, 0.0, 0.0]},
+        )
+        layer_b.metadata["row_annotations"] = {
+            "L1-05": {
+                0: {"bucket": "review"},
+                1: {"bucket": "immediate"},
+            }
+        }
+
+        result = aggregate_scores(base_df, [layer_b])
+
+        review_score = normalize_rule_evidence(
+            rule_id="L1-05",
+            evidence_type="control_failure",
+            severity=3,
+            raw_value=0.4,
+            display_label="review",
+        ).normalized_score
+        immediate_score = normalize_rule_evidence(
+            rule_id="L1-05",
+            evidence_type="control_failure",
+            severity=3,
+            raw_value=0.8,
+            display_label="immediate",
+        ).normalized_score
+        assert result["anomaly_score"].iloc[0] == pytest.approx(
+            review_score * RULE_LEVEL_WEIGHTS["L1"]
+        )
+        assert immediate_score * RULE_LEVEL_WEIGHTS["L1"] < 0.7
+        assert result["anomaly_score"].iloc[1] == pytest.approx(0.7)
+        assert result["risk_floor_reasons"].iloc[1] == "L1-05:immediate"
+        assert result["anomaly_score"].iloc[1] > result["anomaly_score"].iloc[0]
+
+    def test_rule_level_aggregation_splits_review_only_annotation_rules(self, base_df):
+        layer_b = _make_result(
+            "layer_b",
+            [0.0, 0.75, 0.0, 0.0, 0.0],
+            {"L1-04": [0.0, 0.75, 0.0, 0.0, 0.0]},
+        )
+        layer_b.metadata["row_annotations"] = {
+            "L1-04": {
+                0: {"bucket": "boundary", "queue_label": "review", "review_score": 0.4},
+                1: {"bucket": "severe", "queue_label": "immediate", "score": 0.75},
+            }
+        }
+
+        result = aggregate_scores(base_df, [layer_b])
+
+        review_score = normalize_rule_evidence(
+            rule_id="L1-04",
+            evidence_type="control_failure",
+            severity=3,
+            raw_value=0.4,
+            display_label="boundary",
+        ).normalized_score
+        assert result["anomaly_score"].iloc[0] == pytest.approx(
+            review_score * RULE_LEVEL_WEIGHTS["L1"]
+        )
+        assert result["flagged_rules"].iloc[0] == ""
+        assert result["review_rules"].iloc[0] == "L1-04"
+        assert result["flagged_rules"].iloc[1] == "L1-04"
+        assert result["review_rules"].iloc[1] == ""
+        assert result["anomaly_score"].iloc[1] > result["anomaly_score"].iloc[0]
 
 
 # ── TestClassifyRiskLevel ─────────────────────────────────
@@ -191,25 +316,59 @@ class TestAutoEscalation:
     def test_triggers(self, base_df):
         """A 1개 위반 + B 2개 위반 → 원래 Medium이어도 High."""
         # 행 0: L1-01 위반 + L4-01·L1-04 위반 → 자동 승격 대상
-        layer_a = _make_result("layer_a", [0.4, 0.0, 0.0, 0.0, 0.0], {"L1-01": [0.4, 0.0, 0.0, 0.0, 0.0]})
-        layer_b = _make_result("layer_b", [0.6, 0.0, 0.0, 0.0, 0.0], {
-            "L4-01": [0.6, 0.0, 0.0, 0.0, 0.0],
-            "L1-04": [0.6, 0.0, 0.0, 0.0, 0.0],
-        })
+        layer_a = _make_result(
+            "layer_a",
+            [0.4, 0.0, 0.0, 0.0, 0.0],
+            {"L1-01": [0.4, 0.0, 0.0, 0.0, 0.0]},
+        )
+        layer_b = _make_result(
+            "layer_b",
+            [0.6, 0.0, 0.0, 0.0, 0.0],
+            {
+                "L4-01": [0.6, 0.0, 0.0, 0.0, 0.0],
+                "L1-04": [0.6, 0.0, 0.0, 0.0, 0.0],
+            },
+        )
 
         result = aggregate_scores(base_df, [layer_a, layer_b])
         assert result["risk_level"].iloc[0] == RiskLevel.HIGH
 
     def test_no_trigger(self, base_df):
         """A 위반 + B 1개만 → 승격 안됨."""
-        layer_a = _make_result("layer_a", [0.4, 0.0, 0.0, 0.0, 0.0], {"L1-01": [0.4, 0.0, 0.0, 0.0, 0.0]})
-        layer_b = _make_result("layer_b", [0.6, 0.0, 0.0, 0.0, 0.0], {
-            "L4-01": [0.6, 0.0, 0.0, 0.0, 0.0],
-        })
+        layer_a = _make_result(
+            "layer_a",
+            [0.4, 0.0, 0.0, 0.0, 0.0],
+            {"L1-01": [0.4, 0.0, 0.0, 0.0, 0.0]},
+        )
+        layer_b = _make_result(
+            "layer_b",
+            [0.6, 0.0, 0.0, 0.0, 0.0],
+            {"L4-01": [0.6, 0.0, 0.0, 0.0, 0.0]},
+        )
 
         result = aggregate_scores(base_df, [layer_a, layer_b])
         # 행 0: 0.4×0.15 + 0.6×0.45 = 0.33 → Low (승격 안됨)
         assert result["risk_level"].iloc[0] == RiskLevel.LOW
+
+
+class TestPolicyRiskFloors:
+    """Policy floors for severe single-rule control failures."""
+
+    def test_l105_escalated_materiality_is_high_even_as_single_rule(self, base_df):
+        layer_b = _make_result(
+            "layer_b",
+            [0.8, 0.0, 0.0, 0.0, 0.0],
+            {"L1-05": [0.8, 0.0, 0.0, 0.0, 0.0]},
+        )
+        layer_b.metadata["row_annotations"] = {
+            "L1-05": {0: {"bucket": "escalated_materiality"}}
+        }
+
+        result = aggregate_scores(base_df, [layer_b])
+
+        assert result["risk_level"].iloc[0] == RiskLevel.HIGH
+        assert result["anomaly_score"].iloc[0] >= 0.7
+        assert result["risk_floor_reasons"].iloc[0] == "L1-05:escalated_materiality"
 
 
 class TestBatchCorroboration:
@@ -267,12 +426,83 @@ class TestBatchCorroboration:
 # ── TestFlaggedRules ──────────────────────────────────────
 
 
+class TestWorkScopeCorroboration:
+    """L3-12 work-scope signal is promoted only with independent corroboration."""
+
+    def test_l312_only_stays_low_score(self, base_df):
+        layer_b = _make_result(
+            "layer_b",
+            [0.65, 0.0, 0.0, 0.0, 0.0],
+            {"L3-12": [0.65, 0.0, 0.0, 0.0, 0.0]},
+        )
+
+        result = aggregate_scores(base_df, [layer_b])
+
+        assert result["work_scope_combo_score"].iloc[0] == pytest.approx(0.0)
+        assert result["work_scope_combo_reasons"].iloc[0] == ""
+        assert result["risk_level"].iloc[0] == RiskLevel.NORMAL
+        assert "L3-12" in result["flagged_rules"].iloc[0]
+
+    def test_l312_plus_two_groups_promotes_medium(self, base_df):
+        layer_b = _make_result(
+            "layer_b",
+            [0.65, 0.0, 0.0, 0.0, 0.0],
+            {
+                "L3-12": [0.65, 0.0, 0.0, 0.0, 0.0],
+                "L3-02": [0.60, 0.0, 0.0, 0.0, 0.0],
+                "L3-10": [0.50, 0.0, 0.0, 0.0, 0.0],
+            },
+        )
+
+        result = aggregate_scores(base_df, [layer_b])
+
+        assert result["work_scope_combo_score"].iloc[0] == pytest.approx(0.4)
+        assert result["work_scope_combo_reasons"].iloc[0] == (
+            "manual_or_control,sensitive_or_amount"
+        )
+        assert result["risk_level"].iloc[0] == RiskLevel.MEDIUM
+        assert result["anomaly_score"].iloc[0] >= 0.4
+
+    def test_l312_plus_three_groups_promotes_high(self, base_df):
+        layer_b = _make_result(
+            "layer_b",
+            [0.65, 0.0, 0.0, 0.0, 0.0],
+            {
+                "L3-12": [0.65, 0.0, 0.0, 0.0, 0.0],
+                "L3-02": [0.60, 0.0, 0.0, 0.0, 0.0],
+                "L3-10": [0.50, 0.0, 0.0, 0.0, 0.0],
+            },
+        )
+        layer_c = _make_result(
+            "layer_c",
+            [0.60, 0.0, 0.0, 0.0, 0.0],
+            {"L3-04": [0.60, 0.0, 0.0, 0.0, 0.0]},
+        )
+
+        result = aggregate_scores(base_df, [layer_b, layer_c])
+
+        assert result["work_scope_combo_score"].iloc[0] == pytest.approx(0.6)
+        assert result["work_scope_combo_reasons"].iloc[0] == (
+            "manual_or_control,sensitive_or_amount,closing_or_timing"
+        )
+        assert result["risk_level"].iloc[0] == RiskLevel.HIGH
+        assert result["anomaly_score"].iloc[0] >= 0.7
+
+
 class TestFlaggedRules:
     """위반 룰 ID comma-separated 형식."""
 
     def test_comma_separated(self, base_df):
-        layer_a = _make_result("layer_a", [1.0, 0.0, 0.0, 0.0, 0.0], {"L1-01": [1.0, 0.0, 0.0, 0.0, 0.0]})
-        layer_b = _make_result("layer_b", [0.6, 0.0, 0.0, 0.0, 0.0], {"L1-04": [0.6, 0.0, 0.0, 0.0, 0.0]})
+        layer_a = _make_result(
+            "layer_a",
+            [1.0, 0.0, 0.0, 0.0, 0.0],
+            {"L1-01": [1.0, 0.0, 0.0, 0.0, 0.0]},
+        )
+        layer_b = _make_result(
+            "layer_b",
+            [0.6, 0.0, 0.0, 0.0, 0.0],
+            {"L1-04": [0.6, 0.0, 0.0, 0.0, 0.0]},
+        )
 
         result = aggregate_scores(base_df, [layer_a, layer_b])
         # 행 0: L1-01 + L1-04 모두 위반
@@ -301,10 +531,34 @@ class TestEdgeCases:
     def test_preserves_original_index(self):
         """비연속 인덱스 [10, 20, 30] 보존."""
         df = pd.DataFrame({"val": [1, 2, 3]}, index=[10, 20, 30])
-        layer_a = _make_result("layer_a", [0.5, 0.0, 0.0], {"L1-01": [0.5, 0.0, 0.0]}, index=[10, 20, 30])
+        layer_a = _make_result(
+            "layer_a",
+            [0.5, 0.0, 0.0],
+            {"L1-01": [0.5, 0.0, 0.0]},
+            index=[10, 20, 30],
+        )
 
         result = aggregate_scores(df, [layer_a])
         assert list(result.index) == [10, 20, 30]
+
+    def test_l101_split_score_is_weighted_in_row_anomaly_score(self):
+        """L1-01 split score contributes through the L1 family weight."""
+        df = pd.DataFrame({"val": range(2)})
+        details = pd.DataFrame({"L1-01": [0.15, 0.90]}, index=df.index)
+        layer_a = DetectionResult(
+            track_name="layer_a",
+            flagged_indices=[0, 1],
+            scores=details.max(axis=1),
+            rule_flags=[RuleFlag("L1-01", "UnbalancedEntry", 5, 2, len(df))],
+            details=details,
+            metadata={"elapsed": 0.01, "skipped_rules": []},
+            warnings=[],
+        )
+
+        result = aggregate_scores(df, [layer_a])
+
+        assert result["anomaly_score"].iloc[0] == pytest.approx(0.15 * 0.40)
+        assert result["anomaly_score"].iloc[1] == pytest.approx(0.90 * 0.40)
 
 
 # ── TestTopsideDetection ────────────────────────────────
@@ -474,9 +728,9 @@ class TestMLWeights:
         layer_a = _make_result("layer_a", [0.5] * 5, {"L1-01": [0.5] * 5})
         ml_unsup = _make_result("ml_unsupervised", [0.8] * 5, {"ML02": [0.8] * 5})
         result = aggregate_scores(base_df, [layer_a, ml_unsup])
-        # ML 트랙은 기본 가중치에 없으므로 무시됨
+        # ML 트랙은 기본 L1/L2/L3/L4 가중치에 없으므로 무시됨
         assert result["anomaly_score"].iloc[0] == pytest.approx(
-            0.5 * LAYER_WEIGHTS[Layer.LAYER_A]
+            0.5 * RULE_LEVEL_WEIGHTS["L1"]
         )
 
     def test_cold_start_no_ml_results(self, base_df, four_layer_results):

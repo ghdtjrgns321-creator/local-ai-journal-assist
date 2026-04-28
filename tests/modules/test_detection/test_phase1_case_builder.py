@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from src.detection.base import DetectionResult, RuleFlag
 from src.detection.phase1_case_builder import (
@@ -93,6 +94,58 @@ def test_build_phase1_case_result_groups_hits():
     assert first_case.documents
 
 
+def test_build_phase1_case_result_accepts_string_index_and_document_total_amount():
+    df = pd.DataFrame(
+        {
+            "document_id": ["DOC-1", "DOC-1"],
+            "posting_date": pd.to_datetime(["2026-04-20", "2026-04-20"]),
+            "created_by": ["kim", "kim"],
+            "business_process": ["R2R", "R2R"],
+            "gl_account": ["410000", "410000"],
+            "debit_amount": [100.0, 0.0],
+            "credit_amount": [0.0, 200.0],
+            "auxiliary_account_number": ["V001", "V001"],
+            "company_code": ["kr01", "kr01"],
+            "document_type": ["SA", "AB"],
+        },
+        index=["row-a", "row-b"],
+    )
+    details = pd.DataFrame({"L2-05": [0.8, 0.0]}, index=df.index)
+    detection_result = DetectionResult(
+        track_name="layer_b",
+        flagged_indices=[0],
+        scores=details.max(axis=1),
+        rule_flags=[RuleFlag("L2-05", "Reversal", 3, 1, len(df))],
+        details=details,
+        metadata={
+            "elapsed": 0.01,
+            "row_annotations": {
+                "L2-05": {
+                    "row-a": {
+                        "interpretation_label": "High-confidence reversal",
+                        "primary_signal": "S0",
+                        "reason_text": "ERP reversal",
+                    }
+                }
+            },
+        },
+    )
+
+    result = build_phase1_case_result(
+        df,
+        [detection_result],
+        company_id="kr01",
+        batch_id="batch42",
+        dataset_id=None,
+        phase1_case_config={"phase1_case": {}},
+    )
+
+    case = result.cases[0]
+    assert case.raw_rule_hits[0].row_index == 0
+    assert "S0" in (case.raw_rule_hits[0].detail or "")
+    assert case.documents[0].amount == 300.0
+
+
 def test_build_phase1_case_result_collects_secondary_tags_from_same_rows():
     df = pd.DataFrame(
         {
@@ -144,6 +197,56 @@ def test_build_phase1_case_result_collects_secondary_tags_from_same_rows():
 
     control_case = next(case for case in result.cases if case.primary_theme == "control_failure")
     assert "statistical_outlier" in control_case.secondary_tags
+
+
+def test_build_phase1_case_result_uses_l101_split_score_in_logic_score():
+    df = pd.DataFrame(
+        {
+            "document_id": ["DOC-LOW", "DOC-HIGH"],
+            "posting_date": pd.to_datetime(["2026-04-20", "2026-04-20"]),
+            "created_by": ["kim", "kim"],
+            "business_process": ["R2R", "R2R"],
+            "gl_account": ["111000", "111000"],
+            "debit_amount": [100_000.0, 100_000.0],
+            "credit_amount": [99_950.0, 50_000.0],
+            "company_code": ["kr01", "kr01"],
+            "document_type": ["SA", "AB"],
+        }
+    )
+    details = pd.DataFrame({"L1-01": [0.15, 0.90]}, index=df.index)
+    detection_result = DetectionResult(
+        track_name="layer_a",
+        flagged_indices=[0, 1],
+        scores=details.max(axis=1),
+        rule_flags=[RuleFlag("L1-01", "UnbalancedEntry", 5, 2, len(df))],
+        details=details,
+        metadata={
+            "row_annotations": {
+                "L1-01": {
+                    0: {"bucket": "rounding_scale", "score": 0.15},
+                    1: {"bucket": "severe", "score": 0.90},
+                }
+            }
+        },
+    )
+
+    result = build_phase1_case_result(
+        df,
+        [detection_result],
+        company_id="kr01",
+        batch_id="batch42",
+        dataset_id=None,
+        phase1_case_config={"phase1_case": {"top_n_cases": 50, "top_n_per_theme": 10}},
+        generated_at=datetime(2026, 4, 22, 3, 15, 22, tzinfo=UTC),
+    )
+
+    cases = {case.documents[0].document_id: case for case in result.cases}
+    assert cases["DOC-LOW"].logic_score == pytest.approx(0.15)
+    assert cases["DOC-HIGH"].logic_score == pytest.approx(0.90)
+    assert (
+        cases["DOC-HIGH"].raw_rule_hits[0].normalized_score
+        > cases["DOC-LOW"].raw_rule_hits[0].normalized_score
+    )
 
 
 def test_build_phase1_case_result_maps_l3_10_into_logic_mismatch():
@@ -241,6 +344,57 @@ def test_build_phase1_case_result_maps_l1_09_into_control_failure():
     case = next(case for case in result.cases if case.primary_theme == "control_failure")
     assert case.evidence_types == ["control_failure"]
     assert case.raw_rule_hits[0].rule_id == "L1-09"
+
+
+def test_build_phase1_case_result_keeps_review_only_l1_annotation_score():
+    df = pd.DataFrame(
+        {
+            "document_id": ["DOC-1"],
+            "posting_date": pd.to_datetime(["2026-04-30"]),
+            "created_by": ["kim"],
+            "business_process": ["P2P"],
+            "gl_account": ["111000"],
+            "debit_amount": [15_000_000.0],
+            "credit_amount": [0.0],
+            "company_code": ["kr01"],
+            "document_type": ["KR"],
+        }
+    )
+    details = pd.DataFrame({"L1-04": [0.0]}, index=df.index)
+    detection_result = DetectionResult(
+        track_name="layer_b",
+        flagged_indices=[],
+        scores=details.max(axis=1),
+        rule_flags=[RuleFlag("L1-04", "Approval Limit Exceeded", 3, 0, len(df))],
+        details=details,
+        metadata={
+            "row_annotations": {
+                "L1-04": {
+                    0: {
+                        "bucket": "boundary",
+                        "queue_label": "review",
+                        "review_score": 0.4,
+                    }
+                }
+            }
+        },
+    )
+
+    result = build_phase1_case_result(
+        df,
+        [detection_result],
+        company_id="kr01",
+        batch_id="batch42",
+        dataset_id=None,
+        phase1_case_config={"phase1_case": {"top_n_cases": 50, "top_n_per_theme": 10}},
+        generated_at=datetime(2026, 4, 22, 3, 15, 22, tzinfo=UTC),
+    )
+
+    case = next(case for case in result.cases if case.primary_theme == "control_failure")
+    assert case.raw_rule_hits[0].rule_id == "L1-04"
+    assert case.raw_rule_hits[0].score == pytest.approx(0.4)
+    assert case.raw_rule_hits[0].display_label == "boundary"
+    assert case.raw_rule_hits[0].signal_status == "review_candidate"
 
 
 def test_build_phase1_case_result_uses_configured_fallback_columns():
@@ -598,6 +752,48 @@ def test_l406_alone_does_not_create_high_priority_case():
     assert case.batch_combo_bonus == 0.0
 
 
+def test_l404_only_recurring_case_gets_priority_penalty():
+    df = pd.DataFrame(
+        {
+            "document_id": ["DOC-1"],
+            "posting_date": pd.to_datetime(["2026-04-30"]),
+            "created_by": ["batch_user"],
+            "business_process": ["P2P"],
+            "gl_account": ["500360"],
+            "debit_amount": [1_000_000.0],
+            "credit_amount": [0.0],
+            "company_code": ["kr01"],
+            "document_type": ["KR"],
+            "source": ["recurring"],
+        }
+    )
+    details = pd.DataFrame({"L4-04": [0.4]}, index=df.index)
+    detection_result = DetectionResult(
+        track_name="layer_c",
+        flagged_indices=[0],
+        scores=details.max(axis=1),
+        rule_flags=[RuleFlag("L4-04", "Rare Debit-Credit Account Pair", 2, 1, len(df))],
+        details=details,
+        metadata={},
+    )
+
+    result = build_phase1_case_result(
+        df,
+        [detection_result],
+        company_id="kr01",
+        batch_id="batch42",
+        dataset_id=None,
+        phase1_case_config={"phase1_case": {"top_n_cases": 50, "top_n_per_theme": 10}},
+        generated_at=datetime(2026, 4, 22, 3, 15, 22, tzinfo=UTC),
+    )
+
+    case = next(case for case in result.cases if case.primary_theme == "logic_mismatch")
+    assert case.priority_score < case.base_priority_score
+    assert "l404_only_penalty=-0.10" in case.priority_adjustment_reasons
+    assert "l404_recurring_source_penalty=-0.08" in case.priority_adjustment_reasons
+    assert case.priority_band == "low"
+
+
 def test_macro_findings_do_not_enter_transaction_queue():
     df = pd.DataFrame(
         {
@@ -677,6 +873,63 @@ def test_weak_evidence_bonus_requires_strong_evidence():
     case = next(case for case in result.cases if case.primary_theme == "control_failure")
     assert case.weak_evidence_bonus == 0.03
     assert "weak_evidence=is_round_number" in case.priority_adjustment_reasons
+
+
+def test_l105_escalated_materiality_gets_case_priority_floor():
+    df = pd.DataFrame(
+        {
+            "document_id": ["DOC-1"],
+            "posting_date": pd.to_datetime(["2026-04-30"]),
+            "created_by": ["kim"],
+            "business_process": ["R2R"],
+            "gl_account": ["111000"],
+            "debit_amount": [1_500_000_000.0],
+            "credit_amount": [0.0],
+            "company_code": ["kr01"],
+            "document_type": ["KR"],
+        }
+    )
+    details = pd.DataFrame({"L1-05": [0.8]}, index=df.index)
+    detection_result = DetectionResult(
+        track_name="layer_b",
+        flagged_indices=[0],
+        scores=details.max(axis=1),
+        rule_flags=[RuleFlag("L1-05", "SelfApproval", 3, 1, len(df))],
+        details=details,
+        metadata={
+            "row_annotations": {
+                "L1-05": {0: {"bucket": "escalated_materiality"}}
+            }
+        },
+    )
+
+    result = build_phase1_case_result(
+        df,
+        [detection_result],
+        company_id="kr01",
+        batch_id="batch42",
+        dataset_id=None,
+        phase1_case_config={
+            "phase1_case": {
+                "top_n_cases": 50,
+                "top_n_per_theme": 10,
+                "priority_floors": [
+                    {
+                        "rule_id": "L1-05",
+                        "labels": ["escalated_materiality"],
+                        "min_priority_score": 0.80,
+                        "reason": "critical_self_approval",
+                    }
+                ],
+            }
+        },
+        generated_at=datetime(2026, 4, 22, 3, 15, 22, tzinfo=UTC),
+    )
+
+    case = next(case for case in result.cases if case.primary_theme == "control_failure")
+    assert case.priority_score == pytest.approx(0.80)
+    assert case.priority_band == "high"
+    assert "critical_self_approval" in case.priority_adjustment_reasons
 
 
 def test_save_and_load_phase1_case_result_roundtrip(monkeypatch):

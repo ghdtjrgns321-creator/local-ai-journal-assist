@@ -279,6 +279,17 @@ class TestS3ReversalType:
         result = _s3_reversal_type(df)
         assert result.iloc[0] > 0
 
+    def test_system_source_not_boosted(self) -> None:
+        df = pd.DataFrame(
+            {
+                "posting_date": pd.to_datetime(["2025-06-15"]),
+                "source": ["system"],
+                "fiscal_period": [6],
+            }
+        )
+        result = _s3_reversal_type(df)
+        assert result.iloc[0] == 0.0
+
     def test_missing_source_zero(self) -> None:
         df = pd.DataFrame({"posting_date": pd.to_datetime(["2025-06-15"])})
         result = _s3_reversal_type(df)
@@ -470,6 +481,70 @@ class TestC11ReversalEntry:
         annotations = result.attrs["row_annotations"]
         assert annotations[0]["interpretation_code"] == "candidate_reversal_clearing_reclass"
         assert annotations[0]["primary_signal"] == "S1"
+
+    def test_score_series_preserves_composite_reversal_score(self) -> None:
+        df = pd.DataFrame(
+            {
+                "document_id": ["D001", "D002"],
+                "gl_account": ["1000", "1000"],
+                "debit_amount": [1_000_000.0, 0.0],
+                "credit_amount": [0.0, 1_000_000.0],
+                "posting_date": pd.to_datetime(["2025-06-15", "2025-06-16"]),
+                "created_by": ["user_a", "user_a"],
+                "document_type": ["SA", "SA"],
+                "source": ["manual", "manual"],
+                "line_text": ["reclass accrual", "reclass accrual"],
+            }
+        )
+
+        result = c11_reversal_entry(df, score_threshold=0.3)
+
+        assert "score_series" in result.attrs
+        assert result.attrs["score_series"].loc[result].gt(0).all()
+        assert result.attrs["score_series"].loc[~result].eq(0).all()
+
+    def test_score_series_preserves_evidence_trigger_score_when_final_is_damped(self) -> None:
+        df = pd.DataFrame(
+            {
+                "document_id": ["D001", "D002"],
+                "gl_account": ["1000", "1000"],
+                "debit_amount": [1_000_000.0, 0.0],
+                "credit_amount": [0.0, 1_000_000.0],
+                "posting_date": pd.to_datetime(["2025-02-02", "2025-02-03"]),
+                "created_by": ["user_a", "user_b"],
+                "document_type": ["SA", "SA"],
+                "source": ["automated", "automated"],
+                "line_text": ["month start clearing", "month start clearing"],
+            }
+        )
+
+        result = c11_reversal_entry(df, score_threshold=0.3)
+
+        assert result.all()
+        assert result.attrs["score_series"].tolist() == [0.35, 0.35]
+
+    def test_annotations_preserve_non_integer_index(self) -> None:
+        df = pd.DataFrame(
+            {
+                "document_id": ["D001", "D002"],
+                "gl_account": ["1000", "1000"],
+                "debit_amount": [1_000_000.0, 0.0],
+                "credit_amount": [0.0, 1_000_000.0],
+                "posting_date": pd.to_datetime(["2025-06-15", "2025-06-16"]),
+                "created_by": ["user_a", "user_a"],
+                "document_type": ["SA", "SA"],
+                "source": ["manual", "manual"],
+                "line_text": ["reclass accrual", "reclass accrual"],
+            },
+            index=["row-a", "row-b"],
+        )
+
+        result = c11_reversal_entry(df, score_threshold=0.3)
+
+        assert result["row-a"]
+        assert result.attrs["row_annotations"]["row-a"]["interpretation_code"] == (
+            "candidate_reversal_clearing_reclass"
+        )
 
     def test_normal_entries_not_flagged(self) -> None:
         df = pd.DataFrame(

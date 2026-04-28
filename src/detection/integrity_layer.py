@@ -1,4 +1,4 @@
-"""Layer A: 데이터 무결성 탐지 (L1-01~L1-03).
+"""L1/L3 data-quality rule track (L1-01~L1-03, L3-01).
 
 Why: 후속 탐지(B·C 레이어)의 전제조건 검증.
      차대변 균형·필수필드 존재·계정 유효성을 행 단위 score로 산출.
@@ -144,9 +144,23 @@ class IntegrityDetector(BaseDetector):
 
         # Why: details DF — 행×룰 매트릭스, score = (severity/5) × flagged
         details_dict: dict[str, pd.Series] = {}
+        rule_breakdowns: dict[str, object] = {}
+        row_annotations: dict[str, object] = {}
         for rule_id, flagged in rule_results.items():
-            score = flagged * (SEVERITY_MAP[rule_id] / 5)
+            score_series = flagged.attrs.get("score_series") if hasattr(flagged, "attrs") else None
+            if score_series is not None:
+                score = pd.Series(score_series, index=df.index).fillna(0.0).astype(float)
+            else:
+                score = flagged * (SEVERITY_MAP[rule_id] / 5)
             details_dict[rule_id] = score
+            breakdown = flagged.attrs.get("breakdown") if hasattr(flagged, "attrs") else None
+            if breakdown:
+                rule_breakdowns[rule_id] = breakdown
+            annotations = (
+                flagged.attrs.get("row_annotations") if hasattr(flagged, "attrs") else None
+            )
+            if annotations:
+                row_annotations[rule_id] = annotations
 
         details = pd.DataFrame(details_dict, index=df.index).fillna(0.0)
 
@@ -174,7 +188,12 @@ class IntegrityDetector(BaseDetector):
             scores=scores,
             rule_flags=rule_flags,
             details=details,
-            metadata={"elapsed": round(time.monotonic() - t0, 6), "skipped_rules": skipped},
+            metadata={
+                "elapsed": round(time.monotonic() - t0, 6),
+                "skipped_rules": skipped,
+                "rule_breakdowns": rule_breakdowns,
+                "row_annotations": row_annotations,
+            },
             warnings=warnings,
         )
 
@@ -186,7 +205,9 @@ class IntegrityDetector(BaseDetector):
             self._logger.info("document_id 컬럼 부재 — L1-01 건너뜀")
             return None
 
-        diff = df["debit_amount"].fillna(0.0) - df["credit_amount"].fillna(0.0)
+        debit = pd.to_numeric(df["debit_amount"], errors="coerce").fillna(0.0)
+        credit = pd.to_numeric(df["credit_amount"], errors="coerce").fillna(0.0)
+        diff = debit - credit
 
         # Why: groupby()는 NaN 키를 기본 drop → 해당 행 누락 방지
         #      NaN document_id는 고유 더미 키로 개별 행 취급
@@ -196,7 +217,45 @@ class IntegrityDetector(BaseDetector):
             safe_doc_id.loc[nan_mask] = "_nan_" + nan_mask[nan_mask].index.astype(str)
 
         doc_diff = diff.groupby(safe_doc_id).transform("sum")
-        return (doc_diff.abs() > self._tolerance).astype(float)
+        debit_sum = debit.groupby(safe_doc_id).transform("sum").abs()
+        credit_sum = credit.groupby(safe_doc_id).transform("sum").abs()
+        base_amount = pd.concat([debit_sum, credit_sum], axis=1).max(axis=1).clip(lower=1.0)
+        imbalance_amount = doc_diff.abs()
+        imbalance_ratio = (imbalance_amount / base_amount).fillna(0.0).clip(lower=0.0)
+        flagged_mask = imbalance_amount > self._tolerance
+
+        score_series = pd.Series(0.0, index=df.index, dtype="float64")
+        score_series.loc[flagged_mask] = imbalance_ratio.loc[flagged_mask].map(
+            _l101_imbalance_score
+        )
+
+        result = flagged_mask.astype(float)
+        band_series = imbalance_ratio.map(_l101_imbalance_band)
+        result.attrs["score_series"] = score_series
+        result.attrs["breakdown"] = {
+            "flagged_rows": int(flagged_mask.sum()),
+            "flagged_docs": _nunique_documents(df, flagged_mask),
+            "score_bands": {
+                band: int((flagged_mask & band_series.eq(band)).sum())
+                for band in ("rounding_scale", "minor", "material", "severe")
+            },
+            "max_imbalance_ratio": float(imbalance_ratio.loc[flagged_mask].max())
+            if flagged_mask.any()
+            else 0.0,
+        }
+        row_annotations: dict[object, dict[str, object]] = {}
+        for idx in df.index[flagged_mask]:
+            row_annotations[idx] = {
+                "bucket": str(band_series.loc[idx]),
+                "score": float(score_series.loc[idx]),
+                "imbalance_amount": float(imbalance_amount.loc[idx]),
+                "imbalance_ratio": float(imbalance_ratio.loc[idx]),
+                "debit_sum": float(debit_sum.loc[idx]),
+                "credit_sum": float(credit_sum.loc[idx]),
+                "base_amount": float(base_amount.loc[idx]),
+            }
+        result.attrs["row_annotations"] = row_annotations
+        return result
 
     # ── L1-02: 필수필드 누락 ────────────────────────────────────
 
@@ -214,7 +273,7 @@ class IntegrityDetector(BaseDetector):
             self._logger.warning("schema.yaml 로드 실패: %s — 기본 필수 컬럼 사용", e)
             required_cols = [
                 "document_id", "company_code", "fiscal_year",
-                "posting_date", "document_date", "gl_account",
+                "fiscal_period", "posting_date", "document_date", "gl_account",
                 "debit_amount", "credit_amount", "document_type",
             ]
 
@@ -267,6 +326,15 @@ class IntegrityDetector(BaseDetector):
             valid = valid & normalized_account.ne("")
             if self._coa is not None:
                 valid = valid & normalized_account.isin(self._coa)
+        missing_context = process.eq("") | category.eq("") | normalized_account.eq("")
+        invalid_account_excluded = pd.Series(False, index=df.index)
+        if "gl_account" in df.columns and self._coa is not None:
+            invalid_account_excluded = (
+                process.ne("")
+                & category.ne("")
+                & normalized_account.ne("")
+                & ~normalized_account.isin(self._coa)
+            )
 
         denied_accounts = _process_account_match(
             process,
@@ -284,13 +352,13 @@ class IntegrityDetector(BaseDetector):
             cfg.get("process_disallowed_categories", {}),
             default=False,
         )
-        disallowed = denied_accounts | (~account_configured & disallowed)
+        category_mismatch = ~account_configured & disallowed
         allowed_keywords = _process_keyword_match(
             process,
             _combine_text_columns(df, ("line_text", "header_text")),
             cfg.get("process_allowed_keywords", {}),
         )
-        disallowed = disallowed & ~allowed_keywords
+        strict_mismatch = pd.Series(False, index=df.index)
 
         if bool(cfg.get("strict_allowed_categories", False)):
             allowed = _process_category_match(
@@ -299,13 +367,96 @@ class IntegrityDetector(BaseDetector):
                 cfg.get("process_allowed_categories", {}),
                 default=True,
             )
-            return (valid & (disallowed | ~allowed)).astype(float)
+            strict_mismatch = ~allowed
 
-        return (valid & disallowed).astype(float)
+        raw_disallowed = denied_accounts | category_mismatch | strict_mismatch
+        keyword_suppressed = valid & raw_disallowed & allowed_keywords
+        flagged_mask = valid & raw_disallowed & ~allowed_keywords
+        score_series = pd.Series(0.0, index=df.index)
+        exact_mask = flagged_mask & denied_accounts
+        category_mask = flagged_mask & ~denied_accounts & category_mismatch
+        strict_mask = flagged_mask & ~denied_accounts & ~category_mismatch & strict_mismatch
+        score_series.loc[exact_mask] = 0.65
+        score_series.loc[category_mask] = 0.45
+        score_series.loc[strict_mask] = 0.40
+
+        reason_counts = {
+            "exact_denied_account": int(exact_mask.sum()),
+            "category_mismatch": int(category_mask.sum()),
+            "strict_allowed_category_mismatch": int(strict_mask.sum()),
+        }
+        reason_counts = {key: value for key, value in reason_counts.items() if value > 0}
+        result = flagged_mask.astype(float)
+        breakdown = {
+            "flagged_rows": int(flagged_mask.sum()),
+            "exact_denied_rows": int(exact_mask.sum()),
+            "category_mismatch_rows": int(category_mask.sum()),
+            "strict_allowed_mismatch_rows": int(strict_mask.sum()),
+            "keyword_suppressed_rows": int(keyword_suppressed.sum()),
+            "invalid_account_excluded_rows": int(invalid_account_excluded.sum()),
+            "missing_context_rows": int(missing_context.sum()),
+            "reason_counts": reason_counts,
+        }
+        if "document_id" in df.columns:
+            breakdown.update({
+                "exact_denied_docs": _nunique_documents(df, exact_mask),
+                "category_mismatch_docs": _nunique_documents(df, category_mask),
+                "strict_allowed_mismatch_docs": _nunique_documents(df, strict_mask),
+                "keyword_suppressed_docs": _nunique_documents(df, keyword_suppressed),
+            })
+
+        row_annotations: dict[int, dict[str, object]] = {}
+        for idx in df.index[flagged_mask]:
+            matched_reasons: list[str] = []
+            if bool(denied_accounts.loc[idx]):
+                matched_reasons.append("exact_denied_account")
+            if bool(category_mismatch.loc[idx]):
+                matched_reasons.append("category_mismatch")
+            if bool(strict_mismatch.loc[idx]):
+                matched_reasons.append("strict_allowed_category_mismatch")
+            reason_code = matched_reasons[0] if matched_reasons else "category_mismatch"
+            row_annotations[int(idx)] = {
+                "reason_code": reason_code,
+                "matched_reason_codes": matched_reasons,
+                "score": float(score_series.loc[idx]),
+                "business_process": process.loc[idx],
+                "gl_account": normalized_account.loc[idx],
+                "account_category": category.loc[idx],
+                "keyword_suppressed": False,
+            }
+        result.attrs["score_series"] = score_series
+        result.attrs["breakdown"] = breakdown
+        result.attrs["row_annotations"] = row_annotations
+        return result
+
+
+def _l101_imbalance_score(ratio: float) -> float:
+    """Map document imbalance ratio to a PHASE1 signal score."""
+    if ratio <= 0.001:
+        return 0.15
+    if ratio <= 0.01:
+        return 0.30
+    if ratio <= 0.05:
+        return 0.65
+    return 0.90
+
+
+def _l101_imbalance_band(ratio: float) -> str:
+    if ratio <= 0.001:
+        return "rounding_scale"
+    if ratio <= 0.01:
+        return "minor"
+    if ratio <= 0.05:
+        return "material"
+    return "severe"
 
 
 def _has_any_column(df: pd.DataFrame, columns: tuple[str, ...]) -> bool:
     return any(col in df.columns for col in columns)
+
+
+def _nunique_documents(df: pd.DataFrame, mask: pd.Series) -> int:
+    return int(df.loc[mask, "document_id"].dropna().nunique())
 
 
 def _l301_config(audit_rules: dict | None) -> dict:

@@ -107,11 +107,30 @@ class EvidenceDetector(BaseDetector):
         """룰별 연속 점수 → scores, details, RuleFlag 통합."""
         # Why: severity/5.0 정규화 (RelationalDetector 패턴 동일)
         details = pd.DataFrame(index=df.index)
+        rule_breakdowns: dict[str, object] = {}
+        row_annotations: dict[str, object] = {}
         for rule_id, raw_scores in rule_results.items():
             severity_factor = SEVERITY_MAP[rule_id] / 5.0
-            details[rule_id] = (
-                raw_scores.reindex(df.index, fill_value=0.0) * severity_factor
+            score_series = (
+                raw_scores.attrs.get("score_series")
+                if hasattr(raw_scores, "attrs")
+                else None
             )
+            if score_series is not None:
+                base_scores = pd.Series(score_series, index=df.index).fillna(0.0)
+            else:
+                base_scores = raw_scores.reindex(df.index, fill_value=0.0)
+            details[rule_id] = base_scores * severity_factor
+            breakdown = raw_scores.attrs.get("breakdown") if hasattr(raw_scores, "attrs") else None
+            if breakdown:
+                rule_breakdowns[rule_id] = breakdown
+            annotations = (
+                raw_scores.attrs.get("row_annotations")
+                if hasattr(raw_scores, "attrs")
+                else None
+            )
+            if annotations:
+                row_annotations[rule_id] = annotations
 
         # Why: MAX 패턴 — 행별 최대 점수 (합산 아님)
         scores = details.max(axis=1).fillna(0.0)
@@ -131,7 +150,12 @@ class EvidenceDetector(BaseDetector):
             scores=scores,
             rule_flags=rule_flags,
             details=details,
-            metadata={"elapsed": elapsed, "skipped_rules": skipped},
+            metadata={
+                "elapsed": elapsed,
+                "skipped_rules": skipped,
+                "rule_breakdowns": rule_breakdowns,
+                "row_annotations": row_annotations,
+            },
             warnings=warnings,
         )
 
@@ -143,6 +167,11 @@ class EvidenceDetector(BaseDetector):
             scores=pd.Series(0.0, index=df.index),
             rule_flags=[],
             details=pd.DataFrame(index=df.index),
-            metadata={"elapsed": elapsed, "skipped_rules": []},
+            metadata={
+                "elapsed": elapsed,
+                "skipped_rules": [],
+                "rule_breakdowns": {},
+                "row_annotations": {},
+            },
             warnings=warnings,
         )

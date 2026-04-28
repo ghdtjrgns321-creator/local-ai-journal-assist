@@ -1,7 +1,7 @@
 """AccessAuditDetector — 접근감사/감사추적 독립 트랙 (WU-15).
 
 Why: 접근통제·변경이력·전표번호 연속성·승인 프로세스 검증을 독립 트랙으로 분리.
-     AA01은 change_log JOIN이 필요하여 기존 Layer B 단일 DF 패턴에 부적합.
+     AA01은 change_log JOIN이 필요하여 기존 fraud-rule 단일 DF 패턴에 부적합.
      RelationalDetector(doc_flow_df 주입)와 동일한 외부 DF 주입 패턴 사용.
 
 Note: LAYER_WEIGHTS에 의도적 미등록 — 성능 평가 후 가중치 배분 예정 (WU-03 Stacking).

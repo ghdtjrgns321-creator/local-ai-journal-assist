@@ -54,6 +54,30 @@ class TestA01UnbalancedEntry:
         # D2: diff=1.01 → tolerance 초과, 플래그
         assert result.scores.iloc[2] > 0.0
 
+    def test_score_reflects_imbalance_ratio(self):
+        """L1-01 score increases with imbalance / document total ratio."""
+        df = pd.DataFrame({
+            "document_id": ["D1", "D1", "D2", "D2", "D3", "D3"],
+            "debit_amount": [100_000.0, 0.0, 100_000.0, 0.0, 100_000.0, 0.0],
+            "credit_amount": [0.0, 99_950.0, 0.0, 99_000.0, 0.0, 50_000.0],
+            "gl_account": [1000, 2000, 1000, 2000, 1000, 2000],
+            "company_code": ["C1"] * 6,
+            "fiscal_year": [2025] * 6,
+            "posting_date": pd.to_datetime(["2025-01-01"] * 6),
+            "document_date": pd.to_datetime(["2025-01-01"] * 6),
+            "document_type": ["SA"] * 6,
+        })
+        detector = IntegrityDetector(tolerance=1.0)
+        result = detector.detect(df)
+
+        assert result.details["L1-01"].iloc[0] == pytest.approx(0.15)
+        assert result.details["L1-01"].iloc[2] == pytest.approx(0.30)
+        assert result.details["L1-01"].iloc[4] == pytest.approx(0.90)
+        annotations = result.metadata["row_annotations"]["L1-01"]
+        assert annotations[0]["bucket"] == "rounding_scale"
+        assert annotations[2]["bucket"] == "minor"
+        assert annotations[4]["bucket"] == "severe"
+
     def test_nan_debit_treated_as_zero(self):
         """debit NaN → fillna(0) 처리."""
         df = pd.DataFrame({
@@ -263,8 +287,11 @@ class TestL301MisclassifiedAccount:
             audit_rules=self._rules(),
         )
         result = detector.detect(df)
-        expected_score = SEVERITY_MAP["L3-01"] / 5
-        assert result.details["L3-01"].iloc[0] == pytest.approx(expected_score)
+        assert result.details["L3-01"].iloc[0] == pytest.approx(0.65)
+        breakdown = result.metadata["rule_breakdowns"]["L3-01"]
+        annotations = result.metadata["row_annotations"]["L3-01"]
+        assert breakdown["exact_denied_rows"] == 1
+        assert annotations[0]["reason_code"] == "exact_denied_account"
 
     def test_p2p_non_denied_revenue_account_not_flagged_when_exact_list_exists(self):
         df = pd.DataFrame({
@@ -306,7 +333,11 @@ class TestL301MisclassifiedAccount:
             audit_rules=self._rules(),
         )
         result = detector.detect(df)
-        assert result.details["L3-01"].iloc[0] > 0.0
+        assert result.details["L3-01"].iloc[0] == pytest.approx(0.65)
+        breakdown = result.metadata["rule_breakdowns"]["L3-01"]
+        annotations = result.metadata["row_annotations"]["L3-01"]
+        assert breakdown["exact_denied_docs"] == 1
+        assert annotations[0]["reason_code"] == "exact_denied_account"
 
     def test_category_fallback_applies_when_process_has_no_exact_account_list(self):
         df = pd.DataFrame({
@@ -327,7 +358,11 @@ class TestL301MisclassifiedAccount:
             audit_rules=self._rules(),
         )
         result = detector.detect(df)
-        assert result.details["L3-01"].iloc[0] > 0.0
+        assert result.details["L3-01"].iloc[0] == pytest.approx(0.45)
+        breakdown = result.metadata["rule_breakdowns"]["L3-01"]
+        annotations = result.metadata["row_annotations"]["L3-01"]
+        assert breakdown["category_mismatch_docs"] == 1
+        assert annotations[0]["reason_code"] == "category_mismatch"
 
     def test_invalid_account_owned_by_l103_not_l301(self):
         df = pd.DataFrame({
@@ -349,6 +384,8 @@ class TestL301MisclassifiedAccount:
         result = detector.detect(df)
         assert result.details["L1-03"].iloc[0] > 0.0
         assert result.details["L3-01"].iloc[0] == 0.0
+        breakdown = result.metadata["rule_breakdowns"]["L3-01"]
+        assert breakdown["invalid_account_excluded_rows"] == 1
 
     def test_allowed_keyword_suppresses_l301(self):
         df = pd.DataFrame({
@@ -370,6 +407,38 @@ class TestL301MisclassifiedAccount:
         )
         result = detector.detect(df)
         assert result.details["L3-01"].iloc[0] == 0.0
+        breakdown = result.metadata["rule_breakdowns"]["L3-01"]
+        assert breakdown["keyword_suppressed_rows"] == 1
+
+    def test_strict_allowed_category_mismatch_gets_review_score(self):
+        df = pd.DataFrame({
+            "document_id": ["D1"],
+            "debit_amount": [100.0],
+            "credit_amount": [100.0],
+            "gl_account": ["4100"],
+            "account_category": ["revenue"],
+            "business_process": ["P2P"],
+            "company_code": ["C1"],
+            "fiscal_year": [2025],
+            "posting_date": pd.to_datetime(["2025-01-01"]),
+            "document_date": pd.to_datetime(["2025-01-01"]),
+            "document_type": ["SA"],
+        })
+        rules = self._rules()
+        rules["l3_01_misclassified_account"]["strict_allowed_categories"] = True
+        rules["l3_01_misclassified_account"]["process_denied_accounts"] = {}
+        rules["l3_01_misclassified_account"]["process_disallowed_categories"] = {}
+        rules["l3_01_misclassified_account"]["process_allowed_categories"] = {
+            "P2P": ["expense"]
+        }
+        detector = IntegrityDetector(
+            chart_of_accounts={"4100"},
+            audit_rules=rules,
+        )
+        result = detector.detect(df)
+        assert result.details["L3-01"].iloc[0] == pytest.approx(0.40)
+        annotations = result.metadata["row_annotations"]["L3-01"]
+        assert annotations[0]["reason_code"] == "strict_allowed_category_mismatch"
 
 
 class TestDetectIntegration:
@@ -390,7 +459,7 @@ class TestDetectIntegration:
         detector = IntegrityDetector(chart_of_accounts=dt_coa)
         result = detector.detect(df)
 
-        a01_score = SEVERITY_MAP["L1-01"] / 5  # 1.0
+        a01_score = 0.90  # imbalance ratio 50 / 100 = 50%
         a03_score = SEVERITY_MAP["L1-03"] / 5  # 0.6
         # idx 2: L1-01+L1-03 동시 위반 → max(1.0, 0.6) = 1.0
         assert result.scores.iloc[2] == pytest.approx(max(a01_score, a03_score))

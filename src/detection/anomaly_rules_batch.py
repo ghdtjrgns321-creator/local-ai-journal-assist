@@ -10,6 +10,12 @@ import numpy as np
 import pandas as pd
 
 
+def _nunique_documents(df: pd.DataFrame, mask: pd.Series) -> int:
+    if "document_id" not in df.columns:
+        return 0
+    return int(df.loc[mask.reindex(df.index, fill_value=False), "document_id"].dropna().nunique())
+
+
 def c13_batch_anomaly(
     df: pd.DataFrame,
     batch_sources: list[str] | None = None,
@@ -26,18 +32,72 @@ def c13_batch_anomaly(
         return pd.Series(False, index=df.index)
 
     sources = batch_sources or [
-        "batch", "interface", "system", "auto", "if", "sys",
-        "BATCH", "INTERFACE", "SYSTEM", "AUTO", "IF", "SYS",
+        "batch", "interface", "system", "auto", "automated", "if", "sys",
+        "BATCH", "INTERFACE", "SYSTEM", "AUTO", "AUTOMATED", "IF", "SYS",
     ]
     source_values = df["source"].astype("string").str.strip().str.lower()
     is_batch = source_values.isin({str(source).strip().lower() for source in sources})
     if not is_batch.any():
         return pd.Series(False, index=df.index)
 
-    result = pd.Series(False, index=df.index)
-    result = result | _batch_period_end_concentration(df, is_batch, period_end_ratio)
-    result = result | _batch_simultaneous_creation(df, is_batch, simultaneous_threshold)
-    result = result | _batch_amount_outlier(df, is_batch, amount_zscore)
+    period_end_flags = _batch_period_end_concentration(df, is_batch, period_end_ratio)
+    simultaneous_flags = _batch_simultaneous_creation(df, is_batch, simultaneous_threshold)
+    amount_outlier_flags = _batch_amount_outlier(df, is_batch, amount_zscore)
+    result = (period_end_flags | simultaneous_flags | amount_outlier_flags).astype(bool)
+
+    score_series = pd.Series(0.0, index=df.index, dtype="float64")
+    score_series.loc[result] = 0.40
+
+    row_annotations: dict[object, dict[str, object]] = {}
+    optional_columns = (
+        "document_id",
+        "source",
+        "posting_date",
+        "is_period_end",
+        "debit_amount",
+        "credit_amount",
+    )
+    for idx in result[result].index:
+        reason_codes: list[str] = []
+        if bool(period_end_flags.loc[idx]):
+            reason_codes.append("period_end_concentration")
+        if bool(simultaneous_flags.loc[idx]):
+            reason_codes.append("simultaneous_creation")
+        if bool(amount_outlier_flags.loc[idx]):
+            reason_codes.append("amount_outlier")
+        annotation: dict[str, object] = {
+            "reason_codes": reason_codes,
+            "primary_reason": reason_codes[-1] if reason_codes else "batch_review",
+            "score": round(float(score_series.loc[idx]), 4),
+        }
+        for column in optional_columns:
+            if column in df.columns:
+                value = df.at[idx, column]
+                annotation[column] = None if pd.isna(value) else value
+        annotation_key = int(idx) if isinstance(idx, (int, np.integer)) else idx
+        row_annotations[annotation_key] = annotation
+
+    breakdown: dict[str, object] = {
+        "batch_review_rows": int(result.sum()),
+        "batch_source_rows": int(is_batch.sum()),
+        "period_end_concentration_rows": int(period_end_flags.sum()),
+        "simultaneous_creation_rows": int(simultaneous_flags.sum()),
+        "amount_outlier_rows": int(amount_outlier_flags.sum()),
+        "period_end_ratio_threshold": float(period_end_ratio),
+        "simultaneous_threshold": int(simultaneous_threshold),
+        "amount_zscore_threshold": float(amount_zscore),
+    }
+    if "document_id" in df.columns:
+        breakdown.update({
+            "batch_review_docs": _nunique_documents(df, result),
+            "period_end_concentration_docs": _nunique_documents(df, period_end_flags),
+            "simultaneous_creation_docs": _nunique_documents(df, simultaneous_flags),
+            "amount_outlier_docs": _nunique_documents(df, amount_outlier_flags),
+        })
+
+    result.attrs["score_series"] = score_series
+    result.attrs["breakdown"] = breakdown
+    result.attrs["row_annotations"] = row_annotations
     return result
 
 
@@ -67,17 +127,21 @@ def _batch_period_end_concentration(
 def _batch_simultaneous_creation(
     df: pd.DataFrame, is_batch: pd.Series, threshold: int,
 ) -> pd.Series:
-    """같은 날짜에 배치 전표 N건 이상 → 해당 일자 배치 행 플래그.
+    """같은 시각/일자에 배치 전표 N건 이상 → 해당 timestamp 배치 행 플래그.
 
     Why: 대량 동시 생성은 자동화 오류 또는 의도적 대량 전기 의심.
+         GL은 한 전표가 수백 line일 수 있으므로 document_id가 있으면 전표 수 기준으로 센다.
     """
     if "posting_date" not in df.columns:
         return pd.Series(False, index=df.index)
     batch_only = df[is_batch.fillna(False)]
     if batch_only.empty:
         return pd.Series(False, index=df.index)
-    # Why: 일자별 배치 건수 → 임계 초과 일자의 배치 행 플래그
-    daily_counts = batch_only.groupby("posting_date").size()
+    # Why: 전표 건수 기준. document_id 없을 때만 row count로 graceful fallback.
+    if "document_id" in batch_only.columns:
+        daily_counts = batch_only.groupby("posting_date")["document_id"].nunique()
+    else:
+        daily_counts = batch_only.groupby("posting_date").size()
     flagged_dates = daily_counts[daily_counts >= threshold].index
     return is_batch & df["posting_date"].isin(flagged_dates)
 

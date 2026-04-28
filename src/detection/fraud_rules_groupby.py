@@ -141,13 +141,17 @@ def _flag_exact_duplicate_entries(work: pd.DataFrame) -> pd.Series:
     """Flag exact same-day duplicates while suppressing same-document repeats."""
 
     result = pd.Series(0.0, index=work.index)
-    target = work.loc[work["_document_id"].ne(""), ["gl_account", "_base_amt", "_posting_ts", "_document_id"]]
+    target = work.loc[
+        work["_document_id"].ne(""),
+        ["gl_account", "_base_amt", "_posting_ts", "_document_id"],
+    ]
     if target.empty:
         return result
 
-    group_doc_counts = target.groupby(["gl_account", "_base_amt", "_posting_ts"], sort=False)["_document_id"].transform(
-        "nunique"
-    )
+    group_doc_counts = target.groupby(
+        ["gl_account", "_base_amt", "_posting_ts"],
+        sort=False,
+    )["_document_id"].transform("nunique")
     result.loc[target.index[group_doc_counts >= 2]] = 0.95
     return result
 
@@ -175,7 +179,13 @@ def _flag_reference_duplicate_entries(
         return result
 
     window = pd.Timedelta(days=window_days)
-    for _, group in target.groupby(["_partner_key", "_reference", "gl_account"], group_keys=False):
+    group_cols = ["_partner_key", "_reference", "gl_account"]
+    group_sizes = target.groupby(group_cols, sort=False)["_document_id"].transform("size")
+    target = target.loc[group_sizes >= 2]
+    if target.empty:
+        return result
+
+    for _, group in target.groupby(group_cols, group_keys=False):
         if len(group) < 2 or group["_document_id"].nunique() < 2:
             continue
         ordered = group.sort_values("_posting_ts")
@@ -215,28 +225,38 @@ def _flag_near_duplicate_entries(
     if target.empty:
         return result
 
-    for _, group in target.groupby(["_partner_key", "gl_account"], group_keys=False):
-        if len(group) < 2 or len(group) > max_group_size:
-            continue
+    group_cols = ["_partner_key", "gl_account"]
+    group_sizes = target.groupby(group_cols, sort=False)["_document_id"].transform("size")
+    target = target.loc[group_sizes.between(2, max_group_size)]
+    if target.empty:
+        return result
 
+    for _, group in target.groupby(group_cols, group_keys=False):
         ordered = group.sort_values("_posting_ts").reset_index(names="_row_index")
-        rows = ordered.to_dict("records")
+        rows = list(
+            ordered[
+                ["_row_index", "_posting_ts", "_base_amt", "_document_id", "_line_text"]
+            ].itertuples(index=False, name=None)
+        )
         for left_idx, left_row in enumerate(rows):
             for right_row in rows[left_idx + 1:]:
-                day_gap = abs((right_row["_posting_ts"] - left_row["_posting_ts"]).days)
+                day_gap = abs((right_row[1] - left_row[1]).days)
                 if day_gap > window_days:
                     break
-                if left_row["_document_id"] == right_row["_document_id"]:
+                if left_row[3] == right_row[3]:
                     continue
-                if not _is_amount_close(left_row["_base_amt"], right_row["_base_amt"], amount_tolerance):
+                if not _is_amount_close(
+                    left_row[2],
+                    right_row[2],
+                    amount_tolerance,
+                ):
                     continue
-                similarity = fuzz.token_sort_ratio(left_row["_line_text"], right_row["_line_text"])
+                similarity = fuzz.token_sort_ratio(left_row[4], right_row[4])
                 if similarity < fuzzy_threshold:
                     continue
                 pair_score = max(0.55, min(0.85, 0.60 + ((similarity - fuzzy_threshold) / 100.0)))
-                result.loc[[left_row["_row_index"], right_row["_row_index"]]] = result.loc[
-                    [left_row["_row_index"], right_row["_row_index"]]
-                ].clip(lower=pair_score)
+                pair_indices = [left_row[0], right_row[0]]
+                result.loc[pair_indices] = result.loc[pair_indices].clip(lower=pair_score)
 
     return result
 
@@ -262,40 +282,58 @@ def _flag_split_duplicate_entries(
     if target.empty:
         return result
 
-    for _, group in target.groupby(["_partner_key", "gl_account"], group_keys=False):
-        if len(group) < 3 or len(group) > max_group_size:
-            continue
+    group_cols = ["_partner_key", "gl_account"]
+    group_sizes = target.groupby(group_cols, sort=False)["_document_id"].transform("size")
+    target = target.loc[group_sizes.between(3, max_group_size)]
+    if target.empty:
+        return result
 
+    for _, group in target.groupby(group_cols, group_keys=False):
         ordered = group.sort_values("_posting_ts").reset_index(names="_row_index")
-        rows = ordered.to_dict("records")
+        rows = list(
+            ordered[
+                ["_row_index", "_posting_ts", "_base_amt", "_document_id"]
+            ].itertuples(index=False, name=None)
+        )
         for target_row in rows:
-            if target_row["_base_amt"] <= 0:
+            if target_row[2] <= 0:
                 continue
 
-            candidates: list[dict[str, object]] = []
+            candidates: list[tuple[object, pd.Timestamp, float, str]] = []
             for candidate_row in rows:
-                if candidate_row["_row_index"] == target_row["_row_index"]:
+                if candidate_row[0] == target_row[0]:
                     continue
-                if candidate_row["_document_id"] == target_row["_document_id"]:
+                if candidate_row[3] == target_row[3]:
                     continue
-                if candidate_row["_base_amt"] <= 0 or candidate_row["_base_amt"] >= target_row["_base_amt"]:
+                if (
+                    candidate_row[2] <= 0
+                    or candidate_row[2] >= target_row[2]
+                ):
                     continue
-                day_gap = abs((candidate_row["_posting_ts"] - target_row["_posting_ts"]).days)
+                day_gap = abs((candidate_row[1] - target_row[1]).days)
                 if day_gap > split_window_days:
                     continue
                 candidates.append(candidate_row)
 
             for left_row, right_row in combinations(candidates, 2):
-                if len({target_row["_document_id"], left_row["_document_id"], right_row["_document_id"]}) < 3:
+                if (
+                    len({
+                        target_row[3],
+                        left_row[3],
+                        right_row[3],
+                    })
+                    < 3
+                ):
                     continue
-                combined = float(left_row["_base_amt"]) + float(right_row["_base_amt"])
-                if not _is_amount_close(combined, float(target_row["_base_amt"]), amount_tolerance):
+                combined = float(left_row[2]) + float(right_row[2])
+                if not _is_amount_close(combined, float(target_row[2]), amount_tolerance):
                     continue
-                result.loc[
-                    [target_row["_row_index"], left_row["_row_index"], right_row["_row_index"]]
-                ] = result.loc[
-                    [target_row["_row_index"], left_row["_row_index"], right_row["_row_index"]]
-                ].clip(lower=0.75)
+                split_indices = [
+                    target_row[0],
+                    left_row[0],
+                    right_row[0],
+                ]
+                result.loc[split_indices] = result.loc[split_indices].clip(lower=0.75)
 
     return result
 
@@ -431,12 +469,19 @@ def _flag_document_duplicate_entries(
 
     docs["_line_signature_key"] = docs["line_signature"].map(repr)
     ref_docs = docs.loc[docs["reference_norm"].astype(str).ne("")].copy()
-    blank_docs = docs.loc[docs["reference_norm"].astype(str).eq("") & docs["partner_key"].astype(str).ne("")].copy()
+    blank_docs = docs.loc[
+        docs["reference_norm"].astype(str).eq("")
+        & docs["partner_key"].astype(str).ne("")
+    ].copy()
 
-    groups: list[pd.DataFrame] = []
     ref_grouping_cols = ["company_code", "business_process", "document_type", "reference_norm"]
-    for _, group in ref_docs.groupby(ref_grouping_cols, dropna=False, sort=False):
-        groups.append(group)
+    if not ref_docs.empty:
+        ref_sizes = ref_docs.groupby(
+            ref_grouping_cols,
+            dropna=False,
+            sort=False,
+        )["document_id"].transform("size")
+        ref_docs = ref_docs.loc[ref_sizes.between(2, max_group_size)]
 
     blank_grouping_cols = [
         "company_code",
@@ -445,45 +490,61 @@ def _flag_document_duplicate_entries(
         "partner_key",
         "_line_signature_key",
     ]
-    for _, group in blank_docs.groupby(blank_grouping_cols, dropna=False, sort=False):
-        groups.append(group)
+    if not blank_docs.empty:
+        blank_sizes = blank_docs.groupby(
+            blank_grouping_cols,
+            dropna=False,
+            sort=False,
+        )["document_id"].transform("size")
+        blank_docs = blank_docs.loc[blank_sizes.between(2, max_group_size)]
 
-    for group in groups:
-        if len(group) < 2 or len(group) > max_group_size:
-            continue
-        ordered = group.sort_values("posting_date").reset_index(drop=True)
-        records = ordered.to_dict("records")
-        for left_pos, left in enumerate(records):
-            for right in records[left_pos + 1:]:
-                day_gap = right["posting_date"] - left["posting_date"]
-                if day_gap > window:
-                    break
-                if left["document_id"] == right["document_id"]:
-                    continue
-                if not _amount_signatures_close(
-                    left["line_signature"],
-                    right["line_signature"],
-                    amount_tolerance,
-                ):
-                    continue
+    grouped_iterables = [
+        ref_docs.groupby(ref_grouping_cols, dropna=False, sort=False),
+        blank_docs.groupby(blank_grouping_cols, dropna=False, sort=False),
+    ]
+    for grouped in grouped_iterables:
+        for _, group in grouped:
+            ordered = group.sort_values("posting_date").reset_index(drop=True)
+            records = list(ordered.itertuples(index=False))
+            for left_pos, left in enumerate(records):
+                for right in records[left_pos + 1:]:
+                    day_gap = right.posting_date - left.posting_date
+                    if day_gap > window:
+                        break
+                    if left.document_id == right.document_id:
+                        continue
+                    if not _amount_signatures_close(
+                        left.line_signature,
+                        right.line_signature,
+                        amount_tolerance,
+                    ):
+                        continue
 
-                same_reference = bool(left["reference_norm"]) and left["reference_norm"] == right["reference_norm"]
-                same_partner = bool(left["partner_key"]) and left["partner_key"] == right["partner_key"]
-                text_similarity = fuzz.token_sort_ratio(left["text_signature"], right["text_signature"])
-                text_match = text_similarity >= max(70, fuzzy_threshold - 10)
+                    same_reference = (
+                        bool(left.reference_norm)
+                        and left.reference_norm == right.reference_norm
+                    )
+                    same_partner = (
+                        bool(left.partner_key)
+                        and left.partner_key == right.partner_key
+                    )
+                    text_similarity = fuzz.token_sort_ratio(
+                        left.text_signature,
+                        right.text_signature,
+                    )
+                    text_match = text_similarity >= max(70, fuzzy_threshold - 10)
 
-                if same_reference:
-                    pair_score = 0.92 if text_match else 0.88
-                elif same_partner and text_match:
-                    pair_score = 0.82
-                else:
-                    continue
+                    if same_reference:
+                        pair_score = 0.92 if text_match else 0.88
+                    elif same_partner and text_match:
+                        pair_score = 0.82
+                    else:
+                        continue
 
-                target_indices = list(left["row_indices"]) + list(right["row_indices"])
-                result.loc[target_indices] = result.loc[target_indices].clip(lower=pair_score)
+                    target_indices = list(left.row_indices) + list(right.row_indices)
+                    result.loc[target_indices] = result.loc[target_indices].clip(lower=pair_score)
 
     return result
-
 
 def b04_duplicate_payment(
     df: pd.DataFrame,
@@ -560,9 +621,12 @@ def b04_duplicate_payment(
     if doc_target.empty:
         return result
 
+    doc_target["posting_date"] = pd.to_datetime(doc_target["posting_date"], errors="coerce")
     doc_target["_reference_norm"] = doc_target["_reference"].map(_normalize_reference)
     window = pd.Timedelta(days=window_days)
     flagged_doc_ids: set[str] = set()
+    doc_annotations: dict[str, dict[str, object]] = {}
+    suppressed_doc_ids: set[str] = set()
 
     ref_cols = ["_partner_key", "_reference_norm"]
     if "company_code" in doc_target.columns:
@@ -573,17 +637,35 @@ def b04_duplicate_payment(
         if len(group) < 2:
             continue
         ordered = group.sort_values("posting_date")
-        seen: list[tuple[pd.Timestamp, float]] = []
+        seen: list[dict[str, object]] = []
         for _, row in ordered.iterrows():
+            if pd.isna(row["posting_date"]):
+                continue
             amount = float(row["_base_amt"])
             ratio_tolerance = abs(amount) * reference_amount_tolerance
             tolerance = max(min(ratio_tolerance, reference_amount_cap), 1.0)
-            if any(
-                abs(amount - prev_amount) <= tolerance and (row["posting_date"] - prev_date) <= window
-                for prev_date, prev_amount in seen
-            ):
-                flagged_doc_ids.add(str(row["document_id"]))
-            seen.append((row["posting_date"], amount))
+            for prev in seen:
+                day_gap = row["posting_date"] - prev["posting_date"]
+                if abs(amount - float(prev["amount"])) <= tolerance and day_gap <= window:
+                    doc_id = str(row["document_id"])
+                    flagged_doc_ids.add(doc_id)
+                    doc_annotations[doc_id] = {
+                        "reason_code": "reference_match",
+                        "confidence": 0.9,
+                        "confidence_band": "high",
+                        "matched_document_id": str(prev["document_id"]),
+                        "partner_key": str(row["_partner_key"]),
+                        "reference_norm": str(row["_reference_norm"]),
+                        "amount": amount,
+                        "matched_amount": float(prev["amount"]),
+                        "day_gap": int(day_gap.days),
+                    }
+                    break
+            seen.append({
+                "document_id": str(row["document_id"]),
+                "posting_date": row["posting_date"],
+                "amount": amount,
+            })
 
     blank_target = doc_target.loc[doc_target["_reference_norm"].eq("")].copy()
     if not blank_target.empty:
@@ -593,23 +675,78 @@ def b04_duplicate_payment(
             null_cols.insert(0, "company_code")
         for _, group in blank_target.groupby(null_cols, group_keys=False):
             recurring_mask.loc[group.index] = _is_recurring_payment_series(group[["posting_date"]])
+        suppressed_doc_ids.update(blank_target.loc[recurring_mask, "document_id"].astype(str))
         blank_target = blank_target.loc[~recurring_mask]
 
         all_null_cols = list(null_cols)
         for _, group in doc_target.groupby(all_null_cols, group_keys=False):
-            blank_ids = set(blank_target.loc[blank_target.index.intersection(group.index), "document_id"].astype(str))
+            blank_group = blank_target.loc[blank_target.index.intersection(group.index)]
+            blank_ids = set(blank_group["document_id"].astype(str))
             if not blank_ids:
                 continue
             ordered = group.sort_values("posting_date")
-            prev_date: pd.Timestamp | None = None
+            prev_row: pd.Series | None = None
             for _, row in ordered.iterrows():
-                if str(row["document_id"]) in blank_ids and prev_date is not None and (row["posting_date"] - prev_date) <= window:
-                    flagged_doc_ids.add(str(row["document_id"]))
-                prev_date = row["posting_date"]
+                if pd.isna(row["posting_date"]):
+                    continue
+                doc_id = str(row["document_id"])
+                if doc_id in blank_ids and prev_row is not None:
+                    day_gap = row["posting_date"] - prev_row["posting_date"]
+                    if day_gap <= window:
+                        matched_reference = str(prev_row["_reference_norm"])
+                        reason_code = (
+                            "mixed_reference_fallback"
+                            if matched_reference
+                            else "blank_reference_fallback"
+                        )
+                        confidence = 0.7 if matched_reference else 0.6
+                        flagged_doc_ids.add(doc_id)
+                        doc_annotations[doc_id] = {
+                            "reason_code": reason_code,
+                            "confidence": confidence,
+                            "confidence_band": "medium",
+                            "matched_document_id": str(prev_row["document_id"]),
+                            "partner_key": str(row["_partner_key"]),
+                            "reference_norm": str(row["_reference_norm"]),
+                            "amount": float(row["_base_amt"]),
+                            "matched_amount": float(prev_row["_base_amt"]),
+                            "day_gap": int(day_gap.days),
+                        }
+                prev_row = row
 
     if flagged_doc_ids:
         result.loc[target.loc[target["_document_id"].isin(flagged_doc_ids)].index] = True
 
+    score_series = pd.Series(0.0, index=df.index)
+    row_annotations: dict[object, dict[str, object]] = {}
+    reason_counts = {
+        "reference_match": 0,
+        "mixed_reference_fallback": 0,
+        "blank_reference_fallback": 0,
+    }
+    for doc_id, annotation in doc_annotations.items():
+        doc_row_indices = target.loc[target["_document_id"].eq(doc_id)].index
+        if doc_row_indices.empty:
+            continue
+        score = float(annotation["confidence"])
+        score_series.loc[doc_row_indices] = score
+        reason_code = str(annotation["reason_code"])
+        reason_counts[reason_code] = reason_counts.get(reason_code, 0) + 1
+        for idx in doc_row_indices:
+            row_annotations[idx] = annotation.copy()
+
+    result.attrs["score_series"] = score_series
+    result.attrs["breakdown"] = {
+        "flagged_rows": int(result.sum()),
+        "flagged_docs": int(len(flagged_doc_ids)),
+        "reason_counts": {key: value for key, value in reason_counts.items() if value > 0},
+        "reference_match_docs": int(reason_counts.get("reference_match", 0)),
+        "mixed_reference_fallback_docs": int(reason_counts.get("mixed_reference_fallback", 0)),
+        "blank_reference_fallback_docs": int(reason_counts.get("blank_reference_fallback", 0)),
+        "recurring_suppressed_docs": int(len(suppressed_doc_ids)),
+        "partner_key_coverage_ratio": float(populated_partner.mean()),
+    }
+    result.attrs["row_annotations"] = row_annotations
     return result
 
 
@@ -624,7 +761,7 @@ def b05_duplicate_entry(
 ) -> pd.Series:
     """L2-03 duplicate entry with exact, reference, near, and split signals."""
 
-    required = ["gl_account", "posting_date", "debit_amount", "credit_amount"]
+    required = ["document_id", "gl_account", "posting_date", "debit_amount", "credit_amount"]
     missing = [c for c in required if c not in df.columns]
     if missing:
         return pd.Series(False, index=df.index)
@@ -669,7 +806,7 @@ def b05_duplicate_entry(
 
     reason_counts: dict[str, int] = {}
     confidence_band_counts = {"high": 0, "medium": 0, "low": 0}
-    row_annotations: dict[int, dict[str, object]] = {}
+    row_annotations: dict[object, dict[str, object]] = {}
     for idx in confidence[confidence > 0].index:
         row_scores = score_frame.loc[idx]
         matched = row_scores[row_scores > 0].sort_values(ascending=False)
@@ -683,7 +820,7 @@ def b05_duplicate_entry(
             confidence_band = "low"
         reason_counts[primary_reason] = reason_counts.get(primary_reason, 0) + 1
         confidence_band_counts[confidence_band] += 1
-        row_annotations[int(idx)] = {
+        row_annotations[idx] = {
             "reason_code": primary_reason,
             "matched_reason_codes": matched.index.tolist(),
             "confidence": round(primary_confidence, 4),
@@ -738,7 +875,9 @@ def _row_text(df: pd.DataFrame) -> pd.Series:
 
     line = df["line_text"] if "line_text" in df.columns else pd.Series("", index=df.index)
     header = df["header_text"] if "header_text" in df.columns else pd.Series("", index=df.index)
-    return (line.fillna("").astype(str) + " " + header.fillna("").astype(str)).str.strip().str.lower()
+    return (
+        line.fillna("").astype(str) + " " + header.fillna("").astype(str)
+    ).str.strip().str.lower()
 
 
 def _contains_any_keyword(text: str, keywords: tuple[str, ...]) -> bool:
@@ -781,12 +920,40 @@ def b11_expense_capitalization(
 
     score_series = pd.Series(0.0, index=df.index)
     flagged = pd.Series(False, index=df.index)
-    row_annotations: dict[int, dict[str, object]] = {}
+    row_annotations: dict[object, dict[str, object]] = {}
     immediate_rows = 0
     review_rows = 0
     reason_counts: dict[str, int] = {}
+    confidence_band_counts = {"high": 0, "medium": 0}
+    queue_counts = {"immediate": 0, "review": 0}
+    immediate_doc_ids: set[str] = set()
+    review_doc_ids: set[str] = set()
+    reason_doc_ids: dict[str, set[str]] = {}
+    modifier_row_counts: dict[str, int] = {}
+    normal_context_suppressed_doc_ids: set[str] = set()
 
-    for _, group in df.groupby("document_id", sort=False):
+    candidate_doc_ids = pd.Index(df.loc[asset_mask, "document_id"]).intersection(
+        pd.Index(df.loc[expense_mask, "document_id"])
+    )
+    if candidate_doc_ids.empty:
+        flagged.attrs["score_series"] = score_series
+        flagged.attrs["breakdown"] = {
+            "immediate_rows": immediate_rows,
+            "review_rows": review_rows,
+            "queue_counts": queue_counts,
+            "confidence_band_counts": confidence_band_counts,
+            "immediate_docs": 0,
+            "review_docs": 0,
+            "reason_counts": reason_counts,
+            "reason_doc_counts": {},
+            "modifier_row_counts": modifier_row_counts,
+            "normal_context_suppressed_docs": 0,
+        }
+        flagged.attrs["row_annotations"] = row_annotations
+        return flagged
+
+    candidate_df = df.loc[df["document_id"].isin(candidate_doc_ids)]
+    for doc_id, group in candidate_df.groupby("document_id", sort=False):
         asset_rows = group.loc[asset_mask.loc[group.index]]
         expense_rows = group.loc[expense_mask.loc[group.index]]
         if asset_rows.empty or expense_rows.empty:
@@ -837,10 +1004,12 @@ def b11_expense_capitalization(
 
         matched_text = text.loc[target_indices]
         suspicious_keyword_hit = any(
-            _contains_any_keyword(str(value), cfg["suspicious_keywords"]) for value in matched_text.tolist()
+            _contains_any_keyword(str(value), cfg["suspicious_keywords"])
+            for value in matched_text.tolist()
         ) or _contains_any_keyword(doc_text, cfg["suspicious_keywords"])
         normal_keyword_hit = any(
-            _contains_any_keyword(str(value), cfg["normal_keywords"]) for value in matched_text.tolist()
+            _contains_any_keyword(str(value), cfg["normal_keywords"])
+            for value in matched_text.tolist()
         ) or _contains_any_keyword(doc_text, cfg["normal_keywords"])
         suspicious_source_hit = source.isin(cfg["suspicious_sources"]).any()
         suspicious_process_hit = process.isin(cfg["suspicious_processes"]).any()
@@ -859,18 +1028,27 @@ def b11_expense_capitalization(
 
         confidence = max(0.0, min(0.95, confidence))
         if confidence < review_threshold:
+            if normal_keyword_hit or normal_doc_type_hit:
+                normal_context_suppressed_doc_ids.add(str(doc_id))
             continue
 
         if confidence >= immediate_threshold:
             confidence_band = "high"
             queue_label = "immediate"
             immediate_rows += len(target_indices)
+            confidence_band_counts["high"] += len(target_indices)
+            queue_counts["immediate"] += len(target_indices)
+            immediate_doc_ids.add(str(doc_id))
         else:
             confidence_band = "medium"
             queue_label = "review"
             review_rows += len(target_indices)
+            confidence_band_counts["medium"] += len(target_indices)
+            queue_counts["review"] += len(target_indices)
+            review_doc_ids.add(str(doc_id))
 
         reason_counts[primary_reason] = reason_counts.get(primary_reason, 0) + len(target_indices)
+        reason_doc_ids.setdefault(primary_reason, set()).add(str(doc_id))
         flagged.loc[target_indices] = True
         score_series.loc[target_indices] = confidence
         matched_reasons = [primary_reason]
@@ -885,8 +1063,13 @@ def b11_expense_capitalization(
         if normal_doc_type_hit:
             matched_reasons.append("normal_document_type")
 
+        for reason in matched_reasons:
+            if reason == primary_reason:
+                continue
+            modifier_row_counts[reason] = modifier_row_counts.get(reason, 0) + len(target_indices)
+
         for idx in target_indices:
-            row_annotations[int(idx)] = {
+            row_annotations[idx] = {
                 "reason_code": primary_reason,
                 "matched_reason_codes": matched_reasons,
                 "confidence": round(confidence, 4),
@@ -898,7 +1081,17 @@ def b11_expense_capitalization(
     flagged.attrs["breakdown"] = {
         "immediate_rows": immediate_rows,
         "review_rows": review_rows,
+        "queue_counts": queue_counts,
+        "confidence_band_counts": confidence_band_counts,
+        "immediate_docs": len(immediate_doc_ids),
+        "review_docs": len(review_doc_ids),
         "reason_counts": reason_counts,
+        "reason_doc_counts": {
+            reason: len(doc_ids)
+            for reason, doc_ids in reason_doc_ids.items()
+        },
+        "modifier_row_counts": modifier_row_counts,
+        "normal_context_suppressed_docs": len(normal_context_suppressed_doc_ids),
     }
     flagged.attrs["row_annotations"] = row_annotations
     return flagged

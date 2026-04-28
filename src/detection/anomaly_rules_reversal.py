@@ -6,7 +6,6 @@ import logging
 import re
 import time
 
-import duckdb
 import numpy as np
 import pandas as pd
 
@@ -359,60 +358,59 @@ def _s1_one_to_one_match(
             large_groups,
             _LARGE_GROUP_WARN,
         )
+    positives = doc_work.loc[doc_work["net"] > 0]
+    negatives = doc_work.loc[doc_work["net"] < 0]
+    if positives.empty or negatives.empty:
+        return pd.Series(False, index=df.index)
 
-    candidate_sql = f"""
-        SELECT
-            p.document_id AS pos_document_id,
-            n.document_id AS neg_document_id
-        FROM doc_work p
-        JOIN doc_work n
-          ON p.gl_account = n.gl_account
-         AND p.abs_amt = n.abs_amt
-         AND p.net > 0
-         AND n.net < 0
-         AND p.document_id < n.document_id
-         AND ABS(date_diff('day', p.posting_date, n.posting_date)) <= {int(match_window_days)}
-    """
-    try:
-        con = duckdb.connect(":memory:")
-        con.register("doc_work", doc_work)
-        candidate_pairs = con.execute(candidate_sql).fetchdf()
-    finally:
-        try:
-            con.close()
-        except Exception:
-            pass
-
+    candidate_pairs = positives.merge(
+        negatives,
+        on=["gl_account", "abs_amt"],
+        suffixes=("_pos", "_neg"),
+    )
     if candidate_pairs.empty:
         return pd.Series(False, index=df.index)
 
-    row_by_key = {
-        (str(row["document_id"]), str(row["gl_account"])): row
-        for row in doc_work.to_dict("records")
-    }
+    day_gap = (
+        candidate_pairs["posting_date_pos"] - candidate_pairs["posting_date_neg"]
+    ).abs().dt.days
+    context_score = (
+        (
+            candidate_pairs["reference_norm_pos"].ne("")
+            & candidate_pairs["reference_norm_pos"].eq(candidate_pairs["reference_norm_neg"])
+        ).astype(int) * 2
+        + (
+            candidate_pairs["created_by_norm_pos"].ne("")
+            & candidate_pairs["created_by_norm_pos"].eq(candidate_pairs["created_by_norm_neg"])
+        ).astype(int)
+        + (
+            candidate_pairs["document_type_norm_pos"].ne("")
+            & candidate_pairs["document_type_norm_pos"].eq(
+                candidate_pairs["document_type_norm_neg"],
+            )
+        ).astype(int)
+        + (
+            candidate_pairs["line_text_norm_pos"].ne("")
+            & candidate_pairs["line_text_norm_pos"].eq(candidate_pairs["line_text_norm_neg"])
+        ).astype(int)
+        + (
+            candidate_pairs["header_text_norm_pos"].ne("")
+            & candidate_pairs["header_text_norm_pos"].eq(candidate_pairs["header_text_norm_neg"])
+        ).astype(int)
+        + (candidate_pairs["line_keyword_pos"] | candidate_pairs["line_keyword_neg"]).astype(int)
+    )
+    candidate_pairs = candidate_pairs.loc[
+        candidate_pairs["document_id_pos"].lt(candidate_pairs["document_id_neg"])
+        & day_gap.le(int(match_window_days))
+        & context_score.ge(2)
+    ]
+    if candidate_pairs.empty:
+        return pd.Series(False, index=df.index)
+
     matched_doc_ids: set[str] = set()
     for pair in candidate_pairs.itertuples(index=False):
-        pos_document_id = str(pair.pos_document_id)
-        neg_document_id = str(pair.neg_document_id)
-        pos_rows = doc_work[doc_work["document_id"].astype(str) == pos_document_id]
-        neg_rows = doc_work[doc_work["document_id"].astype(str) == neg_document_id]
-        if pos_rows.empty or neg_rows.empty:
-            continue
-        shared_accounts = set(pos_rows["gl_account"].astype(str)) & set(
-            neg_rows["gl_account"].astype(str)
-        )
-        for gl_account in shared_accounts:
-            pos = row_by_key.get((pos_document_id, str(gl_account)))
-            neg = row_by_key.get((neg_document_id, str(gl_account)))
-            if pos is None or neg is None:
-                continue
-            if pos["abs_amt"] != neg["abs_amt"] or not (pos["net"] > 0 and neg["net"] < 0):
-                continue
-            if _pair_context_score(pos, neg) < 2:
-                continue
-            matched_doc_ids.add(pos_document_id)
-            matched_doc_ids.add(neg_document_id)
-            break
+        matched_doc_ids.add(str(pair.document_id_pos))
+        matched_doc_ids.add(str(pair.document_id_neg))
 
     return pd.Series(df["document_id"].astype(str).isin(matched_doc_ids), index=df.index)
 
@@ -489,25 +487,29 @@ def _s2_rolling_zero_out(
             continue
 
         dates = group["posting_date"].tolist()
+        net_values = group["net"].to_numpy(dtype="float64")
+        gross_values = group["gross"].to_numpy(dtype="float64")
+        net_prefix = np.concatenate(([0.0], np.cumsum(net_values)))
+        gross_prefix = np.concatenate(([0.0], np.cumsum(gross_values)))
         left = 0
         for right in range(len(group)):
             while dates[right] - dates[left] > delta:
                 left += 1
-            window = group.iloc[left : right + 1]
-            if len(window) < 2:
+            if (right - left + 1) < 2:
                 continue
-            if window["document_id"].nunique() < 2:
-                continue
-            if _window_context_score(window) < 2:
-                continue
-            window_net = float(window["net"].sum())
-            window_gross = float(window["gross"].sum())
+            window_net = float(net_prefix[right + 1] - net_prefix[left])
+            window_gross = float(gross_prefix[right + 1] - gross_prefix[left])
             if window_gross <= 0:
                 continue
             if (
                 abs(window_net) < zero_threshold
                 and abs(window_net) / window_gross < _NET_GROSS_RATIO_THRESHOLD
             ):
+                window = group.iloc[left : right + 1]
+                if window["document_id"].nunique() < 2:
+                    continue
+                if _window_context_score(window) < 2:
+                    continue
                 matched_doc_ids.update(window["document_id"].astype(str).tolist())
 
     if not matched_doc_ids:
@@ -552,14 +554,15 @@ def _s3_reversal_type(df: pd.DataFrame) -> pd.Series:
 
     posting_date = pd.to_datetime(df["posting_date"], errors="coerce")
     source = df["source"].astype(str).str.lower()
-    is_auto = source.isin(["auto", "automated", "recurring"])
+    is_auto = source.isin(["auto", "automated", "recurring", "batch", "interface", "system"])
+    is_manual = source.isin(["manual", "adjustment"])
     is_month_start = posting_date.dt.day <= 5
     is_january = posting_date.dt.month == 1
 
     result = pd.Series(0.0, index=df.index)
     result[is_auto & is_month_start & is_january] = -_W_S3
     result[is_auto & is_month_start & ~is_january] = -(_W_S3 * 0.67)
-    result[~is_auto] = _W_S3
+    result[is_manual] = _W_S3
     return result
 
 
@@ -635,7 +638,7 @@ def _build_row_annotations(
         if bool(s4.loc[index]):
             reason_parts.append("line text includes a reversal keyword")
 
-        annotations[int(index)] = {
+        annotations[index] = {
             "interpretation_code": interpretation_code,
             "interpretation_label": interpretation_label,
             "primary_signal": primary_signal,
@@ -731,10 +734,16 @@ def c11_reversal_entry(
     flagged = (
         (final_score >= score_threshold) | (evidence_score >= score_threshold)
     ) & has_reversal_pattern
+    score_basis = pd.concat(
+        [final_score.rename("final_score"), evidence_score.rename("evidence_score")],
+        axis=1,
+    ).max(axis=1)
+    score_series = score_basis.where(flagged, 0.0).fillna(0.0)
     flagged.attrs["breakdown"] = {
         "high_confidence_count": int((flagged & (s0 | s2b)).sum()),
         "candidate_count": int((flagged & ~(s0 | s2b)).sum()),
     }
+    flagged.attrs["score_series"] = score_series
     flagged.attrs["row_annotations"] = _build_row_annotations(
         flagged,
         s0=s0,

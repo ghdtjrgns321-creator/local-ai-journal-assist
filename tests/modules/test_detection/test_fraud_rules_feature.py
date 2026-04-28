@@ -61,6 +61,50 @@ class TestL2_01:
         df = pd.DataFrame({"debit_amount": [100.0]})
         assert not b02_near_threshold(df).any()
 
+    def test_exposes_bucket_scores_and_annotations(self) -> None:
+        df = pd.DataFrame({
+            "is_near_threshold": [True, True, True, False, False],
+            "near_threshold_bucket": [
+                "lower_band",
+                "close_band",
+                "razor_band",
+                "none",
+                "unresolved_limit",
+            ],
+            "near_threshold_amount": [91.0, 96.0, 99.0, 80.0, 95.0],
+            "near_threshold_limit_amount": [100.0, 100.0, 100.0, 100.0, pd.NA],
+            "near_threshold_ratio_to_limit": [0.91, 0.96, 0.99, 0.80, pd.NA],
+            "near_threshold_gap_amount": [9.0, 4.0, 1.0, 20.0, pd.NA],
+            "near_threshold_gap_ratio": [0.09, 0.04, 0.01, 0.20, pd.NA],
+            "near_threshold_limit_resolved": [True, True, True, True, False],
+        })
+
+        result = b02_near_threshold(df)
+
+        assert result.tolist() == [True, True, True, False, False]
+        assert result.attrs["score_series"].tolist() == [0.45, 0.60, 0.75, 0.0, 0.0]
+        assert result.attrs["breakdown"]["bucket_counts"] == {
+            "lower_band": 1,
+            "close_band": 1,
+            "razor_band": 1,
+        }
+        assert result.attrs["breakdown"]["unresolved_limit_rows"] == 1
+        assert result.attrs["row_annotations"][2]["bucket"] == "razor_band"
+        assert result.attrs["row_annotations"][2]["near_threshold_gap_ratio"] == 0.01
+
+    def test_annotations_preserve_non_integer_index(self) -> None:
+        df = pd.DataFrame(
+            {
+                "is_near_threshold": [True],
+                "near_threshold_bucket": ["razor_band"],
+            },
+            index=["row-a"],
+        )
+
+        result = b02_near_threshold(df)
+
+        assert result.attrs["row_annotations"]["row-a"]["bucket"] == "razor_band"
+
 
 class TestL1_04:
     def test_exceeds_flagged(self, feature_df: pd.DataFrame) -> None:
@@ -73,6 +117,65 @@ class TestL1_04:
         result = b03_exceeds_threshold(feature_df)
         assert not result[1]
 
+    def test_exposes_bucket_scores_and_annotations(self) -> None:
+        df = pd.DataFrame({
+            "exceeds_threshold": [True, True, True, False],
+            "approval_excess_bucket": ["boundary", "severe", "non_approver", "none"],
+            "document_approval_amount": [105.0, 175.0, 50.0, 90.0],
+            "approver_limit_amount": [100.0, 100.0, 0.0, 100.0],
+            "approval_excess_amount": [5.0, 75.0, 50.0, 0.0],
+            "approval_excess_ratio": [0.05, 0.75, pd.NA, pd.NA],
+            "approval_limit_resolved": [True, True, True, True],
+            "approver_can_approve_je": [True, True, False, True],
+            "approval_level": [1, 2, 1, 0],
+        })
+
+        result = b03_exceeds_threshold(df)
+
+        assert result.tolist() == [False, True, True, False]
+        assert result.attrs["score_series"].tolist() == [0.0, 0.75, 0.90, 0.0]
+        assert result.attrs["review_score_series"].tolist() == [0.4, 0.0, 0.0, 0.0]
+        assert result.attrs["breakdown"]["bucket_counts"] == {
+            "boundary": 1,
+            "severe": 1,
+            "non_approver": 1,
+        }
+        assert result.attrs["breakdown"]["immediate_rows"] == 2
+        assert result.attrs["breakdown"]["review_rows"] == 1
+        assert result.attrs["row_annotations"][0]["queue_label"] == "review"
+        assert result.attrs["row_annotations"][1]["bucket"] == "severe"
+        assert result.attrs["row_annotations"][1]["approval_excess_ratio"] == 0.75
+
+    def test_unresolved_limit_is_suppressed(self) -> None:
+        df = pd.DataFrame({
+            "exceeds_threshold": [True, True],
+            "approval_excess_bucket": ["boundary", "unresolved_limit"],
+            "approval_limit_resolved": [True, False],
+        })
+
+        result = b03_exceeds_threshold(df)
+
+        assert result.tolist() == [False, False]
+        assert result.attrs["breakdown"]["bucket_counts"] == {"boundary": 1}
+        assert result.attrs["breakdown"]["review_rows"] == 1
+
+    def test_automated_context_is_review_not_confirmed(self) -> None:
+        df = pd.DataFrame({
+            "exceeds_threshold": [True, True],
+            "approval_excess_bucket": ["severe", "critical"],
+            "approval_limit_resolved": [True, True],
+            "source": ["automated", "Manual"],
+            "user_persona": ["automated_system", "senior_accountant"],
+        })
+
+        result = b03_exceeds_threshold(df)
+
+        assert result.tolist() == [False, True]
+        assert result.attrs["score_series"].tolist() == [0.0, 0.90]
+        assert result.attrs["review_score_series"].tolist() == [0.4, 0.0]
+        assert result.attrs["breakdown"]["immediate_rows"] == 1
+        assert result.attrs["breakdown"]["review_rows"] == 1
+
 
 class TestL3_02:
     def test_manual_entry_flagged(self, feature_df: pd.DataFrame) -> None:
@@ -80,6 +183,9 @@ class TestL3_02:
         assert result[0]
         assert result[3]
         assert result[4]
+        assert result.attrs["score_series"].iloc[0] == 0.60
+        assert result.attrs["score_series"].iloc[4] == 0.35
+        assert result.attrs["breakdown"]["flagged_rows"] == 3
 
     def test_non_manual_not_flagged(self, feature_df: pd.DataFrame) -> None:
         result = b08_manual_override(feature_df)
@@ -89,4 +195,50 @@ class TestL3_02:
 
     def test_source_fallback_uses_manual_source_codes(self) -> None:
         df = pd.DataFrame({"source": ["Manual", "Adjustment", "automated", None]})
-        assert b08_manual_override(df).tolist() == [True, True, False, False]
+        result = b08_manual_override(df)
+        assert result.tolist() == [True, True, False, False]
+        assert result.attrs["breakdown"]["manual_rows"] == 1
+        assert result.attrs["breakdown"]["adjustment_rows"] == 1
+        assert result.attrs["breakdown"]["bucket_counts"] == {
+            "manual_population": 1,
+            "adjustment_population": 1,
+        }
+
+    def test_source_fallback_uses_injected_manual_source_codes(self) -> None:
+        df = pd.DataFrame({"source": ["LegacyManual", "Manual", "Adjustment"]})
+        result = b08_manual_override(
+            df,
+            audit_rules={"patterns": {"manual_source_codes": ["LegacyManual"]}},
+        )
+        assert result.tolist() == [True, False, False]
+
+    def test_exposes_priority_and_control_bypass_annotations(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D1", "D2", "D3"],
+            "source": ["Manual", "Adjustment", "Manual"],
+            "is_manual_je": [True, True, True],
+            "created_by": ["u1", "u2", "u3"],
+            "approved_by": ["u1", "manager", ""],
+            "approval_date": ["2025-01-02", "", ""],
+            "exceeds_threshold": [False, False, True],
+            "is_period_end": [False, True, False],
+            "description_quality": ["good", "poor", "good"],
+            "gl_account": ["5100", "1190", "4100"],
+        })
+
+        result = b08_manual_override(df)
+
+        assert result.attrs["score_series"].tolist() == [0.75, 0.75, 0.75]
+        assert result.attrs["breakdown"]["control_bypass_rows"] == 3
+        assert result.attrs["breakdown"]["priority_rows"] == 2
+        assert result.attrs["row_annotations"][0]["bucket"] == "manual_control_bypass"
+        assert result.attrs["row_annotations"][1]["priority_reasons"] == [
+            "missing_approval_date",
+            "period_end",
+            "weak_description",
+            "high_risk_account",
+        ]
+        assert result.attrs["row_annotations"][2]["priority_reasons"] == [
+            "skipped_approval",
+            "high_amount",
+        ]

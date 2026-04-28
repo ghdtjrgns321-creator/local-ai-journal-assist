@@ -12,7 +12,6 @@ from src.detection.evidence_rules import (
     ev03_amount_mismatch,
 )
 
-
 # ── 공용 헬퍼 ────────────────────────────────────────────────
 
 
@@ -259,6 +258,53 @@ class TestL3_11:
 # ══════════════════════════════════════════════════════════════
 # EV03: 증빙 금액 불일치
 # ══════════════════════════════════════════════════════════════
+
+
+    def test_cutoff_violation_exposes_breakdown_and_annotations(self):
+        df = pd.DataFrame({
+            "document_id": ["D1", "D2", "D3", "D4"],
+            "debit_amount": [100_000.0] * 4,
+            "credit_amount": [0.0] * 4,
+            "posting_date": pd.to_datetime([
+                "2025-03-15",
+                "2025-03-20",
+                "2025-03-05",
+                "2025-03-10",
+            ]),
+            "delivery_date": pd.to_datetime([
+                "2025-03-01",
+                "2025-03-01",
+                "2025-03-03",
+                pd.NaT,
+            ]),
+            "gl_account": ["4100", "5100", "4100", "4100"],
+            "is_revenue_account": [True, False, True, True],
+            "is_period_end": [True, False, False, False],
+        })
+
+        result = ev02_cutoff_violation(
+            df,
+            revenue_cutoff_days=5,
+            expense_cutoff_days=7,
+            period_end_weight=1.5,
+            max_day_diff=30,
+            use_business_days=False,
+        )
+
+        assert result.iloc[0] == pytest.approx(0.70)
+        assert result.iloc[1] == pytest.approx(19 / 30)
+        assert result.iloc[2] == 0.0
+        breakdown = result.attrs["breakdown"]
+        assert breakdown["cutoff_review_docs"] == 2
+        assert breakdown["revenue_cutoff_docs"] == 1
+        assert breakdown["expense_cutoff_docs"] == 1
+        assert breakdown["period_end_weighted_docs"] == 1
+        assert breakdown["missing_event_date_docs"] == 1
+        annotations = result.attrs["row_annotations"]
+        assert annotations[0]["reason_code"] == "revenue_cutoff_gap"
+        assert annotations[0]["period_end_weighted"] is True
+        assert annotations[1]["reason_code"] == "expense_cutoff_gap"
+        assert annotations[1]["day_diff"] == 19.0
 
 
 class TestEV03:

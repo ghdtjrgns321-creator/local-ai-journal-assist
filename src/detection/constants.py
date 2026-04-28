@@ -140,6 +140,7 @@ RULE_CODES: dict[str, str] = {
     "AA04": "Approval Process Validation",
     "EV01": "Evidence Presence Check",
     "L3-11": "Revenue Cutoff Mismatch",
+    "L3-12": "Work Scope Excess Review",
     "EV03": "Evidence Amount Mismatch",
     "TB01": "Estimate Bias Drift",
     "TB02": "Estimate Range Extreme",
@@ -209,6 +210,7 @@ SEVERITY_MAP: dict[str, int] = {
     "AA04": 4,
     "EV01": 4,
     "L3-11": 3,
+    "L3-12": 3,
     "EV03": 3,
     "TB01": 4,
     "TB02": 3,
@@ -228,12 +230,35 @@ LAYER_WEIGHTS: dict[Layer, float] = {
     Layer.BENFORD: 0.15,
 }
 
+RULE_LEVEL_WEIGHTS: dict[str, float] = {
+    "L1": 0.40,
+    "L2": 0.25,
+    "L3": 0.20,
+    "L4": 0.15,
+}
+
+RULE_LEVEL_WEIGHTS_WITH_ML: dict[str | Layer, float] = {
+    "L1": 0.30,
+    "L2": 0.18,
+    "L3": 0.12,
+    "L4": 0.10,
+    Layer.ML_SUPERVISED: 0.15,
+    Layer.ML_UNSUPERVISED: 0.15,
+}
+
+RULE_LEVEL_WEIGHTS_WITH_TRENDBREAK: dict[str | Layer, float] = {
+    "L1": 0.34,
+    "L2": 0.21,
+    "L3": 0.17,
+    "L4": 0.13,
+    Layer.TRENDBREAK: 0.15,
+}
+
 LAYER_WEIGHTS_WITH_PRIOR: dict[Layer, float] = {
-    Layer.LAYER_A: 0.12,
-    Layer.LAYER_B: 0.38,
-    Layer.LAYER_C: 0.20,
-    Layer.BENFORD: 0.12,
-    Layer.LAYER_D: 0.18,
+    Layer.LAYER_A: 0.15,
+    Layer.LAYER_B: 0.45,
+    Layer.LAYER_C: 0.25,
+    Layer.BENFORD: 0.15,
 }
 
 LAYER_WEIGHTS_WITH_TIMESERIES: dict[Layer, float] = {
@@ -262,11 +287,10 @@ LAYER_WEIGHTS_WITH_TRENDBREAK: dict[Layer, float] = {
 }
 
 LAYER_WEIGHTS_WITH_PRIOR_AND_TRENDBREAK: dict[Layer, float] = {
-    Layer.LAYER_A: 0.10,
-    Layer.LAYER_B: 0.32,
-    Layer.LAYER_C: 0.18,
-    Layer.BENFORD: 0.10,
-    Layer.LAYER_D: 0.15,
+    Layer.LAYER_A: 0.13,
+    Layer.LAYER_B: 0.38,
+    Layer.LAYER_C: 0.22,
+    Layer.BENFORD: 0.12,
     Layer.TRENDBREAK: 0.15,
 }
 
@@ -314,10 +338,30 @@ DETECTOR_DISPLAY_ORDER: list[str] = [
 ]
 
 DETECTOR_PROFILES: dict[str, DetectorProfile] = {
-    Layer.LAYER_A: DetectorProfile(Layer.LAYER_A, "L1", DetectorMaturity.PRODUCTION, True),
-    Layer.LAYER_B: DetectorProfile(Layer.LAYER_B, "L2", DetectorMaturity.PRODUCTION, True),
-    Layer.LAYER_C: DetectorProfile(Layer.LAYER_C, "L3/L4", DetectorMaturity.PRODUCTION, True),
-    Layer.BENFORD: DetectorProfile(Layer.BENFORD, "Benford", DetectorMaturity.PRODUCTION, True),
+    Layer.LAYER_A: DetectorProfile(
+        Layer.LAYER_A,
+        "L1/L3 Data Quality Rules",
+        DetectorMaturity.PRODUCTION,
+        True,
+    ),
+    Layer.LAYER_B: DetectorProfile(
+        Layer.LAYER_B,
+        "L1-L4 Fraud Rules",
+        DetectorMaturity.PRODUCTION,
+        True,
+    ),
+    Layer.LAYER_C: DetectorProfile(
+        Layer.LAYER_C,
+        "L1-L4 Anomaly Rules",
+        DetectorMaturity.PRODUCTION,
+        True,
+    ),
+    Layer.BENFORD: DetectorProfile(
+        Layer.BENFORD,
+        "L4-02 Benford",
+        DetectorMaturity.PRODUCTION,
+        True,
+    ),
     Layer.DUPLICATE: DetectorProfile(Layer.DUPLICATE, "Duplicate", DetectorMaturity.BETA, True),
     Layer.INTERCOMPANY: DetectorProfile(
         Layer.INTERCOMPANY,
@@ -467,19 +511,18 @@ RULE_EXPLANATIONS: dict[str, RuleExplanation] = {
     "L1-06": RuleExplanation(
         rule_id="L1-06",
         plain_reason=(
-            "The entry shows a segregation-of-duties conflict across processes, "
-            "within a process, via IT super-user posting, or with corroborating "
-            "approval/manual-control failures."
+            "The entry shows a direct segregation-of-duties conflict through "
+            "a conflict marker or IT super-user business posting."
         ),
         used_columns=(
             "created_by",
             "business_process",
+            "sod_violation",
             "sod_conflict_type",
             "user_persona",
-            "approved_by",
             "source",
-            "is_manual_je",
-            "exceeds_threshold",
+            "debit_amount",
+            "credit_amount",
         ),
     ),
     "L1-07": RuleExplanation(
@@ -602,6 +645,36 @@ RULE_EXPLANATIONS: dict[str, RuleExplanation] = {
             "Review period-end manual adjustments and subsequent credit memos or reversals.",
         ),
     ),
+    "L3-12": RuleExplanation(
+        rule_id="L3-12",
+        plain_reason=(
+            "One user is concentrated across multiple work areas in the current "
+            "audit population. This is a review signal only; explicit SoD or "
+            "authorization-matrix violations remain L1-06."
+        ),
+        used_columns=(
+            "created_by",
+            "user_persona",
+            "business_process",
+            "company_code",
+            "document_type",
+            "gl_account",
+            "source",
+        ),
+        false_positive_risks=(
+            "Small teams, backup coverage, shared service centers, and month-end "
+            "support can legitimately concentrate multiple processes in one user.",
+            "The rule uses current-period breadth only and does not prove an "
+            "authorization violation.",
+        ),
+        auditor_checks=(
+            "Confirm whether the user's broad activity was expected for the period.",
+            "Check compensating review controls when one user spans many processes "
+            "or company codes.",
+            "Prioritize cases with manual source, sensitive accounts, high amounts, "
+            "or period-end postings.",
+        ),
+    ),
     "L4-01": RuleExplanation(
         rule_id="L4-01",
         plain_reason="A revenue-account amount is an outlier within its peer distribution.",
@@ -704,6 +777,47 @@ BATCH_CORROBORATION_RULES: list[tuple[str, list[tuple[str, str]]]] = [
     ("reversal_or_duplicate", [("L2-05", "layer_c"), ("L2-02", "layer_b")]),
 ]
 
+WORK_SCOPE_CORROBORATION_RULES: list[tuple[str, list[tuple[str, str]]]] = [
+    (
+        "manual_or_control",
+        [
+            ("L3-02", "layer_b"),
+            ("L1-04", "layer_b"),
+            ("L1-05", "layer_b"),
+            ("L1-06", "layer_b"),
+            ("L1-07", "layer_b"),
+            ("L1-09", "layer_b"),
+        ],
+    ),
+    (
+        "sensitive_or_amount",
+        [("L3-10", "layer_b"), ("L4-03", "layer_c"), ("L4-04", "layer_c")],
+    ),
+    (
+        "closing_or_timing",
+        [
+            ("L3-04", "layer_c"),
+            ("L3-06", "layer_c"),
+            ("L3-07", "layer_c"),
+            ("L3-11", "evidence"),
+            ("L1-08", "layer_c"),
+        ],
+    ),
+    (
+        "duplicate_or_outflow",
+        [
+            ("L2-01", "layer_b"),
+            ("L2-02", "layer_b"),
+            ("L2-03", "layer_b"),
+            ("L2-05", "layer_c"),
+        ],
+    ),
+    (
+        "revenue_or_intercompany",
+        [("L4-01", "layer_b"), ("L3-03", "layer_b"), ("IC01", "intercompany")],
+    ),
+]
+
 RISK_THRESHOLDS: dict[str, float] = {
     RiskLevel.HIGH: 0.7,
     RiskLevel.MEDIUM: 0.4,
@@ -723,6 +837,32 @@ def get_detector_profile(track_name: str) -> DetectorProfile:
             default_enabled=False,
         ),
     )
+
+
+def get_rule_level_label(rule_id: str) -> str:
+    """Return the user-facing L1-L4 bucket for a rule id."""
+    code = str(rule_id or "").strip().upper()
+    for prefix in ("L1", "L2", "L3", "L4"):
+        if code.startswith(prefix):
+            return prefix
+    if code.startswith(("IC", "GR")):
+        return "L3"
+    if code.startswith(("EV", "D", "TS", "TB")):
+        return "Analytical"
+    if code.startswith(("ML", "NLP")):
+        return "Phase 2/3"
+    return ""
+
+
+def get_track_display_label(track_name: str, rule_id: str | None = None) -> str:
+    """Return a user-facing label without exposing legacy layer_a/b/c names."""
+    if rule_id:
+        rule_level = get_rule_level_label(rule_id)
+        if rule_level:
+            if str(rule_id).upper() == "L4-02":
+                return "L4 Benford"
+            return rule_level
+    return get_detector_profile(str(track_name)).display_name
 
 
 def get_detector_explanation_profile(track_name: str) -> DetectorExplanationProfile:

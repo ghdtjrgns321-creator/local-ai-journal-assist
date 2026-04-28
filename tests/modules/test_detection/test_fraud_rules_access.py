@@ -11,6 +11,7 @@ from src.detection.fraud_rules_access import (
     b10_intercompany_review_signal,
     b12_missing_approval_date,
     b13_high_risk_account_use,
+    b14_work_scope_excess_review,
 )
 
 
@@ -20,7 +21,69 @@ class TestL1_09:
             "approved_by": ["APR1", "APR2", "", "APR4"],
             "approval_date": [None, "2025-01-02", None, ""],
         })
-        assert b12_missing_approval_date(df).tolist() == [True, False, False, True]
+        result = b12_missing_approval_date(df)
+        assert result.tolist() == [True, False, True, True]
+        assert result.attrs["breakdown"]["candidate_rows"] == 3
+        assert result.attrs["breakdown"]["missing_approver_rows"] == 1
+        assert result.attrs["review_score_series"].iloc[2] == 0.1
+        assert result.attrs["row_annotations"][2]["queue_label"] == "low_priority"
+        assert result.attrs["row_annotations"][2]["source_category"] == "missing_approver"
+
+    def test_system_source_missing_approval_date_stays_review_required(self) -> None:
+        df = pd.DataFrame({
+            "approved_by": ["APR1", "APR2"],
+            "approval_date": [None, None],
+            "source": ["recurring", "automated"],
+        })
+
+        result = b12_missing_approval_date(df)
+
+        assert result.tolist() == [True, True]
+        assert result.attrs["score_series"].tolist() == [0.0, 0.0]
+        assert result.attrs["review_score_series"].tolist() == [0.35, 0.35]
+        assert result.attrs["breakdown"]["immediate_rows"] == 0
+        assert result.attrs["breakdown"]["review_rows"] == 2
+        assert result.attrs["row_annotations"][0]["queue_label"] == "review"
+
+    def test_manual_missing_approval_date_is_immediate(self) -> None:
+        df = pd.DataFrame({
+            "approved_by": ["APR1"],
+            "approval_date": [None],
+            "source": ["Manual"],
+        })
+
+        result = b12_missing_approval_date(df)
+
+        assert result.tolist() == [True]
+        assert result.attrs["score_series"].iloc[0] == 0.6
+        assert result.attrs["breakdown"]["immediate_rows"] == 1
+
+    def test_nat_approval_date_is_missing(self) -> None:
+        df = pd.DataFrame({
+            "approved_by": ["APR1"],
+            "approval_date": pd.to_datetime([None]),
+            "source": ["Manual"],
+        })
+
+        result = b12_missing_approval_date(df)
+
+        assert result.tolist() == [True]
+        assert result.attrs["breakdown"]["immediate_rows"] == 1
+
+    def test_missing_approval_date_without_approver_is_low_priority(self) -> None:
+        df = pd.DataFrame({
+            "approved_by": [""],
+            "approval_date": [None],
+            "source": ["Manual"],
+        })
+
+        result = b12_missing_approval_date(df)
+
+        assert result.tolist() == [True]
+        assert result.attrs["score_series"].iloc[0] == 0.0
+        assert result.attrs["review_score_series"].iloc[0] == 0.1
+        assert result.attrs["breakdown"]["low_priority_rows"] == 1
+        assert result.attrs["row_annotations"][0]["queue_label"] == "low_priority"
 
     def test_missing_columns_returns_false(self) -> None:
         df = pd.DataFrame({"approved_by": ["APR1"]})
@@ -112,9 +175,114 @@ class TestL3_10:
         assert annotations[3]["signal_category"] == "priority_case"
         assert annotations[3]["category_reason"] == "high_amount"
 
+    def test_high_risk_account_score_series_and_category_breakdown(self) -> None:
+        df = pd.DataFrame(
+            {
+                "gl_account": ["1190", "1190", "1190", "5100"],
+                "source": ["manual", "automated", "other", "manual"],
+                "exceeds_threshold": [False, False, False, False],
+            }
+        )
+        rules = {
+            "patterns": {
+                "high_risk_account_use": {
+                    "accounts": ["1190"],
+                    "account_prefixes": [],
+                }
+            }
+        }
+
+        result = b13_high_risk_account_use(df, audit_rules=rules)
+
+        assert result.attrs["score_series"].tolist() == [0.65, 0.20, 0.35, 0.0]
+        assert result.attrs["breakdown"]["priority_case_rows"] == 1
+        assert result.attrs["breakdown"]["normal_control_candidate_rows"] == 1
+        assert result.attrs["breakdown"]["raw_signal_rows"] == 1
+        assert result.attrs["breakdown"]["category_counts"] == {
+            "priority_case": 1,
+            "normal_control_candidate": 1,
+            "raw_signal": 1,
+        }
+
     def test_missing_gl_account_returns_false(self) -> None:
         df = pd.DataFrame({"debit_amount": [1.0]})
         assert not b13_high_risk_account_use(df).any()
+
+
+class TestL3_12:
+    def test_multi_process_only_is_low_score_observation(self) -> None:
+        df = pd.DataFrame(
+            {
+                "created_by": ["u1", "u1", "u1", "u2"],
+                "user_persona": ["staff", "staff", "staff", "staff"],
+                "business_process": ["P2P", "O2C", "R2R", "P2P"],
+                "company_code": ["1000", "1000", "1000", "1000"],
+                "source": ["manual", "manual", "manual", "manual"],
+            }
+        )
+
+        result = b14_work_scope_excess_review(df)
+
+        assert result.tolist() == [True, True, True, False]
+        assert result.attrs["score_series"].tolist() == [0.45, 0.45, 0.45, 0.0]
+        assert result.attrs["breakdown"]["candidate_users"] == 1
+        assert result.attrs["row_annotations"][0]["bucket"] == "manual_scope_concentration"
+        assert result.attrs["row_annotations"][0]["rule_boundary"].startswith("L1-06")
+
+    def test_process_company_breadth_scores_without_sod_violation(self) -> None:
+        df = pd.DataFrame(
+            {
+                "created_by": ["u1", "u1", "u1", "u1"],
+                "user_persona": ["senior_accountant"] * 4,
+                "business_process": ["P2P", "O2C", "R2R", "TRE"],
+                "company_code": ["1000", "2000", "3000", "3000"],
+                "source": ["automated", "automated", "automated", "automated"],
+            }
+        )
+
+        result = b14_work_scope_excess_review(df)
+
+        assert result.attrs["score_series"].tolist() == [0.0, 0.0, 0.0, 0.0]
+        assert result.attrs["breakdown"]["excluded_system_rows"] == 4
+
+    def test_compound_context_caps_l3_12_at_review_score(self) -> None:
+        df = pd.DataFrame(
+            {
+                "created_by": ["u1", "u1", "u1", "u1"],
+                "user_persona": ["accountant"] * 4,
+                "business_process": ["P2P", "O2C", "R2R", "TRE"],
+                "company_code": ["1000", "2000", "3000", "3000"],
+                "source": ["manual", "automated", "automated", "automated"],
+                "gl_account": ["1190", "5100", "4100", "1100"],
+                "is_period_end": [True, False, False, False],
+                "exceeds_threshold": [False, False, False, False],
+            }
+        )
+
+        result = b14_work_scope_excess_review(df)
+
+        assert result.attrs["score_series"].tolist() == [0.65, 0.65, 0.65, 0.65]
+        assert result.attrs["row_annotations"][0]["bucket"] == "compound_scope_concentration"
+        assert set(result.attrs["row_annotations"][0]["reasons"]) >= {
+            "manual_source",
+            "sensitive_account",
+            "period_end",
+        }
+
+    def test_admin_simple_breadth_is_excluded(self) -> None:
+        df = pd.DataFrame(
+            {
+                "created_by": ["admin1", "admin1", "admin1", "admin1"],
+                "user_persona": ["superuser"] * 4,
+                "business_process": ["P2P", "O2C", "R2R", "TRE"],
+                "company_code": ["1000", "2000", "3000", "4000"],
+            }
+        )
+
+        result = b14_work_scope_excess_review(df)
+
+        assert not result.any()
+        assert result.attrs["breakdown"]["excluded_admin_rows"] == 4
 
 
 class TestL1_05:
@@ -130,6 +298,8 @@ class TestL1_05:
         assert result[0]
         assert result.attrs["breakdown"]["immediate_rows"] == 1
         assert result.attrs["breakdown"]["review_rows"] == 0
+        assert result.attrs["score_series"].iloc[0] == 0.8
+        assert result.attrs["row_annotations"][0]["bucket"] == "immediate"
 
     def test_default_allowed_system_persona_excluded(self) -> None:
         df = pd.DataFrame({
@@ -138,7 +308,14 @@ class TestL1_05:
             "user_persona": ["automated_system"],
         })
         result = b06_self_approval(df)
-        assert not result[0]
+        assert result[0]
+        assert result.attrs["breakdown"]["candidate_rows"] == 1
+        assert result.attrs["breakdown"]["actionable_rows"] == 0
+        assert result.attrs["breakdown"]["allowed_system_rows"] == 1
+        assert result.attrs["breakdown"]["bucket_counts"] == {"allowed_system": 1}
+        assert result.attrs["score_series"].iloc[0] == 0.0
+        assert result.attrs["review_score_series"].iloc[0] == 0.0
+        assert result.attrs["row_annotations"][0]["bucket"] == "allowed_system"
 
     def test_default_allowed_system_source_excluded(self) -> None:
         df = pd.DataFrame({
@@ -147,7 +324,12 @@ class TestL1_05:
             "source": ["automated"],
         })
         result = b06_self_approval(df)
-        assert not result[0]
+        assert result[0]
+        assert result.attrs["breakdown"]["candidate_rows"] == 1
+        assert result.attrs["breakdown"]["actionable_rows"] == 0
+        assert result.attrs["breakdown"]["allowed_system_rows"] == 1
+        assert result.attrs["score_series"].iloc[0] == 0.0
+        assert result.attrs["row_annotations"][0]["bucket"] == "allowed_system"
 
     def test_r2r_self_approval_defaults_to_review(self) -> None:
         df = pd.DataFrame({
@@ -161,6 +343,9 @@ class TestL1_05:
         assert result[0]
         assert result.attrs["breakdown"]["immediate_rows"] == 0
         assert result.attrs["breakdown"]["review_rows"] == 1
+        assert result.attrs["score_series"].iloc[0] == 0.0
+        assert result.attrs["review_score_series"].iloc[0] == 0.4
+        assert result.attrs["row_annotations"][0]["bucket"] == "review"
 
     def test_r2r_large_manual_self_approval_escalates_to_immediate(self) -> None:
         df = pd.DataFrame({
@@ -176,6 +361,9 @@ class TestL1_05:
         assert result.attrs["breakdown"]["immediate_rows"] == 1
         assert result.attrs["breakdown"]["review_rows"] == 0
         assert result.attrs["breakdown"]["override_counts"]["materiality_rows"] == 1
+        assert result.attrs["score_series"].iloc[0] == 0.8
+        assert result.attrs["row_annotations"][0]["bucket"] == "escalated_materiality"
+        assert result.attrs["row_annotations"][0]["override_reasons"] == ["materiality"]
 
     def test_r2r_after_hours_self_approval_escalates_to_immediate(self) -> None:
         df = pd.DataFrame({
@@ -189,6 +377,7 @@ class TestL1_05:
         assert result.attrs["breakdown"]["immediate_rows"] == 1
         assert result.attrs["breakdown"]["review_rows"] == 0
         assert result.attrs["breakdown"]["override_counts"]["abnormal_time_rows"] == 1
+        assert result.attrs["row_annotations"][0]["bucket"] == "escalated_abnormal_time"
 
     def test_r2r_high_risk_account_self_approval_escalates_to_immediate(self) -> None:
         df = pd.DataFrame({
@@ -202,6 +391,7 @@ class TestL1_05:
         assert result.attrs["breakdown"]["immediate_rows"] == 1
         assert result.attrs["breakdown"]["review_rows"] == 0
         assert result.attrs["breakdown"]["override_counts"]["high_risk_account_rows"] == 1
+        assert result.attrs["row_annotations"][0]["bucket"] == "escalated_high_risk_account"
 
     def test_o2c_self_approval_defaults_to_immediate(self) -> None:
         df = pd.DataFrame({
@@ -215,6 +405,7 @@ class TestL1_05:
         assert result[0]
         assert result.attrs["breakdown"]["immediate_rows"] == 1
         assert result.attrs["breakdown"]["review_rows"] == 0
+        assert result.attrs["score_series"].iloc[0] == 0.8
 
     def test_review_processes_are_editable(self) -> None:
         df = pd.DataFrame({
@@ -233,6 +424,8 @@ class TestL1_05:
         assert result[0]
         assert result.attrs["breakdown"]["immediate_rows"] == 0
         assert result.attrs["breakdown"]["review_rows"] == 1
+        assert result.attrs["score_series"].iloc[0] == 0.0
+        assert result.attrs["review_score_series"].iloc[0] == 0.4
 
     def test_observed_summary_groups_results_for_queue_review(self) -> None:
         df = pd.DataFrame({
@@ -281,17 +474,53 @@ class TestL1_05:
 
 
 class TestL1_06:
-    def test_toxic_pair_flagged(self) -> None:
+    def test_toxic_pair_is_work_scope_review_not_l106_score(self) -> None:
         df = pd.DataFrame({
             "created_by": ["A", "A", "B"],
             "business_process": ["TRE", "P2P", "R2R"],
+            "exceeds_threshold": [True, True, True],
+        })
+        result = b07_segregation_of_duties(df)
+        assert not result[0]
+        assert not result[1]
+        assert not result[2]
+        assert result.attrs["score_series"].iloc[0] == 0.0
+        assert result.attrs["review_score_series"].iloc[0] == 0.0
+        assert result.attrs["breakdown"]["immediate_rows"] == 0
+        assert result.attrs["breakdown"]["review_rows"] == 0
+        assert result.attrs["breakdown"]["work_scope_review_rows_excluded"] == 2
+        assert result.attrs["breakdown"]["toxic_pair_review_users"] == 1
+
+    def test_direct_sod_violation_is_immediate(self) -> None:
+        df = pd.DataFrame({
+            "created_by": ["A", "A"],
+            "business_process": ["TRE", "P2P"],
+            "sod_violation": [True, False],
+            "sod_conflict_type": ["purchase_payment", ""],
+            "exceeds_threshold": [True, True],
         })
         result = b07_segregation_of_duties(df)
         assert result[0]
-        assert result[1]
-        assert not result[2]
+        assert not result[1]
         assert result.attrs["score_series"].iloc[0] == 0.8
-        assert result.attrs["breakdown"]["immediate_rows"] == 2
+        assert result.attrs["score_series"].iloc[1] == 0.0
+        assert result.attrs["review_score_series"].iloc[1] == 0.0
+        assert result.attrs["breakdown"]["direct_sod_violation_rows"] == 1
+
+    def test_sod_violation_without_conflict_type_is_not_l106_when_both_fields_exist(self) -> None:
+        df = pd.DataFrame({
+            "created_by": ["A"],
+            "business_process": ["TRE"],
+            "sod_violation": [True],
+            "sod_conflict_type": [""],
+            "exceeds_threshold": [True],
+        })
+        result = b07_segregation_of_duties(df)
+        assert not result[0]
+        assert result.attrs["score_series"].iloc[0] == 0.0
+        assert result.attrs["breakdown"]["immediate_rows"] == 0
+        assert result.attrs["breakdown"]["direct_sod_violation_rows"] == 1
+        assert result.attrs["breakdown"]["within_process_conflict_rows"] == 0
 
     def test_in_process_conflict_flagged(self) -> None:
         df = pd.DataFrame({
@@ -304,26 +533,29 @@ class TestL1_06:
         assert not result[1]
         assert result.attrs["score_series"].iloc[0] == 0.8
 
-    def test_junior_exceeds_role_threshold(self) -> None:
+    def test_junior_exceeds_role_threshold_is_excluded_from_l106_score(self) -> None:
         df = pd.DataFrame({
             "created_by": ["J1", "J1"],
             "business_process": ["P2P", "O2C"],
             "user_persona": ["junior_accountant", "junior_accountant"],
+            "exceeds_threshold": [True, True],
         })
         result = b07_segregation_of_duties(df)
-        assert result.all()
-        assert result.attrs["score_series"].eq(0.4).all()
-        assert result.attrs["breakdown"]["review_rows"] == 2
+        assert not result.any()
+        assert result.attrs["score_series"].eq(0.0).all()
+        assert result.attrs["review_score_series"].eq(0.0).all()
+        assert result.attrs["breakdown"]["review_rows"] == 0
+        assert result.attrs["breakdown"]["work_scope_review_rows_excluded"] == 2
 
-    def test_controller_toxic_pair_still_flagged(self) -> None:
+    def test_controller_toxic_pair_review_is_mitigated(self) -> None:
         df = pd.DataFrame({
             "created_by": ["C1"] * 3,
             "business_process": ["R2R", "TRE", "P2P"],
             "user_persona": ["controller"] * 3,
+            "exceeds_threshold": [True] * 3,
         })
         result = b07_segregation_of_duties(df)
-        assert result.all()
-        assert result.attrs["score_series"].eq(0.8).all()
+        assert not result.any()
 
     def test_controller_safe_processes_pass(self) -> None:
         df = pd.DataFrame({
@@ -334,7 +566,7 @@ class TestL1_06:
         result = b07_segregation_of_duties(df)
         assert not result.any()
 
-    def test_r2r_pair_is_review_required_for_non_mitigating_role(self) -> None:
+    def test_r2r_pair_is_excluded_from_l106_score(self) -> None:
         df = pd.DataFrame({
             "created_by": ["C1"] * 2,
             "business_process": ["R2R", "P2P"],
@@ -342,10 +574,12 @@ class TestL1_06:
             "exceeds_threshold": [True, True],
         })
         result = b07_segregation_of_duties(df)
-        assert result.all()
-        assert result.attrs["score_series"].eq(0.4).all()
+        assert not result.any()
+        assert result.attrs["score_series"].eq(0.0).all()
+        assert result.attrs["review_score_series"].eq(0.0).all()
+        assert result.attrs["breakdown"]["work_scope_review_rows_excluded"] == 2
 
-    def test_review_promoted_to_immediate_by_self_approval(self) -> None:
+    def test_self_approval_does_not_promote_l106_review(self) -> None:
         df = pd.DataFrame({
             "created_by": ["C1"] * 2,
             "approved_by": ["C1"] * 2,
@@ -354,12 +588,13 @@ class TestL1_06:
             "exceeds_threshold": [True, True],
         })
         result = b07_segregation_of_duties(df)
-        assert result.all()
-        assert result.attrs["score_series"].eq(0.8).all()
-        assert result.attrs["breakdown"]["corroborated_review_rows"] == 2
-        assert result.attrs["breakdown"]["self_approval_rows"] == 2
+        assert not result.any()
+        assert result.attrs["score_series"].eq(0.0).all()
+        assert result.attrs["review_score_series"].eq(0.0).all()
+        assert result.attrs["breakdown"]["corroborated_review_rows"] == 0
+        assert result.attrs["breakdown"]["self_approval_rows"] == 0
 
-    def test_review_promoted_to_immediate_by_skipped_approval(self) -> None:
+    def test_skipped_approval_does_not_promote_l106_review(self) -> None:
         df = pd.DataFrame({
             "created_by": ["C1"] * 2,
             "business_process": ["R2R", "P2P"],
@@ -369,24 +604,40 @@ class TestL1_06:
             "exceeds_threshold": [True, True],
         })
         result = b07_segregation_of_duties(df)
-        assert result.all()
-        assert result.attrs["score_series"].eq(0.8).all()
-        assert result.attrs["breakdown"]["corroborated_review_rows"] == 2
-        assert result.attrs["breakdown"]["skipped_approval_rows"] == 2
+        assert not result.any()
+        assert result.attrs["score_series"].eq(0.0).all()
+        assert result.attrs["review_score_series"].eq(0.0).all()
+        assert result.attrs["breakdown"]["corroborated_review_rows"] == 0
+        assert result.attrs["breakdown"]["skipped_approval_rows"] == 0
 
-    def test_manual_override_promotes_review_when_circumvention_signal_exists(self) -> None:
+    def test_manual_override_does_not_promote_l106_review(self) -> None:
         df = pd.DataFrame({
             "created_by": ["C1"] * 2,
             "approved_by": ["", ""],
             "business_process": ["R2R", "P2P"],
             "user_persona": ["senior_accountant"] * 2,
             "is_manual_je": [True, True],
+            "exceeds_threshold": [True, True],
         })
         result = b07_segregation_of_duties(df)
-        assert result.all()
-        assert result.attrs["score_series"].eq(0.8).all()
-        assert result.attrs["breakdown"]["corroborated_review_rows"] == 2
-        assert result.attrs["breakdown"]["manual_override_rows"] == 2
+        assert not result.any()
+        assert result.attrs["score_series"].eq(0.0).all()
+        assert result.attrs["review_score_series"].eq(0.0).all()
+        assert result.attrs["breakdown"]["corroborated_review_rows"] == 0
+        assert result.attrs["breakdown"]["manual_override_rows"] == 0
+
+    def test_self_approval_alone_is_not_l106(self) -> None:
+        df = pd.DataFrame({
+            "created_by": ["C1"],
+            "approved_by": ["C1"],
+            "business_process": ["R2R"],
+            "user_persona": ["senior_accountant"],
+            "exceeds_threshold": [True],
+        })
+        result = b07_segregation_of_duties(df)
+        assert not result.any()
+        assert result.attrs["breakdown"]["immediate_rows"] == 0
+        assert result.attrs["breakdown"]["review_rows"] == 0
 
     def test_manual_entry_without_circumvention_signal_does_not_promote_review(self) -> None:
         df = pd.DataFrame({
@@ -398,8 +649,9 @@ class TestL1_06:
             "exceeds_threshold": [True, True],
         })
         result = b07_segregation_of_duties(df)
-        assert result.all()
-        assert result.attrs["score_series"].eq(0.4).all()
+        assert not result.any()
+        assert result.attrs["score_series"].eq(0.0).all()
+        assert result.attrs["review_score_series"].eq(0.0).all()
         assert result.attrs["breakdown"]["corroborated_review_rows"] == 0
         assert result.attrs["breakdown"]["manual_override_rows"] == 0
 
@@ -464,10 +716,23 @@ class TestL1_06:
         df = pd.DataFrame({
             "created_by": ["A", "A", "A", "B"],
             "business_process": ["P2P", "O2C", "R2R", "R2R"],
+            "exceeds_threshold": [True, True, True, True],
         })
         result = b07_segregation_of_duties(df, sod_threshold=3)
-        assert result[0]
+        assert not result[0]
         assert not result[3]
+        assert result.attrs["review_score_series"].iloc[0] == 0.0
+        assert result.attrs["breakdown"]["work_scope_review_rows_excluded"] == 3
+
+    def test_review_without_exceeds_threshold_column_is_suppressed(self) -> None:
+        df = pd.DataFrame({
+            "created_by": ["C1", "C1"],
+            "business_process": ["R2R", "P2P"],
+            "user_persona": ["senior_accountant", "senior_accountant"],
+        })
+        result = b07_segregation_of_duties(df)
+        assert not result.any()
+        assert result.attrs["breakdown"]["review_rows"] == 0
 
     def test_automated_system_excluded(self) -> None:
         df = pd.DataFrame({
@@ -496,6 +761,12 @@ class TestL1_07:
         assert result.attrs["score_series"].iloc[0] == 0.8
         assert result.attrs["breakdown"]["immediate_rows"] == 1
         assert result.attrs["breakdown"]["review_rows"] == 0
+        assert result.attrs["breakdown"]["evidence_count_bands"] == {"2": 1}
+        assert result.attrs["row_annotations"][0]["queue_label"] == "immediate"
+        assert result.attrs["row_annotations"][0]["evidence_reasons"] == [
+            "manual_source",
+            "no_approval_date",
+        ]
 
     def test_recurring_missing_approval_is_review_required(self) -> None:
         df = pd.DataFrame({
@@ -506,9 +777,12 @@ class TestL1_07:
         })
         result = b09_skipped_approval(df)
         assert result[0]
-        assert result.attrs["score_series"].iloc[0] == 0.4
+        assert result.attrs["score_series"].iloc[0] == 0.0
+        assert result.attrs["review_score_series"].iloc[0] == 0.4
         assert result.attrs["breakdown"]["immediate_rows"] == 0
         assert result.attrs["breakdown"]["review_rows"] == 1
+        assert result.attrs["row_annotations"][0]["queue_label"] == "review"
+        assert result.attrs["row_annotations"][0]["source_category"] == "non_system_review"
 
     def test_manual_without_extra_evidence_stays_review_required(self) -> None:
         df = pd.DataFrame({
@@ -518,25 +792,88 @@ class TestL1_07:
         })
         result = b09_skipped_approval(df)
         assert result[0]
-        assert result.attrs["score_series"].iloc[0] == 0.4
+        assert result.attrs["score_series"].iloc[0] == 0.0
+        assert result.attrs["review_score_series"].iloc[0] == 0.4
         assert result.attrs["breakdown"]["immediate_rows"] == 0
         assert result.attrs["breakdown"]["review_rows"] == 1
+        assert result.attrs["row_annotations"][0]["evidence_count"] == 1
+
+    def test_approval_level_with_manual_evidence_is_confirmed_when_l104_suppressed(
+        self,
+    ) -> None:
+        df = pd.DataFrame({
+            "exceeds_threshold": [False],
+            "approval_level": [1],
+            "source": ["Manual"],
+            "approved_by": [""],
+            "approval_date": [None],
+        })
+
+        result = b09_skipped_approval(df)
+
+        assert result[0]
+        assert result.attrs["breakdown"]["immediate_rows"] == 1
+        assert result.attrs["breakdown"]["review_rows"] == 0
+        assert result.attrs["breakdown"]["approval_level_review_rows"] == 1
+
+    def test_system_source_missing_approver_is_low_priority(self) -> None:
+        df = pd.DataFrame({
+            "exceeds_threshold": [True, True],
+            "source": ["batch", "interface"],
+            "approved_by": ["", ""],
+            "approval_date": [None, None],
+        })
+        result = b09_skipped_approval(df)
+        assert result.all()
+        assert result.attrs["breakdown"]["allowed_system_rows"] == 2
+        assert result.attrs["breakdown"]["low_priority_rows"] == 2
+        assert result.attrs["score_series"].eq(0.0).all()
+        assert result.attrs["review_score_series"].eq(0.1).all()
+        assert result.attrs["row_annotations"][0]["queue_label"] == "low_priority"
+        assert result.attrs["row_annotations"][0]["source_category"] == "system_exception"
+
+    def test_missing_approver_without_approval_required_is_low_priority(self) -> None:
+        df = pd.DataFrame({
+            "exceeds_threshold": [False],
+            "source": ["Manual"],
+            "approved_by": [""],
+            "approval_date": [None],
+        })
+        result = b09_skipped_approval(df)
+        assert result[0]
+        assert result.attrs["breakdown"]["low_priority_rows"] == 1
+        assert result.attrs["breakdown"]["no_approval_required_rows"] == 1
+        assert result.attrs["score_series"].iloc[0] == 0.0
+        assert result.attrs["review_score_series"].iloc[0] == 0.1
+        assert result.attrs["row_annotations"][0]["source_category"] == "not_approval_required"
 
     def test_missing_columns_skip(self) -> None:
         df = pd.DataFrame({"debit_amount": [100.0]})
+        assert not b09_skipped_approval(df).any()
+
+    def test_missing_approved_by_column_skip_even_with_other_inputs(self) -> None:
+        df = pd.DataFrame({"exceeds_threshold": [True], "source": ["Manual"]})
         assert not b09_skipped_approval(df).any()
 
 
 class TestL3_03:
     def test_intercompany_account_flagged_for_review(self) -> None:
         df = pd.DataFrame({
+            "document_id": ["D1", "D2", "D3"],
             "is_intercompany": [True, True, False],
             "company_code": ["A", "B", "A"],
+            "trading_partner": ["B", "", ""],
         })
         result = b10_intercompany_review_signal(df)
         assert result[0]
         assert result[1]
         assert not result[2]
+        assert result.attrs["score_series"].tolist() == [0.4, 0.4, 0.0]
+        assert result.attrs["breakdown"]["ic_population_rows"] == 2
+        assert result.attrs["breakdown"]["ic_population_docs"] == 2
+        assert result.attrs["breakdown"]["ic_company_count"] == 2
+        assert result.attrs["breakdown"]["trading_partner_coverage_ratio"] == 0.5
+        assert result.attrs["row_annotations"][0]["signal_category"] == "ic_population"
 
     def test_single_company_intercompany_account_still_flagged(self) -> None:
         df = pd.DataFrame({

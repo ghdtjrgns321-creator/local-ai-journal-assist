@@ -10,18 +10,114 @@ import numpy as np
 import pandas as pd
 from scipy.spatial.distance import jensenshannon
 
-# Why: 전기 값이 0인 계정의 division-by-zero 방지.
-#      1.0으로 설정 시 당기 금액이 그대로 변동률이 되어 신규 계정에 준하는 처리.
-#      원 단위 금액 기준이므로 1원 미만의 정밀도는 의미 없음.
+# Why: Avoid division by zero when prior-period values are zero.
 _EPSILON = 1.0
 
-# Why: D01 가중평균 — 총액 변동이 가장 중요, 건수·평균 순
+# Why: D01 weights total activity most, then count, then average amount.
 _W_TOTAL = 0.5
 _W_COUNT = 0.3
 _W_AVG = 0.2
 
-# Why: D02 — 비교 의미 있는 최소 월 수
+# Why: D02 needs enough active months for a meaningful distribution comparison.
 _MIN_MONTHS = 3
+_MIN_ACCOUNT_DOCS = 100
+_MIN_ANNUAL_AMOUNT = 0.0
+_MIN_TOP_MONTH_DELTA = 0.25
+_MISSING_ACCOUNT_TOKENS = {"", "nan", "none", "null", "<na>"}
+_ACCOUNT_KEY_SEP = "::"
+_D02_DEFAULT_GROUP_KEYS = ("company_code", "gl_account")
+
+
+def _valid_account_mask(series: pd.Series) -> pd.Series:
+    """Return rows with a usable GL account identifier."""
+
+    return series.notna() & ~series.astype(str).str.strip().str.lower().isin(
+        _MISSING_ACCOUNT_TOKENS
+    )
+
+
+def _company_account_key(company_code: object, gl_account: object) -> str:
+    """Return the stable D01 key used when company_code is available."""
+
+    return (
+        f"{_normalise_key_part(company_code)}"
+        f"{_ACCOUNT_KEY_SEP}"
+        f"{_normalise_key_part(gl_account)}"
+    )
+
+
+def _normalise_key_part(value: object) -> str:
+    """Return a stable string key part for cross-source account comparisons."""
+
+    if pd.isna(value):
+        return ""
+
+    text = str(value).strip()
+    try:
+        numeric = float(text)
+    except ValueError:
+        return text
+
+    if numeric.is_integer():
+        return str(int(numeric))
+    return text
+
+
+def _d02_effective_group_keys(
+    df: pd.DataFrame,
+    group_keys: list[str] | tuple[str, ...] | None,
+) -> list[str]:
+    """Return D02 grouping columns available in the current DataFrame."""
+
+    requested = list(group_keys or _D02_DEFAULT_GROUP_KEYS)
+    if "gl_account" not in requested:
+        requested.append("gl_account")
+
+    effective = [key for key in requested if key in df.columns]
+    return effective or ["gl_account"]
+
+
+def _d02_group_key(row: pd.Series, group_keys: list[str]) -> str:
+    """Build the D02 prior-pattern key for the selected evaluation unit."""
+
+    return _ACCOUNT_KEY_SEP.join(_normalise_key_part(row[key]) for key in group_keys)
+
+
+def _lookup_prior_pattern(
+    prior_patterns: dict[str, dict[int, float]],
+    group_key: str,
+    gl_account: object,
+) -> dict[int, float] | None:
+    """Find prior D02 pattern, preferring company/account keys."""
+
+    acct = _normalise_key_part(gl_account)
+    return (
+        prior_patterns.get(group_key)
+        or prior_patterns.get(str(group_key))
+        or prior_patterns.get(gl_account)
+        or prior_patterns.get(acct)
+    )
+
+
+def _lookup_prior_account(
+    prior_aggregates: dict[str, dict[str, float]],
+    gl_account: object,
+    company_code: object | None = None,
+) -> dict[str, float] | None:
+    """Find prior D01 aggregates, preferring company-aware keys."""
+
+    acct = _normalise_key_part(gl_account)
+    if company_code is not None:
+        company_key = _company_account_key(company_code, acct)
+        prior = prior_aggregates.get(company_key)
+        if prior is not None:
+            return prior
+
+    return (
+        prior_aggregates.get(gl_account)
+        or prior_aggregates.get(str(gl_account))
+        or prior_aggregates.get(acct)
+    )
 
 
 def d01_account_activity_variance(
@@ -39,35 +135,68 @@ def d01_account_activity_variance(
     if not prior_aggregates:
         return pd.Series(False, index=df.index)
 
-    # Current-period activity by account.
-    amount = df[["debit_amount", "credit_amount"]].fillna(0).sum(axis=1)
+    valid_accounts = _valid_account_mask(df["gl_account"])
+    if not valid_accounts.any():
+        return pd.Series(False, index=df.index)
+
+    analysis_df = df.loc[valid_accounts].copy()
+    amount = analysis_df[["debit_amount", "credit_amount"]].fillna(0).sum(axis=1)
+    has_company_code = "company_code" in analysis_df.columns
+    group_cols = ["company_code", "gl_account"] if has_company_code else ["gl_account"]
     current_agg = (
-        df.assign(_amount=amount)
-        .groupby("gl_account")["_amount"]
+        analysis_df.assign(_amount=amount)
+        .groupby(group_cols, dropna=False)["_amount"]
         .agg(total_amount="sum", count="count", avg_amount="mean")
     )
 
-    # Weighted year-over-year activity variance by account.
     flagged_accounts: set[str] = set()
-    for acct, row in current_agg.iterrows():
-        prior = prior_aggregates.get(acct)
+    flagged_company_accounts: set[tuple[str, str]] = set()
+    for account_key, row in current_agg.iterrows():
+        if has_company_code:
+            company_code, acct = account_key
+        else:
+            company_code, acct = None, account_key
+
+        prior = _lookup_prior_account(prior_aggregates, acct, company_code)
         if prior is None:
-            # Why: Accounts that did not exist in the prior period need review.
-            flagged_accounts.add(acct)
+            if has_company_code:
+                flagged_company_accounts.add((
+                    _normalise_key_part(company_code),
+                    _normalise_key_part(acct),
+                ))
+            else:
+                flagged_accounts.add(_normalise_key_part(acct))
             continue
 
-        # Why: abs() 필수 — 증가/감소 모두 "급변"으로 탐지
         total_var = abs(row["total_amount"] - prior["total_amount"]) / max(
             prior["total_amount"], _EPSILON
         )
         count_var = abs(row["count"] - prior["count"]) / max(prior["count"], _EPSILON)
-        avg_var = abs(row["avg_amount"] - prior["avg_amount"]) / max(prior["avg_amount"], _EPSILON)
+        avg_var = abs(row["avg_amount"] - prior["avg_amount"]) / max(
+            prior["avg_amount"], _EPSILON
+        )
 
         weighted = total_var * _W_TOTAL + count_var * _W_COUNT + avg_var * _W_AVG
         if weighted > variance_threshold:
-            flagged_accounts.add(acct)
+            if has_company_code:
+                flagged_company_accounts.add((
+                    _normalise_key_part(company_code),
+                    _normalise_key_part(acct),
+                ))
+            else:
+                flagged_accounts.add(_normalise_key_part(acct))
 
-    return df["gl_account"].isin(flagged_accounts)
+    if has_company_code:
+        current_keys = pd.Series(
+            list(zip(
+                df["company_code"].map(_normalise_key_part),
+                df["gl_account"].map(_normalise_key_part),
+            )),
+            index=df.index,
+        )
+        return current_keys.isin(flagged_company_accounts) & valid_accounts
+
+    return df["gl_account"].map(_normalise_key_part).isin(flagged_accounts) & valid_accounts
 
 
 # Backward-compatible alias for older imports/tests. The rule compares account-level
@@ -80,62 +209,174 @@ def d02_monthly_pattern_variance(
     prior_patterns: dict[str, dict[int, float]],
     jsd_threshold: float = 0.3,
     min_months: int = _MIN_MONTHS,
+    min_account_docs: int = _MIN_ACCOUNT_DOCS,
+    min_annual_amount: float = _MIN_ANNUAL_AMOUNT,
+    min_top_month_delta: float = _MIN_TOP_MONTH_DELTA,
+    group_keys: list[str] | tuple[str, ...] | None = _D02_DEFAULT_GROUP_KEYS,
 ) -> pd.Series:
-    """D02 월별 분포 패턴 변화: JSD로 전기/당기 월별 분포 비교.
+    """D02 monthly pattern shift: compare prior/current distributions with JSD."""
+    diagnostics = d02_monthly_pattern_diagnostics(
+        df,
+        prior_patterns,
+        jsd_threshold=jsd_threshold,
+        min_months=min_months,
+        min_account_docs=min_account_docs,
+        min_annual_amount=min_annual_amount,
+        min_top_month_delta=min_top_month_delta,
+        group_keys=group_keys,
+    )
+    if diagnostics.empty:
+        return pd.Series(False, index=df.index)
 
-    Why: ISA 520 §5 — 특정 월에 거래가 급격히 집중되면
-         기말 매출 조작, 비용 이연 등을 의심할 수 있음.
-    """
+    flagged_groups = set(diagnostics.loc[diagnostics["flagged"], "d02_group_key"])
+    effective_group_keys = _d02_effective_group_keys(df, group_keys)
+    current_group_keys = df[effective_group_keys].apply(
+        lambda row: _d02_group_key(row, effective_group_keys),
+        axis=1,
+    )
+    return current_group_keys.isin(flagged_groups) & _valid_account_mask(df["gl_account"])
+
+
+def d02_monthly_pattern_diagnostics(
+    df: pd.DataFrame,
+    prior_patterns: dict[str, dict[int, float]],
+    jsd_threshold: float = 0.3,
+    min_months: int = _MIN_MONTHS,
+    min_account_docs: int = _MIN_ACCOUNT_DOCS,
+    min_annual_amount: float = _MIN_ANNUAL_AMOUNT,
+    min_top_month_delta: float = _MIN_TOP_MONTH_DELTA,
+    group_keys: list[str] | tuple[str, ...] | None = _D02_DEFAULT_GROUP_KEYS,
+) -> pd.DataFrame:
+    """Return account-level D02 evidence and eligibility decisions."""
+    columns = [
+        "d02_group_key",
+        "d02_group_columns",
+        "company_code",
+        "gl_account",
+        "jsd",
+        "flagged",
+        "prior_months",
+        "current_months",
+        "current_doc_count",
+        "current_annual_amount",
+        "prior_top_month",
+        "current_top_month",
+        "prior_top_ratio",
+        "current_top_ratio",
+        "top_month_delta",
+        "skip_reason",
+    ]
     if "gl_account" not in df.columns or "fiscal_period" not in df.columns:
-        return pd.Series(False, index=df.index)
+        return pd.DataFrame(columns=columns)
     if not prior_patterns:
-        return pd.Series(False, index=df.index)
-    min_months = max(int(min_months), 1)
+        return pd.DataFrame(columns=columns)
 
-    # 당기 계정×월별 금액 합계
-    amount = df[["debit_amount", "credit_amount"]].fillna(0).sum(axis=1)
+    min_months = max(int(min_months), 1)
+    min_account_docs = max(int(min_account_docs), 1)
+    min_annual_amount = max(float(min_annual_amount), 0.0)
+    min_top_month_delta = max(float(min_top_month_delta), 0.0)
+
+    valid_accounts = _valid_account_mask(df["gl_account"])
+    if not valid_accounts.any():
+        return pd.DataFrame(columns=columns)
+
+    analysis_df = df.loc[valid_accounts].copy()
+    effective_group_keys = _d02_effective_group_keys(analysis_df, group_keys)
+    analysis_df["_d02_group_key"] = analysis_df[effective_group_keys].apply(
+        lambda row: _d02_group_key(row, effective_group_keys),
+        axis=1,
+    )
+    amount = analysis_df[["debit_amount", "credit_amount"]].fillna(0).sum(axis=1)
     monthly = (
-        df.assign(_amount=amount)
-        .groupby(["gl_account", "fiscal_period"])["_amount"]
+        analysis_df.assign(_amount=amount)
+        .groupby(["_d02_group_key", "fiscal_period"])["_amount"]
         .sum()
     )
+    if "document_id" in analysis_df.columns:
+        account_doc_counts = analysis_df.groupby("_d02_group_key")["document_id"].nunique()
+    else:
+        account_doc_counts = analysis_df.groupby("_d02_group_key").size()
+    group_identity = (
+        analysis_df.groupby("_d02_group_key", dropna=False)
+        .agg(
+            gl_account=("gl_account", "first"),
+            company_code=(
+                "company_code",
+                "first",
+            )
+            if "company_code" in analysis_df.columns
+            else ("gl_account", lambda _series: None),
+        )
+    )
 
-    flagged_accounts: set[str] = set()
+    rows: list[dict[str, object]] = []
 
-    for acct in monthly.index.get_level_values("gl_account").unique():
-        prior_dist_dict = prior_patterns.get(acct)
+    for group_key in monthly.index.get_level_values("_d02_group_key").unique():
+        identity = group_identity.loc[group_key]
+        acct = identity["gl_account"]
+        company_code = identity["company_code"]
+        prior_dist_dict = _lookup_prior_pattern(prior_patterns, str(group_key), acct)
         if prior_dist_dict is None:
             continue
 
-        # Why: 12개월 고정 벡터로 정렬 — 없는 월은 0.0 패딩
         prior_vec = np.array([prior_dist_dict.get(m, 0.0) for m in range(1, 13)])
-        current_amounts = monthly.loc[acct]
+        current_amounts = monthly.loc[group_key]
         current_vec = np.zeros(12)
         for period, amt in current_amounts.items():
             try:
                 month_idx = int(period) - 1
             except (TypeError, ValueError):
-                continue  # NaN 또는 비정수 period는 무시
+                continue
             if 0 <= month_idx < 12:
                 current_vec[month_idx] = amt
 
-        # Why: 비교 의미 있으려면 전기/당기 모두 3개월 이상 데이터 필요
-        if np.count_nonzero(prior_vec) < min_months:
-            continue
-        if np.count_nonzero(current_vec) < min_months:
-            continue
+        prior_months = int(np.count_nonzero(prior_vec))
+        current_months = int(np.count_nonzero(current_vec))
+        current_doc_count = int(account_doc_counts.get(group_key, 0))
+        current_sum = float(current_vec.sum())
+        skip_reason = ""
 
-        # Why: JSD는 확률분포 비교 → 합이 1.0이 되도록 정규화
+        if prior_months < min_months:
+            skip_reason = "insufficient_prior_months"
+        elif current_months < min_months:
+            skip_reason = "insufficient_current_months"
+        elif current_doc_count < min_account_docs:
+            skip_reason = "insufficient_current_docs"
+        elif current_sum < min_annual_amount:
+            skip_reason = "insufficient_current_amount"
+
         prior_sum = prior_vec.sum()
-        current_sum = current_vec.sum()
         if prior_sum == 0 or current_sum == 0:
             continue
 
         prior_norm = prior_vec / prior_sum
         current_norm = current_vec / current_sum
+        prior_top_month = int(np.argmax(prior_norm) + 1)
+        current_top_month = int(np.argmax(current_norm) + 1)
+        prior_top_ratio = float(prior_norm.max())
+        current_top_ratio = float(current_norm.max())
+        top_month_delta = abs(current_top_ratio - prior_top_ratio)
+        if not skip_reason and top_month_delta < min_top_month_delta:
+            skip_reason = "small_top_month_delta"
 
-        jsd = jensenshannon(prior_norm, current_norm)
-        if jsd > jsd_threshold:
-            flagged_accounts.add(acct)
+        jsd = float(jensenshannon(prior_norm, current_norm))
+        rows.append({
+            "d02_group_key": str(group_key),
+            "d02_group_columns": list(effective_group_keys),
+            "company_code": None if pd.isna(company_code) else str(company_code),
+            "gl_account": _normalise_key_part(acct),
+            "jsd": jsd,
+            "flagged": (not skip_reason) and jsd > jsd_threshold,
+            "prior_months": prior_months,
+            "current_months": current_months,
+            "current_doc_count": current_doc_count,
+            "current_annual_amount": current_sum,
+            "prior_top_month": prior_top_month,
+            "current_top_month": current_top_month,
+            "prior_top_ratio": prior_top_ratio,
+            "current_top_ratio": current_top_ratio,
+            "top_month_delta": top_month_delta,
+            "skip_reason": skip_reason,
+        })
 
-    return df["gl_account"].isin(flagged_accounts)
+    return pd.DataFrame(rows, columns=columns)

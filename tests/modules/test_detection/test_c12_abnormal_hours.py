@@ -6,12 +6,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 import pytest
 
 from src.detection.anomaly_rules_simple import c12_abnormal_hours_concentration
 from src.feature.time_features import add_time_zone_category
-
 
 # ── helpers ──────────────────────────────────────────────────────
 
@@ -355,6 +356,9 @@ class TestC12RapidApproval:
         df = self._make_approval_df(time="23:00", approval_offset_min=2)
         result = c12_abnormal_hours_concentration(df, rapid_approval_minutes=5)
         assert result.iloc[0]
+        assert result.attrs["score_series"].iloc[0] >= 0.65
+        assert result.attrs["breakdown"]["rapid_approval_rows"] == 1
+        assert result.attrs["row_annotations"][0]["reason_codes"] == ["rapid_approval"]
 
     def test_auto_rapid_midnight_not_flagged(self):
         """자동 전표(is_manual_je=False) + 2분 + 심야 → 미플래그."""
@@ -457,6 +461,23 @@ class TestC12MinUserEntries:
         user_flags = df.loc[result, "created_by"].unique()
         assert "userA" not in user_flags
 
+    def test_automated_system_midnight_concentration_not_flagged(self):
+        """Automated/system users are excluded from concentration stats."""
+        df = _make_rule_df({
+            "SYSTEM": ["23:00"] * 20,
+            "IC_GENERATOR": ["23:00"] * 20,
+            "userB": ["10:00"] * 20,
+            "userC": ["10:00"] * 20,
+        })
+        df["source"] = ["automated"] * len(df)
+        df["user_persona"] = ["Automated System"] * len(df)
+
+        result = c12_abnormal_hours_concentration(
+            df,
+            auto_entry_sources=["batch", "interface", "system", "automated"],
+        )
+        assert not result.any()
+
     def test_sufficient_entries_user_flagged(self):
         """전표 15건 사용자 80% 심야 → min_user_entries=10 통과 + 플래그.
 
@@ -473,6 +494,44 @@ class TestC12MinUserEntries:
         )
         user_flags = df.loc[result, "created_by"].unique()
         assert "userA" in user_flags
+
+    def test_high_context_midnight_user_flagged_below_sigma(self):
+        """Many midnight entries are flagged even when the user is below sigma."""
+        entries = {"userA": ["23:00"] * 5 + ["10:00"] * 45}
+        for name in ["userB", "userC", "userD", "userE", "userF"]:
+            entries[name] = ["19:00"] * 8 + ["10:00"] * 42
+
+        df = _make_rule_df(entries)
+        result = c12_abnormal_hours_concentration(
+            df,
+            sigma_threshold=10.0,
+            min_abnormal_ratio=0.1,
+            min_high_context_midnight_entries=5,
+        )
+
+        user_a_midnight = (df["created_by"] == "userA") & (
+            df["time_zone_category"] == "midnight"
+        )
+        user_a_normal = (df["created_by"] == "userA") & (
+            df["time_zone_category"] == "normal"
+        )
+        assert result[user_a_midnight].all()
+        assert not result[user_a_normal].any()
+
+    def test_high_context_midnight_ignores_overtime_only(self):
+        """High-context supplement applies only to midnight, not overtime."""
+        entries = {"userA": ["19:00"] * 5 + ["10:00"] * 45}
+        for name in ["userB", "userC", "userD", "userE", "userF"]:
+            entries[name] = ["10:00"] * 50
+
+        df = _make_rule_df(entries)
+        result = c12_abnormal_hours_concentration(
+            df,
+            sigma_threshold=10.0,
+            min_abnormal_ratio=0.1,
+            min_high_context_midnight_entries=5,
+        )
+        assert not result.any()
 
     def test_min_user_entries_lowered_flags(self):
         """min_user_entries=3으로 낮추면 전표 5건 사용자도 분석 대상 포함.
@@ -527,6 +586,17 @@ class TestC12SourceFallback:
             auto_entry_sources=["batch", "interface", "system"],
         )
         assert result.iloc[0]
+
+    def test_automated_system_persona_normalized_not_flagged(self):
+        """Persona comparison handles case and spaces."""
+        df = self._make_source_df("manual")
+        df["user_persona"] = ["Automated System"]
+        result = c12_abnormal_hours_concentration(
+            df,
+            rapid_approval_minutes=5,
+            auto_entry_sources=["batch", "interface", "system"],
+        )
+        assert not result.iloc[0]
 
     def test_no_manual_no_source_defaults_manual(self):
         """is_manual_je·source 모두 없음 → 수기 간주 (기존 동작 유지)."""
@@ -598,8 +668,6 @@ class TestC12Integration:
 #  Part 5: DataSynth E2E 검증
 # ══════════════════════════════════════════════════════════════════
 
-from pathlib import Path
-
 DATASYNTH_CSV = Path("data/journal/primary/datasynth/journal_entries.csv")
 
 
@@ -612,7 +680,7 @@ def _load_datasynth_with_features() -> pd.DataFrame:
     from src.ingest.reader_api import read_file
     from src.ingest.type_caster import cast_dataframe
 
-    vr = validate_file(DATASYNTH_CSV)
+    validate_file(DATASYNTH_CSV)
     rr = read_file(DATASYNTH_CSV)
     raw_df = rr.raw_data[rr.active_sheet]
     hr = detect_header_row(raw_df)

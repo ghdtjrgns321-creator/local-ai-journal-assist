@@ -1,9 +1,8 @@
-"""종합 anomaly_score 산출 — 다중 DetectionResult 가중합 + Top-side JE 복합 탐지.
+"""Aggregate detector results into row-level risk scores.
 
-Why: 탐지 트랙(Layer A/B/C, Benford, Phase 2 ML)별 점수를
-     하나의 anomaly_score로 합산하여 risk_level 분류.
-     Top-side JE score는 기존 룰 플래그를 조합하는 후처리로 여기서 산출.
-     BaseDetector를 상속하지 않는 순수 함수 모듈.
+The execution tracks still use legacy names such as ``layer_a`` and ``layer_b``
+for compatibility, but the default score aggregation is now based on the
+current audit rule code families: L1, L2, L3, and L4.
 """
 
 from __future__ import annotations
@@ -16,21 +15,29 @@ from config.settings import get_settings
 from src.detection.base import DetectionResult
 from src.detection.constants import (
     BATCH_CORROBORATION_RULES,
-    LAYER_WEIGHTS,
     RISK_THRESHOLDS,
+    RULE_LEVEL_WEIGHTS,
+    SEVERITY_MAP,
     TOPSIDE_BONUS_RULES,
+    WORK_SCOPE_CORROBORATION_RULES,
     Layer,
     RiskLevel,
 )
+from src.detection.rule_scoring import RULE_SCORING_REGISTRY, normalize_rule_evidence
 
-# Why: Top-side JE 가점 조건 수 (정규화 분모). ���이트키퍼(수기)는 제���.
 _TOPSIDE_CONDITIONS = len(TOPSIDE_BONUS_RULES)
 _BATCH_CORROBORATION_CONDITIONS = len(BATCH_CORROBORATION_RULES)
+_WORK_SCOPE_CORROBORATION_CONDITIONS = len(WORK_SCOPE_CORROBORATION_RULES)
+
+_POLICY_HIGH_RULES = {"L1-04", "L1-06"}
+_POLICY_HIGH_LABELS = {
+    "immediate",
+    "escalated_materiality",
+    "escalated_abnormal_time",
+    "escalated_high_risk_account",
+}
 
 logger = logging.getLogger(__name__)
-
-
-# ── public API ─────────────────────────────────────────────
 
 
 def aggregate_scores(
@@ -42,45 +49,23 @@ def aggregate_scores(
     *,
     stacking_scores: pd.Series | None = None,
 ) -> pd.DataFrame:
-    """여러 트랙의 DetectionResult를 종합하여 최종 anomaly_score 산출.
-
-    Args:
-        settings: AuditSettings 인스턴스. None이면 get_settings() 싱글톤 사용.
-        stacking_scores: Stacking meta-learner가 산출한 최종 점수.
-            제공되면 기존 가중합을 건너뛰고 이 점수를 anomaly_score로 사용.
-
-    Returns:
-        DataFrame(anomaly_score, risk_level, flagged_rules), index=df.index.
-    """
+    """Return anomaly_score, risk_level, and rule references for each row."""
     if settings is None:
         settings = get_settings()
 
-    # Why: stacking_scores가 있으면 meta-learner 점수를 직접 사용.
-    #      없으면 기존 레이어별 가중합 로직 유지 (하위 호환).
     if stacking_scores is not None:
         anomaly_score = stacking_scores.reindex(df.index, fill_value=0.0).clip(0.0, 1.0)
     else:
-        # Why: Layer enum 값(.value)과 track_name 문자열 통일
-        w = {k.value if isinstance(k, Layer) else k: v
-             for k, v in (weights or LAYER_WEIGHTS).items()}
-
-        result_map = {r.track_name: r for r in results}
-
-        # Why: 각 레이어별 scores × weight 가중합. 에러 격리로 한 레이어 실패해도 계속 진행.
-        score_acc = pd.Series(0.0, index=df.index)
-        for track_name, weight in w.items():
-            if track_name not in result_map:
-                logger.warning("트랙 '%s' 결과 없음 — 0점 처리", track_name)
-                continue
-            try:
-                layer_scores = result_map[track_name].scores.reindex(df.index, fill_value=0.0)
-                score_acc = score_acc + layer_scores * weight
-            except Exception:
-                logger.warning("트랙 '%s' 점수 합산 실패 — 0점 처리", track_name, exc_info=True)
-
+        normalized_weights = {
+            k.value if isinstance(k, Layer) else str(k): float(v)
+            for k, v in (weights or RULE_LEVEL_WEIGHTS).items()
+        }
+        if _uses_rule_level_weights(normalized_weights):
+            score_acc = _aggregate_rule_level_scores(df.index, results, normalized_weights)
+        else:
+            score_acc = _aggregate_legacy_track_scores(df.index, results, normalized_weights)
         anomaly_score = score_acc.clip(0.0, 1.0)
 
-    # Why: settings의 classification mode를 해석하여 quantile/absolute 분기
     mode = getattr(settings, "risk_classification_mode", "absolute")
     quantiles = None
     if mode == "quantile":
@@ -90,41 +75,213 @@ def aggregate_scores(
             RiskLevel.LOW: getattr(settings, "risk_quantile_low", 0.50),
         }
 
-    agg_df = pd.DataFrame({
-        "anomaly_score": anomaly_score,
-        "risk_level": classify_risk_level(
-            anomaly_score, thresholds, mode=mode, quantiles=quantiles,
-        ),
-        "flagged_rules": _collect_flagged_rules(results, df.index),
-    }, index=df.index)
+    agg_df = pd.DataFrame(
+        {
+            "anomaly_score": anomaly_score,
+            "risk_level": classify_risk_level(
+                anomaly_score,
+                thresholds,
+                mode=mode,
+                quantiles=quantiles,
+            ),
+            "flagged_rules": _collect_flagged_rules(results, df.index),
+            "review_rules": _collect_review_rules(results, df.index),
+        },
+        index=df.index,
+    )
 
-    # Why: ML 개별 트랙 점수를 전용 컬럼으로 주입 → 대시보드/DB에서 분리 표시 가능.
-    #      트랙 미존재(Cold Start) 시 컬럼 자체를 생성하지 않아 하위 호환 유지.
     _inject_ml_track_scores(agg_df, results)
-
+    agg_df = _apply_policy_risk_floors(agg_df, results)
     agg_df = _apply_auto_escalation(agg_df, results)
     agg_df = _apply_batch_corroboration(agg_df, results)
+    agg_df = _apply_work_scope_corroboration(agg_df, results)
     return _inject_topside_score(agg_df, df, results)
+
+
+def _uses_rule_level_weights(weights: dict[str, float]) -> bool:
+    return bool({str(key).upper() for key in weights}.intersection(RULE_LEVEL_WEIGHTS))
+
+
+def _combined_rule_details(results: list[DetectionResult], index: pd.Index) -> pd.DataFrame:
+    details_list = [r.details for r in results if r.details is not None and not r.details.empty]
+    if not details_list:
+        return pd.DataFrame(index=index)
+    combined = pd.concat(details_list, axis=1).reindex(index).fillna(0.0)
+    if combined.columns.duplicated().any():
+        combined = combined.T.groupby(level=0).max().T
+    return combined
+
+
+def _combined_rule_signal_details(
+    results: list[DetectionResult],
+    index: pd.Index,
+) -> pd.DataFrame:
+    """Return raw rule signals, including review-only annotation scores."""
+    combined = _combined_rule_details(results, index)
+    annotation_columns: list[pd.Series] = []
+    for result in results:
+        if result.details is None or result.details.empty:
+            continue
+        for rule_id in result.details.columns:
+            rule_code = str(rule_id)
+            annotation_scores = _row_annotation_scores_for_rule(result, rule_code, index)
+            if annotation_scores.gt(0).any():
+                base = (
+                    pd.to_numeric(result.details[rule_code].reindex(index), errors="coerce")
+                    .fillna(0.0)
+                    .astype(float)
+                )
+                annotation_columns.append(base.combine(annotation_scores, max).rename(rule_code))
+
+    if not annotation_columns:
+        return combined
+    annotated = pd.concat(annotation_columns, axis=1).reindex(index).fillna(0.0)
+    if combined.empty:
+        combined = annotated
+    else:
+        combined = pd.concat([combined, annotated], axis=1).reindex(index).fillna(0.0)
+    if combined.columns.duplicated().any():
+        combined = combined.T.groupby(level=0).max().T
+    return combined
+
+
+def _aggregate_rule_level_scores(
+    index: pd.Index,
+    results: list[DetectionResult],
+    weights: dict[str, float],
+) -> pd.Series:
+    """Aggregate by L1/L2/L3/L4 using the max rule score inside each family."""
+    combined = _combined_normalized_rule_details(results, index)
+    result_map = {r.track_name: r for r in results}
+    score_acc = pd.Series(0.0, index=index)
+    for level, weight in weights.items():
+        level_key = str(level).upper()
+        if level_key in RULE_LEVEL_WEIGHTS:
+            if combined.empty:
+                continue
+            columns = [
+                col for col in combined.columns if str(col).upper().startswith(f"{level_key}-")
+            ]
+            if columns:
+                score_acc = score_acc + combined[columns].max(axis=1) * float(weight)
+            continue
+
+        track = result_map.get(str(level))
+        if track is not None:
+            score_acc = score_acc + track.scores.reindex(index, fill_value=0.0) * float(weight)
+    return score_acc
+
+
+def _combined_normalized_rule_details(
+    results: list[DetectionResult],
+    index: pd.Index,
+) -> pd.DataFrame:
+    """Return rule detail columns after applying the PHASE1 rule scoring contract."""
+    normalized_columns: list[pd.Series] = []
+    for result in results:
+        if result.details is None or result.details.empty:
+            continue
+        details = result.details.reindex(index).fillna(0.0)
+        severities = {
+            flag.rule_id: int(flag.severity)
+            for flag in result.rule_flags
+        }
+        for rule_id in details.columns:
+            rule_code = str(rule_id)
+            if not _is_rule_level_code(rule_code):
+                continue
+            metadata = RULE_SCORING_REGISTRY.get(rule_code)
+            if metadata is not None and metadata.scoring_role == "macro_only":
+                normalized_columns.append(pd.Series(0.0, index=index, name=rule_code))
+                continue
+
+            severity = severities.get(rule_code, int(SEVERITY_MAP.get(rule_code, 1)))
+            evidence_type = (
+                metadata.evidence_type
+                if metadata is not None
+                else _default_evidence_type(rule_code)
+            )
+            labels = _row_labels_for_rule(results=[result], rule_id=rule_code, index=index)
+            annotation_scores = _row_annotation_scores_for_rule(result, rule_code, index)
+            raw_values = (
+                pd.to_numeric(details[rule_code], errors="coerce")
+                .fillna(0.0)
+                .combine(annotation_scores, max)
+            )
+            normalized = pd.Series(
+                [
+                    normalize_rule_evidence(
+                        rule_id=rule_code,
+                        evidence_type=evidence_type,
+                        severity=severity,
+                        raw_value=raw_value,
+                        display_label=display_label or None,
+                    ).normalized_score
+                    if float(raw_value) > 0
+                    else 0.0
+                    for raw_value, display_label in zip(raw_values, labels, strict=False)
+                ],
+                index=index,
+                name=rule_code,
+                dtype="float64",
+            )
+            normalized_columns.append(normalized)
+
+    if not normalized_columns:
+        return pd.DataFrame(index=index)
+    combined = pd.concat(normalized_columns, axis=1).reindex(index).fillna(0.0)
+    if combined.columns.duplicated().any():
+        combined = combined.T.groupby(level=0).max().T
+    return combined
+
+
+def _is_rule_level_code(rule_id: str) -> bool:
+    return str(rule_id).upper().startswith(("L1-", "L2-", "L3-", "L4-"))
+
+
+def _default_evidence_type(rule_id: str) -> str:
+    level = str(rule_id).upper().split("-", maxsplit=1)[0]
+    return {
+        "L1": "data_integrity_failure",
+        "L2": "duplicate_or_outflow",
+        "L3": "timing_anomaly",
+        "L4": "statistical_outlier",
+    }.get(level, "statistical_outlier")
+
+
+def _aggregate_legacy_track_scores(
+    index: pd.Index,
+    results: list[DetectionResult],
+    weights: dict[str, float],
+) -> pd.Series:
+    """Keep explicit legacy track weighting available for callers/tests."""
+    result_map = {r.track_name: r for r in results}
+    score_acc = pd.Series(0.0, index=index)
+    for track_name, weight in weights.items():
+        if track_name not in result_map:
+            logger.warning("track '%s' missing; treating as zero", track_name)
+            continue
+        try:
+            track_scores = result_map[track_name].scores.reindex(index, fill_value=0.0)
+            score_acc = score_acc + track_scores * float(weight)
+        except Exception:
+            logger.warning("failed to aggregate track '%s'", track_name, exc_info=True)
+    return score_acc
 
 
 def _inject_ml_track_scores(
     agg_df: pd.DataFrame,
     results: list[DetectionResult],
 ) -> None:
-    """ml_supervised/ml_unsupervised 트랙 점수를 DB 적재용 컬럼에 주입.
-
-    Why: DB schema에 예약된 supervised_score, unsupervised_score 컬럼을 채운다.
-         대시보드 Explorer Grid가 두 점수를 별도 바 렌더러로 표시하기 위함.
-    """
+    """Inject optional ML track scores as separate display/storage columns."""
     track_to_col = {
         "ml_supervised": "supervised_score",
         "ml_unsupervised": "unsupervised_score",
     }
-    for r in results:
-        col = track_to_col.get(r.track_name)
-        if col is None:
-            continue
-        agg_df[col] = r.scores.reindex(agg_df.index)
+    for result in results:
+        col = track_to_col.get(result.track_name)
+        if col is not None:
+            agg_df[col] = result.scores.reindex(agg_df.index)
 
 
 def classify_risk_level(
@@ -133,28 +290,15 @@ def classify_risk_level(
     mode: str = "absolute",
     quantiles: dict[str, float] | None = None,
 ) -> pd.Series:
-    """anomaly_score → risk_level 변환 (4등급).
-
-    Normal→Low→Medium→High 순서로 덮어쓰기하여 최종 등급 결정.
-
-    Args:
-        scores: anomaly_score 시리즈
-        thresholds: 절대값 임계값 (mode="absolute"). None이면 RISK_THRESHOLDS 사용
-        mode: "absolute" (고정 임계값) 또는 "quantile" (분위수 기반)
-        quantiles: 분위수 딕셔너리 (mode="quantile"). 예: {high:0.9, medium:0.75, low:0.5}
-
-    Why (quantile 모드): Stacking Ridge 출력은 진짜 확률이 아니므로 절대값 기준은
-    오해 유발. 분위수 기반은 "상위 10%를 HIGH"로 분류하여 감사 실무 워크플로우
-    (Top-N 조사)에 정렬된다.
-    """
+    """Classify scores into Normal/Low/Medium/High."""
     if mode == "quantile":
         return _classify_by_quantile(scores, quantiles)
 
     t = thresholds or RISK_THRESHOLDS
     levels = pd.Series(RiskLevel.NORMAL, index=scores.index)
-    levels[scores > t[RiskLevel.LOW]] = RiskLevel.LOW
-    levels[scores > t[RiskLevel.MEDIUM]] = RiskLevel.MEDIUM
-    levels[scores > t[RiskLevel.HIGH]] = RiskLevel.HIGH
+    levels[scores >= t[RiskLevel.LOW]] = RiskLevel.LOW
+    levels[scores >= t[RiskLevel.MEDIUM]] = RiskLevel.MEDIUM
+    levels[scores >= t[RiskLevel.HIGH]] = RiskLevel.HIGH
     return levels
 
 
@@ -162,83 +306,205 @@ def _classify_by_quantile(
     scores: pd.Series,
     quantiles: dict[str, float] | None,
 ) -> pd.Series:
-    """분위수 기반 risk_level 분류.
-
-    Why: 절대 확률 가정이 깨져도 "상위 N%"는 항상 의미 있다.
-         동일 score가 여러 행에 있을 때 stable ordering을 위해 rank(method='max') 사용.
-    """
     q = quantiles or {
         RiskLevel.HIGH: 0.90,
         RiskLevel.MEDIUM: 0.75,
         RiskLevel.LOW: 0.50,
     }
-    # Why: 모든 score가 0.0인 경우(결과 없음) quantile 계산 의미 없음 → NORMAL
     if scores.empty or scores.max() <= 0:
         return pd.Series(RiskLevel.NORMAL, index=scores.index)
 
-    # Why: 동일 값의 묶음 처리를 위해 percentile rank 사용 (0~1)
     pct_rank = scores.rank(method="max", pct=True)
     levels = pd.Series(RiskLevel.NORMAL, index=scores.index)
     levels[pct_rank > q[RiskLevel.LOW]] = RiskLevel.LOW
     levels[pct_rank > q[RiskLevel.MEDIUM]] = RiskLevel.MEDIUM
     levels[pct_rank > q[RiskLevel.HIGH]] = RiskLevel.HIGH
-    # Why: score=0인 행은 언제나 NORMAL 보존 (rank가 높아도 실제 위험 없음)
     levels[scores <= 0] = RiskLevel.NORMAL
     return levels
-
-
-# ── private helpers ────────────────────────────────────────
-
-
-def _apply_auto_escalation(
-    agg_df: pd.DataFrame,
-    results: list[DetectionResult],
-) -> pd.DataFrame:
-    """Layer A ≥ 1 위반 AND Layer B ≥ 2 위반 → risk_level = High 강제.
-
-    Why: 무결성 위반 + 부정 의심 중복은 가중합 점수와 무관하게 고위험.
-    """
-    result_map = {r.track_name: r for r in results}
-    layer_a = result_map.get(Layer.LAYER_A.value)
-    layer_b = result_map.get(Layer.LAYER_B.value)
-    if layer_a is None or layer_b is None:
-        return agg_df
-
-    # Why: details > 0인 컬럼 수 = 해당 행에서 위반된 룰 수
-    a_flagged = (layer_a.details.reindex(agg_df.index, fill_value=0.0) > 0).sum(axis=1) >= 1
-    b_flagged = (layer_b.details.reindex(agg_df.index, fill_value=0.0) > 0).sum(axis=1) >= 2
-    escalate_mask = a_flagged & b_flagged
-
-    if escalate_mask.any():
-        agg_df.loc[escalate_mask, "risk_level"] = RiskLevel.HIGH
-    return agg_df
 
 
 def _collect_flagged_rules(
     results: list[DetectionResult],
     index: pd.Index,
 ) -> pd.Series:
-    """행별 위반 룰 ID를 comma-separated 문자열로 반환.
-
-    Why: mask.dot(cols + ",") 벡터화로 100만 행도 1초 미만 처리.
-         apply(axis=1)은 내부 Python for 루프라 대규모 데이터에서 병목.
-    """
-    details_list = [r.details for r in results if not r.details.empty]
-    if not details_list:
+    """Return comma-separated confirmed rule IDs per row."""
+    combined = _combined_rule_details(results, index)
+    if combined.empty:
         return pd.Series("", index=index)
-
-    # Why: 동일 rule_id가 여러 트랙에 존재할 수 있음 (예: L4-02이 layer_c와 benford 양쪽).
-    #      중복 컬럼을 max로 합쳐서 "L4-02,L4-02" 이중 출력 방지.
-    combined = pd.concat(details_list, axis=1).reindex(index).fillna(0.0)
-    if combined.columns.duplicated().any():
-        combined = combined.T.groupby(level=0).max().T
     mask = combined > 0
     cols_with_comma = mask.columns + ","
     flagged_str = mask.dot(cols_with_comma)
     return flagged_str.str.rstrip(",")
 
 
-# ── Top-side JE 복합 점수 ────────────────────────────
+def _collect_review_rules(
+    results: list[DetectionResult],
+    index: pd.Index,
+) -> pd.Series:
+    """Return comma-separated review-only rule IDs per row."""
+    combined = _combined_rule_details(results, index)
+    review_masks: list[pd.Series] = []
+
+    for result in results:
+        if result.details is None or result.details.empty:
+            continue
+        for rule_id in result.details.columns:
+            rule_code = str(rule_id)
+            annotation_scores = _row_annotation_scores_for_rule(result, rule_code, index)
+            if not annotation_scores.gt(0).any():
+                continue
+            detail_scores = (
+                pd.to_numeric(result.details[rule_code].reindex(index), errors="coerce")
+                .fillna(0.0)
+                .astype(float)
+            )
+            review_mask = annotation_scores.gt(0) & detail_scores.le(0)
+            if review_mask.any():
+                review_masks.append(review_mask.rename(rule_code))
+
+    if not review_masks:
+        return pd.Series("", index=index)
+    mask = pd.concat(review_masks, axis=1).reindex(index).fillna(False).astype(bool)
+    if mask.columns.duplicated().any():
+        mask = mask.T.groupby(level=0).max().T.astype(bool)
+    if not combined.empty:
+        confirmed = combined.reindex(index).fillna(0.0).gt(0)
+        for rule_id in mask.columns:
+            if rule_id in confirmed.columns:
+                mask[rule_id] = mask[rule_id] & ~confirmed[rule_id]
+    cols_with_comma = mask.columns + ","
+    review_str = mask.dot(cols_with_comma)
+    return review_str.str.rstrip(",")
+
+
+def _apply_policy_risk_floors(
+    agg_df: pd.DataFrame,
+    results: list[DetectionResult],
+) -> pd.DataFrame:
+    """Promote severe control failures that should not be diluted by weighting."""
+    combined = _combined_rule_details(results, agg_df.index)
+    if combined.empty:
+        agg_df["risk_floor_reasons"] = ""
+        return agg_df
+
+    high_mask = pd.Series(False, index=agg_df.index)
+    reasons = pd.Series("", index=agg_df.index, dtype="string")
+
+    for rule_id in _POLICY_HIGH_RULES:
+        if rule_id in combined.columns:
+            mask = combined[rule_id].ge(0.8)
+            high_mask = high_mask | mask
+            reasons = _append_reason(reasons, mask, f"{rule_id}:immediate")
+
+    for rule_id in ("L1-05", "L1-07"):
+        label_by_index = _row_labels_for_rule(results, rule_id, agg_df.index)
+        for label in _POLICY_HIGH_LABELS:
+            mask = label_by_index.eq(label)
+            high_mask = high_mask | mask
+            reasons = _append_reason(reasons, mask, f"{rule_id}:{label}")
+
+    if high_mask.any():
+        agg_df.loc[high_mask, "anomaly_score"] = agg_df.loc[
+            high_mask, "anomaly_score"
+        ].clip(lower=RISK_THRESHOLDS[RiskLevel.HIGH])
+        agg_df.loc[high_mask, "risk_level"] = RiskLevel.HIGH
+
+    agg_df["risk_floor_reasons"] = reasons.fillna("")
+    return agg_df
+
+
+def _row_labels_for_rule(
+    results: list[DetectionResult],
+    rule_id: str,
+    index: pd.Index,
+) -> pd.Series:
+    labels = pd.Series("", index=index, dtype="string")
+    for result in results:
+        annotations = (result.metadata or {}).get("row_annotations", {}).get(rule_id, {})
+        if not isinstance(annotations, dict):
+            continue
+        for raw_idx, annotation in annotations.items():
+            if not isinstance(annotation, dict):
+                continue
+            label = (
+                annotation.get("bucket")
+                or annotation.get("queue_label")
+                or annotation.get("risk_level")
+                or annotation.get("severity_label")
+                or annotation.get("label")
+            )
+            if label is None:
+                continue
+            idx = raw_idx if raw_idx in labels.index else _coerce_index_label(index, raw_idx)
+            if idx in labels.index:
+                labels.loc[idx] = str(label).strip().lower()
+    return labels
+
+
+def _row_annotation_scores_for_rule(
+    result: DetectionResult,
+    rule_id: str,
+    index: pd.Index,
+) -> pd.Series:
+    scores = pd.Series(0.0, index=index, dtype="float64")
+    annotations = (result.metadata or {}).get("row_annotations", {}).get(rule_id, {})
+    if not isinstance(annotations, dict):
+        return scores
+    for raw_idx, annotation in annotations.items():
+        if not isinstance(annotation, dict):
+            continue
+        idx = raw_idx if raw_idx in scores.index else _coerce_index_label(index, raw_idx)
+        if idx not in scores.index:
+            continue
+        scores.loc[idx] = max(scores.loc[idx], _annotation_score(annotation))
+    return scores
+
+
+def _annotation_score(annotation: dict[str, object]) -> float:
+    for key in ("score", "review_score", "normalized_score"):
+        value = annotation.get(key)
+        try:
+            score = float(value)
+        except (TypeError, ValueError):
+            continue
+        if score > 0:
+            return score
+    return 0.0
+
+
+def _coerce_index_label(index: pd.Index, value: object) -> object:
+    try:
+        pos = int(value)
+    except (TypeError, ValueError):
+        return value
+    if 0 <= pos < len(index):
+        return index[pos]
+    return value
+
+
+def _append_reason(reasons: pd.Series, mask: pd.Series, reason: str) -> pd.Series:
+    return reasons.mask(mask, reasons.where(reasons == "", reasons + ",") + reason)
+
+
+def _apply_auto_escalation(
+    agg_df: pd.DataFrame,
+    results: list[DetectionResult],
+) -> pd.DataFrame:
+    """Escalate data-integrity plus multiple control/fraud findings."""
+    combined = _combined_rule_details(results, agg_df.index)
+    if combined.empty:
+        return agg_df
+    a_cols = [col for col in combined.columns if str(col) in {"L1-01", "L1-02", "L1-03"}]
+    b_cols = [col for col in combined.columns if str(col) not in {"L1-01", "L1-02", "L1-03"}]
+    if not a_cols or not b_cols:
+        return agg_df
+
+    a_flagged = (combined[a_cols] > 0).sum(axis=1) >= 1
+    b_flagged = (combined[b_cols] > 0).sum(axis=1) >= 2
+    escalate_mask = a_flagged & b_flagged
+    if escalate_mask.any():
+        agg_df.loc[escalate_mask, "risk_level"] = RiskLevel.HIGH
+    return agg_df
 
 
 def _get_rule_flag(
@@ -247,13 +513,13 @@ def _get_rule_flag(
     layer_name: str,
     index: pd.Index,
 ) -> pd.Series:
-    """특정 레이어 details에서 룰 플래그 여부를 bool Series로 반환.
-
-    Why: 레이어 누락이나 룰 미실행(skipped) 시에도 에러 없이 False 반환.
-    """
+    """Return whether a rule is flagged, accepting legacy track locations."""
     layer = result_map.get(layer_name)
     if layer is None or rule_id not in layer.details.columns:
-        return pd.Series(False, index=index)
+        combined = _combined_rule_details(list(result_map.values()), index)
+        if rule_id not in combined.columns:
+            return pd.Series(False, index=index)
+        return combined[rule_id].reindex(index, fill_value=0.0) > 0
     return layer.details[rule_id].reindex(index, fill_value=0.0) > 0
 
 
@@ -261,32 +527,22 @@ def _compute_topside_score(
     df: pd.DataFrame,
     results: list[DetectionResult],
 ) -> pd.Series:
-    """Top-side JE 가중 점수 산출.
-
-    Why: 수기 전표(is_manual_je)가 게이트키퍼. 자동 전표는 가점이 만점이어도 0점.
-         게이트 통과 시 5개 가점 조건(L3-04, L1-05/L1-07, L1-03/L4-04, L4-03, L3-08) 합산.
-    """
+    """Compute top-side JE corroboration score."""
     result_map = {r.track_name: r for r in results}
     idx = df.index
     score = pd.Series(0, index=idx, dtype=int)
 
-    # Why: TOPSIDE_BONUS_RULES를 순회하여 하드코딩 제거.
-    #      각 그룹 내 룰은 OR 결합 (하나라도 True면 가점 1).
     for _label, rule_pairs in TOPSIDE_BONUS_RULES:
         group_flag = pd.Series(False, index=idx)
         for rule_id, layer_name in rule_pairs:
             group_flag = group_flag | _get_rule_flag(result_map, rule_id, layer_name, idx)
         score += group_flag.astype(int)
 
-    # Why: 게이트키퍼 — 수기 전표가 아니면 가점 전체를 0으로 초기화.
-    #      자동 배치 전표가 우연히 다른 조건에 걸려도 Top-side JE로 과탐되지 않음.
     if "is_manual_je" in df.columns:
         is_manual = df["is_manual_je"].fillna(False)
     else:
         is_manual = pd.Series(False, index=idx)
-    score = score * is_manual.astype(int)
-
-    return score
+    return score * is_manual.astype(int)
 
 
 def _inject_topside_score(
@@ -294,10 +550,8 @@ def _inject_topside_score(
     df: pd.DataFrame,
     results: list[DetectionResult],
 ) -> pd.DataFrame:
-    """Top-side JE score를 내부 case-priority feature로 추가한다."""
+    """Add top-side score as a supporting feature."""
     raw_score = _compute_topside_score(df, results)
-
-    # Why: topside_score 컬럼은 항상 추가 (하류 코드 컬럼 보장)
     agg_df["topside_score"] = raw_score / _TOPSIDE_CONDITIONS
     return agg_df
 
@@ -306,12 +560,7 @@ def _apply_batch_corroboration(
     agg_df: pd.DataFrame,
     results: list[DetectionResult],
 ) -> pd.DataFrame:
-    """L4-06 단독은 보조 신호로 두고, 결합 신호가 있을 때만 우선순위를 올린다.
-
-    Why: 자동 배치 전표는 정상 대량 처리도 많다. 따라서 L4-06만으로 High를 만들지 않고,
-         결산/cutoff, 통제 실패, 고액/계정 이상, 부실 적요, 역분개/중복 중
-         복수 신호가 함께 있을 때 감사 검토 우선순위를 높인다.
-    """
+    """Promote L4-06 only when corroborating rule groups are also present."""
     result_map = {r.track_name: r for r in results}
     idx = agg_df.index
     batch_flag = _get_rule_flag(result_map, "L4-06", Layer.LAYER_C.value, idx)
@@ -342,5 +591,51 @@ def _apply_batch_corroboration(
     if medium_mask.any():
         current_high = agg_df["risk_level"].eq(RiskLevel.HIGH)
         agg_df.loc[medium_mask & ~current_high, "risk_level"] = RiskLevel.MEDIUM
+    return agg_df
 
+
+def _apply_work_scope_corroboration(
+    agg_df: pd.DataFrame,
+    results: list[DetectionResult],
+) -> pd.DataFrame:
+    """Promote L3-12 only when independent corroborating rule groups exist."""
+
+    result_map = {r.track_name: r for r in results}
+    idx = agg_df.index
+    scope_flag = _get_rule_flag(result_map, "L3-12", Layer.LAYER_B.value, idx)
+
+    raw_score = pd.Series(0, index=idx, dtype=int)
+    reason_parts = pd.Series("", index=idx, dtype="string")
+    for label, rule_pairs in WORK_SCOPE_CORROBORATION_RULES:
+        group_flag = pd.Series(False, index=idx)
+        for rule_id, layer_name in rule_pairs:
+            group_flag = group_flag | _get_rule_flag(result_map, rule_id, layer_name, idx)
+        group_flag = group_flag & scope_flag
+        raw_score += group_flag.astype(int)
+        reason_parts = reason_parts.mask(
+            group_flag,
+            reason_parts.where(reason_parts == "", reason_parts + ",") + label,
+        )
+
+    if _WORK_SCOPE_CORROBORATION_CONDITIONS == 0:
+        agg_df["work_scope_combo_score"] = 0.0
+    else:
+        agg_df["work_scope_combo_score"] = raw_score / _WORK_SCOPE_CORROBORATION_CONDITIONS
+    agg_df["work_scope_combo_reasons"] = reason_parts.fillna("")
+
+    high_mask = scope_flag & (raw_score >= 3)
+    medium_mask = scope_flag & (raw_score >= 2) & ~high_mask
+    if high_mask.any():
+        agg_df.loc[high_mask, "anomaly_score"] = agg_df.loc[
+            high_mask,
+            "anomaly_score",
+        ].clip(lower=RISK_THRESHOLDS[RiskLevel.HIGH])
+        agg_df.loc[high_mask, "risk_level"] = RiskLevel.HIGH
+    if medium_mask.any():
+        agg_df.loc[medium_mask, "anomaly_score"] = agg_df.loc[
+            medium_mask,
+            "anomaly_score",
+        ].clip(lower=RISK_THRESHOLDS[RiskLevel.MEDIUM])
+        current_high = agg_df["risk_level"].eq(RiskLevel.HIGH)
+        agg_df.loc[medium_mask & ~current_high, "risk_level"] = RiskLevel.MEDIUM
     return agg_df

@@ -5,7 +5,7 @@ import pandas as pd
 from src.detection.fraud_layer import FraudLayer
 
 
-def test_l1_06_rule_flag_detail_and_score_band() -> None:
+def test_l1_06_review_pair_is_excluded_from_l106_score() -> None:
     df = pd.DataFrame({
         "debit_amount": [1.0, 1.0],
         "credit_amount": [0.0, 0.0],
@@ -17,12 +17,14 @@ def test_l1_06_rule_flag_detail_and_score_band() -> None:
     layer = FraudLayer()
     result = layer.detect(df)
     l106 = next(flag for flag in result.rule_flags if flag.rule_id == "L1-06")
-    assert l106.detail == "immediate=0, review=2"
-    assert result.details["L1-06"].eq(0.4).all()
-    assert result.metadata["rule_breakdowns"]["L1-06"]["review_rows"] == 2
+    assert l106.detail == "immediate=0, review=0"
+    assert l106.flagged_count == 0
+    assert result.details["L1-06"].eq(0.0).all()
+    assert result.metadata["rule_breakdowns"]["L1-06"]["review_rows"] == 0
+    assert result.metadata["rule_breakdowns"]["L1-06"]["work_scope_review_rows_excluded"] == 2
 
 
-def test_l1_06_review_is_promoted_by_cross_rule_signal() -> None:
+def test_l1_06_review_is_not_promoted_by_self_approval() -> None:
     df = pd.DataFrame({
         "debit_amount": [1.0, 1.0],
         "credit_amount": [0.0, 0.0],
@@ -35,6 +37,7 @@ def test_l1_06_review_is_promoted_by_cross_rule_signal() -> None:
     layer = FraudLayer()
     result = layer.detect(df)
     l106 = next(flag for flag in result.rule_flags if flag.rule_id == "L1-06")
-    assert l106.detail == "immediate=2, review=0"
-    assert result.details["L1-06"].eq(0.8).all()
-    assert result.metadata["rule_breakdowns"]["L1-06"]["corroborated_review_rows"] == 2
+    assert l106.detail == "immediate=0, review=0"
+    assert l106.flagged_count == 0
+    assert result.details["L1-06"].eq(0.0).all()
+    assert result.metadata["rule_breakdowns"]["L1-06"]["corroborated_review_rows"] == 0

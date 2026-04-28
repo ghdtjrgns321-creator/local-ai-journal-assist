@@ -44,9 +44,217 @@ def c01_period_end_large(
         else pd.Series(False, index=df.index)
     )
     flagged = period_end & (high_amount | manual_entry)
-    if whitelist_patterns:
-        flagged = flagged & ~_matches_period_end_whitelist(df, whitelist_patterns)
+    whitelist_matched = (
+        flagged & _matches_period_end_whitelist(df, whitelist_patterns)
+        if whitelist_patterns
+        else pd.Series(False, index=df.index)
+    )
+    flagged = flagged.astype(bool)
+
+    abnormal_time = _abnormal_time_mask(df)
+    weak_description = (
+        df["description_quality"].fillna("").astype(str).str.strip().str.lower().isin(
+            {"missing", "corrupted", "poor"}
+        )
+        if "description_quality" in df.columns
+        else pd.Series(False, index=df.index)
+    )
+    day_gap = (
+        pd.to_numeric(df["days_backdated"], errors="coerce").fillna(0).abs()
+        if "days_backdated" in df.columns
+        else pd.Series(0.0, index=df.index)
+    )
+    long_day_gap = day_gap.gt(30)
+    control_signal = _approval_control_signal_mask(df)
+    priority_signal = abnormal_time | weak_description | long_day_gap | control_signal
+
+    bucket = pd.Series("none", index=df.index, dtype="object")
+    bucket.loc[flagged & high_amount & ~manual_entry] = "closing_high_amount"
+    bucket.loc[flagged & manual_entry & ~high_amount] = "closing_manual"
+    bucket.loc[flagged & manual_entry & high_amount] = "closing_manual_high_amount"
+    bucket.loc[flagged & priority_signal] = "closing_priority"
+    bucket.loc[whitelist_matched] = "closing_recurring_low_priority"
+
+    score_series = pd.Series(0.0, index=df.index, dtype="float64")
+    score_series.loc[flagged] = 0.45
+    score_series.loc[flagged & high_amount] = 0.55
+    score_series.loc[flagged & manual_entry & high_amount] = 0.65
+    score_series.loc[flagged & priority_signal] = 0.70
+    score_series.loc[whitelist_matched] = 0.20
+
+    control_reason_masks = _approval_control_reason_masks(df)
+    reason_masks = {
+        "high_amount": high_amount,
+        "manual_entry": manual_entry,
+        "abnormal_time": abnormal_time,
+        "weak_description": weak_description,
+        "long_day_gap": long_day_gap,
+        **control_reason_masks,
+    }
+    priority_reason_counts: dict[str, int] = {}
+    for reason, mask in reason_masks.items():
+        count = int((flagged & mask).sum())
+        if count:
+            priority_reason_counts[reason] = count
+
+    flagged_index = flagged[flagged].index
+    row_annotations: dict[int, dict[str, object]] = {}
+    optional_columns = [
+        column
+        for column in (
+            "document_id",
+            "posting_date",
+            "source",
+            "is_manual_je",
+            "created_by",
+            "approved_by",
+            "approval_date",
+            "business_process",
+            "account_group",
+            "gl_account",
+            "description_quality",
+            "days_backdated",
+        )
+        if column in df.columns
+    ]
+    optional_values = (
+        df.loc[flagged_index, optional_columns]
+        .astype(object)
+        .where(pd.notna(df.loc[flagged_index, optional_columns]), None)
+        .to_dict(orient="index")
+        if optional_columns
+        else {}
+    )
+    reason_values = {
+        reason: mask.loc[flagged_index].to_numpy(dtype=bool)
+        for reason, mask in reason_masks.items()
+    }
+    threshold_values = (
+        threshold.loc[flagged_index]
+        if isinstance(threshold, pd.Series)
+        else pd.Series(threshold, index=flagged_index)
+    )
+    annotation_frame = pd.DataFrame(
+        {
+            "bucket": bucket.loc[flagged_index].astype(str),
+            "score": score_series.loc[flagged_index].round(4),
+            "whitelist_matched": whitelist_matched.loc[flagged_index].astype(bool),
+            "amount": base.loc[flagged_index],
+            "threshold_amount": threshold_values,
+        },
+        index=flagged_index,
+    ).astype(object)
+    annotation_frame = annotation_frame.where(pd.notna(annotation_frame), None)
+
+    for pos, idx in enumerate(flagged_index):
+        annotation = annotation_frame.loc[idx].to_dict()
+        annotation["score"] = float(annotation["score"])
+        annotation["whitelist_matched"] = bool(annotation["whitelist_matched"])
+        if annotation["amount"] is not None:
+            annotation["amount"] = float(annotation["amount"])
+        if annotation["threshold_amount"] is not None:
+            annotation["threshold_amount"] = float(annotation["threshold_amount"])
+        annotation["priority_reasons"] = [
+            reason
+            for reason, values in reason_values.items()
+            if bool(values[pos])
+        ]
+        annotation.update(optional_values.get(idx, {}))
+        row_annotations[int(idx)] = annotation
+
+    flagged.attrs["score_series"] = score_series
+    flagged.attrs["breakdown"] = {
+        "flagged_rows": int(flagged.sum()),
+        "high_amount_rows": int((flagged & high_amount).sum()),
+        "manual_rows": int((flagged & manual_entry).sum()),
+        "priority_rows": int((flagged & priority_signal & ~whitelist_matched).sum()),
+        "whitelisted_recurring_rows": int(whitelist_matched.sum()),
+        "bucket_counts": bucket.loc[flagged].value_counts().to_dict(),
+        "priority_reason_counts": priority_reason_counts,
+        "quantile": float(quantile),
+        "min_group_size": int(min_group_size),
+    }
+    if "document_id" in df.columns:
+        flagged.attrs["breakdown"]["whitelisted_recurring_docs"] = _nunique_documents(
+            df,
+            whitelist_matched,
+        )
+    flagged.attrs["row_annotations"] = row_annotations
     return flagged
+
+
+def _abnormal_time_mask(df: pd.DataFrame) -> pd.Series:
+    abnormal = pd.Series(False, index=df.index)
+    for column in ("is_after_hours", "is_weekend", "is_holiday"):
+        if column in df.columns:
+            abnormal = abnormal | df[column].fillna(False).astype(bool)
+    if "time_zone_category" in df.columns:
+        time_zone = df["time_zone_category"].fillna("").astype(str).str.strip().str.lower()
+        abnormal = abnormal | time_zone.isin({"overtime", "midnight"})
+    return abnormal
+
+
+def _approval_control_signal_mask(df: pd.DataFrame) -> pd.Series:
+    result = pd.Series(False, index=df.index)
+    for mask in _approval_control_reason_masks(df).values():
+        result = result | mask
+    return result
+
+
+def _approval_control_reason_masks(df: pd.DataFrame) -> dict[str, pd.Series]:
+    masks: dict[str, pd.Series] = {}
+    if {"created_by", "approved_by"}.issubset(df.columns):
+        created = df["created_by"].fillna("").astype(str).str.strip().str.lower()
+        approved = df["approved_by"].fillna("").astype(str).str.strip().str.lower()
+        masks["self_approval"] = created.ne("") & created.eq(approved)
+    if "approved_by" in df.columns and "exceeds_threshold" in df.columns:
+        no_approver = df["approved_by"].fillna("").astype(str).str.strip().eq("")
+        masks["skipped_approval"] = (
+            df["exceeds_threshold"].fillna(False).astype(bool) & no_approver
+        )
+    if {"approved_by", "approval_date"}.issubset(df.columns):
+        has_approver = df["approved_by"].fillna("").astype(str).str.strip().ne("")
+        no_approval_date = df["approval_date"].fillna("").astype(str).str.strip().eq("")
+        masks["missing_approval_date"] = has_approver & no_approval_date
+    return masks
+
+
+def _approval_control_reasons(df: pd.DataFrame, idx: Any) -> list[str]:
+    reasons: list[str] = []
+    if {"created_by", "approved_by"}.issubset(df.columns):
+        created = str(df.at[idx, "created_by"] or "").strip().lower()
+        approved = str(df.at[idx, "approved_by"] or "").strip().lower()
+        if created and created == approved:
+            reasons.append("self_approval")
+    if "approved_by" in df.columns and "exceeds_threshold" in df.columns:
+        no_approver = str(df.at[idx, "approved_by"] or "").strip() == ""
+        if bool(df.at[idx, "exceeds_threshold"]) and no_approver:
+            reasons.append("skipped_approval")
+    if {"approved_by", "approval_date"}.issubset(df.columns):
+        has_approver = str(df.at[idx, "approved_by"] or "").strip() != ""
+        no_approval_date = str(df.at[idx, "approval_date"] or "").strip() == ""
+        if has_approver and no_approval_date:
+            reasons.append("missing_approval_date")
+    return reasons
+
+
+def _coerce_nullable_bool(series: pd.Series) -> pd.Series:
+    """Coerce common bool-like accounting exports while preserving unknowns."""
+    if pd.api.types.is_bool_dtype(series.dtype):
+        return series.astype("boolean")
+    if pd.api.types.is_numeric_dtype(series.dtype):
+        numeric = pd.to_numeric(series, errors="coerce")
+        result = pd.Series(pd.NA, index=series.index, dtype="boolean")
+        result.loc[numeric.notna()] = numeric.loc[numeric.notna()].ne(0)
+        return result
+
+    text = series.astype("string").str.strip().str.lower()
+    result = pd.Series(pd.NA, index=series.index, dtype="boolean")
+    true_values = {"true", "t", "1", "yes", "y", "cleared", "closed", "settled", "resolved"}
+    false_values = {"false", "f", "0", "no", "n", "open", "uncleared", "unsettled", "unresolved"}
+    result.loc[text.isin(true_values)] = True
+    result.loc[text.isin(false_values)] = False
+    return result
 
 
 def c01_period_end_sensitive_account(
@@ -136,6 +344,13 @@ def _normalize_list(value: Any) -> list[str]:
     return [str(item).strip().lower() for item in values if str(item).strip()]
 
 
+def _nunique_documents(df: pd.DataFrame, mask: pd.Series) -> int:
+    """Return distinct document count for rows selected by mask."""
+    if "document_id" not in df.columns:
+        return 0
+    return int(df.loc[mask.reindex(df.index, fill_value=False), "document_id"].dropna().nunique())
+
+
 def _grouped_quantile(
     base: pd.Series,
     groups: pd.Series,
@@ -161,9 +376,58 @@ def c02_weekend_entry(df: pd.DataFrame) -> pd.Series:
 
     Why: PCAOB AS 240 A49(c) — 비정상 시점 거래는 승인 우회 의심.
     """
-    weekend = df.get("is_weekend", pd.Series(False, index=df.index)).fillna(False)
-    holiday = df.get("is_holiday", pd.Series(False, index=df.index)).fillna(False)
-    return weekend | holiday
+    weekend = df.get("is_weekend", pd.Series(False, index=df.index)).fillna(False).astype(bool)
+    holiday = df.get("is_holiday", pd.Series(False, index=df.index)).fillna(False).astype(bool)
+    flagged = weekend | holiday
+    weekend_holiday = weekend & holiday
+    weekend_only = weekend & ~holiday
+    weekday_holiday = holiday & ~weekend
+
+    score_series = pd.Series(0.0, index=df.index)
+    score_series.loc[weekday_holiday] = 0.35
+    score_series.loc[weekend_only] = 0.40
+    score_series.loc[weekend_holiday] = 0.45
+
+    breakdown = {
+        "calendar_review_rows": int(flagged.sum()),
+        "weekend_rows": int(weekend.sum()),
+        "holiday_rows": int(holiday.sum()),
+        "weekend_only_rows": int(weekend_only.sum()),
+        "weekday_holiday_rows": int(weekday_holiday.sum()),
+        "weekend_holiday_rows": int(weekend_holiday.sum()),
+    }
+    if "document_id" in df.columns:
+        breakdown.update({
+            "calendar_review_docs": _nunique_documents(df, flagged),
+            "weekend_docs": _nunique_documents(df, weekend),
+            "holiday_docs": _nunique_documents(df, holiday),
+            "weekend_only_docs": _nunique_documents(df, weekend_only),
+            "weekday_holiday_docs": _nunique_documents(df, weekday_holiday),
+            "weekend_holiday_docs": _nunique_documents(df, weekend_holiday),
+        })
+
+    row_annotations: dict[int, dict[str, object]] = {}
+    for idx in df.index[flagged]:
+        if bool(weekend_holiday.loc[idx]):
+            reason_code = "weekend_holiday"
+        elif bool(weekend.loc[idx]):
+            reason_code = "weekend"
+        elif bool(weekday_holiday.loc[idx]):
+            reason_code = "weekday_holiday"
+        else:
+            reason_code = "holiday"
+        row_annotations[int(idx)] = {
+            "reason_code": reason_code,
+            "score": float(score_series.loc[idx]),
+            "is_weekend": bool(weekend.loc[idx]),
+            "is_holiday": bool(holiday.loc[idx]),
+        }
+
+    result = flagged.astype(bool)
+    result.attrs["score_series"] = score_series
+    result.attrs["breakdown"] = breakdown
+    result.attrs["row_annotations"] = row_annotations
+    return result
 
 
 def c03_after_hours_entry(df: pd.DataFrame) -> pd.Series:
@@ -176,7 +440,81 @@ def c03_after_hours_entry(df: pd.DataFrame) -> pd.Series:
     if "is_after_hours" not in df.columns:
         return pd.Series(False, index=df.index)
 
-    return df["is_after_hours"].fillna(False).astype(bool)
+    result = df["is_after_hours"].fillna(False).astype(bool)
+    if not result.any():
+        return result
+
+    source_norm = (
+        df["source"].fillna("").astype(str).str.strip().str.lower()
+        if "source" in df.columns
+        else pd.Series("", index=df.index)
+    )
+    persona_norm = (
+        df["user_persona"].fillna("").astype(str).str.strip().str.lower()
+        if "user_persona" in df.columns
+        else pd.Series("", index=df.index)
+    )
+    actor_norm = (
+        df["created_by"].fillna("").astype(str).str.strip().str.lower()
+        if "created_by" in df.columns
+        else pd.Series("", index=df.index)
+    )
+    system_source = source_norm.isin({"automated", "batch", "interface", "system"})
+    system_persona = persona_norm.eq("automated_system")
+    system_actor = pd.Series(False, index=df.index)
+    for token in ("batch", "system", "auto", "if_", "svc_"):
+        system_actor = system_actor | actor_norm.str.contains(token, regex=False)
+    normal_system_context = result & (system_source | system_persona | system_actor)
+    confirmed_after_hours = result & ~normal_system_context
+
+    score_series = pd.Series(0.0, index=df.index)
+    score_series.loc[normal_system_context] = 0.20
+    score_series.loc[confirmed_after_hours] = 0.45
+
+    posting = (
+        pd.to_datetime(df["posting_date"], errors="coerce")
+        if "posting_date" in df.columns
+        else pd.Series(pd.NaT, index=df.index)
+    )
+    time_buckets: dict[str, int] = {}
+    row_annotations: dict[int, dict[str, object]] = {}
+    for idx in result[result].index:
+        hour = posting.loc[idx].hour if pd.notna(posting.loc[idx]) else None
+        if hour is None:
+            time_bucket = "unknown_time"
+        elif hour < 6:
+            time_bucket = "midnight_00_05"
+        else:
+            time_bucket = "late_evening_22_23"
+        time_buckets[time_bucket] = time_buckets.get(time_bucket, 0) + 1
+        row_annotations[int(idx)] = {
+            "bucket": (
+                "normal_system_context"
+                if bool(normal_system_context.loc[idx])
+                else "confirmed_after_hours"
+            ),
+            "score": round(float(score_series.loc[idx]), 4),
+            "source_category": (
+                "system_or_batch" if bool(normal_system_context.loc[idx]) else "human_or_unknown"
+            ),
+            "time_bucket": time_bucket,
+            "source": str(df.at[idx, "source"]) if "source" in df.columns else "",
+            "created_by": str(df.at[idx, "created_by"]) if "created_by" in df.columns else "",
+        }
+
+    result.attrs["score_series"] = score_series
+    result.attrs["breakdown"] = {
+        "confirmed_after_hours_rows": int(confirmed_after_hours.sum()),
+        "normal_system_context_rows": int(normal_system_context.sum()),
+        "source_counts": {
+            str(key): int(value)
+            for key, value in source_norm.loc[result].value_counts(dropna=False).items()
+            if str(key)
+        },
+        "time_bucket_counts": time_buckets,
+    }
+    result.attrs["row_annotations"] = row_annotations
+    return result
 
 
 def c04_backdated_entry(
@@ -190,17 +528,187 @@ def c04_backdated_entry(
     """
     if "days_backdated" not in df.columns:
         return pd.Series(False, index=df.index)
-    return df["days_backdated"].fillna(0).abs() > threshold_days
+
+    days = pd.to_numeric(df["days_backdated"], errors="coerce").fillna(0)
+    abs_gap = days.abs()
+    result = (abs_gap > threshold_days).astype(bool)
+    if not result.any():
+        score_series = pd.Series(0.0, index=df.index, dtype="float64")
+        result.attrs["score_series"] = score_series
+        result.attrs["breakdown"] = {
+            "flagged_rows": 0,
+            "late_rows": 0,
+            "forward_rows": 0,
+            "bucket_counts": {},
+            "direction_counts": {},
+            "threshold_days": int(threshold_days),
+        }
+        result.attrs["row_annotations"] = {}
+        return result
+
+    direction = pd.Series("none", index=df.index, dtype="object")
+    direction.loc[result & days.gt(0)] = "late_posting"
+    direction.loc[result & days.lt(0)] = "forward_date_gap"
+
+    bucket = pd.Series("none", index=df.index, dtype="object")
+    moderate = result & abs_gap.le(60)
+    large = result & abs_gap.gt(60) & abs_gap.le(90)
+    extreme = result & abs_gap.gt(90)
+    bucket.loc[moderate & days.gt(0)] = "late_moderate_gap"
+    bucket.loc[large & days.gt(0)] = "late_large_gap"
+    bucket.loc[extreme & days.gt(0)] = "late_extreme_gap"
+    bucket.loc[moderate & days.lt(0)] = "forward_moderate_gap"
+    bucket.loc[large & days.lt(0)] = "forward_large_gap"
+    bucket.loc[extreme & days.lt(0)] = "forward_extreme_gap"
+
+    score_series = pd.Series(0.0, index=df.index, dtype="float64")
+    score_series.loc[moderate] = 0.45
+    score_series.loc[large] = 0.60
+    score_series.loc[extreme] = 0.75
+
+    row_annotations: dict[object, dict[str, object]] = {}
+    optional_columns = (
+        "document_id",
+        "posting_date",
+        "document_date",
+        "entry_date",
+        "created_at",
+        "source",
+        "created_by",
+        "business_process",
+        "document_type",
+    )
+    for idx in result[result].index:
+        annotation: dict[str, object] = {
+            "bucket": str(bucket.loc[idx]),
+            "score": round(float(score_series.loc[idx]), 4),
+            "direction": str(direction.loc[idx]),
+            "days_backdated": int(days.loc[idx]),
+            "abs_gap_days": int(abs_gap.loc[idx]),
+            "threshold_days": int(threshold_days),
+        }
+        for column in optional_columns:
+            if column in df.columns:
+                value = df.at[idx, column]
+                annotation[column] = None if pd.isna(value) else value
+        annotation_key = int(idx) if isinstance(idx, (int, np.integer)) else idx
+        row_annotations[annotation_key] = annotation
+
+    result.attrs["score_series"] = score_series
+    result.attrs["breakdown"] = {
+        "flagged_rows": int(result.sum()),
+        "late_rows": int((result & days.gt(0)).sum()),
+        "forward_rows": int((result & days.lt(0)).sum()),
+        "bucket_counts": bucket.loc[result].value_counts().to_dict(),
+        "direction_counts": direction.loc[result].value_counts().to_dict(),
+        "threshold_days": int(threshold_days),
+    }
+    result.attrs["row_annotations"] = row_annotations
+    return result
+
+def _normalized_values(value: object) -> set[str]:
+    """Return lower-case string values for config matching."""
+    if value is None:
+        return set()
+    if isinstance(value, str):
+        return {value.lower()}
+    if isinstance(value, (list, tuple, set)):
+        return {str(v).lower() for v in value if pd.notna(v)}
+    return {str(value).lower()}
 
 
-def c05_fiscal_period_mismatch(df: pd.DataFrame) -> pd.Series:
+def _matches_any(series: pd.Series, allowed: object) -> pd.Series:
+    values = _normalized_values(allowed)
+    if not values:
+        return pd.Series(False, index=series.index)
+    return series.astype("string").str.lower().isin(values).fillna(False)
+
+
+def _expected_period(date_series: pd.Series, fiscal_year_start: int) -> pd.Series:
+    month = pd.to_datetime(date_series, errors="coerce").dt.month
+    return (month - fiscal_year_start) % 12 + 1
+
+
+def c05_fiscal_period_mismatch(
+    df: pd.DataFrame,
+    policy: dict | None = None,
+) -> pd.Series:
     """L1-08 기간 불일치: 회계기간 ≠ 전기월.
 
     Why: PCAOB AS 240 §32(b) — 기간 귀속 오류는 의도적 기간 이동 가능성.
     """
-    if "fiscal_period_mismatch" not in df.columns:
-        return pd.Series(False, index=df.index)
-    return df["fiscal_period_mismatch"].fillna(False)
+    raw = df.get("fiscal_period_mismatch")
+    if raw is None:
+        raw = pd.Series(False, index=df.index, dtype="boolean")
+    else:
+        raw = raw.fillna(False).astype("boolean")
+
+    cfg = policy or {}
+    strict_mode = bool(cfg.get("strict_mode", True))
+    fiscal_year_start = int(cfg.get("fiscal_year_start", 1))
+    exempted = pd.Series(False, index=df.index)
+
+    if not strict_mode and "fiscal_period" in df.columns:
+        allow_special = bool(cfg.get("allow_special_periods", False))
+        special_periods = set(cfg.get("special_periods") or [])
+        if allow_special and special_periods:
+            special_allowed = df["fiscal_period"].isin(special_periods).fillna(False)
+            if "special_period_allowed_sources" in cfg and "source" in df.columns:
+                special_allowed &= _matches_any(
+                    df["source"],
+                    cfg.get("special_period_allowed_sources"),
+                )
+            if "special_period_allowed_document_types" in cfg and "document_type" in df.columns:
+                special_allowed &= _matches_any(
+                    df["document_type"],
+                    cfg.get("special_period_allowed_document_types"),
+                )
+            if (
+                "special_period_allowed_business_processes" in cfg
+                and "business_process" in df.columns
+            ):
+                special_allowed &= _matches_any(
+                    df["business_process"],
+                    cfg.get("special_period_allowed_business_processes"),
+                )
+            exempted |= special_allowed.fillna(False)
+
+        basis_by_process = cfg.get("period_basis_by_process") or {}
+        if basis_by_process and "business_process" in df.columns:
+            for process, basis_col in basis_by_process.items():
+                if basis_col not in df.columns:
+                    continue
+                process_mask = _matches_any(df["business_process"], [process])
+                has_null = df[basis_col].isna() | df["fiscal_period"].isna()
+                basis_match = df["fiscal_period"].eq(
+                    _expected_period(df[basis_col], fiscal_year_start),
+                )
+                exempted |= (process_mask & ~has_null & basis_match).fillna(False)
+
+        basis_by_source = cfg.get("period_basis_by_source") or {}
+        if basis_by_source and "source" in df.columns:
+            for source, basis_col in basis_by_source.items():
+                if basis_col not in df.columns:
+                    continue
+                source_mask = _matches_any(df["source"], [source])
+                has_null = df[basis_col].isna() | df["fiscal_period"].isna()
+                basis_match = df["fiscal_period"].eq(
+                    _expected_period(df[basis_col], fiscal_year_start),
+                )
+                exempted |= (source_mask & ~has_null & basis_match).fillna(False)
+
+    final = (raw & ~exempted).astype("boolean").fillna(False)
+    raw_count = int(raw.fillna(False).sum())
+    exempted_count = int((raw.fillna(False) & exempted).sum())
+    final.attrs["raw_fiscal_period_mismatch_count"] = raw_count
+    final.attrs["policy_exempted_count"] = exempted_count
+    final.attrs["breakdown"] = {
+        "raw_fiscal_period_mismatch_rows": raw_count,
+        "policy_exempted_rows": exempted_count,
+        "final_l108_rows": int(final.sum()),
+        "strict_mode": strict_mode,
+    }
+    return final
 
 
 def c06_missing_or_corrupted_description(df: pd.DataFrame) -> pd.Series:
@@ -211,8 +719,58 @@ def c06_missing_or_corrupted_description(df: pd.DataFrame) -> pd.Series:
     if "description_quality" not in df.columns:
         return pd.Series(False, index=df.index)
 
+    quality = df["description_quality"].fillna("").astype(str).str.strip().str.lower()
     # "poor"는 기존 저장 데이터/테스트 fixture 호환용 별칭이다.
-    return df["description_quality"].isin(["missing", "corrupted", "poor"])
+    missing = quality.eq("missing")
+    corrupted = quality.eq("corrupted")
+    poor = quality.eq("poor")
+    result = missing | corrupted | poor
+    if not result.any():
+        return result
+
+    score_series = pd.Series(0.0, index=df.index)
+    score_series.loc[missing] = 0.45
+    score_series.loc[corrupted] = 0.55
+    score_series.loc[poor] = 0.50
+
+    row_annotations: dict[int, dict[str, object]] = {}
+    for idx in result[result].index:
+        bucket = str(quality.loc[idx])
+        normalized_bucket = "corrupted_legacy_poor" if bucket == "poor" else bucket
+        row_annotations[int(idx)] = {
+            "description_quality": bucket,
+            "bucket": normalized_bucket,
+            "score": round(float(score_series.loc[idx]), 4),
+            "line_missing": (
+                bool(df.at[idx, "description_line_missing"])
+                if "description_line_missing" in df.columns
+                else None
+            ),
+            "header_missing": (
+                bool(df.at[idx, "description_header_missing"])
+                if "description_header_missing" in df.columns
+                else None
+            ),
+            "both_missing": (
+                bool(df.at[idx, "description_both_missing"])
+                if "description_both_missing" in df.columns
+                else None
+            ),
+        }
+
+    result.attrs["score_series"] = score_series
+    result.attrs["breakdown"] = {
+        "missing_rows": int(missing.sum()),
+        "corrupted_rows": int(corrupted.sum()),
+        "poor_legacy_rows": int(poor.sum()),
+        "quality_counts": {
+            str(key): int(value)
+            for key, value in quality.loc[result].value_counts(dropna=False).items()
+            if str(key)
+        },
+    }
+    result.attrs["row_annotations"] = row_annotations
+    return result
 
 
 # Backward-compatible alias for older imports/tests.
@@ -244,8 +802,69 @@ def c08_amount_outlier(
     else:
         high_amount = pd.Series(True, index=df.index)
 
-    high_zscore = df["amount_zscore"].fillna(0.0) > zscore_threshold
-    return high_zscore & high_amount
+    zscore = pd.to_numeric(df["amount_zscore"], errors="coerce").fillna(0.0)
+    high_zscore = zscore > zscore_threshold
+    result = (high_zscore & high_amount).astype(bool)
+
+    bucket = pd.Series("none", index=df.index, dtype="object")
+    bucket.loc[result] = "review_zscore"
+    bucket.loc[result & zscore.ge(4.0)] = "strong_zscore"
+    bucket.loc[result & zscore.ge(6.0)] = "extreme_zscore"
+
+    score_series = pd.Series(0.0, index=df.index, dtype="float64")
+    score_series.loc[result & bucket.eq("review_zscore")] = 0.45
+    score_series.loc[result & bucket.eq("strong_zscore")] = 0.60
+    score_series.loc[result & bucket.eq("extreme_zscore")] = 0.75
+
+    row_annotations: dict[object, dict[str, object]] = {}
+    optional_columns = (
+        "document_id",
+        "gl_account",
+        "account_group",
+        "posting_date",
+        "debit_amount",
+        "credit_amount",
+    )
+    for idx in result[result].index:
+        annotation_key = int(idx) if isinstance(idx, (int, np.integer)) else idx
+        annotation: dict[str, object] = {
+            "bucket": str(bucket.loc[idx]),
+            "score": round(float(score_series.loc[idx]), 4),
+            "amount_zscore": round(float(zscore.loc[idx]), 4),
+            "base_amount": float(base_amount.loc[idx]),
+            "amount_threshold": (
+                float(amount_threshold) if 0.0 < min_amount_quantile <= 1.0 else None
+            ),
+            "min_amount_quantile": float(min_amount_quantile),
+            "zscore_threshold": float(zscore_threshold),
+        }
+        for column in optional_columns:
+            if column in df.columns:
+                value = df.at[idx, column]
+                annotation[column] = None if pd.isna(value) else value
+        row_annotations[annotation_key] = annotation
+
+    result.attrs["score_series"] = score_series
+    result.attrs["breakdown"] = {
+        "high_amount_review_rows": int(result.sum()),
+        "review_zscore_rows": int((result & bucket.eq("review_zscore")).sum()),
+        "strong_zscore_rows": int((result & bucket.eq("strong_zscore")).sum()),
+        "extreme_zscore_rows": int((result & bucket.eq("extreme_zscore")).sum()),
+        "amount_guard_rows": int(high_amount.sum()),
+        "zscore_candidate_rows": int(high_zscore.sum()),
+        "amount_threshold": float(amount_threshold) if 0.0 < min_amount_quantile <= 1.0 else None,
+        "min_amount_quantile": float(min_amount_quantile),
+        "zscore_threshold": float(zscore_threshold),
+    }
+    if "document_id" in df.columns:
+        result.attrs["breakdown"].update({
+            "high_amount_review_docs": _nunique_documents(df, result),
+            "review_zscore_docs": _nunique_documents(df, result & bucket.eq("review_zscore")),
+            "strong_zscore_docs": _nunique_documents(df, result & bucket.eq("strong_zscore")),
+            "extreme_zscore_docs": _nunique_documents(df, result & bucket.eq("extreme_zscore")),
+        })
+    result.attrs["row_annotations"] = row_annotations
+    return result
 
 
 def c10_suspense_account(
@@ -261,7 +880,7 @@ def c10_suspense_account(
     if "is_suspense_account" not in df.columns or "posting_date" not in df.columns:
         return pd.Series(False, index=df.index)
 
-    suspense = df["is_suspense_account"].astype("boolean").fillna(False)
+    suspense = _coerce_nullable_bool(df["is_suspense_account"]).fillna(False)
     if not suspense.any():
         return suspense.astype(bool)
 
@@ -283,7 +902,7 @@ def c10_suspense_account(
         unresolved = unresolved | (amount_present & (amount_open.abs() > min_open_amount))
 
     if "is_cleared" in df.columns:
-        cleared = df["is_cleared"].astype("boolean")
+        cleared = _coerce_nullable_bool(df["is_cleared"])
         cleared_present = cleared.notna()
         resolution_signal_present = resolution_signal_present | cleared_present
         unresolved = unresolved | (cleared_present & ~cleared.fillna(True))
@@ -341,19 +960,81 @@ def c10_suspense_account(
         & aging_days.fillna(-1).ge(threshold_days)
         & amount_mask
     ).astype(bool)
+
+    amount_open_abs = pd.Series(np.nan, index=df.index, dtype="float64")
+    if "amount_open" in df.columns:
+        amount_open_abs = pd.to_numeric(df["amount_open"], errors="coerce").abs()
+    elif {"debit_amount", "credit_amount"}.issubset(df.columns):
+        debit = pd.to_numeric(df["debit_amount"], errors="coerce").fillna(0.0).abs()
+        credit = pd.to_numeric(df["credit_amount"], errors="coerce").fillna(0.0).abs()
+        amount_open_abs = pd.concat([debit, credit], axis=1).max(axis=1)
+
+    aging_bucket = pd.Series("none", index=df.index, dtype="object")
+    aging_bucket.loc[result & aging_days.lt(threshold_days * 2)] = "aging_30_60"
+    aging_bucket.loc[
+        result & aging_days.ge(threshold_days * 2) & aging_days.lt(threshold_days * 3)
+    ] = "aging_60_90"
+    aging_bucket.loc[result & aging_days.ge(threshold_days * 3)] = "aging_over_90"
+
+    amount_bucket = pd.Series("unknown_amount", index=df.index, dtype="object")
+    flagged_amounts = amount_open_abs[result & amount_open_abs.notna()]
+    if not flagged_amounts.empty:
+        q50 = flagged_amounts.quantile(0.50)
+        q75 = flagged_amounts.quantile(0.75)
+        amount_bucket.loc[result & amount_open_abs.lt(q50)] = "open_amount_low"
+        amount_bucket.loc[
+            result & amount_open_abs.ge(q50) & amount_open_abs.lt(q75)
+        ] = "open_amount_medium"
+        amount_bucket.loc[result & amount_open_abs.ge(q75)] = "open_amount_high"
+
+    score_series = pd.Series(0.0, index=df.index, dtype="float64")
+    score_series.loc[result & aging_bucket.eq("aging_30_60")] = 0.45
+    score_series.loc[result & aging_bucket.eq("aging_60_90")] = 0.60
+    score_series.loc[result & aging_bucket.eq("aging_over_90")] = 0.75
+    high_open_amount = result & amount_bucket.eq("open_amount_high") & score_series.gt(0)
+    score_series.loc[high_open_amount] = (
+        score_series.loc[high_open_amount] + 0.05
+    ).clip(upper=0.80)
+
     result.attrs["breakdown"] = {
         "base_threshold_days": int(threshold_days),
         "flagged_rows": int(result.sum()),
+        "aging_bucket_counts": aging_bucket.loc[result].value_counts().to_dict(),
+        "open_amount_bucket_counts": amount_bucket.loc[result].value_counts().to_dict(),
+        "high_open_amount_rows": int((result & amount_bucket.eq("open_amount_high")).sum()),
     }
-    row_annotations: dict[int, dict[str, object]] = {}
-    if "gl_account" in df.columns:
-        gl_account = df["gl_account"].astype("string").str.strip()
-        for idx in result[result].index:
-            row_annotations[int(idx)] = {
-                "gl_account": None if pd.isna(gl_account.loc[idx]) else str(gl_account.loc[idx]),
-                "aging_days": None if pd.isna(aging_days.loc[idx]) else int(aging_days.loc[idx]),
-                "threshold_days": int(threshold_days),
-            }
+    row_annotations: dict[object, dict[str, object]] = {}
+    gl_account = (
+        df["gl_account"].astype("string").str.strip()
+        if "gl_account" in df.columns
+        else pd.Series(pd.NA, index=df.index, dtype="string")
+    )
+    for idx in result[result].index:
+        annotation_key = int(idx) if isinstance(idx, (int, np.integer)) else idx
+        row_annotations[annotation_key] = {
+            "gl_account": None if pd.isna(gl_account.loc[idx]) else str(gl_account.loc[idx]),
+            "aging_days": None if pd.isna(aging_days.loc[idx]) else int(aging_days.loc[idx]),
+            "threshold_days": int(threshold_days),
+            "aging_bucket": str(aging_bucket.loc[idx]),
+            "open_amount": (
+                None if pd.isna(amount_open_abs.loc[idx]) else float(amount_open_abs.loc[idx])
+            ),
+            "open_amount_bucket": str(amount_bucket.loc[idx]),
+            "score": round(float(score_series.loc[idx]), 4),
+        }
+        for column in (
+            "document_id",
+            "posting_date",
+            "settlement_date",
+            "lettrage_date",
+            "amount_open",
+            "is_cleared",
+            "settlement_status",
+        ):
+            if column in df.columns:
+                value = df.at[idx, column]
+                row_annotations[annotation_key][column] = None if pd.isna(value) else value
+    result.attrs["score_series"] = score_series
     result.attrs["row_annotations"] = row_annotations
     return result
 
@@ -366,14 +1047,15 @@ _FALLBACK_MIDNIGHT_RATIO = 0.2  # 소수 인원 폴백 시 심야 비율 임계
 
 def c12_abnormal_hours_concentration(
     df: pd.DataFrame,
-    sigma_threshold: float = 3.0,
+    sigma_threshold: float = 2.5,
     rapid_approval_minutes: int = 5,
     min_abnormal_ratio: float = 0.1,
     min_midnight_entries: int = 3,
     min_user_entries: int = 10,
+    min_high_context_midnight_entries: int = 100,
     auto_entry_sources: list[str] | None = None,
 ) -> pd.Series:
-    """L4-05 비정상 시간대 입력자 집중: 사용자별 비정상 비율 3σ + 급속 승인.
+    """L4-05 비정상 시간대 입력자 집중: 사용자별 비정상 비율 2.5σ + 급속 승인.
 
     Why: KLCA IT 체크리스트 — L3-05/L3-06은 건별 플래그만 수행.
          특정 사용자가 심야/주말에 집중적으로 전표를 입력하는 행동 패턴은
@@ -382,7 +1064,7 @@ def c12_abnormal_hours_concentration(
     하위 로직:
       (a) time_zone_category로 비정상 시간대 판정
       (b) 사용자별 비정상 비율 산출 (groupby)
-      (c) 3σ 이상치 판정 (소수 인원 폴백 포함)
+      (c) 2.5σ 이상치 판정 (소수 인원 폴백 포함)
       (d) 급속 승인 검증 (자동 승인 필터링)
     """
     # Why: created_by 없으면 사용자별 분석 불가
@@ -392,12 +1074,19 @@ def c12_abnormal_hours_concentration(
         return pd.Series(False, index=df.index)
 
     result = pd.Series(False, index=df.index)
+    sigma_outlier_flags = pd.Series(False, index=df.index)
+    low_volume_midnight_flags = pd.Series(False, index=df.index)
+    high_context_midnight_flags = pd.Series(False, index=df.index)
 
     # ── (a) 비정상 시간대 판정 ──
     is_abnormal = _calc_is_abnormal(df)
 
     # ── (b) 사용자별 비정상 비율 ──
-    user_stats = _calc_user_abnormal_stats(df, is_abnormal)
+    user_stats = _calc_user_abnormal_stats(
+        df,
+        is_abnormal,
+        auto_entry_sources=auto_entry_sources or [],
+    )
     if not user_stats.empty:
         # Why: 전표 수가 극소한 사용자(1~2건)는 비율이 급등하여 오탐 유발
         qualified_stats = user_stats[user_stats["total_count"] >= min_user_entries]
@@ -405,8 +1094,12 @@ def c12_abnormal_hours_concentration(
             (user_stats["total_count"] < min_user_entries)
             & (user_stats["midnight_count"] >= min_midnight_entries)
         ].index
+        high_context_midnight_users = qualified_stats[
+            (qualified_stats["midnight_count"] >= min_high_context_midnight_entries)
+            & (qualified_stats["abnormal_ratio"] >= min_abnormal_ratio)
+        ].index
 
-        # ── (c) 3σ 이상치 판정 ──
+        # ── (c) 2.5σ 이상치 판정 ──
         if not qualified_stats.empty:
             outlier_users = _find_outlier_users(
                 qualified_stats,
@@ -418,20 +1111,100 @@ def c12_abnormal_hours_concentration(
             #       정상 시간 전표까지 낙인하면 Top-side JE 등 복합 판정에서 오탐 유발
             if outlier_users:
                 is_outlier_user = df["created_by"].isin(outlier_users)
-                result = result | (is_outlier_user & is_abnormal)
+                sigma_outlier_flags = is_outlier_user & is_abnormal
+                result = result | sigma_outlier_flags
         if len(low_volume_midnight_users) > 0:
             is_low_volume_midnight_user = df["created_by"].isin(
                 low_volume_midnight_users,
             )
             is_midnight = df["time_zone_category"] == "midnight"
-            result = result | (is_low_volume_midnight_user & is_midnight)
+            low_volume_midnight_flags = is_low_volume_midnight_user & is_midnight
+            result = result | low_volume_midnight_flags
+        if len(high_context_midnight_users) > 0:
+            is_high_context_midnight_user = df["created_by"].isin(
+                high_context_midnight_users,
+            )
+            is_midnight = df["time_zone_category"] == "midnight"
+            high_context_midnight_flags = is_high_context_midnight_user & is_midnight
+            result = result | high_context_midnight_flags
 
     # ── (d) 급속 승인 검증 ──
     rapid_flags = _check_rapid_approval(
         df, rapid_approval_minutes, auto_entry_sources or [],
     )
     result = result | rapid_flags
+    result = result.astype(bool)
 
+    score_series = pd.Series(0.0, index=df.index, dtype="float64")
+    score_series.loc[sigma_outlier_flags] = 0.45
+    score_series.loc[low_volume_midnight_flags] = 0.50
+    score_series.loc[high_context_midnight_flags] = 0.55
+    score_series.loc[rapid_flags] = score_series.loc[rapid_flags].clip(lower=0.65)
+
+    row_annotations: dict[object, dict[str, object]] = {}
+    optional_columns = (
+        "document_id",
+        "created_by",
+        "approved_by",
+        "posting_date",
+        "approval_date",
+        "time_zone_category",
+        "source",
+        "user_persona",
+    )
+    for idx in result[result].index:
+        reason_codes: list[str] = []
+        if bool(sigma_outlier_flags.loc[idx]):
+            reason_codes.append("sigma_outlier")
+        if bool(low_volume_midnight_flags.loc[idx]):
+            reason_codes.append("low_volume_midnight")
+        if bool(high_context_midnight_flags.loc[idx]):
+            reason_codes.append("high_context_midnight")
+        if bool(rapid_flags.loc[idx]):
+            reason_codes.append("rapid_approval")
+        annotation: dict[str, object] = {
+            "reason_codes": reason_codes,
+            "primary_reason": reason_codes[-1] if reason_codes else "abnormal_time_review",
+            "score": round(float(score_series.loc[idx]), 4),
+            "is_abnormal_time": bool(is_abnormal.loc[idx]),
+        }
+        for column in optional_columns:
+            if column in df.columns:
+                value = df.at[idx, column]
+                annotation[column] = None if pd.isna(value) else value
+        annotation_key = int(idx) if isinstance(idx, (int, np.integer)) else idx
+        row_annotations[annotation_key] = annotation
+
+    breakdown: dict[str, object] = {
+        "behavior_review_rows": int(result.sum()),
+        "sigma_outlier_rows": int(sigma_outlier_flags.sum()),
+        "low_volume_midnight_rows": int(low_volume_midnight_flags.sum()),
+        "high_context_midnight_rows": int(high_context_midnight_flags.sum()),
+        "rapid_approval_rows": int(rapid_flags.sum()),
+        "manual_user_count": int(len(user_stats)) if not user_stats.empty else 0,
+        "qualified_user_count": (
+            int(len(user_stats[user_stats["total_count"] >= min_user_entries]))
+            if not user_stats.empty
+            else 0
+        ),
+        "sigma_threshold": float(sigma_threshold),
+        "min_abnormal_ratio": float(min_abnormal_ratio),
+        "min_midnight_entries": int(min_midnight_entries),
+        "min_user_entries": int(min_user_entries),
+        "min_high_context_midnight_entries": int(min_high_context_midnight_entries),
+    }
+    if "document_id" in df.columns:
+        breakdown.update({
+            "behavior_review_docs": _nunique_documents(df, result),
+            "sigma_outlier_docs": _nunique_documents(df, sigma_outlier_flags),
+            "low_volume_midnight_docs": _nunique_documents(df, low_volume_midnight_flags),
+            "high_context_midnight_docs": _nunique_documents(df, high_context_midnight_flags),
+            "rapid_approval_docs": _nunique_documents(df, rapid_flags),
+        })
+
+    result.attrs["score_series"] = score_series
+    result.attrs["breakdown"] = breakdown
+    result.attrs["row_annotations"] = row_annotations
     return result
 
 
@@ -444,14 +1217,16 @@ def _calc_is_abnormal(df: pd.DataFrame) -> pd.Series:
 
 
 def _calc_user_abnormal_stats(
-    df: pd.DataFrame, is_abnormal: pd.Series,
+    df: pd.DataFrame,
+    is_abnormal: pd.Series,
+    auto_entry_sources: list[str] | None = None,
 ) -> pd.DataFrame:
     """사용자별 비정상 비율 + 심야 건수 통계 산출.
 
     Returns: DataFrame(index=created_by, columns=[abnormal_ratio, midnight_count])
     """
     # Why: NaN created_by는 분석 대상에서 제외
-    valid_mask = df["created_by"].notna()
+    valid_mask = _manual_user_mask(df, auto_entry_sources or [])
     if not valid_mask.any():
         return pd.DataFrame()
 
@@ -468,6 +1243,40 @@ def _calc_user_abnormal_stats(
     return stats
 
 
+def _normalized_string(series: pd.Series) -> pd.Series:
+    """Return a normalized string series for case-insensitive comparisons."""
+    return series.astype("string").str.strip().str.lower()
+
+
+def _manual_user_mask(
+    df: pd.DataFrame,
+    auto_entry_sources: list[str] | None = None,
+) -> pd.Series:
+    """Return rows that belong to real/manual users for L4-05 behavior stats."""
+    mask = df["created_by"].notna()
+
+    if "source" in df.columns and auto_entry_sources:
+        auto_sources = {
+            str(source).strip().lower()
+            for source in auto_entry_sources
+            if str(source).strip()
+        }
+        source = _normalized_string(df["source"])
+        mask = mask & ~source.isin(auto_sources)
+
+    if "user_persona" in df.columns:
+        persona = _normalized_string(df["user_persona"]).str.replace(
+            " ",
+            "_",
+            regex=False,
+        )
+        mask = mask & persona.ne("automated_system")
+
+    created_by = _normalized_string(df["created_by"])
+    mask = mask & ~created_by.isin({"system", "ic_generator"})
+    return mask.fillna(False)
+
+
 def _find_outlier_users(
     user_stats: pd.DataFrame,
     *,
@@ -475,7 +1284,7 @@ def _find_outlier_users(
     min_abnormal_ratio: float,
     min_midnight_entries: int,
 ) -> set[str]:
-    """3σ 또는 절대 임계 기준으로 이상치 사용자 식별."""
+    """Return users above the configured sigma or fallback threshold."""
     ratios = user_stats["abnormal_ratio"]
     n_users = len(ratios)
 
@@ -527,11 +1336,21 @@ def _check_rapid_approval(
     if "is_manual_je" in df.columns:
         manual_mask = df["is_manual_je"].fillna(False)
     elif "source" in df.columns and auto_entry_sources:
-        manual_mask = ~df["source"].isin(auto_entry_sources)
+        auto_sources = {
+            str(source).strip().lower()
+            for source in auto_entry_sources
+            if str(source).strip()
+        }
+        manual_mask = ~_normalized_string(df["source"]).isin(auto_sources)
 
     # Why: automated_system 계정은 ERP 자동 처리 — 인간 검토 대상 아님
     if "user_persona" in df.columns:
-        manual_mask = manual_mask & (df["user_persona"] != "automated_system")
+        persona = _normalized_string(df["user_persona"]).str.replace(
+            " ",
+            "_",
+            regex=False,
+        )
+        manual_mask = manual_mask & persona.ne("automated_system")
 
     # Why: 자기 승인은 L1-05에서 이미 탐지 → 여기서 중복 플래그 불필요
     diff_approver = df["created_by"] != df["approved_by"]

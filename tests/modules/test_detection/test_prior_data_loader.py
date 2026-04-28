@@ -19,7 +19,6 @@ from src.detection.prior_data_loader import (
     load_prior_summary,
 )
 
-
 # ── find_prior_engagement 테스트 ────────────────────────────
 
 
@@ -130,6 +129,47 @@ def _create_empty_prior_db(db_path: Path) -> None:
     conn.close()
 
 
+def _create_company_prior_db(db_path: Path) -> None:
+    """Create a prior DB with company_code for company-aware D01 aggregates."""
+    conn = duckdb.connect(str(db_path))
+    conn.execute("""
+        CREATE TABLE general_ledger (
+            company_code  VARCHAR,
+            gl_account    VARCHAR,
+            debit_amount  DOUBLE,
+            credit_amount DOUBLE,
+            fiscal_period INTEGER
+        )
+    """)
+    conn.execute("""
+        INSERT INTO general_ledger VALUES
+            ('C001', '4110', 100000, 0, 1),
+            ('C001', '4110', 200000, 0, 2),
+            ('C002', '4110', 50000, 0, 1)
+    """)
+    conn.close()
+
+
+def _create_numeric_company_prior_db(db_path: Path) -> None:
+    """Create prior data with numeric account codes as DuckDB may return from CSV load."""
+    conn = duckdb.connect(str(db_path))
+    conn.execute("""
+        CREATE TABLE general_ledger (
+            company_code  VARCHAR,
+            gl_account    DOUBLE,
+            debit_amount  DOUBLE,
+            credit_amount DOUBLE,
+            fiscal_period INTEGER
+        )
+    """)
+    conn.execute("""
+        INSERT INTO general_ledger VALUES
+            ('C001', 1000.0, 100000, 0, 1),
+            ('C001', 1000.0, 200000, 0, 2)
+    """)
+    conn.close()
+
+
 class TestLoadPriorSummary:
     """load_prior_summary 4개 케이스."""
 
@@ -163,6 +203,45 @@ class TestLoadPriorSummary:
         assert "4110" in result.monthly_patterns
         pattern_4110 = result.monthly_patterns["4110"]
         assert sum(pattern_4110.values()) == pytest.approx(1.0, abs=1e-6)
+
+    def test_company_code_loads_company_account_aggregates(self, tmp_path: Path) -> None:
+        """company_code가 있으면 D01 prior 집계는 회사별 계정 키로 저장된다."""
+        prior_db = tmp_path / "prior_company.duckdb"
+        _create_company_prior_db(prior_db)
+
+        conn = duckdb.connect()
+        result = load_prior_summary(conn, prior_db, 2024)
+        conn.close()
+
+        assert result is not None
+        assert result.account_aggregates["C001::4110"]["total_amount"] == pytest.approx(
+            300000.0
+        )
+        assert result.account_aggregates["C001::4110"]["count"] == 2
+        assert result.account_aggregates["C002::4110"]["total_amount"] == pytest.approx(
+            50000.0
+        )
+        assert "C001::4110" in result.monthly_patterns
+        assert sum(result.monthly_patterns["C001::4110"].values()) == pytest.approx(
+            1.0,
+            abs=1e-6,
+        )
+        assert "C002::4110" in result.monthly_patterns
+
+    def test_numeric_account_keys_are_normalised(self, tmp_path: Path) -> None:
+        """1000.0 prior keys must match current-period Layer D key C001::1000."""
+        prior_db = tmp_path / "prior_numeric_company.duckdb"
+        _create_numeric_company_prior_db(prior_db)
+
+        conn = duckdb.connect()
+        result = load_prior_summary(conn, prior_db, 2024)
+        conn.close()
+
+        assert result is not None
+        assert "C001::1000" in result.account_aggregates
+        assert "C001::1000.0" not in result.account_aggregates
+        assert "C001::1000" in result.monthly_patterns
+        assert "C001::1000.0" not in result.monthly_patterns
 
     def test_db_not_exists(self, tmp_path: Path) -> None:
         """DB 파일 미존재 → None."""

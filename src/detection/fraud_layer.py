@@ -1,4 +1,4 @@
-"""Layer B fraud detector."""
+"""L1-L4 fraud-rule detector."""
 
 from __future__ import annotations
 
@@ -16,6 +16,8 @@ from src.detection.fraud_rules_access import (
     b10_intercompany_review_signal,
     b12_missing_approval_date,
     b13_high_risk_account_use,
+    b14_work_scope_excess_review,
+    build_access_rule_cache,
 )
 from src.detection.fraud_rules_feature import (
     b01_revenue_manipulation,
@@ -73,7 +75,7 @@ class FraudLayer(BaseDetector):
         return "layer_b"
 
     def detect(self, df: pd.DataFrame) -> DetectionResult:
-        """Execute Layer B rules."""
+        """Execute fraud and control-circumvention rules."""
 
         start = time.perf_counter()
         warnings: list[str] = []
@@ -86,6 +88,7 @@ class FraudLayer(BaseDetector):
         rule_results: dict[str, pd.Series] = {}
         skipped: list[str] = []
         coverage_issues: list[dict[str, Any]] = []
+        access_cache = build_access_rule_cache(df)
 
         for rule_id, func, kwargs in self._build_registry():
             missing_inputs = self._missing_inputs(rule_id, df)
@@ -104,6 +107,8 @@ class FraudLayer(BaseDetector):
                 continue
 
             try:
+                if rule_id in {"L1-05", "L1-06", "L1-07", "L1-09"}:
+                    kwargs = {**kwargs, "cache": access_cache}
                 rule_results[rule_id] = func(df, **kwargs)
                 coverage_issues.extend(self._coverage_issues(rule_id, df))
             except Exception as exc:
@@ -122,13 +127,13 @@ class FraudLayer(BaseDetector):
         )
 
     def _build_registry(self) -> list[tuple[str, Callable, dict]]:
-        """Return the rule registry for Layer B."""
+        """Return the rule registry for fraud and control-circumvention rules."""
 
         s = self._settings
         return [
             ("L4-01", b01_revenue_manipulation, {"zscore_threshold": s.zscore_threshold}),
             ("L2-01", b02_near_threshold, {}),
-            ("L1-04", b03_exceeds_threshold, {}),
+            ("L1-04", b03_exceeds_threshold, {"audit_rules": self._audit_rules}),
             ("L2-02", b04_duplicate_payment, {"window_days": s.duplicate_payment_window_days}),
             (
                 "L2-03",
@@ -151,10 +156,11 @@ class FraudLayer(BaseDetector):
                 b07_segregation_of_duties,
                 {"sod_threshold": s.sod_process_threshold, "audit_rules": self._audit_rules},
             ),
-            ("L3-02", b08_manual_override, {}),
+            ("L3-02", b08_manual_override, {"audit_rules": self._audit_rules}),
             ("L1-07", b09_skipped_approval, {"audit_rules": self._audit_rules}),
-            ("L1-09", b12_missing_approval_date, {}),
+            ("L1-09", b12_missing_approval_date, {"audit_rules": self._audit_rules}),
             ("L3-10", b13_high_risk_account_use, {"audit_rules": self._audit_rules}),
+            ("L3-12", b14_work_scope_excess_review, {"audit_rules": self._audit_rules}),
             ("L3-03", b10_intercompany_review_signal, {}),
             (
                 "L2-04",
@@ -176,11 +182,12 @@ class FraudLayer(BaseDetector):
             "L4-01": ["is_revenue_account", "amount_zscore"],
             "L2-01": ["is_near_threshold"],
             "L1-04": ["exceeds_threshold"],
-            "L2-03": ["gl_account", "posting_date", "debit_amount", "credit_amount"],
+            "L2-03": ["document_id", "gl_account", "posting_date", "debit_amount", "credit_amount"],
             "L1-06": ["created_by", "business_process"],
-            "L1-07": ["exceeds_threshold", "source"],
-            "L1-09": ["approved_by", "approval_date"],
+            "L1-07": ["approved_by"],
+            "L1-09": ["approval_date"],
             "L3-10": ["gl_account"],
+            "L3-12": ["created_by", "business_process"],
             "L3-03": ["is_intercompany"],
             "L2-04": ["document_id", "gl_account", "debit_amount", "credit_amount"],
         }
@@ -274,6 +281,7 @@ class FraudLayer(BaseDetector):
             )
 
         details = pd.DataFrame(index=df.index)
+        review_details = pd.DataFrame(index=df.index)
         rule_breakdowns: dict[str, Any] = {}
         row_annotations: dict[str, Any] = {}
         for rule_id, flagged in rule_results.items():
@@ -282,10 +290,23 @@ class FraudLayer(BaseDetector):
                 details[rule_id] = pd.Series(score_series, index=df.index).fillna(0.0).astype(float)
             else:
                 details[rule_id] = flagged.astype(float) * (SEVERITY_MAP[rule_id] / 5.0)
+            review_score_series = (
+                flagged.attrs.get("review_score_series") if hasattr(flagged, "attrs") else None
+            )
+            if review_score_series is not None:
+                review_details[rule_id] = (
+                    pd.Series(review_score_series, index=df.index).fillna(0.0).astype(float)
+                )
+                details[rule_id] = pd.concat(
+                    [details[rule_id], review_details[rule_id]],
+                    axis=1,
+                ).max(axis=1)
             breakdown = flagged.attrs.get("breakdown") if hasattr(flagged, "attrs") else None
             if breakdown:
                 rule_breakdowns[rule_id] = breakdown
-            annotations = flagged.attrs.get("row_annotations") if hasattr(flagged, "attrs") else None
+            annotations = (
+                flagged.attrs.get("row_annotations") if hasattr(flagged, "attrs") else None
+            )
             if annotations:
                 row_annotations[rule_id] = annotations
 
@@ -294,7 +315,7 @@ class FraudLayer(BaseDetector):
         rule_flags = [
             self._create_rule_flag(
                 rule_id=rule_id,
-                flagged_count=int(flagged.sum()),
+                flagged_count=int(details[rule_id].gt(0).sum()),
                 total_count=len(df),
                 detail=self._format_rule_detail(flagged),
             )
@@ -313,6 +334,7 @@ class FraudLayer(BaseDetector):
                 "analysis_degraded": bool(coverage_issues),
                 "rule_breakdowns": rule_breakdowns,
                 "row_annotations": row_annotations,
+                "review_score_series": review_details,
             },
             warnings=warnings,
         )

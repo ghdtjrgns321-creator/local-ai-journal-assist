@@ -195,8 +195,8 @@ def generate_report(
     md.append(f"| {'실행된 룰':20s} | {total_rules:>30d} |")
     md.append(f"| {'Skipped 룰':20s} | {str(skipped_all) if skipped_all else '없음':>30s} |")
 
-    # §2 레이어별 결과
-    md.append("\n## 2. 레이어별 결과\n")
+    # §2 L1~L4 결과
+    md.append("\n## 2. L1~L4 결과\n")
 
     layer_info = [
         ("layer_a", "L1"),
@@ -293,8 +293,8 @@ def generate_report(
     else:
         md.append("anomaly_labels.csv 미존재 — 대조 분석 생략.")
 
-    # §6 레이어별 성능
-    md.append("\n## 6. 레이어별 성능\n")
+    # §6 L1~L4 성능
+    md.append("\n## 6. L1~L4 성능\n")
     md.append(f"| {'단계':20s} | {'소요시간(s)':>12s} | {'실행 룰':>8s} | {'skipped':>12s} |")
     md.append(f"|:{'-'*20}|{'-'*12}:|{'-'*8}:|:{'-'*12}|")
     for track, title in [("layer_a", "L1"), ("layer_b", "L2"), ("layer_c", "L3/L4"), ("benford", "L4-02 Benford"), ("aggregator", "Score Aggregator")]:

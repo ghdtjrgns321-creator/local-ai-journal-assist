@@ -5,7 +5,23 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from src.detection.base import DetectionResult, RuleFlag, validate_input
+from src.detection.base import BaseDetector, DetectionResult, RuleFlag, validate_input
+
+
+class _DummyDetector(BaseDetector):
+    @property
+    def track_name(self) -> str:
+        return "layer_a"
+
+    def detect(self, df: pd.DataFrame) -> DetectionResult:
+        return self._make_result(
+            flagged_indices=[],
+            scores=pd.Series(0.0, index=df.index),
+            rule_flags=[],
+            details=pd.DataFrame(index=df.index),
+            metadata={},
+            warnings=[],
+        )
 
 
 class TestValidateInput:
@@ -80,13 +96,28 @@ class TestDetectionResult:
             details=pd.DataFrame(),
             metadata={"elapsed": 0.01},
         )
-        assert result.display_name == "L1"
+        assert result.display_name == "L1/L3 Data Quality Rules"
         assert result.maturity == "production"
         assert result.default_enabled is True
         assert result.activation_requirements == []
         assert "structural integrity" in result.explanation_summary
         assert "debit_amount" in result.used_columns
         assert result.references == []
+
+    def test_make_result_maps_string_index_labels_to_row_positions(self):
+        detector = _DummyDetector()
+        scores = pd.Series([0.0, 1.0, 0.0], index=["row-a", "row-b", "row-c"])
+
+        result = detector._make_result(
+            flagged_indices=["row-b"],
+            scores=scores,
+            rule_flags=[],
+            details=pd.DataFrame(index=scores.index),
+            metadata={},
+            warnings=[],
+        )
+
+        assert result.flagged_indices == [1]
 
     def test_metadata_can_override_profile_defaults(self):
         """metadata에 명시된 운영 상태 값이 우선한다."""

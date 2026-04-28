@@ -1,4 +1,4 @@
-"""Layer C: 이상 징후 오케스트레이터 — L3-04~L3-08, L4-03~L4-06.
+"""L1-L4 anomaly-rule track orchestrator — L3-04~L3-08, L4-03~L4-06.
 
 룰 레지스트리를 순회하며 try/except로 격리 실행.
 한 룰 실패해도 나머지 계속 진행, 실패 룰은 skipped + warning 기록.
@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 
     from src.detection.base import DetectionResult
 
-# Why: 최소한 금액 컬럼은 있어야 Layer C 실행 의미가 있음
+# Why: 최소한 금액 컬럼은 있어야 L1-L4 anomaly-rule track 실행 의미가 있음
 _REQUIRED_COLUMNS = ["debit_amount", "credit_amount"]
 
 
@@ -93,7 +93,9 @@ class AnomalyDetector(BaseDetector):
             ("L3-05", c02_weekend_entry, {}),
             ("L3-06", c03_after_hours_entry, {}),
             ("L3-07", c04_backdated_entry, {"threshold_days": s.backdated_threshold_days}),
-            ("L1-08", c05_fiscal_period_mismatch, {}),
+            ("L1-08", c05_fiscal_period_mismatch, {
+                "policy": patterns.get("fiscal_period_mismatch_policy", {}),
+            }),
             ("L3-08", c06_missing_or_corrupted_description, {}),
             # L4-02(Benford)은 BenfordDetector 독립 트랙으로 분리
             ("L4-03", c08_amount_outlier, {
@@ -117,6 +119,7 @@ class AnomalyDetector(BaseDetector):
                 "min_abnormal_ratio": s.min_abnormal_ratio,
                 "min_midnight_entries": s.min_midnight_entries,
                 "min_user_entries": s.min_user_entries,
+                "min_high_context_midnight_entries": s.min_high_context_midnight_entries,
                 "auto_entry_sources": s.auto_entry_sources,
             }),
             ("L4-06", c13_batch_anomaly, {
@@ -144,7 +147,13 @@ class AnomalyDetector(BaseDetector):
         row_annotations: dict[str, object] = {}
         for rule_id, flagged in rule_results.items():
             severity_score = SEVERITY_MAP[rule_id] / 5.0
-            if rule_id == "L3-04":
+            score_series = flagged.attrs.get("score_series") if hasattr(flagged, "attrs") else None
+            if score_series is not None:
+                score = pd.Series(score_series, index=df.index).fillna(0.0).astype(float)
+                if rule_id == "L3-04":
+                    score = self._score_l304(df, flagged, severity_score, base_score=score)
+                details[rule_id] = score
+            elif rule_id == "L3-04":
                 details[rule_id] = self._score_l304(df, flagged, severity_score)
             else:
                 details[rule_id] = flagged.astype(float) * severity_score
@@ -197,9 +206,14 @@ class AnomalyDetector(BaseDetector):
         df: pd.DataFrame,
         flagged: pd.Series,
         severity_score: float,
+        base_score: pd.Series | None = None,
     ) -> pd.Series:
         """Apply sensitive-account priority bonus without creating new L3-04 flags."""
-        score = flagged.astype(float) * severity_score
+        score = (
+            base_score.copy()
+            if base_score is not None
+            else flagged.astype(float) * severity_score
+        )
         patterns = self._audit_rules.get("patterns", {})
         sensitive = c01_period_end_sensitive_account(
             df,

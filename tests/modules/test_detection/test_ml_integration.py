@@ -1,7 +1,7 @@
-"""ML Pipeline 통합 테스트.
+﻿"""ML Pipeline ?듯빀 ?뚯뒪??
 
-Cold Start / ML 포함 / Stacking / 가중치 자동 전환을 검증.
-pipeline.py의 _try_ml_detection, _try_stacking_ensemble, _select_weights 대상.
+Cold Start / ML ?ы븿 / Stacking / 媛以묒튂 ?먮룞 ?꾪솚??寃利?
+pipeline.py??_try_ml_detection, _try_stacking_ensemble, _select_weights ???
 """
 
 from __future__ import annotations
@@ -9,22 +9,19 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
-import pytest
 
-from src.detection.base import DetectionResult
-from src.detection.constants import LAYER_WEIGHTS_WITH_ML, LAYER_WEIGHTS_WITH_PRIOR
+from src.detection.constants import LAYER_WEIGHTS_WITH_ML
 from src.pipeline import AuditPipeline
 from tests.modules.test_detection.conftest import make_detection_result
 
-
-# ── _select_weights 단위 테스트 ──────────────────────────────
+# ?? _select_weights ?⑥쐞 ?뚯뒪????????????????????????????????
 
 
 class TestWeightSelection:
-    """ML 유무에 따른 가중치 자동 전환."""
+    """ML ?좊Т???곕Ⅸ 媛以묒튂 ?먮룞 ?꾪솚."""
 
     def test_weights_with_ml(self):
-        """ml_* 트랙 존재 → LAYER_WEIGHTS_WITH_ML 반환."""
+        """ml_* ?몃옓 議댁옱 ??LAYER_WEIGHTS_WITH_ML 諛섑솚."""
         results = [
             make_detection_result("layer_a"),
             make_detection_result("ml_supervised"),
@@ -33,7 +30,7 @@ class TestWeightSelection:
         assert weights == LAYER_WEIGHTS_WITH_ML
 
     def test_weights_without_ml(self):
-        """ml_* 없음 → None (기본 LAYER_WEIGHTS)."""
+        """ml_* ?놁쓬 ??None (湲곕낯 LAYER_WEIGHTS)."""
         results = [
             make_detection_result("layer_a"),
             make_detection_result("layer_b"),
@@ -41,16 +38,15 @@ class TestWeightSelection:
         assert AuditPipeline._select_weights(results) is None
 
     def test_weights_with_variance_only(self):
-        """layer_d만 있으면 LAYER_WEIGHTS_WITH_PRIOR."""
+        """layer_d only does not override row-level weights."""
         results = [
             make_detection_result("layer_a"),
             make_detection_result("layer_d"),
         ]
-        weights = AuditPipeline._select_weights(results)
-        assert weights == LAYER_WEIGHTS_WITH_PRIOR
+        assert AuditPipeline._select_weights(results) is None
 
     def test_ml_takes_priority_over_variance(self):
-        """ml_* + layer_d 동시 존재 → ML 가중치 우선."""
+        """ml_* + layer_d ?숈떆 議댁옱 ??ML 媛以묒튂 ?곗꽑."""
         results = [
             make_detection_result("layer_a"),
             make_detection_result("layer_d"),
@@ -60,14 +56,14 @@ class TestWeightSelection:
         assert weights == LAYER_WEIGHTS_WITH_ML
 
 
-# ── Cold Start 테스트 ────────────────────────────────────────
+# ?? Cold Start ?뚯뒪??????????????????????????????????????????
 
 
 class TestMLColdStart:
-    """모델 없을 때 graceful degradation."""
+    """紐⑤뜽 ?놁쓣 ??graceful degradation."""
 
     def test_anonymous_skips_ml(self):
-        """anonymous context → ML 트랙 0개."""
+        """anonymous context ??ML ?몃옓 0媛?"""
         ctx = MagicMock(is_anonymous=True)
         pipeline = AuditPipeline.__new__(AuditPipeline)
         pipeline._ctx = ctx
@@ -77,13 +73,13 @@ class TestMLColdStart:
         assert result == []
 
     def test_no_model_returns_empty(self):
-        """ModelRegistry 로드 실패 → 빈 리스트."""
+        """ModelRegistry 濡쒕뱶 ?ㅽ뙣 ??鍮?由ъ뒪??"""
         ctx = MagicMock(is_anonymous=False)
         pipeline = AuditPipeline.__new__(AuditPipeline)
         pipeline._ctx = ctx
         pipeline._settings = MagicMock()
 
-        # Why: lazy import이므로 원본 모듈을 patch
+        # Why: lazy import?대?濡??먮낯 紐⑤뱢??patch
         with patch(
             "src.preprocessing.model_registry.ModelRegistry",
             side_effect=Exception("no registry"),
@@ -92,7 +88,7 @@ class TestMLColdStart:
         assert result == []
 
     def test_anonymous_skips_stacking(self):
-        """anonymous context → stacking None."""
+        """anonymous context ??stacking None."""
         ctx = MagicMock(is_anonymous=True)
         pipeline = AuditPipeline.__new__(AuditPipeline)
         pipeline._ctx = ctx
@@ -102,7 +98,7 @@ class TestMLColdStart:
         assert result is None
 
     def test_stacking_no_model_returns_none(self):
-        """Stacking 모델 없음 → None (기존 가중합 사용)."""
+        """Stacking 紐⑤뜽 ?놁쓬 ??None (湲곗〈 媛以묓빀 ?ъ슜)."""
         ctx = MagicMock(is_anonymous=False)
         pipeline = AuditPipeline.__new__(AuditPipeline)
         pipeline._ctx = ctx
@@ -114,3 +110,4 @@ class TestMLColdStart:
         ):
             result = pipeline._try_stacking_ensemble([], pd.DataFrame({"a": [1]}))
         assert result is None
+

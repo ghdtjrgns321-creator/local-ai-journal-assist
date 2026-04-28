@@ -19,6 +19,11 @@ class TestL4_06:
         })
         # Why: 배치 10건 중 기말 8건 = 80% > 50% 임계
         result = c13_batch_anomaly(df, period_end_ratio=0.5)
+        assert result.attrs["score_series"].loc[result].eq(0.40).all()
+        assert result.attrs["breakdown"]["period_end_concentration_rows"] == 10
+        assert result.attrs["row_annotations"][0]["reason_codes"] == [
+            "period_end_concentration",
+        ]
         assert result[:10].all()   # 배치 전체 플래그
         assert not result[10:].any()  # 수기 전표는 미플래그
 
@@ -27,6 +32,7 @@ class TestL4_06:
         dates = (["2025-12-01"] * 60) + (["2025-12-02"] * 5)
         df = pd.DataFrame({
             "source": ["batch"] * 65,
+            "document_id": [f"D{i:03d}" for i in range(65)],
             "is_period_end": [False] * 65,
             "debit_amount": [100.0] * 65,
             "credit_amount": [0.0] * 65,
@@ -36,6 +42,31 @@ class TestL4_06:
         # Why: 12/01 60건 ≥ 50 → 플래그, 12/02 5건 < 50 → 미플래그
         assert result[:60].all()
         assert not result[60:].any()
+
+    def test_batch_simultaneous_creation_uses_document_count_not_line_count(self) -> None:
+        """동일 timestamp의 multi-line 전표 1건은 대량 동시 생성으로 보지 않는다."""
+        df = pd.DataFrame({
+            "source": ["automated"] * 60,
+            "document_id": ["DOC001"] * 60,
+            "is_period_end": [False] * 60,
+            "debit_amount": [100.0] * 60,
+            "credit_amount": [0.0] * 60,
+            "posting_date": [pd.Timestamp("2025-12-01 09:00:00")] * 60,
+        })
+        result = c13_batch_anomaly(df, simultaneous_threshold=50, period_end_ratio=0.99)
+        assert not result.any()
+
+    def test_batch_simultaneous_creation_falls_back_to_row_count_without_document_id(self) -> None:
+        """document_id가 없으면 기존처럼 row count 기준으로 graceful fallback."""
+        df = pd.DataFrame({
+            "source": ["automated"] * 60,
+            "is_period_end": [False] * 60,
+            "debit_amount": [100.0] * 60,
+            "credit_amount": [0.0] * 60,
+            "posting_date": [pd.Timestamp("2025-12-01 09:00:00")] * 60,
+        })
+        result = c13_batch_anomaly(df, simultaneous_threshold=50, period_end_ratio=0.99)
+        assert result.all()
 
     def test_batch_amount_outlier(self) -> None:
         """배치 내 Z-score 이상치 → 해당 행 플래그."""
@@ -67,13 +98,13 @@ class TestL4_06:
         assert not result.any()
 
     def test_interface_source_is_batch_like_case_insensitive(self) -> None:
-        """interface/IF 계열 source도 배치성 자동 전표로 취급."""
+        """interface/IF/automated 계열 source도 배치성 자동 전표로 취급."""
         df = pd.DataFrame({
-            "source": ["INTERFACE"] * 3 + ["if"] * 3,
-            "is_period_end": [True] * 6,
-            "debit_amount": [100.0] * 6,
-            "credit_amount": [0.0] * 6,
-            "posting_date": pd.date_range("2025-12-25", periods=6),
+            "source": ["INTERFACE"] * 3 + ["if"] * 3 + ["automated"] * 3,
+            "is_period_end": [True] * 9,
+            "debit_amount": [100.0] * 9,
+            "credit_amount": [0.0] * 9,
+            "posting_date": pd.date_range("2025-12-25", periods=9),
         })
         result = c13_batch_anomaly(df, period_end_ratio=0.5)
         assert result.all()
@@ -109,5 +140,30 @@ class TestL4_06:
         result = c13_batch_anomaly(
             df, period_end_ratio=0.99, simultaneous_threshold=100,
         )
-        # Why: std=0이므로 금액 이상치 없음, 다른 조건도 미충족
         assert not result.any()
+
+    def test_batch_annotations_keep_multiple_reasons(self) -> None:
+        """Same row can carry multiple batch-review reasons."""
+        df = pd.DataFrame({
+            "source": ["batch"] * 4,
+            "document_id": [f"D{i}" for i in range(4)],
+            "is_period_end": [True] * 4,
+            "debit_amount": [100.0, 100.0, 100.0, 10000.0],
+            "credit_amount": [0.0] * 4,
+            "posting_date": [pd.Timestamp("2025-12-31")] * 4,
+        })
+
+        result = c13_batch_anomaly(
+            df,
+            period_end_ratio=0.5,
+            simultaneous_threshold=4,
+            amount_zscore=1.0,
+        )
+
+        assert result.all()
+        assert result.attrs["breakdown"]["batch_review_docs"] == 4
+        assert result.attrs["breakdown"]["amount_outlier_docs"] == 1
+        reasons = result.attrs["row_annotations"][3]["reason_codes"]
+        assert "period_end_concentration" in reasons
+        assert "simultaneous_creation" in reasons
+        assert "amount_outlier" in reasons

@@ -130,6 +130,10 @@ class TestL2_02:
         result = b04_duplicate_payment(df, reference_amount_tolerance=0.01)
         assert not result[0]
         assert result[1]
+        assert result.attrs["score_series"].tolist() == [0.0, 0.9]
+        assert result.attrs["breakdown"]["reference_match_docs"] == 1
+        assert result.attrs["row_annotations"][1]["reason_code"] == "reference_match"
+        assert result.attrs["row_annotations"][1]["matched_document_id"] == "D001"
 
     def test_same_reference_same_doc_not_flagged(self) -> None:
         df = pd.DataFrame({
@@ -228,6 +232,27 @@ class TestL2_02:
         result = b04_duplicate_payment(df, window_days=45)
         assert not result[0]
         assert result[1]
+        assert result.attrs["score_series"].tolist() == [0.0, 0.7]
+        assert result.attrs["breakdown"]["mixed_reference_fallback_docs"] == 1
+        assert result.attrs["row_annotations"][1]["reason_code"] == "mixed_reference_fallback"
+
+    def test_blank_reference_fallback_exposes_weaker_score(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D001", "D002"],
+            "document_type": ["KZ", "KZ"],
+            "auxiliary_account_number": ["V001", "V001"],
+            "debit_amount": [1_000_000, 1_000_000],
+            "credit_amount": [0.0, 0.0],
+            "posting_date": pd.to_datetime(["2025-01-05", "2025-01-09"]),
+            "business_process": ["P2P", "P2P"],
+            "reference": ["", ""],
+        })
+        result = b04_duplicate_payment(df, window_days=45)
+        assert not result[0]
+        assert result[1]
+        assert result.attrs["score_series"].tolist() == [0.0, 0.6]
+        assert result.attrs["breakdown"]["blank_reference_fallback_docs"] == 1
+        assert result.attrs["row_annotations"][1]["confidence_band"] == "medium"
 
     def test_non_kz_documents_excluded(self) -> None:
         df = pd.DataFrame({
@@ -253,6 +278,15 @@ class TestL2_03:
             "reference_duplicate",
         }
         assert result.attrs["row_annotations"][0]["confidence"] >= 0.9
+
+    def test_annotations_preserve_non_integer_index(self, dup_entry_df: pd.DataFrame) -> None:
+        df = dup_entry_df.iloc[:2].copy()
+        df.index = ["row-a", "row-b"]
+
+        result = b05_duplicate_entry(df)
+
+        assert result["row-a"]
+        assert result.attrs["row_annotations"]["row-a"]["confidence"] >= 0.9
 
     def test_different_date_not_flagged(self, dup_entry_df: pd.DataFrame) -> None:
         result = b05_duplicate_entry(dup_entry_df)
@@ -338,7 +372,12 @@ class TestL2_03:
             "business_process": ["R2R", "R2R", "R2R", "R2R"],
             "company_code": ["C003", "C003", "C003", "C003"],
             "reference": ["DOC-C003-2022-001068"] * 4,
-            "line_text": ["이자수익 계상", "판관비 재분류", "이자수익 계상 - 재전기", "판관비 재분류 - 재전기"],
+            "line_text": [
+                "이자수익 계상",
+                "판관비 재분류",
+                "이자수익 계상 - 재전기",
+                "판관비 재분류 - 재전기",
+            ],
             "gl_account": [7100, 6300, 7100, 6300],
             "debit_amount": [71_339.0, 0.0, 71_339.0, 0.0],
             "credit_amount": [0.0, 71_339.0, 0.0, 71_339.0],
@@ -386,6 +425,15 @@ class TestL2_03:
 
     def test_missing_column_skip(self) -> None:
         df = pd.DataFrame({"debit_amount": [100.0], "credit_amount": [0.0]})
+        assert not b05_duplicate_entry(df).any()
+
+    def test_document_id_is_required(self) -> None:
+        df = pd.DataFrame({
+            "gl_account": [5100, 5100],
+            "debit_amount": [1_000_000, 1_000_000],
+            "credit_amount": [0.0, 0.0],
+            "posting_date": pd.to_datetime(["2025-01-01", "2025-01-01"]),
+        })
         assert not b05_duplicate_entry(df).any()
 
 
@@ -504,6 +552,32 @@ class TestL2_04:
         assert result.attrs["row_annotations"][0]["confidence_band"] == "high"
         assert result.attrs["row_annotations"][0]["queue_label"] == "immediate"
         assert result.attrs["breakdown"]["immediate_rows"] == 2
+        assert result.attrs["breakdown"]["queue_counts"] == {"immediate": 2, "review": 0}
+        assert result.attrs["breakdown"]["confidence_band_counts"] == {"high": 2, "medium": 0}
+        assert result.attrs["breakdown"]["immediate_docs"] == 1
+        assert result.attrs["breakdown"]["review_docs"] == 0
+        assert result.attrs["breakdown"]["reason_doc_counts"] == {"line_amount_match": 1}
+        assert result.attrs["breakdown"]["modifier_row_counts"] == {
+            "suspicious_expense_keyword": 2,
+            "manual_source": 2,
+            "suspicious_process": 2,
+        }
+
+    def test_normal_context_suppression_is_counted(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D001", "D001"],
+            "gl_account": ["1500", "6100"],
+            "debit_amount": [5_000_000.0, 0.0],
+            "credit_amount": [0.0, 5_000_000.0],
+            "document_type": ["AA", "AA"],
+            "line_text": ["software development project", "software development project"],
+            "header_text": ["capital project", "capital project"],
+        })
+        result = b11_expense_capitalization(df)
+        assert not result.any()
+        assert result.attrs["breakdown"]["normal_context_suppressed_docs"] == 1
+        assert result.attrs["breakdown"]["queue_counts"] == {"immediate": 0, "review": 0}
+        assert result.attrs["breakdown"]["confidence_band_counts"] == {"high": 0, "medium": 0}
 
     def test_missing_column_skip(self) -> None:
         df = pd.DataFrame({

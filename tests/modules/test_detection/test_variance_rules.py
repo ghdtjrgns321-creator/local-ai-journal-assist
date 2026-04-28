@@ -7,6 +7,7 @@ import pytest
 
 from src.detection.variance_rules import (
     d01_account_activity_variance,
+    d02_monthly_pattern_diagnostics,
     d02_monthly_pattern_variance,
 )
 
@@ -92,6 +93,65 @@ class TestD01AccountActivityVariance:
         result = d01_account_activity_variance(df, prior, variance_threshold=0.5)
         assert isinstance(result, pd.Series)
 
+    def test_missing_account_tokens_not_flagged(self):
+        """Missing-like account values are handled by integrity rules, not D01."""
+        df = pd.DataFrame({
+            "gl_account": [None, "nan", "", "1000"],
+            "debit_amount": [100.0, 100.0, 100.0, 100.0],
+            "credit_amount": [0.0, 0.0, 0.0, 0.0],
+        })
+        prior = {"1000": {"total_amount": 1.0, "count": 1, "avg_amount": 1.0}}
+
+        result = d01_account_activity_variance(df, prior, variance_threshold=0.5)
+
+        assert result.tolist() == [False, False, False, True]
+
+    def test_company_code_keeps_same_account_separate(self):
+        """D01 compares company/account pairs when company_code is available."""
+        df = pd.DataFrame({
+            "company_code": ["C001", "C001", "C002", "C002"],
+            "gl_account": ["1000", "1000", "1000", "1000"],
+            "debit_amount": [500.0, 500.0, 100.0, 100.0],
+            "credit_amount": [0.0, 0.0, 0.0, 0.0],
+        })
+        prior = {
+            "C001::1000": {"total_amount": 100.0, "count": 1, "avg_amount": 100.0},
+            "C002::1000": {"total_amount": 200.0, "count": 2, "avg_amount": 100.0},
+        }
+
+        result = d01_account_activity_variance(df, prior, variance_threshold=0.5)
+
+        assert result.tolist() == [True, True, False, False]
+
+    def test_numeric_account_key_matches_string_prior(self):
+        """D01 normalizes numeric-looking account keys before prior lookup."""
+        df = pd.DataFrame({
+            "gl_account": [1000.0, 1000.0],
+            "debit_amount": [100.0, 100.0],
+            "credit_amount": [0.0, 0.0],
+        })
+        prior = {"1000": {"total_amount": 200.0, "count": 2, "avg_amount": 100.0}}
+
+        result = d01_account_activity_variance(df, prior, variance_threshold=0.5)
+
+        assert not result.any()
+
+    def test_company_numeric_account_key_matches_company_prior(self):
+        """D01 normalizes company/account keys before company-aware prior lookup."""
+        df = pd.DataFrame({
+            "company_code": ["C001", "C001"],
+            "gl_account": [1000.0, 1000.0],
+            "debit_amount": [100.0, 100.0],
+            "credit_amount": [0.0, 0.0],
+        })
+        prior = {
+            "C001::1000": {"total_amount": 200.0, "count": 2, "avg_amount": 100.0},
+        }
+
+        result = d01_account_activity_variance(df, prior, variance_threshold=0.5)
+
+        assert not result.any()
+
 
 # ── D02: 월별 분포 패턴 변화 ──────────────────────────────
 
@@ -111,7 +171,13 @@ class TestD02MonthlyPatternVariance:
             "credit_amount": [0.0] * 12,
             "fiscal_period": list(range(1, 13)),
         })
-        result = d02_monthly_pattern_variance(df, prior, jsd_threshold=0.3)
+        result = d02_monthly_pattern_variance(
+            df,
+            prior,
+            jsd_threshold=0.3,
+            min_account_docs=1,
+            min_top_month_delta=0.0,
+        )
         assert result.all()
 
     def test_identical_distribution_not_flagged(self, base_df: pd.DataFrame):
@@ -160,6 +226,108 @@ class TestD02MonthlyPatternVariance:
             prior,
             jsd_threshold=0.3,
             min_months=4,
+        )
+
+        assert not result.any()
+
+    def test_company_account_grouping_prevents_company_level_miss(self):
+        """D02 compares company/account pairs when company_code is available."""
+        df = pd.DataFrame({
+            "company_code": ["C001"] * 12 + ["C002"] * 12,
+            "gl_account": ["1000"] * 24,
+            "document_id": [f"D{i}" for i in range(24)],
+            "debit_amount": ([10.0] * 11 + [500.0]) + ([100.0] * 12),
+            "credit_amount": [0.0] * 24,
+            "fiscal_period": list(range(1, 13)) * 2,
+        })
+        prior = {
+            "C001::1000": {m: 1 / 12 for m in range(1, 13)},
+            "C002::1000": {m: 1 / 12 for m in range(1, 13)},
+        }
+
+        result = d02_monthly_pattern_variance(
+            df,
+            prior,
+            jsd_threshold=0.3,
+            min_account_docs=1,
+            min_top_month_delta=0.0,
+        )
+        diagnostics = d02_monthly_pattern_diagnostics(
+            df,
+            prior,
+            jsd_threshold=0.3,
+            min_account_docs=1,
+            min_top_month_delta=0.0,
+        )
+
+        assert result[df["company_code"] == "C001"].all()
+        assert not result[df["company_code"] == "C002"].any()
+        assert set(diagnostics["d02_group_key"]) == {"C001::1000", "C002::1000"}
+        assert diagnostics.loc[
+            diagnostics["d02_group_key"] == "C001::1000",
+            "flagged",
+        ].item()
+
+    def test_company_grouping_falls_back_to_account_prior_for_legacy_patterns(self):
+        """Legacy gl_account prior patterns still work when company_code is present."""
+        df = pd.DataFrame({
+            "company_code": ["C001"] * 12,
+            "gl_account": ["1000"] * 12,
+            "document_id": [f"D{i}" for i in range(12)],
+            "debit_amount": [10.0] * 11 + [500.0],
+            "credit_amount": [0.0] * 12,
+            "fiscal_period": list(range(1, 13)),
+        })
+        prior = {"1000": {m: 1 / 12 for m in range(1, 13)}}
+
+        result = d02_monthly_pattern_variance(
+            df,
+            prior,
+            jsd_threshold=0.3,
+            min_account_docs=1,
+            min_top_month_delta=0.0,
+        )
+
+        assert result.all()
+
+    def test_min_account_docs_guardrail_suppresses_small_accounts(self):
+        """소량 계정은 JSD가 커도 D02 단독 플래그를 억제한다."""
+        df = pd.DataFrame({
+            "document_id": [f"D{i}" for i in range(12)],
+            "gl_account": ["1000"] * 12,
+            "debit_amount": [10.0] * 11 + [500.0],
+            "credit_amount": [0.0] * 12,
+            "fiscal_period": list(range(1, 13)),
+        })
+        prior = {"1000": {m: 1 / 12 for m in range(1, 13)}}
+
+        result = d02_monthly_pattern_variance(
+            df,
+            prior,
+            jsd_threshold=0.3,
+            min_account_docs=100,
+            min_top_month_delta=0.0,
+        )
+
+        assert not result.any()
+
+    def test_top_month_delta_guardrail_suppresses_small_concentration_change(self):
+        """최대월 비중 변화가 작으면 JSD만으로는 플래그하지 않는다."""
+        df = pd.DataFrame({
+            "document_id": [f"D{i}" for i in range(120)],
+            "gl_account": ["1000"] * 120,
+            "debit_amount": [100.0] * 120,
+            "credit_amount": [0.0] * 120,
+            "fiscal_period": ([1] * 20) + ([2] * 20) + ([3] * 80),
+        })
+        prior = {"1000": {1: 1 / 3, 2: 1 / 3, 3: 1 / 3}}
+
+        result = d02_monthly_pattern_variance(
+            df,
+            prior,
+            jsd_threshold=0.1,
+            min_account_docs=100,
+            min_top_month_delta=0.5,
         )
 
         assert not result.any()

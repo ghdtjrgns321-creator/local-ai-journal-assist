@@ -112,8 +112,8 @@ class TestL3_04:
         result_without = c01_period_end_large(anomaly_feature_df, quantile=0.75)
         pd.testing.assert_series_equal(result_with_param, result_without)
 
-    def test_whitelist_excludes_approved_recurring_closing_pattern(self) -> None:
-        """감사인이 승인한 자동 반복 마감전표 패턴은 L3-04에서 제외."""
+    def test_whitelist_downgrades_approved_recurring_closing_pattern(self) -> None:
+        """Auditor-approved recurring closing patterns remain flagged with lower priority."""
         df = pd.DataFrame({
             "debit_amount": [1000.0, 1000.0, 10.0, 20.0],
             "credit_amount": [0.0, 0.0, 0.0, 0.0],
@@ -139,8 +139,42 @@ class TestL3_04:
             whitelist_patterns=whitelist,
         )
 
-        assert not result[0]
+        assert result[0]
         assert result[1]
+        assert result.attrs["score_series"].tolist()[0] == 0.20
+        assert result.attrs["row_annotations"][0]["bucket"] == "closing_recurring_low_priority"
+        assert result.attrs["row_annotations"][0]["whitelist_matched"] is True
+        assert result.attrs["breakdown"]["whitelisted_recurring_rows"] == 1
+
+    def test_exposes_l304_scores_breakdown_and_annotations(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D1", "D2", "D3", "D4"],
+            "debit_amount": [1000.0, 100.0, 500.0, 900.0],
+            "credit_amount": [0.0, 0.0, 0.0, 0.0],
+            "is_period_end": [True, True, True, False],
+            "is_manual_je": [False, True, True, False],
+            "created_by": ["u1", "u2", "u3", "u4"],
+            "approved_by": ["mgr", "mgr", "u3", "mgr"],
+            "approval_date": ["2025-01-01", "2025-01-01", "2025-01-01", "2025-01-01"],
+            "description_quality": ["normal", "normal", "poor", "normal"],
+        })
+
+        result = c01_period_end_large(df, quantile=0.5)
+
+        assert result.tolist() == [True, True, True, False]
+        assert result.attrs["score_series"].tolist() == [0.55, 0.45, 0.70, 0.0]
+        assert result.attrs["breakdown"]["bucket_counts"] == {
+            "closing_high_amount": 1,
+            "closing_manual": 1,
+            "closing_priority": 1,
+        }
+        assert result.attrs["breakdown"]["priority_rows"] == 1
+        assert result.attrs["row_annotations"][2]["bucket"] == "closing_priority"
+        assert result.attrs["row_annotations"][2]["priority_reasons"] == [
+            "manual_entry",
+            "weak_description",
+            "self_approval",
+        ]
 
     def test_sensitive_account_mask_matches_group_and_prefix(self) -> None:
         """민감 계정 설정은 account_group과 gl_account prefix 둘 다 지원."""
@@ -183,6 +217,28 @@ class TestL3_05:
 # ── L3-06 심야 전기 ──────────────────────────────────────────
 
 
+    def test_weekend_entry_exposes_score_breakdown_and_annotations(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D1", "D2", "D3", "D4"],
+            "is_weekend": [True, False, True, False],
+            "is_holiday": [False, True, True, False],
+        })
+
+        result = c02_weekend_entry(df)
+
+        assert result.tolist() == [True, True, True, False]
+        assert result.attrs["score_series"].tolist() == [0.40, 0.35, 0.45, 0.0]
+        breakdown = result.attrs["breakdown"]
+        assert breakdown["calendar_review_docs"] == 3
+        assert breakdown["weekend_only_docs"] == 1
+        assert breakdown["weekday_holiday_docs"] == 1
+        assert breakdown["weekend_holiday_docs"] == 1
+        annotations = result.attrs["row_annotations"]
+        assert annotations[0]["reason_code"] == "weekend"
+        assert annotations[1]["reason_code"] == "weekday_holiday"
+        assert annotations[2]["reason_code"] == "weekend_holiday"
+
+
 class TestL3_06:
     def test_after_hours_flagged(self, anomaly_feature_df: pd.DataFrame) -> None:
         """업무시간 외 → flagged."""
@@ -219,6 +275,28 @@ class TestL3_06:
         result = c03_after_hours_entry(df)
         assert result.tolist() == [True, False, False, False]
 
+    def test_after_hours_metadata_splits_human_and_system_context(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D1", "D2", "D3"],
+            "debit_amount": [100.0, 100.0, 100.0],
+            "is_after_hours": [True, True, False],
+            "posting_date": pd.to_datetime([
+                "2025-01-01 23:30:00",
+                "2025-01-02 02:15:00",
+                "2025-01-02 14:00:00",
+            ]),
+            "source": ["manual", "batch", "manual"],
+            "created_by": ["USR01", "BATCH_JOB", "USR02"],
+        })
+
+        result = c03_after_hours_entry(df)
+
+        assert result.attrs["score_series"].tolist() == [0.45, 0.20, 0.0]
+        assert result.attrs["breakdown"]["confirmed_after_hours_rows"] == 1
+        assert result.attrs["breakdown"]["normal_system_context_rows"] == 1
+        assert result.attrs["row_annotations"][0]["bucket"] == "confirmed_after_hours"
+        assert result.attrs["row_annotations"][1]["bucket"] == "normal_system_context"
+
 
 # ── L3-07 전기일-문서일 장기 괴리 ─────────────────────────────
 
@@ -241,6 +319,42 @@ class TestL3_07:
         df = pd.DataFrame({"debit_amount": [100.0]})
         assert not c04_backdated_entry(df).any()
 
+    def test_exposes_gap_direction_buckets_scores_and_annotations(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D1", "D2", "D3", "D4", "D5", "D6"],
+            "posting_date": pd.to_datetime([
+                "2024-02-15", "2024-03-20", "2024-05-10",
+                "2024-01-01", "2024-01-01", "2024-01-01",
+            ]),
+            "document_date": pd.to_datetime([
+                "2024-01-01", "2024-01-01", "2024-01-01",
+                "2024-02-15", "2024-03-20", "2024-05-10",
+            ]),
+            "days_backdated": [45, 79, 130, -45, -79, -130],
+            "source": ["manual"] * 6,
+        })
+
+        result = c04_backdated_entry(df, threshold_days=30)
+
+        assert result.tolist() == [True] * 6
+        assert result.attrs["score_series"].tolist() == [0.45, 0.60, 0.75, 0.45, 0.60, 0.75]
+        assert result.attrs["breakdown"]["direction_counts"] == {
+            "late_posting": 3,
+            "forward_date_gap": 3,
+        }
+        assert result.attrs["breakdown"]["bucket_counts"] == {
+            "late_moderate_gap": 1,
+            "late_large_gap": 1,
+            "late_extreme_gap": 1,
+            "forward_moderate_gap": 1,
+            "forward_large_gap": 1,
+            "forward_extreme_gap": 1,
+        }
+        assert result.attrs["row_annotations"][0]["bucket"] == "late_moderate_gap"
+        assert result.attrs["row_annotations"][4]["direction"] == "forward_date_gap"
+        assert result.attrs["row_annotations"][5]["abs_gap_days"] == 130
+        assert result.attrs["row_annotations"][5]["score"] == 0.75
+
 
 # ── L1-08 기간 불일치 ────────────────────────────────────────
 
@@ -254,6 +368,75 @@ class TestL1_08:
     def test_match_not_flagged(self, anomaly_feature_df: pd.DataFrame) -> None:
         result = c05_fiscal_period_mismatch(anomaly_feature_df)
         assert not result[0]
+
+    def test_strict_mode_keeps_raw_mismatch(self) -> None:
+        df = pd.DataFrame({
+            "fiscal_period": [13],
+            "posting_date": pd.to_datetime(["2025-12-31"]),
+            "document_type": ["SA"],
+            "source": ["adjustment"],
+            "fiscal_period_mismatch": [True],
+        })
+
+        result = c05_fiscal_period_mismatch(
+            df,
+            policy={
+                "strict_mode": True,
+                "allow_special_periods": True,
+                "special_periods": [13],
+                "special_period_allowed_sources": ["adjustment"],
+            },
+        )
+
+        assert result[0]
+        assert result.attrs["policy_exempted_count"] == 0
+
+    def test_special_period_policy_exempts_allowed_adjustment(self) -> None:
+        df = pd.DataFrame({
+            "fiscal_period": [13, 13],
+            "posting_date": pd.to_datetime(["2025-12-31", "2025-12-31"]),
+            "document_type": ["SA", "SA"],
+            "source": ["adjustment", "manual"],
+            "fiscal_period_mismatch": [True, True],
+        })
+
+        result = c05_fiscal_period_mismatch(
+            df,
+            policy={
+                "strict_mode": False,
+                "allow_special_periods": True,
+                "special_periods": [13],
+                "special_period_allowed_sources": ["adjustment"],
+            },
+        )
+
+        assert not result[0]
+        assert result[1]
+        assert result.attrs["raw_fiscal_period_mismatch_count"] == 2
+        assert result.attrs["policy_exempted_count"] == 1
+        assert result.attrs["breakdown"]["final_l108_rows"] == 1
+
+    def test_process_basis_policy_exempts_document_date_period(self) -> None:
+        df = pd.DataFrame({
+            "fiscal_period": [1, 1],
+            "posting_date": pd.to_datetime(["2025-05-16", "2025-05-16"]),
+            "document_date": pd.to_datetime(["2025-01-09", "2025-01-09"]),
+            "business_process": ["H2R", "R2R"],
+            "fiscal_period_mismatch": [True, True],
+        })
+
+        result = c05_fiscal_period_mismatch(
+            df,
+            policy={
+                "strict_mode": False,
+                "fiscal_year_start": 1,
+                "period_basis_by_process": {"H2R": "document_date"},
+            },
+        )
+
+        assert not result[0]
+        assert result[1]
+        assert result.attrs["policy_exempted_count"] == 1
 
 
 # ── L3-08 적요 결손/파손 ─────────────────────────────────────
@@ -282,6 +465,24 @@ class TestL3_08:
         result = c06_missing_or_corrupted_description(anomaly_feature_df)
         assert result[7]
 
+    def test_description_quality_metadata_splits_quality_buckets(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D1", "D2", "D3", "D4"],
+            "description_quality": ["missing", "corrupted", "poor", "normal"],
+            "description_line_missing": [True, False, False, False],
+            "description_header_missing": [True, False, False, False],
+            "description_both_missing": [True, False, False, False],
+        })
+
+        result = c06_missing_or_corrupted_description(df)
+
+        assert result.attrs["score_series"].tolist() == [0.45, 0.55, 0.50, 0.0]
+        assert result.attrs["breakdown"]["missing_rows"] == 1
+        assert result.attrs["breakdown"]["corrupted_rows"] == 1
+        assert result.attrs["breakdown"]["poor_legacy_rows"] == 1
+        assert result.attrs["row_annotations"][0]["bucket"] == "missing"
+        assert result.attrs["row_annotations"][2]["bucket"] == "corrupted_legacy_poor"
+
     def test_normal_not_flagged(self, anomaly_feature_df: pd.DataFrame) -> None:
         """quality=normal + risk=low → not flagged."""
         result = c06_missing_or_corrupted_description(anomaly_feature_df)
@@ -301,6 +502,9 @@ class TestL4_03:
             min_amount_quantile=0.90,
         )
         assert result[3]  # z=3.5, amount=P90+ range
+        assert result.attrs["score_series"].iloc[3] == 0.45
+        assert result.attrs["breakdown"]["high_amount_review_rows"] == 1
+        assert result.attrs["row_annotations"][3]["bucket"] == "review_zscore"
 
     def test_low_zscore_not_flagged(self, anomaly_feature_df: pd.DataFrame) -> None:
         """zscore ≤ 3.0 → not flagged."""
@@ -406,6 +610,37 @@ class TestL3_09:
         assert ann["aging_days"] == 83
         assert ann["threshold_days"] == 30
         assert result.attrs["breakdown"]["base_threshold_days"] == 30
+
+    def test_exposes_aging_and_open_amount_buckets(self) -> None:
+        """Flagged suspense rows carry aging/open amount buckets and row scores."""
+        df = pd.DataFrame({
+            "document_id": ["D1", "D2", "D3", "D4"],
+            "gl_account": ["2190", "2190", "2190", "2190"],
+            "posting_date": pd.to_datetime(
+                ["2025-01-01", "2025-02-01", "2025-03-01", "2025-04-15"]
+            ),
+            "is_suspense_account": [True, True, True, True],
+            "amount_open": [1000.0, 500.0, 100.0, 1000.0],
+        })
+
+        result = c10_suspense_account(df, threshold_days=30)
+
+        assert result.tolist() == [True, True, True, False]
+        assert result.attrs["score_series"].tolist() == [0.80, 0.60, 0.45, 0.0]
+        assert result.attrs["breakdown"]["aging_bucket_counts"] == {
+            "aging_over_90": 1,
+            "aging_60_90": 1,
+            "aging_30_60": 1,
+        }
+        assert result.attrs["breakdown"]["open_amount_bucket_counts"] == {
+            "open_amount_high": 1,
+            "open_amount_medium": 1,
+            "open_amount_low": 1,
+        }
+        assert result.attrs["breakdown"]["high_open_amount_rows"] == 1
+        assert result.attrs["row_annotations"][0]["aging_bucket"] == "aging_over_90"
+        assert result.attrs["row_annotations"][0]["open_amount_bucket"] == "open_amount_high"
+        assert result.attrs["row_annotations"][0]["score"] == 0.8
 
     def test_missing_prerequisites_returns_false(self) -> None:
         """필수 컬럼 부족 → 전체 False."""

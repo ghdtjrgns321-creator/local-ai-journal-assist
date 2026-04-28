@@ -19,6 +19,24 @@ from src.detection.constants import (
 )
 
 
+def _coerce_index_positions(index: pd.Index, values: list[object]) -> list[int]:
+    """Return row positions for result indices, accepting labels or positions."""
+
+    positions: list[int] = []
+    label_positions = {label: pos for pos, label in enumerate(index)}
+    for value in values:
+        if value in label_positions:
+            positions.append(label_positions[value])
+            continue
+        try:
+            pos = int(value)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= pos < len(index):
+            positions.append(pos)
+    return positions
+
+
 @dataclass
 class RuleFlag:
     """Summary information for a single rule."""
@@ -122,7 +140,10 @@ class DetectionResult:
 
     @property
     def used_columns(self) -> list[str]:
-        values = self.metadata.get("used_columns", list(self.detector_explanation_profile.used_columns))
+        values = self.metadata.get(
+            "used_columns",
+            list(self.detector_explanation_profile.used_columns),
+        )
         return [str(value) for value in values]
 
     @property
@@ -182,7 +203,7 @@ class BaseDetector(ABC):
     ) -> DetectionResult:
         """Create a normalized DetectionResult."""
 
-        clean_indices = [int(idx) for idx in flagged_indices]
+        clean_indices = _coerce_index_positions(scores.index, list(flagged_indices))
         meta = dict(metadata or {})
         profile = get_detector_profile(self.track_name)
         explanation = get_detector_explanation_profile(self.track_name)

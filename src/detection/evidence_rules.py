@@ -21,6 +21,12 @@ def _np_max(a: pd.Series, b: pd.Series) -> pd.Series:
     """np.maximum 기반 행별 max — pd.concat.max() 대비 18배 빠름."""
     return pd.Series(np.maximum(a.values, b.values), index=a.index)
 
+def _nunique_documents(df: pd.DataFrame, mask: pd.Series) -> int:
+    if "document_id" not in df.columns:
+        return int(mask.sum())
+    return int(df.loc[mask.reindex(df.index, fill_value=False), "document_id"].dropna().nunique())
+
+
 logger = logging.getLogger(__name__)
 
 # ── 헬퍼 ────────────────────────────────────────────────────
@@ -212,14 +218,72 @@ def ev02_cutoff_violation(
         (day_diff_series > expense_cutoff_days) & is_expense & valid_mask
     ).astype(float) * (day_diff_series / max_dd)
 
+    revenue_flag = (day_diff_series > revenue_cutoff_days) & is_revenue & valid_mask
+    expense_flag = (day_diff_series > expense_cutoff_days) & is_expense & valid_mask
     scores = _np_max(revenue_score, expense_score)
 
     # ── 기말 가중 ──
+    period_end = pd.Series(False, index=df.index)
     if "is_period_end" in df.columns:
         period_end = df["is_period_end"].fillna(False)
         scores.loc[period_end] *= period_end_weight
 
-    return scores.clip(0.0, 1.0).fillna(0.0)
+    scores = scores.clip(0.0, 1.0).fillna(0.0)
+    flagged = scores.gt(0)
+    revenue_mask = flagged & revenue_flag
+    expense_mask = flagged & ~revenue_mask & expense_flag
+    period_end_weighted = flagged & period_end
+    missing_event_date = posting.isna() | delivery.isna()
+
+    reason_counts = {
+        "revenue_cutoff_gap": int(revenue_mask.sum()),
+        "expense_cutoff_gap": int(expense_mask.sum()),
+    }
+    reason_counts = {key: value for key, value in reason_counts.items() if value > 0}
+    breakdown = {
+        "cutoff_review_rows": int(flagged.sum()),
+        "revenue_cutoff_rows": int(revenue_mask.sum()),
+        "expense_cutoff_rows": int(expense_mask.sum()),
+        "period_end_weighted_rows": int(period_end_weighted.sum()),
+        "missing_event_date_rows": int(missing_event_date.sum()),
+        "max_day_diff": int(max_dd),
+        "revenue_cutoff_days": int(revenue_cutoff_days),
+        "expense_cutoff_days": int(expense_cutoff_days),
+        "use_business_days": bool(use_business_days),
+        "reason_counts": reason_counts,
+    }
+    if "document_id" in df.columns:
+        breakdown.update({
+            "cutoff_review_docs": _nunique_documents(df, flagged),
+            "revenue_cutoff_docs": _nunique_documents(df, revenue_mask),
+            "expense_cutoff_docs": _nunique_documents(df, expense_mask),
+            "period_end_weighted_docs": _nunique_documents(df, period_end_weighted),
+            "missing_event_date_docs": _nunique_documents(df, missing_event_date),
+        })
+
+    row_annotations: dict[int, dict[str, object]] = {}
+    for idx in df.index[flagged]:
+        if bool(revenue_mask.loc[idx]):
+            reason_code = "revenue_cutoff_gap"
+            cutoff_days = revenue_cutoff_days
+            account_type = "revenue"
+        else:
+            reason_code = "expense_cutoff_gap"
+            cutoff_days = expense_cutoff_days
+            account_type = "expense"
+        row_annotations[int(idx)] = {
+            "reason_code": reason_code,
+            "score": float(scores.loc[idx]),
+            "day_diff": float(day_diff_series.loc[idx]),
+            "cutoff_days": int(cutoff_days),
+            "account_type": account_type,
+            "period_end_weighted": bool(period_end.loc[idx]),
+            "use_business_days": bool(use_business_days),
+        }
+
+    scores.attrs["breakdown"] = breakdown
+    scores.attrs["row_annotations"] = row_annotations
+    return scores
 
 
 # ── EV03: 증빙 금액 불일치 ────────────────────────────────────

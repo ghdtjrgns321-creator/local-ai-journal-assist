@@ -15,6 +15,7 @@ import pandas as pd
 from config.settings import PROJECT_ROOT
 from src.detection.base import DetectionResult
 from src.detection.constants import BATCH_CORROBORATION_RULES, TOPSIDE_BONUS_RULES
+from src.detection.rule_scoring import normalize_rule_evidence
 from src.models.phase1_case import (
     CaseDocumentRef,
     CaseGroupResult,
@@ -27,6 +28,7 @@ SCHEMA_VERSION = "1.0.0"
 
 _EXPLANATION_PRIORITY = (
     "control_failure",
+    "access_scope_review",
     "duplicate_or_outflow",
     "logic_mismatch",
     "timing_anomaly",
@@ -44,6 +46,7 @@ _RULE_THEME_MAP = {
     "L3-01": ("logic_mismatch", "logic_mismatch"),
     "L3-09": ("logic_mismatch", "logic_mismatch"),
     "L3-10": ("logic_mismatch", "logic_mismatch"),
+    "L3-12": ("access_scope_review", "access_scope_review"),
     "L4-04": ("logic_mismatch", "logic_mismatch"),
     "L1-04": ("control_failure", "control_failure"),
     "L1-05": ("control_failure", "control_failure"),
@@ -83,9 +86,20 @@ _MACRO_FINDING_RULES = {"L4-02", "D01", "D02"}
 _THEME_EXPLANATION_PRIORITY = {
     "control_failure": (
         "control_failure",
+        "access_scope_review",
         "statistical_outlier",
         "timing_anomaly",
         "logic_mismatch",
+        "duplicate_or_outflow",
+        "intercompany_structure",
+        "data_integrity_failure",
+    ),
+    "access_scope_review": (
+        "access_scope_review",
+        "control_failure",
+        "logic_mismatch",
+        "timing_anomaly",
+        "statistical_outlier",
         "duplicate_or_outflow",
         "intercompany_structure",
         "data_integrity_failure",
@@ -283,6 +297,14 @@ _RULE_EXPRESSION_METADATA: dict[str, dict[str, Any]] = {
         "focus": "revenue_cutoff_mismatch",
         "action": ["매출 인식일과 증빙일 대조", "납품·검수·청구 조건 확인"],
     },
+    "L3-12": {
+        "evidence_strength": "weak",
+        "focus": "work_scope_concentration",
+        "action": [
+            "한 사용자의 다중 업무 관여가 해당 기간에 예정된 역할인지 확인",
+            "수기·민감계정·고액·결산 맥락이 있으면 대체 검토 통제 확인",
+        ],
+    },
     "L4-01": {
         "evidence_strength": "medium",
         "focus": "revenue_anomaly",
@@ -333,6 +355,7 @@ _RULE_EXPRESSION_METADATA: dict[str, dict[str, Any]] = {
 
 _THEME_LABELS = {
     "control_failure": "승인·권한 통제 검토",
+    "access_scope_review": "업무범위 집중 검토",
     "timing_anomaly": "결산·시점 검토",
     "duplicate_or_outflow": "지급·중복 거래 검토",
     "logic_mismatch": "계정 사용 논리 검토",
@@ -362,6 +385,7 @@ _OUTFLOW_RULES = {
 }
 
 _LOGIC_RULES = {
+    "L3-12": "Work scope concentration",
     "L3-10": "고위험 계정 사용",
     "L1-03": "무효 계정",
     "L2-04": "비용 자산화 의심",
@@ -409,6 +433,12 @@ class _RawHit:
     severity: int
     row_index: int
     score: float
+    signal_strength: float
+    normalized_score: float
+    evidence_strength: str
+    scoring_role: str
+    display_label: str
+    signal_status: str
     document_id: str
     record_id: str | None
     detail: str | None
@@ -524,6 +554,7 @@ def build_phase1_case_reference(
 
 def _collect_raw_hits(df: pd.DataFrame, results: list[DetectionResult]) -> list[_RawHit]:
     hits: list[_RawHit] = []
+    row_positions = {label: pos for pos, label in enumerate(df.index)}
     for result in results:
         details = result.details if result.details is not None else pd.DataFrame(index=df.index)
         row_annotations = (result.metadata or {}).get("row_annotations", {})
@@ -536,23 +567,54 @@ def _collect_raw_hits(df: pd.DataFrame, results: list[DetectionResult]) -> list[
             theme_id, evidence_type = mapping
             column = details[rule_flag.rule_id]
             rule_annotations = row_annotations.get(rule_flag.rule_id, {})
-            for row_index, score in column[column > 0].items():
-                row = df.loc[row_index]
-                document_id = _string_value(row.get("document_id")) or f"row-{row_index}"
+            for row_label, raw_score in column.items():
+                row_pos = row_positions.get(row_label)
+                if row_pos is None:
+                    try:
+                        candidate_pos = int(row_label)
+                    except (TypeError, ValueError):
+                        continue
+                    if candidate_pos < 0 or candidate_pos >= len(df):
+                        continue
+                    row_pos = candidate_pos
+                row = df.iloc[row_pos]
+                document_id = _string_value(row.get("document_id")) or f"row-{row_pos}"
+                row_annotation = _lookup_row_annotation(rule_annotations, row_label, row_pos)
+                raw_score_float = float(raw_score)
+                annotation_score = _annotation_score(row_annotation)
+                score = max(raw_score_float, annotation_score)
+                if score <= 0:
+                    continue
+                signal_status = (
+                    "confirmed" if raw_score_float > 0 else "review_candidate"
+                )
+                normalized = normalize_rule_evidence(
+                    rule_id=rule_flag.rule_id,
+                    evidence_type=evidence_type,
+                    severity=int(rule_flag.severity),
+                    raw_value=score,
+                    display_label=_row_display_label(row_annotation),
+                )
                 hits.append(
                     _RawHit(
                         rule_id=rule_flag.rule_id,
                         theme_id=theme_id,
                         evidence_type=evidence_type,
                         severity=int(rule_flag.severity),
-                        row_index=int(row_index),
+                        row_index=row_pos,
                         score=float(score),
+                        signal_strength=normalized.signal_strength,
+                        normalized_score=normalized.normalized_score,
+                        evidence_strength=normalized.evidence_strength,
+                        scoring_role=normalized.scoring_role,
+                        display_label=normalized.display_label,
+                        signal_status=signal_status,
                         document_id=document_id,
                         record_id=_optional_string(row.get("record_id")),
                         detail=_rule_hit_detail(
                             rule_flag.rule_id,
                             rule_flag.detail,
-                            rule_annotations.get(int(row_index)),
+                            row_annotation,
                         ),
                     )
                 )
@@ -571,7 +633,7 @@ def _build_cases(
     hits_by_row: dict[int, list[_RawHit]] = defaultdict(list)
     for hit in raw_hits:
         hits_by_row[hit.row_index].append(hit)
-        row = df.loc[hit.row_index]
+        row = df.iloc[hit.row_index]
         case_key_parts = _make_case_key_parts(hit.theme_id, row, config)
         case_key = " / ".join(str(value) for value in case_key_parts.values())
         group_key = (hit.theme_id, case_key)
@@ -594,12 +656,13 @@ def _build_cases(
 
     for ordinal, ((theme_id, case_key), group) in enumerate(groups.items(), start=1):
         indices = sorted(group["row_indices"])
-        rows = df.loc[indices]
+        rows = df.iloc[indices]
         case_hits = _collect_case_hits(indices, hits_by_row)
         evidence_types = sorted({hit.evidence_type for hit in case_hits})
         evidence_scores = _theme_scores(case_hits, config)
         total_amount = _case_total_amount(df, indices)
-        amount_score = min(total_amount / max_amount, 1.0)
+        amount_score = _amount_score(total_amount, max_amount, config)
+        access_scope_score = min(evidence_scores.get("access_scope_review", 0.0), 1.0)
         control_score = min(evidence_scores.get("control_failure", 0.0), 1.0)
         logic_score = min(
             max(
@@ -609,7 +672,7 @@ def _build_cases(
             ),
             1.0,
         )
-        behavior_score = min(len(indices) / 10.0, 1.0)
+        behavior_score = max(min(len(indices) / 10.0, 1.0), access_scope_score)
         repeat_months = _repeat_months(rows)
         repeat_score = min(max(repeat_months - 1, 0) / 2.0, 1.0)
         secondary_tags = _secondary_tags(theme_id, evidence_scores, config)
@@ -641,6 +704,12 @@ def _build_cases(
             behavior_score=behavior_score,
             config=config,
         )
+        priority_score, floor_reasons = _apply_priority_floors(
+            case_hits=case_hits,
+            priority_score=priority_score,
+            config=config,
+        )
+        adjustment_reasons.extend(floor_reasons)
         priority_band = _priority_band(priority_score, config, repeat_score)
         l304_repeat_pattern = _is_l304_repeat_pattern_case(
             df,
@@ -696,7 +765,7 @@ def _build_cases(
                 recommended_audit_actions=auditor_insight["recommended_audit_actions"],
                 rule_evidence_summary=auditor_insight["rule_evidence_summary"],
                 evidence_tags=sorted({*evidence_types, *secondary_tags}),
-                documents=_build_document_refs(rows, case_hits, config),
+                documents=_build_document_refs(df, case_hits, config),
                 raw_rule_hits=[
                     RawRuleHitRef(
                         rule_id=hit.rule_id,
@@ -705,6 +774,12 @@ def _build_cases(
                         row_index=hit.row_index,
                         record_id=hit.record_id,
                         score=hit.score,
+                        signal_strength=hit.signal_strength,
+                        normalized_score=hit.normalized_score,
+                        evidence_strength=hit.evidence_strength,
+                        scoring_role=hit.scoring_role,
+                        display_label=hit.display_label,
+                        signal_status=hit.signal_status,
                         detail=hit.detail,
                         evidence_type=hit.evidence_type,
                     )
@@ -795,6 +870,12 @@ def _make_case_key_parts(theme_id: str, row: pd.Series, config: dict[str, Any]) 
             "business_process": _string_value(row.get("business_process")) or "UNKNOWN_PROCESS",
             "period_month": posting_month,
         }
+    if theme_id == "access_scope_review":
+        return {
+            "created_by": _string_value(row.get("created_by")) or "UNKNOWN_USER",
+            "user_persona": _string_value(row.get("user_persona")) or "UNKNOWN_PERSONA",
+            "period_month": posting_month,
+        }
     if theme_id == "timing_anomaly":
         return {
             "created_by": _string_value(row.get("created_by")) or "UNKNOWN_USER",
@@ -833,7 +914,7 @@ def _make_case_key_parts(theme_id: str, row: pd.Series, config: dict[str, Any]) 
 
 
 def _build_document_refs(
-    rows: pd.DataFrame,
+    df: pd.DataFrame,
     hits: list[_RawHit],
     config: dict[str, Any],
 ) -> list[CaseDocumentRef]:
@@ -842,7 +923,8 @@ def _build_document_refs(
         by_doc[hit.document_id].append(hit)
     refs: list[CaseDocumentRef] = []
     for document_id, doc_hits in by_doc.items():
-        row = rows.loc[[hit.row_index for hit in doc_hits]].iloc[0]
+        hit_positions = [hit.row_index for hit in doc_hits]
+        row = df.iloc[hit_positions].iloc[0]
         refs.append(
             CaseDocumentRef(
                 document_id=document_id,
@@ -851,7 +933,7 @@ def _build_document_refs(
                 business_process=_optional_string(row.get("business_process")),
                 gl_account=_optional_string(row.get("gl_account")),
                 counterparty=_counterparty(row, config),
-                amount=_line_amount(row),
+                amount=_document_amount(df, document_id, hit_positions),
                 matched_rules=sorted({hit.rule_id for hit in doc_hits}),
                 evidence_tags=sorted({hit.evidence_type for hit in doc_hits}),
             )
@@ -865,7 +947,7 @@ def _theme_scores(hits: list[_RawHit], config: dict[str, Any]) -> dict[str, floa
     counts: dict[str, int] = defaultdict(int)
     for hit in hits:
         counts[hit.evidence_type] += 1
-        totals[hit.evidence_type] += hit.severity / 5.0
+        totals[hit.evidence_type] += hit.normalized_score
 
     cap = float(config.get("evidence_type_cap", 1.0))
     scale = str(config.get("rule_repeat_scale", "sqrt")).lower()
@@ -897,6 +979,59 @@ def _priority_score(
         + float(weights.get("logic", 0.20)) * logic_score
         + float(weights.get("behavior", 0.15)) * behavior_score
     )
+
+
+def _amount_score(total_amount: float, max_amount: float, config: dict[str, Any]) -> float:
+    relative_score = min(total_amount / (max_amount or 1.0), 1.0)
+    materiality_amount = float(config.get("materiality_amount", 0.0) or 0.0)
+    if materiality_amount <= 0:
+        return relative_score
+    materiality_score = min(total_amount / materiality_amount, 1.0)
+    return max(relative_score, materiality_score)
+
+
+def _apply_priority_floors(
+    *,
+    case_hits: list[_RawHit],
+    priority_score: float,
+    config: dict[str, Any],
+) -> tuple[float, list[str]]:
+    floors = config.get("priority_floors", [])
+    if not isinstance(floors, list) or not floors:
+        return priority_score, []
+
+    adjusted = float(priority_score)
+    reasons: list[str] = []
+    for floor in floors:
+        if not isinstance(floor, dict):
+            continue
+        rule_id = str(floor.get("rule_id", "")).strip()
+        if not rule_id:
+            continue
+        labels = {
+            str(label).strip().lower()
+            for label in floor.get("labels", [])
+            if str(label).strip()
+        }
+        min_raw_score = floor.get("min_raw_score")
+        matched = False
+        for hit in case_hits:
+            if hit.rule_id != rule_id:
+                continue
+            label = str(hit.display_label or "").strip().lower()
+            label_match = not labels or label in labels
+            score_match = min_raw_score is None or hit.score >= float(min_raw_score)
+            if label_match and score_match:
+                matched = True
+                break
+        if not matched:
+            continue
+        floor_score = float(floor.get("min_priority_score", adjusted))
+        if floor_score > adjusted:
+            adjusted = floor_score
+        reason = str(floor.get("reason") or f"priority_floor:{rule_id}")
+        reasons.append(reason)
+    return max(0.0, min(adjusted, 1.0)), reasons
 
 
 def _apply_priority_adjustments(
@@ -961,6 +1096,24 @@ def _apply_priority_adjustments(
             float(weak_cfg.get("max_bonus", 0.09)),
         )
         reasons.append("weak_evidence=" + ",".join(weak_tags))
+
+    rare_pair_cfg = adjustments.get("rare_account_pair", {})
+    if rare_pair_cfg.get("enabled", True) and "L4-04" in rule_ids:
+        non_l404_rules = rule_ids - {"L4-04"}
+        if not non_l404_rules:
+            penalty = float(rare_pair_cfg.get("l404_only_penalty", 0.10))
+            adjusted_priority -= penalty
+            reasons.append(f"l404_only_penalty=-{penalty:.2f}")
+
+        recurring_ratio = _case_source_ratio(
+            rows,
+            rare_pair_cfg.get("recurring_sources", ["recurring", "automated", "batch", "interface", "system"]),
+        )
+        recurring_threshold = float(rare_pair_cfg.get("recurring_source_ratio", 0.60))
+        if recurring_ratio >= recurring_threshold:
+            penalty = float(rare_pair_cfg.get("recurring_source_penalty", 0.08))
+            adjusted_priority -= penalty
+            reasons.append(f"l404_recurring_source_penalty=-{penalty:.2f}")
 
     adjusted_priority += sum(bonuses.values())
     return max(0.0, min(adjusted_priority, 1.0)), adjusted_behavior, reasons, bonuses
@@ -1036,6 +1189,16 @@ def _case_has_true(rows: pd.DataFrame, column: str) -> bool:
     if column not in rows.columns:
         return False
     return bool(rows[column].fillna(False).astype(bool).any())
+
+
+def _case_source_ratio(rows: pd.DataFrame, source_values: list[str]) -> float:
+    if "source" not in rows.columns or rows.empty:
+        return 0.0
+    normalized = rows["source"].fillna("").astype(str).str.strip().str.lower()
+    source_set = {str(value).strip().lower() for value in source_values if str(value).strip()}
+    if not source_set:
+        return 0.0
+    return float(normalized.isin(source_set).mean())
 
 
 def _priority_band(priority_score: float, config: dict[str, Any], repeat_score: float) -> str:
@@ -1213,8 +1376,68 @@ def _repeat_months(rows: pd.DataFrame) -> int:
 
 
 def _case_total_amount(df: pd.DataFrame, indices: set[int] | list[int]) -> float:
-    rows = df.loc[sorted(indices)]
+    rows = df.iloc[sorted(indices)]
     return float(rows.apply(_line_amount, axis=1).sum())
+
+
+def _document_amount(df: pd.DataFrame, document_id: str, hit_positions: list[int]) -> float:
+    rows = df.iloc[hit_positions]
+    if document_id and "document_id" in df.columns:
+        document_ids = df["document_id"].fillna("").astype(str).str.strip()
+        document_rows = df[document_ids == document_id]
+        if not document_rows.empty:
+            rows = document_rows
+    return float(rows.apply(_line_amount, axis=1).sum())
+
+
+def _lookup_row_annotation(
+    rule_annotations: dict[Any, Any],
+    row_label: Any,
+    row_pos: int,
+) -> dict[str, Any] | None:
+    if not isinstance(rule_annotations, dict):
+        return None
+    keys: list[Any] = [row_label, row_pos, str(row_label), str(row_pos)]
+    try:
+        keys.append(int(row_label))
+    except (TypeError, ValueError):
+        pass
+    for key in keys:
+        value = rule_annotations.get(key)
+        if isinstance(value, dict):
+            return value
+    return None
+
+
+def _row_display_label(row_annotation: dict[str, Any] | None) -> str | None:
+    if not isinstance(row_annotation, dict):
+        return None
+    for key in (
+        "risk_level",
+        "finding_severity",
+        "severity_label",
+        "signal_strength",
+        "bucket",
+        "queue_label",
+        "label",
+    ):
+        value = row_annotation.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return None
+
+
+def _annotation_score(row_annotation: dict[str, Any] | None) -> float:
+    if not isinstance(row_annotation, dict):
+        return 0.0
+    for key in ("score", "review_score", "normalized_score"):
+        try:
+            score = float(row_annotation.get(key))
+        except (TypeError, ValueError):
+            continue
+        if score > 0:
+            return score
+    return 0.0
 
 
 def _auditor_insight(
@@ -1264,6 +1487,8 @@ def _risk_narrative(
 
     if primary_evidence == "control_failure":
         return _control_explanation(rule_ids, total_amount)
+    if primary_evidence == "access_scope_review":
+        return _access_scope_explanation(rule_ids, total_amount)
     if primary_evidence == "duplicate_or_outflow":
         return _outflow_explanation(rule_ids, total_amount)
     if primary_evidence == "logic_mismatch":
@@ -1316,6 +1541,8 @@ def _rule_actions(rule_id: str) -> list[str]:
 
 
 def _rule_evidence_strength(hit: _RawHit) -> str:
+    if hit.evidence_strength in _STRENGTH_RANK:
+        return hit.evidence_strength
     metadata = _rule_metadata(hit.rule_id)
     strength = metadata.get("evidence_strength")
     if strength in _STRENGTH_RANK:
@@ -1335,6 +1562,10 @@ def _rule_evidence_summary(hit: _RawHit) -> dict[str, Any]:
         "evidence_strength": _rule_evidence_strength(hit),
         "focus": _rule_focus(hit.rule_id),
         "severity": hit.severity,
+        "display_label": hit.display_label,
+        "signal_strength": hit.signal_strength,
+        "normalized_score": hit.normalized_score,
+        "scoring_role": hit.scoring_role,
         "summary": _rule_summary_text(hit),
     }
 
@@ -1399,6 +1630,8 @@ def _representative_explanation(
 
     if primary_evidence == "control_failure":
         return _control_explanation(rule_ids, total_amount)
+    if primary_evidence == "access_scope_review":
+        return _access_scope_explanation(rule_ids, total_amount)
     if primary_evidence == "duplicate_or_outflow":
         return _outflow_explanation(rule_ids, total_amount)
     if primary_evidence == "logic_mismatch":
@@ -1429,6 +1662,20 @@ def _control_explanation(rule_ids: list[str], total_amount: float) -> str:
     return (
         f"{lead}이 함께 발생했습니다. "
         "승인·권한 통제 적용과 예외 승인 근거를 우선 확인해야 합니다."
+    )
+
+
+def _access_scope_explanation(rule_ids: list[str], total_amount: float) -> str:
+    labels = _ordered_rule_labels(rule_ids, _LOGIC_RULES) or ["Work scope concentration"]
+    lead = " + ".join(labels[:3])
+    if total_amount > 0:
+        return (
+            f"{lead} signal was observed and related entry amount totals {total_amount:,.0f}. "
+            "L1-06 handles explicit SoD violations; this case should review one user's broad current-period activity and compensating controls."
+        )
+    return (
+        f"{lead} signal was observed. L1-06 handles explicit SoD violations; "
+        "this case should review one user's broad current-period activity and compensating controls."
     )
 
 

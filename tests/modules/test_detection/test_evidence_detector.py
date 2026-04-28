@@ -92,3 +92,27 @@ class TestEvidenceDetector:
         result = det.detect(full_evidence_df)
         assert (result.scores >= 0).all()
         assert (result.scores <= 1).all()
+
+    def test_l311_metadata_is_propagated(self, audit_rules):
+        df = pd.DataFrame({
+            "document_id": ["D1", "D2"],
+            "debit_amount": [100_000.0, 100_000.0],
+            "credit_amount": [0.0, 0.0],
+            "posting_date": pd.to_datetime(["2025-03-15", "2025-03-20"]),
+            "delivery_date": pd.to_datetime(["2025-03-01", "2025-03-01"]),
+            "gl_account": ["4100", "5100"],
+            "is_revenue_account": [True, False],
+            "is_period_end": [False, False],
+        })
+        det = EvidenceDetector(audit_rules=audit_rules)
+
+        result = det.detect(df)
+
+        assert result.details["L3-11"].iloc[0] == pytest.approx((10 / 30) * 0.6)
+        breakdown = result.metadata["rule_breakdowns"]["L3-11"]
+        assert breakdown["cutoff_review_docs"] == 2
+        assert breakdown["revenue_cutoff_docs"] == 1
+        assert breakdown["expense_cutoff_docs"] == 1
+        annotations = result.metadata["row_annotations"]["L3-11"]
+        assert annotations[0]["reason_code"] == "revenue_cutoff_gap"
+        assert annotations[1]["reason_code"] == "expense_cutoff_gap"

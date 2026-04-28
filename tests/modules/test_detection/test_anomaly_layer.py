@@ -122,6 +122,25 @@ class TestAnomalyDetectorIntegration:
         ann = result.metadata["row_annotations"]["L3-09"][0]
         assert ann["threshold_days"] == 30
 
+    def test_l305_surfaces_calendar_review_metadata(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D001", "D002", "D003", "D004"],
+            "debit_amount": [100.0, 100.0, 100.0, 100.0],
+            "credit_amount": [0.0, 0.0, 0.0, 0.0],
+            "is_weekend": [True, False, True, False],
+            "is_holiday": [False, True, True, False],
+        })
+        result = AnomalyDetector().detect(df)
+
+        assert result.details["L3-05"].tolist() == [0.40, 0.35, 0.45, 0.0]
+        breakdown = result.metadata["rule_breakdowns"]["L3-05"]
+        assert breakdown["calendar_review_docs"] == 3
+        assert breakdown["weekday_holiday_docs"] == 1
+        annotations = result.metadata["row_annotations"]["L3-05"]
+        assert annotations[0]["reason_code"] == "weekend"
+        assert annotations[1]["reason_code"] == "holiday"
+        assert annotations[2]["reason_code"] == "weekend_holiday"
+
     def test_flagged_indices_valid(self, full_anomaly_df: pd.DataFrame) -> None:
         """flagged_indices가 원본 인덱스 범위 내."""
         result = AnomalyDetector().detect(full_anomaly_df)

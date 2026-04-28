@@ -95,10 +95,41 @@ class TestVarianceDetectorBasic:
         result = detector.detect(sample_df)
 
         assert result.track_name == "layer_d"
-        assert result.flagged_count > 0
-        # D01이 실행되었는지 확인
         rule_ids = [rf.rule_id for rf in result.rule_flags]
         assert "D01" in rule_ids
+        assert result.details["D01"].sum() == 0.0
+        assert result.metadata["d01_row_scoring_mode"] == "account_review_metadata_only"
+        assert result.metadata["d01_review_account_count"] == 2
+        assert result.metadata["d01_review_row_count"] == 12
+        accounts = {item["gl_account"] for item in result.metadata["account_activity_variance"]}
+        assert accounts == {"1000", "2000"}
+
+    def test_d01_metadata_keeps_company_account_pairs(self):
+        """company_code가 있으면 D01 review metadata도 회사별 계정 단위다."""
+        df = pd.DataFrame({
+            "company_code": ["C001", "C001", "C002", "C002"],
+            "gl_account": ["1000", "1000", "1000", "1000"],
+            "debit_amount": [500.0, 500.0, 100.0, 100.0],
+            "credit_amount": [0.0, 0.0, 0.0, 0.0],
+            "fiscal_period": [1, 2, 1, 2],
+        })
+        prior = PriorSummary(
+            account_aggregates={
+                "C001::1000": {"total_amount": 100.0, "count": 1, "avg_amount": 100.0},
+                "C002::1000": {"total_amount": 200.0, "count": 2, "avg_amount": 100.0},
+            },
+            monthly_patterns={},
+            prior_total_rows=3,
+            prior_fiscal_year=2024,
+        )
+        detector = VarianceDetector(prior_summary=prior)
+
+        result = detector.detect(df)
+
+        assert result.metadata["d01_review_account_count"] == 1
+        assert result.metadata["d01_review_row_count"] == 2
+        assert result.metadata["account_activity_variance"][0]["company_code"] == "C001"
+        assert result.metadata["account_activity_variance"][0]["gl_account"] == "1000"
 
 
 class TestVarianceDetectorEdgeCases:
@@ -130,6 +161,77 @@ class TestVarianceDetectorEdgeCases:
         assert "D01" in rule_ids
         assert "D02" in rule_ids
 
+    def test_d02_does_not_create_row_level_scores(self, sample_df: pd.DataFrame):
+        """D02는 분석적 검토 신호로만 리포팅하고 row score는 만들지 않는다."""
+        prior = PriorSummary(
+            account_aggregates={},
+            monthly_patterns={"1000": {m: 1 / 12 for m in range(1, 13)}},
+            prior_total_rows=12,
+            prior_fiscal_year=2024,
+        )
+        df = pd.DataFrame({
+            "gl_account": ["1000"] * 120,
+            "debit_amount": [10.0] * 110 + [500.0] * 10,
+            "credit_amount": [0.0] * 120,
+            "fiscal_period": ([1] * 110) + ([12] * 10),
+        })
+        detector = VarianceDetector(
+            settings=AuditSettings(
+                d02_min_account_docs=1,
+                d02_min_top_month_delta=0.0,
+                min_monthly_data_months=1,
+            ),
+            prior_summary=prior,
+        )
+
+        result = detector.detect(df)
+
+        d02_flag = next(rf for rf in result.rule_flags if rf.rule_id == "D02")
+        assert d02_flag.flagged_count == len(df)
+        assert result.details["D02"].sum() == 0.0
+        assert result.flagged_count == 0
+
+    def test_d02_metadata_keeps_all_flagged_groups_for_evaluation(self):
+        """D02 diagnostics metadata is not capped before account-level evaluation."""
+        group_count = 105
+        rows = []
+        monthly_patterns = {}
+        for idx in range(group_count):
+            account = str(1000 + idx)
+            monthly_patterns[f"C001::{account}"] = {month: 1 / 12 for month in range(1, 13)}
+            for month in range(1, 13):
+                rows.append({
+                    "company_code": "C001",
+                    "gl_account": account,
+                    "document_id": f"D{idx}-{month}",
+                    "debit_amount": 500.0 if month == 12 else 10.0,
+                    "credit_amount": 0.0,
+                    "fiscal_period": month,
+                })
+        df = pd.DataFrame(rows)
+        prior = PriorSummary(
+            account_aggregates={},
+            monthly_patterns=monthly_patterns,
+            prior_total_rows=group_count * 12,
+            prior_fiscal_year=2023,
+        )
+        detector = VarianceDetector(
+            settings=AuditSettings(
+                monthly_pattern_threshold=0.1,
+                d02_min_account_docs=1,
+                d02_min_top_month_delta=0.0,
+            ),
+            prior_summary=prior,
+        )
+
+        result = detector.detect(df)
+        flagged = [
+            item for item in result.metadata["d02_account_diagnostics"]
+            if item["flagged"]
+        ]
+
+        assert len(flagged) == group_count
+
     def test_d02_uses_min_monthly_data_months_setting(
         self, sample_df: pd.DataFrame, prior_summary_normal: PriorSummary
     ):
@@ -153,6 +255,10 @@ class TestVarianceDetectorEdgeCases:
         assert result.metadata["operational_limitations"]
         assert "D02" in result.metadata["high_risk_combinations"]
         assert "L3-04" in result.metadata["high_risk_combinations"]["D02"]
+        assert result.metadata["d02_guardrails"]["group_keys"] == [
+            "company_code",
+            "gl_account",
+        ]
 
     def test_result_scores_shape(
         self, sample_df: pd.DataFrame, prior_summary_normal: PriorSummary

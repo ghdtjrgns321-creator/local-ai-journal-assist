@@ -2,15 +2,37 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+
 import pandas as pd
 
 from config.settings import get_audit_rules
 
 
+@dataclass
+class AccessRuleCache:
+    """Reusable normalized Series and masks for access-control rules."""
+
+    text: dict[str, pd.Series] = field(default_factory=dict)
+    persona: dict[str, pd.Series] = field(default_factory=dict)
+    process: dict[str, pd.Series] = field(default_factory=dict)
+    actor: dict[str, pd.Series] = field(default_factory=dict)
+    account: dict[str, pd.Series] = field(default_factory=dict)
+    bool_masks: dict[str, pd.Series] = field(default_factory=dict)
+    objects: dict[str, object] = field(default_factory=dict)
+
+
+def build_access_rule_cache(df: pd.DataFrame) -> AccessRuleCache:
+    """Create a cache shared by L1-05/L1-06/L1-07 during a FraudLayer run."""
+
+    return AccessRuleCache()
+
+
 def _normalized_text(series: pd.Series) -> pd.Series:
     """Return trimmed lowercase strings with NA handled as empty."""
 
-    return series.fillna("").astype(str).str.strip().str.lower()
+    normalized = series.where(series.notna(), "").astype(str).str.strip().str.lower()
+    return normalized.mask(normalized.isin({"nan", "nat", "none"}), "")
 
 
 def _normalized_persona(series: pd.Series) -> pd.Series:
@@ -35,6 +57,50 @@ def _normalized_account_code(series: pd.Series) -> pd.Series:
     """Return normalized account codes while preserving leading zeroes."""
 
     return _normalized_text(series).str.replace(r"\.0+$", "", regex=True)
+
+
+def _cached_text(df: pd.DataFrame, column: str, cache: AccessRuleCache | None) -> pd.Series:
+    if cache is None:
+        return _normalized_text(df[column])
+    if column not in cache.text:
+        cache.text[column] = _normalized_text(df[column])
+    return cache.text[column]
+
+
+def _cached_persona(df: pd.DataFrame, column: str, cache: AccessRuleCache | None) -> pd.Series:
+    if cache is None:
+        return _normalized_persona(df[column])
+    if column not in cache.persona:
+        cache.persona[column] = _cached_text(df, column, cache).str.replace(" ", "_", regex=False)
+    return cache.persona[column]
+
+
+def _cached_process(df: pd.DataFrame, column: str, cache: AccessRuleCache | None) -> pd.Series:
+    if cache is None:
+        return _normalized_process(df[column])
+    if column not in cache.process:
+        cache.process[column] = df[column].fillna("").astype(str).str.strip().str.upper()
+    return cache.process[column]
+
+
+def _cached_actor(df: pd.DataFrame, column: str, cache: AccessRuleCache | None) -> pd.Series:
+    if cache is None:
+        return _normalized_actor(df[column])
+    if column not in cache.actor:
+        cache.actor[column] = _cached_text(df, column, cache).str.replace(" ", "_", regex=False)
+    return cache.actor[column]
+
+
+def _cached_account(df: pd.DataFrame, column: str, cache: AccessRuleCache | None) -> pd.Series:
+    if cache is None:
+        return _normalized_account_code(df[column])
+    if column not in cache.account:
+        cache.account[column] = _cached_text(df, column, cache).str.replace(
+            r"\.0+$",
+            "",
+            regex=True,
+        )
+    return cache.account[column]
 
 
 def _get_self_approval_allow_config(audit_rules: dict | None = None) -> dict[str, tuple[str, ...]]:
@@ -73,7 +139,10 @@ def _get_self_approval_immediate_override_config(
     rules = audit_rules or get_audit_rules()
     patterns = rules.get("patterns", {})
     override = patterns.get("self_approval_immediate_override", {})
-    manual_sources = override.get("manual_sources", patterns.get("manual_source_codes", ["manual", "adjustment"]))
+    manual_sources = override.get(
+        "manual_sources",
+        patterns.get("manual_source_codes", ["manual", "adjustment"]),
+    )
     return {
         "materiality_amount": float(override.get("materiality_amount", 1_000_000_000)),
         "manual_sources": tuple(str(v).strip().lower() for v in manual_sources),
@@ -95,9 +164,16 @@ def _get_skipped_approval_immediate_config(
     rules = audit_rules or get_audit_rules()
     patterns = rules.get("patterns", {})
     cfg = patterns.get("skipped_approval_immediate", {})
-    manual_sources = cfg.get("manual_sources", patterns.get("manual_source_codes", ["manual", "adjustment"]))
+    manual_sources = cfg.get(
+        "manual_sources",
+        patterns.get("manual_source_codes", ["manual", "adjustment"]),
+    )
     return {
         "manual_sources": tuple(str(v).strip().lower() for v in manual_sources),
+        "system_sources": tuple(
+            str(v).strip().lower()
+            for v in cfg.get("system_sources", ["automated", "batch", "interface", "system"])
+        ),
         "business_processes": tuple(
             str(v).strip().upper()
             for v in cfg.get("business_processes", ["TRE", "P2P", "O2C", "H2R"])
@@ -106,29 +182,81 @@ def _get_skipped_approval_immediate_config(
     }
 
 
-def _line_amount(df: pd.DataFrame) -> pd.Series:
+def _get_missing_approval_date_config(
+    audit_rules: dict | None = None,
+) -> dict[str, tuple[str, ...]]:
+    """Load L1-09 queue split policy."""
+
+    rules = audit_rules or get_audit_rules()
+    patterns = rules.get("patterns", {})
+    cfg = patterns.get("missing_approval_date_immediate", {})
+    manual_sources = cfg.get(
+        "manual_sources",
+        patterns.get("manual_source_codes", ["manual", "adjustment"]),
+    )
+    return {
+        "manual_sources": tuple(str(v).strip().lower() for v in manual_sources),
+        "system_sources": tuple(
+            str(v).strip().lower()
+            for v in cfg.get(
+                "system_sources",
+                ["automated", "batch", "interface", "system", "recurring"],
+            )
+        ),
+        "business_processes": tuple(
+            str(v).strip().upper()
+            for v in cfg.get("business_processes", ["TRE", "P2P", "O2C", "H2R"])
+        ),
+    }
+
+
+def _line_amount(df: pd.DataFrame, cache: AccessRuleCache | None = None) -> pd.Series:
     """Return per-row representative amount for threshold checks."""
 
-    debit_raw = df["debit_amount"] if "debit_amount" in df.columns else pd.Series(0.0, index=df.index)
-    credit_raw = df["credit_amount"] if "credit_amount" in df.columns else pd.Series(0.0, index=df.index)
+    if cache is not None and "line_amount" in cache.bool_masks:
+        return cache.bool_masks["line_amount"]
+    debit_raw = (
+        df["debit_amount"] if "debit_amount" in df.columns else pd.Series(0.0, index=df.index)
+    )
+    credit_raw = (
+        df["credit_amount"] if "credit_amount" in df.columns else pd.Series(0.0, index=df.index)
+    )
     debit = pd.to_numeric(debit_raw, errors="coerce").fillna(0.0)
     credit = pd.to_numeric(credit_raw, errors="coerce").fillna(0.0)
-    return pd.concat([debit, credit], axis=1).max(axis=1)
+    amount = pd.concat([debit, credit], axis=1).max(axis=1)
+    if cache is not None:
+        cache.bool_masks["line_amount"] = amount
+    return amount
 
 
-def _is_manual_source(df: pd.DataFrame, manual_sources: tuple[str, ...]) -> pd.Series:
+def _is_manual_source(
+    df: pd.DataFrame,
+    manual_sources: tuple[str, ...],
+    cache: AccessRuleCache | None = None,
+) -> pd.Series:
     """Return rows treated as human/manual entries."""
 
     if "source" not in df.columns:
         return pd.Series(True, index=df.index)
     if not manual_sources:
         return pd.Series(True, index=df.index)
-    return _normalized_text(df["source"]).isin(manual_sources)
+    key = f"manual_source:{manual_sources!r}"
+    if cache is not None and key in cache.bool_masks:
+        return cache.bool_masks[key]
+    result = _cached_text(df, "source", cache).isin(manual_sources)
+    if cache is not None:
+        cache.bool_masks[key] = result
+    return result
 
 
-def _is_abnormal_self_approval_time(df: pd.DataFrame) -> pd.Series:
+def _is_abnormal_self_approval_time(
+    df: pd.DataFrame,
+    cache: AccessRuleCache | None = None,
+) -> pd.Series:
     """Return rows posted during weekend/holiday/after-hours windows."""
 
+    if cache is not None and "abnormal_self_approval_time" in cache.bool_masks:
+        return cache.bool_masks["abnormal_self_approval_time"]
     abnormal = pd.Series(False, index=df.index)
     if "is_weekend" in df.columns:
         abnormal = abnormal | df["is_weekend"].fillna(False).astype(bool)
@@ -137,10 +265,18 @@ def _is_abnormal_self_approval_time(df: pd.DataFrame) -> pd.Series:
     if "is_after_hours" in df.columns:
         abnormal = abnormal | df["is_after_hours"].fillna(False).astype(bool)
     if "time_zone_category" in df.columns:
-        abnormal = abnormal | _normalized_text(df["time_zone_category"]).isin(("overtime", "midnight"))
+        abnormal = abnormal | _cached_text(df, "time_zone_category", cache).isin(
+            ("overtime", "midnight")
+        )
     if "posting_time" in df.columns:
         posting_hour = pd.to_numeric(df["posting_time"], errors="coerce")
-        abnormal = abnormal | posting_hour.between(23, 24, inclusive="left") | posting_hour.between(0, 6, inclusive="left")
+        abnormal = (
+            abnormal
+            | posting_hour.between(23, 24, inclusive="left")
+            | posting_hour.between(0, 6, inclusive="left")
+        )
+    if cache is not None:
+        cache.bool_masks["abnormal_self_approval_time"] = abnormal
     return abnormal
 
 
@@ -149,17 +285,23 @@ def _is_high_risk_account(
     *,
     exact_accounts: tuple[str, ...],
     account_prefixes: tuple[str, ...],
+    cache: AccessRuleCache | None = None,
 ) -> pd.Series:
     """Return rows touching configured high-risk accounts."""
 
     if "gl_account" not in df.columns:
         return pd.Series(False, index=df.index)
-    gl = _normalized_account_code(df["gl_account"])
+    key = f"high_risk_account:{exact_accounts!r}:{account_prefixes!r}"
+    if cache is not None and key in cache.bool_masks:
+        return cache.bool_masks[key]
+    gl = _cached_account(df, "gl_account", cache)
     mask = pd.Series(False, index=df.index)
     if exact_accounts:
         mask = mask | gl.isin(exact_accounts)
     if account_prefixes:
         mask = mask | gl.str.startswith(account_prefixes)
+    if cache is not None:
+        cache.bool_masks[key] = mask
     return mask
 
 
@@ -178,7 +320,9 @@ def _high_risk_account_match_annotations(
     gl = _normalized_account_code(df["gl_account"])
     exact_mask = gl.isin(exact_accounts) if exact_accounts else pd.Series(False, index=df.index)
     prefix_mask = (
-        gl.str.startswith(account_prefixes) if account_prefixes else pd.Series(False, index=df.index)
+        gl.str.startswith(account_prefixes)
+        if account_prefixes
+        else pd.Series(False, index=df.index)
     )
     mask = exact_mask | prefix_mask
 
@@ -247,7 +391,13 @@ def _high_risk_account_signal_category(row: pd.Series) -> tuple[str, str]:
         priority_reasons.append("uncleared")
 
     settlement_status = str(row.get("settlement_status", "")).strip().lower()
-    if settlement_status and settlement_status not in {"settled", "cleared", "closed", "resolved", "matched"}:
+    if settlement_status and settlement_status not in {
+        "settled",
+        "cleared",
+        "closed",
+        "resolved",
+        "matched",
+    }:
         priority_reasons.append("uncleared")
 
     if bool(row.get("has_missing_approval_date", False)):
@@ -341,14 +491,408 @@ def _get_high_risk_account_config(
     }
 
 
-def b12_missing_approval_date(df: pd.DataFrame) -> pd.Series:
-    """L1-09 approval date missing while an approver is present."""
+def _get_work_scope_excess_config(audit_rules: dict | None = None) -> dict[str, object]:
+    """Load L3-12 user work-scope concentration policy."""
 
-    if "approved_by" not in df.columns or "approval_date" not in df.columns:
+    rules = audit_rules or get_audit_rules()
+    patterns = rules.get("patterns", {})
+    cfg = patterns.get("work_scope_excess_review", {})
+    high_risk = _get_high_risk_account_config(audit_rules)
+    manual_sources = cfg.get("manual_sources", patterns.get("manual_source_codes", []))
+    if not manual_sources:
+        manual_sources = ["manual", "adjustment"]
+    system_sources = cfg.get("system_sources", ["automated", "batch", "interface", "system"])
+    automated_personas = cfg.get("automated_personas", ["automated_system", "batch_user"])
+    admin_personas = cfg.get("admin_personas", ["admin", "superuser", "system_admin"])
+    thresholds = cfg.get("persona_thresholds", {})
+    return {
+        "persona_thresholds": {
+            "junior": {"process": 3, "company": 2},
+            "staff": {"process": 3, "company": 2},
+            "clerk": {"process": 3, "company": 2},
+            "senior": {"process": 4, "company": 3},
+            "accountant": {"process": 4, "company": 3},
+            "manager": {"process": 5, "company": 4},
+            "controller": {"process": 5, "company": 4},
+            "default": {"process": 4, "company": 3},
+            **{
+                str(key).strip().lower(): {
+                    "process": int(value.get("process", 4)),
+                    "company": int(value.get("company", 3)),
+                }
+                for key, value in thresholds.items()
+                if isinstance(value, dict)
+            },
+        },
+        "min_process_info": int(cfg.get("min_process_info", 3)),
+        "min_company_combo": int(cfg.get("min_company_combo", 2)),
+        "manual_sources": tuple(str(v).strip().lower() for v in manual_sources),
+        "system_sources": tuple(str(v).strip().lower() for v in system_sources),
+        "automated_personas": tuple(
+            str(v).strip().lower().replace(" ", "_") for v in automated_personas
+        ),
+        "admin_personas": tuple(str(v).strip().lower().replace(" ", "_") for v in admin_personas),
+        "sensitive_accounts": high_risk["accounts"],
+        "sensitive_account_prefixes": high_risk["account_prefixes"],
+    }
+
+
+def _work_scope_threshold_for_persona(
+    persona: str,
+    thresholds: dict[str, dict[str, int]],
+) -> tuple[int, int, str]:
+    """Return process/company thresholds for a normalized persona."""
+
+    for key, values in thresholds.items():
+        if key != "default" and key in persona:
+            return int(values["process"]), int(values["company"]), key
+    default = thresholds["default"]
+    return int(default["process"]), int(default["company"]), "default"
+
+
+def b14_work_scope_excess_review(
+    df: pd.DataFrame,
+    audit_rules: dict | None = None,
+) -> pd.Series:
+    """L3-12 review signal for one user spanning many work areas."""
+
+    if "created_by" not in df.columns or "business_process" not in df.columns:
         return pd.Series(False, index=df.index)
-    has_approver = _normalized_text(df["approved_by"]).ne("")
-    missing_date = _normalized_text(df["approval_date"]).eq("")
-    return has_approver & missing_date
+
+    cfg = _get_work_scope_excess_config(audit_rules)
+    user = _normalized_actor(df["created_by"])
+    process = _normalized_process(df["business_process"])
+    valid = user.ne("") & process.ne("")
+    if not valid.any():
+        return pd.Series(False, index=df.index)
+
+    persona = (
+        _normalized_persona(df["user_persona"])
+        if "user_persona" in df.columns
+        else pd.Series("", index=df.index)
+    )
+    company = (
+        _normalized_text(df["company_code"])
+        if "company_code" in df.columns
+        else pd.Series("", index=df.index)
+    )
+    document_type = (
+        _normalized_text(df["document_type"])
+        if "document_type" in df.columns
+        else pd.Series("", index=df.index)
+    )
+    source = (
+        _normalized_text(df["source"])
+        if "source" in df.columns
+        else pd.Series("", index=df.index)
+    )
+    manual_source = source.isin(cfg["manual_sources"])
+    system_source = source.isin(cfg["system_sources"])
+
+    gl = (
+        _normalized_account_code(df["gl_account"])
+        if "gl_account" in df.columns
+        else pd.Series("", index=df.index)
+    )
+    account_group = gl.str[:1].where(gl.ne(""), "")
+    sensitive_account = pd.Series(False, index=df.index)
+    exact_accounts = tuple(cfg["sensitive_accounts"])
+    prefixes = tuple(cfg["sensitive_account_prefixes"])
+    if "gl_account" in df.columns:
+        if exact_accounts:
+            sensitive_account = sensitive_account | gl.isin(exact_accounts)
+        if prefixes:
+            sensitive_account = sensitive_account | gl.str.startswith(prefixes)
+
+    period_end = (
+        df["is_period_end"].fillna(False).astype(bool)
+        if "is_period_end" in df.columns
+        else pd.Series(False, index=df.index)
+    )
+    high_amount = (
+        df["exceeds_threshold"].fillna(False).astype(bool)
+        if "exceeds_threshold" in df.columns
+        else pd.Series(False, index=df.index)
+    )
+    if "amount_zscore" in df.columns:
+        high_amount = high_amount | pd.to_numeric(
+            df["amount_zscore"],
+            errors="coerce",
+        ).fillna(0.0).gt(3.0)
+
+    work = pd.DataFrame(
+        {
+            "user": user,
+            "persona": persona,
+            "process": process,
+            "company": company,
+            "document_type": document_type,
+            "account_group": account_group,
+            "source": source,
+            "manual_source": manual_source,
+            "system_source": system_source,
+            "sensitive_account": sensitive_account,
+            "period_end": period_end,
+            "high_amount": high_amount,
+        },
+        index=df.index,
+    )
+
+    score_series = pd.Series(0.0, index=df.index, dtype="float64")
+    bucket = pd.Series("none", index=df.index, dtype="object")
+    row_annotations: dict[int, dict[str, object]] = {}
+    user_summaries: dict[str, dict[str, object]] = {}
+    bucket_counts: dict[str, int] = {}
+
+    grouped = work.loc[valid].groupby("user", sort=False, dropna=False)
+    for user_id, group in grouped:
+        persona_values = group["persona"][group["persona"].ne("")]
+        persona_value = str(persona_values.mode().iloc[0]) if not persona_values.empty else ""
+        process_threshold, company_threshold, threshold_key = _work_scope_threshold_for_persona(
+            persona_value,
+            cfg["persona_thresholds"],
+        )
+        process_count = int(group["process"][group["process"].ne("")].nunique())
+        company_count = int(group["company"][group["company"].ne("")].nunique())
+        document_type_count = int(group["document_type"][group["document_type"].ne("")].nunique())
+        account_group_count = int(group["account_group"][group["account_group"].ne("")].nunique())
+        source_count = int(group["source"][group["source"].ne("")].nunique())
+        has_manual = bool(group["manual_source"].any())
+        has_sensitive = bool(group["sensitive_account"].any())
+        has_period_end = bool(group["period_end"].any())
+        has_high_amount = bool(group["high_amount"].any())
+        has_system_only = bool(group["system_source"].all()) if len(group) else False
+        is_admin = persona_value in cfg["admin_personas"]
+        is_automated = persona_value in cfg["automated_personas"] or has_system_only
+
+        reasons: list[str] = []
+        if process_count >= cfg["min_process_info"]:
+            reasons.append("multi_process")
+        if process_count >= process_threshold:
+            reasons.append("process_threshold")
+        if company_count >= company_threshold:
+            reasons.append("company_threshold")
+        if process_count >= cfg["min_process_info"] and company_count >= cfg["min_company_combo"]:
+            reasons.append("process_company_breadth")
+        if has_manual:
+            reasons.append("manual_source")
+        if has_sensitive:
+            reasons.append("sensitive_account")
+        if has_period_end:
+            reasons.append("period_end")
+        if has_high_amount:
+            reasons.append("high_amount")
+
+        broad_scope = (
+            process_count >= process_threshold
+            or company_count >= company_threshold
+            or (
+                process_count >= cfg["min_process_info"]
+                and company_count >= cfg["min_company_combo"]
+            )
+        )
+        info_only = process_count >= cfg["min_process_info"] and not broad_scope
+        corroborating_count = int(has_manual) + int(has_sensitive) + int(has_period_end) + int(
+            has_high_amount
+        )
+
+        if is_automated and not (has_manual and corroborating_count >= 2):
+            user_score = 0.0
+            user_bucket = "system_excluded"
+        elif is_admin and corroborating_count < 2:
+            user_score = 0.0
+            user_bucket = "admin_excluded"
+        elif broad_scope and process_count >= 4 and company_count >= 3 and has_manual:
+            user_score = 0.55
+            user_bucket = "broad_scope_manual"
+        elif broad_scope and has_sensitive:
+            user_score = 0.50
+            user_bucket = "sensitive_scope_concentration"
+        elif broad_scope and has_manual:
+            user_score = 0.45
+            user_bucket = "manual_scope_concentration"
+        elif process_count >= 4 or company_count >= 3:
+            user_score = 0.35
+            user_bucket = "broad_scope_concentration"
+        elif broad_scope:
+            user_score = 0.30
+            user_bucket = "process_company_concentration"
+        elif info_only:
+            user_score = 0.20
+            user_bucket = "scope_observation"
+        else:
+            user_score = 0.0
+            user_bucket = "none"
+
+        if user_score > 0 and corroborating_count >= 2:
+            user_score = max(user_score, 0.65)
+            user_bucket = "compound_scope_concentration"
+
+        if user_bucket in {"system_excluded", "admin_excluded"}:
+            bucket.loc[group.index] = user_bucket
+            user_index = group.index[:0]
+        elif user_score > 0:
+            user_index = group.index
+        else:
+            user_index = group.index[:0]
+
+        score_series.loc[user_index] = user_score
+        bucket.loc[user_index] = user_bucket
+        if user_bucket not in {"none", "system_excluded", "admin_excluded"}:
+            bucket_counts[user_bucket] = bucket_counts.get(user_bucket, 0) + len(user_index)
+            user_summaries[str(user_id)] = {
+                "persona": persona_value,
+                "threshold_profile": threshold_key,
+                "process_count": process_count,
+                "company_count": company_count,
+                "document_type_count": document_type_count,
+                "account_group_count": account_group_count,
+                "source_count": source_count,
+                "score": round(float(user_score), 4),
+                "bucket": user_bucket,
+                "reasons": reasons,
+            }
+            for idx in user_index:
+                row_annotations[int(idx)] = {
+                    "user": str(user_id),
+                    "persona": persona_value,
+                    "bucket": user_bucket,
+                    "score": round(float(user_score), 4),
+                    "process_count": process_count,
+                    "company_count": company_count,
+                    "document_type_count": document_type_count,
+                    "account_group_count": account_group_count,
+                    "source_count": source_count,
+                    "reasons": reasons,
+                    "rule_boundary": (
+                        "L1-06 handles direct SoD conflict; L3-12 handles work scope"
+                    ),
+                }
+
+    result = score_series.gt(0)
+    result.attrs["score_series"] = score_series
+    result.attrs["breakdown"] = {
+        "candidate_rows": int(result.sum()),
+        "candidate_users": int(len(user_summaries)),
+        "bucket_counts": bucket_counts,
+        "user_summaries": user_summaries,
+        "excluded_system_rows": int(bucket.eq("system_excluded").sum()),
+        "excluded_admin_rows": int(bucket.eq("admin_excluded").sum()),
+    }
+    result.attrs["row_annotations"] = row_annotations
+    return result
+
+
+def b12_missing_approval_date(
+    df: pd.DataFrame,
+    audit_rules: dict | None = None,
+    cache: AccessRuleCache | None = None,
+) -> pd.Series:
+    """L1-09 approval date missing, with score split by approval context."""
+
+    if "approval_date" not in df.columns:
+        return pd.Series(False, index=df.index)
+    cfg = _get_missing_approval_date_config(audit_rules)
+    missing_date = _cached_text(df, "approval_date", cache).eq("")
+    candidate = missing_date
+    if not candidate.any():
+        return candidate
+    has_approver = (
+        _cached_text(df, "approved_by", cache).ne("")
+        if "approved_by" in df.columns
+        else pd.Series(False, index=df.index)
+    )
+
+    if "source" in df.columns:
+        source_norm = _cached_text(df, "source", cache)
+        system_source = source_norm.isin(cfg["system_sources"])
+        manual_source = source_norm.isin(cfg["manual_sources"])
+    else:
+        source_norm = pd.Series("", index=df.index)
+        system_source = pd.Series(False, index=df.index)
+        manual_source = pd.Series(True, index=df.index)
+
+    high_risk_process = (
+        _cached_process(df, "business_process", cache).isin(cfg["business_processes"])
+        if "business_process" in df.columns
+        else pd.Series(False, index=df.index)
+    )
+    high_amount = (
+        df["exceeds_threshold"].fillna(False).astype(bool)
+        if "exceeds_threshold" in df.columns
+        else pd.Series(False, index=df.index)
+    )
+    immediate_evidence = manual_source | high_risk_process | high_amount
+    immediate = candidate & has_approver & ~system_source & immediate_evidence
+    review = candidate & has_approver & ~immediate
+    low_priority = candidate & ~has_approver
+
+    score_series = pd.Series(0.0, index=df.index, dtype="float64")
+    score_series.loc[immediate] = 0.6
+    review_score_series = pd.Series(0.0, index=df.index, dtype="float64")
+    review_score_series.loc[review] = 0.35
+    review_score_series.loc[low_priority] = 0.1
+
+    queue_label = pd.Series("none", index=df.index, dtype="object")
+    queue_label.loc[low_priority] = "low_priority"
+    queue_label.loc[review] = "review"
+    queue_label.loc[immediate] = "immediate"
+
+    row_annotations: dict[int, dict[str, object]] = {}
+    for idx in candidate[candidate].index:
+        evidence_reasons: list[str] = []
+        if bool(manual_source.loc[idx]):
+            evidence_reasons.append("manual_source")
+        if bool(high_risk_process.loc[idx]):
+            evidence_reasons.append("high_risk_process")
+        if bool(high_amount.loc[idx]):
+            evidence_reasons.append("high_amount")
+
+        annotation: dict[str, object] = {
+            "queue_label": str(queue_label.loc[idx]),
+            "score": round(float(score_series.loc[idx]), 4),
+            "review_score": round(float(review_score_series.loc[idx]), 4),
+            "evidence_reasons": evidence_reasons,
+            "source_category": (
+                "missing_approver"
+                if not bool(has_approver.loc[idx])
+                else "system_review"
+                if bool(system_source.loc[idx])
+                else "manual"
+                if bool(manual_source.loc[idx])
+                else "non_system_review"
+            ),
+        }
+        for column in (
+            "document_id",
+            "source",
+            "approved_by",
+            "approval_date",
+            "business_process",
+            "exceeds_threshold",
+        ):
+            if column in df.columns:
+                value = df.at[idx, column]
+                annotation[column] = None if pd.isna(value) else value
+        row_annotations[int(idx)] = annotation
+
+    candidate.attrs["score_series"] = score_series
+    candidate.attrs["review_score_series"] = review_score_series
+    candidate.attrs["breakdown"] = {
+        "candidate_rows": int(candidate.sum()),
+        "immediate_rows": int(immediate.sum()),
+        "review_rows": int(review.sum()),
+        "low_priority_rows": int(low_priority.sum()),
+        "missing_approver_rows": int((candidate & ~has_approver).sum()),
+        "has_approver_rows": int((candidate & has_approver).sum()),
+        "manual_source_rows": int((candidate & manual_source).sum()),
+        "system_source_review_rows": int((candidate & system_source).sum()),
+        "high_risk_process_rows": int((candidate & high_risk_process).sum()),
+        "high_amount_rows": int((candidate & high_amount).sum()),
+        "source_counts": source_norm.loc[candidate].value_counts().to_dict(),
+    }
+    candidate.attrs["row_annotations"] = row_annotations
+    return candidate
 
 
 def b13_high_risk_account_use(
@@ -364,14 +908,39 @@ def b13_high_risk_account_use(
         account_prefixes=cfg["account_prefixes"],
         sensitive_account_groups=cfg["sensitive_account_groups"],
     )
+    score_series = pd.Series(0.0, index=df.index)
+    category_counts = reason_counts.get("category_counts", {})
+    raw_signal_rows = 0
+    priority_case_rows = 0
+    normal_control_candidate_rows = 0
+    for row_index, annotation in annotations.items():
+        category = annotation.get("signal_category", "raw_signal")
+        if category == "priority_case":
+            score_series.loc[row_index] = 0.65
+            priority_case_rows += 1
+        elif category == "normal_control_candidate":
+            score_series.loc[row_index] = 0.20
+            normal_control_candidate_rows += 1
+        else:
+            score_series.loc[row_index] = 0.35
+            raw_signal_rows += 1
+
+    result.attrs["score_series"] = score_series
     result.attrs["row_annotations"] = annotations
-    result.attrs["breakdown"] = {"reason_counts": reason_counts}
+    result.attrs["breakdown"] = {
+        "reason_counts": reason_counts,
+        "raw_signal_rows": raw_signal_rows,
+        "priority_case_rows": priority_case_rows,
+        "normal_control_candidate_rows": normal_control_candidate_rows,
+        "category_counts": dict(category_counts) if isinstance(category_counts, dict) else {},
+    }
     return result
 
 
 def _self_approval_review_mask(
     df: pd.DataFrame,
     audit_rules: dict | None = None,
+    cache: AccessRuleCache | None = None,
 ) -> pd.Series:
     """Return rows that should be surfaced as review-required self-approval."""
 
@@ -379,11 +948,11 @@ def _self_approval_review_mask(
     mask = pd.Series(False, index=df.index)
 
     if "business_process" in df.columns and review["business_processes"]:
-        mask = mask | _normalized_text(df["business_process"]).isin(review["business_processes"])
+        mask = mask | _cached_text(df, "business_process", cache).isin(review["business_processes"])
     if "document_type" in df.columns and review["document_types"]:
-        mask = mask | _normalized_text(df["document_type"]).isin(review["document_types"])
+        mask = mask | _cached_text(df, "document_type", cache).isin(review["document_types"])
     if "company_code" in df.columns and review["company_codes"]:
-        mask = mask | _normalized_text(df["company_code"]).isin(review["company_codes"])
+        mask = mask | _cached_text(df, "company_code", cache).isin(review["company_codes"])
 
     return mask
 
@@ -391,22 +960,24 @@ def _self_approval_review_mask(
 def _self_approval_immediate_override_mask(
     df: pd.DataFrame,
     audit_rules: dict | None = None,
+    cache: AccessRuleCache | None = None,
 ) -> tuple[pd.Series, dict[str, int]]:
     """Return review-to-immediate escalation mask and reason counts."""
 
     override = _get_self_approval_immediate_override_config(audit_rules)
     materiality_amount = float(override["materiality_amount"])
-    manual_mask = _is_manual_source(df, override["manual_sources"])
+    manual_mask = _is_manual_source(df, override["manual_sources"], cache=cache)
 
     materiality_mask = pd.Series(False, index=df.index)
     if materiality_amount > 0:
-        materiality_mask = manual_mask & (_line_amount(df) >= materiality_amount)
+        materiality_mask = manual_mask & (_line_amount(df, cache=cache) >= materiality_amount)
 
-    abnormal_time_mask = _is_abnormal_self_approval_time(df)
+    abnormal_time_mask = _is_abnormal_self_approval_time(df, cache=cache)
     high_risk_account_mask = _is_high_risk_account(
         df,
         exact_accounts=override["high_risk_accounts"],
         account_prefixes=override["high_risk_account_prefixes"],
+        cache=cache,
     )
 
     escalated = materiality_mask | abnormal_time_mask | high_risk_account_mask
@@ -445,6 +1016,7 @@ def _build_self_approval_group_summary(
     abnormal_time: pd.Series,
     high_risk_account: pd.Series,
     sensitive_process: pd.Series,
+    cache: AccessRuleCache | None = None,
 ) -> dict[str, object]:
     """Build grouped L1-05 output for queue-style review without narrowing recall."""
 
@@ -455,19 +1027,20 @@ def _build_self_approval_group_summary(
             "top_groups": [],
         }
 
+    flagged_index = flagged[flagged].index
     doc_key = (
-        _display_text(df["document_id"], fallback="row")
+        _display_text(df.loc[flagged_index, "document_id"], fallback="row")
         if "document_id" in df.columns
-        else df.index.astype(str).to_series(index=df.index)
+        else flagged_index.astype(str).to_series(index=flagged_index)
     )
-    created_by = _display_text(df["created_by"], fallback="unknown")
+    created_by = _display_text(df.loc[flagged_index, "created_by"], fallback="unknown")
     business_process = (
-        _display_text(df["business_process"], fallback="UNKNOWN")
+        _display_text(df.loc[flagged_index, "business_process"], fallback="UNKNOWN")
         if "business_process" in df.columns
-        else pd.Series("UNKNOWN", index=df.index)
+        else pd.Series("UNKNOWN", index=flagged_index)
     )
-    posting_month = _posting_month(df)
-    amount = _line_amount(df)
+    posting_month = _posting_month(df).loc[flagged_index]
+    amount = _line_amount(df, cache=cache).loc[flagged_index]
 
     grouped = pd.DataFrame({
         "document_id": doc_key,
@@ -475,12 +1048,15 @@ def _build_self_approval_group_summary(
         "business_process": business_process,
         "posting_month": posting_month,
         "amount": amount,
-        "level": pd.Series("review", index=df.index).mask(immediate, "immediate"),
-        "high_amount": high_amount,
-        "abnormal_time": abnormal_time,
-        "high_risk_account": high_risk_account,
-        "sensitive_process": sensitive_process,
-    }, index=df.index).loc[flagged].copy()
+        "level": pd.Series("review", index=flagged_index).mask(
+            immediate.loc[flagged_index],
+            "immediate",
+        ),
+        "high_amount": high_amount.loc[flagged_index],
+        "abnormal_time": abnormal_time.loc[flagged_index],
+        "high_risk_account": high_risk_account.loc[flagged_index],
+        "sensitive_process": sensitive_process.loc[flagged_index],
+    }, index=flagged_index).copy()
 
     grouped["additional_signal_count"] = grouped[
         ["high_amount", "abnormal_time", "high_risk_account", "sensitive_process"]
@@ -504,7 +1080,9 @@ def _build_self_approval_group_summary(
     )
 
     immediate_sensitive = doc_level["level"].eq("immediate") & doc_level["sensitive_process"]
-    review_closing = doc_level["level"].eq("review") & doc_level["business_process"].isin(["R2R", "A2R"])
+    review_closing = doc_level["level"].eq("review") & doc_level["business_process"].isin(
+        ["R2R", "A2R"]
+    )
     doc_level["queue_bucket"] = "general_review"
     doc_level.loc[doc_level["level"].eq("immediate"), "queue_bucket"] = "general_immediate"
     doc_level.loc[review_closing, "queue_bucket"] = "closing_review"
@@ -548,6 +1126,7 @@ def _build_self_approval_group_summary(
 def b06_self_approval(
     df: pd.DataFrame,
     audit_rules: dict | None = None,
+    cache: AccessRuleCache | None = None,
 ) -> pd.Series:
     """L1-05 self approval: same person prepared and approved the entry.
 
@@ -561,47 +1140,56 @@ def b06_self_approval(
     if not required.issubset(df.columns):
         return pd.Series(False, index=df.index)
 
-    creator = _normalized_text(df["created_by"])
-    approver = _normalized_text(df["approved_by"])
+    creator = _cached_text(df, "created_by", cache)
+    approver = _cached_text(df, "approved_by", cache)
     same_person = creator.ne("") & approver.ne("") & creator.eq(approver)
 
     allow = _get_self_approval_allow_config(audit_rules)
     allowed = pd.Series(False, index=df.index)
 
     if "user_persona" in df.columns and allow["user_personas"]:
-        allowed = allowed | _normalized_text(df["user_persona"]).isin(allow["user_personas"])
+        allowed = allowed | _cached_text(df, "user_persona", cache).isin(allow["user_personas"])
     if "source" in df.columns and allow["sources"]:
-        allowed = allowed | _normalized_text(df["source"]).isin(allow["sources"])
+        allowed = allowed | _cached_text(df, "source", cache).isin(allow["sources"])
     if "company_code" in df.columns and allow["company_codes"]:
-        allowed = allowed | _normalized_text(df["company_code"]).isin(allow["company_codes"])
+        allowed = allowed | _cached_text(df, "company_code", cache).isin(allow["company_codes"])
 
-    flagged = same_person & ~allowed
-    review_base = flagged & _self_approval_review_mask(df, audit_rules)
-    override_immediate, override_counts = _self_approval_immediate_override_mask(df, audit_rules)
+    # L1-05 first captures every observed self-approval fact. Allowed system
+    # cases are retained as candidates/evidence but scored as 0 below.
+    flagged = same_person
+    actionable = flagged & ~allowed
+    review_base = actionable & _self_approval_review_mask(df, audit_rules, cache=cache)
+    override_immediate, override_counts = _self_approval_immediate_override_mask(
+        df,
+        audit_rules,
+        cache=cache,
+    )
     high_amount = pd.Series(False, index=df.index)
     if float(_get_self_approval_immediate_override_config(audit_rules)["materiality_amount"]) > 0:
         override_cfg = _get_self_approval_immediate_override_config(audit_rules)
-        high_amount = _is_manual_source(df, override_cfg["manual_sources"]) & (
-            _line_amount(df) >= float(override_cfg["materiality_amount"])
+        high_amount = _is_manual_source(df, override_cfg["manual_sources"], cache=cache) & (
+            _line_amount(df, cache=cache) >= float(override_cfg["materiality_amount"])
         )
-        abnormal_time = _is_abnormal_self_approval_time(df)
+        abnormal_time = _is_abnormal_self_approval_time(df, cache=cache)
         high_risk_account = _is_high_risk_account(
             df,
             exact_accounts=override_cfg["high_risk_accounts"],
             account_prefixes=override_cfg["high_risk_account_prefixes"],
+            cache=cache,
         )
     else:
         override_cfg = _get_self_approval_immediate_override_config(audit_rules)
-        abnormal_time = _is_abnormal_self_approval_time(df)
+        abnormal_time = _is_abnormal_self_approval_time(df, cache=cache)
         high_risk_account = _is_high_risk_account(
             df,
             exact_accounts=override_cfg["high_risk_accounts"],
             account_prefixes=override_cfg["high_risk_account_prefixes"],
+            cache=cache,
         )
     review = review_base & ~override_immediate
-    immediate = flagged & ~review
+    immediate = actionable & ~review
     process_series = (
-        _normalized_process(df["business_process"])
+        _cached_process(df, "business_process", cache)
         if "business_process" in df.columns
         else pd.Series("", index=df.index)
     )
@@ -615,12 +1203,66 @@ def b06_self_approval(
         abnormal_time=abnormal_time,
         high_risk_account=high_risk_account,
         sensitive_process=sensitive_process,
+        cache=cache,
     )
 
-    flagged.attrs["score_series"] = flagged.astype(float) * 0.6
+    materiality_escalated = flagged & review_base & high_amount
+    abnormal_time_escalated = flagged & review_base & abnormal_time
+    high_risk_account_escalated = flagged & review_base & high_risk_account
+
+    bucket = pd.Series("none", index=df.index, dtype="object")
+    bucket.loc[same_person & allowed] = "allowed_system"
+    bucket.loc[review] = "review"
+    bucket.loc[immediate] = "immediate"
+    bucket.loc[materiality_escalated] = "escalated_materiality"
+    bucket.loc[abnormal_time_escalated] = "escalated_abnormal_time"
+    bucket.loc[high_risk_account_escalated] = "escalated_high_risk_account"
+
+    score_series = pd.Series(0.0, index=df.index, dtype="float64")
+    score_series.loc[immediate] = 0.8
+    review_score_series = pd.Series(0.0, index=df.index, dtype="float64")
+    review_score_series.loc[review] = 0.4
+
+    row_annotations: dict[int, dict[str, object]] = {}
+    annotation_columns = (
+        "document_id",
+        "created_by",
+        "approved_by",
+        "business_process",
+        "source",
+        "user_persona",
+        "gl_account",
+    )
+    for idx in flagged[flagged].index:
+        override_reasons: list[str] = []
+        if bool(high_amount.loc[idx]):
+            override_reasons.append("materiality")
+        if bool(abnormal_time.loc[idx]):
+            override_reasons.append("abnormal_time")
+        if bool(high_risk_account.loc[idx]):
+            override_reasons.append("high_risk_account")
+
+        annotation: dict[str, object] = {
+            "bucket": str(bucket.loc[idx]),
+            "score": round(float(score_series.loc[idx]), 4),
+            "review_score": round(float(review_score_series.loc[idx]), 4),
+            "override_reasons": override_reasons,
+        }
+        for column in annotation_columns:
+            if column in df.columns:
+                value = df.at[idx, column]
+                annotation[column] = None if pd.isna(value) else value
+        row_annotations[int(idx)] = annotation
+
+    flagged.attrs["score_series"] = score_series
+    flagged.attrs["review_score_series"] = review_score_series
     flagged.attrs["breakdown"] = {
         "immediate_rows": int(immediate.sum()),
         "review_rows": int(review.sum()),
+        "candidate_rows": int(flagged.sum()),
+        "actionable_rows": int(actionable.sum()),
+        "allowed_system_rows": int((same_person & allowed).sum()),
+        "bucket_counts": bucket[bucket.ne("none")].value_counts().to_dict(),
         "immediate_indices": [int(idx) for idx in immediate[immediate].index],
         "review_indices": [int(idx) for idx in review[review].index],
         "immediate_label": "immediate",
@@ -628,26 +1270,36 @@ def b06_self_approval(
         "override_counts": override_counts,
         "observed_summary": observed_summary,
     }
+    flagged.attrs["row_annotations"] = row_annotations
     return flagged
 
 
 def _get_sod_config(audit_rules: dict | None = None) -> tuple[list[frozenset[str]], dict[str, int]]:
-    """Load SoD config: toxic pairs + role thresholds."""
+    """Load work-scope review pairs + role thresholds for L3-12 sidecar metadata."""
 
     rules = audit_rules or get_audit_rules()
     patterns = rules.get("patterns", {})
 
-    raw_pairs = patterns.get(
-        "sod_toxic_pairs",
-        [
-            ["TRE", "P2P"],
-            ["TRE", "O2C"],
-            ["TRE", "H2R"],
-            ["R2R", "TRE"],
-            ["R2R", "P2P"],
-            ["R2R", "O2C"],
-        ],
-    )
+    configured_pairs = patterns.get("sod_review_pairs")
+    if isinstance(configured_pairs, dict):
+        raw_pairs = [
+            *configured_pairs.get("strong", []),
+            *configured_pairs.get("weak", []),
+        ]
+    elif configured_pairs:
+        raw_pairs = configured_pairs
+    else:
+        raw_pairs = patterns.get(
+            "sod_toxic_pairs",
+            [
+                ["TRE", "P2P"],
+                ["TRE", "O2C"],
+                ["TRE", "H2R"],
+                ["R2R", "TRE"],
+                ["R2R", "P2P"],
+                ["R2R", "O2C"],
+            ],
+        )
     toxic_pairs = [
         frozenset(str(v).strip().upper() for v in pair if str(v).strip())
         for pair in raw_pairs
@@ -716,27 +1368,35 @@ def _get_sod_mitigating_roles(audit_rules: dict | None = None) -> tuple[str, ...
     )
 
 
-def _human_sod_mask(df: pd.DataFrame, audit_rules: dict | None = None) -> pd.Series:
+def _human_sod_mask(
+    df: pd.DataFrame,
+    audit_rules: dict | None = None,
+    cache: AccessRuleCache | None = None,
+) -> pd.Series:
     """Return rows treated as human activity for SoD analysis."""
 
+    if cache is not None and "human_sod_mask" in cache.bool_masks:
+        return cache.bool_masks["human_sod_mask"]
     mask = pd.Series(True, index=df.index)
     cfg = _get_sod_human_filter_config(audit_rules)
 
     if "user_persona" in df.columns:
-        persona_norm = _normalized_persona(df["user_persona"])
+        persona_norm = _cached_persona(df, "user_persona", cache)
         mask = mask & (persona_norm != "automated_system")
 
     if "source" in df.columns and cfg["system_sources"]:
-        mask = mask & ~_normalized_text(df["source"]).isin(cfg["system_sources"])
+        mask = mask & ~_cached_text(df, "source", cache).isin(cfg["system_sources"])
 
     if "created_by" in df.columns and cfg["system_actor_tokens"]:
-        actor_norm = _normalized_actor(df["created_by"])
+        actor_norm = _cached_actor(df, "created_by", cache)
         system_actor = pd.Series(False, index=df.index)
         for token in cfg["system_actor_tokens"]:
             if token:
                 system_actor = system_actor | actor_norm.str.contains(token, regex=False)
         mask = mask & ~system_actor
 
+    if cache is not None:
+        cache.bool_masks["human_sod_mask"] = mask
     return mask
 
 
@@ -760,22 +1420,33 @@ def _split_sod_pairs(
     return immediate_pairs, review_pairs
 
 
-def _self_approval_mask(df: pd.DataFrame) -> pd.Series:
+def _self_approval_mask(
+    df: pd.DataFrame,
+    cache: AccessRuleCache | None = None,
+) -> pd.Series:
     """Return rows where preparer and approver are the same human user."""
 
     if "created_by" not in df.columns or "approved_by" not in df.columns:
         return pd.Series(False, index=df.index)
-    created = _normalized_actor(df["created_by"])
-    approved = _normalized_actor(df["approved_by"])
-    return (created != "") & (created == approved)
+    if cache is not None and "self_approval_mask" in cache.bool_masks:
+        return cache.bool_masks["self_approval_mask"]
+    created = _cached_actor(df, "created_by", cache)
+    approved = _cached_actor(df, "approved_by", cache)
+    result = (created != "") & (created == approved)
+    if cache is not None:
+        cache.bool_masks["self_approval_mask"] = result
+    return result
 
 
 def manual_override_signal_mask(
     df: pd.DataFrame,
     audit_rules: dict | None = None,
+    cache: AccessRuleCache | None = None,
 ) -> pd.Series:
-    """Return manual-entry control-circumvention rows used as L1-06 corroboration."""
+    """Return manual-entry control-circumvention rows for non-L1-06 access review context."""
 
+    if cache is not None and "manual_override_signal_mask" in cache.bool_masks:
+        return cache.bool_masks["manual_override_signal_mask"]
     rules = audit_rules or get_audit_rules()
     patterns = rules.get("patterns", {})
     manual_sources = tuple(
@@ -786,19 +1457,19 @@ def manual_override_signal_mask(
     if "is_manual_je" in df.columns:
         manual_entry = df["is_manual_je"].fillna(False).astype(bool)
     elif "source" in df.columns:
-        manual_entry = _is_manual_source(df, manual_sources)
+        manual_entry = _is_manual_source(df, manual_sources, cache=cache)
     else:
         return pd.Series(False, index=df.index)
 
     no_approver = pd.Series(False, index=df.index)
     if "approved_by" in df.columns:
-        no_approver = _normalized_text(df["approved_by"]).eq("")
+        no_approver = _cached_text(df, "approved_by", cache).eq("")
 
     no_approval_date = pd.Series(False, index=df.index)
     if "approval_date" in df.columns:
-        no_approval_date = _normalized_text(df["approval_date"]).eq("")
+        no_approval_date = _cached_text(df, "approval_date", cache).eq("")
 
-    abnormal_time = _is_abnormal_self_approval_time(df)
+    abnormal_time = _is_abnormal_self_approval_time(df, cache=cache)
     period_end = (
         df["is_period_end"].fillna(False).astype(bool)
         if "is_period_end" in df.columns
@@ -810,7 +1481,7 @@ def manual_override_signal_mask(
         else pd.Series(False, index=df.index)
     )
     missing_or_corrupted_description = (
-        _normalized_text(df["description_quality"]).isin(("missing", "corrupted", "poor"))
+        _cached_text(df, "description_quality", cache).isin(("missing", "corrupted", "poor"))
         if "description_quality" in df.columns
         else pd.Series(False, index=df.index)
     )
@@ -819,6 +1490,7 @@ def manual_override_signal_mask(
         df,
         exact_accounts=override_cfg["high_risk_accounts"],
         account_prefixes=override_cfg["high_risk_account_prefixes"],
+        cache=cache,
     )
 
     corroborating_signal = (
@@ -830,26 +1502,28 @@ def manual_override_signal_mask(
         | missing_or_corrupted_description
         | high_risk_account
     )
-    return manual_entry & corroborating_signal
+    result = manual_entry & corroborating_signal
+    if cache is not None:
+        cache.bool_masks["manual_override_signal_mask"] = result
+    return result
 
 
 def b07_segregation_of_duties(
     df: pd.DataFrame,
     sod_threshold: int = 3,
     audit_rules: dict | None = None,
+    cache: AccessRuleCache | None = None,
 ) -> pd.Series:
-    """L1-06 segregation-of-duties signal with candidate/review/immediate split.
+    """L1-06 direct segregation-of-duties violations.
 
-    Immediate violation:
+    L1-06 is restricted to document-level SoD conflicts:
       - direct within-process SoD conflict markers
-      - configured toxic pairs outside R2R review scope
+      - source-provided document-level SoD violation markers
       - IT super-user monetary postings in protected processes
-      - review signals corroborated by self-approval or skipped approval
 
-    Review required:
-      - configured R2R-related SoD pairs
-      - role-threshold excess by persona
-      - manual-override overlap as a supporting signal only
+    User history, configured review pairs, and role-threshold excess are work
+    scope review signals. They are reported in breakdown metadata only and
+    must not produce L1-06 score or review score.
     """
 
     required = ["created_by", "business_process"]
@@ -859,45 +1533,67 @@ def b07_segregation_of_duties(
 
     toxic_pairs, role_thresholds = _get_sod_config(audit_rules)
     it_admin_cfg = _get_sod_it_admin_config(audit_rules)
-    immediate_pairs, review_pairs = _split_sod_pairs(toxic_pairs)
+    strong_review_pairs, weak_review_pairs = _split_sod_pairs(toxic_pairs)
     result = pd.Series(False, index=df.index)
 
     persona_norm = (
-        _normalized_persona(df["user_persona"])
+        _cached_persona(df, "user_persona", cache)
         if "user_persona" in df.columns
         else pd.Series("", index=df.index)
     )
-    human_mask = _human_sod_mask(df, audit_rules)
+    human_mask = _human_sod_mask(df, audit_rules, cache=cache)
 
     human_df = df[human_mask]
-    if human_df.empty:
-        return result
 
-    normalized_process = _normalized_process(human_df["business_process"])
-    user_processes = normalized_process.groupby(human_df["created_by"]).apply(
-        lambda x: frozenset(v for v in x.unique() if v)
-    )
-
-    immediate_users: set[str] = set()
-    for user, procs in user_processes.items():
-        for pair in immediate_pairs:
-            if pair.issubset(procs):
-                immediate_users.add(user)
-                break
-
+    toxic_pair_users: set[str] = set()
     review_users: set[str] = set()
-    for user, procs in user_processes.items():
-        for pair in review_pairs:
-            if pair.issubset(procs):
-                review_users.add(user)
-                break
+    role_violators: set[str] = set()
+    fallback_scope_users: set[str] = set()
+    if not human_df.empty:
+        normalized_process = _cached_process(df, "business_process", cache).loc[human_df.index]
+        user_processes = normalized_process.groupby(human_df["created_by"]).apply(
+            lambda x: frozenset(v for v in x.unique() if v)
+        )
+
+        for user, procs in user_processes.items():
+            for pair in strong_review_pairs:
+                if pair.issubset(procs):
+                    toxic_pair_users.add(user)
+                    break
+
+        for user, procs in user_processes.items():
+            for pair in weak_review_pairs:
+                if pair.issubset(procs):
+                    review_users.add(user)
+                    break
+
+        if "user_persona" in df.columns and role_thresholds:
+            counts = human_df.groupby("created_by")["business_process"].nunique()
+            persona_map = _normalized_persona(
+                human_df.drop_duplicates("created_by").set_index("created_by")["user_persona"]
+            )
+
+            for user, count in counts.items():
+                persona = persona_map.get(user)
+                if persona and persona in role_thresholds and count > role_thresholds[persona]:
+                    role_violators.add(user)
+        else:
+            counts = human_df.groupby("created_by")["business_process"].nunique()
+            fallback_scope_users = set(counts[counts >= sod_threshold].index)
 
     immediate_mask = pd.Series(False, index=df.index)
-    review_mask = pd.Series(False, index=df.index)
-    if immediate_users:
-        immediate_mask = human_mask & df["created_by"].isin(immediate_users)
-    if review_users:
-        review_mask = human_mask & df["created_by"].isin(review_users)
+
+    direct_sod_violation = pd.Series(False, index=df.index)
+    if "sod_violation" in df.columns:
+        if pd.api.types.is_bool_dtype(df["sod_violation"]):
+            direct_sod_violation = human_mask & df["sod_violation"].fillna(False).astype(bool)
+        else:
+            direct_sod_violation = human_mask & _cached_text(
+                df,
+                "sod_violation",
+                cache,
+            ).isin({"true", "1", "yes", "y"})
+    direct_sod_violation_observed = direct_sod_violation.copy()
 
     within_process_conflict = pd.Series(False, index=df.index)
     if "sod_conflict_type" in df.columns:
@@ -906,121 +1602,151 @@ def b07_segregation_of_duties(
             & df["sod_conflict_type"].notna()
             & (df["sod_conflict_type"].astype(str).str.strip() != "")
         )
-        immediate_mask = immediate_mask | within_process_conflict
+        direct_sod_violation = direct_sod_violation & within_process_conflict
+
+    immediate_mask = immediate_mask | direct_sod_violation | within_process_conflict
 
     it_admin_high_risk = pd.Series(False, index=df.index)
     if "user_persona" in df.columns:
         protected_processes = set(it_admin_cfg["business_processes"])
         if protected_processes:
-            process_norm = _normalized_process(df["business_process"])
+            process_norm = _cached_process(df, "business_process", cache)
             protected_mask = process_norm.isin(protected_processes)
         else:
             protected_mask = pd.Series(True, index=df.index)
 
-        amount_mask = _line_amount(df) > 0
+        amount_mask = _line_amount(df, cache=cache) > 0
         materiality_amount = float(it_admin_cfg["materiality_amount"])
         if materiality_amount > 0:
-            amount_mask = amount_mask & (_line_amount(df) >= materiality_amount)
+            amount_mask = amount_mask & (_line_amount(df, cache=cache) >= materiality_amount)
 
         it_admin_persona = persona_norm.isin(it_admin_cfg["user_personas"])
         it_admin_high_risk = human_mask & it_admin_persona & protected_mask & amount_mask
         immediate_mask = immediate_mask | it_admin_high_risk
 
-    if "user_persona" in df.columns and role_thresholds:
-        counts = human_df.groupby("created_by")["business_process"].nunique()
-        persona_map = _normalized_persona(
-            human_df.drop_duplicates("created_by").set_index("created_by")["user_persona"]
-        )
-
-        role_violators: set[str] = set()
-        for user, count in counts.items():
-            persona = persona_map.get(user)
-            if persona and persona in role_thresholds and count > role_thresholds[persona]:
-                role_violators.add(user)
-        if role_violators:
-            review_mask = review_mask | (human_mask & df["created_by"].isin(role_violators))
-    else:
-        counts = human_df.groupby("created_by")["business_process"].nunique()
-        violators = counts[counts >= sod_threshold].index
-        review_mask = review_mask | (human_mask & df["created_by"].isin(violators))
-
-    if "exceeds_threshold" in df.columns:
-        review_mask = review_mask & df["exceeds_threshold"].fillna(False).astype(bool)
-
     mitigating_roles = _get_sod_mitigating_roles(audit_rules)
-    if mitigating_roles and "user_persona" in df.columns:
-        review_mask = review_mask & ~persona_norm.isin(mitigating_roles)
+    scope_review_mask = pd.Series(False, index=df.index)
+    scope_review_users = toxic_pair_users | review_users | role_violators | fallback_scope_users
+    if scope_review_users:
+        scope_review_mask = human_mask & df["created_by"].isin(scope_review_users)
+        if "exceeds_threshold" in df.columns:
+            scope_review_mask = (
+                scope_review_mask & df["exceeds_threshold"].fillna(False).astype(bool)
+            )
+        else:
+            scope_review_mask = pd.Series(False, index=df.index)
+        if mitigating_roles and "user_persona" in df.columns:
+            scope_review_mask = scope_review_mask & ~persona_norm.isin(mitigating_roles)
+        scope_review_mask = scope_review_mask & ~immediate_mask
 
-    self_approval = human_mask & _self_approval_mask(df)
-    skipped_approval = human_mask & b09_skipped_approval(df, audit_rules=audit_rules)
-    manual_override = human_mask & manual_override_signal_mask(df, audit_rules=audit_rules)
-    corroboration_mask = self_approval | skipped_approval | manual_override
-    corroborated_review = review_mask & corroboration_mask
-
-    immediate_mask = immediate_mask | corroborated_review
-    review_mask = review_mask & ~immediate_mask
-    result = immediate_mask | review_mask
+    result = immediate_mask
     score_series = pd.Series(0.0, index=df.index)
-    score_series.loc[review_mask] = 0.4
     score_series.loc[immediate_mask] = 0.8
+    review_score_series = pd.Series(0.0, index=df.index)
 
     result.attrs["score_series"] = score_series
+    result.attrs["review_score_series"] = review_score_series
     result.attrs["breakdown"] = {
         "immediate_rows": int(immediate_mask.sum()),
-        "review_rows": int(review_mask.sum()),
-        "immediate_users": len(immediate_users),
-        "review_users": len(review_users),
-        "immediate_pairs": [sorted(pair) for pair in immediate_pairs],
-        "review_pairs": [sorted(pair) for pair in review_pairs],
+        "review_rows": 0,
+        "immediate_users": 0,
+        "review_users": 0,
+        "toxic_pair_review_users": len(toxic_pair_users),
+        "work_scope_review_rows_excluded": int(scope_review_mask.sum()),
+        "work_scope_review_users_excluded": len(scope_review_users),
+        "role_threshold_review_users_excluded": len(role_violators),
+        "fallback_scope_review_users_excluded": len(fallback_scope_users),
+        "strong_review_pairs": [sorted(pair) for pair in strong_review_pairs],
+        "weak_review_pairs": [sorted(pair) for pair in weak_review_pairs],
+        "direct_sod_violation_rows": int(direct_sod_violation_observed.sum()),
         "within_process_conflict_rows": int(within_process_conflict.sum()),
         "it_admin_high_risk_rows": int(it_admin_high_risk.sum()),
-        "corroborated_review_rows": int(corroborated_review.sum()),
-        "self_approval_rows": int(self_approval.sum()),
-        "skipped_approval_rows": int(skipped_approval.sum()),
-        "manual_override_rows": int(manual_override.sum()),
+        "corroborated_review_rows": 0,
+        "self_approval_rows": 0,
+        "skipped_approval_rows": 0,
+        "manual_override_rows": 0,
     }
     return result
 
 
-def b09_skipped_approval(
+def _skipped_approval_components(
     df: pd.DataFrame,
     audit_rules: dict | None = None,
-) -> pd.Series:
-    """L1-07 skipped approval: approval required but approver missing."""
+    cache: AccessRuleCache | None = None,
+) -> dict[str, object]:
+    """Compute reusable L1-07 masks without row-level annotation construction."""
 
-    if "exceeds_threshold" not in df.columns or "source" not in df.columns:
-        return pd.Series(False, index=df.index)
+    if cache is not None and "b09_skipped_approval_components" in cache.objects:
+        return cache.objects["b09_skipped_approval_components"]  # type: ignore[return-value]
+
+    if "approved_by" not in df.columns:
+        false_mask = pd.Series(False, index=df.index, dtype=bool)
+        zero_count = pd.Series(0, index=df.index, dtype="int64")
+        cfg = _get_skipped_approval_immediate_config(audit_rules)
+        components: dict[str, object] = {
+            "cfg": cfg,
+            "exceeds": false_mask,
+            "level_review_required": false_mask,
+            "approval_required": false_mask,
+            "system_source": false_mask,
+            "no_approval": false_mask,
+            "candidate": false_mask,
+            "manual_source": false_mask,
+            "no_approval_date": false_mask,
+            "manual_entry": false_mask,
+            "abnormal_time": false_mask,
+            "high_risk_process": false_mask,
+            "high_approval_level": false_mask,
+            "evidence_count": zero_count,
+            "immediate": false_mask,
+            "review": false_mask,
+            "low_priority": false_mask,
+        }
+        if cache is not None:
+            cache.objects["b09_skipped_approval_components"] = components
+        return components
 
     cfg = _get_skipped_approval_immediate_config(audit_rules)
-    exceeds = df["exceeds_threshold"].fillna(False).astype(bool)
-    source_norm = _normalized_text(df["source"])
-    not_automated = source_norm.ne("automated")
-    no_approval = pd.Series(True, index=df.index, dtype=bool)
-    if "approved_by" in df.columns:
-        no_approval = df["approved_by"].isna() | (df["approved_by"].astype(str).str.strip() == "")
-    candidate = exceeds & not_automated & no_approval
+    no_approval = _cached_text(df, "approved_by", cache).eq("")
+    exceeds = (
+        df["exceeds_threshold"].fillna(False).astype(bool)
+        if "exceeds_threshold" in df.columns
+        else pd.Series(False, index=df.index, dtype=bool)
+    )
+    if "source" in df.columns:
+        source_norm = _cached_text(df, "source", cache)
+        system_source = source_norm.isin(cfg["system_sources"])
+    else:
+        source_norm = pd.Series("", index=df.index)
+        system_source = pd.Series(False, index=df.index, dtype=bool)
+    high_approval_level = (
+        pd.to_numeric(df["approval_level"], errors="coerce").fillna(0).astype(int).ge(1)
+        if "approval_level" in df.columns
+        else pd.Series(False, index=df.index, dtype=bool)
+    )
+    level_review_required = no_approval & high_approval_level
+    approval_required = exceeds | level_review_required
+    candidate = no_approval
 
     manual_source = source_norm.isin(cfg["manual_sources"])
     no_approval_date = pd.Series(False, index=df.index, dtype=bool)
     if "approval_date" in df.columns:
-        no_approval_date = df["approval_date"].isna() | (
-            df["approval_date"].astype(str).str.strip() == ""
-        )
+        no_approval_date = _cached_text(df, "approval_date", cache).eq("")
     manual_entry = (
         df["is_manual_je"].fillna(False).astype(bool)
         if "is_manual_je" in df.columns
         else pd.Series(False, index=df.index, dtype=bool)
     )
-    abnormal_time = _is_abnormal_self_approval_time(df)
+    abnormal_time = _is_abnormal_self_approval_time(df, cache=cache)
     high_risk_process = (
-        _normalized_process(df["business_process"]).isin(cfg["business_processes"])
+        _cached_process(df, "business_process", cache).isin(cfg["business_processes"])
         if "business_process" in df.columns
         else pd.Series(False, index=df.index, dtype=bool)
     )
-    high_approval_level = (
+    high_approval_level_evidence = high_approval_level & (
         pd.to_numeric(df["approval_level"], errors="coerce").fillna(0).astype(int).ge(2)
         if "approval_level" in df.columns
-        else pd.Series(False, index=df.index, dtype=bool)
+        else False
     )
 
     evidence_count = (
@@ -1029,19 +1755,144 @@ def b09_skipped_approval(
         + manual_entry.astype(int)
         + abnormal_time.astype(int)
         + high_risk_process.astype(int)
-        + high_approval_level.astype(int)
+        + high_approval_level_evidence.astype(int)
     )
-    immediate = candidate & manual_source & evidence_count.ge(int(cfg["min_evidence_count"]))
-    review = candidate & ~immediate
+    actionable = candidate & approval_required & ~system_source
+    immediate = actionable & manual_source & evidence_count.ge(int(cfg["min_evidence_count"]))
+    review = actionable & ~immediate
+    low_priority = candidate & ~immediate & ~review
+    components: dict[str, object] = {
+        "cfg": cfg,
+        "exceeds": exceeds,
+        "level_review_required": level_review_required,
+        "approval_required": approval_required,
+        "system_source": system_source,
+        "no_approval": no_approval,
+        "candidate": candidate,
+        "manual_source": manual_source,
+        "no_approval_date": no_approval_date,
+        "manual_entry": manual_entry,
+        "abnormal_time": abnormal_time,
+        "high_risk_process": high_risk_process,
+        "high_approval_level": high_approval_level_evidence,
+        "evidence_count": evidence_count,
+        "immediate": immediate,
+        "review": review,
+        "low_priority": low_priority,
+    }
+    if cache is not None:
+        cache.objects["b09_skipped_approval_components"] = components
+    return components
+
+
+def b09_skipped_approval(
+    df: pd.DataFrame,
+    audit_rules: dict | None = None,
+    cache: AccessRuleCache | None = None,
+) -> pd.Series:
+    """L1-07 skipped approval: approval required but approver missing."""
+
+    if "approved_by" not in df.columns:
+        return pd.Series(False, index=df.index)
+    if cache is not None and "b09_skipped_approval_result" in cache.bool_masks:
+        return cache.bool_masks["b09_skipped_approval_result"]
+
+    components = _skipped_approval_components(df, audit_rules=audit_rules, cache=cache)
+    cfg = components["cfg"]
+    exceeds = components["exceeds"]
+    approval_required = components["approval_required"]
+    level_review_required = components["level_review_required"]
+    system_source = components["system_source"]
+    no_approval = components["no_approval"]
+    candidate = components["candidate"]
+    manual_source = components["manual_source"]
+    no_approval_date = components["no_approval_date"]
+    manual_entry = components["manual_entry"]
+    abnormal_time = components["abnormal_time"]
+    high_risk_process = components["high_risk_process"]
+    high_approval_level = components["high_approval_level"]
+    evidence_count = components["evidence_count"]
+    immediate = components["immediate"]
+    review = components["review"]
+    low_priority = components["low_priority"]
+    queue_label = pd.Series("none", index=df.index, dtype="object")
+    queue_label.loc[low_priority] = "low_priority"
+    queue_label.loc[review] = "review"
+    queue_label.loc[immediate] = "immediate"
 
     score_series = pd.Series(0.0, index=df.index)
-    score_series.loc[review] = 0.4
     score_series.loc[immediate] = 0.8
+    review_score_series = pd.Series(0.0, index=df.index)
+    review_score_series.loc[review] = 0.4
+    review_score_series.loc[low_priority] = 0.1
+
+    evidence_reasons_by_row: dict[int, list[str]] = {}
+    row_annotations: dict[int, dict[str, object]] = {}
+    for idx in candidate[candidate].index:
+        reasons: list[str] = []
+        if bool(manual_source.loc[idx]):
+            reasons.append("manual_source")
+        if bool(no_approval_date.loc[idx]):
+            reasons.append("no_approval_date")
+        if bool(manual_entry.loc[idx]):
+            reasons.append("manual_entry")
+        if bool(abnormal_time.loc[idx]):
+            reasons.append("abnormal_time")
+        if bool(high_risk_process.loc[idx]):
+            reasons.append("high_risk_process")
+        if bool(high_approval_level.loc[idx]):
+            reasons.append("high_approval_level")
+        evidence_reasons_by_row[int(idx)] = reasons
+
+        annotation: dict[str, object] = {
+            "queue_label": str(queue_label.loc[idx]),
+            "score": round(float(score_series.loc[idx]), 4),
+            "review_score": round(float(review_score_series.loc[idx]), 4),
+            "evidence_count": int(evidence_count.loc[idx]),
+            "evidence_reasons": reasons,
+            "source_category": (
+                "system_exception"
+                if bool(system_source.loc[idx])
+                else "not_approval_required"
+                if not bool(approval_required.loc[idx])
+                else "manual"
+                if bool(manual_source.loc[idx])
+                else "non_system_review"
+            ),
+            "has_approval_date": not bool(no_approval_date.loc[idx]),
+            "min_evidence_count": int(cfg["min_evidence_count"]),
+        }
+        for column in (
+            "document_id",
+            "source",
+            "approved_by",
+            "approval_date",
+            "business_process",
+            "approval_level",
+            "created_by",
+        ):
+            if column in df.columns:
+                value = df.at[idx, column]
+                annotation[column] = None if pd.isna(value) else value
+        row_annotations[int(idx)] = annotation
+
+    evidence_count_bands = {
+        str(int(count)): int(((candidate) & evidence_count.eq(count)).sum())
+        for count in sorted(evidence_count[candidate].dropna().unique())
+    }
+    evidence_reason_counts: dict[str, int] = {}
+    for reasons in evidence_reasons_by_row.values():
+        for reason in reasons:
+            evidence_reason_counts[reason] = evidence_reason_counts.get(reason, 0) + 1
 
     candidate.attrs["score_series"] = score_series
+    candidate.attrs["review_score_series"] = review_score_series
     candidate.attrs["breakdown"] = {
         "immediate_rows": int(immediate.sum()),
         "review_rows": int(review.sum()),
+        "low_priority_rows": int(low_priority.sum()),
+        "confirmed_rows": int(immediate.sum()),
+        "candidate_rows": int(candidate.sum()),
         "immediate_indices": [int(idx) for idx in immediate[immediate].index],
         "review_indices": [int(idx) for idx in review[review].index],
         "immediate_label": "immediate",
@@ -1052,8 +1903,22 @@ def b09_skipped_approval(
         "abnormal_time_rows": int((candidate & abnormal_time).sum()),
         "high_risk_process_rows": int((candidate & high_risk_process).sum()),
         "high_approval_level_rows": int((candidate & high_approval_level).sum()),
+        "approval_level_review_rows": int((candidate & level_review_required & ~exceeds).sum()),
+        "missing_approver_rows": int(candidate.sum()),
+        "actionable_missing_approver_rows": int(
+            (approval_required & ~system_source & no_approval).sum()
+        ),
+        "no_approval_required_rows": int((candidate & ~approval_required).sum()),
+        "no_approval_trace_rows": int((candidate & no_approval_date).sum()),
+        "allowed_system_rows": int((candidate & system_source).sum()),
+        "evidence_count_bands": evidence_count_bands,
+        "evidence_reason_counts": evidence_reason_counts,
         "min_evidence_count": int(cfg["min_evidence_count"]),
     }
+    candidate.attrs["row_annotations"] = row_annotations
+    immediate.attrs = candidate.attrs.copy()
+    if cache is not None:
+        cache.bool_masks["b09_skipped_approval_result"] = candidate
     return candidate
 
 
@@ -1068,9 +1933,43 @@ def b10_intercompany_review_signal(df: pd.DataFrame) -> pd.Series:
     if "is_intercompany" not in df.columns:
         return pd.Series(False, index=df.index)
 
-    ic_mask = df["is_intercompany"].fillna(False)
+    ic_mask = df["is_intercompany"].fillna(False).astype(bool)
     if not ic_mask.any():
         return pd.Series(False, index=df.index)
+
+    breakdown: dict[str, object] = {
+        "ic_population_rows": int(ic_mask.sum()),
+        "ic_population_docs": (
+            int(df.loc[ic_mask, "document_id"].dropna().nunique())
+            if "document_id" in df.columns
+            else int(ic_mask.sum())
+        ),
+    }
+    if "company_code" in df.columns:
+        breakdown["ic_company_count"] = int(df.loc[ic_mask, "company_code"].dropna().nunique())
+    if "trading_partner" in df.columns:
+        partner_populated = _normalized_text(df.loc[ic_mask, "trading_partner"]).ne("")
+        breakdown["trading_partner_coverage_ratio"] = (
+            float(partner_populated.mean()) if len(partner_populated) else 0.0
+        )
+
+    score_series = pd.Series(0.0, index=df.index)
+    score_series.loc[ic_mask] = 0.4
+    ic_mask.attrs["score_series"] = score_series
+    ic_mask.attrs["breakdown"] = breakdown
+    ic_mask.attrs["row_annotations"] = {
+        idx: {
+            "signal_category": "ic_population",
+            "score": 0.4,
+            "company_code": (
+                str(df.at[idx, "company_code"]) if "company_code" in df.columns else ""
+            ),
+            "trading_partner": (
+                str(df.at[idx, "trading_partner"]) if "trading_partner" in df.columns else ""
+            ),
+        }
+        for idx in df.index[ic_mask]
+    }
 
     if "company_code" in df.columns:
         ic_companies = set(df.loc[ic_mask, "company_code"].dropna().unique())
