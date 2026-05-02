@@ -69,14 +69,22 @@ PHASE1 사용자 큐는 위 row-level `anomaly_score`와 별도로 case-level `p
 
 룰 참조는 확정 신호와 검토 후보를 분리한다. `flagged_rules`는 `details > 0`인 confirmed/immediate 룰만 담고, `review_rules`는 `details == 0`이지만 `row_annotations.review_score`가 있는 review-only 후보를 담는다. `anomaly_score`와 PHASE1 case priority는 두 신호를 모두 반영할 수 있지만, DB `anomaly_flags`, export, LLM narrative에서 확정 위반처럼 집계하는 기준은 `flagged_rules`다.
 
+`L3-12` 업무범위 집중 검토는 review-only access/work-scope signal이다. 사용자-year 점수는 `review_score_series`와 `row_annotations.review_score`로만 PHASE1 점수체계에 약하게 유입되며, `details["L3-12"]`와 `flagged_rules`에는 확정 위반처럼 적재하지 않는다.
+
+관계사 거래는 별도 보정 원칙을 둔다. `L3-03` 단독은 관계사 거래 모집단 신호라 row-level `anomaly_score`에 낮게만 반영한다. 별도 `IntercompanyMatcher` 결과로 `IC01/IC02/IC03` 대사 예외가 제공되면 `intercompany_exception_score`를 기록하고, `IC02` 또는 `IC03` 단독은 최소 Low, `IC01` 또는 2개 이상 IC 예외 결합은 최소 Medium floor를 적용한다.
+
 Case priority 기본식:
 
 ```text
-0.35 * control_score
-+ 0.30 * amount_score
-+ 0.20 * logic_score
-+ 0.15 * behavior_score
+0.25 * control_score
++ 0.25 * amount_score
++ 0.15 * duplicate_or_outflow_score
++ 0.15 * logic_score
++ 0.10 * timing_score
++ 0.10 * behavior_score
 ```
+
+`duplicate_or_outflow_score`는 L2-01/L2-02/L2-03/L2-05 같은 지급·중복·역분개 신호가 case priority에 직접 반영되도록 하는 축이다. `timing_score`는 L3-04/L3-07/L3-11 같은 결산·cutoff 신호가 case priority에 직접 반영되도록 하는 축이다. `L3-11`은 raw cutoff score `>=0.60`이면 Medium floor, raw score `>=0.30`이면서 `L4-01`과 결합하면 High floor를 적용한다.
 
 그 뒤 `topside_bonus`, `batch_combo_bonus`, `work_scope_combo_score`, `weak_evidence_bonus` 같은 보정 신호를 적용한다. `L3-12` 단독은 High floor를 만들지 않지만, 독립 보강 evidence group이 2개 붙으면 Medium, 3개 이상 붙으면 High floor로 승격한다. `priority_floors`는 심각한 통제 위반이 보조 룰 부족 때문에 묻히지 않게 최소 priority를 보장한다. 기본 floor는 `L1-05` immediate/escalated 자기승인, `L1-04` 승인한도 초과, `L1-06` immediate SoD, `L1-07` immediate 승인 생략에 적용된다. `L4-02`, `D01`, `D02`는 전표 1건의 transaction queue 점수가 아니라 Account / Process Queue에서 다루는 macro finding으로 분리한다.
 

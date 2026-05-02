@@ -4,7 +4,9 @@
 
 > Row-level `anomaly_score` source of truth is `src/detection/constants.py::RULE_LEVEL_WEIGHTS`: `L1 0.40`, `L2 0.25`, `L3 0.20`, `L4 0.15`. `layer_a`, `layer_b`, `layer_c`, `benford` are detector execution/storage compatibility names, not the current scoring policy. When ML or TrendBreak is enabled, `RULE_LEVEL_WEIGHTS_WITH_ML` or `RULE_LEVEL_WEIGHTS_WITH_TRENDBREAK` keeps the L1~L4 basis and adds the extra track.
 
-> L3-12 WorkScopeExcessReview is an `access_scope_review` review signal, not an L1-06 SoD violation. Its direct L3 contribution is weak/booster; row-level promotion is handled by `work_scope_combo_score` only when two or more independent corroboration groups are present.
+> L3-12 WorkScopeExcessReview is an `access_scope_review` review signal, not an L1-06 SoD violation. It is stored through `review_score_series` and `row_annotations.review_score`, not as a confirmed `details` hit. Its direct L3 contribution is weak/booster; row-level promotion is handled by `work_scope_combo_score` only when two or more independent corroboration groups are present.
+
+> L3-06 AfterHoursPosting is a weak PHASE1 timing signal and review-population tag. Its raw bands keep their order during rule normalization: `normal_system_context=0.20` contributes less than `confirmed_after_hours=0.45`. L3-06 alone should not promote a row to Low/Medium/High; priority increases when it corroborates independent control, amount, closing, description, or user-concentration signals.
 
 > Rule references are split by signal status. `flagged_rules` means confirmed/immediate row hits where `DetectionResult.details > 0`. `review_rules` means review-only candidates where `details == 0` but `row_annotations.review_score` or an equivalent annotation score is present. Row-level `anomaly_score` and PHASE1 cases may use both, but downstream violation counts and `anomaly_flags` remain based on confirmed `flagged_rules`.
 
@@ -805,6 +807,7 @@ patterns:
   - `R2R`?? 疫꿸퀡??L3-01 甕곕뗄??????嚥??節? ??낅뮉 ?紐꾩뵠 ??ル뼄.
 
 ### L3-02 ??띾┛ ?袁るご
+- 2026-04-30 기준 운영 정책: 단순 `manual_population`/`adjustment_population`은 `review_score_series=0.35`와 `review_rules=L3-02`로만 노출한다. `manual_priority=0.60` 또는 `manual_control_bypass=0.75`일 때만 `score_series/details > 0`로 저장되어 `flagged_rules=L3-02`와 DB `anomaly_flags`에 들어간다. 따라서 PHASE1 전체 `anomaly_score`는 수기/조정 모집단 신호를 낮게 반영할 수 있지만, 위반 룰 집계는 priority/control-bypass 후보만 사용한다.
 
 - 揶쏅Ŋ沅?紐꾩뵠 鈺곌퀣???롫뮉 揶? ??띾┛嚥?癰?source ?꾨뗀諭?
   - ??쇱젫 ?? `patterns.manual_source_codes`

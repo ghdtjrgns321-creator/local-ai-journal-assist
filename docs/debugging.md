@@ -300,7 +300,7 @@ if clicked:
   - `RULE_LEGAL_BASIS` dict — 주요 룰 ID → 감사기준서/ISA/PCAOB 근거 매핑
   - `AuditEvidence` dataclass — document_id / score / risk / rules / top_features / narrative
   - `format_narrative(...)` — "전표 D001은 위험도 'High' (anomaly_score=0.850)로 분류...
-    위반 룰: L3-04(기말 대규모) [ISA 240 §32]... VAE 재구성 오차 주요 기여 피처: amount(0.430)..."
+    위반 룰: L3-04(기말/기초 결산 검토 후보군) [ISA 240 §32]... VAE 재구성 오차 주요 기여 피처: amount(0.430)..."
   - `build_evidence_report(df, min_score)` — 파이프라인 결과 DataFrame 일괄 변환
 - **`dashboard/components/shap_waterfall.py`** 확장
   - `render_vae_waterfall(row, top_k=3)` 신규 — P0-1의 `ML02_top_feature_{1..3}`

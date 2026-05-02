@@ -1,344 +1,310 @@
-# Design Decisions
+﻿# Design Decisions
 
-> Current DataSynth production baseline: `data/journal/primary/datasynth/` freeze `v59` as of 2026-04-27. Older `v20.x`, `v23`, and `v45` entries are historical decision records.
+> Current DataSynth production baseline: `data/journal/primary/datasynth/` freeze `v126` as of 2026-05-02. Older `v20.x`, `v23`, and `v45` entries are historical decision records.
 
-아키텍처·기술 선택 결정 로그. 새로운 결정 시 내용 추가.
+?꾪궎?띿쿂쨌湲곗닠 ?좏깮 寃곗젙 濡쒓렇. ?덈줈??寃곗젙 ???댁슜 異붽?.
 
 ---
 
-### D001: Qwen3-8B 1순위 (Qwen2.5-Coder 폴백)
-- **이유**: Qwen3 Ollama 지원, reasoning 성능 향상. RTX 3070 Ti 8GB에 Q4_K_M 적합 (6~7GB VRAM)
-- **폴백**: Qwen2.5-Coder-7B (Text-to-SQL 특화)
+### D001: Qwen3-8B 1?쒖쐞 (Qwen2.5-Coder ?대갚)
+- **?댁쑀**: Qwen3 Ollama 吏?? reasoning ?깅뒫 ?μ긽. RTX 3070 Ti 8GB??Q4_K_M ?곹빀 (6~7GB VRAM)
+- **?대갚**: Qwen2.5-Coder-7B (Text-to-SQL ?뱁솕)
 
-### D002: Vanna AI 2.0 채택 (직접 프롬프트 대신)
-- **이유**: DuckDB+Ollama+ChromaDB 네이티브, agent-based API, 자동 Plotly, 개발시간 80% 절감
-- **트레이드오프**: Vanna 의존성 증가, 커스터마이징 제한
+### D002: Vanna AI 2.0 梨꾪깮 (吏곸젒 ?꾨＼?꾪듃 ???
+- **?댁쑀**: DuckDB+Ollama+ChromaDB ?ㅼ씠?곕툕, agent-based API, ?먮룞 Plotly, 媛쒕컻?쒓컙 80% ?덇컧
+- **?몃젅?대뱶?ㅽ봽**: Vanna ?섏〈??利앷?, 而ㅼ뒪?곕쭏?댁쭠 ?쒗븳
 
-### D003: kiwipiepy 단독 (konlpy 제거)
-- **이유**: JVM 의존성 제거, 순수 Python, pip install 한 줄 완결
+### D003: kiwipiepy ?⑤룆 (konlpy ?쒓굅)
+- **?댁쑀**: JVM ?섏〈???쒓굅, ?쒖닔 Python, pip install ??以??꾧껐
 
-### D004: fpdf2 채택 (reportlab 대신)
-- **이유**: 경량화, 간단한 감사조서에 충분
+### D004: fpdf2 梨꾪깮 (reportlab ???
+- **?댁쑀**: 寃쎈웾?? 媛꾨떒??媛먯궗議곗꽌??異⑸텇
 
-### D005: LangGraph 제거
-- **이유**: Vanna+PandasAI로 충분. Phase 3에서 필요 시 재평가
+### D005: LangGraph ?쒓굅
+- **?댁쑀**: Vanna+PandasAI濡?異⑸텇. Phase 3?먯꽌 ?꾩슂 ???ы룊媛
 
-### D006: BaseDetector 추상 클래스 패턴
-- **이유**: 모든 탐지 트랙이 `detect() -> DetectionResult` 인터페이스 공유. 트랙 추가 시 score_aggregator 수정 최소화
+### D006: BaseDetector 異붿긽 ?대옒???⑦꽩
+- **?댁쑀**: 紐⑤뱺 ?먯? ?몃옓??`detect() -> DetectionResult` ?명꽣?섏씠??怨듭쑀. ?몃옓 異붽? ??score_aggregator ?섏젙 理쒖냼??
+### D007: LLM ?놁씠 MVP ?숈옉
+- **?댁쑀**: Phase 1? LLM ?몄텧 0. 而щ읆 留ㅽ븨 ?ㅽ뙣 ???섎룞 UI ?대갚. ?먯쭊??蹂듭옟??利앷?
 
-### D007: LLM 없이 MVP 동작
-- **이유**: Phase 1은 LLM 호출 0. 컬럼 매핑 실패 시 수동 UI 폴백. 점진적 복잡도 증가
+### D008: dependency-groups 遺꾨━
+- **?댁쑀**: `uv sync --group core,dashboard`濡?MVP 理쒖냼 ?ㅼ튂. ML/LLM? ?꾩슂 ?쒖뿉留?
+### D009: 媛쒖슂????湲곕뒫蹂?援ы쁽 媛?대뱶 10媛?遺꾨━
+- **?댁쑀**: ?섎굹??媛쒖슂??380以??먯꽌 援ы쁽 ??李몄“媛 ?대젮?. 湲곕뒫 ?곸뿭蹂?遺꾨━濡?媛?紐⑤뱢 援ы쁽 ???대떦 媛?대뱶留?李몄“
+- **援ъ“**: `docs/pre-plan/01~10-*.md`, 怨듯넻 ?щ㎎(紐⑹쟻/愿???뚯씪/?듭떖 ?대옒???곗씠???먮쫫/援ы쁽 ?쒖꽌/?섏〈???뚯뒪??Phase/二쇱쓽?ы빆)
+- **?먮낯 ?좎?**: `媛쒖슂??md`???꾩껜 酉??⑸룄濡?蹂댁〈, 援ы쁽 媛?대뱶???곸꽭 ?덊띁?곗뒪
 
-### D008: dependency-groups 분리
-- **이유**: `uv sync --group core,dashboard`로 MVP 최소 설치. ML/LLM은 필요 시에만
+### D010: EY-ASU DataSynth瑜?硫붿씤 ?곗씠???뚯뒪濡?梨꾪깮
+- **寃곗젙**: 32媛?怨듦컻 ?곗씠?곗뀑/?꾧뎄 寃???? EY-ASU DataSynth(tools/datasynth/)濡??앹꽦???⑹꽦 ?꾪몴瑜?硫붿씤 ?곗씠?곕줈 梨꾪깮. 湲곗〈 ?섏쭛 ?곗씠??sap-merged, schreyer-fraud ??5醫???寃利앹슜?쇰줈 ?꾪솚
+- **?댁쑀**:
+  - SAP ACDOCA 71?꾨뱶 ?ㅼ씠?곕툕 援ъ“ (?ㅼ젣 SAP S/4HANA? ?숈씪 ?꾨뱶紐?
+  - Fraud ?덉씠釉?132醫??댁옣 (49 fraud + 28 error + 22 process + 18 statistical + 15 relational)
+  - 蹂듭떇遺湲???벑??李??) 蹂댁옣, Benford 遺꾪룷 以??  - PCAOB/ISA/COSO/SOX 媛먯궗湲곗? 肄붾뱶 ?덈꺼 援ы쁽
+  - seed 怨좎젙?쇰줈 ?숈씪 ?곗씠???ы쁽 媛??  - ?ы듃?대━?ㅼ뿉??"EY+ASU 怨듬룞 媛쒕컻 ?꾧뎄 湲곕컲"?쇰줈 ?댄븘
+- **anomaly ?좏삎???숈닠쨌?곗뾽 洹쇨굅**:
+  - **ACFE Fraud Tree**: 49媛?遺??scheme ???붿????꾪몴 ?섍꼍?쇰줈 ?뺤옣
+  - **PCAOB AS 2401 / ISA 240 / COSO 2013 / SOX 302쨌404**: ?ㅻТ 媛먯궗湲곗? 肄붾뱶 援ы쁽
+  - **Schreyer & Sattarov ?곌뎄** (arXiv 1709.05254, 1908.00734): ?꾪몴 ?댁긽移?遺꾨쪟 ?숈닠 ?쒖?
+  - ?????꾨젅?꾩썙?ъ쓽 援먯감 ?ㅺ퀎瑜?諛뷀깢?쇰줈 ?꾩옱 ?댁쁺 湲곗?蹂몄뿉?쒕룄 fraud/anomaly/SoD? 蹂꾨룄 `anomaly_labels.csv`瑜??④퍡 ?좎??쒕떎. ?몃? 二쇱엯 ?섏튂??freeze 硫붾え 湲곗??쇰줈 愿由ы븳??
+- **?꾧뎄 理쒖떊??*: DataSynth ?덊룷 湲곕컲 ?꾨줈?앺듃 fork瑜?怨꾩냽 蹂댁젙 以묒씠硫? ?꾩옱 ?ㅼ궗??湲곗?蹂몄? 2026-05-02 ?숆껐 `v126`?대떎. `v23`??B04 duplicate payment 蹂댁젙, `v45`??L3-10 ?됯? 怨꾩빟, `v52~v54`??Benford group truth/holdout, `v55~v57`??D01/D02 怨꾩젙 ?⑥쐞 sidecar? ?뺤긽 ?議곌뎔, `v58`??L1-09/L2-02 ?꾩닔 truth 蹂듦뎄, `v126`??L1-03/L3-01 CoA 寃쎄퀎 蹂댁젙???꾩쟻 諛섏쁺?덈떎.
+- **???寃??*: ?ㅼ젣 SAP ?곗씠??sap-merged 332K)???댁긽移??덉씠釉?1%肉? Schreyer(533K)???좎쭨 ?놁쓬+?꾨? ?듬챸?? BPI 2019(1.6M)???꾪몴媛 ?꾨땶 ?대깽??濡쒓렇
+- **?앹꽦 ?ㅼ젙**: `config/datasynth.yaml` (seed 2024, 36媛쒖썡, 3?뚯궗, fraud 2%)
+- **?꾩옱 湲곗? 寃곌낵**: 1,109,435?쇱씤(319,193?꾪몴), 52而щ읆, `anomaly_labels.csv` 3,149嫄?
+### D011: 24媛?猷?L1/L2/L3/L4 泥닿퀎 ?뺤젙
+- **寃곗젙**: 湲곗〈 R001~R008(8媛?猷?+ Benford) 泥닿퀎瑜??먭린?섍퀬, DataSynth 52媛?anomaly ?좏삎?먯꽌 3異??됯?(踰뺢퇋 洹쇨굅 횞 FSS ?ㅼ쬆 횞 ?곗씠??媛?⑹꽦)濡??좊퀎??24媛?猷?L1/L2/L3/L4 泥닿퀎濡??꾨㈃ ?ъ꽕怨?- **?댁쑀**:
+  - 湲곗〈 R001~R008? 媛먯궗湲곗???240?몃쭔 李몄“???먯깋???ㅺ퀎. 踰뺢퇋 洹쇨굅쨌?ㅼ쬆 鍮덈룄쨌?곗씠???곹빀?꾩쓽 泥닿퀎???됯? 遺??  - FSS 媛먮━吏?곸궗濡 189嫄??꾩닔 ?쎄린 遺꾩꽍 ??6? 遺???⑦꽩(媛怨듭쟾??53%, 寃곗궛?섏젙 29%, ?〓졊???26% ?? ?꾩텧
+  - 3異??됯?濡?Must(7~9??/Should(4~6)/Could(2~3)/Drop(0~1) ?먯젙 ??Phase蹂?紐낇솗??援ы쁽 踰붿쐞
+- **援ъ“**:
+  - L1 (?뺤젙 ?ㅻ쪟/?꾨컲): L1-01~L1-08
+  - L2 (媛뺥븳 遺???뺥솴): L2-01~L2-05
+  - L3 (寃???꾩슂 ?댁긽吏뺥썑): L3-01~L3-11
+  - L4 (?듦퀎???댁긽移?: L4-01~L4-06
+- **Phase蹂??뺤옣**: Phase 1(24媛?猷? ??Phase 2(+16媛?ML) ??Phase 3(+5媛?NLP/洹몃옒?? = 珥?41媛??좏삎
+- **?몃? 寃利?*: CAQ 15媛??쒕굹由ъ삤 93% 而ㅻ쾭, PCAOB AS 2401 짠61 11媛??뱀꽦 91% 而ㅻ쾭
 
-### D009: 개요서 → 기능별 구현 가이드 10개 분리
-- **이유**: 하나의 개요서(380줄)에서 구현 시 참조가 어려움. 기능 영역별 분리로 각 모듈 구현 시 해당 가이드만 참조
-- **구조**: `docs/pre-plan/01~10-*.md`, 공통 포맷(목적/관련 파일/핵심 클래스/데이터 흐름/구현 순서/의존성/테스트/Phase/주의사항)
-- **원본 유지**: `개요서.md`는 전체 뷰 용도로 보존, 구현 가이드는 상세 레퍼런스
+> Current note (2026-04-28): D011? 珥덇린 泥닿퀎 ?뺤젙 湲곕줉?대떎. ?꾪뻾 PHASE1 援ы쁽 踰붿쐞??32媛?L1~L4 猷곗씠硫? L3??L3-01~L3-12源뚯? ?ы븿?쒕떎. L3-12??L1-06 direct SoD? 遺꾨━???낅Т踰붿쐞 review signal?대떎.
 
-### D010: EY-ASU DataSynth를 메인 데이터 소스로 채택
-- **결정**: 32개 공개 데이터셋/도구 검토 후, EY-ASU DataSynth(tools/datasynth/)로 생성한 합성 전표를 메인 데이터로 채택. 기존 수집 데이터(sap-merged, schreyer-fraud 등 5종)는 검증용으로 전환
-- **이유**:
-  - SAP ACDOCA 71필드 네이티브 구조 (실제 SAP S/4HANA와 동일 필드명)
-  - Fraud 레이블 132종 내장 (49 fraud + 28 error + 22 process + 18 statistical + 15 relational)
-  - 복식부기 항등식(차=대) 보장, Benford 분포 준수
-  - PCAOB/ISA/COSO/SOX 감사기준 코드 레벨 구현
-  - seed 고정으로 동일 데이터 재현 가능
-  - 포트폴리오에서 "EY+ASU 공동 개발 도구 기반"으로 어필
-- **anomaly 유형의 학술·산업 근거**:
-  - **ACFE Fraud Tree**: 49개 부정 scheme → 디지털 전표 환경으로 확장
-  - **PCAOB AS 2401 / ISA 240 / COSO 2013 / SOX 302·404**: 실무 감사기준 코드 구현
-  - **Schreyer & Sattarov 연구** (arXiv 1709.05254, 1908.00734): 전표 이상치 분류 학술 표준
-  - 이 세 프레임워크의 교차 설계를 바탕으로 현재 운영 기준본에서도 fraud/anomaly/SoD와 별도 `anomaly_labels.csv`를 함께 유지한다. 세부 주입 수치는 freeze 메모 기준으로 관리한다.
-- **도구 최신성**: DataSynth 레포 기반 프로젝트 fork를 계속 보정 중이며, 현재 실사용 기준본은 2026-04-27 동결 `v59`이다. `v23`의 B04 duplicate payment 보정, `v45`의 L3-10 평가 계약, `v52~v54`의 Benford group truth/holdout, `v55~v57`의 D01/D02 계정 단위 sidecar와 정상 대조군, `v58`의 L1-09/L2-02 필수 truth 복구, `v59`의 L1-03/L3-01 CoA 경계 보정을 누적 반영했다.
-- **대안 검토**: 실제 SAP 데이터(sap-merged 332K)는 이상치 레이블 1%뿐, Schreyer(533K)는 날짜 없음+전부 익명화, BPI 2019(1.6M)는 전표가 아닌 이벤트 로그
-- **생성 설정**: `config/datasynth.yaml` (seed 2024, 36개월, 3회사, fraud 2%)
-- **현재 기준 결과**: 1,109,435라인(319,193전표), 52컬럼, `anomaly_labels.csv` 2,843건
+### D012: FSS 媛먮━吏?곸궗濡 189嫄?湲곕컲 ?ㅼ쬆 遺꾩꽍
+- **寃곗젙**: 湲덇컧???뚭퀎?ы깉 媛쒕퀎 ?щ? 189嫄?2011~2025)??蹂몃Ц(HWP/PDF)??吏곸젒 ?섏쭛쨌遺꾩꽍?섏뿬 ?꾪몴 議곗옉 ?⑦꽩 6醫?遺꾨쪟
+- **?댁쑀**: ?⑥닚 嫄댁닔 湲곕컲???꾨땶 蹂몃Ц ?댁슜 湲곕컲 遺꾩꽍?쇰줈 ?ㅼ쭏??遺???⑦꽩 ?꾩텧. ?쒕ぉ留뚯쑝濡?6嫄댁씠??"?〓졊 ???媛 蹂몃Ц 遺꾩꽍 ??24嫄?4諛??쇰줈 利앷????щ? ??- **寃곌낵**: ?꾪몴 愿??94嫄?50%), 6? ?⑦꽩(媛怨듭쟾??50, 寃곗궛?섏젙 27, ?〓졊???24, ?쒗솚嫄곕옒 10, ?뱀씤/SoD?꾨컲 5, 鍮꾩젙?곸떆??4)
+- **?쒖슜**: 3異??됯???"異?: ?ㅼ쬆 鍮덈룄" ?먯닔 ?곗젙 洹쇨굅
 
-### D011: 24개 룰 L1/L2/L3/L4 체계 확정
-- **결정**: 기존 R001~R008(8개 룰 + Benford) 체계를 폐기하고, DataSynth 52개 anomaly 유형에서 3축 평가(법규 근거 × FSS 실증 × 데이터 가용성)로 선별한 24개 룰 L1/L2/L3/L4 체계로 전면 재설계
-- **이유**:
-  - 기존 R001~R008은 감사기준서 240호만 참조한 탐색적 설계. 법규 근거·실증 빈도·데이터 적합도의 체계적 평가 부재
-  - FSS 감리지적사례 189건 전수 읽기 분석 → 6대 부정 패턴(가공전표 53%, 결산수정 29%, 횡령은폐 26% 등) 도출
-  - 3축 평가로 Must(7~9점)/Should(4~6)/Could(2~3)/Drop(0~1) 판정 → Phase별 명확한 구현 범위
-- **구조**:
-  - L1 (확정 오류/위반): L1-01~L1-08
-  - L2 (강한 부정 정황): L2-01~L2-05
-  - L3 (검토 필요 이상징후): L3-01~L3-11
-  - L4 (통계적 이상치): L4-01~L4-06
-- **Phase별 확장**: Phase 1(24개 룰) → Phase 2(+16개 ML) → Phase 3(+5개 NLP/그래프) = 총 41개 유형
-- **외부 검증**: CAQ 15개 시나리오 93% 커버, PCAOB AS 2401 §61 11개 특성 91% 커버
+#### D012 ?낅뜲?댄듃: PHASE1 ?먯닔 湲곗? ?뺤젙 (2026-04-27)
+- **寃곗젙**: row-level 湲곕낯 ?먯닔?????댁긽 `layer_a/layer_b/layer_c/benford` 怨좎젙 媛以묓빀???ъ슜?섏? ?딅뒗?? ?대떦 ?대쫫? detector ?ㅽ뻾/????명솚??track name?쇰줈留??좎??쒕떎.
+- **?꾩옱 湲곗?**: `RULE_LEVEL_WEIGHTS = L1 0.40 + L2 0.25 + L3 0.20 + L4 0.15`.
+- **?꾪뿕?깃툒**: `High >= 0.7`, `Medium >= 0.4`, `Low >= 0.2`, 洹???`Normal`.
+- **蹂댁셿**: `L1-05` immediate/escalated ?먭린?뱀씤, `L1-04`, `L1-06`, `L1-07` immediate ?듭젣 ?꾨컲? row `risk_level`怨?case `priority_score` ?묒そ??policy floor瑜??곸슜?쒕떎.
 
-> Current note (2026-04-28): D011은 초기 체계 확정 기록이다. 현행 PHASE1 구현 범위는 32개 L1~L4 룰이며, L3는 L3-01~L3-12까지 포함한다. L3-12는 L1-06 direct SoD와 분리된 업무범위 review signal이다.
+### D013: ?먯닔 泥닿퀎 ?ъ꽕怨?- **寃곗젙**: MVP ?먯닔??L1/L2/L3/L4 rule-family 湲곗??쇰줈 怨꾩궛?쒕떎. `layer_a`, `layer_b`, `layer_c`, `benford`???ㅽ뻾 ?붿쭊 ?명솚??track name?쇰줈留??좎??쒕떎.
+- **?댁쑀**: ?ъ슜???붾㈃, 媛먯궗 ?뺤콉, 肄붾뱶??理쒖쥌 ?먯닔 湲곗???L1~L4濡??듭씪?댁빞 "??怨좎쐞?섏씤???먯뿉 ?놁??" 媛숈? ?ㅻ챸 遺덉씪移섎? 以꾩씪 ???덈떎.
+- **?꾪뿕?깃툒**: `High >= 0.7`, `Medium >= 0.4`, `Low >= 0.2`, `Normal < 0.2`
+- **?뺤콉 floor**: ?ш컖???듭젣 ?꾨컲? row-level `risk_level`怨?case-level `priority_score` ?묒そ??理쒖냼 ?밴꺽 湲곗????곸슜?쒕떎.
 
-### D012: FSS 감리지적사례 189건 기반 실증 분석
-- **결정**: 금감원 회계포탈 개별 사례 189건(2011~2025)의 본문(HWP/PDF)을 직접 수집·분석하여 전표 조작 패턴 6종 분류
-- **이유**: 단순 건수 기반이 아닌 본문 내용 기반 분석으로 실질적 부정 패턴 도출. 제목만으로 6건이던 "횡령 은폐"가 본문 분석 시 24건(4배)으로 증가한 사례 등
-- **결과**: 전표 관련 94건(50%), 6대 패턴(가공전표 50, 결산수정 27, 횡령은폐 24, 순환거래 10, 승인/SoD위반 5, 비정상시점 4)
-- **활용**: 3축 평가의 "축2: 실증 빈도" 점수 산정 근거
+### D014: ?뚯씪 移댄뀒怨좊━蹂?寃利??꾨왂 (file_validator 3遺꾨쪟)
+- **寃곗젙**: 10媛??뺤옣?먮? 3媛?移댄뀒怨좊━(Excel/Text/Columnar)濡?遺꾨쪟?섏뿬 媛곴컖 ?ㅻⅨ ?ш린 ?쒗븳쨌寃利??꾨왂 ?곸슜. PDF/HWP???꾨줈?앺듃 踰붿쐞 ?몃줈 嫄곕?
+- **?댁쑀**:
+  - Excel(.xlsx/.xls/.xlsb): ?쒗듃??104留???臾쇰━ ?쒗븳 ??100MB 異⑸텇. 媛곴컖 openpyxl/xlrd/pyxlsb濡??먯긽 寃利?  - Text(.csv/.tsv/.txt/.dat): ?ш린 ?쒗븳 ?녿뒗 ?щ㎎, ?몄퐫???ㅼ뼇(UTF-8/CP949/latin-1) ??800MB + charset_normalizer ?먮룞 媛먯? + ascii?뭠atin-1 ?대갚
+  - Columnar(.parquet): ?뺤텞 ?⑥쑉 ?믪븘 1GB ?덉슜. pyarrow 硫뷀??곗씠?곕쭔 ?쎌뼱 寃利?  - PDF/HWP: 鍮꾩젙??臾몄꽌 ?곗씠??異붿텧? 蹂꾨룄 ?꾨줈?앺듃 踰붿쐞 (CONSTRAINTS.md 李멸퀬)
+- **援ъ“**: `file_categories.py`(移댄뀒怨좊━ ?뺤쓽) + `integrity_checkers.py`(?뺤옣?먮퀎 ?닿린 寃利? + `file_validator.py`(?쇱궗?? 3?뚯씪 遺꾨━ (SRP)
+- **?ㅼ젙**: `settings.py`??`allowed_extensions`/`max_file_size_mb`??deprecated. 移댄뀒怨좊━蹂??쒗븳? `file_categories.py` ?곸닔濡?愿由?(?뚯씪 ?щ㎎ 臾쇰━???뱀꽦?대?濡??ъ슜???ㅼ젙???꾨떂)
 
-#### D012 업데이트: PHASE1 점수 기준 정정 (2026-04-27)
-- **결정**: row-level 기본 점수는 더 이상 `layer_a/layer_b/layer_c/benford` 고정 가중합을 사용하지 않는다. 해당 이름은 detector 실행/저장 호환용 track name으로만 유지한다.
-- **현재 기준**: `RULE_LEVEL_WEIGHTS = L1 0.40 + L2 0.25 + L3 0.20 + L4 0.15`.
-- **위험등급**: `High >= 0.7`, `Medium >= 0.4`, `Low >= 0.2`, 그 외 `Normal`.
-- **보완**: `L1-05` immediate/escalated 자기승인, `L1-04`, `L1-06`, `L1-07` immediate 통제 위반은 row `risk_level`과 case `priority_score` 양쪽에 policy floor를 적용한다.
+### D016: UX 1?④퀎 ???곗씠???섏쭛 ?щ챸??(Ingest v2)
+- **UX ?④퀎 泥닿퀎**: UX 1?④퀎(?섏쭛 ?щ챸?? ??UX 2?④퀎(猷??명똿+?뚯깮蹂?? ??UX 3?④퀎(?꾩쿂由?EDA). ?곸꽭: [ux-flow.md](pre-plan/ux-flow.md)
+- **?뺤쓽**: ?ъ슜?먭? ?곗씠?곕? ?ｌ쑝硫?AI媛 ?ㅻ뜑/而щ읆???먮룞 吏?뺥븯怨? ?좊ℓ??遺遺꾩? ?ъ슜?먯뿉寃??꾩엫?섎ŉ, ?먮떒 洹쇨굅(?좊ː?? 留ㅼ묶 諛⑹떇)瑜??щ챸?섍쾶 ?몄텧?섎뒗 UX 紐⑤뜽
+- **寃곗젙**: ?ㅻ뜑 ?먯?瑜?援ъ“???좏샇 湲곕컲?쇰줈 ?꾪솚, fuzzy 留ㅽ븨?????寃利?異붽?, 留ㅽ븨 ?먮떒 洹쇨굅瑜?ReviewItem?쇰줈 援ъ“??- **UX ?먯튃**:
+  - **80/20 ?먮룞??*: ?뺤떊 ?믪? 80%???먮룞 泥섎━(action="auto"), ?섎㉧吏 20%???ъ슜??寃??action="review")
+  - **?먮떒 ?щ챸???뺣낫**: 紐⑤뱺 留ㅽ븨??reason(?먮떒 洹쇨굅) + confidence(?좊ː?? + source_type/target_type ?몄텧
+  - **3-tier ?쒓컖 ?쇰뱶諛?*: ?뺤젙(珥덈줉) / 異붿쿇+?뺤씤 ?꾩슂(?몃옉) / 李⑤떒??鍮④컯)
+- **援ы쁽 ?댁슜**:
+  - A1. 援ъ“???ㅻ뜑 ?먯? ???ㅼ썙???놁뼱???곗씠??援ъ“(??낅떎?묒꽦/怨좎쑀媛?null諛??濡??ㅻ뜑 ?먮퀎
+  - B1. ????명솚??寃利???fuzzy ?꾨낫???뚯뒪?붿뒪?ㅻ쭏 ???鍮꾧탳, 鍮꾪샇??李⑤떒
+  - B3. Null 3?④퀎 遺꾧린 ???좊졊 而щ읆 議곗슜??遺꾨━, ?ㅻℓ???섏떖 紐낆떆 寃쎄퀬
+  - C. dc_indicator ?쒖? 而щ읆 ?깅줉
+  - D. ReviewItem 紐⑤뜽 ??action/confidence/reason/source_type/target_type 援ъ“
+  - E. ascii?뭠atin-1 ?몄퐫???대갚 ????⑸웾 CSV ?ㅽ깘 洹쇰낯 ?닿껐
+- **寃곌낵**: 5醫??ㅻ뜲?댄꽣???꾩껜 ?ш렇由?(bpi2019 527MB 1.6M???ы븿), 197 tests passed
+- **Phase 1c ?곌퀎**: ReviewItem ??Streamlit 留ㅽ븨 ?뺤씤 UI???곗씠???뚯뒪濡?吏곸젒 ?ъ슜
 
-### D013: 점수 체계 재설계
-- **결정**: MVP 점수는 L1/L2/L3/L4 rule-family 기준으로 계산한다. `layer_a`, `layer_b`, `layer_c`, `benford`는 실행 엔진 호환용 track name으로만 유지한다.
-- **이유**: 사용자 화면, 감사 정책, 코드의 최종 점수 기준을 L1~L4로 통일해야 "왜 고위험인데 큐에 없지?" 같은 설명 불일치를 줄일 수 있다.
-- **위험등급**: `High >= 0.7`, `Medium >= 0.4`, `Low >= 0.2`, `Normal < 0.2`
-- **정책 floor**: 심각한 통제 위반은 row-level `risk_level`과 case-level `priority_score` 양쪽에 최소 승격 기준을 적용한다.
+### D017: ascii?뭠atin-1 ?몄퐫???대갚
+- **寃곗젙**: `text_reader._detect_encoding()`?먯꽌 charset_normalizer媛 "ascii"濡?媛먯??섎㈃ "latin-1"?쇰줈 ?대갚
+- **?댁쑀**: charset_normalizer??64KB ?섑뵆 湲곕컲. bpi2019(527MB, latin-1)??泥??뱀닔臾몄옄(0x96)媛 249KB 吏?????섑뵆 踰붿쐞 諛???ascii ?ㅽ깘 ???쎄린 ?ㅽ뙣
+- **洹쇨굅**: ascii??latin-1??吏꾨?遺꾩쭛??0x00~0x7F). latin-1? 0x00~0xFF ?꾩껜 留ㅽ븨?대?濡??대뼡 諛붿씠?몃뱺 ?먮윭 ?놁씠 ?쏀옒. ?쒖닔 ascii ?뚯씪??latin-1濡??쎌뼱??寃곌낵 ?숈씪 ??遺?묒슜 ?놁쓬
+- **???寃??*: ?섑뵆 ?ш린 ?뺣?(256KB~1MB)?????ㅼ뿉 ?뱀닔臾몄옄媛 ?섏삤硫????ㅽ뙣 ??洹쇰낯 ?닿껐 ?꾨떂
 
-### D014: 파일 카테고리별 검증 전략 (file_validator 3분류)
-- **결정**: 10개 확장자를 3개 카테고리(Excel/Text/Columnar)로 분류하여 각각 다른 크기 제한·검증 전략 적용. PDF/HWP는 프로젝트 범위 외로 거부
-- **이유**:
-  - Excel(.xlsx/.xls/.xlsb): 시트당 104만 행 물리 제한 → 100MB 충분. 각각 openpyxl/xlrd/pyxlsb로 손상 검증
-  - Text(.csv/.tsv/.txt/.dat): 크기 제한 없는 포맷, 인코딩 다양(UTF-8/CP949/latin-1) → 800MB + charset_normalizer 자동 감지 + ascii→latin-1 폴백
-  - Columnar(.parquet): 압축 효율 높아 1GB 허용. pyarrow 메타데이터만 읽어 검증
-  - PDF/HWP: 비정형 문서 데이터 추출은 별도 프로젝트 범위 (CONSTRAINTS.md 참고)
-- **구조**: `file_categories.py`(카테고리 정의) + `integrity_checkers.py`(확장자별 열기 검증) + `file_validator.py`(퍼사드) 3파일 분리 (SRP)
-- **설정**: `settings.py`의 `allowed_extensions`/`max_file_size_mb`는 deprecated. 카테고리별 제한은 `file_categories.py` 상수로 관리 (파일 포맷 물리적 특성이므로 사용자 설정이 아님)
+### D015: ?뚯씪 ?쎄린 4-由щ뜑 遺꾨━ + read_only=False 寃곗젙
+- **寃곗젙**: pre-plan???⑥씪 `excel_reader.py`(WorkbookInfo) ??4媛?由щ뜑 + 1媛??쇱궗??+ 1媛?紐⑤뜽濡??뺤옣. xlsx??`read_only=False`濡?蹂묓빀? 泥섎━ ?곗꽑
+- **?댁쑀**:
+  - `read_only=True`? `merged_cells.ranges`??openpyxl?먯꽌 ?묐┰ 遺덇?. ERP ?묒???蹂묓빀?? 留ㅼ슦 ?뷀븿
+  - xlsx/xls/xlsb/csv/tsv/txt/dat/parquet 10媛??뺤옣?먭? 紐⑤몢 ?ㅻⅨ ?쇱씠釉뚮윭由?텮PI ?ъ슜 ???⑥씪 ?뚯씪濡?遺덇? (SRP ?꾨컲, 100以?珥덇낵)
+  - DataSynth CSV(319MB)媛 硫붿씤 ?곗씠?곗씤??openpyxl 寃쎈줈瑜??硫???????CSV fast path ?꾩닔
+  - CSV/Parquet? "?쒗듃" 媛쒕뀗???놁쑝誘濡?WorkbookInfo ????듯빀 `ReadResult` ????꾩슂
+- **援ъ“**: `models.py`(ReadResult) + `excel_reader.py`(xlsx/xls/xlsb) + `text_reader.py`(csv/tsv) + `parquet_reader.py` + `reader_api.py`(?쇱궗??
+- **硫붾え由??덉쟾?μ튂**: file_validator??100MB ?쒗븳??read_only=False??硫붾え由??꾪뿕???곸뇙 (16GB RAM)
 
-### D016: UX 1단계 — 데이터 수집 투명성 (Ingest v2)
-- **UX 단계 체계**: UX 1단계(수집 투명성) → UX 2단계(룰 세팅+파생변수) → UX 3단계(전처리+EDA). 상세: [ux-flow.md](pre-plan/ux-flow.md)
-- **정의**: 사용자가 데이터를 넣으면 AI가 헤더/컬럼을 자동 지정하고, 애매한 부분은 사용자에게 위임하며, 판단 근거(신뢰도, 매칭 방식)를 투명하게 노출하는 UX 모델
-- **결정**: 헤더 탐지를 구조적 신호 기반으로 전환, fuzzy 매핑에 타입 검증 추가, 매핑 판단 근거를 ReviewItem으로 구조화
-- **UX 원칙**:
-  - **80/20 자동화**: 확신 높은 80%는 자동 처리(action="auto"), 나머지 20%는 사용자 검토(action="review")
-  - **판단 투명성 확보**: 모든 매핑에 reason(판단 근거) + confidence(신뢰도) + source_type/target_type 노출
-  - **3-tier 시각 피드백**: 확정(초록) / 추천+확인 필요(노랑) / 차단됨(빨강)
-- **구현 내용**:
-  - A1. 구조적 헤더 탐지 — 키워드 없어도 데이터 구조(타입다양성/고유값/null밀도)로 헤더 판별
-  - B1. 타입 호환성 검증 — fuzzy 후보의 소스↔스키마 타입 비교, 비호환 차단
-  - B3. Null 3단계 분기 — 유령 컬럼 조용히 분리, 오매핑 의심 명시 경고
-  - C. dc_indicator 표준 컬럼 등록
-  - D. ReviewItem 모델 — action/confidence/reason/source_type/target_type 구조
-  - E. ascii→latin-1 인코딩 폴백 — 대용량 CSV 오탐 근본 해결
-- **결과**: 5종 실데이터셋 전체 올그린 (bpi2019 527MB 1.6M행 포함), 197 tests passed
-- **Phase 1c 연계**: ReviewItem → Streamlit 매핑 확인 UI의 데이터 소스로 직접 사용
+### D018: ?댁긽移??뱀씠移??댁쨷 ?먯? 泥닿퀎
+- **寃곗젙**: ?댁긽移?Outlier, ?쇰꺼 ?덈뒗 ?곗씠????Classification(XGBoost ??, ?뱀씠移?Novelty, ?뺤긽留??숈뒿)??VAE+IF ?숈긽釉붾줈 ?댁쨷 ?먯?
+- **?댁쑀**: 吏?꾪븰?듭? "?대? 蹂??⑦꽩"留??먯?. VAE??"?뺤긽 遺꾪룷 諛??대㈃ 誘몄???遺?뺣룄 ?먯? 媛??(zero-day fraud detection)
+- **??븷 遺꾨━**: XGBoost??DataSynth 踰ㅼ튂留덊겕 + ?꾩씠?숈뒿 蹂댁“ ?먯닔, VAE+IF???ㅼ쟾 硫붿씤 ?먯? ?붿쭊
 
-### D017: ascii→latin-1 인코딩 폴백
-- **결정**: `text_reader._detect_encoding()`에서 charset_normalizer가 "ascii"로 감지하면 "latin-1"으로 폴백
-- **이유**: charset_normalizer는 64KB 샘플 기반. bpi2019(527MB, latin-1)의 첫 특수문자(0x96)가 249KB 지점 → 샘플 범위 밖 → ascii 오탐 → 읽기 실패
-- **근거**: ascii는 latin-1의 진부분집합(0x00~0x7F). latin-1은 0x00~0xFF 전체 매핑이므로 어떤 바이트든 에러 없이 읽힘. 순수 ascii 파일을 latin-1로 읽어도 결과 동일 → 부작용 없음
-- **대안 검토**: 샘플 크기 확대(256KB~1MB)는 더 뒤에 특수문자가 나오면 또 실패 → 근본 해결 아님
+### D019: ML 紐⑤뜽 ?꾨낫 ?좎젙
+- **寃곗젙**: 吏?꾪븰??4醫?LR 踰좎씠?ㅻ씪?? RF, XGBoost 硫붿씤, LightGBM) + 鍮꾩???2醫?IF, VAE). KNN/LOF ?쒓굅, DNN 蹂대쪟
+- **?댁쑀**: KNN/LOF??1M嫄댁뿉??O(n짼) ?ㅼ??쇰쭅 臾몄젣. DNN? ?쇱쿂 ?붿??덉뼱留??꾨즺 ?곹깭?먯꽌 ?댁젏 媛먯냼. cv_selector媛 ?꾨낫 4醫??먮룞 鍮꾧탳
+- **洹쇨굅**: 2025 踰ㅼ튂留덊겕?먯꽌 ?뚯씠釉??곗씠?곕뒗 XGBoost媛 Transformer蹂대떎 ?덉젙???곗쐞
 
-### D015: 파일 읽기 4-리더 분리 + read_only=False 결정
-- **결정**: pre-plan의 단일 `excel_reader.py`(WorkbookInfo) → 4개 리더 + 1개 퍼사드 + 1개 모델로 확장. xlsx는 `read_only=False`로 병합셀 처리 우선
-- **이유**:
-  - `read_only=True`와 `merged_cells.ranges`는 openpyxl에서 양립 불가. ERP 엑셀의 병합셀은 매우 흔함
-  - xlsx/xls/xlsb/csv/tsv/txt/dat/parquet 10개 확장자가 모두 다른 라이브러리·API 사용 → 단일 파일로 불가 (SRP 위반, 100줄 초과)
-  - DataSynth CSV(319MB)가 메인 데이터인데 openpyxl 경로를 타면 안 됨 → CSV fast path 필수
-  - CSV/Parquet은 "시트" 개념이 없으므로 WorkbookInfo 대신 통합 `ReadResult` 타입 필요
-- **구조**: `models.py`(ReadResult) + `excel_reader.py`(xlsx/xls/xlsb) + `text_reader.py`(csv/tsv) + `parquet_reader.py` + `reader_api.py`(퍼사드)
-- **메모리 안전장치**: file_validator의 100MB 제한이 read_only=False의 메모리 위험을 상쇄 (16GB RAM)
+### D020: VAE ?꾪궎?띿쿂 ??Basic FC + Phase 3 BiLSTM+Attention 援먯껜
+- **寃곗젙**: Phase 2??Basic FC VAE(50??2????2??0) + IF ?숈긽釉? Phase 3?먯꽌 vae_model.py瑜?BiLSTM+Attention?쇰줈 援먯껜 ?ㅽ뿕
+- **?댁쑀**: (1) ?뚯씠?꾨씪???명솚????2D ?좎?, 3D 蹂?섏? vae_wrapper ?대? 罹≪뒓??(2) ?뚭퀎 ?꾪몴??媛쒕퀎 ?ш굔(Discrete Events) ???쒓컙 ?쇱쿂???대? 異붿텧??(3) IF+VAE ?숈긽釉??쒕꼫吏濡?異⑸텇
+- **援먯껜 ?꾨왂**: vae_wrapper.py ?몃? ?명꽣?섏씠??sklearn 2D)???좎?, ?대?留?援먯껜. ?섑띁 ?⑦꽩???듭떖 媛移?
+### D021: ?곗씠??遺덇퇏??泥섎━ ??紐⑤뜽 臾닿? 4?④퀎 ?꾨왂
+- **寃곗젙**: (1) ?뚭퀬由ъ쬁 ?덈꺼(scale_pos_weight/class_weight ?먮룞 留ㅽ븨) 1?쒖쐞 (2) ?됯? 吏??PR-AUC/F2 (3) SMOTE-ENN ?좏깮??(4) Threshold Moving
+- **?댁쑀**: ?뚭퀬由ъ쬁 ?섏? 議곗젙???곗씠???섏?(SMOTE)蹂대떎 ?덉젙??(ICML 2025). SMOTE??train set?먮쭔 ?곸슜 ?꾩닔 (data leakage 諛⑹?)
+- **紐⑤뜽蹂?留ㅽ븨**: XGBClassifier?뭩cale_pos_weight, RandomForest?뭖lass_weight="balanced", LGBMClassifier?뭝s_unbalance=True
 
-### D018: 이상치/특이치 이중 탐지 체계
-- **결정**: 이상치(Outlier, 라벨 있는 데이터)는 Classification(XGBoost 등), 특이치(Novelty, 정상만 학습)는 VAE+IF 앙상블로 이중 탐지
-- **이유**: 지도학습은 "이미 본 패턴"만 탐지. VAE는 "정상 분포 밖"이면 미지의 부정도 탐지 가능 (zero-day fraud detection)
-- **역할 분리**: XGBoost는 DataSynth 벤치마크 + 전이학습 보조 점수, VAE+IF는 실전 메인 탐지 엔진
+### D022: ?깅뒫 ?됯? 吏??泥닿퀎
+- **寃곗젙**: 1李?AUPRC+F2-score, 2李?MCC+DR@FAR=5%, 3李?ROC-AUC(caveat 紐낆떆), 蹂닿퀬??Precision/Recall/F1
+- **?댁쑀**: 洹밸떒??遺덇퇏??<1%)?먯꽌 Accuracy/ROC-AUC 臾댁쓽誘? F2??Recall 2諛?媛以?遺???볦튂??鍮꾩슜 > ?ㅽ깘 鍮꾩슜). DR@FAR=5%??媛먯궗?몄뿉寃?媛??吏곴???- **UI ?붽뎄**: ??쒕낫?쒖뿉??媛?吏?쒕? 鍮꾩쟾臾멸? 移쒗솕?곸쑝濡?tooltip ?ㅻ챸
+- **PHASE1 ?곸슜 二쇱쓽**: ??吏??泥닿퀎??紐⑤뜽 ?깅뒫 鍮꾧탳? 媛쒕컻 寃利앹슜?대떎. PHASE1 ?댁쁺 寃곌낵??理쒖쥌 遺??遺꾨쪟媛 ?꾨땲???꾨낫 紐⑥쭛?④낵 case priority?대?濡? DataSynth `is_fraud` / `is_anomaly` 湲곗? precision/recall留뚯쑝濡??깃났쨌?ㅽ뙣瑜??먮떒?섏? ?딅뒗?? PHASE1?먮뒗 `rule_truth`, review population coverage, macro finding coverage, exception rate瑜??④퍡 ?ъ슜?쒕떎.
 
-### D019: ML 모델 후보 선정
-- **결정**: 지도학습 4종(LR 베이스라인, RF, XGBoost 메인, LightGBM) + 비지도 2종(IF, VAE). KNN/LOF 제거, DNN 보류
-- **이유**: KNN/LOF는 1M건에서 O(n²) 스케일링 문제. DNN은 피처 엔지니어링 완료 상태에서 이점 감소. cv_selector가 후보 4종 자동 비교
-- **근거**: 2025 벤치마크에서 테이블 데이터는 XGBoost가 Transformer보다 안정적 우위
+### D023: ?쇰꺼留??꾨왂 ???먮룞 ?숈뒿 紐⑤뱶 ?꾪솚
+- **寃곗젙**: label_strategy.py?먯꽌 ?묒꽦 ??0嫄?AND ??%?대㈃ 吏?꾪븰?? 誘몃떖 ???먮룞?쇰줈 鍮꾩???VAE+IF) ?꾪솚
+- **?댁쑀**: StratifiedKFold 5-fold 湲곗? 媛?fold 理쒖냼 ?묒꽦 10嫄??꾩슂. DataSynth??2%(~21K嫄?濡?異⑸텇?섏?留??ㅻТ ?곗씠?곕뒗 遺議깊븷 ???덉쓬
+- **?꾩씠 ?숈뒿**: DataSynth濡??숈뒿??XGBoost瑜??ㅻТ ?곗씠?곗뿉 ?꾩씠 ?곸슜 (蹂댁“ ?먯닔). Phase 3?먯꽌 媛먯궗???쇰뱶諛?猷⑦봽濡??ы븰??
+### D024: score_aggregator ??L1/L2/L3/L4 rule-family aggregation
+- **寃곗젙**: PHASE1 湲곕낯 row-level ?먯닔??L1/L2/L3/L4 rule family蹂?max score瑜?留뚮뱺 ??`RULE_LEVEL_WEIGHTS`濡??⑹궛?쒕떎.
+- **?꾩옱 湲곗?**: `L1 0.40`, `L2 0.25`, `L3 0.20`, `L4 0.15`.
+- **?명솚??*: `layer_a`, `layer_b`, `layer_c`, `benford` track name? detector ?ㅽ뻾/????명솚?⑹쑝濡??좎??쒕떎. 紐낆떆?곸쑝濡?legacy weight dict瑜??섍릿 寃쎌슦?먮쭔 legacy track weighted sum???ъ슜?쒕떎.
+- **?뺤옣**: ML ?먮뒗 TrendBreak媛 遺숇뒗 寃쎌슦 `RULE_LEVEL_WEIGHTS_WITH_ML`, `RULE_LEVEL_WEIGHTS_WITH_TRENDBREAK`濡?L1~L4 異뺤쓣 ?좎???梨?extra track??異붽??쒕떎.
+- **?꾪뿕?깃툒**: threshold??`>`媛 ?꾨땲??`>=`濡??곸슜?쒕떎.
+- **?뺤콉 floor**: 移섎챸 ?듭젣 ?꾨컲? 蹂댁“ 猷?遺議??뚮Ц??Low/Medium??癒몃Ъ吏 ?딅룄濡?row `risk_floor_reasons`? case `priority_floor_reasons`瑜??④린怨??밴꺽?쒕떎.
+- **L3-12 蹂닿컯**: `L3-12`??`access_scope_review` weak/booster濡?L3 family max???쏀븯寃?諛섏쁺?쒕떎. ?⑤룆?쇰줈 policy high floor瑜?留뚮뱾吏 ?딆쑝硫? `work_scope_combo_score`?먯꽌 ?낅┰ 蹂닿컯 evidence group 2媛??댁긽?대㈃ Medium, 3媛??댁긽?대㈃ High floor瑜??곸슜?쒕떎. L3-12??review-only ?좏샇?대?濡?`details`/`flagged_rules`?먮뒗 ?뺤젙 ?꾨컲泥섎읆 ?곸옱?섏? ?딄퀬 `review_score_series`/`row_annotations.review_score`濡쒕쭔 ?먯닔泥닿퀎???좎엯?쒕떎.
+- **Percentile Ranking 踰붿쐞**: Percentile Ranking? 紐⑤뜽 ?먯닔泥섎읆 ?ㅼ??쇱씠 ?ㅻⅨ ?몃? score瑜??⑹튌 ?뚯쓽 蹂댁“ ?뺢퇋??媛쒕뀗?대떎. PHASE1 湲곕낯 猷??먯닔??source of truth??`RULE_LEVEL_WEIGHTS`??
 
-### D020: VAE 아키텍처 — Basic FC + Phase 3 BiLSTM+Attention 교체
-- **결정**: Phase 2는 Basic FC VAE(50→32→8→32→50) + IF 앙상블. Phase 3에서 vae_model.py를 BiLSTM+Attention으로 교체 실험
-- **이유**: (1) 파이프라인 호환성 — 2D 유지, 3D 변환은 vae_wrapper 내부 캡슐화 (2) 회계 전표는 개별 사건(Discrete Events) — 시간 피처는 이미 추출됨 (3) IF+VAE 앙상블 시너지로 충분
-- **교체 전략**: vae_wrapper.py 외부 인터페이스(sklearn 2D)는 유지, 내부만 교체. 래퍼 패턴의 핵심 가치
+### D025: PHASE1 confirmed/review 猷?李몄“ 遺꾨━ (2026-04-27)
+- **寃곗젙**: `flagged_rules`??`DetectionResult.details > 0`??confirmed/immediate 猷곕쭔 ?닿퀬, `review_rules`??`details == 0`?댁?留?`row_annotations.review_score` ??annotation score媛 ?덈뒗 review-only ?꾨낫留??대뒗??
+- **?댁쑀**: `flagged_rules`??DB `anomaly_flags`, dashboard, export, LLM narrative?먯꽌 ?뺤젙 ?꾨컲 猷곗쿂???뚮퉬?쒕떎. review ?꾨낫瑜?媛숈? 而щ읆???욎쑝硫?DB?먮뒗 ?녿뒗 ?꾨컲 猷곗씠 由ы룷?몄뿉 ?몄슜?????덈떎.
+- **?먯닔 湲곗?**: row-level `anomaly_score`? PHASE1 case priority??confirmed? review ?꾨낫瑜?紐⑤몢 諛섏쁺?????덈떎. ?ㅻ쭔 ?꾨컲 猷?吏묎퀎? `anomaly_flags` ?곸옱 湲곗?? confirmed `flagged_rules`??
+- **耳?댁뒪 湲곗?**: `RawRuleHitRef.signal_status`濡?`confirmed`? `review_candidate`瑜?援щ텇?쒕떎.
 
-### D021: 데이터 불균형 처리 — 모델 무관 4단계 전략
-- **결정**: (1) 알고리즘 레벨(scale_pos_weight/class_weight 자동 매핑) 1순위 (2) 평가 지표 PR-AUC/F2 (3) SMOTE-ENN 선택적 (4) Threshold Moving
-- **이유**: 알고리즘 수준 조정이 데이터 수준(SMOTE)보다 안정적 (ICML 2025). SMOTE는 train set에만 적용 필수 (data leakage 방지)
-- **모델별 매핑**: XGBClassifier→scale_pos_weight, RandomForest→class_weight="balanced", LGBMClassifier→is_unbalance=True
+### D026: preprocessing/detection ?⑤갑???섏〈
+- **寃곗젙**: ?붾젆?좊━ 遺꾨━ + detection ??preprocessing ?⑤갑??import
+- **?댁쑀**: ?꾩쿂由щ뒗 "?곗씠?곕? 紐⑤뜽??癒밴린 醫뗪쾶 ?붾━", ?먯???"?붾━瑜?癒밴퀬 ?먮떒". 寃고빀??理쒖냼?? ?쒗솚 ?섏〈 ?놁쓬
+- **援ы쁽 ?쒖꽌**: 1?④퀎 detection 猷?24媛? ??2?④퀎 preprocessing(11媛?紐⑤뱢) ??3?④퀎 detection ML
 
-### D022: 성능 평가 지표 체계
-- **결정**: 1차 AUPRC+F2-score, 2차 MCC+DR@FAR=5%, 3차 ROC-AUC(caveat 명시), 보고용 Precision/Recall/F1
-- **이유**: 극단적 불균형(<1%)에서 Accuracy/ROC-AUC 무의미. F2는 Recall 2배 가중(부정 놓치는 비용 > 오탐 비용). DR@FAR=5%는 감사인에게 가장 직관적
-- **UI 요구**: 대시보드에서 각 지표를 비전문가 친화적으로 tooltip 설명
-- **PHASE1 적용 주의**: 이 지표 체계는 모델 성능 비교와 개발 검증용이다. PHASE1 운영 결과는 최종 부정 분류가 아니라 후보 모집단과 case priority이므로, DataSynth `is_fraud` / `is_anomaly` 기준 precision/recall만으로 성공·실패를 판단하지 않는다. PHASE1에는 `rule_truth`, review population coverage, macro finding coverage, exception rate를 함께 사용한다.
+### D026: VAE ?숈뒿 ?곗씠????寃利??ㅼ쟾 紐⑤뱶 遺꾨━
+- **寃곗젙**: 寃利?紐⑤뱶(DataSynth)??is_fraud=False留??꾪꽣留? ?ㅼ쟾 紐⑤뱶(?쇰꺼 ?놁쓬)???꾩껜 ?곗씠???ъ엯
+- **?댁쑀**: ?ㅼ쟾?먯꽌 ?뺤긽留?遺꾨━ 遺덇?. ?댁긽移?<2%?대㈃ VAE ?좎옱 怨듦컙? ?뺤긽 ?꾩＜濡??뺤꽦 (Contamination Tolerance)
 
-### D023: 라벨링 전략 — 자동 학습 모드 전환
-- **결정**: label_strategy.py에서 양성 ≥50건 AND ≥1%이면 지도학습, 미달 시 자동으로 비지도(VAE+IF) 전환
-- **이유**: StratifiedKFold 5-fold 기준 각 fold 최소 양성 10건 필요. DataSynth는 2%(~21K건)로 충분하지만 실무 데이터는 부족할 수 있음
-- **전이 학습**: DataSynth로 학습한 XGBoost를 실무 데이터에 전이 적용 (보조 점수). Phase 3에서 감사인 피드백 루프로 재학습
+### D027: ML ?뚯뒪????Hold-out Fraud Type + 蹂댁셿 ?뚯뒪??- **寃곗젙**: 8媛?遺???좏삎 以?6媛??덈젴, 2媛?suspense_account_abuse, expense_capitalization)??誘몄? ?좏삎?쇰줈 ?뚯뒪?? 蹂댁셿: Feature Perturbation + t-SNE/UMAP ?좎옱 怨듦컙 ?쒓컖??- **?댁쑀**: VAE??zero-day ?먯? ?λ젰 ?ㅼ쬆. XGBoost??誘몄? ?좏삎 紐??↔퀬 VAE???〓뒗 寃껋쓣 蹂댁뿬二쇰㈃ ?ы듃?대━??李⑤퀎??
+### D028: DataSynth ?꾨줈?몄뒪 諛곗젙 ?꾩떎????遺??湲곕컲 SoD
+- **寃곗젙**: shuffle 湲곕컲 ?쒕뜡 諛곗젙 ??persona蹂?遺??湲곕컲 諛곗젙?쇰줈 援먯껜
+  - Junior: ?⑥씪 ?꾨줈?몄뒪 100% ?꾨떞 (Maker only, 寃몄쭅 遺덇?)
+  - Senior+: compatible_pairs 湲곕컲 ?꾩떎??寃몄쭅 ?덉슜 (25%)
+  - 7%: anomalous_pairs 湲곕컲 鍮꾪쁽?ㅼ쟻 寃몄쭅 (媛먯궗 ?먯? ???
+  - AutomatedSystem: ?꾩껜 ?꾨줈?몄뒪 (?쒗븳 ?놁쓬)
+- **?댁쑀**: 湲곗〈 shuffle()濡?H2R+O2C 媛숈? ?꾩떎?먯꽌 遺덇??ν븳 議고빀???쇱긽?곸쑝濡?諛쒖깮. ?ㅻТ?먯꽌 Junior??AP?꾨떞/AR?꾨떞?쇰줈 ?꾧꺽 遺꾨━?섎ŉ, 鍮꾪쁽?ㅼ쟻 寃몄쭅 ?먯껜媛 媛먯궗 ?곷컻 ???- **?뱀씤?쒕룄 蹂寃?*: 湲곗〈 [1M~100M] ??[10M~50B] KRW (?쒖“???꾧껐洹쒖젙 諛섏쁺)
+- **?몃젅?대뱶?ㅽ봽**: seed ?ы쁽??breaking change (?꾨줈?몄뒪 諛곗젙 濡쒖쭅 蹂寃쎌쑝濡?湲곗〈 seed 異쒕젰 ?щ씪吏?
+- **洹쇨굅**: generation_principles.md 짠2, FSS 189嫄?遺꾩꽍, ?쒓뎅 以묎껄 ?쒖“???ㅻТ ?쇰뱶諛?
+### D029: ?곗씠??遺꾪븷 ?꾨왂 ??Stratified 60/20/20 + Holdout ?좏삎
+- **寃곗젙**: DataSynth 1.1M嫄댁쓣 train 60% / val 20% / test 20%濡?遺꾪븷. `fraud_type` 湲곗? 痢듯솕異붿텧(StratifiedSplit)
+- **?댁쑀**:
+  - ?묒꽦 2%(~22K嫄? 洹밸떒 遺덇퇏?????⑥닚 ?쒕뜡 遺꾪븷 ???쇰? ?좏삎???뱀젙 ?뗭뿉 ?몄쨷 ?꾪뿕
+  - 8媛?fraud_type蹂?鍮꾩쑉 ?좎?媛 紐⑤뜽 ?됯? ?좊ː?꾩쓽 ?듭떖
+  - 60/20/20? 1.1M嫄?洹쒕え?먯꽌 val/test 媛?~220K嫄댁쑝濡??듦퀎???덉젙??異⑸텇
+- **Holdout ?뺤콉**:
+  - test set? 理쒖큹 遺꾪븷 ??**?숆껐** (紐⑤뜽 媛쒕컻 以??덈? ?ъ슜 湲덉?)
+  - val set?쇰줈 ?섏씠?쇳뙆?쇰????쒕떇 + 紐⑤뜽 ?좏깮
+  - test set? 理쒖쥌 蹂닿퀬??1???됯?留??덉슜
+- **Hold-out Fraud Type** (D027 ?곌퀎):
+  - 8媛??좏삎 以?suspense_account_abuse(5%), expense_capitalization(5%)? train?먯꽌 ?쒖쇅
+  - test set?먯꽌 ??2媛??좏삎??VAE ?먯??⑤줈 zero-day ?λ젰 寃利?- **援ы쁽**: `sklearn.model_selection.train_test_split` 2??泥댁씠??(60??0/20), `stratify=fraud_type`
+- **?ㅻТ ?곗씠??*: ?쇰꺼 ?놁쓬 ??label_strategy.py媛 ?먮룞?쇰줈 鍮꾩????꾪솚 (D023). 遺꾪븷 遺덊븘?? ?꾩껜 ?곗씠?곕줈 VAE+IF ?숈뒿
 
-### D024: score_aggregator — L1/L2/L3/L4 rule-family aggregation
-- **결정**: PHASE1 기본 row-level 점수는 L1/L2/L3/L4 rule family별 max score를 만든 뒤 `RULE_LEVEL_WEIGHTS`로 합산한다.
-- **현재 기준**: `L1 0.40`, `L2 0.25`, `L3 0.20`, `L4 0.15`.
-- **호환성**: `layer_a`, `layer_b`, `layer_c`, `benford` track name은 detector 실행/저장 호환용으로 유지한다. 명시적으로 legacy weight dict를 넘긴 경우에만 legacy track weighted sum을 사용한다.
-- **확장**: ML 또는 TrendBreak가 붙는 경우 `RULE_LEVEL_WEIGHTS_WITH_ML`, `RULE_LEVEL_WEIGHTS_WITH_TRENDBREAK`로 L1~L4 축을 유지한 채 extra track을 추가한다.
-- **위험등급**: threshold는 `>`가 아니라 `>=`로 적용한다.
-- **정책 floor**: 치명 통제 위반은 보조 룰 부족 때문에 Low/Medium에 머물지 않도록 row `risk_floor_reasons`와 case `priority_floor_reasons`를 남기고 승격한다.
-- **L3-12 보강**: `L3-12`는 `access_scope_review` weak/booster로 L3 family max에 약하게 반영한다. 단독으로 policy high floor를 만들지 않으며, `work_scope_combo_score`에서 독립 보강 evidence group 2개 이상이면 Medium, 3개 이상이면 High floor를 적용한다.
-- **Percentile Ranking 범위**: Percentile Ranking은 모델 점수처럼 스케일이 다른 외부 score를 합칠 때의 보조 정규화 개념이다. PHASE1 기본 룰 점수의 source of truth는 `RULE_LEVEL_WEIGHTS`다.
+### D030: WU5 ?ㅼ젙 而댄룷?뚰듃 ???ы깘吏 遺꾨━ + 而ㅼ뒪? ?꾨━???뺤콉
+- **寃곗젙**: ?ㅼ젙 蹂寃????ы깘吏 ??`_generate_features`瑜?嫄대꼫?곌퀬 `_run_detection` + `aggregate_scores`留??ㅽ뻾. 而ㅼ뒪? ?꾨━?뗭? ?붿뒪??誘몄???session_state ?꾩슜)
+- **?댁쑀**:
+  - `PipelineResult.data`?먮뒗 ?대? ?뚯깮 ?쇱쿂媛 ?ы븿?섏뼱 ?덉뼱 ?ъ엯????而щ읆 異⑸룎(`_x`, `_y`) 諛쒖깮
+  - `PipelineResult.featured_data`???쇱쿂 ?앹꽦 吏곹썑 ?대┛ DF瑜??ㅻ깄?룻븯???ы깘吏 異쒕컻??蹂댁옣
+  - Docker/?대씪?곕뱶 ?섍꼍?먯꽌 ?뚯씪 ?쒖뒪??Read-only ?먮뒗 ?ㅼ쨷 ?ъ슜??Race Condition 諛⑹?
+- **二쇱슂 ?ㅺ퀎**:
+  - `AuditPipeline.redetect(df, weights, thresholds)` 怨듦컻 硫붿꽌??異붽?
+  - "?곸슜" 踰꾪듉 ?⑦꽩 ??留??щ씪?대뜑 蹂寃쎈쭏???ъ떎??????쇨큵 ?ㅽ뻾?쇰줈 ?⑥쑉??  - 鍮꾪솢??猷곗? `details` 0 留덉뒪??+ `flagged_rules` 臾몄옄???뺢퇋??移섑솚 2?④퀎 泥섎━ (`deepcopy`濡??먮낯 蹂댄샇)
+  - 媛以묒튂 ?⒱돖1.0?대㈃ ?곸슜 踰꾪듉 `disabled=True` ???섎せ??score ?먯쿇 李⑤떒
+  - `aggregate_scores`, `classify_risk_level`, `_apply_topside_escalation`??`settings`/`thresholds` ?좏깮???뚮씪誘명꽣 異붽? (湲곗〈 ?명솚)
+- **援ы쁽 ?뚯씪**: `_redetect.py`, `preset_selector.py`, `threshold_sidebar.py`, `rule_panel.py`, `pipeline.py`, `score_aggregator.py`
+- **?몃젅?대뱶?ㅽ봽**: `featured_data` ?ㅻ깄?룹쑝濡?硫붾え由??ъ슜??~2諛?利앷? (?洹쒕え ?곗씠?곗뿉??怨좊젮 ?꾩슂)
 
-### D025: PHASE1 confirmed/review 룰 참조 분리 (2026-04-27)
-- **결정**: `flagged_rules`는 `DetectionResult.details > 0`인 confirmed/immediate 룰만 담고, `review_rules`는 `details == 0`이지만 `row_annotations.review_score` 등 annotation score가 있는 review-only 후보만 담는다.
-- **이유**: `flagged_rules`는 DB `anomaly_flags`, dashboard, export, LLM narrative에서 확정 위반 룰처럼 소비된다. review 후보를 같은 컬럼에 섞으면 DB에는 없는 위반 룰이 리포트에 인용될 수 있다.
-- **점수 기준**: row-level `anomaly_score`와 PHASE1 case priority는 confirmed와 review 후보를 모두 반영할 수 있다. 다만 위반 룰 집계와 `anomaly_flags` 적재 기준은 confirmed `flagged_rules`다.
-- **케이스 기준**: `RawRuleHitRef.signal_status`로 `confirmed`와 `review_candidate`를 구분한다.
+### D032: BiLSTM + Attention ?쒗???먯? 異붽? (Phase 2b)
+- **寃곗젙**: Phase 2b??BiLSTM + Attention ?쒗???먯?湲?異붽?. 湲곗〈 ???⑥쐞(row-level) ?먯????쒓퀎瑜??ъ슜???쒓컙 ?쒗??而⑦뀓?ㅽ듃濡?蹂댁셿
+- **?쒗??援ъ꽦 ?꾨왂**: `created_by` 湲곗? 洹몃９ ??`posting_date` ?뺣젹 ??seq_len=16 ?щ씪?대뵫 ?덈룄??stride=1). 3嫄?誘몃쭔 ?ъ슜?먮뒗 ?쒕줈 ?⑤뵫 + attention 留덉뒪??- **?꾪궎?띿쿂**: BiLSTM(hidden=64, layers=1, bidirectional) ??Additive Attention ??FC(128??4??). VRAM ~100MB (batch=256)
+- **?댁쑀**:
+  - ISA 240 "寃쎌쁺吏?override" ??遺?뺤? ?ъ슜??以묒떖 諛섎났 ?⑦꽩. ???⑥쐞 紐⑤뜽? ???쒓컙???섏〈??誘명룷李?  - ?뚭퀎 ?꾪몴???낅┰ ?됱씠吏留? 媛숈? ?ъ슜?먯쓽 ?곗냽 ?낅젰?먯꽌 ?쒗???⑦꽩(?먯쭊??湲덉븸 利앷?, 諛섎났???섍린 ?낅젰 ?? 議댁옱
+- **sklearn ?듯빀**: `BiLSTMDetector(BaseEstimator)` ?섑띁媛 ?몃? 2D API ?좎?, ?대??먯꽌 `sequence_builder`濡?3D 蹂??- **洹쇨굅**: vae_wrapper.py ?⑦꽩 ?ъ궗?? RTX 3070 Ti 8GB?먯꽌 ~100MB濡??ъ쑀 異⑸텇
+- **D020 蹂寃?*: "Phase 3?먯꽌 BiLSTM+Attention?쇰줈 援먯껜 ?ㅽ뿕" ??Phase 2b?먯꽌 ?낅┰ ?먯?湲곕줈 利됱떆 援ы쁽
 
-### D026: preprocessing/detection 단방향 의존
-- **결정**: 디렉토리 분리 + detection → preprocessing 단방향 import
-- **이유**: 전처리는 "데이터를 모델이 먹기 좋게 요리", 탐지는 "요리를 먹고 판단". 결합도 최소화, 순환 의존 없음
-- **구현 순서**: 1단계 detection 룰(24개) → 2단계 preprocessing(11개 모듈) → 3단계 detection ML
+### D033: FT-Transformer Tabular ?먯? 異붽? (Phase 2b)
+- **寃곗젙**: Phase 2b??FT-Transformer(Feature Tokenizer + Transformer) 異붽?. 42李⑥썝 ?뺥삎 ?곗씠?곗쓽 ?쇱쿂 媛??곹샇?묒슜??self-attention?쇰줈 ?숈뒿
+- **紐⑤뜽 ?좏깮**: TabTransformer(踰붿＜?뺣쭔 attention) / TabNet(踰ㅼ튂留덊겕 ?댁꽭) ???FT-Transformer 梨꾪깮
+- **?꾪궎?띿쿂**: 42 features ??Feature Tokenizer(媛?64-dim embedding) + [CLS] token ??Transformer Encoder(2 layers, 4 heads, dim=64, ff=128) ??FC(64??). VRAM ~300MB (batch=256)
+- **?댁쑀**:
+  - 猷?寃곌낵 媛?議고빀 ?⑦꽩(?? weekend AND manual AND period_end AND high_amount)??attention???먮룞 ?숈뒿 ??Top-side 議고빀 ?먯닔???숈뒿 踰꾩쟾
+  - Gorishniy et al. (2021) "Revisiting Deep Learning Models for Tabular Data" ??FT-Transformer媛 medium-size tabular?먯꽌 XGBoost? 寃쎌웳??  - ?대뼡 ?곗씠?곌? ?ъ? 紐⑤Ⅴ誘濡? tree 紐⑤뜽怨??ㅻⅨ 愿??attention 湲곕컲)???먯?湲??뺣낫 媛移?- **D019 蹂寃?*: "DNN 蹂대쪟" ??FT-Transformer濡?援ъ껜?뷀븯??Phase 2b???ы븿
+- **sklearn ?듯빀**: `FTTransformerDetector(BaseEstimator)` ?섑띁, vae_wrapper.py ?⑦꽩 ?숈씪
 
-### D026: VAE 학습 데이터 — 검증/실전 모드 분리
-- **결정**: 검증 모드(DataSynth)는 is_fraud=False만 필터링, 실전 모드(라벨 없음)는 전체 데이터 투입
-- **이유**: 실전에서 정상만 분리 불가. 이상치 <2%이면 VAE 잠재 공간은 정상 위주로 형성 (Contamination Tolerance)
+### D034: Stacking Meta-Learner濡?媛以묓빀 ?泥?(Phase 2b)
+- **寃곗젙**: 湲곗〈 怨좎젙 媛以묓빀(D024: rule 0.20 + supervised 0.25 + vae 0.20 + benford 0.15 + duplicate 0.20)??Stacking meta-learner(Logistic Regression, L2)濡??泥?- **援ъ“**:
+  - Level 0: 6媛?base model (24媛?猷? XGBoost, VAE, IF, BiLSTM, FT-Transformer)
+  - Level 1: LR(Ridge) meta-learner ??6媛??뺣쪧媛??낅젰 ??理쒖쥌 anomaly_score 異쒕젰
+- **?댁쑀**:
+  - 湲곗〈 媛以묒튂 5媛쒖뿉 洹쇨굅 ?놁쓬 (D013, D024 紐⑤몢 "?ㅼ륫 ???쒕떇 ?덉젙"?대씪 紐낆떆)
+  - LR 怨꾩닔媛 怨??곗씠??湲곕컲 媛以묒튂 ??媛?紐⑤뜽???ㅼ젣 湲곗뿬?꾨? ?먮룞 ?숈뒿
+  - ?낅젰 6媛쒖뿉 蹂듭옟??meta-learner(XGBoost ????怨쇱쟻??+ self-amplification ?꾪뿕
+- **Leakage 諛⑹?**: 5-fold out-of-fold prediction ?꾨줈?좎퐳. base model? train folds濡쒕쭔 ?숈뒿, OOF prediction?쇰줈 meta-learner ?숈뒿 ?곗씠???앹꽦
+- **Fallback**: stacking ?숈뒿 遺덇? ???쇰꺼 遺議? 湲곗〈 Percentile Ranking 媛以묓빀?쇰줈 ?대갚
 
-### D027: ML 테스트 — Hold-out Fraud Type + 보완 테스트
-- **결정**: 8개 부정 유형 중 6개 훈련, 2개(suspense_account_abuse, expense_capitalization)는 미지 유형으로 테스트. 보완: Feature Perturbation + t-SNE/UMAP 잠재 공간 시각화
-- **이유**: VAE의 zero-day 탐지 능력 실증. XGBoost는 미지 유형 못 잡고 VAE는 잡는 것을 보여주면 포트폴리오 차별화
+### D031: WU6 EDA ??+ 硫붿씤 ???듯빀 ??Lazy Loading + ?꾪꽣 ?낅┰
+- **寃곗젙**: EDA ?꾨줈?뚯씪???낅줈?????숆린 怨꾩궛???꾨땶, EDA ??理쒖큹 ?뚮뜑 ??Lazy Loading?쇰줈 怨꾩궛. ?ъ씠?쒕컮 ?꾪꽣? 臾닿??섍쾶 ?낅줈???먮낯 ?꾩껜 ?곗씠??湲곗??쇰줈 ?꾨줈?뚯씪留?- **?댁쑀**:
+  - 100留?嫄??곗씠?곗뿉??`profile_dataframe()` ?숆린 ?몄텧 ???낅줈???湲??쒓컙??2諛??댁긽 泥닿컧 利앷?
+  - EDA???먯떆 ?곗씠?곗쓽 援ъ“???덉쭏 吏꾨떒 紐⑹쟻. ?꾪꽣留곷맂 遺遺꾩쭛?⑹쓽 ?꾨줈?뚯씪? 媛먯궗 ?섎?媛 ?놁쓬
+  - ?ы깘吏(?꾧퀎媛?媛以묒튂 蹂寃? ??EDA ?ш퀎??遺덊븘?????곗씠???먯껜媛 蹂?섏? ?딆쑝誘濡?- **罹먯떛 ?꾨왂**: `@st.cache_data`???ㅻ? `(upload_key, total_rows, total_columns)` ?ㅼ뭡?쇰줈 ?쒗븳. EDAProfile 媛앹껜瑜?吏곸젒 ?댁떆?섎㈃ UnhashableType ?꾪뿕
+- **?ъ씠?쒕컮 UX**: ?낅줈?????뚯씪紐??됱닔 1以??붿빟留??쒖떆, ?꾪꽣? ?ㅼ젙? 媛곴컖 `st.expander`濡??묒뼱 13?몄튂 ?명듃遺??ㅽ겕濡?理쒖냼??- **???쒖꽌**: EDA ??Summary ??Benford ??Explorer (?곗씠???덉쭏 ?뺤씤??遺꾩꽍蹂대떎 ?좏뻾)
+- **援ы쁽 ?뚯씪**: `app.py`(?좉퇋), `tab_eda.py`(?좉퇋), `eda_charts.py`(?좉퇋), `_state.py`(?섏젙), `data_uploader.py`(?섏젙)
 
-### D028: DataSynth 프로세스 배정 현실화 — 부서 기반 SoD
-- **결정**: shuffle 기반 랜덤 배정 → persona별 부서 기반 배정으로 교체
-  - Junior: 단일 프로세스 100% 전담 (Maker only, 겸직 불가)
-  - Senior+: compatible_pairs 기반 현실적 겸직 허용 (25%)
-  - 7%: anomalous_pairs 기반 비현실적 겸직 (감사 탐지 대상)
-  - AutomatedSystem: 전체 프로세스 (제한 없음)
-- **이유**: 기존 shuffle()로 H2R+O2C 같은 현실에서 불가능한 조합이 일상적으로 발생. 실무에서 Junior는 AP전담/AR전담으로 엄격 분리하며, 비현실적 겸직 자체가 감사 적발 대상
-- **승인한도 변경**: 기존 [1M~100M] → [10M~50B] KRW (제조업 전결규정 반영)
-- **트레이드오프**: seed 재현성 breaking change (프로세스 배정 로직 변경으로 기존 seed 출력 달라짐)
-- **근거**: generation_principles.md §2, FSS 189건 분석, 한국 중견 제조업 실무 피드백
+### D036: DataSynth v20.4 ?댁쁺 湲곗? ?뺤젙
+- **寃곗젙**: `data/journal/primary/datasynth/`瑜??꾩옱 ?댁쁺 湲곗?蹂?`v20.4`濡??뺤젙. Phase 1/2/3 湲곕낯 ?곗씠?곕뒗 ??寃쎈줈瑜??곕Ⅸ??
+- **?댁쑀**:
+  - V20: A04/B04/B10 諛?IC CoA ?뺥빀??蹂댁젙
+  - V20.1: MisclassifiedAccount媛 InvalidAccount瑜??ㅼ뿼?쒗궎??鍮껩oA 怨꾩젙 移섑솚 臾몄젣 ?쒓굅
+  - v20.3: `created_by`/`approved_by`? `employees.user_id` 議곗씤 蹂듦뎄
+  - v20.4: `ExceededApprovalLimit`瑜?`approved_by.approval_limit` 湲곗??쇰줈 ?뺤젙
+  - `document_number` 100% 臾몄옄??梨꾩?, approval violation `0`, B04 JE 吏湲됱뙇 蹂듭썝 媛??- **?곸꽭**: [FREEZE_V20.md](../data/journal/primary/datasynth/FREEZE_V20.md)
 
-### D029: 데이터 분할 전략 — Stratified 60/20/20 + Holdout 유형
-- **결정**: DataSynth 1.1M건을 train 60% / val 20% / test 20%로 분할. `fraud_type` 기준 층화추출(StratifiedSplit)
-- **이유**:
-  - 양성 2%(~22K건) 극단 불균형 → 단순 랜덤 분할 시 일부 유형이 특정 셋에 편중 위험
-  - 8개 fraud_type별 비율 유지가 모델 평가 신뢰도의 핵심
-  - 60/20/20은 1.1M건 규모에서 val/test 각 ~220K건으로 통계적 안정성 충분
-- **Holdout 정책**:
-  - test set은 최초 분할 후 **동결** (모델 개발 중 절대 사용 금지)
-  - val set으로 하이퍼파라미터 튜닝 + 모델 선택
-  - test set은 최종 보고용 1회 평가만 허용
-- **Hold-out Fraud Type** (D027 연계):
-  - 8개 유형 중 suspense_account_abuse(5%), expense_capitalization(5%)은 train에서 제외
-  - test set에서 이 2개 유형의 VAE 탐지율로 zero-day 능력 검증
-- **구현**: `sklearn.model_selection.train_test_split` 2회 체이닝 (60→20/20), `stratify=fraud_type`
-- **실무 데이터**: 라벨 없음 → label_strategy.py가 자동으로 비지도 전환 (D023). 분할 불필요, 전체 데이터로 VAE+IF 학습
-
-### D030: WU5 설정 컴포넌트 — 재탐지 분리 + 커스텀 프리셋 정책
-- **결정**: 설정 변경 후 재탐지 시 `_generate_features`를 건너뛰고 `_run_detection` + `aggregate_scores`만 실행. 커스텀 프리셋은 디스크 미저장(session_state 전용)
-- **이유**:
-  - `PipelineResult.data`에는 이미 파생 피처가 포함되어 있어 재입력 시 컬럼 충돌(`_x`, `_y`) 발생
-  - `PipelineResult.featured_data`에 피처 생성 직후 클린 DF를 스냅샷하여 재탐지 출발점 보장
-  - Docker/클라우드 환경에서 파일 시스템 Read-only 또는 다중 사용자 Race Condition 방지
-- **주요 설계**:
-  - `AuditPipeline.redetect(df, weights, thresholds)` 공개 메서드 추가
-  - "적용" 버튼 패턴 — 매 슬라이더 변경마다 재실행 대신 일괄 실행으로 효율화
-  - 비활성 룰은 `details` 0 마스킹 + `flagged_rules` 문자열 정규식 치환 2단계 처리 (`deepcopy`로 원본 보호)
-  - 가중치 합≠1.0이면 적용 버튼 `disabled=True` — 잘못된 score 원천 차단
-  - `aggregate_scores`, `classify_risk_level`, `_apply_topside_escalation`에 `settings`/`thresholds` 선택적 파라미터 추가 (기존 호환)
-- **구현 파일**: `_redetect.py`, `preset_selector.py`, `threshold_sidebar.py`, `rule_panel.py`, `pipeline.py`, `score_aggregator.py`
-- **트레이드오프**: `featured_data` 스냅샷으로 메모리 사용량 ~2배 증가 (대규모 데이터에서 고려 필요)
-
-### D032: BiLSTM + Attention 시퀀스 탐지 추가 (Phase 2b)
-- **결정**: Phase 2b에 BiLSTM + Attention 시퀀스 탐지기 추가. 기존 행 단위(row-level) 탐지의 한계를 사용자-시간 시퀀스 컨텍스트로 보완
-- **시퀀스 구성 전략**: `created_by` 기준 그룹 → `posting_date` 정렬 → seq_len=16 슬라이딩 윈도우(stride=1). 3건 미만 사용자는 제로 패딩 + attention 마스킹
-- **아키텍처**: BiLSTM(hidden=64, layers=1, bidirectional) → Additive Attention → FC(128→64→2). VRAM ~100MB (batch=256)
-- **이유**:
-  - ISA 240 "경영진 override" — 부정은 사용자 중심 반복 패턴. 행 단위 모델은 이 시간적 의존성 미포착
-  - 회계 전표는 독립 행이지만, 같은 사용자의 연속 입력에서 시퀀스 패턴(점진적 금액 증가, 반복적 수기 입력 등) 존재
-- **sklearn 통합**: `BiLSTMDetector(BaseEstimator)` 래퍼가 외부 2D API 유지, 내부에서 `sequence_builder`로 3D 변환
-- **근거**: vae_wrapper.py 패턴 재사용. RTX 3070 Ti 8GB에서 ~100MB로 여유 충분
-- **D020 변경**: "Phase 3에서 BiLSTM+Attention으로 교체 실험" → Phase 2b에서 독립 탐지기로 즉시 구현
-
-### D033: FT-Transformer Tabular 탐지 추가 (Phase 2b)
-- **결정**: Phase 2b에 FT-Transformer(Feature Tokenizer + Transformer) 추가. 42차원 정형 데이터의 피처 간 상호작용을 self-attention으로 학습
-- **모델 선택**: TabTransformer(범주형만 attention) / TabNet(벤치마크 열세) 대신 FT-Transformer 채택
-- **아키텍처**: 42 features → Feature Tokenizer(각 64-dim embedding) + [CLS] token → Transformer Encoder(2 layers, 4 heads, dim=64, ff=128) → FC(64→2). VRAM ~300MB (batch=256)
-- **이유**:
-  - 룰 결과 간 조합 패턴(예: weekend AND manual AND period_end AND high_amount)을 attention이 자동 학습 → Top-side 조합 점수의 학습 버전
-  - Gorishniy et al. (2021) "Revisiting Deep Learning Models for Tabular Data" — FT-Transformer가 medium-size tabular에서 XGBoost와 경쟁적
-  - 어떤 데이터가 올지 모르므로, tree 모델과 다른 관점(attention 기반)의 탐지기 확보 가치
-- **D019 변경**: "DNN 보류" → FT-Transformer로 구체화하여 Phase 2b에 포함
-- **sklearn 통합**: `FTTransformerDetector(BaseEstimator)` 래퍼, vae_wrapper.py 패턴 동일
-
-### D034: Stacking Meta-Learner로 가중합 대체 (Phase 2b)
-- **결정**: 기존 고정 가중합(D024: rule 0.20 + supervised 0.25 + vae 0.20 + benford 0.15 + duplicate 0.20)을 Stacking meta-learner(Logistic Regression, L2)로 대체
-- **구조**:
-  - Level 0: 6개 base model (24개 룰, XGBoost, VAE, IF, BiLSTM, FT-Transformer)
-  - Level 1: LR(Ridge) meta-learner — 6개 확률값 입력 → 최종 anomaly_score 출력
-- **이유**:
-  - 기존 가중치 5개에 근거 없음 (D013, D024 모두 "실측 후 튜닝 예정"이라 명시)
-  - LR 계수가 곧 데이터 기반 가중치 → 각 모델의 실제 기여도를 자동 학습
-  - 입력 6개에 복잡한 meta-learner(XGBoost 등)는 과적합 + self-amplification 위험
-- **Leakage 방지**: 5-fold out-of-fold prediction 프로토콜. base model은 train folds로만 학습, OOF prediction으로 meta-learner 학습 데이터 생성
-- **Fallback**: stacking 학습 불가 시(라벨 부족) 기존 Percentile Ranking 가중합으로 폴백
-
-### D031: WU6 EDA 탭 + 메인 앱 통합 — Lazy Loading + 필터 독립
-- **결정**: EDA 프로파일을 업로드 시 동기 계산이 아닌, EDA 탭 최초 렌더 시 Lazy Loading으로 계산. 사이드바 필터와 무관하게 업로드 원본 전체 데이터 기준으로 프로파일링
-- **이유**:
-  - 100만 건 데이터에서 `profile_dataframe()` 동기 호출 시 업로드 대기 시간이 2배 이상 체감 증가
-  - EDA는 원시 데이터의 구조적 품질 진단 목적. 필터링된 부분집합의 프로파일은 감사 의미가 없음
-  - 재탐지(임계값/가중치 변경) 시 EDA 재계산 불필요 — 데이터 자체가 변하지 않으므로
-- **캐싱 전략**: `@st.cache_data`의 키를 `(upload_key, total_rows, total_columns)` 스칼라로 제한. EDAProfile 객체를 직접 해시하면 UnhashableType 위험
-- **사이드바 UX**: 업로드 후 파일명+행수 1줄 요약만 표시, 필터와 설정은 각각 `st.expander`로 접어 13인치 노트북 스크롤 최소화
-- **탭 순서**: EDA → Summary → Benford → Explorer (데이터 품질 확인이 분석보다 선행)
-- **구현 파일**: `app.py`(신규), `tab_eda.py`(신규), `eda_charts.py`(신규), `_state.py`(수정), `data_uploader.py`(수정)
-
-### D036: DataSynth v20.4 운영 기준 확정
-- **결정**: `data/journal/primary/datasynth/`를 현재 운영 기준본 `v20.4`로 확정. Phase 1/2/3 기본 데이터는 이 경로를 따른다.
-- **이유**:
-  - V20: A04/B04/B10 및 IC CoA 정합성 보정
-  - V20.1: MisclassifiedAccount가 InvalidAccount를 오염시키던 비CoA 계정 치환 문제 제거
-  - v20.3: `created_by`/`approved_by`와 `employees.user_id` 조인 복구
-  - v20.4: `ExceededApprovalLimit`를 `approved_by.approval_limit` 기준으로 정정
-  - `document_number` 100% 문자열 채움, approval violation `0`, B04 JE 지급쌍 복원 가능
-- **상세**: [FREEZE_V20.md](../data/journal/primary/datasynth/FREEZE_V20.md)
-
-### D039: DataSynth v23 운영 기준 승격
-- **결정**: 당시 `data/journal/primary/datasynth/`를 운영 기준본 `v23`로 승격했다. 현재 기준본은 상단의 `v57` 메모를 따른다.
-- **이유**:
-  - `v22_candidate`의 `B04`는 `미탐 0 / 과탐 0`으로 benchmark 정렬이 너무 강했음
-  - `v23`은 `P2P + KZ` duplicate payment pair를 유지하면서도 일부 미탐/과탐을 남겨 test fitting을 완화
-  - `pair lineage`와 `negative control`을 함께 제공해 설명성과 실무 유사성을 확보
-- **운영 수치**:
+### D039: DataSynth v23 ?댁쁺 湲곗? ?밴꺽
+- **寃곗젙**: ?뱀떆 `data/journal/primary/datasynth/`瑜??댁쁺 湲곗?蹂?`v23`濡??밴꺽?덈떎. ?꾩옱 湲곗?蹂몄? ?곷떒??`v57` 硫붾え瑜??곕Ⅸ??
+- **?댁쑀**:
+  - `v22_candidate`??`B04`??`誘명깘 0 / 怨쇳깘 0`?쇰줈 benchmark ?뺣젹???덈Т 媛뺥뻽??  - `v23`? `P2P + KZ` duplicate payment pair瑜??좎??섎㈃?쒕룄 ?쇰? 誘명깘/怨쇳깘???④꺼 test fitting???꾪솕
+  - `pair lineage`? `negative control`???④퍡 ?쒓났???ㅻ챸?깃낵 ?ㅻТ ?좎궗?깆쓣 ?뺣낫
+- **?댁쁺 ?섏튂**:
   - `DuplicatePayment` labeled docs: `33`
-  - `L2-02` 기준 detected docs: `28`
+  - `L2-02` 湲곗? detected docs: `28`
   - false negatives: `5`
   - false positives: `6`
-- **상세**: [FREEZE_V23.md](../data/journal/primary/datasynth/FREEZE_V23.md)
+- **?곸꽭**: [FREEZE_V23.md](../data/journal/primary/datasynth/FREEZE_V23.md)
 
-### D035: type_caster 정규화 규칙 외부화 — cleaning.yaml
-- **결정**: `type_caster.py`에 하드코딩된 통화 기호·null 값·불리언·Excel serial 범위·DC 지시자를 `config/cleaning.yaml`로 분리. 과학적 표기법(2E+11) 감지/복원과 한국 ERP null 표현(`미정`, `해당없음`) 지원 추가
-- **이유**: 새 ERP 포맷 대응 시 코드 변경 없이 YAML만 편집. 기존에 `keywords.yaml`, `schema.yaml`, `audit_rules.yaml` 패턴이 있으므로 동일 구조 채택
-- **구현 파일**: `config/cleaning.yaml`(신규), `config/settings.py`(`get_cleaning_config()` 추가), `src/ingest/type_caster.py`(리팩토링)
+### D035: type_caster ?뺢퇋??洹쒖튃 ?몃?????cleaning.yaml
+- **寃곗젙**: `type_caster.py`???섎뱶肄붾뵫???듯솕 湲고샇쨌null 媛뮻룸텋由ъ뼵쨌Excel serial 踰붿쐞쨌DC 吏?쒖옄瑜?`config/cleaning.yaml`濡?遺꾨━. 怨쇳븰???쒓린踰?2E+11) 媛먯?/蹂듭썝怨??쒓뎅 ERP null ?쒗쁽(`誘몄젙`, `?대떦?놁쓬`) 吏??異붽?
+- **?댁쑀**: ??ERP ?щ㎎ ?????肄붾뱶 蹂寃??놁씠 YAML留??몄쭛. 湲곗〈??`keywords.yaml`, `schema.yaml`, `audit_rules.yaml` ?⑦꽩???덉쑝誘濡??숈씪 援ъ“ 梨꾪깮
+- **援ы쁽 ?뚯씪**: `config/cleaning.yaml`(?좉퇋), `config/settings.py`(`get_cleaning_config()` 異붽?), `src/ingest/type_caster.py`(由ы뙥?좊쭅)
 
-### D037: 모델 드리프트 재학습 정책 (SOC 2 / ISO 27001 대응)
-- **결정**: ML 모델 재학습 트리거를 PSI 기반 자동 감지 + 분기별 주기 재학습으로 이원화
-  - **자동 트리거**: `drift_detector.compute_drift_report()` 의 `max_psi ≥ 0.25` (critical) 또는 `schema_mismatch=True` 시 즉시 재학습 큐 등록
-  - **주기 트리거**: 매 감사 사이클(분기/연)마다 base 모델 재학습 및 OOF Stacking 재실행
-  - **모니터링 트리거**: `max_psi ∈ [0.1, 0.25)` (warn) 시 재학습은 하지 않되 대시보드 배너 + 감사 로그 기록
-- **이유**:
-  - 감사 사이클은 연 1회가 일반적이어서 학습 모델이 1년 이상 재사용될 위험
-  - 신규 자회사 인수, 회계정책 변경, ERP 업그레이드로 인한 분포 변화에 선제 대응 필요
-  - SOC 2 / ISO 27001 "AI 모델 거버넌스" 항목에 "재학습 정책 문서" 필수
-- **임계값 근거**:
-  - PSI < 0.10 → 분포 안정 (실무 업계 관행)
-  - 0.10 ≤ PSI < 0.25 → 약한 드리프트, 모니터링 강화
-  - PSI ≥ 0.25 → 강한 드리프트, 재학습 필수
-- **구현 파일**:
-  - `src/preprocessing/drift_detector.py` — PSI 계산 유틸 (numeric 가우시안 bin + categorical Top-N)
-  - `src/preprocessing/data_stats.py` — 학습 시점 분포 메타데이터 저장
-  - `src/preprocessing/model_registry.py` — `ModelMetadata.training_data_stats` 필드
-  - `dashboard/components/drift_banner.py` — 상단 경고 배너 + 드리프트 상세 expander
-- **관련 결정**: D013(Stacking), D034(LR Ridge meta), D036(DataSynth 수렴)
-- **향후 확장**: `tools/scripts/retrain_all_models.py` 스크립트 (CI/CD cron 연동), Slack/이메일 알림 통합
+### D037: 紐⑤뜽 ?쒕━?꾪듃 ?ы븰???뺤콉 (SOC 2 / ISO 27001 ???
+- **寃곗젙**: ML 紐⑤뜽 ?ы븰???몃━嫄곕? PSI 湲곕컲 ?먮룞 媛먯? + 遺꾧린蹂?二쇨린 ?ы븰?듭쑝濡??댁썝??  - **?먮룞 ?몃━嫄?*: `drift_detector.compute_drift_report()` ??`max_psi ??0.25` (critical) ?먮뒗 `schema_mismatch=True` ??利됱떆 ?ы븰?????깅줉
+  - **二쇨린 ?몃━嫄?*: 留?媛먯궗 ?ъ씠??遺꾧린/??留덈떎 base 紐⑤뜽 ?ы븰??諛?OOF Stacking ?ъ떎??  - **紐⑤땲?곕쭅 ?몃━嫄?*: `max_psi ??[0.1, 0.25)` (warn) ???ы븰?듭? ?섏? ?딅릺 ??쒕낫??諛곕꼫 + 媛먯궗 濡쒓렇 湲곕줉
+- **?댁쑀**:
+  - 媛먯궗 ?ъ씠?댁? ??1?뚭? ?쇰컲?곸씠?댁꽌 ?숈뒿 紐⑤뜽??1???댁긽 ?ъ궗?⑸맆 ?꾪뿕
+  - ?좉퇋 ?먰쉶???몄닔, ?뚭퀎?뺤콉 蹂寃? ERP ?낃렇?덉씠?쒕줈 ?명븳 遺꾪룷 蹂?붿뿉 ?좎젣 ????꾩슂
+  - SOC 2 / ISO 27001 "AI 紐⑤뜽 嫄곕쾭?뚯뒪" ??ぉ??"?ы븰???뺤콉 臾몄꽌" ?꾩닔
+- **?꾧퀎媛?洹쇨굅**:
+  - PSI < 0.10 ??遺꾪룷 ?덉젙 (?ㅻТ ?낃퀎 愿??
+  - 0.10 ??PSI < 0.25 ???쏀븳 ?쒕━?꾪듃, 紐⑤땲?곕쭅 媛뺥솕
+  - PSI ??0.25 ??媛뺥븳 ?쒕━?꾪듃, ?ы븰???꾩닔
+- **援ы쁽 ?뚯씪**:
+  - `src/preprocessing/drift_detector.py` ??PSI 怨꾩궛 ?좏떥 (numeric 媛?곗떆??bin + categorical Top-N)
+  - `src/preprocessing/data_stats.py` ???숈뒿 ?쒖젏 遺꾪룷 硫뷀??곗씠?????  - `src/preprocessing/model_registry.py` ??`ModelMetadata.training_data_stats` ?꾨뱶
+  - `dashboard/components/drift_banner.py` ???곷떒 寃쎄퀬 諛곕꼫 + ?쒕━?꾪듃 ?곸꽭 expander
+- **愿??寃곗젙**: D013(Stacking), D034(LR Ridge meta), D036(DataSynth ?섎졃)
+- **?ν썑 ?뺤옣**: `tools/scripts/retrain_all_models.py` ?ㅽ겕由쏀듃 (CI/CD cron ?곕룞), Slack/?대찓???뚮┝ ?듯빀
 
-### D038: FT-Transformer 유지 + Ablation 정책 (Phase 2b)
-- **결정**: FT-Transformer(ML03)는 당분간 8-model Stacking에 유지. 단 `tools/scripts/ft_ablation_study.py`로 분기별 ablation 실측 후 유지/제거 판단.
-- **이유**:
-  - 42차원 입력에서 XGBoost 대비 FT-T의 self-attention 이득이 합성 데이터 환경에서 실증 불가
-  - 그러나 Ridge(positive=True) meta-learner가 기여도 낮은 모델 계수를 자동으로 0에 수렴시키므로 유지 비용이 낮음
-  - 제거는 되돌릴 수 없는 결정이므로 "데이터로 증명된 뒤 제거"가 안전
-- **판정 기준** (ft_ablation_study.py): Δ F1-macro (8-model vs 7-model)
-  - `Δ ≥ +0.5%` → keep (유지)
-  - `|Δ| < 0.5%` → inconclusive (보류, seed 반복)
-  - `Δ < -0.5%` → remove (제거 검토)
-- **구현 파일**: `tools/scripts/ft_ablation_study.py` (골격), `tests/modules/test_tools/test_ft_ablation_study.py`
-- **관련 결정**: D033(FT-T 추가), D034(Stacking)
+### D038: FT-Transformer ?좎? + Ablation ?뺤콉 (Phase 2b)
+- **寃곗젙**: FT-Transformer(ML03)???밸텇媛?8-model Stacking???좎?. ??`tools/scripts/ft_ablation_study.py`濡?遺꾧린蹂?ablation ?ㅼ륫 ???좎?/?쒓굅 ?먮떒.
+- **?댁쑀**:
+  - 42李⑥썝 ?낅젰?먯꽌 XGBoost ?鍮?FT-T??self-attention ?대뱷???⑹꽦 ?곗씠???섍꼍?먯꽌 ?ㅼ쬆 遺덇?
+  - 洹몃윭??Ridge(positive=True) meta-learner媛 湲곗뿬????? 紐⑤뜽 怨꾩닔瑜??먮룞?쇰줈 0???섎졃?쒗궎誘濡??좎? 鍮꾩슜????쓬
+  - ?쒓굅???섎룎由????녿뒗 寃곗젙?대?濡?"?곗씠?곕줈 利앸챸?????쒓굅"媛 ?덉쟾
+- **?먯젙 湲곗?** (ft_ablation_study.py): ? F1-macro (8-model vs 7-model)
+  - `? ??+0.5%` ??keep (?좎?)
+  - `|?| < 0.5%` ??inconclusive (蹂대쪟, seed 諛섎났)
+  - `? < -0.5%` ??remove (?쒓굅 寃??
+- **援ы쁽 ?뚯씪**: `tools/scripts/ft_ablation_study.py` (怨④꺽), `tests/modules/test_tools/test_ft_ablation_study.py`
+- **愿??寃곗젙**: D033(FT-T 異붽?), D034(Stacking)
+
+

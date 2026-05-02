@@ -227,7 +227,7 @@ Case key는 전역 하나가 아니라 theme별 템플릿을 둔다.
 
 기본 점수식은 아래처럼 정의한다.
 
-`case_priority = 0.35*control_score + 0.30*amount_score + 0.20*logic_score + 0.15*behavior_score`
+`case_priority = 0.30*control_score + 0.30*amount_score + 0.15*logic_score + 0.15*timing_score + 0.10*behavior_score`
 
 이 공식에 들어가는 `control_score`, `logic_score` 등은 raw rule label을 직접 더한 값이 아니다. 현재 구현은 각 rule hit를 먼저 `src/detection/rule_scoring.py`에서 `display_label`, `signal_strength`, `evidence_strength`, `scoring_role`, `normalized_score`로 정규화한 뒤 evidence type별로 합산한다.
 
@@ -242,6 +242,12 @@ Case key는 전역 하나가 아니라 theme별 템플릿을 둔다.
 - 같은 evidence type 중복은 상한을 둠
 - `L3-08` 같은 booster 룰과 `L4-06` 같은 combo-only 룰은 단독 점수보다 결합 증거로 해석
 - `L4-02/D01/D02` 같은 macro finding은 transaction queue 점수에 직접 더하지 않음
+- `L3-03` 단독은 관계사 거래 모집단 신호로 유지한다. raw `0.40`, `severity=4`, `weak evidence`, L3 weight 적용 후 row `anomaly_score` 자연 기여도는 약 `0.036`이며 단독 Low floor를 만들지 않는다.
+- `IC01/IC02/IC03`은 L1~L4 룰 수에 포함하지 않는 관계사 보조 finding이다. `IntercompanyMatcher` 결과가 aggregate 입력에 포함된 경우, row 대표 점수에서 대사 예외가 숨지 않도록 별도 `intercompany_exception_score`를 기록한다. `IC02` 또는 `IC03` 단독은 최소 Low, `IC01` 또는 2개 이상 IC 예외 결합은 최소 Medium floor를 적용한다.
+
+추가 정규화 예외:
+
+- `L3-01`은 계정-업무 불일치 원인 순서를 보존하기 위해 전용 정규화를 사용한다. exact denylist raw `0.65`는 category fallback `0.45`, strict mismatch `0.40`보다 PHASE1 row `anomaly_score`와 case `logic_score`에 더 크게 반영되어야 한다.
 
 ### 8. Case Explanation Template
 
@@ -334,7 +340,7 @@ Drill-down 설명은 룰 번호 나열 대신 템플릿으로 만든다.
 |------|------------------------|-------|----------------------------------------|
 | L1   | 확정 오류/명시 위반      |     3 | 차대변 균형, 필수필드 누락, 무효 계정     |
 | L2   | 강한 부정 정황           |    10 | 매출 이상변동, 승인한도, 중복지급, 자기승인, 직무분리 |
-| L3/L4 | 검토 필요/통계 이상치   |     9 | 기말 대규모, 주말/심야 전기, Benford 위반 |
+| L3/L4 | 검토 필요/통계 이상치   |     9 | 결산 검토 후보군, 주말/심야 전기, Benford 위반 |
 
 외부 기준 커버리지:
 - AICPA/CAQ 15개 CAAT 시나리오 중 14개(93%) 커버
@@ -1025,7 +1031,7 @@ L3 룰은 검토 필요 이상징후다. 따라서 `rule_truth`는 L3가 화면/
 | L3-01 계정-프로세스 불일치 | 유효한 CoA 계정인데 업무 프로세스와 계정 성격이 맞지 않으면 정답 | CoA 밖 계정은 L1-03 |
 | L3-02 수기 전표 | 수기/조정 전표면 정답 | `ManualOverride`만 정답으로 보지 않음 |
 | L3-03 관계사 거래 | 관계사 거래 모집단이면 정답 | 순환거래 확정은 GR/IC 보조 finding |
-| L3-04 기말/기초 대규모 | 월말/월초 근처이고 고액 또는 수기 전표면 정답 | 반복 마감전표도 rule truth |
+| L3-04 기말/기초 전표 | 월말/월초 ±5일 전표면 정답 | 고액·수기·마감급박 조작 여부는 점수와 후단 시나리오에서 판단 |
 | L3-05 주말/공휴일 전기 | 주말 또는 공휴일 전기면 정답 | 정상 주말 운영도 rule truth |
 | L3-06 심야 전기 | 설정된 심야/비근무시간 전기면 정답 | 야간 배치도 rule truth |
 | L3-07 전기일-문서일 장기 괴리 | 전기일과 문서일 차이가 기준일수를 넘으면 정답 | 정상 장기 지연은 후단에서 낮춤 |
@@ -1075,7 +1081,7 @@ Phase 1 rule truth 분리 작업은 production이 아니라 후보 체인에서 
 
 최신 후보:
 
-`data/journal/primary/datasynth_v81_candidate`
+`data/journal/primary/datasynth_v104_candidate`
 
 체인:
 
@@ -1089,6 +1095,23 @@ Phase 1 rule truth 분리 작업은 production이 아니라 후보 체인에서 
 | v79 | v77 metadata + v71 clean journals | broad L1 truth 후보. v80에서는 L1-06 role-threshold review 후보를 L3-12/work-scope sidecar로 분리 |
 | v80 | v79 | L1-06은 direct SoD만 남기고, 업무범위/프로세스 폭 검토 후보는 L3-12와 `work_scope_excess_review_population`으로 분리 |
 | v81 | v80 | 자동/반복 전표의 비현실적인 승인자·승인일 대량 결측을 시스템 승인 흔적으로 보강 |
+| v82 | v81 | 사후 승인, 권한 위임, 승인자 마스터 매핑 누락, 승인 후 변경, 소량 시스템 통제 공백을 sidecar로 추가 |
+| v83 | v82 | v82에서 시스템 통제 공백으로 잘못 선택된 system self-approval control 2건을 복구 |
+| v84 | v83 | FSS 전표 조작 패턴 비중을 일반화한 rule-agnostic manipulated-entry truth 420건 추가 |
+| v85 | v84 | 기존 59건 `MisclassifiedAccount` 기반 L3-01 정답을 제거하고 현재 L3-01 탐지 계약 기준으로 2,426건 재생성 |
+| v86 | v85 | L3-01의 P2P/매출계정 쏠림을 줄이고 O2C/H2R/TRE/A2R 계정-프로세스 불일치 후보를 분산 |
+| v87 | v86 | L3-03과 `intercompany_population_truth`를 현재 IC 계정 prefix 탐지 계약 기준으로 재생성 |
+| v88 | v87 | L3-02 수기/조정 source 비율을 실무형으로 낮추고 L3-02/manual population truth 재생성 |
+| v89 | v88 | L3-05와 `weekend_review_population`을 현재 journal `posting_date` 주말/휴일 기준으로 재생성 |
+| v90 | v89 | L1-06 direct SoD truth 수량은 유지하되, medium/high/critical severity 증거가 모두 나오도록 보강 |
+| v91 | v90 | L3-06과 `afterhours_review_population`을 현재 journal `posting_date` 심야/비근무시간 기준으로 재생성 |
+| v92 | v91 | 현재 journal row로 재구성되지 않는 stale L3-09 suspense-aging truth 2건 제거 |
+| v93 | v92 | L1-02 필수필드 누락 유형을 다양화하고, 금액 결측으로 생긴 L1-01 차대불균형 truth도 재계산 |
+| v94 | v93 | L3-04 정답을 현재 journal의 월말/월초 ±5일 전표 전체로 재산출 |
+| v95 | v94 | L3-12 공식 정답을 전표 단위에서 사용자-year 단위로 변경하고, 전표 단위 결과는 projection sidecar로 분리 |
+| v96 | v95 | L3-12 user-level truth의 bucket/score 해석을 다양화하고 detector 원점수는 별도 컬럼으로 보존 |
+| v97 | v96 | BatchAnomaly 확정 라벨을 기존 L4-06 후보 안에서 프로세스/source/문서유형/회사별로 재표본추출 |
+| v98 | v97 | 조작전표 truth를 C001/C002/C003으로 재분산하고 기존 조작 텍스트 마커를 truth 문서에만 남김 |
 
 ### 2. 왜 production에 바로 덮지 않았나
 
@@ -1104,32 +1127,1437 @@ Phase 1 rule truth 분리 작업은 production이 아니라 후보 체인에서 
 
 ### 3. 검증 결과
 
-`v81_candidate`에서 필수 truth 게이트를 실행했다.
+`v104_candidate`에서 필수 truth 게이트를 실행했다.
 
 결과:
 
 `failures: []`
 
+L3-01 전용 확인:
+
+| 항목 | 건수 |
+|------|-----:|
+| L3-01 detector hit documents | 2,419 |
+| `rule_truth_L3_01.csv` documents | 2,419 |
+| detector - truth | 0 |
+| truth - detector | 0 |
+
+L3-03 전용 확인:
+
+| 항목 | 건수 |
+|------|-----:|
+| L3-03 detector IC-prefix documents | 30,377 |
+| `rule_truth_L3_03.csv` documents | 30,377 |
+| `intercompany_population_truth.csv` documents | 30,377 |
+| detector - truth | 0 |
+| truth - detector | 0 |
+| truth - population sidecar | 0 |
+
+L3-02 전용 확인:
+
+| 항목 | 건수 |
+|------|-----:|
+| actual manual/adjustment documents | 86,811 |
+| `rule_truth_L3_02.csv` documents | 86,811 |
+| `manual_entry_population_truth.csv` documents | 86,811 |
+| actual - truth | 0 |
+| truth - actual | 0 |
+| truth - population sidecar | 0 |
+
+L3-05 전용 확인:
+
+| 항목 | 건수 |
+|------|-----:|
+| actual weekend/holiday documents | 12,771 |
+| `rule_truth_L3_05.csv` documents | 12,771 |
+| `weekend_review_population.csv` documents | 12,771 |
+| actual - truth | 0 |
+| truth - actual | 0 |
+| truth - population sidecar | 0 |
+
+L1-06 전용 확인:
+
+| 항목 | 건수 |
+|------|-----:|
+| L1-06 truth documents | 19 |
+| L1-06 detector hit documents | 19 |
+| L1-06 detector hit rows | 64 |
+| score 0.70 rows | 24 |
+| score 0.80 rows | 33 |
+| score 0.95 rows | 7 |
+| direct_medium documents | 7 |
+| direct_high documents | 9 |
+| direct_critical documents | 3 |
+
+L1-06 conflict type 분포:
+
+| conflict type | documents |
+|---------------|----------:|
+| preparer_approver | 11 |
+| purchase_payment | 5 |
+| cash_disbursement | 2 |
+| treasury_payment | 1 |
+
+L3-06 전용 확인:
+
+| 항목 | 건수 |
+|------|-----:|
+| L3-06 detector after-hours documents | 7,507 |
+| `rule_truth_L3_06.csv` documents | 7,507 |
+| `afterhours_review_population.csv` documents | 7,507 |
+| detector - truth | 0 |
+| truth - detector | 0 |
+
+L3-06 분포:
+
+| 구분 | 건수 |
+|------|-----:|
+| 2022 | 2,622 |
+| 2023 | 2,444 |
+| 2024 | 2,441 |
+| automated | 3,633 |
+| interface | 1,004 |
+| recurring | 1,279 |
+| manual | 1,524 |
+| adjustment | 67 |
+| score 0.20 system/batch context | 4,773 |
+| score 0.45 human/unknown context | 2,734 |
+
+L3-09 전용 확인:
+
+| 항목 | 건수 |
+|------|-----:|
+| L3-09 detector suspense-aging documents | 1,091 |
+| `rule_truth_L3_09.csv` documents | 1,091 |
+| `suspense_aging_review_population.csv` documents | 1,091 |
+| detector - truth | 0 |
+| truth - detector | 0 |
+| truth - review population | 0 |
+
+L3-09에서 제거한 stale truth:
+
+| document_id | 이유 |
+|-------------|------|
+| `78b6fc4d-2f33-40ac-ab88-88813eab466d` | 현재 journal 기준 가계정 라인이 없고, sidecar의 예전 2900 계정/일자 정보가 남아 있었음 |
+| `6dded142-3eaa-41dc-a85e-d3bc84b1116f` | 현재 journal에는 2900 라인이 있으나 `posting_date=2024-12-30`이라 aging 기준을 넘지 못함 |
+
+L1-02 전용 확인:
+
+| 항목 | 건수 |
+|------|-----:|
+| L1-02 detector documents | 156 |
+| `rule_truth_L1_02.csv` documents | 156 |
+| detector - truth | 0 |
+| truth - detector | 0 |
+
+L1-02 결측 필드 분포:
+
+| 필드 | 건수 |
+|------|-----:|
+| gl_account | 96 |
+| document_date | 13 |
+| document_type | 12 |
+| fiscal_period | 12 |
+| posting_date | 11 |
+| debit_amount | 11 |
+| credit_amount | 10 |
+| company_code | 9 |
+
+L1-02 점수 분포:
+
+| 점수 | 건수 |
+|------|-----:|
+| 0.42 | 13 |
+| 0.48 | 12 |
+| 0.56 | 10 |
+| 0.62 | 7 |
+| 0.72 | 14 |
+| 0.74 | 86 |
+| 0.78 | 4 |
+| 0.80 | 6 |
+| 0.86 | 4 |
+
+L1-01 연동 확인:
+
+| 항목 | 건수 |
+|------|-----:|
+| L1-01 detector documents | 316 |
+| `rule_truth_L1_01.csv` documents | 316 |
+| `l101_unbalanced_truth.csv` documents | 316 |
+| detector - truth | 0 |
+| truth - detector | 0 |
+
 주요 rule truth 건수:
 
 | 룰 | 건수 | 해석 |
 |----|----:|------|
+| L1-01 | 316 | 실제 차변 합계와 대변 합계가 맞지 않는 모든 문서 |
+| L1-02 | 156 | `schema.yaml` required 필드가 비어 있는 모든 문서 |
 | L1-03 | 32 | CoA 밖 계정만 남음 |
 | L1-05 | 244 | 작성자와 승인자가 같은 모든 문서. 자동/시스템 자가승인 컨트롤 27건 포함 |
 | L1-06 | 19 | 직접 SoD marker 또는 직접 IT/admin 업무전표 개입 근거만 남김 |
-| L1-07 | 76 | 승인자가 비어 있는 모든 문서. v81에서 자동/반복 대량 결측은 시스템 승인 흔적으로 보강 |
-| L1-09 | 102 | 승인일이 비어 있는 모든 문서. 남은 후보는 manual/adjustment 중심 |
+| L1-07 | 96 | 승인자가 비어 있는 모든 문서. v82에서 소량 시스템 통제 공백 추가, v83에서 L1-05 충돌 2건 복구 |
+| L1-09 | 122 | 승인일이 비어 있는 모든 문서. v82에서 소량 시스템 통제 공백 추가, v83에서 L1-05 충돌 2건 복구 |
 | L2-03 | 96 | 실제 중복전표 룰 후보 |
 | L2-04 | 563 | 실제 비용 자산화 룰 후보 |
 | L2-05 | 113 | 실제 역분개/상계/정정 패턴 후보 |
-| L3-04 | 117,589 | 기말/기초 고액 또는 수기 review population |
-| L3-12 | 266,863 | 업무범위 집중 검토 모집단. 확정 SoD 위반이 아니라 review population |
+| L3-04 | 141,375 | 월초 1~5일 또는 월말까지 남은 날 0~5일 review population. 고액·수기 여부는 정답 조건이 아니라 우선순위 신호 |
+| L3-06 | 7,507 | 실제 `posting_date` 기준 심야/비근무시간 전기 review population |
+| L3-09 | 1,091 | 현재 journal 기준 장기 미정리 가계정 review population |
+| L3-12 | 64 | 사용자-year 단위 업무범위 집중 검토 모집단. 전표 단위 projection은 strict truth가 아님 |
 | L4-01 | 965 | 매출 계정 z-score review anchor |
-| L4-03 | 4,014 | 고액 z-score review anchor |
+| L4-03 | 4,017 | 고액 z-score review anchor |
+
+추가 조작 전표 truth:
+
+| truth | 건수 | 해석 |
+|-------|----:|------|
+| manipulated_entry_truth | 420 | 특정 룰을 노린 정답이 아니라, 실제 전표 조작 패턴을 일반화한 별도 truth |
 
 ### 4. 남은 주의점
 
-- L1-09는 현재 정책상 승인일이 없으면 모두 rule truth다. v81부터 자동/반복 전표의 정상 시스템 승인 흔적은 원천 데이터에 채워 둔다.
+- L1-09는 현재 정책상 승인일이 없으면 모두 rule truth다. v81부터 자동/반복 전표의 정상 시스템 승인 흔적은 원천 데이터에 채워 두고, v82는 소량의 시스템 통제 공백만 rule truth에 추가한다.
+- v82의 사후 승인, 위임 승인, 승인자 마스터 매핑 누락, 승인 후 변경은 `anomaly_labels.csv`가 아니라 boundary/control sidecar로 관리한다.
+- v84의 조작 전표는 실제 FSS 사건을 개별 복제하지 않는다. `DETECTION_REFERENCE.md`의 패턴 비중을 사용해 일반화한 scenario truth다.
+- v85의 L3-01 공식 정답은 `MisclassifiedAccount` 라벨이 아니라 현재 L3-01 탐지 계약 기준이다. 유효 CoA 계정이 설정된 업무 프로세스-계정 불일치 조건에 걸리면 정답이다.
+- v85에서 기존 59건 L3-01 정답은 공식 truth에서 제거했다. 2건만 현재 계약과 겹쳤고 57건은 현재 L3-01이 잡아야 하는 대상이 아니었다.
+- v86은 L3-01 총량을 크게 바꾸지 않고 분포만 현실화했다. L3-01은 P2P=1,059, O2C=520, H2R=380, TRE=300, A2R=160이다.
+- v87의 L3-03 공식 정답은 `is_intercompany`와 같은 IC 계정 prefix 기준이다. 사용 prefix는 1150, 2050, 4500, 2700이다.
+- v87은 `trading_partner`가 단순히 비어 있지 않다는 이유만으로 L3-03 정답에 넣지 않는다. 별도 관계사 master가 없으면 일반 고객/벤더가 섞이기 때문이다.
+- v88은 L3-02 정답 정의를 바꾸지 않았다. `source`가 manual 또는 adjustment인 문서를 계속 정답으로 두되, 원천 source 분포를 실무형으로 낮췄다.
+- v88의 수기/조정 비율은 2022=27.14%, 2023=27.19%, 2024=27.27%다.
+- v89는 L3-05 정답 정의를 바꾸지 않았다. 현재 `posting_date` 기준 주말 또는 휴일이면 rule truth다.
+- v89에서 stale L3-05 truth 51건을 제거하고 실제 calendar hit 65건을 추가했다.
+- v90은 L1-06 정답 수량을 늘리지 않고 severity 근거만 다양화했다. 이전처럼 모든 SoD hit가 `preparer_approver`/medium 점수로 몰리는 상태를 피하기 위해 high-risk conflict type, threshold 근거, IT/admin critical 근거를 섞었다.
+- v91은 L3-06 정답을 anomaly label이 아니라 실제 `posting_date` 시간 조건으로 재생성했다. 따라서 자연 발생 심야 전표, 자동 배치, 반복 전표도 raw L3-06 rule truth에 포함된다.
+- v91의 `normal_after_hours_context`는 L3-06 정답 제외 목록이 아니다. anomaly label이 없는 정상 야간 운영 맥락을 설명하기 위한 context sidecar다.
+- v92는 L3-09 정답 정의를 바꾸지 않았다. 현재 journal row의 가계정 여부, 미정리 상태, aging 조건으로 detector가 재구성할 수 없는 stale sidecar 문서 2건만 제거했다.
+- v93은 L1-02 detector 코드를 고치지 않았다. DataSynth 원장에 다양한 required 필드 결측을 소량 추가해 기존 field-aware score가 실제 데이터에서 드러나게 했다.
+- v93에서 금액 필드 결측은 실제 차대불균형도 만들 수 있으므로 L1-01 truth도 현재 debit/credit 산술 기준으로 재계산했다.
+- v101은 L3-04 정답을 현재 detector-window 기준으로 다시 계산했다. 기준은 `posting_date.day <= 5 OR days_to_month_end <= 5`이며, 검증 결과 expected docs 141,375건, truth docs 141,375건, missing/extra 0건이다.
+- v109는 L4-03 정답을 현재 detector 계약 기준으로 다시 계산했다. 기준은 `amount_zscore > 3.0`과 전역 P90 금액 가드를 모두 만족하는 문서이며, `rule_truth_L4_03*`와 `high_amount_review_population*`은 4,017건이다. `UnusuallyHighAmount` / `StatisticalOutlier`는 주입 이상치 subset으로만 유지한다.
+- v95는 L3-12 정답 단위를 `document_id`에서 `fiscal_year + created_by`로 바꿨다. 공식 truth와 `work_scope_excess_review_population`은 64 user-year이고, 전표 단위 262,846문서는 `work_scope_excess_document_projection.csv`로만 관리한다.
+- v96은 L3-12 공식 truth 64 user-year를 유지하면서 `bucket`/`score`를 업무 맥락별로 나눴다. 분포는 manual-sensitive 38, system-mixed 15, leadership-broad 11이며 detector 원래 bucket/score는 `detector_bucket`/`detector_score`로 보존한다.
+- v97은 BatchAnomaly 확정 라벨 175건을 H2R/R2R/O2C/P2P/TRE와 automated/recurring으로 분산했다. 회사 분포도 C001=61, C002=59, C003=55로 재조정했다.
+- v98은 조작전표 truth 420건의 연도/시나리오 count를 유지하면서 회사 분포를 C001=147, C002=139, C003=134로 재조정했다. 원장 텍스트 마커는 truth 문서 420건에만 남는다.
 - `anomaly_labels.csv`는 계속 audit/injected issue 의미로 남는다. Phase 1 rule truth로 단독 사용하면 안 된다.
-- `v81_candidate`는 아직 production 승격본이 아니다.
+- `v104_candidate`는 아직 production 승격본이 아니다.
 - journal row를 수정하는 후보 빌더는 하드링크를 쓰면 안 된다. 반드시 물리 복사 후 수정해야 한다.
+
+## DataSynth v99 DuplicatePayment 분포 보정
+
+`v99_candidate`는 `v98_candidate` 위에서 L2-02 DuplicatePayment pair truth만 보정한 후보 버전이다. Production `data/journal/primary/datasynth/`는 아직 덮어쓰지 않았다.
+
+보정 원칙:
+
+- 원장 행을 임의로 조작하지 않는다.
+- 현재 원장에서 실제 재구성 가능한 P2P 반복 지급 pair만 사용한다.
+- 같은 회사, 같은 거래처/지급 기준, 같은 금액, 45일 이내 반복 지급이면 L2-02 pair truth 후보로 본다.
+- 라벨, `rule_truth_L2_02.csv`, `duplicate_payment_pairs.csv`의 document_id 집합은 반드시 같아야 한다.
+
+검증 결과:
+
+| 항목 | 결과 |
+|------|-----:|
+| DuplicatePayment pairs | 33 |
+| C001 | 11 |
+| C002 | 11 |
+| C003 | 11 |
+| 2022 | 19 |
+| 2023 | 7 |
+| 2024 | 7 |
+| pair/truth/anomaly document diff | 0 |
+| journal pair mismatch | 0 |
+| required truth gate failures | 0 |
+
+Variant 분포:
+
+| variant | count |
+|---------|------:|
+| exact | 7 |
+| reference_blank | 7 |
+| reference_variant | 7 |
+| date_shifted | 6 |
+| amount_rounding | 6 |
+
+해석:
+
+- v99는 기존 DuplicatePayment truth가 특정 회사와 2022년에만 몰려 보이는 문제를 줄였다.
+- 2022 비중이 더 큰 것은 현재 원장에서 자연적으로 재구성 가능한 P2P pair가 2022에 더 많기 때문이다.
+- 이 패치는 detector 결과에 맞춘 fitting이 아니라, 원장상 설명 가능한 pair를 골라 truth metadata를 정리한 것이다.
+
+## DataSynth v100 Source 현실성 보정
+
+`v100_candidate`는 `v99_candidate` 위에서 source 분포만 소폭 보정한 후보 버전이다. Production `data/journal/primary/datasynth/`는 아직 덮어쓰지 않았다.
+
+보정 원칙:
+
+- Phase 1 rule truth 정의는 바꾸지 않는다.
+- detector 코드도 바꾸지 않는다.
+- 이미 L3-02의 broad manual/adjustment population에 속한 문서 중 일부만 `manual -> adjustment`로 재분류한다.
+- 같은 document_id가 들어간 sidecar/source 메타도 같이 갱신해서 원장과 라벨 메타가 서로 다르게 남지 않게 한다.
+
+검증 결과:
+
+| 항목 | 결과 |
+|------|-----:|
+| source 재분류 문서 | 6,084 |
+| 2022 | 2,041 |
+| 2023 | 2,010 |
+| 2024 | 2,033 |
+| L3-02 manual | 76,386 |
+| L3-02 adjustment | 10,422 |
+| L4-05 manual | 18 |
+| L4-05 adjustment | 9 |
+| required truth gate failures | 0 |
+
+해석:
+
+- v100은 과탐/미탐을 맞추기 위한 패치가 아니다.
+- 너무 많은 review population이 `manual` 한 값에만 몰려 보이는 합성 티를 줄이는 패치다.
+- `manual`과 `adjustment`는 모두 L3-02 rule truth에 남기 때문에 정답 계약은 유지된다.
+
+## DataSynth v101 L3-04 월말 경계 보정
+
+`v101_candidate`는 `v100_candidate` 위에서 L3-04 rule truth만 다시 만든 후보 버전이다. Production `data/journal/primary/datasynth/`는 아직 덮어쓰지 않았다.
+
+문제:
+
+- 이전 L3-04 truth는 월말을 “마지막 5개 날짜”로 계산했다.
+- 현재 detector/평가 기준은 `days_to_month_end <= 5`다.
+- 그래서 31일짜리 달의 26일, 30일짜리 달의 25일, 2월의 23~24일 같은 경계일 문서가 truth에서 빠졌다.
+
+보정 기준:
+
+- 월초: `posting_date.day <= 5`
+- 월말: `days_to_month_end <= 5`
+- 금액, 수기 여부, 민감 계정, `RushedPeriodEnd` 라벨은 정답 조건이 아니라 후단 점수/우선순위 신호다.
+
+검증 결과:
+
+| 항목 | 결과 |
+|------|-----:|
+| 이전 L3-04 truth | 130,532 |
+| v101 L3-04 truth | 141,375 |
+| 추가된 경계일 문서 | 10,843 |
+| 2022 | 46,822 |
+| 2023 | 46,614 |
+| 2024 | 47,939 |
+| detector-window docs - truth | 0 |
+| truth - detector-window docs | 0 |
+| required truth gate failures | 0 |
+
+해석:
+
+- 이 수정은 과탐을 줄이기 위해 detector에 맞춘 것이 아니라, 이미 합의한 “월초/월말 ±5일은 L3-04 review truth” 기준을 DataSynth에 정확히 반영한 것이다.
+- L3-04는 확정 조작 라벨이 아니라 review population이므로, 정상 결산 전표도 rule truth에 포함된다.
+
+## DataSynth v102 L1 Sidecar 의미 정리
+
+`v102_candidate`는 `v101_candidate` 위에서 L1 sidecar 의미만 정리한 후보 버전이다. 원장, `anomaly_labels.csv`, `rule_truth.csv`는 바꾸지 않았다.
+
+수정한 문제:
+
+- `skipped_approval_normal_controls.csv`는 이름과 달리 현재 L1 정책상 정상 컨트롤이 아니다. 79건 모두 승인자와 승인일이 비어 있어 L1-07/L1-09 rule truth다.
+- `wrongperiod_negative_controls.csv`는 이름과 달리 현재 L1-08 기준 negative가 아니다. 140건 모두 회계기간이 전기월과 달라 L1-08 rule truth다.
+- `sod_review_population.csv`는 L1-06 정답이 아닌 review-only 신호인데 `was_sod_violation=True`로 남아 있어 옛 broad SoD 기준처럼 보였다.
+
+v102 조치:
+
+| 항목 | 조치 |
+|------|------|
+| `skipped_approval_normal_controls*` | 게이트 호환용으로 유지하되 `sidecar_semantics=l107_rule_truth_system_or_control_gap_context` 추가 |
+| `skipped_approval_system_gap_controls*` | 새 의미 alias 추가, 79건 |
+| `wrongperiod_negative_controls*` | 추적용으로 유지하되 `sidecar_semantics=l108_rule_truth_but_not_injected_anomaly_label` 추가 |
+| `wrong_period_non_audit_issue_truth*` | 새 의미 alias 추가, 140건 |
+| `sod_review_population*` | `was_sod_violation=False`, `legacy_was_sod_violation=True`, `sod_review_signal=True`로 정리 |
+
+검증 결과:
+
+| 항목 | 결과 |
+|------|-----:|
+| journal row mutation | 0 |
+| rule_truth mutation | 0 |
+| anomaly_labels mutation | 0 |
+| skipped approval alias docs | 79 |
+| wrong period non-audit truth docs | 140 |
+| SoD review docs | 9,065 |
+| required truth gate failures | 0 |
+
+해석:
+
+- v102는 L1 정답을 바꾼 패치가 아니다.
+- 옛 이름 때문에 “정상/negative”처럼 보이던 파일을 현재 정책에 맞게 설명 가능하게 만든 패치다.
+- 기존 게이트와 과거 추적을 깨지 않기 위해 legacy 파일명은 남겼지만, 새 파일명을 우선 사용해야 한다.
+
+## DataSynth v103 L3 Stale Truth Cleanup
+
+`v103_candidate` is built on `v102_candidate`. It does not mutate journal rows. It only rebuilds stale L3 truth files and matching population sidecars from the current journal fields.
+
+Fixed issues:
+
+| Rule | Issue | v103 action |
+|------|-------|-------------|
+| L3-02 | 3 current manual/adjustment documents were missing from truth after later source patches | Added the 3 documents to `rule_truth_L3_02*` and `manual_entry_population_truth*` |
+| L3-03 | 1 stale truth document had `gl_account` missing in the current journal | Removed the stale document from `rule_truth_L3_03*` and `intercompany_population_truth*` |
+| L3-05 | 3 stale truth documents had missing `posting_date` in the current journal | Removed the stale documents from `rule_truth_L3_05*` and `weekend_review_population*` |
+
+Updated counts:
+
+| Rule | Count | Year split |
+|------|------:|------------|
+| L3-02 | 86,811 | 2022=28,949, 2023=28,688, 2024=29,174 |
+| L3-03 | 30,377 | 2022=10,075, 2023=10,186, 2024=10,116 |
+| L3-05 | 24,318 | 2022=6,011, 2023=9,354, 2024=8,953 |
+
+Verification:
+
+| Check | Result |
+|-------|--------|
+| required truth gate | `failures: []` |
+| L3-02 current journal vs truth diff | 0 |
+| L3-03 current IC-prefix vs truth diff | 0 |
+| L3-05 truth rows with missing `posting_date` | 0 |
+
+Interpretation:
+
+- This is a sidecar/truth consistency patch, not a detector-code patch.
+- The stale rows were real DataSynth consistency issues because truth files no longer matched the current journal rows.
+- Production `data/journal/primary/datasynth/` has not been overwritten by v103.
+
+## DataSynth v104 L3-05 Calendar Realism
+
+`v104_candidate` is built on `v103_candidate`. It reduces the excessive L3-05 weekend/holiday review population by changing selected normal journal `posting_date` values, then rebuilding L3-04 and L3-05 truth from the updated journal.
+
+Patch policy:
+
+- Do not change detector code.
+- Do not reduce L3-05 by editing truth files only.
+- Preserve anomaly-labeled documents.
+- Preserve L1-08, L3-07, and L3-11 truth documents because those depend on dates.
+- Preserve manual and adjustment weekend/holiday postings.
+- Move only selected normal automated/interface/recurring documents to nearby same-month business days.
+
+Result:
+
+| Item | Before v104 | After v104 |
+|------|------------:|-----------:|
+| L3-05 truth documents | 24,318 | 12,771 |
+| L3-05 ratio of all documents | 7.62% | 4.00% |
+| L3-04 truth documents | 141,375 | 142,011 |
+| moved documents | 0 | 11,547 |
+| moved journal rows | 0 | 39,336 |
+
+L3-05 year split after v104:
+
+| Year | Count |
+|------|------:|
+| 2022 | 4,267 |
+| 2023 | 4,010 |
+| 2024 | 4,494 |
+
+L3-05 source split after v104:
+
+| Source | Count |
+|--------|------:|
+| manual | 6,251 |
+| recurring | 3,486 |
+| interface | 1,478 |
+| adjustment | 848 |
+| automated | 708 |
+
+Verification:
+
+| Check | Result |
+|-------|--------|
+| required truth gate | `failures: []` |
+| actual weekend/holiday docs vs L3-05 truth diff | 0 |
+| protected truth documents moved | 0 |
+
+Interpretation:
+
+- This is a DataSynth source-distribution realism patch.
+- L3-05 remains a review population: weekend or holiday posting still means L3-05 truth.
+- The previous 7.62% looked high for a generic company; v104 lowers normal automated/holiday concentration without hiding confirmed issue labels.
+- Production `data/journal/primary/datasynth/` has not been overwritten by v104.
+
+## DataSynth v105 L3 Sidecar Context Cleanup
+
+`v105_candidate` is built on `v104_candidate`. It does not mutate journal rows or rule truth. It only rebuilds or adds L3 explanatory sidecars.
+
+Fixed items:
+
+| Area | Sidecar | Count | Meaning |
+|------|---------|------:|---------|
+| L3-05 | `normal_weekend_context*` | 12,373 | Normal-looking weekend/holiday context inside current L3-05 review population |
+| L3-05 | `weekend_normal_context_within_review_population*` | 12,373 | Clear alias to avoid reading normal weekend context as a negative-control file |
+| L3-05 | `weekend_confirmed_anomalies*` | 29 | Confirmed `WeekendPosting` subset inside current L3-05 truth |
+| L3-06 | `afterhours_normal_context_within_review_population*` | 6,972 | Normal-looking after-hours context inside current L3-06 review population |
+| L3-04 | `period_end_normal_close_context*` | 3,600 | Representative normal close context sample |
+| L3-04 | `period_end_priority_context*` | 3,009 | Representative period-end priority context sample |
+| L3-02 | `manual_entry_normal_context*` | 3,600 | Representative normal manual/adjustment context sample |
+| L3-02 | `manual_override_confirmed_anomalies*` | 3 | Confirmed `ManualOverride` subset inside L3-02 truth |
+| L3-02 | `manual_sensitive_account_context*` | 389 | Manual/adjustment entries also in L3-10 sensitive/high-risk account truth |
+| L3-03 | `ic_unmatched_cases*` | 21 | IC unmatched drill-down cases |
+| L3-03 | `ic_amount_mismatch_cases*` | 16 | IC amount mismatch drill-down cases |
+| L3-03 | `ic_timing_gap_cases*` | 14 | IC timing gap drill-down cases |
+| L3-03 | `transfer_pricing_review_cases*` | 13 | Transfer-pricing drill-down cases |
+
+Validation:
+
+| Check | Result |
+|-------|--------|
+| journal rows mutated | 0 |
+| rule truth mutated | 0 |
+| required truth gate | `failures: []` |
+| new sidecar extra documents outside target rule truth | 0 |
+
+Interpretation:
+
+- This patch fixes explanation and sidecar semantics, not detection behavior.
+- `normal_*_within_review_population` means normal-looking context that the broad Phase 1 rule still surfaces.
+- These files should not be used as strict negatives for raw Phase 1 precision.
+- Production `data/journal/primary/datasynth/` has not been overwritten by v105.
+
+L3-05 PHASE1 scoring note:
+
+- L3-05 remains a weak `review_needed` timing signal, not a confirmed anomaly rule.
+- Detector row scores stay `weekday_holiday=0.35`, `weekend=0.40`, `weekend_holiday=0.45`.
+- PHASE1 aggregation converts them to signal strengths `0.75`, `0.85`, `1.00` before applying `severity=2`, weak evidence factor, and L3 family weight. This preserves the intended order and prevents `weekend_holiday` from being folded below a weekend-only hit by the generic numeric normalizer.
+- After L3 family weight, a standalone L3-05 hit contributes about `0.027` to `0.036` to row `anomaly_score`, so it does not reach the `Low >= 0.20` threshold by itself.
+
+## DataSynth v106 L3-11 Cutoff Truth Realignment
+
+`v106_candidate` is built on `v105_candidate`. It does not mutate journal rows. It rebuilds L3-11 rule truth and cutoff sidecars from the current journal fields after the v104 calendar-realism patch.
+
+Problem:
+
+- v104 moved selected normal weekend/holiday postings to nearby business days.
+- Three documents that were previously valid `cutoff_normal_controls` now have `posting_date=2024-01-02` and `delivery_date=2023-12-25`.
+- For revenue accounts, that is a 6-business-day cutoff gap, so the current detector correctly flags them as L3-11.
+- The old L3-11 sidecars still treated them as normal controls, so evaluation showed 3 false positives.
+
+Affected documents:
+
+- `41f02acb-8b33-4e91-81e9-e229270bc462`
+- `8ecf405b-cc17-488a-9c38-73005f2aab4c`
+- `97153699-01e7-4f19-8705-69af34bc512a`
+
+Fix:
+
+- Rebuild `rule_truth_L3_11*` from current journal `posting_date`, `delivery_date`, and account prefix.
+- Add the three documents to L3-11 rule truth and `cutoff_review_population`.
+- Remove them from `cutoff_normal_controls`.
+- Keep `cutoff_confirmed_anomalies` limited to injected `RevenueCutoffMismatch` / `ExpenseCutoffMismatch` labels.
+- Keep non-injected cutoff rule hits in `cutoff_reasonable_delay_controls` so broad rule truth and injected anomaly truth stay separate.
+
+Verification:
+
+| Check | Result |
+|---|---:|
+| Current journal L3-11 documents | 133 |
+| `rule_truth_L3_11.csv` documents | 133 |
+| Current journal minus truth | 0 |
+| Truth minus current journal | 0 |
+| `cutoff_review_population` | 133 |
+| `cutoff_confirmed_anomalies` | 110 |
+| `cutoff_reasonable_delay_controls` | 23 |
+| `cutoff_normal_controls` | 273 |
+| Representative `cutoff_untestable_controls` | 720 |
+
+Required truth gate:
+
+`python tools/scripts/check_datasynth_required_truth.py data/journal/primary/datasynth_v106_candidate`
+
+Result:
+
+`failures: []`
+
+## DataSynth v113 L2-02 Duplicate-Payment Truth Realignment
+
+`v113_candidate` is built on `v112_candidate`. It does not mutate journal rows, confirmed `DuplicatePayment` labels, or detector code.
+
+Problem:
+
+- The L2-02 detector surfaced 384 duplicate-payment review documents.
+- `rule_truth_L2_02.csv` contained only the 33 injected `duplicate_payment_pairs` documents.
+- Therefore 351 valid Phase 1 review candidates, mostly `amount_partner_fallback`, were counted as false positives even though the detector followed the screening contract.
+
+Fix:
+
+- Rebuild `rule_truth_L2_02.csv` and `duplicate_payment_review_population.csv` from the current `b04_duplicate_payment()` detector output.
+- Keep `DuplicatePayment` labels and `duplicate_payment_pairs.csv` as the confirmed pair subset.
+- Keep `duplicate_payment_negative_controls.csv` as a control sidecar only.
+- Preserve detector reason bands so downstream scoring can separate strong reference matches from weaker fallback candidates.
+
+Verification:
+
+| Check | Result |
+|---|---:|
+| L2-02 detector documents | 384 |
+| `rule_truth_L2_02.csv` documents | 384 |
+| `duplicate_payment_review_population.csv` documents | 384 |
+| Detector minus truth | 0 |
+| Truth minus detector | 0 |
+| Confirmed `DuplicatePayment` labels | 33 |
+| Confirmed labels outside truth | 0 |
+| `duplicate_payment_pairs.csv` docs | 33 |
+| Pair docs outside truth | 0 |
+| Negative-control docs | 18 |
+| Negative-control truth overlap | 0 |
+
+Reason split:
+
+| Reason | Documents |
+|---|---:|
+| amount_partner_fallback | 351 |
+| reference_match | 26 |
+| mixed_reference_fallback | 7 |
+
+## DataSynth v114 Stale Detector-Contract Truth Refresh
+
+Problem:
+
+- Candidate folders are cumulative. A folder such as `v113_candidate` can contain a `rule_truth_*` file generated by an older patch such as `v75`.
+- That makes later evaluations mix current detector code with copied legacy truth.
+- In v113, the staleness scan found actual detector/truth drift in L4-03 and L4-06.
+
+Fix:
+
+- Add `tools/scripts/scan_datasynth_rule_truth_staleness.py`.
+- Build `data/journal/primary/datasynth_v114_candidate` from `v113_candidate`.
+- Rebuild only the rule-truth files whose current detector output differed from the copied sidecars:
+  - `rule_truth_L4_03.csv`
+  - `high_amount_review_population.csv`
+  - `rule_truth_L4_06.csv`
+  - `batch_review_population.csv`
+- Store the scan/refresh manifest in `labels/V114_STALE_TRUTH_REFRESH.json`.
+
+Verification:
+
+| Rule | Detector docs | Truth docs | Detector minus truth | Truth minus detector |
+|---|---:|---:|---:|---:|
+| L4-03 | 4,015 | 4,015 | 0 | 0 |
+| L4-06 | 686 | 686 | 0 | 0 |
+
+Patch delta:
+
+| Rule | Added docs | Removed stale docs |
+|---|---:|---:|
+| L4-03 | 5 | 4 |
+| L4-06 | 0 | 175 |
+
+Required gates:
+
+- `python tools/scripts/check_datasynth_required_truth.py data/journal/primary/datasynth_v114_candidate`
+- `python tools/scripts/scan_datasynth_rule_truth_staleness.py data/journal/primary/datasynth_v114_candidate --detector-diff`
+
+Result:
+
+- Required truth gate: `failures: []`
+- Stale detector diff for L4-03/L4-06: `0`
+
+Production `data/journal/primary/datasynth/` has not been overwritten by v106.
+
+## DataSynth v107 L4-01 Revenue Z-score Truth Realignment
+
+`v107_candidate` is built on `v106_candidate`. It does not mutate journal rows. It rebuilds only L4-01 rule truth from the current feature-backed detector contract.
+
+Current L4-01 detector contract:
+
+- Feature generation creates `is_revenue_account` and `amount_zscore`.
+- L4-01 is true when a row is a revenue account row and `amount_zscore > 3.0`.
+- `RevenueManipulation` remains a broad injected fraud label and should not be used as exhaustive L4-01 rule truth.
+
+Problem:
+
+- `rule_truth_L4_01.csv` was originally built from v75 feature state.
+- Later DataSynth patches changed some journal/account context.
+- v106 therefore had 5 L4-01 truth mismatches:
+  - 3 stale truth documents whose current journal rows are no longer revenue-account rows.
+  - 2 current revenue z-score hits missing from truth.
+
+Fix:
+
+- Recompute features from current v107 journal rows.
+- Run `src.detection.fraud_rules_feature.b01_revenue_manipulation`.
+- Rebuild `rule_truth_L4_01*`.
+- Rebuild combined `rule_truth.csv` / `rule_truth.json`.
+- Add explanatory sidecars:
+  - `revenue_outlier_review_population*`
+  - `revenue_outlier_boundary_controls*`
+
+Verification:
+
+| Check | Result |
+|---|---:|
+| Previous L4-01 truth documents | 965 |
+| Current feature-backed detector documents | 964 |
+| v107 `rule_truth_L4_01.csv` documents | 964 |
+| Detector minus truth | 0 |
+| Truth minus detector | 0 |
+| Added truth documents | 2 |
+| Removed stale truth documents | 3 |
+| Boundary controls | 212 |
+
+Required truth gate:
+
+`python tools/scripts/check_datasynth_required_truth.py data/journal/primary/datasynth_v107_candidate`
+
+Result:
+
+`failures: []`
+
+Production `data/journal/primary/datasynth/` has not been overwritten by v107.
+
+## DataSynth v108 L4-02 Benford Group Truth Realignment
+
+`v108_candidate` is built on `v107_candidate`. It does not mutate journal rows. It rebuilds L4-02 Benford truth at the correct group level.
+
+Current L4-02 detector contract:
+
+- Evaluation unit is `fiscal_year + company_code + gl_account`.
+- Groups with fewer than 500 rows are excluded from strict finding truth.
+- Groups with `MAD > 0.012` are Benford findings.
+- `MAD > 0.015` is `strong`; otherwise the finding is `moderate`.
+- Row-level Benford candidates are drill-down candidates only, not standalone anomaly rows.
+- Legacy document-level `BenfordViolation` labels are not used as L4-02 precision/recall truth.
+
+Problem:
+
+- v107 had 100 Benford truth groups, while the current detector produced 99 groups.
+- The mismatch was small but real:
+  - `2022|C002|100140` was stale because current sample size is 497, below the 500-row threshold.
+  - `2023|C001|200050` and `2024|C001|200120` are now below the MAD threshold.
+  - `2023|C001|100040` and `2024|C001|2050` are current detector findings but were missing from truth.
+
+Fix:
+
+- Rebuild `benford_finding_truth*` from current journal rows.
+- Rebuild `rule_truth_L4_02*` from refreshed finding truth.
+- Rebuild `benford_drilldown_candidates*`, `benford_normal_groups*`, and `benford_skipped_small_groups*`.
+- Rebuild Benford holdout/adversarial sidecars from the refreshed group pool so sidecar references do not remain stale.
+
+Verification:
+
+| Check | Result |
+|---|---:|
+| Previous L4-02 truth groups | 100 |
+| Current detector finding groups | 99 |
+| v108 `rule_truth_L4_02.csv` groups | 99 |
+| Detector minus truth | 0 |
+| Truth minus detector | 0 |
+| Added truth groups | 2 |
+| Removed stale truth groups | 3 |
+| Benford drill-down candidates | 24,148 |
+| Benford normal groups | 318 |
+| Benford skipped small groups | 3,267 |
+| Benford adversarial holdout | 176 |
+
+Required truth gate:
+
+`python tools/scripts/check_datasynth_required_truth.py data/journal/primary/datasynth_v108_candidate`
+
+Result:
+
+`failures: []`
+
+Production `data/journal/primary/datasynth/` has not been overwritten by v108.
+
+## DataSynth v110 L4-04 Rare Account-Pair Truth Realignment
+
+`v110_candidate` is built on `v109_candidate`. It does not mutate journal rows. It rebuilds L4-04 rule truth from the current rare debit-credit account-pair detector output.
+
+Problem:
+
+- Phase 1 treats L4-04 as a broad review anchor: if a document contains a rare debit-credit account pair, it should be surfaced.
+- The previous `rule_truth_L4_04.csv` and `rare_account_pair_review_population.csv` contained 3,503 documents.
+- The current detector found 4,091 documents.
+- The mismatch was not a detector false-positive problem. The truth sidecar was narrower than the current review universe and also had stale rows.
+
+Fix:
+
+- Rebuild `rule_truth_L4_04*` from `c09_rare_account_pair()` current output.
+- Rebuild `rare_account_pair_review_population*` from the same detector universe.
+- Keep `rare_account_pair_confirmed_anomalies*` as the confirmed `UnusualAccountPair` subset.
+- Keep `rare_account_pair_normal_controls*` as legitimate rare-pair controls. These may still be raw L4-04 hits.
+
+Verification:
+
+| Check | Result |
+|---|---:|
+| Current L4-04 detector documents | 4,091 |
+| v110 `rule_truth_L4_04.csv` documents | 4,091 |
+| v110 `rare_account_pair_review_population.csv` documents | 4,091 |
+| Detector minus truth | 0 |
+| Truth minus detector | 0 |
+| Added current detector documents | 645 |
+| Removed stale truth documents | 57 |
+| Single rare-pair documents | 3,380 |
+| Multiple rare-pair documents | 468 |
+| Large-document distinct-pair documents | 243 |
+
+Important interpretation:
+
+- This is not a detector fitting patch. The detector output is unchanged.
+- L4-04 rule truth now means raw Phase 1 review universe, not confirmed fraud.
+- Confirmed `UnusualAccountPair` labels remain a subset. In v110, 46 of 52 confirmed subset documents are currently in the raw detector universe; the remaining 6 are a future confirmed-subset cleanup candidate, not a rule-truth mismatch.
+- Normal rare-pair controls are not false positives by definition. They represent legitimate long-tail cases that Phase 1 may still surface and score down later.
+
+Required truth gate:
+
+`python tools/scripts/check_datasynth_required_truth.py data/journal/primary/datasynth_v110_candidate`
+
+Result:
+
+`failures: []`
+
+## DataSynth v111 L4-05 Combined-Context Truth Realignment
+
+`v111_candidate` is built on `v110_candidate`. It does not mutate journal rows. It rebuilds L4-05 rule truth from the current detector output using the required 2022-2024 combined user-behavior context.
+
+Problem:
+
+- L4-05 is a user-behavior concentration rule, not an isolated document rule.
+- The detector result depends on the population used to compute user abnormal-time ratio, midnight count, and sigma threshold.
+- The old rule truth had only 27 confirmed `AbnormalHoursConcentration` documents.
+- Running detector on the combined 2022-2024 context found 4,964 raw behavior review documents and captured all 27 confirmed subset documents.
+- Running detector separately by year produces different TP/FN counts and should not be used as strict DataSynth truth evaluation.
+
+Fix:
+
+- Rebuild `rule_truth_L4_05*` from the current `c12_abnormal_hours_concentration()` detector output.
+- Add `abnormal_hours_behavior_review_population*` as the raw L4-05 review universe.
+- Keep `abnormal_hours_concentration_cases*` as the confirmed anomaly subset.
+- Explicitly record the evaluation context as `three_year_combined_then_split_by_fiscal_year`.
+
+Verification:
+
+| Check | Result |
+|---|---:|
+| Combined-context L4-05 detector documents | 4,964 |
+| v111 `rule_truth_L4_05.csv` documents | 4,964 |
+| v111 `abnormal_hours_behavior_review_population.csv` documents | 4,964 |
+| Detector minus truth | 0 |
+| Truth minus detector | 0 |
+| Confirmed subset documents | 27 |
+| Confirmed subset in truth | 27 |
+| system context review documents | 3,373 |
+| high-context midnight documents | 1,577 |
+| rapid approval documents | 14 |
+
+Important interpretation:
+
+- This is not a detector fitting patch. The detector output is unchanged.
+- L4-05 rule truth now means raw Phase 1 behavior review universe, not confirmed fraud.
+- Annual single-year L4-05 runs are useful robustness checks, but not the strict DataSynth truth benchmark because they change the statistical population.
+
+Required truth gate:
+
+`python tools/scripts/check_datasynth_required_truth.py data/journal/primary/datasynth_v111_candidate`
+
+Result:
+
+`failures: []`
+
+## DataSynth v109 L3-12 Candidate/Scored Truth Split
+
+`v109_candidate` is built on `v108_candidate`. It does not mutate journal rows. It fixes the L3-12 evaluation-layer mismatch.
+
+Problem:
+
+- L3-12 detector emits both raw candidates and scored review users.
+- The evaluation script compared raw candidate user-years against `rule_truth_L3_12.csv`.
+- `rule_truth_L3_12.csv` contains only scored review truth.
+- Therefore zero-score candidates such as `system_scope_observation` were counted as false positives even though they were intentionally surfaced and then scored down to `0.00`.
+
+Fix:
+
+- Keep `rule_truth_L3_12.csv` as scored review truth.
+- Add `labels/work_scope_raw_candidate_population*.csv` as raw candidate truth.
+- Add `labels/work_scope_raw_candidate_document_projection*.csv` as drill-down projection only.
+- Update `tools/scripts/eval_datasynth_l3_only.py` so L3-12 reports two metrics:
+  - `L3-12`: scored review truth, detected by `review_score_series > 0`.
+  - `L3-12-CAND`: raw candidate truth, detected by raw candidate output.
+
+Verification:
+
+| Metric | Truth | Detected | TP | FP | FN |
+|---|---:|---:|---:|---:|---:|
+| L3-12 scored | 64 | 64 | 64 | 0 | 0 |
+| L3-12 candidate | 127 | 127 | 127 | 0 | 0 |
+
+Year split:
+
+| Year | Scored truth | Candidate truth |
+|---|---:|---:|
+| 2022 | 21 | 43 |
+| 2023 | 21 | 42 |
+| 2024 | 22 | 42 |
+
+Important interpretation:
+
+- This is not a detector fitting patch. The detector output is unchanged.
+- The patch separates two existing truth layers so Phase 1 candidate coverage and risk scoring are not evaluated as the same thing.
+- Document projection files are not strict precision/recall truth.
+
+## DataSynth v112 L4-06 Batch Truth/Control Split
+
+`v112_candidate` is built on `v111_candidate`. It does not mutate journal rows or detector code.
+
+Problem:
+
+- `rule_truth_L4_06` had confirmed, normal, boundary, and review-population meanings mixed together.
+- Some confirmed `BatchAnomaly` rows used `source=recurring`, but the actual L4-06 batch detector does not treat `recurring` as a batch source.
+- As a result, normal/boundary controls and recurring payroll-like examples were counted as false negatives even when the detector was following its contract.
+
+Fix:
+
+- Rebuild `rule_truth_L4_06.csv` and `batch_review_population.csv` from the current `c13_batch_anomaly()` detector output.
+- Keep `batch_confirmed_anomalies.csv` and `BatchAnomaly` labels as a confirmed subset of the raw L4-06 review universe.
+- Keep `batch_normal_controls.csv` and `batch_boundary_controls.csv` as control sidecars only.
+- Do not add `recurring` to the detector source list just to fit the synthetic truth.
+
+Verification:
+
+| Check | Result |
+|---|---:|
+| L4-06 detector documents | 861 |
+| `rule_truth_L4_06.csv` documents | 861 |
+| `batch_review_population.csv` documents | 861 |
+| Detector minus truth | 0 |
+| Truth minus detector | 0 |
+| Confirmed `BatchAnomaly` documents | 175 |
+| Confirmed outside truth | 0 |
+| Truth source `automated` | 639 |
+| Truth source `interface` | 222 |
+| Confirmed source `automated` | 113 |
+| Confirmed source `interface` | 62 |
+
+Required truth gate:
+
+`python tools/scripts/check_datasynth_required_truth.py data/journal/primary/datasynth_v112_candidate`
+
+Result:
+
+`failures: []`
+
+## DataSynth v115/v116 L2 Truth Purge and Active Metadata Cleanup
+
+Problem:
+
+- Active candidate folders copied historical `rule_truth_L2_03`, `rule_truth_L2_04`, and `rule_truth_L2_05` files forward.
+- The files existed in the latest folder, but their `source_candidate` still pointed to `v74`.
+- This made Phase 1 L2 evaluation mix current detector output with old truth criteria.
+
+Fix:
+
+- Build `data/journal/primary/datasynth_v115_candidate` from `v114_candidate`.
+- Delete copied L2-03/L2-04/L2-05 rule-truth families inside the new candidate.
+- Rebuild those three truth families from current detector output:
+  - `b05_duplicate_entry()`
+  - `b11_expense_capitalization()`
+  - `c11_reversal_entry()`
+- Build `data/journal/primary/datasynth_v116_candidate` from `v115_candidate`.
+- Normalize all active `rule_truth_*` files so `source_candidate=v116`; historical patch versions no longer appear as active truth criteria.
+- Remove copied root-level historical patch manifests from the active v116 candidate folder. Only the v116 freeze/cleanup manifests remain in that folder.
+
+Verification:
+
+| Check | Result |
+|---|---:|
+| L2-03 rule truth documents | 105 |
+| L2-04 rule truth documents | 1,098 |
+| L2-05 rule truth documents | 82 |
+| Active rule-truth files with legacy `source_candidate` | 0 |
+| Root-level old freeze/patch manifests left in v116 | 0 |
+| Required truth gate failures | 0 |
+
+Commands:
+
+- `python tools/scripts/build_datasynth_v115_l2_truth_refresh.py`
+- `python tools/scripts/build_datasynth_v116_truth_metadata_cleanup.py`
+- `python tools/scripts/check_datasynth_required_truth.py data/journal/primary/datasynth_v116_candidate`
+
+Important:
+
+- v115 changes L2 rule-truth membership.
+- v116 does not change journal rows or truth membership; it removes old active truth metadata.
+- Confirmed injected labels remain separate from Phase 1 raw candidate truth.
+
+## DataSynth v117 L2 Independent Scenario/Control Sidecars
+
+Problem:
+
+- `rule_truth_*` and `*_review_population*` are detector-contract snapshots.
+- They are valid for checking whether the current detector reproduces its Phase 1 candidate contract.
+- They are not independent behavioral validation data, because they are derived from detector output.
+- L2-02 already had comparatively independent pair/control sidecars, but L2-03/L2-04/L2-05 did not.
+
+Fix:
+
+- Build `data/journal/primary/datasynth_v117_candidate` from `v116_candidate`.
+- Do not change journal rows.
+- Do not change `rule_truth` membership.
+- Add detector-independent L2 scenario/control sidecars selected from anomaly labels or journal business fields only:
+  - `duplicate_entry_confirmed_scenarios*`
+  - `duplicate_entry_negative_controls*`
+  - `expense_capitalization_plausible_cases*`
+  - `expense_capitalization_normal_capex_controls*`
+  - `reversal_pattern_plausible_cases*`
+  - `reversal_pattern_normal_clearing_controls*`
+
+Verification:
+
+| Sidecar | Rows | Purpose |
+|---|---:|---|
+| `duplicate_entry_confirmed_scenarios` | 67 | Independent duplicate-entry confirmed scenario subset |
+| `duplicate_entry_negative_controls` | 90 | Routine/system duplicate-lookalike controls |
+| `expense_capitalization_plausible_cases` | 33 | Independent capitalization plausible cases |
+| `expense_capitalization_normal_capex_controls` | 90 | Normal CAPEX/asset-context controls |
+| `reversal_pattern_plausible_cases` | 51 | Independent reversal-pattern plausible cases |
+| `reversal_pattern_normal_clearing_controls` | 90 | Normal clearing/settlement controls |
+
+Required truth gate:
+
+`python tools/scripts/check_datasynth_required_truth.py data/journal/primary/datasynth_v117_candidate`
+
+Result:
+
+`failures: []`
+
+Important:
+
+- `*_review_population*` = detector-contract universe.
+- `*_confirmed_scenarios*`, `*_plausible_cases*`, `*_negative_controls*`, `*_normal_*_controls*` = independent behavioral validation sidecars.
+- Independent sidecars must not replace strict Phase 1 `rule_truth`.
+
+## DataSynth v118 Sidecar Manifest
+
+Problem:
+
+- Many files under `labels/` are called sidecars, controls, negative controls, review populations, or manifests.
+- Their semantics are not the same.
+- Some are realistic independent controls.
+- Some are detector output snapshots.
+- Some are rule-truth context files that should not be used as independent realism validation sets.
+
+Fix:
+
+- Build `data/journal/primary/datasynth_v118_candidate` from `v117_candidate`.
+- Add `labels/sidecar_manifest.csv` and `labels/sidecar_manifest.json`.
+- Do not change journal rows, labels, existing sidecar rows, or `rule_truth` membership.
+- Classify sidecars with:
+  - `purpose`
+  - `expected_detector_positive`
+  - `allowed_for_independent_sidecar_eval`
+  - `semantics`
+  - `reason`
+
+Key classifications:
+
+| Sidecar | Purpose | Independent eval |
+|---|---|---|
+| `delegated_approval_controls` | realism_control | yes |
+| `late_approval_boundary_controls` | realism_control | yes |
+| `post_approval_change_controls` | realism_control | yes |
+| `approver_master_mapping_issues` | realism_control | yes |
+| `l1_realism_normal_controls` | realism_control | yes |
+| `sod_review_population` | review_population | yes, but not L1-06 direct truth |
+| `wrong_period_non_audit_issue_truth` | rule_truth_but_not_audit_issue | no |
+| `wrongperiod_negative_controls` | legacy_alias | no |
+| `skipped_approval_system_gap_controls` | rule_truth_context | no |
+| `skipped_approval_normal_controls` | legacy_alias | no |
+| `system_control_gap_controls` | rule_truth_context | no |
+
+Verification:
+
+| Check | Result |
+|---|---:|
+| Manifest rows | 146 |
+| `realism_control` sidecars | 33 |
+| `review_population` sidecars | 20 |
+| `detector_contract_universe` sidecars | 4 |
+| `rule_truth_context` sidecars | 2 |
+| `rule_truth_but_not_audit_issue` sidecars | 1 |
+| `legacy_alias` sidecars | 2 |
+| `contract_manifest` files | 84 |
+| Sidecars allowed for independent eval | 34 |
+| Required truth gate failures | 0 |
+
+Important:
+
+- Evaluation code should not infer sidecar semantics from filename alone.
+- Independent behavioral validation must filter `sidecar_manifest.allowed_for_independent_sidecar_eval=True`.
+- Detector-contract checks should use `rule_truth` or `purpose=detector_contract_universe`.
+
+## DataSynth v119 L3 Sidecar Semantics Cleanup
+
+Problem:
+
+- `afterhours_normal_context_within_review_population` and `normal_after_hours_context` were intended to represent normal-looking after-hours context, but still included anomaly-labeled documents.
+- In v118, the actual overlap was `20` documents:
+  - `DuplicatePayment`: 17
+  - `BatchAnomaly`: 3
+- L3-03 IC exception files such as `ic_unmatched_cases` and `transfer_pricing_review_cases` are case-level drilldowns using `target_document_id` and `counterpart_document_id`, not document-level subsets keyed by `document_id`.
+
+Fix:
+
+- Build `data/journal/primary/datasynth_v119_candidate` from `v118_candidate`.
+- Do not change journal rows or `rule_truth` membership.
+- Remove anomaly-labeled documents from:
+  - `afterhours_normal_context_within_review_population*`
+  - `normal_after_hours_context*`
+- Add the removed labeled documents to:
+  - `afterhours_cross_rule_labeled_context*`
+- Add L3-06 contract columns to the normal/cross-rule after-hours sidecars:
+  - `rule_id=L3-06`
+  - `expected_hit=True`
+  - `truth_layer=rule_truth`
+  - `truth_basis=posting_date hour is within configured after-hours window`
+  - `within_l306_review_population=True`
+- Add L3-03 linkage columns to IC drilldown sidecars:
+  - `target_in_l303_rule_truth`
+  - `counterpart_in_l303_rule_truth`
+  - `linked_l303_document_ids`
+  - `linked_l303_document_count`
+
+Verification:
+
+| Check | Result |
+|---|---:|
+| Clean after-hours normal context docs | 6,952 |
+| Clean after-hours normal context anomaly-label overlap | 0 |
+| Cross-rule labeled after-hours context docs | 20 |
+| `ic_unmatched_cases` linked to L3-03 | 21 / 21 |
+| `ic_amount_mismatch_cases` linked to L3-03 | 16 / 16 |
+| `ic_timing_gap_cases` linked to L3-03 | 14 / 14 |
+| `transfer_pricing_review_cases` linked to L3-03 | 13 / 13 |
+| Required truth gate failures | 0 |
+
+Important:
+
+- L3-03 IC drilldowns are not `rule_truth_L3_03` document-level subsets by `document_id`.
+- They are case-level exception files linked to L3-03 through target/counterpart document ids.
+
+## DataSynth v120 L4 Sidecar Semantics Cleanup
+
+Problem:
+
+- Several L4 `rule_truth_L4_*` files and `*_review_population*` files were intentionally identical detector universes.
+- This is correct for strict contract checks, but misleading if someone treats `*_review_population` as detector-independent realism samples.
+- Some `normal_controls` / `boundary_controls` files can legitimately overlap raw detector hits. For example, a rare account-pair can be a normal business context and still be a valid L4-04 review candidate.
+
+Fix:
+
+- Build `data/journal/primary/datasynth_v120_candidate` from `v119_candidate`.
+- Do not change journal rows or `rule_truth` membership.
+- Add detector-universe aliases:
+  - `revenue_outlier_detector_universe*`
+  - `high_amount_detector_universe*`
+  - `rare_account_pair_detector_universe*`
+  - `abnormal_hours_behavior_detector_universe*`
+  - `batch_detector_universe*`
+- Add clearer context aliases:
+  - `high_amount_legitimate_contexts*`
+  - `high_amount_boundary_contexts*`
+  - `rare_account_pair_legitimate_contexts*`
+  - `batch_legitimate_contexts*`
+  - `batch_boundary_contexts*`
+  - `revenue_outlier_boundary_contexts*`
+- Add/refresh `sidecar_role`, `sidecar_purpose`, `expected_detector_positive`, `allowed_for_independent_sidecar_eval`, and `can_overlap_detector_universe` metadata.
+
+Verification:
+
+| Check | Result |
+|---|---:|
+| `revenue_outlier_detector_universe` vs `rule_truth_L4_01` diff | 0 |
+| `high_amount_detector_universe` vs `rule_truth_L4_03` diff | 0 |
+| `rare_account_pair_detector_universe` vs `rule_truth_L4_04` diff | 0 |
+| `abnormal_hours_behavior_detector_universe` vs `rule_truth_L4_05` diff | 0 |
+| `batch_detector_universe` vs `rule_truth_L4_06` diff | 0 |
+| Sidecar manifest rows | 164 |
+| Active `rule_truth_*` legacy `source_candidate` values | 0 |
+| Required truth gate failures | 0 |
+
+Important:
+
+- `*_review_population` and `*_detector_universe` are detector-contract universe files.
+- They are useful for 0-mismatch contract checks, not for detector-independent realism evaluation.
+- `*_legitimate_contexts` and `*_boundary_contexts` are not strict negative controls. If they overlap a raw detector hit, that can be expected.
+- Independent behavioral evaluation must use `labels/sidecar_manifest.csv` and interpret `sidecar_role` / `allowed_for_independent_sidecar_eval`, not filename alone.
+
+## DataSynth v121 D01/D02 Macro Sidecar Semantics Cleanup
+
+Problem:
+
+- D01/D02 are macro findings, but sidecar names can still be read as document-level anomaly labels.
+- D01 `normal_controls` are raw-positive analytical-review contexts, not detector negative controls.
+- D02 `normal_controls` mix two different meanings:
+  - raw-positive normal contexts that D02 should surface but not count as confirmed anomaly
+  - guardrail negatives that D02 should not surface
+- D02 lacked D01-style `evaluation_bucket`, `precision_policy`, and macro-priority metadata.
+
+Fix:
+
+- Build `data/journal/primary/datasynth_v121_candidate` from `v120_candidate`.
+- Do not change journal rows, anomaly labels, or `rule_truth` membership.
+- Add D01 guardrail sidecars:
+  - `account_activity_variance_stable_controls*`
+  - `account_activity_variance_near_threshold_controls*`
+  - `account_activity_variance_exclusions*`
+- Add D02 semantic sidecars:
+  - `monthly_pattern_shift_truth*`
+  - `monthly_pattern_shift_raw_positive_normal_contexts*`
+  - `monthly_pattern_shift_guardrail_negative_controls*`
+- Add or normalize macro metadata:
+  - `evaluation_bucket`
+  - `precision_policy`
+  - `business_event_type`
+  - `expected_macro_priority_band`
+  - `macro_truth_role`
+  - `sidecar_role`
+
+Verification:
+
+| Check | Result |
+|---|---:|
+| D01 rule truth groups | 840 |
+| D01 confirmed truth groups | 336 |
+| D01 normal raw-positive controls | 504 |
+| D01 stable controls | 240 |
+| D01 near-threshold controls | 120 |
+| D01 exclusions | 96 |
+| D02 rule truth groups | 497 |
+| D02 confirmed truth groups | 346 |
+| D02 raw-positive normal contexts | 151 |
+| D02 guardrail negative controls | 43 |
+| D02 exclusions | 2,059 |
+| Active `rule_truth_*` legacy `source_candidate` values | 0 |
+| Required truth gate failures | 0 |
+
+Important:
+
+- D01/D02 evaluation unit is `fiscal_year + company_code + gl_account`.
+- `document_count` in the sidecar manifest should be read as group count for D01/D02 when those three columns exist.
+- Do not change journal row `is_anomaly` to make D01/D02 look cleaner.
+- D01/D02 normal controls are not necessarily “detector should not hit” controls. Use `expected_d01_flag` / `expected_d02_flag`, `sidecar_role`, and `macro_truth_role`.
+
+## DataSynth v122 Year Journal File Consistency Cleanup
+
+Problem:
+
+- v121 had two journal representations with the same row keys but different field values:
+  - `journal_entries.csv`
+  - `journal_entries_2022.csv`, `journal_entries_2023.csv`, `journal_entries_2024.csv`
+- Some Phase 1 evaluators read the year files.
+- L1-02 truth said `fiscal_period` was missing for two documents, but the year files still had fiscal periods filled:
+  - `8c1f9639-51f4-42f0-8280-1b0486b7090b`: year file had `7.0`
+  - `fd85b1ca-3976-4dbb-867d-cd3089257afa`: year file had `1.0`
+- This made L1-02 look like it had two false negatives even though the combined journal and truth sidecar agreed.
+
+Root cause:
+
+- Candidate patches had updated one journal representation without regenerating the other.
+- The row sets were the same, but selected fields diverged.
+
+Fix:
+
+- Build `data/journal/primary/datasynth_v122_candidate` from `v121_candidate`.
+- Regenerate all year CSV/JSON files as deterministic partitions of `journal_entries.csv`.
+- Do not change anomaly-label membership or rule-truth membership.
+
+Verification:
+
+| Year | Rows | Docs | Pre-patch mismatched fields | Post-patch mismatched fields |
+|---|---:|---:|---|---|
+| 2022 | 373,425 | 106,675 | `posting_date=5,867`, `source=6,002` | 0 |
+| 2023 | 366,465 | 105,525 | `fiscal_period=2`, `posting_date=18,449`, `source=5,978` | 0 |
+| 2024 | 369,545 | 106,993 | `fiscal_period=2`, `posting_date=15,020`, `source=7,116` | 0 |
+
+Important:
+
+- Going forward, `journal_entries_YYYY.csv/json` must be regenerated from `journal_entries.csv` whenever journal values are patched.
+- L1/L2/L3/L4 evaluation should not mix combined journal and stale year journal files.
+- v122 fixes the immediate L1-02 false-negative artifact by making the two fiscal-period-missing documents blank in both representations.
+
+## DataSynth v123 L4-06 Truth Refresh
+
+Problem:
+
+- After v122 regenerated the year journal files from the combined journal, L4-06 detector output became wider than the stale L4-06 truth sidecars.
+- The detector correctly flagged six additional automated documents in the same timestamp cluster:
+  - posting timestamp: `2023-09-30 23:25:00`
+  - source: `automated`
+  - reason: `simultaneous_creation`
+- v122 `rule_truth_L4_06_2023.csv`, `batch_review_population`, and `batch_detector_universe` did not include those six documents.
+
+Fix:
+
+- Build `data/journal/primary/datasynth_v123_candidate` from `v122_candidate`.
+- Rebuild only:
+  - `rule_truth_L4_06*`
+  - `batch_review_population*`
+  - `batch_detector_universe*`
+- Do not change confirmed `BatchAnomaly` labels.
+- Do not change `batch_normal_controls*` or `batch_boundary_controls*`.
+
+Verification:
+
+| Check | Result |
+|---|---:|
+| Previous L4-06 truth docs | 686 |
+| Current L4-06 truth docs | 692 |
+| Added docs | 6 |
+| Removed docs | 0 |
+| `rule_truth_L4_06` vs `batch_review_population` diff | 0 |
+| `rule_truth_L4_06` vs `batch_detector_universe` diff | 0 |
+| Required truth gate failures | 0 |
+
+Important:
+
+- This is a DataSynth truth-membership refresh, not a detector change.
+- The six added documents are raw L4-06 review-universe truth. They are not newly confirmed `BatchAnomaly` audit-issue labels.
+
+## DataSynth v124 L3/D A-Axis Truth Refresh
+
+Problem:
+
+- After v122 year-file synchronization, several A-axis evaluations were comparing current detector output against stale L3 truth files.
+- L3-02 had 3 stale truth documents whose current `source` was no longer manual/adjustment.
+- L3-04 had 764 stale truth documents and 128 missing truth documents because current posting dates moved around the period-start/end boundary.
+- L3-05 truth still used the narrower post-v104 subset even though the current A-axis rule contract is all weekend/holiday postings.
+- L3-11 had 3 stale truth documents whose current `posting_date=2024-01-01` no longer exceeded the configured cutoff threshold.
+- D01/D02 A-axis metrics were using confirmed macro subsets as truth while detector output represented the macro review universe.
+
+Root cause:
+
+- The detector was not the primary issue. The active `rule_truth_*` files were not fully synchronized with current `journal_entries_YYYY.csv`.
+- D01/D02 also had evaluation-definition drift: A-axis truth must be the macro review universe, while confirmed macro anomaly subsets belong to downstream/B-C interpretation.
+
+Fix:
+
+- Build `data/journal/primary/datasynth_v124_candidate` from `v123_candidate`.
+- Rebuild:
+  - `rule_truth_L3_02*`
+  - `manual_entry_population_truth*`
+  - `rule_truth_L3_04*`
+  - `rule_truth_L3_05*`
+  - `weekend_review_population*`
+  - `rule_truth_L3_11*`
+  - `cutoff_review_population*`
+  - `cutoff_confirmed_anomalies*`
+  - `cutoff_normal_controls*`
+- Keep D01/D02 membership unchanged, but pin A-axis evaluation to `rule_truth_D01.csv` and `rule_truth_D02.csv`.
+- Do not mutate journal rows.
+
+Verification:
+
+| Check | Result |
+|---|---:|
+| L3-02 truth/detector docs | 86,808 / 86,808 |
+| L3-04 truth/detector docs | 141,375 / 141,375 |
+| L3-05 truth/detector docs | 24,318 / 24,318 |
+| L3-11 truth/detector docs | 130 / 130 |
+| L3-02/L3-04/L3-05/L3-11 FP/FN | 0 / 0 |
+| D01 A-axis truth vs review universe diff | 0 |
+| D02 A-axis truth vs review universe diff | 0 |
+| A-axis alignment gate failures | 0 |
+| Required truth gate failures | 0 |
+
+Important:
+
+- v124 adds `tools/scripts/check_datasynth_axis_truth_alignment.py`.
+- This gate should run after every DataSynth patch that can change journal fields, source values, dates, or macro truth semantics.
+- D01/D02 A-axis denominator is the raw macro review universe, not only confirmed macro truth.
+
+## DataSynth v125 L2 Pair/Reversal Truth Split
+
+Problem:
+
+- L2-02 evidence is pair-based, but `rule_truth_L2_02.csv` only had `document_id` and `matched_document_id`. This made pair-level A-axis evaluation dependent on which document was treated as the matched side.
+- L2-03 membership was acceptable, but reason codes were too generic for downstream scoring/debugging.
+- L2-05 mixed strict reversal truth and weak reversal-like review candidates in one `rule_truth_L2_05.csv`.
+
+Fix:
+
+- Build `data/journal/primary/datasynth_v125_candidate` from `v124_candidate`.
+- Add `pair_key`, `duplicate_pair_key`, and `duplicate_group_id` to:
+  - `rule_truth_L2_02*`
+  - `duplicate_payment_review_population*`
+  - `duplicate_payment_pairs*`
+- Clarify L2-03 reason codes:
+  - `exact_duplicate`
+  - `near_duplicate`
+  - `split_duplicate`
+  - `ic_split_duplicate`
+  - `o2c_offset_duplicate`
+- Split L2-05:
+  - `rule_truth_L2_05*`: superseded strict reversal subset in v125 only
+  - `reversal_entry_review_population*`: full raw reversal-like review universe
+  - `reversal_pattern_raw_review_universe*`: alias for raw review universe
+  - `reversal_weak_review_population*`: weak candidates excluded from A-axis truth
+- Do not mutate journal rows.
+
+Verification:
+
+| Check | Result |
+|---|---:|
+| L2-02 rule truth rows | 384 |
+| L2-02 unique pair keys | 384 |
+| L2-02 confirmed duplicate group rows | 33 |
+| L2-03 exact duplicate reason rows | 64 |
+| L2-03 near duplicate reason rows | 28 |
+| L2-03 IC split duplicate reason rows | 6 |
+| L2-03 O2C offset duplicate reason rows | 4 |
+| L2-03 split duplicate reason rows | 3 |
+| L2-05 previous raw candidates | 82 |
+| L2-05 superseded strict subset | 52 |
+| L2-05 weak review-only candidates | 30 |
+| Required truth gate failures | 0 |
+
+Important:
+
+- L2-02 A-axis pair evaluation should compare `pair_key`, not only `document_id`.
+- This v125 L2-05 A-axis policy is superseded by v126. Keeping strict-only L2-05 as `rule_truth_L2_05` caused false positives in a contract check because Phase 1 A-axis truth must represent the raw detector universe.
+
+## DataSynth v126 L2 A-Axis Contract Truth Refresh
+
+Problem:
+
+- v125 narrowed `rule_truth_L2_05` to the strict 52-document subset while the active detector still surfaced 80 raw reversal candidates.
+- v125 only clarified L2-03 reason metadata but did not refresh rule truth to the current 111-document A-axis evaluator output.
+- L2-02 had pair metadata but still needed a full current detector-contract refresh so document and pair comparison stay aligned.
+
+Fix:
+
+- Build `data/journal/primary/datasynth_v126_candidate` from `v125_candidate`.
+- Do not mutate journal rows.
+- Rebuild L2 A-axis rule truth from the active detector contract:
+  - `L2-02`: current `b04_duplicate_payment()` output, 384 documents, stable `pair_key`.
+  - `L2-03`: current `b05_duplicate_entry()` output only, 111 documents. Do not union broader `DuplicateDetector` subrule output because that is not the current A-axis evaluator contract.
+  - `L2-05`: current `c11_reversal_entry()` raw output, 80 documents.
+- Keep stricter or weaker L2-05 interpretation as sidecars:
+  - `reversal_strict_truth`: 52 documents.
+  - `reversal_weak_review_population`: 28 documents.
+
+Verification:
+
+| Rule | Truth | Detected | TP | FP/Label-Outside | FN |
+|---|---:|---:|---:|---:|---:|
+| L2-02 | 384 | 384 | 384 | 0 | 0 |
+| L2-03 | 111 | 111 | 111 | 0 | 0 |
+| L2-05 | 80 | 80 | 80 | 0 | 0 |
+
+Additional checks:
+
+- Required truth gate: `failures: []`.
+- L3/D A-axis alignment gate: `failures: []`.
+- Active `rule_truth_*` files checked: 34.
+- Active `rule_truth_*` files with stale `source_candidate`: 0.
+
+Lesson:
+
+- A-axis contract truth must not be narrowed to confirmed/strict subsets.
+- Strict, weak, normal, and independent scenario semantics belong in sidecars or B/C-axis evaluation.
+- If `rule_truth_*` is derived from a detector contract, it must be rebuilt from the exact active evaluator used by the A-axis report.

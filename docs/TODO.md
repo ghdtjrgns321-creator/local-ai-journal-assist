@@ -7,51 +7,47 @@ L3
 L4
 D
 
-## 실제 발생할수 있는 애매한데이터 -> SIDECAR로
-L1 정탐미탐 분석후 SIDECAR와 비교도해야함
+  룰       룰 이름             정답   탐지   정탐   과탐   미탐
+  L2-01   승인한도 근접         83    457     83    374      0
+  L2-02   중복 지급             33     33     11     22     22
+  L2-03   중복 전표             67    105      0    105     67
+  L2-04   비용 자본화           33    751     33    718      0
+  L2-05   역분개 패턴           51     82     51     31      0
 
-실제 악의적으로 조작한 데이터도 만들어야함
 
 
-  2022
-  룰      룰 이름                정답     탐지    정탐   과탐      미탐
-  -----  --------------------  -------  ------  -----  -----  --------
-  L1-01✅  차대변 불균형              95      95     95      0         0
-  L1-02✅  필수 필드 누락            24      24     24      0         0
-  L1-03✅  무효 계정                 13      13     13      0         0
-  L1-04✅  승인한도 초과             12      12     12      0         0
-  L1-05✅  자기승인                  80      73     73      0         7
-  L1-06  직무분리 위반         64,183       9      9      0    64,174
-  L1-07  승인 생략             22,457       3      3      0    22,454
-  L1-08✅  회계기간 불일치          230     230    230      0         0
-  L1-09  승인일자 누락         22,463       7      7      0    22,456
+  • 2022
 
-  2023
-  룰      룰 이름                정답     탐지    정탐   과탐      미탐
-  -----  --------------------  -------  ------  -----  -----  --------
-  L1-01  차대변 불균형              81      81     81      0         0
-  L1-02  필수 필드 누락            26      26     26      0         0
-  L1-03  무효 계정                  8       8      8      0         0
-  L1-04  승인한도 초과             20      20     20      0         0
-  L1-05  자기승인                  69      58     58      0        11
-  L1-06  직무분리 위반         63,510      13     13      0    63,497
-  L1-07  승인 생략             22,003       2      2      0    22,001
-  L1-08  회계기간 불일치          244     244    244      0         0
-  L1-09  승인일자 누락         22,006       8      8      0    21,998
+  | 룰 | 룰 이름 | 정답 | 탐지 | 정탐 | 과탐 | 미탐 |
+  |---|---|---:|---:|---:|---:|---:|
+  | L4-01 | 매출 이상 변동 | 334 | 509 | 303 | 206 | 31 |
+  | L4-02 | Benford 위반 | 36 | 35 | 35 | 0 | 1 |
+  | L4-03 | 이상 고액 | 1,363 | 1,916 | 1,290 | 626 | 73 |
+  | L4-04 | 비정상 계정조합 | 1,145 | 3,245 | 1,113 | 2,132 | 32 |
+  | L4-05 | 비정상시간 집중입력 | 8 | 1,081 | 6 | 1,075 | 2 |
+  | L4-06 | 배치 전표 이상 | 190 | 219 | 69 | 150 | 121 |
 
-  2024
-  룰      룰 이름                정답     탐지    정탐   과탐      미탐
-  -----  --------------------  -------  ------  -----  -----  --------
-  L1-01  차대변 불균형             127     127    127      0         0
-  L1-02  필수 필드 누락            36      36     36      0         0
-  L1-03  무효 계정                 11      11     11      0         0
-  L1-04  승인한도 초과             24      24     24      0         0
-  L1-05  자기승인                  95      86     86      0         9
-  L1-06  직무분리 위반         64,394      17     17      0    64,377
-  L1-07  승인 생략             22,489      14     14      0    22,475
-  L1-08  회계기간 불일치          257     257    257      0         0
-  L1-09  승인일자 누락         22,492      11     11      0    22,481
+  • 2023
 
+  | 룰 | 룰 이름 | 정답 | 탐지 | 정탐 | 과탐 | 미탐 |
+  |---|---|---:|---:|---:|---:|---:|
+  | L4-01 | 매출 이상 변동 | 284 | 510 | 257 | 253 | 27 |
+  | L4-02 | Benford 위반 | 32 | 32 | 31 | 1 | 1 |
+  | L4-03 | 이상 고액 | 1,259 | 1,969 | 1,223 | 746 | 36 |
+  | L4-04 | 비정상 계정조합 | 1,124 | 2,602 | 1,119 | 1,483 | 5 |
+  | L4-05 | 비정상시간 집중입력 | 10 | 485 | 4 | 481 | 6 |
+  | L4-06 | 배치 전표 이상 | 187 | 444 | 99 | 345 | 88 |
+
+  • 2024
+
+  | 룰 | 룰 이름 | 정답 | 탐지 | 정탐 | 과탐 | 미탐 |
+  |---|---|---:|---:|---:|---:|---:|
+  | L4-01 | 매출 이상 변동 | 347 | 481 | 306 | 175 | 41 |
+  | L4-02 | Benford 위반 | 32 | 32 | 31 | 1 | 1 |
+  | L4-03 | 이상 고액 | 1,392 | 1,916 | 1,288 | 628 | 104 |
+  | L4-04 | 비정상 계정조합 | 1,234 | 2,759 | 1,227 | 1,532 | 7 |
+  | L4-05 | 비정상시간 집중입력 | 9 | 1,095 | 4 | 1,091 | 5 |
+  | L4-06 | 배치 전표 이상 | 176 | 334 | 64 | 270 | 112 |
 ## 실제 조작 -> SIDECAR에 어떤걸 넣을지
 
 ## 끝나고 점수 다시 검사 기준 바뀐룰들있음
@@ -74,107 +70,94 @@ L1 정탐미탐 분석후 SIDECAR와 비교도해야함
 ## PHASE1이후-1
 
 
-• 그 의문이 맞습니다. 결론은 룰별 “상/중/하”, “위험 높음/낮음” 같은 표현값을 그대로 합산하면 안 됩니
-  다. PHASE1 통합 점수에는 전부 먼저 공통 숫자 스케일로 바꿔서 넣어야 합니다.
-
-  지금 가져야 하는 원칙은 이겁니다.
-
-  룰별 출력 표현
-  상/중/하, High/Medium/Low, 검토 필요, 위험 높음
-  ↓
-  공통 내부값으로 정규화
-  signal_strength: 0.0 ~ 1.0
-  ↓
-  severity와 evidence type 가중치 반영
-  ↓
-  case_priority 합산
-
-  예를 들면:
-
-  | 룰별 표현 | 내부 변환값 |
-  |---|---:|
-  | High / 상 / 위험 높음 | 1.0 |
-  | Medium / 중 / 검토 필요 높음 | 0.6 |
-  | Low / 하 / 참고 | 0.3 |
-  | 단순 flag True | 1.0 |
-  | flag False | 0.0 |
-
-  그 다음 룰 심각도를 곱합니다.
-
-  normalized_score =
-    signal_strength * (severity / 5) * evidence_strength_factor * scoring_role_factor
-
-  예:
-
-  L1-05 자기승인
-  - 표현: High
-  - severity: 3
-  - signal_strength: 1.0
-  → 1.0 * 3/5 = 0.60
-
-  L3-08 설명 부족
-  - 표현: Low
-  - severity: 1
-  - signal_strength: 0.3
-  → 0.3 * 1/5 = 0.06
-
-  이러면 “위험 높음”이라고 나온 약한 룰과, “검토 필요”라고 나온 강한 룰이 같은 무게로 섞이는 문제를 막
-  을 수 있습니다.
-
-  PHASE1 통합에서는 순서가 이렇게 되어야 합니다.
-
-  1. 각 룰 결과를 공통 signal_strength로 변환
-  2. severity를 곱해서 rule_score 계산
-  3. evidence_type별로 묶음
-  4. 같은 evidence_type 안에서는 cap 적용
-  5. 서로 다른 evidence_type이 결합되면 case_priority 상승
-  6. Top-side / Batch / Weak evidence 보정 적용
-
-  핵심은 이겁니다.
-
-  룰별 라벨은 사용자 표현일 뿐,
-  합산에는 label이 아니라 정규화된 score만 쓴다.
-
-  그래서 내부적으로는 이런 매핑 테이블이 필요합니다.
-
-  SIGNAL_STRENGTH_MAP = {
-      "critical": 1.0,
-      "high": 1.0,
-      "상": 1.0,
-      "위험높음": 1.0,
-      "medium": 0.6,
-      "중": 0.6,
-      "review_needed": 0.6,
-      "검토필요": 0.6,
-      "low": 0.3,
-      "하": 0.3,
-      "info": 0.2,
-      "참고": 0.2,
-  }
-
-  그리고 최종적으로는 룰별 원문 표현을 이렇게 분리해야 합니다.
-
-  display_label: "위험 높음"
-  signal_strength: 1.0
-  severity: 3
-  normalized_score: 0.6
-
-  즉 감사인에게 보여주는 말과, 점수 계산에 쓰는 숫자를 분리해야 합니다.
-
-  구현 반영: 2026-04-27 기준 `src/detection/rule_scoring.py`에 룰별 라벨/표현값 표준화 layer를 추가했고,
-  `phase1_case_builder`는 `severity / 5` 단순 합산 대신 `normalized_score`를 evidence type별로 합산합니다.
-
-
-  • 핵심은 룰별 결과를 그대로 보여주지 말고, 룰별 결과를 “증거 조각”으로 흡수한 뒤 감사인이 읽을 수 있는
-  케이스 언어로 번역하는 것입니다.
-
-  지금처럼 룰마다 표현이 다르면 안 됩니다.
-
-  L1-05: High
-  L3-08: 검토 필요
-  L4-03: 이상 고액
-  L2-03: 중복 가능성
-
-  이걸 그대로 보여주면 감사인은 “그래서 뭘 먼저 봐야 하지?”가 됩니다.
-
 ## PHASE1이후-2
+
+
+
+
+## L4 점수체계 SIDECAR
+## L2 점수체계 SIDECAR
+
+
+
+  DataSynth 수정 대상
+  | 영역 | 판단 | 수정 방향 |
+  |---|---|---|
+  | D01 review/control 구성 | 대체로 정상 | D01은 이미 truth 336 + normal_controls 504 = review 840이
+  고, 미탐 0입니다. 정상 control을 제거하면 안 됩니다. |
+  | D01 control metadata | 보강은 되어 있음 | tools/scripts/
+  build_datasynth_v57_d01_control_metadata.py:57에서 evaluation_bucket, business_event_type,
+  precision_policy를 넣고 있어 방향은 맞습니다. 추가로 expected_macro_priority_band 정도만 넣으면 코드
+  점수 검증이 쉬워집니다. |
+  | D02 metadata | 수정 필요 | D02에는 D01 v57 같은 evaluation_bucket/precision_policy/
+  business_event_type 보강이 없습니다. normal_recurring_or_interface_batch,
+  normal_project_or_bonus_expense_concentration, normal_seasonal_or_quarter_end_revenue를 명시적 score
+  bucket으로 만들어야 합니다. |
+  | D02 normal classifier | 수정 필요 | tools/scripts/build_datasynth_v56_monthly_pattern_shift.py:211
+  는 normal reason에 “interface batch”라고 쓰지만 실제 source 판정은 automated/recurring만 봅니다.
+  interface, batch, system, auto도 정상 반복/배치 패턴으로 분류해야 합니다. |
+  | 정상 control 다양성 | 일부 보강 필요 | D02 과탐 151건 중 130건이 recurring/interface batch에 몰려
+  있습니다. 정상 seasonal revenue, bonus/project timing, allocation/depreciation, interface cutover 같
+  은 정상 원인을 더 균형 있게 넣어야 score 분리 학습/검증이 안정적입니다. |
+  | Row label 변경 | 수정 대상 아님 | D01/D02는 계정 단위 sidecar가 truth입니다. journal row의
+  is_anomaly를 바꿔서 맞추면 오히려 PHASE1 계약을 깨뜨립니다. |
+    D01
+
+  - 구성은 명확합니다.
+      - account_activity_variance_truth.csv: 336 groups, 전부 confirmed_truth,
+        is_true_positive_account=True
+      - account_activity_variance_normal_controls.csv: 504 groups, 전부 is_true_positive_account=False
+      - account_activity_variance_review_population.csv: 840 groups = truth 336 + control/review 504
+      - rule_truth_D01.csv: 840 groups와 1:1 겹침
+  - 의미는 괜찮습니다. price_increase, capex_investment_event, working_capital_timing,
+    high_volume_operations, recurring_or_system_volume_shift, review_only_activity_variance처럼 실제
+    있을 법한 사유가 들어 있습니다.
+  - 주의점: normal_controls 504건도 전부 expected_d01_flag=True이고 rule_truth_D01.csv에 포함됩니다.
+    즉 “D01이 잡으면 안 되는 negative control”이 아니라 D01 raw review hit는 맞지만 confirmed truth는
+    아닌 정상 사업 변화/리뷰 큐입니다.
+
+  수정 필요:
+
+  - account_activity_variance_normal_controls 이름은 유지하더라도 manifest에서
+    expected_detector_positive=true, confirmed_truth=false를 명시해야 합니다.
+  - D01에는 진짜 음성/guardrail sidecar가 부족합니다. 추가하면 좋습니다:
+      - account_activity_variance_stable_controls.csv: weighted variance <= threshold
+      - account_activity_variance_near_threshold_controls.csv: threshold 바로 아래
+      - account_activity_variance_exclusions.csv: blank/null gl, prior 없음 정책상 제외할 별도 케이스
+        가 있다면 분리
+
+  D02
+
+  - 구성도 좋습니다.
+      - monthly_pattern_shift_confirmed_anomalies.csv: 346 groups, 전부 true positive
+      - monthly_pattern_shift_review_population.csv: 497 groups, 전부 expected_d02_flag=True
+      - monthly_pattern_shift_normal_controls.csv: 194 groups
+          - 151건은 expected_d02_flag=True지만 정상 계절성/배치/프로젝트성 맥락
+          - 43건은 expected_d02_flag=False, skip_reason=small_top_month_delta
+      - monthly_pattern_shift_exclusions.csv: 2,059 rows/groups, D02 제외 사유가 잘 분리됨
+  - D02는 D01보다 더 낫습니다. 정상 control 안에 raw positive 정상 맥락과 raw negative/guardrail 케이
+    스가 둘 다 있습니다. exclusions도 small_top_month_delta, insufficient_current_docs,
+    blank_gl_account, no_prior_account_group_use_d01 등으로 잘 나뉩니다.
+
+  수정 필요:
+
+  - monthly_pattern_shift_confirmed_anomalies는 이름상 행 단위 anomaly처럼 보입니다.
+    monthly_pattern_shift_truth 또는 manifest에서 macro_group_truth로 명시하는 게 좋습니다.
+  - normal_controls 안의 151 positive / 43 negative가 섞여 있으므로 평가 시 분리 태그가 필요합니다:
+      - normal_raw_positive_control
+      - guardrail_negative_control
+      - excluded_from_d02
+
+  종합 판단
+
+  - D01/D02 SIDECAR는 현재 기준에서 대체로 괜찮습니다.
+  - 큰 문제는 데이터 자체보다 명명과 manifest 부재입니다.
+  - 특히 D01의 normal_controls를 “detector가 안 잡아야 하는 세트”로 해석하면 안 됩니다. D01은 분석적
+    검토 룰이라 정상 사업 변화도 raw hit가 되는 게 맞습니다.
+
+
+
+
+
+
+  - L1-02 미탐 2건은 실제 전표에 fiscal_period 값이 있어 룰 실패가 아니라 truth 불일치로 판단

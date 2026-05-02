@@ -1,6 +1,6 @@
-# DataSynth Patch Workflow
+﻿# DataSynth Patch Workflow
 
-Current production baseline: `data/journal/primary/datasynth/` freeze `v59` as of `2026-04-27`.
+Current production baseline: `data/journal/primary/datasynth/` freeze `v126` as of `2026-05-02`.
 
 This document defines the required workflow for future DataSynth patches. The goal is to avoid slow, risky full rewrites for every small fix.
 
@@ -43,7 +43,7 @@ Every patch must explicitly declare its source baseline.
 
 Allowed source baselines:
 
-- current production freeze, for example `data/journal/primary/datasynth/` freeze `v59`,
+- current production freeze, for example `data/journal/primary/datasynth/` freeze `v126`,
 - a validated candidate with passing validation JSON,
 - a manifest chain that has been explicitly declared as cumulative.
 
@@ -57,9 +57,9 @@ Not allowed:
 
 Rule for sequential patch numbers:
 
-- `v60_candidate` should normally be based on production `v59`.
+- `vXX_candidate` should normally be based on the current production freeze unless the previous candidate has passed all required gates.
 - `v61_candidate` may be based on `v60_candidate` only if `v60_candidate` is validated and explicitly marked as the source baseline.
-- If `v60_candidate` is not validated, `v61_candidate` must restart from production `v59` plus the validated `v60` patch manifest.
+- If a candidate is not validated, the next candidate must restart from the current production freeze plus only validated patch manifests.
 - Never assume `v61` automatically includes `v60` just because the version number is higher.
 
 Every `FREEZE_VXX_CANDIDATE.md` must include:
@@ -404,3 +404,5 @@ Future v60 work should restart as:
 5. candidate validation
 
 The partially materialized `datasynth_v60_candidate` must not be treated as trusted until it is rebuilt from a validated manifest.
+
+

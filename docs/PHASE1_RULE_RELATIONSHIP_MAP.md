@@ -78,7 +78,7 @@ flowchart TB
 
 - 같은 evidence type 안에서 룰이 여러 개 걸려도 case당 기여도는 cap을 둔다.
 - 다른 evidence type이 같이 걸리면 secondary tag가 붙고, 문서 기준 임계값은 `0.40`이다.
-- case priority 공식은 기본적으로 `control 0.35 + amount 0.30 + logic 0.20 + behavior 0.15`다.
+- case priority 공식은 기본적으로 `control 0.25 + amount 0.25 + outflow 0.15 + logic 0.15 + timing 0.10 + behavior 0.10`이다.
 - `L4-05`는 통계 기반으로 산출되지만 감사 해석상 `timing_anomaly`로 본다. 특정 사용자의 심야/주말/overtime 집중은 “분포 이상”보다 “비정상 시간대 행동 집중”으로 설명하는 편이 조서와 UI에서 자연스럽다.
 
 Auditor insight 계층:
@@ -101,6 +101,8 @@ Auditor insight 계층:
 | `evidence_strength` | rule scoring registry | strong/medium/weak 증거 설명력 |
 | `scoring_role` | rule scoring registry | primary/booster/combo_only/macro_only 기여 방식 |
 | `normalized_score` | `normalize_rule_evidence()` | evidence type 합산에 들어가는 실제 점수 |
+
+Rule-specific 예외는 detector row score가 이미 감사 우선순위 bucket을 담는 경우에만 둔다. `L3-09` suspense aging은 `0.45/0.60/0.75/0.80` raw score를 `raw_score * evidence_strength_factor`로 단조 보존해 `logic_score`에 넣는다. 이로써 `aging_over_90` 또는 고액 장기체류가 `aging_60_90`보다 낮게 반영되지 않는다.
 
 추가 구현 기준:
 
@@ -192,15 +194,31 @@ Primary/secondary 구분 원칙:
 
 ```text
 case_priority =
-  0.35 * control_score
-+ 0.30 * amount_score
-+ 0.20 * logic_score
-+ 0.15 * behavior_score
+  0.25 * control_score
++ 0.25 * amount_score
++ 0.15 * duplicate_or_outflow_score
++ 0.15 * logic_score
++ 0.10 * timing_score
++ 0.10 * behavior_score
 ```
+
+`timing_score` is the normalized `timing_anomaly` evidence score. It keeps closing/cutoff signals such as `L3-04`, `L3-07`, and `L3-11` visible in case priority even when row-level L3 family weighting is intentionally conservative.
 
 이 기본식은 유지하되, 아래 보정 신호는 case priority에 직접 개입한다. 구현에서는 보정 전 점수를 `base_priority_score`로 보존하고, 최종 점수는 `priority_score`에 저장한다.
 
-`priority_floors`는 보정과 별개로 최소선을 보장한다. 예를 들어 `L1-05` immediate/escalated 자기승인, `L1-04` 승인한도 초과, `L1-06` immediate SoD, `L1-07` immediate 승인 생략은 단일 룰이어도 최소 high 후보로 올라오도록 한다. `amount_score`는 engagement materiality가 있으면 case 내 상대 금액과 materiality 대비 금액 중 더 큰 신호를 사용한다.
+`priority_floors`는 보정과 별개로 최소선을 보장한다. 예를 들어 `L1-05` immediate/escalated 자기승인, `L1-04` 승인한도 초과, `L1-06` direct SoD, `L1-07` immediate 승인 생략, `L1-09` material approval-date gap, `L3-11` cutoff gap, `L2-02` reference match, `L1-02` 핵심 필드 누락은 단일 룰 또는 지정된 조합만으로도 최소 priority를 만든다. `amount_score`는 engagement materiality가 있으면 case 내 상대 금액과 materiality 대비 금액 중 더 큰 신호를 사용한다.
+
+`L1-01`은 row-level risk floor에서 별도로 다룬다. severe imbalance는 Medium floor, material imbalance는 Low floor를 만든다. `L1-02`는 case priority에서 `document_id`, `gl_account`, `posting_date`, `debit_amount`, `credit_amount` 같은 핵심 필드 누락 수와 종류에 따라 blocker 성격의 floor를 만든다.
+
+`L1-08`은 primary evidence type은 `data_integrity_failure`로 유지하지만, row annotation의 `context_reasons`가 있으면 case priority에 `l108_context_priority` 보정을 준다. 이 보정은 기간 불일치 자체를 timing primary로 바꾸지 않고, cutoff/결산 맥락을 보조 설명으로 남기는 방식이다.
+
+L3-07은 PHASE1에서 `timing_anomaly`의 보조 신호로 유지한다. 탐지기 raw score `0.45/0.60/0.75`는 리포트 설명용으로 보존하고, 통합 점수에서는 bucket label을 기준으로 `moderate_gap=0.55`, `large_gap=0.75`, `extreme_gap=1.0` signal strength를 적용한다. 이렇게 해야 90일 초과 괴리가 61~90일 괴리보다 낮게 평가되는 정규화 역전을 막을 수 있다. L3 family weight가 0.20이므로 L3-07 단독으로는 row-level Medium/High를 만들지 않고, 결산·통제·금액·적요 신호와 결합할 때 우선순위가 올라간다.
+
+L3-10은 PHASE1에서 민감 계정 접촉을 단독 High로 올리지 않는다. 다만 `priority_case`로 분류된 건은 `config/phase1_case.yaml`의 `priority_floors`로 최소 `0.45`를 적용해 Medium 검토 큐에 남긴다. row-level `anomaly_score`에서는 weak booster로 약하게 반영하고, case priority에서 수기/조정, 고액, 미정리, 승인일 누락, 기말/비정상시점 같은 보강 맥락을 보존한다.
+
+L3-01은 PHASE1에서 계정-프로세스 불일치 모집단을 넓게 올리되, 단독 raw population만으로는 priority를 과도하게 올리지 않는다. `manual_entry`, `high_amount`, `period_end`, `approval_issue`, `abnormal_time`, `intercompany`, `repeat_pattern`, `logic_combo` 같은 context tag가 붙을 때 `l301_priority_bonus`를 적용하고, context 강도에 따라 floor를 `0.75~0.95`까지 올린다.
+
+L3-04는 결산 검토 모집단이므로 단독 반복성 패턴은 낮춘다. `L3-04` 단독이면 `l304_only_penalty`를 적용하고, 민감 계정·고액·다른 timing/control/outflow 조합이 붙으면 보정한다. 정상 반복 결산 패턴으로 보이는 경우에는 repeat score도 cap을 둔다.
 
 ### 5.1 Top-side JE 보정
 
@@ -250,9 +268,11 @@ elif L4-06 and corroboration_group_count >= 2:
 
 이 보정은 “배치 전표라서 위험하다”가 아니라 “배치성 처리에 결산/통제/금액/설명/역분개 축이 같이 붙었다”는 설명을 전제로 한다.
 
+row-level `score_aggregator`도 같은 corroboration group을 계산해 `batch_combo_score`, `batch_combo_reasons`를 남긴다. 다만 row-level에서는 L4-06 2개 group이면 `risk_level=Medium`, 3개 group이면 `risk_level=High`로 승격하고, `anomaly_score` 자체의 floor를 별도로 올리지는 않는다. case-level에서는 위 additive bonus와 behavior floor가 `priority_score`에 반영된다.
+
 ### 5.3 Work-scope Combo 보정
 
-L3-12는 한 사용자가 여러 업무 영역에 과도하게 관여한 review signal이다. 단독으로는 업무분장 위반이나 부정을 확정하지 않으며, L1-06의 명시적 SoD 위반과 분리한다. 다만 같은 사용자·같은 기간의 L3-12 hit에 독립 증거 축이 붙으면 Phase1 종합점수에서 우선순위를 올린다.
+L3-12는 한 사용자가 여러 업무 영역에 과도하게 관여한 review signal이다. 단독으로는 업무분장 위반이나 부정을 확정하지 않으며, L1-06의 명시적 SoD 위반과 분리한다. 사용자-year 점수는 `review_score_series`와 `row_annotations.review_score`로만 PHASE1 점수체계에 유입하고, `details`/`flagged_rules`에는 확정 위반처럼 넣지 않는다. 다만 같은 사용자·같은 기간의 L3-12 hit에 독립 증거 축이 붙으면 Phase1 종합점수에서 우선순위를 올린다.
 
 | corroboration group | 룰 |
 |---|---|
@@ -274,6 +294,8 @@ elif L3-12 and corroboration_group_count >= 2:
 ```
 
 이 보정은 L3-12가 확정 위반이라는 뜻이 아니다. Phase1의 L3 family row score가 family max 방식이어서 L3-12와 다른 L3 신호가 함께 떠도 과소 반영될 수 있으므로, 독립 evidence group 수를 `work_scope_combo_score`와 `work_scope_combo_reasons`로 별도 기록해 감사 검토 큐 정렬에 반영한다. L3-12 단독은 High floor를 만들지 않는다.
+
+현재 `work_scope_combo_score`와 `work_scope_combo_reasons`는 row-level `score_aggregator` 출력 컬럼이다. case builder는 L3-12를 `access_scope_review` theme으로 묶고 `review_rules`/row annotation 기반 신호를 case queue에 반영하지만, 별도 case field로 `work_scope_combo_score`를 저장하지 않는다. 따라서 화면이나 export에서 work-scope 조합 사유를 보여주려면 row-level aggregate 컬럼과 case 결과를 함께 참조해야 한다.
 
 ### 5.4 Weak Evidence 보정
 
@@ -301,9 +323,17 @@ weak evidence는 단독으로 high를 만들면 안 된다. `control_failure`, `
 추가 제약:
 
 - weak evidence는 **자기 자신만으로 보정 사유가 되면 안 된다**. 예를 들어 `L3-08` 단독 case가 `weak_description`까지 받아 priority가 올라가면 같은 증거를 두 번 세는 결과가 된다.
-- `weak_description`은 `L3-08`이 `L3-04`, `L1-05`, `L4-03`, `L4-04`, `L2-05`처럼 독립 evidence 축과 함께 나타날 때만 보정한다.
+- `weak_description`은 `L3-08`이 `L3-04`, `L3-02`, `L1-05`, `L1-07`, `L4-03`, `L4-04`, `L2-05`, `L3-09`, `L3-10`처럼 독립 보강 룰과 함께 나타날 때만 보정한다. 구현상 허용 목록은 `config/phase1_case.yaml`의 `l3_08_corroborating_rules`로 관리한다.
 - `round_number_bias`도 단독 High를 만들지 않는다. AS 2401의 round number는 journal entry 선별 특성이지만, 승인 우회·기말 조정·희소 계정·고액 같은 본 신호와 결합될 때 감사상 설명력이 커진다.
 - weak evidence 보정은 `priority_adjustment_reasons`에 남겨야 하며, auditor insight에서는 “보조 신호”로 표현한다.
+
+### 5.5 Duplicate, Rare Pair, Macro Context 보정
+
+`L2-03` 계열은 `L2-03a~L2-03d`를 모두 `duplicate_or_outflow`에 넣지만, 고신뢰 중복이라고 해서 항상 High로 올리지는 않는다. `confidence_band=high`, annotation confidence, 또는 raw score가 `0.85` 이상이고 독립 evidence type이나 materiality/금액 보강이 있을 때만 `l203_high_confidence_corroborated` 또는 `l203_high_confidence_material` 사유로 bonus와 최소 `0.45` floor를 적용한다.
+
+`L4-04` 희소 차대 계정쌍은 단독이면 정상 희소 거래일 수 있다. 따라서 단독 `L4-04` case에는 penalty를 적용하고, source가 recurring/automated/batch/interface/system 성격으로 일정 비율 이상이면 추가 penalty를 적용한다. 다른 logic, timing, control, amount 신호와 결합될 때만 priority 설명력이 커진다.
+
+D01/D02는 Account / Process Queue의 macro finding이지만, 같은 `fiscal_year`, `company_code`, `gl_account`에 속한 transaction case에 context로 연결될 수 있다. `confirmed_*` bucket은 `+0.06`, `corroborated_*` bucket은 `+0.04` priority booster를 주며, macro context bonus 전체는 최대 `+0.10`으로 제한한다. Benford(`L4-02`)는 macro finding으로 생성되지만 현재 transaction case context booster 대상은 D01/D02다.
 
 ## 6. Queue 분리 원칙
 
@@ -420,6 +450,7 @@ Primary evidence: `access_scope_review`
 Phase1 종합점수 반영:
 
 - 기본 row-level 점수에는 `RULE_SCORING_REGISTRY["L3-12"] = weak/booster`와 `RULE_LEVEL_WEIGHTS["L3"] = 0.20`을 통해 약하게 반영한다.
+- L3-12 자체는 `review_score_series`/annotation score를 통해 반영하며, `flagged_rules`가 아니라 `review_rules`로 노출한다.
 - 독립 보강 evidence group이 2개면 `anomaly_score >= 0.40`, 3개 이상이면 `anomaly_score >= 0.70` floor를 적용한다.
 - 보강 결과는 `work_scope_combo_score`, `work_scope_combo_reasons`에 남긴다.
 - L3-12는 `_POLICY_HIGH_RULES`에 넣지 않는다. 확정 통제 위반 floor는 L1-06 등 direct control failure가 담당한다.
@@ -430,7 +461,7 @@ Primary evidence: `timing_anomaly`, 보조로 `control_failure`, `logic_mismatch
 
 핵심 룰:
 
-- L3-04 기말/기초 대규모
+- L3-04 기말/기초 결산 검토 후보군
 - L3-07 전기일-문서일 장기 괴리
 - L1-08 기간 불일치
 - L3-08 적요 결손/파손
@@ -459,7 +490,7 @@ Primary evidence: `statistical_outlier` 또는 `timing_anomaly`
 - L4-01 매출 이상 변동
 - L4-03 이상 고액
 - L3-11 매출 cutoff 불일치
-- L3-04 기말/기초 대규모
+- L3-04 기말/기초 결산 검토 후보군
 - L3-02 수기 전표
 - L1-05/L1-07 승인 통제 우회
 - L2-05 후속 역분개
@@ -533,6 +564,8 @@ Primary evidence: `logic_mismatch`
 | L4-04 + L3-04 + L4-03 | 기말 고액 희소 계정쌍 | High |
 | L3-09 + L3-07/L3-08 | 장기 미정리 가계정과 날짜 괴리/설명 부실 | Medium~High |
 
+PHASE1 통합점수에서는 L3-09를 확정 부정 점수로 취급하지 않는다. `logic_mismatch` medium evidence로 정규화해 기본식의 `0.15 * logic_score` 안에서만 기여시키고, 단독 High floor는 두지 않는다. 다만 detector row score의 순서는 보존한다: `0.45 -> 0.3375`, `0.60 -> 0.45`, `0.75 -> 0.5625`, `0.80 -> 0.60`.
+
 외부 기준 대조:
 
 - AS 2401은 unrelated, unusual, seldom-used account와 significant estimates, unreconciled differences, intercompany transactions를 전표 테스트의 주요 특성으로 본다.
@@ -546,7 +579,7 @@ Primary evidence: `intercompany_structure`
 
 - L3-03 관계사 거래 검토 신호
 - IC01/IC02/IC03 관계사 대사/금액/시차 이상
-- GR01/GR03 순환 구조/이전가격 그래프 신호
+- GR01/GR03 순환 구조/이전가격 그래프 신호. 현재 `rule_scoring.py`에는 `intercompany_structure`의 `macro_only` 신호로 등록되어 있지만, PHASE1 transaction case builder의 `_RULE_THEME_MAP`에는 직접 연결되어 있지 않다.
 - L4-01/L4-03 고액 또는 매출 이상
 - L3-11 cutoff
 - L2-05 역분개
@@ -558,7 +591,7 @@ Primary evidence: `intercompany_structure`
 | L3-03 + L4-01/L4-03 | 관계사 고액 매출/거래 | High |
 | L3-03 + L3-11/L3-04 | 관계사 cutoff 또는 기말 집중 | High |
 | L3-03 + L2-05 | 관계사 거래 후 되돌림/상계 | High |
-| L3-03 + GR01/GR03 | 순환 구조 또는 가격 비대칭 | Critical 후보 |
+| L3-03 + GR01/GR03 | 순환 구조 또는 가격 비대칭. 현재 구현에서는 transaction case 직접 승격이 아니라 graph/macro finding 연계 대상으로 해석 | Critical 후보 |
 
 외부 기준 대조:
 
@@ -609,6 +642,15 @@ Primary evidence: macro-finding. 기존회사에서만 사용.
 | D02 + L2-05 | 특정 월 집중 후 역분개/정리 패턴 | High 후보 |
 | D01 + D02 | 활동량과 월별 배치가 함께 변화 | Medium 이상 |
 
+구현 반영:
+
+- D01은 `account_activity_variance` metadata에서 Account / Process Queue finding으로 생성한다.
+- D02는 `d02_account_diagnostics` metadata에서 flagged group만 Account / Process Queue finding으로 생성한다.
+- `confirmed_account_shift`, `confirmed_monthly_shift`는 macro priority `0.75` 이상으로 보정한다.
+- `corroborated_account_shift`, `corroborated_monthly_shift`는 macro priority `0.55~0.80` 범위로 보정한다.
+- 정상 사업 이벤트나 정상 패턴으로 보이는 bucket은 낮은 macro priority로 남기고 transaction case를 직접 승격하지 않는다.
+- 같은 회사·연도·계정의 transaction case와 연결되면 `macro_context` tag와 제한된 priority booster를 준다.
+
 외부 기준 대조:
 
 - AS 2305는 분석적 절차가 재무·비재무 데이터의 그럴듯한 관계를 평가하는 절차라고 설명하고, prior period, budget, industry, internal relationships 등을 expectation source로 든다.
@@ -616,30 +658,43 @@ Primary evidence: macro-finding. 기존회사에서만 사용.
 
 ## 8. 구현 반영 상태와 남은 정합성
 
-현재 `docs/DETECTION_RULES.md` 기준으로 이미 반영된 항목과 추가 보강이 필요한 항목을 분리한다.
+현재 코드 기준으로 반영된 항목과 아직 문서/화면에서 주의할 항목을 분리한다.
 
 | 항목 | 상태 | 비고 |
 |---|---|---|
+| case priority 기본식 | 반영 | `control 0.25`, `amount 0.25`, `outflow 0.15`, `logic 0.15`, `timing 0.10`, `behavior 0.10` |
 | `_RULE_THEME_MAP`의 `L1-09 -> control_failure` | 반영 | 승인일 누락은 승인 추적성 훼손 신호 |
 | `_RULE_THEME_MAP`의 `L3-01 -> logic_mismatch` | 반영 | 계정-프로세스 불일치 축 |
 | `L4-05 -> timing_anomaly` | 반영 | 산출은 통계 기반이어도 감사 해석은 비정상 시간대/행동 집중 |
 | `L2-03a~L2-03d`를 `L2-03` 하위 reason code로 정리 | 반영 | 모두 `duplicate_or_outflow` |
+| `L1-01` row-level imbalance floor | 반영 | severe imbalance는 Medium, material imbalance는 Low floor |
+| `L1-02` 핵심 필드 누락 floor | 반영 | document/core required field 누락을 blocker 성격의 priority floor로 반영 |
+| `L1-08` context priority | 반영 | primary는 `data_integrity_failure`, annotation context가 있을 때 보조 priority bonus |
+| `L2-03` 고신뢰 중복 보정 | 반영 | 고신뢰 + 독립 evidence 또는 금액 보강일 때 bonus/floor 적용 |
+| `L3-01` context priority | 반영 | manual, high amount, period end, approval, abnormal time, intercompany, repeat, logic combo tag 기반 |
+| `L3-04` timing priority tuning | 반영 | 단독 결산 모집단 penalty, 민감계정/고액/조합 bonus, 정상 반복 패턴 cap |
+| `L4-04` 희소 계정쌍 penalty | 반영 | 단독 또는 recurring source 성격이면 priority penalty |
 | case-level Top-side additive bonus | 반영 | 보정 전 점수는 `base_priority_score`, 최종 점수는 `priority_score` |
-| `L4-06` corroboration group 기반 batch combo 보정 | 반영 | 단독 L4-06은 High로 보지 않음 |
-| `L3-12` access scope review + work-scope combo 보정 | 반영 | 단독 L3-12는 weak/booster, 2개 보강 group은 Medium, 3개 이상은 High floor |
+| `L4-06` corroboration group 기반 batch combo 보정 | 반영 | case priority에는 bonus/behavior floor, row-level에는 risk_level 승격과 combo reason 기록 |
+| `L3-12` access scope review + work-scope combo 보정 | 반영 | 단독 L3-12는 weak/booster, row-level 2개 보강 group은 Medium, 3개 이상은 High floor |
 | weak evidence bonus | 반영 | 강한 독립 evidence 축이 있을 때만 보조 가산 |
 | 룰별 라벨/버킷 정규화 | 반영 | `src/detection/rule_scoring.py`에서 `signal_strength`, `normalized_score`, `scoring_role` 계산 |
 | Auditor Insight 출력 계층 | 반영 | `review_focus`, `risk_narrative`, `recommended_audit_actions` 사용 |
-| Benford, D01, D02 Account / Process Queue | 설계 반영, UI/리포트 지속 보강 대상 | macro-finding과 transaction drill-down 분리 필요 |
+| Benford, D01, D02 Account / Process Queue | 반영 | macro finding과 transaction case를 분리하고, D01/D02는 제한된 macro context booster를 제공 |
 | `rule_evidence_summary` 표준화 | 1차 반영, 지속 보강 대상 | raw rule hit에 `display_label`, `signal_strength`, `normalized_score`, `evidence_strength`, `scoring_role` 포함 |
+| GR01/GR03 graph 신호 | 부분 반영 | scoring registry에는 `macro_only`로 있으나 PHASE1 transaction case builder에는 직접 연결되지 않음 |
 
 남은 정합성 체크:
 
 1. weak evidence가 자기 자신만으로 보정되지 않는지 테스트한다.
 2. `L1-08`이 primary로는 `data_integrity_failure`, scenario narrative에서는 secondary timing signal로만 쓰이는지 확인한다.
 3. Account / Process Queue에서 Benford/D01/D02와 L1~L4 transaction hit drill-down이 분리되어 표시되는지 확인한다.
-4. 화면/export가 `representative_explanation`보다 `risk_narrative`와 `recommended_audit_actions`를 우선 사용하는지 확인한다.
-5. 룰별 상/중/하 또는 위험 높음/낮음 표현이 직접 합산되지 않고, `signal_strength`와 `normalized_score`로 정규화되는지 회귀 테스트한다.
+4. D01/D02 `macro_context` booster가 최대 `0.10`을 넘지 않고, 정상 사업 이벤트 bucket은 context only로 남는지 테스트한다.
+5. 화면/export가 `representative_explanation`보다 `risk_narrative`와 `recommended_audit_actions`를 우선 사용하는지 확인한다.
+6. 케이스 목록은 룰 hit 개수 하나로 표시하지 않고 `Direct`, `Review`, `Blocker`, `Macro` 신호 수를 함께 표시한다.
+7. Drill-down은 raw rule hit 전체 표를 기본으로 노출하지 않고 `직접 위험 신호`, `리뷰/맥락 신호`, `정합성/탐지제약`, `계정/모집단 Finding` 섹션으로 나누어 표시한다.
+8. 룰별 상/중/하 또는 위험 높음/낮음 표현이 직접 합산되지 않고, `signal_strength`와 `normalized_score`로 정규화되는지 회귀 테스트한다.
+9. GR01/GR03을 PHASE1 사용자 큐에 노출하려면 graph/macro queue 설계와 transaction case 연결 방식을 별도 정의한다.
 
 ## 9. 참고한 외부 기준
 

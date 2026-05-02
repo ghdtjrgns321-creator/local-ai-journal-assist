@@ -467,6 +467,8 @@ signal_strength
 * scoring_role_factor
 ```
 
+Rule-specific 정규화가 필요한 detector bucket은 위 공식에 들어가기 전 `signal_strength`를 별도로 산정한다. `L3-09` suspense aging은 detector row score가 30/60/90일 aging 우선순위를 이미 담고 있으므로 `0.45/0.60/0.75/0.80` raw score 순서를 보존한다. PHASE1 contribution은 medium evidence factor를 곱한 `0.3375/0.45/0.5625/0.60`이며, 단독 High floor 없이 `logic_score`에만 반영한다.
+
 `RawRuleHitRef`는 원천 룰 참조 외에 `display_label`, `signal_strength`, `normalized_score`, `evidence_strength`, `scoring_role`을 저장한다. `CaseGroupResult`는 `priority_score`, `base_priority_score`, `topside_bonus`, `batch_combo_bonus`, `weak_evidence_bonus`, `priority_adjustment_reasons`, `review_focus`, `risk_narrative`, `recommended_audit_actions`, `rule_evidence_summary`를 포함한다. Row-level aggregate output은 별도로 `work_scope_combo_score`와 `work_scope_combo_reasons`를 제공한다.
 
-`L3-08`은 `booster`, `L3-12`는 `access_scope_review` evidence type의 weak/booster, `L4-06`은 `combo_only`, `L4-02/D01/D02`는 transaction queue 기준 `macro_only`로 본다. 따라서 룰별 `High/Medium/Low`, `상/중/하`, `검토 필요` 같은 표현값은 화면 설명용 `display_label`로 보존하되, PHASE1 합산에는 `normalized_score`만 사용한다. L3-12는 단독 High floor를 만들지 않고, `work_scope_combo_score`에서 독립 보강 evidence group 2개 이상일 때만 Medium/High 승격을 적용한다.
+`L3-08`은 `booster`, `L3-12`는 `access_scope_review` evidence type의 weak/booster, `L4-06`은 `combo_only`, `L4-02/D01/D02`는 transaction queue 기준 `macro_only`로 본다. 따라서 룰별 `High/Medium/Low`, `상/중/하`, `검토 필요` 같은 표현값은 화면 설명용 `display_label`로 보존하되, PHASE1 합산에는 `normalized_score`만 사용한다. L3-08은 단독으로 `weak_evidence_bonus`를 만들지 않고, `l3_08_corroborating_rules`에 포함된 독립 보강 룰과 결합될 때만 `missing_or_corrupted_description` 보조 태그를 priority 보정에 사용한다. L3-12는 단독 High floor를 만들지 않고, `work_scope_combo_score`에서 독립 보강 evidence group 2개 이상일 때만 Medium/High 승격을 적용한다.
