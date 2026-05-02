@@ -10,6 +10,7 @@ import pandas as pd
 
 from src.detection.base import DetectionResult
 from src.detection.constants import get_track_display_label
+from src.ingest.datasynth_labels import get_source_path
 from src.metrics.models import (
     AnalyticalReviewMetric,
     BenfordBenchmarkMetric,
@@ -27,6 +28,66 @@ from src.metrics.rule_mapping import (
     get_truth_basis,
     get_truth_display,
 )
+
+
+def _datasynth_candidate_dir(df: pd.DataFrame) -> Path | None:
+    """Return the DataSynth candidate directory stored on the dataframe."""
+
+    source_path = get_source_path(df)
+    if source_path is None:
+        return None
+    if source_path.is_dir():
+        return source_path
+    return source_path.parent
+
+
+def _rule_truth_sidecar_paths(rule_id: str, df: pd.DataFrame) -> list[Path]:
+    data_dir = _datasynth_candidate_dir(df)
+    if data_dir is None:
+        return []
+
+    paths: list[Path] = []
+    configured = RULE_TO_POPULATION_TRUTH.get(rule_id)
+    if configured:
+        paths.append(data_dir / configured)
+
+    paths.append(data_dir / "labels" / f"rule_truth_{rule_id.replace('-', '_')}.csv")
+
+    unique: list[Path] = []
+    seen: set[Path] = set()
+    for path in paths:
+        resolved = path.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        unique.append(path)
+    return unique
+
+
+def _load_rule_truth_doc_set(rule_id: str, df: pd.DataFrame) -> set[str] | None:
+    """Load preferred rule-truth sidecar docs when a DataSynth candidate provides one."""
+
+    if "document_id" not in df.columns:
+        return None
+    available_docs = set(df["document_id"].dropna().astype(str).unique())
+    for path in _rule_truth_sidecar_paths(rule_id, df):
+        if not path.exists():
+            continue
+        truth = pd.read_csv(
+            path,
+            usecols=lambda column: column in {"document_id", "expected_hit", "rule_id"},
+            low_memory=False,
+        )
+        if "document_id" not in truth.columns:
+            continue
+        mask = truth["document_id"].notna()
+        if "rule_id" in truth.columns:
+            mask = mask & truth["rule_id"].astype(str).eq(rule_id)
+        if "expected_hit" in truth.columns:
+            expected = truth["expected_hit"].astype(str).str.lower().isin({"true", "1", "yes"})
+            mask = mask & expected
+        return set(truth.loc[mask, "document_id"].astype(str).unique()) & available_docs
+    return None
 
 
 def normalize_results_by_track(
@@ -275,7 +336,9 @@ def per_rule_label_analysis(
 
         rule_scores = result.details[rule_id].reindex(df.index, fill_value=0.0)
         review_scores = _rule_review_scores(rule_id, df, result)
-        rule_mask = (rule_scores > 0) | (review_scores > 0)
+        rule_mask = _rule_flag_mask(rule_id, df, result) | (rule_scores > 0) | (
+            review_scores > 0
+        )
         flagged_rows = int(rule_mask.sum())
         flagged_doc_set = set(df.loc[rule_mask, "document_id"].dropna().unique())
         overlap_docs = _count_overlap_docs(rule_id, df, normalized, flagged_doc_set)
@@ -352,6 +415,20 @@ def _rule_review_scores(rule_id: str, df: pd.DataFrame, result: DetectionResult)
         return review_details[rule_id].reindex(df.index, fill_value=0.0).astype(float)
     if isinstance(review_details, dict) and rule_id in review_details:
         return pd.Series(review_details[rule_id], index=df.index).fillna(0.0).astype(float)
+    return empty
+
+
+def _rule_flag_mask(rule_id: str, df: pd.DataFrame, result: DetectionResult) -> pd.Series:
+    """Return raw detector flags when a rule separates detection from score."""
+
+    empty = pd.Series(False, index=df.index, dtype="bool")
+    if not result.metadata:
+        return empty
+    flag_details = result.metadata.get("rule_flag_series")
+    if isinstance(flag_details, pd.DataFrame) and rule_id in flag_details.columns:
+        return flag_details[rule_id].reindex(df.index, fill_value=False).astype(bool)
+    if isinstance(flag_details, dict) and rule_id in flag_details:
+        return pd.Series(flag_details[rule_id], index=df.index).fillna(False).astype(bool)
     return empty
 
 
@@ -490,15 +567,19 @@ def _rule_score_bands(
             "review_docs": int(review_docs),
         }
     if rule_id == "L3-02":
+        l302_scores = scores.combine(review_scores, max)
         population_docs = df.loc[
-            (scores > 0) & (scores < 0.60),
+            (l302_scores > 0) & (l302_scores < 0.60),
             "document_id",
         ].dropna().nunique()
         priority_docs = df.loc[
-            (scores >= 0.60) & (scores < 0.75),
+            (l302_scores >= 0.60) & (l302_scores < 0.75),
             "document_id",
         ].dropna().nunique()
-        control_bypass_docs = df.loc[scores >= 0.75, "document_id"].dropna().nunique()
+        control_bypass_docs = df.loc[
+            l302_scores >= 0.75,
+            "document_id",
+        ].dropna().nunique()
         return {
             "manual_population_docs": int(population_docs),
             "priority_docs": int(priority_docs),
@@ -1089,6 +1170,10 @@ def _label_doc_set_for_rule(
     Why: L1-01 is a structural balance gate. Its ground truth should be every document
     whose debit-credit sum is actually unbalanced, regardless of sidecar label type.
     """
+    sidecar_docs = _load_rule_truth_doc_set(rule_id, df)
+    if sidecar_docs is not None:
+        return sidecar_docs
+
     if rule_id == "L1-01":
         required = {"document_id", "debit_amount", "credit_amount"}
         if not required.issubset(df.columns):

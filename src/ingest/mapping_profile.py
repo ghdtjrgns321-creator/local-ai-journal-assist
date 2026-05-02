@@ -80,6 +80,7 @@ def save_profile(
     source_name: str = "",
     source_format: str = "",
     header_row: int = 0,
+    fiscal_year: int | None = None,
     profile_dir: Path | None = None,
 ) -> Path:
     """확정 매핑 → JSON 프로파일 저장 + 메타데이터 로그 생성.
@@ -90,6 +91,7 @@ def save_profile(
         source_name: 원본 파일명 (예: "gl_export.xlsx")
         source_format: 원본 포맷 (예: "xlsx")
         header_row: 헤더 행 인덱스
+        fiscal_year: 회계연도 (작년 매칭 비교에 사용)
         profile_dir: 회사별 프로파일 디렉토리 (None이면 글로벌 폴백)
 
     Returns:
@@ -110,6 +112,7 @@ def save_profile(
         "confidence": result.confidence,
         "source_format": source_format,
         "source_name": source_name,
+        "fiscal_year": fiscal_year,
     }
 
     # 기존 프로파일이 있으면 created_at 유지, updated_at만 갱신
@@ -343,7 +346,100 @@ def load_latest_profile(*, profile_dir: Path | None = None) -> dict | None:
         "source_columns": latest["source_columns"],
         "fingerprint": latest.get("fingerprint", ""),
         "source_name": latest.get("source_name", ""),
+        "fiscal_year": latest.get("fiscal_year"),
     }
+
+
+def load_prior_year_profile(
+    prior_fiscal_year: int,
+    *,
+    profile_dir: Path | None = None,
+) -> dict | None:
+    """fiscal_year == prior_fiscal_year 프로파일을 반환.
+
+    Why: 라벨 "작년 컬럼매핑과 비교" 의도에 맞춰, 직전 업로드가 아닌
+         **직전 회계연도** 프로파일과 컬럼 구조를 비교한다. 매칭 다수면
+         updated_at 기준 최신 1개를 선택. 매칭 없으면 None(작년 분석 이력 없음).
+    """
+    resolved = _resolve_dir(profile_dir)
+    if not resolved.exists():
+        return None
+
+    candidate: dict | None = None
+    candidate_ts = ""
+
+    for path in resolved.glob("*.json"):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        if "profile_version" not in data or "source_columns" not in data:
+            continue
+        # fiscal_year 메타가 없는 구버전 프로파일은 매칭 대상에서 제외
+        fy = data.get("fiscal_year")
+        if fy is None or int(fy) != int(prior_fiscal_year):
+            continue
+        ts = data.get("updated_at", "")
+        if ts > candidate_ts:
+            candidate_ts = ts
+            candidate = data
+
+    if candidate is None:
+        return None
+
+    return {
+        "source_columns": candidate["source_columns"],
+        "fingerprint": candidate.get("fingerprint", ""),
+        "source_name": candidate.get("source_name", ""),
+        "fiscal_year": candidate.get("fiscal_year"),
+    }
+
+
+def delete_profiles_by_fiscal_year(
+    fiscal_year: int,
+    *,
+    profile_dir: Path | None = None,
+) -> int:
+    """fiscal_year에 매칭되는 모든 프로파일 + 관련 로그 삭제. 삭제 개수 반환.
+
+    Why: engagement 삭제 시 그 회계연도와 결합된 회사 매핑 프로파일도
+         함께 정리해야 "남는 데이터"가 없다.
+    """
+    resolved = _resolve_dir(profile_dir)
+    if not resolved.exists():
+        return 0
+
+    log_dir = _resolve_log_dir(profile_dir)
+    deleted = 0
+    for path in list(resolved.glob("*.json")):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        if "profile_version" not in data:
+            continue
+        fy = data.get("fiscal_year")
+        if fy is None or int(fy) != int(fiscal_year):
+            continue
+
+        fp = data.get("fingerprint", path.stem)
+        try:
+            path.unlink()
+            deleted += 1
+        except OSError:
+            logger.warning("프로파일 삭제 실패: %s", path)
+            continue
+        # 관련 로그도 함께 정리
+        if log_dir.exists():
+            for log_path in log_dir.glob(f"{fp}_*.json"):
+                try:
+                    log_path.unlink()
+                except OSError:
+                    logger.warning("프로파일 로그 삭제 실패: %s", log_path)
+
+    if deleted:
+        logger.info("FY %s 프로파일 %d개 삭제", fiscal_year, deleted)
+    return deleted
 
 
 def compute_column_diff(

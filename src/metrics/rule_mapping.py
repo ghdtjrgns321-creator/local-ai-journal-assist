@@ -98,8 +98,8 @@ RULE_TO_TRUTH_BASIS: dict[str, str] = {
     "L3-10": "high-risk account review population; confirmed anomaly subset is HighRiskAccountUse",
     "L4-03": "confirmed high-amount anomaly subset; high_amount_review_population is coverage only",
     "L4-04": (
-        "confirmed unusual account-pair subset; rare_account_pair_review_population "
-        "is coverage only"
+        "rare account-pair raw review universe; confirmed UnusualAccountPair "
+        "is a separate subset"
     ),
     "IC01": "confirmed unmatched intercompany labels",
     "IC02": "amount-mismatch review candidates, evaluated against matching exception labels",
@@ -108,16 +108,16 @@ RULE_TO_TRUTH_BASIS: dict[str, str] = {
     "GR03": "transfer-pricing review candidates, evaluated against confirmed anomaly labels",
     "L3-06": "after-hours-only anomaly labels",
     "L4-05": (
-        "confirmed human abnormal-hours concentration subset; raw hits are "
-        "user-behavior review population"
+        "combined-context abnormal-hours behavior review universe; confirmed "
+        "AbnormalHoursConcentration is a separate subset"
     ),
     "L3-11": (
         "cutoff review population; confirmed revenue/expense cutoff labels are "
         "direct anomaly subset"
     ),
     "L3-12": (
-        "current-period user work-scope concentration review population; "
-        "explicit SoD or authorization-matrix violations remain L1-06"
+        "current-period user work-scope scored review population; raw candidate "
+        "coverage is stored separately in work_scope_raw_candidate_population"
     ),
     "L4-06": (
         "auxiliary batch-processing review signal; no confirmed anomaly label "
@@ -171,9 +171,10 @@ RULE_TO_EVALUATION_NOTE: dict[str, str] = {
         "unresolved approver limits are coverage issues, not hits."
     ),
     "L2-02": (
-        "Duplicate-payment screen is pair-oriented. Reference matches are stronger "
-        "evidence; blank-reference fallback hits are review candidates and should "
-        "not be read as confirmed duplicate payments without support."
+        "Duplicate-payment screen is pair-oriented. Phase 1 rule truth is the "
+        "raw duplicate-payment review universe; DuplicatePayment labels and "
+        "pair sidecars are only confirmed subsets. Reference and fallback reason "
+        "bands drive downstream priority rather than truth inclusion."
     ),
     "L2-03": (
         "Duplicate-entry screen mixes exact, reference, near, and split patterns. "
@@ -213,10 +214,11 @@ RULE_TO_EVALUATION_NOTE: dict[str, str] = {
         "hits and should be handled by case priority/Phase 2."
     ),
     "L3-12": (
-        "Work-scope concentration review rule. Do not evaluate it as an L1-06 "
-        "SoD violation; broad current-period activity is a review population "
-        "and should be escalated mainly when manual, sensitive-account, high-"
-        "amount, or period-end context is present."
+        "Work-scope concentration review rule. Evaluate raw candidate coverage "
+        "against work_scope_raw_candidate_population and scored review accuracy "
+        "against rule_truth_L3_12/work_scope_excess_review_population. Do not "
+        "count zero-score system/admin observations as scored-truth false "
+        "positives."
     ),
     "L4-03": (
         "High-amount review anchor. Score confirmed anomaly recall separately from "
@@ -224,9 +226,9 @@ RULE_TO_EVALUATION_NOTE: dict[str, str] = {
         "not confirmed anomalies."
     ),
     "L4-04": (
-        "Rare account-pair review anchor. Score confirmed anomaly recall separately "
-        "from rare_account_pair_review_population coverage; normal rare pairs are "
-        "not confirmed anomalies."
+        "Rare account-pair review anchor. Phase 1 rule truth is the raw detector "
+        "review universe. Confirmed UnusualAccountPair labels and normal rare-pair "
+        "controls are subset/context sidecars, not the strict precision denominator."
     ),
     "L4-02": (
         "Benford is a population-level account distribution finding. Do not read "
@@ -235,18 +237,17 @@ RULE_TO_EVALUATION_NOTE: dict[str, str] = {
         "holdout sidecars."
     ),
     "L4-05": (
-        "User-behavior abnormal-hours screen. Confirmed "
-        "AbnormalHoursConcentration labels are the direct subset; raw sigma, "
-        "midnight, high-context, and rapid-approval hits form a review queue "
-        "that should be triaged with amount, account, period-end, and approval "
-        "signals."
+        "User-behavior abnormal-hours screen. Phase 1 rule truth is the raw "
+        "combined-context behavior review universe. Confirmed "
+        "AbnormalHoursConcentration labels are a subset, and annual single-year "
+        "runs are robustness checks rather than the strict truth benchmark."
     ),
     "L4-06": (
-        "Auxiliary batch-processing signal. L4-06 alone is not a confirmed "
-        "anomaly and should not be scored as strict precision/recall. Use "
-        "period-end concentration, simultaneous creation, and amount-outlier "
-        "bands as review context, and escalate only when independent "
-        "corroborating rule groups are present."
+        "Auxiliary batch-processing signal. Phase 1 rule truth is the raw "
+        "batch detector review universe, while BatchAnomaly labels are only a "
+        "confirmed subset. Normal and boundary batch controls stay outside "
+        "strict rule truth. Escalate only when independent corroborating rule "
+        "groups are present."
     ),
 }
 

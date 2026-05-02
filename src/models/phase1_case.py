@@ -55,11 +55,16 @@ class CaseGroupResult(BaseModel):
     topside_bonus: float = 0.0
     batch_combo_bonus: float = 0.0
     weak_evidence_bonus: float = 0.0
+    l301_priority_bonus: float = 0.0
     priority_adjustment_reasons: list[str] = Field(default_factory=list)
     priority_band: str = "low"
     amount_score: float = 0.0
     control_score: float = 0.0
+    duplicate_or_outflow_score: float = 0.0
     logic_score: float = 0.0
+    data_integrity_score: float = 0.0
+    intercompany_score: float = 0.0
+    timing_score: float = 0.0
     behavior_score: float = 0.0
     repeat_score: float = 0.0
     rule_count: int = 0
@@ -76,6 +81,7 @@ class CaseGroupResult(BaseModel):
     recommended_audit_actions: list[str] = Field(default_factory=list)
     rule_evidence_summary: list[dict[str, Any]] = Field(default_factory=list)
     evidence_tags: list[str] = Field(default_factory=list)
+    macro_contexts: list[dict[str, Any]] = Field(default_factory=list)
     documents: list[CaseDocumentRef] = Field(default_factory=list)
     raw_rule_hits: list[RawRuleHitRef] = Field(default_factory=list)
     exposure_rank: int | None = None

@@ -42,6 +42,7 @@ PHASE2_CASE_FEATURE_COLUMNS = (
     "amount_score",
     "control_score",
     "logic_score",
+    "timing_score",
     "behavior_score",
     "has_control_failure",
     "has_high_materiality",
@@ -180,6 +181,7 @@ def _case_feature_row(case: CaseGroupResult) -> dict[str, Any]:
         "amount_score": float(case.amount_score),
         "control_score": float(case.control_score),
         "logic_score": float(case.logic_score),
+        "timing_score": float(case.timing_score),
         "behavior_score": float(case.behavior_score),
         "has_control_failure": bool(case.has_control_failure),
         "has_high_materiality": bool(case.has_high_materiality),
@@ -205,6 +207,7 @@ def _case_provenance_row(case: CaseGroupResult) -> dict[str, Any]:
             "topside_bonus": case.topside_bonus,
             "batch_combo_bonus": case.batch_combo_bonus,
             "weak_evidence_bonus": case.weak_evidence_bonus,
+            "l301_priority_bonus": case.l301_priority_bonus,
             "reasons": list(case.priority_adjustment_reasons),
         },
     }

@@ -256,6 +256,7 @@ class PipelineResult:
     phase1_case_path: str | None = None
     phase1_case_run_id: str | None = None
     phase1_case_count: int = 0
+    phase1_macro_finding_count: int = 0
     phase1_top_theme_ids: list[str] = field(default_factory=list)
     phase2_case_overlays: list[dict] = field(default_factory=list, repr=False)
     phase3_case_narratives: list[CaseNarrative] = field(default_factory=list, repr=False)
@@ -629,6 +630,9 @@ class AuditPipeline:
             phase1_case_path=phase1_case_ref.get("phase1_case_path"),
             phase1_case_run_id=phase1_case_ref.get("phase1_case_run_id"),
             phase1_case_count=int(phase1_case_ref.get("phase1_case_count", 0)),
+            phase1_macro_finding_count=int(
+                phase1_case_ref.get("phase1_macro_finding_count", 0)
+            ),
             phase1_top_theme_ids=list(phase1_case_ref.get("top_theme_ids", [])),
             phase2_case_overlays=phase2_case_overlays,
         )
@@ -757,6 +761,9 @@ class AuditPipeline:
             phase1_case_path=phase1_case_ref.get("phase1_case_path"),
             phase1_case_run_id=phase1_case_ref.get("phase1_case_run_id"),
             phase1_case_count=int(phase1_case_ref.get("phase1_case_count", 0)),
+            phase1_macro_finding_count=int(
+                phase1_case_ref.get("phase1_macro_finding_count", 0)
+            ),
             phase1_top_theme_ids=list(phase1_case_ref.get("top_theme_ids", [])),
             phase2_case_overlays=phase2_case_overlays,
         )

@@ -216,10 +216,45 @@ class CompanyRepository:
         return results
 
     def delete_engagement(self, company_id: str, engagement_id: str) -> bool:
-        """Engagement 디렉토리 전체 삭제. 미존재 시 False."""
+        """Engagement 디렉토리 전체 삭제 + 결합된 회사 프로파일/캐시 정리.
+
+        Why: 단순 rmtree만 하면 (1) Windows에서 ConnectionManager가 잡고 있는
+             audit.duckdb 파일 락으로 PermissionError가 나거나, (2) 같은 fiscal_year로
+             저장된 회사 매핑 프로파일이 남아 다음 분석에 잔재로 끌려온다.
+             따라서 ① DB 커넥션 close → ② fiscal_year 매칭 프로파일 삭제 →
+             ③ 디렉토리 rmtree 순으로 처리.
+        """
         edir = self.engagement_dir(company_id, engagement_id)
         if not edir.exists():
             return False
+
+        # 1) DB 커넥션 close — Windows 파일 락 해제
+        db_path = self.db_path(company_id, engagement_id)
+        try:
+            from src.db.connection import _manager  # noqa: PLC0415
+            _manager.close(db_path)
+        except Exception:
+            logger.warning("DB 커넥션 close 실패 (계속 진행)", exc_info=True)
+
+        # 2) fiscal_year 매칭 회사 프로파일 + 로그 정리
+        fy: int | None = None
+        try:
+            engagement = self.get_engagement(company_id, engagement_id)
+            fy = engagement.fiscal_year
+        except FileNotFoundError:
+            pass
+        if fy is not None:
+            try:
+                from src.ingest.mapping_profile import (  # noqa: PLC0415
+                    delete_profiles_by_fiscal_year,
+                )
+                delete_profiles_by_fiscal_year(
+                    fy, profile_dir=self.profile_dir(company_id),
+                )
+            except Exception:
+                logger.warning("FY %s 프로파일 정리 실패 (계속 진행)", fy, exc_info=True)
+
+        # 3) 디렉토리 통째 삭제
         shutil.rmtree(edir)
         logger.info("Engagement 삭제: %s/%s", company_id, engagement_id)
         return True
