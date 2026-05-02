@@ -7,9 +7,17 @@ import streamlit as st
 from dashboard._state import (
     KEY_BATCH_ID,
     KEY_FEATURED_DATA,
+    KEY_INGEST_COLUMN_DIFF,
     KEY_INGEST_CONFIRMED,
-    KEY_INGEST_PREPARED_DF,
+    KEY_INGEST_DATA_DF,
+    KEY_INGEST_MAPPING_RESULT,
     KEY_INGEST_PREP_WARNINGS,
+    KEY_INGEST_PREPARED_DF,
+    KEY_INGEST_READ_RESULT,
+    KEY_INGEST_SELECTED_SHEET,
+    KEY_INGEST_SHEET_SCORES,
+    KEY_INGEST_SOURCE_COLUMNS,
+    KEY_INGEST_STAGE,
     KEY_LOADED_FROM_DB,
     KEY_PHASE1_RESULT,
     KEY_PHASE2_RESULT,
@@ -46,5 +54,28 @@ def prepare_mapped_data(file_key: str, progress_cb=None):
     st.session_state[KEY_INGEST_PREP_WARNINGS] = warns
     st.session_state[KEY_INGEST_CONFIRMED] = True
     st.session_state[KEY_LOADED_FROM_DB] = False
+    _clear_ingest_review_state()
     logger.info("mapped data prepared: rows=%s file=%s", len(result.data), file_key)
     return result
+
+
+def _clear_ingest_review_state() -> None:
+    """Leave the completed prep result active and clear upload/review-only state."""
+
+    for key in [
+        KEY_INGEST_READ_RESULT,
+        KEY_INGEST_MAPPING_RESULT,
+        KEY_INGEST_SHEET_SCORES,
+        KEY_INGEST_SELECTED_SHEET,
+        KEY_INGEST_SOURCE_COLUMNS,
+        KEY_INGEST_DATA_DF,
+        KEY_INGEST_COLUMN_DIFF,
+        "_ingest_file_key",
+        "_ingest_source_hint",
+        "_ingest_tmp_path",
+        "_ingest_is_user_path",
+        "_ingest_current_fy",
+        "_ingest_prior_fy",
+    ]:
+        st.session_state.pop(key, None)
+    st.session_state[KEY_INGEST_STAGE] = "UPLOAD"

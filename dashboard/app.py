@@ -54,6 +54,8 @@ ss = st.session_state
 
 if "_company_repo" not in ss:
     ss["_company_repo"] = _repo
+if "_context_factory" not in ss:
+    ss["_context_factory"] = _factory
 if "_conn_mgr" not in ss:
     ss["_conn_mgr"] = _conn_mgr
 
@@ -230,21 +232,8 @@ with col_btn:
         st.rerun()
 st.divider()
 
-from dashboard.tab_data_quality import render as render_data_quality
-from dashboard.tab_findings import render as render_findings
-from dashboard.tab_overview import render as render_overview
-from dashboard.tab_phase1 import render as render_phase1
-from dashboard.tab_phase2 import render as render_phase2
+from dashboard.tab_overview import render as render_overview  # noqa: E402
 
-tabs = st.tabs(["개요", "데이터 탐색", "룰 위반", "이상 탐지"])
+tabs = st.tabs(["개요"])
 with tabs[0]:
     render_overview(display_result)
-with tabs[1]:
-    render_data_quality(display_result)
-with tabs[2]:
-    if phase1_result is None:
-        render_phase1(prep_result or display_result, phase1_result)
-    else:
-        render_findings(phase1_result)
-with tabs[3]:
-    render_phase2(prep_result or display_result, phase2_result)

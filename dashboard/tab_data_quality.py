@@ -9,7 +9,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import streamlit as st
-from src.eda import profile_to_dict
 
 from dashboard._state import KEY_EDA_PROFILE, KEY_FILTERS, KEY_UPLOAD_COUNT
 from dashboard.components.charts import (
@@ -22,6 +21,7 @@ from dashboard.components.charts import (
     risk_heatmap,
 )
 from dashboard.components.filters import apply_filters
+from src.eda import profile_to_dict
 
 if TYPE_CHECKING:
     from src.eda.models import EDAProfile
@@ -82,8 +82,8 @@ def _cached_summary(
     _total_columns: int,
     profile_data: dict,
 ) -> dict:
-    from src.eda.report import summarize_for_dashboard
     from src.eda.models import ColumnProfile, EDAProfile
+    from src.eda.report import summarize_for_dashboard
 
     columns = {
         name: ColumnProfile(**column_data)
@@ -125,7 +125,11 @@ def _render_metrics(summary: dict) -> None:
 
     col_gauge, col_warnings = st.columns([1, 2])
     with col_gauge:
-        st.plotly_chart(quality_gauge(summary["quality_score"]), use_container_width=True)
+        st.plotly_chart(
+            quality_gauge(summary["quality_score"]),
+            use_container_width=True,
+            key="data_quality_quality_gauge",
+        )
     with col_warnings:
         # Why: 감사인용 경고만 표시
         audit_warnings = [
@@ -148,7 +152,11 @@ def _render_missing(summary: dict) -> None:
     nonzero = {k: v for k, v in missing_data.items() if v > 0}
     if nonzero:
         st.subheader("결측률")
-        st.plotly_chart(missing_rate_bar(nonzero), use_container_width=True)
+        st.plotly_chart(
+            missing_rate_bar(nonzero),
+            use_container_width=True,
+            key="data_quality_missing_rate_bar",
+        )
         st.divider()
 
 
@@ -159,6 +167,7 @@ def _render_amount_distribution(summary: dict) -> None:
         st.plotly_chart(
             amount_box_plot(summary["numeric_stats_table"]),
             use_container_width=True,
+            key="data_quality_amount_box_plot",
         )
         st.divider()
 
@@ -197,15 +206,31 @@ def _render_eda_charts(result: PipelineResult) -> None:
     # Row 1: 위험 히트맵 + 시간대 히트맵
     col1, col2 = st.columns(2)
     with col1:
-        st.plotly_chart(risk_heatmap(df), use_container_width=True)
+        st.plotly_chart(
+            risk_heatmap(df),
+            use_container_width=True,
+            key="data_quality_risk_heatmap",
+        )
     with col2:
-        st.plotly_chart(hourly_heatmap(df), use_container_width=True)
+        st.plotly_chart(
+            hourly_heatmap(df),
+            use_container_width=True,
+            key="data_quality_hourly_heatmap",
+        )
 
     # Row 2: 산점도 + 부정유형 트리맵
     col3, col4 = st.columns(2)
     with col3:
-        st.plotly_chart(anomaly_scatter(df), use_container_width=True)
+        st.plotly_chart(
+            anomaly_scatter(df),
+            use_container_width=True,
+            key="data_quality_anomaly_scatter",
+        )
     with col4:
-        st.plotly_chart(fraud_type_treemap(df), use_container_width=True)
+        st.plotly_chart(
+            fraud_type_treemap(df),
+            use_container_width=True,
+            key="data_quality_fraud_type_treemap",
+        )
 
     st.divider()

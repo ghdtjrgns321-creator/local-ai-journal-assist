@@ -12,8 +12,6 @@ Why: 파일 업로드 후 데이터 미리보기(Top 10)를 표시하여
 from __future__ import annotations
 
 import logging
-import tempfile
-import time
 from pathlib import Path
 
 import streamlit as st
@@ -23,7 +21,6 @@ from dashboard._state import (
     KEY_COMPANY_CONTEXT,
     KEY_DEV_MODE,
     KEY_EDA_PROFILE,
-    KEY_ENGAGEMENT_ID,
     KEY_FEATURED_DATA,
     KEY_INGEST_COLUMN_DIFF,
     KEY_INGEST_CONFIRMED,
@@ -60,6 +57,39 @@ def _make_progress_cb(progress_bar):
     return _update
 
 
+def _open_native_file_dialog() -> str | None:
+    """OS 네이티브 파일 다이얼로그를 띄워 절대 경로를 반환.
+
+    Why: 브라우저 file_uploader는 보안상 실제 경로를 노출하지 않고 임시 폴더에
+         바이트를 복사하므로 대용량 파일에서 HTTP 전송 지연이 크다. 이 도구는
+         로컬 단일 사용자 전용이므로 tkinter 다이얼로그로 절대 경로를 받아
+         디스크에서 바로 읽는다.
+    """
+    import tkinter as tk
+    from tkinter import filedialog
+
+    root = tk.Tk()
+    root.withdraw()
+    # 다이얼로그가 다른 창 뒤로 숨지 않도록 강제 전면
+    root.attributes("-topmost", True)
+    root.lift()
+    root.focus_force()
+    try:
+        path = filedialog.askopenfilename(
+            title="감사 데이터 파일 선택",
+            filetypes=[
+                ("All supported", "*.csv *.xlsx *.xls *.xlsb *.tsv *.txt *.dat *.parquet"),
+                ("CSV", "*.csv"),
+                ("Excel", "*.xlsx *.xls *.xlsb"),
+                ("Parquet", "*.parquet"),
+                ("All files", "*.*"),
+            ],
+        )
+    finally:
+        root.destroy()
+    return path or None
+
+
 # ── 공개 API ──────────────────────────────────────────────
 
 
@@ -79,80 +109,45 @@ def render_uploader() -> None:
 
 
 def _render_upload_stage() -> None:
-    """파일 업로드 위젯 + ingest 분석 + 미리보기."""
+    """Browse files 버튼 → 네이티브 다이얼로그 → ingest 분석 → 미리보기."""
     st.title("AI Audit Assistant")
-    st.markdown("감사 데이터를 업로드하면 자동으로 컬럼 매핑과 탐지 분석이 진행됩니다.")
+    st.markdown("감사 데이터를 선택하면 자동으로 컬럼 매핑과 탐지 분석이 진행됩니다.")
 
-    # Why: Streamlit file_uploader는 대용량 파일(300MB+)을 브라우저→서버로
-    # HTTP 전송하므로 수 분이 소요된다. 로컬 파일 경로를 직접 입력하면
-    # 디스크에서 바로 읽어 전송 시간을 완전히 건너뛴다.
-    tab_upload, tab_path = st.tabs(["파일 업로드", "파일 경로 입력 (대용량)"])
+    st.caption(
+        f"지원 형식: {', '.join(_ALLOWED_TYPES).upper()} · "
+        "로컬 파일을 직접 읽어 업로드 지연이 없습니다."
+    )
 
-    with tab_upload:
-        # Why: 함정1 방어 — engagement 전환 시 이전 파일 잔존 방지
-        current_eid = st.session_state.get(KEY_ENGAGEMENT_ID, "anonymous")
-        uploaded = st.file_uploader(
-            "감사 데이터 업로드", type=_ALLOWED_TYPES,
-            help="Excel(.xlsx/.xls/.xlsb) 또는 CSV 파일",
-            key=f"uploader_{current_eid}",
-        )
-
-    with tab_path:
-        st.caption("300MB 이상 파일은 경로 입력이 훨씬 빠릅니다.")
-        file_path_input = st.text_input(
-            "파일 경로",
-            placeholder=r"C:\data\journal_entries.csv",
-            help="로컬 파일의 전체 경로를 입력하세요.",
-        )
-        path_submit = st.button("분석 시작", type="primary")
-
-    # ── 경로 입력 모드 ──
-    if file_path_input and path_submit:
-        local_path = Path(file_path_input.strip().strip('"').strip("'"))
-        if not local_path.exists():
-            st.error(f"파일을 찾을 수 없습니다: {local_path}")
-            return
-        ext = local_path.suffix.lower()
-        if ext.lstrip(".") not in _ALLOWED_TYPES:
-            st.error(f"지원하지 않는 형식: {ext}")
-            return
-
-        file_key = f"{local_path.name}_{local_path.stat().st_size}"
-        if file_key == st.session_state.get(KEY_UPLOAD_COUNT, ""):
-            return
-        st.session_state["_ingest_file_key"] = file_key
-        st.session_state["_ingest_source_hint"] = str(local_path)
-
-        try:
-            progress_bar = st.progress(0, text="파일 분석 중...")
-            _run_ingest_from_path(local_path, _make_progress_cb(progress_bar))
-            progress_bar.empty()
-            st.rerun()
-        except Exception as e:
-            logger.exception("인제스트 분석 실패")
-            st.error(f"인제스트 분석 실패: {e}")
-            if st.session_state.get(KEY_DEV_MODE):
-                st.exception(e)
+    if not st.button("📂 Browse files", type="primary"):
+        st.info("**Browse files** 버튼을 눌러 분석할 파일을 선택하세요.")
         return
 
-    # ── 파일 업로드 모드 ──
-    if uploaded is None:
-        st.info("파일을 업로드하거나, 대용량 파일은 '파일 경로 입력' 탭을 이용하세요.")
+    picked = _open_native_file_dialog()
+    if not picked:
+        st.info("파일 선택이 취소되었습니다.")
         return
 
-    file_key = f"{uploaded.name}_{uploaded.size}"
+    local_path = Path(picked)
+    if not local_path.exists():
+        st.error(f"파일을 찾을 수 없습니다: {local_path}")
+        return
+    ext = local_path.suffix.lower()
+    if ext.lstrip(".") not in _ALLOWED_TYPES:
+        st.error(f"지원하지 않는 형식: {ext}")
+        return
+
+    file_key = f"{local_path.name}_{local_path.stat().st_size}"
     if file_key == st.session_state.get(KEY_UPLOAD_COUNT, ""):
         return
 
     st.session_state["_ingest_file_key"] = file_key
-    st.session_state["_ingest_source_hint"] = uploaded.name
+    st.session_state["_ingest_source_hint"] = str(local_path)
 
     try:
         progress_bar = st.progress(0, text="파일 분석 중...")
-        _run_ingest(uploaded, _make_progress_cb(progress_bar))
+        _run_ingest_from_path(local_path, _make_progress_cb(progress_bar))
         progress_bar.empty()
         st.rerun()
-
     except Exception as e:
         logger.exception("인제스트 분석 실패")
         st.error(f"인제스트 분석 실패: {e}")
@@ -223,21 +218,32 @@ def _render_column_diff_section() -> None:
       3) 프로파일 있음 + 변경 발생 → 추가/삭제/이름변경 상세
     """
     diff = st.session_state.get(KEY_INGEST_COLUMN_DIFF)
+    current_fy = st.session_state.get("_ingest_current_fy")
+    prior_fy = st.session_state.get("_ingest_prior_fy")
 
     st.subheader("작년 컬럼매핑과 비교")
 
     if diff is None:
-        st.info(
-            "이 회사의 첫 업로드입니다. 다음 연도 업로드부터 컬럼 구성 변화(추가/삭제/이름변경)를 자동으로 비교해 표시합니다."
-        )
+        if current_fy is None:
+            st.info(
+                "회사/감사연도(Engagement)가 선택되지 않아 작년 비교를 생략했습니다."
+            )
+        elif prior_fy is not None:
+            st.info(
+                f"작년(FY {prior_fy}) 분석 이력이 없습니다. "
+                f"FY {prior_fy} 데이터를 먼저 분석하면 다음 연도부터 컬럼 구성 변화"
+                "(추가/삭제/이름변경)를 자동으로 비교해 표시합니다."
+            )
+        else:
+            st.info("작년 분석 이력이 없습니다.")
         return
 
     total = len(diff.added) + len(diff.removed) + len(diff.renamed)
-    prev_label = diff.prev_source_name or "작년 업로드"
+    prev_label = diff.prev_source_name or f"FY {prior_fy} 업로드"
 
     if total == 0:
         st.success(
-            f"작년 컬럼매핑과 구성이 동일합니다. (비교 기준: {prev_label})"
+            f"작년(FY {prior_fy}) 컬럼매핑과 구성이 동일합니다. (비교 기준: {prev_label})"
         )
         return
 
@@ -737,17 +743,6 @@ def _render_pipeline_stage() -> None:
 # ── Ingest 로직 ──────────────────────────────────────────
 
 
-def _run_ingest(uploaded, progress_cb) -> None:
-    """UploadedFile → tempfile → read → ingest 공통 로직."""
-    def _file_read_cb(pct: float, msg: str) -> None:
-        overall = 0.05 + pct * 0.80
-        progress_cb(overall, msg)
-
-    progress_cb(0.05, "파일 읽는 중...")
-    read_result = _read_via_ingest(uploaded, progress_cb=_file_read_cb)
-    _run_ingest_common(read_result, progress_cb)
-
-
 def _run_ingest_common(read_result, progress_cb) -> None:
     """ReadResult → header detect → column map → 세션 저장. 공통 로직."""
     from src.ingest.column_mapper import auto_map_columns, prepare_dataframe
@@ -794,15 +789,23 @@ def _run_ingest_common(read_result, progress_cb) -> None:
             source_columns, matched_keywords, data_df=data_df,
         )
 
-    # Why: 이전 업로드 프로파일이 존재하면 "항상" diff를 계산한다.
-    #      fingerprint가 같아도(컬럼 동일) UI에서 "변경 없음"을 명시해야
-    #      사용자가 연도 간 비교 기능이 작동했음을 확인할 수 있다.
+    # Why: 라벨 "작년 컬럼매핑과 비교"에 맞춰, **직전 회계연도(current_fy - 1)**
+    #      프로파일과 비교한다. ctx.fiscal_year가 없으면(anonymous) 비교 생략.
     from src.ingest.mapping_profile import (
+        ColumnDiff,
         column_fingerprint,
         compute_column_diff,
-        load_latest_profile,
+        load_prior_year_profile,
     )
-    prev = load_latest_profile(profile_dir=_pdir)
+    current_fy = getattr(_ctx, "fiscal_year", None) if _ctx is not None else None
+    st.session_state["_ingest_current_fy"] = current_fy
+    st.session_state["_ingest_prior_fy"] = (current_fy - 1) if current_fy else None
+
+    prev = (
+        load_prior_year_profile(current_fy - 1, profile_dir=_pdir)
+        if current_fy is not None
+        else None
+    )
     if prev is not None and prev.get("fingerprint") != column_fingerprint(source_columns):
         st.session_state[KEY_INGEST_COLUMN_DIFF] = compute_column_diff(
             prev["source_columns"], source_columns,
@@ -811,7 +814,6 @@ def _run_ingest_common(read_result, progress_cb) -> None:
         )
     elif prev is not None:
         # 같은 fingerprint — 빈 diff로 "변경 없음" 명시
-        from src.ingest.mapping_profile import ColumnDiff
         st.session_state[KEY_INGEST_COLUMN_DIFF] = ColumnDiff(
             prev_fingerprint=prev.get("fingerprint", ""),
             prev_source_name=prev.get("source_name", ""),
@@ -859,27 +861,6 @@ def _run_ingest_from_path(local_path: Path, progress_cb) -> None:
 
     # 이후 로직은 _run_ingest와 동일
     _run_ingest_common(read_result, progress_cb)
-
-
-def _read_via_ingest(uploaded, *, progress_cb=None):
-    """UploadedFile → ReadResult. tempfile 경유로 검증 + 읽기."""
-    from src.ingest.file_validator import validate_file
-    from src.ingest.reader_api import read_file
-
-    suffix = Path(uploaded.name).suffix
-    uploaded.seek(0)
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
-        f.write(uploaded.read())
-        tmp_path = Path(f.name)
-
-    validation = validate_file(tmp_path)
-    if not validation.is_valid:
-        tmp_path.unlink(missing_ok=True)
-        raise ValueError("; ".join(validation.errors))
-
-    result = read_file(tmp_path, progress_cb=progress_cb)
-    st.session_state["_ingest_tmp_path"] = str(tmp_path)
-    return result
 
 
 def _build_audit_trail(ctx):
@@ -992,13 +973,16 @@ def _run_pipeline_from_mapped(file_key: str, progress_cb, *, prepare_only: bool 
             if hr and hr.header_row is not None:
                 header_row = hr.header_row
 
-            # Why: RC-5-1 — 회사별 프로파일 디렉토리로 저장
+            # Why: RC-5-1 — 회사별 프로파일 디렉토리로 저장 + fiscal_year 메타로
+            #      다음 연도에서 "작년 컬럼매핑 비교"가 작동.
             _pdir = ctx.profile_dir if ctx and not ctx.is_anonymous else None
+            _fy = getattr(ctx, "fiscal_year", None) if ctx else None
             save_profile(
                 mapping_result, source_columns,
                 source_name=file_key.rsplit("_", 1)[0],
                 source_format=read_result.source_format if read_result else "",
                 header_row=header_row,
+                fiscal_year=_fy,
                 profile_dir=_pdir,
             )
         except Exception:
@@ -1033,6 +1017,7 @@ def _clear_ingest_state() -> None:
         KEY_INGEST_SOURCE_COLUMNS, KEY_INGEST_DATA_DF,
         KEY_INGEST_CONFIRMED, KEY_INGEST_PREPARED_DF, KEY_INGEST_PREP_WARNINGS,
         "_ingest_file_key", "_ingest_source_hint",
+        "_ingest_current_fy", "_ingest_prior_fy",
     ]:
         st.session_state.pop(key, None)
     st.session_state[KEY_INGEST_STAGE] = "UPLOAD"

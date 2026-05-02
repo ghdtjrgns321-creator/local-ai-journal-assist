@@ -28,6 +28,59 @@ from src.preprocessing.constants import LABEL_COLUMNS
 
 logger = logging.getLogger(__name__)
 
+_AUTO_HIDDEN_SOURCE_COLUMNS = LABEL_COLUMNS | frozenset({
+    # Derived feature columns created by the pipeline. They are not source-to-schema mapping inputs.
+    "amount_open",
+    "is_cleared",
+    "settlement_status",
+    "settlement_date",
+    "description_quality",
+    "exceeds_threshold",
+    "is_near_threshold",
+    "near_threshold_amount",
+    "near_threshold_limit_amount",
+    "near_threshold_limit_resolved",
+    "near_threshold_ratio_to_limit",
+    "near_threshold_gap_amount",
+    "near_threshold_gap_ratio",
+    "near_threshold_bucket",
+    "document_approval_amount",
+    "approver_limit_amount",
+    "approval_limit_resolved",
+    "approver_can_approve_je",
+    "approval_excess_amount",
+    "approval_excess_ratio",
+    "approval_excess_bucket",
+    "amount_zscore",
+    "amount_magnitude",
+    "is_round_number",
+    "is_manual_je",
+    "is_intercompany",
+    "is_revenue_account",
+    "first_digit",
+    "is_suspense_account",
+    "description_line_missing",
+    "description_header_missing",
+    "description_both_missing",
+    "description_line_missing_header_present",
+    "description_is_missing_or_corrupted",
+    "has_risk_keyword",
+    "morpheme_tokens",
+    # Analysis/database metadata columns that may appear after re-export.
+    "anomaly_score",
+    "risk_level",
+    "flagged_rules",
+    "review_rules",
+    "supervised_score",
+    "unsupervised_score",
+    "duplicate_score",
+    "supervised_model_id",
+    "unsupervised_model_id",
+    "duplicate_model_id",
+    "ml_scored_at",
+    "upload_batch_id",
+})
+
 _COLUMN_LABELS: dict[str, str] = {
     "document_id": "전표번호",
     "company_code": "회사코드",
@@ -161,6 +214,11 @@ def _split_visible_and_hidden_mappings(
     return visible, hidden
 
 
+def _is_auto_hidden_source_column(column_name: str) -> bool:
+    normalized = str(column_name).strip().lower()
+    return normalized in _AUTO_HIDDEN_SOURCE_COLUMNS or normalized.startswith("_")
+
+
 def _display_name(column_name: str) -> str:
     label = _COLUMN_LABELS.get(column_name)
     if label:
@@ -207,16 +265,24 @@ def render_mapping_review() -> None:
 
     st.subheader("컬럼 매핑 확인")
     if read_result is not None:
+        selected_sheet = (
+            st.session_state.get(KEY_INGEST_SELECTED_SHEET, read_result.active_sheet)
+            or "-"
+        )
         st.caption(
             f"형식: {read_result.source_format.upper()} | "
-            f"시트: {st.session_state.get(KEY_INGEST_SELECTED_SHEET, read_result.active_sheet) or '-'}"
+            f"시트: {selected_sheet}"
         )
 
     visible_map, hidden_label_map = _split_visible_and_hidden_mappings(
         source_columns,
         mapping_result,
     )
-    editable_sources = [src for src in source_columns if src not in hidden_label_map]
+    editable_sources = [
+        src
+        for src in source_columns
+        if src not in hidden_label_map and not _is_auto_hidden_source_column(src)
+    ]
     selected_map = {
         src: visible_map.get(src, "(무시)")
         for src in editable_sources
@@ -356,7 +422,11 @@ def _sort_candidates(
 ) -> list[str]:
     req = sorted(col for col in candidates if col in required_cols)
     rec = sorted(col for col in candidates if col in recommended_cols and col not in required_cols)
-    etc = sorted(col for col in candidates if col not in required_cols and col not in recommended_cols)
+    etc = sorted(
+        col
+        for col in candidates
+        if col not in required_cols and col not in recommended_cols
+    )
     return req + rec + etc
 
 
@@ -399,7 +469,10 @@ def _render_mapping_summary(
     elif missing_recommended:
         st.info(f"필수 컬럼 모두 매핑 완료 · 권장 컬럼 미매핑 {len(missing_recommended)}건")
         with st.expander(f"권장 컬럼 미매핑 {len(missing_recommended)}건", expanded=False):
-            st.caption("미매핑 시 아래 검사가 누락/약화됩니다. 원본에 해당 컬럼이 있다면 좌측에서 매핑해 주세요.")
+            st.caption(
+                "미매핑 시 아래 검사가 누락/약화됩니다. "
+                "원본에 해당 컬럼이 있다면 좌측에서 매핑해 주세요."
+            )
             _render_missing_columns_with_impact(missing_recommended, level="recommended")
     else:
         st.success("필수·권장 컬럼이 모두 매핑되었습니다.")

@@ -56,23 +56,51 @@ def render(result: PipelineResult) -> None:
 
     r1_left, r1_right = st.columns([2, 1])
     with r1_left:
-        st.plotly_chart(rule_violation_bar(df), use_container_width=True)
+        st.plotly_chart(
+            rule_violation_bar(df),
+            use_container_width=True,
+            key="summary_rule_violation_bar",
+        )
     with r1_right:
-        st.plotly_chart(risk_donut(df), use_container_width=True)
+        st.plotly_chart(
+            risk_donut(df),
+            use_container_width=True,
+            key="summary_risk_donut",
+        )
 
     r2_left, r2_right = st.columns(2)
     with r2_left:
-        st.plotly_chart(monthly_trend(df), use_container_width=True)
+        st.plotly_chart(
+            monthly_trend(df),
+            use_container_width=True,
+            key="summary_monthly_trend",
+        )
     with r2_right:
-        st.plotly_chart(risk_heatmap(df), use_container_width=True)
+        st.plotly_chart(
+            risk_heatmap(df),
+            use_container_width=True,
+            key="summary_risk_heatmap",
+        )
 
     dim_tabs = st.tabs(["프로세스별", "페르소나별", "법인별"])
     with dim_tabs[0]:
-        st.plotly_chart(process_distribution_bar(df), use_container_width=True)
+        st.plotly_chart(
+            process_distribution_bar(df),
+            use_container_width=True,
+            key="summary_process_distribution_bar",
+        )
     with dim_tabs[1]:
-        st.plotly_chart(persona_risk_matrix(df), use_container_width=True)
+        st.plotly_chart(
+            persona_risk_matrix(df),
+            use_container_width=True,
+            key="summary_persona_risk_matrix",
+        )
     with dim_tabs[2]:
-        st.plotly_chart(company_comparison(df), use_container_width=True)
+        st.plotly_chart(
+            company_comparison(df),
+            use_container_width=True,
+            key="summary_company_comparison",
+        )
 
 
 def _render_phase1_case_summary(result: PipelineResult) -> None:
@@ -85,7 +113,6 @@ def _render_phase1_case_summary(result: PipelineResult) -> None:
 
     theme_rows = summary["themes"]
     high_count = sum(theme["high_count"] for theme in theme_rows)
-    medium_count = sum(theme["medium_count"] for theme in theme_rows)
 
     c1, c2, c3 = st.columns(3)
     c1.metric("PHASE1 Case", f"{summary['case_count']:,}")
