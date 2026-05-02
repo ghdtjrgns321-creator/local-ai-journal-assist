@@ -54,6 +54,8 @@ class RuleMetric:
     tp_docs: int
     fp_docs: int
     fn_docs: int
+    evaluation_mode: str = "strict_truth"
+    score_bands: dict[str, int] | None = None
 
 
 def parse_args() -> argparse.Namespace:
@@ -170,9 +172,6 @@ def run_l2_only(df: pd.DataFrame, rule_ids: set[str]) -> tuple[dict[str, pd.Seri
             review_threshold=settings.expense_capitalization_review_threshold,
             immediate_threshold=settings.expense_capitalization_immediate_threshold,
         )
-        score_series = flagged.attrs.get("score_series")
-        if score_series is not None:
-            flagged = pd.Series(score_series, index=df.index).fillna(0.0).gt(0)
         results["L2-04"] = flagged
         timings["L2-04 rule"] = time.perf_counter() - start
 
@@ -185,9 +184,6 @@ def run_l2_only(df: pd.DataFrame, rule_ids: set[str]) -> tuple[dict[str, pd.Seri
             zero_threshold=settings.reversal_zero_threshold,
             score_threshold=settings.reversal_score_threshold,
         )
-        score_series = flagged.attrs.get("score_series")
-        if score_series is not None:
-            flagged = pd.Series(score_series, index=df.index).fillna(0.0).gt(0)
         results["L2-05"] = flagged
         timings["L2-05 rule"] = time.perf_counter() - start
 
@@ -200,11 +196,30 @@ def metric_for_rule(
     rule_id: str,
     flagged: pd.Series,
 ) -> RuleMetric:
+    if rule_id == "L2-02":
+        pair_metric = _metric_l202_by_duplicate_pair(df, rule_id, flagged)
+        if pair_metric is not None:
+            return pair_metric
+
     flagged_docs = set(df.loc[flagged, "document_id"].dropna().astype(str).unique())
     truth_docs = set(str(value) for value in _label_doc_set_for_rule(rule_id, df, labels))
     tp_docs = flagged_docs & truth_docs
     fp_docs = flagged_docs - truth_docs
     fn_docs = truth_docs - flagged_docs
+
+    if rule_id in {"L2-02", "L2-03", "L2-04"}:
+        return RuleMetric(
+            rule_id=rule_id,
+            rule_name=RULE_NAMES[rule_id],
+            truth_docs=len(truth_docs),
+            detected_docs=len(flagged_docs),
+            tp_docs=len(tp_docs),
+            fp_docs=len(fp_docs),
+            fn_docs=len(fn_docs),
+            evaluation_mode="phase1_population",
+            score_bands=_document_score_bands(rule_id, df, flagged),
+        )
+
     return RuleMetric(
         rule_id=rule_id,
         rule_name=RULE_NAMES[rule_id],
@@ -214,6 +229,115 @@ def metric_for_rule(
         fp_docs=len(fp_docs),
         fn_docs=len(fn_docs),
     )
+
+
+def _candidate_dir_from_df(df: pd.DataFrame) -> Path | None:
+    source_path = df.attrs.get(SOURCE_PATH_ATTR)
+    if not source_path:
+        return None
+    source = Path(str(source_path))
+    if source.name == "journal_entries.csv":
+        return source.parent
+    return source.parent
+
+
+def _pair_key(left: object, right: object) -> tuple[str, str]:
+    values = sorted([str(left), str(right)])
+    return values[0], values[1]
+
+
+def _metric_l202_by_duplicate_pair(
+    df: pd.DataFrame,
+    rule_id: str,
+    flagged: pd.Series,
+) -> RuleMetric | None:
+    """Evaluate L2-02 by duplicate pair, not by whichever document was flagged."""
+
+    data_dir = _candidate_dir_from_df(df)
+    if data_dir is None:
+        return None
+    truth_path = data_dir / "labels" / "rule_truth_L2_02.csv"
+    if not truth_path.exists():
+        return None
+
+    truth = pd.read_csv(truth_path, low_memory=False)
+    if not {"document_id", "matched_document_id"}.issubset(truth.columns):
+        return None
+    if "_eval_year" in df.columns and "fiscal_year" in truth.columns:
+        years = set(pd.to_numeric(df["_eval_year"], errors="coerce").dropna().astype(int).unique())
+        if years:
+            truth = truth.loc[pd.to_numeric(truth["fiscal_year"], errors="coerce").isin(years)]
+
+    truth_pairs = {
+        _pair_key(row.document_id, row.matched_document_id)
+        for row in truth[["document_id", "matched_document_id"]].dropna().itertuples(index=False)
+        if str(row.document_id) and str(row.matched_document_id)
+    }
+    if not truth_pairs:
+        return None
+
+    annotations = flagged.attrs.get("row_annotations", {})
+    flagged_pairs: set[tuple[str, str]] = set()
+    flagged_rows = df.loc[flagged, ["document_id"]]
+    for idx, row in flagged_rows.itertuples():
+        annotation = annotations.get(idx, {}) if isinstance(annotations, dict) else {}
+        matched_doc = annotation.get("matched_document_id") if isinstance(annotation, dict) else None
+        if matched_doc:
+            flagged_pairs.add(_pair_key(row, matched_doc))
+
+    if not flagged_pairs:
+        return None
+
+    tp_pairs = flagged_pairs & truth_pairs
+    fp_pairs = flagged_pairs - truth_pairs
+    fn_pairs = truth_pairs - flagged_pairs
+    return RuleMetric(
+        rule_id=rule_id,
+        rule_name=RULE_NAMES[rule_id],
+        truth_docs=len(truth_pairs),
+        detected_docs=len(flagged_pairs),
+        tp_docs=len(tp_pairs),
+        fp_docs=len(fp_pairs),
+        fn_docs=len(fn_pairs),
+        evaluation_mode="phase1_population",
+        score_bands=_document_score_bands(rule_id, df, flagged),
+    )
+
+
+def _document_score_bands(rule_id: str, df: pd.DataFrame, flagged: pd.Series) -> dict[str, int]:
+    """Summarize Phase1 document-level score bands for a rule result."""
+
+    score_series = flagged.attrs.get("score_series")
+    if not isinstance(score_series, pd.Series):
+        return {}
+
+    score_series = score_series.reindex(df.index, fill_value=0.0).astype(float)
+    detected = flagged.reindex(df.index, fill_value=False).astype(bool)
+    if not detected.any():
+        return {
+            "high_docs": 0,
+            "medium_docs": 0,
+            "low_docs": 0,
+            "zero_docs": 0,
+        }
+
+    doc_scores = (
+        pd.DataFrame({
+            "document_id": df["document_id"].astype(str),
+            "score": score_series.where(detected, 0.0),
+            "detected": detected,
+        })
+        .loc[lambda frame: frame["detected"]]
+        .groupby("document_id", sort=False)["score"]
+        .max()
+    )
+    high_threshold = 0.75 if rule_id == "L2-04" else 0.85
+    return {
+        "high_docs": int(doc_scores.ge(high_threshold).sum()),
+        "medium_docs": int((doc_scores.ge(0.45) & doc_scores.lt(high_threshold)).sum()),
+        "low_docs": int((doc_scores.gt(0) & doc_scores.lt(0.45)).sum()),
+        "zero_docs": int(doc_scores.eq(0).sum()),
+    }
 
 
 def evaluate_by_year(
@@ -247,18 +371,46 @@ def evaluate_by_year(
 def render_section(title: str, metrics: list[RuleMetric]) -> str:
     lines = [
         f"- {title}",
-        "룰      룰 이름            정답   탐지   정탐   과탐   미탐",
-        "-----  ----------------  -----  -----  -----  -----  -----",
     ]
-    for item in metrics:
-        lines.append(
-            f"{item.rule_id:<6} {item.rule_name:<16}"
-            f"{item.truth_docs:>6}"
-            f"{item.detected_docs:>7}"
-            f"{item.tp_docs:>7}"
-            f"{item.fp_docs:>7}"
-            f"{item.fn_docs:>7}"
-        )
+    strict_items = [item for item in metrics if item.evaluation_mode != "phase1_population"]
+    phase1_items = [item for item in metrics if item.evaluation_mode == "phase1_population"]
+
+    if strict_items:
+        lines.extend([
+            "룰      룰 이름            정답   탐지   정탐   과탐   미탐",
+            "-----  ----------------  -----  -----  -----  -----  -----",
+        ])
+        for item in strict_items:
+            lines.append(
+                f"{item.rule_id:<6} {item.rule_name:<16}"
+                f"{item.truth_docs:>6}"
+                f"{item.detected_docs:>7}"
+                f"{item.tp_docs:>7}"
+                f"{item.fp_docs:>7}"
+                f"{item.fn_docs:>7}"
+            )
+
+    if phase1_items:
+        if strict_items:
+            lines.append("")
+        lines.extend([
+            "룰      룰 이름            정답   후보   정탐   라벨외   미탐   high   medium   low   zero",
+            "-----  ----------------  -----  -----  -----  -------  -----  -----  -------  ----  -----",
+        ])
+        for item in phase1_items:
+            bands = item.score_bands or {}
+            lines.append(
+                f"{item.rule_id:<6} {item.rule_name:<16}"
+                f"{item.truth_docs:>6}"
+                f"{item.detected_docs:>7}"
+                f"{item.tp_docs:>7}"
+                f"{item.fp_docs:>9}"
+                f"{item.fn_docs:>7}"
+                f"{bands.get('high_docs', 0):>7}"
+                f"{bands.get('medium_docs', 0):>10}"
+                f"{bands.get('low_docs', 0):>6}"
+                f"{bands.get('zero_docs', 0):>7}"
+            )
     return "\n".join(lines)
 
 
