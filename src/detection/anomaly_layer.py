@@ -143,9 +143,11 @@ class AnomalyDetector(BaseDetector):
             return self._empty_result(df, warnings, elapsed)
 
         details = pd.DataFrame(index=df.index)
+        flag_details = pd.DataFrame(index=df.index)
         rule_breakdowns: dict[str, object] = {}
         row_annotations: dict[str, object] = {}
         for rule_id, flagged in rule_results.items():
+            flag_details[rule_id] = flagged.reindex(df.index, fill_value=False).astype(bool)
             severity_score = SEVERITY_MAP[rule_id] / 5.0
             score_series = flagged.attrs.get("score_series") if hasattr(flagged, "attrs") else None
             if score_series is not None:
@@ -169,7 +171,8 @@ class AnomalyDetector(BaseDetector):
                 row_annotations[rule_id] = annotations
 
         scores = details.max(axis=1).fillna(0.0)
-        flagged_indices = scores[scores > 0].index.tolist()
+        raw_flag_mask = flag_details.any(axis=1) if not flag_details.empty else scores.gt(0)
+        flagged_indices = raw_flag_mask[raw_flag_mask].index.tolist()
 
         rule_flags = [
             self._create_rule_flag(
@@ -190,6 +193,7 @@ class AnomalyDetector(BaseDetector):
             "skipped_rules": skipped,
             "rule_breakdowns": rule_breakdowns,
             "row_annotations": row_annotations,
+            "rule_flag_series": flag_details,
         }
 
         return self._make_result(
@@ -220,7 +224,8 @@ class AnomalyDetector(BaseDetector):
             patterns.get("period_end_sensitive_accounts", {}),
         )
         bonus = float(getattr(self._settings, "period_end_sensitive_bonus", 0.15))
-        return (score + (flagged & sensitive).astype(float) * bonus).clip(upper=1.0)
+        bonus_mask = flagged & sensitive & score.gt(0)
+        return (score + bonus_mask.astype(float) * bonus).clip(upper=1.0)
 
     def _l307_detail(self, df: pd.DataFrame, flagged: pd.Series) -> str | None:
         """Summarize L3-07 direction without changing score columns."""

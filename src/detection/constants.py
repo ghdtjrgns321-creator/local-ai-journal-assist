@@ -105,7 +105,7 @@ RULE_CODES: dict[str, str] = {
     "L3-03": "Related Party Transaction Review Signal",
     "L2-04": "Expense Capitalization Signal",
     "L2-05": "Reversal Pattern",
-    "L3-04": "Period-start/end Large or Manual Posting",
+    "L3-04": "Period-start/end Closing Review Candidate",
     "L3-05": "Weekend Posting",
     "L3-06": "After-hours Posting",
     "L3-07": "Posting-Document Date Gap",
@@ -589,8 +589,11 @@ RULE_EXPLANATIONS: dict[str, RuleExplanation] = {
     ),
     "L3-04": RuleExplanation(
         rule_id="L3-04",
-        plain_reason="A large or manual entry was posted near period start or period end.",
-        used_columns=("posting_date", "debit_amount", "credit_amount", "is_manual_je"),
+        plain_reason=(
+            "The entry was posted near period start or period end; amount, manual source, "
+            "and other context signals only raise review priority."
+        ),
+        used_columns=("posting_date", "is_period_end", "debit_amount", "credit_amount"),
     ),
     "L3-05": RuleExplanation(
         rule_id="L3-05",

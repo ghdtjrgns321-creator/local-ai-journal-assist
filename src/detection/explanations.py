@@ -173,7 +173,10 @@ def build_export_narrative(
         parts.append("No rule-based trigger was attached.")
 
     if top_features:
-        feature_text = ", ".join(f"{name} (contribution={value:.3f})" for name, value in top_features)
+        feature_text = ", ".join(
+            f"{name} (contribution={value:.3f})"
+            for name, value in top_features
+        )
         parts.append(f"Top feature contributions: {feature_text}.")
 
     auditor_checks = _merge_unique(
@@ -222,7 +225,12 @@ def _build_transaction_details(
                 "gl_account": _format_scalar(row.get("gl_account")),
                 "amount": amount,
                 "amount_display": _format_amount(amount),
-                "trigger_value": _build_trigger_value(row, doc_lines, top_rules, row_annotations_by_rule),
+                "trigger_value": _build_trigger_value(
+                    row,
+                    doc_lines,
+                    top_rules,
+                    row_annotations_by_rule,
+                ),
             }
         )
     return details
@@ -307,7 +315,8 @@ def _rule_trigger_text(
     if rule_id == "L3-03":
         return "Related-party account review signal"
     if rule_id == "L3-04":
-        return f"Period-start/end large or manual posting on {_format_scalar(row.get('posting_date'))}"
+        posting_date = _format_scalar(row.get("posting_date"))
+        return f"Period-start/end closing review candidate on {posting_date}"
     if rule_id == "L3-05":
         return "Weekend or holiday posting"
     if rule_id == "L3-06":

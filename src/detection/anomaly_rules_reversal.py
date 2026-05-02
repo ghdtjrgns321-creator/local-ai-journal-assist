@@ -195,6 +195,34 @@ def _window_context_score(window: pd.DataFrame) -> int:
     return score
 
 
+def _window_context_score_prepared(window: pd.DataFrame) -> int:
+    """Score a rolling zero-out window using pre-normalized S2 columns."""
+
+    score = 0
+
+    references = window["reference_norm"]
+    references = references[references.ne("")]
+    if not references.empty and references.nunique() < len(references):
+        score += 2
+
+    doc_types = window["document_type_norm"]
+    doc_types = doc_types[doc_types.ne("")]
+    if not doc_types.empty and doc_types.nunique() == 1:
+        score += 1
+
+    if window["source_norm"].isin(["manual", "adjustment"]).any():
+        score += 1
+
+    line_text = window["line_text_norm"]
+    line_text = line_text[line_text.ne("")]
+    if not line_text.empty and line_text.nunique() < len(line_text):
+        score += 1
+    if window["line_keyword"].any():
+        score += 1
+
+    return score
+
+
 def _has_possible_s1_context(positives: pd.DataFrame, negatives: pd.DataFrame) -> bool:
     """Return True when a group has any plausible contextual bridge for S1."""
 
@@ -471,6 +499,14 @@ def _s2_rolling_zero_out(
         )
         .reset_index()
     )
+    doc_work["reference_norm"] = doc_work["reference"].map(_normalize_value)
+    doc_work["document_type_norm"] = doc_work["document_type"].map(_normalize_value)
+    doc_work["source_norm"] = doc_work["source"].map(_normalize_value)
+    doc_work["line_text_norm"] = doc_work["line_text"].map(_normalize_text)
+    doc_work["line_keyword"] = doc_work["line_text"].fillna("").astype(str).str.contains(
+        _REVERSAL_PATTERN,
+        na=False,
+    )
     if len(doc_work) < 2:
         return pd.Series(False, index=df.index)
 
@@ -508,7 +544,7 @@ def _s2_rolling_zero_out(
                 window = group.iloc[left : right + 1]
                 if window["document_id"].nunique() < 2:
                     continue
-                if _window_context_score(window) < 2:
+                if _window_context_score_prepared(window) < 2:
                     continue
                 matched_doc_ids.update(window["document_id"].astype(str).tolist())
 
@@ -649,6 +685,58 @@ def _build_row_annotations(
     return annotations
 
 
+def _source_norm_series(df: pd.DataFrame) -> pd.Series:
+    if "source" not in df.columns:
+        return pd.Series("", index=df.index)
+    return df["source"].fillna("").astype(str).str.strip().str.lower()
+
+
+def _score_reversal_candidates(
+    df: pd.DataFrame,
+    flagged: pd.Series,
+    score_basis: pd.Series,
+    *,
+    s0: pd.Series,
+    s2b: pd.Series,
+    s4: pd.Series,
+) -> pd.Series:
+    """Separate L2-05 population capture from risk priority."""
+
+    score_series = score_basis.where(flagged, 0.0).fillna(0.0).astype(float)
+    high_confidence = flagged & (s0.astype(bool) | s2b.astype(bool))
+    candidate = flagged & ~high_confidence
+    source = _source_norm_series(df)
+    routine = source.isin(["auto", "automated", "recurring", "batch", "interface", "system"])
+    manual = source.isin(["manual", "adjustment"])
+    keyword = s4.astype(bool)
+
+    routine_population = candidate & routine & ~keyword
+    routine_review = candidate & routine & keyword
+    manual_plain_review = candidate & manual & ~keyword
+    manual_keyword_review = candidate & manual & keyword
+    other_candidate = candidate & ~(routine | manual)
+
+    score_series.loc[routine_population] = 0.0
+    score_series.loc[routine_review] = score_series.loc[routine_review].clip(upper=0.20)
+    score_series.loc[manual_plain_review] = score_series.loc[manual_plain_review].clip(upper=0.35)
+    score_series.loc[manual_keyword_review] = score_series.loc[manual_keyword_review].clip(
+        lower=0.45,
+        upper=0.60,
+    )
+    score_series.loc[other_candidate] = score_series.loc[other_candidate].clip(upper=0.30)
+    return score_series.where(flagged, 0.0)
+
+
+def _l205_queue_label(score: float, interpretation_code: str) -> str:
+    if interpretation_code == "high_confidence_reversal":
+        return "high_confidence_reversal"
+    if score <= 0:
+        return "normal_clearing_reclass_population"
+    if score < 0.45:
+        return "low_reversal_review"
+    return "reversal_review"
+
+
 def c11_reversal_entry(
     df: pd.DataFrame,
     *,
@@ -738,13 +826,32 @@ def c11_reversal_entry(
         [final_score.rename("final_score"), evidence_score.rename("evidence_score")],
         axis=1,
     ).max(axis=1)
-    score_series = score_basis.where(flagged, 0.0).fillna(0.0)
+    score_series = _score_reversal_candidates(
+        df,
+        flagged,
+        score_basis,
+        s0=s0,
+        s2b=s2b,
+        s4=s4,
+    )
+    high_confidence = flagged & (s0 | s2b)
+    candidate = flagged & ~high_confidence
     flagged.attrs["breakdown"] = {
-        "high_confidence_count": int((flagged & (s0 | s2b)).sum()),
-        "candidate_count": int((flagged & ~(s0 | s2b)).sum()),
+        "high_confidence_count": int(high_confidence.sum()),
+        "candidate_count": int(candidate.sum()),
+        "scored_count": int(score_series.gt(0).sum()),
+        "zero_score_count": int((flagged & score_series.eq(0)).sum()),
+        "queue_counts": {
+            "high_confidence_reversal": int(high_confidence.sum()),
+            "reversal_review": int((candidate & score_series.ge(0.45)).sum()),
+            "low_reversal_review": int(
+                (candidate & score_series.gt(0) & score_series.lt(0.45)).sum(),
+            ),
+            "normal_clearing_reclass_population": int((candidate & score_series.eq(0)).sum()),
+        },
     }
     flagged.attrs["score_series"] = score_series
-    flagged.attrs["row_annotations"] = _build_row_annotations(
+    row_annotations = _build_row_annotations(
         flagged,
         s0=s0,
         s1=s1,
@@ -752,4 +859,10 @@ def c11_reversal_entry(
         s2b=s2b,
         s4=s4,
     )
+    for index, annotation in row_annotations.items():
+        score = float(score_series.loc[index])
+        interpretation_code = str(annotation.get("interpretation_code", ""))
+        annotation["score"] = round(score, 4)
+        annotation["queue_label"] = _l205_queue_label(score, interpretation_code)
+    flagged.attrs["row_annotations"] = row_annotations
     return flagged

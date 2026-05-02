@@ -314,7 +314,6 @@ def c09_rare_account_pair(
     # 5. Flag every line in documents that contain at least one rare pair.
     result = df["document_id"].isin(rare_docs)
     score_series = pd.Series(0.0, index=df.index, dtype="float64")
-    score_series.loc[result] = 0.40
 
     rare_pairs = pairs[pairs["_rare"] == True].copy()  # noqa: E712
     if not rare_pairs.empty:
@@ -342,10 +341,30 @@ def c09_rare_account_pair(
             "sample_pair_count": rare_count_lookup.get(pair_key, None),
         }
 
+    score_bucket_by_doc: dict[object, str] = {}
+    score_by_doc: dict[object, float] = {}
+    for document_id, doc_input in doc_annotation_inputs.items():
+        rare_pair_count = int(doc_input.get("rare_pair_count", 0))
+        if bool(doc_input.get("has_large_doc_pair", False)):
+            score_bucket = "large_doc_distinct_pair"
+            score = 0.35
+        elif rare_pair_count >= 2:
+            score_bucket = "multiple_rare_pairs"
+            score = 0.45
+        else:
+            score_bucket = "single_rare_pair"
+            score = 0.25
+        score_bucket_by_doc[document_id] = score_bucket
+        score_by_doc[document_id] = score
+
+    mapped_scores = df["document_id"].map(score_by_doc).fillna(0.0).astype("float64")
+    score_series.loc[result] = mapped_scores.loc[result]
+
     row_annotations: dict[object, dict[str, object]] = {}
     for idx in df.index[result]:
         document_id = df.at[idx, "document_id"]
         doc_input = doc_annotation_inputs.get(document_id, {})
+        score_bucket = score_bucket_by_doc.get(document_id, "single_rare_pair")
         reason_codes = ["rare_account_pair"]
         if bool(doc_input.get("has_large_doc_pair", False)):
             reason_codes.append("large_doc_distinct_pair")
@@ -354,6 +373,7 @@ def c09_rare_account_pair(
             "reason_codes": reason_codes,
             "primary_reason": reason_codes[-1],
             "score": round(float(score_series.loc[idx]), 4),
+            "score_bucket": score_bucket,
             "rare_pair_count": int(doc_input.get("rare_pair_count", 0)),
             "sample_pairs": list(doc_input.get("sample_pairs", [])),
             "threshold_count": float(threshold),
@@ -371,6 +391,14 @@ def c09_rare_account_pair(
         if not rare_doc_summary.empty
         else set()
     )
+    single_rare_pair_docs = {
+        doc for doc, bucket in score_bucket_by_doc.items()
+        if bucket == "single_rare_pair"
+    }
+    multiple_rare_pair_docs = {
+        doc for doc, bucket in score_bucket_by_doc.items()
+        if bucket == "multiple_rare_pairs"
+    }
     result.attrs["breakdown"] = {
         "interpretation": "rare_debit_credit_pair_review_signal",
         "percentile": float(percentile),
@@ -381,6 +409,22 @@ def c09_rare_account_pair(
         "rare_pair_review_docs": int(len(rare_docs)),
         "ordinary_rare_pair_docs": int(len(rare_docs - large_doc_rare_docs)),
         "large_doc_distinct_pair_docs": int(len(large_doc_rare_docs)),
+        "single_rare_pair_docs": int(len(single_rare_pair_docs)),
+        "multiple_rare_pair_docs": int(len(multiple_rare_pair_docs)),
+        "single_rare_pair_rows": int(
+            (result & df["document_id"].isin(single_rare_pair_docs)).sum()
+        ),
+        "multiple_rare_pair_rows": int(
+            (result & df["document_id"].isin(multiple_rare_pair_docs)).sum()
+        ),
+        "large_doc_distinct_pair_rows": int(
+            (result & df["document_id"].isin(large_doc_rare_docs)).sum()
+        ),
+        "score_bands": {
+            "single_rare_pair": 0.25,
+            "large_doc_distinct_pair": 0.35,
+            "multiple_rare_pairs": 0.45,
+        },
         "pair_generation_mode": "line_pairs_with_large_doc_distinct_account_pairs",
         "large_document_line_threshold": _LARGE_DOC_LINE_THRESHOLD,
         "large_document_count": int(len(large_docs)),

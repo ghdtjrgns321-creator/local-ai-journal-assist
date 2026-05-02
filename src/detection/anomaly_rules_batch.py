@@ -45,8 +45,26 @@ def c13_batch_anomaly(
     amount_outlier_flags = _batch_amount_outlier(df, is_batch, amount_zscore)
     result = (period_end_flags | simultaneous_flags | amount_outlier_flags).astype(bool)
 
+    multi_signal_flags = (
+        period_end_flags.astype(int)
+        + simultaneous_flags.astype(int)
+        + amount_outlier_flags.astype(int)
+    ).ge(2)
+    amount_only_flags = amount_outlier_flags & ~period_end_flags & ~simultaneous_flags
+    simultaneous_only_flags = simultaneous_flags & ~period_end_flags & ~amount_outlier_flags
+    period_end_only_flags = period_end_flags & ~simultaneous_flags & ~amount_outlier_flags
+
     score_series = pd.Series(0.0, index=df.index, dtype="float64")
-    score_series.loc[result] = 0.40
+    score_series.loc[amount_only_flags] = 0.25
+    score_series.loc[period_end_only_flags] = 0.45
+    score_series.loc[simultaneous_only_flags] = 0.45
+    score_series.loc[result & multi_signal_flags] = 0.65
+
+    score_bucket = pd.Series("", index=df.index, dtype="object")
+    score_bucket.loc[amount_only_flags] = "amount_outlier_only"
+    score_bucket.loc[period_end_only_flags] = "period_end_concentration"
+    score_bucket.loc[simultaneous_only_flags] = "simultaneous_creation"
+    score_bucket.loc[result & multi_signal_flags] = "multi_signal_batch"
 
     row_annotations: dict[object, dict[str, object]] = {}
     optional_columns = (
@@ -69,6 +87,7 @@ def c13_batch_anomaly(
             "reason_codes": reason_codes,
             "primary_reason": reason_codes[-1] if reason_codes else "batch_review",
             "score": round(float(score_series.loc[idx]), 4),
+            "score_bucket": str(score_bucket.loc[idx] or "batch_review"),
         }
         for column in optional_columns:
             if column in df.columns:
@@ -83,9 +102,19 @@ def c13_batch_anomaly(
         "period_end_concentration_rows": int(period_end_flags.sum()),
         "simultaneous_creation_rows": int(simultaneous_flags.sum()),
         "amount_outlier_rows": int(amount_outlier_flags.sum()),
+        "amount_outlier_only_rows": int((result & amount_only_flags).sum()),
+        "period_end_only_rows": int((result & period_end_only_flags).sum()),
+        "simultaneous_only_rows": int((result & simultaneous_only_flags).sum()),
+        "multi_signal_batch_rows": int((result & multi_signal_flags).sum()),
         "period_end_ratio_threshold": float(period_end_ratio),
         "simultaneous_threshold": int(simultaneous_threshold),
         "amount_zscore_threshold": float(amount_zscore),
+        "score_bands": {
+            "amount_outlier_only": 0.25,
+            "period_end_concentration": 0.45,
+            "simultaneous_creation": 0.45,
+            "multi_signal_batch": 0.65,
+        },
     }
     if "document_id" in df.columns:
         breakdown.update({
@@ -93,6 +122,10 @@ def c13_batch_anomaly(
             "period_end_concentration_docs": _nunique_documents(df, period_end_flags),
             "simultaneous_creation_docs": _nunique_documents(df, simultaneous_flags),
             "amount_outlier_docs": _nunique_documents(df, amount_outlier_flags),
+            "amount_outlier_only_docs": _nunique_documents(df, result & amount_only_flags),
+            "period_end_only_docs": _nunique_documents(df, result & period_end_only_flags),
+            "simultaneous_only_docs": _nunique_documents(df, result & simultaneous_only_flags),
+            "multi_signal_batch_docs": _nunique_documents(df, result & multi_signal_flags),
         })
 
     result.attrs["score_series"] = score_series
@@ -157,11 +190,23 @@ def _batch_amount_outlier(
     if not batch_mask.any():
         return pd.Series(False, index=df.index)
     base = df[["debit_amount", "credit_amount"]].fillna(0).max(axis=1)
-    batch_amounts = base[batch_mask]
+    if "document_id" in df.columns:
+        doc_amount = base.groupby(df["document_id"]).transform("max")
+        batch_amounts = (
+            pd.DataFrame({
+                "document_id": df.loc[batch_mask, "document_id"],
+                "_doc_amount": doc_amount.loc[batch_mask],
+            })
+            .dropna(subset=["document_id"])
+            .drop_duplicates("document_id")["_doc_amount"]
+        )
+    else:
+        doc_amount = base
+        batch_amounts = base[batch_mask]
     std = batch_amounts.std()
     # Why: 급여·상각 등 동일 금액 배치는 std=0 → 이상치 없음으로 처리
     if std == 0 or np.isnan(std):
         return pd.Series(False, index=df.index)
     mean = batch_amounts.mean()
-    zscores = ((base - mean) / std).abs()
+    zscores = ((doc_amount - mean) / std).abs()
     return batch_mask & (zscores > zscore_threshold)

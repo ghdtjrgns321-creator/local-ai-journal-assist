@@ -42,6 +42,64 @@ SCORING_ROLE_FACTOR: dict[str, float] = {
     "macro_only": 0.0,
 }
 
+L104_BUCKET_SIGNAL_STRENGTH: dict[str, float] = {
+    "boundary": 0.35,
+    "moderate": 0.65,
+    "severe": 0.85,
+    "critical": 1.0,
+    "non_approver": 1.0,
+}
+
+L201_BUCKET_SIGNAL_STRENGTH: dict[str, float] = {
+    "lower_band": 0.60,
+    "close_band": 0.80,
+    "razor_band": 1.00,
+    "routine_razor_review": 0.45,
+    "normal_population": 0.0,
+}
+
+L103_BUCKET_SIGNAL_STRENGTH: dict[str, float] = {
+    "unknown_account": 0.75,
+    "unknown_account_family": 0.85,
+    "malformed_account": 0.92,
+    "placeholder_or_reserved": 1.0,
+}
+
+L305_CALENDAR_SIGNAL_STRENGTH: dict[str, float] = {
+    "weekday_holiday": 0.75,
+    "holiday": 0.75,
+    "weekend": 0.85,
+    "weekend_holiday": 1.0,
+}
+
+L307_BUCKET_SIGNAL_STRENGTH: dict[str, float] = {
+    "moderate_gap": 0.55,
+    "large_gap": 0.75,
+    "extreme_gap": 1.0,
+}
+
+L403_ZSCORE_BUCKET_SIGNAL_STRENGTH: dict[str, float] = {
+    "low_zscore": 0.45,
+    "review_zscore": 0.45,
+    "medium_zscore": 0.70,
+    "strong_zscore": 0.70,
+    "high_zscore": 1.0,
+    "extreme_zscore": 1.0,
+}
+
+L309_AGING_BUCKET_SIGNAL_STRENGTH: dict[str, float] = {
+    "aging_30_60": 0.75,
+    "aging_60_90": 1.0,
+    "aging_over_90": 1.25,
+}
+
+L202_DUPLICATE_PAYMENT_SIGNAL_STRENGTH: dict[str, float] = {
+    "reference_match": 0.90,
+    "mixed_reference_fallback": 0.70,
+    "amount_partner_fallback": 0.65,
+    "blank_reference_fallback": 0.60,
+}
+
 
 @dataclass(frozen=True)
 class RuleScoringMetadata:
@@ -167,8 +225,9 @@ def normalize_rule_evidence(
             evidence_strength="medium" if severity >= 3 else "weak",
         ),
     )
-    signal_strength = normalize_signal_strength(
-        raw_value,
+    signal_strength = _rule_specific_signal_strength(
+        rule_id=rule_id,
+        raw_value=raw_value,
         severity=severity,
         display_label=display_label,
     )
@@ -191,4 +250,166 @@ def normalize_rule_evidence(
         evidence_strength=metadata.evidence_strength,
         scoring_role=metadata.scoring_role,
         normalized_score=max(0.0, min(float(normalized_score), 1.0)),
+    )
+
+
+def _rule_specific_signal_strength(
+    *,
+    rule_id: str,
+    raw_value: Any,
+    severity: int,
+    display_label: str | None,
+) -> float:
+    label = str(display_label or "").strip().lower()
+    if rule_id == "L1-04" and label in L104_BUCKET_SIGNAL_STRENGTH:
+        return L104_BUCKET_SIGNAL_STRENGTH[label]
+    if rule_id == "L2-02":
+        if label in L202_DUPLICATE_PAYMENT_SIGNAL_STRENGTH:
+            return L202_DUPLICATE_PAYMENT_SIGNAL_STRENGTH[label]
+        try:
+            return min(max(float(raw_value), 0.0), 1.0)
+        except (TypeError, ValueError):
+            return normalize_signal_strength(
+                raw_value,
+                severity=severity,
+                display_label=display_label,
+            )
+    if rule_id == "L2-01":
+        try:
+            numeric = max(float(raw_value), 0.0)
+        except (TypeError, ValueError):
+            numeric = 0.0
+        if label == "normal_population" or numeric <= 0:
+            return 0.0
+        if label == "routine_razor_review" or numeric <= 0.35:
+            return L201_BUCKET_SIGNAL_STRENGTH["routine_razor_review"]
+        if label in L201_BUCKET_SIGNAL_STRENGTH:
+            return L201_BUCKET_SIGNAL_STRENGTH[label]
+        return min(numeric, 1.0)
+    if rule_id == "L1-03":
+        try:
+            numeric = max(float(raw_value), 0.0)
+        except (TypeError, ValueError):
+            if label in L103_BUCKET_SIGNAL_STRENGTH:
+                return L103_BUCKET_SIGNAL_STRENGTH[label]
+            return normalize_signal_strength(
+                raw_value,
+                severity=severity,
+                display_label=display_label,
+            )
+        severity_factor = max(min(float(severity) / 5.0, 1.0), 0.01)
+        return min(numeric, 1.0) / severity_factor
+    if rule_id == "L1-07":
+        try:
+            numeric = max(float(raw_value), 0.0)
+        except (TypeError, ValueError):
+            return normalize_signal_strength(
+                raw_value,
+                severity=severity,
+                display_label=display_label,
+            )
+        severity_factor = max(min(float(severity) / 5.0, 1.0), 0.01)
+        return min(numeric, 1.0) / severity_factor
+    if rule_id == "L3-09":
+        if label in L309_AGING_BUCKET_SIGNAL_STRENGTH:
+            return L309_AGING_BUCKET_SIGNAL_STRENGTH[label]
+        try:
+            numeric = max(float(raw_value), 0.0)
+        except (TypeError, ValueError):
+            return normalize_signal_strength(
+                raw_value,
+                severity=severity,
+                display_label=display_label,
+            )
+        severity_factor = max(min(float(severity) / 5.0, 1.0), 0.01)
+        return min(numeric, 1.0) / severity_factor
+    if rule_id == "L3-05":
+        if label in L305_CALENDAR_SIGNAL_STRENGTH:
+            return L305_CALENDAR_SIGNAL_STRENGTH[label]
+        try:
+            numeric = max(float(raw_value), 0.0)
+        except (TypeError, ValueError):
+            return normalize_signal_strength(
+                raw_value,
+                severity=severity,
+                display_label=display_label,
+            )
+        if numeric >= 0.45:
+            return L305_CALENDAR_SIGNAL_STRENGTH["weekend_holiday"]
+        if numeric >= 0.40:
+            return L305_CALENDAR_SIGNAL_STRENGTH["weekend"]
+        if numeric >= 0.35:
+            return L305_CALENDAR_SIGNAL_STRENGTH["weekday_holiday"]
+        return normalize_signal_strength(
+            numeric,
+            severity=severity,
+            display_label=display_label,
+        )
+    if rule_id == "L3-01":
+        try:
+            return min(max(float(raw_value), 0.0), 1.0)
+        except (TypeError, ValueError):
+            return normalize_signal_strength(
+                raw_value,
+                severity=severity,
+                display_label=display_label,
+            )
+    if rule_id == "L3-10":
+        try:
+            return min(max(float(raw_value), 0.0), 1.0)
+        except (TypeError, ValueError):
+            return normalize_signal_strength(
+                raw_value,
+                severity=severity,
+                display_label=display_label,
+            )
+    if rule_id == "L4-04":
+        try:
+            numeric = max(float(raw_value), 0.0)
+        except (TypeError, ValueError):
+            return normalize_signal_strength(
+                raw_value,
+                severity=severity,
+                display_label=display_label,
+            )
+        severity_factor = max(min(float(severity) / 5.0, 1.0), 0.01)
+        return min(numeric, 1.0) / severity_factor
+    if rule_id == "L3-12":
+        try:
+            return min(max(float(raw_value), 0.0), 1.0)
+        except (TypeError, ValueError):
+            return normalize_signal_strength(
+                raw_value,
+                severity=severity,
+                display_label=display_label,
+            )
+    if rule_id == "L3-06":
+        try:
+            return min(max(float(raw_value), 0.0), 1.0)
+        except (TypeError, ValueError):
+            return normalize_signal_strength(
+                raw_value,
+                severity=severity,
+                display_label=display_label,
+            )
+    if rule_id == "L4-05":
+        try:
+            return min(max(float(raw_value), 0.0), 1.0)
+        except (TypeError, ValueError):
+            return normalize_signal_strength(
+                raw_value,
+                severity=severity,
+                display_label=display_label,
+            )
+    if rule_id == "L3-07":
+        for suffix, signal_strength in L307_BUCKET_SIGNAL_STRENGTH.items():
+            if label.endswith(suffix):
+                return signal_strength
+    if rule_id == "L4-03":
+        if label in L403_ZSCORE_BUCKET_SIGNAL_STRENGTH:
+            return L403_ZSCORE_BUCKET_SIGNAL_STRENGTH[label]
+    return normalize_signal_strength(
+        raw_value,
+        severity=severity,
+        display_label=display_label,
     )

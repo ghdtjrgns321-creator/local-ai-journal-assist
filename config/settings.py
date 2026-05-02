@@ -114,7 +114,7 @@ class AuditSettings(BaseSettings):
     suspense_aging_days: int = 30               # C10: 가계정 장기체류 기본 임계 일수
     suspense_min_open_amount: float = 0.0       # C10: 장기체류 판정 최소 미정리 금액
     account_pair_rare_percentile: float = 0.01  # C09: 희소 쌍 하위 백분위
-    period_end_amount_quantile: float = 0.75    # C01: 기말/기초 대규모 금액 분위수 (Q3)
+    period_end_amount_quantile: float = 0.75    # C01: L3-04 결산 후보군 금액 분위수 (Q3)
     c01_min_group_size: int = 30                 # C01: 계정그룹별 Q3 최소 표본 수
     period_end_sensitive_bonus: float = 0.15      # C01: 민감 계정군 L3-04 점수 가산
 

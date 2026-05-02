@@ -18,6 +18,22 @@ from src.detection.constants import SEVERITY_MAP
 
 _INTEGERISH_ACCOUNT_RE = re.compile(r"^[+-]?\d+\.0+$")
 
+_L102_FIELD_SCORES: dict[str, float] = {
+    "document_id": 0.80,
+    "gl_account": 0.74,
+    "posting_date": 0.72,
+    "debit_amount": 0.72,
+    "credit_amount": 0.72,
+    "company_code": 0.62,
+    "fiscal_year": 0.56,
+    "fiscal_period": 0.56,
+    "document_type": 0.48,
+    "document_date": 0.42,
+}
+_L102_DEFAULT_FIELD_SCORE = 0.40
+_L102_MULTI_MISSING_STEP = 0.06
+_L102_MAX_SCORE = 0.90
+
 
 def _normalize_account_code(value: object) -> str:
     """Normalize account-code formatting artifacts before CoA checks."""
@@ -30,6 +46,14 @@ def _normalize_account_code(value: object) -> str:
     if _INTEGERISH_ACCOUNT_RE.fullmatch(text):
         return text.split(".", 1)[0]
     return text
+
+
+def _missing_required_mask(series: pd.Series) -> pd.Series:
+    """Treat NULL and blank strings as missing required values."""
+    missing = series.isna()
+    if pd.api.types.is_object_dtype(series) or pd.api.types.is_string_dtype(series):
+        missing = missing | series.astype("string").str.strip().fillna("").eq("")
+    return missing
 
 
 # ── IntegrityDetector ──────────────────────────────────────────
@@ -281,8 +305,50 @@ class IntegrityDetector(BaseDetector):
         if not check_cols:
             return pd.Series(0.0, index=df.index)
 
-        null_count = df[check_cols].isnull().sum(axis=1)
-        return (null_count > 0).astype(float)
+        missing_matrix = pd.DataFrame(
+            {col: _missing_required_mask(df[col]) for col in check_cols},
+            index=df.index,
+        )
+        missing_count = missing_matrix.sum(axis=1)
+        flagged_mask = missing_count > 0
+
+        score_series = pd.Series(0.0, index=df.index, dtype="float64")
+        row_annotations: dict[object, dict[str, object]] = {}
+        for idx in df.index[flagged_mask]:
+            missing_fields = [col for col in check_cols if bool(missing_matrix.at[idx, col])]
+            field_scores = [
+                _L102_FIELD_SCORES.get(col, _L102_DEFAULT_FIELD_SCORE)
+                for col in missing_fields
+            ]
+            base_score = max(field_scores)
+            score = min(
+                _L102_MAX_SCORE,
+                base_score + _L102_MULTI_MISSING_STEP * (len(missing_fields) - 1),
+            )
+            score_series.loc[idx] = score
+            row_annotations[idx] = {
+                "missing_fields": missing_fields,
+                "missing_count": len(missing_fields),
+                "max_field_score": float(base_score),
+                "score": float(score),
+            }
+
+        result = flagged_mask.astype(float)
+        result.attrs["score_series"] = score_series
+        result.attrs["breakdown"] = {
+            "flagged_rows": int(flagged_mask.sum()),
+            "missing_field_counts": {
+                col: int(missing_matrix[col].sum()) for col in check_cols
+            },
+            "score_bands": {
+                "low": int((score_series.gt(0.0) & score_series.lt(0.50)).sum()),
+                "medium": int((score_series.ge(0.50) & score_series.lt(0.70)).sum()),
+                "high": int((score_series.ge(0.70) & score_series.lt(0.85)).sum()),
+                "critical": int(score_series.ge(0.85).sum()),
+            },
+        }
+        result.attrs["row_annotations"] = row_annotations
+        return result
 
     # ── L1-03: 무효 계정 ────────────────────────────────────────
 
@@ -299,7 +365,55 @@ class IntegrityDetector(BaseDetector):
         # Why: astype(str)로 int/str 타입 통일 — schema는 int, CoA는 str일 수 있음
         normalized = df["gl_account"].map(_normalize_account_code)
         has_account = normalized.ne("")
-        return (has_account & ~normalized.isin(self._coa)).astype(float)
+        invalid_mask = has_account & ~normalized.isin(self._coa)
+        result = invalid_mask.astype(float)
+
+        if not invalid_mask.any():
+            return result
+
+        account_bucket = _l103_account_bucket(normalized, self._coa)
+        score_series = account_bucket.map(_l103_base_score).astype(float)
+        score_series = score_series.where(invalid_mask, 0.0)
+        context_boost, context_reasons, document_amount = _l103_context_boost(
+            df,
+            invalid_mask,
+        )
+        score_series = (score_series + context_boost).clip(upper=0.90)
+
+        score_bands = {
+            bucket: int((invalid_mask & account_bucket.eq(bucket)).sum())
+            for bucket in (
+                "unknown_account",
+                "unknown_account_family",
+                "malformed_account",
+                "placeholder_or_reserved",
+            )
+        }
+        result.attrs["score_series"] = score_series
+        result.attrs["breakdown"] = {
+            "flagged_rows": int(invalid_mask.sum()),
+            "flagged_docs": _nunique_documents(df, invalid_mask)
+            if "document_id" in df.columns
+            else 0,
+            "score_bands": score_bands,
+            "context_boosted_rows": int((invalid_mask & context_boost.gt(0)).sum()),
+        }
+
+        row_annotations: dict[object, dict[str, object]] = {}
+        for idx in df.index[invalid_mask]:
+            bucket = str(account_bucket.loc[idx])
+            row_annotations[idx] = {
+                "bucket": bucket,
+                "reason_code": bucket,
+                "score": float(score_series.loc[idx]),
+                "base_score": float(_l103_base_score(bucket)),
+                "context_boost": float(context_boost.loc[idx]),
+                "context_reasons": context_reasons.get(idx, []),
+                "gl_account": normalized.loc[idx],
+                "document_amount": float(document_amount.loc[idx]),
+            }
+        result.attrs["row_annotations"] = row_annotations
+        return result
 
     def _l301_misclassified_account(self, df: pd.DataFrame) -> pd.Series | None:
         """L3-01 계정-업무 프로세스 불일치 검토 신호."""
@@ -449,6 +563,116 @@ def _l101_imbalance_band(ratio: float) -> str:
     if ratio <= 0.05:
         return "material"
     return "severe"
+
+
+def _l103_account_bucket(accounts: pd.Series, coa: set[str]) -> pd.Series:
+    coa_values = [code for code in coa if code]
+    coa_first_digits = {code[0] for code in coa_values if code[:1].isdigit()}
+    numeric_coa_count = sum(1 for code in coa_values if code.isdigit())
+    numeric_coa_share = numeric_coa_count / max(len(coa_values), 1)
+    numeric_coa = numeric_coa_share >= 0.80
+
+    bucket = pd.Series("unknown_account", index=accounts.index, dtype="object")
+    placeholder = accounts.map(_l103_is_placeholder_account)
+    bucket.loc[placeholder] = "placeholder_or_reserved"
+
+    if numeric_coa:
+        malformed = accounts.ne("") & ~accounts.str.fullmatch(r"\d+")
+        bucket.loc[malformed & ~placeholder] = "malformed_account"
+
+    if coa_first_digits:
+        family_unknown = (
+            accounts.ne("")
+            & accounts.str[:1].str.isdigit()
+            & ~accounts.str[:1].isin(coa_first_digits)
+        )
+        bucket.loc[family_unknown & ~placeholder] = "unknown_account_family"
+    return bucket
+
+
+def _l103_is_placeholder_account(account: object) -> bool:
+    text = str(account).strip()
+    if not text:
+        return False
+    if text in {"0000", "000000", "777777", "888888", "9999", "999999"}:
+        return True
+    return text.isdigit() and len(text) >= 4 and len(set(text)) == 1
+
+
+def _l103_base_score(bucket: str) -> float:
+    if bucket == "placeholder_or_reserved":
+        return 0.80
+    if bucket == "malformed_account":
+        return 0.75
+    if bucket == "unknown_account_family":
+        return 0.70
+    return 0.60
+
+
+def _l103_context_boost(
+    df: pd.DataFrame,
+    invalid_mask: pd.Series,
+) -> tuple[pd.Series, dict[object, list[str]], pd.Series]:
+    boost = pd.Series(0.0, index=df.index, dtype="float64")
+    reasons: dict[object, list[str]] = {idx: [] for idx in df.index[invalid_mask]}
+    document_amount = _document_amount(df)
+
+    if invalid_mask.any():
+        nonzero_amount = document_amount[document_amount > 0]
+        if len(nonzero_amount) >= 10:
+            high_cutoff = float(nonzero_amount.quantile(0.90))
+            extreme_cutoff = float(nonzero_amount.quantile(0.99))
+            high_amount = invalid_mask & document_amount.ge(high_cutoff)
+            extreme_amount = invalid_mask & document_amount.ge(extreme_cutoff)
+            boost.loc[high_amount] += 0.05
+            boost.loc[extreme_amount] += 0.05
+            for idx in df.index[high_amount]:
+                reasons[idx].append("high_document_amount")
+            for idx in df.index[extreme_amount]:
+                reasons[idx].append("extreme_document_amount")
+
+    manual = _manual_context(df) & invalid_mask
+    period_end = _period_end_context(df) & invalid_mask
+    boost.loc[manual] += 0.05
+    boost.loc[period_end] += 0.05
+    for idx in df.index[manual]:
+        reasons[idx].append("manual_or_adjustment_context")
+    for idx in df.index[period_end]:
+        reasons[idx].append("period_end_context")
+    return boost.clip(upper=0.20), reasons, document_amount
+
+
+def _document_amount(df: pd.DataFrame) -> pd.Series:
+    zero = pd.Series(0.0, index=df.index)
+    debit = pd.to_numeric(df.get("debit_amount", zero), errors="coerce").fillna(0.0).abs()
+    credit = pd.to_numeric(df.get("credit_amount", zero), errors="coerce").fillna(0.0).abs()
+    line_amount = pd.concat([debit, credit], axis=1).max(axis=1)
+    if "document_id" not in df.columns:
+        return line_amount
+
+    safe_doc_id = df["document_id"].copy()
+    nan_mask = safe_doc_id.isna()
+    if nan_mask.any():
+        safe_doc_id.loc[nan_mask] = "_nan_" + nan_mask[nan_mask].index.astype(str)
+    debit_sum = debit.groupby(safe_doc_id).transform("sum")
+    credit_sum = credit.groupby(safe_doc_id).transform("sum")
+    return pd.concat([debit_sum, credit_sum, line_amount], axis=1).max(axis=1)
+
+
+def _manual_context(df: pd.DataFrame) -> pd.Series:
+    combined = pd.Series("", index=df.index, dtype="object")
+    for column in ("source", "document_type", "entry_type"):
+        if column in df.columns:
+            combined = (combined + " " + df[column].map(_normalize_text)).str.strip()
+    pattern = r"\b(?:manual|adjust|adjustment|je|mnl|수기|조정)\b"
+    return combined.str.contains(pattern, regex=True, na=False)
+
+
+def _period_end_context(df: pd.DataFrame) -> pd.Series:
+    if "posting_date" not in df.columns:
+        return pd.Series(False, index=df.index)
+    dates = pd.to_datetime(df["posting_date"], errors="coerce")
+    return dates.notna() & ((dates.dt.days_in_month - dates.dt.day) <= 2)
 
 
 def _has_any_column(df: pd.DataFrame, columns: tuple[str, ...]) -> bool:

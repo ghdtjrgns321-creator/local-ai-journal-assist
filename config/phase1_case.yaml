@@ -27,10 +27,12 @@ phase1_case:
     - upload_batch_id
 
   priority_weights:
-    control: 0.35
-    amount: 0.30
-    logic: 0.20
-    behavior: 0.15
+    control: 0.25
+    amount: 0.25
+    outflow: 0.15
+    logic: 0.15
+    timing: 0.10
+    behavior: 0.10
 
   materiality_amount: 0
 
@@ -41,25 +43,127 @@ phase1_case:
   priority_floors:
     - rule_id: L1-05
       labels:
-        - immediate
-        - escalated_materiality
         - escalated_abnormal_time
-        - escalated_high_risk_account
       min_priority_score: 0.80
+      reason: escalated_self_approval_abnormal_time
+    - rule_id: L1-05
+      labels:
+        - escalated_materiality
+        - escalated_high_risk_account
+      min_priority_score: 0.85
+      reason: escalated_self_approval_material_or_sensitive
+    - rule_id: L1-05
+      labels:
+        - immediate
+      min_priority_score: 0.75
       reason: critical_self_approval
     - rule_id: L1-04
       min_raw_score: 0.80
       min_priority_score: 0.75
       reason: approval_limit_exceeded
     - rule_id: L1-06
+      min_raw_score: 0.70
+      min_priority_score: 0.45
+      reason: sod_direct_medium
+    - rule_id: L1-06
       min_raw_score: 0.80
       min_priority_score: 0.75
-      reason: immediate_sod_violation
+      reason: sod_direct_high
+    - rule_id: L1-06
+      min_raw_score: 0.95
+      min_priority_score: 0.85
+      reason: sod_direct_critical
     - rule_id: L1-07
       labels:
         - immediate
+      min_raw_score: 0.85
+      min_priority_score: 0.85
+      reason: skipped_approval_critical
+    - rule_id: L1-07
+      labels:
+        - immediate
+      min_raw_score: 0.70
       min_priority_score: 0.75
-      reason: skipped_approval_immediate
+      reason: skipped_approval_high
+    - rule_id: L1-09
+      min_raw_score: 0.80
+      min_priority_score: 0.55
+      reason: missing_approval_date_corroborated_material
+    - rule_id: L1-09
+      min_raw_score: 0.70
+      min_priority_score: 0.45
+      reason: missing_approval_date_material
+    - rule_id: L1-09
+      min_raw_score: 0.55
+      min_priority_score: 0.35
+      reason: missing_approval_date_manual
+    - rule_id: L3-11
+      min_raw_score: 0.60
+      min_priority_score: 0.45
+      reason: l311_severe_cutoff_gap
+    - rule_id: L3-11
+      min_raw_score: 0.30
+      required_rules:
+        - L4-01
+      min_priority_score: 0.75
+      reason: l311_high_amount_cutoff
+    - rule_id: L3-04
+      min_raw_score: 0.45
+      required_rules:
+        - L4-01
+      min_priority_score: 0.75
+      reason: l401_period_end_revenue_outlier
+    - rule_id: L3-02
+      min_raw_score: 0.60
+      required_rules:
+        - L4-01
+      min_priority_score: 0.75
+      reason: l401_manual_revenue_outlier
+    - rule_id: L2-05
+      min_raw_score: 0.45
+      required_rules:
+        - L4-01
+      min_priority_score: 0.75
+      reason: l401_reversal_revenue_outlier
+    - rule_id: L1-09
+      min_raw_score: 0.55
+      required_rules:
+        - L4-01
+      min_priority_score: 0.75
+      reason: l401_revenue_outlier_with_approval_gap
+    - rule_id: L2-02
+      labels:
+        - reference_match
+      min_priority_score: 0.45
+      reason: duplicate_payment_reference_match
+    - rule_id: L1-02
+      missing_fields:
+        - document_id
+      min_priority_score: 0.60
+      reason: missing_document_id_traceability_blocker
+    - rule_id: L1-02
+      missing_fields:
+        - gl_account
+        - posting_date
+        - debit_amount
+        - credit_amount
+      min_priority_score: 0.55
+      reason: missing_core_required_field_blocker
+    - rule_id: L1-02
+      missing_fields:
+        - document_id
+        - gl_account
+        - posting_date
+        - debit_amount
+        - credit_amount
+      min_matching_missing_fields: 2
+      min_priority_score: 0.75
+      reason: multiple_core_required_fields_missing
+    - rule_id: L3-10
+      labels:
+        - priority_case
+      min_priority_score: 0.45
+      reason: sensitive_account_priority_context
 
   priority_adjustments:
     enabled: true
@@ -87,7 +191,50 @@ phase1_case:
         - is_period_end_manual
         - sensitive_account_touch
       include_l3_08_as_weak_description: true
+      # L3-08 alone remains review context only. It becomes a weak-description
+      # priority booster only when one of these independent rules is also present.
+      l3_08_corroborating_rules:
+        - L1-03
+        - L1-05
+        - L1-07
+        - L1-09
+        - L2-02
+        - L2-03
+        - L2-05
+        - L3-02
+        - L3-04
+        - L3-05
+        - L3-06
+        - L3-07
+        - L3-09
+        - L3-10
+        - L3-11
+        - L4-03
+        - L4-04
+        - L4-05
+        - L4-06
       derive_manual_period_end: true
+    l108_context_priority:
+      enabled: true
+      per_context_bonus: 0.03
+      max_bonus: 0.12
+    duplicate_entry:
+      enabled: true
+      high_confidence_score: 0.85
+      bonus: 0.08
+      min_priority_score: 0.45
+      amount_score_threshold: 0.75
+      # 0 disables absolute amount support. When materiality_amount is configured
+      # above, high-confidence L2-03 can use materiality-relative amount support.
+      min_total_amount: 0
+      corroborating_evidence_types:
+        - control_failure
+        - timing_anomaly
+        - logic_mismatch
+        - statistical_outlier
+        - data_integrity_failure
+        - access_scope_review
+        - intercompany_structure
     rare_account_pair:
       l404_only_penalty: 0.10
       recurring_source_penalty: 0.08
@@ -98,6 +245,51 @@ phase1_case:
         - batch
         - interface
         - system
+    l301_context_priority:
+      enabled: true
+      manual_sources:
+        - manual
+        - adjustment
+      high_amount_threshold: 100000000
+      repeat_min_rows: 3
+      repeat_min_count: 3
+      repeat_group_columns:
+        - business_process
+        - gl_account
+        - created_by
+      approval_rules:
+        - L1-04
+        - L1-05
+        - L1-07
+        - L1-09
+      abnormal_time_rules:
+        - L3-05
+        - L3-06
+        - L4-05
+      intercompany_rules:
+        - L3-03
+        - IC01
+        - IC02
+        - IC03
+      logic_combo_rules:
+        - L2-04
+        - L3-10
+        - L4-04
+      manual_bonus: 0.12
+      high_amount_bonus: 0.12
+      period_end_bonus: 0.10
+      approval_issue_bonus: 0.18
+      abnormal_time_bonus: 0.08
+      intercompany_bonus: 0.14
+      repeat_pattern_bonus: 0.12
+      logic_combo_bonus: 0.08
+      max_bonus: 0.70
+      manual_floor: 0.75
+      amount_or_period_floor: 0.80
+      amount_and_period_floor: 0.85
+      strong_context_floor: 0.90
+      critical_context_count: 3
+      critical_context_floor: 0.95
 
   repeat_score_promote: 0.70
   repeat_months_tiebreak: 3

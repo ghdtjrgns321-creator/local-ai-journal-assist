@@ -216,7 +216,7 @@ patterns:
   revenue_account_prefixes:
     - "4"
 
-  # L3-04: 기말/기초 대규모 전표 운영 설정.
+  # L3-04: 기말/기초 결산 검토 후보군 운영 설정.
   # 결산 일정(period_end_margin_days)은 config/settings.py에서 정하고,
   # 정상 반복 마감전표 제외는 아래 whitelist 후보를 감사인이 승인한 뒤 입력한다.
   # 예시:
@@ -251,6 +251,7 @@ patterns:
   # 기본값은 보수적인 시작점일 뿐이며, 회사별 CoA에 맞게 조정해야 한다.
   expense_capitalization:
     asset_account_prefixes:
+      - "12"
       - "15"
     expense_account_prefixes:
       - "5"
@@ -359,6 +360,19 @@ patterns:
   # L2-04/L3-08: 가계정/미결산계정 키워드 (정규식 지원)
   # 한글 키워드: 정확 포함 일치 / 영문 키워드: [Xx] 형태로 대소문자 무관 매칭
   # DataSynth v1.2.0 적요가 영문이므로 영문 키워드 병기
+  l1_06_sod_scoring:
+    direct_low: 0.50
+    direct_medium: 0.70
+    direct_high: 0.80
+    direct_critical: 0.95
+    protected_processes: ["TRE", "P2P", "O2C", "R2R", "H2R"]
+    high_risk_conflict_types:
+      - cash_disbursement
+      - purchase_payment
+      - treasury_payment
+      - payroll_payment
+      - revenue_collection
+
   suspense_keywords:
     - "가수금"
     - "가지급"

@@ -229,6 +229,23 @@ def _line_amount(df: pd.DataFrame, cache: AccessRuleCache | None = None) -> pd.S
     return amount
 
 
+def _document_amount(df: pd.DataFrame, cache: AccessRuleCache | None = None) -> pd.Series:
+    """Return document-level representative amount when document_id is available."""
+
+    if cache is not None and "document_amount" in cache.bool_masks:
+        return cache.bool_masks["document_amount"]
+
+    line_amount = _line_amount(df, cache=cache)
+    if "document_id" not in df.columns:
+        amount = line_amount
+    else:
+        doc_id = df["document_id"].fillna("").astype(str)
+        amount = line_amount.groupby(doc_id, dropna=False).transform("sum")
+    if cache is not None:
+        cache.bool_masks["document_amount"] = amount
+    return amount
+
+
 def _is_manual_source(
     df: pd.DataFrame,
     manual_sources: tuple[str, ...],
@@ -554,7 +571,7 @@ def b14_work_scope_excess_review(
     df: pd.DataFrame,
     audit_rules: dict | None = None,
 ) -> pd.Series:
-    """L3-12 review signal for one user spanning many work areas."""
+    """L3-12 review signal for one user-year spanning many work areas."""
 
     if "created_by" not in df.columns or "business_process" not in df.columns:
         return pd.Series(False, index=df.index)
@@ -619,10 +636,17 @@ def b14_work_scope_excess_review(
             df["amount_zscore"],
             errors="coerce",
         ).fillna(0.0).gt(3.0)
+    fiscal_year = (
+        pd.to_numeric(df["fiscal_year"], errors="coerce").astype("Int64").astype(str)
+        if "fiscal_year" in df.columns
+        else pd.Series("", index=df.index)
+    )
+    fiscal_year = fiscal_year.replace("<NA>", "")
 
     work = pd.DataFrame(
         {
             "user": user,
+            "fiscal_year": fiscal_year,
             "persona": persona,
             "process": process,
             "company": company,
@@ -639,13 +663,24 @@ def b14_work_scope_excess_review(
     )
 
     score_series = pd.Series(0.0, index=df.index, dtype="float64")
+    review_score_series = pd.Series(0.0, index=df.index, dtype="float64")
     bucket = pd.Series("none", index=df.index, dtype="object")
+    raw_candidate = pd.Series(False, index=df.index, dtype="bool")
     row_annotations: dict[int, dict[str, object]] = {}
     user_summaries: dict[str, dict[str, object]] = {}
     bucket_counts: dict[str, int] = {}
 
-    grouped = work.loc[valid].groupby("user", sort=False, dropna=False)
-    for user_id, group in grouped:
+    group_keys: str | list[str] = ["fiscal_year", "user"] if "fiscal_year" in df.columns else "user"
+    grouped = work.loc[valid].groupby(group_keys, sort=False, dropna=False)
+    for group_key, group in grouped:
+        if isinstance(group_key, tuple):
+            year_value = str(group_key[0])
+            user_id = str(group_key[1])
+            summary_key = f"{year_value}:{user_id}" if year_value else user_id
+        else:
+            year_value = ""
+            user_id = str(group_key)
+            summary_key = user_id
         persona_values = group["persona"][group["persona"].ne("")]
         persona_value = str(persona_values.mode().iloc[0]) if not persona_values.empty else ""
         process_threshold, company_threshold, threshold_key = _work_scope_threshold_for_persona(
@@ -696,12 +731,24 @@ def b14_work_scope_excess_review(
             has_high_amount
         )
 
-        if is_automated and not (has_manual and corroborating_count >= 2):
+        is_candidate_user = broad_scope or info_only
+
+        if is_automated and is_candidate_user:
+            user_score = 0.30 if has_manual and corroborating_count >= 2 else 0.0
+            user_bucket = (
+                "system_mixed_scope_review"
+                if user_score > 0
+                else "system_scope_observation"
+            )
+        elif is_automated:
             user_score = 0.0
-            user_bucket = "system_excluded"
-        elif is_admin and corroborating_count < 2:
+            user_bucket = "none"
+        elif is_admin and is_candidate_user and corroborating_count < 2:
             user_score = 0.0
-            user_bucket = "admin_excluded"
+            user_bucket = "admin_scope_observation"
+        elif is_admin and not is_candidate_user:
+            user_score = 0.0
+            user_bucket = "none"
         elif broad_scope and process_count >= 4 and company_count >= 3 and has_manual:
             user_score = 0.55
             user_bucket = "broad_scope_manual"
@@ -724,23 +771,22 @@ def b14_work_scope_excess_review(
             user_score = 0.0
             user_bucket = "none"
 
-        if user_score > 0 and corroborating_count >= 2:
+        if user_score > 0 and not is_automated and not is_admin and corroborating_count >= 2:
             user_score = max(user_score, 0.65)
             user_bucket = "compound_scope_concentration"
 
-        if user_bucket in {"system_excluded", "admin_excluded"}:
-            bucket.loc[group.index] = user_bucket
-            user_index = group.index[:0]
-        elif user_score > 0:
+        if is_candidate_user:
             user_index = group.index
         else:
             user_index = group.index[:0]
 
-        score_series.loc[user_index] = user_score
+        raw_candidate.loc[user_index] = True
+        review_score_series.loc[user_index] = user_score
         bucket.loc[user_index] = user_bucket
-        if user_bucket not in {"none", "system_excluded", "admin_excluded"}:
+        if user_bucket != "none" and len(user_index) > 0:
             bucket_counts[user_bucket] = bucket_counts.get(user_bucket, 0) + len(user_index)
-            user_summaries[str(user_id)] = {
+            user_summaries[summary_key] = {
+                "fiscal_year": year_value,
                 "persona": persona_value,
                 "threshold_profile": threshold_key,
                 "process_count": process_count,
@@ -750,14 +796,17 @@ def b14_work_scope_excess_review(
                 "source_count": source_count,
                 "score": round(float(user_score), 4),
                 "bucket": user_bucket,
+                "raw_candidate": bool(is_candidate_user),
                 "reasons": reasons,
             }
             for idx in user_index:
                 row_annotations[int(idx)] = {
-                    "user": str(user_id),
+                    "user": user_id,
+                    "fiscal_year": year_value,
                     "persona": persona_value,
                     "bucket": user_bucket,
-                    "score": round(float(user_score), 4),
+                    "score": 0.0,
+                    "review_score": round(float(user_score), 4),
                     "process_count": process_count,
                     "company_count": company_count,
                     "document_type_count": document_type_count,
@@ -769,15 +818,25 @@ def b14_work_scope_excess_review(
                     ),
                 }
 
-    result = score_series.gt(0)
+    result = raw_candidate
     result.attrs["score_series"] = score_series
+    result.attrs["review_score_series"] = review_score_series
     result.attrs["breakdown"] = {
+        "scoring_unit": "user_year" if "fiscal_year" in df.columns else "user",
+        "row_projection_policy": "project_user_year_score_to_current_period_activity_rows"
+        if "fiscal_year" in df.columns
+        else "project_user_score_to_current_period_activity_rows",
         "candidate_rows": int(result.sum()),
         "candidate_users": int(len(user_summaries)),
+        "scored_rows": int(review_score_series.gt(0).sum()),
+        "review_scored_rows": int(review_score_series.gt(0).sum()),
+        "scored_users": int(sum(1 for item in user_summaries.values() if item["score"] > 0)),
         "bucket_counts": bucket_counts,
         "user_summaries": user_summaries,
-        "excluded_system_rows": int(bucket.eq("system_excluded").sum()),
-        "excluded_admin_rows": int(bucket.eq("admin_excluded").sum()),
+        "zero_score_system_rows": int((result & bucket.eq("system_scope_observation")).sum()),
+        "zero_score_admin_rows": int((result & bucket.eq("admin_scope_observation")).sum()),
+        "excluded_system_rows": 0,
+        "excluded_admin_rows": 0,
     }
     result.attrs["row_annotations"] = row_annotations
     return result
@@ -822,15 +881,49 @@ def b12_missing_approval_date(
         if "exceeds_threshold" in df.columns
         else pd.Series(False, index=df.index)
     )
-    immediate_evidence = manual_source | high_risk_process | high_amount
-    immediate = candidate & has_approver & ~system_source & immediate_evidence
+    manual_entry = (
+        df["is_manual_je"].fillna(False).astype(bool)
+        if "is_manual_je" in df.columns
+        else pd.Series(False, index=df.index)
+    )
+    manual_context = manual_source | manual_entry
+    abnormal_time = _is_abnormal_self_approval_time(df, cache=cache)
+    period_end = (
+        df["is_period_end"].fillna(False).astype(bool)
+        if "is_period_end" in df.columns
+        else pd.Series(False, index=df.index)
+    )
+    high_risk_cfg = _get_high_risk_account_config(audit_rules)
+    high_risk_account = _is_high_risk_account(
+        df,
+        exact_accounts=high_risk_cfg["accounts"],
+        account_prefixes=high_risk_cfg["account_prefixes"],
+        cache=cache,
+    )
+
+    primary_evidence = manual_context | high_risk_process | high_amount
+    immediate = candidate & has_approver & ~system_source & primary_evidence
     review = candidate & has_approver & ~immediate
     low_priority = candidate & ~has_approver
+    system_review = review & system_source
+    weak_review = review & ~system_source
 
     score_series = pd.Series(0.0, index=df.index, dtype="float64")
-    score_series.loc[immediate] = 0.6
+    score_series.loc[immediate] = 0.55
+    score_series.loc[immediate & high_amount] = 0.65
+    score_series.loc[immediate & manual_context & high_risk_process] = 0.65
+    score_series.loc[immediate & high_amount & (manual_context | high_risk_process)] = 0.70
+    corroborated = immediate & (
+        (high_amount & (period_end | abnormal_time | high_risk_account))
+        | (manual_context & high_risk_process & (high_amount | period_end | abnormal_time))
+    )
+    score_series.loc[corroborated] = 0.80
     review_score_series = pd.Series(0.0, index=df.index, dtype="float64")
-    review_score_series.loc[review] = 0.35
+    review_score_series.loc[system_review] = 0.25
+    review_score_series.loc[
+        system_review & (high_amount | high_risk_process | high_risk_account)
+    ] = 0.35
+    review_score_series.loc[weak_review] = 0.35
     review_score_series.loc[low_priority] = 0.1
 
     queue_label = pd.Series("none", index=df.index, dtype="object")
@@ -843,15 +936,40 @@ def b12_missing_approval_date(
         evidence_reasons: list[str] = []
         if bool(manual_source.loc[idx]):
             evidence_reasons.append("manual_source")
+        if bool(manual_entry.loc[idx]):
+            evidence_reasons.append("manual_entry")
         if bool(high_risk_process.loc[idx]):
             evidence_reasons.append("high_risk_process")
         if bool(high_amount.loc[idx]):
             evidence_reasons.append("high_amount")
+        if bool(period_end.loc[idx]):
+            evidence_reasons.append("period_end")
+        if bool(abnormal_time.loc[idx]):
+            evidence_reasons.append("abnormal_time")
+        if bool(high_risk_account.loc[idx]):
+            evidence_reasons.append("high_risk_account")
+
+        if bool(low_priority.loc[idx]):
+            score_bucket = "missing_approver"
+        elif bool(system_review.loc[idx]):
+            score_bucket = "system_review"
+        elif bool(weak_review.loc[idx]):
+            score_bucket = "weak_review"
+        elif float(score_series.loc[idx]) >= 0.80:
+            score_bucket = "corroborated_material"
+        elif float(score_series.loc[idx]) >= 0.70:
+            score_bucket = "material_control_gap"
+        elif float(score_series.loc[idx]) >= 0.65:
+            score_bucket = "corroborated_control_gap"
+        else:
+            score_bucket = "single_control_gap"
 
         annotation: dict[str, object] = {
             "queue_label": str(queue_label.loc[idx]),
+            "bucket": score_bucket,
             "score": round(float(score_series.loc[idx]), 4),
             "review_score": round(float(review_score_series.loc[idx]), 4),
+            "evidence_count": len(set(evidence_reasons)),
             "evidence_reasons": evidence_reasons,
             "source_category": (
                 "missing_approver"
@@ -870,6 +988,13 @@ def b12_missing_approval_date(
             "approval_date",
             "business_process",
             "exceeds_threshold",
+            "is_manual_je",
+            "is_period_end",
+            "is_after_hours",
+            "is_weekend",
+            "is_holiday",
+            "time_zone_category",
+            "gl_account",
         ):
             if column in df.columns:
                 value = df.at[idx, column]
@@ -882,13 +1007,24 @@ def b12_missing_approval_date(
         "candidate_rows": int(candidate.sum()),
         "immediate_rows": int(immediate.sum()),
         "review_rows": int(review.sum()),
+        "system_review_rows": int(system_review.sum()),
+        "weak_review_rows": int(weak_review.sum()),
         "low_priority_rows": int(low_priority.sum()),
         "missing_approver_rows": int((candidate & ~has_approver).sum()),
         "has_approver_rows": int((candidate & has_approver).sum()),
         "manual_source_rows": int((candidate & manual_source).sum()),
+        "manual_entry_rows": int((candidate & manual_entry).sum()),
         "system_source_review_rows": int((candidate & system_source).sum()),
         "high_risk_process_rows": int((candidate & high_risk_process).sum()),
         "high_amount_rows": int((candidate & high_amount).sum()),
+        "period_end_rows": int((candidate & period_end).sum()),
+        "abnormal_time_rows": int((candidate & abnormal_time).sum()),
+        "high_risk_account_rows": int((candidate & high_risk_account).sum()),
+        "score_bands": {
+            f"{float(score):.2f}": int((score_series.eq(score) & candidate).sum())
+            for score in sorted(score_series.loc[candidate].unique())
+            if float(score) > 0
+        },
         "source_counts": source_norm.loc[candidate].value_counts().to_dict(),
     }
     candidate.attrs["row_annotations"] = row_annotations
@@ -1196,7 +1332,7 @@ def b06_self_approval(
     sensitive_process = process_series.isin(["TRE", "P2P", "H2R"])
     observed_summary = _build_self_approval_group_summary(
         df,
-        flagged=flagged,
+        flagged=actionable,
         immediate=immediate,
         review=review,
         high_amount=high_amount,
@@ -1334,6 +1470,36 @@ def _get_sod_it_admin_config(audit_rules: dict | None = None) -> dict[str, tuple
             for v in cfg.get("business_processes", ["TRE", "P2P", "O2C", "H2R"])
         ),
         "materiality_amount": float(cfg.get("materiality_amount", 0.0)),
+    }
+
+
+def _get_l106_sod_scoring_config(audit_rules: dict | None = None) -> dict[str, object]:
+    """Load direct-only L1-06 score band policy."""
+
+    rules = audit_rules or get_audit_rules()
+    cfg = rules.get("patterns", {}).get("l1_06_sod_scoring", {})
+    return {
+        "direct_low": float(cfg.get("direct_low", 0.50)),
+        "direct_medium": float(cfg.get("direct_medium", 0.70)),
+        "direct_high": float(cfg.get("direct_high", 0.80)),
+        "direct_critical": float(cfg.get("direct_critical", 0.95)),
+        "protected_processes": tuple(
+            str(v).strip().upper()
+            for v in cfg.get("protected_processes", ["TRE", "P2P", "O2C", "R2R", "H2R"])
+        ),
+        "high_risk_conflict_types": tuple(
+            str(v).strip().lower()
+            for v in cfg.get(
+                "high_risk_conflict_types",
+                [
+                    "cash_disbursement",
+                    "purchase_payment",
+                    "treasury_payment",
+                    "payroll_payment",
+                    "revenue_collection",
+                ],
+            )
+        ),
     }
 
 
@@ -1508,6 +1674,98 @@ def manual_override_signal_mask(
     return result
 
 
+def _score_l106_sod_rows(
+    df: pd.DataFrame,
+    *,
+    immediate_mask: pd.Series,
+    direct_sod_violation: pd.Series,
+    within_process_conflict: pd.Series,
+    it_admin_high_risk: pd.Series,
+    audit_rules: dict | None = None,
+    cache: AccessRuleCache | None = None,
+) -> tuple[pd.Series, pd.Series, dict[int, dict[str, object]]]:
+    """Return direct-only L1-06 score bands and row annotations."""
+
+    cfg = _get_l106_sod_scoring_config(audit_rules)
+    score_series = pd.Series(0.0, index=df.index, dtype="float64")
+    bucket = pd.Series("none", index=df.index, dtype="object")
+    reason = pd.Series("", index=df.index, dtype="object")
+    if not immediate_mask.any():
+        return score_series, bucket, {}
+
+    process_norm = (
+        _cached_process(df, "business_process", cache)
+        if "business_process" in df.columns
+        else pd.Series("", index=df.index)
+    )
+    conflict_norm = (
+        _cached_text(df, "sod_conflict_type", cache)
+        if "sod_conflict_type" in df.columns
+        else pd.Series("", index=df.index)
+    )
+    protected_process = process_norm.isin(cfg["protected_processes"])
+    high_risk_conflict = conflict_norm.isin(cfg["high_risk_conflict_types"])
+    threshold_excess = (
+        df["exceeds_threshold"].fillna(False).astype(bool)
+        if "exceeds_threshold" in df.columns
+        else pd.Series(False, index=df.index)
+    )
+    has_amount = _line_amount(df, cache=cache).gt(0)
+
+    direct_low = immediate_mask
+    direct_medium = immediate_mask & (
+        direct_sod_violation | (within_process_conflict & (protected_process | has_amount))
+    )
+    direct_high = immediate_mask & (high_risk_conflict | threshold_excess)
+    direct_critical = immediate_mask & it_admin_high_risk
+
+    score_series.loc[direct_low] = float(cfg["direct_low"])
+    bucket.loc[direct_low] = "direct_low"
+    reason.loc[direct_low] = "direct_conflict_marker"
+
+    score_series.loc[direct_medium] = float(cfg["direct_medium"])
+    bucket.loc[direct_medium] = "direct_medium"
+    reason.loc[direct_medium] = "direct_conflict_with_process_or_amount"
+
+    score_series.loc[direct_high] = float(cfg["direct_high"])
+    bucket.loc[direct_high] = "direct_high"
+    reason.loc[direct_high] = "high_risk_direct_sod"
+
+    score_series.loc[direct_critical] = float(cfg["direct_critical"])
+    bucket.loc[direct_critical] = "direct_critical"
+    reason.loc[direct_critical] = "it_admin_protected_business_posting"
+
+    row_annotations: dict[int, dict[str, object]] = {}
+    annotation_columns = (
+        "document_id",
+        "created_by",
+        "approved_by",
+        "business_process",
+        "source",
+        "user_persona",
+        "sod_conflict_type",
+    )
+    for idx in immediate_mask[immediate_mask].index:
+        annotation: dict[str, object] = {
+            "bucket": str(bucket.loc[idx]),
+            "score": round(float(score_series.loc[idx]), 4),
+            "score_reason": str(reason.loc[idx]),
+            "direct_sod_violation": bool(direct_sod_violation.loc[idx]),
+            "within_process_conflict": bool(within_process_conflict.loc[idx]),
+            "it_admin_high_risk": bool(it_admin_high_risk.loc[idx]),
+            "protected_process": bool(protected_process.loc[idx]),
+            "high_risk_conflict": bool(high_risk_conflict.loc[idx]),
+            "threshold_excess": bool(threshold_excess.loc[idx]),
+        }
+        for column in annotation_columns:
+            if column in df.columns:
+                value = df.at[idx, column]
+                annotation[column] = None if pd.isna(value) else value
+        row_annotations[int(idx)] = annotation
+
+    return score_series, bucket, row_annotations
+
+
 def b07_segregation_of_duties(
     df: pd.DataFrame,
     sod_threshold: int = 3,
@@ -1640,8 +1898,15 @@ def b07_segregation_of_duties(
         scope_review_mask = scope_review_mask & ~immediate_mask
 
     result = immediate_mask
-    score_series = pd.Series(0.0, index=df.index)
-    score_series.loc[immediate_mask] = 0.8
+    score_series, score_bucket, row_annotations = _score_l106_sod_rows(
+        df,
+        immediate_mask=immediate_mask,
+        direct_sod_violation=direct_sod_violation,
+        within_process_conflict=within_process_conflict,
+        it_admin_high_risk=it_admin_high_risk,
+        audit_rules=audit_rules,
+        cache=cache,
+    )
     review_score_series = pd.Series(0.0, index=df.index)
 
     result.attrs["score_series"] = score_series
@@ -1665,7 +1930,9 @@ def b07_segregation_of_duties(
         "self_approval_rows": 0,
         "skipped_approval_rows": 0,
         "manual_override_rows": 0,
+        "score_bucket_counts": score_bucket[score_bucket.ne("none")].value_counts().to_dict(),
     }
+    result.attrs["row_annotations"] = row_annotations
     return result
 
 
@@ -1785,6 +2052,154 @@ def _skipped_approval_components(
     return components
 
 
+def _bounded_score(series: pd.Series | float, index: pd.Index) -> pd.Series:
+    if isinstance(series, pd.Series):
+        return series.reindex(index).fillna(0.0).astype(float).clip(0.0, 1.0)
+    return pd.Series(float(series), index=index, dtype="float64").clip(0.0, 1.0)
+
+
+def _l107_component_scores(
+    df: pd.DataFrame,
+    components: dict[str, object],
+    cache: AccessRuleCache | None = None,
+) -> dict[str, pd.Series]:
+    """Score L1-07 severity components without changing queue-label semantics."""
+
+    index = df.index
+    exceeds = components["exceeds"]
+    approval_required = components["approval_required"]
+    system_source = components["system_source"]
+    manual_source = components["manual_source"]
+    no_approval = components["no_approval"]
+    no_approval_date = components["no_approval_date"]
+    manual_entry = components["manual_entry"]
+    abnormal_time = components["abnormal_time"]
+    high_risk_process = components["high_risk_process"]
+    high_approval_level = components["high_approval_level"]
+
+    approval_level = (
+        pd.to_numeric(df["approval_level"], errors="coerce").fillna(0).astype(int)
+        if "approval_level" in df.columns
+        else pd.Series(0, index=index, dtype="int64")
+    )
+    approval_requirement = pd.Series(0.0, index=index)
+    approval_requirement.loc[approval_required] = 0.55
+    approval_requirement.loc[approval_level.ge(1)] = approval_requirement.loc[
+        approval_level.ge(1)
+    ].clip(lower=0.65)
+    approval_requirement.loc[approval_level.ge(2)] = approval_requirement.loc[
+        approval_level.ge(2)
+    ].clip(lower=0.75)
+    approval_requirement.loc[exceeds] = 1.0
+
+    amount = _document_amount(df, cache=cache)
+    amount_materiality = pd.Series(0.0, index=index)
+    amount_materiality.loc[amount.gt(0)] = 0.35
+    amount_materiality.loc[amount.ge(10_000_000)] = 0.60
+    amount_materiality.loc[amount.ge(100_000_000)] = 0.80
+    amount_materiality.loc[amount.ge(1_000_000_000)] = 1.00
+    amount_materiality.loc[approval_level.ge(1)] = amount_materiality.loc[
+        approval_level.ge(1)
+    ].clip(lower=0.60)
+    amount_materiality.loc[approval_level.ge(2)] = amount_materiality.loc[
+        approval_level.ge(2)
+    ].clip(lower=0.75)
+    amount_materiality.loc[approval_level.ge(3)] = amount_materiality.loc[
+        approval_level.ge(3)
+    ].clip(lower=0.90)
+
+    control_bypass = (
+        manual_source.astype(float) * 0.40
+        + no_approval_date.astype(float) * 0.25
+        + high_risk_process.astype(float) * 0.20
+        + high_approval_level.astype(float) * 0.15
+    ).clip(0.0, 1.0)
+
+    period_end = (
+        df["is_period_end"].fillna(False).astype(bool)
+        if "is_period_end" in df.columns
+        else pd.Series(False, index=index, dtype=bool)
+    )
+    weekend = (
+        df["is_weekend"].fillna(False).astype(bool)
+        if "is_weekend" in df.columns
+        else pd.Series(False, index=index, dtype=bool)
+    )
+    timing_manual = (
+        manual_entry.astype(float) * 0.35
+        + abnormal_time.astype(float) * 0.35
+        + period_end.astype(float) * 0.20
+        + weekend.astype(float) * 0.10
+    ).clip(0.0, 1.0)
+
+    if {"created_by", "business_process"}.issubset(df.columns):
+        repeat_key = (
+            df["created_by"].fillna("").astype(str).str.strip()
+            + "|"
+            + df["business_process"].fillna("").astype(str).str.strip()
+        )
+        repeat_count = repeat_key.groupby(repeat_key, dropna=False).transform("size")
+    elif "created_by" in df.columns:
+        repeat_key = df["created_by"].fillna("").astype(str).str.strip()
+        repeat_count = repeat_key.groupby(repeat_key, dropna=False).transform("size")
+    else:
+        repeat_count = pd.Series(1, index=index)
+    repeat_concentration = pd.Series(0.0, index=index)
+    repeat_concentration.loc[repeat_count.ge(2)] = 0.50
+    repeat_concentration.loc[repeat_count.ge(3)] = 0.80
+    repeat_concentration.loc[repeat_count.ge(5)] = 1.00
+    repeat_concentration = repeat_concentration.where(no_approval, 0.0)
+
+    if "document_id" in df.columns:
+        doc_id = df["document_id"].fillna("").astype(str)
+        all_lines_missing_approver = no_approval.groupby(doc_id, dropna=False).transform("all")
+    else:
+        all_lines_missing_approver = no_approval
+    data_trace = (
+        no_approval_date.astype(float) * 0.70
+        + all_lines_missing_approver.astype(float) * 0.30
+    ).clip(0.0, 1.0)
+
+    source_norm = (
+        _cached_text(df, "source", cache)
+        if "source" in df.columns
+        else pd.Series("", index=index, dtype="object")
+    )
+    recurring_source = source_norm.eq("recurring")
+    has_approval_date = (
+        ~no_approval_date
+        if "approval_date" in df.columns
+        else pd.Series(False, index=index)
+    )
+    mitigation = (
+        system_source.astype(float) * 1.00
+        + recurring_source.astype(float) * 0.55
+        + has_approval_date.astype(float) * 0.25
+        + (~approval_required).astype(float) * 0.65
+    ).clip(0.0, 1.0)
+
+    raw_score = (
+        0.25 * approval_requirement
+        + 0.25 * amount_materiality
+        + 0.20 * control_bypass
+        + 0.15 * timing_manual
+        + 0.10 * repeat_concentration
+        + 0.05 * data_trace
+        - 0.15 * mitigation
+    ).clip(0.0, 1.0)
+
+    return {
+        "approval_requirement_confidence": _bounded_score(approval_requirement, index),
+        "amount_materiality": _bounded_score(amount_materiality, index),
+        "control_bypass_context": _bounded_score(control_bypass, index),
+        "timing_and_manual_context": _bounded_score(timing_manual, index),
+        "repeat_or_concentration": _bounded_score(repeat_concentration, index),
+        "data_trace_quality": _bounded_score(data_trace, index),
+        "mitigation_likelihood": _bounded_score(mitigation, index),
+        "raw_score": _bounded_score(raw_score, index),
+    }
+
+
 def b09_skipped_approval(
     df: pd.DataFrame,
     audit_rules: dict | None = None,
@@ -1820,11 +2235,17 @@ def b09_skipped_approval(
     queue_label.loc[review] = "review"
     queue_label.loc[immediate] = "immediate"
 
+    component_scores = _l107_component_scores(df, components, cache=cache)
+    raw_l107_score = component_scores["raw_score"]
     score_series = pd.Series(0.0, index=df.index)
-    score_series.loc[immediate] = 0.8
+    score_series.loc[immediate] = raw_l107_score.loc[immediate].clip(lower=0.70)
     review_score_series = pd.Series(0.0, index=df.index)
-    review_score_series.loc[review] = 0.4
-    review_score_series.loc[low_priority] = 0.1
+    review_score_series.loc[review] = raw_l107_score.loc[review].clip(lower=0.45, upper=0.69)
+    review_score_series.loc[low_priority] = raw_l107_score.loc[low_priority].clip(
+        lower=0.10,
+        upper=0.44,
+    )
+    effective_score = pd.concat([score_series, review_score_series], axis=1).max(axis=1)
 
     evidence_reasons_by_row: dict[int, list[str]] = {}
     row_annotations: dict[int, dict[str, object]] = {}
@@ -1848,6 +2269,12 @@ def b09_skipped_approval(
             "queue_label": str(queue_label.loc[idx]),
             "score": round(float(score_series.loc[idx]), 4),
             "review_score": round(float(review_score_series.loc[idx]), 4),
+            "severity_score": round(float(raw_l107_score.loc[idx]), 4),
+            "score_components": {
+                key: round(float(series.loc[idx]), 4)
+                for key, series in component_scores.items()
+                if key != "raw_score"
+            },
             "evidence_count": int(evidence_count.loc[idx]),
             "evidence_reasons": reasons,
             "source_category": (
@@ -1862,6 +2289,13 @@ def b09_skipped_approval(
             "has_approval_date": not bool(no_approval_date.loc[idx]),
             "min_evidence_count": int(cfg["min_evidence_count"]),
         }
+        annotation["score_reason_summary"] = [
+            key
+            for key, value in annotation["score_components"].items()
+            if key != "mitigation_likelihood" and float(value) >= 0.5
+        ]
+        if annotation["score_components"]["mitigation_likelihood"] >= 0.5:
+            annotation["score_reason_summary"].append("mitigation_likelihood")
         for column in (
             "document_id",
             "source",
@@ -1914,6 +2348,12 @@ def b09_skipped_approval(
         "evidence_count_bands": evidence_count_bands,
         "evidence_reason_counts": evidence_reason_counts,
         "min_evidence_count": int(cfg["min_evidence_count"]),
+        "score_bands": {
+            "critical": int((candidate & effective_score.ge(0.85)).sum()),
+            "high": int((candidate & effective_score.ge(0.70) & effective_score.lt(0.85)).sum()),
+            "review": int((candidate & effective_score.ge(0.45) & effective_score.lt(0.70)).sum()),
+            "low": int((candidate & effective_score.gt(0.0) & effective_score.lt(0.45)).sum()),
+        },
     }
     candidate.attrs["row_annotations"] = row_annotations
     immediate.attrs = candidate.attrs.copy()

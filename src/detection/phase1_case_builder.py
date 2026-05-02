@@ -81,7 +81,7 @@ _RULE_THEME_MAP = {
 
 _STRENGTH_RANK = {"strong": 3, "medium": 2, "weak": 1}
 
-_MACRO_FINDING_RULES = {"L4-02", "D01", "D02"}
+_MACRO_FINDING_RULES = {"L4-02", "D01", "D02", "GR01", "GR03"}
 
 _THEME_EXPLANATION_PRIORITY = {
     "control_failure": (
@@ -442,6 +442,7 @@ class _RawHit:
     document_id: str
     record_id: str | None
     detail: str | None
+    annotation: dict[str, Any] | None = None
 
 
 def build_phase1_case_run_id(
@@ -493,8 +494,13 @@ def build_phase1_case_result(
         dataset_id=dataset_id,
         generated_at=generated_at,
     )
+    macro_findings = _build_macro_findings(
+        results,
+        df=df,
+        top_n=int(config.get("top_n_macro_findings", 100)),
+    )
     raw_hits = _collect_raw_hits(df, results)
-    cases = _build_cases(df, raw_hits, config)
+    cases = _build_cases(df, raw_hits, config, macro_findings)
     theme_summaries = _build_theme_summaries(cases, int(config.get("top_n_per_theme", 10)))
     return Phase1CaseResult(
         schema_version=SCHEMA_VERSION,
@@ -521,6 +527,12 @@ def build_phase1_case_result(
                 "near_period_days": int(config.get("near_period_days", 7)),
                 "period_end_window_days": int(config.get("period_end_window_days", 5)),
             },
+            "macro_findings": macro_findings,
+            "macro_finding_count": len(macro_findings),
+            "macro_finding_policy": (
+                "L4-02/D01/D02/GR01/GR03 are Account/Process Queue findings. They do not create "
+                "transaction queue priority_score or row-level anomaly_score by themselves."
+            ),
         },
     )
 
@@ -535,6 +547,9 @@ def annotate_detection_results_with_phase1_refs(
         result.metadata["phase1_case_run_id"] = reference["phase1_case_run_id"]
         result.metadata["phase1_case_path"] = reference["phase1_case_path"]
         result.metadata["phase1_case_count"] = reference["phase1_case_count"]
+        result.metadata["phase1_macro_finding_count"] = reference[
+            "phase1_macro_finding_count"
+        ]
         result.metadata["top_theme_ids"] = reference["top_theme_ids"]
         result.metadata["phase1_case_schema_version"] = reference["phase1_case_schema_version"]
 
@@ -547,9 +562,421 @@ def build_phase1_case_reference(
         "phase1_case_run_id": phase1_result.run_id,
         "phase1_case_path": str(artifact_path),
         "phase1_case_count": len(phase1_result.cases),
+        "phase1_macro_finding_count": int(
+            phase1_result.metadata.get("macro_finding_count", 0) or 0
+        ),
         "top_theme_ids": [summary.theme_id for summary in phase1_result.theme_summaries[:3]],
         "phase1_case_schema_version": phase1_result.schema_version,
     }
+
+
+def _build_macro_findings(
+    results: list[DetectionResult],
+    *,
+    df: pd.DataFrame | None = None,
+    top_n: int,
+) -> list[dict[str, Any]]:
+    """Build Account/Process Queue findings that must not enter transaction scoring."""
+
+    findings: list[dict[str, Any]] = []
+    for result in results:
+        metadata = result.metadata or {}
+        findings.extend(_build_l402_macro_findings(result.track_name, metadata))
+        findings.extend(_build_d01_macro_findings(result.track_name, metadata))
+        findings.extend(_build_d02_macro_findings(result.track_name, metadata))
+        findings.extend(_build_graph_macro_findings(result.track_name, result.details, df))
+
+    findings.sort(
+        key=lambda item: (
+            float(item.get("macro_priority_score") or item.get("review_score") or 0.0),
+            int(item.get("candidate_rows") or item.get("review_row_count") or 0),
+        ),
+        reverse=True,
+    )
+    if top_n > 0:
+        findings = findings[:top_n]
+    return [_json_safe_mapping(item) for item in findings]
+
+
+def _build_l402_macro_findings(
+    track_name: str,
+    metadata: dict[str, Any],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for ordinal, finding in enumerate(metadata.get("benford_findings", []) or [], start=1):
+        if not isinstance(finding, dict):
+            continue
+        rows.append({
+            "finding_id": f"L4-02:{ordinal:04d}",
+            "rule_id": "L4-02",
+            "rule_label": "Benford population anomaly",
+            "queue_type": "account_process_macro",
+            "source_track": track_name,
+            "scope": finding.get("scope") or "company_gl_account",
+            "company_code": finding.get("company_code"),
+            "gl_account": finding.get("gl_account"),
+            "sample_size": finding.get("sample_size"),
+            "review_score": finding.get("candidate_score", 0.0),
+            "finding_severity": finding.get("finding_severity", ""),
+            "candidate_rows": finding.get("candidate_rows", 0),
+            "candidate_documents": finding.get("candidate_documents"),
+            "flagged_digits": finding.get("flagged_digits", []),
+            "metrics": {
+                "mad": finding.get("mad"),
+                "chi2_p_value": finding.get("chi2_p_value"),
+                "max_deviation": finding.get("max_deviation"),
+            },
+            "interpretation": (
+                "Population-level digit distribution finding. Drill-down rows are "
+                "review candidates, not confirmed transaction exceptions."
+            ),
+        })
+    return rows
+
+
+def _build_d01_macro_findings(
+    track_name: str,
+    metadata: dict[str, Any],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for ordinal, finding in enumerate(
+        metadata.get("account_activity_variance", []) or [],
+        start=1,
+    ):
+        if not isinstance(finding, dict):
+            continue
+        priority_score = _d01_macro_priority_score(finding)
+        queue_bucket = _d01_queue_bucket(finding)
+        normal_likelihood = _d01_normal_likelihood(finding, queue_bucket)
+        rows.append({
+            "finding_id": f"D01:{ordinal:04d}",
+            "rule_id": "D01",
+            "rule_label": "Account activity variance",
+            "queue_type": "account_process_macro",
+            "source_track": track_name,
+            "scope": "company_gl_account" if finding.get("company_code") else "gl_account",
+            "fiscal_year": finding.get("fiscal_year"),
+            "prior_fiscal_year": finding.get("prior_fiscal_year"),
+            "company_code": finding.get("company_code"),
+            "gl_account": finding.get("gl_account"),
+            "review_row_count": finding.get("review_row_count", 0),
+            "review_score": finding.get("weighted_variance", 0.0),
+            "macro_priority_score": priority_score,
+            "queue_bucket": queue_bucket,
+            "normal_likelihood": normal_likelihood,
+            "scoring_policy": "macro_priority_calibrated_not_row_score",
+            "finding_severity": queue_bucket,
+            "business_event_type": finding.get("business_event_type"),
+            "precision_policy": finding.get("precision_policy"),
+            "metrics": {
+                "current_total_amount": finding.get("current_total_amount"),
+                "prior_total_amount": finding.get("prior_total_amount"),
+                "total_var": finding.get("total_var"),
+                "count_var": finding.get("count_var"),
+                "avg_var": finding.get("avg_var"),
+                "weighted_variance": finding.get("weighted_variance"),
+                "d01_target_document_count": finding.get("d01_target_document_count"),
+                "non_d01_document_count": finding.get("non_d01_document_count"),
+            },
+            "interpretation": (
+                "Account-level activity shift finding. Use it to select accounts for "
+                "analytical review and corroborate transaction-level exceptions."
+            ),
+        })
+    return rows
+
+
+def _build_d02_macro_findings(
+    track_name: str,
+    metadata: dict[str, Any],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for ordinal, finding in enumerate(metadata.get("d02_account_diagnostics", []) or [], start=1):
+        if not isinstance(finding, dict) or not bool(finding.get("flagged", False)):
+            continue
+        priority_score = _d02_macro_priority_score(finding)
+        queue_bucket = _d02_queue_bucket(finding)
+        normal_likelihood = _d02_normal_likelihood(finding, queue_bucket)
+        rows.append({
+            "finding_id": f"D02:{ordinal:04d}",
+            "rule_id": "D02",
+            "rule_label": "Monthly pattern shift",
+            "queue_type": "account_process_macro",
+            "source_track": track_name,
+            "scope": "company_gl_account" if finding.get("company_code") else "gl_account",
+            "fiscal_year": finding.get("fiscal_year"),
+            "prior_fiscal_year": finding.get("prior_fiscal_year"),
+            "company_code": finding.get("company_code"),
+            "gl_account": finding.get("gl_account"),
+            "group_key": finding.get("d02_group_key"),
+            "review_score": finding.get("jsd", 0.0),
+            "macro_priority_score": priority_score,
+            "queue_bucket": queue_bucket,
+            "normal_likelihood": normal_likelihood,
+            "scoring_policy": "macro_priority_calibrated_not_row_score",
+            "finding_severity": queue_bucket,
+            "scenario_type": finding.get("scenario_type"),
+            "metrics": {
+                key: value
+                for key, value in finding.items()
+                if key not in {"flagged", "company_code", "gl_account", "d02_group_key"}
+            },
+            "interpretation": (
+                "Account-level monthly distribution shift finding. It does not identify "
+                "one incorrect journal line without corroborating evidence."
+            ),
+        })
+    return rows
+
+
+def _build_graph_macro_findings(
+    track_name: str,
+    details: pd.DataFrame | None,
+    df: pd.DataFrame | None,
+) -> list[dict[str, Any]]:
+    """Build macro queue items for graph findings without row score inflation."""
+
+    if details is None or details.empty or df is None or df.empty:
+        return []
+
+    rows: list[dict[str, Any]] = []
+    for rule_id in ("GR01", "GR03"):
+        if rule_id not in details.columns:
+            continue
+        scores = pd.to_numeric(details[rule_id].reindex(df.index), errors="coerce").fillna(0.0)
+        if not scores.gt(0).any():
+            continue
+
+        work = df.loc[scores.gt(0)].copy()
+        work["_graph_score"] = scores.loc[work.index].astype(float)
+        work["_row_position"] = [df.index.get_loc(index_value) for index_value in work.index]
+        group_columns = [
+            column
+            for column in ("fiscal_year", "company_code", "gl_account")
+            if column in work.columns
+        ]
+        if not group_columns:
+            group_columns = ["_graph_scope"]
+            work["_graph_scope"] = "all"
+
+        for ordinal, (_group_key, group) in enumerate(
+            work.groupby(group_columns, dropna=False),
+            start=1,
+        ):
+            review_score = float(group["_graph_score"].max())
+            document_ids = _ordered_unique(
+                _string_value(value)
+                for value in group.get("document_id", pd.Series(dtype=object)).tolist()
+                if _string_value(value)
+            )
+            rows.append({
+                "finding_id": f"{rule_id}:{ordinal:04d}",
+                "rule_id": rule_id,
+                "rule_label": _graph_rule_label(rule_id),
+                "queue_type": "account_process_macro",
+                "source_track": track_name,
+                "scope": "company_gl_account" if "company_code" in group_columns else "gl_account",
+                "fiscal_year": _first_group_value(group, "fiscal_year"),
+                "company_code": _first_group_value(group, "company_code"),
+                "gl_account": _first_group_value(group, "gl_account"),
+                "review_score": review_score,
+                "macro_priority_score": _graph_macro_priority_score(review_score),
+                "queue_bucket": _graph_queue_bucket(rule_id),
+                "normal_likelihood": 0.35,
+                "scoring_policy": "macro_priority_calibrated_not_row_score",
+                "finding_severity": "graph_review",
+                "candidate_rows": int(len(group)),
+                "candidate_documents": len(document_ids),
+                "document_ids": document_ids[:25],
+                "row_indices": [int(value) for value in group["_row_position"].tolist()],
+                "metrics": {
+                    "max_graph_score": review_score,
+                    "mean_graph_score": float(group["_graph_score"].mean()),
+                },
+                "interpretation": (
+                    "Graph-level relationship finding. Use it as macro corroboration for "
+                    "matching transaction-level cases, especially related-party review."
+                ),
+            })
+    return rows
+
+
+def _graph_rule_label(rule_id: str) -> str:
+    if rule_id == "GR01":
+        return "Graph circular transaction"
+    if rule_id == "GR03":
+        return "Graph transfer-pricing asymmetry"
+    return rule_id
+
+
+def _graph_queue_bucket(rule_id: str) -> str:
+    if rule_id == "GR01":
+        return "corroborated_graph_cycle"
+    if rule_id == "GR03":
+        return "corroborated_graph_transfer_pricing"
+    return "corroborated_graph_review"
+
+
+def _graph_macro_priority_score(review_score: float) -> float:
+    return max(0.55, min(float(review_score), 0.85))
+
+
+def _first_group_value(group: pd.DataFrame, column: str) -> Any:
+    if column not in group.columns or group.empty:
+        return None
+    value = group[column].iloc[0]
+    return None if pd.isna(value) else value
+
+
+def _bounded_score(value: object, default: float = 0.0) -> float:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        numeric = default
+    return max(0.0, min(numeric, 1.0))
+
+
+def _positive_int(value: object) -> int:
+    try:
+        return max(int(float(value)), 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _d01_queue_bucket(finding: dict[str, Any]) -> str:
+    bucket = str(finding.get("evaluation_bucket") or "").strip().lower()
+    policy = str(finding.get("precision_policy") or "").strip().lower()
+    event_type = str(finding.get("business_event_type") or "").strip().lower()
+    scenario = str(finding.get("scenario_type") or "").strip().lower()
+
+    if bucket == "confirmed_truth" or policy == "count_as_d01_truth":
+        return "confirmed_account_shift"
+    if bucket == "normal_business_control" or policy.startswith("expected_raw_flag_but"):
+        return "normal_business_review"
+    if bucket == "auxiliary_non_d01_context":
+        return "auxiliary_non_d01_context"
+    if bucket == "review_queue":
+        return "analytical_review"
+    if _positive_int(finding.get("d01_target_document_count")) > 0:
+        return "corroborated_account_shift"
+    if scenario.startswith("normal_") or event_type in {
+        "price_increase",
+        "volume_growth",
+        "high_volume_operations",
+        "capex_investment_event",
+        "working_capital_timing",
+        "working_capital_or_investment_timing",
+        "recurring_or_system_volume_shift",
+        "entity_process_expansion",
+    }:
+        return "normal_business_review"
+    return "analytical_review"
+
+
+def _d01_normal_likelihood(finding: dict[str, Any], queue_bucket: str) -> float:
+    if queue_bucket == "normal_business_review":
+        return 0.85
+    if queue_bucket == "auxiliary_non_d01_context":
+        return 0.70
+    if queue_bucket == "analytical_review":
+        return 0.45
+    if queue_bucket == "corroborated_account_shift":
+        return 0.20
+    return 0.05
+
+
+def _d01_macro_priority_score(finding: dict[str, Any]) -> float:
+    weighted = _bounded_score(float(finding.get("weighted_variance") or 0.0) / 3.0)
+    target_docs = _positive_int(finding.get("d01_target_document_count"))
+    queue_bucket = _d01_queue_bucket(finding)
+
+    if queue_bucket == "confirmed_account_shift":
+        return max(0.75, min(1.0, 0.65 + weighted * 0.25 + min(target_docs, 5) * 0.02))
+    if queue_bucket == "corroborated_account_shift":
+        return max(0.55, min(0.80, 0.45 + weighted * 0.25 + min(target_docs, 3) * 0.03))
+    if queue_bucket == "normal_business_review":
+        return min(0.35, 0.12 + weighted * 0.18)
+    if queue_bucket == "auxiliary_non_d01_context":
+        return min(0.40, 0.18 + weighted * 0.18)
+    return min(0.55, 0.25 + weighted * 0.25)
+
+
+def _d02_queue_bucket(finding: dict[str, Any]) -> str:
+    scenario = str(finding.get("scenario_type") or "").strip().lower()
+    sources = str(finding.get("sources") or "").strip().lower()
+    target_docs = _positive_int(finding.get("d02_target_document_count"))
+    normal_docs = _positive_int(finding.get("normal_context_document_count"))
+
+    if scenario in {
+        "revenue_period_end_push",
+        "expense_deferral_or_yearend_concentration",
+        "target_anomaly_monthly_shift",
+        "manual_monthly_shift_with_target_anomaly",
+    }:
+        return "confirmed_monthly_shift"
+    if target_docs > 0:
+        return "corroborated_monthly_shift"
+    if scenario.startswith("normal_"):
+        return "normal_pattern_review"
+    if normal_docs > target_docs:
+        return "auxiliary_non_d02_context"
+    if any(token in sources for token in ("automated", "recurring", "interface", "batch", "system")):
+        return "normal_pattern_review"
+    return "analytical_review"
+
+
+def _d02_normal_likelihood(finding: dict[str, Any], queue_bucket: str) -> float:
+    if queue_bucket == "normal_pattern_review":
+        return 0.85
+    if queue_bucket == "auxiliary_non_d02_context":
+        return 0.70
+    if queue_bucket == "analytical_review":
+        return 0.45
+    if queue_bucket == "corroborated_monthly_shift":
+        return 0.20
+    return 0.05
+
+
+def _d02_macro_priority_score(finding: dict[str, Any]) -> float:
+    jsd = _bounded_score(finding.get("jsd"))
+    top_delta = _bounded_score(finding.get("top_month_delta"))
+    target_docs = _positive_int(finding.get("d02_target_document_count"))
+    queue_bucket = _d02_queue_bucket(finding)
+    shape_score = max(jsd, top_delta)
+
+    if queue_bucket == "confirmed_monthly_shift":
+        return max(0.75, min(1.0, 0.62 + shape_score * 0.25 + min(target_docs, 5) * 0.02))
+    if queue_bucket == "corroborated_monthly_shift":
+        return max(0.55, min(0.80, 0.42 + shape_score * 0.25 + min(target_docs, 3) * 0.03))
+    if queue_bucket == "normal_pattern_review":
+        return min(0.35, 0.12 + shape_score * 0.20)
+    if queue_bucket == "auxiliary_non_d02_context":
+        return min(0.40, 0.18 + shape_score * 0.20)
+    return min(0.55, 0.25 + shape_score * 0.25)
+
+
+def _json_safe_mapping(item: dict[str, Any]) -> dict[str, Any]:
+    return {str(key): _json_safe_value(value) for key, value in item.items()}
+
+
+def _json_safe_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): _json_safe_value(child) for key, child in value.items()}
+    if isinstance(value, list | tuple | set):
+        return [_json_safe_value(child) for child in value]
+    if isinstance(value, datetime | pd.Timestamp):
+        return value.isoformat()
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if hasattr(value, "item"):
+        try:
+            return value.item()
+        except Exception:
+            pass
+    return value
 
 
 def _collect_raw_hits(df: pd.DataFrame, results: list[DetectionResult]) -> list[_RawHit]:
@@ -616,6 +1043,7 @@ def _collect_raw_hits(df: pd.DataFrame, results: list[DetectionResult]) -> list[
                             rule_flag.detail,
                             row_annotation,
                         ),
+                        annotation=row_annotation,
                     )
                 )
     return hits
@@ -625,6 +1053,7 @@ def _build_cases(
     df: pd.DataFrame,
     raw_hits: list[_RawHit],
     config: dict[str, Any],
+    macro_findings: list[dict[str, Any]] | None = None,
 ) -> list[CaseGroupResult]:
     if not raw_hits:
         return []
@@ -664,11 +1093,18 @@ def _build_cases(
         amount_score = _amount_score(total_amount, max_amount, config)
         access_scope_score = min(evidence_scores.get("access_scope_review", 0.0), 1.0)
         control_score = min(evidence_scores.get("control_failure", 0.0), 1.0)
+        duplicate_or_outflow_score = min(
+            evidence_scores.get("duplicate_or_outflow", 0.0),
+            1.0,
+        )
+        timing_score = min(evidence_scores.get("timing_anomaly", 0.0), 1.0)
+        data_integrity_score = min(evidence_scores.get("data_integrity_failure", 0.0), 1.0)
+        intercompany_score = min(evidence_scores.get("intercompany_structure", 0.0), 1.0)
         logic_score = min(
             max(
                 evidence_scores.get("logic_mismatch", 0.0),
-                evidence_scores.get("intercompany_structure", 0.0),
-                evidence_scores.get("data_integrity_failure", 0.0),
+                intercompany_score,
+                data_integrity_score,
             ),
             1.0,
         )
@@ -679,7 +1115,9 @@ def _build_cases(
         priority_score = _priority_score(
             amount_score=amount_score,
             control_score=control_score,
+            duplicate_or_outflow_score=duplicate_or_outflow_score,
             logic_score=logic_score,
+            timing_score=timing_score,
             behavior_score=behavior_score,
             config=config,
         )
@@ -700,6 +1138,8 @@ def _build_cases(
             rows=rows,
             case_hits=case_hits,
             evidence_types=evidence_types,
+            amount_score=amount_score,
+            total_amount=total_amount,
             priority_score=priority_score,
             behavior_score=behavior_score,
             config=config,
@@ -710,6 +1150,12 @@ def _build_cases(
             config=config,
         )
         adjustment_reasons.extend(floor_reasons)
+        macro_contexts = _case_macro_contexts(rows, macro_findings or [])
+        priority_score, macro_reasons = _apply_macro_context_priority(
+            priority_score,
+            macro_contexts,
+        )
+        adjustment_reasons.extend(macro_reasons)
         priority_band = _priority_band(priority_score, config, repeat_score)
         l304_repeat_pattern = _is_l304_repeat_pattern_case(
             df,
@@ -736,11 +1182,16 @@ def _build_cases(
                 topside_bonus=bonuses["topside_bonus"],
                 batch_combo_bonus=bonuses["batch_combo_bonus"],
                 weak_evidence_bonus=bonuses["weak_evidence_bonus"],
+                l301_priority_bonus=bonuses["l301_priority_bonus"],
                 priority_adjustment_reasons=adjustment_reasons,
                 priority_band=priority_band,
                 amount_score=amount_score,
                 control_score=control_score,
+                duplicate_or_outflow_score=duplicate_or_outflow_score,
                 logic_score=logic_score,
+                data_integrity_score=data_integrity_score,
+                intercompany_score=intercompany_score,
+                timing_score=timing_score,
                 behavior_score=behavior_score,
                 repeat_score=repeat_score,
                 rule_count=len({hit.rule_id for hit in case_hits}),
@@ -764,7 +1215,12 @@ def _build_cases(
                 risk_narrative=auditor_insight["risk_narrative"],
                 recommended_audit_actions=auditor_insight["recommended_audit_actions"],
                 rule_evidence_summary=auditor_insight["rule_evidence_summary"],
-                evidence_tags=sorted({*evidence_types, *secondary_tags}),
+                evidence_tags=sorted({
+                    *evidence_types,
+                    *secondary_tags,
+                    *(_macro_context_tags(macro_contexts)),
+                }),
+                macro_contexts=macro_contexts,
                 documents=_build_document_refs(df, case_hits, config),
                 raw_rule_hits=[
                     RawRuleHitRef(
@@ -847,6 +1303,154 @@ def _collect_case_hits(indices: list[int], hits_by_row: dict[int, list[_RawHit]]
             seen.add(key)
             collected.append(hit)
     return collected
+
+
+def _case_macro_contexts(
+    rows: pd.DataFrame,
+    macro_findings: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if rows.empty or not macro_findings or "gl_account" not in rows.columns:
+        return []
+
+    row_document_ids = {
+        _string_value(value)
+        for value in rows.get("document_id", pd.Series(dtype=object)).tolist()
+        if _string_value(value)
+    }
+    row_keys = {
+        (
+            _macro_key_part(row.get("fiscal_year")),
+            _macro_key_part(row.get("company_code")),
+            _macro_key_part(row.get("gl_account")),
+        )
+        for _, row in rows.iterrows()
+    }
+    contexts: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for finding in macro_findings:
+        rule_id = str(finding.get("rule_id") or "")
+        if rule_id not in {"D01", "D02", "GR01", "GR03"}:
+            continue
+        macro_year = _macro_key_part(finding.get("fiscal_year"))
+        macro_company = _macro_key_part(finding.get("company_code"))
+        macro_account = _macro_key_part(finding.get("gl_account"))
+        finding_document_ids = {
+            _string_value(value)
+            for value in finding.get("document_ids", []) or []
+            if _string_value(value)
+        }
+        if not macro_account:
+            continue
+        if finding_document_ids and row_document_ids.intersection(finding_document_ids):
+            matched = True
+        else:
+            matched = any(
+                _macro_key_matches(
+                    row_key,
+                    (macro_year, macro_company, macro_account),
+                )
+                for row_key in row_keys
+            )
+        if not matched:
+            continue
+        context_id = str(finding.get("finding_id") or f"{rule_id}:{macro_account}")
+        if context_id in seen:
+            continue
+        seen.add(context_id)
+        contexts.append({
+            "finding_id": context_id,
+            "rule_id": rule_id,
+            "queue_bucket": finding.get("queue_bucket"),
+            "macro_priority_score": finding.get("macro_priority_score"),
+            "normal_likelihood": finding.get("normal_likelihood"),
+            "company_code": finding.get("company_code"),
+            "gl_account": finding.get("gl_account"),
+            "fiscal_year": finding.get("fiscal_year"),
+            "review_score": finding.get("review_score"),
+            "candidate_documents": finding.get("candidate_documents"),
+            "scoring_effect": _macro_context_scoring_effect(finding),
+        })
+    contexts.sort(
+        key=lambda item: (
+            float(item.get("macro_priority_score") or 0.0),
+            str(item.get("rule_id") or ""),
+        ),
+        reverse=True,
+    )
+    return contexts
+
+
+def _macro_key_matches(
+    row_key: tuple[str, str, str],
+    macro_key: tuple[str, str, str],
+) -> bool:
+    row_year, row_company, row_account = row_key
+    macro_year, macro_company, macro_account = macro_key
+    if macro_account and row_account != macro_account:
+        return False
+    if macro_company and row_company != macro_company:
+        return False
+    if macro_year and row_year != macro_year:
+        return False
+    return True
+
+
+def _macro_key_part(value: Any) -> str:
+    text = _string_value(value)
+    if not text:
+        return ""
+    try:
+        numeric = float(text)
+    except ValueError:
+        return text
+    if numeric.is_integer():
+        return str(int(numeric))
+    return text
+
+
+def _macro_context_scoring_effect(finding: dict[str, Any]) -> str:
+    bucket = str(finding.get("queue_bucket") or "")
+    if bucket.startswith("confirmed_"):
+        return "priority_booster"
+    if bucket.startswith("corroborated_"):
+        return "weak_priority_booster"
+    return "context_only"
+
+
+def _apply_macro_context_priority(
+    priority_score: float,
+    macro_contexts: list[dict[str, Any]],
+) -> tuple[float, list[str]]:
+    bonus = 0.0
+    reasons: list[str] = []
+    for context in macro_contexts:
+        effect = str(context.get("scoring_effect") or "")
+        if effect == "priority_booster":
+            increment = 0.06
+        elif effect == "weak_priority_booster":
+            increment = 0.04
+        else:
+            continue
+        bonus += increment
+        reasons.append(
+            "macro_context="
+            f"{context.get('rule_id')}:{context.get('queue_bucket')}+{increment:.2f}"
+        )
+    if not bonus:
+        return priority_score, []
+    return min(priority_score + min(bonus, 0.10), 1.0), reasons
+
+
+def _macro_context_tags(macro_contexts: list[dict[str, Any]]) -> set[str]:
+    tags: set[str] = set()
+    for context in macro_contexts:
+        rule_id = str(context.get("rule_id") or "").lower()
+        bucket = str(context.get("queue_bucket") or "").lower()
+        if rule_id:
+            tags.add(f"{rule_id}_macro_context")
+        if bucket:
+            tags.add(bucket)
+    return tags
 
 
 def _secondary_tags(
@@ -968,16 +1572,20 @@ def _priority_score(
     *,
     amount_score: float,
     control_score: float,
+    duplicate_or_outflow_score: float,
     logic_score: float,
+    timing_score: float,
     behavior_score: float,
     config: dict[str, Any],
 ) -> float:
     weights = config.get("priority_weights", {})
     return (
-        float(weights.get("control", 0.35)) * control_score
-        + float(weights.get("amount", 0.30)) * amount_score
-        + float(weights.get("logic", 0.20)) * logic_score
-        + float(weights.get("behavior", 0.15)) * behavior_score
+        float(weights.get("control", 0.25)) * control_score
+        + float(weights.get("amount", 0.25)) * amount_score
+        + float(weights.get("outflow", 0.15)) * duplicate_or_outflow_score
+        + float(weights.get("logic", 0.15)) * logic_score
+        + float(weights.get("timing", 0.10)) * timing_score
+        + float(weights.get("behavior", 0.10)) * behavior_score
     )
 
 
@@ -1021,7 +1629,9 @@ def _apply_priority_floors(
             label = str(hit.display_label or "").strip().lower()
             label_match = not labels or label in labels
             score_match = min_raw_score is None or hit.score >= float(min_raw_score)
-            if label_match and score_match:
+            field_match = _priority_floor_missing_field_match(hit, floor)
+            corroboration_match = _priority_floor_corroboration_match(case_hits, floor)
+            if label_match and score_match and field_match and corroboration_match:
                 matched = True
                 break
         if not matched:
@@ -1034,11 +1644,82 @@ def _apply_priority_floors(
     return max(0.0, min(adjusted, 1.0)), reasons
 
 
+def _priority_floor_corroboration_match(
+    case_hits: list[_RawHit],
+    floor: dict[str, Any],
+) -> bool:
+    required_rules = {
+        str(rule_id).strip()
+        for rule_id in floor.get("required_rules", [])
+        if str(rule_id).strip()
+    }
+    if not required_rules:
+        return True
+
+    hit_rules = {hit.rule_id for hit in case_hits}
+    match_mode = str(floor.get("required_rules_match", "all")).strip().lower()
+    if match_mode == "any":
+        return bool(required_rules & hit_rules)
+    return required_rules.issubset(hit_rules)
+
+
+def _priority_floor_missing_field_match(hit: _RawHit, floor: dict[str, Any]) -> bool:
+    field_conditions = (
+        "missing_fields" in floor
+        or "min_missing_count" in floor
+        or "min_matching_missing_fields" in floor
+    )
+    if not field_conditions:
+        return True
+
+    missing_fields = _hit_missing_fields(hit)
+    if not missing_fields:
+        return False
+
+    configured_fields = {
+        str(field).strip()
+        for field in floor.get("missing_fields", [])
+        if str(field).strip()
+    }
+    if configured_fields:
+        matching_count = len(missing_fields & configured_fields)
+        match_mode = str(floor.get("missing_fields_match", "any")).strip().lower()
+        if match_mode == "all":
+            if not configured_fields.issubset(missing_fields):
+                return False
+        elif matching_count == 0:
+            return False
+    else:
+        matching_count = len(missing_fields)
+
+    min_missing_count = floor.get("min_missing_count")
+    if min_missing_count is not None and len(missing_fields) < int(min_missing_count):
+        return False
+
+    min_matching = floor.get("min_matching_missing_fields")
+    if min_matching is not None and matching_count < int(min_matching):
+        return False
+
+    return True
+
+
+def _hit_missing_fields(hit: _RawHit) -> set[str]:
+    annotation = hit.annotation or {}
+    raw_fields = annotation.get("missing_fields")
+    if isinstance(raw_fields, str):
+        return {field.strip() for field in raw_fields.split(",") if field.strip()}
+    if isinstance(raw_fields, (list, tuple, set)):
+        return {str(field).strip() for field in raw_fields if str(field).strip()}
+    return set()
+
+
 def _apply_priority_adjustments(
     *,
     rows: pd.DataFrame,
     case_hits: list[_RawHit],
     evidence_types: list[str],
+    amount_score: float,
+    total_amount: float,
     priority_score: float,
     behavior_score: float,
     config: dict[str, Any],
@@ -1048,6 +1729,8 @@ def _apply_priority_adjustments(
         "topside_bonus": 0.0,
         "batch_combo_bonus": 0.0,
         "weak_evidence_bonus": 0.0,
+        "l301_priority_bonus": 0.0,
+        "l203_duplicate_bonus": 0.0,
     }
     if adjustments.get("enabled", True) is False:
         return priority_score, behavior_score, [], bonuses
@@ -1097,6 +1780,32 @@ def _apply_priority_adjustments(
         )
         reasons.append("weak_evidence=" + ",".join(weak_tags))
 
+    l108_bonus, l108_reasons = _l108_priority_adjustment(
+        case_hits=case_hits,
+        config=adjustments.get("l108_context_priority", {}),
+    )
+    if l108_bonus > 0:
+        adjusted_priority += l108_bonus
+        reasons.extend(l108_reasons)
+
+    duplicate_entry_cfg = dict(adjustments.get("duplicate_entry", {}))
+    duplicate_entry_cfg["_phase1_materiality_amount"] = config.get("materiality_amount", 0.0)
+    l203_bonus, l203_floor, l203_reasons = _l203_priority_adjustment(
+        case_hits=case_hits,
+        evidence_types=evidence_types,
+        amount_score=amount_score,
+        total_amount=total_amount,
+        config=duplicate_entry_cfg,
+    )
+    if l203_floor is not None:
+        if adjusted_priority + l203_bonus < l203_floor:
+            adjusted_priority = l203_floor
+        elif l203_bonus > 0:
+            bonuses["l203_duplicate_bonus"] = l203_bonus
+    elif l203_bonus > 0:
+        bonuses["l203_duplicate_bonus"] = l203_bonus
+    reasons.extend(l203_reasons)
+
     rare_pair_cfg = adjustments.get("rare_account_pair", {})
     if rare_pair_cfg.get("enabled", True) and "L4-04" in rule_ids:
         non_l404_rules = rule_ids - {"L4-04"}
@@ -1115,8 +1824,237 @@ def _apply_priority_adjustments(
             adjusted_priority -= penalty
             reasons.append(f"l404_recurring_source_penalty=-{penalty:.2f}")
 
+    _l301_priority, l301_bonus, l301_reasons = _l301_priority_adjustment(
+        rows=rows,
+        rule_ids=rule_ids,
+        priority_score=adjusted_priority,
+        config=adjustments.get("l301_context_priority", {}),
+    )
+    if l301_bonus > 0:
+        bonuses["l301_priority_bonus"] = l301_bonus
+        reasons.extend(l301_reasons)
+
     adjusted_priority += sum(bonuses.values())
     return max(0.0, min(adjusted_priority, 1.0)), adjusted_behavior, reasons, bonuses
+
+
+def _l203_priority_adjustment(
+    *,
+    case_hits: list[_RawHit],
+    evidence_types: list[str],
+    amount_score: float,
+    total_amount: float,
+    config: dict[str, Any],
+) -> tuple[float, float | None, list[str]]:
+    """Elevate only corroborated high-confidence duplicate-entry candidates."""
+
+    if config.get("enabled", True) is False:
+        return 0.0, None, []
+
+    l203_hits = [
+        hit
+        for hit in case_hits
+        if hit.rule_id in {"L2-03", "L2-03a", "L2-03b", "L2-03c", "L2-03d"}
+    ]
+    if not l203_hits:
+        return 0.0, None, []
+
+    high_confidence_score = float(config.get("high_confidence_score", 0.85))
+    has_high_confidence = any(
+        hit.score >= high_confidence_score
+        or str((hit.annotation or {}).get("confidence_band", "")).strip().lower() == "high"
+        or _annotation_confidence(hit.annotation) >= high_confidence_score
+        for hit in l203_hits
+    )
+    if not has_high_confidence:
+        return 0.0, None, []
+
+    corroborating_evidence = set(
+        config.get(
+            "corroborating_evidence_types",
+            [
+                "control_failure",
+                "timing_anomaly",
+                "logic_mismatch",
+                "statistical_outlier",
+                "data_integrity_failure",
+                "access_scope_review",
+                "intercompany_structure",
+            ],
+        )
+    )
+    has_independent_signal = bool(set(evidence_types) & corroborating_evidence)
+
+    materiality_amount = float(config.get("materiality_amount", 0.0) or 0.0)
+    if materiality_amount <= 0:
+        materiality_amount = float(config.get("_phase1_materiality_amount", 0.0) or 0.0)
+    min_total_amount = float(config.get("min_total_amount", 0.0) or 0.0)
+    amount_threshold = float(config.get("amount_score_threshold", 0.75))
+    has_amount_support = (
+        amount_score >= amount_threshold
+        and (
+            (materiality_amount > 0 and total_amount >= materiality_amount * amount_threshold)
+            or (min_total_amount > 0 and total_amount >= min_total_amount)
+        )
+    )
+
+    if not (has_independent_signal or has_amount_support):
+        return 0.0, None, []
+
+    bonus = float(config.get("bonus", 0.08))
+    floor = float(config.get("min_priority_score", 0.45))
+    reason = (
+        "l203_high_confidence_corroborated"
+        if has_independent_signal
+        else "l203_high_confidence_material"
+    )
+    return bonus, floor, [reason]
+
+
+def _l108_priority_adjustment(
+    *,
+    case_hits: list[_RawHit],
+    config: dict[str, Any],
+) -> tuple[float, list[str]]:
+    """Raise L1-08 case priority when the Boolean hit has corroborating context."""
+
+    if config.get("enabled", True) is False:
+        return 0.0, []
+
+    l108_hits = [hit for hit in case_hits if hit.rule_id == "L1-08"]
+    if not l108_hits:
+        return 0.0, []
+
+    context_reasons: set[str] = set()
+    for hit in l108_hits:
+        annotation = hit.annotation or {}
+        raw_reasons = annotation.get("context_reasons", [])
+        if isinstance(raw_reasons, str):
+            context_reasons.update(part.strip() for part in raw_reasons.split(",") if part.strip())
+        elif isinstance(raw_reasons, (list, tuple, set)):
+            context_reasons.update(str(reason).strip() for reason in raw_reasons if str(reason).strip())
+
+    if not context_reasons:
+        return 0.0, []
+
+    per_context_bonus = float(config.get("per_context_bonus", 0.03))
+    max_bonus = float(config.get("max_bonus", 0.12))
+    bonus = min(len(context_reasons) * per_context_bonus, max_bonus)
+    return bonus, ["l108_context=" + ",".join(sorted(context_reasons))]
+
+
+def _l301_priority_adjustment(
+    *,
+    rows: pd.DataFrame,
+    rule_ids: set[str],
+    priority_score: float,
+    config: dict[str, Any],
+) -> tuple[float, float, list[str]]:
+    """Raise L3-01 review queue priority only when corroborating context exists."""
+
+    if "L3-01" not in rule_ids or config.get("enabled", True) is False:
+        return priority_score, 0.0, []
+
+    tags = _l301_context_tags(rows, rule_ids, config)
+    if not tags:
+        return priority_score, 0.0, ["l301_raw_population_only"]
+
+    tag_bonus = {
+        "manual_entry": float(config.get("manual_bonus", 0.12)),
+        "high_amount": float(config.get("high_amount_bonus", 0.12)),
+        "period_end": float(config.get("period_end_bonus", 0.10)),
+        "approval_issue": float(config.get("approval_issue_bonus", 0.18)),
+        "abnormal_time": float(config.get("abnormal_time_bonus", 0.08)),
+        "intercompany": float(config.get("intercompany_bonus", 0.14)),
+        "repeat_pattern": float(config.get("repeat_pattern_bonus", 0.12)),
+        "logic_combo": float(config.get("logic_combo_bonus", 0.08)),
+    }
+    raw_bonus = sum(tag_bonus.get(tag, 0.0) for tag in tags)
+    adjusted = float(priority_score)
+
+    if "manual_entry" in tags:
+        adjusted = max(adjusted, float(config.get("manual_floor", 0.75)))
+    if "high_amount" in tags or "period_end" in tags:
+        adjusted = max(adjusted, float(config.get("amount_or_period_floor", 0.80)))
+    if {"high_amount", "period_end"}.issubset(tags):
+        adjusted = max(adjusted, float(config.get("amount_and_period_floor", 0.85)))
+    if {"approval_issue", "intercompany", "repeat_pattern"} & set(tags):
+        adjusted = max(adjusted, float(config.get("strong_context_floor", 0.90)))
+    if len(tags) >= int(config.get("critical_context_count", 3)):
+        adjusted = max(adjusted, float(config.get("critical_context_floor", 0.95)))
+
+    floor_delta = max(0.0, adjusted - float(priority_score))
+    bonus = min(
+        max(raw_bonus, floor_delta),
+        float(config.get("max_bonus", 0.70)),
+    )
+    return priority_score, bonus, ["l301_context=" + ",".join(tags)]
+
+
+def _l301_context_tags(
+    rows: pd.DataFrame,
+    rule_ids: set[str],
+    config: dict[str, Any],
+) -> list[str]:
+    tags: list[str] = []
+    if _case_has_true(rows, "is_manual_je") or _case_source_ratio(
+        rows,
+        config.get("manual_sources", ["manual", "adjustment"]),
+    ) > 0:
+        tags.append("manual_entry")
+
+    if _case_has_high_amount(rows, config):
+        tags.append("high_amount")
+
+    if _case_has_true(rows, "is_period_end") or "L3-04" in rule_ids:
+        tags.append("period_end")
+
+    if rule_ids & set(config.get("approval_rules", ["L1-04", "L1-05", "L1-07", "L1-09"])):
+        tags.append("approval_issue")
+
+    if rule_ids & set(config.get("abnormal_time_rules", ["L3-05", "L3-06", "L4-05"])):
+        tags.append("abnormal_time")
+
+    if (
+        rule_ids & set(config.get("intercompany_rules", ["L3-03", "IC01", "IC02", "IC03"]))
+    ) or _case_has_true(rows, "is_intercompany"):
+        tags.append("intercompany")
+
+    if _case_has_repeat_context(rows, config):
+        tags.append("repeat_pattern")
+
+    if rule_ids & set(config.get("logic_combo_rules", ["L2-04", "L3-10", "L4-04"])):
+        tags.append("logic_combo")
+
+    return sorted(set(tags))
+
+
+def _case_has_high_amount(rows: pd.DataFrame, config: dict[str, Any]) -> bool:
+    if rows.empty:
+        return False
+    amount_threshold = float(config.get("high_amount_threshold", 100_000_000.0) or 0.0)
+    if amount_threshold > 0:
+        return any(_line_amount(row) >= amount_threshold for _, row in rows.iterrows())
+    quantile = float(config.get("high_amount_quantile", 0.90))
+    amounts = rows.apply(_line_amount, axis=1)
+    if amounts.empty:
+        return False
+    threshold = float(amounts.quantile(quantile))
+    return bool((amounts >= threshold).any() and amounts.max() > 0)
+
+
+def _case_has_repeat_context(rows: pd.DataFrame, config: dict[str, Any]) -> bool:
+    if len(rows) < int(config.get("repeat_min_rows", 3)):
+        return False
+    group_cols = [
+        col
+        for col in config.get("repeat_group_columns", ["business_process", "gl_account", "created_by"])
+        if col in rows.columns
+    ]
+    if not group_cols:
+        return False
+    min_count = int(config.get("repeat_min_count", 3))
+    return bool(rows.groupby(group_cols, dropna=False).size().ge(min_count).any())
 
 
 def _case_topside_score(
@@ -1172,7 +2110,11 @@ def _case_weak_evidence_tags(
         if _case_has_true(rows, str(column)):
             tags.append(str(column))
 
-    if config.get("include_l3_08_as_weak_description", True) and "L3-08" in rule_ids:
+    if (
+        config.get("include_l3_08_as_weak_description", True)
+        and "L3-08" in rule_ids
+        and _l308_has_corroborating_rule(rule_ids, config)
+    ):
         tags.append("missing_or_corrupted_description")
 
     if (
@@ -1183,6 +2125,42 @@ def _case_weak_evidence_tags(
         tags.append("manual_period_end")
 
     return sorted(set(tags))
+
+
+def _l308_has_corroborating_rule(rule_ids: set[str], config: dict[str, Any]) -> bool:
+    """Allow L3-08 weak-description bonus only with an independent review signal."""
+
+    default_rules = {
+        "L1-03",
+        "L1-05",
+        "L1-07",
+        "L1-09",
+        "L2-02",
+        "L2-03",
+        "L2-05",
+        "L3-02",
+        "L3-04",
+        "L3-05",
+        "L3-06",
+        "L3-07",
+        "L3-09",
+        "L3-10",
+        "L3-11",
+        "L4-03",
+        "L4-04",
+        "L4-05",
+        "L4-06",
+    }
+    configured = config.get("l3_08_corroborating_rules")
+    if configured is None:
+        corroborating_rules = default_rules
+    else:
+        corroborating_rules = {
+            str(rule_id).strip()
+            for rule_id in configured
+            if str(rule_id).strip()
+        }
+    return bool((set(rule_ids) - {"L3-08"}) & corroborating_rules)
 
 
 def _case_has_true(rows: pd.DataFrame, column: str) -> bool:
@@ -1413,10 +2391,12 @@ def _row_display_label(row_annotation: dict[str, Any] | None) -> str | None:
     if not isinstance(row_annotation, dict):
         return None
     for key in (
+        "reason_code",
         "risk_level",
         "finding_severity",
         "severity_label",
         "signal_strength",
+        "signal_category",
         "bucket",
         "queue_label",
         "label",
@@ -1438,6 +2418,15 @@ def _annotation_score(row_annotation: dict[str, Any] | None) -> float:
         if score > 0:
             return score
     return 0.0
+
+
+def _annotation_confidence(row_annotation: dict[str, Any] | None) -> float:
+    if not isinstance(row_annotation, dict):
+        return 0.0
+    try:
+        return float(row_annotation.get("confidence", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _auditor_insight(

@@ -282,14 +282,17 @@ class FraudLayer(BaseDetector):
 
         details = pd.DataFrame(index=df.index)
         review_details = pd.DataFrame(index=df.index)
+        flag_details = pd.DataFrame(index=df.index)
         rule_breakdowns: dict[str, Any] = {}
         row_annotations: dict[str, Any] = {}
         for rule_id, flagged in rule_results.items():
             score_series = flagged.attrs.get("score_series") if hasattr(flagged, "attrs") else None
             if score_series is not None:
                 details[rule_id] = pd.Series(score_series, index=df.index).fillna(0.0).astype(float)
+                flag_details[rule_id] = details[rule_id].gt(0)
             else:
                 details[rule_id] = flagged.astype(float) * (SEVERITY_MAP[rule_id] / 5.0)
+                flag_details[rule_id] = flagged.reindex(df.index, fill_value=False).astype(bool)
             review_score_series = (
                 flagged.attrs.get("review_score_series") if hasattr(flagged, "attrs") else None
             )
@@ -297,10 +300,6 @@ class FraudLayer(BaseDetector):
                 review_details[rule_id] = (
                     pd.Series(review_score_series, index=df.index).fillna(0.0).astype(float)
                 )
-                details[rule_id] = pd.concat(
-                    [details[rule_id], review_details[rule_id]],
-                    axis=1,
-                ).max(axis=1)
             breakdown = flagged.attrs.get("breakdown") if hasattr(flagged, "attrs") else None
             if breakdown:
                 rule_breakdowns[rule_id] = breakdown
@@ -335,6 +334,7 @@ class FraudLayer(BaseDetector):
                 "rule_breakdowns": rule_breakdowns,
                 "row_annotations": row_annotations,
                 "review_score_series": review_details,
+                "rule_flag_series": flag_details,
             },
             warnings=warnings,
         )

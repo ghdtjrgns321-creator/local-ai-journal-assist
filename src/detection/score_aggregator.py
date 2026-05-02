@@ -29,12 +29,18 @@ _TOPSIDE_CONDITIONS = len(TOPSIDE_BONUS_RULES)
 _BATCH_CORROBORATION_CONDITIONS = len(BATCH_CORROBORATION_RULES)
 _WORK_SCOPE_CORROBORATION_CONDITIONS = len(WORK_SCOPE_CORROBORATION_RULES)
 
-_POLICY_HIGH_RULES = {"L1-04", "L1-06"}
+_POLICY_HIGH_RULES = {"L1-04"}
 _POLICY_HIGH_LABELS = {
     "immediate",
     "escalated_materiality",
     "escalated_abnormal_time",
     "escalated_high_risk_account",
+}
+_POLICY_LABEL_FLOORS = {
+    "immediate": RISK_THRESHOLDS[RiskLevel.HIGH],
+    "escalated_abnormal_time": 0.75,
+    "escalated_materiality": 0.80,
+    "escalated_high_risk_account": 0.80,
 }
 
 logger = logging.getLogger(__name__)
@@ -93,6 +99,7 @@ def aggregate_scores(
     _inject_ml_track_scores(agg_df, results)
     agg_df = _apply_policy_risk_floors(agg_df, results)
     agg_df = _apply_auto_escalation(agg_df, results)
+    agg_df = _apply_intercompany_exception_corroboration(agg_df, results)
     agg_df = _apply_batch_corroboration(agg_df, results)
     agg_df = _apply_work_scope_corroboration(agg_df, results)
     return _inject_topside_score(agg_df, df, results)
@@ -402,12 +409,150 @@ def _apply_policy_risk_floors(
             mask = label_by_index.eq(label)
             high_mask = high_mask | mask
             reasons = _append_reason(reasons, mask, f"{rule_id}:{label}")
+            if mask.any():
+                agg_df.loc[mask, "anomaly_score"] = agg_df.loc[
+                    mask,
+                    "anomaly_score",
+                ].clip(lower=_POLICY_LABEL_FLOORS.get(label, RISK_THRESHOLDS[RiskLevel.HIGH]))
+
+    if "L1-06" in combined.columns:
+        l106_score = (
+            pd.to_numeric(combined["L1-06"], errors="coerce")
+            .fillna(0.0)
+            .astype(float)
+        )
+        l106_critical = l106_score.ge(0.95)
+        l106_high = l106_score.ge(0.80) & l106_score.lt(0.95)
+        l106_medium = l106_score.ge(0.70) & l106_score.lt(0.80)
+        l106_low = l106_score.ge(0.50) & l106_score.lt(0.70)
+
+        l106_high_or_critical = l106_high | l106_critical
+        high_mask = high_mask | l106_high_or_critical
+        reasons = _append_reason(reasons, l106_low, "L1-06:direct_low")
+        reasons = _append_reason(reasons, l106_medium, "L1-06:direct_medium")
+        reasons = _append_reason(reasons, l106_high, "L1-06:direct_high")
+        reasons = _append_reason(reasons, l106_critical, "L1-06:direct_critical")
+
+    if "L1-09" in combined.columns:
+        l109_score = (
+            pd.to_numeric(combined["L1-09"], errors="coerce")
+            .fillna(0.0)
+            .astype(float)
+        )
+        other_control_cols = [
+            col for col in ("L1-04", "L1-05", "L1-06", "L1-07") if col in combined.columns
+        ]
+        if other_control_cols:
+            other_strong_control = (
+                combined[other_control_cols]
+                .apply(pd.to_numeric, errors="coerce")
+                .fillna(0.0)
+                .ge(0.70)
+                .any(axis=1)
+            )
+        else:
+            other_strong_control = pd.Series(False, index=agg_df.index)
+
+        l109_high = l109_score.ge(0.55) & other_strong_control
+        high_mask = high_mask | l109_high
+        reasons = _append_reason(reasons, l109_high, "L1-09:corroborated_control")
 
     if high_mask.any():
         agg_df.loc[high_mask, "anomaly_score"] = agg_df.loc[
             high_mask, "anomaly_score"
         ].clip(lower=RISK_THRESHOLDS[RiskLevel.HIGH])
         agg_df.loc[high_mask, "risk_level"] = RiskLevel.HIGH
+
+    if "L1-09" in combined.columns:
+        l109_score = (
+            pd.to_numeric(combined["L1-09"], errors="coerce")
+            .fillna(0.0)
+            .astype(float)
+        )
+        l109_medium = l109_score.ge(0.70) & ~high_mask
+        l109_low = l109_score.ge(0.55) & l109_score.lt(0.70) & ~high_mask
+        if l109_medium.any():
+            agg_df.loc[l109_medium, "anomaly_score"] = agg_df.loc[
+                l109_medium,
+                "anomaly_score",
+            ].clip(lower=RISK_THRESHOLDS[RiskLevel.MEDIUM])
+            current_high = agg_df["risk_level"].eq(RiskLevel.HIGH)
+            agg_df.loc[l109_medium & ~current_high, "risk_level"] = RiskLevel.MEDIUM
+            reasons = _append_reason(reasons, l109_medium, "L1-09:material_missing_date")
+        if l109_low.any():
+            agg_df.loc[l109_low, "anomaly_score"] = agg_df.loc[
+                l109_low,
+                "anomaly_score",
+            ].clip(lower=RISK_THRESHOLDS[RiskLevel.LOW])
+            current_medium_or_high = agg_df["risk_level"].isin(
+                [RiskLevel.MEDIUM, RiskLevel.HIGH]
+            )
+            agg_df.loc[l109_low & ~current_medium_or_high, "risk_level"] = RiskLevel.LOW
+            reasons = _append_reason(reasons, l109_low, "L1-09:manual_missing_date")
+
+    if "L1-06" in combined.columns:
+        l106_score = (
+            pd.to_numeric(combined["L1-06"], errors="coerce")
+            .fillna(0.0)
+            .astype(float)
+        )
+        l106_critical = l106_score.ge(0.95)
+        l106_high = l106_score.ge(0.80) & l106_score.lt(0.95)
+        l106_medium = l106_score.ge(0.70) & l106_score.lt(0.80)
+        l106_low = l106_score.ge(0.50) & l106_score.lt(0.70)
+        if l106_critical.any():
+            agg_df.loc[l106_critical, "anomaly_score"] = agg_df.loc[
+                l106_critical,
+                "anomaly_score",
+            ].clip(lower=0.85)
+        if l106_high.any():
+            agg_df.loc[l106_high, "anomaly_score"] = agg_df.loc[
+                l106_high,
+                "anomaly_score",
+            ].clip(lower=RISK_THRESHOLDS[RiskLevel.HIGH])
+        if l106_medium.any():
+            agg_df.loc[l106_medium, "anomaly_score"] = agg_df.loc[
+                l106_medium,
+                "anomaly_score",
+            ].clip(lower=RISK_THRESHOLDS[RiskLevel.MEDIUM])
+            current_high = agg_df["risk_level"].eq(RiskLevel.HIGH)
+            agg_df.loc[l106_medium & ~current_high, "risk_level"] = RiskLevel.MEDIUM
+        if l106_low.any():
+            agg_df.loc[l106_low, "anomaly_score"] = agg_df.loc[
+                l106_low,
+                "anomaly_score",
+            ].clip(lower=RISK_THRESHOLDS[RiskLevel.LOW])
+            current_medium_or_high = agg_df["risk_level"].isin(
+                [RiskLevel.MEDIUM, RiskLevel.HIGH]
+            )
+            agg_df.loc[l106_low & ~current_medium_or_high, "risk_level"] = RiskLevel.LOW
+
+    if "L1-01" in combined.columns:
+        l101_score = (
+            pd.to_numeric(combined["L1-01"], errors="coerce")
+            .fillna(0.0)
+            .astype(float)
+        )
+        l101_severe = l101_score.ge(0.90) & l101_score.lt(1.0)
+        l101_material = l101_score.ge(0.65) & l101_score.lt(0.90)
+        if l101_severe.any():
+            agg_df.loc[l101_severe, "anomaly_score"] = agg_df.loc[
+                l101_severe,
+                "anomaly_score",
+            ].clip(lower=RISK_THRESHOLDS[RiskLevel.MEDIUM])
+            current_high = agg_df["risk_level"].eq(RiskLevel.HIGH)
+            agg_df.loc[l101_severe & ~current_high, "risk_level"] = RiskLevel.MEDIUM
+            reasons = _append_reason(reasons, l101_severe, "L1-01:severe_imbalance")
+        if l101_material.any():
+            agg_df.loc[l101_material, "anomaly_score"] = agg_df.loc[
+                l101_material,
+                "anomaly_score",
+            ].clip(lower=RISK_THRESHOLDS[RiskLevel.LOW])
+            current_medium_or_high = agg_df["risk_level"].isin(
+                [RiskLevel.MEDIUM, RiskLevel.HIGH]
+            )
+            agg_df.loc[l101_material & ~current_medium_or_high, "risk_level"] = RiskLevel.LOW
+            reasons = _append_reason(reasons, l101_material, "L1-01:material_imbalance")
 
     agg_df["risk_floor_reasons"] = reasons.fillna("")
     return agg_df
@@ -427,10 +572,12 @@ def _row_labels_for_rule(
             if not isinstance(annotation, dict):
                 continue
             label = (
-                annotation.get("bucket")
+                annotation.get("reason_code")
+                or annotation.get("bucket")
                 or annotation.get("queue_label")
                 or annotation.get("risk_level")
                 or annotation.get("severity_label")
+                or annotation.get("signal_category")
                 or annotation.get("label")
             )
             if label is None:
@@ -523,6 +670,19 @@ def _get_rule_flag(
     return layer.details[rule_id].reindex(index, fill_value=0.0) > 0
 
 
+def _get_rule_signal_flag(
+    result_map: dict[str, DetectionResult],
+    rule_id: str,
+    index: pd.Index,
+) -> pd.Series:
+    """Return whether a rule has a confirmed or review-only row signal."""
+
+    combined = _combined_rule_signal_details(list(result_map.values()), index)
+    if rule_id not in combined.columns:
+        return pd.Series(False, index=index)
+    return combined[rule_id].reindex(index, fill_value=0.0) > 0
+
+
 def _compute_topside_score(
     df: pd.DataFrame,
     results: list[DetectionResult],
@@ -587,8 +747,16 @@ def _apply_batch_corroboration(
     high_mask = batch_flag & (raw_score >= 3)
     medium_mask = batch_flag & (raw_score >= 2) & ~high_mask
     if high_mask.any():
+        agg_df.loc[high_mask, "anomaly_score"] = agg_df.loc[
+            high_mask,
+            "anomaly_score",
+        ].clip(lower=RISK_THRESHOLDS[RiskLevel.HIGH])
         agg_df.loc[high_mask, "risk_level"] = RiskLevel.HIGH
     if medium_mask.any():
+        agg_df.loc[medium_mask, "anomaly_score"] = agg_df.loc[
+            medium_mask,
+            "anomaly_score",
+        ].clip(lower=RISK_THRESHOLDS[RiskLevel.MEDIUM])
         current_high = agg_df["risk_level"].eq(RiskLevel.HIGH)
         agg_df.loc[medium_mask & ~current_high, "risk_level"] = RiskLevel.MEDIUM
     return agg_df
@@ -602,7 +770,7 @@ def _apply_work_scope_corroboration(
 
     result_map = {r.track_name: r for r in results}
     idx = agg_df.index
-    scope_flag = _get_rule_flag(result_map, "L3-12", Layer.LAYER_B.value, idx)
+    scope_flag = _get_rule_signal_flag(result_map, "L3-12", idx)
 
     raw_score = pd.Series(0, index=idx, dtype=int)
     reason_parts = pd.Series("", index=idx, dtype="string")
@@ -638,4 +806,74 @@ def _apply_work_scope_corroboration(
         ].clip(lower=RISK_THRESHOLDS[RiskLevel.MEDIUM])
         current_high = agg_df["risk_level"].eq(RiskLevel.HIGH)
         agg_df.loc[medium_mask & ~current_high, "risk_level"] = RiskLevel.MEDIUM
+    return agg_df
+
+
+def _apply_intercompany_exception_corroboration(
+    agg_df: pd.DataFrame,
+    results: list[DetectionResult],
+) -> pd.DataFrame:
+    """Promote intercompany reconciliation exceptions in row-level scoring.
+
+    L3-03 is a weak population signal by design. IC01/IC02/IC03 are not L1-L4
+    rule codes, so the default rule-family aggregation would otherwise hide
+    confirmed reconciliation exceptions from the representative anomaly_score.
+    """
+
+    combined = _combined_rule_details(results, agg_df.index)
+    exception_rules = [rule_id for rule_id in ("IC01", "IC02", "IC03") if rule_id in combined]
+    if not exception_rules:
+        agg_df["intercompany_exception_score"] = 0.0
+        agg_df["intercompany_exception_reasons"] = ""
+        return agg_df
+
+    exception_hits = (
+        combined[exception_rules]
+        .apply(pd.to_numeric, errors="coerce")
+        .fillna(0.0)
+        .gt(0)
+    )
+    exception_count = exception_hits.sum(axis=1)
+    any_exception = exception_count.gt(0)
+    if "IC01" in exception_hits:
+        ic01_hit = exception_hits["IC01"]
+    else:
+        ic01_hit = pd.Series(False, index=agg_df.index)
+
+    raw_score = pd.Series(0.0, index=agg_df.index)
+    raw_score = raw_score.mask(any_exception, RISK_THRESHOLDS[RiskLevel.LOW])
+    raw_score = raw_score.mask(
+        any_exception & (ic01_hit | exception_count.ge(2)),
+        RISK_THRESHOLDS[RiskLevel.MEDIUM],
+    )
+
+    reason_parts = pd.Series("", index=agg_df.index, dtype="string")
+    for rule_id in exception_rules:
+        reason_parts = _append_reason(
+            reason_parts,
+            exception_hits[rule_id],
+            rule_id,
+        )
+
+    medium_mask = raw_score.ge(RISK_THRESHOLDS[RiskLevel.MEDIUM])
+    low_mask = raw_score.ge(RISK_THRESHOLDS[RiskLevel.LOW]) & ~medium_mask
+    if medium_mask.any():
+        agg_df.loc[medium_mask, "anomaly_score"] = agg_df.loc[
+            medium_mask,
+            "anomaly_score",
+        ].clip(lower=RISK_THRESHOLDS[RiskLevel.MEDIUM])
+        current_high = agg_df["risk_level"].eq(RiskLevel.HIGH)
+        agg_df.loc[medium_mask & ~current_high, "risk_level"] = RiskLevel.MEDIUM
+    if low_mask.any():
+        agg_df.loc[low_mask, "anomaly_score"] = agg_df.loc[
+            low_mask,
+            "anomaly_score",
+        ].clip(lower=RISK_THRESHOLDS[RiskLevel.LOW])
+        current_medium_or_high = agg_df["risk_level"].isin(
+            [RiskLevel.MEDIUM, RiskLevel.HIGH]
+        )
+        agg_df.loc[low_mask & ~current_medium_or_high, "risk_level"] = RiskLevel.LOW
+
+    agg_df["intercompany_exception_score"] = raw_score
+    agg_df["intercompany_exception_reasons"] = reason_parts.fillna("")
     return agg_df

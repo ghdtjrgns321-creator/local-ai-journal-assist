@@ -18,11 +18,11 @@ def c01_period_end_large(
     min_group_size: int = 30,
     whitelist_patterns: list[dict[str, Any]] | None = None,
 ) -> pd.Series:
-    """L3-04 기말/기초 대규모: 월말/월초 근접 + 금액 > Q3 또는 수기 전표.
+    """L3-04 period-end/start review population.
 
-    Why: PCAOB AS 240 §32(b), FSS 결산 수정 조작 패턴.
-         기말에 집중되는 고액 전표는 결산 조정 조작 가능성.
-         계정그룹별 Q3로 계정 특성(매출 vs 비용 금액 규모) 반영 → 오탐 감소.
+    The raw hit is the configured period-end/start window (`is_period_end`).
+    Amount bands, manual source, approval issues, and other context signals
+    only affect row score, bucket, and downstream priority.
     """
     if "is_period_end" not in df.columns:
         return pd.Series(False, index=df.index)
@@ -31,19 +31,19 @@ def c01_period_end_large(
 
     # Why: account_group 존재 시 그룹별 Q3 — 계정 특성 반영
     #      미존재 시 전체 단일 Q3 (Phase 1 하위 호환)
-    if "account_group" in df.columns:
-        threshold = _grouped_quantile(base, df["account_group"], quantile, min_group_size)
-    else:
-        threshold = base.quantile(quantile)
+    q50 = _amount_threshold(base, df, 0.50, min_group_size)
+    q75 = _amount_threshold(base, df, quantile, min_group_size)
+    q90 = _amount_threshold(base, df, 0.90, min_group_size)
+    q95 = _amount_threshold(base, df, 0.95, min_group_size)
 
     period_end = df["is_period_end"].fillna(False)
-    high_amount = base > threshold
+    high_amount = base > q75
     manual_entry = (
         df["is_manual_je"].fillna(False).astype(bool)
         if "is_manual_je" in df.columns
         else pd.Series(False, index=df.index)
     )
-    flagged = period_end & (high_amount | manual_entry)
+    flagged = period_end.astype(bool)
     whitelist_matched = (
         flagged & _matches_period_end_whitelist(df, whitelist_patterns)
         if whitelist_patterns
@@ -68,23 +68,32 @@ def c01_period_end_large(
     control_signal = _approval_control_signal_mask(df)
     priority_signal = abnormal_time | weak_description | long_day_gap | control_signal
 
+    amount_p50 = flagged & base.gt(q50)
+    amount_p75 = flagged & base.gt(q75)
+    amount_p90 = flagged & base.gt(q90)
+    amount_p95 = flagged & base.gt(q95)
+
     bucket = pd.Series("none", index=df.index, dtype="object")
-    bucket.loc[flagged & high_amount & ~manual_entry] = "closing_high_amount"
-    bucket.loc[flagged & manual_entry & ~high_amount] = "closing_manual"
-    bucket.loc[flagged & manual_entry & high_amount] = "closing_manual_high_amount"
-    bucket.loc[flagged & priority_signal] = "closing_priority"
+    bucket.loc[flagged] = "closing_base"
+    bucket.loc[amount_p50] = "closing_amount_p50"
+    bucket.loc[amount_p75] = "closing_amount_p75"
+    bucket.loc[amount_p90] = "closing_amount_p90"
+    bucket.loc[amount_p95] = "closing_amount_p95"
     bucket.loc[whitelist_matched] = "closing_recurring_low_priority"
 
     score_series = pd.Series(0.0, index=df.index, dtype="float64")
-    score_series.loc[flagged] = 0.45
-    score_series.loc[flagged & high_amount] = 0.55
-    score_series.loc[flagged & manual_entry & high_amount] = 0.65
-    score_series.loc[flagged & priority_signal] = 0.70
-    score_series.loc[whitelist_matched] = 0.20
+    score_series.loc[amount_p50] = 0.20
+    score_series.loc[amount_p75] = 0.35
+    score_series.loc[amount_p90] = 0.55
+    score_series.loc[amount_p95] = 0.70
+    score_series.loc[whitelist_matched] = score_series.loc[whitelist_matched].clip(upper=0.20)
 
     control_reason_masks = _approval_control_reason_masks(df)
     reason_masks = {
-        "high_amount": high_amount,
+        "amount_p50": amount_p50,
+        "amount_p75": amount_p75,
+        "amount_p90": amount_p90,
+        "amount_p95": amount_p95,
         "manual_entry": manual_entry,
         "abnormal_time": abnormal_time,
         "weak_description": weak_description,
@@ -129,18 +138,21 @@ def c01_period_end_large(
         reason: mask.loc[flagged_index].to_numpy(dtype=bool)
         for reason, mask in reason_masks.items()
     }
-    threshold_values = (
-        threshold.loc[flagged_index]
-        if isinstance(threshold, pd.Series)
-        else pd.Series(threshold, index=flagged_index)
-    )
+    q50_values = _threshold_values(q50, flagged_index)
+    q75_values = _threshold_values(q75, flagged_index)
+    q90_values = _threshold_values(q90, flagged_index)
+    q95_values = _threshold_values(q95, flagged_index)
     annotation_frame = pd.DataFrame(
         {
             "bucket": bucket.loc[flagged_index].astype(str),
             "score": score_series.loc[flagged_index].round(4),
             "whitelist_matched": whitelist_matched.loc[flagged_index].astype(bool),
             "amount": base.loc[flagged_index],
-            "threshold_amount": threshold_values,
+            "threshold_amount": q75_values,
+            "amount_q50": q50_values,
+            "amount_q75": q75_values,
+            "amount_q90": q90_values,
+            "amount_q95": q95_values,
         },
         index=flagged_index,
     ).astype(object)
@@ -170,6 +182,13 @@ def c01_period_end_large(
         "priority_rows": int((flagged & priority_signal & ~whitelist_matched).sum()),
         "whitelisted_recurring_rows": int(whitelist_matched.sum()),
         "bucket_counts": bucket.loc[flagged].value_counts().to_dict(),
+        "amount_band_counts": {
+            "base_zero_score_rows": int((flagged & score_series.eq(0.0)).sum()),
+            "amount_p50_rows": int(amount_p50.sum()),
+            "amount_p75_rows": int(amount_p75.sum()),
+            "amount_p90_rows": int(amount_p90.sum()),
+            "amount_p95_rows": int(amount_p95.sum()),
+        },
         "priority_reason_counts": priority_reason_counts,
         "quantile": float(quantile),
         "min_group_size": int(min_group_size),
@@ -369,6 +388,27 @@ def _grouped_quantile(
     mapped_q = groups.map(group_q_map)
     mapped_size = groups.map(group_size_map)
     return mapped_q.where(mapped_size >= min_size, global_q)
+
+
+def _amount_threshold(
+    base: pd.Series,
+    df: pd.DataFrame,
+    quantile: float,
+    min_group_size: int,
+) -> pd.Series | float:
+    """Return global or account-group quantile threshold for L3-04 amount scoring."""
+
+    if "account_group" in df.columns:
+        return _grouped_quantile(base, df["account_group"], quantile, min_group_size)
+    return float(base.quantile(quantile))
+
+
+def _threshold_values(threshold: pd.Series | float, index: pd.Index) -> pd.Series:
+    """Align scalar or series threshold values to an annotation index."""
+
+    if isinstance(threshold, pd.Series):
+        return threshold.loc[index]
+    return pd.Series(threshold, index=index)
 
 
 def c02_weekend_entry(df: pd.DataFrame) -> pd.Series:
@@ -629,6 +669,35 @@ def _expected_period(date_series: pd.Series, fiscal_year_start: int) -> pd.Serie
     return (month - fiscal_year_start) % 12 + 1
 
 
+def _period_distance(actual: object, expected: object) -> int | None:
+    try:
+        actual_int = int(actual)
+        expected_int = int(expected)
+    except (TypeError, ValueError):
+        return None
+    if not 1 <= actual_int <= 16 or not 1 <= expected_int <= 12:
+        return None
+    if actual_int > 12:
+        return None
+    raw_distance = abs(actual_int - expected_int)
+    return min(raw_distance, 12 - raw_distance)
+
+
+def _l108_context_mask(df: pd.DataFrame, column: str) -> pd.Series:
+    if column not in df.columns:
+        return pd.Series(False, index=df.index, dtype=bool)
+    return df[column].fillna(False).astype(bool)
+
+
+def _l108_amount_context(df: pd.DataFrame) -> pd.Series:
+    if "exceeds_threshold" in df.columns:
+        return _l108_context_mask(df, "exceeds_threshold")
+    if "amount_zscore" in df.columns:
+        zscore = pd.to_numeric(df["amount_zscore"], errors="coerce").abs()
+        return zscore.ge(3.0).fillna(False)
+    return pd.Series(False, index=df.index, dtype=bool)
+
+
 def c05_fiscal_period_mismatch(
     df: pd.DataFrame,
     policy: dict | None = None,
@@ -698,6 +767,78 @@ def c05_fiscal_period_mismatch(
                 exempted |= (source_mask & ~has_null & basis_match).fillna(False)
 
     final = (raw & ~exempted).astype("boolean").fillna(False)
+    score_series = pd.Series(0.80, index=df.index, dtype="float64")
+    context_masks = {
+        "period_end": _l108_context_mask(df, "is_period_end"),
+        "manual_entry": _l108_context_mask(df, "is_manual_je"),
+        "high_amount": _l108_amount_context(df),
+        "date_gap": _l108_context_mask(df, "has_date_gap")
+        | _l108_context_mask(df, "backdated_flag"),
+        "approval_issue": _l108_context_mask(df, "has_missing_approval_date")
+        | _l108_context_mask(df, "approval_missing")
+        | _l108_context_mask(df, "approval_bypass"),
+    }
+    if "days_backdated" in df.columns:
+        days = pd.to_numeric(df["days_backdated"], errors="coerce").abs()
+        context_masks["date_gap"] = context_masks["date_gap"] | days.gt(30).fillna(False)
+    if "source" in df.columns:
+        source = df["source"].fillna("").astype(str).str.strip().str.lower()
+        context_masks["manual_entry"] = context_masks["manual_entry"] | source.isin(
+            {"manual", "adjustment"}
+        )
+
+    context_count = sum(mask.astype(int) for mask in context_masks.values())
+    score_series = (score_series + (context_count * 0.05)).clip(upper=0.95)
+
+    expected_period = (
+        _expected_period(df["posting_date"], fiscal_year_start)
+        if "posting_date" in df.columns
+        else pd.Series(np.nan, index=df.index)
+    )
+    actual_period = (
+        pd.to_numeric(df["fiscal_period"], errors="coerce")
+        if "fiscal_period" in df.columns
+        else pd.Series(np.nan, index=df.index)
+    )
+    row_annotations: dict[object, dict[str, object]] = {}
+    for idx in final[final].index:
+        active_contexts = [
+            name for name, mask in context_masks.items() if bool(mask.reindex(df.index).loc[idx])
+        ]
+        bucket = (
+            "period_mismatch_corroborated"
+            if active_contexts
+            else "period_mismatch_confirmed"
+        )
+        annotation_key = int(idx) if isinstance(idx, (int, np.integer)) else idx
+        expected = expected_period.loc[idx]
+        actual = actual_period.loc[idx]
+        annotation: dict[str, object] = {
+            "bucket": bucket,
+            "score": round(float(score_series.loc[idx]), 4),
+            "actual_period": None if pd.isna(actual) else int(actual),
+            "expected_period": None if pd.isna(expected) else int(expected),
+            "period_distance": _period_distance(actual, expected),
+            "context_reasons": active_contexts,
+            "strict_mode": strict_mode,
+            "policy_exempted": bool(exempted.loc[idx]),
+        }
+        for column in (
+            "document_id",
+            "posting_date",
+            "document_date",
+            "source",
+            "document_type",
+            "business_process",
+            "is_period_end",
+            "is_manual_je",
+            "days_backdated",
+        ):
+            if column in df.columns:
+                value = df.at[idx, column]
+                annotation[column] = None if pd.isna(value) else value
+        row_annotations[annotation_key] = annotation
+
     raw_count = int(raw.fillna(False).sum())
     exempted_count = int((raw.fillna(False) & exempted).sum())
     final.attrs["raw_fiscal_period_mismatch_count"] = raw_count
@@ -707,7 +848,10 @@ def c05_fiscal_period_mismatch(
         "policy_exempted_rows": exempted_count,
         "final_l108_rows": int(final.sum()),
         "strict_mode": strict_mode,
+        "corroborated_rows": int((final & context_count.gt(0)).sum()),
     }
+    final.attrs["score_series"] = score_series.where(final, 0.0)
+    final.attrs["row_annotations"] = row_annotations
     return final
 
 
@@ -807,14 +951,14 @@ def c08_amount_outlier(
     result = (high_zscore & high_amount).astype(bool)
 
     bucket = pd.Series("none", index=df.index, dtype="object")
-    bucket.loc[result] = "review_zscore"
-    bucket.loc[result & zscore.ge(4.0)] = "strong_zscore"
-    bucket.loc[result & zscore.ge(6.0)] = "extreme_zscore"
+    bucket.loc[result] = "low_zscore"
+    bucket.loc[result & zscore.ge(5.0)] = "medium_zscore"
+    bucket.loc[result & zscore.ge(10.0)] = "high_zscore"
 
     score_series = pd.Series(0.0, index=df.index, dtype="float64")
-    score_series.loc[result & bucket.eq("review_zscore")] = 0.45
-    score_series.loc[result & bucket.eq("strong_zscore")] = 0.60
-    score_series.loc[result & bucket.eq("extreme_zscore")] = 0.75
+    score_series.loc[result & bucket.eq("low_zscore")] = 0.25
+    score_series.loc[result & bucket.eq("medium_zscore")] = 0.45
+    score_series.loc[result & bucket.eq("high_zscore")] = 0.70
 
     row_annotations: dict[object, dict[str, object]] = {}
     optional_columns = (
@@ -847,9 +991,12 @@ def c08_amount_outlier(
     result.attrs["score_series"] = score_series
     result.attrs["breakdown"] = {
         "high_amount_review_rows": int(result.sum()),
-        "review_zscore_rows": int((result & bucket.eq("review_zscore")).sum()),
-        "strong_zscore_rows": int((result & bucket.eq("strong_zscore")).sum()),
-        "extreme_zscore_rows": int((result & bucket.eq("extreme_zscore")).sum()),
+        "low_zscore_rows": int((result & bucket.eq("low_zscore")).sum()),
+        "medium_zscore_rows": int((result & bucket.eq("medium_zscore")).sum()),
+        "high_zscore_rows": int((result & bucket.eq("high_zscore")).sum()),
+        "review_zscore_rows": int((result & bucket.eq("low_zscore")).sum()),
+        "strong_zscore_rows": int((result & bucket.eq("medium_zscore")).sum()),
+        "extreme_zscore_rows": int((result & bucket.eq("high_zscore")).sum()),
         "amount_guard_rows": int(high_amount.sum()),
         "zscore_candidate_rows": int(high_zscore.sum()),
         "amount_threshold": float(amount_threshold) if 0.0 < min_amount_quantile <= 1.0 else None,
@@ -859,9 +1006,12 @@ def c08_amount_outlier(
     if "document_id" in df.columns:
         result.attrs["breakdown"].update({
             "high_amount_review_docs": _nunique_documents(df, result),
-            "review_zscore_docs": _nunique_documents(df, result & bucket.eq("review_zscore")),
-            "strong_zscore_docs": _nunique_documents(df, result & bucket.eq("strong_zscore")),
-            "extreme_zscore_docs": _nunique_documents(df, result & bucket.eq("extreme_zscore")),
+            "low_zscore_docs": _nunique_documents(df, result & bucket.eq("low_zscore")),
+            "medium_zscore_docs": _nunique_documents(df, result & bucket.eq("medium_zscore")),
+            "high_zscore_docs": _nunique_documents(df, result & bucket.eq("high_zscore")),
+            "review_zscore_docs": _nunique_documents(df, result & bucket.eq("low_zscore")),
+            "strong_zscore_docs": _nunique_documents(df, result & bucket.eq("medium_zscore")),
+            "extreme_zscore_docs": _nunique_documents(df, result & bucket.eq("high_zscore")),
         })
     result.attrs["row_annotations"] = row_annotations
     return result
@@ -1135,11 +1285,31 @@ def c12_abnormal_hours_concentration(
     result = result | rapid_flags
     result = result.astype(bool)
 
+    human_operational_mask = _manual_user_mask(df, auto_entry_sources or [])
+    propagated_system_context = (
+        result
+        & ~rapid_flags
+        & ~human_operational_mask
+        & (
+            sigma_outlier_flags
+            | low_volume_midnight_flags
+            | high_context_midnight_flags
+        )
+    )
+
     score_series = pd.Series(0.0, index=df.index, dtype="float64")
     score_series.loc[sigma_outlier_flags] = 0.45
     score_series.loc[low_volume_midnight_flags] = 0.50
     score_series.loc[high_context_midnight_flags] = 0.55
+    score_series.loc[propagated_system_context] = 0.25
     score_series.loc[rapid_flags] = score_series.loc[rapid_flags].clip(lower=0.65)
+
+    score_bucket = pd.Series("", index=df.index, dtype="object")
+    score_bucket.loc[sigma_outlier_flags] = "sigma_outlier"
+    score_bucket.loc[low_volume_midnight_flags] = "low_volume_midnight"
+    score_bucket.loc[high_context_midnight_flags] = "high_context_midnight"
+    score_bucket.loc[propagated_system_context] = "system_context_review"
+    score_bucket.loc[rapid_flags] = "rapid_approval"
 
     row_annotations: dict[object, dict[str, object]] = {}
     optional_columns = (
@@ -1160,12 +1330,15 @@ def c12_abnormal_hours_concentration(
             reason_codes.append("low_volume_midnight")
         if bool(high_context_midnight_flags.loc[idx]):
             reason_codes.append("high_context_midnight")
+        if bool(propagated_system_context.loc[idx]):
+            reason_codes.append("system_context_review")
         if bool(rapid_flags.loc[idx]):
             reason_codes.append("rapid_approval")
         annotation: dict[str, object] = {
             "reason_codes": reason_codes,
             "primary_reason": reason_codes[-1] if reason_codes else "abnormal_time_review",
             "score": round(float(score_series.loc[idx]), 4),
+            "score_bucket": str(score_bucket.loc[idx] or "abnormal_time_review"),
             "is_abnormal_time": bool(is_abnormal.loc[idx]),
         }
         for column in optional_columns:
@@ -1180,6 +1353,7 @@ def c12_abnormal_hours_concentration(
         "sigma_outlier_rows": int(sigma_outlier_flags.sum()),
         "low_volume_midnight_rows": int(low_volume_midnight_flags.sum()),
         "high_context_midnight_rows": int(high_context_midnight_flags.sum()),
+        "system_context_review_rows": int(propagated_system_context.sum()),
         "rapid_approval_rows": int(rapid_flags.sum()),
         "manual_user_count": int(len(user_stats)) if not user_stats.empty else 0,
         "qualified_user_count": (
@@ -1199,8 +1373,20 @@ def c12_abnormal_hours_concentration(
             "sigma_outlier_docs": _nunique_documents(df, sigma_outlier_flags),
             "low_volume_midnight_docs": _nunique_documents(df, low_volume_midnight_flags),
             "high_context_midnight_docs": _nunique_documents(df, high_context_midnight_flags),
+            "system_context_review_docs": _nunique_documents(
+                df,
+                propagated_system_context,
+            ),
             "rapid_approval_docs": _nunique_documents(df, rapid_flags),
         })
+
+    breakdown["score_bands"] = {
+        "system_context_review": 0.25,
+        "sigma_outlier": 0.45,
+        "low_volume_midnight": 0.50,
+        "high_context_midnight": 0.55,
+        "rapid_approval": 0.65,
+    }
 
     result.attrs["score_series"] = score_series
     result.attrs["breakdown"] = breakdown

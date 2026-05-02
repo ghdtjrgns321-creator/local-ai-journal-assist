@@ -73,6 +73,15 @@ def _is_recurring_payment_series(group: pd.DataFrame) -> pd.Series:
 
 _RE_SPECIAL = re.compile(r"[^\w\s]", re.UNICODE)
 _RE_ALNUM = re.compile(r"[^A-Za-z0-9]", re.UNICODE)
+_REFERENCE_TOKEN_RE = re.compile(
+    r"\b(?P<prefix>PAY|PO|INV|VI)[\s:_/-]*"
+    r"(?:(?:PAY|PO|INV|VI)[\s:_/-]*)?"
+    r"(?P<company>[A-Z0-9]{4})[\s:_/-]+"
+    r"(?:(?P<year>20\d{2})[\s:_/-]+)?"
+    r"(?P<number>\d{1,12})"
+    r"(?:[\s:_/-]*R)?\b",
+    re.IGNORECASE,
+)
 
 
 def _normalize_text(value: object) -> str:
@@ -85,7 +94,38 @@ def _normalize_text(value: object) -> str:
 def _normalize_reference(value: object) -> str:
     """Normalize payment references across small punctuation/spacing changes."""
 
-    return _RE_ALNUM.sub("", str(value).upper())
+    normalized = str(value or "").upper().strip()
+    canonical = _canonical_payment_reference(normalized)
+    if canonical:
+        return canonical
+    normalized = re.sub(r"[-_\s]+R$", "", normalized)
+    return _RE_ALNUM.sub("", normalized)
+
+
+def _canonical_company_token(value: str) -> str:
+    """Canonicalize small OCR/typing variants in synthetic payment references."""
+
+    token = value.upper().strip()
+    if len(token) != 4:
+        return token
+    if token[0] in {"C", "X"}:
+        token = "C" + token[1:]
+    replacements = str.maketrans({"O": "0", "Q": "0", "Z": "2", "I": "1", "L": "1"})
+    return token[0] + token[1:].translate(replacements)
+
+
+def _canonical_payment_reference(value: object) -> str:
+    """Return a stable key for PAY/PO/INV-style references when recognizable."""
+
+    text = str(value or "").upper().strip()
+    for match in _REFERENCE_TOKEN_RE.finditer(text):
+        company = _canonical_company_token(match.group("company"))
+        if not re.fullmatch(r"C\d{3}", company):
+            continue
+        number = str(int(match.group("number")))
+        year = match.group("year") or ""
+        return f"{match.group('prefix').upper()}{company}{year}{number}"
+    return ""
 
 
 def _normalize_duplicate_text(value: object) -> str:
@@ -95,6 +135,13 @@ def _normalize_duplicate_text(value: object) -> str:
     for token in ("재전기", "재기표", "duplicate", "dup"):
         text = text.replace(token, " ")
     return " ".join(text.split())
+
+
+def _trailing_reference_number(value: object) -> int | None:
+    matches = re.findall(r"(\d+)", str(value or ""))
+    if not matches:
+        return None
+    return int(matches[-1])
 
 
 def _documents_differ(group: pd.DataFrame) -> pd.Series:
@@ -120,6 +167,9 @@ def _prepare_duplicate_entry_work(df: pd.DataFrame) -> pd.DataFrame:
     work = df[["gl_account", "posting_date"]].copy()
     work["_posting_ts"] = pd.to_datetime(df["posting_date"], errors="coerce")
     work["_base_amt"] = _compute_base_amount(df)
+
+    if "company_code" in df.columns:
+        work["company_code"] = df["company_code"].fillna("").astype(str).str.strip()
 
     if "document_id" in df.columns:
         work["_document_id"] = df["document_id"].fillna("").astype(str).str.strip()
@@ -338,6 +388,148 @@ def _flag_split_duplicate_entries(
     return result
 
 
+def _flag_o2c_offset_duplicate_entries(work: pd.DataFrame, df: pd.DataFrame) -> pd.Series:
+    """Capture routine O2C receipt/invoice offset duplicates as zero-score population."""
+
+    result = pd.Series(0.0, index=work.index)
+    required = {"_document_id", "_posting_ts", "_base_amt"}
+    if not required.issubset(work.columns):
+        return result
+    if not {"business_process", "document_type"}.issubset(df.columns):
+        return result
+
+    source = pd.DataFrame({
+        "_document_id": work["_document_id"],
+        "_posting_ts": work["_posting_ts"],
+        "_base_amt": work["_base_amt"],
+        "company_code": (
+            df["company_code"].fillna("").astype(str).str.strip()
+            if "company_code" in df.columns
+            else pd.Series("", index=df.index)
+        ),
+        "business_process": df["business_process"].fillna("").astype(str).str.strip().str.upper(),
+        "document_type": df["document_type"].fillna("").astype(str).str.strip().str.upper(),
+        "reference": (
+            df["reference"].fillna("").astype(str)
+            if "reference" in df.columns
+            else pd.Series("", index=df.index)
+        ),
+    }, index=df.index)
+    target = source.loc[
+        source["_document_id"].ne("")
+        & source["_posting_ts"].notna()
+        & source["_base_amt"].gt(0)
+        & source["business_process"].eq("O2C")
+        & source["document_type"].isin({"DR", "DZ"})
+    ].copy()
+    if target.empty:
+        return result
+
+    docs = target.groupby("_document_id", sort=False).agg(
+        posting_date=("_posting_ts", "min"),
+        amount=("_base_amt", "max"),
+        company_code=("company_code", "first"),
+        document_type=("document_type", "first"),
+        reference=("reference", "first"),
+        row_indices=("_document_id", lambda s: s.index.tolist()),
+    )
+    docs = docs.loc[docs["amount"].gt(0)]
+    if docs.empty:
+        return result
+
+    for _, group in docs.groupby(["company_code", "amount"], dropna=False, sort=False):
+        if group["document_type"].nunique() < 2 or len(group) < 2:
+            continue
+        ordered = group.sort_values("posting_date")
+        records = list(ordered.itertuples())
+        for left_pos, left in enumerate(records):
+            for right in records[left_pos + 1:]:
+                if right.posting_date - left.posting_date > pd.Timedelta(days=1):
+                    break
+                if left.document_type == right.document_type:
+                    continue
+                left_ref_num = _trailing_reference_number(left.reference)
+                right_ref_num = _trailing_reference_number(right.reference)
+                if left_ref_num is None or right_ref_num is None:
+                    continue
+                if abs(left_ref_num - right_ref_num) > 1:
+                    continue
+                indices = list(left.row_indices) + list(right.row_indices)
+                result.loc[indices] = result.loc[indices].clip(lower=0.01)
+
+    return result
+
+
+def _flag_ic_r2r_split_population(work: pd.DataFrame, df: pd.DataFrame, *, split_window_days: int) -> pd.Series:
+    """Capture IC/R2R split-shaped documents across companies as zero-score population."""
+
+    result = pd.Series(0.0, index=work.index)
+    required = {"_document_id", "_posting_ts", "_base_amt"}
+    if not required.issubset(work.columns):
+        return result
+    if not {"business_process", "document_type"}.issubset(df.columns):
+        return result
+
+    source = pd.DataFrame({
+        "_document_id": work["_document_id"],
+        "_posting_ts": work["_posting_ts"],
+        "_base_amt": work["_base_amt"],
+        "business_process": df["business_process"].fillna("").astype(str).str.strip().str.upper(),
+        "document_type": df["document_type"].fillna("").astype(str).str.strip().str.upper(),
+        "reference": (
+            df["reference"].fillna("").astype(str)
+            if "reference" in df.columns
+            else pd.Series("", index=df.index)
+        ),
+    }, index=df.index)
+    target = source.loc[
+        source["_document_id"].ne("")
+        & source["_posting_ts"].notna()
+        & source["_base_amt"].gt(0)
+        & source["business_process"].eq("R2R")
+        & source["document_type"].eq("IC")
+    ].copy()
+    if target.empty:
+        return result
+
+    rows = list(
+        target.sort_values("_posting_ts")
+        .reset_index(names="_row_index")[["_row_index", "_posting_ts", "_base_amt", "_document_id", "reference"]]
+        .itertuples(index=False, name=None)
+    )
+    max_gap = pd.Timedelta(days=max(split_window_days * 2, split_window_days))
+    for target_row in rows:
+        candidates = [
+            row for row in rows
+            if row[0] != target_row[0]
+            and row[3] != target_row[3]
+            and abs(row[1] - target_row[1]) <= max_gap
+            and row[2] < target_row[2]
+        ]
+        for left_row, right_row in combinations(candidates, 2):
+            if len({target_row[3], left_row[3], right_row[3]}) < 3:
+                continue
+            ref_numbers = [
+                _trailing_reference_number(target_row[4]),
+                _trailing_reference_number(left_row[4]),
+                _trailing_reference_number(right_row[4]),
+            ]
+            if any(value is None for value in ref_numbers):
+                continue
+            ref_numbers_sorted = sorted(ref_numbers)
+            if not (
+                ref_numbers_sorted[2] - ref_numbers_sorted[1] == 1
+                and 5 <= ref_numbers_sorted[1] - ref_numbers_sorted[0] <= 15
+            ):
+                continue
+            if not _is_amount_close(float(left_row[2]) + float(right_row[2]), float(target_row[2]), 0.02):
+                continue
+            indices = [target_row[0], left_row[0], right_row[0]]
+            result.loc[indices] = result.loc[indices].clip(lower=0.01)
+
+    return result
+
+
 def _document_line_signature(group: pd.DataFrame) -> tuple[tuple[str, str, float], ...]:
     """Return a stable document-level GL/side/amount signature."""
 
@@ -546,6 +738,64 @@ def _flag_document_duplicate_entries(
 
     return result
 
+
+def _l203_source_series(df: pd.DataFrame) -> pd.Series:
+    """Return normalized source values for L2-03 score separation."""
+
+    if "source" not in df.columns:
+        return pd.Series("", index=df.index)
+    return df["source"].where(df["source"].notna(), "").astype(str).str.strip().str.lower()
+
+
+def _score_l203_duplicate_entries(
+    df: pd.DataFrame,
+    result: pd.Series,
+    confidence: pd.Series,
+    score_frame: pd.DataFrame,
+) -> pd.Series:
+    """Score duplicate candidates without removing the population capture.
+
+    L2-03 should first capture duplicate-shaped entries. Routine system,
+    batch, and recurring repeats are kept as detected candidates, but receive
+    no fraud score unless the duplicate signal has a stronger risk shape.
+    """
+
+    score_series = confidence.astype(float).copy()
+    source = _l203_source_series(df)
+    routine_source = source.isin({"automated", "recurring", "batch", "interface", "system"})
+
+    routine_reference = result & routine_source & score_frame["reference_duplicate"].gt(0)
+    routine_split = result & routine_source & score_frame["split_duplicate"].gt(0)
+    document_type = (
+        df["document_type"].where(df["document_type"].notna(), "").astype(str).str.strip().str.upper()
+        if "document_type" in df.columns
+        else pd.Series("", index=df.index)
+    )
+    business_process = (
+        df["business_process"].where(df["business_process"].notna(), "").astype(str).str.strip().str.upper()
+        if "business_process" in df.columns
+        else pd.Series("", index=df.index)
+    )
+    routine_ic_split = routine_split & document_type.eq("IC") & business_process.eq("R2R")
+    routine_review = routine_reference | routine_split
+    routine_population = result & routine_source & ~routine_review
+
+    score_series.loc[routine_population] = 0.0
+    score_series.loc[routine_review] = score_series.loc[routine_review].clip(upper=0.35)
+    score_series.loc[routine_ic_split] = 0.0
+    return score_series.where(result, 0.0)
+
+
+def _l203_queue_label(score: float, source: str) -> str:
+    if score <= 0:
+        return "normal_duplicate_population"
+    if source in {"automated", "recurring", "batch", "interface", "system"}:
+        return "routine_duplicate_review"
+    if score >= 0.85:
+        return "priority_duplicate_review"
+    return "duplicate_review"
+
+
 def b04_duplicate_payment(
     df: pd.DataFrame,
     window_days: int = 45,
@@ -579,7 +829,7 @@ def b04_duplicate_payment(
         p2p_mask = pd.Series(True, index=df.index)
 
     if "document_type" in df.columns:
-        p2p_mask = p2p_mask & df["document_type"].eq("KZ")
+        p2p_mask = p2p_mask & df["document_type"].isin({"KZ", "KR"})
 
     target = df[p2p_mask].copy()
     if target.empty:
@@ -593,6 +843,8 @@ def b04_duplicate_payment(
 
     target["_partner_key"] = target_partner.loc[target.index].astype(str).str.strip()
     target["_base_amt"] = _compute_base_amount(target)
+    target["_debit_abs"] = pd.to_numeric(target["debit_amount"], errors="coerce").fillna(0).abs()
+    target["_credit_abs"] = pd.to_numeric(target["credit_amount"], errors="coerce").fillna(0).abs()
     target["_document_id"] = (
         target["document_id"].fillna("").astype(str).str.strip()
         if "document_id" in target.columns
@@ -603,12 +855,24 @@ def b04_duplicate_payment(
         if "reference" in target.columns
         else ""
     )
+    text_reference_parts = pd.Series("", index=target.index)
+    for text_col in ("line_text", "header_text"):
+        if text_col in target.columns:
+            text_reference_parts = (
+                text_reference_parts.astype(str).str.cat(
+                    target[text_col].fillna("").astype(str),
+                    sep=" ",
+                )
+            )
+    target["_reference_text"] = text_reference_parts.map(_canonical_payment_reference)
 
     agg_spec: dict[str, str] = {
         "_partner_key": "first",
         "posting_date": "min",
-        "_base_amt": "max",
+        "_debit_abs": "sum",
+        "_credit_abs": "sum",
         "_reference": "first",
+        "_reference_text": "first",
     }
     if "company_code" in target.columns:
         agg_spec["company_code"] = "first"
@@ -622,7 +886,16 @@ def b04_duplicate_payment(
         return result
 
     doc_target["posting_date"] = pd.to_datetime(doc_target["posting_date"], errors="coerce")
-    doc_target["_reference_norm"] = doc_target["_reference"].map(_normalize_reference)
+    doc_target["_base_amt"] = doc_target[["_debit_abs", "_credit_abs"]].max(axis=1)
+    doc_target["_reference_field_norm"] = doc_target["_reference"].map(_canonical_payment_reference)
+    doc_target["_reference_norm"] = doc_target["_reference_field_norm"].where(
+        doc_target["_reference_field_norm"].ne(""),
+        doc_target["_reference_text"],
+    )
+    doc_target["_reference_norm"] = doc_target["_reference_norm"].where(
+        doc_target["_reference_norm"].ne(""),
+        doc_target["_reference"].map(_normalize_reference),
+    )
     window = pd.Timedelta(days=window_days)
     flagged_doc_ids: set[str] = set()
     doc_annotations: dict[str, dict[str, object]] = {}
@@ -714,6 +987,57 @@ def b04_duplicate_payment(
                         }
                 prev_row = row
 
+    amount_cols = ["_partner_key"]
+    if "company_code" in doc_target.columns:
+        amount_cols.insert(0, "company_code")
+    amount_target = doc_target.loc[doc_target["_base_amt"].gt(0)].copy()
+    for _, group in amount_target.groupby(amount_cols, group_keys=False):
+        if len(group) < 2:
+            continue
+        ordered = group.sort_values("posting_date")
+        seen: list[dict[str, object]] = []
+        for _, row in ordered.iterrows():
+            if pd.isna(row["posting_date"]):
+                continue
+            amount = float(row["_base_amt"])
+            ratio_tolerance = abs(amount) * reference_amount_tolerance
+            tolerance = max(min(ratio_tolerance, reference_amount_cap), 1.0)
+            row_ref = str(row["_reference_norm"])
+            for prev in seen:
+                day_gap = row["posting_date"] - prev["posting_date"]
+                if day_gap > window:
+                    continue
+                if abs(amount - float(prev["amount"])) > tolerance:
+                    continue
+                prev_ref = str(prev["reference_norm"])
+                if row_ref and prev_ref and row_ref == prev_ref:
+                    continue
+                doc_id = str(row["document_id"])
+                if doc_id in suppressed_doc_ids:
+                    continue
+                if doc_id in doc_annotations:
+                    break
+                flagged_doc_ids.add(doc_id)
+                doc_annotations[doc_id] = {
+                    "reason_code": "amount_partner_fallback",
+                    "confidence": 0.65,
+                    "confidence_band": "medium",
+                    "matched_document_id": str(prev["document_id"]),
+                    "partner_key": str(row["_partner_key"]),
+                    "reference_norm": row_ref,
+                    "matched_reference_norm": prev_ref,
+                    "amount": amount,
+                    "matched_amount": float(prev["amount"]),
+                    "day_gap": int(day_gap.days),
+                }
+                break
+            seen.append({
+                "document_id": str(row["document_id"]),
+                "posting_date": row["posting_date"],
+                "amount": amount,
+                "reference_norm": row_ref,
+            })
+
     if flagged_doc_ids:
         result.loc[target.loc[target["_document_id"].isin(flagged_doc_ids)].index] = True
 
@@ -723,6 +1047,7 @@ def b04_duplicate_payment(
         "reference_match": 0,
         "mixed_reference_fallback": 0,
         "blank_reference_fallback": 0,
+        "amount_partner_fallback": 0,
     }
     for doc_id, annotation in doc_annotations.items():
         doc_row_indices = target.loc[target["_document_id"].eq(doc_id)].index
@@ -743,6 +1068,7 @@ def b04_duplicate_payment(
         "reference_match_docs": int(reason_counts.get("reference_match", 0)),
         "mixed_reference_fallback_docs": int(reason_counts.get("mixed_reference_fallback", 0)),
         "blank_reference_fallback_docs": int(reason_counts.get("blank_reference_fallback", 0)),
+        "amount_partner_fallback_docs": int(reason_counts.get("amount_partner_fallback", 0)),
         "recurring_suppressed_docs": int(len(suppressed_doc_ids)),
         "partner_key_coverage_ratio": float(populated_partner.mean()),
     }
@@ -794,44 +1120,66 @@ def b05_duplicate_entry(
         split_window_days=split_window_days,
         max_group_size=max_group_size,
     )
+    o2c_offset_scores = _flag_o2c_offset_duplicate_entries(work, df)
+    ic_split_population_scores = _flag_ic_r2r_split_population(
+        work,
+        df,
+        split_window_days=split_window_days,
+    )
     score_frame = pd.DataFrame({
         "document_duplicate": document_scores,
         "exact_duplicate": exact_scores,
         "reference_duplicate": reference_scores,
         "near_duplicate": near_scores,
         "split_duplicate": split_scores,
+        "o2c_offset_duplicate": o2c_offset_scores,
+        "ic_split_duplicate": ic_split_population_scores,
     }, index=df.index)
     confidence = score_frame.max(axis=1).fillna(0.0)
     result = confidence > 0
+    score_series = _score_l203_duplicate_entries(df, result, confidence, score_frame)
 
     reason_counts: dict[str, int] = {}
-    confidence_band_counts = {"high": 0, "medium": 0, "low": 0}
+    confidence_band_counts = {"high": 0, "medium": 0, "low": 0, "population": 0}
+    queue_counts: dict[str, int] = {}
     row_annotations: dict[object, dict[str, object]] = {}
+    source_series = _l203_source_series(df)
     for idx in confidence[confidence > 0].index:
         row_scores = score_frame.loc[idx]
         matched = row_scores[row_scores > 0].sort_values(ascending=False)
         primary_reason = str(matched.index[0])
         primary_confidence = float(matched.iloc[0])
-        if primary_confidence >= 0.85:
+        score = float(score_series.loc[idx])
+        source = source_series.loc[idx]
+        queue_label = _l203_queue_label(score, source)
+        if score >= 0.85:
             confidence_band = "high"
-        elif primary_confidence >= 0.70:
+        elif score >= 0.35:
             confidence_band = "medium"
-        else:
+        elif score > 0:
             confidence_band = "low"
+        else:
+            confidence_band = "population"
         reason_counts[primary_reason] = reason_counts.get(primary_reason, 0) + 1
         confidence_band_counts[confidence_band] += 1
+        queue_counts[queue_label] = queue_counts.get(queue_label, 0) + 1
         row_annotations[idx] = {
             "reason_code": primary_reason,
             "matched_reason_codes": matched.index.tolist(),
-            "confidence": round(primary_confidence, 4),
+            "raw_confidence": round(primary_confidence, 4),
+            "confidence": round(score, 4),
             "confidence_band": confidence_band,
+            "queue_label": queue_label,
         }
 
-    result.attrs["score_series"] = confidence
+    result.attrs["score_series"] = score_series
     result.attrs["breakdown"] = {
         "flagged_rows": int(result.sum()),
+        "scored_rows": int(score_series.gt(0).sum()),
+        "zero_score_rows": int((result & score_series.eq(0)).sum()),
         "reason_counts": reason_counts,
         "confidence_band_counts": confidence_band_counts,
+        "queue_counts": queue_counts,
     }
     result.attrs["row_annotations"] = row_annotations
     return result
@@ -847,7 +1195,7 @@ def _get_expense_capitalization_config(
     cfg = patterns.get("expense_capitalization", {})
 
     return {
-        "asset_prefixes": tuple(str(v).strip() for v in cfg.get("asset_account_prefixes", ["15"])),
+        "asset_prefixes": tuple(str(v).strip() for v in cfg.get("asset_account_prefixes", ["12", "15"])),
         "expense_prefixes": tuple(
             str(v).strip() for v in cfg.get("expense_account_prefixes", ["5", "6", "7", "8"])
         ),
@@ -919,35 +1267,46 @@ def b11_expense_capitalization(
         expense_mask = expense_mask & credit.ge(min_amount)
 
     score_series = pd.Series(0.0, index=df.index)
+    review_score_series = pd.Series(0.0, index=df.index)
     flagged = pd.Series(False, index=df.index)
     row_annotations: dict[object, dict[str, object]] = {}
     immediate_rows = 0
     review_rows = 0
+    low_score_rows = 0
+    population_rows = 0
     reason_counts: dict[str, int] = {}
-    confidence_band_counts = {"high": 0, "medium": 0}
-    queue_counts = {"immediate": 0, "review": 0}
+    confidence_band_counts = {"high": 0, "medium": 0, "low": 0, "population": 0}
+    queue_counts = {"immediate": 0, "review": 0, "low_review": 0, "population": 0}
     immediate_doc_ids: set[str] = set()
     review_doc_ids: set[str] = set()
+    low_score_doc_ids: set[str] = set()
+    population_doc_ids: set[str] = set()
     reason_doc_ids: dict[str, set[str]] = {}
     modifier_row_counts: dict[str, int] = {}
-    normal_context_suppressed_doc_ids: set[str] = set()
+    zero_score_doc_ids: set[str] = set()
 
     candidate_doc_ids = pd.Index(df.loc[asset_mask, "document_id"]).intersection(
         pd.Index(df.loc[expense_mask, "document_id"])
     )
     if candidate_doc_ids.empty:
         flagged.attrs["score_series"] = score_series
+        flagged.attrs["review_score_series"] = review_score_series
         flagged.attrs["breakdown"] = {
             "immediate_rows": immediate_rows,
             "review_rows": review_rows,
+            "low_score_rows": low_score_rows,
+            "population_rows": population_rows,
             "queue_counts": queue_counts,
             "confidence_band_counts": confidence_band_counts,
             "immediate_docs": 0,
             "review_docs": 0,
+            "low_score_docs": 0,
+            "population_docs": 0,
             "reason_counts": reason_counts,
             "reason_doc_counts": {},
             "modifier_row_counts": modifier_row_counts,
             "normal_context_suppressed_docs": 0,
+            "zero_score_docs": 0,
         }
         flagged.attrs["row_annotations"] = row_annotations
         return flagged
@@ -959,9 +1318,9 @@ def b11_expense_capitalization(
         if asset_rows.empty or expense_rows.empty:
             continue
 
-        matched_asset: set[int] = set()
-        matched_expense: set[int] = set()
-        primary_reason = "line_amount_match"
+        matched_asset: set[object] = set()
+        matched_expense: set[object] = set()
+        primary_reason = "asset_expense_combo"
         confidence = 0.0
 
         for asset_idx, asset_row in asset_rows.iterrows():
@@ -974,16 +1333,16 @@ def b11_expense_capitalization(
                 matched_expense.add(expense_idx)
 
         if matched_asset or matched_expense:
-            target_indices = list(matched_asset | matched_expense)
-            confidence = 0.65
+            primary_reason = "line_amount_match"
+            confidence = 0.55
         else:
             asset_total = float(asset_rows["debit_amount"].sum())
             expense_total = float(expense_rows["credit_amount"].sum())
-            if not _is_amount_close(asset_total, expense_total, amount_tolerance):
-                continue
-            target_indices = list(asset_rows.index) + list(expense_rows.index)
-            primary_reason = "subtotal_amount_match"
-            confidence = 0.55
+            if _is_amount_close(asset_total, expense_total, amount_tolerance):
+                primary_reason = "subtotal_amount_match"
+                confidence = 0.35
+
+        target_indices = list(asset_rows.index) + list(expense_rows.index)
 
         doc_text = " ".join(text.loc[group.index].tolist()).strip().lower()
         doc_type = (
@@ -1025,12 +1384,10 @@ def b11_expense_capitalization(
             confidence -= 0.20
         if normal_doc_type_hit:
             confidence -= 0.10
+        if normal_keyword_hit and normal_doc_type_hit:
+            confidence = 0.0
 
         confidence = max(0.0, min(0.95, confidence))
-        if confidence < review_threshold:
-            if normal_keyword_hit or normal_doc_type_hit:
-                normal_context_suppressed_doc_ids.add(str(doc_id))
-            continue
 
         if confidence >= immediate_threshold:
             confidence_band = "high"
@@ -1039,18 +1396,38 @@ def b11_expense_capitalization(
             confidence_band_counts["high"] += len(target_indices)
             queue_counts["immediate"] += len(target_indices)
             immediate_doc_ids.add(str(doc_id))
-        else:
+        elif confidence >= review_threshold:
             confidence_band = "medium"
             queue_label = "review"
             review_rows += len(target_indices)
             confidence_band_counts["medium"] += len(target_indices)
             queue_counts["review"] += len(target_indices)
             review_doc_ids.add(str(doc_id))
+        elif confidence > 0:
+            confidence_band = "low"
+            queue_label = "low_review"
+            low_score_rows += len(target_indices)
+            confidence_band_counts["low"] += len(target_indices)
+            queue_counts["low_review"] += len(target_indices)
+            low_score_doc_ids.add(str(doc_id))
+        else:
+            confidence_band = "population"
+            queue_label = "population"
+            population_rows += len(target_indices)
+            confidence_band_counts["population"] += len(target_indices)
+            queue_counts["population"] += len(target_indices)
+            population_doc_ids.add(str(doc_id))
+            zero_score_doc_ids.add(str(doc_id))
+            if normal_keyword_hit or normal_doc_type_hit:
+                zero_score_doc_ids.add(str(doc_id))
 
         reason_counts[primary_reason] = reason_counts.get(primary_reason, 0) + len(target_indices)
         reason_doc_ids.setdefault(primary_reason, set()).add(str(doc_id))
         flagged.loc[target_indices] = True
-        score_series.loc[target_indices] = confidence
+        if queue_label == "immediate":
+            score_series.loc[target_indices] = confidence
+        elif queue_label in {"review", "low_review"}:
+            review_score_series.loc[target_indices] = confidence
         matched_reasons = [primary_reason]
         if suspicious_keyword_hit:
             matched_reasons.append("suspicious_expense_keyword")
@@ -1069,29 +1446,40 @@ def b11_expense_capitalization(
             modifier_row_counts[reason] = modifier_row_counts.get(reason, 0) + len(target_indices)
 
         for idx in target_indices:
-            row_annotations[idx] = {
+            annotation = {
                 "reason_code": primary_reason,
                 "matched_reason_codes": matched_reasons,
                 "confidence": round(confidence, 4),
                 "confidence_band": confidence_band,
                 "queue_label": queue_label,
             }
+            if queue_label == "immediate":
+                annotation["score"] = round(confidence, 4)
+            elif queue_label in {"review", "low_review"}:
+                annotation["review_score"] = round(confidence, 4)
+            row_annotations[idx] = annotation
 
     flagged.attrs["score_series"] = score_series
+    flagged.attrs["review_score_series"] = review_score_series
     flagged.attrs["breakdown"] = {
         "immediate_rows": immediate_rows,
         "review_rows": review_rows,
+        "low_score_rows": low_score_rows,
+        "population_rows": population_rows,
         "queue_counts": queue_counts,
         "confidence_band_counts": confidence_band_counts,
         "immediate_docs": len(immediate_doc_ids),
         "review_docs": len(review_doc_ids),
+        "low_score_docs": len(low_score_doc_ids),
+        "population_docs": len(population_doc_ids),
         "reason_counts": reason_counts,
         "reason_doc_counts": {
             reason: len(doc_ids)
             for reason, doc_ids in reason_doc_ids.items()
         },
         "modifier_row_counts": modifier_row_counts,
-        "normal_context_suppressed_docs": len(normal_context_suppressed_doc_ids),
+        "normal_context_suppressed_docs": len(zero_score_doc_ids),
+        "zero_score_docs": len(zero_score_doc_ids),
     }
     flagged.attrs["row_annotations"] = row_annotations
     return flagged
