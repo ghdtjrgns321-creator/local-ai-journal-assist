@@ -518,6 +518,40 @@ class TestC12MinUserEntries:
         assert result[user_a_midnight].all()
         assert not result[user_a_normal].any()
 
+    def test_system_context_rows_get_lower_priority_not_removed(self):
+        """System/source rows propagated from a human user hit stay detected but low score."""
+        entries = {"userA": ["23:00"] * 5 + ["10:00"] * 45}
+        for name in ["userB", "userC", "userD", "userE", "userF"]:
+            entries[name] = ["19:00"] * 8 + ["10:00"] * 42
+
+        df = _make_rule_df(entries)
+        df["source"] = "manual"
+        df["user_persona"] = "staff"
+        system_idx = df.index[
+            (df["created_by"] == "userA")
+            & (df["time_zone_category"] == "midnight")
+        ][0]
+        df.loc[system_idx, "source"] = "automated"
+        df.loc[system_idx, "user_persona"] = "Automated System"
+
+        result = c12_abnormal_hours_concentration(
+            df,
+            sigma_threshold=10.0,
+            min_abnormal_ratio=0.08,
+            min_high_context_midnight_entries=4,
+            auto_entry_sources=["automated"],
+        )
+
+        assert result.loc[system_idx]
+        assert result.attrs["score_series"].loc[system_idx] == 0.25
+        assert result.attrs["row_annotations"][system_idx]["score_bucket"] == (
+            "system_context_review"
+        )
+        assert "system_context_review" in result.attrs["row_annotations"][system_idx][
+            "reason_codes"
+        ]
+        assert result.attrs["breakdown"]["system_context_review_rows"] == 1
+
     def test_high_context_midnight_ignores_overtime_only(self):
         """High-context supplement applies only to midnight, not overtime."""
         entries = {"userA": ["19:00"] * 5 + ["10:00"] * 45}

@@ -138,7 +138,7 @@ class TestAnomalyDetectorIntegration:
         assert breakdown["weekday_holiday_docs"] == 1
         annotations = result.metadata["row_annotations"]["L3-05"]
         assert annotations[0]["reason_code"] == "weekend"
-        assert annotations[1]["reason_code"] == "holiday"
+        assert annotations[1]["reason_code"] == "weekday_holiday"
         assert annotations[2]["reason_code"] == "weekend_holiday"
 
     def test_flagged_indices_valid(self, full_anomaly_df: pd.DataFrame) -> None:

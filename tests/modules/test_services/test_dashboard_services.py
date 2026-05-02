@@ -10,11 +10,14 @@ from dashboard._state import (
     KEY_COMPANY_CONTEXT,
     KEY_COMPANY_ID,
     KEY_FEATURED_DATA,
+    KEY_INGEST_DATA_DF,
+    KEY_INGEST_MAPPING_RESULT,
     KEY_INGEST_STAGE,
     KEY_PHASE1_RESULT,
     KEY_PIPELINE_RESULT,
     KEY_PREP_RESULT,
     KEY_SETTINGS,
+    KEY_UPLOAD_COUNT,
 )
 from src.services.analysis_service import make_phase_settings, run_phase_analysis
 from src.services.batch_service import load_batch_into_state
@@ -108,6 +111,47 @@ def test_load_batch_into_state_uses_batch_reader(monkeypatch):
     assert result is loaded
     assert state[KEY_PREP_RESULT] is loaded
     assert state[KEY_BATCH_ID] == "batch_777"
+
+
+def test_prepare_mapped_data_clears_review_state(monkeypatch):
+    from dashboard.components import data_uploader, mapping_finalize
+
+    prepared = SimpleNamespace(
+        data=pd.DataFrame({"document_id": ["D1"]}),
+        featured_data=pd.DataFrame({"document_id": ["D1"]}),
+        batch_id="batch_prepared",
+    )
+
+    def fake_run_pipeline_from_mapped(file_key, progress_cb, *, prepare_only=False):
+        assert file_key == "journal.csv_123"
+        assert prepare_only is True
+        progress_cb(1.0, "done")
+        return prepared, []
+
+    monkeypatch.setattr(
+        data_uploader,
+        "_run_pipeline_from_mapped",
+        fake_run_pipeline_from_mapped,
+    )
+    state = {
+        KEY_INGEST_STAGE: "REVIEW",
+        KEY_INGEST_MAPPING_RESULT: object(),
+        KEY_INGEST_DATA_DF: pd.DataFrame({"x": [1]}),
+        "_ingest_file_key": "journal.csv_123",
+    }
+    monkeypatch.setattr(mapping_finalize.st, "session_state", state)
+
+    result = mapping_finalize.prepare_mapped_data("journal.csv_123")
+
+    assert result is prepared
+    assert state[KEY_PREP_RESULT] is prepared
+    assert state[KEY_BATCH_ID] == "batch_prepared"
+    assert state[KEY_UPLOAD_COUNT] == "journal.csv_123"
+    assert state[KEY_FEATURED_DATA].equals(prepared.featured_data)
+    assert state[KEY_INGEST_STAGE] == "UPLOAD"
+    assert KEY_INGEST_MAPPING_RESULT not in state
+    assert KEY_INGEST_DATA_DF not in state
+    assert "_ingest_file_key" not in state
 
 
 def test_make_phase_settings_enables_ml_only_for_phase2():

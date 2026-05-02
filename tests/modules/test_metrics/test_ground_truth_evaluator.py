@@ -8,6 +8,7 @@ import pandas as pd
 
 from src.detection.base import DetectionResult, RuleFlag
 from src.metrics.ground_truth_evaluator import (
+    _label_doc_set_for_rule,
     build_benford_population_benchmarks,
     build_ground_truth_report,
     normalize_results_by_track,
@@ -15,6 +16,7 @@ from src.metrics.ground_truth_evaluator import (
     per_rule_label_analysis,
     uncovered_label_analysis,
 )
+from src.ingest.datasynth_labels import SOURCE_PATH_ATTR
 
 
 def _make_result(
@@ -55,6 +57,30 @@ class TestNormalizeResultsByTrack:
 
 
 class TestGroundTruthEvaluator:
+    def test_rule_truth_sidecar_takes_precedence_over_legacy_labels(self):
+        data_dir = Path(".tmp_test_rule_truth_sidecar") / "candidate"
+        labels_dir = data_dir / "labels"
+        shutil.rmtree(data_dir.parent, ignore_errors=True)
+        try:
+            labels_dir.mkdir(parents=True)
+            (data_dir / "journal_entries.csv").write_text("", encoding="utf-8")
+            pd.DataFrame({
+                "document_id": ["D1", "D2", "D3"],
+                "rule_id": ["L2-01", "L2-01", "L2-01"],
+                "expected_hit": [True, "true", False],
+            }).to_csv(labels_dir / "rule_truth_L2_01.csv", index=False)
+
+            df = pd.DataFrame({"document_id": ["D1", "D2", "D3"]})
+            df.attrs[SOURCE_PATH_ATTR] = str(data_dir / "journal_entries.csv")
+            labels = pd.DataFrame({
+                "document_id": ["D3"],
+                "anomaly_type": ["JustBelowThreshold"],
+            })
+
+            assert _label_doc_set_for_rule("L2-01", df, labels) == {"D1", "D2"}
+        finally:
+            shutil.rmtree(data_dir.parent, ignore_errors=True)
+
     def test_per_rule_label_analysis_counts_tp_fp_fn(self):
         df = pd.DataFrame(
             {
@@ -361,8 +387,12 @@ class TestGroundTruthEvaluator:
         )
         result = _make_result(
             "layer_b",
-            pd.DataFrame({"L3-02": [0.35, 0.60, 0.75, 0.0]}, index=df.index),
+            pd.DataFrame({"L3-02": [0.0, 0.60, 0.75, 0.0]}, index=df.index),
             metadata={
+                "review_score_series": pd.DataFrame(
+                    {"L3-02": [0.35, 0.0, 0.0, 0.0]},
+                    index=df.index,
+                ),
                 "rule_breakdowns": {
                     "L3-02": {
                         "manual_rows": 2,
@@ -404,7 +434,7 @@ class TestGroundTruthEvaluator:
                         "priority_rows": 2,
                         "bucket_counts": {
                             "closing_manual": 1,
-                            "closing_priority": 1,
+                            "closing_amount_p90": 1,
                             "closing_high_amount": 1,
                         },
                     }

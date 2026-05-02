@@ -17,7 +17,7 @@ def _make_result(track_name: str, flagged_indices: list[int]) -> DetectionResult
         track_name=track_name,
         flagged_indices=flagged_indices,
         scores=pd.Series([0.2, 0.9], index=[0, 1], dtype=float),
-        rule_flags=[RuleFlag("L3-04", "기말 대규모", 3, 1, 2)],
+        rule_flags=[RuleFlag("L3-04", "Period-start/end Closing Review Candidate", 3, 1, 2)],
         details=pd.DataFrame({"L3-04": [0.0, 1.0]}, index=[0, 1]),
         metadata={"elapsed": 0.01},
     )
@@ -34,7 +34,7 @@ def test_build_track_explanation_uses_result_defaults():
 
     explanation = build_track_explanation(result)
 
-    assert explanation["display_name"] == "L1"
+    assert explanation["display_name"] == "L1/L3 Data Quality Rules"
     assert "structural integrity" in explanation["summary"]
     assert "debit_amount" in explanation["used_columns"]
 
@@ -75,7 +75,7 @@ def test_build_document_explanation_aggregates_rules_and_tracks():
     assert "DOC1" in explanation["headline"]
     assert {item["rule_id"] for item in explanation["triggered_rules"]} == {"L2-01", "L3-04"}
     assert explanation["track_explanations"]
-    assert explanation["track_explanations"][0]["display_name"] == "L2"
+    assert explanation["track_explanations"][0]["display_name"] == "L1-L4 Fraud Rules"
 
 
 def test_build_document_explanation_describes_l307_direction():

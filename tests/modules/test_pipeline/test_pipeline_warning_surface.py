@@ -31,7 +31,7 @@ def test_pipeline_surfaces_detector_coverage_warnings(monkeypatch, small_gl_df) 
     monkeypatch.setattr(
         AuditPipeline,
         "_run_detection",
-        lambda self, df: ([detector_result], []),
+        lambda self, df, *, detection_scope="default": ([detector_result], []),
     )
     monkeypatch.setattr(
         AuditPipeline,
@@ -90,7 +90,7 @@ def test_pipeline_surfaces_phase1_case_artifact_failure(monkeypatch, small_gl_df
     monkeypatch.setattr(
         AuditPipeline,
         "_run_detection",
-        lambda self, df: ([], []),
+        lambda self, df, *, detection_scope="default": ([], []),
     )
     monkeypatch.setattr(
         AuditPipeline,

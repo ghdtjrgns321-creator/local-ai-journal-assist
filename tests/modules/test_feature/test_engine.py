@@ -5,9 +5,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 
 from config.settings import AuditSettings
+import src.feature.amount_features as amount_features_module
 from src.feature.engine import (
     EXPECTED_COLUMNS,
     FeatureCategory,
@@ -198,16 +201,35 @@ class TestGracefulDegradation:
 class TestSettingsInjection:
     """설정/룰 주입 검증."""
 
-    def test_custom_settings(self, en_full_df: pd.DataFrame) -> None:
+    def test_custom_settings(self, monkeypatch, en_full_df: pd.DataFrame) -> None:
         """approval_thresholds 변경 → exceeds_threshold 결과 달라짐."""
-        result_default = generate_all_features(en_full_df.copy())
+        monkeypatch.setattr(
+            amount_features_module,
+            "_resolve_employee_master_path",
+            lambda df: Path("dummy-employees.json"),
+        )
+        monkeypatch.setattr(
+            amount_features_module,
+            "_load_employee_approval_map",
+            lambda path: {"APR-001": (100_000_000.0, True)},
+        )
+        df = en_full_df.copy()
+        df["approved_by"] = "APR-001"
+
+        result_default = generate_all_features(df.copy())
         default_exceeds = result_default.data["exceeds_threshold"].tolist()
 
         custom = AuditSettings(approval_thresholds=[1_000])
-        result_custom = generate_all_features(en_full_df.copy(), settings=custom)
+        monkeypatch.setattr(
+            amount_features_module,
+            "_load_employee_approval_map",
+            lambda path: {"APR-001": (1_000.0, True)},
+        )
+        result_custom = generate_all_features(df.copy(), settings=custom)
         custom_exceeds = result_custom.data["exceeds_threshold"].tolist()
 
         assert default_exceeds != custom_exceeds
+        assert custom_exceeds == [True, True, True]
 
     def test_custom_rules(self, en_full_df: pd.DataFrame) -> None:
         """manual_codes 변경 → is_manual_je 결과 달라짐."""

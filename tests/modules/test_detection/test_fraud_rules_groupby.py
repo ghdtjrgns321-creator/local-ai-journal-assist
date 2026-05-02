@@ -190,6 +190,108 @@ class TestL2_02:
         assert not result[0]
         assert result[1]
 
+    def test_reference_revision_suffix_normalization_flagged(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D001", "D002"],
+            "document_type": ["KZ", "KZ"],
+            "auxiliary_account_number": ["V001", "V001"],
+            "debit_amount": [2_950_000, 2_950_000],
+            "credit_amount": [0.0, 0.0],
+            "posting_date": pd.to_datetime(["2025-01-10", "2025-01-16"]),
+            "business_process": ["P2P", "P2P"],
+            "reference": ["PO-C001-2025-001184", "PO-C001-2025-001184-R"],
+        })
+
+        result = b04_duplicate_payment(df, reference_amount_tolerance=0.01)
+
+        assert not result[0]
+        assert result[1]
+        assert result.attrs["breakdown"]["reference_match_docs"] == 1
+        assert result.attrs["row_annotations"][1]["reason_code"] == "reference_match"
+
+    def test_payment_reference_zero_padding_normalization_flagged(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D001", "D002"],
+            "document_type": ["KZ", "KZ"],
+            "auxiliary_account_number": ["V001", "V001"],
+            "debit_amount": [2_950_000, 2_950_000],
+            "credit_amount": [0.0, 0.0],
+            "posting_date": pd.to_datetime(["2025-01-10", "2025-01-16"]),
+            "business_process": ["P2P", "P2P"],
+            "reference": ["PAY:PAY-C002-0000000009", "PAY-C002-000000009"],
+        })
+
+        result = b04_duplicate_payment(df, reference_amount_tolerance=0.01)
+
+        assert not result[0]
+        assert result[1]
+        assert result.attrs["breakdown"]["reference_match_docs"] == 1
+
+    def test_payment_reference_typo_normalization_flagged(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D001", "D002"],
+            "document_type": ["KZ", "KZ"],
+            "auxiliary_account_number": ["V001", "V001"],
+            "debit_amount": [2_950_000, 2_950_000],
+            "credit_amount": [0.0, 0.0],
+            "posting_date": pd.to_datetime(["2025-01-10", "2025-01-16"]),
+            "business_process": ["P2P", "P2P"],
+            "reference": ["PAY-C002-0000000047", "PAY-C00z-0000000047"],
+        })
+
+        result = b04_duplicate_payment(df, reference_amount_tolerance=0.01)
+
+        assert not result[0]
+        assert result[1]
+        assert result.attrs["breakdown"]["reference_match_docs"] == 1
+
+    def test_reference_mismatch_same_partner_amount_flagged(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D001", "D002"],
+            "document_type": ["KR", "KZ"],
+            "auxiliary_account_number": ["V001", "V001"],
+            "debit_amount": [760_014, 760_014],
+            "credit_amount": [0.0, 0.0],
+            "posting_date": pd.to_datetime(["2025-06-01", "2025-06-27"]),
+            "business_process": ["P2P", "P2P"],
+            "reference": ["VI:VI-C002-0000000044", "PAY:PAY-C002-0000000047"],
+        })
+
+        result = b04_duplicate_payment(df, window_days=45)
+
+        assert not result[0]
+        assert result[1]
+        assert result.attrs["breakdown"]["amount_partner_fallback_docs"] == 1
+        assert result.attrs["row_annotations"][1]["reason_code"] == "amount_partner_fallback"
+
+    def test_document_amount_uses_debit_credit_totals(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D001", "D001", "D002", "D002"],
+            "document_type": ["KR", "KR", "KR", "KR"],
+            "auxiliary_account_number": ["V001", "V001", "V001", "V001"],
+            "debit_amount": [18_984, 51_016, 70_000, 0.0],
+            "credit_amount": [0.0, 70_000, 0.0, 70_000],
+            "posting_date": pd.to_datetime([
+                "2025-05-03",
+                "2025-05-03",
+                "2025-06-05",
+                "2025-06-05",
+            ]),
+            "business_process": ["P2P", "P2P", "P2P", "P2P"],
+            "reference": [
+                "PO-C002-2025-001493",
+                "PO-C002-2025-001493",
+                "PO-C002-2025-000260",
+                "PO-C002-2025-000260",
+            ],
+        })
+
+        result = b04_duplicate_payment(df, window_days=45)
+
+        assert not result.iloc[:2].any()
+        assert result.iloc[2:].all()
+        assert result.attrs["breakdown"]["amount_partner_fallback_docs"] == 1
+
     def test_same_reference_near_amount_flagged_by_default(self) -> None:
         df = pd.DataFrame({
             "document_id": ["D001", "D002"],
@@ -236,6 +338,25 @@ class TestL2_02:
         assert result.attrs["breakdown"]["mixed_reference_fallback_docs"] == 1
         assert result.attrs["row_annotations"][1]["reason_code"] == "mixed_reference_fallback"
 
+    def test_blank_reference_uses_line_text_reference(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D001", "D002"],
+            "document_type": ["KZ", "KZ"],
+            "auxiliary_account_number": ["V001", "V001"],
+            "debit_amount": [636_680, 636_680],
+            "credit_amount": [0.0, 0.0],
+            "posting_date": pd.to_datetime(["2025-01-05", "2025-01-09"]),
+            "business_process": ["P2P", "P2P"],
+            "reference": ["PAY:PAY-C003-0000000004", ""],
+            "line_text": ["original payment", "duplicate PAY-x003-0000000004"],
+        })
+
+        result = b04_duplicate_payment(df, window_days=45)
+
+        assert not result[0]
+        assert result[1]
+        assert result.attrs["breakdown"]["reference_match_docs"] == 1
+
     def test_blank_reference_fallback_exposes_weaker_score(self) -> None:
         df = pd.DataFrame({
             "document_id": ["D001", "D002"],
@@ -254,10 +375,25 @@ class TestL2_02:
         assert result.attrs["breakdown"]["blank_reference_fallback_docs"] == 1
         assert result.attrs["row_annotations"][1]["confidence_band"] == "medium"
 
-    def test_non_kz_documents_excluded(self) -> None:
+    def test_kr_p2p_documents_included(self) -> None:
         df = pd.DataFrame({
             "document_id": ["D001", "D002"],
             "document_type": ["KR", "KR"],
+            "auxiliary_account_number": ["V001", "V001"],
+            "debit_amount": [1e6, 1e6],
+            "credit_amount": [0.0, 0.0],
+            "posting_date": pd.to_datetime(["2025-01-01", "2025-01-10"]),
+            "business_process": ["P2P", "P2P"],
+            "reference": ["INV-1", "INV-1"],
+        })
+        result = b04_duplicate_payment(df)
+        assert not result[0]
+        assert result[1]
+
+    def test_non_payment_documents_excluded(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D001", "D002"],
+            "document_type": ["SA", "SA"],
             "auxiliary_account_number": ["V001", "V001"],
             "debit_amount": [1e6, 1e6],
             "credit_amount": [0.0, 0.0],
@@ -278,6 +414,48 @@ class TestL2_03:
             "reference_duplicate",
         }
         assert result.attrs["row_annotations"][0]["confidence"] >= 0.9
+
+    def test_recurring_exact_duplicate_stays_flagged_with_zero_score(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D001", "D002"],
+            "document_type": ["HR", "HR"],
+            "business_process": ["H2R", "H2R"],
+            "source": ["recurring", "recurring"],
+            "gl_account": [6200, 6200],
+            "debit_amount": [1_000_000.0, 1_000_000.0],
+            "credit_amount": [0.0, 0.0],
+            "posting_date": pd.to_datetime(["2025-01-15", "2025-01-15"]),
+        })
+
+        result = b05_duplicate_entry(df)
+
+        assert result.all()
+        assert result.attrs["score_series"].tolist() == [0.0, 0.0]
+        assert result.attrs["breakdown"]["zero_score_rows"] == 2
+        assert result.attrs["row_annotations"][0]["raw_confidence"] == pytest.approx(0.95)
+        assert result.attrs["row_annotations"][0]["queue_label"] == "normal_duplicate_population"
+
+    def test_ic_r2r_automated_split_duplicate_stays_zero_score(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D001", "D002", "D003"],
+            "company_code": ["C001", "C001", "C001"],
+            "document_type": ["IC", "IC", "IC"],
+            "business_process": ["R2R", "R2R", "R2R"],
+            "source": ["automated", "automated", "automated"],
+            "auxiliary_account_number": ["IC-C002", "IC-C002", "IC-C002"],
+            "gl_account": [115001, 115001, 115001],
+            "debit_amount": [100_000.0, 60_000.0, 40_000.0],
+            "credit_amount": [0.0, 0.0, 0.0],
+            "posting_date": pd.to_datetime(["2025-07-19", "2025-07-20", "2025-07-21"]),
+        })
+
+        result = b05_duplicate_entry(df, split_window_days=3)
+
+        assert result.all()
+        assert result.attrs["score_series"].tolist() == [0.0, 0.0, 0.0]
+        assert result.attrs["breakdown"]["zero_score_rows"] == 3
+        assert result.attrs["row_annotations"][0]["reason_code"] == "split_duplicate"
+        assert result.attrs["row_annotations"][0]["queue_label"] == "normal_duplicate_population"
 
     def test_annotations_preserve_non_integer_index(self, dup_entry_df: pd.DataFrame) -> None:
         df = dup_entry_df.iloc[:2].copy()
@@ -461,6 +639,26 @@ class TestL2_04:
         result = b11_expense_capitalization(df)
         assert result.all()
 
+    def test_current_asset_prefixes_are_included(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D001", "D001", "D002", "D002"],
+            "gl_account": ["1200", "7200", "1290", "6200"],
+            "debit_amount": [1_244_983_850.0, 0.0, 7_453_510.0, 0.0],
+            "credit_amount": [0.0, 1_244_983_850.0, 0.0, 7_453_510.0],
+            "line_text": [
+                "선급비용 자산 계상",
+                "유형자산 처분손실",
+                "대여금 지급 단기자금 운용 계정 대체 입력",
+                "세금과공과 차량유지비",
+            ],
+        })
+
+        result = b11_expense_capitalization(df)
+
+        assert result.all()
+        assert result.attrs["row_annotations"][0]["reason_code"] == "line_amount_match"
+        assert result.attrs["row_annotations"][2]["reason_code"] == "line_amount_match"
+
     def test_no_match_not_flagged(self) -> None:
         df = pd.DataFrame({
             "document_id": ["D001", "D001"],
@@ -488,14 +686,18 @@ class TestL2_04:
         })
         assert not b11_expense_capitalization(df).any()
 
-    def test_large_amount_gap_not_flagged(self) -> None:
+    def test_large_amount_gap_stays_flagged_with_zero_score(self) -> None:
         df = pd.DataFrame({
             "document_id": ["D001", "D001"],
             "gl_account": ["1500", "6100"],
             "debit_amount": [5_000_000.0, 0.0],
             "credit_amount": [0.0, 3_000_000.0],
         })
-        assert not b11_expense_capitalization(df).any()
+        result = b11_expense_capitalization(df)
+        assert result.all()
+        assert result.attrs["score_series"].tolist() == [0.0, 0.0]
+        assert result.attrs["row_annotations"][0]["reason_code"] == "asset_expense_combo"
+        assert result.attrs["row_annotations"][0]["queue_label"] == "population"
 
     def test_split_expense_lines_flagged_by_subtotal_match(self) -> None:
         df = pd.DataFrame({
@@ -506,6 +708,9 @@ class TestL2_04:
         })
         result = b11_expense_capitalization(df)
         assert result.all()
+        assert result.attrs["score_series"].tolist() == [0.0, 0.0, 0.0]
+        assert result.attrs["review_score_series"].tolist() == [0.35, 0.35, 0.35]
+        assert result.attrs["row_annotations"][0]["review_score"] == pytest.approx(0.35)
 
     def test_custom_account_prefix_config_used(self) -> None:
         df = pd.DataFrame({
@@ -525,7 +730,7 @@ class TestL2_04:
         result = b11_expense_capitalization(df, audit_rules=audit_rules)
         assert result.all()
 
-    def test_normal_capex_context_suppresses_flag(self) -> None:
+    def test_normal_capex_context_stays_flagged_with_zero_score(self) -> None:
         df = pd.DataFrame({
             "document_id": ["D001", "D001"],
             "gl_account": ["1500", "6100"],
@@ -535,7 +740,11 @@ class TestL2_04:
             "line_text": ["software development project", "software development project"],
             "header_text": ["capital project", "capital project"],
         })
-        assert not b11_expense_capitalization(df).any()
+        result = b11_expense_capitalization(df)
+        assert result.all()
+        assert result.attrs["score_series"].tolist() == [0.0, 0.0]
+        assert result.attrs["breakdown"]["zero_score_docs"] == 1
+        assert result.attrs["row_annotations"][0]["queue_label"] == "population"
 
     def test_manual_expense_context_elevates_to_immediate(self) -> None:
         df = pd.DataFrame({
@@ -551,9 +760,22 @@ class TestL2_04:
         assert result.all()
         assert result.attrs["row_annotations"][0]["confidence_band"] == "high"
         assert result.attrs["row_annotations"][0]["queue_label"] == "immediate"
+        assert result.attrs["score_series"].tolist() == pytest.approx([0.85, 0.85])
+        assert result.attrs["review_score_series"].tolist() == [0.0, 0.0]
+        assert result.attrs["row_annotations"][0]["score"] == pytest.approx(0.85)
         assert result.attrs["breakdown"]["immediate_rows"] == 2
-        assert result.attrs["breakdown"]["queue_counts"] == {"immediate": 2, "review": 0}
-        assert result.attrs["breakdown"]["confidence_band_counts"] == {"high": 2, "medium": 0}
+        assert result.attrs["breakdown"]["queue_counts"] == {
+            "immediate": 2,
+            "review": 0,
+            "low_review": 0,
+            "population": 0,
+        }
+        assert result.attrs["breakdown"]["confidence_band_counts"] == {
+            "high": 2,
+            "medium": 0,
+            "low": 0,
+            "population": 0,
+        }
         assert result.attrs["breakdown"]["immediate_docs"] == 1
         assert result.attrs["breakdown"]["review_docs"] == 0
         assert result.attrs["breakdown"]["reason_doc_counts"] == {"line_amount_match": 1}
@@ -563,7 +785,7 @@ class TestL2_04:
             "suspicious_process": 2,
         }
 
-    def test_normal_context_suppression_is_counted(self) -> None:
+    def test_normal_context_zero_score_is_counted(self) -> None:
         df = pd.DataFrame({
             "document_id": ["D001", "D001"],
             "gl_account": ["1500", "6100"],
@@ -574,10 +796,21 @@ class TestL2_04:
             "header_text": ["capital project", "capital project"],
         })
         result = b11_expense_capitalization(df)
-        assert not result.any()
+        assert result.all()
         assert result.attrs["breakdown"]["normal_context_suppressed_docs"] == 1
-        assert result.attrs["breakdown"]["queue_counts"] == {"immediate": 0, "review": 0}
-        assert result.attrs["breakdown"]["confidence_band_counts"] == {"high": 0, "medium": 0}
+        assert result.attrs["breakdown"]["zero_score_docs"] == 1
+        assert result.attrs["breakdown"]["queue_counts"] == {
+            "immediate": 0,
+            "review": 0,
+            "low_review": 0,
+            "population": 2,
+        }
+        assert result.attrs["breakdown"]["confidence_band_counts"] == {
+            "high": 0,
+            "medium": 0,
+            "low": 0,
+            "population": 2,
+        }
 
     def test_missing_column_skip(self) -> None:
         df = pd.DataFrame({

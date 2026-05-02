@@ -5,7 +5,9 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
+from src.detection.constants import RiskLevel
 from src.detection.fraud_layer import FraudLayer
+from src.detection.score_aggregator import aggregate_scores
 
 
 @pytest.fixture
@@ -125,7 +127,18 @@ class TestFraudLayerDetect:
             "posting_month",
         ]
         assert isinstance(breakdown["observed_summary"]["top_groups"], list)
-        assert result.details["L1-05"].tolist() == [0.8, 0.0, 0.0, 0.4, 0.0]
+        assert result.details["L1-05"].tolist() == [0.8, 0.0, 0.0, 0.0, 0.0]
+        assert result.metadata["review_score_series"]["L1-05"].tolist() == [
+            0.0,
+            0.0,
+            0.0,
+            0.4,
+            0.0,
+        ]
+        assert breakdown["observed_summary"]["queue_counts"] == {
+            "general_immediate": 1,
+            "closing_review": 1,
+        }
         assert result.metadata["row_annotations"]["L1-05"][0]["bucket"] == "immediate"
         assert result.metadata["row_annotations"]["L1-05"][1]["bucket"] == "allowed_system"
         assert result.metadata["row_annotations"]["L1-05"][1]["score"] == 0.0
@@ -135,7 +148,28 @@ class TestFraudLayerDetect:
 
         l105_flag = next(flag for flag in result.rule_flags if flag.rule_id == "L1-05")
         assert l105_flag.detail == "immediate=1, review=1"
-        assert l105_flag.flagged_count == 2
+        assert l105_flag.flagged_count == 1
+
+    def test_l105_review_and_allowed_system_do_not_become_confirmed_rules(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D1", "D2", "D3"],
+            "debit_amount": [100.0, 100.0, 100.0],
+            "credit_amount": [0.0, 0.0, 0.0],
+            "created_by": ["U1", "U2", "SYS"],
+            "approved_by": ["U1", "U2", "SYS"],
+            "business_process": ["R2R", "O2C", "R2R"],
+            "user_persona": ["controller", "controller", "automated_system"],
+            "source": ["interface", "interface", "automated"],
+        })
+
+        detection = FraudLayer().detect(df)
+        result = aggregate_scores(df, [detection])
+
+        assert result["flagged_rules"].tolist() == ["", "L1-05", ""]
+        assert result["review_rules"].tolist() == ["L1-05", "", ""]
+        assert result["risk_level"].iloc[0] == RiskLevel.NORMAL
+        assert result["risk_level"].iloc[1] == RiskLevel.HIGH
+        assert result["risk_level"].iloc[2] == RiskLevel.NORMAL
 
     def test_l107_breakdown_metadata_exposes_immediate_and_review(self) -> None:
         layer = FraudLayer()
@@ -160,11 +194,14 @@ class TestFraudLayerDetect:
 
         l107_flag = next(flag for flag in result.rule_flags if flag.rule_id == "L1-07")
         assert l107_flag.detail == "immediate=1, review=1"
-        assert l107_flag.flagged_count == 2
-        assert result.details["L1-07"].tolist() == [0.8, 0.4]
+        assert l107_flag.flagged_count == 1
+        assert result.details["L1-07"].iloc[0] >= 0.70
+        assert result.details["L1-07"].iloc[1] == 0.0
+        assert 0.45 <= result.metadata["review_score_series"]["L1-07"].iloc[1] < 0.70
         assert result.metadata["row_annotations"]["L1-07"][0]["queue_label"] == "immediate"
         assert result.metadata["row_annotations"]["L1-07"][1]["queue_label"] == "review"
-        assert result.metadata["row_annotations"]["L1-07"][1]["review_score"] == 0.4
+        assert 0.45 <= result.metadata["row_annotations"]["L1-07"][1]["review_score"] < 0.70
+        assert "score_components" in result.metadata["row_annotations"]["L1-07"][0]
 
     def test_l302_breakdown_metadata_exposes_manual_buckets(self) -> None:
         layer = FraudLayer()
@@ -185,12 +222,20 @@ class TestFraudLayerDetect:
         result = layer.detect(df)
 
         breakdown = result.metadata["rule_breakdowns"]["L3-02"]
-        assert breakdown["flagged_rows"] == 3
+        assert breakdown["flagged_rows"] == 2
+        assert breakdown["candidate_rows"] == 3
+        assert breakdown["review_rows"] == 1
         assert breakdown["manual_rows"] == 2
         assert breakdown["adjustment_rows"] == 1
         assert breakdown["priority_rows"] == 1
         assert breakdown["control_bypass_rows"] == 2
-        assert result.details["L3-02"].tolist() == [0.35, 0.75, 0.75, 0.0]
+        assert result.details["L3-02"].tolist() == [0.0, 0.75, 0.75, 0.0]
+        assert result.metadata["review_score_series"]["L3-02"].tolist() == [
+            0.35,
+            0.0,
+            0.0,
+            0.0,
+        ]
         assert result.metadata["row_annotations"]["L3-02"][1]["bucket"] == "manual_control_bypass"
         assert result.metadata["row_annotations"]["L3-02"][1]["priority_reasons"] == [
             "missing_approval_date",
@@ -209,7 +254,8 @@ class TestFraudLayerDetect:
 
         result = layer.detect(df)
 
-        assert result.details["L3-02"].tolist() == [0.35, 0.0]
+        assert result.details["L3-02"].tolist() == [0.0, 0.0]
+        assert result.metadata["review_score_series"]["L3-02"].tolist() == [0.35, 0.0]
         assert result.metadata["rule_breakdowns"]["L3-02"]["manual_rows"] == 1
 
     def test_l312_work_scope_excess_is_registered(self) -> None:
@@ -228,8 +274,15 @@ class TestFraudLayerDetect:
 
         result = layer.detect(df)
 
-        assert result.details["L3-12"].tolist() == [0.65, 0.65, 0.65, 0.65]
+        assert result.details["L3-12"].tolist() == [0.0, 0.0, 0.0, 0.0]
+        assert result.metadata["review_score_series"]["L3-12"].tolist() == [
+            0.65,
+            0.65,
+            0.65,
+            0.65,
+        ]
         assert result.metadata["rule_breakdowns"]["L3-12"]["candidate_users"] == 1
+        assert result.metadata["row_annotations"]["L3-12"][0]["review_score"] == 0.65
         assert result.metadata["row_annotations"]["L3-12"][0]["rule_boundary"].startswith("L1-06")
 
     def test_flagged_indices_match_scores(self, full_df: pd.DataFrame) -> None:
@@ -295,9 +348,21 @@ class TestFraudLayerDetect:
         breakdown = result.metadata["rule_breakdowns"]["L2-04"]
         assert breakdown["immediate_rows"] == 0
         assert breakdown["review_rows"] == 2
-        assert breakdown["queue_counts"] == {"immediate": 0, "review": 2}
-        assert breakdown["confidence_band_counts"] == {"high": 0, "medium": 2}
+        assert breakdown["queue_counts"] == {
+            "immediate": 0,
+            "review": 2,
+            "low_review": 0,
+            "population": 0,
+        }
+        assert breakdown["confidence_band_counts"] == {
+            "high": 0,
+            "medium": 2,
+            "low": 0,
+            "population": 0,
+        }
         annotations = result.metadata["row_annotations"]["L2-04"]
         assert annotations[0]["reason_code"] == "line_amount_match"
         assert annotations[0]["queue_label"] == "review"
-        assert result.details["L2-04"].iloc[0] == pytest.approx(0.65)
+        assert annotations[0]["review_score"] == pytest.approx(0.55)
+        assert result.details["L2-04"].iloc[0] == pytest.approx(0.0)
+        assert result.metadata["review_score_series"]["L2-04"].iloc[0] == pytest.approx(0.55)

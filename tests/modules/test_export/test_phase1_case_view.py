@@ -11,6 +11,7 @@ from src.detection.phase1_case_builder import build_phase1_case_result
 from src.export.phase1_case_view import (
     build_phase1_case_drilldown,
     build_phase1_case_queue,
+    build_phase1_macro_finding_queue,
     resolve_phase1_case_result,
     summarize_phase1_case_result,
 )
@@ -46,7 +47,7 @@ def _make_pipeline_result() -> SimpleNamespace:
         rule_flags=[
             RuleFlag("L1-05", "SelfApproval", 4, 1, len(df)),
             RuleFlag("L1-07", "SkippedApproval", 4, 1, len(df)),
-            RuleFlag("L3-04", "PeriodEndLarge", 3, 1, len(df)),
+            RuleFlag("L3-04", "PeriodEndClosingReview", 3, 1, len(df)),
         ],
         details=details,
         metadata={},
@@ -60,6 +61,17 @@ def _make_pipeline_result() -> SimpleNamespace:
         phase1_case_config={"phase1_case": {"top_n_cases": 50, "top_n_per_theme": 10}},
         generated_at=datetime(2026, 4, 22, 3, 15, 22, tzinfo=UTC),
     )
+    phase1.metadata["macro_findings"] = [
+        {
+            "finding_id": "L4-02:0001",
+            "rule_id": "L4-02",
+            "queue_type": "account_process_macro",
+            "company_code": "kr01",
+            "gl_account": "410000",
+            "review_score": 0.8,
+        }
+    ]
+    phase1.metadata["macro_finding_count"] = 1
     artifact_root = Path(
         "C:/Users/ghdtj/workspace/portfolio/local-ai-assist/.tmp_phase1_case_view_tests"
     )
@@ -83,6 +95,8 @@ def test_summarize_phase1_case_result_returns_theme_summary() -> None:
     assert summary["available"] is True
     assert summary["run_id"] == pipeline_result.phase1_case_run_id
     assert summary["case_count"] == pipeline_result.phase1_case_count
+    assert summary["macro_finding_count"] == 1
+    assert summary["macro_findings"][0]["rule_id"] == "L4-02"
     assert summary["top_theme_labels"]
     assert summary["themes"]
 
@@ -101,10 +115,30 @@ def test_build_phase1_case_queue_and_drilldown_return_projection_rows() -> None:
     assert "batch_combo_bonus" in queue[0]
     assert "weak_evidence_bonus" in queue[0]
     assert "priority_adjustment_reasons" in queue[0]
+    assert "direct_risk_count" in queue[0]
+    assert "review_context_count" in queue[0]
+    assert "integrity_blocker_count" in queue[0]
+    assert "macro_finding_count" in queue[0]
+    assert queue[0]["case_type"]
+    assert queue[0]["main_reason"]
     assert drilldown is not None
     assert drilldown["case"]["case_id"] == queue[0]["case_id"]
     assert drilldown["documents"]
     assert drilldown["raw_rule_hits"]
+    assert "signal_sections" in drilldown
+    assert "direct_risk" in drilldown["signal_sections"]
+    assert drilldown["raw_rule_hits"][0]["signal_type"]
+    assert drilldown["raw_rule_hits"][0]["signal_type_label"]
+
+
+def test_build_phase1_macro_finding_queue_returns_account_process_rows() -> None:
+    pipeline_result = _make_pipeline_result()
+
+    queue = build_phase1_macro_finding_queue(pipeline_result, rule_id="L4-02")
+
+    assert len(queue) == 1
+    assert queue[0]["queue_type"] == "account_process_macro"
+    assert queue[0]["gl_account"] == "410000"
 
 
 def test_resolve_phase1_case_result_loads_from_artifact_when_memory_missing() -> None:

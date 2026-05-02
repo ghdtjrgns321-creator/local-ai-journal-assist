@@ -36,6 +36,7 @@ def _phase1_result() -> Phase1CaseResult:
         amount_score=0.7,
         control_score=0.9,
         logic_score=0.1,
+        timing_score=0.3,
         behavior_score=0.4,
         repeat_score=0.5,
         rule_count=2,

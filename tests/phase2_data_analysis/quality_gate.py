@@ -127,7 +127,7 @@ def check_all(profile: dict) -> GateReport:
         target="12월 1순위 fraud_type ≤ 60% (현실적 분산)",
         actual=f"{dec_dominance*100:.0f}% ({dec_first_count}/{total_types})",
         passed=dec_dominance <= 0.6,
-        why="모든 fraud_type이 12월에 몰리면 L3-04(기말 대규모) 룰 과적합 유발",
+        why="모든 fraud_type이 12월에 몰리면 L3-04(기말/기초 결산 검토 후보군) 룰 과적합 유발",
     ))
 
     # P1-3: 심야 fraud 존재 — 실사용자 기반

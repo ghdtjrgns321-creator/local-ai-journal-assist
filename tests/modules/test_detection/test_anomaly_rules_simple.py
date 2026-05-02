@@ -38,7 +38,7 @@ def anomaly_feature_df() -> pd.DataFrame:
     })
 
 
-# ── L3-04 기말 대규모 ──────────────────────────────────────────
+# ── L3-04 기말/기초 결산 검토 후보군 ──────────────────────────
 
 
 class TestL3_04:
@@ -52,7 +52,8 @@ class TestL3_04:
         """월말이지만 금액 ≤ Q3 → not flagged."""
         result = c01_period_end_large(anomaly_feature_df, quantile=0.75)
         # 행2: is_period_end=True, amount=10e6 (하위) → False
-        assert not result[2]
+        assert result[2]
+        assert result.attrs["score_series"].iloc[2] == 0.0
 
     def test_period_end_manual_low_amount_flagged(self, anomaly_feature_df: pd.DataFrame) -> None:
         """Period-end manual entries are included even when not high amount."""
@@ -85,11 +86,12 @@ class TestL3_04:
         # expense: 100 > Q3(47.5) → True
         assert result[3]
         # expense: 10, 20, 30 ≤ Q3 → False
-        assert not result[0] and not result[1] and not result[2]
+        assert result[0] and result[1] and result[2]
+        assert result.attrs["score_series"].iloc[0] == 0.0
         # revenue: 10000 > Q3(4750) → True
         assert result[7]
         # revenue: 1000, 2000, 3000 ≤ Q3 → False
-        assert not result[4] and not result[5]
+        assert result[4] and result[5]
 
     def test_small_group_fallback_to_global(self) -> None:
         """n < min_group_size인 그룹은 전체 Q3로 fallback."""
@@ -144,7 +146,7 @@ class TestL3_04:
         assert result.attrs["score_series"].tolist()[0] == 0.20
         assert result.attrs["row_annotations"][0]["bucket"] == "closing_recurring_low_priority"
         assert result.attrs["row_annotations"][0]["whitelist_matched"] is True
-        assert result.attrs["breakdown"]["whitelisted_recurring_rows"] == 1
+        assert result.attrs["breakdown"]["whitelisted_recurring_rows"] == 2
 
     def test_exposes_l304_scores_breakdown_and_annotations(self) -> None:
         df = pd.DataFrame({
@@ -162,14 +164,13 @@ class TestL3_04:
         result = c01_period_end_large(df, quantile=0.5)
 
         assert result.tolist() == [True, True, True, False]
-        assert result.attrs["score_series"].tolist() == [0.55, 0.45, 0.70, 0.0]
+        assert result.attrs["score_series"].tolist() == [0.70, 0.0, 0.0, 0.0]
         assert result.attrs["breakdown"]["bucket_counts"] == {
-            "closing_high_amount": 1,
-            "closing_manual": 1,
-            "closing_priority": 1,
+            "closing_amount_p95": 1,
+            "closing_base": 2,
         }
         assert result.attrs["breakdown"]["priority_rows"] == 1
-        assert result.attrs["row_annotations"][2]["bucket"] == "closing_priority"
+        assert result.attrs["row_annotations"][2]["bucket"] == "closing_base"
         assert result.attrs["row_annotations"][2]["priority_reasons"] == [
             "manual_entry",
             "weak_description",
@@ -438,6 +439,37 @@ class TestL1_08:
         assert result[1]
         assert result.attrs["policy_exempted_count"] == 1
 
+    def test_confirmed_hit_keeps_boolean_result_and_surfaces_phase1_score_context(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["DOC-1", "DOC-2"],
+            "fiscal_period": [1, 2],
+            "posting_date": pd.to_datetime(["2025-03-31", "2025-02-15"]),
+            "source": ["manual", "automated"],
+            "is_period_end": [True, False],
+            "is_manual_je": [True, False],
+            "days_backdated": [45, 0],
+            "exceeds_threshold": [True, False],
+            "fiscal_period_mismatch": [True, False],
+        })
+
+        result = c05_fiscal_period_mismatch(df)
+
+        assert result.tolist() == [True, False]
+        assert result.attrs["score_series"].tolist() == [0.95, 0.0]
+        assert result.attrs["breakdown"]["corroborated_rows"] == 1
+        annotation = result.attrs["row_annotations"][0]
+        assert annotation["bucket"] == "period_mismatch_corroborated"
+        assert annotation["actual_period"] == 1
+        assert annotation["expected_period"] == 3
+        assert annotation["period_distance"] == 2
+        assert annotation["score"] == 0.95
+        assert set(annotation["context_reasons"]) == {
+            "period_end",
+            "manual_entry",
+            "high_amount",
+            "date_gap",
+        }
+
 
 # ── L3-08 적요 결손/파손 ─────────────────────────────────────
 
@@ -502,9 +534,29 @@ class TestL4_03:
             min_amount_quantile=0.90,
         )
         assert result[3]  # z=3.5, amount=P90+ range
-        assert result.attrs["score_series"].iloc[3] == 0.45
+        assert result.attrs["score_series"].iloc[3] == 0.25
         assert result.attrs["breakdown"]["high_amount_review_rows"] == 1
-        assert result.attrs["row_annotations"][3]["bucket"] == "review_zscore"
+        assert result.attrs["row_annotations"][3]["bucket"] == "low_zscore"
+
+    def test_zscore_bands_only_change_priority_not_detection(self) -> None:
+        df = pd.DataFrame({
+            "debit_amount": [100.0, 120.0, 140.0],
+            "credit_amount": [0.0, 0.0, 0.0],
+            "amount_zscore": [3.5, 6.0, 12.0],
+        })
+        result = c08_amount_outlier(
+            df,
+            zscore_threshold=3.0,
+            min_amount_quantile=0.0,
+        )
+
+        assert result.tolist() == [True, True, True]
+        assert result.attrs["score_series"].tolist() == [0.25, 0.45, 0.70]
+        assert [result.attrs["row_annotations"][i]["bucket"] for i in range(3)] == [
+            "low_zscore",
+            "medium_zscore",
+            "high_zscore",
+        ]
 
     def test_low_zscore_not_flagged(self, anomaly_feature_df: pd.DataFrame) -> None:
         """zscore ≤ 3.0 → not flagged."""

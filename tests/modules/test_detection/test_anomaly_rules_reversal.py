@@ -503,7 +503,7 @@ class TestC11ReversalEntry:
         assert result.attrs["score_series"].loc[result].gt(0).all()
         assert result.attrs["score_series"].loc[~result].eq(0).all()
 
-    def test_score_series_preserves_evidence_trigger_score_when_final_is_damped(self) -> None:
+    def test_automated_candidate_stays_flagged_with_zero_score(self) -> None:
         df = pd.DataFrame(
             {
                 "document_id": ["D001", "D002"],
@@ -521,7 +521,11 @@ class TestC11ReversalEntry:
         result = c11_reversal_entry(df, score_threshold=0.3)
 
         assert result.all()
-        assert result.attrs["score_series"].tolist() == [0.35, 0.35]
+        assert result.attrs["score_series"].tolist() == [0.0, 0.0]
+        assert result.attrs["breakdown"]["zero_score_count"] == 2
+        assert result.attrs["row_annotations"][0]["queue_label"] == (
+            "normal_clearing_reclass_population"
+        )
 
     def test_annotations_preserve_non_integer_index(self) -> None:
         df = pd.DataFrame(

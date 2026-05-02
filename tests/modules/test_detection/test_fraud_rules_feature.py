@@ -41,10 +41,44 @@ class TestL4_01:
         result = b01_revenue_manipulation(feature_df, zscore_threshold=3.0)
         assert not result[2]
 
+    def test_document_with_non_revenue_outlier_does_not_backfill_revenue_row(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D001", "D001"],
+            "gl_account": ["4000", "5000"],
+            "is_revenue_account": [True, False],
+            "amount_zscore": [2.8, 9.0],
+        })
+
+        result = b01_revenue_manipulation(df, zscore_threshold=3.0)
+
+        assert result.tolist() == [False, False]
+        assert result.attrs["score_series"].tolist() == [0.0, 0.0]
+
     def test_missing_features_returns_all_false(self) -> None:
         df = pd.DataFrame({"debit_amount": [100.0]})
         result = b01_revenue_manipulation(df)
         assert not result.any()
+
+    def test_exposes_bucket_scores_and_annotations(self) -> None:
+        df = pd.DataFrame({
+            "gl_account": ["4100", "4100", "4100", "5100"],
+            "is_revenue_account": [True, True, True, False],
+            "amount_zscore": [3.2, 4.5, 6.2, 8.0],
+        })
+
+        result = b01_revenue_manipulation(df, zscore_threshold=3.0)
+
+        assert result.tolist() == [True, True, True, False]
+        assert result.attrs["score_series"].tolist() == [0.45, 0.60, 0.75, 0.0]
+        assert result.attrs["breakdown"]["bucket_counts"] == {
+            "review_zscore": 1,
+            "strong_zscore": 1,
+            "extreme_zscore": 1,
+        }
+        assert result.attrs["row_annotations"][0]["bucket"] == "review_zscore"
+        assert result.attrs["row_annotations"][2]["interpretation"] == (
+            "high_value_revenue_outlier_anchor"
+        )
 
 
 class TestL2_01:
@@ -64,6 +98,7 @@ class TestL2_01:
     def test_exposes_bucket_scores_and_annotations(self) -> None:
         df = pd.DataFrame({
             "is_near_threshold": [True, True, True, False, False],
+            "source": ["manual", "manual", "manual", "manual", "manual"],
             "near_threshold_bucket": [
                 "lower_band",
                 "close_band",
@@ -88,9 +123,29 @@ class TestL2_01:
             "close_band": 1,
             "razor_band": 1,
         }
+        assert result.attrs["breakdown"]["scored_rows"] == 3
+        assert result.attrs["breakdown"]["zero_score_rows"] == 0
         assert result.attrs["breakdown"]["unresolved_limit_rows"] == 1
         assert result.attrs["row_annotations"][2]["bucket"] == "razor_band"
+        assert result.attrs["row_annotations"][2]["queue_label"] == "priority_review"
         assert result.attrs["row_annotations"][2]["near_threshold_gap_ratio"] == 0.01
+
+    def test_routine_source_lower_and_close_band_are_zero_score_population(self) -> None:
+        df = pd.DataFrame({
+            "is_near_threshold": [True, True, True, True],
+            "source": ["automated", "recurring", "automated", "manual"],
+            "near_threshold_bucket": ["lower_band", "close_band", "razor_band", "close_band"],
+        })
+
+        result = b02_near_threshold(df)
+
+        assert result.tolist() == [True, True, True, True]
+        assert result.attrs["score_series"].tolist() == [0.0, 0.0, 0.35, 0.60]
+        assert result.attrs["breakdown"]["flagged_rows"] == 4
+        assert result.attrs["breakdown"]["scored_rows"] == 2
+        assert result.attrs["breakdown"]["zero_score_rows"] == 2
+        assert result.attrs["row_annotations"][0]["queue_label"] == "normal_population"
+        assert result.attrs["row_annotations"][2]["queue_label"] == "routine_razor_review"
 
     def test_annotations_preserve_non_integer_index(self) -> None:
         df = pd.DataFrame(
@@ -178,14 +233,20 @@ class TestL1_04:
 
 
 class TestL3_02:
-    def test_manual_entry_flagged(self, feature_df: pd.DataFrame) -> None:
+    def test_manual_entry_priority_flagged_and_population_reviewed(
+        self,
+        feature_df: pd.DataFrame,
+    ) -> None:
         result = b08_manual_override(feature_df)
         assert result[0]
         assert result[3]
-        assert result[4]
+        assert not result[4]
         assert result.attrs["score_series"].iloc[0] == 0.60
-        assert result.attrs["score_series"].iloc[4] == 0.35
-        assert result.attrs["breakdown"]["flagged_rows"] == 3
+        assert result.attrs["score_series"].iloc[4] == 0.0
+        assert result.attrs["review_score_series"].iloc[4] == 0.35
+        assert result.attrs["breakdown"]["flagged_rows"] == 2
+        assert result.attrs["breakdown"]["candidate_rows"] == 3
+        assert result.attrs["breakdown"]["review_rows"] == 1
 
     def test_non_manual_not_flagged(self, feature_df: pd.DataFrame) -> None:
         result = b08_manual_override(feature_df)
@@ -196,9 +257,12 @@ class TestL3_02:
     def test_source_fallback_uses_manual_source_codes(self) -> None:
         df = pd.DataFrame({"source": ["Manual", "Adjustment", "automated", None]})
         result = b08_manual_override(df)
-        assert result.tolist() == [True, True, False, False]
+        assert result.tolist() == [False, False, False, False]
+        assert result.attrs["review_score_series"].tolist() == [0.35, 0.35, 0.0, 0.0]
         assert result.attrs["breakdown"]["manual_rows"] == 1
         assert result.attrs["breakdown"]["adjustment_rows"] == 1
+        assert result.attrs["breakdown"]["candidate_rows"] == 2
+        assert result.attrs["breakdown"]["review_rows"] == 2
         assert result.attrs["breakdown"]["bucket_counts"] == {
             "manual_population": 1,
             "adjustment_population": 1,
@@ -210,7 +274,8 @@ class TestL3_02:
             df,
             audit_rules={"patterns": {"manual_source_codes": ["LegacyManual"]}},
         )
-        assert result.tolist() == [True, False, False]
+        assert result.tolist() == [False, False, False]
+        assert result.attrs["review_score_series"].tolist() == [0.35, 0.0, 0.0]
 
     def test_exposes_priority_and_control_bypass_annotations(self) -> None:
         df = pd.DataFrame({

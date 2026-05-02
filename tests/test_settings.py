@@ -80,6 +80,7 @@ class TestYamlLoaders:
         assert phase1["priority_band"]["high"] == 0.75
         assert phase1["priority_band"]["medium"] == 0.45
         assert phase1["counterparty_columns"][0] == "auxiliary_account_number"
-        assert phase1["priority_weights"]["control"] == 0.35
+        assert phase1["priority_weights"]["control"] == 0.25
+        assert phase1["priority_weights"]["outflow"] == 0.15
         assert phase1["timing_priority"]["l304_only_penalty"] == 0.20
         assert phase1["timing_priority"]["l304_repeat_pattern_min_months"] == 3

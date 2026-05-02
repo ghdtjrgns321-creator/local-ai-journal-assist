@@ -6,7 +6,6 @@ import pandas as pd
 import pytest
 
 from src.detection.base import DetectionResult
-from src.detection.constants import SEVERITY_MAP
 from src.detection.integrity_layer import IntegrityDetector
 
 # ── L1-01: 차대변 균형 ──────────────────────────────────────────
@@ -146,7 +145,7 @@ class TestA02MissingRequired:
         """필수 필드 모두 채움 → 0.0."""
         detector = IntegrityDetector()
         result = detector.detect(dt_balanced_df)
-        # L1-02 score (severity=2 → 2/5=0.4 if flagged)
+        # L1-02 uses field-aware scores when flagged.
         a02_scores = result.details.get("L1-02", pd.Series(0.0, index=dt_balanced_df.index))
         assert (a02_scores == 0.0).all()
 
@@ -159,13 +158,40 @@ class TestA02MissingRequired:
         # idx 0: 정상
         assert result.details["L1-02"].iloc[0] == 0.0
 
-    def test_multiple_nulls_still_binary(self, dt_missing_fields_df):
-        """여러 필수 필드 NULL도 binary (0.0 또는 severity/5)."""
+    def test_multiple_nulls_raise_score_above_single_field(self, dt_missing_fields_df):
+        """Multiple missing required fields increase the row score."""
         detector = IntegrityDetector()
-        result = detector.detect(dt_missing_fields_df)
-        expected_score = SEVERITY_MAP["L1-02"] / 5
-        # idx 1: posting_date NaT + gl_account None → 여전히 단일 score
-        assert result.details["L1-02"].iloc[1] == pytest.approx(expected_score)
+        single = dt_missing_fields_df.copy()
+        single.loc[1, "posting_date"] = pd.Timestamp("2025-01-02")
+
+        single_result = detector.detect(single)
+        multi_result = detector.detect(dt_missing_fields_df)
+        assert multi_result.details["L1-02"].iloc[1] > single_result.details["L1-02"].iloc[1]
+
+    def test_missing_field_importance_changes_l102_score(self, dt_missing_fields_df):
+        low = dt_missing_fields_df.copy()
+        high = dt_missing_fields_df.copy()
+        low.loc[1, ["gl_account", "posting_date"]] = [2000, pd.Timestamp("2025-01-02")]
+        high.loc[1, ["gl_account", "posting_date"]] = [2000, pd.Timestamp("2025-01-02")]
+        low.loc[1, "document_date"] = pd.NaT
+        high.loc[1, "document_id"] = None
+
+        detector = IntegrityDetector()
+        low_score = detector.detect(low).details["L1-02"].iloc[1]
+        high_score = detector.detect(high).details["L1-02"].iloc[1]
+
+        assert low_score == pytest.approx(0.42)
+        assert high_score == pytest.approx(0.80)
+        assert high_score > low_score
+
+    def test_blank_string_required_field_counts_as_missing(self, dt_missing_fields_df):
+        df = dt_missing_fields_df.copy()
+        df.loc[1, ["gl_account", "posting_date"]] = [2000, pd.Timestamp("2025-01-02")]
+        df.loc[1, "document_type"] = "  "
+
+        result = IntegrityDetector().detect(df)
+
+        assert result.details["L1-02"].iloc[1] == pytest.approx(0.48)
 
 
 # ── L1-03: 무효 계정 ────────────────────────────────────────────
@@ -181,15 +207,55 @@ class TestA03InvalidAccount:
         a03_scores = result.details.get("L1-03", pd.Series(0.0, index=dt_balanced_df.index))
         assert (a03_scores == 0.0).all()
 
+    def test_invalid_account_scores_reflect_account_quality(self, dt_balanced_df):
+        """L1-03 score separates ordinary unknown, unknown family, malformed, and placeholders."""
+        df = pd.concat([dt_balanced_df.iloc[[0]]] * 4, ignore_index=True)
+        df["document_id"] = ["D1", "D2", "D3", "D4"]
+        df["gl_account"] = ["1999", "9000", "ABC", "9999"]
+        detector = IntegrityDetector(chart_of_accounts={"1000", "2000"})
+        result = detector.detect(df)
+
+        assert result.details["L1-03"].tolist() == pytest.approx([0.60, 0.70, 0.75, 0.80])
+        annotations = result.metadata["row_annotations"]["L1-03"]
+        assert annotations[0]["bucket"] == "unknown_account"
+        assert annotations[1]["bucket"] == "unknown_account_family"
+        assert annotations[2]["bucket"] == "malformed_account"
+        assert annotations[3]["bucket"] == "placeholder_or_reserved"
+        assert result.metadata["rule_breakdowns"]["L1-03"]["score_bands"] == {
+            "unknown_account": 1,
+            "unknown_account_family": 1,
+            "malformed_account": 1,
+            "placeholder_or_reserved": 1,
+        }
+
+    def test_invalid_account_context_boost_is_capped(self, dt_balanced_df):
+        """High amount/manual/period-end context can raise L1-03 without exceeding the cap."""
+        df = pd.concat([dt_balanced_df.iloc[[0]]] * 3, ignore_index=True)
+        df["document_id"] = ["D1", "D2", "D3"]
+        df["gl_account"] = ["1999", "9999", "9999"]
+        df["debit_amount"] = [10.0, 20.0, 1_000_000.0]
+        df["credit_amount"] = [0.0, 0.0, 0.0]
+        df["source"] = ["system", "system", "manual"]
+        df["posting_date"] = pd.to_datetime(["2025-01-10", "2025-01-10", "2025-01-31"])
+
+        detector = IntegrityDetector(chart_of_accounts={"1000", "2000"})
+        result = detector.detect(df)
+
+        assert result.details["L1-03"].iloc[0] == pytest.approx(0.60)
+        assert result.details["L1-03"].iloc[2] == pytest.approx(0.90)
+        annotations = result.metadata["row_annotations"]["L1-03"]
+        assert annotations[2]["context_boost"] == pytest.approx(0.10)
+        assert "manual_or_adjustment_context" in annotations[2]["context_reasons"]
+        assert "period_end_context" in annotations[2]["context_reasons"]
+
     def test_invalid_account_flagged(self, dt_balanced_df, dt_coa):
         """CoA에 없는 계정 → 플래그."""
         # gl_account 9999는 CoA에 없음
         df = dt_balanced_df.copy()
-        df.loc[0, "gl_account"] = 9999
+        df.loc[0, "gl_account"] = 1999
         detector = IntegrityDetector(chart_of_accounts=dt_coa)
         result = detector.detect(df)
-        expected_score = SEVERITY_MAP["L1-03"] / 5
-        assert result.details["L1-03"].iloc[0] == pytest.approx(expected_score)
+        assert result.details["L1-03"].iloc[0] == pytest.approx(0.60)
 
     def test_no_coa_skips_with_warning(self, dt_balanced_df):
         """CoA=None + settings 경로 비활성 → L1-03 skipped."""
@@ -226,8 +292,7 @@ class TestA03InvalidAccount:
         df.loc[0, "gl_account"] = "9999.0"
         detector = IntegrityDetector(chart_of_accounts={"1000", "2000"})
         result = detector.detect(df)
-        expected_score = SEVERITY_MAP["L1-03"] / 5
-        assert result.details["L1-03"].iloc[0] == pytest.approx(expected_score)
+        assert result.details["L1-03"].iloc[0] == pytest.approx(0.80)
 
     def test_blank_account_is_not_l103(self, dt_balanced_df):
         """빈 계정은 L1-03이 아니라 L1-02에서 처리한다."""
@@ -460,8 +525,8 @@ class TestDetectIntegration:
         result = detector.detect(df)
 
         a01_score = 0.90  # imbalance ratio 50 / 100 = 50%
-        a03_score = SEVERITY_MAP["L1-03"] / 5  # 0.6
-        # idx 2: L1-01+L1-03 동시 위반 → max(1.0, 0.6) = 1.0
+        a03_score = 0.80  # placeholder/reserved invalid account
+        # idx 2: L1-01+L1-03 동시 위반 → max(0.90, 0.80) = 0.90
         assert result.scores.iloc[2] == pytest.approx(max(a01_score, a03_score))
 
     def test_skipped_rules_in_metadata(self, dt_balanced_df):

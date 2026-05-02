@@ -19,11 +19,15 @@ class TestL4_06:
         })
         # Why: 배치 10건 중 기말 8건 = 80% > 50% 임계
         result = c13_batch_anomaly(df, period_end_ratio=0.5)
-        assert result.attrs["score_series"].loc[result].eq(0.40).all()
+        assert result.attrs["score_series"].loc[result].eq(0.45).all()
         assert result.attrs["breakdown"]["period_end_concentration_rows"] == 10
+        assert result.attrs["breakdown"]["period_end_only_rows"] == 10
         assert result.attrs["row_annotations"][0]["reason_codes"] == [
             "period_end_concentration",
         ]
+        assert result.attrs["row_annotations"][0]["score_bucket"] == (
+            "period_end_concentration"
+        )
         assert result[:10].all()   # 배치 전체 플래그
         assert not result[10:].any()  # 수기 전표는 미플래그
 
@@ -82,8 +86,64 @@ class TestL4_06:
         )
         # Why: 마지막 행(10000)은 Z-score 크게 초과
         assert result[19]
+        assert result.attrs["score_series"].iloc[19] == 0.25
+        assert result.attrs["row_annotations"][19]["score_bucket"] == (
+            "amount_outlier_only"
+        )
         # Why: 이상치(idx=19) 외 정상 금액 행은 미플래그
         assert not result[:18].any()
+
+    def test_batch_amount_outlier_uses_document_amount_when_document_id_exists(self) -> None:
+        """Multi-line documents are scored by document-level max amount."""
+        rows = []
+        for i in range(19):
+            rows.extend([
+                {
+                    "source": "batch",
+                    "document_id": f"D{i:03d}",
+                    "is_period_end": False,
+                    "debit_amount": 100.0,
+                    "credit_amount": 0.0,
+                    "posting_date": pd.Timestamp("2025-01-01"),
+                },
+                {
+                    "source": "batch",
+                    "document_id": f"D{i:03d}",
+                    "is_period_end": False,
+                    "debit_amount": 100.0,
+                    "credit_amount": 0.0,
+                    "posting_date": pd.Timestamp("2025-01-01"),
+                },
+            ])
+        rows.extend([
+            {
+                "source": "batch",
+                "document_id": "D_OUT",
+                "is_period_end": False,
+                "debit_amount": 10_000.0,
+                "credit_amount": 0.0,
+                "posting_date": pd.Timestamp("2025-01-01"),
+            },
+            {
+                "source": "batch",
+                "document_id": "D_OUT",
+                "is_period_end": False,
+                "debit_amount": 10.0,
+                "credit_amount": 0.0,
+                "posting_date": pd.Timestamp("2025-01-01"),
+            },
+        ])
+        df = pd.DataFrame(rows)
+
+        result = c13_batch_anomaly(
+            df,
+            period_end_ratio=0.99,
+            simultaneous_threshold=100,
+            amount_zscore=2.0,
+        )
+
+        assert result[df["document_id"].eq("D_OUT")].all()
+        assert not result[~df["document_id"].eq("D_OUT")].any()
 
     def test_non_batch_not_flagged(self) -> None:
         """비배치(manual) 전표는 어떤 조건에도 미플래그."""
@@ -163,7 +223,35 @@ class TestL4_06:
         assert result.all()
         assert result.attrs["breakdown"]["batch_review_docs"] == 4
         assert result.attrs["breakdown"]["amount_outlier_docs"] == 1
+        assert result.attrs["breakdown"]["multi_signal_batch_docs"] == 4
+        assert result.attrs["score_series"].loc[result].eq(0.65).all()
         reasons = result.attrs["row_annotations"][3]["reason_codes"]
         assert "period_end_concentration" in reasons
         assert "simultaneous_creation" in reasons
         assert "amount_outlier" in reasons
+        assert result.attrs["row_annotations"][3]["score_bucket"] == "multi_signal_batch"
+
+    def test_batch_simultaneous_creation_uses_exact_timestamp_not_calendar_day(self) -> None:
+        """Batch runs are grouped by exact posting timestamp, not the whole day."""
+        df = pd.DataFrame({
+            "source": ["automated"] * 55 + ["automated"] * 5,
+            "document_id": [f"D{i:03d}" for i in range(60)],
+            "is_period_end": [False] * 60,
+            "debit_amount": [100.0] * 60,
+            "credit_amount": [0.0] * 60,
+            "posting_date": (
+                [
+                    pd.Timestamp("2025-12-01 09:00:00") + pd.Timedelta(minutes=i)
+                    for i in range(55)
+                ]
+                + [
+                    pd.Timestamp("2025-12-02 09:00:00") + pd.Timedelta(minutes=i)
+                    for i in range(5)
+                ]
+            ),
+        })
+
+        result = c13_batch_anomaly(df, simultaneous_threshold=50, period_end_ratio=0.99)
+
+        assert not result.any()
+        assert result.attrs["breakdown"]["simultaneous_creation_docs"] == 0

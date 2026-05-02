@@ -451,7 +451,7 @@ def axis_fraud_signature(con) -> dict:
         ) GROUP BY 1 ORDER BY 2 DESC
     """))
 
-    # fraud_type별 월별 집중도 (L3-04 기말 대규모 대응성)
+    # fraud_type별 월별 집중도 (L3-04 기말/기초 결산 검토 후보군 대응성)
     out["fraud_month_concentration"] = {}
     for r in _q(con, """
         SELECT fraud_type, EXTRACT(MONTH FROM CAST(posting_date AS TIMESTAMP)) m,

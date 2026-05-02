@@ -202,10 +202,77 @@ class TestL4_04:
         assert result[9]
         assert result[10]
         assert result[11]
-        assert result.attrs["score_series"].loc[result].eq(0.40).all()
+        assert result.attrs["score_series"].loc[result].eq(0.25).all()
         assert result.attrs["breakdown"]["rare_pair_review_docs"] == 3
+        assert result.attrs["breakdown"]["single_rare_pair_docs"] == 3
         assert "rare_account_pair" in result.attrs["row_annotations"][8]["reason_codes"]
+        assert result.attrs["row_annotations"][8]["score_bucket"] == "single_rare_pair"
         assert result.attrs["row_annotations"][8]["sample_pairs"]
+
+    def test_score_bands_split_l404_review_priority(self) -> None:
+        rows = []
+        for i in range(5):
+            rows.extend([
+                {
+                    "document_id": f"D_FREQ_{i}",
+                    "gl_account": "1000",
+                    "debit_amount": 100.0,
+                    "credit_amount": 0.0,
+                },
+                {
+                    "document_id": f"D_FREQ_{i}",
+                    "gl_account": "2000",
+                    "debit_amount": 0.0,
+                    "credit_amount": 100.0,
+                },
+            ])
+        rows.extend([
+            {
+                "document_id": "D_SINGLE",
+                "gl_account": "3000",
+                "debit_amount": 100.0,
+                "credit_amount": 0.0,
+            },
+            {
+                "document_id": "D_SINGLE",
+                "gl_account": "4000",
+                "debit_amount": 0.0,
+                "credit_amount": 100.0,
+            },
+            {
+                "document_id": "D_MULTI",
+                "gl_account": "5000",
+                "debit_amount": 100.0,
+                "credit_amount": 0.0,
+            },
+            {
+                "document_id": "D_MULTI",
+                "gl_account": "6000",
+                "debit_amount": 50.0,
+                "credit_amount": 0.0,
+            },
+            {
+                "document_id": "D_MULTI",
+                "gl_account": "7000",
+                "debit_amount": 0.0,
+                "credit_amount": 150.0,
+            },
+        ])
+        df = pd.DataFrame(rows)
+
+        result = c09_rare_account_pair(df, percentile=0.2)
+        scores = result.attrs["score_series"]
+
+        assert result[df["document_id"].eq("D_SINGLE")].all()
+        assert result[df["document_id"].eq("D_MULTI")].all()
+        assert scores[df["document_id"].eq("D_SINGLE")].eq(0.25).all()
+        assert scores[df["document_id"].eq("D_MULTI")].eq(0.45).all()
+        assert result.attrs["breakdown"]["single_rare_pair_docs"] == 1
+        assert result.attrs["breakdown"]["multiple_rare_pair_docs"] == 1
+        multi_idx = df.index[df["document_id"].eq("D_MULTI")][0]
+        assert result.attrs["row_annotations"][multi_idx]["score_bucket"] == (
+            "multiple_rare_pairs"
+        )
 
     def test_frequent_pair_not_flagged(self, pair_df: pd.DataFrame) -> None:
         result = c09_rare_account_pair(pair_df, percentile=0.2)
@@ -287,3 +354,8 @@ class TestL4_04:
         )
         assert result.attrs["breakdown"]["large_document_count"] == 1
         assert result.attrs["breakdown"]["deduplicated_large_debit_account_rows"] == 100
+        assert result.attrs["score_series"][df["document_id"].eq("D_BIG")].eq(0.35).all()
+        big_idx = df.index[df["document_id"].eq("D_BIG")][0]
+        assert result.attrs["row_annotations"][big_idx]["score_bucket"] == (
+            "large_doc_distinct_pair"
+        )
