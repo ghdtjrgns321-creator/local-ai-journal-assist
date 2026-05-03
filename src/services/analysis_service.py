@@ -104,6 +104,15 @@ def run_phase_analysis(
     settings_factory: Callable[[], Any] | None = None,
 ):
     """Execute a phase-specific redetect flow and persist the result into state."""
+    import time
+    from datetime import datetime
+
+    _t_start = time.perf_counter()
+    print(
+        f"[TIMING] {phase} START at {datetime.now().strftime('%H:%M:%S.%f')[:-3]}",
+        flush=True,
+    )
+
     if pipeline_cls is None:
         from src.pipeline import AuditPipeline
 
@@ -121,6 +130,8 @@ def run_phase_analysis(
         phase=phase,
         settings_factory=settings_factory,
     )
+
+    _t_feat = time.perf_counter()
     if phase == "phase1":
         featured_df = build_phase1_core_feature_frame(prep_result, settings, ctx)
     else:
@@ -129,6 +140,12 @@ def run_phase_analysis(
             if prep_result.featured_data is not None
             else prep_result.data
         )
+    _t_feat_end = time.perf_counter()
+    print(
+        f"[TIMING] {phase} feature_build = {_t_feat_end - _t_feat:.2f}s "
+        f"(rows={len(featured_df):,}, cols={len(featured_df.columns):,})",
+        flush=True,
+    )
 
     if ctx is not None:
         ctx = ctx.clone_with_settings(settings)
@@ -137,11 +154,17 @@ def run_phase_analysis(
     else:
         pipeline = pipeline_cls(settings=settings, skip_db=False)
 
+    _t_det = time.perf_counter()
     result = pipeline.redetect(
         featured_df,
         batch_id="",
         file_name=prep_result.file_name,
         detection_scope="phase1_core" if phase == "phase1" else "default",
+    )
+    _t_det_end = time.perf_counter()
+    print(
+        f"[TIMING] {phase} redetect = {_t_det_end - _t_det:.2f}s",
+        flush=True,
     )
     result.file_name = prep_result.file_name
 
@@ -153,6 +176,13 @@ def run_phase_analysis(
     state[KEY_BATCH_ID] = result.batch_id
     state[KEY_PIPELINE_RESULT] = result
     state[KEY_FEATURED_DATA] = featured_df
+
+    _t_total = time.perf_counter() - _t_start
+    result.elapsed = _t_total
+    print(
+        f"[TIMING] {phase} TOTAL = {_t_total:.2f}s ({_t_total / 60:.2f}min)",
+        flush=True,
+    )
     return result
 
 

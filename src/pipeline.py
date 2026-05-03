@@ -606,6 +606,7 @@ class AuditPipeline:
                 results,
                 file_name=file_name,
                 performance_report=performance_report,
+                phase1_case_ref=phase1_case_ref,
             )
             warns.extend(w)
 
@@ -730,6 +731,7 @@ class AuditPipeline:
                 df, batch_id, results,
                 file_name=file_name,
                 performance_report=performance_report,
+                phase1_case_ref=phase1_case_ref,
             )
             warns.extend(w)
             logger.warning("[TIMING] db_load: %.1fs", time.monotonic() - _t)
@@ -1760,6 +1762,7 @@ class AuditPipeline:
 
     def _load_db(
         self, df, batch_id, results, *, file_name: str = "", performance_report=None,
+        phase1_case_ref: dict | None = None,
     ) -> tuple[object | None, list[str]]:
         conn, own_conn = self._conn, self._conn is None
         try:
@@ -1779,6 +1782,7 @@ class AuditPipeline:
             lr = load_all(
                 conn, df, batch_id, results,
                 file_name=file_name, tb_df=tb_df, datasynth_dir=datasynth_dir,
+                phase1_case_ref=phase1_case_ref,
             )
             if performance_report is not None:
                 save_report(conn, performance_report)

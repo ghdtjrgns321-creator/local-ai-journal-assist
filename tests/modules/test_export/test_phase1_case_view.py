@@ -9,9 +9,13 @@ import pandas as pd
 from src.detection.base import DetectionResult, RuleFlag
 from src.detection.phase1_case_builder import build_phase1_case_result
 from src.export.phase1_case_view import (
+    build_phase1_audit_risk_by_queue,
+    build_phase1_audit_risk_queue,
     build_phase1_case_drilldown,
     build_phase1_case_queue,
+    build_phase1_data_quality_gate,
     build_phase1_macro_finding_queue,
+    build_phase1_review_candidate_summary,
     resolve_phase1_case_result,
     summarize_phase1_case_result,
 )
@@ -36,6 +40,7 @@ def _make_pipeline_result() -> SimpleNamespace:
         {
             "L1-05": [0.8, 0.0],
             "L1-07": [0.8, 0.0],
+            "L1-08": [0.0, 0.9],
             "L3-04": [0.0, 0.6],
         },
         index=df.index,
@@ -47,6 +52,7 @@ def _make_pipeline_result() -> SimpleNamespace:
         rule_flags=[
             RuleFlag("L1-05", "SelfApproval", 4, 1, len(df)),
             RuleFlag("L1-07", "SkippedApproval", 4, 1, len(df)),
+            RuleFlag("L1-08", "PeriodMismatch", 5, 1, len(df)),
             RuleFlag("L3-04", "PeriodEndClosingReview", 3, 1, len(df)),
         ],
         details=details,
@@ -78,7 +84,33 @@ def _make_pipeline_result() -> SimpleNamespace:
     artifact_root.mkdir(parents=True, exist_ok=True)
     artifact_path = artifact_root / "phase1_case.json"
     artifact_path.write_text(phase1.model_dump_json(indent=2), encoding="utf-8")
+    low_signal_df = pd.concat(
+        [
+            df.assign(risk_level="Medium", anomaly_score=0.4, flagged_rules="", review_rules=""),
+            pd.DataFrame(
+                {
+                    "document_id": ["DOC-3"],
+                    "posting_date": pd.to_datetime(["2026-04-29"]),
+                    "created_by": ["park"],
+                    "business_process": ["A2R"],
+                    "gl_account": ["510000"],
+                    "debit_amount": [3_000_000.0],
+                    "credit_amount": [0.0],
+                    "auxiliary_account_number": ["V002"],
+                    "company_code": ["kr01"],
+                    "document_type": ["SA"],
+                    "risk_level": ["Normal"],
+                    "anomaly_score": [0.09],
+                    "flagged_rules": ["L3-02"],
+                    "review_rules": ["L3-12"],
+                }
+            ),
+        ],
+        ignore_index=True,
+    )
     return SimpleNamespace(
+        data=low_signal_df,
+        featured_data=low_signal_df,
         phase1_case_result=phase1,
         phase1_case_path=str(artifact_path),
         phase1_case_run_id=phase1.run_id,
@@ -99,6 +131,8 @@ def test_summarize_phase1_case_result_returns_theme_summary() -> None:
     assert summary["macro_findings"][0]["rule_id"] == "L4-02"
     assert summary["top_theme_labels"]
     assert summary["themes"]
+    assert summary["queues"]
+    assert summary["top_queue_labels"]
 
 
 def test_build_phase1_case_queue_and_drilldown_return_projection_rows() -> None:
@@ -109,6 +143,10 @@ def test_build_phase1_case_queue_and_drilldown_return_projection_rows() -> None:
 
     assert len(queue) == 1
     assert queue[0]["primary_theme_label"]
+    assert queue[0]["primary_queue"]
+    assert queue[0]["primary_queue_label"]
+    assert "triage_rank_score" in queue[0]
+    assert "triage_rank_reasons" in queue[0]
     assert queue[0]["representative_explanation"]
     assert "base_priority_score" in queue[0]
     assert "topside_bonus" in queue[0]
@@ -129,6 +167,84 @@ def test_build_phase1_case_queue_and_drilldown_return_projection_rows() -> None:
     assert "direct_risk" in drilldown["signal_sections"]
     assert drilldown["raw_rule_hits"][0]["signal_type"]
     assert drilldown["raw_rule_hits"][0]["signal_type_label"]
+
+
+def test_build_phase1_case_queue_filters_by_issue_queue() -> None:
+    pipeline_result = _make_pipeline_result()
+
+    queue = build_phase1_case_queue(
+        pipeline_result,
+        queue_id="control_approval",
+        top_n=10,
+    )
+
+    assert queue
+    assert all(
+        row["primary_queue"] == "control_approval"
+        or "control_approval" in row["secondary_queues"]
+        for row in queue
+    )
+
+
+def test_build_phase1_case_queue_returns_low_signal_candidates_separately() -> None:
+    pipeline_result = _make_pipeline_result()
+
+    queue = build_phase1_case_queue(
+        pipeline_result,
+        queue_id="low_signal_candidate",
+        top_n=10,
+    )
+    drilldown = build_phase1_case_drilldown(pipeline_result, queue[0]["case_id"])
+
+    assert len(queue) == 1
+    assert queue[0]["case_key"] == "DOC-3"
+    assert queue[0]["primary_queue"] == "low_signal_candidate"
+    assert queue[0]["priority_band"] == "low"
+    assert "not_mixed_into_main_queue" in queue[0]["triage_rank_reasons"]
+    assert drilldown is not None
+    assert drilldown["case"]["case_id"] == queue[0]["case_id"]
+
+
+def test_build_phase1_data_quality_gate_returns_work_items() -> None:
+    pipeline_result = _make_pipeline_result()
+
+    gate = build_phase1_data_quality_gate(pipeline_result)
+
+    assert gate["available"] is True
+    assert gate["items"]
+    assert any(item["rule_id"] == "L1-07" for item in gate["items"]) is False
+
+
+def test_build_phase1_audit_risk_queue_excludes_data_quality_cases() -> None:
+    pipeline_result = _make_pipeline_result()
+
+    queue = build_phase1_audit_risk_queue(pipeline_result, top_n=10)
+
+    assert queue
+    assert all(row["primary_queue"] != "data_integrity" for row in queue)
+    assert "queue_tiebreaker_score" in queue[0]
+    assert "queue_tiebreaker_reasons" in queue[0]
+
+
+def test_build_phase1_audit_risk_by_queue_returns_queue_ranked_items() -> None:
+    pipeline_result = _make_pipeline_result()
+
+    result = build_phase1_audit_risk_by_queue(pipeline_result, top_n_per_queue=2)
+
+    assert result["available"] is True
+    assert result["queues"]
+    assert all(len(queue["items"]) <= 2 for queue in result["queues"])
+    assert all("queue_tiebreaker_score" in queue["items"][0] for queue in result["queues"])
+
+
+def test_build_phase1_review_candidate_summary_returns_type_distribution() -> None:
+    pipeline_result = _make_pipeline_result()
+
+    summary = build_phase1_review_candidate_summary(pipeline_result)
+
+    assert summary["available"] is True
+    assert summary["items"]
+    assert all("queue_label" in row for row in summary["items"])
 
 
 def test_build_phase1_macro_finding_queue_returns_account_process_rows() -> None:

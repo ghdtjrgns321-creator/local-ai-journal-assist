@@ -46,6 +46,10 @@ class CaseGroupResult(BaseModel):
 
     case_id: str
     primary_theme: str
+    primary_queue: str = ""
+    primary_queue_label: str = ""
+    secondary_queues: list[str] = Field(default_factory=list)
+    secondary_queue_labels: list[str] = Field(default_factory=list)
     secondary_tags: list[str] = Field(default_factory=list)
     evidence_types: list[str] = Field(default_factory=list)
     case_key: str
@@ -58,6 +62,8 @@ class CaseGroupResult(BaseModel):
     l301_priority_bonus: float = 0.0
     priority_adjustment_reasons: list[str] = Field(default_factory=list)
     priority_band: str = "low"
+    triage_rank_score: float = 0.0
+    triage_rank_reasons: list[str] = Field(default_factory=list)
     amount_score: float = 0.0
     control_score: float = 0.0
     duplicate_or_outflow_score: float = 0.0

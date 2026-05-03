@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
@@ -80,7 +80,7 @@ class Phase2TrainingReport:
     company_id: str | None
     engagement_id: str | None
     created_at: str = field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat(),
+        default_factory=lambda: datetime.now(UTC).isoformat(),
     )
     status: Phase2TrainingStatus = Phase2TrainingStatus.PENDING
     label_summary: Phase2LabelSummary | None = None
