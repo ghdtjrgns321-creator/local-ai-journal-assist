@@ -37,8 +37,16 @@ def compute_kpis(df: pd.DataFrame) -> dict[str, int | float | str]:
     total_docs = df["document_id"].nunique() if "document_id" in df.columns else 0
     total_lines = len(df)
 
-    is_anomaly = df["risk_level"] != "Normal" if "risk_level" in df.columns else pd.Series(False, index=df.index)
-    anomaly_docs = df.loc[is_anomaly, "document_id"].nunique() if "document_id" in df.columns else 0
+    is_anomaly = (
+        df["risk_level"] != "Normal"
+        if "risk_level" in df.columns
+        else pd.Series(False, index=df.index)
+    )
+    anomaly_docs = (
+        df.loc[is_anomaly, "document_id"].nunique()
+        if "document_id" in df.columns
+        else 0
+    )
     anomaly_rate = anomaly_docs / max(total_docs, 1) * 100
 
     # Why: 전체 거래액 = 분모. 이상 금액만 보여주면 규모감 파악 불가.
@@ -66,8 +74,11 @@ def compute_kpis(df: pd.DataFrame) -> dict[str, int | float | str]:
     # Why: 나머지 KPI가 전표(document_id) 단위이므로 fraud_suspect도 통일.
     fraud_suspect = 0
     if "flagged_rules" in df.columns and "document_id" in df.columns:
-        has_b_rule = df["flagged_rules"].str.contains(r"B\d{2}", na=False)
-        fraud_suspect = df.loc[has_b_rule, "document_id"].nunique()
+        has_fraud_rule = df["flagged_rules"].str.contains(
+            r"\b(?:B\d{2}|L[23]-\d{2})\b",
+            na=False,
+        )
+        fraud_suspect = df.loc[has_fraud_rule, "document_id"].nunique()
 
     # Why: 이상 금액이 총액의 몇 %인지 — 규모감을 한눈에 전달.
     amount_ratio = anomaly_amount / max(total_amount, 1) * 100

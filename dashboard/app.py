@@ -17,18 +17,24 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import streamlit as st
 
 from dashboard._state import (
+    KEY_ACTIVE_RESULT_TAB,
     KEY_COMPANY_CONTEXT,
     KEY_COMPANY_ID,
     KEY_DEV_MODE,
     KEY_ENGAGEMENT_ID,
     KEY_INGEST_STAGE,
     KEY_LOADED_FROM_DB,
+    KEY_PENDING_RESULT_TAB,
     KEY_PHASE1_RESULT,
     KEY_PHASE2_RESULT,
     KEY_PIPELINE_RESULT,
     KEY_PREP_RESULT,
     KEY_UPLOAD_COUNT,
     init_state,
+)
+from dashboard._url_state import (
+    hydrate_selection_from_query_params,
+    sync_selection_to_query_params,
 )
 from dashboard.styles import inject_css
 from src.company.repository import CompanyRepository
@@ -58,6 +64,8 @@ if "_context_factory" not in ss:
     ss["_context_factory"] = _factory
 if "_conn_mgr" not in ss:
     ss["_conn_mgr"] = _conn_mgr
+
+hydrate_selection_from_query_params(ss, st.query_params)
 
 
 def _reset_to_company_select() -> None:
@@ -97,6 +105,21 @@ def _needs_ctx_refresh(ctx, company_id: str | None, engagement_id: str | None) -
     return ctx.company_id != company_id or ctx.engagement_id != engagement_id
 
 
+def _recover_selection_from_context() -> None:
+    """Restore company/engagement keys when a rerun drops them but context survives."""
+    ctx = ss.get(KEY_COMPANY_CONTEXT)
+    if ctx is None or getattr(ctx, "is_anonymous", True):
+        return
+    if not ss.get(KEY_COMPANY_ID):
+        ss[KEY_COMPANY_ID] = ctx.company_id
+    if not ss.get(KEY_ENGAGEMENT_ID):
+        ss[KEY_ENGAGEMENT_ID] = ctx.engagement_id
+    sync_selection_to_query_params(ss, st.query_params)
+
+
+_recover_selection_from_context()
+
+
 with st.sidebar:
     st.title("AI Audit Assistant")
 
@@ -134,6 +157,12 @@ with st.sidebar:
         file_label = _extract_file_name(upload_key)
         st.caption(f"{file_label} | {len(result.data):,}행 | {result.elapsed:.1f}초")
 
+        if dev_mode and ctx is not None and not ctx.is_anonymous:
+            from dashboard.components.dev_analysis_reset import render_dev_analysis_reset
+
+            reset_conn = _conn_mgr.get(str(ctx.db_path))
+            render_dev_analysis_reset(conn=reset_conn, state=ss)
+
         with st.expander("데이터 필터", expanded=False):
             from dashboard.components.filters import render_filters
 
@@ -156,84 +185,125 @@ with st.sidebar:
             render_apply_button()
 
 
-company_id = ss.get(KEY_COMPANY_ID)
-engagement_id = ss.get(KEY_ENGAGEMENT_ID)
-ctx = ss.get(KEY_COMPANY_CONTEXT)
-result = current_display_result(ss)
+def _render_main() -> None:
+    """Render the routed main page inside one replaceable root container."""
+    _recover_selection_from_context()
+    company_id = ss.get(KEY_COMPANY_ID)
+    engagement_id = ss.get(KEY_ENGAGEMENT_ID)
+    ctx = ss.get(KEY_COMPANY_CONTEXT)
+    result = current_display_result(ss)
 
-if company_id is None:
-    from dashboard.page_company import render_company_page
+    if company_id is None:
+        from dashboard.page_company import render_company_page
 
-    render_company_page(_repo)
-    st.stop()
-
-if engagement_id is None:
-    from dashboard.components.engagement_selector import render_engagement_selector
-
-    render_engagement_selector(company_id, _repo)
-    st.stop()
-
-if _needs_ctx_refresh(ctx, company_id, engagement_id):
-    ctx = _factory.create(company_id, engagement_id)
-    ss[KEY_COMPANY_CONTEXT] = ctx
-
-if result is None:
-    force_upload = ss.pop("_force_upload", False)
-
-    conn = _conn_mgr.get(str(ctx.db_path))
-    batches = list_saved_batches(conn)
-
-    if not batches.empty and not force_upload:
-        latest = batches.iloc[0]
-        bid = latest["upload_batch_id"]
-        progress = st.progress(0, text="이전 분석 결과 불러오는 중...")
-        try:
-            progress.progress(30, text="DB에서 데이터 조회 중...")
-            load_batch_into_state(ss, conn, bid)
-            progress.progress(70, text="탐지 결과 복원 중...")
-            progress.progress(100, text="완료!")
-            st.rerun()
-        except Exception:
-            progress.empty()
-            st.warning("이전 결과 로드 실패 — 새 파일을 업로드하세요.")
-    else:
-        if not batches.empty:
-            from dashboard.components.batch_selector import render_batch_selector
-
-            render_batch_selector(conn)
-            st.divider()
-        from dashboard.components.data_uploader import render_uploader
-
-        render_uploader()
+        render_company_page(_repo)
         st.stop()
+        return
 
-prep_result = ss.get(KEY_PREP_RESULT)
-phase1_result = ss.get(KEY_PHASE1_RESULT)
-phase2_result = ss.get(KEY_PHASE2_RESULT)
-display_result = current_display_result(ss)
-if display_result is None:
-    st.stop()
+    if engagement_id is None:
+        if result is not None:
+            st.warning(
+                "분석 결과는 남아 있지만 감사연도 선택 상태가 비었습니다. "
+                "회사 선택으로 돌아가 다시 연도를 선택해 주세요."
+            )
+            st.stop()
+            return
+        from dashboard.components.engagement_selector import render_engagement_selector
 
-col_info, col_btn = st.columns([4, 1])
-with col_info:
-    upload_key = ss.get(KEY_UPLOAD_COUNT, "")
-    file_label = _extract_file_name(upload_key)
-    st.markdown(f"### {file_label}")
-with col_btn:
-    if st.button("다른 파일 분석", use_container_width=True):
-        ss.pop(KEY_PREP_RESULT, None)
-        ss.pop(KEY_PHASE1_RESULT, None)
-        ss.pop(KEY_PHASE2_RESULT, None)
-        ss.pop(KEY_PIPELINE_RESULT, None)
-        ss.pop(KEY_UPLOAD_COUNT, None)
-        ss[KEY_LOADED_FROM_DB] = False
-        ss[KEY_INGEST_STAGE] = "UPLOAD"
-        ss["_force_upload"] = True
-        st.rerun()
-st.divider()
+        render_engagement_selector(company_id, _repo)
+        st.stop()
+        return
 
-from dashboard.tab_overview import render as render_overview  # noqa: E402
+    if _needs_ctx_refresh(ctx, company_id, engagement_id):
+        ctx = _factory.create(company_id, engagement_id)
+        ss[KEY_COMPANY_CONTEXT] = ctx
+        sync_selection_to_query_params(ss, st.query_params)
 
-tabs = st.tabs(["개요"])
-with tabs[0]:
-    render_overview(display_result)
+    if result is None:
+        force_upload = ss.pop("_force_upload", False)
+
+        conn = _conn_mgr.get(str(ctx.db_path))
+        batches = list_saved_batches(conn)
+
+        if not batches.empty and not force_upload:
+            latest = batches.iloc[0]
+            bid = latest["upload_batch_id"]
+            progress = st.progress(0, text="이전 분석 결과 불러오는 중...")
+            try:
+                progress.progress(30, text="DB에서 데이터 조회 중...")
+                load_batch_into_state(ss, conn, bid)
+                progress.empty()
+            except Exception:
+                progress.empty()
+                st.warning("이전 결과 로드 실패 - 새 파일을 업로드하세요.")
+
+        result = current_display_result(ss)
+        if result is None:
+            from dashboard.components.data_uploader import render_uploader
+
+            render_uploader()
+            st.stop()
+            return
+
+    prep_result = ss.get(KEY_PREP_RESULT)
+    phase1_result = ss.get(KEY_PHASE1_RESULT)
+    display_result = current_display_result(ss)
+    if display_result is None:
+        st.stop()
+        return
+
+    col_info, col_btn = st.columns([4, 1])
+    with col_info:
+        upload_key = ss.get(KEY_UPLOAD_COUNT, "")
+        file_label = _extract_file_name(upload_key)
+        st.markdown(f"### {file_label}")
+    with col_btn:
+        if st.button("다른 파일 분석", use_container_width=True):
+            ss.pop(KEY_PREP_RESULT, None)
+            ss.pop(KEY_PHASE1_RESULT, None)
+            ss.pop(KEY_PHASE2_RESULT, None)
+            ss.pop(KEY_PIPELINE_RESULT, None)
+            ss.pop(KEY_UPLOAD_COUNT, None)
+            ss[KEY_ACTIVE_RESULT_TAB] = "개요"
+            ss[KEY_PENDING_RESULT_TAB] = None
+            ss[KEY_LOADED_FROM_DB] = False
+            ss[KEY_INGEST_STAGE] = "UPLOAD"
+            ss["_force_upload"] = True
+            st.rerun()
+    st.divider()
+
+    from dashboard.tab_overview import render_pre_analysis as render_overview  # noqa: E402
+
+    tab_labels = ["개요"]
+    if phase1_result is not None:
+        tab_labels.append("Phase 1 결과")
+
+    pending_tab = ss.pop(KEY_PENDING_RESULT_TAB, None)
+    if pending_tab in tab_labels:
+        ss[KEY_ACTIVE_RESULT_TAB] = pending_tab
+    if ss.get(KEY_ACTIVE_RESULT_TAB, "개요") not in tab_labels:
+        ss[KEY_ACTIVE_RESULT_TAB] = "개요"
+
+    nav_key = "audit_main_nav_radio"
+    ss[nav_key] = ss[KEY_ACTIVE_RESULT_TAB]
+    with st.container(key="main_result_nav"):
+        selected_tab = st.radio(
+            "결과 화면",
+            tab_labels,
+            horizontal=True,
+            key=nav_key,
+            label_visibility="collapsed",
+        )
+    ss[KEY_ACTIVE_RESULT_TAB] = selected_tab
+
+    if selected_tab == "개요":
+        render_overview(prep_result or display_result)
+    elif selected_tab == "Phase 1 결과" and phase1_result is not None:
+        from dashboard.tab_phase1 import render as render_phase1  # noqa: E402
+
+        render_phase1(prep_result or display_result, phase1_result)
+
+
+_main_slot = st.empty()
+with _main_slot.container():
+    _render_main()

@@ -35,7 +35,6 @@ from dashboard._state import (
 )
 from src.company.models import EngagementProfile, EngagementStatus
 
-
 # Why: engagement 삭제 시 분석 결과/ingest 캐시/CompanyContext가 stale 상태로 남으면
 #      이후 화면이 잘못된 데이터를 표시하므로, 한 번에 깨끗이 정리한다.
 _ENGAGEMENT_SCOPED_KEYS: tuple[str, ...] = (

@@ -9,10 +9,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import streamlit as st
-
-from dashboard._state import KEY_COMPANY_ID
 from pydantic import ValidationError
 
+from dashboard._state import KEY_COMPANY_ID
 from src.company.models import CompanyProfile
 
 if TYPE_CHECKING:

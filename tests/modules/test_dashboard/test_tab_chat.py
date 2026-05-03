@@ -6,7 +6,7 @@ Streamlit 렌더 코드는 직접 테스트하지 않고(기존 컨벤션 준수
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pandas as pd
 import pytest
@@ -22,7 +22,6 @@ from dashboard.tab_chat import (
     _truncate_preview,
 )
 from src.llm.text_to_sql import AuditTextToSQL, SQLResult
-
 
 # ── _truncate_preview ──────────────────────────────────────────
 

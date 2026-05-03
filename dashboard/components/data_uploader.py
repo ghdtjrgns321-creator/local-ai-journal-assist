@@ -26,8 +26,8 @@ from dashboard._state import (
     KEY_INGEST_CONFIRMED,
     KEY_INGEST_DATA_DF,
     KEY_INGEST_MAPPING_RESULT,
-    KEY_INGEST_PREPARED_DF,
     KEY_INGEST_PREP_WARNINGS,
+    KEY_INGEST_PREPARED_DF,
     KEY_INGEST_READ_RESULT,
     KEY_INGEST_SELECTED_SHEET,
     KEY_INGEST_SHEET_SCORES,
@@ -264,7 +264,8 @@ def _render_column_diff_section() -> None:
             for old, new, sim in diff.renamed:
                 st.markdown(f"- `{old}` → `{new}`  (유사도 {sim:.0f}%)")
             st.caption(
-                "ERP 접미사/약어 변경으로 추정되는 컬럼입니다. 매핑이 이전과 동일한지 왼쪽 패널에서 확인해 주세요."
+                "ERP 접미사/약어 변경으로 추정되는 컬럼입니다. "
+                "매핑이 이전과 동일한지 왼쪽 패널에서 확인해 주세요."
             )
 
     if diff.added:
@@ -278,7 +279,8 @@ def _render_column_diff_section() -> None:
             for col in diff.removed:
                 st.markdown(f"- `{col}`")
             st.caption(
-                "이전 업로드에 있었지만 이번엔 제공되지 않은 컬럼입니다. 관련 감사 검사가 누락될 수 있습니다."
+                "이전 업로드에 있었지만 이번엔 제공되지 않은 컬럼입니다. "
+                "관련 감사 검사가 누락될 수 있습니다."
             )
 
 
@@ -289,7 +291,6 @@ def _detect_column_mismatch(read_result) -> str | None:
     헤더 이후 행만 검사. 대용량(10만행+)은 상위 1000행 샘플 사용.
     인크리멘탈 진단에서 이미 전체 검사했으므로 여기서는 UI 보충용.
     """
-    import pandas as pd
 
     if read_result is None:
         return None
@@ -631,7 +632,6 @@ def _render_scientific_notation_warning(detail: str) -> None:
 
 def _render_repair_preview(read_result, data_df, source_columns) -> bool:
     """현재 모습(왼쪽) vs 복구 후 모습(오른쪽) 비교. 복구 가능 여부를 반환."""
-    import pandas as pd
     from src.ingest.text_reader import repair_dataframe
 
     if data_df is None or len(source_columns) == 0:
@@ -668,8 +668,7 @@ def _render_repair_preview(read_result, data_df, source_columns) -> bool:
 
 def _apply_auto_repair(read_result, data_df, source_columns) -> None:
     """사용자가 자동 복구를 승인한 경우 실행."""
-    from src.ingest.column_mapper import auto_map_columns, prepare_dataframe
-    from src.ingest.header_detector import detect_headers
+    from src.ingest.column_mapper import auto_map_columns
     from src.ingest.text_reader import repair_dataframe
 
     tmp_path = st.session_state.get("_ingest_tmp_path")
@@ -938,7 +937,9 @@ def _run_pipeline_from_mapped(file_key: str, progress_cb, *, prepare_only: bool 
     settings = st.session_state.get(KEY_SETTINGS)
     repo = st.session_state.get("_company_repo")
     # Why: DB upload_batches 메타에 파일명 기록 (PipelineResult.file_name 경유)
-    fname = st.session_state.get("_ingest_source_hint") or (file_key.rsplit("_", 1)[0] if file_key else "")
+    fname = st.session_state.get("_ingest_source_hint") or (
+        file_key.rsplit("_", 1)[0] if file_key else ""
+    )
     source_path = st.session_state.get("_ingest_tmp_path")
     if source_path and not st.session_state.get("_ingest_source_hint"):
         fname = source_path

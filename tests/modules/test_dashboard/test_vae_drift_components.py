@@ -80,6 +80,7 @@ class TestDriftBannerReport:
 
     def test_compute_drift_report_integration_stable(self, metadata_stable):
         import numpy as np
+
         from src.preprocessing.drift_detector import compute_drift_report
 
         rng = np.random.default_rng(0)
@@ -91,6 +92,7 @@ class TestDriftBannerReport:
 
     def test_compute_drift_report_integration_critical(self, metadata_critical):
         import numpy as np
+
         from src.preprocessing.drift_detector import compute_drift_report
 
         rng = np.random.default_rng(0)
@@ -106,17 +108,15 @@ class TestDriftBannerReport:
         from dashboard.components.drift_banner import _render_report_table
         from src.preprocessing.drift_detector import DriftReport
 
-        reports = [
-            DriftReport(
-                model_name="m1",
-                version=1,
-                column_psi={"x": 0.3},
-                max_psi=0.3,
-                max_psi_column="x",
-                overall_status="critical",
-                schema_mismatch=False,
-            ),
-        ]
+        DriftReport(
+            model_name="m1",
+            version=1,
+            column_psi={"x": 0.3},
+            max_psi=0.3,
+            max_psi_column="x",
+            overall_status="critical",
+            schema_mismatch=False,
+        )
         # Why: _render_report_table은 streamlit에 의존하지만 import는 가능해야 함
         #      실제 렌더는 Streamlit runtime 없이는 테스트 불가 — import만 확인
         assert callable(_render_report_table)
@@ -206,7 +206,9 @@ class TestDataSynthMetadataNotice:
         df.attrs.update(
             {
                 "datasynth_metadata_status": "fail",
-                "datasynth_metadata_path": "data/journal/primary/datasynth/validated_metadata_2024.json",
+                "datasynth_metadata_path": (
+                    "data/journal/primary/datasynth/validated_metadata_2024.json"
+                ),
                 "datasynth_metadata_critical_mismatches": [
                     "total_entries: reported=0, observed=2",
                 ],

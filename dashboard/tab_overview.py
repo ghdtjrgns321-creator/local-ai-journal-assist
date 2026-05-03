@@ -13,7 +13,12 @@ import pandas as pd
 import streamlit as st
 
 from dashboard._kpi import compute_kpis
-from dashboard._state import KEY_COMPANY_CONTEXT, KEY_FILTERS
+from dashboard._state import (
+    KEY_ACTIVE_RESULT_TAB,
+    KEY_COMPANY_CONTEXT,
+    KEY_FILTERS,
+    KEY_PENDING_RESULT_TAB,
+)
 from dashboard.components.charts import (
     benford_overlay,
     monthly_trend,
@@ -72,6 +77,16 @@ def render(result: PipelineResult) -> None:
         _render_after(result)
     else:
         _render_before(result)
+
+
+def render_pre_analysis(result: PipelineResult) -> None:
+    """분석 결과와 분리해 개요 탭은 항상 실행 전 화면으로 유지."""
+    _render_before(result)
+
+
+def render_analysis_result(result: PipelineResult) -> None:
+    """Phase 결과 탭에서 분석 후 화면만 렌더링."""
+    _render_after(result)
 
 
 # ── Before — 분석 전 ───────────────────────────────────────
@@ -773,14 +788,16 @@ def _run_phase1() -> None:
     """Run Phase 1 only. Completed result is reflected on rerun."""
     from dashboard.components.analysis_runner import run_phase_analysis
 
-    progress = st.progress(0, text="Phase 1 룰 기반 감사 시작...")
+    progress = st.progress(0, text="Phase 1 룰 기반 감사 시작... 약 5분 정도 소요됩니다.")
     try:
-        progress.progress(20, text="Phase 1 룰 기반 탐지 실행 중...")
+        progress.progress(20, text="Phase 1 룰 기반 탐지 실행 중... 약 5분 정도 소요됩니다.")
         run_phase_analysis(phase="phase1")
         progress.progress(100, text="완료")
     except Exception as e:
         st.error(f"Phase 1 실행 실패: {e}")
         return
+    st.session_state[KEY_ACTIVE_RESULT_TAB] = "Phase 1 결과"
+    st.session_state[KEY_PENDING_RESULT_TAB] = "Phase 1 결과"
     # 새로 생성된 탐지 결과 반영을 위해 rerun
     st.rerun()
 

@@ -11,7 +11,7 @@ import logging
 import streamlit as st
 import yaml
 
-from config.settings import AuditSettings, CONFIG_DIR, get_settings
+from config.settings import CONFIG_DIR, AuditSettings, get_settings
 from dashboard._state import (
     KEY_COMPANY_CONTEXT,
     KEY_PRESET,

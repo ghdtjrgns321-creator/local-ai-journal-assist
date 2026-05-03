@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from src.pipeline import PipelineResult
 
 
-def render(result: "PipelineResult") -> None:
+def render(result: PipelineResult) -> None:
     """Tab 3 메인 렌더 함수."""
     # 1. 필터 적용
     df = apply_filters(result.data, st.session_state.get(KEY_FILTERS, {}))
@@ -68,7 +68,7 @@ def render(result: "PipelineResult") -> None:
         st.info("행을 선택하면 상세 정보를 확인할 수 있습니다.")
 
 
-def _get_connection(result: "PipelineResult"):
+def _get_connection(result: PipelineResult):
     """DB 적재 완료 시 싱글톤 DuckDB 커넥션 반환, 아니면 None.
 
     Why: 매 렌더마다 duckdb.connect()를 호출하면 파일 핸들 누수 + 쓰기 락 충돌.

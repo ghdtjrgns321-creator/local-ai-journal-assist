@@ -149,8 +149,14 @@ def build_grid(
 
     total = len(df)
     if total > _GRID_MAX_ROWS:
-        df = df.nlargest(_GRID_MAX_ROWS, "anomaly_score") if "anomaly_score" in df.columns else df.head(_GRID_MAX_ROWS)
-        st.caption(f"전체 {total:,}건 중 이상점수 상위 {_GRID_MAX_ROWS:,}건 표시 (필터로 범위를 좁혀보세요)")
+        if "anomaly_score" in df.columns:
+            df = df.nlargest(_GRID_MAX_ROWS, "anomaly_score")
+        else:
+            df = df.head(_GRID_MAX_ROWS)
+        st.caption(
+            f"전체 {total:,}건 중 이상점수 상위 {_GRID_MAX_ROWS:,}건 표시 "
+            "(필터로 범위를 좁혀보세요)"
+        )
 
     # Why: whitelist 행에 시각 표시용 임시 컬럼 추가
     show_df = df.copy()

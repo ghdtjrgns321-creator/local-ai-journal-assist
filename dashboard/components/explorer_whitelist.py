@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 def render_whitelist(
     doc_id: str,
-    conn: "duckdb.DuckDBPyConnection",
+    conn: duckdb.DuckDBPyConnection,
     batch_id: str,
     result_data: pd.DataFrame,
 ) -> bool:
@@ -160,7 +160,7 @@ def _sync_memory(result_data: pd.DataFrame, doc_id: str, rule_codes: list[str]) 
         result_data.loc[mask, "anomaly_score"] = 0.0
 
 
-def _load_engagement_identity(conn: "duckdb.DuckDBPyConnection") -> tuple[str | None, str | None]:
+def _load_engagement_identity(conn: duckdb.DuckDBPyConnection) -> tuple[str | None, str | None]:
     """Load company/engagement identity from the engagement DB."""
     try:
         row = conn.execute(

@@ -1,4 +1,5 @@
-"""shadcn/Linear 스타일 대시보드 CSS — 모던 프로페셔널 UI.
+# ruff: noqa: E501
+"""shadcn/Linear 스타일 대시보드 CSS - 모던 프로페셔널 UI.
 
 Color System (Tailwind slate + neutral):
   #FFFFFF  Background — 페이지 배경
@@ -43,6 +44,26 @@ CUSTOM_CSS = """
 
 html, body, [class*="css"] {
     font-family: var(--font) !important;
+}
+
+/* Why: Streamlit rerun 중 이전 element를 stale 상태로 낮은 opacity 처리한다.
+   탭/라디오/option_menu 클릭마다 화면 전체가 흐릿한 이전 화면처럼 보여 UX가 깨지므로
+   앱의 레이아웃/콘텐츠 컨테이너에는 stale opacity가 전파되지 않게 고정한다. */
+.stMainBlockContainer,
+.stMainBlockContainer [data-testid="stElementContainer"],
+.stMainBlockContainer [data-testid="stVerticalBlock"],
+.stMainBlockContainer [data-testid="stHorizontalBlock"],
+.stMainBlockContainer [data-testid="stColumn"],
+.stMainBlockContainer [data-testid="stMarkdown"],
+.stMainBlockContainer [data-testid="stMarkdownContainer"],
+.stMainBlockContainer [data-testid="stPlotlyChart"],
+.stMainBlockContainer [data-testid="stDataFrame"],
+.stMainBlockContainer [data-testid="stTable"],
+.stMainBlockContainer .stDataFrame,
+.stMainBlockContainer .stPlotlyChart,
+.stMainBlockContainer .element-container {
+    opacity: 1 !important;
+    filter: none !important;
 }
 
 /* ── Layout ────────────────────────────────────────── */
@@ -92,17 +113,15 @@ section[data-testid="stSidebar"] .streamlit-expanderHeader {
     border-radius: var(--r-sm) !important;
 }
 
-/* ── Metric Cards ──────────────────────────────────── */
+/* ── Metric (flat) ─────────────────────────────────── */
+/* Why: 카드형 박스 제거 → shadcn 톤의 flat 디자인.
+       border=True 인자로 명시적으로 카드를 원하는 경우만 Streamlit 기본 동작 사용. */
 [data-testid="stMetric"] {
-    background: var(--c-bg);
-    border: 1px solid var(--c-border);
-    border-radius: var(--r-md);
-    padding: 1rem 1.25rem;
-    box-shadow: var(--s-sm);
-    transition: box-shadow 0.15s ease;
-}
-[data-testid="stMetric"]:hover {
-    box-shadow: var(--s-md);
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    padding: 0;
+    box-shadow: none;
 }
 [data-testid="stMetric"] label {
     color: var(--c-text-secondary) !important;
@@ -150,6 +169,87 @@ section[data-testid="stSidebar"] .streamlit-expanderHeader {
 }
 .stTabs [data-baseweb="tab-highlight"],
 .stTabs [data-baseweb="tab-border"] { display: none !important; }
+
+/* Main result navigation.
+   Why: st.tabs renders hidden tabs and option_menu adds component overhead.
+   A native radio keeps only the selected page rendered, while this scope makes it read as top-level nav. */
+.st-key-main_result_nav {
+    margin: 0.6rem 0 2rem;
+}
+.st-key-main_result_nav [role="radiogroup"] {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    width: 100%;
+}
+.st-key-main_result_nav [role="radiogroup"] label {
+    flex: 1 1 0;
+    max-width: 620px;
+    min-height: 48px;
+    justify-content: center;
+    border-radius: var(--r-md);
+    border: 1px solid var(--c-border);
+    background: var(--c-surface);
+    color: var(--c-text-secondary);
+    padding: 0.75rem 2rem;
+    box-shadow: none;
+}
+.st-key-main_result_nav [role="radiogroup"] label:hover {
+    background: var(--c-surface-hover);
+    color: var(--c-text);
+}
+.st-key-main_result_nav [role="radiogroup"] label:has(input:checked) {
+    background: #111827 !important;
+    border-color: #111827 !important;
+    color: #FFFFFF !important;
+    box-shadow: var(--s-btn);
+}
+.st-key-main_result_nav [role="radiogroup"] label:has(input:checked) * {
+    color: #FFFFFF !important;
+}
+.st-key-main_result_nav [role="radiogroup"] input {
+    display: none;
+}
+.st-key-main_result_nav [role="radiogroup"] p {
+    font-size: 0.95rem;
+    font-weight: 600;
+}
+
+/* Phase1 section navigation: smaller than top-level nav, but still single-render radio. */
+.st-key-phase1_section_nav_wrap [role="radiogroup"] {
+    display: flex;
+    gap: 0;
+    width: 100%;
+    background: var(--c-surface);
+    border-radius: var(--r-md);
+    border: 1px solid var(--c-border);
+    padding: 3px;
+}
+.st-key-phase1_section_nav_wrap [role="radiogroup"] label {
+    min-height: 40px;
+    justify-content: center;
+    border-radius: var(--r-sm);
+    padding: 0.45rem 1rem;
+    color: var(--c-text-secondary);
+    background: transparent;
+    border: none;
+}
+.st-key-phase1_section_nav_wrap [role="radiogroup"] label:hover {
+    color: var(--c-text);
+    background: var(--c-surface-hover);
+}
+.st-key-phase1_section_nav_wrap [role="radiogroup"] label:has(input:checked) {
+    background: var(--c-bg) !important;
+    color: var(--c-text) !important;
+    box-shadow: var(--s-sm);
+}
+.st-key-phase1_section_nav_wrap [role="radiogroup"] input {
+    display: none;
+}
+.st-key-phase1_section_nav_wrap [role="radiogroup"] p {
+    font-size: 0.85rem;
+    font-weight: 500;
+}
 
 /* ── Buttons ───────────────────────────────────────── */
 .stMainBlockContainer .stButton > button {

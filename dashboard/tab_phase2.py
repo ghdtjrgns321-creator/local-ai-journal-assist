@@ -16,12 +16,14 @@ if TYPE_CHECKING:
 def render(prep_result, result: PipelineResult | None) -> None:
     st.subheader("Phase 2 이상 탐지")
     st.caption(
-        "Phase 1 이후에 보는 보조 심화 단계입니다. 룰 기반 탐지에서 놓칠 수 있는 패턴 기반 이상 징후를 추가로 점검합니다."
+        "Phase 1 이후에 보는 보조 심화 단계입니다. 룰 기반 탐지에서 "
+        "놓칠 수 있는 패턴 기반 이상 징후를 추가로 점검합니다."
     )
 
     if result is None:
         st.info(
-            "아직 Phase 2 분석을 실행하지 않았습니다. 필요할 때만 추가 실행해서 패턴 기반 이상 징후를 보강하세요."
+            "아직 Phase 2 분석을 실행하지 않았습니다. 필요할 때만 "
+            "추가 실행해서 패턴 기반 이상 징후를 보강하세요."
         )
         _render_prep_metrics(prep_result)
         if st.button("Phase 2 분석 시작", type="primary", key="run_phase2"):

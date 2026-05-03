@@ -45,7 +45,8 @@ def render_batch_status_banner(result) -> None:
 
     if status == "degraded":
         st.warning(
-            f"배치 상태: 부분 분석. 일부 detector에 coverage 제한이 있어 경고 {len(warnings)}건과 실행 상세를 함께 확인해야 합니다.",
+            f"배치 상태: 부분 분석. 일부 detector에 coverage 제한이 있어 "
+            f"경고 {len(warnings)}건과 실행 상세를 함께 확인해야 합니다.",
             icon=":material/warning:",
         )
     elif status == "failed":

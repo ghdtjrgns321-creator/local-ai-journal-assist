@@ -16,8 +16,14 @@ from __future__ import annotations
 #      별도 헬퍼 함수 없이 dict만 노출하여 호출부에서 직접 사용.
 ML_TOOLTIPS: dict[str, str] = {
     # --- ML 성능 지표 ---
-    "AUPRC": "모델이 부정 전표를 얼마나 정확하게 골라내는지를 나타내는 종합 점수 (0~1, 높을수록 좋음)",
-    "F2-score": "부정을 놓치지 않는 능력에 가중치를 둔 정확도 (0~1, Recall을 Precision보다 2배 중시)",
+    "AUPRC": (
+        "모델이 부정 전표를 얼마나 정확하게 골라내는지를 나타내는 종합 점수 "
+        "(0~1, 높을수록 좋음)"
+    ),
+    "F2-score": (
+        "부정을 놓치지 않는 능력에 가중치를 둔 정확도 "
+        "(0~1, Recall을 Precision보다 2배 중시)"
+    ),
     "DR@FAR=5%": "오탐 5%를 허용할 때 실제 부정을 몇 퍼센트 잡아내는지 (Detection Rate)",
     "Precision": "모델이 '이상'으로 판정한 것 중 실제 이상인 비율 (오탐 제어)",
     "Recall": "실제 이상 중 모델이 잡아낸 비율 (미탐 제어)",
@@ -32,6 +38,9 @@ ML_TOOLTIPS: dict[str, str] = {
     "risk_level": "위험 등급 기준: High(>0.7), Medium(>0.4), Low(>0.2), Normal(≤0.2)",
 
     # --- SHAP ---
-    "shap_value": "SHAP 기여도 — 해당 피처가 최종 예측 점수에 얼마나 영향을 줬는지 (+는 부정 방향, -는 정상 방향)",
+    "shap_value": (
+        "SHAP 기여도 — 해당 피처가 최종 예측 점수에 얼마나 영향을 줬는지 "
+        "(+는 부정 방향, -는 정상 방향)"
+    ),
     "base_value": "모델의 기본 예측값(전체 데이터 평균). SHAP Waterfall 차트의 시작점.",
 }

@@ -129,7 +129,7 @@ def render_vae_waterfall(row, top_k: int = 3) -> None:
     )
 
     # Why: P0-1에서 첨부한 컬럼이 없으면 VAE가 학습/적용되지 않은 상태
-    if f"ML02_top_feature_1" not in row.index:
+    if "ML02_top_feature_1" not in row.index:
         st.info("VAE 기여도가 생성되지 않았습니다. ML 모델 학습 후 재탐지하세요.")
         return
 

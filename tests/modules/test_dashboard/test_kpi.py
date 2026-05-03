@@ -7,7 +7,6 @@ import pytest
 
 from dashboard._kpi import compute_kpis, compute_quality
 
-
 # ── compute_kpis 기본 동작 ───────────────────────────────────
 
 
@@ -80,7 +79,7 @@ def test_anomaly_amount_low_excluded():
 # ── fraud_suspect ────────────────────────────────────────────
 
 
-def test_fraud_suspect_counts_b_layer():
+def test_fraud_suspect_counts_b_and_l2_l3_rules():
     """flagged_rules에 B 접두사 룰이 있는 전표(document_id) 단위 집계."""
     df = pd.DataFrame({
         "document_id": ["D1", "D1", "D2", "D3"],

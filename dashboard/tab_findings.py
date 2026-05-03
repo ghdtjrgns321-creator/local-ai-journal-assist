@@ -76,7 +76,7 @@ def render(result: PipelineResult) -> None:
             st.rerun()
 
 
-def _get_connection(result: "PipelineResult"):
+def _get_connection(result: PipelineResult):
     """DB 적재 완료 시 싱글톤 DuckDB 커넥션 반환, 아니면 None."""
     if result.load_result is None:
         return None

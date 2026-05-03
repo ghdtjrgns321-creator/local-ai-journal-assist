@@ -14,8 +14,9 @@ from dashboard._state import KEY_BATCH_ID, KEY_COMPANY_CONTEXT, KEY_COMPANY_ID
 from src.db.queries import attached_engagement
 
 if TYPE_CHECKING:
-    import duckdb
     from pathlib import Path
+
+    import duckdb
 
     from src.company.repository import CompanyRepository
     from src.db.connection import ConnectionManager
@@ -156,7 +157,6 @@ def _render_comparison(
 
 def _query_overview(conn, current_batch: str, alias: str):
     """건수/금액/평균 anomaly_score 비교 — compare_engagements 대체."""
-    import pandas as pd
 
     # Why: prior DB의 최신 batch_id를 자동 검색 (사용자가 모를 수 있으므로)
     prior_batch_sql = f"""

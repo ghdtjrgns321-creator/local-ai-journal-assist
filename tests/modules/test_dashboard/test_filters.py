@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import pandas as pd
-import pytest
 
 from dashboard.components.filters import apply_filters
-
 
 # ── 빈 필터 (전체 통과) ───────────────────────────────────────
 
@@ -112,7 +110,8 @@ def test_rule_codes_filter_multiple(sample_df):
     result = apply_filters(sample_df, {"rule_codes": ["L2-01", "L1-01"]})
     assert len(result) > 0
     assert all(
-        result["flagged_rules"].str.contains("L2-01") | result["flagged_rules"].str.contains("L1-01")
+        result["flagged_rules"].str.contains("L2-01")
+        | result["flagged_rules"].str.contains("L1-01")
     )
 
 

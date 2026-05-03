@@ -349,7 +349,10 @@ def render(result: PipelineResult | None) -> None:
         return
 
     st.subheader("분석 결과 내보내기")
-    st.caption("메인 분석 흐름의 마지막 단계입니다. 현재 필터와 선택한 옵션을 기준으로 보고서와 감사 증적 파일을 생성합니다.")
+    st.caption(
+        "메인 분석 흐름의 마지막 단계입니다. 현재 필터와 선택한 옵션을 "
+        "기준으로 보고서와 감사 증적 파일을 생성합니다."
+    )
 
     fmt = st.radio(
         "포맷",

@@ -83,7 +83,11 @@ def large_df() -> pd.DataFrame:
     import numpy as np
     n = 10_000
     rng = np.random.default_rng(42)
-    risk_levels = rng.choice(["High", "Medium", "Low", "Normal"], size=n, p=[0.03, 0.07, 0.15, 0.75])
+    risk_levels = rng.choice(
+        ["High", "Medium", "Low", "Normal"],
+        size=n,
+        p=[0.03, 0.07, 0.15, 0.75],
+    )
     scores = rng.uniform(0, 1, size=n)
     return pd.DataFrame({
         "document_id": [f"DOC{i:06d}" for i in range(n)],
@@ -95,11 +99,17 @@ def large_df() -> pd.DataFrame:
         "debit_amount": rng.lognormal(mean=14, sigma=2, size=n),
         "credit_amount": [0.0] * n,
         "business_process": rng.choice(["P2P", "O2C", "R2R", "H2R", "TRE"], size=n).tolist(),
-        "user_persona": rng.choice(["junior", "senior", "controller", "manager", "automated_system"], size=n).tolist(),
+        "user_persona": rng.choice(
+            ["junior", "senior", "controller", "manager", "automated_system"],
+            size=n,
+        ).tolist(),
         "source": rng.choice(["Manual", "Automated", "Recurring", "Adjustment"], size=n).tolist(),
         "risk_level": risk_levels.tolist(),
         "anomaly_score": scores.tolist(),
-        "flagged_rules": rng.choice(["L2-01,L3-04", "L1-01", "L3-06", "L3-02", ""], size=n).tolist(),
+        "flagged_rules": rng.choice(
+            ["L2-01,L3-04", "L1-01", "L3-06", "L3-02", ""],
+            size=n,
+        ).tolist(),
         "is_fraud": (risk_levels == "High").tolist(),
         "fraud_type": ["DuplicatePayment" if r == "High" else "" for r in risk_levels],
         "is_anomaly": (risk_levels != "Normal").tolist(),
