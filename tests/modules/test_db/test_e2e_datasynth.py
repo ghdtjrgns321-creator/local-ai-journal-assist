@@ -12,9 +12,9 @@ import duckdb
 import pandas as pd
 import pytest
 
-from src.db.loader import _derive_approval_level, load_general_ledger
+from src.db.loader import load_general_ledger
 from src.db.queries import execute_preset
-from src.db.schema import GENERAL_LEDGER_COLUMNS, initialize_schema
+from src.db.schema import initialize_schema
 
 DATASYNTH_CSV = Path("data/journal/primary/datasynth/journal_entries.csv")
 BATCH_ID = "e2e_datasynth"

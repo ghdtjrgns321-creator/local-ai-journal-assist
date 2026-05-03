@@ -8,7 +8,6 @@
 """
 
 import duckdb
-import pytest
 
 from src.db.connection import (
     _clear_override,

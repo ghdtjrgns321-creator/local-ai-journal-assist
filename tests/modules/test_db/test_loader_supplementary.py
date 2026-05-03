@@ -6,24 +6,24 @@ JSON → DuckDB 적재 파이프라인 전체를 검증한다.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import duckdb
 import pytest
 
-from src.db.schema import initialize_schema
 from src.db.loader_supplementary import (
-    _coerce_types,
     _extract_header,
     _load_json_file,
     _normalize_nested_doc,
-    load_supplementary,
-    load_purchase_orders,
-    load_vendors,
     load_anomaly_labels_json,
     load_change_log,
     load_ic_matched_pairs,
+    load_purchase_orders,
+    load_supplementary,
+    load_vendors,
 )
+from src.db.schema import initialize_schema
 from src.db.schema_supplementary import (
     PURCHASE_ORDER_HEADERS_COLUMNS,
     PURCHASE_ORDER_LINES_COLUMNS,
@@ -79,15 +79,15 @@ class TestExtractHeader:
 
 class TestNormalizeNestedDoc:
     def test_empty_records(self):
-        h, l, r = _normalize_nested_doc(
+        headers_df, lines_df, refs_df = _normalize_nested_doc(
             [], PURCHASE_ORDER_HEADERS_COLUMNS,
             lines_columns=PURCHASE_ORDER_LINES_COLUMNS,
         )
-        assert h.empty
-        assert l.empty
-        assert r.empty
-        assert list(h.columns) == PURCHASE_ORDER_HEADERS_COLUMNS
-        assert list(l.columns) == PURCHASE_ORDER_LINES_COLUMNS
+        assert headers_df.empty
+        assert lines_df.empty
+        assert refs_df.empty
+        assert list(headers_df.columns) == PURCHASE_ORDER_HEADERS_COLUMNS
+        assert list(lines_df.columns) == PURCHASE_ORDER_LINES_COLUMNS
 
     def test_null_items(self):
         """items가 None인 레코드도 처리 가능."""
@@ -95,12 +95,12 @@ class TestNormalizeNestedDoc:
             "header": {"document_id": "PO-X", "document_type": "NB"},
             "items": None,
         }
-        h, l, r = _normalize_nested_doc(
+        headers_df, lines_df, _refs_df = _normalize_nested_doc(
             [record], PURCHASE_ORDER_HEADERS_COLUMNS,
             lines_columns=PURCHASE_ORDER_LINES_COLUMNS,
         )
-        assert len(h) == 1
-        assert l.empty
+        assert len(headers_df) == 1
+        assert lines_df.empty
 
 
 # ── Document Flow 적재 테스트 ──────────────────────────────
@@ -156,26 +156,67 @@ class TestLoadVendors:
         ).fetchone()
         assert row[0] is not None  # vendor_id 존재
 
+    def test_duplicate_vendor_load_is_idempotent(self, sup_conn, tmp_path):
+        vendors_path = tmp_path / "vendors.json"
+        vendors_path.write_text(
+            json.dumps(
+                [
+                    {
+                        "vendor_id": "V-IDEMPOTENT",
+                        "name": "Idempotent Vendor",
+                        "is_active": True,
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        first_count = load_vendors(sup_conn, vendors_path, BATCH_ID)
+        second_count = load_vendors(sup_conn, vendors_path, "another_batch")
+        saved = sup_conn.execute(
+            "SELECT COUNT(*) FROM vendors WHERE vendor_id = ?",
+            ["V-IDEMPOTENT"],
+        ).fetchone()[0]
+
+        assert first_count == 1
+        assert second_count == 0
+        assert saved == 1
+
 
 # ── Labels 적재 테스트 ─────────────────────────────────────
 
 
 class TestLoadAnomalyLabels:
-    @pytest.mark.skipif(
-        not (DATASYNTH_DIR / "labels/anomaly_labels.json").exists(),
-        reason="DataSynth 데이터 없음",
-    )
-    def test_load_and_decompose_type(self, sup_conn):
+    def test_load_and_decompose_type(self, sup_conn, tmp_path):
+        labels_path = tmp_path / "anomaly_labels.json"
+        labels_path.write_text(
+            json.dumps(
+                [
+                    {
+                        "anomaly_id": "ANO_TEST_DECOMPOSE",
+                        "anomaly_type": {"Relational": "UnusualAccountPair"},
+                        "document_id": "D1",
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+
         n = load_anomaly_labels_json(
-            sup_conn, DATASYNTH_DIR / "labels/anomaly_labels.json", BATCH_ID,
+            sup_conn,
+            labels_path,
+            BATCH_ID,
         )
         assert n > 0
         row = sup_conn.execute(
-            "SELECT anomaly_category, anomaly_subtype FROM anomaly_labels LIMIT 1",
+            """
+            SELECT anomaly_category, anomaly_subtype
+            FROM anomaly_labels
+            WHERE anomaly_id = 'ANO_TEST_DECOMPOSE'
+            """,
         ).fetchone()
         # anomaly_type dict가 category/subtype으로 분해됐는지 검증
-        assert row[0] != ""  # category
-        assert row[1] != ""  # subtype
+        assert row == ("Relational", "UnusualAccountPair")
 
 
 # ── P1 테스트 ──────────────────────────────────────────────
@@ -226,3 +267,78 @@ class TestLoadSupplementary:
         """빈 디렉토리에서도 에러 없이 빈 dict 반환."""
         counts = load_supplementary(sup_conn, tmp_path, BATCH_ID)
         assert counts == {}
+
+    def test_duplicate_anomaly_labels_do_not_abort_connection(self, sup_conn, tmp_path):
+        labels_dir = tmp_path / "labels"
+        labels_dir.mkdir()
+        duplicate_rows = [
+            {
+                "anomaly_id": "ANO00000018",
+                "anomaly_type": "Test",
+                "document_id": "D1",
+            },
+            {
+                "anomaly_id": "ANO00000018",
+                "anomaly_type": "Test",
+                "document_id": "D1",
+            },
+        ]
+        (labels_dir / "anomaly_labels.json").write_text(
+            json.dumps(duplicate_rows),
+            encoding="utf-8",
+        )
+
+        load_supplementary(sup_conn, tmp_path, BATCH_ID)
+
+        sup_conn.execute(
+            """
+            INSERT INTO upload_batches
+            (upload_batch_id, file_name, row_count, anomaly_count, high_risk_count)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            ["batch_after_duplicate_labels", "journal.csv", 1, 0, 0],
+        )
+        saved = sup_conn.execute(
+            "SELECT COUNT(*) FROM upload_batches WHERE upload_batch_id = ?",
+            ["batch_after_duplicate_labels"],
+        ).fetchone()[0]
+        assert saved == 1
+
+    def test_duplicate_master_data_inside_outer_transaction_keeps_transaction_active(
+        self,
+        sup_conn,
+        tmp_path,
+    ):
+        master_dir = tmp_path / "master_data"
+        master_dir.mkdir()
+        (master_dir / "vendors.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "vendor_id": "V-OUTER-TXN",
+                        "name": "Outer Txn Vendor",
+                        "is_active": True,
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        sup_conn.execute("BEGIN TRANSACTION")
+        load_supplementary(sup_conn, tmp_path, BATCH_ID)
+        load_supplementary(sup_conn, tmp_path, "another_batch")
+        sup_conn.execute(
+            """
+            INSERT INTO upload_batches
+            (upload_batch_id, file_name, row_count, anomaly_count, high_risk_count)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            ["batch_after_outer_txn_duplicate", "journal.csv", 1, 0, 0],
+        )
+        sup_conn.execute("COMMIT")
+
+        saved = sup_conn.execute(
+            "SELECT COUNT(*) FROM upload_batches WHERE upload_batch_id = ?",
+            ["batch_after_outer_txn_duplicate"],
+        ).fetchone()[0]
+        assert saved == 1

@@ -14,13 +14,10 @@ import json
 from unittest.mock import patch
 
 import duckdb
-import pytest
 
 from src.db.audit_log import record_event
 from src.db.migration import CURRENT_SCHEMA_VERSION, run_migrations
-from src.db.queries import execute_write
 from src.db.schema import SCHEMA_DDL
-
 
 # ── 스키마 존재 검증 ─────────────────────────────────────────
 

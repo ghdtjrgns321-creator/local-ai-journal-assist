@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
+
 import pandas as pd
 import pytest
 
+import src.db.batch_reader as batch_reader
 from src.db.batch_reader import _build_detector_statuses, list_batches, load_batch
 from src.db.loader import load_all, update_upload_batch_meta
 from src.detection.base import DetectionResult
@@ -90,6 +93,63 @@ class TestLoadBatch:
         assert status_map["timeseries"]["run_status"] == "executed"
         assert status_map["timeseries"]["flagged_docs"] == 2
         assert status_map["ml_unsupervised"]["reason"] == "missing_promoted_model"
+
+    def test_restore_phase1_case_artifact_reference(
+        self, db_conn, db_sample_df, db_detection_results,
+    ):
+        load_all(
+            db_conn,
+            db_sample_df,
+            "batch_phase1_case_restore",
+            db_detection_results,
+            phase1_case_ref={
+                "phase1_case_run_id": "phase1_run_001",
+                "phase1_case_path": "artifacts/phase1_cases/phase1_run_001.json",
+                "phase1_case_count": 7,
+                "phase1_macro_finding_count": 2,
+                "top_theme_ids": ["settlement_timing", "approval_control"],
+                "phase1_case_schema_version": "1.0",
+            },
+        )
+
+        result = load_batch(db_conn, "batch_phase1_case_restore")
+
+        assert result.phase1_case_run_id == "phase1_run_001"
+        assert result.phase1_case_path == "artifacts/phase1_cases/phase1_run_001.json"
+        assert result.phase1_case_count == 7
+        assert result.phase1_macro_finding_count == 2
+        assert result.phase1_top_theme_ids == ["settlement_timing", "approval_control"]
+        assert result.phase1_case_schema_version == "1.0"
+
+    def test_restore_legacy_phase1_case_reference_from_artifact(
+        self, monkeypatch, tmp_path, db_conn, db_sample_df, db_detection_results,
+    ):
+        batch_id = "batch_phase1_legacy"
+        load_all(db_conn, db_sample_df, batch_id, db_detection_results)
+        artifact_dir = tmp_path / "artifacts" / "phase1_cases" / "kr01"
+        artifact_dir.mkdir(parents=True)
+        artifact_path = artifact_dir / f"phase1case_kr01_{batch_id}_20260503T010000Z.json"
+        artifact_path.write_text(
+            json.dumps({
+                "schema_version": "1.0",
+                "run_id": f"phase1case_kr01_{batch_id}_20260503T010000Z",
+                "company_id": "kr01",
+                "dataset_id": batch_id,
+                "batch_id": batch_id,
+                "cases": [{"case_id": "case_001"}],
+                "theme_summaries": [{"theme_id": "settlement_timing"}],
+                "metadata": {"macro_finding_count": 3},
+            }),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(batch_reader, "PROJECT_ROOT", tmp_path)
+
+        result = load_batch(db_conn, batch_id)
+
+        assert result.phase1_case_path == str(artifact_path)
+        assert result.phase1_case_count == 1
+        assert result.phase1_macro_finding_count == 3
+        assert result.phase1_top_theme_ids == ["settlement_timing"]
 
     def test_not_found_raises(self, db_conn):
         with pytest.raises(ValueError, match="배치를 찾을 수 없습니다"):

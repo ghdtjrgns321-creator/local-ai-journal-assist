@@ -204,6 +204,12 @@ SCHEMA_DDL: dict[str, str] = {
             phase2_promotion_policy JSON,
             phase2_inference_mode VARCHAR,
             detector_statuses_json JSON,
+            phase1_case_run_id VARCHAR,
+            phase1_case_path VARCHAR,
+            phase1_case_count INTEGER DEFAULT 0,
+            phase1_macro_finding_count INTEGER DEFAULT 0,
+            phase1_top_theme_ids JSON,
+            phase1_case_schema_version VARCHAR,
             created_at      TIMESTAMP DEFAULT current_timestamp,
             warnings        VARCHAR
         )

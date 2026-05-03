@@ -112,6 +112,7 @@ def load_all(
     phase2_promotion_policy: dict | None = None,
     phase2_inference_mode: str | None = None,
     detector_statuses: list[dict] | None = None,
+    phase1_case_ref: dict | None = None,
 ) -> LoadResult:
     """코어 + 보조 테이블 원자적 적재 (트랜잭션).
 
@@ -146,9 +147,12 @@ def load_all(
             "("
             "upload_batch_id, file_name, row_count, anomaly_count, high_risk_count, "
             "phase2_training_report_id, phase2_inference_contract, phase2_promotion_policy, "
-            "phase2_inference_mode, detector_statuses_json, warnings"
+            "phase2_inference_mode, detector_statuses_json, "
+            "phase1_case_run_id, phase1_case_path, phase1_case_count, "
+            "phase1_macro_finding_count, phase1_top_theme_ids, phase1_case_schema_version, "
+            "warnings"
             ") "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 batch_id,
                 file_name,
@@ -160,6 +164,12 @@ def load_all(
                 _serialize_json_value(phase2_promotion_policy),
                 phase2_inference_mode,
                 _serialize_json_value(detector_statuses),
+                (phase1_case_ref or {}).get("phase1_case_run_id"),
+                (phase1_case_ref or {}).get("phase1_case_path"),
+                int((phase1_case_ref or {}).get("phase1_case_count", 0) or 0),
+                int((phase1_case_ref or {}).get("phase1_macro_finding_count", 0) or 0),
+                _serialize_json_value((phase1_case_ref or {}).get("top_theme_ids")),
+                (phase1_case_ref or {}).get("phase1_case_schema_version"),
                 ";".join(bf_warnings),
             ],
         )
@@ -241,6 +251,7 @@ def load_general_ledger(conn, df: pd.DataFrame, batch_id: str) -> int:
         df["risk_level"] = df["risk_level"].astype(str)
 
     gl_df = df.reindex(columns=GENERAL_LEDGER_COLUMNS)
+    _fill_required_gl_fields(gl_df)
 
     # Why: reindex가 누락 ML 예약 컬럼에 NaN을 넣으면
     # VARCHAR는 'nan' 문자열 삽입, DOUBLE/TIMESTAMP도 방어적으로 None 통일
@@ -253,6 +264,48 @@ def load_general_ledger(conn, df: pd.DataFrame, batch_id: str) -> int:
         f"INSERT INTO general_ledger ({col_list}) SELECT * FROM gl_df"
     )
     return len(gl_df)
+
+
+def _fill_required_gl_fields(gl_df: pd.DataFrame) -> None:
+    """Fill DB NOT NULL columns from nearby source fields before insert."""
+    if "posting_date" in gl_df.columns:
+        gl_df["posting_date"] = pd.to_datetime(gl_df["posting_date"], errors="coerce")
+    if "document_date" in gl_df.columns:
+        gl_df["document_date"] = pd.to_datetime(gl_df["document_date"], errors="coerce")
+
+    if {"posting_date", "document_date"} <= set(gl_df.columns):
+        missing_posting = gl_df["posting_date"].isna()
+        if missing_posting.any():
+            gl_df.loc[missing_posting, "posting_date"] = gl_df.loc[
+                missing_posting, "document_date"
+            ]
+            logger.warning(
+                "posting_date missing for %d GL rows; filled from document_date",
+                int(missing_posting.sum()),
+            )
+
+    if {"fiscal_period", "posting_date"} <= set(gl_df.columns):
+        period = pd.to_numeric(gl_df["fiscal_period"], errors="coerce")
+        missing_period = period.isna()
+        if missing_period.any():
+            period = period.where(~missing_period, gl_df["posting_date"].dt.month)
+            logger.warning(
+                "fiscal_period missing for %d GL rows; filled from posting_date month",
+                int(missing_period.sum()),
+            )
+        gl_df["fiscal_period"] = period.fillna(0).astype("Int64")
+
+    if "company_code" in gl_df.columns:
+        missing_company = gl_df["company_code"].isna()
+        if missing_company.any():
+            mode = gl_df.loc[~missing_company, "company_code"].mode(dropna=True)
+            fallback = mode.iloc[0] if not mode.empty else "UNKNOWN"
+            gl_df.loc[missing_company, "company_code"] = fallback
+            logger.warning(
+                "company_code missing for %d GL rows; filled with %s",
+                int(missing_company.sum()),
+                fallback,
+            )
 
 
 def load_anomaly_flags(

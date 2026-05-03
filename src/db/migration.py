@@ -16,7 +16,7 @@ import duckdb
 logger = logging.getLogger(__name__)
 
 # Why: 새 마이그레이션 추가 시 이 값을 올리고 _MIGRATIONS에 함수 등록
-CURRENT_SCHEMA_VERSION = 5
+CURRENT_SCHEMA_VERSION = 6
 
 # Why: v2에서 general_ledger에 추가할 ML 예약 7개 컬럼
 #      schema.py의 ML_RESERVED_COLUMNS와 동일 집합이어야 함.
@@ -41,6 +41,14 @@ _V4_PERFORMANCE_COLUMNS = {
 _V5_COLUMNS = {
     "review_rules": "VARCHAR",
 }
+_V6_UPLOAD_BATCH_COLUMNS = {
+    "phase1_case_run_id": "VARCHAR",
+    "phase1_case_path": "VARCHAR",
+    "phase1_case_count": "INTEGER DEFAULT 0",
+    "phase1_macro_finding_count": "INTEGER DEFAULT 0",
+    "phase1_top_theme_ids": "JSON",
+    "phase1_case_schema_version": "VARCHAR",
+}
 
 
 # ── 공개 API ───────────────────────────────────────────────
@@ -53,6 +61,7 @@ _MIGRATIONS: dict[int, str] = {
     3: "_migrate_v2_to_v3",
     4: "_migrate_v3_to_v4",
     5: "_migrate_v4_to_v5",
+    6: "_migrate_v5_to_v6",
 }
 
 
@@ -141,6 +150,8 @@ def _get_schema_version(conn: duckdb.DuckDBPyConnection) -> int:
         has_v5 = _V5_COLUMNS.keys() <= existing_cols
         if not has_v5:
             return 4
+        if not _upload_batch_columns_exist(conn):
+            return 5
         return CURRENT_SCHEMA_VERSION
 
     existing_perf_cols = set(
@@ -154,6 +165,8 @@ def _get_schema_version(conn: duckdb.DuckDBPyConnection) -> int:
         has_v5 = _V5_COLUMNS.keys() <= existing_cols
         if not has_v5:
             return 4
+        if not _upload_batch_columns_exist(conn):
+            return 5
         return CURRENT_SCHEMA_VERSION
     return 3
 
@@ -268,3 +281,30 @@ def _migrate_v4_to_v5(conn: duckdb.DuckDBPyConnection) -> None:
         "v4_to_v5: general_ledger review columns=%s",
         ", ".join(added) if added else "none",
     )
+
+
+def _migrate_v5_to_v6(conn: duckdb.DuckDBPyConnection) -> None:
+    """Add PHASE1 case artifact references to upload_batches."""
+    existing = _upload_batch_column_set(conn)
+    added = []
+    for col, dtype in _V6_UPLOAD_BATCH_COLUMNS.items():
+        if col not in existing:
+            conn.execute(f"ALTER TABLE upload_batches ADD COLUMN {col} {dtype}")
+            added.append(col)
+    logger.info(
+        "v5_to_v6: upload_batches phase1 case columns=%s",
+        ", ".join(added) if added else "none",
+    )
+
+
+def _upload_batch_column_set(conn: duckdb.DuckDBPyConnection) -> set[str]:
+    return set(
+        conn.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'upload_batches'"
+        ).fetchdf()["column_name"]
+    )
+
+
+def _upload_batch_columns_exist(conn: duckdb.DuckDBPyConnection) -> bool:
+    return _V6_UPLOAD_BATCH_COLUMNS.keys() <= _upload_batch_column_set(conn)

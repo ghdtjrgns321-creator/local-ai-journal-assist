@@ -111,9 +111,9 @@ def _coerce_types(df: pd.DataFrame, table_name: str) -> pd.DataFrame:
             # Why: object dtype에서 fillna → 다운캐스팅 경고 방지
             col_ser = df[col]
             if col_ser.dtype == object:
-                col_ser = col_ser.map(lambda x: bool(x) if x is not None else False)
+                col_ser = col_ser.map(lambda x: False if pd.isna(x) else bool(x))
             else:
-                col_ser = col_ser.fillna(False)
+                col_ser = col_ser.astype("boolean").fillna(False)
             df[col] = col_ser.astype(bool)
         elif dtype == "TIMESTAMP":
             df[col] = pd.to_datetime(df[col], errors="coerce")
@@ -197,6 +197,11 @@ def _normalize_nested_doc(
 
 # Why: f-string SQL에 외부 입력이 들어가는 것을 방지 — allowlist 검증
 _ALLOWED_TABLES = frozenset(SUPPLEMENTARY_DDL.keys())
+_CONFLICT_IGNORE_TABLES = frozenset(
+    table_name
+    for table_name, ddl in SUPPLEMENTARY_DDL.items()
+    if "PRIMARY KEY" in ddl.upper()
+)
 
 
 def _insert_df(
@@ -205,7 +210,7 @@ def _insert_df(
     table_name: str,
     columns: list[str],
     *,
-    on_conflict_ignore: bool = False,
+    on_conflict_ignore: bool = True,
 ) -> int:
     """DataFrame을 DuckDB 테이블에 INSERT. coerce_types 적용.
 
@@ -221,7 +226,12 @@ def _insert_df(
     df = _coerce_types(df, table_name)
 
     col_list = ", ".join(columns)
-    conflict = " ON CONFLICT DO NOTHING" if on_conflict_ignore else ""
+    conflict = (
+        " ON CONFLICT DO NOTHING"
+        if on_conflict_ignore and table_name in _CONFLICT_IGNORE_TABLES
+        else ""
+    )
+    before_count = conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
     conn.register("_tmp_df", df)
     try:
         conn.execute(
@@ -230,7 +240,8 @@ def _insert_df(
         )
     finally:
         conn.unregister("_tmp_df")
-    return len(df)
+    after_count = conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
+    return max(int(after_count) - int(before_count), 0)
 
 
 # ── Document Flow 로드 (7개) ────────────────────────────────
@@ -251,10 +262,18 @@ def load_purchase_orders(conn, path: Path, batch_id: str) -> int:
     lines_df["upload_batch_id"] = batch_id
     refs_df["upload_batch_id"] = batch_id
 
-    h = _insert_df(conn, headers_df, "purchase_order_headers", PURCHASE_ORDER_HEADERS_COLUMNS)
-    l = _insert_df(conn, lines_df, "purchase_order_lines", PURCHASE_ORDER_LINES_COLUMNS)
-    _insert_df(conn, refs_df, "document_references", DOCUMENT_REFERENCES_COLUMNS, on_conflict_ignore=True)
-    return h + l
+    header_count = _insert_df(
+        conn, headers_df, "purchase_order_headers", PURCHASE_ORDER_HEADERS_COLUMNS
+    )
+    line_count = _insert_df(conn, lines_df, "purchase_order_lines", PURCHASE_ORDER_LINES_COLUMNS)
+    _insert_df(
+        conn,
+        refs_df,
+        "document_references",
+        DOCUMENT_REFERENCES_COLUMNS,
+        on_conflict_ignore=True,
+    )
+    return header_count + line_count
 
 
 def load_goods_receipts(conn, path: Path, batch_id: str) -> int:
@@ -272,10 +291,18 @@ def load_goods_receipts(conn, path: Path, batch_id: str) -> int:
     lines_df["upload_batch_id"] = batch_id
     refs_df["upload_batch_id"] = batch_id
 
-    h = _insert_df(conn, headers_df, "goods_receipt_headers", GOODS_RECEIPT_HEADERS_COLUMNS)
-    l = _insert_df(conn, lines_df, "goods_receipt_lines", GOODS_RECEIPT_LINES_COLUMNS)
-    _insert_df(conn, refs_df, "document_references", DOCUMENT_REFERENCES_COLUMNS, on_conflict_ignore=True)
-    return h + l
+    header_count = _insert_df(
+        conn, headers_df, "goods_receipt_headers", GOODS_RECEIPT_HEADERS_COLUMNS
+    )
+    line_count = _insert_df(conn, lines_df, "goods_receipt_lines", GOODS_RECEIPT_LINES_COLUMNS)
+    _insert_df(
+        conn,
+        refs_df,
+        "document_references",
+        DOCUMENT_REFERENCES_COLUMNS,
+        on_conflict_ignore=True,
+    )
+    return header_count + line_count
 
 
 def load_vendor_invoices(conn, path: Path, batch_id: str) -> int:
@@ -293,10 +320,20 @@ def load_vendor_invoices(conn, path: Path, batch_id: str) -> int:
     lines_df["upload_batch_id"] = batch_id
     refs_df["upload_batch_id"] = batch_id
 
-    h = _insert_df(conn, headers_df, "vendor_invoice_headers", VENDOR_INVOICE_HEADERS_COLUMNS)
-    l = _insert_df(conn, lines_df, "vendor_invoice_lines", VENDOR_INVOICE_LINES_COLUMNS)
-    _insert_df(conn, refs_df, "document_references", DOCUMENT_REFERENCES_COLUMNS, on_conflict_ignore=True)
-    return h + l
+    header_count = _insert_df(
+        conn, headers_df, "vendor_invoice_headers", VENDOR_INVOICE_HEADERS_COLUMNS
+    )
+    line_count = _insert_df(
+        conn, lines_df, "vendor_invoice_lines", VENDOR_INVOICE_LINES_COLUMNS
+    )
+    _insert_df(
+        conn,
+        refs_df,
+        "document_references",
+        DOCUMENT_REFERENCES_COLUMNS,
+        on_conflict_ignore=True,
+    )
+    return header_count + line_count
 
 
 def load_payments(conn, path: Path, batch_id: str) -> int:
@@ -314,10 +351,16 @@ def load_payments(conn, path: Path, batch_id: str) -> int:
     lines_df["upload_batch_id"] = batch_id
     refs_df["upload_batch_id"] = batch_id
 
-    h = _insert_df(conn, headers_df, "payment_headers", PAYMENT_HEADERS_COLUMNS)
-    l = _insert_df(conn, lines_df, "payment_allocations", PAYMENT_ALLOCATIONS_COLUMNS)
-    _insert_df(conn, refs_df, "document_references", DOCUMENT_REFERENCES_COLUMNS, on_conflict_ignore=True)
-    return h + l
+    header_count = _insert_df(conn, headers_df, "payment_headers", PAYMENT_HEADERS_COLUMNS)
+    line_count = _insert_df(conn, lines_df, "payment_allocations", PAYMENT_ALLOCATIONS_COLUMNS)
+    _insert_df(
+        conn,
+        refs_df,
+        "document_references",
+        DOCUMENT_REFERENCES_COLUMNS,
+        on_conflict_ignore=True,
+    )
+    return header_count + line_count
 
 
 def load_sales_orders(conn, path: Path, batch_id: str) -> int:
@@ -335,10 +378,16 @@ def load_sales_orders(conn, path: Path, batch_id: str) -> int:
     lines_df["upload_batch_id"] = batch_id
     refs_df["upload_batch_id"] = batch_id
 
-    h = _insert_df(conn, headers_df, "sales_order_headers", SALES_ORDER_HEADERS_COLUMNS)
-    l = _insert_df(conn, lines_df, "sales_order_lines", SALES_ORDER_LINES_COLUMNS)
-    _insert_df(conn, refs_df, "document_references", DOCUMENT_REFERENCES_COLUMNS, on_conflict_ignore=True)
-    return h + l
+    header_count = _insert_df(conn, headers_df, "sales_order_headers", SALES_ORDER_HEADERS_COLUMNS)
+    line_count = _insert_df(conn, lines_df, "sales_order_lines", SALES_ORDER_LINES_COLUMNS)
+    _insert_df(
+        conn,
+        refs_df,
+        "document_references",
+        DOCUMENT_REFERENCES_COLUMNS,
+        on_conflict_ignore=True,
+    )
+    return header_count + line_count
 
 
 def load_deliveries(conn, path: Path, batch_id: str) -> int:
@@ -356,10 +405,16 @@ def load_deliveries(conn, path: Path, batch_id: str) -> int:
     lines_df["upload_batch_id"] = batch_id
     refs_df["upload_batch_id"] = batch_id
 
-    h = _insert_df(conn, headers_df, "delivery_headers", DELIVERY_HEADERS_COLUMNS)
-    l = _insert_df(conn, lines_df, "delivery_lines", DELIVERY_LINES_COLUMNS)
-    _insert_df(conn, refs_df, "document_references", DOCUMENT_REFERENCES_COLUMNS, on_conflict_ignore=True)
-    return h + l
+    header_count = _insert_df(conn, headers_df, "delivery_headers", DELIVERY_HEADERS_COLUMNS)
+    line_count = _insert_df(conn, lines_df, "delivery_lines", DELIVERY_LINES_COLUMNS)
+    _insert_df(
+        conn,
+        refs_df,
+        "document_references",
+        DOCUMENT_REFERENCES_COLUMNS,
+        on_conflict_ignore=True,
+    )
+    return header_count + line_count
 
 
 def load_customer_invoices(conn, path: Path, batch_id: str) -> int:
@@ -377,10 +432,20 @@ def load_customer_invoices(conn, path: Path, batch_id: str) -> int:
     lines_df["upload_batch_id"] = batch_id
     refs_df["upload_batch_id"] = batch_id
 
-    h = _insert_df(conn, headers_df, "customer_invoice_headers", CUSTOMER_INVOICE_HEADERS_COLUMNS)
-    l = _insert_df(conn, lines_df, "customer_invoice_lines", CUSTOMER_INVOICE_LINES_COLUMNS)
-    _insert_df(conn, refs_df, "document_references", DOCUMENT_REFERENCES_COLUMNS, on_conflict_ignore=True)
-    return h + l
+    header_count = _insert_df(
+        conn, headers_df, "customer_invoice_headers", CUSTOMER_INVOICE_HEADERS_COLUMNS
+    )
+    line_count = _insert_df(
+        conn, lines_df, "customer_invoice_lines", CUSTOMER_INVOICE_LINES_COLUMNS
+    )
+    _insert_df(
+        conn,
+        refs_df,
+        "document_references",
+        DOCUMENT_REFERENCES_COLUMNS,
+        on_conflict_ignore=True,
+    )
+    return header_count + line_count
 
 
 # ── Master Data 로드 (5개) ──────────────────────────────────
@@ -487,7 +552,13 @@ def load_anomaly_labels_json(conn, path: Path, batch_id: str) -> int:
 
     df = pd.DataFrame(rows)
     df["upload_batch_id"] = batch_id
-    return _insert_df(conn, df, "anomaly_labels", ANOMALY_LABELS_COLUMNS)
+    return _insert_df(
+        conn,
+        df,
+        "anomaly_labels",
+        ANOMALY_LABELS_COLUMNS,
+        on_conflict_ignore=True,
+    )
 
 
 def load_fraud_red_flags(conn, path: Path, batch_id: str) -> int:
@@ -644,8 +715,8 @@ def load_supplementary(
             n = loader_fn(conn, full_path, batch_id)
             if n > 0:
                 counts[name] = n
-                logger.info("보조 데이터 적재: %s = %d건", name, n)
+                logger.info("Supplementary data loaded: %s = %d rows", name, n)
         except Exception:
-            logger.warning("보조 데이터 적재 실패 (스킵): %s", name, exc_info=True)
+            logger.warning("Supplementary data load failed; skipping: %s", name, exc_info=True)
 
     return counts

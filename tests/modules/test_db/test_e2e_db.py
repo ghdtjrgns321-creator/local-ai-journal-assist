@@ -313,7 +313,8 @@ def generate_report(
     for i, c in enumerate(checks, 1):
         status = "PASS" if c["pass"] else "FAIL"
         md.append(
-            f"| {i:>2d} | {c['name']:32s} | {str(c['expected']):>20s} | {str(c['actual']):>20s} | {status:4s} |"
+            f"| {i:>2d} | {c['name']:32s} | {str(c['expected']):>20s} "
+            f"| {str(c['actual']):>20s} | {status:4s} |"
         )
 
     # §4 쿼리별 결과 행 수
@@ -323,7 +324,10 @@ def generate_report(
     md.append(f"{'─'*24}  {'─'*10}  {'─'*8}")
     for name, qdf in query_results.items():
         md.append(f"{name:24s}  {len(qdf):>10,d}  {len(qdf.columns):>8d}")
-    md.append(f"{'document_rule_detail':24s}  {len(drilldown_df):>10,d}  {len(drilldown_df.columns):>8d}")
+    md.append(
+        f"{'document_rule_detail':24s}  {len(drilldown_df):>10,d}  "
+        f"{len(drilldown_df.columns):>8d}"
+    )
     md.append("```")
 
     # §5 risk_level 분포
@@ -359,11 +363,15 @@ def generate_report(
     md.append("\n---\n\n## 7. 룰별 위반 통계 (상위 10)\n")
     if not rvs.empty:
         top10 = rvs.head(10)
-        md.append(f"| {'트랙':10s} | {'룰':8s} | {'건수':>10s} | {'avg_score':>10s} | {'max_score':>10s} |")
+        md.append(
+            f"| {'트랙':10s} | {'룰':8s} | {'건수':>10s} "
+            f"| {'avg_score':>10s} | {'max_score':>10s} |"
+        )
         md.append(f"|:{'-'*10}|:{'-'*8}|{'-'*10}:|{'-'*10}:|{'-'*10}:|")
         for _, row in top10.iterrows():
             md.append(
-                f"| {row['track_name']:10s} | {row['rule_code']:8s} | {int(row['flagged_count']):>10,d} "
+                f"| {row['track_name']:10s} | {row['rule_code']:8s} "
+                f"| {int(row['flagged_count']):>10,d} "
                 f"| {row['avg_score']:>10.4f} | {row['max_score']:>10.4f} |"
             )
 
@@ -398,7 +406,11 @@ def generate_report(
     md.append("|:-----|:-----|")
     md.append("| [docs/pre-plan/06-db.md](../../../docs/pre-plan/06-db.md) | DB 레이어 설계 |")
     md.append("| [db-all-results.md](db-all-results.md) | DB unit test 결과 (34 passed) |")
-    md.append("| [e2e-detection-datasynth.md](../../test_detection/test-results/e2e-detection-datasynth.md) | Detection E2E 결과 |")
+    md.append(
+        "| [e2e-detection-datasynth.md]"
+        "(../../test_detection/test-results/e2e-detection-datasynth.md) "
+        "| Detection E2E 결과 |"
+    )
 
     return "\n".join(md) + "\n"
 

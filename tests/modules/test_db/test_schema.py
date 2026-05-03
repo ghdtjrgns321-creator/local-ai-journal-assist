@@ -7,8 +7,6 @@
   - DataSynth PREVIEW 39개 컬럼 대응
 """
 
-import duckdb
-import pytest
 
 from src.db.schema import (
     ANOMALY_FLAGS_COLUMNS,

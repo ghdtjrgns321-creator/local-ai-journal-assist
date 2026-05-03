@@ -9,7 +9,6 @@
 """
 
 import pandas as pd
-import pytest
 
 from src.db.loader import (
     LoadResult,
@@ -59,6 +58,43 @@ class TestLoadGeneralLedger:
             "SELECT DISTINCT risk_level FROM general_ledger ORDER BY risk_level"
         ).fetchdf()
         assert set(result["risk_level"]) == {"Medium", "Normal"}
+
+
+    def test_missing_required_dates_are_filled_for_db_insert(self, db_conn, db_sample_df):
+        df = db_sample_df.copy()
+        df.loc[0, "posting_date"] = pd.NaT
+        df.loc[0, "fiscal_period"] = pd.NA
+
+        rows = load_general_ledger(db_conn, df, "batch_001")
+        result = db_conn.execute(
+            """
+            SELECT posting_date, fiscal_period
+            FROM general_ledger
+            WHERE upload_batch_id = 'batch_001'
+              AND document_id = 'JE-001'
+              AND line_number = 1
+            """
+        ).fetchone()
+
+        assert rows == 3
+        assert result[0] == pd.Timestamp("2022-01-10")
+        assert result[1] == 1
+
+    def test_missing_company_code_is_filled_from_batch_mode(self, db_conn, db_sample_df):
+        df = db_sample_df.copy()
+        df.loc[0, "company_code"] = pd.NA
+
+        load_general_ledger(db_conn, df, "batch_001")
+        result = db_conn.execute(
+            """
+            SELECT DISTINCT company_code
+            FROM general_ledger
+            WHERE upload_batch_id = 'batch_001'
+            ORDER BY company_code
+            """
+        ).fetchdf()
+
+        assert set(result["company_code"]) == {"C001"}
 
 
 class TestLoadAnomalyFlags:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 
 import duckdb
 import pandas as pd
@@ -19,6 +20,7 @@ from src.detection.constants import (
 )
 
 logger = logging.getLogger(__name__)
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 _RESTORED_CORE_TRACKS: frozenset[str] = frozenset({
     "layer_a",
@@ -63,6 +65,7 @@ def load_batch(conn: duckdb.DuckDBPyConnection, batch_id: str):
     detector_statuses_snapshot = _parse_json_meta(
         row.get("detector_statuses_json") if row is not None else None
     )
+    phase1_meta = _phase1_case_meta_from_row(row, batch_id)
 
     performance_report = load_latest_report(conn, batch_id)
     if performance_report is None:
@@ -87,6 +90,18 @@ def load_batch(conn: duckdb.DuckDBPyConnection, batch_id: str):
             detector_statuses_snapshot=detector_statuses_snapshot,
         ),
         performance_report=performance_report,
+        phase1_case_path=phase1_meta.get("phase1_case_path"),
+        phase1_case_run_id=phase1_meta.get("phase1_case_run_id"),
+        phase1_case_count=int(phase1_meta.get("phase1_case_count", 0) or 0),
+        phase1_macro_finding_count=int(
+            phase1_meta.get("phase1_macro_finding_count", 0) or 0
+        ),
+        phase1_top_theme_ids=list(phase1_meta.get("phase1_top_theme_ids") or []),
+    )
+    setattr(
+        result,
+        "phase1_case_schema_version",
+        phase1_meta.get("phase1_case_schema_version"),
     )
     setattr(result, "phase2_training_report_id", phase2_training_report_id)
     setattr(result, "phase2_inference_contract", phase2_inference_contract)
@@ -108,8 +123,16 @@ def _reconstruct_detection_results(
     total_rows = len(data)
     doc_to_idx: dict[str, int] = {}
     if "document_id" in data.columns:
-        for idx, doc_id in enumerate(data["document_id"]):
-            doc_to_idx.setdefault(doc_id, idx)
+        doc_to_idx = (
+            pd.Series(range(total_rows), index=data["document_id"])
+            .groupby(level=0)
+            .first()
+            .to_dict()
+        )
+    flags_df = flags_df.copy()
+    flags_df["_row_index"] = flags_df["document_id"].map(doc_to_idx)
+    flags_df = flags_df.dropna(subset=["_row_index"])
+    flags_df["_row_index"] = flags_df["_row_index"].astype(int)
 
     results: list[DetectionResult] = []
     for track_name, track_group in flags_df.groupby("track_name"):
@@ -118,10 +141,8 @@ def _reconstruct_detection_results(
 
         for rule_code, rule_group in track_group.groupby("rule_code"):
             scores = pd.Series(0.0, index=range(total_rows))
-            for _, flag_row in rule_group.iterrows():
-                idx = doc_to_idx.get(flag_row["document_id"])
-                if idx is not None:
-                    scores.iloc[idx] = max(scores.iloc[idx], flag_row["score"])
+            max_scores = rule_group.groupby("_row_index")["score"].max()
+            scores.iloc[max_scores.index.to_numpy()] = max_scores.to_numpy()
 
             rule_columns[rule_code] = scores
             rule_flags.append(RuleFlag(
@@ -229,7 +250,9 @@ def _normalize_detector_status_snapshot(snapshot: list[dict]) -> list[dict]:
             "display_name": item.get("display_name", profile.display_name),
             "maturity": item.get("maturity", str(profile.maturity)),
             "default_enabled": item.get("default_enabled", profile.default_enabled),
-            "activation_requirements": list(item.get("activation_requirements", profile.activation_requirements)),
+            "activation_requirements": list(
+                item.get("activation_requirements", profile.activation_requirements)
+            ),
             "run_status": item.get("run_status", "unknown"),
             "reason": item.get("reason"),
             "flagged_docs": int(item.get("flagged_docs", 0) or 0),
@@ -237,6 +260,64 @@ def _normalize_detector_status_snapshot(snapshot: list[dict]) -> list[dict]:
             "elapsed_sec": float(item.get("elapsed_sec", 0.0) or 0.0),
         })
     return sorted(normalized, key=lambda item: order.get(item["track_name"], 999))
+
+
+def _phase1_case_meta_from_row(row, batch_id: str) -> dict[str, object]:
+    if row is None:
+        return {}
+
+    top_theme_ids = _parse_json_meta(row.get("phase1_top_theme_ids"))
+    meta = {
+        "phase1_case_run_id": row.get("phase1_case_run_id"),
+        "phase1_case_path": row.get("phase1_case_path"),
+        "phase1_case_count": int(row.get("phase1_case_count", 0) or 0),
+        "phase1_macro_finding_count": int(row.get("phase1_macro_finding_count", 0) or 0),
+        "phase1_top_theme_ids": list(top_theme_ids or []),
+        "phase1_case_schema_version": row.get("phase1_case_schema_version"),
+    }
+    path = str(meta.get("phase1_case_path") or "")
+    if path and Path(path).exists():
+        return meta
+
+    recovered = _recover_phase1_case_meta_from_artifacts(batch_id)
+    if recovered:
+        return recovered
+    return meta
+
+
+def _recover_phase1_case_meta_from_artifacts(batch_id: str) -> dict[str, object] | None:
+    artifacts_dir = PROJECT_ROOT / "artifacts" / "phase1_cases"
+    if not batch_id or not artifacts_dir.exists():
+        return None
+
+    candidates = sorted(
+        artifacts_dir.glob(f"**/phase1case_*_{batch_id}_*.json"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    for path in candidates:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            logger.debug("failed to inspect phase1 case artifact: %s", path, exc_info=True)
+            continue
+
+        if payload.get("batch_id") != batch_id and payload.get("dataset_id") != batch_id:
+            continue
+        themes = payload.get("theme_summaries") or []
+        return {
+            "phase1_case_run_id": payload.get("run_id"),
+            "phase1_case_path": str(path),
+            "phase1_case_count": len(payload.get("cases") or []),
+            "phase1_macro_finding_count": int(
+                (payload.get("metadata") or {}).get("macro_finding_count", 0) or 0
+            ),
+            "phase1_top_theme_ids": [
+                theme.get("theme_id") for theme in themes[:3] if theme.get("theme_id")
+            ],
+            "phase1_case_schema_version": payload.get("schema_version"),
+        }
+    return None
 
 
 def _parse_json_meta(value):

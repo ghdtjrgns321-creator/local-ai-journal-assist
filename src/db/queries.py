@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Generator
 
 import duckdb
 import pandas as pd
@@ -82,7 +82,11 @@ PRESET_QUERIES: dict[str, str] = {
                anomaly_count, high_risk_count,
                phase2_training_report_id, phase2_inference_contract,
                phase2_promotion_policy, phase2_inference_mode,
-               detector_statuses_json, created_at, warnings
+               detector_statuses_json,
+               phase1_case_run_id, phase1_case_path, phase1_case_count,
+               phase1_macro_finding_count, phase1_top_theme_ids,
+               phase1_case_schema_version,
+               created_at, warnings
         FROM upload_batches
         WHERE upload_batch_id = ?
     """,

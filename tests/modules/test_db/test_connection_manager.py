@@ -18,8 +18,6 @@ import duckdb
 import pytest
 
 from src.db.connection import ConnectionManager
-from src.db.schema import initialize_schema
-
 
 # ── 픽스처 ──────────────────────────────────────────────────
 

@@ -15,7 +15,6 @@ import pytest
 from src.db.queries import attached_engagement
 from src.db.schema import initialize_schema
 
-
 # ── 픽스처 ──────────────────────────────────────────────────
 
 

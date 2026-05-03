@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 def record_event(
-    conn: "duckdb.DuckDBPyConnection",
+    conn: duckdb.DuckDBPyConnection,
     *,
     action: str,
     company_id: str | None = None,

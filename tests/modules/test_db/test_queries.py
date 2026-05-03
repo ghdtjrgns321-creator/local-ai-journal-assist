@@ -11,7 +11,7 @@
 
 import pytest
 
-from src.db.loader import load_all, load_anomaly_flags, load_general_ledger
+from src.db.loader import load_anomaly_flags, load_general_ledger
 from src.db.queries import (
     PRESET_QUERIES,
     QueryNotFoundError,
