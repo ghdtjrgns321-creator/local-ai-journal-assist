@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 
+import numpy as np
 import pandas as pd
 
 from config.settings import get_settings
@@ -23,7 +24,21 @@ from src.detection.constants import (
     Layer,
     RiskLevel,
 )
-from src.detection.rule_scoring import RULE_SCORING_REGISTRY, normalize_rule_evidence
+from src.detection.rule_scoring import (
+    EVIDENCE_STRENGTH_FACTOR,
+    L103_BUCKET_SIGNAL_STRENGTH,
+    L104_BUCKET_SIGNAL_STRENGTH,
+    L201_BUCKET_SIGNAL_STRENGTH,
+    L202_DUPLICATE_PAYMENT_SIGNAL_STRENGTH,
+    L305_CALENDAR_SIGNAL_STRENGTH,
+    L307_BUCKET_SIGNAL_STRENGTH,
+    L309_AGING_BUCKET_SIGNAL_STRENGTH,
+    L403_ZSCORE_BUCKET_SIGNAL_STRENGTH,
+    RULE_SCORING_REGISTRY,
+    SCORING_ROLE_FACTOR,
+    SIGNAL_STRENGTH_MAP,
+    normalize_rule_evidence,
+)
 
 _TOPSIDE_CONDITIONS = len(TOPSIDE_BONUS_RULES)
 _BATCH_CORROBORATION_CONDITIONS = len(BATCH_CORROBORATION_RULES)
@@ -138,7 +153,16 @@ def _combined_rule_signal_details(
                     .fillna(0.0)
                     .astype(float)
                 )
-                annotation_columns.append(base.combine(annotation_scores, max).rename(rule_code))
+                annotation_columns.append(
+                    pd.Series(
+                        np.maximum(
+                            base.to_numpy(dtype="float64"),
+                            annotation_scores.to_numpy(dtype="float64"),
+                        ),
+                        index=index,
+                        name=rule_code,
+                    ),
+                )
 
     if not annotation_columns:
         return combined
@@ -213,25 +237,23 @@ def _combined_normalized_rule_details(
             raw_values = (
                 pd.to_numeric(details[rule_code], errors="coerce")
                 .fillna(0.0)
-                .combine(annotation_scores, max)
+                .astype(float)
             )
-            normalized = pd.Series(
-                [
-                    normalize_rule_evidence(
-                        rule_id=rule_code,
-                        evidence_type=evidence_type,
-                        severity=severity,
-                        raw_value=raw_value,
-                        display_label=display_label or None,
-                    ).normalized_score
-                    if float(raw_value) > 0
-                    else 0.0
-                    for raw_value, display_label in zip(raw_values, labels, strict=False)
-                ],
+            raw_values = pd.Series(
+                np.maximum(
+                    raw_values.to_numpy(dtype="float64"),
+                    annotation_scores.to_numpy(dtype="float64"),
+                ),
                 index=index,
                 name=rule_code,
-                dtype="float64",
             )
+            normalized = _normalize_rule_values(
+                rule_id=rule_code,
+                evidence_type=evidence_type,
+                severity=severity,
+                raw_values=raw_values,
+                labels=labels,
+            ).rename(rule_code)
             normalized_columns.append(normalized)
 
     if not normalized_columns:
@@ -563,7 +585,7 @@ def _row_labels_for_rule(
     rule_id: str,
     index: pd.Index,
 ) -> pd.Series:
-    labels = pd.Series("", index=index, dtype="string")
+    values: dict[object, str] = {}
     for result in results:
         annotations = (result.metadata or {}).get("row_annotations", {}).get(rule_id, {})
         if not isinstance(annotations, dict):
@@ -582,10 +604,11 @@ def _row_labels_for_rule(
             )
             if label is None:
                 continue
-            idx = raw_idx if raw_idx in labels.index else _coerce_index_label(index, raw_idx)
-            if idx in labels.index:
-                labels.loc[idx] = str(label).strip().lower()
-    return labels
+            idx = raw_idx if raw_idx in index else _coerce_index_label(index, raw_idx)
+            values[idx] = str(label).strip().lower()
+    if not values:
+        return pd.Series("", index=index, dtype="string")
+    return pd.Series(values, dtype="string").reindex(index, fill_value="")
 
 
 def _row_annotation_scores_for_rule(
@@ -593,18 +616,130 @@ def _row_annotation_scores_for_rule(
     rule_id: str,
     index: pd.Index,
 ) -> pd.Series:
-    scores = pd.Series(0.0, index=index, dtype="float64")
     annotations = (result.metadata or {}).get("row_annotations", {}).get(rule_id, {})
     if not isinstance(annotations, dict):
-        return scores
+        return pd.Series(0.0, index=index, dtype="float64")
+    values: dict[object, float] = {}
     for raw_idx, annotation in annotations.items():
         if not isinstance(annotation, dict):
             continue
-        idx = raw_idx if raw_idx in scores.index else _coerce_index_label(index, raw_idx)
-        if idx not in scores.index:
+        idx = raw_idx if raw_idx in index else _coerce_index_label(index, raw_idx)
+        score = _annotation_score(annotation)
+        if score <= 0:
             continue
-        scores.loc[idx] = max(scores.loc[idx], _annotation_score(annotation))
-    return scores
+        values[idx] = max(values.get(idx, 0.0), score)
+    if not values:
+        return pd.Series(0.0, index=index, dtype="float64")
+    return pd.Series(values, dtype="float64").reindex(index, fill_value=0.0)
+
+
+def _normalize_rule_values(
+    *,
+    rule_id: str,
+    evidence_type: str,
+    severity: int,
+    raw_values: pd.Series,
+    labels: pd.Series,
+) -> pd.Series:
+    """Vectorized equivalent of normalize_rule_evidence for PHASE1 aggregation."""
+
+    metadata = RULE_SCORING_REGISTRY.get(rule_id)
+    if metadata is None:
+        return raw_values.map(
+            lambda raw_value: (
+                normalize_rule_evidence(
+                    rule_id=rule_id,
+                    evidence_type=evidence_type,
+                    severity=severity,
+                    raw_value=raw_value,
+                ).normalized_score
+                if float(raw_value) > 0
+                else 0.0
+            ),
+        ).astype("float64")
+
+    numeric = pd.to_numeric(raw_values, errors="coerce").fillna(0.0).clip(lower=0.0)
+    labels = labels.fillna("").astype("string").str.strip().str.lower()
+    signal = _vector_signal_strength(rule_id, numeric, labels, severity)
+    severity_factor = max(min(float(severity) / 5.0, 1.0), 0.0)
+    evidence_factor = EVIDENCE_STRENGTH_FACTOR.get(metadata.evidence_strength, 0.45)
+    role_factor = SCORING_ROLE_FACTOR.get(metadata.scoring_role, 1.0)
+    normalized = (
+        signal
+        * severity_factor
+        * evidence_factor
+        * role_factor
+        * metadata.contribution_weight
+    )
+    return normalized.where(numeric.gt(0), 0.0).clip(0.0, 1.0).astype("float64")
+
+
+def _vector_signal_strength(
+    rule_id: str,
+    numeric: pd.Series,
+    labels: pd.Series,
+    severity: int,
+) -> pd.Series:
+    severity_factor = max(min(float(severity) / 5.0, 1.0), 0.01)
+    default = _default_signal_strength(numeric, labels, severity_factor)
+
+    if rule_id == "L1-04":
+        return labels.map(L104_BUCKET_SIGNAL_STRENGTH).fillna(default).astype("float64")
+    if rule_id == "L2-02":
+        return labels.map(L202_DUPLICATE_PAYMENT_SIGNAL_STRENGTH).fillna(
+            numeric.clip(upper=1.0),
+        ).astype("float64")
+    if rule_id == "L2-01":
+        signal = numeric.clip(upper=1.0)
+        signal = signal.mask(numeric.le(0), 0.0)
+        signal = signal.mask(labels.eq("normal_population"), 0.0)
+        signal = signal.mask(
+            labels.eq("routine_razor_review") | numeric.le(0.35),
+            L201_BUCKET_SIGNAL_STRENGTH["routine_razor_review"],
+        )
+        mapped = labels.map(L201_BUCKET_SIGNAL_STRENGTH)
+        return signal.where(mapped.isna(), mapped).astype("float64")
+    if rule_id in {"L1-03", "L1-07", "L3-09", "L4-04"}:
+        signal = numeric.clip(upper=1.0) / severity_factor
+        if rule_id == "L1-03":
+            signal = labels.map(L103_BUCKET_SIGNAL_STRENGTH).fillna(signal)
+        elif rule_id == "L3-09":
+            signal = labels.map(L309_AGING_BUCKET_SIGNAL_STRENGTH).fillna(signal)
+        return signal.astype("float64")
+    if rule_id == "L3-05":
+        signal = default.copy()
+        signal = signal.mask(numeric.ge(0.45), L305_CALENDAR_SIGNAL_STRENGTH["weekend_holiday"])
+        signal = signal.mask(
+            numeric.ge(0.40) & numeric.lt(0.45),
+            L305_CALENDAR_SIGNAL_STRENGTH["weekend"],
+        )
+        signal = signal.mask(
+            numeric.ge(0.35) & numeric.lt(0.40),
+            L305_CALENDAR_SIGNAL_STRENGTH["weekday_holiday"],
+        )
+        mapped = labels.map(L305_CALENDAR_SIGNAL_STRENGTH)
+        return signal.where(mapped.isna(), mapped).astype("float64")
+    if rule_id in {"L3-01", "L3-10", "L3-12", "L3-06", "L4-05"}:
+        return numeric.clip(upper=1.0).astype("float64")
+    if rule_id == "L3-07":
+        signal = default.copy()
+        for suffix, strength in L307_BUCKET_SIGNAL_STRENGTH.items():
+            signal = signal.mask(labels.str.endswith(suffix, na=False), strength)
+        return signal.astype("float64")
+    if rule_id == "L4-03":
+        return labels.map(L403_ZSCORE_BUCKET_SIGNAL_STRENGTH).fillna(default).astype("float64")
+    return default.astype("float64")
+
+
+def _default_signal_strength(
+    numeric: pd.Series,
+    labels: pd.Series,
+    severity_factor: float,
+) -> pd.Series:
+    mapped = labels.map(SIGNAL_STRENGTH_MAP)
+    from_numeric = numeric.where(numeric.gt(severity_factor), numeric / severity_factor)
+    from_numeric = from_numeric.clip(0.0, 1.0)
+    return mapped.fillna(from_numeric).astype("float64")
 
 
 def _annotation_score(annotation: dict[str, object]) -> float:

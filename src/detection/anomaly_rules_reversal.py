@@ -118,6 +118,27 @@ def _normalize_text(value: object) -> str:
     return " ".join(normalized.split())
 
 
+def _first_nonempty_group_values(
+    work: pd.DataFrame,
+    group_cols: list[str],
+    value_col: str,
+    *,
+    normalizer,
+) -> pd.Series:
+    """Return first meaningful group value without groupby Python callbacks."""
+
+    subset = work[group_cols + [value_col]].copy()
+    subset["_norm"] = subset[value_col].map(normalizer)
+    subset = subset.loc[subset["_norm"].ne("")]
+    if subset.empty:
+        empty_index = pd.MultiIndex.from_arrays(
+            [[] for _ in group_cols],
+            names=group_cols,
+        )
+        return pd.Series(index=empty_index, dtype=object)
+    return subset.drop_duplicates(group_cols).set_index(group_cols)[value_col]
+
+
 def _pair_context_score(left: dict[str, object], right: dict[str, object]) -> int:
     """Score contextual consistency between two candidate reversal rows."""
 
@@ -338,26 +359,30 @@ def _s1_one_to_one_match(
     for column in ["created_by", "reference", "document_type", "line_text", "header_text"]:
         work[column] = df[column] if column in df.columns else ""
 
-    def _first_nonempty(series: pd.Series) -> str:
-        for value in series:
-            normalized = _normalize_value(value)
-            if normalized:
-                return str(value)
-        return ""
-
+    group_cols = ["document_id", "gl_account"]
     doc_work = (
-        work.groupby(["document_id", "gl_account"], sort=False)
+        work.groupby(group_cols, sort=False)
         .agg(
             posting_date=("posting_date", "min"),
             net=("net", "sum"),
-            created_by=("created_by", _first_nonempty),
-            reference=("reference", _first_nonempty),
-            document_type=("document_type", _first_nonempty),
-            line_text=("line_text", _first_nonempty),
-            header_text=("header_text", _first_nonempty),
         )
         .reset_index()
     )
+    for column, normalizer in {
+        "created_by": _normalize_value,
+        "reference": _normalize_value,
+        "document_type": _normalize_value,
+        "line_text": _normalize_text,
+        "header_text": _normalize_text,
+    }.items():
+        first_values = _first_nonempty_group_values(
+            work,
+            group_cols,
+            column,
+            normalizer=normalizer,
+        )
+        doc_work = doc_work.join(first_values.rename(column), on=group_cols)
+        doc_work[column] = doc_work[column].fillna("")
     doc_work["abs_amt"] = doc_work["net"].abs().round(2)
     doc_work["created_by_norm"] = doc_work["created_by"].map(_normalize_value)
     doc_work["reference_norm"] = doc_work["reference"].map(_normalize_value)
@@ -479,26 +504,30 @@ def _s2_rolling_zero_out(
     if len(work) < 2:
         return pd.Series(False, index=df.index)
 
-    def _first_nonempty(series: pd.Series) -> str:
-        for value in series:
-            normalized = _normalize_value(value)
-            if normalized:
-                return str(value)
-        return ""
-
+    group_cols = ["gl_account", "created_by", "document_id"]
     doc_work = (
-        work.groupby(["gl_account", "created_by", "document_id"], sort=False)
+        work.groupby(group_cols, sort=False)
         .agg(
             posting_date=("posting_date", "min"),
             net=("net", "sum"),
             gross=("gross", "sum"),
-            reference=("reference", _first_nonempty),
-            document_type=("document_type", _first_nonempty),
-            source=("source", _first_nonempty),
-            line_text=("line_text", _first_nonempty),
         )
         .reset_index()
     )
+    for column, normalizer in {
+        "reference": _normalize_value,
+        "document_type": _normalize_value,
+        "source": _normalize_value,
+        "line_text": _normalize_text,
+    }.items():
+        first_values = _first_nonempty_group_values(
+            work,
+            group_cols,
+            column,
+            normalizer=normalizer,
+        )
+        doc_work = doc_work.join(first_values.rename(column), on=group_cols)
+        doc_work[column] = doc_work[column].fillna("")
     doc_work["reference_norm"] = doc_work["reference"].map(_normalize_value)
     doc_work["document_type_norm"] = doc_work["document_type"].map(_normalize_value)
     doc_work["source_norm"] = doc_work["source"].map(_normalize_value)
@@ -569,17 +598,16 @@ def _s2b_line_swap_signature(
     work["net"] = work["debit_amount"] - work["credit_amount"]
     work["abs_line_amt"] = work[["debit_amount", "credit_amount"]].max(axis=1)
 
-    result = pd.Series(False, index=df.index)
-    for _, group in work.groupby("document_id", sort=False):
-        if len(group) < 2:
-            continue
-        doc_net = float(group["net"].sum())
-        if abs(doc_net) <= tolerance:
-            continue
-        if np.any(np.abs((group["abs_line_amt"] * 2.0) - abs(doc_net)) <= tolerance):
-            result.loc[group.index] = True
-
-    return result
+    grouped = work.groupby("document_id", sort=False)
+    doc_net = grouped["net"].transform("sum")
+    doc_size = grouped["net"].transform("size")
+    match = (
+        doc_size.ge(2)
+        & doc_net.abs().gt(tolerance)
+        & ((work["abs_line_amt"] * 2.0) - doc_net.abs()).abs().le(tolerance)
+    )
+    doc_hit = match.groupby(work["document_id"], sort=False).transform("any")
+    return pd.Series(doc_hit.to_numpy(dtype=bool), index=df.index)
 
 
 def _s3_reversal_type(df: pd.DataFrame) -> pd.Series:

@@ -4,7 +4,9 @@
 
 from __future__ import annotations
 
+import time
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,7 +17,7 @@ import pandas as pd
 from config.settings import PROJECT_ROOT
 from src.detection.base import DetectionResult
 from src.detection.constants import BATCH_CORROBORATION_RULES, TOPSIDE_BONUS_RULES
-from src.detection.rule_scoring import normalize_rule_evidence
+from src.detection.rule_scoring import RULE_SCORING_REGISTRY, normalize_rule_evidence
 from src.models.phase1_case import (
     CaseDocumentRef,
     CaseGroupResult,
@@ -36,6 +38,16 @@ _EXPLANATION_PRIORITY = (
     "intercompany_structure",
     "data_integrity_failure",
 )
+
+_FAST_CASE_KEY_THEMES = {
+    "control_failure",
+    "access_scope_review",
+    "timing_anomaly",
+    "duplicate_or_outflow",
+    "intercompany_structure",
+    "statistical_outlier",
+    "logic_mismatch",
+}
 
 _RULE_THEME_MAP = {
     "L1-01": ("data_integrity_failure", "data_integrity_failure"),
@@ -77,6 +89,93 @@ _RULE_THEME_MAP = {
     "IC01": ("intercompany_structure", "intercompany_structure"),
     "IC02": ("intercompany_structure", "intercompany_structure"),
     "IC03": ("intercompany_structure", "intercompany_structure"),
+}
+
+_ISSUE_QUEUE_LABELS = {
+    "data_integrity": "데이터 정합성",
+    "control_approval": "통제/승인",
+    "timing_close": "시점/마감",
+    "amount_statistical": "금액/통계",
+    "duplicate_outflow": "중복/유출",
+    "account_logic": "계정/논리",
+    "intercompany_cycle": "관계사/순환",
+    "manipulation_candidate": "조작 후보 종합",
+}
+
+_THEME_QUEUE_MAP = {
+    "data_integrity_failure": "data_integrity",
+    "control_failure": "control_approval",
+    "access_scope_review": "control_approval",
+    "timing_anomaly": "timing_close",
+    "statistical_outlier": "amount_statistical",
+    "duplicate_or_outflow": "duplicate_outflow",
+    "logic_mismatch": "account_logic",
+    "intercompany_structure": "intercompany_cycle",
+}
+
+_RULE_QUEUE_MAP = {
+    "L1-01": "data_integrity",
+    "L1-02": "data_integrity",
+    "L1-08": "data_integrity",
+    "L1-04": "control_approval",
+    "L1-05": "control_approval",
+    "L1-06": "control_approval",
+    "L1-07": "control_approval",
+    "L1-09": "control_approval",
+    "L3-12": "control_approval",
+    "L3-04": "timing_close",
+    "L3-05": "timing_close",
+    "L3-06": "timing_close",
+    "L3-07": "timing_close",
+    "L4-05": "timing_close",
+    "L4-01": "amount_statistical",
+    "L4-03": "amount_statistical",
+    "L4-06": "amount_statistical",
+    "L2-01": "duplicate_outflow",
+    "L2-02": "duplicate_outflow",
+    "L2-03": "duplicate_outflow",
+    "L2-03a": "duplicate_outflow",
+    "L2-03b": "duplicate_outflow",
+    "L2-03c": "duplicate_outflow",
+    "L2-03d": "duplicate_outflow",
+    "L2-05": "duplicate_outflow",
+    "L1-03": "account_logic",
+    "L2-04": "account_logic",
+    "L3-01": "account_logic",
+    "L3-09": "account_logic",
+    "L3-10": "account_logic",
+    "L4-04": "account_logic",
+    "L3-03": "intercompany_cycle",
+    "IC01": "intercompany_cycle",
+    "IC02": "intercompany_cycle",
+    "IC03": "intercompany_cycle",
+    "GR01": "intercompany_cycle",
+}
+
+_EVIDENCE_QUEUE_MAP = {
+    "data_integrity_failure": "data_integrity",
+    "control_failure": "control_approval",
+    "access_scope_review": "control_approval",
+    "timing_anomaly": "timing_close",
+    "statistical_outlier": "amount_statistical",
+    "duplicate_or_outflow": "duplicate_outflow",
+    "logic_mismatch": "account_logic",
+    "intercompany_structure": "intercompany_cycle",
+}
+
+_STRONG_TRIAGE_RULES = {
+    "L1-04",
+    "L1-05",
+    "L1-06",
+    "L1-07",
+    "L1-09",
+    "L2-02",
+    "L2-03",
+    "L2-05",
+    "L3-02",
+    "L3-04",
+    "L4-01",
+    "L4-03",
 }
 
 _STRENGTH_RANK = {"strong": 3, "medium": 2, "weak": 1}
@@ -443,6 +542,7 @@ class _RawHit:
     record_id: str | None
     detail: str | None
     annotation: dict[str, Any] | None = None
+    can_seed_case: bool = True
 
 
 def build_phase1_case_run_id(
@@ -980,8 +1080,32 @@ def _json_safe_value(value: Any) -> Any:
 
 
 def _collect_raw_hits(df: pd.DataFrame, results: list[DetectionResult]) -> list[_RawHit]:
+    return _collect_raw_hits_profiled(df, results, profile_callback=None)
+
+
+def _collect_raw_hits_profiled(
+    df: pd.DataFrame,
+    results: list[DetectionResult],
+    *,
+    profile_callback: Callable[[str, dict[str, Any]], None] | None = None,
+) -> list[_RawHit]:
     hits: list[_RawHit] = []
     row_positions = {label: pos for pos, label in enumerate(df.index)}
+    document_ids = (
+        df["document_id"].fillna("").astype(str).str.strip().to_numpy()
+        if "document_id" in df.columns
+        else None
+    )
+    record_ids = (
+        df["record_id"].fillna("").astype(str).str.strip().to_numpy()
+        if "record_id" in df.columns
+        else None
+    )
+    normalized_cache: dict[
+        tuple[str, str, int, float, str | None],
+        Any,
+    ] = {}
+    case_candidate_labels = _case_candidate_index_labels(df)
     for result in results:
         details = result.details if result.details is not None else pd.DataFrame(index=df.index)
         row_annotations = (result.metadata or {}).get("row_annotations", {})
@@ -991,10 +1115,39 @@ def _collect_raw_hits(df: pd.DataFrame, results: list[DetectionResult]) -> list[
             mapping = _RULE_THEME_MAP.get(rule_flag.rule_id)
             if mapping is None or rule_flag.rule_id not in details.columns:
                 continue
+            rule_start = time.perf_counter()
+            hit_start_count = len(hits)
             theme_id, evidence_type = mapping
             column = details[rule_flag.rule_id]
             rule_annotations = row_annotations.get(rule_flag.rule_id, {})
-            for row_label, raw_score in column.items():
+            raw_scores = pd.to_numeric(column, errors="coerce").fillna(0.0)
+            seed_labels: set[Any] = set(raw_scores[raw_scores.gt(0)].index.tolist())
+            if case_candidate_labels is not None:
+                seed_labels.intersection_update(case_candidate_labels)
+            context_labels: set[Any] = set()
+            if isinstance(rule_annotations, dict):
+                for raw_idx, annotation in rule_annotations.items():
+                    if not isinstance(annotation, dict):
+                        continue
+                    row_label = raw_idx if raw_idx in row_positions else None
+                    if row_label is None:
+                        try:
+                            candidate_pos = int(raw_idx)
+                        except (TypeError, ValueError):
+                            continue
+                        if 0 <= candidate_pos < len(df):
+                            row_label = df.index[candidate_pos]
+                    if row_label is None:
+                        continue
+                    if case_candidate_labels is not None and row_label not in case_candidate_labels:
+                        continue
+                    if _annotation_can_seed_case(rule_flag.rule_id, annotation):
+                        seed_labels.add(row_label)
+                    elif _annotation_score(annotation) > 0:
+                        context_labels.add(row_label)
+
+            candidate_labels = seed_labels | context_labels
+            for row_label in candidate_labels:
                 row_pos = row_positions.get(row_label)
                 if row_pos is None:
                     try:
@@ -1004,10 +1157,8 @@ def _collect_raw_hits(df: pd.DataFrame, results: list[DetectionResult]) -> list[
                     if candidate_pos < 0 or candidate_pos >= len(df):
                         continue
                     row_pos = candidate_pos
-                row = df.iloc[row_pos]
-                document_id = _string_value(row.get("document_id")) or f"row-{row_pos}"
                 row_annotation = _lookup_row_annotation(rule_annotations, row_label, row_pos)
-                raw_score_float = float(raw_score)
+                raw_score_float = float(raw_scores.iloc[row_pos])
                 annotation_score = _annotation_score(row_annotation)
                 score = max(raw_score_float, annotation_score)
                 if score <= 0:
@@ -1015,19 +1166,42 @@ def _collect_raw_hits(df: pd.DataFrame, results: list[DetectionResult]) -> list[
                 signal_status = (
                     "confirmed" if raw_score_float > 0 else "review_candidate"
                 )
-                normalized = normalize_rule_evidence(
-                    rule_id=rule_flag.rule_id,
-                    evidence_type=evidence_type,
-                    severity=int(rule_flag.severity),
-                    raw_value=score,
-                    display_label=_row_display_label(row_annotation),
+                can_seed_case = row_label in seed_labels
+                display_label = _row_display_label(row_annotation)
+                severity = int(rule_flag.severity)
+                normalized_key = (
+                    rule_flag.rule_id,
+                    evidence_type,
+                    severity,
+                    round(float(score), 8),
+                    display_label,
+                )
+                normalized = normalized_cache.get(normalized_key)
+                if normalized is None:
+                    normalized = normalize_rule_evidence(
+                        rule_id=rule_flag.rule_id,
+                        evidence_type=evidence_type,
+                        severity=severity,
+                        raw_value=score,
+                        display_label=display_label,
+                    )
+                    normalized_cache[normalized_key] = normalized
+                document_id = (
+                    str(document_ids[row_pos])
+                    if document_ids is not None and str(document_ids[row_pos])
+                    else f"row-{row_pos}"
+                )
+                record_id = (
+                    str(record_ids[row_pos])
+                    if record_ids is not None and str(record_ids[row_pos])
+                    else None
                 )
                 hits.append(
                     _RawHit(
                         rule_id=rule_flag.rule_id,
                         theme_id=theme_id,
                         evidence_type=evidence_type,
-                        severity=int(rule_flag.severity),
+                        severity=severity,
                         row_index=row_pos,
                         score=float(score),
                         signal_strength=normalized.signal_strength,
@@ -1037,16 +1211,40 @@ def _collect_raw_hits(df: pd.DataFrame, results: list[DetectionResult]) -> list[
                         display_label=normalized.display_label,
                         signal_status=signal_status,
                         document_id=document_id,
-                        record_id=_optional_string(row.get("record_id")),
+                        record_id=record_id,
                         detail=_rule_hit_detail(
                             rule_flag.rule_id,
                             rule_flag.detail,
                             row_annotation,
                         ),
                         annotation=row_annotation,
+                        can_seed_case=can_seed_case,
                     )
                 )
+            if profile_callback is not None:
+                profile_callback(
+                    f"collect_raw_hits.{rule_flag.rule_id}",
+                    {
+                        "elapsed_sec": round(time.perf_counter() - rule_start, 3),
+                        "candidate_labels": len(candidate_labels),
+                        "seed_candidate_labels": len(seed_labels),
+                        "context_candidate_labels": len(context_labels - seed_labels),
+                        "hits_added": len(hits) - hit_start_count,
+                    },
+                )
     return hits
+
+
+def _case_candidate_index_labels(df: pd.DataFrame) -> set[Any] | None:
+    """Return row labels eligible for the Phase 1 case queue after aggregation."""
+
+    if "risk_level" in df.columns:
+        risk = df["risk_level"].astype(str)
+        return set(risk[risk.ne("Normal")].index.tolist())
+    if "anomaly_score" in df.columns:
+        score = pd.to_numeric(df["anomaly_score"], errors="coerce").fillna(0.0)
+        return set(score[score.gt(0)].index.tolist())
+    return None
 
 
 def _build_cases(
@@ -1054,43 +1252,128 @@ def _build_cases(
     raw_hits: list[_RawHit],
     config: dict[str, Any],
     macro_findings: list[dict[str, Any]] | None = None,
+    profile_callback: Callable[[str, dict[str, Any]], None] | None = None,
 ) -> list[CaseGroupResult]:
     if not raw_hits:
         return []
 
+    build_start = time.perf_counter()
+    step_start = build_start
+    line_amounts = _line_amount_series(df)
+    document_amounts = _document_amounts_by_id(df, line_amounts)
+    macro_index = _build_macro_context_index(macro_findings or [])
+    macro_row_context = _build_macro_row_context(df)
+    if profile_callback is not None:
+        profile_callback(
+            "build_cases.init_amount_cache",
+            {
+                "elapsed_sec": round(time.perf_counter() - step_start, 3),
+                "document_amounts": len(document_amounts),
+            },
+        )
+
+    step_start = time.perf_counter()
     groups: dict[tuple[str, str], dict[str, Any]] = {}
     hits_by_row: dict[int, list[_RawHit]] = defaultdict(list)
+    theme_row_pairs: dict[tuple[str, int], None] = {}
+    row_cache: dict[int, pd.Series] = {}
     for hit in raw_hits:
         hits_by_row[hit.row_index].append(hit)
-        row = df.iloc[hit.row_index]
-        case_key_parts = _make_case_key_parts(hit.theme_id, row, config)
+        if hit.can_seed_case:
+            theme_row_pairs.setdefault((hit.theme_id, hit.row_index), None)
+    case_key_context = _build_case_key_context(
+        df,
+        line_amounts,
+        config,
+        sorted(hits_by_row),
+    )
+    for theme_id, row_index in theme_row_pairs:
+        row = row_cache.get(row_index)
+        if row is None and theme_id not in _FAST_CASE_KEY_THEMES:
+            row = df.iloc[row_index]
+            row_cache[row_index] = row
+        case_key_parts = _make_case_key_parts_from_context(
+            theme_id,
+            row_index,
+            case_key_context,
+        )
+        if case_key_parts is None:
+            if row is None:
+                row = df.iloc[row_index]
+                row_cache[row_index] = row
+            case_key_parts = _make_case_key_parts(theme_id, row, config)
         case_key = " / ".join(str(value) for value in case_key_parts.values())
-        group_key = (hit.theme_id, case_key)
+        group_key = (theme_id, case_key)
         if group_key not in groups:
             groups[group_key] = {
                 "case_key_parts": case_key_parts,
                 "row_indices": set(),
             }
-        groups[group_key]["row_indices"].add(hit.row_index)
+        groups[group_key]["row_indices"].add(row_index)
+    if profile_callback is not None:
+        profile_callback(
+            "build_cases.group_raw_hits",
+            {
+                "elapsed_sec": round(time.perf_counter() - step_start, 3),
+                "groups": len(groups),
+                "hit_rows": len(hits_by_row),
+                "theme_row_pairs": len(theme_row_pairs),
+                "row_cache": len(row_cache),
+            },
+        )
 
+    step_start = time.perf_counter()
     max_amount = (
         max(
-            (_case_total_amount(df, group["row_indices"]) for group in groups.values()),
+            (
+                _case_total_amount(df, group["row_indices"], line_amounts=line_amounts)
+                for group in groups.values()
+            ),
             default=0.0,
         )
         or 1.0
     )
+    if profile_callback is not None:
+        profile_callback(
+            "build_cases.max_amount",
+            {
+                "elapsed_sec": round(time.perf_counter() - step_start, 3),
+                "max_amount": float(max_amount),
+            },
+        )
     repeat_tiebreak = int(config.get("repeat_months_tiebreak", 3))
     cases: list[CaseGroupResult] = []
+    step_start = time.perf_counter()
+    l304_repeat_signatures = (
+        _l304_repeat_pattern_signatures(df, config.get("timing_priority", {}))
+        if any(hit.rule_id == "L3-04" for hit in raw_hits)
+        else set()
+    )
+    if profile_callback is not None:
+        profile_callback(
+            "build_cases.l304_repeat_signatures",
+            {
+                "elapsed_sec": round(time.perf_counter() - step_start, 3),
+                "count": len(l304_repeat_signatures),
+            },
+        )
 
+    step_start = time.perf_counter()
+    loop_timings: dict[str, float] = defaultdict(float)
+    raw_rule_hit_ref_cache: dict[tuple[str, int], RawRuleHitRef] = {}
+    document_ref_cache: dict[tuple[str, tuple[tuple[str, int, str], ...]], CaseDocumentRef] = {}
     for ordinal, ((theme_id, case_key), group) in enumerate(groups.items(), start=1):
+        segment_start = time.perf_counter()
         indices = sorted(group["row_indices"])
         rows = df.iloc[indices]
         case_hits = _collect_case_hits(indices, hits_by_row)
         evidence_types = sorted({hit.evidence_type for hit in case_hits})
         evidence_scores = _theme_scores(case_hits, config)
-        total_amount = _case_total_amount(df, indices)
+        total_amount = _case_total_amount(df, indices, line_amounts=line_amounts)
         amount_score = _amount_score(total_amount, max_amount, config)
+        loop_timings["prep"] += time.perf_counter() - segment_start
+
+        segment_start = time.perf_counter()
         access_scope_score = min(evidence_scores.get("access_scope_review", 0.0), 1.0)
         control_score = min(evidence_scores.get("control_failure", 0.0), 1.0)
         duplicate_or_outflow_score = min(
@@ -1122,6 +1405,9 @@ def _build_cases(
             config=config,
         )
         base_priority_score = priority_score
+        loop_timings["base_score"] += time.perf_counter() - segment_start
+
+        segment_start = time.perf_counter()
         priority_score, behavior_score, repeat_score = _apply_timing_priority_adjustments(
             df=df,
             theme_id=theme_id,
@@ -1133,7 +1419,11 @@ def _build_cases(
             repeat_score=repeat_score,
             priority_score=priority_score,
             config=config,
+            l304_repeat_signatures=l304_repeat_signatures,
         )
+        loop_timings["timing_adjust"] += time.perf_counter() - segment_start
+
+        segment_start = time.perf_counter()
         priority_score, behavior_score, adjustment_reasons, bonuses = _apply_priority_adjustments(
             rows=rows,
             case_hits=case_hits,
@@ -1150,29 +1440,71 @@ def _build_cases(
             config=config,
         )
         adjustment_reasons.extend(floor_reasons)
-        macro_contexts = _case_macro_contexts(rows, macro_findings or [])
+        loop_timings["priority_adjust"] += time.perf_counter() - segment_start
+
+        segment_start = time.perf_counter()
+        macro_contexts = _case_macro_contexts(
+            rows,
+            macro_findings or [],
+            indices=indices,
+            macro_index=macro_index,
+            macro_row_context=macro_row_context,
+        )
         priority_score, macro_reasons = _apply_macro_context_priority(
             priority_score,
             macro_contexts,
         )
         adjustment_reasons.extend(macro_reasons)
+        loop_timings["macro_context"] += time.perf_counter() - segment_start
+
+        segment_start = time.perf_counter()
         priority_band = _priority_band(priority_score, config, repeat_score)
         l304_repeat_pattern = _is_l304_repeat_pattern_case(
             df,
             rows,
             case_hits,
             config.get("timing_priority", {}),
+            l304_repeat_signatures=l304_repeat_signatures,
+        )
+        primary_queue, secondary_queues = _case_issue_queues(theme_id, case_hits, evidence_types)
+        triage_rank_score, triage_rank_reasons = _triage_rank_score(
+            primary_queue=primary_queue,
+            secondary_queues=secondary_queues,
+            case_hits=case_hits,
+            evidence_types=evidence_types,
+            document_count=len({hit.document_id for hit in case_hits}),
+            amount_score=amount_score,
+            total_amount=total_amount,
+            has_repeat_pattern=l304_repeat_pattern or repeat_months >= repeat_tiebreak,
         )
         auditor_insight = _auditor_insight(
             theme_id=theme_id,
             case_hits=case_hits,
             total_amount=total_amount,
         )
+        loop_timings["auditor_insight"] += time.perf_counter() - segment_start
 
+        segment_start = time.perf_counter()
+        documents = _build_document_refs(
+            df,
+            case_hits,
+            config,
+            document_amounts=document_amounts,
+            line_amounts=line_amounts,
+            ref_cache=document_ref_cache,
+        )
+        raw_rule_hits = _raw_rule_hit_refs(case_hits, raw_rule_hit_ref_cache)
+        loop_timings["refs"] += time.perf_counter() - segment_start
+
+        segment_start = time.perf_counter()
         cases.append(
             CaseGroupResult(
                 case_id=f"case_{theme_id}_{ordinal:05d}",
                 primary_theme=theme_id,
+                primary_queue=primary_queue,
+                primary_queue_label=_queue_label(primary_queue),
+                secondary_queues=secondary_queues,
+                secondary_queue_labels=[_queue_label(queue) for queue in secondary_queues],
                 secondary_tags=secondary_tags,
                 evidence_types=evidence_types,
                 case_key=case_key,
@@ -1185,6 +1517,8 @@ def _build_cases(
                 l301_priority_bonus=bonuses["l301_priority_bonus"],
                 priority_adjustment_reasons=adjustment_reasons,
                 priority_band=priority_band,
+                triage_rank_score=triage_rank_score,
+                triage_rank_reasons=triage_rank_reasons,
                 amount_score=amount_score,
                 control_score=control_score,
                 duplicate_or_outflow_score=duplicate_or_outflow_score,
@@ -1221,35 +1555,48 @@ def _build_cases(
                     *(_macro_context_tags(macro_contexts)),
                 }),
                 macro_contexts=macro_contexts,
-                documents=_build_document_refs(df, case_hits, config),
-                raw_rule_hits=[
-                    RawRuleHitRef(
-                        rule_id=hit.rule_id,
-                        severity=hit.severity,
-                        document_id=hit.document_id,
-                        row_index=hit.row_index,
-                        record_id=hit.record_id,
-                        score=hit.score,
-                        signal_strength=hit.signal_strength,
-                        normalized_score=hit.normalized_score,
-                        evidence_strength=hit.evidence_strength,
-                        scoring_role=hit.scoring_role,
-                        display_label=hit.display_label,
-                        signal_status=hit.signal_status,
-                        detail=hit.detail,
-                        evidence_type=hit.evidence_type,
-                    )
-                    for hit in case_hits
-                ],
+                documents=documents,
+                raw_rule_hits=raw_rule_hits,
                 has_control_failure="control_failure" in evidence_types,
                 has_high_materiality=amount_score >= 0.75,
                 has_repeat_pattern=(repeat_months >= repeat_tiebreak) or l304_repeat_pattern,
             )
         )
+        loop_timings["model_append"] += time.perf_counter() - segment_start
+        if profile_callback is not None and ordinal % 1000 == 0:
+            profile_callback(
+                "build_cases.case_loop_progress",
+                {
+                    "elapsed_sec": round(time.perf_counter() - step_start, 3),
+                    "processed": ordinal,
+                    "total_groups": len(groups),
+                    "cases": len(cases),
+                    "timings": {
+                        name: round(value, 3)
+                        for name, value in sorted(loop_timings.items())
+                    },
+                },
+            )
 
+    if profile_callback is not None:
+        profile_callback(
+            "build_cases.case_loop_done",
+            {
+                "elapsed_sec": round(time.perf_counter() - step_start, 3),
+                "processed": len(groups),
+                "cases": len(cases),
+                "timings": {
+                    name: round(value, 3)
+                    for name, value in sorted(loop_timings.items())
+                },
+            },
+        )
+
+    step_start = time.perf_counter()
     cases.sort(
         key=lambda item: (
             item.priority_score,
+            item.triage_rank_score,
             item.repeat_months >= repeat_tiebreak,
             item.total_amount,
             item.rule_count,
@@ -1260,6 +1607,15 @@ def _build_cases(
         case.exposure_rank = index
         case.is_top_case = index <= int(config.get("top_n_cases", 50))
     _apply_theme_ranks(cases)
+    if profile_callback is not None:
+        profile_callback(
+            "build_cases.sort_rank",
+            {
+                "elapsed_sec": round(time.perf_counter() - step_start, 3),
+                "total_elapsed_sec": round(time.perf_counter() - build_start, 3),
+                "cases": len(cases),
+            },
+        )
     return cases
 
 
@@ -1308,9 +1664,15 @@ def _collect_case_hits(indices: list[int], hits_by_row: dict[int, list[_RawHit]]
 def _case_macro_contexts(
     rows: pd.DataFrame,
     macro_findings: list[dict[str, Any]],
+    *,
+    indices: list[int] | None = None,
+    macro_index: dict[str, Any] | None = None,
+    macro_row_context: dict[str, list[str]] | None = None,
 ) -> list[dict[str, Any]]:
     if rows.empty or not macro_findings or "gl_account" not in rows.columns:
         return []
+    if indices is not None and macro_index is not None and macro_row_context is not None:
+        return _case_macro_contexts_from_index(indices, macro_index, macro_row_context)
 
     row_document_ids = {
         _string_value(value)
@@ -1378,6 +1740,127 @@ def _case_macro_contexts(
         reverse=True,
     )
     return contexts
+
+
+def _build_macro_context_index(macro_findings: list[dict[str, Any]]) -> dict[str, Any]:
+    by_doc: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    by_account: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for finding in macro_findings:
+        rule_id = str(finding.get("rule_id") or "")
+        if rule_id not in {"D01", "D02", "GR01", "GR03"}:
+            continue
+        macro_account = _macro_key_part(finding.get("gl_account"))
+        if not macro_account:
+            continue
+        context = _macro_context_from_finding(finding, rule_id, macro_account)
+        for value in finding.get("document_ids", []) or []:
+            document_id = _string_value(value)
+            if document_id:
+                by_doc[document_id].append(context)
+        by_account[macro_account].append(context)
+    return {"by_doc": by_doc, "by_account": by_account}
+
+
+def _build_macro_row_context(df: pd.DataFrame) -> dict[str, list[str]]:
+    def _column_values(column: str) -> list[str]:
+        if column not in df.columns:
+            return [""] * len(df)
+        return [_macro_key_part(value) for value in df[column].tolist()]
+
+    document_ids = (
+        [_string_value(value) for value in df["document_id"].tolist()]
+        if "document_id" in df.columns
+        else [""] * len(df)
+    )
+    return {
+        "document_id": document_ids,
+        "year": _column_values("fiscal_year"),
+        "company": _column_values("company_code"),
+        "account": _column_values("gl_account"),
+    }
+
+
+def _case_macro_contexts_from_index(
+    indices: list[int],
+    macro_index: dict[str, Any],
+    macro_row_context: dict[str, list[str]],
+) -> list[dict[str, Any]]:
+    by_doc = macro_index.get("by_doc", {})
+    by_account = macro_index.get("by_account", {})
+    documents = macro_row_context["document_id"]
+    years = macro_row_context["year"]
+    companies = macro_row_context["company"]
+    accounts = macro_row_context["account"]
+
+    contexts: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row_index in indices:
+        document_id = documents[row_index]
+        if document_id:
+            _append_macro_contexts(contexts, seen, by_doc.get(document_id, ()))
+        row_key = (years[row_index], companies[row_index], accounts[row_index])
+        if row_key[2]:
+            for context in by_account.get(row_key[2], ()):
+                macro_key = (
+                    str(context.get("_macro_year") or ""),
+                    str(context.get("_macro_company") or ""),
+                    str(context.get("_macro_account") or ""),
+                )
+                if _macro_key_matches(row_key, macro_key):
+                    _append_macro_contexts(contexts, seen, (context,))
+    contexts.sort(
+        key=lambda item: (
+            float(item.get("macro_priority_score") or 0.0),
+            str(item.get("rule_id") or ""),
+        ),
+        reverse=True,
+    )
+    return [_public_macro_context(context) for context in contexts]
+
+
+def _append_macro_contexts(
+    contexts: list[dict[str, Any]],
+    seen: set[str],
+    candidates,
+) -> None:
+    for context in candidates:
+        context_id = str(context.get("finding_id") or "")
+        if context_id in seen:
+            continue
+        seen.add(context_id)
+        contexts.append(context)
+
+
+def _macro_context_from_finding(
+    finding: dict[str, Any],
+    rule_id: str,
+    macro_account: str,
+) -> dict[str, Any]:
+    context_id = str(finding.get("finding_id") or f"{rule_id}:{macro_account}")
+    return {
+        "finding_id": context_id,
+        "rule_id": rule_id,
+        "queue_bucket": finding.get("queue_bucket"),
+        "macro_priority_score": finding.get("macro_priority_score"),
+        "normal_likelihood": finding.get("normal_likelihood"),
+        "company_code": finding.get("company_code"),
+        "gl_account": finding.get("gl_account"),
+        "fiscal_year": finding.get("fiscal_year"),
+        "review_score": finding.get("review_score"),
+        "candidate_documents": finding.get("candidate_documents"),
+        "scoring_effect": _macro_context_scoring_effect(finding),
+        "_macro_year": _macro_key_part(finding.get("fiscal_year")),
+        "_macro_company": _macro_key_part(finding.get("company_code")),
+        "_macro_account": macro_account,
+    }
+
+
+def _public_macro_context(context: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in context.items()
+        if not str(key).startswith("_macro_")
+    }
 
 
 def _macro_key_matches(
@@ -1517,32 +2000,303 @@ def _make_case_key_parts(theme_id: str, row: pd.Series, config: dict[str, Any]) 
     }
 
 
+def _build_case_key_context(
+    df: pd.DataFrame,
+    line_amounts: pd.Series,
+    config: dict[str, Any],
+    row_indices: list[int],
+) -> dict[str, Any]:
+    work = df.iloc[row_indices]
+    row_pos = {row_index: pos for pos, row_index in enumerate(row_indices)}
+    posting = (
+        pd.to_datetime(work["posting_date"], errors="coerce")
+        if "posting_date" in work.columns
+        else None
+    )
+    posting_month = (
+        posting.dt.strftime("%Y-%m").fillna("UNKNOWN_MONTH").tolist()
+        if posting is not None
+        else ["UNKNOWN_MONTH"] * len(work)
+    )
+    is_period_end = (
+        work["is_period_end"].fillna(False).astype(bool).tolist()
+        if "is_period_end" in work.columns
+        else [False] * len(work)
+    )
+    return {
+        "_row_pos": row_pos,
+        "posting_month": posting_month,
+        "period_window": _period_end_window_values(
+            posting,
+            is_period_end,
+            int(config.get("period_end_window_days", 5)),
+            len(work),
+        ),
+        "near_period": _near_period_bucket_values(
+            posting,
+            int(config.get("near_period_days", 7)),
+            len(work),
+        ),
+        "created_by": _string_column(work, "created_by"),
+        "business_process": _string_column(work, "business_process"),
+        "user_persona": _string_column(work, "user_persona"),
+        "document_type": _string_column(work, "document_type"),
+        "company_code": _string_column(work, "company_code"),
+        "account_family": _account_family_values(work, config),
+        "counterparty": _counterparty_values(work, config),
+        "company_pair": _company_pair_values(work, config),
+        "amount_band": _amount_band_values(line_amounts.iloc[row_indices]),
+        "load_batch": _load_batch_values(work, config),
+    }
+
+
+def _make_case_key_parts_from_context(
+    theme_id: str,
+    row_index: int,
+    context: dict[str, Any],
+) -> dict[str, Any] | None:
+    row_pos = context["_row_pos"].get(row_index)
+    if row_pos is None:
+        return None
+    if theme_id == "control_failure":
+        return {
+            "created_by": context["created_by"][row_pos] or "UNKNOWN_USER",
+            "business_process": context["business_process"][row_pos] or "UNKNOWN_PROCESS",
+            "period_month": context["posting_month"][row_pos],
+        }
+    if theme_id == "access_scope_review":
+        return {
+            "created_by": context["created_by"][row_pos] or "UNKNOWN_USER",
+            "user_persona": context["user_persona"][row_pos] or "UNKNOWN_PERSONA",
+            "period_month": context["posting_month"][row_pos],
+        }
+    if theme_id == "timing_anomaly":
+        return {
+            "created_by": context["created_by"][row_pos] or "UNKNOWN_USER",
+            "account_family": context["account_family"][row_pos],
+            "period_window": context["period_window"][row_pos],
+        }
+    if theme_id == "duplicate_or_outflow":
+        return {
+            "counterparty": context["counterparty"][row_pos],
+            "amount_band": context["amount_band"][row_pos],
+            "near_period": context["near_period"][row_pos],
+        }
+    if theme_id == "intercompany_structure":
+        return {
+            "company_pair": context["company_pair"][row_pos],
+            "counterparty": context["counterparty"][row_pos],
+            "period_month": context["posting_month"][row_pos],
+        }
+    if theme_id == "statistical_outlier":
+        return {
+            "business_process": context["business_process"][row_pos] or "UNKNOWN_PROCESS",
+            "account_family": context["account_family"][row_pos],
+            "period_month": context["posting_month"][row_pos],
+        }
+    if theme_id == "logic_mismatch":
+        return {
+            "account_family": context["account_family"][row_pos],
+            "document_type": context["document_type"][row_pos] or "UNKNOWN_DOCUMENT_TYPE",
+            "period_month": context["posting_month"][row_pos],
+        }
+    return None
+
+
+def _string_column(df: pd.DataFrame, column: str) -> list[str]:
+    if column not in df.columns:
+        return [""] * len(df)
+    series = df[column]
+    return series.astype(object).where(pd.notna(series), "").astype(str).str.strip().tolist()
+
+
+def _period_end_window_values(
+    posting: pd.Series | None,
+    is_period_end: list[bool],
+    days: int,
+    length: int,
+) -> list[str]:
+    if posting is None:
+        return ["UNKNOWN_PERIOD_WINDOW"] * length
+    values: list[str] = []
+    for pos, timestamp in enumerate(posting):
+        if pd.isna(timestamp):
+            values.append("UNKNOWN_PERIOD_WINDOW")
+            continue
+        if is_period_end[pos]:
+            values.append(f"{timestamp.strftime('%Y-%m')}-period_end")
+            continue
+        month_end = timestamp + pd.offsets.MonthEnd(0)
+        if abs((month_end - timestamp).days) <= days:
+            values.append(f"{timestamp.strftime('%Y-%m')}-month_end_window")
+        else:
+            values.append(timestamp.strftime("%Y-%m"))
+    return values
+
+
+def _near_period_bucket_values(
+    posting: pd.Series | None,
+    days: int,
+    length: int,
+) -> list[str]:
+    if posting is None:
+        return ["UNKNOWN_NEAR_PERIOD"] * length
+    bucket_days = max(days, 1)
+    values: list[str] = []
+    for timestamp in posting:
+        if pd.isna(timestamp):
+            values.append("UNKNOWN_NEAR_PERIOD")
+            continue
+        ordinal = timestamp.toordinal()
+        bucket_start = ordinal - (ordinal % bucket_days)
+        values.append(datetime.fromordinal(bucket_start).strftime("%Y-%m-%d"))
+    return values
+
+
+def _counterparty_values(df: pd.DataFrame, config: dict[str, Any]) -> list[str]:
+    fallback = str(config.get("counterparty_fallback", "UNKNOWN_COUNTERPARTY"))
+    result = [""] * len(df)
+    for field in config.get(
+        "counterparty_columns",
+        ("auxiliary_account_number", "vendor_name", "customer_name"),
+    ):
+        values = _string_column(df, str(field))
+        for index, value in enumerate(values):
+            if not result[index] and value:
+                result[index] = value
+    return [value or fallback for value in result]
+
+
+def _account_family_values(df: pd.DataFrame, config: dict[str, Any]) -> list[str]:
+    fallback = str(config.get("account_family_fallback", "UNKNOWN_ACCOUNT_FAMILY"))
+    result = [""] * len(df)
+    gl_account = _string_column(df, "gl_account")
+    for key in config.get(
+        "account_family_fallback_order",
+        ("account_family", "first_digit", "gl_account_prefix_2", "gl_account_prefix_3"),
+    ):
+        if key == "gl_account_prefix_2":
+            values = [value[:2] if value else "" for value in gl_account]
+        elif key == "gl_account_prefix_3":
+            values = [value[:3] if value else "" for value in gl_account]
+        else:
+            values = _string_column(df, str(key))
+        for index, value in enumerate(values):
+            if not result[index] and value:
+                result[index] = value
+    return [value or fallback for value in result]
+
+
+def _company_pair_values(df: pd.DataFrame, config: dict[str, Any]) -> list[str]:
+    fields = list(config.get("intercompany_pair_columns", ("company_code", "trading_partner")))
+    first = _string_column(df, str(fields[0])) if fields else [""] * len(df)
+    second = _string_column(df, str(fields[1])) if len(fields) > 1 else [""] * len(df)
+    return [
+        (left or f"UNKNOWN_{str(fields[0]).upper()}") + "+" + (right or "UNKNOWN_TRADING_PARTNER")
+        for left, right in zip(first, second, strict=False)
+    ]
+
+
+def _amount_band_values(line_amounts: pd.Series) -> list[str]:
+    values: list[str] = []
+    for amount in line_amounts.to_numpy():
+        if amount >= 1_000_000_000:
+            values.append("1B+")
+        elif amount >= 100_000_000:
+            values.append("100M-1B")
+        elif amount >= 10_000_000:
+            values.append("10M-100M")
+        else:
+            values.append("<10M")
+    return values
+
+
+def _load_batch_values(df: pd.DataFrame, config: dict[str, Any]) -> list[str]:
+    result = [""] * len(df)
+    for field in config.get("load_batch_columns", ("upload_batch_id",)):
+        values = _string_column(df, str(field))
+        for index, value in enumerate(values):
+            if not result[index] and value:
+                result[index] = value
+    return [value or "UNKNOWN_BATCH" for value in result]
+
+
 def _build_document_refs(
     df: pd.DataFrame,
     hits: list[_RawHit],
     config: dict[str, Any],
+    *,
+    document_amounts: dict[str, float] | None = None,
+    line_amounts: pd.Series | None = None,
+    ref_cache: dict[tuple[str, tuple[tuple[str, int, str], ...]], CaseDocumentRef] | None = None,
 ) -> list[CaseDocumentRef]:
     by_doc: dict[str, list[_RawHit]] = defaultdict(list)
     for hit in hits:
         by_doc[hit.document_id].append(hit)
     refs: list[CaseDocumentRef] = []
     for document_id, doc_hits in by_doc.items():
-        hit_positions = [hit.row_index for hit in doc_hits]
-        row = df.iloc[hit_positions].iloc[0]
-        refs.append(
-            CaseDocumentRef(
-                document_id=document_id,
-                posting_date=_date_string(row.get("posting_date")),
-                created_by=_optional_string(row.get("created_by")),
-                business_process=_optional_string(row.get("business_process")),
-                gl_account=_optional_string(row.get("gl_account")),
-                counterparty=_counterparty(row, config),
-                amount=_document_amount(df, document_id, hit_positions),
-                matched_rules=sorted({hit.rule_id for hit in doc_hits}),
-                evidence_tags=sorted({hit.evidence_type for hit in doc_hits}),
-            )
+        cache_key = (
+            document_id,
+            tuple(
+                sorted((hit.rule_id, hit.row_index, hit.evidence_type) for hit in doc_hits)
+            ),
         )
+        if ref_cache is not None and cache_key in ref_cache:
+            refs.append(ref_cache[cache_key])
+            continue
+        hit_positions = [hit.row_index for hit in doc_hits]
+        row = df.iloc[doc_hits[0].row_index]
+        ref = CaseDocumentRef(
+            document_id=document_id,
+            posting_date=_date_string(row.get("posting_date")),
+            created_by=_optional_string(row.get("created_by")),
+            business_process=_optional_string(row.get("business_process")),
+            gl_account=_optional_string(row.get("gl_account")),
+            counterparty=_counterparty(row, config),
+            amount=_document_amount(
+                df,
+                document_id,
+                hit_positions,
+                document_amounts=document_amounts,
+                line_amounts=line_amounts,
+            ),
+            matched_rules=sorted({hit.rule_id for hit in doc_hits}),
+            evidence_tags=sorted({hit.evidence_type for hit in doc_hits}),
+        )
+        if ref_cache is not None:
+            ref_cache[cache_key] = ref
+        refs.append(ref)
     refs.sort(key=lambda item: (item.posting_date or "", item.document_id))
+    return refs
+
+
+def _raw_rule_hit_refs(
+    hits: list[_RawHit],
+    cache: dict[tuple[str, int], RawRuleHitRef],
+) -> list[RawRuleHitRef]:
+    refs: list[RawRuleHitRef] = []
+    for hit in hits:
+        key = (hit.rule_id, hit.row_index)
+        ref = cache.get(key)
+        if ref is None:
+            ref = RawRuleHitRef(
+                rule_id=hit.rule_id,
+                severity=hit.severity,
+                document_id=hit.document_id,
+                row_index=hit.row_index,
+                record_id=hit.record_id,
+                score=hit.score,
+                signal_strength=hit.signal_strength,
+                normalized_score=hit.normalized_score,
+                evidence_strength=hit.evidence_strength,
+                scoring_role=hit.scoring_role,
+                display_label=hit.display_label,
+                signal_status=hit.signal_status,
+                detail=hit.detail,
+                evidence_type=hit.evidence_type,
+            )
+            cache[key] = ref
+        refs.append(ref)
     return refs
 
 
@@ -1566,6 +2320,132 @@ def _theme_scores(hits: list[_RawHit], config: dict[str, Any]) -> dict[str, floa
             scaled = total
         scores[evidence_type] = min(scaled, cap)
     return scores
+
+
+def _case_issue_queues(
+    theme_id: str,
+    case_hits: list[_RawHit],
+    evidence_types: list[str],
+) -> tuple[str, list[str]]:
+    primary = _THEME_QUEUE_MAP.get(theme_id, "account_logic")
+    queues: list[str] = [primary]
+    for evidence_type in evidence_types:
+        queue = _EVIDENCE_QUEUE_MAP.get(str(evidence_type))
+        if queue and queue not in queues:
+            queues.append(queue)
+    for hit in case_hits:
+        queue = _RULE_QUEUE_MAP.get(str(hit.rule_id))
+        if queue and queue not in queues:
+            queues.append(queue)
+    domain_queues = [queue for queue in queues if queue != "manipulation_candidate"]
+    if _is_composite_manipulation_candidate(case_hits, domain_queues):
+        queues.append("manipulation_candidate")
+    return primary, [queue for queue in queues if queue != primary]
+
+
+def _is_composite_manipulation_candidate(case_hits: list[_RawHit], queues: list[str]) -> bool:
+    domain_count = len(set(queues))
+    if domain_count < 2:
+        return False
+    strong_hits = sum(1 for hit in case_hits if hit.rule_id in _STRONG_TRIAGE_RULES)
+    direct_hits = sum(1 for hit in case_hits if hit.signal_status == "confirmed")
+    review_only_hits = sum(1 for hit in case_hits if hit.signal_status == "review_candidate")
+    if strong_hits >= 2 and direct_hits >= 2:
+        return True
+    if domain_count >= 3 and strong_hits >= 1 and direct_hits > review_only_hits:
+        return True
+    return False
+
+
+def _triage_rank_score(
+    *,
+    primary_queue: str,
+    secondary_queues: list[str],
+    case_hits: list[_RawHit],
+    evidence_types: list[str],
+    document_count: int,
+    amount_score: float,
+    total_amount: float,
+    has_repeat_pattern: bool,
+) -> tuple[float, list[str]]:
+    rule_ids = {str(hit.rule_id) for hit in case_hits}
+    queues = {primary_queue, *secondary_queues}
+    strong_count = sum(1 for hit in case_hits if hit.rule_id in _STRONG_TRIAGE_RULES)
+    direct_count = sum(1 for hit in case_hits if hit.signal_status == "confirmed")
+    review_count = sum(1 for hit in case_hits if hit.signal_status == "review_candidate")
+    primary_count = sum(1 for hit in case_hits if hit.scoring_role == "primary")
+    total_hits = max(len(case_hits), 1)
+    review_ratio = review_count / total_hits
+
+    score = 0.0
+    reasons: list[str] = []
+
+    if strong_count:
+        score += min(strong_count, 4) * 0.12
+        reasons.append(f"strong_rules={strong_count}")
+    if direct_count:
+        score += min(direct_count / total_hits, 1.0) * 0.18
+        reasons.append(f"direct_ratio={direct_count}/{total_hits}")
+    if primary_count:
+        score += min(primary_count / total_hits, 1.0) * 0.10
+    queue_overlap = len({queue for queue in queues if queue != "manipulation_candidate"})
+    if queue_overlap > 1:
+        score += min(queue_overlap - 1, 3) * 0.10
+        reasons.append(f"queue_overlap={queue_overlap}")
+    evidence_overlap = len(set(evidence_types))
+    if evidence_overlap > 1:
+        score += min(evidence_overlap - 1, 4) * 0.04
+    if amount_score >= 0.75 or total_amount >= 100_000_000:
+        score += 0.12
+        reasons.append("material_amount")
+    elif amount_score >= 0.40 or total_amount >= 10_000_000:
+        score += 0.06
+    if {"control_approval", "timing_close"}.issubset(queues):
+        score += 0.10
+        reasons.append("control_timing_combo")
+    if {"control_approval", "amount_statistical"}.issubset(queues):
+        score += 0.08
+        reasons.append("control_amount_combo")
+    if {"duplicate_outflow", "amount_statistical"}.issubset(queues):
+        score += 0.08
+        reasons.append("outflow_amount_combo")
+    if "intercompany_cycle" in queues and queue_overlap > 1:
+        score += 0.06
+        reasons.append("ic_corroborated")
+    if has_repeat_pattern:
+        score += 0.05
+        reasons.append("repeat_pattern")
+
+    if document_count <= 10:
+        score += 0.08
+        reasons.append("small_review_set")
+    elif document_count <= 50:
+        score += 0.04
+    elif document_count > 250:
+        score -= 0.12
+        reasons.append("large_review_set_penalty")
+    elif document_count > 100:
+        score -= 0.06
+
+    if review_ratio >= 0.75:
+        score -= 0.12
+        reasons.append("review_context_heavy")
+    elif review_ratio >= 0.50:
+        score -= 0.06
+
+    if primary_queue == "data_integrity" and queue_overlap == 1:
+        score -= 0.10
+        reasons.append("data_integrity_only")
+
+    if "manipulation_candidate" in secondary_queues:
+        score += 0.15
+        reasons.append("composite_candidate")
+
+    return round(max(min(score, 1.0), 0.0), 4), reasons
+
+
+def _queue_label(queue_id: str) -> str:
+    return _ISSUE_QUEUE_LABELS.get(queue_id, queue_id.replace("_", " "))
 
 
 def _priority_score(
@@ -2033,10 +2913,10 @@ def _case_has_high_amount(rows: pd.DataFrame, config: dict[str, Any]) -> bool:
     if rows.empty:
         return False
     amount_threshold = float(config.get("high_amount_threshold", 100_000_000.0) or 0.0)
+    amounts = _line_amount_series(rows)
     if amount_threshold > 0:
-        return any(_line_amount(row) >= amount_threshold for _, row in rows.iterrows())
+        return bool((amounts >= amount_threshold).any())
     quantile = float(config.get("high_amount_quantile", 0.90))
-    amounts = rows.apply(_line_amount, axis=1)
     if amounts.empty:
         return False
     threshold = float(amounts.quantile(quantile))
@@ -2207,6 +3087,7 @@ def _apply_timing_priority_adjustments(
     repeat_score: float,
     priority_score: float,
     config: dict[str, Any],
+    l304_repeat_signatures: set[str] | None = None,
 ) -> tuple[float, float, float]:
     """Tune L3-04 case priority without changing detection coverage."""
     if theme_id != "timing_anomaly":
@@ -2224,7 +3105,13 @@ def _apply_timing_priority_adjustments(
         rule_ids & {"L3-05", "L3-06", "L3-07", "L3-08", "L3-11", "L4-05", "L4-03"}
         or {"control_failure", "duplicate_or_outflow"} & set(secondary_tags)
     )
-    repeat_pattern = _is_l304_repeat_pattern_case(df, rows, case_hits, timing_cfg)
+    repeat_pattern = _is_l304_repeat_pattern_case(
+        df,
+        rows,
+        case_hits,
+        timing_cfg,
+        l304_repeat_signatures=l304_repeat_signatures,
+    )
 
     adjusted_priority = float(priority_score)
     adjusted_behavior = float(behavior_score)
@@ -2267,6 +3154,8 @@ def _is_l304_repeat_pattern_case(
     rows: pd.DataFrame,
     case_hits: list[_RawHit],
     timing_cfg: dict[str, Any],
+    *,
+    l304_repeat_signatures: set[str] | None = None,
 ) -> bool:
     """Approximate recurring close-entry pattern for L3-04-only cases."""
     if {hit.rule_id for hit in case_hits} != {"L3-04"}:
@@ -2294,32 +3183,49 @@ def _is_l304_repeat_pattern_case(
     ):
         return False
 
+    repeat_signatures = (
+        l304_repeat_signatures
+        if l304_repeat_signatures is not None
+        else _l304_repeat_pattern_signatures(df, timing_cfg)
+    )
+    return dominant_signature in repeat_signatures
+
+
+def _l304_repeat_pattern_signatures(
+    df: pd.DataFrame,
+    timing_cfg: dict[str, Any],
+) -> set[str]:
+    required = {"posting_date", "source", "document_type", "business_process", "gl_account"}
+    if not required.issubset(df.columns):
+        return set()
+
     all_rows = df.copy()
     all_posting = pd.to_datetime(all_rows["posting_date"], errors="coerce")
     all_rows = all_rows.loc[all_posting.notna()].copy()
     all_posting = all_posting.loc[all_posting.notna()]
     if all_rows.empty:
-        return False
+        return set()
 
     all_rows = _add_l304_repeat_signature_columns(all_rows, all_posting)
-    dominant = all_rows.loc[all_rows["pattern_signature"] == dominant_signature].copy()
-    repeat_months = int(dominant["period_month"].nunique())
-    if repeat_months < int(timing_cfg.get("l304_repeat_pattern_min_months", 3)):
-        return False
-
-    monthly_amounts = dominant.groupby("period_month")["amount"].median()
+    monthly_amounts = all_rows.groupby(["pattern_signature", "period_month"])["amount"].median()
     if monthly_amounts.empty:
-        return False
-    mean_amount = float(monthly_amounts.mean())
-    if mean_amount <= 0:
-        return False
+        return set()
 
-    amount_cv = (
-        float(monthly_amounts.std(ddof=0) / mean_amount)
-        if len(monthly_amounts) > 1
-        else 0.0
-    )
-    return amount_cv <= float(timing_cfg.get("l304_repeat_pattern_max_amount_cv", 0.35))
+    min_months = int(timing_cfg.get("l304_repeat_pattern_min_months", 3))
+    max_cv = float(timing_cfg.get("l304_repeat_pattern_max_amount_cv", 0.35))
+    repeat_signatures: set[str] = set()
+    for signature, amounts in monthly_amounts.groupby(level=0, sort=False):
+        values = amounts.droplevel(0)
+        repeat_months = int(values.shape[0])
+        if repeat_months < min_months:
+            continue
+        mean_amount = float(values.mean())
+        if mean_amount <= 0:
+            continue
+        amount_cv = float(values.std(ddof=0) / mean_amount) if repeat_months > 1 else 0.0
+        if amount_cv <= max_cv:
+            repeat_signatures.add(str(signature))
+    return repeat_signatures
 
 
 def _add_l304_repeat_signature_columns(
@@ -2331,7 +3237,6 @@ def _add_l304_repeat_signature_columns(
     result["period_side"] = posting.dt.day.map(
         lambda day: "month_start" if day <= 5 else "month_end"
     )
-    result["amount"] = result.apply(_line_amount, axis=1)
     result["pattern_signature"] = (
         result["source"].fillna("").astype(str).str.strip()
         + "|"
@@ -2343,6 +3248,7 @@ def _add_l304_repeat_signature_columns(
         + "|"
         + result["period_side"]
     )
+    result["amount"] = _line_amount_series(result)
     return result
 
 
@@ -2353,19 +3259,28 @@ def _repeat_months(rows: pd.DataFrame) -> int:
     return int(series.nunique())
 
 
-def _case_total_amount(df: pd.DataFrame, indices: set[int] | list[int]) -> float:
-    rows = df.iloc[sorted(indices)]
-    return float(rows.apply(_line_amount, axis=1).sum())
+def _case_total_amount(
+    df: pd.DataFrame,
+    indices: set[int] | list[int],
+    *,
+    line_amounts: pd.Series | None = None,
+) -> float:
+    amounts = line_amounts if line_amounts is not None else _line_amount_series(df)
+    return float(amounts.iloc[sorted(indices)].sum())
 
 
-def _document_amount(df: pd.DataFrame, document_id: str, hit_positions: list[int]) -> float:
-    rows = df.iloc[hit_positions]
-    if document_id and "document_id" in df.columns:
-        document_ids = df["document_id"].fillna("").astype(str).str.strip()
-        document_rows = df[document_ids == document_id]
-        if not document_rows.empty:
-            rows = document_rows
-    return float(rows.apply(_line_amount, axis=1).sum())
+def _document_amount(
+    df: pd.DataFrame,
+    document_id: str,
+    hit_positions: list[int],
+    *,
+    document_amounts: dict[str, float] | None = None,
+    line_amounts: pd.Series | None = None,
+) -> float:
+    if document_id and document_amounts is not None and document_id in document_amounts:
+        return float(document_amounts[document_id])
+    amounts = line_amounts if line_amounts is not None else _line_amount_series(df)
+    return float(amounts.iloc[hit_positions].sum())
 
 
 def _lookup_row_annotation(
@@ -2418,6 +3333,14 @@ def _annotation_score(row_annotation: dict[str, Any] | None) -> float:
         if score > 0:
             return score
     return 0.0
+
+
+def _annotation_can_seed_case(rule_id: str, row_annotation: dict[str, Any] | None) -> bool:
+    if _annotation_score(row_annotation) <= 0:
+        return False
+    metadata = RULE_SCORING_REGISTRY.get(str(rule_id))
+    scoring_role = metadata.scoring_role if metadata is not None else "primary"
+    return scoring_role not in {"booster", "combo_only", "macro_only"}
 
 
 def _annotation_confidence(row_annotation: dict[str, Any] | None) -> float:
@@ -2892,6 +3815,28 @@ def _amount_band(row: pd.Series) -> str:
     if amount >= 10_000_000:
         return "10M-100M"
     return "<10M"
+
+
+def _line_amount_series(df: pd.DataFrame) -> pd.Series:
+    if "debit_amount" in df.columns:
+        debit = pd.to_numeric(df["debit_amount"], errors="coerce").fillna(0.0)
+    else:
+        debit = pd.Series(0.0, index=df.index)
+    if "credit_amount" in df.columns:
+        credit = pd.to_numeric(df["credit_amount"], errors="coerce").fillna(0.0)
+    else:
+        credit = pd.Series(0.0, index=df.index)
+    return pd.concat([debit, credit], axis=1).max(axis=1).astype(float)
+
+
+def _document_amounts_by_id(df: pd.DataFrame, line_amounts: pd.Series) -> dict[str, float]:
+    if "document_id" not in df.columns:
+        return {}
+    document_ids = df["document_id"].fillna("").astype(str).str.strip()
+    valid = document_ids.ne("")
+    if not bool(valid.any()):
+        return {}
+    return line_amounts.loc[valid].groupby(document_ids.loc[valid]).sum().to_dict()
 
 
 def _line_amount(row: pd.Series) -> float:

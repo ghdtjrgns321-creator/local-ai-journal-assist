@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from itertools import combinations
 
+import numpy as np
 import pandas as pd
 from rapidfuzz import fuzz
 
@@ -281,31 +282,41 @@ def _flag_near_duplicate_entries(
     if target.empty:
         return result
 
-    for _, group in target.groupby(group_cols, group_keys=False):
-        ordered = group.sort_values("_posting_ts").reset_index(names="_row_index")
-        rows = list(
-            ordered[
-                ["_row_index", "_posting_ts", "_base_amt", "_document_id", "_line_text"]
-            ].itertuples(index=False, name=None)
-        )
-        for left_idx, left_row in enumerate(rows):
-            for right_row in rows[left_idx + 1:]:
-                day_gap = abs((right_row[1] - left_row[1]).days)
+    ordered = target.sort_values([*group_cols, "_posting_ts"]).reset_index(names="_row_index")
+    group_key = (
+        ordered["_partner_key"].astype(str)
+        + "\x1f"
+        + ordered["gl_account"].astype(str)
+    ).to_numpy()
+    row_indices = ordered["_row_index"].to_numpy()
+    posting_dates = ordered["_posting_ts"].to_numpy(dtype="datetime64[ns]")
+    amounts = ordered["_base_amt"].to_numpy(dtype="float64")
+    document_ids = ordered["_document_id"].astype(str).to_numpy()
+    line_texts = ordered["_line_text"].astype(str).to_numpy()
+
+    boundaries = [0]
+    if len(group_key) > 1:
+        boundaries.extend((np.flatnonzero(group_key[1:] != group_key[:-1]) + 1).tolist())
+    boundaries.append(len(ordered))
+
+    for start, end in zip(boundaries, boundaries[1:], strict=False):
+        for left_pos in range(start, end):
+            for right_pos in range(left_pos + 1, end):
+                day_gap = int(
+                    (posting_dates[right_pos] - posting_dates[left_pos])
+                    / pd.Timedelta(days=1),
+                )
                 if day_gap > window_days:
                     break
-                if left_row[3] == right_row[3]:
+                if document_ids[left_pos] == document_ids[right_pos]:
                     continue
-                if not _is_amount_close(
-                    left_row[2],
-                    right_row[2],
-                    amount_tolerance,
-                ):
+                if not _is_amount_close(amounts[left_pos], amounts[right_pos], amount_tolerance):
                     continue
-                similarity = fuzz.token_sort_ratio(left_row[4], right_row[4])
+                similarity = fuzz.token_sort_ratio(line_texts[left_pos], line_texts[right_pos])
                 if similarity < fuzzy_threshold:
                     continue
                 pair_score = max(0.55, min(0.85, 0.60 + ((similarity - fuzzy_threshold) / 100.0)))
-                pair_indices = [left_row[0], right_row[0]]
+                pair_indices = [row_indices[left_pos], row_indices[right_pos]]
                 result.loc[pair_indices] = result.loc[pair_indices].clip(lower=pair_score)
 
     return result
@@ -338,50 +349,66 @@ def _flag_split_duplicate_entries(
     if target.empty:
         return result
 
-    for _, group in target.groupby(group_cols, group_keys=False):
-        ordered = group.sort_values("_posting_ts").reset_index(names="_row_index")
-        rows = list(
-            ordered[
-                ["_row_index", "_posting_ts", "_base_amt", "_document_id"]
-            ].itertuples(index=False, name=None)
-        )
-        for target_row in rows:
-            if target_row[2] <= 0:
+    ordered = target.sort_values([*group_cols, "_posting_ts"]).reset_index(names="_row_index")
+    group_key = (
+        ordered["_partner_key"].astype(str)
+        + "\x1f"
+        + ordered["gl_account"].astype(str)
+    ).to_numpy()
+    row_indices = ordered["_row_index"].to_numpy()
+    posting_dates = ordered["_posting_ts"].to_numpy(dtype="datetime64[ns]")
+    amounts = ordered["_base_amt"].to_numpy(dtype="float64")
+    document_ids = ordered["_document_id"].astype(str).to_numpy()
+
+    boundaries = [0]
+    if len(group_key) > 1:
+        boundaries.extend((np.flatnonzero(group_key[1:] != group_key[:-1]) + 1).tolist())
+    boundaries.append(len(ordered))
+    window_ns = np.timedelta64(split_window_days, "D")
+
+    for start, end in zip(boundaries, boundaries[1:], strict=False):
+        dates_group = posting_dates[start:end]
+        for target_pos in range(start, end):
+            target_amount = amounts[target_pos]
+            if target_amount <= 0:
                 continue
-
-            candidates: list[tuple[object, pd.Timestamp, float, str]] = []
-            for candidate_row in rows:
-                if candidate_row[0] == target_row[0]:
-                    continue
-                if candidate_row[3] == target_row[3]:
-                    continue
-                if (
-                    candidate_row[2] <= 0
-                    or candidate_row[2] >= target_row[2]
-                ):
-                    continue
-                day_gap = abs((candidate_row[1] - target_row[1]).days)
-                if day_gap > split_window_days:
-                    continue
-                candidates.append(candidate_row)
-
-            for left_row, right_row in combinations(candidates, 2):
+            left_bound = start + int(
+                np.searchsorted(
+                    dates_group,
+                    posting_dates[target_pos] - window_ns,
+                    side="left",
+                ),
+            )
+            right_bound = start + int(
+                np.searchsorted(
+                    dates_group,
+                    posting_dates[target_pos] + window_ns,
+                    side="right",
+                ),
+            )
+            candidates = [
+                pos for pos in range(left_bound, right_bound)
+                if pos != target_pos
+                and document_ids[pos] != document_ids[target_pos]
+                and 0 < amounts[pos] < target_amount
+            ]
+            for left_pos, right_pos in combinations(candidates, 2):
                 if (
                     len({
-                        target_row[3],
-                        left_row[3],
-                        right_row[3],
+                        document_ids[target_pos],
+                        document_ids[left_pos],
+                        document_ids[right_pos],
                     })
                     < 3
                 ):
                     continue
-                combined = float(left_row[2]) + float(right_row[2])
-                if not _is_amount_close(combined, float(target_row[2]), amount_tolerance):
+                combined = float(amounts[left_pos]) + float(amounts[right_pos])
+                if not _is_amount_close(combined, float(target_amount), amount_tolerance):
                     continue
                 split_indices = [
-                    target_row[0],
-                    left_row[0],
-                    right_row[0],
+                    row_indices[target_pos],
+                    row_indices[left_pos],
+                    row_indices[right_pos],
                 ]
                 result.loc[split_indices] = result.loc[split_indices].clip(lower=0.75)
 
@@ -460,7 +487,12 @@ def _flag_o2c_offset_duplicate_entries(work: pd.DataFrame, df: pd.DataFrame) -> 
     return result
 
 
-def _flag_ic_r2r_split_population(work: pd.DataFrame, df: pd.DataFrame, *, split_window_days: int) -> pd.Series:
+def _flag_ic_r2r_split_population(
+    work: pd.DataFrame,
+    df: pd.DataFrame,
+    *,
+    split_window_days: int,
+) -> pd.Series:
     """Capture IC/R2R split-shaped documents across companies as zero-score population."""
 
     result = pd.Series(0.0, index=work.index)
@@ -494,7 +526,9 @@ def _flag_ic_r2r_split_population(work: pd.DataFrame, df: pd.DataFrame, *, split
 
     rows = list(
         target.sort_values("_posting_ts")
-        .reset_index(names="_row_index")[["_row_index", "_posting_ts", "_base_amt", "_document_id", "reference"]]
+        .reset_index(names="_row_index")[
+            ["_row_index", "_posting_ts", "_base_amt", "_document_id", "reference"]
+        ]
         .itertuples(index=False, name=None)
     )
     max_gap = pd.Timedelta(days=max(split_window_days * 2, split_window_days))
@@ -522,7 +556,11 @@ def _flag_ic_r2r_split_population(work: pd.DataFrame, df: pd.DataFrame, *, split
                 and 5 <= ref_numbers_sorted[1] - ref_numbers_sorted[0] <= 15
             ):
                 continue
-            if not _is_amount_close(float(left_row[2]) + float(right_row[2]), float(target_row[2]), 0.02):
+            if not _is_amount_close(
+                float(left_row[2]) + float(right_row[2]),
+                float(target_row[2]),
+                0.02,
+            ):
                 continue
             indices = [target_row[0], left_row[0], right_row[0]]
             result.loc[indices] = result.loc[indices].clip(lower=0.01)
@@ -690,12 +728,19 @@ def _flag_document_duplicate_entries(
         )["document_id"].transform("size")
         blank_docs = blank_docs.loc[blank_sizes.between(2, max_group_size)]
 
-    grouped_iterables = [
-        ref_docs.groupby(ref_grouping_cols, dropna=False, sort=False),
-        blank_docs.groupby(blank_grouping_cols, dropna=False, sort=False),
-    ]
-    for grouped in grouped_iterables:
-        for _, group in grouped:
+    if not ref_docs.empty:
+        _mark_document_duplicate_pairs(
+            ref_docs,
+            ref_grouping_cols,
+            result,
+            window=window,
+            amount_tolerance=amount_tolerance,
+            fuzzy_threshold=fuzzy_threshold,
+            require_reference=True,
+        )
+
+    if not blank_docs.empty:
+        for _, group in blank_docs.groupby(blank_grouping_cols, dropna=False, sort=False):
             ordered = group.sort_values("posting_date").reset_index(drop=True)
             records = list(ordered.itertuples(index=False))
             for left_pos, left in enumerate(records):
@@ -712,10 +757,6 @@ def _flag_document_duplicate_entries(
                     ):
                         continue
 
-                    same_reference = (
-                        bool(left.reference_norm)
-                        and left.reference_norm == right.reference_norm
-                    )
                     same_partner = (
                         bool(left.partner_key)
                         and left.partner_key == right.partner_key
@@ -726,17 +767,88 @@ def _flag_document_duplicate_entries(
                     )
                     text_match = text_similarity >= max(70, fuzzy_threshold - 10)
 
-                    if same_reference:
-                        pair_score = 0.92 if text_match else 0.88
-                    elif same_partner and text_match:
-                        pair_score = 0.82
-                    else:
-                        continue
-
-                    target_indices = list(left.row_indices) + list(right.row_indices)
-                    result.loc[target_indices] = result.loc[target_indices].clip(lower=pair_score)
+                    if same_partner and text_match:
+                        target_indices = list(left.row_indices) + list(right.row_indices)
+                        result.loc[target_indices] = result.loc[target_indices].clip(lower=0.82)
 
     return result
+
+
+def _mark_document_duplicate_pairs(
+    docs: pd.DataFrame,
+    group_cols: list[str],
+    result: pd.Series,
+    *,
+    window: pd.Timedelta,
+    amount_tolerance: float,
+    fuzzy_threshold: int,
+    require_reference: bool,
+) -> None:
+    """Mark duplicate document pairs using sorted arrays instead of group objects."""
+
+    ordered = docs.sort_values([*group_cols, "posting_date"]).reset_index(drop=True)
+    group_key = ordered[group_cols].astype(str).agg("\x1f".join, axis=1).to_numpy()
+    posting_dates = ordered["posting_date"].to_numpy(dtype="datetime64[ns]")
+    document_ids = ordered["document_id"].astype(str).to_numpy()
+    reference_norms = ordered["reference_norm"].astype(str).to_numpy()
+    partner_keys = ordered["partner_key"].astype(str).to_numpy()
+    text_signatures = ordered["text_signature"].astype(str).to_numpy()
+    line_signatures = ordered["line_signature"].to_numpy(dtype=object)
+    row_indices = ordered["row_indices"].to_numpy(dtype=object)
+
+    boundaries = [0]
+    if len(group_key) > 1:
+        boundaries.extend((np.flatnonzero(group_key[1:] != group_key[:-1]) + 1).tolist())
+    boundaries.append(len(ordered))
+    window_ns = np.timedelta64(int(window / pd.Timedelta(days=1)), "D")
+
+    for start, end in zip(boundaries, boundaries[1:], strict=False):
+        dates_group = posting_dates[start:end]
+        for left_pos in range(start, end):
+            right_bound = start + int(
+                np.searchsorted(
+                    dates_group,
+                    posting_dates[left_pos] + window_ns,
+                    side="right",
+                ),
+            )
+            for right_pos in range(left_pos + 1, right_bound):
+                if document_ids[left_pos] == document_ids[right_pos]:
+                    continue
+                left_signature = line_signatures[left_pos]
+                right_signature = line_signatures[right_pos]
+                if left_signature != right_signature and not _amount_signatures_close(
+                    left_signature,
+                    right_signature,
+                    amount_tolerance,
+                ):
+                    continue
+
+                same_reference = (
+                    bool(reference_norms[left_pos])
+                    and reference_norms[left_pos] == reference_norms[right_pos]
+                )
+                same_partner = (
+                    bool(partner_keys[left_pos])
+                    and partner_keys[left_pos] == partner_keys[right_pos]
+                )
+                if require_reference and not same_reference:
+                    continue
+                text_similarity = fuzz.token_sort_ratio(
+                    text_signatures[left_pos],
+                    text_signatures[right_pos],
+                )
+                text_match = text_similarity >= max(70, fuzzy_threshold - 10)
+
+                if same_reference:
+                    pair_score = 0.92 if text_match else 0.88
+                elif same_partner and text_match:
+                    pair_score = 0.82
+                else:
+                    continue
+
+                target_indices = list(row_indices[left_pos]) + list(row_indices[right_pos])
+                result.loc[target_indices] = result.loc[target_indices].clip(lower=pair_score)
 
 
 def _l203_source_series(df: pd.DataFrame) -> pd.Series:
@@ -767,12 +879,20 @@ def _score_l203_duplicate_entries(
     routine_reference = result & routine_source & score_frame["reference_duplicate"].gt(0)
     routine_split = result & routine_source & score_frame["split_duplicate"].gt(0)
     document_type = (
-        df["document_type"].where(df["document_type"].notna(), "").astype(str).str.strip().str.upper()
+        df["document_type"]
+        .where(df["document_type"].notna(), "")
+        .astype(str)
+        .str.strip()
+        .str.upper()
         if "document_type" in df.columns
         else pd.Series("", index=df.index)
     )
     business_process = (
-        df["business_process"].where(df["business_process"].notna(), "").astype(str).str.strip().str.upper()
+        df["business_process"]
+        .where(df["business_process"].notna(), "")
+        .astype(str)
+        .str.strip()
+        .str.upper()
         if "business_process" in df.columns
         else pd.Series("", index=df.index)
     )
@@ -1195,7 +1315,9 @@ def _get_expense_capitalization_config(
     cfg = patterns.get("expense_capitalization", {})
 
     return {
-        "asset_prefixes": tuple(str(v).strip() for v in cfg.get("asset_account_prefixes", ["12", "15"])),
+        "asset_prefixes": tuple(
+            str(v).strip() for v in cfg.get("asset_account_prefixes", ["12", "15"])
+        ),
         "expense_prefixes": tuple(
             str(v).strip() for v in cfg.get("expense_account_prefixes", ["5", "6", "7", "8"])
         ),

@@ -832,6 +832,53 @@ def test_build_phase1_case_result_keeps_review_only_l1_annotation_score():
     assert case.raw_rule_hits[0].signal_status == "review_candidate"
 
 
+def test_build_phase1_case_result_does_not_seed_case_from_booster_review_only():
+    df = pd.DataFrame(
+        {
+            "document_id": ["DOC-1"],
+            "posting_date": pd.to_datetime(["2026-04-30"]),
+            "created_by": ["kim"],
+            "business_process": ["P2P"],
+            "gl_account": ["111000"],
+            "debit_amount": [15_000_000.0],
+            "credit_amount": [0.0],
+            "company_code": ["kr01"],
+            "document_type": ["KR"],
+        }
+    )
+    details = pd.DataFrame({"L3-12": [0.0]}, index=df.index)
+    detection_result = DetectionResult(
+        track_name="layer_b",
+        flagged_indices=[],
+        scores=details.max(axis=1),
+        rule_flags=[RuleFlag("L3-12", "Work Scope Excess Review", 3, 0, len(df))],
+        details=details,
+        metadata={
+            "row_annotations": {
+                "L3-12": {
+                    0: {
+                        "bucket": "compound_scope_concentration",
+                        "queue_label": "review",
+                        "review_score": 0.65,
+                    }
+                }
+            }
+        },
+    )
+
+    result = build_phase1_case_result(
+        df,
+        [detection_result],
+        company_id="kr01",
+        batch_id="batch42",
+        dataset_id=None,
+        phase1_case_config={"phase1_case": {"top_n_cases": 50, "top_n_per_theme": 10}},
+        generated_at=datetime(2026, 4, 22, 3, 15, 22, tzinfo=UTC),
+    )
+
+    assert result.cases == []
+
+
 def test_build_phase1_case_result_uses_configured_fallback_columns():
     df = pd.DataFrame(
         {
