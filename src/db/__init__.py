@@ -3,6 +3,8 @@
 from src.db.audit_log import record_event
 from src.db.connection import ConnectionManager, close_connection, get_connection
 from src.db.loader import LoadResult, load_all
+from src.db.loader_supplementary import load_supplementary
+from src.db.migration import CURRENT_SCHEMA_VERSION, run_migrations
 from src.db.queries import (
     QueryExecutionError,
     QueryNotFoundError,
@@ -11,8 +13,6 @@ from src.db.queries import (
     execute_preset,
     execute_write,
 )
-from src.db.loader_supplementary import load_supplementary
-from src.db.migration import CURRENT_SCHEMA_VERSION, run_migrations
 from src.db.schema import SCHEMA_DDL, initialize_schema
 from src.db.schema_supplementary import SUPPLEMENTARY_DDL, initialize_supplementary_schema
 
