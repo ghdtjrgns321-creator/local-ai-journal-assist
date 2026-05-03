@@ -55,6 +55,8 @@ streamlit_*.log
 .tmp_*/
 .tmp_*.md
 .pytest_tmp/
+.pytest_tmp_*/
+codex_pytest_*/
 tmp*/
 tools/tmp_*.py
 .manual-model-registry-check/
