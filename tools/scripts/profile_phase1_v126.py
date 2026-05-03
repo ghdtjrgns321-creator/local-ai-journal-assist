@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import pickle
 import sys
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -36,10 +38,19 @@ from src.detection.fraud_rules_groupby import (
     _score_l203_duplicate_entries,
 )
 from src.detection.integrity_layer import IntegrityDetector
-from src.detection.phase1_case_builder import build_phase1_case_result, save_phase1_case_result
+from src.detection.phase1_case_builder import (
+    SCHEMA_VERSION,
+    _build_cases,
+    _build_macro_findings,
+    _build_theme_summaries,
+    _collect_raw_hits_profiled,
+    build_phase1_case_run_id,
+    save_phase1_case_result,
+)
 from src.detection.score_aggregator import aggregate_scores
 from src.feature.engine import FeatureCategory, _run_category
 from src.ingest.datasynth_labels import apply_datasynth_label_mode, set_source_path
+from src.models.phase1_case import Phase1CaseResult
 from src.services.analysis_service import make_phase_settings
 
 
@@ -484,6 +495,8 @@ def _aggregate_and_case(
     data_dir: Path,
     checkpoint: Path,
     summary: dict[str, Any],
+    cache_path: Path | None = None,
+    stop_after_cache: bool = False,
 ) -> pd.DataFrame:
     t0 = time.perf_counter()
     _log("aggregate start")
@@ -500,15 +513,53 @@ def _aggregate_and_case(
     _write_checkpoint(checkpoint, summary)
     _log(f"aggregate done: {summary['stages']['aggregate']}")
 
+    if cache_path is not None:
+        _save_case_input_cache(
+            cache_path,
+            df=df,
+            results=results,
+            data_dir=data_dir,
+            summary=summary,
+        )
+        summary["stages"]["case_input_cache"] = {
+            "path": str(cache_path),
+            "rows": int(len(df)),
+            "results": int(len(results)),
+        }
+        _write_checkpoint(checkpoint, summary)
+        _log(f"case input cache saved: {summary['stages']['case_input_cache']}")
+    if stop_after_cache:
+        return df
+
+    _run_case_builder_only(
+        df,
+        results,
+        data_dir=data_dir,
+        checkpoint=checkpoint,
+        summary=summary,
+    )
+    return df
+
+
+def _run_case_builder_only(
+    df: pd.DataFrame,
+    results,
+    *,
+    data_dir: Path,
+    checkpoint: Path,
+    summary: dict[str, Any],
+) -> Phase1CaseResult:
     t0 = time.perf_counter()
     _log("phase1 case builder start")
-    phase1_result = build_phase1_case_result(
+    phase1_result = _profile_phase1_case_builder(
         df,
         results,
         company_id="_anonymous",
         batch_id="datasynth_v126_profiled_phase1",
         dataset_id=str(data_dir),
         phase1_case_config={"phase1_case": {}},
+        checkpoint=checkpoint,
+        summary=summary,
     )
     artifact_path = save_phase1_case_result(phase1_result)
     summary["stages"]["phase1_case_builder"] = {
@@ -520,7 +571,172 @@ def _aggregate_and_case(
     }
     _write_checkpoint(checkpoint, summary)
     _log(f"phase1 case builder done: {summary['stages']['phase1_case_builder']}")
-    return df
+    _evaluate_manipulated_cases(
+        phase1_result,
+        data_dir=data_dir,
+        checkpoint=checkpoint,
+        summary=summary,
+    )
+    return phase1_result
+
+
+def _save_case_input_cache(
+    path: Path,
+    *,
+    df: pd.DataFrame,
+    results,
+    data_dir: Path,
+    summary: dict[str, Any],
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("wb") as file:
+        pickle.dump(
+            {
+                "df": df,
+                "results": results,
+                "data_dir": str(data_dir),
+                "source_summary": summary,
+                "created_at": _now(),
+            },
+            file,
+            protocol=pickle.HIGHEST_PROTOCOL,
+        )
+
+
+def _load_case_input_cache(path: Path) -> dict[str, Any]:
+    with path.open("rb") as file:
+        payload = pickle.load(file)
+    if not isinstance(payload, dict) or "df" not in payload or "results" not in payload:
+        raise ValueError(f"Invalid case input cache: {path}")
+    return payload
+
+
+def _profile_phase1_case_builder(
+    df: pd.DataFrame,
+    results,
+    *,
+    company_id: str,
+    batch_id: str | None,
+    dataset_id: str | None,
+    phase1_case_config: dict[str, Any] | None,
+    checkpoint: Path,
+    summary: dict[str, Any],
+) -> Phase1CaseResult:
+    config = (phase1_case_config or {}).get("phase1_case", {})
+    generated_at = datetime.now(UTC)
+    run_id = build_phase1_case_run_id(
+        company_id=company_id,
+        batch_id=batch_id,
+        dataset_id=dataset_id,
+        generated_at=generated_at,
+    )
+    summary["stages"].setdefault("phase1_case_builder_steps", {})
+
+    t0 = time.perf_counter()
+    macro_findings = _build_macro_findings(
+        results,
+        df=df,
+        top_n=int(config.get("top_n_macro_findings", 100)),
+    )
+    summary["stages"]["phase1_case_builder_steps"]["macro_findings"] = {
+        "elapsed_sec": _elapsed(t0),
+        "count": len(macro_findings),
+    }
+    _write_checkpoint(checkpoint, summary)
+    _log(
+        "phase1 case step done: macro_findings "
+        f"{summary['stages']['phase1_case_builder_steps']['macro_findings']}"
+    )
+
+    t0 = time.perf_counter()
+    def _raw_hit_step(step_name: str, payload: dict[str, Any]) -> None:
+        summary["stages"]["phase1_case_builder_steps"][step_name] = payload
+        _write_checkpoint(checkpoint, summary)
+        _log(f"phase1 case step done: {step_name} {payload}")
+
+    raw_hits = _collect_raw_hits_profiled(
+        df,
+        results,
+        profile_callback=_raw_hit_step,
+    )
+    summary["stages"]["phase1_case_builder_steps"]["collect_raw_hits"] = {
+        "elapsed_sec": _elapsed(t0),
+        "count": len(raw_hits),
+    }
+    _write_checkpoint(checkpoint, summary)
+    _log(
+        "phase1 case step done: collect_raw_hits "
+        f"{summary['stages']['phase1_case_builder_steps']['collect_raw_hits']}"
+    )
+
+    t0 = time.perf_counter()
+    def _case_step(step_name: str, payload: dict[str, Any]) -> None:
+        summary["stages"]["phase1_case_builder_steps"][step_name] = payload
+        _write_checkpoint(checkpoint, summary)
+        _log(f"phase1 case step done: {step_name} {payload}")
+
+    cases = _build_cases(
+        df,
+        raw_hits,
+        config,
+        macro_findings,
+        profile_callback=_case_step,
+    )
+    summary["stages"]["phase1_case_builder_steps"]["build_cases"] = {
+        "elapsed_sec": _elapsed(t0),
+        "count": len(cases),
+    }
+    _write_checkpoint(checkpoint, summary)
+    _log(
+        "phase1 case step done: build_cases "
+        f"{summary['stages']['phase1_case_builder_steps']['build_cases']}"
+    )
+
+    t0 = time.perf_counter()
+    theme_summaries = _build_theme_summaries(cases, int(config.get("top_n_per_theme", 10)))
+    summary["stages"]["phase1_case_builder_steps"]["theme_summaries"] = {
+        "elapsed_sec": _elapsed(t0),
+        "count": len(theme_summaries),
+    }
+    _write_checkpoint(checkpoint, summary)
+    _log(
+        "phase1 case step done: theme_summaries "
+        f"{summary['stages']['phase1_case_builder_steps']['theme_summaries']}"
+    )
+
+    return Phase1CaseResult(
+        schema_version=SCHEMA_VERSION,
+        run_id=run_id,
+        company_id=company_id,
+        dataset_id=dataset_id,
+        batch_id=batch_id,
+        generated_at=generated_at,
+        top_n_cases=int(config.get("top_n_cases", 50)),
+        top_n_per_theme=int(config.get("top_n_per_theme", 10)),
+        theme_summaries=theme_summaries,
+        cases=cases,
+        raw_rule_reference={
+            "source": "detection_results",
+            "track_names": [result.track_name for result in results],
+        },
+        metadata={
+            "phase1_case_config_version": SCHEMA_VERSION,
+            "score_cutoff": {
+                "high": float(config.get("priority_band", {}).get("high", 0.75)),
+                "medium": float(config.get("priority_band", {}).get("medium", 0.45)),
+            },
+            "grouping_window": {
+                "near_period_days": int(config.get("near_period_days", 7)),
+                "period_end_window_days": int(config.get("period_end_window_days", 5)),
+            },
+            "macro_findings": macro_findings,
+            "macro_finding_count": len(macro_findings),
+            "macro_finding_policy": (
+                "L4-02/D01/D02/GR01/GR03 are Account/Process Queue findings. They do not create "
+                "transaction queue priority_score or row-level anomaly_score by themselves."
+            ),
+        },
+    )
 
 
 def _evaluate_manipulated(
@@ -542,6 +758,13 @@ def _evaluate_manipulated(
     truth_docs = set(truth["document_id"].dropna().astype(str).unique())
     score = pd.to_numeric(df.get("anomaly_score", pd.Series(0.0, index=df.index)), errors="coerce").fillna(0.0)
     score_docs = set(df.loc[score.gt(0), "document_id"].dropna().astype(str).unique())
+    risk_doc_counts: dict[str, int] = {}
+    risk_truth_counts: dict[str, int] = {}
+    if "risk_level" in df.columns:
+        for risk_level, group in df.groupby("risk_level"):
+            docs = set(group["document_id"].dropna().astype(str).unique())
+            risk_doc_counts[str(risk_level)] = len(docs)
+            risk_truth_counts[str(risk_level)] = len(docs & truth_docs)
     rule_docs: set[str] = set()
     for column in ("flagged_rules", "review_rules"):
         if column in df.columns:
@@ -571,10 +794,91 @@ def _evaluate_manipulated(
         "score_gt0_docs": len(truth_docs & score_docs),
         "rule_or_review_hit_docs": len(truth_docs & rule_docs),
         "miss_score_gt0_docs": len(truth_docs - score_docs),
+        "risk_doc_counts": risk_doc_counts,
+        "risk_truth_doc_counts": risk_truth_counts,
         "scenarios": scenarios,
     }
     _write_checkpoint(checkpoint, summary)
     _log(f"manipulated eval done: {summary['stages']['manipulated_eval']}")
+
+
+def _evaluate_manipulated_cases(
+    phase1_result: Phase1CaseResult,
+    *,
+    data_dir: Path,
+    checkpoint: Path,
+    summary: dict[str, Any],
+) -> None:
+    truth_path = data_dir / "labels" / "manipulated_entry_truth.csv"
+    if not truth_path.exists():
+        return
+
+    t0 = time.perf_counter()
+    truth = pd.read_csv(truth_path, dtype=str, low_memory=False)
+    truth_docs = set(truth["document_id"].dropna().astype(str).unique())
+
+    top_ns = (10, 50, 100, 500, 1000)
+    top_case_capture = []
+    for top_n in top_ns:
+        docs = _case_documents(phase1_result.cases[:top_n])
+        top_case_capture.append({
+            "top_n_cases": top_n,
+            "case_docs": len(docs),
+            "truth_docs": len(docs & truth_docs),
+        })
+
+    band_capture = []
+    for band in ("high", "medium", "low"):
+        band_cases = [case for case in phase1_result.cases if case.priority_band == band]
+        docs = _case_documents(band_cases)
+        band_capture.append({
+            "priority_band": band,
+            "case_count": len(band_cases),
+            "case_docs": len(docs),
+            "truth_docs": len(docs & truth_docs),
+        })
+
+    top_truth_cases = []
+    for case in phase1_result.cases:
+        docs = {
+            hit.document_id
+            for hit in case.raw_rule_hits
+            if hit.document_id in truth_docs
+        }
+        if not docs:
+            continue
+        top_truth_cases.append({
+            "rank": int(case.exposure_rank or 0),
+            "case_id": case.case_id,
+            "priority_band": case.priority_band,
+            "priority_score": float(case.priority_score),
+            "primary_theme": case.primary_theme,
+            "truth_docs": len(docs),
+            "documents": sorted(docs)[:10],
+        })
+        if len(top_truth_cases) >= 20:
+            break
+
+    summary["stages"]["manipulated_case_eval"] = {
+        "elapsed_sec": _elapsed(t0),
+        "total_truth_docs": len(truth_docs),
+        "top_case_capture": top_case_capture,
+        "priority_band_capture": band_capture,
+        "top_truth_cases": top_truth_cases,
+    }
+    _write_checkpoint(checkpoint, summary)
+    _log(f"manipulated case eval done: {summary['stages']['manipulated_case_eval']}")
+
+
+def _case_documents(cases) -> set[str]:
+    docs: set[str] = set()
+    for case in cases:
+        docs.update(
+            hit.document_id
+            for hit in case.raw_rule_hits
+            if hit.document_id
+        )
+    return docs
 
 
 def main() -> int:
@@ -589,6 +893,21 @@ def main() -> int:
         type=Path,
         default=PROJECT_ROOT / "artifacts" / "phase1_v126_profile.json",
     )
+    parser.add_argument(
+        "--cache-path",
+        type=Path,
+        default=PROJECT_ROOT / "artifacts" / "phase1_v126_case_input.pkl",
+    )
+    parser.add_argument(
+        "--stop-after-cache",
+        action="store_true",
+        help="Run through aggregate, save case-builder input cache, then stop.",
+    )
+    parser.add_argument(
+        "--reuse-cache",
+        action="store_true",
+        help="Skip ingest/features/detectors/aggregate and profile only the case builder.",
+    )
     args = parser.parse_args()
 
     total_start = time.perf_counter()
@@ -598,6 +917,33 @@ def main() -> int:
         "stages": {},
     }
     _write_checkpoint(args.checkpoint, summary)
+
+    if args.reuse_cache:
+        payload = _load_case_input_cache(args.cache_path)
+        df = payload["df"]
+        results = payload["results"]
+        data_dir = Path(str(payload.get("data_dir") or args.data_dir))
+        summary["cache_reused"] = {
+            "path": str(args.cache_path),
+            "created_at": payload.get("created_at"),
+            "rows": int(len(df)),
+            "results": int(len(results)),
+        }
+        _write_checkpoint(args.checkpoint, summary)
+        _log(f"case input cache loaded: {summary['cache_reused']}")
+        _run_case_builder_only(
+            df,
+            results,
+            data_dir=data_dir,
+            checkpoint=args.checkpoint,
+            summary=summary,
+        )
+        _evaluate_manipulated(df, data_dir=data_dir, checkpoint=args.checkpoint, summary=summary)
+        summary["total_elapsed_sec"] = _elapsed(total_start)
+        summary["finished_at"] = _now()
+        _write_checkpoint(args.checkpoint, summary)
+        _log(f"case-only done: {summary['total_elapsed_sec']}s checkpoint={args.checkpoint}")
+        return 0
 
     settings = make_phase_settings(get_settings(), phase="phase1")
     audit_rules = get_audit_rules()
@@ -632,7 +978,15 @@ def main() -> int:
         data_dir=args.data_dir,
         checkpoint=args.checkpoint,
         summary=summary,
+        cache_path=args.cache_path,
+        stop_after_cache=args.stop_after_cache,
     )
+    if args.stop_after_cache:
+        summary["total_elapsed_sec"] = _elapsed(total_start)
+        summary["finished_at"] = _now()
+        _write_checkpoint(args.checkpoint, summary)
+        _log(f"stopped after cache: {summary['total_elapsed_sec']}s checkpoint={args.checkpoint}")
+        return 0
     _evaluate_manipulated(df, data_dir=args.data_dir, checkpoint=args.checkpoint, summary=summary)
     summary["total_elapsed_sec"] = _elapsed(total_start)
     summary["finished_at"] = _now()

@@ -25,7 +25,7 @@ core = [
 ml = ["xgboost", "scikit-learn", "shap", "torch", "lightgbm"]
 nlp = ["kiwipiepy"]
 llm = ["vanna[duckdb,chromadb]", "openai>=1.50"]
-dashboard = ["streamlit", "plotly", "streamlit-aggrid"]
+dashboard = ["streamlit", "plotly", "streamlit-aggrid", "streamlit-option-menu"]
 export = ["fpdf2"]
 dev = ["pytest", "ruff", "mypy"]
 
