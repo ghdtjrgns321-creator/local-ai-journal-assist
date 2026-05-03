@@ -25,6 +25,12 @@ When a candidate becomes the production baseline, update or verify:
 - `data/journal/primary/datasynth/run_manifest.json`
 - `data/journal/primary/datasynth/balance_validation.json`
 
+Current split derivatives:
+
+- `data/journal/primary/datasynth_contract/`: contract truth and sidecar-context validation split.
+- `data/journal/primary/datasynth_manipulation/`: actual manipulation/injected issue truth split.
+- Keep `data/journal/primary/datasynth/` as the compatibility production baseline until loaders explicitly support the split datasets.
+
 Required production docs:
 
 - `data/journal/primary/datasynth/FREEZE_VXX.md`

@@ -1,0 +1,19 @@
+﻿rule_id,category,contract_only_docs,pct_total_docs,realism_judgment,practical_interpretation,source_freeze
+L3-04,broad_review,139323,43.6485,structurally_large_population,월초/월말 ±5일 window라 구조적으로 큼,v126
+L3-02,broad_review,85208,26.6948,plausible_population,수기/조정 모집단. 위험이 아니라 모집단 flag,v126
+L3-03,broad_review,30004,9.4,plausible_population,관계사 거래 모집단. 그룹사면 가능,v126
+L3-05,broad_review,23881,7.4817,higher_than_usual_population,주말/휴일 모집단. 자동 배치 많으면 가능하지만 일반 회사 기준 큼,v126
+L3-06,broad_review,6983,2.1877,plausible_population,심야 모집단. 배치/해외/교대근무 있으면 가능,v126
+L3-12,broad_review,0,0.0,user_level_not_document_rate,사용자 단위라 문서 비율 해석 금지,v126
+L4-05,high_review,4826,1.5119,possibly_overrepresented,비정상 시간대 사용자 집중. high-review로는 많은 편,v126
+L4-04,high_review,3940,1.2344,plausible_but_large,희소 계정조합. 기준이 넓으면 가능하지만 많은 편,v126
+L4-03,high_review,3458,1.0834,plausible_but_large,고액 이상 후보. 대기업/제조업이면 가능하지만 많은 편,v126
+L3-01,high_review,2373,0.7434,higher_than_usual,업무-계정 불일치 후보. 룰이 넓어도 DataSynth가 많은 편,v126
+L3-10,high_review,1516,0.4749,plausible_but_large,고위험 계정 접촉. 정책 따라 가능하나 단독 위험 아님,v126
+L2-04,high_review,1043,0.3268,higher_than_usual,비용 자산화 후보. 정상 CAPEX context 없으면 많은 편,v126
+L4-01,high_review,805,0.2522,plausible,매출 이상 후보. 가능한 수준,v126
+L4-06,high_review,376,0.1178,plausible,배치/동시생성 후보. 가능한 수준,v126
+L2-01,high_review,352,0.1103,higher_than_usual,한도 근접 후보. 실제 가능하지만 특정 한도/승인자 쏠림 확인 필요,v126
+L2-02,high_review,344,0.1078,higher_than_usual,중복지급 후보. 실제 AP에서 가능하지만 검토 큐로는 많은 편,v126
+L2-03,high_review,98,0.0307,plausible,중복전표 후보. 실무 검토 큐로 가능한 수준,v126
+L2-05,high_review,26,0.0081,plausible,역분개/정정 후보. 가능한 수준,v126

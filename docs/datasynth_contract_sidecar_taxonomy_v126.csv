@@ -1,0 +1,181 @@
+﻿sidecar_name,path,row_count,document_count,owner_rule,contract_layer,sidecar_truth_kind,intended_dataset,expected_detector_positive,allowed_for_independent_sidecar_eval,source_candidate,notes
+rule_contract_control_gap.csv,,,,,contract_truth,contract_context,contract,True,False,v126,"Hard exception rule-truth documents excluding injected/manipulated issue truth, split for UI/evaluation handling."
+rule_contract_exception_context.csv,,,,,contract_truth,contract_context,contract,True,False,v126,"Hard exception rule-truth documents excluding injected/manipulated issue truth, split for UI/evaluation handling."
+rule_contract_hard_error.csv,,,,,contract_truth,contract_context,contract,True,False,v126,"Hard exception rule-truth documents excluding injected/manipulated issue truth, split for UI/evaluation handling."
+rule_contract_review_required.csv,,,,,contract_truth,contract_context,contract,True,False,v126,"Hard exception rule-truth documents excluding injected/manipulated issue truth, split for UI/evaluation handling."
+rule_contract_system_policy_exception.csv,,,,,contract_truth,contract_context,contract,True,False,v126,"Hard exception rule-truth documents excluding injected/manipulated issue truth, split for UI/evaluation handling."
+account_activity_variance_truth,labels/account_activity_variance_truth.csv,336.0,336.0,D01,contract_truth,detector_contract_or_rule_truth,contract,true,True,v126,
+benford_finding_truth,labels/benford_finding_truth.csv,99.0,,L4-02,contract_truth,detector_contract_or_rule_truth,contract,true,False,v126,
+field_contract_truth,labels/field_contract_truth.csv,1207.0,1174.0,unclassified,contract_truth,detector_contract_or_rule_truth,contract,,False,v126,
+intercompany_population_truth,labels/intercompany_population_truth.csv,30377.0,30377.0,unclassified,contract_truth,detector_contract_or_rule_truth,contract,,False,v126,
+l101_unbalanced_truth,labels/l101_unbalanced_truth.csv,316.0,316.0,unclassified,contract_truth,detector_contract_or_rule_truth,contract,,False,v126,
+l1_audit_issue_truth,labels/l1_audit_issue_truth.csv,621.0,617.0,unclassified,contract_truth,detector_contract_or_rule_truth,contract,,False,v126,
+l201_just_below_threshold_truth,labels/l201_just_below_threshold_truth.csv,457.0,457.0,unclassified,contract_truth,detector_contract_or_rule_truth,contract,,False,v126,
+manual_entry_population_truth,labels/manual_entry_population_truth.csv,86811.0,86811.0,L3-02,contract_truth,detector_contract_or_rule_truth,contract,true,False,v126,
+missing_corrupted_description_truth,labels/missing_corrupted_description_truth.csv,428.0,428.0,unclassified,contract_truth,detector_contract_or_rule_truth,contract,,False,v126,
+monthly_pattern_shift_truth,labels/monthly_pattern_shift_truth.csv,346.0,346.0,D02,contract_truth,detector_contract_or_rule_truth,contract,true,True,v126,
+reversal_strict_truth,,,,L2-05,contract_truth,detector_contract_or_rule_truth,contract,true,False,v126,
+rule_truth,labels/rule_truth.csv,305924.0,185390.0,unclassified,contract_truth,detector_contract_or_rule_truth,contract,,False,v126,
+rule_truth_D01,labels/rule_truth_D01.csv,840.0,840.0,D01,contract_truth,detector_contract_or_rule_truth,contract,true,False,v126,
+rule_truth_D02,labels/rule_truth_D02.csv,497.0,497.0,D02,contract_truth,detector_contract_or_rule_truth,contract,true,False,v126,
+rule_truth_L4_01,labels/rule_truth_L4_01.csv,964.0,964.0,L4-01,contract_truth,detector_contract_or_rule_truth,contract,true,False,v126,
+rule_truth_L4_02,labels/rule_truth_L4_02.csv,99.0,,L4-02,contract_truth,detector_contract_or_rule_truth,contract,true,False,v126,
+rule_truth_L4_03,labels/rule_truth_L4_03.csv,4015.0,4015.0,L4-03,contract_truth,detector_contract_or_rule_truth,contract,true,False,v126,
+rule_truth_L4_04,labels/rule_truth_L4_04.csv,4091.0,4091.0,L4-04,contract_truth,detector_contract_or_rule_truth,contract,true,False,v126,
+rule_truth_L4_05,labels/rule_truth_L4_05.csv,4964.0,4964.0,L4-05,contract_truth,detector_contract_or_rule_truth,contract,true,False,v126,
+rule_truth_L4_06,labels/rule_truth_L4_06.csv,692.0,692.0,L4-06,contract_truth,detector_contract_or_rule_truth,contract,true,False,v126,
+vague_or_risky_description_truth,labels/vague_or_risky_description_truth.csv,94.0,94.0,unclassified,contract_truth,detector_contract_or_rule_truth,contract,,False,v126,
+wrong_period_non_audit_issue_truth,labels/wrong_period_non_audit_issue_truth.csv,140.0,140.0,L1-08,contract_truth,detector_contract_or_rule_truth,contract,true,False,v126,
+account_activity_variance_exclusions,labels/account_activity_variance_exclusions.csv,96.0,10.0,D01,manifest_log,diagnostic_or_lineage_manifest,contract,false,False,v126,
+approval_date_fill_manifest,labels/approval_date_fill_manifest.csv,17123.0,17123.0,unclassified,manifest_log,diagnostic_or_lineage_manifest,contract,,False,v126,
+l105_self_approval_consistency_fix_manifest,labels/l105_self_approval_consistency_fix_manifest.csv,2.0,2.0,unclassified,manifest_log,diagnostic_or_lineage_manifest,contract,,False,v126,
+monthly_pattern_shift_exclusions,labels/monthly_pattern_shift_exclusions.csv,2059.0,1982.0,D02,manifest_log,diagnostic_or_lineage_manifest,contract,false,False,v126,
+rare_account_pair_excluded_large_docs,labels/rare_account_pair_excluded_large_docs.csv,243.0,243.0,L4-04,manifest_log,diagnostic_or_lineage_manifest,contract,false,False,v126,
+routine_approval_metadata_fill_manifest,labels/routine_approval_metadata_fill_manifest.csv,0.0,,unclassified,manifest_log,diagnostic_or_lineage_manifest,contract,,False,v126,
+rule_contract_exception_context_summary.csv,,,,,manifest_log,diagnostic_or_lineage_manifest,contract,,False,v126,"Hard exception rule-truth documents excluding injected/manipulated issue truth, split for UI/evaluation handling."
+self_approval_label_manifest,labels/self_approval_label_manifest.csv,5910.0,5910.0,unclassified,manifest_log,diagnostic_or_lineage_manifest,contract,,False,v126,
+self_approval_repair_manifest,labels/self_approval_repair_manifest.csv,5693.0,5693.0,unclassified,manifest_log,diagnostic_or_lineage_manifest,contract,,False,v126,
+skipped_approval_add_label_manifest,labels/skipped_approval_add_label_manifest.csv,0.0,0.0,unclassified,manifest_log,diagnostic_or_lineage_manifest,contract,,False,v126,
+skipped_approval_label_manifest,labels/skipped_approval_label_manifest.csv,11.0,11.0,unclassified,manifest_log,diagnostic_or_lineage_manifest,contract,,False,v126,
+skipped_approval_remove_label_manifest,labels/skipped_approval_remove_label_manifest.csv,2.0,2.0,unclassified,manifest_log,diagnostic_or_lineage_manifest,contract,,False,v126,
+wrong_period_label_manifest,labels/wrong_period_label_manifest.csv,660.0,660.0,unclassified,manifest_log,diagnostic_or_lineage_manifest,contract,,False,v126,
+anomaly_labels,labels/anomaly_labels.csv,3149.0,2992.0,unclassified,manipulation_truth,actual_issue_truth,manipulation,,False,v126,
+manipulated_entry_scenario_summary,labels/manipulated_entry_scenario_summary.csv,18.0,,unclassified,manipulation_truth,actual_issue_truth,manipulation,,False,v126,
+manipulated_entry_truth,labels/manipulated_entry_truth.csv,420.0,420.0,unclassified,manipulation_truth,actual_issue_truth,manipulation,,False,v126,
+revenue_manipulation_combination_coverage,labels/revenue_manipulation_combination_coverage.csv,115.0,115.0,unclassified,manipulation_truth,actual_issue_truth,manipulation,,False,v126,
+revenue_manipulation_l401_direct_truth,labels/revenue_manipulation_l401_direct_truth.csv,22.0,22.0,L4-01,manipulation_truth,actual_issue_truth,manipulation,true,True,v126,
+revenue_manipulation_subtypes,labels/revenue_manipulation_subtypes.csv,137.0,137.0,unclassified,manipulation_truth,actual_issue_truth,manipulation,,False,v126,
+account_activity_variance_near_threshold_controls,labels/account_activity_variance_near_threshold_controls.csv,120.0,120.0,D01,sidecar_context,boundary_or_holdout_context,contract,false,True,v126,
+afterhours_limitation_controls,labels/afterhours_limitation_controls.csv,33.0,18.0,unclassified,sidecar_context,boundary_or_holdout_context,contract,,False,v126,
+batch_boundary_contexts,labels/batch_boundary_contexts.csv,128.0,128.0,L4-06,sidecar_context,boundary_or_holdout_context,contract,may_be_true,True,v126,
+batch_boundary_controls,labels/batch_boundary_controls.csv,128.0,128.0,L4-06,sidecar_context,boundary_or_holdout_context,contract,may_be_true,True,v126,
+benford_adversarial_holdout,labels/benford_adversarial_holdout.csv,176.0,,L4-02,sidecar_context,boundary_or_holdout_context,contract,true,True,v126,
+benford_boundary_groups,labels/benford_boundary_groups.csv,36.0,,L4-02,sidecar_context,boundary_or_holdout_context,contract,may_be_true,True,v126,
+benford_weak_fraud_holdout,labels/benford_weak_fraud_holdout.csv,11.0,,L4-02,sidecar_context,boundary_or_holdout_context,contract,may_be_true,True,v126,
+high_amount_boundary_contexts,labels/high_amount_boundary_contexts.csv,116.0,116.0,L4-03,sidecar_context,boundary_or_holdout_context,contract,may_be_true,True,v126,
+high_amount_boundary_controls,labels/high_amount_boundary_controls.csv,116.0,116.0,L4-03,sidecar_context,boundary_or_holdout_context,contract,may_be_true,True,v126,
+late_approval_boundary_controls,labels/late_approval_boundary_controls.csv,375.0,375.0,L1-07/L1-09,sidecar_context,boundary_or_holdout_context,contract,false,True,v126,
+revenue_outlier_boundary_contexts,labels/revenue_outlier_boundary_contexts.csv,212.0,212.0,L4-01,sidecar_context,boundary_or_holdout_context,contract,may_be_true,True,v126,
+revenue_outlier_boundary_controls,labels/revenue_outlier_boundary_controls.csv,212.0,212.0,L4-01,sidecar_context,boundary_or_holdout_context,contract,may_be_true,True,v126,
+approval_date_missing_cases,labels/approval_date_missing_cases.csv,26.0,26.0,unclassified,sidecar_context,case_or_drilldown_context,contract,,False,v126,
+benford_drilldown_candidates,labels/benford_drilldown_candidates.csv,24148.0,18914.0,L4-02,sidecar_context,case_or_drilldown_context,contract,,True,v126,
+expense_capitalization_plausible_cases,labels/expense_capitalization_plausible_cases.csv,33.0,33.0,L2-04,sidecar_context,case_or_drilldown_context,contract,true_or_review,True,v126,
+ic_amount_mismatch_cases,labels/ic_amount_mismatch_cases.csv,16.0,,unclassified,sidecar_context,case_or_drilldown_context,contract,,True,v126,
+ic_timing_gap_cases,labels/ic_timing_gap_cases.csv,14.0,,unclassified,sidecar_context,case_or_drilldown_context,contract,,True,v126,
+ic_unmatched_cases,labels/ic_unmatched_cases.csv,21.0,,unclassified,sidecar_context,case_or_drilldown_context,contract,,True,v126,
+intercompany_exception_cases,labels/intercompany_exception_cases.csv,64.0,,unclassified,sidecar_context,case_or_drilldown_context,contract,,True,v126,
+lateposting_patch_cases,labels/lateposting_patch_cases.csv,40.0,40.0,unclassified,sidecar_context,case_or_drilldown_context,contract,,False,v126,
+misclassified_account_coa_fix_cases,labels/misclassified_account_coa_fix_cases.csv,19.0,19.0,unclassified,sidecar_context,case_or_drilldown_context,contract,,False,v126,
+reversal_pattern_plausible_cases,labels/reversal_pattern_plausible_cases.csv,51.0,51.0,L2-05,sidecar_context,case_or_drilldown_context,contract,true_or_review,True,v126,
+transfer_pricing_review_cases,labels/transfer_pricing_review_cases.csv,13.0,,unclassified,sidecar_context,case_or_drilldown_context,contract,,True,v126,
+abnormal_hours_concentration_cases,labels/abnormal_hours_concentration_cases.csv,27.0,27.0,L4-05,sidecar_context,confirmed_issue_subset,contract,true,True,v126,
+batch_confirmed_anomalies,labels/batch_confirmed_anomalies.csv,175.0,175.0,L4-06,sidecar_context,confirmed_issue_subset,contract,true,True,v126,
+cutoff_confirmed_anomalies,labels/cutoff_confirmed_anomalies.csv,110.0,110.0,unclassified,sidecar_context,confirmed_issue_subset,contract,,False,v126,
+graph_gr01_confirmed_anomalies,labels/graph_gr01_confirmed_anomalies.csv,10.0,10.0,unclassified,sidecar_context,confirmed_issue_subset,contract,,False,v126,
+high_amount_confirmed_anomalies,labels/high_amount_confirmed_anomalies.csv,41.0,41.0,L4-03,sidecar_context,confirmed_issue_subset,contract,true,True,v126,
+high_risk_account_confirmed_anomalies,labels/high_risk_account_confirmed_anomalies.csv,60.0,60.0,unclassified,sidecar_context,confirmed_issue_subset,contract,,False,v126,
+manual_override_confirmed_anomalies,labels/manual_override_confirmed_anomalies.csv,3.0,3.0,unclassified,sidecar_context,confirmed_issue_subset,contract,,False,v126,
+monthly_pattern_shift_confirmed_anomalies,labels/monthly_pattern_shift_confirmed_anomalies.csv,346.0,346.0,D02,sidecar_context,confirmed_issue_subset,contract,true,True,v126,
+rare_account_pair_confirmed_anomalies,labels/rare_account_pair_confirmed_anomalies.csv,52.0,52.0,L4-04,sidecar_context,confirmed_issue_subset,contract,true,True,v126,
+self_approval_confirmed_anomalies,labels/self_approval_confirmed_anomalies.csv,217.0,217.0,unclassified,sidecar_context,confirmed_issue_subset,contract,,False,v126,
+skipped_approval_confirmed_anomalies,labels/skipped_approval_confirmed_anomalies.csv,17.0,17.0,unclassified,sidecar_context,confirmed_issue_subset,contract,,False,v126,
+sod_confirmed_anomalies,labels/sod_confirmed_anomalies.csv,19.0,19.0,unclassified,sidecar_context,confirmed_issue_subset,contract,,False,v126,
+suspense_confirmed_anomalies,labels/suspense_confirmed_anomalies.csv,62.0,62.0,unclassified,sidecar_context,confirmed_issue_subset,contract,,False,v126,
+weekend_confirmed_anomalies,labels/weekend_confirmed_anomalies.csv,29.0,29.0,unclassified,sidecar_context,confirmed_issue_subset,contract,,False,v126,
+wrong_period_confirmed_anomalies,labels/wrong_period_confirmed_anomalies.csv,731.0,731.0,unclassified,sidecar_context,confirmed_issue_subset,contract,,False,v126,
+afterhours_negative_controls,labels/afterhours_negative_controls.csv,239.0,239.0,unclassified,sidecar_context,negative_control,contract,,True,v126,
+duplicate_entry_negative_controls,labels/duplicate_entry_negative_controls.csv,90.0,90.0,L2-03,sidecar_context,negative_control,contract,false_or_score_low,True,v126,
+duplicate_payment_negative_controls,labels/duplicate_payment_negative_controls.csv,18.0,18.0,L2-02,sidecar_context,negative_control,contract,false_or_score_low,True,v126,
+lateposting_negative_controls,labels/lateposting_negative_controls.csv,127.0,127.0,unclassified,sidecar_context,negative_control,contract,,True,v126,
+monthly_pattern_shift_guardrail_negative_controls,labels/monthly_pattern_shift_guardrail_negative_controls.csv,43.0,43.0,D02,sidecar_context,negative_control,contract,false,True,v126,
+wrongperiod_negative_controls,labels/wrongperiod_negative_controls.csv,140.0,140.0,L1-08,sidecar_context,negative_control,contract,true,False,v126,
+account_activity_variance_normal_controls,labels/account_activity_variance_normal_controls.csv,504.0,504.0,D01,sidecar_context,normal_or_legitimate_context,contract,true,True,v126,
+afterhours_normal_context_within_review_population,labels/afterhours_normal_context_within_review_population.csv,6952.0,6952.0,unclassified,sidecar_context,normal_or_legitimate_context,contract,true,True,v126,
+approval_date_present_normal_controls,labels/approval_date_present_normal_controls.csv,319071.0,319071.0,unclassified,sidecar_context,normal_or_legitimate_context,contract,,True,v126,
+batch_legitimate_contexts,labels/batch_legitimate_contexts.csv,250.0,250.0,L4-06,sidecar_context,normal_or_legitimate_context,contract,may_be_true,True,v126,
+batch_normal_controls,labels/batch_normal_controls.csv,250.0,250.0,L4-06,sidecar_context,normal_or_legitimate_context,contract,may_be_true,True,v126,
+benford_business_skew_normal_groups,labels/benford_business_skew_normal_groups.csv,30.0,,L4-02,sidecar_context,normal_or_legitimate_context,contract,may_be_true,True,v126,
+benford_high_mad_normal_controls,labels/benford_high_mad_normal_controls.csv,9.0,,L4-02,sidecar_context,normal_or_legitimate_context,contract,may_be_true,True,v126,
+benford_normal_groups,labels/benford_normal_groups.csv,318.0,,L4-02,sidecar_context,normal_or_legitimate_context,contract,false,True,v126,
+cutoff_normal_controls,labels/cutoff_normal_controls.csv,273.0,273.0,unclassified,sidecar_context,normal_or_legitimate_context,contract,,True,v126,
+description_boundary_normal_controls,labels/description_boundary_normal_controls.csv,530.0,530.0,unclassified,sidecar_context,normal_or_legitimate_context,contract,,True,v126,
+high_amount_legitimate_contexts,labels/high_amount_legitimate_contexts.csv,177.0,177.0,L4-03,sidecar_context,normal_or_legitimate_context,contract,may_be_true,True,v126,
+high_amount_normal_controls,labels/high_amount_normal_controls.csv,177.0,177.0,L4-03,sidecar_context,normal_or_legitimate_context,contract,may_be_true,True,v126,
+high_risk_account_normal_controls,labels/high_risk_account_normal_controls.csv,323.0,323.0,unclassified,sidecar_context,normal_or_legitimate_context,contract,,True,v126,
+intercompany_normal_controls,labels/intercompany_normal_controls.csv,80.0,,unclassified,sidecar_context,normal_or_legitimate_context,contract,,True,v126,
+l1_realism_normal_controls,labels/l1_realism_normal_controls.csv,1492.0,1271.0,L1,sidecar_context,normal_or_legitimate_context,contract,false,True,v126,
+manual_entry_normal_context,labels/manual_entry_normal_context.csv,3600.0,3600.0,unclassified,sidecar_context,normal_or_legitimate_context,contract,,False,v126,
+monthly_pattern_shift_normal_controls,labels/monthly_pattern_shift_normal_controls.csv,194.0,194.0,D02,sidecar_context,normal_or_legitimate_context,contract,may_be_true,True,v126,
+monthly_pattern_shift_raw_positive_normal_contexts,labels/monthly_pattern_shift_raw_positive_normal_contexts.csv,151.0,151.0,D02,sidecar_context,normal_or_legitimate_context,contract,true,True,v126,
+rare_account_pair_legitimate_contexts,labels/rare_account_pair_legitimate_contexts.csv,258.0,258.0,L4-04,sidecar_context,normal_or_legitimate_context,contract,may_be_true,True,v126,
+rare_account_pair_normal_controls,labels/rare_account_pair_normal_controls.csv,258.0,258.0,L4-04,sidecar_context,normal_or_legitimate_context,contract,may_be_true,True,v126,
+self_approval_normal_controls,labels/self_approval_normal_controls.csv,5693.0,5693.0,unclassified,sidecar_context,normal_or_legitimate_context,contract,,True,v126,
+skipped_approval_normal_controls,labels/skipped_approval_normal_controls.csv,79.0,79.0,L1-07/L1-09,sidecar_context,normal_or_legitimate_context,contract,true,False,v126,
+suspense_normal_controls,labels/suspense_normal_controls.csv,1070.0,1070.0,unclassified,sidecar_context,normal_or_legitimate_context,contract,,True,v126,
+weekend_normal_context_within_review_population,labels/weekend_normal_context_within_review_population.csv,12373.0,12373.0,unclassified,sidecar_context,normal_or_legitimate_context,contract,,False,v126,
+wrong_period_normal_controls,labels/wrong_period_normal_controls.csv,750.0,750.0,unclassified,sidecar_context,normal_or_legitimate_context,contract,,True,v126,
+abnormal_hours_behavior_detector_universe,labels/abnormal_hours_behavior_detector_universe.csv,4964.0,4964.0,L4-05,sidecar_context,review_population_or_detector_universe,contract,true,False,v126,
+abnormal_hours_behavior_review_population,labels/abnormal_hours_behavior_review_population.csv,4964.0,4964.0,L4-05,sidecar_context,review_population_or_detector_universe,contract,true,False,v126,
+account_activity_variance_review_population,labels/account_activity_variance_review_population.csv,840.0,840.0,D01,sidecar_context,review_population_or_detector_universe,contract,true,False,v126,
+afterhours_review_population,labels/afterhours_review_population.csv,7507.0,7507.0,unclassified,sidecar_context,review_population_or_detector_universe,contract,,False,v126,
+approval_limit_exceeded_population,labels/approval_limit_exceeded_population.csv,56.0,56.0,unclassified,sidecar_context,review_population_or_detector_universe,contract,,False,v126,
+batch_detector_universe,labels/batch_detector_universe.csv,692.0,692.0,L4-06,sidecar_context,review_population_or_detector_universe,contract,true,False,v126,
+batch_review_population,labels/batch_review_population.csv,692.0,692.0,L4-06,sidecar_context,review_population_or_detector_universe,contract,true,False,v126,
+cutoff_review_population,labels/cutoff_review_population.csv,133.0,133.0,L3-11,sidecar_context,review_population_or_detector_universe,contract,true,False,v126,
+description_quality_population,labels/description_quality_population.csv,319193.0,319193.0,unclassified,sidecar_context,review_population_or_detector_universe,contract,,False,v126,
+duplicate_entry_review_population,labels/duplicate_entry_review_population.csv,105.0,105.0,L2-03,sidecar_context,review_population_or_detector_universe,contract,true,False,v126,
+duplicate_payment_review_population,labels/duplicate_payment_review_population.csv,384.0,384.0,L2-02,sidecar_context,review_population_or_detector_universe,contract,true,False,v126,
+expense_capitalization_review_population,labels/expense_capitalization_review_population.csv,1098.0,1098.0,L2-04,sidecar_context,review_population_or_detector_universe,contract,true,False,v126,
+graph_gr01_review_population,labels/graph_gr01_review_population.csv,227.0,227.0,unclassified,sidecar_context,review_population_or_detector_universe,contract,,False,v126,
+high_amount_detector_universe,labels/high_amount_detector_universe.csv,4015.0,4015.0,L4-03,sidecar_context,review_population_or_detector_universe,contract,true,False,v126,
+high_amount_review_population,labels/high_amount_review_population.csv,4015.0,4015.0,L4-03,sidecar_context,review_population_or_detector_universe,contract,true,False,v126,
+high_risk_account_review_population,labels/high_risk_account_review_population.csv,1601.0,1601.0,unclassified,sidecar_context,review_population_or_detector_universe,contract,,False,v126,
+l301_account_process_mismatch_review_population,labels/l301_account_process_mismatch_review_population.csv,2419.0,2419.0,unclassified,sidecar_context,review_population_or_detector_universe,contract,,False,v126,
+monthly_pattern_shift_review_population,labels/monthly_pattern_shift_review_population.csv,497.0,497.0,D02,sidecar_context,review_population_or_detector_universe,contract,true,False,v126,
+period_end_review_population,labels/period_end_review_population.csv,142011.0,142011.0,unclassified,sidecar_context,review_population_or_detector_universe,contract,,False,v126,
+rare_account_pair_detector_universe,labels/rare_account_pair_detector_universe.csv,4091.0,4091.0,L4-04,sidecar_context,review_population_or_detector_universe,contract,true,False,v126,
+rare_account_pair_review_population,labels/rare_account_pair_review_population.csv,4091.0,4091.0,L4-04,sidecar_context,review_population_or_detector_universe,contract,true,False,v126,
+revenue_outlier_detector_universe,labels/revenue_outlier_detector_universe.csv,964.0,964.0,L4-01,sidecar_context,review_population_or_detector_universe,contract,true,False,v126,
+revenue_outlier_review_population,labels/revenue_outlier_review_population.csv,964.0,964.0,L4-01,sidecar_context,review_population_or_detector_universe,contract,true,False,v126,
+reversal_entry_review_population,,,,L2-05,sidecar_context,review_population_or_detector_universe,contract,true,False,v126,
+reversal_weak_review_population,,,,L2-05,sidecar_context,review_population_or_detector_universe,contract,true,False,v126,
+self_approval_review_population,labels/self_approval_review_population.csv,217.0,217.0,unclassified,sidecar_context,review_population_or_detector_universe,contract,,False,v126,
+sod_review_population,labels/sod_review_population.csv,9065.0,9065.0,L1-06/L3-12,sidecar_context,review_population_or_detector_universe,contract,false_for_L1_06_direct,True,v126,
+suspense_aging_review_population,labels/suspense_aging_review_population.csv,1091.0,1091.0,unclassified,sidecar_context,review_population_or_detector_universe,contract,,False,v126,
+suspense_lifecycle_population,labels/suspense_lifecycle_population.csv,2161.0,2161.0,unclassified,sidecar_context,review_population_or_detector_universe,contract,,False,v126,
+weekend_review_population,labels/weekend_review_population.csv,12771.0,12771.0,L3-05,sidecar_context,review_population_or_detector_universe,contract,true,False,v126,
+work_scope_excess_review_population,labels/work_scope_excess_review_population.csv,64.0,,unclassified,sidecar_context,review_population_or_detector_universe,contract,,False,v126,
+work_scope_raw_candidate_population,labels/work_scope_raw_candidate_population.csv,127.0,,unclassified,sidecar_context,review_population_or_detector_universe,contract,,False,v126,
+account_activity_variance_stable_controls,labels/account_activity_variance_stable_controls.csv,240.0,240.0,D01,sidecar_context,negative_control,contract,false,True,v126,D01 stable below-threshold guardrail groups; detector should not flag.
+afterhours_cross_rule_labeled_context,labels/afterhours_cross_rule_labeled_context.csv,20.0,20.0,L3-06,sidecar_context,cross_rule_labeled_context,contract,true,False,v126,After-hours rows that also have another anomaly label; not normal context.
+approver_master_mapping_issues,labels/approver_master_mapping_issues.csv,54.0,54.0,L1-04/L1-07/L1-09,sidecar_context,boundary_or_master_data_context,contract,,True,v126,Approver master mapping boundary cases; policy/master-data review context.
+benford_broad_digit_findings,labels/benford_broad_digit_findings.csv,18.0,,L4-02,sidecar_context,drilldown_candidate,contract,,True,v126,"Benford broad digit drilldown, not strict truth."
+benford_company_specific_normals,labels/benford_company_specific_normals.csv,24.0,,L4-02,sidecar_context,normal_or_legitimate_context,contract,may_be_true,True,v126,Company-specific normal Benford behavior.
+benford_skipped_small_groups,labels/benford_skipped_small_groups.csv,3267.0,,L4-02,manifest_log,exclusion_manifest,contract,false,False,v126,Benford groups skipped due to small sample.
+benford_small_sample_controls,labels/benford_small_sample_controls.csv,48.0,,L4-02,sidecar_context,boundary_or_holdout_context,contract,false,True,v126,Benford small-sample boundary controls.
+cutoff_reasonable_delay_controls,labels/cutoff_reasonable_delay_controls.csv,23.0,23.0,unclassified,sidecar_context,normal_or_legitimate_context,contract,,False,v126,Reasonable delay controls for cutoff.
+cutoff_untestable_controls,labels/cutoff_untestable_controls.csv,720.0,720.0,unclassified,sidecar_context,limitation_or_untestable_context,contract,,False,v126,Cutoff limitation controls where event-date evidence is insufficient.
+delegated_approval_controls,labels/delegated_approval_controls.csv,188.0,188.0,L1-07/L1-09,sidecar_context,normal_or_legitimate_context,contract,false,True,v126,Delegated approval controls; not skipped approval.
+duplicate_entry_confirmed_scenarios,labels/duplicate_entry_confirmed_scenarios.csv,67.0,67.0,L2-03,sidecar_context,confirmed_issue_subset,contract,true,True,v126,Independent duplicate-entry confirmed scenario subset.
+duplicate_payment_pairs,labels/duplicate_payment_pairs.csv,33.0,,L2-02,sidecar_context,confirmed_issue_subset,contract,true,True,v126,Confirmed duplicate-payment pair lineage subset.
+expense_capitalization_normal_capex_controls,labels/expense_capitalization_normal_capex_controls.csv,90.0,90.0,L2-04,sidecar_context,normal_or_legitimate_context,contract,false_or_score_low_or_review,True,v126,Normal CAPEX controls for L2-04.
+graph_gr01_normal_cycle_controls,labels/graph_gr01_normal_cycle_controls.csv,52.0,52.0,unclassified,sidecar_context,normal_or_legitimate_context,contract,,False,v126,Normal IC/graph cycle controls; not GR01 anomaly truth.
+l102_missing_field_diversity_patch_log,labels/l102_missing_field_diversity_patch_log.csv,70.0,70.0,unclassified,manifest_log,diagnostic_or_lineage_manifest,contract,,False,v126,"L1-02 patch log, not evaluation truth."
+l106_severity_diversity_patch_log,labels/l106_severity_diversity_patch_log.csv,19.0,19.0,unclassified,manifest_log,diagnostic_or_lineage_manifest,contract,,False,v126,"L1-06 patch log, not evaluation truth."
+l1_field_only_normal_or_review,labels/l1_field_only_normal_or_review.csv,586.0,577.0,unclassified,contract_truth,field_contract_context,contract,,False,v126,"Field-contract-only L1 context, separate from audit issue truth."
+l301_distribution_patch_log,labels/l301_distribution_patch_log.csv,1210.0,1210.0,unclassified,manifest_log,diagnostic_or_lineage_manifest,contract,,False,v126,L3-01 distribution patch log.
+l302_source_distribution_patch_log,labels/l302_source_distribution_patch_log.csv,148392.0,148392.0,unclassified,manifest_log,diagnostic_or_lineage_manifest,contract,,False,v126,L3-02 source distribution patch log.
+manual_sensitive_account_context,labels/manual_sensitive_account_context.csv,389.0,389.0,unclassified,sidecar_context,review_context,contract,,False,v126,Manual sensitive account review context.
+normal_after_hours_context,labels/normal_after_hours_context.csv,6952.0,6952.0,unclassified,sidecar_context,normal_or_legitimate_context,contract,true,True,v126,Normal after-hours context.
+normal_weekend_context,labels/normal_weekend_context.csv,12373.0,12373.0,unclassified,sidecar_context,normal_or_legitimate_context,contract,,False,v126,Normal weekend/holiday context.
+period_end_normal_close_context,labels/period_end_normal_close_context.csv,3600.0,3600.0,unclassified,sidecar_context,normal_or_legitimate_context,contract,,False,v126,Representative normal period-end close context.
+period_end_priority_context,labels/period_end_priority_context.csv,3009.0,3009.0,unclassified,sidecar_context,priority_review_context,contract,,False,v126,Priority context inside L3-04 period-end/start population.
+post_approval_change_controls,labels/post_approval_change_controls.csv,130.0,130.0,L1 approval downstream,sidecar_context,boundary_or_downstream_control_context,contract,,True,v126,Post-approval change downstream reapproval context.
+removed_ghost_labels,labels/removed_ghost_labels.csv,58.0,58.0,unclassified,manifest_log,diagnostic_or_lineage_manifest,contract,,False,v126,Removed stale/ghost labels log.
+reversal_pattern_normal_clearing_controls,labels/reversal_pattern_normal_clearing_controls.csv,90.0,90.0,L2-05,sidecar_context,negative_control,contract,false_or_score_low,True,v126,Normal clearing/settlement controls for L2-05.
+skipped_approval_system_gap_controls,labels/skipped_approval_system_gap_controls.csv,79.0,79.0,L1-07/L1-09,contract_truth,system_policy_contract_context,contract,true,False,v126,System/control-gap context that may still be L1-07/L1-09 rule truth.
+source_realism_reclassification_v100,labels/source_realism_reclassification_v100.csv,6084.0,6084.0,unclassified,manifest_log,diagnostic_or_lineage_manifest,contract,,False,v126,Source realism reclassification log.
+system_control_gap_controls,labels/system_control_gap_controls.csv,22.0,22.0,L1-07/L1-09,contract_truth,system_policy_contract_context,contract,true,False,v126,Routine system control-gap context; may be L1 rule truth depending current fields.
+system_self_approval_controls,labels/system_self_approval_controls.csv,27.0,27.0,unclassified,contract_truth,system_policy_contract_context,contract,,False,v126,System/automated self-approval contract context.
+work_scope_excess_document_projection,labels/work_scope_excess_document_projection.csv,262846.0,262846.0,unclassified,sidecar_context,document_projection_context,contract,,False,v126,L3-12 user-level finding projected to documents.
+work_scope_raw_candidate_document_projection,labels/work_scope_raw_candidate_document_projection.csv,318993.0,318993.0,unclassified,sidecar_context,document_projection_context,contract,,False,v126,L3-12 raw user candidate projected to documents.
