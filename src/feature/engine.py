@@ -82,6 +82,7 @@ _RULE_FEATURE_CATEGORIES: dict[str, set[FeatureCategory]] = {
     "L3-08": {FeatureCategory.TEXT},
     "L3-09": {FeatureCategory.PATTERN},
     "L3-10": set(),
+    "L3-11": {FeatureCategory.TIME, FeatureCategory.PATTERN},
     "L4-01": {FeatureCategory.AMOUNT, FeatureCategory.PATTERN},
     "L4-02": {FeatureCategory.PATTERN},
     "L4-03": {FeatureCategory.AMOUNT},

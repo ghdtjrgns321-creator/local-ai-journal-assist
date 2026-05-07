@@ -1,14 +1,15 @@
 """시간/날짜 기반 감사 파생변수 6개 생성 모듈.
 
-L3-04(기말), L3-05(주말/공휴일), L3-06(심야), L3-07(전기일-문서일 장기 괴리), L1-08(기간귀속오류) 룰 대응.
-ingest 완료된 표준 DataFrame을 입력으로 받는다.
+L3-04(기말), L3-05(주말/공휴일), L3-06(심야), L3-07(전기일-문서일 장기 괴리),
+L1-08(기간귀속오류) 룰 대응. ingest 완료된 표준 DataFrame을 입력으로 받는다.
 """
 
 from __future__ import annotations
 
 import logging
 import warnings
-from datetime import date, time as dt_time
+from datetime import date
+from datetime import time as dt_time
 
 import pandas as pd
 
@@ -76,8 +77,8 @@ def add_is_weekend(df: pd.DataFrame) -> pd.DataFrame:
 
 def add_is_after_hours(
     df: pd.DataFrame,
-    start: int = 22,
-    end: int = 6,
+    start: float = 22.0,
+    end: float = 6.0,
 ) -> pd.DataFrame:
     """L3-06: posting_date 시간이 심야 구간이면 True.
 
@@ -87,7 +88,9 @@ def add_is_after_hours(
     시간정보 없으면 전체 False + 경고.
     """
     if start == end:
-        logger.warning("midnight_start == midnight_end(%d) — is_after_hours를 전체 False로 설정", start)
+        logger.warning(
+            "midnight_start == midnight_end(%d) — is_after_hours를 전체 False로 설정", start
+        )
         df["is_after_hours"] = False
         return df
 
@@ -96,7 +99,7 @@ def add_is_after_hours(
         df["is_after_hours"] = False
         return df
 
-    hour = df["posting_date"].dt.hour
+    hour = df["posting_date"].dt.hour + df["posting_date"].dt.minute / 60.0
 
     if start > end:
         # 자정 걸침: 22시 이후 OR 6시 이전
@@ -128,9 +131,9 @@ def add_is_period_end(
     # 익월 초: posting.dt.day 자체가 전월말로부터의 경과 일수
     days_after_prev_end = posting.dt.day
 
-    df["is_period_end"] = (
-        (days_before_end <= margin) | (days_after_prev_end <= margin)
-    ).fillna(False)
+    df["is_period_end"] = ((days_before_end <= margin) | (days_after_prev_end <= margin)).fillna(
+        False
+    )
 
     return df
 
@@ -208,8 +211,8 @@ def add_time_zone_category(
     df: pd.DataFrame,
     normal_start: float = 8.5,
     normal_end: float = 18.5,
-    midnight_start: int = 22,
-    midnight_end: int = 6,
+    midnight_start: float = 22.0,
+    midnight_end: float = 6.0,
     settlement_start_mmdd: str = "1220",
     settlement_end_mmdd: str = "0115",
 ) -> pd.DataFrame:
@@ -228,7 +231,9 @@ def add_time_zone_category(
       주말/공휴일: midnight 아닌 한 최소 overtime 유지
     """
     if not _has_time_info(df["posting_date"]):
-        logger.warning("posting_date에 시간정보 없음 — time_zone_category를 전체 'unknown'으로 설정")
+        logger.warning(
+            "posting_date에 시간정보 없음 — time_zone_category를 전체 'unknown'으로 설정"
+        )
         df["time_zone_category"] = "unknown"
         return df
 
@@ -256,23 +261,16 @@ def add_time_zone_category(
 
     month = df["posting_date"].dt.month
     day = df["posting_date"].dt.day
-    in_settlement = (
-        (month == settle_start_m) & (day >= settle_start_d)
-    ) | (
+    in_settlement = ((month == settle_start_m) & (day >= settle_start_d)) | (
         (month == settle_end_m) & (day <= settle_end_d)
     )
-    category = category.where(
-        ~(in_settlement & (category == "overtime")), "normal"
-    )
+    category = category.where(~(in_settlement & (category == "overtime")), "normal")
 
     # Why: 주말/공휴일에 근무하면 midnight 아닌 한 최소 overtime
-    is_non_business = (
-        df.get("is_weekend", pd.Series(False, index=df.index)).fillna(False)
-        | df.get("is_holiday", pd.Series(False, index=df.index)).fillna(False)
-    )
-    category = category.where(
-        ~(is_non_business & (category == "normal")), "overtime"
-    )
+    is_non_business = df.get("is_weekend", pd.Series(False, index=df.index)).fillna(False) | df.get(
+        "is_holiday", pd.Series(False, index=df.index)
+    ).fillna(False)
+    category = category.where(~(is_non_business & (category == "normal")), "overtime")
 
     # Why: posting_date NaT → 판정 불가
     category = category.where(df["posting_date"].notna(), "unknown")

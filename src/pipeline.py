@@ -94,8 +94,8 @@ def _run_detectors_parallel(
             result.metadata.setdefault("elapsed", time.perf_counter() - t0)
             return idx, result, None
         except Exception as exc:
-            logger.warning("탐지 실패: %s (%s)", det.track_name, exc, exc_info=True)
-            return idx, None, f"탐지 실패: {det.track_name}"
+            logger.warning("detector failed: %s (%s)", det.track_name, exc, exc_info=True)
+            return idx, None, f"detector_failed:{det.track_name}"
 
     # Why: max_workers가 None/1이거나 탐지기 1개 이하면 순차 — 오버헤드 회피
     if not max_workers or max_workers <= 1 or total <= 1:
@@ -1187,39 +1187,51 @@ class AuditPipeline:
         warns: list[str] = []
         self._reset_detector_statuses()
 
-        # Phase 1 core scope: L1-L4 rules plus D01/D02 when prior data exists.
-        base_detectors = [
-            IntegrityDetector(
-                self._ctx.settings,
-                chart_of_accounts=self._ctx.chart_of_accounts,
-                schema=self._ctx.schema,
-                audit_rules=self._ctx.audit_rules,
-            ),
-            FraudLayer(self._ctx.settings, audit_rules=self._ctx.audit_rules),
-            AnomalyDetector(self._ctx.settings, audit_rules=self._ctx.audit_rules),
-            BenfordDetector(self._ctx.settings),
-        ]
-        _t = time.monotonic()
-        results, base_warns = _run_detectors_parallel(
-            base_detectors,
-            df,
-            max_workers=getattr(self._ctx.settings, "detection_parallel_workers", None),
-            progress_callback=getattr(self, "_detection_progress_callback", None),
-        )
-        warns.extend(base_warns)
-        for result in results:
-            self._record_detector_status(result.track_name, run_status="executed", result=result)
-        for warn in base_warns:
-            if warn.startswith("탐지 실패: "):
-                failed_track = warn.removeprefix("탐지 실패: ").strip()
-                self._record_detector_status(
-                    failed_track,
-                    run_status="failed",
-                    reason="detector_exception",
-                )
-        logger.warning("[TIMING] base_detectors_parallel: %.1fs", time.monotonic() - _t)
+        results: list[DetectionResult] = []
 
-        optional_detectors = [("variance", self._try_variance_detection)]
+        if detection_scope != "phase2_only":
+            # Phase 1 core scope: L1-L4 rules plus D01/D02 when prior data exists.
+            base_detectors = [
+                IntegrityDetector(
+                    self._ctx.settings,
+                    chart_of_accounts=self._ctx.chart_of_accounts,
+                    schema=self._ctx.schema,
+                    audit_rules=self._ctx.audit_rules,
+                ),
+                FraudLayer(self._ctx.settings, audit_rules=self._ctx.audit_rules),
+                AnomalyDetector(self._ctx.settings, audit_rules=self._ctx.audit_rules),
+                BenfordDetector(self._ctx.settings),
+            ]
+            _t = time.monotonic()
+            results, base_warns = _run_detectors_parallel(
+                base_detectors,
+                df,
+                max_workers=getattr(self._ctx.settings, "detection_parallel_workers", None),
+                progress_callback=getattr(self, "_detection_progress_callback", None),
+            )
+            warns.extend(base_warns)
+            for result in results:
+                self._record_detector_status(result.track_name, run_status="executed", result=result)
+            for warn in base_warns:
+                if warn.startswith("detector_failed:"):
+                    failed_track = warn.removeprefix("detector_failed:").strip()
+                    self._record_detector_status(
+                        failed_track,
+                        run_status="failed",
+                        reason="detector_exception",
+                    )
+            logger.warning("[TIMING] base_detectors_parallel: %.1fs", time.monotonic() - _t)
+        else:
+            for track_name in ("layer_a", "layer_b", "layer_c", "benford"):
+                self._record_detector_status(
+                    track_name,
+                    run_status="skipped",
+                    reason="phase2_inference_uses_phase1_baseline",
+                )
+
+        optional_detectors = []
+        if detection_scope != "phase2_only":
+            optional_detectors.append(("variance", self._try_variance_detection))
         if detection_scope != "phase1_core":
             optional_detectors.append(("ml", lambda d: self._try_ml_detection(d)))
 
@@ -1580,7 +1592,10 @@ class AuditPipeline:
 
         try:
             from src.preprocessing.model_registry import ModelRegistry
-            registry = ModelRegistry()
+            try:
+                registry = ModelRegistry(registry_dir=self._phase2_model_registry_dir())
+            except TypeError:
+                registry = ModelRegistry()
         except Exception:
             self._record_detector_status("ml_supervised", run_status="skipped", reason="missing_model_registry")
             self._record_detector_status("ml_unsupervised", run_status="skipped", reason="missing_model_registry")
@@ -1638,6 +1653,14 @@ class AuditPipeline:
 
         return results
 
+    def _phase2_model_registry_dir(self) -> Path:
+        """Return the registry directory that matches the current engagement context."""
+        if getattr(self._ctx, "is_anonymous", True):
+            from src.preprocessing.model_registry import _DEFAULT_MODELS_DIR
+
+            return _DEFAULT_MODELS_DIR
+        return Path(getattr(self._ctx, "model_dir"))
+
     def _try_stacking_ensemble(
         self,
         results: list[DetectionResult],
@@ -1654,7 +1677,10 @@ class AuditPipeline:
 
         try:
             from src.preprocessing.model_registry import ModelRegistry
-            registry = ModelRegistry()
+            try:
+                registry = ModelRegistry(registry_dir=self._phase2_model_registry_dir())
+            except TypeError:
+                registry = ModelRegistry()
         except Exception:
             self._record_detector_status("ensemble", run_status="skipped", reason="missing_model_registry")
             return None

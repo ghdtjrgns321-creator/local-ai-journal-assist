@@ -586,6 +586,9 @@ def build_phase1_case_result(
     phase1_case_config: dict[str, Any] | None = None,
     generated_at: datetime | None = None,
 ) -> Phase1CaseResult:
+    import time as _time
+
+    _build_t0 = _time.perf_counter()
     generated_at = generated_at or datetime.now(UTC)
     config = (phase1_case_config or {}).get("phase1_case", {})
     run_id = build_phase1_case_run_id(
@@ -602,6 +605,16 @@ def build_phase1_case_result(
     raw_hits = _collect_raw_hits(df, results)
     cases = _build_cases(df, raw_hits, config, macro_findings)
     theme_summaries = _build_theme_summaries(cases, int(config.get("top_n_per_theme", 10)))
+    # Why: PHASE1 빌드 + 탐지기 실행 시간 합산. 탐지기별 metadata["elapsed"] 합 + 빌드 시간.
+    detector_elapsed = 0.0
+    for result in results:
+        meta = getattr(result, "metadata", {}) or {}
+        try:
+            detector_elapsed += float(meta.get("elapsed", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            pass
+    build_elapsed = _time.perf_counter() - _build_t0
+    elapsed_seconds = detector_elapsed + build_elapsed
     return Phase1CaseResult(
         schema_version=SCHEMA_VERSION,
         run_id=run_id,
@@ -633,6 +646,9 @@ def build_phase1_case_result(
                 "L4-02/D01/D02/GR01/GR03 are Account/Process Queue findings. They do not create "
                 "transaction queue priority_score or row-level anomaly_score by themselves."
             ),
+            "elapsed_seconds": float(elapsed_seconds),
+            "detector_elapsed_seconds": float(detector_elapsed),
+            "build_elapsed_seconds": float(build_elapsed),
         },
     )
 

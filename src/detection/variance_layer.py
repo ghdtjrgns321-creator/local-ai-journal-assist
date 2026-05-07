@@ -336,12 +336,18 @@ class VarianceDetector(BaseDetector):
         warnings: list[str],
         elapsed: float,
     ) -> DetectionResult:
-        """빈 결과 생성 — prior 없음, 컬럼 누락, 모든 룰 실패 시."""
+        """빈 결과 생성 — prior 없음, 컬럼 누락, 모든 룰 실패 시.
+
+        Why: 빈 결과는 곧 D01/D02 두 룰 모두 실행되지 못했다는 의미. UI 의 룰 오딧
+        패널이 "스킵됨" 배지를 붙일 수 있도록 트랙 소유 룰을 metadata.skipped_rules 에
+        명시한다. 이걸 빈 리스트로 두면 룰 오딧이 'no_match' 로 분류해 사유 없이
+        회색 텍스트만 보이게 된다.
+        """
         return self._make_result(
             flagged_indices=[],
             scores=pd.Series(0.0, index=df.index if not df.empty else pd.RangeIndex(0)),
             rule_flags=[],
             details=pd.DataFrame(index=df.index if not df.empty else pd.RangeIndex(0)),
-            metadata={"elapsed": elapsed, "skipped_rules": []},
+            metadata={"elapsed": elapsed, "skipped_rules": ["D01", "D02"]},
             warnings=warnings,
         )

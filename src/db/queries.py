@@ -26,7 +26,7 @@ PRESET_QUERIES: dict[str, str] = {
                line_number, gl_account, debit_amount, credit_amount,
                line_text, header_text, created_by, source,
                business_process, user_persona, approved_by,
-               approval_level, reference,
+               approval_date, approval_level, reference,
                is_fraud, fraud_type, is_anomaly, anomaly_type,
                sod_violation, sod_conflict_type,
                anomaly_score, risk_level, flagged_rules,

@@ -378,10 +378,9 @@ DETECTOR_PROFILES: dict[str, DetectorProfile] = {
     ),
     Layer.EVIDENCE: DetectorProfile(
         Layer.EVIDENCE,
-        "Evidence",
-        DetectorMaturity.BETA,
-        False,
-        ("settings",),
+        "L3-11 Cutoff / Evidence",
+        DetectorMaturity.PRODUCTION,
+        True,
     ),
     Layer.ACCESS_AUDIT: DetectorProfile(
         Layer.ACCESS_AUDIT,

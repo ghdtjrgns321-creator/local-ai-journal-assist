@@ -55,7 +55,7 @@ def make_phase_settings(
 
 
 def build_phase1_core_feature_frame(prep_result, settings, ctx=None) -> pd.DataFrame:
-    """Build only the feature categories required by PHASE1 L1-L4 + D01/D02."""
+    """Build only the feature categories required by PHASE1 L1-L4 + L3-11 + D01/D02."""
 
     from config.settings import get_audit_rules, get_risk_keywords
     from src.feature.engine import (

@@ -80,7 +80,9 @@ class TestAnonymousSkipsLayerD:
 
         track_names = {r.track_name for r in result.results}
         assert "layer_d" not in track_names
-        assert {"layer_a", "layer_b", "layer_c", "benford"}.issubset(track_names)
+        assert {"layer_a", "layer_b", "layer_c", "evidence", "benford"}.issubset(track_names)
+        evidence = next(r for r in result.results if r.track_name == "evidence")
+        assert set(evidence.details.columns) == {"L3-11"}
 
 
 class TestNamedWithPrior:
@@ -107,7 +109,9 @@ class TestNamedWithPrior:
 
         track_names = {r.track_name for r in result.results}
         assert "layer_d" in track_names
-        assert {"layer_a", "layer_b", "layer_c", "benford", "layer_d"}.issubset(track_names)
+        assert {
+            "layer_a", "layer_b", "layer_c", "evidence", "benford", "layer_d",
+        }.issubset(track_names)
 
     @patch("src.detection.prior_data_loader.load_prior_summary")
     @patch("src.detection.prior_data_loader.find_prior_engagement")
@@ -144,7 +148,7 @@ class TestNopriorFallback:
 
         track_names = {r.track_name for r in result.results}
         assert "layer_d" not in track_names
-        assert {"layer_a", "layer_b", "layer_c", "benford"}.issubset(track_names)
+        assert {"layer_a", "layer_b", "layer_c", "evidence", "benford"}.issubset(track_names)
 
 
 class TestWeightAutoSelection:
@@ -190,7 +194,7 @@ class TestBackwardCompatNoRepo:
 
         track_names = {r.track_name for r in result.results}
         assert "layer_d" not in track_names
-        assert {"layer_a", "layer_b", "layer_c", "benford"}.issubset(track_names)
+        assert {"layer_a", "layer_b", "layer_c", "evidence", "benford"}.issubset(track_names)
 
 
 class TestLayerDIsolation:
@@ -205,7 +209,7 @@ class TestLayerDIsolation:
 
         track_names = {r.track_name for r in result.results}
         assert "layer_d" not in track_names
-        assert {"layer_a", "layer_b", "layer_c", "benford"}.issubset(track_names)
+        assert {"layer_a", "layer_b", "layer_c", "evidence", "benford"}.issubset(track_names)
 
 
 class TestRedetectWithVariance:
@@ -234,4 +238,6 @@ class TestRedetectWithVariance:
 
         track_names = {r.track_name for r in result.results}
         assert "layer_d" in track_names
-        assert {"layer_a", "layer_b", "layer_c", "benford", "layer_d"}.issubset(track_names)
+        assert {
+            "layer_a", "layer_b", "layer_c", "evidence", "benford", "layer_d",
+        }.issubset(track_names)

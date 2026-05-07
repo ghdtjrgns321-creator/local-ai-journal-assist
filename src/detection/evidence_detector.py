@@ -34,9 +34,11 @@ class EvidenceDetector(BaseDetector):
         settings: AuditSettings | None = None,
         *,
         audit_rules: dict | None = None,
+        rule_ids: tuple[str, ...] | None = None,
     ) -> None:
         super().__init__(settings)
         self._audit_rules = audit_rules or {}
+        self._rule_ids = {rule_id.upper() for rule_id in rule_ids} if rule_ids else None
 
     @property
     def track_name(self) -> str:
@@ -66,7 +68,7 @@ class EvidenceDetector(BaseDetector):
         """서브룰 레지스트리 — settings + audit_rules 기반 파라미터 주입."""
         s = self._settings
         evidence_cfg = self._audit_rules.get("evidence", {})
-        return [
+        registry = [
             ("EV01", ev01_missing_evidence, {
                 "qualified_doc_types": evidence_cfg.get("qualified_doc_types"),
                 "tax_threshold": s.ev_tax_threshold,
@@ -95,6 +97,9 @@ class EvidenceDetector(BaseDetector):
                 "vat_tolerance": s.ev_vat_tolerance,
             }),
         ]
+        if self._rule_ids is None:
+            return registry
+        return [item for item in registry if item[0].upper() in self._rule_ids]
 
     def _build_result(
         self,

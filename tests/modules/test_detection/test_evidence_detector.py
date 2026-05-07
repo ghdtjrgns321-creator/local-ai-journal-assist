@@ -63,6 +63,14 @@ class TestEvidenceDetector:
         det = EvidenceDetector()
         assert det.track_name == "evidence"
 
+    def test_rule_id_filter_runs_cutoff_only(self, full_evidence_df, audit_rules):
+        """Phase 1 core can run only L3-11 from the evidence detector."""
+        det = EvidenceDetector(audit_rules=audit_rules, rule_ids=("L3-11",))
+        result = det.detect(full_evidence_df)
+
+        assert list(result.details.columns) == ["L3-11"]
+        assert [flag.rule_id for flag in result.rule_flags] == ["L3-11"]
+
     def test_partial_columns_graceful(self, audit_rules):
         """증빙 컬럼 일부 부재 시 해당 룰만 스킵, 나머지 정상."""
         df = pd.DataFrame({

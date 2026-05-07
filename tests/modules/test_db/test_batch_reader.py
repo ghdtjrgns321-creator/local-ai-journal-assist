@@ -38,6 +38,16 @@ class TestLoadBatch:
         assert "Medium" in result.risk_summary
         assert "Normal" in result.risk_summary
 
+    def test_restore_approval_date_for_l109(self, db_conn, db_sample_df, db_detection_results):
+        df = db_sample_df.copy()
+        df["approval_date"] = pd.to_datetime(["2022-01-11", "2022-01-11", None])
+        load_all(db_conn, df, "batch_l109_restore", db_detection_results)
+
+        result = load_batch(db_conn, "batch_l109_restore")
+
+        assert "approval_date" in result.data.columns
+        assert result.data["approval_date"].notna().sum() == 2
+
     def test_restore_performance_report(self, db_conn, db_sample_df, db_detection_results):
         load_all(db_conn, db_sample_df, "batch_perf_01", db_detection_results)
 

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import shutil
+import uuid
 from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -91,7 +94,9 @@ class TestRunFromDataframe:
         assert result.performance_report is not None
         assert result.performance_report.source_kind == "ground_truth"
 
-    def test_falls_back_to_operational_report_without_datasynth_labels(self, monkeypatch, small_gl_df):
+    def test_falls_back_to_operational_report_without_datasynth_labels(
+        self, monkeypatch, small_gl_df,
+    ):
         monkeypatch.setattr("src.pipeline.load_document_labels", lambda source_path: None)
 
         result = AuditPipeline(skip_db=True).run_from_dataframe(
@@ -185,8 +190,14 @@ class TestRunFromDataframe:
                 )
 
         monkeypatch.setattr("src.preprocessing.model_registry.ModelRegistry", DummyRegistry)
-        monkeypatch.setattr("src.detection.supervised_detector.SupervisedDetector", DummySupervisedDetector)
-        monkeypatch.setattr("src.detection.vae_detector.UnsupervisedDetector", DummyUnsupervisedDetector)
+        monkeypatch.setattr(
+            "src.detection.supervised_detector.SupervisedDetector",
+            DummySupervisedDetector,
+        )
+        monkeypatch.setattr(
+            "src.detection.vae_detector.UnsupervisedDetector",
+            DummyUnsupervisedDetector,
+        )
         monkeypatch.setattr("src.context.CompanyContext.is_anonymous", property(lambda self: False))
         monkeypatch.setattr("src.pipeline.load_document_labels", lambda source_path: None)
 
@@ -243,8 +254,14 @@ class TestRunFromDataframe:
                 raise FileNotFoundError
 
         monkeypatch.setattr("src.preprocessing.model_registry.ModelRegistry", DummyRegistry)
-        monkeypatch.setattr("src.detection.supervised_detector.SupervisedDetector", DummySupervisedDetector)
-        monkeypatch.setattr("src.detection.vae_detector.UnsupervisedDetector", DummyUnsupervisedDetector)
+        monkeypatch.setattr(
+            "src.detection.supervised_detector.SupervisedDetector",
+            DummySupervisedDetector,
+        )
+        monkeypatch.setattr(
+            "src.detection.vae_detector.UnsupervisedDetector",
+            DummyUnsupervisedDetector,
+        )
         monkeypatch.setattr("src.context.CompanyContext.is_anonymous", property(lambda self: False))
         monkeypatch.setattr("src.pipeline.load_document_labels", lambda source_path: None)
 
@@ -256,6 +273,45 @@ class TestRunFromDataframe:
         statuses = {status["track_name"]: status for status in result.detector_statuses}
         assert statuses["ml_supervised"]["run_status"] == "executed"
         assert statuses["ml_supervised"]["reason"] == "unknown_training_gate"
+
+    def test_uses_context_model_dir_for_phase2_model_registry(self, monkeypatch, small_gl_df):
+        root = Path("tests") / ".tmp_pipeline_registry" / uuid.uuid4().hex
+        model_dir = root / "models"
+        model_dir.mkdir(parents=True, exist_ok=True)
+        registry_dirs = []
+
+        class DummyRegistry:
+            def __init__(self, registry_dir=None):
+                registry_dirs.append(registry_dir)
+
+        monkeypatch.setattr("src.preprocessing.model_registry.ModelRegistry", DummyRegistry)
+        monkeypatch.setattr("src.context.CompanyContext.is_anonymous", property(lambda self: False))
+        monkeypatch.setattr("src.pipeline.load_document_labels", lambda source_path: None)
+
+        settings = AuditSettings(enable_ml_detection=True)
+        try:
+            ctx = SimpleNamespace(
+                settings=settings,
+                schema={},
+                keywords={},
+                audit_rules={},
+                risk_keywords={},
+                chart_of_accounts=None,
+                model_dir=model_dir,
+                company_id="acme",
+                engagement_id="acme_2025",
+                is_anonymous=False,
+            )
+
+            AuditPipeline(context=ctx, skip_db=True).redetect(
+                small_gl_df,
+                detection_scope="phase2_only",
+            )
+
+            assert registry_dirs
+            assert all(path == model_dir for path in registry_dirs)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
 
     def test_detector_status_carries_phase2_provenance_fields(self, monkeypatch, small_gl_df):
         class DummyRegistry:
@@ -295,8 +351,14 @@ class TestRunFromDataframe:
                 )
 
         monkeypatch.setattr("src.preprocessing.model_registry.ModelRegistry", DummyRegistry)
-        monkeypatch.setattr("src.detection.supervised_detector.SupervisedDetector", DummySupervisedDetector)
-        monkeypatch.setattr("src.detection.vae_detector.UnsupervisedDetector", DummyUnsupervisedDetector)
+        monkeypatch.setattr(
+            "src.detection.supervised_detector.SupervisedDetector",
+            DummySupervisedDetector,
+        )
+        monkeypatch.setattr(
+            "src.detection.vae_detector.UnsupervisedDetector",
+            DummyUnsupervisedDetector,
+        )
         monkeypatch.setattr("src.context.CompanyContext.is_anonymous", property(lambda self: False))
         monkeypatch.setattr("src.pipeline.load_document_labels", lambda source_path: None)
 
@@ -330,7 +392,10 @@ class TestRunFromDataframe:
                     warnings=[],
                 )
 
-        monkeypatch.setattr("src.detection.timeseries_detector.TimeseriesDetector", DummyTimeseriesDetector)
+        monkeypatch.setattr(
+            "src.detection.timeseries_detector.TimeseriesDetector",
+            DummyTimeseriesDetector,
+        )
 
         result = AuditPipeline(
             settings=AuditSettings(enable_timeseries_detection=True),

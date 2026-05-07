@@ -61,6 +61,28 @@ def test_build_phase_provenance_lines_reports_family_and_subdetector_counts() ->
     ]
 
 
+def test_build_phase_provenance_lines_distinguishes_phase2_inference_modes() -> None:
+    modes = ["training_contract", "untrained_contract_only", "cold_start_bootstrap"]
+
+    lines = [
+        build_phase_provenance_lines(
+            SimpleNamespace(
+                detector_statuses=[],
+                warnings=[],
+                phase2_training_report_id=None,
+                phase2_inference_mode=mode,
+                phase2_inference_contract={},
+                phase3_insight=None,
+            )
+        )[0]
+        for mode in modes
+    ]
+
+    assert "mode=training_contract" in lines[0]
+    assert "mode=untrained_contract_only" in lines[1]
+    assert "mode=cold_start_bootstrap" in lines[2]
+
+
 def test_phase3_case_narratives_are_exposed_in_export_status() -> None:
     result = SimpleNamespace(
         detector_statuses=[],

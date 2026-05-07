@@ -9,6 +9,7 @@ import pandas as pd
 from src.detection.base import DetectionResult, RuleFlag
 from src.detection.phase1_case_builder import build_phase1_case_result
 from src.export.phase1_case_view import (
+    PHASE1_RULE_DOCUMENT_RULES,
     build_phase1_audit_risk_by_queue,
     build_phase1_audit_risk_queue,
     build_phase1_case_drilldown,
@@ -16,6 +17,8 @@ from src.export.phase1_case_view import (
     build_phase1_data_quality_gate,
     build_phase1_macro_finding_queue,
     build_phase1_review_candidate_summary,
+    build_phase1_rule_document_detail,
+    build_phase1_rule_documents,
     resolve_phase1_case_result,
     summarize_phase1_case_result,
 )
@@ -213,6 +216,95 @@ def test_build_phase1_data_quality_gate_returns_work_items() -> None:
     assert gate["available"] is True
     assert gate["items"]
     assert any(item["rule_id"] == "L1-07" for item in gate["items"]) is False
+
+
+def test_build_phase1_rule_documents_returns_master_detail_payload() -> None:
+    pipeline_result = _make_pipeline_result()
+    pipeline_result.featured_data.loc[
+        pipeline_result.featured_data["document_id"] == "DOC-2",
+        "review_rules",
+    ] = "L1-08"
+
+    rows = build_phase1_rule_documents(pipeline_result, "L1-08")
+
+    assert rows
+    row = rows[0]
+    assert row["violation_summary"]
+    assert row["violation_details"]
+    assert {item["label"] for item in row["violation_details"]} >= {
+        "전기일 월",
+        "회계기간",
+        "기간 차이",
+    }
+    assert row["evidence_summary"] == row["violation_summary"]
+    assert "expected_value" in row
+    assert "actual_value" in row
+    assert "difference_value" in row
+
+
+def test_build_phase1_rule_document_detail_returns_raw_lines() -> None:
+    pipeline_result = _make_pipeline_result()
+    pipeline_result.featured_data.loc[
+        pipeline_result.featured_data["document_id"] == "DOC-2",
+        "review_rules",
+    ] = "L1-08"
+
+    detail = build_phase1_rule_document_detail(pipeline_result, "L1-08", "DOC-2")
+
+    assert detail is not None
+    assert detail["document_id"] == "DOC-2"
+    assert detail["violation_summary"]
+    assert detail["violation_details"]
+    assert detail["raw_lines"]
+    assert detail["raw_lines"][0]["document_id"] == "DOC-2"
+
+
+def test_phase1_rule_document_builders_cover_all_current_rules() -> None:
+    current_rules = {
+        "L1-01",
+        "L1-02",
+        "L1-03",
+        "L1-04",
+        "L1-05",
+        "L1-06",
+        "L1-07",
+        "L1-08",
+        "L1-09",
+        "L2-01",
+        "L2-02",
+        "L2-03",
+        "L2-03a",
+        "L2-03b",
+        "L2-03c",
+        "L2-03d",
+        "L2-04",
+        "L2-05",
+        "L3-01",
+        "L3-02",
+        "L3-03",
+        "L3-04",
+        "L3-05",
+        "L3-06",
+        "L3-07",
+        "L3-08",
+        "L3-09",
+        "L3-10",
+        "L3-11",
+        "L3-12",
+        "L4-01",
+        "L4-02",
+        "L4-03",
+        "L4-04",
+        "L4-05",
+        "L4-06",
+        "D01",
+        "D02",
+        "IC01",
+        "IC02",
+        "IC03",
+    }
+
+    assert current_rules <= PHASE1_RULE_DOCUMENT_RULES
 
 
 def test_build_phase1_audit_risk_queue_excludes_data_quality_cases() -> None:
