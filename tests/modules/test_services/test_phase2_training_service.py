@@ -28,6 +28,7 @@ from src.services.phase2_training_service import (
     prepare_phase2_feature_inputs,
     resolve_phase2_training_dir,
     run_phase2_training,
+    run_phase2_training_analysis,
     save_phase2_training_report,
 )
 from tests.modules.test_services.test_phase2_case_contract import _phase1_result
@@ -62,6 +63,61 @@ def test_resolve_phase2_training_dir_prefers_context_model_dir():
         assert target == ctx.model_dir / "phase2_train"
     finally:
         shutil.rmtree(root, ignore_errors=True)
+
+
+def test_run_phase2_training_analysis_uses_featured_data_and_persists_state(monkeypatch):
+    class _FakeSettings:
+        def model_copy(self, update):
+            copied = _FakeSettings()
+            for key, value in update.items():
+                setattr(copied, key, value)
+            return copied
+
+    featured = pd.DataFrame({"document_id": ["d1"], "amount": [100.0]})
+    raw = pd.DataFrame({"document_id": ["raw"], "amount": [1.0]})
+    prep = SimpleNamespace(
+        data=raw,
+        featured_data=featured,
+        file_name="journal.csv",
+    )
+    ctx = SimpleNamespace(
+        company_id="acme",
+        engagement_id="acme_2025",
+        settings=object(),
+        clone_with_settings=lambda settings: SimpleNamespace(
+            company_id="acme",
+            engagement_id="acme_2025",
+            settings=settings,
+        ),
+    )
+    state = {
+        "audit_prep_result": prep,
+        "audit_company_context": ctx,
+        "audit_settings": None,
+    }
+    seen: dict[str, object] = {}
+
+    def _fake_run(df, **kwargs):
+        seen["df"] = df
+        seen["ctx"] = kwargs.get("ctx")
+        return Phase2TrainingReport(
+            report_id="train_state",
+            company_id="acme",
+            engagement_id="acme_2025",
+            status=Phase2TrainingStatus.COMPLETED,
+        )
+
+    monkeypatch.setattr(
+        "src.services.phase2_training_service.run_phase2_training",
+        _fake_run,
+    )
+
+    report = run_phase2_training_analysis(state, settings_factory=_FakeSettings)
+
+    assert report.report_id == "train_state"
+    assert seen["df"] is featured
+    assert getattr(seen["ctx"], "company_id") == "acme"
+    assert state["audit_phase2_training_report_id"] == "train_state"
 
 
 def test_build_phase2_training_paths_separates_artifact_folders():

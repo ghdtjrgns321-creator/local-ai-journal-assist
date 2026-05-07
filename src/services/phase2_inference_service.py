@@ -43,6 +43,7 @@ def run_phase2_inference(
         batch_id="",
         file_name=file_name,
         reference_df=reference_df,
+        detection_scope="phase2_only",
     )
     _attach_phase2_training_contract(result, ctx=ctx, snapshot=snapshot)
     setattr(
@@ -67,6 +68,7 @@ def run_phase2_inference_analysis(
         KEY_BATCH_ID,
         KEY_COMPANY_CONTEXT,
         KEY_FEATURED_DATA,
+        KEY_PHASE1_RESULT,
         KEY_PHASE2_RESULT,
         KEY_PIPELINE_RESULT,
         KEY_PREP_RESULT,
@@ -110,6 +112,7 @@ def run_phase2_inference_analysis(
         repo=repo,
         conn=conn,
     )
+    _inherit_phase1_case_result(result, state.get(KEY_PHASE1_RESULT))
 
     if getattr(result, "load_result", None) is None:
         warnings = getattr(result, "warnings", None) or []
@@ -125,6 +128,22 @@ def run_phase2_inference_analysis(
         else featured_df
     )
     return result
+
+
+def _inherit_phase1_case_result(result, phase1_result) -> None:
+    if phase1_result is None or getattr(result, "phase1_case_result", None) is not None:
+        return
+    for attr in (
+        "phase1_case_result",
+        "phase1_case_path",
+        "phase1_case_run_id",
+        "phase1_case_count",
+        "phase1_macro_finding_count",
+        "phase1_top_theme_ids",
+    ):
+        if hasattr(phase1_result, attr):
+            setattr(result, attr, getattr(phase1_result, attr))
+    _attach_phase2_case_overlays(result)
 
 
 def _resolve_reference_df(state, prep_result):

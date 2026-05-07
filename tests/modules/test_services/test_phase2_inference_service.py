@@ -18,6 +18,7 @@ from dashboard._state import (
     KEY_SETTINGS,
 )
 from src.services.phase2_inference_service import (
+    load_latest_phase2_training_snapshot,
     run_phase2_inference,
     run_phase2_inference_analysis,
 )
@@ -36,7 +37,14 @@ class _FakePipeline:
     def __init__(self, **kwargs):
         self.kwargs = kwargs
 
-    def redetect(self, featured_df, batch_id: str, file_name: str, reference_df=None):
+    def redetect(
+        self,
+        featured_df,
+        batch_id: str,
+        file_name: str,
+        reference_df=None,
+        detection_scope: str = "default",
+    ):
         return SimpleNamespace(
             data=featured_df.copy(),
             featured_data=featured_df.copy(),
@@ -49,12 +57,20 @@ class _FakePipeline:
 
 
 class _FakePipelineWithPhase1Case(_FakePipeline):
-    def redetect(self, featured_df, batch_id: str, file_name: str, reference_df=None):
+    def redetect(
+        self,
+        featured_df,
+        batch_id: str,
+        file_name: str,
+        reference_df=None,
+        detection_scope: str = "default",
+    ):
         result = super().redetect(
             featured_df,
             batch_id=batch_id,
             file_name=file_name,
             reference_df=reference_df,
+            detection_scope=detection_scope,
         )
         result.phase1_case_result = _phase1_result()
         result.phase1_case_count = 1
@@ -149,6 +165,50 @@ def test_run_phase2_inference_attaches_training_contract_snapshot():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def test_load_latest_phase2_training_snapshot_prefers_newest_report():
+    root = _make_local_temp_dir()
+    try:
+        older = root / "models" / "phase2_train" / "train_old" / "reports"
+        newer = root / "models" / "phase2_train" / "train_new" / "reports"
+        older.mkdir(parents=True, exist_ok=True)
+        newer.mkdir(parents=True, exist_ok=True)
+        old_path = older / "training_report.json"
+        new_path = newer / "training_report.json"
+        old_path.write_text(
+            json.dumps(
+                {
+                    "report_id": "train_old",
+                    "metadata": {"inference_contract": {"required_models": ["old"]}},
+                }
+            ),
+            encoding="utf-8",
+        )
+        new_path.write_text(
+            json.dumps(
+                {
+                    "report_id": "train_new",
+                    "metadata": {"inference_contract": {"required_models": ["new"]}},
+                }
+            ),
+            encoding="utf-8",
+        )
+        old_time = 1_700_000_000
+        new_time = old_time + 100
+        import os
+
+        os.utime(old_path, (old_time, old_time))
+        os.utime(new_path, (new_time, new_time))
+
+        snapshot = load_latest_phase2_training_snapshot(
+            SimpleNamespace(model_dir=root / "models")
+        )
+
+        assert snapshot["report_id"] == "train_new"
+        assert snapshot["inference_contract"]["required_models"] == ["new"]
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def test_run_phase2_inference_marks_untrained_contract_only_without_snapshot():
     featured_df = pd.DataFrame({"document_id": ["D1"]})
     result = run_phase2_inference(
@@ -164,12 +224,20 @@ def test_run_phase2_inference_marks_untrained_contract_only_without_snapshot():
 
 def test_run_phase2_inference_marks_cold_start_bootstrap_when_statuses_indicate_bootstrap():
     class _BootstrapPipeline(_FakePipeline):
-        def redetect(self, featured_df, batch_id: str, file_name: str, reference_df=None):
+        def redetect(
+            self,
+            featured_df,
+            batch_id: str,
+            file_name: str,
+            reference_df=None,
+            detection_scope: str = "default",
+        ):
             result = super().redetect(
                 featured_df,
                 batch_id=batch_id,
                 file_name=file_name,
                 reference_df=reference_df,
+                detection_scope=detection_scope,
             )
             result.detector_statuses = [
                 {

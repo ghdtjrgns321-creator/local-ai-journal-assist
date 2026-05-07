@@ -687,6 +687,53 @@ def run_phase2_training(
     return report
 
 
+def run_phase2_training_analysis(
+    state,
+    *,
+    training_runner=None,
+    settings_factory=None,
+) -> Phase2TrainingReport:
+    """Execute Phase 2 training from dashboard/session state."""
+    from dashboard._state import (
+        KEY_COMPANY_CONTEXT,
+        KEY_PHASE1_RESULT,
+        KEY_PHASE2_TRAINING_REPORT_ID,
+        KEY_PREP_RESULT,
+        KEY_SETTINGS,
+    )
+    from src.services.analysis_service import make_phase_settings
+
+    if training_runner is None:
+        training_runner = run_phase2_training
+
+    prep_result = state.get(KEY_PREP_RESULT)
+    if prep_result is None:
+        raise RuntimeError("Phase 2 training requires prepared data.")
+
+    featured_df = (
+        prep_result.featured_data
+        if getattr(prep_result, "featured_data", None) is not None
+        else prep_result.data
+    )
+    ctx = state.get(KEY_COMPANY_CONTEXT)
+    settings = make_phase_settings(
+        state.get(KEY_SETTINGS),
+        phase="phase2",
+        settings_factory=settings_factory,
+    )
+    if ctx is not None and hasattr(ctx, "clone_with_settings"):
+        ctx = ctx.clone_with_settings(settings)
+
+    report = training_runner(
+        featured_df,
+        ctx=ctx,
+        metadata={"source": "streamlit", "file_name": getattr(prep_result, "file_name", "")},
+        phase1_case_result=state.get(KEY_PHASE1_RESULT),
+    )
+    state[KEY_PHASE2_TRAINING_REPORT_ID] = report.report_id
+    return report
+
+
 def _build_trial_queue(
     *,
     families: list[str],
