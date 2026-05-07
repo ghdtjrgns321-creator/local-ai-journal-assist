@@ -54,12 +54,18 @@ streamlit_*.log
 .tmp-*/
 .tmp_*/
 .tmp_*.md
+.tmp_*.py
+.tmp_*.txt
+.tmp_*.log
 .pytest_tmp/
 .pytest_tmp_*/
 codex_pytest_*/
 tmp*/
 tools/tmp_*.py
 .manual-model-registry-check/
+
+# 복구 아티팩트 (세션 기반 파일 회복용 임시 보관)
+.codex_recovery/
 
 # 런타임 생성물 (케이스/리포트 등)
 artifacts/
