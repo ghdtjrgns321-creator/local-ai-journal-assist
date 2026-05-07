@@ -93,6 +93,20 @@ class TestResolveSettings:
         s = resolve_settings(company_overrides={"openai_api_key": "secret"})
         assert s.openai_api_key == AuditSettings().openai_api_key
 
+    def test_phase2_phase3_hyperparameters_are_company_overridable(self):
+        s = resolve_settings(
+            company_overrides={
+                "if_contamination": 0.02,
+                "shap_threshold": 0.6,
+                "narrative_batch_size": 10,
+                "insight_significant_tx_top_n": 30,
+            },
+        )
+        assert s.if_contamination == 0.02
+        assert s.shap_threshold == 0.6
+        assert s.narrative_batch_size == 10
+        assert s.insight_significant_tx_top_n == 30
+
     def test_runtime_overrides_applied(self):
         s = resolve_settings(runtime_overrides={"fuzzy_threshold": 95})
         assert s.fuzzy_threshold == 95
