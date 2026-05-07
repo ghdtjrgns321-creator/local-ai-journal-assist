@@ -29,8 +29,17 @@ def render_apply_button() -> None:
     total = sum(weights.values())
     valid = abs(total - 1.0) <= 0.01
 
-    if st.button("새 설정 적용", disabled=not valid, use_container_width=True):
+    apply_slot = st.empty()
+    with apply_slot.container():
+        apply_clicked = st.button(
+            "새 설정 적용",
+            disabled=not valid,
+            use_container_width=True,
+        )
+    if apply_clicked:
+        apply_slot.empty()
         with st.spinner("탐지 재실행 중..."):
             ok = rerun_detection()
         if ok:
             st.rerun()
+

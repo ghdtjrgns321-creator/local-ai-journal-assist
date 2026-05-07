@@ -46,24 +46,15 @@ html, body, [class*="css"] {
     font-family: var(--font) !important;
 }
 
-/* Why: Streamlit rerun 중 이전 element를 stale 상태로 낮은 opacity 처리한다.
-   탭/라디오/option_menu 클릭마다 화면 전체가 흐릿한 이전 화면처럼 보여 UX가 깨지므로
-   앱의 레이아웃/콘텐츠 컨테이너에는 stale opacity가 전파되지 않게 고정한다. */
-.stMainBlockContainer,
-.stMainBlockContainer [data-testid="stElementContainer"],
-.stMainBlockContainer [data-testid="stVerticalBlock"],
-.stMainBlockContainer [data-testid="stHorizontalBlock"],
-.stMainBlockContainer [data-testid="stColumn"],
-.stMainBlockContainer [data-testid="stMarkdown"],
-.stMainBlockContainer [data-testid="stMarkdownContainer"],
-.stMainBlockContainer [data-testid="stPlotlyChart"],
-.stMainBlockContainer [data-testid="stDataFrame"],
-.stMainBlockContainer [data-testid="stTable"],
-.stMainBlockContainer .stDataFrame,
-.stMainBlockContainer .stPlotlyChart,
-.stMainBlockContainer .element-container {
-    opacity: 1 !important;
-    filter: none !important;
+/* Streamlit keeps previous elements in a dimmed "stale" state during long reruns.
+   Hide those wrappers so users see only the current progress/spinner, not ghost cards. */
+.stMainBlockContainer [style*="opacity: 0.33"],
+.stMainBlockContainer [style*="opacity:0.33"],
+.stMainBlockContainer [style*="opacity: 0.35"],
+.stMainBlockContainer [style*="opacity:0.35"],
+.stMainBlockContainer [style*="opacity: 0.2"],
+.stMainBlockContainer [style*="opacity:0.2"] {
+    display: none !important;
 }
 
 /* ── Layout ────────────────────────────────────────── */
@@ -170,85 +161,71 @@ section[data-testid="stSidebar"] .streamlit-expanderHeader {
 .stTabs [data-baseweb="tab-highlight"],
 .stTabs [data-baseweb="tab-border"] { display: none !important; }
 
-/* Main result navigation.
-   Why: st.tabs renders hidden tabs and option_menu adds component overhead.
-   A native radio keeps only the selected page rendered, while this scope makes it read as top-level nav. */
-.st-key-main_result_nav {
-    margin: 0.6rem 0 2rem;
+/* 대분류 nav 전용 */
+.st-key-top_level_nav {
+    margin: 0.25rem 0 0.9rem;
 }
-.st-key-main_result_nav [role="radiogroup"] {
-    display: flex;
-    gap: 12px;
-    justify-content: center;
-    width: 100%;
+.st-key-top_level_nav .stTabs [data-baseweb="tab-list"] {
+    gap: 4px !important;
+    padding: 3px !important;
+    border: 1px solid var(--c-border) !important;
+    border-radius: var(--r-sm) !important;
+    background: var(--c-surface) !important;
 }
-.st-key-main_result_nav [role="radiogroup"] label {
-    flex: 1 1 0;
-    max-width: 620px;
-    min-height: 48px;
-    justify-content: center;
-    border-radius: var(--r-md);
-    border: 1px solid var(--c-border);
-    background: var(--c-surface);
-    color: var(--c-text-secondary);
-    padding: 0.75rem 2rem;
-    box-shadow: none;
+.st-key-top_level_nav .stTabs [data-baseweb="tab"] {
+    min-height: 38px !important;
+    padding: 0.45rem 1.1rem !important;
+    font-size: 0.9rem !important;
+    font-weight: 500 !important;
+    border-radius: var(--r-sm) !important;
 }
-.st-key-main_result_nav [role="radiogroup"] label:hover {
-    background: var(--c-surface-hover);
-    color: var(--c-text);
-}
-.st-key-main_result_nav [role="radiogroup"] label:has(input:checked) {
-    background: #111827 !important;
-    border-color: #111827 !important;
-    color: #FFFFFF !important;
-    box-shadow: var(--s-btn);
-}
-.st-key-main_result_nav [role="radiogroup"] label:has(input:checked) * {
-    color: #FFFFFF !important;
-}
-.st-key-main_result_nav [role="radiogroup"] input {
-    display: none;
-}
-.st-key-main_result_nav [role="radiogroup"] p {
-    font-size: 0.95rem;
-    font-weight: 600;
-}
-
-/* Phase1 section navigation: smaller than top-level nav, but still single-render radio. */
-.st-key-phase1_section_nav_wrap [role="radiogroup"] {
-    display: flex;
-    gap: 0;
-    width: 100%;
-    background: var(--c-surface);
-    border-radius: var(--r-md);
-    border: 1px solid var(--c-border);
-    padding: 3px;
-}
-.st-key-phase1_section_nav_wrap [role="radiogroup"] label {
-    min-height: 40px;
-    justify-content: center;
-    border-radius: var(--r-sm);
-    padding: 0.45rem 1rem;
-    color: var(--c-text-secondary);
-    background: transparent;
-    border: none;
-}
-.st-key-phase1_section_nav_wrap [role="radiogroup"] label:hover {
-    color: var(--c-text);
-    background: var(--c-surface-hover);
-}
-.st-key-phase1_section_nav_wrap [role="radiogroup"] label:has(input:checked) {
+.st-key-top_level_nav .stTabs [aria-selected="true"] {
     background: var(--c-bg) !important;
     color: var(--c-text) !important;
-    box-shadow: var(--s-sm);
+    font-weight: 600 !important;
+    box-shadow: var(--s-sm) !important;
 }
-.st-key-phase1_section_nav_wrap [role="radiogroup"] input {
-    display: none;
+
+/* nested st.tabs 는 기본 톤으로 reset */
+.st-key-top_level_nav .stTabs .stTabs [data-baseweb="tab-list"] {
+    gap: 0 !important;
+    padding: 3px !important;
 }
-.st-key-phase1_section_nav_wrap [role="radiogroup"] p {
-    font-size: 0.85rem;
-    font-weight: 500;
+.st-key-top_level_nav .stTabs .stTabs [data-baseweb="tab"] {
+    min-height: auto !important;
+    padding: 0.45rem 1rem !important;
+    font-size: 0.85rem !important;
+    font-weight: 500 !important;
+    border-radius: var(--r-sm) !important;
+}
+
+/* Phase1 section segmented navigation: selected section only is rendered in Python. */
+.st-key-phase1_section_nav {
+    margin: 0.6rem 0 2rem;
+}
+.st-key-phase1_section_nav [data-testid="stSegmentedControl"] > div {
+    display: flex;
+    gap: 12px;
+    width: 100%;
+}
+.st-key-phase1_section_nav [data-testid="stSegmentedControl"] label {
+    flex: 1 1 0;
+    justify-content: center;
+    min-height: 48px;
+    border-radius: var(--r-md) !important;
+    border: 1px solid var(--c-border) !important;
+    background: var(--c-surface) !important;
+    color: var(--c-text-secondary) !important;
+    box-shadow: none !important;
+}
+.st-key-phase1_section_nav [data-testid="stSegmentedControl"] label:has(input:checked) {
+    background: var(--c-primary) !important;
+    border-color: var(--c-primary) !important;
+    color: #FFFFFF !important;
+    box-shadow: var(--s-btn) !important;
+}
+.st-key-phase1_section_nav [data-testid="stSegmentedControl"] label:has(input:checked) * {
+    color: #FFFFFF !important;
 }
 
 /* ── Buttons ───────────────────────────────────────── */
@@ -488,6 +465,52 @@ hr { border-color: var(--c-border) !important; opacity: 0.6; }
     color: var(--c-text) !important;
     font-size: 0.85rem !important;
 }
+
+/* ── Rule audit note (분석 룰 요약 안내 카드) ─────── */
+.rule-audit-note {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    padding: 8px 12px;
+    margin: 4px 0 14px 0;
+    background: var(--c-surface);
+    border: 1px solid var(--c-border);
+    border-left: 3px solid var(--c-primary);
+    border-radius: var(--r-md);
+}
+.rule-audit-note__icon {
+    flex: 0 0 auto;
+    width: 14px;
+    height: 14px;
+    margin-top: 2px;
+    color: var(--c-primary);
+    opacity: 0.7;
+}
+.rule-audit-note__body {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.rule-audit-note__line {
+    margin: 0;
+    font-size: 0.74rem;
+    line-height: 1.45;
+    color: var(--c-text-secondary);
+}
+.rule-audit-note__tag {
+    display: inline-block;
+    padding: 0px 6px;
+    margin: 0 1px;
+    font-size: 0.66rem;
+    font-weight: 600;
+    line-height: 1.5;
+    color: var(--c-text);
+    background: var(--c-bg);
+    border: 1px solid var(--c-border);
+    border-radius: 4px;
+    vertical-align: 1px;
+}
 </style>
 """
 
@@ -495,4 +518,5 @@ hr { border-color: var(--c-border) !important; opacity: 0.6; }
 def inject_css() -> None:
     """앱 시작 시 1회 호출하여 커스텀 CSS 주입."""
     import streamlit as st
+
     st.markdown(CUSTOM_CSS, unsafe_allow_html=True)

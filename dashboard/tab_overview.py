@@ -18,6 +18,10 @@ from dashboard._state import (
     KEY_COMPANY_CONTEXT,
     KEY_FILTERS,
     KEY_PENDING_RESULT_TAB,
+    KEY_TOP_LEVEL_NAV,
+    PAGE_COMPANY_SETTINGS,
+    PAGE_PHASE1,
+    PAGE_PHASE2,
 )
 from dashboard.components.charts import (
     benford_overlay,
@@ -117,13 +121,16 @@ def _render_before(result: PipelineResult) -> None:
         _render_kpi_card("총 거래 금액", _fmt_amount(total_debit))
 
     # Row 2: 차트 2개 카드 — 꺾은선(시계열)은 가로로 넓어야 자연스러워 1 : 1.5
-    #        카드 높이 320으로 고정해 두 차트 시각적 정렬.
+    # Why: 도넛은 outside 라벨이 차트 밖으로 나오고 꺾은선은 상단 값 라벨 + 하단 footer
+    #      caption까지 합산하면 305px로는 부족해 컨테이너에 스크롤바가 생긴다.
+    #      카드 380, plotly 도넛 280 / 라인 280으로 헤더+차트+caption 합산이 카드 높이 안에
+    #      맞도록 조정.
     c_types, c_monthly = st.columns([1, 1.5], gap="small")
     with c_types:
-        with st.container(border=True, height=305):
+        with st.container(border=True, height=380):
             _render_document_type_donut(df)
     with c_monthly:
-        with st.container(border=True, height=305):
+        with st.container(border=True, height=380):
             _render_monthly_trend_line(df)
 
     st.divider()
@@ -263,7 +270,7 @@ def _render_document_type_donut(df: pd.DataFrame) -> None:
         )
     )
     fig.update_layout(
-        height=220,
+        height=280,
         margin=dict(l=0, r=0, t=4, b=4),
         showlegend=False,
         paper_bgcolor="rgba(0,0,0,0)",
@@ -335,7 +342,7 @@ def _render_monthly_trend_line(df: pd.DataFrame) -> None:
     )
 
     fig.update_layout(
-        height=240,
+        height=280,
         margin=dict(l=8, r=8, t=6, b=24),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
@@ -768,37 +775,62 @@ def _render_pipeline_briefing() -> None:
 
 
 def _render_pipeline_cta() -> None:
-    """대형 실행 버튼 — 탐지 미실행 상태에서만 노출."""
-    _, c_btn, _ = st.columns([1, 2, 1])
-    with c_btn:
-        clicked = st.button(
-            "Phase 1 룰 기반 감사부터 실행",
+    """3분할 실행 버튼 — 회사설정(secondary) / Phase1·Phase2 분석 시작(primary)."""
+    col_settings, col_p1, col_p2 = st.columns(3)
+    with col_settings:
+        settings_clicked = st.button(
+            "분석 전 회사설정",
+            use_container_width=True,
+            key="overview_goto_settings",
+        )
+    with col_p1:
+        p1_clicked = st.button(
+            "Phase 1 분석 시작",
             type="primary",
             use_container_width=True,
             key="overview_run_phase1",
         )
+    with col_p2:
+        p2_clicked = st.button(
+            "Phase 2 분석 시작",
+            type="primary",
+            use_container_width=True,
+            key="overview_run_phase2",
+        )
+
+    if settings_clicked:
+        st.session_state[KEY_ACTIVE_RESULT_TAB] = PAGE_COMPANY_SETTINGS
+        st.session_state[KEY_TOP_LEVEL_NAV] = PAGE_COMPANY_SETTINGS
+        st.session_state[KEY_PENDING_RESULT_TAB] = PAGE_COMPANY_SETTINGS
+        st.rerun()
 
     progress_area = st.empty()
-    if clicked:
+    if p1_clicked:
         with progress_area.container():
             _run_phase1()
+    elif p2_clicked:
+        with progress_area.container():
+            from dashboard.tab_phase2 import _start_phase2_analysis
+
+            _start_phase2_analysis()
 
 
 def _run_phase1() -> None:
     """Run Phase 1 only. Completed result is reflected on rerun."""
     from dashboard.components.analysis_runner import run_phase_analysis
 
-    progress = st.progress(0, text="Phase 1 룰 기반 감사 시작... 약 5분 정도 소요됩니다.")
-    try:
-        progress.progress(20, text="Phase 1 룰 기반 탐지 실행 중... 약 5분 정도 소요됩니다.")
-        run_phase_analysis(phase="phase1")
-        progress.progress(100, text="완료")
-    except Exception as e:
-        st.error(f"Phase 1 실행 실패: {e}")
-        return
-    st.session_state[KEY_ACTIVE_RESULT_TAB] = "Phase 1 결과"
-    st.session_state[KEY_PENDING_RESULT_TAB] = "Phase 1 결과"
-    # 새로 생성된 탐지 결과 반영을 위해 rerun
+    st.session_state[KEY_ACTIVE_RESULT_TAB] = PAGE_PHASE1
+    st.session_state[KEY_TOP_LEVEL_NAV] = PAGE_PHASE1
+
+    with st.spinner("Phase 1 룰 기반 탐지 실행 중... 약 5분 정도 소요됩니다."):
+        try:
+            run_phase_analysis(phase="phase1")
+        except Exception as e:
+            st.error(f"Phase 1 실행 실패: {e}")
+            return
+    st.session_state[KEY_ACTIVE_RESULT_TAB] = PAGE_PHASE1
+    st.session_state[KEY_TOP_LEVEL_NAV] = PAGE_PHASE1
+    st.session_state[KEY_PENDING_RESULT_TAB] = PAGE_PHASE1
     st.rerun()
 
 

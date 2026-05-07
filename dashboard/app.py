@@ -30,6 +30,9 @@ from dashboard._state import (
     KEY_PIPELINE_RESULT,
     KEY_PREP_RESULT,
     KEY_UPLOAD_COUNT,
+    PAGE_OVERVIEW,
+    PAGE_PHASE1,
+    RESULT_PAGES,
     init_state,
 )
 from dashboard._url_state import (
@@ -57,6 +60,8 @@ _factory = ContextFactory(_repo)
 _conn_mgr = ConnectionManager()
 
 ss = st.session_state
+
+KEY_TOP_LEVEL_NAV = "audit_top_level_nav"
 
 if "_company_repo" not in ss:
     ss["_company_repo"] = _repo
@@ -117,31 +122,53 @@ def _recover_selection_from_context() -> None:
     sync_selection_to_query_params(ss, st.query_params)
 
 
+def _coerce_page(value: str | None) -> str:
+    """Return a valid top-level page label."""
+    return value if value in RESULT_PAGES else PAGE_OVERVIEW
+
+
+def _consume_pending_page() -> None:
+    """Apply one-shot page transitions requested by analysis flows."""
+    pending_page = ss.pop(KEY_PENDING_RESULT_TAB, None)
+    if pending_page is None:
+        return
+    if pending_page in RESULT_PAGES:
+        ss[KEY_ACTIVE_RESULT_TAB] = pending_page
+        ss[KEY_TOP_LEVEL_NAV] = pending_page
+
+
+def _render_company_settings_page(ctx) -> None:
+    """Render pre-analysis hyperparameter settings as a first-class main page."""
+    st.markdown("### 분석 전 회사별 설정 변경")
+    st.caption("Phase 1/2/3 분석에 적용할 회사별 감사 기준과 탐지 민감도를 관리합니다.")
+
+    from dashboard.components.analysis_runner import run_phase_analysis
+    from dashboard.components.pre_analysis_settings import render_pre_analysis_settings
+    from dashboard.components.scroll_anchor import scroll_to_anchor
+
+    run_after_save = render_pre_analysis_settings()
+    if run_after_save:
+        scroll_to_anchor("pre_analysis_phase1_actions")
+        st.info("Phase 1 분석을 시작했습니다. 완료 전까지 같은 화면에서 진행 상태를 표시합니다.")
+        progress = st.progress(0, text="Phase 1 룰 기반 감사 시작... 약 5분 정도 소요됩니다.")
+        try:
+            progress.progress(20, text="Phase 1 룰 기반 탐지 실행 중... 약 5분 정도 소요됩니다.")
+            run_phase_analysis(phase="phase1")
+            progress.progress(100, text="완료")
+        except Exception as e:
+            st.error(f"Phase 1 실행 실패: {e}")
+            return
+        ss[KEY_ACTIVE_RESULT_TAB] = PAGE_PHASE1
+        ss[KEY_PENDING_RESULT_TAB] = PAGE_PHASE1
+        st.rerun()
+
+
 _recover_selection_from_context()
+_consume_pending_page()
 
 
 with st.sidebar:
-    st.title("AI Audit Assistant")
-
     ctx = ss.get(KEY_COMPANY_CONTEXT)
-
-    if ctx and not ctx.is_anonymous:
-        try:
-            profile = _repo.get_company(ctx.company_id)
-            display_name = profile.display_name
-        except FileNotFoundError:
-            display_name = ctx.company_id
-        st.caption(f"회사: {display_name} / {ctx.engagement_id}")
-        if st.button("회사 변경"):
-            _reset_to_company_select()
-        with st.expander("회사 설정", expanded=False):
-            from dashboard.components.company_manager import render_company_manager
-
-            render_company_manager(ctx.company_id, _repo, _factory)
-    elif ctx is None:
-        st.caption("회사를 선택하세요")
-        if st.button("회사 선택"):
-            _reset_to_company_select()
 
     dev_mode = st.toggle(
         "개발 모드",
@@ -153,36 +180,11 @@ with st.sidebar:
     result = current_display_result(ss)
 
     if result is not None:
-        upload_key = ss.get(KEY_UPLOAD_COUNT, "")
-        file_label = _extract_file_name(upload_key)
-        st.caption(f"{file_label} | {len(result.data):,}행 | {result.elapsed:.1f}초")
-
         if dev_mode and ctx is not None and not ctx.is_anonymous:
             from dashboard.components.dev_analysis_reset import render_dev_analysis_reset
 
             reset_conn = _conn_mgr.get(str(ctx.db_path))
             render_dev_analysis_reset(conn=reset_conn, state=ss)
-
-        with st.expander("데이터 필터", expanded=False):
-            from dashboard.components.filters import render_filters
-
-            render_filters(result.data)
-
-        if ss.get(KEY_LOADED_FROM_DB):
-            st.caption("설정을 변경하려면 원본 파일을 다시 업로드해주세요")
-        else:
-            with st.expander("탐지 설정", expanded=False):
-                from dashboard.components.preset_selector import render_preset_selector
-                from dashboard.components.rule_panel import render_rule_panel
-                from dashboard.components.threshold_sidebar import render_threshold_sidebar
-
-                render_preset_selector()
-                render_threshold_sidebar(show_admin=dev_mode)
-                render_rule_panel(show_admin=dev_mode)
-
-            from dashboard.components._redetect import render_apply_button
-
-            render_apply_button()
 
 
 def _render_main() -> None:
@@ -218,6 +220,8 @@ def _render_main() -> None:
         ctx = _factory.create(company_id, engagement_id)
         ss[KEY_COMPANY_CONTEXT] = ctx
         sync_selection_to_query_params(ss, st.query_params)
+
+    ss[KEY_ACTIVE_RESULT_TAB] = _coerce_page(ss.get(KEY_ACTIVE_RESULT_TAB))
 
     if result is None:
         force_upload = ss.pop("_force_upload", False)
@@ -264,7 +268,8 @@ def _render_main() -> None:
             ss.pop(KEY_PHASE2_RESULT, None)
             ss.pop(KEY_PIPELINE_RESULT, None)
             ss.pop(KEY_UPLOAD_COUNT, None)
-            ss[KEY_ACTIVE_RESULT_TAB] = "개요"
+            ss[KEY_ACTIVE_RESULT_TAB] = PAGE_OVERVIEW
+            ss[KEY_TOP_LEVEL_NAV] = PAGE_OVERVIEW
             ss[KEY_PENDING_RESULT_TAB] = None
             ss[KEY_LOADED_FROM_DB] = False
             ss[KEY_INGEST_STAGE] = "UPLOAD"
@@ -273,37 +278,49 @@ def _render_main() -> None:
     st.divider()
 
     from dashboard.tab_overview import render_pre_analysis as render_overview  # noqa: E402
+    from dashboard.tab_phase1 import render as render_phase1  # noqa: E402
+    from dashboard.tab_phase2 import render as render_phase2  # noqa: E402
 
-    tab_labels = ["개요"]
-    if phase1_result is not None:
-        tab_labels.append("Phase 1 결과")
+    phase2_result = ss.get(KEY_PHASE2_RESULT)
 
-    pending_tab = ss.pop(KEY_PENDING_RESULT_TAB, None)
-    if pending_tab in tab_labels:
-        ss[KEY_ACTIVE_RESULT_TAB] = pending_tab
-    if ss.get(KEY_ACTIVE_RESULT_TAB, "개요") not in tab_labels:
-        ss[KEY_ACTIVE_RESULT_TAB] = "개요"
-
-    nav_key = "audit_main_nav_radio"
-    ss[nav_key] = ss[KEY_ACTIVE_RESULT_TAB]
-    with st.container(key="main_result_nav"):
-        selected_tab = st.radio(
-            "결과 화면",
-            tab_labels,
-            horizontal=True,
-            key=nav_key,
-            label_visibility="collapsed",
-        )
-    ss[KEY_ACTIVE_RESULT_TAB] = selected_tab
-
-    if selected_tab == "개요":
+    default_top_tab = _coerce_page(ss.get(KEY_ACTIVE_RESULT_TAB, PAGE_OVERVIEW))
+    if ss.get(KEY_TOP_LEVEL_NAV) not in RESULT_PAGES:
+        ss[KEY_TOP_LEVEL_NAV] = default_top_tab
+    # Why: on_change="rerun" 을 켜면 탭 클릭마다 추가 rerun 이 실행되며,
+    #      _main_slot 안의 직전 DOM 이 새 DOM 과 누적되어 같은 페이지가
+    #      위/아래로 두 번 그려지는 잔상이 발생한다. st.tabs 는 모든 탭 콘텐츠를
+    #      한 번에 렌더한 뒤 CSS 로 활성 탭만 보여주므로 별도 rerun 이 필요 없다.
+    overview_tab, settings_tab, phase1_tab, phase2_tab = st.tabs(
+        list(RESULT_PAGES),
+        default=default_top_tab,
+        key=KEY_TOP_LEVEL_NAV,
+    )
+    with overview_tab:
         render_overview(prep_result or display_result)
-    elif selected_tab == "Phase 1 결과" and phase1_result is not None:
-        from dashboard.tab_phase1 import render as render_phase1  # noqa: E402
-
+    with settings_tab:
+        _render_company_settings_page(ctx)
+    with phase1_tab:
         render_phase1(prep_result or display_result, phase1_result)
+    with phase2_tab:
+        render_phase2(prep_result or display_result, phase2_result)
 
 
-_main_slot = st.empty()
-with _main_slot.container():
+# Why: st.empty().container() 슬롯 래핑이 streamlit 1.55 에서 직전 rerun 의
+#      컨테이너를 폐기하지 못하고 새 컨테이너를 그 아래에 누적시키는 문제 발생.
+#      페이지 종류(company/selector/main/upload)별로 고유 key 컨테이너를 사용해
+#      페이지 전환 시 streamlit 이 다른 DOM 식별자로 인식해 직전 콘텐츠를
+#      깨끗이 폐기하도록 한다. 같은 페이지 내 rerun 은 같은 key 라 streamlit
+#      기본 diff 로 정상 갱신.
+def _route_page_key() -> str:
+    if not ss.get(KEY_COMPANY_ID):
+        return "company"
+    if not ss.get(KEY_ENGAGEMENT_ID):
+        return "selector"
+    if current_display_result(ss) is None:
+        return "upload"
+    return "main"
+
+
+with st.container(key=f"app_root_{_route_page_key()}"):
     _render_main()
+

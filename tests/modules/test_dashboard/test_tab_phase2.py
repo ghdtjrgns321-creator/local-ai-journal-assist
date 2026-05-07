@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from dashboard import tab_phase2
 from src.metrics.models import PerformanceReport, RuleMetric
 
@@ -51,3 +53,54 @@ def test_build_performance_rule_frame_returns_dataframe():
     assert list(df["rule_code"]) == ["L1-01"]
     assert list(df["rule_group"]) == ["L1"]
     assert list(df["precision"]) == ["50.0%"]
+
+
+def test_build_phase2_provenance_cards_reports_mode_and_contract():
+    result = type(
+        "Result",
+        (),
+        {
+            "phase2_training_report_id": "train_001",
+            "phase2_inference_mode": "training_contract",
+            "phase2_inference_contract": {
+                "required_models": ["supervised", "unsupervised"],
+                "promoted_versions": {"supervised": 3},
+            },
+        },
+    )()
+
+    cards = tab_phase2._build_phase2_provenance_cards(result)
+
+    assert cards == [
+        ("모델 기준", "train_001"),
+        ("실행 방식", "저장된 기준 사용"),
+        ("사용 후보", "2"),
+        ("확정 모델", "1"),
+    ]
+
+
+def test_build_promoted_model_frame_summarizes_contract():
+    snapshot = {
+        "report_id": "train_001",
+        "inference_contract": {
+            "required_models": ["supervised", "timeseries"],
+            "promoted_versions": {"supervised": 4},
+            "family_sub_detectors": {
+                "timeseries": ["transaction_burst", "unusual_frequency"],
+            },
+        },
+        "promotion_policy": {"selection_mode": "best_per_family"},
+    }
+
+    df = tab_phase2._build_promoted_model_frame(snapshot)
+
+    assert list(df["분석 기준"]) == ["supervised", "timeseries"]
+    assert list(df["버전"]) == ["4", "-"]
+    assert list(df["세부 점검"]) == ["-", "transaction_burst, unusual_frequency"]
+
+
+def test_phase1_no_longer_imports_phase2_inference_action_directly():
+    source = Path("dashboard/tab_phase1.py").read_text(encoding="utf-8")
+
+    assert "from dashboard.tab_phase2 import _start_phase2_analysis" not in source
+    assert "Phase 2 탭으로 이동" in source

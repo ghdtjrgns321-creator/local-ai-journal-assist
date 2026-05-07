@@ -209,48 +209,60 @@ def _render_engagement_list(
 
 
 def _render_create_form(company_id: str, repo: CompanyRepository) -> None:
-    """Render the create-engagement form."""
-    with st.expander("새 감사 연도 생성"):
-        with st.form("create_engagement"):
-            current_year = date.today().year
-            fiscal_year = st.number_input(
-                "회계연도",
-                min_value=2000,
-                max_value=2099,
-                value=current_year,
+    """Render the create-engagement form as an inline section.
+
+    Why: 기존 st.expander("새 감사 연도 생성") 가 streamlit 1.55 에서 페이지
+         전환(selector→main) 후에도 DOM 잔상으로 다른 페이지(overview, phase1)
+         하단에 그대로 보이는 버그가 있어, expander widget 자체를 제거하고
+         inline 헤더 + form 으로 교체. expander widget type 이 사라지면
+         streamlit 의 잔상 매칭 대상도 사라진다.
+    """
+    st.markdown(
+        "<div style='margin-top:1rem; padding-top:0.6rem; "
+        "border-top:1px solid #E2E5E9; color:#374151; "
+        "font-size:0.95rem; font-weight:600;'>새 감사 연도 생성</div>",
+        unsafe_allow_html=True,
+    )
+    with st.form("create_engagement"):
+        current_year = date.today().year
+        fiscal_year = st.number_input(
+            "회계연도",
+            min_value=2000,
+            max_value=2099,
+            value=current_year,
+        )
+
+        col1, col2 = st.columns(2)
+        with col1:
+            p_start = st.date_input(
+                "감사 대상기간 시작일",
+                value=date(current_year, 1, 1),
+            )
+        with col2:
+            p_end = st.date_input(
+                "감사 대상기간 종료일",
+                value=date(current_year, 12, 31),
             )
 
-            col1, col2 = st.columns(2)
-            with col1:
-                p_start = st.date_input(
-                    "감사 대상기간 시작일",
-                    value=date(current_year, 1, 1),
-                )
-            with col2:
-                p_end = st.date_input(
-                    "감사 대상기간 종료일",
-                    value=date(current_year, 12, 31),
-                )
+        engagement_id = f"fy{fiscal_year}"
 
-            engagement_id = f"fy{fiscal_year}"
-
-            submitted = st.form_submit_button("생성", type="primary")
-            if submitted:
-                try:
-                    profile = EngagementProfile(
-                        engagement_id=engagement_id,
-                        company_id=company_id,
-                        fiscal_year=fiscal_year,
-                        period_start=p_start,
-                        period_end=p_end,
-                    )
-                    repo.create_engagement(company_id, profile)
-                    st.session_state[KEY_ENGAGEMENT_ID] = profile.engagement_id
-                    st.rerun()
-                except FileExistsError:
-                    st.error(f"'{engagement_id}' ID의 연도가 이미 존재합니다.")
-                except ValidationError as exc:
-                    first = exc.errors()[0]
-                    st.error(f"입력값 오류 - {first['loc'][0]}: {first['msg']}")
-                except Exception as exc:
-                    st.error(f"생성 실패: {exc}")
+        submitted = st.form_submit_button("생성", type="primary")
+        if submitted:
+            try:
+                profile = EngagementProfile(
+                    engagement_id=engagement_id,
+                    company_id=company_id,
+                    fiscal_year=fiscal_year,
+                    period_start=p_start,
+                    period_end=p_end,
+                )
+                repo.create_engagement(company_id, profile)
+                st.session_state[KEY_ENGAGEMENT_ID] = profile.engagement_id
+                st.rerun()
+            except FileExistsError:
+                st.error(f"'{engagement_id}' ID의 연도가 이미 존재합니다.")
+            except ValidationError as exc:
+                first = exc.errors()[0]
+                st.error(f"입력값 오류 - {first['loc'][0]}: {first['msg']}")
+            except Exception as exc:
+                st.error(f"생성 실패: {exc}")
