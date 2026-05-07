@@ -1,5 +1,29 @@
 # Phase Provenance
 
+## 2026-05-07 Phase2 Streamlit Alignment
+
+Phase2의 운영 정의를 다음처럼 고정한다.
+
+1. `phase2-train`
+- Streamlit에서는 별도 `Phase 2 학습 실행` action으로 노출한다.
+- 학습 결과는 회사/engagement별 `model_dir/phase2_train/{report_id}/reports/training_report.json`에 저장한다.
+- report metadata에는 `inference_contract`와 `promotion_policy`가 포함되어야 한다.
+
+2. `phase2-infer`
+- Streamlit에서는 `저장된 모델로 Phase 2 추론` action으로 노출한다.
+- 최신 training report가 있으면 `training_contract` 모드로 provenance를 붙인다.
+- 최신 training report가 없으면 `untrained_contract_only`로 표시한다.
+- bootstrap 상태가 detector status에 남아 있으면 `cold_start_bootstrap`으로 표시한다.
+
+3. Streamlit 표시 원칙
+- Phase2 탭은 학습과 추론을 같은 버튼으로 숨기지 않는다.
+- Phase2 결과에는 `phase2_training_report_id`, `phase2_inference_mode`, `phase2_inference_contract` 요약을 먼저 표시한다.
+- DB에서 불러온 읽기 전용 결과는 provenance 표시를 우선하고, 재학습/재추론은 원본 파일 재업로드 후 실행한다.
+
+4. Registry 경로
+- Phase2 detector model load는 회사/engagement별 `ctx.model_dir`를 우선 사용한다.
+- anonymous/legacy context에서는 기존 global model registry를 fallback으로 사용한다.
+
 ## 목적
 
 이 프로젝트는 단순히 이상거래를 탐지하는 데서 끝나지 않는다.  

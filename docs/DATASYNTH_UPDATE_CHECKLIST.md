@@ -28,7 +28,7 @@ When a candidate becomes the production baseline, update or verify:
 Current split derivatives:
 
 - `data/journal/primary/datasynth_contract/`: contract truth and sidecar-context validation split.
-- `data/journal/primary/datasynth_manipulation/`: actual manipulation/injected issue truth split.
+- `data/journal/primary/datasynth_manipulation/`: actual manipulation/injected issue truth split. Frozen manipulation-only split: `v132_manipulation_circular_rp_strict`.
 - Keep `data/journal/primary/datasynth/` as the compatibility production baseline until loaders explicitly support the split datasets.
 
 Required production docs:
@@ -36,6 +36,7 @@ Required production docs:
 - `data/journal/primary/datasynth/FREEZE_VXX.md`
 - `data/journal/primary/datasynth/PREVIEW.md`
 - `data/journal/OVERVIEW.md`
+- `data/journal/primary/datasynth_manipulation/FREEZE_MANIPULATION_V132.md` when referring to the frozen manipulation-only split.
 
 Required project docs:
 
@@ -287,6 +288,13 @@ v126 has been promoted to production. Keep this section as the latest candidate 
 - Last L2-03 truth: `rule_truth_L2_03=111`; v126 rebuilds from the active `b05_duplicate_entry()` A-axis evaluator and clarifies reason codes as `exact_duplicate=64`, `near_duplicate=28`, `ic_split_duplicate=12`, `o2c_offset_duplicate=4`, `split_duplicate=3`.
 - Last L2-04 truth: detector docs `1,098`, `rule_truth_L2_04` docs `1,098`; queue split `review=529`, `low_review=418`, `immediate=78`, `population=73`.
 - Last L2-05 truth split: v126 restores A-axis `rule_truth_L2_05` to the raw current detector universe: `80` documents. The `52` strict documents remain in `reversal_strict_truth`; `28` weak candidates remain in `reversal_weak_review_population` and are still A-axis raw truth.
+- Last manipulation split realism patch: `v127_manipulation_realism` updates `data/journal/primary/datasynth_manipulation/` only. It removes journal-text leakage tokens, normalizes employee persona/job-level/approval governance inside the manipulation split, refreshes SoD/timing/account/attachment signals for manipulated-entry scenarios, updates revenue manipulation subtype fields, and rewrites manipulation CSV/JSON labels plus metadata. Verification artifact: `docs/datasynth_manipulation_v127_verification.json`.
+- Last manipulation split RP/weak-signal patch: `v128_manipulation_rp_and_weak_signals` updates `data/journal/primary/datasynth_manipulation/` only. It marks shared RP vendor/customer master records as intercompany, links `34` circular related-party manipulation documents to IC sidecars, converts circular subtype to `shared_rp_three_company_cycle`, adds weak SoD/self-approval signals to `fictitious_entry`, and raises embezzlement over-limit coverage to `6/76` documents. Verification artifact: `docs/datasynth_manipulation_v128_verification.json`.
+- Last manipulation split cleanup patch: `v129_manipulation_cleanup` updates `data/journal/primary/datasynth_manipulation/` only. It fixes circular split rounding imbalance, removes intercompany sidecar leakage strings, aligns circular journal/sidecar document type to `IC`, separates the single remainder related-party document as `shared_rp_counterparty_link`, disperses circular posting timestamps, and clips oversized embezzlement concealment amounts below `5B`. Verification artifact: `docs/datasynth_manipulation_v129_verification.json`.
+- Last manipulation split encoding/cycle patch: `v130_manipulation_encoding_and_cycle_fix` updates `data/journal/primary/datasynth_manipulation/` only. It replaces mojibake Korean text with UTF-8-safe Korean strings, rebuilds circular IC sidecars without model-input leakage markers, and enforces each complete `IC-CYCLE-*` group to contain exactly `C001->C002`, `C002->C003`, and `C003->C001`. Verification artifact: `docs/datasynth_manipulation_v130_verification.json`.
+- Last manipulation split process/report patch: `v131_manipulation_process_mix_and_report_keys` updates `data/journal/primary/datasynth_manipulation/` only. It restores circular related-party manipulation from R2R-only to an O2C/P2P mixed flow (`O2C=23`, `P2P=11` documents), keeps all `11` complete IC cycles on the exact `C001->C002`, `C002->C003`, `C003->C001` edge contract, and renames report-only leakage counters to `mojibake_marker_*` / `label_marker_*` keys. Verification artifact: `docs/datasynth_manipulation_v131_verification.json`.
+- Last manipulation split strict circular-RP patch: `v132_manipulation_circular_rp_strict` updates `data/journal/primary/datasynth_manipulation/` only. It repairs circular related-party journals so all three companies participate, all three related-party codes are used, every company has both O2C and P2P circular exposure across the scenario, each complete `IC-CYCLE-*` has sales total equal to purchase total, and circular intercompany sidecars have `0` journal/sidecar `document_type` mismatches. Verification artifact: `docs/datasynth_manipulation_v132_verification.json`.
+- Frozen manipulation split: `data/journal/primary/datasynth_manipulation/` is frozen at `v132_manipulation_circular_rp_strict`. Future manipulation patches must start from this freeze or explicitly document why they do not.
 - Historical v116 active truth metadata cleanup: v116 first removed legacy `source_candidate` values from active `rule_truth_*`; v126 is the current active metadata baseline.
 - Historical v116 active candidate artifact cleanup: v116 root kept only `FREEZE_V116_CANDIDATE.md` and `V116_TRUTH_METADATA_CLEANUP.json` among versioned freeze/patch manifests at that time; v126 is the current artifact baseline.
 - Last L2 independent sidecars: v117 adds detector-independent behavioral sidecars without changing journal rows or `rule_truth` membership.
