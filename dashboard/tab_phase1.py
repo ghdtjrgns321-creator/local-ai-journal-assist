@@ -16,7 +16,13 @@ from dashboard._state import (
     PAGE_PHASE2,
 )
 from src.detection.constants import RULE_CODES
-from src.detection.rule_scoring import RULE_SCORING_REGISTRY, TOPIC_REGISTRY
+from src.detection.rule_detail_metadata import (
+    PresenterSurface,
+    canonicalize_rule_id as _canonicalize_metadata_rule_id,
+    get_rule_detail_metadata,
+    include_in_l1_l4_transaction_count,
+)
+from src.detection.rule_scoring import TOPIC_REGISTRY
 from src.export.phase1_case_view import (
     _case_row,
     _case_signal_counts,
@@ -1970,9 +1976,50 @@ _TOPIC_RULE_WHITELIST: dict[str, set[str]] = {
 }
 
 
+def _metadata_rule_label(rule_id: str) -> str:
+    """대시보드 토픽 탭에서 보여줄 룰 라벨.
+
+    Why: v1 lock에 따라 metadata display_copy 우선, legacy `_RULE_NAMES_KR` fallback,
+         RULE_CODES fallback 순으로 해석한다. metadata가 없으면 raw rule_id 표시.
+    """
+    legacy = _RULE_NAMES_KR.get(rule_id)
+    if legacy:
+        return legacy
+    try:
+        meta = get_rule_detail_metadata(rule_id)
+    except KeyError:
+        return RULE_CODES.get(rule_id, rule_id)
+    return meta.display_copy.display_title or rule_id
+
+
 def _rules_for_topic(topic_id: str) -> set[str]:
-    """v1 lock 화이트리스트 기준 Topic 소속 룰 집합."""
-    return set(_TOPIC_RULE_WHITELIST.get(topic_id, set()))
+    """Topic 탭에서 활성화할 룰 집합 (metadata canonical 기준).
+
+    Why: legacy `_TOPIC_RULE_WHITELIST` 는 alias(Benford), macro(D01/D02), 그룹 매크로
+         (GR01/03), 사이드카(IC01~03) 등 canonical L1-L4 32개에 포함되지 않는 ID 까지
+         포함하고 있었다. metadata `include_in_l1_l4_transaction_count` 와 `allow_topic_seed`
+         로 필터링해 사용자에게 보이는 활성 룰을 v1 lock 과 1:1 일치시킨다.
+         legacy 화이트리스트는 후보 풀로만 사용한다 (전체 요약 탭 §2 와 무관).
+    """
+    legacy = set(_TOPIC_RULE_WHITELIST.get(topic_id, set()))
+    cleaned: set[str] = set()
+    for rule_id in legacy:
+        canonical = _canonicalize_metadata_rule_id(rule_id)
+        try:
+            meta = get_rule_detail_metadata(canonical)
+        except KeyError:
+            continue
+        if include_in_l1_l4_transaction_count(canonical):
+            cleaned.add(canonical)
+            continue
+        # account_process_macro(D01/D02), graph_sidecar(GR01/03) 는 토픽 활성 룰에서 제외.
+        # intercompany_sidecar(IC01-03) 만 final_topic 일치 시 sidecar topic seed 로 인정.
+        if (
+            meta.presenter_surface == PresenterSurface.INTERCOMPANY_SIDECAR
+            and meta.final_topic == topic_id
+        ):
+            cleaned.add(canonical)
+    return cleaned
 
 
 def _topic_rule_groups_builder(pr, topic_id: str) -> list[dict[str, Any]]:
@@ -1993,10 +2040,17 @@ def _topic_rule_groups_builder(pr, topic_id: str) -> list[dict[str, Any]]:
             continue
         if _case_topic_score(case, topic_id) <= 0:
             continue
-        case_rule_ids = {
-            str(getattr(hit, "rule_id", "") or "")
-            for hit in case.raw_rule_hits or []
-        } & candidate_rules
+        # Why: raw rule_id 가 alias(Benford) 또는 internal reason(L2-03a~d) 인 경우
+        #      canonicalize 후 candidate_rules 와 비교해야 v1 lock 의 canonical 32 기준
+        #      활성 룰 집합과 일치한다.
+        case_rule_ids: set[str] = set()
+        for hit in case.raw_rule_hits or []:
+            raw = str(getattr(hit, "rule_id", "") or "")
+            if not raw:
+                continue
+            canonical = _canonicalize_metadata_rule_id(raw)
+            if canonical in candidate_rules:
+                case_rule_ids.add(canonical)
         if not case_rule_ids:
             continue
         band = (case.priority_band or "low").lower()
@@ -2005,8 +2059,7 @@ def _topic_rule_groups_builder(pr, topic_id: str) -> list[dict[str, Any]]:
                 rule_id,
                 {
                     "rule_id": rule_id,
-                    "rule_label": _RULE_NAMES_KR.get(rule_id)
-                    or RULE_CODES.get(rule_id, "Unknown Rule"),
+                    "rule_label": _metadata_rule_label(rule_id),
                     "cases": set(),
                     "documents": set(),
                     "amount": 0.0,
@@ -2019,7 +2072,14 @@ def _topic_rule_groups_builder(pr, topic_id: str) -> list[dict[str, Any]]:
             if band in {"high", "medium", "low"}:
                 entry[band] += 1
             for doc in case.documents:
-                if rule_id in (doc.matched_rules or []):
+                # Why: doc.matched_rules 도 raw alias(Benford)/internal reason(L2-03a)
+                #      을 포함할 수 있어 canonical 로 매핑한 뒤 멤버십 비교.
+                matched_canonical = {
+                    _canonicalize_metadata_rule_id(str(matched))
+                    for matched in (doc.matched_rules or [])
+                    if matched
+                }
+                if rule_id in matched_canonical:
                     if doc.document_id not in entry["documents"]:
                         entry["documents"].add(doc.document_id)
                         entry["amount"] += float(doc.amount or 0.0)
