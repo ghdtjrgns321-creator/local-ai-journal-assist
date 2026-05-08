@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -14,7 +15,7 @@ from src.detection.phase1_case_builder import (
     load_phase1_case_result,
     save_phase1_case_result,
 )
-from src.detection.rule_scoring import normalize_rule_evidence
+from src.detection.rule_scoring import RULE_SCORING_REGISTRY, normalize_rule_evidence
 
 
 def _make_detection_result(df: pd.DataFrame) -> DetectionResult:
@@ -37,6 +38,69 @@ def _make_detection_result(df: pd.DataFrame) -> DetectionResult:
         ],
         details=details,
         metadata={"elapsed": 0.01},
+    )
+
+
+def _single_row_df() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "document_id": ["DOC-1"],
+            "posting_date": pd.to_datetime(["2026-04-30"]),
+            "created_by": ["kim"],
+            "business_process": ["R2R"],
+            "gl_account": ["410000"],
+            "debit_amount": [10_000_000.0],
+            "credit_amount": [0.0],
+            "company_code": ["kr01"],
+            "trading_partner": ["kr02"],
+            "document_type": ["SA"],
+        }
+    )
+
+
+def _single_rule_detection_result(
+    df: pd.DataFrame,
+    rule_id: str,
+    *,
+    score: float = 0.8,
+    severity: int = 3,
+    row_annotations: dict | None = None,
+) -> DetectionResult:
+    details = pd.DataFrame({rule_id: [score]}, index=df.index)
+    return DetectionResult(
+        track_name="metadata_policy",
+        flagged_indices=[0],
+        scores=details.max(axis=1),
+        rule_flags=[RuleFlag(rule_id, rule_id, severity, 1, len(df))],
+        details=details,
+        metadata={"row_annotations": row_annotations or {}},
+    )
+
+
+def _build_single_rule_case_result(
+    rule_id: str,
+    *,
+    score: float = 0.8,
+    severity: int = 3,
+    row_annotations: dict | None = None,
+):
+    df = _single_row_df()
+    return build_phase1_case_result(
+        df,
+        [
+            _single_rule_detection_result(
+                df,
+                rule_id,
+                score=score,
+                severity=severity,
+                row_annotations=row_annotations,
+            )
+        ],
+        company_id="kr01",
+        batch_id="batch42",
+        dataset_id=None,
+        phase1_case_config={"phase1_case": {"top_n_cases": 50, "top_n_per_theme": 10}},
+        generated_at=datetime(2026, 4, 22, 3, 15, 22, tzinfo=UTC),
     )
 
 
@@ -612,6 +676,91 @@ def test_l310_alone_does_not_seed_case_queue():
             }
         },
         generated_at=datetime(2026, 4, 22, 3, 15, 22, tzinfo=UTC),
+    )
+
+    assert result.cases == []
+
+
+@pytest.mark.parametrize(
+    "rule_id",
+    ("L3-05", "L3-06", "L3-08", "L3-10", "L3-12", "L4-05", "L4-06"),
+)
+def test_metadata_standalone_false_rules_do_not_seed_cases(rule_id: str):
+    result = _build_single_rule_case_result(rule_id)
+
+    assert result.cases == []
+
+
+def test_benford_alias_is_canonicalized_to_l402_but_does_not_seed_transaction_case():
+    result = _build_single_rule_case_result("Benford")
+
+    assert result.cases == []
+
+
+def test_l203_internal_reason_codes_canonicalize_without_extra_case_or_rule_count():
+    df = _single_row_df()
+    details = pd.DataFrame({"L2-03": [0.8], "L2-03a": [0.8], "L2-03d": [0.7]}, index=df.index)
+    detection_result = DetectionResult(
+        track_name="duplicate_reason_codes",
+        flagged_indices=[0],
+        scores=details.max(axis=1),
+        rule_flags=[
+            RuleFlag("L2-03", "DuplicateDocument", 3, 1, len(df)),
+            RuleFlag("L2-03a", "ExactDuplicateReason", 3, 1, len(df)),
+            RuleFlag("L2-03d", "SequentialDuplicateReason", 3, 1, len(df)),
+        ],
+        details=details,
+        metadata={},
+    )
+
+    result = build_phase1_case_result(
+        df,
+        [detection_result],
+        company_id="kr01",
+        batch_id="batch42",
+        dataset_id=None,
+        phase1_case_config={"phase1_case": {"top_n_cases": 50, "top_n_per_theme": 10}},
+        generated_at=datetime(2026, 4, 22, 3, 15, 22, tzinfo=UTC),
+    )
+
+    assert len(result.cases) == 1
+    case = result.cases[0]
+    assert case.rule_count == 1
+    assert {hit.rule_id for hit in case.raw_rule_hits} == {"L2-03"}
+    assert {doc.matched_rules[0] for doc in case.documents} == {"L2-03"}
+    assert case.rule_evidence_summary[0]["canonical_rule_id"] == "L2-03"
+    assert case.rule_evidence_summary[0]["requested_rule_id"] in {"L2-03", "L2-03a", "L2-03d"}
+
+
+def test_intercompany_sidecar_rule_keeps_topic_seed_without_l1_l4_transaction_count():
+    result = _build_single_rule_case_result("IC01")
+
+    assert len(result.cases) == 1
+    case = result.cases[0]
+    assert case.primary_theme == "intercompany_structure"
+    assert case.primary_topic == "intercompany_cycle"
+    assert case.raw_rule_hits[0].rule_id == "IC01"
+    assert case.rule_evidence_summary[0]["canonical_rule_id"] == "IC01"
+
+
+def test_primary_transaction_detail_rule_still_seeds_case():
+    result = _build_single_rule_case_result("L1-05", score=0.8, severity=4)
+
+    assert len(result.cases) == 1
+    assert result.cases[0].raw_rule_hits[0].rule_id == "L1-05"
+
+
+def test_metadata_policy_overrides_legacy_stale_scoring_role(monkeypatch):
+    stale = replace(
+        RULE_SCORING_REGISTRY["L3-05"],
+        scoring_role="primary",
+        standalone_rankable=True,
+    )
+    monkeypatch.setitem(RULE_SCORING_REGISTRY, "L3-05", stale)
+
+    result = _build_single_rule_case_result(
+        "L3-05",
+        row_annotations={"L3-05": {0: {"score": 0.9}}},
     )
 
     assert result.cases == []
