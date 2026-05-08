@@ -46,14 +46,13 @@ html, body, [class*="css"] {
     font-family: var(--font) !important;
 }
 
-/* Streamlit keeps previous elements in a dimmed "stale" state during long reruns.
-   Hide those wrappers so users see only the current progress/spinner, not ghost cards. */
-.stMainBlockContainer [style*="opacity: 0.33"],
-.stMainBlockContainer [style*="opacity:0.33"],
-.stMainBlockContainer [style*="opacity: 0.35"],
-.stMainBlockContainer [style*="opacity:0.35"],
-.stMainBlockContainer [style*="opacity: 0.2"],
-.stMainBlockContainer [style*="opacity:0.2"] {
+/* Streamlit keeps previous elements in a dimmed "stale" state during long reruns
+   and during page-key container swaps (e.g. selector → main). Hide those wrappers
+   so users don't see ghost cards (e.g. engagement-create form leaking onto Overview).
+   Why data-stale: 1.55 applies the dim via styled-components (emotion class), not an
+   inline style attribute, so [style*="opacity:0.33"] no longer matches. The element
+   does carry data-stale="true" on stElementContainer — target that instead. */
+[data-testid="stElementContainer"][data-stale="true"] {
     display: none !important;
 }
 
@@ -162,24 +161,24 @@ section[data-testid="stSidebar"] .streamlit-expanderHeader {
 .stTabs [data-baseweb="tab-border"] { display: none !important; }
 
 /* 대분류 nav 전용 */
-.st-key-top_level_nav {
+.st-key-audit_top_level_nav {
     margin: 0.25rem 0 0.9rem;
 }
-.st-key-top_level_nav .stTabs [data-baseweb="tab-list"] {
+.st-key-audit_top_level_nav .stTabs [data-baseweb="tab-list"] {
     gap: 4px !important;
     padding: 3px !important;
     border: 1px solid var(--c-border) !important;
     border-radius: var(--r-sm) !important;
     background: var(--c-surface) !important;
 }
-.st-key-top_level_nav .stTabs [data-baseweb="tab"] {
+.st-key-audit_top_level_nav .stTabs [data-baseweb="tab"] {
     min-height: 38px !important;
     padding: 0.45rem 1.1rem !important;
     font-size: 0.9rem !important;
     font-weight: 500 !important;
     border-radius: var(--r-sm) !important;
 }
-.st-key-top_level_nav .stTabs [aria-selected="true"] {
+.st-key-audit_top_level_nav .stTabs [aria-selected="true"] {
     background: var(--c-bg) !important;
     color: var(--c-text) !important;
     font-weight: 600 !important;
@@ -187,16 +186,22 @@ section[data-testid="stSidebar"] .streamlit-expanderHeader {
 }
 
 /* nested st.tabs 는 기본 톤으로 reset */
-.st-key-top_level_nav .stTabs .stTabs [data-baseweb="tab-list"] {
-    gap: 0 !important;
-    padding: 3px !important;
+/* Why: 소분류 탭이 다닥다닥 붙어 보여 gap 을 10px 로 키우고 좌우 패널 패딩도
+   넉넉히 확보. 9개까지 가로 배치할 때 wrap 이 일어나지 않도록 min-width 는
+   기존 96px 유지(전체 폭 1400px 기준 96 × 9 + gap = 1004px 로 여유). */
+.st-key-audit_top_level_nav .stTabs .stTabs [data-baseweb="tab-list"] {
+    gap: 10px !important;
+    padding: 4px 6px !important;
 }
-.st-key-top_level_nav .stTabs .stTabs [data-baseweb="tab"] {
+.st-key-audit_top_level_nav .stTabs .stTabs [data-baseweb="tab"] {
     min-height: auto !important;
-    padding: 0.45rem 1rem !important;
+    min-width: 96px !important;
+    padding: 0.5rem 1.25rem !important;
     font-size: 0.85rem !important;
     font-weight: 500 !important;
     border-radius: var(--r-sm) !important;
+    text-align: center !important;
+    justify-content: center !important;
 }
 
 /* Phase1 section segmented navigation: selected section only is rendered in Python. */

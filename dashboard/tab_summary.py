@@ -1,4 +1,4 @@
-"""Tab 1: Executive summary with KPI, data quality, charts, and PHASE1 case queue summary."""
+"""Tab 1: Executive summary with KPI, data quality, charts, and PHASE1 topic summary."""
 
 from __future__ import annotations
 
@@ -117,17 +117,17 @@ def _render_phase1_case_summary(result: PipelineResult) -> None:
     c1, c2, c3 = st.columns(3)
     c1.metric("PHASE1 Case", f"{summary['case_count']:,}")
     c2.metric("High Case", f"{high_count:,}")
-    c3.metric("Top Themes", ", ".join(summary.get("top_theme_labels", [])) or "-")
+    c3.metric("Top Topics", ", ".join(summary.get("top_theme_labels", [])) or "-")
 
     if theme_rows:
         theme_df = pd.DataFrame(theme_rows).rename(
             columns={
-                "theme_label": "Theme",
+                "theme_label": "Topic",
                 "case_count": "Cases",
                 "high_count": "High",
                 "medium_count": "Medium",
                 "low_count": "Low",
                 "total_amount": "Amount",
             }
-        )[["Theme", "Cases", "High", "Medium", "Low", "Amount"]]
+        )[["Topic", "Cases", "High", "Medium", "Low", "Amount"]]
         st.dataframe(theme_df, use_container_width=True, hide_index=True)

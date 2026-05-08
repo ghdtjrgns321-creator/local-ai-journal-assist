@@ -804,15 +804,15 @@ def _render_pipeline_cta() -> None:
         st.session_state[KEY_PENDING_RESULT_TAB] = PAGE_COMPANY_SETTINGS
         st.rerun()
 
-    progress_area = st.empty()
+    # Why: 클릭 전에는 placeholder 자체를 만들지 않는다. 미리 st.empty() 를 깔면
+    #      버튼 아래 빈 박스 슬롯이 항상 남는다(_run_phase1/_start_phase2_analysis
+    #      는 자체적으로 st.spinner/st.progress 로 시각 피드백을 처리).
     if p1_clicked:
-        with progress_area.container():
-            _run_phase1()
+        _run_phase1()
     elif p2_clicked:
-        with progress_area.container():
-            from dashboard.tab_phase2 import _start_phase2_analysis
+        from dashboard.tab_phase2 import _start_phase2_analysis
 
-            _start_phase2_analysis()
+        _start_phase2_analysis()
 
 
 def _run_phase1() -> None:
