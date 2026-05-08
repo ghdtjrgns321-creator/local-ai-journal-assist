@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 from sklearn.exceptions import NotFittedError
 from sklearn.metrics import f1_score
+
 from src.detection.base import BaseDetector, DetectionResult
 from src.preprocessing.bilstm_wrapper import BiLSTMClassifier
 from src.preprocessing.data_stats import (
@@ -231,7 +232,7 @@ class SequenceDetector(BaseDetector):
             ),
         ]
         elapsed = time.perf_counter() - start
-        return self._make_result(
+        result = self._make_result(
             flagged_indices=flagged_indices,
             scores=scores_full,
             rule_flags=rule_flags,
@@ -239,6 +240,11 @@ class SequenceDetector(BaseDetector):
             metadata={"elapsed": elapsed, "skipped_rules": []},
             warnings=[],
         )
+        # Sequence windows are mapped back to source DataFrame labels above.
+        # BaseDetector normalizes to positions for legacy detectors, but this
+        # detector's public contract is label-preserving for filtered inputs.
+        result.flagged_indices = flagged_indices
+        return result
 
     # -- 모델 영속화 --
 

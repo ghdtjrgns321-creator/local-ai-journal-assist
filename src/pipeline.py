@@ -1564,8 +1564,8 @@ class AuditPipeline:
         has_trendbreak = any(r.track_name == "trendbreak" for r in results)
 
         if has_ml:
-            from src.detection.constants import RULE_LEVEL_WEIGHTS_WITH_ML
-            return RULE_LEVEL_WEIGHTS_WITH_ML
+            from src.detection.constants import LAYER_WEIGHTS_WITH_ML
+            return LAYER_WEIGHTS_WITH_ML
         if has_trendbreak:
             from src.detection.constants import RULE_LEVEL_WEIGHTS_WITH_TRENDBREAK
             return RULE_LEVEL_WEIGHTS_WITH_TRENDBREAK

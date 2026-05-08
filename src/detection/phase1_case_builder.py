@@ -7,7 +7,7 @@ from __future__ import annotations
 import time
 from collections import defaultdict
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -17,7 +17,21 @@ import pandas as pd
 from config.settings import PROJECT_ROOT
 from src.detection.base import DetectionResult
 from src.detection.constants import BATCH_CORROBORATION_RULES, TOPSIDE_BONUS_RULES
-from src.detection.rule_scoring import RULE_SCORING_REGISTRY, normalize_rule_evidence
+from src.detection.rule_detail_metadata import (
+    PresenterSurface,
+    canonicalize_rule_id,
+    get_rule_detail_metadata,
+)
+from src.detection.rule_scoring import (
+    RULE_SCORING_REGISTRY,
+    TOPIC_REGISTRY,
+    normalize_rule_evidence,
+)
+from src.detection.topic_scoring import (
+    compute_fraud_scenario_tags,
+    compute_topic_scores,
+    pick_primary_topic,
+)
 from src.models.phase1_case import (
     CaseDocumentRef,
     CaseGroupResult,
@@ -89,6 +103,20 @@ _RULE_THEME_MAP = {
     "IC01": ("intercompany_structure", "intercompany_structure"),
     "IC02": ("intercompany_structure", "intercompany_structure"),
     "IC03": ("intercompany_structure", "intercompany_structure"),
+}
+
+_TOPIC_LEGACY_THEME_MAP = {
+    "ledger_integrity": "data_integrity_failure",
+    "approval_control": "control_failure",
+    "closing_timing": "timing_anomaly",
+    "account_logic": "logic_mismatch",
+    "duplicate_outflow": "duplicate_or_outflow",
+    "intercompany_cycle": "intercompany_structure",
+    "revenue_statistical": "statistical_outlier",
+}
+
+_LEGACY_THEME_TOPIC_MAP = {
+    legacy_theme: topic_id for topic_id, legacy_theme in _TOPIC_LEGACY_THEME_MAP.items()
 }
 
 _ISSUE_QUEUE_LABELS = {
@@ -527,7 +555,10 @@ _INTERCOMPANY_RULES = {
 @dataclass
 class _RawHit:
     rule_id: str
+    requested_rule_id: str
+    canonical_rule_id: str
     theme_id: str
+    topic_id: str
     evidence_type: str
     severity: int
     row_index: int
@@ -543,6 +574,11 @@ class _RawHit:
     detail: str | None
     annotation: dict[str, Any] | None = None
     can_seed_case: bool = True
+    secondary_topics: tuple[str, ...] = ()
+    standalone_rankable: bool = True
+    floor_policy_ids: tuple[str, ...] = ()
+    combo_policy_ids: tuple[str, ...] = ()
+    fraud_scenario_tags: tuple[str, ...] = ()
 
 
 def build_phase1_case_run_id(
@@ -1126,16 +1162,42 @@ def _collect_raw_hits_profiled(
         details = result.details if result.details is not None else pd.DataFrame(index=df.index)
         row_annotations = (result.metadata or {}).get("row_annotations", {})
         for rule_flag in result.rule_flags:
-            if rule_flag.rule_id in _MACRO_FINDING_RULES:
+            requested_rule_id = str(rule_flag.rule_id)
+            canonical_rule_id = canonicalize_rule_id(requested_rule_id)
+            rule_detail_metadata = _safe_rule_detail_metadata(requested_rule_id)
+            if canonical_rule_id in _MACRO_FINDING_RULES:
                 continue
-            mapping = _RULE_THEME_MAP.get(rule_flag.rule_id)
-            if mapping is None or rule_flag.rule_id not in details.columns:
+            metadata = RULE_SCORING_REGISTRY.get(canonical_rule_id) or RULE_SCORING_REGISTRY.get(
+                requested_rule_id
+            )
+            topic_id = metadata.final_topic if metadata is not None else None
+            if rule_detail_metadata is not None and rule_detail_metadata.final_topic:
+                topic_id = rule_detail_metadata.final_topic
+            mapping = _RULE_THEME_MAP.get(canonical_rule_id) or _RULE_THEME_MAP.get(
+                requested_rule_id
+            )
+            if topic_id is None and mapping is not None:
+                topic_id = _LEGACY_THEME_TOPIC_MAP.get(mapping[0])
+            detail_column = (
+                requested_rule_id
+                if requested_rule_id in details.columns
+                else canonical_rule_id
+            )
+            if topic_id not in TOPIC_REGISTRY or detail_column not in details.columns:
                 continue
             rule_start = time.perf_counter()
             hit_start_count = len(hits)
-            theme_id, evidence_type = mapping
-            column = details[rule_flag.rule_id]
-            rule_annotations = row_annotations.get(rule_flag.rule_id, {})
+            fallback_theme_id, fallback_evidence_type = mapping or (
+                _TOPIC_LEGACY_THEME_MAP.get(str(topic_id), str(topic_id)),
+                metadata.evidence_type if metadata is not None else str(topic_id),
+            )
+            theme_id = _TOPIC_LEGACY_THEME_MAP.get(str(topic_id), fallback_theme_id)
+            evidence_type = metadata.evidence_type if metadata is not None else fallback_evidence_type
+            column = details[detail_column]
+            rule_annotations = row_annotations.get(
+                requested_rule_id,
+                row_annotations.get(canonical_rule_id, {}),
+            )
             raw_scores = pd.to_numeric(column, errors="coerce").fillna(0.0)
             seed_labels: set[Any] = set(raw_scores[raw_scores.gt(0)].index.tolist())
             if case_candidate_labels is not None:
@@ -1157,7 +1219,7 @@ def _collect_raw_hits_profiled(
                         continue
                     if case_candidate_labels is not None and row_label not in case_candidate_labels:
                         continue
-                    if _annotation_can_seed_case(rule_flag.rule_id, annotation):
+                    if _annotation_can_seed_case(requested_rule_id, annotation):
                         seed_labels.add(row_label)
                     elif _annotation_score(annotation) > 0:
                         context_labels.add(row_label)
@@ -1186,7 +1248,7 @@ def _collect_raw_hits_profiled(
                 display_label = _row_display_label(row_annotation)
                 severity = int(rule_flag.severity)
                 normalized_key = (
-                    rule_flag.rule_id,
+                    canonical_rule_id,
                     evidence_type,
                     severity,
                     round(float(score), 8),
@@ -1195,13 +1257,17 @@ def _collect_raw_hits_profiled(
                 normalized = normalized_cache.get(normalized_key)
                 if normalized is None:
                     normalized = normalize_rule_evidence(
-                        rule_id=rule_flag.rule_id,
+                        rule_id=canonical_rule_id,
                         evidence_type=evidence_type,
                         severity=severity,
                         raw_value=score,
                         display_label=display_label,
                     )
                     normalized_cache[normalized_key] = normalized
+                can_seed_case = can_seed_case and _hit_can_seed_case(
+                    requested_rule_id=requested_rule_id,
+                    normalized=normalized,
+                )
                 document_id = (
                     str(document_ids[row_pos])
                     if document_ids is not None and str(document_ids[row_pos])
@@ -1214,8 +1280,11 @@ def _collect_raw_hits_profiled(
                 )
                 hits.append(
                     _RawHit(
-                        rule_id=rule_flag.rule_id,
+                        rule_id=canonical_rule_id,
+                        requested_rule_id=requested_rule_id,
+                        canonical_rule_id=canonical_rule_id,
                         theme_id=theme_id,
+                        topic_id=str(normalized.final_topic or topic_id),
                         evidence_type=evidence_type,
                         severity=severity,
                         row_index=row_pos,
@@ -1229,17 +1298,22 @@ def _collect_raw_hits_profiled(
                         document_id=document_id,
                         record_id=record_id,
                         detail=_rule_hit_detail(
-                            rule_flag.rule_id,
+                            canonical_rule_id,
                             rule_flag.detail,
                             row_annotation,
                         ),
                         annotation=row_annotation,
                         can_seed_case=can_seed_case,
+                        secondary_topics=tuple(normalized.secondary_topics),
+                        standalone_rankable=bool(normalized.standalone_rankable),
+                        floor_policy_ids=tuple(normalized.floor_policy_ids),
+                        combo_policy_ids=tuple(normalized.combo_policy_ids),
+                        fraud_scenario_tags=tuple(normalized.fraud_scenario_tags),
                     )
                 )
             if profile_callback is not None:
                 profile_callback(
-                    f"collect_raw_hits.{rule_flag.rule_id}",
+                    f"collect_raw_hits.{requested_rule_id}",
                     {
                         "elapsed_sec": round(time.perf_counter() - rule_start, 3),
                         "candidate_labels": len(candidate_labels),
@@ -1293,10 +1367,12 @@ def _build_cases(
     hits_by_row: dict[int, list[_RawHit]] = defaultdict(list)
     theme_row_pairs: dict[tuple[str, int], None] = {}
     row_cache: dict[int, pd.Series] = {}
+    use_topic_scoring = isinstance(config.get("topic_scoring"), dict)
     for hit in raw_hits:
         hits_by_row[hit.row_index].append(hit)
         if hit.can_seed_case:
-            theme_row_pairs.setdefault((hit.theme_id, hit.row_index), None)
+            seed_theme_id = hit.topic_id if use_topic_scoring else hit.theme_id
+            theme_row_pairs.setdefault((seed_theme_id, hit.row_index), None)
     case_key_context = _build_case_key_context(
         df,
         line_amounts,
@@ -1304,12 +1380,13 @@ def _build_cases(
         sorted(hits_by_row),
     )
     for theme_id, row_index in theme_row_pairs:
+        legacy_theme_id = _legacy_theme_for_topic(theme_id)
         row = row_cache.get(row_index)
-        if row is None and theme_id not in _FAST_CASE_KEY_THEMES:
+        if row is None and legacy_theme_id not in _FAST_CASE_KEY_THEMES:
             row = df.iloc[row_index]
             row_cache[row_index] = row
         case_key_parts = _make_case_key_parts_from_context(
-            theme_id,
+            legacy_theme_id,
             row_index,
             case_key_context,
         )
@@ -1317,7 +1394,7 @@ def _build_cases(
             if row is None:
                 row = df.iloc[row_index]
                 row_cache[row_index] = row
-            case_key_parts = _make_case_key_parts(theme_id, row, config)
+            case_key_parts = _make_case_key_parts(legacy_theme_id, row, config)
         case_key = " / ".join(str(value) for value in case_key_parts.values())
         group_key = (theme_id, case_key)
         if group_key not in groups:
@@ -1379,6 +1456,7 @@ def _build_cases(
     raw_rule_hit_ref_cache: dict[tuple[str, int], RawRuleHitRef] = {}
     document_ref_cache: dict[tuple[str, tuple[tuple[str, int, str], ...]], CaseDocumentRef] = {}
     for ordinal, ((theme_id, case_key), group) in enumerate(groups.items(), start=1):
+        legacy_theme_id = _legacy_theme_for_topic(theme_id)
         segment_start = time.perf_counter()
         indices = sorted(group["row_indices"])
         rows = df.iloc[indices]
@@ -1410,7 +1488,7 @@ def _build_cases(
         behavior_score = max(min(len(indices) / 10.0, 1.0), access_scope_score)
         repeat_months = _repeat_months(rows)
         repeat_score = min(max(repeat_months - 1, 0) / 2.0, 1.0)
-        secondary_tags = _secondary_tags(theme_id, evidence_scores, config)
+        secondary_tags = _secondary_tags(legacy_theme_id, evidence_scores, config)
         priority_score = _priority_score(
             amount_score=amount_score,
             control_score=control_score,
@@ -1426,7 +1504,7 @@ def _build_cases(
         segment_start = time.perf_counter()
         priority_score, behavior_score, repeat_score = _apply_timing_priority_adjustments(
             df=df,
-            theme_id=theme_id,
+            theme_id=legacy_theme_id,
             rows=rows,
             case_hits=case_hits,
             secondary_tags=secondary_tags,
@@ -1474,6 +1552,43 @@ def _build_cases(
         loop_timings["macro_context"] += time.perf_counter() - segment_start
 
         segment_start = time.perf_counter()
+        topic_breakdowns = compute_topic_scores(
+            case_hits,
+            materiality_score=amount_score,
+            repeat_score=repeat_score,
+            audit_evidence_score=_case_audit_evidence_scores(
+                rows=rows,
+                case_hits=case_hits,
+                amount_score=amount_score,
+                repeat_score=repeat_score,
+            ),
+            topic_caps=_topic_caps(config),
+            topic_floor_policies=_topic_floor_policies(config),
+            combo_floor_policies=_combo_floor_policies(config),
+            return_breakdown=True,
+        )
+        topic_scores = {
+            topic_id: breakdown.score
+            for topic_id, breakdown in topic_breakdowns.items()
+            if breakdown.score > 0 and (breakdown.has_rankable_primary or breakdown.has_combo_floor)
+        }
+        primary_topic = theme_id if topic_scores.get(theme_id, 0.0) > 0 else pick_primary_topic(topic_scores)
+        if primary_topic is None:
+            continue
+        primary_topic_label = _topic_label(primary_topic)
+        secondary_topics = [
+            topic_id
+            for topic_id in _case_secondary_topics(case_hits, topic_scores)
+            if topic_id != primary_topic
+        ]
+        topic_score_breakdown = {
+            topic_id: asdict(breakdown)
+            for topic_id, breakdown in topic_breakdowns.items()
+            if topic_id in topic_scores
+        }
+        legacy_priority_score = priority_score
+        if use_topic_scoring:
+            priority_score = max(topic_scores.values(), default=0.0)
         priority_band = _priority_band(priority_score, config, repeat_score)
         l304_repeat_pattern = _is_l304_repeat_pattern_case(
             df,
@@ -1482,10 +1597,27 @@ def _build_cases(
             config.get("timing_priority", {}),
             l304_repeat_signatures=l304_repeat_signatures,
         )
-        primary_queue, secondary_queues = _case_issue_queues(theme_id, case_hits, evidence_types)
+        legacy_primary_queue, legacy_secondary_queues = _case_issue_queues(
+            legacy_theme_id,
+            case_hits,
+            evidence_types,
+        )
+        if use_topic_scoring:
+            primary_theme = primary_topic
+            primary_queue = primary_topic
+            primary_queue_label = primary_topic_label
+            secondary_queues = secondary_topics
+            secondary_queue_labels = [_topic_label(queue) for queue in secondary_queues]
+        else:
+            primary_theme = legacy_theme_id
+            primary_queue = legacy_primary_queue
+            primary_queue_label = _queue_label(primary_queue)
+            secondary_queues = legacy_secondary_queues
+            secondary_queue_labels = [_queue_label(queue) for queue in secondary_queues]
+            priority_score = legacy_priority_score
         triage_rank_score, triage_rank_reasons = _triage_rank_score(
-            primary_queue=primary_queue,
-            secondary_queues=secondary_queues,
+            primary_queue=legacy_primary_queue,
+            secondary_queues=legacy_secondary_queues,
             case_hits=case_hits,
             evidence_types=evidence_types,
             document_count=len({hit.document_id for hit in case_hits}),
@@ -1494,7 +1626,7 @@ def _build_cases(
             has_repeat_pattern=l304_repeat_pattern or repeat_months >= repeat_tiebreak,
         )
         auditor_insight = _auditor_insight(
-            theme_id=theme_id,
+            theme_id=legacy_theme_id,
             case_hits=case_hits,
             total_amount=total_amount,
         )
@@ -1516,11 +1648,17 @@ def _build_cases(
         cases.append(
             CaseGroupResult(
                 case_id=f"case_{theme_id}_{ordinal:05d}",
-                primary_theme=theme_id,
+                primary_topic=primary_topic,
+                primary_topic_label=primary_topic_label,
+                topic_scores=topic_scores,
+                topic_score_breakdown=topic_score_breakdown,
+                secondary_topics=secondary_topics,
+                fraud_scenario_tags=list(compute_fraud_scenario_tags(case_hits)),
+                primary_theme=primary_theme,
                 primary_queue=primary_queue,
-                primary_queue_label=_queue_label(primary_queue),
+                primary_queue_label=primary_queue_label,
                 secondary_queues=secondary_queues,
-                secondary_queue_labels=[_queue_label(queue) for queue in secondary_queues],
+                secondary_queue_labels=secondary_queue_labels,
                 secondary_tags=secondary_tags,
                 evidence_types=evidence_types,
                 case_key=case_key,
@@ -1647,7 +1785,7 @@ def _build_theme_summaries(
         summaries.append(
             ThemeSummary(
                 theme_id=theme_id,
-                theme_label=_THEME_LABELS.get(theme_id, theme_id),
+                theme_label=_topic_label(theme_id),
                 case_count=len(theme_cases),
                 high_count=sum(1 for case in theme_cases if case.priority_band == "high"),
                 medium_count=sum(1 for case in theme_cases if case.priority_band == "medium"),
@@ -2384,7 +2522,6 @@ def _triage_rank_score(
     total_amount: float,
     has_repeat_pattern: bool,
 ) -> tuple[float, list[str]]:
-    rule_ids = {str(hit.rule_id) for hit in case_hits}
     queues = {primary_queue, *secondary_queues}
     strong_count = sum(1 for hit in case_hits if hit.rule_id in _STRONG_TRIAGE_RULES)
     direct_count = sum(1 for hit in case_hits if hit.signal_status == "confirmed")
@@ -2462,6 +2599,228 @@ def _triage_rank_score(
 
 def _queue_label(queue_id: str) -> str:
     return _ISSUE_QUEUE_LABELS.get(queue_id, queue_id.replace("_", " "))
+
+
+def _topic_label(topic_id: str) -> str:
+    metadata = TOPIC_REGISTRY.get(topic_id)
+    if metadata is not None:
+        return metadata.label
+    return topic_id.replace("_", " ")
+
+
+def _legacy_theme_for_topic(topic_id: str) -> str:
+    return _TOPIC_LEGACY_THEME_MAP.get(topic_id, topic_id)
+
+
+def _topic_caps(config: dict[str, Any]) -> dict[str, float]:
+    topic_scoring = config.get("topic_scoring", {})
+    if not isinstance(topic_scoring, dict):
+        return {}
+    caps = topic_scoring.get("topic_caps", {})
+    if not isinstance(caps, dict):
+        return {}
+    return {str(topic_id): float(value) for topic_id, value in caps.items()}
+
+
+def _topic_floor_policies(config: dict[str, Any]) -> dict[str, float]:
+    topic_scoring = config.get("topic_scoring", {})
+    if not isinstance(topic_scoring, dict):
+        return {}
+    floors = topic_scoring.get("topic_floors", {})
+    if not isinstance(floors, dict):
+        return {}
+    return {str(policy_id): float(value) for policy_id, value in floors.items()}
+
+
+def _combo_floor_policies(config: dict[str, Any]) -> dict[str, float]:
+    topic_scoring = config.get("topic_scoring", {})
+    if not isinstance(topic_scoring, dict):
+        return {}
+    floors = topic_scoring.get("combo_floors", {})
+    if not isinstance(floors, dict):
+        return {}
+    return {str(policy_id): float(value) for policy_id, value in floors.items()}
+
+
+def _case_secondary_topics(
+    case_hits: list[_RawHit],
+    topic_scores: dict[str, float],
+) -> list[str]:
+    topics: list[str] = []
+    for topic_id in topic_scores:
+        topics.append(topic_id)
+    for hit in case_hits:
+        if hit.normalized_score <= 0:
+            continue
+        topics.extend(topic for topic in hit.secondary_topics if topic in TOPIC_REGISTRY)
+    return _ordered_unique(topics)
+
+
+def _case_audit_evidence_scores(
+    *,
+    rows: pd.DataFrame,
+    case_hits: list[_RawHit],
+    amount_score: float,
+    repeat_score: float,
+) -> dict[str, float]:
+    """Score case context that is independent from DataSynth labels.
+
+    These signals are deliberately small boosters. They can reorder cases that
+    already have a rankable rule hit, but cannot create a topic score or High
+    floor by themselves.
+    """
+
+    rule_ids = {hit.rule_id for hit in case_hits if hit.normalized_score > 0}
+    manual_context = _case_has_manual_context(rows)
+    support_gap = _case_has_support_gap(rows)
+    approval_gap = _case_has_approval_relationship_gap(rows)
+    post_close_gap = _case_has_post_close_context(rows)
+    related_party_context = _case_has_related_party_context(rows)
+    reversal_context = _case_has_reversal_or_clearing_context(rows)
+    master_gap = _case_has_any_true(rows, "master_counterparty_inactive") or (
+        _case_has_partner_value(rows) and not _case_has_any_true(rows, "master_counterparty_known")
+    )
+    document_flow_orphan = _case_has_any_true(rows, "document_flow_orphan")
+    ic_match_context = _case_has_any_true(rows, "ic_matched_pair_found")
+    ic_unmatched = _case_has_any_true(rows, "ic_unmatched_reference")
+    high_amount = amount_score >= 0.50
+
+    scores = {topic_id: 0.0 for topic_id in TOPIC_REGISTRY}
+
+    if approval_gap or _case_has_any_true(rows, "approval_matrix_gap"):
+        scores["approval_control"] = max(scores["approval_control"], 0.70)
+    if (
+        (approval_gap or _case_has_any_true(rows, "approval_matrix_gap"))
+        and (high_amount or _case_has_any_true(rows, "approval_limit_exceeded_independent"))
+    ):
+        scores["approval_control"] = max(scores["approval_control"], 0.85)
+
+    if (
+        (support_gap or document_flow_orphan)
+        and manual_context
+        and (high_amount or rule_ids & {"L4-01", "L4-03"})
+    ):
+        scores["revenue_statistical"] = max(scores["revenue_statistical"], 0.45)
+        scores["account_logic"] = max(scores["account_logic"], 0.35)
+
+    if master_gap and high_amount:
+        scores["account_logic"] = max(scores["account_logic"], 0.45)
+        scores["duplicate_outflow"] = max(scores["duplicate_outflow"], 0.35)
+
+    if post_close_gap and (high_amount or rule_ids & {"L3-04", "L3-11"}):
+        scores["closing_timing"] = max(scores["closing_timing"], 0.55)
+
+    if reversal_context and (rule_ids & {"L2-02", "L2-03", "L2-05"}):
+        scores["duplicate_outflow"] = max(scores["duplicate_outflow"], 0.45)
+
+    if related_party_context or ic_match_context or ic_unmatched:
+        scores["intercompany_cycle"] = max(scores["intercompany_cycle"], 0.45)
+        if repeat_score >= 0.50 or high_amount or ic_unmatched:
+            scores["intercompany_cycle"] = max(scores["intercompany_cycle"], 0.60)
+
+    return scores
+
+
+def _case_has_manual_context(rows: pd.DataFrame) -> bool:
+    source = _case_string_column(rows, "source")
+    persona = _case_string_column(rows, "user_persona")
+    created_by = _case_string_column(rows, "created_by")
+    return bool(
+        source.str.contains("manual", case=False, na=False).any()
+        or persona.str.contains("manual|accountant|manager", case=False, na=False).any()
+        or (~created_by.str.upper().str.startswith("SYSTEM", na=False)).any()
+    )
+
+
+def _case_has_support_gap(rows: pd.DataFrame) -> bool:
+    if rows.empty:
+        return False
+    no_attachment = False
+    if "has_attachment" in rows.columns:
+        attachment = rows["has_attachment"].astype(str).str.strip().str.lower()
+        no_attachment = bool(attachment.isin({"false", "0", "nan", "none", ""}).any())
+    no_support_type = False
+    if "supporting_doc_type" in rows.columns:
+        support_type = rows["supporting_doc_type"].astype(str).str.strip().str.lower()
+        no_support_type = bool(support_type.isin({"", "nan", "none", "null"}).any())
+    return no_attachment or no_support_type
+
+
+def _case_has_approval_relationship_gap(rows: pd.DataFrame) -> bool:
+    if rows.empty:
+        return False
+    created_by = _case_string_column(rows, "created_by").str.strip()
+    approved_by = _case_string_column(rows, "approved_by").str.strip()
+    manual_rows = ~created_by.str.upper().str.startswith("SYSTEM", na=False)
+    approver_missing = approved_by.eq("") | approved_by.str.lower().isin({"nan", "none", "null"})
+    self_approval = created_by.ne("") & approved_by.ne("") & created_by.eq(approved_by)
+    if bool((manual_rows & (approver_missing | self_approval)).any()):
+        return True
+    if {"posting_date", "approval_date"}.issubset(rows.columns):
+        posting = pd.to_datetime(rows["posting_date"], errors="coerce")
+        approval = pd.to_datetime(rows["approval_date"], errors="coerce")
+        return bool((approval.notna() & posting.notna() & (approval < posting)).any())
+    return False
+
+
+def _case_has_post_close_context(rows: pd.DataFrame) -> bool:
+    if rows.empty or "posting_date" not in rows.columns:
+        return False
+    posting = pd.to_datetime(rows["posting_date"], errors="coerce")
+    period_end = bool(posting.dt.day.ge(28).any() or posting.dt.month.isin({3, 6, 9, 12}).any())
+    if not period_end:
+        return False
+    if "document_date" not in rows.columns:
+        return period_end
+    document = pd.to_datetime(rows["document_date"], errors="coerce")
+    lag_days = (posting - document).dt.days
+    return bool(lag_days.ge(7).any() or period_end)
+
+
+def _case_has_related_party_context(rows: pd.DataFrame) -> bool:
+    trading_partner = _case_string_column(rows, "trading_partner")
+    business_process = _case_string_column(rows, "business_process")
+    reference = _case_string_column(rows, "reference")
+    return bool(
+        trading_partner.str.strip().ne("").any()
+        or business_process.str.contains("IC|intercompany", case=False, na=False).any()
+        or reference.str.contains(r"\bIC", case=False, regex=True, na=False).any()
+    )
+
+
+def _case_has_reversal_or_clearing_context(rows: pd.DataFrame) -> bool:
+    if "lettrage" in rows.columns and _case_string_column(rows, "lettrage").str.strip().ne("").any():
+        return True
+    if "settlement_status" in rows.columns:
+        settlement = _case_string_column(rows, "settlement_status")
+        if settlement.str.contains("revers|offset|clear|settled", case=False, na=False).any():
+            return True
+    if "is_cleared" in rows.columns:
+        cleared = rows["is_cleared"].astype(str).str.strip().str.lower()
+        return bool(cleared.isin({"true", "1"}).any())
+    return False
+
+
+def _case_has_partner_value(rows: pd.DataFrame) -> bool:
+    return bool(
+        _case_string_column(rows, "auxiliary_account_number").str.strip().ne("").any()
+        or _case_string_column(rows, "trading_partner").str.strip().ne("").any()
+    )
+
+
+def _case_has_any_true(rows: pd.DataFrame, column: str) -> bool:
+    if column not in rows.columns:
+        return False
+    values = rows[column]
+    if values.dtype == bool:
+        return bool(values.any())
+    return bool(values.astype(str).str.strip().str.lower().isin({"true", "1", "yes"}).any())
+
+
+def _case_string_column(rows: pd.DataFrame, column: str) -> pd.Series:
+    if column not in rows.columns:
+        return pd.Series("", index=rows.index, dtype="string")
+    return rows[column].fillna("").astype(str)
 
 
 def _priority_score(
@@ -3354,9 +3713,43 @@ def _annotation_score(row_annotation: dict[str, Any] | None) -> float:
 def _annotation_can_seed_case(rule_id: str, row_annotation: dict[str, Any] | None) -> bool:
     if _annotation_score(row_annotation) <= 0:
         return False
+    metadata = _safe_rule_detail_metadata(rule_id)
+    if metadata is not None:
+        return _metadata_allows_case_seed(metadata)
     metadata = RULE_SCORING_REGISTRY.get(str(rule_id))
     scoring_role = metadata.scoring_role if metadata is not None else "primary"
     return scoring_role not in {"booster", "combo_only", "macro_only"}
+
+
+def _safe_rule_detail_metadata(rule_id: str):
+    try:
+        return get_rule_detail_metadata(str(rule_id))
+    except KeyError:
+        return None
+
+
+def _metadata_allows_case_seed(metadata) -> bool:
+    if not metadata.standalone_rankable or not metadata.allow_topic_seed:
+        return False
+    return metadata.presenter_surface in {
+        PresenterSurface.TRANSACTION_DETAIL,
+        PresenterSurface.INTERCOMPANY_SIDECAR,
+    }
+
+
+def _hit_can_seed_case(*, requested_rule_id: str, normalized: Any) -> bool:
+    metadata = _safe_rule_detail_metadata(requested_rule_id)
+    if metadata is not None:
+        return (
+            _metadata_allows_case_seed(metadata)
+            and normalized.normalized_score > 0
+            and normalized.scoring_role == "primary"
+        )
+    return (
+        bool(normalized.standalone_rankable)
+        and normalized.scoring_role == "primary"
+        and normalized.normalized_score > 0
+    )
 
 
 def _annotation_confidence(row_annotation: dict[str, Any] | None) -> float:
@@ -3485,6 +3878,8 @@ def _rule_evidence_strength(hit: _RawHit) -> str:
 def _rule_evidence_summary(hit: _RawHit) -> dict[str, Any]:
     return {
         "rule_id": hit.rule_id,
+        "requested_rule_id": hit.requested_rule_id,
+        "canonical_rule_id": hit.canonical_rule_id,
         "rule_label": _rule_label(hit.rule_id),
         "evidence_type": hit.evidence_type,
         "evidence_strength": _rule_evidence_strength(hit),

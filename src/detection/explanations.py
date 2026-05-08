@@ -10,6 +10,16 @@ import pandas as pd
 from src.detection.base import DetectionResult
 from src.detection.constants import RULE_CODES, get_rule_explanation
 
+_DEFAULT_RULE_REFERENCES: dict[str, tuple[str, ...]] = {
+    "L1-01": ("ISA 240.32-33", "ISA 230"),
+    "L2-02": ("ISA 240.32-33",),
+    "L2-05": ("ISA 240.32-33",),
+    "L3-04": ("ISA 240.32-33",),
+    "L4-02": ("ISA 520.5",),
+    "ML02": ("ISA 240.32-33",),
+    "EN01": ("ISA 240.32-33",),
+}
+
 
 def parse_flagged_rules(value: Any) -> list[str]:
     """Parse a CSV or list value into rule codes."""
@@ -44,6 +54,7 @@ def build_rule_explanation(rule_id: str) -> dict[str, Any]:
     """Build rule-level explanation metadata."""
 
     rule = get_rule_explanation(rule_id)
+    references = rule.references or _DEFAULT_RULE_REFERENCES.get(rule_id, ())
     return {
         "rule_id": rule_id,
         "rule_name": RULE_CODES.get(rule_id, "Unknown Rule"),
@@ -51,7 +62,7 @@ def build_rule_explanation(rule_id: str) -> dict[str, Any]:
         "used_columns": [str(value) for value in rule.used_columns],
         "false_positive_risks": [str(value) for value in rule.false_positive_risks],
         "auditor_checks": [str(value) for value in rule.auditor_checks],
-        "references": [str(value) for value in rule.references],
+        "references": [str(value) for value in references],
     }
 
 
@@ -170,7 +181,7 @@ def build_export_narrative(
         )
         parts.append(f"Triggered rules: {rule_text}.")
     else:
-        parts.append("No rule-based trigger was attached.")
+        parts.append("No rule-based trigger was attached. ML 모델 단독 판정.")
 
     if top_features:
         feature_text = ", ".join(
@@ -183,7 +194,9 @@ def build_export_narrative(
         item for rule in rule_explanations for item in rule.get("auditor_checks", [])
     )
     if auditor_checks:
-        parts.append(f"Recommended audit follow-up: {auditor_checks[0]}.")
+        parts.append(f"Recommended audit follow-up: {auditor_checks[0]}. 재검토 권고.")
+    elif rule_explanations:
+        parts.append("재검토 권고.")
 
     return " ".join(parts)
 
@@ -415,6 +428,8 @@ def _coalesce_amount(row: pd.Series) -> float | None:
 def _format_rule_export_text(rule_id: str, rule_name: str, references: list[str]) -> str:
     """Format a rule token for export text."""
 
+    if rule_name == "Unknown Rule":
+        rule_name = "미등록 룰"
     if references:
         return f"{rule_id}({rule_name}) [{references[0]}]"
     return f"{rule_id}({rule_name})"

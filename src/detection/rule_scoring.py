@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from src.detection.constants import SEVERITY_MAP
@@ -40,6 +40,25 @@ SCORING_ROLE_FACTOR: dict[str, float] = {
     "booster": 0.65,
     "combo_only": 0.35,
     "macro_only": 0.0,
+}
+
+
+@dataclass(frozen=True)
+class TopicMetadata:
+    """Auditor-facing PHASE1 ranking topic."""
+
+    topic_id: str
+    label: str
+
+
+TOPIC_REGISTRY: dict[str, TopicMetadata] = {
+    "ledger_integrity": TopicMetadata("ledger_integrity", "원장기록·데이터정합성"),
+    "approval_control": TopicMetadata("approval_control", "승인·권한·업무분장 통제"),
+    "closing_timing": TopicMetadata("closing_timing", "결산·기간귀속·입력시점"),
+    "account_logic": TopicMetadata("account_logic", "계정분류·거래실질 불일치"),
+    "duplicate_outflow": TopicMetadata("duplicate_outflow", "중복·상계·자금유출"),
+    "intercompany_cycle": TopicMetadata("intercompany_cycle", "관계사·내부거래·순환구조"),
+    "revenue_statistical": TopicMetadata("revenue_statistical", "수익·금액·모집단 통계 이상"),
 }
 
 L104_BUCKET_SIGNAL_STRENGTH: dict[str, float] = {
@@ -110,6 +129,12 @@ class RuleScoringMetadata:
     evidence_strength: str
     scoring_role: str = "primary"
     contribution_weight: float = 1.0
+    final_topic: str | None = None
+    secondary_topics: tuple[str, ...] = field(default_factory=tuple)
+    standalone_rankable: bool = True
+    floor_policy_ids: tuple[str, ...] = field(default_factory=tuple)
+    combo_policy_ids: tuple[str, ...] = field(default_factory=tuple)
+    fraud_scenario_tags: tuple[str, ...] = field(default_factory=tuple)
 
     @property
     def severity(self) -> int:
@@ -128,52 +153,374 @@ class NormalizedRuleEvidence:
     evidence_strength: str
     scoring_role: str
     normalized_score: float
+    final_topic: str | None = None
+    secondary_topics: tuple[str, ...] = field(default_factory=tuple)
+    standalone_rankable: bool = True
+    floor_policy_ids: tuple[str, ...] = field(default_factory=tuple)
+    combo_policy_ids: tuple[str, ...] = field(default_factory=tuple)
+    fraud_scenario_tags: tuple[str, ...] = field(default_factory=tuple)
 
 
 RULE_SCORING_REGISTRY: dict[str, RuleScoringMetadata] = {
-    "L1-01": RuleScoringMetadata("L1-01", "data_integrity_failure", "strong"),
-    "L1-02": RuleScoringMetadata("L1-02", "data_integrity_failure", "medium"),
-    "L1-03": RuleScoringMetadata("L1-03", "logic_mismatch", "medium"),
-    "L1-04": RuleScoringMetadata("L1-04", "control_failure", "strong"),
-    "L1-05": RuleScoringMetadata("L1-05", "control_failure", "strong"),
-    "L1-06": RuleScoringMetadata("L1-06", "control_failure", "strong"),
-    "L1-07": RuleScoringMetadata("L1-07", "control_failure", "strong"),
-    "L1-08": RuleScoringMetadata("L1-08", "data_integrity_failure", "medium"),
-    "L1-09": RuleScoringMetadata("L1-09", "control_failure", "medium"),
-    "L2-01": RuleScoringMetadata("L2-01", "duplicate_or_outflow", "medium"),
-    "L2-02": RuleScoringMetadata("L2-02", "duplicate_or_outflow", "strong"),
-    "L2-03": RuleScoringMetadata("L2-03", "duplicate_or_outflow", "medium"),
-    "L2-03a": RuleScoringMetadata("L2-03a", "duplicate_or_outflow", "strong"),
-    "L2-03b": RuleScoringMetadata("L2-03b", "duplicate_or_outflow", "medium"),
-    "L2-03c": RuleScoringMetadata("L2-03c", "duplicate_or_outflow", "medium"),
-    "L2-03d": RuleScoringMetadata("L2-03d", "duplicate_or_outflow", "medium"),
-    "L2-04": RuleScoringMetadata("L2-04", "logic_mismatch", "medium"),
-    "L2-05": RuleScoringMetadata("L2-05", "duplicate_or_outflow", "medium"),
-    "L3-01": RuleScoringMetadata("L3-01", "logic_mismatch", "medium"),
-    "L3-02": RuleScoringMetadata("L3-02", "control_failure", "medium"),
-    "L3-03": RuleScoringMetadata("L3-03", "intercompany_structure", "weak"),
-    "L3-04": RuleScoringMetadata("L3-04", "timing_anomaly", "medium"),
-    "L3-05": RuleScoringMetadata("L3-05", "timing_anomaly", "weak"),
-    "L3-06": RuleScoringMetadata("L3-06", "timing_anomaly", "weak"),
-    "L3-07": RuleScoringMetadata("L3-07", "timing_anomaly", "medium"),
-    "L3-08": RuleScoringMetadata("L3-08", "timing_anomaly", "weak", "booster"),
-    "L3-09": RuleScoringMetadata("L3-09", "logic_mismatch", "medium"),
-    "L3-10": RuleScoringMetadata("L3-10", "logic_mismatch", "weak", "booster"),
-    "L3-11": RuleScoringMetadata("L3-11", "timing_anomaly", "medium"),
-    "L3-12": RuleScoringMetadata("L3-12", "access_scope_review", "weak", "booster"),
-    "L4-01": RuleScoringMetadata("L4-01", "statistical_outlier", "medium"),
-    "L4-02": RuleScoringMetadata("L4-02", "statistical_outlier", "weak", "macro_only"),
-    "L4-03": RuleScoringMetadata("L4-03", "statistical_outlier", "medium"),
-    "L4-04": RuleScoringMetadata("L4-04", "logic_mismatch", "medium"),
-    "L4-05": RuleScoringMetadata("L4-05", "timing_anomaly", "weak"),
-    "L4-06": RuleScoringMetadata("L4-06", "statistical_outlier", "weak", "combo_only"),
-    "IC01": RuleScoringMetadata("IC01", "intercompany_structure", "medium"),
-    "IC02": RuleScoringMetadata("IC02", "intercompany_structure", "medium"),
-    "IC03": RuleScoringMetadata("IC03", "intercompany_structure", "medium"),
-    "D01": RuleScoringMetadata("D01", "macro_finding", "medium", "macro_only"),
-    "D02": RuleScoringMetadata("D02", "macro_finding", "medium", "macro_only"),
-    "GR01": RuleScoringMetadata("GR01", "intercompany_structure", "medium", "macro_only"),
-    "GR03": RuleScoringMetadata("GR03", "intercompany_structure", "medium", "macro_only"),
+    "L1-01": RuleScoringMetadata(
+        "L1-01",
+        "data_integrity_failure",
+        "strong",
+        final_topic="ledger_integrity",
+        fraud_scenario_tags=("ledger_integrity_failure",),
+    ),
+    "L1-02": RuleScoringMetadata(
+        "L1-02",
+        "data_integrity_failure",
+        "medium",
+        final_topic="ledger_integrity",
+        fraud_scenario_tags=("missing_or_incomplete_data",),
+    ),
+    "L1-03": RuleScoringMetadata(
+        "L1-03",
+        "logic_mismatch",
+        "medium",
+        final_topic="account_logic",
+        fraud_scenario_tags=("account_classification_mismatch",),
+    ),
+    "L1-04": RuleScoringMetadata(
+        "L1-04",
+        "control_failure",
+        "strong",
+        final_topic="approval_control",
+        floor_policy_ids=("approval_control_high",),
+        fraud_scenario_tags=("approval_bypass",),
+    ),
+    "L1-05": RuleScoringMetadata(
+        "L1-05",
+        "control_failure",
+        "strong",
+        final_topic="approval_control",
+        secondary_topics=("duplicate_outflow",),
+        fraud_scenario_tags=("approval_bypass",),
+    ),
+    "L1-06": RuleScoringMetadata(
+        "L1-06",
+        "control_failure",
+        "strong",
+        final_topic="approval_control",
+        fraud_scenario_tags=("segregation_of_duties",),
+    ),
+    "L1-07": RuleScoringMetadata(
+        "L1-07",
+        "control_failure",
+        "strong",
+        final_topic="approval_control",
+        secondary_topics=("duplicate_outflow",),
+        fraud_scenario_tags=("approval_bypass",),
+    ),
+    "L1-08": RuleScoringMetadata(
+        "L1-08",
+        "data_integrity_failure",
+        "medium",
+        final_topic="closing_timing",
+        secondary_topics=("ledger_integrity",),
+        fraud_scenario_tags=("cutoff_or_period_mismatch",),
+    ),
+    "L1-09": RuleScoringMetadata(
+        "L1-09",
+        "control_failure",
+        "medium",
+        final_topic="approval_control",
+        fraud_scenario_tags=("missing_approval_trace",),
+    ),
+    "L2-01": RuleScoringMetadata(
+        "L2-01",
+        "duplicate_or_outflow",
+        "medium",
+        final_topic="duplicate_outflow",
+        secondary_topics=("approval_control",),
+        fraud_scenario_tags=("threshold_splitting",),
+    ),
+    "L2-02": RuleScoringMetadata(
+        "L2-02",
+        "duplicate_or_outflow",
+        "strong",
+        final_topic="duplicate_outflow",
+        floor_policy_ids=("duplicate_outflow_high",),
+        fraud_scenario_tags=("duplicate_payment",),
+    ),
+    "L2-03": RuleScoringMetadata(
+        "L2-03",
+        "duplicate_or_outflow",
+        "medium",
+        final_topic="duplicate_outflow",
+        fraud_scenario_tags=("reversal_or_offset_pattern",),
+    ),
+    "L2-03a": RuleScoringMetadata(
+        "L2-03a",
+        "duplicate_or_outflow",
+        "strong",
+        final_topic="duplicate_outflow",
+        fraud_scenario_tags=("reversal_or_offset_pattern",),
+    ),
+    "L2-03b": RuleScoringMetadata(
+        "L2-03b",
+        "duplicate_or_outflow",
+        "medium",
+        final_topic="duplicate_outflow",
+        fraud_scenario_tags=("reversal_or_offset_pattern",),
+    ),
+    "L2-03c": RuleScoringMetadata(
+        "L2-03c",
+        "duplicate_or_outflow",
+        "medium",
+        final_topic="duplicate_outflow",
+        fraud_scenario_tags=("reversal_or_offset_pattern",),
+    ),
+    "L2-03d": RuleScoringMetadata(
+        "L2-03d",
+        "duplicate_or_outflow",
+        "medium",
+        final_topic="duplicate_outflow",
+        fraud_scenario_tags=("reversal_or_offset_pattern",),
+    ),
+    "L2-04": RuleScoringMetadata(
+        "L2-04",
+        "logic_mismatch",
+        "medium",
+        final_topic="account_logic",
+        fraud_scenario_tags=("transaction_substance_mismatch",),
+    ),
+    "L2-05": RuleScoringMetadata(
+        "L2-05",
+        "duplicate_or_outflow",
+        "medium",
+        final_topic="duplicate_outflow",
+        fraud_scenario_tags=("topside_or_outflow_pattern",),
+    ),
+    "L3-01": RuleScoringMetadata(
+        "L3-01",
+        "logic_mismatch",
+        "medium",
+        final_topic="account_logic",
+        fraud_scenario_tags=("sensitive_account_pattern",),
+    ),
+    "L3-02": RuleScoringMetadata(
+        "L3-02",
+        "control_failure",
+        "medium",
+        final_topic="approval_control",
+        fraud_scenario_tags=("manual_entry_concentration",),
+    ),
+    "L3-03": RuleScoringMetadata(
+        "L3-03",
+        "intercompany_structure",
+        "weak",
+        "booster",
+        final_topic="intercompany_cycle",
+        secondary_topics=("account_logic",),
+        standalone_rankable=False,
+        fraud_scenario_tags=("intercompany_population_context",),
+    ),
+    "L3-04": RuleScoringMetadata(
+        "L3-04",
+        "timing_anomaly",
+        "medium",
+        final_topic="closing_timing",
+        fraud_scenario_tags=("cutoff_or_late_posting",),
+    ),
+    "L3-05": RuleScoringMetadata(
+        "L3-05",
+        "timing_anomaly",
+        "weak",
+        "booster",
+        final_topic="closing_timing",
+        secondary_topics=("approval_control",),
+        standalone_rankable=False,
+        fraud_scenario_tags=("non_business_day_activity",),
+    ),
+    "L3-06": RuleScoringMetadata(
+        "L3-06",
+        "timing_anomaly",
+        "weak",
+        "booster",
+        final_topic="closing_timing",
+        secondary_topics=("approval_control",),
+        standalone_rankable=False,
+        fraud_scenario_tags=("after_hours_activity",),
+    ),
+    "L3-07": RuleScoringMetadata(
+        "L3-07",
+        "timing_anomaly",
+        "medium",
+        final_topic="closing_timing",
+        fraud_scenario_tags=("posting_document_date_gap",),
+    ),
+    "L3-08": RuleScoringMetadata(
+        "L3-08",
+        "timing_anomaly",
+        "weak",
+        "booster",
+        final_topic="ledger_integrity",
+        secondary_topics=("closing_timing",),
+        standalone_rankable=False,
+        fraud_scenario_tags=("sequence_gap_or_backdated_context",),
+    ),
+    "L3-09": RuleScoringMetadata(
+        "L3-09",
+        "logic_mismatch",
+        "medium",
+        final_topic="account_logic",
+        fraud_scenario_tags=("aging_or_settlement_mismatch",),
+    ),
+    "L3-10": RuleScoringMetadata(
+        "L3-10",
+        "logic_mismatch",
+        "weak",
+        "booster",
+        final_topic="account_logic",
+        secondary_topics=("approval_control", "revenue_statistical"),
+        standalone_rankable=False,
+        fraud_scenario_tags=("sensitive_amount_or_account_context",),
+    ),
+    "L3-11": RuleScoringMetadata(
+        "L3-11",
+        "timing_anomaly",
+        "medium",
+        final_topic="closing_timing",
+        fraud_scenario_tags=("period_end_concentration",),
+    ),
+    "L3-12": RuleScoringMetadata(
+        "L3-12",
+        "access_scope_review",
+        "weak",
+        "combo_only",
+        final_topic="approval_control",
+        secondary_topics=("duplicate_outflow",),
+        standalone_rankable=False,
+        combo_policy_ids=("work_scope_combo",),
+        fraud_scenario_tags=("work_scope_concentration",),
+    ),
+    "L4-01": RuleScoringMetadata(
+        "L4-01",
+        "statistical_outlier",
+        "medium",
+        final_topic="revenue_statistical",
+        fraud_scenario_tags=("amount_outlier",),
+    ),
+    "L4-02": RuleScoringMetadata(
+        "L4-02",
+        "statistical_outlier",
+        "weak",
+        "macro_only",
+        final_topic="ledger_integrity",
+        secondary_topics=("revenue_statistical",),
+        standalone_rankable=False,
+        fraud_scenario_tags=("benford_distribution_anomaly",),
+    ),
+    "Benford": RuleScoringMetadata(
+        "Benford",
+        "statistical_outlier",
+        "weak",
+        "macro_only",
+        final_topic="ledger_integrity",
+        secondary_topics=("revenue_statistical",),
+        standalone_rankable=False,
+        fraud_scenario_tags=("benford_distribution_anomaly",),
+    ),
+    "L4-03": RuleScoringMetadata(
+        "L4-03",
+        "statistical_outlier",
+        "medium",
+        final_topic="revenue_statistical",
+        fraud_scenario_tags=("zscore_amount_outlier",),
+    ),
+    "L4-04": RuleScoringMetadata(
+        "L4-04",
+        "logic_mismatch",
+        "medium",
+        final_topic="account_logic",
+        secondary_topics=("intercompany_cycle",),
+        fraud_scenario_tags=("rare_account_partner_pair",),
+    ),
+    "L4-05": RuleScoringMetadata(
+        "L4-05",
+        "timing_anomaly",
+        "weak",
+        "booster",
+        final_topic="closing_timing",
+        secondary_topics=("approval_control",),
+        standalone_rankable=False,
+        fraud_scenario_tags=("behavioral_timing_context",),
+    ),
+    "L4-06": RuleScoringMetadata(
+        "L4-06",
+        "statistical_outlier",
+        "weak",
+        "combo_only",
+        final_topic="revenue_statistical",
+        standalone_rankable=False,
+        combo_policy_ids=("batch_combo",),
+        fraud_scenario_tags=("batch_population_anomaly",),
+    ),
+    "IC01": RuleScoringMetadata(
+        "IC01",
+        "intercompany_structure",
+        "medium",
+        final_topic="intercompany_cycle",
+        floor_policy_ids=("intercompany_exception",),
+        fraud_scenario_tags=("intercompany_reconciliation_exception",),
+    ),
+    "IC02": RuleScoringMetadata(
+        "IC02",
+        "intercompany_structure",
+        "medium",
+        final_topic="intercompany_cycle",
+        floor_policy_ids=("intercompany_exception",),
+        fraud_scenario_tags=("intercompany_amount_difference",),
+    ),
+    "IC03": RuleScoringMetadata(
+        "IC03",
+        "intercompany_structure",
+        "medium",
+        final_topic="intercompany_cycle",
+        floor_policy_ids=("intercompany_exception",),
+        fraud_scenario_tags=("intercompany_cycle_exception",),
+    ),
+    "D01": RuleScoringMetadata(
+        "D01",
+        "macro_finding",
+        "medium",
+        "macro_only",
+        final_topic="account_logic",
+        secondary_topics=("intercompany_cycle", "revenue_statistical"),
+        standalone_rankable=False,
+        fraud_scenario_tags=("macro_account_logic_anomaly",),
+    ),
+    "D02": RuleScoringMetadata(
+        "D02",
+        "macro_finding",
+        "medium",
+        "macro_only",
+        final_topic="closing_timing",
+        secondary_topics=("intercompany_cycle", "revenue_statistical"),
+        standalone_rankable=False,
+        fraud_scenario_tags=("macro_timing_anomaly",),
+    ),
+    "GR01": RuleScoringMetadata(
+        "GR01",
+        "intercompany_structure",
+        "medium",
+        "macro_only",
+        final_topic="intercompany_cycle",
+        standalone_rankable=False,
+        fraud_scenario_tags=("group_relationship_context",),
+    ),
+    "GR03": RuleScoringMetadata(
+        "GR03",
+        "intercompany_structure",
+        "medium",
+        "macro_only",
+        final_topic="intercompany_cycle",
+        standalone_rankable=False,
+        fraud_scenario_tags=("group_relationship_context",),
+    ),
 }
 
 
@@ -250,6 +597,12 @@ def normalize_rule_evidence(
         evidence_strength=metadata.evidence_strength,
         scoring_role=metadata.scoring_role,
         normalized_score=max(0.0, min(float(normalized_score), 1.0)),
+        final_topic=metadata.final_topic,
+        secondary_topics=metadata.secondary_topics,
+        standalone_rankable=metadata.standalone_rankable,
+        floor_policy_ids=metadata.floor_policy_ids,
+        combo_policy_ids=metadata.combo_policy_ids,
+        fraud_scenario_tags=metadata.fraud_scenario_tags,
     )
 
 

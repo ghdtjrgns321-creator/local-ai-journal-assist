@@ -16,6 +16,7 @@ from config.settings import get_settings
 from src.detection.base import DetectionResult
 from src.detection.constants import (
     BATCH_CORROBORATION_RULES,
+    LAYER_WEIGHTS,
     RISK_THRESHOLDS,
     RULE_LEVEL_WEIGHTS,
     SEVERITY_MAP,
@@ -183,24 +184,35 @@ def _aggregate_rule_level_scores(
 ) -> pd.Series:
     """Aggregate by L1/L2/L3/L4 using the max rule score inside each family."""
     combined = _combined_normalized_rule_details(results, index)
+    if combined.empty:
+        return _aggregate_legacy_track_scores(index, results, _string_keyed_weights(LAYER_WEIGHTS))
     result_map = {r.track_name: r for r in results}
     score_acc = pd.Series(0.0, index=index)
+    matched_rule_family = False
     for level, weight in weights.items():
         level_key = str(level).upper()
         if level_key in RULE_LEVEL_WEIGHTS:
-            if combined.empty:
-                continue
             columns = [
                 col for col in combined.columns if str(col).upper().startswith(f"{level_key}-")
             ]
             if columns:
+                matched_rule_family = True
                 score_acc = score_acc + combined[columns].max(axis=1) * float(weight)
             continue
 
         track = result_map.get(str(level))
         if track is not None:
             score_acc = score_acc + track.scores.reindex(index, fill_value=0.0) * float(weight)
+    if not matched_rule_family and not score_acc.gt(0).any():
+        return _aggregate_legacy_track_scores(index, results, _string_keyed_weights(LAYER_WEIGHTS))
     return score_acc
+
+
+def _string_keyed_weights(weights: dict[object, float]) -> dict[str, float]:
+    return {
+        key.value if isinstance(key, Layer) else str(key): float(value)
+        for key, value in weights.items()
+    }
 
 
 def _combined_normalized_rule_details(

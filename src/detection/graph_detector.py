@@ -136,6 +136,36 @@ class GraphDetector(BaseDetector):
         merged_meta: dict = {"elapsed": elapsed, "skipped_rules": skipped}
         for rule_meta in rule_metadata.values():
             merged_meta.update(rule_meta)
+        coverage_issues: list[dict[str, object]] = []
+        gr01_meta = rule_metadata.get("GR01", {})
+        if gr01_meta.get("gr01_max_edges_raised"):
+            coverage_issues.append(
+                {
+                    "rule_id": "GR01",
+                    "kind": "coverage_limited",
+                    "reason": "max_edges_threshold_raised",
+                    "effective_min_amount": gr01_meta.get("gr01_min_amount_effective"),
+                }
+            )
+        if gr01_meta.get("gr01_skipped_components", 0):
+            coverage_issues.append(
+                {
+                    "rule_id": "GR01",
+                    "kind": "coverage_limited",
+                    "reason": "component_limit_skipped",
+                    "skipped_components": gr01_meta.get("gr01_skipped_components"),
+                }
+            )
+        if gr01_meta.get("gr01_skip_reason"):
+            coverage_issues.append(
+                {
+                    "rule_id": "GR01",
+                    "kind": "missing_prerequisites",
+                    "reason": gr01_meta.get("gr01_skip_reason"),
+                }
+            )
+        merged_meta["coverage_issues"] = coverage_issues
+        merged_meta["analysis_degraded"] = bool(coverage_issues)
 
         return self._make_result(
             flagged_indices=flagged_indices,

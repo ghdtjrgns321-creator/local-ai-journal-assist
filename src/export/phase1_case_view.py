@@ -12,6 +12,13 @@ from src.detection.phase1_case_builder import (
     _rule_label,
     load_phase1_case_result,
 )
+from src.detection.rule_detail_metadata import (
+    PresenterSurface,
+    can_render_row_violation_detail,
+    canonicalize_rule_id,
+    get_rule_detail_metadata,
+)
+from src.detection.rule_scoring import TOPIC_REGISTRY
 from src.models.phase1_case import CaseGroupResult, Phase1CaseResult
 
 if TYPE_CHECKING:
@@ -36,6 +43,21 @@ _LOW_SIGNAL_RELEVANT_RULES = {
     "L3-06",
     "L3-12",
     "L4-03",
+}
+
+_TOPIC_IDS = tuple(TOPIC_REGISTRY.keys())
+_LEGACY_QUEUE_TOPIC_MAP = {
+    "data_integrity": "ledger_integrity",
+    "data_integrity_failure": "ledger_integrity",
+    "control_approval": "approval_control",
+    "timing_close": "closing_timing",
+    "account_logic": "account_logic",
+    "duplicate_outflow": "duplicate_outflow",
+    "intercompany_cycle": "intercompany_cycle",
+    "amount_statistical": "revenue_statistical",
+    "revenue_statistical": "revenue_statistical",
+    "manipulation_candidate": "revenue_statistical",
+    "low_signal_candidate": "revenue_statistical",
 }
 
 
@@ -97,10 +119,7 @@ def summarize_phase1_case_result(
             "queues": [],
         }
 
-    queue_summaries = _queue_summaries(phase1)
-    low_signal_summary = _low_signal_summary(pr, phase1)
-    if low_signal_summary is not None:
-        queue_summaries.append(low_signal_summary)
+    topic_summaries = _topic_summaries(phase1)
     return {
         "available": True,
         "metadata_only": False,
@@ -109,23 +128,36 @@ def summarize_phase1_case_result(
         "case_count": len(phase1.cases),
         "macro_finding_count": int(phase1.metadata.get("macro_finding_count", 0) or 0),
         "macro_findings": list(phase1.metadata.get("macro_findings", []) or [])[:5],
-        "top_theme_ids": [theme.theme_id for theme in phase1.theme_summaries[:3]],
-        "top_theme_labels": [theme.theme_label for theme in phase1.theme_summaries[:3]],
-        "queues": queue_summaries,
-        "top_queue_ids": [queue["queue_id"] for queue in queue_summaries[:3]],
-        "top_queue_labels": [queue["queue_label"] for queue in queue_summaries[:3]],
+        "top_theme_ids": [topic["topic_id"] for topic in topic_summaries[:3]],
+        "top_theme_labels": [topic["topic_label"] for topic in topic_summaries[:3]],
+        "queues": [
+            {
+                "queue_id": topic["topic_id"],
+                "queue_label": topic["topic_label"],
+                "case_count": topic["case_count"],
+                "high_count": topic["high_count"],
+                "medium_count": topic["medium_count"],
+                "low_count": topic["low_count"],
+                "total_amount": topic["total_amount"],
+                "top_case_ids": topic["top_case_ids"],
+            }
+            for topic in topic_summaries
+        ],
+        "top_queue_ids": [topic["topic_id"] for topic in topic_summaries[:3]],
+        "top_queue_labels": [topic["topic_label"] for topic in topic_summaries[:3]],
+        "topics": topic_summaries,
         "themes": [
             {
-                "theme_id": theme.theme_id,
-                "theme_label": theme.theme_label,
-                "case_count": theme.case_count,
-                "high_count": theme.high_count,
-                "medium_count": theme.medium_count,
-                "low_count": theme.low_count,
-                "total_amount": theme.total_amount,
-                "top_case_ids": list(theme.top_case_ids),
+                "theme_id": topic["topic_id"],
+                "theme_label": topic["topic_label"],
+                "case_count": topic["case_count"],
+                "high_count": topic["high_count"],
+                "medium_count": topic["medium_count"],
+                "low_count": topic["low_count"],
+                "total_amount": topic["total_amount"],
+                "top_case_ids": topic["top_case_ids"],
             }
-            for theme in phase1.theme_summaries
+            for topic in topic_summaries
         ],
     }
 
@@ -150,21 +182,26 @@ def build_phase1_case_queue(
         if top_n is not None:
             items = items[:top_n]
         return items
-
-    if queue_id:
+    topic_id = _topic_id_from_legacy(queue_id or theme_id)
+    if topic_id:
+        items = [
+            case
+            for case in items
+            if topic_id in _case_topic_ids(case)
+        ]
+    elif queue_id:
         queue = str(queue_id)
         items = [
             case
             for case in items
             if case.primary_queue == queue or queue in case.secondary_queues
         ]
-    if theme_id:
+    elif theme_id:
         items = [case for case in items if case.primary_theme == theme_id]
     items = sorted(
         items,
         key=lambda case: (
-            -int(case.exposure_rank or 1_000_000_000),
-            case.priority_score,
+            _case_topic_score(case, topic_id),
             case.triage_rank_score,
             case.repeat_months,
             case.total_amount,
@@ -174,7 +211,7 @@ def build_phase1_case_queue(
     )
     if top_n is not None:
         items = items[:top_n]
-    return [_case_row(case, phase1) for case in items]
+    return [_case_row(case, phase1, topic_id=topic_id) for case in items]
 
 
 def build_phase1_data_quality_gate(pr: PipelineResult) -> dict[str, Any]:
@@ -372,7 +409,7 @@ def build_phase1_rule_document_counts(pr: PipelineResult) -> dict[str, int]:
         if not case_id:
             continue
         for hit in case.raw_rule_hits:
-            rule_id = str(hit.rule_id or "").strip()
+            rule_id = canonicalize_rule_id(str(hit.rule_id or "").strip())
             if not rule_id:
                 continue
             case_sets.setdefault(rule_id, set()).add(case_id)
@@ -390,8 +427,16 @@ def build_phase1_rule_documents(
     함께 반환한다. 같은 document_id 의 첫 row 를 대표로 사용하고,
     case_id/priority_band 는 phase1.cases 메타데이터로 보강한다.
     """
-    target = str(rule_id)
+    requested_rule_id = str(rule_id or "").strip()
+    target = canonicalize_rule_id(requested_rule_id)
     if not target:
+        return []
+    if not can_render_row_violation_detail(target):
+        logger.debug(
+            "Skipping Phase1 row violation detail for %s; canonical_rule_id=%s",
+            requested_rule_id,
+            target,
+        )
         return []
 
     data = _feature_frame(pr)
@@ -399,7 +444,7 @@ def build_phase1_rule_documents(
         return []
 
     rule_text = _rule_text_series(data)
-    mask = rule_text.map(lambda value: target in _rule_tokens(value))
+    mask = rule_text.map(lambda value: target in _canonical_rule_tokens(value))
     if not bool(mask.any()):
         return []
 
@@ -414,11 +459,15 @@ def build_phase1_rule_documents(
             case_doc_ids = {
                 str(hit.document_id)
                 for hit in case.raw_rule_hits
-                if hit.rule_id == target
+                if canonicalize_rule_id(str(hit.rule_id or "")) == target
             }
             for doc in case.documents:
                 doc_id = str(doc.document_id)
-                if doc_id in case_doc_ids or target in (doc.matched_rules or []):
+                matched_rules = {
+                    canonicalize_rule_id(str(rule or ""))
+                    for rule in (doc.matched_rules or [])
+                }
+                if doc_id in case_doc_ids or target in matched_rules:
                     case_meta.setdefault(
                         doc_id,
                         {
@@ -491,7 +540,8 @@ def build_phase1_rule_document_detail(
     document_id: str,
 ) -> dict[str, Any] | None:
     """Return detail-panel data for one rule/document selection."""
-    target = str(rule_id or "").strip()
+    requested_rule_id = str(rule_id or "").strip()
+    target = canonicalize_rule_id(requested_rule_id)
     doc_id = str(document_id or "").strip()
     if not target or not doc_id:
         return None
@@ -518,7 +568,7 @@ def build_phase1_rule_document_detail(
             case_hit_docs = {
                 str(hit.document_id)
                 for hit in case.raw_rule_hits
-                if str(hit.rule_id) == target
+                if canonicalize_rule_id(str(hit.rule_id or "")) == target
             }
             if doc_id not in case_doc_ids and doc_id not in case_hit_docs:
                 continue
@@ -535,6 +585,7 @@ def build_phase1_rule_document_detail(
 
     return {
         "rule_id": target,
+        "requested_rule_id": requested_rule_id,
         "document_id": doc_id,
         "violation_summary": selected.get("violation_summary")
         or selected.get("evidence_summary"),
@@ -1336,50 +1387,63 @@ def build_phase1_audit_risk_queue(
     return [_case_row(case, phase1, tie_queue_id=queue_id) for case in items]
 
 
+def build_phase1_topic_top_n(
+    pr: PipelineResult,
+    *,
+    topic_id: str,
+    top_n: int | None = 10,
+) -> list[dict[str, Any]]:
+    """Return one official topic's Top-N cases sorted by topic_score desc."""
+    phase1 = resolve_phase1_case_result(pr)
+    resolved_topic = _topic_id_from_legacy(topic_id)
+    if phase1 is None or resolved_topic is None:
+        return []
+    members = [
+        case
+        for case in phase1.cases
+        if resolved_topic in _case_topic_ids(case)
+        and _case_topic_score(case, resolved_topic) > 0
+    ]
+    members.sort(
+        key=lambda case: (
+            _case_topic_score(case, resolved_topic),
+            _band_rank(case.priority_band),
+            case.triage_rank_score,
+            case.total_amount,
+            case.rule_count,
+            -case.document_count,
+        ),
+        reverse=True,
+    )
+    if top_n is not None:
+        members = members[:top_n]
+    return [_case_row(case, phase1, topic_id=resolved_topic) for case in members]
+
+
 def build_phase1_audit_risk_by_queue(
     pr: PipelineResult,
     *,
     top_n_per_queue: int = 5,
 ) -> dict[str, Any]:
-    """Return audit-risk candidates grouped by audit work queue."""
+    """Return PHASE1 Top-N grouped by the seven locked auditor topics."""
     phase1 = resolve_phase1_case_result(pr)
     if phase1 is None:
         return {"available": False, "queues": []}
 
-    queue_order = [
-        "control_approval",
-        "timing_close",
-        "amount_statistical",
-        "account_logic",
-        "duplicate_outflow",
-        "intercompany_cycle",
-        "manipulation_candidate",
-    ]
-    queue_labels = _audit_queue_labels(phase1)
-    excluded = {"data_integrity", _LOW_SIGNAL_QUEUE_ID}
-    source_cases = [
-        case
-        for case in phase1.cases
-        if case.primary_queue not in excluded
-        and case.primary_theme != "data_integrity_failure"
-        and _case_signal_counts(case)["direct_risk"] > 0
-    ]
-
     queues = []
-    for queue_id in queue_order:
+    for queue_id in _TOPIC_IDS:
         members = [
             case
-            for case in source_cases
-            if case.primary_queue == queue_id or queue_id in case.secondary_queues
+            for case in phase1.cases
+            if queue_id in _case_topic_ids(case) and _case_topic_score(case, queue_id) > 0
         ]
         if not members:
             continue
         members = sorted(
             members,
             key=lambda case: (
+                _case_topic_score(case, queue_id),
                 _band_rank(case.priority_band),
-                case.priority_score,
-                _queue_tiebreaker(case, queue_id)["score"],
                 case.triage_rank_score,
                 case.total_amount,
                 case.rule_count,
@@ -1390,10 +1454,10 @@ def build_phase1_audit_risk_by_queue(
         queues.append(
             {
                 "queue_id": queue_id,
-                "queue_label": queue_labels.get(queue_id, queue_id.replace("_", " ")),
+                "queue_label": _topic_label(queue_id),
                 "total_cases": len(members),
                 "items": [
-                    _case_row(case, phase1, tie_queue_id=queue_id)
+                    _case_row(case, phase1, topic_id=queue_id)
                     for case in members[:top_n_per_queue]
                 ],
             }
@@ -1418,12 +1482,13 @@ def build_phase1_review_candidate_summary(pr: PipelineResult) -> dict[str, Any]:
         )
         if not is_review or case.primary_queue == "data_integrity":
             continue
-        key = case.primary_queue or case.primary_theme
+        topic_id = _primary_case_topic(case)
+        key = topic_id or case.primary_queue or case.primary_theme
         row = rows.setdefault(
             key,
             {
                 "queue_id": key,
-                "queue_label": case.primary_queue_label or key.replace("_", " "),
+                "queue_label": _topic_label(topic_id) if topic_id else key.replace("_", " "),
                 "cases": 0,
                 "documents": set(),
                 "review_hits": 0,
@@ -1611,17 +1676,34 @@ def _case_row(
     phase1: Phase1CaseResult,
     *,
     tie_queue_id: str | None = None,
+    topic_id: str | None = None,
 ) -> dict[str, Any]:
     signal_counts = _case_signal_counts(case)
+    resolved_topic = _topic_id_from_legacy(topic_id) or _primary_case_topic(case)
+    topic_score = _case_topic_score(case, resolved_topic)
     tie = _queue_tiebreaker(case, tie_queue_id or case.primary_queue)
+    primary_topic = _primary_case_topic(case)
     return {
         "case_id": case.case_id,
+        "topic_id": resolved_topic,
+        "topic_label": _topic_label(resolved_topic),
+        "topic_score": topic_score,
+        "primary_topic": primary_topic,
+        "primary_topic_label": _topic_label(primary_topic),
+        "topic_scores": dict(case.topic_scores),
+        "topic_score_breakdown": dict(case.topic_score_breakdown),
+        "secondary_topics": list(case.secondary_topics),
+        "fraud_scenario_tags": list(case.fraud_scenario_tags),
         "primary_theme": case.primary_theme,
-        "primary_theme_label": _theme_label(phase1, case.primary_theme),
+        "primary_theme_label": _topic_label(primary_topic),
         "primary_queue": case.primary_queue,
-        "primary_queue_label": case.primary_queue_label,
+        "primary_queue_label": _topic_label(resolved_topic),
         "secondary_queues": list(case.secondary_queues),
-        "secondary_queue_labels": list(case.secondary_queue_labels),
+        "secondary_queue_labels": [
+            _topic_label(topic)
+            for topic in _case_topic_ids(case)
+            if topic != resolved_topic
+        ],
         "secondary_tags": list(case.secondary_tags),
         "case_key": case.case_key,
         "case_key_parts": dict(case.case_key_parts),
@@ -1902,6 +1984,123 @@ def _low_signal_case_row(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _topic_summaries(phase1: Phase1CaseResult) -> list[dict[str, Any]]:
+    summaries: list[dict[str, Any]] = []
+    for topic_id in _TOPIC_IDS:
+        members = [
+            case
+            for case in phase1.cases
+            if topic_id in _case_topic_ids(case) and _case_topic_score(case, topic_id) > 0
+        ]
+        members.sort(
+            key=lambda case: (
+                _case_topic_score(case, topic_id),
+                _band_rank(case.priority_band),
+                case.triage_rank_score,
+                case.total_amount,
+                case.rule_count,
+            ),
+            reverse=True,
+        )
+        high = sum(1 for case in members if str(case.priority_band).lower() == "high")
+        medium = sum(1 for case in members if str(case.priority_band).lower() == "medium")
+        low = len(members) - high - medium
+        summaries.append(
+            {
+                "topic_id": topic_id,
+                "topic_label": _topic_label(topic_id),
+                "case_count": len(members),
+                "high_count": high,
+                "medium_count": medium,
+                "low_count": low,
+                "total_amount": sum(float(case.total_amount or 0.0) for case in members),
+                "top_case_ids": [case.case_id for case in members[:10]],
+            }
+        )
+    return summaries
+
+
+def _topic_id_from_legacy(value: Any) -> str | None:
+    key = str(value or "").strip()
+    if not key:
+        return None
+    if key in TOPIC_REGISTRY:
+        return key
+    return _LEGACY_QUEUE_TOPIC_MAP.get(key)
+
+
+def _topic_label(topic_id: str | None) -> str:
+    if topic_id and topic_id in TOPIC_REGISTRY:
+        return TOPIC_REGISTRY[topic_id].label
+    return str(topic_id or "")
+
+
+def _primary_case_topic(case: CaseGroupResult) -> str | None:
+    for candidate in (
+        getattr(case, "primary_topic", None),
+        getattr(case, "primary_queue", None),
+        getattr(case, "primary_theme", None),
+    ):
+        topic_id = _topic_id_from_legacy(candidate)
+        if topic_id:
+            return topic_id
+    scores = getattr(case, "topic_scores", None) or {}
+    scored_topics = [
+        (topic_id, _case_topic_score(case, topic_id))
+        for topic_id in _TOPIC_IDS
+        if topic_id in scores
+    ]
+    if scored_topics:
+        return max(scored_topics, key=lambda item: item[1])[0]
+    return None
+
+
+def _case_topic_ids(case: CaseGroupResult) -> tuple[str, ...]:
+    topics: list[str] = []
+
+    def add(value: Any) -> None:
+        topic_id = _topic_id_from_legacy(value)
+        if topic_id and topic_id not in topics:
+            topics.append(topic_id)
+
+    for topic_id, score in (getattr(case, "topic_scores", None) or {}).items():
+        if topic_id in TOPIC_REGISTRY and _coerce_float(score) > 0:
+            add(topic_id)
+    add(getattr(case, "primary_topic", None))
+    add(getattr(case, "primary_queue", None))
+    add(getattr(case, "primary_theme", None))
+    for topic_id in getattr(case, "secondary_topics", []) or []:
+        add(topic_id)
+    for queue_id in getattr(case, "secondary_queues", []) or []:
+        add(queue_id)
+    return tuple(topics)
+
+
+def _case_topic_score(case: CaseGroupResult, topic_id: str | None) -> float:
+    if not topic_id:
+        scores = getattr(case, "topic_scores", None) or {}
+        if scores:
+            return max(_coerce_float(score) for score in scores.values())
+        return _coerce_float(getattr(case, "priority_score", 0.0))
+    score = _coerce_float((getattr(case, "topic_scores", None) or {}).get(topic_id))
+    if score > 0:
+        return score
+    if topic_id in {
+        _topic_id_from_legacy(getattr(case, "primary_topic", None)),
+        _topic_id_from_legacy(getattr(case, "primary_queue", None)),
+        _topic_id_from_legacy(getattr(case, "primary_theme", None)),
+    }:
+        return _coerce_float(getattr(case, "priority_score", 0.0))
+    return 0.0
+
+
+def _coerce_float(value: Any) -> float:
+    try:
+        return float(value or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _low_signal_drilldown(
     pr: PipelineResult,
     phase1: Phase1CaseResult,
@@ -1981,6 +2180,10 @@ def _rule_tokens(value: Any) -> set[str]:
     }
 
 
+def _canonical_rule_tokens(value: Any) -> set[str]:
+    return {canonicalize_rule_id(token) for token in _rule_tokens(value)}
+
+
 def _to_numeric(series: Any) -> Any:
     import pandas as pd
 
@@ -2028,45 +2231,19 @@ def _raw_hit_row(hit: Any) -> dict[str, Any]:
 
 
 def _queue_summaries(phase1: Phase1CaseResult) -> list[dict[str, Any]]:
-    by_queue: dict[str, dict[str, Any]] = {}
-    for case in phase1.cases:
-        queues = [case.primary_queue, *case.secondary_queues]
-        for queue_id in queues:
-            if not queue_id:
-                continue
-            row = by_queue.setdefault(
-                queue_id,
-                {
-                    "queue_id": queue_id,
-                    "queue_label": _queue_label(case, queue_id),
-                    "case_count": 0,
-                    "high_count": 0,
-                    "medium_count": 0,
-                    "low_count": 0,
-                    "total_amount": 0.0,
-                    "top_case_ids": [],
-                },
-            )
-            row["case_count"] += 1
-            band = str(case.priority_band).lower()
-            if band == "high":
-                row["high_count"] += 1
-            elif band == "medium":
-                row["medium_count"] += 1
-            else:
-                row["low_count"] += 1
-            row["total_amount"] += float(case.total_amount or 0.0)
-            if len(row["top_case_ids"]) < 10:
-                row["top_case_ids"].append(case.case_id)
-    return sorted(
-        by_queue.values(),
-        key=lambda row: (
-            row["queue_id"] != "manipulation_candidate",
-            -int(row["high_count"]),
-            -int(row["case_count"]),
-            str(row["queue_label"]),
-        ),
-    )
+    return [
+        {
+            "queue_id": topic["topic_id"],
+            "queue_label": topic["topic_label"],
+            "case_count": topic["case_count"],
+            "high_count": topic["high_count"],
+            "medium_count": topic["medium_count"],
+            "low_count": topic["low_count"],
+            "total_amount": topic["total_amount"],
+            "top_case_ids": topic["top_case_ids"],
+        }
+        for topic in _topic_summaries(phase1)
+    ]
 
 
 def _queue_label(case: CaseGroupResult, queue_id: str) -> str:
@@ -2260,10 +2437,29 @@ def _signal_type(hit: Any) -> str:
     scoring_role = str(hit.scoring_role or "").strip().lower()
     evidence_type = str(hit.evidence_type or "").strip().lower()
     signal_status = str(hit.signal_status or "").strip().lower()
+    canonical_rule_id = canonicalize_rule_id(rule_id)
 
-    if rule_id in _MACRO_RULES or scoring_role == "macro_only":
+    try:
+        metadata = get_rule_detail_metadata(rule_id)
+    except KeyError:
+        metadata = None
+    if metadata is not None:
+        if metadata.presenter_surface in {
+            PresenterSurface.ACCOUNT_PROCESS_MACRO,
+            PresenterSurface.GRAPH_SIDECAR,
+        }:
+            return "macro_finding"
+        if metadata.presenter_surface in {
+            PresenterSurface.CONTEXT_BADGE,
+            PresenterSurface.DRILLDOWN_REASON,
+        }:
+            return "review_context"
+        if metadata.presenter_surface == PresenterSurface.INTERCOMPANY_SIDECAR:
+            return "review_context"
+
+    if canonical_rule_id in _MACRO_RULES or scoring_role == "macro_only":
         return "macro_finding"
-    if rule_id in _INTEGRITY_RULES or evidence_type == "data_integrity_failure":
+    if canonical_rule_id in _INTEGRITY_RULES or evidence_type == "data_integrity_failure":
         return "integrity_blocker"
     if signal_status == "review_candidate":
         return "review_context"

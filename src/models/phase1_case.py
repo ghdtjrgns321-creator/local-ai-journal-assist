@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class RawRuleHitRef(BaseModel):
@@ -45,6 +45,12 @@ class CaseGroupResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     case_id: str
+    primary_topic: str = ""
+    primary_topic_label: str = ""
+    topic_scores: dict[str, float] = Field(default_factory=dict)
+    topic_score_breakdown: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    secondary_topics: list[str] = Field(default_factory=list)
+    fraud_scenario_tags: list[str] = Field(default_factory=list)
     primary_theme: str
     primary_queue: str = ""
     primary_queue_label: str = ""
@@ -96,6 +102,22 @@ class CaseGroupResult(BaseModel):
     has_control_failure: bool = False
     has_high_materiality: bool = False
     has_repeat_pattern: bool = False
+
+    @model_validator(mode="after")
+    def _fill_topic_compatibility(self) -> CaseGroupResult:
+        if not self.primary_topic:
+            self.primary_topic = self.primary_theme
+        if not self.primary_theme:
+            self.primary_theme = self.primary_topic
+        if not self.primary_queue:
+            self.primary_queue = self.primary_topic
+        if not self.primary_topic_label:
+            self.primary_topic_label = self.primary_queue_label
+        if not self.topic_scores and self.primary_topic:
+            self.topic_scores = {self.primary_topic: float(self.priority_score or 0.0)}
+        if not self.secondary_topics:
+            self.secondary_topics = list(self.secondary_queues)
+        return self
 
 
 class ThemeSummary(BaseModel):

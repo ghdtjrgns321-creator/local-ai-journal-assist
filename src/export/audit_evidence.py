@@ -20,7 +20,11 @@ from dataclasses import dataclass
 import pandas as pd
 
 from src.detection.constants import RULE_EXPLANATIONS
-from src.detection.explanations import build_export_narrative, parse_flagged_rules
+from src.detection.explanations import (
+    build_export_narrative,
+    build_rule_explanation,
+    parse_flagged_rules,
+)
 
 # Why: 하위 호환 테스트/외부 import를 위해 export 모듈에서도 공개.
 RULE_LEGAL_BASIS: dict[str, str] = {
@@ -28,6 +32,14 @@ RULE_LEGAL_BASIS: dict[str, str] = {
     for rule_id, explanation in RULE_EXPLANATIONS.items()
     if explanation.references
 }
+RULE_LEGAL_BASIS.update(
+    {
+        rule_id: explanation["references"][0]
+        for rule_id in ("L1-01", "L2-02", "L2-05", "L3-04", "L4-02", "ML02", "EN01")
+        for explanation in [build_rule_explanation(rule_id)]
+        if explanation["references"]
+    },
+)
 
 
 @dataclass

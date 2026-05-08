@@ -8,7 +8,7 @@ L4-02(Benford)은 BenfordDetector 독립 트랙으로 분리됨 (DETECTION_RULES
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
@@ -68,8 +68,22 @@ class AnomalyDetector(BaseDetector):
 
         rule_results: dict[str, pd.Series] = {}
         skipped: list[str] = []
+        coverage_issues: list[dict[str, Any]] = []
 
         for rule_id, func, kwargs in self._build_registry():
+            missing_inputs = self._missing_inputs(rule_id, df)
+            if missing_inputs:
+                skipped.append(rule_id)
+                coverage_issues.append(
+                    {
+                        "rule_id": rule_id,
+                        "kind": "missing_prerequisites",
+                        "missing_inputs": missing_inputs,
+                    }
+                )
+                warnings.append(f"{rule_id} skipped: missing inputs {missing_inputs}")
+                rule_results[rule_id] = pd.Series(False, index=df.index)
+                continue
             try:
                 rule_results[rule_id] = func(df, **kwargs)
             except Exception as exc:
@@ -78,7 +92,12 @@ class AnomalyDetector(BaseDetector):
                 self._logger.warning("%s 실행 실패: %s", rule_id, exc)
 
         elapsed = time.perf_counter() - start
-        return self._build_result(df, rule_results, skipped, warnings, elapsed)
+        return self._build_result(df, rule_results, skipped, warnings, elapsed, coverage_issues)
+
+    def _missing_inputs(self, rule_id: str, df: pd.DataFrame) -> list[str]:
+        if rule_id == "L3-04" and "is_period_end" not in df.columns:
+            return ["is_period_end"]
+        return []
 
     def _build_registry(self) -> list[tuple[str, Callable, dict]]:
         """룰 레지스트리: (rule_id, callable, kwargs)."""
@@ -137,10 +156,11 @@ class AnomalyDetector(BaseDetector):
         skipped: list[str],
         warnings: list[str],
         elapsed: float,
+        coverage_issues: list[dict[str, Any]] | None = None,
     ) -> DetectionResult:
         """룰별 bool Series → scores, details, RuleFlag 통합."""
         if not rule_results:
-            return self._empty_result(df, warnings, elapsed)
+            return self._empty_result(df, warnings, elapsed, skipped, coverage_issues)
 
         details = pd.DataFrame(index=df.index)
         flag_details = pd.DataFrame(index=df.index)
@@ -191,6 +211,8 @@ class AnomalyDetector(BaseDetector):
         metadata = {
             "elapsed": elapsed,
             "skipped_rules": skipped,
+            "coverage_issues": coverage_issues or [],
+            "analysis_degraded": bool(coverage_issues),
             "rule_breakdowns": rule_breakdowns,
             "row_annotations": row_annotations,
             "rule_flag_series": flag_details,
@@ -269,6 +291,8 @@ class AnomalyDetector(BaseDetector):
         df: pd.DataFrame,
         warnings: list[str],
         elapsed: float,
+        skipped: list[str] | None = None,
+        coverage_issues: list[dict[str, Any]] | None = None,
     ) -> DetectionResult:
         """빈 결과 생성 — 필수 컬럼 누락 또는 모든 룰 실패 시."""
         return self._make_result(
@@ -276,6 +300,11 @@ class AnomalyDetector(BaseDetector):
             scores=pd.Series(0.0, index=df.index if not df.empty else pd.RangeIndex(0)),
             rule_flags=[],
             details=pd.DataFrame(index=df.index if not df.empty else pd.RangeIndex(0)),
-            metadata={"elapsed": elapsed, "skipped_rules": []},
+            metadata={
+                "elapsed": elapsed,
+                "skipped_rules": skipped or [],
+                "coverage_issues": coverage_issues or [],
+                "analysis_degraded": bool(coverage_issues),
+            },
             warnings=warnings,
         )

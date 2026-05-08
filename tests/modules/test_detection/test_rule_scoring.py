@@ -5,8 +5,14 @@ import pytest
 from src.detection.phase1_case_builder import _RULE_THEME_MAP
 from src.detection.rule_scoring import (
     RULE_SCORING_REGISTRY,
+    TOPIC_REGISTRY,
     normalize_rule_evidence,
     normalize_signal_strength,
+)
+from src.detection.topic_scoring import (
+    compute_fraud_scenario_tags,
+    compute_topic_scores,
+    pick_primary_topic,
 )
 
 
@@ -294,7 +300,7 @@ def test_l305_calendar_scores_preserve_phase1_risk_order():
         ]
     ]
 
-    assert normalized == pytest.approx([0.135, 0.153, 0.18])
+    assert normalized == pytest.approx([0.08775, 0.09945, 0.117])
     assert normalized == sorted(normalized)
 
 
@@ -403,8 +409,380 @@ def test_l405_behavior_bands_preserve_phase1_priority_order():
         for score in scores
     ]
 
-    assert normalized == pytest.approx([0.0675, 0.1215, 0.135, 0.1485, 0.1755])
+    assert normalized == pytest.approx([0.043875, 0.078975, 0.08775, 0.096525, 0.114075])
     assert normalized == sorted(normalized)
+
+
+def test_topic_registry_has_locked_seven_topics():
+    assert list(TOPIC_REGISTRY) == [
+        "ledger_integrity",
+        "approval_control",
+        "closing_timing",
+        "account_logic",
+        "duplicate_outflow",
+        "intercompany_cycle",
+        "revenue_statistical",
+    ]
+    assert TOPIC_REGISTRY["ledger_integrity"].label == "원장기록·데이터정합성"
+
+
+def test_locked_rule_topic_corrections_are_registered():
+    l201 = RULE_SCORING_REGISTRY["L2-01"]
+    l108 = RULE_SCORING_REGISTRY["L1-08"]
+
+    assert l201.final_topic == "duplicate_outflow"
+    assert l201.secondary_topics == ("approval_control",)
+    assert l108.final_topic == "closing_timing"
+    assert l108.secondary_topics == ("ledger_integrity",)
+
+
+def test_all_registered_rules_have_one_locked_final_topic():
+    missing = sorted(
+        rule_id
+        for rule_id, metadata in RULE_SCORING_REGISTRY.items()
+        if metadata.final_topic not in TOPIC_REGISTRY
+    )
+
+    assert missing == []
+
+
+@pytest.mark.parametrize("rule_id", ["L3-05", "L3-06"])
+def test_l305_l306_are_boosters_not_standalone_rankable(rule_id: str):
+    metadata = RULE_SCORING_REGISTRY[rule_id]
+
+    assert metadata.scoring_role == "booster"
+    assert metadata.standalone_rankable is False
+
+
+@pytest.mark.parametrize("rule_id", ["L4-02", "Benford", "D01", "D02"])
+def test_locked_macro_only_rules_have_zero_standalone_contribution(rule_id: str):
+    evidence = normalize_rule_evidence(
+        rule_id=rule_id,
+        evidence_type=RULE_SCORING_REGISTRY[rule_id].evidence_type,
+        severity=3,
+        raw_value=1.0,
+    )
+
+    assert evidence.scoring_role == "macro_only"
+    assert evidence.standalone_rankable is False
+    assert evidence.normalized_score == 0.0
+
+
+@pytest.mark.parametrize("rule_id", ["L4-06", "L3-12"])
+def test_locked_combo_only_rules_do_not_seed_topic_score(rule_id: str):
+    evidence = normalize_rule_evidence(
+        rule_id=rule_id,
+        evidence_type=RULE_SCORING_REGISTRY[rule_id].evidence_type,
+        severity=3,
+        raw_value=1.0,
+    )
+
+    scores = compute_topic_scores([evidence])
+
+    assert evidence.scoring_role == "combo_only"
+    assert evidence.standalone_rankable is False
+    assert max(scores.values()) == 0.0
+
+
+def test_topic_scoring_uses_primary_secondary_and_tags():
+    primary = normalize_rule_evidence(
+        rule_id="L2-01",
+        evidence_type="duplicate_or_outflow",
+        severity=3,
+        raw_value=0.75,
+        display_label="razor_band",
+    )
+    secondary = normalize_rule_evidence(
+        rule_id="L1-05",
+        evidence_type="control_failure",
+        severity=3,
+        raw_value=0.1,
+    )
+
+    scores = compute_topic_scores([primary, secondary])
+
+    assert pick_primary_topic(scores) == "duplicate_outflow"
+    assert scores["duplicate_outflow"] > scores["approval_control"]
+    assert compute_fraud_scenario_tags([primary, secondary]) == (
+        "threshold_splitting",
+        "approval_bypass",
+        "embezzlement_concealment_risk",
+    )
+
+
+def test_audit_evidence_score_boosts_but_does_not_seed_topic_score():
+    no_rule_scores = compute_topic_scores(
+        [],
+        audit_evidence_score={"approval_control": 1.0},
+    )
+    primary = normalize_rule_evidence(
+        rule_id="L1-05",
+        evidence_type="control_failure",
+        severity=3,
+        raw_value=0.6,
+    )
+    without_context = compute_topic_scores([primary])
+    with_context = compute_topic_scores(
+        [primary],
+        audit_evidence_score={"approval_control": 1.0},
+    )
+
+    assert max(no_rule_scores.values()) == 0.0
+    assert with_context["approval_control"] > without_context["approval_control"]
+    assert with_context["approval_control"] < 0.75
+
+
+def _topic_evidences(rule_specs):
+    return [
+        normalize_rule_evidence(
+            rule_id=rule_id,
+            evidence_type=evidence_type,
+            severity=severity,
+            raw_value=raw_value,
+            display_label=display_label,
+        )
+        for rule_id, evidence_type, severity, raw_value, display_label in rule_specs
+    ]
+
+
+@pytest.mark.parametrize(
+    ("topic_id", "expected_tag", "expected_floor", "expected_reason", "rule_specs"),
+    [
+        (
+            "closing_timing",
+            "period_end_adjustment_risk",
+            0.75,
+            "period_end_or_late_posting + high_amount + weak_description_or_sensitive_account",
+            [
+                ("L3-04", "timing_anomaly", 3, 0.6, ""),
+                ("L4-03", "statistical_outlier", 3, 0.7, "high_zscore"),
+                ("L3-08", "timing_anomaly", 1, 0.6, ""),
+            ],
+        ),
+        (
+            "duplicate_outflow",
+            "embezzlement_concealment_risk",
+            0.75,
+            "outflow_or_duplicate + approval_bypass",
+            [
+                ("L2-05", "duplicate_or_outflow", 3, 0.8, ""),
+                ("L1-05", "control_failure", 4, 0.8, ""),
+            ],
+        ),
+        (
+            "intercompany_cycle",
+            "circular_transaction_risk",
+            0.45,
+            "related_party_or_ic + amount_or_timing_anomaly",
+            [
+                ("L3-03", "intercompany_structure", 3, 0.6, ""),
+                ("L4-03", "statistical_outlier", 3, 0.7, "high_zscore"),
+            ],
+        ),
+        (
+            "revenue_statistical",
+            "fictitious_entry_risk",
+            0.75,
+            "revenue_or_amount_outlier + manual_adjustment + rare_or_duplicate_pattern",
+            [
+                ("L4-01", "statistical_outlier", 3, 0.8, ""),
+                ("L3-02", "control_failure", 3, 0.8, ""),
+                ("L4-04", "logic_mismatch", 2, 0.45, ""),
+            ],
+        ),
+        (
+            "approval_control",
+            "approval_bypass_risk",
+            0.75,
+            "approval_bypass + high_amount_or_cutoff_or_strong_abnormal_timing",
+            [
+                ("L1-07", "control_failure", 4, 0.8, ""),
+                ("L4-03", "statistical_outlier", 3, 0.8, "high_zscore"),
+            ],
+        ),
+    ],
+)
+def test_fraud_combo_floor_raises_expected_topic_score(
+    topic_id,
+    expected_tag,
+    expected_floor,
+    expected_reason,
+    rule_specs,
+):
+    evidences = _topic_evidences(rule_specs)
+
+    breakdowns = compute_topic_scores(evidences, return_breakdown=True)
+
+    assert expected_tag in compute_fraud_scenario_tags(evidences)
+    assert breakdowns[topic_id].score >= expected_floor
+    assert expected_reason in breakdowns[topic_id].fraud_combo_policy_ids
+    assert expected_tag in breakdowns[topic_id].fraud_combo_tags
+    assert "manipulation_candidate" not in TOPIC_REGISTRY
+
+
+def test_circular_transaction_combo_gets_high_floor_when_repeat_or_cycle_context_exists():
+    evidences = _topic_evidences([
+        ("IC01", "intercompany_structure", 3, 0.8, ""),
+        ("L3-11", "timing_anomaly", 3, 0.8, ""),
+    ])
+
+    breakdowns = compute_topic_scores(
+        evidences,
+        repeat_score={"intercompany_cycle": 1.0},
+        return_breakdown=True,
+    )
+
+    assert breakdowns["intercompany_cycle"].score == pytest.approx(0.75)
+    assert "related_party_or_ic + amount_or_timing_anomaly + repeat_or_counterparty_cycle" in (
+        breakdowns["intercompany_cycle"].fraud_combo_policy_ids
+    )
+
+
+def test_manual_scope_closing_does_not_create_fictitious_or_period_end_floor():
+    evidences = _topic_evidences([
+        ("L3-02", "control_failure", 3, 0.8, ""),
+        ("L3-04", "timing_anomaly", 3, 0.6, ""),
+        ("L3-12", "access_scope_review", 3, 0.8, ""),
+    ])
+
+    breakdowns = compute_topic_scores(evidences, return_breakdown=True)
+    tags = compute_fraud_scenario_tags(evidences)
+
+    assert "fictitious_entry_risk" not in tags
+    assert "period_end_adjustment_risk" not in tags
+    assert breakdowns["revenue_statistical"].fraud_combo_policy_ids == ()
+    assert breakdowns["closing_timing"].fraud_combo_policy_ids == ()
+
+
+@pytest.mark.parametrize(
+    "rule_specs",
+    [
+        [
+            ("L3-03", "intercompany_structure", 3, 0.6, ""),
+            ("L3-05", "timing_anomaly", 3, 0.6, ""),
+            ("L3-02", "control_failure", 3, 0.8, ""),
+        ],
+        [
+            ("L3-03", "intercompany_structure", 3, 0.6, ""),
+            ("L3-05", "timing_anomaly", 3, 0.6, ""),
+            ("L3-12", "access_scope_review", 3, 0.8, ""),
+        ],
+    ],
+)
+def test_related_party_weekend_manual_or_scope_does_not_create_circular_high_floor(
+    rule_specs,
+):
+    evidences = _topic_evidences(rule_specs)
+
+    breakdowns = compute_topic_scores(evidences, return_breakdown=True)
+
+    assert breakdowns["intercompany_cycle"].score < 0.75
+    assert "related_party + manual_or_scope_context + non_business_day_timing" not in (
+        breakdowns["intercompany_cycle"].fraud_combo_policy_ids
+    )
+
+
+def test_approval_manual_scope_does_not_create_embezzlement_floor():
+    evidences = _topic_evidences([
+        ("L1-05", "control_failure", 4, 0.8, ""),
+        ("L3-02", "control_failure", 3, 0.8, ""),
+        ("L3-12", "access_scope_review", 3, 0.8, ""),
+    ])
+
+    breakdowns = compute_topic_scores(evidences, return_breakdown=True)
+    tags = compute_fraud_scenario_tags(evidences)
+
+    assert "embezzlement_concealment_risk" not in tags
+    assert breakdowns["duplicate_outflow"].fraud_combo_policy_ids == ()
+
+
+@pytest.mark.parametrize(
+    ("rule_specs", "blocked_reason"),
+    [
+        (
+            [
+                ("L1-07", "control_failure", 4, 0.8, ""),
+                ("L3-02", "control_failure", 3, 0.8, ""),
+            ],
+            "approval_bypass + manual_adjustment",
+        ),
+        (
+            [
+                ("L1-07", "control_failure", 4, 0.8, ""),
+                ("L3-05", "timing_anomaly", 3, 0.6, ""),
+            ],
+            "approval_bypass + non_business_day_timing",
+        ),
+    ],
+)
+def test_approval_bypass_with_manual_or_weekend_context_does_not_create_floor(
+    rule_specs,
+    blocked_reason,
+):
+    evidences = _topic_evidences(rule_specs)
+
+    breakdowns = compute_topic_scores(evidences, return_breakdown=True)
+
+    assert breakdowns["approval_control"].score < 0.75
+    assert blocked_reason not in breakdowns["approval_control"].fraud_combo_policy_ids
+
+
+@pytest.mark.parametrize(
+    ("topic_id", "rule_specs", "blocked_reason"),
+    [
+        (
+            "closing_timing",
+            [
+                ("L3-04", "timing_anomaly", 3, 0.6, ""),
+                ("L3-02", "control_failure", 3, 0.8, ""),
+                ("L3-08", "timing_anomaly", 1, 0.6, ""),
+            ],
+            "period_end + manual_adjustment + weak_description",
+        ),
+        (
+            "duplicate_outflow",
+            [
+                ("L2-05", "duplicate_or_outflow", 3, 0.8, ""),
+                ("L3-12", "access_scope_review", 3, 0.8, ""),
+                ("L3-02", "control_failure", 3, 0.8, ""),
+            ],
+            "reversal_or_offset + work_scope_concentration + manual_adjustment",
+        ),
+    ],
+)
+def test_weak_context_combinations_do_not_create_medium_floor(
+    topic_id,
+    rule_specs,
+    blocked_reason,
+):
+    evidences = _topic_evidences(rule_specs)
+
+    breakdowns = compute_topic_scores(evidences, return_breakdown=True)
+    tags = compute_fraud_scenario_tags(evidences)
+
+    assert breakdowns[topic_id].score < 0.60
+    assert blocked_reason not in breakdowns[topic_id].fraud_combo_policy_ids
+    assert not any(tag.endswith("_risk") for tag in tags)
+
+
+@pytest.mark.parametrize(
+    "rule_specs",
+    [
+        [("L4-03", "statistical_outlier", 3, 0.7, "high_zscore")],
+        [("L3-04", "timing_anomaly", 3, 0.6, "")],
+        [("L3-03", "intercompany_structure", 3, 0.6, "")],
+    ],
+)
+def test_single_rules_do_not_apply_fraud_combo_floor(rule_specs):
+    evidences = _topic_evidences(rule_specs)
+
+    breakdowns = compute_topic_scores(evidences, return_breakdown=True)
+
+    assert not any(breakdown.fraud_combo_tags for breakdown in breakdowns.values())
+    assert not any(breakdown.fraud_combo_policy_ids for breakdown in breakdowns.values())
+    assert not any(
+        tag.endswith("_risk") for tag in compute_fraud_scenario_tags(evidences)
+    )
 
 
 def test_l202_duplicate_payment_confidence_order_is_preserved():

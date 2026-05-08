@@ -488,14 +488,17 @@ def test_build_phase1_case_result_uses_l108_annotation_score_for_priority():
         generated_at=datetime(2026, 4, 22, 3, 15, 22, tzinfo=UTC),
     )
 
-    by_doc = {case.documents[0].document_id: case for case in result.cases}
-    base = by_doc["DOC-BASE"]
-    context = by_doc["DOC-CONTEXT"]
-    assert context.raw_rule_hits[0].score == pytest.approx(0.95)
-    assert base.raw_rule_hits[0].score == pytest.approx(0.80)
-    assert context.priority_score > base.priority_score
+    case = next(case for case in result.cases if case.primary_topic == "closing_timing")
+    by_row = {hit.row_index: hit for hit in case.raw_rule_hits}
+
+    assert {doc.document_id for doc in case.documents} == {"DOC-BASE", "DOC-CONTEXT"}
+    assert by_row[0].score == pytest.approx(0.80)
+    assert by_row[1].score == pytest.approx(0.95)
+    assert case.primary_theme == "timing_anomaly"
+    assert case.primary_queue == "timing_close"
+    assert case.priority_score > 0
     assert "l108_context=high_amount,manual_entry,period_end" in (
-        context.priority_adjustment_reasons
+        case.priority_adjustment_reasons
     )
 
 
@@ -551,7 +554,7 @@ def test_l103_case_normalized_score_preserves_raw_score_when_label_is_coarse():
     assert by_doc["DOC-HIGH"].priority_score > by_doc["DOC-LOW"].priority_score
 
 
-def test_build_phase1_case_result_maps_l3_10_into_logic_mismatch():
+def test_l310_alone_does_not_seed_case_queue():
     df = pd.DataFrame(
         {
             "document_id": ["DOC-1"],
@@ -611,19 +614,45 @@ def test_build_phase1_case_result_maps_l3_10_into_logic_mismatch():
         generated_at=datetime(2026, 4, 22, 3, 15, 22, tzinfo=UTC),
     )
 
-    case = next(case for case in result.cases if case.primary_theme == "logic_mismatch")
-    assert case.evidence_types == ["logic_mismatch"]
-    assert case.raw_rule_hits[0].rule_id == "L3-10"
-    assert case.raw_rule_hits[0].detail == (
-        "prefix=111; group=cash_equivalent; "
-        "result=priority_case; reason=manual_or_adjustment"
+    assert result.cases == []
+
+
+def test_l303_alone_does_not_seed_case_queue():
+    df = pd.DataFrame(
+        {
+            "document_id": ["DOC-1"],
+            "posting_date": pd.to_datetime(["2026-04-30"]),
+            "created_by": ["kim"],
+            "business_process": ["R2R"],
+            "gl_account": ["410000"],
+            "debit_amount": [15_000_000.0],
+            "credit_amount": [0.0],
+            "company_code": ["kr01"],
+            "trading_partner": ["kr02"],
+            "document_type": ["SA"],
+        }
     )
-    assert case.raw_rule_hits[0].display_label == "priority_case"
-    assert case.priority_score == pytest.approx(0.45)
-    assert case.priority_band == "medium"
-    assert case.rule_evidence_summary[0]["summary"].endswith(
-        "result=priority_case; reason=manual_or_adjustment"
+    details = pd.DataFrame({"L3-03": [0.6]}, index=df.index)
+    detection_result = DetectionResult(
+        track_name="layer_b",
+        flagged_indices=[0],
+        scores=details.max(axis=1),
+        rule_flags=[RuleFlag("L3-03", "RelatedParty", 3, 1, len(df))],
+        details=details,
+        metadata={},
     )
+
+    result = build_phase1_case_result(
+        df,
+        [detection_result],
+        company_id="kr01",
+        batch_id="batch42",
+        dataset_id=None,
+        phase1_case_config={"phase1_case": {"top_n_cases": 50, "top_n_per_theme": 10}},
+        generated_at=datetime(2026, 4, 22, 3, 15, 22, tzinfo=UTC),
+    )
+
+    assert result.cases == []
 
 
 def test_build_phase1_case_result_maps_l1_09_into_control_failure():
@@ -1618,10 +1647,7 @@ def test_l406_alone_does_not_create_high_priority_case():
         generated_at=datetime(2026, 4, 22, 3, 15, 22, tzinfo=UTC),
     )
 
-    case = result.cases[0]
-    assert case.primary_theme == "statistical_outlier"
-    assert case.priority_band != "high"
-    assert case.batch_combo_bonus == 0.0
+    assert result.cases == []
 
 
 def test_l404_only_recurring_case_gets_priority_penalty():
@@ -1970,7 +1996,7 @@ def test_d01_d02_macro_contexts_flow_into_matching_transaction_cases():
     assert "d02_macro_context" in case.evidence_tags
 
 
-def test_graph_macro_findings_are_queued_and_contextualized():
+def test_graph_macro_findings_remain_context_without_rankable_transaction_seed():
     df = pd.DataFrame(
         {
             "document_id": ["DOC-1"],
@@ -2021,13 +2047,7 @@ def test_graph_macro_findings_are_queued_and_contextualized():
         "GR01",
         "GR03",
     }
-    case = next(case for case in result.cases if case.primary_theme == "intercompany_structure")
-    assert {context["rule_id"] for context in case.macro_contexts} == {"GR01", "GR03"}
-    assert "macro_context=GR01:corroborated_graph_cycle+0.04" in (
-        case.priority_adjustment_reasons
-    )
-    assert "gr01_macro_context" in case.evidence_tags
-    assert "gr03_macro_context" in case.evidence_tags
+    assert result.cases == []
 
 
 def test_case_scores_expose_integrity_and_intercompany_axes():
@@ -2120,7 +2140,7 @@ def test_weak_evidence_bonus_requires_strong_evidence():
     assert "weak_evidence=is_round_number" in case.priority_adjustment_reasons
 
 
-def test_l308_alone_does_not_get_weak_description_bonus():
+def test_l308_alone_does_not_seed_case_queue():
     df = pd.DataFrame(
         {
             "document_id": ["DOC-1"],
@@ -2154,13 +2174,7 @@ def test_l308_alone_does_not_get_weak_description_bonus():
         generated_at=datetime(2026, 4, 22, 3, 15, 22, tzinfo=UTC),
     )
 
-    case = next(case for case in result.cases if case.primary_theme == "timing_anomaly")
-    assert case.weak_evidence_bonus == 0.0
-    assert "missing_or_corrupted_description" not in case.secondary_tags
-    assert not any(
-        reason.startswith("weak_evidence=")
-        for reason in case.priority_adjustment_reasons
-    )
+    assert result.cases == []
 
 
 def test_l308_gets_weak_description_bonus_with_corroborating_rule():
@@ -2205,6 +2219,68 @@ def test_l308_gets_weak_description_bonus_with_corroborating_rule():
     assert (
         "weak_evidence=missing_or_corrupted_description"
         in case.priority_adjustment_reasons
+    )
+
+
+def test_fraud_combo_floor_is_written_to_case_topic_breakdown():
+    df = pd.DataFrame(
+        {
+            "document_id": ["DOC-CLOSING"],
+            "posting_date": pd.to_datetime(["2026-04-30"]),
+            "created_by": ["kim"],
+            "business_process": ["R2R"],
+            "gl_account": ["410000"],
+            "debit_amount": [150_000_000.0],
+            "credit_amount": [0.0],
+            "company_code": ["kr01"],
+            "document_type": ["SA"],
+        }
+    )
+    details = pd.DataFrame(
+        {"L3-04": [0.60], "L4-03": [0.70], "L3-08": [0.60]},
+        index=df.index,
+    )
+    detection_result = DetectionResult(
+        track_name="combo",
+        flagged_indices=[0],
+        scores=details.max(axis=1),
+        rule_flags=[
+            RuleFlag("L3-04", "PeriodEnd", 3, 1, len(df)),
+            RuleFlag("L4-03", "HighAmount", 3, 1, len(df)),
+            RuleFlag("L3-08", "MissingDescription", 1, 1, len(df)),
+        ],
+        details=details,
+        metadata={"row_annotations": {"L4-03": {0: {"bucket": "high_zscore"}}}},
+    )
+
+    result = build_phase1_case_result(
+        df,
+        [detection_result],
+        company_id="kr01",
+        batch_id="batch42",
+        dataset_id=None,
+        phase1_case_config={
+            "phase1_case": {
+                "topic_scoring": {
+                    "combo_floors": {
+                        "period_end_adjustment_high": 0.75,
+                    },
+                },
+                "top_n_cases": 50,
+                "top_n_per_theme": 10,
+            }
+        },
+        generated_at=datetime(2026, 4, 22, 3, 15, 22, tzinfo=UTC),
+    )
+
+    case = next(case for case in result.cases if case.primary_topic == "closing_timing")
+    breakdown = case.topic_score_breakdown["closing_timing"]
+
+    assert case.topic_scores["closing_timing"] == pytest.approx(0.75)
+    assert "period_end_adjustment_risk" in case.fraud_scenario_tags
+    assert "period_end_adjustment_risk" in breakdown["fraud_combo_tags"]
+    assert "period_end_or_late_posting + high_amount + weak_description_or_sensitive_account" in (
+        breakdown["fraud_combo_policy_ids"]
     )
 
 

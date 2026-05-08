@@ -11,11 +11,11 @@ Note: LAYER_WEIGHTS에 의도적 미등록 — 성능 평가 후 가중치 배�
 from __future__ import annotations
 
 import time
-from typing import Callable
+from collections.abc import Callable
+from typing import Any
 
 import pandas as pd
 
-from config.settings import AuditSettings
 from src.detection.base import BaseDetector, DetectionResult, validate_input
 from src.detection.constants import SEVERITY_MAP
 from src.detection.duplicate_rules import (
@@ -36,6 +36,8 @@ class DuplicateDetector(BaseDetector):
     def detect(self, df: pd.DataFrame) -> DetectionResult:
         start = time.perf_counter()
         warnings: list[str] = []
+        if df.empty:
+            raise ValueError("입력 DataFrame이 비어 있습니다")
 
         missing = validate_input(df, ["debit_amount", "credit_amount"])
         if missing:
@@ -54,8 +56,22 @@ class DuplicateDetector(BaseDetector):
 
         rule_results: dict[str, pd.Series] = {}
         skipped: list[str] = []
+        coverage_issues: list[dict[str, Any]] = []
 
         for rule_id, func, kwargs in self._build_registry():
+            missing_inputs = self._missing_inputs(rule_id, df)
+            if missing_inputs:
+                skipped.append(rule_id)
+                coverage_issues.append(
+                    {
+                        "rule_id": rule_id,
+                        "kind": "missing_prerequisites",
+                        "missing_inputs": missing_inputs,
+                    }
+                )
+                warnings.append(f"{rule_id} skipped: missing inputs {missing_inputs}")
+                rule_results[rule_id] = pd.Series(0.0, index=df.index)
+                continue
             try:
                 rule_results[rule_id] = func(df, **kwargs)
             except Exception as exc:
@@ -64,7 +80,12 @@ class DuplicateDetector(BaseDetector):
                 self._logger.warning("%s 실행 실패: %s", rule_id, exc)
 
         elapsed = time.perf_counter() - start
-        return self._build_result(df, rule_results, skipped, warnings, elapsed)
+        return self._build_result(df, rule_results, skipped, warnings, elapsed, coverage_issues)
+
+    def _missing_inputs(self, rule_id: str, df: pd.DataFrame) -> list[str]:
+        if rule_id == "L2-03b" and "line_text" not in df.columns:
+            return ["line_text"]
+        return []
 
     def _build_registry(self) -> list[tuple[str, Callable, dict]]:
         """서브룰 레지스트리: (rule_id, callable, kwargs)."""
@@ -93,9 +114,10 @@ class DuplicateDetector(BaseDetector):
         skipped: list[str],
         warnings: list[str],
         elapsed: float,
+        coverage_issues: list[dict[str, Any]] | None = None,
     ) -> DetectionResult:
         if not rule_results:
-            return self._empty_result(df, warnings, elapsed)
+            return self._empty_result(df, warnings, elapsed, skipped, coverage_issues)
 
         # Why: 각 서브룰의 연속 점수에 severity/5 정규화 적용
         details = pd.DataFrame(index=df.index)
@@ -120,18 +142,33 @@ class DuplicateDetector(BaseDetector):
             scores=scores,
             rule_flags=rule_flags,
             details=details,
-            metadata={"elapsed": elapsed, "skipped_rules": skipped},
+            metadata={
+                "elapsed": elapsed,
+                "skipped_rules": skipped,
+                "coverage_issues": coverage_issues or [],
+                "analysis_degraded": bool(coverage_issues),
+            },
             warnings=warnings,
         )
 
     def _empty_result(
-        self, df: pd.DataFrame, warnings: list[str], elapsed: float,
+        self,
+        df: pd.DataFrame,
+        warnings: list[str],
+        elapsed: float,
+        skipped: list[str] | None = None,
+        coverage_issues: list[dict[str, Any]] | None = None,
     ) -> DetectionResult:
         return self._make_result(
             flagged_indices=[],
             scores=pd.Series(0.0, index=df.index),
             rule_flags=[],
             details=pd.DataFrame(index=df.index),
-            metadata={"elapsed": elapsed, "skipped_rules": []},
+            metadata={
+                "elapsed": elapsed,
+                "skipped_rules": skipped or [],
+                "coverage_issues": coverage_issues or [],
+                "analysis_degraded": bool(coverage_issues),
+            },
             warnings=warnings,
         )

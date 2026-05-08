@@ -26,6 +26,66 @@ phase1_case:
   load_batch_columns:
     - upload_batch_id
 
+  topic_scoring:
+    weights:
+      max_primary_rule_score: 0.62
+      secondary_evidence_score: 0.12
+      corroboration_score: 0.10
+      materiality_score: 0.08
+      repeat_score: 0.05
+      macro_context_score: 0.03
+    topic_caps:
+      ledger_integrity: 1.0
+      approval_control: 1.0
+      closing_timing: 1.0
+      account_logic: 1.0
+      duplicate_outflow: 1.0
+      intercompany_cycle: 1.0
+      revenue_statistical: 1.0
+    topic_floors:
+      approval_control_high: 0.75
+      duplicate_outflow_high: 0.75
+      intercompany_exception: 0.45
+    combo_floors:
+      batch_combo: 0.45
+      work_scope_combo: 0.45
+      fictitious_entry_medium: 0.60
+      fictitious_entry_high: 0.75
+      period_end_adjustment_medium: 0.60
+      period_end_adjustment_high: 0.75
+      embezzlement_concealment_medium: 0.60
+      embezzlement_concealment_high: 0.75
+      circular_transaction_medium: 0.45
+      circular_transaction_high: 0.75
+      approval_bypass_medium: 0.60
+      approval_bypass_high: 0.75
+    macro_context_bonus:
+      max_bonus: 0.10
+      context_only_score: 0.0
+    review_states:
+      high: 0.75
+      medium: 0.45
+      low: 0.20
+      context_only: 0.0
+    fraud_scenario_tag_order:
+      - fictitious_entry_risk
+      - period_end_adjustment_risk
+      - embezzlement_concealment_risk
+      - circular_transaction_risk
+      - approval_bypass_risk
+      - approval_bypass
+      - segregation_of_duties
+      - duplicate_payment
+      - threshold_splitting
+      - reversal_or_offset_pattern
+      - cutoff_or_period_mismatch
+      - intercompany_reconciliation_exception
+      - rare_account_partner_pair
+      - amount_outlier
+      - benford_distribution_anomaly
+
+  # Deprecated fallback: retained for old artifacts/views while topic_scoring
+  # drives PHASE1 v1 case ranking.
   priority_weights:
     control: 0.25
     amount: 0.25
