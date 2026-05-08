@@ -1,5 +1,6 @@
 # 05. 룰 기반 이상탐지 (Detection) [Phase 1b — 의존: 03-feature, 04-validation]
 
+> **PHASE1 역할 원칙**: PHASE1은 `fraud`를 확정하거나 정답 라벨을 맞히는 단계가 아니다. PHASE1의 목적은 전수 모집단에서 규칙 위반, 정책 위반, 이상 징후, 분석적 검토 신호를 넓게 올려 **감사인이 봐야 할 항목과 우선순위**를 만드는 것이다. DataSynth의 `is_fraud`/`is_anomaly`와 precision/recall은 개발 검증 보조 지표이며, 운영 해석은 예외 처리 대상, 감사인 리뷰 대상, 고위험 후보를 구분하는 review queue 기준으로 한다.
 > Latest PHASE1 role note (2026-04-28): this raw plan is historical. Current PHASE1 is not a final answer classifier and must not be judged only by DataSynth `is_fraud` / `is_anomaly` or document-level precision/recall. PHASE1 first captures rule/policy/anomaly candidates broadly, then classifies them into normal exceptions, auditor review targets, and high-risk candidates by materiality, evidence strength, case priority, company exception policy, and rule combinations. Use `docs/DETECTION_RULES.md`, `docs/PHASE1_RULE_RELATIONSHIP_MAP.md`, and `docs/metrics.md` for the current contract.
 
 > Historical plan note (updated 2026-04-28): 이 문서는 초기 24개 룰 설계 기록이다. 현재 PHASE1은 32개 L1~L4 룰과 case-level queue를 사용한다. L3-12는 L1-06과 분리된 `access_scope_review` 업무범위 검토 신호이며, `work_scope_combo_score` 보강 기준은 [PHASE1_RULE_RELATIONSHIP_MAP.md](../PHASE1_RULE_RELATIONSHIP_MAP.md)를 따른다. row-level detector `details`는 여전히 detector별 score를 담지만, PHASE1 case priority는 `src/detection/rule_scoring.py`의 `signal_strength -> normalized_score` 정규화 후 `src/detection/phase1_case_builder.py`에서 evidence type별로 합산한다. 최신 운영 기준은 [DETECTION_RULES.md](../DETECTION_RULES.md)와 [PHASE1_RULE_RELATIONSHIP_MAP.md](../PHASE1_RULE_RELATIONSHIP_MAP.md)를 따른다.
@@ -34,8 +35,8 @@ DataSynth 52개 anomaly 유형을 3축 평가로 선별하여 Phase 1에 배치.
 - **축 3**: 39컬럼 스키마로 즉시 탐지 가능 여부 0~3점
 - 합계 7~9점 → Tier 1(Must) → Phase 1 = 22개 유형 = **24개 룰**
 
-Phase 1만으로 FSS 6대 부정 패턴(가공거래·기말조정·횡령은폐·관계사순환·승인위반·비정상시점)을
-전부 커버하며, AICPA/CAQ CAAT 15개 시나리오 중 14개, PCAOB A49 의심 특성 11개 전부 매핑.
+Phase 1만으로 FSS 6대 주요 감사 검토 패턴(가공거래·기말조정·횡령은폐·관계사순환·승인위반·비정상시점)에
+대응하는 후보 모집단을 넓게 커버하며, AICPA/CAQ CAAT 15개 시나리오 중 14개, PCAOB A49 의심 특성 11개를 검토 큐 기준으로 매핑한다.
 
 > **탐지 체계 상세 근거**: `docs/DETECTION_RULES.md` §4~§5
 
@@ -50,7 +51,7 @@ Phase 1만으로 FSS 6대 부정 패턴(가공거래·기말조정·횡령은폐
        ↓
 ② integrity_layer.detect(df)                 → L1-01~L1-03 무결성 검사
        ↓ (A 위반 시 경고 플래그, 계속 진행)
-③ fraud_layer.detect(df)                     → L4-01~L2-04 부정 탐지
+③ fraud_layer.detect(df)                     → L4-01~L2-04 통제우회·자금유출 검토 신호
        ↓
 ④ anomaly_layer.detect(df)                   → L3-04~L3-09 이상 징후 (L4-02=Benford)
        ↓
@@ -217,7 +218,7 @@ src/detection/
 #### 이 모듈이 하는 일
 
 L1/L2/L3/L4 탐지의 **첫 번째 단계**로, "이 전표 데이터를 신뢰할 수 있는가?"를 판정한다.
-L2(부정 탐지)·C(이상 징후)가 의미 있는 결과를 내려면,
+L2(통제우회·자금유출 검토 신호)·C(이상 징후)가 의미 있는 결과를 내려면,
 **데이터 자체가 올바르게 기록되었는지** 먼저 확인해야 한다.
 
 ```
@@ -351,7 +352,7 @@ tests/test_detection/test_integrity_layer.py — 18개 통과
 
 ---
 
-### ③ L2: 부정 탐지 (fraud_layer.py) — ✅ 구현 완료
+### ③ L2: 통제우회·자금유출 검토 신호 (fraud_layer.py) — ✅ 구현 완료
 
 #### L2가 하는 일
 
@@ -1059,7 +1060,7 @@ tests/test_detection/test_score_aggregator.py — 12개 통과
 | L1-02 | 필수필드 누락 | MissingField         | 2   | 240-A45(d), SOX     | 9개 필수 컬럼 NULL 검사               | 전체 필수 컬럼               |
 | L1-03 | 무효 계정     | InvalidAccount       | 3   | 240-A45(a), 315     | gl_account NOT IN chart_of_accounts   | gl_account                   |
 
-### L2: 부정 탐지 (11개)
+### L2: 통제우회·자금유출 검토 신호 (11개)
 
 | ID  | 룰명            | DataSynth 유형                  | Sev | 근거                   | 탐지 로직                                    | 피처                                 |
 |:----|:---------------|:--------------------------------|:----|:-----------------------|:---------------------------------------------|:-------------------------------------|
@@ -1098,7 +1099,7 @@ tests/test_detection/test_score_aggregator.py — 12개 통과
 2. - [x] `base.py` — BaseDetector(ABC), DetectionResult, RuleFlag, validate_input
 3. - [x] `__init__.py` — public API export
 4. - [ ] `integrity_layer.py` — L1-01~L1-03 (데이터 무결성)
-5. - [ ] `fraud_layer.py` — L4-01~L2-04 (부정 탐지)
+5. - [ ] `fraud_layer.py` — L4-01~L2-04 (통제우회·자금유출 검토 신호)
 6. - [ ] `anomaly_layer.py` — L3-04~L3-09 (이상 징후, L4-02=Benford)
 7. - [ ] `score_aggregator.py` — L1/L2/L3/L4 가중합 + risk_level + 자동 승격
 

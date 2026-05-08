@@ -1,5 +1,6 @@
 # Debugging Log
 
+> **PHASE1 역할 원칙**: PHASE1은 `fraud`를 확정하거나 정답 라벨을 맞히는 단계가 아니다. PHASE1의 목적은 전수 모집단에서 규칙 위반, 정책 위반, 이상 징후, 분석적 검토 신호를 넓게 올려 **감사인이 봐야 할 항목과 우선순위**를 만드는 것이다. DataSynth의 `is_fraud`/`is_anomaly`와 precision/recall은 개발 검증 보조 지표이며, 운영 해석은 예외 처리 대상, 감사인 리뷰 대상, 고위험 후보를 구분하는 review queue 기준으로 한다.
 트러블슈팅 히스토리. 발생한 문제와 해결 과정을 기록하여 같은 실수를 반복하지 않기 위한 문서.
 
 > 이 문서는 시점별 디버깅 기록이다. 현재 실사용 DataSynth 기준본은 `data/journal/primary/datasynth/`의 `v20.3` freeze이며, 과거 DataSynth 수치와 핫픽스 설명은 기록 시점 기준일 수 있다.

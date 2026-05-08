@@ -1,5 +1,6 @@
 # Detection Portfolio Reframe
 
+> **PHASE1 역할 원칙**: PHASE1은 `fraud`를 확정하거나 정답 라벨을 맞히는 단계가 아니다. PHASE1의 목적은 전수 모집단에서 규칙 위반, 정책 위반, 이상 징후, 분석적 검토 신호를 넓게 올려 **감사인이 봐야 할 항목과 우선순위**를 만드는 것이다. DataSynth의 `is_fraud`/`is_anomaly`와 precision/recall은 개발 검증 보조 지표이며, 운영 해석은 예외 처리 대상, 감사인 리뷰 대상, 고위험 후보를 구분하는 review queue 기준으로 한다.
 > 최신 PHASE1 역할 기준: 이 포트폴리오는 "정답을 맞히는 분류기 목록"이 아니라 "감사인이 검토해야 할 후보 모집단을 빠짐없이 만들고, 그 후보를 감사 행동 단위로 재분류하는 체계"다. PHASE1 raw hit는 규칙 위반 후보를 넓게 올리는 1차 결과이며, 정상 예외·리뷰 대상·고위험 후보 구분은 materiality, evidence strength, case priority, 회사별 예외 정책, 룰 조합을 반영한 2차 분류에서 수행한다. 따라서 룰별 precision/recall은 개발 검증 지표일 수는 있지만, PHASE1의 운영 가치를 단독으로 판정하는 기준이 아니다.
 
 > Current PHASE1 scoring note (2026-04-27): 이 문서의 "룰은 감사 절차 단위"라는 원칙은 구현에서 `src/detection/rule_scoring.py`로 반영되었다. 룰별 표현값은 `display_label`로 보존하고, 합산에는 `signal_strength`, `evidence_strength`, `scoring_role`, `normalized_score`를 사용한다. 따라서 portfolio 평가는 raw rule hit 수보다 case-level evidence 결합과 auditor insight를 우선한다.

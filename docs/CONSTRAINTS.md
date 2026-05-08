@@ -1,10 +1,33 @@
 # 프로젝트 제약사항 및 범위 정의
 
+> **PHASE1 역할 원칙**: PHASE1은 `fraud`를 확정하거나 정답 라벨을 맞히는 단계가 아니다. PHASE1의 목적은 전수 모집단에서 규칙 위반, 정책 위반, 이상 징후, 분석적 검토 신호를 넓게 올려 **감사인이 봐야 할 항목과 우선순위**를 만드는 것이다. DataSynth의 `is_fraud`/`is_anomaly`와 precision/recall은 개발 검증 보조 지표이며, 운영 해석은 예외 처리 대상, 감사인 리뷰 대상, 고위험 후보를 구분하는 review queue 기준으로 한다.
 이 문서는 프로젝트에서 **의도적으로 구현하지 않는 영역**과 그 사유를 기록한다.
 
 ---
 
 > 최신 PHASE1 운영 기준: PHASE1은 정답 라벨을 맞히거나 부정을 확정하는 단계가 아니라, 규칙 위반·정책 위반·이상 징후 후보를 전수로 올리는 1차 스크리닝 계층이다. PHASE1 raw hit는 정상 예외와 약한 신호를 포함할 수 있으며, 중요성·증거 강도·case priority·고객사 예외 정책·조합 신호를 기준으로 예외 처리 대상, 감사인 리뷰 대상, 고위험 후보로 2차 분류한다. 현행 L1~L4 구현 룰 수는 32개이며, L3-12 업무범위 집중 검토는 L1-06 direct SoD와 분리된 review signal이다.
+
+---
+
+## PHASE1의 명시적 한계
+
+PHASE1은 전체 전표 모집단을 빠르게 스크리닝하는 rule-based audit exception queue다. 따라서 PHASE1 결과는 부정 확정, 악의적 조작 정답 맞히기, 전체 Top ranking 보장을 목적으로 해석하지 않는다.
+
+| 구분 | 명확한 한계 | 운영 기준 |
+|---|---|---|
+| 부정 확정 | PHASE1 점수는 `fraud` 여부를 확정하지 않는다. | 감사인이 먼저 볼 후보와 우선순위로만 해석한다. |
+| 악의적 조작 ranking | 악의적 조작 문서가 전체 Top100 또는 High risk에 반드시 들어온다는 보장은 없다. | 강한 독립 증거가 없으면 조작 truth도 Low/Medium에 남을 수 있다. |
+| 약한 context 신호 | 수기 입력, 결산말, 휴일, 업무범위 집중, 관계사, 문서흐름 누락, 승인 matrix gap은 정상 업무에서도 자주 발생한다. | 단독 High floor 또는 fraud floor로 쓰지 않고 다른 증거와 조합될 때만 승격한다. |
+| rule hit 해석 | rule hit는 오류나 부정의 직접 증거가 아니다. | 예외 처리 대상, 감사인 리뷰 대상, 고위험 후보를 분리해서 본다. |
+| 전체 Top 지표 | 전체 Top100 truth 비율만으로 PHASE1 품질을 판단하지 않는다. | topic별 High/Top, 전체 coverage, contract noise cap, 미포착 사유를 함께 본다. |
+| DataSynth truth | synthetic manipulation truth는 개발 검증 보조값이다. | label, scenario, id, 특정 생성 패턴에 맞춰 점수를 튜닝하지 않는다. |
+| 독립 evidence | master data, document flows, intercompany matched pairs, approval matrix 조인도 신호가 넓으면 ranking 개선에 실패할 수 있다. | High 승격 전 정상 업무 맥락과 contract noise 증가 여부를 확인한다. |
+
+### PHASE1과 PHASE2의 경계
+
+현재 구현에서 PHASE2 inference는 PHASE1에서 걸린 case subset이 아니라 `featured_df` 전체에 대해 `phase2_only` ML detection을 수행한다. PHASE1은 PHASE2 입력을 잘라내는 gate가 아니며, PHASE1 case는 PHASE2 overlay와 감사 검토 화면의 문맥으로 사용한다.
+
+따라서 악의적 조작 우선순위는 PHASE1 topic score에 억지로 fitting하지 않고, 전체 모집단 기반 PHASE2 ML/통계 이상탐지와 PHASE3 감사 판단에서 보강한다.
 
 ---
 
