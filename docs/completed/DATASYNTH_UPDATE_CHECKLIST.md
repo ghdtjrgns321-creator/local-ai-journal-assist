@@ -28,7 +28,7 @@ When a candidate becomes the production baseline, update or verify:
 Current split derivatives:
 
 - `data/journal/primary/datasynth_contract/`: contract truth and sidecar-context validation split.
-- `data/journal/primary/datasynth_manipulation/`: actual manipulation/injected issue truth split. Frozen manipulation-only split: `v132_manipulation_circular_rp_strict`.
+- `data/journal/primary/datasynth_manipulation/`: actual manipulation/injected issue truth split. Frozen manipulation-only split: `v134_manipulation_operational_noise`.
 - Keep `data/journal/primary/datasynth/` as the compatibility production baseline until loaders explicitly support the split datasets.
 
 Required production docs:
@@ -36,7 +36,7 @@ Required production docs:
 - `data/journal/primary/datasynth/FREEZE_VXX.md`
 - `data/journal/primary/datasynth/PREVIEW.md`
 - `data/journal/OVERVIEW.md`
-- `data/journal/primary/datasynth_manipulation/FREEZE_MANIPULATION_V132.md` when referring to the frozen manipulation-only split.
+- `data/journal/primary/datasynth_manipulation/FREEZE_MANIPULATION_V134.md` when referring to the frozen manipulation-only split.
 
 Required project docs:
 
@@ -294,7 +294,9 @@ v126 has been promoted to production. Keep this section as the latest candidate 
 - Last manipulation split encoding/cycle patch: `v130_manipulation_encoding_and_cycle_fix` updates `data/journal/primary/datasynth_manipulation/` only. It replaces mojibake Korean text with UTF-8-safe Korean strings, rebuilds circular IC sidecars without model-input leakage markers, and enforces each complete `IC-CYCLE-*` group to contain exactly `C001->C002`, `C002->C003`, and `C003->C001`. Verification artifact: `docs/datasynth_manipulation_v130_verification.json`.
 - Last manipulation split process/report patch: `v131_manipulation_process_mix_and_report_keys` updates `data/journal/primary/datasynth_manipulation/` only. It restores circular related-party manipulation from R2R-only to an O2C/P2P mixed flow (`O2C=23`, `P2P=11` documents), keeps all `11` complete IC cycles on the exact `C001->C002`, `C002->C003`, `C003->C001` edge contract, and renames report-only leakage counters to `mojibake_marker_*` / `label_marker_*` keys. Verification artifact: `docs/datasynth_manipulation_v131_verification.json`.
 - Last manipulation split strict circular-RP patch: `v132_manipulation_circular_rp_strict` updates `data/journal/primary/datasynth_manipulation/` only. It repairs circular related-party journals so all three companies participate, all three related-party codes are used, every company has both O2C and P2P circular exposure across the scenario, each complete `IC-CYCLE-*` has sales total equal to purchase total, and circular intercompany sidecars have `0` journal/sidecar `document_type` mismatches. Verification artifact: `docs/datasynth_manipulation_v132_verification.json`.
-- Frozen manipulation split: `data/journal/primary/datasynth_manipulation/` is frozen at `v132_manipulation_circular_rp_strict`. Future manipulation patches must start from this freeze or explicitly document why they do not.
+- Last manipulation split label-contract patch: `v133_manipulation_label_contract` updates `data/journal/primary/datasynth_manipulation/` labels only. It rebuilds `anomaly_labels*` from `manipulated_entry_truth*`, removes active revenue rule-truth sidecars with zero overlap against manipulation truth, and makes active anomaly labels `420` documents with `0` labels outside manipulated truth. Verification artifact: `docs/datasynth_manipulation_v133_verification.json`.
+- Last manipulation split operational-noise patch: `v134_manipulation_operational_noise` updates `data/journal/primary/datasynth_manipulation/` non-truth background only. It preserves the `420` manipulation truth documents and lowers non-truth Phase1 Medium+High noise from the prior hard-negative level to `1.15%` after full Phase1 detection. Phase1 noise artifact: `docs/datasynth_manipulation_v134_phase1_noise.json`.
+- Frozen manipulation split: `data/journal/primary/datasynth_manipulation/` is frozen at `v134_manipulation_operational_noise`. Future manipulation patches must start from this freeze or explicitly document why they do not.
 - Historical v116 active truth metadata cleanup: v116 first removed legacy `source_candidate` values from active `rule_truth_*`; v126 is the current active metadata baseline.
 - Historical v116 active candidate artifact cleanup: v116 root kept only `FREEZE_V116_CANDIDATE.md` and `V116_TRUTH_METADATA_CLEANUP.json` among versioned freeze/patch manifests at that time; v126 is the current artifact baseline.
 - Last L2 independent sidecars: v117 adds detector-independent behavioral sidecars without changing journal rows or `rule_truth` membership.
