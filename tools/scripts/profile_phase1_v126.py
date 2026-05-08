@@ -74,6 +74,11 @@ PHASE1_USECOLS = {
     "approval_date",
     "sod_violation",
     "sod_conflict_type",
+    "has_attachment",
+    "supporting_doc_type",
+    "delivery_date",
+    "invoice_amount",
+    "supply_amount",
     "document_number",
     "line_number",
     "gl_account",
@@ -136,7 +141,226 @@ def _read_data(data_dir: Path, checkpoint: Path, summary: dict[str, Any]) -> pd.
     }
     _write_checkpoint(checkpoint, summary)
     _log(f"read_csv done: {summary['stages']['read_csv']}")
+    df = _enrich_independent_audit_evidence(df, data_dir, checkpoint=checkpoint, summary=summary)
     return df
+
+
+def _enrich_independent_audit_evidence(
+    df: pd.DataFrame,
+    data_dir: Path,
+    *,
+    checkpoint: Path,
+    summary: dict[str, Any],
+) -> pd.DataFrame:
+    t0 = time.perf_counter()
+    _log("independent evidence enrichment start")
+    vendor_master = _load_partner_master(data_dir / "master_data" / "vendors.json", "vendor_id")
+    customer_master = _load_partner_master(
+        data_dir / "master_data" / "customers.json",
+        "customer_id",
+    )
+    flow_doc_ids = _load_document_flow_ids(data_dir / "document_flows")
+    ic_refs, ic_docs = _load_intercompany_reference_sets(data_dir / "intercompany")
+    employee_master = _load_employee_master(data_dir / "master_data" / "employees.json")
+
+    partner = _first_nonblank_series(df, ["auxiliary_account_number", "trading_partner"])
+    partner_upper = partner.str.upper()
+    vendor_known = partner_upper.isin(vendor_master["ids"])
+    customer_known = partner_upper.isin(customer_master["ids"])
+    df["master_counterparty_known"] = vendor_known | customer_known
+    df["master_counterparty_inactive"] = partner_upper.isin(
+        vendor_master["inactive"] | customer_master["inactive"]
+    )
+    df["master_counterparty_intercompany"] = partner_upper.isin(
+        vendor_master["intercompany"] | customer_master["intercompany"]
+    )
+
+    reference_doc = _reference_document_id(df.get("reference"))
+    reference_upper = reference_doc.str.upper()
+    df["document_flow_linked"] = reference_upper.isin(flow_doc_ids)
+    has_flow_prefix = reference_upper.str.match(r"^(PO|GR|VI|PAY|SO|CI|DLV)-", na=False)
+    df["document_flow_orphan"] = has_flow_prefix & ~df["document_flow_linked"]
+
+    raw_reference = _string_series(df.get("reference")).str.upper()
+    df["ic_matched_pair_found"] = raw_reference.isin(ic_refs) | reference_upper.isin(ic_docs)
+    has_ic_reference = raw_reference.str.match(r"^IC\d+", na=False) | reference_upper.str.match(
+        r"^(ICS|ICB)\d+",
+        na=False,
+    )
+    df["ic_unmatched_reference"] = has_ic_reference & ~df["ic_matched_pair_found"]
+
+    approver = _string_series(df.get("approved_by")).str.upper()
+    creator = _string_series(df.get("created_by")).str.upper()
+    company = _string_series(df.get("company_code")).str.upper()
+    doc_amount = (
+        pd.to_numeric(df.get("local_amount", pd.Series(0.0, index=df.index)), errors="coerce")
+        .fillna(0.0)
+        .abs()
+    )
+    if "document_id" in df.columns:
+        doc_amount = doc_amount.groupby(df["document_id"].astype(str)).transform("sum")
+    approver_known = approver.isin(employee_master["ids"])
+    can_approve_je = approver.map(employee_master["can_approve_je"]).fillna(False).astype(bool)
+    approval_limit = pd.to_numeric(
+        approver.map(employee_master["approval_limit"]),
+        errors="coerce",
+    ).fillna(0.0)
+    authorized_companies = approver.map(employee_master["authorized_companies"]).fillna("")
+    company_authorized = [
+        bool(comp) and (comp in str(auth).split("|"))
+        for comp, auth in zip(company.to_numpy(), authorized_companies.to_numpy(), strict=False)
+    ]
+    manual_creator = ~creator.str.startswith("SYSTEM", na=False)
+    missing_approver = approver.eq("") | approver.isin({"NAN", "NONE", "NULL"})
+    self_approval = creator.ne("") & creator.eq(approver)
+    df["approval_matrix_gap"] = manual_creator & (
+        missing_approver
+        | self_approval
+        | (~approver_known & ~missing_approver)
+        | (~can_approve_je & ~missing_approver)
+        | (~pd.Series(company_authorized, index=df.index) & ~missing_approver)
+    )
+    df["approval_limit_exceeded_independent"] = (
+        manual_creator
+        & ~missing_approver
+        & approval_limit.gt(0)
+        & doc_amount.gt(approval_limit)
+    )
+
+    summary["stages"]["independent_evidence_enrichment"] = {
+        "elapsed_sec": _elapsed(t0),
+        "known_counterparty_rows": int(df["master_counterparty_known"].sum()),
+        "document_flow_orphan_rows": int(df["document_flow_orphan"].sum()),
+        "ic_unmatched_rows": int(df["ic_unmatched_reference"].sum()),
+        "approval_matrix_gap_rows": int(df["approval_matrix_gap"].sum()),
+        "approval_limit_exceeded_rows": int(df["approval_limit_exceeded_independent"].sum()),
+    }
+    _write_checkpoint(checkpoint, summary)
+    _log(
+        "independent evidence enrichment done: "
+        f"{summary['stages']['independent_evidence_enrichment']}"
+    )
+    return df
+
+
+def _load_json_list(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    return payload if isinstance(payload, list) else []
+
+
+def _load_partner_master(path: Path, id_field: str) -> dict[str, set[str]]:
+    ids: set[str] = set()
+    inactive: set[str] = set()
+    intercompany: set[str] = set()
+    for row in _load_json_list(path):
+        partner_id = str(row.get(id_field) or "").strip().upper()
+        if not partner_id:
+            continue
+        ids.add(partner_id)
+        if not bool(row.get("is_active", True)):
+            inactive.add(partner_id)
+        if bool(row.get("is_intercompany", False)):
+            intercompany.add(partner_id)
+    return {"ids": ids, "inactive": inactive, "intercompany": intercompany}
+
+
+def _load_document_flow_ids(flow_dir: Path) -> set[str]:
+    ids: set[str] = set()
+    for path in flow_dir.glob("*.json"):
+        for row in _load_json_list(path):
+            header = row.get("header") if isinstance(row.get("header"), dict) else {}
+            document_id = str(header.get("document_id") or "").strip().upper()
+            if document_id:
+                ids.add(document_id)
+            for ref in header.get("document_references") or []:
+                if not isinstance(ref, dict):
+                    continue
+                for key in ("source_doc_id", "target_doc_id"):
+                    ref_id = str(ref.get(key) or "").strip().upper()
+                    if ref_id:
+                        ids.add(ref_id)
+    return ids
+
+
+def _load_intercompany_reference_sets(ic_dir: Path) -> tuple[set[str], set[str]]:
+    refs: set[str] = set()
+    docs: set[str] = set()
+    matched_pairs = _load_json_list(ic_dir / "ic_matched_pairs.json")
+    for row in matched_pairs:
+        ref = str(row.get("ic_reference") or "").strip().upper()
+        if ref:
+            refs.add(ref)
+        for key in ("seller_document", "buyer_document"):
+            doc_id = str(row.get(key) or "").strip().upper()
+            if doc_id:
+                docs.add(doc_id)
+    for path in (
+        ic_dir / "ic_seller_journal_entries.json",
+        ic_dir / "ic_buyer_journal_entries.json",
+    ):
+        for row in _load_json_list(path):
+            header = row.get("header") if isinstance(row.get("header"), dict) else {}
+            doc_id = str(header.get("document_id") or "").strip().upper()
+            ref = str(header.get("reference") or "").strip().upper()
+            if doc_id:
+                docs.add(doc_id)
+            if ref:
+                refs.add(ref)
+    return refs, docs
+
+
+def _load_employee_master(path: Path) -> dict[str, Any]:
+    ids: set[str] = set()
+    can_approve_je: dict[str, bool] = {}
+    approval_limit: dict[str, float] = {}
+    authorized_companies: dict[str, str] = {}
+    for row in _load_json_list(path):
+        user_id = str(row.get("user_id") or "").strip().upper()
+        if not user_id:
+            continue
+        ids.add(user_id)
+        can_approve_je[user_id] = bool(row.get("can_approve_je", False))
+        try:
+            approval_limit[user_id] = float(row.get("approval_limit") or 0.0)
+        except (TypeError, ValueError):
+            approval_limit[user_id] = 0.0
+        companies = [
+            str(value).strip().upper()
+            for value in row.get("authorized_company_codes") or []
+        ]
+        authorized_companies[user_id] = "|".join(company for company in companies if company)
+    return {
+        "ids": ids,
+        "can_approve_je": can_approve_je,
+        "approval_limit": approval_limit,
+        "authorized_companies": authorized_companies,
+    }
+
+
+def _first_nonblank_series(df: pd.DataFrame, columns: list[str]) -> pd.Series:
+    result = pd.Series("", index=df.index, dtype="string")
+    for column in columns:
+        if column not in df.columns:
+            continue
+        candidate = _string_series(df[column])
+        result = result.mask(result.str.strip().eq(""), candidate)
+    return result.fillna("").astype(str)
+
+
+def _string_series(series: pd.Series | None) -> pd.Series:
+    if series is None:
+        return pd.Series(dtype="string")
+    return series.fillna("").astype(str).str.strip()
+
+
+def _reference_document_id(series: pd.Series | None) -> pd.Series:
+    reference = _string_series(series).str.upper()
+    return reference.str.replace(r"^[A-Z0-9_]+:", "", regex=True).str.strip()
 
 
 def _run_features(
