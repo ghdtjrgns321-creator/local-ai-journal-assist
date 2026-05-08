@@ -39,6 +39,8 @@ select = ["E", "F", "I", "UP"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+addopts = ["-p", "no:cacheprovider", "--basetemp=.tmp_pytest_workspace"]
+cache_dir = ".tmp_pytest_cache"
 markers = ["slow: 대용량 데이터 또는 리포트 생성 (별도 실행)"]
 filterwarnings = [
     "ignore:X does not have valid feature names, but LGBMClassifier was fitted with feature names:UserWarning",

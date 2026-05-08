@@ -41,6 +41,7 @@ Thumbs.db
 
 # pytest
 .pytest_cache/
+pytest-cache-files-*/
 
 # ruff
 .ruff_cache/
