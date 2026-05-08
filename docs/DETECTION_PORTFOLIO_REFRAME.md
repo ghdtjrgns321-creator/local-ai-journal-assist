@@ -6,6 +6,8 @@
 
 > 2026-04-28 L3-12 note: `L3-12 WorkScopeExcessReview`는 L1-06 direct SoD 위반이 아니라 `access_scope_review` review signal이다. 단독으로 high 후보를 만들지 않고, `work_scope_combo_score`에서 수기·통제실패·민감계정·결산·중복/유출·매출/관계사 등 독립 보강 evidence group이 결합될 때만 Medium/High로 승격한다.
 
+> 2026-05-07 queue update: `Audit Risk`, `Suspicion`, `조작 후보`, `맥락 검토대상`은 사용자에게 노출할 primary queue가 아니다. PHASE1 결과는 `원장기록·데이터정합성`, `승인·권한·업무분장 통제`, `결산·기간귀속·입력시점`, `계정분류·거래실질 불일치`, `중복·상계·자금유출`, `관계사·내부거래·순환구조`, `수익·금액·모집단 통계 이상`의 7개 감사 주제로 정렬한다.
+
 이 문서는 [DETECTION_REFERENCE.md](DETECTION_REFERENCE.md)와 [DETECTION_RULES.md](DETECTION_RULES.md)를
 현재 포트폴리오의 목적에 맞게 다시 해석한 운영 문서다.
 
@@ -71,6 +73,8 @@
 ## 3. 현재 포트폴리오의 역할 재정의
 
 현재 포트폴리오는 다음 3층으로 재정의하는 것이 맞다.
+
+주의: 아래 3층은 내부 설명용 legacy layer다. 사용자 화면과 결과 문서의 primary queue는 [TROUBLESHOOT.md TS-9](TROUBLESHOOT.md#ts-9-phase1-review-queue를-확실한-감사-주제로-재정렬)의 7개 감사 주제를 사용한다.
 
 ### 3.1 Gatekeeper Layer
 

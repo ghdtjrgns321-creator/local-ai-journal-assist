@@ -127,16 +127,16 @@ flowchart LR
     Scope["업무범위 집중<br/>L3-12"]
     Weak["Weak evidence<br/>round number significant unusual"]
 
-    Control --> High["High review candidate"]
+    Control --> High["승인·권한·업무분장 통제"]
     Amount --> High
-    Timing --> Close["결산/Top-side JE candidate"]
+    Timing --> Close["결산·기간귀속·입력시점"]
     Logic --> Close
     Desc --> Close
-    Outflow --> Cash["자금 유출/은폐 candidate"]
+    Outflow --> Cash["중복·상계·자금유출"]
     Control --> Cash
-    IC --> RPT["관계사/순환거래 candidate"]
+    IC --> RPT["관계사·내부거래·순환구조"]
     Amount --> RPT
-    Timing --> Revenue["매출 cutoff candidate"]
+    Timing --> Revenue["수익·금액·모집단 통계 이상"]
     Scope --> High
     Scope --> Cash
     Scope --> Close
@@ -174,6 +174,20 @@ flowchart LR
 | `data_integrity_failure` | L1-01, L1-02, L1-08 |
 | `access_scope_review` | L3-12 |
 | `intercompany_structure` | L3-03, IC01, IC02, IC03 |
+
+사용자에게 노출하는 공식 review queue는 evidence type을 그대로 보여주지 않고 아래 7개 감사 주제로 번역한다.
+
+| 공식 review queue | 포함 evidence/rule | 사용 목적 |
+|---|---|---|
+| 원장기록·데이터정합성 | `data_integrity_failure`, L3-08 일부 | 원장 기록 자체의 유효성, 필수값, 기간 정합성, 설명 추적성 확인 |
+| 승인·권한·업무분장 통제 | `control_failure`, `access_scope_review` | 승인권한 초과, 자기승인, 승인생략, SoD, 수기우회, 업무범위 집중 확인 |
+| 결산·기간귀속·입력시점 | `timing_anomaly` | 결산 말, 휴일·야간, 사후입력, cutoff, 설명 부족 전표 확인 |
+| 계정분류·거래실질 불일치 | `logic_mismatch` | 계정 조합, 프로세스, 가계정, 민감계정 사용이 거래 실질과 맞는지 확인 |
+| 중복·상계·자금유출 | `duplicate_or_outflow` | 중복 지급, 반복 전표, 상계·반제, 자금 유출 은폐 가능성 확인 |
+| 관계사·내부거래·순환구조 | `intercompany_structure` | 특수관계자, 내부거래, 순환거래, 미상계 IC 구조 확인 |
+| 수익·금액·모집단 통계 이상 | `statistical_outlier`, Benford, D01, D02 | 매출, 고액, 숫자 분포, 배치, 계정·월 단위 모집단 이상 확인 |
+
+`조작 후보`, `맥락 검토대상`, `추가검토사항`은 공식 review queue가 아니다. 이들은 필요하면 보조 tag 또는 상태값으로만 남기고, primary queue는 반드시 위 7개 중 하나로 지정한다. 목적과 배경은 [TROUBLESHOOT.md TS-9](TROUBLESHOOT.md#ts-9-phase1-review-queue를-확실한-감사-주제로-재정렬)에 정리했다.
 
 주의:
 
@@ -695,6 +709,38 @@ Primary evidence: macro-finding. 기존회사에서만 사용.
 7. Drill-down은 raw rule hit 전체 표를 기본으로 노출하지 않고 `직접 위험 신호`, `리뷰/맥락 신호`, `정합성/탐지제약`, `계정/모집단 Finding` 섹션으로 나누어 표시한다.
 8. 룰별 상/중/하 또는 위험 높음/낮음 표현이 직접 합산되지 않고, `signal_strength`와 `normalized_score`로 정규화되는지 회귀 테스트한다.
 9. GR01/GR03을 PHASE1 사용자 큐에 노출하려면 graph/macro queue 설계와 transaction case 연결 방식을 별도 정의한다.
+
+## 8.1 Fraud Combo Floor 관계도 보강
+
+`docs/PHASE1_TOPIC_SCORING_V1_LOCK.md`의 Fraud Combo Scoring Policy는 이 문서의 증폭 관계를 구현 가능한 floor 정책으로 고정한 것이다. 핵심 원칙은 다음과 같다.
+
+- 개별 룰 topic 분류는 유지한다.
+- `조작 후보`를 8번째 topic, tab, queue로 만들지 않는다.
+- 강한 조작 의심은 기존 7개 topic 내부의 `fraud_scenario_tags`, `fraud_combo_bonus`, `fraud_combo_floor`로만 표시한다.
+- `fraud_combo_floor`는 단순 보너스가 아니라 topic score의 최소선을 만든다. 예를 들어 결산말/사후입력 + 고액 + 설명부족/민감계정 조합은 결산·기간귀속·입력시점 topic score를 최소 `0.75`로 올린다.
+
+| 조작 subtype | 증폭 축 | Seed 규칙 | Booster/보강 규칙 | 승격 topic | High floor |
+|---|---|---|---|---|---:|
+| 가공전표 의심 | 수익/금액 이상 + 수기/조정 + 희소·중복·반복 | `L4-01` 또는 `L4-03` | `L3-02` + (`L4-04` 또는 `L2-03`), 보조 `L4-06`, `L3-04` | 수익·금액·모집단 통계 이상 | `0.75` |
+| 결산수정 조작 의심 | 결산말/사후입력 + 고액 + 설명부족·민감·희소계정 | `L3-04`, `L3-07`, `L3-11`, `L1-08` | `L4-03` + (`L3-08` 또는 `L3-10` 또는 `L4-04`) | 결산·기간귀속·입력시점 | `0.75` |
+| 횡령은폐 의심 | 자금유출/상계/중복 + 승인·SoD·권한 우회 | `L2-02`, `L2-03`, `L2-05` | `L1-05`, `L1-06`, `L1-07`, `L1-04`, 보조 `L3-12`, `L3-02` | 중복·상계·자금유출 | `0.75` |
+| 순환거래 의심 | 관계사/내부거래 + 반복·순환 + 금액·시점 이상 | `L3-03`, `IC01`, `IC02`, `IC03` | `L4-03`, `L3-04`, `L3-11`, 반복 거래, 동일 counterparty cycle, 보조 `D01`, `D02` | 관계사·내부거래·순환구조 | `0.75` |
+| 승인우회 조작 의심 | 자기승인/승인생략/권한초과 + 고액·수기·비정상시점 | `L1-04`, `L1-05`, `L1-06`, `L1-07` | `L4-03`, `L3-02`, `L3-05`, `L3-06`, 보조 `L1-09`, `L3-12` | 승인·권한·업무분장 통제 | `0.75` |
+
+2026-05-08 이후 `datasynth_manipulation` 보정에서 확인된 약한 truth 조합은 combo floor reason으로 허용하지 않는다. `L3-12` 업무범위 집중은 booster/context이며, `L3-02 + L3-04 + L3-12`처럼 수기·결산·업무범위만 결합된 조합은 가공전표 또는 결산수정 floor를 만들 수 없다.
+
+| 약한 조합 | floor 적용 | 처리 원칙 |
+|---|---:|---|
+| `L3-02 + L3-04 + L3-12` | 금지 | 수기·결산·업무범위 context만 표시한다. 수익/금액/설명부족/희소계정/중복/cutoff 근거가 붙을 때만 fraud floor 검토 |
+| `(L1-04 or L1-05 or L1-06 or L1-07) + L3-02 + L3-12` | duplicate/outflow fraud floor 금지 | 승인통제 context로 유지한다. 횡령은폐 floor는 `L2-02`, `L2-03`, `L2-05` 같은 자금유출·중복·상계 근거 필요 |
+| `L3-03 + L3-05 + (L3-02 or L3-12)` | High 금지 | 관계사 + 휴일/수기/업무범위 context다. 순환거래 High는 repeat/cycle/IC exception과 금액·시점·불일치 근거 필요 |
+| `approval_bypass + L3-02` 또는 `approval_bypass + L3-05` | High 금지 | 승인통제 Medium으로만 처리한다. High는 고액, cutoff, 결산수기, 강한 비정상시간 근거가 필요 |
+
+관계사 topic은 seed 조건을 특히 주의한다. 현재 v1 결과에서 관계사 truth가 해당 topic에 0건으로 나타난 원인은 `L3-03`을 단순 booster로만 두고 IC sidecar 또는 순환 반복 구조를 primary seed로 충분히 연결하지 못했기 때문이다. 후속 구현에서는 `L3-03`, `IC01`, `IC02`, `IC03` 중 하나가 있으면 관계사·내부거래·순환구조 topic score 계산을 반드시 시작해야 한다. 단, `L3-03` 단독은 Low 모집단 신호이며 High floor는 반복/순환 또는 금액·시점 이상이 결합될 때만 적용한다.
+
+계정분류·거래실질 불일치 topic은 다른 조작 subtype의 보조 승격축으로 보는 것이 원칙이다. `L3-10`은 결산수정 조작 의심을, `L4-04`는 가공전표 의심을, `L3-09`는 횡령은폐 의심을 강화할 수 있지만, 계정실질 topic 단독 High floor를 넓게 만들지는 않는다.
+
+원장기록·데이터정합성 topic은 fraud scoring의 직접 High 승격 대상이 아니다. `L1-02` 핵심 필드 누락이나 `L3-08` 설명 부족은 결산수정 또는 횡령은폐의 은폐 맥락을 강화할 수 있지만, 원장기록 topic 자체는 품질 게이트와 원장 신뢰성 검토를 우선한다.
 
 ## 9. 참고한 외부 기준
 

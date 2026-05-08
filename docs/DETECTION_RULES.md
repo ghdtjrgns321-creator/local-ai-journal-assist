@@ -88,18 +88,20 @@ PHASE1 결과 큐는 탐지 단위에 따라 두 갈래로 나눈다.
    - D01/D02는 Transaction Queue의 row/document-level precision·FP·FN 성과표에 넣지 않는다. 두 룰은 전표 1건의 오류나 부정을 직접 입증하지 않고, 전기 대비 분석적 절차에 따른 계정 단위 review population을 만드는 보조 분석 트랙이다.
    - 따라서 PHASE1 메인 리포트에서는 D01/D02를 `Analytical Review Signals` 또는 `Account Review Population` 섹션으로 분리하고, 계정 group 수, truth coverage, missed account group, normal-control review group, L1~L4 겹침 전표 수를 표시한다.
 
+사용자에게 노출하는 primary queue는 `Audit Risk`, `추가검토사항`, `조작 후보`, `맥락 검토대상` 같은 상태 표현을 쓰지 않는다. 공식 queue는 [TROUBLESHOOT.md TS-9](TROUBLESHOOT.md#ts-9-phase1-review-queue를-확실한-감사-주제로-재정렬)의 7개 감사 주제를 따른다.
+
 #### 2.0.3 레이어와 Evidence Type
 
 | Evidence Type | 포함 룰 | 기본 Primary Theme |
 |---|---|---|
-| `data_integrity_failure` | L1-01, L1-02, L1-08 | 데이터 정합성 오류 |
-| `control_failure` | L1-04, L1-05, L1-06, L1-07, L1-09, L3-02 | 승인·권한 통제 검토 |
-| `access_scope_review` | L3-12 | 업무범위·권한범위 검토 |
-| `duplicate_or_outflow` | L2-01, L2-02, L2-03, L2-05 | 지급·중복 거래 검토 |
-| `timing_anomaly` | L3-04, L3-05, L3-06, L3-07, L3-08, L3-11, L4-05 | 결산·시점 검토 |
-| `logic_mismatch` | L1-03, L2-04, L3-01, L3-09, L3-10, L4-04 | 계정 사용 논리 검토 |
-| `statistical_outlier` | L4-01, L4-02, L4-03, L4-06 | 수익·금액·통계 예외 |
-| `intercompany_structure` | L3-03, IC01, IC02, IC03 | 관계사·연결 거래 검토 |
+| `data_integrity_failure` | L1-01, L1-02, L1-08 | 원장기록·데이터정합성 |
+| `control_failure` | L1-04, L1-05, L1-06, L1-07, L1-09, L3-02 | 승인·권한·업무분장 통제 |
+| `access_scope_review` | L3-12 | 승인·권한·업무분장 통제 |
+| `duplicate_or_outflow` | L2-01, L2-02, L2-03, L2-05 | 중복·상계·자금유출 |
+| `timing_anomaly` | L3-04, L3-05, L3-06, L3-07, L3-08, L3-11, L4-05 | 결산·기간귀속·입력시점 |
+| `logic_mismatch` | L1-03, L2-04, L3-01, L3-09, L3-10, L4-04 | 계정분류·거래실질 불일치 |
+| `statistical_outlier` | L4-01, L4-02, L4-03, L4-06 | 수익·금액·모집단 통계 이상 |
+| `intercompany_structure` | L3-03, IC01, IC02, IC03 | 관계사·내부거래·순환구조 |
 
 `IC01~IC03`은 32개 L1~L4 룰 수에 포함하지 않는 관계사 보조 finding이다. `GR01/GR03`은 Phase 3 그래프 신호지만 `L3-03` 케이스와 결합될 때 관계사·연결 구조 이상 우선순위를 높이는 보조 증거로 사용한다.
 
@@ -154,13 +156,13 @@ Theme별 case key는 전역 공통 키를 쓰지 않고 다르게 둔다.
 
 | Primary Theme | 기본 Case Key |
 |---|---|
-| 데이터 정합성 오류 | `회사 / 전표유형 / 적재배치` |
-| 승인·권한 통제 검토 | `사용자 / 프로세스 / 월` |
-| 지급·중복 거래 검토 | `거래처 / 금액밴드 / 근접기간` |
-| 결산·시점 검토 | `사용자 / 계정군 / 월말 윈도우` |
-| 계정 사용 논리 검토 | `계정군 / 문서유형 / 월` |
-| 수익·금액·통계 예외 | `프로세스 / 계정군 / 월` |
-| 관계사·연결 거래 검토 | `회사쌍 / 거래상대 / 월` |
+| 원장기록·데이터정합성 | `회사 / 전표유형 / 적재배치` |
+| 승인·권한·업무분장 통제 | `사용자 / 프로세스 / 월` |
+| 중복·상계·자금유출 | `거래처 / 금액밴드 / 근접기간` |
+| 결산·기간귀속·입력시점 | `사용자 / 계정군 / 월말 윈도우` |
+| 계정분류·거래실질 불일치 | `계정군 / 문서유형 / 월` |
+| 수익·금액·모집단 통계 이상 | `프로세스 / 계정군 / 월` |
+| 관계사·내부거래·순환구조 | `회사쌍 / 거래상대 / 월` |
 
 주요 스키마 매핑은 `사용자=created_by`, `프로세스=business_process`, `월=posting_date YYYY-MM`, `거래처=auxiliary_account_number/vendor_name/customer_name`, `계정군=gl_account prefix/account_family`, `회사쌍=company_code + trading_partner`를 사용한다.
 

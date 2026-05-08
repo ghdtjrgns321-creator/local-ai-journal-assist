@@ -2561,3 +2561,108 @@ Lesson:
 - A-axis contract truth must not be narrowed to confirmed/strict subsets.
 - Strict, weak, normal, and independent scenario semantics belong in sidecars or B/C-axis evaluation.
 - If `rule_truth_*` is derived from a detector contract, it must be rebuilt from the exact active evaluator used by the A-axis report.
+
+## TS-9: PHASE1 review queue를 확실한 감사 주제로 재정렬
+
+**분류**: 탐지 설계 / 문서 정합화 | **정리일**: 2026-05-07
+
+### 1. 문제
+
+`datasynth_manipulation` v134 결과를 보면 조작 truth 420건은 모두 score 또는 rule/review hit로 포착된다. 문제는 포착이 아니라 case ranking과 queue 표현이다.
+
+기존 문서와 case artifact에는 `Audit Risk`, `추가검토사항`, `우선 위험신호`, `저우선 위험신호`, `맥락 검토대상`, `조작 후보` 같은 표현이 섞여 있었다. 이 표현들은 감사인이 실제로 무엇을 검토해야 하는지 바로 설명하지 못한다.
+
+특히 `조작 후보`와 `맥락 검토대상`은 주제가 아니라 상태값이다. 이 상태값을 review queue 이름으로 쓰면 다음 문제가 생긴다.
+
+- 왜 상단에 올라왔는지 설명이 약하다.
+- 서로 다른 룰이 단순 합산되어 주제별 책임 영역이 흐려진다.
+- 악의적 조작 truth가 통제, 시점, 금액, 관계사, 중복 같은 실제 감사 주제 안에서 어떻게 포착됐는지 추적하기 어렵다.
+- 정상 운영 noise와 실제 조작 신호를 같은 "위험신호" 묶음으로 보게 되어 ranking 해석이 흔들린다.
+
+### 2. 판단 기준
+
+기준 문서는 [DETECTION_REFERENCE.md](DETECTION_REFERENCE.md)다. 해당 문서의 ISA 240, K-SOX, ISA 550, FSS 전표 조작 사례는 "조작 후보"라는 단일 큐를 요구하지 않는다. 실제 기준은 다음 주제들을 요구한다.
+
+- 승인 통제 실패
+- 결산·기간귀속 이상
+- 관계사·순환거래
+- 가공매출 또는 고액·분포 이상
+- 중복 지급, 상계, 반제, 자금 유출
+- 계정분류와 거래실질 불일치
+- 원장 기록 자체의 정합성 오류
+
+따라서 PHASE1 queue는 "부정 의심 여부"가 아니라 "감사인이 검토할 구체 주제"로 나눠야 한다.
+
+### 3. 최종 운영 queue
+
+공식 review queue는 7개로 둔다. 묶을 수 있는 항목은 최대한 묶되, 감사 절차가 달라지는 주제는 분리한다.
+
+| Queue | 포함 룰 | 목적 |
+|---|---|---|
+| 원장기록·데이터정합성 | L1-01, L1-02, L1-08, 일부 L3-08 | 전표가 원장 기록으로서 유효한지 확인 |
+| 승인·권한·업무분장 통제 | L1-04, L1-05, L1-06, L1-07, L1-09, L3-02, L3-12 | 승인권한 초과, 자기승인, 승인생략, 수기우회, 업무범위 집중 확인 |
+| 결산·기간귀속·입력시점 | L3-04, L3-05, L3-06, L3-07, L3-08, L3-11, L4-05 | 결산 말, 휴일·야간, 사후입력, cutoff, 설명 부족 전표 확인 |
+| 계정분류·거래실질 불일치 | L1-03, L2-04, L3-01, L3-09, L3-10, L4-04 | 계정 조합과 거래 설명이 업무 실질과 맞는지 확인 |
+| 중복·상계·자금유출 | L2-01, L2-02, L2-03, L2-05 | 중복 지급, 반복 전표, 상계·반제, 유출 은폐 가능성 확인 |
+| 관계사·내부거래·순환구조 | L3-03, IC01, IC02, IC03 | 특수관계자, 내부거래, 순환거래, 미상계 IC 구조 확인 |
+| 수익·금액·모집단 통계 이상 | L4-01, L4-02, L4-03, L4-06, D01, D02, Benford | 매출, 고액, 숫자 분포, 배치, 계정·월 단위 모집단 이상 확인 |
+
+### 4. 기존 표현 처리
+
+아래 표현은 UI나 결과 문서의 primary queue 이름으로 쓰지 않는다.
+
+| 기존 표현 | 처리 |
+|---|---|
+| 조작 후보 | queue가 아니라 FSS/ISA 240 기반 fraud-scenario tag로만 사용 |
+| 맥락 검토대상 | queue가 아니라 보강 증거가 약한 case 상태값으로만 사용 |
+| 추가검토사항 | 위 7개 queue 중 하나로 재분류 |
+| Audit Risk | 위 7개 queue를 묶는 상위 개념으로만 사용 |
+| 우선 위험신호 / 저우선 위험신호 | priority band로만 사용 |
+
+### 5. 조작 시나리오 매핑
+
+`manipulated_entry_truth.csv`의 조작 시나리오는 별도 queue로 만들지 않고, 위 7개 queue에 매핑한다.
+
+| 조작 시나리오 | 주 queue |
+|---|---|
+| `approval_sod_bypass` | 승인·권한·업무분장 통제 |
+| `circular_related_party_transaction` | 관계사·내부거래·순환구조 |
+| `embezzlement_concealment` | 중복·상계·자금유출 |
+| `fictitious_entry` | 수익·금액·모집단 통계 이상 또는 계정분류·거래실질 불일치 |
+| `period_end_adjustment_manipulation` | 결산·기간귀속·입력시점 |
+| `unusual_timing_manipulation` | 결산·기간귀속·입력시점 |
+
+### 6. 결론
+
+PHASE1의 목적은 "조작이라고 단정하는 큐"를 만드는 것이 아니라, 감사인이 봐야 할 이상징후를 누락 없이 구체 주제로 정렬하는 것이다. 조작 여부는 각 queue 안에서 증거 조합, 금액 중요성, 반복성, 통제 우회, 관계사 구조를 보고 판단한다.
+
+따라서 앞으로 결과 문서와 UI는 위 7개 queue를 primary 분류로 사용하고, `조작 후보`, `맥락 검토대상` 같은 표현은 primary queue가 아닌 보조 tag 또는 상태값으로만 사용한다.
+
+## TS-9 Addendum: Fraud Combo Floor는 7개 topic 내부 정책이다
+
+**분류**: 탐지 설계 / Topic scoring 보강 | **정리일**: 2026-05-08
+
+TS-9의 결론은 유지한다. 새 8번째 topic 또는 tab은 만들지 않는다. 다만 `datasynth_manipulation` v134 결과에서 조작 truth가 일부 기대 topic의 High/Top N에 들어오지 않는 문제가 확인되었으므로, 7개 topic 내부에 금감원/ISA/PCAOB 기반 조합형 승격 로직을 추가한다.
+
+운영 정책:
+
+- `topic_score = existing_topic_score + fraud_combo_bonus + fraud_combo_floor`로 확장한다.
+- `fraud_combo_bonus`는 보강 점수이고, `fraud_combo_floor`는 topic band 최소선이다.
+- `fraud_scenario_tags`는 badge/context field이며 queue나 sort key가 아니다.
+- High floor 기본값은 `0.75`, Medium floor 기본 범위는 `0.45~0.60`이다.
+
+필수 subtype:
+
+| Subtype | 대표 tag | 승격 topic | High floor 핵심 조건 |
+|---|---|---|---|
+| 가공전표 의심 | `가공전표 의심` | 수익·금액·모집단 통계 이상 | `(L4-01 or L4-03) + L3-02 + (L4-04 or L2-03)` |
+| 결산수정 조작 의심 | `결산수정 조작 의심` | 결산·기간귀속·입력시점 | `(L3-04 or L3-07 or L3-11 or L1-08) + L4-03 + (L3-08 or L3-10 or L4-04)` |
+| 횡령은폐 의심 | `횡령은폐 의심` | 중복·상계·자금유출 | `(L2-02 or L2-03 or L2-05) + (L1-05 or L1-06 or L1-07 or L1-04)` |
+| 순환거래 의심 | `순환거래 의심` | 관계사·내부거래·순환구조 | `(L3-03 or IC01 or IC02 or IC03) + (L4-03 or L3-04 or L3-11) + 반복/counterparty cycle` |
+| 승인우회 조작 의심 | `승인우회 조작 의심` | 승인·권한·업무분장 통제 | `(L1-04 or L1-05 or L1-06 or L1-07) + (L4-03 or L3-02 or L3-05 or L3-06)` |
+
+주의사항:
+
+- 관계사 topic은 `L3-03`을 단순 booster로만 두면 안 된다. `L3-03` 또는 `IC01~IC03`이 있으면 관계사 topic score 계산을 시작하되, 단독 `L3-03`은 Low 모집단 신호로 제한한다.
+- 계정분류·거래실질 불일치는 조작 subtype의 독립 High topic이 아니라 가공전표/결산수정/횡령은폐의 booster 축으로 사용한다.
+- 원장기록·데이터정합성은 fraud high 승격 topic이 아니라 품질 게이트다. 다른 조작 combo의 설명 부족, 필드 누락, concealment context를 강화하는 데만 사용한다.
