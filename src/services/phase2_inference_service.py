@@ -44,6 +44,9 @@ def run_phase2_inference(
         file_name=file_name,
         reference_df=reference_df,
         detection_scope="phase2_only",
+        phase2_inference_contract=(
+            snapshot.get("inference_contract") if snapshot is not None else None
+        ),
     )
     _attach_phase2_training_contract(result, ctx=ctx, snapshot=snapshot)
     setattr(

@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 import time
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 from sklearn.metrics import f1_score
 
@@ -22,13 +24,15 @@ from src.detection.tabular_transformer import TransformerDetector
 from src.detection.timeseries_detector import TimeseriesDetector
 from src.detection.vae_detector import UnsupervisedDetector
 from src.eda.profiler import profile_dataframe
-from src.preprocessing.feature_groups import classify_features
+from src.preprocessing.feature_groups import FeatureGroups, classify_features
 from src.preprocessing.feature_quality import (
     FEATURE_FAMILIES,
     apply_feature_quality_policy,
 )
 from src.preprocessing.label_strategy import create_labels, create_labels_from_feedback
 from src.preprocessing.model_registry import ModelRegistry
+from src.preprocessing.phase2_matrix import Phase2AutoencoderMatrixBuilder
+from src.preprocessing.phase2_plan import build_phase2_preprocessing_plan
 from src.services.phase2_case_contract import (
     PROVENANCE_ONLY_FIELDS,
     build_phase2_case_feature_frame,
@@ -42,18 +46,8 @@ from src.services.phase2_training_models import (
 )
 
 _DEFAULT_PHASE2_TRAIN_DIR = PROJECT_ROOT / "data" / "phase2_train"
-_DEFAULT_MODEL_FAMILIES = (
-    "unsupervised",
-    "supervised",
-    "transformer",
-    "sequence",
-    "timeseries",
-    "relational",
-    "duplicate",
-    "intercompany",
-    "stacking",
-)
-_SUPERVISED_FAMILIES = {"supervised", "transformer", "sequence", "stacking"}
+_DEFAULT_MODEL_FAMILIES = ("unsupervised",)
+_PHASE2_TRAINING_MODE = "unsupervised_autoencoder_mvp"
 _RULE_STYLE_FAMILIES = {"timeseries", "relational", "duplicate", "intercompany"}
 _SEQUENCE_CONTEXT_COLUMNS = ("document_id", "created_by", "posting_date", "posting_time")
 _RULE_STYLE_REQUIRED_COLUMNS = {
@@ -115,7 +109,7 @@ _DEFAULT_FAMILY_MIN_COMPLETED_TRIALS = {
     "stacking": 2,
 }
 _DEFAULT_FAMILY_MIN_METRIC = {
-    "unsupervised": 0.10,
+    "unsupervised": 0.05,
     "supervised": 0.10,
     "transformer": 0.10,
     "sequence": 0.10,
@@ -124,6 +118,13 @@ _DEFAULT_FAMILY_MIN_METRIC = {
     "duplicate": 0.05,
     "intercompany": 0.05,
     "stacking": 0.10,
+}
+_SEVERE_UNSUPERVISED_RELIABILITY_WARNINGS = {
+    "degenerate_score_distribution",
+    "group_loss_dominated",
+    "nan_score_distribution",
+    "posterior_collapse_warning",
+    "score_flat",
 }
 _DEFAULT_DETECTOR_FACTORIES = {
     "unsupervised": UnsupervisedDetector,
@@ -161,19 +162,42 @@ _FAMILY_TO_CANONICAL_MODEL = {
 _DEFAULT_SEARCH_PRESETS = {
     "unsupervised": (
         {
-            "name": "balanced",
+            "name": "compact",
             "settings_updates": {
-                "vae_latent_dim": 32,
-                "vae_epochs": 30,
+                "vae_hidden_dim": 32,
+                "vae_latent_dim": 8,
+                "vae_epochs": 20,
+                "vae_batch_size": 512,
+                "vae_lr": 1e-3,
+                "vae_beta": 1.0,
                 "if_contamination": 0.01,
+                "phase2_review_capacity_ratio": 0.10,
             },
         },
         {
-            "name": "sensitive",
+            "name": "balanced",
             "settings_updates": {
+                "vae_hidden_dim": 64,
+                "vae_latent_dim": 32,
+                "vae_epochs": 40,
+                "vae_batch_size": 256,
+                "vae_lr": 1e-3,
+                "vae_beta": 1.0,
+                "if_contamination": 0.01,
+                "phase2_review_capacity_ratio": 0.10,
+            },
+        },
+        {
+            "name": "strict_capacity",
+            "settings_updates": {
+                "vae_hidden_dim": 96,
                 "vae_latent_dim": 64,
                 "vae_epochs": 50,
-                "if_contamination": 0.02,
+                "vae_batch_size": 256,
+                "vae_lr": 7.5e-4,
+                "vae_beta": 1.25,
+                "if_contamination": 0.005,
+                "phase2_review_capacity_ratio": 0.05,
             },
         },
     ),
@@ -312,6 +336,13 @@ _DEFAULT_SEARCH_PRESETS = {
 }
 
 
+@dataclass
+class Phase2UnsupervisedSplit:
+    train_df: pd.DataFrame
+    calibration_df: pd.DataFrame
+    metadata: dict[str, Any]
+
+
 def resolve_phase2_training_dir(ctx=None, base_dir: Path | None = None) -> Path:
     """Return the root directory for Phase 2 training artifacts."""
     if base_dir is not None:
@@ -418,22 +449,268 @@ def build_phase2_label_summary(
     return summary, label_result
 
 
-def prepare_phase2_feature_inputs(df) -> tuple[Any, Any, dict[str, Any]]:
+def prepare_phase2_feature_inputs(df, *, settings=None) -> tuple[Any, Any, dict[str, Any]]:
     """Build cleaned training features, groups, and quality metadata once."""
-    profile = profile_dataframe(df)
+    active_settings = settings or get_settings()
+    profile = profile_dataframe(
+        df,
+        max_rows=getattr(active_settings, "phase2_profile_max_rows", None),
+        random_seed=int(getattr(active_settings, "phase2_random_seed", 42)),
+    )
+    preprocessing_plan = build_phase2_preprocessing_plan(
+        profile,
+        high_card_threshold=int(
+            getattr(active_settings, "heuristic_high_cardinality_threshold", 50),
+        ),
+    )
     raw_groups = classify_features(profile)
     cleaned_df, adjusted_groups, feature_quality = apply_feature_quality_policy(
         df,
         raw_groups,
-        for_training=True,
+        for_training=False,
     )
     payload = {
         "raw_groups": _feature_groups_to_dict(raw_groups),
         "adjusted_groups": _feature_groups_to_dict(adjusted_groups),
+        "preprocessing_plan": preprocessing_plan.to_dict(),
         "feature_quality_profile": feature_quality.to_dict(),
         "feature_variants": build_phase2_feature_variants(cleaned_df, adjusted_groups),
     }
     return cleaned_df, adjusted_groups, payload
+
+
+def _phase2_training_mode(settings) -> str:
+    return str(
+        getattr(settings, "phase2_training_mode", _PHASE2_TRAINING_MODE)
+        or _PHASE2_TRAINING_MODE
+    )
+
+
+def _split_unsupervised_train_calibration(df, settings) -> Phase2UnsupervisedSplit:
+    """Split Phase 2 unsupervised data with group split as the default path."""
+    train_ratio = getattr(settings, "phase2_unsup_train_ratio", None)
+    if train_ratio is None:
+        calibration_size = float(getattr(settings, "phase2_calibration_size", 0.20) or 0.20)
+    else:
+        train_ratio = min(max(float(train_ratio), 0.10), 1.0)
+        calibration_size = 1.0 - train_ratio
+    calibration_size = min(max(calibration_size, 0.0), 0.9)
+    calibration_row_cap = int(getattr(settings, "phase2_unsup_calibration_rows", 0) or 0)
+    seed = int(getattr(settings, "phase2_random_seed", 42))
+    strategy = str(getattr(settings, "phase2_split_strategy", "group") or "group").lower()
+    group_column = str(
+        getattr(settings, "phase2_split_group_column", "document_id") or "document_id"
+    )
+    temporal_column = str(
+        getattr(settings, "phase2_temporal_column", "posting_date") or "posting_date"
+    )
+
+    if len(df) <= 1 or calibration_size <= 0:
+        return Phase2UnsupervisedSplit(
+            train_df=df.copy(),
+            calibration_df=df.iloc[0:0].copy(),
+            metadata={
+                "split_strategy": "none",
+                "train_row_count": int(len(df)),
+                "calibration_row_count": 0,
+                "calibration_size": calibration_size,
+                "unsup_train_ratio": float(1.0 - calibration_size),
+                "unsup_calibration_rows_cap": calibration_row_cap,
+            },
+        )
+
+    if strategy == "temporal" and temporal_column in df.columns:
+        split = _temporal_unsupervised_split(df, temporal_column, calibration_size)
+    elif group_column in df.columns:
+        split = _group_unsupervised_split(df, group_column, calibration_size, seed)
+    else:
+        split = _random_unsupervised_split(df, calibration_size, seed)
+
+    split.metadata.update(
+        {
+            "train_row_count": int(len(split.train_df)),
+            "calibration_row_count": int(len(split.calibration_df)),
+            "calibration_size": calibration_size,
+            "unsup_train_ratio": float(1.0 - calibration_size),
+            "unsup_calibration_rows_cap": calibration_row_cap,
+            "random_seed": seed,
+        }
+    )
+    return split
+
+
+def _apply_unsupervised_split_row_caps(
+    split: Phase2UnsupervisedSplit,
+    settings,
+) -> Phase2UnsupervisedSplit:
+    """Apply deterministic train/calibration caps after split selection."""
+    seed = int(getattr(settings, "phase2_random_seed", 42))
+    train_cap = int(getattr(settings, "phase2_train_max_rows", 0) or 0)
+    calibration_cap = int(getattr(settings, "phase2_unsup_calibration_rows", 0) or 0)
+    group_column = str(
+        getattr(settings, "phase2_split_group_column", "document_id") or "document_id"
+    )
+    prefer_group_cap = (
+        split.metadata.get("split_strategy") == "group"
+        and group_column in split.train_df.columns
+        and group_column in split.calibration_df.columns
+    )
+
+    capped_train, train_strategy = _cap_frame_deterministically(
+        split.train_df,
+        cap_rows=train_cap,
+        seed=seed,
+        group_column=group_column if prefer_group_cap else None,
+    )
+    capped_calibration, calibration_strategy = _cap_frame_deterministically(
+        split.calibration_df,
+        cap_rows=calibration_cap,
+        seed=seed + 1,
+        group_column=group_column if prefer_group_cap else None,
+    )
+    metadata = dict(split.metadata)
+    metadata.update(
+        {
+            "source_train_rows": int(len(split.train_df)),
+            "source_calibration_rows": int(len(split.calibration_df)),
+            "capped_train_rows": int(len(capped_train)),
+            "capped_calibration_rows": int(len(capped_calibration)),
+            "train_row_cap": train_cap,
+            "calibration_row_cap": calibration_cap,
+            "cap_strategy": {
+                "train": train_strategy,
+                "calibration": calibration_strategy,
+            },
+            "seed": seed,
+        }
+    )
+    metadata["train_row_count"] = int(len(capped_train))
+    metadata["calibration_row_count"] = int(len(capped_calibration))
+    return Phase2UnsupervisedSplit(
+        train_df=capped_train,
+        calibration_df=capped_calibration,
+        metadata=metadata,
+    )
+
+
+def _cap_frame_deterministically(
+    df,
+    *,
+    cap_rows: int,
+    seed: int,
+    group_column: str | None = None,
+) -> tuple[Any, str]:
+    if cap_rows <= 0:
+        return df.copy(), "uncapped"
+    if len(df) <= cap_rows:
+        return df.copy(), "not_needed"
+    if group_column and group_column in df.columns:
+        capped = _cap_frame_by_group(df, group_column=group_column, cap_rows=cap_rows, seed=seed)
+        if not capped.empty:
+            return capped, "document_group_cap"
+    return df.sample(n=cap_rows, random_state=seed).sort_index().copy(), "row_sample_cap"
+
+
+def _cap_frame_by_group(df, *, group_column: str, cap_rows: int, seed: int):
+    group_sizes = pd.Series(df[group_column]).astype("string").value_counts(dropna=False)
+    groups = group_sizes.index.tolist()
+    rng = np.random.default_rng(seed)
+    shuffled = list(groups)
+    rng.shuffle(shuffled)
+    selected: list[Any] = []
+    selected_rows = 0
+    for group in shuffled:
+        group_rows = int(group_sizes.loc[group])
+        if selected_rows > 0 and selected_rows + group_rows > cap_rows:
+            continue
+        selected.append(group)
+        selected_rows += group_rows
+        if selected_rows >= cap_rows:
+            break
+    if not selected:
+        return df.iloc[0:0].copy()
+    mask = pd.Series(df[group_column]).astype("string").isin(selected)
+    return df.loc[mask].sort_index().copy()
+
+
+def _group_unsupervised_split(
+    df,
+    group_column: str,
+    calibration_size: float,
+    seed: int,
+) -> Phase2UnsupervisedSplit:
+    groups = pd.Series(df[group_column]).dropna().astype("string").unique().tolist()
+    if len(groups) < 2:
+        split = _random_unsupervised_split(df, calibration_size, seed)
+        split.metadata["fallback_reason"] = "insufficient_groups"
+        return split
+    rng = np.random.default_rng(seed)
+    shuffled = list(groups)
+    rng.shuffle(shuffled)
+    target_groups = max(1, int(round(len(shuffled) * calibration_size)))
+    calibration_groups = set(shuffled[:target_groups])
+    calibration_mask = pd.Series(df[group_column]).astype("string").isin(calibration_groups)
+    if calibration_mask.all() or not calibration_mask.any():
+        split = _random_unsupervised_split(df, calibration_size, seed)
+        split.metadata["fallback_reason"] = "empty_group_split"
+        return split
+    return Phase2UnsupervisedSplit(
+        train_df=df.loc[~calibration_mask].copy(),
+        calibration_df=df.loc[calibration_mask].copy(),
+        metadata={
+            "split_strategy": "group",
+            "group_column": group_column,
+            "calibration_group_count": len(calibration_groups),
+        },
+    )
+
+
+def _temporal_unsupervised_split(
+    df,
+    temporal_column: str,
+    calibration_size: float,
+) -> Phase2UnsupervisedSplit:
+    ordered = df.assign(
+        __phase2_temporal_key=pd.to_datetime(df[temporal_column], errors="coerce"),
+    ).sort_values("__phase2_temporal_key", kind="mergesort")
+    if ordered["__phase2_temporal_key"].isna().all():
+        return Phase2UnsupervisedSplit(
+            train_df=df.copy(),
+            calibration_df=df.iloc[0:0].copy(),
+            metadata={
+                "split_strategy": "temporal",
+                "temporal_column": temporal_column,
+                "fallback_reason": "all_temporal_values_missing",
+            },
+        )
+    calibration_rows = max(1, int(round(len(ordered) * calibration_size)))
+    train = ordered.iloc[:-calibration_rows].drop(columns=["__phase2_temporal_key"])
+    calibration = ordered.iloc[-calibration_rows:].drop(columns=["__phase2_temporal_key"])
+    if train.empty:
+        train = ordered.iloc[:1].drop(columns=["__phase2_temporal_key"])
+        calibration = ordered.iloc[1:].drop(columns=["__phase2_temporal_key"])
+    return Phase2UnsupervisedSplit(
+        train_df=train.copy(),
+        calibration_df=calibration.copy(),
+        metadata={"split_strategy": "temporal", "temporal_column": temporal_column},
+    )
+
+
+def _random_unsupervised_split(
+    df,
+    calibration_size: float,
+    seed: int,
+) -> Phase2UnsupervisedSplit:
+    calibration_rows = max(1, int(round(len(df) * calibration_size)))
+    calibration_rows = min(calibration_rows, len(df) - 1)
+    rng = np.random.default_rng(seed)
+    calibration_positions = set(rng.choice(len(df), size=calibration_rows, replace=False))
+    mask = np.array([idx in calibration_positions for idx in range(len(df))])
+    return Phase2UnsupervisedSplit(
+        train_df=df.loc[~mask].copy(),
+        calibration_df=df.loc[mask].copy(),
+        metadata={"split_strategy": "random", "fallback": True},
+    )
 
 
 def build_phase2_feature_variants(df, groups) -> list[dict[str, Any]]:
@@ -507,13 +784,17 @@ def build_phase2_training_report(
         report_id=report_id,
         metadata=metadata,
     )
+    settings = getattr(ctx, "settings", None) or get_settings()
     label_summary, _label_result = build_phase2_label_summary(
         df,
         detection_scores=detection_scores,
         feedback_labels=feedback_labels,
         strategy=strategy,
     )
-    cleaned_df, _groups, feature_payload = prepare_phase2_feature_inputs(df)
+    cleaned_df, _groups, feature_payload = prepare_phase2_feature_inputs(
+        df,
+        settings=settings,
+    )
     phase1_case_contract = _build_phase1_case_contract_metadata(phase1_case_result)
 
     families = list(model_families or _DEFAULT_MODEL_FAMILIES)
@@ -524,12 +805,14 @@ def build_phase2_training_report(
     report.metadata.update(
         {
             "candidate_families": families,
+            "phase2_training_mode": _phase2_training_mode(settings),
             "feature_row_count": int(len(cleaned_df)),
             "feature_column_count": int(len(cleaned_df.columns)),
             "feature_variant_count": len(variants),
             "search_preset_count": sum(len(presets) for presets in search_presets.values()),
             "feature_quality_profile": feature_payload["feature_quality_profile"],
             "adjusted_feature_groups": feature_payload["adjusted_groups"],
+            "preprocessing_plan": feature_payload["preprocessing_plan"],
             "phase1_case_contract": phase1_case_contract,
             "search_presets": search_presets,
         }
@@ -538,7 +821,6 @@ def build_phase2_training_report(
         _build_trial_queue(
             families=families,
             variants=variants,
-            label_summary=label_summary,
             search_presets=search_presets,
         ),
     )
@@ -586,7 +868,10 @@ def run_phase2_training(
         feedback_labels=feedback_labels,
         strategy=strategy,
     )
-    cleaned_df, groups, feature_payload = prepare_phase2_feature_inputs(df)
+    cleaned_df, groups, feature_payload = prepare_phase2_feature_inputs(
+        df,
+        settings=settings,
+    )
     phase1_case_contract = _build_phase1_case_contract_metadata(phase1_case_result)
     families = list(model_families or _DEFAULT_MODEL_FAMILIES)
     variants = feature_payload["feature_variants"]
@@ -597,12 +882,14 @@ def run_phase2_training(
     report.metadata.update(
         {
             "candidate_families": families,
+            "phase2_training_mode": _phase2_training_mode(settings),
             "feature_row_count": int(len(cleaned_df)),
             "feature_column_count": int(len(cleaned_df.columns)),
             "feature_variant_count": len(variants),
             "search_preset_count": sum(len(presets) for presets in search_presets.values()),
             "feature_quality_profile": feature_payload["feature_quality_profile"],
             "adjusted_feature_groups": feature_payload["adjusted_groups"],
+            "preprocessing_plan": feature_payload["preprocessing_plan"],
             "phase1_case_contract": phase1_case_contract,
             "registry_dir": str(registry_dir),
             "search_presets": search_presets,
@@ -611,17 +898,35 @@ def run_phase2_training(
     report.leaderboard = _build_trial_queue(
         families=families,
         variants=variants,
-        label_summary=label_summary,
         search_presets=search_presets,
     )
 
     trained_results: dict[str, list[dict[str, Any]]] = {}
+    label_series = (
+        pd.Series(label_result.y, index=cleaned_df.index)
+        if len(label_result.y) == len(cleaned_df)
+        else pd.Series(dtype=int)
+    )
     for trial in report.leaderboard:
         if trial.status != Phase2TrainingStatus.PENDING:
             _write_trial_artifact(paths["trials_dir"], trial)
             continue
         family = trial.model_family
-        variant_df = _build_variant_frame(cleaned_df, trial, family)
+        split_metadata = None
+        calibration_df = None
+        eval_y = label_result.y
+        if family == "unsupervised":
+            split = _split_unsupervised_train_calibration(cleaned_df, settings)
+            split = _apply_unsupervised_split_row_caps(split, settings)
+            variant_df = _build_variant_frame(split.train_df, trial, family)
+            calibration_df = _build_variant_frame(split.calibration_df, trial, family)
+            split_metadata = split.metadata
+            if not label_series.empty and not calibration_df.empty:
+                eval_y = label_series.loc[calibration_df.index].to_numpy()
+            elif calibration_df.empty:
+                eval_y = []
+        else:
+            variant_df = _build_variant_frame(cleaned_df, trial, family)
         variant_groups = _subset_feature_groups(groups, variant_df.columns)
         if family == "stacking":
             _execute_stacking_trial(
@@ -657,6 +962,10 @@ def run_phase2_training(
                 detector_factory=factories[family],
                 family=family,
                 trained_results=trained_results,
+                calibration_df=calibration_df,
+                eval_y=eval_y,
+                split_metadata=split_metadata,
+                preprocessing_plan=feature_payload["preprocessing_plan"],
             )
         _write_trial_artifact(paths["trials_dir"], trial)
 
@@ -738,25 +1047,17 @@ def _build_trial_queue(
     *,
     families: list[str],
     variants: list[dict[str, Any]],
-    label_summary: Phase2LabelSummary,
     search_presets: dict[str, list[dict[str, Any]]],
 ) -> list[Phase2TrialResult]:
     queue: list[Phase2TrialResult] = []
     for family in families:
         for variant in variants:
             for preset in search_presets.get(family, []):
-                is_supervised_family = family in _SUPERVISED_FAMILIES
-                allowed = (not is_supervised_family) or label_summary.is_supervised_eligible
-                status = (
-                    Phase2TrainingStatus.PENDING
-                    if allowed
-                    else Phase2TrainingStatus.SKIPPED
-                )
                 queue.append(
                     Phase2TrialResult(
                         model_family=family,
                         variant=f"{variant['variant']}__{preset['name']}",
-                        status=status,
+                        status=Phase2TrainingStatus.PENDING,
                         params={
                             "feature_variant": str(variant["variant"]),
                             "search_name": str(preset["name"]),
@@ -766,7 +1067,7 @@ def _build_trial_queue(
                             "settings_updates": dict(preset.get("settings_updates", {})),
                             "detector_kwargs": dict(preset.get("detector_kwargs", {})),
                         },
-                        gate_reason=None if allowed else label_summary.gate_reason,
+                        gate_reason=None,
                         metadata={
                             "description": variant["description"],
                             "family_role": (
@@ -795,6 +1096,10 @@ def _execute_model_trial(
     detector_factory,
     family: str,
     trained_results: dict[str, list[dict[str, Any]]],
+    calibration_df=None,
+    eval_y=None,
+    split_metadata: dict[str, Any] | None = None,
+    preprocessing_plan: dict[str, Any] | None = None,
 ) -> None:
     start = time.perf_counter()
     trial_settings = _build_trial_settings(settings, trial)
@@ -805,12 +1110,62 @@ def _execute_model_trial(
         detector_kwargs=trial.params.get("detector_kwargs", {}),
     )
     try:
+        matrix_metadata = None
+        detection_df = trial_df
+        training_df = trial_df
+        training_groups = groups
+        train_y = _align_labels_to_index(label_result.y, trial_df.index)
         if family == "unsupervised":
-            train_info = detector.train(trial_df, groups, y=label_result.y)
+            if preprocessing_plan is not None:
+                matrix_builder = Phase2AutoencoderMatrixBuilder(
+                    preprocessing_plan,
+                    rare_min_count=int(
+                        getattr(trial_settings, "phase2_low_card_rare_min_count", 2),
+                    ),
+                ).fit(trial_df)
+                train_matrix = matrix_builder.transform(trial_df)
+                calibration_matrix = (
+                    matrix_builder.transform(calibration_df)
+                    if calibration_df is not None and not calibration_df.empty
+                    else pd.DataFrame(columns=train_matrix.columns)
+                )
+                train_matrix.attrs["phase2_matrix_prepared"] = True
+                calibration_matrix.attrs["phase2_matrix_prepared"] = True
+                feature_group_map = dict(matrix_builder.output_feature_groups_)
+                train_matrix.attrs["phase2_feature_group_map"] = feature_group_map
+                calibration_matrix.attrs["phase2_feature_group_map"] = feature_group_map
+                training_df = train_matrix
+                training_groups = _matrix_feature_groups(train_matrix)
+                detection_df = calibration_matrix
+                matrix_metadata = matrix_builder.to_metadata()
+                matrix_metadata.update(
+                    {
+                        "train_matrix_shape": list(train_matrix.shape),
+                        "calibration_matrix_shape": list(calibration_matrix.shape),
+                    }
+                )
+            train_info = detector.train(training_df, training_groups, y=train_y)
+            if matrix_metadata is not None and hasattr(detector, "set_phase2_matrix_state"):
+                detector.set_phase2_matrix_state(matrix_builder, matrix_metadata)
+            if (
+                preprocessing_plan is None
+                and calibration_df is not None
+                and not calibration_df.empty
+            ):
+                detection_df = calibration_df
         else:
             train_info = detector.train(trial_df, label_result, groups)
-        detect_result = detector.detect(trial_df)
-        metric_name, metric_value = _compute_trial_metric(detect_result, label_result.y)
+        detect_result = detector.detect(detection_df)
+        effective_y = eval_y if eval_y is not None else label_result.y
+        if family == "unsupervised" and not _has_positive_labels(effective_y):
+            metric_name, metric_value, unsupervised_metric = _compute_unsupervised_metric(
+                detect_result,
+                settings=trial_settings,
+                train_scores=getattr(detector, "ensemble_train_scores_", None),
+            )
+        else:
+            metric_name, metric_value = _compute_trial_metric(detect_result, effective_y)
+            unsupervised_metric = None
         save_meta = detector.save_model(metric_value or 0.0)
         trial.status = Phase2TrainingStatus.COMPLETED
         trial.metric_name = metric_name
@@ -824,6 +1179,16 @@ def _execute_model_trial(
                 "registry_path": getattr(save_meta, "file_path", None),
             }
         )
+        if isinstance(train_info, dict):
+            for diagnostic_key in ("vae_diagnostics", "if_diagnostics"):
+                if diagnostic_key in train_info:
+                    trial.metadata[diagnostic_key] = train_info[diagnostic_key]
+        if unsupervised_metric is not None:
+            trial.metadata["unsupervised_metric"] = unsupervised_metric
+        if split_metadata is not None:
+            trial.metadata["train_calibration_split"] = dict(split_metadata)
+        if matrix_metadata is not None:
+            trial.metadata["matrix_builder"] = matrix_metadata
         trained_results.setdefault(family, []).append(
             {
                 "trial_variant": trial.variant,
@@ -841,6 +1206,22 @@ def _execute_model_trial(
         trial.warnings.append(str(exc))
     finally:
         trial.elapsed_sec = time.perf_counter() - start
+
+
+def _matrix_feature_groups(matrix: pd.DataFrame) -> FeatureGroups:
+    """Treat a prepared Phase 2 autoencoder matrix as numeric model input."""
+    return FeatureGroups(numeric=list(matrix.columns))
+
+
+def _align_labels_to_index(y, index: pd.Index):
+    """Align full-dataset labels to the split index used for unsupervised training."""
+    if y is None:
+        return None
+    series = pd.Series(y)
+    aligned = series.reindex(index)
+    if aligned.isna().any():
+        return None
+    return aligned.to_numpy()
 
 
 def _execute_stacking_trial(
@@ -1017,6 +1398,142 @@ def _compute_trial_metric(detect_result, y_true) -> tuple[str, float | None]:
         return "f1_macro", float(f1_score(y_true, y_pred, average="macro", zero_division=0))
     flagged_ratio = float(len(detect_result.flagged_indices) / max(len(detect_result.scores), 1))
     return "flagged_ratio", flagged_ratio
+
+
+def _compute_unsupervised_metric(
+    detect_result,
+    *,
+    settings=None,
+    train_scores=None,
+) -> tuple[str, float, dict[str, Any]]:
+    """Compute a no-label ranking proxy for unsupervised Phase 2 selection."""
+    scores = pd.Series(detect_result.scores).astype(float).replace([np.inf, -np.inf], np.nan)
+    scores = scores.dropna()
+    total_count = int(len(detect_result.scores))
+    flagged_ratio = float(len(detect_result.flagged_indices) / max(total_count, 1))
+    capacity_ratio = float(getattr(settings, "phase2_review_capacity_ratio", 0.10) or 0.10)
+    capacity_ratio = min(max(capacity_ratio, 0.001), 0.50)
+
+    warnings = [str(value) for value in getattr(detect_result, "warnings", [])]
+    if scores.empty:
+        components = {
+            "score_tail_gap": 0.0,
+            "topk_stability": 0.0,
+            "capacity_penalty": 1.0,
+            "score_degeneracy_penalty": 1.0,
+            "flagged_ratio": flagged_ratio,
+        }
+        metadata = _build_unsupervised_metric_metadata(
+            components=components,
+            review_capacity_ratio=capacity_ratio,
+            review_threshold=None,
+            reliability_warnings=["nan_score_distribution", *warnings],
+        )
+        return "unsupervised_selection_score", 0.0, metadata
+
+    review_threshold = float(scores.quantile(1.0 - capacity_ratio))
+    capacity_mask = scores >= review_threshold
+    capacity_flagged_ratio = float(capacity_mask.mean())
+    tail_scores = scores[capacity_mask]
+    body_scores = scores[~capacity_mask]
+    score_range = max(float(scores.max() - scores.min()), 1e-12)
+    tail_mean = float(tail_scores.mean()) if len(tail_scores) else float(scores.max())
+    body_mean = float(body_scores.mean()) if len(body_scores) else float(scores.min())
+    score_tail_gap = float(np.clip((tail_mean - body_mean) / score_range, 0.0, 1.0))
+
+    topk_count = max(1, int(np.ceil(len(scores) * capacity_ratio)))
+    topk_scores = scores.nlargest(topk_count)
+    topk_stability = 1.0 - min(
+        float(topk_scores.std(ddof=0) / max(scores.std(ddof=0), 1e-12)),
+        1.0,
+    )
+    unique_ratio = float(scores.nunique(dropna=True) / max(len(scores), 1))
+    score_std = float(scores.std(ddof=0))
+    score_degeneracy_penalty = 1.0 if score_std <= 1e-12 or unique_ratio <= 0.2 else 0.0
+    capacity_penalty = min(
+        abs(capacity_flagged_ratio - capacity_ratio) / max(capacity_ratio, 1e-12),
+        1.0,
+    )
+    drift = _train_calibration_score_drift(train_scores, scores)
+    components = {
+        "score_tail_gap": score_tail_gap,
+        "topk_stability": float(np.clip(topk_stability, 0.0, 1.0)),
+        "capacity_penalty": float(capacity_penalty),
+        "score_degeneracy_penalty": float(score_degeneracy_penalty),
+        "flagged_ratio": flagged_ratio,
+        "capacity_flagged_ratio": capacity_flagged_ratio,
+        "train_calibration_drift": float(drift) if drift is not None else None,
+    }
+    reliability_warnings = list(warnings)
+    if score_std <= 1e-12:
+        reliability_warnings.append("score_flat")
+    if components["topk_stability"] <= 0.05:
+        reliability_warnings.append("topk_unstable")
+    if drift is not None and drift > 0.35:
+        reliability_warnings.append("train_calibration_drift")
+    if score_degeneracy_penalty >= 0.75:
+        reliability_warnings.append("degenerate_score_distribution")
+    severe_warnings = sorted(
+        set(reliability_warnings) & _SEVERE_UNSUPERVISED_RELIABILITY_WARNINGS
+    )
+    score = (
+        (0.55 * components["score_tail_gap"])
+        + (0.30 * components["topk_stability"])
+        - (0.10 * components["capacity_penalty"])
+        - (0.35 * components["score_degeneracy_penalty"])
+    )
+    if severe_warnings:
+        score = min(score, 0.0)
+    metadata = _build_unsupervised_metric_metadata(
+        components=components,
+        review_capacity_ratio=capacity_ratio,
+        review_threshold=review_threshold,
+        reliability_warnings=reliability_warnings,
+    )
+    return "unsupervised_selection_score", float(np.clip(score, 0.0, 1.0)), metadata
+
+
+def _build_unsupervised_metric_metadata(
+    *,
+    components: dict[str, float],
+    review_capacity_ratio: float,
+    review_threshold: float | None,
+    reliability_warnings: list[str],
+) -> dict[str, Any]:
+    severe_warnings = sorted(
+        set(reliability_warnings) & _SEVERE_UNSUPERVISED_RELIABILITY_WARNINGS
+    )
+    return {
+        "metric_interpretation": "ranking_proxy_not_fraud_accuracy",
+        "metric_name": "unsupervised_selection_score",
+        "components": components,
+        "review_capacity_ratio": review_capacity_ratio,
+        "review_threshold": review_threshold,
+        "reliability_warnings": sorted(set(reliability_warnings)),
+        "severe_reliability_warnings": severe_warnings,
+        "promotion_eligible": not severe_warnings,
+    }
+
+
+def _train_calibration_score_drift(train_scores, calibration_scores: pd.Series) -> float | None:
+    if train_scores is None:
+        return None
+    train = pd.Series(train_scores).astype(float).replace([np.inf, -np.inf], np.nan).dropna()
+    calibration = (
+        pd.Series(calibration_scores)
+        .astype(float)
+        .replace([np.inf, -np.inf], np.nan)
+        .dropna()
+    )
+    if train.empty or calibration.empty:
+        return None
+    return abs(float(train.mean()) - float(calibration.mean()))
+
+
+def _has_positive_labels(y_true) -> bool:
+    if len(y_true) == 0:
+        return False
+    return int((pd.Series(y_true) == 1).sum()) > 0
 
 
 def _compute_rule_style_metric(detect_result, y_true) -> tuple[str, float | None]:
@@ -1239,6 +1756,7 @@ def _build_promotion_policy(trials: list[Phase2TrialResult]) -> dict[str, Any]:
     metric_names = sorted({trial.metric_name for trial in completed if trial.metric_name})
     return {
         "selection_mode": "best_per_family",
+        "eligible_model_families": ["unsupervised"],
         "eligible_statuses": [Phase2TrainingStatus.COMPLETED.value],
         "requires_registry_version": True,
         "requires_metric_value": True,
@@ -1273,6 +1791,18 @@ def _build_promotion_policy(trials: list[Phase2TrialResult]) -> dict[str, Any]:
                 "flagged_ratio": 0.7,
                 "score_mean": 0.3,
             },
+        },
+        "unsupervised_metric_policy": {
+            "metric_name": "unsupervised_selection_score",
+            "interpretation": "ranking_proxy_not_fraud_accuracy",
+            "components": [
+                "score_tail_gap",
+                "topk_stability",
+                "capacity_penalty",
+                "score_degeneracy_penalty",
+            ],
+            "flagged_ratio_role": "metadata_only",
+            "promotion_contract_families": ["unsupervised"],
         },
     }
 
@@ -1526,6 +2056,10 @@ def _eligible_promotion_trials(
         str(value)
         for value in policy.get("eligible_statuses", [Phase2TrainingStatus.COMPLETED.value])
     }
+    eligible_model_families = {
+        str(value)
+        for value in policy.get("eligible_model_families", [])
+    }
     requires_registry_version = bool(policy.get("requires_registry_version", True))
     requires_metric_value = bool(policy.get("requires_metric_value", True))
     artifactless_families = {str(value) for value in policy.get("artifactless_families", [])}
@@ -1567,7 +2101,23 @@ def _eligible_promotion_trials(
             )
     eligible: list[Phase2TrialResult] = []
     for trial in trials:
+        if eligible_model_families and trial.model_family not in eligible_model_families:
+            continue
         if trial.status.value not in eligible_statuses:
+            continue
+        unsupervised_metric = dict(trial.metadata.get("unsupervised_metric", {}))
+        severe_warnings = set(unsupervised_metric.get("severe_reliability_warnings") or [])
+        severe_warnings.update(
+            set(unsupervised_metric.get("reliability_warnings") or [])
+            & _SEVERE_UNSUPERVISED_RELIABILITY_WARNINGS
+        )
+        if trial.model_family == "unsupervised" and severe_warnings:
+            continue
+        if (
+            trial.model_family == "unsupervised"
+            and unsupervised_metric
+            and unsupervised_metric.get("promotion_eligible") is False
+        ):
             continue
         family_min_completed = family_min_completed_trials.get(
             trial.model_family,

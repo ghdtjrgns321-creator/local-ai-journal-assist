@@ -10,8 +10,12 @@ from sklearn.exceptions import NotFittedError
 from src.detection.base import DetectionResult
 from src.detection.constants import RULE_CODES, SEVERITY_MAP
 from src.detection.vae_detector import UnsupervisedDetector
+from src.eda.profiler import profile_dataframe
 from src.preprocessing.feature_groups import FeatureGroups
 from src.preprocessing.model_registry import ModelRegistry
+from src.preprocessing.phase2_matrix import Phase2AutoencoderMatrixBuilder
+from src.preprocessing.phase2_plan import build_phase2_preprocessing_plan
+from src.preprocessing.vae_wrapper import VAEDetector
 
 
 @pytest.fixture()
@@ -85,6 +89,38 @@ class TestTrain:
         meta = det.train(df, unsup_groups)
         assert meta["n_train_samples"] == len(df)
 
+    def test_accepts_prepared_phase2_matrix_input(self, unsup_train_data):
+        settings = type(
+            "Settings",
+            (),
+            {
+                "vae_hidden_dim": 8,
+                "vae_latent_dim": 2,
+                "vae_epochs": 1,
+                "vae_batch_size": 128,
+                "vae_lr": 1e-3,
+                "vae_beta": 1.0,
+                "vae_posterior_collapse_ratio_threshold": 0.0,
+                "if_contamination": 0.01,
+            },
+        )()
+        det = UnsupervisedDetector(settings=settings)
+        df, y = unsup_train_data
+        matrix = df.rename(columns={"f1": "amount__signed_log"}).copy()
+        matrix["vendor_name__freq"] = 0.5
+        matrix["vendor_name__count"] = 10.0
+        matrix["has_tax_amount"] = 0.0
+        matrix.attrs["phase2_matrix_prepared"] = True
+        groups = FeatureGroups(numeric=list(matrix.columns))
+
+        meta = det.train(matrix, groups, y=y)
+        result = det.detect(matrix.iloc[:10])
+
+        assert meta["input_matrix_prepared"] is True
+        assert result.metadata["input_matrix_prepared"] is True
+        assert "vendor_name" not in det._feature_group_columns["numeric"]
+        assert "vendor_name__freq" in det._feature_group_columns["numeric"]
+
     def test_y_used_for_eval_only(self, unsup_train_data, unsup_groups):
         """y가 있어도 학습 데이터 = X 전체 (필터링 없음)."""
         det = UnsupervisedDetector()
@@ -92,6 +128,171 @@ class TestTrain:
         meta = det.train(df, unsup_groups, y=y)
         # n_train_samples가 X 전체 행 수와 일치해야 함
         assert meta["n_train_samples"] == len(df)
+
+    def test_hidden_dim_setting_is_applied(self, unsup_train_data, unsup_groups):
+        settings = type(
+            "Settings",
+            (),
+            {
+                "vae_hidden_dim": 12,
+                "vae_latent_dim": 3,
+                "vae_epochs": 1,
+                "vae_batch_size": 64,
+                "vae_lr": 1e-3,
+                "vae_beta": 1.0,
+                "vae_posterior_collapse_ratio_threshold": 0.0,
+                "if_contamination": 0.01,
+            },
+        )()
+        det = UnsupervisedDetector(settings=settings)
+        df, y = unsup_train_data
+
+        meta = det.train(df, unsup_groups, y=y)
+        vae = det.vae_pipeline_.named_steps["detector"]
+
+        assert vae.model_.hidden_dim == 12
+        assert meta["vae_diagnostics"]["hidden_dim"] == 12
+
+    def test_posterior_collapse_warning_fixture(self, unsup_train_data, unsup_groups):
+        settings = type(
+            "Settings",
+            (),
+            {
+                "vae_hidden_dim": 8,
+                "vae_latent_dim": 2,
+                "vae_epochs": 1,
+                "vae_batch_size": 128,
+                "vae_lr": 1e-3,
+                "vae_beta": 1.0,
+                "vae_posterior_collapse_ratio_threshold": 10.0,
+                "if_contamination": 0.01,
+            },
+        )()
+        det = UnsupervisedDetector(settings=settings)
+        df, y = unsup_train_data
+
+        meta = det.train(df, unsup_groups, y=y)
+
+        assert "posterior_collapse_warning" in meta["vae_diagnostics"]["warnings"]
+
+    def test_group_weighted_reconstruction_diagnostics(self):
+        rng = np.random.default_rng(321)
+        matrix = pd.DataFrame(
+            {
+                "amount__signed_log": rng.normal(0, 1, 80),
+                **{
+                    f"vendor__cat_{i}": rng.normal(0, 0.01, 80)
+                    for i in range(20)
+                },
+            }
+        )
+        matrix.attrs["phase2_matrix_prepared"] = True
+        matrix.attrs["phase2_feature_group_map"] = {
+            "amount__signed_log": "amount",
+            **{f"vendor__cat_{i}": "categorical" for i in range(20)},
+        }
+        settings = type(
+            "Settings",
+            (),
+            {
+                "vae_hidden_dim": 6,
+                "vae_latent_dim": 2,
+                "vae_epochs": 1,
+                "vae_batch_size": 64,
+                "vae_lr": 1e-3,
+                "vae_beta": 1.0,
+                "vae_posterior_collapse_ratio_threshold": 0.0,
+                "phase2_reconstruction_group_weights": {
+                    "amount": 1.0,
+                    "categorical": 1.0,
+                },
+                "phase2_group_loss_dominance_threshold": 0.0,
+                "if_contamination": 0.05,
+            },
+        )()
+        det = UnsupervisedDetector(settings=settings)
+
+        meta = det.train(matrix, FeatureGroups(numeric=list(matrix.columns)))
+        diagnostics = meta["vae_diagnostics"]
+
+        assert "per_group_reconstruction_loss" in diagnostics
+        assert set(diagnostics["per_group_reconstruction_loss"]) == {
+            "amount",
+            "categorical",
+        }
+        assert diagnostics["dominant_group"] in {"amount", "categorical"}
+        assert diagnostics["group_loss_dominance_ratio"] < 1.0
+
+    def test_group_loss_dominated_warning_fixture(self):
+        rng = np.random.default_rng(1234)
+        matrix = pd.DataFrame(
+            {
+                "amount__signed_log": rng.normal(0, 25, 80),
+                "vendor__cat": rng.normal(0, 0.01, 80),
+            }
+        )
+        matrix.attrs["phase2_matrix_prepared"] = True
+        matrix.attrs["phase2_feature_group_map"] = {
+            "amount__signed_log": "amount",
+            "vendor__cat": "categorical",
+        }
+        settings = type(
+            "Settings",
+            (),
+            {
+                "vae_hidden_dim": 4,
+                "vae_latent_dim": 2,
+                "vae_epochs": 1,
+                "vae_batch_size": 64,
+                "vae_lr": 1e-3,
+                "vae_beta": 1.0,
+                "vae_posterior_collapse_ratio_threshold": 0.0,
+                "phase2_reconstruction_group_weights": {
+                    "amount": 1.0,
+                    "categorical": 1.0,
+                },
+                "phase2_group_loss_dominance_threshold": 0.0,
+                "if_contamination": 0.05,
+            },
+        )()
+        det = UnsupervisedDetector(settings=settings)
+
+        meta = det.train(matrix, FeatureGroups(numeric=list(matrix.columns)))
+
+        assert "group_loss_dominated" in meta["vae_diagnostics"]["warnings"]
+
+    def test_50k_smoke_uses_minibatches(self):
+        rng = np.random.default_rng(123)
+        df = pd.DataFrame({f"f{i}": rng.normal(size=50_000) for i in range(1, 4)})
+        settings = type(
+            "Settings",
+            (),
+            {
+                "vae_hidden_dim": 4,
+                "vae_latent_dim": 2,
+                "vae_epochs": 1,
+                "vae_batch_size": 4096,
+                "vae_lr": 1e-3,
+                "vae_beta": 1.0,
+                "vae_posterior_collapse_ratio_threshold": 0.0,
+                "if_contamination": 0.01,
+            },
+        )()
+
+        vae = VAEDetector(
+            hidden_dim=settings.vae_hidden_dim,
+            latent_dim=settings.vae_latent_dim,
+            epochs=settings.vae_epochs,
+            batch_size=settings.vae_batch_size,
+            lr=settings.vae_lr,
+            beta=settings.vae_beta,
+            posterior_collapse_ratio_threshold=(
+                settings.vae_posterior_collapse_ratio_threshold
+            ),
+        ).fit(df.to_numpy(dtype=np.float32))
+
+        assert vae.training_diagnostics_["batch_count"] >= 13
+        assert vae.training_diagnostics_["n_samples"] == 50_000
 
 
 class TestDetect:
@@ -168,6 +369,18 @@ class TestExplainability:
         assert per_feature.shape[0] == len(df)
         assert per_feature.shape[1] == len(names)
         assert len(names) > 0
+
+    def test_detect_metadata_has_feature_group_reconstruction_scores(
+        self,
+        trained_detector,
+        unsup_train_data,
+    ):
+        df, _ = unsup_train_data
+        result = trained_detector.detect(df)
+
+        assert "numeric" in result.metadata["feature_group_reconstruction_scores"]
+        assert result.metadata["feature_group_reconstruction_scores"]["numeric"] >= 0
+        assert result.metadata["if_diagnostics"]["role"] == "diagnostic_legacy"
 
 
 class TestECDF:
@@ -252,6 +465,63 @@ class TestModelPersistence:
         np.testing.assert_array_almost_equal(
             r1.scores.values, r2.scores.values,
         )
+
+    def test_save_load_restores_phase2_matrix_state_for_raw_detect(self, tmp_path):
+        settings = type(
+            "Settings",
+            (),
+            {
+                "vae_hidden_dim": 8,
+                "vae_latent_dim": 2,
+                "vae_epochs": 1,
+                "vae_batch_size": 64,
+                "vae_lr": 1e-3,
+                "vae_beta": 1.0,
+                "vae_posterior_collapse_ratio_threshold": 0.0,
+                "if_contamination": 0.10,
+            },
+        )()
+        train_df = pd.DataFrame(
+            {
+                "document_id": [f"d{i}" for i in range(8)],
+                "amount": [100.0, -50.0, 25.0, 40.0, 80.0, -10.0, 70.0, 30.0],
+                "vendor_name": ["A", "B", "C", "D", "E", "F", "G", "H"],
+                "tax_amount": [None, None, None, None, None, None, 3.0, None],
+            }
+        )
+        plan = build_phase2_preprocessing_plan(
+            profile_dataframe(train_df),
+            high_card_threshold=3,
+        )
+        builder = Phase2AutoencoderMatrixBuilder(plan).fit(train_df)
+        train_matrix = builder.transform(train_df)
+        train_matrix.attrs["phase2_matrix_prepared"] = True
+        groups = FeatureGroups(numeric=list(train_matrix.columns))
+
+        registry = ModelRegistry(registry_dir=tmp_path)
+        det = UnsupervisedDetector(settings=settings, model_registry=registry)
+        det.train(train_matrix, groups)
+        det.set_phase2_matrix_state(builder, builder.to_metadata())
+        saved_hash = det.matrix_schema_hash
+        det.save_model(metric_value=0.0)
+
+        loaded = UnsupervisedDetector(settings=settings, model_registry=registry)
+        loaded.load_model("unsupervised")
+        raw_detect_df = pd.DataFrame(
+            {
+                "document_id": ["new1", "new2"],
+                "amount": [15.0, -25.0],
+                "vendor_name": ["UNSEEN_VENDOR", "A"],
+                "tax_amount": [5.0, None],
+            }
+        )
+
+        result = loaded.detect(raw_detect_df)
+
+        assert loaded.matrix_schema_hash == saved_hash
+        assert result.metadata["matrix_schema_hash"] == saved_hash
+        assert result.metadata["matrix_metadata"]["feature_names"] == list(train_matrix.columns)
+        assert len(result.scores) == len(raw_detect_df)
 
     def test_save_without_registry_raises(self, trained_detector):
         trained_detector._registry = None

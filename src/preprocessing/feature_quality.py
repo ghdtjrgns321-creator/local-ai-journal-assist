@@ -9,9 +9,9 @@ Why: DataSynth optional fields can be sparse or unstable enough to hurt
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass, field
 from difflib import get_close_matches
-import re
 
 import pandas as pd
 
@@ -73,6 +73,11 @@ FEATURE_FAMILIES = {
     "trading_partner": ("trading_partner",),
     "auxiliary": ("auxiliary_account_number", "auxiliary_account_label"),
 }
+
+
+def get_sparse_feature_thresholds() -> dict[str, float]:
+    """Return sparse feature coverage thresholds for Phase 2 planning/builders."""
+    return dict(_SPARSE_FEATURE_THRESHOLDS)
 
 
 @dataclass

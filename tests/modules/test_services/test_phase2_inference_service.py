@@ -34,6 +34,8 @@ def _make_local_temp_dir() -> Path:
 
 
 class _FakePipeline:
+    last_phase2_inference_contract = None
+
     def __init__(self, **kwargs):
         self.kwargs = kwargs
 
@@ -44,7 +46,9 @@ class _FakePipeline:
         file_name: str,
         reference_df=None,
         detection_scope: str = "default",
+        phase2_inference_contract=None,
     ):
+        type(self).last_phase2_inference_contract = phase2_inference_contract
         return SimpleNamespace(
             data=featured_df.copy(),
             featured_data=featured_df.copy(),
@@ -64,6 +68,7 @@ class _FakePipelineWithPhase1Case(_FakePipeline):
         file_name: str,
         reference_df=None,
         detection_scope: str = "default",
+        phase2_inference_contract=None,
     ):
         result = super().redetect(
             featured_df,
@@ -71,6 +76,7 @@ class _FakePipelineWithPhase1Case(_FakePipeline):
             file_name=file_name,
             reference_df=reference_df,
             detection_scope=detection_scope,
+            phase2_inference_contract=phase2_inference_contract,
         )
         result.phase1_case_result = _phase1_result()
         result.phase1_case_count = 1
@@ -161,6 +167,7 @@ def test_run_phase2_inference_attaches_training_contract_snapshot():
         ]
         assert result.phase2_promotion_policy["selection_mode"] == "best_per_family"
         assert result.phase2_inference_mode == "training_contract"
+        assert _FakePipeline.last_phase2_inference_contract is result.phase2_inference_contract
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -231,6 +238,7 @@ def test_run_phase2_inference_marks_cold_start_bootstrap_when_statuses_indicate_
             file_name: str,
             reference_df=None,
             detection_scope: str = "default",
+            phase2_inference_contract=None,
         ):
             result = super().redetect(
                 featured_df,
@@ -238,6 +246,7 @@ def test_run_phase2_inference_marks_cold_start_bootstrap_when_statuses_indicate_
                 file_name=file_name,
                 reference_df=reference_df,
                 detection_scope=detection_scope,
+                phase2_inference_contract=phase2_inference_contract,
             )
             result.detector_statuses = [
                 {

@@ -8,6 +8,7 @@ Why: 룰 기반이 잡지 못하는 미지 패턴(zero-day)을 정상 분포 학
 from __future__ import annotations
 
 import time
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -24,9 +25,9 @@ from src.preprocessing.feature_groups import FeatureGroups
 from src.preprocessing.model_registry import ModelRegistry
 from src.preprocessing.pipeline_builder import (
     build_if_pipeline,
-    prepare_training_features,
     build_vae_pipeline,
     drop_label_columns,
+    prepare_training_features,
 )
 
 _RULE_ID = "ML02"
@@ -67,14 +68,40 @@ class UnsupervisedDetector(BaseDetector):
              자체적으로 소수의 이상치를 튕겨냄. y로 필터링하면 룰 엔진 편향 답습.
         """
         start = time.perf_counter()
+        matrix_prepared = bool(X.attrs.get("phase2_matrix_prepared", False))
+        matrix_feature_group_map = dict(X.attrs.get("phase2_feature_group_map", {}) or {})
         X, groups, feature_quality = prepare_training_features(X, groups)
+        feature_group_sequence = _feature_group_sequence(
+            X,
+            groups,
+            matrix_feature_group_map=matrix_feature_group_map if matrix_prepared else None,
+        )
 
         # VAE Pipeline: X 전체로 학습
         self.vae_pipeline_ = build_vae_pipeline(groups)
         self.vae_pipeline_.set_params(
+            detector__hidden_dim=getattr(self._settings, "vae_hidden_dim", 32),
             detector__latent_dim=self._settings.vae_latent_dim,
             detector__epochs=self._settings.vae_epochs,
             detector__batch_size=self._settings.vae_batch_size,
+            detector__lr=getattr(self._settings, "vae_lr", 1e-3),
+            detector__beta=getattr(self._settings, "vae_beta", 1.0),
+            detector__posterior_collapse_ratio_threshold=getattr(
+                self._settings,
+                "vae_posterior_collapse_ratio_threshold",
+                1e-4,
+            ),
+            detector__feature_groups=feature_group_sequence,
+            detector__group_weights=getattr(
+                self._settings,
+                "phase2_reconstruction_group_weights",
+                {},
+            ),
+            detector__group_loss_dominance_threshold=getattr(
+                self._settings,
+                "phase2_group_loss_dominance_threshold",
+                0.75,
+            ),
         )
         self.vae_pipeline_.fit(X)
 
@@ -96,13 +123,17 @@ class UnsupervisedDetector(BaseDetector):
         # Why: train() 시점에서는 학습 데이터 전체에 대해 rankdata 사용.
         #      배치=전체이므로 누수 없음. ECDF는 detect() 시점에서 사용.
         ensemble = self._combine_scores_initial(vae_raw, if_raw)
+        self.ensemble_train_scores_ = np.sort(ensemble)
         contamination = self._settings.if_contamination
         self.threshold_ = float(np.percentile(ensemble, (1 - contamination) * 100))
 
         elapsed = time.perf_counter() - start
         self._logger.info(
             "학습 완료: %d행 × %d피처, threshold=%.4f (%.1f초)",
-            len(X), X.shape[1], self.threshold_, elapsed,
+            len(X),
+            X.shape[1],
+            self.threshold_,
+            elapsed,
         )
 
         # Why: 드리프트 감지 베이스라인 — 학습 시점 분포를 메타데이터에 보존
@@ -111,6 +142,23 @@ class UnsupervisedDetector(BaseDetector):
         self._class_imbalance = compute_class_imbalance(y)
         self._n_train = int(len(X))
         self._feature_quality_profile = feature_quality.to_dict()
+        self._input_matrix_prepared = matrix_prepared
+        self._feature_group_columns = {
+            "numeric": list(getattr(groups, "numeric", [])),
+            "categorical_low": list(getattr(groups, "categorical_low", [])),
+            "categorical_high": list(getattr(groups, "categorical_high", [])),
+            "boolean": list(getattr(groups, "boolean", [])),
+            "ordinal": list(getattr(groups, "ordinal", [])),
+        }
+        if matrix_feature_group_map:
+            self._feature_group_columns = _columns_by_group(matrix_feature_group_map)
+        vae = self.vae_pipeline_.named_steps["detector"]
+        self._vae_diagnostics = dict(getattr(vae, "training_diagnostics_", {}))
+        self._if_diagnostics = {
+            "role": "diagnostic_legacy",
+            "contamination": float(self._settings.if_contamination),
+            "score_std": float(np.std(if_raw)),
+        }
 
         return {
             "ensemble_threshold": self.threshold_,
@@ -118,16 +166,30 @@ class UnsupervisedDetector(BaseDetector):
             "n_features": X.shape[1],
             "elapsed": elapsed,
             "feature_quality_profile": self._feature_quality_profile,
+            "vae_diagnostics": self._vae_diagnostics,
+            "if_diagnostics": self._if_diagnostics,
+            "input_matrix_prepared": self._input_matrix_prepared,
         }
 
     # -- 탐지 --
+
+    def set_phase2_matrix_state(
+        self,
+        builder: Any,
+        metadata: dict | None = None,
+    ) -> None:
+        """Attach fitted Phase 2 matrix state for persistence and inference."""
+        self._phase2_matrix_builder = builder
+        self._phase2_matrix_metadata = dict(metadata or builder.to_metadata())
+        self._matrix_schema_hash = self._phase2_matrix_metadata.get("schema_hash")
+        self._input_matrix_prepared = True
 
     def detect(self, df: pd.DataFrame) -> DetectionResult:
         """ECDF 기반 앙상블 탐지 수행."""
         self._check_fitted()
         start = time.perf_counter()
 
-        X = drop_label_columns(df)
+        X = self._prepare_detection_features(df)
         vae_raw = self._score_vae(X)
         if_raw = self._score_if(X)
         scores = self._combine_scores(vae_raw, if_raw, df.index)
@@ -135,7 +197,9 @@ class UnsupervisedDetector(BaseDetector):
         # Why: 감사조서 정량 증거용 — 어느 피처에서 재구성 실패가 컸는지 Top-K 분해
         per_feature, feature_names = self._score_vae_per_feature(X)
         topk_columns = self._build_topk_columns(
-            per_feature, feature_names, df.index,
+            per_feature,
+            feature_names,
+            df.index,
         )
 
         flagged_mask = scores > self.threshold_
@@ -152,13 +216,28 @@ class UnsupervisedDetector(BaseDetector):
             ),
         ]
         elapsed = time.perf_counter() - start
+        warnings = list(getattr(self, "_vae_diagnostics", {}).get("warnings", []))
         return self._make_result(
             flagged_indices=flagged_indices,
             scores=scores,
             rule_flags=rule_flags,
             details=details,
-            metadata={"elapsed": elapsed, "skipped_rules": []},
-            warnings=[],
+            metadata={
+                "elapsed": elapsed,
+                "skipped_rules": [],
+                "vae_diagnostics": getattr(self, "_vae_diagnostics", {}),
+                "if_diagnostics": getattr(self, "_if_diagnostics", {}),
+                "feature_group_reconstruction_scores": (
+                    self._build_feature_group_reconstruction_scores(
+                        per_feature,
+                        feature_names,
+                    )
+                ),
+                "input_matrix_prepared": getattr(self, "_input_matrix_prepared", False),
+                "matrix_schema_hash": getattr(self, "_matrix_schema_hash", None),
+                "matrix_metadata": getattr(self, "_phase2_matrix_metadata", None),
+            },
+            warnings=warnings,
         )
 
     # -- 모델 영속화 --
@@ -174,9 +253,19 @@ class UnsupervisedDetector(BaseDetector):
             "threshold": self.threshold_,
             "vae_train_scores": self.vae_train_scores_,
             "if_train_scores": self.if_train_scores_,
+            "ensemble_train_scores": getattr(self, "ensemble_train_scores_", None),
+            "vae_diagnostics": getattr(self, "_vae_diagnostics", {}),
+            "if_diagnostics": getattr(self, "_if_diagnostics", {}),
+            "input_matrix_prepared": getattr(self, "_input_matrix_prepared", False),
+            "feature_group_columns": getattr(self, "_feature_group_columns", {}),
+            "matrix_builder_state": getattr(self, "_phase2_matrix_builder", None),
+            "matrix_schema_hash": getattr(self, "_matrix_schema_hash", None),
+            "matrix_metadata": getattr(self, "_phase2_matrix_metadata", None),
         }
         return self._registry.save(
-            bundle, "unsupervised", metric_value,
+            bundle,
+            "unsupervised",
+            metric_value,
             params={"threshold": self.threshold_},
             training_data_stats=getattr(self, "_train_stats", {}),
             feature_schema_version=getattr(self, "_schema_version", 1),
@@ -186,7 +275,9 @@ class UnsupervisedDetector(BaseDetector):
         )
 
     def load_model(
-        self, model_name: str = "unsupervised", version: int | None = None,
+        self,
+        model_name: str = "unsupervised",
+        version: int | None = None,
     ) -> None:
         """ModelRegistry에서 번들 복원."""
         if self._registry is None:
@@ -197,18 +288,45 @@ class UnsupervisedDetector(BaseDetector):
         self.threshold_ = bundle["threshold"]
         self.vae_train_scores_ = bundle["vae_train_scores"]
         self.if_train_scores_ = bundle["if_train_scores"]
+        self.ensemble_train_scores_ = bundle.get("ensemble_train_scores")
+        self._vae_diagnostics = bundle.get("vae_diagnostics", {})
+        self._if_diagnostics = bundle.get("if_diagnostics", {})
+        self._input_matrix_prepared = bool(bundle.get("input_matrix_prepared", False))
+        self._feature_group_columns = bundle.get("feature_group_columns", {})
+        self._phase2_matrix_builder = bundle.get("matrix_builder_state")
+        self._matrix_schema_hash = bundle.get("matrix_schema_hash")
+        self._phase2_matrix_metadata = bundle.get("matrix_metadata")
+
+    @property
+    def matrix_schema_hash(self):
+        return getattr(self, "_matrix_schema_hash", None)
 
     # -- private --
 
     def _check_fitted(self) -> None:
         """학습 상태 검증."""
-        required = ("vae_pipeline_", "if_pipeline_", "threshold_",
-                     "vae_train_scores_", "if_train_scores_")
+        required = (
+            "vae_pipeline_",
+            "if_pipeline_",
+            "threshold_",
+            "vae_train_scores_",
+            "if_train_scores_",
+        )
         if not all(hasattr(self, attr) for attr in required):
             raise NotFittedError(
-                f"{type(self).__name__}은 아직 학습되지 않았습니다. "
-                "train()을 먼저 호출하세요.",
+                f"{type(self).__name__}은 아직 학습되지 않았습니다. train()을 먼저 호출하세요.",
             )
+
+    def _prepare_detection_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Reuse fitted Phase 2 matrix state unless input is already prepared."""
+        if bool(df.attrs.get("phase2_matrix_prepared", False)):
+            return df
+        builder = getattr(self, "_phase2_matrix_builder", None)
+        if builder is None:
+            return drop_label_columns(df)
+        matrix = builder.transform(df)
+        matrix.attrs["phase2_matrix_prepared"] = True
+        return matrix
 
     def _score_vae(self, df: pd.DataFrame) -> np.ndarray:
         """VAE 파이프라인의 raw 재구성 오차(MSE) 반환.
@@ -221,7 +339,8 @@ class UnsupervisedDetector(BaseDetector):
         return vae.score_samples(X_transformed)
 
     def _score_vae_per_feature(
-        self, df: pd.DataFrame,
+        self,
+        df: pd.DataFrame,
     ) -> tuple[np.ndarray, list[str]]:
         """피처별 재구성 오차 + 전처리 후 피처명 반환.
 
@@ -267,9 +386,7 @@ class UnsupervisedDetector(BaseDetector):
 
         effective_k = min(k, n_features)
         # Why: argpartition은 정렬되지 않은 상위 K → argsort로 다시 정렬
-        partition_idx = np.argpartition(-per_feature, kth=effective_k - 1, axis=1)[
-            :, :effective_k
-        ]
+        partition_idx = np.argpartition(-per_feature, kth=effective_k - 1, axis=1)[:, :effective_k]
         rows = np.arange(n_rows)[:, None]
         topk_values = per_feature[rows, partition_idx]
         order = np.argsort(-topk_values, axis=1)
@@ -280,20 +397,45 @@ class UnsupervisedDetector(BaseDetector):
         cols: dict[str, pd.Series] = {}
         for i in range(effective_k):
             cols[f"{_RULE_ID}_top_feature_{i + 1}"] = pd.Series(
-                feature_name_array[sorted_idx[:, i]], index=index,
+                feature_name_array[sorted_idx[:, i]],
+                index=index,
             )
             cols[f"{_RULE_ID}_top_feature_{i + 1}_contrib"] = pd.Series(
-                sorted_values[:, i].astype(float), index=index,
+                sorted_values[:, i].astype(float),
+                index=index,
             )
         # Why: K가 피처 수보다 큰 경우(거의 발생 안 하나 방어) 빈 컬럼 채움
         for i in range(effective_k, k):
             cols[f"{_RULE_ID}_top_feature_{i + 1}"] = pd.Series(
-                [None] * n_rows, index=index,
+                [None] * n_rows,
+                index=index,
             )
             cols[f"{_RULE_ID}_top_feature_{i + 1}_contrib"] = pd.Series(
-                np.zeros(n_rows, dtype=float), index=index,
+                np.zeros(n_rows, dtype=float),
+                index=index,
             )
         return pd.DataFrame(cols, index=index)
+
+    def _build_feature_group_reconstruction_scores(
+        self,
+        per_feature: np.ndarray,
+        feature_names: list[str],
+    ) -> dict[str, float]:
+        """Aggregate reconstruction error by original feature group when available."""
+        group_columns = getattr(self, "_feature_group_columns", {})
+        if not group_columns:
+            return {}
+        scores: dict[str, float] = {}
+        for group_name, columns in group_columns.items():
+            matched_indices = [
+                idx
+                for idx, feature_name in enumerate(feature_names)
+                if any(str(column) in str(feature_name) for column in columns)
+            ]
+            if not matched_indices:
+                continue
+            scores[group_name] = float(per_feature[:, matched_indices].mean())
+        return scores
 
     def _score_if(self, df: pd.DataFrame) -> np.ndarray:
         """IF 파이프라인의 decision_function(raw) 반환.
@@ -308,7 +450,8 @@ class UnsupervisedDetector(BaseDetector):
 
     @staticmethod
     def _ecdf_transform(
-        new_scores: np.ndarray, train_sorted: np.ndarray,
+        new_scores: np.ndarray,
+        train_sorted: np.ndarray,
     ) -> np.ndarray:
         """ECDF: 학습 데이터 분포 기준 백분위수 계산.
 
@@ -326,13 +469,13 @@ class UnsupervisedDetector(BaseDetector):
     ) -> pd.Series:
         """ECDF 기반 앙상블. 학습 분포 기준 percentile 후 균등 결합."""
         vae_pct = self._ecdf_transform(vae_raw, self.vae_train_scores_)
-        if_pct = self._ecdf_transform(-if_raw, self.if_train_scores_)
-        ensemble = np.clip(0.5 * vae_pct + 0.5 * if_pct, 0.0, 1.0)
+        ensemble = np.clip(vae_pct, 0.0, 1.0)
         return pd.Series(ensemble, index=index, name=_RULE_ID)
 
     @staticmethod
     def _combine_scores_initial(
-        vae_raw: np.ndarray, if_raw: np.ndarray,
+        vae_raw: np.ndarray,
+        if_raw: np.ndarray,
     ) -> np.ndarray:
         """train() 전용: ECDF 미구축 상태에서 rankdata로 threshold 결정.
 
@@ -341,5 +484,27 @@ class UnsupervisedDetector(BaseDetector):
         """
         n = len(vae_raw)
         vae_rank = rankdata(vae_raw) / n
-        if_rank = rankdata(-if_raw) / n
-        return 0.5 * vae_rank + 0.5 * if_rank
+        return vae_rank
+
+
+def _feature_group_sequence(
+    X: pd.DataFrame,
+    groups: FeatureGroups,
+    *,
+    matrix_feature_group_map: dict[str, str] | None = None,
+) -> list[str]:
+    if matrix_feature_group_map:
+        return [str(matrix_feature_group_map.get(column, "numeric")) for column in X.columns]
+    group_by_column: dict[str, str] = {}
+    for group_name in ("numeric", "categorical_low", "categorical_high", "boolean", "ordinal"):
+        for column in getattr(groups, group_name, []):
+            mapped = "categorical" if group_name.startswith("categorical") else group_name
+            group_by_column[str(column)] = mapped
+    return [group_by_column.get(str(column), "numeric") for column in X.columns]
+
+
+def _columns_by_group(feature_group_map: dict[str, str]) -> dict[str, list[str]]:
+    grouped: dict[str, list[str]] = {}
+    for column, group in feature_group_map.items():
+        grouped.setdefault(str(group), []).append(str(column))
+    return grouped

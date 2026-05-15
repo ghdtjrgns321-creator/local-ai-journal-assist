@@ -19,6 +19,43 @@ class Phase2TrainingStatus(StrEnum):
 
 
 @dataclass
+class Phase2ColumnDecision:
+    """Preprocessing decision for one source column before matrix building."""
+
+    column: str
+    role: str
+    action: str
+    reason_code: str
+    dtype_group: str | None = None
+    missing_rate: float | None = None
+    unique_count: int | None = None
+    notes: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class Phase2PreprocessingPlan:
+    """Serializable Phase 2 preprocessing plan metadata."""
+
+    row_count: int
+    profile_sampled: bool
+    profile_sample_size: int | None
+    duplicate_rows: int
+    duplicate_rows_estimated: bool
+    duplicate_sample_size: int | None
+    duplicate_rate_estimate: float | None
+    decisions: list[Phase2ColumnDecision] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = asdict(self)
+        payload["decisions"] = [decision.to_dict() for decision in self.decisions]
+        return payload
+
+
+@dataclass
 class Phase2LabelSummary:
     """Label readiness summary captured before candidate training starts."""
 
