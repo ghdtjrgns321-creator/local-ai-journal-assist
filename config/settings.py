@@ -10,7 +10,7 @@ import functools
 from pathlib import Path
 
 import yaml
-from pydantic import computed_field, field_validator
+from pydantic import Field, computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # 프로젝트 루트 = config/ 의 부모
@@ -290,9 +290,35 @@ class AuditSettings(BaseSettings):
     profile_dir: str = "data/profiles"  # 프로파일 저장 디렉토리
 
     # --- ML Pipeline (Phase 2) ---
+    phase2_training_mode: str = "unsupervised_autoencoder_mvp"
+    phase2_train_max_rows: int = 50_000
+    phase2_profile_max_rows: int = 100_000
+    phase2_random_seed: int = 42
+    phase2_review_capacity_ratio: float = 0.10
+    phase2_unsup_train_ratio: float = 0.80
+    phase2_unsup_calibration_rows: int = 50_000
+    phase2_calibration_size: float = 0.20
+    phase2_split_strategy: str = "group"
+    phase2_split_group_column: str = "document_id"
+    phase2_temporal_column: str = "posting_date"
+    phase2_low_card_rare_min_count: int = 2
+    phase2_reconstruction_group_weights: dict[str, float] = Field(
+        default_factory=lambda: {
+            "numeric": 1.0,
+            "categorical": 1.0,
+            "amount": 1.0,
+            "boolean": 1.0,
+            "date": 1.0,
+            "indicator": 1.0,
+        }
+    )
     vae_latent_dim: int = 32
+    vae_hidden_dim: int = 64
     vae_epochs: int = 50
     vae_batch_size: int = 256
+    vae_lr: float = 1e-3
+    vae_beta: float = 1.0
+    vae_posterior_collapse_ratio_threshold: float = 1e-4
     if_contamination: float = 0.01  # IsolationForest
     cv_folds: int = 5
     cv_scoring: str = "f1_macro"
