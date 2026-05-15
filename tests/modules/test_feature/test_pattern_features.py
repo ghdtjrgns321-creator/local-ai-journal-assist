@@ -97,6 +97,33 @@ class TestAddIsIntercompany:
         result = add_is_intercompany(df, self.IDENTIFIERS)
         assert not result["is_intercompany"].any()
 
+    def test_business_process_intercompany(self):
+        """business_process가 Intercompany면 GL prefix 없이도 관계사 후보."""
+        df = pd.DataFrame({
+            "gl_account": ["1200", "5000"],
+            "business_process": ["Intercompany", "P2P"],
+        })
+        result = add_is_intercompany(df, self.IDENTIFIERS)
+        assert result["is_intercompany"].tolist() == [True, False]
+
+    def test_counterparty_type_intercompany_affiliate(self):
+        """counterparty_type이 IntercompanyAffiliate면 관계사 후보."""
+        df = pd.DataFrame({
+            "gl_account": ["1200", "5000"],
+            "counterparty_type": ["IntercompanyAffiliate", "Vendor"],
+        })
+        result = add_is_intercompany(df, self.IDENTIFIERS)
+        assert result["is_intercompany"].tolist() == [True, False]
+
+    def test_empty_identifiers_still_uses_semantic_columns(self):
+        """GL prefix config가 없어도 명시적 semantic 컬럼은 유지."""
+        df = pd.DataFrame({
+            "business_process": ["Intercompany", "P2P"],
+            "counterparty_type": ["Vendor", "IntercompanyAffiliate"],
+        })
+        result = add_is_intercompany(df, [])
+        assert result["is_intercompany"].tolist() == [True, True]
+
     def test_multiple_gl_prefixes(self):
         """여러 GL prefix 중 하나라도 매칭이면 True."""
         df = pd.DataFrame({

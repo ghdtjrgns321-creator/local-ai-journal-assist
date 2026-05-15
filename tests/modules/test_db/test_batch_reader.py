@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -216,6 +217,50 @@ class TestPseudoDetectionResults:
         for dr in result.results:
             if not dr.details.empty:
                 assert (dr.details > 0).any().any()
+
+    def test_restored_flags_preserve_line_number_row_position(self, db_conn):
+        df = pd.DataFrame({
+            "document_id": ["JE-LINE", "JE-LINE", "JE-LINE"],
+            "company_code": ["C001", "C001", "C001"],
+            "fiscal_year": [2022, 2022, 2022],
+            "fiscal_period": [1, 1, 1],
+            "posting_date": pd.to_datetime(["2022-01-10"] * 3),
+            "document_date": pd.to_datetime(["2022-01-10"] * 3),
+            "document_type": ["SA", "SA", "SA"],
+            "gl_account": ["1000", "2000", "9999"],
+            "debit_amount": [100.0, 0.0, 777.0],
+            "credit_amount": [0.0, 100.0, 0.0],
+            "line_number": [1, 2, 3],
+            "created_by": ["USR"] * 3,
+            "source": ["Manual"] * 3,
+            "business_process": ["R2R"] * 3,
+            "anomaly_score": [0.0, 0.0, 0.9],
+            "risk_level": ["Normal", "Normal", "High"],
+            "flagged_rules": ["", "", "L1-03"],
+            "review_rules": ["", "", ""],
+        })
+        details = pd.DataFrame({"L1-03": [0.0, 0.0, 0.9]}, index=df.index)
+        load_all(
+            db_conn,
+            df,
+            "batch_line_number_restore",
+            [SimpleNamespace(track_name="layer_a", details=details, metadata={})],
+        )
+
+        result = load_batch(db_conn, "batch_line_number_restore")
+        layer_a = next(dr for dr in result.results if dr.track_name == "layer_a")
+
+        assert len(layer_a.flagged_indices) == 1
+        flagged_index = layer_a.flagged_indices[0]
+        assert result.data.iloc[flagged_index]["line_number"] == 3
+        assert result.data.iloc[flagged_index]["gl_account"] == "9999"
+        assert layer_a.details.loc[flagged_index, "L1-03"] == 0.9
+        unflagged_indices = [
+            idx
+            for idx, line_number in enumerate(result.data["line_number"])
+            if int(line_number) != 3
+        ]
+        assert (layer_a.details.loc[unflagged_indices, "L1-03"] == 0.0).all()
 
 
 class TestDetectorStatuses:

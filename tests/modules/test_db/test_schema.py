@@ -7,7 +7,6 @@
   - DataSynth PREVIEW 39개 컬럼 대응
 """
 
-
 from src.db.schema import (
     ANOMALY_FLAGS_COLUMNS,
     BENFORD_DIGITS_COLUMNS,
@@ -30,14 +29,17 @@ class TestInitializeSchema:
         """6개 테이블 생성 확인 (engagement_meta 포함)."""
         initialize_schema(db_raw_conn)
         tables = db_raw_conn.execute(
-            "SELECT table_name FROM information_schema.tables "
-            "WHERE table_schema = 'main'"
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'"
         ).fetchdf()
         expected = {
-            "general_ledger", "anomaly_flags",
-            "benford_summary", "benford_digits",
-            "ml_model_metadata", "engagement_meta",
-            "performance_reports", "performance_rule_metrics",
+            "general_ledger",
+            "anomaly_flags",
+            "benford_summary",
+            "benford_digits",
+            "ml_model_metadata",
+            "engagement_meta",
+            "performance_reports",
+            "performance_rule_metrics",
             "feedback_events",
         }
         # Why: DuckDB에서 VIEW도 information_schema.tables에 포함될 수 있음
@@ -52,22 +54,57 @@ class TestInitializeSchema:
         ).fetchdf()
         assert "anomaly_flag_summary" in set(views["view_name"])
 
-    def test_schema_ddl_has_15_objects(self):
-        """SCHEMA_DDL 오브젝트 수와 신규 feedback 테이블 포함 여부."""
-        assert len(SCHEMA_DDL) == 19
+    def test_schema_ddl_has_27_objects(self):
+        """SCHEMA_DDL 오브젝트 수 + 핵심 테이블 포함 여부.
+
+        + WU-31 Sprint A: review_narratives 테이블 + 인덱스 2종 추가 (19 → 22).
+        + WU-31 후속: 감사인 결정 컬럼 4종(audit_decision/note/reviewed_by/reviewed_at)
+          + decision 인덱스 (22 → 27).
+        """
+        assert len(SCHEMA_DDL) == 27
         assert "llm_narratives" in SCHEMA_DDL
         assert "llm_narratives_idx" in SCHEMA_DDL
         assert "performance_reports" in SCHEMA_DDL
         assert "performance_rule_metrics" in SCHEMA_DDL
         assert "feedback_events" in SCHEMA_DDL
+        assert "review_narratives" in SCHEMA_DDL
+        assert "review_narratives_batch_idx" in SCHEMA_DDL
+        assert "review_narratives_rank_idx" in SCHEMA_DDL
+        assert "review_narratives_audit_decision" in SCHEMA_DDL
+        assert "review_narratives_decision_idx" in SCHEMA_DDL
+
+    def test_review_narratives_table_columns(self, db_raw_conn):
+        """review_narratives 테이블이 기대 컬럼을 모두 포함."""
+        initialize_schema(db_raw_conn)
+        cols = db_raw_conn.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'review_narratives'"
+        ).fetchdf()
+        ddl_cols = set(cols["column_name"])
+        expected = {
+            "candidate_id",
+            "batch_id",
+            "journal_id",
+            "priority_rank",
+            "priority_score",
+            "confidence",
+            "narrative_json",
+            "citation_valid",
+            "input_hash",
+            "model_tier",
+            "prompt_tokens",
+            "completion_tokens",
+            "cost_usd",
+            "created_at",
+        }
+        assert expected <= ddl_cols
 
     def test_idempotent(self, db_raw_conn):
         """2회 실행해도 에러 없음 (멱등성)."""
         initialize_schema(db_raw_conn)
         initialize_schema(db_raw_conn)  # 두 번째 호출
         tables = db_raw_conn.execute(
-            "SELECT table_name FROM information_schema.tables "
-            "WHERE table_schema = 'main'"
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'"
         ).fetchdf()
         # Why: VIEW 포함 시 5개
         assert len(tables) >= 4
@@ -79,8 +116,7 @@ class TestColumnConstants:
     def test_gl_columns_in_ddl(self, db_conn):
         """GENERAL_LEDGER_COLUMNS 전부 general_ledger DDL에 존재."""
         cols = db_conn.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_name = 'general_ledger'"
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'general_ledger'"
         ).fetchdf()
         ddl_cols = set(cols["column_name"])
         for col in GENERAL_LEDGER_COLUMNS:
@@ -89,8 +125,7 @@ class TestColumnConstants:
     def test_af_columns_in_ddl(self, db_conn):
         """ANOMALY_FLAGS_COLUMNS 전부 anomaly_flags DDL에 존재."""
         cols = db_conn.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_name = 'anomaly_flags'"
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'anomaly_flags'"
         ).fetchdf()
         ddl_cols = set(cols["column_name"])
         for col in ANOMALY_FLAGS_COLUMNS:
@@ -109,8 +144,7 @@ class TestColumnConstants:
     def test_bd_columns_in_ddl(self, db_conn):
         """BENFORD_DIGITS_COLUMNS 전부 benford_digits DDL에 존재."""
         cols = db_conn.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_name = 'benford_digits'"
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'benford_digits'"
         ).fetchdf()
         ddl_cols = set(cols["column_name"])
         for col in BENFORD_DIGITS_COLUMNS:
@@ -128,8 +162,7 @@ class TestColumnConstants:
         _DB_EXCLUDED = {"morpheme_tokens"}
 
         cols = db_conn.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_name = 'general_ledger'"
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'general_ledger'"
         ).fetchdf()
         ddl_cols = set(cols["column_name"])
         for category_cols in EXPECTED_COLUMNS.values():
@@ -141,21 +174,23 @@ class TestColumnConstants:
     def test_approval_level_in_gl(self, db_conn):
         """approval_level 파생 컬럼 존재."""
         cols = db_conn.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_name = 'general_ledger'"
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'general_ledger'"
         ).fetchdf()
         assert "approval_level" in set(cols["column_name"])
 
     def test_ml_columns_in_gl(self, db_conn):
         """ML 예약 7개 컬럼이 general_ledger DDL에 존재."""
         cols = db_conn.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_name = 'general_ledger'"
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'general_ledger'"
         ).fetchdf()
         ddl_cols = set(cols["column_name"])
         ml_cols = [
-            "supervised_score", "unsupervised_score", "duplicate_score",
-            "supervised_model_id", "unsupervised_model_id", "duplicate_model_id",
+            "supervised_score",
+            "unsupervised_score",
+            "duplicate_score",
+            "supervised_model_id",
+            "unsupervised_model_id",
+            "duplicate_model_id",
             "ml_scored_at",
         ]
         for col in ml_cols:
@@ -193,8 +228,7 @@ class TestEngagementMeta:
     def test_table_created(self, db_conn):
         """engagement_meta 테이블 존재 확인."""
         tables = db_conn.execute(
-            "SELECT table_name FROM information_schema.tables "
-            "WHERE table_name = 'engagement_meta'"
+            "SELECT table_name FROM information_schema.tables WHERE table_name = 'engagement_meta'"
         ).fetchdf()
         assert len(tables) == 1
 

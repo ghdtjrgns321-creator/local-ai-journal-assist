@@ -129,21 +129,17 @@ def _compute_approver_info(df: pd.DataFrame) -> pd.DataFrame | None:
         return None
 
     approver = df["approved_by"].fillna("").astype(str).str.strip()
-    limits = pd.Series(np.nan, index=df.index, dtype="float64")
-    can_approve = pd.Series(pd.NA, index=df.index, dtype="boolean")
-    for idx, user_id in approver.items():
-        if not user_id:
-            continue
-        approval_info = approval_map.get(user_id)
-        if approval_info is None:
-            continue
-        approval_limit, can_approve_je = approval_info
-        if can_approve_je is not None:
-            can_approve.at[idx] = bool(can_approve_je)
-        if can_approve_je is False:
-            limits.at[idx] = 0.0
-        elif approval_limit is not None:
-            limits.at[idx] = approval_limit
+    limit_map = {
+        user_id: (0.0 if can_approve_je is False else approval_limit)
+        for user_id, (approval_limit, can_approve_je) in approval_map.items()
+    }
+    can_approve_map = {
+        user_id: can_approve_je
+        for user_id, (_, can_approve_je) in approval_map.items()
+        if can_approve_je is not None
+    }
+    limits = pd.to_numeric(approver.map(limit_map), errors="coerce")
+    can_approve = approver.map(can_approve_map).astype("boolean")
     return pd.DataFrame(
         {"approval_limit": limits, "can_approve_je": can_approve},
         index=df.index,

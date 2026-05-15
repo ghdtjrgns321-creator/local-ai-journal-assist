@@ -51,25 +51,31 @@ def add_is_intercompany(
     df: pd.DataFrame,
     identifiers: list[str],
 ) -> pd.DataFrame:
-    """L3-03: 관계사 거래 여부. gl_account에서 IC 전용 계정 prefix 매칭.
+    """L3-03: 관계사 거래 여부.
 
     감사 관점: 관계사 거래는 특수관계자 거래 검토, 대사, 이전가격 검토의 후보 신호.
-    identifiers는 관계사 채권/채무 GL 계정 prefix 목록 — UI에서 입력.
+    GL prefix를 1순위로 보되, DataSynth/ERP에서 process와 counterparty semantic이
+    명확히 표시된 경우도 관계사 후보로 본다.
     """
-    if not identifiers:
-        logger.warning("intercompany_identifiers 비어있음 — is_intercompany를 전체 False로 설정")
-        df["is_intercompany"] = False
-        return df
+    result = pd.Series(False, index=df.index)
 
-    if "gl_account" not in df.columns:
-        logger.warning("gl_account 컬럼 없음 — is_intercompany를 전체 False로 설정")
-        df["is_intercompany"] = False
-        return df
+    if identifiers and "gl_account" in df.columns:
+        gl_str = df["gl_account"].astype(str).str.strip()
+        result = result | gl_str.str.startswith(tuple(identifiers)).fillna(False)
+    elif not identifiers:
+        logger.warning("intercompany_identifiers 비어있음 — GL prefix 기반 식별 생략")
+    elif "gl_account" not in df.columns:
+        logger.warning("gl_account 컬럼 없음 — GL prefix 기반 식별 생략")
 
-    # Why: company_code 매칭은 모든 행이 True가 되는 과탐 유발
-    #      GL 계정 prefix(IC Receivable/Payable)만으로 관계사 거래 식별
-    gl_str = df["gl_account"].astype(str).str.strip()
-    df["is_intercompany"] = gl_str.str.startswith(tuple(identifiers)).fillna(False)
+    if "business_process" in df.columns:
+        process = df["business_process"].fillna("").astype(str).str.strip().str.lower()
+        result = result | process.eq("intercompany")
+
+    if "counterparty_type" in df.columns:
+        counterparty_type = df["counterparty_type"].fillna("").astype(str).str.strip().str.lower()
+        result = result | counterparty_type.eq("intercompanyaffiliate")
+
+    df["is_intercompany"] = result.fillna(False)
     return df
 
 

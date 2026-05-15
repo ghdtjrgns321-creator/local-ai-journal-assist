@@ -385,6 +385,9 @@ class AuditPipeline:
                 "saved_model_name",
                 "model_name",
                 "sub_detector_keys",
+                "contract_version",
+                "loaded_version",
+                "matrix_schema_hash",
             ):
                 if key in result.metadata:
                     status[key] = result.metadata.get(key)
@@ -551,6 +554,7 @@ class AuditPipeline:
         *,
         file_name: str = "",
         detection_scope: str = "default",
+        phase2_inference_contract: dict | None = None,
     ) -> PipelineResult:
         """피처 생성 완료 DF에서 detection + aggregate만 재실행.
 
@@ -559,7 +563,12 @@ class AuditPipeline:
         """
         start = time.monotonic()
         df = df.copy()
-        results, warns = self._run_detection(df, detection_scope=detection_scope)
+        previous_phase2_contract = getattr(self, "_phase2_inference_contract", None)
+        self._phase2_inference_contract = phase2_inference_contract
+        try:
+            results, warns = self._run_detection(df, detection_scope=detection_scope)
+        finally:
+            self._phase2_inference_contract = previous_phase2_contract
         warns.extend(_detector_result_warnings(results))
 
         # Why: weights 미지정 시 ML/Layer D 유무에 따라 가중치 자동 선택
@@ -567,7 +576,9 @@ class AuditPipeline:
             weights = self._select_weights(results)
 
         from src.detection.score_aggregator import aggregate_scores
-        stacking_scores = self._try_stacking_ensemble(results, df)
+        stacking_scores = None
+        if detection_scope != "phase2_only":
+            stacking_scores = self._try_stacking_ensemble(results, df)
         agg_df = aggregate_scores(
             df, results, weights=weights, thresholds=thresholds,
             settings=self._settings, stacking_scores=stacking_scores,
@@ -1233,7 +1244,9 @@ class AuditPipeline:
         if detection_scope != "phase2_only":
             optional_detectors.append(("variance", self._try_variance_detection))
         if detection_scope != "phase1_core":
-            optional_detectors.append(("ml", lambda d: self._try_ml_detection(d)))
+            optional_detectors.append(
+                ("ml", lambda d: self._try_ml_detection(d, detection_scope=detection_scope))
+            )
 
         for _name, _func in optional_detectors:
             _t = time.monotonic()
@@ -1571,7 +1584,12 @@ class AuditPipeline:
             return RULE_LEVEL_WEIGHTS_WITH_TRENDBREAK
         return None  # 기본 RULE_LEVEL_WEIGHTS (L1-L4)
 
-    def _try_ml_detection(self, df: pd.DataFrame) -> list[DetectionResult]:
+    def _try_ml_detection(
+        self,
+        df: pd.DataFrame,
+        *,
+        detection_scope: str = "default",
+    ) -> list[DetectionResult]:
         """학습된 ML 모델 로드 → 탐지 실행. 모델 없으면 빈 리스트 (Cold Start 방어).
 
         Why: ML 모델은 train() 후에만 사용 가능. 최초 배포/새 회사에서는
@@ -1601,8 +1619,18 @@ class AuditPipeline:
             self._record_detector_status("ml_unsupervised", run_status="skipped", reason="missing_model_registry")
             return results
 
+        class _SkipSupervisedForPhase2Only(Exception):
+            pass
+
         # Supervised (ML01)
         try:
+            if detection_scope == "phase2_only":
+                self._record_detector_status(
+                    "ml_supervised",
+                    run_status="skipped",
+                    reason="phase2_unsupervised_only",
+                )
+                raise _SkipSupervisedForPhase2Only
             from src.detection.supervised_detector import SupervisedDetector
             det = SupervisedDetector(self._settings, model_registry=registry)
             det.load_model("supervised")
@@ -1629,6 +1657,8 @@ class AuditPipeline:
                 )
                 # Why: SHAP은 sklearn pipeline이 필요 → 로드된 detector 참조 보관
                 self._ml_supervised_detector = det
+        except _SkipSupervisedForPhase2Only:
+            pass
         except FileNotFoundError:
             logger.debug("SupervisedDetector 모델 없음 — 스킵")
             self._record_detector_status("ml_supervised", run_status="skipped", reason="missing_trained_model")
@@ -1640,8 +1670,20 @@ class AuditPipeline:
         try:
             from src.detection.vae_detector import UnsupervisedDetector
             det = UnsupervisedDetector(self._settings, model_registry=registry)
-            det.load_model("unsupervised")
+            phase2_contract = getattr(self, "_phase2_inference_contract", None)
+            promoted_versions = (
+                phase2_contract.get("promoted_versions", {})
+                if isinstance(phase2_contract, dict)
+                else {}
+            )
+            loaded_version = promoted_versions.get("unsupervised")
+            det.load_model("unsupervised", version=loaded_version)
             result = det.detect(df)
+            if result.metadata is None:
+                result.metadata = {}
+            if isinstance(phase2_contract, dict):
+                result.metadata["contract_version"] = phase2_contract.get("contract_version")
+            result.metadata["loaded_version"] = loaded_version
             results.append(result)
             self._record_detector_status("ml_unsupervised", run_status="executed", result=result)
         except FileNotFoundError:

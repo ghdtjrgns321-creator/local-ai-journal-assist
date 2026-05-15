@@ -285,6 +285,10 @@ def _migrate_v4_to_v5(conn: duckdb.DuckDBPyConnection) -> None:
 
 def _migrate_v5_to_v6(conn: duckdb.DuckDBPyConnection) -> None:
     """Add PHASE1 case artifact references to upload_batches."""
+    if not _table_exists(conn, "upload_batches"):
+        logger.info("v5_to_v6: upload_batches missing -> skip phase1 case columns")
+        return
+
     existing = _upload_batch_column_set(conn)
     added = []
     for col, dtype in _V6_UPLOAD_BATCH_COLUMNS.items():
@@ -294,6 +298,15 @@ def _migrate_v5_to_v6(conn: duckdb.DuckDBPyConnection) -> None:
     logger.info(
         "v5_to_v6: upload_batches phase1 case columns=%s",
         ", ".join(added) if added else "none",
+    )
+
+
+def _table_exists(conn: duckdb.DuckDBPyConnection, table_name: str) -> bool:
+    return bool(
+        conn.execute(
+            "SELECT 1 FROM information_schema.tables WHERE table_name = ?",
+            [table_name],
+        ).fetchone()
     )
 
 
@@ -307,4 +320,6 @@ def _upload_batch_column_set(conn: duckdb.DuckDBPyConnection) -> set[str]:
 
 
 def _upload_batch_columns_exist(conn: duckdb.DuckDBPyConnection) -> bool:
+    if not _table_exists(conn, "upload_batches"):
+        return True
     return _V6_UPLOAD_BATCH_COLUMNS.keys() <= _upload_batch_column_set(conn)

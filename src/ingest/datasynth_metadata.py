@@ -10,7 +10,7 @@ Why:
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 import json
 from pathlib import Path
 from typing import Any
@@ -24,6 +24,8 @@ REQUIRED_JE_COLUMNS: tuple[str, ...] = (
     "document_type",
     "gl_account",
     "line_number",
+    "semantic_scenario_id",
+    "counterparty_type",
 )
 PRIMARY_DUPLICATE_KEY_COLUMNS: tuple[str, ...] = ("document_id", "line_number")
 LABEL_COLUMNS: tuple[str, ...] = (
@@ -37,18 +39,12 @@ LABEL_COLUMNS: tuple[str, ...] = (
 CRITICAL_GENERATION_FIELDS: tuple[str, ...] = (
     "total_entries",
     "total_line_items",
-    "anomalies_injected",
-)
-CRITICAL_QUALITY_FIELDS: tuple[str, ...] = (
-    "total_records",
-    "missing_values.total_records",
-    "duplicates.total_processed",
 )
 VALIDATED_ISSUE_DEFINITION = {
     "records_with_issues": [
-        "required_field_missing",
+        "normal_required_field_missing",
         "duplicate_document_line_key",
-        "unbalanced_document",
+        "normal_unbalanced_document",
     ],
     "exclusions": [
         "generator-only typo counts",
@@ -98,7 +94,7 @@ def build_validated_metadata(
     source = Path(source_csv)
     df = pd.read_csv(source, low_memory=False)
     df = _attach_label_sidecar_if_needed(df, source)
-    observed = summarize_observed_metadata(df)
+    observed = _with_label_sidecar_counts(summarize_observed_metadata(df), source)
     generation_stats = _load_json_if_exists(Path(generation_statistics_path)) if generation_statistics_path else _load_json_if_exists(source.parent / "generation_statistics.json")
     data_quality = _load_json_if_exists(Path(data_quality_stats_path)) if data_quality_stats_path else _load_json_if_exists(source.parent / "data_quality_stats.json")
     return reconcile_reported_metadata(
@@ -128,6 +124,7 @@ def write_validated_metadata(
         json.dumps(reconciliation.to_dict(), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    _write_semantic_validation_report(source, reconciliation)
     return target
 
 
@@ -211,10 +208,93 @@ def default_validated_metadata_path(source_csv: str | Path) -> Path:
     return source.parent / "validated_metadata.json"
 
 
+def semantic_validation_report_path(source_csv: str | Path) -> Path:
+    return Path(source_csv).parent / "reports" / "semantic_validation_report.md"
+
+
+def _write_semantic_validation_report(
+    source_csv: Path,
+    reconciliation: MetadataReconciliation,
+) -> None:
+    observed = reconciliation.observed
+    generation = observed.get("generation_statistics", {})
+    issues = observed.get("issue_breakdown", {})
+    policy = observed.get("validation_policy", {})
+    lines = [
+        "# DataSynth Semantic Validation Report",
+        "",
+        f"- source_csv: `{source_csv.as_posix()}`",
+        f"- status: `{reconciliation.status}`",
+        "",
+        "## Export Counts",
+        "",
+        "| metric | value |",
+        "|---|---:|",
+        f"| total_entries | {generation.get('total_entries', 0)} |",
+        f"| total_line_items | {generation.get('total_line_items', 0)} |",
+        f"| anomalies_injected | {generation.get('anomalies_injected', '')} |",
+        f"| anomaly_or_fraud_row_count | {generation.get('anomaly_or_fraud_row_count', 0)} |",
+        f"| anomaly_or_fraud_document_count | {generation.get('anomaly_or_fraud_document_count', 0)} |",
+        "",
+        "## Input Contract Issues",
+        "",
+        "| issue | rows |",
+        "|---|---:|",
+    ]
+    for key in (
+        "normal_required_field_missing",
+        "required_field_missing",
+        "duplicate_document_line_key",
+        "normal_unbalanced_document",
+        "unbalanced_document",
+        "abnormal_unbalanced_document",
+    ):
+        lines.append(f"| {key} | {issues.get(key, 0)} |")
+    lines.extend(
+        [
+            "",
+            "## Reconciliation",
+            "",
+            "| type | count |",
+            "|---|---:|",
+            f"| critical_mismatches | {len(reconciliation.critical_mismatches)} |",
+            f"| warning_mismatches | {len(reconciliation.warning_mismatches)} |",
+            "",
+            "## Policy",
+            "",
+            "Records with issues are based on normal input-contract failures and duplicate keys, not optional evaluation metadata.",
+            "",
+            "```json",
+            json.dumps(policy, ensure_ascii=False, indent=2),
+            "```",
+            "",
+        ]
+    )
+    if reconciliation.critical_mismatches:
+        lines.extend(["## Critical Mismatches", ""])
+        lines.extend(f"- {item}" for item in reconciliation.critical_mismatches)
+        lines.append("")
+    if reconciliation.warning_mismatches:
+        lines.extend(["## Warning Mismatches", ""])
+        lines.extend(f"- {item}" for item in reconciliation.warning_mismatches)
+        lines.append("")
+
+    report = semantic_validation_report_path(source_csv)
+    report.parent.mkdir(parents=True, exist_ok=True)
+    report.write_text("\n".join(lines), encoding="utf-8")
+
+
 def summarize_observed_metadata(df: pd.DataFrame) -> ObservedMetadata:
     """Compute observable metadata directly from the ledger dataframe."""
     total_rows = int(len(df))
     total_documents = _distinct_document_count(df)
+    anomaly_mask = _anomaly_or_fraud_mask(df)
+    anomaly_rows = int(anomaly_mask.sum())
+    anomaly_documents = (
+        int(df.loc[anomaly_mask, "document_id"].dropna().nunique())
+        if "document_id" in df.columns
+        else 0
+    )
     anomalies_injected = _count_labeled_documents(df)
 
     missing_masks = {
@@ -227,14 +307,20 @@ def summarize_observed_metadata(df: pd.DataFrame) -> ObservedMetadata:
     duplicate_key_mask = _duplicate_key_group_mask(df)
     unbalanced_mask = _unbalanced_document_mask(df)
     required_missing_mask = _required_field_missing_mask(df)
+    normal_mask = ~anomaly_mask
+    normal_required_missing_mask = required_missing_mask & normal_mask
+    normal_unbalanced_mask = unbalanced_mask & normal_mask
 
     records_with_issues_mask = _combine_masks(
-        (required_missing_mask, duplicate_key_mask, unbalanced_mask)
+        (normal_required_missing_mask, duplicate_key_mask, normal_unbalanced_mask)
     )
     issue_breakdown = {
         "required_field_missing": int(required_missing_mask.sum()),
+        "normal_required_field_missing": int(normal_required_missing_mask.sum()),
         "duplicate_document_line_key": int(duplicate_key_mask.sum()),
         "unbalanced_document": int(unbalanced_mask.sum()),
+        "normal_unbalanced_document": int(normal_unbalanced_mask.sum()),
+        "abnormal_unbalanced_document": int((unbalanced_mask & anomaly_mask).sum()),
     }
 
     data_quality_stats = {
@@ -279,6 +365,10 @@ def summarize_observed_metadata(df: pd.DataFrame) -> ObservedMetadata:
         "total_entries": total_documents,
         "total_line_items": total_rows,
         "anomalies_injected": anomalies_injected,
+        "anomaly_label_count": anomalies_injected,
+        "anomaly_label_document_count": anomalies_injected,
+        "anomaly_or_fraud_row_count": anomaly_rows,
+        "anomaly_or_fraud_document_count": anomaly_documents,
         "data_quality_issues": int(records_with_issues_mask.sum()),
     }
     return ObservedMetadata(
@@ -316,9 +406,6 @@ def reconcile_reported_metadata(
             critical_mismatches.append(mismatch)
 
     quality_field_map = {
-        "total_records": observed.data_quality_stats.get("total_records"),
-        "missing_values.total_records": observed.data_quality_stats["missing_values"].get("total_records"),
-        "duplicates.total_processed": observed.data_quality_stats["duplicates"].get("total_processed"),
         "records_with_issues": observed.data_quality_stats.get("records_with_issues"),
         "missing_values.total_missing": observed.data_quality_stats["missing_values"].get("total_missing"),
         "duplicates.total_duplicates": observed.data_quality_stats["duplicates"].get("total_duplicates"),
@@ -332,10 +419,18 @@ def reconcile_reported_metadata(
         )
         if not mismatch:
             continue
-        if field in CRITICAL_QUALITY_FIELDS:
-            critical_mismatches.append(mismatch)
-        else:
-            warning_mismatches.append(mismatch)
+        warning_mismatches.append(mismatch)
+
+    if observed.issue_breakdown.get("normal_required_field_missing", 0):
+        critical_mismatches.append(
+            "normal_required_field_missing: "
+            f"observed={observed.issue_breakdown['normal_required_field_missing']}"
+        )
+    if observed.issue_breakdown.get("normal_unbalanced_document", 0):
+        critical_mismatches.append(
+            "normal_unbalanced_document: "
+            f"observed={observed.issue_breakdown['normal_unbalanced_document']}"
+        )
 
     status = "pass"
     if critical_mismatches:
@@ -362,7 +457,7 @@ def _distinct_document_count(df: pd.DataFrame) -> int:
 def _count_labeled_documents(df: pd.DataFrame) -> int | None:
     if "document_id" not in df.columns:
         return None
-    label_cols = [col for col in LABEL_COLUMNS if col in df.columns]
+    label_cols = [col for col in ("is_anomaly", "is_fraud") if col in df.columns]
     if not label_cols:
         return None
     working = df[label_cols].copy()
@@ -377,6 +472,45 @@ def _count_labeled_documents(df: pd.DataFrame) -> int | None:
             lowered = series.astype("string").str.strip().str.lower()
             truthy = truthy | lowered.isin({"1", "true", "y", "yes"})
     return int(df.loc[truthy, "document_id"].dropna().nunique())
+
+
+def _with_label_sidecar_counts(
+    observed: ObservedMetadata,
+    source_csv: Path,
+) -> ObservedMetadata:
+    label_path = source_csv.parent / "labels" / "anomaly_labels.csv"
+    if not label_path.exists():
+        return observed
+    try:
+        labels = pd.read_csv(label_path, usecols=lambda column: column == "document_id")
+    except Exception:
+        return observed
+    label_count = int(len(labels))
+    label_document_count = (
+        int(labels["document_id"].dropna().nunique())
+        if "document_id" in labels.columns
+        else label_count
+    )
+    generation_statistics = dict(observed.generation_statistics)
+    generation_statistics["anomalies_injected"] = label_count
+    generation_statistics["anomaly_label_count"] = label_count
+    generation_statistics["anomaly_label_document_count"] = label_document_count
+    return replace(observed, generation_statistics=generation_statistics)
+
+
+def _anomaly_or_fraud_mask(df: pd.DataFrame) -> pd.Series:
+    mask = pd.Series(False, index=df.index)
+    for column in ("is_anomaly", "is_fraud"):
+        if column not in df.columns:
+            continue
+        series = df[column]
+        if pd.api.types.is_bool_dtype(series):
+            mask = mask | series.fillna(False)
+        else:
+            mask = mask | series.astype("string").str.strip().str.lower().isin(
+                {"1", "true", "y", "yes"}
+            )
+    return mask.fillna(False)
 
 
 def _required_field_missing_mask(df: pd.DataFrame) -> pd.Series:

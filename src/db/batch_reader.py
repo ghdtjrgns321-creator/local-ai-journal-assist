@@ -121,16 +121,8 @@ def _reconstruct_detection_results(
         return []
 
     total_rows = len(data)
-    doc_to_idx: dict[str, int] = {}
-    if "document_id" in data.columns:
-        doc_to_idx = (
-            pd.Series(range(total_rows), index=data["document_id"])
-            .groupby(level=0)
-            .first()
-            .to_dict()
-        )
     flags_df = flags_df.copy()
-    flags_df["_row_index"] = flags_df["document_id"].map(doc_to_idx)
+    flags_df["_row_index"] = _resolve_flag_row_indices(data, flags_df)
     flags_df = flags_df.dropna(subset=["_row_index"])
     flags_df["_row_index"] = flags_df["_row_index"].astype(int)
 
@@ -176,6 +168,81 @@ def _reconstruct_detection_results(
         ))
 
     return results
+
+
+def _resolve_flag_row_indices(
+    data: pd.DataFrame,
+    flags_df: pd.DataFrame,
+) -> pd.Series:
+    """anomaly_flags row 를 ledger DataFrame 의 row index 로 매핑.
+
+    Why: 같은 document_id 안에서도 line_number 가 다른 라인이 별도 위반을 가질 수
+         있다(L1-02 적요 누락은 빈 적요 라인에만, L3-01 계정-거래 부정합은 특정 라인에
+         만). 이전 구현은 doc_id 만 보고 doc 의 첫 row 에 score 를 부여해, 첫 라인이
+         아닌 위반 라인이 화면에서 첫 라인으로 이동하는 버그가 있었다.
+
+    매핑 우선순위:
+        1) (document_id, line_number) 정확 매칭 — line_number 가 양쪽에 있고 ledger에
+           실제 존재하는 경우.
+        2) document_id 만 매칭 — flag 또는 ledger 한쪽에 line_number 가 비어 있을 때
+           안전 fallback. doc 의 첫 row 로 매핑하고 warning 로그.
+        3) ledger 에 doc_id 자체가 없으면 NaN — 호출부에서 dropna.
+    """
+    total_rows = len(data)
+    if "document_id" not in data.columns:
+        return pd.Series([pd.NA] * len(flags_df), dtype="Float64")
+
+    doc_first_idx: dict[str, int] = (
+        pd.Series(range(total_rows), index=data["document_id"].astype(str))
+        .groupby(level=0)
+        .first()
+        .to_dict()
+    )
+
+    doc_line_to_idx: dict[tuple[str, int], int] = {}
+    if "line_number" in data.columns:
+        line_series = pd.to_numeric(data["line_number"], errors="coerce")
+        for idx, (doc_id, line_no) in enumerate(
+            zip(data["document_id"].astype(str), line_series, strict=False)
+        ):
+            if pd.isna(line_no):
+                continue
+            doc_line_to_idx[(doc_id, int(line_no))] = idx
+
+    flag_doc_ids = flags_df.get("document_id", pd.Series(dtype=str)).astype(str)
+    # Why: flags_df 에 line_number 컬럼이 아예 없으면 .get() 의 default 가 길이 0
+    #      Series 라 zip(strict=False) 시 아무 row 도 처리되지 않는다. flag_doc_ids
+    #      길이에 맞춰 NaN 으로 broadcast 해야 doc_id 만으로 fallback 매칭 가능.
+    if "line_number" in flags_df.columns:
+        flag_line_numbers = pd.to_numeric(flags_df["line_number"], errors="coerce")
+    else:
+        flag_line_numbers = pd.Series(
+            [float("nan")] * len(flag_doc_ids), index=flag_doc_ids.index
+        )
+
+    fallback_count = 0
+    indices: list[float] = []
+    for doc_id, line_no in zip(flag_doc_ids, flag_line_numbers, strict=False):
+        if not pd.isna(line_no):
+            key = (doc_id, int(line_no))
+            mapped = doc_line_to_idx.get(key)
+            if mapped is not None:
+                indices.append(float(mapped))
+                continue
+        # fallback: doc 첫 row
+        first_idx = doc_first_idx.get(doc_id)
+        if first_idx is None:
+            indices.append(float("nan"))
+        else:
+            indices.append(float(first_idx))
+            fallback_count += 1
+
+    if fallback_count:
+        logger.debug(
+            "anomaly_flags row 매핑: %d 건이 (doc, line) 정확 매칭 실패해 doc 첫 row 로 fallback",
+            fallback_count,
+        )
+    return pd.Series(indices, index=flags_df.index, dtype="Float64")
 
 
 def _build_detector_statuses(

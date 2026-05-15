@@ -48,7 +48,12 @@ def _normalize_for_hashing(series: pd.Series) -> pd.Series:
     return series.map(_to_hashable) if series.dtype == "object" else series
 
 
-def profile_dataframe(df: pd.DataFrame) -> EDAProfile:
+def profile_dataframe(
+    df: pd.DataFrame,
+    *,
+    max_rows: int | None = None,
+    random_seed: int = 42,
+) -> EDAProfile:
     """DataFrame → EDAProfile 산출. 단일 진입점.
 
     1. 전체 통계 (원본 기준): rows, cols, memory, duplicates
@@ -58,16 +63,33 @@ def profile_dataframe(df: pd.DataFrame) -> EDAProfile:
     total_rows = len(df)
     total_columns = len(df.columns)
     memory_bytes = int(df.memory_usage(deep=True).sum())
+    duplicate_source = df
+    duplicate_rows_estimated = False
+    duplicate_sample_size = None
+    if max_rows is not None and total_rows > max_rows > 0:
+        duplicate_source = df.sample(n=max_rows, random_state=random_seed)
+        duplicate_rows_estimated = True
+        duplicate_sample_size = max_rows
+    sample_duplicate_rows = (
+        int(duplicate_source.apply(_normalize_for_hashing).duplicated().sum())
+        if len(duplicate_source) > 0 else 0
+    )
+    duplicate_rate_estimate = (
+        float(sample_duplicate_rows / len(duplicate_source))
+        if duplicate_rows_estimated and len(duplicate_source) > 0
+        else None
+    )
     duplicate_rows = (
-        int(df.apply(_normalize_for_hashing).duplicated().sum())
-        if total_rows > 0 else 0
+        int(round(duplicate_rate_estimate * total_rows))
+        if duplicate_rows_estimated and duplicate_rate_estimate is not None
+        else sample_duplicate_rows
     )
 
     # 샘플링 판정
     sampled = total_rows > _SAMPLING_THRESHOLD
     sample_size = _SAMPLE_SIZE if sampled else None
     sample_df = (
-        df.sample(n=_SAMPLE_SIZE, random_state=42)
+        df.sample(n=_SAMPLE_SIZE, random_state=random_seed)
         if sampled
         else df
     )
@@ -110,6 +132,9 @@ def profile_dataframe(df: pd.DataFrame) -> EDAProfile:
         total_columns=total_columns,
         memory_bytes=memory_bytes,
         duplicate_rows=duplicate_rows,
+        duplicate_rows_estimated=duplicate_rows_estimated,
+        duplicate_sample_size=duplicate_sample_size,
+        duplicate_rate_estimate=duplicate_rate_estimate,
         sampled=sampled,
         sample_size=sample_size,
         columns=columns,

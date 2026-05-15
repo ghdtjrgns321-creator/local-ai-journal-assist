@@ -56,6 +56,9 @@ class EDAProfile:
     total_columns: int
     memory_bytes: int
     duplicate_rows: int
+    duplicate_rows_estimated: bool = False
+    duplicate_sample_size: int | None = None
+    duplicate_rate_estimate: float | None = None
     sampled: bool = False
     sample_size: int | None = None
     columns: dict[str, ColumnProfile] = field(default_factory=dict)

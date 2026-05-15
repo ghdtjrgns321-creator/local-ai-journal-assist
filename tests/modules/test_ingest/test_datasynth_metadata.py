@@ -29,6 +29,8 @@ def test_summarize_observed_metadata_counts_observable_issues() -> None:
             "document_type": ["SA", "SA", "KR", "KR", "SA", "SA"],
             "gl_account": [1000, 2000, 3000, 3000, 1000, 2000],
             "line_number": [1, 2, 1, 1, 1, 2],
+            "semantic_scenario_id": ["R2R_ACCRUAL"] * 6,
+            "counterparty_type": ["InternalDepartment"] * 6,
             "debit_amount": [100, 0, 50, 50, 70, 0],
             "credit_amount": [0, 100, 0, 0, 0, 60],
             "is_anomaly": [False, False, True, True, False, False],
@@ -45,8 +47,11 @@ def test_summarize_observed_metadata_counts_observable_issues() -> None:
     assert observed.data_quality_stats["records_with_issues"] == 4
     assert observed.issue_breakdown == {
         "required_field_missing": 1,
+        "normal_required_field_missing": 0,
         "duplicate_document_line_key": 2,
         "unbalanced_document": 4,
+        "normal_unbalanced_document": 2,
+        "abnormal_unbalanced_document": 2,
     }
 
 
@@ -59,6 +64,8 @@ def test_reconcile_reported_metadata_marks_critical_and_warning_mismatches() -> 
             "document_type": ["SA", "SA"],
             "gl_account": [1000, 2000],
             "line_number": [1, 2],
+            "semantic_scenario_id": ["R2R_ACCRUAL", "R2R_ACCRUAL"],
+            "counterparty_type": ["InternalDepartment", "InternalDepartment"],
             "debit_amount": [100, 0],
             "credit_amount": [0, 100],
         }
@@ -82,7 +89,7 @@ def test_reconcile_reported_metadata_marks_critical_and_warning_mismatches() -> 
 
     assert reconciliation.status == "fail"
     assert "total_entries: reported=0, observed=1" in reconciliation.critical_mismatches
-    assert "total_records: reported=0, observed=2" in reconciliation.critical_mismatches
+    assert not any("total_records" in item for item in reconciliation.critical_mismatches)
     assert (
         "missing_values.total_missing: reported=99, observed=0"
         in reconciliation.warning_mismatches

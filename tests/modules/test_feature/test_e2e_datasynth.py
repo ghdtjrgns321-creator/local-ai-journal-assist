@@ -12,6 +12,7 @@ import pytest
 
 from src.feature.engine import FeatureResult, generate_all_features
 from src.ingest.column_mapper import auto_map_columns, prepare_dataframe
+from src.ingest.datasynth_labels import set_source_path
 from src.ingest.file_validator import validate_file
 from src.ingest.header_detector import detect_header_row
 from src.ingest.reader_api import read_file
@@ -40,7 +41,7 @@ def _run_ingest_pipeline(filepath: Path) -> pd.DataFrame:
 
     cr = cast_dataframe(renamed_df)
     assert cr.success, f"캐스팅 실패: {cr.errors}"
-    return cr.data
+    return set_source_path(cr.data, filepath)
 
 
 class TestDataSynthE2E:

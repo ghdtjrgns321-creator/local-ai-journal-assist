@@ -185,7 +185,11 @@ class TestRunFromDataframe:
                     scores=scores,
                     rule_flags=[RuleFlag("ML02", "ML02", 3, 0, len(df))],
                     details=details,
-                    metadata={"elapsed": 0.01, "skipped_rules": []},
+                    metadata={
+                        "elapsed": 0.01,
+                        "skipped_rules": [],
+                        "matrix_schema_hash": 12345,
+                    },
                     warnings=[],
                 )
 
@@ -374,6 +378,214 @@ class TestRunFromDataframe:
             "transaction_burst",
             "unusual_frequency",
         ]
+
+    def test_phase2_only_loads_contract_pinned_unsupervised_version(
+        self, monkeypatch, small_gl_df,
+    ):
+        load_calls = []
+        supervised_load_calls = []
+
+        class DummyRegistry:
+            pass
+
+        class DummySupervisedDetector:
+            def __init__(self, settings=None, model_registry=None):
+                self.model_registry = model_registry
+
+            def load_model(self, model_name="supervised", version=None):
+                supervised_load_calls.append((model_name, version))
+                raise FileNotFoundError
+
+        class DummyUnsupervisedDetector:
+            def __init__(self, settings=None, model_registry=None):
+                self.model_registry = model_registry
+
+            def load_model(self, model_name="unsupervised", version=None):
+                load_calls.append((model_name, version))
+                return None
+
+            def detect(self, df):
+                scores = pd.Series(0.2, index=df.index, name="ML02")
+                details = pd.DataFrame({"ML02": scores}, index=df.index)
+                return DetectionResult(
+                    track_name="ml_unsupervised",
+                    flagged_indices=[],
+                    scores=scores,
+                    rule_flags=[RuleFlag("ML02", "ML02", 3, 0, len(df))],
+                    details=details,
+                    metadata={
+                        "elapsed": 0.01,
+                        "skipped_rules": [],
+                        "matrix_schema_hash": 12345,
+                    },
+                    warnings=[],
+                )
+
+        monkeypatch.setattr("src.preprocessing.model_registry.ModelRegistry", DummyRegistry)
+        monkeypatch.setattr(
+            "src.detection.supervised_detector.SupervisedDetector",
+            DummySupervisedDetector,
+        )
+        monkeypatch.setattr(
+            "src.detection.vae_detector.UnsupervisedDetector",
+            DummyUnsupervisedDetector,
+        )
+        monkeypatch.setattr("src.context.CompanyContext.is_anonymous", property(lambda self: False))
+        monkeypatch.setattr("src.pipeline.load_document_labels", lambda source_path: None)
+
+        contract = {
+            "contract_version": "phase2_unsupervised_mvp_v1",
+            "promoted_versions": {"unsupervised": 7},
+        }
+        result = AuditPipeline(
+            settings=AuditSettings(enable_ml_detection=True),
+            skip_db=True,
+        ).redetect(
+            small_gl_df,
+            detection_scope="phase2_only",
+            phase2_inference_contract=contract,
+        )
+
+        assert load_calls == [("unsupervised", 7)]
+        assert supervised_load_calls == []
+        statuses = {status["track_name"]: status for status in result.detector_statuses}
+        assert statuses["ml_supervised"]["run_status"] == "skipped"
+        assert statuses["ml_supervised"]["reason"] == "phase2_unsupervised_only"
+        assert statuses["ml_unsupervised"]["contract_version"] == "phase2_unsupervised_mvp_v1"
+        assert statuses["ml_unsupervised"]["loaded_version"] == 7
+        assert statuses["ml_unsupervised"]["matrix_schema_hash"] == 12345
+        assert result.results[0].metadata["contract_version"] == "phase2_unsupervised_mvp_v1"
+        assert result.results[0].metadata["loaded_version"] == 7
+
+    def test_phase2_only_skips_stacking_ensemble(self, monkeypatch, small_gl_df):
+        def fail_stacking(self, results, df):
+            raise AssertionError("phase2_only must not invoke stacking ensemble")
+
+        class DummyRegistry:
+            pass
+
+        class DummySupervisedDetector:
+            def __init__(self, settings=None, model_registry=None):
+                self.model_registry = model_registry
+
+            def load_model(self, model_name="supervised", version=None):
+                raise AssertionError("phase2_only must not load supervised model")
+
+        class DummyUnsupervisedDetector:
+            def __init__(self, settings=None, model_registry=None):
+                self.model_registry = model_registry
+
+            def load_model(self, model_name="unsupervised", version=None):
+                return None
+
+            def detect(self, df):
+                scores = pd.Series(0.2, index=df.index, name="ML02")
+                details = pd.DataFrame({"ML02": scores}, index=df.index)
+                return DetectionResult(
+                    track_name="ml_unsupervised",
+                    flagged_indices=[],
+                    scores=scores,
+                    rule_flags=[RuleFlag("ML02", "ML02", 3, 0, len(df))],
+                    details=details,
+                    metadata={"elapsed": 0.01, "skipped_rules": []},
+                    warnings=[],
+                )
+
+        monkeypatch.setattr(AuditPipeline, "_try_stacking_ensemble", fail_stacking)
+        monkeypatch.setattr("src.preprocessing.model_registry.ModelRegistry", DummyRegistry)
+        monkeypatch.setattr(
+            "src.detection.supervised_detector.SupervisedDetector",
+            DummySupervisedDetector,
+        )
+        monkeypatch.setattr(
+            "src.detection.vae_detector.UnsupervisedDetector",
+            DummyUnsupervisedDetector,
+        )
+        monkeypatch.setattr("src.context.CompanyContext.is_anonymous", property(lambda self: False))
+        monkeypatch.setattr("src.pipeline.load_document_labels", lambda source_path: None)
+
+        result = AuditPipeline(
+            settings=AuditSettings(enable_ml_detection=True),
+            skip_db=True,
+        ).redetect(small_gl_df, detection_scope="phase2_only")
+
+        statuses = {status["track_name"]: status for status in result.detector_statuses}
+        assert statuses["ensemble"]["run_status"] != "executed"
+        assert {item.track_name for item in result.results} == {"ml_unsupervised"}
+
+    def test_default_redetect_still_invokes_stacking_when_ml_enabled(
+        self, monkeypatch, small_gl_df,
+    ):
+        stacking_calls = []
+
+        def capture_stacking(self, results, df):
+            stacking_calls.append([result.track_name for result in results])
+            return None
+
+        monkeypatch.setattr(AuditPipeline, "_try_ml_detection", lambda self, df, **kwargs: [])
+        monkeypatch.setattr(AuditPipeline, "_try_stacking_ensemble", capture_stacking)
+
+        AuditPipeline(
+            settings=AuditSettings(enable_ml_detection=True),
+            skip_db=True,
+        ).redetect(small_gl_df)
+
+        assert stacking_calls
+
+    def test_phase2_only_without_contract_uses_latest_unsupervised_fallback(
+        self, monkeypatch, small_gl_df,
+    ):
+        load_calls = []
+
+        class DummyRegistry:
+            pass
+
+        class DummySupervisedDetector:
+            def __init__(self, settings=None, model_registry=None):
+                self.model_registry = model_registry
+
+            def load_model(self, model_name="supervised", version=None):
+                raise FileNotFoundError
+
+        class DummyUnsupervisedDetector:
+            def __init__(self, settings=None, model_registry=None):
+                self.model_registry = model_registry
+
+            def load_model(self, model_name="unsupervised", version=None):
+                load_calls.append((model_name, version))
+                return None
+
+            def detect(self, df):
+                scores = pd.Series(0.2, index=df.index, name="ML02")
+                details = pd.DataFrame({"ML02": scores}, index=df.index)
+                return DetectionResult(
+                    track_name="ml_unsupervised",
+                    flagged_indices=[],
+                    scores=scores,
+                    rule_flags=[RuleFlag("ML02", "ML02", 3, 0, len(df))],
+                    details=details,
+                    metadata={"elapsed": 0.01, "skipped_rules": []},
+                    warnings=[],
+                )
+
+        monkeypatch.setattr("src.preprocessing.model_registry.ModelRegistry", DummyRegistry)
+        monkeypatch.setattr(
+            "src.detection.supervised_detector.SupervisedDetector",
+            DummySupervisedDetector,
+        )
+        monkeypatch.setattr(
+            "src.detection.vae_detector.UnsupervisedDetector",
+            DummyUnsupervisedDetector,
+        )
+        monkeypatch.setattr("src.context.CompanyContext.is_anonymous", property(lambda self: False))
+        monkeypatch.setattr("src.pipeline.load_document_labels", lambda source_path: None)
+
+        AuditPipeline(
+            settings=AuditSettings(enable_ml_detection=True),
+            skip_db=True,
+        ).redetect(small_gl_df, detection_scope="phase2_only")
+
+        assert load_calls == [("unsupervised", None)]
 
     def test_phase1_default_excludes_timeseries_detector(self, monkeypatch, small_gl_df):
         class DummyTimeseriesDetector:

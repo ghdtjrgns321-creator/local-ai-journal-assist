@@ -83,9 +83,8 @@ class TestContextInjection:
 
         assert captured_coa["value"] == custom_coa
 
-    def test_different_context_different_results(self, small_gl_df):
-        """서로 다른 approval_thresholds → 탐지 결과 상이."""
-        # Why: approval_thresholds가 다르면 is_over_approval 피처가 달라짐
+    def test_approval_thresholds_do_not_fallback_without_approver_limits(self, small_gl_df):
+        """공통 approval_thresholds만으로는 승인한도 초과 점수를 만들지 않는다."""
         low_limit = AuditSettings(approval_thresholds=[100.0])
         high_limit = AuditSettings(approval_thresholds=[100_000_000.0])
 
@@ -99,12 +98,12 @@ class TestContextInjection:
             small_gl_df
         )
 
-        # Why: 임계값이 극단적으로 다르면 anomaly_score 합계가 달라야 함
+        # Why: L1-04/L2-01은 직원 마스터의 approver limit가 있을 때만 판정한다.
         score_low = r_low.data["anomaly_score"].sum()
         score_high = r_high.data["anomaly_score"].sum()
-        assert score_low != score_high, (
-            f"다른 approval_thresholds인데 점수 동일: {score_low}"
-        )
+        assert score_low == score_high
+        assert not r_low.data["approval_limit_resolved"].any()
+        assert not r_high.data["approval_limit_resolved"].any()
 
 
 # ── batch_id ─────────────────────────────────────────────────

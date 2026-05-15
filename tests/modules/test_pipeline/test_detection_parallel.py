@@ -9,6 +9,7 @@ import pandas as pd
 import pytest
 
 from src.detection.base import BaseDetector, DetectionResult
+from src.detection.constants import get_detector_profile
 from src.pipeline import (
     _run_detectors_parallel,
     collect_detection_profile,
@@ -68,7 +69,8 @@ class TestRunDetectorsParallel:
         detectors = [_FakeDetector("layer_a")]
         results, _ = _run_detectors_parallel(detectors, sample_df, max_workers=None)
         result = results[0]
-        assert result.metadata["display_name"] == "L1"
+        profile = get_detector_profile("layer_a")
+        assert result.metadata["display_name"] == profile.display_name
         assert result.metadata["maturity"] == "production"
         assert result.metadata["default_enabled"] is True
         assert result.metadata["activation_requirements"] == []

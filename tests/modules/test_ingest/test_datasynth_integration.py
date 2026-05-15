@@ -112,7 +112,7 @@ class TestDataSynthColumnMapping:
 
     def test_column_count_matches_current_dataset(self, pipeline_result):
         columns = pipeline_result["columns"]
-        assert len(columns) == 44
+        assert len(columns) == 53
 
 
 class TestDataSynthCasting:
@@ -148,7 +148,7 @@ class TestDataSynthCasting:
     def test_final_shape(self, pipeline_result):
         cr = pipeline_result["casting"]
         assert cr.data.shape[0] > 100_000, f"row count too small: {cr.data.shape[0]}"
-        assert cr.data.shape[1] == 44
+        assert cr.data.shape[1] == 53
 
 
 class TestDataSynthDataQuality:

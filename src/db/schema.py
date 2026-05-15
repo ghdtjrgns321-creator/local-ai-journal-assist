@@ -342,6 +342,73 @@ SCHEMA_DDL: dict[str, str] = {
         CREATE INDEX IF NOT EXISTS idx_llm_narratives_generated
             ON llm_narratives(generated_at DESC)
     """,
+    # ── Phase 3 v2: Review Queue Narrator 캐시 (WU-31 Sprint A) ──
+    # Why: candidate_id 단위 LLM 호출 결과를 UPSERT 캐시한다. input_hash가 동일하면
+    #      재호출 없이 재사용해 비용·latency를 줄이고, citation_valid 플래그로 후순위
+    #      판정·UI 표시에 활용. batch_id/priority_rank 인덱스는 대시보드 조회 패턴 대응.
+    # Nullable 정책:
+    #   - 필수(NOT NULL): candidate_id, batch_id, narrative_json, citation_valid,
+    #     input_hash, model_tier — 캐시 row가 의미를 가지려면 반드시 채워져야 함.
+    #   - 선택(NULL 허용): priority_rank/priority_score/confidence/journal_id —
+    #     LLM 응답이 부분적으로 비어있거나 강등 처리된 경우를 위해 허용. 토큰/비용
+    #     집계 컬럼(prompt_tokens/completion_tokens/cost_usd)은 모델·요금 정책에 따라
+    #     수집 불가한 경우(예: 평가 하니스 외 일반 호출)를 위해 NULL 허용.
+    #     Sprint B 캐시 writer는 NULL 값을 방어 쿼리(IS NULL/COALESCE)로 처리할 것.
+    "review_narratives": """
+        CREATE TABLE IF NOT EXISTS review_narratives (
+            candidate_id          VARCHAR PRIMARY KEY NOT NULL,
+            batch_id              VARCHAR NOT NULL,
+            journal_id            VARCHAR,
+            priority_rank         INTEGER,
+            priority_score        DOUBLE,
+            confidence            VARCHAR,
+            narrative_json        JSON NOT NULL,
+            citation_valid        BOOLEAN NOT NULL,
+            input_hash            VARCHAR NOT NULL,
+            model_tier            VARCHAR NOT NULL,
+            prompt_tokens         INTEGER,
+            completion_tokens     INTEGER,
+            cost_usd              DOUBLE,
+            created_at            TIMESTAMP DEFAULT current_timestamp
+        )
+    """,
+    "review_narratives_batch_idx": """
+        CREATE INDEX IF NOT EXISTS idx_review_narratives_batch
+            ON review_narratives(batch_id)
+    """,
+    "review_narratives_rank_idx": """
+        CREATE INDEX IF NOT EXISTS idx_review_narratives_rank
+            ON review_narratives(priority_rank)
+    """,
+    # ── Phase 3 v2: 감사인 분류·메모 컬럼 (WU-31 Sprint E2) ──
+    # Why: 감사인이 review queue candidate를 4종 결정값으로 분류하고 메모를 남길 수
+    #      있어야 audit workpaper에 결과를 첨부할 수 있다. 기존 DB에서도 안전하게
+    #      재실행 가능하도록 모든 ALTER는 IF NOT EXISTS 사용.
+    # audit_decision 허용 값:
+    #   'confirmed_high_risk' | 'under_review' | 'normal_exception'
+    #   | 'false_positive' | NULL
+    # NULL은 "감사인이 아직 분류하지 않음"을 의미한다. CHECK 제약은 두지 않고
+    # 애플리케이션 레이어(cache.update_audit_decision)에서 enum을 강제한다.
+    "review_narratives_audit_decision": """
+        ALTER TABLE review_narratives
+            ADD COLUMN IF NOT EXISTS audit_decision VARCHAR
+    """,
+    "review_narratives_audit_note": """
+        ALTER TABLE review_narratives
+            ADD COLUMN IF NOT EXISTS audit_note VARCHAR
+    """,
+    "review_narratives_reviewed_by": """
+        ALTER TABLE review_narratives
+            ADD COLUMN IF NOT EXISTS reviewed_by VARCHAR
+    """,
+    "review_narratives_reviewed_at": """
+        ALTER TABLE review_narratives
+            ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMP
+    """,
+    "review_narratives_decision_idx": """
+        CREATE INDEX IF NOT EXISTS idx_review_narratives_decision
+            ON review_narratives(audit_decision)
+    """,
     "anomaly_flag_summary": """
         CREATE VIEW IF NOT EXISTS anomaly_flag_summary AS
         SELECT
@@ -359,118 +426,274 @@ SCHEMA_DDL: dict[str, str] = {
 # ── 컬럼 상수 (loader.py reindex용, created_at 제외) ────────
 
 GENERAL_LEDGER_COLUMNS: list[str] = [
-    "document_id", "company_code", "fiscal_year", "fiscal_period",
-    "posting_date", "posting_time", "document_date", "document_type", "currency",
-    "exchange_rate", "reference", "header_text", "created_by",
-    "user_persona", "source", "business_process", "ledger",
-    "approved_by", "approval_date",
-    "is_fraud", "fraud_type", "is_anomaly", "anomaly_type",
-    "sod_violation", "sod_conflict_type",
-    "line_number", "gl_account", "debit_amount", "credit_amount",
-    "local_amount", "cost_center", "profit_center", "line_text",
-    "tax_code", "tax_amount", "trading_partner",
-    "auxiliary_account_number", "auxiliary_account_label",
-    "lettrage", "lettrage_date",
+    "document_id",
+    "company_code",
+    "fiscal_year",
+    "fiscal_period",
+    "posting_date",
+    "posting_time",
+    "document_date",
+    "document_type",
+    "currency",
+    "exchange_rate",
+    "reference",
+    "header_text",
+    "created_by",
+    "user_persona",
+    "source",
+    "business_process",
+    "ledger",
+    "approved_by",
+    "approval_date",
+    "is_fraud",
+    "fraud_type",
+    "is_anomaly",
+    "anomaly_type",
+    "sod_violation",
+    "sod_conflict_type",
+    "line_number",
+    "gl_account",
+    "debit_amount",
+    "credit_amount",
+    "local_amount",
+    "cost_center",
+    "profit_center",
+    "line_text",
+    "tax_code",
+    "tax_amount",
+    "trading_partner",
+    "auxiliary_account_number",
+    "auxiliary_account_label",
+    "lettrage",
+    "lettrage_date",
     "approval_level",
-    "is_weekend", "is_after_hours", "is_period_end",
-    "days_backdated", "fiscal_period_mismatch", "is_holiday",
+    "is_weekend",
+    "is_after_hours",
+    "is_period_end",
+    "days_backdated",
+    "fiscal_period_mismatch",
+    "is_holiday",
     "time_zone_category",
     "is_near_threshold",
-    "near_threshold_amount", "near_threshold_limit_amount",
-    "near_threshold_limit_resolved", "near_threshold_ratio_to_limit",
-    "near_threshold_gap_amount", "near_threshold_gap_ratio",
+    "near_threshold_amount",
+    "near_threshold_limit_amount",
+    "near_threshold_limit_resolved",
+    "near_threshold_ratio_to_limit",
+    "near_threshold_gap_amount",
+    "near_threshold_gap_ratio",
     "near_threshold_bucket",
     "exceeds_threshold",
-    "document_approval_amount", "approver_limit_amount",
-    "approval_limit_resolved", "approver_can_approve_je",
-    "approval_excess_amount", "approval_excess_ratio",
+    "document_approval_amount",
+    "approver_limit_amount",
+    "approval_limit_resolved",
+    "approver_can_approve_je",
+    "approval_excess_amount",
+    "approval_excess_ratio",
     "approval_excess_bucket",
-    "amount_zscore", "amount_magnitude", "is_round_number",
-    "is_manual_je", "is_intercompany", "is_revenue_account",
-    "first_digit", "is_suspense_account",
+    "amount_zscore",
+    "amount_magnitude",
+    "is_round_number",
+    "is_manual_je",
+    "is_intercompany",
+    "is_revenue_account",
+    "first_digit",
+    "is_suspense_account",
     "description_quality",
-    "description_line_missing", "description_header_missing",
-    "description_both_missing", "description_line_missing_header_present",
+    "description_line_missing",
+    "description_header_missing",
+    "description_both_missing",
+    "description_line_missing_header_present",
     "description_is_missing_or_corrupted",
     "has_risk_keyword",
-    "anomaly_score", "risk_level", "flagged_rules", "review_rules",
+    "anomaly_score",
+    "risk_level",
+    "flagged_rules",
+    "review_rules",
     # ML Phase 2 예약 (nullable)
-    "supervised_score", "unsupervised_score", "duplicate_score",
-    "supervised_model_id", "unsupervised_model_id", "duplicate_model_id",
+    "supervised_score",
+    "unsupervised_score",
+    "duplicate_score",
+    "supervised_model_id",
+    "unsupervised_model_id",
+    "duplicate_model_id",
     "ml_scored_at",
     "upload_batch_id",
 ]
 
 ANOMALY_FLAGS_COLUMNS: list[str] = [
-    "upload_batch_id", "document_id", "line_number",
-    "track_name", "rule_code", "score",
+    "upload_batch_id",
+    "document_id",
+    "line_number",
+    "track_name",
+    "rule_code",
+    "score",
 ]
 
 BENFORD_SUMMARY_COLUMNS: list[str] = [
-    "upload_batch_id", "sample_size", "mad", "mad_conformity",
-    "chi2_statistic", "chi2_p_value", "ks_statistic", "ks_p_value",
-    "is_conforming", "confidence",
+    "upload_batch_id",
+    "sample_size",
+    "mad",
+    "mad_conformity",
+    "chi2_statistic",
+    "chi2_p_value",
+    "ks_statistic",
+    "ks_p_value",
+    "is_conforming",
+    "confidence",
 ]
 
 BENFORD_DIGITS_COLUMNS: list[str] = [
-    "upload_batch_id", "digit", "observed_freq",
-    "expected_freq", "deviation",
+    "upload_batch_id",
+    "digit",
+    "observed_freq",
+    "expected_freq",
+    "deviation",
 ]
 
 ML_MODEL_METADATA_COLUMNS: list[str] = [
-    "model_id", "model_type", "model_version",
-    "train_batch_id", "train_rows", "train_metrics",
+    "model_id",
+    "model_type",
+    "model_version",
+    "train_batch_id",
+    "train_rows",
+    "train_metrics",
     "hyperparameters",
 ]
 
 # Why: loader.py에서 reindex 후 NaN→None 변환 대상 (Phase 1에서 항상 NULL)
 WHITELIST_COLUMNS: list[str] = [
-    "batch_id", "document_id", "rule_code", "reason", "created_by",
+    "batch_id",
+    "document_id",
+    "rule_code",
+    "reason",
+    "created_by",
 ]
 
 ENGAGEMENT_META_COLUMNS: list[str] = [
-    "company_id", "engagement_id", "created_at", "schema_version",
+    "company_id",
+    "engagement_id",
+    "created_at",
+    "schema_version",
 ]
 
 UPLOAD_BATCHES_COLUMNS: list[str] = [
-    "upload_batch_id", "file_name", "row_count",
-    "anomaly_count", "high_risk_count", "warnings",
+    "upload_batch_id",
+    "file_name",
+    "row_count",
+    "anomaly_count",
+    "high_risk_count",
+    "warnings",
 ]
 
 PERFORMANCE_REPORTS_COLUMNS: list[str] = [
-    "report_id", "upload_batch_id", "source_kind", "phase_scope",
-    "metric_confidence", "total_docs", "flagged_docs", "high_risk_docs",
-    "high_risk_ratio", "precision", "recall", "f1",
-    "whitelist_removed_docs", "false_positive_docs", "confirmed_issue_docs",
+    "report_id",
+    "upload_batch_id",
+    "source_kind",
+    "phase_scope",
+    "metric_confidence",
+    "total_docs",
+    "flagged_docs",
+    "high_risk_docs",
+    "high_risk_ratio",
+    "precision",
+    "recall",
+    "f1",
+    "whitelist_removed_docs",
+    "false_positive_docs",
+    "confirmed_issue_docs",
 ]
 
 PERFORMANCE_RULE_METRICS_COLUMNS: list[str] = [
-    "report_id", "track_name", "rule_code", "label_docs", "flagged_docs",
-    "tp_docs", "fp_docs", "fn_docs", "precision", "recall", "f1",
+    "report_id",
+    "track_name",
+    "rule_code",
+    "label_docs",
+    "flagged_docs",
+    "tp_docs",
+    "fp_docs",
+    "fn_docs",
+    "precision",
+    "recall",
+    "f1",
 ]
 
 TRIAL_BALANCE_COLUMNS: list[str] = [
-    "upload_batch_id", "fiscal_year", "fiscal_period",
-    "gl_account", "account_name", "opening_balance",
-    "debit_total", "credit_total", "closing_balance",
+    "upload_batch_id",
+    "fiscal_year",
+    "fiscal_period",
+    "gl_account",
+    "account_name",
+    "opening_balance",
+    "debit_total",
+    "credit_total",
+    "closing_balance",
 ]
 
 AUDIT_LOG_COLUMNS: list[str] = [
-    "action", "actor", "company_id", "engagement_id",
-    "batch_id", "target_id", "details",
+    "action",
+    "actor",
+    "company_id",
+    "engagement_id",
+    "batch_id",
+    "target_id",
+    "details",
 ]
 
 FEEDBACK_EVENTS_COLUMNS: list[str] = [
-    "company_id", "engagement_id", "batch_id", "document_id",
-    "track_name", "rule_code", "event_type", "decision",
-    "reason", "payload_json", "created_by",
+    "company_id",
+    "engagement_id",
+    "batch_id",
+    "document_id",
+    "track_name",
+    "rule_code",
+    "event_type",
+    "decision",
+    "reason",
+    "payload_json",
+    "created_by",
 ]
 
 ML_RESERVED_COLUMNS: list[str] = [
-    "supervised_score", "unsupervised_score", "duplicate_score",
-    "supervised_model_id", "unsupervised_model_id", "duplicate_model_id",
+    "supervised_score",
+    "unsupervised_score",
+    "duplicate_score",
+    "supervised_model_id",
+    "unsupervised_model_id",
+    "duplicate_model_id",
     "ml_scored_at",
 ]
+
+REVIEW_NARRATIVES_COLUMNS: list[str] = [
+    "candidate_id",
+    "batch_id",
+    "journal_id",
+    "priority_rank",
+    "priority_score",
+    "confidence",
+    "narrative_json",
+    "citation_valid",
+    "input_hash",
+    "model_tier",
+    "prompt_tokens",
+    "completion_tokens",
+    "cost_usd",
+    # Sprint E2 — 감사인 분류·메모 (Phase 3 v2)
+    "audit_decision",
+    "audit_note",
+    "reviewed_by",
+    "reviewed_at",
+]
+
+# Why: cache.update_audit_decision이 외부 입력값을 받기 전에 검증해 잘못된
+#      decision 문자열이 DB에 들어가는 것을 차단한다. NULL은 별도 처리.
+AUDIT_DECISION_VALUES: frozenset[str] = frozenset(
+    {
+        "confirmed_high_risk",
+        "under_review",
+        "normal_exception",
+        "false_positive",
+    }
+)
 
 
 # ── 초기화 ───────────────────────────────────────────────────
@@ -483,6 +706,7 @@ def initialize_schema(conn: duckdb.DuckDBPyConnection) -> None:
 
     # Why: DataSynth 보조 데이터(document_flows, master_data 등) 테이블도 함께 생성
     from src.db.schema_supplementary import initialize_supplementary_schema
+
     initialize_supplementary_schema(conn)
 
     total = len(SCHEMA_DDL)
