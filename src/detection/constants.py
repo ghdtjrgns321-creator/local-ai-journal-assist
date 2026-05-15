@@ -557,8 +557,7 @@ RULE_EXPLANATIONS: dict[str, RuleExplanation] = {
     "L2-04": RuleExplanation(
         rule_id="L2-04",
         plain_reason=(
-            "The document mixes expense and asset patterns consistent with "
-            "capitalization risk."
+            "The document mixes expense and asset patterns consistent with capitalization risk."
         ),
         used_columns=("document_id", "gl_account", "debit_amount", "credit_amount"),
     ),
@@ -606,9 +605,7 @@ RULE_EXPLANATIONS: dict[str, RuleExplanation] = {
     ),
     "L3-07": RuleExplanation(
         rule_id="L3-07",
-        plain_reason=(
-            "The posting date and document date differ beyond the allowed threshold."
-        ),
+        plain_reason=("The posting date and document date differ beyond the allowed threshold."),
         used_columns=("posting_date", "document_date"),
     ),
     "L3-08": RuleExplanation(
@@ -721,8 +718,7 @@ RULE_EXPLANATIONS: dict[str, RuleExplanation] = {
     "D01": RuleExplanation(
         rule_id="D01",
         plain_reason=(
-            "The account's current-period activity level changed materially from the "
-            "prior period."
+            "The account's current-period activity level changed materially from the prior period."
         ),
         used_columns=("gl_account", "debit_amount", "credit_amount"),
         false_positive_risks=(
@@ -742,8 +738,7 @@ RULE_EXPLANATIONS: dict[str, RuleExplanation] = {
     "D02": RuleExplanation(
         rule_id="D02",
         plain_reason=(
-            "The account's monthly amount distribution changed materially from the "
-            "prior period."
+            "The account's monthly amount distribution changed materially from the prior period."
         ),
         used_columns=("gl_account", "fiscal_period", "debit_amount", "credit_amount"),
         false_positive_risks=(
@@ -821,9 +816,9 @@ WORK_SCOPE_CORROBORATION_RULES: list[tuple[str, list[tuple[str, str]]]] = [
 ]
 
 RISK_THRESHOLDS: dict[str, float] = {
-    RiskLevel.HIGH: 0.7,
-    RiskLevel.MEDIUM: 0.4,
-    RiskLevel.LOW: 0.2,
+    RiskLevel.HIGH: 0.50,
+    RiskLevel.MEDIUM: 0.25,
+    RiskLevel.LOW: 0.10,
 }
 
 

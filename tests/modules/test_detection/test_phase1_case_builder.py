@@ -561,9 +561,7 @@ def test_build_phase1_case_result_uses_l108_annotation_score_for_priority():
     assert case.primary_theme == "timing_anomaly"
     assert case.primary_queue == "timing_close"
     assert case.priority_score > 0
-    assert "l108_context=high_amount,manual_entry,period_end" in (
-        case.priority_adjustment_reasons
-    )
+    assert "l108_context=high_amount,manual_entry,period_end" in (case.priority_adjustment_reasons)
 
 
 def test_l103_case_normalized_score_preserves_raw_score_when_label_is_coarse():
@@ -804,7 +802,9 @@ def test_l303_alone_does_not_seed_case_queue():
     assert result.cases == []
 
 
-def test_build_phase1_case_result_maps_l1_09_into_control_failure():
+def test_l109_alone_does_not_seed_case_queue():
+    # §9.1 light_seeder audit (2026-05-14): L1-09는 case seeder 권한이 회수되었으므로
+    # 단독 hit는 더 이상 case를 생성하지 않는다. corroborating evidence 로만 합류한다.
     df = pd.DataFrame(
         {
             "document_id": ["DOC-1"],
@@ -838,12 +838,19 @@ def test_build_phase1_case_result_maps_l1_09_into_control_failure():
         generated_at=datetime(2026, 4, 22, 3, 15, 22, tzinfo=UTC),
     )
 
-    case = next(case for case in result.cases if case.primary_theme == "control_failure")
-    assert case.evidence_types == ["control_failure"]
-    assert case.raw_rule_hits[0].rule_id == "L1-09"
+    assert result.cases == []
 
 
-def test_l109_material_missing_date_gets_case_priority_floor():
+def test_l107_alone_does_not_seed_case_queue():
+    # §9.1 light_seeder audit (2026-05-14): L1-07도 동일하게 case seeder 권한 회수.
+    result = _build_single_rule_case_result("L1-07", score=0.8, severity=4)
+
+    assert result.cases == []
+
+
+def test_light_seeder_l107_l109_pair_does_not_seed_case_queue():
+    # §9.1: light_seeder 정의 — ruleset ⊆ {L1-07, L1-09, L3-04} 이고 L3-04 가 없으면
+    # 어떤 룰도 seeder가 아니므로 case가 생성되지 않는다.
     df = pd.DataFrame(
         {
             "document_id": ["DOC-1"],
@@ -857,17 +864,113 @@ def test_l109_material_missing_date_gets_case_priority_floor():
             "document_type": ["KR"],
         }
     )
-    details = pd.DataFrame({"L1-09": [0.70]}, index=df.index)
+    details = pd.DataFrame({"L1-07": [0.7], "L1-09": [0.6]}, index=df.index)
     detection_result = DetectionResult(
         track_name="layer_b",
         flagged_indices=[0],
         scores=details.max(axis=1),
-        rule_flags=[RuleFlag("L1-09", "Approval Date Missing", 3, 1, len(df))],
+        rule_flags=[
+            RuleFlag("L1-07", "Approval Bypass", 4, 1, len(df)),
+            RuleFlag("L1-09", "Approval Date Missing", 3, 1, len(df)),
+        ],
+        details=details,
+        metadata={},
+    )
+
+    result = build_phase1_case_result(
+        df,
+        [detection_result],
+        company_id="kr01",
+        batch_id="batch42",
+        dataset_id=None,
+        phase1_case_config={"phase1_case": {"top_n_cases": 50, "top_n_per_theme": 10}},
+        generated_at=datetime(2026, 4, 22, 3, 15, 22, tzinfo=UTC),
+    )
+
+    assert result.cases == []
+
+
+def test_light_seeder_l107_l109_join_case_seeded_by_l304_as_corroborating():
+    # §9.1: light_seeder ruleset {L1-07, L1-09, L3-04} 에서 L3-04 만 seeder.
+    # L1-07/L1-09는 corroborating evidence로 같은 case에 합류한다 (theme/topic는 L3-04 기준).
+    df = pd.DataFrame(
+        {
+            "document_id": ["DOC-1"],
+            "posting_date": pd.to_datetime(["2026-04-30"]),
+            "created_by": ["kim"],
+            "business_process": ["P2P"],
+            "gl_account": ["111000"],
+            "debit_amount": [15_000_000.0],
+            "credit_amount": [0.0],
+            "company_code": ["kr01"],
+            "document_type": ["KR"],
+            "fiscal_period": ["12"],
+        }
+    )
+    details = pd.DataFrame(
+        {"L1-07": [0.7], "L1-09": [0.6], "L3-04": [0.4]},
+        index=df.index,
+    )
+    detection_result = DetectionResult(
+        track_name="layer_b",
+        flagged_indices=[0],
+        scores=details.max(axis=1),
+        rule_flags=[
+            RuleFlag("L1-07", "Approval Bypass", 4, 1, len(df)),
+            RuleFlag("L1-09", "Approval Date Missing", 3, 1, len(df)),
+            RuleFlag("L3-04", "PeriodEndClosingReview", 2, 1, len(df)),
+        ],
+        details=details,
+        metadata={},
+    )
+
+    result = build_phase1_case_result(
+        df,
+        [detection_result],
+        company_id="kr01",
+        batch_id="batch42",
+        dataset_id=None,
+        phase1_case_config={"phase1_case": {"top_n_cases": 50, "top_n_per_theme": 10}},
+        generated_at=datetime(2026, 4, 22, 3, 15, 22, tzinfo=UTC),
+    )
+
+    # L3-04만 seeder이므로 case가 한 개만 생성되고, 그 안에 L1-07/L1-09가 corroborating으로 합류.
+    assert len(result.cases) == 1
+    case = result.cases[0]
+    hit_rule_ids = {hit.rule_id for hit in case.raw_rule_hits}
+    assert hit_rule_ids == {"L1-07", "L1-09", "L3-04"}
+    # primary_theme은 L3-04 기반 (timing/closing) 이어야 하고 approval_control(control_failure)이 아님.
+    assert case.primary_theme != "control_failure"
+
+
+def test_l109_material_missing_date_gets_case_priority_floor():
+    # §9.1 light_seeder audit: L1-09는 더 이상 단독 seeder가 아니므로 co-seeder L1-04를 추가해
+    # case를 생성한 뒤 L1-09 priority_floor가 corroborating evidence 매칭으로 동작하는지 검증한다.
+    df = pd.DataFrame(
+        {
+            "document_id": ["DOC-1"],
+            "posting_date": pd.to_datetime(["2026-04-30"]),
+            "created_by": ["kim"],
+            "business_process": ["P2P"],
+            "gl_account": ["111000"],
+            "debit_amount": [15_000_000.0],
+            "credit_amount": [0.0],
+            "company_code": ["kr01"],
+            "document_type": ["KR"],
+        }
+    )
+    details = pd.DataFrame({"L1-04": [0.5], "L1-09": [0.70]}, index=df.index)
+    detection_result = DetectionResult(
+        track_name="layer_b",
+        flagged_indices=[0],
+        scores=details.max(axis=1),
+        rule_flags=[
+            RuleFlag("L1-04", "Approval Limit Exceeded", 3, 1, len(df)),
+            RuleFlag("L1-09", "Approval Date Missing", 3, 1, len(df)),
+        ],
         details=details,
         metadata={
-            "row_annotations": {
-                "L1-09": {0: {"bucket": "material_control_gap", "score": 0.70}}
-            }
+            "row_annotations": {"L1-09": {0: {"bucket": "material_control_gap", "score": 0.70}}}
         },
     )
 
@@ -901,6 +1004,8 @@ def test_l109_material_missing_date_gets_case_priority_floor():
 
 
 def test_l109_corroborated_missing_date_gets_stronger_case_priority_floor():
+    # §9.1 light_seeder audit: L1-04 co-seeder + L1-09 corroborating evidence 조합에서
+    # L1-09 priority_floor 강한 등급(0.55)이 그대로 적용되는지 검증.
     df = pd.DataFrame(
         {
             "document_id": ["DOC-1"],
@@ -914,17 +1019,18 @@ def test_l109_corroborated_missing_date_gets_stronger_case_priority_floor():
             "document_type": ["KR"],
         }
     )
-    details = pd.DataFrame({"L1-09": [0.80]}, index=df.index)
+    details = pd.DataFrame({"L1-04": [0.5], "L1-09": [0.80]}, index=df.index)
     detection_result = DetectionResult(
         track_name="layer_b",
         flagged_indices=[0],
         scores=details.max(axis=1),
-        rule_flags=[RuleFlag("L1-09", "Approval Date Missing", 3, 1, len(df))],
+        rule_flags=[
+            RuleFlag("L1-04", "Approval Limit Exceeded", 3, 1, len(df)),
+            RuleFlag("L1-09", "Approval Date Missing", 3, 1, len(df)),
+        ],
         details=details,
         metadata={
-            "row_annotations": {
-                "L1-09": {0: {"bucket": "corroborated_material", "score": 0.80}}
-            }
+            "row_annotations": {"L1-09": {0: {"bucket": "corroborated_material", "score": 0.80}}}
         },
     )
 
@@ -954,9 +1060,7 @@ def test_l109_corroborated_missing_date_gets_stronger_case_priority_floor():
     case = next(case for case in result.cases if case.primary_theme == "control_failure")
     assert case.priority_score == pytest.approx(0.55)
     assert case.priority_band == "medium"
-    assert "missing_approval_date_corroborated_material" in (
-        case.priority_adjustment_reasons
-    )
+    assert "missing_approval_date_corroborated_material" in (case.priority_adjustment_reasons)
 
 
 def test_build_phase1_case_result_keeps_review_only_l1_annotation_score():
@@ -2134,9 +2238,7 @@ def test_d01_d02_macro_contexts_flow_into_matching_transaction_cases():
         "normal_business_review",
         "normal_pattern_review",
     }
-    assert "macro_context=D01:confirmed_account_shift+0.06" in (
-        case.priority_adjustment_reasons
-    )
+    assert "macro_context=D01:confirmed_account_shift+0.06" in (case.priority_adjustment_reasons)
     assert not any(
         "normal_business_review" in reason or "normal_pattern_review" in reason
         for reason in case.priority_adjustment_reasons
@@ -2365,10 +2467,7 @@ def test_l308_gets_weak_description_bonus_with_corroborating_rule():
 
     case = next(case for case in result.cases if case.primary_theme == "timing_anomaly")
     assert case.weak_evidence_bonus == 0.03
-    assert (
-        "weak_evidence=missing_or_corrupted_description"
-        in case.priority_adjustment_reasons
-    )
+    assert "weak_evidence=missing_or_corrupted_description" in case.priority_adjustment_reasons
 
 
 def test_fraud_combo_floor_is_written_to_case_topic_breakdown():
@@ -2428,8 +2527,9 @@ def test_fraud_combo_floor_is_written_to_case_topic_breakdown():
     assert case.topic_scores["closing_timing"] == pytest.approx(0.75)
     assert "period_end_adjustment_risk" in case.fraud_scenario_tags
     assert "period_end_adjustment_risk" in breakdown["fraud_combo_tags"]
-    assert "period_end_or_late_posting + high_amount + weak_description_or_sensitive_account" in (
-        breakdown["fraud_combo_policy_ids"]
+    assert (
+        "period_end_or_late_posting + high_amount + weak_description_or_sensitive_account"
+        in (breakdown["fraud_combo_policy_ids"])
     )
 
 
@@ -2454,11 +2554,7 @@ def test_l105_escalated_materiality_gets_case_priority_floor():
         scores=details.max(axis=1),
         rule_flags=[RuleFlag("L1-05", "SelfApproval", 3, 1, len(df))],
         details=details,
-        metadata={
-            "row_annotations": {
-                "L1-05": {0: {"bucket": "escalated_materiality"}}
-            }
-        },
+        metadata={"row_annotations": {"L1-05": {0: {"bucket": "escalated_materiality"}}}},
     )
 
     result = build_phase1_case_result(
@@ -2504,18 +2600,19 @@ def test_l107_uses_score_sensitive_case_priority_floor():
             "document_type": ["KR"],
         }
     )
-    details = pd.DataFrame({"L1-07": [0.86]}, index=df.index)
+    # §9.1 light_seeder audit: L1-07는 더 이상 단독 seeder가 아니므로 co-seeder L1-04를 추가해
+    # case를 생성한 뒤 L1-07 priority_floor가 corroborating evidence 매칭으로 동작하는지 검증한다.
+    details = pd.DataFrame({"L1-04": [0.5], "L1-07": [0.86]}, index=df.index)
     detection_result = DetectionResult(
         track_name="layer_b",
         flagged_indices=[0],
         scores=details.max(axis=1),
-        rule_flags=[RuleFlag("L1-07", "SkippedApproval", 4, 1, len(df))],
+        rule_flags=[
+            RuleFlag("L1-04", "Approval Limit Exceeded", 3, 1, len(df)),
+            RuleFlag("L1-07", "SkippedApproval", 4, 1, len(df)),
+        ],
         details=details,
-        metadata={
-            "row_annotations": {
-                "L1-07": {0: {"queue_label": "immediate"}}
-            }
-        },
+        metadata={"row_annotations": {"L1-07": {0: {"queue_label": "immediate"}}}},
     )
 
     result = build_phase1_case_result(
@@ -2656,9 +2753,7 @@ def test_l102_core_missing_field_gets_medium_case_priority_floor():
         rule_flags=[RuleFlag("L1-02", "MissingField", 2, 1, len(df))],
         details=details,
         metadata={
-            "row_annotations": {
-                "L1-02": {0: {"missing_fields": ["gl_account"], "score": 0.74}}
-            }
+            "row_annotations": {"L1-02": {0: {"missing_fields": ["gl_account"], "score": 0.74}}}
         },
     )
 
@@ -2813,3 +2908,246 @@ def test_save_and_load_phase1_case_result_roundtrip(monkeypatch):
     assert reference["phase1_case_run_id"] == result.run_id
     assert reference["phase1_case_path"] == str(artifact_path)
     assert reference["phase1_case_count"] == len(result.cases)
+
+
+# ---------------------------------------------------------------------------
+# §9.3 composite_sort_score 회귀 가드
+# ---------------------------------------------------------------------------
+
+
+def _topic_scoring_config() -> dict:
+    return {
+        "phase1_case": {
+            "top_n_cases": 50,
+            "top_n_per_theme": 10,
+            "topic_scoring": {
+                "topic_caps": {},
+                "topic_floors": {},
+                "combo_floors": {},
+            },
+        }
+    }
+
+
+def test_composite_sort_score_components_match_audit_formula():
+    # §9.3 공식: 1.0*topic + 0.3*max_primary + 0.3*audit_evidence + 0.3*corroboration
+    #             + 0.1*min(independent_evidence/5, 1.0)
+    df = _single_row_df()
+    detection_result = _single_rule_detection_result(df, "L1-05", score=0.8, severity=4)
+    result = build_phase1_case_result(
+        df,
+        [detection_result],
+        company_id="kr01",
+        batch_id="batch42",
+        dataset_id=None,
+        phase1_case_config=_topic_scoring_config(),
+        generated_at=datetime(2026, 4, 22, 3, 15, 22, tzinfo=UTC),
+    )
+
+    assert len(result.cases) == 1
+    case = result.cases[0]
+    comps = case.composite_sort_score_components
+    expected = (
+        1.0 * comps["topic_score"]
+        + 0.3 * comps["max_primary_rule_score"]
+        + 0.3 * comps["audit_evidence_score"]
+        + 0.3 * comps["corroboration_score"]
+        + 0.1 * comps["independent_evidence_norm"]
+    )
+    assert case.composite_sort_score == pytest.approx(expected, abs=1e-9)
+    assert comps["topic_score"] > 0
+    assert comps["independent_evidence_count"] >= 1
+
+
+def test_composite_sort_score_falls_back_to_priority_score_without_topic_scoring():
+    # use_topic_scoring=False (legacy 모드) 에서는 fallback 으로 priority_score 사용.
+    df = _single_row_df()
+    detection_result = _single_rule_detection_result(df, "L1-05", score=0.8, severity=4)
+    result = build_phase1_case_result(
+        df,
+        [detection_result],
+        company_id="kr01",
+        batch_id="batch42",
+        dataset_id=None,
+        phase1_case_config={"phase1_case": {"top_n_cases": 50, "top_n_per_theme": 10}},
+        generated_at=datetime(2026, 4, 22, 3, 15, 22, tzinfo=UTC),
+    )
+
+    case = result.cases[0]
+    assert case.composite_sort_score == pytest.approx(case.priority_score, abs=1e-9)
+    assert case.composite_sort_score_components == {"fallback_score": case.priority_score}
+
+
+def test_composite_sort_score_orders_high_max_primary_above_high_amount():
+    # §9.3 audit §2.1: approval_control:high 에서 truth case 는 nontruth 보다 max_primary_rule_score
+    # 가 크고 total_amount 는 작다. composite_sort_score 정렬에서 max_primary 가 큰 case 가 위에
+    # 와야 한다.
+    df = pd.DataFrame(
+        {
+            "document_id": ["DOC-TRUTH", "DOC-AMOUNT"],
+            "posting_date": pd.to_datetime(["2026-04-30", "2026-04-29"]),
+            "created_by": ["kim", "lee"],
+            "business_process": ["P2P", "P2P"],
+            "gl_account": ["111000", "111100"],
+            "debit_amount": [10_000_000.0, 5_000_000_000.0],
+            "credit_amount": [0.0, 0.0],
+            "company_code": ["kr01", "kr02"],
+            "trading_partner": ["V01", "V02"],
+            "document_type": ["KR", "KR"],
+        }
+    )
+    # L1-05 (self-approval) 가 truth 행에서는 강한 점수, amount 큰 nontruth 행에서는 약한 점수.
+    details = pd.DataFrame({"L1-05": [0.95, 0.55]}, index=df.index)
+    detection_result = DetectionResult(
+        track_name="layer_b",
+        flagged_indices=[0, 1],
+        scores=details.max(axis=1),
+        rule_flags=[RuleFlag("L1-05", "SelfApproval", 4, 2, len(df))],
+        details=details,
+        metadata={},
+    )
+    result = build_phase1_case_result(
+        df,
+        [detection_result],
+        company_id="kr01",
+        batch_id="batch42",
+        dataset_id=None,
+        phase1_case_config=_topic_scoring_config(),
+        generated_at=datetime(2026, 4, 22, 3, 15, 22, tzinfo=UTC),
+    )
+
+    assert len(result.cases) >= 2
+    truth_case = next(
+        case
+        for case in result.cases
+        if any(hit.document_id == "DOC-TRUTH" for hit in case.raw_rule_hits)
+    )
+    amount_case = next(
+        case
+        for case in result.cases
+        if any(hit.document_id == "DOC-AMOUNT" for hit in case.raw_rule_hits)
+    )
+    # composite_sort_score 정렬에서 truth (max_primary=0.95) 가 amount (max_primary=0.55) 보다 위.
+    assert truth_case.composite_sort_score > amount_case.composite_sort_score
+    assert (truth_case.exposure_rank or 0) < (amount_case.exposure_rank or 0)
+
+
+_COMPOSITE_GUARD_ARTIFACT = Path(
+    "artifacts/phase1_cases/_anonymous/"
+    "phase1case__anonymous_datasynth_v126_profiled_phase1_20260514T092313Z.json"
+)
+_COMPOSITE_GUARD_TRUTH = Path(
+    "data/journal/archive/primary_legacy_20260514/datasynth/labels/manipulated_entry_truth.csv"
+)
+
+
+@pytest.mark.skipif(
+    not _COMPOSITE_GUARD_ARTIFACT.exists() or not _COMPOSITE_GUARD_TRUTH.exists(),
+    reason="v126 composite case artifact or truth CSV not present in this checkout",
+)
+def test_composite_sort_score_v126_truth_capture_thresholds():
+    """§9.3 audit 수용 기준 — 7개 주제 합계/도메인별 Top200 truth_doc."""
+    import csv
+    import json as _json
+
+    artifact_path = _COMPOSITE_GUARD_ARTIFACT
+    truth_path = _COMPOSITE_GUARD_TRUTH
+    data = _json.loads(artifact_path.read_text(encoding="utf-8"))
+    cases = data.get("cases", [])
+    with truth_path.open(encoding="utf-8") as fp:
+        truth_docs = {
+            str(row["document_id"]).strip() for row in csv.DictReader(fp) if row.get("document_id")
+        }
+
+    def _case_docs(case: dict) -> set[str]:
+        out: set[str] = set()
+        for hit in case.get("raw_rule_hits") or []:
+            doc = hit.get("document_id")
+            if doc:
+                out.add(str(doc))
+        return out
+
+    def _composite_score(case: dict, topic_id: str | None = None) -> float:
+        composite = case.get("composite_sort_score")
+        if composite is not None:
+            return float(composite)
+        if topic_id:
+            return float((case.get("topic_scores") or {}).get(topic_id, 0.0))
+        return float(case.get("priority_score") or 0.0)
+
+    def _topic_top_n_truth(topic_id: str, top_n: int, *, high_only: bool) -> int:
+        rows = []
+        for case in cases:
+            scores = case.get("topic_scores") or {}
+            ts = float(scores.get(topic_id, 0.0))
+            if ts <= 0:
+                continue
+            if high_only and ts < 0.75:
+                continue
+            rows.append(case)
+        rows.sort(
+            key=lambda case: (
+                -_composite_score(case, topic_id),
+                -float(case.get("triage_rank_score") or 0.0),
+                -float(case.get("total_amount") or 0.0),
+                -int(case.get("rule_count") or 0),
+            )
+        )
+        seen: set[str] = set()
+        for case in rows[:top_n]:
+            seen |= _case_docs(case)
+        return len(seen & truth_docs)
+
+    topics = (
+        "ledger_integrity",
+        "approval_control",
+        "closing_timing",
+        "account_logic",
+        "duplicate_outflow",
+        "intercompany_cycle",
+        "revenue_statistical",
+    )
+    all_band_sum = sum(_topic_top_n_truth(topic_id, 200, high_only=False) for topic_id in topics)
+    approval_high = _topic_top_n_truth("approval_control", 200, high_only=True)
+    closing_all = _topic_top_n_truth("closing_timing", 200, high_only=False)
+    revenue_all = _topic_top_n_truth("revenue_statistical", 200, high_only=False)
+
+    # approval_control:high 가드를 비율 기반으로 환산 (T4 multi-dataset lock).
+    # 절대치 12 는 v126_profiled 단일 측정 (high_cases=489) 기준이라 high_band 모집단이 바뀌면
+    # 임계가 의미를 잃는다. high_cases 대비 Top200 truth_doc 비율 ≥ 2.0% 로 재정의 한다.
+    # 본 가드는 Layer C SOFT WARN (baseline 회귀 방지선) 이며 가중치 조정의 근거로 사용 금지.
+    approval_high_cases = sum(
+        1
+        for case in cases
+        if float((case.get("topic_scores") or {}).get("approval_control", 0.0)) >= 0.75
+    )
+    approval_high_ratio = (approval_high / approval_high_cases) if approval_high_cases else 0.0
+
+    # 수용 기준 (post A1+A3, 14342 cases, multi-dataset 검증 후)
+    # baseline (post-A1, baseline sort) vs composite (post-A1+A3, composite sort) 비교:
+    #   sum Top200             96 -> 138
+    #   approval_control:high  ratio: 9/489=1.84% -> 12/489=2.45%
+    #   closing_timing all     16 -> 20
+    #   revenue_statistical all 21 -> 20
+    # multi-dataset 검증 (v126_profiled / v133_archive / manipulation_v2) 결과 v126_profiled 측정
+    # 2.45% 를 통과시키되 0% 회귀를 차단할 안전 임계 ≥ 2.0% 채택. v133_archive (46.30%) /
+    # manipulation_v2 (61.77%) 는 모집단 자체가 다른 데이터셋이므로 별도 audit 산출물 참조
+    # (`artifacts/phase1_sort_composite_multi_dataset_lock.md`).
+    assert all_band_sum >= 100, (
+        f"7개 주제 합계 Top200 truth_doc = {all_band_sum} < 100 (§9.3 audit C3 권고)"
+    )
+    assert approval_high_ratio >= 0.02, (
+        f"approval_control:high Top200 truth_doc / high_cases = "
+        f"{approval_high}/{approval_high_cases} = {approval_high_ratio:.2%} < 2.0% "
+        f"(v126_profiled 측정 = 2.45%, multi-dataset lock 임계 2.0%)"
+    )
+    assert closing_all >= 18, (
+        f"closing_timing all-band Top200 truth_doc = {closing_all} < 18 "
+        f"(post A1+A3 measured = 20, baseline = 16)"
+    )
+    # revenue_statistical 도메인 충돌 가드 — post-A1+A3 실측 20, baseline 21 (-1).
+    # audit §4.2 손실 ≤5 한도 적용 시 ≥16 안전 임계.
+    assert revenue_all >= 16, (
+        f"revenue_statistical all-band Top200 truth_doc = {revenue_all} < 16 "
+        f"(post A1+A3 measured = 20, baseline = 21, 도메인 충돌 가드 위반)"
+    )

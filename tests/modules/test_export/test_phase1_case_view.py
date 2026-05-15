@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pandas as pd
+import pytest
 
 from src.detection.base import DetectionResult, RuleFlag
 from src.detection.phase1_case_builder import build_phase1_case_result
@@ -17,6 +18,7 @@ from src.export.phase1_case_view import (
     build_phase1_case_queue,
     build_phase1_data_quality_gate,
     build_phase1_macro_finding_queue,
+    build_phase1_raw_rule_truth_index,
     build_phase1_review_candidate_summary,
     build_phase1_rule_document_counts,
     build_phase1_rule_document_detail,
@@ -582,6 +584,429 @@ def test_build_phase1_rule_document_detail_returns_raw_lines() -> None:
     assert detail["violation_details"]
     assert detail["raw_lines"]
     assert detail["raw_lines"][0]["document_id"] == "DOC-2"
+
+
+def _make_row_level_row_index_result(rule_id: str) -> SimpleNamespace:
+    hit_doc_id = f"DOC-HIT-{rule_id}"
+    stale_doc_id = f"DOC-STALE-{rule_id}"
+    df = pd.DataFrame(
+        {
+            "document_id": [hit_doc_id, hit_doc_id, hit_doc_id, stale_doc_id],
+            "line_number": [1, 2, 3, 1],
+            "posting_date": pd.to_datetime(["2026-04-30"] * 4),
+            "document_date": pd.to_datetime(
+                ["2026-04-30", "2026-04-30", "2026-04-27", "2026-04-30"]
+            ),
+            "approval_date": [None, None, None, None],
+            "fiscal_period": [4, 4, 4, 4],
+            "created_by": ["kim", "kim", "kim", "lee"],
+            "business_process": ["R2R", "R2R", "R2R", "P2P"],
+            "gl_account": ["100000", "200000", "999999", "777777"],
+            "debit_amount": [100.0, 0.0, 777.0, 900.0],
+            "credit_amount": [0.0, 100.0, 0.0, 0.0],
+            "local_amount": [100.0, 100.0, 777.0, 900.0],
+            "amount": [100.0, 100.0, 777.0, 900.0],
+            "company_code": ["kr01", "kr01", "kr01", "kr01"],
+            "document_type": ["SA", "SA", "SA", "SA"],
+            "line_text": [
+                "normal debit",
+                "normal credit",
+                f"{rule_id} violation line",
+                "stale flagged line",
+            ],
+            "description": [
+                "normal debit",
+                "normal credit",
+                f"{rule_id} violation line",
+                "stale flagged line",
+            ],
+            "anomaly_score": [0.0, 0.0, 0.91, 0.99],
+            "flagged_rules": ["", "", "", rule_id],
+            "review_rules": ["", "", "", ""],
+        }
+    )
+    case = _case(f"row-hit-{rule_id}", primary_topic="account_logic", priority_score=0.8)
+    case.documents = [
+        CaseDocumentRef(document_id=hit_doc_id, matched_rules=[rule_id], amount=777.0)
+    ]
+    case.raw_rule_hits = [
+        RawRuleHitRef(
+            rule_id=rule_id,
+            severity=5,
+            document_id=hit_doc_id,
+            row_index=2,
+            score=0.9,
+            normalized_score=0.9,
+            evidence_type="account_logic",
+        )
+    ]
+    pipeline_result = _phase1([case])
+    pipeline_result.featured_data = df
+    return pipeline_result
+
+
+@pytest.mark.parametrize(
+    "rule_id",
+    [
+        "L1-02",
+        "L1-03",
+        "L2-04",
+        "L3-01",
+        "L3-07",
+        "L3-09",
+        "L4-01",
+        "L4-03",
+        "L4-04",
+    ],
+)
+def test_row_level_rule_documents_use_raw_hit_row_index_for_representative_record(
+    rule_id: str,
+) -> None:
+    pipeline_result = _make_row_level_row_index_result(rule_id)
+
+    rows = build_phase1_rule_documents(pipeline_result, rule_id)
+
+    assert len(rows) == 1
+    assert rows[0]["document_id"] == f"DOC-HIT-{rule_id}"
+    assert rows[0]["line_number"] == 3
+    assert rows[0]["gl_account"] == "999999"
+    assert rows[0]["amount"] == 777.0
+    assert rows[0]["debit_amount"] == 777.0
+    assert rows[0]["credit_amount"] == 0.0
+    assert rows[0]["line_text"] == f"{rule_id} violation line"
+    assert rows[0]["description"] == f"{rule_id} violation line"
+
+
+def test_rule_documents_ignore_stale_flagged_rules_when_raw_truth_exists() -> None:
+    df = pd.DataFrame(
+        {
+            "document_id": ["DOC-TRUTH", "DOC-TRUTH", "DOC-STALE"],
+            "line_number": [1, 2, 1],
+            "posting_date": pd.to_datetime(["2026-04-30"] * 3),
+            "document_date": pd.to_datetime(["2026-04-30"] * 3),
+            "fiscal_period": [4, 4, 4],
+            "created_by": ["kim", "kim", "lee"],
+            "business_process": ["R2R", "R2R", "P2P"],
+            "gl_account": ["100000", "888888", "777777"],
+            "debit_amount": [100.0, 250.0, 900.0],
+            "credit_amount": [0.0, 0.0, 0.0],
+            "local_amount": [100.0, 250.0, 900.0],
+            "company_code": ["kr01", "kr01", "kr01"],
+            "document_type": ["SA", "SA", "SA"],
+            "line_text": ["normal", "truth hit", "stale flag"],
+            "flagged_rules": ["", "", "L1-03"],
+            "review_rules": ["", "", ""],
+        }
+    )
+    case = _case("truth-only", primary_topic="account_logic", priority_score=0.8)
+    case.documents = [
+        CaseDocumentRef(document_id="DOC-TRUTH", matched_rules=["L1-03"], amount=250.0)
+    ]
+    case.raw_rule_hits = [
+        RawRuleHitRef(
+            rule_id="L1-03",
+            severity=5,
+            document_id="DOC-TRUTH",
+            row_index=1,
+            score=0.9,
+            normalized_score=0.9,
+            evidence_type="account_logic",
+        )
+    ]
+    pipeline_result = _phase1([case])
+    pipeline_result.featured_data = df
+
+    rows = build_phase1_rule_documents(pipeline_result, "L1-03")
+
+    assert [row["document_id"] for row in rows] == ["DOC-TRUTH"]
+    assert rows[0]["gl_account"] == "888888"
+
+
+def test_raw_rule_truth_index_excludes_stale_flags_and_includes_truth_only_hits() -> None:
+    df = pd.DataFrame(
+        {
+            "document_id": ["DOC-TRUTH", "DOC-TRUTH", "DOC-STALE"],
+            "line_number": [1, 2, 1],
+            "flagged_rules": ["", "", "L1-03"],
+            "review_rules": ["", "", ""],
+        }
+    )
+    case = _case("truth-index", primary_topic="account_logic", priority_score=0.8)
+    case.documents = [
+        CaseDocumentRef(document_id="DOC-TRUTH", matched_rules=["L1-03"], amount=250.0)
+    ]
+    case.raw_rule_hits = [
+        RawRuleHitRef(
+            rule_id="L1-03",
+            severity=5,
+            document_id="DOC-TRUTH",
+            row_index=1,
+            score=0.9,
+            normalized_score=0.9,
+            evidence_type="account_logic",
+        )
+    ]
+    pipeline_result = _phase1([case])
+    pipeline_result.featured_data = df
+
+    truth = build_phase1_raw_rule_truth_index(pipeline_result)
+
+    assert truth["available"] is True
+    assert truth["rules"] == ["L1-03"]
+    assert truth["rule_document_ids"] == {"L1-03": {"DOC-TRUTH"}}
+    assert truth["rule_row_indices"] == {"L1-03": {1}}
+    assert truth["document_rule_ids"] == {"DOC-TRUTH": {"L1-03"}}
+
+
+def test_document_level_rule_documents_keep_document_totals() -> None:
+    df = pd.DataFrame(
+        {
+            "document_id": ["DOC-L101", "DOC-L101", "DOC-L108", "DOC-L108"],
+            "line_number": [1, 2, 1, 2],
+            "posting_date": pd.to_datetime(
+                ["2026-04-30", "2026-04-30", "2026-04-30", "2026-04-30"]
+            ),
+            "document_date": pd.to_datetime(
+                ["2026-04-30", "2026-04-30", "2026-04-30", "2026-04-30"]
+            ),
+            "fiscal_period": [4, 4, 3, 3],
+            "created_by": ["kim"] * 4,
+            "business_process": ["R2R"] * 4,
+            "gl_account": ["100000", "200000", "300000", "400000"],
+            "debit_amount": [100.0, 0.0, 10.0, 20.0],
+            "credit_amount": [0.0, 90.0, 0.0, 0.0],
+            "local_amount": [100.0, 90.0, 10.0, 20.0],
+            "company_code": ["kr01"] * 4,
+            "document_type": ["SA"] * 4,
+            "flagged_rules": ["", "", "", ""],
+            "review_rules": ["", "", "", ""],
+        }
+    )
+    case_l101 = _case("doc-l101", primary_topic="ledger_integrity", priority_score=0.8)
+    case_l101.documents = [
+        CaseDocumentRef(document_id="DOC-L101", matched_rules=["L1-01"], amount=100.0)
+    ]
+    case_l101.raw_rule_hits = [
+        RawRuleHitRef(
+            rule_id="L1-01",
+            severity=5,
+            document_id="DOC-L101",
+            row_index=0,
+            score=0.9,
+            normalized_score=0.9,
+            evidence_type="data_integrity_failure",
+        )
+    ]
+    case_l108 = _case("doc-l108", primary_topic="closing_timing", priority_score=0.8)
+    case_l108.documents = [
+        CaseDocumentRef(document_id="DOC-L108", matched_rules=["L1-08"], amount=30.0)
+    ]
+    case_l108.raw_rule_hits = [
+        RawRuleHitRef(
+            rule_id="L1-08",
+            severity=5,
+            document_id="DOC-L108",
+            row_index=2,
+            score=0.9,
+            normalized_score=0.9,
+            evidence_type="data_integrity_failure",
+        )
+    ]
+    pipeline_result = _phase1([case_l101, case_l108])
+    pipeline_result.featured_data = df
+
+    l101 = build_phase1_rule_documents(pipeline_result, "L1-01")[0]
+    l108 = build_phase1_rule_documents(pipeline_result, "L1-08")[0]
+
+    assert l101["amount"] == 100.0
+    assert l101["debit_amount"] == 100.0
+    assert l101["credit_amount"] == 90.0
+    assert l108["amount"] == 30.0
+
+
+def _make_document_amount_policy_result(rule_id: str) -> SimpleNamespace:
+    df = pd.DataFrame(
+        {
+            "document_id": ["DOC-AMOUNT", "DOC-AMOUNT"],
+            "line_number": [1, 2],
+            "posting_date": pd.to_datetime(["2026-04-30", "2026-04-30"]),
+            "document_date": pd.to_datetime(["2026-04-30", "2026-04-30"]),
+            "approval_date": [None, None],
+            "fiscal_period": [4, 4],
+            "created_by": ["kim", "kim"],
+            "approved_by": ["kim" if rule_id == "L1-05" else None] * 2,
+            "business_process": ["R2R", "R2R"],
+            "gl_account": ["100000", "200000"],
+            "debit_amount": [10.0, 40.0],
+            "credit_amount": [0.0, 0.0],
+            "local_amount": [10.0, 40.0],
+            "approval_limit": [30.0, 30.0],
+            "company_code": ["kr01", "kr01"],
+            "document_type": ["SA", "SA"],
+            "flagged_rules": ["", ""],
+            "review_rules": ["", ""],
+        }
+    )
+    case = _case(f"doc-amount-{rule_id}", primary_topic="approval_control", priority_score=0.8)
+    case.documents = [
+        CaseDocumentRef(document_id="DOC-AMOUNT", matched_rules=[rule_id], amount=50.0)
+    ]
+    case.raw_rule_hits = [
+        RawRuleHitRef(
+            rule_id=rule_id,
+            severity=5,
+            document_id="DOC-AMOUNT",
+            row_index=0,
+            score=0.9,
+            normalized_score=0.9,
+            evidence_type="control_failure",
+        )
+    ]
+    pipeline_result = _phase1([case])
+    pipeline_result.featured_data = df
+    return pipeline_result
+
+
+def test_approval_document_level_rules_use_document_amount_policy() -> None:
+    for rule_id in ("L1-04", "L1-05", "L1-07", "L1-09", "L2-01"):
+        rows = build_phase1_rule_documents(
+            _make_document_amount_policy_result(rule_id),
+            rule_id,
+        )
+
+        assert len(rows) == 1
+        assert rows[0]["amount"] == 50.0, rule_id
+        assert rows[0]["evidence_amount"] == 50.0, rule_id
+        assert rows[0]["debit_amount"] == 50.0, rule_id
+        assert rows[0]["credit_amount"] == 0.0, rule_id
+
+
+def test_document_level_difference_values_use_document_amount_policy() -> None:
+    l104 = build_phase1_rule_documents(
+        _make_document_amount_policy_result("L1-04"),
+        "L1-04",
+    )[0]
+    l201 = build_phase1_rule_documents(
+        _make_document_amount_policy_result("L2-01"),
+        "L2-01",
+    )[0]
+
+    assert l104["difference_value"] == 20.0
+    assert l201["difference_value"] == 50.0 / 30.0
+
+
+def _detail_map(row: dict) -> dict[str, object]:
+    return {
+        str(item["label"]): item.get("value")
+        for item in row.get("violation_details", [])
+    }
+
+
+def _make_pair_group_result(rule_id: str, fields: dict[str, object]) -> SimpleNamespace:
+    row = {
+        "document_id": "DOC-PAIR-A",
+        "line_number": 1,
+        "posting_date": pd.Timestamp("2026-04-30"),
+        "document_date": pd.Timestamp("2026-04-29"),
+        "fiscal_period": 4,
+        "created_by": "kim",
+        "business_process": "R2R",
+        "gl_account": "210000",
+        "debit_amount": 120.0,
+        "credit_amount": 0.0,
+        "local_amount": 120.0,
+        "company_code": "kr01",
+        "document_type": "SA",
+        "counterparty": "Vendor A",
+        "reference": "INV-100",
+        "flagged_rules": "",
+        "review_rules": "",
+    }
+    row.update(fields)
+    df = pd.DataFrame([row])
+    case = _case(f"pair-{rule_id}", primary_topic="duplicate_outflow", priority_score=0.8)
+    case.documents = [
+        CaseDocumentRef(document_id="DOC-PAIR-A", matched_rules=[rule_id], amount=120.0)
+    ]
+    case.raw_rule_hits = [
+        RawRuleHitRef(
+            rule_id=rule_id,
+            severity=5,
+            document_id="DOC-PAIR-A",
+            row_index=0,
+            score=0.9,
+            normalized_score=0.9,
+            evidence_type="duplicate_or_outflow",
+        )
+    ]
+    pipeline_result = _phase1([case])
+    pipeline_result.featured_data = df
+    return pipeline_result
+
+
+def test_l202_pair_group_evidence_exposes_matched_document() -> None:
+    row = build_phase1_rule_documents(
+        _make_pair_group_result(
+            "L2-02",
+            {
+                "matched_document_id": "DOC-PAIR-B",
+                "duplicate_group_id": "PAY-GRP-1",
+                "matched_amount": 120.0,
+                "day_gap": 2,
+            },
+        ),
+        "L2-02",
+    )[0]
+
+    details = _detail_map(row)
+    assert details["Matched document"] == "DOC-PAIR-B"
+    assert details["Duplicate group"] == "PAY-GRP-1"
+    assert details["Matched amount"] == 120.0
+    assert details["Date gap"] == 2
+
+
+def test_l203_pair_group_evidence_exposes_signature_group_and_reason() -> None:
+    row = build_phase1_rule_documents(
+        _make_pair_group_result(
+            "L2-03a",
+            {
+                "duplicate_group_id": "JRN-GRP-1",
+                "duplicate_signature": "kr01|2026-04-30|210000|120",
+                "internal_reason_code": "L2-03a",
+                "matched_reason_codes": "document_duplicate,reference_duplicate",
+            },
+        ),
+        "L2-03a",
+    )[0]
+
+    details = _detail_map(row)
+    assert details["Duplicate group"] == "JRN-GRP-1"
+    assert details["Duplicate signature"] == "kr01|2026-04-30|210000|120"
+    assert details["Reason code"] == "L2-03a"
+    assert details["Matched reasons"] == "document_duplicate,reference_duplicate"
+
+
+def test_l205_pair_group_evidence_exposes_reversal_pair_fields() -> None:
+    row = build_phase1_rule_documents(
+        _make_pair_group_result(
+            "L2-05",
+            {
+                "reversal_pair_id": "REV-1",
+                "matched_document_id": "DOC-REV-B",
+                "date_gap_days": 1,
+                "amount_match": True,
+                "matched_amount": 120.0,
+            },
+        ),
+        "L2-05",
+    )[0]
+
+    details = _detail_map(row)
+    assert details["Reversal pair"] == "REV-1"
+    assert details["Matched document"] == "DOC-REV-B"
+    assert details["Date gap"] == 1
+    assert details["Amount match"] is True
+    assert details["Matched amount"] == 120.0
 
 
 def test_phase1_rule_document_builders_cover_all_current_rules() -> None:

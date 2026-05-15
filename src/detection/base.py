@@ -50,12 +50,17 @@ class RuleFlag:
 
     def __post_init__(self) -> None:
         if self.flagged_count < 0:
-            raise ValueError(f"flagged_count must be non-negative: {self.flagged_count}")
+            raise ValueError(
+                f"flagged_count must be non-negative / 음수일 수 없습니다: {self.flagged_count}"
+            )
         if self.total_count < 0:
-            raise ValueError(f"total_count must be non-negative: {self.total_count}")
+            raise ValueError(
+                f"total_count must be non-negative / 음수일 수 없습니다: {self.total_count}"
+            )
         if self.flagged_count > self.total_count:
             raise ValueError(
-                f"flagged_count({self.flagged_count}) exceeds total_count({self.total_count})"
+                f"flagged_count({self.flagged_count}) exceeds total_count"
+                f"({self.total_count}) / 초과"
             )
 
     @property
@@ -172,7 +177,7 @@ def validate_input(df: pd.DataFrame, required_columns: list[str]) -> list[str]:
     """Return missing required columns, raising on empty input."""
 
     if df.empty:
-        raise ValueError("input DataFrame is empty")
+        raise ValueError("입력 DataFrame이 비어 있습니다 (input DataFrame is empty)")
     return sorted(set(required_columns) - set(df.columns))
 
 
@@ -241,7 +246,9 @@ class BaseDetector(ABC):
 
         if rule_id not in RULE_CODES:
             valid_ids = sorted(RULE_CODES.keys())
-            raise ValueError(f"unknown rule_id '{rule_id}'. valid ids: {valid_ids}")
+            raise ValueError(
+                f"알 수 없는 rule_id '{rule_id}' (unknown rule_id). valid ids: {valid_ids}"
+            )
 
         return RuleFlag(
             rule_id=rule_id,

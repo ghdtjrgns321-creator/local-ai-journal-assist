@@ -351,6 +351,7 @@ RULE_DETAIL_METADATA_REGISTRY: dict[str, RuleDetailMetadata] = {
         "L1-07",
         final_topic="approval_control",
         secondary_topics=("duplicate_outflow",),
+        allow_topic_seed=False,
         title="Approval bypass",
         column_sources=_transaction_columns(
             "created_by",
@@ -358,6 +359,10 @@ RULE_DETAIL_METADATA_REGISTRY: dict[str, RuleDetailMetadata] = {
             "source",
             "business_process",
             derived=("display_label", "signal_status"),
+        ),
+        conflict_note=(
+            "Case seeder authority revoked (§9.1 light_seeder audit 2026-05-14). "
+            "Retains standalone_rankable + topic_score contribution as corroborating evidence."
         ),
     ),
     "L1-08": _entry(
@@ -376,6 +381,7 @@ RULE_DETAIL_METADATA_REGISTRY: dict[str, RuleDetailMetadata] = {
     "L1-09": _entry(
         "L1-09",
         final_topic="approval_control",
+        allow_topic_seed=False,
         title="Missing approval trace",
         column_sources=_transaction_columns(
             "created_by",
@@ -383,6 +389,10 @@ RULE_DETAIL_METADATA_REGISTRY: dict[str, RuleDetailMetadata] = {
             "approval_date",
             "source",
             derived=("approved_at", "display_label"),
+        ),
+        conflict_note=(
+            "Case seeder authority revoked (§9.1 light_seeder audit 2026-05-14). "
+            "Retains standalone_rankable + topic_score contribution as corroborating evidence."
         ),
     ),
     "L2-01": _entry(

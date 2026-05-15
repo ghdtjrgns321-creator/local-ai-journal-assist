@@ -59,6 +59,34 @@ def _normalized_account_code(series: pd.Series) -> pd.Series:
     return _normalized_text(series).str.replace(r"\.0+$", "", regex=True)
 
 
+def _approval_contract_degraded(df: pd.DataFrame) -> bool:
+    """Return true when approval/user master evidence is not reliable enough."""
+
+    if "approval_contract_degraded" not in df.columns:
+        return False
+    values = df["approval_contract_degraded"]
+    if values.empty:
+        return False
+    if pd.api.types.is_bool_dtype(values):
+        return bool(values.fillna(False).any())
+    normalized = values.fillna("").astype(str).str.strip().str.lower()
+    return bool(normalized.isin({"1", "true", "yes", "y"}).any())
+
+
+def _degraded_approval_result(df: pd.DataFrame, rule_id: str) -> pd.Series:
+    result = pd.Series(False, index=df.index, dtype=bool)
+    result.attrs["score_series"] = pd.Series(0.0, index=df.index, dtype="float64")
+    result.attrs["review_score_series"] = pd.Series(0.0, index=df.index, dtype="float64")
+    result.attrs["breakdown"] = {
+        "candidate_rows": 0,
+        "suppressed_rows": int(len(df)),
+        "suppression_reason": "approval_contract_degraded",
+        "rule_id": rule_id,
+    }
+    result.attrs["row_annotations"] = {}
+    return result
+
+
 def _cached_text(df: pd.DataFrame, column: str, cache: AccessRuleCache | None) -> pd.Series:
     if cache is None:
         return _normalized_text(df[column])
@@ -851,6 +879,8 @@ def b12_missing_approval_date(
 
     if "approval_date" not in df.columns:
         return pd.Series(False, index=df.index)
+    if _approval_contract_degraded(df):
+        return _degraded_approval_result(df, "L1-09")
     cfg = _get_missing_approval_date_config(audit_rules)
     missing_date = _cached_text(df, "approval_date", cache).eq("")
     candidate = missing_date
@@ -2209,6 +2239,8 @@ def b09_skipped_approval(
 
     if "approved_by" not in df.columns:
         return pd.Series(False, index=df.index)
+    if _approval_contract_degraded(df):
+        return _degraded_approval_result(df, "L1-07")
     if cache is not None and "b09_skipped_approval_result" in cache.bool_masks:
         return cache.bool_masks["b09_skipped_approval_result"]
 

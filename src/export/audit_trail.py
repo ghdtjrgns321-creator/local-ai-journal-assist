@@ -38,7 +38,19 @@ if TYPE_CHECKING:
 # Why: EventType Literal이 단일 진실 공급원(single source of truth).
 #      VALID_EVENT_TYPES는 typing.get_args()로 자동 파생하므로
 #      이벤트 타입 추가 시 Literal 한 곳만 고치면 된다.
-EventType = Literal["upload", "validate", "analysis", "query", "filter", "export"]
+# Phase 3 v2 Sprint E2: review queue 감사인 워크플로우 이벤트 2종 추가
+#   - analysis_run: review queue Narrator 실행 트리거 (N, 비용 추정 등)
+#   - review_decision_change: 감사인이 candidate 분류 라디오를 변경 (4종 enum)
+EventType = Literal[
+    "upload",
+    "validate",
+    "analysis",
+    "query",
+    "filter",
+    "export",
+    "analysis_run",
+    "review_decision_change",
+]
 
 VALID_EVENT_TYPES: frozenset[str] = frozenset(get_args(EventType))
 
@@ -90,7 +102,7 @@ class AuditTrail:
 
     def __init__(self, conn: duckdb.DuckDBPyConnection) -> None:
         """Args:
-            conn: CompanyContext.db_path로 연 engagement별 DuckDB 커넥션.
+        conn: CompanyContext.db_path로 연 engagement별 DuckDB 커넥션.
         """
         self._conn = conn
 
@@ -102,8 +114,7 @@ class AuditTrail:
         """
         if event.event_type not in VALID_EVENT_TYPES:
             raise ValueError(
-                f"invalid event_type: {event.event_type!r}. "
-                f"허용: {sorted(VALID_EVENT_TYPES)}"
+                f"invalid event_type: {event.event_type!r}. 허용: {sorted(VALID_EVENT_TYPES)}"
             )
 
         # Why: details가 먼저, user_action이 나중에 와야 호출자가 실수로

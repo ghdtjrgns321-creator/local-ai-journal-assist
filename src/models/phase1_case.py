@@ -62,6 +62,8 @@ class CaseGroupResult(BaseModel):
     case_key_parts: dict[str, Any] = Field(default_factory=dict)
     priority_score: float = 0.0
     base_priority_score: float = 0.0
+    composite_sort_score: float = 0.0
+    composite_sort_score_components: dict[str, float] = Field(default_factory=dict)
     topside_bonus: float = 0.0
     batch_combo_bonus: float = 0.0
     weak_evidence_bonus: float = 0.0

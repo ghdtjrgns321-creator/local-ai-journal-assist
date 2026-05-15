@@ -14,7 +14,6 @@ from src.detection.base import (
 )
 from src.detection.constants import Layer
 
-
 # ── validate_input ───────────────────────────────────────────
 
 
@@ -186,7 +185,7 @@ class TestBaseDetector:
         detector = _StubDetector()
         flag = detector._create_rule_flag("L1-06", 10, 200, detail="테스트")
         assert flag.rule_id == "L1-06"
-        assert flag.rule_name == "직무분리 위반"
+        assert flag.rule_name == "Segregation of Duties Violation"
         assert flag.severity == 4
         assert flag.flagged_count == 10
         assert flag.detail == "테스트"

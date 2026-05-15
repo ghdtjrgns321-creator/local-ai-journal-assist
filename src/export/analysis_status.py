@@ -47,12 +47,25 @@ def summarize_export_analysis_status(pr: PipelineResult) -> dict[str, Any]:
     phase2_summary = {
         "training_report_id": getattr(pr, "phase2_training_report_id", None),
         "inference_mode": getattr(pr, "phase2_inference_mode", None),
+        "contract_version": phase2_contract.get(
+            "contract_version",
+            "phase2_unsupervised_mvp_v1",
+        ),
         "selection_mode": phase2_contract.get("selection_mode"),
         "required_model_count": len(required_models),
         "promoted_model_count": len(promoted_versions),
         "required_models": required_models,
         "promoted_versions": promoted_versions,
         "family_sub_detectors": family_sub_detectors,
+        "metric_semantics": phase2_contract.get(
+            "metric_semantics",
+            {
+                "metric_name": "unsupervised_selection_score",
+                "interpretation": "ranking/calibration proxy, not fraud accuracy",
+                "precision_recall_f1_policy": "ground_truth_only",
+                "flagged_ratio_role": "metadata_only",
+            },
+        ),
     }
     phase3_insight = getattr(pr, "phase3_insight", None)
     phase3_case_narratives = list(getattr(pr, "phase3_case_narratives", []) or [])
@@ -95,7 +108,9 @@ def build_phase_provenance_lines(pr: PipelineResult) -> list[str]:
             "Phase 2 provenance: "
             f"train={phase2.get('training_report_id') or '-'} | "
             f"mode={phase2.get('inference_mode') or '-'} | "
+            f"contract={phase2.get('contract_version') or '-'} | "
             f"select={phase2.get('selection_mode') or '-'} | "
+            f"metric={phase2.get('metric_semantics', {}).get('metric_name') or '-'} | "
             f"promoted={phase2.get('promoted_model_count', 0)} | "
             f"families={phase2.get('required_model_count', 0)} | "
             f"subdetectors={sub_detector_count}"

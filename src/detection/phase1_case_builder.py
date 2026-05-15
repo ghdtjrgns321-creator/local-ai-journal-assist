@@ -440,7 +440,10 @@ _RULE_EXPRESSION_METADATA: dict[str, dict[str, Any]] = {
     "L4-02": {
         "evidence_strength": "weak",
         "focus": "benford_population_anomaly",
-        "action": ["계정/월 모집단의 숫자 분포 이상 원인 확인", "해당 모집단의 표본 전표 추가 검토"],
+        "action": [
+            "계정/월 모집단의 숫자 분포 이상 원인 확인",
+            "해당 모집단의 표본 전표 추가 검토",
+        ],
     },
     "L4-03": {
         "evidence_strength": "medium",
@@ -512,7 +515,7 @@ _OUTFLOW_RULES = {
 }
 
 _LOGIC_RULES = {
-    "L3-12": "Work scope concentration",
+    "L3-12": "권한·업무 범위 집중",
     "L3-10": "고위험 계정 사용",
     "L1-03": "무효 계정",
     "L2-04": "비용 자산화 의심",
@@ -699,9 +702,7 @@ def annotate_detection_results_with_phase1_refs(
         result.metadata["phase1_case_run_id"] = reference["phase1_case_run_id"]
         result.metadata["phase1_case_path"] = reference["phase1_case_path"]
         result.metadata["phase1_case_count"] = reference["phase1_case_count"]
-        result.metadata["phase1_macro_finding_count"] = reference[
-            "phase1_macro_finding_count"
-        ]
+        result.metadata["phase1_macro_finding_count"] = reference["phase1_macro_finding_count"]
         result.metadata["top_theme_ids"] = reference["top_theme_ids"]
         result.metadata["phase1_case_schema_version"] = reference["phase1_case_schema_version"]
 
@@ -758,31 +759,33 @@ def _build_l402_macro_findings(
     for ordinal, finding in enumerate(metadata.get("benford_findings", []) or [], start=1):
         if not isinstance(finding, dict):
             continue
-        rows.append({
-            "finding_id": f"L4-02:{ordinal:04d}",
-            "rule_id": "L4-02",
-            "rule_label": "Benford population anomaly",
-            "queue_type": "account_process_macro",
-            "source_track": track_name,
-            "scope": finding.get("scope") or "company_gl_account",
-            "company_code": finding.get("company_code"),
-            "gl_account": finding.get("gl_account"),
-            "sample_size": finding.get("sample_size"),
-            "review_score": finding.get("candidate_score", 0.0),
-            "finding_severity": finding.get("finding_severity", ""),
-            "candidate_rows": finding.get("candidate_rows", 0),
-            "candidate_documents": finding.get("candidate_documents"),
-            "flagged_digits": finding.get("flagged_digits", []),
-            "metrics": {
-                "mad": finding.get("mad"),
-                "chi2_p_value": finding.get("chi2_p_value"),
-                "max_deviation": finding.get("max_deviation"),
-            },
-            "interpretation": (
-                "Population-level digit distribution finding. Drill-down rows are "
-                "review candidates, not confirmed transaction exceptions."
-            ),
-        })
+        rows.append(
+            {
+                "finding_id": f"L4-02:{ordinal:04d}",
+                "rule_id": "L4-02",
+                "rule_label": "Benford population anomaly",
+                "queue_type": "account_process_macro",
+                "source_track": track_name,
+                "scope": finding.get("scope") or "company_gl_account",
+                "company_code": finding.get("company_code"),
+                "gl_account": finding.get("gl_account"),
+                "sample_size": finding.get("sample_size"),
+                "review_score": finding.get("candidate_score", 0.0),
+                "finding_severity": finding.get("finding_severity", ""),
+                "candidate_rows": finding.get("candidate_rows", 0),
+                "candidate_documents": finding.get("candidate_documents"),
+                "flagged_digits": finding.get("flagged_digits", []),
+                "metrics": {
+                    "mad": finding.get("mad"),
+                    "chi2_p_value": finding.get("chi2_p_value"),
+                    "max_deviation": finding.get("max_deviation"),
+                },
+                "interpretation": (
+                    "Population-level digit distribution finding. Drill-down rows are "
+                    "review candidates, not confirmed transaction exceptions."
+                ),
+            }
+        )
     return rows
 
 
@@ -800,41 +803,43 @@ def _build_d01_macro_findings(
         priority_score = _d01_macro_priority_score(finding)
         queue_bucket = _d01_queue_bucket(finding)
         normal_likelihood = _d01_normal_likelihood(finding, queue_bucket)
-        rows.append({
-            "finding_id": f"D01:{ordinal:04d}",
-            "rule_id": "D01",
-            "rule_label": "Account activity variance",
-            "queue_type": "account_process_macro",
-            "source_track": track_name,
-            "scope": "company_gl_account" if finding.get("company_code") else "gl_account",
-            "fiscal_year": finding.get("fiscal_year"),
-            "prior_fiscal_year": finding.get("prior_fiscal_year"),
-            "company_code": finding.get("company_code"),
-            "gl_account": finding.get("gl_account"),
-            "review_row_count": finding.get("review_row_count", 0),
-            "review_score": finding.get("weighted_variance", 0.0),
-            "macro_priority_score": priority_score,
-            "queue_bucket": queue_bucket,
-            "normal_likelihood": normal_likelihood,
-            "scoring_policy": "macro_priority_calibrated_not_row_score",
-            "finding_severity": queue_bucket,
-            "business_event_type": finding.get("business_event_type"),
-            "precision_policy": finding.get("precision_policy"),
-            "metrics": {
-                "current_total_amount": finding.get("current_total_amount"),
-                "prior_total_amount": finding.get("prior_total_amount"),
-                "total_var": finding.get("total_var"),
-                "count_var": finding.get("count_var"),
-                "avg_var": finding.get("avg_var"),
-                "weighted_variance": finding.get("weighted_variance"),
-                "d01_target_document_count": finding.get("d01_target_document_count"),
-                "non_d01_document_count": finding.get("non_d01_document_count"),
-            },
-            "interpretation": (
-                "Account-level activity shift finding. Use it to select accounts for "
-                "analytical review and corroborate transaction-level exceptions."
-            ),
-        })
+        rows.append(
+            {
+                "finding_id": f"D01:{ordinal:04d}",
+                "rule_id": "D01",
+                "rule_label": "Account activity variance",
+                "queue_type": "account_process_macro",
+                "source_track": track_name,
+                "scope": "company_gl_account" if finding.get("company_code") else "gl_account",
+                "fiscal_year": finding.get("fiscal_year"),
+                "prior_fiscal_year": finding.get("prior_fiscal_year"),
+                "company_code": finding.get("company_code"),
+                "gl_account": finding.get("gl_account"),
+                "review_row_count": finding.get("review_row_count", 0),
+                "review_score": finding.get("weighted_variance", 0.0),
+                "macro_priority_score": priority_score,
+                "queue_bucket": queue_bucket,
+                "normal_likelihood": normal_likelihood,
+                "scoring_policy": "macro_priority_calibrated_not_row_score",
+                "finding_severity": queue_bucket,
+                "business_event_type": finding.get("business_event_type"),
+                "precision_policy": finding.get("precision_policy"),
+                "metrics": {
+                    "current_total_amount": finding.get("current_total_amount"),
+                    "prior_total_amount": finding.get("prior_total_amount"),
+                    "total_var": finding.get("total_var"),
+                    "count_var": finding.get("count_var"),
+                    "avg_var": finding.get("avg_var"),
+                    "weighted_variance": finding.get("weighted_variance"),
+                    "d01_target_document_count": finding.get("d01_target_document_count"),
+                    "non_d01_document_count": finding.get("non_d01_document_count"),
+                },
+                "interpretation": (
+                    "Account-level activity shift finding. Use it to select accounts for "
+                    "analytical review and corroborate transaction-level exceptions."
+                ),
+            }
+        )
     return rows
 
 
@@ -849,35 +854,37 @@ def _build_d02_macro_findings(
         priority_score = _d02_macro_priority_score(finding)
         queue_bucket = _d02_queue_bucket(finding)
         normal_likelihood = _d02_normal_likelihood(finding, queue_bucket)
-        rows.append({
-            "finding_id": f"D02:{ordinal:04d}",
-            "rule_id": "D02",
-            "rule_label": "Monthly pattern shift",
-            "queue_type": "account_process_macro",
-            "source_track": track_name,
-            "scope": "company_gl_account" if finding.get("company_code") else "gl_account",
-            "fiscal_year": finding.get("fiscal_year"),
-            "prior_fiscal_year": finding.get("prior_fiscal_year"),
-            "company_code": finding.get("company_code"),
-            "gl_account": finding.get("gl_account"),
-            "group_key": finding.get("d02_group_key"),
-            "review_score": finding.get("jsd", 0.0),
-            "macro_priority_score": priority_score,
-            "queue_bucket": queue_bucket,
-            "normal_likelihood": normal_likelihood,
-            "scoring_policy": "macro_priority_calibrated_not_row_score",
-            "finding_severity": queue_bucket,
-            "scenario_type": finding.get("scenario_type"),
-            "metrics": {
-                key: value
-                for key, value in finding.items()
-                if key not in {"flagged", "company_code", "gl_account", "d02_group_key"}
-            },
-            "interpretation": (
-                "Account-level monthly distribution shift finding. It does not identify "
-                "one incorrect journal line without corroborating evidence."
-            ),
-        })
+        rows.append(
+            {
+                "finding_id": f"D02:{ordinal:04d}",
+                "rule_id": "D02",
+                "rule_label": "Monthly pattern shift",
+                "queue_type": "account_process_macro",
+                "source_track": track_name,
+                "scope": "company_gl_account" if finding.get("company_code") else "gl_account",
+                "fiscal_year": finding.get("fiscal_year"),
+                "prior_fiscal_year": finding.get("prior_fiscal_year"),
+                "company_code": finding.get("company_code"),
+                "gl_account": finding.get("gl_account"),
+                "group_key": finding.get("d02_group_key"),
+                "review_score": finding.get("jsd", 0.0),
+                "macro_priority_score": priority_score,
+                "queue_bucket": queue_bucket,
+                "normal_likelihood": normal_likelihood,
+                "scoring_policy": "macro_priority_calibrated_not_row_score",
+                "finding_severity": queue_bucket,
+                "scenario_type": finding.get("scenario_type"),
+                "metrics": {
+                    key: value
+                    for key, value in finding.items()
+                    if key not in {"flagged", "company_code", "gl_account", "d02_group_key"}
+                },
+                "interpretation": (
+                    "Account-level monthly distribution shift finding. It does not identify "
+                    "one incorrect journal line without corroborating evidence."
+                ),
+            }
+        )
     return rows
 
 
@@ -921,35 +928,39 @@ def _build_graph_macro_findings(
                 for value in group.get("document_id", pd.Series(dtype=object)).tolist()
                 if _string_value(value)
             )
-            rows.append({
-                "finding_id": f"{rule_id}:{ordinal:04d}",
-                "rule_id": rule_id,
-                "rule_label": _graph_rule_label(rule_id),
-                "queue_type": "account_process_macro",
-                "source_track": track_name,
-                "scope": "company_gl_account" if "company_code" in group_columns else "gl_account",
-                "fiscal_year": _first_group_value(group, "fiscal_year"),
-                "company_code": _first_group_value(group, "company_code"),
-                "gl_account": _first_group_value(group, "gl_account"),
-                "review_score": review_score,
-                "macro_priority_score": _graph_macro_priority_score(review_score),
-                "queue_bucket": _graph_queue_bucket(rule_id),
-                "normal_likelihood": 0.35,
-                "scoring_policy": "macro_priority_calibrated_not_row_score",
-                "finding_severity": "graph_review",
-                "candidate_rows": int(len(group)),
-                "candidate_documents": len(document_ids),
-                "document_ids": document_ids[:25],
-                "row_indices": [int(value) for value in group["_row_position"].tolist()],
-                "metrics": {
-                    "max_graph_score": review_score,
-                    "mean_graph_score": float(group["_graph_score"].mean()),
-                },
-                "interpretation": (
-                    "Graph-level relationship finding. Use it as macro corroboration for "
-                    "matching transaction-level cases, especially related-party review."
-                ),
-            })
+            rows.append(
+                {
+                    "finding_id": f"{rule_id}:{ordinal:04d}",
+                    "rule_id": rule_id,
+                    "rule_label": _graph_rule_label(rule_id),
+                    "queue_type": "account_process_macro",
+                    "source_track": track_name,
+                    "scope": "company_gl_account"
+                    if "company_code" in group_columns
+                    else "gl_account",
+                    "fiscal_year": _first_group_value(group, "fiscal_year"),
+                    "company_code": _first_group_value(group, "company_code"),
+                    "gl_account": _first_group_value(group, "gl_account"),
+                    "review_score": review_score,
+                    "macro_priority_score": _graph_macro_priority_score(review_score),
+                    "queue_bucket": _graph_queue_bucket(rule_id),
+                    "normal_likelihood": 0.35,
+                    "scoring_policy": "macro_priority_calibrated_not_row_score",
+                    "finding_severity": "graph_review",
+                    "candidate_rows": int(len(group)),
+                    "candidate_documents": len(document_ids),
+                    "document_ids": document_ids[:25],
+                    "row_indices": [int(value) for value in group["_row_position"].tolist()],
+                    "metrics": {
+                        "max_graph_score": review_score,
+                        "mean_graph_score": float(group["_graph_score"].mean()),
+                    },
+                    "interpretation": (
+                        "Graph-level relationship finding. Use it as macro corroboration for "
+                        "matching transaction-level cases, especially related-party review."
+                    ),
+                }
+            )
     return rows
 
 
@@ -1072,7 +1083,9 @@ def _d02_queue_bucket(finding: dict[str, Any]) -> str:
         return "normal_pattern_review"
     if normal_docs > target_docs:
         return "auxiliary_non_d02_context"
-    if any(token in sources for token in ("automated", "recurring", "interface", "batch", "system")):
+    if any(
+        token in sources for token in ("automated", "recurring", "interface", "batch", "system")
+    ):
         return "normal_pattern_review"
     return "analytical_review"
 
@@ -1179,9 +1192,7 @@ def _collect_raw_hits_profiled(
             if topic_id is None and mapping is not None:
                 topic_id = _LEGACY_THEME_TOPIC_MAP.get(mapping[0])
             detail_column = (
-                requested_rule_id
-                if requested_rule_id in details.columns
-                else canonical_rule_id
+                requested_rule_id if requested_rule_id in details.columns else canonical_rule_id
             )
             if topic_id not in TOPIC_REGISTRY or detail_column not in details.columns:
                 continue
@@ -1192,7 +1203,9 @@ def _collect_raw_hits_profiled(
                 metadata.evidence_type if metadata is not None else str(topic_id),
             )
             theme_id = _TOPIC_LEGACY_THEME_MAP.get(str(topic_id), fallback_theme_id)
-            evidence_type = metadata.evidence_type if metadata is not None else fallback_evidence_type
+            evidence_type = (
+                metadata.evidence_type if metadata is not None else fallback_evidence_type
+            )
             column = details[detail_column]
             rule_annotations = row_annotations.get(
                 requested_rule_id,
@@ -1241,9 +1254,7 @@ def _collect_raw_hits_profiled(
                 score = max(raw_score_float, annotation_score)
                 if score <= 0:
                     continue
-                signal_status = (
-                    "confirmed" if raw_score_float > 0 else "review_candidate"
-                )
+                signal_status = "confirmed" if raw_score_float > 0 else "review_candidate"
                 can_seed_case = row_label in seed_labels
                 display_label = _row_display_label(row_annotation)
                 severity = int(rule_flag.severity)
@@ -1572,7 +1583,9 @@ def _build_cases(
             for topic_id, breakdown in topic_breakdowns.items()
             if breakdown.score > 0 and (breakdown.has_rankable_primary or breakdown.has_combo_floor)
         }
-        primary_topic = theme_id if topic_scores.get(theme_id, 0.0) > 0 else pick_primary_topic(topic_scores)
+        primary_topic = (
+            theme_id if topic_scores.get(theme_id, 0.0) > 0 else pick_primary_topic(topic_scores)
+        )
         if primary_topic is None:
             continue
         primary_topic_label = _topic_label(primary_topic)
@@ -1590,6 +1603,15 @@ def _build_cases(
         if use_topic_scoring:
             priority_score = max(topic_scores.values(), default=0.0)
         priority_band = _priority_band(priority_score, config, repeat_score)
+        # §9.3 composite_sort_score: 7개 주제 공통 정렬 식. primary_topic 의 breakdown 으로 산출.
+        composite_sort_score, composite_sort_score_components = _composite_sort_score(
+            primary_topic=primary_topic,
+            topic_scores=topic_scores,
+            topic_breakdowns=topic_breakdowns,
+            case_hits=case_hits,
+            fallback_score=priority_score,
+            use_topic_scoring=use_topic_scoring,
+        )
         l304_repeat_pattern = _is_l304_repeat_pattern_case(
             df,
             rows,
@@ -1665,6 +1687,8 @@ def _build_cases(
                 case_key_parts=group["case_key_parts"],
                 priority_score=priority_score,
                 base_priority_score=base_priority_score,
+                composite_sort_score=composite_sort_score,
+                composite_sort_score_components=composite_sort_score_components,
                 topside_bonus=bonuses["topside_bonus"],
                 batch_combo_bonus=bonuses["batch_combo_bonus"],
                 weak_evidence_bonus=bonuses["weak_evidence_bonus"],
@@ -1703,11 +1727,13 @@ def _build_cases(
                 risk_narrative=auditor_insight["risk_narrative"],
                 recommended_audit_actions=auditor_insight["recommended_audit_actions"],
                 rule_evidence_summary=auditor_insight["rule_evidence_summary"],
-                evidence_tags=sorted({
-                    *evidence_types,
-                    *secondary_tags,
-                    *(_macro_context_tags(macro_contexts)),
-                }),
+                evidence_tags=sorted(
+                    {
+                        *evidence_types,
+                        *secondary_tags,
+                        *(_macro_context_tags(macro_contexts)),
+                    }
+                ),
                 macro_contexts=macro_contexts,
                 documents=documents,
                 raw_rule_hits=raw_rule_hits,
@@ -1726,8 +1752,7 @@ def _build_cases(
                     "total_groups": len(groups),
                     "cases": len(cases),
                     "timings": {
-                        name: round(value, 3)
-                        for name, value in sorted(loop_timings.items())
+                        name: round(value, 3) for name, value in sorted(loop_timings.items())
                     },
                 },
             )
@@ -1739,19 +1764,17 @@ def _build_cases(
                 "elapsed_sec": round(time.perf_counter() - step_start, 3),
                 "processed": len(groups),
                 "cases": len(cases),
-                "timings": {
-                    name: round(value, 3)
-                    for name, value in sorted(loop_timings.items())
-                },
+                "timings": {name: round(value, 3) for name, value in sorted(loop_timings.items())},
             },
         )
 
     step_start = time.perf_counter()
+    # §9.3 정렬: composite_sort_score 1차 → (triage_rank_score, total_amount, rule_count) 보조.
+    # total_amount 를 1차 결정자에서 보조 결정자로 격하해 truth 가 amount 큰 nontruth 에 묻히지 않게 한다.
     cases.sort(
         key=lambda item: (
-            item.priority_score,
+            item.composite_sort_score,
             item.triage_rank_score,
-            item.repeat_months >= repeat_tiebreak,
             item.total_amount,
             item.rule_count,
         ),
@@ -1873,19 +1896,21 @@ def _case_macro_contexts(
         if context_id in seen:
             continue
         seen.add(context_id)
-        contexts.append({
-            "finding_id": context_id,
-            "rule_id": rule_id,
-            "queue_bucket": finding.get("queue_bucket"),
-            "macro_priority_score": finding.get("macro_priority_score"),
-            "normal_likelihood": finding.get("normal_likelihood"),
-            "company_code": finding.get("company_code"),
-            "gl_account": finding.get("gl_account"),
-            "fiscal_year": finding.get("fiscal_year"),
-            "review_score": finding.get("review_score"),
-            "candidate_documents": finding.get("candidate_documents"),
-            "scoring_effect": _macro_context_scoring_effect(finding),
-        })
+        contexts.append(
+            {
+                "finding_id": context_id,
+                "rule_id": rule_id,
+                "queue_bucket": finding.get("queue_bucket"),
+                "macro_priority_score": finding.get("macro_priority_score"),
+                "normal_likelihood": finding.get("normal_likelihood"),
+                "company_code": finding.get("company_code"),
+                "gl_account": finding.get("gl_account"),
+                "fiscal_year": finding.get("fiscal_year"),
+                "review_score": finding.get("review_score"),
+                "candidate_documents": finding.get("candidate_documents"),
+                "scoring_effect": _macro_context_scoring_effect(finding),
+            }
+        )
     contexts.sort(
         key=lambda item: (
             float(item.get("macro_priority_score") or 0.0),
@@ -2010,11 +2035,7 @@ def _macro_context_from_finding(
 
 
 def _public_macro_context(context: dict[str, Any]) -> dict[str, Any]:
-    return {
-        key: value
-        for key, value in context.items()
-        if not str(key).startswith("_macro_")
-    }
+    return {key: value for key, value in context.items() if not str(key).startswith("_macro_")}
 
 
 def _macro_key_matches(
@@ -2070,8 +2091,7 @@ def _apply_macro_context_priority(
             continue
         bonus += increment
         reasons.append(
-            "macro_context="
-            f"{context.get('rule_id')}:{context.get('queue_bucket')}+{increment:.2f}"
+            f"macro_context={context.get('rule_id')}:{context.get('queue_bucket')}+{increment:.2f}"
         )
     if not bonus:
         return priority_score, []
@@ -2391,9 +2411,7 @@ def _build_document_refs(
     for document_id, doc_hits in by_doc.items():
         cache_key = (
             document_id,
-            tuple(
-                sorted((hit.rule_id, hit.row_index, hit.evidence_type) for hit in doc_hits)
-            ),
+            tuple(sorted((hit.rule_id, hit.row_index, hit.evidence_type) for hit in doc_hits)),
         )
         if ref_cache is not None and cache_key in ref_cache:
             refs.append(ref_cache[cache_key])
@@ -2689,9 +2707,8 @@ def _case_audit_evidence_scores(
 
     if approval_gap or _case_has_any_true(rows, "approval_matrix_gap"):
         scores["approval_control"] = max(scores["approval_control"], 0.70)
-    if (
-        (approval_gap or _case_has_any_true(rows, "approval_matrix_gap"))
-        and (high_amount or _case_has_any_true(rows, "approval_limit_exceeded_independent"))
+    if (approval_gap or _case_has_any_true(rows, "approval_matrix_gap")) and (
+        high_amount or _case_has_any_true(rows, "approval_limit_exceeded_independent")
     ):
         scores["approval_control"] = max(scores["approval_control"], 0.85)
 
@@ -2789,7 +2806,10 @@ def _case_has_related_party_context(rows: pd.DataFrame) -> bool:
 
 
 def _case_has_reversal_or_clearing_context(rows: pd.DataFrame) -> bool:
-    if "lettrage" in rows.columns and _case_string_column(rows, "lettrage").str.strip().ne("").any():
+    if (
+        "lettrage" in rows.columns
+        and _case_string_column(rows, "lettrage").str.strip().ne("").any()
+    ):
         return True
     if "settlement_status" in rows.columns:
         settlement = _case_string_column(rows, "settlement_status")
@@ -2821,6 +2841,63 @@ def _case_string_column(rows: pd.DataFrame, column: str) -> pd.Series:
     if column not in rows.columns:
         return pd.Series("", index=rows.index, dtype="string")
     return rows[column].fillna("").astype(str)
+
+
+_COMPOSITE_SORT_WEIGHTS = {
+    "topic_score": 1.0,
+    "max_primary_rule_score": 0.3,
+    "audit_evidence_score": 0.3,
+    "corroboration_score": 0.3,
+    "independent_evidence_norm": 0.1,
+}
+_COMPOSITE_SORT_INDEPENDENT_EVIDENCE_CAP = 5.0
+
+
+def _composite_sort_score(
+    *,
+    primary_topic: str | None,
+    topic_scores: dict[str, float],
+    topic_breakdowns: dict[str, Any],
+    case_hits: list[_RawHit],
+    fallback_score: float,
+    use_topic_scoring: bool,
+) -> tuple[float, dict[str, float]]:
+    """§9.3 composite_sort_score: 7개 주제 공통 정렬 식.
+
+    Why: topic_score 단독 정렬은 approval_control:high 의 0.75 한 점 묶음 + total_amount 우선
+         tiebreak 로 truth case 가 nontruth amount 뒤로 밀린다. PHASE1 한계 내에서 universal
+         +방향 보조 키(max_primary_rule_score / audit_evidence_score / corroboration_score /
+         independent_evidence_count) 를 작은 가중치로 합산하여 7개 주제 모두에서 baseline 손실
+         없이 truth 회수율을 올린다 (audit §4.1).
+    """
+
+    breakdown = topic_breakdowns.get(primary_topic) if primary_topic else None
+    if not use_topic_scoring or breakdown is None:
+        return float(fallback_score), {"fallback_score": float(fallback_score)}
+    independent_evidence = len({hit.rule_id for hit in case_hits if hit.scoring_role == "primary"})
+    independent_evidence_norm = min(
+        independent_evidence / _COMPOSITE_SORT_INDEPENDENT_EVIDENCE_CAP, 1.0
+    )
+    topic_score = float(topic_scores.get(primary_topic, 0.0))
+    max_primary_rule_score = float(getattr(breakdown, "max_primary_rule_score", 0.0) or 0.0)
+    audit_evidence_score = float(getattr(breakdown, "audit_evidence_score", 0.0) or 0.0)
+    corroboration_score = float(getattr(breakdown, "corroboration_score", 0.0) or 0.0)
+    components = {
+        "topic_score": topic_score,
+        "max_primary_rule_score": max_primary_rule_score,
+        "audit_evidence_score": audit_evidence_score,
+        "corroboration_score": corroboration_score,
+        "independent_evidence_count": float(independent_evidence),
+        "independent_evidence_norm": independent_evidence_norm,
+    }
+    score = (
+        _COMPOSITE_SORT_WEIGHTS["topic_score"] * topic_score
+        + _COMPOSITE_SORT_WEIGHTS["max_primary_rule_score"] * max_primary_rule_score
+        + _COMPOSITE_SORT_WEIGHTS["audit_evidence_score"] * audit_evidence_score
+        + _COMPOSITE_SORT_WEIGHTS["corroboration_score"] * corroboration_score
+        + _COMPOSITE_SORT_WEIGHTS["independent_evidence_norm"] * independent_evidence_norm
+    )
+    return float(score), components
 
 
 def _priority_score(
@@ -2872,9 +2949,7 @@ def _apply_priority_floors(
         if not rule_id:
             continue
         labels = {
-            str(label).strip().lower()
-            for label in floor.get("labels", [])
-            if str(label).strip()
+            str(label).strip().lower() for label in floor.get("labels", []) if str(label).strip()
         }
         min_raw_score = floor.get("min_raw_score")
         matched = False
@@ -2904,9 +2979,7 @@ def _priority_floor_corroboration_match(
     floor: dict[str, Any],
 ) -> bool:
     required_rules = {
-        str(rule_id).strip()
-        for rule_id in floor.get("required_rules", [])
-        if str(rule_id).strip()
+        str(rule_id).strip() for rule_id in floor.get("required_rules", []) if str(rule_id).strip()
     }
     if not required_rules:
         return True
@@ -2932,9 +3005,7 @@ def _priority_floor_missing_field_match(hit: _RawHit, floor: dict[str, Any]) -> 
         return False
 
     configured_fields = {
-        str(field).strip()
-        for field in floor.get("missing_fields", [])
-        if str(field).strip()
+        str(field).strip() for field in floor.get("missing_fields", []) if str(field).strip()
     }
     if configured_fields:
         matching_count = len(missing_fields & configured_fields)
@@ -3071,7 +3142,9 @@ def _apply_priority_adjustments(
 
         recurring_ratio = _case_source_ratio(
             rows,
-            rare_pair_cfg.get("recurring_sources", ["recurring", "automated", "batch", "interface", "system"]),
+            rare_pair_cfg.get(
+                "recurring_sources", ["recurring", "automated", "batch", "interface", "system"]
+            ),
         )
         recurring_threshold = float(rare_pair_cfg.get("recurring_source_ratio", 0.60))
         if recurring_ratio >= recurring_threshold:
@@ -3107,9 +3180,7 @@ def _l203_priority_adjustment(
         return 0.0, None, []
 
     l203_hits = [
-        hit
-        for hit in case_hits
-        if hit.rule_id in {"L2-03", "L2-03a", "L2-03b", "L2-03c", "L2-03d"}
+        hit for hit in case_hits if hit.rule_id in {"L2-03", "L2-03a", "L2-03b", "L2-03c", "L2-03d"}
     ]
     if not l203_hits:
         return 0.0, None, []
@@ -3145,12 +3216,9 @@ def _l203_priority_adjustment(
         materiality_amount = float(config.get("_phase1_materiality_amount", 0.0) or 0.0)
     min_total_amount = float(config.get("min_total_amount", 0.0) or 0.0)
     amount_threshold = float(config.get("amount_score_threshold", 0.75))
-    has_amount_support = (
-        amount_score >= amount_threshold
-        and (
-            (materiality_amount > 0 and total_amount >= materiality_amount * amount_threshold)
-            or (min_total_amount > 0 and total_amount >= min_total_amount)
-        )
+    has_amount_support = amount_score >= amount_threshold and (
+        (materiality_amount > 0 and total_amount >= materiality_amount * amount_threshold)
+        or (min_total_amount > 0 and total_amount >= min_total_amount)
     )
 
     if not (has_independent_signal or has_amount_support):
@@ -3187,7 +3255,9 @@ def _l108_priority_adjustment(
         if isinstance(raw_reasons, str):
             context_reasons.update(part.strip() for part in raw_reasons.split(",") if part.strip())
         elif isinstance(raw_reasons, (list, tuple, set)):
-            context_reasons.update(str(reason).strip() for reason in raw_reasons if str(reason).strip())
+            context_reasons.update(
+                str(reason).strip() for reason in raw_reasons if str(reason).strip()
+            )
 
     if not context_reasons:
         return 0.0, []
@@ -3252,10 +3322,14 @@ def _l301_context_tags(
     config: dict[str, Any],
 ) -> list[str]:
     tags: list[str] = []
-    if _case_has_true(rows, "is_manual_je") or _case_source_ratio(
-        rows,
-        config.get("manual_sources", ["manual", "adjustment"]),
-    ) > 0:
+    if (
+        _case_has_true(rows, "is_manual_je")
+        or _case_source_ratio(
+            rows,
+            config.get("manual_sources", ["manual", "adjustment"]),
+        )
+        > 0
+    ):
         tags.append("manual_entry")
 
     if _case_has_high_amount(rows, config):
@@ -3303,7 +3377,9 @@ def _case_has_repeat_context(rows: pd.DataFrame, config: dict[str, Any]) -> bool
         return False
     group_cols = [
         col
-        for col in config.get("repeat_group_columns", ["business_process", "gl_account", "created_by"])
+        for col in config.get(
+            "repeat_group_columns", ["business_process", "gl_account", "created_by"]
+        )
         if col in rows.columns
     ]
     if not group_cols:
@@ -3348,9 +3424,7 @@ def _case_weak_evidence_tags(
         "logic_mismatch",
         "duplicate_or_outflow",
     }
-    if config.get("require_strong_evidence", True) and not (
-        strong_evidence & set(evidence_types)
-    ):
+    if config.get("require_strong_evidence", True) and not (strong_evidence & set(evidence_types)):
         return []
 
     tags: list[str] = []
@@ -3411,9 +3485,7 @@ def _l308_has_corroborating_rule(rule_ids: set[str], config: dict[str, Any]) -> 
         corroborating_rules = default_rules
     else:
         corroborating_rules = {
-            str(rule_id).strip()
-            for rule_id in configured
-            if str(rule_id).strip()
+            str(rule_id).strip() for rule_id in configured if str(rule_id).strip()
         }
     return bool((set(rule_ids) - {"L3-08"}) & corroborating_rules)
 
@@ -3778,9 +3850,7 @@ def _auditor_insight(
     )
     review_focus = _ordered_unique(_rule_focus(hit.rule_id) for hit in ordered_hits)
     recommended_actions = _ordered_unique(
-        action
-        for hit in ordered_hits
-        for action in _rule_actions(hit.rule_id)
+        action for hit in ordered_hits for action in _rule_actions(hit.rule_id)
     )
     rule_evidence_summary = [_rule_evidence_summary(hit) for hit in ordered_hits]
     risk_narrative = _risk_narrative(
@@ -3974,70 +4044,45 @@ def _representative_explanation(
     return f"{label} 징후가 관찰되었습니다."
 
 
+# Why: 위험 사유 텍스트는 case master 표의 '합계' 컬럼이 별도로 있어 동일한 금액을
+#      문장에 또 적으면 중복이다. 모든 explanation 함수에서 'X입니다' 금액 문구를
+#      제거하고 행동 가이드 위주의 한 줄로 단순화한다. total_amount 인자는
+#      시그니처 호환을 위해 유지하되 본문에서 사용하지 않는다.
+
+
 def _control_explanation(rule_ids: list[str], total_amount: float) -> str:
     labels = _ordered_rule_labels(rule_ids, _CONTROL_RULES) or ["승인 통제 위반"]
     lead = " + ".join(labels[:3])
-    if total_amount > 0:
-        return (
-            f"{lead}이 함께 발생했고 관련 전표 총금액은 {total_amount:,.0f}입니다. "
-            "승인·권한 통제 적용과 예외 승인 근거를 우선 확인해야 합니다."
-        )
     return (
-        f"{lead}이 함께 발생했습니다. "
-        "승인·권한 통제 적용과 예외 승인 근거를 우선 확인해야 합니다."
+        f"{lead}이 함께 발생했습니다. 승인·권한 통제 적용과 예외 승인 근거를 우선 확인해야 합니다."
     )
 
 
 def _access_scope_explanation(rule_ids: list[str], total_amount: float) -> str:
-    labels = _ordered_rule_labels(rule_ids, _LOGIC_RULES) or ["Work scope concentration"]
+    labels = _ordered_rule_labels(rule_ids, _LOGIC_RULES) or ["권한·업무 범위 집중"]
     lead = " + ".join(labels[:3])
-    if total_amount > 0:
-        return (
-            f"{lead} signal was observed and related entry amount totals {total_amount:,.0f}. "
-            "L1-06 handles explicit SoD violations; this case should review one user's broad current-period activity and compensating controls."
-        )
     return (
-        f"{lead} signal was observed. L1-06 handles explicit SoD violations; "
-        "this case should review one user's broad current-period activity and compensating controls."
+        f"{lead} 신호가 관찰되었습니다. "
+        "L1-06 은 명시적 직무분리 위반을 다루므로, 이 case 는 한 사용자의 광범위한 "
+        "당기 활동 패턴과 보완 통제를 함께 검토해야 합니다."
     )
 
 
 def _outflow_explanation(rule_ids: list[str], total_amount: float) -> str:
     labels = _ordered_rule_labels(rule_ids, _OUTFLOW_RULES)
     lead = " + ".join(labels[:3]) if labels else "지급·중복 징후"
-    if total_amount > 0:
-        return (
-            f"{lead}가 관찰되었고 관련 금액은 {total_amount:,.0f}입니다. "
-            "동일 지급·중복 처리 여부와 승인·증빙 대사를 확인해야 합니다."
-        )
-    return (
-        f"{lead}가 관찰되었습니다. "
-        "동일 지급·중복 처리 여부와 승인·증빙 대사를 확인해야 합니다."
-    )
+    return f"{lead}가 관찰되었습니다. 동일 지급·중복 처리 여부와 승인·증빙 대사를 확인해야 합니다."
 
 
 def _logic_explanation(rule_ids: list[str], total_amount: float) -> str:
     labels = _ordered_rule_labels(rule_ids, _LOGIC_RULES)
     lead = " + ".join(labels[:3]) if labels else "회계 처리 논리 이상"
-    if total_amount > 0:
-        return (
-            f"{lead}이 관찰되었고 관련 금액은 {total_amount:,.0f}입니다. "
-            "거래의 경제적 실질과 계정 사용이 맞는지 재검토해야 합니다."
-        )
-    return (
-        f"{lead}이 관찰되었습니다. "
-        "거래의 경제적 실질과 계정 사용이 맞는지 재검토해야 합니다."
-    )
+    return f"{lead}이 관찰되었습니다. 거래의 경제적 실질과 계정 사용이 맞는지 재검토해야 합니다."
 
 
 def _timing_explanation(rule_ids: list[str], total_amount: float) -> str:
     labels = _ordered_rule_labels(rule_ids, _TIMING_RULES)
     lead = " + ".join(labels[:3]) if labels else "기말·시점 이상"
-    if total_amount > 0:
-        return (
-            f"{lead}이 관찰되었고 관련 금액은 {total_amount:,.0f}입니다. "
-            "결산 시점의 기간 귀속, 결산 조정 승인, 사후 보정 근거를 확인해야 합니다."
-        )
     return (
         f"{lead}이 관찰되었습니다. "
         "결산 시점의 기간 귀속, 결산 조정 승인, 사후 보정 근거를 확인해야 합니다."
@@ -4047,22 +4092,12 @@ def _timing_explanation(rule_ids: list[str], total_amount: float) -> str:
 def _statistical_explanation(rule_ids: list[str], total_amount: float) -> str:
     labels = _ordered_rule_labels(rule_ids, _STAT_RULES)
     lead = " + ".join(labels[:3]) if labels else "통계적 이상치"
-    if total_amount > 0:
-        return (
-            f"{lead}가 관찰되었고 관련 금액은 {total_amount:,.0f}입니다. "
-            "일반 분포에서 벗어난 예외 거래인지 확인이 필요합니다."
-        )
     return f"{lead}가 관찰되었습니다. 일반 분포에서 벗어난 예외 거래인지 확인이 필요합니다."
 
 
 def _intercompany_explanation(rule_ids: list[str], total_amount: float) -> str:
     labels = _ordered_rule_labels(rule_ids, _INTERCOMPANY_RULES)
     lead = " + ".join(labels[:3]) if labels else "관계사 거래 검토 신호"
-    if total_amount > 0:
-        return (
-            f"{lead}가 관찰되었고 관련 금액은 {total_amount:,.0f}입니다. "
-            "거래 상대방, 계약 근거, 정상 가격 및 대사 여부를 확인해야 합니다."
-        )
     return (
         f"{lead}가 관찰되었습니다. "
         "거래 상대방, 계약 근거, 정상 가격 및 대사 여부를 확인해야 합니다."
@@ -4072,11 +4107,6 @@ def _intercompany_explanation(rule_ids: list[str], total_amount: float) -> str:
 def _integrity_explanation(rule_ids: list[str], total_amount: float) -> str:
     labels = _ordered_rule_labels(rule_ids, _INTEGRITY_RULES)
     lead = " + ".join(labels[:3]) if labels else "데이터 정합성 오류"
-    if total_amount > 0:
-        return (
-            f"{lead}가 관찰되었고 관련 금액은 {total_amount:,.0f}입니다. "
-            "원천 데이터와 장부 반영 내역의 정합성을 먼저 점검해야 합니다."
-        )
     return f"{lead}가 관찰되었습니다. 원천 데이터와 장부 반영 내역의 정합성을 먼저 점검해야 합니다."
 
 

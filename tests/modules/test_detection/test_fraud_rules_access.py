@@ -123,6 +123,20 @@ class TestL1_09:
         df = pd.DataFrame({"approved_by": ["APR1"]})
         assert not b12_missing_approval_date(df).any()
 
+    def test_approval_contract_degraded_suppresses_l109_control_failure(self) -> None:
+        df = pd.DataFrame({
+            "approved_by": ["APR1"],
+            "approval_date": [None],
+            "source": ["Manual"],
+            "approval_contract_degraded": [True],
+        })
+
+        result = b12_missing_approval_date(df)
+
+        assert not result.any()
+        assert result.attrs["breakdown"]["suppression_reason"] == "approval_contract_degraded"
+        assert result.attrs["breakdown"]["rule_id"] == "L1-09"
+
 
 class TestL3_10:
     def test_high_risk_account_exact_and_prefix_flagged(self) -> None:
@@ -970,6 +984,21 @@ class TestL1_07:
     def test_missing_approved_by_column_skip_even_with_other_inputs(self) -> None:
         df = pd.DataFrame({"exceeds_threshold": [True], "source": ["Manual"]})
         assert not b09_skipped_approval(df).any()
+
+    def test_approval_contract_degraded_suppresses_l107_control_failure(self) -> None:
+        df = pd.DataFrame({
+            "exceeds_threshold": [True],
+            "source": ["Manual"],
+            "approved_by": [""],
+            "approval_date": [None],
+            "approval_contract_degraded": [True],
+        })
+
+        result = b09_skipped_approval(df)
+
+        assert not result.any()
+        assert result.attrs["breakdown"]["suppression_reason"] == "approval_contract_degraded"
+        assert result.attrs["breakdown"]["rule_id"] == "L1-07"
 
 
 class TestL3_03:

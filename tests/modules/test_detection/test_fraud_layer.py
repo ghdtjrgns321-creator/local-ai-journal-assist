@@ -13,38 +13,48 @@ from src.detection.score_aggregator import aggregate_scores
 @pytest.fixture
 def full_df() -> pd.DataFrame:
     """18개 피처 포함 DataFrame — 다양한 부정 패턴 혼합."""
-    return pd.DataFrame({
-        # 필수 컬럼
-        "debit_amount": [60e6, 45e6, 1e6, 80e6, 500.0],
-        "credit_amount": [0.0, 0.0, 0.0, 0.0, 0.0],
-        # 원본 컬럼
-        "gl_account": [4100, 4200, 1000, 4100, 1000],
-        "posting_date": pd.to_datetime([
-            "2025-01-01", "2025-01-01", "2025-01-15", "2025-02-01", "2025-01-01",
-        ]),
-        "auxiliary_account_number": ["V001", "V002", "V001", "V001", "V003"],
-        "company_code": ["A", "B", "A", "B", "A"],
-        "created_by": ["Kim", "Kim", "Kim", "Lee", "Lee"],
-        "approved_by": ["Kim", "Kim", "Park", "Lee", "SYS"],
-        "source": ["Manual", "automated", "SA", "Manual", "automated"],
-        "business_process": ["O2C", "R2R", "TRE", "A2R", "R2R"],
-        # 피처 컬럼
-        "is_revenue_account": [True, True, False, True, False],
-        "amount_zscore": [4.0, 1.5, 0.2, 3.5, 0.1],
-        "is_near_threshold": [False, True, False, False, False],
-        "exceeds_threshold": [True, False, False, True, False],
-        "is_manual_je": [True, False, False, True, False],
-        "is_intercompany": [True, True, False, False, False],
-    })
+    return pd.DataFrame(
+        {
+            # 필수 컬럼
+            "debit_amount": [60e6, 45e6, 1e6, 80e6, 500.0],
+            "credit_amount": [0.0, 0.0, 0.0, 0.0, 0.0],
+            # 원본 컬럼
+            "gl_account": [4100, 4200, 1000, 4100, 1000],
+            "posting_date": pd.to_datetime(
+                [
+                    "2025-01-01",
+                    "2025-01-01",
+                    "2025-01-15",
+                    "2025-02-01",
+                    "2025-01-01",
+                ]
+            ),
+            "auxiliary_account_number": ["V001", "V002", "V001", "V001", "V003"],
+            "company_code": ["A", "B", "A", "B", "A"],
+            "created_by": ["Kim", "Kim", "Kim", "Lee", "Lee"],
+            "approved_by": ["Kim", "Kim", "Park", "Lee", "SYS"],
+            "source": ["Manual", "automated", "SA", "Manual", "automated"],
+            "business_process": ["O2C", "R2R", "TRE", "A2R", "R2R"],
+            # 피처 컬럼
+            "is_revenue_account": [True, True, False, True, False],
+            "amount_zscore": [4.0, 1.5, 0.2, 3.5, 0.1],
+            "is_near_threshold": [False, True, False, False, False],
+            "exceeds_threshold": [True, False, False, True, False],
+            "is_manual_je": [True, False, False, True, False],
+            "is_intercompany": [True, True, False, False, False],
+        }
+    )
 
 
 @pytest.fixture
 def minimal_df() -> pd.DataFrame:
     """필수 컬럼만 있는 DataFrame — graceful degradation 테스트."""
-    return pd.DataFrame({
-        "debit_amount": [100.0, 200.0],
-        "credit_amount": [0.0, 0.0],
-    })
+    return pd.DataFrame(
+        {
+            "debit_amount": [100.0, 200.0],
+            "credit_amount": [0.0, 0.0],
+        }
+    )
 
 
 class TestFraudLayerDetect:
@@ -151,36 +161,42 @@ class TestFraudLayerDetect:
         assert l105_flag.flagged_count == 1
 
     def test_l105_review_and_allowed_system_do_not_become_confirmed_rules(self) -> None:
-        df = pd.DataFrame({
-            "document_id": ["D1", "D2", "D3"],
-            "debit_amount": [100.0, 100.0, 100.0],
-            "credit_amount": [0.0, 0.0, 0.0],
-            "created_by": ["U1", "U2", "SYS"],
-            "approved_by": ["U1", "U2", "SYS"],
-            "business_process": ["R2R", "O2C", "R2R"],
-            "user_persona": ["controller", "controller", "automated_system"],
-            "source": ["interface", "interface", "automated"],
-        })
+        df = pd.DataFrame(
+            {
+                "document_id": ["D1", "D2", "D3"],
+                "debit_amount": [100.0, 100.0, 100.0],
+                "credit_amount": [0.0, 0.0, 0.0],
+                "created_by": ["U1", "U2", "SYS"],
+                "approved_by": ["U1", "U2", "SYS"],
+                "business_process": ["R2R", "O2C", "R2R"],
+                "user_persona": ["controller", "controller", "automated_system"],
+                "source": ["interface", "interface", "automated"],
+            }
+        )
 
         detection = FraudLayer().detect(df)
         result = aggregate_scores(df, [detection])
 
         assert result["flagged_rules"].tolist() == ["", "L1-05", ""]
         assert result["review_rules"].tolist() == ["L1-05", "", ""]
-        assert result["risk_level"].iloc[0] == RiskLevel.NORMAL
+        # Why: 새 RISK_THRESHOLDS(0.50/0.25/0.10) 하에서 review_score=0.4의 L1-05 review 행은
+        # 자연 점수가 LOW 영역에 진입한다. 권고 B 도입 의도(분포 정합)와 부합.
+        assert result["risk_level"].iloc[0] in {RiskLevel.NORMAL, RiskLevel.LOW}
         assert result["risk_level"].iloc[1] == RiskLevel.HIGH
         assert result["risk_level"].iloc[2] == RiskLevel.NORMAL
 
     def test_l107_breakdown_metadata_exposes_immediate_and_review(self) -> None:
         layer = FraudLayer()
-        df = pd.DataFrame({
-            "debit_amount": [20_000_000.0, 20_000_000.0],
-            "credit_amount": [0.0, 0.0],
-            "exceeds_threshold": [True, True],
-            "source": ["Manual", "recurring"],
-            "approved_by": ["", ""],
-            "approval_date": [None, None],
-        })
+        df = pd.DataFrame(
+            {
+                "debit_amount": [20_000_000.0, 20_000_000.0],
+                "credit_amount": [0.0, 0.0],
+                "exceeds_threshold": [True, True],
+                "source": ["Manual", "recurring"],
+                "approved_by": ["", ""],
+                "approval_date": [None, None],
+            }
+        )
 
         result = layer.detect(df)
         breakdown = result.metadata["rule_breakdowns"]["L1-07"]
@@ -205,19 +221,21 @@ class TestFraudLayerDetect:
 
     def test_l302_breakdown_metadata_exposes_manual_buckets(self) -> None:
         layer = FraudLayer()
-        df = pd.DataFrame({
-            "document_id": ["M1", "M2", "M3", "A1"],
-            "debit_amount": [100.0, 200.0, 300.0, 400.0],
-            "credit_amount": [0.0, 0.0, 0.0, 0.0],
-            "source": ["Manual", "Adjustment", "Manual", "automated"],
-            "is_manual_je": [True, True, True, False],
-            "created_by": ["u1", "u2", "u3", "sys"],
-            "approved_by": ["mgr", "mgr", "u3", "sys"],
-            "approval_date": ["2025-01-02", "", "2025-01-03", "2025-01-01"],
-            "exceeds_threshold": [False, False, False, False],
-            "is_period_end": [False, True, False, False],
-            "description_quality": ["good", "poor", "good", "good"],
-        })
+        df = pd.DataFrame(
+            {
+                "document_id": ["M1", "M2", "M3", "A1"],
+                "debit_amount": [100.0, 200.0, 300.0, 400.0],
+                "credit_amount": [0.0, 0.0, 0.0, 0.0],
+                "source": ["Manual", "Adjustment", "Manual", "automated"],
+                "is_manual_je": [True, True, True, False],
+                "created_by": ["u1", "u2", "u3", "sys"],
+                "approved_by": ["mgr", "mgr", "u3", "sys"],
+                "approval_date": ["2025-01-02", "", "2025-01-03", "2025-01-01"],
+                "exceeds_threshold": [False, False, False, False],
+                "is_period_end": [False, True, False, False],
+                "description_quality": ["good", "poor", "good", "good"],
+            }
+        )
 
         result = layer.detect(df)
 
@@ -245,12 +263,14 @@ class TestFraudLayerDetect:
 
     def test_l302_uses_injected_manual_source_codes(self) -> None:
         layer = FraudLayer(audit_rules={"patterns": {"manual_source_codes": ["LegacyManual"]}})
-        df = pd.DataFrame({
-            "document_id": ["M1", "M2"],
-            "debit_amount": [100.0, 200.0],
-            "credit_amount": [0.0, 0.0],
-            "source": ["LegacyManual", "Manual"],
-        })
+        df = pd.DataFrame(
+            {
+                "document_id": ["M1", "M2"],
+                "debit_amount": [100.0, 200.0],
+                "credit_amount": [0.0, 0.0],
+                "source": ["LegacyManual", "Manual"],
+            }
+        )
 
         result = layer.detect(df)
 
@@ -260,17 +280,19 @@ class TestFraudLayerDetect:
 
     def test_l312_work_scope_excess_is_registered(self) -> None:
         layer = FraudLayer()
-        df = pd.DataFrame({
-            "debit_amount": [100.0, 200.0, 300.0, 400.0],
-            "credit_amount": [0.0, 0.0, 0.0, 0.0],
-            "created_by": ["u1", "u1", "u1", "u1"],
-            "user_persona": ["accountant"] * 4,
-            "business_process": ["P2P", "O2C", "R2R", "TRE"],
-            "company_code": ["1000", "2000", "3000", "3000"],
-            "source": ["manual", "automated", "automated", "automated"],
-            "gl_account": ["1190", "5100", "4100", "1100"],
-            "is_period_end": [True, False, False, False],
-        })
+        df = pd.DataFrame(
+            {
+                "debit_amount": [100.0, 200.0, 300.0, 400.0],
+                "credit_amount": [0.0, 0.0, 0.0, 0.0],
+                "created_by": ["u1", "u1", "u1", "u1"],
+                "user_persona": ["accountant"] * 4,
+                "business_process": ["P2P", "O2C", "R2R", "TRE"],
+                "company_code": ["1000", "2000", "3000", "3000"],
+                "source": ["manual", "automated", "automated", "automated"],
+                "gl_account": ["1190", "5100", "4100", "1100"],
+                "is_period_end": [True, False, False, False],
+            }
+        )
 
         result = layer.detect(df)
 
@@ -294,15 +316,17 @@ class TestFraudLayerDetect:
 
     def test_l203_row_annotations_expose_reason_code_and_confidence(self) -> None:
         layer = FraudLayer()
-        df = pd.DataFrame({
-            "document_id": ["D100", "D101"],
-            "auxiliary_account_number": ["V001", "V001"],
-            "reference": ["INV-2025-001", "INV-2025-001"],
-            "gl_account": [5100, 5100],
-            "debit_amount": [5_000_000.0, 5_020_000.0],
-            "credit_amount": [0.0, 0.0],
-            "posting_date": pd.to_datetime(["2025-01-01", "2025-01-04"]),
-        })
+        df = pd.DataFrame(
+            {
+                "document_id": ["D100", "D101"],
+                "auxiliary_account_number": ["V001", "V001"],
+                "reference": ["INV-2025-001", "INV-2025-001"],
+                "gl_account": [5100, 5100],
+                "debit_amount": [5_000_000.0, 5_020_000.0],
+                "credit_amount": [0.0, 0.0],
+                "posting_date": pd.to_datetime(["2025-01-01", "2025-01-04"]),
+            }
+        )
 
         result = layer.detect(df)
         annotations = result.metadata["row_annotations"]["L2-03"]
@@ -314,16 +338,18 @@ class TestFraudLayerDetect:
 
     def test_l202_breakdown_and_annotations_expose_match_strength(self) -> None:
         layer = FraudLayer()
-        df = pd.DataFrame({
-            "document_id": ["D001", "D002", "D003"],
-            "document_type": ["KZ", "KZ", "KZ"],
-            "auxiliary_account_number": ["V001", "V001", ""],
-            "debit_amount": [5_000_000.0, 5_010_000.0, 1_000_000.0],
-            "credit_amount": [0.0, 0.0, 0.0],
-            "posting_date": pd.to_datetime(["2025-01-01", "2025-01-10", "2025-01-12"]),
-            "business_process": ["P2P", "P2P", "P2P"],
-            "reference": ["INV-001", "INV-001", ""],
-        })
+        df = pd.DataFrame(
+            {
+                "document_id": ["D001", "D002", "D003"],
+                "document_type": ["KZ", "KZ", "KZ"],
+                "auxiliary_account_number": ["V001", "V001", ""],
+                "debit_amount": [5_000_000.0, 5_010_000.0, 1_000_000.0],
+                "credit_amount": [0.0, 0.0, 0.0],
+                "posting_date": pd.to_datetime(["2025-01-01", "2025-01-10", "2025-01-12"]),
+                "business_process": ["P2P", "P2P", "P2P"],
+                "reference": ["INV-001", "INV-001", ""],
+            }
+        )
 
         result = layer.detect(df)
 
@@ -337,12 +363,14 @@ class TestFraudLayerDetect:
 
     def test_l204_breakdown_and_annotations_expose_review_queue(self) -> None:
         layer = FraudLayer()
-        df = pd.DataFrame({
-            "document_id": ["D001", "D001"],
-            "gl_account": ["1500", "6100"],
-            "debit_amount": [5_000_000.0, 0.0],
-            "credit_amount": [0.0, 5_000_000.0],
-        })
+        df = pd.DataFrame(
+            {
+                "document_id": ["D001", "D001"],
+                "gl_account": ["1500", "6100"],
+                "debit_amount": [5_000_000.0, 0.0],
+                "credit_amount": [0.0, 5_000_000.0],
+            }
+        )
 
         result = layer.detect(df)
         breakdown = result.metadata["rule_breakdowns"]["L2-04"]

@@ -6,6 +6,8 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
+import pandas as pd
+
 from src.detection.phase1_case_builder import (
     _rule_actions,
     _rule_focus,
@@ -184,17 +186,11 @@ def build_phase1_case_queue(
         return items
     topic_id = _topic_id_from_legacy(queue_id or theme_id)
     if topic_id:
-        items = [
-            case
-            for case in items
-            if topic_id in _case_topic_ids(case)
-        ]
+        items = [case for case in items if topic_id in _case_topic_ids(case)]
     elif queue_id:
         queue = str(queue_id)
         items = [
-            case
-            for case in items
-            if case.primary_queue == queue or queue in case.secondary_queues
+            case for case in items if case.primary_queue == queue or queue in case.secondary_queues
         ]
     elif theme_id:
         items = [case for case in items if case.primary_theme == theme_id]
@@ -416,16 +412,292 @@ def build_phase1_rule_document_counts(pr: PipelineResult) -> dict[str, int]:
     return {rule_id: len(case_ids) for rule_id, case_ids in case_sets.items()}
 
 
+def build_phase1_raw_rule_truth_index(pr: PipelineResult) -> dict[str, Any]:
+    """Return raw_rule_hits-based rule truth maps for PHASE1 UI surfaces.
+
+    This is the source of truth for PHASE1 user-facing rule filters/counts. Row
+    flag columns remain a legacy fallback when no PHASE1 case artifact exists.
+    """
+    phase1 = resolve_phase1_case_result(pr)
+    if phase1 is None:
+        return {
+            "available": False,
+            "rules": [],
+            "rule_document_ids": {},
+            "rule_row_indices": {},
+            "document_rule_ids": {},
+        }
+
+    rule_document_ids: dict[str, set[str]] = {}
+    rule_row_indices: dict[str, set[int]] = {}
+    document_rule_ids: dict[str, set[str]] = {}
+    for case in phase1.cases:
+        for hit in case.raw_rule_hits:
+            rule_id = canonicalize_rule_id(str(hit.rule_id or "").strip())
+            doc_id = str(hit.document_id or "").strip()
+            if not rule_id or not doc_id:
+                continue
+            rule_document_ids.setdefault(rule_id, set()).add(doc_id)
+            document_rule_ids.setdefault(doc_id, set()).add(rule_id)
+            try:
+                row_index = int(getattr(hit, "row_index", None))
+            except (TypeError, ValueError):
+                continue
+            if row_index >= 0:
+                rule_row_indices.setdefault(rule_id, set()).add(row_index)
+
+    return {
+        "available": True,
+        "rules": sorted(rule_document_ids),
+        "rule_document_ids": rule_document_ids,
+        "rule_row_indices": rule_row_indices,
+        "document_rule_ids": document_rule_ids,
+    }
+
+
+def _clean_case_explanation(text: str) -> str:
+    """기존 case 에 저장된 영문/금액 문구를 화면용으로 정화.
+
+    Why: representative_explanation 은 case 빌드 시점에 한 번 저장되어 다시 빌드하지
+         않으면 갱신되지 않는다. 신규 빌드 함수는 한국어·금액 미포함으로 바뀌었지만,
+         기존 case 에는 영문 access_scope 설명과 'X입니다' 금액 문구가 남아 있다.
+         dashboard 표시 직전에 후처리해 일관된 한국어 문장만 노출.
+    """
+    import re
+
+    if not text:
+        return ""
+    cleaned = str(text).strip()
+
+    # 영문 access_scope_explanation 패턴을 한국어 fallback 으로 대체.
+    if "L1-06 handles explicit SoD violations" in cleaned or (
+        "Work scope concentration" in cleaned and "signal was observed" in cleaned
+    ):
+        return (
+            "권한·업무 범위 집중 신호가 관찰되었습니다. "
+            "L1-06 은 명시적 직무분리 위반을 다루므로, 이 case 는 한 사용자의 광범위한 "
+            "당기 활동 패턴과 보완 통제를 함께 검토해야 합니다."
+        )
+
+    # 'X입니다' 금액 문구 제거 — 합계 컬럼과 중복.
+    cleaned = re.sub(r"\s*관련 전표 총금액은 [\d,\.]+입니다\.\s*", " ", cleaned)
+    cleaned = re.sub(r"\s*관련 금액은 [\d,\.]+입니다\.\s*", " ", cleaned)
+    cleaned = re.sub(r"\s*and related entry amount totals [\d,\.]+\.\s*", " ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
+
+
+def _case_matches_topic(case: CaseGroupResult, topic_id: str | None) -> bool:
+    """topic_id 가 주어지면 그 토픽 안에서 의미 있는 점수를 가진 case 만 통과.
+
+    expander 헤더 카운트(_topic_summary_stats / _topic_rule_groups)와 동일한 필터를
+    case 목록·case→doc 매핑에도 적용해 단위 일치를 보장한다.
+    """
+    if not topic_id:
+        return True
+    if topic_id not in _case_topic_ids(case):
+        return False
+    return _case_topic_score(case, topic_id) > 0
+
+
+def build_phase1_rule_case_doc_map(
+    pr: PipelineResult,
+    rule_id: str,
+    *,
+    topic_id: str | None = None,
+) -> dict[str, dict[str, list[str]]]:
+    """룰별 case_id → {hit_documents, related_documents} 분리 매핑.
+
+    Why: 이전 버전은 case 의 모든 documents 를 한꺼번에 반환해 사용자 화면에서
+         '왜 이 룰과 무관한 doc 까지 같이 나오나' 혼란이 생겼다. 외부 분석 권고대로
+         raw_rule_hits 에 해당 룰이 직접 잡힌 doc(=hit_documents)과 같은 case 에
+         속하지만 다른 룰만 잡힌 doc(=related_documents)을 분리한다. 컨텍스트는
+         보존하면서 룰 hit 와 같은 case 컨텍스트를 시각적으로 구분 가능.
+
+    반환:
+        {
+            case_id: {
+                "hit_documents": [doc_id, ...],        # raw_rule_hits 매칭 doc
+                "related_documents": [doc_id, ...],    # 같은 case 의 나머지 doc
+            },
+        }
+    """
+    requested = canonicalize_rule_id(str(rule_id or "").strip())
+    if not requested:
+        return {}
+    phase1 = resolve_phase1_case_result(pr)
+    if phase1 is None:
+        return {}
+    out: dict[str, dict[str, list[str]]] = {}
+    for case in phase1.cases:
+        if not _case_matches_topic(case, topic_id):
+            continue
+        hit_doc_ids: set[str] = set()
+        for hit in case.raw_rule_hits:
+            if canonicalize_rule_id(str(hit.rule_id or "")) != requested:
+                continue
+            doc_id = str(hit.document_id or "").strip()
+            if doc_id:
+                hit_doc_ids.add(doc_id)
+        if not hit_doc_ids:
+            continue
+        all_doc_ids = [str(doc.document_id) for doc in case.documents if doc and doc.document_id]
+        related = [d for d in all_doc_ids if d not in hit_doc_ids]
+        out[str(case.case_id)] = {
+            "hit_documents": sorted(hit_doc_ids),
+            "related_documents": related,
+        }
+    return out
+
+
+def build_phase1_rule_cases(
+    pr: PipelineResult,
+    rule_id: str,
+    *,
+    topic_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """해당 룰이 매칭된 case 목록을 자연어 라벨과 함께 반환.
+
+    case master 표(룰 expander → case 단위 1차 행)용 프로젝션. 룰별 case 필터링은
+    raw_rule_hits 기준 — 같은 case가 여러 룰에 잡힐 수 있고, 한 case 안 다수 doc이
+    같은 룰을 공유해도 case는 1번만 등장한다.
+
+    topic_id 가 주어지면 그 토픽 안 case 만 포함 — expander 헤더의
+    `case High N · Low M` 카운트와 단위 일치.
+    """
+    from src.export.phase1_case_label import case_natural_label
+
+    requested = canonicalize_rule_id(str(rule_id or "").strip())
+    if not requested:
+        return []
+    phase1 = resolve_phase1_case_result(pr)
+    if phase1 is None:
+        return []
+
+    rows: list[dict[str, Any]] = []
+    for case in phase1.cases:
+        if not _case_matches_topic(case, topic_id):
+            continue
+        rule_ids_in_case = {
+            canonicalize_rule_id(str(hit.rule_id or "").strip()) for hit in case.raw_rule_hits
+        }
+        if requested not in rule_ids_in_case:
+            continue
+        # Why: 한 case 안에 여러 룰이 섞여 있어도 master 라벨은 case 자체의
+        #      theme(케이스 묶음 단위)을 그대로 유지한다. 룰별 보강 라벨은
+        #      위반 전표 목록(2차 마스터)에서 표시한다.
+        # Why: case master 표는 '사례 요약 / 전표 수 / 합계' 컬럼이 별도로 있어
+        #      라벨 끝에 또 'N건 · 합계'를 붙이면 같은 정보를 두 번 보게 된다.
+        #      doc_count·total_amount 인자는 생략한다.
+        theme = case.primary_theme or case.primary_topic or ""
+        natural = case_natural_label(theme, case.case_key_parts)
+        # Why: triage_rank_reasons는 strong_rules=N 같은 점수 산출 트레이스가 섞여
+        #      감사인이 못 읽는다. 자연어 설명(representative_explanation)이 있으면
+        #      그쪽을 우선, 없으면 trace에서 사람이 읽을 수 있는 첫 줄만 백업.
+        #      기존 case 에 저장된 영문/금액 문구는 _clean_case_explanation 으로 정화.
+        why = _clean_case_explanation(case.representative_explanation or "")
+        if not why:
+            for reason in case.triage_rank_reasons or []:
+                text = str(reason or "").strip()
+                if not text or "=" in text:
+                    continue
+                why = _clean_case_explanation(text)
+                break
+        rows.append(
+            {
+                "case_id": case.case_id,
+                "natural_label": natural,
+                "theme_id": theme,
+                "priority_band": case.priority_band or "low",
+                "priority_score": float(case.priority_score or 0.0),
+                "document_count": int(case.document_count or 0),
+                "total_amount": float(case.total_amount or 0.0),
+                "why": why,
+                "case_key": case.case_key,
+            }
+        )
+
+    band_rank = {"high": 3, "medium": 2, "low": 1}
+    rows.sort(
+        key=lambda row: (
+            -band_rank.get(str(row["priority_band"]).lower(), 0),
+            -float(row["total_amount"]),
+            -int(row["document_count"]),
+        )
+    )
+    return rows
+
+
+def _build_rule_document_row(
+    target: str,
+    record: Any,
+    doc_rows: Any,
+    meta: dict[str, Any],
+) -> dict[str, Any]:
+    """rule_documents 단일 row 빌드 — mask 매칭 path 와 truth 보강 path 가 공유.
+
+    Why: L1-01 (차대변 균형) 같은 전표 단위 룰은 master 표의 거래금액·차변·대변 모두
+         전표 합계여야 감사인이 임팩트를 정확히 인식한다. 라인 단위 값으로 표시하면
+         같은 doc 의 일부만 보여 균형 이탈이 작아 보이는 인지 오류가 난다.
+         그 외 룰은 라인 단위 record 값을 유지.
+    """
+    amount = _rule_evidence_amount(target, record, doc_rows)
+    evidence = _rule_document_evidence(target, record, doc_rows, amount)
+    if (
+        target in _DOCUMENT_LEVEL_RULES
+        and doc_rows is not None
+        and not getattr(doc_rows, "empty", True)
+    ):
+        debit_value: float | None = _coerced_sum(doc_rows, "debit_amount")
+        credit_value: float | None = _coerced_sum(doc_rows, "credit_amount")
+    else:
+        debit_value = _row_numeric(record, "debit_amount")
+        credit_value = _row_numeric(record, "credit_amount")
+    return {
+        "document_id": str(record.get("document_id") or "").strip(),
+        "line_number": _row_value(record, "line_number"),
+        **evidence,
+        "posting_date": _row_value(record, "posting_date"),
+        "document_date": _row_value(record, "document_date"),
+        "fiscal_period": _row_value(record, "fiscal_period"),
+        "company_code": _row_value(record, "company_code"),
+        "document_type": _row_value(record, "document_type"),
+        "business_process": _row_value(record, "business_process"),
+        "source": _row_value(record, "source"),
+        "created_by": _row_value(record, "created_by"),
+        "approved_by": _row_value(record, "approved_by"),
+        "approved_at": _row_value(record, "approved_at"),
+        "approval_limit": _row_value(record, "approval_limit"),
+        "gl_account": _row_value(record, "gl_account"),
+        "counterparty": _row_value(record, "counterparty") or meta.get("counterparty"),
+        "line_text": _row_value(record, "line_text"),
+        "description": _row_value(record, "description"),
+        "reference": _row_value(record, "reference"),
+        "amount": amount,
+        "debit_amount": debit_value,
+        "credit_amount": credit_value,
+        "local_amount": _row_numeric(record, "local_amount"),
+        "risk_level": _row_value(record, "risk_level"),
+        "anomaly_score": _row_numeric(record, "anomaly_score"),
+        "flagged_rules": _row_value(record, "flagged_rules"),
+        "review_rules": _row_value(record, "review_rules"),
+        "case_id": meta.get("case_id"),
+        "priority_band": meta.get("priority_band"),
+    }
+
+
 def build_phase1_rule_documents(
     pr: PipelineResult,
     rule_id: str,
 ) -> list[dict[str, Any]]:
     """Return distinct document rows hit by a single rule.
 
-    pr.data 에서 해당 룰이 매칭된 row 를 직접 추출해 가능한 모든 원본
-    GL 컬럼(document_type, fiscal_period, line_text, approved_by 등)을
-    함께 반환한다. 같은 document_id 의 첫 row 를 대표로 사용하고,
-    case_id/priority_band 는 phase1.cases 메타데이터로 보강한다.
+    Source 일관성: phase1.cases.raw_rule_hits 를 truth 로 두고 mask 결과를 보조로 사용.
+    - mask True row: 그 row 가 truth doc_ids 에 있을 때만 채택. truth 가 없으면 그대로
+      (phase1 결과가 없는 경우의 backward-compat).
+    - truth 에 있지만 mask 에 잡히지 않은 doc: data 의 그 doc 첫 row 를 대표로 보강.
+      stale/누락된 flagged_rules·review_rules 컬럼으로 인해 case 목록과 전표 목록이
+      어긋나는 문제(외부 분석 #3)를 막는다.
     """
     requested_rule_id = str(rule_id or "").strip()
     target = canonicalize_rule_id(requested_rule_id)
@@ -443,31 +715,30 @@ def build_phase1_rule_documents(
     if data is None or data.empty or "document_id" not in data.columns:
         return []
 
-    rule_text = _rule_text_series(data)
-    mask = rule_text.map(lambda value: target in _canonical_rule_tokens(value))
-    if not bool(mask.any()):
-        return []
-
-    relevant = data.loc[mask].copy()
-    doc_groups = _document_groups(data, relevant["document_id"])
-
-    # phase1.cases 메타로 case_id/priority_band 매핑 (있는 doc만 보강)
+    # phase1.cases 에서 truth_doc_ids + case_meta 동시 추출
     phase1 = resolve_phase1_case_result(pr)
+    truth_doc_ids: set[str] = set()
+    truth_records: dict[str, Any] = {}
     case_meta: dict[str, dict[str, Any]] = {}
     if phase1 is not None:
         for case in phase1.cases:
-            case_doc_ids = {
-                str(hit.document_id)
-                for hit in case.raw_rule_hits
-                if canonicalize_rule_id(str(hit.rule_id or "")) == target
-            }
+            case_doc_ids_for_target: set[str] = set()
+            for hit in case.raw_rule_hits:
+                if canonicalize_rule_id(str(hit.rule_id or "")) != target:
+                    continue
+                doc_id = str(hit.document_id or "").strip()
+                if doc_id:
+                    case_doc_ids_for_target.add(doc_id)
+                    truth_doc_ids.add(doc_id)
+                    truth_record = _raw_hit_record(data, hit, doc_id)
+                    if truth_record is not None:
+                        truth_records.setdefault(doc_id, truth_record)
             for doc in case.documents:
                 doc_id = str(doc.document_id)
                 matched_rules = {
-                    canonicalize_rule_id(str(rule or ""))
-                    for rule in (doc.matched_rules or [])
+                    canonicalize_rule_id(str(rule or "")) for rule in (doc.matched_rules or [])
                 }
-                if doc_id in case_doc_ids or target in matched_rules:
+                if doc_id in case_doc_ids_for_target or target in matched_rules:
                     case_meta.setdefault(
                         doc_id,
                         {
@@ -477,52 +748,52 @@ def build_phase1_rule_documents(
                         },
                     )
 
+    rule_text = _rule_text_series(data)
+    mask = rule_text.map(lambda value: target in _canonical_rule_tokens(value))
+
+    relevant_doc_ids: set[str] = set()
+    if bool(mask.any()):
+        relevant_doc_ids = set(data.loc[mask, "document_id"].astype(str).unique())
+    # truth 가 있으면 truth ∪ (mask ∩ truth). truth 가 없으면 mask 만 사용 (legacy).
+    if truth_doc_ids:
+        final_doc_ids = truth_doc_ids
+    else:
+        final_doc_ids = relevant_doc_ids
+
+    if not final_doc_ids:
+        return []
+
+    doc_groups = _document_groups(data, pd.Series(list(final_doc_ids), dtype=str))
+
     seen: set[str] = set()
     rows: list[dict[str, Any]] = []
-    for _, record in relevant.iterrows():
-        doc_id = str(record.get("document_id") or "").strip()
-        if not doc_id or doc_id.lower() == "nan" or doc_id in seen:
-            continue
-        seen.add(doc_id)
-        meta = case_meta.get(doc_id, {})
-        amount = _row_amount(record)
-        evidence = _rule_document_evidence(
-            target,
-            record,
-            doc_groups.get(doc_id),
-            amount,
-        )
-        rows.append(
-            {
-                "document_id": doc_id,
-                **evidence,
-                "posting_date": _row_value(record, "posting_date"),
-                "document_date": _row_value(record, "document_date"),
-                "fiscal_period": _row_value(record, "fiscal_period"),
-                "company_code": _row_value(record, "company_code"),
-                "document_type": _row_value(record, "document_type"),
-                "business_process": _row_value(record, "business_process"),
-                "source": _row_value(record, "source"),
-                "created_by": _row_value(record, "created_by"),
-                "approved_by": _row_value(record, "approved_by"),
-                "approved_at": _row_value(record, "approved_at"),
-                "approval_limit": _row_value(record, "approval_limit"),
-                "gl_account": _row_value(record, "gl_account"),
-                "counterparty": _row_value(record, "counterparty") or meta.get("counterparty"),
-                "line_text": _row_value(record, "line_text"),
-                "reference": _row_value(record, "reference"),
-                "amount": amount,
-                "debit_amount": _row_numeric(record, "debit_amount"),
-                "credit_amount": _row_numeric(record, "credit_amount"),
-                "local_amount": _row_numeric(record, "local_amount"),
-                "risk_level": _row_value(record, "risk_level"),
-                "anomaly_score": _row_numeric(record, "anomaly_score"),
-                "flagged_rules": _row_value(record, "flagged_rules"),
-                "review_rules": _row_value(record, "review_rules"),
-                "case_id": meta.get("case_id"),
-                "priority_band": meta.get("priority_band"),
-            }
-        )
+
+    # 1) mask 매칭 row 우선 — 위반 라인 정보를 살리기 위해 mask True row 를 대표로.
+    if bool(mask.any()):
+        for _, record in data.loc[mask].iterrows():
+            doc_id = str(record.get("document_id") or "").strip()
+            if not doc_id or doc_id.lower() == "nan" or doc_id in seen:
+                continue
+            if doc_id not in final_doc_ids:
+                continue  # stale flagged_rules 방어
+            seen.add(doc_id)
+            meta = case_meta.get(doc_id, {})
+            record = truth_records.get(doc_id, record)
+            rows.append(_build_rule_document_row(target, record, doc_groups.get(doc_id), meta))
+
+    # 2) truth 에 있는데 mask 에 안 잡힌 doc 보강 — 그 doc 의 첫 row 를 대표로.
+    missing_doc_ids = final_doc_ids - seen
+    if missing_doc_ids:
+        for doc_id in missing_doc_ids:
+            doc_data = doc_groups.get(doc_id)
+            if doc_data is None or getattr(doc_data, "empty", True):
+                continue
+            seen.add(doc_id)
+            record = truth_records.get(doc_id)
+            if record is None:
+                record = doc_data.iloc[0]
+            meta = case_meta.get(doc_id, {})
+            rows.append(_build_rule_document_row(target, record, doc_data, meta))
 
     rows.sort(
         key=lambda row: (
@@ -532,6 +803,20 @@ def build_phase1_rule_documents(
         )
     )
     return rows
+
+
+def _raw_hit_record(data: Any, hit: Any, doc_id: str) -> Any | None:
+    """Return the ledger row referenced by raw_rule_hits.row_index, if valid."""
+    try:
+        row_index = int(getattr(hit, "row_index"))
+    except (TypeError, ValueError):
+        return None
+    if row_index < 0 or row_index >= len(data):
+        return None
+    record = data.iloc[row_index]
+    if str(record.get("document_id") or "").strip() != doc_id:
+        return None
+    return record
 
 
 def build_phase1_rule_document_detail(
@@ -587,8 +872,7 @@ def build_phase1_rule_document_detail(
         "rule_id": target,
         "requested_rule_id": requested_rule_id,
         "document_id": doc_id,
-        "violation_summary": selected.get("violation_summary")
-        or selected.get("evidence_summary"),
+        "violation_summary": selected.get("violation_summary") or selected.get("evidence_summary"),
         "violation_details": selected.get("violation_details") or [],
         "review_point": selected.get("review_point"),
         "master_row": selected,
@@ -1267,6 +1551,96 @@ _STAT_RULES = {
     },
 }
 
+
+def _pair_relationship_evidence(
+    rule_id: str,
+    record: Any,
+    doc_rows: Any,
+    amount: float,
+) -> dict[str, Any]:
+    spec = _RELATIONSHIP_RULES[rule_id]
+    details = [
+        _detail_item("거래처", _value(record, "counterparty"), kind="text"),
+        _detail_item("금액", amount, kind="amount"),
+        _detail_item("참조번호", _value(record, "reference"), kind="text"),
+    ]
+    details.extend(_pair_group_detail_items(rule_id, record))
+    details.append(_detail_item("예외 사유", spec["difference"], kind="text"))
+    return _ev(
+        spec["summary"],
+        spec["expected"],
+        f"{_value(record, 'counterparty')} / {_compact(amount)} / {_value(record, 'reference')}",
+        spec["difference"],
+        spec["review"],
+        amount,
+        details=details,
+    )
+
+
+def _pair_group_detail_items(rule_id: str, record: Any) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+
+    def add(
+        label: str,
+        columns: tuple[str, ...],
+        *,
+        kind: str = "text",
+        unit: str | None = None,
+    ) -> None:
+        value = _first_record_value(record, columns)
+        if value is None:
+            return
+        items.append(_detail_item(label, value, kind=kind, unit=unit))
+
+    if rule_id == "L2-02":
+        add("Matched document", ("matched_document_id", "counterpart_document_id"))
+        add("Duplicate group", ("duplicate_group_id", "duplicate_payment_group_id", "group_id"))
+        add("Matched amount", ("matched_amount", "paired_amount"), kind="amount")
+        add("Date gap", ("date_gap_days", "day_gap", "date_gap"), kind="delta", unit="days")
+        add("Reason code", ("reason_code", "internal_reason_code", "primary_reason"))
+    elif rule_id == "L2-03":
+        add("Matched document", ("matched_document_id", "counterpart_document_id"))
+        add("Duplicate group", ("duplicate_group_id", "group_id"))
+        add("Duplicate signature", ("duplicate_signature", "signature"))
+        add("Reason code", ("internal_reason_code", "reason_code", "primary_reason"))
+        add("Matched reasons", ("matched_reason_codes", "reason_codes"))
+        add("Similarity score", ("similarity_score",), kind="score")
+        add("Split group", ("split_group_id",))
+        add("Sequential group", ("sequential_group_id",))
+    elif rule_id == "L2-05":
+        add("Reversal pair", ("reversal_pair_id", "reversal_pair_key", "pair_key"))
+        add(
+            "Matched document",
+            (
+                "matched_document_id",
+                "counterpart_document_id",
+                "reversal_document_id",
+                "paired_document_id",
+            ),
+        )
+        add("Date gap", ("date_gap_days", "day_gap", "date_gap"), kind="delta", unit="days")
+        add("Amount match", ("amount_match", "amount_matched", "is_amount_match"))
+        add("Matched amount", ("matched_amount", "paired_amount"), kind="amount")
+
+    return items
+
+
+def _first_record_value(record: Any, columns: tuple[str, ...]) -> Any | None:
+    for column in columns:
+        value = _row_value(record, column)
+        if value is None:
+            continue
+        if isinstance(value, (list, tuple, set)):
+            return ", ".join(str(item) for item in value)
+        if hasattr(value, "item"):
+            try:
+                return value.item()
+            except (TypeError, ValueError):
+                pass
+        return value
+    return None
+
+
 _EVIDENCE_BUILDERS = {
     "L1-01": _balance_evidence,
     "L1-02": _missing_field_evidence,
@@ -1278,7 +1652,7 @@ _EVIDENCE_BUILDERS = {
     "L1-08": _period_evidence,
     "L1-09": _approval_missing_evidence,
     "L2-01": _near_limit_evidence,
-    **{rule: _relationship_evidence for rule in _RELATIONSHIP_RULES},
+    **{rule: _pair_relationship_evidence for rule in _RELATIONSHIP_RULES},
     **{rule: _classification_evidence for rule in _CLASSIFICATION_RULES},
     "L3-02": lambda rule_id, record, doc_rows, amount: _ev(
         f"수기 입력: {_value(record, 'source')}",
@@ -1331,7 +1705,7 @@ def _row_numeric(record: Any, column: str) -> float | None:
 
 
 def _row_amount(record: Any) -> float:
-    """Best-effort 거래 금액 — line_amount → debit-credit → local_amount 순."""
+    """Best-effort 라인 거래 금액 — line_amount → debit-credit → local_amount 순."""
     for column in ("line_amount", "amount"):
         if column in record.index:
             value = _row_numeric(record, column)
@@ -1343,6 +1717,63 @@ def _row_amount(record: Any) -> float:
         return float(debit - credit)
     local = _row_numeric(record, "local_amount")
     return float(local or 0.0)
+
+
+# Why: 전표 단위 룰(L1-01 차대변 균형, L1-08 회계기간 오류 등)은 거래금액이 라인 1줄
+#      금액이 아닌 전표 합계여야 감사인이 임팩트를 정확히 인식한다. pair/group/macro
+#      룰은 별도 정책으로 분리하되 일단 라인 금액으로 fallback.
+_DOCUMENT_LEVEL_RULES: frozenset[str] = frozenset(
+    {
+        "L1-01",
+        "L1-04",
+        "L1-05",
+        "L1-07",
+        "L1-08",
+        "L1-09",
+        "L2-01",
+    }
+)
+
+
+def _coerced_sum(doc_rows: Any, column: str) -> float:
+    """문자열 금액(CSV 원본 등)에서도 안전한 sum.
+
+    Why: pandas .sum() 은 dtype=object 일 때 문자열을 이어붙여 ValueError(또는
+         의도치 않은 concat) 를 일으킨다. pd.to_numeric(errors='coerce') 로 숫자만
+         남기고 비숫자는 0 처리.
+    """
+    import pandas as pd
+
+    if column not in doc_rows.columns:
+        return 0.0
+    series = pd.to_numeric(doc_rows[column], errors="coerce").fillna(0)
+    return float(series.sum())
+
+
+def _document_total_amount(doc_rows: Any) -> float | None:
+    """전표 합계 = max(차변 합, 대변 합). 차대변 합이 동일하면 그 값."""
+    if doc_rows is None or getattr(doc_rows, "empty", True):
+        return None
+    debit_sum = _coerced_sum(doc_rows, "debit_amount")
+    credit_sum = _coerced_sum(doc_rows, "credit_amount")
+    if debit_sum or credit_sum:
+        return float(max(debit_sum, credit_sum))
+    line_sum = _coerced_sum(doc_rows, "line_amount")
+    if line_sum:
+        return line_sum
+    local_sum = _coerced_sum(doc_rows, "local_amount")
+    if local_sum:
+        return local_sum
+    return None
+
+
+def _rule_evidence_amount(rule_id: str, record: Any, doc_rows: Any) -> float:
+    """룰 카테고리별 거래금액. 전표 단위 룰은 doc 합계, 그 외는 라인 금액."""
+    if rule_id in _DOCUMENT_LEVEL_RULES:
+        total = _document_total_amount(doc_rows)
+        if total is not None:
+            return total
+    return _row_amount(record)
 
 
 def build_phase1_audit_risk_queue(
@@ -1401,8 +1832,7 @@ def build_phase1_topic_top_n(
     members = [
         case
         for case in phase1.cases
-        if resolved_topic in _case_topic_ids(case)
-        and _case_topic_score(case, resolved_topic) > 0
+        if resolved_topic in _case_topic_ids(case) and _case_topic_score(case, resolved_topic) > 0
     ]
     members.sort(
         key=lambda case: (
@@ -1457,8 +1887,7 @@ def build_phase1_audit_risk_by_queue(
                 "queue_label": _topic_label(queue_id),
                 "total_cases": len(members),
                 "items": [
-                    _case_row(case, phase1, topic_id=queue_id)
-                    for case in members[:top_n_per_queue]
+                    _case_row(case, phase1, topic_id=queue_id) for case in members[:top_n_per_queue]
                 ],
             }
         )
@@ -1700,15 +2129,15 @@ def _case_row(
         "primary_queue_label": _topic_label(resolved_topic),
         "secondary_queues": list(case.secondary_queues),
         "secondary_queue_labels": [
-            _topic_label(topic)
-            for topic in _case_topic_ids(case)
-            if topic != resolved_topic
+            _topic_label(topic) for topic in _case_topic_ids(case) if topic != resolved_topic
         ],
         "secondary_tags": list(case.secondary_tags),
         "case_key": case.case_key,
         "case_key_parts": dict(case.case_key_parts),
         "priority_score": case.priority_score,
         "base_priority_score": case.base_priority_score,
+        "composite_sort_score": case.composite_sort_score,
+        "composite_sort_score_components": dict(case.composite_sort_score_components),
         "topside_bonus": case.topside_bonus,
         "batch_combo_bonus": case.batch_combo_bonus,
         "weak_evidence_bonus": case.weak_evidence_bonus,

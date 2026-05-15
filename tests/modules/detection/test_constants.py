@@ -18,20 +18,34 @@ class TestRuleCodesIntegrity:
     """RULE_CODES 룰 ID·이름 무결성. 신규 룰 추가 시 카운트 갱신."""
 
     def test_rule_count(self) -> None:
-        # Why: WU-21 NLP01~NLP05 추가로 64. 이전 값(WU-22까지) 59 + NLP 5 = 64.
-        assert len(RULE_CODES) == 64
+        # Why: Current registry includes L1-L4, analytical, graph, evidence, access,
+        # trendbreak, NLP, and Phase2 ML rule codes.
+        assert len(RULE_CODES) == 67
 
     def test_layer_a_ids(self) -> None:
         for rid in ("L1-01", "L1-02", "L1-03"):
             assert rid in RULE_CODES
 
     def test_layer_b_ids(self) -> None:
-        for i in range(1, 11):
-            assert f"B{i:02d}" in RULE_CODES
+        for rid in ("L2-01", "L2-02", "L2-03", "L2-04", "L2-05"):
+            assert rid in RULE_CODES
 
     def test_layer_c_ids(self) -> None:
-        for i in range(1, 10):
-            assert f"C{i:02d}" in RULE_CODES
+        for rid in (
+            "L3-01",
+            "L3-02",
+            "L3-03",
+            "L3-04",
+            "L3-05",
+            "L3-06",
+            "L3-07",
+            "L3-08",
+            "L3-09",
+            "L3-10",
+            "L3-11",
+            "L3-12",
+        ):
+            assert rid in RULE_CODES
 
     def test_all_names_nonempty(self) -> None:
         for rid, name in RULE_CODES.items():
@@ -82,8 +96,7 @@ class TestEnums:
         assert set(RiskLevel) == {"High", "Medium", "Low", "Normal"}
 
     def test_layer_values(self) -> None:
-        # Why: 신규 트랙 추가 시 갱신. 기본 5종 + Phase 2/3 확장(duplicate, timeseries, intercompany,
-        #      relational, ml_*, ensemble, access_audit, evidence, trendbreak, graph, nlp)
+        # Why: 신규 트랙 추가 시 갱신. 기본 5종 + Phase 2/3 확장 레이어.
         expected = {
             "layer_a", "layer_b", "layer_c", "benford", "layer_d",
             "duplicate", "timeseries", "intercompany", "relational",
