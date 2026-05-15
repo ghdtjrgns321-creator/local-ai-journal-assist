@@ -1,0 +1,351 @@
+# Phase2 Unsupervised Autoencoder - Task Checklist
+
+## Progress Summary
+
+62 / 62 MVP tasks complete (100%)
+
+## Phase 0: Surface Reduction
+
+- [x] Reduce default family list
+  - File: `src/services/phase2_training_service.py`
+  - Details: Set Phase2 default model families to `("unsupervised",)`.
+  - Acceptance: default training report contains only `unsupervised` family trials.
+  - Size: S
+- [x] Exclude non-autoencoder presets from default queue
+  - File: `src/services/phase2_training_service.py`
+  - Details: Keep only unsupervised presets in default Phase2 search preset builder.
+  - Acceptance: default preset keys do not include supervised, transformer, sequence, stacking, or rule-style families.
+  - Size: M
+- [x] Stop instantiating non-autoencoder detectors in Phase2 default path
+  - File: `src/services/phase2_training_service.py`
+  - Details: Do not instantiate supervised/transformer/sequence/stacking/rule-style detectors from Phase2 default orchestration. Do not delete detector classes.
+  - Acceptance: focused test confirms those detectors are not constructed in default Phase2 training.
+  - Size: M
+- [x] Exclude non-autoencoder families from Phase2 contract maps
+  - File: `src/services/phase2_training_service.py`
+  - Details: Required/promoted model maps contain only `unsupervised`.
+  - Acceptance: inference contract never requires non-autoencoder families by default.
+  - Size: M
+- [x] Exclude supervised and stacking loading in Phase2-only inference
+  - File: `src/pipeline.py`
+  - Details: `phase2_only` loads the unsupervised detector only.
+  - Acceptance: pipeline test observes no supervised or stacking load attempt.
+  - Size: M
+- [x] Update Phase2 dashboard naming
+  - File: `dashboard/tab_phase2.py`
+  - Details: Replace generic candidate wording with VAE/unsupervised Phase2 wording.
+  - Acceptance: dashboard helper test asserts the new labels.
+  - Size: S
+
+## Phase 1: Contract and Report Semantics
+
+- [x] Add `phase2_training_mode`
+  - File: `config/settings.py`
+  - Details: Add default value `unsupervised_autoencoder_mvp`.
+  - Acceptance: `AuditSettings().phase2_training_mode` returns the default.
+  - Size: S
+- [x] Add mode metadata to dry-run report builder
+  - File: `src/services/phase2_training_service.py`
+  - Details: Store `training_mode` in `build_phase2_training_report()` metadata.
+  - Acceptance: dry-run report metadata contains `training_mode`.
+  - Size: S
+- [x] Add mode metadata to training runner
+  - File: `src/services/phase2_training_service.py`
+  - Details: Store `training_mode` in saved `training_report.json`.
+  - Acceptance: saved report contains `metadata.training_mode`.
+  - Size: S
+- [x] Add metric semantics metadata
+  - File: `src/services/phase2_training_models.py`
+  - Details: Preserve `evaluation_policy`, `metric_name`, and `metric_semantics` in trial/report metadata.
+  - Acceptance: report serialization preserves these keys.
+  - Size: S
+- [x] Keep label summary out of queue construction
+  - File: `src/services/phase2_training_service.py`
+  - Details: Store label diagnostics in metadata only; labels do not add supervised trials in this mode.
+  - Acceptance: labeled and unlabeled fixtures both produce only unsupervised default trials.
+  - Size: M
+
+## Phase 2: Capped EDA and Preprocessing Plan
+
+- [x] Add Phase2 profile cap setting
+  - File: `config/settings.py`
+  - Details: Add finite `phase2_profile_max_rows`.
+  - Acceptance: settings expose the cap.
+  - Size: S
+- [x] Apply deterministic profile sample before heavy EDA
+  - File: `src/services/phase2_training_service.py`
+  - Details: Sample with `phase2_random_seed` before Phase2 profile details.
+  - Acceptance: metadata records source rows, sampled rows, cap, and seed.
+  - Size: M
+- [x] Cap duplicate profiling cost
+  - File: `src/eda/profiler.py`
+  - Details: For Phase2, compute duplicate count on capped sample and label it as sampled estimate.
+  - Acceptance: 1M-row fixture does not run full-frame duplicate count in Phase2 profile path.
+  - Size: M
+- [x] Add preprocessing plan dataclasses
+  - File: `src/services/phase2_training_models.py`
+  - Details: Define `Phase2PreprocessingPlan` and `Phase2ColumnDecision`.
+  - Acceptance: dataclasses serialize to dict.
+  - Size: M
+- [x] Create Phase2 plan module
+  - File: `src/preprocessing/phase2_plan.py`
+  - Details: Convert profile results into deterministic column decisions with reason codes.
+  - Acceptance: module imports cleanly and mixed fixture columns receive expected roles.
+  - Size: L
+- [x] Implement leakage exclusions
+  - File: `src/preprocessing/phase2_plan.py`
+  - Details: Exclude labels, anomaly flags, risk levels, model scores, rule outputs, and export/dashboard columns.
+  - Acceptance: leakage fixture columns have action `excluded`.
+  - Size: M
+- [x] Persist preprocessing plan in report
+  - File: `src/services/phase2_training_service.py`
+  - Details: Store plan under `metadata.preprocessing_plan`.
+  - Acceptance: saved report JSON includes the plan and reason codes.
+  - Size: M
+
+## Phase 3: Leakage-Safe Split
+
+- [x] Add split settings
+  - File: `config/settings.py`
+  - Details: Add `phase2_unsup_train_ratio`, `phase2_unsup_calibration_rows`, `phase2_random_seed`, and `phase2_split_strategy`.
+  - Acceptance: defaults are deterministic and documented.
+  - Size: M
+- [x] Create split helper
+  - File: `src/services/phase2_training_service.py`
+  - Details: Add `_split_unsupervised_train_calibration(df, settings)`.
+  - Acceptance: returned train/calibration indices are disjoint.
+  - Size: M
+- [x] Implement document group split
+  - File: `src/services/phase2_training_service.py`
+  - Details: Split by `document_id` when present.
+  - Acceptance: no document id appears in both splits.
+  - Size: M
+- [x] Implement temporal holdout option
+  - File: `src/services/phase2_training_service.py`
+  - Details: Use fiscal year or reliable posting date when configured and sufficient coverage exists.
+  - Acceptance: temporal fixture holds out the later period.
+  - Size: M
+- [x] Implement deterministic random fallback
+  - File: `src/services/phase2_training_service.py`
+  - Details: Use random fallback only when group/date columns are unavailable.
+  - Acceptance: fallback metadata records `random_fallback`.
+  - Size: S
+- [x] Fit preprocessing on train split only
+  - File: `src/services/phase2_training_service.py`
+  - Details: Fit imputers, scalers, rare grouping, and frequency encoders using train rows only.
+  - Acceptance: calibration-only categories do not alter fitted encoder state.
+  - Size: L
+- [x] Record split metadata
+  - File: `src/services/phase2_training_service.py`
+  - Details: Store strategy, train rows, calibration rows, group count, date range, and seed.
+  - Acceptance: trial artifact JSON contains these values.
+  - Size: S
+- [x] Guard against pre-split resampling
+  - File: `src/services/phase2_training_service.py`
+  - Details: Do not rebalance, oversample, undersample, or SMOTE data before splitting.
+  - Acceptance: labeled fixture preserves original calibration prevalence.
+  - Size: M
+
+## Phase 4: Autoencoder Matrix Builder
+
+- [x] Create matrix module
+  - File: `src/preprocessing/phase2_matrix.py`
+  - Details: Build fitted autoencoder matrix transformer from `Phase2PreprocessingPlan`.
+  - Acceptance: module imports cleanly.
+  - Size: M
+- [x] Add signed log amount transformer
+  - File: `src/preprocessing/transformers.py`
+  - Details: Transform signed amounts with sign-preserving `log1p(abs(x))`.
+  - Acceptance: positive, negative, and zero values transform deterministically.
+  - Size: M
+- [x] Add robust numeric transform selector
+  - File: `src/preprocessing/phase2_matrix.py`
+  - Details: Select robust scaling for high-skew/outlier numeric columns and standard scaling otherwise.
+  - Acceptance: skewed fixture selects robust scaling.
+  - Size: M
+- [x] Add low-cardinality one-hot rare grouping
+  - File: `src/preprocessing/phase2_matrix.py`
+  - Details: Use one-hot encoding with rare category grouping and output width cap.
+  - Acceptance: rare categories group correctly and output width stays capped.
+  - Size: M
+- [x] Add high-cardinality frequency encoder
+  - File: `src/preprocessing/transformers.py`
+  - Details: Encode categories by train-set frequency/count with unseen mapped to 0 or rare bucket.
+  - Acceptance: unseen category transforms without exception.
+  - Size: L
+- [x] Add sparse indicator generation
+  - File: `src/preprocessing/feature_quality.py`
+  - Details: Create `has_*` features before dropping sparse raw columns.
+  - Acceptance: raw sparse column can be excluded while indicator remains.
+  - Size: M
+- [x] Add feature group metadata
+  - File: `src/preprocessing/phase2_matrix.py`
+  - Details: Record transformed feature names by amount, numeric, categorical, boolean, and indicator groups.
+  - Acceptance: every output column maps to one group.
+  - Size: M
+- [x] Save matrix builder state
+  - File: `src/detection/vae_detector.py`
+  - Details: Include fitted preprocessing/matrix state and schema hash in the unsupervised model bundle.
+  - Acceptance: saved bundle contains preprocessing state and schema hash.
+  - Size: M
+- [x] Reuse matrix builder state in inference
+  - File: `src/detection/vae_detector.py`
+  - Details: Use loaded preprocessing state instead of re-inferring EDA decisions.
+  - Acceptance: inference on changed category distribution keeps same feature dimensions.
+  - Size: M
+
+## Phase 5: VAE Training and Loss
+
+- [x] Redefine unsupervised presets
+  - File: `src/services/phase2_training_service.py`
+  - Details: Replace current unsupervised presets with `compact`, `balanced`, and `strict_capacity`.
+  - Acceptance: `build_phase2_search_presets(["unsupervised"])` returns only these presets.
+  - Size: M
+- [x] Pass VAE architecture settings
+  - File: `src/services/phase2_training_service.py`
+  - Details: Include hidden dim, latent dim, epochs, batch size, learning rate, and beta.
+  - Acceptance: trial settings expose all values.
+  - Size: M
+- [x] Add hidden dim to `AuditVAE`
+  - File: `src/preprocessing/vae_model.py`
+  - Details: Replace hard-coded hidden width with constructor argument.
+  - Acceptance: `AuditVAE(input_dim=5, hidden_dim=64)` builds 64-width hidden layers.
+  - Size: M
+- [x] Add mini-batch training
+  - File: `src/preprocessing/vae_wrapper.py`
+  - Details: Replace full-tensor fit loop with DataLoader mini-batch training.
+  - Acceptance: 50k-row fixture trains without full dataset tensor allocation.
+  - Size: L
+- [x] Add group loss weights setting
+  - File: `config/settings.py`
+  - Details: Add `phase2_reconstruction_group_weights`.
+  - Acceptance: default weights are present and positive.
+  - Size: S
+- [x] Add group-weighted reconstruction loss
+  - File: `src/preprocessing/vae_wrapper.py`
+  - Details: Weight reconstruction loss by feature group metadata.
+  - Acceptance: wide categorical one-hot block does not dominate total loss by width alone.
+  - Size: L
+- [x] Record VAE training diagnostics
+  - File: `src/preprocessing/vae_wrapper.py`
+  - Details: Store reconstruction loss, KL loss, beta, and KL/reconstruction ratio per epoch.
+  - Acceptance: diagnostics are present after training.
+  - Size: M
+- [x] Add posterior collapse warning
+  - File: `src/preprocessing/vae_wrapper.py`
+  - Details: Mark warning when KL mean or KL/reconstruction ratio remains below threshold.
+  - Acceptance: forced near-zero KL fixture emits `posterior_collapse_warning`.
+  - Size: M
+- [x] Add per-group reconstruction score details
+  - File: `src/detection/vae_detector.py`
+  - Details: Add group score columns where matrix metadata is available.
+  - Acceptance: result details include group score columns for matrix metadata fixtures.
+  - Size: M
+
+## Phase 6: Evaluation and Promotion
+
+- [x] Add `_compute_unsupervised_metric()`
+  - File: `src/services/phase2_training_service.py`
+  - Details: Return `("unsupervised_selection_score", value, components)` for no-label unsupervised trials.
+  - Acceptance: helper returns finite value for non-degenerate calibration scores.
+  - Size: M
+- [x] Demote `flagged_ratio` to metadata
+  - File: `src/services/phase2_training_service.py`
+  - Details: Store flagged ratio under `selection_components.flagged_ratio`.
+  - Acceptance: no-label unsupervised trial does not use `flagged_ratio` as `metric_name`.
+  - Size: S
+- [x] Implement score tail gap
+  - File: `src/services/phase2_training_service.py`
+  - Details: Compute tail separation on calibration scores.
+  - Acceptance: component increases for a clear high-score tail.
+  - Size: M
+- [x] Implement top-k stability
+  - File: `src/services/phase2_training_service.py`
+  - Details: Compute bootstrap top-k Jaccard stability over calibration scores.
+  - Acceptance: component is between 0 and 1.
+  - Size: L
+- [x] Implement review capacity penalty
+  - File: `src/services/phase2_training_service.py`
+  - Details: Penalize flagged ratio above `phase2_review_capacity_ratio`.
+  - Acceptance: same scores receive lower metric when flagged ratio exceeds capacity.
+  - Size: M
+- [x] Add calibration threshold policy
+  - File: `src/services/phase2_training_service.py`
+  - Details: Compute final threshold from calibration split score distribution and review capacity.
+  - Acceptance: threshold metadata records calibration source and review capacity.
+  - Size: M
+- [x] Separate contamination and review capacity settings
+  - File: `config/settings.py`
+  - Details: Add `phase2_review_capacity_ratio`.
+  - Acceptance: changing review capacity changes final threshold without changing model fit contamination.
+  - Size: M
+- [x] Add reliability diagnostics
+  - File: `src/services/phase2_training_service.py`
+  - Details: Record `score_flat`, `topk_unstable`, `group_loss_dominated`, and `train_calibration_drift`.
+  - Acceptance: fixtures emit expected warnings.
+  - Size: L
+- [x] Gate promotion on severe reliability warnings
+  - File: `src/services/phase2_training_service.py`
+  - Details: Prevent promotion when severe warnings are present.
+  - Acceptance: warning fixture completes but is marked diagnostic-only.
+  - Size: M
+- [x] Exclude rule-style promotion inputs
+  - File: `src/services/phase2_training_service.py`
+  - Details: Promotion reads only unsupervised trial candidates.
+  - Acceptance: rule-style fixture cannot enter `required_models`.
+  - Size: M
+
+## Phase 7: Inference, Dashboard, Runtime Budget
+
+- [x] Pass inference contract before detection
+  - File: `src/services/phase2_inference_service.py`
+  - Details: Pass snapshot inference contract into `pipeline.redetect()`.
+  - Acceptance: fake pipeline receives the contract before detection.
+  - Size: M
+- [x] Load promoted unsupervised version
+  - File: `src/pipeline.py`
+  - Details: Call `load_model("unsupervised", version=contract_version)` when available.
+  - Acceptance: pipeline test observes requested version.
+  - Size: M
+- [x] Record loaded version status
+  - File: `src/pipeline.py`
+  - Details: Add `contract_version`, `loaded_version`, and `matrix_schema_hash` to detector status metadata.
+  - Acceptance: detector status contains all three fields.
+  - Size: S
+- [x] Show metric semantics in dashboard
+  - File: `dashboard/tab_phase2.py`
+  - Details: Show that `unsupervised_selection_score` is ranking/calibration proxy, not F1.
+  - Acceptance: dashboard renders unsupervised metric caption.
+  - Size: S
+- [x] Render preprocessing and split summary
+  - File: `dashboard/tab_phase2.py`
+  - Details: Show preprocessing plan summary, split policy, profile cap, and schema hash.
+  - Acceptance: dashboard helper returns non-empty summary frame.
+  - Size: M
+- [x] Add train row cap setting
+  - File: `config/settings.py`
+  - Details: Add `phase2_train_max_rows`.
+  - Acceptance: setting exists and is int.
+  - Size: S
+- [x] Apply train and calibration row caps
+  - File: `src/services/phase2_training_service.py`
+  - Details: Cap train and calibration rows deterministically after split strategy is chosen.
+  - Acceptance: metadata records cap policy and actual rows.
+  - Size: M
+- [x] Add 50k smoke budget test
+  - File: `tests/modules/test_services/test_phase2_training_service.py`
+  - Details: Use lightweight fake detector or short epochs to verify configured budget path.
+  - Acceptance: test completes under the configured local timeout.
+  - Size: L
+
+## Experimental Backlog: Not MVP
+
+- High-confidence normal subset using Phase1 risk/rule-hit/extreme-tail
+- Denoising VAE objective
+- Cyclical KL schedule
+- ECOD/COPOD/IsolationForest sanity baseline comparison
+- Synthetic anomaly benchmark module
+- Subgroup-specific thresholds
+- VAE + XGBoost benchmark
+- VAE + Transformer benchmark
+- VAE + BiLSTM/Attention benchmark

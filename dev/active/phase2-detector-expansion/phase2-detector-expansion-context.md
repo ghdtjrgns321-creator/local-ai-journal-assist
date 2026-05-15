@@ -58,8 +58,37 @@
    - Alternatives: full search space 확대
    - Trade-offs: 탐색 폭은 제한되지만 실행 가능성과 설명 가능성이 높다.
 
+5. **closing_timing / intercompany_cycle high band는 PHASE1 한계로 확정, PHASE2 이관** (2026-05-15)
+   - Rationale: PHASE1 가중치 보강안(L3-04 weight 0.4→0.5, L3-03 cap 0.4→0.6)이 3가드(회계 도메인 정당성 + AB 손실 + noise FP) 모두 FAIL. ISA 240 ¶A44 (period-end corroboration 필요), ISA 550 ¶A28 (RPT 식별/평가 단계 분리) 가 단일 룰 가중치로 high band 결정을 만드는 것을 금지함.
+   - 이관 범위:
+     * `closing_timing:high` (period_end_adjustment_manipulation 92건의 high 진입 4건) → PHASE2 `supervised` family (XGBoost multi-feature: timing × counterparty × amount × manual × approval)
+     * `intercompany_cycle:high` (circular_related_party 34건의 high 진입 0건) → PHASE2 `relational` family (graph cycle: NetworkX simple_cycles / Tarjan SCC)
+   - PHASE1 잔존: closing_timing:medium, intercompany_cycle:medium 진입은 그대로 review queue 에 medium band 로 노출. PHASE2 high 가 medium band 위에 보강 신호를 얹는 구조.
+   - Trade-offs: PHASE1 가중치 lock 유지 → period_end_adjustment / circular_related_party 의 high band ranking 은 PHASE2 가 가동될 때까지 medium band 잔류. 회계기준 정합성과 review queue 신뢰성을 우선.
+   - 근거 문서: [`artifacts/closing_intercompany_high_band_decision.md`](../../../artifacts/closing_intercompany_high_band_decision.md), `docs/DETECTION_RESULTS_MANIPULATION_V2.md` §10.
+
 ## Known Issues
 - `phase2_training_service.py`는 현재 ML family 중심 이름과 canonical model key를 전제로 작성되어 있어 rule-style family 추가 시 mapping을 재정리해야 한다.
 - `duplicate`와 `intercompany`는 기존 DB score/model_id 컬럼과 Phase 2 promoted contract가 일부 중첩된다.
 - `timeseries`와 `relational`은 현재 registry version을 남길 저장 모델이 없어 artifact-less provenance 기준을 새로 정의해야 한다.
 - dashboard/UI는 현재 확장 family 요약까지는 노출하지 않으므로 이번 단계에서는 contract와 tests를 우선 고정한다.
+
+## PHASE1 한계 → PHASE2 이관 책임 (2026-05-15)
+
+본 family 확장 작업은 closing_timing / intercompany_cycle high band 의 truth recall 책임을 명시적으로 떠안는다.
+
+```
+PHASE1 한계 영역                            PHASE2 family / sub-detector       기대 작용                                          근거 문서
+------------------------------------------- ---------------------------------- -------------------------------------------------- -------------------------------------------------------------------
+closing_timing:high (period_end_adjustment) supervised / XGBoost               timing × counterparty × amount × manual ×          artifacts/closing_intercompany_high_band_decision.md §6-7
+                                                                               approval feature 결합으로 정상 결산 vs.            docs/DETECTION_RESULTS_MANIPULATION_V2.md §10
+                                                                               조작 결산 분리. ISA 240 ¶A44 'period-end +
+                                                                               corroboration' 요구를 multi-feature 학습으로
+                                                                               해소.
+intercompany_cycle:high (circular_RPT)      relational / graph cycle           NetworkX simple_cycles / Tarjan SCC 로             artifacts/closing_intercompany_high_band_decision.md §6-7
+                                            sub-detector                       circular pattern 식별. ISA 550 ¶A19-A21            docs/DETECTION_RESULTS_MANIPULATION_V2.md §10
+                                                                               'transaction flow + economic substance'
+                                                                               평가는 graph 영역.
+```
+
+PHASE1 가중치 lock 은 유지 — 본 family 가 PHASE1 의 회계 도메인 정합성 한계를 회수하는 형태. 정상 결산 야근·정상 RPT 거래 FP 폭증 위험은 PHASE2 학습 라벨(`is_fraud`)로 분리.
