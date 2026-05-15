@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import pandas as pd
 
+from dashboard._phase1_truth import phase1_truth_index, raw_truth_document_ids
+
 
 def _format_krw(value: float) -> str:
     """금액을 한국식 축약 형태로 변환 (조/억/만).
@@ -26,7 +28,10 @@ def _format_krw(value: float) -> str:
     return f"{sign}₩{abs_val:,.0f}"
 
 
-def compute_kpis(df: pd.DataFrame) -> dict[str, int | float | str]:
+_FRAUD_RULE_PREFIXES = ("B", "L2-", "L3-")
+
+
+def compute_kpis(df: pd.DataFrame, *, pr=None) -> dict[str, int | float | str]:
     """KPI 계산. 전표(document_id) 단위 중복 제거 포함.
 
     Returns:
@@ -73,7 +78,20 @@ def compute_kpis(df: pd.DataFrame) -> dict[str, int | float | str]:
 
     # Why: 나머지 KPI가 전표(document_id) 단위이므로 fraud_suspect도 통일.
     fraud_suspect = 0
-    if "flagged_rules" in df.columns and "document_id" in df.columns:
+    truth = phase1_truth_index(pr)
+    if truth.get("available") and "document_id" in df.columns:
+        fraud_rules = [
+            rule_id
+            for rule_id in truth.get("rules", [])
+            if str(rule_id).startswith(_FRAUD_RULE_PREFIXES)
+        ]
+        fraud_doc_ids = raw_truth_document_ids(truth, fraud_rules)
+        if fraud_doc_ids:
+            fraud_suspect = (
+                df.loc[df["document_id"].astype(str).isin(fraud_doc_ids), "document_id"]
+                .nunique()
+            )
+    elif "flagged_rules" in df.columns and "document_id" in df.columns:
         has_fraud_rule = df["flagged_rules"].str.contains(
             r"\b(?:B\d{2}|L[23]-\d{2})\b",
             na=False,

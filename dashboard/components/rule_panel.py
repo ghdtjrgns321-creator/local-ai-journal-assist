@@ -44,7 +44,9 @@ def _render_layer_weights() -> None:
     weights: dict[str, float] = {}
     for layer, label in _TRACK_LABELS.items():
         weights[layer.value] = st.slider(
-            label, 0.0, 1.0,
+            label,
+            0.0,
+            1.0,
             value=current.get(layer.value, LAYER_WEIGHTS[layer]),
             step=0.05,
             key=f"rp_w_{layer.value}",
@@ -68,18 +70,34 @@ def _render_risk_thresholds() -> None:
         current = dict(RISK_THRESHOLDS)
 
     high = st.slider(
-        "High", 0.50, 0.95,
-        value=current.get(RiskLevel.HIGH, 0.7), step=0.05, key="rp_t_high",
+        "High",
+        0.30,
+        0.95,
+        value=current.get(RiskLevel.HIGH, RISK_THRESHOLDS[RiskLevel.HIGH]),
+        step=0.05,
+        key="rp_t_high",
     )
     medium = st.slider(
-        "Medium", 0.20, high - 0.05,
-        value=min(current.get(RiskLevel.MEDIUM, 0.4), high - 0.05),
-        step=0.05, key="rp_t_medium",
+        "Medium",
+        0.15,
+        high - 0.05,
+        value=min(
+            current.get(RiskLevel.MEDIUM, RISK_THRESHOLDS[RiskLevel.MEDIUM]),
+            high - 0.05,
+        ),
+        step=0.05,
+        key="rp_t_medium",
     )
     low = st.slider(
-        "Low", 0.05, medium - 0.05,
-        value=min(current.get(RiskLevel.LOW, 0.2), medium - 0.05),
-        step=0.05, key="rp_t_low",
+        "Low",
+        0.05,
+        medium - 0.05,
+        value=min(
+            current.get(RiskLevel.LOW, RISK_THRESHOLDS[RiskLevel.LOW]),
+            medium - 0.05,
+        ),
+        step=0.05,
+        key="rp_t_low",
     )
 
     new_t = {RiskLevel.HIGH: high, RiskLevel.MEDIUM: medium, RiskLevel.LOW: low}

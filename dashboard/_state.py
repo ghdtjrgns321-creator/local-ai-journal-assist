@@ -48,7 +48,14 @@ PAGE_OVERVIEW = "개요"
 PAGE_COMPANY_SETTINGS = "회사별 설정"
 PAGE_PHASE1 = "Phase1 결과"
 PAGE_PHASE2 = "Phase2 결과"
-RESULT_PAGES = (PAGE_OVERVIEW, PAGE_COMPANY_SETTINGS, PAGE_PHASE1, PAGE_PHASE2)
+PAGE_REVIEW_QUEUE = "Review Queue"
+RESULT_PAGES = (
+    PAGE_OVERVIEW,
+    PAGE_COMPANY_SETTINGS,
+    PAGE_PHASE1,
+    PAGE_PHASE2,
+    PAGE_REVIEW_QUEUE,
+)
 
 # WU7: Ingest 스테이지 관리
 KEY_INGEST_STAGE = "audit_ingest_stage"  # "UPLOAD" | "REVIEW" | "PIPELINE"
@@ -83,6 +90,28 @@ KEY_EXPORT_READY_DATA = "audit_export_ready_data"  # bytes | None (캐시된 생
 KEY_EXPORT_READY_NAME = "audit_export_ready_name"  # str | None (파일명)
 KEY_EXPORT_READY_MIME = "audit_export_ready_mime"  # str | None (MIME 타입)
 KEY_EXPORT_READY_HASH = "audit_export_ready_hash"  # str | None (stale 판정용)
+
+# WU-31 Sprint E2: Review Queue Narrator UI 상태
+# Why: 분석 실행 트리거·재생성 여부·사이드바 필터·검색 박스 값을 rerun에도 유지.
+#      input_hash 비교로 "재생성" 버튼을 활성/비활성 토글.
+KEY_REVIEW_QUEUE_FILTERS = "audit_review_queue_filters"  # ReviewQueueFilters dict
+KEY_REVIEW_QUEUE_SEARCH = "audit_review_queue_search"  # str (candidate_id 검색)
+KEY_REVIEW_QUEUE_LAST_HASH = "audit_review_queue_hash"  # str | None (직전 실행 input hash)
+KEY_REVIEW_QUEUE_RUN_STATUS = (
+    "audit_review_queue_status"  # "idle"|"running"|"ok"|"error"|"budget_capped"
+)
+KEY_REVIEW_QUEUE_RUN_ERROR = "audit_review_queue_error"  # str | None (마지막 에러 메시지)
+KEY_REVIEW_QUEUE_TARGET_N = "audit_review_queue_target_n"  # int (실행 대상 candidate 수)
+
+# WU-31 Sprint E1: Review Queue Narrator 탭
+# Why: Narrator JSON 카드 + citation 클릭 점프(rule/feature/journal) 상태 유지.
+#      narratives 리스트 + 선택된 candidate + citation 점프 타깃 + 입력 해시(캐시 무효화)
+#      를 분리해 rerun 동안 카드 렌더와 점프 패널을 일관되게 복원.
+KEY_REVIEW_QUEUE_NARRATIVES = "audit_review_queue_narratives"  # list[dict] | None
+KEY_REVIEW_QUEUE_SELECTED_CANDIDATE = "audit_review_queue_selected_candidate"  # str | None
+KEY_REVIEW_QUEUE_CITATION_TARGET = "audit_review_queue_citation_target"  # dict | None
+KEY_REVIEW_QUEUE_INPUT_HASH = "audit_review_queue_input_hash"  # str | None
+KEY_REVIEW_QUEUE_CANDIDATE_INDEX = "audit_review_queue_candidate_index"  # dict[str, dict]
 
 
 # ── 필터 상태 타입 ──────────────────────────────────────────────
@@ -168,6 +197,19 @@ _DEFAULTS: dict[str, object] = {
     KEY_EXPORT_READY_NAME: None,
     KEY_EXPORT_READY_MIME: None,
     KEY_EXPORT_READY_HASH: None,
+    # WU-31 Sprint E1: Review Queue Narrator
+    KEY_REVIEW_QUEUE_NARRATIVES: None,
+    KEY_REVIEW_QUEUE_SELECTED_CANDIDATE: None,
+    KEY_REVIEW_QUEUE_CITATION_TARGET: None,
+    KEY_REVIEW_QUEUE_INPUT_HASH: None,
+    KEY_REVIEW_QUEUE_CANDIDATE_INDEX: {},
+    # WU-31 Sprint E2: Review Queue Narrator UI
+    KEY_REVIEW_QUEUE_FILTERS: {},
+    KEY_REVIEW_QUEUE_SEARCH: "",
+    KEY_REVIEW_QUEUE_LAST_HASH: None,
+    KEY_REVIEW_QUEUE_RUN_STATUS: "idle",
+    KEY_REVIEW_QUEUE_RUN_ERROR: None,
+    KEY_REVIEW_QUEUE_TARGET_N: 20,
 }
 
 

@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pandas as pd
+
 from dashboard import tab_phase1
 from src.detection.rule_detail_metadata import (
     canonicalize_rule_id,
     get_rule_detail_metadata,
 )
 from src.detection.rule_scoring import TOPIC_REGISTRY
+from src.models.phase1_case import CaseDocumentRef, CaseGroupResult, RawRuleHitRef
 
 
 class _TabContext:
@@ -16,6 +19,57 @@ class _TabContext:
 
     def __exit__(self, exc_type, exc, tb):
         return False
+
+
+def _phase1_grid_pr() -> SimpleNamespace:
+    data = pd.DataFrame(
+        {
+            "document_id": ["DOC-TRUTH", "DOC-TRUTH", "DOC-STALE"],
+            "line_number": [1, 2, 1],
+            "flagged_rules": ["", "", "L1-03"],
+            "review_rules": ["", "", ""],
+        }
+    )
+    case = CaseGroupResult(
+        case_id="CASE-L1-03",
+        primary_topic="account_logic",
+        primary_theme="account_logic",
+        primary_queue="account_logic",
+        primary_queue_label="",
+        topic_scores={"account_logic": 0.9},
+        secondary_topics=[],
+        secondary_queues=[],
+        secondary_queue_labels=[],
+        fraud_scenario_tags=[],
+        case_key="CASE-L1-03",
+        priority_score=0.9,
+        priority_band="high",
+        triage_rank_score=0.9,
+        document_count=1,
+        row_count=1,
+        rule_count=1,
+        total_amount=250.0,
+        representative_explanation="truth-only row",
+        documents=[
+            CaseDocumentRef(document_id="DOC-TRUTH", matched_rules=["L1-03"], amount=250.0)
+        ],
+        raw_rule_hits=[
+            RawRuleHitRef(
+                rule_id="L1-03",
+                severity=5,
+                document_id="DOC-TRUTH",
+                row_index=1,
+                score=0.9,
+                normalized_score=0.9,
+                evidence_type="account_logic",
+            )
+        ],
+    )
+    return SimpleNamespace(
+        data=data,
+        featured_data=data,
+        phase1_case_result=SimpleNamespace(cases=[case]),
+    )
 
 
 def test_phase1_render_uses_all_data_seven_topics_and_ai_conclusion_tabs(monkeypatch) -> None:
@@ -47,6 +101,48 @@ def test_phase1_render_uses_all_data_seven_topics_and_ai_conclusion_tabs(monkeyp
         ["전체 요약"] + expected_topic_labels + ["AI 결론"]
     )
     assert len(captured_labels) == 9
+
+
+def test_available_rules_uses_raw_rule_hits_when_phase1_truth_exists() -> None:
+    pr = _phase1_grid_pr()
+
+    rules = tab_phase1._available_rules(pr.featured_data, pr=pr)
+
+    assert rules == ["L1-03"]
+
+
+def test_filter_master_data_uses_raw_rule_hits_and_ignores_stale_flags() -> None:
+    pr = _phase1_grid_pr()
+
+    filtered = tab_phase1._filter_master_data(
+        pr.featured_data,
+        pr=pr,
+        rule_only=True,
+        selected_rules=["L1-03"],
+        data_quality_only=False,
+        audit_risk_only=False,
+        review_only=False,
+    )
+
+    assert filtered["document_id"].tolist() == ["DOC-TRUTH"]
+    assert filtered["line_number"].tolist() == [2]
+
+
+def test_filter_master_data_falls_back_to_row_flags_without_phase1_truth() -> None:
+    pr = _phase1_grid_pr()
+    pr.phase1_case_result = None
+
+    filtered = tab_phase1._filter_master_data(
+        pr.featured_data,
+        pr=pr,
+        rule_only=True,
+        selected_rules=["L1-03"],
+        data_quality_only=False,
+        audit_risk_only=False,
+        review_only=False,
+    )
+
+    assert filtered["document_id"].tolist() == ["DOC-STALE"]
 
 
 # ----------------------------------------------------------------------------

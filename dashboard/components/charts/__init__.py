@@ -28,7 +28,7 @@ from dashboard.components.charts.risk_charts import (
     risk_donut,
     risk_heatmap,
 )
-from dashboard.components.charts.rule_charts import rule_violation_bar
+from dashboard.components.charts.rule_charts import phase1_rule_violation_bar, rule_violation_bar
 from dashboard.components.charts.special_charts import (
     fraud_type_treemap,
     layer_score_radar,
@@ -51,6 +51,7 @@ __all__ = [
     "persona_risk_matrix",
     "process_distribution_bar",
     "quality_gauge",
+    "phase1_rule_violation_bar",
     "risk_donut",
     "risk_heatmap",
     "rule_violation_bar",

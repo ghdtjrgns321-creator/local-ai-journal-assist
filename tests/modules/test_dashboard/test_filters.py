@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pandas as pd
 
 from dashboard.components.filters import apply_filters
+from src.models.phase1_case import CaseGroupResult, RawRuleHitRef
 
 # ── 빈 필터 (전체 통과) ───────────────────────────────────────
 
@@ -113,6 +116,33 @@ def test_rule_codes_filter_multiple(sample_df):
         result["flagged_rules"].str.contains("L2-01")
         | result["flagged_rules"].str.contains("L1-01")
     )
+
+
+def test_rule_codes_filter_prefers_phase1_raw_truth_over_stale_flags():
+    df = pd.DataFrame({
+        "document_id": ["D-TRUTH", "D-STALE"],
+        "line_number": [1, 1],
+        "flagged_rules": ["", "L2-01"],
+    })
+    case = CaseGroupResult(
+        case_id="CASE-L2-01",
+        primary_theme="duplicate_outflow",
+        case_key="CASE-L2-01",
+        raw_rule_hits=[
+            RawRuleHitRef(
+                rule_id="L2-01",
+                severity=5,
+                document_id="D-TRUTH",
+                row_index=0,
+                evidence_type="duplicate_outflow",
+            )
+        ],
+    )
+    pr = SimpleNamespace(phase1_case_result=SimpleNamespace(cases=[case]))
+
+    result = apply_filters(df, {"rule_codes": ["L2-01"]}, pr=pr)
+
+    assert result["document_id"].tolist() == ["D-TRUTH"]
 
 
 def test_large_df_filter_performance(large_df):

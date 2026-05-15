@@ -29,15 +29,13 @@ def render_apply_button() -> None:
     total = sum(weights.values())
     valid = abs(total - 1.0) <= 0.01
 
-    apply_slot = st.empty()
-    with apply_slot.container():
-        apply_clicked = st.button(
-            "새 설정 적용",
-            disabled=not valid,
-            use_container_width=True,
-        )
-    if apply_clicked:
-        apply_slot.empty()
+    # Why: 미리 st.empty() 를 깔면 빈 슬롯이 항상 박스로 남는다(tab_overview 동일 이슈).
+    #      placeholder 없이 직접 버튼 + spinner 만 그려 빈 박스 잔상을 제거한다.
+    if st.button(
+        "새 설정 적용",
+        disabled=not valid,
+        use_container_width=True,
+    ):
         with st.spinner("탐지 재실행 중..."):
             ok = rerun_detection()
         if ok:

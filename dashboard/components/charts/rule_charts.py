@@ -12,16 +12,19 @@ from dashboard.components.charts._theme import (
     empty_figure,
 )
 from src.detection.constants import RULE_CODES, get_rule_level_label
+from src.export.phase1_case_view import build_phase1_raw_rule_truth_index
 
 # Why: 룰 접두사(A/B/C) → Layer enum 값 매핑. 차트 색상·범례에 사용.
 _RULE_LEVEL_ORDER = ("L1", "L2", "L3", "L4", "Analytical", "Phase 2/3")
 
 
-def rule_violation_bar(df: pd.DataFrame) -> go.Figure:
+def rule_violation_bar(df: pd.DataFrame, *, pr=None) -> go.Figure:
     """24개 룰별 위반 건수 가로 바 차트. L1~L4 색상 구분.
 
     flagged_rules 컬럼(comma-separated)을 파싱하여 룰별 건수 집계.
     """
+    if pr is not None:
+        return phase1_rule_violation_bar(pr)
     if df.empty or "flagged_rules" not in df.columns:
         return empty_figure("룰 위반 데이터가 없습니다")
 
@@ -69,5 +72,56 @@ def rule_violation_bar(df: pd.DataFrame) -> go.Figure:
     )
     # Why: update_layout에서 xaxis/yaxis 중복 키워드 방지 → 별도 호출.
     fig.update_xaxes(title_text="위반 건수 (log scale)", type="log")
+    fig.update_yaxes(categoryorder="category ascending")
+    return fig
+
+
+def phase1_rule_violation_bar(pr) -> go.Figure:
+    """PHASE1 raw_rule_hits truth 기준 룰별 문서 수 차트."""
+    truth = build_phase1_raw_rule_truth_index(pr)
+    if not truth.get("available"):
+        data = getattr(pr, "featured_data", None)
+        if data is None:
+            data = getattr(pr, "data", pd.DataFrame())
+        return rule_violation_bar(data)
+
+    rule_document_ids = truth.get("rule_document_ids") or {}
+    counts = pd.Series(
+        {
+            rule_id: len(document_ids)
+            for rule_id, document_ids in rule_document_ids.items()
+            if document_ids
+        },
+        dtype="int64",
+    )
+    if counts.empty:
+        return empty_figure("PHASE1 raw_rule_hits 룰 데이터가 없습니다")
+    counts = counts.reindex(sorted(counts.index))
+
+    label_map = {code: f"{code} ({RULE_CODES.get(code, code)})" for code in counts.index}
+    fig = go.Figure()
+    for rule_level in _RULE_LEVEL_ORDER:
+        label = LAYER_LABELS.get(rule_level, rule_level)
+        mask = [code for code in counts.index if get_rule_level_label(code) == rule_level]
+        if not mask:
+            continue
+        subset = counts[mask]
+        y_labels = [label_map[c] for c in subset.index]
+        fig.add_trace(go.Bar(
+            y=y_labels,
+            x=subset.values,
+            orientation="h",
+            name=label,
+            marker_color=LAYER_COLORS.get(rule_level, "#64748B"),
+            hovertemplate="%{y}<br>%{x:,}문서<extra></extra>",
+        ))
+
+    fig.update_layout(
+        **{**DEFAULT_LAYOUT, "margin": {"l": 180, "r": 20, "t": 40, "b": 40}},
+        title="PHASE1 raw_rule_hits 기준 룰별 문서 수",
+        barmode="stack",
+        legend={"orientation": "h", "y": -0.15},
+    )
+    fig.update_xaxes(title_text="문서 수")
     fig.update_yaxes(categoryorder="category ascending")
     return fig

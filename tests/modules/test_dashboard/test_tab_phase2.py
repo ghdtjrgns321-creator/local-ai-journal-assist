@@ -26,6 +26,24 @@ def test_build_performance_cards_formats_values():
     assert cards[2][1] == "20.0%"
 
 
+def test_build_performance_cards_hides_prf_without_ground_truth():
+    report = PerformanceReport(
+        report_id="rep_001",
+        upload_batch_id="batch_001",
+        source_kind="operational_proxy",
+        phase_scope="phase2_included",
+        precision=0.8,
+        recall=0.7,
+        f1=0.75,
+    )
+
+    cards = tab_phase2._build_performance_cards(report)
+
+    assert "Precision" not in {label for label, _ in cards}
+    assert "Recall" not in {label for label, _ in cards}
+    assert "F1" not in {label for label, _ in cards}
+
+
 def test_build_performance_rule_frame_returns_dataframe():
     report = PerformanceReport(
         report_id="rep_001",
@@ -97,6 +115,72 @@ def test_build_promoted_model_frame_summarizes_contract():
     assert list(df["분석 기준"]) == ["supervised", "timeseries"]
     assert list(df["버전"]) == ["4", "-"]
     assert list(df["세부 점검"]) == ["-", "transaction_burst, unusual_frequency"]
+
+
+def test_build_promoted_model_frame_exposes_unsupervised_metric_semantics():
+    snapshot = {
+        "report_id": "train_001",
+        "inference_contract": {
+            "required_models": ["unsupervised"],
+            "promoted_versions": {"unsupervised": 4},
+        },
+        "promoted_models": [
+            {
+                "model_name": "unsupervised",
+                "metric_name": "unsupervised_selection_score",
+                "metric_value": 0.4321,
+            }
+        ],
+        "promotion_policy": {
+            "unsupervised_metric_policy": {
+                "interpretation": "ranking_proxy_not_fraud_accuracy",
+            },
+        },
+    }
+
+    df = tab_phase2._build_promoted_model_frame(snapshot)
+
+    assert list(df["metric_name"]) == ["unsupervised_selection_score"]
+    assert list(df["metric_value"]) == ["0.4321"]
+    assert list(df["evaluation_policy"]) == ["ranking_proxy_not_fraud_accuracy"]
+    assert "ranking/calibration proxy" in tab_phase2._build_unsupervised_metric_caption(
+        snapshot
+    )
+
+
+def test_build_phase2_training_diagnostics_and_preprocessing_summary():
+    snapshot = {
+        "metadata": {"schema_hash": "abc123"},
+        "preprocessing_plan": {
+            "row_count": 100,
+            "profile_sampled": True,
+            "profile_sample_size": 50,
+            "metadata": {"decision_count": 3},
+            "decisions": [
+                {"column": "amount", "action": "include"},
+                {"column": "is_fraud", "action": "exclude"},
+            ],
+        },
+        "leaderboard": [
+            {
+                "metadata": {
+                    "train_calibration_split": {"split_strategy": "group"},
+                    "unsupervised_metric": {
+                        "reliability_warnings": ["degenerate_score_distribution"]
+                    },
+                }
+            }
+        ],
+    }
+
+    summary = tab_phase2._build_preprocessing_plan_summary(snapshot)
+    diagnostics = tab_phase2._build_phase2_training_diagnostics(snapshot)
+
+    assert "profile=sampled(50)" in summary
+    assert diagnostics.loc[0, "split_policy"] == "group"
+    assert diagnostics.loc[0, "profile_cap"] == 50
+    assert diagnostics.loc[0, "schema_hash"] == "abc123"
+    assert diagnostics.loc[0, "reliability_warnings"] == "degenerate_score_distribution"
 
 
 def test_phase1_no_longer_imports_phase2_inference_action_directly():

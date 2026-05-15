@@ -23,7 +23,6 @@ from src.db.analysis_reset import (
 )
 from src.services.batch_service import load_batch_into_state
 
-_BATCH_INSIGHT_KEY = "_overview_batch_insight"
 _RESET_MESSAGE_KEY = "_dev_analysis_reset_message"
 
 
@@ -91,14 +90,12 @@ def _clear_phase1_state(state: MutableMapping[str, Any]) -> None:
     state.pop(KEY_PHASE1_RESULT, None)
     state.pop(KEY_PHASE2_RESULT, None)
     state.pop(KEY_PIPELINE_RESULT, None)
-    state.pop(_BATCH_INSIGHT_KEY, None)
     state[KEY_ACTIVE_RESULT_TAB] = "개요"
     state[KEY_LOADED_FROM_DB] = False
 
 
 def _clear_phase2_state(state: MutableMapping[str, Any]) -> None:
     state.pop(KEY_PHASE2_RESULT, None)
-    state.pop(_BATCH_INSIGHT_KEY, None)
     phase1_result = state.get(KEY_PHASE1_RESULT)
     if phase1_result is not None:
         _clear_phase_attrs(
@@ -118,7 +115,6 @@ def _clear_phase2_state(state: MutableMapping[str, Any]) -> None:
 
 
 def _clear_phase3_state(state: MutableMapping[str, Any]) -> None:
-    state.pop(_BATCH_INSIGHT_KEY, None)
     for key in (KEY_PHASE2_RESULT, KEY_PHASE1_RESULT, KEY_PIPELINE_RESULT):
         result = state.get(key)
         if result is not None:

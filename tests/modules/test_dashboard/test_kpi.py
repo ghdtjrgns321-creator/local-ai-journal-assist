@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pandas as pd
 import pytest
 
 from dashboard._kpi import compute_kpis, compute_quality
+from src.models.phase1_case import CaseGroupResult, RawRuleHitRef
 
 # ── compute_kpis 기본 동작 ───────────────────────────────────
 
@@ -93,6 +96,36 @@ def test_fraud_suspect_counts_b_and_l2_l3_rules():
 
 
 # ── compute_quality ──────────────────────────────────────────
+
+
+def test_fraud_suspect_prefers_phase1_raw_truth_over_stale_flags():
+    df = pd.DataFrame({
+        "document_id": ["D-TRUTH", "D-STALE"],
+        "risk_level": ["High", "High"],
+        "debit_amount": [100, 200],
+        "flagged_rules": ["", "L2-01"],
+    })
+    case = CaseGroupResult(
+        case_id="CASE-L2-01",
+        primary_theme="duplicate_outflow",
+        case_key="CASE-L2-01",
+        priority_score=0.9,
+        priority_band="high",
+        raw_rule_hits=[
+            RawRuleHitRef(
+                rule_id="L2-01",
+                severity=5,
+                document_id="D-TRUTH",
+                row_index=0,
+                evidence_type="duplicate_outflow",
+            )
+        ],
+    )
+    pr = SimpleNamespace(phase1_case_result=SimpleNamespace(cases=[case]))
+
+    kpis = compute_kpis(df, pr=pr)
+
+    assert kpis["fraud_suspect"] == 1
 
 
 def test_quality_basic(sample_df):

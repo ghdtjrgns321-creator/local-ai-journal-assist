@@ -280,6 +280,7 @@ def _render_main() -> None:
     from dashboard.tab_overview import render_pre_analysis as render_overview  # noqa: E402
     from dashboard.tab_phase1 import render as render_phase1  # noqa: E402
     from dashboard.tab_phase2 import render as render_phase2  # noqa: E402
+    from dashboard.tab_review_queue import render as render_review_queue  # noqa: E402
 
     phase2_result = ss.get(KEY_PHASE2_RESULT)
 
@@ -290,7 +291,7 @@ def _render_main() -> None:
     #      _main_slot 안의 직전 DOM 이 새 DOM 과 누적되어 같은 페이지가
     #      위/아래로 두 번 그려지는 잔상이 발생한다. st.tabs 는 모든 탭 콘텐츠를
     #      한 번에 렌더한 뒤 CSS 로 활성 탭만 보여주므로 별도 rerun 이 필요 없다.
-    overview_tab, settings_tab, phase1_tab, phase2_tab = st.tabs(
+    overview_tab, settings_tab, phase1_tab, phase2_tab, review_queue_tab = st.tabs(
         list(RESULT_PAGES),
         default=default_top_tab,
         key=KEY_TOP_LEVEL_NAV,
@@ -303,6 +304,8 @@ def _render_main() -> None:
         render_phase1(prep_result or display_result, phase1_result)
     with phase2_tab:
         render_phase2(prep_result or display_result, phase2_result)
+    with review_queue_tab:
+        render_review_queue(prep_result or display_result)
 
 
 # Why: st.empty().container() 슬롯 래핑이 streamlit 1.55 에서 직전 rerun 의
@@ -323,4 +326,3 @@ def _route_page_key() -> str:
 
 with st.container(key=f"app_root_{_route_page_key()}"):
     _render_main()
-

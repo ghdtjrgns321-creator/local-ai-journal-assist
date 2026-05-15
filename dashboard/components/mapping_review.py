@@ -337,11 +337,6 @@ def render_mapping_footer() -> None:
     prep_warns = st.session_state.get(KEY_INGEST_PREP_WARNINGS, [])
     btn_confirm, btn_cancel, _spacer = st.columns([1, 1, 6])
 
-    # Why: spinner/progress를 버튼 column 안에서 렌더하면 1/8 폭에 갇혀 텍스트가
-    #      여러 줄로 잘린다. st.columns 바깥에 placeholder를 먼저 만들어 두고,
-    #      버튼 클릭 시 그 풀 폭 placeholder에 렌더한다.
-    progress_area = st.empty()
-
     with btn_confirm:
         confirm_clicked = st.button(
             "매핑 확인",
@@ -362,6 +357,10 @@ def render_mapping_footer() -> None:
         _try_learn_keywords(final_mapping)
 
         file_key = st.session_state.get("_ingest_file_key", "")
+        # Why: spinner/progress 를 버튼 column(1/8 폭) 안에서 렌더하면 텍스트가
+        #      여러 줄로 잘린다. 풀 폭 placeholder 를 클릭 시점에만 만들고 그 안에
+        #      그린다. 클릭 전에 미리 깔면 빈 박스 잔상이 남는다.
+        progress_area = st.empty()
         with progress_area.container():
             with st.spinner("매핑 확인 후 준비 단계를 실행하는 중..."):
                 from dashboard.components.mapping_finalize import prepare_mapped_data

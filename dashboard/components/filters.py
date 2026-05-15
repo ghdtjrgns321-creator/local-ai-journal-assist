@@ -8,6 +8,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from dashboard._phase1_truth import phase1_truth_index, raw_truth_row_mask
 from dashboard._state import KEY_DEV_MODE, KEY_FILTERS, FilterState
 from src.detection.constants import RULE_CODES
 
@@ -94,7 +95,7 @@ def render_filters(df: pd.DataFrame) -> None:
     st.session_state[KEY_FILTERS] = filters
 
 
-def apply_filters(df: pd.DataFrame, filters: FilterState) -> pd.DataFrame:
+def apply_filters(df: pd.DataFrame, filters: FilterState, *, pr=None) -> pd.DataFrame:
     """FilterState dict → boolean mask → 필터된 DataFrame 반환.
 
     빈 dict이면 전체 데이터 반환.
@@ -120,11 +121,15 @@ def apply_filters(df: pd.DataFrame, filters: FilterState) -> pd.DataFrame:
         mask &= df["debit_amount"].between(lo, hi)
 
     # 위반 룰 (벡터화 정규식 매칭)
-    if "rule_codes" in filters and "flagged_rules" in df.columns:
-        # Why: .apply(lambda) 루프는 1M행에서 느림. str.contains 벡터화가 ~10× 빠름.
-        import re
-        pattern = "|".join(re.escape(code) for code in filters["rule_codes"])
-        mask &= df["flagged_rules"].fillna("").str.contains(pattern, regex=True)
+    if "rule_codes" in filters:
+        truth = phase1_truth_index(pr)
+        if truth.get("available"):
+            mask &= raw_truth_row_mask(df, truth, filters["rule_codes"])
+        elif "flagged_rules" in df.columns:
+            # Why: .apply(lambda) 루프는 1M행에서 느림. str.contains 벡터화가 ~10× 빠름.
+            import re
+            pattern = "|".join(re.escape(code) for code in filters["rule_codes"])
+            mask &= df["flagged_rules"].fillna("").str.contains(pattern, regex=True)
 
     # 차원 필터 6개 + 개발 필터 2개 (동일 패턴 루프)
     _all_filters = _DIMENSION_FILTERS + _DEV_FILTERS

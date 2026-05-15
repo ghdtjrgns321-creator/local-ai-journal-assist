@@ -15,13 +15,11 @@ import streamlit as st
 from dashboard._kpi import compute_kpis
 from dashboard._state import (
     KEY_ACTIVE_RESULT_TAB,
-    KEY_COMPANY_CONTEXT,
     KEY_FILTERS,
     KEY_PENDING_RESULT_TAB,
     KEY_TOP_LEVEL_NAV,
     PAGE_COMPANY_SETTINGS,
     PAGE_PHASE1,
-    PAGE_PHASE2,
 )
 from dashboard.components.charts import (
     benford_overlay,
@@ -35,9 +33,6 @@ from src.services.session_service import has_analysis_output
 
 if TYPE_CHECKING:
     from src.pipeline import PipelineResult
-
-
-_BATCH_INSIGHT_KEY = "_overview_batch_insight"
 
 
 @st.cache_data(show_spinner=False)
@@ -104,12 +99,8 @@ def _render_before(result: PipelineResult) -> None:
     st.caption("회사의 비즈니스 성격과 데이터 건전성을 한눈에 보여주는 지표입니다.")
 
     period = _period_range(df)
-    total_docs = (
-        int(df["document_id"].nunique()) if "document_id" in df.columns else len(df)
-    )
-    total_debit = (
-        float(df["debit_amount"].sum()) if "debit_amount" in df.columns else 0.0
-    )
+    total_docs = int(df["document_id"].nunique()) if "document_id" in df.columns else len(df)
+    total_debit = float(df["debit_amount"].sum()) if "debit_amount" in df.columns else 0.0
 
     # Row 1: KPI 3개 카드 (균등 폭, 균등 높이)
     c1, c2, c3 = st.columns(3, gap="small")
@@ -232,17 +223,11 @@ def _render_document_type_donut(df: pd.DataFrame) -> None:
             break
 
     if sa_pct >= 40:
-        caption = (
-            f"SA 일반분개 {sa_pct:.0f}% · 수기 조정 전표 비중 높음"
-        )
+        caption = f"SA 일반분개 {sa_pct:.0f}% · 수기 조정 전표 비중 높음"
     elif sa_pct >= 20:
-        caption = (
-            f"SA 일반분개 {sa_pct:.0f}% · 수기 조정 전표 비중 평균 수준"
-        )
+        caption = f"SA 일반분개 {sa_pct:.0f}% · 수기 조정 전표 비중 평균 수준"
     else:
-        caption = (
-            f"SA 일반분개 {sa_pct:.0f}% · 자동화 수준 양호"
-        )
+        caption = f"SA 일반분개 {sa_pct:.0f}% · 자동화 수준 양호"
 
     # 헤더: 제목만 (꺾은선과 동일하게 캡션은 차트 아래로)
     st.markdown(
@@ -423,7 +408,8 @@ def _render_quality_checklist(df: pd.DataFrame) -> None:
 
 
 def _render_checklist_card(
-    title: str, items: list[tuple[str, str, str] | None],
+    title: str,
+    items: list[tuple[str, str, str] | None],
 ) -> None:
     """카테고리 제목 + 체크 항목. padding 상하 대칭으로 여백 일관."""
     parts: list[str] = [
@@ -688,9 +674,7 @@ def _check_period_end_concentration(df: pd.DataFrame) -> tuple[str, str, str] | 
         return None
 
     dec_rate = (dates.dt.month == 12).sum() / total * 100
-    last5_rate = (
-        (dates.dt.month == 12) & (dates.dt.day >= 27)
-    ).sum() / total * 100
+    last5_rate = ((dates.dt.month == 12) & (dates.dt.day >= 27)).sum() / total * 100
 
     # 월별 균등 가정 시 12월 평균 8.3% — 15% 초과 시 집중, 25% 초과 시 심각
     if dec_rate < 15:
@@ -775,8 +759,8 @@ def _render_pipeline_briefing() -> None:
 
 
 def _render_pipeline_cta() -> None:
-    """3분할 실행 버튼 — 회사설정(secondary) / Phase1·Phase2 분석 시작(primary)."""
-    col_settings, col_p1, col_p2 = st.columns(3)
+    """2분할 실행 버튼 — 분석 전 회사설정(secondary) / Phase 1 분석 시작(primary)."""
+    col_settings, col_p1 = st.columns(2)
     with col_settings:
         settings_clicked = st.button(
             "분석 전 회사설정",
@@ -790,13 +774,6 @@ def _render_pipeline_cta() -> None:
             use_container_width=True,
             key="overview_run_phase1",
         )
-    with col_p2:
-        p2_clicked = st.button(
-            "Phase 2 분석 시작",
-            type="primary",
-            use_container_width=True,
-            key="overview_run_phase2",
-        )
 
     if settings_clicked:
         st.session_state[KEY_ACTIVE_RESULT_TAB] = PAGE_COMPANY_SETTINGS
@@ -805,14 +782,10 @@ def _render_pipeline_cta() -> None:
         st.rerun()
 
     # Why: 클릭 전에는 placeholder 자체를 만들지 않는다. 미리 st.empty() 를 깔면
-    #      버튼 아래 빈 박스 슬롯이 항상 남는다(_run_phase1/_start_phase2_analysis
-    #      는 자체적으로 st.spinner/st.progress 로 시각 피드백을 처리).
+    #      버튼 아래 빈 박스 슬롯이 항상 남는다(_run_phase1 은 자체적으로
+    #      st.spinner 로 시각 피드백을 처리).
     if p1_clicked:
         _run_phase1()
-    elif p2_clicked:
-        from dashboard.tab_phase2 import _start_phase2_analysis
-
-        _start_phase2_analysis()
 
 
 def _run_phase1() -> None:
@@ -840,8 +813,8 @@ def _run_phase1() -> None:
 def _render_after(result: PipelineResult) -> None:
     """분석 후 화면 — 위험 KPI + LLM 요약 + Top 5 + 기존 차트."""
     filters = st.session_state.get(KEY_FILTERS, {})
-    df = apply_filters(result.data, filters)
-    kpis = _cached_kpis(df)
+    df = apply_filters(result.data, filters, pr=result)
+    kpis = compute_kpis(df, pr=result)
 
     # 상단: 제목 + 작은 재실행 버튼
     col_title, col_rerun = st.columns([5, 1])
@@ -873,7 +846,7 @@ def _render_after(result: PipelineResult) -> None:
         )
     with col_bar:
         st.plotly_chart(
-            rule_violation_bar(df),
+            rule_violation_bar(df, pr=result),
             use_container_width=True,
             key="overview_after_rule_violation_bar",
         )
@@ -925,64 +898,26 @@ def _render_risk_kpis(kpis: dict) -> None:
         st.caption(f"전체의 {fraud_pct:.1f}%")
 
 
-# ── LLM 배치 요약 ──────────────────────────────────────────
+# ── Phase 3 v2 placeholder (Sprint E에서 Review Queue Narrator로 교체) ─────
+# Why: WU-25 InsightGenerator/NarrativeReporter는 Sprint D에서 폐기됐다.
+#      Review Queue Narrator(candidate 단위)로 재포커싱 중이며, candidate별
+#      narrative를 보여주는 신규 UI(`dashboard/tab_review_queue.py`)는
+#      Sprint E에서 RC-4 review queue 탭과 함께 도입된다. 그 전까지 본 함수는
+#      안내 메시지만 출력한다.
 
 
-def _render_batch_insight(result: PipelineResult) -> None:
-    """LLM 배치 요약 — 세션 캐시에 있으면 표시, 없으면 생성 버튼."""
+def _render_batch_insight(result: PipelineResult) -> None:  # noqa: ARG001
+    """Phase 3 v2 placeholder — 안내 메시지만 출력.
+
+    Sprint E에서 Review Queue Narrator candidate 카드(priority_rank / summary /
+    reasoning citations / suggested_actions)로 교체된다. `result` 인자는 호출부
+    시그니처 호환 위해 보존하되 본 함수에서는 사용하지 않는다 (ARG001 무시).
+    """
     st.subheader("LLM 배치 요약")
-
-    insight = st.session_state.get(_BATCH_INSIGHT_KEY)
-    if insight is None:
-        st.caption(
-            "LLM이 배치 전체를 분석해 거시적 위험 평가를 자연어로 정리합니다. "
-            "비용이 발생할 수 있어 사용자가 요청할 때만 실행합니다."
-        )
-        if st.button("요약 생성", key="overview_gen_insight"):
-            _generate_batch_insight()
-        return
-
-    st.markdown(insight.summary)
-
-    if insight.top_risks:
-        st.markdown("**주요 위험 포인트**")
-        for risk in insight.top_risks:
-            st.markdown(f"- {risk}")
-
-    if insight.significant_tx_opinions:
-        with st.expander(
-            f"유의적 거래 의견 {len(insight.significant_tx_opinions)}건",
-            expanded=False,
-        ):
-            for opinion in insight.significant_tx_opinions:
-                doc_id = getattr(opinion, "document_id", "—")
-                rationale = getattr(opinion, "rationale", "")
-                st.markdown(f"- **{doc_id}** — {rationale}")
-
-    if st.button("다시 생성", key="overview_regen_insight"):
-        st.session_state.pop(_BATCH_INSIGHT_KEY, None)
-        _generate_batch_insight()
-
-
-def _generate_batch_insight() -> None:
-    """InsightGenerator 호출 + 세션 캐시."""
-    ctx = st.session_state.get(KEY_COMPANY_CONTEXT)
-    if ctx is None or ctx.is_anonymous:
-        st.warning("회사 컨텍스트가 필요합니다.")
-        return
-
-    try:
-        from src.db.connection import get_connection
-        from src.llm.insight_generator import InsightGenerator
-
-        conn = get_connection(str(ctx.db_path))
-        with st.spinner("LLM 배치 요약 생성 중..."):
-            generator = InsightGenerator(conn)
-            insight = generator.generate_batch_insight()
-        st.session_state[_BATCH_INSIGHT_KEY] = insight
-        st.rerun()
-    except Exception as e:
-        st.error(f"요약 생성 실패: {e}")
+    st.caption(
+        "Phase 3 v2 재코딩 중 — 배치 단위 LLM 요약은 candidate 단위 "
+        "Review Queue Narrator로 교체됩니다. RC-4 review queue 탭에서 곧 제공."
+    )
 
 
 # ── Top 5 고위험 전표 ──────────────────────────────────────
@@ -1013,7 +948,8 @@ def _render_top5_high_risk(df: pd.DataFrame) -> None:
     top5 = high.nlargest(5, sort_col)
 
     display_cols = [
-        c for c in [
+        c
+        for c in [
             "document_id",
             "posting_date",
             "gl_account",
@@ -1103,11 +1039,13 @@ def _render_benford_summary(df: pd.DataFrame) -> None:
     settings = get_settings()
     br, _ = analyze_benford(digits, settings=settings)
 
-    digits_df = pd.DataFrame({
-        "digit": range(1, 10),
-        "observed_freq": [br.observed.get(d, 0.0) for d in range(1, 10)],
-        "expected_freq": [BENFORD_EXPECTED[d] for d in range(1, 10)],
-    })
+    digits_df = pd.DataFrame(
+        {
+            "digit": range(1, 10),
+            "observed_freq": [br.observed.get(d, 0.0) for d in range(1, 10)],
+            "expected_freq": [BENFORD_EXPECTED[d] for d in range(1, 10)],
+        }
+    )
 
     col_chart, col_metrics = st.columns([2, 1])
     with col_chart:
