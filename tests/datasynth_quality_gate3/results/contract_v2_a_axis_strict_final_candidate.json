@@ -1,0 +1,317 @@
+{
+  "dataset": "data\\journal\\primary\\datasynth_contract_v2",
+  "phase1_cache": "artifacts/phase1_contract_v2_final_candidate_20260514.pkl",
+  "rules_checked": 34,
+  "rules_with_diff": 0,
+  "total_false_positive_docs": 0,
+  "total_false_negative_docs": 0,
+  "rules": [
+    {
+      "rule_id": "L1-01",
+      "truth_docs": 281,
+      "detected_docs": 281,
+      "false_positive_docs": 0,
+      "false_negative_docs": 0,
+      "sample_false_positive_docs": [],
+      "sample_false_negative_docs": []
+    },
+    {
+      "rule_id": "L1-02",
+      "truth_docs": 91,
+      "detected_docs": 91,
+      "false_positive_docs": 0,
+      "false_negative_docs": 0,
+      "sample_false_positive_docs": [],
+      "sample_false_negative_docs": []
+    },
+    {
+      "rule_id": "L1-03",
+      "truth_docs": 40,
+      "detected_docs": 40,
+      "false_positive_docs": 0,
+      "false_negative_docs": 0,
+      "sample_false_positive_docs": [],
+      "sample_false_negative_docs": []
+    },
+    {
+      "rule_id": "L1-04",
+      "truth_docs": 60,
+      "detected_docs": 60,
+      "false_positive_docs": 0,
+      "false_negative_docs": 0,
+      "sample_false_positive_docs": [],
+      "sample_false_negative_docs": []
+    },
+    {
+      "rule_id": "L1-05",
+      "truth_docs": 47,
+      "detected_docs": 47,
+      "false_positive_docs": 0,
+      "false_negative_docs": 0,
+      "sample_false_positive_docs": [],
+      "sample_false_negative_docs": []
+    },
+    {
+      "rule_id": "L1-06",
+      "truth_docs": 0,
+      "detected_docs": 0,
+      "false_positive_docs": 0,
+      "false_negative_docs": 0,
+      "sample_false_positive_docs": [],
+      "sample_false_negative_docs": []
+    },
+    {
+      "rule_id": "L1-07",
+      "truth_docs": 17,
+      "detected_docs": 17,
+      "false_positive_docs": 0,
+      "false_negative_docs": 0,
+      "sample_false_positive_docs": [],
+      "sample_false_negative_docs": []
+    },
+    {
+      "rule_id": "L1-08",
+      "truth_docs": 54,
+      "detected_docs": 54,
+      "false_positive_docs": 0,
+      "false_negative_docs": 0,
+      "sample_false_positive_docs": [],
+      "sample_false_negative_docs": []
+    },
+    {
+      "rule_id": "L1-09",
+      "truth_docs": 18,
+      "detected_docs": 18,
+      "false_positive_docs": 0,
+      "false_negative_docs": 0,
+      "sample_false_positive_docs": [],
+      "sample_false_negative_docs": []
+    },
+    {
+      "rule_id": "L2-01",
+      "truth_docs": 0,
+      "detected_docs": 0,
+      "false_positive_docs": 0,
+      "false_negative_docs": 0,
+      "sample_false_positive_docs": [],
+      "sample_false_negative_docs": []
+    },
+    {
+      "rule_id": "L2-02",
+      "truth_docs": 47,
+      "detected_docs": 47,
+      "false_positive_docs": 0,
+      "false_negative_docs": 0,
+      "sample_false_positive_docs": [],
+      "sample_false_negative_docs": []
+    },
+    {
+      "rule_id": "L2-03",
+      "truth_docs": 1208,
+      "detected_docs": 1208,
+      "false_positive_docs": 0,
+      "false_negative_docs": 0,
+      "sample_false_positive_docs": [],
+      "sample_false_negative_docs": []
+    },
+    {
+      "rule_id": "L2-04",
+      "truth_docs": 34,
+      "detected_docs": 34,
+      "false_positive_docs": 0,
+      "false_negative_docs": 0,
+      "sample_false_positive_docs": [],
+      "sample_false_negative_docs": []
+    },
+    {
+      "rule_id": "L2-05",
+      "truth_docs": 267,
+      "detected_docs": 267,
+      "false_positive_docs": 0,
+      "false_negative_docs": 0,
+      "sample_false_positive_docs": [],
+      "sample_false_negative_docs": []
+    },
+    {
+      "rule_id": "L3-01",
+      "truth_docs": 2,
+      "detected_docs": 2,
+      "false_positive_docs": 0,
+      "false_negative_docs": 0,
+      "sample_false_positive_docs": [],
+      "sample_false_negative_docs": []
+    },
+    {
+      "rule_id": "L3-02",
+      "truth_docs": 131775,
+      "detected_docs": 131775,
+      "false_positive_docs": 0,
+      "false_negative_docs": 0,
+      "sample_false_positive_docs": [],
+      "sample_false_negative_docs": []
+    },
+    {
+      "rule_id": "L3-03",
+      "truth_docs": 6499,
+      "detected_docs": 6499,
+      "false_positive_docs": 0,
+      "false_negative_docs": 0,
+      "sample_false_positive_docs": [],
+      "sample_false_negative_docs": []
+    },
+    {
+      "rule_id": "L3-04",
+      "truth_docs": 94393,
+      "detected_docs": 94393,
+      "false_positive_docs": 0,
+      "false_negative_docs": 0,
+      "sample_false_positive_docs": [],
+      "sample_false_negative_docs": []
+    },
+    {
+      "rule_id": "L3-05",
+      "truth_docs": 24412,
+      "detected_docs": 24412,
+      "false_positive_docs": 0,
+      "false_negative_docs": 0,
+      "sample_false_positive_docs": [],
+      "sample_false_negative_docs": []
+    },
+    {
+      "rule_id": "L3-06",
+      "truth_docs": 14844,
+      "detected_docs": 14844,
+      "false_positive_docs": 0,
+      "false_negative_docs": 0,
+      "sample_false_positive_docs": [],
+      "sample_false_negative_docs": []
+    },
+    {
+      "rule_id": "L3-07",
+      "truth_docs": 107,
+      "detected_docs": 107,
+      "false_positive_docs": 0,
+      "false_negative_docs": 0,
+      "sample_false_positive_docs": [],
+      "sample_false_negative_docs": []
+    },
+    {
+      "rule_id": "L3-08",
+      "truth_docs": 451,
+      "detected_docs": 451,
+      "false_positive_docs": 0,
+      "false_negative_docs": 0,
+      "sample_false_positive_docs": [],
+      "sample_false_negative_docs": []
+    },
+    {
+      "rule_id": "L3-09",
+      "truth_docs": 12,
+      "detected_docs": 12,
+      "false_positive_docs": 0,
+      "false_negative_docs": 0,
+      "sample_false_positive_docs": [],
+      "sample_false_negative_docs": []
+    },
+    {
+      "rule_id": "L3-10",
+      "truth_docs": 12,
+      "detected_docs": 12,
+      "false_positive_docs": 0,
+      "false_negative_docs": 0,
+      "sample_false_positive_docs": [],
+      "sample_false_negative_docs": []
+    },
+    {
+      "rule_id": "L3-11",
+      "truth_docs": 0,
+      "detected_docs": 0,
+      "false_positive_docs": 0,
+      "false_negative_docs": 0,
+      "sample_false_positive_docs": [],
+      "sample_false_negative_docs": []
+    },
+    {
+      "rule_id": "L3-12",
+      "truth_docs": 18617,
+      "detected_docs": 18617,
+      "false_positive_docs": 0,
+      "false_negative_docs": 0,
+      "sample_false_positive_docs": [],
+      "sample_false_negative_docs": []
+    },
+    {
+      "rule_id": "L4-01",
+      "truth_docs": 367,
+      "detected_docs": 367,
+      "false_positive_docs": 0,
+      "false_negative_docs": 0,
+      "sample_false_positive_docs": [],
+      "sample_false_negative_docs": []
+    },
+    {
+      "rule_id": "L4-02",
+      "truth_docs": 0,
+      "detected_docs": 0,
+      "false_positive_docs": 0,
+      "false_negative_docs": 0,
+      "sample_false_positive_docs": [],
+      "sample_false_negative_docs": []
+    },
+    {
+      "rule_id": "L4-03",
+      "truth_docs": 2946,
+      "detected_docs": 2946,
+      "false_positive_docs": 0,
+      "false_negative_docs": 0,
+      "sample_false_positive_docs": [],
+      "sample_false_negative_docs": []
+    },
+    {
+      "rule_id": "L4-04",
+      "truth_docs": 386,
+      "detected_docs": 386,
+      "false_positive_docs": 0,
+      "false_negative_docs": 0,
+      "sample_false_positive_docs": [],
+      "sample_false_negative_docs": []
+    },
+    {
+      "rule_id": "L4-05",
+      "truth_docs": 10828,
+      "detected_docs": 10828,
+      "false_positive_docs": 0,
+      "false_negative_docs": 0,
+      "sample_false_positive_docs": [],
+      "sample_false_negative_docs": []
+    },
+    {
+      "rule_id": "L4-06",
+      "truth_docs": 390,
+      "detected_docs": 390,
+      "false_positive_docs": 0,
+      "false_negative_docs": 0,
+      "sample_false_positive_docs": [],
+      "sample_false_negative_docs": []
+    },
+    {
+      "rule_id": "D01",
+      "truth_docs": 0,
+      "detected_docs": 0,
+      "false_positive_docs": 0,
+      "false_negative_docs": 0,
+      "sample_false_positive_docs": [],
+      "sample_false_negative_docs": []
+    },
+    {
+      "rule_id": "D02",
+      "truth_docs": 0,
+      "detected_docs": 0,
+      "false_positive_docs": 0,
+      "false_negative_docs": 0,
+      "sample_false_positive_docs": [],
+      "sample_false_negative_docs": []
+    }
+  ],
+  "failures": []
+}

@@ -1,0 +1,246 @@
+{
+  "dataset": "data/journal/primary/datasynth_manipulation_v3/journal_entries.csv",
+  "truth_path": "data/journal/primary/datasynth_manipulation_v3/labels/manipulated_entry_truth.csv",
+  "n_rows": 1077767,
+  "n_columns_total": 53,
+  "manipulated_row_count": 1111,
+  "manipulated_row_prevalence": 0.0010308350506185475,
+  "policy": {
+    "initial_auroc_leak_threshold": 0.95,
+    "residual_auroc_threshold": 0.99,
+    "max_iterations": 3,
+    "explicit_user_denylist": [
+      "detection_surface_hints",
+      "mutation_base_event_type",
+      "mutation_mutated_field",
+      "mutation_mutated_value",
+      "mutation_original_value",
+      "mutation_reason",
+      "mutation_type",
+      "semantic_scenario_id"
+    ],
+    "target_label_columns_excluded_from_features": [
+      "anomaly_type",
+      "fraud_type",
+      "is_anomaly",
+      "is_fraud",
+      "sod_conflict_type",
+      "sod_violation"
+    ]
+  },
+  "deny_list_final": [
+    "detection_surface_hints",
+    "document_id",
+    "document_number",
+    "header_text",
+    "ip_address",
+    "mutation_base_event_type",
+    "mutation_mutated_field",
+    "mutation_mutated_value",
+    "mutation_original_value",
+    "mutation_reason",
+    "mutation_type",
+    "reference",
+    "semantic_scenario_id"
+  ],
+  "deny_list_size": 13,
+  "deny_list_detail": [
+    {
+      "column": "detection_surface_hints",
+      "s0_auroc": 1.0,
+      "reason": "explicit_user_denylist"
+    },
+    {
+      "column": "document_id",
+      "s0_auroc": 1.0,
+      "reason": "s0_auroc>=0.95"
+    },
+    {
+      "column": "document_number",
+      "s0_auroc": 1.0,
+      "reason": "s0_auroc>=0.95"
+    },
+    {
+      "column": "header_text",
+      "s0_auroc": 1.0,
+      "reason": "s0_auroc>=0.95"
+    },
+    {
+      "column": "ip_address",
+      "s0_auroc": 0.9824358635875476,
+      "reason": "s0_auroc>=0.95"
+    },
+    {
+      "column": "mutation_base_event_type",
+      "s0_auroc": 0.6288898030085512,
+      "reason": "explicit_user_denylist"
+    },
+    {
+      "column": "mutation_mutated_field",
+      "s0_auroc": 1.0,
+      "reason": "explicit_user_denylist"
+    },
+    {
+      "column": "mutation_mutated_value",
+      "s0_auroc": 1.0,
+      "reason": "explicit_user_denylist"
+    },
+    {
+      "column": "mutation_original_value",
+      "s0_auroc": 1.0,
+      "reason": "explicit_user_denylist"
+    },
+    {
+      "column": "mutation_reason",
+      "s0_auroc": 1.0,
+      "reason": "explicit_user_denylist"
+    },
+    {
+      "column": "mutation_type",
+      "s0_auroc": 1.0,
+      "reason": "explicit_user_denylist"
+    },
+    {
+      "column": "reference",
+      "s0_auroc": 0.9989815521375441,
+      "reason": "s0_auroc>=0.95"
+    },
+    {
+      "column": "semantic_scenario_id",
+      "s0_auroc": 0.6288898030085512,
+      "reason": "explicit_user_denylist"
+    }
+  ],
+  "iterations": [
+    {
+      "round": 1,
+      "denylist_size_before": 13,
+      "residual_columns_audited": 38,
+      "residual_above_threshold": [],
+      "top_residual_auroc": [
+        {
+          "column": "source",
+          "auroc_vs_manipulated": 0.9198026954840643
+        },
+        {
+          "column": "supply_amount",
+          "auroc_vs_manipulated": 0.893624178459367
+        },
+        {
+          "column": "invoice_amount",
+          "auroc_vs_manipulated": 0.8931926877541598
+        },
+        {
+          "column": "created_by",
+          "auroc_vs_manipulated": 0.819860695936069
+        },
+        {
+          "column": "auxiliary_account_number",
+          "auroc_vs_manipulated": 0.8093462126209203
+        }
+      ]
+    }
+  ],
+  "final_residual_top_auroc": [
+    {
+      "column": "source",
+      "auroc_vs_manipulated": 0.9198026954840643
+    },
+    {
+      "column": "supply_amount",
+      "auroc_vs_manipulated": 0.893624178459367
+    },
+    {
+      "column": "invoice_amount",
+      "auroc_vs_manipulated": 0.8931926877541598
+    },
+    {
+      "column": "created_by",
+      "auroc_vs_manipulated": 0.819860695936069
+    },
+    {
+      "column": "auxiliary_account_number",
+      "auroc_vs_manipulated": 0.8093462126209203
+    },
+    {
+      "column": "trading_partner",
+      "auroc_vs_manipulated": 0.8021311492077862
+    },
+    {
+      "column": "counterparty_type",
+      "auroc_vs_manipulated": 0.7972425018225918
+    },
+    {
+      "column": "auxiliary_account_label",
+      "auroc_vs_manipulated": 0.7908697362153478
+    },
+    {
+      "column": "local_amount",
+      "auroc_vs_manipulated": 0.7889464034360963
+    },
+    {
+      "column": "document_type",
+      "auroc_vs_manipulated": 0.7401469731910255
+    },
+    {
+      "column": "approved_by",
+      "auroc_vs_manipulated": 0.7401027602202939
+    },
+    {
+      "column": "line_text",
+      "auroc_vs_manipulated": 0.7051828880243539
+    },
+    {
+      "column": "business_process",
+      "auroc_vs_manipulated": 0.6937178860308495
+    },
+    {
+      "column": "gl_account",
+      "auroc_vs_manipulated": 0.6822887093679572
+    },
+    {
+      "column": "profit_center",
+      "auroc_vs_manipulated": 0.6316060599628939
+    },
+    {
+      "column": "line_number",
+      "auroc_vs_manipulated": 0.610694281196781
+    },
+    {
+      "column": "supporting_doc_type",
+      "auroc_vs_manipulated": 0.5893783825355384
+    },
+    {
+      "column": "user_persona",
+      "auroc_vs_manipulated": 0.5823684225468809
+    },
+    {
+      "column": "debit_amount",
+      "auroc_vs_manipulated": 0.5518804525680013
+    },
+    {
+      "column": "credit_amount",
+      "auroc_vs_manipulated": 0.5494396919295443
+    },
+    {
+      "column": "has_attachment",
+      "auroc_vs_manipulated": 0.547380531714285
+    },
+    {
+      "column": "fiscal_period",
+      "auroc_vs_manipulated": 0.5337925275508187
+    },
+    {
+      "column": "fiscal_year",
+      "auroc_vs_manipulated": 0.530521896323692
+    },
+    {
+      "column": "posting_date",
+      "auroc_vs_manipulated": 0.5302445963265986
+    },
+    {
+      "column": "document_date",
+      "auroc_vs_manipulated": 0.5296769036550562
+    }
+  ]
+}

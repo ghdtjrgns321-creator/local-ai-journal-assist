@@ -1,0 +1,20 @@
+{
+  "artifact": "artifacts\\phase1_cases\\_anonymous\\phase1case__anonymous_datasynth_v126_profiled_phase1_20260514T050639Z.json",
+  "total_cases": 17011,
+  "reviewed_cases": 120,
+  "review_scope": "top 20 cases per primary_theme",
+  "theme_count": 6,
+  "flag_counts": {
+    "action_overload": 67,
+    "duplicate_evidence_rows": 81,
+    "evidence_overload": 76,
+    "multi_theme_summary_too_generic": 71,
+    "unknown_counterparty_context": 12
+  },
+  "pass_conditions": {
+    "core_narrative_missing_cases": 0,
+    "themes_present": 6,
+    "a_axis_out_of_scope": "B-axis reviews readability only; A-axis strict diff is checked separately."
+  },
+  "recommendation": "WARN"
+}

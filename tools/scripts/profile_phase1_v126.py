@@ -53,7 +53,6 @@ from src.ingest.datasynth_labels import apply_datasynth_label_mode, set_source_p
 from src.models.phase1_case import Phase1CaseResult
 from src.services.analysis_service import make_phase_settings
 
-
 DATE_COLUMNS = ("posting_date", "document_date", "entry_date", "approval_date", "created_at")
 PHASE1_USECOLS = {
     "document_id",
@@ -70,8 +69,15 @@ PHASE1_USECOLS = {
     "user_persona",
     "source",
     "business_process",
+    "semantic_scenario_id",
+    "counterparty_type",
     "approved_by",
     "approval_date",
+    "base_event_type",
+    "mutation_type",
+    "mutated_field",
+    "mutation_reason",
+    "detection_surface_hints",
     "sod_violation",
     "sod_conflict_type",
     "has_attachment",
@@ -118,7 +124,9 @@ def _log(message: str) -> None:
 
 def _write_checkpoint(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
+    )
 
 
 def _elapsed(start: float) -> float:
@@ -200,6 +208,7 @@ def _enrich_independent_audit_evidence(
     if "document_id" in df.columns:
         doc_amount = doc_amount.groupby(df["document_id"].astype(str)).transform("sum")
     approver_known = approver.isin(employee_master["ids"])
+    creator_known = creator.isin(employee_master["ids"])
     can_approve_je = approver.map(employee_master["can_approve_je"]).fillna(False).astype(bool)
     approval_limit = pd.to_numeric(
         approver.map(employee_master["approval_limit"]),
@@ -213,18 +222,45 @@ def _enrich_independent_audit_evidence(
     manual_creator = ~creator.str.startswith("SYSTEM", na=False)
     missing_approver = approver.eq("") | approver.isin({"NAN", "NONE", "NULL"})
     self_approval = creator.ne("") & creator.eq(approver)
-    df["approval_matrix_gap"] = manual_creator & (
+    manual_creator_present = (
+        manual_creator & creator.ne("") & ~creator.isin({"NAN", "NONE", "NULL"})
+    )
+    approver_present = ~missing_approver
+    creator_join_rows = int(manual_creator_present.sum())
+    creator_known_rows = int((manual_creator_present & creator_known).sum())
+    approver_present_rows = int(approver_present.sum())
+    approver_known_rows = int((approver_present & approver_known).sum())
+    creator_join_rate = creator_known_rows / creator_join_rows if creator_join_rows else 1.0
+    approver_join_rate = (
+        approver_known_rows / approver_present_rows if approver_present_rows else 1.0
+    )
+    approval_contract_degraded = (
+        not employee_master["ids"]
+        or creator_join_rate < 0.95
+        or (approver_present_rows > 0 and approver_join_rate < 0.95)
+    )
+    raw_approval_matrix_gap = manual_creator & (
         missing_approver
         | self_approval
         | (~approver_known & ~missing_approver)
         | (~can_approve_je & ~missing_approver)
         | (~pd.Series(company_authorized, index=df.index) & ~missing_approver)
     )
+    df["approval_contract_degraded"] = approval_contract_degraded
+    df["approval_contract_gap"] = raw_approval_matrix_gap
+    df["employee_creator_join_gap"] = manual_creator_present & ~creator_known
+    df["employee_approver_join_gap"] = approver_present & ~approver_known
+    df["approval_matrix_gap"] = (
+        pd.Series(False, index=df.index, dtype=bool)
+        if approval_contract_degraded
+        else raw_approval_matrix_gap
+    )
     df["approval_limit_exceeded_independent"] = (
         manual_creator
         & ~missing_approver
         & approval_limit.gt(0)
         & doc_amount.gt(approval_limit)
+        & ~approval_contract_degraded
     )
 
     summary["stages"]["independent_evidence_enrichment"] = {
@@ -233,6 +269,17 @@ def _enrich_independent_audit_evidence(
         "document_flow_orphan_rows": int(df["document_flow_orphan"].sum()),
         "ic_unmatched_rows": int(df["ic_unmatched_reference"].sum()),
         "approval_matrix_gap_rows": int(df["approval_matrix_gap"].sum()),
+        "approval_contract_gap_rows": int(df["approval_contract_gap"].sum()),
+        "employee_creator_join_gap_rows": int(df["employee_creator_join_gap"].sum()),
+        "employee_approver_join_gap_rows": int(df["employee_approver_join_gap"].sum()),
+        "employee_creator_join_rate": round(float(creator_join_rate), 6),
+        "employee_approver_join_rate": round(float(approver_join_rate), 6),
+        "approval_contract_degraded": bool(approval_contract_degraded),
+        "approval_contract_degraded_reason": (
+            "employee/user approval master join coverage below 95%"
+            if approval_contract_degraded
+            else ""
+        ),
         "approval_limit_exceeded_rows": int(df["approval_limit_exceeded_independent"].sum()),
     }
     _write_checkpoint(checkpoint, summary)
@@ -259,13 +306,23 @@ def _load_partner_master(path: Path, id_field: str) -> dict[str, set[str]]:
     intercompany: set[str] = set()
     for row in _load_json_list(path):
         partner_id = str(row.get(id_field) or "").strip().upper()
-        if not partner_id:
+        intercompany_code = str(row.get("intercompany_code") or "").strip().upper()
+        if not partner_id and not intercompany_code:
             continue
-        ids.add(partner_id)
+        if partner_id:
+            ids.add(partner_id)
+        if intercompany_code:
+            ids.add(intercompany_code)
         if not bool(row.get("is_active", True)):
-            inactive.add(partner_id)
+            if partner_id:
+                inactive.add(partner_id)
+            if intercompany_code:
+                inactive.add(intercompany_code)
         if bool(row.get("is_intercompany", False)):
-            intercompany.add(partner_id)
+            if partner_id:
+                intercompany.add(partner_id)
+            if intercompany_code:
+                intercompany.add(intercompany_code)
     return {"ids": ids, "inactive": inactive, "intercompany": intercompany}
 
 
@@ -330,8 +387,7 @@ def _load_employee_master(path: Path) -> dict[str, Any]:
         except (TypeError, ValueError):
             approval_limit[user_id] = 0.0
         companies = [
-            str(value).strip().upper()
-            for value in row.get("authorized_company_codes") or []
+            str(value).strip().upper() for value in row.get("authorized_company_codes") or []
         ]
         authorized_companies[user_id] = "|".join(company for company in companies if company)
     return {
@@ -444,7 +500,9 @@ def _run_detectors(
             "warnings": list(result.warnings or [])[:20],
         }
         _write_checkpoint(checkpoint, summary)
-        _log(f"detector done: {detector.track_name} {summary['stages']['detectors'][detector.track_name]}")
+        _log(
+            f"detector done: {detector.track_name} {summary['stages']['detectors'][detector.track_name]}"
+        )
     return results
 
 
@@ -484,7 +542,9 @@ def _run_anomaly_layer_rule_by_rule(
                 "error": repr(exc),
             }
         _write_checkpoint(checkpoint, summary)
-        _log(f"layer_c rule done: {rule_id} {summary['stages']['detector_rules']['layer_c'][rule_id]}")
+        _log(
+            f"layer_c rule done: {rule_id} {summary['stages']['detector_rules']['layer_c'][rule_id]}"
+        )
 
     elapsed = time.perf_counter() - layer_start
     return detector._build_result(df, rule_results, skipped, warnings, elapsed)  # noqa: SLF001
@@ -553,7 +613,9 @@ def _run_fraud_layer_rule_by_rule(
                 "error": repr(exc),
             }
         _write_checkpoint(checkpoint, summary)
-        _log(f"layer_b rule done: {rule_id} {summary['stages']['detector_rules']['layer_b'][rule_id]}")
+        _log(
+            f"layer_b rule done: {rule_id} {summary['stages']['detector_rules']['layer_b'][rule_id]}"
+        )
 
     elapsed = time.perf_counter() - layer_start
     return detector._build_result(  # noqa: SLF001 - profiler only
@@ -652,15 +714,18 @@ def _profile_l203_duplicate_entry(
 
     t0 = time.perf_counter()
     _log("L2-03 step start: combine")
-    score_frame = pd.DataFrame({
-        "document_duplicate": document_scores,
-        "exact_duplicate": exact_scores,
-        "reference_duplicate": reference_scores,
-        "near_duplicate": near_scores,
-        "split_duplicate": split_scores,
-        "o2c_offset_duplicate": o2c_offset_scores,
-        "ic_split_duplicate": ic_split_scores,
-    }, index=df.index)
+    score_frame = pd.DataFrame(
+        {
+            "document_duplicate": document_scores,
+            "exact_duplicate": exact_scores,
+            "reference_duplicate": reference_scores,
+            "near_duplicate": near_scores,
+            "split_duplicate": split_scores,
+            "o2c_offset_duplicate": o2c_offset_scores,
+            "ic_split_duplicate": ic_split_scores,
+        },
+        index=df.index,
+    )
     confidence = score_frame.max(axis=1).fillna(0.0)
     result = confidence > 0
     score_series = _score_l203_duplicate_entries(df, result, confidence, score_frame)
@@ -721,6 +786,7 @@ def _aggregate_and_case(
     summary: dict[str, Any],
     cache_path: Path | None = None,
     stop_after_cache: bool = False,
+    batch_id: str = "datasynth_v126_profiled_phase1",
 ) -> pd.DataFrame:
     t0 = time.perf_counter()
     _log("aggregate start")
@@ -730,9 +796,10 @@ def _aggregate_and_case(
     summary["stages"]["aggregate"] = {
         "elapsed_sec": _elapsed(t0),
         "risk_summary": {
-            str(k): int(v)
-            for k, v in df["risk_level"].value_counts().to_dict().items()
-        } if "risk_level" in df.columns else {},
+            str(k): int(v) for k, v in df["risk_level"].value_counts().to_dict().items()
+        }
+        if "risk_level" in df.columns
+        else {},
     }
     _write_checkpoint(checkpoint, summary)
     _log(f"aggregate done: {summary['stages']['aggregate']}")
@@ -761,6 +828,7 @@ def _aggregate_and_case(
         data_dir=data_dir,
         checkpoint=checkpoint,
         summary=summary,
+        batch_id=batch_id,
     )
     return df
 
@@ -772,6 +840,7 @@ def _run_case_builder_only(
     data_dir: Path,
     checkpoint: Path,
     summary: dict[str, Any],
+    batch_id: str = "datasynth_v126_profiled_phase1",
 ) -> Phase1CaseResult:
     t0 = time.perf_counter()
     _log("phase1 case builder start")
@@ -779,7 +848,7 @@ def _run_case_builder_only(
         df,
         results,
         company_id="_anonymous",
-        batch_id="datasynth_v126_profiled_phase1",
+        batch_id=batch_id,
         dataset_id=str(data_dir),
         phase1_case_config={"phase1_case": {}},
         checkpoint=checkpoint,
@@ -873,6 +942,7 @@ def _profile_phase1_case_builder(
     )
 
     t0 = time.perf_counter()
+
     def _raw_hit_step(step_name: str, payload: dict[str, Any]) -> None:
         summary["stages"]["phase1_case_builder_steps"][step_name] = payload
         _write_checkpoint(checkpoint, summary)
@@ -894,6 +964,7 @@ def _profile_phase1_case_builder(
     )
 
     t0 = time.perf_counter()
+
     def _case_step(step_name: str, payload: dict[str, Any]) -> None:
         summary["stages"]["phase1_case_builder_steps"][step_name] = payload
         _write_checkpoint(checkpoint, summary)
@@ -980,7 +1051,9 @@ def _evaluate_manipulated(
     _log("manipulated eval start")
     truth = pd.read_csv(truth_path, dtype=str, low_memory=False)
     truth_docs = set(truth["document_id"].dropna().astype(str).unique())
-    score = pd.to_numeric(df.get("anomaly_score", pd.Series(0.0, index=df.index)), errors="coerce").fillna(0.0)
+    score = pd.to_numeric(
+        df.get("anomaly_score", pd.Series(0.0, index=df.index)), errors="coerce"
+    ).fillna(0.0)
     score_docs = set(df.loc[score.gt(0), "document_id"].dropna().astype(str).unique())
     risk_doc_counts: dict[str, int] = {}
     risk_truth_counts: dict[str, int] = {}
@@ -1004,13 +1077,15 @@ def _evaluate_manipulated(
     if scenario_col in truth.columns:
         for scenario, group in truth.groupby(scenario_col):
             docs = set(group["document_id"].dropna().astype(str).unique())
-            scenarios.append({
-                "scenario": str(scenario),
-                "total": len(docs),
-                "score_gt0": len(docs & score_docs),
-                "rule_or_review_hit": len(docs & rule_docs),
-                "miss_score_gt0": len(docs - score_docs),
-            })
+            scenarios.append(
+                {
+                    "scenario": str(scenario),
+                    "total": len(docs),
+                    "score_gt0": len(docs & score_docs),
+                    "rule_or_review_hit": len(docs & rule_docs),
+                    "miss_score_gt0": len(docs - score_docs),
+                }
+            )
 
     summary["stages"]["manipulated_eval"] = {
         "elapsed_sec": _elapsed(t0),
@@ -1045,41 +1120,43 @@ def _evaluate_manipulated_cases(
     top_case_capture = []
     for top_n in top_ns:
         docs = _case_documents(phase1_result.cases[:top_n])
-        top_case_capture.append({
-            "top_n_cases": top_n,
-            "case_docs": len(docs),
-            "truth_docs": len(docs & truth_docs),
-        })
+        top_case_capture.append(
+            {
+                "top_n_cases": top_n,
+                "case_docs": len(docs),
+                "truth_docs": len(docs & truth_docs),
+            }
+        )
 
     band_capture = []
     for band in ("high", "medium", "low"):
         band_cases = [case for case in phase1_result.cases if case.priority_band == band]
         docs = _case_documents(band_cases)
-        band_capture.append({
-            "priority_band": band,
-            "case_count": len(band_cases),
-            "case_docs": len(docs),
-            "truth_docs": len(docs & truth_docs),
-        })
+        band_capture.append(
+            {
+                "priority_band": band,
+                "case_count": len(band_cases),
+                "case_docs": len(docs),
+                "truth_docs": len(docs & truth_docs),
+            }
+        )
 
     top_truth_cases = []
     for case in phase1_result.cases:
-        docs = {
-            hit.document_id
-            for hit in case.raw_rule_hits
-            if hit.document_id in truth_docs
-        }
+        docs = {hit.document_id for hit in case.raw_rule_hits if hit.document_id in truth_docs}
         if not docs:
             continue
-        top_truth_cases.append({
-            "rank": int(case.exposure_rank or 0),
-            "case_id": case.case_id,
-            "priority_band": case.priority_band,
-            "priority_score": float(case.priority_score),
-            "primary_theme": case.primary_theme,
-            "truth_docs": len(docs),
-            "documents": sorted(docs)[:10],
-        })
+        top_truth_cases.append(
+            {
+                "rank": int(case.exposure_rank or 0),
+                "case_id": case.case_id,
+                "priority_band": case.priority_band,
+                "priority_score": float(case.priority_score),
+                "primary_theme": case.primary_theme,
+                "truth_docs": len(docs),
+                "documents": sorted(docs)[:10],
+            }
+        )
         if len(top_truth_cases) >= 20:
             break
 
@@ -1097,11 +1174,7 @@ def _evaluate_manipulated_cases(
 def _case_documents(cases) -> set[str]:
     docs: set[str] = set()
     for case in cases:
-        docs.update(
-            hit.document_id
-            for hit in case.raw_rule_hits
-            if hit.document_id
-        )
+        docs.update(hit.document_id for hit in case.raw_rule_hits if hit.document_id)
     return docs
 
 
@@ -1132,6 +1205,12 @@ def main() -> int:
         action="store_true",
         help="Skip ingest/features/detectors/aggregate and profile only the case builder.",
     )
+    parser.add_argument(
+        "--batch-id",
+        type=str,
+        default="datasynth_v126_profiled_phase1",
+        help="batch_id embedded in case artifact filename (distinguishes datasets in multi-dataset audits)",
+    )
     args = parser.parse_args()
 
     total_start = time.perf_counter()
@@ -1161,6 +1240,7 @@ def main() -> int:
             data_dir=data_dir,
             checkpoint=args.checkpoint,
             summary=summary,
+            batch_id=args.batch_id,
         )
         _evaluate_manipulated(df, data_dir=data_dir, checkpoint=args.checkpoint, summary=summary)
         summary["total_elapsed_sec"] = _elapsed(total_start)
@@ -1204,6 +1284,7 @@ def main() -> int:
         summary=summary,
         cache_path=args.cache_path,
         stop_after_cache=args.stop_after_cache,
+        batch_id=args.batch_id,
     )
     if args.stop_after_cache:
         summary["total_elapsed_sec"] = _elapsed(total_start)

@@ -1,0 +1,7 @@
+manipulation_scenario,High,Low,Medium,Normal
+approval_sod_bypass,20,9,0,0
+circular_related_party_transaction,0,7,0,27
+embezzlement_concealment,16,2,0,58
+fictitious_entry,49,2,8,109
+period_end_adjustment_manipulation,72,19,1,0
+unusual_timing_manipulation,21,0,0,0

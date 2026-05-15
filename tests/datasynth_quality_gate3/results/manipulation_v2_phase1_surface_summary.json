@@ -1,0 +1,16 @@
+{
+  "dataset": "data\\journal\\primary\\datasynth_manipulation_v2",
+  "phase1_cache": "artifacts\\phase1_manipulation_v2_case_input_20260514.pkl",
+  "truth_docs": 420,
+  "truth_rows_in_phase1": 1111,
+  "truth_docs_in_phase1": 420,
+  "doc_risk_counts": {
+    "High": 178,
+    "Low": 39,
+    "Medium": 9,
+    "Normal": 194
+  },
+  "docs_with_flagged_rules": 381,
+  "docs_with_review_rules": 209,
+  "note": "Manipulation truth is not a Phase1 rule contract; this is surface coverage only."
+}

@@ -1,0 +1,15 @@
+{
+  "approval_gap_rows": 363,
+  "approval_gap_docs": 142,
+  "limit_exceeded_rows": 276,
+  "limit_exceeded_docs": 107,
+  "union_docs": 193,
+  "union_truth_docs": 193,
+  "union_nontruth_docs": 0,
+  "truth_scenarios_in_union": {
+    "period_end_adjustment_manipulation": 92,
+    "fictitious_entry": 51,
+    "approval_sod_bypass": 29,
+    "unusual_timing_manipulation": 21
+  }
+}

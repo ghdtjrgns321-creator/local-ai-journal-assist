@@ -1,13 +1,13 @@
 # DataSynth E2E 테스트 결과 (ingest → feature)
 
-> 실행일: 2026-05-08 19:22
+> 실행일: 2026-05-10 16:24
 
 ## 1. 요약
 
 | 항목           | 값                          |
 |:---------------|:----------------------------|
 | 입력 행수      | 1,109,435               |
-| 소요시간       | 36.75s              |
+| 소요시간       | 37.91s              |
 | 생성 피처      | 39/18 |
 | 카테고리 실행  | time, amount, pattern, text |
 
@@ -22,22 +22,22 @@
 | fiscal_period_mismatch  | boolean |      0.0 |      2 |               |
 | is_holiday              | bool    |      0.0 |      2 | True 5.0%     |
 | time_zone_category      | object  |      0.0 |      4 |               |
-| is_near_threshold       | bool    |      0.0 |      1 | True 0.0%     |
+| is_near_threshold       | bool    |      0.0 |      2 | True 0.1%     |
 | near_threshold_amount   | float64 |      0.0 | 260581 | [0.0, 100000000000.0] |
-| near_threshold_limit_amount | float64 |    100.0 |      0 | 전체 NaN        |
-| near_threshold_limit_resolved | bool    |      0.0 |      1 | True 0.0%     |
-| near_threshold_ratio_to_limit | float64 |    100.0 |      0 | 전체 NaN        |
-| near_threshold_gap_amount | float64 |    100.0 |      0 | 전체 NaN        |
-| near_threshold_gap_ratio | float64 |    100.0 |      0 | 전체 NaN        |
-| near_threshold_bucket   | object  |      0.0 |      1 |               |
-| exceeds_threshold       | bool    |      0.0 |      1 | True 0.0%     |
+| near_threshold_limit_amount | float64 |     24.0 |      6 | [10000000.0, 50000000000.0] |
+| near_threshold_limit_resolved | bool    |      0.0 |      2 | True 76.0%    |
+| near_threshold_ratio_to_limit | float64 |     24.0 | 218113 | [0.0, 3.3]    |
+| near_threshold_gap_amount | float64 |     24.0 | 218158 | [-50000000000.0, 50000000000.0] |
+| near_threshold_gap_ratio | float64 |     24.0 | 218113 | [-2.3, 1.0]   |
+| near_threshold_bucket   | object  |      0.0 |      5 |               |
+| exceeds_threshold       | bool    |      0.0 |      2 | True 0.0%     |
 | document_approval_amount | float64 |      0.0 | 260581 | [0.0, 100000000000.0] |
-| approver_limit_amount   | float64 |    100.0 |      0 | 전체 NaN        |
-| approval_limit_resolved | bool    |      0.0 |      1 | True 0.0%     |
-| approver_can_approve_je | boolean |    100.0 |      0 |               |
-| approval_excess_amount  | float64 |      0.0 |      1 | [0.0, 0.0]    |
-| approval_excess_ratio   | float64 |    100.0 |      0 | 전체 NaN        |
-| approval_excess_bucket  | object  |      0.0 |      1 |               |
+| approver_limit_amount   | float64 |     24.0 |      6 | [10000000.0, 50000000000.0] |
+| approval_limit_resolved | bool    |      0.0 |      2 | True 76.0%    |
+| approver_can_approve_je | boolean |     24.0 |      1 |               |
+| approval_excess_amount  | float64 |      0.0 |     10 | [0.0, 50000000000.0] |
+| approval_excess_ratio   | float64 |    100.0 |      6 | [0.1, 2.3]    |
+| approval_excess_bucket  | object  |      0.0 |      5 |               |
 | amount_zscore           | float64 |      0.0 | 1031658 | [-1.607810105367811, 103.09223464499284] |
 | amount_magnitude        | float64 |      0.0 | 501479 | [0.0, 11.000000000004343] |
 | is_round_number         | bool    |      0.0 |      2 | True 0.1%     |
@@ -57,29 +57,20 @@
 
 ## 3. 분석
 
-### 코드 버그 (조사 필요)
+### 코드 버그
 
-- **near_threshold_limit_amount**: 전체 NaN — 입력 데이터 또는 로직 확인 필요
-- **near_threshold_ratio_to_limit**: 전체 NaN — 입력 데이터 또는 로직 확인 필요
-- **near_threshold_gap_amount**: 전체 NaN — 입력 데이터 또는 로직 확인 필요
-- **near_threshold_gap_ratio**: 전체 NaN — 입력 데이터 또는 로직 확인 필요
-- **approver_limit_amount**: 전체 NaN — 입력 데이터 또는 로직 확인 필요
-- **approver_can_approve_je**: 전체 NaN — 입력 데이터 또는 로직 확인 필요
-- **approval_excess_ratio**: 전체 NaN — 입력 데이터 또는 로직 확인 필요
+없음.
 
 ### 데이터 특성 (코드 정상, 데이터에 해당 패턴 부재)
 
-- `is_near_threshold`: all-False
-- `near_threshold_limit_resolved`: all-False
-- `exceeds_threshold`: all-False
-- `approval_limit_resolved`: all-False
+- `approver_can_approve_je`: all-<NA>
 
 ## 4. 카테고리별 성능
 
 | 카테고리 | 상태   | 소요시간(s) | 피처 수 |
 |:---------|:------:|------------:|--------:|
-| time     | 성공     |      1.359 |       7 |
-| amount   | 성공     |      3.204 |      19 |
-| pattern  | 성공     |      3.953 |       5 |
-| text     | 성공     |     28.234 |       8 |
-| **합계** |        |     36.750 |      39 |
+| time     | 성공     |      1.406 |       7 |
+| amount   | 성공     |      4.016 |      19 |
+| pattern  | 성공     |      3.984 |       5 |
+| text     | 성공     |     28.500 |       8 |
+| **합계** |        |     37.906 |      39 |

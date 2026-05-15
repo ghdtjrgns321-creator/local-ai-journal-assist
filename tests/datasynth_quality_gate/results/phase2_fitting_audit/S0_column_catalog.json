@@ -1,0 +1,736 @@
+{
+  "dataset": "data/journal/primary/datasynth_manipulation_v3/journal_entries.csv",
+  "truth_path": "data/journal/primary/datasynth_manipulation_v3/labels/manipulated_entry_truth.csv",
+  "n_rows": 1077767,
+  "n_columns": 53,
+  "manipulated_row_count": 1111,
+  "manipulated_row_prevalence": 0.0010308350506185475,
+  "columns": [
+    {
+      "column": "document_id",
+      "dtype": "object",
+      "null_rate": 0.0,
+      "distinct_count": 317997,
+      "sample_values": [
+        "39d5140b-8aa0-49e7-a1b1-d9e9b08acba1",
+        "188b2500-81d9-4ec8-988e-89668a488e83",
+        "7b69f320-9c2e-4f25-b3f5-79f051dd6fb0"
+      ],
+      "auroc_vs_manipulated": 1.0,
+      "category": "A_label_leak",
+      "reasoning": "AUROC=1.0000 ≥ 0.95 → 단일 컬럼으로 라벨을 거의 복원, 누수 의심"
+    },
+    {
+      "column": "company_code",
+      "dtype": "object",
+      "null_rate": 0.0,
+      "distinct_count": 3,
+      "sample_values": [
+        "C001",
+        "C002",
+        "C003"
+      ],
+      "auroc_vs_manipulated": 0.5226551898513624,
+      "category": "D_identifier_structure",
+      "reasoning": "도메인: PK/FK/fiscal 좌표/free-form 텍스트는 ML 피처가 아닌 구조 컬럼"
+    },
+    {
+      "column": "fiscal_year",
+      "dtype": "int64",
+      "null_rate": 0.0,
+      "distinct_count": 3,
+      "sample_values": [
+        "2022",
+        "2023",
+        "2024"
+      ],
+      "auroc_vs_manipulated": 0.530521896323692,
+      "category": "D_identifier_structure",
+      "reasoning": "도메인: PK/FK/fiscal 좌표/free-form 텍스트는 ML 피처가 아닌 구조 컬럼"
+    },
+    {
+      "column": "fiscal_period",
+      "dtype": "int64",
+      "null_rate": 0.0,
+      "distinct_count": 12,
+      "sample_values": [
+        "3",
+        "6",
+        "11"
+      ],
+      "auroc_vs_manipulated": 0.5337925275508187,
+      "category": "D_identifier_structure",
+      "reasoning": "도메인: PK/FK/fiscal 좌표/free-form 텍스트는 ML 피처가 아닌 구조 컬럼"
+    },
+    {
+      "column": "posting_date",
+      "dtype": "datetime64[us]",
+      "null_rate": 0.0,
+      "distinct_count": 315988,
+      "sample_values": [
+        "2022-03-11 16:51:08",
+        "2023-06-28 13:29:55",
+        "2022-06-22 15:26:36"
+      ],
+      "auroc_vs_manipulated": 0.5302445963265986,
+      "category": "C_ml_feature_candidate",
+      "reasoning": "AUROC=0.5302, null_rate=0.0000, distinct=315988 → 일반 피처 후보"
+    },
+    {
+      "column": "document_date",
+      "dtype": "datetime64[us]",
+      "null_rate": 0.0,
+      "distinct_count": 1099,
+      "sample_values": [
+        "2022-03-11 00:00:00",
+        "2023-06-28 00:00:00",
+        "2022-06-22 00:00:00"
+      ],
+      "auroc_vs_manipulated": 0.5296769036550562,
+      "category": "C_ml_feature_candidate",
+      "reasoning": "AUROC=0.5297, null_rate=0.0000, distinct=1099 → 일반 피처 후보"
+    },
+    {
+      "column": "document_type",
+      "dtype": "object",
+      "null_rate": 0.0,
+      "distinct_count": 10,
+      "sample_values": [
+        "BK",
+        "AF",
+        "DR"
+      ],
+      "auroc_vs_manipulated": 0.7401469731910255,
+      "category": "C_ml_feature_candidate",
+      "reasoning": "AUROC=0.7401, null_rate=0.0000, distinct=10 → 일반 피처 후보"
+    },
+    {
+      "column": "currency",
+      "dtype": "object",
+      "null_rate": 0.0,
+      "distinct_count": 1,
+      "sample_values": [
+        "KRW"
+      ],
+      "auroc_vs_manipulated": 0.5,
+      "category": "D_identifier_structure",
+      "reasoning": "distinct=1 → 상수 컬럼, 피처 가치 없음"
+    },
+    {
+      "column": "exchange_rate",
+      "dtype": "int64",
+      "null_rate": 0.0,
+      "distinct_count": 1,
+      "sample_values": [
+        "1"
+      ],
+      "auroc_vs_manipulated": 0.5,
+      "category": "D_identifier_structure",
+      "reasoning": "distinct=1 → 상수 컬럼, 피처 가치 없음"
+    },
+    {
+      "column": "reference",
+      "dtype": "object",
+      "null_rate": 0.018910395289519905,
+      "distinct_count": 70653,
+      "sample_values": [
+        "SO-C001-2022-000001",
+        "FA-C002-2023-000001",
+        "SO-C003-2022-000002"
+      ],
+      "auroc_vs_manipulated": 0.9989815521375441,
+      "category": "A_label_leak",
+      "reasoning": "AUROC=0.9990 ≥ 0.95 → 단일 컬럼으로 라벨을 거의 복원, 누수 의심"
+    },
+    {
+      "column": "header_text",
+      "dtype": "object",
+      "null_rate": 0.021337636056772937,
+      "distinct_count": 4584,
+      "sample_values": [
+        "고객 대금 수금 - legacy batch",
+        "상각비 계상",
+        "고객 매출 청구 / C003"
+      ],
+      "auroc_vs_manipulated": 1.0,
+      "category": "A_label_leak",
+      "reasoning": "AUROC=1.0000 ≥ 0.95 → 단일 컬럼으로 라벨을 거의 복원, 누수 의심"
+    },
+    {
+      "column": "created_by",
+      "dtype": "object",
+      "null_rate": 0.0,
+      "distinct_count": 200,
+      "sample_values": [
+        "PMARTI050",
+        "NSILVA044",
+        "FESPIN033"
+      ],
+      "auroc_vs_manipulated": 0.819860695936069,
+      "category": "C_ml_feature_candidate",
+      "reasoning": "AUROC=0.8199, null_rate=0.0000, distinct=200 → 일반 피처 후보"
+    },
+    {
+      "column": "user_persona",
+      "dtype": "object",
+      "null_rate": 0.0,
+      "distinct_count": 13,
+      "sample_values": [
+        "junior_accountant",
+        "controller",
+        "junior accountant"
+      ],
+      "auroc_vs_manipulated": 0.5823684225468809,
+      "category": "C_ml_feature_candidate",
+      "reasoning": "AUROC=0.5824, null_rate=0.0000, distinct=13 → 일반 피처 후보"
+    },
+    {
+      "column": "source",
+      "dtype": "object",
+      "null_rate": 0.0,
+      "distinct_count": 4,
+      "sample_values": [
+        "adjustment",
+        "recurring",
+        "automated"
+      ],
+      "auroc_vs_manipulated": 0.9198026954840643,
+      "category": "C_ml_feature_candidate",
+      "reasoning": "AUROC=0.9198, null_rate=0.0000, distinct=4 → 일반 피처 후보"
+    },
+    {
+      "column": "business_process",
+      "dtype": "object",
+      "null_rate": 0.0,
+      "distinct_count": 7,
+      "sample_values": [
+        "O2C",
+        "A2R",
+        "R2R"
+      ],
+      "auroc_vs_manipulated": 0.6937178860308495,
+      "category": "C_ml_feature_candidate",
+      "reasoning": "AUROC=0.6937, null_rate=0.0000, distinct=7 → 일반 피처 후보"
+    },
+    {
+      "column": "semantic_scenario_id",
+      "dtype": "object",
+      "null_rate": 0.0,
+      "distinct_count": 12,
+      "sample_values": [
+        "O2C_CASH_RECEIPT",
+        "A2R_DEPRECIATION",
+        "O2C_CUSTOMER_INVOICE"
+      ],
+      "auroc_vs_manipulated": 0.6288898030085512,
+      "category": "A_label_leak",
+      "reasoning": "도메인: mutation/scenario 메타는 manipulated 행에만 채워지는 truth 라벨 사이드카"
+    },
+    {
+      "column": "counterparty_type",
+      "dtype": "object",
+      "null_rate": 0.0,
+      "distinct_count": 13,
+      "sample_values": [
+        "Customer",
+        "InternalDepartment",
+        "VendorRawMaterial"
+      ],
+      "auroc_vs_manipulated": 0.7972425018225918,
+      "category": "C_ml_feature_candidate",
+      "reasoning": "AUROC=0.7972, null_rate=0.0000, distinct=13 → 일반 피처 후보"
+    },
+    {
+      "column": "ledger",
+      "dtype": "object",
+      "null_rate": 0.0,
+      "distinct_count": 1,
+      "sample_values": [
+        "0L"
+      ],
+      "auroc_vs_manipulated": 0.5,
+      "category": "D_identifier_structure",
+      "reasoning": "도메인: PK/FK/fiscal 좌표/free-form 텍스트는 ML 피처가 아닌 구조 컬럼"
+    },
+    {
+      "column": "mutation_base_event_type",
+      "dtype": "object",
+      "null_rate": 0.0,
+      "distinct_count": 12,
+      "sample_values": [
+        "O2C_CASH_RECEIPT",
+        "A2R_DEPRECIATION",
+        "O2C_CUSTOMER_INVOICE"
+      ],
+      "auroc_vs_manipulated": 0.6288898030085512,
+      "category": "A_label_leak",
+      "reasoning": "도메인: mutation/scenario 메타는 manipulated 행에만 채워지는 truth 라벨 사이드카"
+    },
+    {
+      "column": "mutation_type",
+      "dtype": "object",
+      "null_rate": 0.9942204576684942,
+      "distinct_count": 50,
+      "sample_values": [
+        "RoundDollarManipulation",
+        "LatePosting",
+        "ReversedAmount"
+      ],
+      "auroc_vs_manipulated": 1.0,
+      "category": "A_label_leak",
+      "reasoning": "도메인: mutation/scenario 메타는 manipulated 행에만 채워지는 truth 라벨 사이드카"
+    },
+    {
+      "column": "mutation_mutated_field",
+      "dtype": "object",
+      "null_rate": 0.9942204576684942,
+      "distinct_count": 5,
+      "sample_values": [
+        "semantic_surface",
+        "substantive_cash_leakage",
+        "substantive_fictitious_revenue_distribution"
+      ],
+      "auroc_vs_manipulated": 1.0,
+      "category": "A_label_leak",
+      "reasoning": "도메인: mutation/scenario 메타는 manipulated 행에만 채워지는 truth 라벨 사이드카"
+    },
+    {
+      "column": "mutation_original_value",
+      "dtype": "object",
+      "null_rate": 0.9942204576684942,
+      "distinct_count": 13,
+      "sample_values": [
+        "R2R_ACCRUAL",
+        "R2R_REVERSAL",
+        "O2C_CUSTOMER_INVOICE"
+      ],
+      "auroc_vs_manipulated": 1.0,
+      "category": "A_label_leak",
+      "reasoning": "도메인: mutation/scenario 메타는 manipulated 행에만 채워지는 truth 라벨 사이드카"
+    },
+    {
+      "column": "mutation_mutated_value",
+      "dtype": "object",
+      "null_rate": 0.9942204576684942,
+      "distinct_count": 50,
+      "sample_values": [
+        "RoundDollarManipulation",
+        "LatePosting",
+        "ReversedAmount"
+      ],
+      "auroc_vs_manipulated": 1.0,
+      "category": "A_label_leak",
+      "reasoning": "도메인: mutation/scenario 메타는 manipulated 행에만 채워지는 truth 라벨 사이드카"
+    },
+    {
+      "column": "mutation_reason",
+      "dtype": "object",
+      "null_rate": 0.9942204576684942,
+      "distinct_count": 50,
+      "sample_values": [
+        "Legacy abnormal injection exported as mutation provenance: RoundDollarManipulation",
+        "Legacy abnormal injection exported as mutation provenance: LatePosting",
+        "Legacy abnormal injection exported as mutation provenance: ReversedAmount"
+      ],
+      "auroc_vs_manipulated": 1.0,
+      "category": "A_label_leak",
+      "reasoning": "도메인: mutation/scenario 메타는 manipulated 행에만 채워지는 truth 라벨 사이드카"
+    },
+    {
+      "column": "detection_surface_hints",
+      "dtype": "object",
+      "null_rate": 0.9989691649493815,
+      "distinct_count": 6,
+      "sample_values": [
+        "embezzlement_concealment",
+        "fictitious_entry",
+        "period_end_adjustment_manipulation"
+      ],
+      "auroc_vs_manipulated": 1.0,
+      "category": "A_label_leak",
+      "reasoning": "도메인: mutation/scenario 메타는 manipulated 행에만 채워지는 truth 라벨 사이드카"
+    },
+    {
+      "column": "approved_by",
+      "dtype": "object",
+      "null_rate": 0.0,
+      "distinct_count": 113,
+      "sample_values": [
+        "JSCOTT049",
+        "RCHATT034",
+        "NDAVIS006"
+      ],
+      "auroc_vs_manipulated": 0.7401027602202939,
+      "category": "C_ml_feature_candidate",
+      "reasoning": "AUROC=0.7401, null_rate=0.0000, distinct=113 → 일반 피처 후보"
+    },
+    {
+      "column": "approval_date",
+      "dtype": "datetime64[us]",
+      "null_rate": 6.587694742926811e-05,
+      "distinct_count": 1105,
+      "sample_values": [
+        "2023-06-28 00:00:00",
+        "2022-06-23 00:00:00",
+        "2023-11-01 00:00:00"
+      ],
+      "auroc_vs_manipulated": 0.5024882775017184,
+      "category": "C_ml_feature_candidate",
+      "reasoning": "AUROC=0.5025, null_rate=0.0001, distinct=1105 → 일반 피처 후보"
+    },
+    {
+      "column": "sod_violation",
+      "dtype": "bool",
+      "null_rate": 0.0,
+      "distinct_count": 2,
+      "sample_values": [
+        "False",
+        "True"
+      ],
+      "auroc_vs_manipulated": 0.5000009288017715,
+      "category": "C_ml_feature_candidate",
+      "reasoning": "AUROC=0.5000, null_rate=0.0000, distinct=2 → 일반 피처 후보"
+    },
+    {
+      "column": "sod_conflict_type",
+      "dtype": "object",
+      "null_rate": 0.99999814431134,
+      "distinct_count": 1,
+      "sample_values": [
+        "CompatibilitySidecarOnly"
+      ],
+      "auroc_vs_manipulated": 0.5000009288017715,
+      "category": "A_label_leak",
+      "reasoning": "null_rate=1.0000 가 정상행 비율 0.9990 와 거의 일치 → manipulated 행에만 채워지는 라벨 사이드카 의심 (보수 분류)"
+    },
+    {
+      "column": "has_attachment",
+      "dtype": "bool",
+      "null_rate": 0.0,
+      "distinct_count": 2,
+      "sample_values": [
+        "True",
+        "False"
+      ],
+      "auroc_vs_manipulated": 0.547380531714285,
+      "category": "C_ml_feature_candidate",
+      "reasoning": "AUROC=0.5474, null_rate=0.0000, distinct=2 → 일반 피처 후보"
+    },
+    {
+      "column": "supporting_doc_type",
+      "dtype": "object",
+      "null_rate": 0.4111872046555517,
+      "distinct_count": 8,
+      "sample_values": [
+        "기타증빙",
+        "세금계산서",
+        "내부결의서"
+      ],
+      "auroc_vs_manipulated": 0.5893783825355384,
+      "category": "C_ml_feature_candidate",
+      "reasoning": "AUROC=0.5894, null_rate=0.4112, distinct=8 → 일반 피처 후보"
+    },
+    {
+      "column": "delivery_date",
+      "dtype": "datetime64[us]",
+      "null_rate": 0.9999331952082408,
+      "distinct_count": 24,
+      "sample_values": [
+        "2022-06-07 00:00:00",
+        "2023-10-02 00:00:00",
+        "2024-06-17 00:00:00"
+      ],
+      "auroc_vs_manipulated": 0.5000334368637708,
+      "category": "A_label_leak",
+      "reasoning": "null_rate=0.9999 가 정상행 비율 0.9990 와 거의 일치 → manipulated 행에만 채워지는 라벨 사이드카 의심 (보수 분류)"
+    },
+    {
+      "column": "invoice_amount",
+      "dtype": "int64",
+      "null_rate": 0.0,
+      "distinct_count": 269638,
+      "sample_values": [
+        "2993623",
+        "38000",
+        "8221400"
+      ],
+      "auroc_vs_manipulated": 0.8931926877541598,
+      "category": "C_ml_feature_candidate",
+      "reasoning": "AUROC=0.8932, null_rate=0.0000, distinct=269638 → 일반 피처 후보"
+    },
+    {
+      "column": "supply_amount",
+      "dtype": "int64",
+      "null_rate": 0.0,
+      "distinct_count": 267427,
+      "sample_values": [
+        "2993623",
+        "38000",
+        "7474000"
+      ],
+      "auroc_vs_manipulated": 0.893624178459367,
+      "category": "C_ml_feature_candidate",
+      "reasoning": "AUROC=0.8936, null_rate=0.0000, distinct=267427 → 일반 피처 후보"
+    },
+    {
+      "column": "ip_address",
+      "dtype": "object",
+      "null_rate": 0.0,
+      "distinct_count": 150707,
+      "sample_values": [
+        "10.1.202.228",
+        "10.2.230.210",
+        "10.3.170.55"
+      ],
+      "auroc_vs_manipulated": 0.9824358635875476,
+      "category": "A_label_leak",
+      "reasoning": "AUROC=0.9824 ≥ 0.95 → 단일 컬럼으로 라벨을 거의 복원, 누수 의심"
+    },
+    {
+      "column": "document_number",
+      "dtype": "object",
+      "null_rate": 0.0,
+      "distinct_count": 317997,
+      "sample_values": [
+        "C001-2022-005804",
+        "C002-2023-016713",
+        "C003-2022-015356"
+      ],
+      "auroc_vs_manipulated": 1.0,
+      "category": "A_label_leak",
+      "reasoning": "AUROC=1.0000 ≥ 0.95 → 단일 컬럼으로 라벨을 거의 복원, 누수 의심"
+    },
+    {
+      "column": "line_number",
+      "dtype": "int64",
+      "null_rate": 0.0,
+      "distinct_count": 998,
+      "sample_values": [
+        "1",
+        "2",
+        "3"
+      ],
+      "auroc_vs_manipulated": 0.610694281196781,
+      "category": "D_identifier_structure",
+      "reasoning": "도메인: PK/FK/fiscal 좌표/free-form 텍스트는 ML 피처가 아닌 구조 컬럼"
+    },
+    {
+      "column": "gl_account",
+      "dtype": "Int64",
+      "null_rate": 8.443383402906194e-05,
+      "distinct_count": 281,
+      "sample_values": [
+        "100070",
+        "100190",
+        "500800"
+      ],
+      "auroc_vs_manipulated": 0.6822887093679572,
+      "category": "C_ml_feature_candidate",
+      "reasoning": "AUROC=0.6823, null_rate=0.0001, distinct=281 → 일반 피처 후보"
+    },
+    {
+      "column": "debit_amount",
+      "dtype": "int64",
+      "null_rate": 0.0,
+      "distinct_count": 355926,
+      "sample_values": [
+        "2993623",
+        "0",
+        "9836"
+      ],
+      "auroc_vs_manipulated": 0.5518804525680013,
+      "category": "C_ml_feature_candidate",
+      "reasoning": "AUROC=0.5519, null_rate=0.0000, distinct=355926 → 일반 피처 후보"
+    },
+    {
+      "column": "credit_amount",
+      "dtype": "int64",
+      "null_rate": 0.0,
+      "distinct_count": 373444,
+      "sample_values": [
+        "0",
+        "2993623",
+        "24944"
+      ],
+      "auroc_vs_manipulated": 0.5494396919295443,
+      "category": "C_ml_feature_candidate",
+      "reasoning": "AUROC=0.5494, null_rate=0.0000, distinct=373444 → 일반 피처 후보"
+    },
+    {
+      "column": "local_amount",
+      "dtype": "int64",
+      "null_rate": 0.0,
+      "distinct_count": 503365,
+      "sample_values": [
+        "2993623",
+        "9836",
+        "28164"
+      ],
+      "auroc_vs_manipulated": 0.7889464034360963,
+      "category": "C_ml_feature_candidate",
+      "reasoning": "AUROC=0.7889, null_rate=0.0000, distinct=503365 → 일반 피처 후보"
+    },
+    {
+      "column": "cost_center",
+      "dtype": "object",
+      "null_rate": 0.6739731314838922,
+      "distinct_count": 273,
+      "sample_values": [
+        "CC1000",
+        "CC2000",
+        "CC3000"
+      ],
+      "auroc_vs_manipulated": 0.5231789324758069,
+      "category": "C_ml_feature_candidate",
+      "reasoning": "AUROC=0.5232, null_rate=0.6740, distinct=273 → 일반 피처 후보"
+    },
+    {
+      "column": "profit_center",
+      "dtype": "object",
+      "null_rate": 0.0,
+      "distinct_count": 18,
+      "sample_values": [
+        "PC-C001-O2C",
+        "PC-C002-A2R",
+        "PC-C003-O2C"
+      ],
+      "auroc_vs_manipulated": 0.6316060599628939,
+      "category": "C_ml_feature_candidate",
+      "reasoning": "AUROC=0.6316, null_rate=0.0000, distinct=18 → 일반 피처 후보"
+    },
+    {
+      "column": "line_text",
+      "dtype": "object",
+      "null_rate": 0.02078928005774903,
+      "distinct_count": 5701,
+      "sample_values": [
+        "매출채권 회수 [BK]",
+        "고객 입금 반제",
+        "C002:감가상각누계액"
+      ],
+      "auroc_vs_manipulated": 0.7051828880243539,
+      "category": "D_identifier_structure",
+      "reasoning": "도메인: PK/FK/fiscal 좌표/free-form 텍스트는 ML 피처가 아닌 구조 컬럼"
+    },
+    {
+      "column": "tax_code",
+      "dtype": "object",
+      "null_rate": 0.91629637945864,
+      "distinct_count": 2,
+      "sample_values": [
+        "TC-C001-0001",
+        "TC-C001-0002"
+      ],
+      "auroc_vs_manipulated": 0.5121972484935554,
+      "category": "C_ml_feature_candidate",
+      "reasoning": "AUROC=0.5122, null_rate=0.9163, distinct=2 → 일반 피처 후보"
+    },
+    {
+      "column": "tax_amount",
+      "dtype": "float64",
+      "null_rate": 0.91629637945864,
+      "distinct_count": 69651,
+      "sample_values": [
+        "747400.0",
+        "547436.1",
+        "218983.1"
+      ],
+      "auroc_vs_manipulated": 0.5276353091629474,
+      "category": "C_ml_feature_candidate",
+      "reasoning": "AUROC=0.5276, null_rate=0.9163, distinct=69651 → 일반 피처 후보"
+    },
+    {
+      "column": "trading_partner",
+      "dtype": "object",
+      "null_rate": 0.13580207967028124,
+      "distinct_count": 3526,
+      "sample_values": [
+        "C-000212",
+        "DEPT-001",
+        "C-000378"
+      ],
+      "auroc_vs_manipulated": 0.8021311492077862,
+      "category": "C_ml_feature_candidate",
+      "reasoning": "AUROC=0.8021, null_rate=0.1358, distinct=3526 → 일반 피처 후보"
+    },
+    {
+      "column": "auxiliary_account_number",
+      "dtype": "object",
+      "null_rate": 0.13702312280854767,
+      "distinct_count": 3450,
+      "sample_values": [
+        "C-000212",
+        "DEPT-001",
+        "C-000378"
+      ],
+      "auroc_vs_manipulated": 0.8093462126209203,
+      "category": "C_ml_feature_candidate",
+      "reasoning": "AUROC=0.8093, null_rate=0.1370, distinct=3450 → 일반 피처 후보"
+    },
+    {
+      "column": "auxiliary_account_label",
+      "dtype": "object",
+      "null_rate": 0.13697394705905822,
+      "distinct_count": 2720,
+      "sample_values": [
+        "(주)부동산개발 제3",
+        "내부부서",
+        "(유)유틸리티서비스 제3"
+      ],
+      "auroc_vs_manipulated": 0.7908697362153478,
+      "category": "C_ml_feature_candidate",
+      "reasoning": "AUROC=0.7909, null_rate=0.1370, distinct=2720 → 일반 피처 후보"
+    },
+    {
+      "column": "is_suspense_account",
+      "dtype": "bool",
+      "null_rate": 0.0,
+      "distinct_count": 2,
+      "sample_values": [
+        "False",
+        "True"
+      ],
+      "auroc_vs_manipulated": 0.5000055728106285,
+      "category": "C_ml_feature_candidate",
+      "reasoning": "AUROC=0.5000, null_rate=0.0000, distinct=2 → 일반 피처 후보"
+    },
+    {
+      "column": "amount_open",
+      "dtype": "Int64",
+      "null_rate": 0.9999888658680401,
+      "distinct_count": 12,
+      "sample_values": [
+        "20120555",
+        "2440000",
+        "6372008"
+      ],
+      "auroc_vs_manipulated": 0.5,
+      "category": "A_label_leak",
+      "reasoning": "null_rate=1.0000 가 정상행 비율 0.9990 와 거의 일치 → manipulated 행에만 채워지는 라벨 사이드카 의심 (보수 분류)"
+    },
+    {
+      "column": "is_cleared",
+      "dtype": "boolean",
+      "null_rate": 0.9999888658680401,
+      "distinct_count": 1,
+      "sample_values": [
+        "False"
+      ],
+      "auroc_vs_manipulated": 0.5,
+      "category": "A_label_leak",
+      "reasoning": "null_rate=1.0000 가 정상행 비율 0.9990 와 거의 일치 → manipulated 행에만 채워지는 라벨 사이드카 의심 (보수 분류)"
+    },
+    {
+      "column": "settlement_status",
+      "dtype": "object",
+      "null_rate": 0.9999888658680401,
+      "distinct_count": 1,
+      "sample_values": [
+        "open"
+      ],
+      "auroc_vs_manipulated": 0.5000055728106285,
+      "category": "A_label_leak",
+      "reasoning": "null_rate=1.0000 가 정상행 비율 0.9990 와 거의 일치 → manipulated 행에만 채워지는 라벨 사이드카 의심 (보수 분류)"
+    }
+  ]
+}

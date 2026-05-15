@@ -1,0 +1,36 @@
+{
+  "dataset": "data\\journal\\primary\\datasynth_manipulation_v3_rust_candidate_fast",
+  "status": "pass",
+  "failures": [],
+  "journal_rows": 1077767,
+  "year_rows": {
+    "2022": 360345,
+    "2023": 362292,
+    "2024": 355130
+  },
+  "truth_docs": 420,
+  "label_docs": 420,
+  "scenario_counts": {
+    "approval_sod_bypass": 29,
+    "circular_related_party_transaction": 34,
+    "embezzlement_concealment": 76,
+    "fictitious_entry": 168,
+    "period_end_adjustment_manipulation": 92,
+    "unusual_timing_manipulation": 21
+  },
+  "truth_by_year": {
+    "2022": 115,
+    "2023": 145,
+    "2024": 160
+  },
+  "forbidden_label_files": [],
+  "leakage_columns_present": [],
+  "missing_provenance_counts": {
+    "mutation_type": 0,
+    "mutation_reason": 0,
+    "mutation_base_event_type": 0,
+    "mutation_mutated_field": 0,
+    "mutation_original_value": 0,
+    "mutation_mutated_value": 0
+  }
+}
