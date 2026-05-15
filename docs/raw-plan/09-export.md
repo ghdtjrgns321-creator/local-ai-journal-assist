@@ -1,5 +1,7 @@
 # 09. 감사조서 내보내기 (Export) [Phase 3 — 의존: 06, 07, 08]
 
+> **🔄 Phase 3 v2 Rescope 안내 (2026-05-14) ✅ Narrator 구현 완료 (Sprint A~G, 2026-05-15)**: 본 문서 전체(Export Excel/PDF/감사증적 CSV, Audit Trail 기반 다운로드)는 Phase 3 v2 **비범위**다. WU-24 / WU-27 구현물은 보존하되 신규 작업·확장 없음. Phase 3 단일 목표는 [PHASE3_REVIEW_NARRATOR_SPEC.md](../PHASE3_REVIEW_NARRATOR_SPEC.md) (Review Queue Narrator)이며 Export는 별도 의사결정 시까지 동결. 완료 리포트 [completed/phase3_review_narrator_completion.md](../completed/phase3_review_narrator_completion.md).
+
 ## 목적
 
 분석 결과를 Excel/PDF 감사조서로 내보내고,

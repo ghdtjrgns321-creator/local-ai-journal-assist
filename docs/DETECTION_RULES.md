@@ -1,14 +1,15 @@
 # Detection Rules — 감사 검토 후보 선별 룰 전체 목록
 
 > **PHASE1 역할 원칙**: PHASE1은 `fraud`를 확정하거나 정답 라벨을 맞히는 단계가 아니다. PHASE1의 목적은 전수 모집단에서 규칙 위반, 정책 위반, 이상 징후, 분석적 검토 신호를 넓게 올려 **감사인이 봐야 할 항목과 우선순위**를 만드는 것이다. DataSynth의 `is_fraud`/`is_anomaly`와 precision/recall은 개발 검증 보조 지표이며, 운영 해석은 예외 처리 대상, 감사인 리뷰 대상, 고위험 후보를 구분하는 review queue 기준으로 한다.
+
 한국 감사기준서(240호, K-SOX, PCAOB AS 2401)를 근거로 도출한 전표 검토 후보 선별 룰의 단일 참조 문서.
 법규·기준서 근거는 [DETECTION_REFERENCE.md](DETECTION_REFERENCE.md) 참조.
 
-탐지 파이프라인은 **PHASE 1 (전수 필터/Recall) → PHASE 2 (스코어 보정/Precision) → PHASE 3 (의미 해석/Explainability)** 순서로 이어진다.
+탐지 파이프라인은 **PHASE 1 (전수 필터/Recall) → PHASE 2 (스코어 보정/Precision) → PHASE 3 (Review Queue Narrator)** 순서로 이어진다.
 
 - **PHASE 1**은 룰 기반 전수 필터다. 이 단계의 목적은 정답을 확정하는 것이 아니라, 1차로 규칙에 어긋난 항목을 가능한 한 모두 포착하는 것이다. 이후 중요성, 증거 강도, 정상 예외 가능성, 조합 신호를 기준으로 예외 처리 대상·리뷰 대상·진짜 위험 후보로 2차 분류한다.
 - **PHASE 2**는 PHASE 1을 대체하지 않고, case 단위 우선순위를 구조적·통계적 모델로 보정한다. 룰 ID 자체를 예측 feature로 쓰지 않는다.
-- **PHASE 3**는 전체 원천 전표를 무차별 분석하지 않고, 선별된 case에 대해 적요·계정·관계 맥락을 해석하고 감사인이 읽을 수 있는 근거 기반 narrative를 만든다.
+- **PHASE 3 (v2, 2026-05-14 rescope, ✅ 구현 완료 Sprint A~G 2026-05-15)**는 PHASE1 룰 히트 + PHASE2 ML 스코어 + 전표 메타를 LLM이 읽고 (a) 후보 Top-N 재정렬, (b) 의심 근거 서술(rule_id/feature_id/journal_id 인용 필수), (c) 감사인 다음 행동 제안. 새 fraud 패턴 발견·자유 가설 생성은 비범위. NLP/그래프 탐지 보조 룰(NLP01~05, GR01/03)은 보존되어 Narrator 입력으로 활용된다. 단일 출처: [PHASE3_REVIEW_NARRATOR_SPEC.md](PHASE3_REVIEW_NARRATOR_SPEC.md), 완료 리포트 [completed/phase3_review_narrator_completion.md](completed/phase3_review_narrator_completion.md).
 
 ---
 
@@ -2390,7 +2391,9 @@ Phase 2 결과는 “유형 A detector가 유형 A만 잡는다”는 의미로 
 
 현재 구현의 목표는 “완전 탐색 AutoML”이 아니라, **설명 가능하고 추적 가능한 Phase 2 운영 구조**를 만드는 데 있다.
 
-## 4. Phase 3: NLP + 그래프 (5개 유형, 미구현)
+## 4. Phase 3 보조 신호: NLP + 그래프 (Narrator 입력)
+
+> **🔄 v2 rescope (2026-05-14)**: Phase 3의 단일 신규 작업은 [Review Queue Narrator (WU-31)](PHASE3_REVIEW_NARRATOR_SPEC.md)다. 본 절의 NLP·Graph·TrendBreak 보조 룰은 **Narrator 입력 신호**로 보존된다. 7트랙 점수 체계와 41개 유형 누적은 v1 historical 기록이며, v2의 운영 우선순위는 case-level `priority_score`와 Narrator 출력 `priority_rank`다.
 
 | DataSynth 유형          | 카테고리     | Sev | 방법               | 상태 |
 |-------------------------|-------------|-----|--------------------|------|
@@ -2400,13 +2403,13 @@ Phase 2 결과는 “유형 A detector가 유형 A만 잡는다”는 의미로 
 | TransferPricingAnomaly  | Graph(GR03)  | 4  | 양방향 IC 엣지 price asymmetry      | ✅ WU-22 |
 | TrendBreak (TL4-01/TL2-01)  | Statistical  | 4/3| 설정vs상각 분리     | ✅   |
 
-### Phase 3 점수 체계 (7트랙)
+### Phase 3 점수 체계 (7트랙, historical v1)
 
 ```
 rule(0.15) + xgboost(0.20) + vae(0.15) + benford(0.10) + duplicate(0.15) + nlp(0.10) + graph(0.15)
 ```
 
-**Phase 3 누적: Tier 1(20) + Tier 2(16) + Tier 3(5) = 41개 유형 커버**
+**Phase 3 누적: Tier 1(20) + Tier 2(16) + Tier 3(5) = 41개 유형 커버** *(historical, v1)*
 
 ### 4.1 PHASE3 입력 계약 — Selected Case 중심
 

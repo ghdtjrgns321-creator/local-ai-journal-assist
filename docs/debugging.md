@@ -1,9 +1,82 @@
 # Debugging Log
 
 > **PHASE1 역할 원칙**: PHASE1은 `fraud`를 확정하거나 정답 라벨을 맞히는 단계가 아니다. PHASE1의 목적은 전수 모집단에서 규칙 위반, 정책 위반, 이상 징후, 분석적 검토 신호를 넓게 올려 **감사인이 봐야 할 항목과 우선순위**를 만드는 것이다. DataSynth의 `is_fraud`/`is_anomaly`와 precision/recall은 개발 검증 보조 지표이며, 운영 해석은 예외 처리 대상, 감사인 리뷰 대상, 고위험 후보를 구분하는 review queue 기준으로 한다.
+
 트러블슈팅 히스토리. 발생한 문제와 해결 과정을 기록하여 같은 실수를 반복하지 않기 위한 문서.
 
 > 이 문서는 시점별 디버깅 기록이다. 현재 실사용 DataSynth 기준본은 `data/journal/primary/datasynth/`의 `v20.3` freeze이며, 과거 DataSynth 수치와 핫픽스 설명은 기록 시점 기준일 수 있다.
+
+---
+
+## 2026-05-15: Phase 3 v2 Sprint E2 — 감사인 워크플로우 (실행 트리거 + 분류 + 필터)
+
+### 상황
+
+Sprint E1 완료(카드 렌더 + citation 점프) 위에 감사인 워크플로우를 얹어야 한다. 요구사항: `review_narratives`에 분류·메모 4컬럼 idempotent 추가, `update_audit_decision` UPSERT 헬퍼, AuditTrail EventType 확장(`analysis_run` / `review_decision_change`), 사이드바 6종 필터·검색, 분석 실행 트리거(N·예산·진행률), 분류 라디오·메모 + DB 저장. Sprint E1 회귀를 깨지 않은 채 통합.
+
+### 해결
+
+- `src/db/schema.py` SCHEMA_DDL에 idempotent ALTER 4컬럼(`audit_decision`/`audit_note`/`reviewed_by`/`reviewed_at`) + `idx_review_narratives_decision` 인덱스, `AUDIT_DECISION_VALUES` frozenset 상수 노출.
+- `src/llm/review_narrator/cache.py::update_audit_decision`(invalid decision·빈 user·candidate 미존재 가드 3중 검증, `reviewed_at`은 `datetime.now(UTC).replace(tzinfo=None)`) + `read_audit_decision`(라디오·메모 위젯 기본값 복원용 4컬럼 SELECT).
+- `src/export/audit_trail.py` EventType Literal에 `analysis_run` / `review_decision_change` 2종 추가. `VALID_EVENT_TYPES`는 `get_args()`로 자동 파생 → 기존 audit_trail 회귀 자동 호환.
+- `dashboard/components/review_queue_workflow.py` 신규 — 순수 함수 5개 (`ReviewQueueFilters` dataclass, `apply_filters`(6차원: confidence/priority_rank/process/batch_id/audit_decision[unassigned sentinel 포함]/rule_ids 교집합), `apply_search`(candidate_id 부분일치·대소문자 무시), `compute_run_plan`(N ladder 20→10→5 + 비용 추정), `register_review_decision`(UPDATE + AuditTrail.log 묶음, trail 실패는 흡수)).
+- `dashboard/tab_review_queue.py` 확장 — 기존 E1 카드/citation 흐름 유지 위 + 사이드바 필터 + 검색 박스 + 실행 트리거 섹션(N number_input·예산·진행률·재생성[input_hash 비교]) + candidate별 분류 라디오·메모 위젯 + `AuditTrail.log` `analysis_run`/`review_decision_change`.
+- `dashboard/_state.py`에 E2 6키(`KEY_REVIEW_QUEUE_FILTERS`/`SEARCH`/`LAST_HASH`/`RUN_STATUS`/`RUN_ERROR`/`TARGET_N`) + `_DEFAULTS` 등록.
+- 테스트 38건 신규 — cache(`update_audit_decision` UPSERT/overwrite/none clear/narrative 무영향/invalid·empty user·missing candidate/read 헬퍼) 9, workflow(`apply_filters` 10/`apply_search` 5/`compute_run_plan` 6/`register_review_decision` 4/AuditTrail EventType 3/UI 진입점 1) 29. Sprint E1 회귀 2건은 E2 통합으로 추가 위젯이 그려지면서 columns 단언이 의미를 잃어 `_stub_streamlit_layout` 공용 stub으로 패치.
+
+### 결과
+
+| 항목 | 결과 |
+|---|---:|
+| 단위 테스트 (cache 신규) | 9 / 9 PASS |
+| 단위 테스트 (workflow 신규) | 29 / 29 PASS |
+| Sprint E1 회귀 (호환 패치) | 9 / 9 PASS |
+| review_narrator 누적 | 117 / 117 PASS |
+| audit_trail 회귀 | 15 / 15 PASS |
+| 통합 누적(E1+E2+cache+audit_trail) | 171 / 171 PASS |
+| dashboard import smoke | OK |
+
+### 교훈
+
+1. Streamlit 함수에 import 추가만 한 edit는 ruff(hook)가 미사용으로 즉시 제거한다. 동일 edit에서 사용 코드까지 함께 넣거나, 함수 스코프 inline import로 회피해야 한다.
+2. `EventType = Literal[...]`과 `VALID_EVENT_TYPES = frozenset(get_args(EventType))` 패턴을 유지하면 새 이벤트 타입 추가 시 회귀 테스트가 자동으로 6→8종을 검증한다. 단일 진실 공급원 효과 확인.
+3. pyright는 `iterrows()` row의 컬럼 접근을 Series로 추론한다. `row.to_dict()`로 우회하거나 `isinstance(value, str)` 가드를 함께 두면 narrowing이 안정적.
+4. UI 통합 테스트의 stub은 위젯 컨텍스트 매니저(`with st.expander(...)`)까지 받아야 하므로 `_DummyCtx`의 `__getattr__`이 다음 호출에서 다시 `_DummyCtx`를 반환하도록 자기참조해야 한다. 단순 lambda → None 반환은 컨텍스트 매니저 프로토콜 실패.
+5. Sprint E1 회귀가 빈 narratives 시 `columns 호출 금지`를 단언했다면, E2 통합으로 사이드바·트리거·검색이 추가되는 순간 단언이 깨진다. 회귀 의도(빈 안내 메시지 발생)만 유지하고 columns 단언은 완화해야 진화 가능.
+
+---
+
+## 2026-05-15: Phase 3 v2 Sprint E1 — Review Queue Narrator 대시보드 렌더링
+
+### 상황
+
+Sprint C 완료(Narrator + Cache + 통합 테스트)에 이어 RC-4 미진입 상태에서 Narrator 출력을 표시할 임시 탭을 새로 만든다. 입력은 세션에 적재된 `KEY_REVIEW_QUEUE_NARRATIVES`(list[dict]) + `KEY_REVIEW_QUEUE_CANDIDATE_INDEX`(citation 점프용)이며, 본 Sprint는 표시·렌더링만 다루고 실행 트리거·재생성·필터·분류는 Sprint E2 범위로 분리.
+
+### 해결
+
+- `dashboard/_state.py`에 `KEY_REVIEW_QUEUE_NARRATIVES / SELECTED_CANDIDATE / CITATION_TARGET / INPUT_HASH / CANDIDATE_INDEX` 5개 키 + `PAGE_REVIEW_QUEUE` 추가, 기본값 dict까지 등록.
+- `dashboard/components/review_narrator.py`에 카드 컴포넌트(`render_candidate_card`)를 분리. priority_rank + confidence chip(green/amber/red) + summary + reasoning(인용 버튼) + suggested_actions 구조.
+- `dashboard/components/review_narrator_jump.py`에 citation 점프 패널 분리. rule_hit은 `rule_detail_metadata.asdict()` 평탄화 후 핵심 필드 + 전체 JSON expander, ml_feature는 `candidate.ml_scores` 매칭, row는 `result.data`에서 journal_id/document_id + line_no 필터.
+- `dashboard/tab_review_queue.py`에 좌측 카드 + 우측 jump 2열 레이아웃, priority_rank 오름차순 정렬, `KEY_REVIEW_QUEUE_INPUT_HASH` 변경 시 직전 점프 표적 자동 무효화.
+- `app.py`에 5번째 탭으로 등록(`PAGE_REVIEW_QUEUE`).
+- 테스트 9건 추가: 정렬 / 빈 입력 / 카드 호출 / citation 클릭 → 세션 상태 / 해시 변경 무효화 / 해시 동일 유지 / citation label 포맷 3종 parametrize.
+
+### 결과
+
+| 항목 | 결과 |
+|---|---:|
+| 단위 테스트 (신규) | 9 / 9 PASS |
+| dashboard 회귀 테스트 | 175 / 175 PASS |
+| review_narrator 회귀 테스트 | 118 / 118 PASS |
+| Streamlit boot (`/`) | HTTP 200 |
+| Streamlit boot (`/healthz`) | `ok` |
+
+### 교훈
+
+1. PHASE3 v2 대시보드는 입력(candidate dict)이 변경되면 직전 citation 표적이 유효하지 않을 수 있다. Sprint E1은 `_invalidate_jump_on_hash_change`에서 해시 변경 시 표적과 선택 candidate를 함께 비워 stale 상태를 차단.
+2. `RuleDetailMetadata`는 pydantic이 아닌 frozen dataclass라 `model_dump`가 없다. `dataclasses.asdict`로 평탄화해 dict 접근 패턴을 유지.
+3. `data[mask]`는 pyright가 ndarray로 해석하는 케이스가 있어 `data.loc[mask]`로 명시 캐스팅이 더 안전.
+4. Sprint E1은 표시 전용이며, citation 표적 적재/해시 무효화는 작은 헬퍼(`_set_citation_target`, `_invalidate_jump_on_hash_change`)로 분리해 E2의 트리거·분류 UI가 동일 키를 재사용하도록 한다.
 
 ---
 
@@ -854,6 +927,63 @@ Run  T3-03  T3-04      T3-05     T3-10  T3-12   T3-13   총 FAIL
 | 100% Recall 룰 | 10개 |
 | L1-06 flagged | 1.9% |
 | Normal 등급 | 85.2% |
+## 2026-05-14: DataSynth manipulation v2 substantive mutation repair
+
+### 문제
+
+`datasynth_manipulation_v2`의 일부 manipulation truth가 표면 메타데이터만 바뀌고 회계 실체가 충분히 바뀌지 않았다.
+
+- `circular_related_party_transaction`: `business_process=Intercompany` 표지는 있으나 IC GL prefix(`1150/2050/4500/2700`)가 0건이라 L3-03 신호가 죽음.
+- `fictitious_entry`: fictitious revenue truth인데 4xxx 매출 계정과 11xx 매출채권/현금 계정 조합이 전 문서에 보장되지 않음.
+- `embezzlement_concealment`: employee/cash leakage truth인데 가지급금/대여금(`1200/1250`)과 현금(`1000`) 조합, duplicate/near-limit 표면이 약함.
+
+### 해결
+
+`tools/scripts/materialize_datasynth_manipulation_v2.py`에 실체 mutation 단계를 추가했다.
+
+- circular 34개 truth doc 전부에 IC GL prefix를 강제.
+- fictitious 168개 truth doc 전부에 DR 11xx / CR 4xxx revenue pattern을 강제하고 일부는 batch-like period-end posting으로 묶음.
+- embezzlement 76개 truth doc 전부에 DR 1200/1250 / CR 1000 pattern을 강제하고 duplicate card reference 및 near approval limit 문서를 생성.
+- manifest에 operational noise floor 지표(`approved_by_null_pct`, `manual_entry_pct`, `approval_matrix_gap_pct`, `weekend_posting_pct`)를 추가.
+
+### 검증
+
+- `uv run ruff check tools/scripts/materialize_datasynth_manipulation_v2.py`
+- `uv run python -m py_compile tools/scripts/materialize_datasynth_manipulation_v2.py`
+- `uv run python tools/scripts/check_datasynth_manipulation_truth.py data/journal/primary/datasynth_manipulation_v2 --out tests/datasynth_quality_gate3/results/manipulation_v2_truth_check_after_substantive_mutation.json`
+- 컬럼 검증 산출물: `artifacts/manipulation_v2_substantive_mutation_column_check.json`
+- 요약 리포트: `artifacts/manipulation_v2_substantive_mutation_repair.md`
+- full Phase1 cache: `artifacts/phase1_manipulation_v2_final_candidate_20260514.pkl`
+- case artifact: `artifacts/phase1_cases/_anonymous/phase1case__anonymous_datasynth_v126_profiled_phase1_20260514T091304Z.json`
+- topic/ranking 리포트: `artifacts/manipulation_v2_final_label_signal_recovery.md`
+
+### 최신 Phase1 확인
+
+2026-05-14 최신 full Phase1 실행은 detector warning 없이 완료됐다.
+
+- manipulation truth 420건 전부 `score > 0` 및 `rule_or_review_hit`에 진입
+- top-500 case truth capture: 305 / 420
+- high priority truth capture: 276 / 420
+- fictitious expected topic 진입: 144 / 168
+- embezzlement expected topic 진입: 76 / 76
+- circular L3-03 hit: 34 / 34
+- circular expected topic 진입: 34 / 34
+
+circular truth는 IC GL prefix와 결산 표면을 함께 갖도록 보강했다. 이로써 L3-03 단독 context badge에 머무르지 않고 `intercompany_cycle` case topic에 전건 진입한다.
+
+### PHASE1 보조 보강
+
+B1 데이터 보강 후에도 IC 신호 강건성을 높이기 위해 두 가지 보조 보강을 적용했다.
+
+- `src/feature/pattern_features.py:add_is_intercompany`
+  - 기존 GL prefix 기준에 `business_process == Intercompany`, `counterparty_type == IntercompanyAffiliate`를 OR 조건으로 추가.
+  - 최신 `datasynth_contract_v2` 기준 row/doc 증가분은 0으로 확인.
+- `tools/scripts/profile_phase1_v126.py:_load_partner_master`
+  - `vendor_id/customer_id` 외에 `intercompany_code`도 `ids` 및 `intercompany` set에 적재.
+  - `IC-C00x` 형태 trading partner가 master evidence에서 intercompany로 인식될 수 있게 보강.
+
+---
+
 | 코드 버그 의심 | 0건 |
 
 ### 확정 사유
@@ -934,3 +1064,87 @@ Run  T3-03  T3-04      T3-05     T3-10  T3-12   T3-13   총 FAIL
 2. **갭 비율 설계 시 기본률과 추가률을 합산할 것.** exclusive가 아닌 additive로 설계해야 "기말 > 비기말" 보장.
 3. **Quality gate 체크를 데이터 스키마 변경에 맞춰 업데이트할 것.** 채번 기준이 바뀌면 검증 쿼리도 같이 바꿔야 함.
 > Historical debugging log. Current production DataSynth baseline is `data/journal/primary/datasynth/` freeze `v23` as of 2026-04-22. Older `v20.x` references below are point-in-time notes.
+## 2026-05-14: DataSynth manipulation v3 fitting guard 적용
+
+### 문제
+
+T1/T6 분석 후 `unusual_timing_manipulation`과 `fictitious_entry`를 함께 DataSynth에서 보강하자는 제안이 있었지만, 그대로 진행하면 PHASE1 expected-topic 진입률에 데이터를 맞추는 fitting 위험이 있었다.
+
+### 판단
+
+- `unusual_timing_manipulation`은 raw data 기준 21개 문서가 이미 야간/주말/manual posting 실체를 충족했다. DataSynth에서 period-end 근처로 더 밀면 `period_end_adjustment_manipulation`과 taxonomy가 섞인다.
+- `circular_related_party_transaction`은 v2에서 이미 IC GL/관계사 cycle 실체와 expected topic 진입이 회복되어, high-cash 동시 hit 유도 mutation을 추가하지 않았다.
+- `fictitious_entry`는 일부 문서가 DR 11xx / CR 4xxx 구조는 갖췄지만 금액·batch 실체가 약해 허위 매출 데이터로서의 회계 실체 보강 여지가 있었다.
+
+### 해결
+
+- 신규 후보 `data/journal/primary/datasynth_manipulation_v3/` 생성. v2는 덮어쓰지 않음.
+- `tools/scripts/materialize_datasynth_manipulation_v3.py` 추가.
+- fictitious revenue만 회사별 매출계정 상위 분위수 기반 금액 floor(`p99.95 * 1.5`)와 deterministic batch cluster로 보강.
+- `tools/scripts/audit_manipulation_v3_mutation_guards.py`로 raw-data guard를 분리.
+- `tools/scripts/analyze_contract_v2_master_flow_gap.py`로 contract_v2 approval gap을 원인분리.
+
+### 결과
+
+| 항목 | 결과 |
+|---|---:|
+| manipulation truth docs | 420 |
+| truth gate failures | 0 |
+| Guard 1 회계 실체 | PASS |
+| Guard 2 정상 배경 fitting 차단 | PASS |
+| Guard 3 다른 시나리오 회귀 차단 | PASS |
+| Phase1 score/rule/review hit docs | 420 / 420 |
+| Top500 truth capture | 309 / 420 |
+| fictitious expected topic docs | 151 / 168 |
+| unusual_timing expected topic docs | 11 / 21 |
+
+### 교훈
+
+1. DataSynth mutation은 "룰 진입률을 올리기 위해"가 아니라 "회계 실체를 데이터에 새기기 위해"만 추가한다.
+2. raw-data guard와 Phase1 measure-only 지표를 분리하면 fitting 위험을 낮출 수 있다.
+3. unusual timing처럼 원시 실체는 맞지만 topic 진입이 약한 경우는 DataSynth가 아니라 PHASE1 topic/case 또는 PHASE3 의미해석 과제로 분리한다.
+
+---
+
+## 2026-05-15: manipulation v3 Rust 후보 승격
+
+### 문제
+
+T9에서 Python materialize 후처리를 Rust CLI 단일 명령으로 이관했다. 후보 데이터셋은 생성과 truth/raw-data guard를 통과했지만, Phase1 topic regression guard에서 `circular_related_party_transaction`, `embezzlement_concealment` expected-topic 진입이 활성 Python v3 후보보다 낮았다. 원인은 Rust 후보가 `posting_date` 변경 시 `fiscal_period`도 정합화한 반면, 기존 Python 후보는 일부 기간 불일치를 남겼기 때문이다.
+
+### 확인
+
+- 활성 데이터셋: `data/journal/primary/datasynth_manipulation_v3/`
+- 생성 명령: `cargo run -p datasynth-cli --bin datasynth-data -- generate --profile manipulation-v3 ...`
+- truth gate: pass, manipulation truth 420건
+- Guard 1 회계 실체: pass
+- Guard 2 정상 배경 fitting 차단: pass
+- Phase1 score/rule/review hit docs: 420 / 420
+- Guard 3 topic regression: 기존 Python 후보 대비 기준 재설정
+  - circular expected topic: 34 -> 22
+  - embezzlement expected topic: 76 -> 42
+
+### 원인
+
+Rust 후보는 `posting_date`를 변경할 때 `fiscal_period`도 같이 정합화한다. 기존 Python materialize 후보는 일부 scenario에서 `posting_date`를 6월/12월로 바꾼 뒤 `fiscal_period`가 1월 값으로 남는 케이스가 있었다. Rust가 이 불일치를 재현하지 않으면서 current Phase1 case/topic baseline과 달라졌다.
+
+### 결정
+
+Rust에서 stale `fiscal_period`를 일부러 재현하는 것은 회계 정합성을 악화시키는 fitting 위험이므로, 회계기간 정합성을 우선하는 1번 안을 채택했다. `datasynth_manipulation_v3_rust_candidate_fixed`를 활성 `datasynth_manipulation_v3`로 승격했고, 기존 Python 후보는 archive로 보존했다.
+
+### 산출물
+
+- `tools/datasynth/crates/datasynth-cli/src/manipulation_v3.rs`
+- `artifacts/manipulation_v3_rust_migration_report.md`
+- `artifacts/manipulation_v3_final_mutation_recovery.json`
+- `artifacts/manipulation_v3_rust_fixed_topic_analysis.json`
+- `data/journal/primary/DATASET_VARIANTS.md`
+- `data/journal/archive/primary_legacy_20260515/datasynth_manipulation_v3_python_candidate/`
+
+### 교훈
+
+1. Python 후처리와 byte/behavior compatible하게 이관하는 것과 synthetic accounting consistency를 개선하는 것은 별도 의사결정이다.
+2. topic 진입률 회귀를 맞추기 위해 period 불일치를 재현하면 DataSynth fitting이 된다.
+3. promotion 기준은 Phase1 topic 수치 일치가 아니라 raw-data 회계 정합성과 truth/provenance 계약 통과여야 한다.
+
+---

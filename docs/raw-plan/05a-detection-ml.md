@@ -1,6 +1,9 @@
 # 05a. ML 이상탐지 (Phase 2b — 의존: 03a-preprocessing, 05-detection)
 
 > **PHASE1 역할 원칙**: PHASE1은 `fraud`를 확정하거나 정답 라벨을 맞히는 단계가 아니다. PHASE1의 목적은 전수 모집단에서 규칙 위반, 정책 위반, 이상 징후, 분석적 검토 신호를 넓게 올려 **감사인이 봐야 할 항목과 우선순위**를 만드는 것이다. DataSynth의 `is_fraud`/`is_anomaly`와 precision/recall은 개발 검증 보조 지표이며, 운영 해석은 예외 처리 대상, 감사인 리뷰 대상, 고위험 후보를 구분하는 review queue 기준으로 한다.
+
+> **🔄 Phase 3 v2 Rescope (2026-05-14) ✅ 구현 완료 (Sprint A~G, 2026-05-15)**: Phase 3 단일 목표는 [Review Queue Narrator](../PHASE3_REVIEW_NARRATOR_SPEC.md), 완료 리포트 [completed/phase3_review_narrator_completion.md](../completed/phase3_review_narrator_completion.md). 본 문서 내 "Phase 3 BiLSTM+Attention 교체 실험" / "DNN stacking meta-learner" / "7트랙 점수 가중" 절은 historical v1 기록. Phase 2의 Basic FC VAE + Isolation Forest는 그대로 보존되며 Narrator의 ML 스코어 입력으로 사용된다. [DECISION.md §D041](../DECISION.md) 참조.
+
 > Latest PHASE1 role note (2026-04-28): this raw plan predates the current PHASE1 contract. PHASE1 rule output is a candidate-generation and case-priority input, not a final fraud label. Phase 2 should not treat PHASE1 rule IDs or DataSynth `is_fraud` / `is_anomaly` as a clean final truth for PHASE1 success. Use PHASE1 structured case summaries, rule-truth sidecars, and provenance-safe features; preserve the distinction between review candidates and confirmed audit issues.
 
 ## 목적

@@ -1,6 +1,7 @@
 # PHASE1 Detection Ranking Criteria
 
 > **PHASE1 역할 원칙**: PHASE1은 `fraud`를 확정하거나 정답 라벨을 맞히는 단계가 아니다. PHASE1의 목적은 전수 모집단에서 규칙 위반, 정책 위반, 이상 징후, 분석적 검토 신호를 넓게 올려 **감사인이 봐야 할 항목과 우선순위**를 만드는 것이다. DataSynth의 `is_fraud`/`is_anomaly`와 precision/recall은 개발 검증 보조 지표이며, 운영 해석은 예외 처리 대상, 감사인 리뷰 대상, 고위험 후보를 구분하는 review queue 기준으로 한다.
+
 Updated: 2026-05-08
 
 ## 목적
@@ -40,7 +41,37 @@ Topic score band는 다음 기준을 사용한다.
 | Low | `topic_score >= 0.20` | 참고 또는 drill-down 대상 |
 | Context only | `< 0.20` | 단독 ranking 근거로 사용하지 않음 |
 
+### Band 축 표기 정책
+
+PHASE1 문서, 리포트, dashboard 설명에서는 band 축을 반드시 prefix로 명시한다. 단순 `high band`, `medium band`, `low band` 표현은 금지한다.
+
+| 표기 | 기준 | 사용 예 |
+|---|---|---|
+| `priority high/medium/low` | case의 `priority_band`. `priority_score` 기준으로 High `>= 0.75`, Medium `>= 0.45`, Low는 그 아래 review case다. | `priority high truth 276`, `priority medium case 4,409` |
+| `{topic_id} topic high/medium/low` | case의 `topic_scores[topic_id]` 기준. High `>= 0.75`, Medium `>= 0.45`, Low `>= 0.20`. | `approval_control topic high`, `intercompany_cycle topic medium` |
+| `{topic_id} topic membership` | band와 무관하게 `topic_scores[topic_id] > 0`인 case membership. | `closing_timing topic membership truth 410` |
+| row `risk_level` | row-level `anomaly_score` 기준. case band와 별개다. | `row risk_level High 244` |
+
+운영 보고에서는 `priority high`, `approval_control topic high`, `closing_timing topic membership`처럼 축과 topic을 함께 적는다. `High 큐`, `medium 보존`, `high band 약점`처럼 축이 생략된 표현은 새 문서에서 사용하지 않는다.
+
+### PHASE2 이관 전 priority medium 운영 정책
+
+PHASE1 `priority medium` 및 topic별 `topic medium`은 PHASE2 구현 전까지 삭제하거나 숨기지 않는 임시 review 보관소다. `closing_timing`, `intercompany_cycle`처럼 High 승격 근거가 아직 부족하지만 ML anomaly score, graph/cycle evidence, 통계적 context로 보강될 수 있는 영역은 해당 priority/topic medium 축에 남겨 감사인이 검토할 수 있어야 한다.
+
+운영 기준은 다음과 같다.
+
+| 기준 | 정책 |
+|---|---|
+| 노출 | topic 탭 ribbon과 룰 expander 헤더에 Medium case 수를 표시한다. |
+| 상세 접근 | expander는 성능상 기본 collapsed 상태일 수 있으나, 사용자가 펼치면 case 목록과 위반 전표가 렌더되어야 한다. |
+| 정렬 | 전체 category queue는 `priority_band`를 먼저 적용하고 같은 band 안에서 `composite_sort_score`를 우선한다. topic-specific Top-N은 `topic_score`를 우선한다. |
+| 해석 | Medium은 confirmed violation이 아니라 PHASE2/PHASE3 또는 감사인 검토에서 보강 판단할 review candidate다. |
+
 `fraud_scenario_tags`는 display/context 필드다. tag가 있다고 해서 자동으로 High나 Top ranking에 올리지 않는다. High 승격은 topic score floor나 충분한 보강 근거가 있을 때만 가능하다.
+
+> 행 `RISK_THRESHOLDS`(HIGH=0.50 / MEDIUM=0.25 / LOW=0.10, `src/detection/constants.py`)와 case `priority_band`(High=0.75 / Medium=0.45)는 서로 다른 축이다. 행 단위 risk_level은 `anomaly_score` 정규화 합산 기준이고, case 단위 priority_band는 case priority score 기준이다. 동일 case 내에서 행 risk_level과 case priority_band가 달라도 모순이 아니다 (산출 경로가 다름; `artifacts/phase1_score_band_audit.md` §4-2 참조).
+>
+> 한 줄 요약 (§9.4 §5-4): **행 risk_level (anomaly_score 축, warm 톤 ● 기호) ≠ case priority_band (priority_score 축, cool 톤 ◆ 기호)**. v2 high case 229 건 안의 row 68% 가 Normal/Low (`artifacts/phase1_score_band_audit.md` §4-2 crosstab) 인 것은 정상이며, dashboard 는 두 축을 다른 라벨·색상으로 분리 표시한다.
 
 ## 점수 구성 원칙
 

@@ -1,6 +1,9 @@
 # 00. 데이터셋 수집·선정·활용 전략 [Phase 0 — 사전 준비]
 
 > **PHASE1 역할 원칙**: PHASE1은 `fraud`를 확정하거나 정답 라벨을 맞히는 단계가 아니다. PHASE1의 목적은 전수 모집단에서 규칙 위반, 정책 위반, 이상 징후, 분석적 검토 신호를 넓게 올려 **감사인이 봐야 할 항목과 우선순위**를 만드는 것이다. DataSynth의 `is_fraud`/`is_anomaly`와 precision/recall은 개발 검증 보조 지표이며, 운영 해석은 예외 처리 대상, 감사인 리뷰 대상, 고위험 후보를 구분하는 review queue 기준으로 한다.
+
+> **🔄 Phase 3 v2 Rescope (2026-05-14) ✅ 구현 완료 (Sprint A~G, 2026-05-15)**: Phase 3 단일 목표는 [Review Queue Narrator](../PHASE3_REVIEW_NARRATOR_SPEC.md), 완료 리포트 [completed/phase3_review_narrator_completion.md](../completed/phase3_review_narrator_completion.md). 본 문서 내 Text-to-SQL / Vanna / Ollama / Export / Chat / fpdf2 / ChromaDB / 감사조서 언급은 historical v1 기록 (구현 보존, 신규 작업 없음). [DECISION.md §D041](../DECISION.md) / [PHASE3_REWORK_PLAN.md](../PHASE3_REWORK_PLAN.md) 참조.
+
 ## 목적
 
 감사 이상치 탐지 시스템의 입력 데이터를 확보하고 Phase별 활용 전략을 수립한다.

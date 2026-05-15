@@ -1,6 +1,9 @@
 # Project Overview
 
+> **🔄 Phase 3 v2 Rescope 안내 (2026-05-14) ✅ 구현 완료 (Sprint A~G, 2026-05-15)**: 본 문서의 Phase 3 관련 기술 스택 표·디렉토리 구조·pre-plan 인덱스(8/9번)는 v1 시점 정의(Ollama/Vanna/Text-to-SQL/Export)다. Phase 3 v2 단일 목표는 **Review Queue Narrator** — PHASE1 룰 히트 + PHASE2 ML 스코어 + 전표 메타를 LLM이 읽고 감사 후보 Top-N 재정렬 + 의심 근거 서술 + 다음 행동 제안. Text-to-SQL/Vanna/ChromaDB/fpdf2/Export 탭/Chat 탭은 비범위(구현 보존, 신규 작업 없음). 단일 출처: [PHASE3_REVIEW_NARRATOR_SPEC.md](PHASE3_REVIEW_NARRATOR_SPEC.md), [PHASE3_REWORK_PLAN.md](PHASE3_REWORK_PLAN.md), [DECISION.md §D041 / §D043](DECISION.md), 완료 리포트 [completed/phase3_review_narrator_completion.md](completed/phase3_review_narrator_completion.md). 본 문서 본문 라인은 historical reference로 보존한다.
+
 > **PHASE1 역할 원칙**: PHASE1은 `fraud`를 확정하거나 정답 라벨을 맞히는 단계가 아니다. PHASE1의 목적은 전수 모집단에서 규칙 위반, 정책 위반, 이상 징후, 분석적 검토 신호를 넓게 올려 **감사인이 봐야 할 항목과 우선순위**를 만드는 것이다. DataSynth의 `is_fraud`/`is_anomaly`와 precision/recall은 개발 검증 보조 지표이며, 운영 해석은 예외 처리 대상, 감사인 리뷰 대상, 고위험 후보를 구분하는 review queue 기준으로 한다.
+
 > PHASE1 operating role: PHASE1 is a rule-based full-population screening layer, not a final fraud classifier. Its first job is to surface all records, groups, and macro signals that violate configured rules or deserve review. The second step classifies those hits into normal exceptions, auditor review queues, and high-risk candidates using materiality, evidence strength, case priority, company exception policy, and rule combinations.
 
 > Current DataSynth baseline: `data/journal/primary/datasynth/` freeze `v126` as of 2026-05-02. Dataset size is `1,109,435` rows / `319,193` documents / `52` columns. Main label sidecar: `labels/anomaly_labels.csv` `3,149` rows.

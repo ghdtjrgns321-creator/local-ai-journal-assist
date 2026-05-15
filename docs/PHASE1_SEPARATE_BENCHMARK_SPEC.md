@@ -1,6 +1,7 @@
 # PHASE1 별도 검증 스펙
 
 > **PHASE1 역할 원칙**: PHASE1은 `fraud`를 확정하거나 정답 라벨을 맞히는 단계가 아니다. PHASE1의 목적은 전수 모집단에서 규칙 위반, 정책 위반, 이상 징후, 분석적 검토 신호를 넓게 올려 **감사인이 봐야 할 항목과 우선순위**를 만드는 것이다. DataSynth의 `is_fraud`/`is_anomaly`와 precision/recall은 개발 검증 보조 지표이며, 운영 해석은 예외 처리 대상, 감사인 리뷰 대상, 고위험 후보를 구분하는 review queue 기준으로 한다.
+
 > Current PHASE1 scoring note (2026-04-27): 별도 benchmark 대상 룰 중 `L4-02`는 transaction queue에서 `macro_only`로 정규화된다. 즉 row-level `normalized_score`는 case priority에 직접 기여하지 않고, Account / Process Queue 또는 macro-finding drill-down에서 평가한다. `L4-03`, `L4-04`, `L4-05`는 transaction queue에 남지만 `rule_scoring.py`의 `evidence_strength`와 `scoring_role`을 거친 `normalized_score`만 evidence type score에 합산된다.
 
 PHASE1 룰 중 일부는 `document_labels.csv`의 전표 단위 정답만으로 검증하면 룰의 본질을 왜곡한다. 이 문서는 그런 룰에 대해 별도 benchmark 단위, 입력 산출물, acceptance 기준을 정의한다.

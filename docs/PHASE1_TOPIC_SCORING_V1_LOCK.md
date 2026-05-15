@@ -1,6 +1,7 @@
 # PHASE1 Topic Scoring V1 Lock
 
 > **PHASE1 역할 원칙**: PHASE1은 `fraud`를 확정하거나 정답 라벨을 맞히는 단계가 아니다. PHASE1의 목적은 전수 모집단에서 규칙 위반, 정책 위반, 이상 징후, 분석적 검토 신호를 넓게 올려 **감사인이 봐야 할 항목과 우선순위**를 만드는 것이다. DataSynth의 `is_fraud`/`is_anomaly`와 precision/recall은 개발 검증 보조 지표이며, 운영 해석은 예외 처리 대상, 감사인 리뷰 대상, 고위험 후보를 구분하는 review queue 기준으로 한다.
+
 Updated: 2026-05-08
 Status: Locked for v1 implementation
 
@@ -152,7 +153,46 @@ topic_score =
 
 ## Ranking Rules
 
-- Topic pages rank by `topic_score` descending.
+- 1차 정렬은 `composite_sort_score` 내림차순 (§9.3 audit 2026-05-14, lock 문서 `artifacts/phase1_sort_composite_lock.md`).
+- `composite_sort_score` 정의:
+
+  ```text
+  composite_sort_score =
+      1.0 * topic_score
+    + 0.3 * max_primary_rule_score
+    + 0.3 * audit_evidence_score
+    + 0.3 * corroboration_score
+    + 0.1 * min(independent_evidence_count / 5.0, 1.0)
+  ```
+
+  - `topic_score` 는 case 의 `primary_topic` 점수.
+  - `max_primary_rule_score`, `audit_evidence_score`, `corroboration_score` 는 `topic_score_breakdown[primary_topic]` 의 동명 필드.
+  - `independent_evidence_count` 는 case 의 `rule_evidence_summary` 안에서 `scoring_role=='primary'` 인 distinct rule_id 수.
+- 보조 tiebreak: `triage_rank_score desc → total_amount desc → rule_count desc`. `total_amount` 는 1차 결정자에서 보조 결정자로 격하한다 (§9.2 audit §2.1 — approval high band 에서 nontruth 평균 amount 가 truth 보다 1.8x 큼).
+
+### Multi-Dataset 검증 (2026-05-14, T4)
+
+- 검증 데이터셋: `v126_profiled` (lock baseline, 14342 cases), `v133_archive datasynth_manipulation` (4861 cases),
+  `datasynth_manipulation_v2` (11116 cases). truth 각 420건. `datasynth_v122_profiled` 는 active primary 부재로
+  defer.
+- 산출물: [`artifacts/phase1_sort_composite_multi_dataset_lock.md`](../artifacts/phase1_sort_composite_multi_dataset_lock.md)
+  / [`artifacts/phase1_sort_composite_multi_dataset_lock.json`](../artifacts/phase1_sort_composite_multi_dataset_lock.json).
+- 결과 요약 — `max_primary_rule_score` universal positive 는 다중 데이터셋에서 재확인 (3개 dataset / 7개 topic
+  에서 -방향 0건). 단, `manipulation_v2` 의 `closing_timing` 도메인에서 AB_C3 - AB_C0 = -34 로 도메인 충돌 가드
+  (≤ 5/topic) 를 위반. PHASE1 평탄 가중치가 substantive mutation 데이터 (DR/CR 패턴 부여, IC GL prefix 강제) 에서
+  closing_timing truth 를 baseline 대비 손해보는 것이 실증됨.
+- 종합 판정: **DEFER**. composite_sort_score 가중치는 변경하지 않으며 (truth recall 직접 추구 금지 정책,
+  `feedback_phase1_truth_recall_guard`), v126_profiled 단일 lock 을 유지한다. closing_timing 도메인 ranking 은
+  PHASE2 ML 학습 영역으로 이관 (도메인별 가중치 학습).
+- 회귀 가드 갱신: `approval_control:high` 가드는 절대치 12 (v126 단일 측정) → 비율 기반 **Top200 truth_doc /
+  high_cases ≥ 2.0%** 로 lock. v126_profiled 측정 2.45%, v133_archive 46.30%, manipulation_v2 61.77% 모두 통과.
+  본 가드는 Layer C SOFT WARN (baseline 회귀 방지선) 이며 가중치 조정의 근거로 사용 금지.
+- `topic_score` 단독 정렬은 보조 토글로만 유지 (legacy compatibility).
+- 2026-05-15 Decision #3 선택 A(`closing_timing` 전용 `audit_evidence_score` weight 0.0) 는 측정 후 롤백했다.
+  `manipulation_v2`의 `closing_timing` AB_C3 - AB_C0 손실이 -34로 유지되어 도메인 충돌 해소 가드(≤5)를
+  통과하지 못했다. 세부 측정은
+  [`artifacts/phase1_sort_composite_domain_override_lock.md`](../artifacts/phase1_sort_composite_domain_override_lock.md)
+  에 남기고, Decision #3은 선택 C로 전환한다.
 - A case with no primary hit for the topic must not enter the topic Top N when all signals are `booster`, `combo_only`, or `macro_only`.
 - `standalone_rankable=False` rules cannot seed a case by themselves.
 - The same document/case may appear in more than one topic. Each topic gets its own rank, and UI should show cross-topic links rather than merging topics into one queue.
@@ -176,6 +216,7 @@ topic_score =
    - Ensure `macro_only` remains row score 0.
    - Ensure `standalone_rankable=False` rules do not trigger standalone row/case escalation.
    - Keep `L4-06` and `L3-12` escalation only through evidence-group conditions.
+   - 행 `RISK_THRESHOLDS`(HIGH=0.50 / MEDIUM=0.25 / LOW=0.10, `src/detection/constants.py`)는 case `priority_band`(High=0.75 / Medium=0.45)와 다른 축이다. 행 risk_level은 `anomaly_score` 정규화 합산 기준이며, case priority_band는 topic score 기준이다. 동일 case 내에서 두 값이 달라도 모순이 아니다 (`artifacts/phase1_score_band_audit.md` §4-2, `phase1_score_band_audit_after.md`).
 4. `src/detection/phase1_case_builder.py`
    - Replace hard-coded queue/theme maps with registry-based topic mapping.
    - Use `compute_topic_scores()` for case ranking.

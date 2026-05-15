@@ -1,9 +1,90 @@
 # Design Decisions
 
 > **PHASE1 역할 원칙**: PHASE1은 `fraud`를 확정하거나 정답 라벨을 맞히는 단계가 아니다. PHASE1의 목적은 전수 모집단에서 규칙 위반, 정책 위반, 이상 징후, 분석적 검토 신호를 넓게 올려 **감사인이 봐야 할 항목과 우선순위**를 만드는 것이다. DataSynth의 `is_fraud`/`is_anomaly`와 precision/recall은 개발 검증 보조 지표이며, 운영 해석은 예외 처리 대상, 감사인 리뷰 대상, 고위험 후보를 구분하는 review queue 기준으로 한다.
+
 > Current DataSynth production baseline: `data/journal/primary/datasynth/` freeze `v126` as of 2026-05-02. Older `v20.x`, `v23`, and `v45` entries are historical decision records.
 
 ?꾪궎?띿쿂쨌湲곗닠 ?좏깮 寃곗젙 濡쒓렇. ?덈줈??寃곗젙 ???댁슜 異붽?.
+
+---
+
+### D040: Defer Codex PostToolUse mojibake guard
+- **Decision**: Codex PostToolUse mojibake guard is deferred because file path/payload stability is not confirmed. Use AGENTS.md and `local-ai-assist-testing` manual validation guidance instead.
+
+---
+
+### D041: Phase 3 v2 rescope to Review Queue Narrator (2026-05-14)
+- **Decision**: Phase 3 단일 목표를 **Review Queue Narrator**로 좁힌다. LLM은 PHASE1 룰 히트 + PHASE2 ML 스코어 + 전표 메타를 읽고 (a) 후보 Top-N 재정렬, (b) 의심 근거 서술(rule_id/feature_id/journal_id 인용 필수), (c) 감사인 다음 행동을 제안한다.
+- **비범위 (out of scope)**: Text-to-SQL (WU-20), Excel/PDF Export (WU-24), Chat UI (WU-26), Export 탭 (WU-27), 룰 피드백 루프 (WU-30). 기존 코드는 보존하되 Phase 3 v2 완료 기준에 포함하지 않는다.
+- **이유**: (1) 자유 가설 생성은 환각 위험 + 감사 신뢰성 부족, (2) Text-to-SQL/Export는 Phase 3 핵심 가치(감사인 검토 우선순위)와 직접 연결되지 않음, (3) PHASE1 역할 원칙(검토 후보 선별)과 Phase 3을 자연스럽게 잇기 위함.
+- **단일 출처**: [PHASE3_REVIEW_NARRATOR_SPEC.md](PHASE3_REVIEW_NARRATOR_SPEC.md), [PHASE3_REWORK_PLAN.md](PHASE3_REWORK_PLAN.md) (예정).
+- **D001/D002/D004 영향**: Qwen3-8B(D001), Vanna AI(D002), fpdf2(D004) 결정은 historical로 유지. 활성 의존성은 OpenAI 2티어 추상화(`src/llm/api_client.py`)로 단일화되어 있다.
+
+---
+
+### D042: PHASE1 룰 메타 변경 금지 + unusual_timing 11/21 ceiling 정식 채택 (2026-05-15)
+- **결정**: PHASE1 룰 정의(`src/detection/rule_scoring.py`의 `scoring_role`, `standalone_rankable`, `final_topic`)는 단일 시나리오 truth 회수를 위해 변경하지 않는다. `datasynth_manipulation_v2` 의 `unusual_timing_manipulation` 21건 중 11건 closing_timing topic 진입을 **PHASE1 본질적 detectability ceiling**으로 정식 채택한다.
+- **반려 옵션 (P1: L3-06 promote)**:
+  - 제안: `L3-06 after_hours_activity`를 `scoring_role="primary"`, `standalone_rankable=True`로 promote하면 21/21 진입 가능.
+  - 반려 사유: `L3-05 weekend_posting` / `L3-06 after_hours_activity`는 정상 결산기 야근, 분기말 마감 보정, 주말 휴일 전기 등 한국 중견 제조업의 합법적 운영 패턴에서도 자연스럽게 hit한다. booster + standalone_rankable=False 설계는 정상 운영의 false positive 폭증을 방지하기 위한 의도된 게이트다. standalone primary로 promote하면 review queue high band가 정상 야근 거래로 점령되어 감사인 정밀도가 회귀한다. **단일 시나리오 truth 11→21 회수 이득 < 정상 운영 모집단 FP 폭증 손실**.
+- **채택 옵션 (P2: 11/21 ceiling 수용)**:
+  - 11/21은 `after_hours_posting` 시나리오의 PHASE1 본질적 한계로 baseline freeze.
+  - 18→11은 회귀가 아니라 incidental case bundling artifact 제거. 직전 18/21은 L3-04 보유 non-truth co-doc과 우연히 같은 케이스로 묶인 corroboration이었다.
+  - 정상 야근 거래와 의심 시간대 거래의 분리는 **PHASE2 ML(multi-feature 분류)** 또는 **PHASE3 LLM(적요·맥락 의미 해석)** 영역으로 이관한다.
+- **반려 옵션 (P3: DataSynth day 이동)**:
+  - 제안: `materialize_datasynth_manipulation_v2.py:256-262` `day = 23 + (bucket % 5)` → `day = 26 + (bucket % 5)`로 변경하여 period_end window 안에 강제 배치.
+  - 반려 사유: 두 시나리오(`unusual_timing` vs `period_end_adjustment`)의 taxonomic clarity 손상. 합성 데이터의 의도된 정의가 변질된다.
+- **영향 범위 (룰 메타 변경 금지 원칙의 일반화)**:
+  - `src/detection/rule_scoring.py` `RULE_SCORING_REGISTRY` 항목의 `scoring_role`, `standalone_rankable`, `final_topic`은 정상 모집단 FP 영향 평가 없이 변경 금지.
+  - 시나리오 진입률 회복이 필요하면 DataSynth mutation 보강 (fictitious T7 D1) 또는 PHASE2/PHASE3 후속 단계로 이관.
+  - PHASE1 KPI 가드는 truth recall 향상을 강제하지 않는다(`tests/phase1_rulebase/kpi_baseline.json` `_meta.principle`).
+- **단일 출처**: `docs/DETECTION_RESULTS_MANIPULATION_V2.md` §6.1, §8.1, §10, `tests/phase1_rulebase/kpi_baseline.json` `c4_scenario_full_entry_count.scenario_entry_ceilings.unusual_timing_manipulation`, `artifacts/unusual_timing_regression_trace.md` §7, `artifacts/manipulation_v3_mutation_recovery.md` Guard 3.
+
+---
+
+### D043: Phase 3 v2 안착 — provider 단일화 잠정 유지 + multi-provider 재평가 트리거 조건 (2026-05-15)
+- **결정**: Sprint G 마감 시점에 GPT-5.4 / GPT-5.4-mini 2티어 단일 provider 구성을 **잠정 유지**한다. Anthropic / Gemini multi-provider A/B는 본 단계에서 실시하지 않는다.
+- **이유**:
+  1. citation은 `rule_id` / `feature_id` / `journal_id` **enum 인용**이라 OpenAI Structured Output `strict: True` + `build_review_narrative_schema()` 동적 enum 제약(§4.2 PHASE3_REWORK_PLAN)이 1차 방어선 역할을 한다. 모든 주요 모델의 통과율이 자연스럽게 ≥99%에 수렴 — provider 차이가 본 프로젝트에서는 실효 없음.
+  2. WU-18 / Sprint A·C에서 OpenAI 2티어 자산이 단위 회귀 누적 33+108건으로 안착. 여기서 provider를 바꾸면 추가 마찰만 발생한다.
+  3. `BudgetGuard`(N 자동 축소 20→10→5) + `input_hash` 기반 캐시로 비용 폭증은 GPT-5.4로도 통제 가능.
+- **재평가 트리거 (Triggers for re-evaluation)**:
+  - candidate 처리량이 **batch당 1000건 이상 또는 일일 5000건** 규모로 증가 → 저비용 provider(Gemini 2.5 Flash 등) 비용 모델 재산정.
+  - GPT-5.4-mini의 citation 통과율이 평가 하니스에서 **≥99% 미달이 3주 연속** 관측됨 (현 시점은 mock 100%).
+  - OpenAI 가격 정책이 본 batch 비용을 **현재 대비 50% 이상 인상** 시.
+  - Anthropic / Gemini가 Structured Output strict + JSON Schema enum 동등 수준의 성숙도를 공개적으로 보증.
+- **재평가 절차**: ChatClient Protocol(ISP 설계)로 인해 신규 provider 추가는 `src/llm/anthropic_client.py` 또는 `gemini_client.py` 신규 파일만 작성하면 된다. 의존성 추가 시 `pyproject.toml llm` 그룹에 명시.
+- **단일 출처**: `docs/PHASE3_REWORK_PLAN.md` §4.1 / §4.2, `docs/completed/phase3_review_narrator_completion.md` §7 후속 로드맵.
+
+---
+
+### D044: T9 Rust 승격 baseline PR 템플릿 의무화 (2026-05-15)
+- **결정**: T9 Rust 승격 또는 `datasynth_manipulation_v3_rust` 계열 baseline 갱신 PR은 description에 아래 섹션을 반드시 포함한다.
+
+```markdown
+## fiscal_period 정확화로 인한 truth 정정
+
+- 변경 전/후 fiscal_period 산출 기준:
+- truth label 변동:
+- circular / embezzlement 수치 변화:
+- 회귀가 아닌 과탐 정정으로 보는 근거:
+
+## fitting-risk check
+
+- label, scenario, document id, 특정 생성 패턴에 맞춘 scoring/rule 조정 여부:
+- 정상 모집단 false-positive 영향:
+- rollback 필요 여부:
+
+## 후속 action
+
+- baseline 갱신:
+- detector/scoring 변경:
+- 문서 갱신:
+```
+
+- **해석 원칙**: fiscal_period 정확화로 circular/embezzlement 수치가 바뀌는 경우, 먼저 truth surface 정정 또는 기존 과탐 제거로 해석한다. detector 회귀로 단정하지 않는다.
+- **롤백 조건**: fitting-risk check에서 label, scenario, document id, 특정 생성 패턴에 맞춘 scoring/rule 조정이 발견되면 해당 변경은 롤백하거나 scoring 변경을 제거한다.
+- **단일 출처**: `artifacts/phase2_handoff_band_axis_audit.md` §6.
 
 ---
 

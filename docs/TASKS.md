@@ -1,6 +1,7 @@
 # Phase별 태스크
 
 > **PHASE1 역할 원칙**: PHASE1은 `fraud`를 확정하거나 정답 라벨을 맞히는 단계가 아니다. PHASE1의 목적은 전수 모집단에서 규칙 위반, 정책 위반, 이상 징후, 분석적 검토 신호를 넓게 올려 **감사인이 봐야 할 항목과 우선순위**를 만드는 것이다. DataSynth의 `is_fraud`/`is_anomaly`와 precision/recall은 개발 검증 보조 지표이며, 운영 해석은 예외 처리 대상, 감사인 리뷰 대상, 고위험 후보를 구분하는 review queue 기준으로 한다.
+
 > 각 태스크의 상세 구현 가이드는 `docs/pre-plan/` 참조
 > pre-plan 번호(00~10)는 **도메인 분류**이며, 구현 순서는 **Phase 번호**를 따른다.
 > 예: `05a-detection-ml.md`는 Phase 2b의 설계 레퍼런스이지, 05 다음에 바로 구현하는 것이 아님.
@@ -213,7 +214,7 @@ WU1 (기반 컴포넌트) ──── 반드시 최초 실행
 
 ### Phase 2 준비: DataSynth 확장 (한국 실무 맞춤 컬럼 추가)
 
-> 현재 운영 기준본은 DataSynth `v20.4`이다. 아래는 Phase 2 탐지 룰의 **선행 의존**이다.
+> 현재 active DataSynth 후보는 `data/journal/primary/datasynth_contract_v2`와 `data/journal/primary/datasynth_manipulation_v2`이다. legacy 비교용 데이터셋은 `data/journal/archive/primary_legacy_20260514/`로 이동했다. 아래는 Phase 2 탐지 룰의 **선행 의존**이다.
 
 | 태스크                             | 파일                                                              | 가이드                                                               | 상태 |
 |------------------------------------|-------------------------------------------------------------------|----------------------------------------------------------------------|------|
@@ -620,9 +621,28 @@ WU1 (기반 컴포넌트) ──── 반드시 최초 실행
 
 ---
 
-## Phase 3: NLQ + Graph + Polish (NLP·그래프 5개 유형 + LLM + 내보내기)
+## Phase 3: Review Queue Narrator + 기존 자산 (NLP·그래프 보존)
 
-> **아키텍처 변경 (2026-04-09)**: 로컬 LLM(Ollama + Qwen3-8B) → **상용 API(Gemini, Claude 등) 하이브리드**로 전환.
+> **🔄 Rescope 공지 (2026-05-14)**: Phase 3의 단일 목표는 **Review Queue Narrator** — PHASE1 룰 히트 + PHASE2 ML 스코어 + 전표 메타를 LLM이 읽고 감사 후보 Top-N 재정렬 + 의심 근거 서술 + 다음 행동 제안.
+> 단일 출처(SoT): [docs/PHASE3_REVIEW_NARRATOR_SPEC.md](PHASE3_REVIEW_NARRATOR_SPEC.md)
+>
+> **비범위 (구현 보존, 신규 작업 없음)**:
+> - **WU-20 Text-to-SQL** ✅ — 코드 유지, Phase 3 완료 기준에서 제외. 대시보드 노출 여부는 별도 결정.
+> - **WU-24 데이터분석 보고서 Excel/PDF** ✅ — 코드 유지, Phase 3 완료 기준에서 제외.
+> - **WU-26 Chat UI 탭** ✅ — Text-to-SQL UI. 코드 유지, Phase 3 완료 기준에서 제외.
+> - **WU-27 Export 탭** ✅ — 코드 유지, Phase 3 완료 기준에서 제외.
+> - **WU-30 감사규칙 피드백 루프** ✅ — LLM이 룰 추가/수정 제안. 자유 가설 영역이라 비범위로 분류. 코드 유지.
+>
+> **신규 WU 슬롯**: WU-31 Review Queue Narrator (Candidate Builder + Citation Validator + Narrator UI).
+>
+> **Sprint D 흡수 완료 (2026-05-15)**: WU-25 `insight_generator.py` + `narrative_report.py` + `batch_insight_store.py` + 관련 테스트 2건 `git rm`. `BatchInsight` / `SignificantTxOpinion` / `EntryNarrative` / `NarrativeBatch` Pydantic 모델 제거. `dashboard/tab_overview.py::_render_batch_insight()`는 Sprint E placeholder로 임시 교체. 전체 회귀 **2991 PASS**.
+>
+> **유지 자산 (Narrator 입력에 활용)**:
+> - WU-18 API 클라이언트 ✅ / WU-19 kiwipiepy ✅ / WU-21 NLP 탐지 ✅ / WU-22 그래프 탐지 ✅ / WU-23 Audit Trail ✅ / WU-28 헤더 탐지 ✅. (WU-25 자산은 Sprint D에서 흡수 후 폐기 — CaseNarrative/CaseNarrativeGenerator만 PHASE2 overlay용으로 보존)
+>
+> ---
+>
+> **기존 아키텍처 변경 이력 (2026-04-09)**: 로컬 LLM(Ollama + Qwen3-8B) → **상용 API(Gemini, Claude 등) 하이브리드**로 전환.
 > 로컬 환경(RTX 3070 Ti 8GB)에서 8B 양자화 모델의 한국어 회계 도메인 이해력 부족 + VRAM 병목 문제.
 > 원본 데이터는 로컬에서 처리하고, API에는 위험 스코어·통계 지표 등 비식별 정보만 전달.
 > 비식별화 모듈은 현재 범위 외 (필요성 인지, [CONSTRAINTS.md §비식별화](CONSTRAINTS.md) 참조).
@@ -720,7 +740,9 @@ WU1 (기반 컴포넌트) ──── 반드시 최초 실행
 |     | Kiwi 인스턴스 싱글톤 + 배치   | `src/feature/text_features.py` — `_get_kiwi` lazy 싱글톤 + iterable 배치 토큰화 | —                                     | ✅   |
 |     | 단위 테스트                    | `tests/modules/test_feature/test_text_kiwi.py` (신규, 31건 통과)            | —                                         | ✅   |
 
-### WU-20: Text-to-SQL 파이프라인 `[L]` — #68, #69, #70 ✅
+### WU-20: Text-to-SQL 파이프라인 `[L]` — #68, #69, #70 ✅ 🔄 *비범위(보존)*
+
+> **2026-05-14 rescope**: Phase 3 완료 기준에서 제외. 구현물은 보존하되 신규 작업/확장 없음. 대시보드 노출 여부는 별도 결정.
 
 > **의존**: WU-18 ✅ (API 클라이언트)
 > 자연어 → SQL 변환 + 검증 + 감사 프리셋 12종. Chat UI(WU-26)의 백엔드.
@@ -789,7 +811,9 @@ WU1 (기반 컴포넌트) ──── 반드시 최초 실행
 |     | export 패키지 초기화          | `src/export/__init__.py` (신규)                                                  | —                                              | ✅   |
 |     | 단위 테스트                    | `tests/modules/test_export/test_audit_trail.py` (신규) — 14개 테스트 (5 클래스)   | —                                              | ✅   |
 
-### WU-24: 데이터분석 보고서 Excel/PDF `[L]` — #75 ✅
+### WU-24: 데이터분석 보고서 Excel/PDF `[L]` — #75 ✅ 🔄 *비범위(보존)*
+
+> **2026-05-14 rescope**: Phase 3 완료 기준에서 제외. 구현물은 보존하되 신규 작업/확장 없음.
 
 > **방향 전환**: 원래 "감사조서(Audit Working Paper)" 산출이었으나, 감사조서는 ISA 230에 따라
 > 감사인이 직접 작성하는 법적 문서이므로 **데이터분석 보고서(Data Analysis Report)** 로 재정의.
@@ -830,7 +854,9 @@ WU1 (기반 컴포넌트) ──── 반드시 최초 실행
 |     | DDL + settings                 | `src/db/schema.py` llm_narratives 테이블/인덱스 + `config/settings.py` WU-25 4개 필드        | —                                       | ✅   |
 |     | 단위 테스트                    | `tests/modules/test_llm/test_insight_generator.py` (6), `test_narrative_report.py` (10) — 16건 통과 | —                                       | ✅   |
 
-### WU-26: Chat UI 탭 `[M]` — #73 ✅
+### WU-26: Chat UI 탭 `[M]` — #73 ✅ 🔄 *비범위(보존)*
+
+> **2026-05-14 rescope**: Text-to-SQL UI. Phase 3 완료 기준에서 제외. 구현물 보존.
 
 > **의존**: WU-20 (Text-to-SQL)
 > Streamlit Chat UI + 프리셋 버튼 12종 + 스트리밍 응답.
@@ -846,7 +872,9 @@ WU1 (기반 컴포넌트) ──── 반드시 최초 실행
 |     | app.py 탭 등록                | `dashboard/app.py` (수정) — 5번째 "Chat" 탭 추가                | —                                              | ✅   |
 |     | 단위 테스트                    | `tests/modules/test_dashboard/test_tab_chat.py` (17 tests) — preview 컷/FIFO/audit event/run_query graceful | —                                              | ✅   |
 
-### WU-27: Export 탭 (통합) `[M]` — #74 ✅
+### WU-27: Export 탭 (통합) `[M]` — #74 ✅ 🔄 *비범위(보존)*
+
+> **2026-05-14 rescope**: Phase 3 완료 기준에서 제외. 구현물 보존.
 
 > **의존**: WU-24 (감사조서) + WU-26 (Chat UI, 선택적) + WU-23 (audit_trail)
 > 대시보드 Export 탭 — 포맷 선택(Excel/PDF/CSV), ExportFilter UI, 다운로드 버튼.
@@ -890,7 +918,9 @@ WU1 (기반 컴포넌트) ──── 반드시 최초 실행
 
 > WU-18에서 `preprocessing_advisor.py`의 `OllamaClient` → `get_chat_client("light")` 교체를 함께 수행. `rule_based_fallback`은 `RuntimeError` 흡수 + `self.client=None` 패턴으로 유지. 본 태스크는 독립 작업으로 남기지 않는다.
 
-### WU-30: 감사규칙 피드백 루프 `[M]` — #87 ✅
+### WU-30: 감사규칙 피드백 루프 `[M]` — #87 ✅ 🔄 *비범위(보존)*
+
+> **2026-05-14 rescope**: LLM이 룰 추가/수정을 제안하는 자유 가설 영역. Phase 3 v2 비범위. 구현물 보존, 신규 작업 없음.
 
 > **의존**: WU-25 (인사이트 생성기)
 > LLM이 새 데이터 패턴 분석 → audit_rules.yaml 개선 제안 → 사용자 승인.
@@ -922,15 +952,39 @@ WU1 (기반 컴포넌트) ──── 반드시 최초 실행
 > | GraphDetector (WU-22)           | GR01(CircularTransaction), GR03(TransferPricingAnomaly) (2개)                                    |
 > | TrendBreak (WU-16, Phase 2)     | 시계열 추세 이탈 — Phase 2 DataSynth 블로커 해소 후 구현 (#54)                                    |
 
-**Phase 3 완료 기준**:
-1. API 클라이언트: Gemini/Claude 중 1개 이상 정상 동작 + Ollama 폴백 확인
-2. Text-to-SQL: 자연어 질의 → SQL → DuckDB 실행 → DataFrame E2E 동작. 프리셋 12종 정상 실행
-3. NLP 탐지: NLPDetector 5개 서브룰(NLP01~05) + constants 등록 + pipeline 연동
-4. 그래프 탐지: GraphDetector 2개 서브룰(GR01, GR03) 동작. L3-03 recall 7% → 20%+ 개선
-6. Audit Trail: 이벤트 6종 기록 + CSV 내보내기 동작
-7. Chat UI: 프리셋 버튼 + 자유 질의 + 스트리밍 + SQL 표시 동작
-8. Export 탭: 포맷 선택 + 필터 + 다운로드 동작
-9. 인사이트: High 위험 전표 자동 위험 사유서 생성 동작
+### WU-31: Review Queue Narrator `[L]` — 신규 (v2 핵심)
+
+> **의존**: WU-18 (API 클라이언트) ✅ / WU-25 (insight_generator, narrative_report) ✅ / Phase 2 ML 스코어 산출 + DuckDB review queue 테이블.
+> 단일 출처: [docs/PHASE3_REVIEW_NARRATOR_SPEC.md](PHASE3_REVIEW_NARRATOR_SPEC.md).
+>
+> Candidate Builder는 review queue 1건당 (rule_hits + ml_scores + journal_meta + peer_context)을 PII 비식별 후 LLM에 전달. Structured Output(`strict: True`)으로 우선순위·근거·다음 행동을 JSON으로 받아 Citation Validator가 rule_id/feature_id/journal_id 존재 여부를 검증. 검증 실패 건은 `confidence=low` + 후순위 처리.
+
+| #   | 태스크                          | 파일                                                                                                                  | 가이드                                                  | 상태 |
+|-----|---------------------------------|----------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------|------|
+| 신규 | Candidate Builder              | `src/llm/review_narrator/candidate_builder.py` (신규) — review queue + rule_hits + ml_scores + journal_meta → LLM 입력 dict | [PHASE3_REVIEW_NARRATOR_SPEC](PHASE3_REVIEW_NARRATOR_SPEC.md) | ✅ Sprint B |
+| 신규 | PII Sanitizer                  | `src/llm/review_narrator/sanitizer.py` (신규) — 식별자(이름·사업자번호 등) 비식별 처리                                  | 동                                                      | ✅ Sprint B |
+| 신규 | Review Narrator                | `src/llm/review_narrator/narrator.py` (신규) — Structured Output 스키마 + reasoning 티어 호출 + light 폴백             | 동                                                      | ✅ Sprint C |
+| 신규 | Citation Validator             | `src/llm/review_narrator/citation_validator.py` (신규) — rule_id/feature_id/journal_id 존재 검증 + 실패 시 confidence 강등 | 동                                                      | ✅ Sprint A |
+| 신규 | Review Queue 테이블/캐시 DDL    | `src/db/schema.py` (확장) — `review_narratives` 테이블 (candidate_id PK, narrative JSON, citation_valid bool, created_at) | 동                                                      | ✅ Sprint A |
+| 신규 | 응답 스키마 (Pydantic)          | `src/llm/review_narrator/models.py` (신규) — `ReviewNarrative`, `ReasoningItem`, `ReasoningEvidence`, `SuggestedAction` | 동                                                      | ✅ Sprint A |
+| 신규 | 대시보드 통합 (Sprint E1)        | `dashboard/tab_review_queue.py` + `dashboard/components/review_narrator{,_jump}.py` (신규) — 카드 + citation 점프, `app.py` 탭 등록 + `_state.py` KEY_REVIEW_QUEUE_* | 동                                                      | ✅ Sprint E1 (2026-05-15 — 9개 unit PASS, dashboard 175 regression PASS, streamlit boot 200) |
+| 신규 | 대시보드 워크플로우 (Sprint E2)  | `dashboard/components/review_queue_workflow.py` (신규) + `tab_review_queue.py` 확장 — 실행 트리거 + 분류 라디오·메모 + 사이드바 6종 필터·검색. `src/db/schema.py` idempotent ALTER (`audit_decision`/`audit_note`/`reviewed_by`/`reviewed_at` + `idx_review_narratives_decision`). `src/llm/review_narrator/cache.py::update_audit_decision`·`read_audit_decision` 헬퍼. `src/export/audit_trail.py` EventType 2종(`analysis_run`/`review_decision_change`) 확장. | 동                                                      | ✅ Sprint E2 (2026-05-15 — workflow 29 + cache 9 신규 + E1 회귀 호환, 누적 171 PASS) |
+| 신규 | 단위 테스트                     | `tests/modules/test_llm/test_review_narrator/*` (신규) — Candidate Builder / Sanitizer / Citation Validator / Narrator / Cache mock + E2E 통합 | —                                                       | ✅ Sprint A+B+C+E2 (138개 PASS — models 18 / citation 11 / sanitizer 26 / builder 26 / narrator 12 / cache 19 / 통합 5 / E1 9 / E2 29 ※ E1·E2는 dashboard 측 카운트) |
+| 신규 | 평가 하니스 + 비용 가드          | `src/llm/review_narrator/budget_guard.py` + `audit_logger.py` + `eval_harness.py` (신규) + `tests/modules/test_llm/test_review_narrator/test_eval.py` (신규). `audit_log.analysis_run` 이벤트 기록, citation/Spearman/latency 측정, `test-results/phase3_review_narrator_eval/YYYYMMDD/` JSON 저장. opt-in `RUN_LLM_EVAL=1`. | —                                                       | ✅ Sprint F (2026-05-15 — 22 unit PASS + 1 opt-in skipped. §4.2 schema enum 회귀 2건 포함) |
+
+**Phase 3 v2 완료 기준** (Review Queue Narrator):
+1. Candidate Builder: PHASE1 룰 히트 + PHASE2 ML 스코어 + 전표 메타 → LLM 입력 dict 생성. PII 비식별 통과.
+2. Review Narrator: Structured Output(`strict: True`)으로 candidate 1건당 (priority_rank, summary, reasoning[], suggested_actions[], confidence) 반환.
+3. Citation Validator: `evidence.rule_id` / `feature_id` / `journal_id` 모두 입력에 실존. 검증 통과율 ≥ 99%.
+4. Latency: candidate 1건당 p95 ≤ 8s(reasoning) / ≤ 2s(light).
+5. 우선순위 일치도: 감사인 라벨 N=50 vs LLM rank Spearman ρ ≥ 0.6.
+6. 캐시: `review_narratives` 테이블에 candidate_id 단위 UPSERT.
+
+**유지 자산 정합 기준** (rescope 후에도 통과해야 함):
+- WU-18 API 클라이언트 / WU-21 NLP 탐지 / WU-22 그래프 탐지 / WU-25 insight·narrative / WU-23 Audit Trail / WU-28 헤더 LLM 보강: 회귀 테스트 그대로 통과.
+
+**비범위 (테스트만 통과, 신규 기준 없음)**:
+- WU-20 Text-to-SQL / WU-24 Export 보고서 / WU-26 Chat UI / WU-27 Export 탭 / WU-30 룰 피드백 루프.
 > Current DataSynth production baseline: `data/journal/primary/datasynth/` = `v23` freeze (2026-04-22).  
 > `B04 DuplicatePayment`는 `P2P + KZ` 지급쌍과 pair/negative-control sidecar 기준으로 승격되었고, `v20.4`는 백업본 `datasynth_backup_v20_4_20260422`로 보존된다.
 > Current production DataSynth baseline: `data/journal/primary/datasynth/` freeze `v23` as of 2026-04-22. Older `v20.x` references below are historical task notes.

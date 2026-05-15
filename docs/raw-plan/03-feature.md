@@ -1,6 +1,9 @@
 # 03. 감사 파생변수 엔진 (Feature Engineering) [Phase 1a — 의존: 02]
 
 > **PHASE1 역할 원칙**: PHASE1은 `fraud`를 확정하거나 정답 라벨을 맞히는 단계가 아니다. PHASE1의 목적은 전수 모집단에서 규칙 위반, 정책 위반, 이상 징후, 분석적 검토 신호를 넓게 올려 **감사인이 봐야 할 항목과 우선순위**를 만드는 것이다. DataSynth의 `is_fraud`/`is_anomaly`와 precision/recall은 개발 검증 보조 지표이며, 운영 해석은 예외 처리 대상, 감사인 리뷰 대상, 고위험 후보를 구분하는 review queue 기준으로 한다.
+
+> **🔄 Phase 3 v2 Rescope (2026-05-14) ✅ 구현 완료 (Sprint A~G, 2026-05-15)**: Phase 3 단일 목표는 [Review Queue Narrator](../PHASE3_REVIEW_NARRATOR_SPEC.md), 완료 리포트 [completed/phase3_review_narrator_completion.md](../completed/phase3_review_narrator_completion.md). 본 문서 내 `add_semantic_anomaly` / Ollama Qwen3-8B 문맥 이상 / LLM 적요 실질 평가 / LLM 계정명 의미 분석 절은 historical v1 기록. 임베딩 기반 `semantic_similarity`는 WU-21에서 OpenAI EmbeddingClient로 구현 완료 → Narrator 입력 신호로 보존. [DECISION.md §D041](../DECISION.md) 참조.
+
 ## 목적
 표준 DataFrame에 감사 관점의 파생변수 18개를 추가하여, 이상탐지 룰과 ML 모델의 입력 피처로 활용한다.
 각 파생변수는 DETECTION_RULES.md §5의 24개 룰(L1-01~L3-09)에 대응.

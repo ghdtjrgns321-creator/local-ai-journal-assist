@@ -1,6 +1,7 @@
 # Local AI Audit Assistant 설명
 
 > **PHASE1 역할 원칙**: PHASE1은 `fraud`를 확정하거나 정답 라벨을 맞히는 단계가 아니다. PHASE1의 목적은 전수 모집단에서 규칙 위반, 정책 위반, 이상 징후, 분석적 검토 신호를 넓게 올려 **감사인이 봐야 할 항목과 우선순위**를 만드는 것이다. DataSynth의 `is_fraud`/`is_anomaly`와 precision/recall은 개발 검증 보조 지표이며, 운영 해석은 예외 처리 대상, 감사인 리뷰 대상, 고위험 후보를 구분하는 review queue 기준으로 한다.
+
 > 최신 설명 기준: Phase 1은 "정답을 잡는 모델"이 아니라 규칙 위반·정책 위반·이상 징후 후보를 전체 모집단에서 먼저 올리는 설명 가능한 1차 필터다. Phase 1 결과는 곧바로 부정 또는 오류 결론이 아니며, 이후 중요성·증거 강도·업무상 정상 예외·다른 룰과의 조합을 기준으로 예외 처리 대상, 감사인 리뷰 대상, 고위험 후보로 2차 분류한다.
 
 > 작성 기준: 2026-04-16  
@@ -61,13 +62,14 @@
 
 ---
 
-## 4. LLM의 역할
+## 4. LLM의 역할 (Phase 3 v2) ✅ 완료 (2026-05-15)
 
 이 프로젝트는 LLM 중심 앱이 아니다.
 
-- LLM은 Text-to-SQL, 룰 제안, 전처리 보조 같은 보조 기능에 가깝다.
+- Phase 3 v2의 LLM 역할은 단 하나: **Review Queue Narrator** (Sprint A~G 안착, [completion 리포트](completed/phase3_review_narrator_completion.md)). PHASE1 룰 히트 + PHASE2 ML 스코어 + 전표 메타를 읽고 감사 후보 Top-N 재정렬 + 의심 근거 서술 + 다음 행동 제안.
+- LLM은 새 fraud 패턴을 발견하지 않는다. 룰/ML 출력 해석에만 한정한다.
 - 탐지의 기본 판단은 규칙과 통계 기반 파이프라인이 맡는다.
-- 따라서 제품 설명에서도 LLM은 핵심 탐지 축 뒤에 나와야 한다.
+- Text-to-SQL·룰 제안·전처리 보조는 historical v1 자산으로 비범위(구현 보존). 단일 출처: [PHASE3_REVIEW_NARRATOR_SPEC.md](PHASE3_REVIEW_NARRATOR_SPEC.md).
 
 ---
 
@@ -79,7 +81,7 @@
 2. 감사 룰로 설명 가능한 이상을 먼저 찾는다.
 3. 비지도 탐지로 룰 밖 패턴을 보완한다.
 4. 결과를 우선순위화해서 대시보드에서 검토한다.
-5. Chat, Export, 룰 제안은 그 다음에 쓰는 보조 기능이다.
+5. LLM Review Queue Narrator가 우선순위와 의심 근거를 서술해 감사인 검토를 보조한다 (Phase 3 v2). Chat / Export / 룰 제안은 historical v1 자산으로 비범위 보존.
 
 ---
 
