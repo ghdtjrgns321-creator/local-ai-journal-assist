@@ -56,14 +56,6 @@ def __getattr__(name: str):
         from src.llm import embedding_service
 
         return getattr(embedding_service, name)
-    if name == "InsightGenerator":
-        from src.llm.insight_generator import InsightGenerator
-
-        return InsightGenerator
-    if name == "NarrativeReporter":
-        from src.llm.narrative_report import NarrativeReporter
-
-        return NarrativeReporter
     if name == "CaseNarrativeGenerator":
         from src.llm.case_narrative_generator import CaseNarrativeGenerator
 

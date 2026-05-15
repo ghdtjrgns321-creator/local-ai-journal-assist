@@ -104,40 +104,10 @@ class PreprocessingAdvice(BaseModel):
     source: str = "llm"  # "llm" | "rule_based" — LLM 추천과 규칙 기반 폴백 구분
 
 
-# ── WU-25: 인사이트 + XAI 사유서 스키마 ──
-
-
-class SignificantTxOpinion(BaseModel):
-    """유의적 거래(L4-03 AND L4-01) 1건에 대한 LLM 보조 의견 (ISA 240 §32(c))."""
-
-    document_id: str
-    account: str
-    amount: float
-    business_rationale: str
-    audit_flag: Literal["reasonable", "questionable", "high_risk"]
-
-
-class BatchInsight(BaseModel):
-    """감사 배치 전체 자연어 요약 + 유의적 거래 의견 (#78, #80)."""
-
-    summary: str
-    top_risks: list[str]
-    significant_tx_opinions: list[SignificantTxOpinion]
-
-
-class EntryNarrative(BaseModel):
-    """개별 전표 1건의 XAI 위험 사유서 (#86)."""
-
-    document_id: str
-    rationale: str
-    cited_rules: list[str]
-
-
-class NarrativeBatch(BaseModel):
-    """LLM 배치 응답 래퍼 — list[EntryNarrative]를 root로 반환하면 일부 모델이
-    strict 스키마를 거부하므로 객체로 한 번 감싼다."""
-
-    narratives: list[EntryNarrative]
+# ── PHASE3 v2 selected-case narrative (CaseNarrativeGenerator 전용) ──
+# Why: WU-25 BatchInsight / SignificantTxOpinion / EntryNarrative / NarrativeBatch는
+#      Sprint D에서 폐기됐다 (Review Queue Narrator의 candidate 단위 응답으로 흡수).
+#      CaseNarrative / CaseNarrativeBatch는 PHASE2 case overlay 흐름에서 별도 사용 중.
 
 
 class CaseNarrative(BaseModel):
