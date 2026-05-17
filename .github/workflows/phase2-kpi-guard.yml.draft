@@ -1,25 +1,37 @@
-name: phase1-kpi-guard
+name: phase2-kpi-guard
 
-# PHASE1 nightly KPI guard — Layer A/B/C 3계층 가드.
+# PHASE2 KPI guard — Layer A/B/C 3계층 + meta 가드.
+#
+# 단일 출처:
+#   - docs/PHASE2_GOVERNANCE_DESIGN.md (설계 문서)
+#   - tests/phase2_rulebase/kpi_baseline.json (baseline)
+#   - tests/phase2_rulebase/nightly_kpi_guard.py (가드 함수 — 후속 PR 에서 구현)
 #
 # 트리거:
 #   - PR 대상 main / develop  (Layer A/B HARD FAIL = PR 차단, Layer C SOFT WARN = PR 코멘트)
 #   - main 머지 시점 (post-merge 검증, 회귀 발생 시 issue 자동 생성)
-#   - weekly cron (월요일 09:00 UTC, fixture freshness 회귀 감시)
+#   - weekly cron (월요일 10:00 UTC, PHASE1 cron 09:00 보다 1시간 뒤로 runner 자원 충돌 회피)
 #
-# 원칙 (CLAUDE.md PHASE1 역할 원칙):
-#   PHASE1 향상은 도메인 정합성으로만 정당화. truth recall 향상을 강제하는 가드 금지.
-#   Layer C 가드는 baseline 70% 비율 하한 SOFT WARN 만 (절대값 임계 금지).
+# 원칙 (CLAUDE.md PHASE1 역할 원칙 계승, docs/PHASE2_GOVERNANCE_DESIGN.md §결정5):
+#   PHASE2 향상은 도메인 정합성과 학습 무결성으로만 정당화한다.
+#   truth recall 향상을 강제하는 가드 금지. Layer C 가드는 baseline 70% 비율 하한 SOFT WARN 만.
+#   supervised 활성화 시 옵션 Q 전환 정책은 별도 design PR 의무.
 #
-# baseline 갱신 절차:
-#   tests/phase1_rulebase/kpi_baseline.json 직접 편집 PR. description에 변경 사유 +
-#   도메인 정당성(회계 실무 / 감사기준서) 명시 의무. truth recall 향상을 baseline
-#   갱신 직접 사유로 사용 금지.
+# baseline 갱신 절차 (PHASE1 패턴 + D044 PR 템플릿 PHASE2 확장):
+#   tests/phase2_rulebase/kpi_baseline.json 직접 편집 PR. description 에 변경 사유 +
+#   도메인 정당성 + fitting-risk check + rollback 조건 명시 의무.
 #
-# Layer C SOFT WARN 누적 대응:
+# Layer C SOFT WARN 누적 대응 (PHASE1 streak-reset 정책 그대로):
 #   - PR: 코멘트만 남기고 차단하지 않음
-#   - main/schedule/workflow_dispatch 3회 연속: kpi-guard issue 자동 생성
+#   - main/schedule/workflow_dispatch 3회 연속: kpi-guard issue 자동 생성 (label: phase2)
 #   - 6회 연속: baseline 갱신 PR 또는 회귀 원인 분석 docs 의무
+#   - 정상 run 1회 발생: streak reset (milestones lineage 초기화)
+
+# DRAFT — 활성화 전 다음 의존 작업 필요:
+#   1. tests/phase2_rulebase/nightly_kpi_guard.py 구현
+#   2. tests/phase2_rulebase/kpi_baseline.json baseline 값 측정 PR
+#   3. data/companies/_ci_baseline/engagements/2026/models/phase2_unsupervised/ CI baseline 모델 준비
+#   4. 본 파일을 phase2-kpi-guard.yml 로 rename
 
 on:
   pull_request:
@@ -27,21 +39,19 @@ on:
       - main
       - develop
     paths:
-      - "src/detection/**"
-      - "config/phase1_case.yaml"
+      - "src/preprocessing/**"
+      - "src/detection/vae_detector.py"
+      - "src/services/phase2_training_service.py"
+      - "src/services/phase2_inference_service.py"
+      - "src/services/phase2_evaluation.py"
       - "config/settings.py"
-      - "tests/phase1_rulebase/**"
-      - "tools/scripts/profile_phase1_v126.py"
-      - "tools/scripts/materialize_datasynth_manipulation_v2.py"
-      - "tools/scripts/build_datasynth_v13*.py"
-      - "artifacts/phase1_manipulation_v2_*"
-      - "artifacts/phase1_contract_v2_*"
+      - "tests/phase2_rulebase/**"
+      - "artifacts/phase2_*"
   push:
     branches:
       - main
   schedule:
-    # 매주 월요일 09:00 UTC (한국 시간 18:00)
-    - cron: "0 9 * * 1"
+    - cron: "0 10 * * 1"
   workflow_dispatch: {}
 
 permissions:
@@ -52,7 +62,7 @@ permissions:
 jobs:
   kpi-guard:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -69,40 +79,40 @@ jobs:
         with:
           version: "latest"
 
-      - name: Sync dev dependencies
-        run: uv sync --group core --group dev --group dashboard
+      - name: Sync dependencies
+        run: uv sync --group core --group ml --group dev
 
       - name: Restore Layer C soft warn history
         id: softwarn-history-restore
         uses: actions/cache/restore@v4
         with:
-          path: artifacts/_kpi_guard_softwarn_history.json
-          key: kpi-guard-softwarn-${{ github.ref_name }}-${{ github.run_id }}
+          path: artifacts/_phase2_kpi_guard_softwarn_history.json
+          key: phase2-kpi-guard-softwarn-${{ github.ref_name }}-${{ github.run_id }}
           restore-keys: |
-            kpi-guard-softwarn-${{ github.ref_name }}-
+            phase2-kpi-guard-softwarn-${{ github.ref_name }}-
 
-      - name: Layer A + B (HARD FAIL)
+      - name: Layer A + B + Meta (HARD FAIL)
         id: hard
         shell: bash
         run: |
           set -o pipefail
-          uv run pytest tests/phase1_rulebase/nightly_kpi_guard.py \
+          uv run pytest tests/phase2_rulebase/nightly_kpi_guard.py \
             -v \
             -k "TestLayerADomainIntegrity or TestLayerBOperationalLoad or TestGuardMetaIntegrity" \
             --tb=short \
-            2>&1 | tee artifacts/_kpi_guard_hard.log
+            2>&1 | tee artifacts/_phase2_kpi_guard_hard.log
 
       - name: Layer C (SOFT WARN, never fails)
         id: soft
         if: always()
         continue-on-error: true
         run: |
-          uv run pytest tests/phase1_rulebase/nightly_kpi_guard.py \
+          uv run pytest tests/phase2_rulebase/nightly_kpi_guard.py \
             -v \
-            -k "TestLayerCTruthRegressionSoftWarn" \
+            -k "TestLayerCRankingRegressionSoftWarn" \
             -W "default::UserWarning" \
             --tb=no \
-            2>&1 | tee artifacts/_kpi_guard_soft.log
+            2>&1 | tee artifacts/_phase2_kpi_guard_soft.log
 
       - name: Update Layer C soft warn history
         id: soft_history
@@ -111,9 +121,9 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            const path = 'artifacts/_kpi_guard_softwarn_history.json';
+            const path = 'artifacts/_phase2_kpi_guard_softwarn_history.json';
             let softLog = '';
-            try { softLog = fs.readFileSync('artifacts/_kpi_guard_soft.log', 'utf8'); } catch (_) {}
+            try { softLog = fs.readFileSync('artifacts/_phase2_kpi_guard_soft.log', 'utf8'); } catch (_) {}
             const softWarns = (softLog.match(/SOFT WARN/g) || []).length;
             let history = {
               consecutive_count: 0,
@@ -130,9 +140,7 @@ jobs:
             const previousCount = Number(history.consecutive_count || 0);
             const consecutive = softWarns > 0 ? previousCount + 1 : 0;
             const milestone = consecutive >= 6 ? 6 : (consecutive >= 3 ? 3 : 0);
-            // 정상 run(softWarns === 0)으로 streak가 끊기면 milestones lineage도 초기화한다.
-            // 이후 같은 회귀가 다시 누적되면 새로운 streak로 보고 milestone 3/6 issue가 재발화된다.
-            // 정책 단일 출처: docs/CONSTRAINTS.md §"SOFT WARN 누적 대응 절차" — 옵션 A (streak-reset).
+            // streak-reset 정책 (PHASE1 동일): 정상 run 1회로 milestones 초기화 → 재누적 시 issue 재발화.
             const milestonesOpened = softWarns === 0
               ? []
               : (Array.isArray(history.milestones_opened) ? history.milestones_opened : []);
@@ -178,8 +186,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: kpi-guard-logs
-          path: artifacts/_kpi_guard_*.log
+          name: phase2-kpi-guard-logs
+          path: artifacts/_phase2_kpi_guard_*.log
           retention-days: 30
 
       - name: PR comment — Layer A/B/C summary
@@ -190,8 +198,8 @@ jobs:
             const fs = require('fs');
             let hardLog = '';
             let softLog = '';
-            try { hardLog = fs.readFileSync('artifacts/_kpi_guard_hard.log', 'utf8'); } catch (_) {}
-            try { softLog = fs.readFileSync('artifacts/_kpi_guard_soft.log', 'utf8'); } catch (_) {}
+            try { hardLog = fs.readFileSync('artifacts/_phase2_kpi_guard_hard.log', 'utf8'); } catch (_) {}
+            try { softLog = fs.readFileSync('artifacts/_phase2_kpi_guard_soft.log', 'utf8'); } catch (_) {}
             const hardPass = !hardLog.includes('FAILED') && hardLog.includes('passed');
             const softWarns = (softLog.match(/SOFT WARN/g) || []).length;
             const verdict = hardPass
@@ -201,7 +209,7 @@ jobs:
               ? `⚠️ Layer C SOFT WARN ${softWarns}건 (검토 권장, 차단 아님)`
               : '✅ Layer C 회귀 없음';
             const body = [
-              '## PHASE1 KPI Guard',
+              '## PHASE2 KPI Guard',
               '',
               `**Layer A/B (HARD)**: ${verdict}`,
               `**Layer C (SOFT WARN)**: ${layerCMsg}`,
@@ -222,8 +230,9 @@ jobs:
               '',
               '</details>',
               '',
-              '> **원칙**: PHASE1 향상은 도메인 정합성으로만 정당화. Layer C 는 회귀 방지선 (SOFT WARN), 향상 강제 금지.',
-              '> baseline 갱신은 `tests/phase1_rulebase/kpi_baseline.json` 편집 PR + 도메인 사유 명시.',
+              '> **원칙**: PHASE2 향상은 도메인 정합성과 학습 무결성으로만 정당화. Layer C 는 회귀 방지선 (SOFT WARN), 향상 강제 금지.',
+              '> baseline 갱신은 `tests/phase2_rulebase/kpi_baseline.json` 편집 PR + 도메인 사유 + fitting-risk check (D044 확장).',
+              '> 설계: docs/PHASE2_GOVERNANCE_DESIGN.md',
             ].join('\n');
             github.rest.issues.createComment({
               owner: context.repo.owner,
@@ -243,18 +252,18 @@ jobs:
             const milestone = Number('${{ steps.soft_history.outputs.milestone }}');
             let softLog = '';
             let history = '';
-            try { softLog = fs.readFileSync('artifacts/_kpi_guard_soft.log', 'utf8'); } catch (_) {}
-            try { history = fs.readFileSync('artifacts/_kpi_guard_softwarn_history.json', 'utf8'); } catch (_) {}
+            try { softLog = fs.readFileSync('artifacts/_phase2_kpi_guard_soft.log', 'utf8'); } catch (_) {}
+            try { history = fs.readFileSync('artifacts/_phase2_kpi_guard_softwarn_history.json', 'utf8'); } catch (_) {}
             const requiredAction = milestone >= 6
-              ? 'baseline 갱신 PR을 열거나 회귀 원인 분석 docs를 작성하세요. fitting 위험이 확인되면 변경을 롤백하세요.'
-              : 'Layer C SOFT WARN이 3회 연속 발생했습니다. 회귀 원인을 확인하고 kpi_baseline 갱신 필요성을 검토하세요.';
+              ? 'baseline 갱신 PR 또는 회귀 원인 분석 docs 작성 의무. fitting 위험 확인 시 변경 롤백.'
+              : 'Layer C SOFT WARN 3회 연속. 회귀 원인 확인 + kpi_baseline 갱신 필요성 검토.';
             await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: `[KPI Guard] Layer C SOFT WARN ${consecutive} consecutive runs (${context.sha.substring(0,7)})`,
-              labels: ['kpi-guard', 'phase1', 'soft-warn'],
+              title: `[KPI Guard PHASE2] Layer C SOFT WARN ${consecutive} consecutive runs (${context.sha.substring(0,7)})`,
+              labels: ['kpi-guard', 'phase2', 'soft-warn'],
               body: [
-                '## Layer C SOFT WARN 누적 대응',
+                '## Layer C SOFT WARN 누적 대응 (PHASE2)',
                 '',
                 `commit: \`${context.sha}\``,
                 `workflow: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
@@ -263,6 +272,10 @@ jobs:
                 '',
                 '### required action',
                 requiredAction,
+                '',
+                '### 설계 참조',
+                '- docs/PHASE2_GOVERNANCE_DESIGN.md §결정4 Layer C',
+                '- docs/PHASE2_GOVERNANCE_DESIGN.md §6.4 승격 PR 템플릿 (fitting-risk check)',
                 '',
                 '### Layer C 로그',
                 '```',
@@ -283,8 +296,8 @@ jobs:
         if: always() && github.event_name != 'pull_request'
         uses: actions/cache/save@v4
         with:
-          path: artifacts/_kpi_guard_softwarn_history.json
-          key: kpi-guard-softwarn-${{ github.ref_name }}-${{ github.run_id }}
+          path: artifacts/_phase2_kpi_guard_softwarn_history.json
+          key: phase2-kpi-guard-softwarn-${{ github.ref_name }}-${{ github.run_id }}
 
       - name: Post-merge issue — Layer A/B regression
         if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.hard.outcome == 'failure'
@@ -293,17 +306,20 @@ jobs:
           script: |
             const fs = require('fs');
             let log = '';
-            try { log = fs.readFileSync('artifacts/_kpi_guard_hard.log', 'utf8'); } catch (_) {}
+            try { log = fs.readFileSync('artifacts/_phase2_kpi_guard_hard.log', 'utf8'); } catch (_) {}
             await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: `[KPI Guard] Layer A/B regression on main (${context.sha.substring(0,7)})`,
-              labels: ['kpi-guard', 'regression', 'phase1'],
+              title: `[KPI Guard PHASE2] Layer A/B regression on main (${context.sha.substring(0,7)})`,
+              labels: ['kpi-guard', 'regression', 'phase2'],
               body: [
-                '## post-merge KPI Guard 회귀',
+                '## post-merge KPI Guard 회귀 (PHASE2)',
                 '',
                 `commit: \`${context.sha}\``,
                 `workflow: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                '',
+                '### 설계 참조',
+                '- docs/PHASE2_GOVERNANCE_DESIGN.md',
                 '',
                 '### 로그',
                 '```',
