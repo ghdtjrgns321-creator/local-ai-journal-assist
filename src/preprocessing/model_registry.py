@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import joblib
@@ -51,6 +51,7 @@ class ModelMetadata:
     label_source: str = "unknown"
     positive_count: int = 0
     positive_rate: float = 0.0
+    gate_decision: str = "unknown"
     gate_status: str = "unknown"
     gate_reason: str | None = None
     feature_quality_profile: dict = field(default_factory=dict)
@@ -99,6 +100,7 @@ class ModelRegistry:
         label_source: str = "unknown",
         positive_count: int = 0,
         positive_rate: float = 0.0,
+        gate_decision: str = "unknown",
         gate_status: str = "unknown",
         gate_reason: str | None = None,
         feature_quality_profile: dict | None = None,
@@ -121,7 +123,7 @@ class ModelRegistry:
             mean_f1=mean_f1,
             feature_count=feature_count,
             params=params or {},
-            saved_at=datetime.now(timezone.utc).isoformat(),
+            saved_at=datetime.now(UTC).isoformat(),
             training_data_stats=training_data_stats or {},
             feature_schema_version=feature_schema_version,
             class_imbalance_ratio=class_imbalance_ratio,
@@ -133,6 +135,7 @@ class ModelRegistry:
             label_source=label_source,
             positive_count=positive_count,
             positive_rate=positive_rate,
+            gate_decision=gate_decision,
             gate_status=gate_status,
             gate_reason=gate_reason,
             feature_quality_profile=feature_quality_profile or {},

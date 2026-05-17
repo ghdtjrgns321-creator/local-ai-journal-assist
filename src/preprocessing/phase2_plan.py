@@ -10,7 +10,7 @@ import re
 from collections import Counter
 
 from src.eda.models import ColumnProfile, EDAProfile
-from src.preprocessing.constants import LABEL_COLUMNS
+from src.preprocessing.constants import LABEL_COLUMNS, LEAKAGE_DENY_COLUMNS
 from src.services.phase2_training_models import (
     Phase2ColumnDecision,
     Phase2PreprocessingPlan,
@@ -19,6 +19,12 @@ from src.services.phase2_training_models import (
 _ID_NAMES = {"document_id", "doc_id", "row_id", "id", "transaction_id", "journal_id"}
 _LOW_CARD_DOMAIN_COLUMNS = {"user_persona"}
 _HIGH_MISSING_THRESHOLD = 0.90
+
+# DataSynth v3 S4 §3 measured `f_manual` as normal=0.41 vs manipulated=1.00.
+# This is a synthetic shortcut until v4 noises the manual flag distribution;
+# remove this guard in the matrix builder only after the v4 profile fixes it.
+_SINGLE_USE_DENY = frozenset({"f_manual"})
+_LEAKAGE_DENY_COLUMN_NAMES = frozenset(column.lower() for column in LEAKAGE_DENY_COLUMNS)
 
 _LEAKAGE_PATTERNS = (
     ("label", "leakage_label"),
@@ -76,6 +82,8 @@ def _decide_column(
 
     if normalized_name in LABEL_COLUMNS:
         return _decision(name, column, "label", "exclude", "leakage_label")
+    if normalized_name in _LEAKAGE_DENY_COLUMN_NAMES:
+        return _decision(name, column, "leakage", "exclude", "leakage_deny_column")
     if leakage_reason is not None:
         return _decision(name, column, "leakage", "exclude", leakage_reason)
     if normalized_name in _ID_NAMES or normalized_name.endswith("_id"):
@@ -127,6 +135,22 @@ def _leakage_reason(normalized_name: str) -> str | None:
         if token in tokens or normalized_name.endswith(f"_{token}"):
             return reason_code
     return None
+
+
+def _validate_single_use_deny_columns(columns: list[str] | tuple[str, ...]) -> None:
+    """Reject shortcut columns when they would enter the matrix as standalone inputs."""
+    denied = [
+        column
+        for column in columns
+        if _normalize_name(column) in _SINGLE_USE_DENY
+    ]
+    if denied:
+        denied_list = ", ".join(sorted(denied))
+        raise ValueError(
+            "Phase 2 feature matrix cannot include single-use denied feature(s): "
+            f"{denied_list}. Use interaction features such as "
+            "f_manual_x_amount_high or f_manual_x_weekend instead."
+        )
 
 
 def _normalize_name(name: str) -> str:

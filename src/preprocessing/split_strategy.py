@@ -13,6 +13,7 @@ DEFAULT_TEST_YEARS = (2024,)
 _DOC_ID_COL = "document_id"
 _FISCAL_YEAR_COL = "fiscal_year"
 _POSTING_DATE_COL = "posting_date"
+_CREATED_BY_COL = "created_by"
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,48 @@ def split_document_temporal_holdout(
     )
 
 
+def split_user_year_holdout(
+    df: pd.DataFrame,
+    *,
+    user_column: str = _CREATED_BY_COL,
+    year_column: str = _FISCAL_YEAR_COL,
+    train_years: tuple[int, ...] = DEFAULT_TRAIN_YEARS,
+    test_years: tuple[int, ...] = DEFAULT_TEST_YEARS,
+) -> TemporalHoldoutSplit:
+    """Split by train/test years and remove test rows for train-seen users."""
+    if user_column not in df.columns:
+        raise ValueError(f"{user_column} column is required for user-year holdout")
+
+    years = _extract_years_for_column(df, year_column)
+    users = df[user_column].astype(str)
+
+    train_year_mask = years.isin(train_years)
+    test_year_mask = years.isin(test_years)
+
+    train_users = set(users[train_year_mask].tolist())
+    test_users = set(users[test_year_mask].tolist())
+    overlapping_users = train_users & test_users
+
+    train_mask = train_year_mask.to_numpy()
+    test_mask = (test_year_mask & ~users.isin(overlapping_users)).to_numpy()
+
+    if not train_mask.any():
+        raise ValueError(f"no rows found for train_years={train_years}")
+    if not test_mask.any():
+        raise ValueError(
+            f"no user-disjoint test rows found for test_years={test_years}",
+        )
+
+    return TemporalHoldoutSplit(
+        train_idx=np.flatnonzero(train_mask),
+        test_idx=np.flatnonzero(test_mask),
+        policy="user_year_holdout",
+        group_column=user_column,
+        train_years=train_years,
+        test_years=test_years,
+    )
+
+
 def choose_train_validation_split(
     df: pd.DataFrame,
     *,
@@ -84,6 +127,24 @@ def choose_train_validation_split(
     """
     if group_column not in df.columns:
         raise ValueError(f"{group_column} column is required for Phase 2 splitting")
+
+    if group_column == _CREATED_BY_COL:
+        try:
+            return split_user_year_holdout(
+                df,
+                user_column=group_column,
+                train_years=train_years,
+                test_years=test_years,
+            )
+        except ValueError:
+            try:
+                years = extract_split_years(df)
+            except ValueError:
+                years = None
+            if years is not None:
+                available_years = set(years.unique().tolist())
+                if set(test_years).issubset(available_years) and available_years & set(train_years):
+                    raise
 
     try:
         years = extract_split_years(df)
@@ -160,6 +221,19 @@ def extract_split_years(df: pd.DataFrame) -> pd.Series:
         raise ValueError(
             "Phase 2 splitting requires either fiscal_year or posting_date column",
         )
+
+    if years.isna().any():
+        raise ValueError("unable to resolve split year for all rows")
+    return years.astype(int)
+
+
+def _extract_years_for_column(df: pd.DataFrame, year_column: str) -> pd.Series:
+    if year_column in df.columns:
+        years = pd.to_numeric(df[year_column], errors="coerce")
+    elif year_column == _FISCAL_YEAR_COL:
+        return extract_split_years(df)
+    else:
+        raise ValueError(f"{year_column} column is required for user-year holdout")
 
     if years.isna().any():
         raise ValueError("unable to resolve split year for all rows")

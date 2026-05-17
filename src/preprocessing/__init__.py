@@ -6,7 +6,11 @@ EDAProfile → 피처 분류 → Pipeline 조립 → CV 비교 → 모델 저장
 from src.preprocessing.cv_selector import (
     CVComparisonResult,
     CVResult,
+    SplitStrategySelection,
+    build_user_group_kfold,
     compare_pipelines,
+    evaluate_stage2_auc_gaps,
+    select_split_strategy,
     tune_best_pipeline,
 )
 from src.preprocessing.explainer import PipelineExplainer
@@ -33,14 +37,18 @@ __all__ = [
     "NullFlagTransformer",
     "PipelineExplainer",
     "SafePowerTransformer",
+    "SplitStrategySelection",
     "VAEDetector",
     "build_all_pipelines",
     "build_if_pipeline",
+    "build_user_group_kfold",
     "build_vae_pipeline",
     "build_xgb_pipeline",
     "capture_preprocessing_metadata",
     "classify_features",
     "compare_pipelines",
     "create_labels",
+    "evaluate_stage2_auc_gaps",
+    "select_split_strategy",
     "tune_best_pipeline",
 ]

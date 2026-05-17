@@ -13,10 +13,14 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
+from config.settings import get_settings
 from src.ingest.datasynth_labels import ensure_datasynth_ground_truth
 from src.preprocessing.constants import DEFAULT_GROUND_TRUTH_LABEL_COLUMNS
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_SUPERVISED_MIN_POSITIVE = 50
+_DEFAULT_SUPERVISED_MIN_POSITIVE_RATE = 0.01
 
 
 @dataclass
@@ -28,11 +32,25 @@ class LabelResult:
     label_source: str
     positive_rate: float
     positive_count: int = 0
+    quality_grade: str = "unknown"
+    gate_decision: str = "unknown"
     label_quality: str = "unknown"
     gate_status: str = "unknown"
     gate_reason: str | None = None
     is_supervised_eligible: bool = False
     source_breakdown: dict | None = field(default=None)
+
+    def __post_init__(self) -> None:
+        if self.positive_count == 0 and len(self.y) > 0:
+            self.positive_count = int(np.asarray(self.y).sum())
+        if self.quality_grade == "unknown" and self.label_quality != "unknown":
+            self.quality_grade = self.label_quality
+        if self.label_quality == "unknown" and self.quality_grade != "unknown":
+            self.label_quality = self.quality_grade
+        if self.gate_decision == "unknown" and self.gate_status != "unknown":
+            self.gate_decision = _decision_from_legacy_status(self.gate_status)
+        if self.gate_status == "unknown" and self.gate_decision != "unknown":
+            self.gate_status = _legacy_status_from_decision(self.gate_decision)
 
 
 def create_labels(
@@ -183,7 +201,7 @@ def _build_label_result(
     source_breakdown: dict | None = None,
 ) -> LabelResult:
     positive_count = int(np.asarray(y).sum())
-    label_quality, gate_status, gate_reason, is_supervised_eligible = _qualify_label_source(
+    quality_grade, gate_decision, gate_reason, is_supervised_eligible = _qualify_label_source(
         label_source=label_source,
         positive_count=positive_count,
         positive_rate=positive_rate,
@@ -194,8 +212,10 @@ def _build_label_result(
         label_source=label_source,
         positive_rate=positive_rate,
         positive_count=positive_count,
-        label_quality=label_quality,
-        gate_status=gate_status,
+        quality_grade=quality_grade,
+        gate_decision=gate_decision,
+        label_quality=quality_grade,
+        gate_status=_legacy_status_from_decision(gate_decision),
         gate_reason=gate_reason,
         is_supervised_eligible=is_supervised_eligible,
         source_breakdown=source_breakdown,
@@ -211,15 +231,57 @@ def _qualify_label_source(
     trusted_sources = {"ground_truth", "synthetic", "holdout_test", "train_oof", "oof_fold"}
     circular_sources = {"detection_scores", "pseudo_fallback"}
     absent_sources = {"unsupervised"}
+    min_positive, min_positive_rate = _supervised_thresholds()
 
     if label_source in circular_sources:
-        return "circular_risk", "fallback_to_unsupervised", "circular_label_risk", False
+        return "circular_risk", "low_signal_fallback", "circular_label_risk", False
     if label_source in absent_sources:
-        return "absent", "fallback_to_unsupervised", "missing_ground_truth_labels", False
+        return "absent", "unavailable", "missing_ground_truth_labels", False
     if label_source not in trusted_sources:
-        return "unknown", "fallback_to_unsupervised", "untrusted_label_source", False
+        return "unknown", "low_signal_fallback", "untrusted_label_source", False
     if positive_count == 0:
-        return "trusted", "blocked", "no_positive_labels", False
+        return "trusted", "hard_fail", "no_positive_labels", False
     if positive_rate <= 0.0:
-        return "trusted", "blocked", "no_positive_labels", False
+        return "trusted", "hard_fail", "no_positive_labels", False
+    if positive_count < min_positive:
+        return "trusted", "low_signal_fallback", "insufficient_positive_count", False
+    if positive_rate < min_positive_rate:
+        return "trusted", "low_signal_fallback", "low_positive_rate", False
     return "trusted", "eligible", None, True
+
+
+def _supervised_thresholds() -> tuple[int, float]:
+    try:
+        settings = get_settings()
+        return (
+            int(getattr(settings, "supervised_min_positive", _DEFAULT_SUPERVISED_MIN_POSITIVE)),
+            float(
+                getattr(
+                    settings,
+                    "supervised_min_positive_rate",
+                    _DEFAULT_SUPERVISED_MIN_POSITIVE_RATE,
+                )
+            ),
+        )
+    except Exception:
+        return _DEFAULT_SUPERVISED_MIN_POSITIVE, _DEFAULT_SUPERVISED_MIN_POSITIVE_RATE
+
+
+def _legacy_status_from_decision(decision: str) -> str:
+    if decision == "eligible":
+        return "eligible"
+    if decision == "hard_fail":
+        return "blocked"
+    if decision in {"low_signal_fallback", "unavailable"}:
+        return "fallback_to_unsupervised"
+    return "unknown"
+
+
+def _decision_from_legacy_status(status: str) -> str:
+    if status == "eligible":
+        return "eligible"
+    if status == "blocked":
+        return "hard_fail"
+    if status == "fallback_to_unsupervised":
+        return "low_signal_fallback"
+    return "unknown"

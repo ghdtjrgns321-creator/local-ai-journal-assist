@@ -13,6 +13,7 @@ import pandas as pd
 
 from src.preprocessing.data_stats import compute_feature_schema_version
 from src.preprocessing.feature_quality import get_sparse_feature_thresholds
+from src.preprocessing.phase2_plan import _validate_single_use_deny_columns
 from src.preprocessing.transformers import (
     FrequencyCountEncoder,
     NumericPolicyTransformer,
@@ -43,6 +44,7 @@ class Phase2AutoencoderMatrixBuilder:
             for decision in decisions
             if decision.get("action") == "include" and decision.get("column") in df.columns
         ]
+        _validate_single_use_deny_columns([decision["column"] for decision in include])
         sparse_columns = _detect_sparse_columns(df)
         self.sparse_dropped_columns = [
             decision["column"]

@@ -10,7 +10,7 @@ import logging
 from dataclasses import dataclass, field
 
 from src.eda.models import ColumnProfile, EDAProfile
-from src.preprocessing.constants import LABEL_COLUMNS
+from src.preprocessing.constants import LABEL_COLUMNS, LEAKAGE_DENY_COLUMNS
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,7 @@ def classify_features(
             continue
 
         # ID·label·datetime 자동 제외
-        if col_name.lower() in _EXCLUDE_NAMES | LABEL_COLUMNS:
+        if col_name.lower() in _EXCLUDE_NAMES | LABEL_COLUMNS | LEAKAGE_DENY_COLUMNS:
             _assign_to_group(groups, col_name, "excluded")
             continue
         if cp.dtype_group == "datetime":

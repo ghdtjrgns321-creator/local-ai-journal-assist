@@ -15,7 +15,7 @@ from difflib import get_close_matches
 
 import pandas as pd
 
-from src.preprocessing.constants import LABEL_COLUMNS
+from src.preprocessing.constants import LABEL_COLUMNS, LEAKAGE_DENY_COLUMNS, LEAKAGE_DENY_RULES
 from src.preprocessing.feature_groups import FeatureGroups
 
 USER_PERSONA_COLUMN = "user_persona"
@@ -213,7 +213,9 @@ def _normalize_user_persona_value(value):
 
 
 def _drop_label_columns(df: pd.DataFrame) -> pd.DataFrame:
-    cols_to_drop = [col for col in df.columns if col.lower() in LABEL_COLUMNS]
+    deny = LABEL_COLUMNS | LEAKAGE_DENY_COLUMNS | LEAKAGE_DENY_RULES
+    normalized_deny = {col.lower() for col in deny}
+    cols_to_drop = [col for col in df.columns if col.lower() in normalized_deny]
     if not cols_to_drop:
         return df
     return df.drop(columns=cols_to_drop, errors="ignore")
