@@ -17,7 +17,6 @@ from dashboard._state import (
     KEY_ACTIVE_RESULT_TAB,
     KEY_FILTERS,
     KEY_PENDING_RESULT_TAB,
-    KEY_TOP_LEVEL_NAV,
     PAGE_COMPANY_SETTINGS,
     PAGE_PHASE1,
 )
@@ -72,6 +71,10 @@ def _period_range(df: pd.DataFrame) -> str:
 
 def render(result: PipelineResult) -> None:
     """개요 탭 엔트리 — 분석 결과 유무에 따라 Before/After 자동 분기."""
+    from dashboard.components.scroll_anchor import preserve_scroll_position
+
+    preserve_scroll_position("overview")
+
     if has_analysis_output(result):
         _render_after(result)
     else:
@@ -724,9 +727,9 @@ def _render_pipeline_briefing() -> None:
         ),
         (
             "Phase 3",
-            "LLM 위험 요약",
-            "적요·그래프 분석 + 자연어 요약",
-            "식별된 위험 요소를 종합하여 설명하고, 위험 사유서를 생성합니다.",
+            "LLM 리뷰",
+            "의심 후보 Top-N 정렬 · 필요 후속 조치",
+            "Phase 1·2 신호를 종합해 LLM으로 분석하여 우선순위와 의심 근거, 필요 절차를 제시합니다.",
         ),
     ]
 
@@ -776,8 +779,10 @@ def _render_pipeline_cta() -> None:
         )
 
     if settings_clicked:
+        # KEY_TOP_LEVEL_NAV 는 widget key 라 인스턴스화 후 직접 쓰면 streamlit
+        # 예외. 다음 run 의 _consume_pending_page 가 KEY_PENDING_RESULT_TAB 를
+        # widget 렌더 전에 KEY_TOP_LEVEL_NAV 로 옮긴다.
         st.session_state[KEY_ACTIVE_RESULT_TAB] = PAGE_COMPANY_SETTINGS
-        st.session_state[KEY_TOP_LEVEL_NAV] = PAGE_COMPANY_SETTINGS
         st.session_state[KEY_PENDING_RESULT_TAB] = PAGE_COMPANY_SETTINGS
         st.rerun()
 
@@ -792,8 +797,10 @@ def _run_phase1() -> None:
     """Run Phase 1 only. Completed result is reflected on rerun."""
     from dashboard.components.analysis_runner import run_phase_analysis
 
+    # _run_phase1 은 overview_tab 내부에서 실행되므로 widget key 인
+    # KEY_TOP_LEVEL_NAV 는 직접 쓰지 못한다. KEY_PENDING_RESULT_TAB 로 다음
+    # run 에 위임하면 _consume_pending_page 가 widget 렌더 전에 적용한다.
     st.session_state[KEY_ACTIVE_RESULT_TAB] = PAGE_PHASE1
-    st.session_state[KEY_TOP_LEVEL_NAV] = PAGE_PHASE1
 
     with st.spinner("Phase 1 룰 기반 탐지 실행 중... 약 5분 정도 소요됩니다."):
         try:
@@ -802,7 +809,6 @@ def _run_phase1() -> None:
             st.error(f"Phase 1 실행 실패: {e}")
             return
     st.session_state[KEY_ACTIVE_RESULT_TAB] = PAGE_PHASE1
-    st.session_state[KEY_TOP_LEVEL_NAV] = PAGE_PHASE1
     st.session_state[KEY_PENDING_RESULT_TAB] = PAGE_PHASE1
     st.rerun()
 

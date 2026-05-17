@@ -11,7 +11,6 @@ import streamlit as st
 from dashboard._state import (
     KEY_ACTIVE_RESULT_TAB,
     KEY_PENDING_RESULT_TAB,
-    KEY_TOP_LEVEL_NAV,
     PAGE_PHASE1,
     PAGE_PHASE2,
 )
@@ -115,38 +114,41 @@ _MASTER_GRID_COLUMNS = [
 
 
 def render(prep_result, phase1_result) -> None:
+    # Why: 필터/버튼 클릭 시 st.rerun()으로 페이지가 맨 위로 튕기는 문제 회피.
+    from dashboard.components.scroll_anchor import preserve_scroll_position
+
+    preserve_scroll_position("phase1")
+
     st.subheader("PHASE1 결과")
 
     if phase1_result is None:
         st.info("아직 Phase 1 분석 결과가 없습니다.")
         if prep_result is None:
-            st.caption("회사별 설정 탭에서 데이터를 먼저 준비하세요.")
             return
-        _render_prep_summary(prep_result)
-        # Why: 미리 st.empty() 를 깔면 빈 슬롯이 항상 박스로 남는다(tab_overview 와 동일 이슈).
-        #      placeholder 없이 직접 버튼/spinner 만 그려 빈 박스 잔상을 제거한다.
+        # Why: spinner 는 _start_phase1_analysis 내부에 한 번만 띄운다.
+        #      호출부에서 또 감싸면 동일 메시지가 두 줄로 표시된다.
         if st.button("Phase 1 분석 시작", type="primary", key="run_phase1"):
-            with st.spinner("Phase 1 룰 기반 탐지 실행 중... 약 5분 정도 소요됩니다."):
-                _start_phase1_analysis()
+            _start_phase1_analysis()
         return
 
     summary = summarize_phase1_case_result(phase1_result)
     if summary.get("available"):
-        section_tabs = st.tabs(
-            ["전체 요약"]
-            + [
-                _TOPIC_SHORT_LABELS.get(topic_id, topic.label)
-                for topic_id, topic in TOPIC_REGISTRY.items()
-            ]
-            + ["AI 결론"]
-        )
+        # Why: PHASE1 위반은 수만 건이라 7-Topic + AI 결론을 펼쳐 두면 감사인이
+        #      "어디부터 봐야 할지" 잃는다. 4-tab으로 압축:
+        #        전체 요약 → 한눈 인사이트
+        #        데이터 정합성 → L1-01/02/03/08 데이터 결함(이미 case skip)
+        #        위반 케이스 → Top 50/100/200 우선순위 큐(핵심 메시지 포함)
+        #        통계결과 → 7-Topic 분포/드릴다운 통합
+        #      전기 비교는 최상위 탭(Phase2 결과 우측)으로 분리되었다.
+        section_tabs = st.tabs(["전체 요약", "데이터 정합성", "위반 케이스", "통계결과"])
         with section_tabs[0]:
             _render_overview(phase1_result, summary)
-        for index, (topic_id, topic) in enumerate(TOPIC_REGISTRY.items(), start=1):
-            with section_tabs[index]:
-                _render_topic_top_n(phase1_result, topic_id, topic.label)
-        with section_tabs[-1]:
-            _render_ai_conclusion(phase1_result, summary)
+        with section_tabs[1]:
+            _render_data_quality_gate(phase1_result)
+        with section_tabs[2]:
+            _render_violation_cases_tab(phase1_result, summary)
+        with section_tabs[3]:
+            _render_statistics_tab(phase1_result, summary)
         return
     if not summary["available"]:
         st.warning("PHASE1 case 결과를 불러오지 못했습니다.")
@@ -257,7 +259,7 @@ def _render_phase1_summary_ribbon(
         {delta_case_html}
     </div>
     <div style="{block_style}">
-        <div style="{label_style}">High 리스크 케이스</div>
+        <div style="{label_style}" title="축: priority high (priority_score &gt;= 0.75) — case priority_band 기준">High 리스크 케이스</div>
         <div style="color:#EA580C; {value_base}">
             {direct_risk_case_count:,} <span style="{unit_style}">건</span>
         </div>
@@ -346,7 +348,8 @@ _VIEW_MODES: list[tuple[str, str]] = [
     ("Topic score", "audit_risk"),
     ("Scenario detail", "review"),
 ]
-_GRID_ROW_CAP = 100_000
+_GRID_ROW_CAP = 10_000
+_GRID_PAGE_SIZE = 50
 
 
 @st.fragment
@@ -425,9 +428,14 @@ def _render_master_data_grid(pr, data: pd.DataFrame) -> None:
     )
     gb.configure_pagination(
         paginationAutoPageSize=False,
-        paginationPageSize=100,
+        paginationPageSize=_GRID_PAGE_SIZE,
     )
-    gb.configure_grid_options(domLayout="normal")
+    # Why: 컬럼/행 가상화로 viewport 밖 DOM 노드를 제거해 초기 렌더 비용을 낮춘다.
+    gb.configure_grid_options(
+        domLayout="normal",
+        suppressColumnVirtualisation=False,
+        rowBuffer=10,
+    )
     AgGrid(
         show_df,
         gridOptions=gb.build(),
@@ -436,6 +444,8 @@ def _render_master_data_grid(pr, data: pd.DataFrame) -> None:
         key=f"phase1_master_grid_{view_mode}",
         allow_unsafe_jscode=True,
         update_mode=GridUpdateMode.NO_UPDATE,
+        # Why: NO_UPDATE 모드라 결과 round-trip이 필요 없으니 타입 복원도 건너뛴다.
+        try_to_convert_back_to_original_types=False,
     )
 
 
@@ -1563,11 +1573,8 @@ def _render_raw_lines_table(
 
         gb.configure_column(col, **configure_kwargs)
 
-    legend = "  ".join(sorted(highlight_kor))
-    if rule_id == "L1-02":
-        st.caption("강조: 빈 셀 = 누락된 필수 필드")
-    elif legend:
-        st.caption(f"강조 컬럼: {legend}")
+    # Why: 강조 컬럼 안내 캡션은 표 안에서 시각적 강조로 이미 전달되므로
+    #      부차 설명을 제거하고 표만 노출한다 (모든 룰 공통).
 
     aggrid_key = (
         f"phase1_rule_raw_{rule_id}_{key_suffix}" if key_suffix else f"phase1_rule_raw_{rule_id}"
@@ -1703,6 +1710,26 @@ def _format_amount_short(value: float) -> str:
     return f"{value:,.0f}"
 
 
+# Why: 데이터 정합성/구조 결함 룰은 전표 단위 결함이라 case 묶음(회사·기간·계정 그룹화)
+#      에 묶을 의미가 없다. 감사인이 곧장 "어느 전표가 어떤 필드를 어겼느냐"로 진입하도록
+#      case master 단계를 생략하고 위반 전표 목록을 바로 master로 렌더한다.
+#      L1-01 차대변 불일치, L1-02 필수필드 누락, L1-03 무효계정 사용, L1-08 회계기간 오류.
+RULES_WITHOUT_CASE_GROUPING: frozenset[str] = frozenset({"L1-01", "L1-02", "L1-03", "L1-08"})
+
+# Why: case 생략 컨텍스트(DQ 탭 + RULES_WITHOUT_CASE_GROUPING)의 master 정렬 키.
+#      룰별 핵심 비교 지표(차이/초과액/일수)를 우선 정렬해 감사인이 "더 심각한 결함"
+#      부터 보게 한다. 비교 지표가 없는 룰은 evidence_amount(거래금액) 기본 fallback.
+_NO_CASE_SORT_OVERRIDE: dict[str, tuple[str, str]] = {
+    # (정렬 컬럼명, 캡션 라벨)
+    "L1-01": ("difference_value", "차이 큰 순"),
+    "L1-02": ("difference_value", "누락 필드 많은 순"),
+    "L1-04": ("difference_value", "초과액 큰 순"),
+    "L1-08": ("difference_value", "차이(개월) 큰 순"),
+    "L3-07": ("difference_value", "일자 차이 큰 순"),
+    # L1-05/L1-07/L1-09/L3-04는 거래금액 fallback (별도 비교 지표 없음).
+}
+
+
 @st.fragment
 def _render_rule_master_detail(
     rule_id: str,
@@ -1711,12 +1738,16 @@ def _render_rule_master_detail(
     pr,
     key_suffix: str = "",
     topic_id: str | None = None,
+    force_no_case: bool = False,
 ) -> None:
-    """Case-centric 3단 master/detail.
+    """Case-centric 3단 master/detail (데이터 정합성 룰은 2단으로 단축).
 
     Layer 1: 이 룰이 잡힌 case 목록 (자연어 라벨, 전표수, 합계, band, 사유)
     Layer 2: 선택된 case 안의 위반 전표 목록 (case_id 로 rows 필터)
     Layer 3: 선택된 전표의 위반 상세 + 원본 원장 라인 하이라이트
+
+    `RULES_WITHOUT_CASE_GROUPING`에 속하는 룰은 Layer 1을 건너뛰고 Layer 2의
+    전표 목록을 직접 master로 렌더한다(case 묶음이 무의미한 데이터 결함 룰).
 
     Why: 같은 룰이 여러 토픽 탭에 등장할 수 있어 (예: L3-05는 approval_control과 closing_timing
          양쪽에 매핑) AgGrid key 충돌이 발생한다. key_suffix를 받아 토픽별로 고유화한다.
@@ -1725,26 +1756,10 @@ def _render_rule_master_detail(
          case 에서 룰 매칭만 보는 fallback (DQ gate).
          @st.fragment: AgGrid 행 클릭 시 페이지 전체 rerun 으로 브라우저 스크롤이 점프하는
          문제를 막기 위해 master/detail 영역만 부분 rerun 한다.
+         force_no_case: 데이터 정합성 탭처럼 컨텍스트 단위로 case 묶음을 끄고 싶을 때
+         호출부에서 True 로 강제한다(통계결과 탭 Topic Top-N에서는 False 기본).
     """
-    # Why: 같은 cache namespace에 topic_id 다른 호출이 섞이지 않도록 key_suffix 가
-    #      이미 토픽별로 고유. _cached_phase1_build 의 cache key 는 args+kwargs 해시.
-    cases = _cached_phase1_build(
-        pr, "rule_cases", build_phase1_rule_cases, rule_id, topic_id=topic_id
-    )
-    if not cases:
-        st.info(f"{rule_id} 매칭 case 가 없습니다.")
-        return
-
-    # Why: case 클릭마다 phase1.cases 전체를 linear scan 하면 case 339건 환경에서
-    #      체감 지연이 크다. 룰 진입 시 1회만 빌드하고 _cached_phase1_build 캐시에
-    #      보관해 case 클릭은 dict lookup 으로 끝낸다.
-    case_doc_map = _cached_phase1_build(
-        pr,
-        "rule_case_doc_map",
-        build_phase1_rule_case_doc_map,
-        rule_id,
-        topic_id=topic_id,
-    )
+    skip_case_layer = force_no_case or rule_id in RULES_WITHOUT_CASE_GROUPING
 
     docs_df = pd.DataFrame(rows) if rows else pd.DataFrame()
     review_points: list[str] = []
@@ -1757,18 +1772,44 @@ def _render_rule_master_detail(
     review_point = review_points[0] if review_points else None
     _render_rule_signature_card(rule_id, docs_df, review_point)
 
-    selected_case_id = _render_rule_case_master(rule_id, cases, key_suffix=key_suffix)
-    if not selected_case_id:
-        st.caption("위 case 목록에서 한 줄을 선택하세요.")
-        return
+    if skip_case_layer:
+        selected_doc = _render_rule_document_master_no_case(
+            rule_id, rows or [], key_suffix=key_suffix
+        )
+    else:
+        # Why: 같은 cache namespace에 topic_id 다른 호출이 섞이지 않도록 key_suffix 가
+        #      이미 토픽별로 고유. _cached_phase1_build 의 cache key 는 args+kwargs 해시.
+        cases = _cached_phase1_build(
+            pr, "rule_cases", build_phase1_rule_cases, rule_id, topic_id=topic_id
+        )
+        if not cases:
+            st.info(f"{rule_id} 매칭 case 가 없습니다.")
+            return
 
-    selected_doc = _render_case_document_master(
-        rule_id,
-        selected_case_id,
-        rows or [],
-        case_doc_map=case_doc_map,
-        key_suffix=key_suffix,
-    )
+        # Why: case 클릭마다 phase1.cases 전체를 linear scan 하면 case 339건 환경에서
+        #      체감 지연이 크다. 룰 진입 시 1회만 빌드하고 _cached_phase1_build 캐시에
+        #      보관해 case 클릭은 dict lookup 으로 끝낸다.
+        case_doc_map = _cached_phase1_build(
+            pr,
+            "rule_case_doc_map",
+            build_phase1_rule_case_doc_map,
+            rule_id,
+            topic_id=topic_id,
+        )
+
+        selected_case_id = _render_rule_case_master(rule_id, cases, key_suffix=key_suffix)
+        if not selected_case_id:
+            st.caption("위 case 목록에서 한 줄을 선택하세요.")
+            return
+
+        selected_doc = _render_case_document_master(
+            rule_id,
+            selected_case_id,
+            rows or [],
+            case_doc_map=case_doc_map,
+            key_suffix=key_suffix,
+        )
+
     if not selected_doc:
         st.caption("위 위반 전표 목록에서 한 줄을 선택하세요.")
         return
@@ -1785,7 +1826,8 @@ def _render_rule_master_detail(
         return
 
     st.markdown("##### 위반 전표 상세 내역")
-    _render_violation_details(detail.get("violation_details") or [])
+    # Why: violation_details(차변/대변/불일치 등 메트릭 카드)는 표 안에 같은
+    #      정보가 이미 보이므로 부차 설명을 제거하고 표만 노출한다 (모든 룰 공통).
     raw_lines = detail.get("raw_lines") or []
     if not raw_lines:
         st.caption("원본 전표 라인을 찾지 못했습니다.")
@@ -1793,53 +1835,257 @@ def _render_rule_master_detail(
     _render_raw_lines_table(rule_id, raw_lines, key_suffix=key_suffix)
 
 
-def _render_rule_case_master(
+def _render_rule_document_master_no_case(
     rule_id: str,
-    cases: list[dict],
+    rows: list[dict],
     *,
     key_suffix: str = "",
 ) -> str | None:
-    """Layer 1 — 룰별 case 목록 master. 선택된 case_id 반환."""
-    from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
+    """Case 단계를 생략하고 룰 위반 전표 목록을 직접 master로 렌더.
 
-    case_df = pd.DataFrame(
-        [
-            {
-                "case_id": case["case_id"],
-                "사례 요약": case["natural_label"],
-                "전표 수": int(case["document_count"] or 0),
-                "합계": _format_amount_short(float(case["total_amount"] or 0.0)),
-                "_total_amount": float(case["total_amount"] or 0.0),
-                "Band": _format_band_cell(case["priority_band"]),
-                "위험 사유": (case.get("why") or "").strip(),
-            }
-            for case in cases
-        ]
+    Why: `RULES_WITHOUT_CASE_GROUPING` 룰(L1-01/02/03/08)은 전표 단위 데이터
+         결함이라 case 묶음이 무의미하다. 묶음 단계를 제거해 감사인이 곧장
+         "어느 전표가 어떤 필드를 어겼느냐"로 진입하도록 한다.
+    """
+    from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, JsCode
+
+    if not rows:
+        st.caption("이 룰의 위반 전표 데이터를 찾지 못했습니다.")
+        return None
+    docs_df = pd.DataFrame(rows)
+    if "document_id" not in docs_df.columns:
+        st.caption("이 룰의 표시할 위반 전표가 없습니다.")
+        return None
+
+    # Why: 룰의 핵심 비교 지표가 있으면 그 지표(절댓값 기준)로 내림차순 재정렬한다.
+    #      L1-01은 차이 금액이 클수록 즉시 검토 우선순위가 높다.
+    sort_override = _NO_CASE_SORT_OVERRIDE.get(rule_id)
+    if sort_override and sort_override[0] in docs_df.columns:
+        sort_col = sort_override[0]
+        sort_label = sort_override[1]
+        sort_series = pd.to_numeric(docs_df[sort_col], errors="coerce").abs()
+        docs_df = (
+            docs_df.assign(_sort_key=sort_series)
+            .sort_values(by="_sort_key", ascending=False, na_position="last")
+            .drop(columns=["_sort_key"])
+            .reset_index(drop=True)
+        )
+    else:
+        sort_label = "거래금액 큰 순"
+
+    cap = min(len(docs_df), 500)
+    master_df = docs_df.head(cap).copy()
+    master_display, extra_labels = _build_master_display(rule_id, master_df)
+    # Why: case를 생략했으므로 case band 컬럼은 정보가치가 없다.
+    if "Case Band" in master_display.columns:
+        master_display = master_display.drop(columns=["Case Band"])
+
+    st.markdown("##### 위반 전표 목록")
+    total = len(docs_df)
+    if total > cap:
+        st.caption(f"위반 전표 {total:,}건 중 상위 {cap:,}건 표시 ({sort_label})")
+    else:
+        st.caption(f"위반 전표 {cap:,}건 ({sort_label})")
+
+    amount_formatter = JsCode(
+        "function(p){if(p.value==null||p.value===''||isNaN(p.value))return '';"
+        "return Number(p.value).toLocaleString('ko-KR');}"
     )
-
-    st.markdown("##### case 목록")
-    st.caption(
-        f"{len(cases):,}개의 case 가 묶여 있습니다. "
-        "case 한 줄을 선택하면 그 묶음 안 위반 전표가 아래에 펼쳐집니다."
-    )
-
-    gb = GridOptionsBuilder.from_dataframe(case_df)
+    gb = GridOptionsBuilder.from_dataframe(master_display)
     gb.configure_default_column(resizable=True, filter=True, sortable=True)
     gb.configure_selection(selection_mode="single", use_checkbox=False, pre_selected_rows=[0])
+    gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=50)
     gb.configure_grid_options(
         rowSelection="single",
         suppressRowClickSelection=False,
         suppressCellFocus=True,
     )
+    if "전표번호" in master_display.columns:
+        gb.configure_column("전표번호", minWidth=140, maxWidth=200)
+    if "위반 요약" in master_display.columns:
+        gb.configure_column("위반 요약", minWidth=200, flex=3, wrapText=True, autoHeight=True)
+    if "거래금액" in master_display.columns:
+        gb.configure_column(
+            "거래금액",
+            type=["numericColumn"],
+            valueFormatter=amount_formatter,
+            minWidth=110,
+            maxWidth=160,
+        )
+    for label in extra_labels:
+        if label in master_display.columns:
+            gb.configure_column(label, minWidth=70, maxWidth=110)
+
+    suffix = f"_{key_suffix}" if key_suffix else ""
+    grid_key = f"phase1_rule_doc_master_nocase_{rule_id}{suffix}"
+    response = AgGrid(
+        master_display,
+        gridOptions=gb.build(),
+        height=380,
+        theme="streamlit",
+        key=grid_key,
+        update_mode=GridUpdateMode.SELECTION_CHANGED,
+        allow_unsafe_jscode=True,
+        reload_data=False,
+        fit_columns_on_grid_load=True,
+    )
+
+    state_key = f"_phase1_rule_doc_selection_{grid_key}"
+    selected_rows = response.get("selected_rows", [])
+    if hasattr(selected_rows, "to_dict"):
+        selected_rows = selected_rows.to_dict("records")
+    selected_doc = None
+    if selected_rows:
+        selected_doc = str(selected_rows[0].get("전표번호") or "")
+    if selected_doc:
+        st.session_state[state_key] = selected_doc
+    else:
+        selected_doc = st.session_state.get(state_key)
+        if not selected_doc and not master_display.empty:
+            selected_doc = str(master_display.iloc[0].get("전표번호") or "")
+    return selected_doc or None
+
+
+def _render_rule_case_master(
+    rule_id: str,
+    cases: list[dict],
+    *,
+    key_suffix: str = "",
+    hide_columns: set[str] | None = None,
+    caption_override: str | None = None,
+    show_header: bool = True,
+    preserve_order: bool = False,
+    rank_column: bool = False,
+) -> str | None:
+    """Layer 1 — 룰별 case 목록 master. 선택된 case_id 반환.
+
+    hide_columns: 표시 컬럼에서 제외할 라벨(예: {"전표 수", "Band"}). 위반 케이스
+                  탭처럼 일부 컬럼을 슬림화하고 싶을 때 호출부에서 지정한다.
+    caption_override: 기본 캡션("N개의 case 가 묶여…") 대신 노출할 안내 문구.
+                  빈 문자열을 넘기면 캡션 자체를 생략한다.
+    show_header: "##### case 목록" 헤더 표시 여부. False이면 헤더 생략.
+    preserve_order: True이면 내부 (band, -amount) 재정렬을 건너뛰고 호출부에서
+                  넘긴 cases 순서를 그대로 유지한다. 위반 케이스 탭처럼 호출부가
+                  priority composite_sort_score 같은 별도 기준으로 정렬했을 때
+                  표시 순서를 깨뜨리지 않게 한다.
+    rank_column: True 이면 최종 표시 순서 기준 "순위" 컬럼(1부터)을 사례 요약
+                  왼쪽 pinned 컬럼으로 추가. preserve_order=True 와 함께 써야
+                  의미가 있다(정렬이 다시 일어나면 순위가 깨짐).
+    """
+    from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
+
+    # Why: case 수가 룰당 1만 건을 넘어가면 AgGrid client-side 렌더가 수 초~수십 초로
+    #      체감 정지가 생긴다. priority band → 금액 내림차순으로 정렬한 뒤 상위 N건만
+    #      클라이언트로 보내고, 페이지네이션으로 viewport DOM 노드도 제한한다.
+    _CASE_MASTER_CAP = 1_000
+    _CASE_MASTER_PAGE_SIZE = 50
+    _BAND_RANK = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
+    hide_columns = hide_columns or set()
+
+    case_rows = [
+        {
+            "case_id": case["case_id"],
+            "사례 요약": case["natural_label"],
+            "전표 수": int(case["document_count"] or 0),
+            "합계": _format_amount_short(float(case["total_amount"] or 0.0)),
+            "_total_amount": float(case["total_amount"] or 0.0),
+            "Band": _format_band_cell(case["priority_band"]),
+            "_band_rank": _BAND_RANK.get(str(case.get("priority_band") or "").upper(), 9),
+            "위험 사유": (case.get("why") or "").strip(),
+        }
+        for case in cases
+    ]
+    if not preserve_order:
+        case_rows.sort(key=lambda row: (row["_band_rank"], -row["_total_amount"]))
+    if rank_column:
+        # Why: 최종 표시 순서가 곧 위험도 순위. 정렬이 끝난 뒤에 1부터 매겨야
+        #      preserve_order=False 인 경우에도 보이는 순서와 일치한다.
+        for idx, row in enumerate(case_rows, start=1):
+            row["순위"] = idx
+    total_cases = len(case_rows)
+    truncated_cases = total_cases > _CASE_MASTER_CAP
+    case_df = pd.DataFrame(case_rows[:_CASE_MASTER_CAP]).drop(columns=["_band_rank"])
+    if rank_column and "순위" in case_df.columns:
+        # 사례 요약 왼쪽으로 끌어와 다른 컬럼 순서 유지.
+        ordered = ["순위"] + [col for col in case_df.columns if col != "순위"]
+        case_df = case_df[ordered]
+    if hide_columns:
+        case_df = case_df.drop(columns=[col for col in hide_columns if col in case_df.columns])
+
+    if show_header:
+        st.markdown("##### case 목록")
+    if caption_override is None:
+        caption = (
+            f"{total_cases:,}개의 case 가 묶여 있습니다. "
+            "case 한 줄을 선택하면 그 묶음 안 위반 전표가 아래에 펼쳐집니다."
+        )
+        if truncated_cases:
+            caption += (
+                f" · 표시 상한 {_CASE_MASTER_CAP:,}건 적용 (priority band → 합계 내림차순 상위)"
+            )
+        st.caption(caption)
+    elif caption_override:
+        st.caption(caption_override)
+
+    gb = GridOptionsBuilder.from_dataframe(case_df)
+    gb.configure_default_column(resizable=True, filter=True, sortable=True)
+    gb.configure_selection(selection_mode="single", use_checkbox=False, pre_selected_rows=[0])
+    gb.configure_pagination(
+        paginationAutoPageSize=False,
+        paginationPageSize=_CASE_MASTER_PAGE_SIZE,
+    )
+    gb.configure_grid_options(
+        rowSelection="single",
+        suppressRowClickSelection=False,
+        suppressCellFocus=True,
+        rowBuffer=10,
+    )
     gb.configure_column("case_id", hide=True)
     gb.configure_column("_total_amount", hide=True)
-    # Why: 사례 요약은 한 줄짜리 키 라벨(20~30자) 이라 좁아도 충분.
-    #      위험 사유는 100자 이상 자연어 설명이라 더 넓게 잡아 wrap 줄 수를 줄인다.
-    gb.configure_column("사례 요약", minWidth=240, flex=2, wrapText=True, autoHeight=True)
-    gb.configure_column("전표 수", type=["numericColumn"], minWidth=70, maxWidth=90)
-    gb.configure_column("합계", minWidth=90, maxWidth=120)
-    gb.configure_column("Band", minWidth=80, maxWidth=110)
-    gb.configure_column("위험 사유", minWidth=360, flex=5, wrapText=True, autoHeight=True)
+    if "순위" in case_df.columns:
+        gb.configure_column(
+            "순위",
+            type=["numericColumn"],
+            minWidth=60,
+            maxWidth=80,
+            pinned="left",
+            headerTooltip="위반 우선순위 (priority composite 큰 순)",
+        )
+    # Why: 행 높이를 일관되게 유지하기 위해 모든 본문 컬럼은 wrap 없이 한 줄로 표시하고
+    #      잘리는 텍스트는 tooltipField로 hover 시 전체 노출한다. 좌우 폭은 컬럼 비중에
+    #      맞춰 사례 요약(좁음) → 합계(아주 좁음) → 위험 사유(가장 넓음) flex 비율로 분배.
+    gb.configure_column(
+        "사례 요약",
+        minWidth=200,
+        maxWidth=300,
+        wrapText=False,
+        autoHeight=False,
+        tooltipField="사례 요약",
+    )
+    if "전표 수" in case_df.columns:
+        gb.configure_column("전표 수", type=["numericColumn"], minWidth=70, maxWidth=90)
+    if "합계" in case_df.columns:
+        gb.configure_column("합계", minWidth=90, maxWidth=120)
+    if "Band" in case_df.columns:
+        gb.configure_column(
+            "Band",
+            minWidth=80,
+            maxWidth=110,
+            headerTooltip=(
+                "축: case priority_band (priority high >= 0.75, "
+                "priority medium >= 0.45, priority low < 0.45). "
+                "행 risk_level 과는 다른 축."
+            ),
+        )
+    if "위험 사유" in case_df.columns:
+        gb.configure_column(
+            "위험 사유",
+            minWidth=420,
+            flex=3,
+            wrapText=False,
+            autoHeight=False,
+            tooltipField="위험 사유",
+        )
 
     suffix = f"_{key_suffix}" if key_suffix else ""
     grid_key = f"phase1_rule_case_master_{rule_id}{suffix}"
@@ -1992,13 +2238,12 @@ _DQ_MAIN_DESC = (
 _DQ_EXTENDED_CATEGORIES: tuple[tuple[str, tuple[str, ...], str], ...] = (
     (
         "계정·마스터 정합성",
-        ("L1-03", "L3-01"),
-        "마스터 데이터(계정·거래처) 정합성 위반입니다. 무효 계정 코드 사용, "
-        "계정 성격과 전표 맥락의 불일치 항목입니다.",
+        ("L1-03", "L3-01", "L3-08"),
+        "마스터 데이터(계정·거래처) 정합성 위반과 필수 메타데이터(적요) 누락 ·훼손 항목입니다.",
     ),
     (
         "일자·기간 흐름 정합성",
-        ("L3-07", "L1-09", "L3-04"),
+        ("L3-07", "L1-09"),
         "증빙일·기표일·승인일·월말 윈도우 간 흐름이 어색한 항목입니다.",
     ),
     (
@@ -2020,6 +2265,14 @@ def _render_dq_rule_expanders(items_df: pd.DataFrame, *, pr) -> None:
     if items_df is None or items_df.empty:
         st.info("표시할 룰이 없습니다.")
         return
+    # Why: 위반 전표가 0건인 룰은 expander 자체를 그리지 않는다. 사용자는 펼치기 전엔
+    #      해당 룰이 잡혔는지 알 수 없고, 펼친 뒤 "데이터를 찾지 못했습니다" 안내만
+    #      보여 노이즈가 된다. documents 컬럼이 있을 때만 필터링하고 없으면 원본 유지.
+    if "documents" in items_df.columns:
+        items_df = items_df[items_df["documents"].fillna(0).astype(int) > 0]
+        if items_df.empty:
+            st.info("탐지된 위반 전표가 없습니다.")
+            return
     for _, row in items_df.iterrows():
         rule_id = str(row.get("rule_id", ""))
         rule_label = str(row.get("rule_label", ""))
@@ -2034,9 +2287,12 @@ def _render_dq_rule_expanders(items_df: pd.DataFrame, *, pr) -> None:
                 rows = _cached_phase1_build(
                     pr, "rule_documents", build_phase1_rule_documents, rule_id
                 )
-                _render_rule_master_detail(rule_id, rows or [], pr=pr)
+                # Why: 데이터 정합성 탭은 컨텍스트 단위로 case 묶음을 생략하여
+                #      바로 위반 전표 목록을 노출한다(룰 종류와 무관). 통계결과 탭의
+                #      Topic Top-N에서는 case-centric 동작이 유지된다.
+                _render_rule_master_detail(rule_id, rows or [], pr=pr, force_no_case=True)
             else:
-                st.caption("헤더를 클릭해 펼치면 case 목록과 위반 전표가 표시됩니다.")
+                st.caption("헤더를 클릭해 펼치면 위반 전표 목록이 표시됩니다.")
 
 
 def _render_dq_category_card(
@@ -2067,16 +2323,8 @@ def _render_data_quality_gate(pr) -> None:
         else items_df
     )
 
-    total_docs = _total_document_count(pr)
-    main_docs = int(main_df["documents"].sum()) if not main_df.empty else 0
-    impact_ratio = (main_docs / total_docs * 100) if total_docs else 0.0
-    st.metric(
-        "정합성 위반 전표",
-        f"{main_docs:,}",
-        delta=f"전체의 {impact_ratio:.2f}%",
-        delta_color="inverse" if main_docs else "off",
-    )
-    st.divider()
+    # Why: 상단 "정합성 위반 전표" 메트릭 + divider 제거. 룰별 카드에 동일 카운트가
+    #      이미 표시되므로 부차 KPI 카드가 불필요.
 
     st.markdown("#### 데이터 정합성 오류")
     if main_df.empty:
@@ -2160,23 +2408,29 @@ def _render_topic_top_n(pr, topic_id: str, topic_label: str) -> None:
         # Why: 헤더는 case(시나리오) 단위 카운트, 아래 위반 전표 목록 표는 document
         #      (전표) 단위라 두 숫자가 일치하지 않는다. 'case'/'전표' 라벨을 명시해
         #      감사인이 단위 차이를 즉시 인지하게 한다.
-        bands_chunks: list[str] = []
-        if group["high_count"]:
-            bands_chunks.append(f"High {group['high_count']}")
-        if group["medium_count"]:
-            bands_chunks.append(f"Med {group['medium_count']}")
-        if group["low_count"]:
-            bands_chunks.append(f"Low {group['low_count']}")
-        bands_text = " · ".join(bands_chunks)
+        #      단, RULES_WITHOUT_CASE_GROUPING(L1-01/02/03/08)은 case 단계 자체를
+        #      생략하므로 헤더에도 case 정보를 표시하지 않고 전표 수만 노출한다.
+        skip_case_layer = rule_id in RULES_WITHOUT_CASE_GROUPING
         doc_count = int(group.get("document_count") or 0)
-        if bands_text and doc_count:
-            meta = f"case {bands_text} · 전표 {doc_count:,}건"
-        elif bands_text:
-            meta = f"case {bands_text}"
-        elif doc_count:
-            meta = f"전표 {doc_count:,}건"
+        if skip_case_layer:
+            meta = f"전표 {doc_count:,}건" if doc_count else ""
         else:
-            meta = ""
+            bands_chunks: list[str] = []
+            if group["high_count"]:
+                bands_chunks.append(f"High {group['high_count']}")
+            if group["medium_count"]:
+                bands_chunks.append(f"Med {group['medium_count']}")
+            if group["low_count"]:
+                bands_chunks.append(f"Low {group['low_count']}")
+            bands_text = " · ".join(bands_chunks)
+            if bands_text and doc_count:
+                meta = f"case {bands_text} · 전표 {doc_count:,}건"
+            elif bands_text:
+                meta = f"case {bands_text}"
+            elif doc_count:
+                meta = f"전표 {doc_count:,}건"
+            else:
+                meta = ""
         header_main = f"**{rule_id} : {group['rule_label']}**"
         header = f"{header_main}  ({meta})" if meta else header_main
         # Why: with st.expander(...) 안 코드는 collapsed 상태에서도 매번 실행되어
@@ -2196,6 +2450,8 @@ def _render_topic_top_n(pr, topic_id: str, topic_label: str) -> None:
                 _render_rule_master_detail(
                     rule_id, rows or [], pr=pr, key_suffix=topic_id, topic_id=topic_id
                 )
+            elif skip_case_layer:
+                st.caption("헤더를 클릭해 펼치면 위반 전표 목록이 표시됩니다.")
             else:
                 st.caption("헤더를 클릭해 펼치면 case 목록과 위반 전표가 표시됩니다.")
 
@@ -2464,10 +2720,11 @@ def _render_topic_summary_ribbon(
     label_style = "color:#6B7280; font-size:0.74rem; margin-bottom:4px; font-weight:500;"
     value_style = "font-size:1.4rem; font-weight:700; letter-spacing:-0.02em; line-height:1.2;"
     unit_style = "font-size:0.85rem; font-weight:500; color:#6B7280;"
+    # Why: ribbon 폭이 좁아 라벨은 H/M/L 짧게 유지하고, tooltip 으로 축 정책 노출.
     bands_html = (
-        f"<span style='color:#DC2626;'>H {high}</span> · "
-        f"<span style='color:#EA580C;'>M {medium}</span> · "
-        f"<span style='color:#0EA5E9;'>L {low}</span>"
+        f"<span style='color:#DC2626;' title='priority high (priority_score &gt;= 0.75)'>H {high}</span> · "
+        f"<span style='color:#EA580C;' title='priority medium (priority_score &gt;= 0.45)'>M {medium}</span> · "
+        f"<span style='color:#0EA5E9;' title='priority low (priority_score &lt; 0.45)'>L {low}</span>"
     )
     case_count_html = f'{case_count:,} <span style="{unit_style}">건</span>'
     doc_count_html = f'{doc_count:,} <span style="{unit_style}">건</span>'
@@ -2517,6 +2774,9 @@ def _render_topic_case_quadrant(pr, topic_id: str, topic_label: str) -> None:
         "검토할 Case",
         options=list(options.keys()),
         key=f"phase1_quadrant_select_{topic_id}",
+        help=(
+            "옵션 앞 HIGH/MEDIUM/LOW = case priority_band (priority_score >= 0.75 / 0.45 / 그 아래)"
+        ),
     )
     case_id = options[selected_label]
     drilldown = _cached_phase1_build(pr, "case_drilldown", build_phase1_case_drilldown, case_id)
@@ -2598,11 +2858,16 @@ def _render_topic_case_quadrant(pr, topic_id: str, topic_label: str) -> None:
     sample_docs_safe = html.escape(sample_docs) or "—"
     tie_text_safe = html.escape(tie_text)
 
+    band_axis_tooltip = (
+        f"축: case priority_band ({band_label.replace('◆ case ', 'priority ').lower()}). "
+        "행 risk_level 과 다른 축."
+    )
     panel_a = (
         f"<div style='{quad_box_style}'>"
         f"<div style='{quad_label_style}'>① What · 위반 요지</div>"
         f"<div style='font-size:1rem; color:{band_color}; font-weight:700; margin-bottom:8px;'>"
-        f"{band_label} &nbsp;·&nbsp; {main_reason_safe}</div>"
+        f"<span title='{html.escape(band_axis_tooltip)}'>{band_label}</span>"
+        f" &nbsp;·&nbsp; {main_reason_safe}</div>"
         f"<div style='font-size:0.88rem; color:#334155; line-height:1.55;'>{narrative_safe}</div>"
         f"</div>"
     )
@@ -2694,6 +2959,7 @@ def _render_topic_rule_case_heatmap(
 
     z_matrix: list[list[float]] = []
     text_matrix: list[list[str]] = []
+    band_matrix: list[list[str]] = []
     case_axis: list[str] = []
     for case in members:
         rule_to_score: dict[str, float] = {}
@@ -2707,9 +2973,12 @@ def _render_topic_rule_case_heatmap(
         text_row = [f"{value:.2f}" if value > 0 else "" for value in z_row]
         z_matrix.append(z_row)
         text_matrix.append(text_row)
-        band = str(case.priority_band or "low").upper()[:1]
+        band_full = str(case.priority_band or "low").lower()
+        band = band_full.upper()[:1]
         key_text = (case.case_key or case.case_id)[:28]
         case_axis.append(f"[{band}] {key_text}")
+        # Why: y축은 폭상 [H]/[M]/[L] 약자만 노출하고, hover에서 priority {band} 정책 표기.
+        band_matrix.append([f"priority {band_full}"] * len(rule_ids))
 
     fig = go.Figure(
         data=go.Heatmap(
@@ -2719,6 +2988,7 @@ def _render_topic_rule_case_heatmap(
             text=text_matrix,
             texttemplate="%{text}",
             textfont=dict(size=10, color="#0F172A"),
+            customdata=band_matrix,
             colorscale=[
                 [0.0, "#F8FAFC"],
                 [0.001, "#FEF3C7"],
@@ -2727,7 +2997,10 @@ def _render_topic_rule_case_heatmap(
             ],
             zmin=0.0,
             zmax=1.0,
-            hovertemplate=("<b>%{y}</b><br>%{x}<br>signal=%{z:.2f}<extra></extra>"),
+            hovertemplate=(
+                "<b>%{y}</b><br>%{customdata} (case priority_band)<br>"
+                "%{x}<br>signal=%{z:.2f}<extra></extra>"
+            ),
             showscale=True,
             colorbar=dict(title="signal", thickness=12, len=0.6),
         )
@@ -2752,7 +3025,7 @@ def _render_priority_risk_queue(pr) -> None:
         pr,
         category="Topic Top N",
         title="Topic Top N",
-        caption="High/Medium 우선순위이며 직접 위험 신호가 있는 case입니다.",
+        caption="priority high/medium 우선순위이며 직접 위험 신호가 있는 case입니다.",
         key_prefix="phase1_priority_risk",
     )
 
@@ -2763,7 +3036,7 @@ def _render_low_priority_risk_queue(pr) -> None:
         category="Topic 보조 표시",
         title="Topic 보조 표시",
         caption=(
-            "직접 위험 신호는 있지만 Low band이거나 timing/control 성격의 넓은 "
+            "직접 위험 신호는 있지만 priority low이거나 timing/control 성격의 넓은 "
             "모집단으로 분류된 case입니다."
         ),
         key_prefix="phase1_low_priority_risk",
@@ -2968,6 +3241,745 @@ def _render_all_case_queue(pr, summary: dict) -> None:
     _render_case_selector(pr, queue)
 
 
+_VIOLATION_CASES_CAP = 200
+
+
+@st.fragment
+def _render_violation_cases_tab(pr, summary: dict) -> None:
+    """위반 케이스 탭 — 핵심 메시지 + Top 200 case master + 클릭 시 drilldown.
+
+    Why: PHASE1 전체 위반은 수만 건이지만 감사인이 1주 풀타임으로 검토 가능한
+         양은 Top 50~100건이 한계. 핵심 메시지로 검토 한계를 안내하고
+         priority composite_sort_score 큰 순으로 Top 200까지 master에 보내고,
+         AgGrid 페이지네이션(50건/페이지)로 넘기게 한다. 행 클릭 시 case
+         drilldown(설명·메트릭·문서 목록·signal section)이 아래에 펼쳐진다.
+
+         @st.fragment: AgGrid SELECTION_CHANGED 가 페이지 전체 rerun 으로 번지면
+         st.tabs 활성 탭 상태가 초기화돼 "케이스 선택 시 개요 탭으로 튕기는"
+         버그가 난다. fragment 로 격리해 위반 케이스 탭 영역만 부분 rerun.
+
+         페이지 키 phase1_violation 로 별도 scrollY 보존 — 다른 탭에서 위반
+         케이스 탭으로 돌아왔을 때 직전 위치로 복원해 "맨 위로 튕기는" 동작
+         을 줄인다.
+    """
+    from dashboard.components.scroll_anchor import preserve_scroll_position
+
+    preserve_scroll_position("phase1_violation")
+
+    phase1 = resolve_phase1_case_result(pr)
+    if phase1 is None or not phase1.cases:
+        st.info("PHASE1 case 결과가 없습니다.")
+        return
+
+    # Why: streamlit st.info()는 파란 강조 박스라 화면 톤이 과하다. 회색 컨테이너
+    #      + ℹ 아이콘으로 부드럽게 처리하고, 본문은 priority cohort별 회수율을
+    #      간결한 dash 형식으로 정리한다.
+    st.markdown(
+        """
+<div style="background:#F3F4F6; border:1px solid #E5E7EB; border-radius:8px;
+            padding:0.75rem 1rem; margin:0.25rem 0 1rem; color:#374151;">
+  <div style="font-weight:600; margin-bottom:0.45rem; color:#111827;">
+    ℹ 검토 우선순위 안내
+  </div>
+  <ul style="margin:0; padding-left:1.2rem; font-size:0.88rem; line-height:1.6;">
+    <li><strong>Top 50 우선 조회</strong> — 실제 부정의 약 25 ~ 33% 포함.</li>
+    <li><strong>Top 100 ~ 200 확장</strong> — 회수율 약 40 ~ 50%까지 상승.</li>
+    <li><strong>Top 500 이후</strong> — 추가 발견의 한계 효익 급감.</li>
+  </ul>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+    # Why: priority band → composite_sort_score → tie-breakers 순으로 내림차순 정렬.
+    #      _category_rule_groups 의 정렬 기준과 동일해 운영 해석 일관성을 유지한다.
+    cases = sorted(
+        phase1.cases,
+        key=lambda c: (
+            _priority_band_rank(c.priority_band),
+            c.composite_sort_score,
+            c.priority_score,
+            c.triage_rank_score,
+            c.total_amount,
+            c.rule_count,
+        ),
+        reverse=True,
+    )
+    total_cases = len(cases)
+    top_cap = min(_VIOLATION_CASES_CAP, total_cases)
+    case_rows = _violation_case_master_rows(cases[:top_cap])
+
+    selected_case_id = _render_rule_case_master(
+        "violation_cases",
+        case_rows,
+        key_suffix="violation_cases",
+        hide_columns={"전표 수", "Band"},
+        # Why: 안내 박스에 우선순위·검토 분량이 모두 정리돼 있으므로 캡션은 생략.
+        caption_override="",
+        show_header=False,
+        # Why: 호출부에서 priority_band → composite_sort_score → ... 순으로 이미
+        #      정렬했으므로 내부 (band, -amount) 재정렬을 끈다. 그렇지 않으면
+        #      Top 200을 amount 순으로 다시 정렬해 priority 순서가 깨진다.
+        preserve_order=True,
+        # Why: 사례 요약 왼쪽에 위험도 순위(1~200)를 pinned 컬럼으로 노출.
+        rank_column=True,
+    )
+    if not selected_case_id:
+        st.caption("위 case 목록에서 한 줄을 선택하세요.")
+        return
+
+    drilldown = build_phase1_case_drilldown(pr, selected_case_id)
+    if drilldown is None:
+        st.caption("선택된 case의 상세를 찾지 못했습니다.")
+        return
+    _render_case_drilldown(drilldown, pr=pr)
+
+
+_VIOLATION_PART_LABELS: dict[str, str] = {
+    "company_code": "회사",
+    "created_by": "작성자",
+    "business_process": "프로세스",
+    "period_month": "월",
+    "fiscal_period": "기간",
+    "counterparty": "거래처",
+    "account_family": "계정",
+    "document_type": "전표",
+    "amount_band": "금액대",
+    "user_persona": "권한",
+    "period_window": "시점",
+    "company_pair": "회사쌍",
+    "near_period": "기말근접",
+}
+
+_VIOLATION_LABELED_THEMES = frozenset(
+    {
+        "logic_mismatch",
+        "control_failure",
+        "access_scope_review",
+        "timing_anomaly",
+        "duplicate_or_outflow",
+        "intercompany_structure",
+        "statistical_outlier",
+        "data_integrity_failure",
+    }
+)
+
+
+def _violation_natural_label(case) -> str:
+    """위반 케이스 탭 전용 사례 요약 라벨.
+
+    Why: case_natural_label 은 theme 매칭 시 자연어 문장을 만들지만, theme이 빈
+         경우 case_key_parts.values() 를 단순 join 한다("R2R · 1 · 2022-01" 처럼
+         모호함). 매칭 실패 시 한글 prefix("프로세스 R2R", "월 2022-01") 를 붙여
+         감사인이 한눈에 키 의미를 알 수 있게 한다.
+    """
+    from src.export.phase1_case_label import case_natural_label
+
+    theme = str(case.primary_theme or case.primary_topic or "").strip().lower()
+    parts = case.case_key_parts or {}
+    natural = case_natural_label(theme, parts).strip()
+    if theme in _VIOLATION_LABELED_THEMES and natural:
+        return natural
+
+    chunks: list[str] = []
+    for key, val in parts.items():
+        if not val:
+            continue
+        label = _VIOLATION_PART_LABELS.get(key, key)
+        chunks.append(f"{label} {val}")
+    if chunks:
+        return " · ".join(chunks[:4])
+    return natural or case.case_key or case.case_id
+
+
+def _violation_case_master_rows(cases) -> list[dict[str, Any]]:
+    """case 객체 리스트를 _render_rule_case_master 입력 형식으로 변환.
+
+    Why: _render_rule_case_master는 build_phase1_rule_cases 가 만든 dict 입력을
+         기대한다. 위반 케이스 탭은 룰 필터 없이 phase1.cases 전체를 다루므로
+         같은 키 구조(case_id/natural_label/priority_band/document_count/
+         total_amount/why)로 dict 를 만든다.
+    """
+    rows: list[dict[str, Any]] = []
+    for case in cases:
+        why = str(case.risk_narrative or case.representative_explanation or "").strip()
+        rows.append(
+            {
+                "case_id": case.case_id,
+                "natural_label": _violation_natural_label(case),
+                "priority_band": case.priority_band or "low",
+                "document_count": int(case.document_count or 0),
+                "total_amount": float(case.total_amount or 0.0),
+                "why": why,
+            }
+        )
+    return rows
+
+
+def _render_statistics_tab(pr, summary: dict) -> None:
+    """통계결과 탭 — PHASE1 결과 분포 6종.
+
+    Why: 룰 위반 건수가 아니라 PHASE1 case 의 score/band/topic/시계열/엔티티
+         분포를 한 화면에 압축. Topic 드릴다운은 위반 케이스 탭의 master/detail
+         로 일원화했으므로 통계 탭은 분포 차트 전용.
+    """
+    case_result = getattr(pr, "phase1_case_result", None)
+    cases = list(getattr(case_result, "cases", []) or []) if case_result else []
+
+    if not cases:
+        st.info("통계를 계산할 case 데이터가 없습니다.")
+        return
+    _render_phase1_summary_charts(pr, cases)
+
+
+# ── PHASE1 결과 통계 차트 ─────────────────────────────────────────
+
+
+@st.cache_resource(show_spinner=False)
+def _account_name_lookup() -> dict[str, str]:
+    """gl_account → 한국어 계정명 매핑 (config/chart_of_accounts.csv 캐시).
+
+    Why: Top 10 계정 차트에 코드만 노출되면 감사인이 직관 파악이 어렵다.
+         글로벌 COA CSV 를 한 번 읽어 dict 로 캐시한다.
+    """
+    import csv
+    from pathlib import Path
+
+    coa_path = Path(__file__).resolve().parent.parent / "config" / "chart_of_accounts.csv"
+    if not coa_path.exists():
+        return {}
+    lookup: dict[str, str] = {}
+    with open(coa_path, encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            code = (row.get("gl_account") or "").strip()
+            name = (row.get("account_name_kr") or "").strip()
+            if code and name:
+                lookup[code] = name
+    return lookup
+
+
+def _render_phase1_summary_charts(pr, cases: list) -> None:
+    """6종 통계 — Plotly 시각화.
+
+    1) priority_score 히스토그램 + band 경계선 + 설명
+    2) priority_band × topic heatmap (compact) | 3) Topic 평균 priority (2-col)
+    4) 월별 위반 전표 추이 (line)
+    5) 요일 × 시간 히트맵 (심야·주말 점선 박스)
+    6) 작성자 / 계정 Top 10 (계정은 한국어 명칭 동반)
+    """
+    from dashboard.components.charts._theme import (
+        AXIS_STYLE,
+        CASE_BAND_COLORS,
+        COLOR_BORDER,
+        COLOR_PRIMARY,
+        COLOR_TEXT_MUTED,
+        DEFAULT_LAYOUT,
+        RISK_COLORS,
+    )
+
+    # 데이터 준비 (한 번 순회)
+    scores: list[float] = []
+    band_topic: dict[tuple[str, str], int] = {}
+    topic_scores_sum: dict[str, float] = {}
+    topic_scores_n: dict[str, int] = {}
+    # Why: 외부 변경/기존 차트가 case별 룰 수 분포(rule_count_per_case)를 참조할 수
+    #      있어 사전에 채워 둔다. 차트가 안 쓰면 무해, NameError 만 차단.
+    rule_count_per_case: list[int] = []
+    flat_docs: list[dict[str, Any]] = []
+    seen_doc_ids: set[str] = set()
+
+    for case in cases:
+        score = float(getattr(case, "priority_score", 0.0) or 0.0)
+        band = str(getattr(case, "priority_band", "low") or "low").lower()
+        topic = str(getattr(case, "primary_topic", "") or "")
+        scores.append(score)
+        if topic:
+            band_topic[(band, topic)] = band_topic.get((band, topic), 0) + 1
+            topic_scores_sum[topic] = topic_scores_sum.get(topic, 0.0) + score
+            topic_scores_n[topic] = topic_scores_n.get(topic, 0) + 1
+
+        rule_ids = {
+            str(getattr(hit, "rule_id", "") or "")
+            for hit in getattr(case, "raw_rule_hits", []) or []
+        }
+        rule_ids.discard("")
+        rule_count_per_case.append(len(rule_ids))
+
+        for doc in getattr(case, "documents", []) or []:
+            doc_id = str(getattr(doc, "document_id", "") or "")
+            if not doc_id or doc_id in seen_doc_ids:
+                continue
+            seen_doc_ids.add(doc_id)
+            flat_docs.append(
+                {
+                    "document_id": doc_id,
+                    "posting_date": getattr(doc, "posting_date", None),
+                    "created_by": getattr(doc, "created_by", None),
+                    "gl_account": getattr(doc, "gl_account", None),
+                }
+            )
+
+    docs_df = pd.DataFrame(flat_docs)
+
+    # ── 1) 위험 우선순위 점수 분포 — 좌(설명 카드) · 우(차트) ─────
+    section_1 = st.container(border=True)
+    section_1.markdown("##### 위험 우선순위 점수 분포")
+    # Why: 1:2 비율에서 마지막 bullet 끝 "사 용" 이 두 줄로 줄바꿈됨. 설명 칸 폭을
+    #      살짝 넓혀(1:1.5) 한 줄에 들어오게.
+    col_desc, col_chart = section_1.columns([1, 1.5])
+    with col_desc:
+        # Why: 우측 차트(height=240) 와 시각 균형을 맞추기 위해 동일 높이 컨테이너에
+        #      회색 배경 카드. flex column + justify-center 로 상하 중앙 정렬.
+        st.markdown(
+            """
+            <div style="
+                background:#F8F9FA;
+                border:1px solid #E5E7EB;
+                border-radius:10px;
+                padding:1.1rem 1.4rem;
+                height:240px;
+                display:flex;
+                flex-direction:column;
+                justify-content:center;
+                box-shadow:0 1px 2px rgba(15,23,42,0.03);
+            ">
+                <ul style="
+                    margin:0;
+                    padding-left:1.1rem;
+                    color:#374151;
+                    font-size:0.92rem;
+                    line-height:1.85;
+                ">
+                    <li>각 위반 케이스의 <b style="color:#111827;">위험 우선순위 점수(0~1)</b> 분포</li>
+                    <li>룰 위반 강도 · 금액 · 통제 신호 합산으로 등급화</li>
+                    <li>상(≥ 0.75) · 중(≥ 0.45) · 하(&lt; 0.45) 3등급</li>
+                    <li>점수가 한 구간에 몰리면 그 경계를 검토 컷오프로 사용</li>
+                </ul>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with col_chart:
+        hist_fig = go.Figure(
+            go.Histogram(
+                x=scores,
+                nbinsx=20,
+                marker={"color": COLOR_PRIMARY, "line": {"color": "#FFFFFF", "width": 1}},
+                hovertemplate="구간: %{x}<br>케이스 수: %{y}<extra></extra>",
+            )
+        )
+        hist_fig.add_vline(
+            x=0.45,
+            line_dash="dot",
+            line_color=CASE_BAND_COLORS["medium"],
+            annotation_text="중 ≥ 0.45",
+            annotation_position="top",
+            annotation_font={"size": 10, "color": CASE_BAND_COLORS["medium"]},
+        )
+        hist_fig.add_vline(
+            x=0.75,
+            line_dash="dot",
+            line_color=CASE_BAND_COLORS["high"],
+            annotation_text="상 ≥ 0.75",
+            annotation_position="top",
+            annotation_font={"size": 10, "color": CASE_BAND_COLORS["high"]},
+        )
+        hist_fig.update_layout(
+            **DEFAULT_LAYOUT,
+            height=240,
+            xaxis_title="위험 우선순위 점수",
+            yaxis_title="케이스 수",
+        )
+        hist_fig.update_xaxes(**AXIS_STYLE, range=[0.0, 1.0])
+        hist_fig.update_yaxes(**AXIS_STYLE)
+        st.plotly_chart(
+            hist_fig,
+            use_container_width=True,
+            key="phase1_stats_priority_hist",
+            config={"displayModeBar": False},
+        )
+
+    # ── 2) band × topic heatmap + 3) Topic 별 평균 priority (균형 잡힌 폭) ─
+    # Why: heatmap 3 행이 너무 납작해서 셀이 길게 늘어남. 비율 1:1 로 두고 양쪽 height 도 320 으로 동일하게 키움.
+    section_2 = st.container(border=True)
+    col_heat, col_avg = section_2.columns([1, 1])
+    topic_ids = [tid for tid in TOPIC_REGISTRY]
+    topic_labels = [_TOPIC_SHORT_LABELS.get(tid, TOPIC_REGISTRY[tid].label) for tid in topic_ids]
+
+    band_kor = {"high": "상", "medium": "중", "low": "하"}
+    with col_heat:
+        st.markdown("##### 위험등급 × 검토 영역 분포")
+        band_order = ["high", "medium", "low"]
+        z = [[band_topic.get((band, tid), 0) for tid in topic_ids] for band in band_order]
+        text = [[f"{v:,}" if v else "" for v in row] for row in z]
+        heat = go.Figure(
+            go.Heatmap(
+                z=z,
+                x=topic_labels,
+                y=[band_kor[b] for b in band_order],
+                text=text,
+                texttemplate="%{text}",
+                textfont={"size": 12},
+                colorscale="Purples",
+                hovertemplate="등급: %{y}<br>영역: %{x}<br>케이스: %{z:,}<extra></extra>",
+                colorbar={"title": "케이스", "thickness": 10, "len": 0.75},
+            )
+        )
+        heat.update_layout(
+            **{**DEFAULT_LAYOUT, "margin": {"l": 50, "r": 10, "t": 10, "b": 90}},
+            height=320,
+            xaxis_title="",
+            yaxis_title="위험등급",
+        )
+        heat.update_xaxes(tickangle=-30, tickfont={"size": 10})
+        heat.update_yaxes(tickfont={"size": 11})
+        st.plotly_chart(
+            heat,
+            use_container_width=True,
+            key="phase1_stats_band_topic_heat",
+            config={"displayModeBar": False},
+        )
+
+    with col_avg:
+        st.markdown("##### 검토 영역별 평균 위험 점수")
+        avg_pairs = [
+            (
+                _TOPIC_SHORT_LABELS.get(tid, TOPIC_REGISTRY[tid].label),
+                topic_scores_sum.get(tid, 0.0) / topic_scores_n[tid]
+                if topic_scores_n.get(tid)
+                else 0.0,
+            )
+            for tid in topic_ids
+        ]
+        avg_pairs.sort(key=lambda x: x[1])
+        avg_labels, avg_values = zip(*avg_pairs, strict=False) if avg_pairs else ([], [])
+        from dashboard.components.charts.comparison_charts import (
+            _TICK_FONT_MONO,
+            _left_align_labels,
+        )
+
+        aligned_avg_labels = _left_align_labels(list(avg_labels))
+        avg_fig = go.Figure(
+            go.Bar(
+                x=list(avg_values),
+                y=aligned_avg_labels,
+                orientation="h",
+                marker={"color": CASE_BAND_COLORS["high"]},
+                text=[f"{v:.2f}" for v in avg_values],
+                textposition="outside",
+                hovertemplate="%{y}<br>평균 점수: %{x:.3f}<extra></extra>",
+            )
+        )
+        # Why: 우측 여백이 너무 많이 남던 비율 문제 — x 축 범위를 최댓값 약간 위로 타이트하게 조정.
+        max_v = max(list(avg_values) + [0.0])
+        avg_fig.update_layout(
+            **{**DEFAULT_LAYOUT, "margin": {"l": 100, "r": 40, "t": 10, "b": 40}},
+            height=320,
+            xaxis_title="평균 위험 점수",
+            yaxis_title="",
+        )
+        avg_fig.update_xaxes(
+            **AXIS_STYLE, range=[0, min(1.0, max_v * 1.25 + 0.05)], tickfont={"size": 10}
+        )
+        avg_fig.update_yaxes(automargin=True, tickfont=_TICK_FONT_MONO)
+        st.plotly_chart(
+            avg_fig,
+            use_container_width=True,
+            key="phase1_stats_topic_avg",
+            config={"displayModeBar": False},
+        )
+
+    # ── 4) 월별 위반 전표 추이 + 5) 요일 × 시간 히트맵 ─────────
+    dt = (
+        pd.to_datetime(docs_df["posting_date"], errors="coerce").dropna()
+        if not docs_df.empty and "posting_date" in docs_df.columns
+        else pd.Series(dtype="datetime64[ns]")
+    )
+    if not dt.empty:
+        section_3 = st.container(border=True)
+        section_3.markdown("##### 월별 위반 전표 추이")
+        section_3.caption(
+            "위반 전표(중복 제거 기준)의 회계 월별 분포. "
+            "분기말(3·6·9·12월)에 결산조정·이익조정이 집중되는지 확인."
+        )
+        monthly = dt.dt.month.value_counts().reindex(range(1, 13), fill_value=0).sort_index()
+        line_fig = go.Figure(
+            go.Scatter(
+                x=list(monthly.index),
+                y=list(monthly.values),
+                mode="lines+markers+text",
+                line={"color": COLOR_PRIMARY, "width": 2.5, "shape": "spline"},
+                marker={"size": 8, "color": COLOR_PRIMARY},
+                text=[f"{v:,}" for v in monthly.values],
+                textposition="top center",
+                textfont={"size": 10, "color": COLOR_TEXT_MUTED},
+                hovertemplate="%{x}월: %{y:,}건<extra></extra>",
+            )
+        )
+        for q in (3, 6, 9, 12):
+            line_fig.add_vline(x=q, line_dash="dot", line_color=COLOR_BORDER, opacity=0.6)
+        line_fig.update_layout(
+            **DEFAULT_LAYOUT, height=260, xaxis_title="회계 월", yaxis_title="위반 전표 건수"
+        )
+        line_fig.update_xaxes(
+            **AXIS_STYLE,
+            tickmode="array",
+            tickvals=list(range(1, 13)),
+            ticktext=[f"{m}월" for m in range(1, 13)],
+        )
+        line_fig.update_yaxes(**AXIS_STYLE, rangemode="tozero")
+        section_3.plotly_chart(
+            line_fig,
+            use_container_width=True,
+            key="phase1_stats_monthly_trend",
+            config={"displayModeBar": False},
+        )
+
+        # ── 5) 요일별 분포 (시간 정보 있으면 요일×시간 히트맵으로 자동 전환) ─
+        section_4 = st.container(border=True)
+        weekday = dt.dt.dayofweek
+        hour = dt.dt.hour
+        day_labels = ["월", "화", "수", "목", "금", "토", "일"]
+
+        if hour.nunique() > 1:
+            section_4.markdown("##### 요일·시간대 분포")
+            section_4.caption("위반 전표의 기표 시점. 빨강 점선=심야(0~6·22~23시), 주황 점선=주말.")
+            temp = pd.DataFrame({"weekday": weekday.values, "hour": hour.values})
+            grouped = temp.groupby(["weekday", "hour"]).size().reset_index(name="cnt")
+            pivot = pd.DataFrame(0, index=range(7), columns=range(24))
+            for _, row in grouped.iterrows():
+                pivot.at[int(row["weekday"]), int(row["hour"])] = int(row["cnt"])
+            heat_time = go.Figure(
+                go.Heatmap(
+                    z=pivot.values,
+                    x=list(range(24)),
+                    y=day_labels,
+                    colorscale="YlOrRd",
+                    hovertemplate="시간: %{x}시<br>요일: %{y}<br>건수: %{z}<extra></extra>",
+                    colorbar={"title": "건수", "thickness": 10, "len": 0.8},
+                )
+            )
+            for x0, x1 in [(-0.5, 6.5), (21.5, 23.5)]:
+                heat_time.add_shape(
+                    type="rect",
+                    x0=x0,
+                    x1=x1,
+                    y0=-0.5,
+                    y1=6.5,
+                    line={"dash": "dash", "color": "#DC2626", "width": 2},
+                )
+            heat_time.add_shape(
+                type="rect",
+                x0=-0.5,
+                x1=23.5,
+                y0=4.5,
+                y1=6.5,
+                line={"dash": "dash", "color": "#D97706", "width": 2},
+            )
+            heat_time.update_layout(
+                **{**DEFAULT_LAYOUT, "margin": {"l": 30, "r": 10, "t": 10, "b": 40}},
+                height=240,
+                xaxis_title="시간",
+                yaxis_title="요일",
+            )
+            section_4.plotly_chart(
+                heat_time,
+                use_container_width=True,
+                key="phase1_stats_weekday_hour_heat",
+                config={"displayModeBar": False},
+            )
+        else:
+            # Why: posting_date 에 시간 정보가 없으면(전표 모두 00:00) 24칸 가로 히트맵은
+            #      대부분 빈칸으로 보여 정보 가치가 없다. 요일 단위 콤보 차트로 전환.
+            #      막대=요일별 전체 거래 건수, 라인=위반 전표 비율(%) — 위반의 절대량과
+            #      상대 비율을 한 화면에 비교해야 "토·일은 전체가 적지만 비율이 높다"
+            #      같은 인사이트를 즉시 인지할 수 있다.
+            section_4.markdown("##### 요일별 전체 거래 대비 위반 비율")
+            section_4.caption(
+                "막대=요일별 전체 전표 건수 · 선=위반 전표 비율(%). 통제 약한 토·일은 "
+                "건수가 적어도 비율이 솟아오르면 즉시 검토 신호."
+            )
+            # 전체 거래 — pr.data 의 distinct document_id × posting_date 기준 요일 분포
+            total_weekday = _total_weekday_distribution(pr)
+            viol_weekday = (
+                pd.Series(weekday.values)
+                .value_counts()
+                .reindex(range(7), fill_value=0)
+                .sort_index()
+            )
+            # 비율(%) — 분모 0 이면 0
+            ratio = []
+            for i in range(7):
+                total_v = int(total_weekday.get(i, 0))
+                viol_v = int(viol_weekday.get(i, 0))
+                ratio.append((viol_v / total_v * 100) if total_v else 0.0)
+
+            from plotly.subplots import make_subplots
+
+            combo = make_subplots(specs=[[{"secondary_y": True}]])
+            # Why: 색상 톤을 위 차트들과 일치 — 막대는 모집단(CASE low slate),
+            #      선은 위험 신호 (RISK_COLORS["High"] 채도 낮춘 red).
+            #      라벨 겹침 해소: 막대 위 숫자는 hover 로만 노출하고, 위반 비율
+            #      라인 위의 % 텍스트만 시각 노출(요일 차트의 핵심 인사이트).
+            combo.add_trace(
+                go.Bar(
+                    x=day_labels,
+                    y=[int(total_weekday.get(i, 0)) for i in range(7)],
+                    name="전체 전표",
+                    # Why: case low(slate-400)는 톤이 무거워 막대가 라인을 압도한다.
+                    #      RISK_COLORS["Low"](sky-9 desaturated) 계열의 더 연한 sky 톤으로
+                    #      낮춰 도넛/위반 라인과 동일한 cool 팔레트로 조화.
+                    marker={"color": "#A5C8E6", "line": {"width": 0}},
+                    hovertemplate="%{x}요일 전체: %{y:,}건<extra></extra>",
+                ),
+                secondary_y=False,
+            )
+            risk_color = RISK_COLORS["High"]
+            combo.add_trace(
+                go.Scatter(
+                    x=day_labels,
+                    y=ratio,
+                    name="위반 비율",
+                    mode="lines+markers+text",
+                    line={"color": risk_color, "width": 2.5},
+                    marker={"size": 8, "color": risk_color},
+                    text=[f"{v:.1f}%" for v in ratio],
+                    textposition="top center",
+                    textfont={"size": 10, "color": risk_color},
+                    cliponaxis=False,
+                    hovertemplate="%{x}요일 위반 비율: %{y:.2f}%<extra></extra>",
+                ),
+                secondary_y=True,
+            )
+            combo.update_layout(
+                **DEFAULT_LAYOUT,
+                height=320,
+                xaxis_title="요일",
+                legend={
+                    "orientation": "h",
+                    "yanchor": "bottom",
+                    "y": 1.02,
+                    "xanchor": "right",
+                    "x": 1,
+                },
+            )
+            combo.update_xaxes(**AXIS_STYLE)
+            combo.update_yaxes(
+                title_text="전체 전표 건수", rangemode="tozero", secondary_y=False, **AXIS_STYLE
+            )
+            # Why: 라인 위 % 텍스트가 상단에 잘리지 않도록 secondary y축 max 에
+            #      약 20% 여유. min=0 고정.
+            max_ratio = max(ratio) if ratio else 0.0
+            combo.update_yaxes(
+                title_text="위반 비율 (%)",
+                range=[0, max(max_ratio * 1.2, 1.0)],
+                secondary_y=True,
+                showgrid=False,
+            )
+            section_4.plotly_chart(
+                combo,
+                use_container_width=True,
+                key="phase1_stats_weekday_combo",
+                config={"displayModeBar": False},
+            )
+
+    # ── 6) 작성자 / 계정과목 상위 10 (계정은 한국어 명칭 동반) ─────
+    if not docs_df.empty:
+        section_6 = st.container(border=True)
+        col_u, col_g = section_6.columns(2)
+        with col_u:
+            st.markdown("##### 작성자별 위반 전표 상위 10")
+            _render_topn_hbar(
+                docs_df.get("created_by"),
+                key="phase1_stats_user_topn",
+                color=CASE_BAND_COLORS["high"],
+                empty_msg="작성자 정보가 없습니다.",
+            )
+        with col_g:
+            st.markdown("##### 계정과목별 위반 전표 상위 10")
+            _render_topn_hbar(
+                docs_df.get("gl_account"),
+                key="phase1_stats_account_topn",
+                color=CASE_BAND_COLORS["medium"],
+                empty_msg="계정과목 정보가 없습니다.",
+                label_map=_account_name_lookup(),
+            )
+
+
+def _total_weekday_distribution(pr) -> pd.Series:
+    """pr.data 에서 distinct document_id 기준 요일별 분포 산출.
+
+    Why: 위반 전표(flat_docs) 와 같은 단위(전표=문서 1건)로 분모를 맞춰야 비율이
+         정확. line 단위 합계는 분개 라인 수가 많은 전표가 과대평가되어 비율 왜곡.
+    """
+    data = getattr(pr, "data", None)
+    if data is None or not hasattr(data, "columns"):
+        return pd.Series([0] * 7, index=range(7))
+    if "posting_date" not in data.columns:
+        return pd.Series([0] * 7, index=range(7))
+    if "document_id" in data.columns:
+        sub = data[["document_id", "posting_date"]].drop_duplicates(subset=["document_id"])
+        dates = pd.to_datetime(sub["posting_date"], errors="coerce").dropna()
+    else:
+        dates = pd.to_datetime(data["posting_date"], errors="coerce").dropna()
+    if dates.empty:
+        return pd.Series([0] * 7, index=range(7))
+    return dates.dt.dayofweek.value_counts().reindex(range(7), fill_value=0).sort_index()
+
+
+def _render_topn_hbar(
+    series: pd.Series | None,
+    *,
+    key: str,
+    color: str,
+    empty_msg: str,
+    top_n: int = 10,
+    label_map: dict[str, str] | None = None,
+) -> None:
+    """Top N horizontal bar — 위반 전표 distinct 수 기준.
+
+    label_map: {code: 표시명} 매핑이 있으면 "code · 표시명" 으로 y 축 라벨 보강.
+    """
+    from dashboard.components.charts._theme import AXIS_STYLE, DEFAULT_LAYOUT
+    from dashboard.components.charts.comparison_charts import (
+        _TICK_FONT_MONO,
+        _left_align_labels,
+    )
+
+    if series is None or series.dropna().empty:
+        st.caption(empty_msg)
+        return
+    counts = series.dropna().astype(str).value_counts().head(top_n).iloc[::-1]
+    if label_map:
+        y_labels = [
+            f"{code} · {label_map[code]}" if code in label_map else code for code in counts.index
+        ]
+    else:
+        y_labels = list(counts.index)
+    aligned_labels = _left_align_labels(y_labels)
+    fig = go.Figure(
+        go.Bar(
+            x=counts.values,
+            y=aligned_labels,
+            orientation="h",
+            marker={"color": color},
+            text=[f"{v:,}" for v in counts.values],
+            textposition="outside",
+            hovertemplate="%{y}: %{x:,}건<extra></extra>",
+        )
+    )
+    fig.update_layout(
+        **DEFAULT_LAYOUT,
+        height=max(260, 32 * len(counts) + 80),
+        xaxis_title="위반 전표 건수",
+        yaxis_title="",
+    )
+    fig.update_xaxes(**AXIS_STYLE, rangemode="tozero")
+    fig.update_yaxes(automargin=True, tickfont=_TICK_FONT_MONO)
+    st.plotly_chart(fig, use_container_width=True, key=key, config={"displayModeBar": False})
+
+
 def _render_ai_conclusion(pr, summary: dict) -> None:
     gate = build_phase1_data_quality_gate(pr)
     audit = build_phase1_audit_risk_by_queue(pr, top_n_per_queue=1)
@@ -2978,7 +3990,7 @@ def _render_ai_conclusion(pr, summary: dict) -> None:
     st.markdown("#### 요약 판단")
     st.write(
         f"PHASE1은 총 {summary['case_count']:,}개 case를 생성했고, "
-        f"High {high_count:,}개, Medium {medium_count:,}개를 우선 검토 대상으로 분류했습니다."
+        f"priority high {high_count:,}개, priority medium {medium_count:,}개를 우선 검토 대상으로 분류했습니다."
     )
     st.write(
         f"데이터정합성 Gate에는 {gate.get('document_count', 0):,}개 document가 걸렸습니다. "
@@ -3017,8 +4029,9 @@ def _render_ai_conclusion(pr, summary: dict) -> None:
         type="primary",
         key="ai_conclusion_goto_phase2",
     ):
+        # KEY_TOP_LEVEL_NAV 는 widget key — _consume_pending_page 가 다음 run
+        # widget 렌더 전에 KEY_PENDING_RESULT_TAB 를 옮긴다.
         st.session_state[KEY_ACTIVE_RESULT_TAB] = PAGE_PHASE2
-        st.session_state[KEY_TOP_LEVEL_NAV] = PAGE_PHASE2
         st.session_state[KEY_PENDING_RESULT_TAB] = PAGE_PHASE2
         st.rerun()
 
@@ -3032,7 +4045,7 @@ def _render_case_table(queue_df: pd.DataFrame) -> None:
             "case_type": "Case Type",
             "main_reason": "Main Reason",
             "case_key": "Case Key",
-            "priority_band": "Band",
+            "priority_band": "Priority band",
             "priority_score": "Score",
             "composite_sort_score": "Sort",
             "triage_rank_score": "Triage",
@@ -3057,7 +4070,7 @@ def _render_case_table(queue_df: pd.DataFrame) -> None:
         "Topic",
         "Topic Score",
         "Primary Topic",
-        "Band",
+        "Priority band",
         "Case Type",
         "Main Reason",
         "Sort",
@@ -3100,54 +4113,183 @@ def _render_case_selector(
         "Drill-down Case",
         options=list(case_options.keys()),
         key=f"phase1_case_select_{key_base}",
+        help=(
+            "옵션 포맷: topic | case priority_band | case_key. "
+            "가운데 high/medium/low 는 priority high/medium/low "
+            "(priority_score 기준, 행 risk_level 과 다른 축)."
+        ),
     )
     selected_case_id = case_options[selected_case_label]
     drilldown = build_phase1_case_drilldown(pr, selected_case_id)
     if drilldown is not None:
-        _render_case_drilldown(drilldown)
+        _render_case_drilldown(drilldown, pr=pr)
 
 
-def _render_case_drilldown(drilldown: dict) -> None:
+def _render_case_drilldown(drilldown: dict, *, pr=None) -> None:
+    # Why: case 메타 메트릭/영문 캡션/signal section expander 를 모두 제거하고
+    #      Case 설명 + 문서 master(AgGrid) + 선택된 문서의 원장 라인 표 만 남긴다.
+    #      위반 document 행을 클릭하면 그 밑에 raw 분개 라인이 즉시 펼쳐진다.
     case = drilldown["case"]
     narrative = case["risk_narrative"] or case["representative_explanation"]
     st.markdown(f"**Case 설명**  \n{narrative}")
 
-    meta1, meta2, meta3, meta4 = st.columns(4)
-    meta1.metric("Topic Score", f"{case.get('topic_score', case['priority_score']):.2f}")
-    meta2.metric("Priority", f"{case['priority_score']:.2f}")
-    meta3.metric("Documents", f"{case['document_count']:,}")
-    meta4.metric("Amount", f"{case['total_amount']:,.0f}")
+    documents = drilldown.get("documents") or []
+    if not documents:
+        return
 
-    sig1, sig2, sig3, sig4 = st.columns(4)
-    sig1.metric("Direct risk", f"{case['direct_risk_count']:,}")
-    sig2.metric("Review context", f"{case['review_context_count']:,}")
-    sig3.metric("Data blocker", f"{case['integrity_blocker_count']:,}")
-    sig4.metric("Macro finding", f"{case['macro_finding_count']:,}")
-
-    topic_caption = "Topic: " + str(
-        case.get("topic_label") or case.get("primary_topic_label") or ""
+    selected_doc = _render_case_drilldown_document_master(
+        documents, key_suffix=str(case.get("case_id", ""))
     )
-    if case.get("secondary_queue_labels"):
-        topic_caption += " / " + ", ".join(case["secondary_queue_labels"])
-    st.caption(topic_caption)
-    if case.get("fraud_scenario_tags"):
-        st.caption("Fraud scenario tags: " + ", ".join(case["fraud_scenario_tags"]))
-    tie_reasons = case.get("queue_tiebreaker_reasons") or []
-    if tie_reasons:
-        st.caption("Tie-breaker: " + " / ".join(tie_reasons[:5]))
-    if case["triage_rank_reasons"]:
-        st.caption("Triage: " + ", ".join(case["triage_rank_reasons"][:6]))
-    if case["review_focus"]:
-        st.caption("Review Focus: " + ", ".join(case["review_focus"]))
-    if case["recommended_audit_actions"]:
-        st.caption("Recommended Actions: " + " / ".join(case["recommended_audit_actions"][:4]))
+    if not selected_doc or pr is None:
+        return
 
-    documents_df = pd.DataFrame(drilldown["documents"])
-    if not documents_df.empty:
-        st.caption("Document drill-down")
-        st.dataframe(documents_df, use_container_width=True, hide_index=True)
+    raw_lines = _case_document_raw_lines(pr, selected_doc)
+    if not raw_lines:
+        st.caption("선택된 전표의 원장 라인을 찾지 못했습니다.")
+        return
+    _render_raw_lines_table("", raw_lines, key_suffix=f"case_drilldown_{case.get('case_id', '')}")
 
-    _render_signal_sections(drilldown)
+
+_CASE_DRILLDOWN_DOC_COLUMNS = (
+    "document_id",
+    "posting_date",
+    "created_by",
+    "approved_by",
+    "gl_account",
+    "debit_amount",
+    "credit_amount",
+    "evidence_amount",
+    "matched_rules",
+)
+
+
+def _serialize_cell(value):
+    """AgGrid 직렬화용 — list/tuple/dict 셀을 사람이 읽을 수 있는 문자열로 변환.
+
+    Why: drilldown documents 에 matched_rules 같은 list 컬럼이 그대로 들어가면
+         AgGrid 가 "[object Object]" 로 표시한다. join 으로 평탄화한다.
+    """
+    if isinstance(value, (list, tuple, set)):
+        return ", ".join(str(item) for item in value if item not in (None, ""))
+    if isinstance(value, dict):
+        return ", ".join(f"{k}={v}" for k, v in value.items() if v not in (None, ""))
+    return value
+
+
+def _matched_rules_to_kr(value) -> str:
+    """matched_rules 셀(L3-02 등 rule_id 목록)을 짧은 한국어 라벨로 변환.
+
+    Why: case 드릴다운 표에 "L3-02, L3-04" 처럼 코드만 노출되면 감사인이 즉시
+         의미를 파악할 수 없다. canonical 정규화 후 `_RULE_NAMES_KR` 한국어 라벨로
+         치환하고, 매핑이 없으면 원본 코드를 그대로 둔다.
+    """
+    if isinstance(value, (list, tuple, set)):
+        items = list(value)
+    elif isinstance(value, str) and value:
+        items = [token.strip() for token in value.split(",") if token.strip()]
+    elif value in (None, ""):
+        return ""
+    else:
+        items = [value]
+
+    labels: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        raw = str(item).strip()
+        if not raw:
+            continue
+        canonical = _canonicalize_metadata_rule_id(raw)
+        label = _RULE_NAMES_KR.get(canonical) or _RULE_NAMES_KR.get(raw) or raw
+        if label in seen:
+            continue
+        seen.add(label)
+        labels.append(label)
+    return ", ".join(labels)
+
+
+def _render_case_drilldown_document_master(
+    documents: list[dict], *, key_suffix: str = ""
+) -> str | None:
+    """Case drilldown 문서 master — 행 선택 시 document_id 반환.
+
+    Why: 단순 st.dataframe 은 행 클릭이 안 돼 분개 라인까지 들어가는 흐름이
+         끊긴다. AgGrid 단일 선택으로 바꿔 클릭 즉시 raw 분개가 펼쳐지게 한다.
+         핵심 컬럼만 화이트리스트로 노출하고 list/dict 셀은 문자열로 직렬화.
+    """
+    from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
+
+    docs_df = pd.DataFrame(documents)
+    if docs_df.empty or "document_id" not in docs_df.columns:
+        st.dataframe(docs_df, use_container_width=True, hide_index=True)
+        return None
+
+    # 의미있는 컬럼만 화이트리스트로 노출 (matched_rules 등 list 메타는 직렬화).
+    available_cols = [col for col in _CASE_DRILLDOWN_DOC_COLUMNS if col in docs_df.columns]
+    if available_cols:
+        docs_df = docs_df[available_cols].copy()
+    # Why: matched_rules 는 코드(L3-02) 대신 한국어 짧은 라벨로 보여 감사인이 즉시 읽도록.
+    if "matched_rules" in docs_df.columns:
+        docs_df["matched_rules"] = docs_df["matched_rules"].map(_matched_rules_to_kr)
+    for col in docs_df.columns:
+        if docs_df[col].dtype == object:
+            docs_df[col] = docs_df[col].map(_serialize_cell)
+
+    gb = GridOptionsBuilder.from_dataframe(docs_df)
+    gb.configure_default_column(resizable=True, filter=True, sortable=True)
+    gb.configure_selection(selection_mode="single", use_checkbox=False, pre_selected_rows=[0])
+    gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=20)
+    gb.configure_grid_options(
+        rowSelection="single",
+        suppressRowClickSelection=False,
+        suppressCellFocus=True,
+    )
+
+    safe_suffix = (key_suffix or "default").replace(" ", "_")
+    grid_key = f"phase1_case_drilldown_docs_{safe_suffix}"
+    response = AgGrid(
+        docs_df,
+        gridOptions=gb.build(),
+        height=min(320, (len(docs_df) + 1) * 36),
+        theme="streamlit",
+        key=grid_key,
+        update_mode=GridUpdateMode.SELECTION_CHANGED,
+        allow_unsafe_jscode=True,
+        reload_data=False,
+        fit_columns_on_grid_load=True,
+    )
+
+    state_key = f"_phase1_case_drilldown_doc_selection_{grid_key}"
+    selected_rows = response.get("selected_rows", [])
+    if hasattr(selected_rows, "to_dict"):
+        selected_rows = selected_rows.to_dict("records")
+    selected_doc = None
+    if selected_rows:
+        selected_doc = str(selected_rows[0].get("document_id") or "")
+    if selected_doc:
+        st.session_state[state_key] = selected_doc
+    else:
+        selected_doc = st.session_state.get(state_key)
+        if not selected_doc and not docs_df.empty:
+            selected_doc = str(docs_df.iloc[0].get("document_id") or "")
+    return selected_doc or None
+
+
+def _case_document_raw_lines(pr, document_id: str) -> list[dict]:
+    """선택된 document_id 의 원장 라인을 pr.data / featured_data 에서 조회.
+
+    Why: build_phase1_rule_document_detail 은 rule_id 컨텍스트가 필요한데, case
+         drilldown 에서는 case 안에 여러 룰이 섞일 수 있어 단일 rule_id 가 없다.
+         원본 데이터에서 document_id 로 단순 필터해 라인 목록을 만든다.
+    """
+    df = getattr(pr, "featured_data", None)
+    if df is None or getattr(df, "empty", True):
+        df = getattr(pr, "data", None)
+    if df is None or df.empty or "document_id" not in df.columns:
+        return []
+    subset = df[df["document_id"].astype(str) == str(document_id)]
+    if subset.empty:
+        return []
+    return subset.to_dict("records")
 
 
 def _render_signal_sections(drilldown: dict) -> None:
@@ -3350,10 +4492,15 @@ def _render_risk_pie(risk_df: pd.DataFrame, topics: list[dict[str, Any]]) -> Non
 
     # ── 좌측: 전체 분포 도넛 ────────────────────────────────
     with left_col, st.container(border=True, height=chart_card_height):
+        row_axis_tooltip_html = html.escape(
+            "축: 행 risk_level (anomaly_score 기준). "
+            f"위험신호 = row risk_level High {high:,} + Medium {medium:,} + Low {low:,}. "
+            "case priority_band 와 다른 축."
+        )
         st.markdown(
             f"<div style='font-family:{typography};'>"
             f"<div style='color:{color_text}; font-size:0.875rem; "
-            f"font-weight:600;'>전체 분포</div>"
+            f"font-weight:600;' title='{row_axis_tooltip_html}'>전체 분포</div>"
             f"<div style='color:{color_muted}; font-size:0.75rem; "
             f"margin-top:2px;'>총 {grand_total:,}건 · 위험신호 "
             f"{review_pct:.1f}%</div>"
@@ -3376,7 +4523,15 @@ def _render_risk_pie(risk_df: pd.DataFrame, topics: list[dict[str, Any]]) -> Non
                 textinfo="label+percent",
                 textposition="outside",
                 textfont={"size": 12, "color": color_text, "family": typography},
-                hovertemplate="%{label}: %{value:,}건 (%{percent})<extra></extra>",
+                # Why: 도넛은 normal/위험신호 2분류만 보이지만 위험신호 내부는 row risk_level
+                #      High/Medium/Low 합계임을 hover 에 명시 (Band 축 표기 정책).
+                customdata=[
+                    [f"row risk_level Normal {normal:,}"],
+                    [f"row risk_level High {high:,} · Medium {medium:,} · Low {low:,}"],
+                ],
+                hovertemplate=(
+                    "%{label}: %{value:,}건 (%{percent})<br>%{customdata[0]}<extra></extra>"
+                ),
                 showlegend=False,
             )
         )
@@ -3477,8 +4632,12 @@ def _render_risk_pie(risk_df: pd.DataFrame, topics: list[dict[str, Any]]) -> Non
                 textposition="outside",
                 textfont={"size": 11, "color": color_muted, "family": typography},
                 cliponaxis=False,
-                customdata=[[row["high_count"]] for row in topic_rows],
-                hovertemplate=("%{y}<br>case %{x:,}건 · High %{customdata[0]:,}건<extra></extra>"),
+                customdata=[[row["high_count"], row["topic_id"]] for row in topic_rows],
+                hovertemplate=(
+                    "%{y}<br>case %{x:,}건 · "
+                    "%{customdata[1]} topic high %{customdata[0]:,}건"
+                    "<extra></extra>"
+                ),
                 showlegend=False,
             )
         )
@@ -3830,13 +4989,12 @@ def _rule_tokens(value: Any) -> set[str]:
 def _start_phase1_analysis() -> None:
     """Run Phase 1 from the empty-result placeholder.
 
-    Why: 분석 트리거 시점에 탭 widget state(KEY_TOP_LEVEL_NAV)를 phase1로
-         고정해야 rerun 도중 st.tabs default 가 개요로 리셋되며 튕기는 현상을 막는다.
+    Why: KEY_TOP_LEVEL_NAV 는 widget key 라 인스턴스화 후 직접 쓰지 못한다.
+         KEY_PENDING_RESULT_TAB 로 다음 run 의 _consume_pending_page 에 위임.
     """
     from dashboard.components.analysis_runner import run_phase_analysis
 
     st.session_state[KEY_ACTIVE_RESULT_TAB] = PAGE_PHASE1
-    st.session_state[KEY_TOP_LEVEL_NAV] = PAGE_PHASE1
 
     with st.spinner("Phase 1 룰 기반 탐지 실행 중... 약 5분 정도 소요됩니다."):
         try:
@@ -3845,6 +5003,5 @@ def _start_phase1_analysis() -> None:
             st.error(f"Phase 1 실행 실패: {e}")
             return
     st.session_state[KEY_ACTIVE_RESULT_TAB] = PAGE_PHASE1
-    st.session_state[KEY_TOP_LEVEL_NAV] = PAGE_PHASE1
     st.session_state[KEY_PENDING_RESULT_TAB] = PAGE_PHASE1
     st.rerun()

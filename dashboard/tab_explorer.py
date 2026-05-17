@@ -25,6 +25,10 @@ if TYPE_CHECKING:
 
 def render(result: PipelineResult) -> None:
     """Tab 3 메인 렌더 함수."""
+    from dashboard.components.scroll_anchor import preserve_scroll_position
+
+    preserve_scroll_position("explorer")
+
     # 1. 필터 적용
     df = apply_filters(result.data, st.session_state.get(KEY_FILTERS, {}))
     dev_mode = st.session_state.get(KEY_DEV_MODE, False)
@@ -53,7 +57,10 @@ def render(result: PipelineResult) -> None:
 
         # 7. 상세 패널 — SHAP 데이터가 있으면 피처 기여도 패널도 함께 렌더
         render_detail(
-            doc_id, result.data, conn, result.batch_id,
+            doc_id,
+            result.data,
+            conn,
+            result.batch_id,
             results=result.results,
             shap_contributions=result.shap_contributions,
             shap_base_value=result.shap_base_value,
@@ -78,9 +85,11 @@ def _get_connection(result: PipelineResult):
         return None
     try:
         from src.db.connection import get_connection
+
         return get_connection()
     except Exception:
         import logging
+
         logging.getLogger(__name__).warning("DuckDB 연결 실패", exc_info=True)
         return None
 
@@ -91,6 +100,7 @@ def _load_whitelist_docs(conn, batch_id: str) -> set[str]:
         return set()
     try:
         from src.db.queries import execute_preset
+
         wl_df = execute_preset(conn, "batch_whitelist", batch_id=batch_id)
         return set(wl_df["document_id"].unique()) if not wl_df.empty else set()
     except Exception:

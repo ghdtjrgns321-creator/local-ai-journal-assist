@@ -160,6 +160,12 @@ def _render_upload_stage() -> None:
 
 def _render_review_with_preview() -> None:
     """왼쪽: 컬럼 매핑 확인 / 오른쪽: 데이터 미리보기(Top 10)."""
+    from dashboard.components.scroll_anchor import preserve_scroll_position
+
+    # Why: "매핑 확인" 버튼 등으로 st.rerun()이 발생하면 페이지가 맨 위로 튕긴다.
+    #      페이지별 키로 scrollY를 sessionStorage에 영구 보존하여 위치를 복원.
+    preserve_scroll_position("mapping_review")
+
     data_df = st.session_state.get(KEY_INGEST_DATA_DF)
     source_columns = st.session_state.get(KEY_INGEST_SOURCE_COLUMNS, [])
     read_result = st.session_state.get(KEY_INGEST_READ_RESULT)
@@ -181,7 +187,24 @@ def _render_review_with_preview() -> None:
         if data_df is not None and len(source_columns) > 0:
             n_preview = min(5, len(data_df))
             preview = data_df.head(n_preview).copy()
-            preview.columns = source_columns[:preview.shape[1]]
+            preview.columns = source_columns[: preview.shape[1]]
+
+            # Why: 매핑 selectbox에서 자동 숨김되는 컬럼은 미리보기에도 노이즈일 뿐
+            #      이므로 동일 기준(AUTO_HIDDEN_SOURCE_COLUMNS)으로 가린다.
+            #      포함 범위: (a) DataSynth 합성 라벨/sidecar, (b) clearing·suspense
+            #      lifecycle 메타(amount_open/is_cleared/settlement_status 등),
+            #      (c) 파이프라인 derived feature, (d) 분석/DB metadata.
+            # 늦은 import: mapping_review→data_uploader 순환을 회피.
+            from dashboard.components.mapping_review import AUTO_HIDDEN_SOURCE_COLUMNS
+
+            visible_cols = [
+                col
+                for col in preview.columns
+                if str(col).strip().lower() not in AUTO_HIDDEN_SOURCE_COLUMNS
+                and not str(col).startswith("_")
+            ]
+            hidden_count = preview.shape[1] - len(visible_cols)
+            preview = preview[visible_cols]
 
             # marker는 sticky 타겟 식별용 (CSS :has에서 사용)
             st.markdown(
@@ -195,17 +218,22 @@ def _render_review_with_preview() -> None:
                 hide_index=True,
                 height=min(240, (n_preview + 1) * 38),
             )
-            st.caption(f"{len(data_df):,}행 × {len(source_columns)}열")
+            caption = f"{len(data_df):,}행 × {len(visible_cols)}열"
+            if hidden_count:
+                caption += f" (시스템 컬럼 {hidden_count}열 숨김)"
+            st.caption(caption)
         else:
             st.info("미리보기 데이터가 없습니다.")
 
     with col_map:
         from dashboard.components.mapping_review import render_mapping_review
+
         render_mapping_review()
 
     # ── 풀 폭 푸터: 매핑 요약 + 확인/취소 + 준비 단계 progress ──
     st.divider()
     from dashboard.components.mapping_review import render_mapping_footer
+
     render_mapping_footer()
 
 
@@ -225,14 +253,17 @@ def _render_column_diff_section() -> None:
 
     if diff is None:
         if current_fy is None:
-            st.info(
-                "회사/감사연도(Engagement)가 선택되지 않아 작년 비교를 생략했습니다."
-            )
+            st.info("회사/감사연도(Engagement)가 선택되지 않아 작년 비교를 생략했습니다.")
         elif prior_fy is not None:
+            # Why: profile_dir 가 회사별 격리이므로 "분석 이력 없음" 의 실제 원인은
+            #      다른 회사에서 FY{prior_fy} 를 분석했거나, 같은 회사에서도 아직
+            #      FY{prior_fy} 를 분석하지 않은 두 가지. 회사명을 같이 노출.
+            company_id = st.session_state.get("audit_company_id") or "(선택 없음)"
             st.info(
-                f"작년(FY {prior_fy}) 분석 이력이 없습니다. "
-                f"FY {prior_fy} 데이터를 먼저 분석하면 다음 연도부터 컬럼 구성 변화"
-                "(추가/삭제/이름변경)를 자동으로 비교해 표시합니다."
+                f"회사 **{company_id}** 의 작년(FY {prior_fy}) 분석 이력이 없습니다. "
+                f"같은 회사에서 FY {prior_fy} 데이터를 먼저 분석해야 다음 연도부터 컬럼 구성 "
+                "변화(추가/삭제/이름변경)를 자동으로 비교해 표시합니다. "
+                "(다른 회사의 FY 프로파일은 회사 격리로 비교 대상이 아닙니다.)"
             )
         else:
             st.info("작년 분석 이력이 없습니다.")
@@ -242,9 +273,7 @@ def _render_column_diff_section() -> None:
     prev_label = diff.prev_source_name or f"FY {prior_fy} 업로드"
 
     if total == 0:
-        st.success(
-            f"작년(FY {prior_fy}) 컬럼매핑과 구성이 동일합니다. (비교 기준: {prev_label})"
-        )
+        st.success(f"작년(FY {prior_fy}) 컬럼매핑과 구성이 동일합니다. (비교 기준: {prev_label})")
         return
 
     # 변경 요약 KPI
@@ -305,7 +334,7 @@ def _detect_column_mismatch(read_result) -> str | None:
     hr = header_results.get(sheet)
     header_row = hr.header_row if hr and hr.header_row is not None else 0
 
-    data_slice = raw_df.iloc[header_row + 1:].reset_index(drop=True)
+    data_slice = raw_df.iloc[header_row + 1 :].reset_index(drop=True)
     if data_slice.shape[0] <= 1:
         return None
 
@@ -336,17 +365,11 @@ def _detect_column_mismatch(read_result) -> str | None:
         row_id = sample.iloc[row_idx, 0]
         if cnt < mode_cols:
             missing = mode_cols - cnt
-            lines.append(
-                f"  행 {row_idx + 1} ({row_id}): "
-                f"{cnt}열만 존재 → {missing}열 누락(NaN)"
-            )
+            lines.append(f"  행 {row_idx + 1} ({row_id}): {cnt}열만 존재 → {missing}열 누락(NaN)")
         elif cnt > mode_cols:
-            extra_vals = [
-                str(v) for v in sample.iloc[row_idx, mode_cols:].dropna()
-            ]
+            extra_vals = [str(v) for v in sample.iloc[row_idx, mode_cols:].dropna()]
             lines.append(
-                f"  행 {row_idx + 1} ({row_id}): "
-                f"{cnt}열 → 초과 값 [{', '.join(extra_vals)}] 버려짐"
+                f"  행 {row_idx + 1} ({row_id}): {cnt}열 → 초과 값 [{', '.join(extra_vals)}] 버려짐"
             )
     return "\n".join(lines)
 
@@ -366,17 +389,15 @@ def _detect_scientific_notation(data_df, source_columns: list[str]) -> str | Non
     # Why: 1.1M행 전체에 regex.apply() → 수 분 소요. 상위 1000행이면 즉시.
     sample = data_df.head(1000)
 
-    col_names = list(source_columns[:data_df.shape[1]])
+    col_names = list(source_columns[: data_df.shape[1]])
     for col_idx, col in enumerate(sample.columns):
         col_name = col_names[col_idx] if col_idx < len(col_names) else str(col)
         if sample[col].dtype != object:
             continue
-        matches = sample[col].dropna().apply(
-            lambda v: bool(pattern.match(str(v)))
-        )
+        matches = sample[col].dropna().apply(lambda v: bool(pattern.match(str(v))))
         cnt = int(matches.sum())
         if cnt > 0:
-            examples = sample[col][matches.values[:len(sample[col])]].head(2).tolist()
+            examples = sample[col][matches.values[: len(sample[col])]].head(2).tolist()
             hits.append(f"{col_name}: {cnt}건 (예: {', '.join(str(e) for e in examples)})")
 
     if not hits:
@@ -454,14 +475,14 @@ def _render_data_warnings(read_result, data_df, source_columns) -> None:
             elif "혼합 구분자" in w:
                 st.warning(f"{w}\n\n자동 복구로 구분자를 통일할 수 있습니다.")
             elif "미닫힌 따옴표" in w:
-                st.warning(
-                    f"{w}\n\n자동 복구로 따옴표를 무시하고 재파싱을 시도할 수 있습니다."
-                )
+                st.warning(f"{w}\n\n자동 복구로 따옴표를 무시하고 재파싱을 시도할 수 있습니다.")
 
         # 복구 미리보기 + 버튼
         if action_warnings:
             has_repairs = _render_repair_preview(
-                read_result, data_df, source_columns,
+                read_result,
+                data_df,
+                source_columns,
             )
             if has_repairs:
                 if st.button("자동 복구", type="primary"):
@@ -526,7 +547,9 @@ def _render_datasynth_metadata_notice(data_df) -> None:
 
 
 def _render_column_mismatch_warning(
-    warning_text: str, read_result, source_columns: list[str],
+    warning_text: str,
+    read_result,
+    source_columns: list[str],
 ) -> None:
     """열 수 불일치 경고: 설명 + 접힌 상세 테이블(하이라이트).
 
@@ -580,11 +603,7 @@ def _render_column_mismatch_warning(
     hr = header_results.get(sheet)
     header_offset = (hr.header_row + 1) if hr and hr.header_row is not None else 0
 
-    raw_idxs = [
-        i + header_offset
-        for i in problem_rows
-        if (i + header_offset) < len(raw_df)
-    ]
+    raw_idxs = [i + header_offset for i in problem_rows if (i + header_offset) < len(raw_df)]
     if not raw_idxs:
         return
 
@@ -595,9 +614,9 @@ def _render_column_mismatch_warning(
         col_labels = list(source_columns[:mode_cols])
         for i in range(mode_cols, subset.shape[1]):
             col_labels.append(f"여분{i - mode_cols + 1}")
-        subset.columns = col_labels[:subset.shape[1]]
+        subset.columns = col_labels[: subset.shape[1]]
 
-        subset.index = [f"행 {i + 1}" for i in problem_rows[:len(raw_idxs)]]
+        subset.index = [f"행 {i + 1}" for i in problem_rows[: len(raw_idxs)]]
 
         # NaN(누락) → 노란 배경, 초과 열 → 빨간 배경
         yellow = "background-color: #fff3cd"
@@ -605,9 +624,7 @@ def _render_column_mismatch_warning(
 
         def _highlight_issues(row: pd.Series) -> list[str]:
             return [
-                yellow if pd.isna(val)
-                else red if col_idx >= mode_cols
-                else ""
+                yellow if pd.isna(val) else red if col_idx >= mode_cols else ""
                 for col_idx, val in enumerate(row)
             ]
 
@@ -649,17 +666,17 @@ def _render_repair_preview(read_result, data_df, source_columns) -> bool:
     with col_before:
         st.caption("현재")
         preview = data_df.head(n).copy()
-        preview.columns = source_columns[:preview.shape[1]]
+        preview.columns = source_columns[: preview.shape[1]]
         st.dataframe(preview, use_container_width=True, hide_index=True)
         st.caption(f"{len(data_df):,}행 × {data_df.shape[1]}열")
 
     with col_after:
         st.caption("복구 후")
-        cols_after = source_columns[:repaired_df.shape[1]]
+        cols_after = source_columns[: repaired_df.shape[1]]
         if len(cols_after) < repaired_df.shape[1]:
             cols_after = [str(c) for c in repaired_df.columns]
         preview_r = repaired_df.head(n).copy()
-        preview_r.columns = cols_after[:preview_r.shape[1]]
+        preview_r.columns = cols_after[: preview_r.shape[1]]
         st.dataframe(preview_r, use_container_width=True, hide_index=True)
         st.caption(f"{len(repaired_df):,}행 × {repaired_df.shape[1]}열")
 
@@ -687,7 +704,8 @@ def _apply_auto_repair(read_result, data_df, source_columns) -> None:
 
     # 매핑 재실행
     mapping_result = auto_map_columns(
-        source_columns_new, data_df=repaired_df,
+        source_columns_new,
+        data_df=repaired_df,
     )
     st.session_state[KEY_INGEST_MAPPING_RESULT] = mapping_result
 
@@ -785,7 +803,9 @@ def _run_ingest_common(read_result, progress_cb) -> None:
         mapping_result = profile
     else:
         mapping_result = auto_map_columns(
-            source_columns, matched_keywords, data_df=data_df,
+            source_columns,
+            matched_keywords,
+            data_df=data_df,
         )
 
     # Why: 라벨 "작년 컬럼매핑과 비교"에 맞춰, **직전 회계연도(current_fy - 1)**
@@ -796,6 +816,7 @@ def _run_ingest_common(read_result, progress_cb) -> None:
         compute_column_diff,
         load_prior_year_profile,
     )
+
     current_fy = getattr(_ctx, "fiscal_year", None) if _ctx is not None else None
     st.session_state["_ingest_current_fy"] = current_fy
     st.session_state["_ingest_prior_fy"] = (current_fy - 1) if current_fy else None
@@ -807,7 +828,8 @@ def _run_ingest_common(read_result, progress_cb) -> None:
     )
     if prev is not None and prev.get("fingerprint") != column_fingerprint(source_columns):
         st.session_state[KEY_INGEST_COLUMN_DIFF] = compute_column_diff(
-            prev["source_columns"], source_columns,
+            prev["source_columns"],
+            source_columns,
             prev_fingerprint=prev["fingerprint"],
             prev_source_name=prev["source_name"],
         )
@@ -856,6 +878,7 @@ def _run_ingest_from_path(local_path: Path, progress_cb) -> None:
 
     progress_cb(0.05, "파일 읽는 중...")
     from src.ingest.reader_api import read_file
+
     read_result = read_file(local_path, progress_cb=_file_read_cb)
 
     # 이후 로직은 _run_ingest와 동일
@@ -874,6 +897,7 @@ def _build_audit_trail(ctx):
     try:
         from src.db.connection import get_connection
         from src.export.audit_trail import AuditTrail
+
         conn = get_connection(str(ctx.db_path))
         return AuditTrail(conn)
     except Exception:  # pragma: no cover — 방어적
@@ -948,12 +972,15 @@ def _run_pipeline_from_mapped(file_key: str, progress_cb, *, prepare_only: bool 
     audit_trail = build_audit_trail(ctx)
     if ctx is not None:
         pipeline = AuditPipeline(
-            context=ctx, progress_callback=progress_cb, repo=repo,
+            context=ctx,
+            progress_callback=progress_cb,
+            repo=repo,
             audit_trail=audit_trail,
         )
     else:
         pipeline = AuditPipeline(
-            settings=settings, progress_callback=progress_cb,
+            settings=settings,
+            progress_callback=progress_cb,
             audit_trail=audit_trail,
         )
     if prepare_only:
@@ -968,6 +995,7 @@ def _run_pipeline_from_mapped(file_key: str, progress_cb, *, prepare_only: bool 
             header_results = {}
             if read_result and read_result.source_format != "parquet":
                 from src.ingest.header_detector import detect_headers
+
                 header_results = detect_headers(read_result)
             header_row = 0
             hr = header_results.get(selected_sheet)
@@ -979,7 +1007,8 @@ def _run_pipeline_from_mapped(file_key: str, progress_cb, *, prepare_only: bool 
             _pdir = ctx.profile_dir if ctx and not ctx.is_anonymous else None
             _fy = getattr(ctx, "fiscal_year", None) if ctx else None
             save_profile(
-                mapping_result, source_columns,
+                mapping_result,
+                source_columns,
                 source_name=file_key.rsplit("_", 1)[0],
                 source_format=read_result.source_format if read_result else "",
                 header_row=header_row,
@@ -1013,12 +1042,19 @@ def _clear_ingest_state() -> None:
         Path(tmp).unlink(missing_ok=True)
 
     for key in [
-        KEY_INGEST_READ_RESULT, KEY_INGEST_MAPPING_RESULT,
-        KEY_INGEST_SHEET_SCORES, KEY_INGEST_SELECTED_SHEET,
-        KEY_INGEST_SOURCE_COLUMNS, KEY_INGEST_DATA_DF,
-        KEY_INGEST_CONFIRMED, KEY_INGEST_PREPARED_DF, KEY_INGEST_PREP_WARNINGS,
-        "_ingest_file_key", "_ingest_source_hint",
-        "_ingest_current_fy", "_ingest_prior_fy",
+        KEY_INGEST_READ_RESULT,
+        KEY_INGEST_MAPPING_RESULT,
+        KEY_INGEST_SHEET_SCORES,
+        KEY_INGEST_SELECTED_SHEET,
+        KEY_INGEST_SOURCE_COLUMNS,
+        KEY_INGEST_DATA_DF,
+        KEY_INGEST_CONFIRMED,
+        KEY_INGEST_PREPARED_DF,
+        KEY_INGEST_PREP_WARNINGS,
+        "_ingest_file_key",
+        "_ingest_source_hint",
+        "_ingest_current_fy",
+        "_ingest_prior_fy",
     ]:
         st.session_state.pop(key, None)
     st.session_state[KEY_INGEST_STAGE] = "UPLOAD"

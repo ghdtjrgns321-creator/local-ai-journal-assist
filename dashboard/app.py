@@ -22,12 +22,9 @@ from dashboard._state import (
     KEY_COMPANY_ID,
     KEY_DEV_MODE,
     KEY_ENGAGEMENT_ID,
-    KEY_INGEST_STAGE,
-    KEY_LOADED_FROM_DB,
     KEY_PENDING_RESULT_TAB,
     KEY_PHASE1_RESULT,
     KEY_PHASE2_RESULT,
-    KEY_PIPELINE_RESULT,
     KEY_PREP_RESULT,
     KEY_UPLOAD_COUNT,
     PAGE_OVERVIEW,
@@ -74,8 +71,15 @@ hydrate_selection_from_query_params(ss, st.query_params)
 
 
 def _reset_to_company_select() -> None:
-    """회사 선택 화면으로 돌아가기 위한 state 리셋."""
+    """회사 선택 화면으로 돌아가기 위한 state 리셋.
+
+    Why: clear_company_selection 은 session_state 만 비운다. URL query params
+         (?company=X&engagement=Y) 가 남아 있으면 다음 rerun 의
+         hydrate_selection_from_query_params 가 URL 에서 다시 ID 를 복원해
+         회사 선택 화면으로 돌아가지 못한다. ss 를 비운 직후 URL 도 동기화.
+    """
     clear_company_selection(ss)
+    sync_selection_to_query_params(ss, st.query_params)
     st.rerun()
 
 
@@ -128,7 +132,12 @@ def _coerce_page(value: str | None) -> str:
 
 
 def _consume_pending_page() -> None:
-    """Apply one-shot page transitions requested by analysis flows."""
+    """Apply one-shot page transitions requested by analysis flows.
+
+    Why: ``st.tabs`` 를 ``on_change="rerun"`` 로 쓰면 widget 이 ``st.session_state[key]``
+         에 binding 되어, widget 렌더 전에 그 값을 덮어쓰면 강제 전환된다. 분석 완료
+         직후 ``KEY_PENDING_RESULT_TAB`` 를 통해 다음 rerun 의 활성 탭을 지정한다.
+    """
     pending_page = ss.pop(KEY_PENDING_RESULT_TAB, None)
     if pending_page is None:
         return
@@ -144,11 +153,13 @@ def _render_company_settings_page(ctx) -> None:
 
     from dashboard.components.analysis_runner import run_phase_analysis
     from dashboard.components.pre_analysis_settings import render_pre_analysis_settings
-    from dashboard.components.scroll_anchor import scroll_to_anchor
 
     run_after_save = render_pre_analysis_settings()
     if run_after_save:
-        scroll_to_anchor("pre_analysis_phase1_actions")
+        # Why: scrollIntoView(block:"center") 를 호출하면 폼 하단 버튼을 막 누른
+        #      사용자를 다시 화면 중앙으로 끌어올려 "버튼 누르자마자 위로 튕긴다"
+        #      는 시각적 충격을 만든다. 이미 사용자는 그 위치에 있으므로 강제
+        #      스크롤 없이 인라인 진행 표시만 추가한다.
         st.info("Phase 1 분석을 시작했습니다. 완료 전까지 같은 화면에서 진행 상태를 표시합니다.")
         progress = st.progress(0, text="Phase 1 룰 기반 감사 시작... 약 5분 정도 소요됩니다.")
         try:
@@ -262,21 +273,13 @@ def _render_main() -> None:
         file_label = _extract_file_name(upload_key)
         st.markdown(f"### {file_label}")
     with col_btn:
-        if st.button("다른 파일 분석", use_container_width=True):
-            ss.pop(KEY_PREP_RESULT, None)
-            ss.pop(KEY_PHASE1_RESULT, None)
-            ss.pop(KEY_PHASE2_RESULT, None)
-            ss.pop(KEY_PIPELINE_RESULT, None)
-            ss.pop(KEY_UPLOAD_COUNT, None)
+        if st.button("처음으로 돌아가기", use_container_width=True):
             ss[KEY_ACTIVE_RESULT_TAB] = PAGE_OVERVIEW
-            ss[KEY_TOP_LEVEL_NAV] = PAGE_OVERVIEW
             ss[KEY_PENDING_RESULT_TAB] = None
-            ss[KEY_LOADED_FROM_DB] = False
-            ss[KEY_INGEST_STAGE] = "UPLOAD"
-            ss["_force_upload"] = True
-            st.rerun()
+            _reset_to_company_select()
     st.divider()
 
+    from dashboard.tab_comparison import render as render_comparison  # noqa: E402
     from dashboard.tab_overview import render_pre_analysis as render_overview  # noqa: E402
     from dashboard.tab_phase1 import render as render_phase1  # noqa: E402
     from dashboard.tab_phase2 import render as render_phase2  # noqa: E402
@@ -284,18 +287,28 @@ def _render_main() -> None:
 
     phase2_result = ss.get(KEY_PHASE2_RESULT)
 
+    # Why: on_change="rerun" 으로 widget 을 session_state[KEY_TOP_LEVEL_NAV] 에
+    #      binding. 분석 완료 후 _consume_pending_page 가 widget 렌더 전에 그 값을
+    #      덮어쓰면 강제 전환되고, 일반 탭 클릭은 streamlit 이 자동 동기화한다.
     default_top_tab = _coerce_page(ss.get(KEY_ACTIVE_RESULT_TAB, PAGE_OVERVIEW))
     if ss.get(KEY_TOP_LEVEL_NAV) not in RESULT_PAGES:
         ss[KEY_TOP_LEVEL_NAV] = default_top_tab
-    # Why: on_change="rerun" 을 켜면 탭 클릭마다 추가 rerun 이 실행되며,
-    #      _main_slot 안의 직전 DOM 이 새 DOM 과 누적되어 같은 페이지가
-    #      위/아래로 두 번 그려지는 잔상이 발생한다. st.tabs 는 모든 탭 콘텐츠를
-    #      한 번에 렌더한 뒤 CSS 로 활성 탭만 보여주므로 별도 rerun 이 필요 없다.
-    overview_tab, settings_tab, phase1_tab, phase2_tab, review_queue_tab = st.tabs(
+    (
+        overview_tab,
+        settings_tab,
+        phase1_tab,
+        phase2_tab,
+        comparison_tab,
+        review_queue_tab,
+    ) = st.tabs(
         list(RESULT_PAGES),
         default=default_top_tab,
         key=KEY_TOP_LEVEL_NAV,
+        on_change="rerun",
     )
+    # Sync canonical KEY_ACTIVE_RESULT_TAB with the widget value so other modules
+    # (re-detection, pending tab routing) read the latest user-selected tab.
+    ss[KEY_ACTIVE_RESULT_TAB] = ss.get(KEY_TOP_LEVEL_NAV, default_top_tab)
     with overview_tab:
         render_overview(prep_result or display_result)
     with settings_tab:
@@ -304,25 +317,19 @@ def _render_main() -> None:
         render_phase1(prep_result or display_result, phase1_result)
     with phase2_tab:
         render_phase2(prep_result or display_result, phase2_result)
+    with comparison_tab:
+        render_comparison(prep_result or display_result, _repo, _conn_mgr)
     with review_queue_tab:
         render_review_queue(prep_result or display_result)
 
 
-# Why: st.empty().container() 슬롯 래핑이 streamlit 1.55 에서 직전 rerun 의
-#      컨테이너를 폐기하지 못하고 새 컨테이너를 그 아래에 누적시키는 문제 발생.
-#      페이지 종류(company/selector/main/upload)별로 고유 key 컨테이너를 사용해
-#      페이지 전환 시 streamlit 이 다른 DOM 식별자로 인식해 직전 콘텐츠를
-#      깨끗이 폐기하도록 한다. 같은 페이지 내 rerun 은 같은 key 라 streamlit
-#      기본 diff 로 정상 갱신.
-def _route_page_key() -> str:
-    if not ss.get(KEY_COMPANY_ID):
-        return "company"
-    if not ss.get(KEY_ENGAGEMENT_ID):
-        return "selector"
-    if current_display_result(ss) is None:
-        return "upload"
-    return "main"
-
-
-with st.container(key=f"app_root_{_route_page_key()}"):
+# Why: 페이지 분기마다 컨테이너 key 를 바꾸면 (upload → main 등) Streamlit 이
+#      매 전환마다 컨테이너 DOM 을 폐기/재생성한다. 이러면 매핑 확인 직후
+#      rerun 에서 컨테이너 식별자가 바뀌어 브라우저가 새 컨테이너를 최상단부터
+#      그리며 화면이 위로 튕긴다. preserve_scroll_position 의 sessionStorage 도
+#      컨테이너 자체가 새 DOM 이라 복원 시점을 잡지 못한다.
+#      과거 stacking 이슈는 `st.empty().container()` 래핑 때문이었고 현재는
+#      `st.container(key=...)` 직접 호출로 제거됐다. 안정 key 로 통일해 같은
+#      컨테이너 안에서 내용만 diff 되도록 한다.
+with st.container(key="app_root"):
     _render_main()

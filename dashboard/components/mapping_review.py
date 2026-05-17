@@ -24,62 +24,68 @@ from dashboard._state import (
     KEY_PREP_RESULT,
     KEY_UPLOAD_COUNT,
 )
-from src.preprocessing.constants import LABEL_COLUMNS
+from src.preprocessing.constants import LABEL_COLUMNS, SYNTHETIC_ONLY_COLUMNS
 
 logger = logging.getLogger(__name__)
 
-_AUTO_HIDDEN_SOURCE_COLUMNS = LABEL_COLUMNS | frozenset({
-    # Derived feature columns created by the pipeline. They are not source-to-schema mapping inputs.
-    "amount_open",
-    "is_cleared",
-    "settlement_status",
-    "settlement_date",
-    "description_quality",
-    "exceeds_threshold",
-    "is_near_threshold",
-    "near_threshold_amount",
-    "near_threshold_limit_amount",
-    "near_threshold_limit_resolved",
-    "near_threshold_ratio_to_limit",
-    "near_threshold_gap_amount",
-    "near_threshold_gap_ratio",
-    "near_threshold_bucket",
-    "document_approval_amount",
-    "approver_limit_amount",
-    "approval_limit_resolved",
-    "approver_can_approve_je",
-    "approval_excess_amount",
-    "approval_excess_ratio",
-    "approval_excess_bucket",
-    "amount_zscore",
-    "amount_magnitude",
-    "is_round_number",
-    "is_manual_je",
-    "is_intercompany",
-    "is_revenue_account",
-    "first_digit",
-    "is_suspense_account",
-    "description_line_missing",
-    "description_header_missing",
-    "description_both_missing",
-    "description_line_missing_header_present",
-    "description_is_missing_or_corrupted",
-    "has_risk_keyword",
-    "morpheme_tokens",
-    # Analysis/database metadata columns that may appear after re-export.
-    "anomaly_score",
-    "risk_level",
-    "flagged_rules",
-    "review_rules",
-    "supervised_score",
-    "unsupervised_score",
-    "duplicate_score",
-    "supervised_model_id",
-    "unsupervised_model_id",
-    "duplicate_model_id",
-    "ml_scored_at",
-    "upload_batch_id",
-})
+# Why: SYNTHETIC_ONLY_COLUMNS는 실제 고객 CSV에 존재하지 않는 DataSynth 합성 전용 컬럼.
+#      여기에 (a) 파이프라인이 만들어 내는 derived feature, (b) 라벨/메타 컬럼을 합쳐
+#      mapping selectbox · 권장 컬럼 누락 경고 · 원본 데이터 미리보기에서 모두 제외한다.
+#      (data_uploader._render_review_with_preview에서 import하여 동일 기준으로 필터)
+AUTO_HIDDEN_SOURCE_COLUMNS = SYNTHETIC_ONLY_COLUMNS | frozenset(
+    {
+        # Derived feature columns created by the pipeline. They are not source-to-schema mapping inputs.
+        "amount_open",
+        "is_cleared",
+        "settlement_status",
+        "settlement_date",
+        "description_quality",
+        "exceeds_threshold",
+        "is_near_threshold",
+        "near_threshold_amount",
+        "near_threshold_limit_amount",
+        "near_threshold_limit_resolved",
+        "near_threshold_ratio_to_limit",
+        "near_threshold_gap_amount",
+        "near_threshold_gap_ratio",
+        "near_threshold_bucket",
+        "document_approval_amount",
+        "approver_limit_amount",
+        "approval_limit_resolved",
+        "approver_can_approve_je",
+        "approval_excess_amount",
+        "approval_excess_ratio",
+        "approval_excess_bucket",
+        "amount_zscore",
+        "amount_magnitude",
+        "is_round_number",
+        "is_manual_je",
+        "is_intercompany",
+        "is_revenue_account",
+        "first_digit",
+        "is_suspense_account",
+        "description_line_missing",
+        "description_header_missing",
+        "description_both_missing",
+        "description_line_missing_header_present",
+        "description_is_missing_or_corrupted",
+        "has_risk_keyword",
+        "morpheme_tokens",
+        # Analysis/database metadata columns that may appear after re-export.
+        "anomaly_score",
+        "risk_level",
+        "flagged_rules",
+        "review_rules",
+        "supervised_score",
+        "unsupervised_score",
+        "duplicate_score",
+        "supervised_model_id",
+        "unsupervised_model_id",
+        "duplicate_model_id",
+        "ml_scored_at",
+        "upload_batch_id",
+    }
+)
 
 _COLUMN_LABELS: dict[str, str] = {
     "document_id": "전표번호",
@@ -169,27 +175,31 @@ _COLUMN_IMPACT: dict[str, str] = {
 
 
 def _get_required_columns(schema: dict) -> set[str]:
-    return {
-        col["name"]
-        for col in schema.get("columns", [])
-        if col.get("required", False)
-    }
+    return {col["name"] for col in schema.get("columns", []) if col.get("required", False)}
 
 
 def _get_recommended_columns(schema: dict) -> set[str]:
+    # Why: 권장 컬럼은 (1) 실제 고객 CSV에 존재할 수 있고 (2) 미매핑 시 약화되는
+    #      구체적인 감사 검사가 정의된 컬럼만 의미가 있다. _COLUMN_IMPACT에 영향
+    #      문구가 등록되지 않은 optional 컬럼(amount_open, settlement_status 등
+    #      "연관 검사 정보 없음"으로 노출되던 항목)은 권장에서 제외한다.
     return {
         col["name"]
         for col in schema.get("columns", [])
         if not col.get("required", False)
         and not col.get("is_label", col.get("type") == "bool")
+        and col["name"] not in SYNTHETIC_ONLY_COLUMNS
+        and col["name"] in _COLUMN_IMPACT
     }
 
 
 def _get_all_standard_columns(schema: dict) -> list[str]:
+    # Why: selectbox 후보에서도 합성 전용 컬럼을 제외해 실제 CSV에 없는 타깃 매핑을 막는다.
     return sorted(
         col["name"]
         for col in schema.get("columns", [])
         if not col.get("is_label", col.get("type") == "bool")
+        and col["name"] not in SYNTHETIC_ONLY_COLUMNS
     )
 
 
@@ -216,7 +226,7 @@ def _split_visible_and_hidden_mappings(
 
 def _is_auto_hidden_source_column(column_name: str) -> bool:
     normalized = str(column_name).strip().lower()
-    return normalized in _AUTO_HIDDEN_SOURCE_COLUMNS or normalized.startswith("_")
+    return normalized in AUTO_HIDDEN_SOURCE_COLUMNS or normalized.startswith("_")
 
 
 def _display_name(column_name: str) -> str:
@@ -266,13 +276,9 @@ def render_mapping_review() -> None:
     st.subheader("컬럼 매핑 확인")
     if read_result is not None:
         selected_sheet = (
-            st.session_state.get(KEY_INGEST_SELECTED_SHEET, read_result.active_sheet)
-            or "-"
+            st.session_state.get(KEY_INGEST_SELECTED_SHEET, read_result.active_sheet) or "-"
         )
-        st.caption(
-            f"형식: {read_result.source_format.upper()} | "
-            f"시트: {selected_sheet}"
-        )
+        st.caption(f"형식: {read_result.source_format.upper()} | 시트: {selected_sheet}")
 
     visible_map, hidden_label_map = _split_visible_and_hidden_mappings(
         source_columns,
@@ -283,10 +289,7 @@ def render_mapping_review() -> None:
         for src in source_columns
         if src not in hidden_label_map and not _is_auto_hidden_source_column(src)
     ]
-    selected_map = {
-        src: visible_map.get(src, "(무시)")
-        for src in editable_sources
-    }
+    selected_map = {src: visible_map.get(src, "(무시)") for src in editable_sources}
 
     _render_mapping_editor(
         source_columns=editable_sources,
@@ -319,9 +322,7 @@ def render_mapping_footer() -> None:
     recommended_cols = _get_recommended_columns(schema)
 
     final_mapping = {
-        source: target
-        for source, target in selected_map.items()
-        if target != "(무시)"
+        source: target for source, target in selected_map.items() if target != "(무시)"
     }
     final_mapping.update(hidden_label_map)
     mapped_targets = set(final_mapping.values())
@@ -372,10 +373,30 @@ def render_mapping_footer() -> None:
 
                 prepare_mapped_data(file_key, progress_cb=_progress_cb)
                 progress.progress(100, text="준비 완료")
-        st.rerun()
+        # Why: 여기서 st.rerun() 을 호출하면 prepare_mapped_data 내부에서 stage 가
+        #      "UPLOAD" 로 리셋되고 KEY_PREP_RESULT 가 채워진 상태로 다음 rerun 이
+        #      _render_main 의 분석 결과 페이지로 자동 전환된다. 옛 페이지의
+        #      preserve_scroll_position("mapping_review") 와 새 페이지의
+        #      preserve_scroll_position("overview") 는 다른 sessionStorage 키라
+        #      스크롤 복원이 불가능 — 사용자는 "맨 위로 튕긴다"고 인식한다.
+        #      자동 전환을 끊고 사용자가 명시적으로 "결과 보기" 버튼을 누를 때만
+        #      페이지를 전환하면 같은 페이지에 머무르므로 스크롤이 보존된다.
 
     if st.session_state.get(KEY_INGEST_CONFIRMED, False):
-        st.success("매핑이 확정되었습니다. 다음 화면에서 데이터 개요와 EDA를 확인할 수 있습니다.")
+        col_msg, col_btn = st.columns([4, 1])
+        with col_msg:
+            st.success(
+                "매핑이 확정되었습니다. **결과 보기** 버튼을 누르면 데이터 개요·EDA 화면으로 이동합니다."
+            )
+        with col_btn:
+            # Why: 사용자가 클릭한 시점에만 st.rerun() 호출 → 명시적 페이지 전환.
+            if st.button(
+                "결과 보기",
+                type="primary",
+                use_container_width=True,
+                key="mapping_goto_result_btn",
+            ):
+                st.rerun()
     for warn in prep_warns:
         st.caption(f"- {warn}")
 
@@ -395,8 +416,7 @@ def _render_mapping_editor(
         taken = _refresh_taken(source_columns, selected_map, source)
         current_value = selected_map.get(source, "(무시)")
         candidates = [
-            column for column in all_standard
-            if column not in taken or column == current_value
+            column for column in all_standard if column not in taken or column == current_value
         ]
         ordered_candidates = _sort_candidates(candidates, required_cols, recommended_cols)
         options = ["(무시)"] + ordered_candidates
@@ -422,9 +442,7 @@ def _sort_candidates(
     req = sorted(col for col in candidates if col in required_cols)
     rec = sorted(col for col in candidates if col in recommended_cols and col not in required_cols)
     etc = sorted(
-        col
-        for col in candidates
-        if col not in required_cols and col not in recommended_cols
+        col for col in candidates if col not in required_cols and col not in recommended_cols
     )
     return req + rec + etc
 
@@ -478,7 +496,9 @@ def _render_mapping_summary(
 
 
 def _render_missing_columns_with_impact(
-    columns: list[str], *, level: str = "recommended",
+    columns: list[str],
+    *,
+    level: str = "recommended",
 ) -> None:
     """누락 컬럼을 "컬럼명 | 영향 검사" 2열 표 형태로 렌더링."""
     if not columns:
@@ -513,6 +533,7 @@ def _save_mapping_profile(mapping_result) -> None:
 
         ctx = st.session_state.get(KEY_COMPANY_CONTEXT)
         profile_dir = ctx.profile_dir if ctx and not ctx.is_anonymous else None
+        fiscal_year = getattr(ctx, "fiscal_year", None) if ctx else None
         save_profile(
             mapping_result,
             source_columns,
@@ -520,6 +541,7 @@ def _save_mapping_profile(mapping_result) -> None:
             or st.session_state.get("_ingest_file_key", ""),
             source_format=read_result.source_format if read_result is not None else "",
             header_row=0,
+            fiscal_year=fiscal_year,
             profile_dir=profile_dir,
         )
     except Exception:

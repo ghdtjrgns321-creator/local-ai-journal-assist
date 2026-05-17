@@ -10,7 +10,6 @@ from dashboard._state import (
     KEY_LOADED_FROM_DB,
     KEY_PENDING_RESULT_TAB,
     KEY_PHASE2_TRAINING_REPORT_ID,
-    KEY_TOP_LEVEL_NAV,
     PAGE_PHASE2,
 )
 from src.detection.constants import get_track_display_label
@@ -22,45 +21,30 @@ if TYPE_CHECKING:
 
 
 def render(prep_result, result: PipelineResult | None) -> None:
+    from dashboard.components.scroll_anchor import preserve_scroll_position
+
+    preserve_scroll_position("phase2")
+
     st.subheader("Phase 2 추가 분석")
+
+    if result is None:
+        st.info("아직 Phase 2 추가 분석 결과가 없습니다.")
+        if prep_result is None:
+            return
+        if st.session_state.get(KEY_LOADED_FROM_DB):
+            return
+        # Why: spinner 는 _start_phase2_analysis 내부에 한 번만 띄운다.
+        #      호출부에서 또 감싸면 동일 메시지가 두 줄로 표시된다.
+        if st.button("Phase 2 분석 시작", type="primary", key="run_phase2"):
+            _start_phase2_analysis()
+        return
+
     st.caption(
         "Phase 1에서 찾은 의심 거래를 바탕으로, 저장된 모델 기준이 있으면 "
         "그 기준으로 패턴을 한 번 더 점검합니다."
     )
     _render_phase2_current_state(result)
-
-    if result is None:
-        st.info("아직 Phase 2 추가 분석 결과가 없습니다.")
-        if prep_result is None:
-            st.caption("먼저 데이터를 준비하세요.")
-            return
-        _render_prep_metrics(prep_result)
-        if st.session_state.get(KEY_LOADED_FROM_DB):
-            st.caption(
-                "DB에서 불러온 과거 분석 결과입니다. 설정을 바꿔 다시 실행하려면 "
-                "원본 파일을 다시 업로드하세요."
-            )
-            return
-        _render_training_snapshot_summary()
-
-        # Why: 미리 st.empty() 를 깔면 빈 슬롯이 항상 박스로 남는다.
-        train_clicked = st.button("모델 기준 새로 준비", key="phase2_train_btn")
-        infer_clicked = st.button(
-            "저장된 기준으로 추가 분석",
-            type="primary",
-            key="run_phase2",
-        )
-        if train_clicked:
-            with st.spinner("Phase 2 모델 기준 학습 중..."):
-                _start_phase2_training()
-        if infer_clicked:
-            with st.spinner("Phase 2 추가 분석 실행 중..."):
-                _start_phase2_analysis()
-        return
-
-    st.caption(
-        "어떤 기준으로 추가 분석했는지와 실행된 탐지 항목을 확인한 뒤 결과를 검토하세요."
-    )
+    st.caption("어떤 기준으로 추가 분석했는지와 실행된 탐지 항목을 확인한 뒤 결과를 검토하세요.")
     _render_status_grid(result)
     st.divider()
     _render_performance_report(result)
@@ -143,8 +127,7 @@ def _build_promoted_model_frame(snapshot: dict | None) -> pd.DataFrame:
         {
             "분석 기준": model,
             "버전": str(versions.get(model, "-")),
-            "세부 점검": ", ".join(str(item) for item in sub_detectors.get(model, []))
-            or "-",
+            "세부 점검": ", ".join(str(item) for item in sub_detectors.get(model, [])) or "-",
             "metric_name": str(promoted.get(model, {}).get("metric_name") or "-"),
             "metric_value": _format_metric_value(promoted.get(model, {}).get("metric_value")),
             "evaluation_policy": _format_model_evaluation_policy(
@@ -335,9 +318,7 @@ def _build_feature_quality_frame(models: list[ModelMetadata]) -> pd.DataFrame:
                 "sparse_dropped": ", ".join(profile.get("sparse_dropped_columns") or []),
                 "active_families": ", ".join(active_families),
                 "ablation_variants": ", ".join(
-                    str(item.get("variant"))
-                    for item in ablation_plan
-                    if item.get("variant")
+                    str(item.get("variant")) for item in ablation_plan if item.get("variant")
                 ),
             }
         )
@@ -382,11 +363,14 @@ def _render_track_status(result: PipelineResult) -> None:
 
 
 def _start_phase2_analysis() -> None:
-    """Run Phase 2 inference from the empty-result placeholder."""
+    """Run Phase 2 inference from the empty-result placeholder.
+
+    Why: KEY_TOP_LEVEL_NAV 는 widget key — _consume_pending_page 가 다음 run 의
+         widget 렌더 전에 KEY_PENDING_RESULT_TAB 를 옮긴다.
+    """
     from src.services.phase2_inference_service import run_phase2_inference_analysis
 
     st.session_state[KEY_ACTIVE_RESULT_TAB] = PAGE_PHASE2
-    st.session_state[KEY_TOP_LEVEL_NAV] = PAGE_PHASE2
 
     with st.spinner("Phase 2 추가 분석 실행 중..."):
         try:
@@ -395,7 +379,6 @@ def _start_phase2_analysis() -> None:
             st.error(f"Phase 2 추가 분석 실패: {e}")
             return
     st.session_state[KEY_ACTIVE_RESULT_TAB] = PAGE_PHASE2
-    st.session_state[KEY_TOP_LEVEL_NAV] = PAGE_PHASE2
     st.session_state[KEY_PENDING_RESULT_TAB] = PAGE_PHASE2
     st.rerun()
 
@@ -405,7 +388,6 @@ def _start_phase2_training() -> None:
     from src.services.phase2_training_service import run_phase2_training_analysis
 
     st.session_state[KEY_ACTIVE_RESULT_TAB] = PAGE_PHASE2
-    st.session_state[KEY_TOP_LEVEL_NAV] = PAGE_PHASE2
 
     with st.spinner("Phase 2 모델 기준 준비 중..."):
         try:
@@ -415,7 +397,6 @@ def _start_phase2_training() -> None:
             return
     st.session_state[KEY_PHASE2_TRAINING_REPORT_ID] = report.report_id
     st.session_state[KEY_ACTIVE_RESULT_TAB] = PAGE_PHASE2
-    st.session_state[KEY_TOP_LEVEL_NAV] = PAGE_PHASE2
     st.session_state[KEY_PENDING_RESULT_TAB] = PAGE_PHASE2
     st.rerun()
 
@@ -443,8 +424,7 @@ def _format_model_evaluation_policy(
     metric_name = str(promoted.get("metric_name") or "")
     if model_name == "unsupervised" or metric_name == "unsupervised_selection_score":
         return str(
-            unsup_policy.get("interpretation")
-            or "ranking/calibration proxy, not fraud accuracy"
+            unsup_policy.get("interpretation") or "ranking/calibration proxy, not fraud accuracy"
         )
     return str(promoted.get("evaluation_policy") or "-")
 

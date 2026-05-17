@@ -5,9 +5,13 @@
 
 from dashboard.components.charts.benford_charts import benford_facet, benford_overlay
 from dashboard.components.charts.comparison_charts import (
+    category_flux_bar,
+    changed_accounts_table,
+    monthly_trend_comparison,
     new_accounts_table,
     risk_distribution_comparison,
     rule_violation_delta,
+    top_changed_accounts_bar,
     yoy_amount_bar,
     yoy_count_bar,
 )

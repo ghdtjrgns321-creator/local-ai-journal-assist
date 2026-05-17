@@ -71,7 +71,8 @@ def render_company_page(repo: CompanyRepository) -> None:
 
 
 def _render_company_cards(
-    companies: list[CompanyProfile], repo: CompanyRepository,
+    companies: list[CompanyProfile],
+    repo: CompanyRepository,
 ) -> None:
     """회사 카드 목록 — 3열 그리드 + 삭제 버튼."""
     cols = st.columns(3)
@@ -92,7 +93,9 @@ def _render_company_cards(
                         st.rerun()
                 with del_col:
                     if st.button(
-                        "삭제", key=f"delete_{profile.company_id}", type="secondary",
+                        "삭제",
+                        key=f"delete_{profile.company_id}",
+                        type="secondary",
                     ):
                         st.session_state[f"_confirm_del_{profile.company_id}"] = True
 
@@ -104,13 +107,15 @@ def _render_company_cards(
                         if st.button("삭제 확인", key=f"confirm_del_{profile.company_id}"):
                             repo.delete_company(profile.company_id)
                             st.session_state.pop(
-                                f"_confirm_del_{profile.company_id}", None,
+                                f"_confirm_del_{profile.company_id}",
+                                None,
                             )
                             st.rerun()
                     with c2:
                         if st.button("취소", key=f"cancel_del_{profile.company_id}"):
                             st.session_state.pop(
-                                f"_confirm_del_{profile.company_id}", None,
+                                f"_confirm_del_{profile.company_id}",
+                                None,
                             )
                             st.rerun()
 
@@ -118,13 +123,18 @@ def _render_company_cards(
 def _render_register_form(repo: CompanyRepository) -> None:
     """새 회사 등록 폼."""
     with st.form("register_company"):
-        cid = st.text_input("회사 ID (영소문자, 숫자, 밑줄)", placeholder="acme_corp")
+        cid = st.text_input(
+            "회사 ID",
+            placeholder="acme_corp",
+            help='공백과 < > : " / \\ | ? * 문자를 제외한 한글·영문·숫자·기호 모두 허용됩니다 (최대 64자).',
+        )
         name = st.text_input("회사명", placeholder="ACME 주식회사")
 
         col1, col2 = st.columns(2)
         with col1:
             industry_idx = st.selectbox(
-                "산업", options=range(len(INDUSTRY_OPTIONS)),
+                "산업",
+                options=range(len(INDUSTRY_OPTIONS)),
                 format_func=lambda i: INDUSTRY_OPTIONS[i],
             )
             industry = INDUSTRY_OPTIONS[industry_idx]
@@ -139,7 +149,8 @@ def _render_register_form(repo: CompanyRepository) -> None:
 
         with col2:
             erp_idx = st.selectbox(
-                "ERP 시스템", options=range(len(ERP_OPTIONS)),
+                "ERP 시스템",
+                options=range(len(ERP_OPTIONS)),
                 format_func=lambda i: ERP_OPTIONS[i],
             )
             erp = ERP_OPTIONS[erp_idx]
@@ -166,7 +177,7 @@ def _render_register_form(repo: CompanyRepository) -> None:
                 st.session_state[KEY_COMPANY_ID] = profile.company_id
                 st.rerun()
             except FileExistsError:
-                st.error(f"'{cid}' ID의 회사가 이미 존재합니다.")
+                st.error(f"'{cid}' ID 의 회사가 이미 존재합니다.")
             except ValidationError as e:
                 first = e.errors()[0]
                 st.error(f"입력값 오류 — {first['loc'][0]}: {first['msg']}")

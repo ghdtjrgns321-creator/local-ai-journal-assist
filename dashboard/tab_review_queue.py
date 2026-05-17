@@ -448,6 +448,10 @@ def render(result: PipelineResult | None = None) -> None:
         result: 전표 데이터(`result.data`)를 통해 citation 점프(전표 라인) 표시.
                 None이면 점프 패널의 row evidence는 candidate.journal_ref 만 표시.
     """
+    from dashboard.components.scroll_anchor import preserve_scroll_position
+
+    preserve_scroll_position("review_queue")
+
     st.markdown("### Review Queue · Narrator")
     st.caption(
         "PHASE1 룰 히트 + PHASE2 ML 스코어를 LLM이 재정렬·요약·인용한 결과. "

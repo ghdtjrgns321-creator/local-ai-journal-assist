@@ -63,8 +63,8 @@ def _render_layer_weights() -> None:
 
 
 def _render_risk_thresholds() -> None:
-    """위험등급 임계값 3개 슬라이더."""
-    st.subheader("위험등급 임계값")
+    """행 risk_level 임계값 3개 슬라이더."""
+    st.subheader("행 risk_level 임계값")
     current = st.session_state.get(KEY_RISK_THRESHOLDS)
     if current is None:
         current = dict(RISK_THRESHOLDS)

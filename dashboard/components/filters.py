@@ -34,7 +34,8 @@ def _get_filter_options(df: pd.DataFrame) -> dict[str, list]:
     # Why: key=str로 혼합 타입(int/str) 정렬 시 TypeError 방지.
     return {
         col: sorted(df[col].dropna().unique().tolist(), key=str)
-        for col in cols if col in df.columns
+        for col in cols
+        if col in df.columns
     }
 
 
@@ -54,7 +55,16 @@ def render_filters(df: pd.DataFrame) -> None:
             filters["date_range"] = (str(start), str(end))
 
     risk_opts = ["High", "Medium", "Low", "Normal"]
-    selected_risks = st.multiselect("위험 등급", risk_opts, default=risk_opts)
+    selected_risks = st.multiselect(
+        "위험 등급",
+        risk_opts,
+        default=risk_opts,
+        help=(
+            "축: 행 risk_level (anomaly_score 기준). "
+            "row risk_level High/Medium/Low/Normal. "
+            "case priority_band 와 다른 축이다."
+        ),
+    )
     if selected_risks and len(selected_risks) < len(risk_opts):
         filters["risk_levels"] = selected_risks
 
@@ -63,8 +73,11 @@ def render_filters(df: pd.DataFrame) -> None:
         amt_max = float(df["debit_amount"].max())
         if amt_min < amt_max:
             amount = st.slider(
-                "금액 범위", min_value=amt_min, max_value=amt_max,
-                value=(amt_min, amt_max), format="%.0f",
+                "금액 범위",
+                min_value=amt_min,
+                max_value=amt_max,
+                value=(amt_min, amt_max),
+                format="%.0f",
             )
             if amount != (amt_min, amt_max):
                 filters["amount_range"] = amount
@@ -128,6 +141,7 @@ def apply_filters(df: pd.DataFrame, filters: FilterState, *, pr=None) -> pd.Data
         elif "flagged_rules" in df.columns:
             # Why: .apply(lambda) 루프는 1M행에서 느림. str.contains 벡터화가 ~10× 빠름.
             import re
+
             pattern = "|".join(re.escape(code) for code in filters["rule_codes"])
             mask &= df["flagged_rules"].fillna("").str.contains(pattern, regex=True)
 
