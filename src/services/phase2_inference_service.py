@@ -28,11 +28,6 @@ def run_phase2_inference(
 
         pipeline_cls = AuditPipeline
 
-    if settings is not None and snapshot is not None:
-        settings = _with_phase2_bootstrap_policy(settings, allow_cold_start_bootstrap=False)
-    if ctx is not None and snapshot is not None:
-        ctx = _clone_ctx_with_phase2_bootstrap_policy(ctx, allow_cold_start_bootstrap=False)
-
     if ctx is not None:
         pipeline = pipeline_cls(context=ctx, skip_db=False, repo=repo, conn=conn)
     else:
@@ -199,40 +194,9 @@ def _persist_phase2_batch_snapshot(*, conn=None, result=None) -> None:
         return
 
 
-def _with_phase2_bootstrap_policy(settings, *, allow_cold_start_bootstrap: bool):
-    if settings is None:
-        return None
-    if hasattr(settings, "model_copy"):
-        return settings.model_copy(
-            update={
-                "phase2_allow_cold_start_bootstrap": allow_cold_start_bootstrap,
-            }
-        )
-    setattr(settings, "phase2_allow_cold_start_bootstrap", allow_cold_start_bootstrap)
-    return settings
-
-
-def _clone_ctx_with_phase2_bootstrap_policy(ctx, *, allow_cold_start_bootstrap: bool):
-    settings = getattr(ctx, "settings", None)
-    if settings is None or not hasattr(ctx, "clone_with_settings"):
-        return ctx
-    return ctx.clone_with_settings(
-        _with_phase2_bootstrap_policy(
-            settings,
-            allow_cold_start_bootstrap=allow_cold_start_bootstrap,
-        )
-    )
-
-
 def _determine_phase2_inference_mode(*, snapshot: dict[str, Any] | None, result) -> str:
     if snapshot is not None:
         return "training_contract"
-    statuses = getattr(result, "detector_statuses", None) or []
-    if any(
-        str(item.get("reason") or "") == "bootstrapped_phase2_model"
-        for item in statuses
-    ):
-        return "cold_start_bootstrap"
     return "untrained_contract_only"
 
 

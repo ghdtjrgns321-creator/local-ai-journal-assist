@@ -66,6 +66,16 @@ class Phase2LabelSummary:
     is_supervised_eligible: bool
     positive_count: int
     positive_rate: float
+    gate_decision: str = "unknown"
+
+    def __post_init__(self) -> None:
+        if self.gate_decision == "unknown":
+            if self.gate_status == "eligible":
+                self.gate_decision = "eligible"
+            elif self.gate_status == "blocked":
+                self.gate_decision = "hard_fail"
+            elif self.gate_status == "fallback_to_unsupervised":
+                self.gate_decision = "low_signal_fallback"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -121,6 +131,7 @@ class Phase2TrainingReport:
     )
     status: Phase2TrainingStatus = Phase2TrainingStatus.PENDING
     label_summary: Phase2LabelSummary | None = None
+    supervised_gate: dict[str, Any] = field(default_factory=dict)
     leaderboard: list[Phase2TrialResult] = field(default_factory=list)
     promoted_models: list[Phase2PromotedModel] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
@@ -136,8 +147,43 @@ class Phase2TrainingReport:
             "label_summary": (
                 None if self.label_summary is None else self.label_summary.to_dict()
             ),
+            "supervised_gate": (
+                dict(self.supervised_gate)
+                if self.supervised_gate
+                else _supervised_gate_from_label_summary(self.label_summary)
+            ),
             "leaderboard": [trial.to_dict() for trial in self.leaderboard],
             "promoted_models": [model.to_dict() for model in self.promoted_models],
             "warnings": list(self.warnings),
             "metadata": dict(self.metadata),
         }
+
+
+def _supervised_gate_from_label_summary(
+    label_summary: Phase2LabelSummary | None,
+) -> dict[str, Any]:
+    if label_summary is None:
+        return {
+            "decision": "unavailable",
+            "reason": "missing_label_summary",
+            "label_source": "unknown",
+            "positive_count": 0,
+            "positive_rate": 0.0,
+            "thresholds": {
+                "min_positive_count": 50,
+                "min_positive_rate": 0.01,
+            },
+            "eligible": False,
+        }
+    return {
+        "decision": label_summary.gate_decision,
+        "reason": label_summary.gate_reason,
+        "label_source": label_summary.label_source,
+        "positive_count": label_summary.positive_count,
+        "positive_rate": label_summary.positive_rate,
+        "thresholds": {
+            "min_positive_count": 50,
+            "min_positive_rate": 0.01,
+        },
+        "eligible": label_summary.is_supervised_eligible,
+    }

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 import uuid
 from dataclasses import dataclass
@@ -19,11 +20,13 @@ from src.detection.ensemble_detector import EnsembleDetector
 from src.detection.intercompany_matcher import IntercompanyMatcher
 from src.detection.relational_detector import RelationalDetector
 from src.detection.sequence_detector import SequenceDetector
-from src.detection.supervised_detector import SupervisedDetector
+from src.detection.supervised_detector import SupervisedDetector, SupervisedGateError
 from src.detection.tabular_transformer import TransformerDetector
 from src.detection.timeseries_detector import TimeseriesDetector
 from src.detection.vae_detector import UnsupervisedDetector
 from src.eda.profiler import profile_dataframe
+from src.evaluation.phase2_report import build_hold_out_metrics
+from src.preprocessing.constants import LEAKAGE_DENY_COLUMNS, LEAKAGE_DENY_RULES
 from src.preprocessing.feature_groups import FeatureGroups, classify_features
 from src.preprocessing.feature_quality import (
     FEATURE_FAMILIES,
@@ -37,6 +40,8 @@ from src.services.phase2_case_contract import (
     PROVENANCE_ONLY_FIELDS,
     build_phase2_case_feature_frame,
 )
+from src.services.phase2_leaderboard import save_leaderboard_json
+from src.services.phase2_promotion_policy import save_promotion_decision_json
 from src.services.phase2_training_models import (
     Phase2LabelSummary,
     Phase2PromotedModel,
@@ -46,8 +51,19 @@ from src.services.phase2_training_models import (
 )
 
 _DEFAULT_PHASE2_TRAIN_DIR = PROJECT_ROOT / "data" / "phase2_train"
-_DEFAULT_MODEL_FAMILIES = ("unsupervised",)
+_DEFAULT_MODEL_FAMILIES = (
+    "unsupervised",
+    "timeseries",
+    "relational",
+    "duplicate",
+    "intercompany",
+)
+DEFAULT_HOLD_OUT_SCENARIOS = (
+    "unusual_timing_manipulation",
+    "approval_sod_bypass",
+)
 _PHASE2_TRAINING_MODE = "unsupervised_autoencoder_mvp"
+_PHASE2_RULE_INPUT_DIM = 22
 _RULE_STYLE_FAMILIES = {"timeseries", "relational", "duplicate", "intercompany"}
 _SEQUENCE_CONTEXT_COLUMNS = ("document_id", "created_by", "posting_date", "posting_time")
 _RULE_STYLE_REQUIRED_COLUMNS = {
@@ -96,6 +112,12 @@ _RULE_STYLE_SUB_DETECTORS = {
         "amount_mismatch",
         "timing_gap",
     ),
+}
+_RULE_STYLE_METRIC_NAMES = {
+    "timeseries": "burst_detection_rate",
+    "relational": "new_counterparty_precision",
+    "duplicate": "fuzzy_match_f1",
+    "intercompany": "ic_match_completeness",
 }
 _DEFAULT_FAMILY_MIN_COMPLETED_TRIALS = {
     "unsupervised": 2,
@@ -148,6 +170,7 @@ _PROMOTED_TRACK_MAP = {
     "intercompany": "intercompany",
     "stacking_meta": "ensemble",
 }
+logger = logging.getLogger(__name__)
 _FAMILY_TO_CANONICAL_MODEL = {
     "unsupervised": "unsupervised",
     "supervised": "supervised",
@@ -370,6 +393,8 @@ def build_phase2_training_paths(
         "reports_dir": run_root / "reports",
         "promoted_dir": run_root / "promoted",
         "report_path": run_root / "reports" / "training_report.json",
+        "leaderboard_path": run_root / "reports" / "leaderboard.json",
+        "promotion_decision_path": run_root / "reports" / "promotion_decision.json",
     }
 
 
@@ -404,7 +429,16 @@ def save_phase2_training_report(
         json.dumps(report.to_dict(), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    save_leaderboard_json(report, paths["reports_dir"])
+    save_promotion_decision_json(report, paths["reports_dir"])
     return report_path
+
+
+def build_promoted_model_artifact_dir(ctx, *, family: str, version: int | str) -> Path:
+    """Return the canonical promoted model artifact directory for a family/version."""
+    model_dir = Path(getattr(ctx, "model_dir"))
+    version_text = f"v{int(version):04d}" if isinstance(version, int) else str(version)
+    return model_dir / f"phase2_{family}" / version_text
 
 
 def initialize_phase2_training_report(
@@ -445,12 +479,40 @@ def build_phase2_label_summary(
         is_supervised_eligible=bool(label_result.is_supervised_eligible),
         positive_count=int(label_result.positive_count),
         positive_rate=float(label_result.positive_rate),
+        gate_decision=str(getattr(label_result, "gate_decision", "unknown")),
     )
     return summary, label_result
 
 
+def _build_supervised_gate_payload(
+    label_summary: Phase2LabelSummary,
+    settings,
+) -> dict[str, Any]:
+    return {
+        "decision": str(label_summary.gate_decision),
+        "reason": label_summary.gate_reason,
+        "label_source": str(label_summary.label_source),
+        "positive_count": int(label_summary.positive_count),
+        "positive_rate": float(label_summary.positive_rate),
+        "thresholds": {
+            "min_positive_count": int(getattr(settings, "supervised_min_positive", 50)),
+            "min_positive_rate": float(
+                getattr(settings, "supervised_min_positive_rate", 0.01),
+            ),
+        },
+        "eligible": bool(label_summary.is_supervised_eligible),
+        "allowed_label_sources": list(
+            getattr(settings, "supervised_allowed_label_sources", ["ground_truth"]),
+        ),
+    }
+
+
 def prepare_phase2_feature_inputs(df, *, settings=None) -> tuple[Any, Any, dict[str, Any]]:
     """Build cleaned training features, groups, and quality metadata once."""
+    logger.info(
+        "Leakage deny applied: %s columns",
+        len(LEAKAGE_DENY_COLUMNS | LEAKAGE_DENY_RULES),
+    )
     active_settings = settings or get_settings()
     profile = profile_dataframe(
         df,
@@ -472,6 +534,11 @@ def prepare_phase2_feature_inputs(df, *, settings=None) -> tuple[Any, Any, dict[
     payload = {
         "raw_groups": _feature_groups_to_dict(raw_groups),
         "adjusted_groups": _feature_groups_to_dict(adjusted_groups),
+        "feature_metadata": {
+            "rule_input_dim": _PHASE2_RULE_INPUT_DIM,
+            "rule_input_policy": "phase1_rule_results_excluding_leakage_deny_rules",
+            "excluded_rule_columns": sorted(LEAKAGE_DENY_RULES),
+        },
         "preprocessing_plan": preprocessing_plan.to_dict(),
         "feature_quality_profile": feature_quality.to_dict(),
         "feature_variants": build_phase2_feature_variants(cleaned_df, adjusted_groups),
@@ -486,8 +553,17 @@ def _phase2_training_mode(settings) -> str:
     )
 
 
-def _split_unsupervised_train_calibration(df, settings) -> Phase2UnsupervisedSplit:
+def _split_unsupervised_train_calibration(
+    df,
+    settings,
+    *,
+    hold_out_scenarios: tuple[str, ...] = DEFAULT_HOLD_OUT_SCENARIOS,
+) -> Phase2UnsupervisedSplit:
     """Split Phase 2 unsupervised data with group split as the default path."""
+    working_df, hold_out_df, hold_out_metadata = _extract_hold_out_frame(
+        df,
+        hold_out_scenarios=hold_out_scenarios,
+    )
     train_ratio = getattr(settings, "phase2_unsup_train_ratio", None)
     if train_ratio is None:
         calibration_size = float(getattr(settings, "phase2_calibration_size", 0.20) or 0.20)
@@ -505,27 +581,29 @@ def _split_unsupervised_train_calibration(df, settings) -> Phase2UnsupervisedSpl
         getattr(settings, "phase2_temporal_column", "posting_date") or "posting_date"
     )
 
-    if len(df) <= 1 or calibration_size <= 0:
-        return Phase2UnsupervisedSplit(
-            train_df=df.copy(),
-            calibration_df=df.iloc[0:0].copy(),
+    if len(working_df) <= 1 or calibration_size <= 0:
+        split = Phase2UnsupervisedSplit(
+            train_df=working_df.copy(),
+            calibration_df=working_df.iloc[0:0].copy(),
             metadata={
                 "split_strategy": "none",
-                "train_row_count": int(len(df)),
+                "train_row_count": int(len(working_df)),
                 "calibration_row_count": 0,
                 "calibration_size": calibration_size,
                 "unsup_train_ratio": float(1.0 - calibration_size),
                 "unsup_calibration_rows_cap": calibration_row_cap,
             },
         )
+        return _append_hold_out_to_calibration(split, hold_out_df, hold_out_metadata)
 
-    if strategy == "temporal" and temporal_column in df.columns:
-        split = _temporal_unsupervised_split(df, temporal_column, calibration_size)
-    elif group_column in df.columns:
-        split = _group_unsupervised_split(df, group_column, calibration_size, seed)
+    if strategy == "temporal" and temporal_column in working_df.columns:
+        split = _temporal_unsupervised_split(working_df, temporal_column, calibration_size)
+    elif group_column in working_df.columns:
+        split = _group_unsupervised_split(working_df, group_column, calibration_size, seed)
     else:
-        split = _random_unsupervised_split(df, calibration_size, seed)
+        split = _random_unsupervised_split(working_df, calibration_size, seed)
 
+    split = _append_hold_out_to_calibration(split, hold_out_df, hold_out_metadata)
     split.metadata.update(
         {
             "train_row_count": int(len(split.train_df)),
@@ -537,6 +615,70 @@ def _split_unsupervised_train_calibration(df, settings) -> Phase2UnsupervisedSpl
         }
     )
     return split
+
+
+def _extract_hold_out_frame(
+    df,
+    *,
+    hold_out_scenarios: tuple[str, ...],
+) -> tuple[Any, Any, dict[str, Any]]:
+    scenarios = tuple(str(value).strip().lower() for value in hold_out_scenarios if value)
+    metadata: dict[str, Any] = {
+        "hold_out_scenarios": list(hold_out_scenarios),
+        "hold_out_scenario_column": "mutation_type",
+        "hold_out_row_count": 0,
+        "hold_out_doc_count": 0,
+        "_hold_out_row_indices": [],
+    }
+    if not scenarios or "mutation_type" not in df.columns:
+        metadata["hold_out_available"] = False
+        return df.copy(), df.iloc[0:0].copy(), metadata
+    scenario_values = df["mutation_type"].fillna("").astype(str).str.strip().str.lower()
+    mask = scenario_values.isin(scenarios)
+    hold_out_df = df.loc[mask].copy()
+    trainable_df = df.loc[~mask].copy()
+    metadata.update(
+        {
+            "hold_out_available": True,
+            "hold_out_row_count": int(len(hold_out_df)),
+            "hold_out_doc_count": (
+                int(hold_out_df["document_id"].dropna().nunique())
+                if "document_id" in hold_out_df.columns
+                else int(len(hold_out_df))
+            ),
+            "hold_out_by_scenario": {
+                scenario: int(scenario_values.loc[mask].eq(scenario).sum())
+                for scenario in scenarios
+            },
+            "_hold_out_row_indices": hold_out_df.index.tolist(),
+        }
+    )
+    return trainable_df, hold_out_df, metadata
+
+
+def _append_hold_out_to_calibration(
+    split: Phase2UnsupervisedSplit,
+    hold_out_df,
+    hold_out_metadata: dict[str, Any],
+) -> Phase2UnsupervisedSplit:
+    metadata = dict(split.metadata)
+    metadata.update(hold_out_metadata)
+    if hold_out_df.empty:
+        return Phase2UnsupervisedSplit(
+            train_df=split.train_df,
+            calibration_df=split.calibration_df,
+            metadata=metadata,
+        )
+    calibration_df = pd.concat([split.calibration_df, hold_out_df], axis=0).sort_index()
+    metadata["hold_out_in_train_rows"] = int(split.train_df.index.isin(hold_out_df.index).sum())
+    metadata["hold_out_in_calibration_rows"] = int(
+        calibration_df.index.isin(hold_out_df.index).sum()
+    )
+    return Phase2UnsupervisedSplit(
+        train_df=split.train_df,
+        calibration_df=calibration_df,
+        metadata=metadata,
+    )
 
 
 def _apply_unsupervised_split_row_caps(
@@ -555,6 +697,7 @@ def _apply_unsupervised_split_row_caps(
         and group_column in split.train_df.columns
         and group_column in split.calibration_df.columns
     )
+    metadata = dict(split.metadata)
 
     capped_train, train_strategy = _cap_frame_deterministically(
         split.train_df,
@@ -562,13 +705,29 @@ def _apply_unsupervised_split_row_caps(
         seed=seed,
         group_column=group_column if prefer_group_cap else None,
     )
-    capped_calibration, calibration_strategy = _cap_frame_deterministically(
-        split.calibration_df,
+    hold_out_indices = set(metadata.get("_hold_out_row_indices") or [])
+    if hold_out_indices:
+        hold_out_mask = split.calibration_df.index.isin(hold_out_indices)
+        calibration_for_cap = split.calibration_df.loc[~hold_out_mask]
+        hold_out_calibration = split.calibration_df.loc[hold_out_mask]
+    else:
+        calibration_for_cap = split.calibration_df
+        hold_out_calibration = split.calibration_df.iloc[0:0]
+
+    capped_calibration_base, calibration_strategy = _cap_frame_deterministically(
+        calibration_for_cap,
         cap_rows=calibration_cap,
         seed=seed + 1,
         group_column=group_column if prefer_group_cap else None,
     )
-    metadata = dict(split.metadata)
+    if not hold_out_calibration.empty:
+        capped_calibration = pd.concat(
+            [capped_calibration_base, hold_out_calibration],
+            axis=0,
+        ).sort_index()
+        calibration_strategy = f"{calibration_strategy}_plus_hold_out"
+    else:
+        capped_calibration = capped_calibration_base
     metadata.update(
         {
             "source_train_rows": int(len(split.train_df)),
@@ -586,6 +745,13 @@ def _apply_unsupervised_split_row_caps(
     )
     metadata["train_row_count"] = int(len(capped_train))
     metadata["calibration_row_count"] = int(len(capped_calibration))
+    if metadata.get("hold_out_row_count"):
+        hold_out_indices = set(metadata.get("_hold_out_row_indices") or [])
+        metadata["hold_out_in_train_rows"] = int(capped_train.index.isin(hold_out_indices).sum())
+        metadata["hold_out_in_calibration_rows"] = int(
+            capped_calibration.index.isin(hold_out_indices).sum()
+        )
+    metadata.pop("_hold_out_row_indices", None)
     return Phase2UnsupervisedSplit(
         train_df=capped_train,
         calibration_df=capped_calibration,
@@ -777,6 +943,7 @@ def build_phase2_training_report(
     strategy: str = "hybrid",
     model_families: list[str] | tuple[str, ...] | None = None,
     phase1_case_result=None,
+    hold_out_scenarios: tuple[str, ...] = DEFAULT_HOLD_OUT_SCENARIOS,
 ) -> Phase2TrainingReport:
     """Create the initial Phase 2 training orchestration report."""
     report = initialize_phase2_training_report(
@@ -801,15 +968,18 @@ def build_phase2_training_report(
     variants = feature_payload["feature_variants"]
     search_presets = build_phase2_search_presets(families)
     report.label_summary = label_summary
+    report.supervised_gate = _build_supervised_gate_payload(label_summary, settings)
     report.status = Phase2TrainingStatus.RUNNING
     report.metadata.update(
         {
             "candidate_families": families,
             "phase2_training_mode": _phase2_training_mode(settings),
+            "hold_out_scenarios": list(hold_out_scenarios),
             "feature_row_count": int(len(cleaned_df)),
             "feature_column_count": int(len(cleaned_df.columns)),
             "feature_variant_count": len(variants),
             "search_preset_count": sum(len(presets) for presets in search_presets.values()),
+            "feature_metadata": feature_payload["feature_metadata"],
             "feature_quality_profile": feature_payload["feature_quality_profile"],
             "adjusted_feature_groups": feature_payload["adjusted_groups"],
             "preprocessing_plan": feature_payload["preprocessing_plan"],
@@ -841,6 +1011,7 @@ def run_phase2_training(
     base_dir: Path | None = None,
     save_report: bool = True,
     phase1_case_result=None,
+    hold_out_scenarios: tuple[str, ...] = DEFAULT_HOLD_OUT_SCENARIOS,
 ) -> Phase2TrainingReport:
     """Execute Phase 2 training trials and persist a training report."""
     report = initialize_phase2_training_report(
@@ -872,21 +1043,25 @@ def run_phase2_training(
         df,
         settings=settings,
     )
+    split_context_df = _with_unsupervised_split_context(cleaned_df, df, settings)
     phase1_case_contract = _build_phase1_case_contract_metadata(phase1_case_result)
     families = list(model_families or _DEFAULT_MODEL_FAMILIES)
     variants = feature_payload["feature_variants"]
     search_presets = build_phase2_search_presets(families)
 
     report.label_summary = label_summary
+    report.supervised_gate = _build_supervised_gate_payload(label_summary, settings)
     report.status = Phase2TrainingStatus.RUNNING
     report.metadata.update(
         {
             "candidate_families": families,
             "phase2_training_mode": _phase2_training_mode(settings),
+            "hold_out_scenarios": list(hold_out_scenarios),
             "feature_row_count": int(len(cleaned_df)),
             "feature_column_count": int(len(cleaned_df.columns)),
             "feature_variant_count": len(variants),
             "search_preset_count": sum(len(presets) for presets in search_presets.values()),
+            "feature_metadata": feature_payload["feature_metadata"],
             "feature_quality_profile": feature_payload["feature_quality_profile"],
             "adjusted_feature_groups": feature_payload["adjusted_groups"],
             "preprocessing_plan": feature_payload["preprocessing_plan"],
@@ -914,11 +1089,17 @@ def run_phase2_training(
         family = trial.model_family
         split_metadata = None
         calibration_df = None
+        hold_out_eval_df = None
         eval_y = label_result.y
         if family == "unsupervised":
-            split = _split_unsupervised_train_calibration(cleaned_df, settings)
+            split = _split_unsupervised_train_calibration(
+                split_context_df,
+                settings,
+                hold_out_scenarios=hold_out_scenarios,
+            )
             split = _apply_unsupervised_split_row_caps(split, settings)
             variant_df = _build_variant_frame(split.train_df, trial, family)
+            hold_out_eval_df = split.calibration_df
             calibration_df = _build_variant_frame(split.calibration_df, trial, family)
             split_metadata = split.metadata
             if not label_series.empty and not calibration_df.empty:
@@ -966,6 +1147,8 @@ def run_phase2_training(
                 eval_y=eval_y,
                 split_metadata=split_metadata,
                 preprocessing_plan=feature_payload["preprocessing_plan"],
+                hold_out_scenarios=hold_out_scenarios,
+                hold_out_eval_df=hold_out_eval_df,
             )
         _write_trial_artifact(paths["trials_dir"], trial)
 
@@ -975,9 +1158,18 @@ def run_phase2_training(
         report.leaderboard,
         policy=promotion_policy,
     )
+    _write_rule_style_promoted_artifacts(
+        ctx=ctx,
+        promoted_models=report.promoted_models,
+        trials=report.leaderboard,
+        report_id=report.report_id,
+    )
     if report.promoted_models:
         report.metadata["best_overall_model"] = report.promoted_models[0].to_dict()
     report.metadata.update(_build_trial_report_metadata(report.leaderboard))
+    hold_out_summary = _build_hold_out_report_summary(report.leaderboard)
+    if hold_out_summary:
+        report.metadata["hold_out_evaluation"] = hold_out_summary
     report.metadata["promotion_policy"] = promotion_policy
     report.metadata["family_promotion_decisions"] = _build_family_promotion_decisions(
         report.leaderboard,
@@ -1100,6 +1292,8 @@ def _execute_model_trial(
     eval_y=None,
     split_metadata: dict[str, Any] | None = None,
     preprocessing_plan: dict[str, Any] | None = None,
+    hold_out_scenarios: tuple[str, ...] = DEFAULT_HOLD_OUT_SCENARIOS,
+    hold_out_eval_df=None,
 ) -> None:
     start = time.perf_counter()
     trial_settings = _build_trial_settings(settings, trial)
@@ -1185,6 +1379,13 @@ def _execute_model_trial(
                     trial.metadata[diagnostic_key] = train_info[diagnostic_key]
         if unsupervised_metric is not None:
             trial.metadata["unsupervised_metric"] = unsupervised_metric
+        if family == "unsupervised" and hold_out_eval_df is not None:
+            hold_out_metrics = build_hold_out_metrics(
+                hold_out_eval_df,
+                detect_result,
+                hold_out_scenarios=hold_out_scenarios,
+            )
+            trial.metadata["hold_out_evaluation"] = hold_out_metrics
         if split_metadata is not None:
             trial.metadata["train_calibration_split"] = dict(split_metadata)
         if matrix_metadata is not None:
@@ -1200,6 +1401,11 @@ def _execute_model_trial(
                 "train_info": train_info,
             }
         )
+    except SupervisedGateError as exc:
+        trial.status = Phase2TrainingStatus.SKIPPED
+        trial.gate_reason = exc.reason
+        trial.metadata["supervised_gate"] = dict(exc.snapshot)
+        trial.warnings.append(str(exc))
     except Exception as exc:
         trial.status = Phase2TrainingStatus.FAILED
         trial.gate_reason = trial.gate_reason or type(exc).__name__
@@ -1265,10 +1471,15 @@ def _execute_stacking_trial(
         )
         if oof_ready:
             base_results = [best_inputs["unsupervised"]["detect_result"]]
+            created_by_user_ids = trial_df["created_by"].astype(str).to_numpy()
+            assert np.array_equal(
+                created_by_user_ids,
+                trial_df["created_by"].astype(str).to_numpy(),
+            ), "ensemble train_oof user_ids must be created_by"
             train_info = detector.train_oof(
                 trial_df,
                 label_result,
-                user_ids=trial_df["created_by"].astype(str).to_numpy(),
+                user_ids=created_by_user_ids,
                 df_index=trial_df.index,
                 non_leakage_results=base_results,
                 groups=groups,
@@ -1350,7 +1561,11 @@ def _execute_rule_style_trial(
     )
     try:
         detect_result = detector.detect(trial_df)
-        metric_name, metric_value = _compute_rule_style_metric(detect_result, label_result.y)
+        metric_name, metric_value = _compute_rule_style_metric(
+            family,
+            detect_result,
+            label_result.y,
+        )
         trial.status = Phase2TrainingStatus.COMPLETED
         trial.metric_name = metric_name
         trial.metric_value = metric_value
@@ -1364,6 +1579,7 @@ def _execute_rule_style_trial(
                 "sub_detector_keys": list(_RULE_STYLE_SUB_DETECTORS.get(family, ())),
                 "rule_flag_ids": [flag.rule_id for flag in detect_result.rule_flags],
                 "flagged_count": int(len(detect_result.flagged_indices)),
+                "metric_interpretation": "rule_proxy_score",
             }
         )
         trained_results.setdefault(family, []).append(
@@ -1536,13 +1752,19 @@ def _has_positive_labels(y_true) -> bool:
     return int((pd.Series(y_true) == 1).sum()) > 0
 
 
-def _compute_rule_style_metric(detect_result, y_true) -> tuple[str, float | None]:
+def _compute_rule_style_metric(
+    family: str,
+    detect_result,
+    y_true,
+) -> tuple[str, float | None]:
+    metric_name = _RULE_STYLE_METRIC_NAMES.get(str(family), "rule_proxy_score")
     if len(y_true) > 0 and int((pd.Series(y_true) == 1).sum()) > 0:
-        return _compute_trial_metric(detect_result, y_true)
+        _truth_metric_name, metric_value = _compute_trial_metric(detect_result, y_true)
+        return metric_name, metric_value
     flagged_ratio = float(len(detect_result.flagged_indices) / max(len(detect_result.scores), 1))
     score_mean = float(pd.Series(detect_result.scores).fillna(0.0).mean())
     proxy_metric = min((flagged_ratio * 0.7) + (score_mean * 0.3), 1.0)
-    return "rule_proxy_score", proxy_metric
+    return metric_name, proxy_metric
 
 
 def _compact_train_info(train_info: dict[str, Any]) -> dict[str, Any]:
@@ -1581,6 +1803,21 @@ def _build_variant_frame(cleaned_df, trial: Phase2TrialResult, family: str):
             if col in cleaned_df.columns and col not in required:
                 required.append(col)
     return cleaned_df.loc[:, [col for col in required if col in cleaned_df.columns]].copy()
+
+
+def _with_unsupervised_split_context(cleaned_df, source_df, settings):
+    """Attach split-only keys without adding them to selected model features."""
+    split_df = cleaned_df.copy()
+    context_columns = {
+        str(getattr(settings, "phase2_split_group_column", "document_id") or "document_id"),
+        str(getattr(settings, "phase2_temporal_column", "posting_date") or "posting_date"),
+        "mutation_type",
+    }
+    for col in context_columns:
+        if col in split_df.columns or col not in source_df.columns:
+            continue
+        split_df[col] = source_df.loc[split_df.index, col]
+    return split_df
 
 
 def _build_trial_settings(settings, trial: Phase2TrialResult):
@@ -1716,6 +1953,78 @@ def _select_promoted_models(
     return winners
 
 
+def _write_rule_style_promoted_artifacts(
+    *,
+    ctx,
+    promoted_models: list[Phase2PromotedModel],
+    trials: list[Phase2TrialResult],
+    report_id: str,
+) -> None:
+    if ctx is None or getattr(ctx, "model_dir", None) is None:
+        return
+    by_family_variant = {
+        (trial.model_family, trial.variant): trial
+        for trial in trials
+    }
+    reverse_family_map = {
+        canonical_name: family_name
+        for family_name, canonical_name in _FAMILY_TO_CANONICAL_MODEL.items()
+    }
+    for model in promoted_models:
+        family = reverse_family_map.get(model.model_name, model.model_name)
+        if family not in _RULE_STYLE_FAMILIES:
+            continue
+        trial = by_family_variant.get((family, model.source_trial_variant))
+        if trial is None:
+            continue
+        family_root = Path(getattr(ctx, "model_dir")) / f"phase2_{family}"
+        version = _next_rule_style_artifact_version(family_root)
+        artifact_dir = build_promoted_model_artifact_dir(ctx, family=family, version=version)
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        artifact_path = artifact_dir / "calibration_metadata.json"
+        payload = {
+            "schema_version": 1,
+            "report_id": report_id,
+            "family": family,
+            "model_name": model.model_name,
+            "source_trial_variant": model.source_trial_variant,
+            "metric_name": model.metric_name,
+            "metric_value": model.metric_value,
+            "metric_interpretation": trial.metadata.get(
+                "metric_interpretation",
+                "rule_proxy_score",
+            ),
+            "schema_hash": _trial_schema_hash(trial),
+            "model_bundle": None,
+            "calibration": {
+                "mode": "stateless_rule_detector",
+                "settings_updates": dict(trial.metadata.get("settings_updates", {})),
+                "sub_detector_keys": list(trial.metadata.get("sub_detector_keys", [])),
+                "flagged_count": int(trial.metadata.get("flagged_count", 0) or 0),
+            },
+        }
+        artifact_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        trial.metadata["registry_path"] = str(artifact_path)
+        model.registry_path = str(artifact_path)
+        model.registry_version = None
+
+
+def _next_rule_style_artifact_version(family_root: Path) -> int:
+    if not family_root.exists():
+        return 1
+    versions: list[int] = []
+    for child in family_root.iterdir():
+        if not child.is_dir():
+            continue
+        name = child.name
+        if len(name) == 5 and name.startswith("v") and name[1:].isdigit():
+            versions.append(int(name[1:]))
+    return max(versions, default=0) + 1
+
+
 def _build_trial_report_metadata(
     trials: list[Phase2TrialResult],
 ) -> dict[str, Any]:
@@ -1726,6 +2035,31 @@ def _build_trial_report_metadata(
         "feature_variant_summaries": _build_feature_variant_summaries(trials),
         "sub_detector_summaries": _build_sub_detector_summaries(trials),
     }
+
+
+def _build_hold_out_report_summary(
+    trials: list[Phase2TrialResult],
+) -> dict[str, Any]:
+    candidates = [
+        trial
+        for trial in trials
+        if trial.status == Phase2TrainingStatus.COMPLETED
+        and isinstance(trial.metadata.get("hold_out_evaluation"), dict)
+        and trial.metadata["hold_out_evaluation"].get("available")
+    ]
+    if not candidates:
+        return {}
+    best = max(
+        candidates,
+        key=lambda trial: (
+            trial.metadata["hold_out_evaluation"].get("hold_out_recall") or 0.0,
+            trial.metric_value or 0.0,
+        ),
+    )
+    payload = dict(best.metadata["hold_out_evaluation"])
+    payload["source_trial_variant"] = best.variant
+    payload["source_model_family"] = best.model_family
+    return payload
 
 
 def _build_promotion_policy(trials: list[Phase2TrialResult]) -> dict[str, Any]:
@@ -1756,7 +2090,13 @@ def _build_promotion_policy(trials: list[Phase2TrialResult]) -> dict[str, Any]:
     metric_names = sorted({trial.metric_name for trial in completed if trial.metric_name})
     return {
         "selection_mode": "best_per_family",
-        "eligible_model_families": ["unsupervised"],
+        "eligible_model_families": [
+            "unsupervised",
+            "timeseries",
+            "relational",
+            "duplicate",
+            "intercompany",
+        ],
         "eligible_statuses": [Phase2TrainingStatus.COMPLETED.value],
         "requires_registry_version": True,
         "requires_metric_value": True,
@@ -1787,6 +2127,11 @@ def _build_promotion_policy(trials: list[Phase2TrialResult]) -> dict[str, Any]:
         "family_search_diversity": family_search_diversity,
         "rule_style_metric_policy": {
             "metric_name": "rule_proxy_score",
+            "family_metric_names": dict(_RULE_STYLE_METRIC_NAMES),
+            "interpretation": (
+                "Family-specific rule metric names carry detector semantics; "
+                "values are proxy scores for selection, not truth recall."
+            ),
             "components": {
                 "flagged_ratio": 0.7,
                 "score_mean": 0.3,
@@ -1826,6 +2171,7 @@ def _build_inference_contract(
         "selection_mode": promotion_policy.get("selection_mode", "best_per_family"),
         "required_models": required_models,
         "promoted_versions": promoted_versions,
+        "model_versions": _build_model_version_contract(promoted_models, trials),
         "family_sub_detectors": _build_promoted_sub_detector_map(promoted_models, trials),
         "track_map": {
             model_name: track_name
@@ -1836,6 +2182,49 @@ def _build_inference_contract(
     if phase1_case_contract is not None:
         contract["phase1_case_contract"] = phase1_case_contract
     return contract
+
+
+def _build_model_version_contract(
+    promoted_models: list[Phase2PromotedModel],
+    trials: list[Phase2TrialResult],
+) -> dict[str, dict[str, Any]]:
+    by_family_variant = {
+        (trial.model_family, trial.variant): trial
+        for trial in trials
+    }
+    reverse_family_map = {
+        canonical_name: family_name
+        for family_name, canonical_name in _FAMILY_TO_CANONICAL_MODEL.items()
+    }
+    contract: dict[str, dict[str, Any]] = {}
+    for model in promoted_models:
+        family_name = reverse_family_map.get(model.model_name, model.model_name)
+        trial = by_family_variant.get((family_name, model.source_trial_variant))
+        contract[model.model_name] = {
+            "model_version": model.registry_version,
+            "source_trial_variant": model.source_trial_variant,
+            "schema_hash": _trial_schema_hash(trial),
+            "registry_path": model.registry_path,
+            "fixture_contract": {
+                "feature_index_name": "phase1_case_id",
+                "requires_schema_match": True,
+            },
+        }
+    return contract
+
+
+def _trial_schema_hash(trial: Phase2TrialResult | None) -> str | None:
+    if trial is None:
+        return None
+    matrix = trial.metadata.get("matrix_builder")
+    if isinstance(matrix, dict) and matrix.get("schema_hash") is not None:
+        return str(matrix["schema_hash"])
+    feature_quality = trial.feature_quality_profile or trial.metadata.get(
+        "feature_quality_profile",
+    )
+    if isinstance(feature_quality, dict) and feature_quality.get("schema_hash") is not None:
+        return str(feature_quality["schema_hash"])
+    return None
 
 
 def _build_phase1_case_contract_metadata(phase1_case_result) -> dict[str, Any]:
