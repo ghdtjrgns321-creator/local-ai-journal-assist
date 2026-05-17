@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from src.eda.profiler import profile_dataframe
+from src.preprocessing.phase2_matrix import Phase2AutoencoderMatrixBuilder
 from src.preprocessing.phase2_plan import build_phase2_preprocessing_plan
 
 
@@ -44,6 +46,44 @@ def test_phase2_preprocessing_plan_excludes_leakage_columns():
             "is_fraud",
         )
     )
+
+
+def test_phase2_preprocessing_plan_excludes_v6_baseline_deny_columns():
+    df = pd.DataFrame(
+        {
+            "amount_magnitude": [1.0, 2.0, 3.0],
+            "approval_lag_abs": [0, 5, 10],
+            "is_suspense_account": [False, True, False],
+            "operating_feature": [10.0, 11.0, 12.0],
+        }
+    )
+
+    plan = build_phase2_preprocessing_plan(profile_dataframe(df))
+    decisions = _decisions_by_column(plan)
+
+    for column in ("amount_magnitude", "approval_lag_abs", "is_suspense_account"):
+        assert decisions[column].action == "exclude"
+        assert decisions[column].reason_code == "leakage_deny_column"
+    assert decisions["operating_feature"].action == "include"
+
+
+def test_phase2_preprocessing_plan_excludes_v7_derived_deny_columns():
+    df = pd.DataFrame(
+        {
+            "near_threshold_gap_amount": [1.0, 2.0, 3.0],
+            "approver_limit_amount": [10.0, 20.0, 30.0],
+            "line_number": [1, 2, 3],
+            "operating_feature": [10.0, 11.0, 12.0],
+        }
+    )
+
+    plan = build_phase2_preprocessing_plan(profile_dataframe(df))
+    decisions = _decisions_by_column(plan)
+
+    for column in ("near_threshold_gap_amount", "approver_limit_amount", "line_number"):
+        assert decisions[column].action == "exclude"
+        assert decisions[column].reason_code == "leakage_deny_column"
+    assert decisions["operating_feature"].action == "include"
 
 
 def test_phase2_preprocessing_plan_column_decision_snapshot():
@@ -111,3 +151,32 @@ def test_phase2_preprocessing_plan_column_decision_snapshot():
             "reason_code": "domain_low_card",
         },
     }
+
+
+def test_phase2_matrix_rejects_standalone_f_manual():
+    df = pd.DataFrame(
+        {
+            "document_id": ["d1", "d2", "d3"],
+            "amount": [100.0, 200.0, 300.0],
+            "f_manual": [True, False, True],
+        }
+    )
+    plan = build_phase2_preprocessing_plan(profile_dataframe(df))
+
+    with pytest.raises(ValueError, match="f_manual"):
+        Phase2AutoencoderMatrixBuilder(plan).fit(df)
+
+
+def test_phase2_matrix_allows_f_manual_interaction_feature():
+    df = pd.DataFrame(
+        {
+            "document_id": ["d1", "d2", "d3"],
+            "amount": [100.0, 200.0, 300.0],
+            "f_manual_x_amount_high": [True, False, True],
+        }
+    )
+    plan = build_phase2_preprocessing_plan(profile_dataframe(df))
+
+    matrix = Phase2AutoencoderMatrixBuilder(plan).fit_transform(df)
+
+    assert "f_manual_x_amount_high" in matrix.columns

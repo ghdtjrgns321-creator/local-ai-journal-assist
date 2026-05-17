@@ -29,8 +29,13 @@ def sv_train_data() -> tuple[pd.DataFrame, LabelResult]:
     """학습용 합성 데이터 (200행, 양성 ~35%)."""
     rng = np.random.default_rng(42)
     n = 200
+    document_ids = (
+        [f"D2022_{i}" for i in range(n // 2)]
+        + [f"D2023_{i}" for i in range(n // 4)]
+        + [f"D2024_{i}" for i in range(n // 4)]
+    )
     df = pd.DataFrame({
-        "document_id": [f"D2022_{i}" for i in range(n // 2)] + [f"D2023_{i}" for i in range(n // 4)] + [f"D2024_{i}" for i in range(n // 4)],
+        "document_id": document_ids,
         "fiscal_year": ([2022] * (n // 2)) + ([2023] * (n // 4)) + ([2024] * (n // 4)),
         "f1": rng.normal(0, 1, n),
         "f2": rng.normal(0, 1, n),
@@ -81,7 +86,7 @@ class TestTrain:
         assert "best_model" in meta
         assert "mean_f1" in meta
         assert "optimal_threshold" in meta
-        assert meta["gate_status"] == "eligible"
+        assert meta["gate_decision"] == "eligible"
         assert meta["label_source"] == "ground_truth"
         assert meta["feature_quality_profile"]["normalized_persona"] is True
         assert "cost_center" in meta["feature_quality_profile"]["sparse_dropped_columns"]
@@ -102,8 +107,13 @@ class TestTrain:
         """양성 < 50건이면 hard gate로 차단."""
         rng = np.random.default_rng(42)
         n = 200
+        document_ids = (
+            [f"D2022_{i}" for i in range(n // 2)]
+            + [f"D2023_{i}" for i in range(n // 4)]
+            + [f"D2024_{i}" for i in range(n // 4)]
+        )
         df = pd.DataFrame({
-            "document_id": [f"D2022_{i}" for i in range(n // 2)] + [f"D2023_{i}" for i in range(n // 4)] + [f"D2024_{i}" for i in range(n // 4)],
+            "document_id": document_ids,
             "fiscal_year": ([2022] * (n // 2)) + ([2023] * (n // 4)) + ([2024] * (n // 4)),
             "f1": rng.normal(0, 1, n),
             "f2": rng.normal(0, 1, n),
@@ -122,13 +132,19 @@ class TestTrain:
         with pytest.raises(SupervisedGateError) as exc_info:
             det.train(df, label, sv_groups)
         assert exc_info.value.reason == "insufficient_positive_count"
+        assert exc_info.value.snapshot["decision"] == "low_signal_fallback"
 
     def test_zero_positive_raises(self, sv_groups):
         """양성 0건이면 ValueError."""
         rng = np.random.default_rng(42)
         n = 100
+        document_ids = (
+            [f"D2022_{i}" for i in range(n // 2)]
+            + [f"D2023_{i}" for i in range(n // 4)]
+            + [f"D2024_{i}" for i in range(n // 4)]
+        )
         df = pd.DataFrame({
-            "document_id": [f"D2022_{i}" for i in range(n // 2)] + [f"D2023_{i}" for i in range(n // 4)] + [f"D2024_{i}" for i in range(n // 4)],
+            "document_id": document_ids,
             "fiscal_year": ([2022] * (n // 2)) + ([2023] * (n // 4)) + ([2024] * (n // 4)),
             "f1": rng.normal(0, 1, n),
             "f2": rng.normal(0, 1, n),
@@ -145,6 +161,7 @@ class TestTrain:
         with pytest.raises(SupervisedGateError) as exc_info:
             det.train(df, label, sv_groups)
         assert exc_info.value.reason == "no_positive_labels"
+        assert exc_info.value.snapshot["decision"] == "hard_fail"
 
     def test_pseudo_label_source_blocked(self, sv_train_data, sv_groups):
         df, _ = sv_train_data
@@ -156,8 +173,8 @@ class TestTrain:
             label_source="detection_scores",
             positive_rate=float(y.mean()),
             positive_count=int(y.sum()),
-            label_quality="circular_risk",
-            gate_status="fallback_to_unsupervised",
+            quality_grade="circular_risk",
+            gate_decision="low_signal_fallback",
             gate_reason="circular_label_risk",
             is_supervised_eligible=False,
         )
@@ -227,7 +244,7 @@ class TestModelPersistence:
         assert det2.optimal_threshold_ == saved_threshold
         gate = det2.get_training_gate_snapshot()
         assert gate["label_source"] == "ground_truth"
-        assert gate["gate_status"] == "eligible"
+        assert gate["decision"] == "eligible"
 
         # detect 일관성
         df, _ = sv_train_data

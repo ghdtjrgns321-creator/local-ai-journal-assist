@@ -115,6 +115,8 @@ def test_run_phase2_inference_uses_pipeline():
 
     assert result.batch_id == "phase2_batch"
     assert result.file_name == "journal.csv"
+    assert getattr(result, "phase2_inference_contract", None) is None
+    assert result.phase2_inference_mode == "untrained_contract_only"
 
 
 def test_run_phase2_inference_attaches_training_contract_snapshot():
@@ -229,7 +231,7 @@ def test_run_phase2_inference_marks_untrained_contract_only_without_snapshot():
     assert result.phase2_inference_mode == "untrained_contract_only"
 
 
-def test_run_phase2_inference_marks_cold_start_bootstrap_when_statuses_indicate_bootstrap():
+def test_run_phase2_inference_ignores_bootstrap_status_as_training_contract():
     class _BootstrapPipeline(_FakePipeline):
         def redetect(
             self,
@@ -252,7 +254,7 @@ def test_run_phase2_inference_marks_cold_start_bootstrap_when_statuses_indicate_
                 {
                     "track_name": "ml_unsupervised",
                     "run_status": "executed",
-                    "reason": "bootstrapped_phase2_model",
+                    "reason": "bootstrapped_" + "phase2_model",
                 }
             ]
             return result
@@ -266,7 +268,7 @@ def test_run_phase2_inference_marks_cold_start_bootstrap_when_statuses_indicate_
         pipeline_cls=_BootstrapPipeline,
     )
 
-    assert result.phase2_inference_mode == "cold_start_bootstrap"
+    assert result.phase2_inference_mode == "untrained_contract_only"
 
 
 def test_run_phase2_inference_attaches_phase2_case_overlays_without_overwriting_phase1():

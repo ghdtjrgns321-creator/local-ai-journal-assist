@@ -14,11 +14,20 @@ from src.detection.constants import (
     LAYER_WEIGHTS_WITH_ML,
     RISK_THRESHOLDS,
     RULE_LEVEL_WEIGHTS,
+    SEVERITY_MAP,
     Layer,
     RiskLevel,
 )
-from src.detection.rule_scoring import normalize_rule_evidence
-from src.detection.score_aggregator import aggregate_scores, classify_risk_level
+from src.detection.rule_scoring import (
+    EVIDENCE_STRENGTH_FACTOR,
+    SIGNAL_STRENGTH_MAP,
+    normalize_rule_evidence,
+)
+from src.detection.score_aggregator import (
+    _POLICY_LABEL_FLOORS,
+    aggregate_scores,
+    classify_risk_level,
+)
 
 # ── 테스트 헬퍼 ───────────────────────────────────────────
 
@@ -664,6 +673,73 @@ class TestPolicyRiskFloors:
         assert result["anomaly_score"].iloc[0] >= RISK_THRESHOLDS[RiskLevel.HIGH]
         assert "L1-09:corroborated_control" in result["risk_floor_reasons"].iloc[0]
 
+    def test_l105_escalated_high_risk_account_floor(self, base_df):
+        """L1-05 escalated_high_risk_account 단독 floor가 0.80 이상으로 clip되고 HIGH로 승격."""
+        layer_b = _make_result(
+            "layer_b",
+            [0.40, 0.0, 0.0, 0.0, 0.0],
+            {"L1-05": [0.40, 0.0, 0.0, 0.0, 0.0]},
+        )
+        layer_b.metadata["row_annotations"] = {
+            "L1-05": {0: {"bucket": "escalated_high_risk_account"}}
+        }
+
+        result = aggregate_scores(base_df, [layer_b])
+
+        assert result["risk_level"].iloc[0] == RiskLevel.HIGH
+        assert result["anomaly_score"].iloc[0] >= 0.80
+        assert result["risk_floor_reasons"].iloc[0] == "L1-05:escalated_high_risk_account"
+
+    def test_l107_immediate_floor_via_policy_label(self, base_df):
+        """L1-07 immediate가 _POLICY_LABEL_FLOORS["immediate"] 경로로 HIGH 임계 진입."""
+        layer_b = _make_result(
+            "layer_b",
+            [0.30, 0.0, 0.0, 0.0, 0.0],
+            {"L1-07": [0.30, 0.0, 0.0, 0.0, 0.0]},
+        )
+        layer_b.metadata["row_annotations"] = {"L1-07": {0: {"bucket": "immediate"}}}
+
+        result = aggregate_scores(base_df, [layer_b])
+
+        assert result["risk_level"].iloc[0] == RiskLevel.HIGH
+        assert result["anomaly_score"].iloc[0] >= RISK_THRESHOLDS[RiskLevel.HIGH]
+        assert result["risk_floor_reasons"].iloc[0] == "L1-07:immediate"
+
+    def test_l107_escalated_abnormal_time_floor(self, base_df):
+        """L1-07 escalated_abnormal_time라벨도 policy loop에 포함되어 0.75 floor + HIGH 승격."""
+        layer_b = _make_result(
+            "layer_b",
+            [0.30, 0.0, 0.0, 0.0, 0.0],
+            {"L1-07": [0.30, 0.0, 0.0, 0.0, 0.0]},
+        )
+        layer_b.metadata["row_annotations"] = {"L1-07": {0: {"bucket": "escalated_abnormal_time"}}}
+
+        result = aggregate_scores(base_df, [layer_b])
+
+        assert result["risk_level"].iloc[0] == RiskLevel.HIGH
+        assert result["anomaly_score"].iloc[0] >= 0.75
+        assert result["risk_floor_reasons"].iloc[0] == "L1-07:escalated_abnormal_time"
+
+    def test_l104_immediate_floor(self, base_df):
+        """L1-04 raw 0.80 이상 → immediate floor 적용 + HIGH 승격."""
+        layer_b = _make_result(
+            "layer_b",
+            [0.85, 0.0, 0.0, 0.0, 0.0],
+            {"L1-04": [0.85, 0.0, 0.0, 0.0, 0.0]},
+        )
+
+        result = aggregate_scores(base_df, [layer_b])
+
+        assert result["risk_level"].iloc[0] == RiskLevel.HIGH
+        assert result["anomaly_score"].iloc[0] >= RISK_THRESHOLDS[RiskLevel.HIGH]
+        assert "L1-04:immediate" in result["risk_floor_reasons"].iloc[0]
+
+    def test_policy_label_floors_immediate_follows_risk_thresholds_high(self):
+        """_POLICY_LABEL_FLOORS["immediate"]는 literal 값이 아니라 RISK_THRESHOLDS[HIGH] 동적 참조."""
+        # Why: 향후 RISK_THRESHOLDS[HIGH]가 변경되면 immediate floor도 같이 따라가야 한다.
+        # literal 0.50 하드코딩 회귀를 차단한다.
+        assert _POLICY_LABEL_FLOORS["immediate"] == pytest.approx(RISK_THRESHOLDS[RiskLevel.HIGH])
+
 
 class TestBatchCorroboration:
     """L4-06 batch 신호는 결합될 때만 우선순위를 올린다."""
@@ -1231,3 +1307,176 @@ class TestMLWeights:
         )
         assert (result["anomaly_score"] >= 0).all()
         assert (result["anomaly_score"] <= 1).all()
+
+
+# ── TestNormalizationCoverage ─────────────────────────────────
+
+
+def _single_rule_result(
+    rule_id: str,
+    raw_value: float,
+    label: str | None = None,
+) -> DetectionResult:
+    """단일 룰 하나로 구성된 DetectionResult — registry severity 사용."""
+    severity = SEVERITY_MAP[rule_id]
+    details = pd.DataFrame({rule_id: [raw_value]})
+    metadata: dict = {"elapsed": 0.01, "skipped_rules": []}
+    if label is not None:
+        metadata["row_annotations"] = {rule_id: {0: {"bucket": label, "score": raw_value}}}
+    return DetectionResult(
+        track_name="layer_b",
+        flagged_indices=[0],
+        scores=pd.Series([raw_value]),
+        rule_flags=[RuleFlag(rule_id, rule_id, severity, 1, 1)],
+        details=details,
+        metadata=metadata,
+        warnings=[],
+    )
+
+
+@pytest.mark.parametrize(
+    "rule_id, evidence_type, raw_value, label",
+    [
+        # weak / medium / strong evidence_strength를 모두 거치는 registry 미커버 룰들.
+        ("L1-02", "data_integrity_failure", 0.60, None),
+        ("L1-08", "data_integrity_failure", 0.60, None),
+        ("L2-01", "duplicate_or_outflow", 0.60, "close_band"),
+        ("L2-02", "duplicate_or_outflow", 0.70, "reference_match"),
+        ("L2-03", "duplicate_or_outflow", 0.60, None),
+        ("L3-05", "timing_anomaly", 0.45, "weekend_holiday"),
+        ("L3-09", "logic_mismatch", 0.60, "aging_60_90"),
+        ("L3-11", "timing_anomaly", 0.60, None),
+        ("L4-05", "timing_anomaly", 0.60, None),
+    ],
+)
+def test_normalize_rule_values_covers_uncovered_rules(
+    rule_id: str,
+    evidence_type: str,
+    raw_value: float,
+    label: str | None,
+):
+    """registry 미커버 룰들의 raw → normalized 변환이 normalize_rule_evidence와 일치."""
+    df = pd.DataFrame({"val": [0]})
+    detection = _single_rule_result(rule_id, raw_value, label)
+
+    result = aggregate_scores(df, [detection])
+
+    severity = SEVERITY_MAP[rule_id]
+    expected_normalized = normalize_rule_evidence(
+        rule_id=rule_id,
+        evidence_type=evidence_type,
+        severity=severity,
+        raw_value=raw_value,
+        display_label=label,
+    ).normalized_score
+    level = rule_id.split("-", 1)[0]
+    expected = expected_normalized * RULE_LEVEL_WEIGHTS[level]
+    assert result["anomaly_score"].iloc[0] == pytest.approx(expected, abs=1e-6)
+    assert rule_id in result["flagged_rules"].iloc[0]
+
+
+@pytest.mark.parametrize(
+    "rule_id",
+    ["L2-03", "L2-03a", "L2-03b", "L2-03c", "L2-03d"],
+)
+def test_l203_reason_code_variants_each_aggregate_into_l2_family(rule_id: str):
+    """L2-03 canonical + a~d 변형들은 L2 family 가중치를 통해 모두 anomaly_score에 기여."""
+    df = pd.DataFrame({"val": [0]})
+    detection = _single_rule_result(rule_id, 0.60)
+
+    result = aggregate_scores(df, [detection])
+
+    severity = SEVERITY_MAP[rule_id]
+    expected_normalized = normalize_rule_evidence(
+        rule_id=rule_id,
+        evidence_type="duplicate_or_outflow",
+        severity=severity,
+        raw_value=0.60,
+    ).normalized_score
+    expected = expected_normalized * RULE_LEVEL_WEIGHTS["L2"]
+    assert result["anomaly_score"].iloc[0] == pytest.approx(expected, abs=1e-6)
+    assert result["flagged_rules"].iloc[0] == rule_id
+
+
+def test_l203_variants_share_canonical_l2_family_weight():
+    """L2-03 canonical + 변형 4개가 동시에 들어오면 max(normalized) * L2 weight."""
+    df = pd.DataFrame({"val": [0]})
+    details = pd.DataFrame(
+        {
+            "L2-03": [0.60],
+            "L2-03a": [0.60],
+            "L2-03b": [0.60],
+            "L2-03c": [0.60],
+            "L2-03d": [0.60],
+        }
+    )
+    rule_flags = [RuleFlag(rid, rid, SEVERITY_MAP[rid], 1, 1) for rid in details.columns]
+    detection = DetectionResult(
+        track_name="layer_b",
+        flagged_indices=[0],
+        scores=details.max(axis=1),
+        rule_flags=rule_flags,
+        details=details,
+        metadata={"elapsed": 0.01, "skipped_rules": []},
+        warnings=[],
+    )
+
+    result = aggregate_scores(df, [detection])
+
+    normalized_values = [
+        normalize_rule_evidence(
+            rule_id=rid,
+            evidence_type="duplicate_or_outflow",
+            severity=SEVERITY_MAP[rid],
+            raw_value=0.60,
+        ).normalized_score
+        for rid in details.columns
+    ]
+    expected = max(normalized_values) * RULE_LEVEL_WEIGHTS["L2"]
+    assert result["anomaly_score"].iloc[0] == pytest.approx(expected, abs=1e-6)
+
+
+# ── TestSignalStrengthMapping ─────────────────────────────────
+
+
+class TestEvidenceStrengthFactor:
+    """evidence_strength → severity-independent multiplier 매핑."""
+
+    @pytest.mark.parametrize(
+        "evidence_strength, expected_factor",
+        [
+            ("weak", 0.45),
+            ("medium", 0.75),
+            ("strong", 1.0),
+            ("info", 0.25),
+        ],
+    )
+    def test_default_signal_strength_maps_weak_medium_strong(
+        self,
+        evidence_strength: str,
+        expected_factor: float,
+    ):
+        """EVIDENCE_STRENGTH_FACTOR가 weak/medium/strong/info를 0.45/0.75/1.0/0.25로 매핑."""
+        # Why: rule_scoring에서 normalize_rule_evidence가 이 factor를 곱하므로,
+        # 값이 바뀌면 모든 rule normalized_score가 전역 회귀된다.
+        assert EVIDENCE_STRENGTH_FACTOR[evidence_strength] == pytest.approx(expected_factor)
+
+    @pytest.mark.parametrize(
+        "label, expected_strength",
+        [
+            ("high", 1.0),
+            ("critical", 1.0),
+            ("medium", 0.6),
+            ("moderate", 0.6),
+            ("low", 0.3),
+            ("info", 0.2),
+            ("normal", 0.0),
+        ],
+    )
+    def test_signal_strength_map_canonical_labels(
+        self,
+        label: str,
+        expected_strength: float,
+    ):
+        """SIGNAL_STRENGTH_MAP의 기준 label이 기대 signal strength로 매핑."""
+        assert SIGNAL_STRENGTH_MAP[label] == pytest.approx(expected_strength)

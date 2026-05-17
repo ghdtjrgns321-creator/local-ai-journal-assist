@@ -2,12 +2,8 @@
 
 from __future__ import annotations
 
-import numpy as np
-import pandas as pd
-import pytest
-
 from src.eda.models import ColumnProfile, EDAProfile
-from src.preprocessing.feature_groups import FeatureGroups, classify_features
+from src.preprocessing.feature_groups import classify_features
 
 
 class TestClassifyFeatures:
@@ -15,13 +11,16 @@ class TestClassifyFeatures:
 
     def test_numeric_columns_classified(self, pp_sample_profile):
         groups = classify_features(pp_sample_profile)
-        for col in ("debit_amount", "credit_amount", "amount_zscore"):
+        for col in ("fiscal_period", "gl_account"):
             assert col in groups.numeric, f"{col} not in numeric"
+        for col in ("debit_amount", "credit_amount", "amount_zscore"):
+            assert col in groups.excluded, f"{col} should be leakage-denied"
 
     def test_boolean_columns_classified(self, pp_sample_profile):
         groups = classify_features(pp_sample_profile)
-        expected = {"is_weekend", "is_after_hours", "is_round_number", "has_risk_keyword"}
+        expected = {"is_weekend", "is_after_hours", "has_risk_keyword"}
         assert expected.issubset(set(groups.boolean))
+        assert "is_round_number" in groups.excluded
 
     def test_gl_account_high_cardinality(self, pp_sample_profile):
         # gl_account는 Int64(numeric) → domain_overrides로 categorical_high 배치

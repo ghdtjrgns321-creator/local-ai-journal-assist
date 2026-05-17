@@ -172,3 +172,66 @@ def test_phase2_case_overlays_preserve_phase1_priority():
     assert overlay["phase2_family_scores"] == {"timeseries": 0.6, "relational": 0.4}
     assert overlay["phase2_adjusted_priority"] == 0.71
     assert overlay["phase2_training_report_id"] == "train_001"
+
+
+def test_phase2_case_overlay_does_not_mutate_phase1_priority_score():
+    """옵션 Z lock HARD: overlay 적용 전후 case.priority_score 가 row-wise 동일.
+
+    PHASE1 priority_score 는 PHASE2 family_scores 가 주어져도 절대 덮어쓰여지지 않는다
+    (Stage 7 phase1_phase2_integration_stage7.assert_priority_score_preserved 와 동일 계약).
+    """
+    phase1 = _phase1_result()
+    snapshot = {case.case_id: float(case.priority_score) for case in phase1.cases}
+
+    overlays = build_phase2_case_overlays(
+        phase1,
+        family_scores_by_case={
+            "case_control_failure_00001": {
+                "ml_unsupervised": 0.95,
+                "timeseries": 0.6,
+            }
+        },
+        phase2_training_report_id="train_z_lock",
+    )
+
+    # 원본 priority_score 가 모든 case 에서 변경되지 않았다 (diff == 0)
+    for case in phase1.cases:
+        assert float(case.priority_score) == snapshot[case.case_id], (
+            f"case {case.case_id} priority_score 가 overlay 적용 후 변경됨: "
+            f"{snapshot[case.case_id]} → {case.priority_score}"
+        )
+
+    # overlay 는 phase2_adjusted_priority 컬럼으로만 영향을 전달한다 (별도 필드)
+    overlay = overlays[0]
+    assert "phase2_adjusted_priority" in overlay
+    assert overlay["phase2_adjusted_priority"] is not None
+    # adjusted 와 base 가 다른지(=실제로 overlay 가 계산되었는지) 확인
+    assert overlay["phase2_adjusted_priority"] != snapshot["case_control_failure_00001"]
+
+
+def test_phase2_case_overlay_without_family_scores_reports_not_applied():
+    """family_scores 가 비어 있으면 adjusted_priority 는 None, reason 은 phase2_not_applied."""
+    phase1 = _phase1_result()
+    overlays = build_phase2_case_overlays(phase1)
+    overlay = overlays[0]
+
+    assert overlay["phase2_adjusted_priority"] is None
+    assert overlay["precision_adjustment_reason"] == "phase2_not_applied"
+    # 원본 priority 는 여전히 보존
+    assert float(phase1.cases[0].priority_score) == 0.8
+
+
+def test_phase2_case_overlay_keys_do_not_include_priority_score():
+    """overlay dict 의 키 자체에 priority_score 가 없다 (이름 충돌로 인한 덮어쓰기 방지)."""
+    phase1 = _phase1_result()
+    overlays = build_phase2_case_overlays(
+        phase1,
+        family_scores_by_case={"case_control_failure_00001": {"ml_unsupervised": 0.9}},
+    )
+    overlay_keys = set(overlays[0].keys())
+
+    # PHASE1 priority_score 와 동일한 키명을 overlay 가 갖지 않아야 다운스트림에서
+    # dict merge 시 의도치 않은 덮어쓰기가 발생하지 않음.
+    assert "priority_score" not in overlay_keys
+    # adjusted 는 명시적으로 phase2_ 접두사로 격리됨
+    assert "phase2_adjusted_priority" in overlay_keys

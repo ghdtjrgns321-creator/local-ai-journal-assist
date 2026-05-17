@@ -21,14 +21,26 @@ class TestDataSynthStrategy:
         result = create_labels(pp_sample_df, strategy="datasynth")
         assert 0.0 <= result.positive_rate <= 1.0
         assert result.positive_count == int(result.y.sum())
-        assert result.gate_status == "eligible"
-        assert result.is_supervised_eligible is True
+        assert result.quality_grade == "trusted"
+        assert result.gate_decision in {"eligible", "low_signal_fallback"}
+        assert result.is_supervised_eligible is (result.gate_decision == "eligible")
+
+    def test_datasynth_low_signal_is_structured_fallback(self):
+        df = pd.DataFrame({
+            "is_fraud": [1, 0, 0, 0],
+            "is_anomaly": [0, 0, 0, 0],
+        })
+        result = create_labels(df, strategy="datasynth")
+        assert result.quality_grade == "trusted"
+        assert result.gate_decision == "low_signal_fallback"
+        assert result.gate_reason == "insufficient_positive_count"
+        assert result.is_supervised_eligible is False
 
     def test_no_label_columns(self):
         df = pd.DataFrame({"amount": [100, 200, 300]})
         result = create_labels(df, strategy="datasynth")
         assert np.all(result.y == 0)
-        assert result.gate_status == "blocked"
+        assert result.gate_decision == "hard_fail"
         assert result.gate_reason == "no_positive_labels"
         assert result.is_supervised_eligible is False
 
@@ -67,8 +79,8 @@ class TestPseudoStrategy:
         scores = np.random.default_rng(42).uniform(0, 1, len(pp_sample_df))
         result = create_labels(pp_sample_df, detection_scores=scores, strategy="pseudo")
         assert len(result.y) == len(pp_sample_df)
-        assert result.label_quality == "circular_risk"
-        assert result.gate_status == "fallback_to_unsupervised"
+        assert result.quality_grade == "circular_risk"
+        assert result.gate_decision == "low_signal_fallback"
         assert result.gate_reason == "circular_label_risk"
         assert result.is_supervised_eligible is False
 
@@ -91,7 +103,8 @@ class TestHybridStrategy:
         assert result.strategy == "hybrid"
         # DataSynth 컬럼이 있으므로 ground_truth 소스 사용
         assert result.label_source == "ground_truth"
-        assert result.is_supervised_eligible is True
+        assert result.gate_decision == "low_signal_fallback"
+        assert result.is_supervised_eligible is False
 
     def test_falls_back_to_pseudo(self):
         df = pd.DataFrame({"amount": [100, 200, 300]})
@@ -107,6 +120,6 @@ class TestHybridStrategy:
         result = create_labels(df, strategy="hybrid")
         assert np.all(result.y == 0)
         assert result.label_source == "unsupervised"
-        assert result.gate_status == "fallback_to_unsupervised"
+        assert result.gate_decision == "unavailable"
         assert result.gate_reason == "missing_ground_truth_labels"
         assert result.is_supervised_eligible is False

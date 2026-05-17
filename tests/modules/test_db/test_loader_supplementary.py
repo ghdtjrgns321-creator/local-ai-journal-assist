@@ -30,6 +30,7 @@ from src.db.schema_supplementary import (
 )
 
 DATASYNTH_DIR = Path("data/journal/primary/datasynth")
+DATASYNTH_JOURNAL_CSV = DATASYNTH_DIR / "journal_entries.csv"
 BATCH_ID = "test_sup_001"
 
 
@@ -46,6 +47,10 @@ def sup_conn():
 
 
 class TestLoadJsonFile:
+    @pytest.mark.skipif(
+        not DATASYNTH_JOURNAL_CSV.exists(),
+        reason="plain datasynth fixture not available (intentionally retired)",
+    )
     def test_existing_file(self):
         records = _load_json_file(DATASYNTH_DIR / "document_flows/purchase_orders.json")
         assert len(records) > 0

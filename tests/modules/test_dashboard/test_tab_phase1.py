@@ -9,7 +9,6 @@ from src.detection.rule_detail_metadata import (
     canonicalize_rule_id,
     get_rule_detail_metadata,
 )
-from src.detection.rule_scoring import TOPIC_REGISTRY
 from src.models.phase1_case import CaseDocumentRef, CaseGroupResult, RawRuleHitRef
 
 
@@ -50,9 +49,7 @@ def _phase1_grid_pr() -> SimpleNamespace:
         rule_count=1,
         total_amount=250.0,
         representative_explanation="truth-only row",
-        documents=[
-            CaseDocumentRef(document_id="DOC-TRUTH", matched_rules=["L1-03"], amount=250.0)
-        ],
+        documents=[CaseDocumentRef(document_id="DOC-TRUTH", matched_rules=["L1-03"], amount=250.0)],
         raw_rule_hits=[
             RawRuleHitRef(
                 rule_id="L1-03",
@@ -72,11 +69,18 @@ def _phase1_grid_pr() -> SimpleNamespace:
     )
 
 
-def test_phase1_render_uses_all_data_seven_topics_and_ai_conclusion_tabs(monkeypatch) -> None:
-    captured_labels: list[str] = []
+def test_phase1_render_uses_compact_four_tab_layout(monkeypatch) -> None:
+    """4-tab 압축 구조 가드.
+
+    Why: PHASE1 결과는 수만 건이라 7-Topic + AI 결론을 펼쳐 두면 감사인이
+         어디부터 봐야 할지 잃는다. 4-tab(전체 요약/데이터 정합성/위반 케이스/
+         통계결과)으로 압축하고 통계결과 안에 7-Topic을 sub-tab으로 보존한다.
+         "AI 결론" 탭은 PHASE3 Review Queue Narrator로 대체되어 제거.
+    """
+    captured_label_groups: list[list[str]] = []
 
     def fake_tabs(labels):
-        captured_labels.extend(labels)
+        captured_label_groups.append(list(labels))
         return [_TabContext() for _ in labels]
 
     monkeypatch.setattr(tab_phase1.st, "subheader", lambda *args, **kwargs: None)
@@ -88,19 +92,25 @@ def test_phase1_render_uses_all_data_seven_topics_and_ai_conclusion_tabs(monkeyp
         lambda _result: {"available": True, "case_count": 1, "themes": []},
     )
     monkeypatch.setattr(tab_phase1, "_render_overview", lambda *args, **kwargs: None)
-    monkeypatch.setattr(tab_phase1, "_render_topic_top_n", lambda *args, **kwargs: None)
-    monkeypatch.setattr(tab_phase1, "_render_ai_conclusion", lambda *args, **kwargs: None)
+    monkeypatch.setattr(tab_phase1, "_render_data_quality_gate", lambda *args, **kwargs: None)
+    monkeypatch.setattr(tab_phase1, "_render_violation_cases_tab", lambda *args, **kwargs: None)
+    monkeypatch.setattr(tab_phase1, "_render_statistics_tab", lambda *args, **kwargs: None)
+    monkeypatch.setattr(tab_phase1, "_render_year_over_year", lambda *args, **kwargs: None)
 
     tab_phase1.render(None, SimpleNamespace())
 
-    expected_topic_labels = [
-        tab_phase1._TOPIC_SHORT_LABELS.get(topic_id, topic.label)
-        for topic_id, topic in TOPIC_REGISTRY.items()
+    # 최상위 탭 라벨 가드.
+    assert captured_label_groups, "st.tabs가 호출되지 않았습니다."
+    assert captured_label_groups[0] == [
+        "전체 요약",
+        "데이터 정합성",
+        "위반 케이스",
+        "통계결과",
+        "전기 비교",
     ]
-    assert captured_labels == (
-        ["전체 요약"] + expected_topic_labels + ["AI 결론"]
-    )
-    assert len(captured_labels) == 9
+    # AI 결론 탭이 더 이상 노출되지 않음을 보장.
+    flat = [label for group in captured_label_groups for label in group]
+    assert "AI 결론" not in flat
 
 
 def test_available_rules_uses_raw_rule_hits_when_phase1_truth_exists() -> None:

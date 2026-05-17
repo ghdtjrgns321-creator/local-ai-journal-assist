@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 import uuid
 from pathlib import Path
@@ -10,6 +11,7 @@ import pandas as pd
 
 from config.settings import AuditSettings
 from src.detection.base import DetectionResult
+from src.evaluation.phase2_report import build_hold_out_metrics
 from src.services.phase2_training_models import (
     Phase2LabelSummary,
     Phase2PromotedModel,
@@ -18,6 +20,7 @@ from src.services.phase2_training_models import (
     Phase2TrialResult,
 )
 from src.services.phase2_training_service import (
+    DEFAULT_HOLD_OUT_SCENARIOS,
     _apply_unsupervised_split_row_caps,
     _compute_unsupervised_metric,
     _eligible_promotion_trials,
@@ -27,6 +30,7 @@ from src.services.phase2_training_service import (
     build_phase2_search_presets,
     build_phase2_training_paths,
     build_phase2_training_report,
+    build_promoted_model_artifact_dir,
     ensure_phase2_training_dirs,
     initialize_phase2_training_report,
     prepare_phase2_feature_inputs,
@@ -148,8 +152,20 @@ def test_build_phase2_training_paths_separates_artifact_folders():
         assert paths["reports_dir"].name == "reports"
         assert paths["promoted_dir"].name == "promoted"
         assert paths["report_path"].name == "training_report.json"
+        assert paths["leaderboard_path"].name == "leaderboard.json"
+        assert paths["promotion_decision_path"].name == "promotion_decision.json"
     finally:
         shutil.rmtree(root, ignore_errors=True)
+
+
+def test_build_promoted_model_artifact_dir_uses_family_version_pattern():
+    ctx = SimpleNamespace(model_dir=Path("data/companies/acme/engagements/2025/models"))
+
+    path = build_promoted_model_artifact_dir(ctx, family="unsupervised", version=3)
+
+    assert path.as_posix().endswith(
+        "data/companies/acme/engagements/2025/models/phase2_unsupervised/v0003"
+    )
 
 
 def test_ensure_phase2_training_dirs_creates_artifact_directories():
@@ -209,6 +225,11 @@ def test_save_phase2_training_report_serializes_nested_types():
         assert path.exists()
         assert payload["status"] == "running"
         assert payload["label_summary"]["label_source"] == "ground_truth"
+        assert payload["supervised_gate"]["decision"] == "eligible"
+        assert payload["supervised_gate"]["thresholds"] == {
+            "min_positive_count": 50,
+            "min_positive_rate": 0.01,
+        }
         assert payload["leaderboard"][0]["status"] == "completed"
         assert payload["promoted_models"][0]["model_name"] == "supervised"
     finally:
@@ -233,7 +254,8 @@ def test_build_phase2_label_summary_prefers_feedback_labels():
 
     assert summary.strategy == "feedback"
     assert summary.label_source == "ground_truth"
-    assert summary.is_supervised_eligible is True
+    assert summary.is_supervised_eligible is False
+    assert summary.gate_decision == "low_signal_fallback"
     assert label_result.positive_count == 2
     assert label_result.source_breakdown == {
         "confirmed_issue_docs": 1,
@@ -250,7 +272,7 @@ def test_build_phase2_search_presets_returns_family_configs():
     assert all("name" in preset for preset in presets["supervised"])
 
 
-def test_prepare_phase2_feature_inputs_returns_variant_payload():
+def test_prepare_phase2_feature_inputs_returns_variant_payload(caplog):
     df = pd.DataFrame(
         {
             "document_id": ["d1", "d2", "d3"],
@@ -262,10 +284,13 @@ def test_prepare_phase2_feature_inputs_returns_variant_payload():
         }
     )
 
-    cleaned_df, groups, payload = prepare_phase2_feature_inputs(df)
+    with caplog.at_level(logging.INFO, logger="src.services.phase2_training_service"):
+        cleaned_df, groups, payload = prepare_phase2_feature_inputs(df)
     variants = build_phase2_feature_variants(cleaned_df, groups)
 
+    assert "Leakage deny applied: 54 columns" in caplog.text
     assert "feature_quality_profile" in payload
+    assert payload["feature_metadata"]["rule_input_dim"] == 22
     assert payload["feature_variants"]
     assert variants[0]["variant"] == "baseline_core"
     assert "user_persona" in cleaned_df.columns
@@ -293,12 +318,27 @@ def test_build_phase2_training_report_defaults_to_unsupervised_mvp_queue():
     assert report.status == Phase2TrainingStatus.RUNNING
     assert report.label_summary is not None
     assert report.label_summary.gate_reason == "missing_ground_truth_labels"
-    assert report.metadata["candidate_families"] == ["unsupervised"]
+    assert report.supervised_gate["decision"] == "unavailable"
+    assert report.to_dict()["supervised_gate"]["reason"] == "missing_ground_truth_labels"
+    assert report.metadata["candidate_families"] == [
+        "unsupervised",
+        "timeseries",
+        "relational",
+        "duplicate",
+        "intercompany",
+    ]
     assert report.metadata["phase2_training_mode"] == "unsupervised_autoencoder_mvp"
+    assert report.metadata["feature_metadata"]["rule_input_dim"] == 22
     assert report.metadata["search_preset_count"] >= 2
     assert unsupervised_trials
     assert all(trial.status == Phase2TrainingStatus.PENDING for trial in unsupervised_trials)
-    assert trial_families == {"unsupervised"}
+    assert trial_families == {
+        "unsupervised",
+        "timeseries",
+        "relational",
+        "duplicate",
+        "intercompany",
+    }
 
 
 def test_unsupervised_search_presets_are_mvp_contract():
@@ -456,6 +496,86 @@ def test_unsupervised_split_row_caps_are_deterministic_and_keep_groups_disjoint(
     assert capped_a.metadata["seed"] == 17
 
 
+def test_hold_out_scenarios_are_removed_from_train_and_preserved_in_test_fold():
+    hold_out_docs = [
+        (f"timing-{i:02d}", "unusual_timing_manipulation")
+        for i in range(21)
+    ] + [
+        (f"sod-{i:02d}", "approval_sod_bypass")
+        for i in range(29)
+    ]
+    normal_docs = [(f"normal-{i:02d}", "") for i in range(80)]
+    df = pd.DataFrame(
+        {
+            "document_id": [doc_id for doc_id, _scenario in normal_docs + hold_out_docs],
+            "mutation_type": [scenario for _doc_id, scenario in normal_docs + hold_out_docs],
+            "amount": [float(i) for i in range(130)],
+            "posting_date": pd.date_range("2024-01-01", periods=130, freq="D"),
+        }
+    )
+    settings = SimpleNamespace(
+        phase2_unsup_train_ratio=0.75,
+        phase2_unsup_calibration_rows=5,
+        phase2_train_max_rows=20,
+        phase2_random_seed=19,
+        phase2_split_strategy="group",
+        phase2_split_group_column="document_id",
+        phase2_temporal_column="posting_date",
+    )
+
+    split = _split_unsupervised_train_calibration(
+        df,
+        settings,
+        hold_out_scenarios=DEFAULT_HOLD_OUT_SCENARIOS,
+    )
+    capped = _apply_unsupervised_split_row_caps(split, settings)
+
+    hold_out_set = set(DEFAULT_HOLD_OUT_SCENARIOS)
+    train_hold_out_docs = capped.train_df.loc[
+        capped.train_df["mutation_type"].isin(hold_out_set),
+        "document_id",
+    ].nunique()
+    test_hold_out_docs = capped.calibration_df.loc[
+        capped.calibration_df["mutation_type"].isin(hold_out_set),
+        "document_id",
+    ].nunique()
+
+    assert train_hold_out_docs == 0
+    assert test_hold_out_docs == 50
+    assert capped.metadata["hold_out_doc_count"] == 50
+    assert capped.metadata["hold_out_in_train_rows"] == 0
+    assert capped.metadata["hold_out_in_calibration_rows"] == 50
+    assert capped.metadata["cap_strategy"]["calibration"].endswith("_plus_hold_out")
+
+
+def test_hold_out_metrics_compute_doc_recall_ci_and_pass_flag():
+    df = pd.DataFrame(
+        {
+            "document_id": [f"h{i:02d}" for i in range(50)],
+            "mutation_type": (
+                ["unusual_timing_manipulation"] * 21
+                + ["approval_sod_bypass"] * 29
+            ),
+            "amount": [float(i) for i in range(50)],
+        }
+    )
+    result = _unsupervised_result([0.9 if i < 25 else 0.1 for i in range(50)])
+    result.flagged_indices = list(range(25))
+
+    metrics = build_hold_out_metrics(
+        df,
+        result,
+        hold_out_scenarios=DEFAULT_HOLD_OUT_SCENARIOS,
+    )
+
+    assert metrics["hold_out_doc_count"] == 50
+    assert metrics["hold_out_detected_docs"] == 25
+    assert metrics["hold_out_recall"] == 0.5
+    assert metrics["hold_out_pass"] is True
+    assert round(metrics["ci95"]["half_width"], 2) == 0.14
+    assert "true zero-day fraud type 아님" in metrics["caveat"]
+
+
 def _unsupervised_result(scores, *, warnings=None):
     series = pd.Series(scores, name="ML02")
     threshold = series.quantile(0.80)
@@ -607,17 +727,21 @@ def test_run_phase2_training_no_label_unsupervised_uses_selection_score():
             if trial.status == Phase2TrainingStatus.COMPLETED
         ]
         assert completed
-        assert {trial.metric_name for trial in completed} == {
+        completed_unsupervised = [
+            trial for trial in completed if trial.model_family == "unsupervised"
+        ]
+        assert completed_unsupervised
+        assert {trial.metric_name for trial in completed_unsupervised} == {
             "unsupervised_selection_score"
         }
         assert all(
             "flagged_ratio" in trial.metadata["unsupervised_metric"]["components"]
-            for trial in completed
+            for trial in completed_unsupervised
         )
         assert all(
             trial.metadata["unsupervised_metric"]["metric_interpretation"]
             == "ranking_proxy_not_fraud_accuracy"
-            for trial in completed
+            for trial in completed_unsupervised
         )
     finally:
         shutil.rmtree(root, ignore_errors=True)
@@ -698,9 +822,22 @@ def test_build_phase2_training_report_keeps_default_unsupervised_with_ground_tru
 
     assert report.label_summary is not None
     assert report.label_summary.label_source == "ground_truth"
-    assert report.label_summary.is_supervised_eligible is True
-    assert report.metadata["candidate_families"] == ["unsupervised"]
-    assert trial_families == {"unsupervised"}
+    assert report.label_summary.gate_decision == "low_signal_fallback"
+    assert report.label_summary.is_supervised_eligible is False
+    assert report.metadata["candidate_families"] == [
+        "unsupervised",
+        "timeseries",
+        "relational",
+        "duplicate",
+        "intercompany",
+    ]
+    assert trial_families == {
+        "unsupervised",
+        "timeseries",
+        "relational",
+        "duplicate",
+        "intercompany",
+    }
 
 
 def test_run_phase2_training_uses_prepared_matrix_for_unsupervised_train_and_detect():
@@ -718,6 +855,7 @@ def test_run_phase2_training_uses_prepared_matrix_for_unsupervised_train_and_det
                 "amount": [100.0, -50.0, 25.0, 40.0, 300.0, -10.0],
                 "vendor_name": ["A", "B", "C", "D", "CAL_ONLY", "CAL_ONLY_2"],
                 "tax_amount": [None, None, None, None, 12.5, None],
+                "cost_center": [None, None, None, None, "CC-10", None],
                 "posting_date": pd.to_datetime(
                     [
                         "2024-01-01",
@@ -759,14 +897,15 @@ def test_run_phase2_training_uses_prepared_matrix_for_unsupervised_train_and_det
         assert report.status == Phase2TrainingStatus.COMPLETED
         assert _MatrixCaptureUnsupervised.train_frames
         assert _MatrixCaptureUnsupervised.detect_frames
-        tax_train_frames = [
+        sparse_train_frames = [
             frame
             for frame in _MatrixCaptureUnsupervised.train_frames
-            if "has_tax_amount" in frame.columns
+            if "has_cost_center" in frame.columns
         ]
-        assert tax_train_frames
-        assert all("tax_amount" not in frame.columns for frame in tax_train_frames)
-        assert all("document_id" not in frame.columns for frame in tax_train_frames)
+        assert sparse_train_frames
+        assert all("cost_center" not in frame.columns for frame in sparse_train_frames)
+        assert all("tax_amount" not in frame.columns for frame in sparse_train_frames)
+        assert all("document_id" not in frame.columns for frame in sparse_train_frames)
 
         high_card_frames = [
             frame
@@ -1145,9 +1284,21 @@ def test_run_phase2_training_executes_trials_with_injected_detectors():
 
         assert report.status == Phase2TrainingStatus.COMPLETED
         assert report.label_summary is not None
-        assert report.metadata["candidate_families"] == ["unsupervised"]
+        assert report.metadata["candidate_families"] == [
+            "unsupervised",
+            "timeseries",
+            "relational",
+            "duplicate",
+            "intercompany",
+        ]
         assert report.metadata["phase2_training_mode"] == "test_unsupervised_mvp"
-        assert {trial.model_family for trial in report.leaderboard} == {"unsupervised"}
+        assert {trial.model_family for trial in report.leaderboard} == {
+            "unsupervised",
+            "timeseries",
+            "relational",
+            "duplicate",
+            "intercompany",
+        }
         assert all(trial.artifact_path for trial in report.leaderboard)
         assert report.promoted_models
         assert "best_overall_model" in report.metadata
@@ -1161,6 +1312,15 @@ def test_run_phase2_training_executes_trials_with_injected_detectors():
         assert (
             report.metadata["inference_contract"]["promoted_versions"]["unsupervised"] >= 1
         )
+        assert (
+            report.metadata["inference_contract"]["model_versions"]["unsupervised"][
+                "model_version"
+            ]
+            >= 1
+        )
+        assert "schema_hash" in report.metadata["inference_contract"]["model_versions"][
+            "unsupervised"
+        ]
         assert (
             report.metadata["inference_contract"]["track_map"]["unsupervised"]
             == "ml_unsupervised"
@@ -1193,13 +1353,32 @@ def test_run_phase2_training_executes_trials_with_injected_detectors():
             report.metadata["promotion_policy"]["rule_style_metric_policy"]["metric_name"]
             == "rule_proxy_score"
         )
-        assert report.metadata["sub_detector_summaries"] == {}
-        assert set(report.metadata["family_promotion_decisions"]) == {"unsupervised"}
+        assert set(report.metadata["sub_detector_summaries"]) <= {
+            "timeseries",
+            "relational",
+            "duplicate",
+            "intercompany",
+        }
+        assert set(report.metadata["family_promotion_decisions"]) == {
+            "unsupervised",
+            "timeseries",
+            "relational",
+            "duplicate",
+            "intercompany",
+        }
         case_contract = report.metadata["inference_contract"]["phase1_case_contract"]
         assert case_contract["available"] is False
         assert "top_rule_ids" in case_contract["provenance_only_fields"]
         assert (
             root / "phase2_train" / report.report_id / "reports" / "training_report.json"
+        ).exists()
+        assert (root / "phase2_train" / report.report_id / "reports" / "leaderboard.json").exists()
+        assert (
+            root
+            / "phase2_train"
+            / report.report_id
+            / "reports"
+            / "promotion_decision.json"
         ).exists()
     finally:
         shutil.rmtree(root, ignore_errors=True)

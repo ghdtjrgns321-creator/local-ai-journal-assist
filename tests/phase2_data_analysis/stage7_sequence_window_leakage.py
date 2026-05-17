@@ -9,8 +9,8 @@
     2. seq_len=16, stride=1 윈도우에서 truth 라인이 위치별 0~15 어디에 분포하는지
        (윈도우 라벨 시점 vs 컨텍스트 시점 구분)
     3. GroupKFold(groups=created_by) 분할에서 truth 윈도우의 train/val 비율
-    4. 시간 인접 leakage: val fold 윈도우의 ±15 컨텍스트 시점을 train fold 가
-       본 적이 있는지 (같은 posting_date 기준)
+    4. user-year holdout 적용 후 test truth 시점을 train 이 본 적이 있는지
+       (같은 posting_date 및 ±7일 기준)
 
 출력:
     artifacts/S7_sequence_window_leakage.json
@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from collections import Counter
 from pathlib import Path
 
@@ -27,6 +28,11 @@ import pandas as pd
 from sklearn.model_selection import GroupKFold
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.preprocessing.split_strategy import split_user_year_holdout  # noqa: E402
+
 DATA_ROOT = PROJECT_ROOT / "data" / "journal" / "primary" / "datasynth_manipulation_v3"
 JOURNAL_CSV = DATA_ROOT / "journal_entries.csv"
 TRUTH_CSV = DATA_ROOT / "labels" / "manipulated_entry_truth.csv"
@@ -185,55 +191,49 @@ def compute_group_kfold_split(df: pd.DataFrame, truth_doc_ids: set[str]) -> dict
 
 
 def compute_temporal_context_leakage(df: pd.DataFrame, truth_doc_ids: set[str]) -> dict:
-    """val fold 의 truth window 시점 (±15 컨텍스트) 이 train fold posting_date 와 겹치는지."""
+    """User-year holdout test truth dates that overlap train posting dates."""
     is_truth = df["document_id"].astype(str).isin(truth_doc_ids).to_numpy()
-    user_ids = df["created_by"].to_numpy()
     posting_dates = df["posting_date"].to_numpy()
 
-    gkf = GroupKFold(n_splits=N_SPLITS)
-    dummy_y = np.zeros(len(df), dtype=np.int8)
-
+    split = split_user_year_holdout(df)
     truth_row_idx = np.where(is_truth)[0]
+    train_idx = split.train_idx
+    test_idx = split.test_idx
+    test_set = set(test_idx.tolist())
+    train_dates = pd.Series(posting_dates[train_idx])
+    train_date_set = set(train_dates.unique())
+    test_truth_idx = [i for i in truth_row_idx if i in test_set]
 
-    fold_leakage: dict[int, dict] = {}
-    for fold_i, (train_idx, val_idx) in enumerate(
-        gkf.split(np.zeros(len(df)), dummy_y, groups=user_ids)
-    ):
-        val_set = set(val_idx.tolist())
-        train_dates = pd.Series(posting_dates[train_idx])
-        train_date_set = set(train_dates.unique())
-
-        # val 에 들어간 truth 행만 추출
-        val_truth_idx = [i for i in truth_row_idx if i in val_set]
-
-        if not val_truth_idx:
-            fold_leakage[fold_i] = {
+    if not test_truth_idx:
+        return {
+            split.policy: {
                 "val_truth_rows": 0,
+                "val_unique_truth_dates": 0,
                 "dates_with_train_overlap": 0,
                 "dates_unique_to_val": 0,
                 "ratio_overlap": None,
             }
-            continue
-
-        val_truth_dates = pd.Series(posting_dates[val_truth_idx]).unique()
-        overlap_dates = [d for d in val_truth_dates if d in train_date_set]
-        unique_dates = [d for d in val_truth_dates if d not in train_date_set]
-
-        fold_leakage[fold_i] = {
-            "val_truth_rows": len(val_truth_idx),
-            "val_unique_truth_dates": int(len(val_truth_dates)),
-            "dates_with_train_overlap": int(len(overlap_dates)),
-            "dates_unique_to_val": int(len(unique_dates)),
-            "ratio_overlap": float(len(overlap_dates) / max(len(val_truth_dates), 1)),
         }
 
-    return fold_leakage
+    test_truth_dates = pd.Series(posting_dates[test_truth_idx]).unique()
+    overlap_dates = [d for d in test_truth_dates if d in train_date_set]
+    unique_dates = [d for d in test_truth_dates if d not in train_date_set]
+
+    return {
+        split.policy: {
+            "val_truth_rows": len(test_truth_idx),
+            "val_unique_truth_dates": int(len(test_truth_dates)),
+            "dates_with_train_overlap": int(len(overlap_dates)),
+            "dates_unique_to_val": int(len(unique_dates)),
+            "ratio_overlap": float(len(overlap_dates) / max(len(test_truth_dates), 1)),
+        }
+    }
 
 
 def compute_neighbor_context_leakage(
     df: pd.DataFrame, truth_doc_ids: set[str], window_days: int = 7
 ) -> dict:
-    """val fold truth window 의 시간 ±N일 컨텍스트 행이 train fold 에 존재하는 비율.
+    """User-year holdout test truth rows with train rows within ±N days.
 
     sequence_builder 의 윈도우 길이 (seq_len=16) 는 user 별 순서 기준이지만,
     실제 시간 인접성은 posting_date 기준 ±N일로 측정한다. 16 스텝 윈도우는
@@ -241,51 +241,46 @@ def compute_neighbor_context_leakage(
     추정으로 사용한다.
     """
     is_truth = df["document_id"].astype(str).isin(truth_doc_ids).to_numpy()
-    user_ids = df["created_by"].to_numpy()
     posting_dates = df["posting_date"].to_numpy()
 
-    gkf = GroupKFold(n_splits=N_SPLITS)
-    dummy_y = np.zeros(len(df), dtype=np.int8)
-
+    split = split_user_year_holdout(df)
     truth_row_idx = np.where(is_truth)[0]
+    train_idx = split.train_idx
+    test_idx = split.test_idx
     one_day = np.timedelta64(1, "D")
 
-    fold_neighbor: dict[int, dict] = {}
-    for fold_i, (train_idx, val_idx) in enumerate(
-        gkf.split(np.zeros(len(df)), dummy_y, groups=user_ids)
-    ):
-        train_date_set = set(pd.Series(posting_dates[train_idx]).unique())
-        val_set = set(val_idx.tolist())
-        val_truth_idx = [i for i in truth_row_idx if i in val_set]
+    train_date_set = set(pd.Series(posting_dates[train_idx]).unique())
+    test_set = set(test_idx.tolist())
+    test_truth_idx = [i for i in truth_row_idx if i in test_set]
 
-        if not val_truth_idx:
-            fold_neighbor[fold_i] = {
+    if not test_truth_idx:
+        return {
+            split.policy: {
                 "val_truth_rows": 0,
                 "rows_with_neighbor_in_train": 0,
                 "ratio_neighbor_seen": None,
             }
-            continue
-
-        seen = 0
-        for ti in val_truth_idx:
-            ts = posting_dates[ti]
-            # ±window_days 검사
-            found = False
-            for d in range(-window_days, window_days + 1):
-                cand = ts + d * one_day
-                if cand in train_date_set:
-                    found = True
-                    break
-            if found:
-                seen += 1
-
-        fold_neighbor[fold_i] = {
-            "val_truth_rows": len(val_truth_idx),
-            "rows_with_neighbor_in_train": int(seen),
-            "ratio_neighbor_seen": float(seen / max(len(val_truth_idx), 1)),
         }
 
-    return fold_neighbor
+    seen = 0
+    for ti in test_truth_idx:
+        ts = posting_dates[ti]
+        found = False
+        for d in range(-window_days, window_days + 1):
+            cand = ts + d * one_day
+            if cand in train_date_set:
+                found = True
+                break
+        if found:
+            seen += 1
+
+    return {
+        split.policy: {
+            "val_truth_rows": len(test_truth_idx),
+            "rows_with_neighbor_in_train": int(seen),
+            "ratio_neighbor_seen": float(seen / max(len(test_truth_idx), 1)),
+        }
+    }
 
 
 def main() -> None:
@@ -313,10 +308,10 @@ def main() -> None:
     print("[Stage 7] GroupKFold split distribution...")
     gkf_dist = compute_group_kfold_split(df, truth_doc_ids)
 
-    print("[Stage 7] temporal context leakage (date exact)...")
+    print("[Stage 7] temporal context leakage (date exact, user-year holdout)...")
     temporal = compute_temporal_context_leakage(df, truth_doc_ids)
 
-    print("[Stage 7] neighbor context leakage (±7 days)...")
+    print("[Stage 7] neighbor context leakage (±7 days, user-year holdout)...")
     neighbor = compute_neighbor_context_leakage(df, truth_doc_ids, window_days=7)
 
     # 평균 통계 계산
@@ -368,8 +363,8 @@ def main() -> None:
         "neighbor_window_pm7d_avg": avg_neighbor_seen,
         "verdicts": {
             "same_user_window_both_folds_ge_5pct": same_user_cross_fold_ratio >= 0.05,
-            "temporal_date_overlap_avg_ge_50pct": avg_temporal_overlap >= 0.5,
-            "neighbor_pm7d_avg_ge_50pct": avg_neighbor_seen >= 0.5,
+            "temporal_date_overlap_avg_ge_5pct": avg_temporal_overlap >= 0.05,
+            "neighbor_pm7d_avg_ge_20pct": avg_neighbor_seen >= 0.2,
         },
     }
 

@@ -697,7 +697,7 @@ def test_approval_manual_scope_does_not_create_embezzlement_floor():
 
 
 @pytest.mark.parametrize(
-    ("rule_specs", "blocked_reason"),
+    ("rule_specs", "blocked_reason", "expected_medium_reason"),
     [
         (
             [
@@ -705,6 +705,7 @@ def test_approval_manual_scope_does_not_create_embezzlement_floor():
                 ("L3-02", "control_failure", 3, 0.8, ""),
             ],
             "approval_bypass + manual_adjustment",
+            "approval_bypass + manual_adjustment_context",
         ),
         (
             [
@@ -712,19 +713,31 @@ def test_approval_manual_scope_does_not_create_embezzlement_floor():
                 ("L3-05", "timing_anomaly", 3, 0.6, ""),
             ],
             "approval_bypass + non_business_day_timing",
+            "approval_bypass + non_business_day_context",
+        ),
+        (
+            [
+                ("L1-07", "control_failure", 4, 0.8, ""),
+                ("L3-06", "timing_anomaly", 3, 0.6, ""),
+            ],
+            "approval_bypass + abnormal_time",
+            "approval_bypass + after_hours_context",
         ),
     ],
 )
-def test_approval_bypass_with_manual_or_weekend_context_does_not_create_floor(
+def test_approval_bypass_with_weak_timing_or_manual_context_is_medium_not_high(
     rule_specs,
     blocked_reason,
+    expected_medium_reason,
 ):
     evidences = _topic_evidences(rule_specs)
 
     breakdowns = compute_topic_scores(evidences, return_breakdown=True)
 
+    assert breakdowns["approval_control"].score >= 0.60
     assert breakdowns["approval_control"].score < 0.75
     assert blocked_reason not in breakdowns["approval_control"].fraud_combo_policy_ids
+    assert expected_medium_reason in breakdowns["approval_control"].fraud_combo_policy_ids
 
 
 @pytest.mark.parametrize(

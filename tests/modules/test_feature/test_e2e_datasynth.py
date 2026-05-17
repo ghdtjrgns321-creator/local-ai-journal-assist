@@ -20,6 +20,11 @@ from src.ingest.type_caster import cast_dataframe
 
 DATASYNTH_CSV = Path("data/journal/primary/datasynth/journal_entries.csv")
 
+pytestmark = pytest.mark.skipif(
+    not DATASYNTH_CSV.exists(),
+    reason="plain datasynth fixture not available (intentionally retired)",
+)
+
 # datasynth 1M건에서 반드시 True/False 모두 존재해야 하는 피처
 MUST_HAVE_VARIATION = {"is_weekend", "is_period_end", "is_manual_je", "is_revenue_account"}
 

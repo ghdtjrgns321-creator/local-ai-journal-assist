@@ -6,11 +6,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.detection.base import DetectionResult, RuleFlag
-from src.detection.constants import STACKING_BASE_MODELS, STACKING_FALLBACK_WEIGHTS
+from src.detection.base import DetectionResult
+from src.detection.constants import STACKING_BASE_MODELS
 from src.detection.ensemble_detector import EnsembleDetector
-from src.preprocessing.stacking import StackingEnsemble
-
 
 # ── Fixture ───────────────────────────────────────────────
 
@@ -349,3 +347,33 @@ class TestOOFFallbackPath:
         assert info["n_folds"] == 0
         assert det._is_fallback is True
         assert len(det._fallback_ecdf) > 0
+
+    def test_train_oof_rejects_user_ids_not_matching_created_by(
+        self, full_results, labels_insufficient, df_index,
+    ):
+        from src.preprocessing.label_strategy import LabelResult
+
+        det = EnsembleDetector()
+        label_result = LabelResult(
+            y=labels_insufficient,
+            strategy="test",
+            label_source="manual",
+            positive_rate=float(labels_insufficient.mean()),
+        )
+        X = pd.DataFrame(
+            {
+                "created_by": [f"user_{idx % 3}" for idx in range(100)],
+                "x": np.arange(100),
+            },
+            index=df_index,
+        )
+
+        with pytest.raises(ValueError, match="must match X\\['created_by'\\]"):
+            det.train_oof(
+                X=X,
+                label_result=label_result,
+                user_ids=np.full(100, "not_created_by"),
+                df_index=df_index,
+                non_leakage_results=full_results,
+                groups=None,
+            )

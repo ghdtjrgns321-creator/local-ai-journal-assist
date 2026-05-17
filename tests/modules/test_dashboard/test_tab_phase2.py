@@ -4,6 +4,7 @@ from pathlib import Path
 
 from dashboard import tab_phase2
 from src.metrics.models import PerformanceReport, RuleMetric
+from src.metrics.report_builder import build_markdown_report
 
 
 def test_build_performance_cards_formats_values():
@@ -71,6 +72,32 @@ def test_build_performance_rule_frame_returns_dataframe():
     assert list(df["rule_code"]) == ["L1-01"]
     assert list(df["rule_group"]) == ["L1"]
     assert list(df["precision"]) == ["50.0%"]
+
+
+def test_markdown_report_includes_phase2_hold_out_caveat():
+    report = PerformanceReport(
+        report_id="rep_001",
+        upload_batch_id="batch_001",
+        source_kind="ground_truth",
+        phase_scope="phase2_included",
+        hold_out_metrics={
+            "hold_out_doc_count": 50,
+            "hold_out_detected_docs": 25,
+            "hold_out_recall": 0.5,
+            "hold_out_pass": True,
+            "ci95": {"half_width": 0.14},
+            "caveat": (
+                "n=50, 95% CI ≈ ±0.14, "
+                "시나리오 단위 hold-out (true zero-day fraud type 아님)"
+            ),
+        },
+    )
+
+    markdown = build_markdown_report(report)
+
+    assert "## Phase 2 Hold-out" in markdown
+    assert "n=50, 95% CI ≈ ±0.14" in markdown
+    assert "| Hold-out pass | True |" in markdown
 
 
 def test_build_phase2_provenance_cards_reports_mode_and_contract():

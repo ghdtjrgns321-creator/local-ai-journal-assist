@@ -141,6 +141,40 @@ class TestMLOnly:
         )
         assert result == []
 
+    def test_hold_out_scenario_journal_is_still_available_to_narrator(self, rn_san):
+        metas = {
+            "JE-HOLDOUT": {
+                "batch_id": "B-2026-Q1",
+                "posting_date": "2026-03-31",
+                "period": "2026-03",
+                "process": "R2R",
+                "amount": 50_000_000,
+                "gl_account": "5200",
+                "counterparty": "거래처H",
+                "approver": "승인자H",
+                "description": "hold-out 평가 전표",
+                "mutation_type": "approval_sod_bypass",
+            }
+        }
+        ml_scores = {
+            "JE-HOLDOUT": [
+                {"model_id": "vae_v1", "score": 0.91, "percentile": 0.995, "top_features": []}
+            ]
+        }
+
+        result = build_candidates(
+            phase1_cases=[],
+            journal_metas=metas,
+            ml_scores=ml_scores,
+            peer_contexts={},
+            sanitizer=rn_san,
+        )
+
+        assert [candidate["journal_ref"]["journal_id"] for candidate in result] == [
+            "JE-HOLDOUT"
+        ]
+        assert result[0]["ml_scores"][0]["model_id"] == "vae_v1"
+
 
 # ── (3) 둘 다 히트 ──
 

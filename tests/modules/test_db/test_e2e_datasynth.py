@@ -17,12 +17,18 @@ from src.db.queries import execute_preset
 from src.db.schema import initialize_schema
 
 DATASYNTH_CSV = Path("data/journal/primary/datasynth/journal_entries.csv")
+pytestmark = pytest.mark.skipif(
+    not DATASYNTH_CSV.exists(),
+    reason="plain datasynth fixture not available (intentionally retired)",
+)
 BATCH_ID = "e2e_datasynth"
 
 
 @pytest.fixture(scope="module")
 def e2e_conn():
     """E2E용 in-memory 커넥션 (모듈 스코프)."""
+    if not DATASYNTH_CSV.exists():
+        pytest.skip(f"DataSynth CSV 없음: {DATASYNTH_CSV}")
     conn = duckdb.connect(":memory:")
     initialize_schema(conn)
     yield conn
