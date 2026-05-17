@@ -21,9 +21,26 @@ from src.detection.evidence_rules import (
     ev02_cutoff_violation,
     ev03_amount_mismatch,
 )
+from src.detection.explanation_schema import RuleExplanation
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+
+EVIDENCE_RULE_EXPLANATIONS: dict[str, RuleExplanation] = {
+    "L3-11": RuleExplanation(
+        principle="Revenue and expense recognition should be recorded in the proper period.",
+        violation_reason=(
+            "The posting date differs from delivery, service, or other available cutoff evidence "
+            "beyond the configured window."
+        ),
+        audit_next_action=(
+            "Tie the entry to delivery, acceptance, billing, or service evidence and review "
+            "period-end adjustments or reversals."
+        ),
+        reference="PCAOB AS 2401; ISA 240; ISA 500",
+    ),
+}
 
 
 class EvidenceDetector(BaseDetector):

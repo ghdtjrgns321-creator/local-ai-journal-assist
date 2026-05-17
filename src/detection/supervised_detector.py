@@ -8,6 +8,7 @@ Why: 룰 기반 탐지의 복합 패턴 한계를 ML로 보완.
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
@@ -33,6 +34,34 @@ from src.preprocessing.split_strategy import choose_train_validation_split
 
 _RULE_ID = "ML01"
 _THRESHOLD_VAL_RATIO = 0.2
+
+
+@dataclass(frozen=True)
+class GateDecision:
+    """Structured supervised label gate decision."""
+
+    decision: str
+    reason: str | None
+    label_source: str
+    positive_count: int
+    positive_rate: float
+    quality_grade: str
+    thresholds: dict[str, float | int]
+    warnings: list[str]
+
+    def to_dict(self) -> dict:
+        return {
+            "decision": self.decision,
+            "reason": self.reason,
+            "label_source": self.label_source,
+            "positive_count": self.positive_count,
+            "positive_rate": self.positive_rate,
+            "quality_grade": self.quality_grade,
+            "thresholds": dict(self.thresholds),
+            "warnings": list(self.warnings),
+            "gate_status": _legacy_status_from_decision(self.decision),
+            "gate_reason": self.reason,
+        }
 
 
 class SupervisedGateError(ValueError):
@@ -73,6 +102,7 @@ class SupervisedDetector(BaseDetector):
         groups: FeatureGroups,
     ) -> dict:
         """모델 학습 + CV 비교 + 최적 모델 선택 + 동적 threshold."""
+        split_source = X
         X, groups, feature_quality = prepare_training_features(X, groups)
         gate_snapshot = self._validate_labels(label_result)
         warnings = gate_snapshot["warnings"]
@@ -84,7 +114,7 @@ class SupervisedDetector(BaseDetector):
         y = label_result.y
 
         # Why: threshold 탐색용 hold-out 분리 — train 데이터로 탐색하면 과적합 누수
-        split = choose_train_validation_split(X)
+        split = choose_train_validation_split(split_source)
         X_tr, X_val = X.iloc[split.train_idx], X.iloc[split.test_idx]
         y_tr, y_val = y[split.train_idx], y[split.test_idx]
 
@@ -97,7 +127,12 @@ class SupervisedDetector(BaseDetector):
             pipelines["xgb"].set_params(classifier__scale_pos_weight=neg / pos)
 
         # CV 비교 (train split에서만)
-        cv_result = compare_pipelines(pipelines, X_tr, y_tr)
+        cv_result = compare_pipelines(
+            pipelines,
+            X_tr,
+            y_tr,
+            group_source=split_source.iloc[split.train_idx],
+        )
         best_name = cv_result.best_pipeline_name
         self._logger.info(
             "최적 모델: %s (F1=%.4f)", best_name, cv_result.results[best_name].mean_f1,
@@ -122,6 +157,8 @@ class SupervisedDetector(BaseDetector):
         self._feature_quality_profile = feature_quality.to_dict()
         self._label_gate_snapshot = {
             **gate_snapshot,
+            "decision": "eligible",
+            "reason": None,
             "gate_status": "eligible",
             "gate_reason": None,
         }
@@ -137,6 +174,7 @@ class SupervisedDetector(BaseDetector):
             "n_val": len(X_val),
             "cv_results": cv_result.comparison_table.to_dict(),
             "warnings": warnings,
+            "gate_decision": self._label_gate_snapshot["decision"],
             "gate_status": self._label_gate_snapshot["gate_status"],
             "gate_reason": self._label_gate_snapshot["gate_reason"],
             "label_source": self._label_gate_snapshot["label_source"],
@@ -198,6 +236,7 @@ class SupervisedDetector(BaseDetector):
             label_source=getattr(self, "_label_gate_snapshot", {}).get("label_source", "unknown"),
             positive_count=getattr(self, "_label_gate_snapshot", {}).get("positive_count", 0),
             positive_rate=getattr(self, "_label_gate_snapshot", {}).get("positive_rate", 0.0),
+            gate_decision=getattr(self, "_label_gate_snapshot", {}).get("decision", "unknown"),
             gate_status=getattr(self, "_label_gate_snapshot", {}).get("gate_status", "unknown"),
             gate_reason=getattr(self, "_label_gate_snapshot", {}).get("gate_reason"),
             feature_quality_profile=getattr(self, "_feature_quality_profile", {}),
@@ -237,25 +276,38 @@ class SupervisedDetector(BaseDetector):
         settings = self._settings
         min_positive = int(getattr(settings, "supervised_min_positive", 50))
         min_positive_rate = float(getattr(settings, "supervised_min_positive_rate", 0.01))
-        allowed_sources = set(getattr(settings, "supervised_allowed_label_sources", ["ground_truth"]))
+        allowed_sources = set(
+            getattr(settings, "supervised_allowed_label_sources", ["ground_truth"])
+        )
 
         pos_count = int(label_result.positive_count or int(label_result.y.sum()))
         positive_rate = float(label_result.positive_rate)
         label_source = str(label_result.label_source)
 
-        snapshot = {
-            "label_source": label_source,
-            "positive_count": pos_count,
-            "positive_rate": positive_rate,
-            "label_quality": getattr(label_result, "label_quality", "unknown"),
-            "gate_status": getattr(label_result, "gate_status", "unknown"),
-            "gate_reason": getattr(label_result, "gate_reason", None),
-            "warnings": [],
+        quality_grade = str(
+            getattr(
+                label_result,
+                "quality_grade",
+                getattr(label_result, "label_quality", "unknown"),
+            )
+        )
+        thresholds = {
+            "min_positive_count": min_positive,
+            "min_positive_rate": min_positive_rate,
         }
 
         if label_source not in allowed_sources:
-            snapshot["gate_status"] = "fallback_to_unsupervised"
-            snapshot["gate_reason"] = getattr(label_result, "gate_reason", None) or "untrusted_label_source"
+            snapshot = GateDecision(
+                decision="low_signal_fallback",
+                reason=getattr(label_result, "gate_reason", None)
+                or "untrusted_label_source",
+                label_source=label_source,
+                positive_count=pos_count,
+                positive_rate=positive_rate,
+                quality_grade=quality_grade,
+                thresholds=thresholds,
+                warnings=[],
+            ).to_dict()
             raise SupervisedGateError(snapshot["gate_reason"], snapshot)
         if (
             not getattr(label_result, "is_supervised_eligible", False)
@@ -264,22 +316,67 @@ class SupervisedDetector(BaseDetector):
                 or getattr(label_result, "gate_reason", None) is not None
             )
         ):
-            snapshot["gate_status"] = getattr(label_result, "gate_status", "fallback_to_unsupervised")
-            snapshot["gate_reason"] = getattr(label_result, "gate_reason", None) or "ineligible_label_source"
+            snapshot = GateDecision(
+                decision=str(
+                    getattr(label_result, "gate_decision", "low_signal_fallback")
+                    or "low_signal_fallback"
+                ),
+                reason=getattr(label_result, "gate_reason", None)
+                or "ineligible_label_source",
+                label_source=label_source,
+                positive_count=pos_count,
+                positive_rate=positive_rate,
+                quality_grade=quality_grade,
+                thresholds=thresholds,
+                warnings=[],
+            ).to_dict()
             raise SupervisedGateError(snapshot["gate_reason"], snapshot)
         if pos_count == 0:
-            snapshot["gate_status"] = "blocked"
-            snapshot["gate_reason"] = "no_positive_labels"
+            snapshot = GateDecision(
+                decision="hard_fail",
+                reason="no_positive_labels",
+                label_source=label_source,
+                positive_count=pos_count,
+                positive_rate=positive_rate,
+                quality_grade=quality_grade,
+                thresholds=thresholds,
+                warnings=[],
+            ).to_dict()
             raise SupervisedGateError(snapshot["gate_reason"], snapshot)
         if pos_count < min_positive:
-            snapshot["gate_status"] = "blocked"
-            snapshot["gate_reason"] = "insufficient_positive_count"
+            snapshot = GateDecision(
+                decision="low_signal_fallback",
+                reason="insufficient_positive_count",
+                label_source=label_source,
+                positive_count=pos_count,
+                positive_rate=positive_rate,
+                quality_grade=quality_grade,
+                thresholds=thresholds,
+                warnings=[],
+            ).to_dict()
             raise SupervisedGateError(snapshot["gate_reason"], snapshot)
         if positive_rate < min_positive_rate:
-            snapshot["gate_status"] = "blocked"
-            snapshot["gate_reason"] = "low_positive_rate"
+            snapshot = GateDecision(
+                decision="low_signal_fallback",
+                reason="low_positive_rate",
+                label_source=label_source,
+                positive_count=pos_count,
+                positive_rate=positive_rate,
+                quality_grade=quality_grade,
+                thresholds=thresholds,
+                warnings=[],
+            ).to_dict()
             raise SupervisedGateError(snapshot["gate_reason"], snapshot)
-        return snapshot
+        return GateDecision(
+            decision="eligible",
+            reason=None,
+            label_source=label_source,
+            positive_count=pos_count,
+            positive_rate=positive_rate,
+            quality_grade=quality_grade if quality_grade != "unknown" else "trusted",
+            thresholds=thresholds,
+            warnings=[],
+        ).to_dict()
 
     def get_training_gate_snapshot(self) -> dict:
         """Return saved or loaded gate metadata for UI/pipeline status decisions."""
@@ -291,13 +388,22 @@ class SupervisedDetector(BaseDetector):
                 "label_source": "unknown",
                 "positive_count": 0,
                 "positive_rate": 0.0,
+                "decision": "unavailable",
                 "gate_status": "unknown",
                 "gate_reason": "unknown_training_gate",
             }
+        decision = getattr(meta, "gate_decision", None) or getattr(
+            meta,
+            "gate_status",
+            "unknown",
+        )
+        if decision not in {"eligible", "low_signal_fallback", "hard_fail", "unavailable"}:
+            decision = _decision_from_legacy_status(str(decision))
         return {
             "label_source": getattr(meta, "label_source", "unknown"),
             "positive_count": int(getattr(meta, "positive_count", 0)),
             "positive_rate": float(getattr(meta, "positive_rate", 0.0)),
+            "decision": decision,
             "gate_status": str(getattr(meta, "gate_status", "unknown")),
             "gate_reason": getattr(meta, "gate_reason", None),
             "evaluation_confidence": getattr(meta, "evaluation_confidence", "unknown"),
@@ -325,4 +431,24 @@ def _evaluation_confidence(split_policy: str) -> str:
         return "benchmark"
     if split_policy == "document_group_holdout":
         return "development_only"
+    return "unknown"
+
+
+def _legacy_status_from_decision(decision: str) -> str:
+    if decision == "eligible":
+        return "eligible"
+    if decision == "hard_fail":
+        return "blocked"
+    if decision in {"low_signal_fallback", "unavailable"}:
+        return "fallback_to_unsupervised"
+    return "unknown"
+
+
+def _decision_from_legacy_status(status: str) -> str:
+    if status == "eligible":
+        return "eligible"
+    if status == "blocked":
+        return "hard_fail"
+    if status == "fallback_to_unsupervised":
+        return "low_signal_fallback"
     return "unknown"

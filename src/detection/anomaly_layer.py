@@ -29,6 +29,7 @@ from src.detection.anomaly_rules_simple import (
 from src.detection.anomaly_rules_statistical import c09_rare_account_pair
 from src.detection.base import BaseDetector, validate_input
 from src.detection.constants import SEVERITY_MAP
+from src.detection.explanation_schema import RuleExplanation
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -37,6 +38,114 @@ if TYPE_CHECKING:
 
 # Why: 최소한 금액 컬럼은 있어야 L1-L4 anomaly-rule track 실행 의미가 있음
 _REQUIRED_COLUMNS = ["debit_amount", "credit_amount"]
+
+ANOMALY_RULE_EXPLANATIONS: dict[str, RuleExplanation] = {
+    "L3-04": RuleExplanation(
+        principle="Period-end postings should be supported by clear cutoff rationale.",
+        violation_reason=(
+            "The entry occurs near period end or period start with review-relevant context."
+        ),
+        audit_next_action=(
+            "Inspect cutoff support, manual source, amount size, and sensitive-account context."
+        ),
+        reference="PCAOB AS 2401; ISA 240",
+    ),
+    "L3-05": RuleExplanation(
+        principle="Non-business-day postings are timing context for audit review.",
+        violation_reason="The entry was posted on a weekend or holiday.",
+        audit_next_action=(
+            "Confirm whether the posting source, schedule, and approval are expected."
+        ),
+        reference="PCAOB AS 2401; ISA 240",
+    ),
+    "L3-06": RuleExplanation(
+        principle="After-hours postings require context before relying on automated controls.",
+        violation_reason="The entry was posted outside configured business hours.",
+        audit_next_action=(
+            "Review source system, user role, and whether the timing was routine or exceptional."
+        ),
+        reference="PCAOB AS 2401; ISA 240",
+    ),
+    "L3-07": RuleExplanation(
+        principle=(
+            "Posting date and document date should align with the recorded accounting period."
+        ),
+        violation_reason="The date gap exceeds the configured threshold.",
+        audit_next_action=(
+            "Inspect source document date, posting rationale, and subsequent adjustment evidence."
+        ),
+        reference="PCAOB AS 1105; ISA 240",
+    ),
+    "L1-08": RuleExplanation(
+        principle="Fiscal period should agree with posting date policy.",
+        violation_reason="The fiscal period or year does not match the posting date expectation.",
+        audit_next_action=(
+            "Confirm period assignment, closing calendar, and whether a reclassification is needed."
+        ),
+        reference="PCAOB AS 1105; ISA 240",
+    ),
+    "L3-08": RuleExplanation(
+        principle="Narrative descriptions should provide enough context for audit review.",
+        violation_reason="The line or header description is missing, weak, or corrupted.",
+        audit_next_action=(
+            "Inspect source support and combine with amount, timing, account, or approval signals."
+        ),
+        reference="PCAOB AS 1105; ISA 500",
+    ),
+    "L4-03": RuleExplanation(
+        principle="Unusual amounts should be evaluated against the relevant population.",
+        violation_reason=(
+            "The amount is a statistical outlier under the configured population model."
+        ),
+        audit_next_action=(
+            "Inspect supporting documents and compare peer transactions in the same "
+            "account/process."
+        ),
+        reference="ISA 520; PCAOB AS 2305",
+    ),
+    "L4-04": RuleExplanation(
+        principle="Rare account pairings can indicate unusual transaction substance.",
+        violation_reason="The debit-credit account pair is rare in the current population.",
+        audit_next_action="Review the business rationale and corroborate with source evidence.",
+        reference="PCAOB AS 1105; ISA 240",
+    ),
+    "L3-09": RuleExplanation(
+        principle="Suspense or clearing items should be resolved timely.",
+        violation_reason="A suspense-account item remains unresolved beyond the aging threshold.",
+        audit_next_action=(
+            "Inspect reconciliation status, subsequent clearing, and responsible owner evidence."
+        ),
+        reference="PCAOB AS 1105; ISA 330",
+    ),
+    "L2-05": RuleExplanation(
+        principle="Reversals and offsets should have a valid accounting rationale.",
+        violation_reason=(
+            "The entry matches reversal, offset, or clearing patterns requiring review."
+        ),
+        audit_next_action=(
+            "Trace the original entry, reversal timing, and supporting approval evidence."
+        ),
+        reference="PCAOB AS 2401; ISA 240",
+    ),
+    "L4-05": RuleExplanation(
+        principle="Unusual user timing patterns are corroborating context for audit review.",
+        violation_reason="The user or timing cluster is statistically unusual.",
+        audit_next_action=(
+            "Assess whether the pattern is expected, automated, or linked to other rule hits."
+        ),
+        reference="PCAOB AS 2401; ISA 240",
+    ),
+    "L4-06": RuleExplanation(
+        principle=(
+            "Batch postings should be evaluated as population context before row-level conclusion."
+        ),
+        violation_reason="The posting pattern appears batch-like or unusually concentrated.",
+        audit_next_action=(
+            "Confirm interface schedule, batch owner, and overlap with cutoff or amount signals."
+        ),
+        reference="PCAOB AS 1105; ISA 330",
+    ),
+}
 
 
 class AnomalyDetector(BaseDetector):
@@ -49,6 +158,7 @@ class AnomalyDetector(BaseDetector):
         super().__init__(settings)
         if audit_rules is None:
             from config.settings import get_audit_rules
+
             audit_rules = get_audit_rules()
         self._audit_rules = audit_rules
 
@@ -104,49 +214,77 @@ class AnomalyDetector(BaseDetector):
         s = self._settings
         patterns = self._audit_rules.get("patterns", {})
         return [
-            ("L3-04", c01_period_end_large, {
-                "quantile": s.period_end_amount_quantile,
-                "min_group_size": s.c01_min_group_size,
-                "whitelist_patterns": patterns.get("period_end_whitelist", []),
-            }),
+            (
+                "L3-04",
+                c01_period_end_large,
+                {
+                    "quantile": s.period_end_amount_quantile,
+                    "min_group_size": s.c01_min_group_size,
+                    "whitelist_patterns": patterns.get("period_end_whitelist", []),
+                },
+            ),
             ("L3-05", c02_weekend_entry, {}),
             ("L3-06", c03_after_hours_entry, {}),
             ("L3-07", c04_backdated_entry, {"threshold_days": s.backdated_threshold_days}),
-            ("L1-08", c05_fiscal_period_mismatch, {
-                "policy": patterns.get("fiscal_period_mismatch_policy", {}),
-            }),
+            (
+                "L1-08",
+                c05_fiscal_period_mismatch,
+                {
+                    "policy": patterns.get("fiscal_period_mismatch_policy", {}),
+                },
+            ),
             ("L3-08", c06_missing_or_corrupted_description, {}),
             # L4-02(Benford)은 BenfordDetector 독립 트랙으로 분리
-            ("L4-03", c08_amount_outlier, {
-                "zscore_threshold": s.zscore_threshold,
-                "min_amount_quantile": s.l403_min_amount_quantile,
-            }),
+            (
+                "L4-03",
+                c08_amount_outlier,
+                {
+                    "zscore_threshold": s.zscore_threshold,
+                    "min_amount_quantile": s.l403_min_amount_quantile,
+                },
+            ),
             ("L4-04", c09_rare_account_pair, {"percentile": s.account_pair_rare_percentile}),
-            ("L3-09", c10_suspense_account, {
-                "threshold_days": s.suspense_aging_days,
-                "min_open_amount": s.suspense_min_open_amount,
-            }),
-            ("L2-05", c11_reversal_entry, {
-                "match_window_days": s.reversal_match_window_days,
-                "rolling_window_days": s.reversal_rolling_window_days,
-                "zero_threshold": s.reversal_zero_threshold,
-                "score_threshold": s.reversal_score_threshold,
-            }),
-            ("L4-05", c12_abnormal_hours_concentration, {
-                "sigma_threshold": s.abnormal_sigma_threshold,
-                "rapid_approval_minutes": s.rapid_approval_minutes,
-                "min_abnormal_ratio": s.min_abnormal_ratio,
-                "min_midnight_entries": s.min_midnight_entries,
-                "min_user_entries": s.min_user_entries,
-                "min_high_context_midnight_entries": s.min_high_context_midnight_entries,
-                "auto_entry_sources": s.auto_entry_sources,
-            }),
-            ("L4-06", c13_batch_anomaly, {
-                "batch_sources": s.batch_source_values,
-                "period_end_ratio": s.batch_period_end_ratio,
-                "simultaneous_threshold": s.batch_simultaneous_threshold,
-                "amount_zscore": s.batch_amount_zscore,
-            }),
+            (
+                "L3-09",
+                c10_suspense_account,
+                {
+                    "threshold_days": s.suspense_aging_days,
+                    "min_open_amount": s.suspense_min_open_amount,
+                },
+            ),
+            (
+                "L2-05",
+                c11_reversal_entry,
+                {
+                    "match_window_days": s.reversal_match_window_days,
+                    "rolling_window_days": s.reversal_rolling_window_days,
+                    "zero_threshold": s.reversal_zero_threshold,
+                    "score_threshold": s.reversal_score_threshold,
+                },
+            ),
+            (
+                "L4-05",
+                c12_abnormal_hours_concentration,
+                {
+                    "sigma_threshold": s.abnormal_sigma_threshold,
+                    "rapid_approval_minutes": s.rapid_approval_minutes,
+                    "min_abnormal_ratio": s.min_abnormal_ratio,
+                    "min_midnight_entries": s.min_midnight_entries,
+                    "min_user_entries": s.min_user_entries,
+                    "min_high_context_midnight_entries": s.min_high_context_midnight_entries,
+                    "auto_entry_sources": s.auto_entry_sources,
+                },
+            ),
+            (
+                "L4-06",
+                c13_batch_anomaly,
+                {
+                    "batch_sources": s.batch_source_values,
+                    "period_end_ratio": s.batch_period_end_ratio,
+                    "simultaneous_threshold": s.batch_simultaneous_threshold,
+                    "amount_zscore": s.batch_amount_zscore,
+                },
+            ),
         ]
 
     def _build_result(
@@ -183,9 +321,7 @@ class AnomalyDetector(BaseDetector):
             if breakdown:
                 rule_breakdowns[rule_id] = breakdown
             annotations = (
-                flagged.attrs.get("row_annotations")
-                if hasattr(flagged, "attrs")
-                else None
+                flagged.attrs.get("row_annotations") if hasattr(flagged, "attrs") else None
             )
             if annotations:
                 row_annotations[rule_id] = annotations
@@ -236,9 +372,7 @@ class AnomalyDetector(BaseDetector):
     ) -> pd.Series:
         """Apply sensitive-account priority bonus without creating new L3-04 flags."""
         score = (
-            base_score.copy()
-            if base_score is not None
-            else flagged.astype(float) * severity_score
+            base_score.copy() if base_score is not None else flagged.astype(float) * severity_score
         )
         patterns = self._audit_rules.get("patterns", {})
         sensitive = c01_period_end_sensitive_account(

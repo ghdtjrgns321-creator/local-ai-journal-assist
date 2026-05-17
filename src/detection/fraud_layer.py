@@ -9,6 +9,7 @@ import pandas as pd
 
 from src.detection.base import BaseDetector, validate_input
 from src.detection.constants import SEVERITY_MAP
+from src.detection.explanation_schema import RuleExplanation
 from src.detection.fraud_rules_access import (
     b06_self_approval,
     b07_segregation_of_duties,
@@ -49,6 +50,133 @@ _L2_02_PARTNER_COLUMNS = (
     "counterparty_code",
     "counterparty_name",
 )
+
+FRAUD_RULE_EXPLANATIONS: dict[str, RuleExplanation] = {
+    "L4-01": RuleExplanation(
+        principle="Revenue postings should be supported by population-consistent evidence.",
+        violation_reason="The revenue amount is an outlier within its peer distribution.",
+        audit_next_action=(
+            "Inspect revenue support, cutoff evidence, approval, and reversal activity."
+        ),
+        reference="PCAOB AS 2401; ISA 240; ISA 520",
+    ),
+    "L2-01": RuleExplanation(
+        principle="Approval controls should not be circumvented by near-threshold structuring.",
+        violation_reason="The amount falls close to an approval threshold or review boundary.",
+        audit_next_action=(
+            "Compare related entries, approver authority, and split-pattern evidence."
+        ),
+        reference="PCAOB AS 2401; ISA 240",
+    ),
+    "L1-04": RuleExplanation(
+        principle="Transactions should remain within delegated approval authority.",
+        violation_reason="The amount exceeds the configured approval limit or approver authority.",
+        audit_next_action="Obtain approval matrix evidence and confirm post-approval remediation.",
+        reference="PCAOB AS 1105; ISA 330",
+    ),
+    "L2-02": RuleExplanation(
+        principle="Cash outflows should not duplicate the same obligation.",
+        violation_reason=(
+            "The entry resembles another payment by amount, date, and counterparty evidence."
+        ),
+        audit_next_action=(
+            "Match invoice, vendor, reference, and payment evidence for duplicate settlement."
+        ),
+        reference="PCAOB AS 2401; ISA 240",
+    ),
+    "L2-03": RuleExplanation(
+        principle="Duplicate documents and split postings require consolidated review.",
+        violation_reason=(
+            "The document matches exact, fuzzy, split, or sequential duplicate patterns."
+        ),
+        audit_next_action=(
+            "Review duplicate groups and verify whether each posting has distinct support."
+        ),
+        reference="PCAOB AS 1105; ISA 240",
+    ),
+    "L1-05": RuleExplanation(
+        principle="Preparation and approval duties should be separated.",
+        violation_reason="The same user appears as creator and approver for the entry.",
+        audit_next_action=(
+            "Inspect workflow logs and determine whether a compensating review occurred."
+        ),
+        reference="PCAOB AS 2401; ISA 240; ISA 330",
+    ),
+    "L1-06": RuleExplanation(
+        principle="Segregation-of-duties conflicts should be resolved before posting reliance.",
+        violation_reason="The user/process combination matches a configured SoD conflict.",
+        audit_next_action=(
+            "Confirm access roles, exception approvals, and compensating control evidence."
+        ),
+        reference="PCAOB AS 2401; ISA 330",
+    ),
+    "L3-02": RuleExplanation(
+        principle="Manual journal entries require heightened audit attention.",
+        violation_reason="The source or document context indicates a manual or adjustment entry.",
+        audit_next_action="Inspect preparer rationale, approval trail, and period-end context.",
+        reference="PCAOB AS 2401; ISA 240",
+    ),
+    "L1-07": RuleExplanation(
+        principle="Approval workflow should not be bypassed or left unresolved.",
+        violation_reason=(
+            "Approval evidence is missing, bypassed, or inconsistent with workflow policy."
+        ),
+        audit_next_action=(
+            "Trace workflow status and confirm authorized review before relying on the entry."
+        ),
+        reference="PCAOB AS 1105; ISA 330",
+    ),
+    "L1-09": RuleExplanation(
+        principle="Approval traces should include timing evidence.",
+        violation_reason="Approval date or equivalent approval trace is missing.",
+        audit_next_action=(
+            "Reconcile approval logs to the posting and assess whether evidence is incomplete."
+        ),
+        reference="PCAOB AS 1105; ISA 500",
+    ),
+    "L3-10": RuleExplanation(
+        principle=(
+            "Sensitive accounts should be reviewed with account-specific professional skepticism."
+        ),
+        violation_reason="The entry touches a configured sensitive or high-risk account.",
+        audit_next_action=(
+            "Inspect account purpose, supporting evidence, approver, and related entries."
+        ),
+        reference="PCAOB AS 2401; ISA 240",
+    ),
+    "L3-12": RuleExplanation(
+        principle=(
+            "Broad user activity across processes is a review context, not a standalone finding."
+        ),
+        violation_reason=(
+            "One user is concentrated across multiple processes, companies, or account scopes."
+        ),
+        audit_next_action=(
+            "Assess role design and compensating controls, especially when other rules also hit."
+        ),
+        reference="PCAOB AS 315; ISA 330",
+    ),
+    "L3-03": RuleExplanation(
+        principle="Intercompany and related-party activity requires clear counterparty support.",
+        violation_reason="The entry contains intercompany or related-party indicators.",
+        audit_next_action=(
+            "Reconcile counterparty evidence and attach sidecar matching results when available."
+        ),
+        reference="PCAOB AS 2410; ISA 550",
+    ),
+    "L2-04": RuleExplanation(
+        principle=(
+            "Expense and asset classification should reflect the substance of the transaction."
+        ),
+        violation_reason=(
+            "The account, process, or amount pattern indicates possible misclassification."
+        ),
+        audit_next_action=(
+            "Inspect capitalization policy, invoice substance, and period classification."
+        ),
+        reference="PCAOB AS 1105; ISA 240",
+    ),
+}
 
 
 def _populated_mask(series: pd.Series) -> pd.Series:

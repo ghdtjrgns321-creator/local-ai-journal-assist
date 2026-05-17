@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 from sklearn.exceptions import NotFittedError
 from sklearn.metrics import f1_score
+
 from src.detection.base import BaseDetector, DetectionResult
 from src.preprocessing.data_stats import (
     compute_class_imbalance,
@@ -58,6 +59,7 @@ class TransformerDetector(BaseDetector):
         groups: FeatureGroups,
     ) -> dict:
         """FT-Transformer 학습 + 동적 threshold 탐색."""
+        split_source = X
         X, groups, feature_quality = prepare_training_features(X, groups)
         warnings = self._validate_labels(label_result)
         if feature_quality.sparse_dropped_columns:
@@ -67,7 +69,7 @@ class TransformerDetector(BaseDetector):
             ]
         y = label_result.y
 
-        split = choose_train_validation_split(X)
+        split = choose_train_validation_split(split_source)
         X_tr, X_val = X.iloc[split.train_idx], X.iloc[split.test_idx]
         y_tr, y_val = y[split.train_idx], y[split.test_idx]
 

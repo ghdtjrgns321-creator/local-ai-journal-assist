@@ -13,6 +13,7 @@ import pandas as pd
 
 from src.detection.base import BaseDetector, validate_input
 from src.detection.constants import SEVERITY_MAP
+from src.detection.explanation_schema import RuleExplanation
 from src.detection.prior_data_loader import PriorSummary
 from src.detection.variance_rules import (
     _lookup_prior_account,
@@ -29,6 +30,33 @@ if TYPE_CHECKING:
 # Why: 최소한 금액 + 계정 컬럼은 있어야 Layer D 실행 의미가 있음
 _REQUIRED_COLUMNS = ["debit_amount", "credit_amount", "gl_account"]
 _D01_ROW_SCORE = 0.0
+
+VARIANCE_RULE_EXPLANATIONS: dict[str, RuleExplanation] = {
+    "D01": RuleExplanation(
+        principle="Analytical review should identify unusual account activity changes.",
+        violation_reason=(
+            "Current account activity differs materially from the prior-period account baseline."
+        ),
+        audit_next_action=(
+            "Review account-level business events, compare supporting schedules, and prioritize "
+            "overlapping row-level rule hits."
+        ),
+        reference="ISA 520; PCAOB AS 2305",
+    ),
+    "D02": RuleExplanation(
+        principle=(
+            "Monthly account patterns should be evaluated for unexplained distribution shifts."
+        ),
+        violation_reason=(
+            "The current monthly distribution differs from prior-period monthly patterns."
+        ),
+        audit_next_action=(
+            "Inspect monthly drivers, closing entries, recurring batches, and related "
+            "row-level signals."
+        ),
+        reference="ISA 520; PCAOB AS 2305",
+    ),
+}
 
 
 class VarianceDetector(BaseDetector):
@@ -98,10 +126,14 @@ class VarianceDetector(BaseDetector):
         """룰 레지스트리: (rule_id, callable, kwargs)."""
         s = self._settings
         registry: list[tuple[str, Callable, dict]] = [
-            ("D01", d01_account_activity_variance, {
-                "prior_aggregates": self._prior.account_aggregates,
-                "variance_threshold": s.variance_threshold,
-            }),
+            (
+                "D01",
+                d01_account_activity_variance,
+                {
+                    "prior_aggregates": self._prior.account_aggregates,
+                    "variance_threshold": s.variance_threshold,
+                },
+            ),
         ]
 
         # Why: fiscal_period 누락 시 d02 내부에서 조기 반환 처리.
@@ -145,9 +177,7 @@ class VarianceDetector(BaseDetector):
 
         d01_flags = rule_results.get("D01")
         d01_summary = (
-            self._build_d01_account_summary(df, d01_flags)
-            if d01_flags is not None
-            else []
+            self._build_d01_account_summary(df, d01_flags) if d01_flags is not None else []
         )
         d01_review_rows = int(d01_flags.sum()) if d01_flags is not None else 0
         d02_diagnostics_rows = self._build_d02_account_diagnostics(d02_diagnostics)
@@ -230,20 +260,22 @@ class VarianceDetector(BaseDetector):
             if has_company_code:
                 common["company_code"] = _normalise_key_part(company_code)
             if prior is None:
-                rows.append({
-                    **common,
-                    "reason": "new_account",
-                    "current_total_amount": float(current["total_amount"]),
-                    "current_count": int(current["count"]),
-                    "current_avg_amount": float(current["avg_amount"]),
-                    "prior_total_amount": None,
-                    "prior_count": None,
-                    "prior_avg_amount": None,
-                    "total_var": None,
-                    "count_var": None,
-                    "avg_var": None,
-                    "weighted_variance": 1.0,
-                })
+                rows.append(
+                    {
+                        **common,
+                        "reason": "new_account",
+                        "current_total_amount": float(current["total_amount"]),
+                        "current_count": int(current["count"]),
+                        "current_avg_amount": float(current["avg_amount"]),
+                        "prior_total_amount": None,
+                        "prior_count": None,
+                        "prior_avg_amount": None,
+                        "total_var": None,
+                        "count_var": None,
+                        "avg_var": None,
+                        "weighted_variance": 1.0,
+                    }
+                )
                 continue
 
             total_var = abs(current["total_amount"] - prior["total_amount"]) / max(
@@ -254,20 +286,22 @@ class VarianceDetector(BaseDetector):
                 prior["avg_amount"], 1.0
             )
             weighted = total_var * 0.5 + count_var * 0.3 + avg_var * 0.2
-            rows.append({
-                **common,
-                "reason": "activity_variance",
-                "current_total_amount": float(current["total_amount"]),
-                "current_count": int(current["count"]),
-                "current_avg_amount": float(current["avg_amount"]),
-                "prior_total_amount": float(prior["total_amount"]),
-                "prior_count": int(prior["count"]),
-                "prior_avg_amount": float(prior["avg_amount"]),
-                "total_var": float(total_var),
-                "count_var": float(count_var),
-                "avg_var": float(avg_var),
-                "weighted_variance": float(weighted),
-            })
+            rows.append(
+                {
+                    **common,
+                    "reason": "activity_variance",
+                    "current_total_amount": float(current["total_amount"]),
+                    "current_count": int(current["count"]),
+                    "current_avg_amount": float(current["avg_amount"]),
+                    "prior_total_amount": float(prior["total_amount"]),
+                    "prior_count": int(prior["count"]),
+                    "prior_avg_amount": float(prior["avg_amount"]),
+                    "total_var": float(total_var),
+                    "count_var": float(count_var),
+                    "avg_var": float(avg_var),
+                    "weighted_variance": float(weighted),
+                }
+            )
 
         rows.sort(key=lambda item: float(item["weighted_variance"]), reverse=True)
         return rows

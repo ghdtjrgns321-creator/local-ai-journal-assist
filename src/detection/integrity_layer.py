@@ -15,6 +15,7 @@ import pandas as pd
 from config.settings import AuditSettings, get_schema
 from src.detection.base import BaseDetector, DetectionResult, validate_input
 from src.detection.constants import SEVERITY_MAP
+from src.detection.explanation_schema import RuleExplanation
 
 _INTEGERISH_ACCOUNT_RE = re.compile(r"^[+-]?\d+\.0+$")
 
@@ -33,6 +34,53 @@ _L102_FIELD_SCORES: dict[str, float] = {
 _L102_DEFAULT_FIELD_SCORE = 0.40
 _L102_MULTI_MISSING_STEP = 0.06
 _L102_MAX_SCORE = 0.90
+
+INTEGRITY_RULE_EXPLANATIONS: dict[str, RuleExplanation] = {
+    "L1-01": RuleExplanation(
+        principle="Journal entries should preserve debit and credit balance by document.",
+        violation_reason=(
+            "The document-level debit and credit totals differ beyond the configured "
+            "rounding tolerance."
+        ),
+        audit_next_action=(
+            "Recalculate the entry, inspect correction or reversal evidence, and confirm "
+            "whether the imbalance is a posting error or permitted rounding difference."
+        ),
+        reference="PCAOB AS 1105; ISA 240",
+    ),
+    "L1-02": RuleExplanation(
+        principle="Required ledger fields must be complete enough to support audit evidence.",
+        violation_reason="One or more required source fields are null or blank on the row.",
+        audit_next_action=(
+            "Trace the missing field to source documentation or system logs and decide "
+            "whether downstream rule results are evidence-limited."
+        ),
+        reference="PCAOB AS 1105; ISA 500",
+    ),
+    "L1-03": RuleExplanation(
+        principle="Posted accounts should be valid under the chart of accounts.",
+        violation_reason=(
+            "The posted account is absent from, malformed against, or reserved in the CoA."
+        ),
+        audit_next_action=(
+            "Confirm the account against the approved CoA, investigate mapping changes, "
+            "and inspect high-amount or manual context first."
+        ),
+        reference="PCAOB AS 1105; ISA 315",
+    ),
+    "L3-01": RuleExplanation(
+        principle="Account use should be consistent with the business process being recorded.",
+        violation_reason=(
+            "The account family or configured account rule does not match the recorded "
+            "business process."
+        ),
+        audit_next_action=(
+            "Review the process/account mapping, inspect supporting text and source "
+            "evidence, and confirm whether classification is appropriate."
+        ),
+        reference="PCAOB AS 1105; ISA 240",
+    ),
+}
 
 
 def _normalize_account_code(value: object) -> str:
@@ -104,6 +152,7 @@ class IntegrityDetector(BaseDetector):
         if not path:
             return None
         from pathlib import Path
+
         p = Path(path)
         if not p.exists():
             self._logger.warning("CoA 파일 미존재: %s — L1-03 skip", path)
@@ -118,8 +167,7 @@ class IntegrityDetector(BaseDetector):
                 return {
                     code
                     for code in (
-                        _normalize_account_code(line)
-                        for line in p.read_text().splitlines()
+                        _normalize_account_code(line) for line in p.read_text().splitlines()
                     )
                     if code
                 }
@@ -296,9 +344,16 @@ class IntegrityDetector(BaseDetector):
         except Exception as e:
             self._logger.warning("schema.yaml 로드 실패: %s — 기본 필수 컬럼 사용", e)
             required_cols = [
-                "document_id", "company_code", "fiscal_year",
-                "fiscal_period", "posting_date", "document_date", "gl_account",
-                "debit_amount", "credit_amount", "document_type",
+                "document_id",
+                "company_code",
+                "fiscal_year",
+                "fiscal_period",
+                "posting_date",
+                "document_date",
+                "gl_account",
+                "debit_amount",
+                "credit_amount",
+                "document_type",
             ]
 
         check_cols = [c for c in required_cols if c in df.columns]
@@ -317,8 +372,7 @@ class IntegrityDetector(BaseDetector):
         for idx in df.index[flagged_mask]:
             missing_fields = [col for col in check_cols if bool(missing_matrix.at[idx, col])]
             field_scores = [
-                _L102_FIELD_SCORES.get(col, _L102_DEFAULT_FIELD_SCORE)
-                for col in missing_fields
+                _L102_FIELD_SCORES.get(col, _L102_DEFAULT_FIELD_SCORE) for col in missing_fields
             ]
             base_score = max(field_scores)
             score = min(
@@ -337,9 +391,7 @@ class IntegrityDetector(BaseDetector):
         result.attrs["score_series"] = score_series
         result.attrs["breakdown"] = {
             "flagged_rows": int(flagged_mask.sum()),
-            "missing_field_counts": {
-                col: int(missing_matrix[col].sum()) for col in check_cols
-            },
+            "missing_field_counts": {col: int(missing_matrix[col].sum()) for col in check_cols},
             "score_bands": {
                 "low": int((score_series.gt(0.0) & score_series.lt(0.50)).sum()),
                 "medium": int((score_series.ge(0.50) & score_series.lt(0.70)).sum()),
@@ -512,12 +564,14 @@ class IntegrityDetector(BaseDetector):
             "reason_counts": reason_counts,
         }
         if "document_id" in df.columns:
-            breakdown.update({
-                "exact_denied_docs": _nunique_documents(df, exact_mask),
-                "category_mismatch_docs": _nunique_documents(df, category_mask),
-                "strict_allowed_mismatch_docs": _nunique_documents(df, strict_mask),
-                "keyword_suppressed_docs": _nunique_documents(df, keyword_suppressed),
-            })
+            breakdown.update(
+                {
+                    "exact_denied_docs": _nunique_documents(df, exact_mask),
+                    "category_mismatch_docs": _nunique_documents(df, category_mask),
+                    "strict_allowed_mismatch_docs": _nunique_documents(df, strict_mask),
+                    "keyword_suppressed_docs": _nunique_documents(df, keyword_suppressed),
+                }
+            )
 
         row_annotations: dict[int, dict[str, object]] = {}
         for idx in df.index[flagged_mask]:

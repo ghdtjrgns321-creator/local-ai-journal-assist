@@ -512,6 +512,27 @@ def _fraud_combo_floor_results(
             "approval_bypass_risk",
             "missing_approval_trace + high_amount + manual_adjustment",
         )
+    elif has_approval_bypass and "L3-02" in rule_ids:
+        add(
+            "approval_control",
+            "approval_bypass_medium",
+            "approval_bypass_risk",
+            "approval_bypass + manual_adjustment_context",
+        )
+    elif has_approval_bypass and "L3-06" in rule_ids:
+        add(
+            "approval_control",
+            "approval_bypass_medium",
+            "approval_bypass_risk",
+            "approval_bypass + after_hours_context",
+        )
+    elif has_approval_bypass and "L3-05" in rule_ids:
+        add(
+            "approval_control",
+            "approval_bypass_medium",
+            "approval_bypass_risk",
+            "approval_bypass + non_business_day_context",
+        )
     elif "L3-12" in rule_ids and {"L1-05", "L1-07"} & rule_ids:
         add(
             "approval_control",

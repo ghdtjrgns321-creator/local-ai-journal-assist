@@ -15,12 +15,29 @@ import pandas as pd
 
 from src.detection.anomaly_rules_statistical import c07_benford_violation
 from src.detection.base import BaseDetector, validate_input
+from src.detection.explanation_schema import RuleExplanation
 
 if TYPE_CHECKING:
     from src.detection.base import DetectionResult
 
 
 _RULE_ID = "L4-02"
+
+BENFORD_RULE_EXPLANATIONS: dict[str, RuleExplanation] = {
+    "L4-02": RuleExplanation(
+        principle=(
+            "Analytical procedures should evaluate population-level digit distribution anomalies."
+        ),
+        violation_reason=(
+            "The amount population deviates from expected Benford first-digit behavior."
+        ),
+        audit_next_action=(
+            "Review account/process populations, inspect high-deviation digit groups, and use "
+            "candidate rows as drill-down context rather than standalone conclusions."
+        ),
+        reference="ISA 520; PCAOB AS 2305",
+    ),
+}
 
 
 class BenfordDetector(BaseDetector):

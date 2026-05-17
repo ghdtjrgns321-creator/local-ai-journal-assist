@@ -15,12 +15,12 @@ import pandas as pd
 from joblib import Parallel, delayed
 from sklearn.model_selection import GroupKFold
 
-from config.settings import AuditSettings, get_settings
+from config.settings import AuditSettings
 from src.detection.base import BaseDetector, DetectionResult
 from src.detection.constants import (
-    Layer,
     STACKING_BASE_MODELS,
     STACKING_FALLBACK_WEIGHTS,
+    Layer,
 )
 from src.preprocessing.label_strategy import LabelResult
 from src.preprocessing.model_registry import ModelRegistry
@@ -244,6 +244,14 @@ class EnsembleDetector(BaseDetector):
             {"mode": "oof_stacking", "n_folds": int, "feature_weights": {...}}
         """
         y = np.asarray(label_result.y)
+        user_ids = np.asarray(user_ids)
+        if len(user_ids) != len(X):
+            raise ValueError("train_oof user_ids length must match X rows")
+        if "created_by" in X.columns:
+            expected_user_ids = X["created_by"].astype(str).to_numpy()
+            received_user_ids = pd.Series(user_ids).astype(str).to_numpy()
+            if not np.array_equal(received_user_ids, expected_user_ids):
+                raise ValueError("train_oof user_ids must match X['created_by']")
 
         if self._check_fallback_needed(y):
             self._is_fallback = True
@@ -270,6 +278,15 @@ class EnsembleDetector(BaseDetector):
 
         # Why: fold split index를 미리 구해두어 _train_fold가 참조할 수 있도록 한다.
         fold_splits = list(gkf.split(X, y, groups=user_ids))
+        for train_idx, val_idx in fold_splits:
+            train_users = set(user_ids[train_idx].astype(str).tolist())
+            val_users = set(user_ids[val_idx].astype(str).tolist())
+            overlap = train_users & val_users
+            if overlap:
+                raise ValueError(
+                    "GroupKFold user leakage detected in train_oof: "
+                    f"{sorted(overlap)[:5]}",
+                )
 
         # Why: 각 fold는 base 모델 3개의 OOF score를 (val_idx, track_name → ndarray) 형식으로 반환.
         #      joblib backend="loky"는 별도 프로세스로 fold를 격리 — torch/sklearn 안전.
@@ -351,7 +368,10 @@ class EnsembleDetector(BaseDetector):
                 raw = score_matrix[:, col_idx]
                 if np.std(raw) >= 1e-12:
                     self._fallback_ecdf[track_name] = np.sort(raw)
-            logger.info("라벨 부족 — fallback 모드 활성화 (ECDF %d개 저장)", len(self._fallback_ecdf))
+            logger.info(
+                "라벨 부족 — fallback 모드 활성화 (ECDF %d개 저장)",
+                len(self._fallback_ecdf),
+            )
             return {"mode": "fallback", "feature_weights": dict(STACKING_FALLBACK_WEIGHTS)}
 
         score_matrix = self._build_score_matrix(results, df_index)
@@ -442,7 +462,8 @@ class EnsembleDetector(BaseDetector):
     ) -> np.ndarray:
         """OOF fallback 경로용 score_matrix 빌더.
 
-        Why: train_oof()가 fallback으로 빠질 때도 동일한 (N, len(STACKING_BASE_MODELS)) 형식이 필요하다.
+        Why: train_oof()가 fallback으로 빠질 때도 동일한
+             (N, len(STACKING_BASE_MODELS)) 형식이 필요하다.
              non_leakage_results만으로 채우고 나머지는 0.
         """
         return EnsembleDetector._build_score_matrix(
@@ -455,7 +476,7 @@ class EnsembleDetector(BaseDetector):
         oof_scores: dict[str, np.ndarray],
         df_index: pd.Index,
     ) -> np.ndarray:
-        """non-leakage 결과 + leakage-prone 모델의 OOF score → (N, len(STACKING_BASE_MODELS)) 행렬 조립.
+        """non-leakage 결과 + leakage-prone 모델의 OOF score 행렬 조립.
 
         Why: STACKING_BASE_MODELS 순서를 그대로 따르되, leakage-prone 트랙은
              oof_scores 딕셔너리에서, 나머지는 non_leakage_results에서 가져온다.
