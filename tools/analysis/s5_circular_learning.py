@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -35,10 +36,17 @@ from sklearn.linear_model import LogisticRegression  # noqa: E402
 from sklearn.metrics import average_precision_score  # noqa: E402
 from sklearn.model_selection import GroupKFold  # noqa: E402
 
-DATA_DIR = ROOT / "data" / "journal" / "primary" / "datasynth_manipulation_v3"
+DATA_DIR = Path(
+    os.getenv(
+        "DATASYNTH_MANIPULATION_DATA_DIR",
+        str(ROOT / "data" / "journal" / "primary" / "datasynth_manipulation_v3"),
+    )
+)
 LABELS_PATH = DATA_DIR / "labels" / "manipulated_entry_truth.csv"
-OUT_JSON = ROOT / "artifacts" / "S5_circular_learning_overlap.json"
-OUT_MD = ROOT / "artifacts" / "S5_phase2_input_redesign.md"
+OUT_JSON = Path(
+    os.getenv("S5_OUT_JSON", str(ROOT / "artifacts" / "S5_circular_learning_overlap.json"))
+)
+OUT_MD = Path(os.getenv("S5_OUT_MD", str(ROOT / "artifacts" / "S5_phase2_input_redesign.md")))
 
 SCENARIO_ALIAS = {
     "fictitious_entry": "fictitious_entry",
@@ -47,6 +55,8 @@ SCENARIO_ALIAS = {
     "circular_related_party_transaction": "circular_related_party",
     "approval_sod_bypass": "approval_sod_bypass",
     "unusual_timing_manipulation": "unusual_timing_manipulation",
+    "suspense_account_abuse": "suspense_account_abuse",
+    "expense_capitalization": "expense_capitalization",
 }
 
 

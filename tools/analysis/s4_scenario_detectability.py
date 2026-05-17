@@ -16,20 +16,41 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 from pathlib import Path
 
 import duckdb
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import GroupKFold
 
 ROOT = Path(__file__).resolve().parents[2]
-DATA_DIR = ROOT / "data" / "journal" / "primary" / "datasynth_manipulation_v3"
+sys.path.insert(0, str(ROOT))
+
+from src.evaluation.scenario_detectability import bootstrap_ci, groupkfold_recall_at_k  # noqa: E402
+
+DATA_DIR = Path(
+    os.getenv(
+        "DATASYNTH_MANIPULATION_DATA_DIR",
+        str(ROOT / "data" / "journal" / "primary" / "datasynth_manipulation_v3"),
+    )
+)
 LABELS = DATA_DIR / "labels" / "manipulated_entry_truth.csv"
-TOPIC_JSON = ROOT / "artifacts" / "manipulation_v3_rust_fixed_topic_analysis.json"
-OUT_DATA = ROOT / "artifacts" / "S4_scenario_detectability_data.json"
-OUT_HEAT = ROOT / "artifacts" / "S4_target_encoding_heatmap.csv"
-OUT_RECALL = ROOT / "artifacts" / "S4_scenario_recall.csv"
+TOPIC_JSON = Path(
+    os.getenv(
+        "DATASYNTH_TOPIC_JSON",
+        str(ROOT / "artifacts" / "manipulation_v3_rust_fixed_topic_analysis.json"),
+    )
+)
+OUT_DATA = Path(
+    os.getenv("S4_OUT_DATA", str(ROOT / "artifacts" / "S4_scenario_detectability_data.json"))
+)
+OUT_HEAT = Path(
+    os.getenv("S4_OUT_HEAT", str(ROOT / "artifacts" / "S4_target_encoding_heatmap.csv"))
+)
+OUT_RECALL = Path(
+    os.getenv("S4_OUT_RECALL", str(ROOT / "artifacts" / "S4_scenario_recall.csv"))
+)
 
 SCENARIO_ALIAS = {
     "fictitious_entry": "fictitious_entry",
@@ -38,6 +59,8 @@ SCENARIO_ALIAS = {
     "circular_related_party_transaction": "circular_related_party",
     "approval_sod_bypass": "approval_sod_bypass",
     "unusual_timing_manipulation": "unusual_timing_manipulation",
+    "suspense_account_abuse": "suspense_account_abuse",
+    "expense_capitalization": "expense_capitalization",
 }
 EXPECTED_DOC_COUNT = {
     "fictitious_entry": 168,
@@ -46,6 +69,8 @@ EXPECTED_DOC_COUNT = {
     "circular_related_party": 34,
     "approval_sod_bypass": 29,
     "unusual_timing_manipulation": 21,
+    "suspense_account_abuse": 100,
+    "expense_capitalization": 100,
 }
 CI_WIDTH_INSIGNIFICANT = 0.15
 
@@ -97,14 +122,29 @@ def load_doc_features() -> pd.DataFrame:
       CAST(posting_date AS TIMESTAMP) AS posting_ts,
       EXTRACT(dow FROM CAST(posting_date AS TIMESTAMP)) AS dow,
       EXTRACT(hour FROM CAST(posting_date AS TIMESTAMP)) AS hour,
-      CASE WHEN EXTRACT(dow FROM CAST(posting_date AS TIMESTAMP)) IN (0,6) THEN 1 ELSE 0 END AS f_weekend,
+      CASE
+        WHEN EXTRACT(dow FROM CAST(posting_date AS TIMESTAMP)) IN (0,6) THEN 1
+        ELSE 0
+      END AS f_weekend,
       CASE WHEN EXTRACT(hour FROM CAST(posting_date AS TIMESTAMP)) < 8
-            OR EXTRACT(hour FROM CAST(posting_date AS TIMESTAMP)) >= 20 THEN 1 ELSE 0 END AS f_offhour,
+            OR EXTRACT(hour FROM CAST(posting_date AS TIMESTAMP)) >= 20
+        THEN 1
+        ELSE 0
+      END AS f_offhour,
       CASE WHEN source IN ('manual','adjustment') THEN 1 ELSE 0 END AS f_manual,
       CASE WHEN approved_by IS NULL OR approved_by = '' THEN 1 ELSE 0 END AS f_no_approver,
-      CASE WHEN approved_by = created_by AND approved_by IS NOT NULL THEN 1 ELSE 0 END AS f_self_approval,
-      CASE WHEN LOWER(CAST(sod_violation AS VARCHAR)) IN ('true','1') THEN 1 ELSE 0 END AS f_sod_violation,
-      CASE WHEN LOWER(CAST(has_attachment AS VARCHAR)) IN ('false','0') THEN 1 ELSE 0 END AS f_no_attachment,
+      CASE
+        WHEN approved_by = created_by AND approved_by IS NOT NULL THEN 1
+        ELSE 0
+      END AS f_self_approval,
+      CASE
+        WHEN LOWER(CAST(sod_violation AS VARCHAR)) IN ('true','1') THEN 1
+        ELSE 0
+      END AS f_sod_violation,
+      CASE
+        WHEN LOWER(CAST(has_attachment AS VARCHAR)) IN ('false','0') THEN 1
+        ELSE 0
+      END AS f_no_attachment,
       CASE WHEN fiscal_period IN (3,6,9,12) THEN 1 ELSE 0 END AS f_quarter_end,
       CASE WHEN fiscal_period = 12 THEN 1 ELSE 0 END AS f_year_end
     FROM header
@@ -143,10 +183,9 @@ def trivial_score(df: pd.DataFrame) -> pd.Series:
     return df[TRIVIAL_FEATURES].sum(axis=1).astype(float)
 
 
-def target_encoding_table(df: pd.DataFrame) -> pd.DataFrame:
+def target_encoding_table(df: pd.DataFrame, expected_doc_count: dict[str, int]) -> pd.DataFrame:
     rows = []
-    normal = df[df["scenario"] == "normal"]
-    for scenario in ["normal"] + list(EXPECTED_DOC_COUNT.keys()):
+    for scenario in ["normal"] + list(expected_doc_count.keys()):
         sub = df[df["scenario"] == scenario]
         if sub.empty:
             continue
@@ -159,77 +198,13 @@ def target_encoding_table(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def groupkfold_recall_at_k(
-    df: pd.DataFrame, score_col: str, top_frac: float = 0.01, n_splits: int = 5
-) -> pd.DataFrame:
-    df = df.copy()
-    df["group"] = df["company_code"].astype(str) + "_" + df["fiscal_year"].astype(str)
-    gkf = GroupKFold(n_splits=n_splits)
-    fold_records = []
-    for fold_idx, (_, test_idx) in enumerate(
-        gkf.split(df, groups=df["group"]),
-    ):
-        sub = df.iloc[test_idx].copy()
-        k = max(1, int(len(sub) * top_frac))
-        threshold = sub[score_col].nlargest(k).iloc[-1]
-        sub["in_topk"] = sub[score_col] >= threshold
-        for scenario, n_expected in EXPECTED_DOC_COUNT.items():
-            sc_truth = sub[sub["scenario"] == scenario]
-            n_truth_fold = len(sc_truth)
-            n_hit = int(sc_truth["in_topk"].sum())
-            fold_records.append(
-                {
-                    "fold": fold_idx,
-                    "scenario": scenario,
-                    "n_truth_in_fold": n_truth_fold,
-                    "n_hit": n_hit,
-                    "recall": (n_hit / n_truth_fold) if n_truth_fold else np.nan,
-                    "k": k,
-                    "fold_size": len(sub),
-                }
-            )
-    return pd.DataFrame(fold_records)
-
-
-def bootstrap_ci(
-    df: pd.DataFrame, score_col: str, n_boot: int = 1000, top_frac: float = 0.01
-) -> pd.DataFrame:
-    rng = np.random.default_rng(2026)
-    k = max(1, int(len(df) * top_frac))
-    threshold = df[score_col].nlargest(k).iloc[-1]
-    df = df.copy()
-    df["in_topk"] = df[score_col] >= threshold
-    rows = []
-    for scenario, n_expected in EXPECTED_DOC_COUNT.items():
-        sc_truth = df[df["scenario"] == scenario]
-        n = len(sc_truth)
-        if n == 0:
-            continue
-        hit_mask = sc_truth["in_topk"].astype(int).to_numpy()
-        boot = rng.choice(hit_mask, size=(n_boot, n), replace=True).mean(axis=1)
-        lo, hi = np.quantile(boot, [0.025, 0.975])
-        width = hi - lo
-        rows.append(
-            {
-                "scenario": scenario,
-                "n_truth": n,
-                "point_recall": hit_mask.mean(),
-                "ci_lo": lo,
-                "ci_hi": hi,
-                "ci_width": width,
-                "statistically_insignificant": width > CI_WIDTH_INSIGNIFICANT,
-            }
-        )
-    return pd.DataFrame(rows)
-
-
-def phase1_aggregate_recall() -> pd.DataFrame:
+def phase1_aggregate_recall(expected_doc_count: dict[str, int]) -> pd.DataFrame:
     blob = json.loads(TOPIC_JSON.read_text(encoding="utf-8"))
     sm = blob["scenario_metrics"]
     rows = []
     for entry in sm:
         scenario = SCENARIO_ALIAS.get(entry["scenario"], entry["scenario"])
-        if scenario not in EXPECTED_DOC_COUNT:
+        if scenario not in expected_doc_count:
             continue
         n = entry["truth_docs"]
         rows.append(
@@ -250,17 +225,32 @@ def phase1_aggregate_recall() -> pd.DataFrame:
 
 def main() -> None:
     truth = pd.read_csv(LABELS)
+    expected_doc_count = (
+        truth["manipulation_scenario"]
+        .map(lambda s: SCENARIO_ALIAS.get(s, s))
+        .value_counts()
+        .to_dict()
+    )
     doc_df = load_doc_features()
     doc_df = attach_truth(doc_df, truth)
     doc_df["trivial_score"] = trivial_score(doc_df)
 
     n_truth_found = int(doc_df["is_manipulated"].sum())
-    assert n_truth_found == 420, f"truth join mismatch: {n_truth_found}"
+    expected_total = int(sum(expected_doc_count.values()))
+    assert n_truth_found == expected_total, f"truth join mismatch: {n_truth_found}"
 
-    heat = target_encoding_table(doc_df)
-    fold_df = groupkfold_recall_at_k(doc_df, "trivial_score")
-    boot_df = bootstrap_ci(doc_df, "trivial_score")
-    phase1_df = phase1_aggregate_recall()
+    heat = target_encoding_table(doc_df, expected_doc_count)
+    fold_df = groupkfold_recall_at_k(
+        doc_df,
+        "trivial_score",
+        expected_doc_count=expected_doc_count,
+    )
+    boot_df = bootstrap_ci(
+        doc_df,
+        "trivial_score",
+        expected_doc_count=expected_doc_count,
+    )
+    phase1_df = phase1_aggregate_recall(expected_doc_count)
 
     recall_summary = (
         fold_df.groupby("scenario")
@@ -286,7 +276,7 @@ def main() -> None:
                 "n_bootstrap": 1000,
                 "ci_width_insignificant_threshold": CI_WIDTH_INSIGNIFICANT,
                 "trivial_features": TRIVIAL_FEATURES,
-                "expected_doc_count": EXPECTED_DOC_COUNT,
+                "expected_doc_count": expected_doc_count,
                 "groupkfold_per_fold": fold_df.to_dict(orient="records"),
                 "bootstrap_summary": boot_df.to_dict(orient="records"),
                 "phase1_aggregate": phase1_df.to_dict(orient="records"),

@@ -1,11 +1,13 @@
-"""Topic별 Top N truth 진입 + scenario별 진입을 case artifact에서 계산한다.
+"""Topic별 Top N truth 진입 + scenario별 진입을 case artifact에서 계산한다 (v4 8-scenario 대응).
 
-v1 문서(DETECTION_RESULTS_MANIPULATION.md) 형식과 동일한 통계를 v2 산출물에서 재현하기 위한 단발성 분석 스크립트.
+v3까지의 분석 스크립트(`analyze_manipulation_v2_topic_top.py`)와 동일한 구조를 유지하되,
+v4 hold-out 시나리오 2개(`expense_capitalization`, `suspense_account_abuse`)를 추가했다.
 
 분류 규칙(v1 ranking_analysis와 동일):
 - case의 `topic_scores[topic_id]` > 0 이면 그 topic에 포함 (한 case가 여러 topic에 동시 포함 가능)
-- high case = `topic_scores[topic_id] >= 0.75`
-- topic 내 정렬: topic_score desc, triage_rank_score desc, total_amount desc, rule_count desc
+- topic high case = `topic_scores[topic_id] >= 0.75`
+- topic 내 정렬: composite_sort_score(or topic_score) desc, triage_rank_score desc,
+  total_amount desc, rule_count desc
 """
 
 # ruff: noqa: E501
@@ -33,11 +35,12 @@ EXPECTED_TOPIC = {
     "approval_sod_bypass": "approval_control",
     "circular_related_party_transaction": "intercompany_cycle",
     "embezzlement_concealment": "duplicate_outflow",
-    "expense_capitalization": "account_logic",
     "fictitious_entry": "revenue_statistical",
     "period_end_adjustment_manipulation": "closing_timing",
-    "suspense_account_abuse": "account_logic",
     "unusual_timing_manipulation": "closing_timing",
+    # v4 hold-out scenarios (L2-04 / L3-09 모두 logic_mismatch theme → account_logic topic)
+    "expense_capitalization": "account_logic",
+    "suspense_account_abuse": "account_logic",
 }
 
 TOP_NS = (10, 50, 100, 200)
@@ -68,8 +71,6 @@ def topic_score(case: dict, topic_id: str) -> float:
 
 
 def topic_sort_key(case: dict, topic_id: str) -> tuple:
-    # §9.3 composite_sort_score 우선. case JSON 에 composite_sort_score 가 없으면
-    # baseline (topic_score) 으로 폴백.
     composite = case.get("composite_sort_score")
     if composite is None:
         composite = topic_score(case, topic_id)
@@ -102,7 +103,6 @@ def main() -> None:
         for scenario, group in truth_df.groupby(scenario_col):
             scenario_truth[str(scenario)] = set(group["document_id"].dropna().astype(str).unique())
 
-    # topic별 분류 (topic_scores > 0 인 모든 topic에 포함)
     by_topic: dict[str, list[dict]] = defaultdict(list)
     for c in cases:
         for topic_id in TOPIC_LABELS:
@@ -143,7 +143,7 @@ def main() -> None:
     scenario_metrics = []
     for scenario, docs in scenario_truth.items():
         exp_topic = EXPECTED_TOPIC.get(scenario)
-        exp_label = TOPIC_LABELS.get(exp_topic, exp_topic or "-")
+        exp_label = TOPIC_LABELS.get(exp_topic, "-") if exp_topic else "-"
         tcases = sorted_by_topic.get(exp_topic, []) if exp_topic else []
 
         topic_docs_total: set[str] = set()
@@ -170,7 +170,6 @@ def main() -> None:
             row[f"top{n}"] = len(cum_docs & docs)
         scenario_metrics.append(row)
 
-    # 전체 case 누적 Top N (exposure_rank 기준)
     cases_sorted = sorted(
         cases,
         key=lambda c: (
@@ -191,7 +190,6 @@ def main() -> None:
             }
         )
 
-    # priority_band 분포 (전체 case 기준)
     band_metrics = []
     for band in ("high", "medium", "low"):
         bcases = [c for c in cases if (c.get("priority_band") or "").lower() == band]
@@ -207,21 +205,9 @@ def main() -> None:
             }
         )
 
-    # topic_id:band 기준 score band (v1 문서의 closing_timing:low 등)
     score_band_summary = []
     for topic_id in TOPIC_LABELS:
-        for level, lo, hi in (
-            ("high", HIGH_THRESHOLD, 1.01),
-            ("medium", 0.4, HIGH_THRESHOLD),
-            ("low", 0.0, 0.4),
-        ):
-            members = [
-                c
-                for c in cases
-                if lo < topic_score(c, topic_id) < hi
-                or (level == "high" and topic_score(c, topic_id) >= lo)
-            ]
-            # 위 조건이 헷갈리니 다시: high=score>=0.75, medium=0.4<=score<0.75, low=0<score<0.4
+        for level in ("high", "medium", "low"):
             members = [
                 c
                 for c in cases
@@ -244,7 +230,6 @@ def main() -> None:
                 }
             )
 
-    # exposure_rank 기준 상위 truth case 20개
     top_truth_cases = []
     for c in cases_sorted:
         docs = case_documents(c) & truth_docs
