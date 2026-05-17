@@ -16,7 +16,7 @@ import hashlib
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from config.settings import PROJECT_ROOT, get_settings
@@ -65,9 +65,33 @@ def _resolve_log_dir(profile_dir: Path | None) -> Path:
     return _resolve_dir(profile_dir) / "logs"
 
 
-def _resolve_profile_path(fingerprint: str, profile_dir: Path | None) -> Path:
-    """fingerprint → 프로파일 JSON 경로."""
-    return _resolve_dir(profile_dir) / f"{fingerprint}.json"
+def _resolve_profile_path(
+    fingerprint: str,
+    profile_dir: Path | None,
+    fiscal_year: int | None = None,
+) -> Path:
+    """fingerprint(+fiscal_year) → 프로파일 JSON 경로.
+
+    Why: 회계연도별 컬럼 구조가 동일(=같은 fingerprint)하면 과거에는 같은
+    `{fp}.json` 파일에 덮어쓰여 직전 연도 프로파일이 사라졌다. fy 가 주어지면
+    파일명에 `__fy{year}` suffix 를 붙여 연도별로 별도 저장. fy 가 None 이면
+    기존 형식(`{fp}.json`)을 유지하여 비-회계 사용·과거 데이터와 호환.
+    """
+    base = _resolve_dir(profile_dir)
+    if fiscal_year is None:
+        return base / f"{fingerprint}.json"
+    return base / f"{fingerprint}__fy{int(fiscal_year)}.json"
+
+
+def _find_profile_files(
+    fingerprint: str,
+    profile_dir: Path | None,
+) -> list[Path]:
+    """동일 fingerprint 의 모든 변형(`{fp}.json`, `{fp}__fy*.json`) 경로 반환."""
+    base = _resolve_dir(profile_dir)
+    if not base.exists():
+        return []
+    return [p for p in base.glob(f"{fingerprint}*.json") if p.is_file()]
 
 
 # ── save ─────────────────────────────────────────────────
@@ -98,7 +122,7 @@ def save_profile(
         저장된 프로파일 JSON 경로
     """
     fp = column_fingerprint(source_columns)
-    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    now = datetime.now(UTC).isoformat(timespec="seconds")
 
     # 프로파일 JSON — 확정 매핑만 포함
     profile_data = {
@@ -115,8 +139,10 @@ def save_profile(
         "fiscal_year": fiscal_year,
     }
 
-    # 기존 프로파일이 있으면 created_at 유지, updated_at만 갱신
-    dest = _resolve_profile_path(fp, profile_dir)
+    # 기존 프로파일이 있으면 created_at 유지, updated_at만 갱신.
+    # fy 가 지정되면 연도별 파일(`{fp}__fy{year}.json`) 에 저장 — 동일 fingerprint
+    # 다른 연도가 서로 덮어쓰는 사고 방지.
+    dest = _resolve_profile_path(fp, profile_dir, fiscal_year)
     if dest.exists():
         try:
             existing = json.loads(dest.read_text(encoding="utf-8"))
@@ -151,17 +177,14 @@ def _save_mapping_log(
     Why: 프로파일에는 확정 매핑만 넣고, 불확실한 정보는
     로그로 분리하여 Phase 1c에서 "수동 확인 필요" UI에 활용.
     """
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
 
     # suggestion별 confidence 추출
-    suggestion_confidence = {
-        src: result.confidence.get(src, 0.0)
-        for src in result.suggestions
-    }
+    suggestion_confidence = {src: result.confidence.get(src, 0.0) for src in result.suggestions}
 
     log_data = {
         "fingerprint": fingerprint,
-        "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "timestamp": datetime.now(UTC).isoformat(timespec="seconds"),
         "suggestions": result.suggestions,
         "unmapped": result.unmapped,
         "missing_required": result.missing_required,
@@ -187,47 +210,57 @@ def _save_mapping_log(
 def load_profile(
     source_columns: list[str],
     *,
+    fiscal_year: int | None = None,
     profile_dir: Path | None = None,
 ) -> MappingResult | None:
-    """fingerprint로 프로파일 검색 → MappingResult 복원.
+    """fingerprint(+fiscal_year)로 프로파일 검색 → MappingResult 복원.
 
-    Why: 동일 ERP 재업로드 시 이전 확정 매핑을 자동 적용하여
-    사용자가 반복 매핑 작업을 하지 않아도 된다.
+    매핑 내용은 동일 fingerprint 라면 연도와 무관하게 사용 가능하므로,
+    fy 가 주어지면 정확한 fy 매칭 → plain `{fp}.json` → 같은 fp 의 가장 최신
+    fy 변형 순서로 fallback 한다. fy 가 None 이면 plain → 최신 fy 변형 순.
 
     Args:
         source_columns: 원본 컬럼명 리스트
+        fiscal_year: 회계연도 (정확한 매칭이 있으면 우선 사용)
         profile_dir: 회사별 프로파일 디렉토리 (None이면 글로벌 폴백)
 
     Returns:
         저장된 프로파일이 있으면 MappingResult, 없으면 None
     """
     fp = column_fingerprint(source_columns)
-    dest = _resolve_profile_path(fp, profile_dir)
 
-    if not dest.exists():
-        return None
+    candidates: list[Path] = []
+    if fiscal_year is not None:
+        exact = _resolve_profile_path(fp, profile_dir, fiscal_year)
+        if exact.exists():
+            candidates.append(exact)
+    plain = _resolve_profile_path(fp, profile_dir, fiscal_year=None)
+    if plain.exists() and plain not in candidates:
+        candidates.append(plain)
+    for path in _find_profile_files(fp, profile_dir):
+        if path not in candidates:
+            candidates.append(path)
 
-    try:
-        data = json.loads(dest.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as e:
-        logger.warning("프로파일 로드 실패 (%s): %s", fp, e)
-        return None
-
-    # 필수 필드 검증
-    if "mapping" not in data or "confidence" not in data:
-        logger.warning("프로파일 필수 필드 누락: %s", fp)
-        return None
-
-    # MappingResult 복원 — 프로파일에는 확정 매핑만 저장되어 있으므로
-    # suggestions/unmapped는 빈 상태로 생성
-    return MappingResult(
-        mapping=data["mapping"],
-        suggestions={},
-        confidence=data["confidence"],
-        unmapped=[],
-        missing_required=[],
-        needs_review=False,
-    )
+    for dest in candidates:
+        try:
+            data = json.loads(dest.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning("프로파일 로드 실패 (%s): %s", dest.name, e)
+            continue
+        if "mapping" not in data or "confidence" not in data:
+            logger.warning("프로파일 필수 필드 누락: %s", dest.name)
+            continue
+        # MappingResult 복원 — 프로파일에는 확정 매핑만 저장되어 있으므로
+        # suggestions/unmapped는 빈 상태로 생성
+        return MappingResult(
+            mapping=data["mapping"],
+            suggestions={},
+            confidence=data["confidence"],
+            unmapped=[],
+            missing_required=[],
+            needs_review=False,
+        )
+    return None
 
 
 # ── list / delete ────────────────────────────────────────
@@ -253,14 +286,16 @@ def list_profiles(*, profile_dir: Path | None = None) -> list[dict]:
             # profile_version 없으면 프로파일이 아닌 파일 → 스킵
             if "profile_version" not in data:
                 continue
-            profiles.append({
-                "fingerprint": data.get("fingerprint", path.stem),
-                "source_name": data.get("source_name", ""),
-                "source_format": data.get("source_format", ""),
-                "mapping_count": len(data.get("mapping", {})),
-                "created_at": data.get("created_at", ""),
-                "updated_at": data.get("updated_at", ""),
-            })
+            profiles.append(
+                {
+                    "fingerprint": data.get("fingerprint", path.stem),
+                    "source_name": data.get("source_name", ""),
+                    "source_format": data.get("source_format", ""),
+                    "mapping_count": len(data.get("mapping", {})),
+                    "created_at": data.get("created_at", ""),
+                    "updated_at": data.get("updated_at", ""),
+                }
+            )
         except (json.JSONDecodeError, OSError):
             logger.warning("프로파일 읽기 실패: %s", path.name)
 
@@ -272,31 +307,39 @@ def list_profiles(*, profile_dir: Path | None = None) -> list[dict]:
 def delete_profile(
     fingerprint: str,
     *,
+    fiscal_year: int | None = None,
     profile_dir: Path | None = None,
 ) -> bool:
     """프로파일 + 관련 로그 삭제.
 
     Args:
         fingerprint: 삭제할 프로파일의 fingerprint
+        fiscal_year: 특정 연도 변형만 삭제. None 이면 같은 fingerprint 의 모든
+            연도 변형 + plain 파일을 모두 삭제 (기존 동작과 호환).
         profile_dir: 회사별 프로파일 디렉토리 (None이면 글로벌 폴백)
 
     Returns:
-        삭제 성공 여부 (프로파일이 존재하지 않으면 False)
+        하나 이상 삭제됐으면 True, 매칭 파일이 없으면 False.
     """
-    dest = _resolve_profile_path(fingerprint, profile_dir)
-    if not dest.exists():
+    if fiscal_year is not None:
+        targets = [_resolve_profile_path(fingerprint, profile_dir, fiscal_year)]
+        targets = [p for p in targets if p.exists()]
+    else:
+        targets = _find_profile_files(fingerprint, profile_dir)
+
+    if not targets:
         return False
 
-    # 프로파일 삭제
-    dest.unlink()
+    for path in targets:
+        path.unlink()
 
-    # 관련 로그 삭제
+    # 관련 로그 삭제 — fy 별 분리 저장이 아니므로 fingerprint prefix 로 일괄 정리.
     log_dir = _resolve_log_dir(profile_dir)
     if log_dir.exists():
         for log_path in log_dir.glob(f"{fingerprint}_*.json"):
             log_path.unlink()
 
-    logger.info("프로파일 삭제: %s", fingerprint)
+    logger.info("프로파일 삭제: %s (%d개)", fingerprint, len(targets))
     return True
 
 

@@ -103,3 +103,4 @@ class PerformanceReport:
     rule_metrics: list[RuleMetric] = field(default_factory=list)
     benford_benchmarks: list[BenfordBenchmarkMetric] = field(default_factory=list)
     analytical_review_metrics: list[AnalyticalReviewMetric] = field(default_factory=list)
+    hold_out_metrics: dict[str, Any] = field(default_factory=dict)

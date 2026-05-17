@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import date
 from enum import StrEnum
 from typing import Any
@@ -9,6 +10,20 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator
 
 from src.company.merger import normalize_settings_overrides
+
+# Why: company_id / engagement_id 는 폴더명으로 쓰이므로 Windows·Linux 모두에서
+#      금지하는 path-unsafe 문자(< > : " / \ | ? *)와 공백/제어문자만 차단한다.
+#      나머지 문자(한글·대문자·하이픈 등)는 모두 허용.
+_PATH_UNSAFE_RE = re.compile(r'[<>:"/\\|?*\s\x00-\x1f]')
+
+
+def _validate_identifier(value: str, *, field_name: str) -> str:
+    stripped = value.strip()
+    if not stripped:
+        raise ValueError(f"{field_name} 는 비어 있을 수 없습니다.")
+    if _PATH_UNSAFE_RE.search(stripped):
+        raise ValueError(f'{field_name} 에는 공백과 < > : " / \\ | ? * 문자를 사용할 수 없습니다.')
+    return stripped
 
 
 class EngagementStatus(StrEnum):
@@ -23,9 +38,7 @@ class EngagementStatus(StrEnum):
 class CompanyProfile(BaseModel):
     """Company profile persisted in `company.yaml`."""
 
-    company_id: str = Field(
-        ..., min_length=1, max_length=64, pattern=r"^[a-z0-9_]+$"
-    )
+    company_id: str = Field(..., min_length=1, max_length=64)
     display_name: str = Field(..., min_length=1, max_length=128)
     industry: str = ""
     erp_system: str = ""
@@ -40,7 +53,7 @@ class CompanyProfile(BaseModel):
     @field_validator("company_id")
     @classmethod
     def _normalize_company_id(cls, v: str) -> str:
-        return v.strip().lower()
+        return _validate_identifier(v, field_name="company_id")
 
     @field_validator("settings_overrides", mode="before")
     @classmethod
@@ -54,9 +67,7 @@ class CompanyProfile(BaseModel):
 class EngagementProfile(BaseModel):
     """Engagement profile persisted in `engagement.yaml`."""
 
-    engagement_id: str = Field(
-        ..., min_length=1, max_length=64, pattern=r"^[a-z0-9_]+$"
-    )
+    engagement_id: str = Field(..., min_length=1, max_length=64)
     company_id: str = Field(..., min_length=1)
     fiscal_year: int = Field(..., ge=2000, le=2099)
     materiality_amount: int = Field(default=0, ge=0)
@@ -64,6 +75,16 @@ class EngagementProfile(BaseModel):
     period_end: date | None = None
     settings_overrides: dict[str, Any] = Field(default_factory=dict)
     status: EngagementStatus = EngagementStatus.DRAFT
+
+    @field_validator("engagement_id")
+    @classmethod
+    def _normalize_engagement_id(cls, v: str) -> str:
+        return _validate_identifier(v, field_name="engagement_id")
+
+    @field_validator("company_id")
+    @classmethod
+    def _normalize_company_id_ref(cls, v: str) -> str:
+        return _validate_identifier(v, field_name="company_id")
 
     @field_validator("period_end")
     @classmethod

@@ -8,7 +8,6 @@ Why: type_caster가 보장한 dtype을 재확인하고, 값 범위(ge=0 등)와
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 import pandas as pd
 import pandera.pandas as pa
@@ -18,6 +17,43 @@ from config.settings import AuditSettings, get_schema, get_settings
 from src.validation.models import SchemaResult
 
 logger = logging.getLogger(__name__)
+
+# ── Detector-forbidden 메타데이터 컬럼 (deny-list) ─────────────
+# Why: DataSynth가 ledger CSV에 주입하는 시나리오/뮤테이션 메타데이터.
+#      탐지기가 입력 피처로 사용하면 라벨 누설(label leakage)·합성 아티팩트
+#      학습이 발생한다. L1 schema에는 미정의 + strict=False로 통과되므로,
+#      validate_schema()가 발견 시 warning을 남기고 pipeline에서 strip한다.
+#      회귀 가드: tests/modules/test_validation/test_schema_validator.py가
+#      src/detection/*.py에 이 컬럼명 참조가 없는지 AST 레벨로 검사.
+DETECTOR_FORBIDDEN_COLUMNS: frozenset[str] = frozenset(
+    {
+        "semantic_scenario_id",
+        "mutation_type",
+        "mutation_base_event_type",
+        "mutation_mutated_field",
+        "mutation_original_value",
+        "mutation_mutated_value",
+        "mutation_reason",
+        "detection_surface_hints",
+    }
+)
+
+
+def strip_detector_forbidden_columns(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+    """detection 진입 전 deny-list 컬럼 제거.
+
+    Why: validate_schema()가 warning을 내고 통과시킨 메타 컬럼을, detection
+         파이프라인 진입 직전에 물리적으로 제거하여 신규 룰이 실수로 참조해도
+         AttributeError로 즉시 실패하도록 한다.
+
+    Returns:
+        (cleaned_df, stripped_columns) — stripped_columns는 실제 제거된 컬럼 목록.
+    """
+    stripped = sorted(set(df.columns) & DETECTOR_FORBIDDEN_COLUMNS)
+    if not stripped:
+        return df, []
+    return df.drop(columns=stripped), stripped
+
 
 # ── schema.yaml에서 필수/전체 컬럼 목록 추출 ──────────────────
 
@@ -43,7 +79,7 @@ class GeneralLedgerSchema(pa.DataFrameModel):
     """표준 GL DataFrame의 L1 구조 스키마.
 
     필수 10개: nullable=False, dtype 강제
-    선택 29개 (=39-10): Optional → df에 없어도 에러 아님, nullable=True
+    선택 41개: Optional → df에 없어도 에러 아님, nullable=True
     Config.strict=False → 피처 컬럼 등 추가 컬럼 허용
     """
 
@@ -63,50 +99,62 @@ class GeneralLedgerSchema(pa.DataFrameModel):
     document_type: Series[str] = pa.Field(nullable=True)
 
     # ── 선택 컬럼 — Header (Optional → df에 없어도 통과) ──
-    currency: Optional[Series[str]] = pa.Field(nullable=True)
-    exchange_rate: Optional[Series[float]] = pa.Field(nullable=True)
-    reference: Optional[Series[str]] = pa.Field(nullable=True)
-    header_text: Optional[Series[str]] = pa.Field(nullable=True)
-    created_by: Optional[Series[str]] = pa.Field(nullable=True)
-    user_persona: Optional[Series[str]] = pa.Field(nullable=True)
-    source: Optional[Series[str]] = pa.Field(nullable=True)
-    business_process: Optional[Series[str]] = pa.Field(nullable=True)
-    ledger: Optional[Series[str]] = pa.Field(nullable=True)
-    approved_by: Optional[Series[str]] = pa.Field(nullable=True)
+    currency: Series[str] | None = pa.Field(nullable=True)
+    exchange_rate: Series[float] | None = pa.Field(nullable=True)
+    reference: Series[str] | None = pa.Field(nullable=True)
+    header_text: Series[str] | None = pa.Field(nullable=True)
+    created_by: Series[str] | None = pa.Field(nullable=True)
+    user_persona: Series[str] | None = pa.Field(nullable=True)
+    source: Series[str] | None = pa.Field(nullable=True)
+    business_process: Series[str] | None = pa.Field(nullable=True)
+    # Why: pattern_features.py가 intercompany 컨텍스트 도출에 사용. v2 ledger 메타.
+    counterparty_type: Series[str] | None = pa.Field(nullable=True)
+    ledger: Series[str] | None = pa.Field(nullable=True)
+    approved_by: Series[str] | None = pa.Field(nullable=True)
     # Why: schema.yaml type: date → type_caster가 datetime64[ns]로 변환
-    approval_date: Optional[Series[pa.DateTime]] = pa.Field(nullable=True)
+    approval_date: Series[pa.DateTime] | None = pa.Field(nullable=True)
 
-    # ── 선택 컬럼 — 레이블 (DataSynth 전용) ──
-    is_fraud: Optional[Series[bool]] = pa.Field(nullable=True)
-    fraud_type: Optional[Series[str]] = pa.Field(nullable=True)
-    is_anomaly: Optional[Series[bool]] = pa.Field(nullable=True)
-    anomaly_type: Optional[Series[str]] = pa.Field(nullable=True)
-    sod_violation: Optional[Series[bool]] = pa.Field(nullable=True)
-    sod_conflict_type: Optional[Series[str]] = pa.Field(nullable=True)
+    # ── 선택 컬럼 — 레이블 (DataSynth 전용, 검증/평가 전용 — detection 입력 금지) ──
+    # Why: PHASE1 detector에 라벨이 흘러가면 truth leakage. sidecar로만 주입되며 ledger 데이터 아님.
+    is_fraud: Series[bool] | None = pa.Field(nullable=True)
+    fraud_type: Series[str] | None = pa.Field(nullable=True)
+    is_anomaly: Series[bool] | None = pa.Field(nullable=True)
+    anomaly_type: Series[str] | None = pa.Field(nullable=True)
+    sod_violation: Series[bool] | None = pa.Field(nullable=True)
+    sod_conflict_type: Series[str] | None = pa.Field(nullable=True)
 
     # ── 선택 컬럼 ── Stage 2 확장
-    has_attachment: Optional[Series[bool]] = pa.Field(nullable=True)
-    supporting_doc_type: Optional[Series[str]] = pa.Field(nullable=True)
-    delivery_date: Optional[Series[pa.DateTime]] = pa.Field(nullable=True)
-    invoice_amount: Optional[Series[float]] = pa.Field(nullable=True)
-    supply_amount: Optional[Series[float]] = pa.Field(nullable=True)
-    ip_address: Optional[Series[str]] = pa.Field(nullable=True)
-    document_number: Optional[Series[pd.Int64Dtype]] = pa.Field(nullable=True)
+    has_attachment: Series[bool] | None = pa.Field(nullable=True)
+    supporting_doc_type: Series[str] | None = pa.Field(nullable=True)
+    delivery_date: Series[pa.DateTime] | None = pa.Field(nullable=True)
+    invoice_amount: Series[float] | None = pa.Field(nullable=True)
+    supply_amount: Series[float] | None = pa.Field(nullable=True)
+    ip_address: Series[str] | None = pa.Field(nullable=True)
+    document_number: Series[pd.Int64Dtype] | None = pa.Field(nullable=True)
 
     # ── 선택 컬럼 — Line ──
-    line_number: Optional[Series[pd.Int64Dtype]] = pa.Field(nullable=True)
-    local_amount: Optional[Series[float]] = pa.Field(nullable=True)
-    cost_center: Optional[Series[str]] = pa.Field(nullable=True)
-    profit_center: Optional[Series[str]] = pa.Field(nullable=True)
-    line_text: Optional[Series[str]] = pa.Field(nullable=True)
-    tax_code: Optional[Series[str]] = pa.Field(nullable=True)
-    tax_amount: Optional[Series[float]] = pa.Field(nullable=True)
-    trading_partner: Optional[Series[str]] = pa.Field(nullable=True)
-    auxiliary_account_number: Optional[Series[str]] = pa.Field(nullable=True)
-    auxiliary_account_label: Optional[Series[str]] = pa.Field(nullable=True)
-    lettrage: Optional[Series[str]] = pa.Field(nullable=True)
+    line_number: Series[pd.Int64Dtype] | None = pa.Field(nullable=True)
+    local_amount: Series[float] | None = pa.Field(nullable=True)
+    cost_center: Series[str] | None = pa.Field(nullable=True)
+    profit_center: Series[str] | None = pa.Field(nullable=True)
+    line_text: Series[str] | None = pa.Field(nullable=True)
+    tax_code: Series[str] | None = pa.Field(nullable=True)
+    tax_amount: Series[float] | None = pa.Field(nullable=True)
+    trading_partner: Series[str] | None = pa.Field(nullable=True)
+    auxiliary_account_number: Series[str] | None = pa.Field(nullable=True)
+    auxiliary_account_label: Series[str] | None = pa.Field(nullable=True)
+
+    # ── 선택 컬럼 — Clearing / suspense lifecycle (v2 ledger 메타) ──
+    # Why: anomaly_rules_simple.py(L3-09 aging) / fraud_rules_access.py가 직접 참조.
+    #      라벨이 아닌 ledger 상태값이므로 L1 optional 허용.
+    is_suspense_account: Series[bool] | None = pa.Field(nullable=True)
+    amount_open: Series[float] | None = pa.Field(nullable=True)
+    is_cleared: Series[bool] | None = pa.Field(nullable=True)
+    settlement_status: Series[str] | None = pa.Field(nullable=True)
+
+    lettrage: Series[str] | None = pa.Field(nullable=True)
     # Why: schema.yaml type: date → type_caster가 datetime64[ns]로 변환
-    lettrage_date: Optional[Series[pa.DateTime]] = pa.Field(nullable=True)
+    lettrage_date: Series[pa.DateTime] | None = pa.Field(nullable=True)
 
     class Config:
         strict = False  # 피처 컬럼 등 스키마 외 컬럼 허용
@@ -116,9 +164,7 @@ class GeneralLedgerSchema(pa.DataFrameModel):
 # ── 내부 헬퍼 ─────────────────────────────────────────────────
 
 
-def _collect_column_stats(
-    df: pd.DataFrame, schema_columns: set[str]
-) -> dict[str, dict]:
+def _collect_column_stats(df: pd.DataFrame, schema_columns: set[str]) -> dict[str, dict]:
     """schema.yaml에 정의된 컬럼만 대상으로 기초 통계 수집."""
     stats: dict[str, dict] = {}
     for col in sorted(schema_columns & set(df.columns)):
@@ -165,8 +211,7 @@ def _classify_failures(
             warning_agg[key] = warning_agg.get(key, 0) + 1
 
     errors = [
-        {"column": col, "check": chk, "failure_count": cnt}
-        for (col, chk), cnt in error_agg.items()
+        {"column": col, "check": chk, "failure_count": cnt} for (col, chk), cnt in error_agg.items()
     ]
     warnings = [
         {"column": col, "issue": chk, "detail": f"{cnt}건 위반"}
@@ -176,6 +221,7 @@ def _classify_failures(
 
 
 # ── 공개 API ──────────────────────────────────────────────────
+
 
 def validate_schema(
     df: pd.DataFrame,
@@ -202,11 +248,13 @@ def validate_schema(
     missing = required_columns - set(df.columns)
     if missing:
         for col in sorted(missing):
-            errors.append({
-                "column": col,
-                "check": "column_in_dataframe",
-                "failure_count": 1,
-            })
+            errors.append(
+                {
+                    "column": col,
+                    "check": "column_in_dataframe",
+                    "failure_count": 1,
+                }
+            )
         logger.warning("필수 컬럼 누락: %s", sorted(missing))
 
     # 2) column_stats 수집
@@ -217,29 +265,44 @@ def validate_schema(
     for col in sorted(optional_columns & set(df.columns)):
         null_rate = column_stats.get(col, {}).get("null_rate", 0.0)
         if null_rate >= high_null_threshold:
-            warnings.append({
+            warnings.append(
+                {
+                    "column": col,
+                    "issue": "high_null_rate",
+                    "detail": f"결측률 {null_rate:.1%} — 오매핑 의심",
+                }
+            )
+
+    # 3.5) Detector-forbidden 메타데이터 경고 (DataSynth 메타 → detection 차단 신호)
+    # Why: strict=False로 통과되는 잠재적 라벨 누설 컬럼을 노출. pipeline은
+    #      strip_detector_forbidden_columns()로 detection 진입 전 제거.
+    forbidden_present = sorted(set(df.columns) & DETECTOR_FORBIDDEN_COLUMNS)
+    for col in forbidden_present:
+        warnings.append(
+            {
                 "column": col,
-                "issue": "high_null_rate",
-                "detail": f"결측률 {null_rate:.1%} — 오매핑 의심",
-            })
+                "issue": "detector_forbidden_column",
+                "detail": "DataSynth 메타데이터 — detection 진입 전 strip 필요",
+            }
+        )
 
     # 4) Pandera lazy=True 검증 (필수 컬럼이 모두 존재할 때만 실행)
     if not missing:
         try:
             GeneralLedgerSchema.validate(df, lazy=True)
         except pa.errors.SchemaErrors as exc:
-            pandera_errors, pandera_warnings = _classify_failures(
-                exc, required_columns
-            )
+            pandera_errors, pandera_warnings = _classify_failures(exc, required_columns)
             errors.extend(pandera_errors)
             warnings.extend(pandera_warnings)
         except pa.errors.SchemaError as exc:
             # Why: lazy=True에서도 단일 에러가 SchemaError로 올 수 있음
-            errors.append({
-                "column": str(getattr(exc, "schema", "")),
-                "check": str(getattr(exc, "check", "unknown")),
-                "failure_count": 1,
-            })
+            errors.append(
+                {
+                    "column": str(getattr(exc, "schema", "")),
+                    "check": str(getattr(exc, "check", "unknown")),
+                    "failure_count": 1,
+                }
+            )
 
     is_valid = len(errors) == 0
     if is_valid:

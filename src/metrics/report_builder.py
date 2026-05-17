@@ -43,6 +43,21 @@ def build_markdown_report(report: PerformanceReport) -> str:
                 f"{_fmt_pct(item.precision)} | {_fmt_pct(item.recall)} | {_fmt_pct(item.f1)} |"
             )
 
+    if report.hold_out_metrics:
+        hold_out = report.hold_out_metrics
+        lines.append("\n## Phase 2 Hold-out\n")
+        lines.append(str(hold_out.get("caveat") or ""))
+        lines.append("\n| Metric | Value |")
+        lines.append("|:--|--:|")
+        lines.append(f"| Hold-out docs | {int(hold_out.get('hold_out_doc_count') or 0):,} |")
+        lines.append(
+            f"| Detected docs | {int(hold_out.get('hold_out_detected_docs') or 0):,} |"
+        )
+        lines.append(f"| Hold-out recall | {_fmt_pct(hold_out.get('hold_out_recall'))} |")
+        ci = hold_out.get("ci95") or {}
+        lines.append(f"| 95% CI half-width | {_fmt_pct(ci.get('half_width'))} |")
+        lines.append(f"| Hold-out pass | {bool(hold_out.get('hold_out_pass'))} |")
+
     if report.rule_metrics:
         lines.append("\n## Rule Metrics\n")
         lines.append(

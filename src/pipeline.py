@@ -49,6 +49,8 @@ class _NullAuditTrail:
 
     def log(self, event: AuditEvent) -> None:  # noqa: ARG002 — 인터페이스 호환
         return None
+
+
 _TEXT_EXT = frozenset({".csv", ".tsv", ".txt", ".dat"})
 _EXCEL_EXT = frozenset({".xlsx", ".xls", ".xlsb"})
 _INGEST_CACHE_SCHEMA_VERSION = "ingest-cache-v1"
@@ -89,7 +91,9 @@ def _run_detectors_parallel(
             result.metadata.setdefault("display_name", profile.display_name)
             result.metadata.setdefault("maturity", str(profile.maturity))
             result.metadata.setdefault("default_enabled", profile.default_enabled)
-            result.metadata.setdefault("activation_requirements", list(profile.activation_requirements))
+            result.metadata.setdefault(
+                "activation_requirements", list(profile.activation_requirements)
+            )
             result.metadata.setdefault("run_status", "executed")
             result.metadata.setdefault("elapsed", time.perf_counter() - t0)
             return idx, result, None
@@ -115,8 +119,7 @@ def _run_detectors_parallel(
         completed = 0
         with ThreadPoolExecutor(max_workers=max_workers) as ex:
             futures = {
-                ex.submit(_run_one, idx, det): (idx, det)
-                for idx, det in enumerate(detectors)
+                ex.submit(_run_one, idx, det): (idx, det) for idx, det in enumerate(detectors)
             }
             for fut in as_completed(futures):
                 idx, res, warn = fut.result()
@@ -128,7 +131,9 @@ def _run_detectors_parallel(
                 if progress_callback is not None:
                     try:
                         progress_callback(
-                            completed, total, detectors[idx].track_name,
+                            completed,
+                            total,
+                            detectors[idx].track_name,
                         )
                     except Exception:
                         logger.debug("progress_callback 호출 실패", exc_info=True)
@@ -233,6 +238,7 @@ def _detector_result_warnings(results: list[DetectionResult]) -> list[str]:
 @dataclass
 class PipelineResult:
     """전체 파이프라인 실행 결과."""
+
     data: pd.DataFrame
     results: list[DetectionResult]
     risk_summary: dict[str, int]
@@ -364,16 +370,19 @@ class AuditPipeline:
         if not hasattr(self, "_detector_statuses"):
             self._reset_detector_statuses()
         profile = get_detector_profile(track_name)
-        status = self._detector_statuses.get(track_name, {
-            "track_name": track_name,
-            "display_name": profile.display_name,
-            "maturity": str(profile.maturity),
-            "default_enabled": profile.default_enabled,
-            "activation_requirements": list(profile.activation_requirements),
-            "flagged_docs": 0,
-            "rules_run": 0,
-            "elapsed_sec": 0.0,
-        })
+        status = self._detector_statuses.get(
+            track_name,
+            {
+                "track_name": track_name,
+                "display_name": profile.display_name,
+                "maturity": str(profile.maturity),
+                "default_enabled": profile.default_enabled,
+                "activation_requirements": list(profile.activation_requirements),
+                "flagged_docs": 0,
+                "rules_run": 0,
+                "elapsed_sec": 0.0,
+            },
+        )
         status["run_status"] = run_status
         status["reason"] = reason
         if result is not None:
@@ -450,13 +459,20 @@ class AuditPipeline:
         warns.extend(w)
         fname = Path(path).name
         result = self._execute(
-            df, self._make_batch_id(), start, warns, file_name=fname,
+            df,
+            self._make_batch_id(),
+            start,
+            warns,
+            file_name=fname,
         )
         result.file_name = fname
         return result
 
     def run_from_dataframe(
-        self, df: pd.DataFrame, *, file_name: str = "",
+        self,
+        df: pd.DataFrame,
+        *,
+        file_name: str = "",
     ) -> PipelineResult:
         """DataFrame 직접 입력 (ingest 생략).
 
@@ -474,14 +490,20 @@ class AuditPipeline:
         else:
             metadata_warnings = []
         result = self._execute(
-            work_df, self._make_batch_id(), time.monotonic(), metadata_warnings,
+            work_df,
+            self._make_batch_id(),
+            time.monotonic(),
+            metadata_warnings,
             file_name=file_name,
         )
         result.file_name = file_name
         return result
 
     def prepare_from_dataframe(
-        self, df: pd.DataFrame, *, file_name: str = "",
+        self,
+        df: pd.DataFrame,
+        *,
+        file_name: str = "",
     ) -> PipelineResult:
         """탐지 전 단계까지만 수행하여 준비 결과를 반환."""
         start = time.monotonic()
@@ -576,12 +598,17 @@ class AuditPipeline:
             weights = self._select_weights(results)
 
         from src.detection.score_aggregator import aggregate_scores
+
         stacking_scores = None
         if detection_scope != "phase2_only":
             stacking_scores = self._try_stacking_ensemble(results, df)
         agg_df = aggregate_scores(
-            df, results, weights=weights, thresholds=thresholds,
-            settings=self._settings, stacking_scores=stacking_scores,
+            df,
+            results,
+            weights=weights,
+            thresholds=thresholds,
+            settings=self._settings,
+            stacking_scores=stacking_scores,
         )
         for col in agg_df.columns:
             df[col] = agg_df[col].values
@@ -621,7 +648,9 @@ class AuditPipeline:
             )
             warns.extend(w)
 
-        risk_summary = df["risk_level"].value_counts().to_dict() if "risk_level" in df.columns else {}
+        risk_summary = (
+            df["risk_level"].value_counts().to_dict() if "risk_level" in df.columns else {}
+        )
         elapsed = time.monotonic() - start
         # Why: 재탐지 연속성 — 설정 변경으로 risk_level 분포가 달라졌음을 증적에 남김
         self._log_event(
@@ -632,26 +661,36 @@ class AuditPipeline:
         )
         logger.info("재탐지 완료: %.2fs, batch=%s", elapsed, bid)
         return PipelineResult(
-            data=df, results=results, risk_summary=risk_summary,
-            batch_id=bid, load_result=load_result, elapsed=elapsed, warnings=warns,
-            featured_data=df.copy(), file_name=file_name,
-            shap_contributions=shap_contributions, shap_base_value=shap_base_value,
+            data=df,
+            results=results,
+            risk_summary=risk_summary,
+            batch_id=bid,
+            load_result=load_result,
+            elapsed=elapsed,
+            warnings=warns,
+            featured_data=df.copy(),
+            file_name=file_name,
+            shap_contributions=shap_contributions,
+            shap_base_value=shap_base_value,
             detector_statuses=detector_statuses,
             performance_report=performance_report,
             phase1_case_result=phase1_case_result,
             phase1_case_path=phase1_case_ref.get("phase1_case_path"),
             phase1_case_run_id=phase1_case_ref.get("phase1_case_run_id"),
             phase1_case_count=int(phase1_case_ref.get("phase1_case_count", 0)),
-            phase1_macro_finding_count=int(
-                phase1_case_ref.get("phase1_macro_finding_count", 0)
-            ),
+            phase1_macro_finding_count=int(phase1_case_ref.get("phase1_macro_finding_count", 0)),
             phase1_top_theme_ids=list(phase1_case_ref.get("top_theme_ids", [])),
             phase2_case_overlays=phase2_case_overlays,
         )
 
     def _execute(
-        self, df: pd.DataFrame, batch_id: str, start: float, warns: list[str],
-        *, file_name: str = "",
+        self,
+        df: pd.DataFrame,
+        batch_id: str,
+        start: float,
+        warns: list[str],
+        *,
+        file_name: str = "",
     ) -> PipelineResult:
         """validate → feature → detection → aggregate → db."""
         # Why: ingest 완료 직후 사후 로깅 — batch_id가 _make_batch_id()로 확정된 시점.
@@ -702,10 +741,14 @@ class AuditPipeline:
         self._progress(0.80, "점수 집계 중...")
         # Why: aggregate_scores는 별도 DF 반환. .values로 인덱스 불일치 방어.
         from src.detection.score_aggregator import aggregate_scores
+
         stacking_scores = self._try_stacking_ensemble(results, df)
         weights = self._select_weights(results)
         agg_df = aggregate_scores(
-            df, results, weights=weights, stacking_scores=stacking_scores,
+            df,
+            results,
+            weights=weights,
+            stacking_scores=stacking_scores,
         )
         for col in agg_df.columns:
             df[col] = agg_df[col].values
@@ -739,7 +782,9 @@ class AuditPipeline:
             _t = time.monotonic()
             self._progress(0.90, "DB 적재 중...")
             load_result, w = self._load_db(
-                df, batch_id, results,
+                df,
+                batch_id,
+                results,
                 file_name=file_name,
                 performance_report=performance_report,
                 phase1_case_ref=phase1_case_ref,
@@ -754,29 +799,36 @@ class AuditPipeline:
                 details={
                     "rows_inserted": (
                         getattr(load_result, "rows_inserted", None)
-                        if load_result is not None else None
+                        if load_result is not None
+                        else None
                     ),
                 },
             )
 
-        risk_summary = df["risk_level"].value_counts().to_dict() if "risk_level" in df.columns else {}
+        risk_summary = (
+            df["risk_level"].value_counts().to_dict() if "risk_level" in df.columns else {}
+        )
         elapsed = time.monotonic() - start
         self._progress(1.0, "완료!")
         logger.info("파이프라인 완료: %.2fs, batch=%s", elapsed, batch_id)
         return PipelineResult(
-            data=df, results=results, risk_summary=risk_summary,
-            batch_id=batch_id, load_result=load_result, elapsed=elapsed, warnings=warns,
+            data=df,
+            results=results,
+            risk_summary=risk_summary,
+            batch_id=batch_id,
+            load_result=load_result,
+            elapsed=elapsed,
+            warnings=warns,
             featured_data=featured_snapshot,
-            shap_contributions=shap_contributions, shap_base_value=shap_base_value,
+            shap_contributions=shap_contributions,
+            shap_base_value=shap_base_value,
             detector_statuses=detector_statuses,
             performance_report=performance_report,
             phase1_case_result=phase1_case_result,
             phase1_case_path=phase1_case_ref.get("phase1_case_path"),
             phase1_case_run_id=phase1_case_ref.get("phase1_case_run_id"),
             phase1_case_count=int(phase1_case_ref.get("phase1_case_count", 0)),
-            phase1_macro_finding_count=int(
-                phase1_case_ref.get("phase1_macro_finding_count", 0)
-            ),
+            phase1_macro_finding_count=int(phase1_case_ref.get("phase1_macro_finding_count", 0)),
             phase1_top_theme_ids=list(phase1_case_ref.get("top_theme_ids", [])),
             phase2_case_overlays=phase2_case_overlays,
         )
@@ -894,7 +946,9 @@ class AuditPipeline:
 
         self._progress(0.12, "컬럼 매핑 중...")
         mapping_result = auto_map_columns(
-            source_columns, matched_keywords, data_df=data_df,
+            source_columns,
+            matched_keywords,
+            data_df=data_df,
             schema=self._ctx.schema,
             keywords=self._ctx.keywords,
         )
@@ -1035,11 +1089,10 @@ class AuditPipeline:
             ).attrs
         )
         messages = build_validated_metadata_messages(reconciliation)
-        if (
-            enforcement == "strict"
-            and reconciliation.status == "fail"
-        ):
-            detail = "; ".join(reconciliation.critical_mismatches[:5]) or "critical metadata mismatch"
+        if enforcement == "strict" and reconciliation.status == "fail":
+            detail = (
+                "; ".join(reconciliation.critical_mismatches[:5]) or "critical metadata mismatch"
+            )
             raise ValueError(f"DataSynth metadata validation failed: {detail}")
         if enforcement == "off":
             return []
@@ -1047,6 +1100,7 @@ class AuditPipeline:
 
     def _validate(self, df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
         from src.validation import validate_accounting, validate_schema
+
         warns: list[str] = []
         sr = validate_schema(df, schema=self._ctx.schema, settings=self._ctx.settings)
         if not sr.is_valid:
@@ -1057,11 +1111,23 @@ class AuditPipeline:
 
             if not_null_errors and not other_errors:
                 # NaN 행만 드롭하여 복구 시도
-                required_cols = [col for col in df.columns
-                                 if col in {"document_id", "posting_date", "debit_amount",
-                                            "credit_amount", "gl_account", "document_type",
-                                            "fiscal_year", "fiscal_period", "document_date",
-                                            "company_code"}]
+                required_cols = [
+                    col
+                    for col in df.columns
+                    if col
+                    in {
+                        "document_id",
+                        "posting_date",
+                        "debit_amount",
+                        "credit_amount",
+                        "gl_account",
+                        "document_type",
+                        "fiscal_year",
+                        "fiscal_period",
+                        "document_date",
+                        "company_code",
+                    }
+                ]
                 before = len(df)
                 df = df.dropna(subset=required_cols, how="any").reset_index(drop=True)
                 dropped = before - len(df)
@@ -1080,21 +1146,11 @@ class AuditPipeline:
             # Why: 회계 복식부기 근본 위반 — 비율 기반 임계로 fatal/warning 분기.
             #      단일 행 불일치만으로 중단하지 않되, materiality 수준을 넘으면 차단.
             total_debit = float(
-                df["debit_amount"].fillna(0).sum()
-                if "debit_amount" in df.columns else 0.0
+                df["debit_amount"].fillna(0).sum() if "debit_amount" in df.columns else 0.0
             )
-            diff_ratio = (
-                acct.balance_diff / total_debit
-                if total_debit > 0 else float("inf")
-            )
-            unique_docs = (
-                df["document_id"].nunique()
-                if "document_id" in df.columns else 0
-            )
-            doc_ratio = (
-                len(acct.unbalanced_docs) / unique_docs
-                if unique_docs > 0 else 0.0
-            )
+            diff_ratio = acct.balance_diff / total_debit if total_debit > 0 else float("inf")
+            unique_docs = df["document_id"].nunique() if "document_id" in df.columns else 0
+            doc_ratio = len(acct.unbalanced_docs) / unique_docs if unique_docs > 0 else 0.0
 
             msg = (
                 f"대차불일치 {len(acct.unbalanced_docs)}건, "
@@ -1103,10 +1159,7 @@ class AuditPipeline:
             )
 
             s = self._ctx.settings
-            is_fatal = (
-                diff_ratio > s.balance_fatal_ratio
-                or doc_ratio > s.balance_fatal_doc_ratio
-            )
+            is_fatal = diff_ratio > s.balance_fatal_ratio or doc_ratio > s.balance_fatal_doc_ratio
             if is_fatal:
                 # Why: detection 진입 차단. audit_log에 사유 기록 후 예외 발생.
                 self._record_validate_failure(msg)
@@ -1117,6 +1170,7 @@ class AuditPipeline:
 
         # Why: WU-13 TB 교차검증 — GL 계정별 집계 무결성 + 유형별 잔액 대사
         from src.validation.tb_reconciliation import validate_tb_reconciliation
+
         recon = validate_tb_reconciliation(
             df,
             materiality=self._ctx.materiality_amount,
@@ -1132,6 +1186,7 @@ class AuditPipeline:
         #      validate_statistics()는 170줄 완전 구현되어 있었으나 호출이 누락된 Dead Code였음.
         try:
             from src.validation import validate_statistics
+
             stat = validate_statistics(df, settings=self._ctx.settings)
             warns.extend(stat.warnings)
             # flags는 dict[str, str] → "L3 type: detail" 포맷으로 평탄화
@@ -1142,6 +1197,15 @@ class AuditPipeline:
             logger.warning("L3 통계 검증 실패 — graceful 스킵", exc_info=True)
             warns.append("L3 통계 검증 스킵 (예외)")
             self._stat_result = None
+
+        # Why: DataSynth 메타데이터(semantic_scenario_id, mutation_* 등)는
+        #      strict=False로 L1을 우회하여 통과한다. feature/detection이
+        #      참조하면 라벨 누설 위험 → 검증 직후 물리적으로 strip한다.
+        from src.validation.schema_validator import strip_detector_forbidden_columns
+
+        df, stripped = strip_detector_forbidden_columns(df)
+        if stripped:
+            warns.append(f"DataSynth 메타 {len(stripped)}컬럼 strip (detection 격리): {stripped}")
 
         return df, warns
 
@@ -1169,6 +1233,7 @@ class AuditPipeline:
                 return cached, []
 
         from src.feature.engine import generate_all_features
+
         feat = generate_all_features(
             df,
             settings=settings,
@@ -1195,6 +1260,7 @@ class AuditPipeline:
         from src.detection.benford_detector import BenfordDetector
         from src.detection.fraud_layer import FraudLayer
         from src.detection.integrity_layer import IntegrityDetector
+
         warns: list[str] = []
         self._reset_detector_statuses()
 
@@ -1222,7 +1288,9 @@ class AuditPipeline:
             )
             warns.extend(base_warns)
             for result in results:
-                self._record_detector_status(result.track_name, run_status="executed", result=result)
+                self._record_detector_status(
+                    result.track_name, run_status="executed", result=result
+                )
             for warn in base_warns:
                 if warn.startswith("detector_failed:"):
                     failed_track = warn.removeprefix("detector_failed:").strip()
@@ -1264,7 +1332,9 @@ class AuditPipeline:
         """Timeseries detector execution for TS01/TS02."""
         if not getattr(self._ctx.settings, "enable_timeseries_detection", True):
             logger.debug("timeseries detection disabled by settings")
-            self._record_detector_status("timeseries", run_status="skipped", reason="disabled_by_settings")
+            self._record_detector_status(
+                "timeseries", run_status="skipped", reason="disabled_by_settings"
+            )
             return None
         try:
             from src.detection.timeseries_detector import TimeseriesDetector
@@ -1275,24 +1345,34 @@ class AuditPipeline:
             return result
         except Exception:
             logger.warning("Timeseries detection failed and will be skipped", exc_info=True)
-            self._record_detector_status("timeseries", run_status="failed", reason="detector_exception")
+            self._record_detector_status(
+                "timeseries", run_status="failed", reason="detector_exception"
+            )
             return None
 
     def _try_variance_detection(self, df: pd.DataFrame) -> DetectionResult | None:
         """Layer D(전기 대비 변동) 실행 시도. 조건 불충족 시 None."""
         if not getattr(self._ctx.settings, "enable_variance_detection", True):
             logger.debug("variance detection disabled by settings")
-            self._record_detector_status("layer_d", run_status="skipped", reason="disabled_by_settings")
+            self._record_detector_status(
+                "layer_d", run_status="skipped", reason="disabled_by_settings"
+            )
             return None
         if self._ctx.is_anonymous:
-            self._record_detector_status("layer_d", run_status="skipped", reason="anonymous_context")
+            self._record_detector_status(
+                "layer_d", run_status="skipped", reason="anonymous_context"
+            )
             return None
         if self._ctx.fiscal_year is None:
-            self._record_detector_status("layer_d", run_status="skipped", reason="missing_fiscal_year")
+            self._record_detector_status(
+                "layer_d", run_status="skipped", reason="missing_fiscal_year"
+            )
             return None
         if self._repo is None:
             logger.debug("repo 미주입 — Layer D 스킵")
-            self._record_detector_status("layer_d", run_status="skipped", reason="missing_repository")
+            self._record_detector_status(
+                "layer_d", run_status="skipped", reason="missing_repository"
+            )
             return None
 
         try:
@@ -1300,11 +1380,15 @@ class AuditPipeline:
             from src.detection.variance_layer import VarianceDetector
 
             prior = find_prior_engagement(
-                self._repo, self._ctx.company_id, self._ctx.fiscal_year,
+                self._repo,
+                self._ctx.company_id,
+                self._ctx.fiscal_year,
             )
             if prior is None:
                 logger.info("전기 engagement 없음 — Layer D 스킵")
-                self._record_detector_status("layer_d", run_status="skipped", reason="missing_historical_data")
+                self._record_detector_status(
+                    "layer_d", run_status="skipped", reason="missing_historical_data"
+                )
                 return None
 
             prior_db_path = self._repo.db_path(self._ctx.company_id, prior.engagement_id)
@@ -1314,11 +1398,14 @@ class AuditPipeline:
             conn = self._conn
             if conn is None:
                 from src.db.connection import get_connection
+
                 conn = get_connection(path=str(self._ctx.db_path))
 
             prior_summary = load_prior_summary(conn, prior_db_path, prior.fiscal_year)
             if prior_summary is None:
-                self._record_detector_status("layer_d", run_status="skipped", reason="missing_prior_summary")
+                self._record_detector_status(
+                    "layer_d", run_status="skipped", reason="missing_prior_summary"
+                )
                 return None
 
             det = VarianceDetector(self._ctx.settings, prior_summary=prior_summary)
@@ -1328,7 +1415,9 @@ class AuditPipeline:
 
         except Exception:
             logger.warning("Layer D 실행 실패 — 스킵", exc_info=True)
-            self._record_detector_status("layer_d", run_status="failed", reason="detector_exception")
+            self._record_detector_status(
+                "layer_d", run_status="failed", reason="detector_exception"
+            )
             return None
 
     def _try_relational_detection(self, df: pd.DataFrame) -> DetectionResult | None:
@@ -1339,7 +1428,9 @@ class AuditPipeline:
         """
         if not getattr(self._ctx.settings, "enable_relational_detection", False):
             logger.debug("relational detection disabled by settings")
-            self._record_detector_status("relational", run_status="skipped", reason="disabled_by_settings")
+            self._record_detector_status(
+                "relational", run_status="skipped", reason="disabled_by_settings"
+            )
             return None
         try:
             from src.detection.relational_detector import RelationalDetector
@@ -1362,7 +1453,9 @@ class AuditPipeline:
             return result
         except Exception:
             logger.warning("Relational 탐지 실패 — 스킵", exc_info=True)
-            self._record_detector_status("relational", run_status="failed", reason="detector_exception")
+            self._record_detector_status(
+                "relational", run_status="failed", reason="detector_exception"
+            )
             return None
 
     def _try_graph_detection(self, df: pd.DataFrame) -> DetectionResult | None:
@@ -1373,7 +1466,9 @@ class AuditPipeline:
         """
         if not getattr(self._ctx.settings, "enable_graph_detection", False):
             logger.debug("graph detection disabled by settings")
-            self._record_detector_status("graph", run_status="skipped", reason="disabled_by_settings")
+            self._record_detector_status(
+                "graph", run_status="skipped", reason="disabled_by_settings"
+            )
             return None
         try:
             from src.detection.graph_detector import GraphDetector
@@ -1385,7 +1480,9 @@ class AuditPipeline:
             if result.total_rules_run == 0 and any("networkx" in w for w in result.warnings):
                 run_status = "skipped"
                 reason = "missing_optional_dependency"
-            self._record_detector_status("graph", run_status=run_status, reason=reason, result=result)
+            self._record_detector_status(
+                "graph", run_status=run_status, reason=reason, result=result
+            )
             return result
         except Exception:
             logger.warning("Graph 탐지 실패 — 스킵", exc_info=True)
@@ -1427,7 +1524,9 @@ class AuditPipeline:
         """
         if not getattr(self._ctx.settings, "enable_access_audit_detection", False):
             logger.debug("access audit detection disabled by settings")
-            self._record_detector_status("access_audit", run_status="skipped", reason="disabled_by_settings")
+            self._record_detector_status(
+                "access_audit", run_status="skipped", reason="disabled_by_settings"
+            )
             return None
         try:
             from src.detection.access_audit_layer import AccessAuditDetector
@@ -1436,8 +1535,7 @@ class AuditPipeline:
             if self._conn is not None:
                 try:
                     change_log_df = self._conn.execute(
-                        "SELECT document_id, changed_by, changed_field, change_date "
-                        "FROM change_log"
+                        "SELECT document_id, changed_by, changed_field, change_date FROM change_log"
                     ).fetchdf()
                 except Exception:
                     logger.debug("change_log 미존재 — AL1-01 스킵")
@@ -1452,7 +1550,9 @@ class AuditPipeline:
             return result
         except Exception:
             logger.warning("Access Audit 탐지 실패 — 스킵", exc_info=True)
-            self._record_detector_status("access_audit", run_status="failed", reason="detector_exception")
+            self._record_detector_status(
+                "access_audit", run_status="failed", reason="detector_exception"
+            )
             return None
 
     def _try_evidence_detection(self, df: pd.DataFrame) -> DetectionResult | None:
@@ -1463,7 +1563,9 @@ class AuditPipeline:
         """
         if not getattr(self._ctx.settings, "enable_evidence_detection", False):
             logger.debug("evidence detection disabled by settings")
-            self._record_detector_status("evidence", run_status="skipped", reason="disabled_by_settings")
+            self._record_detector_status(
+                "evidence", run_status="skipped", reason="disabled_by_settings"
+            )
             return None
         try:
             from src.detection.evidence_detector import EvidenceDetector
@@ -1477,7 +1579,9 @@ class AuditPipeline:
             return result
         except Exception:
             logger.warning("Evidence 탐지 실패 — 스킵", exc_info=True)
-            self._record_detector_status("evidence", run_status="failed", reason="detector_exception")
+            self._record_detector_status(
+                "evidence", run_status="failed", reason="detector_exception"
+            )
             return None
 
     def _try_trendbreak_detection(self, df: pd.DataFrame) -> DetectionResult | None:
@@ -1488,24 +1592,34 @@ class AuditPipeline:
         """
         if not getattr(self._ctx.settings, "enable_trendbreak_detection", False):
             logger.debug("trendbreak detection disabled by settings")
-            self._record_detector_status("trendbreak", run_status="skipped", reason="disabled_by_settings")
+            self._record_detector_status(
+                "trendbreak", run_status="skipped", reason="disabled_by_settings"
+            )
             return None
         if self._ctx.is_anonymous:
-            self._record_detector_status("trendbreak", run_status="skipped", reason="anonymous_context")
+            self._record_detector_status(
+                "trendbreak", run_status="skipped", reason="anonymous_context"
+            )
             return None
         if self._ctx.fiscal_year is None:
-            self._record_detector_status("trendbreak", run_status="skipped", reason="missing_fiscal_year")
+            self._record_detector_status(
+                "trendbreak", run_status="skipped", reason="missing_fiscal_year"
+            )
             return None
         if self._repo is None:
             logger.debug("repo 미주입 — TrendBreak 스킵")
-            self._record_detector_status("trendbreak", run_status="skipped", reason="missing_repository")
+            self._record_detector_status(
+                "trendbreak", run_status="skipped", reason="missing_repository"
+            )
             return None
 
         # Why: audit_rules.yaml에서 estimation_accounts 설정 확인
         estimation_config = self._ctx.audit_rules.get("estimation_accounts")
         if not estimation_config:
             logger.debug("estimation_accounts 미설정 — TrendBreak 스킵")
-            self._record_detector_status("trendbreak", run_status="skipped", reason="missing_estimation_config")
+            self._record_detector_status(
+                "trendbreak", run_status="skipped", reason="missing_estimation_config"
+            )
             return None
 
         try:
@@ -1517,8 +1631,7 @@ class AuditPipeline:
 
             # Why: YAML에서 계정별 부호 규칙 추출
             account_sign_convention = {
-                item["account"]: item.get("sign", "credit_normal")
-                for item in estimation_config
+                item["account"]: item.get("sign", "credit_normal") for item in estimation_config
             }
 
             engagements = find_multi_year_engagements(
@@ -1530,13 +1643,16 @@ class AuditPipeline:
             )
             if engagements is None:
                 logger.info("다기간 engagement 부족 — TrendBreak 스킵")
-                self._record_detector_status("trendbreak", run_status="skipped", reason="missing_historical_data")
+                self._record_detector_status(
+                    "trendbreak", run_status="skipped", reason="missing_historical_data"
+                )
                 return None
 
             # Why: _try_variance_detection과 동일한 커넥션 확보 패턴
             conn = self._conn
             if conn is None:
                 from src.db.connection import get_connection
+
                 conn = get_connection(path=str(self._ctx.db_path))
 
             estimates = load_multi_year_estimates(
@@ -1550,7 +1666,9 @@ class AuditPipeline:
                 account_sign_convention=account_sign_convention,
             )
             if estimates is None:
-                self._record_detector_status("trendbreak", run_status="skipped", reason="missing_multi_year_estimates")
+                self._record_detector_status(
+                    "trendbreak", run_status="skipped", reason="missing_multi_year_estimates"
+                )
                 return None
 
             det = TrendBreakDetector(
@@ -1563,7 +1681,9 @@ class AuditPipeline:
 
         except Exception:
             logger.warning("TrendBreak 실행 실패 — 스킵", exc_info=True)
-            self._record_detector_status("trendbreak", run_status="failed", reason="detector_exception")
+            self._record_detector_status(
+                "trendbreak", run_status="failed", reason="detector_exception"
+            )
             return None
 
     @staticmethod
@@ -1578,9 +1698,11 @@ class AuditPipeline:
 
         if has_ml:
             from src.detection.constants import LAYER_WEIGHTS_WITH_ML
+
             return LAYER_WEIGHTS_WITH_ML
         if has_trendbreak:
             from src.detection.constants import RULE_LEVEL_WEIGHTS_WITH_TRENDBREAK
+
             return RULE_LEVEL_WEIGHTS_WITH_TRENDBREAK
         return None  # 기본 RULE_LEVEL_WEIGHTS (L1-L4)
 
@@ -1598,25 +1720,38 @@ class AuditPipeline:
         results: list[DetectionResult] = []
         if not getattr(self._ctx.settings, "enable_ml_detection", False):
             logger.debug("ml detection disabled by settings")
-            self._record_detector_status("ml_supervised", run_status="skipped", reason="disabled_by_settings")
-            self._record_detector_status("ml_unsupervised", run_status="skipped", reason="disabled_by_settings")
+            self._record_detector_status(
+                "ml_supervised", run_status="skipped", reason="disabled_by_settings"
+            )
+            self._record_detector_status(
+                "ml_unsupervised", run_status="skipped", reason="disabled_by_settings"
+            )
             return results
         # Why: SHAP 단계에서 재사용하기 위해 Supervised detector 인스턴스 캐싱
         self._ml_supervised_detector = None
         if self._ctx.is_anonymous:
-            self._record_detector_status("ml_supervised", run_status="skipped", reason="anonymous_context")
-            self._record_detector_status("ml_unsupervised", run_status="skipped", reason="anonymous_context")
+            self._record_detector_status(
+                "ml_supervised", run_status="skipped", reason="anonymous_context"
+            )
+            self._record_detector_status(
+                "ml_unsupervised", run_status="skipped", reason="anonymous_context"
+            )
             return results
 
         try:
             from src.preprocessing.model_registry import ModelRegistry
+
             try:
                 registry = ModelRegistry(registry_dir=self._phase2_model_registry_dir())
             except TypeError:
                 registry = ModelRegistry()
         except Exception:
-            self._record_detector_status("ml_supervised", run_status="skipped", reason="missing_model_registry")
-            self._record_detector_status("ml_unsupervised", run_status="skipped", reason="missing_model_registry")
+            self._record_detector_status(
+                "ml_supervised", run_status="skipped", reason="missing_model_registry"
+            )
+            self._record_detector_status(
+                "ml_unsupervised", run_status="skipped", reason="missing_model_registry"
+            )
             return results
 
         class _SkipSupervisedForPhase2Only(Exception):
@@ -1632,6 +1767,7 @@ class AuditPipeline:
                 )
                 raise _SkipSupervisedForPhase2Only
             from src.detection.supervised_detector import SupervisedDetector
+
             det = SupervisedDetector(self._settings, model_registry=registry)
             det.load_model("supervised")
             gate_snapshot = det.get_training_gate_snapshot()
@@ -1652,7 +1788,9 @@ class AuditPipeline:
                 self._record_detector_status(
                     "ml_supervised",
                     run_status="executed",
-                    reason=(gate_reason or "unknown_training_gate") if gate_status == "unknown" else None,
+                    reason=(gate_reason or "unknown_training_gate")
+                    if gate_status == "unknown"
+                    else None,
                     result=result,
                 )
                 # Why: SHAP은 sklearn pipeline이 필요 → 로드된 detector 참조 보관
@@ -1661,14 +1799,19 @@ class AuditPipeline:
             pass
         except FileNotFoundError:
             logger.debug("SupervisedDetector 모델 없음 — 스킵")
-            self._record_detector_status("ml_supervised", run_status="skipped", reason="missing_trained_model")
+            self._record_detector_status(
+                "ml_supervised", run_status="skipped", reason="missing_trained_model"
+            )
         except Exception:
             logger.warning("SupervisedDetector 탐지 실패", exc_info=True)
-            self._record_detector_status("ml_supervised", run_status="failed", reason="detector_exception")
+            self._record_detector_status(
+                "ml_supervised", run_status="failed", reason="detector_exception"
+            )
 
         # Unsupervised (ML02)
         try:
             from src.detection.vae_detector import UnsupervisedDetector
+
             det = UnsupervisedDetector(self._settings, model_registry=registry)
             phase2_contract = getattr(self, "_phase2_inference_contract", None)
             promoted_versions = (
@@ -1688,10 +1831,14 @@ class AuditPipeline:
             self._record_detector_status("ml_unsupervised", run_status="executed", result=result)
         except FileNotFoundError:
             logger.debug("UnsupervisedDetector 모델 없음 — 스킵")
-            self._record_detector_status("ml_unsupervised", run_status="skipped", reason="missing_trained_model")
+            self._record_detector_status(
+                "ml_unsupervised", run_status="skipped", reason="missing_trained_model"
+            )
         except Exception:
             logger.warning("UnsupervisedDetector 탐지 실패", exc_info=True)
-            self._record_detector_status("ml_unsupervised", run_status="failed", reason="detector_exception")
+            self._record_detector_status(
+                "ml_unsupervised", run_status="failed", reason="detector_exception"
+            )
 
         return results
 
@@ -1714,21 +1861,27 @@ class AuditPipeline:
              Cold Start 시나리오에서 graceful degradation.
         """
         if self._ctx.is_anonymous:
-            self._record_detector_status("ensemble", run_status="skipped", reason="anonymous_context")
+            self._record_detector_status(
+                "ensemble", run_status="skipped", reason="anonymous_context"
+            )
             return None
 
         try:
             from src.preprocessing.model_registry import ModelRegistry
+
             try:
                 registry = ModelRegistry(registry_dir=self._phase2_model_registry_dir())
             except TypeError:
                 registry = ModelRegistry()
         except Exception:
-            self._record_detector_status("ensemble", run_status="skipped", reason="missing_model_registry")
+            self._record_detector_status(
+                "ensemble", run_status="skipped", reason="missing_model_registry"
+            )
             return None
 
         try:
             from src.detection.ensemble_detector import EnsembleDetector
+
             det = EnsembleDetector(self._settings, model_registry=registry)
             det.load_model("stacking_meta")
             result = det.detect_from_results(results, df.index)
@@ -1737,11 +1890,15 @@ class AuditPipeline:
             return result.scores
         except FileNotFoundError:
             logger.debug("Stacking meta-learner 모델 없음 — 기존 가중합 사용")
-            self._record_detector_status("ensemble", run_status="skipped", reason="missing_trained_model")
+            self._record_detector_status(
+                "ensemble", run_status="skipped", reason="missing_trained_model"
+            )
             return None
         except Exception:
             logger.warning("Stacking meta-learner 추론 실패", exc_info=True)
-            self._record_detector_status("ensemble", run_status="failed", reason="detector_exception")
+            self._record_detector_status(
+                "ensemble", run_status="failed", reason="detector_exception"
+            )
             return None
 
     def _try_shap_explanation(
@@ -1783,11 +1940,13 @@ class AuditPipeline:
             flagged_df = flagged_df.nlargest(max_rows, "anomaly_score")
             logger.info(
                 "SHAP 대상 축소: %d → %d건 (shap_max_rows 적용)",
-                int(flagged_mask.sum()), max_rows,
+                int(flagged_mask.sum()),
+                max_rows,
             )
 
         try:
             from src.preprocessing.explainer import PipelineExplainer
+
             explainer = PipelineExplainer(
                 pipeline=det.pipeline_,
                 feature_names=list(flagged_df.columns),
@@ -1803,10 +1962,7 @@ class AuditPipeline:
             return None, None
 
         doc_ids = flagged_df["document_id"].tolist()
-        shap_map = {
-            str(doc_id): contrib
-            for doc_id, contrib in zip(doc_ids, contributions_list)
-        }
+        shap_map = {str(doc_id): contrib for doc_id, contrib in zip(doc_ids, contributions_list)}
         logger.info("SHAP 산출 완료: %d건 (base_value=%.4f)", len(shap_map), base_value)
         return shap_map, base_value
 
@@ -1829,13 +1985,20 @@ class AuditPipeline:
         return None
 
     def _load_db(
-        self, df, batch_id, results, *, file_name: str = "", performance_report=None,
+        self,
+        df,
+        batch_id,
+        results,
+        *,
+        file_name: str = "",
+        performance_report=None,
         phase1_case_ref: dict | None = None,
     ) -> tuple[object | None, list[str]]:
         conn, own_conn = self._conn, self._conn is None
         try:
             if own_conn:
                 from src.db.connection import get_connection
+
                 # Why: 회사 프로파일 없는 폴백(anonymous/legacy) → :memory: 사용
                 #      동일 파일에 동시 쓰기 시 DuckDB File Lock 방지
                 if self._ctx.is_anonymous:
@@ -1844,12 +2007,18 @@ class AuditPipeline:
                     conn = get_connection(path=str(self._ctx.db_path))
             from src.db.loader import load_all
             from src.db.performance_store import save_report
+
             # Why: WU-13 — _validate()에서 캐싱한 TB DataFrame을 DB에 적재
             tb_df = getattr(self, "_tb_df", None)
             datasynth_dir = self._detect_datasynth_dir(file_name)
             lr = load_all(
-                conn, df, batch_id, results,
-                file_name=file_name, tb_df=tb_df, datasynth_dir=datasynth_dir,
+                conn,
+                df,
+                batch_id,
+                results,
+                file_name=file_name,
+                tb_df=tb_df,
+                datasynth_dir=datasynth_dir,
                 phase1_case_ref=phase1_case_ref,
             )
             if performance_report is not None:
@@ -1862,7 +2031,11 @@ class AuditPipeline:
             # Why: ISO 27001 / SOC 2 감사증적 — 파이프라인 실행 이벤트 기록.
             #      락 충돌 시 execute_write 내부 재시도, 영구 실패 시 graceful.
             self._record_detection_run(
-                conn, batch_id=batch_id, results=results, df=df, file_name=file_name,
+                conn,
+                batch_id=batch_id,
+                results=results,
+                df=df,
+                file_name=file_name,
             )
 
             return lr, []
@@ -1928,6 +2101,7 @@ class AuditPipeline:
         try:
             from src.db.audit_log import record_event
             from src.db.connection import get_connection
+
             conn = self._conn or get_connection(path=str(self._ctx.db_path))
             record_event(
                 conn,
