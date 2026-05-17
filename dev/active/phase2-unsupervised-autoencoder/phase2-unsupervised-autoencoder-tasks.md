@@ -2,7 +2,10 @@
 
 ## Progress Summary
 
-62 / 62 MVP tasks complete (100%)
+- 62 / 62 MVP tasks complete (100%)
+- Stage 5 (PHASE2 first training): complete (2026-05-17)
+- Stage 6 (Layer A/B/C guards): complete (2026-05-17)
+- Stage 7 (Phase2CaseOverlay + Review Queue): complete (2026-05-17)
 
 ## Phase 0: Surface Reduction
 
@@ -349,3 +352,34 @@
 - VAE + XGBoost benchmark
 - VAE + Transformer benchmark
 - VAE + BiLSTM/Attention benchmark
+
+## Stage 5: PHASE2 first training (2026-05-17)
+
+- [x] First training on `datasynth_manipulation_v7_candidate_fixed3`
+  - Artifacts: `data/companies/_ci_baseline/engagements/2026/models/phase2_unsupervised/v1/{training_report.json,model_bundle.pt,ecdf_train_distribution.npz}`
+  - Metadata: training_mode=`unsupervised_autoencoder_mvp`, loss=`reconstruction_only_mse_plus_kl`, target_used=false, fit_split=train, split_strategy=`group_by_document_id`, epochs=40, train_rows=80,000, val=19,999, test=50,000
+  - Acceptance: training report contains all metadata keys and persisted bundle reproduces inference scores.
+
+## Stage 6: Layer A/B/C audit guards (2026-05-17)
+
+- [x] Layer A (HARD, training leakage) — pass 8/8 → GO
+  - Artifact: `artifacts/phase2_layer_a_audit_2026-05-17.{md,json}`
+  - Gates: A1 dataset_version, A2 deny-list >= 76 columns, A3 group_by_document_id split, A4 fit_only_on_train, A5 no doc_id leak across splits, A6 fit then transform, A7 target_used=false, A8 reconstruction loss only.
+- [x] Layer B (HARD, model quality) — pass 5/5 → GO
+  - Artifact: `artifacts/phase2_layer_b_audit_2026-05-17.{md,json}`
+  - Measurements: val/train recon ratio 1.0809, test↔val drift 0.1577, KS 0.7224, ECDF consistent, top-1% scenario entropy 0.8393.
+- [x] Layer C (SOFT WARN, PHASE1↔PHASE2 alignment) — SOFT-INFO (C1 PASS, C2~C4 INFO)
+  - Artifact: `artifacts/phase2_layer_c_audit_2026-05-17.{md,json}`
+  - C1 priority_score preservation: PASS. C2 top-500 overlap 0.03, C3 PHASE2-only docs 485 / truth match 56, C4 truth recall informational only.
+  - Truth recall is informational only per `feedback_phase1_truth_recall_guard`.
+
+## Stage 7: Phase2CaseOverlay + Review Queue integration (2026-05-17)
+
+- [x] Generate review queue export
+  - Artifacts: `data/companies/_ci_baseline/engagements/2026/review_queue/v1/queue.parquet` (41,129 rows × 24 cols), `queue_top500.parquet` (500 rows), `queue_top100.parquet` (100 rows)
+- [x] HARD integration checks
+  - `priority_score_preserved=True` (mismatch 0 / 41,129)
+  - `narrator_required_fields_present=True` (6 required Phase3 narrator fields, missing 0)
+  - `composite_sort_v1_lock_compliant=True` — sort keys: phase1_composite_sort_score, phase1_triage_rank_score, total_amount, rule_count; phase2_score is auxiliary column, not in sort keys
+- [x] Integration report
+  - Artifact: `artifacts/phase1_phase2_integration_report_2026-05-17.{md,json}` → GO

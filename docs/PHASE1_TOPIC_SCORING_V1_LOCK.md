@@ -120,7 +120,7 @@ topic_score =
 | 결산수정 조작 의심 | 금감원 감리 결산 수정 조작 27건. ISA 240 §32/A45와 PCAOB AS 2401은 기말/마감후 전표, 설명 부족, 비정상·희소 계정, 사후 조정을 management override 위험으로 본다. | L3-04, L3-07, L3-11, L1-08, L4-03, L3-08, L3-10, L4-04, 보조 L3-02 | `L3-04 + L3-02 + L3-08`이면 `0.45~0.60` | `(L3-04 or L3-07 or L3-11 or L1-08) + L4-03 + (L3-08 or L3-10 or L4-04)`이면 `0.75`; `L3-11 + (L4-01 or L4-03)`도 `0.75` | `결산수정 조작 의심` | 결산·기간귀속·입력시점 |
 | 횡령은폐 의심 | 금감원 감리 횡령 은폐 24건과 대형 횡령 사례. K-SOX 통제 우회, 승인·업무분장 실패, 자산 유용 은폐 위험에 대응한다. | L2-02, L2-03, L2-05, L2-01, L1-05, L1-06, L1-07, L1-04, L3-12, 보조 L3-02 | `L2-05 + L3-12 + L3-02`, 또는 `L2-01 + (L1-04 or L1-05)`이면 `0.45~0.70` | `(L2-02 or L2-03 or L2-05) + (L1-05 or L1-06 or L1-07 or L1-04)`이면 `0.75` | `횡령은폐 의심` | 중복·상계·자금유출 |
 | 순환거래 의심 | 금감원 감리 순환거래 10건, 특수관계자 거래 중점심사. ISA 550은 특수관계자 거래의 사업상 합리성, 조건, 승인, intercompany balance 대사를 요구한다. | L3-03, IC01, IC02, IC03, L4-03, L3-04, L3-11, L4-04, D01, D02 | `L3-03 + L4-04`, 또는 `IC01 or IC02 or IC03`이면 최소 `0.45` | `(L3-03 or IC01 or IC02 or IC03) + (L4-03 or L3-04 or L3-11) + (반복 거래 or 동일 counterparty cycle)`이면 `0.75` | `순환거래 의심` | 관계사·내부거래·순환구조 |
-| 승인우회 조작 의심 | 금감원 감리 승인/SoD 위반 5건과 횡령 은폐의 전제 조건. K-SOX와 내부회계관리제도 운영 효과성 관점에서 승인권한·업무분장 실패를 본다. | L1-04, L1-05, L1-06, L1-07, L1-09, L3-02, L3-05, L3-06, L4-03, L3-12 | `L1-09 + L4-03 + L3-02`, 또는 `L3-12 + (L1-05 or L1-07)`이면 `0.45~0.70` | `(L1-04 or L1-05 or L1-06 or L1-07) + (L4-03 or L3-02 or L3-05 or L3-06)`이면 `0.75` | `승인우회 조작 의심` | 승인·권한·업무분장 통제 |
+| 승인우회 조작 의심 | 금감원 감리 승인/SoD 위반 5건과 횡령 은폐의 전제 조건. K-SOX와 내부회계관리제도 운영 효과성 관점에서 승인권한·업무분장 실패를 본다. | L1-04, L1-05, L1-06, L1-07, L1-09, L3-02, L3-05, L3-06, L4-03, L3-12 | `approval_bypass + (L3-02 or L3-05 or L3-06)`, `L1-09 + L4-03 + L3-02`, 또는 `L3-12 + (L1-05 or L1-07)`이면 `0.60` 전후 Medium | `(L1-04 or L1-05 or L1-06 or L1-07) + (L4-03 or L3-11 or (L3-04 + L3-02) or (L3-06 + L3-02))`이면 `0.75` | `승인우회 조작 의심` | 승인·권한·업무분장 통제 |
 
 계정분류·거래실질 불일치 topic은 단독 조작 subtype을 남발하지 않는다. `L1-03`, `L2-04`, `L3-01`, `L3-09`, `L3-10`, `L4-04`는 다른 조작 combo에 붙을 때 해당 topic의 floor를 높이는 booster 축으로 사용한다. 예를 들어 결산시점 + `L3-10`은 결산수정 조작 의심을 강화하고, 수익/금액 이상 + `L4-04`는 가공전표 의심을 강화하며, 자금유출 + `L3-09`는 횡령은폐 의심을 강화한다.
 
@@ -147,7 +147,15 @@ topic_score =
 | `L3-02 + L3-04 + L3-12` | 가공전표/결산수정 Medium floor 금지 | 수기 + 결산 + 업무범위 집중 context. `L4-03`, `L3-08`, `L3-10`, `L4-04`, `L3-11`, 수익/금액/희소/중복 근거가 붙을 때만 floor 검토 |
 | `(L1-04 or L1-05 or L1-06 or L1-07) + L3-02 + L3-12` | 횡령은폐 Medium floor 금지 | 승인통제 topic의 보조 context. 중복/상계/자금유출(`L2-02`, `L2-03`, `L2-05`) 근거가 붙을 때만 횡령은폐 floor |
 | `L3-03 + L3-05 + (L3-02 or L3-12)` | 순환거래 High floor 금지 | 관계사 + 휴일/수기/업무범위 context. repeat/cycle/IC exception과 금액·시점·불일치 근거가 붙을 때만 High |
-| `approval_bypass + L3-02` 또는 `approval_bypass + L3-05` | 승인우회 High floor 금지 | 승인통제 Medium. High는 `L4-03`, `L3-11`, `L3-04 + L3-02`, `L3-06 + L3-02` 같은 강한 근거 필요 |
+| `approval_bypass + L3-02`, `approval_bypass + L3-05`, `approval_bypass + L3-06` | 승인우회 High floor 금지 | 승인통제 Medium. High는 `L4-03`, `L3-11`, `L3-04 + L3-02`, `L3-06 + L3-02` 같은 강한 근거 필요 |
+
+Weak/FSS-supported floor classification:
+
+| Classification | Allowed floor behavior | Examples |
+|---|---|---|
+| FSS/ISA/PCAOB-supported High | Keep High floor | revenue/amount outlier + manual + rare/duplicate; timing seed + high amount + weak description/sensitive/rare; outflow/duplicate + approval bypass; related-party/IC + amount/timing + repeat/cycle |
+| Domain-supported Medium | Keep Medium floor only | approval bypass + manual context; approval bypass + non-business-day context; approval bypass + after-hours context; related-party/IC + amount/timing without repeat/cycle |
+| Weak auxiliary context | No fraud floor; badge/tie-break/context only | `L3-02 + L3-04 + L3-12`; approval bypass + `L3-02 + L3-12` without outflow; `L3-03 + L3-05 + (L3-02 or L3-12)` |
 
 `L3-12`는 fraud floor의 핵심 조건이 아니라 booster/context다. `fraud_scenario_tags`는 정렬 key가 아니며, floor가 적용되는 경우에만 `topic_score_breakdown.fraud_combo_policy_ids`에 policy reason을 남긴다.
 

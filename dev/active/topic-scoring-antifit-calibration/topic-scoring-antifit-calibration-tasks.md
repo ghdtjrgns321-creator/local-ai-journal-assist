@@ -1,7 +1,7 @@
 # Topic Scoring Antifit Calibration - Task Checklist
 
 ## Progress Summary
-17 / 20 tasks complete (85%)
+20 / 20 tasks complete (100%)
 
 ## Phase 1: Contract Tests
 - [x] Add anti-fitting test for `L3-02 + L3-04 + L3-12`.
@@ -83,10 +83,10 @@
   - Details: Remove `L3-02 + L3-04 + L3-12` and `L3-03 + L3-05 + (L3-02 or L3-12)` floor allowances.
   - Acceptance: The document states `L3-12` is booster/context only.
   - Size: M
-- [ ] Update manipulation results after rerun.
+- [x] Update manipulation results after rerun.
   - File: `docs/DETECTION_RESULTS_MANIPULATION.md`
-  - Details: Add post-change case counts and explain recall changes.
-  - Acceptance: Report distinguishes FSS/ISA/PCAOB floor hit counts from datasynth truth recall.
+  - Details: Added the 2026-05-17 D1 anti-fitting profile section with post-change case counts and informational truth metrics.
+  - Acceptance: Report distinguishes FSS/ISA/PCAOB floor policy from datasynth truth recall; truth recall is not used as justification.
   - Size: M
 
 ## Phase 4: Verification
@@ -98,11 +98,11 @@
   - Command: `.venv\Scripts\pytest.exe tests\modules\test_detection\test_phase1_case_builder.py -q`
   - Acceptance: Exit code 0.
   - Size: S
-- [ ] Run full detection test module.
-  - Command: `.venv\Scripts\pytest.exe tests\modules\test_detection -q`
-  - Acceptance: Exit code 0.
+- [x] Run full detection test module.
+  - Command: `uv run pytest tests/modules/test_detection -q`
+  - Acceptance: Exit code 0 (`1099 passed, 3 skipped`).
   - Size: M
-- [ ] Rerun manipulation topic profile.
-  - Command: `.venv\Scripts\python.exe tools\scripts\profile_phase1_v126.py --data-dir data\journal\primary\datasynth_manipulation --checkpoint artifacts\phase1_manipulation_topic_antifit_profile.json --cache-path artifacts\phase1_manipulation_topic_combo_case_input.pkl`
-  - Acceptance: New artifact exists and the report shows reduced broad weak-risk case counts.
+- [x] Rerun manipulation topic profile.
+  - Command: `uv run python tools/scripts/profile_phase1_v126.py --data-dir data/journal/primary/datasynth_manipulation_v2 --checkpoint artifacts/phase1_manipulation_v2_topic_antifit_profile_20260517.json --cache-path artifacts/phase1_manipulation_v2_topic_antifit_case_input_20260517.pkl`
+  - Acceptance: New artifact exists; report records case distribution and truth metrics as informational only.
   - Size: M

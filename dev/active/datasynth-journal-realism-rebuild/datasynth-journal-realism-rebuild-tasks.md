@@ -4,6 +4,11 @@
 0 / 99 tasks complete (0%)
 
 ## Phase 1: Contract Tests
+- [ ] Lock manipulation V6 anti-fitting contract
+  - File: `dev/active/datasynth-journal-realism-rebuild/manipulation-v6-anti-fitting-contract.md`
+  - Details: Define V6 work as accounting-substance and natural-noise repair while treating AUROC/AUPRC, top-k capture, and Phase2 separability as measurement-only.
+  - Acceptance: Contract forbids generator changes made solely to satisfy Phase2 numeric thresholds and requires high-separation feature cause classification.
+  - Size: S
 - [ ] Maintain Phase1 rule testability matrix
   - File: `dev/active/datasynth-journal-realism-rebuild/phase1-rule-testability-matrix.md`
   - Details: Keep all 32 canonical Phase1 rules classified as A/B/C/D with data conditions, current DataSynth status, missing conditions, and real-data need.

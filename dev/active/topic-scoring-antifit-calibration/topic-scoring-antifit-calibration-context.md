@@ -1,9 +1,9 @@
 # Topic Scoring Antifit Calibration - Context & Decisions
 
 ## Status
-- Phase: Implementation verification
-- Progress: 17 / 20 tasks complete
-- Last Updated: 2026-05-08
+- Phase: Complete
+- Progress: 20 / 20 tasks complete
+- Last Updated: 2026-05-17
 
 ## Key Files
 **Modified by future implementation**:
@@ -22,7 +22,7 @@
 1. **Remove weak datasynth-shaped floors** (2026-05-08)
    - Rationale: `L3-02 + L3-04 + L3-12` is audit-relevant context but lacks strong evidence for fictitious entry or period-end manipulation floors.
    - Alternatives: Lower the floor to `0.45`; rejected as still allowing weak combinations to drive topic routing.
-   - Trade-offs: Datasynth truth recall may drop, but real audit precision and policy defensibility improve.
+   - Trade-offs: Synthetic truth coverage may drop, while audit precision and policy defensibility become stronger.
 
 2. **Make `L3-12` context-only for fraud floors** (2026-05-08)
    - Rationale: Work-scope concentration can strengthen an already suspicious case but should not be a primary fraud-pattern ingredient.
@@ -48,5 +48,36 @@
 - The existing documentation contains mojibake in several Korean sections. The implementation should edit only the relevant policy lines and avoid broad encoding churn.
 - `topic_scoring.py` currently returns only floor-derived `fraud_combo_tags`; there may not be a separate badge-only mechanism. If no existing badge-only path fits, weak combinations should be omitted from fraud tags rather than added as floors.
 - Some tests may assert current broad floors. Those tests should be updated to policy-aligned expectations, not deleted without replacement.
-- Full `tests/modules/test_detection -q` did not finish within 300 seconds in this workspace. Focused topic scoring and phase1 case builder tests passed.
-- `profile_phase1_v126.py` created `artifacts/phase1_manipulation_topic_antifit_profile.json`, but the command timed out during aggregate/case stages before post-change case counts were produced.
+- Earlier full `tests/modules/test_detection -q` runs exceeded a shorter timeout, but the final D1 verification completed successfully.
+- Earlier profile attempts against the legacy `datasynth_manipulation` path were blocked by missing labels or cache references; the final D1 profile uses the available `datasynth_manipulation_v2` dataset and is recorded below.
+
+## Sprint D1 Results (2026-05-17)
+
+### Status
+
+Sprint D1 completed. The weak auxiliary floor policy is now encoded in `topic_scoring.py`, `config/phase1_case.yaml`, the topic scoring lock docs, and regression tests. PHASE1 dashboard files and PHASE2 paths were not modified.
+
+### Code and policy result
+
+- `approval_bypass + L3-02`, `approval_bypass + L3-05`, and `approval_bypass + L3-06` now produce approval-control Medium context only.
+- `approval_bypass_high` remains reserved for stronger evidence: high amount, cutoff, manual closing, manual after-hours, or explicit override context.
+- `L3-02 + L3-04 + L3-12`, `approval_bypass + L3-02 + L3-12`, and `L3-03 + L3-05 + (L3-02 or L3-12)` remain excluded from fraud-pattern High/Medium floors.
+- `phase1_case.topic_scoring.anti_fitting_policy` records the domain policy and marks truth recall as `informational_only`.
+
+### Verification
+
+| Check | Result |
+| --- | --- |
+| `uv run pytest tests/modules/test_detection/test_rule_scoring.py -q` | 60 passed |
+| `uv run pytest tests/modules/test_detection/test_rule_scoring.py tests/modules/test_detection/test_phase1_case_builder.py -q` | 128 passed |
+| `uv run pytest tests/modules/test_detection -q` | 1099 passed, 3 skipped |
+| `uv run pytest tests/modules/test_detection/test_phase1_case_builder.py -q -k "composite_sort_score"` | 4 passed, 64 deselected |
+| `uv run ruff check src/detection/topic_scoring.py tests/modules/test_detection/test_rule_scoring.py` | passed |
+
+### Profile artifact
+
+Current available manipulation v2 profile was rerun with:
+
+`uv run python tools/scripts/profile_phase1_v126.py --data-dir data/journal/primary/datasynth_manipulation_v2 --checkpoint artifacts/phase1_manipulation_v2_topic_antifit_profile_20260517.json --cache-path artifacts/phase1_manipulation_v2_topic_antifit_case_input_20260517.pkl`
+
+The run produced `case_count=11116`, `macro_finding_count=20`, and retained score/rule/review hit coverage for the 420 truth documents. These truth metrics are informational only and were not used as the justification for the D1 change.

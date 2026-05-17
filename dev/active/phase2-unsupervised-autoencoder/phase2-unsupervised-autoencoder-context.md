@@ -2,9 +2,9 @@
 
 ## Status
 
-- Phase: MVP implementation in verification
-- Progress: 62 / 62 MVP tasks complete
-- Last Updated: 2026-05-10
+- Phase: MVP first training and integration complete (Stages 5/6/7 closed)
+- Progress: 62 / 62 MVP tasks complete + Stages 5/6/7 closed
+- Last Updated: 2026-05-17
 
 ## Key Files
 
@@ -164,3 +164,55 @@
 - synthetic anomaly benchmark
 - subgroup-specific thresholds
 - VAE hybrid benchmarks
+
+## Stage 5/6/7 Results (2026-05-17)
+
+### Stage 5 — First training metadata
+
+| key                  | value                                          |
+|----------------------|------------------------------------------------|
+| dataset              | datasynth_manipulation_v7_candidate_fixed3     |
+| training_mode        | unsupervised_autoencoder_mvp                   |
+| loss                 | reconstruction_only_mse_plus_kl                |
+| target_used          | false                                          |
+| fit_split            | train                                          |
+| split_strategy       | group_by_document_id                           |
+| epochs               | 40                                             |
+| train_rows           | 80,000                                         |
+| val_rows             | 19,999                                         |
+| test_rows            | 50,000                                         |
+| model_bundle         | data/companies/_ci_baseline/engagements/2026/models/phase2_unsupervised/v1/model_bundle.pt |
+| training_report      | data/companies/_ci_baseline/engagements/2026/models/phase2_unsupervised/v1/training_report.json |
+| ecdf_train           | data/companies/_ci_baseline/engagements/2026/models/phase2_unsupervised/v1/ecdf_train_distribution.npz |
+
+### Stage 6 — Layer A/B/C verdicts
+
+| layer | policy    | verdict      | passes |
+|-------|-----------|--------------|--------|
+| A     | HARD      | GO           | 8 / 8  |
+| B     | HARD      | GO           | 5 / 5  |
+| C     | SOFT WARN | SOFT-INFO    | C1 PASS, C2~C4 INFO |
+
+Key Layer B measurements: val/train recon ratio 1.0809, test↔val drift 0.1577, KS 0.7224, top-1% scenario entropy 0.8393.
+
+Key Layer C measurements: top-500 PHASE1∩PHASE2 overlap 0.03 (485 PHASE2-only docs), truth recall metrics are informational only per `feedback_phase1_truth_recall_guard`.
+
+### Stage 7 — Review Queue integration
+
+| check                              | result |
+|------------------------------------|--------|
+| priority_score_preserved           | True (mismatch 0 / 41,129) |
+| narrator_required_fields_present   | True (6 fields, missing 0) |
+| composite_sort_v1_lock_compliant   | True (phase2_score is auxiliary, not a sort key) |
+
+Sort keys (V1 lock): `phase1_composite_sort_score`, `phase1_triage_rank_score`, `total_amount`, `rule_count`.
+
+Review queue export: `data/companies/_ci_baseline/engagements/2026/review_queue/v1/queue.parquet` (41,129 rows × 24 cols), `queue_top500.parquet`, `queue_top100.parquet`.
+
+### Cross References
+
+- Debugging log: `docs/debugging.md` 2026-05-17 entry
+- DataSynth gate result: `docs/completed/datasynth.md` §3.3 V7 fixed3 patched
+- Layer A/B/C policy decision: `docs/DECISION.md` D050
+- PHASE1 rule detail audit overlay note: `dev/active/phase1-rule-detail-audit-note.md` PHASE2 overlay 반영 노트
+- Audit artifacts: `artifacts/phase2_layer_{a,b,c}_audit_2026-05-17.{md,json}`, `artifacts/phase1_phase2_integration_report_2026-05-17.{md,json}`

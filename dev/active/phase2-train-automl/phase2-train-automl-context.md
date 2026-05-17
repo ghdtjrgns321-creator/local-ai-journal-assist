@@ -1,9 +1,9 @@
 # Phase2 Train AutoML - Context & Decisions
 
 ## Status
-- Phase: Planning
-- Progress: 0 / 31 tasks complete
-- Last Updated: 2026-04-18
+- Phase: Sprint A2 완료
+- Progress: 24 / 31 tasks complete
+- Last Updated: 2026-05-17
 
 ## Key Files
 **Modified**:
@@ -51,3 +51,28 @@
 - 현재 `src/pipeline.py`의 bootstrap helper는 detector train API를 직접 호출한다. phase2-train 도입 후에는 thin wrapper로 축소해야 한다.
 - `docs/pre-plan` 경로는 현재 워크스페이스에 없어서 과거 ML 설계 문서를 직접 참조하지 못했다. 이번 계획은 코드베이스 현재 상태 기준이다.
 - `src/__init__.py`에 `src/pipeline.py`의 중복 코드가 남아 있다. 구현 전 ripple search로 실제 import 경로를 재확인해야 한다.
+
+## Sprint A2 Results (2026-05-17)
+
+Sprint A2는 A1 `supervised_gate` 계약을 전제로 PHASE2 학습/추론 산출물 경계를 고정했다. `run_phase2_training()`은 label gate 평가, feature variant 생성, family/preset trial 실행, leaderboard 정렬, promotion policy 적용, inference contract 생성까지 담당한다. `run_phase2_inference()`는 최신 training snapshot의 promoted version contract만 pipeline에 전달하며, cold-start bootstrap 상태를 추론 모드로 승격하지 않는다.
+
+새 산출물:
+- `leaderboard.json`: `family`, `trial`, `preset`, `status`, `metric`, `artifact_path`, `model_version`, `schema_hash`를 row 단위로 저장한다.
+- `promotion_decision.json`: promotion policy와 family별 승격/탈락 사유, promoted model 목록을 감사 가능한 JSON으로 저장한다.
+- `inference_contract.model_versions`: model별 `model_version`, `source_trial_variant`, `schema_hash`, `fixture_contract`를 담는다.
+
+신규 모듈:
+- `src/services/phase2_leaderboard.py`
+- `src/services/phase2_promotion_policy.py`
+
+경로 계약:
+- training run: `{model_dir}/phase2_train/{report_id}/`
+- reports: `{model_dir}/phase2_train/{report_id}/reports/{training_report.json,leaderboard.json,promotion_decision.json}`
+- trial artifacts: `{model_dir}/phase2_train/{report_id}/trials/*.json`
+- promoted family artifact target: `data/companies/{company_id}/engagements/{year}/models/phase2_<family>/vNNNN/`
+
+검증:
+- `uv run pytest tests/modules/test_services/test_phase2_leaderboard.py tests/modules/test_services/test_phase2_promotion_policy.py tests/modules/test_services/test_phase2_inference_service.py tests/modules/test_services/test_phase2_training_service.py -q` -> 45 passed
+- `uv run pytest tests/modules/test_preprocessing/test_label_strategy.py tests/modules/test_detection/test_supervised_detector.py tests/modules/test_services/test_phase2_training_service.py tests/modules/test_services/test_phase2_layer_a_guards.py tests/modules/test_services/test_phase2_case_contract.py -q` -> 83 passed
+- touched-file ruff check -> PASS
+- focused cold-start grep over `src/pipeline.py`, `src/services/phase2_inference_service.py`, and inference tests -> 0 matches

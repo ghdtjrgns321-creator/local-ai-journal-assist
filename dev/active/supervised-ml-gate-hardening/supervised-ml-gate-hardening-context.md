@@ -2,9 +2,9 @@
 
 ## Status
 
-- Phase: 계획 수립
-- Progress: 0 / 15 tasks complete
-- Last Updated: 2026-04-16
+- Phase: Sprint A1 완료
+- Progress: 11 / 15 tasks complete
+- Last Updated: 2026-05-17
 
 ## Key Files
 
@@ -56,3 +56,19 @@
 1. supervised gate 실패를 `ValueError`로 둘지, 전용 `SupervisedGateError`로 둘지 구현 시점에 결정해야 한다.
 2. runtime에서 legacy supervised 모델을 발견했을 때 바로 차단할지, `unknown` 경고와 함께 실행 허용할지 운영 정책이 필요하다.
 3. 이번 턴에서 ML01만 적용한 뒤 ML03/ML04까지 같은 정책을 즉시 확장할지 후속 작업으로 분리할지 결정해야 한다.
+
+## Sprint A1 Results (2026-05-17)
+
+Sprint A1은 label_strategy -> supervised_detector -> Phase2 training report까지 supervised gate를 구조화했다. `LabelResult`는 `quality_grade`, `gate_decision`, `gate_reason`을 노출하며, 기존 `label_quality`, `gate_status`는 하위 호환 별칭으로 유지한다. GateDecision 값은 `eligible`, `low_signal_fallback`, `hard_fail`, `unavailable` 네 가지로 고정했다.
+
+Low-signal 기준은 `positive_count < 50` 또는 `positive_rate < 0.01`이다. trusted ground truth라도 기준 미달이면 `low_signal_fallback`으로 supervised 학습 대상에서 제외된다. pseudo/pseudo_fallback은 `circular_label_risk`, unsupervised/no-label은 `missing_ground_truth_labels`로 구조화된다.
+
+`SupervisedDetector.train()`은 `SupervisedGateError`를 통해 gate 실패를 학습 전에 차단하고, 성공 시 model registry metadata에 gate snapshot을 저장한다. `run_phase2_training()`은 supervised gate 실패 trial을 `skipped`로 기록하고 `trial.metadata.supervised_gate`에 snapshot을 남기며, `training_report.json` 최상위에는 `supervised_gate` 필드를 추가한다.
+
+검증:
+- `uv run pytest tests/modules/test_preprocessing/test_label_strategy.py tests/modules/test_detection/test_supervised_detector.py tests/modules/test_services/test_phase2_training_service.py -q` -> 63 passed
+- `uv run pytest tests/modules/test_services/test_phase2_layer_a_guards.py tests/modules/test_services/test_phase2_case_contract.py tests/modules/test_detection/test_supervised_detector.py -q` -> 37 passed
+- Combined focused regression -> 82 passed
+- Touched-file ruff check -> PASS
+
+Git diff 확인은 사용자 hook이 git 명령을 차단하여 수행하지 못했다. 파일 검토는 `rg`와 직접 파일 읽기로 대체했다.

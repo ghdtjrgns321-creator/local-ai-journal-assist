@@ -47,6 +47,7 @@
 - `dev/active/datasynth-journal-realism-rebuild/phase1-rule-testability-matrix.md` - Phase1 rule synthetic testability classification.
 - `dev/active/datasynth-journal-realism-rebuild/phase2-vae-testability-matrix.md` - Phase2 VAE feature boundary, synthetic testability, and real-data revalidation scope.
 - `dev/active/datasynth-journal-realism-rebuild/dataset-regeneration-contract.md` - semantic-clean dataset output path, metadata, reports, manifest, and quality metrics.
+- `dev/active/datasynth-journal-realism-rebuild/manipulation-v6-anti-fitting-contract.md` - manipulation V6 work contract that separates DataSynth accounting fixes from Phase2 metric fitting.
 
 ## Observed Failure
 Known failing document:
@@ -117,6 +118,11 @@ Measured on `data/journal/primary/datasynth_contract/journal_entries.csv`:
    - Rationale: The VAE normal baseline must never include unlabelled semantic contradictions. Python checks can report bad exports, but Rust generation must reject them before output.
    - Alternatives: rely on downstream quality gates only.
    - Trade-offs: Generation may retry more often and requires extra metadata fields, but invalid normal rows stop at the source.
+
+12. **Treat Phase2 AUROC/AUPRC as measurement-only for manipulation V6** (2026-05-16)
+   - Rationale: V5 diagnostics showed high supervised separability even after generation quality checks passed. Lowering AUROC by generator mutation would fit synthetic data to the current Phase2 feature set and can weaken intended manipulation scenarios.
+   - Alternatives: make `single-column AUROC < 0.80`, `two-feature AUROC < 0.95`, and simulated logistic AUROC hard generator gates.
+   - Trade-offs: Measurement-only metrics require a cause classification step, but preserve accounting-domain realism. Remaining high-separation features must be classified as generator defect, Phase2 feature-policy issue, legitimate scenario signal, or real-data revalidation need.
 
 12. **Create semantic abnormal rows only by mutation** (2026-05-10)
    - Rationale: Abnormal cases are useful for detector validation only when their causal field change is known. Accidental semantic violations from normal generation pollute both normal baseline and anomaly labels.

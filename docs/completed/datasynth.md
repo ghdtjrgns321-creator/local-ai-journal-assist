@@ -228,6 +228,33 @@ uv run python -m tests.datasynth_quality_gate2
 | T5-05/11/16/18| WARNING | anomaly율, 대형전표, lettrage 등 메타데이터 |
 | T2-23/25      | WARNING | self-offsetting, tax_code -- 설계상 정상 또는 미구현 |
 
+### 3.3 V7 fixed3 patched 품질 게이트 (2026-05-17)
+
+`datasynth_manipulation_v7_candidate_fixed3` patched 빌드 기준. baseline `datasynth_manipulation_v5_candidate_fixed9`와 회귀 비교. final verdict **GO**, HARD failures 0, SOFT failures 0.
+
+| 게이트                                   | 결과 | 핵심 측정값 |
+|:-----------------------------------------|:-----|:------------|
+| Gate 1 — V5 fixed9 generation regression | PASS | truth_docs 620/620, CoA 15110/8030/8010 보존 |
+| Gate 2 — accounting substance            | PASS | debit/credit balanced 620/620, V5 fixed9 truth subset of V7 |
+| Gate 3 — enrichment criteria split (A/B) | PASS | A 8 컬럼 occurrence target 충족, B 3 컬럼 normal/manipulation overlap 충족 |
+| Gate 4 — quality_gate3                   | PASS | T4/T5 통합 검증 |
+| Gate 5 — no new defects                  | PASS | baseline 대비 신규 결함 없음 |
+
+산출물: `artifacts/datasynth_v7_fixed3_patched_quality_verification.md` / `_phase2_cheat_route_audit.md` / `_preflight_check.md` / `_accounting_logic_audit.md`.
+
+#### 3.3.1 해결된 이슈
+
+- Gate 3 검증을 단일 AUROC 임계로 통합하지 않고 A(occurrence rate)와 B(distribution overlap)로 분리하여 카테고리별 PASS 기준을 적용했다. A 컬럼은 AUROC가 < 0.80이어도 informational, B 컬럼은 AUROC 0.80~0.95 정상 범위 운영.
+- V5 fixed9 generation regression 8개 체크 모두 PASS: o2c_revenue_missing_docs/p2p_credit_grir_rows/sod_self_approval_false_rows/zero_filler_rows 모두 0.
+
+#### 3.3.2 미해결 이슈
+
+- 본 빌드에서 HARD/SOFT failure 모두 0. §3.2의 보조원장(T3-22~25), IC(T3-28/29), MCAR(T4-16) 잔여 WARNING은 별도 scope로 유지하며 본 patched 빌드의 PASS 판정에 영향을 주지 않는다.
+
+#### 3.3.3 PHASE2 학습 채택
+
+V7 fixed3는 PHASE2 unsupervised autoencoder MVP의 첫 학습 dataset_version으로 채택되었다 (Stage 5, 2026-05-17). 자세한 학습 메타와 Layer A/B/C 가드 결과는 [debugging.md](../debugging.md) §2026-05-17 항목 참조.
+
 ---
 
 ## 4. 수정 시 절대 수칙

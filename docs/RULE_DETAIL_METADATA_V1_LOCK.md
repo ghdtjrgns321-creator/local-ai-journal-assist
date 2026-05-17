@@ -34,11 +34,18 @@ Locked decisions:
 
 The v1 canonical L1~L4 transaction/detail rule count is fixed at 32.
 
+The 32 is the sum of two presenter surfaces, and external docs must use this decomposition wherever a single integer would be ambiguous:
+
+- **31 transaction/review row cards** with `presenter_surface=transaction_detail` (includes the review-only `L3-12`).
+- **1 macro card** for `L4-02` with `presenter_surface=account_process_macro` (canonical Benford rule). `Benford` is its display alias and must not increase the count.
+
+`31 + 1` is the single canonical decomposition. Any external doc may also state the total `32`, but must not claim a different split such as `32 row cards`, `33 rules`, or count `Benford` separately from `L4-02`.
+
 Included in the 32:
 
 - Canonical `L1-01` through `L4-06` rows as defined by the L1~L4 rule set.
-- `L3-12`, even though it is review/context oriented.
-- `L4-02`, because it is the canonical Benford L4 rule.
+- `L3-12`, even though it is review/context oriented (counted under the 31 row cards).
+- `L4-02`, because it is the canonical Benford L4 rule (counted as the 1 macro card; `Benford` is alias-only).
 
 Excluded from the canonical transaction/detail count:
 
@@ -287,3 +294,23 @@ Deferred beyond v1:
 - Whether to expand from minimal `RuleDetailMetadata` into the full nested Context D registry.
 - Whether to persist `canonical_rule_id` and `presenter_surface` directly into raw hit storage instead of enriching at projection time.
 - Whether `L4-02` macro context should attach to every eligible transaction case in the same account/process population or only to explicit account/process review queues.
+
+## RuleExplanation Extension Area (2026-05-17)
+
+Sprint B3-meta adds a separate explanation extension without changing the locked `RuleDetailMetadata` keys. The v1 lock remains the source of truth for canonical ID, count, presenter surface, row-detail eligibility, scoring role, and column-source policy. `RuleExplanation` is an additive metadata layer consumed through `src/detection/explanation_registry.py`.
+
+Required `RuleExplanation` fields:
+
+| field | meaning |
+|---|---|
+| `principle` | Audit principle or control expectation behind the rule. |
+| `violation_reason` | Why the rule flags or raises review context. |
+| `audit_next_action` | Auditor's next review action; must not conclude fraud by itself. |
+| `reference` | PCAOB/ISA or analytical-review reference string. |
+
+Extension rules:
+
+- `RuleExplanation` must be frozen and JSON serializable.
+- The explanation registry may add coverage for active detector rules, macro rules, or future UI use, but must not mutate `RULE_DETAIL_METADATA_REGISTRY`.
+- Non-row and macro rules must retain review-context language. `L4-02`, `D01`, and `D02` remain account/process analytical review signals, not transaction-row violation detail.
+- `dashboard/` consumers must call `get_rule_explanation(rule_id)` in a future UI sprint instead of importing detector modules directly.

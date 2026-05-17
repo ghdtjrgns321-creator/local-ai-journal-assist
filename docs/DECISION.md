@@ -4,12 +4,27 @@
 
 > Current DataSynth production baseline: `data/journal/primary/datasynth/` freeze `v126` as of 2026-05-02. Older `v20.x`, `v23`, and `v45` entries are historical decision records.
 
+> **결정 ID 발번 규칙 (2026-05-15)**: D001~D049 는 모두 발번 완료. 다음 신규 결정 ID 는 **D050 부터** 사용한다. D046 은 2026-05-15 ID 충돌 정정 시 D040 으로 통합되었기 때문에 본문 stub 만 유지하며, D043~D045 / D049 는 모두 점유 상태다 (각각 Phase 3 v2 provider, T9 Rust PR 템플릿, Codex mojibake defer, VAE 학습 데이터 검증 모드 분리). 모든 `### D{n}:` 헤더는 unique 해야 하며 `tools/scripts/audit_decision_ids.py` 가 CI 에서 회귀 가드로 강제한다.
+
 ?꾪궎?띿쿂쨌湲곗닠 ?좏깮 寃곗젙 濡쒓렇. ?덈줈??寃곗젙 ???댁슜 異붽?.
 
 ---
 
-### D040: Defer Codex PostToolUse mojibake guard
-- **Decision**: Codex PostToolUse mojibake guard is deferred because file path/payload stability is not confirmed. Use AGENTS.md and `local-ai-assist-testing` manual validation guidance instead.
+### D040: Phase 2 ML 평가 강제 protocol (Stage 10 Audit 통합)
+- **결정**: PHASE2 ML 평가 보고서는 5 protocol 항목과 S9 6개 부가가치 게이트를 모두 만족 시에만 promotion 가능하다.
+  (1) bootstrap 95% CI 동봉, CI > 0.15 시 `[insignificant]` 마커
+  (2) 시나리오별 fold × scenario truth count matrix 첨부 (fold truth < 5 시 fold-level 통계 금지, `unusual_timing_manipulation` n=21 은 fold-level 보고 금지)
+  (3) 10 trivial binary feature 합산 baseline 동시 보고, Δrecall < 0.05 시 fitting 의심 마킹
+  (4) Phase 2 ML 부가가치 6 게이트 통과 (S9: macro AUPRC ≥ 0.4898, macro F2 @ top-1% ≥ 0.118, embezzlement recall ≥ 0.495, circular recall ≥ 0.276, 다른 4 시나리오 recall 손실 |Δ| < 0.05)
+  (5) macro-F2 unweighted + prevalence-weighted 두 값 동시 보고
+- **6번째 게이트 (BLOCK 조건)**: `ensemble macro AUPRC / trivial_10feature macro AUPRC ≤ 4.0`. 4 배 초과 시 synthetic shortcut 의심으로 마킹하고 DataSynth v4 빌드 전까지 BLOCK 한다. 본 ratio cap 단일 조건만 BLOCK 정책으로 적용한다 (코드 구현: `src/services/phase2_evaluation.py::evaluate_anti_shortcut_cap`, `ANTI_SHORTCUT_RATIO_CAP = 4.0`).
+- **보조 측정값 (보강 진단, BLOCK 아님)**: Top-5 LEAKAGE_DENY_RULES (`rule_L3-02`, `rule_L3-09`, `rule_L1-03`, `rule_L2-03`, `rule_L1-05`) 제거 후 재학습한 ML 앙상블의 macro AUPRC 잔존율 ≥ 30% AND 절대값 ≥ 0.30. v4 S5 §5 재측정값 (24-dim AUPRC 0.397 → Top-5 deny 후 0.056, 잔존 14.0%, drop ratio 0.86) 의 정량 trace 용도이며, deterministic 5 룰 의존도의 진단 지표로 보고하되 BLOCK 으로 격상하지 않는다. 본 측정값을 BLOCK 조건으로 격상하려면 `phase2_evaluation.py` 에 Top-5 deny 후 재학습 ML 의 잔존율/절대값 산출 함수 신설이 선행되어야 하며, 현 코드에는 미구현 상태다.
+- **AND 조건**: S4 P4 `Δrecall ≥ 0.05` 와 anti-shortcut cap 은 OR 조건이 아니다. 둘 중 하나라도 미달하면 PHASE2 promotion gate 는 BLOCK 이다.
+- **구현 위치**: `tools/analysis/compute_trivial_baseline.py` 가 S4 10-feature trivial baseline 을 ensemble 평가와 동일 fold 구성으로 재산정하고, `src/services/phase2_evaluation.py` 가 S4 P4 + anti-shortcut cap (ratio ≤ 4.0) 을 AND 정책으로 판정한다.
+- **사유**: v3 dataset 의 합성 shortcut 위험(S4 RED L-08~L-10) 때문에 0.99급 AUPRC 가 실제 일반화 성능이 아니라 trivial surface 대비 과도한 shortcut 증폭일 수 있다. ratio cap 은 trivial baseline 대비 증폭 배수로서 shortcut 의 직접 지표이고, 보조 측정값(Top-5 deny 잔존율)은 deterministic 룰 의존도의 정량 진단이다.
+- **영향 범위**: `phase2_training_service`, PHASE2 평가 entry, CI workflow, `tests/datasynth_quality_gate/results/phase2_fitting_audit/`.
+- **관련 audit**: `docs/PHASE2_FITTING_AUDIT.md`, `artifacts/S4_evaluation_protocol.md`, `docs/S9_phase2_value_baseline.md`, `artifacts/S5_phase2_input_redesign.md`.
+- **관련 결정**: D027(Hold-out Fraud Type), D029(데이터 분할 전략), D034(Stacking Meta-Learner), D037(모델 드리프트 재학습).
 
 ---
 
@@ -85,6 +100,28 @@
 - **해석 원칙**: fiscal_period 정확화로 circular/embezzlement 수치가 바뀌는 경우, 먼저 truth surface 정정 또는 기존 과탐 제거로 해석한다. detector 회귀로 단정하지 않는다.
 - **롤백 조건**: fitting-risk check에서 label, scenario, document id, 특정 생성 패턴에 맞춘 scoring/rule 조정이 발견되면 해당 변경은 롤백하거나 scoring 변경을 제거한다.
 - **단일 출처**: `artifacts/phase2_handoff_band_axis_audit.md` §6.
+
+---
+
+### D045: Defer Codex PostToolUse mojibake guard
+- **Decision**: Codex PostToolUse mojibake guard is deferred because file path/payload stability is not confirmed. Use AGENTS.md and `local-ai-assist-testing` manual validation guidance instead.
+
+---
+
+### D051: PHASE2 Layer A/B/C 가드 3계층 + A3/A4 운영 임계 calibration (2026-05-17)
+- **결정**: PHASE2 unsupervised autoencoder MVP의 학습/추론 검증을 3계층 가드로 운영한다. Layer A(학습 누설)와 Layer B(모델 품질)는 **HARD** (GO/NO-GO 차단), Layer C(PHASE1↔PHASE2 정합)는 **SOFT WARN**으로 분리한다.
+- **Layer A — HARD (학습 누설)**: 8가드. A1 dataset_version 명시, A2 deny-list 적용 + 누적 제외 컬럼 ≥76, A3 split_strategy=`group_by_document_id`, A4 fit_only_on_train (val/test transform-only), A5 train/val/test 간 document_id 누수 없음, A6 fit→transform 순서, A7 target_used=false, A8 reconstruction loss only (label-based loss 키 부재).
+- **Layer B — HARD (모델 품질)**: 5가드. B1 val/train recon ratio < 1.3, B2 test↔val recon |drift| ≤ 0.5, B3 KS(top-N score 분포 분리) ≥ 0.3, B4 ECDF 학습/추론 일관성, B5 top-1% scenario entropy ≥ 0.7 (normalized).
+- **Layer C — SOFT WARN (PHASE1↔PHASE2 정합)**: 4지표. C1 PHASE1 priority_score 비파괴(PASS 강제), C2 PHASE1∩PHASE2 top-500 overlap rate (INFO), C3 PHASE2-only 신규 발굴 case 수 (INFO), C4 PHASE1 high ∩ PHASE2 high truth recall (INFO only).
+- **HARD/SOFT 분리 사유**: Layer A/B는 학습 정합성과 모델 동작 자체의 결함을 차단해야 한다. Layer C는 PHASE1과 PHASE2의 신호가 어느 정도 보완성을 가질지 사전 단정할 수 없고, 동일 후보 집합이 되는 redundancy(과도한 overlap)도 보완성 결여(과도한 분리)도 모두 운영상 정상 범위가 다양하다. 따라서 truth recall과 overlap rate은 informational만 산출하고 차단 게이트로 격상하지 않는다.
+- **truth recall 가드**: `feedback_phase1_truth_recall_guard`에 따라 truth recall은 PHASE1/PHASE2 변경의 정당화 사유로 사용 금지. Layer C의 truth 관련 지표(C3/C4)는 모두 informational only.
+- **운영 기준**: HARD 트랙 중 하나라도 FAIL이면 promotion BLOCK. SOFT 트랙은 결과 보고에 표기하되 BLOCK 사유로 사용 금지.
+- **A3/A4 운영 임계 calibration**: ECDF q95를 PHASE2 high-score 정의로 유지하되, 정상 모집단의 high_ratio 운영 임계는 A3/A4 모두 8%로 둔다. ECDF q95 정의상 정상 모집단도 약 5%가 HIGH가 되며, 300행 표본의 sampling noise와 contract_v2 정상 모집단 분포 변동을 합산해 3%p buffer를 둔다.
+- **A3/A4 측정 범위**: A3는 `datasynth_manipulation_v7_candidate_fixed3` test partition에서 truth가 아닌 정상 300행 동적 fixture를 사용한다. A4는 `datasynth_contract_v2_enriched_normal` mutation-free fixture만 사용한다. 이 calibration은 PHASE2 Layer A 운영 가드 임계 조정이며, D050의 DataSynth fixed3 promotion status를 변경하지 않는다.
+- **정상 baseline 정의**: `datasynth_contract_v2_enriched`에는 legacy mutation provenance가 5,135/1,077,767행(0.48%) 포함되어 있었으므로, A4 normal baseline은 `mutation_type`이 비어 있는 1,072,632행 subset으로 제한한다. 해당 subset은 contract_v2 전용이며 `datasynth_manipulation_v7_candidate_fixed3`에는 적용하지 않는다.
+- **truth recall 영향**: q95 자체를 q99로 올리지 않으므로 모델의 tail definition과 truth recall 측정 방식은 유지된다. truth recall 수치는 evaluation-only/informational로만 보고하며 PHASE1/PHASE2 변경 정당화 사유로 사용하지 않는다.
+- **단일 출처**: `artifacts/phase2_layer_a_audit_2026-05-17.md`, `artifacts/phase2_layer_b_audit_2026-05-17.md`, `artifacts/phase2_layer_c_audit_2026-05-17.md`, `artifacts/phase1_phase2_integration_report_2026-05-17.md`.
+- **관련 결정**: D040(Phase 2 ML 평가 강제 protocol — supervised promotion gate), D027(Hold-out Fraud Type), D029(데이터 분할 전략).
 
 ---
 
@@ -253,7 +290,7 @@
 - **?댁쑀**: ?꾩쿂由щ뒗 "?곗씠?곕? 紐⑤뜽??癒밴린 醫뗪쾶 ?붾━", ?먯???"?붾━瑜?癒밴퀬 ?먮떒". 寃고빀??理쒖냼?? ?쒗솚 ?섏〈 ?놁쓬
 - **援ы쁽 ?쒖꽌**: 1?④퀎 detection 猷?24媛? ??2?④퀎 preprocessing(11媛?紐⑤뱢) ??3?④퀎 detection ML
 
-### D026: VAE ?숈뒿 ?곗씠????寃利??ㅼ쟾 紐⑤뱶 遺꾨━
+### D049: VAE ?숈뒿 ?곗씠????寃利??ㅼ쟾 紐⑤뱶 遺꾨━
 - **寃곗젙**: 寃利?紐⑤뱶(DataSynth)??is_fraud=False留??꾪꽣留? ?ㅼ쟾 紐⑤뱶(?쇰꺼 ?놁쓬)???꾩껜 ?곗씠???ъ엯
 - **?댁쑀**: ?ㅼ쟾?먯꽌 ?뺤긽留?遺꾨━ 遺덇?. ?댁긽移?<2%?대㈃ VAE ?좎옱 怨듦컙? ?뺤긽 ?꾩＜濡??뺤꽦 (Contamination Tolerance)
 
@@ -389,4 +426,82 @@
 - **援ы쁽 ?뚯씪**: `tools/scripts/ft_ablation_study.py` (怨④꺽), `tests/modules/test_tools/test_ft_ablation_study.py`
 - **愿??寃곗젙**: D033(FT-T 異붽?), D034(Stacking)
 
+### D046: Phase 2 ML 평가 6번째 게이트 — D040 으로 통합 (2026-05-15)
+- 본 항목은 [D040](#d040-phase-2-ml-평가-강제-protocol-stage-10-audit-통합) 으로 통합되었다. anti-shortcut cap 의 BLOCK 정책 (`ratio ≤ 4.0`) 과 보조 측정값 (Top-5 LEAKAGE_DENY_RULES 제거 후 잔존율 ≥ 30% AND 절대값 ≥ 0.30) 의 단일 출처는 D040 이며, 본 ID 는 2026-05-15 ID 충돌 정정 시점에 stub 으로 남겨둔 historical anchor 다.
+
+### D047: BiLSTM 트랙 PHASE2 본 평가 보류 조건 (Stage 7 + 10 Audit)
+- **결정**: BiLSTM (ML_SEQUENCE) 트랙은 다음 3 조건 모두 통과 시에만 PHASE2 본 평가에 포함한다. 미통과 시 본 평가 제외, FT-Transformer + VAE + Supervised 7 트랙 ensemble 만 유지.
+  - (1) `split_user_year_holdout` 적용 후 정확 날짜 매칭 overlap < 5%
+  - (2) ±7일 인접 매칭 overlap < 20%
+  - (3) val F1 (시퀀스 단위) 와 doc-level recall 의 격차 < 15pp
+- **사유**: S7 측정 결과 현 split 정책에서 cross-user temporal context leakage 가 75% 에 달한다 (val truth 의 75% 가 train 의 ±7일 인접 시점에서 학습됨). stride=1 만 수정해도 단일 fold 내 16x context 중복 효율 손실은 해소되나 cross-user 시점 leakage 는 해소 불가.
+- **영향 범위**: `src/preprocessing/split_strategy.py`, `config/settings.py`, `src/detection/sequence_detector.py`, `src/services/phase2_training_service.py`
+- **관련 audit**: `artifacts/S7_sequence_split_redesign.md`, `docs/PHASE2_FITTING_AUDIT.md`
+- **관련 결정**: D032(BiLSTM + Attention 시퀀스 탐지 추가)
+
+### D048: DataSynth manipulation v4 active lock (Stage 10 Audit, SUPERSEDED 2026-05-17)
+- **상태**: **SUPERSEDED** — `data/journal/primary/datasynth_manipulation_v4_candidate/` 는 Stage 10 당시 Phase1/Phase2 측정 active lock 이었으나, 2026-05-17 D050에서 `datasynth_manipulation_v7_candidate_fixed3` 로 승격됐다. v3/v4 디렉토리는 회귀 비교 reference 로 유지한다.
+- **결정**: DataSynth manipulation v4 profile 빌드 완료. v3 의 6 시나리오 + 2 hold-out 시나리오 (`suspense_account_abuse`=100, `expense_capitalization`=100, raw-plan D027 의도) 추가하여 총 8 시나리오 / 620 truth docs. 합성 shortcut 분포 노이즈화 (`f_manual` 0.41 정상 vs 시나리오별 0.45-0.79, `unusual_timing` 4 피처 stealth split, fictitious revenue amount upper-tail bucket sampling).
+- **사유**: Stage 10 audit RED 4건 중 3건 (L-08 f_manual, L-09 trivial shortcut, L-10 unusual_timing degenerate) 이 모두 v3 dataset 의 합성 설계 결함에서 비롯된다. v4 빌드는 합성 shortcut 자체를 제거하는 근본 해법으로, raw-data guard (`tools/scripts/audit_manipulation_v4_candidate.py`) 8 check 모두 PASS.
+- **재검증 결과 (2026-05-16, `artifacts/manipulation_v4_audit_rerun_summary_20260516.md`)**:
+  - S3 trivial 10-feature macro AP: 0.1292 (v3) → **0.0237** (v4), 81.7% 감소.
+  - S4 trivial top-1% recall: 4/6 scenario at ≥80% (v3) → 2 scenario at 1.0 (circular_related_party, unusual_timing_manipulation) + approval_sod_bypass 0.86 (v4). hold-out 2 시나리오는 trivial 기여 0.0/0.29.
+  - S5 24-dim rule AUPRC = 0.397 (LOW band, 독립 신호), top-5 concentration drop = 0.86 → top-5 deny-list 정책 유지. v4 Top-5 ID 는 `rule_L3-02`, `rule_L3-09`, `rule_L1-03`, `rule_L2-03`, `rule_L1-05` 이며, v3 에서 강했던 `rule_L1-09`, `rule_L2-02` 는 v4 shortcut noise 로 약화되어 deny 에서 제외한다.
+  - S8 ensemble overall AUPRC = 0.99 → **Phase2 supervised raw feature leak (모델 설계 문제)** 로 잔존. 데이터 측 해소는 완료, Phase2 모델 설계 후속 작업으로 이관.
+  - S9 anti-shortcut cap: ensemble macro AP / trivial floor ratio = 33-40 → **BLOCK** (v4 가 trivial floor 를 낮춰 게이트 강도 약 6배 상승, 의도된 효과).
+- **영향 범위**: `tools/datasynth/crates/datasynth-cli/src/manipulation_v4.rs`, `tools/scripts/audit_manipulation_v4_candidate.py`, S4/S5/S8 reproducer, Phase1 회귀 (`artifacts/phase1_manipulation_v4_candidate_20260515.*`), `docs/PHASE2_FITTING_AUDIT.md` 의 RED → **YELLOW** 전환 (데이터 RED 해소 / 모델 RED 잔존).
+- **비용**: Rust profile 설계 + 빌드 + 검증 — 완료.
+- **관련 audit**: `docs/PHASE2_FITTING_AUDIT.md`, `docs/S9_zero_day_protocol_alternatives.md` §3.3, `artifacts/manipulation_v4_audit_rerun_summary_20260516.md`
+- **관련 결정**: D027(Hold-out Fraud Type), D028(DataSynth 프로세스), D036(DataSynth v20.4), D039(DataSynth v23)
+
+### D050: DataSynth manipulation v7 fixed3 active promotion (2026-05-17)
+- **상태**: **ACTIVE GO-WITH-CAVEAT** — `datasynth_manipulation_v7_candidate_fixed3` 가 최신 active manipulation synthetic 기준이다. v3/v4/fixed2는 회귀 비교 reference 로 유지한다.
+- **결정**: V7 에서는 생성기로 고칠 수 있는 회계 substance 결함만 고친다. P2P vendor invoice 의 GR/IR credit, O2C customer invoice revenue 누락, normal near-threshold proxy, suspense line text ordering, period-end 발생액 line text 보존을 generator 에서 수정했다. 반면 amount/approval/scenario-specific shortcut 은 더 이상 DataSynth fitting 으로 밀지 않고 `LEAKAGE_DENY_COLUMNS` 로 PHASE2 feature policy 에 위임한다.
+- **검증 결과**:
+  - manipulation truth check: PASS, truth docs 620, label docs 620, missing provenance 0.
+  - V7 quality verification: GO, hard failures 0, soft failures 0.
+  - period_end adjustment expense line 92개 전부 발생액/환입 의미 line_text 포함.
+- **PHASE2 policy**: `src/preprocessing/constants.py` 의 `LEAKAGE_DENY_COLUMNS_V6_BASELINE` + `LEAKAGE_DENY_COLUMNS_V7_DERIVED` 를 학습/inference 공통 deny-list 로 고정한다. 해당 컬럼은 real-data 재검증 전까지 개별 해제하지 않는다.
+- **PHASE2 Layer A calibration과의 관계**: A3/A4 운영 임계 조정은 D051의 PHASE2 guard calibration이며, 본 D050의 fixed3 승격 상태나 DataSynth 생성물에는 영향을 주지 않는다.
+- **관련 산출물**: `artifacts/datasynth_v7_quality_verification.md`, `tests/datasynth_quality_gate3/results/manipulation_v7_candidate_fixed3_truth_check.json`.
+- **관련 결정**: D040(PHASE2 평가 protocol), D048(DataSynth manipulation v4 active lock), D051(PHASE2 Layer A/B/C guard calibration)
+
+### D052: Supervised ML label gate hardening (2026-05-17)
+- **결정**: PHASE2 supervised track은 label source와 low-signal 기준을 통과한 경우에만 학습한다. GateDecision 값은 `eligible`, `low_signal_fallback`, `hard_fail`, `unavailable` 네 가지로 고정한다.
+- **임계값**:
+  - `supervised_min_positive = 50`
+  - `supervised_min_positive_rate = 0.01`
+  - 허용 label source: `ground_truth`, `synthetic`, `holdout_test`, `train_oof`, `oof_fold`
+- **정책**:
+  - trusted source라도 `positive_count < 50` 또는 `positive_rate < 0.01`이면 `low_signal_fallback`으로 supervised 학습을 차단한다.
+  - `detection_scores`, `pseudo_fallback`은 `circular_label_risk`로 supervised 학습을 차단한다.
+  - label source가 없으면 `unavailable`, 양성 0건이면 `hard_fail`로 기록한다.
+  - 기존 `label_quality`/`gate_status` 필드는 하위 호환으로 유지하되, 신규 계약은 `quality_grade`/`gate_decision`/`gate_reason`을 표준으로 사용한다.
+- **영향 범위**: `src/preprocessing/label_strategy.py`, `src/detection/supervised_detector.py`, `src/preprocessing/model_registry.py`, `src/services/phase2_training_models.py`, `src/services/phase2_training_service.py`.
+- **운영 관측성**: `training_report.json` 최상위 `supervised_gate` 필드에 decision, reason, label_source, positive_count, positive_rate, thresholds, eligible, allowed_label_sources를 기록한다.
+- **관련 산출물**: `artifacts/sprint_phaseA_A1_handoff_2026-05-17.md`.
+
+### D053: Phase 2 training/inference separation and auditable promotion policy (2026-05-17)
+- **결정**: PHASE2는 `run_phase2_training()` 학습 경로와 `run_phase2_inference()` 추론 경로를 분리한다. 추론은 최신 training snapshot의 promoted model contract만 사용하며, cold-start bootstrap 상태를 추론 mode로 승격하지 않는다.
+- **학습 산출물**:
+  - `training_report.json`: 기존 report 계약 유지 + `supervised_gate`, `metadata.inference_contract`.
+  - `leaderboard.json`: family × trial × preset row, metric/status/artifact/model_version/schema_hash 저장.
+  - `promotion_decision.json`: promotion policy, family별 승격/탈락 사유, promoted models 저장.
+- **promotion policy**: `best_per_family`를 기본으로 하며, eligible status, 최소 completed trial 수, family별 metric threshold, search diversity, failure ratio, registry requirement를 JSON으로 보존한다.
+- **inference contract**: `promoted_versions` 하위 호환 키를 유지하면서 `model_versions.{model}.model_version`, `source_trial_variant`, `schema_hash`, `fixture_contract`를 추가한다.
+- **산출 경로**: `{model_dir}/phase2_train/{report_id}/reports/` 아래 report/leaderboard/promotion decision을 저장하고, promoted family artifact target은 `data/companies/{company_id}/engagements/{year}/models/phase2_<family>/vNNNN/`로 표준화한다.
+- **영향 범위**: `src/services/phase2_training_service.py`, `src/services/phase2_inference_service.py`, `src/services/phase2_leaderboard.py`, `src/services/phase2_promotion_policy.py`.
+- **관련 산출물**: `artifacts/sprint_phaseA_A2_handoff_2026-05-17.md`.
+
+### D054: Rule-based detector family promotion into PHASE2 contract (2026-05-17)
+- **결정**: `timeseries`, `relational`, `duplicate`, `intercompany` rule-based detector를 PHASE2 train/inference family로 승격한다. 기본 active family는 `unsupervised` + 4 rule-style family이며, `supervised`, `transformer`, `sequence`, `stacking`은 dormant 상태로 유지한다.
+- **사유**: 기존 rule detector가 PHASE1 rule panel과 pipeline track에만 남아 있으면 leaderboard, promotion decision, inference contract, provenance가 PHASE2 운영 계약에서 분리된다. A3는 detect logic을 바꾸지 않고 registration/promotion/artifact 계약만 통합한다.
+- **정책**:
+  - rule-style family는 `model_bundle.pt`를 재학습하거나 생성하지 않는다.
+  - 승격 산출물은 `{model_dir}/phase2_<family>/vNNNN/calibration_metadata.json`에 calibration metadata로 저장한다.
+  - `schema_hash`는 rule-style family에서 `null`을 허용한다.
+  - leaderboard metric은 family별 이름을 쓰되, `metric_interpretation=rule_proxy_score`로 truth recall 해석을 금지한다.
+  - `sequence` family의 D047 leakage guard는 BiLSTM/user-temporal track에만 적용하고, transaction-level `timeseries` burst detector에는 적용하지 않는다.
+- **영향 범위**: `src/services/phase2_training_service.py`, `tests/modules/test_services/test_phase2_detector_expansion.py`, `tests/modules/test_services/test_phase2_training_service.py`, `docs/DETECTION_RULES.md`.
+- **관련 산출물**: `artifacts/sprint_phaseA_A3_handoff_2026-05-17.md`.
 

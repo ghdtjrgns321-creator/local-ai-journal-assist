@@ -596,6 +596,19 @@ WU1 (기반 컴포넌트) ──── 반드시 최초 실행
 
 **Phase 2 완료 기준**: ML Pipeline E2E 동작 + Stacking 6-model 앙상블 + DuckDB ML 컬럼 적재 + 추가 탐지기 8종 동작
 
+### Phase 2 첫 학습 완료 (2026-05-17)
+
+| 단계   | 산출물                                                                                                    | 상태 |
+|--------|-----------------------------------------------------------------------------------------------------------|------|
+| Stage 5 | `data/companies/_ci_baseline/engagements/2026/models/phase2_unsupervised/v1/{training_report.json,model_bundle.pt,ecdf_train_distribution.npz}` | ✅ |
+| Stage 6 | Layer A HARD GO (8/8), Layer B HARD GO (5/5), Layer C SOFT-INFO (C1 PASS, C2~C4 INFO)                     | ✅   |
+| Stage 7 | `data/companies/_ci_baseline/engagements/2026/review_queue/v1/{queue.parquet,queue_top500.parquet,queue_top100.parquet}` (41,129 rows, HARD checks GO) | ✅ |
+
+- dataset: `datasynth_manipulation_v7_candidate_fixed3` (V7 fixed3 patched)
+- training_mode: `unsupervised_autoencoder_mvp`, loss: `reconstruction_only_mse_plus_kl`, target_used=false, fit_split=train, split_strategy=`group_by_document_id`, epochs=40
+- HARD 통합 체크: priority_score_preserved=True (mismatch 0 / 41,129), narrator_required_fields_present=True (6 필드 결측 0), composite_sort_v1_lock_compliant=True
+- 상세: [dev/active/phase2-unsupervised-autoencoder/phase2-unsupervised-autoencoder-context.md](../dev/active/phase2-unsupervised-autoencoder/phase2-unsupervised-autoencoder-context.md) Stage 5/6/7 Results, [DECISION.md](DECISION.md) D050, [debugging.md](debugging.md) 2026-05-17 entry
+
 > **DETECTION_RULES §3.2 유형→모듈 매핑** (모듈별 관리, 16개 유형 커버):
 >
 > | 모듈 (WU)                    | 커버 유형                                                                                       |

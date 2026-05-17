@@ -1,7 +1,7 @@
 # Phase2 Detector Expansion - Task Checklist
 
 ## Progress Summary
-26 / 31 tasks complete (84%)
+29 / 31 tasks complete (94%) - Sprint A3 complete (2026-05-17)
 
 ## Phase 1: Planning Baseline and Contract Audit
 - [x] Phase 2 training family 현황 재확인
@@ -166,8 +166,8 @@
   - Size: L
 - [ ] pipeline/inference 회귀 테스트 추가
   - File: `tests/modules/test_pipeline/test_pipeline.py`
-  - Details: promoted contract와 detector status 정합을 검증한다.
-  - Acceptance: phase2 관련 subset 테스트가 통과한다.
+  - Details: promoted contract와 detector status 정합을 검증한다. Sprint A3에서는 dashboard/pipeline 파일 0수정 정책 때문에 `tests/modules/test_services/test_phase2_inference_service.py`와 신규 service E2E로 inference contract를 고정했다.
+  - Acceptance: Phase B 또는 pipeline sprint에서 detector_status 저장/복원까지 확장한다.
   - Size: M
 - [x] export provenance 회귀 테스트 추가
   - File: `tests/modules/test_export/test_excel_exporter.py`
@@ -186,9 +186,20 @@
   - Size: S
 
 ## Deployment Checklist
-- [ ] 확장 family queue 생성 테스트 통과
-- [ ] training report 직렬화 테스트 통과
+- [x] 확장 family queue 생성 테스트 통과
+- [x] training report 직렬화 테스트 통과
 - [x] phase2 infer contract 회귀 테스트 통과
 - [ ] batch 저장/복원 테스트 통과
 - [x] export provenance 테스트 통과
 - [x] 문서 최신화 완료
+
+## Sprint A3 Completion (2026-05-17)
+
+- [x] `_DEFAULT_DETECTOR_FACTORIES`에 `timeseries`, `relational`, `duplicate`, `intercompany` 등록
+- [x] 4개 family search preset / canonical model / promoted track map 등록
+- [x] `leaderboard.json` rows에 4개 family와 `schema_hash: null` 출력 검증
+- [x] `promotion_decision.json` family_decisions에 4개 family 출력 검증
+- [x] `inference_contract.required_models` / `model_versions` / `track_map`에 4개 family 반영
+- [x] rule-style promoted artifact를 calibration metadata로 저장
+- [x] `sequence` D047 guard와 신규 `timeseries` family 분리 문서화
+- [x] dashboard 디렉토리 수정 없음

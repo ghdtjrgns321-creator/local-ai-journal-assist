@@ -1,9 +1,9 @@
 # Phase2 Detector Expansion - Context & Decisions
 
 ## Status
-- Phase: Phase 5 - Contract Propagation and Policy Hardening
-- Progress: 24 / 31 tasks complete
-- Last Updated: 2026-04-21
+- Phase: Sprint A3 complete - PHASE2 rule-based family registration
+- Progress: 29 / 31 tasks complete
+- Last Updated: 2026-05-17
 
 ## Key Files
 **Modified**:
@@ -72,6 +72,22 @@
 - `duplicate`와 `intercompany`는 기존 DB score/model_id 컬럼과 Phase 2 promoted contract가 일부 중첩된다.
 - `timeseries`와 `relational`은 현재 registry version을 남길 저장 모델이 없어 artifact-less provenance 기준을 새로 정의해야 한다.
 - dashboard/UI는 현재 확장 family 요약까지는 노출하지 않으므로 이번 단계에서는 contract와 tests를 우선 고정한다.
+
+## A2 Handoff Entry (2026-05-17)
+
+Sprint A3 진입 시 A2 leaderboard 진입점을 사용한다. Family registration은 `src/services/phase2_training_service.py`의 `_DEFAULT_DETECTOR_FACTORIES`, `_DEFAULT_SEARCH_PRESETS`, `_FAMILY_TO_CANONICAL_MODEL`, `_PROMOTED_TRACK_MAP`를 기준으로 확장하고, 산출 검증은 `src/services/phase2_leaderboard.py::build_leaderboard_payload()`와 `src/services/phase2_promotion_policy.py::build_promotion_decision_payload()`를 통과해야 한다. A2 handoff: `artifacts/sprint_phaseA_A2_handoff_2026-05-17.md`.
+
+## Sprint A3 Results (2026-05-17)
+
+Sprint A3는 A2 Entry Contract의 6개 family registration 진입점을 사용해 PHASE2 family를 5개 registry 중심에서 9개 registry로 정렬하고, 운영 기본 active track을 `unsupervised` 1개에서 `unsupervised`, `timeseries`, `relational`, `duplicate`, `intercompany` 5개로 확장했다. `supervised`, `transformer`, `sequence`, `stacking`은 dormant 상태를 유지한다.
+
+4개 rule-style detector는 기존 `detect()` 로직을 변경하지 않고 train/inference contract에 편입했다. `leaderboard.json`에는 family별 metric(`burst_detection_rate`, `new_counterparty_precision`, `fuzzy_match_f1`, `ic_match_completeness`)과 `schema_hash: null`이 출력된다. `promotion_decision.json`에는 4개 family의 family_decisions가 남고, 승격된 rule-style family는 `model_bundle.pt` 대신 `{model_dir}/phase2_<family>/vNNNN/calibration_metadata.json`을 저장한다. `inference_contract.required_models`, `model_versions`, `family_sub_detectors`, `track_map`에도 4개 family가 반영된다.
+
+검증:
+- `uv run pytest tests/modules/test_services/test_phase2_training_service.py tests/modules/test_services/test_phase2_leaderboard.py tests/modules/test_services/test_phase2_promotion_policy.py tests/modules/test_services/test_phase2_inference_service.py tests/modules/test_services/test_phase2_detector_expansion.py -q` -> 47 passed.
+- `uv run pytest tests/modules/test_preprocessing/test_label_strategy.py tests/modules/test_detection/test_supervised_detector.py tests/modules/test_services/test_phase2_training_service.py tests/modules/test_services/test_phase2_layer_a_guards.py tests/modules/test_services/test_phase2_case_contract.py tests/modules/test_services/test_phase2_leaderboard.py tests/modules/test_services/test_phase2_promotion_policy.py tests/modules/test_services/test_phase2_inference_service.py tests/modules/test_services/test_phase2_detector_expansion.py -q` -> 96 passed.
+
+Handoff: `artifacts/sprint_phaseA_A3_handoff_2026-05-17.md`.
 
 ## PHASE1 한계 → PHASE2 이관 책임 (2026-05-15)
 

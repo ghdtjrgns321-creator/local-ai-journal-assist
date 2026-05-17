@@ -55,3 +55,7 @@
 - Phase2 UI 변경은 `dashboard/tab_phase2.py`와 `dashboard/tab_phase1.py`에 집중한다. 문제가 생기면 기존 inference-only 버튼 경로로 되돌릴 수 있다.
 - Registry path 변경은 테스트로 고정한 뒤 진행한다. 회사별 모델 로드가 실패하면 `ModelRegistry` 주입만 되돌리고 UI 상태 표시 변경은 유지할 수 있다.
 - DB schema 변경은 계획하지 않는다. 기존 nullable metadata columns만 사용한다.
+
+## A3 Handoff Entry (2026-05-17)
+
+Sprint A3는 dashboard 파일을 수정하지 않고 PHASE2 training/inference contract에 4개 rule-based family(`timeseries`, `relational`, `duplicate`, `intercompany`)를 추가했다. Phase B A4 UI 작업은 `load_latest_phase2_training_snapshot()`이 반환하는 `metadata.inference_contract.required_models`, `model_versions`, `family_sub_detectors`, `track_map`와 `leaderboard.json` / `promotion_decision.json`을 읽어 9 family 표시를 추가하면 된다. Rule-style family의 `model_versions.<family>.model_version`과 `schema_hash`는 `null`일 수 있으며, artifact 링크는 `registry_path`의 `calibration_metadata.json`을 사용한다.

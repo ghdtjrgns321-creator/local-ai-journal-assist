@@ -393,6 +393,66 @@ duplicate_outflow:reversal_or_offset + work_scope_concentration + manual_adjustm
 
 datasynth manipulation truth를 Top100에 더 넣기 위해 위 combo를 다시 올리면 contract 정상/fixture case도 같이 폭증한다. 결산·수익은 manipulation보다 contract에서 High case가 훨씬 많아 rule 조합 floor 강화 방향은 부적합.
 
+### A.5 D1 anti-fitting profile rerun (2026-05-17)
+
+Sprint D1에서는 약한 approval floor를 High로 되돌리지 않고 Medium control context로만 허용했다. `approval_bypass + L3-02`, `approval_bypass + L3-05`, `approval_bypass + L3-06`은 승인·권한 주제의 Medium floor이며, `approval_bypass_high`는 고액·cutoff·manual closing·manual after-hours처럼 더 강한 감사 근거가 붙은 경우에만 유지한다.
+
+이 절의 truth 수치는 변경 정당화 근거가 아니라 informational profile이다. D1의 정당화 기준은 FSS/ISA/PCAOB-supported floor 유지, 약한 auxiliary floor 제거, 정상군까지 함께 끌어올리는 조합 차단이다.
+
+산출물:
+
+| 파일 | 경로 |
+| --- | --- |
+| v2 checkpoint | `artifacts/phase1_manipulation_v2_topic_antifit_profile_20260517.json` |
+| v2 case cache | `artifacts/phase1_manipulation_v2_topic_antifit_case_input_20260517.pkl` |
+| v2 case artifact | `artifacts/phase1_cases/_anonymous/phase1case__anonymous_datasynth_v126_profiled_phase1_20260517T135044Z.json` |
+| legacy cache-only checkpoint | `artifacts/phase1_manipulation_topic_antifit_profile.json` |
+
+Current available `datasynth_manipulation_v2` profile:
+
+```
+항목                         값
+---------------------------  ----------
+journal rows                 1,077,767
+documents                      317,997
+case_count                      11,116
+macro_finding_count                 20
+manipulation truth docs            420
+score_gt0_docs                     420
+rule_or_review_hit_docs            420
+miss_score_gt0_docs                  0
+```
+
+주제별 case / priority band 분포:
+
+```
+주제                          case_count   high   medium   low
+----------------------------  ----------  -----  -------  -----
+결산·기간귀속·입력시점             6,555    151    3,022  3,382
+승인·권한·업무분장 통제            2,658     43      874  1,741
+중복·상계·자금유출                   442     16      125    301
+원장기록·데이터정합성                 25     16        6      3
+수익·금액·모집단 통계 이상           908     12       68    828
+계정분류·거래실질 불일치             528      5      314    209
+```
+
+Informational truth capture:
+
+```
+범위 / band     truth_docs
+--------------  ----------
+Top10                   92
+Top50                  214
+Top100                 234
+Top500                 305
+Top1000                401
+High band              276
+Medium band            337
+Low band               119
+```
+
+Legacy cache-only run도 생성했지만, 해당 cache가 과거 `datasynth_manipulation` label 경로를 참조해 `manipulated_eval`만 실패했다. 이 결과는 산출물 존재 확인과 case 분포 참고용이며, D1 판정에는 사용하지 않는다.
+
 ---
 
 ## 한 줄 결론

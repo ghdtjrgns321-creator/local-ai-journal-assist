@@ -2,9 +2,9 @@
 
 ## Status
 
-- Phase: Planning complete
-- Progress: 0 / 15 tasks complete
-- Last Updated: 2026-04-16
+- Phase: B3 metadata-only complete
+- Progress: 4 / 15 tasks complete, UI/export display tasks deferred
+- Last Updated: 2026-05-17
 
 ## Key Files
 
@@ -96,6 +96,14 @@
 - `dashboard/tab_findings.py`의 `render_detail(selected, result.data)` 호출 시그니처는 현재 `explorer_detail.render_detail()` 정의와 맞지 않는다. 3.6 구현 전에 이 호출 경로를 실제 런타임 기준으로 다시 점검해야 한다.
 - `src/export/audit_evidence.py`는 현재 `RULE_LEGAL_BASIS`를 파일 내부에 들고 있어 설명 registry와 중복될 가능성이 높다.
 - 일부 detector는 실제 사용 컬럼이 동적이다. 이런 경우 고정 컬럼만 registry에 두고 동적 컬럼은 metadata supplement로 보강해야 한다.
+
+## Sprint B3-meta Results (2026-05-17)
+
+Sprint B3는 UI 표시 영역을 후속 phase로 이관하고, detection explanation metadata 전용 범위로 완료했다. `RuleExplanation` frozen dataclass를 `src/detection/explanation_schema.py`에 추가했고, `src/detection/explanation_registry.py`가 `get_rule_explanation(rule_id)` 및 `list_rules_without_explanation()` 단일 조회 API를 제공한다.
+
+활성 설명 범위는 canonical L1-L4 32개와 Variance macro `D01`, `D02`를 포함한 34개 룰이다. 룰별 인스턴스는 detector layer 상수에 보강했으며, `RULE_DETAIL_METADATA_V1`의 canonical/count/surface 키는 변경하지 않았다. `dashboard/` 파일과 PHASE1 결과 UI는 수정하지 않았고, 표시 영역 task는 `[DEFERRED]`로 유지한다.
+
+검증: `uv run pytest tests/modules/test_detection/test_explanation_schema.py tests/modules/test_detection/test_explanation_registry.py tests/modules/test_detection/test_rule_detail_metadata.py tests/modules/test_detection/test_rule_scoring.py -q` 통과(81 passed), ruff targeted check 통과. `git diff --stat -- dashboard/`는 사용자 hook에 의해 차단되어 handoff에 hook 차단 사실과 대체 검증을 기록했다.
 
 ## Open Questions To Resolve During Implementation
 
