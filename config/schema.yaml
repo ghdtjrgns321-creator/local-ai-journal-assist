@@ -61,6 +61,10 @@ columns:
   - name: business_process     # P2P/O2C/R2R/H2R/TRE/A2R
     type: str
     required: false
+  - name: counterparty_type    # 거래처 유형 (External / IntercompanyAffiliate / Subsidiary 등)
+    # Why: src/feature/pattern_features.py가 intercompany 컨텍스트 도출에 사용. 라벨이 아닌 ledger 메타.
+    type: str
+    required: false
   - name: ledger               # 원장 (Leading Ledger: 0L)
     type: str
     required: false
@@ -71,17 +75,20 @@ columns:
     type: date
     required: false
 
-  # --- 레이블 (DataSynth 전용) ---
-  - name: is_fraud             # 부정 전표 여부
+  # --- 레이블 (DataSynth 전용 — 검증/평가 전용, detection 입력 금지) ---
+  # Why: PHASE1 detector는 truth 라벨을 입력으로 사용하면 안 됨. 평가/리포트에서만 참조.
+  #      실제 GL 파일에는 존재하지 않으나 sidecar(_attach_label_sidecar_if_needed)로 주입될 수 있어
+  #      schema에서 optional로 허용. v2 CSV 자체 컬럼은 아님.
+  - name: is_fraud             # 부정 전표 여부 (DataSynth 라벨, detection 입력 금지)
     type: bool
     required: false
-  - name: fraud_type           # 부정 유형 (nullable) — DuplicatePayment, SelfApproval 등
+  - name: fraud_type           # 부정 유형 (DataSynth 라벨, detection 입력 금지)
     type: str
     required: false
-  - name: is_anomaly           # 이상징후 여부
+  - name: is_anomaly           # 이상징후 여부 (DataSynth 라벨, detection 입력 금지)
     type: bool
     required: false
-  - name: anomaly_type         # 이상징후 유형 (nullable) — NewCounterparty, CircularTransaction 등
+  - name: anomaly_type         # 이상징후 유형 (DataSynth 라벨, detection 입력 금지)
     type: str
     required: false
   - name: sod_violation        # 직무분리 위반 여부 — L1-06 SoD 탐지용
@@ -145,9 +152,26 @@ columns:
   - name: auxiliary_account_label   # 보조원장 라벨 (nullable)
     type: str
     required: false
-  - name: lettrage             # 대사 그룹 (nullable)
+
+  # === Clearing / suspense lifecycle metadata — L1 optional ledger fields ===
+  # Why: anomaly_rules_simple.py(L3-09 suspense aging) 및 fraud_rules_access.py가 직접 참조.
+  #      v2 ledger CSV에서 행 단위로 제공되며, 라벨이 아닌 회계 상태값이므로 L1 optional 허용.
+  - name: is_suspense_account  # 가계정/미결산 계정 여부 — L3-09 suspense aging detector 입력
+    type: bool
+    required: false
+  - name: amount_open          # 미결산 잔액 — suspense lifecycle 메타
+    type: float
+    required: false
+  - name: is_cleared           # 대사 완료 여부 — clearing 상태
+    type: bool
+    required: false
+  - name: settlement_status    # 결제/정리 상태 문자열 (open/cleared/partial 등)
     type: str
     required: false
-  - name: lettrage_date        # 대사일 (nullable)
+
+  - name: lettrage             # 대사 그룹 (nullable) — clearing 영역 ledger 메타, anomaly_rules_simple.py 참조
+    type: str
+    required: false
+  - name: lettrage_date        # 대사일 (nullable) — clearing 영역 ledger 메타
     type: date
     required: false

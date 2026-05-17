@@ -345,7 +345,7 @@ class AuditSettings(BaseSettings):
     # --- BiLSTM Sequence (WU-01c) ---
     bilstm_hidden_size: int = 64  # BiLSTM 은닉 차원 (bidirectional → 출력 128)
     bilstm_seq_len: int = 16  # 시퀀스 윈도우 길이
-    bilstm_stride: int = 1  # 슬라이딩 윈도우 보폭
+    bilstm_stride: int = 16  # 학습 슬라이딩 윈도우 보폭 (detect는 stride=1 고정)
     bilstm_epochs: int = 50  # 학습 에폭 수
     bilstm_batch_size: int = 256  # 배치 크기 (~100MB VRAM)
     bilstm_lr: float = 1e-3  # 학습률 (Adam)
