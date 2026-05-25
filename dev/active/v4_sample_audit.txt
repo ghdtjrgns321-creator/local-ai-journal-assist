@@ -1,0 +1,398 @@
+# V4 Candidate Sampling Audit (seeds=[11, 22, 33, 44, 55])
+total sampled: 75  |  flagged: 44
+
+## flag summary
+- APPROVAL_BEFORE_POSTING: 16
+- SELF_APPROVAL_NO_SOD: 15
+- APPROVAL_AFTER_POSTING_LATE: 11
+- ZERO_FILLER_LINE: 9
+- PAYROLL_NO_SALARY_DR: 8
+- O2C_INVOICE_NO_REVENUE_CR: 5
+- ACCOUNT_NOT_IN_COA: 5
+- P2P_INVOICE_GR_IR_INSTEAD_OF_AP: 1
+
+## flagged documents (with full journal lines)
+==============================================================================================================
+[seed=11] [NORMAL] a62190ba-e57d-45f7-b87b-aa691f97438c  posting=2022-06-28 17:13:20  sem=P2P_VENDOR_INVOICE
+  flags : ['P2P_INVOICE_GR_IR_INSTEAD_OF_AP']
+  - CR sub_types=['accrued_liabilities', 'accrued_liabilities', 'goods_received_clearing']
+  hdr   : '구매 송장 접수 - doc KR' creator=GTAYLO055(senior_accountant) approver=NWALTE046 adate=2022-06-28 sod=False
+     1  100330  asset    /inventory                 DR       2,165,914  원재료 구매 ref-KR
+     2  6700  expense  /administrative_expenses   DR       2,887,945  전문용역비
+     3  6400  expense  /operating_expenses        DR       7,483,603  통신비 [KR]
+     4  2200  liability/accrued_liabilities       CR       2,605,387  원자재 입고
+     5  2200  liability/accrued_liabilities       CR       1,359,237  자문수수료 ref-KR
+     6  199100  asset    /goods_received_clearing   CR       8,572,838  통신비
+==============================================================================================================
+[seed=11] [approval_sod_bypass] 1eb0fa5e-c612-435a-ac29-a1756201e72f  posting=2024-03-28 18:00:00  sem=R2R_REVERSAL
+  flags : ['SELF_APPROVAL_NO_SOD']
+  - created_by=LCOLLI067==approved_by=LCOLLI067 sod=False
+  hdr   : '긴급 승인 경로 조정' creator=LCOLLI067(senior_accountant) approver=LCOLLI067 adate=None sod=False
+     1  200220  liability/accrued_liabilities       DR      45,354,000  C003:발생액 역분개 tp=DEPT-001
+     2  200220  liability/accrued_liabilities       DR      43,618,417  결산 조정 환입 ref-SA tp=DEPT-001
+     3  6400  expense  /operating_expenses        CR      84,830,000  발생액 역분개 ref-SA tp=DEPT-001
+     4  6700  expense  /administrative_expenses   CR       4,142,417  발생액 역분개 [SA]
+==============================================================================================================
+[seed=11] [circular_related_party_transaction] f2aae947-e67d-4e55-81e7-d2d679f378dc  posting=2024-12-30 23:32:00  sem=O2C_CUSTOMER_INVOICE
+  flags : ['APPROVAL_BEFORE_POSTING', 'O2C_INVOICE_NO_REVENUE_CR']
+  - approval=2024-07-12 posting=2024-12-30 delta=-171d
+  - CR sub_types=['accounts_payable']
+  hdr   : '관계사 정산' creator=ASHARM006(senior_accountant) approver=AWALKE019 adate=2024-07-12 sod=False
+     1  1150  asset    /accounts_receivable       DR     250,000,000  C001:제품 매출 tp=IC-C002
+     2  2050  liability/accounts_payable          CR     250,000,000  매출채권 인식 [DR] tp=IC-C002
+==============================================================================================================
+[seed=11] [embezzlement_concealment] 87945568-c3a8-4d74-bde5-9bfa7672b5c4  posting=2023-06-18 10:00:00  sem=R2R_ACCRUAL
+  flags : ['APPROVAL_BEFORE_POSTING']
+  - approval=2023-01-20 posting=2023-06-18 delta=-149d
+  hdr   : '임직원 비용 정산' creator=CLPEZ033(senior_accountant) approver=NEAR_LIMIT_REVIEWER adate=2023-01-20 sod=False
+     1  1200  asset    /inventory                 DR     850,022,000  C001:월말 발생액 tp=EMP-CARD-0022
+     2  1000  asset    /cash                      CR     850,022,000  C001:미지급 비용 계상 tp=EMP-CARD-0022
+==============================================================================================================
+[seed=11] [expense_capitalization] 45b71848-417a-408e-b30a-1a0a3bfeb4d4  posting=2024-01-28 09:03:00  sem=A2R_DEPRECIATION
+  flags : ['APPROVAL_AFTER_POSTING_LATE']
+  - approval=2024-12-13 posting=2024-01-28 delta=+320d
+  hdr   : '비용성 지출 자산 대체' creator=TREYES034(senior_accountant) approver=ANELSO028 adate=2024-12-13 sod=False
+     1  1500  asset    /fixed_assets              DR      75,000,000  수선비성 지출 자산 계상 검토 tp=DEPT-001
+     2  8000  expense  /tax_expense               CR      75,000,000  수선비성 지출 자산 계상 검토 tp=DEPT-001
+==============================================================================================================
+[seed=11] [fictitious_entry] e65276c6-d473-47be-9a55-7ec58db7339d  posting=2024-12-30 22:54:00  sem=R2R_ACCRUAL
+  flags : ['APPROVAL_BEFORE_POSTING']
+  - approval=2024-08-08 posting=2024-12-30 delta=-144d
+  hdr   : '거래 정산 반영' creator=BATCH_FICT_USER_2024(manager) approver=AWALKE019 adate=2024-08-08 sod=False
+     1  1100  asset    /accounts_receivable       DR   1,092,093,435  C001:미지급 비용 계상 tp=DEPT-091
+     2  4000  revenue  /product_revenue           CR   1,092,093,435  C001:결산 조정 tp=DEPT-001
+==============================================================================================================
+[seed=11] [period_end_adjustment_manipulation] 9722678e-9dae-4044-8dea-8f2882cd73a9  posting=2023-03-30 18:00:00  sem=A2R_DEPRECIATION
+  flags : ['SELF_APPROVAL_NO_SOD']
+  - created_by=HSCHFE066==approved_by=HSCHFE066 sod=False
+  hdr   : '결산 추정 조정' creator=HSCHFE066(senior_accountant) approver=HSCHFE066 adate=2023-03-30 sod=False
+     1  500760  expense  /depreciation_expense      DR       8,823,375  감가상각비 tp=DEPT-001
+     2  100700  asset    /accumulated_depreciation  CR       8,823,375  C003:월차 감가상각 tp=DEPT-001
+==============================================================================================================
+[seed=11] [suspense_account_abuse] 4d7d1e96-63cf-4eca-9148-b6c696b05798  posting=2022-01-10 10:00:00  sem=P2P_VENDOR_INVOICE
+  flags : ['ZERO_FILLER_LINE', 'APPROVAL_AFTER_POSTING_LATE', 'ACCOUNT_NOT_IN_COA']
+  - zero lines: [2, 4]
+  - approval=2022-12-27 posting=2022-01-10 delta=+351d
+  - missing accts: ['15110']
+  hdr   : '장기 미결 임시계정 정리' creator=AVERMA024(senior_accountant) approver=JE_APPROVER_C002 adate=2022-12-27 sod=False
+     1  15110  ?        /?                         DR     150,000,000  미결산 계정 장기잔액 검토 [SUSP]
+     2  1160  asset    /other_receivables         CR               0  미결산 계정 장기잔액 검토 [SUSP]
+     3  1000  asset    /cash                      CR     150,000,000  미결산 계정 장기잔액 검토 [SUSP]
+     4  2200  liability/accrued_liabilities       CR               0  미결산 계정 장기잔액 검토 [SUSP]
+==============================================================================================================
+[seed=11] [unusual_timing_manipulation] fd3fdf1f-c636-4866-b996-7fda8f388dad  posting=2024-06-22 23:20:00  sem=H2R_PAYROLL_PAYMENT
+  flags : ['SELF_APPROVAL_NO_SOD', 'APPROVAL_BEFORE_POSTING', 'PAYROLL_NO_SALARY_DR']
+  - created_by=RRIVER066==approved_by=RRIVER066 sod=False
+  - approval=2024-03-23 posting=2024-06-22 delta=-91d
+  - DR sub_types=['accrued_liabilities']
+  hdr   : '마감 전표 처리' creator=RRIVER066(senior_accountant) approver=RRIVER066 adate=2024-03-23 sod=False
+     1  2220  liability/accrued_liabilities       DR      85,213,659  C002:상여 지급 tp=BANK-001
+     2  100100  asset    /cash                      CR      85,213,659  임직원 복지비 [BK] tp=BANK-001
+==============================================================================================================
+[seed=22] [NORMAL] 24b9c37c-6b1f-4186-8629-5799f3fb0fce  posting=2024-12-02 16:17:58  sem=H2R_PAYROLL_PAYMENT
+  flags : ['PAYROLL_NO_SALARY_DR']
+  - DR sub_types=['tax_liabilities']
+  hdr   : '급여 지급 전표 - workflow update' creator=YMATSU046(junior_accountant) approver=CHERNA012 adate=2024-12-02 sod=False
+     1  2120  liability/tax_liabilities           DR          56,326  4대보험 회사부담분 ref-KZ tp=PAYROLL-001
+     2  100070  asset    /cash                      CR          56,326  퇴직급여 비용 [KZ] tp=PAYROLL-001
+==============================================================================================================
+[seed=22] [approval_sod_bypass] 3cbc0b48-273b-43d2-8412-02adbe84f80a  posting=2024-03-28 18:00:00  sem=R2R_ACCRUAL
+  flags : ['SELF_APPROVAL_NO_SOD']
+  - created_by=SSMITH025==approved_by=SSMITH025 sod=False
+  hdr   : '긴급 승인 경로 조정' creator=SSMITH025(senior_accountant) approver=SSMITH025 adate=None sod=False
+     1  6700  expense  /administrative_expenses   DR     426,862,077  미지급 비용 계상 [SA] tp=DEPT-001
+     2  500900  expense  /tax_expense               DR      59,692,134  월말 발생액 [SA] tp=DEPT-001
+     3  200260  liability/accrued_liabilities       CR     256,187,407  긴급 승인 경로 조정 tp=DEPT-001
+     4  2200  liability/accrued_liabilities       CR     230,366,804  C003:미지급 비용 계상 tp=DEPT-001
+==============================================================================================================
+[seed=22] [circular_related_party_transaction] c10f07de-3a7b-42bd-a111-d91a18a47638  posting=2022-12-30 23:26:00  sem=O2C_CUSTOMER_INVOICE
+  flags : ['ZERO_FILLER_LINE', 'APPROVAL_BEFORE_POSTING', 'O2C_INVOICE_NO_REVENUE_CR']
+  - zero lines: [3]
+  - approval=2022-03-02 posting=2022-12-30 delta=-303d
+  - CR sub_types=['accounts_payable', 'tax_liabilities']
+  hdr   : '관계사 정산' creator=RCAMPB026(junior_accountant) approver=PHERRM028 adate=2022-03-02 sod=False
+     1  1150  asset    /accounts_receivable       DR     906,844,334  제품 매출 [DR] tp=IC-C002
+     2  2050  liability/accounts_payable          CR     906,844,334  고객 매출 청구 [DR] tp=IC-C002
+     3  2100  liability/tax_liabilities           CR               0  고객 매출 청구 ref-DR tp=IC-C002
+==============================================================================================================
+[seed=22] [embezzlement_concealment] 9795738c-b467-45bc-ab9a-d8b998f220b7  posting=2024-06-20 10:00:00  sem=R2R_REVERSAL
+  flags : ['APPROVAL_AFTER_POSTING_LATE']
+  - approval=2024-12-30 posting=2024-06-20 delta=+193d
+  hdr   : '임직원 비용 정산' creator=CHERNA012(controller) approver=JE_APPROVER_C001 adate=2024-12-30 sod=False
+     1  1200  asset    /inventory                 DR     850,026,000  C091:전표 취소 tp=EMP-CARD-0026
+     2  1000  asset    /cash                      CR     850,026,000  C001:전표 취소 tp=EMP-CARD-0026
+==============================================================================================================
+[seed=22] [expense_capitalization] b8014dee-03d0-40ae-b1f9-a94c14be258d  posting=2023-01-28 09:03:00  sem=A2R_ASSET_ACQUISITION
+  flags : ['ZERO_FILLER_LINE']
+  - zero lines: [2, 3, 5, 6]
+  hdr   : '비용성 지출 자산 대체' creator=TREYES034(senior_accountant) approver=JE_APPROVER_C003 adate=2023-03-27 sod=False
+     1  1500  asset    /fixed_assets              DR   1,887,178,556  수선비성 지출 자산 계상 검토 tp=BANK-001
+     2  100530  asset    /fixed_assets              CR               0  수선비성 지출 자산 계상 검토 tp=BANK-001
+     3  100640  asset    /fixed_assets              CR               0  수선비성 지출 자산 계상 검토 tp=BANK-001
+     4  8000  expense  /tax_expense               CR   1,887,178,556  수선비성 지출 자산 계상 검토 tp=BANK-001
+     5  2000  liability/accounts_payable          CR               0  수선비성 지출 자산 계상 검토 tp=BANK-001
+     6  200010  liability/accounts_payable          CR               0  수선비성 지출 자산 계상 검토 tp=BANK-001
+==============================================================================================================
+[seed=22] [fictitious_entry] 10815398-ec00-48cd-8876-86be44be89d4  posting=2022-12-30 22:12:00  sem=R2R_REVERSAL
+  flags : ['ZERO_FILLER_LINE', 'APPROVAL_BEFORE_POSTING']
+  - zero lines: [2, 4]
+  - approval=2022-03-02 posting=2022-12-30 delta=-303d
+  hdr   : '거래 정산 반영' creator=BATCH_FICT_USER(senior_accountant) approver=JE_APPROVER_C002 adate=2022-03-02 sod=False
+     1  1100  asset    /accounts_receivable       DR   1,290,666,135  C002:발생액 역분개 tp=DEPT-001
+     2  200210  liability/accrued_liabilities       CR               0  발생액 역분개 tp=DEPT-001
+     3  4000  revenue  /product_revenue           CR   1,290,666,135  전표 취소 ref-SA tp=DEPT-001
+     4  6700  expense  /administrative_expenses   CR               0  전표 취소 [SA] tp=DEPT-001
+==============================================================================================================
+[seed=22] [period_end_adjustment_manipulation] 0bc22d51-e698-4685-a137-9377b49ffb69  posting=2023-03-30 18:00:00  sem=R2R_ACCRUAL
+  flags : ['SELF_APPROVAL_NO_SOD']
+  - created_by=ZGUO041==approved_by=ZGUO041 sod=False
+  hdr   : '결산 추정 조정' creator=ZGUO041(senior_accountant) approver=ZGUO041 adate=2023-03-30 sod=False
+     1  6400  expense  /operating_expenses        DR       5,751,254  C003:결산 조정 tp=DEPT-001
+     2  200280  liability/accrued_liabilities       CR       5,751,254  결산 조정 [SA] tp=DEPT-001
+==============================================================================================================
+[seed=22] [suspense_account_abuse] 5fc6833a-5e2b-4308-b3c2-41bbb43fa5ce  posting=2023-01-10 10:00:00  sem=P2P_VENDOR_INVOICE
+  flags : ['APPROVAL_AFTER_POSTING_LATE', 'ACCOUNT_NOT_IN_COA']
+  - approval=2023-10-17 posting=2023-01-10 delta=+280d
+  - missing accts: ['15110']
+  hdr   : '장기 미결 임시계정 정리' creator=NDAZ031(junior_accountant) approver=MANDER003 adate=2023-10-17 sod=False
+     1  15110  ?        /?                         DR     150,000,000  미결산 계정 장기잔액 검토 [SUSP]
+     2  1000  asset    /cash                      CR     150,000,000  미결산 계정 장기잔액 검토 [SUSP]
+==============================================================================================================
+[seed=22] [unusual_timing_manipulation] 20e30ccb-1217-4e75-8d9b-21309b0bb703  posting=2024-09-26 22:01:00  sem=H2R_PAYROLL_PAYMENT
+  flags : ['SELF_APPROVAL_NO_SOD', 'APPROVAL_BEFORE_POSTING', 'PAYROLL_NO_SALARY_DR']
+  - created_by=RMURTH052==approved_by=RMURTH052 sod=False
+  - approval=2024-03-23 posting=2024-09-26 delta=-187d
+  - DR sub_types=['accrued_liabilities', 'tax_liabilities']
+  hdr   : '마감 전표 처리' creator=RMURTH052(senior_accountant) approver=RMURTH052 adate=2024-03-23 sod=False
+     1  2220  liability/accrued_liabilities       DR     992,148,949  복리후생비 ref-BK tp=PAYROLL-001
+     2  2120  liability/tax_liabilities           DR     142,611,051  원천세 계상 ref-BK tp=PAYROLL-001
+     3  100110  asset    /cash                      CR     643,790,000  월 급여 계상 [BK] tp=PAYROLL-001
+     4  100050  asset    /cash                      CR     490,970,000  급여 비용 [BK] tp=PAYROLL-001
+==============================================================================================================
+[seed=33] [NORMAL] 4f645d3d-0be5-4004-9035-6dabd880538d  posting=2024-12-11 13:11:20  sem=H2R_PAYROLL_PAYMENT
+  flags : ['PAYROLL_NO_SALARY_DR']
+  - DR sub_types=['tax_liabilities']
+  hdr   : '급여 이체 실행 - workflow update' creator=CAGUIL055(junior_accountant) approver=ACORTS004 adate=2024-12-11 sod=False
+     1  2120  liability/tax_liabilities           DR       3,665,941  급여세 예수금 ref-KZ tp=TAX-001
+     2  1020  asset    /cash                      CR       3,665,941  C001:퇴직급여 비용 tp=TAX-001
+==============================================================================================================
+[seed=33] [approval_sod_bypass] 00905d94-0625-40fc-aefc-a14c5f6c303a  posting=2024-03-28 18:00:00  sem=R2R_ACCRUAL
+  flags : ['SELF_APPROVAL_NO_SOD']
+  - created_by=NMILLE039==approved_by=NMILLE039 sod=False
+  hdr   : '긴급 승인 경로 조정' creator=NMILLE039(senior_accountant) approver=NMILLE039 adate=None sod=False
+     1  500880  expense  /interest_expense          DR     145,420,000  결산 조정 ref-SA tp=DEPT-001
+     2  6400  expense  /operating_expenses        DR      28,334,000  C002:월말 발생액 tp=DEPT-001
+     3  200260  liability/accrued_liabilities       CR      11,967,120  C002:미지급 비용 계상 tp=DEPT-001
+     4  200290  liability/accrued_liabilities       CR     161,786,880  C002:미지급 비용 계상 tp=DEPT-001
+==============================================================================================================
+[seed=33] [circular_related_party_transaction] a75fdf63-8855-4333-9231-39307083c079  posting=2022-12-30 23:20:00  sem=O2C_CUSTOMER_INVOICE
+  flags : ['APPROVAL_BEFORE_POSTING', 'O2C_INVOICE_NO_REVENUE_CR']
+  - approval=2022-09-22 posting=2022-12-30 delta=-99d
+  - CR sub_types=['accounts_payable']
+  hdr   : '관계사 정산' creator=RBROWN056(senior_accountant) approver=DWALTE013 adate=2022-09-22 sod=False
+     1  1150  asset    /accounts_receivable       DR     250,000,000  C003:제품 매출 tp=IC-C002
+     2  2050  liability/accounts_payable          CR     250,000,000  고객 매출 청구 ref-DR tp=IC-C002
+==============================================================================================================
+[seed=33] [embezzlement_concealment] c8c94882-0539-4a09-88a9-24fcdd9831c3  posting=2023-06-19 10:00:00  sem=P2P_VENDOR_INVOICE
+  flags : ['ZERO_FILLER_LINE', 'APPROVAL_AFTER_POSTING_LATE']
+  - zero lines: [2, 4]
+  - approval=2023-12-12 posting=2023-06-19 delta=+176d
+  hdr   : '임직원 비용 정산' creator=LJIN017(junior_accountant) approver=AMOLIN003 adate=2023-12-12 sod=False
+     1  1200  asset    /inventory                 DR     850,030,000  C002:원재료 매입 tp=EMP-CARD-0030
+     2  500010  expense  /cost_of_goods_sold        CR               0  원재료 구매 [KR] tp=EMP-CARD-0030
+     3  1000  asset    /cash                      CR     850,030,000  임직원 비용 정산 tp=EMP-CARD-0030
+     4  200110  liability/accounts_payable          CR               0  오피스 소모품 구매 tp=EMP-CARD-0030
+==============================================================================================================
+[seed=33] [expense_capitalization] 9871c9b6-2688-43ca-8990-26e2bff3606b  posting=2023-01-28 09:03:00  sem=A2R_DEPRECIATION
+  flags : ['APPROVAL_AFTER_POSTING_LATE']
+  - approval=2023-06-30 posting=2023-01-28 delta=+153d
+  hdr   : '비용성 지출 자산 대체' creator=MLUO035(junior_accountant) approver=MANDER003 adate=2023-06-30 sod=False
+     1  1500  asset    /fixed_assets              DR      75,000,000  수선비성 지출 자산 계상 검토 tp=DEPT-001
+     2  8000  expense  /tax_expense               CR      75,000,000  수선비성 지출 자산 계상 검토 tp=DEPT-001
+==============================================================================================================
+[seed=33] [fictitious_entry] e3489ec6-c5e9-4351-9337-d27fc19ffd80  posting=2024-12-30 22:53:00  sem=O2C_CUSTOMER_INVOICE
+  flags : ['APPROVAL_BEFORE_POSTING']
+  - approval=2024-08-21 posting=2024-12-30 delta=-131d
+  hdr   : '거래 정산 반영' creator=BATCH_FICT_USER_2024(senior_accountant) approver=NMLLER003 adate=2024-08-21 sod=False
+     1  1100  asset    /accounts_receivable       DR   1,012,132,730  C001:매출채권 인식 tp=C-000144
+     2  4000  revenue  /product_revenue           CR   1,012,132,730  제품 매출 ref-DR tp=C-000144
+==============================================================================================================
+[seed=33] [period_end_adjustment_manipulation] 0d13b857-ffa8-4032-b7e0-f5ae5d0a0421  posting=2023-03-30 18:00:00  sem=R2R_REVERSAL
+  flags : ['SELF_APPROVAL_NO_SOD']
+  - created_by=CLPEZ033==approved_by=CLPEZ033 sod=False
+  hdr   : '결산 추정 조정' creator=CLPEZ033(senior_accountant) approver=CLPEZ033 adate=2023-03-30 sod=False
+     1  200270  liability/accrued_liabilities       DR         254,507  결산 조정 환입 tp=DEPT-001
+     2  200220  liability/accrued_liabilities       DR       7,781,540  C001:결산 조정 환입 tp=DEPT-001
+     3  200260  liability/accrued_liabilities       DR       2,873,467  결산 조정 환입
+     4  6400  expense  /operating_expenses        CR       2,658,000  C001:전표 취소 tp=DEPT-001
+     5  6700  expense  /administrative_expenses   CR       4,054,458  발생액 역분개 tp=DEPT-001
+     6  6700  expense  /administrative_expenses   CR       4,197,056  발생액 역분개 [SA] tp=DEPT-001
+==============================================================================================================
+[seed=33] [suspense_account_abuse] 45d6f177-e9db-419e-9ca3-d6fe55cd9936  posting=2024-01-10 10:00:00  sem=P2P_PAYMENT
+  flags : ['ZERO_FILLER_LINE', 'APPROVAL_AFTER_POSTING_LATE', 'ACCOUNT_NOT_IN_COA']
+  - zero lines: [2, 4]
+  - approval=2024-05-23 posting=2024-01-10 delta=+134d
+  - missing accts: ['15110']
+  hdr   : '장기 미결 임시계정 정리' creator=RMATSU053(junior_accountant) approver=WJONES033 adate=2024-05-23 sod=False
+     1  15110  ?        /?                         DR     150,000,000  미결산 계정 장기잔액 검토 tp=V-000471 [SUSP]
+     2  200100  liability/accounts_payable          CR               0  미결산 계정 장기잔액 검토 tp=V-000471 [SUSP]
+     3  1000  asset    /cash                      CR     150,000,000  미결산 계정 장기잔액 검토 tp=V-000471 [SUSP]
+     4  100080  asset    /cash                      CR               0  미결산 계정 장기잔액 검토 tp=V-000471 [SUSP]
+==============================================================================================================
+[seed=33] [unusual_timing_manipulation] 20e30ccb-1217-4e75-8d9b-21309b0bb703  posting=2024-09-26 22:01:00  sem=H2R_PAYROLL_PAYMENT
+  flags : ['SELF_APPROVAL_NO_SOD', 'APPROVAL_BEFORE_POSTING', 'PAYROLL_NO_SALARY_DR']
+  - created_by=RMURTH052==approved_by=RMURTH052 sod=False
+  - approval=2024-03-23 posting=2024-09-26 delta=-187d
+  - DR sub_types=['accrued_liabilities', 'tax_liabilities']
+  hdr   : '마감 전표 처리' creator=RMURTH052(senior_accountant) approver=RMURTH052 adate=2024-03-23 sod=False
+     1  2220  liability/accrued_liabilities       DR     992,148,949  복리후생비 ref-BK tp=PAYROLL-001
+     2  2120  liability/tax_liabilities           DR     142,611,051  원천세 계상 ref-BK tp=PAYROLL-001
+     3  100110  asset    /cash                      CR     643,790,000  월 급여 계상 [BK] tp=PAYROLL-001
+     4  100050  asset    /cash                      CR     490,970,000  급여 비용 [BK] tp=PAYROLL-001
+==============================================================================================================
+[seed=44] [approval_sod_bypass] 2d0322df-6559-4fe6-bd92-7d09999b6d8c  posting=2024-03-28 18:00:00  sem=R2R_REVERSAL
+  flags : ['SELF_APPROVAL_NO_SOD']
+  - created_by=NHALL011==approved_by=NHALL011 sod=False
+  hdr   : '긴급 승인 경로 조정' creator=NHALL011(senior_accountant) approver=NHALL011 adate=None sod=False
+     1  200170  liability/accrued_liabilities       DR     140,793,789  발생액 역분개 tp=DEPT-001
+     2  6400  expense  /operating_expenses        CR     140,793,789  발생액 역분개 [SA] tp=DEPT-001
+==============================================================================================================
+[seed=44] [circular_related_party_transaction] 61fd3569-9a75-4f66-97b7-1b5b3fe7aa95  posting=2024-12-31 22:13:00  sem=R2R_ACCRUAL
+  flags : ['APPROVAL_BEFORE_POSTING']
+  - approval=2024-08-02 posting=2024-12-31 delta=-151d
+  hdr   : '관계사 정산' creator=AMOLIN003(manager) approver=JE_APPROVER_C002 adate=2024-08-02 sod=False
+     1  1150  asset    /accounts_receivable       DR     250,000,000  C002:월말 발생액 tp=IC-C001
+     2  2050  liability/accounts_payable          CR     250,000,000  월말 발생액 ref-SA tp=IC-C001
+==============================================================================================================
+[seed=44] [expense_capitalization] ecc39926-b98c-47dc-889b-6c8a289c11fe  posting=2022-01-28 09:03:00  sem=R2R_ACCRUAL
+  flags : ['APPROVAL_AFTER_POSTING_LATE']
+  - approval=2022-07-21 posting=2022-01-28 delta=+174d
+  hdr   : '비용성 지출 자산 대체' creator=SSMITH025(controller) approver=JYOUNG029 adate=2022-07-21 sod=False
+     1  1500  asset    /fixed_assets              DR      75,000,000  수선비성 지출 자산 계상 검토 tp=DEPT-001
+     2  8000  expense  /tax_expense               CR      75,000,000  수선비성 지출 자산 계상 검토 tp=DEPT-001
+==============================================================================================================
+[seed=44] [fictitious_entry] 2ef52f58-5868-420c-9086-1fec747517bf  posting=2024-12-30 22:10:00  sem=R2R_REVERSAL
+  flags : ['ZERO_FILLER_LINE', 'APPROVAL_BEFORE_POSTING']
+  - zero lines: [2, 4]
+  - approval=2024-09-30 posting=2024-12-30 delta=-91d
+  hdr   : '거래 정산 반영' creator=BATCH_FICT_USER_2024(senior_accountant) approver=JSCOTT049 adate=2024-09-30 sod=False
+     1  1100  asset    /accounts_receivable       DR     502,905,026  C001:전표 취소 tp=DEPT-001
+     2  200180  liability/accrued_liabilities       CR               0  발생액 역분개 tp=DEPT-001
+     3  4000  revenue  /product_revenue           CR     502,905,026  C001:전표 취소 tp=DEPT-001
+     4  6700  expense  /administrative_expenses   CR               0  C001:발생액 역분개 tp=DEPT-001
+==============================================================================================================
+[seed=44] [period_end_adjustment_manipulation] c63e054c-c816-413f-b8e6-98498ff58124  posting=2024-03-30 18:00:00  sem=R2R_ACCRUAL
+  flags : ['SELF_APPROVAL_NO_SOD']
+  - created_by=RCHATT034==approved_by=RCHATT034 sod=False
+  hdr   : '결산 추정 조정' creator=RCHATT034(senior_accountant) approver=RCHATT034 adate=2024-03-30 sod=False
+     1  500940  expense  /tax_expense               DR         772,000  C002:미지급 비용 계상 tp=DEPT-001
+     2  6400  expense  /operating_expenses        DR       3,240,751  미지급 비용 계상 [SA] tp=DEPT-001
+     3  200230  liability/accrued_liabilities       CR         460,863  C002:결산 조정 tp=DEPT-001
+     4  200220  liability/accrued_liabilities       CR       3,551,888  C002:월말 발생액 tp=DEPT-001
+==============================================================================================================
+[seed=44] [suspense_account_abuse] 4683cd70-3a0c-494a-bb6c-0c13e05118dd  posting=2024-12-31 18:00:00  sem=P2P_VENDOR_INVOICE
+  flags : ['ZERO_FILLER_LINE', 'APPROVAL_BEFORE_POSTING', 'ACCOUNT_NOT_IN_COA']
+  - zero lines: [3]
+  - approval=2024-12-06 posting=2024-12-31 delta=-25d
+  - missing accts: ['15110']
+  hdr   : '장기 미결 임시계정 정리' creator=RMATSU053(junior_accountant) approver=AROMER062 adate=2024-12-06 sod=False
+     1  15110  ?        /?                         DR     150,000,000  미결산 계정 장기잔액 검토 [SUSP]
+     2  1000  asset    /cash                      CR     150,000,000  미결산 계정 장기잔액 검토 [SUSP]
+     3  200080  liability/accounts_payable          CR               0  미결산 계정 장기잔액 검토 [SUSP]
+==============================================================================================================
+[seed=44] [unusual_timing_manipulation] 2683aefc-2d70-4d4a-b801-aaa7fa2ac88f  posting=2024-03-27 21:03:00  sem=H2R_PAYROLL_PAYMENT
+  flags : ['SELF_APPROVAL_NO_SOD', 'PAYROLL_NO_SALARY_DR']
+  - created_by=JWHITE012==approved_by=JWHITE012 sod=False
+  - DR sub_types=['accrued_liabilities', 'accrued_liabilities']
+  hdr   : '마감 전표 처리' creator=JWHITE012(senior_accountant) approver=JWHITE012 adate=2024-03-27 sod=False
+     1  2220  liability/accrued_liabilities       DR     243,287,000  C002:임직원 복지비 tp=TAX-001
+     2  2220  liability/accrued_liabilities       DR      13,126,000  퇴직급여 비용 tp=TAX-001
+     3  1020  asset    /cash                      CR     203,120,000  원천세 계상 [BK] tp=TAX-001
+     4  100030  asset    /cash                      CR      53,293,000  C002:복리후생비 tp=TAX-001
+==============================================================================================================
+[seed=55] [NORMAL] f54aafd6-6e2a-49c7-9f6b-97d3c3b4c22f  posting=2023-09-08 02:16:40  sem=O2C_CUSTOMER_INVOICE
+  flags : ['O2C_INVOICE_NO_REVENUE_CR']
+  - CR sub_types=['tax_liabilities', 'tax_liabilities']
+  hdr   : '고객 매출 청구' creator=EDAVIS025(controller) approver=TJACKS023 adate=2023-09-08 sod=False
+     1  100150  asset    /accounts_receivable       DR      23,801,190  C001:제품 매출 tp=C-000314
+     2  2110  liability/tax_liabilities           CR      13,681,000  C001:매출채권 인식 tp=C-000314
+     3  2110  liability/tax_liabilities           CR      10,120,190  C001:제품 매출 tp=C-000314
+==============================================================================================================
+[seed=55] [NORMAL] 579c9a3d-b2d6-410b-88d4-c477f9c1ba3e  posting=2022-04-14 09:27:09  sem=O2C_CUSTOMER_INVOICE
+  flags : ['O2C_INVOICE_NO_REVENUE_CR']
+  - CR sub_types=['tax_liabilities', 'tax_liabilities']
+  hdr   : '고객 매출 청구 - legacy batch' creator=TROUSS058(senior_accountant) approver=JE_APPROVER_C003 adate=2022-04-14 sod=False
+     1  100170  asset    /accounts_receivable       DR         780,000  제품 매출 ref-DR tp=C-000043
+     2  2110  liability/tax_liabilities           CR         478,264  제품 매출 tp=C-000043
+     3  2110  liability/tax_liabilities           CR         301,736  제품 매출 ref-DR tp=C-000043
+==============================================================================================================
+[seed=55] [approval_sod_bypass] b8ba1e05-b54e-41d8-a541-ea174cb14ec8  posting=2022-03-28 18:00:00  sem=H2R_PAYROLL_PAYMENT
+  flags : ['SELF_APPROVAL_NO_SOD', 'PAYROLL_NO_SALARY_DR']
+  - created_by=ASANCH014==approved_by=ASANCH014 sod=False
+  - DR sub_types=['accrued_liabilities', 'accrued_liabilities', 'tax_liabilities']
+  hdr   : '긴급 승인 경로 조정' creator=ASANCH014(senior_accountant) approver=ASANCH014 adate=None sod=False
+     1  2220  liability/accrued_liabilities       DR     481,090,576  월 급여 계상 ref-KZ tp=BANK-001
+     2  2220  liability/accrued_liabilities       DR      53,734,947  C003:상여 지급
+     3  2120  liability/tax_liabilities           DR     311,468,177  원천세 계상 ref-KZ tp=BANK-001
+     4  100060  asset    /cash                      CR     230,395,956  임직원 복지비 [KZ] tp=BANK-001
+     5  100100  asset    /cash                      CR     248,131,139  4대보험 회사부담분 ref-KZ tp=BANK-001
+     6  1020  asset    /cash                      CR     367,766,605  상여 지급 tp=BANK-001
+==============================================================================================================
+[seed=55] [circular_related_party_transaction] c02df2f7-acab-4dae-8093-dacf8ce033f7  posting=2023-12-31 22:25:00  sem=R2R_REVERSAL
+  flags : ['APPROVAL_BEFORE_POSTING']
+  - approval=2023-01-06 posting=2023-12-31 delta=-359d
+  hdr   : '관계사 정산' creator=GSCHMI014(manager) approver=MRUIZ040 adate=2023-01-06 sod=False
+     1  1150  asset    /accounts_receivable       DR     250,000,000  C002:전표 취소 tp=IC-C001
+     2  2050  liability/accounts_payable          CR     250,000,000  결산 조정 환입 ref-SA tp=IC-C001
+==============================================================================================================
+[seed=55] [embezzlement_concealment] 87945568-c3a8-4d74-bde5-9bfa7672b5c4  posting=2023-06-18 10:00:00  sem=R2R_ACCRUAL
+  flags : ['APPROVAL_BEFORE_POSTING']
+  - approval=2023-01-20 posting=2023-06-18 delta=-149d
+  hdr   : '임직원 비용 정산' creator=CLPEZ033(senior_accountant) approver=NEAR_LIMIT_REVIEWER adate=2023-01-20 sod=False
+     1  1200  asset    /inventory                 DR     850,022,000  C001:월말 발생액 tp=EMP-CARD-0022
+     2  1000  asset    /cash                      CR     850,022,000  C001:미지급 비용 계상 tp=EMP-CARD-0022
+==============================================================================================================
+[seed=55] [expense_capitalization] d7d11a2f-3128-430b-822d-3d23fde6fb02  posting=2023-01-28 09:03:00  sem=R2R_ACCRUAL
+  flags : ['APPROVAL_AFTER_POSTING_LATE']
+  - approval=2023-06-19 posting=2023-01-28 delta=+142d
+  hdr   : '비용성 지출 자산 대체' creator=EMARTI009(senior_accountant) approver=RCHATT034 adate=2023-06-19 sod=False
+     1  1500  asset    /fixed_assets              DR      75,000,000  수선비성 지출 자산 계상 검토 tp=DEPT-001
+     2  8000  expense  /tax_expense               CR      75,000,000  수선비성 지출 자산 계상 검토 tp=DEPT-001
+==============================================================================================================
+[seed=55] [fictitious_entry] 705de2c3-0065-4c07-a81d-1cd273a2dc4f  posting=2023-01-28 09:03:00  sem=O2C_CUSTOMER_INVOICE
+  flags : ['APPROVAL_AFTER_POSTING_LATE']
+  - approval=2023-12-28 posting=2023-01-28 delta=+334d
+  hdr   : '거래 정산 반영' creator=AROMER062(manager) approver=KHILL032 adate=2023-12-28 sod=False
+     1  1100  asset    /accounts_receivable       DR     935,552,662  C002:매출채권 인식 tp=C-000362
+     2  4000  revenue  /product_revenue           CR     935,552,662  C002:제품 매출 tp=C-000362
+==============================================================================================================
+[seed=55] [period_end_adjustment_manipulation] 0d13b857-ffa8-4032-b7e0-f5ae5d0a0421  posting=2023-03-30 18:00:00  sem=R2R_REVERSAL
+  flags : ['SELF_APPROVAL_NO_SOD']
+  - created_by=CLPEZ033==approved_by=CLPEZ033 sod=False
+  hdr   : '결산 추정 조정' creator=CLPEZ033(senior_accountant) approver=CLPEZ033 adate=2023-03-30 sod=False
+     1  200270  liability/accrued_liabilities       DR         254,507  결산 조정 환입 tp=DEPT-001
+     2  200220  liability/accrued_liabilities       DR       7,781,540  C001:결산 조정 환입 tp=DEPT-001
+     3  200260  liability/accrued_liabilities       DR       2,873,467  결산 조정 환입
+     4  6400  expense  /operating_expenses        CR       2,658,000  C001:전표 취소 tp=DEPT-001
+     5  6700  expense  /administrative_expenses   CR       4,054,458  발생액 역분개 tp=DEPT-001
+     6  6700  expense  /administrative_expenses   CR       4,197,056  발생액 역분개 [SA] tp=DEPT-001
+==============================================================================================================
+[seed=55] [suspense_account_abuse] c7cb83d5-cf45-4886-9879-c01af849fdae  posting=2024-01-10 10:00:00  sem=P2P_VENDOR_INVOICE
+  flags : ['ZERO_FILLER_LINE', 'APPROVAL_AFTER_POSTING_LATE', 'ACCOUNT_NOT_IN_COA']
+  - zero lines: [2, 4]
+  - approval=2024-07-02 posting=2024-01-10 delta=+174d
+  - missing accts: ['15110']
+  hdr   : '장기 미결 임시계정 정리' creator=BROBIN036(junior_accountant) approver=FHOFFM055 adate=2024-07-02 sod=False
+     1  15110  ?        /?                         DR     150,000,000  미결산 계정 장기잔액 검토 [SUSP]
+     2  100290  asset    /inventory                 CR               0  미결산 계정 장기잔액 검토 [SUSP]
+     3  1000  asset    /cash                      CR     150,000,000  미결산 계정 장기잔액 검토 [SUSP]
+     4  2200  liability/accrued_liabilities       CR               0  미결산 계정 장기잔액 검토 [SUSP]
+==============================================================================================================
+[seed=55] [unusual_timing_manipulation] c6e781df-5772-49c6-97ff-c7b114038a9f  posting=2023-09-26 22:13:00  sem=H2R_PAYROLL_PAYMENT
+  flags : ['SELF_APPROVAL_NO_SOD', 'APPROVAL_BEFORE_POSTING', 'PAYROLL_NO_SALARY_DR']
+  - created_by=SSMITH022==approved_by=SSMITH022 sod=False
+  - approval=2023-03-25 posting=2023-09-26 delta=-185d
+  - DR sub_types=['accrued_liabilities']
+  hdr   : '마감 전표 처리' creator=SSMITH022(senior_accountant) approver=SSMITH022 adate=2023-03-25 sod=False
+     1  2220  liability/accrued_liabilities       DR     296,745,399  상여 지급 [KZ] tp=TAX-001
+     2  100060  asset    /cash                      CR     296,745,399  상여 지급 ref-KZ tp=TAX-001

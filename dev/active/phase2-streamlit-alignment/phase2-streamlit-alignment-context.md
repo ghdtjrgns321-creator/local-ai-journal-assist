@@ -59,3 +59,30 @@
 ## A3 Handoff Entry (2026-05-17)
 
 Sprint A3는 dashboard 파일을 수정하지 않고 PHASE2 training/inference contract에 4개 rule-based family(`timeseries`, `relational`, `duplicate`, `intercompany`)를 추가했다. Phase B A4 UI 작업은 `load_latest_phase2_training_snapshot()`이 반환하는 `metadata.inference_contract.required_models`, `model_versions`, `family_sub_detectors`, `track_map`와 `leaderboard.json` / `promotion_decision.json`을 읽어 9 family 표시를 추가하면 된다. Rule-style family의 `model_versions.<family>.model_version`과 `schema_hash`는 `null`일 수 있으며, artifact 링크는 `registry_path`의 `calibration_metadata.json`을 사용한다.
+
+## Pre-UI smoke result (2026-05-18)
+
+Streamlit UI 진입 시 본 smoke 결과를 정독한다. 기준 문서는 `docs/DETECTION_RESULTS_MANIPULATION_V7_FIXED3_PHASE2.md`이고, 연도별 JSON은 `artifacts/phase2_inference_v7_fixed3_year_2022.json`, `artifacts/phase2_inference_v7_fixed3_year_2023.json`, `artifacts/phase2_inference_v7_fixed3_year_2024.json`이다. UI는 active/dormant family를 분리하고, rule-style family는 `rule_proxy_score`로 표시하며, truth recall을 family ranking 근거로 사용하지 않는다.
+
+## Sprint UI-A4 Results (2026-05-18)
+
+Sprint UI-A4는 Phase A handoff 7개와 active plan 3개를 기준으로 Phase2 탭을 3-state UI로 확장했다. 상태는 `Not trained` / `Training report available` / `Inference complete`로 분기하며, 학습은 `run_phase2_training_analysis()`, 추론은 `run_phase2_inference_analysis()`로 분리된다. 추론 실행 시 UI partition selector(`2022`, `2023`, `2024`, `전체`)가 `fiscal_year` 필터로 전달된다.
+
+신규 컴포넌트:
+- `dashboard/components/phase2_family_matrix.py`: `build_family_matrix_frame(snapshot, partition_summary)` / `render_family_matrix(snapshot, partition_summary)`.
+- `dashboard/components/phase2_subdetector_grid.py`: `build_subdetector_grid_frame(partition_summary)` / `render_subdetector_grid(partition_summary)`.
+- `dashboard/components/phase2_leaderboard_view.py`: `build_leaderboard_frame(snapshot)`, `build_promotion_decision_frame(snapshot)`, `render_leaderboard_view(snapshot)`.
+
+UI contract:
+- active 5 family + dormant 4 family를 항상 표시한다.
+- 13 sub-detector hit count는 zero-hit도 숨기지 않는다.
+- `intercompany`는 Diag-1 contract에 따라 active / IC01 only / `metric_confidence=sidecar_unmatched_reference_only`로 표시한다. IC02/IC03은 `carry-over (matched-pair data 미보유)`로 표시한다.
+- `leaderboard.json`과 `promotion_decision.json`은 latest training snapshot의 sidecar artifact로 로드한다. rule-style `schema_hash=null`은 정상 표시값이다.
+- PHASE1 result UI 파일(`dashboard/tab_phase1.py`, `dashboard/components/rule_panel.py`)과 overview는 수정하지 않았다. `git diff` 확인은 local hook이 차단했으므로 fallback grep/변경 파일 검사로 확인했다.
+
+Verification:
+- Focused Phase2 dashboard/service: 27 passed.
+- RUFF changed files: PASS.
+- `dashboard.app` import smoke: PASS with bare Streamlit warnings.
+- Duplicate performance guard: 2 passed.
+- Dashboard full suite: 213 passed, 1 pre-existing `tab_phase1._render_year_over_year` absence failure.

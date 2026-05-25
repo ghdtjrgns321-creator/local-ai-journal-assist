@@ -108,3 +108,59 @@ intercompany_cycle:high (circular_RPT)      relational / graph cycle           N
 ```
 
 PHASE1 가중치 lock 은 유지 — 본 family 가 PHASE1 의 회계 도메인 정합성 한계를 회수하는 형태. 정상 결산 야근·정상 RPT 거래 FP 폭증 위험은 PHASE2 학습 라벨(`is_fraud`)로 분리.
+
+## Smoke validation V7 fixed3 by year (2026-05-18)
+
+V7 fixed3 PHASE2 by-year smoke를 실행했다. 결과 문서는 `docs/DETECTION_RESULTS_MANIPULATION_V7_FIXED3_PHASE2.md`이며, 2022/2023/2024 partition 모두에서 active 5 family score가 산출되었다. 13 sub-detector hit 분포와 시나리오 x family detection matrix는 informational only로 기록했으며, PHASE1 priority/composite_sort 및 model bundle은 변경하지 않았다.
+
+| Family | 2022 | 2023 | 2024 | Metric |
+|---|---:|---:|---:|---|
+| `unsupervised` | 22,689 | 26,172 | 30,374 | ECDF q95 high count |
+| `timeseries` | 299,127 | 296,765 | 295,572 | score>0 nonzero count |
+| `relational` | 15,718 | 15,324 | 15,752 | score>0 nonzero count |
+| `duplicate` | 77,115 | 74,367 | 70,918 | score>0 nonzero count |
+| `intercompany` | 0 | 0 | 0 | score>0 nonzero count |
+
+## Diag-1 intercompany Results (2026-05-18)
+
+V7 fixed3 `intercompany` family 0건 원인을 systematic-debugging 4단계로 재현/격리했다. IC 거래 자체는 존재하므로 data limitation skip이 아니라 input contract mismatch로 확정했다. 2024 기준 `counterparty_type=IntercompanyAffiliate` 15,709행, `is_intercompany=True` 17,813행이 존재했지만, PHASE2 IC01은 `ic_unmatched_reference` sidecar evidence를 사용하지 않아 0건이 됐다.
+
+수정은 `src/detection/intercompany_rules.py::ic01_unmatched_intercompany()`에 한정했다. `is_intercompany=True AND ic_unmatched_reference=True`를 IC01 unmatched evidence로 반영하고, IC02/IC03은 matched-pair amount/date reference 부재 시 계속 0으로 둔다. V7 fixed3 source, `model_bundle.pt`, dashboard 파일은 변경하지 않았다.
+
+| Year | Metric | Before | After |
+|---:|---|---:|---:|
+| 2022 | intercompany nonzero | 0 | 12 |
+| 2022 | IC01 unmatched_intercompany | 0 | 12 |
+| 2022 | IC02 amount_mismatch | 0 | 0 |
+| 2022 | IC03 timing_gap | 0 | 0 |
+| 2023 | intercompany nonzero | 0 | 6 |
+| 2023 | IC01 unmatched_intercompany | 0 | 6 |
+| 2023 | IC02 amount_mismatch | 0 | 0 |
+| 2023 | IC03 timing_gap | 0 | 0 |
+| 2024 | intercompany nonzero | 0 | 16 |
+| 2024 | IC01 unmatched_intercompany | 0 | 16 |
+| 2024 | IC02 amount_mismatch | 0 | 0 |
+| 2024 | IC03 timing_gap | 0 | 0 |
+
+UI sprint는 `artifacts/phase2_inference_v7_fixed3_year_2024_intercompany_rerun.json`의 `after.ui_meta`를 사용한다. 현재 meta는 `skipped=false`, `metric_confidence=sidecar_unmatched_reference_only`, `active_sub_detectors=["IC01"]`, `zero_hit_sub_detectors=["IC02","IC03"]`이다.
+
+검증:
+- `uv run pytest tests/modules/test_detection/test_intercompany_v7_fixed3_smoke.py tests/modules/test_detection/test_intercompany_matcher.py -q` -> 25 passed.
+- A3 focused regression + 신규 smoke guard -> 98 passed.
+- `uv run ruff check src/detection/intercompany_rules.py tests/modules/test_detection/test_intercompany_v7_fixed3_smoke.py` -> PASS.
+
+Handoff: `artifacts/sprint_phaseA_diag1_intercompany_handoff_20260518.md`.
+
+
+## Diag-2 duplicate optimization Results (2026-05-18)
+
+Duplicate inference 병목을 `src/detection/duplicate_rules.py`에서 해결했다. 2024 partition 기준 Phase A smoke baseline 83.66s에서 2.744s 평균으로 감소했고, full V7 fixed3 1,032,864 rows 기준 3회 평균 4.533s를 기록했다.
+
+| Sub-detector | Before 2024 | After 2024 | Diff |
+|---|---:|---:|---:|
+| `L2-03a` exact_duplicate_amount | 2,964 | 2,964 | 0.000% |
+| `L2-03b` fuzzy_duplicate | 34,655 | 34,655 | 0.000% |
+| `L2-03c` split_transaction | 16,784 | 16,784 | 0.000% |
+| `L2-03d` time_shifted_duplicate | 28,590 | 28,590 | 0.000% |
+
+적용 옵션: A(blocking key), B(RapidFuzz cdist 후보 축소), D(early guard), E(line_text normalization cache). Sampling(C)은 사용하지 않았다. 산출물은 `artifacts/sprint_phaseA_diag2_duplicate_optimization_handoff_20260518.md` 및 `artifacts/phase2_duplicate_perf_before_after_20260518.json`에 기록했다.

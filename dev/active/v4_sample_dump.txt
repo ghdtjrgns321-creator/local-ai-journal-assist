@@ -1,0 +1,156 @@
+==============================================================================================================
+[NORMAL] 5d329031-69cb-4c96-86f1-d9c93b7dd989  posting=2022-10-04 17:00:07  type=BK  cur=KRW  ref=EXP-C003-2022-000015
+  header_text : BK | 급여 이체 실행
+  source      : automated  bp=H2R  sem_scen=H2R_PAYROLL_PAYMENT  ctp_type=PayrollProvider
+  created_by  : ASANCH014 (junior_accountant)  approved_by=VNAIR019  approval_date=2022-10-04  sod=False
+  lines (2):
+     1  2120  liability/tax_liabilities           DR      13,040,000  C003:원천세 계상 tp=PAYROLL-001 [ABN-SIDE]
+     2  100010  asset    /cash                      CR      13,040,000  원천세 계상 ref-BK tp=PAYROLL-001 [ABN-SIDE]
+  totals: DR=     13,040,000  CR=     13,040,000  balance=OK
+==============================================================================================================
+[NORMAL] 3c9cbd0d-4026-4a3c-8117-144f6d3a43bd  posting=2023-06-27 11:28:20  type=DR  cur=KRW  ref=SO-C002-2023-000799
+  header_text : 고객 송장 발행 / C002
+  source      : automated  bp=O2C  sem_scen=O2C_CUSTOMER_INVOICE  ctp_type=Customer
+  created_by  : MSMITH054 (junior_accountant)  approved_by=AMUOZ002  approval_date=2023-06-27  sod=False
+  lines (2):
+     1  1100  asset    /accounts_receivable       DR       4,984,101  C002:매출채권 인식 tp=C-000253
+     2  2110  liability/tax_liabilities           CR       4,984,101  제품 매출 ref-DR tp=C-000253
+  totals: DR=      4,984,101  CR=      4,984,101  balance=OK
+==============================================================================================================
+[NORMAL] 51851b38-ac82-40f7-aa2e-40fcb1bbec0c  posting=2024-03-15 08:47:53  type=SA  cur=KRW  ref=DOC-C001-2024-000766
+  header_text : 결산 조정 취소 - workflow update
+  source      : manual  bp=R2R  sem_scen=R2R_REVERSAL  ctp_type=InternalDepartment
+  created_by  : MGUTIR061 (Manager)  approved_by=ÉCHEVA031  approval_date=2024-03-15  sod=False
+  lines (2):
+     1  200250  liability/accrued_liabilities       DR          54,827  C001:발생액 역분개 tp=DEPT-001 [ABN-SIDE]
+     2  6700  expense  /administrative_expenses   CR          54,827  C001:전표 취소 tp=DEPT-001 [ABN-SIDE]
+  totals: DR=         54,827  CR=         54,827  balance=OK
+==============================================================================================================
+[NORMAL] 6975af4b-6103-4c95-8c6b-c39999dc46a7  posting=2022-02-07 13:11:10  type=DR  cur=KRW  ref=SO-C003-2022-000590
+  header_text : 고객 송장 발행
+  source      : automated  bp=O2C  sem_scen=O2C_CUSTOMER_INVOICE  ctp_type=Customer
+  created_by  : TROUSS058 (senior_accountant)  approved_by=JE_APPROVER_C003  approval_date=2022-02-07  sod=False
+  lines (2):
+     1  100190  asset    /accounts_receivable       DR         210,000  C003:제품 매출 tp=C-000193
+     2  400450  revenue  /service_revenue           CR         210,000  C003:매출채권 인식 tp=C-000193
+  totals: DR=        210,000  CR=        210,000  balance=OK
+==============================================================================================================
+[NORMAL] e1d2d1bf-bf65-461c-97d2-8e725a90d1d0  posting=2024-12-05 17:17:07  type=SA  cur=KRW  ref=DOC-C001-2024-000350
+  header_text : SA | 결산 조정 전표
+  source      : manual  bp=R2R  sem_scen=R2R_ACCRUAL  ctp_type=InternalDepartment
+  created_by  : CHERNA012 (controller)  approved_by=FSILVA002  approval_date=2024-12-05  sod=False
+  lines (2):
+     1  500930  expense  /tax_expense               DR         376,458  결산 조정 ref-SA tp=DEPT-001
+     2  200290  liability/accrued_liabilities       CR         376,458  미지급 비용 계상 tp=DEPT-001
+  totals: DR=        376,458  CR=        376,458  balance=OK
+==============================================================================================================
+[NORMAL] 9b630cbb-ca6d-40a1-97fe-ec5489dd3a88  posting=2024-04-17 15:45:45  type=SA  cur=KRW  ref=DOC-C002-2024-001602
+  header_text : C002 미지급 비용 계상
+  source      : manual  bp=R2R  sem_scen=R2R_ACCRUAL  ctp_type=InternalDepartment
+  created_by  : ACOLLI006 (junior_accountant)  approved_by=KKNIG005  approval_date=2024-04-17  sod=False
+  lines (2):
+     1  500920  expense  /tax_expense               DR       5,727,702  C002:월말 발생액 tp=DEPT-001
+     2  200280  liability/accrued_liabilities       CR       5,727,702  미지급 비용 계상 tp=DEPT-001
+  totals: DR=      5,727,702  CR=      5,727,702  balance=OK
+==============================================================================================================
+[NORMAL] d38799b7-2843-474f-8970-4ec0390b579e  posting=2022-12-21 01:37:27  type=KR  cur=KRW  ref=PO-C003-2022-001257
+  header_text : C003 구매 송장 접수
+  source      : recurring  bp=P2P  sem_scen=P2P_VENDOR_INVOICE  ctp_type=VendorUtilities
+  created_by  : BROBIN036 (junior_accountant)  approved_by=FHOFFM055  approval_date=2022-12-21  sod=False
+  lines (2):
+     1  100360  asset    /inventory                 DR       1,422,356  원재료 구매 ref-KR
+     2  2900  liability/goods_received_clearing   CR       1,422,356  C003:문구류 구입
+  totals: DR=      1,422,356  CR=      1,422,356  balance=OK
+==============================================================================================================
+[approval_sod_bypass] db101a6a-8de1-4f76-ae69-db3ddc4eb4cd  posting=2022-03-28 18:00:00  type=SA  cur=KRW  ref=DOC-C003-2022-000143
+  header_text : 긴급 승인 경로 조정
+  source      : manual  bp=R2R  sem_scen=R2R_ACCRUAL  ctp_type=InternalDepartment
+  created_by  : JSANCH021 (senior_accountant)  approved_by=JSANCH021  approval_date=None  sod=False
+  TRUTH       : scenario=approval_sod_bypass subtype=self_approval_sod intent=override or bypass normal approval route while preserving accounting form year=conservative_control_environment_low_volume_manipulation layer=manipulated_entry_truth stealth=workflow_owner
+  eval_note   : Evaluate whether L1-L4 signal combinations surface this manipulated entry; not rule-specific truth.
+  lines (3):
+     1  500920  expense  /tax_expense               DR     289,885,350  미지급 비용 계상 tp=DEPT-001
+     2  200180  liability/accrued_liabilities       CR     236,573,697  C003:결산 조정 tp=DEPT-010
+     3  2200  liability/accrued_liabilities       CR      53,311,653  월말 발생액 ref-SA tp=DEPT-001
+  totals: DR=    289,885,350  CR=    289,885,350  balance=OK
+==============================================================================================================
+[circular_related_party_transaction] a55beb1c-4ab5-4571-a0e1-0c2899105bb7  posting=2023-12-31 22:19:00  type=DR  cur=KRW  ref=ICS-2023-00019
+  header_text : 관계사 정산
+  source      : manual  bp=Intercompany  sem_scen=O2C_CUSTOMER_INVOICE  ctp_type=IntercompanyAffiliate
+  created_by  : YITO057 (senior_accountant)  approved_by=NWALTE046  approval_date=2023-10-10  sod=False
+  TRUTH       : scenario=circular_related_party_transaction subtype=round_trip_intercompany intent=move value through related-party or intercompany-looking flows year=mixed_control_environment_manipulation layer=manipulated_entry_truth stealth=routine_reference
+  eval_note   : Evaluate whether L1-L4 signal combinations surface this manipulated entry; not rule-specific truth.
+  lines (2):
+     1  1150  asset    /accounts_receivable       DR     250,000,000  C002:고객 매출 청구 tp=IC-C001
+     2  2050  liability/accounts_payable          CR     250,000,000  C002:매출채권 인식 tp=IC-C001
+  totals: DR=    250,000,000  CR=    250,000,000  balance=OK
+==============================================================================================================
+[embezzlement_concealment] 334ee41f-c0a0-403c-b513-6f3323d6e154  posting=2022-06-22 10:00:00  type=KZ  cur=KRW  ref=EMP-CARD-DUP-0012
+  header_text : 임직원 비용 정산
+  source      : manual  bp=P2P  sem_scen=P2P_VENDOR_INVOICE  ctp_type=Employee
+  created_by  : RMATSU053 (junior_accountant)  approved_by=RCHATT034  approval_date=2022-03-22  sod=False
+  TRUTH       : scenario=embezzlement_concealment subtype=corporate_card_private_use intent=conceal employee or cash leakage in plausible operating expense/payment entries year=conservative_control_environment_low_volume_manipulation layer=manipulated_entry_truth stealth=routine_reference
+  eval_note   : Evaluate whether L1-L4 signal combinations surface this manipulated entry; not rule-specific truth.
+  lines (2):
+     1  1200  asset    /inventory                 DR     850,012,000  C002:원재료 구매 tp=EMP-CARD-0012
+     2  1000  asset    /cash                      CR     850,012,000  전문용역비 tp=EMP-CARD-0012 [ABN-SIDE]
+  totals: DR=    850,012,000  CR=    850,012,000  balance=OK
+==============================================================================================================
+[expense_capitalization] f2e1f4cf-a34d-4ee9-bb10-a31bf8066ce2  posting=2022-01-28 09:03:00  type=AA  cur=KRW  ref=PO-C002-2022-000185
+  header_text : 비용성 지출 자산 대체
+  source      : automated  bp=A2R  sem_scen=P2P_VENDOR_INVOICE  ctp_type=InternalDepartment
+  created_by  : MWHITE065 (senior_accountant)  approved_by=FLPEZ058  approval_date=2022-02-01  sod=False
+  TRUTH       : scenario=expense_capitalization subtype=repair_expense_capitalized intent=capitalize expense-like activity into assets with weak supporting evidence year=conservative_control_environment_low_volume_manipulation layer=manipulated_entry_truth stealth=routine_reference
+  eval_note   : Evaluate whether L1-L4 signal combinations surface this manipulated entry; not rule-specific truth.
+  lines (2):
+     1  1500  asset    /fixed_assets              DR      75,000,000  수선비성 지출 자산 계상 검토
+     2  8000  expense  /tax_expense               CR      75,000,000  수선비성 지출 자산 계상 검토 [ABN-SIDE]
+  totals: DR=     75,000,000  CR=     75,000,000  balance=OK
+==============================================================================================================
+[fictitious_entry] 30ad45ae-e86c-491b-9d04-4c01e21f1a15  posting=2023-01-28 09:03:00  type=SA  cur=KRW  ref=DOC-C003-2023-001589
+  header_text : 거래 정산 반영
+  source      : recurring  bp=O2C  sem_scen=R2R_ACCRUAL  ctp_type=Customer
+  created_by  : SSMITH025 (controller)  approved_by=MNELSO060  approval_date=2023-07-03  sod=False
+  TRUTH       : scenario=fictitious_entry subtype=fictitious_revenue intent=record non-existent revenue, asset, or expense activity year=mixed_control_environment_manipulation layer=manipulated_entry_truth stealth=routine_reference
+  eval_note   : Evaluate whether L1-L4 signal combinations surface this manipulated entry; not rule-specific truth.
+  lines (4):
+     1  1100  asset    /accounts_receivable       DR   3,916,089,000  C003:미지급 비용 계상 tp=DEPT-001
+     2  500930  expense  /tax_expense               CR               0  결산 조정 ref-SA [ABN-SIDE]
+     3  4000  revenue  /product_revenue           CR   3,916,089,000  미지급 비용 계상 [SA] tp=DEPT-001
+     4  200270  liability/accrued_liabilities       CR               0  C003:결산 조정 tp=DEPT-001
+  totals: DR=  3,916,089,000  CR=  3,916,089,000  balance=OK
+==============================================================================================================
+[period_end_adjustment_manipulation] 4252a97d-598b-4b65-968c-c599da028f31  posting=2024-03-30 18:00:00  type=SA  cur=KRW  ref=DOC-C002-2024-000618
+  header_text : 결산 추정 조정
+  source      : manual  bp=R2R  sem_scen=R2R_REVERSAL  ctp_type=InternalDepartment
+  created_by  : SNELSO023 (senior_accountant)  approved_by=SNELSO023  approval_date=2024-03-30  sod=False
+  TRUTH       : scenario=period_end_adjustment_manipulation subtype=manual_accrual_bias intent=bias period-end estimates or accruals year=heightened_close_pressure_manipulation layer=manipulated_entry_truth stealth=routine_reference
+  eval_note   : Evaluate whether L1-L4 signal combinations surface this manipulated entry; not rule-specific truth.
+  lines (4):
+     1  200270  liability/accrued_liabilities       DR       1,152,101  전표 취소 tp=DEPT-001 [ABN-SIDE]
+     2  200220  liability/accrued_liabilities       DR       4,929,367  발생액 역분개 ref-SA tp=DEPT-001 [ABN-SIDE]
+     3  6400  expense  /operating_expenses        CR       2,224,703  발생액 역분개 tp=DEPT-001 [ABN-SIDE]
+     4  6700  expense  /administrative_expenses   CR       3,856,765  결산 조정 환입 [SA] tp=DEPT-001 [ABN-SIDE]
+  totals: DR=      6,081,468  CR=      6,081,468  balance=OK
+==============================================================================================================
+[suspense_account_abuse] 88f063bd-efd4-4cf6-bb38-7a8784377e8e  posting=2022-01-10 10:00:00  type=SA  cur=KRW  ref=PO-C002-2022-001196
+  header_text : 장기 미결 임시계정 정리
+  source      : manual  bp=R2R  sem_scen=P2P_VENDOR_INVOICE  ctp_type=InternalDepartment
+  created_by  : AVERMA024 (senior_accountant)  approved_by=MRUIZ040  approval_date=2022-05-31  sod=False
+  TRUTH       : scenario=suspense_account_abuse subtype=long_aged_suspense_balance intent=park unclear balances in suspense accounts and clear them late near close year=conservative_control_environment_low_volume_manipulation layer=manipulated_entry_truth stealth=routine_reference
+  eval_note   : Evaluate whether L1-L4 signal combinations surface this manipulated entry; not rule-specific truth.
+  lines (2):
+     1  15110  ?        /?                         DR     150,000,000  미결산 계정 장기잔액 검토 [SUSPENSE]
+     2  1000  asset    /cash                      CR     150,000,000  미결산 계정 장기잔액 검토 [ABN-SIDE] [SUSPENSE]
+  totals: DR=    150,000,000  CR=    150,000,000  balance=OK
+==============================================================================================================
+[unusual_timing_manipulation] 6532530f-2468-4091-a598-b7ce27662566  posting=2023-09-26 22:05:00  type=BK  cur=KRW  ref=PAY-C002-2023-000174
+  header_text : 마감 전표 처리
+  source      : manual  bp=TRE  sem_scen=TRE_INTEREST_PAYMENT  ctp_type=Lender
+  created_by  : JRAMRE025 (senior_accountant)  approved_by=JRAMRE025  approval_date=2023-03-25  sod=False
+  TRUTH       : scenario=unusual_timing_manipulation subtype=after_hours_posting intent=post legitimate-looking entries at unusual timing to avoid normal review year=mixed_control_environment_manipulation layer=manipulated_entry_truth stealth=routine_reference
+  eval_note   : Evaluate whether L1-L4 signal combinations surface this manipulated entry; not rule-specific truth.
+  lines (2):
+     1  500850  expense  /interest_expense          DR      89,810,000  C002:차입금 이자 tp=LENDER-001
+     2  100100  asset    /cash                      CR      89,810,000  C002:이자비용 지급 tp=LENDER-001 [ABN-SIDE]
+  totals: DR=     89,810,000  CR=     89,810,000  balance=OK

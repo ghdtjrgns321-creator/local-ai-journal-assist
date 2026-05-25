@@ -159,3 +159,18 @@
   - Evidence: `test_build_phase_provenance_lines_distinguishes_phase2_inference_modes` passed.
 - [x] 관련 pytest smoke가 통과한다.
   - Evidence: Phase2 alignment smoke passed: `36 passed`.
+
+## Sprint UI-A4 Checklist (2026-05-18)
+
+- [x] Phase A handoff 7개와 active plan 3개 정독.
+- [x] Diag-1 GO-WITH-CAVEAT와 Diag-2 GO 진입 조건 확인.
+- [x] Phase2 사용자-facing 3 상태 UI 분기 구현.
+- [x] 학습/추론 버튼 분리 유지.
+- [x] 9 family matrix 컴포넌트 추가.
+- [x] 13 sub-detector grid 컴포넌트 추가.
+- [x] 2022/2023/2024/전체 partition selector 추가 및 inference filter 전달.
+- [x] leaderboard/promotion_decision sidecar 표시 컴포넌트 추가.
+- [x] ECDF q95 high count와 `rule_proxy_score` 라벨 표시. truth recall 라벨 미사용.
+- [x] PHASE1 result UI 파일 변경 금지 준수.
+- [x] duplicate performance guard 재실행.
+- [x] 완료 handoff 작성.
