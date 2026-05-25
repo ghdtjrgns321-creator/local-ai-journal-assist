@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.formatting import format_krw_compact
 
 _DOCUMENT_TYPE_LABELS: dict[str, str] = {
     "SA": "수기조정",
@@ -68,16 +69,7 @@ _GL_FIRST_DIGIT_LABELS: dict[str, str] = {
 
 def _format_amount_short(value: float) -> str:
     """한국식 단위 약어로 금액 표기 (조/억/만/원)."""
-    if not value:
-        return "0원"
-    abs_v = abs(float(value))
-    if abs_v >= 1_000_000_000_000:
-        return f"{value / 1_000_000_000_000:.1f}조"
-    if abs_v >= 100_000_000:
-        return f"{value / 100_000_000:.1f}억"
-    if abs_v >= 10_000:
-        return f"{value / 10_000:.0f}만"
-    return f"{value:,.0f}원"
+    return format_krw_compact(value, zero="0원", won_suffix=True, grouped=False)
 
 
 def _format_period_month(value: Any) -> str:

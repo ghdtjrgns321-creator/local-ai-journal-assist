@@ -13,7 +13,6 @@ import pandas as pd
 
 from src.ingest.models import HeaderDetectionResult, ReadResult, SheetScore
 
-
 # 스코어 가중치
 _W_ROW = 0.3
 _W_COL = 0.2

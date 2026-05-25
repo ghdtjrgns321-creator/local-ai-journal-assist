@@ -149,6 +149,12 @@ class CompanyRepository:
         cdir = self.company_dir(company_id)
         if not cdir.exists():
             return False
+        try:
+            from src.db.connection import close_connection  # noqa: PLC0415
+
+            close_connection()
+        except Exception:
+            logger.warning("회사 삭제 전 DB 커넥션 close 실패 (계속 진행)", exc_info=True)
         shutil.rmtree(cdir)
         logger.info("회사 삭제: %s", company_id)
         return True

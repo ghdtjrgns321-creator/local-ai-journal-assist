@@ -16,6 +16,16 @@ from src.preprocessing.vae_model import AuditVAE, vae_loss, vae_loss_components
 logger = logging.getLogger(__name__)
 
 
+class _NullContext:
+    """No-op context manager for non-AMP forward path."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        return None
+
+
 class VAEDetector(BaseEstimator):
     """VAE reconstruction-error detector with mini-batch training."""
 
@@ -33,6 +43,8 @@ class VAEDetector(BaseEstimator):
         feature_groups: list[str] | None = None,
         group_weights: dict[str, float] | None = None,
         group_loss_dominance_threshold: float = 0.75,
+        use_compile: bool = True,
+        use_amp: bool = True,
     ):
         self.hidden_dim = hidden_dim
         self.latent_dim = latent_dim
@@ -46,27 +58,57 @@ class VAEDetector(BaseEstimator):
         self.feature_groups = feature_groups
         self.group_weights = group_weights
         self.group_loss_dominance_threshold = group_loss_dominance_threshold
+        self.use_compile = use_compile
+        self.use_amp = use_amp
 
     def _resolve_device(self) -> str:
         if self.device == "auto":
             return "cuda" if torch.cuda.is_available() else "cpu"
         return self.device
 
+    def _maybe_compile(self, model: torch.nn.Module) -> torch.nn.Module:
+        # Why: torch.compile은 작은 모델/짧은 epoch에서도 10-30% 가속.
+        #      그러나 Windows inductor 백엔드는 MSVC `cl` 컴파일러가 필요하고,
+        #      미설치 환경에서 첫 forward에서 BackendCompilerFailed가 발생한다.
+        #      Windows에서는 비활성, 그 외 OS에서만 시도하며 실패 시 원본 반환.
+        if not self.use_compile or not hasattr(torch, "compile"):
+            return model
+        import platform
+
+        if platform.system() == "Windows":
+            return model
+        try:
+            return torch.compile(model, mode="reduce-overhead", dynamic=True)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("torch.compile fallback (원본 사용): %s", exc)
+            return model
+
     def fit(self, X, y=None):  # noqa: ARG002
         X = np.array(X, dtype=np.float32)
         device = self._resolve_device()
         self.model_ = AuditVAE(X.shape[1], self.latent_dim, self.hidden_dim).to(device)
+        self.model_ = self._maybe_compile(self.model_)
         optimizer = torch.optim.Adam(self.model_.parameters(), lr=self.lr)
+        # Why: GPU 학습 시 pin_memory=True 로 호스트→디바이스 비동기 전송.
+        #      Windows + Streamlit 환경 child-process 안정성 위해 num_workers=0 유지.
+        pin_memory = device == "cuda"
         loader = DataLoader(
             TensorDataset(torch.from_numpy(X)),
             batch_size=max(int(self.batch_size), 1),
             shuffle=True,
+            pin_memory=pin_memory,
         )
 
         self.model_.train()
+        # Why: GPU + AMP 시 forward 를 fp16 로 실행 → 30-50% 가속.
+        #      CPU 환경에선 fp16 가속이 미미/역효과라 scaler=None 폴백.
+        use_amp = bool(self.use_amp and device == "cuda")
+        scaler = torch.amp.GradScaler("cuda") if use_amp else None
         epoch_diagnostics: list[dict[str, float]] = []
         for _ in range(int(self.epochs)):
-            epoch_diagnostics.append(self._fit_one_epoch(loader, optimizer, device))
+            epoch_diagnostics.append(
+                self._fit_one_epoch(loader, optimizer, device, scaler=scaler),
+            )
 
         errors = self._compute_errors(X, device)
         percentile = (1 - self.contamination) * 100
@@ -78,34 +120,51 @@ class VAEDetector(BaseEstimator):
         )
         return self
 
-    def _fit_one_epoch(self, loader, optimizer, device: str) -> dict[str, float]:
+    def _fit_one_epoch(
+        self,
+        loader,
+        optimizer,
+        device: str,
+        *,
+        scaler: torch.amp.GradScaler | None = None,
+    ) -> dict[str, float]:
         total_loss = 0.0
         total_recon = 0.0
         total_kl = 0.0
         total_rows = 0
+        use_amp = scaler is not None
         for (batch_cpu,) in loader:
-            batch = batch_cpu.to(device)
-            recon, mu, logvar = self.model_(batch)
-            recon_loss, kl_loss = vae_loss_components(
-                recon,
-                batch,
-                mu,
-                logvar,
-                feature_groups=self.feature_groups,
-                group_weights=self.group_weights,
-            )
-            loss = vae_loss(
-                recon,
-                batch,
-                mu,
-                logvar,
-                beta=self.beta,
-                feature_groups=self.feature_groups,
-                group_weights=self.group_weights,
-            )
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            batch = batch_cpu.to(device, non_blocking=True)
+            optimizer.zero_grad(set_to_none=True)
+            # Why: autocast 는 forward+loss 만 fp16 로 실행하고 backward 의
+            #      reduce ops 는 자동으로 fp32 promote → 수치 안정성 보장.
+            amp_ctx = torch.amp.autocast("cuda") if use_amp else _NullContext()
+            with amp_ctx:
+                recon, mu, logvar = self.model_(batch)
+                recon_loss, kl_loss = vae_loss_components(
+                    recon,
+                    batch,
+                    mu,
+                    logvar,
+                    feature_groups=self.feature_groups,
+                    group_weights=self.group_weights,
+                )
+                loss = vae_loss(
+                    recon,
+                    batch,
+                    mu,
+                    logvar,
+                    beta=self.beta,
+                    feature_groups=self.feature_groups,
+                    group_weights=self.group_weights,
+                )
+            if use_amp:
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                loss.backward()
+                optimizer.step()
 
             n_rows = int(len(batch))
             total_rows += n_rows

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
@@ -97,6 +98,153 @@ def resolve_phase1_case_result(
     except Exception:
         pass
     return loaded
+
+
+# ── Phase 1 case basis classification (P3) ────────────────────
+
+
+# Why: phase2 overlay 가 어떤 phase1 case 위에 만들어졌는지 UI/감사 조서에 명시하기 위한 status.
+#      `_inherit_phase1_case_result` 와 dashboard 가 동일 상수를 공유한다.
+class Phase1CaseBasisStatus:
+    CANONICAL_IN_MEMORY = "canonical_in_memory"
+    CANONICAL_ARTIFACT = "canonical_artifact"
+    METADATA_ONLY = "metadata_only"
+    FALLBACK_REDETECT = "fallback_redetect"
+    UNAVAILABLE = "unavailable"
+    ARTIFACT_ERROR = "artifact_error"
+
+
+@dataclass(frozen=True)
+class Phase1CaseBasis:
+    """Phase 1 case basis 분류 결과.
+
+    Attributes:
+        status: ``Phase1CaseBasisStatus`` 상수.
+        case_result: status 가 canonical_* 또는 fallback_redetect 일 때 사용 가능한
+            CaseGroupResult 들의 컨테이너. metadata_only / unavailable / artifact_error
+            는 None.
+        message: 로깅·UI 진단용 한 줄 영어 메시지.
+        metadata: artifact_path, phase1_case_count 등 부가 정보.
+    """
+
+    status: str
+    case_result: Phase1CaseResult | None = None
+    message: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+def _redetect_case_result(redetect_result: Any) -> Phase1CaseResult | None:
+    """redetect 가 생성한 임시 phase1_case_result 가 있으면 반환."""
+    if redetect_result is None:
+        return None
+    case_result = getattr(redetect_result, "phase1_case_result", None)
+    if case_result is None or not getattr(case_result, "cases", None):
+        return None
+    return case_result
+
+
+def classify_phase1_case_basis(
+    phase1_result: Any | None,
+    *,
+    redetect_result: Any | None = None,
+) -> Phase1CaseBasis:
+    """Phase 1 case basis 를 분류한다.
+
+    분류 흐름:
+        1. ``phase1_result`` 가 None 이면 redetect fallback 가능 여부 확인 후
+           ``FALLBACK_REDETECT`` 또는 ``UNAVAILABLE``.
+        2. in-memory ``phase1_case_result.cases`` 가 있으면 ``CANONICAL_IN_MEMORY``.
+        3. ``phase1_case_path`` 로 artifact lazy load 시도:
+            - 성공 → ``CANONICAL_ARTIFACT``.
+            - 실패 → redetect fallback 가능하면 ``FALLBACK_REDETECT``, 아니면
+              ``ARTIFACT_ERROR``.
+        4. 메타데이터(`phase1_case_count`) 만 있으면 redetect fallback 가능하면
+           ``FALLBACK_REDETECT``, 아니면 ``METADATA_ONLY``.
+        5. 그 외 → ``UNAVAILABLE``.
+
+    Why: ``METADATA_ONLY`` 는 inference path 에서 가능하면 ``CANONICAL_ARTIFACT`` 또는
+    ``ARTIFACT_ERROR`` 로 해소되어야 한다 (정책). 그래서 본 함수는 artifact_path 가 있으면
+    무조건 load 를 시도한다.
+    """
+    if phase1_result is None:
+        fallback = _redetect_case_result(redetect_result)
+        if fallback is not None:
+            return Phase1CaseBasis(
+                status=Phase1CaseBasisStatus.FALLBACK_REDETECT,
+                case_result=fallback,
+                message="phase1_result is None — using Phase2 redetect cases as fallback",
+            )
+        return Phase1CaseBasis(
+            status=Phase1CaseBasisStatus.UNAVAILABLE,
+            message="phase1_result is None and no redetect fallback available",
+        )
+
+    # 1) in-memory canonical
+    existing = getattr(phase1_result, "phase1_case_result", None)
+    if existing is not None and getattr(existing, "cases", None):
+        return Phase1CaseBasis(
+            status=Phase1CaseBasisStatus.CANONICAL_IN_MEMORY,
+            case_result=existing,
+            message="in-memory canonical phase1 case result",
+            metadata={"case_count": len(existing.cases)},
+        )
+
+    # 2) artifact lazy load
+    artifact_path = getattr(phase1_result, "phase1_case_path", None)
+    if artifact_path:
+        try:
+            loaded = load_phase1_case_result(artifact_path)
+        except Exception as exc:
+            logger.warning("PHASE1 case artifact load failed: %s", artifact_path, exc_info=True)
+            fallback = _redetect_case_result(redetect_result)
+            if fallback is not None:
+                return Phase1CaseBasis(
+                    status=Phase1CaseBasisStatus.FALLBACK_REDETECT,
+                    case_result=fallback,
+                    message=(f"phase1 artifact load failed ({exc}); using redetect fallback"),
+                    metadata={"artifact_path": str(artifact_path)},
+                )
+            return Phase1CaseBasis(
+                status=Phase1CaseBasisStatus.ARTIFACT_ERROR,
+                message=f"phase1 artifact load failed: {exc}",
+                metadata={"artifact_path": str(artifact_path)},
+            )
+        if getattr(loaded, "cases", None):
+            return Phase1CaseBasis(
+                status=Phase1CaseBasisStatus.CANONICAL_ARTIFACT,
+                case_result=loaded,
+                message="loaded canonical phase1 case artifact",
+                metadata={
+                    "artifact_path": str(artifact_path),
+                    "case_count": len(loaded.cases),
+                },
+            )
+
+    # 3) metadata only — redetect fallback 가능 여부 확인
+    count = int(getattr(phase1_result, "phase1_case_count", 0) or 0)
+    if count > 0:
+        fallback = _redetect_case_result(redetect_result)
+        if fallback is not None:
+            return Phase1CaseBasis(
+                status=Phase1CaseBasisStatus.FALLBACK_REDETECT,
+                case_result=fallback,
+                message=(
+                    f"phase1 metadata only ({count} cases) without artifact path; "
+                    "using redetect fallback"
+                ),
+                metadata={"phase1_case_count": count},
+            )
+        return Phase1CaseBasis(
+            status=Phase1CaseBasisStatus.METADATA_ONLY,
+            message=(f"phase1 metadata only ({count} cases) and no artifact/redetect basis"),
+            metadata={"phase1_case_count": count},
+        )
+
+    # 4) unavailable
+    return Phase1CaseBasis(
+        status=Phase1CaseBasisStatus.UNAVAILABLE,
+        message="no phase1 case basis available",
+    )
 
 
 def summarize_phase1_case_result(

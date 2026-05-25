@@ -144,9 +144,17 @@ def get_connection(path: str | None = None) -> duckdb.DuckDBPyConnection:
     return _manager.get(db_path)
 
 
-def close_connection() -> None:
-    """하위 호환 래퍼 — 모든 캐시 커넥션 종료."""
-    _manager.close_all()
+def close_connection(path: str | Path | None = None) -> None:
+    """하위 호환 래퍼 — 특정 경로 또는 모든 캐시 커넥션 종료."""
+    if path is None:
+        _manager.close_all()
+    else:
+        _manager.close(path)
+
+
+def get_connection_manager() -> ConnectionManager:
+    """Return the process-wide connection manager singleton."""
+    return _manager
 
 
 def _override_connection(conn: duckdb.DuckDBPyConnection) -> None:

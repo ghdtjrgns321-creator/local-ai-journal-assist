@@ -41,6 +41,33 @@ _LEAKAGE_PATTERNS = (
     ("dashboard", "leakage_dashboard"),
 )
 
+# Why: standalone contract — PHASE1/PHASE2/PHASE3 산출 중 위 토큰 패턴에
+#      걸리지 않는 컬럼은 exact name 으로 명시 차단한다. broad token (예:
+#      "priority", "narrative") 를 추가하면 raw ERP 컬럼인 payment_priority /
+#      vendor_priority / transaction_narrative 같은 정상 비즈니스 필드까지
+#      함께 막힌다 (2026-05-24 리뷰).
+_PHASE_OUTPUT_DENY_EXACT = frozenset(
+    {
+        # PHASE1 case priority 분류 (token deny 매칭 없음)
+        "priority_band",
+        # PHASE3 narrator 재정렬 출력 (token deny 매칭 없음)
+        "priority_rank",
+        # PHASE3 narrator 출력 (token deny 매칭 없음)
+        "review_narrative_text",
+        "review_narrative_summary",
+        "review_narrative_actions",
+    }
+)
+
+# PHASE1/2/3 단계 산출 prefix — 재투입 차단. raw ERP 컬럼은 이 prefix 를
+# 쓰지 않으므로 false positive 위험이 낮다.
+_PHASE_OUTPUT_DENY_PREFIXES = (
+    "phase1_",
+    "phase2_",
+    "phase3_",
+    "review_narrative_",
+)
+
 
 def build_phase2_preprocessing_plan(
     profile: EDAProfile,
@@ -84,6 +111,10 @@ def _decide_column(
         return _decision(name, column, "label", "exclude", "leakage_label")
     if normalized_name in _LEAKAGE_DENY_COLUMN_NAMES:
         return _decision(name, column, "leakage", "exclude", "leakage_deny_column")
+    if normalized_name in _PHASE_OUTPUT_DENY_EXACT:
+        return _decision(name, column, "leakage", "exclude", "phase_output_deny")
+    if any(normalized_name.startswith(prefix) for prefix in _PHASE_OUTPUT_DENY_PREFIXES):
+        return _decision(name, column, "leakage", "exclude", "phase_output_prefix")
     if leakage_reason is not None:
         return _decision(name, column, "leakage", "exclude", leakage_reason)
     if normalized_name in _ID_NAMES or normalized_name.endswith("_id"):
@@ -131,19 +162,22 @@ def _decision(
 
 def _leakage_reason(normalized_name: str) -> str | None:
     tokens = set(normalized_name.split("_"))
+    # Why: 단복수 모두 차단 (flagged_rules / review_rules / labels / scores 등).
+    #      Phase 2 standalone contract 위반을 막기 위해 plural 도 매칭.
     for token, reason_code in _LEAKAGE_PATTERNS:
-        if token in tokens or normalized_name.endswith(f"_{token}"):
+        if (
+            token in tokens
+            or f"{token}s" in tokens
+            or normalized_name.endswith(f"_{token}")
+            or normalized_name.endswith(f"_{token}s")
+        ):
             return reason_code
     return None
 
 
 def _validate_single_use_deny_columns(columns: list[str] | tuple[str, ...]) -> None:
     """Reject shortcut columns when they would enter the matrix as standalone inputs."""
-    denied = [
-        column
-        for column in columns
-        if _normalize_name(column) in _SINGLE_USE_DENY
-    ]
+    denied = [column for column in columns if _normalize_name(column) in _SINGLE_USE_DENY]
     if denied:
         denied_list = ", ".join(sorted(denied))
         raise ValueError(

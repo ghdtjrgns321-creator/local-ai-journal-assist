@@ -1,7 +1,12 @@
 """DuckDB 데이터베이스 레이어 — 커넥션·스키마·적재·쿼리."""
 
 from src.db.audit_log import record_event
-from src.db.connection import ConnectionManager, close_connection, get_connection
+from src.db.connection import (
+    ConnectionManager,
+    close_connection,
+    get_connection,
+    get_connection_manager,
+)
 from src.db.loader import LoadResult, load_all
 from src.db.loader_supplementary import load_supplementary
 from src.db.migration import CURRENT_SCHEMA_VERSION, run_migrations
@@ -19,6 +24,7 @@ from src.db.schema_supplementary import SUPPLEMENTARY_DDL, initialize_supplement
 __all__ = [
     "ConnectionManager",
     "get_connection",
+    "get_connection_manager",
     "close_connection",
     "CURRENT_SCHEMA_VERSION",
     "run_migrations",

@@ -78,7 +78,13 @@ def phase3_fact_grounding_system_prompt() -> str:
         "Do not infer external accounting standards, legal conclusions, company "
         "policies, or facts that are not present in the input. Do not conclude fraud, "
         "violation, or manipulation. Use review-oriented wording such as 가능성, "
-        "검토 필요, 확인 필요. If evidence is insufficient, explicitly say so."
+        "검토 필요, 확인 필요. If evidence is insufficient, explicitly say so. "
+        "PHASE2 unsupervised family (ML02 / VAE) signals must be described only as "
+        "'통계적 이상치' (statistical outlier) or '패턴/맥락' wording. Do not use "
+        "fraud, violation, confirmed, 위반 확정, 부정 확정, or 오류 확정 wording "
+        "for unsupervised contributions. Treat reason tags in "
+        "phase2_unsupervised_explanation as display labels only — they are not "
+        "confirmed violations and have no audit conclusion weight."
     )
 
 
@@ -101,6 +107,16 @@ def _case_input(
         "top_rule_ids": _top_rule_ids(case),
         "phase1_case_priority": case.priority_score,
         "phase2_family_scores": dict(overlay.get("phase2_family_scores") or {}),
+        "phase2_family_contributions": list(overlay.get("family_contributions") or []),
+        "phase2_top_family": overlay.get("top_family"),
+        # PHASE2 unsupervised explanation surface — display only, no audit conclusion.
+        # narrator system prompt 가 "통계적 이상치" 어휘만 허용한다.
+        "phase2_unsupervised_explanation": _unsupervised_explanation_from_overlay(overlay),
+        "phase2_coverage_breadth_q95": int(overlay.get("coverage_breadth_q95") or 0),
+        "phase2_max_family_ecdf": overlay.get("max_family_ecdf"),
+        "phase2_max_evidence_tier": overlay.get("max_evidence_tier"),
+        "phase2_lane_membership": list(overlay.get("lane_membership") or []),
+        "phase2_coverage_gap_families": list(overlay.get("coverage_gap_families") or []),
         "phase2_inference_contract": overlay.get("phase2_inference_contract"),
         "phase2_training_report_id": overlay.get("phase2_training_report_id"),
         "top_documents": [
@@ -177,6 +193,30 @@ def _rank_documents(documents: list[CaseDocumentRef]) -> list[CaseDocumentRef]:
     return [by_id[doc_id] for doc_id in ranked_ids]
 
 
+def _unsupervised_explanation_from_overlay(overlay: dict[str, Any]) -> dict[str, Any]:
+    """family_contributions 의 unsupervised entry 에서 explanation payload 추출.
+
+    Returns:
+        ``{evidence_type, features: [{feature, contrib, tag, label_ko}], ...}``.
+        unsupervised entry 가 없거나 explanation_features 가 비면 빈 dict.
+
+    Narrator system prompt 가 "통계적 이상치" 어휘만 허용함을 강제하기 때문에,
+    본 payload 는 audit conclusion 으로 해석되어서는 안 된다 (display only).
+    """
+    contributions = overlay.get("family_contributions") or []
+    for entry in contributions:
+        if str(entry.get("family")) != "unsupervised":
+            continue
+        features = list(entry.get("explanation_features") or [])
+        if not features:
+            return {}
+        return {
+            "evidence_type": entry.get("evidence_type") or "statistical_outlier",
+            "features": features,
+        }
+    return {}
+
+
 def _has_graph_degree_context(related_entity_risk: dict[str, Any]) -> bool:
     degree_keys = (
         "degree",
@@ -204,7 +244,5 @@ def _top_rule_ids(case: CaseGroupResult, limit: int = 5) -> list[str]:
         counts[hit.rule_id] = counts.get(hit.rule_id, 0) + 1
     return [
         rule_id
-        for rule_id, _ in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[
-            :limit
-        ]
+        for rule_id, _ in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:limit]
     ]

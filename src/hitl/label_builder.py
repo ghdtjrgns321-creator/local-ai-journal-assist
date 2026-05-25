@@ -8,6 +8,7 @@ import pandas as pd
 
 from src.hitl.models import DocumentFeedbackLabel
 
+
 def build_document_feedback_labels(events_df: pd.DataFrame) -> list[DocumentFeedbackLabel]:
     """Reduce feedback events into latest effective document-level labels."""
     if events_df.empty or "document_id" not in events_df.columns:

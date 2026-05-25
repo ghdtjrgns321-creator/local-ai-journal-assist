@@ -204,6 +204,7 @@ def update_upload_batch_meta(
     detector_statuses: list[dict] | None = None,
 ) -> None:
     """Update persisted batch-level analysis metadata after inference completes."""
+    _ensure_upload_batch_meta_columns(conn)
     conn.execute(
         """
         UPDATE upload_batches
@@ -226,10 +227,38 @@ def update_upload_batch_meta(
     )
 
 
+_UPLOAD_BATCH_META_COLUMNS: dict[str, str] = {
+    "phase2_training_report_id": "VARCHAR",
+    "phase2_inference_contract": "JSON",
+    "phase2_promotion_policy": "JSON",
+    "phase2_inference_mode": "VARCHAR",
+    "detector_statuses_json": "JSON",
+}
+
+
+def _ensure_upload_batch_meta_columns(conn) -> None:
+    """Backfill Phase2 metadata columns for older engagement DB files.
+
+    Older `audit.duckdb` files can have `upload_batches` without the Phase2
+    restore columns. The inference service treats DB provenance persistence as
+    best-effort, so a missing column used to drop all Phase2 metadata silently
+    and refresh would show the inference button again.
+    """
+    existing = set(
+        conn.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'upload_batches'"
+        ).fetchdf()["column_name"]
+    )
+    for column, dtype in _UPLOAD_BATCH_META_COLUMNS.items():
+        if column not in existing:
+            conn.execute(f"ALTER TABLE upload_batches ADD COLUMN {column} {dtype}")
+
+
 def _serialize_json_value(value):
     if value is None:
         return None
-    return json.dumps(value, ensure_ascii=False)
+    return json.dumps(value, ensure_ascii=False, default=str)
 
 
 def load_general_ledger(conn, df: pd.DataFrame, batch_id: str) -> int:
@@ -384,6 +413,7 @@ def _build_anomaly_flags_df(
         melted = result.details.melt(
             ignore_index=False, var_name="rule_code", value_name="score",
         )
+        melted["score"] = pd.to_numeric(melted["score"], errors="coerce")
         melted = melted[melted["score"] > 0].copy()
         if melted.empty:
             continue

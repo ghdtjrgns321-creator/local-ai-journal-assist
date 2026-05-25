@@ -69,7 +69,12 @@ def create_labels(
     if strategy == "pseudo":
         return _from_pseudo(df, detection_scores, threshold)
     return _hybrid(
-        df, detection_scores, threshold, fraud_col, anomaly_col, gt_label_columns,
+        df,
+        detection_scores,
+        threshold,
+        fraud_col,
+        anomaly_col,
+        gt_label_columns,
     )
 
 
@@ -119,7 +124,9 @@ def _from_datasynth(
 
     for col in columns_to_use:
         if col in df.columns:
-            mask = df[col].fillna(0).astype(bool)
+            # Why: nullable BooleanDtype 컬럼은 .fillna(0) 거부 → False로 통일.
+            #      bool/int/string 어떤 dtype이든 .fillna(False).astype(bool)이 안전.
+            mask = df[col].fillna(False).astype(bool)
             y = y | mask.values.astype(int)
             breakdown[col] = int(mask.sum())
 

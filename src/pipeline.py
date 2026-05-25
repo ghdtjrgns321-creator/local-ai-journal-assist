@@ -10,8 +10,10 @@ import logging
 import re
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
@@ -33,6 +35,7 @@ from src.ingest.datasynth_metadata import (
 from src.llm.models import CaseNarrative
 from src.metrics.models import PerformanceReport
 from src.models.phase1_case import Phase1CaseResult
+from src.services._phase_timing import log_timing, now_str  # noqa: F401
 from src.services.phase2_case_contract import build_phase2_case_overlays
 
 logger = logging.getLogger(__name__)
@@ -54,6 +57,7 @@ class _NullAuditTrail:
 _TEXT_EXT = frozenset({".csv", ".tsv", ".txt", ".dat"})
 _EXCEL_EXT = frozenset({".xlsx", ".xls", ".xlsb"})
 _INGEST_CACHE_SCHEMA_VERSION = "ingest-cache-v1"
+_OptionalDetectionResult = DetectionResult | list[DetectionResult] | None
 
 
 def _run_detectors_parallel(
@@ -577,6 +581,9 @@ class AuditPipeline:
         file_name: str = "",
         detection_scope: str = "default",
         phase2_inference_contract: dict | None = None,
+        phase2_training_report_id: str | None = None,
+        phase2_promotion_policy: dict | None = None,
+        phase2_inference_mode: str | None = None,
     ) -> PipelineResult:
         """피처 생성 완료 DF에서 detection + aggregate만 재실행.
 
@@ -584,13 +591,21 @@ class AuditPipeline:
              컬럼 충돌(_x, _y) 및 데이터 오염 차단.
         """
         start = time.monotonic()
+        _t = time.monotonic()
+        _ts = now_str()
         df = df.copy()
+        if detection_scope == "phase2_only":
+            log_timing("phase2.redetect.df_copy", time.monotonic() - _t, start_ts=_ts)
         previous_phase2_contract = getattr(self, "_phase2_inference_contract", None)
         self._phase2_inference_contract = phase2_inference_contract
+        _t = time.monotonic()
+        _ts = now_str()
         try:
             results, warns = self._run_detection(df, detection_scope=detection_scope)
         finally:
             self._phase2_inference_contract = previous_phase2_contract
+        if detection_scope == "phase2_only":
+            log_timing("phase2.redetect.detection", time.monotonic() - _t, start_ts=_ts)
         warns.extend(_detector_result_warnings(results))
 
         # Why: weights 미지정 시 ML/Layer D 유무에 따라 가중치 자동 선택
@@ -602,41 +617,91 @@ class AuditPipeline:
         stacking_scores = None
         if detection_scope != "phase2_only":
             stacking_scores = self._try_stacking_ensemble(results, df)
+        _t = time.monotonic()
+        _ts = now_str()
         agg_df = aggregate_scores(
             df,
             results,
             weights=weights,
             thresholds=thresholds,
             settings=self._settings,
+            detection_scope=detection_scope,
             stacking_scores=stacking_scores,
         )
+        if detection_scope == "phase2_only":
+            log_timing("phase2.redetect.aggregate", time.monotonic() - _t, start_ts=_ts)
         for col in agg_df.columns:
             df[col] = agg_df[col].values
 
+        # Why: phase2_only 추론은 phase1 batch_id 를 그대로 재사용해야 한다.
+        #      외부에서 batch_id 가 주입되지 않으면 phase2 추론이 phase1 row 와 무관한
+        #      orphan batch 를 만들어 데이터 모델을 망친다 — 명시적 RuntimeError 로 가드.
+        if detection_scope == "phase2_only":
+            if not batch_id:
+                raise RuntimeError(
+                    "phase2_only redetect 호출 시 phase1 batch_id 가 반드시 필요합니다."
+                )
+            bid = batch_id
+        else:
+            bid = batch_id or self._make_batch_id()
         # Why: 재탐지에서도 SHAP 재산출 — 설정 변경 시 flagged rows가 달라질 수 있음
-        bid = batch_id or self._make_batch_id()
+        _t = time.monotonic()
+        _ts = now_str()
         shap_contributions, shap_base_value = self._try_shap_explanation(df)
+        if detection_scope == "phase2_only":
+            log_timing("phase2.redetect.shap", time.monotonic() - _t, start_ts=_ts)
+        _t = time.monotonic()
+        _ts = now_str()
         performance_report = self._build_performance_report(
             df=df,
             agg_df=agg_df,
             results=results,
             batch_id=bid,
         )
-        phase1_case_result, phase1_case_ref = self._build_phase1_case_artifact(
+        if detection_scope == "phase2_only":
+            log_timing(
+                "phase2.redetect.performance_report",
+                time.monotonic() - _t,
+                start_ts=_ts,
+            )
+        # Why: phase2_only 추론은 phase1 case artifact 와 완전히 격리한다.
+        #      - 새 빈 phase1_case artifact 를 디스크에 저장하지 않는다 (덮어쓰기 방지).
+        #      - PipelineResult.phase1_case_path/run_id 도 None 으로 둔다.
+        #      - DB batch_meta 의 phase1 case 컬럼도 채우지 않아 phase2 batch 가
+        #        phase1 batch 의 메타를 가리지 않게 한다.
+        #      phase2_inference_service 의 ``_inherit_phase1_case_result`` 가 호출자
+        #      세션의 KEY_PHASE1_RESULT 에서 phase1 case 메타를 메모리상으로만 inherit 한다.
+        phase1_case_result: Phase1CaseResult | None
+        phase1_case_ref: dict[str, Any]
+        if detection_scope == "phase2_only":
+            phase1_case_result = None
+            phase1_case_ref = {}
+        else:
+            phase1_case_result, phase1_case_ref = self._build_phase1_case_artifact(
+                df,
+                results,
+                batch_id=bid,
+            )
+            if phase1_case_ref.get("phase1_case_warning"):
+                warns.append(str(phase1_case_ref["phase1_case_warning"]))
+        detector_statuses = self._get_detector_statuses()
+        _t = time.monotonic()
+        _ts = now_str()
+        phase2_case_overlays = self._build_phase2_case_overlays(
             df,
             results,
-            batch_id=bid,
-        )
-        if phase1_case_ref.get("phase1_case_warning"):
-            warns.append(str(phase1_case_ref["phase1_case_warning"]))
-        detector_statuses = self._get_detector_statuses()
-        phase2_case_overlays = self._build_phase2_case_overlays(
             phase1_case_result,
             detector_statuses=detector_statuses,
         )
+        if detection_scope == "phase2_only":
+            log_timing("phase2.redetect.overlay", time.monotonic() - _t, start_ts=_ts)
 
+        # Why: phase2_only 는 phase1 row 가 이미 DB 에 INSERT 되어 있으므로 _load_db 를
+        #      호출하면 PK 충돌 또는 phase1 데이터를 덮어쓰는 새 row insert 가 된다.
+        #      phase2 메타 update 는 호출자 (phase2_inference_service) 가
+        #      update_upload_batch_meta 로 처리한다.
         load_result = None
-        if not self._skip_db:
+        if not self._skip_db and detection_scope != "phase2_only":
             self._progress(0.90, "DB 적재 중...")
             load_result, w = self._load_db(
                 df,
@@ -645,6 +710,11 @@ class AuditPipeline:
                 file_name=file_name,
                 performance_report=performance_report,
                 phase1_case_ref=phase1_case_ref,
+                phase2_training_report_id=phase2_training_report_id,
+                phase2_inference_contract=phase2_inference_contract,
+                phase2_promotion_policy=phase2_promotion_policy,
+                phase2_inference_mode=phase2_inference_mode,
+                detector_statuses=detector_statuses,
             )
             warns.extend(w)
 
@@ -652,6 +722,11 @@ class AuditPipeline:
             df["risk_level"].value_counts().to_dict() if "risk_level" in df.columns else {}
         )
         elapsed = time.monotonic() - start
+        _t = time.monotonic()
+        _ts = now_str()
+        featured_data_snapshot = df.copy()
+        if detection_scope == "phase2_only":
+            log_timing("phase2.redetect.result_copy", time.monotonic() - _t, start_ts=_ts)
         # Why: 재탐지 연속성 — 설정 변경으로 risk_level 분포가 달라졌음을 증적에 남김
         self._log_event(
             event_type="analysis",
@@ -668,7 +743,7 @@ class AuditPipeline:
             load_result=load_result,
             elapsed=elapsed,
             warnings=warns,
-            featured_data=df.copy(),
+            featured_data=featured_data_snapshot,
             file_name=file_name,
             shap_contributions=shap_contributions,
             shap_base_value=shap_base_value,
@@ -773,6 +848,8 @@ class AuditPipeline:
             warns.append(str(phase1_case_ref["phase1_case_warning"]))
         detector_statuses = self._get_detector_statuses()
         phase2_case_overlays = self._build_phase2_case_overlays(
+            df,
+            results,
             phase1_case_result,
             detector_statuses=detector_statuses,
         )
@@ -870,13 +947,35 @@ class AuditPipeline:
 
     def _build_phase2_case_overlays(
         self,
+        df: pd.DataFrame,
+        results: list[DetectionResult],
         phase1_case_result: Phase1CaseResult | None,
         *,
         detector_statuses: list[dict],
     ) -> list[dict]:
+        from src.services.phase2_case_family_aggregator import (
+            build_phase2_case_family_overlay_inputs,
+        )
+
+        overlay_inputs = build_phase2_case_family_overlay_inputs(
+            df,
+            results,
+            phase1_case_result,
+        )
         return build_phase2_case_overlays(
             phase1_case_result,
+            family_scores_by_case=overlay_inputs.family_scores_by_case,
+            family_ecdf_by_case=overlay_inputs.family_ecdf_by_case,
+            family_top_subdetectors_by_case=overlay_inputs.family_top_subdetectors_by_case,
+            family_roles=overlay_inputs.family_roles,
+            family_q95_thresholds=overlay_inputs.family_q95_thresholds,
             detector_statuses=detector_statuses,
+            family_explanation_features_by_case=(
+                overlay_inputs.family_explanation_features_by_case
+            ),
+            relational_continuity_depth_by_case=(
+                overlay_inputs.relational_continuity_depth_by_case
+            ),
         )
 
     def _ingest(self, path: str | Path) -> tuple[pd.DataFrame, list[str]]:
@@ -1317,20 +1416,74 @@ class AuditPipeline:
             )
 
         for _name, _func in optional_detectors:
+            results.extend(self._run_optional_detection_step(_name, _func, df))
+
+        # Why: Phase 2 추론의 4개 family detector (timeseries/relational/duplicate/intercompany)
+        #      는 순차 호출 시 348k 행 기준 10분+ 걸려 Streamlit 이 죽는다. phase1 의
+        #      ``_run_detectors_parallel`` 패턴을 따라 ThreadPoolExecutor 로 병렬 실행한다.
+        #      pandas/numpy 내부 연산은 GIL 해제하므로 thread pool 로 충분히 가속.
+        if detection_scope == "phase2_only":
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            family_funcs = [
+                ("timeseries", lambda d: self._try_timeseries_detection(d, force_enable=True)),
+                ("relational", lambda d: self._try_relational_detection(d, force_enable=True)),
+                ("duplicate", lambda d: self._try_duplicate_detection(d, force_enable=True)),
+                ("intercompany", lambda d: self._try_intercompany_detection(d, force_enable=True)),
+            ]
+            configured_workers = getattr(self._ctx.settings, "detection_parallel_workers", None)
+            max_workers = min(
+                configured_workers if configured_workers else len(family_funcs),
+                len(family_funcs),
+            )
             _t = time.monotonic()
-            _r = _func(df)
-            _elapsed = time.monotonic() - _t
-            logger.warning("[TIMING] detect_%s: %.1fs", _name, _elapsed)
-            if isinstance(_r, list):
-                results.extend(_r)
-            elif _r is not None:
-                results.append(_r)
+            with ThreadPoolExecutor(max_workers=max_workers) as ex:
+                future_map = {ex.submit(func, df): name for name, func in family_funcs}
+                for fut in as_completed(future_map):
+                    name = future_map[fut]
+                    try:
+                        r = fut.result()
+                    except Exception:
+                        logger.warning("phase2 family %s parallel failed", name, exc_info=True)
+                        self._record_detector_status(
+                            name, run_status="failed", reason="detector_exception"
+                        )
+                        continue
+                    if isinstance(r, list):
+                        results.extend(r)
+                    elif r is not None:
+                        results.append(r)
+            logger.warning("[TIMING] phase2_family_parallel: %.1fs", time.monotonic() - _t)
 
         return results, warns
 
-    def _try_timeseries_detection(self, df: pd.DataFrame) -> DetectionResult | None:
-        """Timeseries detector execution for TS01/TS02."""
-        if not getattr(self._ctx.settings, "enable_timeseries_detection", True):
+    def _run_optional_detection_step(
+        self,
+        name: str,
+        detector_func: Callable[[pd.DataFrame], _OptionalDetectionResult],
+        df: pd.DataFrame,
+    ) -> list[DetectionResult]:
+        """Run one optional detector and normalize its result shape."""
+        started_at = time.monotonic()
+        result = detector_func(df)
+        logger.warning("[TIMING] detect_%s: %.1fs", name, time.monotonic() - started_at)
+        if isinstance(result, list):
+            return result
+        if result is not None:
+            return [result]
+        return []
+
+    def _try_timeseries_detection(
+        self, df: pd.DataFrame, *, force_enable: bool = False
+    ) -> DetectionResult | None:
+        """Timeseries detector execution for TS01/TS02.
+
+        Why: ``force_enable`` 은 Phase 2 추론 분기에서 사용. 학습 단계가 이미 이 family
+        를 promoted 했으므로 settings.enable_* 플래그와 무관하게 무조건 실행한다.
+        """
+        if not force_enable and not getattr(
+            self._ctx.settings, "enable_timeseries_detection", True
+        ):
             logger.debug("timeseries detection disabled by settings")
             self._record_detector_status(
                 "timeseries", run_status="skipped", reason="disabled_by_settings"
@@ -1420,13 +1573,18 @@ class AuditPipeline:
             )
             return None
 
-    def _try_relational_detection(self, df: pd.DataFrame) -> DetectionResult | None:
+    def _try_relational_detection(
+        self, df: pd.DataFrame, *, force_enable: bool = False
+    ) -> DetectionResult | None:
         """Relational 탐지기 실행. R01~R03 항상, R04는 document_flows 존재 시만.
 
         Why: R04(문서 흐름 누락)는 DuckDB에 적재된 document_references 테이블 필요.
              conn이 없거나 테이블 미적재 시 R04만 graceful 스킵 (R01~R03는 정상 실행).
+             ``force_enable`` 은 Phase 2 추론 분기 (settings 플래그 무시) 용도.
         """
-        if not getattr(self._ctx.settings, "enable_relational_detection", False):
+        if not force_enable and not getattr(
+            self._ctx.settings, "enable_relational_detection", False
+        ):
             logger.debug("relational detection disabled by settings")
             self._record_detector_status(
                 "relational", run_status="skipped", reason="disabled_by_settings"
@@ -1455,6 +1613,69 @@ class AuditPipeline:
             logger.warning("Relational 탐지 실패 — 스킵", exc_info=True)
             self._record_detector_status(
                 "relational", run_status="failed", reason="detector_exception"
+            )
+            return None
+
+    def _try_duplicate_detection(
+        self, df: pd.DataFrame, *, force_enable: bool = False
+    ) -> DetectionResult | None:
+        """Duplicate detector 실행 (Exact/Fuzzy/Split/TimeShift).
+
+        Why: Phase 2 추론에서 family=duplicate 결과를 얻기 위해 호출. ``force_enable``
+        은 settings 플래그 무시 (학습 단계가 이미 promoted 한 family).
+        """
+        if not force_enable and not getattr(
+            self._ctx.settings, "enable_duplicate_detection", False
+        ):
+            logger.debug("duplicate detection disabled by settings")
+            self._record_detector_status(
+                "duplicate", run_status="skipped", reason="disabled_by_settings"
+            )
+            return None
+        try:
+            from src.detection.duplicate_detector import DuplicateDetector
+
+            det = DuplicateDetector(self._ctx.settings)
+            result = det.detect(df)
+            self._record_detector_status("duplicate", run_status="executed", result=result)
+            return result
+        except Exception:
+            logger.warning("Duplicate 탐지 실패 — 스킵", exc_info=True)
+            self._record_detector_status(
+                "duplicate", run_status="failed", reason="detector_exception"
+            )
+            return None
+
+    def _try_intercompany_detection(
+        self, df: pd.DataFrame, *, force_enable: bool = False
+    ) -> DetectionResult | None:
+        """Intercompany matcher 실행.
+
+        Why: Phase 2 추론에서 family=intercompany 결과를 얻기 위해 호출. ``force_enable``
+        은 settings 플래그 무시.
+        """
+        if not force_enable and not getattr(
+            self._ctx.settings, "enable_intercompany_detection", False
+        ):
+            logger.debug("intercompany detection disabled by settings")
+            self._record_detector_status(
+                "intercompany", run_status="skipped", reason="disabled_by_settings"
+            )
+            return None
+        try:
+            from src.detection.intercompany_matcher import IntercompanyMatcher
+
+            det = IntercompanyMatcher(
+                self._ctx.settings,
+                audit_rules=self._ctx.audit_rules,
+            )
+            result = det.detect(df)
+            self._record_detector_status("intercompany", run_status="executed", result=result)
+            return result
+        except Exception:
+            logger.warning("Intercompany 탐지 실패 — 스킵", exc_info=True)
+            self._record_detector_status(
+                "intercompany", run_status="failed", reason="detector_exception"
             )
             return None
 
@@ -1993,6 +2214,11 @@ class AuditPipeline:
         file_name: str = "",
         performance_report=None,
         phase1_case_ref: dict | None = None,
+        phase2_training_report_id: str | None = None,
+        phase2_inference_contract: dict | None = None,
+        phase2_promotion_policy: dict | None = None,
+        phase2_inference_mode: str | None = None,
+        detector_statuses: list[dict] | None = None,
     ) -> tuple[object | None, list[str]]:
         conn, own_conn = self._conn, self._conn is None
         try:
@@ -2020,6 +2246,11 @@ class AuditPipeline:
                 tb_df=tb_df,
                 datasynth_dir=datasynth_dir,
                 phase1_case_ref=phase1_case_ref,
+                phase2_training_report_id=phase2_training_report_id,
+                phase2_inference_contract=phase2_inference_contract,
+                phase2_promotion_policy=phase2_promotion_policy,
+                phase2_inference_mode=phase2_inference_mode,
+                detector_statuses=detector_statuses,
             )
             if performance_report is not None:
                 save_report(conn, performance_report)
@@ -2039,9 +2270,9 @@ class AuditPipeline:
             )
 
             return lr, []
-        except Exception:
+        except Exception as exc:
             logger.warning("DB 적재 실패", exc_info=True)
-            return None, ["DB 적재 실패"]
+            return None, [f"DB 적재 실패: {exc}"]
         finally:
             # Why: anonymous :memory: 커넥션만 직접 close.
             #      named DB 커넥션은 ConnectionManager 캐시가 관리.

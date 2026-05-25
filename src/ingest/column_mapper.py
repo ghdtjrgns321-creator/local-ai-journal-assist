@@ -221,7 +221,6 @@ def _classify_series(series: pd.Series) -> tuple[str, float] | None:
         return None
 
     str_vals = sample.astype(str).str.strip()
-    unique_vals = str_vals.unique()
     n = len(str_vals)
 
     # 1) 날짜 패턴 — YYYY-MM-DD / YYYY/MM/DD

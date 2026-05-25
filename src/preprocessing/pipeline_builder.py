@@ -15,8 +15,8 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OrdinalEncoder, StandardScaler
 
-from src.preprocessing.feature_quality import apply_feature_quality_policy
 from src.preprocessing.feature_groups import FeatureGroups
+from src.preprocessing.feature_quality import apply_feature_quality_policy
 from src.preprocessing.transformers import SafePowerTransformer
 from src.preprocessing.vae_wrapper import VAEDetector
 

@@ -35,8 +35,6 @@ from src.company.repository import CompanyRepository
 from src.hitl.feedback_store import build_feedback_event, record_feedback_event
 from src.llm.api_client import ChatClient, get_chat_client
 from src.llm.models import (
-    EvidenceSample,
-    IntercompanyPair,
     RuleCategory,
     RuleFeedbackReport,
     RuleSuggestion,

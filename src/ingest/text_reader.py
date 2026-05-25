@@ -11,6 +11,7 @@ import csv
 import io
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -162,9 +163,6 @@ def _prescan_max_columns(path: Path, encoding: str, separator: str) -> int:
 # ── 인크리멘탈 진단 (청크 단위) ─────────────────────────
 
 
-from dataclasses import dataclass, field as dc_field
-
-
 @dataclass
 class _DiagAccumulator:
     """청크 단위 인크리멘탈 진단 누적 상태.
@@ -177,7 +175,7 @@ class _DiagAccumulator:
     # 컬럼별 "값이 한 번이라도 존재" 플래그 — False인 컬럼이 빈 열
     col_has_value: np.ndarray | None = None
     # {non_null_count: 행 수} 히스토그램 — 열 수 불일치 판정용
-    non_null_histogram: dict[int, int] = dc_field(default_factory=dict)
+    non_null_histogram: dict[int, int] = field(default_factory=dict)
     mixed_delim_count: int = 0
     total_rows: int = 0
     separator: str = ","
@@ -393,8 +391,8 @@ def repair_dataframe(
         }
         raw_repaired = _repair_unclosed_quotes(df, path, csv_kwargs)
         if len(raw_repaired) > len(df):
-            from src.ingest.header_detector import detect_header_row
             from src.ingest.column_mapper import prepare_dataframe
+            from src.ingest.header_detector import detect_header_row
 
             hdr = detect_header_row(raw_repaired)
             if hdr.header_row is not None:

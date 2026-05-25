@@ -10,8 +10,8 @@ Why:
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, replace
 import json
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 

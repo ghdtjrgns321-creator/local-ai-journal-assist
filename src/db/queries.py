@@ -21,19 +21,7 @@ logger = logging.getLogger(__name__)
 
 PRESET_QUERIES: dict[str, str] = {
     "batch_ledger": """
-        SELECT document_id, company_code, fiscal_year, fiscal_period,
-               posting_date, document_date, document_type,
-               line_number, gl_account, debit_amount, credit_amount,
-               line_text, header_text, created_by, source,
-               business_process, user_persona, approved_by,
-               approval_date, approval_level, reference,
-               is_fraud, fraud_type, is_anomaly, anomaly_type,
-               sod_violation, sod_conflict_type,
-               anomaly_score, risk_level, flagged_rules,
-               first_digit,
-               supervised_score, unsupervised_score, duplicate_score,
-               supervised_model_id, unsupervised_model_id, duplicate_model_id,
-               ml_scored_at
+        SELECT *
         FROM general_ledger
         WHERE upload_batch_id = ?
         ORDER BY anomaly_score DESC
@@ -311,8 +299,7 @@ def execute_preset(
     """
     if query_name not in PRESET_QUERIES:
         raise QueryNotFoundError(
-            f"존재하지 않는 쿼리: '{query_name}'. "
-            f"사용 가능: {sorted(PRESET_QUERIES.keys())}"
+            f"존재하지 않는 쿼리: '{query_name}'. 사용 가능: {sorted(PRESET_QUERIES.keys())}"
         )
 
     if params is None:
@@ -326,9 +313,7 @@ def execute_preset(
         result = conn.execute(sql, params)
         return result.fetchdf()
     except duckdb.Error as exc:
-        raise QueryExecutionError(
-            f"쿼리 '{query_name}' 실행 실패: {exc}"
-        ) from exc
+        raise QueryExecutionError(f"쿼리 '{query_name}' 실행 실패: {exc}") from exc
 
 
 def execute_write(
@@ -347,8 +332,7 @@ def execute_write(
 
     if query_name not in PRESET_QUERIES:
         raise QueryNotFoundError(
-            f"존재하지 않는 쿼리: '{query_name}'. "
-            f"사용 가능: {sorted(PRESET_QUERIES.keys())}"
+            f"존재하지 않는 쿼리: '{query_name}'. 사용 가능: {sorted(PRESET_QUERIES.keys())}"
         )
 
     sql = PRESET_QUERIES[query_name]
@@ -368,9 +352,7 @@ def execute_write(
             else:
                 raise
         except duckdb.Error as exc:
-            raise QueryExecutionError(
-                f"쿼리 '{query_name}' 실행 실패: {exc}"
-            ) from exc
+            raise QueryExecutionError(f"쿼리 '{query_name}' 실행 실패: {exc}") from exc
 
 
 # ── ATTACH 헬퍼 (RC-3: 연도 비교) ──────────────────────────
