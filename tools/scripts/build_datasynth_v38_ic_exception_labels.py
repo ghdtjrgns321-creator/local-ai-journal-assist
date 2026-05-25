@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import argparse
 import csv
@@ -9,7 +9,6 @@ from collections import Counter
 from pathlib import Path
 
 import pandas as pd
-
 
 EXCEPTION_COUNTS = {
     2022: {
@@ -43,8 +42,12 @@ NORMAL_CONTROL_COUNTS = {
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Build v38 small IC exception labels and controls.")
-    parser.add_argument("--source", required=True, help="Source dataset directory, normally datasynth_v37_candidate")
+    parser = argparse.ArgumentParser(
+        description="Build v38 small IC exception labels and controls."
+    )
+    parser.add_argument(
+        "--source", required=True, help="Source dataset directory, normally datasynth_v37_candidate"
+    )
     parser.add_argument("--output", required=True, help="Output candidate directory")
     parser.add_argument("--force", action="store_true", help="Overwrite output directory")
     return parser.parse_args()
@@ -76,13 +79,15 @@ def normalize_datetime(value: object) -> str:
 
 def load_ic_pair_candidates(output: Path) -> pd.DataFrame:
     truth = pd.read_csv(output / "labels" / "intercompany_population_truth.csv")
-    ic = truth[
-        truth["document_type"].eq("IC")
-        & truth["has_trading_partner"].astype(bool)
-        & truth["reference_available"].eq(True)
-    ] if "reference_available" in truth.columns else truth[
-        truth["document_type"].eq("IC") & truth["has_trading_partner"].astype(bool)
-    ]
+    ic = (
+        truth[
+            truth["document_type"].eq("IC")
+            & truth["has_trading_partner"].astype(bool)
+            & truth["reference_available"].eq(True)
+        ]
+        if "reference_available" in truth.columns
+        else truth[truth["document_type"].eq("IC") & truth["has_trading_partner"].astype(bool)]
+    )
     # v37 sidecar does not store reference, so derive pairs from the journal.
     cols = [
         "document_id",
@@ -102,7 +107,12 @@ def load_ic_pair_candidates(output: Path) -> pd.DataFrame:
         "credit_amount",
         "line_number",
     ]
-    je = pd.read_csv(output / "journal_entries.csv", usecols=cols, low_memory=False, parse_dates=["posting_date", "document_date"])
+    je = pd.read_csv(
+        output / "journal_entries.csv",
+        usecols=cols,
+        low_memory=False,
+        parse_dates=["posting_date", "document_date"],
+    )
     ic_docs = set(ic["document_id"].astype(str))
     je = je[je["document_id"].astype(str).isin(ic_docs)].copy()
     je["_amount"] = je[["debit_amount", "credit_amount"]].fillna(0).max(axis=1)
@@ -119,7 +129,10 @@ def load_ic_pair_candidates(output: Path) -> pd.DataFrame:
             source=("source", "first"),
             created_by=("created_by", "first"),
             reference=("reference", "first"),
-            trading_partner=("trading_partner", lambda s: next((x for x in s.dropna().astype(str) if x.strip()), "")),
+            trading_partner=(
+                "trading_partner",
+                lambda s: next((x for x in s.dropna().astype(str) if x.strip()), ""),
+            ),
             amount=("_amount", "max"),
         )
         .reset_index()
@@ -134,7 +147,9 @@ def load_ic_pair_candidates(output: Path) -> pd.DataFrame:
             a, b = rows[i], rows[i + 1]
             if a["company_code"] == b["company_code"]:
                 continue
-            if str(a["trading_partner"]) != str(b["company_code"]) or str(b["trading_partner"]) != str(a["company_code"]):
+            if str(a["trading_partner"]) != str(b["company_code"]) or str(
+                b["trading_partner"]
+            ) != str(a["company_code"]):
                 continue
             pairs.append(
                 {
@@ -172,7 +187,7 @@ def select_cases(pairs: pd.DataFrame) -> tuple[list[dict], list[dict]]:
                 if ref in used_refs:
                     continue
                 row = pool[pool["reference"].eq(ref)].iloc[0]
-                case_id = f"ICEX-{year}-{len(cases)+1:04d}"
+                case_id = f"ICEX-{year}-{len(cases) + 1:04d}"
                 target_doc = row["doc_a"] if picked % 2 == 0 else row["doc_b"]
                 counterpart_doc = row["doc_b"] if target_doc == row["doc_a"] else row["doc_a"]
                 variant = _variant_for(anomaly_type, picked)
@@ -201,7 +216,9 @@ def select_cases(pairs: pd.DataFrame) -> tuple[list[dict], list[dict]]:
                 if picked >= count:
                     break
             if picked < count:
-                raise RuntimeError(f"Only selected {picked}/{count} {anomaly_type} cases for {year}")
+                raise RuntimeError(
+                    f"Only selected {picked}/{count} {anomaly_type} cases for {year}"
+                )
 
         control_count = NORMAL_CONTROL_COUNTS[year]
         picked_controls = 0
@@ -211,7 +228,7 @@ def select_cases(pairs: pd.DataFrame) -> tuple[list[dict], list[dict]]:
             row = pool[pool["reference"].eq(ref)].iloc[0]
             controls.append(
                 {
-                    "control_id": f"ICNC-{year}-{picked_controls+1:04d}",
+                    "control_id": f"ICNC-{year}-{picked_controls + 1:04d}",
                     "fiscal_year": year,
                     "reference": ref,
                     "document_id_a": row["doc_a"],
@@ -231,7 +248,9 @@ def select_cases(pairs: pd.DataFrame) -> tuple[list[dict], list[dict]]:
             if picked_controls >= control_count:
                 break
         if picked_controls < control_count:
-            raise RuntimeError(f"Only selected {picked_controls}/{control_count} normal IC controls for {year}")
+            raise RuntimeError(
+                f"Only selected {picked_controls}/{control_count} normal IC controls for {year}"
+            )
     return cases, controls
 
 
@@ -265,7 +284,9 @@ def append_labels(output: Path, cases: list[dict]) -> pd.DataFrame:
         row.update(
             {
                 "anomaly_id": f"ANO{max_num + offset:08d}",
-                "anomaly_category": "Relational" if anomaly_type != "CircularTransaction" else "Graph",
+                "anomaly_category": "Relational"
+                if anomaly_type != "CircularTransaction"
+                else "Graph",
                 "anomaly_type": anomaly_type,
                 "document_id": case["target_document_id"],
                 "document_type": "JE",
@@ -273,10 +294,14 @@ def append_labels(output: Path, cases: list[dict]) -> pd.DataFrame:
                 "anomaly_date": normalize_date(case["posting_date_a"]),
                 "detection_timestamp": pd.Timestamp.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
                 "confidence": 0.85,
-                "severity": 4 if anomaly_type in {"CircularTransaction", "TransferPricingAnomaly"} else 3,
+                "severity": 4
+                if anomaly_type in {"CircularTransaction", "TransferPricingAnomaly"}
+                else 3,
                 "description": _description_for(case),
                 "is_injected": True,
-                "related_entities": json.dumps([case["counterpart_document_id"]], ensure_ascii=False),
+                "related_entities": json.dumps(
+                    [case["counterpart_document_id"]], ensure_ascii=False
+                ),
                 "injection_strategy": anomaly_type,
                 "scenario_id": case["case_id"],
                 "metadata_json": dump_metadata(metadata),
@@ -312,11 +337,15 @@ def patch_journal_for_cases(output: Path, cases: list[dict]) -> tuple[list[dict]
         before = _doc_snapshot(je.loc[mask])
 
         if anomaly_type == "UnmatchedIntercompany":
-            current_company = str(je.loc[mask, "company_code"].iloc[0])
-            unmatched_partner = f"C{(int(current_company[-1]) % 3) + 1:03d}-UNMATCHED"
+            # D065 (D055 supersede): master 외부 회사 코드로 patch.
+            # 기존 `-UNMATCHED` 접미사는 detector fitting signature 였음.
+            # 새 코드는 dataset distinct company_code (`C001~C003`) 와 충돌하지 않는
+            # `C9NN` 형식. detector 는 partner_format 의 ic_partner_regex 매칭 + master
+            # 외부 조건만으로 high evidence 부여한다.
+            unmatched_partner = f"C9{(idx % 9) + 1:02d}"
             je.loc[mask, "trading_partner"] = unmatched_partner
             case["patched_trading_partner"] = unmatched_partner
-            case["field_patch"] = "trading_partner_changed_to_unmatched_company"
+            case["field_patch"] = "trading_partner_changed_to_non_master_company"
 
         elif anomaly_type == "IntercompanyAmountMismatch":
             factor = 1.07 + (idx % 3) * 0.015
@@ -372,7 +401,10 @@ def patch_journal_json_for_cases(output: Path, cases: list[dict]) -> int:
     patched = 0
     first_written = False
 
-    with json_path.open("r", encoding="utf-8") as src, tmp_path.open("w", encoding="utf-8", newline="\n") as dst:
+    with (
+        json_path.open("r", encoding="utf-8") as src,
+        tmp_path.open("w", encoding="utf-8", newline="\n") as dst,
+    ):
         dst.write("[\n")
         buffer: list[str] = []
         depth = 0
@@ -481,11 +513,15 @@ def _scale_document_amounts(je: pd.DataFrame, mask: pd.Series, factor: float) ->
         # The CSV remains numeric after reload, but object assignment keeps this
         # patcher forward-compatible.
         je[col] = je[col].astype("object")
-        je.loc[scale_mask, col] = (pd.to_numeric(je.loc[scale_mask, col], errors="coerce") * factor).round(2)
+        je.loc[scale_mask, col] = (
+            pd.to_numeric(je.loc[scale_mask, col], errors="coerce") * factor
+        ).round(2)
 
 
 def _ensure_min_document_amount(je: pd.DataFrame, mask: pd.Series, min_amount: float) -> None:
-    current = pd.to_numeric(je.loc[mask, ["debit_amount", "credit_amount"]].max(axis=1), errors="coerce").max()
+    current = pd.to_numeric(
+        je.loc[mask, ["debit_amount", "credit_amount"]].max(axis=1), errors="coerce"
+    ).max()
     if pd.isna(current) or current <= 0:
         return
     if current >= min_amount:
@@ -553,7 +589,9 @@ def rewrite_label_jsons(labels_dir: Path, labels: pd.DataFrame) -> None:
                 "anomaly_date": str(row["anomaly_date"]),
                 "detection_timestamp": str(row["detection_timestamp"]),
                 "confidence": row["confidence"],
-                "severity": int(row["severity"]) if pd.notna(row["severity"]) and str(row["severity"]) != "" else None,
+                "severity": int(row["severity"])
+                if pd.notna(row["severity"]) and str(row["severity"]) != ""
+                else None,
                 "description": row["description"],
                 "related_entities": related,
                 "metadata": metadata,
@@ -561,19 +599,35 @@ def rewrite_label_jsons(labels_dir: Path, labels: pd.DataFrame) -> None:
                 "injection_strategy": row["injection_strategy"],
             }
         )
-    (labels_dir / "anomaly_labels.json").write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
+    (labels_dir / "anomaly_labels.json").write_text(
+        json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     with (labels_dir / "anomaly_labels.jsonl").open("w", encoding="utf-8") as fh:
         for record in records:
             fh.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
     summary = {
         "total_labels": int(len(labels)),
-        "by_category": {k: int(v) for k, v in labels["anomaly_category"].value_counts().to_dict().items()},
-        "by_company": {k: int(v) for k, v in labels["company_code"].value_counts().to_dict().items()},
-        "with_provenance": int(labels["causal_reason_json"].fillna("").astype(str).str.len().gt(0).sum()) if "causal_reason_json" in labels else 0,
-        "in_scenarios": int(labels["scenario_id"].fillna("").astype(str).str.len().gt(0).sum()) if "scenario_id" in labels else 0,
-        "in_clusters": int(labels["cluster_id"].fillna("").astype(str).str.len().gt(0).sum()) if "cluster_id" in labels else 0,
+        "by_category": {
+            k: int(v) for k, v in labels["anomaly_category"].value_counts().to_dict().items()
+        },
+        "by_company": {
+            k: int(v) for k, v in labels["company_code"].value_counts().to_dict().items()
+        },
+        "with_provenance": int(
+            labels["causal_reason_json"].fillna("").astype(str).str.len().gt(0).sum()
+        )
+        if "causal_reason_json" in labels
+        else 0,
+        "in_scenarios": int(labels["scenario_id"].fillna("").astype(str).str.len().gt(0).sum())
+        if "scenario_id" in labels
+        else 0,
+        "in_clusters": int(labels["cluster_id"].fillna("").astype(str).str.len().gt(0).sum())
+        if "cluster_id" in labels
+        else 0,
     }
-    (labels_dir / "anomaly_labels_summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    (labels_dir / "anomaly_labels_summary.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
 
 def write_records(path: Path, records: list[dict]) -> None:
@@ -585,13 +639,19 @@ def write_records(path: Path, records: list[dict]) -> None:
         writer.writerows(records)
 
 
-def write_sidecar_family(labels_dir: Path, stem: str, records: list[dict], year_key: str = "fiscal_year") -> None:
+def write_sidecar_family(
+    labels_dir: Path, stem: str, records: list[dict], year_key: str = "fiscal_year"
+) -> None:
     write_records(labels_dir / f"{stem}.csv", records)
-    (labels_dir / f"{stem}.json").write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
+    (labels_dir / f"{stem}.json").write_text(
+        json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     for year in sorted({int(r[year_key]) for r in records}):
         year_records = [r for r in records if int(r[year_key]) == year]
         write_records(labels_dir / f"{stem}_{year}.csv", year_records)
-        (labels_dir / f"{stem}_{year}.json").write_text(json.dumps(year_records, ensure_ascii=False, indent=2), encoding="utf-8")
+        (labels_dir / f"{stem}_{year}.json").write_text(
+            json.dumps(year_records, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
 
 def build_summary(cases: list[dict], controls: list[dict], labels: pd.DataFrame) -> dict:
@@ -601,24 +661,35 @@ def build_summary(cases: list[dict], controls: list[dict], labels: pd.DataFrame)
         "focus": "Small IC exception labels for IC01/IC02/IC03/GR01/GR03 evaluation",
         "exception_cases": {
             "total": len(cases),
-            "by_year": {str(k): int(v) for k, v in sorted(Counter(c["fiscal_year"] for c in cases).items())},
-            "by_type": {str(k): int(v) for k, v in sorted(Counter(c["anomaly_type"] for c in cases).items())},
+            "by_year": {
+                str(k): int(v) for k, v in sorted(Counter(c["fiscal_year"] for c in cases).items())
+            },
+            "by_type": {
+                str(k): int(v) for k, v in sorted(Counter(c["anomaly_type"] for c in cases).items())
+            },
         },
         "normal_controls": {
             "total": len(controls),
-            "by_year": {str(k): int(v) for k, v in sorted(Counter(c["fiscal_year"] for c in controls).items())},
+            "by_year": {
+                str(k): int(v)
+                for k, v in sorted(Counter(c["fiscal_year"] for c in controls).items())
+            },
         },
         "label_counts_after_patch": {
             k: int(v)
             for k, v in labels["anomaly_type"]
             .value_counts()
-            .loc[lambda s: s.index.isin([
-                "UnmatchedIntercompany",
-                "IntercompanyAmountMismatch",
-                "IntercompanyTimingMismatch",
-                "TransferPricingAnomaly",
-                "CircularTransaction",
-            ])]
+            .loc[
+                lambda s: s.index.isin(
+                    [
+                        "UnmatchedIntercompany",
+                        "IntercompanyAmountMismatch",
+                        "IntercompanyTimingMismatch",
+                        "TransferPricingAnomaly",
+                        "CircularTransaction",
+                    ]
+                )
+            ]
             .to_dict()
             .items()
         },
@@ -639,8 +710,8 @@ v38 is a candidate dataset that keeps the v37 L3-03 intercompany population trut
 ## Summary
 
 - Source baseline: `datasynth_v37_candidate`
-- Added anomaly labels: {summary['exception_cases']['total']}
-- Added normal IC controls: {summary['normal_controls']['total']}
+- Added anomaly labels: {summary["exception_cases"]["total"]}
+- Added normal IC controls: {summary["normal_controls"]["total"]}
 - Scope: IC01/IC02/IC03/GR01/GR03 scenario truth, not L3-03 population truth
 - Journal CSV fields are patched for the selected exception documents:
   - `UnmatchedIntercompany`: unmatched `trading_partner`
@@ -650,12 +721,12 @@ v38 is a candidate dataset that keeps the v37 L3-03 intercompany population trut
 
 ## Exception Labels
 
-- By year: {summary['exception_cases']['by_year']}
-- By type: {summary['exception_cases']['by_type']}
+- By year: {summary["exception_cases"]["by_year"]}
+- By type: {summary["exception_cases"]["by_type"]}
 
 ## Normal Controls
 
-- By year: {summary['normal_controls']['by_year']}
+- By year: {summary["normal_controls"]["by_year"]}
 - Meaning: matched IC pairs that should remain unlabeled as exception cases
 
 ## Generated Files
@@ -696,7 +767,9 @@ def main() -> None:
     summary = build_summary(cases, controls, labels)
     summary["journal_field_patches"] = patch_counts
     summary["journal_json_patched_documents"] = json_patch_count
-    (output / "V38_IC_EXCEPTION_LABELS.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    (output / "V38_IC_EXCEPTION_LABELS.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     write_preview(output, summary)
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 
