@@ -2,10 +2,14 @@
 
 > **PHASE1 역할 원칙**: PHASE1은 `fraud`를 확정하거나 정답 라벨을 맞히는 단계가 아니다. PHASE1의 목적은 전수 모집단에서 규칙 위반, 정책 위반, 이상 징후, 분석적 검토 신호를 넓게 올려 **감사인이 봐야 할 항목과 우선순위**를 만드는 것이다. DataSynth의 `is_fraud`/`is_anomaly`와 precision/recall은 개발 검증 보조 지표이며, 운영 해석은 예외 처리 대상, 감사인 리뷰 대상, 고위험 후보를 구분하는 review queue 기준으로 한다.
 
+
+> **포트폴리오 주장 범위 (2026-05-19)**: 이 프로젝트는 `fraud`를 판정하거나 실제 운영 부정 탐지 성능을 보장하는 모델이 아니다. 전수 모집단에서 감사인이 먼저 볼 review queue를 만들고, 무작위 검토 대비 상위 구간에 review-worthy synthetic anomaly를 강하게 농축하는 로컬 감사 분석 보조 도구다. DataSynth 기반 precision/recall은 개발 검증 보조 지표이며, 실데이터 운영 성능으로 주장하지 않는다.
+> **금지 표현**: "부정을 정확히 탐지", "실무 운영 성능 검증 완료", "TOP100 precision 충분", "fraud 확정/자동 적발"처럼 확정적이거나 운영 성능을 보장하는 표현은 사용하지 않는다.
+
 Updated: 2026-05-08
 Status: Locked for v1 implementation
 
-Completion record: `docs/PHASE1_TOPIC_SCORING_V1_COMPLETION.md`
+Completion record: `docs/completed/PHASE1_TOPIC_SCORING_V1_COMPLETION.md`
 
 ## Decision Summary
 
@@ -93,8 +97,8 @@ max(applicable_floor,
 Bands:
 
 ```text
-high >= 0.75
-medium >= 0.45
+high >= 0.90
+medium >= 0.75
 low >= 0.20
 context_only < 0.20
 ```
@@ -137,6 +141,39 @@ topic_score =
 | 중복·상계·자금유출 | L2-01, L2-02, L2-03, L2-05 | L1-05, L1-07, L3-12 | none | none | routine L2-01, L3-12 standalone |
 | 관계사·내부거래·순환구조 | IC01, IC02, IC03 | L3-03, L4-04 | none | D01, D02 | L3-03, D01, D02 |
 | 수익·금액·모집단 통계 이상 | L4-01, L4-03 | L3-10, L4-02/Benford only as conditional row booster | L4-06 | L4-02/Benford, D01, D02 | L4-02, Benford, L4-06, D01, D02 |
+
+### 관계사·내부거래·순환구조 topic — IC01 evidence level floor 차별 (2026-05-23, D065)
+
+Primary rules `IC01, IC02, IC03` 본문은 변경하지 않는다. 외부 rule id 는 `IC01` 단일 유지. floor 차별은 `score_aggregator._apply_intercompany_exception_corroboration()` 가 IC01 hit row 의 `ic01_evidence_level` sidecar 를 `DetectionResult.metadata["row_sidecar"]` 에서 read 하여 처리한다 (저장 위치 상세: `docs/RULE_DETAIL_METADATA_V1_LOCK.md` §IC01 Evidence Level Sidecar Policy — Sidecar 저장 위치 절).
+
+```
+조합                                                  floor             비고
+────────────────────────────────────────────────────────────────────────────────────────────
+IC01 hit + ic01_evidence_level == "high", 단독        Medium 0.40       명시적 미대사 근거 (master 부재)
+IC01 hit + ic01_evidence_level == "review", 단독      Low 0.20          review-only data quality signal
+IC02 단독                                              Low 0.20          기존 유지
+IC03 단독                                              Low 0.20          기존 유지
+IC02 + IC03 (IC01 없음)                                Medium 0.40       2 개 이상 IC 예외 결합 (기존 유지)
+IC01(high) + IC02 / IC03                               Medium 0.40       2 개 이상 IC 예외 결합 (기존 유지)
+IC01(review) + IC02 / IC03                             Medium 0.40       2 개 이상 IC 예외 결합 (기존 유지)
+```
+
+Review-level confirmed 격상 방지 (2026-05-23 보정):
+
+- IC01 review-level 은 `details["IC01"]` score 가 `0.0` 으로 유지된다 (`intercompany_rules.ic01_unmatched_intercompany` 의 review 분기). high 만 `score = 1.0`.
+- `score_aggregator._extract_ic01_evidence_level()` 가 `metadata["row_sidecar"]["ic01_evidence_level"]` 에서 evidence level 을 read 하여 Low floor (0.20) 만 부여한다. `details["IC01"] = 0` 이므로 `flagged_rules` / case seed / ground-truth 평가의 `> 0` 비교에서 confirmed violation 으로 격상되지 않는다.
+- 근거: `AGENTS.md` "review-only signals must not become confirmed violations".
+
+정책 정합 지점:
+
+- `src/detection/score_aggregator.py::_apply_intercompany_exception_corroboration()` (D065 갱신, line 1001~1110)
+- `src/detection/score_aggregator.py::_extract_ic01_evidence_level()` — `metadata["row_sidecar"]` read + 구버전 `details` fallback
+- `src/detection/intercompany_matcher.py::_build_result()` — `details` 는 numeric only, sidecar 는 `metadata["row_sidecar"]` 로 부착
+- `src/detection/constants.py::RISK_THRESHOLDS` (`MEDIUM=0.40`, `LOW=0.20`) — 변경 없음
+- `src/detection/constants.py::SEVERITY_MAP` (`IC01=3`, `IC02=2`, `IC03=2`) — 변경 없음
+- `intercompany_exception_reasons` 문자열의 IC01 hit 표기는 `IC01[high]` / `IC01[review]` qualifier 부착. base rule id `IC01` 단일 유지.
+
+본 floor 차별은 PHASE1 truth recall 직접 추구가 아니라 도메인 정합성 보강이다 (`feedback_phase1_truth_recall_guard`). evidence=`high` 만 IFRS 10 §B86 / K-IFRS 1110 / ISA 600 의 "그룹 내부거래 양측 대사 실패" 회계 evidence 로 인정하고, evidence=`review` 는 review queue 진입 가능한 data quality 수준으로 분류한다.
 
 ## Anti-fitting calibration notes
 
@@ -224,7 +261,7 @@ Weak/FSS-supported floor classification:
    - Ensure `macro_only` remains row score 0.
    - Ensure `standalone_rankable=False` rules do not trigger standalone row/case escalation.
    - Keep `L4-06` and `L3-12` escalation only through evidence-group conditions.
-   - 행 `RISK_THRESHOLDS`(HIGH=0.50 / MEDIUM=0.25 / LOW=0.10, `src/detection/constants.py`)는 case `priority_band`(High=0.75 / Medium=0.45)와 다른 축이다. 행 risk_level은 `anomaly_score` 정규화 합산 기준이며, case priority_band는 topic score 기준이다. 동일 case 내에서 두 값이 달라도 모순이 아니다 (`artifacts/phase1_score_band_audit.md` §4-2, `phase1_score_band_audit_after.md`).
+   - 행 `RISK_THRESHOLDS`(HIGH=0.50 / MEDIUM=0.25 / LOW=0.10, `src/detection/constants.py`)는 case `priority_band`(High=0.90 / Medium=0.75)와 다른 축이다. 행 risk_level은 `anomaly_score` 정규화 합산 기준이며, case priority_band는 topic score 기준이다. 동일 case 내에서 두 값이 달라도 모순이 아니다 (`artifacts/phase1_score_band_audit.md` §4-2, `phase1_score_band_audit_after.md`).
 4. `src/detection/phase1_case_builder.py`
    - Replace hard-coded queue/theme maps with registry-based topic mapping.
    - Use `compute_topic_scores()` for case ranking.

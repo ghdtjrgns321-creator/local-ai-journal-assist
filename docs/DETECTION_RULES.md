@@ -2,6 +2,10 @@
 
 > **PHASE1 역할 원칙**: PHASE1은 `fraud`를 확정하거나 정답 라벨을 맞히는 단계가 아니다. PHASE1의 목적은 전수 모집단에서 규칙 위반, 정책 위반, 이상 징후, 분석적 검토 신호를 넓게 올려 **감사인이 봐야 할 항목과 우선순위**를 만드는 것이다. DataSynth의 `is_fraud`/`is_anomaly`와 precision/recall은 개발 검증 보조 지표이며, 운영 해석은 예외 처리 대상, 감사인 리뷰 대상, 고위험 후보를 구분하는 review queue 기준으로 한다.
 
+
+> **포트폴리오 주장 범위 (2026-05-19)**: 이 프로젝트는 `fraud`를 판정하거나 실제 운영 부정 탐지 성능을 보장하는 모델이 아니다. 전수 모집단에서 감사인이 먼저 볼 review queue를 만들고, 무작위 검토 대비 상위 구간에 review-worthy synthetic anomaly를 강하게 농축하는 로컬 감사 분석 보조 도구다. DataSynth 기반 precision/recall은 개발 검증 보조 지표이며, 실데이터 운영 성능으로 주장하지 않는다.
+> **금지 표현**: "부정을 정확히 탐지", "실무 운영 성능 검증 완료", "TOP100 precision 충분", "fraud 확정/자동 적발"처럼 확정적이거나 운영 성능을 보장하는 표현은 사용하지 않는다.
+
 한국 감사기준서(240호, K-SOX, PCAOB AS 2401)를 근거로 도출한 전표 검토 후보 선별 룰의 단일 참조 문서.
 법규·기준서 근거는 [DETECTION_REFERENCE.md](DETECTION_REFERENCE.md) 참조.
 
@@ -198,7 +202,7 @@ Theme별 case key는 전역 공통 키를 쓰지 않고 다르게 둔다.
 2. **Case priority score**
    - 사용자 큐 정렬 기준이다.
    - 기본식: `0.25*control_score + 0.25*amount_score + 0.15*duplicate_or_outflow_score + 0.15*logic_score + 0.10*timing_score + 0.10*behavior_score`
-   - band 기준: `high >= 0.75`, `medium >= 0.45`, 그 외 `low`
+   - band 기준: `high >= 0.90` 즉시검토, `medium >= 0.75` 검토 후보, 그 외 `low`
    - `amount_score`는 engagement materiality가 있으면 상대 금액 점수와 materiality 대비 점수 중 큰 값을 사용한다.
    - `duplicate_or_outflow_score`는 `L2-01/L2-02/L2-03/L2-05` 같은 지급·중복·역분개 evidence type의 정규화 점수다. L2-01 승인한도 직하, L2-05 역분개/상계 후보처럼 금액만으로는 묻히거나 반대로 단독 확정으로 과대해석될 수 있는 부정 시나리오 신호가 case priority에 직접 반영되도록 별도 축으로 둔다.
    - `timing_score`는 `timing_anomaly` evidence type의 정규화 점수다. L3-04, L3-07, L3-11 같은 결산·cutoff 검토 신호가 row-level L3 family max에서 과소 반영되지 않도록 case priority에 직접 들어간다.
@@ -206,9 +210,9 @@ Theme별 case key는 전역 공통 키를 쓰지 않고 다르게 둔다.
    - L1-01 단독 case에서 logic 기여도는 `0.15 * L1-01 normalized_score`다. `rounding_scale`은 priority에 0.0225만 더하고, `severe`는 0.135까지 더한다.
    - `priority_floors`는 심각한 통제 위반(`L1-05`, `L1-04`, `L1-06`, `L1-07`), 보강 맥락이 있는 민감 계정 접촉(`L3-10 priority_case`), 중대한 cutoff 후보(`L3-11`)가 단일 룰 또는 약한 family weight라는 이유로 queue에서 밀리지 않도록 최소 priority를 보장한다.
    - L1-05 immediate는 row `High` floor 0.70을 적용한다. L1-05 escalated bucket은 High 내부 정렬을 위해 더 높은 floor를 적용한다: `escalated_abnormal_time >= 0.75`, `escalated_materiality >= 0.80`, `escalated_high_risk_account >= 0.80`.
-   - L1-05 case priority floor는 `config/phase1_case.yaml`에서 별도 관리한다. 기본값은 `immediate >= 0.75`, `escalated_abnormal_time >= 0.80`, `escalated_materiality/high_risk_account >= 0.85`다.
-   - L1-06은 direct SoD raw score를 `0.50/0.70/0.80/0.95`로 나누고, row risk floor를 `Low/Medium/High/Critical-high`에 맞춘다. Case priority는 `0.70 -> medium floor 0.45`, `0.80 -> high floor 0.75`, `0.95 -> critical floor 0.85`를 적용한다.
-   - L3-11은 raw cutoff score가 `0.60` 이상이면 최소 Medium floor `0.45`를 적용한다. raw score `0.30` 이상이면서 `L4-01` 고액/수익 이상 신호가 같은 case에 있으면 최소 High floor `0.75`를 적용한다. 이는 부정 확정이 아니라 cutoff review queue 우선순위 보정이다.
+   - L1-05 case priority floor는 `config/phase1_case.yaml`에서 별도 관리한다. 기본값은 `immediate >= 0.75`, `escalated_abnormal_time >= 0.80`, `escalated_materiality/high_risk_account >= 0.90`이다.
+   - L1-06은 direct SoD raw score를 `0.50/0.70/0.80/0.95`로 나누고, row risk floor를 `Low/Medium/High/Critical-high`에 맞춘다. Case priority는 `0.70 -> low floor 0.45`, `0.80 -> medium floor 0.75`, `0.95 -> immediate high floor 0.90`을 적용한다.
+   - L3-11은 raw cutoff score가 `0.60` 이상이면 최소 참고 후보 floor `0.45`를 적용한다. raw score `0.30` 이상이면서 `L4-01` 고액/수익 이상 신호가 같은 case에 있으면 최소 Medium 검토 후보 floor `0.75`를 적용한다. 이는 부정 확정이 아니라 cutoff review queue 우선순위 보정이다.
    - L3-10 `priority_case`는 `config/phase1_case.yaml`에서 `min_priority_score: 0.45`를 적용한다. 민감 계정 단독 접촉을 High로 보지는 않지만, 수기/조정, 고액, 미정리, 승인일 누락, 기말/비정상시점 같은 보강 맥락이 있으면 Medium 검토 큐에 남긴다.
    - L2-04는 별도 `priority_floors`를 두지 않는다. `logic_score` 기본 가중치 `0.15`와 금액 중요성, 수기/기말/승인 등 다른 evidence 조합으로만 case priority가 올라간다. 이 설계는 정상 CAPEX와 오류 가능 후보가 섞이는 L2-04 특성상 단독 High 승격을 피하기 위한 것이다.
 
@@ -559,9 +563,9 @@ PHASE1 전체 점수에 미치는 직접 영향:
 - **점수체계와 위험도 매핑**
   - L1-06 raw score는 확정 direct SoD 증거 강도이며, L3-12 review/work-scope 신호는 여기에 섞지 않는다.
   - `direct_low = 0.50`: `sod_conflict_type` 등 직접 충돌 marker는 있지만 금액·보호 프로세스·한도초과 보강이 약한 경우. L1 가중치 0.40 적용 후 row `Low` 경계인 0.20에 닿는다.
-  - `direct_medium = 0.70`: 직접 SoD marker가 보호 프로세스(`TRE/P2P/O2C/R2R/H2R`) 또는 금액 전표 맥락과 결합된 경우. 자연 row score는 Medium에 못 미치므로 `L1-06:direct_medium` floor로 row `Medium >= 0.40`, case priority `medium >= 0.45`를 보장한다.
-  - `direct_high = 0.80`: 고위험 conflict type(`cash_disbursement`, `purchase_payment`, `treasury_payment`, `payroll_payment`, `revenue_collection`) 또는 `exceeds_threshold=True`가 붙은 경우. 기존 L1-06 immediate와 같은 row `High >= 0.70`, case priority `high >= 0.75` floor를 적용한다.
-  - `direct_critical = 0.95`: IT/admin/super-user가 보호 프로세스에서 실제 금액 전표를 처리한 경우. 정규화상 자연 점수만으로는 `0.80`보다 높아지지 않으므로 row score floor `0.85`, case priority floor `0.85`로 High 내부 최상단에 둔다.
+  - `direct_medium = 0.70`: 직접 SoD marker가 보호 프로세스(`TRE/P2P/O2C/R2R/H2R`) 또는 금액 전표 맥락과 결합된 경우. 자연 row score는 Medium에 못 미치므로 `L1-06:direct_medium` floor로 row `Medium >= 0.40`, case priority 참고 후보 floor `0.45`를 보장한다.
+  - `direct_high = 0.80`: 고위험 conflict type(`cash_disbursement`, `purchase_payment`, `treasury_payment`, `payroll_payment`, `revenue_collection`) 또는 `exceeds_threshold=True`가 붙은 경우. 기존 L1-06 immediate와 같은 row `High >= 0.70`, case priority Medium 검토 후보 floor `0.75`를 적용한다.
+  - `direct_critical = 0.95`: IT/admin/super-user가 보호 프로세스에서 실제 금액 전표를 처리한 경우. 정규화상 자연 점수만으로는 `0.80`보다 높아지지 않으므로 row score floor `0.85`, case priority 즉시검토 floor `0.90`으로 High 내부 최상단에 둔다.
   - `review_score_series`는 L1-06에서 항상 0이다. L1-06은 review band가 아니라 direct evidence band만 가진다.
 - **L1-06에서 제외하는 신호**
   - `sod_review_pairs`에 걸린 동일 사용자 프로세스 조합 이력
@@ -837,6 +841,9 @@ PHASE1 전체 점수에 미치는 직접 영향:
   - UI, export, review queue에는 `reason_code`, `confidence`, `matched_reason_codes`, 핵심 근거 필드(`reference`, 거래처, 금액, 날짜, 적요)를 함께 제공한다.
   - 정상 반복 전표, 내부거래, 정산성 전표는 탐지 제거보다 confidence 조정 또는 review queue 분리로 처리한다.
   - `P2P/KZ` 지급성 전표가 함께 걸리면 `L2-02 duplicate payment`와 병합 설명을 제공한다.
+- **Phase 2 pair similarity artifact**
+  - `DuplicateDetector.detect()`는 row scoring 후 [`build_duplicate_pair_artifact`](../src/detection/duplicate_pair_features.py)를 호출해 `result.metadata["pair_artifact"]`에 bounded·sanitized pair payload를 주입한다. row score 식과 `details`/`rule_flags`/`scores` contract는 변동 없음 (KPI baseline 회귀 0).
+  - 한계는 [`phase2_reorgani.md` §3 duplicate](phase2_reorgani.md) 참조. pair_artifact는 evidence/attribution 보강용이며 row score 가중치로 사용하지 않는다.
 - **DataSynth 상태**
   - `v26_candidate`에서 `DuplicateEntry` / `ExactDuplicateAmount` 라벨을 실제 복제 결과 문서(`duplicate_document_id`) 기준으로 보정했다.
   - 현재 기준 recall은 확보했지만, unrelated false positive가 남아 있어 confidence와 review queue 운영으로 좁혀야 한다.
@@ -1082,7 +1089,8 @@ PHASE1 전체 점수에 미치는 직접 영향:
 #### L3-03 — 관계사 거래 검토 신호 (RelatedPartyTransactionSignal) ✅
 
 - **심각도**: 4
-- **근거**: ISA 550 §23 특수관계자 거래의 사업상 합리성 검토. Phase 1에서는 순환 구조를 단정하지 않고 관계사 계정 사용 전표를 검토 후보로 올린다.
+- **근거 (1차)**: IFRS 10 §B86 연결 내부거래 제거, K-IFRS 1110 연결재무제표 작성 시 내부거래 제거 절차, K-IFRS 1024 특수관계자 공시, KICPA Issue Paper 46 (JET 완전성), ISA 600 그룹감사 구성단위 잔액 대사. IC 양측 대사 룰의 회계적 필연성은 이 근거에서 도출된다.
+- **근거 (보조)**: ISA 550 §23 특수관계자 거래의 사업상 합리성 검토. Phase 1에서는 순환 구조를 단정하지 않고 관계사 계정 사용 전표를 검토 후보로 올린다.
 - **탐지 로직**: IC GL prefix 매칭
   - `intercompany_identifiers: ['1150', '2050', '4500', '2700']`
   - 관계사 채권/채무/매출/미지급 등 고객사 CoA상 IC 전용 계정 사용 여부만 판단
@@ -1094,14 +1102,14 @@ PHASE1 전체 점수에 미치는 직접 영향:
   - `score_series`는 관계사 거래 모집단을 `0.40`으로 표시한다. 이 점수는 순환거래 확정 점수가 아니라 후속 대사/그래프 분석 대상이라는 의미다.
   - `breakdown`에는 `ic_population_rows`, `ic_population_docs`, `ic_company_count`, `trading_partner_coverage_ratio`를 기록한다.
   - `row_annotations`에는 `signal_category=ic_population`, `company_code`, `trading_partner`를 기록한다.
-- **실무 해석**: 단독 부정 적발이 아니라 특수관계자 거래 모집단/샘플링 후보. 계약서, 상대방, 정상가격, 대사 여부를 후속 확인한다.
+- **실무 해석**: 단독 부정 관련 검토 후보 식별이 아니라 특수관계자 거래 모집단/샘플링 후보. 계약서, 상대방, 정상가격, 대사 여부를 후속 확인한다.
 - **PHASE1 제약**: 이 룰 계열은 recall 우선 스크리닝이다. 과탐을 줄이기 위해 IC prefix, 금액 차이, 시차, 그래프 가격 비대칭 조건을 임의로 좁혀 미탐을 늘리지 않는다. 정밀도 보정은 case priority, Phase 2 ranking, 감사인 검토 단계에서 처리한다.
 - **PHASE1 점수 유입**
   - `L3-03` 단독은 모집단 신호다. PHASE1 공통 정규화 후 row `anomaly_score` 자연 기여도는 약 `0.036`이며, 단독으로 Low/Medium/High를 만들지 않는다.
   - `IC01/IC02/IC03`은 L1~L4 family 가중합에는 직접 들어가지 않지만, `IntercompanyMatcher` 결과가 제공되면 `score_aggregator`의 관계사 예외 보정에서 별도 floor를 적용한다.
   - `IC02` 또는 `IC03` 단독 예외는 row 최소 Low `0.20`으로 표시한다.
-  - `IC01` 또는 2개 이상 IC 예외 결합은 row 최소 Medium `0.40`으로 표시한다.
-  - 이 보정은 기존 `flagged_rules` 확정 룰 참조 생성 기준을 바꾸지 않는다. 출력에는 `intercompany_exception_score`, `intercompany_exception_reasons`로 별도 추적한다.
+  - `IC01` 단독 예외는 `ic01_evidence_level` sidecar 에 따라 floor 가 차별 적용된다. `high` 는 row 최소 Medium `0.40`, `review` 는 row 최소 Low `0.20`. 2개 이상 IC 예외 결합은 evidence level 과 무관하게 row 최소 Medium `0.40` 으로 표시한다 (D065 결정).
+  - 이 보정은 기존 `flagged_rules` 확정 룰 참조 생성 기준을 바꾸지 않는다. 출력에는 `intercompany_exception_score`, `intercompany_exception_reasons`로 별도 추적하며, IC01 hit 시 reason 문자열에 `IC01[high]` / `IC01[review]` qualifier 가 부착된다.
 - **평가/리포트 표시 방식**
   - `L3-03`은 관계사 거래 모집단 룰이므로 `intercompany_population_truth`로 평가하고, 실제 비정상 순환거래 라벨인 `CircularIntercompany`/`CircularTransaction`과 혼동하지 않는다.
   - 리포트에는 `ic_population_docs`, `ic_exception_overlap_docs`, `graph_overlap_docs` score band와 탐지기 breakdown을 함께 표시한다.
@@ -1112,10 +1120,33 @@ PHASE1 전체 점수에 미치는 직접 영향:
 - **DataSynth 예외 라벨**: `v38_candidate`부터 IC01/IC02/IC03/GR01/GR03 검증용 소량 truth를 `labels/intercompany_exception_cases*.csv/json`에 둔다. 이 라벨은 detector 결과를 역으로 채운 것이 아니라 정상 IC pair 일부에 거래상대 불일치, 금액 차이, 전기일 차이, 순환 seed, 가격 비대칭을 작게 주입한 scenario truth다. 정상 대조군은 `labels/intercompany_normal_controls*.csv/json`에 별도로 둔다.
 - **GR01 평가 계약**: `v39_candidate`부터 GR01 hit 전체는 `labels/graph_gr01_review_population*.csv/json`에 review population으로 저장한다. 확정 이상은 기존 `CircularTransaction`/`CircularIntercompany` 라벨과 `labels/graph_gr01_confirmed_anomalies*.csv/json`만 사용하고, 정상 순환 대조군은 `labels/graph_gr01_normal_cycle_controls*.csv/json`로 분리한다. 따라서 GR01 raw hit 전체를 anomaly precision 분모로 쓰지 않는다.
 - **IC01/IC02/IC03 평가 계약**: `intercompany_exception_cases` 전체를 한꺼번에 정답으로 쓰지 않는다. IC01은 `UnmatchedIntercompany`, IC02는 `IntercompanyAmountMismatch`, IC03은 `IntercompanyTimingMismatch`만 각각 평가한다. `target_document_id`가 주입 대상이며, counterpart 문서는 룰 성격에 따라 같이 flag될 수 있는 보조 문서다.
+- **IC02 금액 대사 정책**: 기본 금액 차이 허용 오차는 `ic_amount_tolerance=0.05` (5%)다. IC02는 대응 관계가 확인된 관계사 쌍의 금액 차이를 검토 후보로 표시하되, 통화가 다른 쌍 또는 통화 정보가 약한 상태에서 금액비가 `ic_cross_currency_ratio_threshold=20.0`을 초과하는 쌍은 FX 환산 기준 없이는 비교 가능한 금액으로 보지 않고 점수를 억제한다. 통화가 다른 쌍은 대응 관계 자체를 미대사로 보지 않기 위해 `currency`를 매칭 키로 쓰지 않고 `cross_currency` sidecar로 분리한다.
 - **IC01 실무 기준**: 고객/벤더 코드(`C-000123`, `V-000123`)가 IC 계정에 들어온 경우는 DataSynth 현실성 노이즈로 보고 미대사 예외에서 제외한다. IC01은 명시적 회사 상대방 코드가 존재하지만 실제 회사코드와 대사되지 않는 고확신 케이스를 우선 flag한다.
+- **IC01 외부 rule id 단일 유지**: 외부 rule id 는 `IC01` 단일을 유지한다. `IC01_A` / `IC01_B` 와 같은 분리는 도입하지 않으며, `RULE_CODES`, `SEVERITY_MAP`, `RULE_DETAIL_METADATA_REGISTRY`, dashboard / export 표시 맵은 모두 단일 `IC01` 기준으로 일관 운영한다 (D065 결정 반영).
+- **IC01 evidence level sidecar 정책**: IC01 hit 의 신뢰도는 detector 결과 DataFrame 의 두 sidecar column (`ic01_evidence_level`, `ic01_review_reason`) 으로 분류한다. 두 column 은 canonical 32 rule count 외부의 `intercompany_sidecar` surface 산출물이다.
+- **PHASE2 internal probabilistic columns (2026-05-24)**: IC01/IC02/IC03 hard-threshold 룰을 보존하면서 `IntercompanyMatcher.details` 에 `ic_unmatched_prob` / `ic_amount_prob` / `ic_timing_prob` 3개 0~1 raw probability column 을 additive 로 추가한다. canonical rule id (IC04 등) 는 신설하지 않으며 `RULE_CODES` / `SEVERITY_MAP` / `RULE_DETAIL_METADATA_REGISTRY` / `_RULE_STYLE_SUB_DETECTORS` / `config/phase2_subdetector_tiers.yaml` 모두 변경 없다. 신규 column 은 PHASE2 family overlay 의 zero-preserving ECDF + Noisy-OR 에 자연 흡수되며 PHASE1 case priority 나 PHASE1 ↔ PHASE2 queue 순서를 바꾸지 않는다. 데이터 계약 3-tier (`L1_exact` / `L2_aggregate` / `L3_insufficient`) 와 cross-currency 시 amount term 0 (weight 재정규화 없음), `ic_unmatched_prob=1.0` 의 user-facing 표현 ("unmatched review signal") 은 [docs/phase2_reorgani.md §5](phase2_reorgani.md) 단일 출처. Phase 1 rule hit / DataSynth truth / `document_id` 식별자는 입력으로 사용하지 않는다.
+
+  ```
+  evidence_level     정의                                                            floor 정책      reason code 예시
+  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  high               IC 모집단 + 그룹 매칭 실패 + 명시적 회사 상대방 코드 +          Medium 0.40     (review_reason 미부착)
+                     관계사/그룹 master 에 대사 실패
+  review             IC 모집단 + 그룹 매칭 실패 + (trading_partner 결측 OR           Low 0.20        missing_partner /
+                     형식 비표준 OR master mapping 미정)                                             nonstandard_format /
+                                                                                                     mapping_uncertain
+  ""                 IC 모집단 + counterparty 가 customer/vendor master 또는        0.0 (평가 제외)  (해당 없음)
+                     외부 거래처. IC 룰 평가 모집단에서 제외.
+  ```
+
+  - `ic01_evidence_level == "high"` 단독 → row Medium floor (`RISK_THRESHOLDS[MEDIUM]=0.40`) 자격
+  - `ic01_evidence_level == "review"` 단독 → row Low floor (`RISK_THRESHOLDS[LOW]=0.20`)
+  - IC02 단독, IC03 단독 → Low floor (기존 유지)
+  - IC01 + IC02 / IC03 또는 IC02 + IC03 (2 개 이상 IC 예외 결합) → Medium floor (기존 유지)
+  - 위 floor 정책은 `src/detection/score_aggregator.py::_apply_intercompany_exception_corroboration()` 와 정합한다.
+  - `intercompany_exception_reasons` 문자열은 IC01 hit 시 `IC01[high]` / `IC01[review]` qualifier 를 부착한다. base rule id 는 그대로 `IC01` 이다.
 - **표시 기준**:
   - `L3-03`: 관계사 거래 모집단
-  - `IC01`: 고확신 미대사 예외 후보
+  - `IC01`: 고확신 미대사 예외 후보. evidence level sidecar (`ic01_evidence_level`) 로 신뢰도 분류 — `high` 는 master 미대사 확정, `review` 는 partner 결측 / 형식 비표준 / master mapping 미정. dashboard / export 표시 시 외부 rule id 는 `IC01` 단일을 유지하고, 상세 panel 에서만 evidence level 을 노출한다.
   - `IC02`: 금액 불일치 검토 후보
   - `IC03`: 시차 불일치 검토 후보
   - `GR01`: 순환 구조 검토 후보. 확정 이상 평가는 `graph_gr01_confirmed_anomalies` 기준
@@ -1256,7 +1287,7 @@ PHASE1 전체 점수에 미치는 직접 영향:
   - 운영 진단용 보조 피처: `description_line_missing`, `description_header_missing`, `description_both_missing`, `description_line_missing_header_present`, `description_is_missing_or_corrupted`
 - **출력 방식**
   - `L3-08`은 Boolean hit 외에 행 단위 `score_series`, `breakdown`, `row_annotations`를 함께 제공한다.
-  - `score_series`는 `missing=0.45`, `corrupted=0.55`, legacy `poor=0.50`으로 표시한다. 이 점수는 부정 확정도가 아니라 기록통제 품질 저하 강도다.
+  - `score_series`는 `missing=0.45`, `corrupted=0.55`, legacy `poor=0.50`으로 표시한다. 이 점수는 부정 확률이 아니라 기록통제 품질 저하 강도다.
   - `breakdown`에는 `missing_rows`, `corrupted_rows`, `poor_legacy_rows`, `quality_counts`를 기록한다.
   - `row_annotations`에는 `description_quality`, `bucket`, `score`, `line_missing`, `header_missing`, `both_missing`을 기록한다.
 - **평가/리포트 표시 방식**
@@ -1543,11 +1574,11 @@ PHASE1 전체 점수에 미치는 직접 영향:
   | `L4-01 + L4-03` | 전체 금액 기준으로도 유의적인 고액 매출 | Medium~High | 감사 중요성 기준 초과 여부, 정상 대형계약/신규고객/일회성 거래 여부 |
 
   - 현재 Phase 1 floor:
-    - `L3-11 >= 0.30 + L4-01` → `priority_score >= 0.75`
-    - `L3-04 >= 0.45 + L4-01` → `priority_score >= 0.75`
-    - `L3-02 >= 0.60 + L4-01` → `priority_score >= 0.75`
-    - `L2-05 >= 0.45 + L4-01` → `priority_score >= 0.75`
-    - `L1-09 >= 0.55 + L4-01` → `priority_score >= 0.75`
+    - `L3-11 >= 0.30 + L4-01` → `priority_score >= 0.75` (Medium 검토 후보)
+    - `L3-04 >= 0.45 + L4-01` → `priority_score >= 0.75` (Medium 검토 후보)
+    - `L3-02 >= 0.60 + L4-01` → `priority_score >= 0.75` (Medium 검토 후보)
+    - `L2-05 >= 0.45 + L4-01` → `priority_score >= 0.75` (Medium 검토 후보)
+    - `L1-09 >= 0.55 + L4-01` → `priority_score >= 0.75` (Medium 검토 후보)
   - 보조 조합으로 `L4-01 + L3-03`은 관계사 매출, 순환거래, 밀어넣기 가능성을 후속 확인한다.
   - 동일 전표 내 여러 라인이 L4-01에 걸리면 라인별 합산보다 전표 단위 최대점수와 동시 플래그 수를 함께 보여준다.
 
@@ -2123,8 +2154,8 @@ Phase 2는 공통 feature frame을 만든 뒤, 여러 family가 이를 공유해
 
 일부 family는 일반 tabular embedding보다 구조화 집계 입력이 더 중요하다.
 
-- `timeseries`: 사용자/계정/거래처 단위 빈도, burst, 간격, 직전 대비 변화량
-- `relational`: 신규 거래쌍, dormant 재활성, 희귀 관계 조합
+- `timeseries`: statistical anomaly — 일별 burst robust z-score (median/MAD baseline), 그룹별 단기 빈도 robust z, 월말/분기말/연말 concentration. zero-preserving ECDF 정규화 후 결합 (2026-05-24 보강, `src/detection/timeseries_rules.py`). Phase 1 rule hit / 합성 라벨 입력 없음.
+- `relational` (7 sub-detector — R01·R02·R03·R04 기본 + R05·R06·R07 graph/entity 2026-05-24): 신규 거래쌍, dormant 재활성(account/partner), 희귀 (account, partner) edge, user-account degree spike, IC 가격 편차, 문서 흐름 누락
 - `duplicate`: exact duplicate, near duplicate, 반복 금액/설명 패턴
 - `intercompany`: 법인 간 쌍방향, unmatched pair, 비정상 offset 패턴
 
@@ -2940,8 +2971,8 @@ Phase 2 ML에서 **False Positive 내성 훈련**에 활용.
 ## 관련 문서
 
 - [DETECTION_REFERENCE.md](DETECTION_REFERENCE.md) — 법규·기준서·도메인 지식 근거
-- [pre-plan/05-detection.md](pre-plan/05-detection.md) — detection 구현 가이드
-- [pre-plan/05a-detection-ml.md](pre-plan/05a-detection-ml.md) — Phase 2b ML 탐지기 설계
+- [completed/raw-plan/05-detection.md](completed/raw-plan/05-detection.md) — detection 구현 가이드
+- [completed/raw-plan/05a-detection-ml.md](completed/raw-plan/05a-detection-ml.md) — Phase 2b ML 탐지기 설계
 - [debugging.md](debugging.md) — engine.py rules 버그 기록
 - [E2E 테스트 결과](../tests/test_detection/test-results/e2e-detection-datasynth.md)
 

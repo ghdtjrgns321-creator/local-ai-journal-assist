@@ -2,6 +2,10 @@
 
 > **PHASE1 역할 원칙**: PHASE1은 `fraud`를 확정하거나 정답 라벨을 맞히는 단계가 아니다. PHASE1의 목적은 전수 모집단에서 규칙 위반, 정책 위반, 이상 징후, 분석적 검토 신호를 넓게 올려 **감사인이 봐야 할 항목과 우선순위**를 만드는 것이다. DataSynth의 `is_fraud`/`is_anomaly`와 precision/recall은 개발 검증 보조 지표이며, 운영 해석은 예외 처리 대상, 감사인 리뷰 대상, 고위험 후보를 구분하는 review queue 기준으로 한다.
 
+
+> **포트폴리오 주장 범위 (2026-05-19)**: 이 프로젝트는 `fraud`를 판정하거나 실제 운영 부정 탐지 성능을 보장하는 모델이 아니다. 전수 모집단에서 감사인이 먼저 볼 review queue를 만들고, 무작위 검토 대비 상위 구간에 review-worthy synthetic anomaly를 강하게 농축하는 로컬 감사 분석 보조 도구다. DataSynth 기반 precision/recall은 개발 검증 보조 지표이며, 실데이터 운영 성능으로 주장하지 않는다.
+> **금지 표현**: "부정을 정확히 탐지", "실무 운영 성능 검증 완료", "TOP100 precision 충분", "fraud 확정/자동 적발"처럼 확정적이거나 운영 성능을 보장하는 표현은 사용하지 않는다.
+
 전표 감사 검토 후보 선별 룰의 법적 근거, 실증 데이터, 도메인 지식을 정리한 참고 문서.
 탐지 룰 목록과 구현 상세는 [DETECTION_RULES.md](DETECTION_RULES.md) 참조.
 
@@ -146,7 +150,7 @@
 > 520호에 Benford's Law 명시는 없으나, "기대값 개발 → 차이 분석" 프레임워크에 정확히 부합.
 > Mark Nigrini (2012), Journal of Accountancy 등 학술·실무에서 분석적절차 도구로 널리 인정.
 
-### 2.5 감사기준서 550호 §23 — 특수관계자
+### 2.5 감사기준서 550호 §23 — 특수관계자 (보조 근거)
 
 > 기업의 정상적인 영업과정을 벗어나는 것으로 식별된 유의적 특수관계자 거래에 대하여,
 > 감사인은 그 근거가 되는 약정이나 합의사항을 검사하고, 해당 거래의 **사업상 합리성**이
@@ -156,6 +160,65 @@
 → L3-03 관계사 거래 검토 신호 — 관계사 거래 모집단 및 후속 구조 분석 후보
 
 > **금감원 실증**: 2024년 중점심사 4대 이슈 중 하나로 "특수관계자거래 회계처리" 선정.
+
+> **위치 (2026-05-23, D065)**: ISA 550 §23 은 특수관계자 거래의 "사업상 합리성" 평가 기준이다. IC 양측 대사의 회계적 필연성은 IFRS 10 §B86 / K-IFRS 1110 / 1024 / KICPA Issue Paper 46 / ISA 600 (§2.5a~§2.5d) 에서 도출되며, ISA 550 §23 은 본 프로젝트에서 보조 근거로 유지한다. L3-03 관계사 거래 모집단 식별의 1차 근거는 K-IFRS 1024 와 IFRS 10 §B86 이다.
+
+### 2.5a IFRS 10 §B86 — 연결 내부거래 제거 원칙
+
+> 연결재무제표를 작성할 때, 지배기업과 그 종속기업 사이의 거래에서 발생한
+> **자산, 부채, 자본, 수익, 비용 및 현금흐름은 전부 제거하여야 한다**.
+> 이러한 거래에서 인식된 손익은 자산(예: 재고자산이나 유형자산)으로 인식될 때
+> 미실현손익을 포함하므로 전부 제거한다.
+>
+> — IFRS Foundation, IFRS 10 Consolidated Financial Statements, Appendix B (B86)
+
+→ 프로젝트 매핑
+- IC01 (`UnmatchedIntercompany`) 1차 근거. 그룹 내부거래의 양측 대사 실패는 §B86 의 "전부 제거" 의무를 위협하는 evidence 다.
+- L3-03 관계사 거래 모집단 식별의 회계적 근거. IC GL prefix 모집단은 §B86 제거 대상의 후보 모집단이다.
+- IC02/IC03 (`IntercompanyAmountMismatch` / `IntercompanyTimingMismatch`) 은 §B86 제거가 가능하려면 양측의 금액·기간이 정합해야 한다는 전제에서 필요한 대사 절차다.
+
+### 2.5b K-IFRS 1110 — 연결재무제표 작성 시 내부거래 제거 절차
+
+> 지배기업은 동일 회계정책을 적용하여 종속기업의 재무제표를 연결한다.
+> 지배기업과 종속기업 간 거래에서 발생한 잔액, 수익, 비용은 **전액 제거**하여야 한다.
+> 다만, 미실현손익 제거 시점에 일시적차이가 발생하는 경우 이연법인세 회계처리를 한다.
+>
+> — 한국채택국제회계기준 1110 '연결재무제표' (K-IFRS 1110), KICPA / KASB
+
+→ 프로젝트 매핑
+- IFRS 10 §B86 의 국내 채택 버전. L3-03 관계사 거래 모집단 + IC01/IC02/IC03 대사 룰의 K-GAAP 등가 근거다.
+- DataSynth `intercompany_population_truth` sidecar 의 회계 정합성 근거. v37_candidate 부터 IC GL prefix 기준 모집단을 별도 관리한다.
+- 본 프로젝트는 외감대상 한국 중견 제조업 시나리오를 1차 dataset 으로 가정하므로 K-IFRS 1110 을 IFRS 10 §B86 의 운영 근거로 사용한다.
+
+### 2.5c K-IFRS 1024 — 특수관계자 공시 의무
+
+> 보고기업은 다음 사항을 공시한다.
+> (a) 특수관계자와의 거래가 있는 경우, 그 특수관계의 성격
+> (b) 거래 금액
+> (c) 미결제 잔액 (보증 포함) 과 그 조건, 결제 통화, 담보 제공 여부
+> (d) 미결제 잔액에 대한 대손충당금
+> (e) 당기 비용으로 인식한 대손 및 의심채권 금액
+>
+> — 한국채택국제회계기준 1024 '특수관계자 공시' (K-IFRS 1024) §18, KICPA / KASB
+
+→ 프로젝트 매핑
+- L3-03 관계사 거래 모집단 식별의 공시 측 근거. 관계사 GL prefix (`1150`, `2050`, `4500`, `2700`) 모집단은 §18 공시 대상 거래의 후보 모집단이다.
+- IC01 evidence=`high` 의 `related_party_master` 대사 정책은 §18(a) "특수관계의 성격" 명시 요구와 직접 대응한다. master 부재 시 dataset 의 distinct `company_code` 로 폴백하는 정책 역시 미공시 특수관계 식별의 안전망이다.
+- IC02 / IC03 의 잔액·기간 대사는 §18(c) "미결제 잔액과 그 조건" 공시 정합성 확인 절차다.
+
+### 2.5d ISA 600 — 그룹감사 구성단위 잔액 대사
+
+> 그룹감사인은 다음 사항에 대한 충분하고 적합한 감사증거를 입수하여야 한다.
+> (a) 그룹 구성단위의 재무정보의 통합
+> (b) 그룹 내 거래와 미실현손익의 제거
+> (c) 그룹 구성단위 간 잔액의 정합성 (intercompany balance reconciliation)
+>
+> — International Standards on Auditing (ISA) 600 (Revised), IAASB
+
+→ 프로젝트 매핑
+- IC01/IC02/IC03 의 그룹감사 측 1차 근거. ISA 600 은 그룹 구성단위 간 잔액·거래의 양측 대사를 명시적으로 요구한다.
+- IC01 evidence=`high` 는 ISA 600 (c) "구성단위 간 잔액의 정합성" 미충족 evidence 다. IC02 는 금액 측, IC03 은 기간 측 정합성 evidence 다.
+- ISA 600 은 그룹감사 컨텍스트에서 IFRS 10 §B86 / K-IFRS 1110 의 회계 의무를 감사 절차로 번역한다. 즉, 회계 의무 (§B86) + 감사 의무 (ISA 600) + 공시 의무 (K-IFRS 1024) 가 동일한 IC 대사 절차로 수렴한다.
 
 ### 2.6 감사기준서 330호 — 실증절차·재무제표 대사
 
@@ -228,12 +291,16 @@ DataSynth에 증빙 관련 컬럼 추가 시 구현 가능.
 외감법 §8②               내회관 우회 금지                       → L1-07
 감사기준서 315호 §26      controls over journal entries           → L1-05~L3-02
 감사기준서 520호 §5       develop an expectation                  → L4-02
-감사기준서 550호 §23      business rationale of related party      → L3-03
+감사기준서 550호 §23      business rationale of related party      → L3-03 (보조 근거)
+IFRS 10 §B86             연결 내부거래 전부 제거 원칙              → L3-03 모집단, IC01/IC02/IC03 대사 (1차 근거)
+K-IFRS 1110              연결재무제표 작성 시 내부거래 제거 절차    → L3-03 모집단, IC01/IC02/IC03 대사 (K-GAAP 등가)
+K-IFRS 1024 §18           특수관계자 공시 의무                      → L3-03 모집단, IC01 evidence=high 의 related_party_master 대사
+ISA 600                  그룹감사 구성단위 잔액 대사               → IC01 (잔액 정합성), IC02 (금액 측), IC03 (기간 측)
+KICPA Issue Paper 46       Benford·계정 패턴, 완전성                → L4-02, L4-04, IC01~IC03 (JET 완전성)
 감사기준서 330호           실증절차, 재무제표-장부 대사              → 현재 32개 L1~L4 룰 전체 (실증절차)
 감사기준서 500호           감사증거 충분성·적합성                   → 증빙 관련 (DataSynth 확장 시)
 감사기준서 1100호          내회관 감사 (통제 운영평가)               → L1-05~L1-07 (통제 결과 추론)
 KLCA IT 체크리스트         전표 로그 무결성, 변경관리                → L3-05, L3-06, L1-05~L1-07 (부분 커버)
-KICPA Issue Paper 46       Benford·계정 패턴, 완전성                → L4-02, L4-04
 ```
 
 ---
@@ -624,5 +691,5 @@ VPN/재택:   10.10.x.x   외부(공인): 203.x.x.x 등
 ## 관련 문서
 
 - [DETECTION_RULES.md](DETECTION_RULES.md) — 전체 탐지 룰 목록, 구현 상세, 점수 체계
-- [pre-plan/05-detection.md](pre-plan/05-detection.md) — detection 구현 가이드
-- [pre-plan/05a-detection-ml.md](pre-plan/05a-detection-ml.md) — Phase 2b ML 탐지기 설계
+- [completed/raw-plan/05-detection.md](completed/raw-plan/05-detection.md) — detection 구현 가이드
+- [completed/raw-plan/05a-detection-ml.md](completed/raw-plan/05a-detection-ml.md) — Phase 2b ML 탐지기 설계

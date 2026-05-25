@@ -4,6 +4,10 @@
 
 > Current PHASE1 scoring note (2026-04-27): 별도 benchmark 대상 룰 중 `L4-02`는 transaction queue에서 `macro_only`로 정규화된다. 즉 row-level `normalized_score`는 case priority에 직접 기여하지 않고, Account / Process Queue 또는 macro-finding drill-down에서 평가한다. `L4-03`, `L4-04`, `L4-05`는 transaction queue에 남지만 `rule_scoring.py`의 `evidence_strength`와 `scoring_role`을 거친 `normalized_score`만 evidence type score에 합산된다.
 
+
+> **포트폴리오 주장 범위 (2026-05-19)**: 이 프로젝트는 `fraud`를 판정하거나 실제 운영 부정 탐지 성능을 보장하는 모델이 아니다. 전수 모집단에서 감사인이 먼저 볼 review queue를 만들고, 무작위 검토 대비 상위 구간에 review-worthy synthetic anomaly를 강하게 농축하는 로컬 감사 분석 보조 도구다. DataSynth 기반 precision/recall은 개발 검증 보조 지표이며, 실데이터 운영 성능으로 주장하지 않는다.
+> **금지 표현**: "부정을 정확히 탐지", "실무 운영 성능 검증 완료", "TOP100 precision 충분", "fraud 확정/자동 적발"처럼 확정적이거나 운영 성능을 보장하는 표현은 사용하지 않는다.
+
 PHASE1 룰 중 일부는 `document_labels.csv`의 전표 단위 정답만으로 검증하면 룰의 본질을 왜곡한다. 이 문서는 그런 룰에 대해 별도 benchmark 단위, 입력 산출물, acceptance 기준을 정의한다.
 
 관련 문서:

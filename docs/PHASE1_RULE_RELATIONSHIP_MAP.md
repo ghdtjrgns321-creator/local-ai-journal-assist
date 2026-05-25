@@ -2,6 +2,10 @@
 
 > **PHASE1 역할 원칙**: PHASE1은 `fraud`를 확정하거나 정답 라벨을 맞히는 단계가 아니다. PHASE1의 목적은 전수 모집단에서 규칙 위반, 정책 위반, 이상 징후, 분석적 검토 신호를 넓게 올려 **감사인이 봐야 할 항목과 우선순위**를 만드는 것이다. DataSynth의 `is_fraud`/`is_anomaly`와 precision/recall은 개발 검증 보조 지표이며, 운영 해석은 예외 처리 대상, 감사인 리뷰 대상, 고위험 후보를 구분하는 review queue 기준으로 한다.
 
+
+> **포트폴리오 주장 범위 (2026-05-19)**: 이 프로젝트는 `fraud`를 판정하거나 실제 운영 부정 탐지 성능을 보장하는 모델이 아니다. 전수 모집단에서 감사인이 먼저 볼 review queue를 만들고, 무작위 검토 대비 상위 구간에 review-worthy synthetic anomaly를 강하게 농축하는 로컬 감사 분석 보조 도구다. DataSynth 기반 precision/recall은 개발 검증 보조 지표이며, 실데이터 운영 성능으로 주장하지 않는다.
+> **금지 표현**: "부정을 정확히 탐지", "실무 운영 성능 검증 완료", "TOP100 precision 충분", "fraud 확정/자동 적발"처럼 확정적이거나 운영 성능을 보장하는 표현은 사용하지 않는다.
+
 분석일: 2026-04-25
 보강일: 2026-04-27
 
@@ -197,6 +201,7 @@ flowchart LR
 - `L3-08`은 `timing_anomaly`의 구성 룰로 유지한다. 의미는 “설명 부실”이지만, 결산/기말 조정 이상 시나리오에서 시점 이상과 결합해 중요해지는 보조 증거이기 때문이다.
 - `L1-08`은 primary evidence type 기준으로는 `data_integrity_failure`다. 다만 기간 불일치는 결산/cutoff 시나리오에서 중요한 secondary 증거가 되므로, `timing_anomaly` 자체로 재분류하지 않고 `secondary_tags`와 scenario narrative에서 시점 증거로 사용한다.
 - `L4-02` Benford는 `statistical_outlier`에 이름은 남기되, 실제 사용자 큐에서는 row-level transaction hit보다 population/account-level finding으로 다루는 것이 맞다.
+- `intercompany_structure` evidence type 표 (`L3-03 IC01 IC02 IC03`) 본문은 외부 rule id 단일 유지 정책상 변경하지 않는다 (2026-05-23, D065). IC01 hit 의 floor 자격은 detector 결과의 `ic01_evidence_level`, `ic01_review_reason` 두 sidecar column 으로 결정된다. evidence=`high` 만 row Medium floor (0.40) 자격, evidence=`review` 는 row Low floor (0.20). 두 sidecar 는 `intercompany_sidecar` surface 산출물이며 canonical 32 rule count 외부 (`docs/RULE_DETAIL_METADATA_V1_LOCK.md` §IC01 Evidence Level Sidecar Policy 참조). mermaid diagram 의 evidence type 노드 본문은 변경하지 않는다.
 
 Primary/secondary 구분 원칙:
 

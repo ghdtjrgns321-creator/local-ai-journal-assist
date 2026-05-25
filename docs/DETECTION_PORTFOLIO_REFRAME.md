@@ -10,6 +10,10 @@
 
 > 2026-05-07 queue update: `Audit Risk`, `Suspicion`, `조작 후보`, `맥락 검토대상`은 사용자에게 노출할 primary queue가 아니다. PHASE1 결과는 `원장기록·데이터정합성`, `승인·권한·업무분장 통제`, `결산·기간귀속·입력시점`, `계정분류·거래실질 불일치`, `중복·상계·자금유출`, `관계사·내부거래·순환구조`, `수익·금액·모집단 통계 이상`의 7개 감사 주제로 정렬한다.
 
+
+> **포트폴리오 주장 범위 (2026-05-19)**: 이 프로젝트는 `fraud`를 판정하거나 실제 운영 부정 탐지 성능을 보장하는 모델이 아니다. 전수 모집단에서 감사인이 먼저 볼 review queue를 만들고, 무작위 검토 대비 상위 구간에 review-worthy synthetic anomaly를 강하게 농축하는 로컬 감사 분석 보조 도구다. DataSynth 기반 precision/recall은 개발 검증 보조 지표이며, 실데이터 운영 성능으로 주장하지 않는다.
+> **금지 표현**: "부정을 정확히 탐지", "실무 운영 성능 검증 완료", "TOP100 precision 충분", "fraud 확정/자동 적발"처럼 확정적이거나 운영 성능을 보장하는 표현은 사용하지 않는다.
+
 이 문서는 [DETECTION_REFERENCE.md](DETECTION_REFERENCE.md)와 [DETECTION_RULES.md](DETECTION_RULES.md)를
 현재 포트폴리오의 목적에 맞게 다시 해석한 운영 문서다.
 

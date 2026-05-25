@@ -2,16 +2,20 @@
 
 > **PHASE1 역할 원칙**: PHASE1은 `fraud`를 확정하거나 정답 라벨을 맞히는 단계가 아니다. PHASE1의 목적은 전수 모집단에서 규칙 위반, 정책 위반, 이상 징후, 분석적 검토 신호를 넓게 올려 **감사인이 봐야 할 항목과 우선순위**를 만드는 것이다. DataSynth의 `is_fraud`/`is_anomaly`와 precision/recall은 개발 검증 보조 지표이며, 운영 해석은 예외 처리 대상, 감사인 리뷰 대상, 고위험 후보를 구분하는 review queue 기준으로 한다.
 
+
+> **포트폴리오 주장 범위 (2026-05-19)**: 이 프로젝트는 `fraud`를 판정하거나 실제 운영 부정 탐지 성능을 보장하는 모델이 아니다. 전수 모집단에서 감사인이 먼저 볼 review queue를 만들고, 무작위 검토 대비 상위 구간에 review-worthy synthetic anomaly를 강하게 농축하는 로컬 감사 분석 보조 도구다. DataSynth 기반 precision/recall은 개발 검증 보조 지표이며, 실데이터 운영 성능으로 주장하지 않는다.
+> **금지 표현**: "부정을 정확히 탐지", "실무 운영 성능 검증 완료", "TOP100 precision 충분", "fraud 확정/자동 적발"처럼 확정적이거나 운영 성능을 보장하는 표현은 사용하지 않는다.
+
 Updated: 2026-05-08
 Status: Locked for v1 implementation
 
 Source inputs:
 
-- `docs/tmp_context_a_rule_metadata.md`
-- `docs/tmp_context_b_rule_display_guidance.md`
-- `docs/tmp_context_c_rule_column_metadata.md`
-- `docs/tmp_context_d_rule_metadata_schema.md`
-- `docs/tmp_context_e_rule_metadata_integration_review.md`
+- `docs/completed/tmp_context_a_rule_metadata.md`
+- `docs/completed/tmp_context_b_rule_display_guidance.md`
+- `docs/completed/tmp_context_c_rule_column_metadata.md`
+- `docs/completed/tmp_context_d_rule_metadata_schema.md`
+- `docs/completed/tmp_context_e_rule_metadata_integration_review.md`
 - `docs/DETECTION_RULES.md`
 - `docs/PHASE1_TOPIC_SCORING_V1_LOCK.md`
 
@@ -294,6 +298,64 @@ Deferred beyond v1:
 - Whether to expand from minimal `RuleDetailMetadata` into the full nested Context D registry.
 - Whether to persist `canonical_rule_id` and `presenter_surface` directly into raw hit storage instead of enriching at projection time.
 - Whether `L4-02` macro context should attach to every eligible transaction case in the same account/process population or only to explicit account/process review queues.
+
+## IC01 Evidence Level Sidecar Policy (2026-05-23, D065)
+
+본 절은 IC01 의 evidence level sidecar 정책을 별도 lock 으로 명시한다. canonical 32 transaction/detail rule count 정책 (§Rule Count Policy) 과 `RULE_DETAIL_METADATA_REGISTRY` 본문은 변경하지 않는다.
+
+Locked decisions:
+
+- 외부 rule id 는 `IC01` 단일을 유지한다. `IC01_A` / `IC01_B` 와 같은 분리는 도입하지 않는다.
+- `IC01`, `IC02`, `IC03` 의 canonical excluded 분류는 그대로 유지된다 (`Excluded from the canonical transaction/detail count` §). `intercompany_sidecar` surface 정책 변경 없음.
+- `SEVERITY_MAP` 의 IC01/IC02/IC03 점수 (`IC01=3, IC02=2, IC03=2`) 는 변경하지 않는다 (`src/detection/constants.py:195`).
+
+신규 sidecar column 2 종 (canonical 32 count 외부, `intercompany_sidecar` surface 의 일부):
+
+```
+column                      값                                             의미
+────────────────────────────────────────────────────────────────────────────────────────────────────────
+ic01_evidence_level         "high"                                         IC 모집단 + 그룹 매칭 실패 +
+                                                                           명시적 회사 상대방 +
+                                                                           관계사/그룹 master 대사 실패
+ic01_evidence_level         "review"                                       IC 모집단 + 그룹 매칭 실패 +
+                                                                           (partner 결측 OR 형식 비표준 OR
+                                                                            master mapping 미정)
+ic01_evidence_level         ""                                             해당 없음 (IC01 미해당 또는
+                                                                           customer/vendor master 제외)
+ic01_review_reason          "missing_partner"                              trading_partner 결측
+ic01_review_reason          "nonstandard_format"                           trading_partner 형식 비표준
+                                                                           (partner_format regex 비매칭)
+ic01_review_reason          "mapping_uncertain"                            master mapping 미정 (폴백 적용)
+ic01_review_reason          ""                                             evidence_level != "review" 또는
+                                                                           IC01 미해당
+```
+
+Sidecar 저장 위치 (2026-05-23 보정):
+
+- 두 sidecar column 은 `DetectionResult.metadata["row_sidecar"]: dict[str, pd.Series]` 에 보관한다. `DetectionResult.details` 에는 부착하지 않는다.
+- `DetectionResult.details` 는 numeric rule-score (IC01/IC02/IC03 `float64`) matrix 계약을 유지한다. 문자열 sidecar 가 `details` 에 섞이면 `src/metrics/ground_truth_evaluator.py:1152, 1537` 과 `src/detection/score_aggregator.py::_collect_flagged_rules` 의 `details > 0` 비교에서 TypeError 가 발생하므로 분리 필수.
+- 런타임 검증: `result.details.columns == ['IC01', 'IC02', 'IC03']`, `result.details.dtypes` 전부 `float64`, `(result.details > 0).any().any()` 정상 동작.
+
+Review-only 신호의 confirmed 격상 방지 (2026-05-23):
+
+- IC01 review-level (`ic01_evidence_level == "review"`) 은 `details["IC01"]` score 가 `0.0` 으로 유지된다. high 만 `score = 1.0` 으로 산출된다.
+- 따라서 `flagged_rules` / case seed / ground-truth 평가에서 confirmed violation 으로 격상되지 않는다.
+- `score_aggregator._extract_ic01_evidence_level()` 는 `metadata["row_sidecar"]["ic01_evidence_level"]` 에서 evidence level 을 read 하여 row-level `anomaly_score` 의 Low floor (0.20) 만 부여한다.
+- 근거: `AGENTS.md` "review-only signals must not become confirmed violations".
+
+Lock 조건:
+
+- 두 sidecar column 은 `intercompany_sidecar` surface 산출물이다. `RULE_DETAIL_METADATA_REGISTRY` 의 rule_id enum 에는 포함하지 않는다.
+- `presenter_surface=intercompany_sidecar`, `include_in_l1_l4_transaction_count=False`, `allow_row_violation_detail=False` 정책은 IC01 본 entry 와 동일하게 적용된다.
+- 두 sidecar column 의 생성 책임은 `src/detection/intercompany_rules.py::ic01_unmatched_intercompany()` 와 `src/detection/intercompany_matcher.py::_build_result()` 에 있다. 후자는 `DetectionResult.metadata["row_sidecar"]` 에 부착한다. `score_aggregator._apply_intercompany_exception_corroboration()` 는 `metadata["row_sidecar"]` 를 read-only 로 소비한다 (구버전 `details` fallback 도 지원).
+- dashboard / export 표시 맵의 외부 rule id 는 `IC01` 단일 유지. evidence level 은 상세 panel 또는 sidecar drill-down 에서만 노출한다.
+- review_reason 코드 enum 확장은 별도 결정문 (후속 D-series) 으로만 허용한다. v1 lock 시점에는 `missing_partner`, `nonstandard_format`, `mapping_uncertain`, `""` 4 값만 유효하다.
+
+관련 결정문 / 문서:
+
+- `docs/DECISION.md` D065 (2026-05-23) — IC01 sidecar 직접 의존 제거, evidence level 정책 도입.
+- `docs/DETECTION_RULES.md` L3-03 절 evidence level sidecar 정책 표.
+- `docs/PHASE1_TOPIC_SCORING_V1_LOCK.md` 관계사·내부거래·순환구조 topic floor 차별 보조 절.
 
 ## RuleExplanation Extension Area (2026-05-17)
 

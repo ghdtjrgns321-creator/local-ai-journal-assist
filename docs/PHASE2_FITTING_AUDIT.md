@@ -18,6 +18,10 @@
 > S9 anti-shortcut cap ratio≈39.6, BLOCK 유지) — 모두 모델 설계 측 작업.
 > 재검증 trace: [`artifacts/manipulation_v4_audit_rerun_summary_20260516.md`](../artifacts/manipulation_v4_audit_rerun_summary_20260516.md)
 
+
+> **포트폴리오 주장 범위 (2026-05-19)**: 이 프로젝트는 `fraud`를 판정하거나 실제 운영 부정 탐지 성능을 보장하는 모델이 아니다. 전수 모집단에서 감사인이 먼저 볼 review queue를 만들고, 무작위 검토 대비 상위 구간에 review-worthy synthetic anomaly를 강하게 농축하는 로컬 감사 분석 보조 도구다. DataSynth 기반 precision/recall은 개발 검증 보조 지표이며, 실데이터 운영 성능으로 주장하지 않는다.
+> **금지 표현**: "부정을 정확히 탐지", "실무 운영 성능 검증 완료", "TOP100 precision 충분", "fraud 확정/자동 적발"처럼 확정적이거나 운영 성능을 보장하는 표현은 사용하지 않는다.
+
 ---
 
 ## 0. 종합 판정
@@ -45,13 +49,13 @@
 | S0 | Column catalog & leakage classification | [`S0_column_classification.md`](../tests/datasynth_quality_gate/results/phase2_fitting_audit/S0_column_classification.md), `S0_column_catalog.json` |
 | S1 | Label leakage deny-list enforcement | [`S1_leakage_enforcement_plan.md`](../tests/datasynth_quality_gate/results/phase2_fitting_audit/S1_leakage_enforcement_plan.md), `S1_leakage_columns_audit.json` |
 | S2 | Split contamination | [`artifacts/S2_split_recommendation.md`](../artifacts/S2_split_recommendation.md), `artifacts/S2_split_contamination.json` |
-| S3 | Trivial baseline | [`docs/S3_trivial_shortcut_baseline.md`](S3_trivial_shortcut_baseline.md), `artifacts/stage3_trivial_shortcut_baseline.json` |
+| S3 | Trivial baseline | [`docs/completed/S3_trivial_shortcut_baseline.md`](completed/S3_trivial_shortcut_baseline.md), `artifacts/stage3_trivial_shortcut_baseline.json` |
 | S4 | Scenario detectability + 평가 protocol | [`artifacts/S4_scenario_detectability.md`](../artifacts/S4_scenario_detectability.md), [`artifacts/S4_evaluation_protocol.md`](../artifacts/S4_evaluation_protocol.md) |
 | S5 | Phase1 룰 ↔ manipulated truth 순환학습 | [`artifacts/S5_phase2_input_redesign.md`](../artifacts/S5_phase2_input_redesign.md), `artifacts/S5_circular_learning_overlap.json` |
 | S6 | VAE 학습 데이터 오염 | [`artifacts/s6_vae_contamination/S6_vae_train_contamination.md`](../artifacts/s6_vae_contamination/S6_vae_train_contamination.md), `S6_label_strategy_patch.md`, `ks_test_result.json` |
 | S7 | BiLSTM sequence window leakage + split redesign | [`artifacts/S7_sequence_split_redesign.md`](../artifacts/S7_sequence_split_redesign.md), `artifacts/S7_sequence_window_leakage.json` |
-| S8 | Stacking OOF protocol 재검증 | [`docs/S8_stacking_oof_audit.md`](S8_stacking_oof_audit.md), `artifacts/S8_stacking_oof_ablation.json` |
-| S9 | Phase 2 ML 부가가치 baseline + zero-day 대안 | [`docs/S9_phase2_value_baseline.md`](S9_phase2_value_baseline.md), [`docs/S9_zero_day_protocol_alternatives.md`](S9_zero_day_protocol_alternatives.md) |
+| S8 | Stacking OOF protocol 재검증 | [`docs/completed/S8_stacking_oof_audit.md`](completed/S8_stacking_oof_audit.md), `artifacts/S8_stacking_oof_ablation.json` |
+| S9 | Phase 2 ML 부가가치 baseline + zero-day 대안 | [`docs/completed/S9_phase2_value_baseline.md`](completed/S9_phase2_value_baseline.md), [`docs/completed/S9_zero_day_protocol_alternatives.md`](completed/S9_zero_day_protocol_alternatives.md) |
 | S10 | 종합 판정 (본 문서) | [`docs/PHASE2_FITTING_AUDIT.md`](PHASE2_FITTING_AUDIT.md), `tests/datasynth_quality_gate/results/phase2_fitting_audit/SUMMARY.md` |
 
 ---
@@ -203,7 +207,7 @@
 +   두 값 동시 보고. 격차 ≥ 0.05 시 prevalence skew 경고.
 +
 +근거 audit: `docs/PHASE2_FITTING_AUDIT.md`,
-+`artifacts/S4_evaluation_protocol.md`, `docs/S9_phase2_value_baseline.md`.
++`artifacts/S4_evaluation_protocol.md`, `docs/completed/S9_phase2_value_baseline.md`.
 ```
 
 ### 6.2 `docs/DECISION.md` — D040 신규 결정 추가
@@ -227,7 +231,7 @@
 +- **영향 범위**: `phase2_training_service`, PHASE2 평가 entry, CI workflow,
 +  `tests/datasynth_quality_gate/results/phase2_fitting_audit/`
 +- **관련 audit**: `docs/PHASE2_FITTING_AUDIT.md`,
-+  `artifacts/S4_evaluation_protocol.md`, `docs/S9_phase2_value_baseline.md`
++  `artifacts/S4_evaluation_protocol.md`, `docs/completed/S9_phase2_value_baseline.md`
 +- **관련 결정**: D027 (Hold-out Fraud Type), D029 (데이터 분할 전략),
 +  D034 (Stacking Meta-Learner), D037 (모델 드리프트 재학습)
 +
@@ -263,7 +267,7 @@
 +  `data/journal/primary/datasynth_manipulation_v3` 의 active lock 변경
 +- **비용**: Rust profile 설계 + 빌드 + 검증 2-3 일
 +- **관련 audit**: `docs/PHASE2_FITTING_AUDIT.md`,
-+  `docs/S9_zero_day_protocol_alternatives.md` §3.3
++  `docs/completed/S9_zero_day_protocol_alternatives.md` §3.3
 +- **관련 결정**: D027 (Hold-out Fraud Type), D028 (DataSynth 프로세스),
 +  D036 (DataSynth v20.4), D039 (DataSynth v23)
 ```

@@ -9,6 +9,10 @@
 >
 > **PHASE1 거버넌스 정합**: [docs/CONSTRAINTS.md §"PHASE1 CI KPI 가드 정책 (3-Layer 구조)"](CONSTRAINTS.md) · [tests/phase1_rulebase/kpi_baseline.json](../tests/phase1_rulebase/kpi_baseline.json) · [tests/phase1_rulebase/nightly_kpi_guard.py](../tests/phase1_rulebase/nightly_kpi_guard.py)
 
+
+> **포트폴리오 주장 범위 (2026-05-19)**: 이 프로젝트는 `fraud`를 판정하거나 실제 운영 부정 탐지 성능을 보장하는 모델이 아니다. 전수 모집단에서 감사인이 먼저 볼 review queue를 만들고, 무작위 검토 대비 상위 구간에 review-worthy synthetic anomaly를 강하게 농축하는 로컬 감사 분석 보조 도구다. DataSynth 기반 precision/recall은 개발 검증 보조 지표이며, 실데이터 운영 성능으로 주장하지 않는다.
+> **금지 표현**: "부정을 정확히 탐지", "실무 운영 성능 검증 완료", "TOP100 precision 충분", "fraud 확정/자동 적발"처럼 확정적이거나 운영 성능을 보장하는 표현은 사용하지 않는다.
+
 ---
 
 ## 0. 배경 및 원칙
@@ -432,6 +436,306 @@ PHASE1 패턴 그대로:
 | workflow 별도 (`phase1-kpi-guard.yml` / `phase2-kpi-guard.yml`) | PR diff scope 가 다름 (`paths:` filter) |
 | baseline JSON 별도 (`tests/phase1_rulebase/` / `tests/phase2_rulebase/`) | 가드 의미 충돌 방지 |
 | cron 시간차 (09:00 / 10:00 UTC) | runner 자원 충돌 회피 |
+
+---
+
+## 결정 8 — PHASE2 family ranking 정책 (2026-05-19, Noisy-OR 채택으로 갱신)
+
+### 8.0 결정 요지 (최종)
+
+PHASE2 5 family 결합 ranking 은 **Noisy-OR separated** 채택. 구체적으로:
+
+1. **RRF 적용 범위 제한**: PHASE1 ↔ PHASE2 의 전역 결합 (2-way RRF k=60) 한정. PHASE2 내부 5 family 결합에는 RRF 미사용.
+2. **PHASE2 internal 결합 = Noisy-OR**: `phase2_internal_noisy_or(case) = 1 - Π_f (1 - ecdf_f(case))`. 5 family ECDF 를 독립 anomaly 확률로 해석한 OR 결합. 단, 0/NaN 은 "무신호"로 보존하며 percentile 중간값으로 올리지 않는다.
+3. **Reject 결정** (PHASE2 internal hierarchical RRF): V7 fixed3 measurement-only 비교에서 TOP 100~5000 평균 -6.45pp 손실. supervised/transformer 활성화 시 재평가.
+4. **family signal lane/overlay/tie-break/narrator citation 보조 노출 유지**: ranking 합산과 별개로 attribution 용도.
+
+### 8.0a 채택 산출물 (Noisy-OR separated, 2026-05-19)
+
+| 항목 | 값 |
+|------|---|
+| 채택 측정 산출물 | [`artifacts/phase2_family_ranking_alt_aggregators_20260519.md`](../artifacts/phase2_family_ranking_alt_aggregators_20260519.md) (탐색) / [`artifacts/phase1_phase2_integration_report_noisy_or_20260519.md`](../artifacts/phase1_phase2_integration_report_noisy_or_20260519.md) (운영 production run) |
+| 탐색 measurement Δ — alt_aggregator (`synthesize_phase1_composite` 근사 + 일반 ECDF) | 초기 batch-local 일반 ECDF 측정에서는 전 깊이 양수였으나, 0/NaN 무신호를 percentile 중간값으로 올리는 결함이 있어 **운영 성능 주장으로 사용하지 않음** |
+| 운영 production V7 fixed3 recall — Noisy-OR voter (queue_integrated.parquet) | TOP 100 22.42% (139) / TOP 500 45.48% (282) / TOP 1,000 49.68% (308) / TOP 2,000 59.68% (370) |
+| 운영 production V7 fixed3 recall — legacy PHASE1+VAE 2-way RRF (비교용) | TOP 100 16.77% (104) / TOP 500 43.23% (268) / TOP 1,000 53.71% (333) / TOP 2,000 63.55% (394) |
+| 깊이별 Δ (Noisy-OR − legacy) | TOP 100 **+5.65pp** / TOP 500 **+2.26pp** / TOP 1,000 **-4.03pp** / TOP 2,000 **-3.87pp** — **단조 우월 아님, 깊이별 trade-off** |
+| 종합 truth recall 비교 | TOP 100~2,000 평균 Δ ≈ 0pp — 운영적으로 **사실상 동률**. 분포만 상단(TOP 100~500)으로 재배치된 형태. truth recall 은 informational only (feedback_phase1_truth_recall_guard 준수). |
+| 채택 사유 (truth recall 개선 아님) | (a) 5-family signal 을 단일 PHASE2 voter 와 narrator attribution 으로 **일관되게 표준화** (b) **무신호(0/NaN) 보존** — 일반 ECDF 의 percentile 중간값 결함 회피 (c) **parameter 0개 / weight 0개 / fitting 위험 0** — PHASE1 truth-recall-guard 무충돌 |
+| Production run 산출 위치 | **queue.parquet 는 PHASE1 단독 큐 alias 유지 (legacy 호환). 통합 큐는 queue_integrated.parquet.** |
+| 채택 helper | `src/services/queue_fusion.py::compute_phase2_internal_noisy_or` |
+| 채택 wiring | `tools/scripts/phase1_phase2_integration_stage7.py::build_integrated_queue` |
+| 정정 기록 | [`docs/TROUBLESHOOT.md` TS-15](TROUBLESHOOT.md#ts-15) |
+
+### 8.1 사용자 승인 문장 (lock)
+
+> Proceed with design pivot: keep primary PHASE1+VAE 2-way RRF, reject PHASE2 internal hierarchical RRF for production, preserve family diagnostics as lane/evidence overlays, and update governance/docs/tests accordingly.
+
+후속 사용자 지시 (RRF 외 측정 진행 후):
+> RRF를 버리고 다른방식으로 합산하는 건은 왜 안진행했어? RRF좀 씨발 집착하지말라고
+
+→ 8 결합식 × 3 적용 방식 측정 → **Noisy-OR separated 채택**으로 결정 8 갱신.
+
+### 8.2 측정 근거
+
+#### 8.2a Hierarchical RRF reject 측정 (1차 시도, 폐기)
+
+| 항목 | 값 |
+|------|---|
+| 측정 산출물 | [`artifacts/phase2_family_ranking_measurement_20260519.md`](../artifacts/phase2_family_ranking_measurement_20260519.md) |
+| baseline | PHASE1 composite (dry-run 근사) ↔ VAE ECDF 2-way RRF k=60 |
+| 비교 대상 | hierarchical RRF (active=unsup+duplicate / booster=timeseries+relational / near-dormant=intercompany) |
+| TOP 100 Δrecall | -0.48pp |
+| TOP 500 Δrecall | -6.45pp |
+| TOP 1,000 Δrecall | -10.64pp |
+| TOP 2,000 Δrecall | -7.90pp |
+| TOP 5,000 Δrecall | -6.77pp |
+| 원인 진단 | 5 family 가 동등 voter 가 아님 (unsupervised 연속 / duplicate 이산 cap / timeseries 2값 이산 / intercompany 99.997% 0). voter 형식 통일 시 unsupervised 의 연속 분해능이 dilute 됨. |
+| 재평가 조건 | supervised / transformer 등 family 가 추가 활성화되어 모든 active family 가 연속·전역 ranker 가 될 때 |
+
+#### 8.2b Noisy-OR separated 채택 측정 (2차 시도, 채택)
+
+| 항목 | 값 |
+|------|---|
+| 측정 산출물 | [`artifacts/phase2_family_ranking_alt_aggregators_20260519.md`](../artifacts/phase2_family_ranking_alt_aggregators_20260519.md) |
+| 측정 범위 | 8 결합식 (max / tier_weighted_sum / cascade_boost / evidence_vote / noisy_or / rank_product / geometric_mean / top_k_mean) × 3 적용 (phase2_only / separated / unified) = 24 측정 + baseline 2 |
+| **측정 1 baseline** | VAE ECDF 단독 (PHASE2 internal 비교) |
+| Noisy-OR Δ vs VAE 단독 | 초기 batch-local ECDF 측정값. 0/NaN 무신호 row 에 양의 ECDF가 부여되는 문제가 있어 운영 성능 근거로 사용하지 않음 |
+| **측정 2 baseline** | PHASE1 composite + VAE ECDF 2-way RRF k=60 |
+| Noisy-OR separated Δ vs baseline | 초기 batch-local ECDF 측정값. 운영 helper 를 zero-preserving ECDF 로 수정한 뒤에는 local V7 fixture 에서 legacy PHASE1+VAE 2-way 와 동률 |
+| 일관성 | Noisy-OR 식은 유지하되, 성능 향상 주장은 제거. 사용 목적은 5-family attribution 을 단일 PHASE2 voter 로 표준화하는 것 |
+| 도메인 해석 | 각 family ECDF 를 독립 anomaly 확률로 해석한 OR 결합. 0/NaN 은 무신호로 보존. V7 §6 family 보완성 (시나리오별 분담) 을 한 점수에 흡수하되, truth recall 향상 근거로 주장하지 않음 |
+| Production run 검증 | TOP 100/500/1,000/2,000 doc recall (queue_integrated.parquet, Noisy-OR voter): **22.42% / 45.48% / 49.68% / 59.68%** (139 / 282 / 308 / 370 truth docs). legacy PHASE1+VAE 2-way 대비 깊이별 trade-off: TOP 100 +5.65pp / TOP 500 +2.26 / TOP 1,000 **-4.03** / TOP 2,000 **-3.87**. **단조 우월 아님**, 평균 ≈ 0pp 종합 동률. queue.parquet alias 는 PHASE1 단독 큐 분리 보존. |
+
+### 8.3 RRF 적용 범위 + PHASE2 internal 결합식
+
+| 적용 영역 | 결합식 | 상태 |
+|---|---|---|
+| primary global queue | `1/(60 + rank_phase1_composite) + 1/(60 + rank_phase2_internal_noisy_or)` | ✅ 운영 채택 (2026-05-19) |
+| PHASE2 internal family 결합 | `1 - Π_{f ∈ 5 families} (1 - ecdf_f)` (Noisy-OR) | ✅ 운영 채택 |
+| PHASE2 internal hierarchical RRF | (도입 안 함) | ❌ V7 fixed3 -6.45pp 손실로 reject |
+| 미래 supervised/transformer 결합 | (재평가 조건부) | hierarchical RRF 재평가 가능 |
+
+운영 식 정정 (이전 → 신규):
+
+```
+# 이전 (PHASE2 voter = VAE ECDF 단독)
+final_score(case) = 1/(60 + rank(phase1_composite_sort_score))
+                  + 1/(60 + rank(phase2_unsupervised_score_max))
+
+# 신규 (PHASE2 voter = 5-family Noisy-OR)
+phase2_internal_noisy_or(case) = 1 - Π_f (1 - ecdf_f(case))  # zero-preserving 5 family ECDF
+final_score(case) = 1/(60 + rank(phase1_composite_sort_score))
+                  + 1/(60 + rank(phase2_internal_noisy_or))
+```
+
+식 자체는 PHASE1 ↔ PHASE2 2-way RRF k=60 으로 동일. **voter 만 VAE 단독에서 5-family Noisy-OR 로 교체**.
+
+운영 효과 — V7 fixed3 fixture 측정으로는 **종합 truth recall 사실상 동률**. TOP 100/500 에서 +5.65/+2.26pp 개선, TOP 1,000/2,000 에서 -4.03/-3.87pp 손실의 깊이별 trade-off. 채택은 truth recall 개선이 아니라 (a) 단일 voter + narrator attribution standardization, (b) 무신호(0/NaN) 보존, (c) parameter 0개 / fitting 위험 0 의 architecture 합치성으로 정당화한다.
+
+### 8.4 family signal 노출 4 경로
+
+| 경로 | 정의 | 출처 코드 |
+|---|---|---|
+| lane | dashboard 보조 큐. `duplicate / relational / timing / intercompany` 별 정렬. evidence_tier desc → family ECDF desc. | `dashboard/components/phase2_family_lanes.py`, `src/services/phase2_lane_sort.py` |
+| overlay | `Phase2CaseOverlay.family_contributions[{family, score, ecdf, role, evidence_tier, sub_detectors}]` + `top_family` + `coverage_breadth_q95` + `max_family_ecdf` + `max_evidence_tier` + `lane_membership` + `coverage_gap_families` | `src/services/phase2_case_contract.py::build_phase2_case_overlays` |
+| tie-break | primary RRF 동률·near-tie 한정 6단 ladder. weighted score 금지. | `src/services/phase2_case_contract.py::apply_phase2_tie_break` |
+| narrator citation | `phase2_family_contributions`, `phase2_top_family`, `phase2_lane_membership`, `phase2_max_evidence_tier` 등 PHASE3 prompt payload | `src/llm/phase3_case_prompt.py::_case_input` |
+
+### 8.5 Tie-break 가드 (lock)
+
+> **Tie-break ladder는 primary RRF의 동률 또는 near-tie 보조 정렬에만 사용하며, primary queue의 기본 순위를 뒤집는 별도 weighted score로 사용하지 않는다.**
+
+구현 가드:
+- 동률 정의: `primary RRF score 차이 ≤ near_tie_eps` (기본 1e-9, float 정밀도)
+- ladder 적용은 lexicographic 비교만, weight 가중합 금지
+- regression test `tests/modules/test_services/test_phase2_case_contract.py::test_tie_break_preserves_primary_order_outside_near_tie` 가 near-tie 외 영역에서 primary 순위 보존을 검증
+
+### 8.6 family role 4 상태 (L0 metric 자동 판정)
+
+| role | 임계값 | 운영 의미 |
+|---|---|---|
+| active-ranker | row_nonzero_rate ≥ 0.001 AND rank_resolution ≥ 0.01 AND top_tail_resolution ≥ 0.5 | lane 노출, primary tier badge 계산에 참여 |
+| coarse-booster | rank_resolution < 0.01 OR top_tail_resolution < 0.5 (≥ 0.2) | lane 노출, "보조" 배지 |
+| tail-only-fallback | top_tail_resolution < 0.2 | lane 노출, "꼬리만" 배지 |
+| near-dormant | row_nonzero_rate < 0.001 | lane 표시는 유지하되 "데이터 미보유" 배지, coverage_gap_families 에 포함 |
+
+L0 metric:
+- `row_nonzero_rate`: score > 0 인 행 / 전체 행 (near-dormant 진단)
+- `rank_resolution`: unique rank 수 / 전체 행 (coarse 진단)
+- `top_tail_resolution`: 1 - (largest tie block at or above q95 / top_tail_count) (tail 변별력 진단)
+
+role classification 은 **training 시점에 결정 + `training_report.json` 의 `metadata.family_diagnostics.roles` 에 pin**. inference 마다 재계산하면 role 이 진동하므로 재분류는 재학습 trigger 로만 통제 (§6.2 trigger matrix 정합).
+
+### 8.7 evidence_tier 거버넌스 lock
+
+`config/phase2_subdetector_tiers.yaml` 단일 출처. 21 sub-detector (1 unsupervised + 2 timeseries + 7 relational + 4 duplicate + 7 intercompany) 모두 cover. relational R05~R07 (rare_account_partner_edge / user_account_degree_spike / dormant_partner_reactivation) 은 2026-05-24 graph/entity anomaly 보강으로 추가. intercompany internal probability column 4개 (`ic_reciprocal_flow_prob` strong / `ic_amount_prob` moderate / `ic_unmatched_prob` weak / `ic_timing_prob` weak) 는 2026-05-25 옵션 2 (lane evidence_role priority) 적용으로 추가 등록 — score 합성 변경 없음, lane sort `ic_role_priority` secondary dim 노출 용도 (docs/PHASE2_INTERFACE_DESIGN.md §4.3.2). IC internal prob hit 은 의도적으로 family entry `evidence_tier` 로 승격되어 `classify_phase2_review_band` 분류에도 영향 (audit semantic — ISA 550 ¶A20 / PCAOB AS 2401 §B7 인용 정합). 회귀 가드는 `TestIntercompanyInternalProbReviewBandImpact` 6 케이스. 각 항목에 `source_type ∈ {standard, distribution}` + 출처 인용 (PCAOB AS 2401 / ISA 240 / ISA 550 또는 V7 fixed3 분포 측정값) 필수.
+
+| 가드 | 위치 |
+|---|---|
+| 21 항목 누락 차단 | `tests/phase2_rulebase/test_subdetector_tiers_schema.py::TestCoverage` |
+| tier ∈ {strong, moderate, weak, ml_quantile} | 동 schema test `TestTierValues` |
+| 출처 필수 | 동 schema test `TestSourceFields` + `TestStrongTierStandardBacking` |
+| IC lane role priority 회귀 | `tests/modules/test_services/test_phase2_lane_sort.py::TestIntercompanyRolePriority` |
+| PR 변경 절차 | [`docs/DECISION.md` D044 fitting-risk check](DECISION.md) — "PHASE2 sub-detector tier 변경 여부" 명시. truth recall 사유 금지. |
+
+### 8.8 PHASE1 truth-recall-guard / 옵션 R / 옵션 Z 정합
+
+| 기존 정책 | 결정 8 정합 여부 | 근거 |
+|---|---|---|
+| `feedback_phase1_truth_recall_guard` | ✅ 정합 | tier·role·tie-break 가드 모두 truth label 미사용. parameter 0 개. |
+| 결정 5 옵션 R (supervised 활성화 시 zero-day 발견용, ranking 은 narrator 재정렬) | ✅ 정합 | PHASE2 family signal 은 narrator citation 입력 (family_contributions). primary ranking 침범 없음. |
+| 결정 3 옵션 Z (independent queue) | ✅ 정합 | PHASE1 단독 큐는 그대로 보존하고, 통합 큐는 PHASE1 ↔ PHASE2 Noisy-OR 2-way RRF 로 별도 산출. |
+| Layer C SOFT WARN 원칙 | ✅ 정합 | family_diagnostics 안정성 metric 은 SOFT WARN 만 (baseline × 0.7 하한). 향상 강제 금지. |
+| Meta M1 (truth recall 향상 강제 가드 금지) | ✅ 정합 | tier/role 모두 truth 미사용. lane 정렬도 분포 기반. |
+
+### 8.9 산출물 인덱스 (결정 8)
+
+#### 채택 코드 (Noisy-OR separated, 2026-05-19 채택)
+
+| 파일 | 역할 |
+|------|------|
+| `src/services/queue_fusion.py::compute_phase2_internal_noisy_or` | **채택된 PHASE2 5-family Noisy-OR helper** |
+| `src/services/queue_fusion.py::to_ecdf` | zero-preserving ECDF 변환 helper (0/NaN 무신호 보존) |
+| `tools/scripts/phase1_phase2_integration_stage7.py::build_integrated_queue` | 운영 통합 큐 — Noisy-OR voter 적용 |
+| `tools/scripts/phase2_family_ranking_alt_aggregators.py` | 8 결합식 measurement script (재현 가능) |
+| `tests/modules/test_services/test_queue_fusion.py::TestNoisyOr*` | Noisy-OR helper 회귀 (33 tests) |
+| `tests/modules/test_services/test_phase1_phase2_integration_stage7.py` | 운영 wiring 회귀 (15 tests) |
+
+#### 보조 코드 (Phase A~F 사전 작업)
+
+| 파일 | 역할 |
+|------|------|
+| `config/phase2_subdetector_tiers.yaml` | 21 sub-detector tier lock 단일 출처 (relational R05~R07 graph/entity 보강 2026-05-24, IC 4개 internal prob column 2026-05-25 옵션 2) |
+| `src/services/subdetector_tiers.py` | tier loader + 검증 |
+| `src/services/phase2_family_diagnostics.py` | L0 3 metric + role classifier + metadata pin |
+| `src/services/phase2_case_contract.py` | Phase2CaseOverlay 확장 + 6단 tie-break (가드 포함) |
+| `src/services/phase2_lane_sort.py` | lane 내부 정렬 helper |
+| `dashboard/components/phase2_family_lanes.py` | lane view 컴포넌트 |
+| `tests/phase2_rulebase/test_subdetector_tiers_schema.py` | tier YAML schema test |
+| `tests/modules/test_services/test_phase2_family_diagnostics.py` | L0 metric + role classifier 회귀 |
+| `tests/modules/test_services/test_phase2_case_contract.py` | overlay 신규 필드 + 6단 tie-break 가드 회귀 |
+| `tests/modules/test_services/test_phase2_lane_sort.py` | lane 정렬 회귀 |
+| `tests/modules/test_pipeline/test_phase2_lane_overlay_preservation.py` | primary queue 보존 회귀 |
+| `tests/modules/test_dashboard/test_phase2_family_lanes.py` | lane UI helper 회귀 |
+
+#### 격리 코드 (Hierarchical RRF, V7 fixed3 reject)
+
+| 파일 | 역할 |
+|------|------|
+| `src/services/queue_fusion.py::compute_phase2_internal_rrf` | **EXPERIMENTAL** — V7 fixed3 -6.45pp reject, 미래 재평가용 보존 |
+| `tests/modules/test_services/test_queue_fusion_hierarchical.py` | `@pytest.mark.experimental_phase2_internal_rrf` 격리 |
+| `tools/scripts/phase2_family_ranking_dry_run.py` | reject measurement 재현 script |
+
+#### 측정 산출물
+
+| 파일 | 역할 |
+|------|------|
+| `artifacts/phase2_family_ranking_measurement_20260519.{md,json}` | hierarchical RRF reject 근거 |
+| `artifacts/phase2_family_ranking_alt_aggregators_20260519.{md,json}` | **Noisy-OR 채택 근거 — 8 결합식 × 3 적용 측정** |
+| `artifacts/phase1_phase2_integration_report_5way_20260519.{md,json}` | production run TOP 100/500/1000/2000 recall (Noisy-OR voter 적용) |
+
+#### 거버넌스 / 플랜 / 정정 기록
+
+| 파일 | 역할 |
+|------|------|
+| `docs/TROUBLESHOOT.md` TS-15 | 결정 과정 (hierarchical RRF reject → Noisy-OR 채택) 정리 |
+| `docs/users/08_PHASE2_FAMILY_STRUCTURE.md` | 사용자 문서 — Noisy-OR 채택 반영 |
+| `docs/users/09_REVIEW_QUEUE_RRF_FUSION.md` | 사용자 문서 — RRF 적용 범위 한정 + Noisy-OR 식 명시 |
+| `dev/active/phase2-family-ranking/` | plan/context/tasks 3 파일 |
+
+---
+
+## 결정 9 — Timeseries family role lock (2026-05-25)
+
+### 9.1 결정 요지
+
+`timeseries` family (TS01 transaction_burst / TS02 unusual_frequency) 의 운영 역할을 **결산·시점·빈도 컨텍스트 lane** 으로 고정한다. TOP100/500 단독 ranker 성능 추격(특히 truth recall 튜닝)을 거버넌스 단에서 차단한다.
+
+### 9.2 배경 — 왜 락이 필요한가
+
+V7 fixed3 → fixed4/fixed5 의 timeseries detector 재설계 측정에서 다음이 관찰됨.
+
+| 깊이 | timeseries 단독 lane recall (방향성) | 해석 |
+|---|---|---|
+| TOP 100 | 약함 | 단독 precision ranker 로 부적합 — 정상 결산 이벤트와 분포 겹침 |
+| TOP 500 | 약함 | 동일 — period_end/manual/amount_tail 조합 fitting attractor 존재 |
+| TOP 2000+ | 보조 coverage 회복 | 결산/시점 컨텍스트로 다른 family 후보를 보강 |
+
+추가 튜닝 시 발생 가능한 fitting attractor:
+- `period_end` window 임의 확장 (분포는 좁아지지만 정상 결산도 같이 끌려옴)
+- `manual` flag · `amount_tail` 조합 weight 강화 (DataSynth 의 `is_anomaly` sidecar 형태에 맞춰 학습되는 형태)
+- inference batch ECDF 의 q-cap 조정 (정상 routine close 이벤트와 조작 close 이벤트가 batch 분포상 겹침)
+
+### 9.3 락 대상 정책
+
+| 항목 | 락 내용 |
+|------|--------|
+| 단독 precision ranker | **금지** — TS lane 단독으로 review queue 의 TOP recall metric 을 직접 목표로 삼지 않는다 |
+| TOP100/500 recall 튜닝 | **금지** — `period_end`/`manual`/`amount_tail` 등 fitting attractor 가중치 조정 차단 |
+| primary queue 영향 | **없음** — TS lane 정렬은 `phase2_lane_sort.sort_lane` 의 evidence_tier desc → ECDF desc, primary 2-way RRF 순위 미변경 |
+| ranker 의미 | **TOP2000+ 보조 coverage** — 결산/시점 컨텍스트 후보 검토 lane 으로만 사용 |
+| 분포 baseline | inference batch-local ECDF 한정 — 회사별 routine closing calendar baseline 은 **후속 과제**, 본 락은 현 baseline 의 한계를 명시만 |
+
+### 9.4 yaml 메타 (단일 출처)
+
+`config/phase2_subdetector_tiers.yaml` TS01/TS02 항목에 결정 9 메타 5개 필드 추가.
+
+| 필드 | 값 |
+|------|---|
+| `role_lock` | `context_lane` |
+| `ranker_use` | `top2000_plus_context` |
+| `do_not_tune_for_top_recall` | `true` |
+| `coverage_profile` | "TOP100~500 단독 약함, TOP2000+ 보조 coverage 회복" |
+| `batch_local_ecdf_caveat` | inference batch 분포 한정 + routine closing/batch calendar baseline 후속 명시 |
+
+다른 family (relational/duplicate/intercompany/unsupervised) 는 본 메타 미설정 (락 범위 timeseries 한정).
+
+### 9.5 가드 위치
+
+| 가드 | 위치 |
+|------|------|
+| TS01/TS02 `role_lock == "context_lane"` | `tests/phase2_rulebase/test_subdetector_tiers_schema.py::TestTimeseriesRoleLock::test_ts0{1,2}_role_lock_is_context_lane` |
+| TS01/TS02 `do_not_tune_for_top_recall == True` | 동 `test_ts0{1,2}_do_not_tune_for_top_recall` |
+| TS01/TS02 `ranker_use == "top2000_plus_context"` | 동 `test_ts_ranker_use_top2000_plus` |
+| coverage_profile / batch_local_ecdf_caveat 필수 | 동 `test_ts_coverage_profile_present` / `test_ts_batch_local_ecdf_caveat_present` |
+| 다른 family 에 role_lock 설정 금지 | 동 `test_non_timeseries_families_have_no_role_lock` |
+
+### 9.6 UI 표현 (결정 9 정합)
+
+| 경로 | 변경 |
+|------|------|
+| `dashboard/components/phase2_family_lanes.py::LANE_LABELS["timeseries"]` | "Timing (시계열)" → "Timing Context (결산·시점 보조)" |
+| 동 `render_lane_view` caption | "단독 ranker 아님 / 결산·시점 보조 lane / primary queue 영향 없음" 명시 |
+| `dashboard/tab_phase2.py::_LANE_LABELS_KR["timeseries"]` / `_LANE_HINTS["timeseries"]` | "시점 이상" → "결산·시점 컨텍스트", 힌트에 TOP100~500 약함·TOP2000+ 보조 명시 |
+
+### 9.7 변경 절차
+
+본 락(role_lock / do_not_tune_for_top_recall / ranker_use) 의 yaml 값을 변경하려면:
+
+1. `docs/PHASE2_TIMESERIES_ROLE_LOCK.md` §변경 절차 통과
+2. `docs/DECISION.md` D044 PR 템플릿 "PHASE2 sub-detector tier 변경" fitting-risk check 통과
+3. truth recall (DataSynth `is_fraud`/`is_anomaly`) 향상 사유 단독 **금지** — 도메인 정합성·기준서 인용 변경·운영 패턴 변경 등 비-truth 사유 필수
+4. `TestTimeseriesRoleLock` 가드 갱신 + 회귀 통과
+
+### 9.8 PHASE1 truth-recall-guard / 결정 8 정합
+
+| 정책 | 정합 여부 | 근거 |
+|------|----------|------|
+| `feedback_phase1_truth_recall_guard` | ✅ | TS lane 은 `truth recall 향상 강제 금지` 정책의 PHASE2 분야별 적용. 락 자체가 truth label 미사용. |
+| 결정 8 (Noisy-OR separated) | ✅ | TS family ECDF 는 그대로 Noisy-OR voter 의 하나로 결합. primary 2-way RRF 형식 미변경. lane 은 attribution view 한정. |
+| 결정 8.6 (family role 4 상태) | ✅ | TS family 의 `role_lock` 메타 는 sub-detector 단 lock 으로, `family_diagnostics.roles` 자동 분류 (active-ranker / coarse-booster / tail-only-fallback / near-dormant) 와 직교. role lock 은 운영 정책 lock, family_diagnostics 는 분포 진단 자동 분류. |
+| Layer C SOFT WARN | ✅ | TS lane 의 분포·case_count 변동은 진단만 (SOFT WARN), 향상 강제 미적용. |
+
+### 9.9 산출물 인덱스 (결정 9)
+
+| 파일 | 역할 |
+|------|------|
+| `config/phase2_subdetector_tiers.yaml` (TS01/TS02 메타 5필드) | 락 단일 출처 |
+| `src/services/subdetector_tiers.py::SubdetectorTier` (optional 필드 5개 + `is_context_lane_locked` property) | loader + dataclass |
+| `docs/PHASE2_TIMESERIES_ROLE_LOCK.md` | 락 문서 (변경 절차 포함) |
+| `tests/phase2_rulebase/test_subdetector_tiers_schema.py::TestTimeseriesRoleLock` | 가드 8 케이스 |
+| `dashboard/components/phase2_family_lanes.py` | lane UI 라벨/caption (결정 9.6) |
+| `dashboard/tab_phase2.py::_LANE_LABELS_KR/_LANE_HINTS` | lane 한국어 라벨/힌트 (결정 9.6) |
 
 ---
 
