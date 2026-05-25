@@ -76,12 +76,24 @@ streamlit_*.log
 .tmp_*.py
 .tmp_*.txt
 .tmp_*.log
+_tmp_*.py
+_tmp_*.md
+_tmp_*.txt
+_tmp_*.log
+tmp_*.png
+tmp_*.log
+tmp_*.txt
 .pytest_tmp/
 .pytest_tmp_*/
 codex_pytest_*/
+codex_py_dir_probe/
 tmp*/
 tools/tmp_*.py
 .manual-model-registry-check/
+.playwright-mcp/
+
+# 백업 파일
+*.bak
 
 # 복구 아티팩트 (세션 기반 파일 회복용 임시 보관)
 .codex_recovery/
