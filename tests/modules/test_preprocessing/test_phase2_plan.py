@@ -167,6 +167,85 @@ def test_phase2_matrix_rejects_standalone_f_manual():
         Phase2AutoencoderMatrixBuilder(plan).fit(df)
 
 
+def test_phase2_standalone_contract_excludes_phase1_output_columns():
+    """Phase 2 standalone contract: PHASE1 산출/PHASE2 자체 출력은 입력 deny."""
+    df = pd.DataFrame(
+        {
+            # operating feature — 진입해야 함
+            "amount": [100.0, 200.0, 300.0, 400.0],
+            # PHASE1 case-level 산출
+            "composite_sort_score": [0.7, 0.5, 0.9, 0.3],
+            "topic_score_amount": [0.6, 0.4, 0.8, 0.2],
+            "priority_score": [0.65, 0.42, 0.88, 0.21],
+            "priority_band": ["high", "medium", "high", "low"],
+            "priority_rank": [1, 2, 3, 4],
+            "flagged_rules": ["L3-02", "", "L1-05,L2-03", ""],
+            "review_rules": ["", "L4-01", "", ""],
+            # PHASE1 row-level 산출
+            "risk_level": ["High", "Low", "Medium", "Low"],
+            # PHASE2 자체 출력 재투입 금지
+            "anomaly_score": [0.9, 0.1, 0.4, 0.05],
+            "ml_score": [0.8, 0.2, 0.5, 0.1],
+            # PHASE3 산출
+            "review_narrative_text": ["a", "b", "c", "d"],
+        }
+    )
+
+    plan = build_phase2_preprocessing_plan(profile_dataframe(df))
+    decisions = _decisions_by_column(plan)
+
+    assert decisions["amount"].action == "include"
+    for column in (
+        "composite_sort_score",
+        "topic_score_amount",
+        "priority_score",
+        "priority_band",
+        "priority_rank",
+        "flagged_rules",
+        "review_rules",
+        "risk_level",
+        "anomaly_score",
+        "ml_score",
+        "review_narrative_text",
+    ):
+        assert decisions[column].action == "exclude", (
+            f"Phase 2 standalone contract 위반: '{column}' 가 ML 입력으로 진입"
+        )
+
+
+def test_phase2_standalone_contract_keeps_raw_erp_priority_narrative_columns():
+    """raw ERP 컬럼 (payment_priority / transaction_narrative 등) 은 deny 되면 안 됨.
+
+    standalone contract 의 PHASE1/2/3 출력 차단은 exact name (priority_band /
+    review_narrative_*) + phase{1,2,3}_/review_narrative_ prefix 로 한정한다.
+    broad token deny (priority / narrative) 는 비즈니스 raw 컬럼을 함께
+    막으므로 사용하지 않는다.
+    """
+    df = pd.DataFrame(
+        {
+            "payment_priority": [1, 2, 3, 1],
+            "vendor_priority": ["high", "low", "medium", "high"],
+            "transaction_narrative": ["abc", "def", "ghi", "jkl"],
+            "shipment_narrative_code": ["X", "Y", "Z", "X"],
+            "amount": [100.0, 200.0, 300.0, 400.0],
+        }
+    )
+
+    plan = build_phase2_preprocessing_plan(profile_dataframe(df))
+    decisions = _decisions_by_column(plan)
+
+    for column in (
+        "payment_priority",
+        "vendor_priority",
+        "transaction_narrative",
+        "shipment_narrative_code",
+        "amount",
+    ):
+        assert decisions[column].action == "include", (
+            f"raw ERP 컬럼 '{column}' 가 standalone deny 에 잘못 걸림"
+        )
+
+
 def test_phase2_matrix_allows_f_manual_interaction_feature():
     df = pd.DataFrame(
         {

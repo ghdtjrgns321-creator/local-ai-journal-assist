@@ -309,6 +309,7 @@ class TestRunFromDataframe:
 
             AuditPipeline(context=ctx, skip_db=True).redetect(
                 small_gl_df,
+                batch_id="batch_phase1",
                 detection_scope="phase2_only",
             )
 
@@ -442,6 +443,7 @@ class TestRunFromDataframe:
             skip_db=True,
         ).redetect(
             small_gl_df,
+            batch_id="batch_phase1",
             detection_scope="phase2_only",
             phase2_inference_contract=contract,
         )
@@ -456,6 +458,77 @@ class TestRunFromDataframe:
         assert statuses["ml_unsupervised"]["matrix_schema_hash"] == 12345
         assert result.results[0].metadata["contract_version"] == "phase2_unsupervised_mvp_v1"
         assert result.results[0].metadata["loaded_version"] == 7
+
+    def test_phase2_only_skips_db_insert_and_keeps_phase2_metadata(self, monkeypatch):
+        df = pd.DataFrame({"document_id": ["D1"], "amount": [100.0]})
+        scores = pd.Series([0.9], index=df.index, name="ML02")
+        detection_result = DetectionResult(
+            track_name="ml_unsupervised",
+            flagged_indices=[0],
+            scores=scores,
+            rule_flags=[RuleFlag("ML02", "ML02", 3, 1, len(df))],
+            details=pd.DataFrame({"ML02": scores}, index=df.index),
+            metadata={"elapsed": 0.1},
+            warnings=[],
+        )
+        captured: dict = {}
+
+        monkeypatch.setattr(
+            AuditPipeline,
+            "_run_detection",
+            lambda self, frame, detection_scope="default": ([detection_result], []),
+        )
+        monkeypatch.setattr(
+            AuditPipeline,
+            "_try_shap_explanation",
+            lambda self, frame: (None, None),
+        )
+        monkeypatch.setattr(
+            AuditPipeline,
+            "_build_performance_report",
+            lambda self, **kwargs: None,
+        )
+        monkeypatch.setattr(
+            AuditPipeline,
+            "_build_phase1_case_artifact",
+            lambda self, frame, results, batch_id: (None, {}),
+        )
+        monkeypatch.setattr(
+            AuditPipeline,
+            "_build_phase2_case_overlays",
+            lambda self, frame, results, phase1_case_result, detector_statuses: [],
+        )
+        monkeypatch.setattr(
+            AuditPipeline,
+            "_get_detector_statuses",
+            lambda self: [
+                {
+                    "track_name": "ml_unsupervised",
+                    "run_status": "executed",
+                    "flagged_docs": 1,
+                }
+            ],
+        )
+
+        def fake_load_db(self, frame, batch_id, results, **kwargs):
+            captured.update(kwargs)
+            return object(), []
+
+        monkeypatch.setattr(AuditPipeline, "_load_db", fake_load_db)
+
+        result = AuditPipeline(skip_db=False).redetect(
+            df,
+            batch_id="batch_phase1",
+            detection_scope="phase2_only",
+            phase2_inference_contract={"required_models": ["unsupervised"]},
+            phase2_training_report_id="train_001",
+            phase2_promotion_policy={"selection_mode": "best_per_family"},
+            phase2_inference_mode="training_contract",
+        )
+
+        assert captured == {}
+        assert result.batch_id == "batch_phase1"
+        assert result.load_result is None
 
     def test_phase2_only_skips_stacking_ensemble(self, monkeypatch, small_gl_df):
         def fail_stacking(self, results, df):
@@ -507,11 +580,17 @@ class TestRunFromDataframe:
         result = AuditPipeline(
             settings=AuditSettings(enable_ml_detection=True),
             skip_db=True,
-        ).redetect(small_gl_df, detection_scope="phase2_only")
+        ).redetect(small_gl_df, batch_id="batch_phase1", detection_scope="phase2_only")
 
         statuses = {status["track_name"]: status for status in result.detector_statuses}
         assert statuses["ensemble"]["run_status"] != "executed"
-        assert {item.track_name for item in result.results} == {"ml_unsupervised"}
+        assert {item.track_name for item in result.results} == {
+            "ml_unsupervised",
+            "timeseries",
+            "relational",
+            "duplicate",
+            "intercompany",
+        }
 
     def test_default_redetect_still_invokes_stacking_when_ml_enabled(
         self, monkeypatch, small_gl_df,
@@ -583,7 +662,7 @@ class TestRunFromDataframe:
         AuditPipeline(
             settings=AuditSettings(enable_ml_detection=True),
             skip_db=True,
-        ).redetect(small_gl_df, detection_scope="phase2_only")
+        ).redetect(small_gl_df, batch_id="batch_phase1", detection_scope="phase2_only")
 
         assert load_calls == [("unsupervised", None)]
 

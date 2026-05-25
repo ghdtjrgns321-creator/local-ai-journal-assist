@@ -127,6 +127,31 @@ class TestLoadAnomalyFlags:
         ).fetchdf()
         assert set(result["document_id"]) <= set(db_sample_df["document_id"])
 
+    def test_non_numeric_detail_columns_are_ignored(
+        self, db_conn, db_sample_df, db_detection_results,
+    ):
+        """설명용 문자열 details 컬럼은 anomaly_flags score 적재에서 제외."""
+        db_detection_results[0].details["explanation"] = [
+            "normal",
+            "candidate",
+            "high reconstruction error",
+        ]
+        db_detection_results[0].details["numeric_string_score"] = ["0.0", "0.2", "0.0"]
+
+        rows = load_anomaly_flags(db_conn, db_detection_results, db_sample_df, "batch_001")
+        result = db_conn.execute(
+            """
+            SELECT rule_code, score
+            FROM anomaly_flags
+            WHERE upload_batch_id = 'batch_001'
+            ORDER BY rule_code, score
+            """
+        ).fetchdf()
+
+        assert rows == 4
+        assert "explanation" not in set(result["rule_code"])
+        assert set(result["score"]) == {0.2, 0.6, 0.8}
+
 
 class TestLoadBenford:
     """benford_summary + benford_digits 적재."""

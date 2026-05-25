@@ -1,16 +1,14 @@
 """RelationalDetector 오케스트레이터 단위 테스트 — WU-08.
 
-15개 테스트: Basic(3) + Integration(4) + Graceful(5) + DocFlow(3)
+15개 기존 테스트 + R05~R07 graph/entity 보강 (2026-05-24).
 """
 
 from __future__ import annotations
 
 import pandas as pd
-import pytest
 
 from src.detection.base import DetectionResult
 from src.detection.relational_detector import RelationalDetector
-
 
 # ── 공용 헬퍼 ──────────────────────────────────────────────────
 
@@ -32,29 +30,79 @@ def _detector(**kwargs) -> RelationalDetector:
 
 def _full_df() -> pd.DataFrame:
     """R01~R03 테스트용 — 다양한 패턴 포함."""
-    return _make_df([
-        # 기존 거래처 정상 거래
-        {"trading_partner": "V01", "gl_account": "5100", "posting_date": "2023-01-15",
-         "debit_amount": 1_000_000, "credit_amount": 0, "is_intercompany": False},
-        {"trading_partner": "V01", "gl_account": "5100", "posting_date": "2023-06-15",
-         "debit_amount": 1_000_000, "credit_amount": 0, "is_intercompany": False},
-        # 신규 거래처 대액 (R01 트리거)
-        {"trading_partner": "V99", "gl_account": "5200", "posting_date": "2023-06-20",
-         "debit_amount": 50_000_000, "credit_amount": 0, "is_intercompany": False},
-        # 휴면 계정 재활성화 (R02 트리거) — 5100 계정 200일 후
-        {"trading_partner": "V01", "gl_account": "5100", "posting_date": "2024-01-01",
-         "debit_amount": 5_000_000, "credit_amount": 0, "is_intercompany": False},
-        # IC 거래 정상 (R03 비트리거)
-        {"trading_partner": "SUB01", "gl_account": "4500", "posting_date": "2024-01-05",
-         "debit_amount": 10_000_000, "credit_amount": 0, "is_intercompany": True},
-        {"trading_partner": "SUB01", "gl_account": "4500", "posting_date": "2024-01-10",
-         "debit_amount": 10_000_000, "credit_amount": 0, "is_intercompany": True},
-        {"trading_partner": "SUB01", "gl_account": "4500", "posting_date": "2024-01-15",
-         "debit_amount": 10_000_000, "credit_amount": 0, "is_intercompany": True},
-        # IC 이전가격 이상 (R03 트리거)
-        {"trading_partner": "SUB01", "gl_account": "4500", "posting_date": "2024-01-20",
-         "debit_amount": 50_000_000, "credit_amount": 0, "is_intercompany": True},
-    ])
+    return _make_df(
+        [
+            # 기존 거래처 정상 거래
+            {
+                "trading_partner": "V01",
+                "gl_account": "5100",
+                "posting_date": "2023-01-15",
+                "debit_amount": 1_000_000,
+                "credit_amount": 0,
+                "is_intercompany": False,
+            },
+            {
+                "trading_partner": "V01",
+                "gl_account": "5100",
+                "posting_date": "2023-06-15",
+                "debit_amount": 1_000_000,
+                "credit_amount": 0,
+                "is_intercompany": False,
+            },
+            # 신규 거래처 대액 (R01 트리거)
+            {
+                "trading_partner": "V99",
+                "gl_account": "5200",
+                "posting_date": "2023-06-20",
+                "debit_amount": 50_000_000,
+                "credit_amount": 0,
+                "is_intercompany": False,
+            },
+            # 휴면 계정 재활성화 (R02 트리거) — 5100 계정 200일 후
+            {
+                "trading_partner": "V01",
+                "gl_account": "5100",
+                "posting_date": "2024-01-01",
+                "debit_amount": 5_000_000,
+                "credit_amount": 0,
+                "is_intercompany": False,
+            },
+            # IC 거래 정상 (R03 비트리거)
+            {
+                "trading_partner": "SUB01",
+                "gl_account": "4500",
+                "posting_date": "2024-01-05",
+                "debit_amount": 10_000_000,
+                "credit_amount": 0,
+                "is_intercompany": True,
+            },
+            {
+                "trading_partner": "SUB01",
+                "gl_account": "4500",
+                "posting_date": "2024-01-10",
+                "debit_amount": 10_000_000,
+                "credit_amount": 0,
+                "is_intercompany": True,
+            },
+            {
+                "trading_partner": "SUB01",
+                "gl_account": "4500",
+                "posting_date": "2024-01-15",
+                "debit_amount": 10_000_000,
+                "credit_amount": 0,
+                "is_intercompany": True,
+            },
+            # IC 이전가격 이상 (R03 트리거)
+            {
+                "trading_partner": "SUB01",
+                "gl_account": "4500",
+                "posting_date": "2024-01-20",
+                "debit_amount": 50_000_000,
+                "credit_amount": 0,
+                "is_intercompany": True,
+            },
+        ]
+    )
 
 
 # ── Basic (3개) ────────────────────────────────────────────────
@@ -137,9 +185,11 @@ class TestGraceful:
 
     def test_doc_flow_enables_r04(self):
         """#10: doc_flow_df 제공 시 R04 등록."""
-        doc_flow = pd.DataFrame([
-            {"journal_entry_id": "dummy", "chain": "P2P", "total": 3, "present": 1},
-        ])
+        doc_flow = pd.DataFrame(
+            [
+                {"journal_entry_id": "dummy", "chain": "P2P", "total": 3, "present": 1},
+            ]
+        )
         df = _full_df()
         df["document_id"] = [f"JE-{i:03d}" for i in range(len(df))]
         result = _detector(doc_flow_df=doc_flow).detect(df)
@@ -149,22 +199,40 @@ class TestGraceful:
     def test_individual_rule_exception(self):
         """#11: 개별 룰 예외 → skipped에 기록, 다른 룰 계속."""
         # R01만 실패하도록 — trading_partner에 비호환 타입 주입
-        df = _make_df([
-            {"trading_partner": "V01", "gl_account": "5100",
-             "posting_date": "2023-01-15", "debit_amount": 1_000_000,
-             "is_intercompany": False},
-            {"trading_partner": "V01", "gl_account": "5100",
-             "posting_date": "2024-01-15", "debit_amount": 1_000_000,
-             "is_intercompany": False},
-        ])
+        df = _make_df(
+            [
+                {
+                    "trading_partner": "V01",
+                    "gl_account": "5100",
+                    "posting_date": "2023-01-15",
+                    "debit_amount": 1_000_000,
+                    "is_intercompany": False,
+                },
+                {
+                    "trading_partner": "V01",
+                    "gl_account": "5100",
+                    "posting_date": "2024-01-15",
+                    "debit_amount": 1_000_000,
+                    "is_intercompany": False,
+                },
+            ]
+        )
         # 정상 실행 — 예외가 아닌 일반 케이스에서도 skipped 처리가 동작하는지
         result = _detector().detect(df)
         assert isinstance(result, DetectionResult)
 
     def test_empty_dataframe(self):
         """#12: 빈 DataFrame → 빈 결과."""
-        df = pd.DataFrame(columns=["trading_partner", "gl_account", "posting_date",
-                                    "debit_amount", "credit_amount", "is_intercompany"])
+        df = pd.DataFrame(
+            columns=[
+                "trading_partner",
+                "gl_account",
+                "posting_date",
+                "debit_amount",
+                "credit_amount",
+                "is_intercompany",
+            ]
+        )
         result = _detector().detect(df)
         assert isinstance(result, DetectionResult)
         assert len(result.flagged_indices) == 0
@@ -178,15 +246,31 @@ class TestDocFlowIntegration:
 
     def test_r04_scores_in_result(self):
         """#13: R04 점수가 DetectionResult.details에 포함."""
-        doc_flow = pd.DataFrame([
-            {"journal_entry_id": "JE-002", "chain": "P2P", "total": 3, "present": 1},
-        ])
-        df = _make_df([
-            {"document_id": "JE-001", "trading_partner": "V01", "gl_account": "5100",
-             "posting_date": "2024-01-15", "debit_amount": 1_000_000, "is_intercompany": False},
-            {"document_id": "JE-002", "trading_partner": "V01", "gl_account": "5100",
-             "posting_date": "2024-01-20", "debit_amount": 2_000_000, "is_intercompany": False},
-        ])
+        doc_flow = pd.DataFrame(
+            [
+                {"journal_entry_id": "JE-002", "chain": "P2P", "total": 3, "present": 1},
+            ]
+        )
+        df = _make_df(
+            [
+                {
+                    "document_id": "JE-001",
+                    "trading_partner": "V01",
+                    "gl_account": "5100",
+                    "posting_date": "2024-01-15",
+                    "debit_amount": 1_000_000,
+                    "is_intercompany": False,
+                },
+                {
+                    "document_id": "JE-002",
+                    "trading_partner": "V01",
+                    "gl_account": "5100",
+                    "posting_date": "2024-01-20",
+                    "debit_amount": 2_000_000,
+                    "is_intercompany": False,
+                },
+            ]
+        )
         result = _detector(doc_flow_df=doc_flow).detect(df)
         assert "R04" in result.details.columns
         assert result.details["R04"].iloc[1] > 0, "R04 매칭 행 미탐지"
@@ -195,10 +279,18 @@ class TestDocFlowIntegration:
     def test_r04_empty_doc_flow(self):
         """#14: 빈 doc_flow_df → R04 등록되나 모두 0점."""
         doc_flow = pd.DataFrame(columns=["journal_entry_id", "chain", "total", "present"])
-        df = _make_df([
-            {"document_id": "JE-001", "trading_partner": "V01", "gl_account": "5100",
-             "posting_date": "2024-01-15", "debit_amount": 1_000_000, "is_intercompany": False},
-        ])
+        df = _make_df(
+            [
+                {
+                    "document_id": "JE-001",
+                    "trading_partner": "V01",
+                    "gl_account": "5100",
+                    "posting_date": "2024-01-15",
+                    "debit_amount": 1_000_000,
+                    "is_intercompany": False,
+                },
+            ]
+        )
         result = _detector(doc_flow_df=doc_flow).detect(df)
         # 빈 doc_flow → R04 스킵 (None 반환과 동일 처리)
         rule_ids = {rf.rule_id for rf in result.rule_flags}
@@ -212,3 +304,240 @@ class TestDocFlowIntegration:
         result = _detector().detect(_full_df())
         assert "elapsed" in result.metadata
         assert result.metadata["elapsed"] >= 0
+
+
+# ── R05 ~ R07 Graph/Entity Anomaly (2026-05-24) ───────────────
+
+
+def _rare_pair_df(n_population: int = 60) -> pd.DataFrame:
+    """R05 positive 검증 — common pair 다수 + rare pair 1개."""
+    rows: list[dict] = []
+    # common: 60개 unique pair, 각 freq=10 (rare 판정 미해당)
+    for i in range(n_population):
+        for _ in range(10):
+            rows.append(
+                {
+                    "trading_partner": f"V{i:03d}",
+                    "gl_account": f"5{i:03d}",
+                    "posting_date": "2024-03-15",
+                    "debit_amount": 1_000,
+                    "credit_amount": 0,
+                    "is_intercompany": False,
+                    "created_by": "U00",
+                }
+            )
+    # rare pair 1개 — freq=1
+    rows.append(
+        {
+            "trading_partner": "RARE_V",
+            "gl_account": "9999",
+            "posting_date": "2024-03-15",
+            "debit_amount": 50_000_000,
+            "credit_amount": 0,
+            "is_intercompany": False,
+            "created_by": "U00",
+        }
+    )
+    return _make_df(rows)
+
+
+def _user_spike_df() -> pd.DataFrame:
+    """R06 positive 검증 — 12 user × 5 month, U00 spike month."""
+    rows: list[dict] = []
+    months = ["2024-01-15", "2024-02-15", "2024-03-15", "2024-04-15", "2024-05-15"]
+    for i in range(12):
+        for m in months:
+            for acc in ("5100", "5200"):  # 평소 degree=2
+                rows.append(
+                    {
+                        "trading_partner": "V01",
+                        "gl_account": acc,
+                        "posting_date": m,
+                        "debit_amount": 1_000,
+                        "credit_amount": 0,
+                        "is_intercompany": False,
+                        "created_by": f"U{i:02d}",
+                    }
+                )
+    # U00 spike — 2024-06 에 20개 unique account
+    for j in range(20):
+        rows.append(
+            {
+                "trading_partner": "V01",
+                "gl_account": f"9{j:03d}",
+                "posting_date": "2024-06-15",
+                "debit_amount": 1_000,
+                "credit_amount": 0,
+                "is_intercompany": False,
+                "created_by": "U00",
+            }
+        )
+    return _make_df(rows)
+
+
+def _dormant_partner_df() -> pd.DataFrame:
+    """R07 positive 검증 — V01 200일 휴면 후 재활성, V_BLANK 미포함."""
+    return _make_df(
+        [
+            {
+                "trading_partner": "V01",
+                "gl_account": "5100",
+                "posting_date": "2023-01-01",
+                "debit_amount": 1_000_000,
+                "credit_amount": 0,
+                "is_intercompany": False,
+            },
+            {
+                "trading_partner": "V01",
+                "gl_account": "5100",
+                "posting_date": "2023-08-01",
+                "debit_amount": 1_000_000,
+                "credit_amount": 0,
+                "is_intercompany": False,
+            },
+            {  # blank partner — 제외 확인
+                "trading_partner": "",
+                "gl_account": "5100",
+                "posting_date": "2023-01-01",
+                "debit_amount": 100,
+                "credit_amount": 0,
+                "is_intercompany": False,
+            },
+            {
+                "trading_partner": "",
+                "gl_account": "5100",
+                "posting_date": "2024-01-01",
+                "debit_amount": 100,
+                "credit_amount": 0,
+                "is_intercompany": False,
+            },
+        ]
+    )
+
+
+class TestR05RareAccountPartnerEdge:
+    def test_positive_rare_pair_scored(self):
+        result = _detector().detect(_rare_pair_df(n_population=60))
+        assert "R05" in result.details.columns
+        # 마지막 행이 rare pair
+        assert result.details["R05"].iloc[-1] > 0
+
+    def test_small_population_returns_zero(self):
+        # unique pair count < min_pair_population(50) → R05 전부 0
+        df = _rare_pair_df(n_population=10)
+        result = _detector().detect(df)
+        assert (result.details["R05"] == 0).all()
+
+    def test_missing_columns_graceful(self):
+        df = pd.DataFrame(
+            {
+                "trading_partner": ["V01"] * 5,
+                "posting_date": pd.to_datetime(["2024-01-01"] * 5),
+                "debit_amount": [1000] * 5,
+                "credit_amount": [0] * 5,
+                "is_intercompany": [False] * 5,
+            }
+        )
+        result = _detector().detect(df)
+        # gl_account 부재 → R05 전부 0 (skipped 또는 zero)
+        if "R05" in result.details.columns:
+            assert (result.details["R05"] == 0).all()
+
+
+class TestR06UserAccountDegreeSpike:
+    def test_positive_spike_user_scored(self):
+        result = _detector().detect(_user_spike_df())
+        assert "R06" in result.details.columns
+        # spike user U00 의 spike 행에 점수
+        df = _user_spike_df()
+        spike_mask = (df["created_by"] == "U00") & (df["posting_date"] == "2024-06-15")
+        assert result.details["R06"][spike_mask].max() > 0
+
+    def test_small_user_population_returns_zero(self):
+        # 5 user < min_users(10) → R06 전부 0
+        df = _make_df(
+            [
+                {
+                    "trading_partner": "V01",
+                    "gl_account": f"acc_{j}",
+                    "posting_date": "2024-01-15",
+                    "debit_amount": 1_000,
+                    "credit_amount": 0,
+                    "is_intercompany": False,
+                    "created_by": f"U{i}",
+                }
+                for i in range(5)
+                for j in range(3)
+            ]
+        )
+        result = _detector().detect(df)
+        if "R06" in result.details.columns:
+            assert (result.details["R06"] == 0).all()
+
+    def test_missing_created_by_graceful(self):
+        df = _make_df(
+            [
+                {
+                    "trading_partner": "V01",
+                    "gl_account": "5100",
+                    "posting_date": "2024-01-15",
+                    "debit_amount": 1_000_000,
+                    "credit_amount": 0,
+                    "is_intercompany": False,
+                },
+            ]
+        )
+        result = _detector().detect(df)
+        # created_by 부재 → R06 0
+        if "R06" in result.details.columns:
+            assert (result.details["R06"] == 0).all()
+
+
+class TestR07DormantPartnerReactivation:
+    def test_positive_partner_reactivation_scored(self):
+        result = _detector().detect(_dormant_partner_df())
+        assert "R07" in result.details.columns
+        # V01 재활성 행 (index 1) 점수 > 0
+        assert result.details["R07"].iloc[1] > 0
+        # V01 첫 거래는 0
+        assert result.details["R07"].iloc[0] == 0
+
+    def test_blank_partner_excluded(self):
+        result = _detector().detect(_dormant_partner_df())
+        # blank partner 행 (index 2, 3) — 365일 gap 있어도 partner 식별 불가로 0
+        assert result.details["R07"].iloc[2] == 0
+        assert result.details["R07"].iloc[3] == 0
+
+    def test_no_dormancy_returns_zero(self):
+        # 동일 partner 빈번 거래 — gap < inactive_days
+        df = _make_df(
+            [
+                {
+                    "trading_partner": "V01",
+                    "gl_account": "5100",
+                    "posting_date": d,
+                    "debit_amount": 1_000_000,
+                    "credit_amount": 0,
+                    "is_intercompany": False,
+                }
+                for d in ["2024-01-01", "2024-02-01", "2024-03-01"]
+            ]
+        )
+        result = _detector().detect(df)
+        assert (result.details["R07"] == 0).all()
+
+
+class TestGraphEntityMetadata:
+    def test_graph_entity_summary_present(self):
+        result = _detector().detect(_dormant_partner_df())
+        assert "graph_entity_summary" in result.metadata
+        summary = result.metadata["graph_entity_summary"]
+        assert "R07_flagged_rows" in summary
+        assert summary["R07_flagged_rows"] >= 1
+
+    def test_r05_r06_r07_registered(self):
+        result = _detector().detect(_full_df())
+        rule_ids = {rf.rule_id for rf in result.rule_flags}
+        assert "R05" in rule_ids
+        assert "R06" in rule_ids
+        assert "R07" in rule_ids

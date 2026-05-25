@@ -187,6 +187,15 @@
       "fail_mode": "SOFT_WARN",
       "source": "engagement A vs engagement B 동일 fixture inference 의 mean/std 비교",
       "rationale": "학습-추론 환경 격리 회귀. 회사별 격리에서 동일 fixture 점수가 너무 다르면 학습 환경 차이."
+    },
+    "c6_family_diagnostics_stability": {
+      "baseline": null,
+      "min_ratio": 0.70,
+      "warn_threshold": null,
+      "fail_mode": "SOFT_WARN",
+      "source": "training_report.metadata.family_diagnostics — row_nonzero_rate / rank_resolution / top_tail_resolution 3 metric 의 직전 학습 대비 변동률",
+      "rationale": "PHASE2 family role 자동 판정(active-ranker / coarse-booster / near-dormant / tail-only-fallback) 안정성 회귀 감지. 결정 8 §8.6 lane visibility 일관성 보호. 향상 강제 아님 — baseline × 0.7 하한.",
+      "decision_link": "docs/PHASE2_GOVERNANCE_DESIGN.md 결정 8 (lane/overlay governance), config/phase2_subdetector_tiers.yaml, artifacts/phase2_family_ranking_measurement_20260519.md"
     }
   },
   "meta_guard_integrity": {

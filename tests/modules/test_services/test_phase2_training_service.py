@@ -266,7 +266,9 @@ def test_build_phase2_label_summary_prefers_feedback_labels():
 def test_build_phase2_search_presets_returns_family_configs():
     presets = build_phase2_search_presets(["unsupervised", "supervised", "stacking"])
 
-    assert len(presets["unsupervised"]) >= 2
+    # Why: 100k 측정(2026-05-23) 결과 unsup_selection_score 가 preset 별 noise(<0.001)
+    # 라 unsupervised preset 1개(balanced)로 -75% 시간 단축. 다른 family는 2 preset 유지.
+    assert len(presets["unsupervised"]) == 1
     assert len(presets["supervised"]) >= 2
     assert len(presets["stacking"]) >= 2
     assert all("name" in preset for preset in presets["supervised"])
@@ -354,11 +356,10 @@ def test_unsupervised_search_presets_are_mvp_contract():
         "phase2_review_capacity_ratio",
     }
 
-    assert [preset["name"] for preset in presets] == [
-        "compact",
-        "balanced",
-        "strict_capacity",
-    ]
+    # Why: 100k 측정(2026-05-23) 결과 compact/balanced/strict_capacity 간 unsup metric
+    # 차이가 noise 수준(±0.001). balanced(epochs=20) 단일 preset 으로 -75% 시간 절감.
+    assert [preset["name"] for preset in presets] == ["balanced"]
+    assert presets[0]["settings_updates"]["vae_epochs"] == 20
     assert all(required_keys <= set(preset["settings_updates"]) for preset in presets)
     assert "sensitive" not in {preset["name"] for preset in presets}
 
@@ -414,10 +415,7 @@ def test_build_phase2_training_report_persists_preprocessing_plan_metadata():
 
     report = build_phase2_training_report(df, ctx=ctx)
     plan = report.metadata["preprocessing_plan"]
-    decisions = {
-        decision["column"]: decision
-        for decision in plan["decisions"]
-    }
+    decisions = {decision["column"]: decision for decision in plan["decisions"]}
     payload = json.loads(json.dumps(report.to_dict(), ensure_ascii=False))
 
     assert plan["duplicate_rows_estimated"] is True
@@ -489,20 +487,15 @@ def test_unsupervised_split_row_caps_are_deterministic_and_keep_groups_disjoint(
     )
     assert capped_a.metadata["source_train_rows"] > capped_a.metadata["capped_train_rows"]
     assert (
-        capped_a.metadata["source_calibration_rows"]
-        > capped_a.metadata["capped_calibration_rows"]
+        capped_a.metadata["source_calibration_rows"] > capped_a.metadata["capped_calibration_rows"]
     )
     assert capped_a.metadata["cap_strategy"]["train"] == "document_group_cap"
     assert capped_a.metadata["seed"] == 17
 
 
 def test_hold_out_scenarios_are_removed_from_train_and_preserved_in_test_fold():
-    hold_out_docs = [
-        (f"timing-{i:02d}", "unusual_timing_manipulation")
-        for i in range(21)
-    ] + [
-        (f"sod-{i:02d}", "approval_sod_bypass")
-        for i in range(29)
+    hold_out_docs = [(f"timing-{i:02d}", "unusual_timing_manipulation") for i in range(21)] + [
+        (f"sod-{i:02d}", "approval_sod_bypass") for i in range(29)
     ]
     normal_docs = [(f"normal-{i:02d}", "") for i in range(80)]
     df = pd.DataFrame(
@@ -552,10 +545,7 @@ def test_hold_out_metrics_compute_doc_recall_ci_and_pass_flag():
     df = pd.DataFrame(
         {
             "document_id": [f"h{i:02d}" for i in range(50)],
-            "mutation_type": (
-                ["unusual_timing_manipulation"] * 21
-                + ["approval_sod_bypass"] * 29
-            ),
+            "mutation_type": (["unusual_timing_manipulation"] * 21 + ["approval_sod_bypass"] * 29),
             "amount": [float(i) for i in range(50)],
         }
     )
@@ -722,9 +712,7 @@ def test_run_phase2_training_no_label_unsupervised_uses_selection_score():
         )
 
         completed = [
-            trial
-            for trial in report.leaderboard
-            if trial.status == Phase2TrainingStatus.COMPLETED
+            trial for trial in report.leaderboard if trial.status == Phase2TrainingStatus.COMPLETED
         ]
         assert completed
         completed_unsupervised = [
@@ -952,14 +940,10 @@ def test_run_phase2_training_uses_prepared_matrix_for_unsupervised_train_and_det
         completed = [
             trial
             for trial in report.leaderboard
-            if trial.status == Phase2TrainingStatus.COMPLETED
-            and "matrix_builder" in trial.metadata
+            if trial.status == Phase2TrainingStatus.COMPLETED and "matrix_builder" in trial.metadata
         ]
         assert completed
-        assert all(
-            trial.metadata["matrix_builder"]["schema_hash"]
-            for trial in completed
-        )
+        assert all(trial.metadata["matrix_builder"]["schema_hash"] for trial in completed)
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -1309,25 +1293,21 @@ def test_run_phase2_training_executes_trials_with_injected_detectors():
             report.metadata["promotion_policy"]["tie_break_policy"]["primary"]
             == "metric_value_desc"
         )
+        assert report.metadata["inference_contract"]["promoted_versions"]["unsupervised"] >= 1
         assert (
-            report.metadata["inference_contract"]["promoted_versions"]["unsupervised"] >= 1
-        )
-        assert (
-            report.metadata["inference_contract"]["model_versions"]["unsupervised"][
-                "model_version"
-            ]
+            report.metadata["inference_contract"]["model_versions"]["unsupervised"]["model_version"]
             >= 1
         )
-        assert "schema_hash" in report.metadata["inference_contract"]["model_versions"][
-            "unsupervised"
-        ]
         assert (
-            report.metadata["inference_contract"]["track_map"]["unsupervised"]
-            == "ml_unsupervised"
+            "schema_hash" in report.metadata["inference_contract"]["model_versions"]["unsupervised"]
+        )
+        assert (
+            report.metadata["inference_contract"]["track_map"]["unsupervised"] == "ml_unsupervised"
         )
         assert report.metadata["trial_status_counts"]["completed"] > 0
+        # Why: preset 단일화(balanced) 후 best_variant 는 무조건 balanced 종결.
         assert report.metadata["family_summaries"]["unsupervised"]["best_variant"].endswith(
-            "strict_capacity"
+            "balanced"
         )
         completed_unsupervised = [
             trial
@@ -1341,14 +1321,8 @@ def test_run_phase2_training_executes_trials_with_injected_detectors():
             == "group"
         )
         assert completed_unsupervised[0].metadata["matrix_builder"]["feature_count"] > 0
-        assert (
-            completed_unsupervised[0]
-            .metadata["matrix_builder"]["train_matrix_shape"][0]
-            == 2
-        )
-        assert (
-            report.metadata["feature_variant_summaries"]["plus_persona"]["trial_count"] > 0
-        )
+        assert completed_unsupervised[0].metadata["matrix_builder"]["train_matrix_shape"][0] == 2
+        assert report.metadata["feature_variant_summaries"]["plus_persona"]["trial_count"] > 0
         assert (
             report.metadata["promotion_policy"]["rule_style_metric_policy"]["metric_name"]
             == "rule_proxy_score"
@@ -1374,11 +1348,7 @@ def test_run_phase2_training_executes_trials_with_injected_detectors():
         ).exists()
         assert (root / "phase2_train" / report.report_id / "reports" / "leaderboard.json").exists()
         assert (
-            root
-            / "phase2_train"
-            / report.report_id
-            / "reports"
-            / "promotion_decision.json"
+            root / "phase2_train" / report.report_id / "reports" / "promotion_decision.json"
         ).exists()
     finally:
         shutil.rmtree(root, ignore_errors=True)
@@ -1503,3 +1473,68 @@ def test_eligible_promotion_trials_require_search_diversity_and_control_failure_
         ),
     ]
     assert _eligible_promotion_trials(high_failure_trials, policy) == []
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# _RULE_STYLE_SUB_DETECTORS ↔ phase2_subdetector_tiers.yaml 정합 lock
+#
+# tier registry (21 항목) 와 training metadata sub_detector_keys 는 의도적으로
+# 다른 범위를 가진다. IC family 의 4개 internal probability column
+# (ic_reciprocal_flow_prob / ic_amount_prob / ic_unmatched_prob / ic_timing_prob)
+# 은 tier registry 에는 등록하되 training metadata 에서는 의도적으로 제외한다 —
+# IntercompanyMatcher detector 내부에서 한 번에 산출되는 probability surface 이지
+# 독립 학습 trial 대상이 아니기 때문이다. 본 lock 은 이 비대칭이 우연한 누락이
+# 아니라 의도된 설계임을 코드 단에서 고정한다 (2026-05-25 옵션 2 결정).
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class TestRuleStyleSubDetectorRegistryContract:
+    """training metadata 의 sub_detector_keys 가 tier registry 와 의도적으로
+    다른 범위를 가짐을 lock 하는 회귀.
+    """
+
+    def test_intercompany_training_keys_only_canonical_labels(self):
+        """IC training sub_detector_keys 는 IC01/02/03 의 label 3개만 보고한다.
+
+        IC internal probability column (ic_reciprocal_flow_prob / ic_amount_prob /
+        ic_unmatched_prob / ic_timing_prob) 는 detector 내부 surface 이므로
+        training trial sub_detector_keys 에서 제외한다.
+        """
+        from src.services.phase2_training_service import _RULE_STYLE_SUB_DETECTORS
+
+        intercompany_keys = _RULE_STYLE_SUB_DETECTORS["intercompany"]
+        assert intercompany_keys == (
+            "unmatched_intercompany",
+            "amount_mismatch",
+            "timing_gap",
+        )
+
+    def test_ic_internal_prob_codes_excluded_from_training_keys(self):
+        """ic_* prefix internal probability column 은 training keys 에 등장하지 않는다."""
+        from src.services.phase2_training_service import _RULE_STYLE_SUB_DETECTORS
+
+        for family, keys in _RULE_STYLE_SUB_DETECTORS.items():
+            leaked = [key for key in keys if key.startswith("ic_")]
+            assert leaked == [], f"family {family} 에 IC internal prob key 누출: {leaked}"
+
+    def test_ic_internal_prob_codes_registered_in_tier_registry(self):
+        """tier registry 쪽은 4개 internal prob column 을 보유.
+
+        training metadata 와의 비대칭이 의도된 설계임을 확인하는 회귀.
+        """
+        from src.services.subdetector_tiers import get_subdetector_tier_index
+
+        tier_index = get_subdetector_tier_index()
+        registry_ic_codes = {
+            code for (family, code) in tier_index.keys() if family == "intercompany"
+        }
+        # IC01~03 canonical + 4 internal prob = 7
+        expected_internal = {
+            "ic_reciprocal_flow_prob",
+            "ic_amount_prob",
+            "ic_unmatched_prob",
+            "ic_timing_prob",
+        }
+        assert expected_internal.issubset(registry_ic_codes), (
+            f"tier registry 에 IC internal prob 4개 누락: {expected_internal - registry_ic_codes}"
+        )

@@ -130,21 +130,18 @@ def test_row_detail_eligibility_is_surface_and_flag_gated() -> None:
     assert can_render_row_violation_detail("L2-03") is True
 
     for rule_id, metadata in RULE_DETAIL_METADATA_REGISTRY.items():
-        expected = (
-            metadata.presenter_surface == PresenterSurface.TRANSACTION_DETAIL
-            and metadata.allow_row_violation_detail
-        )
+        expected = metadata.allow_row_violation_detail
         assert can_render_row_violation_detail(rule_id) is expected
 
     for surface_rule in (
-        "L3-03",
-        "L3-05",
         "L4-02",
         "IC01",
         "GR01",
         "L2-03a",
     ):
         assert can_render_row_violation_detail(surface_rule) is False
+    for context_rule in ("L3-03", "L3-05", "L3-06", "L3-08", "L3-10", "L3-12", "L4-05", "L4-06"):
+        assert can_render_row_violation_detail(context_rule) is True
 
 
 def test_standalone_violation_copy_is_forbidden_for_locked_context_rules() -> None:

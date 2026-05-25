@@ -65,6 +65,39 @@ def _make_result(
     )
 
 
+def test_phase2_only_expected_missing_legacy_tracks_are_not_warnings(
+    base_df: pd.DataFrame,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    ml_unsup = _make_result("ml_unsupervised", [0.2] * 5, {"ML02": [0.2] * 5})
+
+    with caplog.at_level("WARNING", logger="src.detection.score_aggregator"):
+        aggregate_scores(
+            base_df,
+            [ml_unsup],
+            weights=LAYER_WEIGHTS_WITH_ML,
+            detection_scope="phase2_only",
+        )
+
+    assert "track 'layer_a' missing; treating as zero" not in caplog.text
+    assert "track 'layer_b' missing; treating as zero" not in caplog.text
+    assert "track 'layer_c' missing; treating as zero" not in caplog.text
+    assert "track 'benford' missing; treating as zero" not in caplog.text
+    assert "track 'ml_supervised' missing; treating as zero" not in caplog.text
+
+
+def test_default_scope_missing_legacy_tracks_remain_warnings(
+    base_df: pd.DataFrame,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    ml_unsup = _make_result("ml_unsupervised", [0.2] * 5, {"ML02": [0.2] * 5})
+
+    with caplog.at_level("WARNING", logger="src.detection.score_aggregator"):
+        aggregate_scores(base_df, [ml_unsup], weights=LAYER_WEIGHTS_WITH_ML)
+
+    assert "track 'layer_a' missing; treating as zero" in caplog.text
+
+
 # ── 공용 fixture ──────────────────────────────────────────
 
 
@@ -207,6 +240,51 @@ class TestAggregateScores:
 
         assert result["anomaly_score"].tolist() == sorted(result["anomaly_score"].tolist())
         assert result["anomaly_score"].iloc[3] > result["anomaly_score"].iloc[0]
+
+    def test_ic01_review_only_sidecar_gets_low_floor_without_confirmed_score(self):
+        """IC01 review-only sidecar must not disappear when numeric score is zero."""
+        df = pd.DataFrame({"val": range(3)})
+        ic = _make_result(
+            "intercompany",
+            [0.0, 0.0, 0.0],
+            {"IC01": [0.0, 0.0, 0.0]},
+            index=[0, 1, 2],
+            metadata={
+                "row_sidecar": {
+                    "ic01_evidence_level": pd.Series(["review", "", ""], index=[0, 1, 2])
+                }
+            },
+        )
+
+        result = aggregate_scores(df, [ic], detection_scope="phase2_only")
+
+        assert result.loc[0, "intercompany_exception_score"] == RISK_THRESHOLDS[RiskLevel.LOW]
+        assert result.loc[0, "anomaly_score"] == RISK_THRESHOLDS[RiskLevel.LOW]
+        assert result.loc[0, "risk_level"] == RiskLevel.LOW
+        assert result.loc[0, "intercompany_exception_reasons"] == "IC01[review]"
+        assert result.loc[0, "flagged_rules"] == ""
+
+    def test_ic01_high_sidecar_gets_medium_floor_without_confirmed_score(self):
+        """IC01 high sidecar receives the documented Medium floor even with score 0."""
+        df = pd.DataFrame({"val": range(2)})
+        ic = _make_result(
+            "intercompany",
+            [0.0, 0.0],
+            {"IC01": [0.0, 0.0]},
+            index=[0, 1],
+            metadata={
+                "row_sidecar": {
+                    "ic01_evidence_level": pd.Series(["high", ""], index=[0, 1])
+                }
+            },
+        )
+
+        result = aggregate_scores(df, [ic], detection_scope="phase2_only")
+
+        assert result.loc[0, "intercompany_exception_score"] == RISK_THRESHOLDS[RiskLevel.MEDIUM]
+        assert result.loc[0, "anomaly_score"] == RISK_THRESHOLDS[RiskLevel.MEDIUM]
+        assert result.loc[0, "risk_level"] == RiskLevel.MEDIUM
+        assert result.loc[0, "intercompany_exception_reasons"] == "IC01[high]"
 
     def test_l307_bucket_scores_are_monotonic_in_rule_level_score(self, base_df):
         """L3-07 gap buckets should not invert when folded into PHASE1 scoring."""
@@ -735,7 +813,7 @@ class TestPolicyRiskFloors:
         assert "L1-04:immediate" in result["risk_floor_reasons"].iloc[0]
 
     def test_policy_label_floors_immediate_follows_risk_thresholds_high(self):
-        """_POLICY_LABEL_FLOORS["immediate"]는 literal 값이 아니라 RISK_THRESHOLDS[HIGH] 동적 참조."""
+        """_POLICY_LABEL_FLOORS["immediate"] follows RISK_THRESHOLDS[HIGH]."""
         # Why: 향후 RISK_THRESHOLDS[HIGH]가 변경되면 immediate floor도 같이 따라가야 한다.
         # literal 0.50 하드코딩 회귀를 차단한다.
         assert _POLICY_LABEL_FLOORS["immediate"] == pytest.approx(RISK_THRESHOLDS[RiskLevel.HIGH])
@@ -1191,7 +1269,10 @@ class TestIntercompanyExceptionScoring:
         assert result["intercompany_exception_score"].iloc[0] == pytest.approx(0.0)
 
     def test_ic01_exception_gets_medium_floor(self):
-        """IC01 미대사 예외는 row-level 대표 점수에서도 Medium 이상 노출."""
+        """IC01[high] 미대사 예외는 row-level 대표 점수에서 Medium 이상 노출.
+
+        D0xx (D055 supersede) 정책: evidence=high 만 Medium floor.
+        """
         df = pd.DataFrame({"is_intercompany": [True]})
         layer_b = DetectionResult(
             track_name="layer_b",
@@ -1207,7 +1288,13 @@ class TestIntercompanyExceptionScoring:
             flagged_indices=[0],
             scores=pd.Series([0.6]),
             rule_flags=[RuleFlag("IC01", "IC01", 3, 1, 1)],
-            details=pd.DataFrame({"IC01": [0.6]}),
+            details=pd.DataFrame(
+                {
+                    "IC01": [0.6],
+                    "ic01_evidence_level": ["high"],
+                    "ic01_review_reason": [""],
+                }
+            ),
             metadata={"elapsed": 0.01, "skipped_rules": []},
             warnings=[],
         )
@@ -1219,7 +1306,7 @@ class TestIntercompanyExceptionScoring:
         assert result["intercompany_exception_score"].iloc[0] == pytest.approx(
             RISK_THRESHOLDS[RiskLevel.MEDIUM]
         )
-        assert result["intercompany_exception_reasons"].iloc[0] == "IC01"
+        assert result["intercompany_exception_reasons"].iloc[0] == "IC01[high]"
 
     def test_single_ic02_exception_gets_low_floor(self):
         """IC02 단독 금액 차이는 Low floor로 표시."""
@@ -1261,6 +1348,83 @@ class TestIntercompanyExceptionScoring:
         assert result["anomaly_score"].iloc[0] == pytest.approx(RISK_THRESHOLDS[RiskLevel.MEDIUM])
         assert result["risk_level"].iloc[0] == RiskLevel.MEDIUM
         assert result["intercompany_exception_reasons"].iloc[0] == "IC02,IC03"
+
+
+# ── IC01 evidence level floor 차별 (T-P5-3, D065) ──────────────
+
+
+class TestIC01EvidenceLevelFloor:
+    """D065 정책 — evidence=high 만 Medium floor 자격, review 는 Low."""
+
+    @staticmethod
+    def _build_ic_result(
+        ic01: float, evidence_level: str, ic02: float = 0.0, ic03: float = 0.0
+    ) -> DetectionResult:
+        details_data: dict = {
+            "IC01": [ic01],
+            "ic01_evidence_level": [evidence_level],
+            "ic01_review_reason": [""],
+        }
+        rule_flags: list[RuleFlag] = []
+        if ic01 > 0:
+            rule_flags.append(RuleFlag("IC01", "IC01", 3, 1, 1))
+        if ic02 > 0:
+            details_data["IC02"] = [ic02]
+            rule_flags.append(RuleFlag("IC02", "IC02", 2, 1, 1))
+        if ic03 > 0:
+            details_data["IC03"] = [ic03]
+            rule_flags.append(RuleFlag("IC03", "IC03", 2, 1, 1))
+        return DetectionResult(
+            track_name="intercompany",
+            flagged_indices=[0],
+            scores=pd.Series([max(ic01, ic02, ic03)]),
+            rule_flags=rule_flags,
+            details=pd.DataFrame(details_data),
+            metadata={"elapsed": 0.01, "skipped_rules": []},
+            warnings=[],
+        )
+
+    def test_ic01_high_alone_medium(self):
+        """IC01[high] 단독 → Medium floor."""
+        df = pd.DataFrame({"is_intercompany": [True]})
+        ic = self._build_ic_result(ic01=0.6, evidence_level="high")
+        result = aggregate_scores(df, [ic])
+        assert result["anomaly_score"].iloc[0] == pytest.approx(RISK_THRESHOLDS[RiskLevel.MEDIUM])
+        assert result["risk_level"].iloc[0] == RiskLevel.MEDIUM
+        assert "IC01[high]" in result["intercompany_exception_reasons"].iloc[0]
+
+    def test_ic01_review_alone_low(self):
+        """IC01[review] 단독 → Low floor (Medium 자격 없음)."""
+        df = pd.DataFrame({"is_intercompany": [True]})
+        ic = self._build_ic_result(ic01=0.6, evidence_level="review")
+        result = aggregate_scores(df, [ic])
+        assert result["anomaly_score"].iloc[0] == pytest.approx(RISK_THRESHOLDS[RiskLevel.LOW])
+        assert result["risk_level"].iloc[0] == RiskLevel.LOW
+        assert "IC01[review]" in result["intercompany_exception_reasons"].iloc[0]
+
+    def test_ic02_ic03_combo_medium(self):
+        """IC02 + IC03 (IC01 없음) → Medium floor (2 개 이상 결합 유지)."""
+        df = pd.DataFrame({"is_intercompany": [True]})
+        ic = self._build_ic_result(ic01=0.0, evidence_level="", ic02=0.4, ic03=0.4)
+        result = aggregate_scores(df, [ic])
+        assert result["anomaly_score"].iloc[0] == pytest.approx(RISK_THRESHOLDS[RiskLevel.MEDIUM])
+        assert result["risk_level"].iloc[0] == RiskLevel.MEDIUM
+
+    def test_ic01_high_with_ic02_medium(self):
+        """IC01[high] + IC02 → Medium floor 유지."""
+        df = pd.DataFrame({"is_intercompany": [True]})
+        ic = self._build_ic_result(ic01=0.6, evidence_level="high", ic02=0.4)
+        result = aggregate_scores(df, [ic])
+        assert result["anomaly_score"].iloc[0] == pytest.approx(RISK_THRESHOLDS[RiskLevel.MEDIUM])
+        assert result["risk_level"].iloc[0] == RiskLevel.MEDIUM
+
+    def test_ic01_review_with_ic02_medium(self):
+        """IC01[review] + IC02 → Medium floor (2 개 이상 결합 유지)."""
+        df = pd.DataFrame({"is_intercompany": [True]})
+        ic = self._build_ic_result(ic01=0.6, evidence_level="review", ic02=0.4)
+        result = aggregate_scores(df, [ic])
+        assert result["anomaly_score"].iloc[0] == pytest.approx(RISK_THRESHOLDS[RiskLevel.MEDIUM])
+        assert result["risk_level"].iloc[0] == RiskLevel.MEDIUM
 
 
 # ── TestMLWeights ────────────────────────────────────────

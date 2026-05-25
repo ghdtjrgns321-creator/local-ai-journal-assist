@@ -81,3 +81,50 @@ class TestUploadBatchesMeta:
         assert "best_per_family" in row["phase2_promotion_policy"]
         assert row["phase2_inference_mode"] == "training_contract"
         assert "timeseries" in row["detector_statuses_json"]
+
+    def test_phase2_meta_update_backfills_legacy_upload_batch_columns(self):
+        conn = duckdb.connect(":memory:")
+        conn.execute(
+            """
+            CREATE TABLE upload_batches (
+                upload_batch_id VARCHAR PRIMARY KEY NOT NULL,
+                file_name VARCHAR,
+                row_count INTEGER NOT NULL,
+                anomaly_count INTEGER DEFAULT 0,
+                high_risk_count INTEGER DEFAULT 0
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO upload_batches (
+                upload_batch_id, file_name, row_count, anomaly_count, high_risk_count
+            )
+            VALUES ('legacy_phase2_batch', 'legacy.csv', 1, 0, 0)
+            """
+        )
+
+        update_upload_batch_meta(
+            conn,
+            "legacy_phase2_batch",
+            phase2_training_report_id="train_legacy",
+            phase2_inference_contract={"required_models": ["unsupervised"]},
+            phase2_promotion_policy={"selection_mode": "best_per_family"},
+            phase2_inference_mode="training_contract",
+            detector_statuses=[{"track_name": "ml_unsupervised", "elapsed_sec": object()}],
+        )
+
+        row = conn.execute(
+            """
+            SELECT phase2_training_report_id, phase2_inference_contract,
+                   phase2_promotion_policy, phase2_inference_mode, detector_statuses_json
+            FROM upload_batches
+            WHERE upload_batch_id = 'legacy_phase2_batch'
+            """
+        ).fetchdf().iloc[0]
+
+        assert row["phase2_training_report_id"] == "train_legacy"
+        assert "unsupervised" in row["phase2_inference_contract"]
+        assert "best_per_family" in row["phase2_promotion_policy"]
+        assert row["phase2_inference_mode"] == "training_contract"
+        assert "ml_unsupervised" in row["detector_statuses_json"]

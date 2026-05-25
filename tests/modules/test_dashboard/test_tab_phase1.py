@@ -95,7 +95,9 @@ def test_phase1_render_uses_compact_four_tab_layout(monkeypatch) -> None:
     monkeypatch.setattr(tab_phase1, "_render_data_quality_gate", lambda *args, **kwargs: None)
     monkeypatch.setattr(tab_phase1, "_render_violation_cases_tab", lambda *args, **kwargs: None)
     monkeypatch.setattr(tab_phase1, "_render_statistics_tab", lambda *args, **kwargs: None)
-    monkeypatch.setattr(tab_phase1, "_render_year_over_year", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        tab_phase1, "_render_year_over_year", lambda *args, **kwargs: None, raising=False
+    )
 
     tab_phase1.render(None, SimpleNamespace())
 
@@ -104,9 +106,8 @@ def test_phase1_render_uses_compact_four_tab_layout(monkeypatch) -> None:
     assert captured_label_groups[0] == [
         "전체 요약",
         "데이터 정합성",
-        "위반 케이스",
+        "검토 케이스",
         "통계결과",
-        "전기 비교",
     ]
     # AI 결론 탭이 더 이상 노출되지 않음을 보장.
     flat = [label for group in captured_label_groups for label in group]
@@ -119,6 +120,25 @@ def test_available_rules_uses_raw_rule_hits_when_phase1_truth_exists() -> None:
     rules = tab_phase1._available_rules(pr.featured_data, pr=pr)
 
     assert rules == ["L1-03"]
+
+
+def test_case_band_distribution_counts_phase1_cases() -> None:
+    pr = SimpleNamespace(
+        phase1_case_result=SimpleNamespace(
+            cases=[
+                SimpleNamespace(priority_band="high"),
+                SimpleNamespace(priority_band="high"),
+                SimpleNamespace(priority_band="medium"),
+                SimpleNamespace(priority_band="low"),
+                SimpleNamespace(priority_band="unexpected"),
+            ]
+        )
+    )
+
+    result = tab_phase1._case_band_distribution(pr)
+
+    counts = dict(zip(result["band"], result["count"]))
+    assert counts == {"high": 2, "medium": 1, "low": 2}
 
 
 def test_filter_master_data_uses_raw_rule_hits_and_ignores_stale_flags() -> None:

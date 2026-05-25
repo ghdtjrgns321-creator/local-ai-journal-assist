@@ -488,6 +488,18 @@ def test_export_skips_row_violation_detail_for_non_transaction_surfaces() -> Non
         assert build_phase1_rule_documents(pipeline_result, rule_id) == []
 
 
+def test_l308_context_badge_rule_still_renders_hit_documents() -> None:
+    pipeline_result = _make_row_level_row_index_result("L3-08")
+
+    rows = build_phase1_rule_documents(pipeline_result, "L3-08")
+
+    assert len(rows) == 1
+    assert rows[0]["document_id"] == "DOC-HIT-L3-08"
+    assert rows[0]["line_number"] == 3
+    assert rows[0]["violation_summary"] == "적요 누락 또는 손상"
+    assert rows[0]["line_text"] == "L3-08 violation line"
+
+
 def test_export_canonicalizes_l203_reason_codes_without_separate_detail_heading() -> None:
     pipeline_result = _make_pipeline_result()
     pipeline_result.featured_data.loc[
@@ -652,11 +664,19 @@ def _make_row_level_row_index_result(rule_id: str) -> SimpleNamespace:
         "L1-03",
         "L2-04",
         "L3-01",
+        "L3-03",
+        "L3-05",
+        "L3-06",
+        "L3-08",
         "L3-07",
         "L3-09",
+        "L3-10",
+        "L3-12",
         "L4-01",
         "L4-03",
         "L4-04",
+        "L4-05",
+        "L4-06",
     ],
 )
 def test_row_level_rule_documents_use_raw_hit_row_index_for_representative_record(
@@ -1120,3 +1140,92 @@ def test_resolve_phase1_case_result_returns_none_when_artifact_is_missing() -> N
     loaded = resolve_phase1_case_result(pipeline_result)
 
     assert loaded is None
+
+
+# ── P3: Phase 1 case basis classifier 단위 테스트 ───────────────
+
+
+from src.export.phase1_case_view import (  # noqa: E402
+    Phase1CaseBasis,
+    Phase1CaseBasisStatus,
+    classify_phase1_case_basis,
+)
+
+
+def _phase1_with_cases() -> Phase1CaseResult:
+    """기존 _make_pipeline_result() 가 만드는 phase1 case result 와 동등."""
+    return _make_pipeline_result().phase1_case_result
+
+
+def test_classify_returns_canonical_in_memory_when_cases_present() -> None:
+    phase1_result = SimpleNamespace(phase1_case_result=_phase1_with_cases())
+    basis = classify_phase1_case_basis(phase1_result)
+    assert basis.status == Phase1CaseBasisStatus.CANONICAL_IN_MEMORY
+    assert basis.case_result is phase1_result.phase1_case_result
+    assert basis.metadata.get("case_count") == len(phase1_result.phase1_case_result.cases)
+
+
+def test_classify_returns_canonical_artifact_when_lazy_load_succeeds(tmp_path) -> None:
+    phase1 = _phase1_with_cases()
+    artifact_path = tmp_path / "phase1_case.json"
+    artifact_path.write_text(
+        phase1.__pydantic_serializer__.to_json(phase1).decode("utf-8"),
+        encoding="utf-8",
+    )
+    phase1_result = SimpleNamespace(
+        phase1_case_path=str(artifact_path),
+        phase1_case_count=len(phase1.cases),
+    )
+    basis = classify_phase1_case_basis(phase1_result)
+    assert basis.status == Phase1CaseBasisStatus.CANONICAL_ARTIFACT
+    assert basis.case_result is not None
+    assert len(basis.case_result.cases) == len(phase1.cases)
+    assert basis.metadata.get("artifact_path") == str(artifact_path)
+
+
+def test_classify_returns_fallback_redetect_when_artifact_missing_but_redetect_has_cases(
+    tmp_path,
+) -> None:
+    redetect = SimpleNamespace(phase1_case_result=_phase1_with_cases())
+    phase1_result = SimpleNamespace(
+        phase1_case_path=str(tmp_path / "missing.json"),
+        phase1_case_count=3,
+    )
+    basis = classify_phase1_case_basis(phase1_result, redetect_result=redetect)
+    # missing artifact → load 시도하면 exception 발생 → fallback (redetect cases 있음)
+    # OR missing path 인 경우 load_phase1_case_result 가 raise → ARTIFACT_ERROR 분기에서
+    # redetect 가 있으면 FALLBACK_REDETECT 로 분류
+    assert basis.status == Phase1CaseBasisStatus.FALLBACK_REDETECT
+    assert basis.case_result is redetect.phase1_case_result
+
+
+def test_classify_returns_artifact_error_when_load_fails_and_no_fallback(tmp_path) -> None:
+    phase1_result = SimpleNamespace(
+        phase1_case_path=str(tmp_path / "missing.json"),
+        phase1_case_count=2,
+    )
+    basis = classify_phase1_case_basis(phase1_result, redetect_result=None)
+    assert basis.status == Phase1CaseBasisStatus.ARTIFACT_ERROR
+    assert basis.case_result is None
+    assert "missing.json" in basis.metadata.get("artifact_path", "")
+
+
+def test_classify_returns_metadata_only_when_no_artifact_and_no_fallback() -> None:
+    phase1_result = SimpleNamespace(phase1_case_count=5)
+    basis = classify_phase1_case_basis(phase1_result, redetect_result=None)
+    assert basis.status == Phase1CaseBasisStatus.METADATA_ONLY
+    assert basis.case_result is None
+    assert basis.metadata.get("phase1_case_count") == 5
+
+
+def test_classify_returns_unavailable_when_phase1_result_is_none() -> None:
+    basis = classify_phase1_case_basis(None, redetect_result=None)
+    assert basis.status == Phase1CaseBasisStatus.UNAVAILABLE
+    assert basis.case_result is None
+
+
+def test_classify_returns_fallback_when_phase1_none_but_redetect_has_cases() -> None:
+    redetect = SimpleNamespace(phase1_case_result=_phase1_with_cases())
+    basis = classify_phase1_case_basis(None, redetect_result=redetect)
+    assert basis.status == Phase1CaseBasisStatus.FALLBACK_REDETECT
+    assert basis.case_result is redetect.phase1_case_result

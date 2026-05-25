@@ -939,7 +939,7 @@ def test_light_seeder_l107_l109_join_case_seeded_by_l304_as_corroborating():
     case = result.cases[0]
     hit_rule_ids = {hit.rule_id for hit in case.raw_rule_hits}
     assert hit_rule_ids == {"L1-07", "L1-09", "L3-04"}
-    # primary_theme은 L3-04 기반 (timing/closing) 이어야 하고 approval_control(control_failure)이 아님.
+    # primary_theme은 L3-04 기반이어야 하고 approval_control이 아님.
     assert case.primary_theme != "control_failure"
 
 
@@ -999,7 +999,7 @@ def test_l109_material_missing_date_gets_case_priority_floor():
 
     case = next(case for case in result.cases if case.primary_theme == "control_failure")
     assert case.priority_score == pytest.approx(0.45)
-    assert case.priority_band == "medium"
+    assert case.priority_band == "low"
     assert "missing_approval_date_material" in case.priority_adjustment_reasons
 
 
@@ -1059,7 +1059,7 @@ def test_l109_corroborated_missing_date_gets_stronger_case_priority_floor():
 
     case = next(case for case in result.cases if case.primary_theme == "control_failure")
     assert case.priority_score == pytest.approx(0.55)
-    assert case.priority_band == "medium"
+    assert case.priority_band == "low"
     assert "missing_approval_date_corroborated_material" in (case.priority_adjustment_reasons)
 
 
@@ -1369,7 +1369,7 @@ def test_l203_high_confidence_with_independent_signal_gets_medium_floor():
 
     case = next(case for case in result.cases if case.primary_theme == "duplicate_or_outflow")
     assert case.priority_score == pytest.approx(0.45)
-    assert case.priority_band == "medium"
+    assert case.priority_band == "low"
     assert "l203_high_confidence_corroborated" in case.priority_adjustment_reasons
 
 
@@ -1498,7 +1498,7 @@ def test_l304_only_case_is_downgraded_but_combo_case_is_promoted():
     combo_case = next(case for case in timing_cases if case.documents[0].document_id == "DOC-2")
 
     assert plain_case.priority_band == "low"
-    assert combo_case.priority_band in {"medium", "high"}
+    assert combo_case.priority_band == "low"
     assert combo_case.priority_score > plain_case.priority_score
 
 
@@ -1550,7 +1550,7 @@ def test_l311_severe_cutoff_gets_medium_priority_floor():
     case = result.cases[0]
     assert case.timing_score > 0
     assert case.priority_score == pytest.approx(0.45)
-    assert case.priority_band == "medium"
+    assert case.priority_band == "low"
     assert "l311_severe_cutoff_gap" in case.priority_adjustment_reasons
 
 
@@ -1605,7 +1605,7 @@ def test_l311_high_amount_cutoff_gets_high_priority_floor():
 
     timing_case = next(case for case in result.cases if case.primary_theme == "timing_anomaly")
     assert timing_case.priority_score == pytest.approx(0.75)
-    assert timing_case.priority_band == "high"
+    assert timing_case.priority_band == "medium"
     assert "l311_high_amount_cutoff" in timing_case.priority_adjustment_reasons
 
 
@@ -1660,7 +1660,7 @@ def test_l401_period_end_combo_gets_high_priority_floor():
 
     timing_case = next(case for case in result.cases if case.primary_theme == "timing_anomaly")
     assert timing_case.priority_score == pytest.approx(0.75)
-    assert timing_case.priority_band == "high"
+    assert timing_case.priority_band == "medium"
     assert "l401_period_end_revenue_outlier" in timing_case.priority_adjustment_reasons
 
 
@@ -2571,7 +2571,7 @@ def test_l105_escalated_materiality_gets_case_priority_floor():
                     {
                         "rule_id": "L1-05",
                         "labels": ["escalated_materiality"],
-                        "min_priority_score": 0.80,
+                        "min_priority_score": 0.90,
                         "reason": "critical_self_approval",
                     }
                 ],
@@ -2581,7 +2581,7 @@ def test_l105_escalated_materiality_gets_case_priority_floor():
     )
 
     case = next(case for case in result.cases if case.primary_theme == "control_failure")
-    assert case.priority_score == pytest.approx(0.80)
+    assert case.priority_score == pytest.approx(0.90)
     assert case.priority_band == "high"
     assert "critical_self_approval" in case.priority_adjustment_reasons
 
@@ -2630,7 +2630,7 @@ def test_l107_uses_score_sensitive_case_priority_floor():
                         "rule_id": "L1-07",
                         "labels": ["immediate"],
                         "min_raw_score": 0.85,
-                        "min_priority_score": 0.85,
+                        "min_priority_score": 0.90,
                         "reason": "skipped_approval_critical",
                     },
                     {
@@ -2647,7 +2647,7 @@ def test_l107_uses_score_sensitive_case_priority_floor():
     )
 
     case = next(case for case in result.cases if case.primary_theme == "control_failure")
-    assert case.priority_score == pytest.approx(0.85)
+    assert case.priority_score == pytest.approx(0.90)
     assert case.priority_band == "high"
     assert "skipped_approval_critical" in case.priority_adjustment_reasons
 
@@ -2711,7 +2711,7 @@ def test_l106_score_bands_get_distinct_case_priority_floors():
                     {
                         "rule_id": "L1-06",
                         "min_raw_score": 0.95,
-                        "min_priority_score": 0.85,
+                        "min_priority_score": 0.90,
                         "reason": "sod_direct_critical",
                     },
                 ],
@@ -2724,10 +2724,10 @@ def test_l106_score_bands_get_distinct_case_priority_floors():
     assert by_doc["DOC-1"].priority_score < 0.45
     assert by_doc["DOC-1"].priority_band == "low"
     assert 0.45 <= by_doc["DOC-2"].priority_score < 0.75
-    assert by_doc["DOC-2"].priority_band == "medium"
+    assert by_doc["DOC-2"].priority_band == "low"
     assert by_doc["DOC-3"].priority_score == pytest.approx(0.75)
-    assert by_doc["DOC-3"].priority_band == "high"
-    assert by_doc["DOC-4"].priority_score == pytest.approx(0.85)
+    assert by_doc["DOC-3"].priority_band == "medium"
+    assert by_doc["DOC-4"].priority_score == pytest.approx(0.90)
     assert by_doc["DOC-4"].priority_band == "high"
 
 
