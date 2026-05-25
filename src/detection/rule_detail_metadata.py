@@ -109,6 +109,9 @@ CANONICALIZATION_MAP = {
 LOCKED_NO_STANDALONE_COPY_RULE_IDS = frozenset(
     {"L3-05", "L3-06", "L3-08", "L3-10", "L3-12", "L4-05", "L4-06"}
 )
+LOCKED_CONTEXT_ROW_DETAIL_RULE_IDS = frozenset(
+    {"L3-03", "L3-05", "L3-06", "L3-08", "L3-10", "L3-12", "L4-05", "L4-06"}
+)
 
 CANONICAL_TRANSACTION_RULE_IDS = (
     "L1-01",
@@ -547,6 +550,7 @@ RULE_DETAIL_METADATA_REGISTRY: dict[str, RuleDetailMetadata] = {
         secondary_topics=("account_logic",),
         scoring_role=ScoringRole.BOOSTER,
         standalone_rankable=False,
+        allow_row_violation_detail=True,
         allow_standalone_violation_copy=False,
         title="Intercompany transaction context",
         tone="context_only",
@@ -577,6 +581,7 @@ RULE_DETAIL_METADATA_REGISTRY: dict[str, RuleDetailMetadata] = {
         secondary_topics=("approval_control",),
         scoring_role=ScoringRole.BOOSTER,
         standalone_rankable=False,
+        allow_row_violation_detail=True,
         allow_standalone_violation_copy=False,
         title="Non-business-day posting context",
         tone="context_only",
@@ -595,6 +600,7 @@ RULE_DETAIL_METADATA_REGISTRY: dict[str, RuleDetailMetadata] = {
         secondary_topics=("approval_control",),
         scoring_role=ScoringRole.BOOSTER,
         standalone_rankable=False,
+        allow_row_violation_detail=True,
         allow_standalone_violation_copy=False,
         title="After-hours posting context",
         tone="context_only",
@@ -624,6 +630,7 @@ RULE_DETAIL_METADATA_REGISTRY: dict[str, RuleDetailMetadata] = {
         secondary_topics=("closing_timing",),
         scoring_role=ScoringRole.BOOSTER,
         standalone_rankable=False,
+        allow_row_violation_detail=True,
         allow_standalone_violation_copy=False,
         title="Weak description context",
         tone="context_only",
@@ -654,6 +661,7 @@ RULE_DETAIL_METADATA_REGISTRY: dict[str, RuleDetailMetadata] = {
         secondary_topics=("approval_control", "revenue_statistical"),
         scoring_role=ScoringRole.BOOSTER,
         standalone_rankable=False,
+        allow_row_violation_detail=True,
         allow_standalone_violation_copy=False,
         title="Sensitive account context",
         tone="context_only",
@@ -685,6 +693,7 @@ RULE_DETAIL_METADATA_REGISTRY: dict[str, RuleDetailMetadata] = {
         secondary_topics=("duplicate_outflow",),
         scoring_role=ScoringRole.COMBO_ONLY,
         standalone_rankable=False,
+        allow_row_violation_detail=True,
         allow_standalone_violation_copy=False,
         title="Work-scope concentration context",
         tone="context_only",
@@ -780,6 +789,7 @@ RULE_DETAIL_METADATA_REGISTRY: dict[str, RuleDetailMetadata] = {
         secondary_topics=("approval_control",),
         scoring_role=ScoringRole.BOOSTER,
         standalone_rankable=False,
+        allow_row_violation_detail=True,
         allow_standalone_violation_copy=False,
         title="Unusual user timing context",
         tone="context_only",
@@ -797,6 +807,7 @@ RULE_DETAIL_METADATA_REGISTRY: dict[str, RuleDetailMetadata] = {
         final_topic="revenue_statistical",
         scoring_role=ScoringRole.COMBO_ONLY,
         standalone_rankable=False,
+        allow_row_violation_detail=True,
         allow_standalone_violation_copy=False,
         title="Batch posting context",
         tone="context_only",
@@ -1031,10 +1042,7 @@ def can_render_row_violation_detail(rule_id: str) -> bool:
     """Return whether a requested rule can render transaction row detail."""
 
     metadata = get_rule_detail_metadata(rule_id)
-    return (
-        metadata.presenter_surface == PresenterSurface.TRANSACTION_DETAIL
-        and metadata.allow_row_violation_detail
-    )
+    return metadata.allow_row_violation_detail
 
 
 def can_generate_standalone_violation_copy(rule_id: str) -> bool:
@@ -1096,6 +1104,7 @@ def validate_rule_detail_metadata_registry(schema_path: Path | None = None) -> l
         if (
             metadata.presenter_surface != PresenterSurface.TRANSACTION_DETAIL
             and metadata.allow_row_violation_detail
+            and rule_id not in LOCKED_CONTEXT_ROW_DETAIL_RULE_IDS
         ):
             errors.append(f"{rule_id}: non-transaction surface allows row detail")
         if (

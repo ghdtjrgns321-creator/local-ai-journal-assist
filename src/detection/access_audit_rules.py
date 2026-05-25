@@ -8,7 +8,6 @@ AL3-01: 승인 프로세스 검증 (감사기준서 315/330호 ITGC)
 
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 
 

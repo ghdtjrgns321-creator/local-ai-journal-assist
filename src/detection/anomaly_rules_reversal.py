@@ -118,6 +118,21 @@ def _normalize_text(value: object) -> str:
     return " ".join(normalized.split())
 
 
+def _cached_normalize_map(series: pd.Series, normalizer) -> pd.Series:
+    """series.map(normalizer)를 unique-value 캐싱으로 가속 — callable과 수학적 동치.
+
+    Why: 1.07M scalar normalize 호출 → unique 값에만 callable 적용 후 dict map.
+         _normalize_value/_normalize_text는 입력 only deterministic이라 안전.
+         NaN 입력(dict miss)은 normalizer(None) 결과로 fillna하여 기존 .map(callable) 동작 보존.
+    """
+    unique_vals = series.dropna().drop_duplicates()
+    lookup = {v: normalizer(v) for v in unique_vals}
+    mapped = series.map(lookup)
+    if series.isna().any():
+        mapped = mapped.where(series.notna(), normalizer(None))
+    return mapped
+
+
 def _first_nonempty_group_values(
     work: pd.DataFrame,
     group_cols: list[str],
@@ -128,7 +143,7 @@ def _first_nonempty_group_values(
     """Return first meaningful group value without groupby Python callbacks."""
 
     subset = work[group_cols + [value_col]].copy()
-    subset["_norm"] = subset[value_col].map(normalizer)
+    subset["_norm"] = _cached_normalize_map(subset[value_col], normalizer)
     subset = subset.loc[subset["_norm"].ne("")]
     if subset.empty:
         empty_index = pd.MultiIndex.from_arrays(
@@ -352,10 +367,9 @@ def _s1_one_to_one_match(
     work["document_id"] = df["document_id"].astype(str)
     work["gl_account"] = df["gl_account"].astype(str)
     work["posting_date"] = pd.to_datetime(df["posting_date"], errors="coerce")
-    work["net"] = (
-        pd.to_numeric(df["debit_amount"], errors="coerce").fillna(0.0)
-        - pd.to_numeric(df["credit_amount"], errors="coerce").fillna(0.0)
-    )
+    work["net"] = pd.to_numeric(df["debit_amount"], errors="coerce").fillna(0.0) - pd.to_numeric(
+        df["credit_amount"], errors="coerce"
+    ).fillna(0.0)
     for column in ["created_by", "reference", "document_type", "line_text", "header_text"]:
         work[column] = df[column] if column in df.columns else ""
 
@@ -384,14 +398,21 @@ def _s1_one_to_one_match(
         doc_work = doc_work.join(first_values.rename(column), on=group_cols)
         doc_work[column] = doc_work[column].fillna("")
     doc_work["abs_amt"] = doc_work["net"].abs().round(2)
-    doc_work["created_by_norm"] = doc_work["created_by"].map(_normalize_value)
-    doc_work["reference_norm"] = doc_work["reference"].map(_normalize_value)
-    doc_work["document_type_norm"] = doc_work["document_type"].map(_normalize_value)
-    doc_work["line_text_norm"] = doc_work["line_text"].map(_normalize_text)
-    doc_work["header_text_norm"] = doc_work["header_text"].map(_normalize_text)
-    doc_work["line_keyword"] = doc_work["line_text"].fillna("").astype(str).str.contains(
-        _REVERSAL_PATTERN,
-        na=False,
+    doc_work["created_by_norm"] = _cached_normalize_map(doc_work["created_by"], _normalize_value)
+    doc_work["reference_norm"] = _cached_normalize_map(doc_work["reference"], _normalize_value)
+    doc_work["document_type_norm"] = _cached_normalize_map(
+        doc_work["document_type"], _normalize_value
+    )
+    doc_work["line_text_norm"] = _cached_normalize_map(doc_work["line_text"], _normalize_text)
+    doc_work["header_text_norm"] = _cached_normalize_map(doc_work["header_text"], _normalize_text)
+    doc_work["line_keyword"] = (
+        doc_work["line_text"]
+        .fillna("")
+        .astype(str)
+        .str.contains(
+            _REVERSAL_PATTERN,
+            na=False,
+        )
     )
 
     nonzero_mask = doc_work["net"].ne(0.0)
@@ -425,13 +446,14 @@ def _s1_one_to_one_match(
         return pd.Series(False, index=df.index)
 
     day_gap = (
-        candidate_pairs["posting_date_pos"] - candidate_pairs["posting_date_neg"]
-    ).abs().dt.days
+        (candidate_pairs["posting_date_pos"] - candidate_pairs["posting_date_neg"]).abs().dt.days
+    )
     context_score = (
         (
             candidate_pairs["reference_norm_pos"].ne("")
             & candidate_pairs["reference_norm_pos"].eq(candidate_pairs["reference_norm_neg"])
-        ).astype(int) * 2
+        ).astype(int)
+        * 2
         + (
             candidate_pairs["created_by_norm_pos"].ne("")
             & candidate_pairs["created_by_norm_pos"].eq(candidate_pairs["created_by_norm_neg"])
@@ -484,14 +506,12 @@ def _s2_rolling_zero_out(
     work["document_id"] = df.get("document_id", pd.Series("", index=df.index)).astype(str)
     work["created_by"] = df["created_by"].astype(str)
     work["posting_date"] = pd.to_datetime(df["posting_date"], errors="coerce")
-    work["net"] = (
-        pd.to_numeric(df["debit_amount"], errors="coerce").fillna(0.0)
-        - pd.to_numeric(df["credit_amount"], errors="coerce").fillna(0.0)
-    )
-    work["gross"] = (
-        pd.to_numeric(df["debit_amount"], errors="coerce").fillna(0.0)
-        + pd.to_numeric(df["credit_amount"], errors="coerce").fillna(0.0)
-    )
+    work["net"] = pd.to_numeric(df["debit_amount"], errors="coerce").fillna(0.0) - pd.to_numeric(
+        df["credit_amount"], errors="coerce"
+    ).fillna(0.0)
+    work["gross"] = pd.to_numeric(df["debit_amount"], errors="coerce").fillna(0.0) + pd.to_numeric(
+        df["credit_amount"], errors="coerce"
+    ).fillna(0.0)
     for column in ["reference", "document_type", "source", "line_text"]:
         work[column] = df[column] if column in df.columns else ""
     if _EXCLUDE_ACCOUNTS:
@@ -528,13 +548,20 @@ def _s2_rolling_zero_out(
         )
         doc_work = doc_work.join(first_values.rename(column), on=group_cols)
         doc_work[column] = doc_work[column].fillna("")
-    doc_work["reference_norm"] = doc_work["reference"].map(_normalize_value)
-    doc_work["document_type_norm"] = doc_work["document_type"].map(_normalize_value)
-    doc_work["source_norm"] = doc_work["source"].map(_normalize_value)
-    doc_work["line_text_norm"] = doc_work["line_text"].map(_normalize_text)
-    doc_work["line_keyword"] = doc_work["line_text"].fillna("").astype(str).str.contains(
-        _REVERSAL_PATTERN,
-        na=False,
+    doc_work["reference_norm"] = _cached_normalize_map(doc_work["reference"], _normalize_value)
+    doc_work["document_type_norm"] = _cached_normalize_map(
+        doc_work["document_type"], _normalize_value
+    )
+    doc_work["source_norm"] = _cached_normalize_map(doc_work["source"], _normalize_value)
+    doc_work["line_text_norm"] = _cached_normalize_map(doc_work["line_text"], _normalize_text)
+    doc_work["line_keyword"] = (
+        doc_work["line_text"]
+        .fillna("")
+        .astype(str)
+        .str.contains(
+            _REVERSAL_PATTERN,
+            na=False,
+        )
     )
     if len(doc_work) < 2:
         return pd.Series(False, index=df.index)
@@ -685,9 +712,7 @@ def _build_row_annotations(
 
         high_confidence = "S0" in trigger_signals or "S2b" in trigger_signals
         interpretation_code = (
-            "high_confidence_reversal"
-            if high_confidence
-            else "candidate_reversal_clearing_reclass"
+            "high_confidence_reversal" if high_confidence else "candidate_reversal_clearing_reclass"
         )
         interpretation_label = (
             "High-confidence reversal"

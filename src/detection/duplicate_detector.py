@@ -18,6 +18,7 @@ import pandas as pd
 
 from src.detection.base import BaseDetector, DetectionResult, validate_input
 from src.detection.constants import SEVERITY_MAP
+from src.detection.duplicate_pair_features import build_duplicate_pair_artifact
 from src.detection.duplicate_rules import (
     b05a_exact_duplicate,
     b05b_fuzzy_duplicate,
@@ -92,19 +93,31 @@ class DuplicateDetector(BaseDetector):
         s = self._settings
         return [
             ("L2-03a", b05a_exact_duplicate, {}),
-            ("L2-03b", b05b_fuzzy_duplicate, {
-                "fuzzy_threshold": s.duplicate_fuzzy_threshold,
-                "amount_tolerance": s.duplicate_amount_tolerance,
-                "max_group_size": s.duplicate_max_group_size,
-            }),
-            ("L2-03c", b05c_split_transaction, {
-                "window_days": s.duplicate_split_window_days,
-                "amount_tolerance": s.duplicate_amount_tolerance,
-                "max_group_size": s.duplicate_max_group_size,
-            }),
-            ("L2-03d", b05d_time_shifted_duplicate, {
-                "window_days": s.duplicate_time_window_days,
-            }),
+            (
+                "L2-03b",
+                b05b_fuzzy_duplicate,
+                {
+                    "fuzzy_threshold": s.duplicate_fuzzy_threshold,
+                    "amount_tolerance": s.duplicate_amount_tolerance,
+                    "max_group_size": s.duplicate_max_group_size,
+                },
+            ),
+            (
+                "L2-03c",
+                b05c_split_transaction,
+                {
+                    "window_days": s.duplicate_split_window_days,
+                    "amount_tolerance": s.duplicate_amount_tolerance,
+                    "max_group_size": s.duplicate_max_group_size,
+                },
+            ),
+            (
+                "L2-03d",
+                b05d_time_shifted_duplicate,
+                {
+                    "window_days": s.duplicate_time_window_days,
+                },
+            ),
         ]
 
     def _build_result(
@@ -137,6 +150,7 @@ class DuplicateDetector(BaseDetector):
             for rule_id, raw_scores in rule_results.items()
         ]
 
+        pair_artifact = build_duplicate_pair_artifact(df, self._settings)
         return self._make_result(
             flagged_indices=flagged_indices,
             scores=scores,
@@ -147,6 +161,7 @@ class DuplicateDetector(BaseDetector):
                 "skipped_rules": skipped,
                 "coverage_issues": coverage_issues or [],
                 "analysis_degraded": bool(coverage_issues),
+                "pair_artifact": pair_artifact.to_dict(),
             },
             warnings=warnings,
         )
@@ -159,6 +174,7 @@ class DuplicateDetector(BaseDetector):
         skipped: list[str] | None = None,
         coverage_issues: list[dict[str, Any]] | None = None,
     ) -> DetectionResult:
+        pair_artifact = build_duplicate_pair_artifact(df, self._settings)
         return self._make_result(
             flagged_indices=[],
             scores=pd.Series(0.0, index=df.index),
@@ -169,6 +185,7 @@ class DuplicateDetector(BaseDetector):
                 "skipped_rules": skipped or [],
                 "coverage_issues": coverage_issues or [],
                 "analysis_degraded": bool(coverage_issues),
+                "pair_artifact": pair_artifact.to_dict(),
             },
             warnings=warnings,
         )

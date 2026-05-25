@@ -8,6 +8,7 @@ current audit rule code families: L1, L2, L3, and L4.
 from __future__ import annotations
 
 import logging
+import time
 
 import numpy as np
 import pandas as pd
@@ -40,6 +41,27 @@ from src.detection.rule_scoring import (
     SIGNAL_STRENGTH_MAP,
     normalize_rule_evidence,
 )
+from src.services._phase_timing import log_timing, now_str
+
+
+class _Phase2Timer:
+    """phase2_only scope 일 때만 stage timing 출력하는 컨텍스트 매니저."""
+
+    def __init__(self, scope: str, tag: str) -> None:
+        self.scope = scope
+        self.tag = tag
+        self._start = 0.0
+        self._ts = ""
+
+    def __enter__(self) -> _Phase2Timer:
+        if self.scope == "phase2_only":
+            self._start = time.perf_counter()
+            self._ts = now_str()
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        if self.scope == "phase2_only":
+            log_timing(self.tag, time.perf_counter() - self._start, start_ts=self._ts)
 
 _TOPSIDE_CONDITIONS = len(TOPSIDE_BONUS_RULES)
 _BATCH_CORROBORATION_CONDITIONS = len(BATCH_CORROBORATION_RULES)
@@ -69,6 +91,7 @@ def aggregate_scores(
     thresholds: dict[str, float] | None = None,
     settings: object | None = None,
     *,
+    detection_scope: str = "default",
     stacking_scores: pd.Series | None = None,
 ) -> pd.DataFrame:
     """Return anomaly_score, risk_level, and rule references for each row."""
@@ -82,10 +105,22 @@ def aggregate_scores(
             k.value if isinstance(k, Layer) else str(k): float(v)
             for k, v in (weights or RULE_LEVEL_WEIGHTS).items()
         }
-        if _uses_rule_level_weights(normalized_weights):
-            score_acc = _aggregate_rule_level_scores(df.index, results, normalized_weights)
-        else:
-            score_acc = _aggregate_legacy_track_scores(df.index, results, normalized_weights)
+        expected_missing_tracks = _expected_missing_tracks_for_scope(detection_scope)
+        with _Phase2Timer(detection_scope, "phase2.aggregate.score_acc"):
+            if _uses_rule_level_weights(normalized_weights):
+                score_acc = _aggregate_rule_level_scores(
+                    df.index,
+                    results,
+                    normalized_weights,
+                    expected_missing_tracks=expected_missing_tracks,
+                )
+            else:
+                score_acc = _aggregate_legacy_track_scores(
+                    df.index,
+                    results,
+                    normalized_weights,
+                    expected_missing_tracks=expected_missing_tracks,
+                )
         anomaly_score = score_acc.clip(0.0, 1.0)
 
     mode = getattr(settings, "risk_classification_mode", "absolute")
@@ -97,28 +132,32 @@ def aggregate_scores(
             RiskLevel.LOW: getattr(settings, "risk_quantile_low", 0.50),
         }
 
-    agg_df = pd.DataFrame(
-        {
-            "anomaly_score": anomaly_score,
-            "risk_level": classify_risk_level(
-                anomaly_score,
-                thresholds,
-                mode=mode,
-                quantiles=quantiles,
-            ),
-            "flagged_rules": _collect_flagged_rules(results, df.index),
-            "review_rules": _collect_review_rules(results, df.index),
-        },
-        index=df.index,
-    )
+    with _Phase2Timer(detection_scope, "phase2.aggregate.agg_df_init"):
+        agg_df = pd.DataFrame(
+            {
+                "anomaly_score": anomaly_score,
+                "risk_level": classify_risk_level(
+                    anomaly_score,
+                    thresholds,
+                    mode=mode,
+                    quantiles=quantiles,
+                ),
+                "flagged_rules": _collect_flagged_rules(results, df.index),
+                "review_rules": _collect_review_rules(results, df.index),
+            },
+            index=df.index,
+        )
 
     _inject_ml_track_scores(agg_df, results)
-    agg_df = _apply_policy_risk_floors(agg_df, results)
-    agg_df = _apply_auto_escalation(agg_df, results)
-    agg_df = _apply_intercompany_exception_corroboration(agg_df, results)
-    agg_df = _apply_batch_corroboration(agg_df, results)
-    agg_df = _apply_work_scope_corroboration(agg_df, results)
-    return _inject_topside_score(agg_df, df, results)
+    with _Phase2Timer(detection_scope, "phase2.aggregate.policy_floors"):
+        agg_df = _apply_policy_risk_floors(agg_df, results)
+    with _Phase2Timer(detection_scope, "phase2.aggregate.corroboration"):
+        agg_df = _apply_auto_escalation(agg_df, results)
+        agg_df = _apply_intercompany_exception_corroboration(agg_df, results)
+        agg_df = _apply_batch_corroboration(agg_df, results)
+        agg_df = _apply_work_scope_corroboration(agg_df, results)
+    with _Phase2Timer(detection_scope, "phase2.aggregate.topside"):
+        return _inject_topside_score(agg_df, df, results)
 
 
 def _uses_rule_level_weights(weights: dict[str, float]) -> bool:
@@ -129,7 +168,11 @@ def _combined_rule_details(results: list[DetectionResult], index: pd.Index) -> p
     details_list = [r.details for r in results if r.details is not None and not r.details.empty]
     if not details_list:
         return pd.DataFrame(index=index)
-    combined = pd.concat(details_list, axis=1).reindex(index).fillna(0.0)
+    combined = pd.concat(details_list, axis=1).reindex(index)
+    # Why: ML/외부 detector가 details에 model_id/string column을 섞을 수 있어
+    #      모든 다운스트림 비교(`combined > 0` 등)에서 'str > int' TypeError를 유발.
+    #      numeric 강제 변환으로 근본 차단 — non-numeric은 NaN→0.0 처리.
+    combined = combined.apply(lambda c: pd.to_numeric(c, errors="coerce")).fillna(0.0)
     if combined.columns.duplicated().any():
         combined = combined.T.groupby(level=0).max().T
     return combined
@@ -181,11 +224,18 @@ def _aggregate_rule_level_scores(
     index: pd.Index,
     results: list[DetectionResult],
     weights: dict[str, float],
+    *,
+    expected_missing_tracks: set[str] | None = None,
 ) -> pd.Series:
     """Aggregate by L1/L2/L3/L4 using the max rule score inside each family."""
     combined = _combined_normalized_rule_details(results, index)
     if combined.empty:
-        return _aggregate_legacy_track_scores(index, results, _string_keyed_weights(LAYER_WEIGHTS))
+        return _aggregate_legacy_track_scores(
+            index,
+            results,
+            _string_keyed_weights(LAYER_WEIGHTS),
+            expected_missing_tracks=expected_missing_tracks,
+        )
     result_map = {r.track_name: r for r in results}
     score_acc = pd.Series(0.0, index=index)
     matched_rule_family = False
@@ -204,8 +254,19 @@ def _aggregate_rule_level_scores(
         if track is not None:
             score_acc = score_acc + track.scores.reindex(index, fill_value=0.0) * float(weight)
     if not matched_rule_family and not score_acc.gt(0).any():
-        return _aggregate_legacy_track_scores(index, results, _string_keyed_weights(LAYER_WEIGHTS))
+        return _aggregate_legacy_track_scores(
+            index,
+            results,
+            _string_keyed_weights(LAYER_WEIGHTS),
+            expected_missing_tracks=expected_missing_tracks,
+        )
     return score_acc
+
+
+def _expected_missing_tracks_for_scope(detection_scope: str) -> set[str]:
+    if detection_scope != "phase2_only":
+        return set()
+    return {"layer_a", "layer_b", "layer_c", "benford", "ml_supervised"}
 
 
 def _string_keyed_weights(weights: dict[object, float]) -> dict[str, float]:
@@ -225,10 +286,7 @@ def _combined_normalized_rule_details(
         if result.details is None or result.details.empty:
             continue
         details = result.details.reindex(index).fillna(0.0)
-        severities = {
-            flag.rule_id: int(flag.severity)
-            for flag in result.rule_flags
-        }
+        severities = {flag.rule_id: int(flag.severity) for flag in result.rule_flags}
         for rule_id in details.columns:
             rule_code = str(rule_id)
             if not _is_rule_level_code(rule_code):
@@ -247,9 +305,7 @@ def _combined_normalized_rule_details(
             labels = _row_labels_for_rule(results=[result], rule_id=rule_code, index=index)
             annotation_scores = _row_annotation_scores_for_rule(result, rule_code, index)
             raw_values = (
-                pd.to_numeric(details[rule_code], errors="coerce")
-                .fillna(0.0)
-                .astype(float)
+                pd.to_numeric(details[rule_code], errors="coerce").fillna(0.0).astype(float)
             )
             raw_values = pd.Series(
                 np.maximum(
@@ -294,13 +350,19 @@ def _aggregate_legacy_track_scores(
     index: pd.Index,
     results: list[DetectionResult],
     weights: dict[str, float],
+    *,
+    expected_missing_tracks: set[str] | None = None,
 ) -> pd.Series:
     """Keep explicit legacy track weighting available for callers/tests."""
     result_map = {r.track_name: r for r in results}
     score_acc = pd.Series(0.0, index=index)
+    expected_missing_tracks = expected_missing_tracks or set()
     for track_name, weight in weights.items():
         if track_name not in result_map:
-            logger.warning("track '%s' missing; treating as zero", track_name)
+            if track_name in expected_missing_tracks:
+                logger.debug("track '%s' missing; treating as zero", track_name)
+            else:
+                logger.warning("track '%s' missing; treating as zero", track_name)
             continue
         try:
             track_scores = result_map[track_name].scores.reindex(index, fill_value=0.0)
@@ -450,11 +512,7 @@ def _apply_policy_risk_floors(
                 ].clip(lower=_POLICY_LABEL_FLOORS.get(label, RISK_THRESHOLDS[RiskLevel.HIGH]))
 
     if "L1-06" in combined.columns:
-        l106_score = (
-            pd.to_numeric(combined["L1-06"], errors="coerce")
-            .fillna(0.0)
-            .astype(float)
-        )
+        l106_score = pd.to_numeric(combined["L1-06"], errors="coerce").fillna(0.0).astype(float)
         l106_critical = l106_score.ge(0.95)
         l106_high = l106_score.ge(0.80) & l106_score.lt(0.95)
         l106_medium = l106_score.ge(0.70) & l106_score.lt(0.80)
@@ -468,11 +526,7 @@ def _apply_policy_risk_floors(
         reasons = _append_reason(reasons, l106_critical, "L1-06:direct_critical")
 
     if "L1-09" in combined.columns:
-        l109_score = (
-            pd.to_numeric(combined["L1-09"], errors="coerce")
-            .fillna(0.0)
-            .astype(float)
-        )
+        l109_score = pd.to_numeric(combined["L1-09"], errors="coerce").fillna(0.0).astype(float)
         other_control_cols = [
             col for col in ("L1-04", "L1-05", "L1-06", "L1-07") if col in combined.columns
         ]
@@ -492,17 +546,13 @@ def _apply_policy_risk_floors(
         reasons = _append_reason(reasons, l109_high, "L1-09:corroborated_control")
 
     if high_mask.any():
-        agg_df.loc[high_mask, "anomaly_score"] = agg_df.loc[
-            high_mask, "anomaly_score"
-        ].clip(lower=RISK_THRESHOLDS[RiskLevel.HIGH])
+        agg_df.loc[high_mask, "anomaly_score"] = agg_df.loc[high_mask, "anomaly_score"].clip(
+            lower=RISK_THRESHOLDS[RiskLevel.HIGH]
+        )
         agg_df.loc[high_mask, "risk_level"] = RiskLevel.HIGH
 
     if "L1-09" in combined.columns:
-        l109_score = (
-            pd.to_numeric(combined["L1-09"], errors="coerce")
-            .fillna(0.0)
-            .astype(float)
-        )
+        l109_score = pd.to_numeric(combined["L1-09"], errors="coerce").fillna(0.0).astype(float)
         l109_medium = l109_score.ge(0.70) & ~high_mask
         l109_low = l109_score.ge(0.55) & l109_score.lt(0.70) & ~high_mask
         if l109_medium.any():
@@ -518,18 +568,12 @@ def _apply_policy_risk_floors(
                 l109_low,
                 "anomaly_score",
             ].clip(lower=RISK_THRESHOLDS[RiskLevel.LOW])
-            current_medium_or_high = agg_df["risk_level"].isin(
-                [RiskLevel.MEDIUM, RiskLevel.HIGH]
-            )
+            current_medium_or_high = agg_df["risk_level"].isin([RiskLevel.MEDIUM, RiskLevel.HIGH])
             agg_df.loc[l109_low & ~current_medium_or_high, "risk_level"] = RiskLevel.LOW
             reasons = _append_reason(reasons, l109_low, "L1-09:manual_missing_date")
 
     if "L1-06" in combined.columns:
-        l106_score = (
-            pd.to_numeric(combined["L1-06"], errors="coerce")
-            .fillna(0.0)
-            .astype(float)
-        )
+        l106_score = pd.to_numeric(combined["L1-06"], errors="coerce").fillna(0.0).astype(float)
         l106_critical = l106_score.ge(0.95)
         l106_high = l106_score.ge(0.80) & l106_score.lt(0.95)
         l106_medium = l106_score.ge(0.70) & l106_score.lt(0.80)
@@ -556,17 +600,11 @@ def _apply_policy_risk_floors(
                 l106_low,
                 "anomaly_score",
             ].clip(lower=RISK_THRESHOLDS[RiskLevel.LOW])
-            current_medium_or_high = agg_df["risk_level"].isin(
-                [RiskLevel.MEDIUM, RiskLevel.HIGH]
-            )
+            current_medium_or_high = agg_df["risk_level"].isin([RiskLevel.MEDIUM, RiskLevel.HIGH])
             agg_df.loc[l106_low & ~current_medium_or_high, "risk_level"] = RiskLevel.LOW
 
     if "L1-01" in combined.columns:
-        l101_score = (
-            pd.to_numeric(combined["L1-01"], errors="coerce")
-            .fillna(0.0)
-            .astype(float)
-        )
+        l101_score = pd.to_numeric(combined["L1-01"], errors="coerce").fillna(0.0).astype(float)
         l101_severe = l101_score.ge(0.90) & l101_score.lt(1.0)
         l101_material = l101_score.ge(0.65) & l101_score.lt(0.90)
         if l101_severe.any():
@@ -582,9 +620,7 @@ def _apply_policy_risk_floors(
                 l101_material,
                 "anomaly_score",
             ].clip(lower=RISK_THRESHOLDS[RiskLevel.LOW])
-            current_medium_or_high = agg_df["risk_level"].isin(
-                [RiskLevel.MEDIUM, RiskLevel.HIGH]
-            )
+            current_medium_or_high = agg_df["risk_level"].isin([RiskLevel.MEDIUM, RiskLevel.HIGH])
             agg_df.loc[l101_material & ~current_medium_or_high, "risk_level"] = RiskLevel.LOW
             reasons = _append_reason(reasons, l101_material, "L1-01:material_imbalance")
 
@@ -677,11 +713,7 @@ def _normalize_rule_values(
     evidence_factor = EVIDENCE_STRENGTH_FACTOR.get(metadata.evidence_strength, 0.45)
     role_factor = SCORING_ROLE_FACTOR.get(metadata.scoring_role, 1.0)
     normalized = (
-        signal
-        * severity_factor
-        * evidence_factor
-        * role_factor
-        * metadata.contribution_weight
+        signal * severity_factor * evidence_factor * role_factor * metadata.contribution_weight
     )
     return normalized.where(numeric.gt(0), 0.0).clip(0.0, 1.0).astype("float64")
 
@@ -698,9 +730,13 @@ def _vector_signal_strength(
     if rule_id == "L1-04":
         return labels.map(L104_BUCKET_SIGNAL_STRENGTH).fillna(default).astype("float64")
     if rule_id == "L2-02":
-        return labels.map(L202_DUPLICATE_PAYMENT_SIGNAL_STRENGTH).fillna(
-            numeric.clip(upper=1.0),
-        ).astype("float64")
+        return (
+            labels.map(L202_DUPLICATE_PAYMENT_SIGNAL_STRENGTH)
+            .fillna(
+                numeric.clip(upper=1.0),
+            )
+            .astype("float64")
+        )
     if rule_id == "L2-01":
         signal = numeric.clip(upper=1.0)
         signal = signal.mask(numeric.le(0), 0.0)
@@ -814,7 +850,11 @@ def _get_rule_flag(
         if rule_id not in combined.columns:
             return pd.Series(False, index=index)
         return combined[rule_id].reindex(index, fill_value=0.0) > 0
-    return layer.details[rule_id].reindex(index, fill_value=0.0) > 0
+    # Why: 일부 detector가 details에 string column을 넣는 경우 'str > int' 차단.
+    raw = pd.to_numeric(
+        layer.details[rule_id].reindex(index, fill_value=0.0), errors="coerce"
+    ).fillna(0.0)
+    return raw > 0
 
 
 def _get_rule_signal_flag(
@@ -956,18 +996,58 @@ def _apply_work_scope_corroboration(
     return agg_df
 
 
+def _extract_ic01_evidence_level(
+    results: list[DetectionResult],
+    index: pd.Index,
+) -> pd.Series:
+    """IntercompanyMatcher 결과 metadata 에서 ic01_evidence_level sidecar 추출.
+
+    details 는 numeric rule-score matrix 계약을 유지하기 위해 string sidecar 는
+    `metadata["row_sidecar"]` 에 보관된다. 평가/리포트 단계에서만 read 한다.
+    하위 호환: 과거 details 컬럼에 sidecar 가 부착된 결과도 fallback 으로 지원.
+    """
+    for result in results:
+        metadata = result.metadata or {}
+        row_sidecar = metadata.get("row_sidecar") if isinstance(metadata, dict) else None
+        if isinstance(row_sidecar, dict) and "ic01_evidence_level" in row_sidecar:
+            series = row_sidecar["ic01_evidence_level"]
+            if isinstance(series, pd.Series):
+                return series.reindex(index, fill_value="").astype(str)
+        if result.details is not None and not result.details.empty:
+            if "ic01_evidence_level" in result.details.columns:
+                return (
+                    result.details["ic01_evidence_level"].reindex(index, fill_value="").astype(str)
+                )
+    return pd.Series("", index=index, dtype="object")
+
+
 def _apply_intercompany_exception_corroboration(
     agg_df: pd.DataFrame,
     results: list[DetectionResult],
 ) -> pd.DataFrame:
     """Promote intercompany reconciliation exceptions in row-level scoring.
 
-    L3-03 is a weak population signal by design. IC01/IC02/IC03 are not L1-L4
-    rule codes, so the default rule-family aggregation would otherwise hide
-    confirmed reconciliation exceptions from the representative anomaly_score.
+    근거: IFRS 10 §B86 / K-IFRS 1110 / 1024 / KICPA Issue Paper 46 / ISA 600.
+          L3-03 는 약한 모집단 신호이고, IC01/IC02/IC03 은 32 canonical 룰 외부
+          finding 이므로 row-level anomaly_score 에서 숨지 않도록 별도 floor 적용.
+
+    IC01 evidence level 정책 (D0xx, D055 supersede):
+      - evidence=high  → Medium floor (0.40)
+      - evidence=review → Low floor (0.20)
+      - 2 개 이상 IC 예외 결합 → Medium floor (기존 유지)
     """
 
     combined = _combined_rule_details(results, agg_df.index)
+    evidence_level = (
+        _extract_ic01_evidence_level(results, agg_df.index)
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.lower()
+    )
+    ic01_evidence_hit = evidence_level.isin({"high", "review"})
+    if "IC01" not in combined and ic01_evidence_hit.any():
+        combined["IC01"] = 0.0
     exception_rules = [rule_id for rule_id in ("IC01", "IC02", "IC03") if rule_id in combined]
     if not exception_rules:
         agg_df["intercompany_exception_score"] = 0.0
@@ -975,32 +1055,37 @@ def _apply_intercompany_exception_corroboration(
         return agg_df
 
     exception_hits = (
-        combined[exception_rules]
-        .apply(pd.to_numeric, errors="coerce")
-        .fillna(0.0)
-        .gt(0)
+        combined[exception_rules].apply(pd.to_numeric, errors="coerce").fillna(0.0).gt(0)
     )
-    exception_count = exception_hits.sum(axis=1)
-    any_exception = exception_count.gt(0)
     if "IC01" in exception_hits:
-        ic01_hit = exception_hits["IC01"]
+        ic01_hit = exception_hits["IC01"] | ic01_evidence_hit
+        exception_hits["IC01"] = ic01_hit
     else:
         ic01_hit = pd.Series(False, index=agg_df.index)
+    exception_count = exception_hits.sum(axis=1)
+    any_exception = exception_count.gt(0)
+    ic01_high = ic01_hit & evidence_level.eq("high")
+    ic01_review = ic01_hit & evidence_level.eq("review")
 
     raw_score = pd.Series(0.0, index=agg_df.index)
     raw_score = raw_score.mask(any_exception, RISK_THRESHOLDS[RiskLevel.LOW])
+    # Medium floor: IC01[high] 단독 또는 2 개 이상 IC 예외 결합
     raw_score = raw_score.mask(
-        any_exception & (ic01_hit | exception_count.ge(2)),
+        ic01_high | exception_count.ge(2),
         RISK_THRESHOLDS[RiskLevel.MEDIUM],
     )
 
     reason_parts = pd.Series("", index=agg_df.index, dtype="string")
     for rule_id in exception_rules:
-        reason_parts = _append_reason(
-            reason_parts,
-            exception_hits[rule_id],
-            rule_id,
-        )
+        rule_mask = exception_hits[rule_id]
+        if rule_id == "IC01":
+            # IC01 hit 에는 evidence level qualifier 부착
+            high_label_mask = rule_mask & ic01_high
+            review_label_mask = rule_mask & ic01_review
+            reason_parts = _append_reason(reason_parts, high_label_mask, "IC01[high]")
+            reason_parts = _append_reason(reason_parts, review_label_mask, "IC01[review]")
+        else:
+            reason_parts = _append_reason(reason_parts, rule_mask, rule_id)
 
     medium_mask = raw_score.ge(RISK_THRESHOLDS[RiskLevel.MEDIUM])
     low_mask = raw_score.ge(RISK_THRESHOLDS[RiskLevel.LOW]) & ~medium_mask
@@ -1016,9 +1101,7 @@ def _apply_intercompany_exception_corroboration(
             low_mask,
             "anomaly_score",
         ].clip(lower=RISK_THRESHOLDS[RiskLevel.LOW])
-        current_medium_or_high = agg_df["risk_level"].isin(
-            [RiskLevel.MEDIUM, RiskLevel.HIGH]
-        )
+        current_medium_or_high = agg_df["risk_level"].isin([RiskLevel.MEDIUM, RiskLevel.HIGH])
         agg_df.loc[low_mask & ~current_medium_or_high, "risk_level"] = RiskLevel.LOW
 
     agg_df["intercompany_exception_score"] = raw_score

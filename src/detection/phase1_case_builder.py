@@ -17,6 +17,27 @@ import pandas as pd
 from config.settings import PROJECT_ROOT
 from src.detection.base import DetectionResult
 from src.detection.constants import BATCH_CORROBORATION_RULES, TOPSIDE_BONUS_RULES
+from src.detection.phase1_rule_catalog import (
+    EVIDENCE_QUEUE_MAP as _EVIDENCE_QUEUE_MAP,
+)
+from src.detection.phase1_rule_catalog import (
+    ISSUE_QUEUE_LABELS as _ISSUE_QUEUE_LABELS,
+)
+from src.detection.phase1_rule_catalog import (
+    LEGACY_THEME_TOPIC_MAP as _LEGACY_THEME_TOPIC_MAP,
+)
+from src.detection.phase1_rule_catalog import (
+    RULE_QUEUE_MAP as _RULE_QUEUE_MAP,
+)
+from src.detection.phase1_rule_catalog import (
+    RULE_THEME_MAP as _RULE_THEME_MAP,
+)
+from src.detection.phase1_rule_catalog import (
+    THEME_QUEUE_MAP as _THEME_QUEUE_MAP,
+)
+from src.detection.phase1_rule_catalog import (
+    TOPIC_LEGACY_THEME_MAP as _TOPIC_LEGACY_THEME_MAP,
+)
 from src.detection.rule_detail_metadata import (
     PresenterSurface,
     canonicalize_rule_id,
@@ -61,134 +82,6 @@ _FAST_CASE_KEY_THEMES = {
     "intercompany_structure",
     "statistical_outlier",
     "logic_mismatch",
-}
-
-_RULE_THEME_MAP = {
-    "L1-01": ("data_integrity_failure", "data_integrity_failure"),
-    "L1-02": ("data_integrity_failure", "data_integrity_failure"),
-    "L1-08": ("data_integrity_failure", "data_integrity_failure"),
-    "L1-03": ("logic_mismatch", "logic_mismatch"),
-    "L2-04": ("logic_mismatch", "logic_mismatch"),
-    "L3-01": ("logic_mismatch", "logic_mismatch"),
-    "L3-09": ("logic_mismatch", "logic_mismatch"),
-    "L3-10": ("logic_mismatch", "logic_mismatch"),
-    "L3-12": ("access_scope_review", "access_scope_review"),
-    "L4-04": ("logic_mismatch", "logic_mismatch"),
-    "L1-04": ("control_failure", "control_failure"),
-    "L1-05": ("control_failure", "control_failure"),
-    "L1-06": ("control_failure", "control_failure"),
-    "L1-07": ("control_failure", "control_failure"),
-    "L1-09": ("control_failure", "control_failure"),
-    "L3-02": ("control_failure", "control_failure"),
-    "L2-01": ("duplicate_or_outflow", "duplicate_or_outflow"),
-    "L2-02": ("duplicate_or_outflow", "duplicate_or_outflow"),
-    "L2-03": ("duplicate_or_outflow", "duplicate_or_outflow"),
-    "L2-03a": ("duplicate_or_outflow", "duplicate_or_outflow"),
-    "L2-03b": ("duplicate_or_outflow", "duplicate_or_outflow"),
-    "L2-03c": ("duplicate_or_outflow", "duplicate_or_outflow"),
-    "L2-03d": ("duplicate_or_outflow", "duplicate_or_outflow"),
-    "L2-05": ("duplicate_or_outflow", "duplicate_or_outflow"),
-    "L3-04": ("timing_anomaly", "timing_anomaly"),
-    "L3-05": ("timing_anomaly", "timing_anomaly"),
-    "L3-06": ("timing_anomaly", "timing_anomaly"),
-    "L3-07": ("timing_anomaly", "timing_anomaly"),
-    "L3-08": ("timing_anomaly", "timing_anomaly"),
-    "L3-11": ("timing_anomaly", "timing_anomaly"),
-    "L4-05": ("timing_anomaly", "timing_anomaly"),
-    "L4-01": ("statistical_outlier", "statistical_outlier"),
-    "L4-02": ("statistical_outlier", "statistical_outlier"),
-    "L4-03": ("statistical_outlier", "statistical_outlier"),
-    "L4-06": ("statistical_outlier", "statistical_outlier"),
-    "L3-03": ("intercompany_structure", "intercompany_structure"),
-    "IC01": ("intercompany_structure", "intercompany_structure"),
-    "IC02": ("intercompany_structure", "intercompany_structure"),
-    "IC03": ("intercompany_structure", "intercompany_structure"),
-}
-
-_TOPIC_LEGACY_THEME_MAP = {
-    "ledger_integrity": "data_integrity_failure",
-    "approval_control": "control_failure",
-    "closing_timing": "timing_anomaly",
-    "account_logic": "logic_mismatch",
-    "duplicate_outflow": "duplicate_or_outflow",
-    "intercompany_cycle": "intercompany_structure",
-    "revenue_statistical": "statistical_outlier",
-}
-
-_LEGACY_THEME_TOPIC_MAP = {
-    legacy_theme: topic_id for topic_id, legacy_theme in _TOPIC_LEGACY_THEME_MAP.items()
-}
-
-_ISSUE_QUEUE_LABELS = {
-    "data_integrity": "데이터 정합성",
-    "control_approval": "통제/승인",
-    "timing_close": "시점/마감",
-    "amount_statistical": "금액/통계",
-    "duplicate_outflow": "중복/유출",
-    "account_logic": "계정/논리",
-    "intercompany_cycle": "관계사/순환",
-    "manipulation_candidate": "조작 후보 종합",
-}
-
-_THEME_QUEUE_MAP = {
-    "data_integrity_failure": "data_integrity",
-    "control_failure": "control_approval",
-    "access_scope_review": "control_approval",
-    "timing_anomaly": "timing_close",
-    "statistical_outlier": "amount_statistical",
-    "duplicate_or_outflow": "duplicate_outflow",
-    "logic_mismatch": "account_logic",
-    "intercompany_structure": "intercompany_cycle",
-}
-
-_RULE_QUEUE_MAP = {
-    "L1-01": "data_integrity",
-    "L1-02": "data_integrity",
-    "L1-08": "data_integrity",
-    "L1-04": "control_approval",
-    "L1-05": "control_approval",
-    "L1-06": "control_approval",
-    "L1-07": "control_approval",
-    "L1-09": "control_approval",
-    "L3-12": "control_approval",
-    "L3-04": "timing_close",
-    "L3-05": "timing_close",
-    "L3-06": "timing_close",
-    "L3-07": "timing_close",
-    "L4-05": "timing_close",
-    "L4-01": "amount_statistical",
-    "L4-03": "amount_statistical",
-    "L4-06": "amount_statistical",
-    "L2-01": "duplicate_outflow",
-    "L2-02": "duplicate_outflow",
-    "L2-03": "duplicate_outflow",
-    "L2-03a": "duplicate_outflow",
-    "L2-03b": "duplicate_outflow",
-    "L2-03c": "duplicate_outflow",
-    "L2-03d": "duplicate_outflow",
-    "L2-05": "duplicate_outflow",
-    "L1-03": "account_logic",
-    "L2-04": "account_logic",
-    "L3-01": "account_logic",
-    "L3-09": "account_logic",
-    "L3-10": "account_logic",
-    "L4-04": "account_logic",
-    "L3-03": "intercompany_cycle",
-    "IC01": "intercompany_cycle",
-    "IC02": "intercompany_cycle",
-    "IC03": "intercompany_cycle",
-    "GR01": "intercompany_cycle",
-}
-
-_EVIDENCE_QUEUE_MAP = {
-    "data_integrity_failure": "data_integrity",
-    "control_failure": "control_approval",
-    "access_scope_review": "control_approval",
-    "timing_anomaly": "timing_close",
-    "statistical_outlier": "amount_statistical",
-    "duplicate_or_outflow": "duplicate_outflow",
-    "logic_mismatch": "account_logic",
-    "intercompany_structure": "intercompany_cycle",
 }
 
 _STRONG_TRIAGE_RULES = {
@@ -672,8 +565,8 @@ def build_phase1_case_result(
         metadata={
             "phase1_case_config_version": SCHEMA_VERSION,
             "score_cutoff": {
-                "high": float(config.get("priority_band", {}).get("high", 0.75)),
-                "medium": float(config.get("priority_band", {}).get("medium", 0.45)),
+                "high": float(config.get("priority_band", {}).get("high", 0.90)),
+                "medium": float(config.get("priority_band", {}).get("medium", 0.75)),
             },
             "grouping_window": {
                 "near_period_days": int(config.get("near_period_days", 7)),
@@ -1555,11 +1448,16 @@ def _build_cases(
             macro_index=macro_index,
             macro_row_context=macro_row_context,
         )
+        # Why: Stage 1 - macro 이중가산 방지. topic_scoring 의 macro_context_score 가중치가
+        # macro 신호를 한 번 반영하므로, use_topic_scoring 경로의 머지 후보는 macro 이전 점수로 캐시한다.
+        priority_score_pre_macro = priority_score
         priority_score, macro_reasons = _apply_macro_context_priority(
             priority_score,
             macro_contexts,
         )
-        adjustment_reasons.extend(macro_reasons)
+        # macro_reasons append 는 use_topic_scoring 결정 후 진행 — line 1614 참조.
+        # legacy 경로에서는 macro 보너스가 최종 priority_score 에 반영되므로 사유 보존,
+        # topic_scoring 경로에서는 보너스가 머지 후보에서 배제되므로 사유도 audit 설명에서 제외.
         loop_timings["macro_context"] += time.perf_counter() - segment_start
 
         segment_start = time.perf_counter()
@@ -1601,7 +1499,15 @@ def _build_cases(
         }
         legacy_priority_score = priority_score
         if use_topic_scoring:
-            priority_score = max(topic_scores.values(), default=0.0)
+            # Why: Stage 1 - priority_floors (0.90 floor 포함) 가 topic_scoring 에 의해
+            # 덮이지 않도록 max 머지. 머지 후보는 macro 이전 점수 (priority_score_pre_macro)
+            # 로 두어 topic_scoring 의 macro_context_score 와 이중가산되지 않게 한다.
+            topic_priority_score = max(topic_scores.values(), default=0.0)
+            priority_score = max(topic_priority_score, priority_score_pre_macro)
+        else:
+            # legacy 경로에서는 macro 보너스가 priority_score 에 반영되어 있으므로
+            # 해당 사유를 audit 설명에 보존한다.
+            adjustment_reasons.extend(macro_reasons)
         priority_band = _priority_band(priority_score, config, repeat_score)
         # §9.3 composite_sort_score: 7개 주제 공통 정렬 식. primary_topic 의 breakdown 으로 산출.
         composite_sort_score, composite_sort_score_components = _composite_sort_score(
@@ -3508,14 +3414,12 @@ def _case_source_ratio(rows: pd.DataFrame, source_values: list[str]) -> float:
 
 def _priority_band(priority_score: float, config: dict[str, Any], repeat_score: float) -> str:
     bands = config.get("priority_band", {})
-    high = float(bands.get("high", 0.75))
-    medium = float(bands.get("medium", 0.45))
+    high = float(bands.get("high", 0.90))
+    medium = float(bands.get("medium", 0.75))
     promote_cutoff = float(config.get("repeat_score_promote", 0.70))
     if priority_score >= high:
         return "high"
     if priority_score >= medium:
-        if repeat_score >= promote_cutoff:
-            return "high"
         return "medium"
     if repeat_score >= promote_cutoff:
         return "medium"

@@ -139,7 +139,9 @@ def b02_near_threshold(df: pd.DataFrame) -> pd.Series:
                 for idx in result[result].index
             ],
             dtype="object",
-        ).value_counts().to_dict(),
+        )
+        .value_counts()
+        .to_dict(),
         "unresolved_limit_rows": int(bucket.eq("unresolved_limit").sum()),
     }
     result.attrs["row_annotations"] = row_annotations
@@ -267,22 +269,29 @@ def b03_exceeds_threshold(
         )
         if column in df.columns
     ]
-    annotation_df = pd.DataFrame({
-        "bucket": bucket.loc[flagged_index].astype(str),
-        "score": score_series.loc[flagged_index].round(4),
-        "review_score": review_score_series.loc[flagged_index].round(4),
-        "queue_label": pd.Series("review", index=flagged_index).where(
-            review.loc[flagged_index],
-            "immediate",
-        ),
-    }, index=flagged_index)
+    annotation_df = pd.DataFrame(
+        {
+            "bucket": bucket.loc[flagged_index].astype(str),
+            "score": score_series.loc[flagged_index].round(4),
+            "review_score": review_score_series.loc[flagged_index].round(4),
+            "queue_label": pd.Series("review", index=flagged_index).where(
+                review.loc[flagged_index],
+                "immediate",
+            ),
+        },
+        index=flagged_index,
+    )
     if annotation_columns:
         annotation_df = pd.concat(
             [annotation_df, df.loc[flagged_index, annotation_columns]],
             axis=1,
         )
-    row_annotations = annotation_df.astype(object).where(pd.notna(annotation_df), None).to_dict(
-        orient="index",
+    row_annotations = (
+        annotation_df.astype(object)
+        .where(pd.notna(annotation_df), None)
+        .to_dict(
+            orient="index",
+        )
     )
 
     immediate.attrs["score_series"] = score_series
@@ -375,9 +384,12 @@ def b08_manual_override(
         else pd.Series(False, index=df.index)
     )
     weak_description = (
-        df["description_quality"].fillna("").astype(str).str.strip().str.lower().isin(
-            {"missing", "corrupted", "poor"}
-        )
+        df["description_quality"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.lower()
+        .isin({"missing", "corrupted", "poor"})
         if "description_quality" in df.columns
         else pd.Series(False, index=df.index)
     )
@@ -396,7 +408,12 @@ def b08_manual_override(
         )
     )
     gl = (
-        df["gl_account"].fillna("").astype(str).str.strip().str.lower().str.replace(
+        df["gl_account"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.lower()
+        .str.replace(
             r"\.0+$",
             "",
             regex=True,
@@ -410,11 +427,7 @@ def b08_manual_override(
 
     control_bypass = candidate & (self_approval | skipped_approval | missing_approval_date)
     priority = candidate & (
-        exceeds_threshold
-        | abnormal_time
-        | period_end
-        | weak_description
-        | high_risk_account
+        exceeds_threshold | abnormal_time | period_end | weak_description | high_risk_account
     )
     immediate = priority | control_bypass
 
@@ -475,12 +488,12 @@ def b08_manual_override(
         for reason, mask in reason_masks.items()
     }
     bucket_values = bucket.loc[candidate_index].astype(str).to_numpy()
-    score_values = (
-        score_series.combine(review_score_series, max)
-        .loc[candidate_index]
-        .round(4)
-        .to_numpy()
-    )
+    # Why: Series.combine(other, max)는 element-wise getitem 2.16M회를 유발 (cProfile cumtime 8.88s).
+    #      두 series 모두 df.index 기반이라 np.maximum element-wise와 수학적 동치.
+    score_values = np.maximum(
+        score_series.loc[candidate_index].to_numpy(),
+        review_score_series.loc[candidate_index].to_numpy(),
+    ).round(4)
     source_bucket_values = np.where(
         source_norm.loc[candidate_index].eq("adjustment").to_numpy(),
         "adjustment",
@@ -493,9 +506,7 @@ def b08_manual_override(
             "score": float(score_values[pos]),
             "source_bucket": source_bucket_values[pos],
             "priority_reasons": [
-                reason
-                for reason, values in reason_values.items()
-                if bool(values[pos])
+                reason for reason, values in reason_values.items() if bool(values[pos])
             ],
         }
         annotation.update(optional_values.get(idx, {}))

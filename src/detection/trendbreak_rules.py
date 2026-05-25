@@ -9,8 +9,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import numpy as np
-
 # Why: estimation error가 이 값 이하이면 "변동 없음"으로 간주.
 #      원 단위 기준. float 연산 오차 방어.
 _EPSILON = 1.0

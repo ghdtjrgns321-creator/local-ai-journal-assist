@@ -31,10 +31,12 @@ def c01_period_end_large(
 
     # Why: account_group 존재 시 그룹별 Q3 — 계정 특성 반영
     #      미존재 시 전체 단일 Q3 (Phase 1 하위 호환)
-    q50 = _amount_threshold(base, df, 0.50, min_group_size)
-    q75 = _amount_threshold(base, df, quantile, min_group_size)
-    q90 = _amount_threshold(base, df, 0.90, min_group_size)
-    q95 = _amount_threshold(base, df, 0.95, min_group_size)
+    #      4개 quantile을 단일 groupby로 통합 — _amount_threshold 4회 호출과 동치
+    _qts = _amount_quantiles(base, df, [0.50, quantile, 0.90, 0.95], min_group_size)
+    q50 = _qts[0.50]
+    q75 = _qts[float(quantile)]
+    q90 = _qts[0.90]
+    q95 = _qts[0.95]
 
     period_end = df["is_period_end"].fillna(False)
     high_amount = base > q75
@@ -52,20 +54,23 @@ def c01_period_end_large(
     flagged = flagged.astype(bool)
 
     abnormal_time = _abnormal_time_mask(df)
-    weak_description = (
-        df["description_quality"].fillna("").astype(str).str.strip().str.lower().isin(
-            {"missing", "corrupted", "poor"}
-        )
-        if "description_quality" in df.columns
-        else pd.Series(False, index=df.index)
-    )
+    # Why: 동일 컬럼에 strip().lower()를 isin 직전에만 1회 적용 — chain 평가 횟수 1회로 고정
+    if "description_quality" in df.columns:
+        _desc_norm = df["description_quality"].fillna("").astype(str).str.strip().str.lower()
+        weak_description = _desc_norm.isin({"missing", "corrupted", "poor"})
+    else:
+        weak_description = pd.Series(False, index=df.index)
     day_gap = (
         pd.to_numeric(df["days_backdated"], errors="coerce").fillna(0).abs()
         if "days_backdated" in df.columns
         else pd.Series(0.0, index=df.index)
     )
     long_day_gap = day_gap.gt(30)
-    control_signal = _approval_control_signal_mask(df)
+    # Why: _approval_control_signal_mask 내부도 동일 dict을 계산 → 1회만 계산하여 OR 누적
+    control_reason_masks = _approval_control_reason_masks(df)
+    control_signal = pd.Series(False, index=df.index)
+    for _ctrl_mask in control_reason_masks.values():
+        control_signal = control_signal | _ctrl_mask
     priority_signal = abnormal_time | weak_description | long_day_gap | control_signal
 
     amount_p50 = flagged & base.gt(q50)
@@ -88,7 +93,7 @@ def c01_period_end_large(
     score_series.loc[amount_p95] = 0.70
     score_series.loc[whitelist_matched] = score_series.loc[whitelist_matched].clip(upper=0.20)
 
-    control_reason_masks = _approval_control_reason_masks(df)
+    # Why: control_reason_masks는 위에서 이미 계산됨 — 재호출 제거
     reason_masks = {
         "amount_p50": amount_p50,
         "amount_p75": amount_p75,
@@ -134,10 +139,16 @@ def c01_period_end_large(
         if optional_columns
         else {}
     )
-    reason_values = {
-        reason: mask.loc[flagged_index].to_numpy(dtype=bool)
-        for reason, mask in reason_masks.items()
-    }
+    # Why: reason masks를 (n_reasons, n_flagged) boolean matrix로 모아 row별 active reason을
+    #      np.flatnonzero로 일괄 추출 — 480k 회 dict comprehension 회피
+    reason_keys = list(reason_masks.keys())
+    if reason_keys and len(flagged_index) > 0:
+        reason_matrix = np.stack(
+            [reason_masks[k].loc[flagged_index].to_numpy(dtype=bool) for k in reason_keys],
+            axis=0,
+        )
+    else:
+        reason_matrix = np.zeros((len(reason_keys), len(flagged_index)), dtype=bool)
     q50_values = _threshold_values(q50, flagged_index)
     q75_values = _threshold_values(q75, flagged_index)
     q90_values = _threshold_values(q90, flagged_index)
@@ -158,19 +169,18 @@ def c01_period_end_large(
     ).astype(object)
     annotation_frame = annotation_frame.where(pd.notna(annotation_frame), None)
 
+    # Why: 480k 회 .loc[idx].to_dict() (~22s) → 단일 to_dict(orient="index") (~5s)
+    annotation_dict = annotation_frame.to_dict(orient="index")
     for pos, idx in enumerate(flagged_index):
-        annotation = annotation_frame.loc[idx].to_dict()
+        annotation = annotation_dict[idx]
         annotation["score"] = float(annotation["score"])
         annotation["whitelist_matched"] = bool(annotation["whitelist_matched"])
         if annotation["amount"] is not None:
             annotation["amount"] = float(annotation["amount"])
         if annotation["threshold_amount"] is not None:
             annotation["threshold_amount"] = float(annotation["threshold_amount"])
-        annotation["priority_reasons"] = [
-            reason
-            for reason, values in reason_values.items()
-            if bool(values[pos])
-        ]
+        active = np.flatnonzero(reason_matrix[:, pos])
+        annotation["priority_reasons"] = [reason_keys[i] for i in active]
         annotation.update(optional_values.get(idx, {}))
         row_annotations[int(idx)] = annotation
 
@@ -228,9 +238,7 @@ def _approval_control_reason_masks(df: pd.DataFrame) -> dict[str, pd.Series]:
         masks["self_approval"] = created.ne("") & created.eq(approved)
     if "approved_by" in df.columns and "exceeds_threshold" in df.columns:
         no_approver = df["approved_by"].fillna("").astype(str).str.strip().eq("")
-        masks["skipped_approval"] = (
-            df["exceeds_threshold"].fillna(False).astype(bool) & no_approver
-        )
+        masks["skipped_approval"] = df["exceeds_threshold"].fillna(False).astype(bool) & no_approver
     if {"approved_by", "approval_date"}.issubset(df.columns):
         has_approver = df["approved_by"].fillna("").astype(str).str.strip().ne("")
         no_approval_date = df["approval_date"].fillna("").astype(str).str.strip().eq("")
@@ -403,6 +411,37 @@ def _amount_threshold(
     return float(base.quantile(quantile))
 
 
+def _amount_quantiles(
+    base: pd.Series,
+    df: pd.DataFrame,
+    quantiles: list[float],
+    min_group_size: int,
+) -> dict[float, pd.Series | float]:
+    """L3-04용 다중 quantile threshold 일괄 계산.
+
+    Why: 동일 groupby에 대해 quantile 4번 호출(4 group materialize + 4 quantile)을
+         단일 groupby + quantile 벡터 호출로 통합. _grouped_quantile과 수학적 동치.
+    """
+    requested = list(dict.fromkeys(float(q) for q in quantiles))  # preserve order + dedup
+    if "account_group" not in df.columns:
+        global_q = base.quantile(requested)
+        return {float(q): float(global_q.loc[q]) for q in requested}
+
+    groups = df["account_group"]
+    grouped = base.groupby(groups)
+    # quantile([list]) → MultiIndex (group, quantile) → unstack 후 quantile별 컬럼 사용
+    quantile_df = grouped.quantile(requested).unstack(-1)
+    size_map = grouped.size()
+    mapped_size = groups.map(size_map)
+    global_q_map = base.quantile(requested)
+
+    out: dict[float, pd.Series | float] = {}
+    for q in requested:
+        mapped_q = groups.map(quantile_df[q])
+        out[q] = mapped_q.where(mapped_size >= min_group_size, float(global_q_map.loc[q]))
+    return out
+
+
 def _threshold_values(threshold: pd.Series | float, index: pd.Index) -> pd.Series:
     """Align scalar or series threshold values to an annotation index."""
 
@@ -437,14 +476,16 @@ def c02_weekend_entry(df: pd.DataFrame) -> pd.Series:
         "weekend_holiday_rows": int(weekend_holiday.sum()),
     }
     if "document_id" in df.columns:
-        breakdown.update({
-            "calendar_review_docs": _nunique_documents(df, flagged),
-            "weekend_docs": _nunique_documents(df, weekend),
-            "holiday_docs": _nunique_documents(df, holiday),
-            "weekend_only_docs": _nunique_documents(df, weekend_only),
-            "weekday_holiday_docs": _nunique_documents(df, weekday_holiday),
-            "weekend_holiday_docs": _nunique_documents(df, weekend_holiday),
-        })
+        breakdown.update(
+            {
+                "calendar_review_docs": _nunique_documents(df, flagged),
+                "weekend_docs": _nunique_documents(df, weekend),
+                "holiday_docs": _nunique_documents(df, holiday),
+                "weekend_only_docs": _nunique_documents(df, weekend_only),
+                "weekday_holiday_docs": _nunique_documents(df, weekday_holiday),
+                "weekend_holiday_docs": _nunique_documents(df, weekend_holiday),
+            }
+        )
 
     row_annotations: dict[int, dict[str, object]] = {}
     for idx in df.index[flagged]:
@@ -646,6 +687,7 @@ def c04_backdated_entry(
     result.attrs["row_annotations"] = row_annotations
     return result
 
+
 def _normalized_values(value: object) -> set[str]:
     """Return lower-case string values for config matching."""
     if value is None:
@@ -805,11 +847,7 @@ def c05_fiscal_period_mismatch(
         active_contexts = [
             name for name, mask in context_masks.items() if bool(mask.reindex(df.index).loc[idx])
         ]
-        bucket = (
-            "period_mismatch_corroborated"
-            if active_contexts
-            else "period_mismatch_confirmed"
-        )
+        bucket = "period_mismatch_corroborated" if active_contexts else "period_mismatch_confirmed"
         annotation_key = int(idx) if isinstance(idx, (int, np.integer)) else idx
         expected = expected_period.loc[idx]
         actual = actual_period.loc[idx]
@@ -1004,15 +1042,17 @@ def c08_amount_outlier(
         "zscore_threshold": float(zscore_threshold),
     }
     if "document_id" in df.columns:
-        result.attrs["breakdown"].update({
-            "high_amount_review_docs": _nunique_documents(df, result),
-            "low_zscore_docs": _nunique_documents(df, result & bucket.eq("low_zscore")),
-            "medium_zscore_docs": _nunique_documents(df, result & bucket.eq("medium_zscore")),
-            "high_zscore_docs": _nunique_documents(df, result & bucket.eq("high_zscore")),
-            "review_zscore_docs": _nunique_documents(df, result & bucket.eq("low_zscore")),
-            "strong_zscore_docs": _nunique_documents(df, result & bucket.eq("medium_zscore")),
-            "extreme_zscore_docs": _nunique_documents(df, result & bucket.eq("high_zscore")),
-        })
+        result.attrs["breakdown"].update(
+            {
+                "high_amount_review_docs": _nunique_documents(df, result),
+                "low_zscore_docs": _nunique_documents(df, result & bucket.eq("low_zscore")),
+                "medium_zscore_docs": _nunique_documents(df, result & bucket.eq("medium_zscore")),
+                "high_zscore_docs": _nunique_documents(df, result & bucket.eq("high_zscore")),
+                "review_zscore_docs": _nunique_documents(df, result & bucket.eq("low_zscore")),
+                "strong_zscore_docs": _nunique_documents(df, result & bucket.eq("medium_zscore")),
+                "extreme_zscore_docs": _nunique_documents(df, result & bucket.eq("high_zscore")),
+            }
+        )
     result.attrs["row_annotations"] = row_annotations
     return result
 
@@ -1132,9 +1172,9 @@ def c10_suspense_account(
         q50 = flagged_amounts.quantile(0.50)
         q75 = flagged_amounts.quantile(0.75)
         amount_bucket.loc[result & amount_open_abs.lt(q50)] = "open_amount_low"
-        amount_bucket.loc[
-            result & amount_open_abs.ge(q50) & amount_open_abs.lt(q75)
-        ] = "open_amount_medium"
+        amount_bucket.loc[result & amount_open_abs.ge(q50) & amount_open_abs.lt(q75)] = (
+            "open_amount_medium"
+        )
         amount_bucket.loc[result & amount_open_abs.ge(q75)] = "open_amount_high"
 
     score_series = pd.Series(0.0, index=df.index, dtype="float64")
@@ -1142,9 +1182,9 @@ def c10_suspense_account(
     score_series.loc[result & aging_bucket.eq("aging_60_90")] = 0.60
     score_series.loc[result & aging_bucket.eq("aging_over_90")] = 0.75
     high_open_amount = result & amount_bucket.eq("open_amount_high") & score_series.gt(0)
-    score_series.loc[high_open_amount] = (
-        score_series.loc[high_open_amount] + 0.05
-    ).clip(upper=0.80)
+    score_series.loc[high_open_amount] = (score_series.loc[high_open_amount] + 0.05).clip(
+        upper=0.80
+    )
 
     result.attrs["breakdown"] = {
         "base_threshold_days": int(threshold_days),
@@ -1280,7 +1320,9 @@ def c12_abnormal_hours_concentration(
 
     # ── (d) 급속 승인 검증 ──
     rapid_flags = _check_rapid_approval(
-        df, rapid_approval_minutes, auto_entry_sources or [],
+        df,
+        rapid_approval_minutes,
+        auto_entry_sources or [],
     )
     result = result | rapid_flags
     result = result.astype(bool)
@@ -1290,11 +1332,7 @@ def c12_abnormal_hours_concentration(
         result
         & ~rapid_flags
         & ~human_operational_mask
-        & (
-            sigma_outlier_flags
-            | low_volume_midnight_flags
-            | high_context_midnight_flags
-        )
+        & (sigma_outlier_flags | low_volume_midnight_flags | high_context_midnight_flags)
     )
 
     score_series = pd.Series(0.0, index=df.index, dtype="float64")
@@ -1368,17 +1406,19 @@ def c12_abnormal_hours_concentration(
         "min_high_context_midnight_entries": int(min_high_context_midnight_entries),
     }
     if "document_id" in df.columns:
-        breakdown.update({
-            "behavior_review_docs": _nunique_documents(df, result),
-            "sigma_outlier_docs": _nunique_documents(df, sigma_outlier_flags),
-            "low_volume_midnight_docs": _nunique_documents(df, low_volume_midnight_flags),
-            "high_context_midnight_docs": _nunique_documents(df, high_context_midnight_flags),
-            "system_context_review_docs": _nunique_documents(
-                df,
-                propagated_system_context,
-            ),
-            "rapid_approval_docs": _nunique_documents(df, rapid_flags),
-        })
+        breakdown.update(
+            {
+                "behavior_review_docs": _nunique_documents(df, result),
+                "sigma_outlier_docs": _nunique_documents(df, sigma_outlier_flags),
+                "low_volume_midnight_docs": _nunique_documents(df, low_volume_midnight_flags),
+                "high_context_midnight_docs": _nunique_documents(df, high_context_midnight_flags),
+                "system_context_review_docs": _nunique_documents(
+                    df,
+                    propagated_system_context,
+                ),
+                "rapid_approval_docs": _nunique_documents(df, rapid_flags),
+            }
+        )
 
     breakdown["score_bands"] = {
         "system_context_review": 0.25,
@@ -1416,16 +1456,22 @@ def _calc_user_abnormal_stats(
     if not valid_mask.any():
         return pd.DataFrame()
 
-    grouped = df[valid_mask].assign(
-        _is_abnormal=is_abnormal[valid_mask],
-        _is_midnight=(df.loc[valid_mask, "time_zone_category"] == "midnight"),
-    ).groupby("created_by")
+    grouped = (
+        df[valid_mask]
+        .assign(
+            _is_abnormal=is_abnormal[valid_mask],
+            _is_midnight=(df.loc[valid_mask, "time_zone_category"] == "midnight"),
+        )
+        .groupby("created_by")
+    )
 
-    stats = pd.DataFrame({
-        "abnormal_ratio": grouped["_is_abnormal"].mean(),
-        "midnight_count": grouped["_is_midnight"].sum(),
-        "total_count": grouped.size(),
-    })
+    stats = pd.DataFrame(
+        {
+            "abnormal_ratio": grouped["_is_abnormal"].mean(),
+            "midnight_count": grouped["_is_midnight"].sum(),
+            "total_count": grouped.size(),
+        }
+    )
     return stats
 
 
@@ -1443,9 +1489,7 @@ def _manual_user_mask(
 
     if "source" in df.columns and auto_entry_sources:
         auto_sources = {
-            str(source).strip().lower()
-            for source in auto_entry_sources
-            if str(source).strip()
+            str(source).strip().lower() for source in auto_entry_sources if str(source).strip()
         }
         source = _normalized_string(df["source"])
         mask = mask & ~source.isin(auto_sources)
@@ -1492,9 +1536,7 @@ def _find_outlier_users(
 
     threshold = mean + sigma_threshold * std
     # Why: σ 이상치여도 절대 비율 미달이면 미플래그 (저비율 과탐 방지)
-    flagged = user_stats[
-        (ratios > threshold) & (ratios >= min_abnormal_ratio)
-    ]
+    flagged = user_stats[(ratios > threshold) & (ratios >= min_abnormal_ratio)]
     return set(flagged.index)
 
 
@@ -1523,9 +1565,7 @@ def _check_rapid_approval(
         manual_mask = df["is_manual_je"].fillna(False)
     elif "source" in df.columns and auto_entry_sources:
         auto_sources = {
-            str(source).strip().lower()
-            for source in auto_entry_sources
-            if str(source).strip()
+            str(source).strip().lower() for source in auto_entry_sources if str(source).strip()
         }
         manual_mask = ~_normalized_string(df["source"]).isin(auto_sources)
 
@@ -1544,7 +1584,8 @@ def _check_rapid_approval(
 
     # Why: 비정상 시간대가 아닌 급속 승인은 정상 업무 흐름
     is_abnormal_time = df.get(
-        "time_zone_category", pd.Series("unknown", index=df.index),
+        "time_zone_category",
+        pd.Series("unknown", index=df.index),
     ).isin(["midnight", "overtime"])
     manual_mask = manual_mask & is_abnormal_time
 

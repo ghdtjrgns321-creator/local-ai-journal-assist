@@ -7,11 +7,11 @@ Why: 기존 L2-03 exact match recall 9%. 유사 금액, 분할 거래, 시차 �
 from __future__ import annotations
 
 import re
-from itertools import combinations
 
 import numpy as np
 import pandas as pd
-from rapidfuzz import fuzz, process as rfprocess
+from rapidfuzz import fuzz
+from rapidfuzz import process as rfprocess
 
 # ── 공용 유틸 ────────────────────────────────────────────────
 
@@ -28,6 +28,14 @@ def _normalize_text(s: str) -> str:
     """적요 정규화: 소문자 + 괄호/특수문자 제거 + 공백 정규화."""
     s = _RE_SPECIAL.sub("", str(s).lower())
     return " ".join(s.split())
+
+
+def _normalize_text_series(series: pd.Series) -> pd.Series:
+    """반복 적요가 많은 원장 데이터에서 정규화 결과를 재사용한다."""
+    raw = series.fillna("").astype(str)
+    unique_values = raw.unique()
+    normalized = {value: _normalize_text(value) for value in unique_values}
+    return raw.map(normalized)
 
 
 # ── L2-03a: Exact Duplicate ────────────────────────────────────
@@ -72,46 +80,75 @@ def b05b_fuzzy_duplicate(
         return scores
 
     amt = _base_amount(df)
-    texts = df["line_text"].fillna("").map(_normalize_text)
+    texts = _normalize_text_series(df["line_text"])
+    threshold = fuzzy_threshold / 100.0
+    score_values = np.zeros(len(df), dtype=float)
+    positions = pd.Series(np.arange(len(df)), index=df.index)
 
-    for _gl, grp in df.groupby("gl_account"):
+    work = pd.DataFrame(
+        {
+            "gl_account": df["gl_account"],
+            "amount": amt,
+            "text": texts,
+            "_pos": positions,
+        },
+        index=df.index,
+    )
+
+    for _gl, grp in work.groupby("gl_account", sort=False):
         if len(grp) < 2:
             continue
         if len(grp) > max_group_size:
             continue  # warning은 오케스트레이터에서 처리
 
-        idx = grp.index
-        grp_texts = texts.loc[idx].values
-        grp_amts = amt.loc[idx].values
+        ordered = grp.sort_values("amount", kind="mergesort")
+        grp_texts = ordered["text"].to_numpy(dtype=object)
+        grp_amts = ordered["amount"].to_numpy(dtype=float)
+        grp_pos = ordered["_pos"].to_numpy(dtype=int)
 
-        # Why: rapidfuzz cdist로 그룹 내 모든 쌍의 유사도 행렬 일괄 계산
-        sim_matrix = rfprocess.cdist(
-            grp_texts, grp_texts, scorer=fuzz.token_sort_ratio,
-        ) / 100.0  # 0~100 → 0.0~1.0
-
-        n = len(idx)
+        n = len(ordered)
+        upper = 1
         for i in range(n):
-            for j in range(i + 1, n):
-                text_sim = sim_matrix[i][j]
-                if text_sim < fuzzy_threshold / 100.0:
-                    continue
+            base_amt = grp_amts[i]
+            if base_amt <= 0:
+                continue
+            if upper < i + 1:
+                upper = i + 1
+            max_candidate_amt = base_amt / max(1.0 - amount_tolerance, 1e-12)
+            while upper < n and grp_amts[upper] <= max_candidate_amt:
+                upper += 1
+            if upper <= i + 1:
+                continue
 
-                # Why: 금액 근접도 = 1 - 상대 차이. 차이 > tolerance면 스킵
-                max_amt = max(grp_amts[i], grp_amts[j])
-                if max_amt == 0:
-                    continue
-                rel_diff = abs(grp_amts[i] - grp_amts[j]) / max_amt
-                if rel_diff > amount_tolerance:
-                    continue
+            candidate_texts = grp_texts[i + 1 : upper]
+            text_sims = (
+                rfprocess.cdist(
+                    [grp_texts[i]],
+                    candidate_texts,
+                    scorer=fuzz.token_sort_ratio,
+                    dtype=np.float32,
+                )[0]
+                / 100.0
+            )
+            candidate_offsets = np.flatnonzero(text_sims >= threshold)
+            if len(candidate_offsets) == 0:
+                continue
 
-                amt_sim = 1.0 - rel_diff
-                pair_score = text_sim * amt_sim
+            candidate_idx = i + 1 + candidate_offsets
+            rel_diff = np.abs(grp_amts[candidate_idx] - base_amt) / np.maximum(
+                grp_amts[candidate_idx], base_amt
+            )
+            valid = rel_diff <= amount_tolerance
+            if not np.any(valid):
+                continue
 
-                # Why: 쌍 중 높은 점수를 양쪽에 부여 (원본·중복 모두 플래그)
-                scores.at[idx[i]] = max(scores.at[idx[i]], pair_score)
-                scores.at[idx[j]] = max(scores.at[idx[j]], pair_score)
+            valid_idx = candidate_idx[valid]
+            pair_scores = text_sims[candidate_offsets[valid]] * (1.0 - rel_diff[valid])
+            base_score = float(pair_scores.max())
+            score_values[grp_pos[i]] = max(score_values[grp_pos[i]], base_score)
+            np.maximum.at(score_values, grp_pos[valid_idx], pair_scores)
 
-    return scores
+    return pd.Series(score_values, index=df.index)
 
 
 # ── L2-03c: Split Transaction ──────────────────────────────────
@@ -136,45 +173,85 @@ def b05c_split_transaction(
         return scores
 
     amt = _base_amount(df)
+    dates = pd.to_datetime(df["posting_date"], errors="coerce")
+    score_values = np.zeros(len(df), dtype=float)
+    positions = pd.Series(np.arange(len(df)), index=df.index)
+    day_ns = np.timedelta64(1, "D").astype("timedelta64[ns]").astype(np.int64)
+    window_ns = int(window_days * day_ns)
 
-    for _gl, grp in df.groupby("gl_account"):
+    work = pd.DataFrame(
+        {
+            "gl_account": df["gl_account"],
+            "posting_date": dates,
+            "amount": amt,
+            "_pos": positions,
+        },
+        index=df.index,
+    ).dropna(subset=["posting_date"])
+
+    for _gl, grp in work.groupby("gl_account", sort=False):
         if len(grp) < 3:  # Why: 최소 3건 (타겟 1 + 분할 2)
             continue
         if len(grp) > max_group_size:
             continue
 
-        idx = grp.index
-        grp_amts = amt.loc[idx].values
-        grp_dates = pd.to_datetime(grp["posting_date"]).values
+        ordered = grp.sort_values("posting_date", kind="mergesort")
+        grp_amts = ordered["amount"].to_numpy(dtype=float)
+        grp_dates = ordered["posting_date"].to_numpy(dtype="datetime64[ns]").astype(np.int64)
+        grp_pos = ordered["_pos"].to_numpy(dtype=int)
 
-        for t_pos, t_idx in enumerate(idx):
+        n = len(ordered)
+        for t_pos in range(n):
             target = grp_amts[t_pos]
             if target <= 0:
                 continue
 
-            # Why: 타겟보다 큰 금액은 합산 후보가 될 수 없으므로 사전 제외
-            candidates = [
-                (c_pos, c_idx)
-                for c_pos, c_idx in enumerate(idx)
-                if c_pos != t_pos
-                and grp_amts[c_pos] < target
-                and grp_amts[c_pos] > 0
-                and abs(
-                    (grp_dates[c_pos] - grp_dates[t_pos])
-                    / np.timedelta64(1, "D")
-                ) <= window_days
-            ]
+            left = np.searchsorted(grp_dates, grp_dates[t_pos] - window_ns, side="left")
+            right = np.searchsorted(grp_dates, grp_dates[t_pos] + window_ns, side="right")
+            if right - left < 3:
+                continue
 
-            # Why: 2-way split만 검사 — 3-way는 O(n³)이고 승인한도 회피 주요 패턴은 2-way
-            for (p1, i1), (p2, i2) in combinations(candidates, 2):
-                pair_sum = grp_amts[p1] + grp_amts[p2]
-                rel_diff = abs(pair_sum - target) / target
-                if rel_diff <= amount_tolerance:
-                    scores.at[t_idx] = max(scores.at[t_idx], 0.7)
-                    scores.at[i1] = max(scores.at[i1], 0.7)
-                    scores.at[i2] = max(scores.at[i2], 0.7)
+            window_positions = np.arange(left, right)
+            mask = (
+                (window_positions != t_pos)
+                & (grp_amts[window_positions] > 0)
+                & (grp_amts[window_positions] < target)
+            )
+            candidate_positions = window_positions[mask]
+            if len(candidate_positions) < 2:
+                continue
 
-    return scores
+            candidate_amounts = grp_amts[candidate_positions]
+            order = np.argsort(candidate_amounts, kind="mergesort")
+            sorted_amounts = candidate_amounts[order]
+            sorted_positions = candidate_positions[order]
+            low = target * (1.0 - amount_tolerance)
+            high = target * (1.0 + amount_tolerance)
+
+            target_hit = False
+            for left_pos, left_amount in enumerate(sorted_amounts[:-1]):
+                lo_idx = np.searchsorted(
+                    sorted_amounts, low - left_amount, side="left", sorter=None
+                )
+                hi_idx = np.searchsorted(
+                    sorted_amounts, high - left_amount, side="right", sorter=None
+                )
+                lo_idx = max(lo_idx, left_pos + 1)
+                if hi_idx <= lo_idx:
+                    continue
+                target_hit = True
+                score_values[grp_pos[sorted_positions[left_pos]]] = max(
+                    score_values[grp_pos[sorted_positions[left_pos]]], 0.7
+                )
+                hit_positions = sorted_positions[lo_idx:hi_idx]
+                score_values[grp_pos[hit_positions]] = np.maximum(
+                    score_values[grp_pos[hit_positions]], 0.7
+                )
+
+            if target_hit:
+                score_values[grp_pos[t_pos]] = max(score_values[grp_pos[t_pos]], 0.7)
+
+    return pd.Series(score_values, index=df.index)
 
 
 # ── L2-03d: Time-Shifted Duplicate ─────────────────────────────
@@ -198,32 +275,66 @@ def b05d_time_shifted_duplicate(
         return scores
 
     amt = _base_amount(df)
-    dates = pd.to_datetime(df["posting_date"])
+    dates = pd.to_datetime(df["posting_date"], errors="coerce")
+    score_values = np.zeros(len(df), dtype=float)
+    positions = pd.Series(np.arange(len(df)), index=df.index)
+    day_ns = np.timedelta64(1, "D").astype("timedelta64[ns]").astype(np.int64)
+    window_ns = int(window_days * day_ns)
 
-    for _gl, grp in df.groupby("gl_account"):
-        if len(grp) < 2:
-            continue
+    valid = dates.notna().to_numpy()
+    if not np.any(valid):
+        return scores
 
-        idx = grp.index
-        grp_amts = amt.loc[idx].values
-        grp_dates = dates.loc[idx].values
+    gl_codes = pd.factorize(df["gl_account"], sort=False)[0][valid]
+    amounts = amt.to_numpy(dtype=float)[valid]
+    floors = np.floor(amounts).astype(np.int64, copy=False)
+    date_ns = dates.to_numpy(dtype="datetime64[ns]").astype(np.int64)[valid]
+    pos = positions.to_numpy(dtype=int)[valid]
 
-        n = len(idx)
+    order = np.lexsort((floors, gl_codes))
+    gl_codes = gl_codes[order]
+    floors = floors[order]
+    amounts = amounts[order]
+    date_ns = date_ns[order]
+    pos = pos[order]
+
+    group_breaks = np.flatnonzero(
+        (gl_codes[1:] != gl_codes[:-1]) | (floors[1:] != floors[:-1])
+    ) + 1
+    starts = np.r_[0, group_breaks]
+    ends = np.r_[group_breaks, len(order)]
+
+    def score_window(
+        group_dates: np.ndarray,
+        group_pos: np.ndarray,
+    ) -> None:
+        if len(group_pos) < 2:
+            return
+        date_order = np.argsort(group_dates, kind="mergesort")
+        grp_dates = group_dates[date_order]
+        grp_pos = group_pos[date_order]
+        n = len(grp_pos)
+        upper = 1
         for i in range(n):
-            for j in range(i + 1, n):
-                # Why: 부동소수점 오차 방지 — 1원 이내 차이는 동일 금액으로 취급 (KRW 실무)
-                if abs(grp_amts[i] - grp_amts[j]) > 1.0:
-                    continue
+            if upper < i + 1:
+                upper = i + 1
+            while upper < n and grp_dates[upper] - grp_dates[i] <= window_ns:
+                upper += 1
+            if upper <= i + 1:
+                continue
+            valid_idx = np.arange(i + 1, upper)
+            day_diff = (grp_dates[i + 1 : upper] - grp_dates[i]) / day_ns
+            nonzero_day = day_diff != 0
+            if not np.any(nonzero_day):
+                continue
+            valid_idx = valid_idx[nonzero_day]
+            pair_scores = 1.0 - (day_diff[nonzero_day] / window_days)
+            base_score = float(pair_scores.max())
+            score_values[grp_pos[i]] = max(score_values[grp_pos[i]], base_score)
+            np.maximum.at(score_values, grp_pos[valid_idx], pair_scores)
 
-                day_diff = abs(
-                    (grp_dates[i] - grp_dates[j]) / np.timedelta64(1, "D")
-                )
-                # Why: 같은 날짜(day_diff=0)는 L2-03a에서 처리 → 여기선 제외
-                if day_diff == 0 or day_diff > window_days:
-                    continue
+    for start, end in zip(starts, ends, strict=True):
+        if end - start >= 2:
+            score_window(date_ns[start:end], pos[start:end])
 
-                pair_score = 1.0 - (day_diff / window_days)
-                scores.at[idx[i]] = max(scores.at[idx[i]], pair_score)
-                scores.at[idx[j]] = max(scores.at[idx[j]], pair_score)
-
-    return scores
+    return pd.Series(score_values, index=df.index)
