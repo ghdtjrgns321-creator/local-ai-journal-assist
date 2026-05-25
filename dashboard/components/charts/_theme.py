@@ -44,12 +44,14 @@ CASE_BAND_COLORS: dict[str, str] = {
     "high": "#4338CA",  # indigo-700 — 우선 검토 case
     "medium": "#7C3AED",  # violet-600 — 보조 검토 case
     "low": "#94A3B8",  # slate-400 — 모집단 case
+    "none": "#E2E8F0",  # slate-200 — 신호 없는 전표
 }
 
 CASE_BAND_LABELS: dict[str, str] = {
-    "high": "◆ case High",
-    "medium": "◆ case Medium",
-    "low": "◆ case Low",
+    "high": "◆ 즉시검토",
+    "medium": "◆ 검토대상",
+    "low": "◆ 참고후보",
+    "none": "◆ 신호 없음",
 }
 
 ROW_RISK_LABELS: dict[str, str] = {

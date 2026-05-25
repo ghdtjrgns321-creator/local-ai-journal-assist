@@ -130,7 +130,7 @@ def _render_row(
         line_subset: pd.DataFrame = subset.loc[subset["line_no"].astype("Int64") == line_no]
         if not line_subset.empty:
             subset = line_subset
-    st.dataframe(subset, use_container_width=True, hide_index=True)
+    st.dataframe(subset, width="stretch", hide_index=True)
 
 
 def render_citation_jump_panel(data: pd.DataFrame | None) -> None:

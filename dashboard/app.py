@@ -27,8 +27,12 @@ from dashboard._state import (
     KEY_PHASE2_RESULT,
     KEY_PREP_RESULT,
     KEY_UPLOAD_COUNT,
+    PAGE_COMPANY_SETTINGS,
+    PAGE_COMPARISON,
     PAGE_OVERVIEW,
     PAGE_PHASE1,
+    PAGE_PHASE2,
+    PAGE_REVIEW_QUEUE,
     RESULT_PAGES,
     init_state,
 )
@@ -39,8 +43,7 @@ from dashboard._url_state import (
 from dashboard.styles import inject_css
 from src.company.repository import CompanyRepository
 from src.context import ContextFactory
-from src.db.connection import ConnectionManager
-from src.services.batch_service import list_saved_batches, load_batch_into_state
+from src.db.connection import get_connection_manager
 from src.services.session_service import clear_company_selection, current_display_result
 
 st.set_page_config(
@@ -54,7 +57,7 @@ inject_css()
 _COMPANIES_DIR = Path("data/companies")
 _repo = CompanyRepository(_COMPANIES_DIR)
 _factory = ContextFactory(_repo)
-_conn_mgr = ConnectionManager()
+_conn_mgr = get_connection_manager()
 
 ss = st.session_state
 
@@ -64,8 +67,13 @@ if "_company_repo" not in ss:
     ss["_company_repo"] = _repo
 if "_context_factory" not in ss:
     ss["_context_factory"] = _factory
-if "_conn_mgr" not in ss:
-    ss["_conn_mgr"] = _conn_mgr
+existing_conn_mgr = ss.get("_conn_mgr")
+if existing_conn_mgr is not None and existing_conn_mgr is not _conn_mgr:
+    try:
+        existing_conn_mgr.close_all()
+    except Exception:
+        pass
+ss["_conn_mgr"] = _conn_mgr
 
 hydrate_selection_from_query_params(ss, st.query_params)
 
@@ -161,7 +169,7 @@ def _render_company_settings_page(ctx) -> None:
         #      는 시각적 충격을 만든다. 이미 사용자는 그 위치에 있으므로 강제
         #      스크롤 없이 인라인 진행 표시만 추가한다.
         st.info("Phase 1 분석을 시작했습니다. 완료 전까지 같은 화면에서 진행 상태를 표시합니다.")
-        progress = st.progress(0, text="Phase 1 룰 기반 감사 시작... 약 5분 정도 소요됩니다.")
+        progress = st.progress(0, text="Phase 1 룰 기반 탐지 실행 중... 약 5분 정도 소요됩니다.")
         try:
             progress.progress(20, text="Phase 1 룰 기반 탐지 실행 중... 약 5분 정도 소요됩니다.")
             run_phase_analysis(phase="phase1")
@@ -228,6 +236,9 @@ def _render_main() -> None:
         return
 
     if _needs_ctx_refresh(ctx, company_id, engagement_id):
+        from src.services.session_service import close_dashboard_connections
+
+        close_dashboard_connections(ss)
         ctx = _factory.create(company_id, engagement_id)
         ss[KEY_COMPANY_CONTEXT] = ctx
         sync_selection_to_query_params(ss, st.query_params)
@@ -235,30 +246,11 @@ def _render_main() -> None:
     ss[KEY_ACTIVE_RESULT_TAB] = _coerce_page(ss.get(KEY_ACTIVE_RESULT_TAB))
 
     if result is None:
-        force_upload = ss.pop("_force_upload", False)
+        from dashboard.components.data_uploader import render_uploader
 
-        conn = _conn_mgr.get(str(ctx.db_path))
-        batches = list_saved_batches(conn)
-
-        if not batches.empty and not force_upload:
-            latest = batches.iloc[0]
-            bid = latest["upload_batch_id"]
-            progress = st.progress(0, text="이전 분석 결과 불러오는 중...")
-            try:
-                progress.progress(30, text="DB에서 데이터 조회 중...")
-                load_batch_into_state(ss, conn, bid)
-                progress.empty()
-            except Exception:
-                progress.empty()
-                st.warning("이전 결과 로드 실패 - 새 파일을 업로드하세요.")
-
-        result = current_display_result(ss)
-        if result is None:
-            from dashboard.components.data_uploader import render_uploader
-
-            render_uploader()
-            st.stop()
-            return
+        render_uploader()
+        st.stop()
+        return
 
     prep_result = ss.get(KEY_PREP_RESULT)
     phase1_result = ss.get(KEY_PHASE1_RESULT)
@@ -273,7 +265,7 @@ def _render_main() -> None:
         file_label = _extract_file_name(upload_key)
         st.markdown(f"### {file_label}")
     with col_btn:
-        if st.button("처음으로 돌아가기", use_container_width=True):
+        if st.button("처음으로 돌아가기", width="stretch"):
             ss[KEY_ACTIVE_RESULT_TAB] = PAGE_OVERVIEW
             ss[KEY_PENDING_RESULT_TAB] = None
             _reset_to_company_select()
@@ -293,41 +285,36 @@ def _render_main() -> None:
     default_top_tab = _coerce_page(ss.get(KEY_ACTIVE_RESULT_TAB, PAGE_OVERVIEW))
     if ss.get(KEY_TOP_LEVEL_NAV) not in RESULT_PAGES:
         ss[KEY_TOP_LEVEL_NAV] = default_top_tab
-    (
-        overview_tab,
-        settings_tab,
-        phase1_tab,
-        phase2_tab,
-        comparison_tab,
-        review_queue_tab,
-    ) = st.tabs(
+    # Why: st.tabs 는 nav 만 담당하고 콘텐츠는 active tab 만 렌더해
+    #      6개 panel 의 동시 평가로 인한 로딩 지연을 제거한다.
+    #      탭 widget 자체는 그대로 두므로 시각 UI 변경 없음.
+    st.tabs(
         list(RESULT_PAGES),
         default=default_top_tab,
         key=KEY_TOP_LEVEL_NAV,
         on_change="rerun",
     )
-    # Sync canonical KEY_ACTIVE_RESULT_TAB with the widget value so other modules
-    # (re-detection, pending tab routing) read the latest user-selected tab.
-    ss[KEY_ACTIVE_RESULT_TAB] = ss.get(KEY_TOP_LEVEL_NAV, default_top_tab)
-    with overview_tab:
+    active_tab = ss.get(KEY_TOP_LEVEL_NAV, default_top_tab)
+    ss[KEY_ACTIVE_RESULT_TAB] = active_tab
+
+    if active_tab == PAGE_OVERVIEW:
         render_overview(prep_result or display_result)
-    with settings_tab:
+    elif active_tab == PAGE_COMPANY_SETTINGS:
         _render_company_settings_page(ctx)
-    with phase1_tab:
+    elif active_tab == PAGE_PHASE1:
         render_phase1(prep_result or display_result, phase1_result)
-    with phase2_tab:
+    elif active_tab == PAGE_PHASE2:
         render_phase2(prep_result or display_result, phase2_result)
-    with comparison_tab:
+    elif active_tab == PAGE_COMPARISON:
         render_comparison(prep_result or display_result, _repo, _conn_mgr)
-    with review_queue_tab:
+    elif active_tab == PAGE_REVIEW_QUEUE:
         render_review_queue(prep_result or display_result)
 
 
 # Why: 페이지 분기마다 컨테이너 key 를 바꾸면 (upload → main 등) Streamlit 이
 #      매 전환마다 컨테이너 DOM 을 폐기/재생성한다. 이러면 매핑 확인 직후
 #      rerun 에서 컨테이너 식별자가 바뀌어 브라우저가 새 컨테이너를 최상단부터
-#      그리며 화면이 위로 튕긴다. preserve_scroll_position 의 sessionStorage 도
-#      컨테이너 자체가 새 DOM 이라 복원 시점을 잡지 못한다.
+#      그리며 화면이 위로 튕긴다.
 #      과거 stacking 이슈는 `st.empty().container()` 래핑 때문이었고 현재는
 #      `st.container(key=...)` 직접 호출로 제거됐다. 안정 key 로 통일해 같은
 #      컨테이너 안에서 내용만 diff 되도록 한다.

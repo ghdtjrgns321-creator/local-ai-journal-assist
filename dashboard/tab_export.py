@@ -369,7 +369,7 @@ def render(result: PipelineResult | None) -> None:
     _invalidate_cache_if_stale(current_hash)
 
     # Step A — 생성 버튼
-    if st.button("📋 보고서 생성", type="primary", use_container_width=True):
+    if st.button("📋 보고서 생성", type="primary", width="stretch"):
         with st.spinner(f"{fmt} 보고서를 생성 중..."):
             try:
                 conn = _get_conn(ctx)
@@ -392,7 +392,7 @@ def render(result: PipelineResult | None) -> None:
             data=ss[KEY_EXPORT_READY_DATA],
             file_name=file_name,
             mime=ss[KEY_EXPORT_READY_MIME],
-            use_container_width=True,
+            width="stretch",
             on_click=_on_download_click,
             kwargs={"fmt": fmt, "file_name": file_name, "ctx": ctx, "batch_id": batch_id},
         )

@@ -119,7 +119,7 @@ def render_candidate_card(narrative: dict[str, Any]) -> None:
                         key=_citation_key("rqcit", candidate_id, r_idx, e_idx),
                         on_click=_set_citation_target,
                         args=(candidate_id, evidence),
-                        use_container_width=True,
+                        width="stretch",
                     )
 
         if actions:

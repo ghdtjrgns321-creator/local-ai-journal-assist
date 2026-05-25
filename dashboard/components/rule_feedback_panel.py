@@ -59,7 +59,7 @@ def render(
 
     col_btn, col_info = st.columns([1, 3])
     with col_btn:
-        generate = st.button("제안 생성", use_container_width=True)
+        generate = st.button("제안 생성", width="stretch")
     with col_info:
         st.caption(f"회사: {ctx.company_id} / {ctx.engagement_id}")
 
@@ -111,7 +111,7 @@ def _render_summary(report) -> None:
                 [(k, v) for k, v in report.sample_summary.items()],
                 columns=["category", "sample_count"],
             )
-            st.dataframe(df, hide_index=True, use_container_width=True)
+            st.dataframe(df, hide_index=True, width="stretch")
 
 
 def _render_suggestions(
@@ -154,7 +154,7 @@ def _render_single_suggestion(
 
     if suggestion.evidence_samples:
         df = pd.DataFrame([e.model_dump() for e in suggestion.evidence_samples])
-        st.dataframe(df, hide_index=True, use_container_width=True)
+        st.dataframe(df, hide_index=True, width="stretch")
 
     key_base = f"wu30_{suggestion.category.value}_{idx}"
     col_a, col_r, _ = st.columns([1, 1, 6])

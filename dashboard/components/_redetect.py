@@ -34,7 +34,7 @@ def render_apply_button() -> None:
     if st.button(
         "새 설정 적용",
         disabled=not valid,
-        use_container_width=True,
+        width="stretch",
     ):
         with st.spinner("탐지 재실행 중..."):
             ok = rerun_detection()

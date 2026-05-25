@@ -1,4 +1,4 @@
-"""위험 등급 시각화 — risk_heatmap, risk_donut, anomaly_scatter."""
+"""우선검토 등급 시각화 — risk_heatmap, risk_donut, anomaly_scatter."""
 
 from __future__ import annotations
 
@@ -36,14 +36,14 @@ def risk_heatmap(df: pd.DataFrame) -> go.Figure:
         colorscale="Reds",
         hovertemplate="기간: %{x}<br>프로세스: %{y}<br>평균 점수: %{z:.3f}<extra></extra>",
     ))
-    fig.update_layout(**DEFAULT_LAYOUT, title="월별 × 프로세스 위험 히트맵")
+    fig.update_layout(**DEFAULT_LAYOUT, title="월별 × 프로세스 검토 신호 히트맵")
     return fig
 
 
 def risk_donut(df: pd.DataFrame) -> go.Figure:
     """위험 등급(High/Medium/Low/Normal) 분포 도넛 차트."""
     if df.empty or "risk_level" not in df.columns:
-        return empty_figure("위험 등급 데이터가 없습니다")
+        return empty_figure("검토 후보 등급 데이터가 없습니다")
 
     counts = df["risk_level"].value_counts()
     # Why: 정의된 순서대로 정렬하여 일관된 시각화 보장.
@@ -56,7 +56,7 @@ def risk_donut(df: pd.DataFrame) -> go.Figure:
         hole=0.4, marker={"colors": colors},
         hovertemplate="%{label}: %{value}건 (%{percent})<extra></extra>",
     ))
-    fig.update_layout(**DEFAULT_LAYOUT, title="위험 등급 분포", showlegend=True)
+    fig.update_layout(**DEFAULT_LAYOUT, title="검토 후보 등급 분포", showlegend=True)
     return fig
 
 
@@ -111,7 +111,7 @@ def anomaly_scatter(
         ))
 
     fig.update_layout(
-        **DEFAULT_LAYOUT, title="금액 — 위험 점수 산점도",
-        xaxis_title="차변 금액", yaxis_title="이상 점수",
+        **DEFAULT_LAYOUT, title="금액 — 우선순위 점수 산점도",
+        xaxis_title="차변 금액", yaxis_title="이상 신호 점수",
     )
     return fig

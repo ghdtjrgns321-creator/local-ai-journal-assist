@@ -13,9 +13,6 @@ from dashboard._state import (
     KEY_ACTIVE_RESULT_TAB,
     KEY_COMPANY_CONTEXT,
     KEY_PENDING_RESULT_TAB,
-    KEY_PHASE1_RESULT,
-    KEY_PHASE2_RESULT,
-    KEY_PIPELINE_RESULT,
     KEY_PRE_ANALYSIS_SETTINGS_OPEN,
     KEY_SETTINGS,
     KEY_SETTINGS_DIRTY,
@@ -62,9 +59,7 @@ def render_pre_analysis_settings() -> bool:
         audit_rule_updates: dict[str, Any] = {}
         phase1_case_updates: dict[str, Any] = {}
         # form 안 다른 카드와 함께 저장될 수 있도록 현재 휴일 list 도 동기화.
-        settings_updates["custom_holidays"] = list(
-            st.session_state.get(holiday_key, [])
-        )
+        settings_updates["custom_holidays"] = list(st.session_state.get(holiday_key, []))
         st.caption(
             "고객사 회계정책, ERP source 코드, 계정체계와 다르면 오탐·누락이 커집니다. "
             "4개 영역으로 나눠 입력합니다."
@@ -84,18 +79,18 @@ def render_pre_analysis_settings() -> bool:
         with col_back:
             close_clicked = st.form_submit_button(
                 "개요로 돌아가기",
-                use_container_width=True,
+                width="stretch",
             )
         with col_save:
             save_clicked = st.form_submit_button(
                 "변경사항 저장",
-                use_container_width=True,
+                width="stretch",
             )
         with col_run:
             run_clicked = st.form_submit_button(
                 "저장 후 Phase 1 분석",
                 type="primary",
-                use_container_width=True,
+                width="stretch",
             )
 
     if close_clicked:
@@ -251,7 +246,7 @@ def _render_holiday_card(holiday_key: str, profile, repo, factory, ctx) -> None:
             st.button(
                 "휴일 추가",
                 key=f"{holiday_key}_add",
-                use_container_width=True,
+                width="stretch",
                 on_click=_holiday_add_cb,
                 args=(holiday_key, picker_key, profile, repo, factory, ctx),
             )
@@ -281,7 +276,7 @@ def _render_holiday_card(holiday_key: str, profile, repo, factory, ctx) -> None:
                 st.button(
                     "✕",
                     key=f"{holiday_key}_rm_{hday}",
-                    use_container_width=True,
+                    width="stretch",
                     help=f"{hday} 삭제",
                     on_click=_holiday_remove_cb,
                     args=(holiday_key, hday, profile, repo, factory, ctx),
@@ -384,7 +379,7 @@ def _render_company_policy(
             threshold_df,
             hide_index=True,
             num_rows="fixed",
-            use_container_width=True,
+            width="stretch",
             column_config={
                 "승인권한": st.column_config.TextColumn(
                     "승인권한",
@@ -421,8 +416,7 @@ def _render_company_policy(
                     "자동/시스템 source 코드",
                     value=_join_list(settings.auto_entry_sources),
                     help=(
-                        "자동 전표로 보아 급속 승인·심야 사용자 행동 검토에서 "
-                        "제외할 source입니다."
+                        "자동 전표로 보아 급속 승인·심야 사용자 행동 검토에서 제외할 source입니다."
                     ),
                 )
             )
@@ -546,9 +540,6 @@ def _save_company_settings(
         st.session_state[KEY_SETTINGS] = ctx.settings.model_copy(update=compact_settings)
 
     st.session_state[KEY_SETTINGS_DIRTY] = False
-    st.session_state.pop(KEY_PIPELINE_RESULT, None)
-    st.session_state.pop(KEY_PHASE1_RESULT, None)
-    st.session_state.pop(KEY_PHASE2_RESULT, None)
 
 
 def _join_list(values: Any) -> str:

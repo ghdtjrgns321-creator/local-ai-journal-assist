@@ -48,7 +48,7 @@ def render_shap_waterfall(
         return
 
     fig = _build_waterfall(contribution, base_value)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
     st.caption(
         f"기준값(base) {base_value:.3f} → 최종 예측값 "
         f"{base_value + sum(contribution.values()):.3f}",
@@ -150,7 +150,7 @@ def render_vae_waterfall(row, top_k: int = 3) -> None:
         return
 
     fig = _build_vae_waterfall(items)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
     total = sum(c for _, c in items)
     st.caption(f"Top-{len(items)} 피처 기여 합계: {total:.4f}")
 

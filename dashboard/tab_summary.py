@@ -58,13 +58,13 @@ def render(result: PipelineResult) -> None:
     with r1_left:
         st.plotly_chart(
             rule_violation_bar(df),
-            use_container_width=True,
+            width="stretch",
             key="summary_rule_violation_bar",
         )
     with r1_right:
         st.plotly_chart(
             risk_donut(df),
-            use_container_width=True,
+            width="stretch",
             key="summary_risk_donut",
         )
 
@@ -72,13 +72,13 @@ def render(result: PipelineResult) -> None:
     with r2_left:
         st.plotly_chart(
             monthly_trend(df),
-            use_container_width=True,
+            width="stretch",
             key="summary_monthly_trend",
         )
     with r2_right:
         st.plotly_chart(
             risk_heatmap(df),
-            use_container_width=True,
+            width="stretch",
             key="summary_risk_heatmap",
         )
 
@@ -86,19 +86,19 @@ def render(result: PipelineResult) -> None:
     with dim_tabs[0]:
         st.plotly_chart(
             process_distribution_bar(df),
-            use_container_width=True,
+            width="stretch",
             key="summary_process_distribution_bar",
         )
     with dim_tabs[1]:
         st.plotly_chart(
             persona_risk_matrix(df),
-            use_container_width=True,
+            width="stretch",
             key="summary_persona_risk_matrix",
         )
     with dim_tabs[2]:
         st.plotly_chart(
             company_comparison(df),
-            use_container_width=True,
+            width="stretch",
             key="summary_company_comparison",
         )
 
@@ -130,4 +130,4 @@ def _render_phase1_case_summary(result: PipelineResult) -> None:
                 "total_amount": "Amount",
             }
         )[["Topic", "Cases", "High", "Medium", "Low", "Amount"]]
-        st.dataframe(theme_df, use_container_width=True, hide_index=True)
+        st.dataframe(theme_df, width="stretch", hide_index=True)

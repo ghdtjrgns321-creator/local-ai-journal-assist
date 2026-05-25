@@ -21,6 +21,7 @@ from dashboard._state import (
     KEY_LOADED_FROM_DB,
     KEY_PHASE1_RESULT,
     KEY_PHASE2_RESULT,
+    KEY_PHASE2_TRAINING_REPORT_ID,
     KEY_PIPELINE_RESULT,
     KEY_PREP_RESULT,
     KEY_UPLOAD_COUNT,
@@ -46,6 +47,9 @@ def prepare_mapped_data(file_key: str, progress_cb=None):
     st.session_state[KEY_PREP_RESULT] = result
     st.session_state[KEY_PHASE1_RESULT] = None
     st.session_state[KEY_PHASE2_RESULT] = None
+    # Why: 새 데이터 schema 가 이전 학습 기준과 다를 수 있어 training_report_id 도 reset.
+    #      다음 Phase2 inference 가 cold-start 로 fallback 하거나 사용자가 재학습하도록 유도.
+    st.session_state[KEY_PHASE2_TRAINING_REPORT_ID] = None
     st.session_state[KEY_PIPELINE_RESULT] = None
     st.session_state[KEY_BATCH_ID] = result.batch_id
     st.session_state[KEY_UPLOAD_COUNT] = file_key

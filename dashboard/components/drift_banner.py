@@ -110,4 +110,4 @@ def _render_report_table(reports: list[DriftReport]) -> None:
             "스키마 불일치": "O" if r.schema_mismatch else "X",
         })
     df = pd.DataFrame(rows)
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.dataframe(df, width="stretch", hide_index=True)

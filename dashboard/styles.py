@@ -46,14 +46,11 @@ html, body, [class*="css"] {
     font-family: var(--font) !important;
 }
 
-/* Streamlit keeps previous elements in a dimmed "stale" state during long reruns
-   and during page-key container swaps (e.g. selector → main). Hide those wrappers
-   so users don't see ghost cards (e.g. engagement-create form leaking onto Overview).
-   Why data-stale: 1.55 applies the dim via styled-components (emotion class), not an
-   inline style attribute, so [style*="opacity:0.33"] no longer matches. The element
-   does carry data-stale="true" on stElementContainer — target that instead. */
+/* Streamlit이 rerun 중 stale 요소에 data-stale="true"를 붙여 dim 처리한다.
+   display:none 으로 숨기면 레이아웃 공간까지 사라져 빈 박스/스크롤 점프가
+   생기므로 opacity 만 유지해 레이아웃은 그대로 두고 새 콘텐츠로 부드럽게 교체. */
 [data-testid="stElementContainer"][data-stale="true"] {
-    display: none !important;
+    opacity: 1 !important;
 }
 
 /* ── Layout ────────────────────────────────────────── */

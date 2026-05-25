@@ -27,6 +27,7 @@ from dashboard.components.coa_categories import (
     CATEGORY_ORDER,
     account_display,
 )
+from src.formatting import format_krw_compact
 
 # Why: 당기/전기 색상을 일관되게 적용.
 _CURRENT_COLOR = "#2563EB"  # blue-600
@@ -38,21 +39,14 @@ _DELTA_NEUTRAL = "#94A3B8"  # slate-400 — 임계값 이하
 
 def _format_amount(value: float) -> str:
     """₩ 금액을 한국식(억/만) 축약."""
-    v = float(value)
-    sign = "-" if v < 0 else ""
-    av = abs(v)
-    if av >= 1_0000_0000:
-        return f"{sign}{av / 1_0000_0000:,.2f}억"
-    if av >= 1_0000:
-        return f"{sign}{av / 1_0000:,.1f}만"
-    return f"{sign}{av:,.0f}"
+    return format_krw_compact(value, jo_digits=2, eok_digits=2, man_digits=1)
 
 
 def _pct_change(current: float, prior: float) -> float | None:
     """전기 대비 변동률. 전기가 0 이면 None (∞ 방어).
 
     분모는 abs(prior) — NI 처럼 음수 base 에서 부호가 "방향(증감)" 의미를 잃지
-    않도록 정규화. prior 가 음수이고 current 가 더 큰 (덜 부정적) 값이면 +%로
+    않도록 정규화. prior 가 음수이고 current 가 더 큰 (덜 음수인) 값이면 +%로
     표시되어 손실 감소를 시각적으로 올바르게 나타낸다.
     """
     if prior is None or math.isclose(prior, 0.0):
@@ -373,21 +367,21 @@ def monthly_trend_comparison(
     return fig
 
 
-# ── 4) 위험등급 분포 비교 (도넛) ───────────────────────────────
+# ── 4) 검토 후보 등급 분포 비교 (도넛) ───────────────────────────────
 
 
 def risk_distribution_comparison(
     current_df: pd.DataFrame,
     prior_df: pd.DataFrame,
 ) -> go.Figure:
-    """위험등급 분포 비교 — 도넛 2개 나란히.
+    """검토 후보 등급 분포 비교 — 도넛 2개 나란히.
 
     Args:
         current_df: columns=[risk_level, cnt]
         prior_df: columns=[risk_level, cnt]
     """
     if current_df.empty and prior_df.empty:
-        return empty_figure("위험등급 데이터 없음")
+        return empty_figure("검토 후보 등급 데이터 없음")
 
     fig = make_subplots(
         rows=1,
@@ -423,7 +417,7 @@ def rule_violation_delta(
     current_df: pd.DataFrame,
     prior_df: pd.DataFrame,
 ) -> go.Figure:
-    """룰별 위반 건수 증감 — 수평 바 차트.
+    """룰별 검토 신호 건수 증감 — 수평 바 차트.
 
     Args:
         current_df: columns=[rule_code, cnt]
@@ -432,7 +426,7 @@ def rule_violation_delta(
     Y축 라벨은 `{rule_code} · {한국어 이름}` 형식 (rule_labels.RULE_NAMES_KR).
     """
     if current_df.empty and prior_df.empty:
-        return empty_figure("룰 위반 데이터 없음")
+        return empty_figure("룰 신호 데이터 없음")
 
     from dashboard.components.rule_labels import rule_label
 
@@ -446,7 +440,7 @@ def rule_violation_delta(
     # Why: 변동 없는 룰은 제거 — 신호가 약해진다.
     merged = merged[merged["증감"] != 0].sort_values(by="증감")
     if merged.empty:
-        return empty_figure("룰 위반 변동 없음")
+        return empty_figure("룰 신호 변동 없음")
 
     merged["rule_label"] = merged["rule_code"].astype(str).map(lambda r: rule_label(r))
     aligned_labels = _left_align_labels(merged["rule_label"].astype(str).tolist())

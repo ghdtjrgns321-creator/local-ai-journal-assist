@@ -25,10 +25,6 @@ if TYPE_CHECKING:
 
 def render(result: PipelineResult) -> None:
     """Tab 3 메인 렌더 함수."""
-    from dashboard.components.scroll_anchor import preserve_scroll_position
-
-    preserve_scroll_position("explorer")
-
     # 1. 필터 적용
     df = apply_filters(result.data, st.session_state.get(KEY_FILTERS, {}))
     dev_mode = st.session_state.get(KEY_DEV_MODE, False)

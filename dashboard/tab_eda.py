@@ -89,7 +89,7 @@ def _render_overview(summary: dict) -> None:
 
     col_gauge, col_warnings = st.columns([1, 2])
     with col_gauge:
-        st.plotly_chart(quality_gauge(summary["quality_score"]), use_container_width=True)
+        st.plotly_chart(quality_gauge(summary["quality_score"]), width="stretch")
     with col_warnings:
         if summary["warnings"]:
             for w in summary["warnings"]:
@@ -122,7 +122,7 @@ def _render_missing_heatmap(summary: dict) -> None:
     st.subheader("결측률 히트맵")
     st.plotly_chart(
         missing_rate_bar(summary["missing_heatmap_data"]),
-        use_container_width=True,
+        width="stretch",
     )
     st.divider()
 
@@ -135,11 +135,11 @@ def _render_outlier_distribution(summary: dict) -> None:
     if summary["numeric_stats_table"]:
         st.plotly_chart(
             outlier_ratio_bar(summary["numeric_stats_table"], total_rows),
-            use_container_width=True,
+            width="stretch",
         )
         st.plotly_chart(
             numeric_box_plots(summary["numeric_stats_table"]),
-            use_container_width=True,
+            width="stretch",
         )
     else:
         st.info("수치형 컬럼이 없어 이상치 분석을 건너뜁니다.")

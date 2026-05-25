@@ -1,4 +1,4 @@
-"""룰 위반 건수 시각화 — rule_violation_bar."""
+"""룰 검토 신호 건수 시각화 — rule_violation_bar."""
 
 from __future__ import annotations
 
@@ -19,14 +19,14 @@ _RULE_LEVEL_ORDER = ("L1", "L2", "L3", "L4", "Analytical", "Phase 2/3")
 
 
 def rule_violation_bar(df: pd.DataFrame, *, pr=None) -> go.Figure:
-    """24개 룰별 위반 건수 가로 바 차트. L1~L4 색상 구분.
+    """룰별 검토 신호 건수 가로 바 차트. L1~L4 색상 구분.
 
     flagged_rules 컬럼(comma-separated)을 파싱하여 룰별 건수 집계.
     """
     if pr is not None:
         return phase1_rule_violation_bar(pr)
     if df.empty or "flagged_rules" not in df.columns:
-        return empty_figure("룰 위반 데이터가 없습니다")
+        return empty_figure("룰 신호 데이터가 없습니다")
 
     # Why: 빈 문자열("")은 Normal 행 → NA 변환 후 제거해야 explode 시 오염 방지.
     rules = (
@@ -38,7 +38,7 @@ def rule_violation_bar(df: pd.DataFrame, *, pr=None) -> go.Figure:
         .str.strip()
     )
     if rules.empty:
-        return empty_figure("위반된 룰이 없습니다")
+        return empty_figure("발동된 룰 신호가 없습니다")
 
     counts = rules.value_counts()
     # Why: 알파벳순 정렬로 L1-01→L4-05 일관된 시각적 순서 보장.
@@ -66,12 +66,12 @@ def rule_violation_bar(df: pd.DataFrame, *, pr=None) -> go.Figure:
 
     fig.update_layout(
         **{**DEFAULT_LAYOUT, "margin": {"l": 180, "r": 20, "t": 40, "b": 40}},
-        title="룰별 위반 건수",
+        title="룰별 검토 신호 건수",
         barmode="stack",
         legend={"orientation": "h", "y": -0.15},
     )
     # Why: update_layout에서 xaxis/yaxis 중복 키워드 방지 → 별도 호출.
-    fig.update_xaxes(title_text="위반 건수 (log scale)", type="log")
+    fig.update_xaxes(title_text="검토 신호 건수 (log scale)", type="log")
     fig.update_yaxes(categoryorder="category ascending")
     return fig
 

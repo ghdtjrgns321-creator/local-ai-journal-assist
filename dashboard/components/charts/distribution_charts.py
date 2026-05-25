@@ -14,7 +14,7 @@ from dashboard.components.charts._theme import (
 
 
 def process_distribution_bar(df: pd.DataFrame) -> go.Figure:
-    """business_process별 전표 건수 + 이상 비율 이중축 바+라인 차트."""
+    """business_process별 전표 건수 + 이상 신호율 이중축 바+라인 차트."""
     required = {"business_process", "document_id", "risk_level"}
     if df.empty or not required.issubset(df.columns):
         return empty_figure("프로세스 분포 데이터가 없습니다")
@@ -33,7 +33,7 @@ def process_distribution_bar(df: pd.DataFrame) -> go.Figure:
     fig.add_trace(
         go.Scatter(
             x=stats.index, y=stats["abnormal_rate"],
-            mode="lines+markers", name="이상 비율(%)",
+            mode="lines+markers", name="이상 신호율(%)",
             line={"color": "#DC2626", "width": 2},
         ),
         secondary_y=True,
@@ -41,7 +41,7 @@ def process_distribution_bar(df: pd.DataFrame) -> go.Figure:
 
     fig.update_layout(**DEFAULT_LAYOUT, title="프로세스별 전표 분포")
     fig.update_yaxes(title_text="건수", secondary_y=False)
-    fig.update_yaxes(title_text="이상 비율(%)", secondary_y=True)
+    fig.update_yaxes(title_text="이상 신호율(%)", secondary_y=True)
     return fig
 
 
@@ -65,7 +65,7 @@ def persona_risk_matrix(df: pd.DataFrame) -> go.Figure:
         text=pivot.values, texttemplate="%{text}",
         hovertemplate="페르소나: %{y}<br>등급: %{x}<br>건수: %{z}<extra></extra>",
     ))
-    fig.update_layout(**DEFAULT_LAYOUT, title="페르소나 × 위험등급 매트릭스")
+    fig.update_layout(**DEFAULT_LAYOUT, title="페르소나 × 우선검토 등급 매트릭스")
     return fig
 
 
@@ -89,13 +89,13 @@ def company_comparison(df: pd.DataFrame) -> go.Figure:
         secondary_y=False,
     )
     fig.add_trace(
-        go.Bar(x=companies, y=stats["abnormal"], name="이상수", marker_color="#DC2626"),
+        go.Bar(x=companies, y=stats["abnormal"], name="이상 신호 수", marker_color="#DC2626"),
         secondary_y=False,
     )
     fig.add_trace(
         go.Scatter(
             x=companies, y=stats["avg_score"].round(3),
-            mode="lines+markers", name="평균 위험점수",
+            mode="lines+markers", name="평균 우선순위 점수",
             line={"color": "#FFA15A", "width": 2},
         ),
         secondary_y=True,
@@ -103,5 +103,5 @@ def company_comparison(df: pd.DataFrame) -> go.Figure:
 
     fig.update_layout(**DEFAULT_LAYOUT, title="법인별 KPI 비교", barmode="group")
     fig.update_yaxes(title_text="건수", secondary_y=False)
-    fig.update_yaxes(title_text="평균 위험점수", range=[0, 1], secondary_y=True)
+    fig.update_yaxes(title_text="평균 우선순위 점수", range=[0, 1], secondary_y=True)
     return fig

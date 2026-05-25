@@ -3,7 +3,7 @@
 감사 표준 요건(분석적 절차)에 맞춰 세 소분류로 구성:
   ① 분석적 절차 (Flux)   — KPI 리본 + K-IFRS 카테고리 변동 + 월별 추세
   ② 계정과목 변동         — 변동 큰 계정 Top N + 신규/소멸 계정
-  ③ 위험 신호 변동       — 위험등급 분포 + 룰별 위반 증감
+  ③ 검토 신호 변동       — 검토 후보 등급 분포 + 룰별 신호 증감
 
 함정3 방어: 집계 연산은 DuckDB SQL 에 위임. Pandas 에는 요약표만 전달.
 """
@@ -32,6 +32,7 @@ from dashboard.components.charts.comparison_charts import (
 )
 from dashboard.components.coa_categories import DERIVED_NET_INCOME_LABEL, category_label
 from src.db.queries import attached_engagement
+from src.formatting import format_krw_compact
 
 if TYPE_CHECKING:
     import duckdb
@@ -71,7 +72,7 @@ def render(
     if not company_id:
         return
 
-    # Why: 전기 비교는 PHASE1 위반/PHASE2 위험점수를 모두 활용하지만, 임시로
+    # Why: 전기 비교는 PHASE1 검토 신호/PHASE2 우선순위 점수를 모두 활용하지만, 임시로
     #      Phase 2 가드는 풀어 Phase 1 만 실행된 상태에서도 진입할 수 있게 한다.
     # TODO: PHASE2 결과를 카드에 결합한 뒤 phase2_done 조건을 다시 활성화.
     phase1_done = st.session_state.get(KEY_PHASE1_RESULT) is not None
@@ -140,7 +141,7 @@ def _render_page(others, data: dict) -> None:
     """
     st.markdown("## 전기 비교")
 
-    sub_tabs = st.tabs(["전체 요약", "계정과목 변동", "위험 신호 변동"])
+    sub_tabs = st.tabs(["전체 요약", "계정과목 변동", "검토 신호 변동"])
     with sub_tabs[0]:
         _prior_selectbox(others, suffix="overview")
         _render_header(data["overview"])
@@ -288,10 +289,10 @@ def _render_header(overview: pd.DataFrame) -> None:
         ),
     ]
 
-    # ── 위험 신호 ──
+    # ── 검토 신호 ──
     section_risk = [
         _build_kpi_card(
-            label="이상 의심 전표",
+            label="이상 신호 전표",
             current_value=int(_v(cur_row, "anomaly_count")),
             prior_value=int(_v(pri_row, "anomaly_count")),
             unit="건",
@@ -300,7 +301,7 @@ def _render_header(overview: pd.DataFrame) -> None:
             accent=accent["위험"],
         ),
         _build_kpi_card(
-            label="High 위험 전표",
+            label="High 우선검토 전표",
             current_value=int(_v(cur_row, "high_count")),
             prior_value=int(_v(pri_row, "high_count")),
             unit="건",
@@ -308,13 +309,13 @@ def _render_header(overview: pd.DataFrame) -> None:
             accent=accent["위험"],
         ),
         _build_kpi_card(
-            label="이상 의심률",
+            label="이상 신호율",
             current_value=_v(cur_row, "anomaly_rate"),
             prior_value=_v(pri_row, "anomaly_rate"),
             unit="%",
             inverse=True,
             value_fmt=_format_pct,
-            tooltip="이상 의심 전표 / 전체 전표 × 100 — 전표 증가에 정규화한 베이스라인 위험률",
+            tooltip="이상 신호 전표 / 전체 전표 × 100 — 전표 증가에 정규화한 검토 신호율",
             accent=accent["위험"],
         ),
         _build_kpi_card(
@@ -323,7 +324,7 @@ def _render_header(overview: pd.DataFrame) -> None:
             prior_value=int(_v(pri_row, "rule_kind_count")),
             unit="개",
             inverse=True,
-            tooltip="flagged_rules 에 등장한 distinct rule_code 수 (위험 시나리오 다양성)",
+            tooltip="flagged_rules 에 등장한 distinct rule_code 수 (검토 시나리오 다양성)",
             accent=accent["위험"],
         ),
     ]
@@ -337,7 +338,7 @@ def _render_header(overview: pd.DataFrame) -> None:
             unit="%",
             inverse=True,
             value_fmt=_format_pct,
-            tooltip="source 가 manual 인 전표 비율 — 자동화 수준 하락 시 통제 약화 의심",
+            tooltip="source 가 manual 인 전표 비율 — 자동화 수준 하락 시 통제 약화 검토 신호",
             accent=accent["통제"],
         ),
         _build_kpi_card(
@@ -414,7 +415,7 @@ def _render_header(overview: pd.DataFrame) -> None:
 
     st.markdown(_KPI_CARD_CSS, unsafe_allow_html=True)
     _render_kpi_section("거래 규모", accent["거래"], section_trade)
-    _render_kpi_section("위험 신호", accent["위험"], section_risk)
+    _render_kpi_section("검토 신호", accent["위험"], section_risk)
     _render_kpi_section("통제 환경", accent["통제"], section_control)
     _render_kpi_section("조직 · 마스터", accent["마스터"], section_master)
 
@@ -444,7 +445,7 @@ def _render_flux_subtab(data: dict) -> None:
     else:
         section_cat.plotly_chart(
             category_flux_bar(cat_df, materiality_pct=_MATERIALITY_PCT),
-            use_container_width=True,
+            width="stretch",
             key="comparison_category_flux",
         )
         with section_cat.expander("카테고리별 수치 표 보기", expanded=False):
@@ -465,7 +466,7 @@ def _render_flux_subtab(data: dict) -> None:
             st.dataframe(
                 display[["카테고리", "당기(₩)", "전기(₩)", "증감액(₩)", "증감률(%)"]],
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
                 column_config={
                     "당기(₩)": st.column_config.NumberColumn(format="%,.0f"),
                     "전기(₩)": st.column_config.NumberColumn(format="%,.0f"),
@@ -485,14 +486,14 @@ def _render_flux_subtab(data: dict) -> None:
         st.markdown("**월별 전표 건수**")
         st.plotly_chart(
             monthly_trend_comparison(data["monthly"], value_col="row_count"),
-            use_container_width=True,
+            width="stretch",
             key="comparison_monthly_count",
         )
     with col_sales:
         st.markdown("**월별 순매출** (매출 계정 대변 − 차변)")
         st.plotly_chart(
             monthly_trend_comparison(data["monthly"], value_col="net_sales"),
-            use_container_width=True,
+            width="stretch",
             key="comparison_monthly_sales",
         )
 
@@ -515,7 +516,7 @@ def _render_account_subtab(data: dict) -> None:
                 top_n=15,
                 materiality_pct=_MATERIALITY_PCT,
             ),
-            use_container_width=True,
+            width="stretch",
             key="comparison_top_accounts",
         )
 
@@ -577,7 +578,7 @@ def _render_changed_account_card(df: pd.DataFrame, *, kind: str) -> None:
     st.dataframe(
         df,
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
         column_config={
             "계정코드": st.column_config.TextColumn(width="small"),
             "계정명": st.column_config.TextColumn(width="medium"),
@@ -586,34 +587,34 @@ def _render_changed_account_card(df: pd.DataFrame, *, kind: str) -> None:
     )
 
 
-# ── ③ 위험 신호 변동 ───────────────────────────────────────────
+# ── ③ 검토 신호 변동 ───────────────────────────────────────────
 
 
 def _render_risk_subtab(data: dict) -> None:
-    """소분류 ③ — 위험등급 분포 + 룰별 위반 증감."""
+    """소분류 ③ — 검토 후보 등급 분포 + 룰별 검토 신호 증감."""
     section_risk = st.container(border=True)
-    section_risk.markdown("##### 위험등급 분포 비교")
+    section_risk.markdown("##### 검토 후보 등급 분포 비교")
     section_risk.caption(
-        "탐지 룰이 부여한 risk_level(High/Medium/Low/Normal) 비율의 당기·전기 분포입니다. "
-        "High·Medium 비중이 커진 쪽은 감사 표본 확장 검토 대상입니다."
+        "룰 기반 review signal 등급(High/Medium/Low/Normal) 비율의 당기·전기 분포입니다. "
+        "High·Medium 비중이 커진 쪽은 감사 표본 확장 후보입니다."
     )
     section_risk.plotly_chart(
         risk_distribution_comparison(data["current_risk"], data["prior_risk"]),
-        use_container_width=True,
+        width="stretch",
         key="comparison_risk_donut",
     )
 
     section_rule = st.container(border=True)
-    section_rule.markdown("##### 룰별 위반 건수 증감")
+    section_rule.markdown("##### 룰별 검토 신호 건수 증감")
     section_rule.caption(
-        "각 탐지 룰의 **당기 - 전기 위반 건수 차이**. 빨강 막대는 당기에 늘어난 룰, "
-        "초록 막대는 줄어든 룰입니다. 신규로 발동된 룰은 새로운 통제 약점 신호."
+        "각 룰의 **당기 - 전기 검토 신호 건수 차이**. 빨강 막대는 당기에 늘어난 룰, "
+        "초록 막대는 줄어든 룰입니다. 신규로 발동된 룰은 새로운 통제 약점 검토 신호입니다."
     )
     cur_rules = data["current_rules"]
     pri_rules = data["prior_rules"]
     section_rule.plotly_chart(
         rule_violation_delta(cur_rules, pri_rules),
-        use_container_width=True,
+        width="stretch",
         key="comparison_rule_delta",
     )
 
@@ -684,7 +685,7 @@ def _query_overview(
 
     반환 컬럼:
       거래: row_count, total_debit, avg_per_doc, daily_avg_rows
-      위험: anomaly_count, high_count, anomaly_rate (+ rule_kind_count는 별도 쿼리)
+      검토 신호: anomaly_count, high_count, anomaly_rate (+ rule_kind_count는 별도 쿼리)
       통제: manual_rate, self_approve_rate, night_weekend_rate, year_end_rate
       마스터: account_count, user_count, partner_count, doc_type_count
     """
@@ -707,11 +708,11 @@ def _query_overview(
                        ),
                    0.0
                ) AS daily_avg_rows,
-               -- 위험 등급
+               -- 우선검토 등급
                SUM(CASE WHEN risk_level IS NOT NULL AND risk_level <> 'Normal'
                         THEN 1 ELSE 0 END) AS anomaly_count,
                SUM(CASE WHEN risk_level = 'High' THEN 1 ELSE 0 END) AS high_count,
-               -- 이상 의심률(%) = anomaly_count / 전체 × 100
+               -- 이상 신호율(%) = anomaly_count / 전체 × 100
                COALESCE(
                    100.0 * SUM(CASE WHEN risk_level IS NOT NULL AND risk_level <> 'Normal'
                                     THEN 1 ELSE 0 END)
@@ -1000,14 +1001,7 @@ def _query_accounts(
 
 def _format_amount_short(value: float) -> str:
     """KPI 카드용 ₩ 축약."""
-    av = abs(value)
-    if av >= 1_0000_0000_0000:
-        return f"{value / 1_0000_0000_0000:,.2f}조"
-    if av >= 1_0000_0000:
-        return f"{value / 1_0000_0000:,.2f}억"
-    if av >= 1_0000:
-        return f"{value / 1_0000:,.1f}만"
-    return f"{value:,.0f}"
+    return format_krw_compact(value, jo_digits=2, eok_digits=2, man_digits=1)
 
 
 def _format_pct(value: float) -> str:
@@ -1038,7 +1032,7 @@ def _build_kpi_card(
         current_value: 당기 값 (숫자).
         prior_value: 전기 값 (숫자).
         unit: 값 뒤 단위 (예: "건", "%", "개"). None 이면 미표시.
-        inverse: True 면 증가가 나쁜 방향 (이상의심·High·수기·자기승인).
+        inverse: True 면 증가가 나쁜 방향 (이상 신호·High·수기·자기승인).
         value_fmt: 값 포매터 함수. None 이면 _format_count.
         tooltip: title 속성에 들어갈 도움말. None 이면 미표시.
         accent: 카드 좌측 보더 색상 (카테고리 구분용). None 이면 회색.

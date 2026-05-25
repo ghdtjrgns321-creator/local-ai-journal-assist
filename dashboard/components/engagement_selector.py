@@ -34,6 +34,7 @@ from dashboard._state import (
     KEY_UPLOAD_COUNT,
 )
 from src.company.models import EngagementProfile, EngagementStatus
+from src.services.session_service import close_dashboard_connections
 
 # Why: engagement 삭제 시 분석 결과/ingest 캐시/CompanyContext가 stale 상태로 남으면
 #      이후 화면이 잘못된 데이터를 표시하므로, 한 번에 깨끗이 정리한다.
@@ -70,6 +71,8 @@ _ENGAGEMENT_SCOPED_KEYS: tuple[str, ...] = (
 
 def _purge_engagement_caches(company_id: str, engagement_id: str) -> None:
     """삭제된 engagement에 묶인 session_state + ContextFactory 캐시 정리."""
+    close_dashboard_connections(st.session_state)
+
     # 1) ContextFactory 메모리 캐시 무효화
     factory = st.session_state.get("_context_factory")
     if factory is not None:
@@ -136,6 +139,7 @@ def render_engagement_selector(
     )
 
     if st.button("회사 선택으로 돌아가기"):
+        close_dashboard_connections(st.session_state)
         st.session_state.pop(KEY_COMPANY_ID, None)
         st.session_state.pop(KEY_ENGAGEMENT_ID, None)
         st.rerun()
@@ -176,6 +180,7 @@ def _render_engagement_list(
                 btn_col, del_col = st.columns([2, 1])
                 with btn_col:
                     if st.button("선택", key=f"sel_eng_{eng.engagement_id}"):
+                        close_dashboard_connections(st.session_state)
                         st.session_state[KEY_ENGAGEMENT_ID] = eng.engagement_id
                         st.rerun()
                 with del_col:
@@ -187,6 +192,7 @@ def _render_engagement_list(
                             type="primary",
                         ):
                             try:
+                                close_dashboard_connections(st.session_state)
                                 repo.delete_engagement(
                                     company_id, eng.engagement_id,
                                 )
@@ -257,6 +263,7 @@ def _render_create_form(company_id: str, repo: CompanyRepository) -> None:
                     period_end=p_end,
                 )
                 repo.create_engagement(company_id, profile)
+                close_dashboard_connections(st.session_state)
                 st.session_state[KEY_ENGAGEMENT_ID] = profile.engagement_id
                 st.rerun()
             except FileExistsError:

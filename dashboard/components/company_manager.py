@@ -22,6 +22,7 @@ from dashboard._state import (
     KEY_PIPELINE_RESULT,
 )
 from src.company.merger import normalize_settings_overrides, resolve_settings
+from src.services.session_service import close_dashboard_connections
 
 if TYPE_CHECKING:
     from src.company.models import CompanyProfile
@@ -70,7 +71,7 @@ def _render_settings_editor(
         key=f"cm_thresholds_{profile.company_id}",
         hide_index=True,
         num_rows="fixed",
-        use_container_width=True,
+        width="stretch",
         disabled=["Level"],
     )
 
@@ -202,7 +203,7 @@ def _render_coa_editor(
     edited_df = st.data_editor(
         coa_df,
         num_rows="dynamic",
-        use_container_width=True,
+        width="stretch",
         key=f"coa_editor_{company_id}",
     )
 
@@ -312,6 +313,7 @@ def _render_delete_confirm(company_id: str, repo: CompanyRepository) -> None:
         )
         if st.button("삭제", type="primary", key="cm_delete_btn"):
             if confirm == company_id:
+                close_dashboard_connections(st.session_state)
                 repo.delete_company(company_id)
                 for key in [
                     KEY_COMPANY_ID,

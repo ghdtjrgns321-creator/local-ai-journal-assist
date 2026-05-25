@@ -37,7 +37,7 @@ def render_batch_header(
             unsafe_allow_html=True,
         )
     with col_btn:
-        reset_clicked = st.button("다른 파일 분석", use_container_width=True)
+        reset_clicked = st.button("다른 파일 분석", width="stretch")
 
     return reset_clicked
 

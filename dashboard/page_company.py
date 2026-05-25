@@ -13,6 +13,7 @@ from pydantic import ValidationError
 
 from dashboard._state import KEY_COMPANY_ID
 from src.company.models import CompanyProfile
+from src.services.session_service import close_dashboard_connections
 
 if TYPE_CHECKING:
     from src.company.repository import CompanyRepository
@@ -89,6 +90,7 @@ def _render_company_cards(
                 btn_col, del_col = st.columns([3, 1])
                 with btn_col:
                     if st.button("선택", key=f"select_{profile.company_id}"):
+                        close_dashboard_connections(st.session_state)
                         st.session_state[KEY_COMPANY_ID] = profile.company_id
                         st.rerun()
                 with del_col:
@@ -105,6 +107,7 @@ def _render_company_cards(
                     c1, c2 = st.columns(2)
                     with c1:
                         if st.button("삭제 확인", key=f"confirm_del_{profile.company_id}"):
+                            close_dashboard_connections(st.session_state)
                             repo.delete_company(profile.company_id)
                             st.session_state.pop(
                                 f"_confirm_del_{profile.company_id}",
@@ -126,7 +129,10 @@ def _render_register_form(repo: CompanyRepository) -> None:
         cid = st.text_input(
             "회사 ID",
             placeholder="acme_corp",
-            help='공백과 < > : " / \\ | ? * 문자를 제외한 한글·영문·숫자·기호 모두 허용됩니다 (최대 64자).',
+            help=(
+                '공백과 < > : " / \\ | ? * 문자를 제외한 한글·영문·숫자·기호를 '
+                "허용합니다 (최대 64자)."
+            ),
         )
         name = st.text_input("회사명", placeholder="ACME 주식회사")
 

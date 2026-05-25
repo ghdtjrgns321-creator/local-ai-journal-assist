@@ -1,12 +1,13 @@
 """개요 탭 — 분석 전(Before) / 분석 후(After) 2단계 변신.
 
 Before: 기본 정보 KPI + 대형 CTA "전체 감사 파이프라인 가동"
-After : 위험 KPI + LLM 배치 요약 + Top 5 고위험 전표 + 기존 차트
+After : 위험 KPI + LLM 배치 요약 + Top 5 우선검토 전표 + 기존 차트
 """
 
 from __future__ import annotations
 
 import math
+from html import escape
 from typing import TYPE_CHECKING
 
 import pandas as pd
@@ -27,6 +28,7 @@ from dashboard.components.charts import (
     rule_violation_bar,
 )
 from dashboard.components.filters import apply_filters
+from src.formatting import format_krw_compact
 from src.metrics.models import PerformanceReport, RuleMetric
 from src.services.session_service import has_analysis_output
 
@@ -44,14 +46,7 @@ def _cached_kpis(df: pd.DataFrame) -> dict:
 
 def _fmt_amount(value: float) -> str:
     """금액을 한국식 축약 (조·억·만)."""
-    v = float(value)
-    if abs(v) >= 1_0000_0000_0000:
-        return f"{v / 1_0000_0000_0000:,.2f}조"
-    if abs(v) >= 1_0000_0000:
-        return f"{v / 1_0000_0000:,.2f}억"
-    if abs(v) >= 1_0000:
-        return f"{v / 1_0000:,.1f}만"
-    return f"{v:,.0f}"
+    return format_krw_compact(value, jo_digits=2, eok_digits=2, man_digits=1)
 
 
 def _period_range(df: pd.DataFrame) -> str:
@@ -71,10 +66,6 @@ def _period_range(df: pd.DataFrame) -> str:
 
 def render(result: PipelineResult) -> None:
     """개요 탭 엔트리 — 분석 결과 유무에 따라 Before/After 자동 분기."""
-    from dashboard.components.scroll_anchor import preserve_scroll_position
-
-    preserve_scroll_position("overview")
-
     if has_analysis_output(result):
         _render_after(result)
     else:
@@ -114,6 +105,8 @@ def _render_before(result: PipelineResult) -> None:
     with c3:
         _render_kpi_card("총 거래 금액", _fmt_amount(total_debit))
 
+    st.markdown("<div style='height:0.75rem;'></div>", unsafe_allow_html=True)
+
     # Row 2: 차트 2개 카드 — 꺾은선(시계열)은 가로로 넓어야 자연스러워 1 : 1.5
     # Why: 도넛은 outside 라벨이 차트 밖으로 나오고 꺾은선은 상단 값 라벨 + 하단 footer
     #      caption까지 합산하면 305px로는 부족해 컨테이너에 스크롤바가 생긴다.
@@ -142,34 +135,28 @@ def _render_before(result: PipelineResult) -> None:
 
 
 def _render_kpi_card(label: str, value: str, unit: str | None = None) -> None:
-    """단일 KPI 카드 — container 고정 높이 + 내부 100% flex center.
-
-    Why: container 높이가 content에 의해 결정되면 Streamlit wrapper의 비대칭
-         padding 때문에 flex center가 실제 카드 중앙으로 오지 않는다.
-         `st.container(height=...)`로 카드 높이를 고정하고, 내부 div를 `height:100%`로
-         꽉 채운 뒤 flex center를 적용하면 실제 정중앙에 온다.
-    """
+    """단일 KPI 카드 — Streamlit wrapper padding에 의존하지 않는 자체 카드."""
     unit_html = ""
     if unit:
         unit_html = (
             f"<span style='font-size:0.9rem; font-weight:500; color:#6B7280; "
-            f"margin-left:3px;'>{unit}</span>"
+            f"margin-left:3px;'>{escape(unit)}</span>"
         )
 
     html = (
-        "<div class='tab-overview-scoped' style='height:100%; display:flex; "
-        "flex-direction:column; justify-content:center; align-items:center; "
-        "text-align:center;'>"
-        f"<div style='color:#6B7280; font-size:0.82rem; line-height:1.2; "
-        f"margin:0 0 0.3rem;'>{label}</div>"
+        "<div class='tab-overview-kpi-card' style='height:70px; min-height:70px; "
+        "box-sizing:border-box; border:1px solid #D1D5DB; border-radius:8px; "
+        "background:#FFFFFF; display:flex; flex-direction:column; "
+        "justify-content:center; align-items:center; text-align:center; "
+        "overflow:hidden;'>"
+        f"<div style='color:#6B7280; font-size:0.82rem; line-height:1.2; margin:0;'>"
+        f"{escape(label)}</div>"
         f"<div style='color:#111827; font-size:1.5rem; font-weight:700; "
-        f"letter-spacing:-0.025em; line-height:1.15; margin:0;'>"
-        f"{value}{unit_html}</div>"
+        f"letter-spacing:0; line-height:1.15; margin:0.3rem 0 0;'>"
+        f"{escape(value)}{unit_html}</div>"
         "</div>"
     )
-    # Why: height=70로 상하폭 슬림 + overflow 방지.
-    with st.container(border=True, height=70):
-        st.markdown(html, unsafe_allow_html=True)
+    st.markdown(html, unsafe_allow_html=True)
 
 
 # ── 우: 주요 거래 유형 가로 바 차트 ────────────────────────
@@ -266,7 +253,7 @@ def _render_document_type_donut(df: pd.DataFrame) -> None:
     )
     st.plotly_chart(
         fig,
-        use_container_width=True,
+        width="stretch",
         config={"displayModeBar": False},
         key="overview_before_document_type_donut",
     )
@@ -354,7 +341,7 @@ def _render_monthly_trend_line(df: pd.DataFrame) -> None:
     )
     st.plotly_chart(
         fig,
-        use_container_width=True,
+        width="stretch",
         config={"displayModeBar": False},
         key="overview_before_monthly_trend_line",
     )
@@ -449,7 +436,7 @@ def _render_checklist_card(
 def _check_self_approval(df: pd.DataFrame) -> tuple[str, str, str] | None:
     """자기승인 거래 — 작성자와 승인자가 동일한 전표 비율.
 
-    감사 시사점: SoD(ISA 315) 위반 사전 스크리닝. B06/B07 룰의 직접 선행 지표.
+    감사 시사점: SoD(ISA 315) 충돌 가능성 사전 스크리닝. B06/B07 룰의 직접 선행 지표.
     """
     if "created_by" not in df.columns or "approved_by" not in df.columns:
         return None
@@ -656,7 +643,7 @@ def _check_timing(df: pd.DataFrame) -> tuple[str, str, str] | None:
 def _check_period_end_concentration(df: pd.DataFrame) -> tuple[str, str, str] | None:
     """기말(12월·마지막 5일) 기표 집중도.
 
-    감사 시사점: Cutoff 검증(ISA 545) · 결산조정·이익조정 집중 의심의 사전 지표.
+    감사 시사점: Cutoff 검증(ISA 545) · 결산조정·이익조정 집중 검토의 사전 지표.
     """
     if "posting_date" not in df.columns:
         return None
@@ -716,20 +703,21 @@ def _render_pipeline_briefing() -> None:
         (
             "Phase 1",
             "룰 기반 감사",
-            "K-IFRS 24개 부정 시나리오",
-            "자기승인·중복지급 등 명백한 룰 위반 전표를 1차 스캐닝합니다.",
+            "K-IFRS 기반 감사 검토 시나리오",
+            "자기승인·중복지급 등 주요 검토 신호를 1차 스크리닝합니다.",
         ),
         (
             "Phase 2",
-            "ML 이상 탐지",
+            "ML 이상 점수",
             "Isolation Forest · VAE · XGBoost",
-            "감사인이 놓치기 쉬운 비선형·우회적 이상 패턴을 식별합니다.",
+            "감사인이 놓치기 쉬운 비선형·우회적 이상 패턴 후보를 보조 신호로 제시합니다.",
         ),
         (
             "Phase 3",
             "LLM 리뷰",
-            "의심 후보 Top-N 정렬 · 필요 후속 조치",
-            "Phase 1·2 신호를 종합해 LLM으로 분석하여 우선순위와 의심 근거, 필요 절차를 제시합니다.",
+            "검토 후보 Top-N 정렬 · 필요 후속 조치",
+            "Phase 1·2 신호를 종합해 LLM으로 분석하여 우선순위와 "
+            "검토 근거, 필요 절차를 제시합니다.",
         ),
     ]
 
@@ -767,14 +755,14 @@ def _render_pipeline_cta() -> None:
     with col_settings:
         settings_clicked = st.button(
             "분석 전 회사설정",
-            use_container_width=True,
+            width="stretch",
             key="overview_goto_settings",
         )
     with col_p1:
         p1_clicked = st.button(
             "Phase 1 분석 시작",
             type="primary",
-            use_container_width=True,
+            width="stretch",
             key="overview_run_phase1",
         )
 
@@ -817,7 +805,7 @@ def _run_phase1() -> None:
 
 
 def _render_after(result: PipelineResult) -> None:
-    """분석 후 화면 — 위험 KPI + LLM 요약 + Top 5 + 기존 차트."""
+    """분석 후 화면 — 검토 신호 KPI + LLM 요약 + Top 5 + 기존 차트."""
     filters = st.session_state.get(KEY_FILTERS, {})
     df = apply_filters(result.data, filters, pr=result)
     kpis = compute_kpis(df, pr=result)
@@ -826,9 +814,9 @@ def _render_after(result: PipelineResult) -> None:
     col_title, col_rerun = st.columns([5, 1])
     with col_title:
         st.subheader("감사 결과 개요")
-        st.caption("아래 KPI·요약·Top 5로 배치 전체 위험을 빠르게 확인하세요.")
+        st.caption("아래 KPI·요약·Top 5로 배치 전체 검토 신호를 빠르게 확인하세요.")
     with col_rerun:
-        if st.button("재실행", use_container_width=True, key="overview_rerun"):
+        if st.button("재실행", width="stretch", key="overview_rerun"):
             _run_phase1()
 
     _render_risk_kpis(kpis)
@@ -838,7 +826,7 @@ def _render_after(result: PipelineResult) -> None:
     _render_batch_insight(result)
     st.divider()
 
-    # Top 5 고위험 전표
+    # Top 5 우선검토 전표
     _render_top5_high_risk(df)
     st.divider()
 
@@ -847,20 +835,20 @@ def _render_after(result: PipelineResult) -> None:
     with col_donut:
         st.plotly_chart(
             risk_donut(df),
-            use_container_width=True,
+            width="stretch",
             key="overview_after_risk_donut",
         )
     with col_bar:
         st.plotly_chart(
             rule_violation_bar(df, pr=result),
-            use_container_width=True,
+            width="stretch",
             key="overview_after_rule_violation_bar",
         )
 
     _render_monthly_highlights(df)
     st.plotly_chart(
         monthly_trend(df),
-        use_container_width=True,
+        width="stretch",
         key="overview_after_monthly_trend",
     )
 
@@ -868,7 +856,7 @@ def _render_after(result: PipelineResult) -> None:
 
 
 def _render_risk_kpis(kpis: dict) -> None:
-    """위험 등급별 핵심 KPI 4개."""
+    """우선검토 등급별 핵심 KPI 4개."""
     anomaly_pct = kpis["anomaly_rate"]
     high_ratio = kpis["high_risk_docs"] / max(kpis["anomaly_docs"], 1) * 100
     fraud_pct = kpis["fraud_suspect"] / max(kpis["total_docs"], 1) * 100
@@ -876,30 +864,30 @@ def _render_risk_kpis(kpis: dict) -> None:
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         st.metric(
-            label="이상 의심 전표",
+            label="이상 신호 전표",
             value=f"{kpis['anomaly_docs']:,}건",
-            help="감사 룰에서 비정상 패턴이 1건 이상 감지된 전표의 총 수",
+            help="감사 룰에서 비정상 패턴 신호가 1건 이상 표시된 전표의 총 수",
         )
         st.caption(f"전체의 {anomaly_pct}%")
     with c2:
         st.metric(
-            label="이상 의심 금액",
+            label="이상 신호 금액",
             value=kpis["anomaly_amount_fmt"],
             help="High·Medium 등급 전표에 포함된 차변 금액 합계",
         )
         st.caption(f"총 {kpis['total_amount_fmt']}의 {kpis['amount_ratio']}%")
     with c3:
         st.metric(
-            label="고위험(High) 전표",
+            label="High 우선검토 전표",
             value=f"{kpis['high_risk_docs']:,}건",
-            help="위험 점수 최상위 전표. 감사 시 최우선 검토 대상",
+            help="우선순위 점수 최상위 전표. 감사 시 먼저 검토할 후보",
         )
-        st.caption(f"이상 전표의 {high_ratio:.1f}%")
+        st.caption(f"이상 신호 전표의 {high_ratio:.1f}%")
     with c4:
         st.metric(
-            label="부정 의심 (Layer B)",
+            label="부정 관련 검토 신호",
             value=f"{kpis['fraud_suspect']:,}건",
-            help="중복 지급, 자기 승인 등 횡령/배임 시나리오에 해당하는 전표 수",
+            help="중복 지급, 자기 승인 등 부정 관련 리스크 검토 시나리오에 해당하는 전표 수",
         )
         st.caption(f"전체의 {fraud_pct:.1f}%")
 
@@ -926,12 +914,12 @@ def _render_batch_insight(result: PipelineResult) -> None:  # noqa: ARG001
     )
 
 
-# ── Top 5 고위험 전표 ──────────────────────────────────────
+# ── Top 5 우선검토 전표 ──────────────────────────────────────
 
 
 def _render_top5_high_risk(df: pd.DataFrame) -> None:
     """가장 점수가 높은 전표 5건을 요약 테이블로 표시."""
-    st.subheader("Top 5 고위험 전표")
+    st.subheader("Top 5 우선검토 전표")
 
     if "risk_level" not in df.columns:
         st.caption("위험 등급 정보가 없습니다. 파이프라인을 먼저 실행하세요.")
@@ -969,7 +957,7 @@ def _render_top5_high_risk(df: pd.DataFrame) -> None:
     ]
     st.dataframe(
         top5[display_cols],
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
 
@@ -1004,7 +992,7 @@ def _render_monthly_highlights(df: pd.DataFrame) -> None:
     for period, row in high_rate_months.iterrows():
         pct = row["anomaly_rate"] * 100
         ratio = row["anomaly_rate"] / max(avg_rate, 0.001)
-        findings.append(f"**{int(period)}월** 이상 비율 {pct:.1f}% (전체 평균의 {ratio:.1f}배)")
+        findings.append(f"**{int(period)}월** 이상 신호율 {pct:.1f}% (전체 평균의 {ratio:.1f}배)")
 
     if "risk_level" in df.columns:
         high_monthly = df[df["risk_level"] == "High"].groupby("fiscal_period").size()
@@ -1013,7 +1001,7 @@ def _render_monthly_highlights(df: pd.DataFrame) -> None:
             peak_count = high_monthly.max()
             if peak_count > high_monthly.mean() * 1.5:
                 findings.append(
-                    f"**{int(peak_month)}월** 고위험(High) 전표 집중 ({peak_count:,}건)"
+                    f"**{int(peak_month)}월** High 우선검토 전표 집중 ({peak_count:,}건)"
                 )
 
     if not findings:
@@ -1058,7 +1046,7 @@ def _render_benford_summary(df: pd.DataFrame) -> None:
         fig = benford_overlay(digits_df, mad_threshold=settings.benford_mad_threshold)
         st.plotly_chart(
             fig,
-            use_container_width=True,
+            width="stretch",
             key="overview_after_benford_overlay",
         )
     with col_metrics:
@@ -1074,7 +1062,7 @@ def _render_benford_summary(df: pd.DataFrame) -> None:
             f"{br.mad:.4f}" if br.mad is not None else "N/A",
             help="실제 첫째자리 분포와 Benford 이론 분포의 평균 차이. 0에 가까울수록 정상.",
         )
-        st.metric("판정", conformity)
+        st.metric("분포 평가", conformity)
 
 
 _SEPARATE_BENCHMARK_RULES: dict[str, str] = {

@@ -37,6 +37,7 @@ from dashboard._state import (
 )
 from dashboard.components.review_narrator import render_candidate_card
 from dashboard.components.review_narrator_jump import render_citation_jump_panel
+from dashboard.components.review_queue_browser import render_queue_browser
 from dashboard.components.review_queue_workflow import (
     ReviewQueueFilters,
     apply_filters,
@@ -261,14 +262,14 @@ def _render_run_trigger(input_hash: str | None) -> None:
                 "분석 실행",
                 disabled=plan.effective_n == 0,
                 key="rq_run_btn",
-                use_container_width=True,
+                width="stretch",
             )
             regen_disabled = (input_hash is None) or (last_hash == input_hash)
             regen_clicked = st.button(
                 "재생성",
                 disabled=regen_disabled,
                 key="rq_regen_btn",
-                use_container_width=True,
+                width="stretch",
             )
 
     if run_clicked or regen_clicked:
@@ -384,7 +385,7 @@ def _render_decision_widget(
         save_clicked = st.button(
             "저장",
             key=f"rq_save_{candidate_id}",
-            use_container_width=True,
+            width="stretch",
         )
 
     if save_clicked and conn is not None:
@@ -441,21 +442,138 @@ def _persist_decision(
 # ── 탭 진입점 ─────────────────────────────────────────────────
 
 
+def _build_overlay_queue_df(overlays: list[dict], case_lookup: dict, kind: str) -> pd.DataFrame:
+    """KEY_PHASE2_RESULT.overlays + phase1 case lookup 으로부터 큐 DataFrame 생성.
+
+    Why: 사용자가 업로드한 CSV 의 본인 batch 결과 (engagement-scoped overlay JSON) 를
+    Review Queue 탭에서 직접 사용. _ci_baseline 정적 baseline parquet fallback 의존을
+    완전히 제거해서 "다른 CSV 올려도 같은 결과" 문제를 차단한다.
+    """
+    import pandas as pd
+
+    rows: list[dict] = []
+    for overlay in overlays:
+        case_id = str(overlay.get("phase1_case_id") or "").strip()
+        if not case_id:
+            continue
+        case = case_lookup.get(case_id)
+        docs = list(getattr(case, "documents", None) or []) if case is not None else []
+        doc_count = len(docs)
+        total_amount = 0.0
+        for d in docs:
+            try:
+                total_amount += float(getattr(d, "total_amount", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                continue
+        # phase2 rank score (Noisy-OR)
+        contributions = overlay.get("family_contributions") or []
+        survival = 1.0
+        has_signal = False
+        for entry in contributions:
+            try:
+                ecdf = float(entry.get("ecdf") or 0.0)
+            except (TypeError, ValueError):
+                ecdf = 0.0
+            ecdf = max(0.0, min(ecdf, 1.0))
+            if ecdf > 0.0:
+                has_signal = True
+            survival *= 1.0 - ecdf
+        p2_score = 1.0 - survival if has_signal else float(overlay.get("max_family_ecdf") or 0.0)
+        # phase1 priority score
+        try:
+            p1_score = (
+                float(getattr(case, "priority_score", 0.0) or 0.0) if case is not None else 0.0
+            )
+        except (TypeError, ValueError):
+            p1_score = 0.0
+        rows.append(
+            {
+                "case_id": case_id,
+                "primary_topic": getattr(case, "topic_label", "") or "",
+                "primary_theme": getattr(case, "scenario_label", None)
+                or getattr(case, "theme_label", "")
+                or "",
+                "total_amount": total_amount,
+                "document_count": doc_count,
+                "rule_count": len(getattr(case, "raw_rule_hits", None) or [])
+                if case is not None
+                else 0,
+                "phase1_priority_score": p1_score,
+                "phase2_score": p2_score,
+                "phase1_review_band": str(getattr(case, "priority_band", "") or "").lower()
+                if case is not None
+                else "",
+                "phase2_review_band": str(overlay.get("phase2_review_band") or "").strip().lower(),
+            }
+        )
+    if not rows:
+        return pd.DataFrame()
+    df = pd.DataFrame(rows)
+    # rank 부여 (1-based, score 내림차순)
+    if kind in ("phase1", "integrated"):
+        df["review_rank"] = (
+            (-df["phase1_priority_score"]).rank(method="first", ascending=True).astype(int)
+        )
+    if kind in ("phase2", "integrated"):
+        df["phase2_review_rank"] = (
+            (-df["phase2_score"]).rank(method="first", ascending=True).astype(int)
+        )
+    if kind == "integrated":
+        # RRF (k=60) 근사 — 두 rank 의 1/(k+rank) 합
+        k = 60
+        df["rrf_score"] = 1.0 / (k + df["review_rank"]) + 1.0 / (k + df["phase2_review_rank"])
+        df["rrf_rank"] = (-df["rrf_score"]).rank(method="first", ascending=True).astype(int)
+        df = df.sort_values("rrf_rank")
+    elif kind == "phase1":
+        df = df.sort_values("review_rank")
+    else:
+        df = df.sort_values("phase2_review_rank")
+    return df.reset_index(drop=True)
+
+
 def render(result: PipelineResult | None = None) -> None:
-    """탭 엔트리.
+    """탭 엔트리 — 4 sub-tab (통합 / PHASE1 / PHASE2 / Narrator).
 
     Args:
-        result: 전표 데이터(`result.data`)를 통해 citation 점프(전표 라인) 표시.
-                None이면 점프 패널의 row evidence는 candidate.journal_ref 만 표시.
+        result: 전표 데이터(`result.data`)를 통해 Narrator citation 점프 표시.
     """
-    from dashboard.components.scroll_anchor import preserve_scroll_position
 
-    preserve_scroll_position("review_queue")
+    from dashboard._state import KEY_PHASE1_RESULT, KEY_PHASE2_RESULT
+    from src.export.phase1_case_view import resolve_phase1_case_result
 
-    st.markdown("### Review Queue · Narrator")
+    st.markdown("### Review Queue")
     st.caption(
-        "PHASE1 룰 히트 + PHASE2 ML 스코어를 LLM이 재정렬·요약·인용한 결과. "
-        "Sprint E2 워크플로우 — 실행 트리거, 분류 라디오·메모, 필터·검색이 추가됨."
+        "PHASE1 룰 신호와 PHASE2 ML 신호를 결합한 검토 큐. "
+        "통합 추천이 기본 활성, PHASE1·PHASE2 단독 큐와 Narrator 카드 분석을 함께 제공."
+    )
+
+    ss = st.session_state
+    phase2_result = ss.get(KEY_PHASE2_RESULT)
+    phase1_result = ss.get(KEY_PHASE1_RESULT)
+    overlays = list(getattr(phase2_result, "phase2_case_overlays", None) or [])
+    case_result = resolve_phase1_case_result(phase1_result) if phase1_result is not None else None
+    case_lookup = {str(c.case_id): c for c in (getattr(case_result, "cases", None) or [])}
+
+    integrated_df = _build_overlay_queue_df(overlays, case_lookup, "integrated")
+    phase1_df = _build_overlay_queue_df(overlays, case_lookup, "phase1")
+    phase2_df = _build_overlay_queue_df(overlays, case_lookup, "phase2")
+
+    tabs = st.tabs(["통합 추천", "PHASE1 우선", "PHASE2 우선", "Narrator 분석"])
+    with tabs[0]:
+        render_queue_browser(integrated_df, kind="integrated", integration_report=None)
+    with tabs[1]:
+        render_queue_browser(phase1_df, kind="phase1", integration_report=None)
+    with tabs[2]:
+        render_queue_browser(phase2_df, kind="phase2", integration_report=None)
+    with tabs[3]:
+        _render_narrator_workflow(result)
+
+
+def _render_narrator_workflow(result: PipelineResult | None) -> None:
+    """기존 Phase 3 Narrator UI — Sprint E2 워크플로우(필터·실행·분류) 보존."""
+    st.caption(
+        "PHASE1 룰 히트 + PHASE2 ML 스코어를 LLM 이 재정렬·요약·인용한 결과. "
+        "필터·검색·실행·분류·메모 워크플로우 포함."
     )
 
     ss = st.session_state
@@ -490,7 +608,6 @@ def render(result: PipelineResult | None = None) -> None:
         st.info("조건에 해당하는 candidate가 없습니다.")
         return
 
-    # 정렬 — narratives 원본 dict로 카드 렌더 + DataFrame row로 분류 위젯
     cid_to_row: dict[str, dict[str, Any]] = {
         str(r["candidate_id"]): r.to_dict() for _, r in filtered.iterrows()
     }

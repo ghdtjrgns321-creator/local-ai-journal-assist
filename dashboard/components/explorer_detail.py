@@ -51,9 +51,9 @@ def render_detail(
             st.subheader("탐지 룰 점수")
             rule_df = _get_rule_detail(doc_id, conn, batch_id)
             if rule_df.empty:
-                st.plotly_chart(empty_figure("탐지 결과 없음"), use_container_width=True)
+                st.plotly_chart(empty_figure("탐지 결과 없음"), width="stretch")
             else:
-                st.plotly_chart(_build_rule_chart(rule_df), use_container_width=True)
+                st.plotly_chart(_build_rule_chart(rule_df), width="stretch")
 
         with col_lines:
             st.subheader("라인아이템")
@@ -71,7 +71,7 @@ def render_detail(
                 visible = [col for col in display_cols if col in doc_lines.columns]
                 st.dataframe(
                     doc_lines[visible].reset_index(drop=True),
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True,
                 )
 
@@ -137,7 +137,7 @@ def _render_feedback_history(
         for col in ["decision", "rule_code", "reason", "created_by", "created_at", "payload_json"]
         if col in preview.columns
     ]
-    st.dataframe(preview[visible], use_container_width=True, hide_index=True)
+    st.dataframe(preview[visible], width="stretch", hide_index=True)
 
 
 def _get_rule_detail(

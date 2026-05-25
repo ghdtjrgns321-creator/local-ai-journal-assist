@@ -25,6 +25,7 @@ from dashboard._state import (
     KEY_UPLOAD_COUNT,
 )
 from src.preprocessing.constants import LABEL_COLUMNS, SYNTHETIC_ONLY_COLUMNS
+from src.services.session_service import close_dashboard_connections
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ logger = logging.getLogger(__name__)
 #      (data_uploader._render_review_with_preview에서 import하여 동일 기준으로 필터)
 AUTO_HIDDEN_SOURCE_COLUMNS = SYNTHETIC_ONLY_COLUMNS | frozenset(
     {
-        # Derived feature columns created by the pipeline. They are not source-to-schema mapping inputs.
+        # Derived feature columns created by the pipeline. They are not mapping inputs.
         "amount_open",
         "is_cleared",
         "settlement_status",
@@ -343,12 +344,12 @@ def render_mapping_footer() -> None:
             "매핑 확인",
             type="primary",
             disabled=bool(still_missing),
-            use_container_width=True,
+            width="stretch",
             key="mapping_confirm_btn",
         )
 
     with btn_cancel:
-        if st.button("취소", use_container_width=True, key="mapping_cancel_btn"):
+        if st.button("취소", width="stretch", key="mapping_cancel_btn"):
             _clear_and_reset()
 
     if confirm_clicked:
@@ -373,30 +374,11 @@ def render_mapping_footer() -> None:
 
                 prepare_mapped_data(file_key, progress_cb=_progress_cb)
                 progress.progress(100, text="준비 완료")
-        # Why: 여기서 st.rerun() 을 호출하면 prepare_mapped_data 내부에서 stage 가
-        #      "UPLOAD" 로 리셋되고 KEY_PREP_RESULT 가 채워진 상태로 다음 rerun 이
-        #      _render_main 의 분석 결과 페이지로 자동 전환된다. 옛 페이지의
-        #      preserve_scroll_position("mapping_review") 와 새 페이지의
-        #      preserve_scroll_position("overview") 는 다른 sessionStorage 키라
-        #      스크롤 복원이 불가능 — 사용자는 "맨 위로 튕긴다"고 인식한다.
-        #      자동 전환을 끊고 사용자가 명시적으로 "결과 보기" 버튼을 누를 때만
-        #      페이지를 전환하면 같은 페이지에 머무르므로 스크롤이 보존된다.
-
-    if st.session_state.get(KEY_INGEST_CONFIRMED, False):
-        col_msg, col_btn = st.columns([4, 1])
-        with col_msg:
-            st.success(
-                "매핑이 확정되었습니다. **결과 보기** 버튼을 누르면 데이터 개요·EDA 화면으로 이동합니다."
-            )
-        with col_btn:
-            # Why: 사용자가 클릭한 시점에만 st.rerun() 호출 → 명시적 페이지 전환.
-            if st.button(
-                "결과 보기",
-                type="primary",
-                use_container_width=True,
-                key="mapping_goto_result_btn",
-            ):
-                st.rerun()
+        # Why: prepare_mapped_data 가 stage 를 "UPLOAD" 로 리셋하고 KEY_PREP_RESULT
+        #      를 채운 직후 즉시 rerun 해 _render_main 이 결과 페이지로 자동 전환
+        #      되게 한다. 별도 "결과 보기" 클릭을 강제하지 않는다.
+        st.toast("매핑이 확정되었습니다.", icon="✅")
+        st.rerun()
     for warn in prep_warns:
         st.caption(f"- {warn}")
 
@@ -578,6 +560,8 @@ def _try_learn_keywords(final_mapping: dict[str, str]) -> None:
 
 
 def _clear_and_reset() -> None:
+    close_dashboard_connections(st.session_state)
+
     for key in [
         KEY_INGEST_READ_RESULT,
         KEY_INGEST_MAPPING_RESULT,

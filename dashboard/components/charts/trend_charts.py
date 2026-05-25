@@ -9,7 +9,7 @@ from dashboard.components.charts._theme import DEFAULT_LAYOUT, empty_figure
 
 
 def monthly_trend(df: pd.DataFrame) -> go.Figure:
-    """fiscal_period(1~12) 월별 전표 건수 추이 (전체 vs 이상).
+    """fiscal_period(1~12) 월별 전표 건수 추이 (전체 vs 이상 신호).
 
     분기말(3, 6, 9, 12)에 수직 참조선 표시.
     """
@@ -30,7 +30,7 @@ def monthly_trend(df: pd.DataFrame) -> go.Figure:
     ))
     fig.add_trace(go.Scatter(
         x=monthly.index, y=monthly["abnormal"],
-        mode="lines+markers", name="이상",
+        mode="lines+markers", name="이상 신호",
         line={"color": "#DC2626"},
     ))
 
@@ -49,7 +49,7 @@ def monthly_trend(df: pd.DataFrame) -> go.Figure:
 def hourly_heatmap(df: pd.DataFrame) -> go.Figure:
     """요일(월~일) x 시간(0~23) 전표 건수 히트맵.
 
-    심야(22~6) / 주말 영역에 점선 박스 오버레이 → L3-05/L3-06 탐지 연계.
+    심야(22~6) / 주말 영역에 점선 박스 오버레이 → L3-05/L3-06 검토 신호 연계.
     """
     if df.empty or "posting_date" not in df.columns:
         return empty_figure("시간대별 데이터가 없습니다")
@@ -71,7 +71,7 @@ def hourly_heatmap(df: pd.DataFrame) -> go.Figure:
         hovertemplate="시간: %{x}시<br>요일: %{y}<br>건수: %{z}<extra></extra>",
     ))
 
-    # Why: 심야(22~6) 영역 — 두 구간으로 분리 (0~6시 + 22~23시). L3-06 탐지 연계.
+    # Why: 심야(22~6) 영역 — 두 구간으로 분리 (0~6시 + 22~23시). L3-06 검토 신호 연계.
     fig.add_shape(
         type="rect", x0=-0.5, x1=6.5, y0=-0.5, y1=6.5,
         line={"dash": "dash", "color": "#DC2626", "width": 2},

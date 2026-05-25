@@ -186,7 +186,7 @@ def _render_header(ctx: CompanyContext, llm_available: bool) -> None:
         )
         st.session_state[KEY_CHAT_LLM_ENABLED] = new_val
     with col_clear:
-        if st.button("히스토리 지우기", use_container_width=True):
+        if st.button("히스토리 지우기", width="stretch"):
             st.session_state[KEY_CHAT_HISTORY] = []
             st.rerun()
 
@@ -208,7 +208,7 @@ def _render_preset_panel(ctx: CompanyContext, batch_id: str | None) -> None:
                         preset.label,
                         key=f"preset_{preset.key}",
                         help=preset.question,
-                        use_container_width=True,
+                        width="stretch",
                     ):
                         result = _run_query(
                             preset.question, ctx, batch_id,
@@ -236,7 +236,7 @@ def _render_history() -> None:
                     st.code(sql, language="sql")
             df_preview = msg.get("df_preview")
             if isinstance(df_preview, pd.DataFrame) and not df_preview.empty:
-                st.dataframe(df_preview, use_container_width=True, hide_index=True)
+                st.dataframe(df_preview, width="stretch", hide_index=True)
             error = msg.get("error")
             if error and role == "assistant":
                 st.error(error)

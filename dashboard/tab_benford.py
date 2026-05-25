@@ -79,7 +79,7 @@ def _render_overview(br, mad_threshold: float) -> None:
 
     with col_chart:
         fig = benford_overlay(digits_df, mad_threshold=mad_threshold)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     with col_metrics:
         st.metric("표본 크기", f"{br.sample_size:,}건", help=f"신뢰도: {br.confidence}")
@@ -112,7 +112,7 @@ def _render_split_analysis(filtered_df: pd.DataFrame, mad_threshold: float) -> N
 
         if group_col in filtered_df.columns:
             fig = benford_facet(filtered_df, group_col, mad_threshold=mad_threshold)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         else:
             st.info(f"'{group_col}' 컬럼이 데이터에 없습니다.")
 
@@ -125,7 +125,7 @@ def _render_split_analysis(filtered_df: pd.DataFrame, mad_threshold: float) -> N
             st.info(f"digit {selected_digit}에 해당하는 전표가 없습니다.")
         else:
             show_cols = [c for c in _DRILL_COLUMNS if c in drill_df.columns]
-            st.dataframe(drill_df[show_cols], use_container_width=True, height=300)
+            st.dataframe(drill_df[show_cols], width="stretch", height=300)
             st.caption(f"digit {selected_digit} 전표: {len(drill_df):,}건")
 
 

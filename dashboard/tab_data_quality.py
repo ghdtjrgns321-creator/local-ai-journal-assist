@@ -127,7 +127,7 @@ def _render_metrics(summary: dict) -> None:
     with col_gauge:
         st.plotly_chart(
             quality_gauge(summary["quality_score"]),
-            use_container_width=True,
+            width="stretch",
             key="data_quality_quality_gauge",
         )
     with col_warnings:
@@ -154,7 +154,7 @@ def _render_missing(summary: dict) -> None:
         st.subheader("결측률")
         st.plotly_chart(
             missing_rate_bar(nonzero),
-            use_container_width=True,
+            width="stretch",
             key="data_quality_missing_rate_bar",
         )
         st.divider()
@@ -166,7 +166,7 @@ def _render_amount_distribution(summary: dict) -> None:
         st.subheader("금액 분포")
         st.plotly_chart(
             amount_box_plot(summary["numeric_stats_table"]),
-            use_container_width=True,
+            width="stretch",
             key="data_quality_amount_box_plot",
         )
         st.divider()
@@ -208,13 +208,13 @@ def _render_eda_charts(result: PipelineResult) -> None:
     with col1:
         st.plotly_chart(
             risk_heatmap(df),
-            use_container_width=True,
+            width="stretch",
             key="data_quality_risk_heatmap",
         )
     with col2:
         st.plotly_chart(
             hourly_heatmap(df),
-            use_container_width=True,
+            width="stretch",
             key="data_quality_hourly_heatmap",
         )
 
@@ -223,13 +223,13 @@ def _render_eda_charts(result: PipelineResult) -> None:
     with col3:
         st.plotly_chart(
             anomaly_scatter(df),
-            use_container_width=True,
+            width="stretch",
             key="data_quality_anomaly_scatter",
         )
     with col4:
         st.plotly_chart(
             fraud_type_treemap(df),
-            use_container_width=True,
+            width="stretch",
             key="data_quality_fraud_type_treemap",
         )
 

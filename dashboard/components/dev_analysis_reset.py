@@ -45,19 +45,19 @@ def render_dev_analysis_reset(*, conn, state: MutableMapping[str, Any]) -> None:
         if st.button(
             "Phase 1 분석 완료된거 DB에서 삭제",
             key="dev_reset_phase1",
-            use_container_width=True,
+            width="stretch",
         ):
             _reset_and_refresh(conn, state, batch_id, phase="phase1")
         if st.button(
             "Phase 2 완료된거 DB에서 삭제",
             key="dev_reset_phase2",
-            use_container_width=True,
+            width="stretch",
         ):
             _reset_and_refresh(conn, state, batch_id, phase="phase2")
         if st.button(
             "Phase 3 완료된거 DB에서 삭제",
             key="dev_reset_phase3",
-            use_container_width=True,
+            width="stretch",
         ):
             _reset_and_refresh(conn, state, batch_id, phase="phase3")
 

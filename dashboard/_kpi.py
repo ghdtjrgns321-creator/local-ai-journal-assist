@@ -9,6 +9,7 @@ from __future__ import annotations
 import pandas as pd
 
 from dashboard._phase1_truth import phase1_truth_index, raw_truth_document_ids
+from src.formatting import format_krw_compact
 
 
 def _format_krw(value: float) -> str:
@@ -17,15 +18,7 @@ def _format_krw(value: float) -> str:
     Why: ₩5,766,465,070,813 같은 원시 숫자는 직관적 파악 불가.
          "₩5.8조" 형태가 감사인 보고서에서도 표준.
     """
-    abs_val = abs(value)
-    sign = "-" if value < 0 else ""
-    if abs_val >= 1e12:
-        return f"{sign}₩{abs_val / 1e12:.1f}조"
-    if abs_val >= 1e8:
-        return f"{sign}₩{abs_val / 1e8:.0f}억"
-    if abs_val >= 1e4:
-        return f"{sign}₩{abs_val / 1e4:.0f}만"
-    return f"{sign}₩{abs_val:,.0f}"
+    return format_krw_compact(value, prefix="₩", grouped=False, eok_digits=0)
 
 
 _FRAUD_RULE_PREFIXES = ("B", "L2-", "L3-")

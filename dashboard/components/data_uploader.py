@@ -38,6 +38,7 @@ from dashboard._state import (
     KEY_UPLOAD_COUNT,
 )
 from src.services.analysis_service import build_audit_trail
+from src.services.session_service import close_dashboard_connections
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +119,8 @@ def _render_upload_stage() -> None:
         "로컬 파일을 직접 읽어 업로드 지연이 없습니다."
     )
 
+    _render_saved_batch_history()
+
     if not st.button("📂 Browse files", type="primary"):
         st.info("**Browse files** 버튼을 눌러 분석할 파일을 선택하세요.")
         return
@@ -155,17 +158,37 @@ def _render_upload_stage() -> None:
             st.exception(e)
 
 
+def _render_saved_batch_history() -> None:
+    """Render persisted batch restore cards for the selected engagement."""
+    ctx = st.session_state.get(KEY_COMPANY_CONTEXT)
+    if ctx is None or getattr(ctx, "is_anonymous", True):
+        return
+
+    try:
+        conn_mgr = st.session_state.get("_conn_mgr")
+        if conn_mgr is None:
+            from src.db.connection import get_connection_manager
+
+            conn_mgr = get_connection_manager()
+            st.session_state["_conn_mgr"] = conn_mgr
+        conn = conn_mgr.get(str(ctx.db_path))
+
+        from dashboard.components.batch_selector import render_batch_selector
+
+        if render_batch_selector(conn):
+            st.divider()
+    except Exception as exc:
+        logger.warning("저장된 배치 이력 렌더링 실패", exc_info=True)
+        st.warning("이전 분석 결과 목록을 불러오지 못했습니다.")
+        if st.session_state.get(KEY_DEV_MODE):
+            st.exception(exc)
+
+
 # ── REVIEW 스테이지 (미리보기 포함) ──────────────────────
 
 
 def _render_review_with_preview() -> None:
     """왼쪽: 컬럼 매핑 확인 / 오른쪽: 데이터 미리보기(Top 10)."""
-    from dashboard.components.scroll_anchor import preserve_scroll_position
-
-    # Why: "매핑 확인" 버튼 등으로 st.rerun()이 발생하면 페이지가 맨 위로 튕긴다.
-    #      페이지별 키로 scrollY를 sessionStorage에 영구 보존하여 위치를 복원.
-    preserve_scroll_position("mapping_review")
-
     data_df = st.session_state.get(KEY_INGEST_DATA_DF)
     source_columns = st.session_state.get(KEY_INGEST_SOURCE_COLUMNS, [])
     read_result = st.session_state.get(KEY_INGEST_READ_RESULT)
@@ -214,7 +237,7 @@ def _render_review_with_preview() -> None:
             st.subheader(f"원본 데이터 (상위 {n_preview}행)")
             st.dataframe(
                 preview,
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
                 height=min(240, (n_preview + 1) * 38),
             )
@@ -259,12 +282,7 @@ def _render_column_diff_section() -> None:
             #      다른 회사에서 FY{prior_fy} 를 분석했거나, 같은 회사에서도 아직
             #      FY{prior_fy} 를 분석하지 않은 두 가지. 회사명을 같이 노출.
             company_id = st.session_state.get("audit_company_id") or "(선택 없음)"
-            st.info(
-                f"회사 **{company_id}** 의 작년(FY {prior_fy}) 분석 이력이 없습니다. "
-                f"같은 회사에서 FY {prior_fy} 데이터를 먼저 분석해야 다음 연도부터 컬럼 구성 "
-                "변화(추가/삭제/이름변경)를 자동으로 비교해 표시합니다. "
-                "(다른 회사의 FY 프로파일은 회사 격리로 비교 대상이 아닙니다.)"
-            )
+            st.info(f"회사 **{company_id}** 의 작년(FY {prior_fy}) 분석 이력이 없습니다.")
         else:
             st.info("작년 분석 이력이 없습니다.")
         return
@@ -629,7 +647,7 @@ def _render_column_mismatch_warning(
             ]
 
         styled = subset.style.apply(_highlight_issues, axis=1)
-        st.dataframe(styled, use_container_width=True)
+        st.dataframe(styled, width="stretch")
 
 
 def _render_scientific_notation_warning(detail: str) -> None:
@@ -667,7 +685,7 @@ def _render_repair_preview(read_result, data_df, source_columns) -> bool:
         st.caption("현재")
         preview = data_df.head(n).copy()
         preview.columns = source_columns[: preview.shape[1]]
-        st.dataframe(preview, use_container_width=True, hide_index=True)
+        st.dataframe(preview, width="stretch", hide_index=True)
         st.caption(f"{len(data_df):,}행 × {data_df.shape[1]}열")
 
     with col_after:
@@ -677,7 +695,7 @@ def _render_repair_preview(read_result, data_df, source_columns) -> bool:
             cols_after = [str(c) for c in repaired_df.columns]
         preview_r = repaired_df.head(n).copy()
         preview_r.columns = cols_after[: preview_r.shape[1]]
-        st.dataframe(preview_r, use_container_width=True, hide_index=True)
+        st.dataframe(preview_r, width="stretch", hide_index=True)
         st.caption(f"{len(repaired_df):,}행 × {repaired_df.shape[1]}열")
 
     return True
@@ -1035,6 +1053,8 @@ def _run_pipeline_from_mapped(file_key: str, progress_cb, *, prepare_only: bool 
 
 def _clear_ingest_state() -> None:
     """인제스트 중간 상태 정리."""
+    close_dashboard_connections(st.session_state)
+
     # tempfile 삭제 (경로 모드에서 직접 지정한 파일은 삭제하지 않음)
     tmp = st.session_state.pop("_ingest_tmp_path", None)
     is_user_file = st.session_state.pop("_ingest_is_user_path", False)
