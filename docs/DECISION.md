@@ -6,6 +6,10 @@
 
 > **결정 ID 발번 규칙 (2026-05-15)**: D001~D049 는 모두 발번 완료. 다음 신규 결정 ID 는 **D050 부터** 사용한다. D046 은 2026-05-15 ID 충돌 정정 시 D040 으로 통합되었기 때문에 본문 stub 만 유지하며, D043~D045 / D049 는 모두 점유 상태다 (각각 Phase 3 v2 provider, T9 Rust PR 템플릿, Codex mojibake defer, VAE 학습 데이터 검증 모드 분리). 모든 `### D{n}:` 헤더는 unique 해야 하며 `tools/scripts/audit_decision_ids.py` 가 CI 에서 회귀 가드로 강제한다.
 
+
+> **포트폴리오 주장 범위 (2026-05-19)**: 이 프로젝트는 `fraud`를 판정하거나 실제 운영 부정 탐지 성능을 보장하는 모델이 아니다. 전수 모집단에서 감사인이 먼저 볼 review queue를 만들고, 무작위 검토 대비 상위 구간에 review-worthy synthetic anomaly를 강하게 농축하는 로컬 감사 분석 보조 도구다. DataSynth 기반 precision/recall은 개발 검증 보조 지표이며, 실데이터 운영 성능으로 주장하지 않는다.
+> **금지 표현**: "부정을 정확히 탐지", "실무 운영 성능 검증 완료", "TOP100 precision 충분", "fraud 확정/자동 적발"처럼 확정적이거나 운영 성능을 보장하는 표현은 사용하지 않는다.
+
 ?꾪궎?띿쿂쨌湲곗닠 ?좏깮 寃곗젙 濡쒓렇. ?덈줈??寃곗젙 ???댁슜 異붽?.
 
 ---
@@ -23,7 +27,7 @@
 - **구현 위치**: `tools/analysis/compute_trivial_baseline.py` 가 S4 10-feature trivial baseline 을 ensemble 평가와 동일 fold 구성으로 재산정하고, `src/services/phase2_evaluation.py` 가 S4 P4 + anti-shortcut cap (ratio ≤ 4.0) 을 AND 정책으로 판정한다.
 - **사유**: v3 dataset 의 합성 shortcut 위험(S4 RED L-08~L-10) 때문에 0.99급 AUPRC 가 실제 일반화 성능이 아니라 trivial surface 대비 과도한 shortcut 증폭일 수 있다. ratio cap 은 trivial baseline 대비 증폭 배수로서 shortcut 의 직접 지표이고, 보조 측정값(Top-5 deny 잔존율)은 deterministic 룰 의존도의 정량 진단이다.
 - **영향 범위**: `phase2_training_service`, PHASE2 평가 entry, CI workflow, `tests/datasynth_quality_gate/results/phase2_fitting_audit/`.
-- **관련 audit**: `docs/PHASE2_FITTING_AUDIT.md`, `artifacts/S4_evaluation_protocol.md`, `docs/S9_phase2_value_baseline.md`, `artifacts/S5_phase2_input_redesign.md`.
+- **관련 audit**: `docs/PHASE2_FITTING_AUDIT.md`, `artifacts/S4_evaluation_protocol.md`, `docs/completed/S9_phase2_value_baseline.md`, `artifacts/S5_phase2_input_redesign.md`.
 - **관련 결정**: D027(Hold-out Fraud Type), D029(데이터 분할 전략), D034(Stacking Meta-Learner), D037(모델 드리프트 재학습).
 
 ---
@@ -32,7 +36,7 @@
 - **Decision**: Phase 3 단일 목표를 **Review Queue Narrator**로 좁힌다. LLM은 PHASE1 룰 히트 + PHASE2 ML 스코어 + 전표 메타를 읽고 (a) 후보 Top-N 재정렬, (b) 의심 근거 서술(rule_id/feature_id/journal_id 인용 필수), (c) 감사인 다음 행동을 제안한다.
 - **비범위 (out of scope)**: Text-to-SQL (WU-20), Excel/PDF Export (WU-24), Chat UI (WU-26), Export 탭 (WU-27), 룰 피드백 루프 (WU-30). 기존 코드는 보존하되 Phase 3 v2 완료 기준에 포함하지 않는다.
 - **이유**: (1) 자유 가설 생성은 환각 위험 + 감사 신뢰성 부족, (2) Text-to-SQL/Export는 Phase 3 핵심 가치(감사인 검토 우선순위)와 직접 연결되지 않음, (3) PHASE1 역할 원칙(검토 후보 선별)과 Phase 3을 자연스럽게 잇기 위함.
-- **단일 출처**: [PHASE3_REVIEW_NARRATOR_SPEC.md](PHASE3_REVIEW_NARRATOR_SPEC.md), [PHASE3_REWORK_PLAN.md](PHASE3_REWORK_PLAN.md) (예정).
+- **단일 출처**: [PHASE3_REVIEW_NARRATOR_SPEC.md](PHASE3_REVIEW_NARRATOR_SPEC.md), [completed/PHASE3_REWORK_PLAN.md](completed/PHASE3_REWORK_PLAN.md).
 - **D001/D002/D004 영향**: Qwen3-8B(D001), Vanna AI(D002), fpdf2(D004) 결정은 historical로 유지. 활성 의존성은 OpenAI 2티어 추상화(`src/llm/api_client.py`)로 단일화되어 있다.
 
 ---
@@ -53,7 +57,7 @@
   - `src/detection/rule_scoring.py` `RULE_SCORING_REGISTRY` 항목의 `scoring_role`, `standalone_rankable`, `final_topic`은 정상 모집단 FP 영향 평가 없이 변경 금지.
   - 시나리오 진입률 회복이 필요하면 DataSynth mutation 보강 (fictitious T7 D1) 또는 PHASE2/PHASE3 후속 단계로 이관.
   - PHASE1 KPI 가드는 truth recall 향상을 강제하지 않는다(`tests/phase1_rulebase/kpi_baseline.json` `_meta.principle`).
-- **단일 출처**: `docs/DETECTION_RESULTS_MANIPULATION_V2.md` §6.1, §8.1, §10, `tests/phase1_rulebase/kpi_baseline.json` `c4_scenario_full_entry_count.scenario_entry_ceilings.unusual_timing_manipulation`, `artifacts/unusual_timing_regression_trace.md` §7, `artifacts/manipulation_v3_mutation_recovery.md` Guard 3.
+- **단일 출처**: `docs/completed/DETECTION_RESULTS_MANIPULATION_V2.md` §6.1, §8.1, §10, `tests/phase1_rulebase/kpi_baseline.json` `c4_scenario_full_entry_count.scenario_entry_ceilings.unusual_timing_manipulation`, `artifacts/unusual_timing_regression_trace.md` §7, `artifacts/manipulation_v3_mutation_recovery.md` Guard 3.
 
 ---
 
@@ -69,7 +73,7 @@
   - OpenAI 가격 정책이 본 batch 비용을 **현재 대비 50% 이상 인상** 시.
   - Anthropic / Gemini가 Structured Output strict + JSON Schema enum 동등 수준의 성숙도를 공개적으로 보증.
 - **재평가 절차**: ChatClient Protocol(ISP 설계)로 인해 신규 provider 추가는 `src/llm/anthropic_client.py` 또는 `gemini_client.py` 신규 파일만 작성하면 된다. 의존성 추가 시 `pyproject.toml llm` 그룹에 명시.
-- **단일 출처**: `docs/PHASE3_REWORK_PLAN.md` §4.1 / §4.2, `docs/completed/phase3_review_narrator_completion.md` §7 후속 로드맵.
+- **단일 출처**: `docs/completed/PHASE3_REWORK_PLAN.md` §4.1 / §4.2, `docs/completed/phase3_review_narrator_completion.md` §7 후속 로드맵.
 
 ---
 
@@ -89,6 +93,7 @@
 - label, scenario, document id, 특정 생성 패턴에 맞춘 scoring/rule 조정 여부:
 - 정상 모집단 false-positive 영향:
 - rollback 필요 여부:
+- PHASE2 sub-detector tier 변경 여부 — 변경 시 `config/phase2_subdetector_tiers.yaml` 출처가 기준서(PCAOB/ISA) 또는 분포 측정값임을 확인하고 truth recall 향상은 사유로 사용하지 않았음을 명시:
 
 ## 후속 action
 
@@ -149,10 +154,10 @@
 
 ### D008: dependency-groups 遺꾨━
 - **?댁쑀**: `uv sync --group core,dashboard`濡?MVP 理쒖냼 ?ㅼ튂. ML/LLM? ?꾩슂 ?쒖뿉留?
-### D009: 媛쒖슂????湲곕뒫蹂?援ы쁽 媛?대뱶 10媛?遺꾨━
-- **?댁쑀**: ?섎굹??媛쒖슂??380以??먯꽌 援ы쁽 ??李몄“媛 ?대젮?. 湲곕뒫 ?곸뿭蹂?遺꾨━濡?媛?紐⑤뱢 援ы쁽 ???대떦 媛?대뱶留?李몄“
-- **援ъ“**: `docs/pre-plan/01~10-*.md`, 怨듯넻 ?щ㎎(紐⑹쟻/愿???뚯씪/?듭떖 ?대옒???곗씠???먮쫫/援ы쁽 ?쒖꽌/?섏〈???뚯뒪??Phase/二쇱쓽?ы빆)
-- **?먮낯 ?좎?**: `媛쒖슂??md`???꾩껜 酉??⑸룄濡?蹂댁〈, 援ы쁽 媛?대뱶???곸꽭 ?덊띁?곗뒪
+### D009: 개요서 → 기능별 구현 가이드 10개 분리
+- **이유**: 하나의 개요서(380줄)에서 구현 시 참조가 어려움. 기능 영역별 분리로 각 모듈 구현 시 해당 가이드만 참조
+- **구조**: `docs/completed/raw-plan/01~10-*.md`, 공통 포맷(목적/관련 파일/핵심 클래스/데이터 흐름/구현 순서/의존성/테스트/Phase/주의사항)
+- **원본 유지**: `completed/raw-plan/개요서.md`는 전체 뷰 용도로 보존, 구현 가이드는 상세 레퍼런스
 
 ### D010: EY-ASU DataSynth瑜?硫붿씤 ?곗씠???뚯뒪濡?梨꾪깮
 - **寃곗젙**: 32媛?怨듦컻 ?곗씠?곗뀑/?꾧뎄 寃???? EY-ASU DataSynth(tools/datasynth/)濡??앹꽦???⑹꽦 ?꾪몴瑜?硫붿씤 ?곗씠?곕줈 梨꾪깮. 湲곗〈 ?섏쭛 ?곗씠??sap-merged, schreyer-fraud ??5醫???寃利앹슜?쇰줈 ?꾪솚
@@ -208,22 +213,23 @@
 - **援ъ“**: `file_categories.py`(移댄뀒怨좊━ ?뺤쓽) + `integrity_checkers.py`(?뺤옣?먮퀎 ?닿린 寃利? + `file_validator.py`(?쇱궗?? 3?뚯씪 遺꾨━ (SRP)
 - **?ㅼ젙**: `settings.py`??`allowed_extensions`/`max_file_size_mb`??deprecated. 移댄뀒怨좊━蹂??쒗븳? `file_categories.py` ?곸닔濡?愿由?(?뚯씪 ?щ㎎ 臾쇰━???뱀꽦?대?濡??ъ슜???ㅼ젙???꾨떂)
 
-### D016: UX 1?④퀎 ???곗씠???섏쭛 ?щ챸??(Ingest v2)
-- **UX ?④퀎 泥닿퀎**: UX 1?④퀎(?섏쭛 ?щ챸?? ??UX 2?④퀎(猷??명똿+?뚯깮蹂?? ??UX 3?④퀎(?꾩쿂由?EDA). ?곸꽭: [ux-flow.md](pre-plan/ux-flow.md)
-- **?뺤쓽**: ?ъ슜?먭? ?곗씠?곕? ?ｌ쑝硫?AI媛 ?ㅻ뜑/而щ읆???먮룞 吏?뺥븯怨? ?좊ℓ??遺遺꾩? ?ъ슜?먯뿉寃??꾩엫?섎ŉ, ?먮떒 洹쇨굅(?좊ː?? 留ㅼ묶 諛⑹떇)瑜??щ챸?섍쾶 ?몄텧?섎뒗 UX 紐⑤뜽
-- **寃곗젙**: ?ㅻ뜑 ?먯?瑜?援ъ“???좏샇 湲곕컲?쇰줈 ?꾪솚, fuzzy 留ㅽ븨?????寃利?異붽?, 留ㅽ븨 ?먮떒 洹쇨굅瑜?ReviewItem?쇰줈 援ъ“??- **UX ?먯튃**:
-  - **80/20 ?먮룞??*: ?뺤떊 ?믪? 80%???먮룞 泥섎━(action="auto"), ?섎㉧吏 20%???ъ슜??寃??action="review")
-  - **?먮떒 ?щ챸???뺣낫**: 紐⑤뱺 留ㅽ븨??reason(?먮떒 洹쇨굅) + confidence(?좊ː?? + source_type/target_type ?몄텧
-  - **3-tier ?쒓컖 ?쇰뱶諛?*: ?뺤젙(珥덈줉) / 異붿쿇+?뺤씤 ?꾩슂(?몃옉) / 李⑤떒??鍮④컯)
-- **援ы쁽 ?댁슜**:
-  - A1. 援ъ“???ㅻ뜑 ?먯? ???ㅼ썙???놁뼱???곗씠??援ъ“(??낅떎?묒꽦/怨좎쑀媛?null諛??濡??ㅻ뜑 ?먮퀎
-  - B1. ????명솚??寃利???fuzzy ?꾨낫???뚯뒪?붿뒪?ㅻ쭏 ???鍮꾧탳, 鍮꾪샇??李⑤떒
-  - B3. Null 3?④퀎 遺꾧린 ???좊졊 而щ읆 議곗슜??遺꾨━, ?ㅻℓ???섏떖 紐낆떆 寃쎄퀬
-  - C. dc_indicator ?쒖? 而щ읆 ?깅줉
-  - D. ReviewItem 紐⑤뜽 ??action/confidence/reason/source_type/target_type 援ъ“
-  - E. ascii?뭠atin-1 ?몄퐫???대갚 ????⑸웾 CSV ?ㅽ깘 洹쇰낯 ?닿껐
-- **寃곌낵**: 5醫??ㅻ뜲?댄꽣???꾩껜 ?ш렇由?(bpi2019 527MB 1.6M???ы븿), 197 tests passed
-- **Phase 1c ?곌퀎**: ReviewItem ??Streamlit 留ㅽ븨 ?뺤씤 UI???곗씠???뚯뒪濡?吏곸젒 ?ъ슜
+### D016: UX 1단계 — 데이터 수집 투명성 (Ingest v2)
+- **UX 단계 체계**: UX 1단계(수집 투명성) → UX 2단계(룰 세팅+파생변수) → UX 3단계(전처리+EDA). 상세: [ux-flow.md](ux-flow.md)
+- **정의**: 사용자가 데이터를 넣으면 AI가 헤더/컬럼을 자동 지정하고, 애매한 부분은 사용자에게 위임하며, 판단 근거(신뢰도, 매칭 방식)를 투명하게 노출하는 UX 모델
+- **결정**: 헤더 탐지를 구조적 신호 기반으로 전환, fuzzy 매핑에 타입 검증 추가, 매핑 판단 근거를 ReviewItem으로 구조화
+- **UX 원칙**:
+  - **80/20 자동화**: 확신 높은 80%는 자동 처리(action="auto"), 나머지 20%는 사용자 검토(action="review")
+  - **판단 투명성 확보**: 모든 매핑에 reason(판단 근거) + confidence(신뢰도) + source_type/target_type 노출
+  - **3-tier 시각 피드백**: 확정(초록) / 추천+확인 필요(노랑) / 차단됨(빨강)
+- **구현 내용**:
+  - A1. 구조적 헤더 탐지 — 키워드 없어도 데이터 구조(타입다양성/고유값/null밀도)로 헤더 판별
+  - B1. 타입 호환성 검증 — fuzzy 후보의 소스↔스키마 타입 비교, 비호환 차단
+  - B3. Null 3단계 분기 — 유령 컬럼 조용히 분리, 오매핑 의심 명시 경고
+  - C. dc_indicator 표준 컬럼 등록
+  - D. ReviewItem 모델 — action/confidence/reason/source_type/target_type 구조
+  - E. ascii→latin-1 인코딩 폴백 — 대용량 CSV 오탐 근본 해결
+- **결과**: 5종 실데이터셋 전체 올그린 (bpi2019 527MB 1.6M행 포함), 197 tests passed
+- **Phase 1c 연계**: ReviewItem → Streamlit 매핑 확인 UI의 데이터 소스로 직접 사용
 
 ### D017: ascii?뭠atin-1 ?몄퐫???대갚
 - **寃곗젙**: `text_reader._detect_encoding()`?먯꽌 charset_normalizer媛 "ascii"濡?媛먯??섎㈃ "latin-1"?쇰줈 ?대갚
@@ -243,7 +249,7 @@
 
 ### D018: ?댁긽移??뱀씠移??댁쨷 ?먯? 泥닿퀎
 - **寃곗젙**: ?댁긽移?Outlier, ?쇰꺼 ?덈뒗 ?곗씠????Classification(XGBoost ??, ?뱀씠移?Novelty, ?뺤긽留??숈뒿)??VAE+IF ?숈긽釉붾줈 ?댁쨷 ?먯?
-- **?댁쑀**: 吏?꾪븰?듭? "?대? 蹂??⑦꽩"留??먯?. VAE??"?뺤긽 遺꾪룷 諛??대㈃ 誘몄???遺?뺣룄 ?먯? 媛??(zero-day fraud detection)
+- **?댁쑀**: 吏?꾪븰?듭? "?대? 蹂??⑦꽩"留??먯?. VAE??"?뺤긽 遺꾪룷 諛??대㈃ 誘몄???遺?뺣룄 ?먯? 媛??(unseen-pattern review signal discovery)
 - **??븷 遺꾨━**: XGBoost??DataSynth 踰ㅼ튂留덊겕 + ?꾩씠?숈뒿 蹂댁“ ?먯닔, VAE+IF???ㅼ쟾 硫붿씤 ?먯? ?붿쭊
 
 ### D019: ML 紐⑤뜽 ?꾨낫 ?좎젙
@@ -451,7 +457,7 @@
   - S9 anti-shortcut cap: ensemble macro AP / trivial floor ratio = 33-40 → **BLOCK** (v4 가 trivial floor 를 낮춰 게이트 강도 약 6배 상승, 의도된 효과).
 - **영향 범위**: `tools/datasynth/crates/datasynth-cli/src/manipulation_v4.rs`, `tools/scripts/audit_manipulation_v4_candidate.py`, S4/S5/S8 reproducer, Phase1 회귀 (`artifacts/phase1_manipulation_v4_candidate_20260515.*`), `docs/PHASE2_FITTING_AUDIT.md` 의 RED → **YELLOW** 전환 (데이터 RED 해소 / 모델 RED 잔존).
 - **비용**: Rust profile 설계 + 빌드 + 검증 — 완료.
-- **관련 audit**: `docs/PHASE2_FITTING_AUDIT.md`, `docs/S9_zero_day_protocol_alternatives.md` §3.3, `artifacts/manipulation_v4_audit_rerun_summary_20260516.md`
+- **관련 audit**: `docs/PHASE2_FITTING_AUDIT.md`, `docs/completed/S9_zero_day_protocol_alternatives.md` §3.3, `artifacts/manipulation_v4_audit_rerun_summary_20260516.md`
 - **관련 결정**: D027(Hold-out Fraud Type), D028(DataSynth 프로세스), D036(DataSynth v20.4), D039(DataSynth v23)
 
 ### D050: DataSynth manipulation v7 fixed3 active promotion (2026-05-17)
@@ -505,3 +511,292 @@
 - **영향 범위**: `src/services/phase2_training_service.py`, `tests/modules/test_services/test_phase2_detector_expansion.py`, `tests/modules/test_services/test_phase2_training_service.py`, `docs/DETECTION_RULES.md`.
 - **관련 산출물**: `artifacts/sprint_phaseA_A3_handoff_2026-05-17.md`.
 
+### D055: Intercompany IC01 accepts PHASE1 unmatched-reference sidecar evidence (2026-05-18)
+> **Superseded by D065 (2026-05-23)** — IC01 sidecar 직접 의존 제거, evidence level 정책으로 재정의.
+- **결정**: PHASE2 `intercompany` family의 IC01 `unmatched_intercompany`는 그룹 대사 결과뿐 아니라 PHASE1 case input의 `ic_unmatched_reference=True` evidence를 high-confidence unmatched IC evidence로 수용한다.
+- **사유**: V7 fixed3 PHASE1 case input에는 IC 거래 자체(`counterparty_type=IntercompanyAffiliate`, `business_process=Intercompany`, `is_intercompany=True`)와 `ic_unmatched_reference` sidecar evidence가 존재하지만, matched-pair source document reference는 PHASE2 matcher의 `reference` grouping key로 전달되지 않는다. 기존 IC01은 그룹 대사만 보아 V7 fixed3 2022/2023/2024에서 0건이 되었고, sidecar unmatched evidence를 버렸다.
+- **정책**:
+  - `ic_unmatched_reference=True`는 IC01 unmatched reference evidence로만 반영한다.
+  - IC02 amount mismatch와 IC03 timing gap은 matched-pair amount/date 대사에 필요한 pair reference가 있을 때만 산출한다.
+  - 이 결정은 truth recall 개선 근거가 아니며, PHASE2 rule proxy score 입력 계약 보강이다.
+  - UI는 `metric_confidence=sidecar_unmatched_reference_only`인 경우 IC01 active, IC02/IC03 zero-hit 상태를 숨기지 않는다.
+- **영향 범위**: `src/detection/intercompany_rules.py`, `tests/modules/test_detection/test_intercompany_v7_fixed3_smoke.py`.
+- **관련 산출물**: `artifacts/sprint_phaseA_diag1_intercompany_handoff_20260518.md`, `artifacts/phase2_inference_v7_fixed3_year_2024_intercompany_rerun.json`.
+
+
+### D056: Duplicate detector candidate blocking for PHASE2 inference latency (2026-05-18)
+- **결정**: PHASE2 `duplicate` family의 L2-03b/L2-03c/L2-03d는 full pair scan 대신 amount/date/gl-account blocking과 early guard를 사용한다. Fuzzy text comparison은 amount tolerance 후보에만 RapidFuzz를 적용하고, split detection은 date-window two-sum range, time-shift detection은 amount bucket + date sliding window로 제한한다.
+- **사유**: V7 fixed3 2024 partition에서 duplicate inference가 83.66s로 Streamlit UI 진입 병목이 되었다. 동일 partition 최적화 후 3회 평균 2.744s, full V7 fixed3 1,032,864 rows 기준 3회 평균 4.533s를 기록했다.
+- **정합성 정책**: L2-03a exact_duplicate_amount는 deterministic exact match로 유지한다. L2-03b/L2-03c/L2-03d는 Phase A smoke baseline 대비 ±5% 이내를 허용하지만, 이번 변경에서는 2024 기준 4개 sub-detector hit count가 모두 동일했다.
+- **금지한 대안**: Sampling(C)은 사용하지 않는다. Truth recall은 최적화 정당화 근거로 사용하지 않는다.
+- **영향 범위**: `src/detection/duplicate_rules.py`, `tests/modules/test_detection/test_duplicate_performance.py`.
+- **관련 산출물**: `artifacts/sprint_phaseA_diag2_duplicate_optimization_handoff_20260518.md`, `artifacts/phase2_duplicate_perf_before_after_20260518.json`.
+
+### D057: PHASE2 Streamlit 3-state family contract UI (2026-05-18)
+- **결정**: Streamlit `Phase2 결과` 탭은 사용자-facing 상태를 `Not trained`, `Training report available`, `Inference complete` 세 가지로 표시한다. 학습 버튼은 `run_phase2_training_analysis()` 경로, 추론 버튼은 `run_phase2_inference_analysis()` 경로를 호출하며 같은 버튼으로 숨기지 않는다.
+- **표시 계약**:
+  - 9 family matrix는 active 5(`unsupervised`, `timeseries`, `relational`, `duplicate`, `intercompany`)와 dormant 4(`supervised`, `transformer`, `sequence`, `stacking`)를 항상 함께 표시한다.
+  - rule-style family는 `metric_interpretation=rule_proxy_score`로 표시하고, truth recall/precision을 승격 또는 우선순위 사유로 쓰지 않는다.
+  - `intercompany`는 Diag-1 meta contract에 따라 active family로 표시하되 `active, IC01 only`, `metric_confidence=sidecar_unmatched_reference_only`, IC02/IC03 carry-over zero-hit을 명시한다.
+  - `leaderboard.json`과 `promotion_decision.json`은 latest training snapshot sidecar로 읽으며, rule-style family의 `schema_hash=null`은 정상 값으로 표시한다.
+- **partition 정책**: UI partition selector는 `2022`, `2023`, `2024`, `전체` 네 옵션을 제공한다. 선택된 연도는 추론 실행 시 `fiscal_year` 필터로 적용하고, UI summary artifact도 동일 partition 형식으로 표시한다.
+- **PHASE1 lock**: `dashboard/tab_phase1.py`, `dashboard/components/rule_panel.py`, `dashboard/tab_overview.py`는 본 UI sprint 범위에서 변경하지 않는다. PHASE2 UI는 PHASE1 `priority_score`와 `composite_sort_score`를 sort key로 변경하지 않고 별도 overlay/provenance 화면으로만 동작한다.
+- **영향 범위**: `dashboard/tab_phase2.py`, `dashboard/components/phase2_family_matrix.py`, `dashboard/components/phase2_subdetector_grid.py`, `dashboard/components/phase2_leaderboard_view.py`, `src/services/phase2_inference_service.py`.
+- **관련 산출물**: `artifacts/sprint_phaseB_a4_phase2_streamlit_handoff_20260518.md`.
+
+### D063: PHASE2 rule-style training variant de-duplication and timing observability (2026-05-22)
+- **결정**: PHASE2 rule-style family(`timeseries`, `relational`, `duplicate`, `intercompany`)는 training queue에서 `baseline_core` feature variant만 사용한다. 각 family의 search preset은 2개 그대로 유지해 promotion policy의 최소 completed/search diversity 조건을 만족한다.
+- **사유**: rule-style detector 4종은 `_build_variant_frame()`에서 feature variant를 사용하지 않고 필요한 원천 컬럼이 포함된 `cleaned_df`를 사용한다. 여러 feature variant를 반복 실행하면 동일 입력에 대한 결정론적 trial만 중복 생성되어 latency만 증가한다.
+- **관측성**: PHASE2 inference는 `phase2.redetect.*` 및 `phase2.inference.*` timing log를 남겨 detector 이후 aggregate, SHAP, report, overlay, persistence, session cache 비용을 분해 측정한다.
+- **로그 정책**: `phase2_only` score aggregation에서 Phase 1 legacy track(`layer_a`, `layer_b`, `layer_c`, `benford`, `ml_supervised`) 누락은 expected missing으로 보고 debug 처리한다. 기본 Phase 1/일반 aggregation에서는 누락 warning을 유지한다.
+- **영향 범위**: `src/services/phase2_training_service.py`, `src/services/phase2_inference_service.py`, `src/pipeline.py`, `src/detection/score_aggregator.py`, 관련 tests.
+
+### D064: PHASE2 unsupervised preset 단일화 + epochs_half + policy 완화 (2026-05-23)
+- **결정**: `_DEFAULT_SEARCH_PRESETS["unsupervised"]` 를 `balanced` 1개(`vae_epochs=20`)로 축소하고, `_build_promotion_policy.family_min_search_variants["unsupervised"]` 를 1로 완화한다. 다른 family(timeseries/relational/duplicate/intercompany)의 preset 2개와 search_variants=2 정책은 그대로 유지한다.
+- **사유**: 100k sample 3 시나리오 측정(2026-05-23) 결과:
+    - baseline(3 preset × 7 variant = 21 trial, 1241s) vs epochs_half(epochs 10/20/30, 21 trial, 770s) vs preset_balanced_only(1 preset × 7 variant = 7 trial, 478s)
+    - 세 시나리오의 `unsupervised_selection_score` 최고치는 모두 0.547~0.548 (편차 ±0.0003, noise 수준).
+    - `unsupervised_selection_score` 는 score_tail_gap + topk_stability + capacity_penalty 의 ranking proxy 라 epoch/preset variant 의 차이가 metric 에 의미 있게 반영되지 않는다.
+- **효과**: 1M rows 학습 ~955s → ~250s 추정(-74%). feature variant 7개는 유지 → search diversity 보존.
+- **품질 영향**: `feedback_phase1_truth_recall_guard` 위반 없음. metric 차이가 noise 수준이라 truth recall 추구가 아닌 ranking-proxy 안정성 기반 결정.
+- **영향 범위**: `src/services/phase2_training_service.py`, `tests/modules/test_services/test_phase2_training_service.py`.
+- **관련 산출물**: `tools/scripts/measure_phase2_scenarios.py` (3 시나리오 측정 스크립트), 측정 데이터는 `tools/scripts/measure_phase2_scenarios.py` 재실행으로 재현 가능.
+
+### D065: IC01 sidecar 직접 의존 제거 + evidence level 정책 재정의 (2026-05-23, supersedes D055)
+- **결정**:
+  - `ic_unmatched_reference` sidecar 의 IC01 score 직접 의존을 제거한다. IC01 은 group matching 결과 + `related_party_master` (또는 dataset distinct `company_code` 폴백) 대사 기반으로 재정의한다.
+  - evidence level sidecar 부착: `ic01_evidence_level` ∈ {`"high"`, `"review"`, `""`}, `ic01_review_reason` ∈ {`"missing_partner"`, `"nonstandard_format"`, `"mapping_uncertain"`, `""`}.
+  - 외부 rule id `IC01` 단일을 유지한다. `RULE_CODES` / `SEVERITY_MAP` / `RULE_DETAIL_METADATA_REGISTRY` / dashboard / metrics 표시 맵은 변경하지 않는다.
+- **사유**:
+  - **Fitting 증거**: `src/detection/intercompany_rules.py:354` 의 `partner.str.endswith("-UNMATCHED")` 휴리스틱이 `tools/scripts/build_datasynth_v38_ic_exception_labels.py:316` 의 `f"C{n}-UNMATCHED"` patch signature 와 직접 매칭. 메모리 `feedback_phase1_truth_recall_guard` 의 "PHASE1 변경은 도메인 정합성으로만 정당화. truth recall 직접 추구 금지" 정면 위반.
+  - **Label leakage**: `ic_unmatched_reference` sidecar 가 DataSynth v38 라벨 산출물에서 흘러와 row 단위로 부착되고 detector score 의 fallback 경로로 사용된다 (`src/detection/intercompany_rules.py:332~340`). detector score 에 직접 반영하면 평가 leakage 가 발생한다.
+  - **도메인 정합 재정렬**: IFRS 10 §B86 (그룹 내부거래 전부 제거), K-IFRS 1110 (연결재무제표 작성 시 내부거래 제거 절차), K-IFRS 1024 §18 (특수관계자 공시), KICPA Issue Paper 46 (JET 완전성), ISA 600 (그룹감사 구성단위 잔액 대사) 으로 1차 근거를 재정렬. ISA 550 §23 은 특수관계자 거래의 "사업상 합리성" 평가로 범위가 다르므로 보조 근거로만 유지.
+- **정책**:
+  - `score_aggregator._apply_intercompany_exception_corroboration()` 의 floor 정책:
+    - evidence=`high` 만 Medium floor (`RISK_THRESHOLDS[MEDIUM]=0.40`) 자격.
+    - evidence=`review` 는 Low floor (`RISK_THRESHOLDS[LOW]=0.20`).
+    - IC02 / IC03 단독 → Low floor (기존 유지).
+    - 2 개 이상 IC 예외 결합 → Medium floor (기존 유지).
+  - `SEVERITY_MAP` 변경 없음 (`IC01=3, IC02=2, IC03=2`, `src/detection/constants.py:195`).
+  - `intercompany_exception_reasons` 문자열에 IC01 hit 시 `IC01[high]` / `IC01[review]` qualifier 부착. base rule id 는 `IC01` 단일 유지.
+  - `config/audit_rules.yaml::patterns.intercompany` 의 신규 키:
+    - `related_party_master`: 명시적 관계사 리스트. 빈 리스트 / 미지정 시 dataset distinct `company_code` 폴백.
+    - `partner_format`: `ic_partner_regex`, `customer_partner_regex`, `vendor_partner_regex` regex 정책. customer / vendor 코드는 IC 모집단에서 제외.
+  - `config/settings.py` 의 신규 옵션: `ic_use_related_party_master: bool = True`, `ic_period_boundary_days: int = 5`.
+  - `ic_unmatched_reference` sidecar 자체는 평가 / 리포트 read-only 비교용으로 유지 가능. detector score 에서는 사용하지 않는다.
+  - **Sidecar 저장 위치**: 두 sidecar column (`ic01_evidence_level`, `ic01_review_reason`) 은 `DetectionResult.metadata["row_sidecar"]: dict[str, pd.Series]` 에 보관한다. `DetectionResult.details` 는 numeric rule-score (IC01/IC02/IC03 `float64`) matrix 계약을 유지하여 `src/metrics/ground_truth_evaluator.py:1152, 1537` 및 `src/detection/score_aggregator.py::_collect_flagged_rules` 의 `> 0` 비교에서 TypeError 가 발생하지 않도록 한다.
+  - **Review-only 신호의 confirmed 격상 방지**: IC01 review-level (`ic01_evidence_level == "review"`) 은 `details["IC01"]` score 가 `0.0` 으로 유지된다. 따라서 `flagged_rules` / case seed / ground-truth 평가에서 confirmed violation 으로 격상되지 않는다. `score_aggregator._apply_intercompany_exception_corroboration()` 는 `metadata["row_sidecar"]` 에서 evidence level 을 read 하여 row-level `anomaly_score` 의 Low floor (0.20) 만 부여한다. 근거: `AGENTS.md` "review-only signals must not become confirmed violations".
+  - **PHASE2 overlay 표시 계약**: IC01 review-only 는 `phase2_family_scores` / family nonzero hit 에는 더하지 않는다. 대신 case overlay 의 `family_contributions[].review_only_count` / `review_reasons` 와 `family_review_only` 메타로 보존하고, `intercompany` lane 에서 확인 가능하게 한다. 이 메타는 `top_family`, `coverage_breadth_q95`, `phase2_review_band` 를 승격하지 않는다.
+- **영향 범위**:
+  - `src/detection/intercompany_rules.py::ic01_unmatched_intercompany` — `(score, evidence_level, review_reason)` 튜플 반환. review 분기는 `score=0.0`, high 만 `score=1.0`. evidence_level/review_reason 는 high/review/"" 그대로 산출.
+  - `src/detection/intercompany_matcher.py::_build_result` — `details` 는 numeric rule-score (IC01/IC02/IC03 float64) 만 유지. 두 sidecar series 는 `DetectionResult.metadata["row_sidecar"]: dict[str, pd.Series]` 로 부착.
+  - `src/detection/score_aggregator.py::_extract_ic01_evidence_level` — `metadata["row_sidecar"]["ic01_evidence_level"]` 에서 read. 구버전 details fallback 도 지원.
+  - `src/detection/score_aggregator.py:1001~1110` — `_apply_intercompany_exception_corroboration()` 재구성
+  - `src/services/phase2_case_family_aggregator.py`, `src/services/phase2_case_contract.py`, `src/services/phase2_lane_sort.py`, `dashboard/components/phase2_family_lanes.py` — IC01 review-only sidecar 를 case overlay/lane 메타로 전달하되 score/family hit 집계는 유지.
+  - `config/audit_rules.yaml:309~` — `patterns.intercompany` 신규 키 (`related_party_master`, `partner_format`)
+  - `config/settings.py:198~199` — `ic_use_related_party_master`, `ic_period_boundary_days` 신규 옵션
+  - `tools/scripts/build_datasynth_v38_ic_exception_labels.py` — P4 에서 `-UNMATCHED` patch 제거 예정
+  - `docs/DETECTION_RULES.md` — L3-03 절 evidence level sidecar 정책 표 + IFRS / K-IFRS / ISA 600 근거 추가
+  - `docs/DETECTION_REFERENCE.md` — §2.5a IFRS 10 §B86 / §2.5b K-IFRS 1110 / §2.5c K-IFRS 1024 / §2.5d ISA 600 신규 절, §2.10 요약 표 행 추가
+  - `docs/RULE_DETAIL_METADATA_V1_LOCK.md` — IC01 evidence level sidecar 정책 절 신규 추가 (canonical 32 count 변경 없음)
+  - `docs/PHASE1_TOPIC_SCORING_V1_LOCK.md` — 관계사·내부거래·순환구조 topic floor 차별 보조 절 추가 (Primary rules 본문 변경 없음)
+  - `docs/PHASE1_RULE_RELATIONSHIP_MAP.md` — intercompany_structure evidence type 표 본문은 유지, evidence level sidecar 보조 주석 추가
+  - `tests/modules/test_detection/test_intercompany_matcher.py`, `tests/modules/test_detection/test_score_aggregator.py` — fixture 갱신 (`ic01_evidence_level=["high"]` 등)
+- **관련 산출물**:
+  - `dev/active/ic-matcher-redesign/ic-matcher-redesign-plan.md`
+  - `dev/active/ic-matcher-redesign/ic-matcher-redesign-context.md`
+  - `dev/active/ic-matcher-redesign/ic-matcher-redesign-tasks.md`
+
+### D058: PHASE1+PHASE2 통합 큐에 Reciprocal Rank Fusion (RRF) 적용 + 3개 큐 분리 (2026-05-18, 2026-05-19 갱신)
+- **현재 결정**: review queue 를 `PHASE1 단독`, `PHASE2 단독`, `통합` 3개로 분리한다. 통합 큐의 최종 정렬식은 Reciprocal Rank Fusion(RRF) 이며 `k=60` 으로 고정한다. 단, PHASE2 내부 family 는 RRF voter 로 직접 넣지 않고 zero-preserving ECDF 기반 Noisy-OR 로 먼저 `phase2_internal_noisy_or` 단일 voter 로 결합한다.
+  - RRF 식: `RRF_score(case) = Σ 1/(k + rank_i)`.
+  - `rank_i` 는 `phase1_composite`, `phase2_internal_noisy_or` 2개 ranker다.
+  - `phase1_composite` 는 `phase1_composite_sort_score` 내림차순 rank(method="min"), `phase2_internal_noisy_or` 는 5-family Noisy-OR score 내림차순 rank. PHASE2 score 가 없는 family row 는 Noisy-OR 내부에서 0/NaN 무신호로 보존한다.
+  - 통합 큐 정렬: `rrf_score` 내림차순 1차, `phase1_composite_sort_score` 내림차순 tiebreak.
+- **2026-05-19 갱신**:
+  - PHASE2 active family 5개(`unsupervised`, `timeseries`, `relational`, `duplicate`, `intercompany`)를 직접 RRF ranker 로 넣는 5-way/hierarchical RRF 는 V7 fixed3 측정에서 reject.
+  - 낮은 family 간 상관은 "결합 가능성" 근거이지 "동등 voter" 근거가 아니므로, 5 family 는 Noisy-OR 단일 PHASE2 voter 로 결합한다.
+  - `intercompany`는 near-dormant family이며 0/NaN row 는 Noisy-OR 에 0 contribution 으로 들어간다.
+- **사유**:
+  - PHASE1 ↔ PHASE2 상관계수 +0.07/-0.23 (사실상 독립). 두 신호의 union recall(상위 1% 합집합) 이 단독보다 6%p 이상 크다.
+  - PHASE2 family 간 score 상관도 낮아 family signal 의 보완성은 인정되지만, score 형태가 연속/이산/희소로 달라 동일 RRF voter 로 취급하지 않는다.
+  - RRF 는 Microsoft Azure AI Search / OpenSearch 2.19 / Elasticsearch / Vespa / Weaviate / MongoDB 의 hybrid search 표준이며 학술 근거(Cormack, Clarke, Büttcher, SIGIR 2009)가 견고하다.
+  - `k=60` 은 위 산업 표준 default. truth label 로 grid search 하지 않아 [[feedback_phase1_truth_recall_guard]] 위반 위험 0.
+- **V1 lock 정책**:
+  - PHASE1 단독 큐(`queue_phase1.parquet`)는 기존 `composite_sort_score` V1 lock 정렬을 그대로 유지. `queue.parquet`/`queue_top500.parquet`/`queue_top100.parquet` 는 PHASE1 단독 큐의 별칭(legacy 호환).
+  - PHASE1 priority_score, composite_sort_score 값 변경 금지. RRF 는 별도 컬럼(`rrf_score`, `rrf_rank`)에만 적재.
+- **UI 정책**:
+  - Streamlit review queue 탭은 4 sub-tab: `통합 추천`(기본 활성) · `PHASE1 우선` · `PHASE2 우선` · `Narrator 분석`.
+  - 알고리즘 명칭(RRF, k=60)은 본문에 노출하지 않고 tooltip help 에만 표기.
+  - 메인 KPI 는 doc 단위(truth 라벨이 있는 합성 데이터에서만 표시), case 단위 수치는 보조 라인.
+- **영향 범위**: `src/services/queue_fusion.py`(신규), `tools/scripts/phase1_phase2_integration_stage7.py`, `dashboard/tab_review_queue.py`, `dashboard/components/review_queue_browser.py`(신규).
+- **관련 결정**: [TS-12](TROUBLESHOOT.md#ts-12-phase2-점수가-통합-정렬에-미반영--truth-case-분모-인플레이션) §6.1 (수정 방향 확정).
+- **재현 metric (V7 fixed3, queue_integrated.parquet, informational only — `feedback_phase1_truth_recall_guard` 준수)**:
+  | TOP N | legacy PHASE1+VAE 2-way RRF | Noisy-OR voter | Δ pp |
+  |---|---:|---:|---:|
+  | 100 | 16.77% (104) | **22.42% (139)** | **+5.65** |
+  | 500 | 43.23% (268) | **45.48% (282)** | **+2.26** |
+  | 1,000 | **53.71% (333)** | 49.68% (308) | **-4.03** |
+  | 2,000 | **63.55% (394)** | 59.68% (370) | **-3.87** |
+
+  Noisy-OR voter 는 **단조 우월 아니다.** TOP 100/500 에서 +5.65/+2.26pp 개선, TOP 1,000/2,000 에서 -4.03/-3.87pp 손실. TOP 100~2,000 평균 Δ ≈ 0pp 로 **종합 truth recall 동률**. 분포가 상단으로 재배치된 형태이며, 채택은 truth recall 개선이 아니라 단일 PHASE2 voter + 무신호 보존 + parameter 0개 architecture standardization 으로 정당화한다. 산출물: `artifacts/phase1_phase2_integration_report_noisy_or_20260519.{json,md}`.
+
+### D059: Tritscher ERP-Fraud external shadow benchmark policy (2026-05-19)
+- **결정**: Tritscher ERP-Fraud 공개 데이터셋은 PHASE2 `unsupervised` family의 외부 synthetic ERP shadow benchmark로만 사용한다. 이 결과는 active VAE의 보조 일반화 근거이며, supervised/transformer/sequence/stacking dormant family 활성화 근거로 사용하지 않는다.
+- **검증 결과**:
+  - Tritscher row-level VAE 평균 AUROC: 0.6521.
+  - Tritscher document-level VAE 평균 AUROC: 0.8670.
+  - Tritscher document recall@100 평균: 0.4375.
+  - 빠른 진단용 IsolationForest 대비 VAE가 document-level에서 우세했다. document AUROC 0.8670 vs 0.7948, document recall@100 0.4375 vs 0.1815.
+- **해석**:
+  - 외부 SAP ERP simulation에서도 document-level ranking은 의미 있게 유지된다.
+  - row-level ranking은 불안정하므로 PHASE2 운영 해석은 document-prioritized evidence가 맞다.
+  - Tritscher도 synthetic simulation이므로 실데이터 운영 성능이나 지도학습 일반화 성능을 보장하지 않는다.
+- **정책**:
+  - `Label`, `source_file`, `run_id`는 feature deny. `run_id`는 holdout boundary로만 사용한다.
+  - VAE shadow 학습은 `Label == NonFraud`인 non-holdout run rows만 사용한다.
+  - 산출물은 외부 검증 artifact로 보존하되 promotion gate를 자동 통과시키지 않는다.
+  - supervised track은 D052의 label gate와 real/golden trusted positive 조건이 충족될 때까지 `low_signal_fallback`/dormant 상태를 유지한다.
+- **관련 산출물**:
+  - `artifacts/external_validation/tritscher_erp_fraud_20260519/tritscher_vae_shadow_benchmark.md`
+  - `artifacts/external_validation/tritscher_erp_fraud_20260519/tritscher_shadow_benchmark_comparison.md`
+  - `artifacts/external_validation/tritscher_erp_fraud_20260519/phase2_external_shadow_summary.md`
+- **관련 결정**: D052(Supervised ML label gate hardening), D054(Rule-based detector family promotion), D058(RRF integration).
+
+### D060: PHASE1 priority_score 0.90 critical 승격 원칙 5조 잠금 (2026-05-20)
+- **결정**: `config/phase1_case.yaml` 의 `priority_floors` 에서 `min_priority_score: 0.90` 인 entry 의 신설/유지 조건은 다음 5조를 모두 만족해야 한다.
+  1. **강한 seed 1개** — primary rule 의 raw_score 가 medium 이상 또는 명시적 escalated label
+  2. **금액성/중요성 1개** — L4-03 또는 materiality 임계 초과 또는 escalated_materiality 라벨
+  3. **독립 보강근거 1개** — timing/manual/SoD/duplicate 중 seed/금액성과 다른 축 1개
+  4. **단독 금지** — macro-only / manual-only / timing-only / approval-only / sensitive-only 단독으로는 0.90 진입 불가
+  5. **건수 목표로 조건 재조정 금지** — count 가 목표 범위 밖이어도 도메인적으로 타당하면 entry 유지. count 보고 조건을 조이거나 푸는 행위는 fitting 으로 간주한다.
+- **fraud scenario 표시명 격하 원칙**: 내부 tag 는 fraud scenario 명 (예: `embezzlement_concealment`, `fictitious_entry`) 을 유지해도 되나 UI/export/LLM 노출 시 단정형 (`횡령 은폐`, `가공 거래`, `대형 자금 유용 사례`) 사용 금지. "검토 신호 / 결합 리스크" 형태로 격하한다. 직접 fraud scenario 명칭 노출은 자금성 계정 / vendor·employee / bank·payment 같은 직접 증거가 있을 때만 허용.
+- **사유**: PHASE1 priority_score 분포 튜닝 중 "0.90+ 100~200건 목표" 라는 count 기반 의사결정이 0.80~0.89 분석 → 조건 재설계 흐름을 통해 fitting 패턴으로 흐른 사례 (Stage 2 prep 단계) 가 있었다. `scripts/fitting_audit.py` 측정에서 (a) stage_1 의 0.80~0.89 band 가 단일 floor 인공물 (100% 매칭), (b) 4종 critical 의 94~100% overlap, (c) 도메인 조건 매칭 case 의 ~16% 만 진입하는 자기 floor 의존성 확인. 본 원칙은 향후 priority_floors 신규 entry 신설 시 fitting 회피선이다.
+- **영향 범위**: `config/phase1_case.yaml::priority_floors`, `src/detection/phase1_case_builder.py::_apply_priority_floors`, `docs/PHASE1_SCORE_DISTRIBUTION_LOG.md`, Stage 2-A/2-B 신규 entry 설계.
+- **관련 산출물**:
+  - `docs/PHASE1_SCORE_DISTRIBUTION_LOG.md`
+  - `scripts/fitting_audit.py`
+  - `scripts/simulate_stage1_priority_score.py` (Stage 1 복원 근사용)
+- **관련 결정**: D055(IC01 sidecar evidence), D058(RRF integration).
+
+### D061: Stage 2-A/2-B 보류 + priority_score 계층 재설계 방향 (2026-05-21)
+- **결정**: `config/phase1_case.yaml` 의 `priority_floors` 에 `approval_bypass_critical` + `period_end_adjustment_critical` 0.90 entry 7종을 신설하려던 Stage 2-A 작업을 **보류**한다. 신설 yaml entry 와 `_priority_floor_corroboration_match` 의 `required_rules_any` 지원 모두 roll back. Stage 1 종료 상태 (`priority_score = max(topic, priority_score_pre_macro)`) 로 복귀하며 0.90+ = fy2022 21건 / fy2023 23건 유지. Stage 2-B (outflow/duplicate + revenue/manual critical) 도 동일 이유로 보류한다.
+- **사유**: `scripts/simulate_stage2_critical.py` 측정 결과 D060 5조 원칙 정합 entry 인데도 fy2022 1,043건 / fy2023 1,130건 promote — `period_end_adjustment_critical` 만 950~1,022건. 조건을 좁혀 count 를 100~200 으로 맞추면 D060 5조 5번 ("건수 목표로 조건 재조정 금지") 위반. 본질 문제는 critical 정의가 아니라 priority_score 계층이 0.75/0.90 2단계만 도메인 의미를 가지고 0.80/0.85 는 단일 floor 인공물이라는 점이다. 4,000건 검토대상을 의미있게 세분화하려면 계층 재설계 필요.
+- **`approval_bypass_critical` / `period_end_adjustment_critical` 결합 신호의 후속 활용**: 즉시검토 floor 가 아니라 **검토대상 상단의 정렬/필터 축**으로 이관. UI 작업에서 이 결합 신호를 가진 case 를 상위 정렬·필터하는 보조 차원으로 활용.
+- **다음 작업 — priority_score 계층 재설계**: 0.90 즉시검토 (20~50건, 도메인 정합) / 0.85 상위 검토대상·supervisor review (100~300건) / 0.80 검토대상 상단 (500~1,000건) / 0.75 일반 검토대상 (수천 건) 의 4단 계층을 priority_floors 의 다단계 entry 로 구현. 본 작업은 별도 Stage (Stage 5) 로 분리하며 D060 5조 (특히 5번 count 재조정 금지) 정신을 유지한다.
+- **fraud scenario 단정형 명칭 처리**: D060 의 표시명 격하 원칙은 본 결정과 독립. `embezzlement_concealment` / `fictitious_entry` 같은 단정형의 UI/export/LLM 격하는 Stage 4 UI 작업에서 진행.
+- **영향 범위**: `config/phase1_case.yaml::priority_floors` (7 entry 제거), `src/detection/phase1_case_builder.py::_priority_floor_corroboration_match` (required_rules_any 제거), `tests/modules/test_detection/test_phase1_case_builder_stage2.py` (삭제).
+- **보존 산출물**: `scripts/simulate_stage2_critical.py`, `scripts/analyze_stage2_candidates.py`, `scripts/fitting_audit.py` 는 향후 priority_score 계층 재설계 시 검증 도구로 재사용.
+- **관련 산출물**:
+  - `docs/PHASE1_SCORE_DISTRIBUTION_LOG.md` Stage 2-A/2-B 섹션
+  - `scripts/simulate_stage2_critical.py` 측정 결과 (fy2022/fy2023 시뮬레이션)
+- **관련 결정**: D060 (priority_score 0.90 critical 승격 원칙 5조).
+
+### D062: PHASE2/PHASE1+2 통합 3등급 분류 정책 (2026-05-21)
+- **결정**: PHASE2 단독 큐와 PHASE1+2 통합 큐의 표시 등급을 PHASE1 과 같은 3등급 (즉시검토 / 검토대상 / 후보 / 신호없음) 으로 통일한다. 점수 임계 기반 분류 대신 **subdetector tier (yaml 도메인 잠금) + coverage_breadth_q95 (다중 family 동의) + ml_only ECDF** 결합 정책을 사용한다.
+
+#### PHASE2 단독 등급 (v2 채택)
+
+```
+즉시검토:
+  max_evidence_tier == "strong" AND coverage_breadth_q95 >= 2
+
+검토대상:
+  max_evidence_tier == "strong" AND coverage_breadth_q95 < 2
+  OR (max_evidence_tier == "moderate" AND coverage_breadth_q95 >= 2)
+  OR (max_evidence_tier == "ml_quantile" AND family in ml_only_families
+      AND max_family_ecdf >= 0.995 AND coverage_breadth_q95 >= 2)
+
+후보:
+  phase2_noisy_or > 0 AND 위 조건 미달
+
+신호없음:
+  phase2_noisy_or == 0
+```
+
+`ml_only_families` 는 `unsupervised` (VAE) 만 포함. 단정 fraud scenario 명칭 (`embezzlement_concealment`, `fictitious_entry`) UI/export/LLM 직접 노출 금지 (D060 격하 원칙 정합).
+
+#### PHASE1+2 통합 등급 — "max band 취하되 즉시검토만 교집합"
+
+```
+통합 즉시검토:
+  PHASE1 즉시검토 AND PHASE2 즉시검토              (양측 모두 통과)
+
+통합 검토대상:
+  PHASE1 즉시검토
+  OR PHASE2 즉시검토
+  OR PHASE1 검토대상
+  OR PHASE2 검토대상                              (max band)
+
+통합 후보:
+  PHASE1 후보 OR PHASE2 후보
+
+통합 신호없음:
+  양측 모두 신호없음
+```
+
+즉시검토만 교집합으로 보수적 정의 (양측 도메인 잠금 모두 통과). 그 외 등급은 max band — PHASE1 검토대상이 PHASE2 신호없음 만으로 통합 후보로 격하되지 않도록 안전망.
+
+#### 신규 필드 (band 만, 가상 점수 신설 없음)
+
+```
+phase1_review_band    # 기존 priority_band 표시 alias
+phase2_review_band    # 신규
+phase12_review_band   # 신규
+```
+
+`phase2_review_score` / `phase12_review_score` 같은 가상 점수는 신설 안 함 — band 만 도입. 표시/필터/KPI/badge 용도. **정렬 키 변경 금지**:
+- PHASE1 단독 큐: `priority_band → composite_sort_score → priority_score → ...` (기존)
+- PHASE2 단독 큐: `primary_rrf_score → coverage_breadth_q95 → strong_count → ...` (기존 ladder)
+- 통합 큐: `final_rrf_score = 1/(60+rank_P1) + 1/(60+rank_P2)` (기존 RRF)
+
+#### UI 표시 정책 (P2-C, 2026-05-21)
+
+- PHASE2 결과 탭 KPI는 `phase2_review_band` 기준의 `즉시검토 / 검토대상 / 후보`를 표시한다. `strong tier` raw count 자체를 즉시검토로 노출하지 않는다.
+- 통합 Review Queue 표는 `통합 등급 → PHASE1 등급 → PHASE2 등급`을 먼저 보여주고, 정렬 점수 컬럼은 본문 기본 표에서 숨긴다.
+- 정렬 알고리즘명(`RRF`, `k=60`, `Noisy-OR`)은 사용자 본문에 노출하지 않고 감사인 검토 언어로 설명한다.
+- 합성 truth 검증 KPI는 "부정 발견"이 아니라 "검증 라벨 매칭"으로 표시한다. 운영 UI에서 fraud scenario 단정 표현을 쓰지 않는다.
+- `dashboard/tab_phase1.py` 와 `dashboard/tab_overview.py` 는 본 UI 변경 범위에서 제외해 PHASE1/전체개요 표시 계약을 보존한다.
+
+#### Fitting 회피 (D060 5조 정합)
+
+1. **강한 seed**: strong tier 는 `subdetector_tiers.yaml` 의 도메인 잠금 — 변경 X.
+2. **중요성/금액성**: 통합 단계에서 PHASE1 의 L4-03 floor / materiality 가 자동 반영.
+3. **독립 보강**: `coverage_breadth_q95 >= 2` 가 다중 family 동의를 강제.
+4. **단독 금지**: weak / moderate 단독 / ml_quantile 단독 / 단순 ECDF / 단순 coverage 즉시검토 진입 불가. strong tier 는 yaml 도메인 잠금이라 본 원칙 적용 대상이 아니지만, 즉시검토는 coverage>=2 까지 강제하여 한 번 더 안전망 적용.
+5. **count 보고 재조정 금지**: yaml 임계 (`coverage_breadth_q95 >= 2`, `ml_only_families`, `min_max_family_ecdf: 0.995`) 는 yaml 잠금 — 측정 후 결과 보고 변경 금지.
+
+#### 사유
+
+- v3 안 (strong 단독 즉시검토 + max(P1, P2) 통합) 은 PHASE1 Stage 2-A 가 fitting 으로 폭증한 패턴과 동일 위험 ("도메인상 맞아 보여도 모집단에서 흔하면 즉시검토 폭증") 을 재현할 가능성. v2 안 (strong + coverage>=2 + 통합 교집합) 이 보수적이고 TS-15 학습 정합.
+- PHASE2 raw family score (`phase2_internal_noisy_or` 등) 의 절대값은 데이터 분포 의존이라 도메인 의미가 약함. 점수 임계 기반 분류 대신 yaml 잠금된 tier + coverage 결합 정책이 fitting 회피에 안전.
+
+#### 영향 범위
+
+- `config/phase2_review_band.yaml` (신규)
+- `src/services/phase2_case_contract.py::Phase2CaseOverlay` (필드 추가) + `classify_phase2_review_band` helper 신규
+- 통합 build 위치 (`queue_fusion.py` 또는 동등) — `phase12_review_band` 컬럼 추가 (정렬식 변경 X)
+- `dashboard/tab_phase1.py` / `tab_phase2.py` / 통합 review queue 탭 — UI 라벨 통일 ("즉시검토 / 검토대상 / 후보"), 알고리즘명 (RRF, k=60, noisy-or) 본문 노출 금지
+- `docs/users/08_PHASE2_FAMILY_STRUCTURE.md` / `09_REVIEW_QUEUE_RRF_FUSION.md` 분류 정책 추가
+- `docs/CONSTRAINTS.md` PHASE2 band fitting 회피 정책 추가
+- `docs/TROUBLESHOOT.md` TS-16 신규
+
+#### 관련 산출물
+
+- `config/phase2_review_band.yaml`
+- `docs/PHASE1_SCORE_DISTRIBUTION_LOG.md` 후속편 또는 PHASE2 별도 로그
+- `src/services/subdetector_tiers.py` (strong/moderate/weak/ml_quantile tier 정의)
+- `docs/TROUBLESHOOT.md` TS-16 (Stage7 cache 측정 한계와 운영 경로 분리)
+
+#### 관련 결정
+
+- D058 (PHASE1+PHASE2 통합 큐 RRF) — 본 결정은 D058 의 정렬 정책을 변경하지 않고 band 표시만 추가.
+- D060 (PHASE1 priority_score 0.90 critical 승격 5조) — PHASE2 분류에 동일 5조 정신 적용.
+- D061 (Stage 2-A 보류 + priority_score 계층 재설계) — 본 결정의 v2 채택 사유 (count 폭증 회피).
+
+### D066: IC02 tolerance 및 cross-currency 가드 재보정 (2026-05-23)
+
+- **결정**: IC02 기본 금액 허용 오차를 `0.02` 에서 `0.05` 로 상향한다. `currency` 는 IC 그룹 매칭 키에서 제외해 통화가 다른 관계사 쌍도 대응 관계 자체는 인식하되, 명시 통화 불일치 또는 금액비 `20x` 초과 쌍은 `cross_currency=True` 로 표시하고 IC02 점수를 억제한다.
+- **사유**: IC02는 관계사 양측 금액이 비교 가능한 경우의 대사 예외다. FX 환산표나 기준환율이 없는 상태에서 통화가 다른 금액을 직접 비교하면 정상 관계사 pair가 금액 불일치 후보로 과대 유입된다. 통화 차이는 미대사(IC01)가 아니라 비교 불가/FX 확인 사유로 분리한다.
+- **운영 의미**: `IC02`는 계속 금액 불일치 검토 후보이며 단독 Low floor 정책은 유지한다. 다만 cross-currency 쌍은 IC02 high-confidence 금액 차이로 보지 않고 후속 FX/환산 기준 확인 대상으로 남긴다.
+- **영향 범위**: `src/detection/intercompany_rules.py::match_ic_groups`, `ic02_amount_mismatch`, `src/services/phase2_training_service.py` intercompany search presets, `config/settings.py::ic_amount_tolerance`, `ic_cross_currency_ratio_threshold`, `tests/modules/test_detection/test_intercompany_matcher.py`.

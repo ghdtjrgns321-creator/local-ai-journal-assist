@@ -1,6 +1,6 @@
 # Project Overview
 
-> **🔄 Phase 3 v2 Rescope 안내 (2026-05-14) ✅ 구현 완료 (Sprint A~G, 2026-05-15)**: 본 문서의 Phase 3 관련 기술 스택 표·디렉토리 구조·pre-plan 인덱스(8/9번)는 v1 시점 정의(Ollama/Vanna/Text-to-SQL/Export)다. Phase 3 v2 단일 목표는 **Review Queue Narrator** — PHASE1 룰 히트 + PHASE2 ML 스코어 + 전표 메타를 LLM이 읽고 감사 후보 Top-N 재정렬 + 의심 근거 서술 + 다음 행동 제안. Text-to-SQL/Vanna/ChromaDB/fpdf2/Export 탭/Chat 탭은 비범위(구현 보존, 신규 작업 없음). 단일 출처: [PHASE3_REVIEW_NARRATOR_SPEC.md](PHASE3_REVIEW_NARRATOR_SPEC.md), [PHASE3_REWORK_PLAN.md](PHASE3_REWORK_PLAN.md), [DECISION.md §D041 / §D043](DECISION.md), 완료 리포트 [completed/phase3_review_narrator_completion.md](completed/phase3_review_narrator_completion.md). 본 문서 본문 라인은 historical reference로 보존한다.
+> **🔄 Phase 3 v2 Rescope (2026-05-14) ✅ 구현 완료 (Sprint A~G, 2026-05-15)**: Phase 3 v2 단일 목표는 **Review Queue Narrator** — PHASE1 룰 히트 + PHASE2 ML 스코어 + 전표 메타를 LLM이 읽고 감사 후보 Top-N 재정렬 + 의심 근거 서술 + 다음 행동 제안. Text-to-SQL/Vanna/ChromaDB/fpdf2/Export 탭/Chat 탭은 비범위(구현 보존, 신규 작업 없음). 단일 출처: [PHASE3_REVIEW_NARRATOR_SPEC.md](PHASE3_REVIEW_NARRATOR_SPEC.md), [DECISION.md §D041 / §D043](DECISION.md), 완료 리포트 [completed/phase3_review_narrator_completion.md](completed/phase3_review_narrator_completion.md), 재코딩 계획 [completed/PHASE3_REWORK_PLAN.md](completed/PHASE3_REWORK_PLAN.md).
 
 > **PHASE1 역할 원칙**: PHASE1은 `fraud`를 확정하거나 정답 라벨을 맞히는 단계가 아니다. PHASE1의 목적은 전수 모집단에서 규칙 위반, 정책 위반, 이상 징후, 분석적 검토 신호를 넓게 올려 **감사인이 봐야 할 항목과 우선순위**를 만드는 것이다. DataSynth의 `is_fraud`/`is_anomaly`와 precision/recall은 개발 검증 보조 지표이며, 운영 해석은 예외 처리 대상, 감사인 리뷰 대상, 고위험 후보를 구분하는 review queue 기준으로 한다.
 
@@ -10,194 +10,211 @@
 
 > PHASE1 scoring baseline: rule results are normalized through `src/detection/rule_scoring.py` before case aggregation. Dashboard/report priority is case-level `priority_score`, not a direct sum of raw rule labels or row-level `anomaly_score`. Case priority uses control, amount, logic, timing, and behavior axes; timing keeps closing/cutoff signals such as L3-11 visible in the review queue.
 
-> Current PHASE1 rule scope: 32 L1~L4 implemented rules. L3-12 is an `access_scope_review` work-scope review signal, separated from L1-06 direct SoD violations and promoted only through `work_scope_combo_score` when corroborating rule groups are present.
+> Current PHASE1 rule scope: 32 L1~L4 canonical rules (31 transaction/detail + 1 macro `L4-02`). `Benford` is a display alias for `L4-02` and must not be counted separately. `L3-12` is an `access_scope_review` review signal under `L1-06`. `D01/D02`, `IC01~IC03`, `GR01/GR03` are macro/sidecar findings outside the L1~L4 count. 단일 출처: [RULE_DETAIL_METADATA_V1_LOCK.md](RULE_DETAIL_METADATA_V1_LOCK.md), [PHASE1_TOPIC_SCORING_V1_LOCK.md](PHASE1_TOPIC_SCORING_V1_LOCK.md).
 
-## ?꾨줈?앺듃 ?뺤쓽
 
-Local AI Audit Assistant v2.0 ??媛먯궗 ?ㅼ쬆?덉감 ?꾪몴 ?뚯뒪???먮룞???꾧뎄.
-MindBridge, KPMG Clara???듭떖 濡쒖쭅???ㅽ뵂?뚯뒪(Python)濡??ы쁽?섎뒗 ?ы듃?대━??
+> **포트폴리오 주장 범위 (2026-05-19)**: 이 프로젝트는 `fraud`를 판정하거나 실제 운영 부정 탐지 성능을 보장하는 모델이 아니다. 전수 모집단에서 감사인이 먼저 볼 review queue를 만들고, 무작위 검토 대비 상위 구간에 review-worthy synthetic anomaly를 강하게 농축하는 로컬 감사 분석 보조 도구다. DataSynth 기반 precision/recall은 개발 검증 보조 지표이며, 실데이터 운영 성능으로 주장하지 않는다.
+> **금지 표현**: "부정을 정확히 탐지", "실무 운영 성능 검증 완료", "TOP100 precision 충분", "fraud 확정/자동 적발"처럼 확정적이거나 운영 성능을 보장하는 표현은 사용하지 않는다.
 
-## 湲곗닠 ?ㅽ깮
+## 프로젝트 정의
 
-| ?곸뿭        | 湲곗닠                               | 鍮꾧퀬                                        |
+Local AI Audit Assistant v2.0 — 감사 실증절차 전표 테스트 자동화 도구.
+MindBridge, KPMG Clara의 핵심 로직을 오픈소스(Python)로 재현하는 포트폴리오.
+
+## 기술 스택
+
+| 영역        | 기술                               | 비고                                        |
 |-------------|------------------------------------|---------------------------------------------|
-| ?몄뼱        | Python 3.11+                       |                                             |
-| ?⑦궎吏      | uv + pyproject.toml                | dependency-groups濡?core/ml/llm/dashboard 遺꾨━ |
-| ?꾩쿂由?     | openpyxl, pandas 2.x, pandera      | pandera: ?ㅽ궎留?湲곕컲 ?덉쭏 寃뚯씠??           |
-| 而щ읆 留ㅽ븨   | rapidfuzz                          | fuzzy string matching                       |
-| ?ㅼ젙        | pydantic-settings, pyyaml          | ?섍꼍蹂??+ YAML                             |
-| ?듦퀎        | scipy.stats, numpy                 | Benford, KS 寃?? Runs test                |
-| 吏?꾪븰??   | xgboost, lightgbm, scikit-learn, shap | ?뚯씠?꾨씪???명봽??(怨좉컼???ㅻ뜲?댄꽣 fine-tuning?? Phase 2) |
-| 鍮꾩??꾪븰?? | pytorch (VAE), scikit-learn (IF)   | **?듭떖 ?먯?湲?* ???⑹꽦 ?곗씠???곹빀???믪쓬 (Phase 2)  |
-| ?쒓뎅??NLP  | kiwipiepy                          | JVM ?섏〈???놁쓬 (Phase 3)                  |
-| DB          | duckdb                             | OLAP 理쒖쟻??                                |
-| LLM         | ?곸슜 API (Gemini, Claude ??       | Phase 3 ??濡쒖뺄 LLM ????곸슜 API ?ъ슜      |
-| Text-to-SQL | ?곸슜 LLM API 湲곕컲                  | Phase 3                                     |
-| 踰≫꽣 DB     | ChromaDB                           | RAG ?ㅽ넗由ъ? (Phase 3)                     |
-| ??쒕낫??   | streamlit, plotly, streamlit-aggrid |                                             |
-| PDF         | fpdf2                              | Phase 3                                     |
+| 언어        | Python 3.11+                       |                                             |
+| 패키지      | uv + pyproject.toml                | dependency-groups로 core/ml/llm/dashboard 분리 |
+| 전처리      | openpyxl, pandas 2.x, pandera      | pandera: 스키마 기반 품질 게이트            |
+| 컬럼 매핑   | rapidfuzz                          | fuzzy string matching                       |
+| 설정        | pydantic-settings, pyyaml          | 환경변수 + YAML                             |
+| 통계        | scipy.stats, numpy                 | Benford, KS 검정, Runs test                 |
+| 지도학습    | xgboost, lightgbm, scikit-learn, shap | 파이프라인 인프라 (고객사 실데이터 fine-tuning용, Phase 2 dormant) |
+| 비지도학습  | pytorch (VAE), scikit-learn (IF)   | **핵심 탐지기** — Phase 2 MVP 단일 promoted model |
+| 한국어 NLP  | kiwipiepy                          | JVM 의존성 없음. Phase 3 Narrator 적요 요약 입력 |
+| DB          | duckdb                             | OLAP 최적화, Engagement별 격리              |
+| LLM         | OpenAI API (gpt-5.4 / gpt-5.4-mini 2티어) | Phase 3 Review Queue Narrator 한정 |
+| 벡터 DB     | ChromaDB (historical v1)           | Phase 3 v2 비범위 (구현 보존)               |
+| Text-to-SQL | (historical v1, Vanna)             | Phase 3 v2 비범위 (구현 보존)               |
+| 대시보드    | streamlit, plotly, streamlit-aggrid |                                             |
+| PDF/Export  | fpdf2 (historical v1)              | Phase 3 v2 비범위 (구현 보존)               |
 
-## ?붾젆?좊━ 援ъ“
+## 디렉토리 구조
 
-> **?꾪궎?띿쿂 ?꾪솚 (2026-04-02)**: Company-Centric ?ъ꽕怨?吏꾪뻾 以? [NEW_TASKS.MD](NEW_TASKS.MD) 李몄“.
+> **아키텍처**: Company-Centric — `data/companies/{id}/engagements/{year}/audit.duckdb` 격리.
 
 ```
 local-ai-assist/
-?쒋?? pyproject.toml
-?쒋?? CLAUDE.md
-?쒋?? config/                     # 湲濡쒕쾶 湲곕낯 ?ㅼ젙 (?뚯궗蹂??ㅻ쾭?쇱씠?쒖쓽 ?대갚)
-??  ?쒋?? settings.py             # AuditSettings + ContextFactory
-??  ?쒋?? datasynth.yaml          # DataSynth ?앹꽦 ?ㅼ젙
-??  ?쒋?? schema.yaml             # ?쒖? 46而щ읆 ?ㅽ궎留?(?꾩궗 怨듯넻)
-??  ?쒋?? keywords.yaml           # 湲곕낯 ERP蹂??ㅻ뜑 ?ㅼ썙????  ?쒋?? audit_rules.yaml        # 湲곕낯 媛먯궗 猷???  ?쒋?? risk_keywords.yaml      # 湲곕낯 ?꾪뿕 ?곸슂 ?ㅼ썙????  ?쒋?? cleaning.yaml           # ???罹먯뒪??洹쒖튃 (?꾩궗 怨듯넻)
-??  ?쒋?? chart_of_accounts.csv   # 踰붿슜 CoA (湲濡쒕쾶 ?대갚)
-??  ?붴?? presets/                # ?곗뾽蹂??꾨━??(?고????ㅻ쾭?덉씠)
-?쒋?? src/
-??  ?쒋?? context.py              # CompanyContext + ContextFactory (RC-0)
-??  ?쒋?? pipeline.py             # AuditPipeline(context=) ?ㅼ??ㅽ듃?덉씠????  ?쒋?? company/                # ?뚯궗/Engagement CRUD (RC-0)
-??  ??  ?쒋?? models.py           # CompanyProfile, EngagementProfile
-??  ??  ?쒋?? repository.py       # YAML CRUD, ?붾젆?좊━ 愿由???  ??  ?쒋?? merger.py           # 3怨꾩링 deep_merge
-??  ??  ?붴?? migration.py        # ?덇굅??DB 留덉씠洹몃젅?댁뀡
-??  ?쒋?? ingest/                 # ?섏쭛쨌?됲깂????  ?쒋?? feature/                # 媛먯궗 ?뚯깮蹂??19媛???  ?쒋?? eda/                    # EDA ?꾨줈?뚯씪留???  ?쒋?? validation/             # 怨꾩링??寃利?(L1~L3)
-??  ?쒋?? preprocessing/          # ML ?꾩쿂由??뚯씠?꾨씪??(Phase 2)
-??  ?쒋?? detection/              # PHASE1 L1~L4 32媛?猷?+ 蹂댁“ findings
-??  ?쒋?? db/                     # DuckDB (ConnectionManager)
-??  ?쒋?? llm/                    # LLM ?곕룞 (Phase 3)
-??  ?붴?? export/                 # ?대낫?닿린 (Phase 3)
-?쒋?? dashboard/                  # Streamlit
-??  ?쒋?? app.py                  # 硫붿씤 ??(?뚯궗 ?좏깮 ??遺꾩꽍 ?뚮줈??
-??  ?쒋?? page_company.py         # ?뚯궗 ?좏깮/?앹꽦 ?붾㈃ (RC-4)
-??  ?쒋?? _state.py               # session_state ??(company_id, engagement_id ?ы븿)
-??  ?쒋?? _kpi.py                 # KPI 6媛???  ?쒋?? tab_eda.py              # Tab 0: EDA ?꾨줈?뚯씪
-??  ?쒋?? tab_summary.py          # Tab 1: Executive Summary
-??  ?쒋?? tab_benford.py          # Tab 2: Benford Analysis
-??  ?쒋?? tab_explorer.py         # Tab 3: Anomaly Explorer
-??  ?쒋?? tab_comparison.py       # Tab 4: ?곕룄 鍮꾧탳 (RC-4)
-??  ?쒋?? tab_chat.py             # Tab 5: Text-to-SQL (Phase 3)
-??  ?붴?? components/
-??      ?쒋?? company_manager.py  # ?뚯궗 CRUD 而댄룷?뚰듃 (RC-4)
-??      ?쒋?? engagement_selector.py # ?곕룄 ?좏깮 (RC-4)
-??      ?쒋?? data_uploader.py    # ?뚯씪 ?낅줈??+ ?뚯씠?꾨씪???ㅽ뻾
-??      ?쒋?? filters.py          # ?ъ씠?쒕컮 ?꾪꽣 12媛???      ?쒋?? mapping_review.py   # 留ㅽ븨 由щ럭 3-tier UI
-??      ?쒋?? preset_selector.py  # ?꾨━??+ ?뚯궗蹂??ㅼ젙 ?듯빀
-??      ?쒋?? threshold_sidebar.py # ?꾧퀎媛??쒕떇 ?щ씪?대뜑
-??      ?쒋?? rule_panel.py       # 猷?而⑦듃濡??⑤꼸
-??      ?쒋?? _redetect.py        # ?ы깘吏 ?ы띁
-??      ?쒋?? explorer_*.py       # ?먯깋湲??쒕툕 而댄룷?뚰듃 3醫???      ?붴?? charts/             # Plotly 李⑦듃 ?섑띁 17醫??쒋?? data/
-??  ?쒋?? companies/              # ?뚯궗蹂??곗씠??(Company-Centric)
-??  ??  ?붴?? {company_id}/
-??  ??      ?쒋?? company.yaml    # 硫뷀? + settings_overrides
-??  ??      ?쒋?? chart_of_accounts.csv
-??  ??      ?쒋?? keywords.yaml   # ERP 蹂꾩묶 ?ㅻ쾭?쇱씠????  ??      ?쒋?? audit_rules.yaml
-??  ??      ?쒋?? profiles/       # 留ㅽ븨 ?꾨줈?뚯씪
-??  ??      ?붴?? engagements/{year}/
-??  ??          ?쒋?? engagement.yaml
-??  ??          ?쒋?? audit.duckdb  # Engagement蹂?寃⑸━ DB
-??  ??          ?붴?? models/       # ML 紐⑤뜽 ?꾪떚?⑺듃
-??  ?붴?? journal/                # ?꾪몴 ?먮낯 (.gitignore)
-?쒋?? tools/datasynth/            # EY-ASU DataSynth (Rust)
-?쒋?? tests/
-?붴?? docs/
+├── pyproject.toml
+├── CLAUDE.md
+├── config/                     # 글로벌 기본 설정 (회사별 오버라이드의 폴백)
+│   ├── settings.py             # AuditSettings + ContextFactory
+│   ├── datasynth.yaml          # DataSynth 생성 설정
+│   ├── schema.yaml             # 표준 스키마 (전사 공통)
+│   ├── keywords.yaml           # 기본 ERP별 헤더 키워드
+│   ├── audit_rules.yaml        # 기본 감사 룰
+│   ├── risk_keywords.yaml      # 기본 위험 적요 키워드
+│   ├── cleaning.yaml           # 타입 캐스팅 규칙 (전사 공통)
+│   ├── chart_of_accounts.csv   # 범용 CoA (글로벌 폴백)
+│   ├── coa_categories.yaml     # 계정군 정의 (YAML, 코드 상수 금지)
+│   ├── phase1_case.yaml        # PHASE1 case priority/floor 정책
+│   └── presets/                # 산업별 프리셋 (런타임 오버레이)
+├── src/
+│   ├── context.py              # CompanyContext + ContextFactory (RC-0)
+│   ├── pipeline.py             # AuditPipeline(context=) 오케스트레이터
+│   ├── company/                # 회사/Engagement CRUD
+│   │   ├── models.py           # CompanyProfile, EngagementProfile
+│   │   ├── repository.py       # YAML CRUD, 디렉토리 관리
+│   │   ├── merger.py           # 3계층 deep_merge
+│   │   └── migration.py        # 레거시 DB 마이그레이션
+│   ├── ingest/                 # 수집·평탄화·헤더 탐지·컬럼 매핑
+│   ├── feature/                # 감사 파생변수 19개
+│   ├── eda/                    # EDA 프로파일링
+│   ├── validation/             # 계층적 검증 (L1 Pandera / L2 회계 / L3 통계)
+│   ├── preprocessing/          # ML 전처리 파이프라인 (Phase 2)
+│   ├── detection/              # PHASE1 L1~L4 32개 룰 + 보조 findings
+│   │   ├── rule_scoring.py     # 룰 normalized score (PHASE1 운영 단일 출처)
+│   │   ├── topic_scoring.py    # 7개 topic queue
+│   │   ├── score_aggregator.py # row anomaly_score 가중합
+│   │   ├── phase1_case_builder.py
+│   │   └── ...                 # L1~L4, evidence, benford, variance, IC, graph
+│   ├── models/                 # phase1_case 등 Pydantic 모델
+│   ├── services/               # phase2 inference/training service
+│   ├── db/                     # DuckDB (ConnectionManager)
+│   ├── llm/                    # Phase 3 Narrator (api_client, models)
+│   └── export/                 # phase1_case_view (historical export v1 보존)
+├── dashboard/                  # Streamlit
+│   ├── app.py                  # 메인 앱 (회사 선택 → 분석 플로우)
+│   ├── page_company.py         # 회사 선택/생성 화면
+│   ├── _state.py / _kpi.py
+│   ├── tab_overview.py / tab_phase1.py / tab_phase2.py
+│   ├── tab_review_queue.py     # Phase 3 Narrator 결과 큐
+│   ├── tab_explorer.py / tab_comparison.py
+│   └── components/             # data_uploader, filters, mapping_review,
+│                               # rule_panel, scroll_anchor, charts/, ...
+├── data/
+│   ├── companies/              # 회사별 데이터 (Company-Centric)
+│   │   └── {company_id}/
+│   │       ├── company.yaml    # 메타 + settings_overrides
+│   │       ├── chart_of_accounts.csv
+│   │       ├── keywords.yaml
+│   │       ├── audit_rules.yaml
+│   │       ├── profiles/       # 매핑 프로파일
+│   │       └── engagements/{year}/
+│   │           ├── engagement.yaml
+│   │           ├── audit.duckdb  # Engagement별 격리 DB
+│   │           └── models/       # ML 모델 아티팩트
+│   └── journal/                # 전표 원본 (.gitignore)
+├── tools/datasynth/            # EY-ASU DataSynth (Rust, .gitignore)
+├── tools/scripts/              # 진단/베이스라인/감사 스크립트
+├── tests/
+├── dev/active/                 # 진행 중 plan/context/tasks
+└── docs/
 ```
 
-## 援ы쁽 媛?대뱶 (docs/pre-plan/)
+## 활성 문서 인덱스
 
-媛쒖슂?쒕? 湲곕뒫 ?곸뿭蹂꾨줈 遺꾨━??援ы쁽 ?덊띁?곗뒪. 媛??뚯씪? 紐⑹쟻/愿???뚯씪/?듭떖 ?대옒???곗씠???먮쫫/援ы쁽 ?쒖꽌/?뚯뒪???꾨왂???ы븿.
+| 영역 | 문서 |
+|------|------|
+| 프로젝트 정의 | 본 문서, [상세.MD](상세.MD), [핵심기능.MD](핵심기능.MD), [EXPLAIN.md](EXPLAIN.md), [ux-flow.md](ux-flow.md) |
+| 설계 결정/제약 | [DECISION.md](DECISION.md), [CONSTRAINTS.md](CONSTRAINTS.md), [TROUBLESHOOT.md](TROUBLESHOOT.md), [debugging.md](debugging.md) |
+| Detection 운영 | [DETECTION_RULES.md](DETECTION_RULES.md), [DETECTION_REFERENCE.md](DETECTION_REFERENCE.md), [DETECTION_PARAMETERS.md](DETECTION_PARAMETERS.md), [DETECTION_PORTFOLIO_REFRAME.md](DETECTION_PORTFOLIO_REFRAME.md), [DETECTION_RANKING_CRITERIA.md](DETECTION_RANKING_CRITERIA.md) |
+| PHASE1 활성 락 | [RULE_DETAIL_METADATA_V1_LOCK.md](RULE_DETAIL_METADATA_V1_LOCK.md), [PHASE1_TOPIC_SCORING_V1_LOCK.md](PHASE1_TOPIC_SCORING_V1_LOCK.md), [PHASE1_RULE_RELATIONSHIP_MAP.md](PHASE1_RULE_RELATIONSHIP_MAP.md), [PHASE1_SEPARATE_BENCHMARK_SPEC.md](PHASE1_SEPARATE_BENCHMARK_SPEC.md) |
+| PHASE2 진행 | [PHASE2_GOVERNANCE_DESIGN.md](PHASE2_GOVERNANCE_DESIGN.md), [PHASE2_INTERFACE_DESIGN.md](PHASE2_INTERFACE_DESIGN.md), [PHASE2_FITTING_AUDIT.md](PHASE2_FITTING_AUDIT.md) |
+| Phase 3 spec | [PHASE3_REVIEW_NARRATOR_SPEC.md](PHASE3_REVIEW_NARRATOR_SPEC.md) |
+| 최신 검증 결과 | [DETECTION_RESULTS_CONTRACT_V3.md](DETECTION_RESULTS_CONTRACT_V3.md), [DETECTION_RESULTS_MANIPULATION_V7_FIXED3_PHASE2.md](DETECTION_RESULTS_MANIPULATION_V7_FIXED3_PHASE2.md) |
+| 지표 정의 | [metrics.md](metrics.md) |
+| Git 운영 | [GIT.md](GIT.md) |
+| 사용자 시나리오 | [users/00_INDEX.md](users/00_INDEX.md) ~ `10_PORTFOLIO_POSITIONING.md` |
+| 템플릿 | [templates/phase2_evaluation_report_template.md](templates/phase2_evaluation_report_template.md) |
+| 완료 산출물 (구현 가이드 포함) | [completed/](completed/) — `raw-plan/` (구 pre-plan 13개), Phase 3 완료 리포트, S 시리즈, DataSynth contract v126 sidecar, 구버전 DETECTION_RESULTS 등 |
 
-| #  | ?뚯씪                                                     | ?댁슜                                                          | Phase  |
-|----|----------------------------------------------------------|---------------------------------------------------------------|--------|
-| 0  | [00-dataset.md](pre-plan/00-dataset.md)                  | ?곗씠?곗뀑 ?섏쭛쨌?좎젙쨌?곹빀?꽷텾hase蹂??쒖슜 ?꾨왂                   | ?ъ쟾   |
-| 1  | [01-project-setup.md](pre-plan/01-project-setup.md)      | pyproject.toml, uv, AuditSettings, YAML ?ㅼ젙                 | MVP    |
-| 2  | [02-ingest.md](pre-plan/02-ingest.md)                    | ?뚯씪 寃利? Excel ?쎄린, ?ㅻ뜑 ?먯?, 而щ읆 留ㅽ븨, ???罹먯뒪??    | MVP    |
-| 3  | [03-feature.md](pre-plan/03-feature.md)                  | 媛먯궗 ?뚯깮蹂??11媛?(time/amount/pattern/text)                 | MVP    |
-| 3a | [03a-preprocessing.md](pre-plan/03a-preprocessing.md)    | ML ?꾩쿂由??뚯씠?꾨씪?? VAE ?섑띁, ?쇰꺼 ?꾨왂                     | P2     |
-| 4  | [04-validation.md](pre-plan/04-validation.md)            | L1 Pandera + L2 ?뚭퀎 + L3 ?듦퀎 寃利?+ 由ы룷??                | MVP+P2 |
-| 5  | [05-detection.md](pre-plan/05-detection.md)              | 珥덇린 24媛?猷??ㅺ퀎 湲곕줉. ?꾪뻾 湲곗?? L1/L2/L3/L4 32媛?猷? Benford(L4-02), L3-12 work-scope review, ML 16媛? NLP 5媛?| MVP~P3 |
-| 6  | [06-db.md](pre-plan/06-db.md)                            | DuckDB 而ㅻ꽖?? ?ㅽ궎留? 濡쒕뜑, ?꾨━??荑쇰━                     | MVP    |
-| 7  | [07-dashboard.md](pre-plan/07-dashboard.md)              | Streamlit 5?? 而댄룷?뚰듃, 李⑦듃, ?꾪꽣                          | MVP+P3 |
-| 8  | [08-llm.md](pre-plan/08-llm.md)                          | Ollama, Vanna AI 2.0, SQL 寃利? ?꾨━?? ?몄궗?댄듃             | P3     |
-| 9  | [09-export.md](pre-plan/09-export.md)                    | Excel/PDF 媛먯궗議곗꽌, Audit Trail                               | P3     |
-| 10 | [10-sample-data.md](pre-plan/10-sample-data.md)          | 媛??GL ?곗씠???앹꽦湲???DataSynth濡??泥대맖                    | MVP    |
-| UX | [ux-flow.md](pre-plan/ux-flow.md)                        | UX 3?④퀎 ?먮쫫?? 媛먯궗???щ━, 3媛吏 ?붿옄???먯튃               | ?꾩껜   |
+## 합성 데이터 (DataSynth)
 
-**援ы쁽 ?섏〈 洹몃옒??**
-```
-00-dataset ??01-project-setup ??10-sample-data ??02-ingest ??03-feature ??04-validation
-                                                                    ??                                                              05-detection ??03a-preprocessing ??ML ?먯?
-                                                                                                    ??                                                                                                  06-db
-                                                                                                    ??                                                                                              07-dashboard
-                                                                                                    ??                                                                                         08-llm ??09-export
-```
+EY-ASU DataSynth(Rust)로 생성한 K-IFRS 적용 한국 중견 제조 그룹사 시뮬레이션. 현재 baseline freeze `v126` (2026-05-02).
 
-## ?⑹꽦 ?곗씠??(DataSynth)
-
-EY-ASU DataSynth(Rust)濡??앹꽦??K-IFRS ?곸슜 ?쒓뎅 以묎껄 ?쒖“ 洹몃９???쒕??덉씠??
-
-| ??ぉ           | 媛?                                                   |
+| 항목           | 값                                                    |
 |----------------|-------------------------------------------------------|
-| 踰뺤씤           | C001 蹂몄궗(?쒖슱), C002 ?몄궛怨듭옣, C003 泥쒖븞怨듭옣 ???꾩껜 KRW |
-| ?뚭퀎?곕룄       | 2022-01 ~ 2024-12 (3媛쒕뀈)                             |
-| ?꾪몴 洹쒕え      | 319,226嫄?/ 1,109,221 ?쇱씤?꾩씠??(?꾪몴????3.47??      |
-| 湲덉븸 遺꾪룷      | LogNormal(14.0, 2.5) ???쇱씤 以묒븰媛?~33.6留뚯썝, ?됯퇏 ~1,706留뚯썝 |
-| ?뱀씤 ?쒕룄      | 6?④퀎 ?꾧껐洹쒖젙 (?먮룞?믩떞?뱀옄?믫??β넂蹂몃??β넂CFO?믪씠?ы쉶)    |
-| ?ъ슜???      | 吏곸썝 留덉뒪??246紐?湲곕낯 204 + JE actor 42), `created_by 42/42` 諛?`approved_by 14/14` 吏곸젒 議곗씤 |
-| ?쒓컙 ?⑦꽩      | ?쒓뎅 洹쇰Т 臾명솕 諛섏쁺 (?ъ빞 1.5%, ?ㅼ쟾 ?쇳겕 29.7%, ?쇨렐 13.1%) |
-| ?댁긽 二쇱엯      | fraud 1.35% (15,008?? + anomaly 0.57% (6,270?? + SoD 2.75% (30,488?? + anomaly_labels.csv 1,912嫄?(5媛?移댄뀒怨좊━) |
-| Benford        | 泥レ㎏ ?먮┸???곹빀 (tolerance 5%, payroll/recurring ?쒖쇅) |
+| 법인           | C001 본사(서울), C002 울산공장, C003 천안공장 — 전체 KRW |
+| 회계연도       | 2022-01 ~ 2024-12 (3개년)                             |
+| 전표 규모      | `319,193` 문서 / `1,109,435` 라인아이템 (52 컬럼) |
+| 금액 분포      | LogNormal(14.0, 2.5) — 라인 중앙값 ~33.6만원, 평균 ~1,706만원 |
+| 승인 한도      | 6단계 전결규정 (자동→담당자→팀장→본부장→CFO→이사회)    |
+| 사용자 풀      | 직원 마스터 246명 (기본 204 + JE actor 42), `created_by 42/42` 및 `approved_by 14/14` 직접 조인 |
+| 시간 패턴      | 한국 근무 문화 반영 (심야 1.5%, 오전 피크 29.7%, 야근 13.1%) |
+| 이상 주입      | sidecar `labels/anomaly_labels.csv` `3,149` 건 (manipulation v4~v7 시리즈로 fitting 위험 제거 후 확장 중) |
+| Benford        | 첫째 자릿수 적합 (tolerance 5%, payroll/recurring 제외) |
+| 외부 검증      | OpenDataPhilly / Tritscher portability·shadow 검증 (보조) |
 
-## ML ?숈뒿 ?꾨왂
+상세: [completed/datasynth.md](completed/datasynth.md), [completed/DATASYNTH_INJECTION_SPEC.md](completed/DATASYNTH_INJECTION_SPEC.md), DataSynth contract sidecar/taxonomy v126 (`completed/datasynth_contract_*_v126.*`).
 
-鍮꾩??꾪븰??以묒떖 + 吏?꾪븰???뚯씠?꾨씪???명봽??援ъ텞.
+## ML 학습 전략
 
-| ?묎렐踰?| 紐⑤뜽 | ??븷 | ?⑹꽦 ?곗씠???곹빀??|
+비지도학습 중심 + 지도학습 dormant + Phase 3 LLM Narrator.
+
+| 접근법 | 모델 | 역할 | 합성 데이터 적합도 |
 |:-------|:-----|:-----|:-----------------:|
-| 鍮꾩??꾪븰??| VAE + Isolation Forest | **?듭떖 ?먯?湲?* ???뺤긽 遺꾪룷 ?댄깉 ?먯? | ?믪쓬 |
-| 吏?꾪븰??| XGBoost, FT-Transformer, BiLSTM | ?뚯씠?꾨씪???명봽????怨좉컼???ㅻ뜲?댄꽣 ?좎엯 ???쒖꽦??| 以묎컙 |
-| ?숈긽釉?| Stacking Meta-Learner (LR Ridge) | 6媛?紐⑤뜽 異쒕젰 寃고빀 | ?믪쓬 |
+| 비지도학습 | VAE (1개 promoted) + Isolation Forest | **Phase 2 MVP 핵심 탐지기** — 정상 분포 이탈 evidence | 높음 |
+| 지도학습 | XGBoost, LightGBM, FT-Transformer, BiLSTM | Dormant. 라벨 누수 가드(Supervised Gate) 통과 후만 활성화 | 낮음 (생성기 shortcut 위험) |
+| 앙상블 | Stacking Meta-Learner (LR Ridge, OOF) | Experimental — 지도학습 활성화 시 결합 | 중간 |
+| LLM Narrator | OpenAI gpt-5.4 / gpt-5.4-mini 2티어 | Phase 3 v2 — Top-N 재정렬, 근거 서술, 다음 행동 제안 | (해석 전용) |
 
-**諛곌꼍**: DataSynth ?⑹꽦 ?곗씠?곗쓽 ?댁긽移섎뒗 猷?湲곕컲?쇰줈 二쇱엯?섎?濡? 吏?꾪븰?????쒗솚 ?숈뒿(Circular Learning) 臾몄젣 諛쒖깮.
-鍮꾩??꾪븰??VAE+IF)? ?뺤긽 遺꾪룷瑜??숈뒿?섎?濡??⑹꽦 ?곗씠?곗뿉?쒕룄 ?좏슚.
-吏?꾪븰???뚯씠?꾨씪??cv_selector, SMOTE-ENN, PR-AUC ?됯?)? ?명봽?쇰줈 援ъ텞?섏뿬,
-?ν썑 怨좉컼?щ퀎 ?ㅻ뜲?댄꽣 ?좎엯 ??fine-tuning?쇰줈 利됱떆 ?쒖꽦??媛??
+**배경**: DataSynth 합성 데이터의 이상치는 룰 기반으로 주입되므로, 지도학습 시 순환 학습(Circular Learning) 문제 발생.
+비지도학습(VAE+IF)은 정상 분포를 학습하므로 합성 데이터에서도 유효.
+지도학습 파이프라인(cv_selector, SMOTE-ENN, PR-AUC 평가, threshold 동적 최적화)은 인프라로만 구축, 고객사별 실데이터 유입·HITL 라벨 축적 이후 fine-tuning으로 활성화.
 
-?곸꽭: [CONSTRAINTS.md 짠ML ?숈뒿 ?꾨왂](CONSTRAINTS.md) | [TROUBLESHOOT.md 짠TS-3](TROUBLESHOOT.md)
+상세: [CONSTRAINTS.md](CONSTRAINTS.md), [TROUBLESHOOT.md §TS-3](TROUBLESHOOT.md), [PHASE2_FITTING_AUDIT.md](PHASE2_FITTING_AUDIT.md).
 
-## ?곗씠???먮쫫
-
-> **Company-Centric ?ъ꽕怨?諛섏쁺 (2026-04-02)**
+## 데이터 흐름
 
 ```
-[??쒕낫??吏꾩엯]
-  ???뚯궗 ?좏깮/?앹꽦 ??Engagement(?곕룄) ?좏깮 ??CompanyContext ?앹꽦
-  ??(ContextFactory: 湲濡쒕쾶 ???뚯궗 ???곕룄 3怨꾩링 ?ㅼ젙 ?댁냼)
+[대시보드 진입]
+  → 회사 선택/생성 → Engagement(연도) 선택 → CompanyContext 생성
+  ↓ (ContextFactory: 글로벌 → 회사 → 연도 3계층 설정 해소)
 
-[?곗씠???낅줈??
-  Excel/CSV ??file_validator ??reader ??header_detector
-  ??column_mapper(?릀tx.keywords) ??type_caster(?릀leaning.yaml)
-  ??留ㅽ븨 ?꾨줈?뚯씪 ???(ctx.profile_dir)
-  ??UX 1?④퀎: ?먮룞 ?ㅻ뜑/留ㅽ븨 + ?ъ슜???꾩엫 + ?먮떒 洹쇨굅 ?щ챸 ?몄텧
+[데이터 업로드]
+  Excel/CSV → file_validator → reader → header_detector
+  → column_mapper(←ctx.keywords) → type_caster(←cleaning.yaml)
+  → 매핑 프로파일 저장 (ctx.profile_dir)
+  ↑ UX 1단계: 자동 헤더/매핑 + 사용자 위임 + 판단 근거 투명 노출
 
-[?뚯씠?꾨씪???ㅽ뻾] ??AuditPipeline(context=ctx).run(path)
-  ???쒖? DataFrame ??feature/engine(?릀tx.settings, ctx.audit_rules) ???뚯깮蹂??19媛?  ??validation (L1 援ъ“ + L2 ?뚭퀎 + L3 ?듦퀎)
-  ??detection (L1~L4 32媛?猷?+ 蹂댁“ findings, ?릀tx.settings, ctx.chart_of_accounts)
-  ??score_aggregator (媛以묓빀 + risk_level + L2-05)
-  ??DuckDB ?곸옱 (ctx.db_path ??Engagement蹂?寃⑸━ DB)
-  ??UX 2?④퀎: 猷?而⑦듃濡??⑤꼸 + ?ы깘吏
+[파이프라인 실행] — AuditPipeline(context=ctx).run(path)
+  → 표준 DataFrame → feature/engine(←ctx.settings, ctx.audit_rules) — 파생변수 19개
+  → validation (L1 Pandera + L2 회계 + L3 통계)
+  → detection (L1~L4 32개 룰 + IC/D/Benford/Graph 보조 findings)
+  → rule_scoring (normalized_score + scoring_role + evidence_strength)
+  → topic_scoring (7개 topic queue)
+  → phase1_case_builder (case priority + floor)
+  → score_aggregator (row anomaly_score 가중합 L1=0.40 / L2=0.25 / L3=0.20 / L4=0.15)
+  → DuckDB 적재 (ctx.db_path — Engagement별 격리 DB)
+  ↑ UX 2단계: 룰 컨트롤 패널 + 재탐지
 
-[遺꾩꽍]
-  ??Streamlit 4??(EDA / Summary / Benford / Explorer)
-  ???곕룄 鍮꾧탳 ??(ATTACH 援먯감 荑쇰━)
-  ??UX 3?④퀎: EDA ?꾨줈?뚯씪留?+ ?꾩쿂由??щ챸??
-[Phase 2: ML/DL ??濡쒖뺄 ?ㅽ뻾]
-  ??preprocessing (pipeline_builder ??cv_selector)
-  ??ML ?먯? (VAE+IF + Stacking) ??紐⑤뜽 ??? ctx.model_dir
+[분석]
+  → Streamlit (overview / phase1 / phase2 / review_queue / explorer / comparison)
+  ↑ UX 3단계: review queue 우선순위 + 의심 근거 + 다음 행동
 
-[Phase 3: LLM ???곸슜 API (?섏씠釉뚮━??]
-  ??濡쒖뺄: ?꾪뿕 ?ㅼ퐫?는룻넻怨?吏??異붿텧
-  ??API: Text-to-SQL, NLP ?섎? 遺꾩꽍, ?몄궗?댄듃 ?앹꽦, Export
-  ??鍮꾩떇蹂꾪솕 ?덉씠?? ?꾩옱 踰붿쐞 ?? ?꾩슂???몄? (CONSTRAINTS.md 李몄“)
+[Phase 2: ML/DL — 로컬 실행]
+  → preprocessing (pipeline_builder → cv_selector, document_id GroupKFold)
+  → 비지도 학습: VAE (train split에서만 fit, ECDF 분포 저장)
+  → unsupervised_selection_score (score_tail_gap / topk_stability / capacity / degeneracy)
+  → 모델 저장: ctx.model_dir/phase2_unsupervised/v1/
+  → Layer A KPI guard (audit-testing nightly CI)
+
+[Phase 3: Review Queue Narrator — OpenAI API]
+  → PHASE1 case + PHASE2 ml_score + 전표 메타를 LLM 입력 패키지로
+  → 2티어 호출 (gpt-5.4 / gpt-5.4-mini, 비용 가드)
+  → 출력: ReviewNarrative (Top-N 재정렬, ReasoningEvidence 인용, SuggestedAction)
+  → dashboard/tab_review_queue.py 노출
+  ↑ Narrator는 fraud 확정이나 새 패턴 발견을 하지 않는다 (룰/ML 출력 해석에 한정)
 ```
-> Historical note. Current DataSynth production baseline is `data/journal/primary/datasynth/` freeze `v126` as of 2026-05-02. This section originally referenced `v23` freeze (2026-04-22).
-> `B04 DuplicatePayment`??`P2P + KZ` pair/negative-control 援ъ“濡??밴꺽?섏뿀怨? `v20.4`??諛깆뾽蹂?`datasynth_backup_v20_4_20260422`濡?蹂댁〈?쒕떎.
-> Historical sub-note. This section originally referenced `v23` as of 2026-04-22; current production is `v126`.
 
+## CI 워크플로우
+
+| 워크플로우 | 트리거 | 역할 |
+|-----------|--------|------|
+| `phase1-kpi-guard` | PR (main/develop), main push, weekly schedule, manual | PHASE1 Layer A/B hard guard + Layer C soft warn |
+| `audit-testing` | manual + nightly `0 18 * * *` UTC (KST 03:00) | PHASE2 Stage 5 baseline `training_report.json` Layer A + case contract 회귀 차단 |
+
+상세: [GIT.md](GIT.md).
