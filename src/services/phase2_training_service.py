@@ -1,4 +1,28 @@
-"""Foundation helpers for the Phase 2 AutoML training pipeline."""
+"""Foundation helpers for the Phase 2 AutoML training pipeline.
+
+Phase 2 standalone training contract
+------------------------------------
+
+Phase 2 학습은 **원본/featured 회계 DataFrame** 에서 family detector 와
+unsupervised VAE 를 standalone 으로 학습한다. PHASE1 case ranking,
+``composite_sort_score``, ``topic_score_*``, rule hit summary 는 학습
+입력 feature 로 들어가지 않는다.
+
+- primary input: ``df`` (= featured GL DataFrame).
+- optional context: ``phase1_case_result`` — manifest metadata 산출용. case-level
+  ML-safe feature (``PHASE2_CASE_FEATURE_COLUMNS``) 와 provenance fields 의
+  존재 여부를 inference contract 에 기록할 뿐, row matrix 입력 또는 학습
+  target 으로 사용하지 않는다. ``_build_phase1_case_contract_metadata`` 는
+  feature firewall (``enforce_phase2_case_feature_firewall``) 검증을 거친 뒤
+  manifest 만 반환한다.
+- deny coverage: ``LEAKAGE_DENY_COLUMNS`` + ``LEAKAGE_DENY_RULES`` +
+  ``_LEAKAGE_PATTERNS`` (label/target/fraud/anomaly/risk/rule/score/model/
+  prediction/probability/export/dashboard 토큰) 으로 PHASE1 산출 컬럼과
+  DataSynth shortcut 을 모두 차단한다 (``preprocessing.phase2_plan``).
+
+따라서 PHASE1 결과는 "어떤 case 가 존재한다" 라는 메타데이터만 contract
+에 남기며, "어떤 row 가 risky 한지" 학습을 유도하지 않는다.
+"""
 
 from __future__ import annotations
 
@@ -36,6 +60,7 @@ from src.preprocessing.label_strategy import create_labels, create_labels_from_f
 from src.preprocessing.model_registry import ModelRegistry
 from src.preprocessing.phase2_matrix import Phase2AutoencoderMatrixBuilder
 from src.preprocessing.phase2_plan import build_phase2_preprocessing_plan
+from src.services._phase_timing import TimingBlock, log_timing
 from src.services.phase2_case_contract import (
     PROVENANCE_ONLY_FIELDS,
     build_phase2_case_feature_frame,
@@ -93,6 +118,16 @@ _RULE_STYLE_REQUIRED_COLUMNS = {
         "trading_partner",
     ),
 }
+# 학습 trial metadata 의 sub_detector_keys (training_report.json) 출처.
+# 본 매핑은 phase2_subdetector_tiers.yaml 의 tier registry 와 의도적으로 다른
+# 범위를 가진다 — 여기에는 **rule-style 학습 trial 의 식별자만** 등재하며,
+# IC family 의 `ic_reciprocal_flow_prob` / `ic_amount_prob` / `ic_unmatched_prob` /
+# `ic_timing_prob` (2026-05-25 옵션 2 로 tier registry 에 등록된 4개 internal
+# probability column) 는 IntercompanyMatcher detector 내부에서 한 번에 산출되는
+# probability surface 이지 독립 학습 대상이 아니므로 본 매핑에서 의도적으로 제외한다.
+# tier registry 와 본 매핑의 정합 lock 은
+# `tests/modules/test_services/test_phase2_training_service.py`
+# ::TestRuleStyleSubDetectorRegistryContract 참조.
 _RULE_STYLE_SUB_DETECTORS = {
     "timeseries": ("transaction_burst", "unusual_frequency"),
     "relational": (
@@ -100,6 +135,9 @@ _RULE_STYLE_SUB_DETECTORS = {
         "dormant_account_activity",
         "transfer_pricing_anomaly",
         "missing_relationship",
+        "rare_account_partner_edge",
+        "user_account_degree_spike",
+        "dormant_partner_reactivation",
     ),
     "duplicate": (
         "exact_duplicate_amount",
@@ -183,44 +221,23 @@ _FAMILY_TO_CANONICAL_MODEL = {
     "stacking": "stacking_meta",
 }
 _DEFAULT_SEARCH_PRESETS = {
+    # Why (2026-05-23): 100k 측정 결과 unsupervised_selection_score 가
+    # ranking proxy 라 epoch/preset variant 별 차이가 noise 수준(±0.0003)이고,
+    # baseline(3 preset × 7 variant = 21 trial, ~1150s) → balanced 1개 + epochs=20
+    # (1 preset × 7 variant = 7 trial, ~280s) 로 학습 시간 -75% 절감.
+    # search variant 다양성을 잃지 않도록 feature variant 7개는 유지.
     "unsupervised": (
-        {
-            "name": "compact",
-            "settings_updates": {
-                "vae_hidden_dim": 32,
-                "vae_latent_dim": 8,
-                "vae_epochs": 20,
-                "vae_batch_size": 512,
-                "vae_lr": 1e-3,
-                "vae_beta": 1.0,
-                "if_contamination": 0.01,
-                "phase2_review_capacity_ratio": 0.10,
-            },
-        },
         {
             "name": "balanced",
             "settings_updates": {
                 "vae_hidden_dim": 64,
                 "vae_latent_dim": 32,
-                "vae_epochs": 40,
+                "vae_epochs": 20,
                 "vae_batch_size": 256,
                 "vae_lr": 1e-3,
                 "vae_beta": 1.0,
                 "if_contamination": 0.01,
                 "phase2_review_capacity_ratio": 0.10,
-            },
-        },
-        {
-            "name": "strict_capacity",
-            "settings_updates": {
-                "vae_hidden_dim": 96,
-                "vae_latent_dim": 64,
-                "vae_epochs": 50,
-                "vae_batch_size": 256,
-                "vae_lr": 7.5e-4,
-                "vae_beta": 1.25,
-                "if_contamination": 0.005,
-                "phase2_review_capacity_ratio": 0.05,
             },
         },
     ),
@@ -330,14 +347,14 @@ _DEFAULT_SEARCH_PRESETS = {
         {
             "name": "balanced",
             "settings_updates": {
-                "ic_amount_tolerance": 0.03,
+                "ic_amount_tolerance": 0.05,
                 "ic_max_day_diff": 7,
             },
         },
         {
             "name": "strict",
             "settings_updates": {
-                "ic_amount_tolerance": 0.01,
+                "ic_amount_tolerance": 0.05,
                 "ic_max_day_diff": 3,
             },
         },
@@ -548,8 +565,7 @@ def prepare_phase2_feature_inputs(df, *, settings=None) -> tuple[Any, Any, dict[
 
 def _phase2_training_mode(settings) -> str:
     return str(
-        getattr(settings, "phase2_training_mode", _PHASE2_TRAINING_MODE)
-        or _PHASE2_TRAINING_MODE
+        getattr(settings, "phase2_training_mode", _PHASE2_TRAINING_MODE) or _PHASE2_TRAINING_MODE
     )
 
 
@@ -888,15 +904,9 @@ def build_phase2_feature_variants(df, groups) -> list[dict[str, Any]]:
         family: [col for col in columns if col in all_columns]
         for family, columns in FEATURE_FAMILIES.items()
     }
-    optional_active = {
-        family: cols
-        for family, cols in optional_columns.items()
-        if cols
-    }
+    optional_active = {family: cols for family, cols in optional_columns.items() if cols}
     baseline_columns = [
-        col
-        for col in all_columns
-        if not any(col in cols for cols in optional_active.values())
+        col for col in all_columns if not any(col in cols for cols in optional_active.values())
     ]
 
     variants: list[dict[str, Any]] = [
@@ -1033,17 +1043,20 @@ def run_phase2_training(
     if detector_factories:
         factories.update(detector_factories)
 
-    label_summary, label_result = build_phase2_label_summary(
-        df,
-        detection_scores=detection_scores,
-        feedback_labels=feedback_labels,
-        strategy=strategy,
-    )
-    cleaned_df, groups, feature_payload = prepare_phase2_feature_inputs(
-        df,
-        settings=settings,
-    )
-    split_context_df = _with_unsupervised_split_context(cleaned_df, df, settings)
+    with TimingBlock("phase2.training.label_summary"):
+        label_summary, label_result = build_phase2_label_summary(
+            df,
+            detection_scores=detection_scores,
+            feedback_labels=feedback_labels,
+            strategy=strategy,
+        )
+    with TimingBlock("phase2.training.prepare_feature_inputs"):
+        cleaned_df, groups, feature_payload = prepare_phase2_feature_inputs(
+            df,
+            settings=settings,
+        )
+    with TimingBlock("phase2.training.split_context"):
+        split_context_df = _with_unsupervised_split_context(cleaned_df, df, settings)
     phase1_case_contract = _build_phase1_case_contract_metadata(phase1_case_result)
     families = list(model_families or _DEFAULT_MODEL_FAMILIES)
     variants = feature_payload["feature_variants"]
@@ -1070,11 +1083,12 @@ def run_phase2_training(
             "search_presets": search_presets,
         }
     )
-    report.leaderboard = _build_trial_queue(
-        families=families,
-        variants=variants,
-        search_presets=search_presets,
-    )
+    with TimingBlock("phase2.training.build_trial_queue"):
+        report.leaderboard = _build_trial_queue(
+            families=families,
+            variants=variants,
+            search_presets=search_presets,
+        )
 
     trained_results: dict[str, list[dict[str, Any]]] = {}
     label_series = (
@@ -1082,6 +1096,7 @@ def run_phase2_training(
         if len(label_result.y) == len(cleaned_df)
         else pd.Series(dtype=int)
     )
+    trials_total_block = TimingBlock("phase2.training.trials_total").__enter__()
     for trial in report.leaderboard:
         if trial.status != Phase2TrainingStatus.PENDING:
             _write_trial_artifact(paths["trials_dir"], trial)
@@ -1151,19 +1166,25 @@ def run_phase2_training(
                 hold_out_eval_df=hold_out_eval_df,
             )
         _write_trial_artifact(paths["trials_dir"], trial)
+        log_timing(
+            f"phase2.training.trial.{trial.model_family}.{trial.variant}.{trial.status.value}",
+            float(trial.elapsed_sec or 0.0),
+        )
+    trials_total_block.__exit__(None, None, None)
 
-    report.leaderboard = _sort_trials(report.leaderboard)
-    promotion_policy = _build_promotion_policy(report.leaderboard)
-    report.promoted_models = _select_promoted_models(
-        report.leaderboard,
-        policy=promotion_policy,
-    )
-    _write_rule_style_promoted_artifacts(
-        ctx=ctx,
-        promoted_models=report.promoted_models,
-        trials=report.leaderboard,
-        report_id=report.report_id,
-    )
+    with TimingBlock("phase2.training.promote"):
+        report.leaderboard = _sort_trials(report.leaderboard)
+        promotion_policy = _build_promotion_policy(report.leaderboard)
+        report.promoted_models = _select_promoted_models(
+            report.leaderboard,
+            policy=promotion_policy,
+        )
+        _write_rule_style_promoted_artifacts(
+            ctx=ctx,
+            promoted_models=report.promoted_models,
+            trials=report.leaderboard,
+            report_id=report.report_id,
+        )
     if report.promoted_models:
         report.metadata["best_overall_model"] = report.promoted_models[0].to_dict()
     report.metadata.update(_build_trial_report_metadata(report.leaderboard))
@@ -1184,7 +1205,8 @@ def run_phase2_training(
     )
     report.status = _finalize_report_status(report.leaderboard)
     if save_report:
-        save_phase2_training_report(report, ctx=ctx, base_dir=base_dir)
+        with TimingBlock("phase2.training.save_report"):
+            save_phase2_training_report(report, ctx=ctx, base_dir=base_dir)
     return report
 
 
@@ -1225,11 +1247,20 @@ def run_phase2_training_analysis(
     if ctx is not None and hasattr(ctx, "clone_with_settings"):
         ctx = ctx.clone_with_settings(settings)
 
+    # Why: KEY_PHASE1_RESULT는 PipelineResult 객체. run_phase2_training은 그 안의
+    #      Phase1CaseResult(cases 속성)를 기대 — PipelineResult.phase1_case_result로 추출.
+    phase1_pipeline = state.get(KEY_PHASE1_RESULT)
+    phase1_case = (
+        getattr(phase1_pipeline, "phase1_case_result", None)
+        if phase1_pipeline is not None
+        else None
+    )
+
     report = training_runner(
         featured_df,
         ctx=ctx,
         metadata={"source": "streamlit", "file_name": getattr(prep_result, "file_name", "")},
-        phase1_case_result=state.get(KEY_PHASE1_RESULT),
+        phase1_case_result=phase1_case,
     )
     state[KEY_PHASE2_TRAINING_REPORT_ID] = report.report_id
     return report
@@ -1243,7 +1274,8 @@ def _build_trial_queue(
 ) -> list[Phase2TrialResult]:
     queue: list[Phase2TrialResult] = []
     for family in families:
-        for variant in variants:
+        family_variants = _trial_variants_for_family(family, variants)
+        for variant in family_variants:
             for preset in search_presets.get(family, []):
                 queue.append(
                     Phase2TrialResult(
@@ -1275,6 +1307,19 @@ def _build_trial_queue(
                     )
                 )
     return queue
+
+
+def _trial_variants_for_family(
+    family: str,
+    variants: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return feature variants that produce distinct trials for this family."""
+    if family not in _RULE_STYLE_FAMILIES:
+        return variants
+    for variant in variants:
+        if str(variant.get("variant", "")) == "baseline_core":
+            return [variant]
+    return variants[:1]
 
 
 def _execute_model_trial(
@@ -1460,8 +1505,7 @@ def _execute_stacking_trial(
     )
     try:
         best_inputs = {
-            family: _select_best_trained_entry(trained_results[family])
-            for family in required
+            family: _select_best_trained_entry(trained_results[family]) for family in required
         }
         oof_ready = (
             hasattr(detector, "train_oof")
@@ -1518,9 +1562,7 @@ def _execute_stacking_trial(
                         "sequence": trial.variant,
                     }
                     if oof_ready
-                    else {
-                        family: best_inputs[family]["trial_variant"] for family in required
-                    }
+                    else {family: best_inputs[family]["trial_variant"] for family in required}
                 ),
                 "saved_model_name": getattr(save_meta, "model_name", "stacking"),
                 "registry_version": getattr(save_meta, "version", None),
@@ -1689,9 +1731,7 @@ def _compute_unsupervised_metric(
         reliability_warnings.append("train_calibration_drift")
     if score_degeneracy_penalty >= 0.75:
         reliability_warnings.append("degenerate_score_distribution")
-    severe_warnings = sorted(
-        set(reliability_warnings) & _SEVERE_UNSUPERVISED_RELIABILITY_WARNINGS
-    )
+    severe_warnings = sorted(set(reliability_warnings) & _SEVERE_UNSUPERVISED_RELIABILITY_WARNINGS)
     score = (
         (0.55 * components["score_tail_gap"])
         + (0.30 * components["topk_stability"])
@@ -1716,9 +1756,7 @@ def _build_unsupervised_metric_metadata(
     review_threshold: float | None,
     reliability_warnings: list[str],
 ) -> dict[str, Any]:
-    severe_warnings = sorted(
-        set(reliability_warnings) & _SEVERE_UNSUPERVISED_RELIABILITY_WARNINGS
-    )
+    severe_warnings = sorted(set(reliability_warnings) & _SEVERE_UNSUPERVISED_RELIABILITY_WARNINGS)
     return {
         "metric_interpretation": "ranking_proxy_not_fraud_accuracy",
         "metric_name": "unsupervised_selection_score",
@@ -1736,10 +1774,7 @@ def _train_calibration_score_drift(train_scores, calibration_scores: pd.Series) 
         return None
     train = pd.Series(train_scores).astype(float).replace([np.inf, -np.inf], np.nan).dropna()
     calibration = (
-        pd.Series(calibration_scores)
-        .astype(float)
-        .replace([np.inf, -np.inf], np.nan)
-        .dropna()
+        pd.Series(calibration_scores).astype(float).replace([np.inf, -np.inf], np.nan).dropna()
     )
     if train.empty or calibration.empty:
         return None
@@ -1782,8 +1817,7 @@ def build_phase2_search_presets(
 ) -> dict[str, list[dict[str, Any]]]:
     return {
         family: [
-            dict(preset)
-            for preset in _DEFAULT_SEARCH_PRESETS.get(family, ({"name": "default"},))
+            dict(preset) for preset in _DEFAULT_SEARCH_PRESETS.get(family, ({"name": "default"},))
         ]
         for family in families
     }
@@ -1962,10 +1996,7 @@ def _write_rule_style_promoted_artifacts(
 ) -> None:
     if ctx is None or getattr(ctx, "model_dir", None) is None:
         return
-    by_family_variant = {
-        (trial.model_family, trial.variant): trial
-        for trial in trials
-    }
+    by_family_variant = {(trial.model_family, trial.variant): trial for trial in trials}
     reverse_family_map = {
         canonical_name: family_name
         for family_name, canonical_name in _FAMILY_TO_CANONICAL_MODEL.items()
@@ -2104,7 +2135,10 @@ def _build_promotion_policy(trials: list[Phase2TrialResult]) -> dict[str, Any]:
         "family_min_completed_trials": dict(_DEFAULT_FAMILY_MIN_COMPLETED_TRIALS),
         "family_min_metric": dict(_DEFAULT_FAMILY_MIN_METRIC),
         "family_min_search_variants": {
-            family: 2 for family in set(_DEFAULT_FAMILY_MIN_COMPLETED_TRIALS)
+            # Why (2026-05-23): unsupervised는 balanced preset 1개만 운영(75% 절감안)
+            # 이라 search_variants 최소를 1로 완화. 다른 family는 preset 2개 유지.
+            family: (1 if family == "unsupervised" else 2)
+            for family in set(_DEFAULT_FAMILY_MIN_COMPLETED_TRIALS)
         },
         "family_max_failed_trial_ratio": {
             family: 0.5 for family in set(_DEFAULT_FAMILY_MIN_COMPLETED_TRIALS)
@@ -2188,10 +2222,7 @@ def _build_model_version_contract(
     promoted_models: list[Phase2PromotedModel],
     trials: list[Phase2TrialResult],
 ) -> dict[str, dict[str, Any]]:
-    by_family_variant = {
-        (trial.model_family, trial.variant): trial
-        for trial in trials
-    }
+    by_family_variant = {(trial.model_family, trial.variant): trial for trial in trials}
     reverse_family_map = {
         canonical_name: family_name
         for family_name, canonical_name in _FAMILY_TO_CANONICAL_MODEL.items()
@@ -2228,6 +2259,25 @@ def _trial_schema_hash(trial: Phase2TrialResult | None) -> str | None:
 
 
 def _build_phase1_case_contract_metadata(phase1_case_result) -> dict[str, Any]:
+    """PHASE1 case manifest — **overlay/debug metadata only, training/inference matrix forbidden**.
+
+    Phase 2 standalone contract 하에서 본 함수의 반환값은 inference contract
+    JSON 에 **overlay manifest 와 debug metadata** 로만 첨부된다. 절대 금지:
+
+    - PHASE2 row matrix 의 join 입력으로 사용 금지.
+    - PHASE2 supervised/unsupervised 모델의 학습 target / feature 로 사용 금지.
+    - PHASE2 inference 시 case feature 로 모델에 주입 금지.
+
+    ``feature_columns`` 는 "PHASE1 case 구조에서 ML-safe 형태로 만들 수 있는
+    컬럼 이름의 목록" 일 뿐, 실제 학습/추론 입력 행렬에는 사용하지 않는다.
+    list 자체는 ``build_phase2_case_feature_frame`` →
+    ``enforce_phase2_case_feature_firewall`` 통과를 거쳐 PROVENANCE_ONLY_FIELDS
+    가 섞이지 않음을 정적 검증한다.
+
+    PHASE2 학습/추론 입력은 ``preprocessing.phase2_plan`` +
+    ``preprocessing.phase2_matrix`` 가 산출하는 row matrix 뿐이며, 그 안에는
+    PHASE1 case 메타가 들어가지 않는다.
+    """
     if phase1_case_result is None:
         return {
             "available": False,
@@ -2260,10 +2310,7 @@ def _build_family_summaries(
     grouped: dict[str, list[Phase2TrialResult]] = {}
     for trial in trials:
         grouped.setdefault(trial.model_family, []).append(trial)
-    return {
-        family: _build_group_summary(group_trials)
-        for family, group_trials in grouped.items()
-    }
+    return {family: _build_group_summary(group_trials) for family, group_trials in grouped.items()}
 
 
 def _build_search_summaries(
@@ -2328,10 +2375,7 @@ def _build_promoted_sub_detector_map(
     promoted_models: list[Phase2PromotedModel],
     trials: list[Phase2TrialResult],
 ) -> dict[str, list[str]]:
-    by_family_variant = {
-        (trial.model_family, trial.variant): trial
-        for trial in trials
-    }
+    by_family_variant = {(trial.model_family, trial.variant): trial for trial in trials}
     reverse_family_map = {
         canonical_name: family_name
         for family_name, canonical_name in _FAMILY_TO_CANONICAL_MODEL.items()
@@ -2360,8 +2404,7 @@ def _build_family_promotion_decisions(
         for key, value in dict(policy.get("family_min_completed_trials", {})).items()
     }
     family_min_metric = {
-        str(key): float(value)
-        for key, value in dict(policy.get("family_min_metric", {})).items()
+        str(key): float(value) for key, value in dict(policy.get("family_min_metric", {})).items()
     }
     eligible = _eligible_promotion_trials(trials, policy)
     eligible_keys = {(trial.model_family, trial.variant) for trial in eligible}
@@ -2445,10 +2488,7 @@ def _eligible_promotion_trials(
         str(value)
         for value in policy.get("eligible_statuses", [Phase2TrainingStatus.COMPLETED.value])
     }
-    eligible_model_families = {
-        str(value)
-        for value in policy.get("eligible_model_families", [])
-    }
+    eligible_model_families = {str(value) for value in policy.get("eligible_model_families", [])}
     requires_registry_version = bool(policy.get("requires_registry_version", True))
     requires_metric_value = bool(policy.get("requires_metric_value", True))
     artifactless_families = {str(value) for value in policy.get("artifactless_families", [])}
@@ -2458,8 +2498,7 @@ def _eligible_promotion_trials(
         for key, value in dict(policy.get("family_min_completed_trials", {})).items()
     }
     family_min_metric = {
-        str(key): float(value)
-        for key, value in dict(policy.get("family_min_metric", {})).items()
+        str(key): float(value) for key, value in dict(policy.get("family_min_metric", {})).items()
     }
     family_min_search_variants = {
         str(key): int(value)
@@ -2485,9 +2524,7 @@ def _eligible_promotion_trials(
                 )
             )
         elif trial.status == Phase2TrainingStatus.FAILED:
-            failed_by_family[trial.model_family] = (
-                failed_by_family.get(trial.model_family, 0) + 1
-            )
+            failed_by_family[trial.model_family] = failed_by_family.get(trial.model_family, 0) + 1
     eligible: list[Phase2TrialResult] = []
     for trial in trials:
         if eligible_model_families and trial.model_family not in eligible_model_families:
@@ -2525,9 +2562,11 @@ def _eligible_promotion_trials(
                 continue
         if requires_metric_value and trial.metric_value is None:
             continue
-        if (trial.metric_value is not None) and (
-            (min_metric := family_min_metric.get(trial.model_family)) is not None
-        ) and trial.metric_value < min_metric:
+        if (
+            (trial.metric_value is not None)
+            and ((min_metric := family_min_metric.get(trial.model_family)) is not None)
+            and trial.metric_value < min_metric
+        ):
             continue
         if (
             requires_registry_version

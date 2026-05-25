@@ -10,6 +10,7 @@ from src.services.batch_service import list_saved_batches, load_batch_into_state
 from src.services.phase2_evaluation import evaluate_phase2_value_gates
 from src.services.session_service import (
     clear_company_selection,
+    close_dashboard_connections,
     current_display_result,
     has_analysis_output,
     restore_loaded_result,
@@ -18,6 +19,7 @@ from src.services.session_service import (
 __all__ = [
     "build_audit_trail",
     "clear_company_selection",
+    "close_dashboard_connections",
     "current_display_result",
     "evaluate_phase2_value_gates",
     "has_analysis_output",

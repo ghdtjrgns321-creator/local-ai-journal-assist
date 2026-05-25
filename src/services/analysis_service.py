@@ -91,7 +91,8 @@ def build_audit_trail(ctx):
         import logging
 
         logging.getLogger(__name__).warning(
-            "AuditTrail 생성 실패 -> 증적 기록 없이 진행", exc_info=True,
+            "AuditTrail 생성 실패 -> 증적 기록 없이 진행",
+            exc_info=True,
         )
         return None
 
@@ -136,9 +137,7 @@ def run_phase_analysis(
         featured_df = build_phase1_core_feature_frame(prep_result, settings, ctx)
     else:
         featured_df = (
-            prep_result.featured_data
-            if prep_result.featured_data is not None
-            else prep_result.data
+            prep_result.featured_data if prep_result.featured_data is not None else prep_result.data
         )
     _t_feat_end = time.perf_counter()
     print(
@@ -170,6 +169,9 @@ def run_phase_analysis(
 
     if phase == "phase1":
         state[KEY_PHASE1_RESULT] = result
+        # Why: Phase1 케이스가 새로 만들어졌으므로 이전 Phase2 overlay 는 case_id 기준이
+        #      어긋나 stale. 사용자가 Phase2 를 다시 실행해야 정렬이 맞으므로 명시 reset.
+        state[KEY_PHASE2_RESULT] = None
     else:
         state[KEY_PHASE2_RESULT] = result
 
@@ -212,15 +214,23 @@ def rerun_detection(
     if ctx is not None and settings is not None:
         ctx = ctx.clone_with_settings(settings)
         pipeline = pipeline_cls(
-            context=ctx, skip_db=True, repo=repo, audit_trail=audit_trail,
+            context=ctx,
+            skip_db=True,
+            repo=repo,
+            audit_trail=audit_trail,
         )
     elif ctx is not None:
         pipeline = pipeline_cls(
-            context=ctx, skip_db=True, repo=repo, audit_trail=audit_trail,
+            context=ctx,
+            skip_db=True,
+            repo=repo,
+            audit_trail=audit_trail,
         )
     else:
         pipeline = pipeline_cls(
-            settings=settings, skip_db=True, audit_trail=audit_trail,
+            settings=settings,
+            skip_db=True,
+            audit_trail=audit_trail,
         )
     result = pipeline.redetect(
         featured_df,
