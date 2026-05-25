@@ -312,6 +312,42 @@ patterns:
         payable: "2050"       # IC Payable (관계사 채무)
       - receivable: "4500"    # IC Revenue (관계사 매출)
         payable: "2700"       # IC Accrued (관계사 미지급)
+    # IC01 evidence level 분류용 — K-IFRS 1024 관계사 master.
+    # 명시 시 detector 가 trading_partner 가 master 에 있는지 확인.
+    # 빈 리스트/미지정 시 dataset distinct company_code 로 폴백.
+    related_party_master: []
+    # IC01 partner format 정책 — regex 매칭으로 customer/vendor 제외 + 표준 IC 형식 검증.
+    # ic_partner_regex: 표준 IC 회사 코드 형식. 미지정 시 형식 검증 건너뜀 (partner 존재만 확인).
+    # customer_partner_regex / vendor_partner_regex: IC 모집단에서 제외할 외부 거래처 형식.
+    partner_format:
+      ic_partner_regex: "^C\\d{3}$"
+      customer_partner_regex: "^C-\\d+$"
+      vendor_partner_regex: "^V-\\d+$"
+
+    # PHASE2 internal probabilistic reconciliation surface — IC01/IC02/IC03 보강.
+    # Why: hard threshold(group key 동치 + amount tolerance)만으로는 후보 pair 부분 일치
+    #      (금액 근사, 일자 근처, 참조번호 유사)를 점수화하지 못한다. 0~1 raw probability
+    #      column 으로 details DataFrame 에 합류하고, family overlay 가 ECDF + Noisy-OR 로
+    #      흡수한다. canonical rule id (IC04 등) 는 생성하지 않는다.
+    matching_weights:
+      amount: 0.40
+      date: 0.25
+      reference: 0.20
+      counterparty: 0.15
+    candidate_blocking:
+      amount_bucket_factor: 2.0      # log-bucket factor (인접 ±1 bucket = 최대 4x 차이까지 후보)
+      max_candidates_per_row: 50     # row 당 후보 상한 (초과 시 amount 가까운 순 절단 + warning)
+      reference_min_length: 3        # 양측 stripped len 미만이면 reference_similarity=0
+    # contract-tier score caps (audit evidence strength 기준).
+    # Why: no_candidate vs candidate mismatch 의 의미 차이를 점수로 분리한다.
+    #      truth recall 기준 튜닝 금지 — 값 변경은 evidence interpretation 변경 시에만.
+    contract_score_caps:
+      l1_mismatch: 1.0       # L1 + candidate mismatch → cap 없음 (강 증거)
+      l2_mismatch: 0.7       # L2 + candidate mismatch → reference 약함으로 mid-strong
+      no_candidate_l1: 0.5   # L1 + no_candidate → 정상 단방향 양립, mid review
+      no_candidate_l2: 0.3   # L2 + no_candidate → matching evidence 약함, weak review
+      weak_contract: 0.3     # cp_block weak (cc/tp 모두 비어 anchor 부재)
+      l3: 0.0                # L3 insufficient (matching 불가능)
 
   # L1-06: 직무분리(SoD) 위반 — 하이브리드 로직
   # Rule B: 프로세스 간 상충 쌍 (직급 불문, 즉시 Critical)

@@ -1,0 +1,96 @@
+# config/phase2_review_band.yaml
+#
+# PHASE2 단독 큐와 PHASE1+2 통합 큐의 표시 등급 (즉시검토 / 검토대상 / 후보 / 신호없음) 정책.
+# DECISION.md D062 (2026-05-21) 잠금. count 보고 임계 재조정 금지.
+#
+# 본 yaml 의 위치: 정책 잠금 문서 (policy lock document).
+# 코드 상수: `src/services/phase2_case_contract.py` 의 _PHASE2_IMMEDIATE_COVERAGE_MIN,
+#           _PHASE2_REVIEW_COVERAGE_MIN, _PHASE2_ML_QUANTILE_ECDF_MIN, _ML_ONLY_FAMILIES.
+# 본 yaml 은 코드에서 직접 로드하지 않는다. yaml 의 값과 코드 상수가 동일하도록 PR 단위로 검증한다.
+# 향후 yaml 동적 로드가 필요하면 D062 보강 결정 후 진행.
+#
+# 본 yaml 은 분류/표시/필터/KPI/badge 용도. 정렬 키 변경 X:
+#   - PHASE1 단독 큐 정렬: priority_band → composite_sort_score → priority_score → ... (기존)
+#   - PHASE2 단독 큐 정렬: primary_rrf_score → coverage_breadth_q95 → strong_subdetector_count → ...
+#   - 통합 큐 정렬:       final_rrf_score = 1/(60 + rank_P1) + 1/(60 + rank_P2)
+#
+# D060 5조 원칙 정합:
+#   1. 강한 seed: subdetector_tiers.yaml 의 strong tier (도메인 잠금)
+#   2. 중요성: PHASE1 통합 시 L4-03 floor 자동 반영
+#   3. 독립 보강: coverage_breadth_q95 (다른 family 동의)
+#   4. 단독 금지: weak / moderate 단독 / ml_quantile 단독 / 단순 ECDF / 단순 coverage 즉시검토 금지
+#                strong tier 는 yaml 도메인 잠금이라 단독 금지 적용 안 됨 (단, 즉시검토는 coverage>=2 강제)
+#   5. count 재조정 금지: 측정 후 결과가 도메인 정합이면 수용. 임계 변경 금지.
+
+phase2_review_band:
+  # PHASE2 단독 큐의 3등급 + 신호없음
+  immediate:
+    # 즉시검토 — strong tier + 다중 family 동의
+    require_max_evidence_tier: strong
+    min_coverage_breadth_q95: 2
+
+  review:
+    # 검토대상 — 3가지 entry (OR)
+    strong_without_coverage:
+      # strong tier 단독 (coverage 0 또는 1)
+      require_max_evidence_tier: strong
+      max_coverage_breadth_q95: 1
+    moderate_with_coverage:
+      # moderate tier + 다중 family 동의
+      require_max_evidence_tier: moderate
+      min_coverage_breadth_q95: 2
+    ml_quantile_tail_with_coverage:
+      # ML-only family 의 ECDF 상위 0.5% + 다중 family 동의
+      require_max_evidence_tier: ml_quantile
+      ml_only_families:
+        - unsupervised
+      min_max_family_ecdf: 0.995
+      min_coverage_breadth_q95: 2
+
+  candidate:
+    # 후보 — PHASE2 신호가 있으나 위 조건 미달
+    require_phase2_signal: true
+
+  none:
+    # 신호없음
+    require_phase2_signal: false
+
+# PHASE1+2 통합 큐의 3등급 + 신호없음
+phase12_review_band:
+  # "max band 를 취하되, 즉시검토만은 교집합"
+  immediate:
+    # 통합 즉시검토 — 양측 모두 즉시검토 (가장 확실한 신호)
+    require_phase1_band: immediate
+    require_phase2_band: immediate
+
+  review:
+    # 통합 검토대상 — 한쪽이라도 검토대상 이상 (max band)
+    any_of:
+      - phase1_band: immediate
+      - phase2_band: immediate
+      - phase1_band: review
+      - phase2_band: review
+
+  candidate:
+    # 통합 후보 — 한쪽이라도 후보
+    any_of:
+      - phase1_band: candidate
+      - phase2_band: candidate
+
+  none:
+    # 통합 신호없음 — 양측 모두 신호 없음
+    phase1_band: none
+    phase2_band: none
+
+# 정책 메타
+policy:
+  decision_id: D062
+  decision_date: "2026-05-21"
+  count_reconfiguration: forbidden
+  fy_definition: fy2022
+  fy_holdout: fy2023
+  sort_key_change: forbidden
+  ranking_keys_preserved:
+    - phase1_priority_score
+    - phase2_internal_noisy_or_score
+    - rrf_score

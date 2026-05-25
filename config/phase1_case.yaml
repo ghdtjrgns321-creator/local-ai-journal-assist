@@ -96,8 +96,8 @@ phase1_case:
       max_bonus: 0.10
       context_only_score: 0.0
     review_states:
-      high: 0.75
-      medium: 0.45
+      high: 0.90
+      medium: 0.75
       low: 0.20
       context_only: 0.0
     fraud_scenario_tag_order:
@@ -130,8 +130,8 @@ phase1_case:
   materiality_amount: 0
 
   priority_band:
-    high: 0.75
-    medium: 0.45
+    high: 0.90
+    medium: 0.75
 
   priority_floors:
     - rule_id: L1-05
@@ -143,7 +143,7 @@ phase1_case:
       labels:
         - escalated_materiality
         - escalated_high_risk_account
-      min_priority_score: 0.85
+      min_priority_score: 0.90
       reason: escalated_self_approval_material_or_sensitive
     - rule_id: L1-05
       labels:
@@ -164,13 +164,13 @@ phase1_case:
       reason: sod_direct_high
     - rule_id: L1-06
       min_raw_score: 0.95
-      min_priority_score: 0.85
+      min_priority_score: 0.90
       reason: sod_direct_critical
     - rule_id: L1-07
       labels:
         - immediate
       min_raw_score: 0.85
-      min_priority_score: 0.85
+      min_priority_score: 0.90
       reason: skipped_approval_critical
     - rule_id: L1-07
       labels:
@@ -250,7 +250,7 @@ phase1_case:
         - debit_amount
         - credit_amount
       min_matching_missing_fields: 2
-      min_priority_score: 0.75
+      min_priority_score: 0.90
       reason: multiple_core_required_fields_missing
     - rule_id: L3-10
       labels:

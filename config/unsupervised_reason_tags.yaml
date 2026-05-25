@@ -1,0 +1,44 @@
+# config/unsupervised_reason_tags.yaml
+# PHASE2 unsupervised (ML02 / VAE) explanation surface 용 reason tag 매핑.
+#
+# 본 파일은 VAE detector 가 산출한 per-row top-K 재구성 기여 피처 이름을
+# audit narrator·dashboard 가 표시할 reason tag 로 변환하기 위한 단일 출처다.
+#
+# Lock (2026-05-25, dev/active/phase2-unsupervised-explainability-surface):
+#   - 본 매핑은 overlay/narrator 표시 전용. score 에 절대 사용 금지.
+#   - label 어휘는 "이상", "패턴", "맥락" 까지만. "위반/부정/오류 확정" 금지.
+#   - 미매핑 feature → fallback (`feature_pattern_outlier` / "피처 패턴 이상").
+#   - 매칭 순서: exact → prefix → contains (loader 보장).
+#   - evidence_type 은 전부 `statistical_outlier` 고정.
+
+schema_version: 1
+last_updated: 2026-05-25
+evidence_type: statistical_outlier
+
+# 매핑 셋 — feature_key 는 정규화된(prefix 제거 후) 이름의 토큰.
+mappings:
+  - feature_key: posting_date_weekend
+    tag: unusual_timing
+    label_ko: "비정상 거래시점"
+  - feature_key: posting_date_after_hours
+    tag: unusual_timing
+    label_ko: "비정상 거래시점"
+  - feature_key: round_amount
+    tag: round_amount_deviation
+    label_ko: "금액 패턴 이상"
+  - feature_key: amount_z
+    tag: amount_outlier
+    label_ko: "금액 규모 이상"
+  - feature_key: trading_partner_frequency
+    tag: vendor_frequency_anomaly
+    label_ko: "거래처 빈도 이상"
+  - feature_key: posting_lag_days
+    tag: posting_lag_anomaly
+    label_ko: "전기 지연 패턴 이상"
+  - feature_key: manual_entry_flag
+    tag: manual_entry_context
+    label_ko: "수기입력 맥락"
+
+fallback:
+  tag: feature_pattern_outlier
+  label_ko: "피처 패턴 이상"

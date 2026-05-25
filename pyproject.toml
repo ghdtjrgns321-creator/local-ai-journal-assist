@@ -32,6 +32,14 @@ dev = ["pytest", "ruff", "mypy"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+extend-exclude = [
+    "_tmp*.py",
+    "dev/active/**",
+    "scripts/**",
+    "tools/analysis/**",
+    "tools/scripts/**",
+    "tools/tmp*.py",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
@@ -47,7 +55,10 @@ testpaths = ["tests"]
 pythonpath = ["."]
 addopts = ["-p", "no:cacheprovider", "--basetemp=.tmp_pytest_workspace"]
 cache_dir = ".tmp_pytest_cache"
-markers = ["slow: 대용량 데이터 또는 리포트 생성 (별도 실행)"]
+markers = [
+    "slow: 대용량 데이터 또는 리포트 생성 (별도 실행)",
+    "experimental_phase2_internal_rrf: PHASE2 internal hierarchical RRF — V7 fixed3 production reject (2026-05-19). 미래 supervised/transformer 활성화 시 재평가",
+]
 filterwarnings = [
     "ignore:X does not have valid feature names, but LGBMClassifier was fitted with feature names:UserWarning",
 ]

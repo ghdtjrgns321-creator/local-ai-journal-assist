@@ -1,0 +1,255 @@
+# config/phase2_subdetector_tiers.yaml
+# PHASE2 sub-detector evidence_tier 단일 출처 (lock 파일)
+#
+# 본 파일은 PHASE2 family ranking tie-break ladder의 max_subdetector_evidence_tier
+# step (Layer 4 §5) 에서만 사용한다. tier는 truth recall 기준으로 조정하지 않는다.
+# 각 항목의 source_type 은 standard (회계기준서 직접 인용) 또는 distribution
+# (V7 fixed3 분포 측정값) 중 하나여야 하며, 두 출처 모두 비어 있지 않아야 한다.
+#
+# 변경 절차: docs/DECISION.md D044 PR 템플릿의 "PHASE2 sub-detector tier
+# 변경" fitting-risk check 통과 필수. tests/phase2_rulebase/
+# test_subdetector_tiers_schema.py schema test 통과 필수.
+#
+# 관련 문서:
+#   - dev/active/phase2-family-ranking/phase2-family-ranking-plan.md §L5
+#   - docs/PHASE2_GOVERNANCE_DESIGN.md (결정 8 예정)
+#   - docs/PHASE2_INTERFACE_DESIGN.md §4.4
+
+schema_version: 1
+last_updated: 2026-05-25  # 결정 9 (timeseries role lock) 메타 필드 추가
+
+# tier 의미:
+#   strong         — 기준서 직접 매핑 또는 분포 변별력 높음. 단독으로도 review queue 진입 근거.
+#   moderate       — 기준서 간접 매핑 또는 임계값 의존. 보강 증거가 함께 필요.
+#   weak           — 분포 변별력 낮음 또는 false positive 위험 높음. tie-break 최하위.
+#   ml_quantile    — ML 모델 점수. tier 값은 case 내부 score quantile 로 동적 결정.
+#                    tie-break ladder 의 max_subdetector_evidence_tier 단계에서는 분기하지 않고,
+#                    max_family_ecdf 단계에서 처리.
+allowed_tiers:
+  - strong
+  - moderate
+  - weak
+  - ml_quantile
+
+allowed_source_types:
+  - standard
+  - distribution
+
+sub_detectors:
+  - family: unsupervised
+    code: VAE-01
+    label: audit_vae_reconstruction
+    tier: ml_quantile
+    source_type: distribution
+    source_citation: "AUROC 0.9300 (V7 fixed3 3년 평균, docs/DETECTION_RESULTS_MANIPULATION_V7_FIXED3_PHASE2.md §2)"
+    distribution_metric: "row_nonzero_rate=99.9999%, q95=0.9712, q99=0.9935 (artifacts/phase2_family_correlation_matrix_20260519.json)"
+    rationale: "단일 ML model. tier 분기는 score quantile 로 동적 처리, tie-break ladder 는 max_family_ecdf 단계 사용."
+
+  - family: timeseries
+    code: TS01
+    label: transaction_burst
+    tier: moderate
+    source_type: standard
+    source_citation: "ISA 240 ¶A41 — unusual transactions including those occurring at end of period or near the period under audit"
+    distribution_metric: "PRE-MIGRATION: V7 fixed3 timeseries family score 0.4/0.8 이산값 (artifacts/phase2_family_correlation_matrix_20260519.md). POST-MIGRATION REMEASUREMENT PENDING — 2026-05-24 이후 detector 가 robust z + zero-preserving ECDF continuous score 를 산출 (docs/phase2_reorgani.md §timeseries). 새 분포 측정 후 D044 PR 로 갱신."
+    rationale: "단기 burst 는 기준서 인용 가능하나 임계 window 의존. 단독으로 high band 진입 금지."
+    # ── role lock (결정 9, 2026-05-25) ──
+    # timeseries family 는 결산/시점 컨텍스트 lane 으로 역할 고정. TOP100/500 단독 ranker 추격 금지.
+    # 변경 시: docs/PHASE2_TIMESERIES_ROLE_LOCK.md §변경 절차 통과 필수.
+    role_lock: context_lane
+    ranker_use: top2000_plus_context
+    do_not_tune_for_top_recall: true
+    coverage_profile: "TOP100~500 단독 약함, TOP2000+ 보조 coverage 회복 (결산/시점 컨텍스트 lane)"
+    batch_local_ecdf_caveat: "현 ECDF 는 inference batch 분포 기준. 회사별 routine closing calendar baseline 미적용 — 정상 결산 이벤트와 조작 결산 이벤트가 분포상 겹칠 수 있음. routine closing calendar profile 은 후속 과제."
+
+  - family: timeseries
+    code: TS02
+    label: unusual_frequency
+    tier: weak
+    source_type: distribution
+    source_citation: "PRE-MIGRATION measurement: row_nonzero_rate=87.23% (timeseries 전체), q90=q95=0.8 — 분해능 매우 낮음. POST-MIGRATION REMEASUREMENT PENDING — 2026-05-24 detector 변경 (docs/phase2_reorgani.md §timeseries) 후 분포 재측정 필요."
+    distribution_metric: "PRE-MIGRATION: V7 fixed3 measurement, timeseries family score 의 86% 행 hit, top_tail tie 지배 (artifacts/phase2_family_correlation_matrix_20260519.json). POST-MIGRATION REMEASUREMENT PENDING — robust z + ECDF 적용 후 분해능 변경 예상, 운영 측정 후 D044 PR 로 갱신."
+    rationale: "분포 변별력 낮음. coarse-booster 강제 사유. 단독 ranker 사용 금지."
+    # ── role lock (결정 9, 2026-05-25) ──
+    role_lock: context_lane
+    ranker_use: top2000_plus_context
+    do_not_tune_for_top_recall: true
+    coverage_profile: "TOP100~500 단독 약함, TOP2000+ 보조 coverage 회복 (빈도 컨텍스트 lane)"
+    batch_local_ecdf_caveat: "현 ECDF 는 inference batch 분포 기준. 회사별 routine batch 시각대 baseline 미적용 — 정상 batch 일괄기표 와 비정상 빈도 패턴이 분포상 겹칠 수 있음. routine batch calendar baseline 은 후속 과제."
+
+  - family: relational
+    code: R01
+    label: new_counterparty
+    tier: strong
+    source_type: standard
+    source_citation: "ISA 550 ¶A19 — previously unidentified related parties; ISA 240 ¶A41 (b)"
+    distribution_metric: "relational family q99=0.8 — top-tail 분리 명확 (artifacts/phase2_family_correlation_matrix_20260519.json)"
+    rationale: "신규 거래처 발견은 ISA 550 직접 인용 + 후속 절차 trigger. strong 단독 review 가능."
+
+  - family: relational
+    code: R02
+    label: dormant_account_activity
+    tier: strong
+    source_type: standard
+    source_citation: "PCAOB AS 2401 §B7 — unusual activity in dormant accounts; ISA 240 ¶A41 (d)"
+    distribution_metric: "relational family row_nonzero_rate=2.94% — 희소·일관 (artifacts/phase2_family_correlation_matrix_20260519.json)"
+    rationale: "휴면 계정 활성화는 PCAOB AS 2401 직접 인용 + 회계 substance 강한 신호."
+
+  - family: relational
+    code: R03
+    label: transfer_pricing_anomaly
+    tier: moderate
+    source_type: standard
+    source_citation: "ISA 550 ¶A21 — complex transactions with related parties"
+    distribution_metric: "relational family q99=0.8 (R01·R02·R03 통합), R03 단독 분포 미측정"
+    rationale: "이전가격 이상은 기준서 인용 가능하나 통계적 추정 의존. 보강 증거 함께 사용."
+
+  - family: relational
+    code: R04
+    label: missing_relationship
+    tier: weak
+    source_type: standard
+    source_citation: "ISA 550 ¶A19 (보조) — structural completeness check"
+    distribution_metric: "relational family 통합 분포, R04 단독 측정 부재"
+    rationale: "관계망 누락 정의 모호. false positive 위험. 단독 사용 금지."
+
+  - family: relational
+    code: R05
+    label: rare_account_partner_edge
+    tier: moderate
+    source_type: standard
+    source_citation: "ISA 240 ¶A41 (c) — significant transactions outside the normal course of business; unusual (account, partner) combinations are review signals"
+    distribution_metric: "rare pair = freq <= rel_r05_min_freq(2). small sample guard: min_pair_population=50 (unique pair count 미만이면 0)."
+    rationale: "신규/희소 (gl_account, trading_partner) 조합은 routine 거래와 구분되는 graph/entity anomaly signal. small sample guard로 fitting·소표본 오탐 차단."
+
+  - family: relational
+    code: R06
+    label: user_account_degree_spike
+    tier: moderate
+    source_type: standard
+    source_citation: "PCAOB AS 2401 §B7 — journal entries posted by individuals who do not typically post such entries; unusual user activity scope"
+    distribution_metric: "period bucket(M) 내 user-account degree, robust z-score(MAD) threshold=2.0. small sample guard: min_user_obs=3, min_users=10."
+    rationale: "사용자가 평소 다루지 않던 다양한 계정을 단기에 다루는 패턴은 backup·결산 지원 등 정상 사유 가능. moderate, 보강 증거 권장."
+
+  - family: relational
+    code: R07
+    label: dormant_partner_reactivation
+    tier: moderate
+    source_type: standard
+    source_citation: "PCAOB AS 2401 §B7 — unusual activity in previously dormant business relationships; ISA 240 ¶A41 (d) significant unusual transactions"
+    distribution_metric: "trading_partner inactive_days>180 후 reactivation_window=7일. blank/NaN partner 제외 (오탐 방지). R02(account level)와 차별."
+    rationale: "휴면 거래처 재활성화는 회계 substance 신호이나 계절성·신규 사업 재개 등 정상 패턴 포함. 단독 strong보다 moderate가 방어 가능."
+
+  - family: duplicate
+    code: L2-03a
+    label: exact_duplicate_amount
+    tier: strong
+    source_type: standard
+    source_citation: "PCAOB AS 2401 §B7 — transactions that are duplicates of others; AS 2401 .A6 (1)"
+    distribution_metric: "V7 fixed3 2024 hit=2,964 (전체의 0.87%) — deterministic precision, false positive 최소"
+    rationale: "정확 중복은 PCAOB AS 2401 직접 인용 + deterministic 매칭. 단독 review 가능."
+
+  - family: duplicate
+    code: L2-03b
+    label: fuzzy_duplicate
+    tier: moderate
+    source_type: standard
+    source_citation: "PCAOB AS 2401 §B7 (보조) — near-duplicate transactions; RapidFuzz threshold 의존"
+    distribution_metric: "V7 fixed3 2024 hit=34,655 — fuzzy threshold 의존, 정상 routine 거래 포함 가능 (docs/DETECTION_RULES.md §L2-03 high/medium/low confidence 분류)"
+    rationale: "유사 중복은 fuzzy threshold 임의성. 보강 증거 함께 사용. high_confidence_corroborated 보정 별도."
+
+  - family: duplicate
+    code: L2-03c
+    label: split_transaction
+    tier: moderate
+    source_type: standard
+    source_citation: "PCAOB AS 2401 §B7 (보조) — split transactions to circumvent approval thresholds"
+    distribution_metric: "V7 fixed3 2024 hit=16,784 — date window·two-sum range 의존 (Diag-2 후 최적화)"
+    rationale: "분할 거래는 회계 substance 신호이나 window threshold 임의성. 보강 증거 권장."
+
+  - family: duplicate
+    code: L2-03d
+    label: time_shifted_duplicate
+    tier: weak
+    source_type: distribution
+    source_citation: "V7 fixed3 2024 hit=28,590 — date sliding window·amount bucket 의존도 높음"
+    distribution_metric: "duplicate family q95=0.5985, q99=0.6 — 분해능 cap, ranking 변별력 약함"
+    rationale: "시차 중복은 window 임의성 + amount bucket 의존. 단독 사용 시 false positive 위험. weak."
+
+  - family: intercompany
+    code: IC01
+    label: unmatched_intercompany
+    tier: strong
+    source_type: standard
+    source_citation: "ISA 550 ¶A20 — intercompany balances and transactions not appropriately reconciled; PCAOB AS 2401 .A6 (3)"
+    distribution_metric: "V7 fixed3 Diag-1 후 active, 2024 hit=16 doc — sidecar unmatched-reference evidence 한정"
+    rationale: "미대사 IC는 ISA 550 직접 인용 + 회계 reconciliation 기본 절차. strong 단독 review."
+
+  - family: intercompany
+    code: IC02
+    label: amount_mismatch
+    tier: moderate
+    source_type: standard
+    source_citation: "ISA 550 ¶A20 (보조) — intercompany amount discrepancy"
+    distribution_metric: "V7 fixed3 hit=0 (carry-over, matched-pair data 미보유)"
+    rationale: "금액 불일치는 기준서 인용 가능하나 currency 변환·timing 차이로 false positive. 보강 증거 필요."
+
+  - family: intercompany
+    code: IC03
+    label: timing_gap
+    tier: weak
+    source_type: standard
+    source_citation: "ISA 550 ¶A20 (보조) — intercompany timing mismatch"
+    distribution_metric: "V7 fixed3 hit=0 (carry-over, matched-pair data 미보유)"
+    rationale: "시차 IC는 cut-off 기간 normal 차이와 구분 어려움. 단독 사용 금지."
+
+  # ──────────────────────────────────────────────────────────────────────────────
+  # PHASE2 IC internal probabilistic / reciprocal surface (2026-05-25 등록).
+  #
+  # 본 4개 entry 는 IntercompanyMatcher 가 산출하는 raw 0~1 probability column
+  # (ic_reciprocal_flow_prob / ic_amount_prob / ic_unmatched_prob / ic_timing_prob)
+  # 의 evidence_role 을 lane sort tier ladder 에 노출하기 위한 sub-detector
+  # 등록이다. score 합성 (IntercompanyMatcher._build_result 의 details.max(axis=1))
+  # 은 변경 없음. lane sort key 에 추가되는 ic_role_priority 차원 정의는
+  # docs/PHASE2_INTERFACE_DESIGN.md §IC role priority 참조.
+  #
+  # POST-MIGRATION REMEASUREMENT PENDING — V7 fixed3 시점 hit=0 (carry-over,
+  # matched-pair data 미보유) 상태이며 새 prob surface 분포는 운영 측정 후
+  # D044 PR 로 갱신한다. TS01/TS02 등록 선례와 동일 표기 정책.
+  # ──────────────────────────────────────────────────────────────────────────────
+
+  - family: intercompany
+    code: ic_reciprocal_flow_prob
+    label: reciprocal_flow_probability
+    tier: strong
+    source_type: standard
+    source_citation: "ISA 550 ¶A20 — intercompany balances and transactions appropriately reconciled (양방향 흐름); PCAOB AS 2401 §B7 — unusual journal entries with related parties; AS 2401 .A6 (3) reconciliation completeness"
+    distribution_metric: "POST-MIGRATION REMEASUREMENT PENDING — IntercompanyMatcher.compute_reciprocal_flow_scores 가 2026-05-24 도입된 single-document structural(rec+pay 동시 + amount symmetry≥0.95) + context(period_end/after_hours/round_amount) 가중평균. V7 fixed3 시점 hit=0 (carry-over), structural_candidate_docs/context_boost_docs/score_q95/q99/max 는 prob_summary['reciprocal_flow'] 에서 노출."
+    rationale: "단일 document 내 receivable+payable 동시 존재 + 금액 대칭은 reconciliation 구조 자체를 보여주는 강한 audit evidence. ISA 550 양방향 reconciliation 정의에 직접 매핑. strong 단독 review queue 진입 근거."
+
+  - family: intercompany
+    code: ic_amount_prob
+    label: amount_mismatch_probability
+    tier: moderate
+    source_type: standard
+    source_citation: "ISA 550 ¶A20 (보조) — intercompany amount discrepancy; PCAOB AS 2401 .A6 (3) reconciliation amount field 정합"
+    distribution_metric: "POST-MIGRATION REMEASUREMENT PENDING — IntercompanyMatcher.compute_probabilistic_pair_scores 가 candidate 존재 row 에 한해 contract tier (L1/L2) 별 cap 적용. V7 fixed3 시점 hit=0 (carry-over). pair_candidate_count / capped_by_contract_count 는 prob_summary 에서 노출."
+    rationale: "금액 불일치 confidence 는 ISA 550 인용 가능하나 currency 변환·timing 차이·partial reconciliation 으로 false positive 가능. IC02 와 동일 evidence role (amount_mismatch) 로 묶어 moderate 유지."
+
+  - family: intercompany
+    code: ic_unmatched_prob
+    label: no_candidate_probability
+    tier: weak
+    source_type: standard
+    source_citation: "ISA 550 ¶A20 (보조) — intercompany transactions without identified counterparty; PCAOB AS 2401 §B7 unmatched related-party flow"
+    distribution_metric: "POST-MIGRATION REMEASUREMENT PENDING — IntercompanyMatcher.compute_probabilistic_pair_scores 의 no_candidate 분기. weak cp_block (cc/tp 모두 비어 anchor 가 unique tag) 은 별도 더 낮은 cap. no_candidate_count / weak_contract_count 는 prob_summary 에서 노출."
+    rationale: "후보 부재는 정상 단방향 거래·data completeness gap 와 양립. detector 내부에서 이미 lower cap 적용. evidence role 은 no_candidate, tier 는 weak 로 잠가 단독 review queue 진입 금지."
+
+  - family: intercompany
+    code: ic_timing_prob
+    label: timing_gap_probability
+    tier: weak
+    source_type: standard
+    source_citation: "ISA 550 ¶A20 (보조) — intercompany timing mismatch; cut-off 기간 정상 차이와 구분 어려움"
+    distribution_metric: "POST-MIGRATION REMEASUREMENT PENDING — IntercompanyMatcher.compute_probabilistic_pair_scores 가 candidate 존재 row 에 한해 date_window_days / max_day_diff 기반 timing distance 산출. V7 fixed3 시점 hit=0 (carry-over). timing_domain params 는 prob_summary 에서 노출."
+    rationale: "시차는 cut-off 기간 normal 차이·결산 timing lag 와 구분 어려움. IC03 와 동일 evidence role (timing_gap) 로 묶어 weak 유지. ic_role_priority 에서 amount_mismatch / no_candidate 보다 하위."

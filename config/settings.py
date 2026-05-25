@@ -118,6 +118,14 @@ class AuditSettings(BaseSettings):
     duplicate_split_window_days: int = 3  # B05c: 분할 거래 윈도우 (일)
     duplicate_time_window_days: int = 7  # B05d: 시차 중복 윈도우 (일)
     duplicate_max_group_size: int = 1000  # 그룹 크기 제한 (초과 시 스킵)
+    # pair similarity artifact (Phase 2 duplicate family 보강)
+    # Why: 정상 반복 거래(월세·주차료)에서 pair 폭발 방지 + metadata payload 크기 제한.
+    duplicate_max_pairs_per_row: int = 200  # 단일 row가 진입할 수 있는 pair 상한
+    duplicate_max_total_pairs: int = 200_000  # 내부 candidate pair 절대 상한
+    duplicate_pair_artifact_top_n: int = 500  # metadata 노출용 top-N pair (sanitized)
+    # Why: row scoring 은 벡터화돼 있어 100k 행이 1초 내 끝나지만 pair feature 산출은
+    #      blocking sweep 비용이 크다. 대용량 입력에서는 artifact 만 graceful skip.
+    duplicate_pair_artifact_max_rows: int = 50_000
 
     # --- Detection Layer C 관련 ---
     backdated_threshold_days: int = 30  # C04: 전기일-문서일 괴리 임계 일수
@@ -161,8 +169,24 @@ class AuditSettings(BaseSettings):
     rel_dormant_inactive_days: int = 180  # R02: 휴면 계정 판정 기간 (일)
     rel_dormant_reactivation_window_days: int = 7  # R02: 연좌 플래깅 윈도우 (일)
     rel_dormant_reactivation_min_amount: float = 0.0  # R02: 재활성화 최소 금액 (0=제한없음)
-    rel_tp_ic_deviation_threshold: float = 0.15  # R03: IC 가격 편차 허용 (15%)
-    rel_tp_min_ic_pairs: int = 3  # R03: 최소 비교 쌍 수
+    rel_tp_ic_deviation_threshold: float = (
+        1.0  # R03: IC 가격 편차 허용 (truth-negative q95 ≈ 0.9995)
+    )
+    rel_tp_min_ic_pairs: int = 5  # R03: 최소 비교 쌍 수 (그룹 통계 유의미 최소 표본)
+
+    # --- RelationalDetector graph/entity 보강 (R05~R07) ---
+    # Why: Phase 2 relational family를 graph/entity anomaly로 격상.
+    #      모든 sub-detector는 컬럼 부재 시 0 반환 (graceful), small sample 가드 포함.
+    rel_r05_min_pair_population: int = 50  # R05: rare 판정 최소 unique pair 수 (small sample 가드)
+    rel_r05_min_freq: int = 2  # R05: rare pair 판정 최대 빈도
+    rel_r05_lookback_days: int = 90  # R05: 첫 등장 recency bonus 윈도우 (일)
+    rel_r06_period: str = "M"  # R06: degree bucket period ("M" month 또는 "W" week)
+    rel_r06_z_threshold: float = 2.0  # R06: robust z-score (MAD 기반) 임계
+    rel_r06_min_user_obs: int = 3  # R06: user별 period 관측 수 최소 (통계 유의미)
+    rel_r06_min_users: int = 10  # R06: 모집단 user 수 최소 (small sample 가드)
+    rel_r07_partner_inactive_days: int = 180  # R07: trading_partner 휴면 판정 일수
+    rel_r07_reactivation_window_days: int = 7  # R07: 재활성화 윈도우 (일)
+    rel_r07_min_amount: float = 0.0  # R07: 재활성화 최소 금액 (0=제한없음)
 
     # --- GraphDetector (WU-22) — networkx 기반 순환/이전가격 탐지 ---
     # Why: 회계 장부 100만+ 행을 graph에 올리면 OOM. pandas 사전 필터 + from_pandas_edgelist 강제.
@@ -190,11 +214,73 @@ class AuditSettings(BaseSettings):
     nlp_min_group_size: int = 5  # NLP03/NLP04: centroid 산출 최소 표본 (소규모 그룹 스킵)
 
     # --- IntercompanyMatcher (WU-07) ---
-    ic_amount_tolerance: float = 0.02  # IC01/IC02: 금액 허용 오차 (2%)
+    ic_amount_tolerance: float = 0.05  # IC01/IC02: 금액 허용 오차 (5%)
     ic_max_diff_ratio: float = 0.10  # IC02: 최대 비율 (10% → score 1.0)
+    ic_cross_currency_ratio_threshold: float = 20.0  # IC02: 통화 미상 시 FX 의심 금액비 가드
     ic_date_window_days: int = 5  # IC03: 정상 시차 허용 (일)
     ic_max_day_diff: int = 30  # IC03: 최대 시차 (30일 → score 1.0)
     ic_min_ic_rows: int = 2  # 최소 IC 행 수 (미달 시 스킵 + warning)
+    ic_use_related_party_master: bool = True  # IC01: YAML related_party_master 사용 여부
+    ic_period_boundary_days: int = 5  # IC03: 결산 경계 reason code 부착용 (월말 ±N일)
+    # PHASE2 internal probabilistic reconciliation (IC01~03 보강) 폴백 기본값.
+    # Why: audit_rules.yaml::patterns.intercompany.matching_weights /
+    #      candidate_blocking 미지정 시 사용.
+    ic_prob_weight_amount: float = 0.40
+    ic_prob_weight_date: float = 0.25
+    ic_prob_weight_reference: float = 0.20
+    ic_prob_weight_counterparty: float = 0.15
+    ic_prob_amount_bucket_factor: float = 2.0
+    ic_prob_max_candidates_per_row: int = 50
+    ic_prob_reference_min_length: int = 3
+    # contract-tier score caps (audit evidence strength 기준, truth recall 튜닝 금지).
+    # Why: no_candidate (counterpart 가 후보로 잡히지 않은 row) 는 정상 단방향 거래나
+    #      matching evidence 부족과 양립하므로 strong anomaly 처럼 다루면 정상 row 가
+    #      Phase2 Noisy-OR TOP 구간을 오염시킨다. candidate mismatch (실제 reconciliation
+    #      gap 가 측정된 case) 만 강한 점수를 받을 수 있게 cap 을 분리한다.
+    #   - L1 + candidate mismatch: 1.0 — counterparty + reference 식별자 명확한데 gap → 강 증거
+    #   - L1 + no_candidate:       0.5 — counterpart 명확한데 후보 없음 → 단방향 양립, mid review
+    #   - L2 + candidate mismatch: 0.7 — reference 약함으로 매칭 정밀도 하락, FP 가능
+    #   - L2 + no_candidate:       0.3 — matching evidence 약함 + 후보 없음, weak review
+    #   - weak cp_block:           0.3 — cc/tp 모두 비어 anchor 부재, matching evidence 자체 부족
+    #   - L3 insufficient:         0.0 — matching 불가능 (early return, 폴백용 상수)
+    ic_prob_l1_mismatch_cap: float = 1.0
+    ic_prob_l2_mismatch_cap: float = 0.7
+    ic_prob_no_candidate_cap_l1: float = 0.5
+    ic_prob_no_candidate_cap_l2: float = 0.3
+    ic_prob_weak_contract_cap: float = 0.3
+    ic_prob_l3_cap: float = 0.0
+
+    # --- IC timing_prob 도메인 분리 (정상 결산 close lag vs 의심 timing gap) ---
+    # Why: ic_timing_prob 는 단독 row 의 day_diff/max_day_diff 만 보고 1.0 박는다.
+    #      정상 IC 는 receivable 측 월말 결산 → payable 측 다음 달 인식 패턴이
+    #      흔하다 (K-IFRS / KICPA cutoff). 시차만 큰 정상 close lag 가 의심 timing
+    #      gap 과 동일 점수로 합류하면 IC family TOP 구간이 정상으로 채워진다.
+    #      audit 의미상 timing 단독은 weak signal, timing + (amount mismatch /
+    #      weak counterparty / no reference) 조합만 strong evidence 로 본다.
+    ic_timing_grace_window_days: int = 14  # month-end close lag 판정 day_diff 한계
+    ic_timing_month_end_window_days: int = 7  # 월말/월초 N일 정의 (raw close pattern)
+    ic_timing_amount_strong_min: float = 0.95  # amount_sim ≥ → amount 강한 매칭 판정
+    ic_timing_cp_strong_min: float = 0.5  # cp_score ≥ → counterparty 강한 매칭 판정
+    ic_timing_ref_strong_min: float = 0.7  # reference_sim ≥ → ref 강한 매칭 판정
+    ic_timing_only_weak_cap: float = 0.3  # 모든 evidence 강할 때 timing 단독 cap
+
+    # --- PHASE2 internal: single-document reciprocal IC flow (ic_reciprocal_flow_prob) ---
+    # Why: 정상 IC 는 receivable 또는 payable 한 쪽 GL 만 단일 doc 에 기록하고
+    #      양측 reconciliation 으로 검증된다 (분석 결과 fixed5: 정상 9,256건 single-doc
+    #      reciprocal GL 비율 0%). receivable + payable GL pair 가 같은 doc 안에
+    #      self-balanced 로 동시 기표되면 양측 검증 없이 한 회사가 임의로 양변을
+    #      동시 처리한 것 (ISA 550 §23 related-party 사업상 합리성 결여,
+    #      PCAOB AS 2401 management override). cap/weight 는 audit evidence 강도
+    #      기준이며 fixed5 truth recall 기준으로 튜닝 금지.
+    ic_reciprocal_amount_similarity_min: float = 0.95  # 1 - |rec-pay|/max ≥ threshold
+    ic_reciprocal_min_structural_score: float = 0.5  # structural 미달 시 context boost 차단
+    ic_reciprocal_structural_weight: float = 0.7  # bounded combination weight (structural)
+    ic_reciprocal_context_weight: float = 0.3  # bounded combination weight (context)
+    ic_reciprocal_context_period_end_days: int = 5  # 월말/월초 N일 (posting_date.day 기반)
+    ic_reciprocal_context_round_amount_unit: float = 1_000_000.0  # round amount 판정 단위
+    ic_reciprocal_context_period_end_weight: float = 0.4  # context sub-weight (sum=1)
+    ic_reciprocal_context_after_hours_weight: float = 0.3
+    ic_reciprocal_context_round_weight: float = 0.3
 
     # --- Detection Layer C: C12 비정상 시간대 집중 분석 ---
     normal_hours_start: float = 8.5  # 정상 업무시간 시작 (08:30)
@@ -267,10 +353,76 @@ class AuditSettings(BaseSettings):
     trendbreak_min_years: int = 3  # 다기간 로더: 최소 유효 연도 수
 
     # --- Detection Timeseries (TS01/TS02) ---
-    burst_window_days: int = 7  # TS01: 롤링 윈도우 (일)
-    burst_sigma: float = 3.0  # TS01: 급증 판정 σ 배수
-    frequency_window_days: int = 7  # TS02: 빈도 집중 윈도우 (일)
-    frequency_min_count: int = 5  # TS02: 윈도우 내 최소 거래 건수
+    # Why: legacy boolean rolling mean+sigma 파라미터. ts_* statistical anomaly
+    # 경로로 대체 예정이나, 외부 직접 참조가 없어졌음을 별도 PR에서 확인 후 제거.
+    burst_window_days: int = 7  # legacy TS01 boolean (deprecated)
+    burst_sigma: float = 3.0  # legacy TS01 boolean (deprecated)
+    frequency_window_days: int = 7  # legacy TS02 boolean (deprecated)
+    frequency_min_count: int = 5  # legacy TS02 boolean (deprecated)
+
+    # --- Detection Timeseries statistical anomaly (TS sub-signal v2) ---
+    # Why: rule-style boolean → robust z-score + ECDF 정규화 + period-end
+    # concentration 결합. 임계는 ECDF percentile 단일 기준으로 일관화.
+    ts_burst_window_days: int = 14  # 일별 burst robust baseline 롤링 윈도우
+    ts_group_window_days: int = 7  # 그룹(vendor/account) 단기 빈도 윈도우
+    # Why(min_support): baseline 유의성 확보. 5건은 baseline median 이 0~1 에 머물러 spike
+    # 변별력이 없다. 10건은 group 시계열이 최소 baseline 형성 가능한 도메인 기준이다.
+    # 본 값은 anomaly semantics 기준이며 truth recall 기준이 아니다.
+    ts_group_min_support: int = 10  # 그룹 baseline 산출 최소 표본 (5→10, sanity guard)
+    # Why(spike 정의 가드): broad activity 를 anomaly 로 보지 않기 위한 sanity guard.
+    # 이전 group_frequency 는 단순 활동 빈도를 spike 로 오인하여 분포 62% case 가 nonzero
+    # 였다. 아래 3 조건을 모두 충족할 때만 group spike 로 인정한다 (AND 조건).
+    #   - 활성일 ≥ 3: 단일 일자 burst 는 daily_burst(TS01) 영역. group spike 는 기간 패턴.
+    #   - 절대 excess ≥ 3: PCAOB AS 2401 burst 표준 ("baseline 대비 +3 건 이상").
+    #   - 비율 ≥ 2.0: 회계 burst 표준 ("double the normal"). 1.5 는 노이즈.
+    # 값은 truth recall 튜닝이 아니라 도메인 anomaly semantics 기준이다.
+    ts_group_min_active_days: int = 3  # group spike 인정 최소 활성일
+    ts_group_min_excess_count: int = 3  # group spike 인정 최소 절대 초과 건수
+    ts_group_spike_ratio_min: float = 2.0  # group spike 인정 최소 비율 (current/baseline)
+    # Why(cold_start_score_cap): baseline_median=0 인 cold-start group 의 단순 1~2 건 첫
+    # 활동은 strong anomaly 가 아닌 context 신호로만 본다. cap 값은 기존 period_end
+    # context_cap=0.30 과 일관. cold-start 은 baseline 정보가 없으므로 boost 입력 자격만.
+    ts_group_cold_start_score_cap: float = 0.30
+    ts_burst_high_pctile: float = 0.95  # TS01 boolean 임계 (ts01_signal ECDF)
+    ts_freq_high_pctile: float = 0.95  # TS02 boolean 임계 (s2 ECDF)
+    ts_period_end_window_days: int = 3  # 월말/분기말 근접도 선형 감쇠 윈도우
+    ts_period_end_high: float = 0.80  # period_end_concentration high score 기준
+    # Why: ISA 240 ¶A41 의 "period-end transactions" 는 routine 결산 거래를 포함한다.
+    # unusual 로 격상하려면 amount/frequency/volume baseline 이상 신호가 함께 있어야 한다.
+    # cap=0.30 — TS01 boolean 임계 0.95 보다 훨씬 낮아 context 없는 period-end-only 는
+    # row score 가 weak band 에 머물러 boolean flag 도, family TOP 점유도 차단된다.
+    # threshold=0.50 — ECDF median. anomaly context (s1/s2/amount_tail) 가 분포 상위 절반
+    # 이상이어야 "충분한 context" 로 간주. 값은 truth-recall 튜닝이 아니라 도메인 기준.
+    ts_period_end_context_cap: float = 0.30
+    ts_period_end_context_threshold: float = 0.50
+    # Why(strong_present_threshold): row_score 결합식의 evidence role gating 임계.
+    # strong_score = max(daily_burst_ecdf, group_spike_ecdf) 가 본 임계 이상이어야 context
+    # (period_end / amount_tail) 가 raw 값으로 row_score 에 기여한다. strong 부재 시 context
+    # 는 ts_period_end_context_cap 이하로 cap → context 단독 high score 차단. 값은 도메인
+    # 기준 (context_cap 과 동일) — broad activity 를 anomaly 로 보지 않기 위한 sanity guard.
+    ts_strong_present_threshold: float = 0.30
+
+    # --- TS composite temporal anomaly (3-axis 결합식) ---
+    # Why: strong axis (daily_burst/group_spike) 가 단일 사건 fraud 패턴 (fictitious_entry
+    # 1~2 건 추가, period_end_adjustment 결산 분개, expense_capitalization 단일 자본화)
+    # 를 모두 우회한다. amount_tail / period_end / after_hours / manual / round 같은
+    # context+rarity 신호가 *결합* 될 때만 strong band 진입을 허용하는 composite path 를
+    # 추가한다. 단독 신호는 cap 이하 — context_count >= 2 + rarity_tail >= q95 OR
+    # context_count >= 3 + rarity_tail >= q90 만 cap 초과 허용. 모든 임계는 audit anomaly
+    # semantics 기준 (분포 위치, evidence count). truth recall 기준 튜닝 금지.
+    # Why: evidence_count = context_count + rarity_high_count. 3 이상 + context >= 1 이면
+    # composite path 통과. 단독 신호 (rarity 1 + context 0, context 1 + rarity 0) 모두 차단.
+    ts_composite_min_evidence_count: int = 3
+    ts_composite_tail_q: float = 0.90  # moderate path rarity 분포 임계 (상위 10%)
+    ts_composite_strong_tail_q: float = 0.95  # strong-composite path rarity 분포 임계 (상위 5%)
+    ts_composite_context_boost_max: float = 0.80  # composite path row_score 상한
+    # Why: context 신호 boolean 판정 임계. period_end_concentration raw score 가 본 값 이상
+    # 일 때만 context_count 에 산입. 0.05 는 노이즈 floor (proximity * percentile_tail
+    # 곱에서 D-3 ~ 0.5 percentile 인 경우 0.125 이상 산출, 그 이하는 약한 결산기 인접).
+    ts_composite_period_end_min: float = 0.05
+    # Why: rarity sub-signal 의 batch-local ECDF 산출 시 unique pair 수가 본 값 미만이면
+    # 통계적으로 의미 있는 rare 판정 불가 → 전체 0. R05 와 일관 (rel_r05_min_pair_population).
+    ts_rarity_min_pair_population: int = 50
 
     # --- L3 통계 검증 (statistical_validator) ---
     monthly_volatility_zscore: float = 2.0  # 월별 변동률 이상 판정 Z-score
@@ -374,6 +526,9 @@ class AuditSettings(BaseSettings):
     # Why: pandas/numpy 내부 연산은 GIL 해제 → ThreadPoolExecutor로 독립 탐지기
     #      병렬화. ProcessPool은 DataFrame pickle 비용(1M 행 기준 수 초)이 커서
     #      오히려 느림. None이면 순차 실행(테스트/디버깅용).
+    # 2026-05-18 벤치 결과: 1.07M 행 / 4 workers 에서 단축 0.4% (268.67s → 267.63s).
+    # 각 detector wall time이 2~24x 길어짐 — Python 코드(.map/.apply/loop/regex)가
+    # GIL을 잡고 있어 ThreadPool 이득이 거의 없고 contention만 발생. 순차 유지.
     detection_parallel_workers: int | None = None
 
     # --- Detection execution scope ---
