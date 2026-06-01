@@ -17,14 +17,16 @@ logger = logging.getLogger(__name__)
 # ── 상수 ──────────────────────────────────────────────────────
 
 # Why: Text-to-SQL은 분석용 core 테이블만 조회 허용
-TABLE_WHITELIST: frozenset[str] = frozenset({
-    "general_ledger",
-    "anomaly_flags",
-    "anomaly_flag_summary",
-    "benford_summary",
-    "benford_digits",
-    "trial_balance",
-})
+TABLE_WHITELIST: frozenset[str] = frozenset(
+    {
+        "general_ledger",
+        "anomaly_flags",
+        "anomaly_flag_summary",
+        "benford_summary",
+        "benford_digits",
+        "trial_balance",
+    }
+)
 
 MAX_SUBQUERY_DEPTH = 3
 DEFAULT_LIMIT = 1000
@@ -40,18 +42,21 @@ _STRING_LITERAL_PATTERN = re.compile(r"'[^']*'")
 
 # Why: FROM/JOIN 절 뒤의 테이블명 추출
 _TABLE_REF_PATTERN = re.compile(
-    r"\b(?:FROM|JOIN)\s+(\w+)", re.IGNORECASE,
+    r"\b(?:FROM|JOIN)\s+(\w+)",
+    re.IGNORECASE,
 )
 
 # Why: CTE 별칭은 테이블이 아니므로 화이트리스트 검사에서 제외
 _CTE_ALIAS_PATTERN = re.compile(
-    r"\bWITH\s+(\w+)\s+AS\b", re.IGNORECASE,
+    r"\bWITH\s+(\w+)\s+AS\b",
+    re.IGNORECASE,
 )
 
 _LIMIT_PATTERN = re.compile(r"\bLIMIT\s+\d+", re.IGNORECASE)
 
 
 # ── 결과 모델 ────────────────────────────────────────────────
+
 
 @dataclass(frozen=True)
 class ValidationResult:
@@ -64,6 +69,7 @@ class ValidationResult:
 
 
 # ── 검증 함수 ────────────────────────────────────────────────
+
 
 def validate_sql(
     sql: str,
@@ -91,12 +97,8 @@ def validate_sql(
         errors.append("DML/DDL 구문 감지 — SELECT만 허용")
 
     # Step 2: 테이블 화이트리스트 (CTE 별칭 제외)
-    tables = {
-        m.group(1).lower() for m in _TABLE_REF_PATTERN.finditer(normalized)
-    }
-    cte_aliases = {
-        m.group(1).lower() for m in _CTE_ALIAS_PATTERN.finditer(normalized)
-    }
+    tables = {m.group(1).lower() for m in _TABLE_REF_PATTERN.finditer(normalized)}
+    cte_aliases = {m.group(1).lower() for m in _CTE_ALIAS_PATTERN.finditer(normalized)}
     unauthorized = tables - TABLE_WHITELIST - cte_aliases
     if unauthorized:
         errors.append(f"비허용 테이블: {', '.join(sorted(unauthorized))}")
@@ -104,9 +106,7 @@ def validate_sql(
     # Step 3: 서브쿼리 깊이
     depth = _measure_subquery_depth(sql_without_strings)
     if depth > MAX_SUBQUERY_DEPTH:
-        errors.append(
-            f"서브쿼리 깊이 {depth} — 최대 {MAX_SUBQUERY_DEPTH}단계 허용"
-        )
+        errors.append(f"서브쿼리 깊이 {depth} — 최대 {MAX_SUBQUERY_DEPTH}단계 허용")
 
     # Step 4: 배치 격리 키 확인
     if require_batch_filter and "upload_batch_id" not in normalized.lower():
@@ -132,6 +132,7 @@ def validate_sql(
 
 
 # ── 내부 헬퍼 ────────────────────────────────────────────────
+
 
 def _measure_subquery_depth(sql: str) -> int:
     """괄호 중첩 내 SELECT 키워드로 서브쿼리 깊이 측정."""

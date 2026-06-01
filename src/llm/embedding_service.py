@@ -32,11 +32,36 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Why: 영문 stopword 최소 집합 — 적요에서 의미 단어만 남기기 위한 보수적 필터
-_EN_STOPWORDS = frozenset({
-    "a", "an", "and", "are", "as", "at", "be", "by", "for", "from",
-    "has", "have", "in", "is", "it", "its", "of", "on", "or", "that",
-    "the", "this", "to", "was", "were", "with",
-})
+_EN_STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "be",
+        "by",
+        "for",
+        "from",
+        "has",
+        "have",
+        "in",
+        "is",
+        "it",
+        "its",
+        "of",
+        "on",
+        "or",
+        "that",
+        "the",
+        "this",
+        "to",
+        "was",
+        "were",
+        "with",
+    }
+)
 
 # Why: 영문 토큰 추출 — 알파벳/숫자만 단어 단위로
 _RE_EN_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9]+")

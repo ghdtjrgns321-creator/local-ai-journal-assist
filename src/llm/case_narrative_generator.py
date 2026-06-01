@@ -69,9 +69,11 @@ class CaseNarrativeGenerator:
             "Generate PHASE3 selected-case narratives in Korean.\n"
             "Return one object per requested case_id.\n"
             "Do not add facts outside the provided case payload.\n"
+            "Do not reorder cases or assign new priority.\n"
             "Use review-oriented wording; do not conclude fraud, violation, or manipulation.\n"
-            "For each case, include narrative, cited_rules, review_focus, and "
-            "evidence_limitations.\n\n"
+            "For each case, include summary, narrative, cited_rules, review_focus, "
+            "suggested_audit_actions, evidence_limitations, and optional "
+            "phase2_family_summary.\n\n"
             f"{json.dumps(payloads, ensure_ascii=False, default=str)}"
         )
         return [

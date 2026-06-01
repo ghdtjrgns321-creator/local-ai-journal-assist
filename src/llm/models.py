@@ -8,7 +8,7 @@ tree_model/distance_model 분기로 1회 LLM 호출에 전 모델 전략 수령.
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -114,10 +114,13 @@ class CaseNarrative(BaseModel):
     """PHASE3 selected-case explanation output."""
 
     case_id: str
+    summary: str = ""
     narrative: str
     cited_rules: list[str] = Field(default_factory=list)
     review_focus: list[str] = Field(default_factory=list)
+    suggested_audit_actions: list[dict[str, str]] = Field(default_factory=list)
     evidence_limitations: list[str] = Field(default_factory=list)
+    phase2_family_summary: dict[str, Any] | None = None
 
 
 class CaseNarrativeBatch(BaseModel):

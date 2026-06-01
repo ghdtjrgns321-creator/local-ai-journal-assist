@@ -37,48 +37,54 @@ def profile_to_llm_context(profile: EDAProfile) -> dict:
                 if col.outlier_count and profile.total_rows > 0
                 else 0.0
             )
-            entry.update({
-                "mean": col.mean,
-                "median": col.median,
-                "std": col.std,
-                "skewness": col.skewness,
-                "is_highly_skewed": (
-                    abs(col.skewness) > settings.heuristic_skewness_threshold
-                    if col.skewness is not None
-                    else False
-                ),
-                "kurtosis": col.kurtosis,
-                "outlier_count": col.outlier_count,
-                "outlier_rate": round(outlier_rate, 4),
-                "has_many_outliers": (
-                    outlier_rate > settings.heuristic_outlier_rate_threshold
-                ),
-                "min_val": col.min_val,
-                "max_val": col.max_val,
-            })
+            entry.update(
+                {
+                    "mean": col.mean,
+                    "median": col.median,
+                    "std": col.std,
+                    "skewness": col.skewness,
+                    "is_highly_skewed": (
+                        abs(col.skewness) > settings.heuristic_skewness_threshold
+                        if col.skewness is not None
+                        else False
+                    ),
+                    "kurtosis": col.kurtosis,
+                    "outlier_count": col.outlier_count,
+                    "outlier_rate": round(outlier_rate, 4),
+                    "has_many_outliers": (outlier_rate > settings.heuristic_outlier_rate_threshold),
+                    "min_val": col.min_val,
+                    "max_val": col.max_val,
+                }
+            )
 
         elif col.dtype_group == "categorical":
-            entry.update({
-                "cardinality": col.cardinality,
-                "is_high_cardinality": (
-                    col.cardinality > settings.heuristic_high_cardinality_threshold
-                    if col.cardinality is not None
-                    else False
-                ),
-                "top_values": col.top_values[:5] if col.top_values else [],
-            })
+            entry.update(
+                {
+                    "cardinality": col.cardinality,
+                    "is_high_cardinality": (
+                        col.cardinality > settings.heuristic_high_cardinality_threshold
+                        if col.cardinality is not None
+                        else False
+                    ),
+                    "top_values": col.top_values[:5] if col.top_values else [],
+                }
+            )
 
         elif col.dtype_group == "datetime":
-            entry.update({
-                "min_date": col.min_date,
-                "max_date": col.max_date,
-                "date_range_days": col.date_range_days,
-            })
+            entry.update(
+                {
+                    "min_date": col.min_date,
+                    "max_date": col.max_date,
+                    "date_range_days": col.date_range_days,
+                }
+            )
 
         elif col.dtype_group == "boolean":
-            entry.update({
-                "true_rate": col.true_rate,
-            })
+            entry.update(
+                {
+                    "true_rate": col.true_rate,
+                }
+            )
 
         columns_context[name] = entry
 
@@ -152,10 +158,10 @@ def _build_user_prompt(profile_context: dict) -> str:
     profile_json = json.dumps(profile_context, ensure_ascii=False, indent=2)
 
     return f"""## 데이터 개요
-- 행: {profile_context['total_rows']:,}
-- 컬럼: {profile_context['total_columns']}
-- 중복행: {profile_context['duplicate_rows']:,}
-- 샘플링 여부: {profile_context['sampled']}
+- 행: {profile_context["total_rows"]:,}
+- 컬럼: {profile_context["total_columns"]}
+- 중복행: {profile_context["duplicate_rows"]:,}
+- 샘플링 여부: {profile_context["sampled"]}
 
 ## 컬럼별 EDA 프로파일
 ```json

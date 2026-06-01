@@ -88,7 +88,10 @@ class PreprocessingAdvisor:
                 if attempt < _MAX_RETRIES:
                     messages = messages + [
                         {"role": "assistant", "content": raw_response},
-                        {"role": "user", "content": "응답이 JSON Schema에 맞지 않습니다. 다시 시도하세요."},
+                        {
+                            "role": "user",
+                            "content": "응답이 JSON Schema에 맞지 않습니다. 다시 시도하세요.",
+                        },
                     ]
 
         logger.warning("LLM 재시도 소진 — 규칙 기반 폴백으로 전환")
@@ -118,17 +121,22 @@ class PreprocessingAdvisor:
             )
             tree_strategy = _rule_tree_strategy()
             distance_strategy = _rule_distance_strategy(
-                col.dtype_group, col.skewness, outlier_rate, settings,
+                col.dtype_group,
+                col.skewness,
+                outlier_rate,
+                settings,
             )
 
-            columns.append(ColumnPreprocessing(
-                column=name,
-                dtype_group=col.dtype_group,
-                imputer=imputer,
-                encoder=encoder,
-                tree_model=tree_strategy,
-                distance_model=distance_strategy,
-            ))
+            columns.append(
+                ColumnPreprocessing(
+                    column=name,
+                    dtype_group=col.dtype_group,
+                    imputer=imputer,
+                    encoder=encoder,
+                    tree_model=tree_strategy,
+                    distance_model=distance_strategy,
+                )
+            )
 
         imbalance, imbalance_reason = _rule_imbalance(settings)
 

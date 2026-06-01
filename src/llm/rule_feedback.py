@@ -60,9 +60,7 @@ class ApplyResult:
 def _validate_actor(actor: str) -> None:
     """actor 문자열이 감사로그에 안전하게 기록 가능한지 검증."""
     if not _ACTOR_PATTERN.match(actor or ""):
-        raise ValueError(
-            f"actor 포맷 불일치 (영문/숫자/._-@, 1~64자): {actor!r}"
-        )
+        raise ValueError(f"actor 포맷 불일치 (영문/숫자/._-@, 1~64자): {actor!r}")
 
 
 _SYSTEM_PROMPT = (
@@ -101,9 +99,7 @@ class RuleFeedbackEngine:
         # Why: topk가 쿼리에 실리므로 생성자에서 타입/범위 강제 → SQL 파라미터 바인딩의
         #      두 번째 방어선. 매우 큰 값으로 LLM 프롬프트가 터지는 것도 함께 방지.
         if not isinstance(topk, int) or topk < 1 or topk > _TOPK_MAX:
-            raise ValueError(
-                f"topk must be int in [1, {_TOPK_MAX}], got {topk!r}"
-            )
+            raise ValueError(f"topk must be int in [1, {_TOPK_MAX}], got {topk!r}")
         self.conn = conn
         self.existing = existing_rules.get("patterns", {}) if existing_rules else {}
         self.client = client if client is not None else get_chat_client("reasoning")
@@ -159,7 +155,8 @@ class RuleFeedbackEngine:
         if not suggestions:
             return ApplyResult(
                 path=repo.company_dir(company_id) / "audit_rules.yaml",
-                applied=0, skipped=0,
+                applied=0,
+                skipped=0,
             )
 
         # 1) 전역 + 기존 회사 override 머지본 = 현재 사용 중 룰
@@ -177,9 +174,7 @@ class RuleFeedbackEngine:
         #    (전역 리스트가 deep_merge로 replace되어도 유실 없음)
         override_to_save = dict(existing_override)
         override_to_save["patterns"] = patterns
-        path = repo.save_company_yaml(
-            company_id, "audit_rules.yaml", override_to_save
-        )
+        path = repo.save_company_yaml(company_id, "audit_rules.yaml", override_to_save)
 
         # 3) 전역 설정 캐시 무효화 (lru_cache) — monkeypatch로 교체된 경우 속성 없음
         clear_fn = getattr(get_audit_rules, "cache_clear", None)
@@ -200,10 +195,13 @@ class RuleFeedbackEngine:
 
         logger.info(
             "rule_feedback 적용: company=%s, 저장 %d건, 스킵 %d건",
-            company_id, len(applied), len(suggestions) - len(applied),
+            company_id,
+            len(applied),
+            len(suggestions) - len(applied),
         )
         return ApplyResult(
-            path=path, applied=len(applied),
+            path=path,
+            applied=len(applied),
             skipped=len(suggestions) - len(applied),
         )
 
@@ -311,11 +309,14 @@ class RuleFeedbackEngine:
             if code in existing_codes:
                 continue
             evidence = self._fetch_evidence_by_account(code)
-            out.append({
-                "value": code, "count": int(n),
-                "suspense_ratio": round(float(ratio), 3),
-                "evidence": evidence,
-            })
+            out.append(
+                {
+                    "value": code,
+                    "count": int(n),
+                    "suspense_ratio": round(float(ratio), 3),
+                    "evidence": evidence,
+                }
+            )
         return out
 
     def _sample_revenue_prefixes(self) -> list[dict]:
@@ -338,11 +339,14 @@ class RuleFeedbackEngine:
             if pfx in existing or not pfx:
                 continue
             evidence = self._fetch_evidence_by_prefix(pfx)
-            out.append({
-                "value": pfx, "count": int(n),
-                "credit_total": float(total or 0),
-                "evidence": evidence,
-            })
+            out.append(
+                {
+                    "value": pfx,
+                    "count": int(n),
+                    "credit_total": float(total or 0),
+                    "evidence": evidence,
+                }
+            )
         return out
 
     def _sample_intercompany(self) -> list[dict]:
@@ -392,10 +396,14 @@ class RuleFeedbackEngine:
             if (rec, pay) in existing_pairs:
                 continue
             evidence = self._fetch_evidence_by_ic_pair(rec, pay)
-            out.append({
-                "receivable": rec, "payable": pay,
-                "count": int(n), "evidence": evidence,
-            })
+            out.append(
+                {
+                    "receivable": rec,
+                    "payable": pay,
+                    "count": int(n),
+                    "evidence": evidence,
+                }
+            )
         return out
 
     # ── Evidence 조회 헬퍼 ──────────────────────────────────
@@ -458,7 +466,10 @@ class RuleFeedbackEngine:
         return [self._row_to_evidence(r) for r in rows]
 
     def _fetch_evidence_by_ic_pair(
-        self, receivable: str, payable: str, limit: int = 3,
+        self,
+        receivable: str,
+        payable: str,
+        limit: int = 3,
     ) -> list[dict]:
         """IC 쌍 증거: 동일 document_id 안에서 두 계정이 동시에 등장한 전표만."""
         # Why: 단순 IN 필터는 해당 계정을 가진 모든 전표를 섞어 반환하므로
@@ -522,7 +533,8 @@ class RuleFeedbackEngine:
         ]
 
     def _filter_duplicates(
-        self, suggestions: list[RuleSuggestion],
+        self,
+        suggestions: list[RuleSuggestion],
     ) -> list[RuleSuggestion]:
         """기존 룰(전역 머지본)과의 중복을 코드 레벨에서 한 번 더 제거."""
         manual = {s.lower() for s in self.existing.get("manual_source_codes", [])}
@@ -556,7 +568,8 @@ class RuleFeedbackEngine:
 
     @staticmethod
     def _merge_into_patterns(
-        patterns: dict[str, Any], s: RuleSuggestion,
+        patterns: dict[str, Any],
+        s: RuleSuggestion,
     ) -> bool:
         """head-merged 'patterns' dict에 제안 1건을 append (중복 시 False).
 
@@ -577,14 +590,14 @@ class RuleFeedbackEngine:
             ic = patterns.setdefault("intercompany", {}).setdefault("pairs", [])
             new = {"receivable": pair.receivable, "payable": pair.payable}
             if any(
-                p.get("receivable") == new["receivable"]
-                and p.get("payable") == new["payable"]
+                p.get("receivable") == new["receivable"] and p.get("payable") == new["payable"]
                 for p in ic
             ):
                 return False
             ic.append(new)
             return True
         return False
+
 
 # ── 모듈 레벨 헬퍼 ───────────────────────────────────────────
 
@@ -619,19 +632,24 @@ def _append_log(
     ts = datetime.utcnow().isoformat(timespec="seconds") + "Z"
     with open(log_path, "a", encoding="utf-8") as f:
         for s in suggestions:
-            f.write(json.dumps({
-                "timestamp": ts,
-                "actor": actor,
-                "action": action,
-                "category": s.category.value,
-                "proposed_value": s.proposed_value,
-                "intercompany_pair": (
-                    s.intercompany_pair.model_dump()
-                    if s.intercompany_pair else None
-                ),
-                "confidence": s.confidence,
-                "rationale": s.rationale,
-            }, ensure_ascii=False) + "\n")
+            f.write(
+                json.dumps(
+                    {
+                        "timestamp": ts,
+                        "actor": actor,
+                        "action": action,
+                        "category": s.category.value,
+                        "proposed_value": s.proposed_value,
+                        "intercompany_pair": (
+                            s.intercompany_pair.model_dump() if s.intercompany_pair else None
+                        ),
+                        "confidence": s.confidence,
+                        "rationale": s.rationale,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
 
 
 def _record_feedback_events(

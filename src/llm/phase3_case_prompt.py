@@ -25,7 +25,7 @@ def build_phase3_selected_case_inputs(
     top_n: int = _DEFAULT_TOP_N,
     max_documents_per_case: int = _DEFAULT_DOCUMENTS_PER_CASE,
 ) -> list[dict[str, Any]]:
-    """Build PHASE3 inputs from selected PHASE1 cases and PHASE2 overlays."""
+    """Build selected case explanation inputs from PHASE1 cases and PHASE2 overlays."""
     overlays_by_case = {
         str(overlay.get("phase1_case_id")): overlay
         for overlay in (phase2_case_overlays or [])
@@ -77,8 +77,12 @@ def phase3_fact_grounding_system_prompt() -> str:
         "PHASE1 evidence, PHASE2 overlay/provenance, and supplied related_entity_risk. "
         "Do not infer external accounting standards, legal conclusions, company "
         "policies, or facts that are not present in the input. Do not conclude fraud, "
-        "violation, or manipulation. Use review-oriented wording such as 가능성, "
+        "violation, or manipulation. Do not reorder cases. Do not assign new priority. "
+        "Use review-oriented wording such as 가능성, "
         "검토 필요, 확인 필요. If evidence is insufficient, explicitly say so. "
+        "Data quality and integrity blockers are not fraud or violation conclusions; "
+        "describe them as 분석 제한, 추가 확인 필요, 데이터 품질 검토 항목, "
+        "or evidence reliability/completeness review items. "
         "PHASE2 unsupervised family (ML02 / VAE) signals must be described only as "
         "'통계적 이상치' (statistical outlier) or '패턴/맥락' wording. Do not use "
         "fraud, violation, confirmed, 위반 확정, 부정 확정, or 오류 확정 wording "

@@ -274,11 +274,7 @@ def get_chat_client(tier: Tier = "light") -> ChatClient:
     from config.settings import get_settings
 
     settings = get_settings()
-    model = (
-        settings.openai_reasoning_model
-        if tier == "reasoning"
-        else settings.openai_light_model
-    )
+    model = settings.openai_reasoning_model if tier == "reasoning" else settings.openai_light_model
     client = OpenAIClient(api_key=settings.openai_api_key, model=model)
     if not client.is_available():
         raise RuntimeError(
@@ -302,7 +298,5 @@ def get_embedding_client() -> EmbeddingClient:
         embedding_model=settings.openai_embedding_model,
     )
     if not client.is_available():
-        raise RuntimeError(
-            "OpenAI embedding unavailable — check openai_api_key / connectivity"
-        )
+        raise RuntimeError("OpenAI embedding unavailable — check openai_api_key / connectivity")
     return client

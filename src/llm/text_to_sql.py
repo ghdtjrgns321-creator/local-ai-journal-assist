@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 # ── 결과 모델 ────────────────────────────────────────────────
 
+
 @dataclass(frozen=True)
 class SQLResult:
     """Text-to-SQL 실행 결과.
@@ -57,6 +58,7 @@ _SQL_RESPONSE_SCHEMA: dict = {
 
 # ── 메인 엔진 ────────────────────────────────────────────────
 
+
 class AuditTextToSQL:
     """하이브리드 Text-to-SQL 엔진.
 
@@ -81,6 +83,7 @@ class AuditTextToSQL:
         """DB 커넥션 lazy 초기화."""
         if self._conn is None:
             from src.db.connection import get_connection
+
             self._conn = get_connection(str(self.ctx.db_path))
         return self._conn
 
@@ -121,9 +124,7 @@ class AuditTextToSQL:
 
         # 3순위: 실패
         error_msg = (
-            "프리셋 미매칭 — LLM 비활성"
-            if not llm_enabled
-            else "프리셋 미매칭 + LLM 미가용"
+            "프리셋 미매칭 — LLM 비활성" if not llm_enabled else "프리셋 미매칭 + LLM 미가용"
         )
         return SQLResult(
             sql="",
@@ -141,7 +142,9 @@ class AuditTextToSQL:
         # Why: batch_id 없이 ? 바인딩 SQL 실행 시 DuckDB 오류 → 명확한 메시지
         if batch_id is None and "?" in sql:
             return SQLResult(
-                sql=sql, result_df=None, source="failed",
+                sql=sql,
+                result_df=None,
+                source="failed",
                 error="batch_id 미제공 — 업로드 배치를 먼저 선택하세요",
                 preset_key=preset.key,
             )
@@ -160,29 +163,33 @@ class AuditTextToSQL:
         except Exception as e:
             logger.warning("프리셋 실행 실패 [%s]: %s", preset.key, e)
             return SQLResult(
-                sql=sql, result_df=None, source="failed",
+                sql=sql,
+                result_df=None,
+                source="failed",
                 error=f"프리셋 실행 오류: {e}",
                 preset_key=preset.key,
             )
 
     def _generate_and_execute(
-        self, question: str, batch_id: str | None,
+        self,
+        question: str,
+        batch_id: str | None,
     ) -> SQLResult:
         """LLM으로 SQL 생성 → 검증 → 실행."""
         try:
             raw_sql = self._generate_sql(question)
         except Exception as e:
             logger.warning("LLM SQL 생성 실패: %s", e)
-            return SQLResult(sql="", result_df=None, source="failed",
-                             error=f"SQL 생성 오류: {e}")
+            return SQLResult(sql="", result_df=None, source="failed", error=f"SQL 생성 오류: {e}")
 
         # Why: 검증기에서 배치 격리 키 누락도 차단
-        validation = validate_sql(raw_sql, conn=self.conn,
-                                  require_batch_filter=True)
+        validation = validate_sql(raw_sql, conn=self.conn, require_batch_filter=True)
         if not validation.is_valid:
             logger.warning("SQL 검증 실패: %s", validation.errors)
             return SQLResult(
-                sql=raw_sql, result_df=None, source="failed",
+                sql=raw_sql,
+                result_df=None,
+                source="failed",
                 error=f"SQL 검증 실패: {'; '.join(validation.errors)}",
             )
 
@@ -195,7 +202,9 @@ class AuditTextToSQL:
         except Exception as e:
             logger.warning("SQL 실행 실패: %s", e)
             return SQLResult(
-                sql=validation.sql, result_df=None, source="failed",
+                sql=validation.sql,
+                result_df=None,
+                source="failed",
                 error=f"SQL 실행 오류: {e}",
             )
 
@@ -224,10 +233,7 @@ class AuditTextToSQL:
         presets = list(AUDIT_PRESETS.values())
         basic = [p for p in presets if p.category == "basic"][:3]
         process = [p for p in presets if p.category == "process"][:3]
-        few_shot = "\n".join(
-            f"Q: {p.question}\nSQL: {p.sql}"
-            for p in basic + process
-        )
+        few_shot = "\n".join(f"Q: {p.question}\nSQL: {p.sql}" for p in basic + process)
 
         return f"""당신은 DuckDB SQL 전문가입니다. 감사 데이터 분석용 SELECT 쿼리만 생성합니다.
 
@@ -246,7 +252,7 @@ class AuditTextToSQL:
 - upload_batch_id 조건은 ? 플레이스홀더로 작성 (WHERE upload_batch_id = ?)
 - LIMIT 절 필수 (최대 1000)
 - 서브쿼리 최대 3단계
-- 허용 테이블: {', '.join(sorted(TABLE_WHITELIST))}
+- 허용 테이블: {", ".join(sorted(TABLE_WHITELIST))}
 
 ## few-shot 예시
 {few_shot}"""
@@ -254,10 +260,7 @@ class AuditTextToSQL:
     @staticmethod
     def _build_user_prompt(question: str) -> str:
         """사용자 프롬프트 — batch_id는 포함하지 않음."""
-        return (
-            f"{question}\n"
-            "반드시 WHERE 절에 upload_batch_id = ? 조건을 포함하세요."
-        )
+        return f"{question}\n반드시 WHERE 절에 upload_batch_id = ? 조건을 포함하세요."
 
     def _build_ddl_context(self) -> str:
         """화이트리스트 테이블의 DDL만 추출."""
@@ -274,6 +277,7 @@ class AuditTextToSQL:
             if not api_key:
                 return None
             from src.llm.api_client import OpenAIClient
+
             client = OpenAIClient(
                 api_key=api_key,
                 model=self.ctx.settings.openai_light_model,
@@ -288,6 +292,7 @@ class AuditTextToSQL:
 
 
 # ── 팩토리 ───────────────────────────────────────────────────
+
 
 def create_text_to_sql(
     ctx: CompanyContext,

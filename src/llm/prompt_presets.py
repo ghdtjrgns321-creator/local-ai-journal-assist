@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 # ── 데이터 모델 ──────────────────────────────────────────────
 
+
 @dataclass(frozen=True)
 class AuditPreset:
     """감사 프리셋 단일 항목."""
@@ -245,6 +246,7 @@ LIMIT 10
 
 
 # ── 매칭/필터 함수 ───────────────────────────────────────────
+
 
 def match_preset(question: str) -> AuditPreset | None:
     """자연어 질문 → 프리셋 매칭 (정확 매칭 → 키워드 매칭).
