@@ -114,6 +114,15 @@ def load_audit_rules() -> dict[str, Any]:
 
 
 def score_unsupervised(df: pd.DataFrame, bundle: dict[str, Any]) -> pd.Series:
+    # Artifact remeasurement compares exact TOP-N counts. Keep inference
+    # single-threaded/deterministic so q95 boundary rows do not drift between runs.
+    torch.set_num_threads(1)
+    try:
+        torch.set_num_interop_threads(1)
+    except RuntimeError:
+        # PyTorch allows setting inter-op threads only before parallel work starts.
+        pass
+    torch.use_deterministic_algorithms(True)
     builder = bundle["matrix_builder"]
     post_scaler = bundle["post_scaler"]
     ecdf_train_sorted = bundle["ecdf_train_sorted"]
@@ -133,7 +142,10 @@ def score_unsupervised(df: pd.DataFrame, bundle: dict[str, Any]) -> pd.Series:
         10.0,
     ).astype(np.float32)
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    # Measurement scripts need reproducible aggregate review-candidate counts.
+    # CUDA kernels can move rows around the q95 boundary by tiny reconstruction
+    # differences, so the artifact path uses CPU inference even when GPU exists.
+    device = "cpu"
     model = AuditVAE(bundle["input_dim"], bundle["latent_dim"], bundle["hidden_dim"]).to(device)
     state = torch.load(io.BytesIO(bundle["model_state_dict"]), weights_only=True)
     model.load_state_dict(state)
@@ -144,10 +156,12 @@ def score_unsupervised(df: pd.DataFrame, bundle: dict[str, Any]) -> pd.Series:
         tensor = torch.from_numpy(arr)
         for start in range(0, len(tensor), 2048):
             chunk = tensor[start : start + 2048].to(device)
-            recon, _, _ = model(chunk)
+            mu, _ = model.encode(chunk)
+            recon = model.decode(mu)
             raw_chunks.append(((recon - chunk) ** 2).mean(dim=1).cpu().numpy())
     raw_scores = np.concatenate(raw_chunks, axis=0)
     ecdf_scores = np.searchsorted(ecdf_train_sorted, raw_scores) / max(len(ecdf_train_sorted), 1)
+    ecdf_scores = np.round(ecdf_scores.astype(np.float64), decimals=10)
     return pd.Series(ecdf_scores, index=cleaned_df.index, name="unsupervised")
 
 
