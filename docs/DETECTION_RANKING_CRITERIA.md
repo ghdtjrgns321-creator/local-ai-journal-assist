@@ -69,7 +69,7 @@ PHASE1 `priority medium` 및 topic별 `topic medium`은 PHASE2 구현 전까지 
 | 노출 | topic 탭 ribbon과 룰 expander 헤더에 Medium case 수를 표시한다. |
 | 상세 접근 | expander는 성능상 기본 collapsed 상태일 수 있으나, 사용자가 펼치면 case 목록과 위반 전표가 렌더되어야 한다. |
 | 정렬 | 전체 category queue는 `priority_band`를 먼저 적용하고 같은 band 안에서 `composite_sort_score`를 우선한다. topic-specific Top-N은 `topic_score`를 우선한다. |
-| 해석 | Medium은 confirmed violation이 아니라 PHASE2/PHASE3 또는 감사인 검토에서 보강 판단할 review candidate다. |
+| 해석 | Medium은 confirmed violation이 아니라 PHASE2 또는 감사인 검토에서 보강 판단할 review candidate다. |
 
 `fraud_scenario_tags`는 display/context 필드다. tag가 있다고 해서 자동으로 High나 Top ranking에 올리지 않는다. High 승격은 topic score floor나 충분한 보강 근거가 있을 때만 가능하다.
 

@@ -1,6 +1,6 @@
 # Project Overview
 
-> **🔄 Phase 3 v2 Rescope (2026-05-14) ✅ 구현 완료 (Sprint A~G, 2026-05-15)**: Phase 3 v2 단일 목표는 **Review Queue Narrator** — PHASE1 룰 히트 + PHASE2 ML 스코어 + 전표 메타를 LLM이 읽고 감사 후보 Top-N 재정렬 + 의심 근거 서술 + 다음 행동 제안. Text-to-SQL/Vanna/ChromaDB/fpdf2/Export 탭/Chat 탭은 비범위(구현 보존, 신규 작업 없음). 단일 출처: [PHASE3_REVIEW_NARRATOR_SPEC.md](PHASE3_REVIEW_NARRATOR_SPEC.md), [DECISION.md §D041 / §D043](DECISION.md), 완료 리포트 [completed/phase3_review_narrator_completion.md](completed/phase3_review_narrator_completion.md), 재코딩 계획 [completed/PHASE3_REWORK_PLAN.md](completed/PHASE3_REWORK_PLAN.md).
+> **Local-first product boundary (2026-05-26)**: local-ai-assist is a local ledger analysis assistant. PHASE1 is the base review queue, PHASE2 is family-specific lane support, and PHASE3 LLM Narrator is a removed/deprecated historical asset. Active product paths do not call external LLM/API services. 단일 출처: [LOCAL_FIRST_EVIDENCE_POLICY.md](LOCAL_FIRST_EVIDENCE_POLICY.md), [DECISION.md §D068](DECISION.md), deprecated spec [PHASE3_REVIEW_NARRATOR_SPEC.md](PHASE3_REVIEW_NARRATOR_SPEC.md).
 
 > **PHASE1 역할 원칙**: PHASE1은 `fraud`를 확정하거나 정답 라벨을 맞히는 단계가 아니다. PHASE1의 목적은 전수 모집단에서 규칙 위반, 정책 위반, 이상 징후, 분석적 검토 신호를 넓게 올려 **감사인이 봐야 할 항목과 우선순위**를 만드는 것이다. DataSynth의 `is_fraud`/`is_anomaly`와 precision/recall은 개발 검증 보조 지표이며, 운영 해석은 예외 처리 대상, 감사인 리뷰 대상, 고위험 후보를 구분하는 review queue 기준으로 한다.
 
@@ -26,20 +26,20 @@ MindBridge, KPMG Clara의 핵심 로직을 오픈소스(Python)로 재현하는 
 | 영역        | 기술                               | 비고                                        |
 |-------------|------------------------------------|---------------------------------------------|
 | 언어        | Python 3.11+                       |                                             |
-| 패키지      | uv + pyproject.toml                | dependency-groups로 core/ml/llm/dashboard 분리 |
+| 패키지      | uv + pyproject.toml                | dependency-groups로 core/ml/dashboard 분리; llm group은 legacy/historical |
 | 전처리      | openpyxl, pandas 2.x, pandera      | pandera: 스키마 기반 품질 게이트            |
 | 컬럼 매핑   | rapidfuzz                          | fuzzy string matching                       |
 | 설정        | pydantic-settings, pyyaml          | 환경변수 + YAML                             |
 | 통계        | scipy.stats, numpy                 | Benford, KS 검정, Runs test                 |
 | 지도학습    | xgboost, lightgbm, scikit-learn, shap | 파이프라인 인프라 (고객사 실데이터 fine-tuning용, Phase 2 dormant) |
 | 비지도학습  | pytorch (VAE), scikit-learn (IF)   | **핵심 탐지기** — Phase 2 MVP 단일 promoted model |
-| 한국어 NLP  | kiwipiepy                          | JVM 의존성 없음. Phase 3 Narrator 적요 요약 입력 |
+| 한국어 NLP  | kiwipiepy                          | JVM 의존성 없음. future local-only NLP 후보 |
 | DB          | duckdb                             | OLAP 최적화, Engagement별 격리              |
-| LLM         | OpenAI API (gpt-5.4 / gpt-5.4-mini 2티어) | Phase 3 Review Queue Narrator 한정 |
-| 벡터 DB     | ChromaDB (historical v1)           | Phase 3 v2 비범위 (구현 보존)               |
-| Text-to-SQL | (historical v1, Vanna)             | Phase 3 v2 비범위 (구현 보존)               |
+| LLM         | OpenAI/API integrations (historical) | Active product path에서 제거 |
+| 벡터 DB     | ChromaDB (historical v1)           | Active product path에서 제거               |
+| Text-to-SQL | (historical v1, Vanna)             | Active product path에서 제거               |
 | 대시보드    | streamlit, plotly, streamlit-aggrid |                                             |
-| PDF/Export  | fpdf2 (historical v1)              | Phase 3 v2 비범위 (구현 보존)               |
+| PDF/Export  | local export/report modules         | 로컬 렌더링만 허용                          |
 
 ## 디렉토리 구조
 
@@ -83,14 +83,14 @@ local-ai-assist/
 │   ├── models/                 # phase1_case 등 Pydantic 모델
 │   ├── services/               # phase2 inference/training service
 │   ├── db/                     # DuckDB (ConnectionManager)
-│   ├── llm/                    # Phase 3 Narrator (api_client, models)
-│   └── export/                 # phase1_case_view (historical export v1 보존)
+│   ├── llm/                    # historical/disabled LLM assets
+│   └── export/                 # local export/report helpers
 ├── dashboard/                  # Streamlit
 │   ├── app.py                  # 메인 앱 (회사 선택 → 분석 플로우)
 │   ├── page_company.py         # 회사 선택/생성 화면
 │   ├── _state.py / _kpi.py
 │   ├── tab_overview.py / tab_phase1.py / tab_phase2.py
-│   ├── tab_review_queue.py     # Phase 3 Narrator 결과 큐
+│   ├── tab_review_queue.py     # PHASE1/PHASE2 local review queue
 │   ├── tab_explorer.py / tab_comparison.py
 │   └── components/             # data_uploader, filters, mapping_review,
 │                               # rule_panel, scroll_anchor, charts/, ...
@@ -123,7 +123,7 @@ local-ai-assist/
 | Detection 운영 | [DETECTION_RULES.md](DETECTION_RULES.md), [DETECTION_REFERENCE.md](DETECTION_REFERENCE.md), [DETECTION_PARAMETERS.md](DETECTION_PARAMETERS.md), [DETECTION_PORTFOLIO_REFRAME.md](DETECTION_PORTFOLIO_REFRAME.md), [DETECTION_RANKING_CRITERIA.md](DETECTION_RANKING_CRITERIA.md) |
 | PHASE1 활성 락 | [RULE_DETAIL_METADATA_V1_LOCK.md](RULE_DETAIL_METADATA_V1_LOCK.md), [PHASE1_TOPIC_SCORING_V1_LOCK.md](PHASE1_TOPIC_SCORING_V1_LOCK.md), [PHASE1_RULE_RELATIONSHIP_MAP.md](PHASE1_RULE_RELATIONSHIP_MAP.md), [PHASE1_SEPARATE_BENCHMARK_SPEC.md](PHASE1_SEPARATE_BENCHMARK_SPEC.md) |
 | PHASE2 진행 | [PHASE2_GOVERNANCE_DESIGN.md](PHASE2_GOVERNANCE_DESIGN.md), [PHASE2_INTERFACE_DESIGN.md](PHASE2_INTERFACE_DESIGN.md), [PHASE2_FITTING_AUDIT.md](PHASE2_FITTING_AUDIT.md) |
-| Phase 3 spec | [PHASE3_REVIEW_NARRATOR_SPEC.md](PHASE3_REVIEW_NARRATOR_SPEC.md) |
+| Local-first / deprecated PHASE3 | [LOCAL_FIRST_EVIDENCE_POLICY.md](LOCAL_FIRST_EVIDENCE_POLICY.md), [PHASE3_REVIEW_NARRATOR_SPEC.md](PHASE3_REVIEW_NARRATOR_SPEC.md) |
 | 최신 검증 결과 | [DETECTION_RESULTS_CONTRACT_V3.md](DETECTION_RESULTS_CONTRACT_V3.md), [DETECTION_RESULTS_MANIPULATION_V7_FIXED3_PHASE2.md](DETECTION_RESULTS_MANIPULATION_V7_FIXED3_PHASE2.md) |
 | 지표 정의 | [metrics.md](metrics.md) |
 | Git 운영 | [GIT.md](GIT.md) |
@@ -152,14 +152,14 @@ EY-ASU DataSynth(Rust)로 생성한 K-IFRS 적용 한국 중견 제조 그룹사
 
 ## ML 학습 전략
 
-비지도학습 중심 + 지도학습 dormant + Phase 3 LLM Narrator.
+비지도학습 중심 + 지도학습 dormant + local evidence summaries.
 
 | 접근법 | 모델 | 역할 | 합성 데이터 적합도 |
 |:-------|:-----|:-----|:-----------------:|
 | 비지도학습 | VAE (1개 promoted) + Isolation Forest | **Phase 2 MVP 핵심 탐지기** — 정상 분포 이탈 evidence | 높음 |
 | 지도학습 | XGBoost, LightGBM, FT-Transformer, BiLSTM | Dormant. 라벨 누수 가드(Supervised Gate) 통과 후만 활성화 | 낮음 (생성기 shortcut 위험) |
 | 앙상블 | Stacking Meta-Learner (LR Ridge, OOF) | Experimental — 지도학습 활성화 시 결합 | 중간 |
-| LLM Narrator | OpenAI gpt-5.4 / gpt-5.4-mini 2티어 | Phase 3 v2 — Top-N 재정렬, 근거 서술, 다음 행동 제안 | (해석 전용) |
+| Local Evidence Brief | deterministic template | PHASE1/PHASE2 로컬 근거 요약 | 외부 API 없음 |
 
 **배경**: DataSynth 합성 데이터의 이상치는 룰 기반으로 주입되므로, 지도학습 시 순환 학습(Circular Learning) 문제 발생.
 비지도학습(VAE+IF)은 정상 분포를 학습하므로 합성 데이터에서도 유효.
@@ -202,12 +202,11 @@ EY-ASU DataSynth(Rust)로 생성한 K-IFRS 적용 한국 중견 제조 그룹사
   → 모델 저장: ctx.model_dir/phase2_unsupervised/v1/
   → Layer A KPI guard (audit-testing nightly CI)
 
-[Phase 3: Review Queue Narrator — OpenAI API]
-  → PHASE1 case + PHASE2 ml_score + 전표 메타를 LLM 입력 패키지로
-  → 2티어 호출 (gpt-5.4 / gpt-5.4-mini, 비용 가드)
-  → 출력: ReviewNarrative (Top-N 재정렬, ReasoningEvidence 인용, SuggestedAction)
-  → dashboard/tab_review_queue.py 노출
-  ↑ Narrator는 fraud 확정이나 새 패턴 발견을 하지 않는다 (룰/ML 출력 해석에 한정)
+[Local Evidence Brief]
+  → PHASE1 rule evidence + PHASE2 family lane signal + case metadata
+  → deterministic local template summary
+  → dashboard selected-case/detail panels and local export views
+  ↑ 외부 LLM/API 호출 없음. 요약은 fraud 확정이나 새 패턴 발견을 하지 않는다.
 ```
 
 ## CI 워크플로우

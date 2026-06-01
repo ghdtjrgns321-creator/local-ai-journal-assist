@@ -330,9 +330,11 @@ TS02 flag   = (ts02_signal >= ts_freq_high_pctile)
   (split/time-shift). 동일 도메인 규칙을 row scorer와 helper가 독립 적용한다.
 - 안전장치: `duplicate_max_group_size` (group skip), `duplicate_max_pairs_per_row`
   (단일 row 진입 cap, default 200), `duplicate_max_total_pairs` (전역 cap,
-  default 200_000), `duplicate_pair_artifact_max_rows` (default 50_000 이상이면
-  artifact 부분 skip — row scoring SLA 보호), `duplicate_pair_artifact_top_n`
-  (metadata payload top-N, default 500).
+  default 200_000), `duplicate_pair_artifact_max_rows` (default 50_000 초과 입력은
+  전체 artifact skip 대신 duplicate row-score review candidate subset으로 pair evidence
+  재계산), `duplicate_pair_artifact_top_n` (metadata payload top-N, default 500),
+  `duplicate_pair_artifact_max_pairs_per_document` / `_per_document_pair` (top-N 내
+  반복 문서·문서쌍 evidence unit 독점 방지).
 - sanitization: `top_pairs`에는 원문 `line_text` / `reference` 노출 금지. 수치
   feature, `rule_id/rule_source`, `left_index/right_index`, `document_id` (있으면)만
   포함한다.
@@ -343,6 +345,11 @@ TS02 flag   = (ts02_signal >= ts_freq_high_pctile)
   가중치로 사용하지 않는다. row score 식 변경은 KPI baseline 갱신을 동반해야 한다.
 - 정상 반복 거래(월세, 정기 카드결제, 주차료)도 동일 blocking에 들어오므로
   pair는 그 자체로 부정 증거가 아니다. 감사인 검토 우선순위 ranking 보조용.
+- row score hit가 있어도 left/right pair evidence가 없거나 evidence tier가 weak이면
+  native DuplicateCase는 생성하지 않는다. 이때 builder는 case-grade artifact 부재
+  원인을 diagnostics metadata로 남긴다.
+- top-N document diversity retention 은 artifact 보존 정책이다. detector row score,
+  PHASE1 priority, PHASE2 family ranking 결합에는 영향을 주지 않는다.
 - PHASE1 rule hit는 feature/label로 사용하지 않는다 (`LEAKAGE_DENY_RULES` 준수).
 - 합성 라벨(`is_fraud`, `mutation_type`)은 sanity assertion에만 사용. threshold나
   weight 결정에 사용 금지.
@@ -487,7 +494,7 @@ count / capped / warnings / weights / params 가 노출되며 pair queue artifac
   `ic_timing_prob` 컬럼은 family score / Noisy-OR 결합에만 기여하고
   `phase2_case_family_aggregator._top_subdetectors_for_case` 의 tier registry 화이트
   리스트 필터로 sub_detectors entry 에서 제외된다. tier registry 등록되지 않은 모든
-  detail column 에 동일 정책이 적용된다. PHASE3 narrator / export 표시 결정은 후속
+  detail column 에 동일 정책이 적용된다. Local Evidence Brief / export 표시 결정은 후속
   PR 에서 별도 tier 등록 또는 `internal_signals` metadata 채널로 처리
 
 ## DataSynth 합성 라벨 사용 원칙

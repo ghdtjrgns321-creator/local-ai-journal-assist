@@ -371,7 +371,7 @@ intercompany          34    0.003%   Diag-1 후 IC01만 (carry-over)
 | PHASE2 단독 큐 | 5-family zero-preserving Noisy-OR score 정렬 |
 | PHASE1+2 통합 큐 | PHASE1 composite ↔ PHASE2 Noisy-OR 2-way RRF k=60 |
 | PHASE2 internal hierarchical RRF | reject — V7 fixed3 measurement-only 비교에서 TOP 100~5000 평균 -6.45pp 손실 |
-| family signal 노출 | lane (`duplicate / relational / timing / intercompany`) + Phase2CaseOverlay (`family_contributions / top_family / lane_membership / coverage_gap_families`) + 6단 tie-break (primary RRF 동률 한정) + PHASE3 narrator citation |
+| family signal 노출 | lane (`duplicate / relational / timing / intercompany`) + Phase2CaseOverlay (`family_contributions / top_family / lane_membership / coverage_gap_families`) + 6단 tie-break (primary RRF 동률 한정) + Local Evidence Brief provenance |
 | 격리 산출물 | `compute_phase2_internal_rrf` + `test_queue_fusion_hierarchical.py` (`pytest.mark.experimental_phase2_internal_rrf`) — supervised/transformer 활성화 시 재평가 |
 | 측정 근거 | 현재 코드 `tools/scripts/phase1_phase2_integration_stage7.py::{build_phase2_queue, build_integrated_queue}` 기준 재계산 |
 | 거버넌스 출처 | `docs/PHASE2_GOVERNANCE_DESIGN.md` 결정 8, `dev/active/phase2-family-ranking/` plan/context/tasks |

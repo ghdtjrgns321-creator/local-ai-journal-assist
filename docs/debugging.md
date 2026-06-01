@@ -10,6 +10,16 @@
 
 > 이 문서는 시점별 디버깅 기록이다. 현재 실사용 DataSynth 기준본은 `data/journal/primary/datasynth/`의 `v126` freeze (2026-05-02) + `datasynth_manipulation_v4_candidate` (manipulation v4, 2026-05-16 active) 이며, 과거 DataSynth 수치와 핫픽스 설명은 기록 시점 기준일 수 있다. 최신 baseline 출처: [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md) §활성 문서 인덱스.
 
+## 2026-05-26: PHASE3 LLM removal / local-first boundary
+
+PHASE3 LLM narrator and selected-case AI memo were removed from active product path. The feature duplicated existing PHASE1 case evidence and required sending case metadata/rule evidence to an external LLM, which conflicted with the local ledger analysis product boundary.
+
+Replacement: deterministic Local Evidence Brief from existing PHASE1/PHASE2 evidence only.
+
+Historical logs below may still mention LLM/PHASE3 work. Those entries are retained as time-stamped historical records, not active implementation guidance.
+
+---
+
 ## 2026-05-17: Sprint A3 — PHASE2 rule-based detector family registration
 
 ### 상황
@@ -1693,5 +1703,123 @@ intercompany 디버깅은 별도 작업으로 분리.
 dashboard/ 변경 없음. Phase 2 lane/overlay/tie-break 컴포넌트는 기존
 `result.scores` (row max) 와 `details[TS01/TS02]` 인터페이스만 사용하므로
 detector 내부 변경은 투명.
+
+---
+
+## 2026-06-01 — v33d IC native case 0/34 회귀 원인 및 수정
+
+### 상황
+
+v33d responsibility full run에서 `injected_intercompany_primary` denominator는
+34였지만 native intercompany case가 0건이었다. v33d DataSynth는 journal-visible
+shortcut token을 제거했지만, 34개 primary 문서는 여전히 1150/2050 IC GL,
+동일 문서 내 receivable/payable 대칭 금액, 관련회사 counterparty context를
+보유했다.
+
+### 원인
+
+`IntercompanyMatcher.detect()`가 `is_intercompany`를 필수 입력으로 요구해,
+v33d journal처럼 해당 shortcut 컬럼이 제거된 입력에서는 GL/account evidence를
+보기 전에 empty result를 반환했다. GL prefix로 `is_intercompany`를 임시
+복구해 확인하면 두 번째 문제가 드러났다. `match_ic_groups()`가 문자열
+`posting_date`를 groupby median으로 직접 집계해 pandas가 object median
+예외를 냈다.
+
+### 해결
+
+- matcher 입력을 변경하지 않고, configured IC GL prefix에서 내부용
+  `is_intercompany`를 추론하도록 변경했다.
+- `match_ic_groups()`의 posting date 집계는 `pd.to_datetime(..., errors="coerce")`
+  결과를 median 대상으로 사용하도록 바꿨다.
+- partner matching key를 `trading_partner` 단일 컬럼에서 `affiliate`,
+  `counterparty`, `counterparty_code`, `counterparty_id` 대체 컬럼까지 확장했다.
+  DataSynth shortcut token은 재도입하지 않았다.
+
+### 검증
+
+- `uv run pytest tests/modules/test_detection/test_intercompany_matcher.py tests/modules/test_detection/test_intercompany_reciprocal_flow.py tests/modules/test_detection/test_intercompany_matcher_pair_artifact.py -q`
+  → **79 passed**.
+- `uv run pytest tests/modules/test_detection -q -k intercompany`
+  → **109 passed, 1259 deselected**.
+- v33d IC-only diagnostic:
+  - reciprocal artifact count: 34
+  - primary denominator: 34
+  - primary docs covered by reciprocal artifact: 34
+  - TOP500 recall proxy from native IC artifact: **34/34**
+- `uv run ruff check src/detection/intercompany_matcher.py src/detection/intercompany_rules.py tests/modules/test_detection/test_intercompany_matcher.py tests/modules/test_detection/test_intercompany_reciprocal_flow.py`
+  → **All checks passed**.
+
+---
+
+## 2026-05-26 — DataSynth 2022 적요 한글 깨짐 원인 및 수정
+
+### 상황
+
+`data/journal/primary/datasynth_manipulation_v7_candidate_fixed5_normalcal5`
+의 `journal_entries_2022.csv`를 대시보드 결과 그리드에서 볼 때 `line_text`
+적요가 `л`, `δ`, `Θ` 등으로 깨져 표시됐다. CSV 헤더와 2023/2024 데이터는
+정상이라 생성물 전체 인코딩 문제와 표시 컴포넌트 문제를 분리해 확인했다.
+
+### 원인
+
+원본 `journal_entries_2022.csv`는 UTF-8로 정상 디코딩되지만,
+`src.ingest.text_reader._detect_encoding()`이 64KB 샘플을
+`charset_normalizer`에 바로 맡기면서 `ptcp154`로 오탐했다. `ptcp154`는
+한글 UTF-8 바이트를 키릴/기호 문자로 조용히 디코딩하므로 ingest 이후
+적요 값 자체가 깨진 문자열이 됐다.
+
+### 해결
+
+`_detect_encoding()`에서 BOM을 먼저 확인하고, 그 외 파일은 UTF-8 incremental
+strict decode가 성공하면 `utf-8`을 우선 채택하도록 변경했다. 샘플 끝이
+멀티바이트 문자 중간에서 잘리는 경우를 허용하기 위해 `final=False`를
+사용했다. CP949처럼 UTF-8 strict decode가 실패하는 파일은 기존
+`charset_normalizer` 경로를 그대로 사용한다.
+
+### 검증
+
+- `uv run pytest tests/modules/test_ingest/test_text_reader.py -q` → **15 passed**.
+- 실제 DataSynth 파일 감지 확인:
+  - `journal_entries_2022.csv` → `utf-8`, confidence `1.0`
+  - `journal_entries_2023.csv` → `utf-8`, confidence `1.0`
+  - `journal_entries_2024.csv` → `utf-8`, confidence `1.0`
+  - `journal_entries.csv` → `utf-8`, confidence `1.0`
+
+### 후속 수정
+
+대시보드 PHASE1 결과에서 적요가 계속 깨져 보이는 추가 원인은 수정 전 ingest
+결과가 `artifacts/ingest_cache/*.parquet`에 남아 있었기 때문이다. 파이프라인은
+원본 CSV보다 ingest cache를 먼저 사용하므로, 인코딩 감지 로직을 고쳐도 기존
+`ingest-cache-v1` parquet를 재사용하면 깨진 문자열이 그대로 표시된다.
+
+`src/pipeline.py`의 ingest cache schema를 `ingest-cache-v2`로 올려 기존 v1 캐시를
+자동 무효화했다. 사용자는 기존 PHASE1 세션/DB 결과를 삭제하거나 CSV를 다시
+읽어 PHASE1을 재실행해야 정상 적요가 반영된다.
+
+추가 확인 결과, Streamlit에서 PHASE1만 재실행하면 CSV를 다시 읽지 않고 기존
+`KEY_PREP_RESULT.data` 또는 DB에서 복원된 `general_ledger` DataFrame을 입력으로
+사용할 수 있다. 이 경우 ingest cache를 무효화해도 이미 세션/DB에 들어간 깨진
+문자열이 계속 전달된다. 또한 feature cache도 별도 `feature-cache-v1` 키를 쓰고
+있어 과거 feature parquet가 재사용될 수 있었다.
+
+후속 보완:
+
+- `src/feature/cache.py` schema를 `feature-cache-v2`로 올려 기존 feature cache를
+  자동 무효화.
+- `src/ingest/text_mojibake.py`를 추가해 UTF-8 한글이 `ptcp154`로 오디코딩된
+  문자열만 보수적으로 복구.
+- `src/services/analysis_service.py`의 PHASE1 feature 입력과
+  `src/db/batch_reader.py`의 DB batch 복원 경로에서 해당 복구를 적용.
+
+검증:
+
+- `uv run pytest tests/modules/test_ingest/test_text_reader.py tests/modules/test_pipeline/test_pipeline.py::TestRunFromDataframe::test_ignores_v1_ingest_cache_after_encoding_detector_change -q`
+  → **16 passed**.
+- `uv run ruff check src/pipeline.py tests/modules/test_pipeline/test_pipeline.py`
+  → **All checks passed**.
+- `uv run pytest tests/modules/test_ingest/test_text_mojibake.py tests/modules/test_ingest/test_text_reader.py tests/modules/test_pipeline/test_pipeline.py::TestRunFromDataframe::test_ignores_v1_ingest_cache_after_encoding_detector_change tests/modules/test_feature/test_feature_cache.py -q`
+  → **21 passed**.
+- `uv run ruff check src/ingest/text_mojibake.py src/feature/cache.py src/services/analysis_service.py src/db/batch_reader.py tests/modules/test_ingest/test_text_mojibake.py tests/modules/test_pipeline/test_pipeline.py`
+  → **All checks passed**.
 
 ---

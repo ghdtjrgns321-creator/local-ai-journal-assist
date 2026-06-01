@@ -4,7 +4,7 @@
 
 > Current DataSynth production baseline: `data/journal/primary/datasynth/` freeze `v126` as of 2026-05-02. Older `v20.x`, `v23`, and `v45` entries are historical decision records.
 
-> **결정 ID 발번 규칙 (2026-05-15)**: D001~D049 는 모두 발번 완료. 다음 신규 결정 ID 는 **D050 부터** 사용한다. D046 은 2026-05-15 ID 충돌 정정 시 D040 으로 통합되었기 때문에 본문 stub 만 유지하며, D043~D045 / D049 는 모두 점유 상태다 (각각 Phase 3 v2 provider, T9 Rust PR 템플릿, Codex mojibake defer, VAE 학습 데이터 검증 모드 분리). 모든 `### D{n}:` 헤더는 unique 해야 하며 `tools/scripts/audit_decision_ids.py` 가 CI 에서 회귀 가드로 강제한다.
+> **결정 ID 발번 규칙 (2026-05-15)**: D001~D049 는 모두 발번 완료. 다음 신규 결정 ID 는 **D050 부터** 사용한다. D046 은 2026-05-15 ID 충돌 정정 시 D040 으로 통합되었기 때문에 본문 stub 만 유지하며, D043~D045 / D049 는 모두 점유 상태다. 모든 `### D{n}:` 헤더는 unique 해야 하며 `tools/scripts/audit_decision_ids.py` 가 CI 에서 회귀 가드로 강제한다.
 
 
 > **포트폴리오 주장 범위 (2026-05-19)**: 이 프로젝트는 `fraud`를 판정하거나 실제 운영 부정 탐지 성능을 보장하는 모델이 아니다. 전수 모집단에서 감사인이 먼저 볼 review queue를 만들고, 무작위 검토 대비 상위 구간에 review-worthy synthetic anomaly를 강하게 농축하는 로컬 감사 분석 보조 도구다. DataSynth 기반 precision/recall은 개발 검증 보조 지표이며, 실데이터 운영 성능으로 주장하지 않는다.
@@ -33,11 +33,10 @@
 ---
 
 ### D041: Phase 3 v2 rescope to Review Queue Narrator (2026-05-14)
-- **Decision**: Phase 3 단일 목표를 **Review Queue Narrator**로 좁힌다. LLM은 PHASE1 룰 히트 + PHASE2 ML 스코어 + 전표 메타를 읽고 (a) 후보 Top-N 재정렬, (b) 의심 근거 서술(rule_id/feature_id/journal_id 인용 필수), (c) 감사인 다음 행동을 제안한다.
-- **비범위 (out of scope)**: Text-to-SQL (WU-20), Excel/PDF Export (WU-24), Chat UI (WU-26), Export 탭 (WU-27), 룰 피드백 루프 (WU-30). 기존 코드는 보존하되 Phase 3 v2 완료 기준에 포함하지 않는다.
-- **이유**: (1) 자유 가설 생성은 환각 위험 + 감사 신뢰성 부족, (2) Text-to-SQL/Export는 Phase 3 핵심 가치(감사인 검토 우선순위)와 직접 연결되지 않음, (3) PHASE1 역할 원칙(검토 후보 선별)과 Phase 3을 자연스럽게 잇기 위함.
-- **단일 출처**: [PHASE3_REVIEW_NARRATOR_SPEC.md](PHASE3_REVIEW_NARRATOR_SPEC.md), [completed/PHASE3_REWORK_PLAN.md](completed/PHASE3_REWORK_PLAN.md).
-- **D001/D002/D004 영향**: Qwen3-8B(D001), Vanna AI(D002), fpdf2(D004) 결정은 historical로 유지. 활성 의존성은 OpenAI 2티어 추상화(`src/llm/api_client.py`)로 단일화되어 있다.
+- **Status**: Superseded by D068. Historical only.
+- **Historical decision**: Phase 3 단일 목표를 Review Queue Narrator로 좁히고, LLM이 PHASE1 룰 히트 + PHASE2 ML 스코어 + 전표 메타를 요약하는 방향을 검토했다.
+- **현재 해석**: 이 결정은 더 이상 active product contract가 아니다. PHASE3 LLM Narrator, LLM reranking, AI review memo, Text-to-SQL, 룰 피드백 루프는 active product path에서 제거되었다.
+- **대체**: [LOCAL_FIRST_EVIDENCE_POLICY.md](LOCAL_FIRST_EVIDENCE_POLICY.md)의 Local Evidence Brief.
 
 ---
 
@@ -49,31 +48,23 @@
 - **채택 옵션 (P2: 11/21 ceiling 수용)**:
   - 11/21은 `after_hours_posting` 시나리오의 PHASE1 본질적 한계로 baseline freeze.
   - 18→11은 회귀가 아니라 incidental case bundling artifact 제거. 직전 18/21은 L3-04 보유 non-truth co-doc과 우연히 같은 케이스로 묶인 corroboration이었다.
-  - 정상 야근 거래와 의심 시간대 거래의 분리는 **PHASE2 ML(multi-feature 분류)** 또는 **PHASE3 LLM(적요·맥락 의미 해석)** 영역으로 이관한다.
+  - 정상 야근 거래와 의심 시간대 거래의 분리는 **PHASE2 ML(multi-feature 분류)** 또는 향후 local-only NLP 검토 영역으로 이관한다.
 - **반려 옵션 (P3: DataSynth day 이동)**:
   - 제안: `materialize_datasynth_manipulation_v2.py:256-262` `day = 23 + (bucket % 5)` → `day = 26 + (bucket % 5)`로 변경하여 period_end window 안에 강제 배치.
   - 반려 사유: 두 시나리오(`unusual_timing` vs `period_end_adjustment`)의 taxonomic clarity 손상. 합성 데이터의 의도된 정의가 변질된다.
 - **영향 범위 (룰 메타 변경 금지 원칙의 일반화)**:
   - `src/detection/rule_scoring.py` `RULE_SCORING_REGISTRY` 항목의 `scoring_role`, `standalone_rankable`, `final_topic`은 정상 모집단 FP 영향 평가 없이 변경 금지.
-  - 시나리오 진입률 회복이 필요하면 DataSynth mutation 보강 (fictitious T7 D1) 또는 PHASE2/PHASE3 후속 단계로 이관.
+  - 시나리오 진입률 회복이 필요하면 DataSynth mutation 보강 (fictitious T7 D1) 또는 PHASE2/local-only 후속 단계로 이관.
   - PHASE1 KPI 가드는 truth recall 향상을 강제하지 않는다(`tests/phase1_rulebase/kpi_baseline.json` `_meta.principle`).
 - **단일 출처**: `docs/completed/DETECTION_RESULTS_MANIPULATION_V2.md` §6.1, §8.1, §10, `tests/phase1_rulebase/kpi_baseline.json` `c4_scenario_full_entry_count.scenario_entry_ceilings.unusual_timing_manipulation`, `artifacts/unusual_timing_regression_trace.md` §7, `artifacts/manipulation_v3_mutation_recovery.md` Guard 3.
 
 ---
 
 ### D043: Phase 3 v2 안착 — provider 단일화 잠정 유지 + multi-provider 재평가 트리거 조건 (2026-05-15)
-- **결정**: Sprint G 마감 시점에 GPT-5.4 / GPT-5.4-mini 2티어 단일 provider 구성을 **잠정 유지**한다. Anthropic / Gemini multi-provider A/B는 본 단계에서 실시하지 않는다.
-- **이유**:
-  1. citation은 `rule_id` / `feature_id` / `journal_id` **enum 인용**이라 OpenAI Structured Output `strict: True` + `build_review_narrative_schema()` 동적 enum 제약(§4.2 PHASE3_REWORK_PLAN)이 1차 방어선 역할을 한다. 모든 주요 모델의 통과율이 자연스럽게 ≥99%에 수렴 — provider 차이가 본 프로젝트에서는 실효 없음.
-  2. WU-18 / Sprint A·C에서 OpenAI 2티어 자산이 단위 회귀 누적 33+108건으로 안착. 여기서 provider를 바꾸면 추가 마찰만 발생한다.
-  3. `BudgetGuard`(N 자동 축소 20→10→5) + `input_hash` 기반 캐시로 비용 폭증은 GPT-5.4로도 통제 가능.
-- **재평가 트리거 (Triggers for re-evaluation)**:
-  - candidate 처리량이 **batch당 1000건 이상 또는 일일 5000건** 규모로 증가 → 저비용 provider(Gemini 2.5 Flash 등) 비용 모델 재산정.
-  - GPT-5.4-mini의 citation 통과율이 평가 하니스에서 **≥99% 미달이 3주 연속** 관측됨 (현 시점은 mock 100%).
-  - OpenAI 가격 정책이 본 batch 비용을 **현재 대비 50% 이상 인상** 시.
-  - Anthropic / Gemini가 Structured Output strict + JSON Schema enum 동등 수준의 성숙도를 공개적으로 보증.
-- **재평가 절차**: ChatClient Protocol(ISP 설계)로 인해 신규 provider 추가는 `src/llm/anthropic_client.py` 또는 `gemini_client.py` 신규 파일만 작성하면 된다. 의존성 추가 시 `pyproject.toml llm` 그룹에 명시.
-- **단일 출처**: `docs/completed/PHASE3_REWORK_PLAN.md` §4.1 / §4.2, `docs/completed/phase3_review_narrator_completion.md` §7 후속 로드맵.
+- **Status**: Superseded by D068. Historical only.
+- **Historical decision**: Sprint G 마감 시점에 GPT provider 단일화를 잠정 유지하는 방안을 기록했다.
+- **현재 해석**: OpenAI/GPT provider, Structured Output, BudgetGuard 기반 LLM 호출은 active product dependency가 아니다. 관련 기록은 historical LLM experiment로만 보존한다.
+- **대체**: 외부 provider 재평가 트리거는 폐기한다. active explanation path는 local deterministic Local Evidence Brief다.
 
 ---
 
@@ -129,6 +120,8 @@
 - **관련 결정**: D040(Phase 2 ML 평가 강제 protocol — supervised promotion gate), D027(Hold-out Fraud Type), D029(데이터 분할 전략).
 
 ---
+
+> **Legacy/mojibake decision block**: D001~D039 below are pre-cleanup historical records. Any LLM/OpenAI/Vanna/Text-to-SQL/Phase 3 references in this legacy block are superseded by D068 and are not active product capability.
 
 ### D001: Qwen3-8B 1?쒖쐞 (Qwen2.5-Coder ?대갚)
 - **?댁쑀**: Qwen3 Ollama 吏?? reasoning ?깅뒫 ?μ긽. RTX 3070 Ti 8GB??Q4_K_M ?곹빀 (6~7GB VRAM)
@@ -626,7 +619,7 @@
   - PHASE1 단독 큐(`queue_phase1.parquet`)는 기존 `composite_sort_score` V1 lock 정렬을 그대로 유지. `queue.parquet`/`queue_top500.parquet`/`queue_top100.parquet` 는 PHASE1 단독 큐의 별칭(legacy 호환).
   - PHASE1 priority_score, composite_sort_score 값 변경 금지. RRF 는 별도 컬럼(`rrf_score`, `rrf_rank`)에만 적재.
 - **UI 정책**:
-  - Streamlit review queue 탭은 4 sub-tab: `통합 추천`(기본 활성) · `PHASE1 우선` · `PHASE2 우선` · `Narrator 분석`.
+  - Streamlit review queue 탭은 3 sub-tab: `통합 큐`(기본 활성) · `PHASE1 우선` · `PHASE2 우선`. 기존 historical `Narrator 분석` sub-tab은 active product path에서 제거되었다 (D068).
   - 알고리즘 명칭(RRF, k=60)은 본문에 노출하지 않고 tooltip help 에만 표기.
   - 메인 KPI 는 doc 단위(truth 라벨이 있는 합성 데이터에서만 표시), case 단위 수치는 보조 라인.
 - **영향 범위**: `src/services/queue_fusion.py`(신규), `tools/scripts/phase1_phase2_integration_stage7.py`, `dashboard/tab_review_queue.py`, `dashboard/components/review_queue_browser.py`(신규).
@@ -754,6 +747,7 @@ phase12_review_band   # 신규
 
 - PHASE2 결과 탭 KPI는 `phase2_review_band` 기준의 `즉시검토 / 검토대상 / 후보`를 표시한다. `strong tier` raw count 자체를 즉시검토로 노출하지 않는다.
 - 통합 Review Queue 표는 `통합 등급 → PHASE1 등급 → PHASE2 등급`을 먼저 보여주고, 정렬 점수 컬럼은 본문 기본 표에서 숨긴다.
+
 - 정렬 알고리즘명(`RRF`, `k=60`, `Noisy-OR`)은 사용자 본문에 노출하지 않고 감사인 검토 언어로 설명한다.
 - 합성 truth 검증 KPI는 "부정 발견"이 아니라 "검증 라벨 매칭"으로 표시한다. 운영 UI에서 fraud scenario 단정 표현을 쓰지 않는다.
 - `dashboard/tab_phase1.py` 와 `dashboard/tab_overview.py` 는 본 UI 변경 범위에서 제외해 PHASE1/전체개요 표시 계약을 보존한다.
@@ -800,3 +794,38 @@ phase12_review_band   # 신규
 - **사유**: IC02는 관계사 양측 금액이 비교 가능한 경우의 대사 예외다. FX 환산표나 기준환율이 없는 상태에서 통화가 다른 금액을 직접 비교하면 정상 관계사 pair가 금액 불일치 후보로 과대 유입된다. 통화 차이는 미대사(IC01)가 아니라 비교 불가/FX 확인 사유로 분리한다.
 - **운영 의미**: `IC02`는 계속 금액 불일치 검토 후보이며 단독 Low floor 정책은 유지한다. 다만 cross-currency 쌍은 IC02 high-confidence 금액 차이로 보지 않고 후속 FX/환산 기준 확인 대상으로 남긴다.
 - **영향 범위**: `src/detection/intercompany_rules.py::match_ic_groups`, `ic02_amount_mismatch`, `src/services/phase2_training_service.py` intercompany search presets, `config/settings.py::ic_amount_tolerance`, `ic_cross_currency_ratio_threshold`, `tests/modules/test_detection/test_intercompany_matcher.py`.
+
+---
+
+### D067: PHASE3 selected PHASE1 case brief integration (2026-05-26)
+- **Status**: Superseded by D068. Historical only.
+- **Historical decision**: PHASE3 LLM narrative의 운영 위치를 `Phase 1 -> 검토 케이스` drilldown의 단일 selected case로 고정하는 방안을 기록했다.
+- **현재 해석**: selected-case AI memo와 LLM narrative는 active product path에서 제거되었다. PHASE1 selected case 화면은 외부 LLM 호출 없이 Local Evidence Brief만 사용할 수 있다.
+- **대체**: `docs/LOCAL_FIRST_EVIDENCE_POLICY.md`의 Local Evidence Brief.
+
+### D068: PHASE3 LLM Narrator 제거 및 Local Evidence Brief 전환 (2026-05-26)
+- **Decision**: PHASE3 LLM Narrator, LLM-based reranking, AI review memo, Text-to-SQL/rule-feedback LLM 기능을 active product path에서 제거한다.
+- **Reason**: 이 프로젝트는 local-first ledger analytics assistant다. 원장/전표/작성자/승인자/거래처/적요/룰 히트 근거를 외부 LLM API로 전송하는 것은 제품 신뢰 경계와 충돌한다.
+- **Replacement**: PHASE1 selected case 화면에는 필요한 경우 Local Evidence Brief를 둔다. 이는 기존 PHASE1 rule evidence, review_focus, recommended_audit_actions, PHASE2 family lane signal을 deterministic template으로 요약한다.
+- **Non-scope**: PHASE1 scoring, PHASE2 detector, PHASE2 family lane ranking, DataSynth는 변경하지 않는다.
+- **Policy**: LLM/OpenAI references may remain only as historical/deprecated documentation, not as active capability.
+- **Single source**: [LOCAL_FIRST_EVIDENCE_POLICY.md](LOCAL_FIRST_EVIDENCE_POLICY.md), [PHASE3_REVIEW_NARRATOR_SPEC.md](PHASE3_REVIEW_NARRATOR_SPEC.md).
+
+### D069: PHASE2 row_ref_map sidecar optional manifest contract (2026-05-28)
+
+- **Decision**: `phase2_case_store` schema `1.1` introduces explicit
+  `row_ref_map_status` with values `generated` or `omitted`. The default save path
+  remains `generated` for backward compatibility. Callers may opt into
+  `write_row_ref_map=False`; then `row_ref_map_hash=null` and load succeeds without
+  `row_ref_map.jsonl`.
+- **Compatibility**: schema `1.0` artifacts remain supported and are interpreted as
+  `row_ref_map_status=generated`. Missing or tampered sidecar files still fail for
+  generated manifests. Only schema `1.1` manifests that explicitly declare `omitted`
+  bypass sidecar integrity checks.
+- **Reason**: S6.next Phase 1/2 moved PHASE1-PHASE2 linking to hit-hash direct matching
+  (`canonical_label_hash`, `doc_id_hash`, `line_number_key`, `company_code_hash`) with
+  row_ref_map only as a legacy fallback. Store-level deprecation must be explicit so old
+  artifacts do not silently lose their fallback integrity guard.
+- **Non-scope**: This does not anonymize family jsonl payloads; those still contain raw
+  `row_refs` fields by design for auditor UI/debugging. External distribution still
+  requires a separate anonymized export contract.

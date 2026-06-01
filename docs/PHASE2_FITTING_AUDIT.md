@@ -296,7 +296,7 @@
 | #8 | L-15 | `split_strategy.py::split_user_year_holdout` 신설 + BiLSTM 재측정 자동화 |
 | #9 | L-17 | hold-out 후보 A protocol (unusual_timing + sod_bypass) PHASE2 entry 통합 — 구현됨 (`phase2_training_service`, `evaluation/phase2_report`) |
 | #10 | docs | CONSTRAINTS.md / DECISION.md 패치 (§6) |
-| #11 | L-09 (보강) | S5 Top-5 룰 LEAKAGE_DENY_RULES (`L3-02`, `L1-05`, `L1-09`, `L2-03`, `L2-02`) 적용 — `phase2_plan` 에서 5 룰을 Phase 2 ML 입력 행렬에서 제거하고 PHASE1 → PHASE3 narrator 입력으로만 노출. 근거: §3 (S5 §5, AUPRC 0.4398 → 0.0013) |
+| #11 | L-09 (보강) | S5 Top-5 룰 LEAKAGE_DENY_RULES (`L3-02`, `L1-05`, `L1-09`, `L2-03`, `L2-02`) 적용 — `phase2_plan` 에서 5 룰을 Phase 2 ML 입력 행렬에서 제거하고 PHASE1 → Local Evidence Brief/UI provenance 입력으로만 노출. 근거: §3 (S5 §5, AUPRC 0.4398 → 0.0013) |
 | #12 | L-09 (보강) | S9 6번째 게이트 anti-shortcut cap — Top-5 deny 후 재학습 ML 앙상블의 macro AUPRC 잔존율 ≥ 30% AND 절대값 ≥ 0.30 통과 강제 (위 §6 평가 protocol 6번 항목). 기존 PR#4 의 `≤ 4.0` 컬럼 기여도 cap 과 동시 적용 |
 | #13 | L-13 (보강) | contamination ratio 게이지 (S6 §5.2) — `compute_class_imbalance` 에 contamination 게이지 등록 + 운영 GL contamination > 0.5% 시 alarm + `tests/modules/test_detection/` 회귀 가드 |
 | #14 | L-08~L-10 (장기) | DataSynth manipulation v4 빌드 후 S8 ablation 재실행 트리거 — v4 active 승격 시 `tools/analysis/s8_stacking_oof_ablation.py` 자동 재실행 + macro AUPRC delta 비교 + Phase1 회귀 검증 통합 |

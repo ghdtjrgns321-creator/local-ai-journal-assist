@@ -1,5 +1,7 @@
 # Phase 3 v2 — Review Queue Narrator 구현 완료 리포트
 
+> **Historical/deprecated only (2026-05-26)**: This completion report records a removed implementation. PHASE3 LLM Narrator, LLM reranking, AI review memo, Text-to-SQL, and LLM rule feedback are not active product capability. Current policy is [LOCAL_FIRST_EVIDENCE_POLICY.md](../LOCAL_FIRST_EVIDENCE_POLICY.md) and [DECISION.md §D068](../DECISION.md).
+
 > 작성일: 2026-05-15
 > 단일 출처 스펙: [PHASE3_REVIEW_NARRATOR_SPEC.md](../PHASE3_REVIEW_NARRATOR_SPEC.md)
 > 재코딩 계획: [PHASE3_REWORK_PLAN.md](../PHASE3_REWORK_PLAN.md)

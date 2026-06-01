@@ -4,6 +4,8 @@
 
 > **포트폴리오 포지셔닝 기준 (2026-05-19)**: UX는 "부정 관련 검토 후보 식별 모델"처럼 보이면 안 된다. 모든 화면은 "감사인이 검토해야 할 후보를 설명 가능한 review queue로 정렬한다"는 메시지를 우선한다.
 
+> **Local-first UX boundary (2026-05-26)**: Active UX must not expose external LLM/API, PHASE3 Narrator, Text-to-SQL, AI review memo, or LLM rule feedback as product capability. Explanation UI should use deterministic Local Evidence Brief from already-computed PHASE1/PHASE2 evidence.
+
 > 작성 기준: 2026-04-16  
 > 이 문서는 현재 제품 UX의 기준 문서다. 핵심 목표는 사용자가 "지금 이 시스템의 메인 탐지 경로가 무엇인지"를 헷갈리지 않게 만드는 것이다.
 
@@ -28,14 +30,13 @@
 - `Core`: Phase 1 룰 기반, Phase 2 비지도
 - `Optional`: 지도학습
 - `Experimental`: 스태킹, 고급 모델
-- `Future`: NLP, 그래프, LLM 판단
+- `Future`: local-only NLP, 그래프, local model inference
 
 표현상 `fraud probability`, `부정 확률`, `review queue 농축도`을 기본 UI에 노출하지 않는다. 필요한 경우 synthetic truth 기반 개발 검증 지표라고 명시한다.
 
 ### 원칙 3. 보조 기능은 탐지 뒤에 나온다
 
-- Chat
-- 룰 제안
+- Local Evidence Brief
 - Export
 
 이 기능들은 중요하지만, 핵심 탐지 축보다 앞에 나오면 안 된다.
@@ -113,6 +114,10 @@
 ### 4.1 업로드 단계
 
 사용자가 이 단계에서 이해해야 하는 것은 "내 파일이 탐지 가능한 상태인가"이다.
+
+선택한 회사/감사연도에 이미 분석 결과가 있으면 업로드 화면에서 이력 목록을
+쌓아 보여주지 않고 최신 결과를 바로 복원한다. 같은 회사의 같은 연도 화면은
+항상 현재 최신 분석 결과를 기준으로 시작한다.
 
 따라서 UI 메시지도 아래에 맞춘다.
 

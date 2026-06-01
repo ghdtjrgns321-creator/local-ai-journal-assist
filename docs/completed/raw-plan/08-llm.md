@@ -1,5 +1,7 @@
 # 08. LLM 연동 (Ollama + Vanna AI) [Phase 3 — 의존: 06, 07]
 
+> **Historical/deprecated only (2026-05-26)**: This raw plan is retained as historical design context. PHASE3 LLM Narrator, Text-to-SQL, Vanna, LLM rule feedback, and external LLM/API based memo generation are removed from the active product path. Active explanation must follow [LOCAL_FIRST_EVIDENCE_POLICY.md](../../LOCAL_FIRST_EVIDENCE_POLICY.md).
+
 > **🔄 Phase 3 v2 Rescope 안내 (2026-05-14) ✅ 구현 완료 (Sprint A~G, 2026-05-15)**: Phase 3 단일 목표는 **Review Queue Narrator**다. 단일 출처: [PHASE3_REVIEW_NARRATOR_SPEC.md](../PHASE3_REVIEW_NARRATOR_SPEC.md), 완료 리포트 [completed/phase3_review_narrator_completion.md](../completed/phase3_review_narrator_completion.md).
 > 본 문서 내 Text-to-SQL(WU-20), Chat UI(WU-26), 룰 피드백 루프(WU-30) 절은 **구현물 보존, 신규 작업 없음**으로 분류한다. 신규 작업은 [TASKS.md WU-31](../TASKS.md) 참조.
 

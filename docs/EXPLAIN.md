@@ -64,7 +64,7 @@
 
 - NLP 적요 해석
 - 그래프 기반 관계형 탐지
-- LLM 기반 판단 자동화
+- local-only NLP 또는 local model inference
 
 여기서 중요한 점은, 이 기능들이 "없다"가 아니라 "지금 메인 가치 제안이 아니다"라는 것이다.
 
@@ -72,15 +72,16 @@
 
 ---
 
-## 4. LLM의 역할 (Phase 3 v2) ✅ 완료 (2026-05-15)
+## 4. Local Evidence Brief
 
-이 프로젝트는 LLM 중심 앱이 아니다.
+이 프로젝트는 외부 LLM/API 없이 로컬에서 원장 데이터를 분석하는 감사 검토 지원 도구다.
 
-- Phase 3 v2의 LLM 역할은 단 하나: **Review Queue Narrator** (Sprint A~G 안착, [completion 리포트](completed/phase3_review_narrator_completion.md)). PHASE1 룰 히트 + PHASE2 ML 스코어 + 전표 메타를 읽고 감사 후보 Top-N 재정렬 + 의심 근거 서술 + 다음 행동 제안.
-- LLM은 새 fraud 패턴을 발견하지 않는다. 룰/ML 출력 해석에만 한정한다.
-- LLM은 부정 여부를 판정하지 않는다. 감사인이 확인해야 할 근거와 후속 절차를 정리한다.
-- 탐지의 기본 판단은 규칙과 통계 기반 파이프라인이 맡는다.
-- Text-to-SQL·룰 제안·전처리 보조는 historical v1 자산으로 비범위(구현 보존). 단일 출처: [PHASE3_REVIEW_NARRATOR_SPEC.md](PHASE3_REVIEW_NARRATOR_SPEC.md).
+- PHASE1: review queue와 rule-level 근거를 만든다.
+- PHASE2: family-specific lane과 보조 anomaly signal을 만든다.
+- Local Evidence Brief: 이미 계산된 rule evidence, review_focus, recommended_audit_actions, PHASE2 family signal, case metadata에서 deterministic template으로 구성한다.
+- PHASE3 LLM Narrator, LLM reranking, AI review memo, Text-to-SQL, 룰 피드백은 active product에서 제거되었다.
+
+단일 출처: [LOCAL_FIRST_EVIDENCE_POLICY.md](LOCAL_FIRST_EVIDENCE_POLICY.md), deprecated spec [PHASE3_REVIEW_NARRATOR_SPEC.md](PHASE3_REVIEW_NARRATOR_SPEC.md).
 
 ---
 
@@ -92,7 +93,7 @@
 2. 감사 룰로 설명 가능한 이상을 먼저 찾는다.
 3. 비지도 탐지로 룰 밖 패턴을 보완한다.
 4. 결과를 부정 확정이 아니라 review queue 우선순위로 대시보드에서 검토한다.
-5. LLM Review Queue Narrator가 우선순위와 의심 근거를 서술해 감사인 검토를 보조한다 (Phase 3 v2). Chat / Export / 룰 제안은 historical v1 자산으로 비범위 보존.
+5. 선택한 case의 근거와 다음 확인 절차는 로컬 evidence 기반 요약으로 확인한다.
 
 ---
 
@@ -103,11 +104,12 @@ Streamlit UI도 같은 구조를 따라야 한다.
 - 첫 화면 메시지는 `룰 기반 -> 비지도 보완` 순서를 보여준다.
 - 메인 탭은 핵심 탐지 결과를 먼저 보여준다.
 - Phase 2 탭은 `비지도`를 메인 확장 축으로 설명한다.
-- 지도학습, 스태킹, LLM 판단은 기본 탭 구조의 중심에 두지 않는다.
+- 지도학습과 스태킹은 기본 탭 구조의 중심에 두지 않는다.
+- 외부 LLM/API 기능은 active UI capability로 노출하지 않는다.
 
 ---
 
 ## 7. 면접용 짧은 버전
 
 > 저는 이 프로젝트를 "룰 기반 감사 탐지를 기본으로 두고, 비지도 이상 탐지로 룰 밖 패턴을 보완해 감사인이 볼 후보를 설명 가능한 review queue로 정렬하는 로컬 감사 분석 시스템"으로 설명합니다.  
-> 실제 부정을 확정하는 모델은 아니고, 지도학습과 LLM도 감사인 판단을 보조하는 범위에서만 사용합니다.
+> 외부 LLM/API 없이 로컬에서 원장 데이터를 분석하며, 실제 부정을 확정하는 모델이 아니라 감사인이 검토할 근거와 우선순위를 구조화하는 도구입니다.
