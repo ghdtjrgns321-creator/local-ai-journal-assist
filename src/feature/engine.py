@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 class FeatureCategory(StrEnum):
     """피처 카테고리 — 실행 순서이기도 하다."""
+
     TIME = "time"
     AMOUNT = "amount"
     PATTERN = "pattern"
@@ -109,6 +110,7 @@ def feature_categories_for_rules(rule_ids: list[str] | tuple[str, ...]) -> list[
         if rule_id in requested or family in requested:
             categories.update(rule_categories)
     return [category for category in _EXECUTION_ORDER if category in categories]
+
 
 # Why: 병렬 실행 시 전체 df.copy() 대신 필요 컬럼만 thin copy (OOM 방지)
 _INPUT_COLUMNS: dict[FeatureCategory, list[str]] = {
@@ -192,8 +194,8 @@ class FeatureResult:
     """피처 생성 결과 — 데이터 + 메타데이터."""
 
     data: pd.DataFrame
-    added_columns: list[str]                   # df에 존재하는 피처 컬럼 전체
-    missing_columns: list[str]                 # 기대했지만 df에 없는 컬럼
+    added_columns: list[str]  # df에 존재하는 피처 컬럼 전체
+    missing_columns: list[str]  # 기대했지만 df에 없는 컬럼
     execution_times: dict[str, float] = field(default_factory=dict)
     categories_run: list[str] = field(default_factory=list)
     failed_categories: list[str] = field(default_factory=list)  # KeyError로 스킵된 카테고리
@@ -243,19 +245,24 @@ def generate_all_features(
     ordered_targets = [c for c in _EXECUTION_ORDER if c in target_set]
 
     if parallel:
-        execution_times, categories_run, failed_categories, warnings_map = (
-            _run_categories_parallel(
-                df, ordered_targets,
-                settings=s, rules=rules, raw_rules=raw_rules,
-                risk_keywords=risk_keywords, max_workers=max_workers,
-                include_morpheme_tokens=include_morpheme_tokens,
-            )
+        execution_times, categories_run, failed_categories, warnings_map = _run_categories_parallel(
+            df,
+            ordered_targets,
+            settings=s,
+            rules=rules,
+            raw_rules=raw_rules,
+            risk_keywords=risk_keywords,
+            max_workers=max_workers,
+            include_morpheme_tokens=include_morpheme_tokens,
         )
     else:
         execution_times, categories_run, failed_categories, warnings_map = (
             _run_categories_sequential(
-                df, ordered_targets,
-                settings=s, rules=rules, raw_rules=raw_rules,
+                df,
+                ordered_targets,
+                settings=s,
+                rules=rules,
+                raw_rules=raw_rules,
                 risk_keywords=risk_keywords,
                 include_morpheme_tokens=include_morpheme_tokens,
             )
@@ -276,7 +283,10 @@ def generate_all_features(
 
     logger.info(
         "피처 생성 완료: %d/%d 컬럼, %.3fs (parallel=%s)",
-        len(added), len(all_expected), sum(execution_times.values()), parallel,
+        len(added),
+        len(all_expected),
+        sum(execution_times.values()),
+        parallel,
     )
 
     return FeatureResult(
@@ -310,8 +320,12 @@ def _run_categories_sequential(
         t0 = time.monotonic()
         cat_warnings: list[str] = []
         success = _run_category(
-            df, cat, settings=settings, rules=rules,
-            raw_rules=raw_rules, risk_keywords=risk_keywords,
+            df,
+            cat,
+            settings=settings,
+            rules=rules,
+            raw_rules=raw_rules,
+            risk_keywords=risk_keywords,
             include_morpheme_tokens=include_morpheme_tokens,
             warnings_out=cat_warnings,
         )
@@ -359,8 +373,12 @@ def _run_categories_parallel(
         t0 = time.monotonic()
         cat_warnings: list[str] = []
         success = _run_category(
-            thin_df, cat, settings=settings, rules=rules,
-            raw_rules=raw_rules, risk_keywords=risk_keywords,
+            thin_df,
+            cat,
+            settings=settings,
+            rules=rules,
+            raw_rules=raw_rules,
+            risk_keywords=risk_keywords,
             include_morpheme_tokens=include_morpheme_tokens,
             warnings_out=cat_warnings,
         )

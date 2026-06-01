@@ -65,7 +65,9 @@ class PipelineExplainer:
         if self.model_type == "tree":
             explainer = shap.TreeExplainer(model)
         else:
-            explainer = shap.KernelExplainer(model.predict, X_transformed[:min(100, len(X_transformed))])
+            explainer = shap.KernelExplainer(
+                model.predict, X_transformed[: min(100, len(X_transformed))]
+            )
 
         shap_values = explainer.shap_values(X_transformed)
         if isinstance(shap_values, list):

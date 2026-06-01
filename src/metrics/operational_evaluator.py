@@ -24,7 +24,11 @@ def evaluate_operational_report(
     high_risk_docs = _count_high_risk_docs(df)
     high_risk_ratio = high_risk_docs / total_docs if total_docs > 0 else 0.0
     whitelist_removed_docs = 0
-    if whitelist_df is not None and not whitelist_df.empty and "document_id" in whitelist_df.columns:
+    if (
+        whitelist_df is not None
+        and not whitelist_df.empty
+        and "document_id" in whitelist_df.columns
+    ):
         whitelist_removed_docs = int(whitelist_df["document_id"].nunique())
     feedback_labels = build_document_feedback_frame(
         feedback_events_df if feedback_events_df is not None else pd.DataFrame()

@@ -13,7 +13,7 @@ import pandas as pd
 from config.settings import PROJECT_ROOT, AuditSettings
 from src.ingest.datasynth_labels import get_source_path
 
-CACHE_SCHEMA_VERSION = "feature-cache-v1"
+CACHE_SCHEMA_VERSION = "feature-cache-v2"
 _CACHE_SETTING_EXCLUDES = {"enable_feature_cache", "feature_cache_dir"}
 
 

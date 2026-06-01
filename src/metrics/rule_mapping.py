@@ -66,8 +66,7 @@ RULE_TO_POPULATION_TRUTH: dict[str, str] = {
 RULE_TO_TRUTH_BASIS: dict[str, str] = {
     "L1-01": "document imbalance population",
     "L4-01": (
-        "RevenueManipulation broad label with high_value_revenue_outlier "
-        "as direct L4-01 truth"
+        "RevenueManipulation broad label with high_value_revenue_outlier as direct L4-01 truth"
     ),
     "L2-01": "JustBelowThreshold labels with threshold-proximity bands",
     "L2-02": "DuplicatePayment labels; detector evidence is document-pair based",
@@ -88,18 +87,15 @@ RULE_TO_TRUTH_BASIS: dict[str, str] = {
     "L3-02": "manual/adjustment source population",
     "L3-03": "intercompany account population",
     "L3-05": (
-        "weekend/holiday posting review population; confirmed anomaly subset "
-        "is WeekendPosting"
+        "weekend/holiday posting review population; confirmed anomaly subset is WeekendPosting"
     ),
     "L3-09": (
-        "suspense account aging review population; confirmed anomaly subset "
-        "is SuspenseAccountAbuse"
+        "suspense account aging review population; confirmed anomaly subset is SuspenseAccountAbuse"
     ),
     "L3-10": "high-risk account review population; confirmed anomaly subset is HighRiskAccountUse",
     "L4-03": "confirmed high-amount anomaly subset; high_amount_review_population is coverage only",
     "L4-04": (
-        "rare account-pair raw review universe; confirmed UnusualAccountPair "
-        "is a separate subset"
+        "rare account-pair raw review universe; confirmed UnusualAccountPair is a separate subset"
     ),
     "IC01": "confirmed unmatched intercompany labels",
     "IC02": "amount-mismatch review candidates, evaluated against matching exception labels",
@@ -200,12 +196,10 @@ RULE_TO_EVALUATION_NOTE: dict[str, str] = {
         "L3-02."
     ),
     "IC02": (
-        "Phase 1 review candidate. Preserve recall; precision is handled by "
-        "case priority/Phase 2."
+        "Phase 1 review candidate. Preserve recall; precision is handled by case priority/Phase 2."
     ),
     "IC03": (
-        "Phase 1 review candidate. Preserve recall; precision is handled by "
-        "case priority/Phase 2."
+        "Phase 1 review candidate. Preserve recall; precision is handled by case priority/Phase 2."
     ),
     "GR01": "Review population sidecar is not a confirmed-anomaly precision denominator.",
     "GR03": "Graph review candidate. Preserve recall; confirmed judgement remains downstream.",

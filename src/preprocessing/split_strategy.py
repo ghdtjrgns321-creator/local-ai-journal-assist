@@ -47,8 +47,7 @@ def split_document_temporal_holdout(
     overlap = train_groups & test_groups
     if overlap:
         raise ValueError(
-            f"{group_column} leakage across temporal holdout: "
-            f"{sorted(overlap)[:5]}",
+            f"{group_column} leakage across temporal holdout: {sorted(overlap)[:5]}",
         )
 
     train_mask = df[group_column].isin(train_groups).to_numpy()
@@ -204,8 +203,7 @@ def build_document_group_kfold(
     unique_docs = np.unique(groups)
     if len(unique_docs) < n_splits:
         raise ValueError(
-            f"not enough unique document_id values for GroupKFold: "
-            f"{len(unique_docs)} < {n_splits}",
+            f"not enough unique document_id values for GroupKFold: {len(unique_docs)} < {n_splits}",
         )
     return GroupKFold(n_splits=n_splits), groups
 
@@ -241,19 +239,18 @@ def _extract_years_for_column(df: pd.DataFrame, year_column: str) -> pd.Series:
 
 
 def _group_year_map(group_ids: pd.Series, years: pd.Series, *, group_column: str) -> dict[str, int]:
-    pairs = pd.DataFrame({
-        group_column: group_ids.astype(str),
-        "split_year": years.astype(int),
-    })
+    pairs = pd.DataFrame(
+        {
+            group_column: group_ids.astype(str),
+            "split_year": years.astype(int),
+        }
+    )
     grouped = pairs.groupby(group_column, dropna=False)["split_year"].nunique()
     inconsistent = grouped[grouped > 1]
     if not inconsistent.empty:
         raise ValueError(
-            f"{group_column} spans multiple fiscal years: "
-            f"{inconsistent.index.tolist()[:5]}",
+            f"{group_column} spans multiple fiscal years: {inconsistent.index.tolist()[:5]}",
         )
     return (
-        pairs.drop_duplicates(subset=[group_column])
-        .set_index(group_column)["split_year"]
-        .to_dict()
+        pairs.drop_duplicates(subset=[group_column]).set_index(group_column)["split_year"].to_dict()
     )

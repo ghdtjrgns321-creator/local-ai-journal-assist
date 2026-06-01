@@ -20,8 +20,8 @@ from src.ingest.datasynth_labels import get_source_path
 logger = logging.getLogger(__name__)
 
 # -- Z-score fallback 기준 --
-_MIN_GROUP_SIZE = 30   # 이상이면 그룹별 Z-score
-_MIN_TOTAL_SIZE = 10   # 미만이면 Z-score 포기 → NaN
+_MIN_GROUP_SIZE = 30  # 이상이면 그룹별 Z-score
+_MIN_TOTAL_SIZE = 10  # 미만이면 Z-score 포기 → NaN
 
 
 # ── Private helpers ──────────────────────────────────────────────
@@ -262,10 +262,7 @@ def add_is_near_threshold(
     if approver_limit is not None:
         limit = approver_limit
         resolved = limit.notna() & can_compute_document_amount
-        near = resolved & (
-            (threshold_amount >= limit * ratio)
-            & (threshold_amount < limit)
-        )
+        near = resolved & ((threshold_amount >= limit * ratio) & (threshold_amount < limit))
     else:
         resolved = pd.Series(False, index=df.index)
 
@@ -466,9 +463,11 @@ def add_is_round_number(
     if currency_decimals and "currency" in df.columns:
         # Why: 행마다 통화가 다르므로 단일 round() 호출 불가.
         #      map으로 통화별 decimals를 벡터화 적용. NaN currency는 round(0) 폴백.
-        dec_series = df["currency"].map(
-            lambda c: currency_decimals.get(c, 0) if pd.notna(c) else 0
-        ).astype(int)
+        dec_series = (
+            df["currency"]
+            .map(lambda c: currency_decimals.get(c, 0) if pd.notna(c) else 0)
+            .astype(int)
+        )
         # Why: Series.round()는 int 스칼라만 받으므로 고유 decimals별 마스크 처리
         rounded = base.copy()
         for dec_val in dec_series.unique():
@@ -500,6 +499,7 @@ def add_all_amount_features(
     # Why: currency_decimals는 patterns 밖에 있으므로 원본 audit_rules에서 직접 접근
     if audit_rules is None:
         from config.settings import get_audit_rules
+
         audit_rules = get_audit_rules()
     currency_dec = audit_rules.get("currency_decimals")
 

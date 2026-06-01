@@ -189,9 +189,7 @@ def _select_numeric_policy(
     )
     return {
         "policy": "robust" if use_robust else "standard",
-        "reason": (
-            "skew_or_outlier_tail" if use_robust else "approximately_symmetric"
-        ),
+        "reason": ("skew_or_outlier_tail" if use_robust else "approximately_symmetric"),
         "mean": mean,
         "std": std,
         "median": median,

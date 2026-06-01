@@ -10,10 +10,10 @@ from __future__ import annotations
 from src.eda.models import EDAProfile
 
 # 경고 생성 기준값
-_MISSING_WARN_THRESHOLD = 0.10    # 결측률 10% 이상
+_MISSING_WARN_THRESHOLD = 0.10  # 결측률 10% 이상
 _HIGH_CARDINALITY_THRESHOLD = 100  # 카디널리티 100 이상
-_DUPLICATE_WARN_THRESHOLD = 0.05   # 중복률 5% 이상
-_OUTLIER_WARN_THRESHOLD = 0.05     # 이상치 비율 5% 이상
+_DUPLICATE_WARN_THRESHOLD = 0.05  # 중복률 5% 이상
+_OUTLIER_WARN_THRESHOLD = 0.05  # 이상치 비율 5% 이상
 
 
 def summarize_for_dashboard(profile: EDAProfile) -> dict:
@@ -28,9 +28,7 @@ def summarize_for_dashboard(profile: EDAProfile) -> dict:
     warnings = _generate_warnings(profile)
     quality_score = _calculate_quality_score(profile)
     column_summaries = _build_column_summaries(profile)
-    missing_heatmap = {
-        col: cp.missing_rate for col, cp in profile.columns.items()
-    }
+    missing_heatmap = {col: cp.missing_rate for col, cp in profile.columns.items()}
     numeric_table = _build_numeric_stats_table(profile)
 
     return {
@@ -95,30 +93,22 @@ def _generate_warnings(profile: EDAProfile) -> list[str]:
     # 중복행 경고
     dup_rate = profile.duplicate_rows / profile.total_rows
     if dup_rate >= _DUPLICATE_WARN_THRESHOLD:
-        warnings.append(
-            f"중복행 {profile.duplicate_rows}건 ({dup_rate:.1%}) — L1-02 룰 확인 필요"
-        )
+        warnings.append(f"중복행 {profile.duplicate_rows}건 ({dup_rate:.1%}) — L1-02 룰 확인 필요")
 
     for col, cp in profile.columns.items():
         # 고결측 경고
         if cp.missing_rate >= _MISSING_WARN_THRESHOLD:
-            warnings.append(
-                f"'{col}' 결측률 {cp.missing_rate:.1%} — 결측치 처리 필요"
-            )
+            warnings.append(f"'{col}' 결측률 {cp.missing_rate:.1%} — 결측치 처리 필요")
         # 고카디널리티 경고
         if cp.cardinality is not None and cp.cardinality >= _HIGH_CARDINALITY_THRESHOLD:
-            warnings.append(
-                f"'{col}' 카디널리티 {cp.cardinality} — TargetEncoder 권장"
-            )
+            warnings.append(f"'{col}' 카디널리티 {cp.cardinality} — TargetEncoder 권장")
         # 이상치 경고
         if (
             cp.outlier_count is not None
             and profile.total_rows > 0
             and cp.outlier_count / profile.total_rows >= _OUTLIER_WARN_THRESHOLD
         ):
-            warnings.append(
-                f"'{col}' 이상치 {cp.outlier_count}건 — IQR 기준 확인 필요"
-            )
+            warnings.append(f"'{col}' 이상치 {cp.outlier_count}건 — IQR 기준 확인 필요")
 
     return warnings
 
@@ -128,12 +118,14 @@ def _build_column_summaries(profile: EDAProfile) -> list[dict]:
     summaries = []
     for col, cp in profile.columns.items():
         highlights = _column_highlights(cp)
-        summaries.append({
-            "name": col,
-            "dtype_group": cp.dtype_group,
-            "missing_rate": cp.missing_rate,
-            "highlights": highlights,
-        })
+        summaries.append(
+            {
+                "name": col,
+                "dtype_group": cp.dtype_group,
+                "missing_rate": cp.missing_rate,
+                "highlights": highlights,
+            }
+        )
     return summaries
 
 
@@ -162,15 +154,17 @@ def _build_numeric_stats_table(profile: EDAProfile) -> list[dict]:
     for col, cp in profile.columns.items():
         if cp.dtype_group != "numeric" or cp.mean is None:
             continue
-        rows.append({
-            "column": col,
-            "mean": cp.mean,
-            "median": cp.median,
-            "std": cp.std,
-            "min": cp.min_val,
-            "max": cp.max_val,
-            "q1": cp.q1,
-            "q3": cp.q3,
-            "outlier_count": cp.outlier_count,
-        })
+        rows.append(
+            {
+                "column": col,
+                "mean": cp.mean,
+                "median": cp.median,
+                "std": cp.std,
+                "min": cp.min_val,
+                "max": cp.max_val,
+                "q1": cp.q1,
+                "q3": cp.q3,
+                "outlier_count": cp.outlier_count,
+            }
+        )
     return rows

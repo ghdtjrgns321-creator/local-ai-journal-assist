@@ -113,7 +113,9 @@ class BiLSTMClassifier(BaseEstimator, ClassifierMixin):
         return np.argmax(proba, axis=1)
 
     def predict_proba(
-        self, X: np.ndarray, mask: np.ndarray | None = None,
+        self,
+        X: np.ndarray,
+        mask: np.ndarray | None = None,
     ) -> np.ndarray:
         """softmax(logits) → [P(정상), P(이상)]."""
         check_is_fitted(self, ["model_"])
@@ -135,13 +137,17 @@ class BiLSTMClassifier(BaseEstimator, ClassifierMixin):
         return np.concatenate(results)
 
     def score_samples(
-        self, X: np.ndarray, mask: np.ndarray | None = None,
+        self,
+        X: np.ndarray,
+        mask: np.ndarray | None = None,
     ) -> np.ndarray:
         """이상 확률(클래스 1) 반환 — 앙상블 결합용."""
         return self.predict_proba(X, mask)[:, 1]
 
     def get_attention_weights(
-        self, X: np.ndarray, mask: np.ndarray | None = None,
+        self,
+        X: np.ndarray,
+        mask: np.ndarray | None = None,
     ) -> np.ndarray:
         """시퀀스 시점별 Attention 가중치 반환 — Explainability용 public API.
 

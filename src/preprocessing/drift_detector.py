@@ -34,10 +34,10 @@ class DriftReport:
     model_name: str
     version: int
     column_psi: dict[str, float]  # 컬럼별 PSI
-    max_psi: float                 # 최대 PSI (가장 드리프트 심한 컬럼)
-    max_psi_column: str            # 최대 PSI 컬럼명
-    overall_status: str            # "stable" | "warn" | "critical"
-    schema_mismatch: bool          # 컬럼 set 변경 여부
+    max_psi: float  # 최대 PSI (가장 드리프트 심한 컬럼)
+    max_psi_column: str  # 최대 PSI 컬럼명
+    overall_status: str  # "stable" | "warn" | "critical"
+    schema_mismatch: bool  # 컬럼 set 변경 여부
 
 
 def compute_psi_numeric(
@@ -69,6 +69,7 @@ def compute_psi_numeric(
 
     # Why: 가우시안 분포의 각 bin 이론 확률 (baseline 대체)
     from scipy.stats import norm
+
     baseline_cdf = norm.cdf(bin_edges_full[1:]) - norm.cdf(bin_edges_full[:-1])
     baseline_pct = baseline_cdf / baseline_cdf.sum()
 
@@ -98,9 +99,7 @@ def compute_psi_categorical(
     baseline_total = sum(baseline_top_categories.values())
     if baseline_total == 0:
         return 0.0
-    baseline_pct = {
-        k: v / baseline_total for k, v in baseline_top_categories.items()
-    }
+    baseline_pct = {k: v / baseline_total for k, v in baseline_top_categories.items()}
 
     current_counts = current.astype(str).value_counts()
     current_total = int(current_counts.sum())

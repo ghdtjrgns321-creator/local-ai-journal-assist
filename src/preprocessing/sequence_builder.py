@@ -76,16 +76,29 @@ def build_sequences(
         if n >= seq_len:
             # 정상: 슬라이딩 윈도우
             _build_sliding_windows(
-                user_X, user_y, sorted_positions,
-                seq_len, stride, n_features,
-                windows_X, windows_y, windows_mask, windows_orig_idx,
+                user_X,
+                user_y,
+                sorted_positions,
+                seq_len,
+                stride,
+                n_features,
+                windows_X,
+                windows_y,
+                windows_mask,
+                windows_orig_idx,
             )
         else:
             # 부족: 앞쪽 제로 패딩 + mask=False
             _build_padded_window(
-                user_X, user_y, sorted_positions,
-                seq_len, n_features,
-                windows_X, windows_y, windows_mask, windows_orig_idx,
+                user_X,
+                user_y,
+                sorted_positions,
+                seq_len,
+                n_features,
+                windows_X,
+                windows_y,
+                windows_mask,
+                windows_orig_idx,
             )
 
     if not windows_X:

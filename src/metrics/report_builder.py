@@ -50,9 +50,7 @@ def build_markdown_report(report: PerformanceReport) -> str:
         lines.append("\n| Metric | Value |")
         lines.append("|:--|--:|")
         lines.append(f"| Hold-out docs | {int(hold_out.get('hold_out_doc_count') or 0):,} |")
-        lines.append(
-            f"| Detected docs | {int(hold_out.get('hold_out_detected_docs') or 0):,} |"
-        )
+        lines.append(f"| Detected docs | {int(hold_out.get('hold_out_detected_docs') or 0):,} |")
         lines.append(f"| Hold-out recall | {_fmt_pct(hold_out.get('hold_out_recall'))} |")
         ci = hold_out.get("ci95") or {}
         lines.append(f"| 95% CI half-width | {_fmt_pct(ci.get('half_width'))} |")

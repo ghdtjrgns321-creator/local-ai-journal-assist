@@ -1,4 +1,4 @@
-﻿"""Ground-truth based performance evaluation helpers."""
+"""Ground-truth based performance evaluation helpers."""
 
 from __future__ import annotations
 
@@ -128,15 +128,17 @@ def build_benford_population_benchmarks(
     labels_path = Path(labels_dir)
     year = _resolve_benford_year(df, fiscal_year)
     if year is None:
-        return [BenfordBenchmarkMetric(
-            year="unknown",
-            benchmark="sidecars_missing",
-            note=(
-                "Benford population benchmark unavailable: fiscal year could not "
-                "be resolved. Do not interpret row-level L4-02 metrics as "
-                "Benford pass/fail."
-            ),
-        )]
+        return [
+            BenfordBenchmarkMetric(
+                year="unknown",
+                benchmark="sidecars_missing",
+                note=(
+                    "Benford population benchmark unavailable: fiscal year could not "
+                    "be resolved. Do not interpret row-level L4-02 metrics as "
+                    "Benford pass/fail."
+                ),
+            )
+        ]
 
     findings = result.metadata.get("benford_findings", {}) if result.metadata else {}
     predicted_groups = _benford_predicted_group_keys(findings, str(year))
@@ -149,29 +151,33 @@ def build_benford_population_benchmarks(
         tp = len(predicted_groups & truth_groups)
         fp = len(predicted_groups - truth_groups)
         fn = len(truth_groups - predicted_groups)
-        metrics.append(BenfordBenchmarkMetric(
-            year=str(year),
-            benchmark="contract_findings",
-            truth_count=len(truth_groups),
-            hit_count=tp,
-            miss_count=fn,
-            extra_count=fp,
-            precision=tp / (tp + fp) if (tp + fp) else None,
-            recall=tp / (tp + fn) if (tp + fn) else None,
-            note="strict contract truth",
-        ))
+        metrics.append(
+            BenfordBenchmarkMetric(
+                year=str(year),
+                benchmark="contract_findings",
+                truth_count=len(truth_groups),
+                hit_count=tp,
+                miss_count=fn,
+                extra_count=fp,
+                precision=tp / (tp + fp) if (tp + fp) else None,
+                recall=tp / (tp + fn) if (tp + fn) else None,
+                note="strict contract truth",
+            )
+        )
 
     if normal_groups:
         hits = len(predicted_groups & normal_groups)
-        metrics.append(BenfordBenchmarkMetric(
-            year=str(year),
-            benchmark="normal_group_controls",
-            truth_count=len(normal_groups),
-            hit_count=hits,
-            miss_count=max(len(normal_groups) - hits, 0),
-            recall=hits / len(normal_groups),
-            note="hit rate is false-finding pressure",
-        ))
+        metrics.append(
+            BenfordBenchmarkMetric(
+                year=str(year),
+                benchmark="normal_group_controls",
+                truth_count=len(normal_groups),
+                hit_count=hits,
+                miss_count=max(len(normal_groups) - hits, 0),
+                recall=hits / len(normal_groups),
+                note="hit rate is false-finding pressure",
+            )
+        )
 
     candidate_metrics = _benford_candidate_metrics(df, result, labels_path, year)
     metrics.extend(candidate_metrics)
@@ -181,26 +187,30 @@ def build_benford_population_benchmarks(
         if not groups:
             continue
         hits = len(predicted_groups & groups)
-        metrics.append(BenfordBenchmarkMetric(
-            year=str(year),
-            benchmark=sidecar_name,
-            truth_count=len(groups),
-            hit_count=hits,
-            miss_count=max(len(groups) - hits, 0),
-            recall=hits / len(groups),
-            note=note,
-        ))
+        metrics.append(
+            BenfordBenchmarkMetric(
+                year=str(year),
+                benchmark=sidecar_name,
+                truth_count=len(groups),
+                hit_count=hits,
+                miss_count=max(len(groups) - hits, 0),
+                recall=hits / len(groups),
+                note=note,
+            )
+        )
 
     if not metrics:
-        metrics.append(BenfordBenchmarkMetric(
-            year=str(year),
-            benchmark="sidecars_missing",
-            note=(
-                "Benford population benchmark unavailable: no Benford sidecars "
-                "found for this labels directory/year. Row-level L4-02 "
-                "precision/recall is intentionally not the acceptance metric."
-            ),
-        ))
+        metrics.append(
+            BenfordBenchmarkMetric(
+                year=str(year),
+                benchmark="sidecars_missing",
+                note=(
+                    "Benford population benchmark unavailable: no Benford sidecars "
+                    "found for this labels directory/year. Row-level L4-02 "
+                    "precision/recall is intentionally not the acceptance metric."
+                ),
+            )
+        )
 
     return metrics
 
@@ -251,15 +261,17 @@ def build_analytical_review_metrics(
         normal_groups = _account_review_sidecar_keys(labels_path, normal_stem, year)
         review_population = _account_review_sidecar_keys(labels_path, review_stem, year)
         if not sidecar_available:
-            metrics.append(AnalyticalReviewMetric(
-                rule_code=rule_code,
-                year=str(year),
-                review_groups=len(predicted_groups),
-                note=(
-                    f"{rule_code} analytical review benchmark unavailable: "
-                    "no account-level sidecars found for this labels directory/year."
-                ),
-            ))
+            metrics.append(
+                AnalyticalReviewMetric(
+                    rule_code=rule_code,
+                    year=str(year),
+                    review_groups=len(predicted_groups),
+                    note=(
+                        f"{rule_code} analytical review benchmark unavailable: "
+                        "no account-level sidecars found for this labels directory/year."
+                    ),
+                )
+            )
             continue
         if not predicted_groups and not truth_groups and not review_population:
             continue
@@ -268,34 +280,34 @@ def build_analytical_review_metrics(
         missed_truth = len(truth_groups - predicted_groups)
         normal_hits = len(predicted_groups & normal_groups)
         review_hits = len(predicted_groups & review_population)
-        metrics.append(AnalyticalReviewMetric(
-            rule_code=rule_code,
-            year=str(year),
-            review_groups=len(predicted_groups),
-            truth_groups=len(truth_groups),
-            truth_covered=truth_covered,
-            missed_truth_groups=missed_truth,
-            normal_control_groups=len(normal_groups),
-            normal_control_review_groups=normal_hits,
-            review_population_groups=len(review_population),
-            review_population_covered=review_hits,
-            overlap_docs=_analytical_overlap_docs(
-                df,
-                predicted_groups,
-                all_results or {},
-                rule_code,
-            ),
-            truth_coverage=(
-                truth_covered / len(truth_groups) if truth_groups else None
-            ),
-            normal_control_hit_rate=(
-                normal_hits / len(normal_groups) if normal_groups else None
-            ),
-            review_population_coverage=(
-                review_hits / len(review_population) if review_population else None
-            ),
-            note=notes[rule_code],
-        ))
+        metrics.append(
+            AnalyticalReviewMetric(
+                rule_code=rule_code,
+                year=str(year),
+                review_groups=len(predicted_groups),
+                truth_groups=len(truth_groups),
+                truth_covered=truth_covered,
+                missed_truth_groups=missed_truth,
+                normal_control_groups=len(normal_groups),
+                normal_control_review_groups=normal_hits,
+                review_population_groups=len(review_population),
+                review_population_covered=review_hits,
+                overlap_docs=_analytical_overlap_docs(
+                    df,
+                    predicted_groups,
+                    all_results or {},
+                    rule_code,
+                ),
+                truth_coverage=(truth_covered / len(truth_groups) if truth_groups else None),
+                normal_control_hit_rate=(
+                    normal_hits / len(normal_groups) if normal_groups else None
+                ),
+                review_population_coverage=(
+                    review_hits / len(review_population) if review_population else None
+                ),
+                note=notes[rule_code],
+            )
+        )
 
     return metrics
 
@@ -314,31 +326,31 @@ def per_rule_label_analysis(
         result = normalized.get(track_name)
 
         if result is None or rule_id not in result.details.columns:
-            analysis.append({
-                "rule_id": rule_id,
-                "label_types": label_types,
-                "truth_display": get_truth_display(rule_id),
-                "truth_basis": get_truth_basis(rule_id),
-                "status": "skipped",
-                "reason": f"rule missing in {get_track_display_label(track_name, rule_id)}",
-                "label_docs": 0,
-                "flagged_rows": 0,
-                "flagged_docs": 0,
-                "tp_docs": 0,
-                "fp_docs": 0,
-                "fn_docs": 0,
-                "recall": 0.0,
-                "precision": 0.0,
-                "sample_fn": [],
-                "sample_fp": [],
-            })
+            analysis.append(
+                {
+                    "rule_id": rule_id,
+                    "label_types": label_types,
+                    "truth_display": get_truth_display(rule_id),
+                    "truth_basis": get_truth_basis(rule_id),
+                    "status": "skipped",
+                    "reason": f"rule missing in {get_track_display_label(track_name, rule_id)}",
+                    "label_docs": 0,
+                    "flagged_rows": 0,
+                    "flagged_docs": 0,
+                    "tp_docs": 0,
+                    "fp_docs": 0,
+                    "fn_docs": 0,
+                    "recall": 0.0,
+                    "precision": 0.0,
+                    "sample_fn": [],
+                    "sample_fp": [],
+                }
+            )
             continue
 
         rule_scores = result.details[rule_id].reindex(df.index, fill_value=0.0)
         review_scores = _rule_review_scores(rule_id, df, result)
-        rule_mask = _rule_flag_mask(rule_id, df, result) | (rule_scores > 0) | (
-            review_scores > 0
-        )
+        rule_mask = _rule_flag_mask(rule_id, df, result) | (rule_scores > 0) | (review_scores > 0)
         flagged_rows = int(rule_mask.sum())
         flagged_doc_set = set(df.loc[rule_mask, "document_id"].dropna().unique())
         overlap_docs = _count_overlap_docs(rule_id, df, normalized, flagged_doc_set)
@@ -367,32 +379,34 @@ def per_rule_label_analysis(
             status = "no_label"
         else:
             status = "ok"
-        analysis.append({
-            "rule_id": rule_id,
-            "label_types": label_types,
-            "truth_display": get_truth_display(rule_id),
-            "truth_basis": get_truth_basis(rule_id),
-            "status": status,
-            "reason": get_evaluation_note(rule_id),
-            "label_docs": label_count,
-            "flagged_rows": flagged_rows,
-            "flagged_docs": len(flagged_doc_set),
-            "tp_docs": tp,
-            "fp_docs": fp,
-            "fn_docs": fn,
-            "recall": recall,
-            "precision": precision,
-            "sample_fn": sorted(fn_docs)[:5],
-            "sample_fp": sorted(fp_docs)[:5],
-            "rule_objective": profile.rule_objective if profile else "",
-            "broad_fraud_type": profile.broad_fraud_type if profile else "",
-            "expected_coverage": profile.expected_coverage if profile else "",
-            "overlap_docs": overlap_docs,
-            "standalone_docs": max(len(flagged_doc_set) - overlap_docs, 0),
-            "review_queue_docs": _review_queue_docs(rule_id, fp, score_bands),
-            "breakdown": breakdown,
-            "score_bands": score_bands,
-        })
+        analysis.append(
+            {
+                "rule_id": rule_id,
+                "label_types": label_types,
+                "truth_display": get_truth_display(rule_id),
+                "truth_basis": get_truth_basis(rule_id),
+                "status": status,
+                "reason": get_evaluation_note(rule_id),
+                "label_docs": label_count,
+                "flagged_rows": flagged_rows,
+                "flagged_docs": len(flagged_doc_set),
+                "tp_docs": tp,
+                "fp_docs": fp,
+                "fn_docs": fn,
+                "recall": recall,
+                "precision": precision,
+                "sample_fn": sorted(fn_docs)[:5],
+                "sample_fp": sorted(fp_docs)[:5],
+                "rule_objective": profile.rule_objective if profile else "",
+                "broad_fraud_type": profile.broad_fraud_type if profile else "",
+                "expected_coverage": profile.expected_coverage if profile else "",
+                "overlap_docs": overlap_docs,
+                "standalone_docs": max(len(flagged_doc_set) - overlap_docs, 0),
+                "review_queue_docs": _review_queue_docs(rule_id, fp, score_bands),
+                "breakdown": breakdown,
+                "score_bands": score_bands,
+            }
+        )
 
     return analysis
 
@@ -449,22 +463,40 @@ def _rule_score_bands(
         if annotations:
             return {
                 "boundary_docs": _annotation_doc_count_by_field(
-                    df, annotations, "bucket", "boundary",
+                    df,
+                    annotations,
+                    "bucket",
+                    "boundary",
                 ),
                 "moderate_docs": _annotation_doc_count_by_field(
-                    df, annotations, "bucket", "moderate",
+                    df,
+                    annotations,
+                    "bucket",
+                    "moderate",
                 ),
                 "severe_docs": _annotation_doc_count_by_field(
-                    df, annotations, "bucket", "severe",
+                    df,
+                    annotations,
+                    "bucket",
+                    "severe",
                 ),
                 "critical_docs": _annotation_doc_count_by_field(
-                    df, annotations, "bucket", "critical",
+                    df,
+                    annotations,
+                    "bucket",
+                    "critical",
                 ),
                 "non_approver_docs": _annotation_doc_count_by_field(
-                    df, annotations, "bucket", "non_approver",
+                    df,
+                    annotations,
+                    "bucket",
+                    "non_approver",
                 ),
                 "unresolved_limit_docs": _annotation_doc_count_by_field(
-                    df, annotations, "bucket", "unresolved_limit",
+                    df,
+                    annotations,
+                    "bucket",
+                    "unresolved_limit",
                 ),
             }
         return {
@@ -486,7 +518,10 @@ def _rule_score_bands(
         if annotations:
             review_docs = _annotation_doc_count_by_field(df, annotations, "bucket", "review")
             immediate_docs = _annotation_doc_count_by_field(
-                df, annotations, "bucket", "immediate",
+                df,
+                annotations,
+                "bucket",
+                "immediate",
             )
             escalated_docs = _annotation_doc_count_by_field_prefix(
                 df,
@@ -511,13 +546,22 @@ def _rule_score_bands(
         if annotations:
             return {
                 "lower_band_docs": _annotation_doc_count_by_field(
-                    df, annotations, "bucket", "lower_band",
+                    df,
+                    annotations,
+                    "bucket",
+                    "lower_band",
                 ),
                 "close_band_docs": _annotation_doc_count_by_field(
-                    df, annotations, "bucket", "close_band",
+                    df,
+                    annotations,
+                    "bucket",
+                    "close_band",
                 ),
                 "razor_band_docs": _annotation_doc_count_by_field(
-                    df, annotations, "bucket", "razor_band",
+                    df,
+                    annotations,
+                    "bucket",
+                    "razor_band",
                 ),
             }
         doc_scores = _document_max_scores(df, scores)
@@ -531,13 +575,22 @@ def _rule_score_bands(
         if annotations:
             return {
                 "reference_match_docs": _annotation_doc_count_by_field(
-                    df, annotations, "reason_code", "reference_match",
+                    df,
+                    annotations,
+                    "reason_code",
+                    "reference_match",
                 ),
                 "mixed_reference_fallback_docs": _annotation_doc_count_by_field(
-                    df, annotations, "reason_code", "mixed_reference_fallback",
+                    df,
+                    annotations,
+                    "reason_code",
+                    "mixed_reference_fallback",
                 ),
                 "blank_reference_fallback_docs": _annotation_doc_count_by_field(
-                    df, annotations, "reason_code", "blank_reference_fallback",
+                    df,
+                    annotations,
+                    "reason_code",
+                    "blank_reference_fallback",
                 ),
             }
         doc_scores = _document_max_scores(df, scores)
@@ -546,9 +599,7 @@ def _rule_score_bands(
             "mixed_reference_fallback_docs": int(
                 ((doc_scores >= 0.70) & (doc_scores < 0.85)).sum()
             ),
-            "blank_reference_fallback_docs": int(
-                ((doc_scores > 0) & (doc_scores < 0.70)).sum()
-            ),
+            "blank_reference_fallback_docs": int(((doc_scores > 0) & (doc_scores < 0.70)).sum()),
         }
     if rule_id == "L1-06":
         immediate_docs = df.loc[scores >= 0.8, "document_id"].dropna().nunique()
@@ -568,32 +619,52 @@ def _rule_score_bands(
         }
     if rule_id == "L3-02":
         l302_scores = scores.combine(review_scores, max)
-        population_docs = df.loc[
-            (l302_scores > 0) & (l302_scores < 0.60),
-            "document_id",
-        ].dropna().nunique()
-        priority_docs = df.loc[
-            (l302_scores >= 0.60) & (l302_scores < 0.75),
-            "document_id",
-        ].dropna().nunique()
-        control_bypass_docs = df.loc[
-            l302_scores >= 0.75,
-            "document_id",
-        ].dropna().nunique()
+        population_docs = (
+            df.loc[
+                (l302_scores > 0) & (l302_scores < 0.60),
+                "document_id",
+            ]
+            .dropna()
+            .nunique()
+        )
+        priority_docs = (
+            df.loc[
+                (l302_scores >= 0.60) & (l302_scores < 0.75),
+                "document_id",
+            ]
+            .dropna()
+            .nunique()
+        )
+        control_bypass_docs = (
+            df.loc[
+                l302_scores >= 0.75,
+                "document_id",
+            ]
+            .dropna()
+            .nunique()
+        )
         return {
             "manual_population_docs": int(population_docs),
             "priority_docs": int(priority_docs),
             "control_bypass_docs": int(control_bypass_docs),
         }
     if rule_id == "L3-04":
-        low_docs = df.loc[
-            (scores > 0) & (scores < 0.60),
-            "document_id",
-        ].dropna().nunique()
-        priority_docs = df.loc[
-            (scores >= 0.60) & (scores < 0.75),
-            "document_id",
-        ].dropna().nunique()
+        low_docs = (
+            df.loc[
+                (scores > 0) & (scores < 0.60),
+                "document_id",
+            ]
+            .dropna()
+            .nunique()
+        )
+        priority_docs = (
+            df.loc[
+                (scores >= 0.60) & (scores < 0.75),
+                "document_id",
+            ]
+            .dropna()
+            .nunique()
+        )
         high_docs = df.loc[scores >= 0.75, "document_id"].dropna().nunique()
         return {
             "closing_low_docs": int(low_docs),
@@ -601,14 +672,22 @@ def _rule_score_bands(
             "closing_high_docs": int(high_docs),
         }
     if rule_id == "L3-09":
-        review_docs = df.loc[
-            (scores > 0) & (scores < 0.60),
-            "document_id",
-        ].dropna().nunique()
-        priority_docs = df.loc[
-            (scores >= 0.60) & (scores < 0.75),
-            "document_id",
-        ].dropna().nunique()
+        review_docs = (
+            df.loc[
+                (scores > 0) & (scores < 0.60),
+                "document_id",
+            ]
+            .dropna()
+            .nunique()
+        )
+        priority_docs = (
+            df.loc[
+                (scores >= 0.60) & (scores < 0.75),
+                "document_id",
+            ]
+            .dropna()
+            .nunique()
+        )
         high_docs = df.loc[scores >= 0.75, "document_id"].dropna().nunique()
         return {
             "suspense_aging_review_docs": int(review_docs),
@@ -631,12 +710,8 @@ def _rule_score_bands(
         return {
             "calendar_review_docs": len(_docs_for_mask(df, calendar_review)),
             "weekend_docs": len(_docs_for_mask(df, calendar_review & weekend)),
-            "weekday_holiday_docs": len(
-                _docs_for_mask(df, calendar_review & holiday & ~weekend)
-            ),
-            "weekend_holiday_docs": len(
-                _docs_for_mask(df, calendar_review & weekend & holiday)
-            ),
+            "weekday_holiday_docs": len(_docs_for_mask(df, calendar_review & holiday & ~weekend)),
+            "weekend_holiday_docs": len(_docs_for_mask(df, calendar_review & weekend & holiday)),
         }
     if rule_id == "L2-04":
         doc_scores = _document_max_scores(df, scores)
@@ -648,10 +723,14 @@ def _rule_score_bands(
         }
     if rule_id == "L3-01":
         exact_denied_docs = df.loc[scores >= 0.65, "document_id"].dropna().nunique()
-        category_review_docs = df.loc[
-            (scores > 0) & (scores < 0.65),
-            "document_id",
-        ].dropna().nunique()
+        category_review_docs = (
+            df.loc[
+                (scores > 0) & (scores < 0.65),
+                "document_id",
+            ]
+            .dropna()
+            .nunique()
+        )
         return {
             "exact_denied_docs": int(exact_denied_docs),
             "category_review_docs": int(category_review_docs),
@@ -684,10 +763,14 @@ def _rule_score_bands(
         }
     if rule_id == "L3-06":
         confirmed_docs = df.loc[scores >= 0.40, "document_id"].dropna().nunique()
-        normal_context_docs = df.loc[
-            (scores > 0) & (scores < 0.40),
-            "document_id",
-        ].dropna().nunique()
+        normal_context_docs = (
+            df.loc[
+                (scores > 0) & (scores < 0.40),
+                "document_id",
+            ]
+            .dropna()
+            .nunique()
+        )
         return {
             "confirmed_after_hours_docs": int(confirmed_docs),
             "normal_system_context_docs": int(normal_context_docs),
@@ -697,10 +780,16 @@ def _rule_score_bands(
         if annotations:
             return {
                 "late_posting_docs": _annotation_doc_count_by_field(
-                    df, annotations, "direction", "late_posting",
+                    df,
+                    annotations,
+                    "direction",
+                    "late_posting",
                 ),
                 "forward_date_gap_docs": _annotation_doc_count_by_field(
-                    df, annotations, "direction", "forward_date_gap",
+                    df,
+                    annotations,
+                    "direction",
+                    "forward_date_gap",
                 ),
                 "moderate_gap_docs": _annotation_doc_count_by_field_suffix(
                     df,
@@ -736,10 +825,14 @@ def _rule_score_bands(
         quality = df["description_quality"].fillna("").astype(str).str.strip().str.lower()
         flagged = scores > 0
         missing_docs = df.loc[flagged & quality.eq("missing"), "document_id"].dropna().nunique()
-        corrupted_docs = df.loc[
-            flagged & quality.eq("corrupted"),
-            "document_id",
-        ].dropna().nunique()
+        corrupted_docs = (
+            df.loc[
+                flagged & quality.eq("corrupted"),
+                "document_id",
+            ]
+            .dropna()
+            .nunique()
+        )
         poor_docs = df.loc[flagged & quality.eq("poor"), "document_id"].dropna().nunique()
         return {
             "missing_description_docs": int(missing_docs),
@@ -769,15 +862,23 @@ def _rule_score_bands(
                     "normal_control_candidate",
                 ),
             }
-        raw_docs = df.loc[
-            (scores >= 0.30) & (scores < 0.60),
-            "document_id",
-        ].dropna().nunique()
+        raw_docs = (
+            df.loc[
+                (scores >= 0.30) & (scores < 0.60),
+                "document_id",
+            ]
+            .dropna()
+            .nunique()
+        )
         priority_docs = df.loc[scores >= 0.60, "document_id"].dropna().nunique()
-        normal_docs = df.loc[
-            (scores > 0) & (scores < 0.30),
-            "document_id",
-        ].dropna().nunique()
+        normal_docs = (
+            df.loc[
+                (scores > 0) & (scores < 0.30),
+                "document_id",
+            ]
+            .dropna()
+            .nunique()
+        )
         return {
             "raw_sensitive_touch_docs": int(raw_docs),
             "priority_case_docs": int(priority_docs),
@@ -785,10 +886,14 @@ def _rule_score_bands(
         }
     if rule_id == "L3-11":
         cutoff_review_docs = df.loc[scores > 0, "document_id"].dropna().nunique()
-        cutoff_priority_docs = df.loc[
-            scores >= 0.30,
-            "document_id",
-        ].dropna().nunique()
+        cutoff_priority_docs = (
+            df.loc[
+                scores >= 0.30,
+                "document_id",
+            ]
+            .dropna()
+            .nunique()
+        )
         cutoff_high_docs = df.loc[scores >= 0.60, "document_id"].dropna().nunique()
         return {
             "cutoff_review_docs": int(cutoff_review_docs),
@@ -983,10 +1088,12 @@ def _document_max_scores(df: pd.DataFrame, scores: pd.Series) -> pd.Series:
     """Collapse row scores to one max score per document."""
     if "document_id" not in df.columns:
         return pd.Series(dtype="float64")
-    frame = pd.DataFrame({
-        "document_id": df["document_id"],
-        "score": scores.reindex(df.index, fill_value=0.0),
-    }).dropna(subset=["document_id"])
+    frame = pd.DataFrame(
+        {
+            "document_id": df["document_id"],
+            "score": scores.reindex(df.index, fill_value=0.0),
+        }
+    ).dropna(subset=["document_id"])
     if frame.empty:
         return pd.Series(dtype="float64")
     return frame.groupby("document_id", sort=False)["score"].max()
@@ -1235,9 +1342,8 @@ def _label_doc_set_for_rule(
                 metadata = json.loads(metadata_json)
             except json.JSONDecodeError:
                 return False
-            return (
-                metadata.get("revenue_subtype") == "high_value_revenue_outlier"
-                and bool(metadata.get("is_l401_direct_truth"))
+            return metadata.get("revenue_subtype") == "high_value_revenue_outlier" and bool(
+                metadata.get("is_l401_direct_truth")
             )
 
         direct_mask = revenue["metadata_json"].map(is_direct_l401)
@@ -1456,11 +1562,13 @@ def _d01_predicted_group_keys(
     for finding in findings:
         if not isinstance(finding, dict):
             continue
-        keys.add(_account_review_group_key(
-            year,
-            finding.get("company_code", ""),
-            finding.get("gl_account", ""),
-        ))
+        keys.add(
+            _account_review_group_key(
+                year,
+                finding.get("company_code", ""),
+                finding.get("gl_account", ""),
+            )
+        )
     return keys
 
 
@@ -1475,11 +1583,13 @@ def _d02_predicted_group_keys(
     for item in diagnostics:
         if not isinstance(item, dict) or not item.get("flagged"):
             continue
-        keys.add(_account_review_group_key(
-            year,
-            item.get("company_code", ""),
-            item.get("gl_account", ""),
-        ))
+        keys.add(
+            _account_review_group_key(
+                year,
+                item.get("company_code", ""),
+                item.get("gl_account", ""),
+            )
+        )
     return keys
 
 
@@ -1558,11 +1668,13 @@ def _benford_predicted_group_keys(
     for finding in findings:
         if not isinstance(finding, dict):
             continue
-        keys.add(_benford_group_key(
-            year,
-            finding.get("company_code"),
-            finding.get("gl_account"),
-        ))
+        keys.add(
+            _benford_group_key(
+                year,
+                finding.get("company_code"),
+                finding.get("gl_account"),
+            )
+        )
     return keys
 
 
@@ -1595,8 +1707,7 @@ def _benford_candidate_metrics(
         return []
 
     candidate_indices = (
-        result.metadata.get("benford_candidate_indices", [])
-        if result.metadata else []
+        result.metadata.get("benford_candidate_indices", []) if result.metadata else []
     )
     predicted_line_keys: set[tuple[str, object]] = set()
     predicted_doc_keys: set[str] = set()
@@ -1612,9 +1723,7 @@ def _benford_candidate_metrics(
     if not {"document_id", "line_number"}.issubset(truth.columns):
         return []
     truth["document_id"] = truth["document_id"].astype(str)
-    truth_line_keys = set(
-        truth[["document_id", "line_number"]].itertuples(index=False, name=None)
-    )
+    truth_line_keys = set(truth[["document_id", "line_number"]].itertuples(index=False, name=None))
     truth_doc_keys = set(truth["document_id"])
 
     line_tp = len(predicted_line_keys & truth_line_keys)
@@ -1648,4 +1757,3 @@ def _benford_candidate_metrics(
             note="candidate documents are review scope, not row-level fraud truth",
         ),
     ]
-

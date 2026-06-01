@@ -47,9 +47,7 @@ class Phase2AutoencoderMatrixBuilder:
         _validate_single_use_deny_columns([decision["column"] for decision in include])
         sparse_columns = _detect_sparse_columns(df)
         self.sparse_dropped_columns = [
-            decision["column"]
-            for decision in include
-            if decision["column"] in sparse_columns
+            decision["column"] for decision in include if decision["column"] in sparse_columns
         ]
         active = [
             decision
@@ -63,9 +61,7 @@ class Phase2AutoencoderMatrixBuilder:
         self.general_numeric_columns = [
             column for column in self.numeric_columns if column not in self.amount_columns
         ]
-        self.low_card_columns = [
-            d["column"] for d in active if d.get("role") == "categorical_low"
-        ]
+        self.low_card_columns = [d["column"] for d in active if d.get("role") == "categorical_low"]
         self.high_card_columns = [
             d["column"] for d in active if d.get("role") == "categorical_high"
         ]
@@ -114,17 +110,11 @@ class Phase2AutoencoderMatrixBuilder:
             names = self._high_card_encoder.get_feature_names_out()
             blocks.append(pd.DataFrame(values, index=df.index, columns=names))
         if self.boolean_columns:
-            values = (
-                df.reindex(columns=self.boolean_columns)
-                .fillna(False)
-                .astype(float)
-            )
+            values = df.reindex(columns=self.boolean_columns).fillna(False).astype(float)
             blocks.append(values)
         for column in self.sparse_dropped_columns:
             present = (
-                _not_empty(df[column])
-                if column in df.columns
-                else pd.Series(False, index=df.index)
+                _not_empty(df[column]) if column in df.columns else pd.Series(False, index=df.index)
             )
             blocks.append(
                 pd.DataFrame(
@@ -171,9 +161,7 @@ class Phase2AutoencoderMatrixBuilder:
             names.extend(self._signed_log.get_feature_names_out(self.amount_columns).tolist())
         if self.general_numeric_columns:
             names.extend(
-                self._numeric_policy.get_feature_names_out(
-                    self.general_numeric_columns
-                ).tolist()
+                self._numeric_policy.get_feature_names_out(self.general_numeric_columns).tolist()
             )
         if self.low_card_columns:
             names.extend(self._low_card_encoder.get_feature_names_out().tolist())

@@ -72,7 +72,8 @@ def profile_dataframe(
         duplicate_sample_size = max_rows
     sample_duplicate_rows = (
         int(duplicate_source.apply(_normalize_for_hashing).duplicated().sum())
-        if len(duplicate_source) > 0 else 0
+        if len(duplicate_source) > 0
+        else 0
     )
     duplicate_rate_estimate = (
         float(sample_duplicate_rows / len(duplicate_source))
@@ -88,11 +89,7 @@ def profile_dataframe(
     # 샘플링 판정
     sampled = total_rows > _SAMPLING_THRESHOLD
     sample_size = _SAMPLE_SIZE if sampled else None
-    sample_df = (
-        df.sample(n=_SAMPLE_SIZE, random_state=random_seed)
-        if sampled
-        else df
-    )
+    sample_df = df.sample(n=_SAMPLE_SIZE, random_state=random_seed) if sampled else df
 
     # 컬럼별 프로파일링
     columns: dict[str, ColumnProfile] = {}
@@ -124,7 +121,9 @@ def profile_dataframe(
 
     logger.info(
         "EDA 프로파일링 완료: %d행 × %d열 (샘플링=%s)",
-        total_rows, total_columns, sampled,
+        total_rows,
+        total_columns,
+        sampled,
     )
 
     return EDAProfile(
@@ -144,6 +143,7 @@ def profile_dataframe(
 def profile_to_dict(profile: EDAProfile) -> dict:
     """EDAProfile → JSON-serializable dict 변환."""
     from dataclasses import asdict
+
     raw = asdict(profile)
     return _sanitize(raw)
 

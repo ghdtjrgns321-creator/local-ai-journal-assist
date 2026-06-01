@@ -22,19 +22,9 @@ def profile_datetime(series: pd.Series) -> dict:
     range_days = (max_dt - min_dt).days
 
     # 요일 분포: sort_index()로 0~6 순서 보장
-    weekday_dist = (
-        clean.dt.dayofweek
-        .value_counts()
-        .sort_index()
-        .to_dict()
-    )
+    weekday_dist = clean.dt.dayofweek.value_counts().sort_index().to_dict()
     # 월별 분포: sort_index()로 1~12 순서 보장
-    monthly_dist = (
-        clean.dt.month
-        .value_counts()
-        .sort_index()
-        .to_dict()
-    )
+    monthly_dist = clean.dt.month.value_counts().sort_index().to_dict()
 
     return {
         "min_date": min_dt.isoformat(),

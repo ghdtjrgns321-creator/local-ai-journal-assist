@@ -77,9 +77,7 @@ class ModelRegistry:
             json.dump(self._index, f, indent=2, ensure_ascii=False)
 
     def _next_version(self, model_name: str) -> int:
-        versions = [
-            e["version"] for e in self._index if e["model_name"] == model_name
-        ]
+        versions = [e["version"] for e in self._index if e["model_name"] == model_name]
         return max(versions, default=0) + 1
 
     def save(
@@ -163,9 +161,7 @@ class ModelRegistry:
         try:
             path.resolve().relative_to(self._dir.resolve())
         except ValueError:
-            raise ValueError(
-                f"경로 순회 차단: '{path}'는 레지스트리 디렉토리 외부입니다."
-            )
+            raise ValueError(f"경로 순회 차단: '{path}'는 레지스트리 디렉토리 외부입니다.")
         if not path.exists():
             raise FileNotFoundError(
                 f"모델 파일 없음: '{path}'. 레지스트리 인덱스가 손상되었을 수 있습니다."
@@ -180,8 +176,7 @@ class ModelRegistry:
         """
         known_fields = {f.name for f in ModelMetadata.__dataclass_fields__.values()}
         return [
-            ModelMetadata(**{k: v for k, v in e.items() if k in known_fields})
-            for e in self._index
+            ModelMetadata(**{k: v for k, v in e.items() if k in known_fields}) for e in self._index
         ]
 
     def compare_versions(self, model_name: str) -> list[dict]:

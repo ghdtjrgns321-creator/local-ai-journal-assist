@@ -45,10 +45,22 @@ def profile_numeric(series: pd.Series) -> dict:
 
 def _empty_numeric() -> dict:
     """전체 NaN일 때 반환할 빈 dict."""
-    return {k: None for k in (
-        "mean", "median", "std", "skewness", "kurtosis",
-        "q1", "q3", "iqr", "outlier_count", "min_val", "max_val",
-    )}
+    return {
+        k: None
+        for k in (
+            "mean",
+            "median",
+            "std",
+            "skewness",
+            "kurtosis",
+            "q1",
+            "q3",
+            "iqr",
+            "outlier_count",
+            "min_val",
+            "max_val",
+        )
+    }
 
 
 def _to_native(val):

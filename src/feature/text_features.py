@@ -90,8 +90,7 @@ def _is_noise_pattern(text: str) -> bool:
     normalized = text.strip().lower()
     return bool(
         normalized in _GARBAGE_TOKENS
-        or
-        _RE_JAMO_ONLY.match(text)
+        or _RE_JAMO_ONLY.match(text)
         or _RE_SPECIAL_ONLY.match(text)
         or _RE_REPEAT_CHAR.match(text)
         or _RE_REPEAT_WORD.match(text)
@@ -121,6 +120,7 @@ def _compute_entropy(text: str) -> float:
     if len(text) == 0:
         return 0.0
     from collections import Counter
+
     counts = np.array(list(Counter(text).values()), dtype=float)
     probs = counts / counts.sum()
     return float(-np.sum(probs * np.log2(probs)))
@@ -248,8 +248,8 @@ def add_description_quality(
         for col in text_cols:
             values = df[col]
             present = values.notna() & values.astype(str).str.strip().ne("")
-            noise = values.fillna("").astype(str).map(
-                lambda value: _is_noise_pattern(value.strip())
+            noise = (
+                values.fillna("").astype(str).map(lambda value: _is_noise_pattern(value.strip()))
             )
             any_present = any_present | present
             all_present_noise = all_present_noise & (~present | noise)
@@ -320,9 +320,7 @@ def build_description_quality_profile(
     ).reset_index()
 
     denominator = profile["row_count"].where(profile["row_count"] > 0, 1)
-    profile["missing_or_corrupted_rate"] = (
-        profile["missing_or_corrupted_rows"] / denominator
-    )
+    profile["missing_or_corrupted_rate"] = profile["missing_or_corrupted_rows"] / denominator
     profile["both_missing_rate"] = profile["both_missing_rows"] / denominator
     profile["line_missing_header_present_rate"] = (
         profile["line_missing_header_present_rows"] / denominator
@@ -348,9 +346,7 @@ def add_has_risk_keyword(
     combined = _combine_text(df)
     cleaned = _clean_for_keyword(combined)
 
-    df["has_risk_keyword"] = cleaned.map(
-        lambda t: _match_risk_level(t, high, medium)
-    )
+    df["has_risk_keyword"] = cleaned.map(lambda t: _match_risk_level(t, high, medium))
     return df
 
 
@@ -456,17 +452,18 @@ def add_account_semantic(
     *,
     max_accounts: int = 200,
 ) -> pd.DataFrame:
-    """WU-21 #85: GL 계정명 LLM 카테고리 분류 + 적요 교차 검증.
+    """WU-21 #85: GL 계정명 카테고리 분류 + 적요 교차 검증.
 
     추가 컬럼:
       - account_category (str): revenue/expense/asset/liability/equity/suspense/payroll/...
       - account_desc_match (bool): 적요(combined_text)에 카테고리 시그널이 있는가
 
-    비용 최적화:
-      - 고유 gl_account 수만큼만 LLM 호출 (max_accounts 상한)
-      - LLM 결과는 dict 캐시 → DataFrame.map으로 일괄 적용
+    실행:
+      - 기본 active path에서는 외부 client를 자동 생성하지 않고 graceful skip한다.
+      - 테스트/실험에서 명시 주입한 client가 있을 때만 계정 카테고리 분류를 수행한다.
+      - 결과는 dict 캐시 → DataFrame.map으로 일괄 적용한다.
 
-    LLM 불가 시 graceful skip: 컬럼 NaN/False, warning.
+    client 부재 시 graceful skip: 컬럼 NaN/False.
     """
     if "gl_account" not in df.columns:
         logger.warning("add_account_semantic: gl_account 컬럼 없음 — 스킵")
@@ -484,7 +481,9 @@ def add_account_semantic(
     if len(unique_accounts) > max_accounts:
         logger.warning(
             "add_account_semantic: 고유 gl_account %d개 > max_accounts %d — 상위 %d개만 처리",
-            len(unique_accounts), max_accounts, max_accounts,
+            len(unique_accounts),
+            max_accounts,
+            max_accounts,
         )
         unique_accounts = unique_accounts[:max_accounts]
 
@@ -495,9 +494,9 @@ def add_account_semantic(
         return df
 
     try:
-        category_map = _classify_accounts_via_llm(client, unique_accounts)
+        category_map = _classify_accounts_with_client(client, unique_accounts)
     except Exception as exc:
-        logger.warning("add_account_semantic LLM 호출 실패 — 스킵: %s", exc)
+        logger.warning("add_account_semantic client 분류 실패 — 스킵: %s", exc)
         df["account_category"] = pd.NA
         df["account_desc_match"] = False
         return df
@@ -517,29 +516,19 @@ def add_account_semantic(
 
 
 def _resolve_embedding_service(svc: object | None):
-    """주입받은 임베딩 서비스 또는 싱글톤. 실패 시 None + warning."""
+    """Return an explicitly injected embedding service, or None."""
     if svc is not None:
         return svc
-    try:
-        from src.llm.embedding_service import get_embedding_service
-
-        return get_embedding_service()
-    except Exception as exc:  # pragma: no cover - 환경 의존
-        logger.warning("EmbeddingService 초기화 실패 — semantic_similarity 스킵: %s", exc)
-        return None
+    logger.info("EmbeddingService 자동 초기화 비활성 — semantic_similarity 스킵")
+    return None
 
 
 def _resolve_chat_client(client: object | None):
-    """주입받은 chat client 또는 light 티어. 실패 시 None + warning."""
+    """Return an explicitly injected classification client, or None."""
     if client is not None:
         return client
-    try:
-        from src.llm.api_client import get_chat_client
-
-        return get_chat_client("light")
-    except Exception as exc:  # pragma: no cover - 환경 의존
-        logger.warning("ChatClient 초기화 실패 — account_semantic 스킵: %s", exc)
-        return None
+    logger.info("ChatClient 자동 초기화 비활성 — account_semantic 스킵")
+    return None
 
 
 def _sanitize_rows(df: pd.DataFrame) -> pd.Series:
@@ -547,23 +536,30 @@ def _sanitize_rows(df: pd.DataFrame) -> pd.Series:
 
     morpheme_tokens 있으면 우선 사용, 없으면 combined_text(영문) 토큰화.
     """
-    from src.llm.embedding_service import sanitize_for_embedding
-
     combined = _combine_text(df).fillna("")
     if "morpheme_tokens" in df.columns:
         return pd.Series(
             [
-                sanitize_for_embedding(text, morpheme_tokens=tokens)
+                _sanitize_for_embedding(text, morpheme_tokens=tokens)
                 for text, tokens in zip(combined, df["morpheme_tokens"])
             ],
             index=df.index,
             dtype="string",
         )
     return pd.Series(
-        [sanitize_for_embedding(text) for text in combined],
+        [_sanitize_for_embedding(text) for text in combined],
         index=df.index,
         dtype="string",
     )
+
+
+def _sanitize_for_embedding(text: object, morpheme_tokens: object | None = None) -> str:
+    """Local minimal sanitizer used when an injected embedding service is supplied."""
+    if isinstance(morpheme_tokens, (list, tuple)):
+        tokens = [str(token).strip() for token in morpheme_tokens if str(token).strip()]
+        if tokens:
+            return " ".join(tokens)
+    return str(text or "").strip()
 
 
 def _group_positions(group_series: pd.Series) -> dict[str, np.ndarray]:
@@ -595,7 +591,7 @@ _CATEGORY_KEYWORDS: dict[str, tuple[str, ...]] = {
 def _category_in_text(category: object, text: str) -> bool:
     """카테고리 시그널 키워드가 적요에 있으면 True.
 
-    Why: LLM 분류 결과가 적요와 의미적으로 정합인지 1차 키워드 매칭 검증.
+    Why: 분류 결과가 적요와 의미적으로 정합인지 1차 키워드 매칭 검증.
          최종 임베딩 유사도 검증은 NLP01 룰이 담당 — 여기는 빠른 보조 신호.
     """
     cat = str(category).lower() if pd.notna(category) else ""
@@ -605,8 +601,8 @@ def _category_in_text(category: object, text: str) -> bool:
     return any(kw in text for kw in keywords)
 
 
-def _classify_accounts_via_llm(client: object, accounts: list[str]) -> dict[str, str]:
-    """LLM으로 GL 계정 코드/명을 카테고리로 분류.
+def _classify_accounts_with_client(client: object, accounts: list[str]) -> dict[str, str]:
+    """Classify GL account codes/names with an explicitly injected client.
 
     Returns:
         {account_str: category} 매핑. 실패 분만 누락.

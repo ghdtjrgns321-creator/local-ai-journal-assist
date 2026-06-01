@@ -58,7 +58,8 @@ def _extract_steps(pipeline) -> list[dict]:
                 params = step.get_params(deep=False)
                 # 직렬화 가능한 값만 유지
                 step_info["params"] = {
-                    k: v for k, v in params.items()
+                    k: v
+                    for k, v in params.items()
                     if isinstance(v, (int, float, str, bool, type(None)))
                 }
             except Exception:

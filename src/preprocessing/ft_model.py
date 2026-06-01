@@ -87,7 +87,8 @@ class AuditFTTransformer(nn.Module):
         return self.head(cls_output)  # (B, n_classes)
 
     def forward_with_attention(
-        self, x: torch.Tensor,
+        self,
+        x: torch.Tensor,
     ) -> tuple[torch.Tensor, list[torch.Tensor]]:
         """logits와 함께 각 layer의 [CLS]→피처 attention 가중치 반환.
 
@@ -112,7 +113,9 @@ class AuditFTTransformer(nn.Module):
         for layer in self.encoder.layers:
             # Self-attention sub-block
             attn_out, attn_w = layer.self_attn(
-                current, current, current,
+                current,
+                current,
+                current,
                 need_weights=True,
                 average_attn_weights=True,  # head 평균 → (B, S, S)
             )

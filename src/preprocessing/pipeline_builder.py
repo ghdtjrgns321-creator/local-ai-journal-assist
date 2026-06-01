@@ -58,14 +58,18 @@ def _build_supervised_preprocessor(groups: FeatureGroups) -> ColumnTransformer:
     if groups.numeric:
         transformers.append(("num", SimpleImputer(strategy="median"), groups.numeric))
     if groups.categorical_high and TargetEncoder is not None:
-        transformers.append((
-            "cat_high",
-            Pipeline([
-                ("imputer", SimpleImputer(strategy="most_frequent")),
-                ("encoder", TargetEncoder()),
-            ]),
-            groups.categorical_high,
-        ))
+        transformers.append(
+            (
+                "cat_high",
+                Pipeline(
+                    [
+                        ("imputer", SimpleImputer(strategy="most_frequent")),
+                        ("encoder", TargetEncoder()),
+                    ]
+                ),
+                groups.categorical_high,
+            )
+        )
     if groups.categorical_low:
         transformers.append(("cat_low", _build_cat_low_transformer(), groups.categorical_low))
     if groups.boolean:
@@ -80,24 +84,29 @@ def _build_supervised_preprocessor(groups: FeatureGroups) -> ColumnTransformer:
 
 def build_xgb_pipeline(groups: FeatureGroups) -> Pipeline:
     """XGBoost 지도학습 Pipeline 조립."""
-    return Pipeline([
-        ("preprocessor", _build_supervised_preprocessor(groups)),
-        ("classifier", XGBClassifier(eval_metric="logloss")),
-    ])
+    return Pipeline(
+        [
+            ("preprocessor", _build_supervised_preprocessor(groups)),
+            ("classifier", XGBClassifier(eval_metric="logloss")),
+        ]
+    )
 
 
 def build_lgbm_pipeline(groups: FeatureGroups) -> Pipeline:
     """LightGBM 지도학습 Pipeline 조립."""
     if LGBMClassifier is None:
         raise ImportError("lightgbm 미설치. pip install lightgbm")
-    return Pipeline([
-        ("preprocessor", _build_supervised_preprocessor(groups)),
-        ("classifier", LGBMClassifier(is_unbalance=True, verbosity=-1, random_state=42)),
-    ])
+    return Pipeline(
+        [
+            ("preprocessor", _build_supervised_preprocessor(groups)),
+            ("classifier", LGBMClassifier(is_unbalance=True, verbosity=-1, random_state=42)),
+        ]
+    )
 
 
 def build_supervised_pipelines(
-    groups: FeatureGroups, use_smote: bool = False,
+    groups: FeatureGroups,
+    use_smote: bool = False,
 ) -> dict[str, Pipeline]:
     """지도학습 4개 Pipeline: lr, rf, xgb, lgbm.
 
@@ -107,21 +116,27 @@ def build_supervised_pipelines(
     classifiers = {
         "lr": LogisticRegression(class_weight="balanced", max_iter=1000, random_state=42),
         "rf": RandomForestClassifier(
-            class_weight="balanced", n_estimators=100, random_state=42,
+            class_weight="balanced",
+            n_estimators=100,
+            random_state=42,
         ),
     }
     if XGBClassifier is not None:
         classifiers["xgb"] = XGBClassifier(eval_metric="logloss", random_state=42)
     if LGBMClassifier is not None:
         classifiers["lgbm"] = LGBMClassifier(
-            is_unbalance=True, verbosity=-1, random_state=42,
+            is_unbalance=True,
+            verbosity=-1,
+            random_state=42,
         )
 
     # Why: 각 파이프라인에 독립적인 preprocessor 인스턴스 — fit 상태 교차 오염 방지
     pipelines: dict[str, Pipeline] = {}
     for name, clf in classifiers.items():
         pipelines[name] = _wrap_pipeline(
-            _build_supervised_preprocessor(groups), clf, use_smote,
+            _build_supervised_preprocessor(groups),
+            clf,
+            use_smote,
         )
     return pipelines
 
@@ -136,11 +151,13 @@ def _wrap_pipeline(preprocessor: ColumnTransformer, clf, use_smote: bool) -> Pip
     except ImportError:
         logger.warning("imbalanced-learn 미설치. SMOTE 없이 진행.")
         return Pipeline([("preprocessor", preprocessor), ("classifier", clf)])
-    return ImbPipeline([
-        ("preprocessor", preprocessor),
-        ("smote", SMOTEENN(random_state=42)),
-        ("classifier", clf),
-    ])
+    return ImbPipeline(
+        [
+            ("preprocessor", preprocessor),
+            ("smote", SMOTEENN(random_state=42)),
+            ("classifier", clf),
+        ]
+    )
 
 
 def build_vae_pipeline(groups: FeatureGroups) -> Pipeline:
@@ -152,10 +169,12 @@ def build_vae_pipeline(groups: FeatureGroups) -> Pipeline:
 def build_if_pipeline(groups: FeatureGroups) -> Pipeline:
     """Isolation Forest 비지도 Pipeline 조립."""
     preprocessor = _build_unsupervised_preprocessor(groups)
-    return Pipeline([
-        ("preprocessor", preprocessor),
-        ("detector", IsolationForest(contamination=0.01, random_state=42)),
-    ])
+    return Pipeline(
+        [
+            ("preprocessor", preprocessor),
+            ("detector", IsolationForest(contamination=0.01, random_state=42)),
+        ]
+    )
 
 
 def build_ft_pipeline(groups: FeatureGroups) -> Pipeline:
@@ -167,10 +186,12 @@ def build_ft_pipeline(groups: FeatureGroups) -> Pipeline:
     from src.preprocessing.ft_wrapper import FTTransformerClassifier
 
     preprocessor = _build_supervised_preprocessor(groups)
-    return Pipeline([
-        ("preprocessor", preprocessor),
-        ("classifier", FTTransformerClassifier()),
-    ])
+    return Pipeline(
+        [
+            ("preprocessor", preprocessor),
+            ("classifier", FTTransformerClassifier()),
+        ]
+    )
 
 
 def build_all_pipelines(groups: FeatureGroups) -> dict[str, Pipeline]:
@@ -193,14 +214,19 @@ def _build_ordinal_encoder(columns: list[str]) -> OrdinalEncoder:
 
 def _build_cat_low_transformer() -> Pipeline:
     """저카디널리티 범주형: SimpleImputer + OrdinalEncoder."""
-    return Pipeline([
-        ("imputer", SimpleImputer(strategy="most_frequent")),
-        ("encoder", OrdinalEncoder(
-            categories="auto",
-            handle_unknown="use_encoded_value",
-            unknown_value=-1,
-        )),
-    ])
+    return Pipeline(
+        [
+            ("imputer", SimpleImputer(strategy="most_frequent")),
+            (
+                "encoder",
+                OrdinalEncoder(
+                    categories="auto",
+                    handle_unknown="use_encoded_value",
+                    unknown_value=-1,
+                ),
+            ),
+        ]
+    )
 
 
 # Why: SequenceDetector가 2D 전처리기를 직접 호출하기 위한 public alias
@@ -211,15 +237,19 @@ def _build_unsupervised_preprocessor(groups: FeatureGroups) -> ColumnTransformer
     """VAE/IF 공용 전처리: 수치형 스케일링 + 고카디널리티 DROP."""
     transformers = []
     if groups.numeric:
-        transformers.append((
-            "num",
-            Pipeline([
-                ("imputer", SimpleImputer(strategy="median")),
-                ("power", SafePowerTransformer()),
-                ("scaler", StandardScaler()),
-            ]),
-            groups.numeric,
-        ))
+        transformers.append(
+            (
+                "num",
+                Pipeline(
+                    [
+                        ("imputer", SimpleImputer(strategy="median")),
+                        ("power", SafePowerTransformer()),
+                        ("scaler", StandardScaler()),
+                    ]
+                ),
+                groups.numeric,
+            )
+        )
     # 고카디널리티 범주형: TargetEncoder 없이(y 불필요) → DROP
     if groups.categorical_low:
         transformers.append(("cat_low", _build_cat_low_transformer(), groups.categorical_low))

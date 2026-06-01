@@ -36,9 +36,7 @@ def groupkfold_recall_at_k(
         raise ValueError(f"df missing required columns: {missing_cols}")
 
     df = df.copy()
-    df["_evaluation_group"] = (
-        df[group_cols[0]].astype(str) + "_" + df[group_cols[1]].astype(str)
-    )
+    df["_evaluation_group"] = df[group_cols[0]].astype(str) + "_" + df[group_cols[1]].astype(str)
     gkf = GroupKFold(n_splits=n_splits)
     fold_records = []
     scenarios = _scenario_names(df, expected_doc_count)

@@ -60,9 +60,12 @@ class FTTransformerClassifier(BaseEstimator, ClassifierMixin):
         # Why: n_features는 전처리 후 실제 차원 — 하드코딩 금지
         self.n_features_ = X.shape[1]
         self.model_ = AuditFTTransformer(
-            n_features=self.n_features_, d_token=self.d_token,
-            n_layers=self.n_layers, n_heads=self.n_heads,
-            d_ff=self.d_ff, dropout=self.dropout,
+            n_features=self.n_features_,
+            d_token=self.d_token,
+            n_layers=self.n_layers,
+            n_heads=self.n_heads,
+            d_ff=self.d_ff,
+            dropout=self.dropout,
         ).to(device)
 
         optimizer = torch.optim.Adam(self.model_.parameters(), lr=self.lr)
@@ -158,9 +161,12 @@ class FTTransformerClassifier(BaseEstimator, ClassifierMixin):
         """joblib 역직렬화: bytes → torch 모델 복원."""
         if "_model_bytes" in state:
             model = AuditFTTransformer(
-                n_features=state["n_features_"], d_token=state["d_token"],
-                n_layers=state["n_layers"], n_heads=state["n_heads"],
-                d_ff=state["d_ff"], dropout=state["dropout"],
+                n_features=state["n_features_"],
+                d_token=state["d_token"],
+                n_layers=state["n_layers"],
+                n_heads=state["n_heads"],
+                d_ff=state["d_ff"],
+                dropout=state["dropout"],
             )
             buf = io.BytesIO(state["_model_bytes"])
             model.load_state_dict(torch.load(buf, weights_only=True))

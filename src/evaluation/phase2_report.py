@@ -11,10 +11,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-HOLD_OUT_CAVEAT = (
-    "n=50, 95% CI ≈ ±0.14, 시나리오 단위 hold-out "
-    "(true zero-day fraud type 아님)"
-)
+HOLD_OUT_CAVEAT = "n=50, 95% CI ≈ ±0.14, 시나리오 단위 hold-out (true zero-day fraud type 아님)"
 INSIGNIFICANT_MARKER = "[insignificant]"
 SIGNIFICANCE_CLAIM_RE = re.compile(r"(통계적\s*유의|statistically\s+significant)", re.I)
 FOLD_STAT_KEYS = {
@@ -186,8 +183,7 @@ class Phase2EvaluationReport:
         markers = list(_iter_values_by_key(self.ensemble_results, "statistically_insignificant"))
         if any(bool(marker) for marker in markers):
             return (
-                "[insignificant] Some confidence intervals are too wide "
-                "for a significance claim."
+                "[insignificant] Some confidence intervals are too wide for a significance claim."
             )
         return "No insignificant confidence-interval markers were reported."
 

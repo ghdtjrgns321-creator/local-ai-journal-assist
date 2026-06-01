@@ -162,10 +162,12 @@ def compare_pipelines(
         _cleanup_gpu_if_needed(pipe)
 
     best_name = max(results, key=lambda key: results[key].mean_f1)
-    table = pd.DataFrame([
-        {"pipeline": item.pipeline_name, "mean_f1": item.mean_f1, "std_f1": item.std_f1}
-        for item in results.values()
-    ])
+    table = pd.DataFrame(
+        [
+            {"pipeline": item.pipeline_name, "mean_f1": item.mean_f1, "std_f1": item.std_f1}
+            for item in results.values()
+        ]
+    )
 
     return CVComparisonResult(
         results=results,

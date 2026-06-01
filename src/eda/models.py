@@ -14,9 +14,9 @@ class ColumnProfile:
     """단일 컬럼의 프로파일 결과."""
 
     name: str
-    dtype: str                          # 원본 dtype 문자열 (예: "float64")
-    dtype_group: str                    # "numeric" | "categorical" | "datetime" | "boolean"
-    missing_rate: float                 # 0.0~1.0
+    dtype: str  # 원본 dtype 문자열 (예: "float64")
+    dtype_group: str  # "numeric" | "categorical" | "datetime" | "boolean"
+    missing_rate: float  # 0.0~1.0
     unique_count: int
     mode: str | None = None
 
@@ -38,11 +38,11 @@ class ColumnProfile:
     top_values: list[tuple[str, int]] | None = None
 
     # ── datetime 전용 ──
-    min_date: str | None = None         # ISO 8601
+    min_date: str | None = None  # ISO 8601
     max_date: str | None = None
     date_range_days: int | None = None
-    weekday_distribution: dict[int, int] | None = None   # 0(Mon)~6(Sun)
-    monthly_distribution: dict[int, int] | None = None   # 1(Jan)~12(Dec)
+    weekday_distribution: dict[int, int] | None = None  # 0(Mon)~6(Sun)
+    monthly_distribution: dict[int, int] | None = None  # 1(Jan)~12(Dec)
 
     # ── boolean 전용 ──
     true_rate: float | None = None
