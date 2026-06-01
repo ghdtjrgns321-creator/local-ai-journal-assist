@@ -149,6 +149,33 @@ class TestRunFromDataframe:
                 skip_db=True,
             ).run_from_dataframe(small_gl_df, file_name="journal_entries_2022.csv")
 
+    def test_ignores_v1_ingest_cache_after_encoding_detector_change(self, tmp_path: Path):
+        source = tmp_path / "journal_entries_2022.csv"
+        source.write_text("document_id,line_text\nD1,정상 적요\n", encoding="utf-8")
+
+        settings = AuditSettings(ingest_cache_dir=str(tmp_path / "cache"))
+        pipeline = AuditPipeline(settings=settings, skip_db=True)
+        parquet_path, meta_path = pipeline._ingest_cache_paths(source)
+        parquet_path.parent.mkdir(parents=True, exist_ok=True)
+
+        pd.DataFrame({"document_id": ["D1"], "line_text": ["깨진 캐시"]}).to_parquet(
+            parquet_path,
+            index=False,
+        )
+        stat = source.stat()
+        meta_path.write_text(
+            (
+                '{\n'
+                '  "schema": "ingest-cache-v1",\n'
+                f'  "source_size": {stat.st_size},\n'
+                f'  "source_mtime_ns": {stat.st_mtime_ns}\n'
+                '}\n'
+            ),
+            encoding="utf-8",
+        )
+
+        assert pipeline._try_load_ingest_cache(source) is None
+
     def test_skips_supervised_when_training_gate_blocks_model(self, monkeypatch, small_gl_df):
         class DummyRegistry:
             pass

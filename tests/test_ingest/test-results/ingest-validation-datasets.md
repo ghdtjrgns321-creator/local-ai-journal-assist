@@ -1,12 +1,12 @@
 # Validation 데이터셋 Ingest 파이프라인 검증 결과
 
-> 실행일: 2026-05-17 11:04 | 5종 실데이터셋
+> 실행일: 2026-05-28 13:08 | 5종 실데이터셋
 
 ## 1. 테스트 요약
 
 | 데이터셋            | 검증 | 읽기 | 헤더 | 매핑 | 캐스팅 | 최종 shape        |
 |:--------------------|:----:|:----:|:----:|:----:|:------:|:------------------|
-| bpi2019             | ✅   | ✅   | ✅   | ✅   | ✅     | 1,595,923 × 22    |
+| bpi2019             | ✅   | ❌   | ⏭️   | ⏭️   | ⏭️     | —                 |
 | financial-anomaly   | ✅   | ✅   | ✅   | ✅   | ✅     | 217,441 × 7       |
 | general-ledger      | ✅   | ✅   | ✅   | ✅   | ✅     | 27,909 × 6        |
 | sap-merged          | ✅   | ✅   | ✅   | ✅   | ✅     | 331,934 × 60      |
@@ -18,8 +18,7 @@
 
 | 데이터셋 | 문제 | 상세 |
 |:---------|:-----|:-----|
-| bpi2019 | ③ 헤더 키워드 0개 | 구조 기반 탐지 (keywords.yaml 미등록 컬럼) |
-| bpi2019 | ④ 필수 미매핑 9개 | credit_amount, debit_amount, document_date, document_id, document_type... |
+| bpi2019 | ② 읽기 실패 | 'utf-8' codec can't decode byte 0x96 in position 15: invalid |
 | financial-anomaly | ③ 헤더 키워드 0개 | 구조 기반 탐지 (keywords.yaml 미등록 컬럼) |
 | financial-anomaly | ④ 필수 미매핑 9개 | company_code, credit_amount, document_date, document_id, document_type... |
 | general-ledger | ③ 헤더 키워드 0개 | 구조 기반 탐지 (keywords.yaml 미등록 컬럼) |
@@ -44,6 +43,7 @@
 
 | 문제 | 현상 | 해결 시점 |
 |:-----|:-----|:----------|
+| 인코딩 오탐 (bpi2019) | 'utf-8' codec can't decode byte 0x96 in position 1 | Phase 1a |
 | Parquet 헤더 탐지 스킵 | 불필요한 탐지 시도 (동작 무영향) | Phase 1c |
 | 멀티시트 UI 선택 | active_sheet가 데이터 양 무관 | Phase 1c |
 | 일부 Fuzzy 추천 부정확 | monat→debit_amount 등 | Phase 1c~3 |
@@ -59,36 +59,8 @@
 **✅ ① 파일 검증** (0.13s)
   category=text
 
-**✅ ② 파일 읽기** (5.49s)
-  sheets=['Sheet1'], selected=Sheet1, rows=1595924, cols=22, format=csv, encoding=latin-1
-
-**✅ ③ 헤더 탐지** (0.01s)
-  header_row=0, confidence=0.85, matched=[]
-
-**✅ ④ 컬럼 매핑** (1.71s)
-  mapping=3개, suggestions=6개, unmapped=13개, needs_review=True
-  WARN: 필수 컬럼 미매핑: ['credit_amount', 'debit_amount', 'document_date', 'document_id', 'document_type', 'fiscal_period', 'fiscal_year', 'gl_account', 'posting_date']
-
-**✅ ⑤ 타입 캐스팅** (0.11s)
-  cast=0개, skipped=3개
-
-| 원본 | 표준 | 구분 |
-|:-----|:-----|:----:|
-| case Company | company_code | 확정 |
-| case Source | source | 확정 |
-| event User | created_by | 확정 |
-| case Document Type | document_type | 추천 |
-| case GR-Based Inv. Verif. | gl_account | 추천 |
-| case Item Type | supporting_doc_type | 추천 |
-| case Purchasing Document | document_id | 추천 |
-| case Spend classification text | line_text | 추천 |
-| case Vendor | cost_center | 추천 |
-
-미매핑: event org:resource, case Item Category, case Purch. Doc. Category name, eventID, case Spend area text, case Sub spend area text, case Name, case Item, case concept:name, event concept:name 외 3개
-
-필수 미매핑: credit_amount, debit_amount, document_date, document_id, document_type, fiscal_period, fiscal_year, gl_account, posting_date
-
-최종: 1,595,923행 × 22열
+**❌ ② 파일 읽기** (0.46s)
+  ERROR: 'utf-8' codec can't decode byte 0x96 in position 15: invalid start byte
 
 ---
 
@@ -96,11 +68,11 @@
 
 **금융 트랜잭션 이상치 데이터 (15MB, UTF-8)**
 
-**✅ ① 파일 검증** (0.01s)
+**✅ ① 파일 검증** (0.00s)
   category=text
 
-**✅ ② 파일 읽기** (0.29s)
-  sheets=['Sheet1'], selected=Sheet1, rows=217442, cols=7, format=csv, encoding=latin-1
+**✅ ② 파일 읽기** (0.25s)
+  sheets=['Sheet1'], selected=Sheet1, rows=217442, cols=7, format=csv, encoding=utf-8
 
 **✅ ③ 헤더 탐지** (0.00s)
   header_row=0, confidence=0.85, matched=[]
@@ -109,7 +81,7 @@
   mapping=2개, suggestions=3개, unmapped=2개, needs_review=True
   WARN: 필수 컬럼 미매핑: ['company_code', 'credit_amount', 'document_date', 'document_id', 'document_type', 'fiscal_period', 'fiscal_year', 'gl_account', 'posting_date']
 
-**✅ ⑤ 타입 캐스팅** (0.32s)
+**✅ ⑤ 타입 캐스팅** (0.28s)
   cast=1개, skipped=1개
 
 | 원본 | 표준 | 구분 |
@@ -136,10 +108,10 @@
 
 **교육용 총계정원장 (2MB, xlsx)**
 
-**✅ ① 파일 검증** (0.03s)
+**✅ ① 파일 검증** (0.01s)
   category=excel
 
-**✅ ② 파일 읽기** (2.27s)
+**✅ ② 파일 읽기** (2.36s)
   sheets=['GL', 'Chart of Accounts', 'Calendar', 'Territory', 'CashFlow_St', 'SoCE_St'], selected=GL, rows=27910, cols=12, format=xlsx
 
 **✅ ③ 헤더 탐지** (0.00s)
@@ -188,7 +160,7 @@
   mapping=19개, suggestions=6개, unmapped=35개, needs_review=True
   WARN: 필수 컬럼 미매핑: ['credit_amount']
 
-**✅ ⑤ 타입 캐스팅** (0.75s)
+**✅ ⑤ 타입 캐스팅** (0.72s)
   cast=4개, skipped=14개
 
 | 원본 | 표준 | 구분 |
@@ -241,17 +213,17 @@
 **✅ ① 파일 검증** (0.01s)
   category=text
 
-**✅ ② 파일 읽기** (0.65s)
-  sheets=['Sheet1'], selected=Sheet1, rows=533010, cols=10, format=csv, encoding=latin-1
+**✅ ② 파일 읽기** (0.60s)
+  sheets=['Sheet1'], selected=Sheet1, rows=533010, cols=10, format=csv, encoding=utf-8
 
 **✅ ③ 헤더 탐지** (0.00s)
   header_row=0, confidence=1.00, matched=['BELNR', 'WAERS', 'BUKRS', 'PRCTR', 'HKONT', 'DMBTR']
 
-**✅ ④ 컬럼 매핑** (0.10s)
+**✅ ④ 컬럼 매핑** (0.09s)
   mapping=9개, suggestions=0개, unmapped=1개, needs_review=True
   WARN: 필수 컬럼 미매핑: ['credit_amount', 'document_date', 'document_type', 'fiscal_period', 'fiscal_year', 'posting_date']
 
-**✅ ⑤ 타입 캐스팅** (2.16s)
+**✅ ⑤ 타입 캐스팅** (1.34s)
   cast=2개, skipped=7개
 
 | 원본 | 표준 | 구분 |

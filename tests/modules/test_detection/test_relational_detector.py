@@ -237,6 +237,25 @@ class TestGraceful:
         assert isinstance(result, DetectionResult)
         assert len(result.flagged_indices) == 0
 
+    def test_missing_amount_columns_graceful_without_r01_warning(self):
+        """PHASE2 feature subset에서 amount 컬럼이 빠져도 R01은 skipped 되지 않는다."""
+        df = pd.DataFrame(
+            {
+                "trading_partner": ["V01", "SUB01"],
+                "posting_date": pd.to_datetime(["2024-01-01", "2024-01-02"]),
+                "gl_account": ["5100", "4500"],
+                "is_intercompany": [False, True],
+            },
+            index=[10, 20],
+        )
+
+        result = _detector().detect(df)
+
+        assert isinstance(result, DetectionResult)
+        assert not any("R01 실행 실패" in warning for warning in result.warnings)
+        assert "R01" not in result.metadata["skipped_rules"]
+        assert (result.scores == 0.0).all()
+
 
 # ── DocFlow Integration (3개) ─────────────────────────────────
 

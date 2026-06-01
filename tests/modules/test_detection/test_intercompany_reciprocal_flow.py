@@ -380,3 +380,24 @@ class TestMatcherIntegration:
         rs = result.metadata["reciprocal_flow"]
         assert "structural_candidate_docs" in rs
         assert "evaluated_ic_rows" in rs
+
+    def test_missing_is_intercompany_column_infers_from_configured_gl_prefixes(self):
+        """#13: journal-visible shortcut 컬럼 없이도 IC GL prefix 로 reciprocal case 산출."""
+        rows = _make_doc(
+            "D-no-shortcut",
+            rec_gl="1150",
+            pay_gl="2050",
+            rec_amt=200_000_000,
+            pay_amt=200_000_000,
+            posting_date="2024-06-30 10:00:00",
+        )
+        df = pd.DataFrame(rows)
+        # v33d regression shape: no is_intercompany column and posting_date remains string.
+        det = IntercompanyMatcher(settings=_settings(), audit_rules=AUDIT_RULES)
+        result = det.detect(df)
+
+        assert "ic_reciprocal_flow_prob" in result.details.columns
+        assert result.metadata["reciprocal_flow"]["structural_candidate_docs"] == 1
+        assert result.details["ic_reciprocal_flow_prob"].gt(0).all()
+        reciprocal = result.metadata["ic_pair_artifact"]["reciprocal_pairs"]
+        assert len(reciprocal) == 1

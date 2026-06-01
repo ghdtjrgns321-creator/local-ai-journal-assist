@@ -15,7 +15,6 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from config.settings import get_settings
 from src.detection.base import DetectionResult
 from src.detection.nlp_analyzer import NLPDetector
 from src.detection.nlp_rules import (
@@ -26,7 +25,6 @@ from src.detection.nlp_rules import (
     nlp05_synonym_evasion,
 )
 from src.llm.embedding_service import EmbeddingService
-
 
 # ── Mock EmbeddingClient + Service ──────────────────────────
 
@@ -125,6 +123,16 @@ def test_detector_graceful_skip_when_embedding_unavailable(dt_nlp_df):
     assert all(s == 0.0 for s in result.scores.tolist())
     # 모든 룰이 예외 → skipped_rules 채워짐 또는 rule_flags 비어있음
     assert len(result.metadata.get("skipped_rules", [])) >= 1 or len(result.rule_flags) == 0
+
+
+def test_detector_skips_without_injected_embedding_service(dt_nlp_df):
+    det = NLPDetector(risk_keywords=["상품권"])
+
+    result = det.detect(dt_nlp_df)
+
+    assert result.total_rules_run == 0
+    assert all(score == 0.0 for score in result.scores.tolist())
+    assert any("embedding_service" in warning for warning in result.warnings)
 
 
 def test_detector_isolates_rule_failures(dt_nlp_df, dt_nlp_svc, monkeypatch):

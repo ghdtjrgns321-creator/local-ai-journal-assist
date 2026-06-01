@@ -154,9 +154,7 @@ def test_rule_based_families_end_to_end_leaderboard_promotion_and_inference_cont
         for family in RULE_FAMILIES:
             rows = [row for row in leaderboard["rows"] if row["family"] == family]
             assert len(rows) == 2
-            assert {row["variant"].split("__", maxsplit=1)[0] for row in rows} == {
-                "baseline_core"
-            }
+            assert {row["variant"].split("__", maxsplit=1)[0] for row in rows} == {"baseline_core"}
             assert {row["schema_hash"] for row in rows} == {None}
             assert {row["metric"]["name"] for row in rows} == {RULE_METRICS[family]}
             assert {row["metadata"]["metric_interpretation"] for row in rows} == {

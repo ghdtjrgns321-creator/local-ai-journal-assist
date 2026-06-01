@@ -554,7 +554,7 @@ class TestGracefulDegradation:
     """컬럼 부재·빈 데이터 시 안전한 동작."""
 
     def test_no_is_intercompany_column(self):
-        """#17: is_intercompany 컬럼 없음 → 전체 0 + warning."""
+        """#17: is_intercompany 컬럼 없음 → GL prefix 로 graceful 추론."""
         df = pd.DataFrame(
             {
                 "gl_account": ["1150", "2050"],
@@ -562,10 +562,10 @@ class TestGracefulDegradation:
                 "credit_amount": [0, 1_000_000],
             }
         )
-        # Why: is_intercompany 없으면 필수 컬럼 누락
         result = _detector().detect(df)
+        # company/document evidence 가 부족해 점수는 0이어도 matcher 자체는 실행된다.
         assert result.scores.sum() == 0.0
-        assert any("필수 컬럼 누락" in w for w in result.warnings)
+        assert not any("필수 컬럼 누락" in w for w in result.warnings)
 
     def test_no_ic_rows(self):
         """#18: IC 행 없음 → 전체 0."""
@@ -843,6 +843,35 @@ class TestProbabilisticReconciliation:
         """완전 일치 pair → ic_unmatched_prob ≤ 0.05."""
         df = _make_ic_pair(rec_reference="INV-1001", pay_reference="INV-1001")
         result = _detector().detect(df)
+        assert result.details["ic_unmatched_prob"].max() <= 0.05
+
+    def test_affiliate_counterparty_columns_used_when_trading_partner_absent(self):
+        """trading_partner shortcut 없이 affiliate/counterparty symmetry 로 IC pair 매칭."""
+        df = _make_ic_df(
+            [
+                {
+                    "gl_account": "1150",
+                    "debit_amount": 1_000_000,
+                    "credit_amount": 0,
+                    "company_code": "A001",
+                    "affiliate": "B001",
+                    "posting_date": "2025-03-01",
+                    "reference": "INV-ALT-1",
+                },
+                {
+                    "gl_account": "2050",
+                    "debit_amount": 0,
+                    "credit_amount": 1_000_000,
+                    "company_code": "B001",
+                    "counterparty": "A001",
+                    "posting_date": "2025-03-01",
+                    "reference": "INV-ALT-1",
+                },
+            ]
+        )
+        result = _detector().detect(df)
+
+        assert result.details["IC01"].sum() == 0.0
         assert result.details["ic_unmatched_prob"].max() <= 0.05
 
     def test_no_counterpart_under_l2_capped_to_no_candidate_cap(self):

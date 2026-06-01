@@ -1,7 +1,99 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+import pandas as pd
+
 from dashboard import tab_overview
 from src.metrics.models import PerformanceReport, RuleMetric
+
+
+class _DummyColumn:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return None
+
+
+def _dummy_columns(spec, **kwargs):
+    count = spec if isinstance(spec, int) else len(spec)
+    return [_DummyColumn() for _ in range(count)]
+
+
+def test_render_before_uses_line_count_for_total_journals(monkeypatch):
+    rendered: list[tuple[str, str, str]] = []
+
+    monkeypatch.setattr(tab_overview.st, "subheader", lambda *args, **kwargs: None)
+    monkeypatch.setattr(tab_overview.st, "caption", lambda *args, **kwargs: None)
+    monkeypatch.setattr(tab_overview.st, "markdown", lambda *args, **kwargs: None)
+    monkeypatch.setattr(tab_overview.st, "divider", lambda *args, **kwargs: None)
+    monkeypatch.setattr(tab_overview.st, "columns", _dummy_columns)
+    monkeypatch.setattr(tab_overview.st, "container", lambda *args, **kwargs: _DummyColumn())
+    monkeypatch.setattr(tab_overview, "_render_document_type_donut", lambda df: None)
+    monkeypatch.setattr(tab_overview, "_render_monthly_trend_line", lambda df: None)
+    monkeypatch.setattr(tab_overview, "_render_quality_checklist", lambda df: None)
+    monkeypatch.setattr(tab_overview, "_render_pipeline_briefing", lambda: None)
+    monkeypatch.setattr(tab_overview, "_render_pipeline_cta", lambda: None)
+    monkeypatch.setattr(
+        tab_overview,
+        "_render_kpi_card",
+        lambda title, value, unit="": rendered.append((title, value, unit)),
+    )
+
+    result = SimpleNamespace(
+        data=pd.DataFrame({
+            "document_id": ["D1", "D1", "D2"],
+            "posting_date": pd.to_datetime(["2022-01-01", "2022-01-01", "2022-01-02"]),
+            "debit_amount": [100.0, 0.0, 50.0],
+        })
+    )
+
+    tab_overview._render_before(result)
+
+    assert ("총 전표 수", "3", "건") in rendered
+    assert not any(title == "고유 전표 수" for title, _, _ in rendered)
+
+
+def test_monthly_trend_uses_line_count_not_distinct_documents(monkeypatch):
+    plotted = {}
+
+    monkeypatch.setattr(tab_overview.st, "caption", lambda *args, **kwargs: None)
+    monkeypatch.setattr(tab_overview.st, "markdown", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        tab_overview.st,
+        "plotly_chart",
+        lambda fig, *args, **kwargs: plotted.setdefault("fig", fig),
+    )
+
+    df = pd.DataFrame({
+        "document_id": ["D1", "D1", "D2"],
+        "posting_date": pd.to_datetime(["2022-01-01", "2022-01-01", "2022-02-01"]),
+    })
+
+    tab_overview._render_monthly_trend_line(df)
+
+    y = list(plotted["fig"].data[0].y)
+    assert y[0] == 2
+    assert y[1] == 1
+
+
+def test_quality_checks_label_line_and_document_basis() -> None:
+    df = pd.DataFrame({
+        "document_id": ["D1", "D1", "D2"],
+        "created_by": ["U1", "U1", "U2"],
+        "approved_by": ["U1", "U3", "U4"],
+        "source": ["manual", "manual", "automated"],
+        "posting_date": pd.to_datetime(["2022-12-28", "2022-12-29", "2022-01-03"]),
+        "debit_amount": [100.0, 0.0, 50.0],
+        "credit_amount": [0.0, 100.0, 50.0],
+    })
+
+    assert tab_overview._check_self_approval(df)[1] == "자기승인 라인"
+    assert tab_overview._check_manual_je(df)[1] == "수기 라인 비율"
+    assert tab_overview._check_timing(df)[1] == "시간대 분포(라인 기준)"
+    assert tab_overview._check_period_end_concentration(df)[1] == "기말 집중도(라인 기준)"
+    assert tab_overview._check_trial_balance(df)[1] == "차대변 대사(전표 단위)"
 
 
 def test_build_datasynth_rule_tables_splits_ground_truth_and_separate_benchmarks():

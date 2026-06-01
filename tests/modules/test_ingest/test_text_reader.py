@@ -116,6 +116,19 @@ class TestDetectEncoding:
         enc, _ = _detect_encoding(valid_csv)
         assert enc != "ascii"  # ascii → latin-1 폴백
 
+    def test_valid_utf8_korean_prefers_utf8(self, tmp_path: Path) -> None:
+        """UTF-8 한글 CSV는 legacy 인코딩 오탐 없이 UTF-8로 읽는다."""
+        path = tmp_path / "korean.csv"
+        path.write_text(
+            "document_id,line_text\nD1,고객 대금 수금\n",
+            encoding="utf-8",
+        )
+
+        enc, conf = _detect_encoding(path)
+
+        assert enc == "utf-8"
+        assert conf == 1.0
+
 
 class TestSeparatorDetection:
     """구분자 자동 감지."""

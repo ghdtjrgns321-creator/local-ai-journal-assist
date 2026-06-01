@@ -84,6 +84,9 @@ def test_phase3_payload_carries_family_contributions_and_lane_membership():
     # narrator 가 citation 으로 쓰는 contribution sub_detectors 보존
     assert payload["phase2_family_contributions"][0]["evidence_tier"] == "strong"
     assert payload["phase2_family_contributions"][0]["sub_detectors"][0]["code"] == "L2-03a"
+    assert "priority_rank" not in payload
+    assert "priority_score" not in payload
+    assert "phase2_adjusted_priority" not in payload
 
 
 def test_phase3_related_entity_risk_is_conditionally_omitted():
@@ -150,6 +153,8 @@ def test_phase3_fact_grounding_system_prompt_contains_constraints():
     assert "Use only the selected case input" in prompt
     assert "Do not infer external accounting standards" in prompt
     assert "Do not conclude fraud" in prompt
+    assert "Do not reorder cases" in prompt
+    assert "Do not assign new priority" in prompt
 
 
 def test_phase3_system_prompt_contains_unsupervised_guard():
@@ -163,6 +168,15 @@ def test_phase3_system_prompt_contains_unsupervised_guard():
     assert "위반 확정" in prompt
     assert "부정 확정" in prompt
     assert "오류 확정" in prompt
+
+
+def test_phase3_system_prompt_treats_data_quality_as_review_item_not_conclusion():
+    prompt = phase3_fact_grounding_system_prompt()
+
+    assert "Data quality and integrity blockers are not fraud or violation conclusions" in prompt
+    assert "분석 제한" in prompt
+    assert "데이터 품질 검토 항목" in prompt
+    assert "evidence reliability/completeness review items" in prompt
 
 
 def test_phase3_payload_carries_unsupervised_explanation_features():

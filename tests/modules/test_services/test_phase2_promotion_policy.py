@@ -83,6 +83,4 @@ def test_save_promotion_decision_json_writes_valid_json(tmp_path: Path):
     payload = json.loads(path.read_text(encoding="utf-8"))
 
     assert path.name == "promotion_decision.json"
-    assert payload["family_decisions"]["supervised"]["reasons"] == [
-        "insufficient_completed_trials"
-    ]
+    assert payload["family_decisions"]["supervised"]["reasons"] == ["insufficient_completed_trials"]

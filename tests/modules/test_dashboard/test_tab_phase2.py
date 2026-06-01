@@ -3,9 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import pandas as pd
+
 from dashboard import tab_phase2
 from src.metrics.models import PerformanceReport, RuleMetric
 from src.metrics.report_builder import build_markdown_report
+from src.models.phase2_case import Phase2CaseSet, RelationalCase, make_row_ref
 
 
 def test_build_performance_cards_formats_values():
@@ -251,56 +254,67 @@ def test_build_phase2_state_cards_describe_report_and_contract():
     ]
 
 
-def test_apply_phase2_partition_filters_fiscal_year_only_when_selected():
+def test_company_partition_summary_filters_fiscal_year_only_when_selected():
     df = tab_phase2.pd.DataFrame(
         {
             "fiscal_year": [2022, 2023, 2024],
             "amount": [1, 2, 3],
+            "document_id": ["d1", "d2", "d3"],
         }
     )
-
-    full = tab_phase2._apply_phase2_partition_filter(df, "전체")
-    year_2024 = tab_phase2._apply_phase2_partition_filter(df, "2024")
-
-    assert len(full) == 3
-    assert list(year_2024["amount"]) == [3]
-
-
-def test_merge_phase2_partition_summaries_accepts_list_subdetectors():
-    merged = tab_phase2._merge_phase2_partition_summaries(
-        [
-            {
-                "year": "2022",
-                "families": {
-                    "unsupervised": {
-                        "family": "unsupervised",
-                        "rows_scored": 10,
-                        "high_count_q95": 1,
-                        "score_distribution": {"nonzero_count": 2},
-                        "sub_detectors": ["vae_reconstruction_ecdf"],
-                    }
-                },
-            },
-            {
-                "year": "2023",
-                "families": {
-                    "unsupervised": {
-                        "family": "unsupervised",
-                        "rows_scored": 20,
-                        "high_count_q95": 3,
-                        "score_distribution": {"nonzero_count": 4},
-                        "sub_detectors": ["vae_reconstruction_ecdf"],
-                    }
-                },
-            },
-        ]
+    phase2_result = SimpleNamespace(
+        data=df,
+        results=[
+            SimpleNamespace(
+                track_name="ml_unsupervised",
+                scores=tab_phase2.pd.Series([0.0, 0.2, 0.3]),
+                details=tab_phase2.pd.DataFrame({"vae_reconstruction_ecdf": [0, 1, 1]}),
+            )
+        ],
     )
 
-    family = merged["families"]["unsupervised"]
-    assert family["rows_scored"] == 30
-    assert family["high_count_q95"] == 4
-    assert family["score_distribution"]["nonzero_count"] == 6
-    assert family["sub_detectors"]["vae_reconstruction_ecdf"]["hit_count"] == 0
+    full = tab_phase2._build_company_partition_summary(phase2_result, "전체")
+    year_2024 = tab_phase2._build_company_partition_summary(phase2_result, "2024")
+
+    assert full is not None
+    assert year_2024 is not None
+    assert full["rows"] == 3
+    assert year_2024["rows"] == 1
+    assert year_2024["documents"] == 1
+    assert year_2024["families"]["unsupervised"]["score_distribution"]["nonzero_count"] == 1
+
+
+def test_company_partition_summary_rebuilds_from_overlays_when_results_missing():
+    phase2_result = SimpleNamespace(
+        phase2_case_overlays=[
+            {
+                "phase1_case_id": "c1",
+                "family_contributions": [
+                    {
+                        "family": "duplicate",
+                        "sub_detectors": [{"code": "exact_duplicate_amount"}],
+                    }
+                ],
+            },
+            {
+                "phase1_case_id": "c2",
+                "family_contributions": [
+                    {
+                        "family": "duplicate",
+                        "sub_detectors": [{"code": "exact_duplicate_amount"}],
+                    }
+                ],
+            },
+        ],
+    )
+
+    summary = tab_phase2._build_company_partition_summary(phase2_result, "전체")
+
+    assert summary is not None
+    family = summary["families"]["duplicate"]
+    assert family["rows_scored"] == 2
+    assert family["score_distribution"]["nonzero_count"] == 2
+    assert family["sub_detectors"]["exact_duplicate_amount"]["hit_count"] == 2
 
 
 def test_family_overview_frame_centers_audit_family_meaning():
@@ -331,6 +345,42 @@ def test_family_overview_frame_centers_audit_family_meaning():
     assert "라벨" in supervised["활성 조건/비고"]
 
 
+def test_phase2_family_summary_row_renders_audit_scenario_chips():
+    html = tab_phase2._phase2_family_summary_row_html(
+        {
+            "family": "timeseries",
+            "상태": "활성",
+            "분석 영역": "시점 이상",
+            "무엇을 잡나": "결산기 집중 거래",
+            "주요 감사 시나리오": "결산기 매출 인식 조작, cutoff 조작, 백데이팅",
+            "이번 데이터 반응": "10건 신호",
+            "signal_value": 10,
+        }
+    )
+
+    assert "주요 감사 시나리오</span><span" in html
+    assert "결산기 매출 인식 조작</span>" in html
+    assert "cutoff 조작</span>" in html
+    assert "백데이팅</span>" in html
+    assert "주요 감사 시나리오</span><span style=" in html
+
+
+def test_phase2_family_summary_row_renders_dormant_without_support_note_error():
+    html = tab_phase2._phase2_family_summary_row_html(
+        {
+            "family": "supervised",
+            "상태": "대기",
+            "분석 영역": "지도 학습",
+            "무엇을 잡나": "라벨 확보 후 활성화",
+            "이번 데이터 반응": "조건 충족 전",
+            "signal_value": 0,
+        }
+    )
+
+    assert "현재 미실행중" in html
+    assert "라벨 확보 후 활성화" in html
+
+
 def test_family_signal_chart_frame_uses_relative_reaction_score():
     partition_summary = {
         "families": {
@@ -349,60 +399,118 @@ def test_family_signal_chart_frame_uses_relative_reaction_score():
     assert supervised["반응도"] == 0.0
 
 
-def test_phase12_priority_matrix_keeps_phase1_priority_band_and_ranks_phase2():
-    case_lookup = {
-        f"case_{idx:03d}": SimpleNamespace(
-            case_id=f"case_{idx:03d}",
-            priority_score=float(101 - idx),
-            priority_band="high" if idx <= 4 else "medium" if idx <= 10 else "low",
-        )
-        for idx in range(1, 101)
-    }
+def test_lane_tier_counts_aggregates_family_contributions_by_evidence_tier():
     overlays = [
         {
-            "phase1_case_id": f"case_{idx:03d}",
-            "phase2_review_band": "immediate",
+            "phase1_case_id": "case_1",
             "family_contributions": [
-                {"family": "unsupervised", "score": float(101 - idx), "ecdf": (101 - idx) / 100}
+                {"family": "duplicate", "evidence_tier": "strong", "score": 1.0},
+                {"family": "unsupervised", "evidence_tier": "ml_quantile", "score": 0.9},
+            ],
+        },
+        {
+            "phase1_case_id": "case_2",
+            "family_contributions": [
+                {"family": "duplicate", "evidence_tier": "weak", "score": 0.3},
+                {"family": "timeseries", "evidence_tier": "weak", "score": 0.4},
+            ],
+        },
+        {
+            "phase1_case_id": "case_3",
+            "family_contributions": [
+                {"family": "relational", "evidence_tier": "strong", "score": 0.95},
+                {"family": "intercompany", "evidence_tier": "moderate", "score": 0.7},
+            ],
+        },
+    ]
+
+    counts = tab_phase2._lane_tier_counts(overlays)
+
+    assert counts["duplicate"] == {"strong": 1, "moderate": 0, "weak": 1, "ml_quantile": 0}
+    assert counts["relational"] == {"strong": 1, "moderate": 0, "weak": 0, "ml_quantile": 0}
+    assert counts["intercompany"] == {"strong": 0, "moderate": 1, "weak": 0, "ml_quantile": 0}
+    assert counts["timeseries"] == {"strong": 0, "moderate": 0, "weak": 1, "ml_quantile": 0}
+    # unsupervised(VAE) 는 lane matrix 에서 분리돼 카운트 dict 에 포함되지 않는다.
+    assert "unsupervised" not in counts
+
+
+def test_lane_tier_counts_ignores_unknown_family_and_tier_values():
+    overlays = [
+        {
+            "phase1_case_id": "case_1",
+            "family_contributions": [
+                {"family": "supervised", "evidence_tier": "strong", "score": 1.0},  # unknown lane
+                {
+                    "family": "duplicate",
+                    "evidence_tier": "bogus_tier",
+                    "score": 0.5,
+                },  # unknown tier
+                {"family": "duplicate", "evidence_tier": "strong", "score": 1.0},
             ],
         }
-        for idx in range(1, 101)
     ]
 
-    p1_counts, p2_counts, integrated_counts, total_cases = (
-        tab_phase2._phase12_rank_percentile_review_bands(case_lookup, overlays)
-    )
+    counts = tab_phase2._lane_tier_counts(overlays)
 
-    assert total_cases == 100
-    # PHASE1 uses existing priority_band, PHASE2 uses rank percentile.
-    # PHASE1+2 통합 = PHASE1 band ∩ PHASE2 band per case.
-    #   immediate ∩ immediate: case_001~002 (both phase1 immediate ∩ phase2 top 1.25%) → 2
-    #   review ∩ review: case_005 only (phase1 review=case_005~010, phase2 review=case_003~005) → 1
-    #   candidate ∩ candidate: case_011~025 (phase1 candidate from 011, phase2 candidate to 025) → 15
-    assert p1_counts == {"immediate": 4, "review": 6, "candidate": 90}
-    assert p2_counts == {"immediate": 2, "review": 3, "candidate": 20}
-    assert integrated_counts == {"immediate": 2, "review": 1, "candidate": 15}
+    assert counts["duplicate"] == {"strong": 1, "moderate": 0, "weak": 0, "ml_quantile": 0}
+    assert "supervised" not in counts
 
 
-def test_phase2_rank_percentile_uses_phase1_case_universe_denominator():
-    case_lookup = {
-        f"case_{idx:03d}": SimpleNamespace(case_id=f"case_{idx:03d}", priority_score=1.0)
-        for idx in range(1, 101)
-    }
+def test_unsupervised_scores_from_overlays_extracts_positive_scores_only():
+    # VAE 전용 패널의 base 데이터 — family_contributions 에서 unsupervised score>0 만 수집.
     overlays = [
         {
-            "phase1_case_id": f"case_{idx:03d}",
-            "family_contributions": [{"family": "duplicate", "score": 1.0, "ecdf": 1.0}],
-        }
-        for idx in range(1, 11)
+            "phase1_case_id": "case_1",
+            "family_contributions": [
+                {"family": "unsupervised", "score": 0.9},
+                {"family": "duplicate", "score": 0.5},  # ignored
+            ],
+        },
+        {
+            "phase1_case_id": "case_2",
+            "family_contributions": [
+                {"family": "unsupervised", "score": 0.0},  # score 0 → skip
+            ],
+        },
+        {
+            "phase1_case_id": "case_3",
+            "family_contributions": [
+                {"family": "unsupervised", "score": 0.45},
+            ],
+        },
     ]
 
-    _p1_counts, p2_counts, _integrated_counts, total_cases = (
-        tab_phase2._phase12_rank_percentile_review_bands(case_lookup, overlays)
-    )
+    scores = tab_phase2._unsupervised_scores_from_overlays(overlays)
 
-    assert total_cases == 100
-    assert p2_counts == {"immediate": 2, "review": 3, "candidate": 5}
+    assert sorted(scores) == [0.45, 0.9]
+
+
+def test_lane_tier_counts_ignore_explicit_zero_signal_entries():
+    overlays = [
+        {
+            "phase1_case_id": "case_1",
+            "family_contributions": [
+                {
+                    "family": "duplicate",
+                    "evidence_tier": "weak",
+                    "score": 0.0,
+                    "ecdf": 0.0,
+                },
+                {
+                    "family": "unsupervised",
+                    "evidence_tier": "moderate",
+                    "score": 0.4,
+                    "ecdf": 0.8,
+                },
+            ],
+        }
+    ]
+
+    counts = tab_phase2._lane_tier_counts(overlays)
+
+    assert counts["duplicate"] == {"strong": 0, "moderate": 0, "weak": 0, "ml_quantile": 0}
+    # unsupervised(VAE) 는 lane matrix 에서 분리돼 카운트 dict 에 포함되지 않는다.
+    assert "unsupervised" not in counts
 
 
 def test_family_case_contribution_counts_ignore_explicit_zero_signal_entries():
@@ -443,27 +551,128 @@ def test_family_case_contribution_counts_include_review_only_candidates():
     assert counts["intercompany"] == 1
 
 
-def test_all_family_summary_uses_review_only_candidates_for_intercompany():
+def test_all_family_summary_uses_native_case_set_counts(monkeypatch):
+    """``_build_all_family_summary`` 는 PHASE2 native case set 기반 카운트 사용.
+
+    Why: 2026-05-28 사용자 결정 — Overview 의 모든 수치는 ``Phase2CaseSet`` 의
+    family 별 case 수로 통일. overlay-based contribution 카운트는 PHASE1 case
+    단위라 PHASE2 가 산출한 case 와 의미가 달라 더 이상 source 가 아니다.
+    """
+    monkeypatch.setattr(
+        "dashboard.components.phase2_native_case_metrics.count_native_cases_by_family",
+        lambda _case_set: {
+            "duplicate": 0,
+            "intercompany": 3,
+            "relational": 0,
+            "timeseries": 0,
+            "unsupervised": 0,
+        },
+    )
+    monkeypatch.setattr(
+        "dashboard.components.phase2_native_case_metrics.resolve_phase2_case_set_from_state",
+        lambda: object(),
+    )
+
+    rows = tab_phase2._build_all_family_summary({"families": {}}, overlays=[])
+    intercompany = next(row for row in rows if row["family"] == "intercompany")
+
+    assert intercompany["signal_value"] == 3
+    assert intercompany["이번 데이터 반응"] == "3건 신호"
+
+
+def test_family_case_section_passes_phase2_case_set_to_native_panel(monkeypatch):
+    row_ref = make_row_ref(
+        row_position=0,
+        index_label="i:0",
+        document_id="DOC-A",
+        raw_line_number=1,
+        company_code="C01",
+    )
+    relational_case = RelationalCase(
+        phase2_case_id="p2_relational_edge_rel00000001",
+        batch_id="batch-1",
+        family="relational",
+        unit_type="edge",
+        row_refs=(row_ref,),
+        evidence_tier="strong",
+        case_generation_reason={},
+        family_score=0.9,
+        family_ecdf=1.0,
+        sub_rule="R03",
+        edge_a="partner",
+        edge_b="account",
+        metric_name="transfer_pricing_score",
+        metric_value=0.9,
+    )
+    case_set = Phase2CaseSet(relational_cases=(relational_case,))
+    phase2_result = SimpleNamespace(phase2_case_set=case_set)
+    captured = {}
+
+    monkeypatch.setattr(tab_phase2.st, "markdown", lambda *args, **kwargs: None)
+    monkeypatch.setattr(tab_phase2.st, "session_state", {})
+    monkeypatch.setattr(
+        "dashboard.components.phase2_native_case_panel.render_phase2_native_case_panel",
+        lambda family, *, case_set, phase1_case_lookup, pr: captured.update(
+            family=family,
+            case_set=case_set,
+            phase1_case_lookup=phase1_case_lookup,
+            pr=pr,
+        ),
+    )
+
+    tab_phase2._render_phase2_family_case_section(
+        "relational",
+        overlays=[],
+        overlay_status=None,
+        partition="all",
+        phase2_result=phase2_result,
+    )
+
+    assert captured["family"] == "relational"
+    assert captured["case_set"] is case_set
+    assert captured["case_set"].relational_cases == (relational_case,)
+
+
+def test_count_active_families_prefers_overlay_case_contributions_over_partition_summary():
+    partition_summary = {
+        "families": {
+            "duplicate": {"score_distribution": {"nonzero_count": 99}},
+            "relational": {"score_distribution": {"nonzero_count": 99}},
+        }
+    }
     overlays = [
         {
             "phase1_case_id": "case_1",
             "family_contributions": [
-                {
-                    "family": "intercompany",
-                    "score": 0.0,
-                    "ecdf": 0.0,
-                    "review_only_count": 1,
-                    "review_reasons": ["mapping_uncertain"],
-                }
+                {"family": "duplicate", "score": 0.0, "ecdf": 0.0},
+                {"family": "timeseries", "review_only_count": 1},
             ],
-        }
+        },
+        {
+            "phase1_case_id": "case_2",
+            "family_contributions": [
+                {"family": "intercompany", "score": 0.7, "ecdf": 0.9},
+            ],
+        },
     ]
 
-    rows = tab_phase2._build_all_family_summary({"families": {}}, overlays=overlays)
-    intercompany = next(row for row in rows if row["family"] == "intercompany")
+    count = tab_phase2._count_active_families(partition_summary, overlays=overlays)
 
-    assert intercompany["signal_value"] == 1
-    assert intercompany["이번 데이터 반응"] == "1건 신호"
+    assert count == 2
+
+
+def test_count_active_families_falls_back_to_partition_summary_without_overlays():
+    partition_summary = {
+        "families": {
+            "duplicate": {"score_distribution": {"nonzero_count": 1}},
+            "relational": {"score_distribution": {"nonzero_count": 0}},
+            "unsupervised": {"high_count_q95": 1},
+        }
+    }
+
+    count = tab_phase2._count_active_families(partition_summary, overlays=[])
+
+    assert count == 2
 
 
 def test_case_level_overlay_placeholder_does_not_render_as_zero_signal():
@@ -478,20 +687,7 @@ def test_case_level_overlay_placeholder_does_not_render_as_zero_signal():
     ]
 
     assert not tab_phase2._has_case_level_phase2_details(overlays)
-
-    scale_cards = tab_phase2._build_scale_kpi_cards(
-        overlays,
-        {"families": {}},
-        overlay_status="placeholder",
-    )
-    evidence_cards = tab_phase2._build_evidence_tier_kpi_cards(
-        overlays,
-        overlay_status="placeholder",
-    )
-
-    assert "case-level overlay 미생성" in "".join(scale_cards)
-    assert "case-level overlay 미생성" in "".join(evidence_cards)
-    assert ">0<span" not in "".join(evidence_cards)
+    assert tab_phase2._overlay_status_short_text("placeholder") == "case-level overlay 미생성"
 
 
 def test_summary_ribbon_valid_no_hit_shows_zero_with_explicit_label(monkeypatch):
@@ -519,17 +715,37 @@ def test_summary_ribbon_valid_no_hit_shows_zero_with_explicit_label(monkeypatch)
     tab_phase2._render_phase2_summary_ribbon({"families": {}})
 
     html = "".join(rendered)
-    assert "추가 적중 없음" in html
+    # lane 중심 ribbon (Phase 2 신호 케이스 카드) 의 valid_no_hit 분기 문구.
+    assert "추가 신호 없음" in html
     assert "\n    <div" not in html
     # "실패" 같은 단어가 함께 노출되면 안 된다 (valid_no_hit 은 정상 결과).
     assert "실패" not in html
 
 
-def test_review_lane_frame_marks_missing_phase1_priority_unknown():
+def test_phase2_phase1_immediate_case_uses_display_score_threshold():
+    assert tab_phase2._is_phase1_immediate_case(
+        SimpleNamespace(priority_score=0.91, priority_band="low")
+    )
+    assert not tab_phase2._is_phase1_immediate_case(
+        SimpleNamespace(priority_score=0.89, priority_band="high")
+    )
+    assert tab_phase2._is_phase1_immediate_case(
+        SimpleNamespace(priority_score=None, priority_band="high")
+    )
+
+
+def test_phase1_result_ui_forbidden_files_are_not_imported():
+    tab_phase1 = Path("dashboard/tab_phase1.py").read_text(encoding="utf-8")
+    rule_panel = Path("dashboard/components/rule_panel.py").read_text(encoding="utf-8")
+
+    assert "phase2_family_matrix" not in tab_phase1
+    assert "phase2_family_matrix" not in rule_panel
+
+
+def test_phase2_family_case_frame_uses_phase1_priority_and_family_signal():
     overlays = [
         {
-            "phase1_case_id": "case_missing",
-            "lane_membership": ["duplicate"],
+            "phase1_case_id": "case_low",
             "top_family": "duplicate",
             "family_contributions": [
                 {
@@ -540,66 +756,324 @@ def test_review_lane_frame_marks_missing_phase1_priority_unknown():
                     "sub_detectors": [{"code": "L2-03a"}],
                 }
             ],
-        }
-    ]
-
-    frame = tab_phase2._build_review_lane_frame("duplicate", overlays)
-
-    assert list(frame["Phase1 등급"]) == ["미확인"]
-    assert list(frame["Phase1 점수"]) == ["-"]
-
-
-def test_review_lane_frame_uses_phase2_result_phase1_fallback_for_priority():
-    overlays = [
-        {
-            "phase1_case_id": "case_low",
-            "lane_membership": ["duplicate"],
-            "family_contributions": [
-                {"family": "duplicate", "score": 0.7, "ecdf": 0.99, "sub_detectors": []}
-            ],
         },
         {
             "phase1_case_id": "case_high",
-            "lane_membership": ["duplicate"],
+            "top_family": "relational",
             "family_contributions": [
-                {"family": "duplicate", "score": 0.2, "ecdf": 0.96, "sub_detectors": []}
+                {
+                    "family": "duplicate",
+                    "score": 0.2,
+                    "ecdf": 0.96,
+                    "evidence_tier": "weak",
+                    "sub_detectors": [{"code": "L2-03d"}],
+                }
             ],
+        },
+        {
+            "phase1_case_id": "case_other",
+            "family_contributions": [{"family": "relational", "score": 1.0}],
         },
     ]
     phase2_result = SimpleNamespace(
         phase1_case_result=SimpleNamespace(
             cases=[
-                SimpleNamespace(
-                    case_id="case_low",
-                    priority_band="low",
-                    priority_score=0.1,
-                ),
-                SimpleNamespace(
-                    case_id="case_high",
-                    priority_band="high",
-                    priority_score=0.9,
-                ),
+                SimpleNamespace(case_id="case_low", priority_band="low", priority_score=0.1),
+                SimpleNamespace(case_id="case_high", priority_band="high", priority_score=0.9),
             ]
         )
     )
 
-    frame = tab_phase2._build_review_lane_frame(
+    frame = tab_phase2._build_phase2_family_case_frame(
         "duplicate",
         overlays,
         phase2_result=phase2_result,
     )
 
-    assert list(frame["case_id"]) == ["case_high", "case_low"]
-    assert list(frame["Phase1 등급"]) == ["HIGH", "LOW"]
-    assert list(frame["Phase1 점수"]) == [0.9, 0.1]
+    assert list(frame["case_id"]) == ["case_low", "case_high"]
+    assert list(frame["Phase1 등급"]) == ["LOW", "HIGH"]
+    assert list(frame["Phase2 강도"]) == ["Strong", "Weak"]
+    assert list(frame["세부 탐지 내용"]) == [
+        "정확 중복",
+        "시차 중복",
+    ]
 
 
-def test_phase1_result_ui_forbidden_files_are_not_imported():
-    tab_phase1 = Path("dashboard/tab_phase1.py").read_text(encoding="utf-8")
-    rule_panel = Path("dashboard/components/rule_panel.py").read_text(encoding="utf-8")
+def test_phase2_unsupervised_case_frame_uses_tail_score_columns_and_order():
+    overlays = [
+        {
+            "phase1_case_id": "case_mid",
+            "family_contributions": [
+                {
+                    "family": "unsupervised",
+                    "score": 0.77,
+                    "ecdf": 0.95,
+                    "evidence_tier": "ml_quantile",
+                    "sub_detectors": [{"code": "VAE-01"}],
+                }
+            ],
+        },
+        {
+            "phase1_case_id": "case_high",
+            "family_contributions": [
+                {
+                    "family": "unsupervised",
+                    "score": 0.91,
+                    "ecdf": 0.99,
+                    "evidence_tier": "ml_quantile",
+                    "sub_detectors": [{"code": "VAE-01"}],
+                }
+            ],
+        },
+    ]
 
-    assert "phase2_family_matrix" not in tab_phase1
-    assert "phase2_family_matrix" not in rule_panel
+    frame = tab_phase2._build_phase2_family_case_frame("unsupervised", overlays)
+
+    assert list(frame["case_id"]) == ["case_high", "case_mid"]
+    assert list(frame["꼬리점수"]) == [0.91, 0.77]
+    assert "세부 탐지 내용" not in frame.columns
+    assert "Phase2 강도" not in frame.columns
+
+
+def test_phase2_family_case_options_keeps_unique_case_order_and_context():
+    frame = pd.DataFrame(
+        [
+            {
+                "case_id": "case_high",
+                "Phase1 등급": "HIGH",
+                "Phase2 강도": "Strong",
+                "세부 탐지 내용": "정확 중복",
+            },
+            {
+                "case_id": "case_high",
+                "Phase1 등급": "HIGH",
+                "Phase2 강도": "Strong",
+                "세부 탐지 내용": "정확 중복",
+            },
+            {
+                "case_id": "case_low",
+                "Phase1 등급": "LOW",
+                "Phase2 강도": "Weak",
+                "세부 탐지 내용": "희소 관계",
+            },
+        ]
+    )
+
+    options = tab_phase2._phase2_family_case_options(frame)
+
+    assert list(options.values()) == ["case_high", "case_low"]
+    labels = list(options)
+    assert labels[0].startswith("1. HIGH · Strong · 정확 중복 · case_high")
+    assert labels[1].startswith("2. LOW · Weak · 희소 관계 · case_low")
+
+
+def test_phase2_family_case_master_rows_keep_phase1_reason_and_add_phase2_columns():
+    frame = pd.DataFrame(
+        [
+            {
+                "case_id": "case_high",
+                "Phase1 등급": "HIGH",
+                "Phase1 점수": 0.9,
+                "Phase2 강도": "Strong",
+                "세부 탐지 내용": "정확 중복",
+                "대표 영역": "중복 전표",
+            }
+        ]
+    )
+    phase2_result = SimpleNamespace(
+        phase1_case_result=SimpleNamespace(
+            cases=[
+                SimpleNamespace(
+                    case_id="case_high",
+                    priority_band="high",
+                    priority_score=0.9,
+                    document_count=2,
+                    total_amount=1000.0,
+                    primary_theme="",
+                    primary_topic="",
+                    case_key_parts={},
+                    case_key="case_high",
+                    risk_narrative="중복 지급 확인 요망.",
+                    representative_explanation="",
+                )
+            ]
+        )
+    )
+
+    rows = tab_phase2._phase2_family_case_master_rows(frame, phase2_result=phase2_result)
+
+    assert rows[0]["why"] == "중복 지급 확인 요망."
+    assert rows[0]["세부 탐지 내용"] == "정확 중복"
+    assert rows[0]["Phase2 강도"] == "Strong"
+
+
+def test_phase2_unsupervised_case_master_rows_use_tail_score_instead_of_detector_columns():
+    frame = pd.DataFrame(
+        [
+            {
+                "case_id": "case_high",
+                "Phase1 등급": "HIGH",
+                "Phase1 점수": 0.9,
+                "꼬리점수": 0.9876,
+                "대표 영역": "VAE Deep Learning",
+            }
+        ]
+    )
+    phase2_result = SimpleNamespace(
+        phase1_case_result=SimpleNamespace(
+            cases=[
+                SimpleNamespace(
+                    case_id="case_high",
+                    priority_band="high",
+                    priority_score=0.9,
+                    document_count=2,
+                    total_amount=1000.0,
+                    primary_theme="",
+                    primary_topic="",
+                    case_key_parts={},
+                    case_key="case_high",
+                    risk_narrative="분포 꼬리 우선 확인.",
+                    representative_explanation="",
+                )
+            ]
+        )
+    )
+
+    rows = tab_phase2._phase2_family_case_master_rows(
+        frame,
+        family="unsupervised",
+        phase2_result=phase2_result,
+    )
+
+    assert rows[0]["why"] == "분포 꼬리 우선 확인."
+    assert rows[0]["꼬리점수"] == "0.9876"
+    assert "세부 탐지 내용" not in rows[0]
+    assert "Phase2 강도" not in rows[0]
+
+
+def test_phase2_vae_family_note_explains_tail_score_without_subdetector_table():
+    html = tab_phase2._phase2_vae_family_note_html()
+
+    assert "VAE Deep Learning score" in html
+    assert "Isolation Forest" in html
+    assert "q95 cutoff" in html
+    assert "정상 분포" in html
+
+
+def test_phase2_subdetector_labels_can_hide_code_and_show_english_tier():
+    assert (
+        tab_phase2._phase2_subdetector_display_label(
+            "TS01",
+            include_code=False,
+            include_tier=False,
+        )
+        == "단기간 거래 폭증"
+    )
+    assert tab_phase2._phase2_subdetector_tier_label("L2-03a") == "Strong"
+    assert (
+        tab_phase2._phase2_subdetector_display_label(
+            "R05",
+            include_code=False,
+            include_tier=False,
+        )
+        == "희소 계정-거래처 조합"
+    )
+    assert (
+        tab_phase2._phase2_subdetector_display_label(
+            "R06",
+            include_code=False,
+            include_tier=False,
+        )
+        == "사용자 계정 범위 급증"
+    )
+    assert (
+        tab_phase2._phase2_subdetector_display_label(
+            "ic_unmatched_prob",
+            include_code=False,
+            include_tier=False,
+        )
+        == "대응 전표 미확인"
+    )
+    assert (
+        tab_phase2._phase2_subdetector_display_label(
+            "ic_reciprocal_flow_prob",
+            include_code=False,
+            include_tier=False,
+        )
+        == "상호 이전 흐름"
+    )
+
+
+def test_phase2_family_case_frame_keeps_more_than_first_page():
+    overlays = [
+        {
+            "phase1_case_id": f"case_{idx:03d}",
+            "family_contributions": [
+                {
+                    "family": "intercompany",
+                    "score": 1.0,
+                    "ecdf": 0.9,
+                    "evidence_tier": "strong",
+                    "sub_detectors": [{"code": "ic_unmatched_prob"}],
+                }
+            ],
+        }
+        for idx in range(75)
+    ]
+
+    frame = tab_phase2._build_phase2_family_case_frame("intercompany", overlays)
+
+    assert len(frame) == 75
+    assert set(frame["세부 탐지 내용"]) == {"대응 전표 미확인"}
+
+
+def test_phase2_subdetector_case_counts_are_unique_by_case_and_code():
+    overlays = [
+        {
+            "phase1_case_id": "case_1",
+            "family_contributions": [
+                {
+                    "family": "duplicate",
+                    "score": 0.8,
+                    "sub_detectors": [{"code": "L2-03a"}, {"code": "L2-03a"}],
+                }
+            ],
+        },
+        {
+            "phase1_case_id": "case_2",
+            "family_contributions": [
+                {
+                    "family": "duplicate",
+                    "score": 0.7,
+                    "sub_detectors": [{"code": "L2-03a"}, {"code": "L2-03b"}],
+                }
+            ],
+        },
+        {
+            "phase1_case_id": "case_3",
+            "family_contributions": [
+                {
+                    "family": "duplicate",
+                    "score": 0.0,
+                    "sub_detectors": [{"code": "L2-03b"}],
+                }
+            ],
+        },
+        {
+            "phase1_case_id": "case_4",
+            "family_contributions": [
+                {
+                    "family": "relational",
+                    "score": 1.0,
+                    "sub_detectors": [{"code": "R-M1"}],
+                }
+            ],
+        },
+    ]
+
+    counts = tab_phase2._family_subdetector_case_counts(overlays, "duplicate")
+
+    assert counts == {"L2-03a": 2, "L2-03b": 1}
 
 
 def test_phase1_no_longer_imports_phase2_inference_action_directly():
@@ -1000,7 +1474,7 @@ def test_resolve_empty_state_phase1_basis_unavailable_priority_over_no_hit_overl
     assert state.state_id == tab_phase2._PHASE2_STATE_PHASE1_BASIS_UNAVAILABLE
 
 
-# ── P6: 정적 reference artifact 격리 / 라벨링 ──────────────────
+# ── P6: 회사 scoped Phase 2 source 라벨링 ──────────────────
 
 
 def test_phase2_signal_source_status_missing_when_summary_none():
@@ -1009,53 +1483,35 @@ def test_phase2_signal_source_status_missing_when_summary_none():
     assert message
 
 
-def test_phase2_signal_source_status_static_reference_preview_for_year():
-    summary = tab_phase2._load_phase2_partition_summary("2024")
-    assert summary is not None
+def test_phase2_signal_source_status_runtime_company_scoped_for_summary():
+    summary = {
+        "_source": {
+            "status": "runtime_company_scoped",
+            "message": "현재 회사 Phase 2 추론 결과 기반",
+        }
+    }
     status, message = tab_phase2._resolve_phase2_signal_source_status(summary)
-    assert status == "static_reference_preview"
-    assert "V7 fixed3" in message
-    # source metadata 가 payload 안에 명시되어 있어야 한다.
-    assert summary["_source"]["is_static_reference"] is True
-    assert summary["_source"]["partition"] == "2024"
+    assert status == "runtime_company_scoped"
+    assert "현재 회사" in message
 
 
-def test_phase2_signal_source_status_mixed_reference_when_year_missing(monkeypatch):
-    """전체 merge 시 일부 연도 artifact 가 없으면 mixed_reference."""
-    # 2022/2023 만 정상 load, 2024 는 None.
-    real_loader = tab_phase2._load_phase2_partition_summary
-
-    def _fake_loader(partition: str):
-        if partition == "전체":
-            return real_loader(partition)
-        if partition == "2024":
-            return None
-        return real_loader(partition)
-
-    monkeypatch.setattr(tab_phase2, "_load_phase2_partition_summary", _fake_loader)
-    summary = _fake_loader("전체")
-    assert summary is not None
+def test_phase2_signal_source_status_defaults_runtime_for_summary_without_source():
+    summary = {"families": {}}
     status, message = tab_phase2._resolve_phase2_signal_source_status(summary)
-    assert status == "mixed_reference"
-    assert "누락" in message
-    assert summary["_source"]["missing_years"] == ["2024"]
+    assert status == "runtime_company_scoped"
+    assert "현재 회사" in message
 
 
-def test_phase2_source_kpi_label_includes_reference_note():
-    """KPI sub 라벨이 static/mixed 분기에서 "참고 기준" 명시."""
-    static_label = tab_phase2._PHASE2_SOURCE_KPI_LABELS["static_reference_preview"]
-    mixed_label = tab_phase2._PHASE2_SOURCE_KPI_LABELS["mixed_reference"]
-    assert "참고 기준" in static_label
-    assert "참고 기준" in mixed_label
-    # 회사 scoped 분기는 빈 문자열이어야 한다 (silent).
+def test_phase2_source_kpi_label_keeps_runtime_silent_and_marks_missing():
+    """KPI sub 라벨은 회사 scoped 결과는 조용히 두고 결과 없음만 표시."""
     assert tab_phase2._PHASE2_SOURCE_KPI_LABELS["runtime_company_scoped"] == ""
+    assert "결과 없음" in tab_phase2._PHASE2_SOURCE_KPI_LABELS["missing_reference"]
 
 
-def test_phase2_source_header_suffix_includes_reference_note():
-    """차트/지도 헤더 suffix 도 같은 정책."""
-    assert "참고 기준" in tab_phase2._PHASE2_SOURCE_HEADER_SUFFIX["static_reference_preview"]
-    assert "참고 기준" in tab_phase2._PHASE2_SOURCE_HEADER_SUFFIX["mixed_reference"]
+def test_phase2_source_header_suffix_keeps_runtime_silent_and_marks_missing():
+    """차트/지도 헤더 suffix 도 같은 source 정책."""
     assert tab_phase2._PHASE2_SOURCE_HEADER_SUFFIX["runtime_company_scoped"] == ""
+    assert "결과 없음" in tab_phase2._PHASE2_SOURCE_HEADER_SUFFIX["missing_reference"]
 
 
 def test_phase2_signal_source_suffix_helper_returns_runtime_for_unknown_status():
@@ -1065,12 +1521,12 @@ def test_phase2_signal_source_suffix_helper_returns_runtime_for_unknown_status()
 
 
 def test_overlay_status_and_source_status_are_independent():
-    """회사 scoped overlay 와 static preview source 는 다른 axis.
+    """overlay availability 와 signal source 는 다른 axis.
 
-    overlay 가 정상 LOADED 이어도 partition_summary 가 static reference 면 source
-    label 이 표시되어야 한다 — 두 status 가 서로 덮어쓰지 않는다.
+    overlay 가 정상 LOADED 여도 partition_summary 가 없으면 source 는 missing 으로
+    남는다. 두 status 는 서로 덮어쓰지 않는다.
     """
-    summary = tab_phase2._load_phase2_partition_summary("2024")
+    summary = None
     overlay_state = tab_phase2._resolve_phase2_empty_state(
         phase2_result=SimpleNamespace(),
         overlays=[{"phase1_case_id": "c1", "top_family": "duplicate"}],
@@ -1078,6 +1534,6 @@ def test_overlay_status_and_source_status_are_independent():
         overlay_status="available",
     )
     source_status, _ = tab_phase2._resolve_phase2_signal_source_status(summary)
-    # overlay 는 available, source 는 정적 reference — 충돌 없이 동시 존재.
+    # overlay 는 available, source 는 missing — 충돌 없이 동시 존재.
     assert overlay_state.state_id == tab_phase2._PHASE2_STATE_AVAILABLE
-    assert source_status == "static_reference_preview"
+    assert source_status == "missing_reference"

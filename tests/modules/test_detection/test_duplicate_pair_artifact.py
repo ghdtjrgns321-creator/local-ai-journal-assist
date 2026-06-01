@@ -12,6 +12,12 @@ import pytest
 
 from config.settings import AuditSettings
 from src.detection.duplicate_detector import DuplicateDetector
+from src.detection.duplicate_pair_features import (
+    _select_large_input_candidate_frame,
+    _select_top_pairs_with_evidence_diversity,
+    _select_top_pairs_with_rule_balanced_evidence,
+)
+from src.services.phase2_duplicate_case_builder import build_duplicate_cases
 
 
 def _pair_artifact(result) -> dict:
@@ -208,6 +214,40 @@ class TestPairArtifactTimeShift:
         assert pair["pair_score"] == pytest.approx(1.0 - 3 / 7)
 
 
+class TestPairArtifactDocumentProfile:
+    def test_document_profile_pair_recorded_for_p2p_time_shifted_documents(self) -> None:
+        df = pd.DataFrame(
+            {
+                "document_id": ["DOC-1", "DOC-1", "DOC-2", "DOC-2"],
+                "business_process": ["P2P", "P2P", "P2P", "P2P"],
+                "gl_account": [1000, 2000, 1000, 2000],
+                "debit_amount": [500.0, 0.0, 500.0, 0.0],
+                "credit_amount": [0.0, 500.0, 0.0, 500.0],
+                "posting_date": pd.to_datetime(
+                    ["2025-03-01", "2025-03-01", "2025-03-03", "2025-03-03"]
+                ),
+                "line_text": ["invoice", "offset", "invoice", "offset"],
+                "trading_partner": ["VEND-A", "VEND-A", "VEND-A", "VEND-A"],
+                "reference": [
+                    "EMP-CARD-DUP-01",
+                    "EMP-CARD-DUP-01",
+                    "EMP-CARD-DUP-01",
+                    "EMP-CARD-DUP-01",
+                ],
+            }
+        )
+
+        artifact = _pair_artifact(DuplicateDetector().detect(df))
+        profile = _pairs_by_rule(artifact, "L2-03e")
+
+        assert profile
+        pair = profile[0]
+        assert pair["rule_source"] == "document_profile_duplicate"
+        assert pair["features"]["same_partner"] is True
+        assert pair["features"]["reference_similarity"] >= 0.9
+        assert pair["features"]["amount_similarity"] >= 0.98
+
+
 # ── graceful degradation ─────────────────────────────────────
 
 
@@ -259,6 +299,104 @@ class TestPairArtifactDegradation:
 
 
 class TestPairArtifactCaps:
+    def test_large_input_row_score_candidates_still_emit_joinable_pairs(self) -> None:
+        """대용량 cap 상황에서도 row-score 후보가 있으면 pair evidence를 남긴다."""
+        settings = AuditSettings(duplicate_pair_artifact_max_rows=2)
+        df = pd.DataFrame(
+            {
+                "document_id": ["DOC-1", "DOC-2", "DOC-3", "DOC-4"],
+                "gl_account": [1000, 1000, 2000, 3000],
+                "debit_amount": [500.0, 500.0, 300.0, 700.0],
+                "credit_amount": [0.0, 0.0, 0.0, 0.0],
+                "posting_date": pd.to_datetime(
+                    ["2025-03-01", "2025-03-01", "2025-03-02", "2025-03-03"]
+                ),
+                "line_text": ["매입", "매입", "기타", "기타2"],
+                "trading_partner": ["VEND-A", "VEND-A", "VEND-B", "VEND-C"],
+                "reference": ["INV-001", "INV-001", "INV-003", "INV-004"],
+            },
+            index=pd.Index(["r0", "r1", "r2", "r3"]),
+        )
+
+        result = DuplicateDetector(settings).detect(df)
+        artifact = _pair_artifact(result)
+
+        assert artifact["coverage"]["bounded_from_large_input"] is True
+        assert artifact["coverage"]["row_score_hit_count"] >= 2
+        assert artifact["top_pairs"]
+        for pair in artifact["top_pairs"]:
+            assert pair["left_index"] in df.index
+            assert pair["right_index"] in df.index
+
+    def test_large_input_pair_artifact_builds_duplicate_case(self) -> None:
+        """artifact pair가 strong evidence unit이면 DuplicateCase로 변환된다."""
+        settings = AuditSettings(duplicate_pair_artifact_max_rows=2)
+        df = pd.DataFrame(
+            {
+                "document_id": ["DOC-1", "DOC-2", "DOC-3", "DOC-4"],
+                "gl_account": [1000, 1000, 2000, 3000],
+                "debit_amount": [500.0, 500.0, 300.0, 700.0],
+                "credit_amount": [0.0, 0.0, 0.0, 0.0],
+                "posting_date": pd.to_datetime(
+                    ["2025-03-01", "2025-03-01", "2025-03-02", "2025-03-03"]
+                ),
+                "line_text": ["매입", "매입", "기타", "기타2"],
+                "trading_partner": ["VEND-A", "VEND-A", "VEND-B", "VEND-C"],
+                "reference": ["INV-001", "INV-001", "INV-003", "INV-004"],
+            },
+            index=pd.Index(["r0", "r1", "r2", "r3"]),
+        )
+
+        result = DuplicateDetector(settings).detect(df)
+        cases = build_duplicate_cases(batch_id="b1", detection_result=result, df=df)
+
+        assert cases
+        assert any(case.family == "duplicate" for case in cases)
+        assert all(case.unit_type == "pair" for case in cases)
+        assert any(case.pair_evidence_tier == "strong" for case in cases)
+
+    def test_large_input_candidate_subset_reserves_observable_profile_supplement(
+        self,
+    ) -> None:
+        """Lower-score duplicate-shaped P2P docs get a bounded route to pair evidence."""
+        df = pd.DataFrame(
+            {
+                "document_id": ["DOC-H1", "DOC-H2", "DOC-S1", "DOC-S1"],
+                "business_process": ["O2C", "O2C", "P2P", "P2P"],
+                "gl_account": [1000, 1000, 2000, 2000],
+                "debit_amount": [900.0, 900.0, 700.0, 700.0],
+                "credit_amount": [0.0, 0.0, 0.0, 0.0],
+                "posting_date": pd.to_datetime(
+                    ["2025-03-01", "2025-03-01", "2025-03-02", "2025-03-04"]
+                ),
+                "line_text": ["high", "high", "supp", "supp"],
+                "trading_partner": ["", "", "VEND-A", "VEND-A"],
+                "reference": ["", "", "INV-1", "INV-1"],
+            },
+            index=pd.Index(["h0", "h1", "s0", "s1"]),
+        )
+        candidate_scores = pd.Series(
+            [1.0, 0.9, 0.1, 0.1],
+            index=df.index,
+            dtype=float,
+        )
+
+        candidate_df, coverage = _select_large_input_candidate_frame(
+            df,
+            max_rows=3,
+            candidate_scores=candidate_scores,
+            candidate_details=None,
+            candidate_supplement_strategy="observable_profile",
+            candidate_supplement_max_docs=1,
+        )
+
+        assert candidate_df is not None
+        assert set(candidate_df["document_id"]) >= {"DOC-S1"}
+        assert len(candidate_df) <= 3
+        assert coverage["candidate_supplement_strategy"] == "observable_profile"
+        assert coverage["candidate_supplement_selected_docs"] == 1
+        assert coverage["candidate_supplement_selected_rows"] == 2
+
     def test_per_row_cap_marks_truncated(self) -> None:
         """정상 반복 거래(월세 12건)에서 max_pairs_per_row 발동."""
         settings = AuditSettings(
@@ -315,3 +453,290 @@ class TestPairArtifactCaps:
         )
         artifact = _pair_artifact(DuplicateDetector(settings).detect(df))
         assert len(artifact["top_pairs"]) <= 2
+
+    def test_top_n_retention_uses_document_diversity(self) -> None:
+        """동일 dense 문서군이 top_pairs 전체를 점유하지 않게 보존한다."""
+        settings = AuditSettings(
+            duplicate_pair_artifact_selection_strategy="document_diversity",
+            duplicate_pair_artifact_top_n=6,
+            duplicate_pair_artifact_max_pairs_per_document=1,
+            duplicate_pair_artifact_max_pairs_per_document_pair=1,
+        )
+        df = pd.DataFrame(
+            {
+                "document_id": [f"DOC-{i}" for i in range(7)],
+                "gl_account": [1000, 1000, 1000, 1000, 1000, 2000, 2000],
+                "debit_amount": [500.0, 500.0, 500.0, 500.0, 500.0, 900.0, 900.0],
+                "credit_amount": [0.0] * 7,
+                "posting_date": pd.to_datetime(["2025-03-01"] * 7),
+                "line_text": ["반복"] * 5 + ["별도", "별도"],
+                "trading_partner": ["V-A"] * 5 + ["V-B", "V-B"],
+                "reference": ["REF-A"] * 5 + ["REF-B", "REF-B"],
+            }
+        )
+
+        artifact = _pair_artifact(DuplicateDetector(settings).detect(df))
+        docs = {
+            doc
+            for pair in artifact["top_pairs"]
+            for doc in (pair.get("left_document_id"), pair.get("right_document_id"))
+        }
+
+        assert "DOC-5" in docs
+        assert "DOC-6" in docs
+        assert artifact["coverage"]["top_pair_selection"]["strategy"] == "document_diversity"
+
+    def test_document_diversity_soft_cap_fills_when_needed(self) -> None:
+        """diversity pass가 top_n을 못 채우면 score 순 fill로 metadata를 채운다."""
+        settings = AuditSettings(
+            duplicate_pair_artifact_selection_strategy="document_diversity",
+            duplicate_pair_artifact_top_n=3,
+            duplicate_pair_artifact_max_pairs_per_document=1,
+            duplicate_pair_artifact_max_pairs_per_document_pair=1,
+        )
+        df = pd.DataFrame(
+            {
+                "document_id": ["DOC-1", "DOC-2", "DOC-3"],
+                "gl_account": [1000, 1000, 1000],
+                "debit_amount": [500.0, 500.0, 500.0],
+                "credit_amount": [0.0, 0.0, 0.0],
+                "posting_date": pd.to_datetime(["2025-03-01"] * 3),
+                "line_text": ["반복"] * 3,
+                "trading_partner": ["V-A"] * 3,
+                "reference": ["REF-A"] * 3,
+            }
+        )
+
+        artifact = _pair_artifact(DuplicateDetector(settings).detect(df))
+        selection = artifact["coverage"]["top_pair_selection"]
+
+        assert len(artifact["top_pairs"]) == 3
+        assert selection["selected_by_diversity"] == 1
+        assert selection["selected_by_fill"] == 2
+
+
+class TestEvidenceDiversityRetention:
+    def _record(
+        self,
+        *,
+        left_pos: int,
+        right_pos: int,
+        score: float,
+        same_partner: bool,
+        reference_similarity: float,
+        text_similarity: float,
+    ) -> dict:
+        return {
+            "left_pos": left_pos,
+            "right_pos": right_pos,
+            "pair_score": score,
+            "rule_id": "L2-03a",
+            "features": {
+                "same_account": True,
+                "same_partner": same_partner,
+                "amount_similarity": 1.0,
+                "reference_similarity": reference_similarity,
+                "text_similarity": text_similarity,
+            },
+        }
+
+    def test_evidence_diversity_selector_limits_dense_document_pair_monopoly(self) -> None:
+        df = pd.DataFrame({"document_id": [f"DOC-{idx}" for idx in range(8)]})
+        records = [
+            self._record(
+                left_pos=0,
+                right_pos=1,
+                score=1.0,
+                same_partner=True,
+                reference_similarity=0.95,
+                text_similarity=0.95,
+            )
+            for _ in range(5)
+        ]
+        records.extend(
+            [
+                self._record(
+                    left_pos=2,
+                    right_pos=3,
+                    score=0.98,
+                    same_partner=True,
+                    reference_similarity=0.95,
+                    text_similarity=0.95,
+                ),
+                self._record(
+                    left_pos=4,
+                    right_pos=5,
+                    score=0.97,
+                    same_partner=True,
+                    reference_similarity=0.95,
+                    text_similarity=0.95,
+                ),
+            ]
+        )
+
+        selected, diagnostics = _select_top_pairs_with_evidence_diversity(records, df, top_n=3)
+        doc_pairs = {
+            tuple(
+                sorted(
+                    (
+                        df["document_id"].iat[pair["left_pos"]],
+                        df["document_id"].iat[pair["right_pos"]],
+                    )
+                )
+            )
+            for pair in selected
+        }
+
+        assert diagnostics["strategy"] == "evidence_diversity"
+        assert len(doc_pairs) == 3
+        assert diagnostics["truth_label_used"] is False
+
+    def test_evidence_diversity_selector_prioritizes_case_grade_tier_over_weak(self) -> None:
+        df = pd.DataFrame({"document_id": ["DOC-1", "DOC-2", "DOC-3", "DOC-4"]})
+        weak_high_score = self._record(
+            left_pos=0,
+            right_pos=1,
+            score=1.0,
+            same_partner=False,
+            reference_similarity=1.0,
+            text_similarity=1.0,
+        )
+        strong_lower_score = self._record(
+            left_pos=2,
+            right_pos=3,
+            score=0.9,
+            same_partner=True,
+            reference_similarity=0.95,
+            text_similarity=0.95,
+        )
+
+        selected, diagnostics = _select_top_pairs_with_evidence_diversity(
+            [weak_high_score, strong_lower_score],
+            df,
+            top_n=1,
+        )
+
+        assert selected == [strong_lower_score]
+        assert diagnostics["weak_pair_count"] == 0
+
+    def test_evidence_diversity_selector_keeps_high_score_when_evidence_tie(self) -> None:
+        df = pd.DataFrame({"document_id": ["DOC-1", "DOC-2", "DOC-3", "DOC-4"]})
+        lower = self._record(
+            left_pos=0,
+            right_pos=1,
+            score=0.8,
+            same_partner=True,
+            reference_similarity=0.95,
+            text_similarity=0.95,
+        )
+        higher = self._record(
+            left_pos=2,
+            right_pos=3,
+            score=0.9,
+            same_partner=True,
+            reference_similarity=0.95,
+            text_similarity=0.95,
+        )
+
+        selected, _diagnostics = _select_top_pairs_with_evidence_diversity(
+            [lower, higher],
+            df,
+            top_n=1,
+        )
+
+        assert selected == [higher]
+
+    def test_evidence_diversity_strategy_is_flag_gated(self) -> None:
+        settings = AuditSettings(
+            duplicate_pair_artifact_selection_strategy="evidence_diversity",
+            duplicate_pair_artifact_top_n=2,
+        )
+        df = pd.DataFrame(
+            {
+                "document_id": ["DOC-1", "DOC-2", "DOC-3"],
+                "gl_account": [1000, 1000, 1000],
+                "debit_amount": [500.0, 500.0, 500.0],
+                "credit_amount": [0.0, 0.0, 0.0],
+                "posting_date": pd.to_datetime(["2025-03-01"] * 3),
+                "line_text": ["반복"] * 3,
+                "trading_partner": ["V-A"] * 3,
+                "reference": ["REF-A"] * 3,
+            }
+        )
+
+        artifact = _pair_artifact(DuplicateDetector(settings).detect(df))
+
+        assert artifact["coverage"]["top_pair_selection"]["strategy"] == "evidence_diversity"
+
+
+class TestRuleBalancedEvidenceRetention:
+    def _record(
+        self,
+        *,
+        rule_id: str,
+        left_pos: int,
+        right_pos: int,
+        score: float,
+        same_partner: bool = True,
+        reference_similarity: float = 0.95,
+        text_similarity: float = 0.95,
+    ) -> dict:
+        return {
+            "left_pos": left_pos,
+            "right_pos": right_pos,
+            "pair_score": score,
+            "rule_id": rule_id,
+            "features": {
+                "same_account": True,
+                "same_partner": same_partner,
+                "amount_similarity": 1.0,
+                "reference_similarity": reference_similarity,
+                "text_similarity": text_similarity,
+            },
+        }
+
+    def test_rule_balanced_selector_prevents_exact_rule_monopoly(self) -> None:
+        df = pd.DataFrame({"document_id": [f"DOC-{idx}" for idx in range(20)]})
+        records = [
+            self._record(rule_id="L2-03a", left_pos=0, right_pos=1, score=1.0)
+            for _ in range(10)
+        ]
+        records.extend(
+            [
+                self._record(rule_id="L2-03d", left_pos=2, right_pos=3, score=0.4),
+                self._record(rule_id="L2-03d", left_pos=4, right_pos=5, score=0.3),
+            ]
+        )
+
+        selected, diagnostics = _select_top_pairs_with_rule_balanced_evidence(
+            records,
+            df,
+            top_n=4,
+        )
+
+        selected_rules = [record["rule_id"] for record in selected]
+        assert diagnostics["strategy"] == "rule_balanced_evidence"
+        assert diagnostics["truth_label_used"] is False
+        assert selected_rules.count("L2-03d") == 2
+        assert selected_rules.count("L2-03a") == 2
+
+    def test_default_strategy_is_rule_balanced_evidence(self) -> None:
+        settings = AuditSettings(duplicate_pair_artifact_top_n=2)
+        df = pd.DataFrame(
+            {
+                "document_id": ["DOC-1", "DOC-2", "DOC-3"],
+                "gl_account": [1000, 1000, 1000],
+                "debit_amount": [500.0, 500.0, 500.0],
+                "credit_amount": [0.0, 0.0, 0.0],
+                "posting_date": pd.to_datetime(["2025-03-01"] * 3),
+                "line_text": ["반복"] * 3,
+                "trading_partner": ["V-A"] * 3,
+                "reference": ["REF-A"] * 3,
+            }
+        )
+
+        artifact = _pair_artifact(DuplicateDetector(settings).detect(df))
+
+        assert artifact["coverage"]["top_pair_selection"]["strategy"] == (
+            "rule_balanced_evidence"
+        )

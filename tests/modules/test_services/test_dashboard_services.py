@@ -427,6 +427,8 @@ def test_make_phase_settings_enables_ml_only_for_phase2():
     assert phase1.enable_variance_detection is True
     assert phase2.enable_variance_detection is True
     assert phase1.enable_graph_detection is False
+    assert phase1.enable_nlp_detection is False
+    assert phase2.enable_nlp_detection is False
 
 
 def test_run_phase_analysis_uses_service_pipeline():

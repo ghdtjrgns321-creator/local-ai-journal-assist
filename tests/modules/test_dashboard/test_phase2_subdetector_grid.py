@@ -3,7 +3,7 @@ from __future__ import annotations
 from dashboard.components.phase2_subdetector_grid import build_subdetector_grid_frame
 
 
-def test_build_subdetector_grid_frame_shows_all_thirteen_subdetectors():
+def test_build_subdetector_grid_frame_shows_all_twenty_display_subdetectors():
     partition_summary = {
         "families": {
             "timeseries": {
@@ -33,8 +33,15 @@ def test_build_subdetector_grid_frame_shows_all_thirteen_subdetectors():
 
     frame = build_subdetector_grid_frame(partition_summary)
 
-    assert len(frame) == 13
+    assert len(frame) == 20
     assert frame["hit_count"].isna().sum() == 0
+    assert {"R05", "R06", "R07"}.issubset(set(frame["sub_detector"]))
+    assert {
+        "ic_reciprocal_flow_prob",
+        "ic_amount_prob",
+        "ic_unmatched_prob",
+        "ic_timing_prob",
+    }.issubset(set(frame["sub_detector"]))
     r04 = frame[frame["sub_detector"] == "R04"].iloc[0]
     assert r04["hit_count"] == 0
     ic02 = frame[frame["sub_detector"] == "IC02"].iloc[0]
