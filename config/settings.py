@@ -123,9 +123,21 @@ class AuditSettings(BaseSettings):
     duplicate_max_pairs_per_row: int = 200  # 단일 row가 진입할 수 있는 pair 상한
     duplicate_max_total_pairs: int = 200_000  # 내부 candidate pair 절대 상한
     duplicate_pair_artifact_top_n: int = 500  # metadata 노출용 top-N pair (sanitized)
+    # Default remains the fixed5 document-diversity retention path. evidence_diversity
+    # is a Phase 4 candidate selector for audit-observable pair ordering comparison.
+    duplicate_pair_artifact_selection_strategy: str = "rule_balanced_evidence"
+    # top-N diversity pass soft caps. If the diverse pass cannot fill top_n, remaining
+    # high-score pairs may fill the artifact and exceed these caps.
+    duplicate_pair_artifact_max_pairs_per_document: int = 5
+    duplicate_pair_artifact_max_pairs_per_document_pair: int = 1
     # Why: row scoring 은 벡터화돼 있어 100k 행이 1초 내 끝나지만 pair feature 산출은
     #      blocking sweep 비용이 크다. 대용량 입력에서는 artifact 만 graceful skip.
     duplicate_pair_artifact_max_rows: int = 50_000
+    # Large-input supplement lane. Keeps the score-ranked row subset, but reserves
+    # a small bounded budget for audit-observable duplicate-shaped documents that
+    # lower score can otherwise exclude before pair evidence is generated.
+    duplicate_pair_artifact_candidate_supplement_strategy: str = "observable_profile"
+    duplicate_pair_artifact_candidate_supplement_max_docs: int = 500
 
     # --- Detection Layer C 관련 ---
     backdated_threshold_days: int = 30  # C04: 전기일-문서일 괴리 임계 일수
