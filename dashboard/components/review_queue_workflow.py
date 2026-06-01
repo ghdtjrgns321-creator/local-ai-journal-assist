@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 import pandas as pd
 
 from src.export.audit_trail import AuditEvent
-from src.llm.review_narrator.cache import update_audit_decision
+from src.review_queue.audit_decision import update_audit_decision
 
 if TYPE_CHECKING:
     import duckdb

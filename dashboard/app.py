@@ -32,7 +32,7 @@ from dashboard._state import (
     PAGE_OVERVIEW,
     PAGE_PHASE1,
     PAGE_PHASE2,
-    PAGE_REVIEW_QUEUE,
+    PAGE_PHASE_COMPARISON,
     RESULT_PAGES,
     init_state,
 )
@@ -275,7 +275,7 @@ def _render_main() -> None:
     from dashboard.tab_overview import render_pre_analysis as render_overview  # noqa: E402
     from dashboard.tab_phase1 import render as render_phase1  # noqa: E402
     from dashboard.tab_phase2 import render as render_phase2  # noqa: E402
-    from dashboard.tab_review_queue import render as render_review_queue  # noqa: E402
+    from dashboard.tab_phase_comparison import render as render_phase_comparison  # noqa: E402
 
     phase2_result = ss.get(KEY_PHASE2_RESULT)
 
@@ -305,10 +305,10 @@ def _render_main() -> None:
         render_phase1(prep_result or display_result, phase1_result)
     elif active_tab == PAGE_PHASE2:
         render_phase2(prep_result or display_result, phase2_result)
+    elif active_tab == PAGE_PHASE_COMPARISON:
+        render_phase_comparison(prep_result or display_result, phase1_result, phase2_result)
     elif active_tab == PAGE_COMPARISON:
         render_comparison(prep_result or display_result, _repo, _conn_mgr)
-    elif active_tab == PAGE_REVIEW_QUEUE:
-        render_review_queue(prep_result or display_result)
 
 
 # Why: 페이지 분기마다 컨테이너 key 를 바꾸면 (upload → main 등) Streamlit 이

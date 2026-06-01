@@ -48,15 +48,19 @@ PAGE_OVERVIEW = "개요"
 PAGE_COMPANY_SETTINGS = "회사별 설정"
 PAGE_PHASE1 = "Phase1 결과"
 PAGE_PHASE2 = "Phase2 결과"
+PAGE_PHASE_COMPARISON = "Phase1, 2 비교"
 PAGE_COMPARISON = "전기 비교"
+# Why: PAGE_REVIEW_QUEUE 상수는 legacy session_state / 직렬화 호환을 위해 보존하되,
+# 대분류 라우팅(RESULT_PAGES)에서는 제거 — UX 가 phase1 → phase2 → 비교 → 전기 비교
+# 단방향 흐름으로 통합 (사용자 결정, 2026-05-28).
 PAGE_REVIEW_QUEUE = "Review Queue"
 RESULT_PAGES = (
     PAGE_OVERVIEW,
     PAGE_COMPANY_SETTINGS,
     PAGE_PHASE1,
     PAGE_PHASE2,
+    PAGE_PHASE_COMPARISON,
     PAGE_COMPARISON,
-    PAGE_REVIEW_QUEUE,
 )
 
 # WU7: Ingest 스테이지 관리
@@ -78,7 +82,7 @@ KEY_LOADED_FROM_DB = "audit_loaded_from_db"  # bool
 # WU-26: Chat UI
 # Why: chat 결과를 rerun에도 유지 — DataFrame은 반드시 head(100) 프리뷰만 저장해 OOM 방지.
 KEY_CHAT_HISTORY = "audit_chat_history"  # list[dict]
-KEY_CHAT_LLM_ENABLED = "audit_chat_llm_enabled"  # bool: 자유 질의 LLM 사용 toggle
+KEY_CHAT_LLM_ENABLED = "audit_chat_llm_enabled"  # legacy inactive Chat tab toggle
 KEY_CHAT_ENGINE = "audit_chat_engine"  # AuditTextToSQL | None (ctx당 1개 캐싱)
 KEY_CHAT_ENGINE_KEY = "audit_chat_engine_key"  # str: 캐시 무효화 키 (ctx.db_path)
 
@@ -93,7 +97,7 @@ KEY_EXPORT_READY_NAME = "audit_export_ready_name"  # str | None (파일명)
 KEY_EXPORT_READY_MIME = "audit_export_ready_mime"  # str | None (MIME 타입)
 KEY_EXPORT_READY_HASH = "audit_export_ready_hash"  # str | None (stale 판정용)
 
-# WU-31 Sprint E2: Review Queue Narrator UI 상태
+# Legacy review queue workflow UI 상태
 # Why: 분석 실행 트리거·재생성 여부·사이드바 필터·검색 박스 값을 rerun에도 유지.
 #      input_hash 비교로 "재생성" 버튼을 활성/비활성 토글.
 KEY_REVIEW_QUEUE_FILTERS = "audit_review_queue_filters"  # ReviewQueueFilters dict
@@ -105,16 +109,14 @@ KEY_REVIEW_QUEUE_RUN_STATUS = (
 KEY_REVIEW_QUEUE_RUN_ERROR = "audit_review_queue_error"  # str | None (마지막 에러 메시지)
 KEY_REVIEW_QUEUE_TARGET_N = "audit_review_queue_target_n"  # int (실행 대상 candidate 수)
 
-# WU-31 Sprint E1: Review Queue Narrator 탭
-# Why: Narrator JSON 카드 + citation 클릭 점프(rule/feature/journal) 상태 유지.
-#      narratives 리스트 + 선택된 candidate + citation 점프 타깃 + 입력 해시(캐시 무효화)
-#      를 분리해 rerun 동안 카드 렌더와 점프 패널을 일관되게 복원.
+# Legacy review queue detail state.
+# Why: persisted queue rows and reviewer decision state can still be restored
+#      when historical review_narratives rows exist.
 KEY_REVIEW_QUEUE_NARRATIVES = "audit_review_queue_narratives"  # list[dict] | None
 KEY_REVIEW_QUEUE_SELECTED_CANDIDATE = "audit_review_queue_selected_candidate"  # str | None
 KEY_REVIEW_QUEUE_CITATION_TARGET = "audit_review_queue_citation_target"  # dict | None
 KEY_REVIEW_QUEUE_INPUT_HASH = "audit_review_queue_input_hash"  # str | None
 KEY_REVIEW_QUEUE_CANDIDATE_INDEX = "audit_review_queue_candidate_index"  # dict[str, dict]
-
 
 # ── 필터 상태 타입 ──────────────────────────────────────────────
 
@@ -199,13 +201,13 @@ _DEFAULTS: dict[str, object] = {
     KEY_EXPORT_READY_NAME: None,
     KEY_EXPORT_READY_MIME: None,
     KEY_EXPORT_READY_HASH: None,
-    # WU-31 Sprint E1: Review Queue Narrator
+    # Legacy review queue detail state
     KEY_REVIEW_QUEUE_NARRATIVES: None,
     KEY_REVIEW_QUEUE_SELECTED_CANDIDATE: None,
     KEY_REVIEW_QUEUE_CITATION_TARGET: None,
     KEY_REVIEW_QUEUE_INPUT_HASH: None,
     KEY_REVIEW_QUEUE_CANDIDATE_INDEX: {},
-    # WU-31 Sprint E2: Review Queue Narrator UI
+    # Legacy review queue workflow UI
     KEY_REVIEW_QUEUE_FILTERS: {},
     KEY_REVIEW_QUEUE_SEARCH: "",
     KEY_REVIEW_QUEUE_LAST_HASH: None,

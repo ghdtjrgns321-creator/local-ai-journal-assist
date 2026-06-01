@@ -12,6 +12,9 @@ SUB_DETECTORS = (
     ("relational", "R02", "dormant_account_activity"),
     ("relational", "R03", "transfer_pricing_anomaly"),
     ("relational", "R04", "missing_relationship"),
+    ("relational", "R05", "rare_account_partner_edge"),
+    ("relational", "R06", "user_account_degree_spike"),
+    ("relational", "R07", "dormant_partner_reactivation"),
     ("duplicate", "L2-03a", "exact_duplicate_amount"),
     ("duplicate", "L2-03b", "fuzzy_duplicate"),
     ("duplicate", "L2-03c", "split_transaction"),
@@ -19,6 +22,10 @@ SUB_DETECTORS = (
     ("intercompany", "IC01", "unmatched_intercompany"),
     ("intercompany", "IC02", "amount_mismatch"),
     ("intercompany", "IC03", "timing_gap"),
+    ("intercompany", "ic_reciprocal_flow_prob", "reciprocal_flow"),
+    ("intercompany", "ic_amount_prob", "amount_mismatch_probability"),
+    ("intercompany", "ic_unmatched_prob", "unmatched_probability"),
+    ("intercompany", "ic_timing_prob", "timing_gap_probability"),
 )
 
 

@@ -74,7 +74,7 @@ _TOPIC_SHORT_LABELS: dict[str, str] = {
     "account_logic": "계정·분류",
     "duplicate_outflow": "자금 위험",
     "intercompany_cycle": "내부 거래",
-    "revenue_statistical": "통계 이상",
+    "revenue_statistical": "금액·분포 이상",
 }
 
 _DATA_QUALITY_RULES = {"L1-01", "L1-02", "L1-03", "L1-08"}
@@ -644,7 +644,8 @@ _RULE_DESCRIPTIONS_KR: dict[str, str] = {
         "의도적 차대 불일치 가능성까지 검토 범위에 포함됩니다."
     ),
     "L1-02": (
-        "전표일자·계정·금액 같이 회계 처리에 필수적인 필드가 비어 있는 라인을 검토 후보로 표시합니다. "
+        "전표일자·계정·금액 같이 회계 처리에 필수적인 필드가 비어 있는 라인을 "
+        "검토 후보로 표시합니다. "
         "회계처리 자체가 불완전하거나 감사 추적이 불가능한 데이터 품질 이슈로, "
         "분석을 시작하기 전에 먼저 정리해야 합니다."
     ),
@@ -670,7 +671,8 @@ _RULE_DESCRIPTIONS_KR: dict[str, str] = {
     ),
     "L1-07": (
         "한도를 넘는 금액인데도 승인자가 비어 있거나, 정상 승인 단계를 거치지 않은 전표입니다. "
-        "외감법 §8② 관점에서 직접 검토할 통제 신호로, 한도초과 + 승인 없음 조합이 가장 강한 신호입니다."
+        "외감법 §8② 관점에서 직접 검토할 통제 신호로, 한도초과 + 승인 없음 "
+        "조합이 가장 강한 신호입니다."
     ),
     "L1-08": (
         "기표일이 속한 달과 전표에 적힌 회계기간(fiscal_period)이 어긋난 케이스입니다. "
@@ -680,7 +682,8 @@ _RULE_DESCRIPTIONS_KR: dict[str, str] = {
     ),
     "L1-09": (
         "승인자는 있는데 승인 시각이 기록되지 않은 전표입니다. "
-        "승인 절차의 추적 가능성을 깨뜨리는 신호이고, 사후 승인이나 기록 신뢰성 저하 가능성을 검토할 "
+        "승인 절차의 추적 가능성을 깨뜨리는 신호이고, 사후 승인이나 기록 신뢰성 "
+        "저하 가능성을 검토할 "
         "보강 근거가 됩니다."
     ),
     "L2-01": (
@@ -2083,8 +2086,9 @@ def _render_rule_case_master(
     _BAND_RANK = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
     hide_columns = hide_columns or set()
 
-    case_rows = [
-        {
+    case_rows = []
+    for case in cases:
+        row = {
             "case_id": case["case_id"],
             "사례 요약": case["natural_label"],
             "전표 수": int(case["document_count"] or 0),
@@ -2092,10 +2096,12 @@ def _render_rule_case_master(
             "_total_amount": float(case["total_amount"] or 0.0),
             "Band": _format_band_cell(_row_display_priority_band(case)),
             "_band_rank": _BAND_RANK.get(_row_display_priority_band(case).upper(), 9),
-            "위험 사유": (case.get("why") or "").strip(),
         }
-        for case in cases
-    ]
+        for optional_col in ("세부 탐지 내용", "Phase2 강도", "꼬리점수"):
+            if optional_col in case:
+                row[optional_col] = case.get(optional_col) or "-"
+        row["위험 사유"] = _compact_case_reason(case.get("why") or "")
+        case_rows.append(row)
     if not preserve_order:
         case_rows.sort(key=lambda row: (row["_band_rank"], -row["_total_amount"]))
     if rank_column:
@@ -2140,6 +2146,7 @@ def _render_rule_case_master(
         suppressRowClickSelection=False,
         suppressCellFocus=True,
         rowBuffer=10,
+        rowHeight=34,
     )
     gb.configure_column("case_id", hide=True)
     gb.configure_column("_total_amount", hide=True)
@@ -2152,20 +2159,50 @@ def _render_rule_case_master(
             pinned="left",
             headerTooltip="검토 우선순위 (priority composite 큰 순)",
         )
-    # Why: 검토 케이스 탭에서는 자연어 case key가 바로 식별 정보다. 사례 요약은
-    #      줄바꿈으로 모두 보이게 하고, 남는 폭은 위험 사유에 양보(flex 비중 차이)한다.
+    # Why: case 목록은 스캔용 master 표다. 사례 요약과 위험 사유는 한 줄로 유지하고
+    #      전체 텍스트는 tooltip 에 맡겨 행 높이가 과하게 벌어지지 않게 한다.
     gb.configure_column(
         "사례 요약",
-        minWidth=280,
-        flex=1,
-        wrapText=True,
-        autoHeight=True,
+        width=410,
+        minWidth=300,
+        maxWidth=480,
+        suppressSizeToFit=True,
+        wrapText=False,
+        autoHeight=False,
         tooltipField="사례 요약",
     )
     if "전표 수" in case_df.columns:
         gb.configure_column("전표 수", type=["numericColumn"], minWidth=70, maxWidth=90)
     if "합계" in case_df.columns:
-        gb.configure_column("합계", minWidth=90, maxWidth=120)
+        gb.configure_column("합계", minWidth=72, maxWidth=88, width=80)
+    if "세부 탐지 내용" in case_df.columns:
+        gb.configure_column(
+            "세부 탐지 내용",
+            width=260,
+            minWidth=220,
+            maxWidth=900,
+            suppressSizeToFit=True,
+            wrapText=False,
+            autoHeight=False,
+            tooltipField="세부 탐지 내용",
+        )
+    if "Phase2 강도" in case_df.columns:
+        gb.configure_column(
+            "Phase2 강도",
+            minWidth=82,
+            maxWidth=104,
+            width=94,
+            tooltipField="Phase2 강도",
+        )
+    if "꼬리점수" in case_df.columns:
+        gb.configure_column(
+            "꼬리점수",
+            type=["numericColumn"],
+            minWidth=86,
+            maxWidth=110,
+            width=96,
+            headerTooltip="VAE/Isolation Forest anomaly score. 클수록 정상 분포에서 먼 case.",
+        )
     if "Band" in case_df.columns:
         gb.configure_column(
             "Band",
@@ -2180,10 +2217,10 @@ def _render_rule_case_master(
     if "위험 사유" in case_df.columns:
         gb.configure_column(
             "위험 사유",
-            minWidth=360,
-            flex=3,
-            wrapText=True,
-            autoHeight=True,
+            minWidth=520,
+            flex=1,
+            wrapText=False,
+            autoHeight=False,
             tooltipField="위험 사유",
         )
 
@@ -2198,7 +2235,7 @@ def _render_rule_case_master(
         update_mode=GridUpdateMode.SELECTION_CHANGED,
         allow_unsafe_jscode=True,
         reload_data=False,
-        fit_columns_on_grid_load=True,
+        fit_columns_on_grid_load=False,
     )
 
     state_key = f"_phase1_case_selection_{grid_key}"
@@ -3301,7 +3338,8 @@ def _render_violation_cases_tab(pr, summary: dict) -> None:
     ℹ 검토 우선순위 안내
   </div>
   <ul style="margin:0; padding-left:1.2rem; font-size:0.88rem; line-height:1.6;">
-    <li><strong>Top 50 우선 조회</strong> — 감사인이 먼저 확인할 이상 징후가 상위 구간에 집중되어 있습니다.</li>
+    <li><strong>Top 50 우선 조회</strong> — 감사인이 먼저 확인할 이상 징후가
+    상위 구간에 집중되어 있습니다.</li>
     <li><strong>Top 100 ~ 200 확장</strong> — 회수율 약 40 ~ 50%까지 상승.</li>
     <li><strong>Top 500 이후</strong> — 추가 발견의 한계 효익 급감.</li>
   </ul>
@@ -3411,6 +3449,39 @@ def _violation_natural_label(case) -> str:
     return natural or case.case_key or case.case_id
 
 
+def _compact_case_reason(value: object) -> str:
+    """Normalize saved case reasons for compact dashboard display."""
+    import re
+
+    text = str(value or "").strip()
+    if not text:
+        return ""
+
+    replacements = (
+        (r"(.+?)이 함께 발생했습니다\.", r"\1 함께 관찰."),
+        (r"(.+?)가 함께 발생했습니다\.", r"\1 함께 관찰."),
+        (r"(.+?) 신호가 관찰되었습니다\.", r"\1 신호 관찰."),
+        (r"(.+?)이 관찰되었습니다\.", r"\1 관찰."),
+        (r"(.+?)가 관찰되었습니다\.", r"\1 관찰."),
+        (r"확인해야 합니다", "확인 요망"),
+        (r"확인이 필요합니다", "확인 요망"),
+        (r"함께 검토해야 합니다", "함께 검토 요망"),
+        (r"검토해야 합니다", "검토 요망"),
+        (r"재검토해야 합니다", "재검토 요망"),
+        (r"점검해야 합니다", "점검 요망"),
+    )
+    for pattern, repl in replacements:
+        text = re.sub(pattern, repl, text)
+    text = re.sub(r"([가-힣A-Za-z0-9·/]+)를 (우선 )?확인 요망", r"\1 \2확인 요망", text)
+    text = re.sub(r"([가-힣A-Za-z0-9·/]+)을 (우선 )?확인 요망", r"\1 \2확인 요망", text)
+    text = re.sub(
+        r"([가-힣A-Za-z0-9·/]+)와 ([가-힣A-Za-z0-9·/]+)를 확인 요망",
+        r"\1와 \2 확인 요망",
+        text,
+    )
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def _violation_case_master_rows(cases) -> list[dict[str, Any]]:
     """case 객체 리스트를 _render_rule_case_master 입력 형식으로 변환.
 
@@ -3421,7 +3492,7 @@ def _violation_case_master_rows(cases) -> list[dict[str, Any]]:
     """
     rows: list[dict[str, Any]] = []
     for case in cases:
-        why = str(case.risk_narrative or case.representative_explanation or "").strip()
+        why = _compact_case_reason(case.risk_narrative or case.representative_explanation or "")
         rows.append(
             {
                 "case_id": case.case_id,
@@ -3571,7 +3642,8 @@ def _render_phase1_summary_charts(pr, cases: list) -> None:
                     font-size:0.92rem;
                     line-height:1.85;
                 ">
-                    <li>각 검토 케이스의 <b style="color:#111827;">위험 우선순위 점수(0~1)</b> 분포</li>
+                    <li>각 검토 케이스의
+                    <b style="color:#111827;">위험 우선순위 점수(0~1)</b> 분포</li>
                     <li>룰 신호 강도 · 금액 · 통제 신호 합산으로 등급화</li>
                     <li>즉시검토(≥ 0.90) · 검토대상(≥ 0.75) · 참고후보(&lt; 0.75)</li>
                     <li>점수가 한 구간에 몰리면 그 경계를 검토 컷오프로 사용</li>
@@ -3621,7 +3693,8 @@ def _render_phase1_summary_charts(pr, cases: list) -> None:
         )
 
     # ── 2) band × topic heatmap + 3) Topic 별 평균 priority (균형 잡힌 폭) ─
-    # Why: heatmap 3 행이 너무 납작해서 셀이 길게 늘어남. 비율 1:1 로 두고 양쪽 height 도 320 으로 동일하게 키움.
+    # Why: heatmap 3 행이 너무 납작해서 셀이 길게 늘어남.
+    #      비율 1:1 로 두고 양쪽 height 도 320 으로 동일하게 키움.
     section_2 = st.container(border=True)
     col_heat, col_avg = section_2.columns([1, 1])
     topic_ids = [tid for tid in TOPIC_REGISTRY]
@@ -3630,6 +3703,10 @@ def _render_phase1_summary_charts(pr, cases: list) -> None:
     band_kor = {"high": "상", "medium": "중", "low": "하"}
     with col_heat:
         st.markdown("##### 위험등급 × 검토 영역 분포")
+        st.caption(
+            "각 케이스의 주 검토영역(primary topic)으로만 집계합니다. "
+            "보조 신호는 중복 집계하지 않습니다."
+        )
         band_order = ["high", "medium", "low"]
         z = [[band_topic.get((band, tid), 0) for tid in topic_ids] for band in band_order]
         text = [[f"{v:,}" if v else "" for v in row] for row in z]
@@ -4162,21 +4239,20 @@ def _render_case_selector(
         _render_case_drilldown(drilldown, pr=pr)
 
 
-def _render_case_drilldown(drilldown: dict, *, pr=None) -> None:
+def _render_case_drilldown(drilldown: dict, *, pr=None, key_suffix: str | None = None) -> None:
     # Why: case 메타 메트릭/영문 캡션/signal section expander 를 모두 제거하고
     #      Case 설명 + 문서 master(AgGrid) + 선택된 문서의 원장 라인 표 만 남긴다.
     #      위반 document 행을 클릭하면 그 밑에 raw 분개 라인이 즉시 펼쳐진다.
     case = drilldown["case"]
-    narrative = case["risk_narrative"] or case["representative_explanation"]
+    narrative = _compact_case_reason(case["risk_narrative"] or case["representative_explanation"])
     st.markdown(f"**Case 설명**  \n{narrative}")
 
     documents = drilldown.get("documents") or []
     if not documents:
         return
 
-    selected_doc = _render_case_drilldown_document_master(
-        documents, key_suffix=str(case.get("case_id", ""))
-    )
+    case_key = key_suffix or str(case.get("case_id", ""))
+    selected_doc = _render_case_drilldown_document_master(documents, key_suffix=case_key)
     if not selected_doc or pr is None:
         return
 
@@ -4184,7 +4260,7 @@ def _render_case_drilldown(drilldown: dict, *, pr=None) -> None:
     if not raw_lines:
         st.caption("선택된 전표의 원장 라인을 찾지 못했습니다.")
         return
-    _render_raw_lines_table("", raw_lines, key_suffix=f"case_drilldown_{case.get('case_id', '')}")
+    _render_raw_lines_table("", raw_lines, key_suffix=f"case_drilldown_{case_key}")
 
 
 _CASE_DRILLDOWN_DOC_COLUMNS = (

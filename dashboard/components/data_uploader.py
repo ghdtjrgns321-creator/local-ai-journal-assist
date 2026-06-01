@@ -33,6 +33,7 @@ from dashboard._state import (
     KEY_INGEST_SHEET_SCORES,
     KEY_INGEST_SOURCE_COLUMNS,
     KEY_INGEST_STAGE,
+    KEY_LOADED_FROM_DB,
     KEY_PIPELINE_RESULT,
     KEY_SETTINGS,
     KEY_UPLOAD_COUNT,
@@ -111,6 +112,10 @@ def render_uploader() -> None:
 
 def _render_upload_stage() -> None:
     """Browse files 버튼 → 네이티브 다이얼로그 → ingest 분석 → 미리보기."""
+    if _restore_latest_saved_batch():
+        st.rerun()
+        return
+
     st.title("AI Audit Assistant")
     st.markdown("감사 데이터를 선택하면 자동으로 컬럼 매핑과 탐지 분석이 진행됩니다.")
 
@@ -118,8 +123,6 @@ def _render_upload_stage() -> None:
         f"지원 형식: {', '.join(_ALLOWED_TYPES).upper()} · "
         "로컬 파일을 직접 읽어 업로드 지연이 없습니다."
     )
-
-    _render_saved_batch_history()
 
     if not st.button("📂 Browse files", type="primary"):
         st.info("**Browse files** 버튼을 눌러 분석할 파일을 선택하세요.")
@@ -158,11 +161,15 @@ def _render_upload_stage() -> None:
             st.exception(e)
 
 
-def _render_saved_batch_history() -> None:
-    """Render persisted batch restore cards for the selected engagement."""
+def _restore_latest_saved_batch() -> bool:
+    """Restore the latest saved batch for the selected engagement, if one exists."""
     ctx = st.session_state.get(KEY_COMPANY_CONTEXT)
     if ctx is None or getattr(ctx, "is_anonymous", True):
-        return
+        return False
+
+    current_batch = str(st.session_state.get(KEY_BATCH_ID) or "")
+    if current_batch and st.session_state.get(KEY_LOADED_FROM_DB):
+        return False
 
     try:
         conn_mgr = st.session_state.get("_conn_mgr")
@@ -171,17 +178,49 @@ def _render_saved_batch_history() -> None:
 
             conn_mgr = get_connection_manager()
             st.session_state["_conn_mgr"] = conn_mgr
-        conn = conn_mgr.get(str(ctx.db_path))
+        db_path = str(ctx.db_path)
+        conn = conn_mgr.get(db_path)
 
-        from dashboard.components.batch_selector import render_batch_selector
+        from src.services.batch_service import list_saved_batches, load_batch_into_state
 
-        if render_batch_selector(conn):
-            st.divider()
+        batches = list_saved_batches(conn)
+        if batches.empty:
+            return False
+        latest_batch_id = str(batches.iloc[0]["upload_batch_id"])
+        if current_batch == latest_batch_id:
+            return False
+        try:
+            load_batch_into_state(st.session_state, conn, latest_batch_id)
+        except Exception as exc:
+            if not _is_closed_duckdb_connection_error(exc):
+                raise
+            logger.info("저장 배치 복원 중 닫힌 DuckDB 커넥션 감지 — 재연결 후 1회 재시도")
+            try:
+                conn_mgr.close(db_path)
+            except Exception:
+                pass
+            conn = conn_mgr.get(db_path)
+            load_batch_into_state(st.session_state, conn, latest_batch_id)
+        return True
     except Exception as exc:
-        logger.warning("저장된 배치 이력 렌더링 실패", exc_info=True)
-        st.warning("이전 분석 결과 목록을 불러오지 못했습니다.")
+        logger.warning("최신 저장 배치 복원 실패", exc_info=True)
+        st.warning(
+            "최신 분석 결과를 불러오지 못했습니다. "
+            "새 파일을 선택해 다시 분석할 수 있습니다."
+        )
         if st.session_state.get(KEY_DEV_MODE):
             st.exception(exc)
+        return False
+
+
+def _is_closed_duckdb_connection_error(exc: Exception) -> bool:
+    """DuckDB connection closed 에러가 QueryExecutionError로 감싸진 경우까지 감지."""
+    cur: BaseException | None = exc
+    while cur is not None:
+        if "Connection already closed" in str(cur):
+            return True
+        cur = cur.__cause__ or cur.__context__
+    return False
 
 
 # ── REVIEW 스테이지 (미리보기 포함) ──────────────────────

@@ -1,9 +1,7 @@
-"""Review Queue Narrator 탭 — Sprint E1 (렌더링) + Sprint E2 (워크플로우).
+"""Review Queue tab.
 
-세션에 적재된 Narrator 출력(`KEY_REVIEW_QUEUE_NARRATIVES`)을 priority_rank 순으로
-카드 렌더하고, 우측에 citation 점프 패널을 함께 그린다(E1). 본 탭은 Sprint E2에서
-사이드바 필터, 검색, 실행 트리거(예산 가드 포함), 분류 라디오·메모 저장, AuditTrail
-이벤트 기록을 추가로 처리한다.
+PHASE1 and PHASE2 standalone queue browsers live here. The legacy Narrator
+workflow and integrated recommendation tab are inactive.
 
 캐시 무효화:
 - 호출부에서 candidate 입력 해시(`KEY_REVIEW_QUEUE_INPUT_HASH`)를 갱신하면 카드
@@ -26,27 +24,20 @@ from dashboard._state import (
     KEY_COMPANY_CONTEXT,
     KEY_REVIEW_QUEUE_CITATION_TARGET,
     KEY_REVIEW_QUEUE_FILTERS,
-    KEY_REVIEW_QUEUE_INPUT_HASH,
     KEY_REVIEW_QUEUE_LAST_HASH,
-    KEY_REVIEW_QUEUE_NARRATIVES,
     KEY_REVIEW_QUEUE_RUN_ERROR,
     KEY_REVIEW_QUEUE_RUN_STATUS,
-    KEY_REVIEW_QUEUE_SEARCH,
     KEY_REVIEW_QUEUE_SELECTED_CANDIDATE,
     KEY_REVIEW_QUEUE_TARGET_N,
 )
-from dashboard.components.review_narrator import render_candidate_card
-from dashboard.components.review_narrator_jump import render_citation_jump_panel
 from dashboard.components.review_queue_browser import render_queue_browser
 from dashboard.components.review_queue_workflow import (
     ReviewQueueFilters,
-    apply_filters,
-    apply_search,
     compute_run_plan,
     register_review_decision,
 )
 from src.export.audit_trail import AuditEvent, AuditTrail
-from src.llm.review_narrator.cache import read_audit_decision
+from src.review_queue.audit_decision import read_audit_decision
 
 if TYPE_CHECKING:
     import duckdb
@@ -279,10 +270,10 @@ def _render_run_trigger(input_hash: str | None) -> None:
 
 
 def _trigger_analysis_run(plan: Any, input_hash: str | None, *, regen: bool) -> None:
-    """실제 LLM 파이프라인 연결은 Sprint F. 본 함수는 상태·AuditTrail만 기록."""
+    """Legacy no-op runner retained for state tests; no external calls are made."""
     ss = st.session_state
     ss[KEY_REVIEW_QUEUE_RUN_STATUS] = "running"
-    progress = st.progress(0, text="Narrator 실행 준비...")
+    progress = st.progress(0, text="로컬 검토 큐 상태 기록 준비...")
     try:
         progress.progress(30, text=f"후보 {plan.effective_n}건 조립 중...")
         if plan.effective_n == 0:
@@ -532,10 +523,10 @@ def _build_overlay_queue_df(overlays: list[dict], case_lookup: dict, kind: str) 
 
 
 def render(result: PipelineResult | None = None) -> None:
-    """탭 엔트리 — 4 sub-tab (통합 / PHASE1 / PHASE2 / Narrator).
+    """탭 엔트리 — 2 sub-tab (PHASE1 / PHASE2).
 
     Args:
-        result: 전표 데이터(`result.data`)를 통해 Narrator citation 점프 표시.
+        result: retained for app-level call compatibility.
     """
 
     from dashboard._state import KEY_PHASE1_RESULT, KEY_PHASE2_RESULT
@@ -543,8 +534,8 @@ def render(result: PipelineResult | None = None) -> None:
 
     st.markdown("### Review Queue")
     st.caption(
-        "PHASE1 룰 신호와 PHASE2 ML 신호를 결합한 검토 큐. "
-        "통합 추천이 기본 활성, PHASE1·PHASE2 단독 큐와 Narrator 카드 분석을 함께 제공."
+        "PHASE1 룰 기반 review queue와 PHASE2 family lane 보조 신호를 별도로 제공합니다. "
+        "외부 API 호출 없이 이미 산출된 로컬 결과만 표시합니다."
     )
 
     ss = st.session_state
@@ -554,86 +545,17 @@ def render(result: PipelineResult | None = None) -> None:
     case_result = resolve_phase1_case_result(phase1_result) if phase1_result is not None else None
     case_lookup = {str(c.case_id): c for c in (getattr(case_result, "cases", None) or [])}
 
-    integrated_df = _build_overlay_queue_df(overlays, case_lookup, "integrated")
     phase1_df = _build_overlay_queue_df(overlays, case_lookup, "phase1")
     phase2_df = _build_overlay_queue_df(overlays, case_lookup, "phase2")
 
-    tabs = st.tabs(["통합 추천", "PHASE1 우선", "PHASE2 우선", "Narrator 분석"])
+    if phase1_df.empty and phase2_df.empty:
+        st.info("표시할 검토 큐가 없습니다. PHASE1/PHASE2 분석 결과를 먼저 확인하세요.")
+
+    tabs = st.tabs(["PHASE1 우선", "PHASE2 보조"])
     with tabs[0]:
-        render_queue_browser(integrated_df, kind="integrated", integration_report=None)
-    with tabs[1]:
         render_queue_browser(phase1_df, kind="phase1", integration_report=None)
-    with tabs[2]:
+    with tabs[1]:
         render_queue_browser(phase2_df, kind="phase2", integration_report=None)
-    with tabs[3]:
-        _render_narrator_workflow(result)
-
-
-def _render_narrator_workflow(result: PipelineResult | None) -> None:
-    """기존 Phase 3 Narrator UI — Sprint E2 워크플로우(필터·실행·분류) 보존."""
-    st.caption(
-        "PHASE1 룰 히트 + PHASE2 ML 스코어를 LLM 이 재정렬·요약·인용한 결과. "
-        "필터·검색·실행·분류·메모 워크플로우 포함."
-    )
-
-    ss = st.session_state
-    narratives = ss.get(KEY_REVIEW_QUEUE_NARRATIVES) or []
-    current_hash = ss.get(KEY_REVIEW_QUEUE_INPUT_HASH)
-    _invalidate_jump_on_hash_change(current_hash)
-
-    conn = _get_engagement_conn()
-    df = _narratives_to_dataframe(narratives, conn)
-    filters = _render_sidebar_filters(df)
-    search_query = st.text_input(
-        "candidate_id 검색",
-        value=ss.get(KEY_REVIEW_QUEUE_SEARCH, ""),
-        key="rq_search_input",
-        placeholder="예: CAND-CASE-",
-    )
-    ss[KEY_REVIEW_QUEUE_SEARCH] = search_query
-
-    _render_run_trigger(current_hash)
-
-    if not narratives:
-        st.info(
-            "표시할 Narrator 결과가 아직 없습니다. "
-            "위의 '분석 실행' 버튼이 narratives 적재 파이프라인과 연결되면 카드가 표시됩니다."
-        )
-        return
-
-    filtered = apply_filters(df, filters)
-    filtered = apply_search(filtered, search_query or "")
-    st.markdown(f"총 {len(filtered):,}건 / 원본 {len(df):,}건")
-    if filtered.empty:
-        st.info("조건에 해당하는 candidate가 없습니다.")
-        return
-
-    cid_to_row: dict[str, dict[str, Any]] = {
-        str(r["candidate_id"]): r.to_dict() for _, r in filtered.iterrows()
-    }
-    sorted_filtered = [
-        n for n in _sorted_narratives(narratives) if str(n.get("candidate_id")) in cid_to_row
-    ]
-
-    col_cards, col_jump = st.columns([3, 2], gap="large")
-    with col_cards:
-        for narrative in sorted_filtered:
-            cid = str(narrative.get("candidate_id") or "")
-            render_candidate_card(narrative)
-            row = cid_to_row[cid]
-            decision_raw = row.get("audit_decision")
-            note_raw = row.get("audit_note")
-            batch_raw = row.get("batch_id")
-            _render_decision_widget(
-                cid,
-                prev_decision=decision_raw if isinstance(decision_raw, str) else None,
-                prev_note=note_raw if isinstance(note_raw, str) else None,
-                batch_id=batch_raw if isinstance(batch_raw, str) and batch_raw else None,
-                conn=conn,
-            )
-    with col_jump:
-        data = getattr(result, "data", None) if result is not None else None
-        render_citation_jump_panel(data)
 
 
 def _get_engagement_conn() -> duckdb.DuckDBPyConnection | None:

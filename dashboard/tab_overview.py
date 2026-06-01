@@ -1,7 +1,7 @@
 """개요 탭 — 분석 전(Before) / 분석 후(After) 2단계 변신.
 
 Before: 기본 정보 KPI + 대형 CTA "전체 감사 파이프라인 가동"
-After : 위험 KPI + LLM 배치 요약 + Top 5 우선검토 전표 + 기존 차트
+After : 위험 KPI + Top 5 우선검토 전표 + 기존 차트
 """
 
 from __future__ import annotations
@@ -93,15 +93,15 @@ def _render_before(result: PipelineResult) -> None:
     st.caption("회사의 비즈니스 성격과 데이터 건전성을 한눈에 보여주는 지표입니다.")
 
     period = _period_range(df)
-    total_docs = int(df["document_id"].nunique()) if "document_id" in df.columns else len(df)
+    total_lines = int(len(df))
     total_debit = float(df["debit_amount"].sum()) if "debit_amount" in df.columns else 0.0
 
-    # Row 1: KPI 3개 카드 (균등 폭, 균등 높이)
+    # Row 1: KPI cards. In this dashboard, "전표 수" follows the GL line count shown in source data.
     c1, c2, c3 = st.columns(3, gap="small")
     with c1:
         _render_kpi_card("분석 기간", period)
     with c2:
-        _render_kpi_card("총 전표 수", f"{total_docs:,}", unit="건")
+        _render_kpi_card("총 전표 수", f"{total_lines:,}", unit="건")
     with c3:
         _render_kpi_card("총 거래 금액", _fmt_amount(total_debit))
 
@@ -273,12 +273,7 @@ def _render_monthly_trend_line(df: pd.DataFrame) -> None:
         st.caption("posting_date 컬럼이 없어 월별 추이를 그릴 수 없습니다.")
         return
 
-    if "document_id" in df.columns:
-        doc_dates = df.drop_duplicates("document_id")["posting_date"]
-    else:
-        doc_dates = df["posting_date"]
-
-    dt = pd.to_datetime(doc_dates, errors="coerce").dropna()
+    dt = pd.to_datetime(df["posting_date"], errors="coerce").dropna()
     if dt.empty:
         st.caption("유효한 기표일이 없습니다.")
         return
@@ -434,22 +429,14 @@ def _render_checklist_card(
 
 
 def _check_self_approval(df: pd.DataFrame) -> tuple[str, str, str] | None:
-    """자기승인 거래 — 작성자와 승인자가 동일한 전표 비율.
+    """자기승인 거래 — 작성자와 승인자가 동일한 라인 비율.
 
     감사 시사점: SoD(ISA 315) 충돌 가능성 사전 스크리닝. B06/B07 룰의 직접 선행 지표.
     """
     if "created_by" not in df.columns or "approved_by" not in df.columns:
         return None
 
-    # 문서 단위로 대조 — 같은 전표의 여러 라인이 중복 집계되지 않도록
-    if "document_id" in df.columns:
-        subset = (
-            df.groupby("document_id")
-            .agg(created_by=("created_by", "first"), approved_by=("approved_by", "first"))
-            .dropna()
-        )
-    else:
-        subset = df[["created_by", "approved_by"]].dropna()
+    subset = df[["created_by", "approved_by"]].dropna()
 
     if subset.empty:
         return None
@@ -459,10 +446,10 @@ def _check_self_approval(df: pd.DataFrame) -> tuple[str, str, str] | None:
     rate = self_approved / total * 100
 
     if self_approved == 0:
-        return "ok", "자기승인 거래", "0건 (정상)"
+        return "ok", "자기승인 라인", "0건 (정상)"
     if rate < 1.0:
-        return "warn", "자기승인 거래", f"{self_approved:,}건 ({rate:.2f}%) 검토 권장"
-    return "err", "자기승인 거래", f"{self_approved:,}건 ({rate:.1f}%) 통제 취약"
+        return "warn", "자기승인 라인", f"{self_approved:,}건 ({rate:.2f}%) 검토 권장"
+    return "err", "자기승인 라인", f"{self_approved:,}건 ({rate:.1f}%) 통제 취약"
 
 
 def _check_date_consistency(df: pd.DataFrame) -> tuple[str, str, str] | None:
@@ -541,10 +528,10 @@ def _check_manual_je(df: pd.DataFrame) -> tuple[str, str, str] | None:
         return None
 
     if manual_rate < 10:
-        return "ok", "수기 전표 비율", f"{manual_rate:.1f}% (자동화율 양호)"
+        return "ok", "수기 라인 비율", f"{manual_rate:.1f}% (자동화율 양호)"
     if manual_rate < 30:
-        return "warn", "수기 전표 비율", f"{manual_rate:.1f}% (검토 권장)"
-    return "err", "수기 전표 비율", f"{manual_rate:.1f}% (통제 취약)"
+        return "warn", "수기 라인 비율", f"{manual_rate:.1f}% (검토 권장)"
+    return "err", "수기 라인 비율", f"{manual_rate:.1f}% (통제 취약)"
 
 
 def _check_trial_balance(df: pd.DataFrame) -> tuple[str, str, str] | None:
@@ -563,12 +550,12 @@ def _check_trial_balance(df: pd.DataFrame) -> tuple[str, str, str] | None:
     total = len(grouped)
 
     if unbalanced == 0:
-        return "ok", "차대변 대사", f"100% 일치 ({total:,}건)"
+        return "ok", "차대변 대사(전표 단위)", f"100% 일치 ({total:,}건)"
 
     # Why: 불일치가 1건이라도 있으면 100%로 반올림되지 않도록 floor 적용.
     rate = math.floor((total - unbalanced) / total * 10000) / 100
     level = "warn" if unbalanced / max(total, 1) < 0.01 else "err"
-    return level, "차대변 대사", f"{rate:.2f}% 일치 · 불균형 {unbalanced:,}건"
+    return level, "차대변 대사(전표 단위)", f"{rate:.2f}% 일치 · 불균형 {unbalanced:,}건"
 
 
 def _check_benford(df: pd.DataFrame) -> tuple[str, str, str] | None:
@@ -623,19 +610,19 @@ def _check_timing(df: pd.DataFrame) -> tuple[str, str, str] | None:
     # Why: 시간 정보가 모두 00:00 이면 심야 판정 의미 없음 → 주말만 체크
     if hour.nunique() <= 1:
         if weekend_rate > 15:
-            return "warn", "시간대 분포", f"주말 기표 {weekend_rate:.1f}% 감지"
-        return "ok", "시간대 분포", f"주말 기표 {weekend_rate:.1f}%"
+            return "warn", "시간대 분포(라인 기준)", f"주말 기표 {weekend_rate:.1f}% 감지"
+        return "ok", "시간대 분포(라인 기준)", f"주말 기표 {weekend_rate:.1f}%"
 
     night_rate = ((hour >= 22) | (hour < 6)).sum() / total * 100
     if night_rate > 5 or weekend_rate > 15:
         return (
             "warn",
-            "시간대 분포",
+            "시간대 분포(라인 기준)",
             f"심야 {night_rate:.1f}% · 주말 {weekend_rate:.1f}% 감지",
         )
     return (
         "ok",
-        "시간대 분포",
+        "시간대 분포(라인 기준)",
         f"심야 {night_rate:.1f}% · 주말 {weekend_rate:.1f}%",
     )
 
@@ -648,16 +635,7 @@ def _check_period_end_concentration(df: pd.DataFrame) -> tuple[str, str, str] | 
     if "posting_date" not in df.columns:
         return None
 
-    # 문서 단위로 중복 제거 (라인 여러 개인 전표의 편향 제거)
-    if "document_id" in df.columns:
-        dates = (
-            df.groupby("document_id")["posting_date"]
-            .first()
-            .pipe(pd.to_datetime, errors="coerce")
-            .dropna()
-        )
-    else:
-        dates = pd.to_datetime(df["posting_date"], errors="coerce").dropna()
+    dates = pd.to_datetime(df["posting_date"], errors="coerce").dropna()
 
     total = len(dates)
     if total == 0:
@@ -670,18 +648,18 @@ def _check_period_end_concentration(df: pd.DataFrame) -> tuple[str, str, str] | 
     if dec_rate < 15:
         return (
             "ok",
-            "기말 집중도",
+            "기말 집중도(라인 기준)",
             f"12월 {dec_rate:.1f}% · 마지막 5일 {last5_rate:.1f}%",
         )
     if dec_rate < 25:
         return (
             "warn",
-            "기말 집중도",
+            "기말 집중도(라인 기준)",
             f"12월 {dec_rate:.1f}% · 마지막 5일 {last5_rate:.1f}% (검토 권장)",
         )
     return (
         "err",
-        "기말 집중도",
+        "기말 집중도(라인 기준)",
         f"12월 {dec_rate:.1f}% · 마지막 5일 {last5_rate:.1f}% (결산조정 집중)",
     )
 
@@ -690,12 +668,12 @@ def _check_period_end_concentration(df: pd.DataFrame) -> tuple[str, str, str] | 
 
 
 def _render_pipeline_briefing() -> None:
-    """3단계 파이프라인을 간결한 카드로 예고."""
+    """PHASE1 기본 큐 + PHASE2 family lane 흐름을 간결한 카드로 예고."""
     st.markdown(
         "<div style='color:#111827; font-size:1.05rem; font-weight:600; "
-        "margin-bottom:0.25rem;'>AI 감사 파이프라인 가동 대기</div>"
+        "margin-bottom:0.25rem;'>로컬 감사 분석 파이프라인 가동 대기</div>"
         "<div style='color:#6B7280; font-size:0.85rem; margin-bottom:1rem;'>"
-        "실행 시 아래 세 단계가 순차적으로 진행됩니다.</div>",
+        "실행 시 PHASE1 검토 큐와 PHASE2 보조 Lane 이 순차적으로 준비됩니다.</div>",
         unsafe_allow_html=True,
     )
 
@@ -708,20 +686,14 @@ def _render_pipeline_briefing() -> None:
         ),
         (
             "Phase 2",
-            "ML 이상 점수",
-            "Isolation Forest · VAE · XGBoost",
-            "감사인이 놓치기 쉬운 비선형·우회적 이상 패턴 후보를 보조 신호로 제시합니다.",
-        ),
-        (
-            "Phase 3",
-            "LLM 리뷰",
-            "검토 후보 Top-N 정렬 · 필요 후속 조치",
-            "Phase 1·2 신호를 종합해 LLM으로 분석하여 우선순위와 "
-            "검토 근거, 필요 절차를 제시합니다.",
+            "ML/DL 기반 감사",
+            "중복 · 관계망 · 시점 · 관계사 · 비지도 이상",
+            "영역별로 감사인이 놓치기 쉬운 비선형·우회적 이상 패턴 후보를 "
+            "보조 신호로 제시합니다.",
         ),
     ]
 
-    cols = st.columns(3)
+    cols = st.columns(len(cards))
     for col, (phase, title, desc, value) in zip(cols, cards, strict=False):
         with col:
             st.markdown(
@@ -805,7 +777,7 @@ def _run_phase1() -> None:
 
 
 def _render_after(result: PipelineResult) -> None:
-    """분석 후 화면 — 검토 신호 KPI + LLM 요약 + Top 5 + 기존 차트."""
+    """분석 후 화면 — 검토 신호 KPI + 로컬 근거 안내 + Top 5 + 기존 차트."""
     filters = st.session_state.get(KEY_FILTERS, {})
     df = apply_filters(result.data, filters, pr=result)
     kpis = compute_kpis(df, pr=result)
@@ -820,10 +792,6 @@ def _render_after(result: PipelineResult) -> None:
             _run_phase1()
 
     _render_risk_kpis(kpis)
-    st.divider()
-
-    # LLM 배치 요약
-    _render_batch_insight(result)
     st.divider()
 
     # Top 5 우선검토 전표
@@ -890,28 +858,6 @@ def _render_risk_kpis(kpis: dict) -> None:
             help="중복 지급, 자기 승인 등 부정 관련 리스크 검토 시나리오에 해당하는 전표 수",
         )
         st.caption(f"전체의 {fraud_pct:.1f}%")
-
-
-# ── Phase 3 v2 placeholder (Sprint E에서 Review Queue Narrator로 교체) ─────
-# Why: WU-25 InsightGenerator/NarrativeReporter는 Sprint D에서 폐기됐다.
-#      Review Queue Narrator(candidate 단위)로 재포커싱 중이며, candidate별
-#      narrative를 보여주는 신규 UI(`dashboard/tab_review_queue.py`)는
-#      Sprint E에서 RC-4 review queue 탭과 함께 도입된다. 그 전까지 본 함수는
-#      안내 메시지만 출력한다.
-
-
-def _render_batch_insight(result: PipelineResult) -> None:  # noqa: ARG001
-    """Phase 3 v2 placeholder — 안내 메시지만 출력.
-
-    Sprint E에서 Review Queue Narrator candidate 카드(priority_rank / summary /
-    reasoning citations / suggested_actions)로 교체된다. `result` 인자는 호출부
-    시그니처 호환 위해 보존하되 본 함수에서는 사용하지 않는다 (ARG001 무시).
-    """
-    st.subheader("LLM 배치 요약")
-    st.caption(
-        "Phase 3 v2 재코딩 중 — 배치 단위 LLM 요약은 candidate 단위 "
-        "Review Queue Narrator로 교체됩니다. RC-4 review queue 탭에서 곧 제공."
-    )
 
 
 # ── Top 5 우선검토 전표 ──────────────────────────────────────

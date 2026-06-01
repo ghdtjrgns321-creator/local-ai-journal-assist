@@ -105,10 +105,12 @@ def _render_settings_editor(
             )
     col1, col2, col3 = st.columns(3)
     with col1:
-        enable_nlp = st.checkbox(
+        st.checkbox(
             "NLP 탐지",
-            value=bool(resolved.enable_nlp_detection),
-            key="cm_enable_nlp",
+            value=False,
+            key="cm_enable_nlp_disabled",
+            disabled=True,
+            help="외부 임베딩/API 경로 차단을 위해 active 제품에서는 비활성화합니다.",
         )
     with col2:
         enable_graph = st.checkbox(
@@ -138,7 +140,7 @@ def _render_settings_editor(
         overrides = {
             "approval_thresholds": amounts,
             "period_end_margin_days": period_margin,
-            "enable_nlp_detection": enable_nlp,
+            "enable_nlp_detection": False,
             "enable_graph_detection": enable_graph,
             "enable_ml_detection": enable_ml,
         }

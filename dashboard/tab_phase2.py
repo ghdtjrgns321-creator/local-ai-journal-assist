@@ -15,22 +15,17 @@ from dashboard._state import (
     PAGE_PHASE1,
     PAGE_PHASE2,
 )
-from dashboard.components.phase2_family_lanes import render_lane_view
 from dashboard.components.phase2_family_matrix import (
     ACTIVE_FAMILIES,
     DORMANT_FAMILIES,
     DORMANT_REASONS,
     FAMILY_INTERPRETATIONS,
     FAMILY_METRICS,
-    render_family_matrix,
 )
-from dashboard.components.phase2_leaderboard_view import render_leaderboard_view
 from dashboard.components.phase2_subdetector_grid import (
     SUB_DETECTORS,
-    render_subdetector_grid,
 )
 from src.detection.constants import get_track_display_label
-from src.services.review_band_policy import rank_band_caption, rank_percentile_band
 
 if TYPE_CHECKING:
     from src.metrics.models import PerformanceReport
@@ -110,15 +105,21 @@ def render(prep_result, result: PipelineResult | None) -> None:
     partition = active_partition or _DEFAULT_PARTITION
     partition_summary = _load_phase2_partition_summary(partition)
 
-    sub_tabs = st.tabs(["전체 요약", "분석 영역별", "위험 신호별", "통계결과"])
+    family_tab_order = (
+        "unsupervised",
+        "timeseries",
+        "duplicate",
+        "relational",
+        "intercompany",
+    )
+    sub_tabs = st.tabs(
+        ["전체 요약", *(_FAMILY_LABELS_KR.get(family, family) for family in family_tab_order)]
+    )
     with sub_tabs[0]:
         _render_overview_tab(user_state, snapshot, result, partition, partition_summary)
-    with sub_tabs[1]:
-        _render_phase2_analysis_area_tab(snapshot, partition, partition_summary)
-    with sub_tabs[2]:
-        _render_phase2_risk_signal_tab(snapshot, partition, partition_summary)
-    with sub_tabs[3]:
-        _render_phase2_stats_tab(snapshot, partition, partition_summary)
+    for tab, family in zip(sub_tabs[1:], family_tab_order, strict=True):
+        with tab:
+            _render_phase2_family_tab(snapshot, partition, partition_summary, family)
 
 
 # ── partition 기본값 ─────────────────────────────────────────
@@ -143,8 +144,8 @@ def _render_overview_tab(
 
     Why: 감사인이 결과 첫 화면에서 필요한 것은 실행 계약 상태가 아니라 "어떤 분석
          분석 영역이 무엇을 보며, 이번 데이터에서 어떤 관점이 반응했는지"다. 내부
-         모델 수치와 case-overlay 상태는 모델 기준/검토 Lane으로 밀고, 전체 요약은
-         분석 영역 해석과 현재 반응도에 집중한다.
+         모델 수치와 case-overlay 상태는 요약/분석 영역 탭의 보조 정보로 두고,
+         전체 요약은 분석 영역 해석과 현재 반응도에 집중한다.
     """
     del user_state, result, partition
 
@@ -159,7 +160,7 @@ def _render_overview_tab(
     _render_phase2_status_captions()
     # P7: family detector 실행 결과 진단 — 어떤 family 가 executed/skipped/failed 인지
     #      한 줄 caption 으로 즉시 노출. 활성 분석 영역 0/1 같은 비정상 결과의 원인을
-    #      모델 기준 탭까지 가지 않고도 확인할 수 있게 한다.
+    #      별도 내부 진단 화면 없이도 확인할 수 있게 한다.
     _render_phase2_family_dispatch_caption()
     # R-H2: 통합 empty_state 를 한 번 계산해 ribbon / distribution / actions 가 모두
     #       동일 객체를 사용하도록 한다. 자체 분류 시 phase1_basis_unavailable /
@@ -188,7 +189,7 @@ def _render_overview_tab(
 
 @dataclass(frozen=True)
 class Phase2EmptyState:
-    """전체 요약 / 검토 Lane 빈 상태 표시 결정.
+    """전체 요약 / case-level 상세 빈 상태 표시 결정.
 
     Attributes:
         state_id: 분류 (phase2_not_run / phase1_basis_unavailable /
@@ -198,7 +199,7 @@ class Phase2EmptyState:
         body: 부가 설명 (1~2 문장).
         next_action_label: 사용자 행동 안내 (없으면 None).
         show_charts: 활성 분석 분포 차트를 그릴지.
-        show_lanes: 검토 Lane 표를 그릴지.
+        show_lanes: case-level 상세 표를 그릴지.
     """
 
     state_id: str
@@ -226,7 +227,7 @@ def _resolve_phase2_empty_state(
 ) -> Phase2EmptyState:
     """현재 입력으로 표시 결정 반환.
 
-    Why: KPI 카드 / Active Distribution 차트 / 검토 Lane 이 같은 분기를 반복하지 않게
+    Why: KPI 카드 / Active Distribution 차트 / case-level 상세가 같은 분기를 반복하지 않게
     한 곳에서 분류한다. 표시 레이어 전용 — service 로직과 분리.
 
     분기 우선순위:
@@ -243,7 +244,7 @@ def _resolve_phase2_empty_state(
             title="Phase 2 추론 결과가 없습니다.",
             body=(
                 "저장된 모델로 추론하거나 학습 + 추론을 실행하세요. "
-                "추론 완료 후 케이스별 추가 신호와 검토 Lane 을 볼 수 있습니다."
+                "추론 완료 후 케이스별 추가 신호를 볼 수 있습니다."
             ),
             next_action_label="Phase 2 추론 실행",
             show_charts=False,
@@ -302,9 +303,9 @@ def _resolve_phase2_empty_state(
         for overlay in overlays
     )
     if has_overlays and not has_any_hit:
-        # R-M1: valid_no_hit 은 Phase 2 Lane 에 표시할 적중 case 가 없는 상태다.
-        # show_lanes=True 로 두고 Lane 탭에서 fallback 표를 띄우지 않을 거면 사용자에게
-        # 잘못된 기대(검토 Lane 에 무언가 보임)를 준다. Phase 1 결과 탭으로 안내하는
+        # R-M1: valid_no_hit 은 Phase 2 에 표시할 적중 case 가 없는 상태다.
+        # show_lanes=True 로 두고 fallback 표를 띄우지 않을 거면 사용자에게
+        # 잘못된 기대를 준다. Phase 1 결과 탭으로 안내하는
         # 것이 정합. 따라서 show_lanes=False + next_action_label 도 일치.
         return Phase2EmptyState(
             state_id=_PHASE2_STATE_VALID_NO_HIT,
@@ -532,8 +533,8 @@ def _render_phase2_empty_state_actions(
             st.session_state[KEY_PENDING_RESULT_TAB] = PAGE_PHASE1
             st.rerun()
     elif empty_state.state_id == _PHASE2_STATE_VALID_NO_HIT:
-        # R-M1: valid_no_hit 은 Phase 2 적중 case 없는 상태라 검토 Lane 에 표시할
-        # fallback 표가 없다. Phase 1 결과 탭으로 안내해야 사용자가 헛걸음하지 않는다.
+        # R-M1: valid_no_hit 은 Phase 2 적중 case 없는 상태라 표시할 fallback 표가 없다.
+        # Phase 1 결과 탭으로 안내해야 사용자가 헛걸음하지 않는다.
         if st.button(
             "Phase 1 결과 탭에서 계속 검토",
             key="p5_action_goto_phase1_no_hit",
@@ -576,6 +577,10 @@ def _render_phase1_case_basis_caption() -> None:
 
 
 _PHASE2_TOTAL_FAMILY_COUNT = 9
+
+# 표시용 lane 총 수: 활성 5 + 대기 4. "활성 Lane" KPI 는 몇 개 lane 이 깨어 있는지를
+# 전체 분석 영역 9개 기준으로 보여준다.
+_PHASE2_TOTAL_LANE_COUNT = len(ACTIVE_FAMILIES) + len(DORMANT_FAMILIES)
 
 
 def _classify_ribbon_state_from_overlays(overlays: list[dict]) -> Phase2EmptyState:
@@ -659,45 +664,50 @@ def _render_phase2_summary_ribbon(
     *,
     empty_state: Phase2EmptyState | None = None,
 ) -> None:
-    """PHASE 2 실행 요약 — Phase1 ribbon 패턴의 4 KPI 카드 flex 배너.
+    """PHASE 2 실행 요약 — PHASE2 native case 중심 4 KPI 카드 flex 배너.
 
-    카드 4:
-      1) Phase 1+2 중복 탐지 케이스 — phase1 case 중 phase2 신호가 붙은 수
-      2) Phase 2 즉시검토 케이스    — case rank 상위 1.25% 케이스 수
-      3) 활성 분석 영역             — nonzero hit family 수 / 9
-      4) 최상위 분석 영역           — nonzero_count 최대 family 한국어 라벨
+    카드 4 (사용자 결정 2026-05-28, native case 기준):
+      1) 분석 대상 케이스    — Phase2CaseSet 의 5 family case 총 수
+      2) Phase 2 신호 케이스 — evidence_tier ∈ {strong, moderate} 인 case 수 + 비율
+      3) 활성 Lane          — case > 0 인 active family 수 / 9 (active 5 + dormant 4)
+      4) 최상위 Lane        — case 수 최대 family 한국어 라벨 + 건수 (VAE 제외)
+
+    Why: 기존 KPI 는 PHASE1 case 에 PHASE2 가 attach 한 overlay 의 카운트였다.
+         사용자 요청에 따라 PHASE2 가 별도로 산출한 native case (Phase2CaseSet) 의
+         5 family 집계로 전환. overlay 는 PHASE1 case 1:1 mapping 이라 native
+         case 와 정의가 다르다.
     """
-    overlays = _resolve_phase2_overlays_from_state()
-    phase1_case_count = _resolve_phase1_case_count_from_state()
-    # Why: ribbon 은 result is None 분기 이후 호출되므로 phase2_result 존재를 가정.
-    #      overlays 만 보고 available / valid_no_hit / overlay_missing 분류하면 충분.
-    #      empty_state 가 명시 전달되면 그것을 우선 (overview 탭이 통합 분류한 경우).
+    from dashboard.components.phase2_native_case_metrics import (
+        count_active_native_families,
+        count_native_cases_signaled,
+        count_native_cases_total,
+        resolve_phase2_case_set_from_state,
+        top_native_case_family,
+    )
+
+    case_set = resolve_phase2_case_set_from_state()
+    overlays = _resolve_phase2_overlays_from_state()  # empty_state 분기 호환
     if empty_state is None:
         empty_state = _classify_ribbon_state_from_overlays(overlays)
 
-    case_lookup = _resolve_phase1_case_lookup_from_state()
-    p1_review_bands, p2_rank_bands, _integrated_bands, total_rank_cases = (
-        _phase12_rank_percentile_band_maps(case_lookup, overlays)
-    )
-    p1_high_case_ids = {case_id for case_id, band in p1_review_bands.items() if band == "immediate"}
-    cross_detect_count = sum(
-        1
-        for case_id, band in p2_rank_bands.items()
-        if case_id in p1_high_case_ids and band == "immediate"
-    )
-    review_band_counts = _count_review_bands(p2_rank_bands)
-    immediate_count = review_band_counts["immediate"]
-    review_count = review_band_counts["review"]
-    candidate_count = review_band_counts["candidate"]
+    # 카드 ① 분석 대상 케이스 — native case set 의 5 family 합산
+    base_case_count = count_native_cases_total(case_set)
 
-    active_family_count = _count_active_families(partition_summary)
-    # Why: top family 는 우측 막대 차트(_render_phase2_family_case_bar)와 동일한
-    #      case-level family_contributions 카운트를 사용해야 카드와 막대가 어긋나
-    #      보이지 않는다. partition_summary 의 row-level nonzero_count / unsupervised
-    #      high_count_q95 는 단위가 달라 비교 시 순위가 뒤집힌다.
-    top_family_kr, top_family_hint, top_family_count = _resolve_top_active_family(
-        partition_summary, overlays=overlays
-    )
+    # 카드 ② Phase 2 신호 케이스 — evidence_tier ∈ {strong, moderate}
+    signaled_count = count_native_cases_signaled(case_set)
+    signal_ratio = (signaled_count / base_case_count) if base_case_count else 0.0
+
+    # 카드 ③ 활성 Lane — case > 0 인 active family 수 / 9 (사용자 결정: dormant 4 유지)
+    active_family_count = count_active_native_families(case_set)
+
+    # 카드 ④ 최상위 Lane — case 수 최대 family (VAE 제외)
+    top_family = top_native_case_family(case_set)
+    if top_family is None:
+        top_family_kr = ""
+        top_family_count = 0
+    else:
+        family_key, top_family_count = top_family
+        top_family_kr = _FAMILY_LABELS_KR.get(family_key, family_key)
 
     sub_style = "color:#9CA3AF; font-size:0.72rem; margin-top:3px;"
     block_style = "text-align:center; flex:1; padding:0 1rem; border-right:1px solid #E5E7EB;"
@@ -709,64 +719,48 @@ def _render_phase2_summary_ribbon(
     value_base = "font-size:1.7rem; font-weight:700; letter-spacing:-0.02em; line-height:1.2;"
     unit_style = "font-size:0.95rem; font-weight:500; color:#6B7280;"
 
-    # P5-2: state_id 별 KPI value / sub 분기 — missing 은 "-", valid_no_hit 은 "0".
-    cross_value_text, cross_sub_html = _build_kpi_value_and_sub(
+    base_value_text, base_sub_html = _build_kpi_value_and_sub(
         empty_state=empty_state,
-        value=cross_detect_count,
-        denom=phase1_case_count,
-        available_sub=(
-            f"<div style='{sub_style}'>전체 케이스의 "
-            f"{(cross_detect_count / phase1_case_count if phase1_case_count else 0.0):.1%}"
-            "만 남김</div>"
-            if phase1_case_count
-            else f"<div style='{sub_style}'>Phase 1 즉시검토 ∩ Phase 2 즉시검토</div>"
-        ),
-        no_hit_sub=f"<div style='{sub_style}'>양쪽 즉시검토 등급 교집합 0건</div>",
+        value=base_case_count,
+        denom=base_case_count,
+        available_sub=f"<div style='{sub_style}'>Phase 2 가 분석한 case 모집단</div>",
+        no_hit_sub=f"<div style='{sub_style}'>분석할 case 가 없습니다.</div>",
         missing_sub_template=f"<div style='{sub_style}'>{{label}}</div>",
         sub_style=sub_style,
     )
-    immediate_value_text, immediate_sub_html = _build_kpi_value_and_sub(
+    signaled_value_text, signaled_sub_html = _build_kpi_value_and_sub(
         empty_state=empty_state,
-        value=immediate_count,
-        denom=phase1_case_count,
+        value=signaled_count,
+        denom=base_case_count,
         available_sub=(
-            f"<div style='{sub_style}'>검토대상 {review_count:,}건 · 참고후보 "
-            f"{candidate_count:,}건 · 전체 케이스의 "
-            f"{(1.0 - immediate_count / total_rank_cases if total_rank_cases else 0.0):.1%}"
-            " 제거</div>"
-            if total_rank_cases
-            else f"<div style='{sub_style}'>case 순위 상위 1.25%</div>"
+            f"<div style='{sub_style}'>전체 case 의 {signal_ratio:.1%}</div>"
+            if base_case_count
+            else f"<div style='{sub_style}'>Phase 2 신호가 있는 case 수</div>"
         ),
-        no_hit_sub=f"<div style='{sub_style}'>추가 적중 없음 (즉시 검토 후보 0건)</div>",
+        no_hit_sub=f"<div style='{sub_style}'>추가 신호 없음 (정상 결과)</div>",
         missing_sub_template=f"<div style='{sub_style}'>{{label}}</div>",
         sub_style=sub_style,
     )
-    # P6-3: 활성/최상위 영역은 partition_summary (정적 reference) 기반이라 source
-    #       label 을 sub 에 명시. 회사 scoped overlay 기반 KPI(중복/즉시검토) 와 출처
-    #       다르다는 점을 카드 단위로 구분.
+
     source_status, _source_message = _resolve_phase2_signal_source_status(partition_summary)
     source_label = _PHASE2_SOURCE_KPI_LABELS.get(source_status, "")
-    # Why: "총 9개 영역 중 신호 잡힌 수" 문구는 라벨/값으로 자명해서 sub 를 비운다.
-    #      결과 없음 같은 source 경고만 남아 있을 때는 노출.
     active_source_text = source_label.strip(" ·")
     active_sub_html = (
         f"<div style='{sub_style}'>{active_source_text}</div>" if active_source_text else ""
     )
-    # Why: 최상위 분석 영역은 family 이름 + 건수를 한 토큰처럼 한 줄에 표시.
-    #      "시점 이상 (891,464건)" 형식. 폰트는 다른 카드보다 살짝 작게.
+
     if top_family_kr:
         if top_family_count:
             top_value_text = f"{top_family_kr} ({top_family_count:,}건)"
         else:
             top_value_text = top_family_kr
-        hint_html = top_family_hint or ""
-        sub_parts = [part for part in (hint_html, source_label.strip(" ·")) if part]
+        top_sub_parts = [part for part in (source_label.strip(" ·"),) if part]
         top_sub_html = (
-            f"<div style='{sub_style}'>{' · '.join(sub_parts)}</div>" if sub_parts else ""
+            f"<div style='{sub_style}'>{' · '.join(top_sub_parts)}</div>" if top_sub_parts else ""
         )
     else:
         top_value_text = "-"
-        top_sub_html = f"<div style='{sub_style}'>신호가 잡힌 영역이 없습니다.{source_label}</div>"
+        top_sub_html = f"<div style='{sub_style}'>신호가 잡힌 lane 이 없습니다.{source_label}</div>"
 
     top_value_style = (
         "font-size:1.05rem; font-weight:700; letter-spacing:-0.02em; "
@@ -780,32 +774,32 @@ def _render_phase2_summary_ribbon(
             box-shadow:0 1px 2px rgba(15,23,42,0.04);
             margin:0.25rem 0 1rem;">
     <div style="{block_style}">
-        <div style="{label_style}">Phase 1+2 중복 탐지 케이스</div>
-        <div style="color:#DC2626; {value_base}">
-            {cross_value_text} <span style="{unit_style}">건</span>
+        <div style="{label_style}">분석 대상 케이스</div>
+        <div style="color:#111827; {value_base}">
+            {base_value_text} <span style="{unit_style}">건</span>
         </div>
-        {cross_sub_html}
+        {base_sub_html}
     </div>
     <div style="{block_style}">
         <div style="{label_style}"
-             title="case rank 기준: PHASE2 5-family Noisy-OR 상위 1.25%">
-            Phase 2 즉시검토 케이스
+             title="자체 q95 threshold 이상 진입한 family 가 1개 이상인 case 수">
+            Phase 2 신호 케이스
         </div>
         <div style="color:#EA580C; {value_base}">
-            {immediate_value_text} <span style="{unit_style}">건</span>
+            {signaled_value_text} <span style="{unit_style}">건</span>
         </div>
-        {immediate_sub_html}
+        {signaled_sub_html}
     </div>
     <div style="{block_style}">
-        <div style="{label_style}">활성 분석 영역</div>
+        <div style="{label_style}">활성 Lane</div>
         <div style="color:#111827; {value_base}">
             {active_family_count}
-            <span style="{unit_style}">/ {_PHASE2_TOTAL_FAMILY_COUNT} 개</span>
+            <span style="{unit_style}">/ {_PHASE2_TOTAL_LANE_COUNT} 개</span>
         </div>
         {active_sub_html}
     </div>
     <div style="{last_block_style}">
-        <div style="{label_style}">최상위 분석 영역</div>
+        <div style="{label_style}">최상위 Lane</div>
         <div style="{top_value_style}">{top_value_text}</div>
         {top_sub_html}
     </div>
@@ -834,8 +828,16 @@ def _resolve_top_active_family(
     *,
     overlays: list[dict] | None = None,
 ) -> tuple[str, str, int]:
-    """nonzero hit 가 가장 큰 active family 의 한국어 라벨/힌트/건수 반환."""
-    case_counts = _family_case_contribution_counts(overlays)
+    """nonzero hit 가 가장 큰 active lane 의 한국어 라벨/힌트/건수 반환.
+
+    VAE/unsupervised 는 별도 분포 패널에서 다루므로 '최상위 Lane' 후보에서 제외한다.
+    모든 case 에 VAE 점수가 매겨져 항상 최상위로 잡혀 다른 lane 비교가 무의미해진다.
+    """
+    case_counts = {
+        family: count
+        for family, count in _family_case_contribution_counts(overlays).items()
+        if family != "unsupervised"
+    }
     if any(case_counts.values()):
         best_family, best_count = max(case_counts.items(), key=lambda item: item[1])
         return (
@@ -850,14 +852,13 @@ def _resolve_top_active_family(
     best_family: str | None = None
     best_count = 0
     for family in ACTIVE_FAMILIES:
+        if family == "unsupervised":
+            continue
         payload = families.get(family) or {}
         if not isinstance(payload, dict):
             continue
-        if family == "unsupervised":
-            count = int(payload.get("high_count_q95") or 0)
-        else:
-            distribution = payload.get("score_distribution") or {}
-            count = int(distribution.get("nonzero_count") or 0)
+        distribution = payload.get("score_distribution") or {}
+        count = int(distribution.get("nonzero_count") or 0)
         if count > best_count:
             best_count = count
             best_family = family
@@ -870,7 +871,7 @@ def _resolve_top_active_family(
     )
 
 
-# ── 활성 분석 분포 섹션 (case rank band matrix + family hit bar) ──
+# ── 활성 분석 분포 섹션 (lane × evidence_tier matrix + family hit bar) ──
 
 
 def _render_phase2_active_distribution(
@@ -878,10 +879,10 @@ def _render_phase2_active_distribution(
     *,
     empty_state: Phase2EmptyState | None = None,
 ) -> None:
-    """카드 밑 활성 분석 분포 — 우선순위 matrix + 가로 막대 2열.
+    """카드 밑 활성 분석 분포 — lane matrix + 가로 막대 2열.
 
-    좌: Phase 1 / Phase 2 / 공통 우선순위 band 비교.
-    우: Phase 2 family 별 case-family 적중 수 (중복 포함).
+    좌: Phase 2 lane × evidence_tier case-family contribution matrix.
+    우: Phase 2 family 별 case-family contribution hit 수 (중복 포함).
 
     Why: state_id 가 ``available`` 또는 ``valid_no_hit`` 일 때만 차트 컨테이너를
     그린다. 그 외(overlay_missing / phase2_not_run / phase1_basis_unavailable)는
@@ -900,25 +901,28 @@ def _render_phase2_active_distribution(
         st.caption(f"활성 분석 분포: {reason}")
         return
 
-    case_lookup = _resolve_phase1_case_lookup_from_state()
-
     st.markdown(
         "<div style='color:#18181B; font-size:1rem; font-weight:600; "
         "margin:1.5rem 0 0.75rem;'>활성 분석 분포</div>",
         unsafe_allow_html=True,
     )
-    # Why: 우측 막대가 9 family(active 5 + dormant 4) 라서 Phase1(7 topic) 보다
-    #      slot 개수가 많다. Phase1 의 slot 당 픽셀(약 43px) 을 유지해 막대 두께를
-    #      같게 맞추려면 카드 높이를 380 → 470 으로 확장한다. 좌측은 동일 높이의
-    #      matrix 카드로 맞춰 두 카드의 시각 무게를 비슷하게 둔다.
-    chart_card_height = 470
-    left, right = st.columns([1, 1.5], gap="small")
-    with left, st.container(border=True, height=chart_card_height):
-        _render_phase12_priority_matrix(
-            overlays, case_lookup, partition_summary, empty_state=empty_state
-        )
-    with right, st.container(border=True, height=chart_card_height):
+    # Why: 2x2 그리드. 1행은 rule-based 4 lane 의 tier matrix(좌) + family bar(우).
+    #      2행은 VAE 전용 — 본질적 측정 단위(ml_quantile)가 달라 분리한다.
+    #      1행 카드는 heatmap/bar (height 380) + 헤더에 맞춰 440.
+    #      2행 VAE 카드는 contents 크기에 맞춰 360 (가운데 정렬 효과).
+    chart_card_height = 440
+    vae_card_height = 360
+    row1_left, row1_right = st.columns([1, 1], gap="small")
+    with row1_left, st.container(border=True, height=chart_card_height):
+        _render_phase2_lane_matrix(overlays, empty_state=empty_state)
+    with row1_right, st.container(border=True, height=chart_card_height):
         _render_phase2_family_case_bar(overlays, empty_state=empty_state)
+
+    row2_left, row2_right = st.columns([1, 1], gap="small")
+    with row2_left, st.container(border=True, height=vae_card_height):
+        _render_phase2_vae_distribution(overlays, empty_state=empty_state)
+    with row2_right, st.container(border=True, height=vae_card_height):
+        _render_phase2_vae_meta(overlays, empty_state=empty_state)
 
 
 _PHASE2_DISTRIBUTION_EMPTY_REASONS: dict[str, str] = {
@@ -942,234 +946,176 @@ def _resolve_phase1_case_lookup_from_state() -> dict:
     return {str(case.case_id): case for case in case_result.cases}
 
 
-def _rank_positions_desc(scores_by_case: dict[str, float]) -> dict[str, int]:
-    """Return deterministic 1-based ranks for descending score order."""
+def _is_phase1_immediate_case(case) -> bool:
+    """Phase1 UI 기준으로 즉시검토 case 여부를 판정."""
+    from dashboard.phase1_display import display_priority_band_from_score
 
-    ranked = sorted(scores_by_case.items(), key=lambda item: (-item[1], item[0]))
-    return {case_id: idx for idx, (case_id, _score) in enumerate(ranked, start=1)}
-
-
-def _phase2_scores_by_case(overlays: list[dict], case_ids: set[str]) -> dict[str, float]:
-    """PHASE2 5-family Noisy-OR display score by case id."""
-
-    scores = {case_id: 0.0 for case_id in case_ids}
-    for overlay in overlays:
-        case_id = str(overlay.get("phase1_case_id") or "").strip()
-        if not case_id:
-            continue
-        scores[case_id] = max(scores.get(case_id, 0.0), _phase2_overlay_rank_score(overlay))
-    return scores
+    band = display_priority_band_from_score(
+        getattr(case, "priority_score", None),
+        getattr(case, "priority_band", "low"),
+    )
+    return band == "high"
 
 
-def _phase12_rank_percentile_band_maps(
-    case_lookup: dict, overlays: list[dict]
-) -> tuple[dict[str, str], dict[str, str], dict[str, str], int]:
-    """PHASE1 priority band + PHASE2 rank-percentile band + PHASE1∩PHASE2 band maps.
+# Lane matrix 표시용 lane 그룹 — 결정 9 정합으로 active 와 supporting 분리.
+# active = primary ranker 4개, supporting = timeseries (결산·시점 보조 lane).
+# Lane matrix 전용 family 그룹. unsupervised(VAE) 는 ml_quantile 단위라 strong/
+# moderate/weak 축과 측정 단위가 달라 lane matrix 에서 제외하고 별도 VAE 패널
+# (_render_phase2_vae_distribution / meta) 로 분리한다.
+_PHASE2_ACTIVE_LANES: tuple[str, ...] = (
+    "duplicate",
+    "relational",
+    "intercompany",
+)
+_PHASE2_SUPPORTING_LANES: tuple[str, ...] = ("timeseries",)
 
-    PHASE1 keeps its existing priority_score band contract. PHASE2 is ranked
-    by 5-family zero-preserving Noisy-OR rank-percentile. PHASE1+2 통합은
-    동일 case 가 양쪽에서 같은 band 에 속할 때만 그 band 에 카운트한다
-    (예: PHASE1 즉시검토 ∩ PHASE2 즉시검토 → 통합 즉시검토).
+
+def _lane_tier_counts(overlays: list[dict]) -> dict[str, dict[str, int]]:
+    """family → evidence tier 카운트 (case-family contribution 단위).
+
+    Why: lane matrix 좌측에 lane × evidence_tier 분포를 그릴 base 데이터. case 가
+         여러 lane 에 걸리면 각 lane row 의 tier 카운트에 모두 1 씩 들어간다 (우측
+         막대와 같은 case-family contribution 단위).
     """
-
-    normalized_case_lookup = {
-        str(case_id or "").strip(): case
-        for case_id, case in case_lookup.items()
-        if str(case_id or "").strip()
-    }
-    case_ids = set(normalized_case_lookup)
-    for overlay in overlays:
-        case_ids.add(str(overlay.get("phase1_case_id") or "").strip())
-    case_ids.discard("")
-    total_cases = len(case_ids)
-    if total_cases == 0:
-        return {}, {}, {}, 0
-
-    phase2_scores = _phase2_scores_by_case(overlays, case_ids)
-    phase2_ranks = _rank_positions_desc(phase2_scores)
-
-    phase1_bands = _phase1_priority_bands_by_case(normalized_case_lookup, case_ids)
-    phase2_bands = {
-        case_id: rank_percentile_band(
-            phase2_ranks.get(case_id), total_cases, has_signal=phase2_scores[case_id] > 0.0
-        )
-        for case_id in case_ids
-    }
-
-    # PHASE1 band ∩ PHASE2 band per case. 두 phase 모두 같은 review band 인
-    # case 만 통합 band 에 카운트. 한 쪽만 immediate 면 통합 immediate 비포함.
-    intersect_scope = {"immediate", "review", "candidate"}
-    integrated_bands = {
-        case_id: phase1_bands.get(case_id, "none")
-        if phase1_bands.get(case_id) == phase2_bands.get(case_id)
-        and phase1_bands.get(case_id) in intersect_scope
-        else "none"
-        for case_id in case_ids
-    }
-    return phase1_bands, phase2_bands, integrated_bands, total_cases
+    # lane matrix 표시용 — unsupervised(VAE) 는 별도 VAE 패널로 분리되므로 제외.
+    counts: dict[str, dict[str, int]] = {}
+    for family in (*_PHASE2_ACTIVE_LANES, *_PHASE2_SUPPORTING_LANES):
+        counts[family] = {"strong": 0, "moderate": 0, "weak": 0, "ml_quantile": 0}
+    for overlay in overlays or []:
+        for entry in overlay.get("family_contributions") or []:
+            family = str(entry.get("family") or "")
+            if family not in counts:
+                continue
+            if not _family_contribution_has_positive_signal(entry):
+                continue
+            tier = str(entry.get("evidence_tier") or "").strip().lower()
+            if tier in counts[family]:
+                counts[family][tier] += 1
+    return counts
 
 
-def _phase12_rank_percentile_review_bands(
-    case_lookup: dict, overlays: list[dict]
-) -> tuple[dict[str, int], dict[str, int], dict[str, int], int]:
-    """Exclusive counts for PHASE1 priority bands and PHASE2/integrated rank bands."""
-
-    phase1_bands, phase2_bands, integrated_bands, total_cases = _phase12_rank_percentile_band_maps(
-        case_lookup, overlays
-    )
-    return (
-        _count_review_bands(phase1_bands),
-        _count_review_bands(phase2_bands),
-        _count_review_bands(integrated_bands),
-        total_cases,
-    )
-
-
-def _render_phase12_priority_matrix(
+def _render_phase2_lane_matrix(
     overlays: list[dict],
-    case_lookup: dict,
-    partition_summary: dict | None,
     *,
     empty_state: Phase2EmptyState | None = None,
 ) -> None:
-    """Phase1 priority band + Phase2 / Phase1+2 rank-percentile review-band matrix.
+    """Phase 2 family lane × evidence_tier 매트릭스 (활성 4 + 보조 1 분리).
 
-    PHASE1 follows the existing priority_score band contract. PHASE2 uses
-    5-family Noisy-OR rank, and PHASE1+2 uses RRF rank.
+    각 lane row 는 Strong / Moderate / Weak/Context 셀의 case 카운트를 표시한다.
+    timing context 는 결정 9 (PHASE2_TIMESERIES_ROLE_LOCK) 정합으로 보조 lane 섹션에
+    분리해 표시하며, strong/moderate 셀은 "-" 로 비워 단독 ranker 가 아닌 점을
+    시각적으로 강제한다.
     """
-    del partition_summary
-
-    p1_counts, p2_counts, integrated_counts, total_cases = _phase12_rank_percentile_review_bands(
-        case_lookup, overlays
-    )
-
-    # Why: 슬레이트 모노톤 히트맵. 셀 배경 alpha 농도가 비율 시각화 역할을 하므로
-    #      카드 border/progress track 톤은 더 이상 필요하지 않다.
     color_text = "#111827"  # gray-900
     color_text_strong = "#0F172A"  # slate-900
-    color_muted = "#6B7280"  # gray-500
-    color_chip_bg = "#F8FAFC"
-    color_chip_border = "#E2E8F0"
     typography = "Pretendard, Inter, -apple-system, BlinkMacSystemFont, sans-serif"
 
+    # native case 기준으로 전환 (사용자 결정 2026-05-28).
+    # ``overlays`` 시그니처는 호환 유지하되 본문은 phase2_case_set 만 사용.
+    from dashboard.components.phase2_native_case_metrics import (
+        count_native_cases_by_family_tier,
+        resolve_phase2_case_set_from_state,
+    )
+
+    del overlays
+    case_set = resolve_phase2_case_set_from_state()
+    tier_counts = count_native_cases_by_family_tier(case_set)
+    total_cells = sum(sum(row.values()) for row in tier_counts.values())
+
     st.markdown(
-        f"<div style='font-family:{typography}; display:flex; align-items:center; "
-        "justify-content:space-between; gap:0.75rem;'>"
+        f"<div style='font-family:{typography};'>"
         f"<div style='color:{color_text_strong}; font-size:0.875rem; "
-        f"font-weight:700; letter-spacing:-0.01em;'>검토 우선순위 구성</div>"
-        f"<div style='display:inline-flex; align-items:center; gap:0.4rem; "
-        f"background:{color_chip_bg}; border:1px solid {color_chip_border}; "
-        "border-radius:999px; padding:0.2rem 0.65rem;'>"
-        f"<span style='color:{color_muted}; font-size:0.65rem; "
-        "font-weight:600; letter-spacing:0.04em; text-transform:uppercase;'>"
-        "Total</span>"
-        f"<span style='color:{color_text_strong}; font-size:0.78rem; "
-        f"font-weight:700;'>{total_cases:,}</span>"
-        "</div></div>",
-        unsafe_allow_html=True,
-    )
-
-    # P5-3: valid_no_hit (정상 결과, 추가 적중 없음) 와 데이터 부재(missing) 구분.
-    if total_cases == 0 or not overlays:
-        state_id = empty_state.state_id if empty_state else _PHASE2_STATE_OVERLAY_MISSING
-        if state_id == _PHASE2_STATE_VALID_NO_HIT:
-            st.info("분석 완료 — 추가 적중 없음. Phase 1 우선순위 기준 검토를 계속하세요.")
-        else:
-            st.info("overlay 가 없어 분포를 표시할 수 없습니다. Phase 2 재추론하세요.")
-        return
-
-    # Phase 별 row accent — _theme.LAYER_COLORS 와 같은 indigo/teal/violet 700 톤.
-    rows = [
-        ("Phase 1", p1_counts, "#4338CA"),  # indigo-700
-        ("Phase 2", p2_counts, "#0D9488"),  # teal-600
-        ("Phase 1+2 통합", integrated_counts, "#7C3AED"),  # violet-600
-    ]
-    # band 축 — 셀 배경(slate alpha 농도) 자체가 비율 시각화 역할을 하므로 hue 분리 제거.
-    bands = [
-        ("immediate", "즉시검토"),
-        ("review", "검토대상"),
-        ("candidate", "참고후보"),
-    ]
-    band_dot = "#64748B"  # slate-500 — 헤더 dot 만 통일된 모노톤
-
-    # Why: 히트맵 농도 정규화. 전체 9 셀 max ratio 기준으로 alpha 를 0.04~0.42 범위에
-    #      선형 매핑. 행 단위 정규화는 작은 행(예: Phase1+2 공통 174건)이 큰 행과
-    #      동일 농도로 보여 잘못된 비교를 유발 → 전체 정규화 유지.
-    all_ratios = [
-        (counts.get(band, 0) / total_cases if total_cases else 0.0)
-        for _, counts, _ in rows
-        for band, _label in bands
-    ]
-    max_ratio = max(all_ratios) if all_ratios else 0.0
-    alpha_min, alpha_max = 0.04, 0.42
-
-    def _cell_alpha(ratio: float) -> float:
-        if max_ratio <= 0:
-            return alpha_min
-        return alpha_min + (alpha_max - alpha_min) * (ratio / max_ratio)
-
-    header_cells = "".join(
-        "<div style='display:flex; align-items:center; justify-content:center; "
-        f"gap:6px; padding-bottom:0.55rem;'>"
-        f"<span style='width:6px; height:6px; border-radius:999px; "
-        f"background:{band_dot};'></span>"
-        f"<span style='color:{color_muted}; font-size:0.7rem; "
-        "font-weight:600; letter-spacing:0.04em; text-transform:uppercase;'>"
-        f"{label}</span>"
-        "</div>"
-        for _, label in bands
-    )
-
-    row_html = ""
-    for row_label, counts, accent in rows:
-        cells = ""
-        for band, _label in bands:
-            count = counts.get(band, 0)
-            ratio = count / total_cases if total_cases else 0.0
-            alpha = _cell_alpha(ratio)
-            cells += (
-                # slate-900 (15,23,42) 단일 hue 에 alpha 만 비율 매핑 → 히트맵 셀.
-                f"<div style='background:rgba(15,23,42,{alpha:.3f}); "
-                "border-radius:8px; padding:0.6rem 0.95rem; "
-                "display:flex; flex-direction:column; gap:3px; min-height:58px; "
-                "justify-content:center;'>"
-                f"<div style='color:{color_text_strong}; font-size:1.2rem; "
-                "font-weight:700; letter-spacing:-0.02em; line-height:1.1; "
-                "font-variant-numeric:tabular-nums;'>"
-                f"{count:,}</div>"
-                f"<div style='color:{color_muted}; font-size:0.72rem; "
-                "font-weight:500; font-variant-numeric:tabular-nums;'>"
-                f"{ratio:.1%}</div>"
-                "</div>"
-            )
-        row_html += (
-            "<div style='display:grid; grid-template-columns:120px repeat(3, 1fr); "
-            "gap:6px; align-items:stretch; margin-top:6px;'>"
-            f"<div style='border-left:3px solid {accent}; padding-left:10px; "
-            "display:flex; align-items:center;'>"
-            f"<span style='color:{color_text}; font-size:0.82rem; "
-            "font-weight:600; line-height:1.3;'>"
-            f"{row_label}</span></div>"
-            f"{cells}"
-            "</div>"
-        )
-
-    # 매트릭스 wrapper 에 min-height 와 flex centering 을 적용해 카드 안 가운데로.
-    # 카드 470px - 헤더/streamlit gap 합 ≈ 60-80px → wrapper min-height 약 380px 가
-    # 안전. wrapper 안에서 매트릭스 contents 가 자연 크기로 vertical center 정렬되어
-    # 카드 상·하 여백이 균등하게 보인다.
-    st.markdown(
-        f"<div style='margin-top:0.5rem; font-family:{typography}; "
-        "min-height:380px; display:flex; flex-direction:column; "
-        "justify-content:center;'>"
-        "<div style='display:grid; grid-template-columns:120px repeat(3, 1fr); "
-        "gap:6px; align-items:end;'>"
-        "<div></div>"
-        f"{header_cells}"
-        "</div>"
-        f"{row_html}"
+        f"font-weight:700; letter-spacing:-0.01em;'>Phase 2 Family Lanes</div>"
         "</div>",
         unsafe_allow_html=True,
+    )
+
+    if total_cells == 0:
+        state_id = empty_state.state_id if empty_state else _PHASE2_STATE_OVERLAY_MISSING
+        if state_id == _PHASE2_STATE_VALID_NO_HIT:
+            st.info("분석 완료 — Lane 적중 없음 (정상 결과)")
+        else:
+            st.info(
+                "PHASE2 native case 가 없어 Lane 분포를 표시할 수 없습니다. Phase 2 재추론하세요."
+            )
+        return
+
+    # X = Lane (좌→우), Y = evidence tier (위→아래: Strong → Weak).
+    # ml_quantile 행은 VAE 분리 후 사용처가 없으므로 매트릭스에서 제외.
+    import plotly.graph_objects as go
+
+    lanes_order: tuple[str, ...] = (*_PHASE2_ACTIVE_LANES, *_PHASE2_SUPPORTING_LANES)
+    tiers_order: tuple[str, ...] = ("strong", "moderate", "weak")
+    tier_labels: list[str] = ["Strong", "Moderate", "Weak"]
+    _tier_zero: dict[str, int] = {"strong": 0, "moderate": 0, "weak": 0}
+
+    x_labels: list[str] = []
+    for family in lanes_order:
+        label = _FAMILY_LABELS_KR.get(family, family)
+        if family in _PHASE2_SUPPORTING_LANES:
+            label = f"{label} (보조)"
+        x_labels.append(label)
+
+    z_matrix: list[list[int]] = []
+    text_matrix: list[list[str]] = []
+    for tier in tiers_order:
+        row_z: list[int] = []
+        row_text: list[str] = []
+        for family in lanes_order:
+            counts = tier_counts.get(family, _tier_zero)
+            is_supporting = family in _PHASE2_SUPPORTING_LANES
+            # 결정 9: 보조 lane (timing) 은 weak 행만 사용 — 나머지 셀은 "-".
+            if is_supporting and tier != "weak":
+                row_z.append(0)
+                row_text.append("-")
+                continue
+            value = int(counts.get(tier, 0) or 0)
+            row_z.append(value)
+            row_text.append(f"{value:,}" if value > 0 else "")
+        z_matrix.append(row_z)
+        text_matrix.append(row_text)
+
+    # Phase 1 stats heatmap 과 동일 설정 (height 320 + Phase1 margin/colorbar).
+    heat = go.Figure(
+        go.Heatmap(
+            z=z_matrix,
+            x=x_labels,
+            y=tier_labels,
+            text=text_matrix,
+            texttemplate="%{text}",
+            textfont={"size": 12, "family": typography},
+            colorscale="Purples",
+            hovertemplate="Lane: %{x}<br>Tier: %{y}<br>케이스: %{z:,}<extra></extra>",
+            colorbar={"title": "케이스", "thickness": 10, "len": 0.55, "x": 0.92},
+        )
+    )
+    # Plot area 를 카드 가운데로 강제 — xaxis/yaxis domain 명시.
+    # plot 가로 = figure 의 12%~80% (좌측 yaxis 라벨 12%, 우측 20% 영역에 colorbar).
+    # plot 세로 = figure 의 5%~80% (xaxis 라벨 회전 자리 아래 20%).
+    heat.update_layout(
+        height=380,
+        margin={"l": 10, "r": 10, "t": 10, "b": 10},
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font={"family": typography, "color": color_text},
+        xaxis_title="",
+        yaxis_title="",
+    )
+    heat.update_xaxes(
+        tickangle=-30,
+        tickfont={"size": 10},
+        domain=[0.12, 0.80],
+    )
+    heat.update_yaxes(
+        tickfont={"size": 11},
+        autorange="reversed",
+        domain=[0.20, 0.95],
+    )
+    st.plotly_chart(
+        heat,
+        width="stretch",
+        key="phase2_lane_matrix_heatmap",
+        config={"displayModeBar": False},
     )
 
 
@@ -1187,6 +1133,318 @@ def _collect_docs_of_cases(case_ids: set[str], case_lookup: dict) -> set[str]:
     return docs
 
 
+# VAE 전용 분포 패널 ─────────────────────────────────────────
+
+
+def _unsupervised_scores_from_overlays(overlays: list[dict] | None) -> list[float]:
+    """family_contributions 에서 unsupervised entry 의 raw score 수집 (score > 0)."""
+    scores: list[float] = []
+    for overlay in overlays or []:
+        for entry in overlay.get("family_contributions") or []:
+            if str(entry.get("family") or "") != "unsupervised":
+                continue
+            try:
+                value = float(entry.get("score") or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if value > 0.0:
+                scores.append(value)
+    return scores
+
+
+def _count_vae_only_q95_discovery(
+    overlays: list[dict] | None,
+    *,
+    score_threshold: float,
+) -> int:
+    """Phase 1 즉시검토 외 case 중 VAE score ≥ q95 인 case 수.
+
+    Why: PHASE2 의 본질 가치 = Phase 1 룰로 못 잡는 새 anomaly 패턴.
+         Phase 1 priority_band 가 "high" 가 아닌데 VAE 가 q95+ 신호를 잡은 case 를
+         VAE 단독 발견으로 카운트한다.
+    """
+    case_lookup = _resolve_phase1_case_lookup_from_state()
+    phase1_immediate_ids = {
+        str(case_id) for case_id, case in case_lookup.items() if _is_phase1_immediate_case(case)
+    }
+    vae_q95_ids: set[str] = set()
+    for overlay in overlays or []:
+        case_id = str(overlay.get("phase1_case_id") or "").strip()
+        if not case_id:
+            continue
+        for entry in overlay.get("family_contributions") or []:
+            if str(entry.get("family") or "") != "unsupervised":
+                continue
+            try:
+                value = float(entry.get("score") or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if value >= score_threshold:
+                vae_q95_ids.add(case_id)
+                break
+    return len(vae_q95_ids - phase1_immediate_ids)
+
+
+def _render_phase2_vae_distribution(
+    overlays: list[dict],
+    *,
+    empty_state: Phase2EmptyState | None = None,
+    chart_key: str = "phase2_vae_distribution",
+    show_description: bool = True,
+) -> None:
+    """VAE/Isolation Forest score 분포 히스토그램 + q95 cutoff line."""
+    import numpy as np
+    import plotly.graph_objects as go
+
+    color_text = "#18181B"
+    color_muted = "#71717A"
+    typography = "Inter, -apple-system, BlinkMacSystemFont, sans-serif"
+
+    if show_description:
+        st.markdown(
+            f"<div style='font-family:{typography};'>"
+            f"<div style='color:{color_text}; font-size:0.875rem; font-weight:600;'>"
+            "VAE Deep Learning score 분포</div>"
+            f"<ul style='color:{color_muted}; font-size:0.74rem; margin:6px 0 0; "
+            "padding-left:1.1rem; line-height:1.6;'>"
+            "<li><b>VAE</b>(Variational Autoencoder) + <b>Isolation Forest</b> 두 비지도 "
+            "ML 모델이 정상 전표 분포를 학습합니다.</li>"
+            "<li>각 case 의 <b>anomaly score</b> = 정상 분포에서 떨어진 정도.</li>"
+            "<li><b>score 가 클수록</b> 정상 분포에서 멀리 떨어진 case (비정상 의심).</li>"
+            "<li>점선 <b>q95 cutoff</b>(상위 5%) — 이 위쪽 꼬리가 감사인 우선 검토 후보.</li>"
+            "<li>하위 score 영역은 정상 분포에 가까운 case → 검토 우선순위 <b>제외</b>.</li>"
+            "</ul>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown("##### VAE Deep Learning score 분포")
+
+    # native case 기준 (사용자 결정 2026-05-28).
+    from dashboard.components.phase2_native_case_metrics import (
+        iter_unsupervised_cases,
+        resolve_phase2_case_set_from_state,
+    )
+
+    del overlays
+    case_set = resolve_phase2_case_set_from_state()
+    scores = [
+        float(c.anomaly_score)
+        for c in iter_unsupervised_cases(case_set)
+        if c.anomaly_score is not None and float(c.anomaly_score) > 0.0
+    ]
+    if not scores:
+        state_id = empty_state.state_id if empty_state else _PHASE2_STATE_OVERLAY_MISSING
+        if state_id == _PHASE2_STATE_VALID_NO_HIT:
+            st.info("분석 완료 — VAE 점수 0 (정상 결과)")
+        else:
+            st.info("PHASE2 unsupervised native case 가 없어 분포를 표시할 수 없습니다.")
+        return
+
+    q95 = float(np.percentile(scores, 95))
+
+    fig = go.Figure(
+        go.Histogram(
+            x=scores,
+            nbinsx=40,
+            marker={"color": "#7C3AED", "line": {"width": 0}},
+            hovertemplate="score: %{x:.3f}<br>case 수: %{y:,}<extra></extra>",
+        )
+    )
+    fig.add_vline(
+        x=q95,
+        line={"color": "#DC2626", "width": 1.5, "dash": "dash"},
+        annotation_text=f"q95={q95:.3f}",
+        annotation_position="top right",
+        annotation_font={"size": 11, "color": "#DC2626"},
+    )
+    fig.update_layout(
+        height=240,
+        margin={"l": 50, "r": 10, "t": 20, "b": 35},
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        bargap=0.05,
+        font={"family": typography, "color": color_text},
+        xaxis_title="VAE score",
+        yaxis_title="case 수",
+        showlegend=False,
+    )
+    fig.update_xaxes(tickfont={"size": 11})
+    fig.update_yaxes(tickfont={"size": 11})
+    st.plotly_chart(
+        fig,
+        width="stretch",
+        key=chart_key,
+        config={"displayModeBar": False},
+    )
+
+
+def _render_phase2_vae_meta(
+    overlays: list[dict],
+    *,
+    empty_state: Phase2EmptyState | None = None,
+) -> None:
+    """VAE 분포 요약 — Vercel/Linear analytics 스타일 KPI 카드 grid.
+
+    Layout:
+      [Row 1] 강조 KPI 2 카드 (q95+ / q99+) — 보라색 액센트 + 큰 숫자 + 작은 sub-text
+      [Row 2] 보조 stat 3 카드 (median / max / 신호 비율) — 슬레이트 톤 미니 카드
+    """
+    import numpy as np
+
+    typography = "Inter, -apple-system, BlinkMacSystemFont, sans-serif"
+
+    st.markdown(
+        f"<div style='font-family:{typography};'>"
+        "<div style='color:#0F172A; font-size:0.875rem; font-weight:600;'>"
+        "VAE 분포 요약</div>"
+        "<div style='color:#64748B; font-size:0.72rem; margin-top:2px;'>"
+        "anomaly score 분포의 핵심 cutoff 와 분위 통계</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    # native case 기준 (사용자 결정 2026-05-28).
+    from dashboard.components.phase2_native_case_metrics import (
+        iter_unsupervised_cases,
+        resolve_phase2_case_set_from_state,
+    )
+
+    del overlays
+    case_set = resolve_phase2_case_set_from_state()
+    unsupervised_cases = tuple(iter_unsupervised_cases(case_set))
+    total_cases = len(unsupervised_cases)
+    scores = [
+        float(c.anomaly_score)
+        for c in unsupervised_cases
+        if c.anomaly_score is not None and float(c.anomaly_score) > 0.0
+    ]
+    if not scores:
+        state_id = empty_state.state_id if empty_state else _PHASE2_STATE_OVERLAY_MISSING
+        if state_id == _PHASE2_STATE_VALID_NO_HIT:
+            st.info("분석 완료 — VAE 점수 0 (정상 결과)")
+        else:
+            st.info("PHASE2 unsupervised native case 가 없어 VAE 메타를 계산할 수 없습니다.")
+        return
+
+    arr = np.array(scores, dtype=float)
+    q90 = float(np.percentile(arr, 90))
+    q95 = float(np.percentile(arr, 95))
+    q99 = float(np.percentile(arr, 99))
+    high_q90 = int((arr >= q90).sum())
+    high_q95 = int((arr >= q95).sum())
+    high_q99 = int((arr >= q99).sum())
+    # VAE 단독 발견 case — PHASE1 case 와 cross-reference 안 된 unsupervised native case.
+    # native 기준: phase1_case_refs 가 비어 있으면 rule 이 못 잡은 신호 (PHASE2 단독 가치).
+    vae_only_discovery = sum(1 for c in unsupervised_cases if not c.phase1_case_refs)
+    # ── Row 1: 강조 KPI 2 카드 (q95+ / q99+)
+    primary_card_css = (
+        "background:linear-gradient(135deg, #FAF5FF 0%, #F3E8FF 100%); "
+        "border:1px solid #E9D5FF; border-radius:14px; "
+        "padding:1rem 1.1rem; position:relative;"
+    )
+
+    def _primary_card(label: str, value: int, hint: str, badge: str) -> str:
+        return (
+            f"<div style='{primary_card_css}'>"
+            "<div style='display:flex; justify-content:space-between; "
+            "align-items:flex-start; gap:0.5rem;'>"
+            "<div style='min-width:0;'>"
+            "<div style='color:#7C3AED; font-size:0.65rem; font-weight:700; "
+            "letter-spacing:0.08em; text-transform:uppercase;'>"
+            f"{label}</div>"
+            "<div style='color:#3B0764; font-size:1.85rem; font-weight:800; "
+            "line-height:1.1; margin-top:0.4rem; letter-spacing:-0.02em; "
+            "font-variant-numeric:tabular-nums;'>"
+            f"{value:,}"
+            "<span style='font-size:0.85rem; font-weight:500; color:#7C3AED; "
+            "margin-left:0.25rem;'>건</span>"
+            "</div>"
+            "<div style='color:#7C3AED; font-size:0.72rem; margin-top:0.35rem; "
+            "opacity:0.85; font-variant-numeric:tabular-nums;'>"
+            f"{hint}</div>"
+            "</div>"
+            "<div style='background:rgba(124,58,237,0.12); border-radius:8px; "
+            "padding:0.3rem 0.55rem; white-space:nowrap;'>"
+            f"<span style='color:#7C3AED; font-size:0.65rem; font-weight:700; "
+            "letter-spacing:0.05em;'>"
+            f"{badge}</span>"
+            "</div>"
+            "</div>"
+            "</div>"
+        )
+
+    primary_html = (
+        "<div style='display:grid; grid-template-columns:1fr 1fr; gap:0.65rem; "
+        "margin-top:0.65rem;'>"
+        + _primary_card(
+            "q95 진입 case",
+            high_q95,
+            f"score ≥ {q95:.3f} · 전체 {total_cases:,} 건",
+            "TOP 5%",
+        )
+        + _primary_card(
+            "q99 진입 case",
+            high_q99,
+            f"score ≥ {q99:.3f} · 전체 {total_cases:,} 건",
+            "TOP 1%",
+        )
+        + "</div>"
+    )
+
+    # ── Row 2: 보조 stat 3 카드 (전체 모집단 / q90+ / 꼬리 평균)
+    secondary_card_css = (
+        "background:#FAFAFA; border:1px solid #F1F5F9; border-radius:10px; padding:0.7rem 0.85rem;"
+    )
+
+    def _secondary_card(label: str, value: str, sub: str = "") -> str:
+        sub_html = (
+            "<div style='color:#94A3B8; font-size:0.66rem; margin-top:0.15rem; "
+            "font-variant-numeric:tabular-nums;'>"
+            f"{sub}</div>"
+            if sub
+            else ""
+        )
+        return (
+            f"<div style='{secondary_card_css}'>"
+            "<div style='color:#94A3B8; font-size:0.62rem; font-weight:700; "
+            "letter-spacing:0.06em; text-transform:uppercase;'>"
+            f"{label}</div>"
+            "<div style='color:#0F172A; font-size:1.15rem; font-weight:700; "
+            "margin-top:0.25rem; letter-spacing:-0.02em; "
+            "font-variant-numeric:tabular-nums;'>"
+            f"{value}</div>"
+            f"{sub_html}"
+            "</div>"
+        )
+
+    secondary_html = (
+        "<div style='display:grid; grid-template-columns:1fr 1fr 1fr; "
+        "gap:0.5rem; margin-top:0.5rem;'>"
+        + _secondary_card(
+            "전체 분석 case",
+            f"{total_cases:,}",
+            "VAE 점수 부여된 모집단",
+        )
+        + _secondary_card(
+            "q90 진입 case",
+            f"{high_q90:,}",
+            f"TOP 10% · score ≥ {q90:.3f}",
+        )
+        + _secondary_card(
+            "VAE 단독 발견",
+            f"{vae_only_discovery:,}",
+            "Phase 1 즉시검토 외 ∩ VAE q95+",
+        )
+        + "</div>"
+    )
+
+    st.markdown(
+        f"<div style='font-family:{typography};'>{primary_html}{secondary_html}</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def _render_phase2_family_case_bar(
     overlays: list[dict],
     *,
@@ -1201,7 +1459,18 @@ def _render_phase2_family_case_bar(
     """
     import plotly.graph_objects as go
 
-    counter = _family_case_contribution_counts(overlays)
+    # native case 기준 (사용자 결정 2026-05-28). overlay 인자는 시그니처 호환용.
+    from dashboard.components.phase2_native_case_metrics import (
+        count_native_cases_by_family,
+        count_native_cases_total,
+        resolve_phase2_case_set_from_state,
+    )
+
+    del overlays
+    case_set = resolve_phase2_case_set_from_state()
+    counter = dict(count_native_cases_by_family(case_set))
+    # VAE/unsupervised 는 별도 VAE 분포 패널로 분리해 노출하므로 막대 차트에서 제외.
+    counter.pop("unsupervised", None)
 
     active_rows = sorted(counter.items(), key=lambda kv: -kv[1])
     dormant_rows = [(family, 0) for family in DORMANT_FAMILIES]
@@ -1242,11 +1511,14 @@ def _render_phase2_family_case_bar(
         if state_id == _PHASE2_STATE_VALID_NO_HIT:
             st.info("분석 완료 — Phase 2 분석 영역별 적중 없음. 정상 결과입니다.")
         else:
-            st.info("overlay 가 없어 분석 영역별 적중을 표시할 수 없습니다. Phase 2 재추론하세요.")
+            st.info(
+                "PHASE2 native case 가 없어 분석 영역별 적중을 표시할 수 없습니다. "
+                "Phase 2 재추론하세요."
+            )
         return
 
-    case_total = len({str(o.get("phase1_case_id") or "").strip() for o in overlays if o})
-    case_total = case_total or len(overlays)
+    # case_total = native case 총수 (5 family 합). family 별 % 의 분모.
+    case_total = count_native_cases_total(case_set)
     bar_pcts = [v / case_total * 100 if case_total else 0.0 for v in values]
     bar_text = [
         f"  {v:,} 건  ·  {p:.1f}%" if family in ACTIVE_FAMILIES else "  현재 미실행중"
@@ -1272,8 +1544,8 @@ def _render_phase2_family_case_bar(
         )
     )
     fig.update_layout(
-        height=400,
-        margin={"l": 6, "r": 120, "t": 40, "b": 20},
+        height=380,
+        margin={"l": 6, "r": 120, "t": 30, "b": 10},
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         bargap=0.42,
@@ -1413,10 +1685,7 @@ def _render_phase2_empty_overview(
 ) -> None:
     """KPI 카드 대신 안내 + 활성 영역 preview chip 만 표시."""
     msg = _overlay_status_message(status, partition)
-    hint = (
-        "분석 영역 단위 집계는 <b>분석 영역 신호</b> 탭에서, "
-        "학습 기준은 <b>모델 기준</b> 탭에서 확인할 수 있습니다."
-    )
+    hint = "분석 영역 단위 집계는 상단 family 탭에서 확인할 수 있습니다."
     st.markdown(
         f"<div class='p2-empty-card'>{msg}<span class='p2-empty-hint'>{hint}</span></div>",
         unsafe_allow_html=True,
@@ -1519,6 +1788,26 @@ def _family_case_contribution_counts(overlays: list[dict] | None) -> dict[str, i
     return counter
 
 
+def _family_subdetector_case_counts(overlays: list[dict] | None, family: str) -> dict[str, int]:
+    """family 내 subdetector 별 고유 Phase1 case 수."""
+    case_ids_by_code: dict[str, set[str]] = {}
+    for overlay in overlays or []:
+        case_id = str(overlay.get("phase1_case_id") or "").strip()
+        if not case_id:
+            continue
+        entry = _find_family_contribution(overlay, family)
+        if entry is None or not _family_contribution_has_positive_signal(entry):
+            continue
+        for sub in entry.get("sub_detectors") or []:
+            if not isinstance(sub, dict):
+                continue
+            code = str(sub.get("code") or sub.get("label") or "").strip()
+            if not code:
+                continue
+            case_ids_by_code.setdefault(code, set()).add(case_id)
+    return {code: len(case_ids) for code, case_ids in case_ids_by_code.items()}
+
+
 def _build_all_family_summary(
     partition_summary: dict | None,
     snapshot: dict | None = None,
@@ -1527,12 +1816,19 @@ def _build_all_family_summary(
 ) -> list[dict]:
     """active(신호 desc) + dormant 순서로 모두 반환.
 
-    Why: 신호 카운트는 상단 막대 차트와 동일하게 overlays 의 family_contributions
-         기반 case 카운트(중복 포함)로 모든 active family 에 통일. partition_summary
-         의 row-level nonzero_count(또는 unsupervised high_count_q95)와 case-level
-         집계가 단위가 다른데 같은 '건' 라벨로 노출돼 막대와 어긋나 보였다.
+    Why: 신호 카운트를 PHASE2 native case (Phase2CaseSet) 의 family 별 case 수로
+         통일 (사용자 결정 2026-05-28). 기존 overlay 기반 case-family contribution
+         카운트는 PHASE1 case 단위라 PHASE2 가 산출한 case 와 정의가 달랐다.
+         overlay 인자는 시그니처 호환을 위해 받되 본문에서는 사용하지 않는다.
     """
-    case_counts = _family_case_contribution_counts(overlays)
+    from dashboard.components.phase2_native_case_metrics import (
+        count_native_cases_by_family,
+        resolve_phase2_case_set_from_state,
+    )
+
+    del overlays
+    case_set = resolve_phase2_case_set_from_state()
+    case_counts = count_native_cases_by_family(case_set)
     active_rows = [
         _build_family_overview_row(family, partition_summary, snapshot=snapshot)
         for family in ACTIVE_FAMILIES
@@ -1585,9 +1881,16 @@ _DORMANT_REASON_DETAIL_KR: dict[str, str] = {
 def _phase2_family_summary_row_html(item: dict) -> str:
     family_key = str(item["family"])
     family = html.escape(family_key)
+    is_timeseries = family_key == "timeseries"
     is_dormant = str(item.get("상태", "")) == "대기"
-    label = html.escape(str(item["분석 영역"]))
+    label_text = str(item["분석 영역"])
+    if is_timeseries and not label_text.endswith("(보조)"):
+        label_text = f"{label_text} (보조)"
+    label = html.escape(label_text)
     purpose = html.escape(str(item["무엇을 잡나"]))
+    # 시나리오는 활성 row 에만 노출. 비활성은 신호가 없어 시나리오 매칭 의미 없음.
+    scenario = str(item.get("주요 감사 시나리오", "") or "")
+    support_note_html = ""
 
     if is_dormant:
         opacity = "0.55"
@@ -1599,21 +1902,30 @@ def _phase2_family_summary_row_html(item: dict) -> str:
         title_html = (
             f"<span style='color:#6B7280; font-size:0.875rem; font-weight:600;'>{label}</span>"
         )
-        activation_html = ""
+        scenario_html = ""
     else:
         opacity = "1"
+        is_unsupervised = family_key == "unsupervised"
         signal_value = int(item.get("signal_value", 0) or 0)
         signal_label = html.escape(str(item["이번 데이터 반응"]))
         icon, badge_bg, badge_color = _phase2_family_badge_style(signal_value)
+        # VAE 는 별도 분포 패널(_render_phase2_vae_distribution / meta) 에서 카운트
+        # 와 분위 통계를 노출한다. 모든 case 에 score 가 매겨져 100% 신호로 잡혀
+        # 의미 없는 row 헤더 배지는 제거.
         badge_html = (
-            f"<span style='background:{badge_bg}; color:{badge_color}; "
-            "font-size:0.72rem; font-weight:600; padding:2px 8px; "
-            f"border-radius:999px; white-space:nowrap;'>{icon} {signal_label}</span>"
+            ""
+            if is_unsupervised
+            else (
+                f"<span style='background:{badge_bg}; color:{badge_color}; "
+                "font-size:0.72rem; font-weight:600; padding:2px 8px; "
+                f"border-radius:999px; white-space:nowrap;'>{icon} {signal_label}</span>"
+            )
         )
         title_html = (
             f"<span style='color:#111827; font-size:0.875rem; font-weight:600;'>{label}</span>"
         )
-        activation_html = ""
+        scenario_html = _phase2_audit_scenario_chips_html(scenario)
+        support_note_html = _phase2_timeseries_support_note_html() if is_timeseries else ""
 
     return (
         f"<div data-family='{family}' "
@@ -1625,7 +1937,42 @@ def _phase2_family_summary_row_html(item: dict) -> str:
         "</div>"
         "<div style='color:#6B7280; font-size:0.78rem; "
         f"line-height:1.55; margin-top:4px;'>{purpose}</div>"
-        f"{activation_html}"
+        f"{scenario_html}"
+        f"{support_note_html}"
+        "</div>"
+    )
+
+
+def _phase2_audit_scenario_chips_html(scenario: str, *, max_items: int = 3) -> str:
+    """주요 감사 시나리오를 row 안에서 눈에 띄는 chip 묶음으로 표시."""
+    parts = [part.strip() for part in str(scenario or "").split(",") if part.strip()]
+    if not parts:
+        return ""
+    chips = "".join(
+        "<span style='display:inline-flex; align-items:center; "
+        "background:#FFF7ED; color:#9A3412; border:1px solid #FED7AA; "
+        "border-radius:999px; padding:2px 8px; font-size:0.72rem; "
+        "font-weight:600; line-height:1.35; white-space:nowrap;'>"
+        f"{html.escape(part)}</span>"
+        for part in parts[:max_items]
+    )
+    return (
+        "<div style='display:flex; align-items:flex-start; gap:0.45rem; "
+        "margin-top:7px; flex-wrap:wrap;'>"
+        "<span style='color:#6B7280; font-size:0.74rem; font-weight:700; "
+        "line-height:1.6; white-space:nowrap;'>주요 감사 시나리오</span>"
+        f"{chips}"
+        "</div>"
+    )
+
+
+def _phase2_timeseries_support_note_html() -> str:
+    """시점 이상 lane 이 보조 신호인 이유를 짧게 표시."""
+    return (
+        "<div style='color:#64748B; font-size:0.74rem; line-height:1.5; "
+        "margin-top:5px;'>"
+        "결산·시점 신호는 정상 업무에서도 자주 발생하므로 단독 판단보다 "
+        "다른 영역 신호를 해석하는 보조 맥락으로 봅니다."
         "</div>"
     )
 
@@ -1775,6 +2122,7 @@ def _build_family_overview_row(
         "상태": status,
         "분석 영역": _FAMILY_LABELS_KR.get(family, family),
         "무엇을 잡나": _FAMILY_AUDIT_PURPOSE_KR.get(family, "-"),
+        "주요 감사 시나리오": _FAMILY_AUDIT_SCENARIO_KR.get(family, "-"),
         "이번 데이터 반응": signal_label,
         "감사인이 확인할 것": _FAMILY_AUDIT_CHECK_KR.get(family, "-"),
         "활성 조건/비고": note,
@@ -1817,271 +2165,25 @@ def _dormant_activation_note(family: str, snapshot: dict | None) -> str:
     return f"{base} · 준비된 기준 v{version}"
 
 
-# ── KPI 카드 디자인 (전기 비교 탭 _KPI_CARD_CSS 차용) ──────────
-
-_PHASE2_KPI_CSS = """
-<style>
-.p2-kpi-section { margin:0.25rem 0 0.8rem; }
-.p2-kpi-section-header { display:flex; align-items:center; gap:0.5rem;
-                         margin:0 0 0.45rem 0.15rem; }
-.p2-kpi-section-dot { width:6px; height:6px; border-radius:999px; }
-.p2-kpi-section-title { color:#374151; font-size:0.78rem; font-weight:600;
-                        letter-spacing:0.06em; text-transform:uppercase; }
-.p2-kpi-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:0.55rem; }
-.p2-kpi-card { background:#FFFFFF; border:1px solid #E5E7EB; border-radius:10px;
-               padding:0.75rem 0.95rem; box-shadow:0 1px 2px rgba(15,23,42,0.04);
-               border-left:3px solid var(--accent,#E5E7EB); }
-.p2-kpi-label { color:#6B7280; font-size:0.75rem; font-weight:500;
-                letter-spacing:0.01em; margin-bottom:0.35rem; }
-.p2-kpi-row { display:flex; align-items:baseline; justify-content:space-between;
-              gap:0.4rem; }
-.p2-kpi-value { color:#111827; font-size:1.4rem; font-weight:700;
-                letter-spacing:-0.02em; line-height:1.15; }
-.p2-kpi-unit { font-size:0.8rem; font-weight:500; color:#6B7280; margin-left:2px; }
-.p2-kpi-sub { color:#9CA3AF; font-size:0.72rem; margin-top:0.4rem;
-              border-top:1px dashed #F1F3F5; padding-top:0.35rem; }
-</style>
-"""
-
-_PHASE2_KPI_COLORS: dict[str, str] = {
-    "scale": "#2563EB",  # blue-600 — 분석 규모
-    "evidence": "#7C3AED",  # violet-600 — 근거 강도
-}
-
-_TIER_LABELS: dict[str, str] = {
-    "strong": "강 (Strong)",
-    "moderate": "중 (Moderate)",
-    "weak": "약 (Weak)",
-}
-
-_REVIEW_BAND_LABELS: dict[str, str] = {
-    "immediate": "즉시검토",
-    "review": "검토대상",
-    "candidate": "참고후보",
-    "none": "후순위",
-}
-
-_PHASE1_PRIORITY_BAND_TO_REVIEW_BAND: dict[str, str] = {
-    "high": "immediate",
-    "medium": "review",
-    "low": "candidate",
-}
-
-
-def _is_phase1_immediate_case(case: object) -> bool:
-    """Match Phase 1 UI immediate rule: priority_score >= 0.90."""
-
-    try:
-        return float(getattr(case, "priority_score", 0.0) or 0.0) >= 0.90
-    except (TypeError, ValueError):
-        return str(getattr(case, "priority_band", "") or "").lower() == "high"
-
-
-def _phase1_rank_score(case: object) -> float:
-    """Phase1 display rank score used for rank-percentile banding."""
-
-    for attr in ("composite_sort_score", "priority_score", "base_priority_score"):
-        if not hasattr(case, attr):
-            continue
-        raw_value = getattr(case, attr)
-        if raw_value in (None, ""):
-            continue
-        try:
-            return float(raw_value)
-        except (TypeError, ValueError):
-            continue
-    return 0.0
-
-
-def _phase1_priority_bands_by_case(
-    case_lookup: dict[str, object], case_ids: set[str] | None = None
-) -> dict[str, str]:
-    """Case id -> PHASE1 review band from existing priority_band."""
-
-    ids = case_ids if case_ids is not None else set(case_lookup)
-    bands: dict[str, str] = {}
-    for case_id in ids:
-        normalized_case_id = str(case_id or "").strip()
-        if not normalized_case_id:
-            continue
-        case = case_lookup.get(normalized_case_id)
-        raw_band = (
-            str(getattr(case, "priority_band", "") if case is not None else "").strip().lower()
-        )
-        bands[normalized_case_id] = _PHASE1_PRIORITY_BAND_TO_REVIEW_BAND.get(raw_band, "candidate")
-    return bands
-
-
-def _phase2_overlay_rank_score(overlay: dict) -> float:
-    """Approximate PHASE2 Noisy-OR score from overlay family ECDF values."""
-
-    contributions = overlay.get("family_contributions") or []
-    survival = 1.0
-    has_signal = False
-    for entry in contributions:
-        try:
-            ecdf = float(entry.get("ecdf") or 0.0)
-        except (TypeError, ValueError):
-            ecdf = 0.0
-        ecdf = max(0.0, min(ecdf, 1.0))
-        if ecdf > 0.0:
-            has_signal = True
-        survival *= 1.0 - ecdf
-    if has_signal:
-        return 1.0 - survival
-    try:
-        return float(overlay.get("max_family_ecdf") or 0.0)
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def _phase2_rank_bands_by_case(overlays: list[dict]) -> dict[str, str]:
-    """Case id -> rank-percentile PHASE2 band, based on overlay Noisy-OR score."""
-
-    scored: list[tuple[float, str]] = []
-    for overlay in overlays:
-        case_id = str(overlay.get("phase1_case_id") or "").strip()
-        if not case_id:
-            continue
-        scored.append((_phase2_overlay_rank_score(overlay), case_id))
-    scored.sort(key=lambda item: item[0], reverse=True)
-    total_cases = len(scored)
-    bands: dict[str, str] = {}
-    for idx, (score, case_id) in enumerate(scored, start=1):
-        bands[case_id] = rank_percentile_band(idx, total_cases, has_signal=score > 0.0)
-    return bands
-
-
-def _count_review_bands(bands_by_case: dict[str, str]) -> dict[str, int]:
-    """Exclusive count for immediate / review / candidate bands."""
-
-    counts = {"immediate": 0, "review": 0, "candidate": 0}
-    for band in bands_by_case.values():
-        if band in counts:
-            counts[band] += 1
-    return counts
-
-
-_REVIEW_BAND_LEVEL: dict[str, int] = {
-    "immediate": 1,
-    "review": 2,
-    "candidate": 3,
-}
-
-
-def _count_common_review_bands(
-    left_bands_by_case: dict[str, str],
-    right_bands_by_case: dict[str, str],
-) -> dict[str, int]:
-    """Exclusive common band counts from two rank-band mappings.
-
-    A case is common at level N when both sources rank it within that cumulative
-    level. Exclusive cells subtract the previous cumulative level so matrix
-    columns do not double count.
-    """
-
-    common_case_ids = set(left_bands_by_case) & set(right_bands_by_case)
-
-    def cumulative_count(max_level: int) -> int:
-        count = 0
-        for case_id in common_case_ids:
-            left_level = _REVIEW_BAND_LEVEL.get(left_bands_by_case.get(case_id, "none"), 99)
-            right_level = _REVIEW_BAND_LEVEL.get(right_bands_by_case.get(case_id, "none"), 99)
-            if left_level <= max_level and right_level <= max_level:
-                count += 1
-        return count
-
-    immediate = cumulative_count(1)
-    review_cumulative = cumulative_count(2)
-    candidate_cumulative = cumulative_count(3)
-    return {
-        "immediate": immediate,
-        "review": max(review_cumulative - immediate, 0),
-        "candidate": max(candidate_cumulative - review_cumulative, 0),
-    }
-
-
-def _build_scale_kpi_cards(
-    overlays: list[dict],
+def _count_active_families(
     partition_summary: dict | None,
     *,
-    overlay_status: str = "available",
-) -> list[str]:
-    """분석 규모 3 KPI 카드: 분석 대상 케이스 / Phase2 신호 케이스 / 활성 분석 영역."""
-    accent = _PHASE2_KPI_COLORS["scale"]
-    total_cases = len(overlays)
-    signaled = sum(1 for o in overlays if o.get("top_family"))
-    signal_ratio = (signaled / total_cases * 100.0) if total_cases else 0.0
-    active_family_count = _count_active_families(partition_summary)
-    signaled_value = f"{signaled:,}" if overlay_status == "available" else "-"
-    signaled_sub = (
-        f"전체의 {signal_ratio:.1f}%"
-        if overlay_status == "available" and total_cases
-        else _overlay_status_short_text(overlay_status)
-    )
-    return [
-        _build_phase2_kpi_card(
-            label="분석 대상 케이스",
-            value_text=f"{total_cases:,}",
-            unit="건",
-            sub_text="Phase 1 검토 케이스 전체",
-            accent=accent,
-        ),
-        _build_phase2_kpi_card(
-            label="Phase 2 신호 케이스",
-            value_text=signaled_value,
-            unit="건",
-            sub_text=signaled_sub,
-            accent=accent,
-        ),
-        _build_phase2_kpi_card(
-            label="활성 분석 영역",
-            value_text=f"{active_family_count}",
-            unit="개",
-            sub_text="신호가 잡힌 분석 영역 수 (max 5)",
-            accent=accent,
-        ),
-    ]
+    overlays: list[dict] | None = None,
+) -> int:
+    """신호가 있는 표시 lane 수.
 
+    overlay 가 있으면 ribbon / lane matrix / family hit bar 모두 같은 case-family
+    contribution 단위를 사용한다. partition_summary 는 overlay 가 없을 때만 row-level
+    fallback 으로 사용한다.
+    """
+    active = {"unsupervised", "timeseries", "relational", "duplicate", "intercompany"}
+    case_counts = _family_case_contribution_counts(overlays)
+    if overlays:
+        return sum(1 for family in active if int(case_counts.get(family, 0) or 0) > 0)
 
-def _build_evidence_tier_kpi_cards(
-    overlays: list[dict],
-    *,
-    overlay_status: str = "available",
-) -> list[str]:
-    """PHASE2 검토 등급 3 KPI 카드: 즉시검토 / 검토대상 / 후보."""
-    accent = _PHASE2_KPI_COLORS["evidence"]
-    band_counts = _count_phase2_review_bands(overlays)
-    total_tagged = sum(band_counts.values()) or 0
-    cutoff_caption = rank_band_caption(len(overlays)) if overlays else ""
-    cards: list[str] = []
-    for band in ("immediate", "review", "candidate"):
-        count = band_counts.get(band, 0)
-        ratio = (count / total_tagged * 100.0) if total_tagged else 0.0
-        value = f"{count:,}" if overlay_status == "available" else "-"
-        sub = (
-            f"{cutoff_caption} · 현재 {ratio:.1f}%"
-            if overlay_status == "available" and total_tagged
-            else _overlay_status_short_text(overlay_status)
-        )
-        cards.append(
-            _build_phase2_kpi_card(
-                label=_REVIEW_BAND_LABELS[band],
-                value_text=value,
-                unit="건",
-                sub_text=sub,
-                accent=accent,
-            )
-        )
-    return cards
-
-
-def _count_active_families(partition_summary: dict | None) -> int:
-    """partition_summary 에서 nonzero hit 가 있는 active family 수."""
     if not partition_summary:
         return 0
     families = partition_summary.get("families") or {}
-    active = {"unsupervised", "timeseries", "relational", "duplicate", "intercompany"}
     count = 0
     for name, payload in families.items():
         if name not in active or not isinstance(payload, dict):
@@ -2101,17 +2203,6 @@ def _count_evidence_tiers(overlays: list[dict]) -> dict[str, int]:
         tier = str(overlay.get("max_evidence_tier") or "").strip().lower()
         if tier in counts:
             counts[tier] += 1
-    return counts
-
-
-def _count_phase2_review_bands(overlays: list[dict]) -> dict[str, int]:
-    """Rank-percentile PHASE2 review band distribution."""
-
-    counts: dict[str, int] = {"immediate": 0, "review": 0, "candidate": 0, "none": 0}
-    for band in _phase2_rank_bands_by_case(overlays).values():
-        if band not in counts:
-            band = "none"
-        counts[band] += 1
     return counts
 
 
@@ -2190,13 +2281,13 @@ def _overlay_status_message(status: str, partition: str) -> str:
     if status == "partition_mismatch":
         return (
             f"선택한 partition({partition})과 현재 Phase 2 추론 결과의 partition이 다릅니다. "
-            "분석 영역 신호 탭의 집계는 선택 연도 기준으로 볼 수 있지만, case-level KPI와 Lane은 "
+            "상단 family 탭의 집계는 선택 연도 기준으로 볼 수 있지만, case-level KPI는 "
             "현재 추론 결과와 일치할 때만 표시합니다."
         )
     if status == "placeholder":
         return (
             "현재 Phase 2 결과에는 case-level 분석 영역 attribution이 아직 연결되지 않았습니다. "
-            "분석 영역 신호 탭의 aggregate hit는 확인할 수 있지만, 신호 케이스 수와 Lane은 "
+            "상단 family 탭의 aggregate hit는 확인할 수 있지만, 신호 케이스 수는 "
             "0건으로 해석하면 안 됩니다."
         )
     if status == "missing":
@@ -2236,47 +2327,54 @@ def _overlay_status_message(status: str, partition: str) -> str:
     return ""
 
 
-def _render_kpi_section(title: str, color: str, cards: list[str]) -> None:
-    """카테고리 헤더 + 카드 그리드 한 섹션."""
-    html = (
-        "<div class='p2-kpi-section'>"
-        "<div class='p2-kpi-section-header'>"
-        f"<span class='p2-kpi-section-dot' style='background:{color};'></span>"
-        f"<span class='p2-kpi-section-title'>{title}</span>"
-        "</div>"
-        "<div class='p2-kpi-grid'>" + "".join(cards) + "</div>"
-        "</div>"
-    )
-    st.markdown(html, unsafe_allow_html=True)
-
-
-def _build_phase2_kpi_card(
-    *,
-    label: str,
-    value_text: str,
-    unit: str | None,
-    sub_text: str,
-    accent: str,
-) -> str:
-    """단일 KPI 카드 HTML — 전기 비교 카드와 동일한 마크업."""
-    unit_html = f"<span class='p2-kpi-unit'>{unit}</span>" if unit else ""
-    return (
-        f"<div class='p2-kpi-card' style='--accent:{accent};'>"
-        f"<div class='p2-kpi-label'>{label}</div>"
-        f"<div class='p2-kpi-row'>"
-        f"<div class='p2-kpi-value'>{value_text}{unit_html}</div>"
-        f"</div>"
-        f"<div class='p2-kpi-sub'>{sub_text}</div>"
-        f"</div>"
-    )
-
-
 # ──────────────────────────────────────────────────────────────
-# 새 sub-tab skeleton: 분석 영역별 / 위험 신호별 / 통계결과
-# Why: Phase 1 결과 탭(데이터 정합성 / 검토 케이스 / 통계결과)과 일관된 구조로
-#      Phase 2 결과 화면을 재구성. 기존 분석 영역 신호 / 검토 Lane / 모델 기준은
-#      더이상 호출하지 않는다.
+# 새 sub-tab skeleton: 전체 요약 + family별 독립 tab.
+# Why: Phase 2는 통합 점수/검토등급 tab이 아니라 family lane별 보조 분석으로 노출한다.
 # ──────────────────────────────────────────────────────────────
+
+
+def _render_phase2_family_tab(
+    snapshot: dict | None,
+    partition: str,
+    partition_summary: dict | None,
+    family: str,
+) -> None:
+    """단일 Phase2 family 탭 — 영역 카드 + family case 상세."""
+    del snapshot
+
+    families_payload = (partition_summary or {}).get("families") or {}
+    from dashboard._state import KEY_PHASE2_RESULT
+
+    phase2_result = st.session_state.get(KEY_PHASE2_RESULT)
+    overlays, overlay_status = _resolve_display_overlays(phase2_result, partition)
+    case_counts = _family_case_contribution_counts(overlays)
+    subdetector_case_counts = _family_subdetector_case_counts(overlays, family)
+
+    source_suffix = _phase2_signal_source_suffix(partition_summary)
+    st.markdown(f"#### {_FAMILY_LABELS_KR.get(family, family)}{source_suffix}")
+    _render_phase2_signal_source_caption(partition_summary)
+    with st.container(border=True):
+        _render_phase2_family_section_card(
+            family,
+            families_payload.get(family) or {},
+            case_count=int(case_counts.get(family, 0) or 0),
+            subdetector_case_counts=subdetector_case_counts,
+        )
+    if family == "unsupervised":
+        with st.container(border=True):
+            _render_phase2_vae_distribution(
+                overlays,
+                empty_state=None,
+                chart_key="phase2_vae_distribution_family_tab",
+                show_description=False,
+            )
+    _render_phase2_family_case_section(
+        family,
+        overlays,
+        overlay_status=overlay_status,
+        partition=partition,
+        phase2_result=phase2_result,
+    )
 
 
 def _render_phase2_analysis_area_tab(
@@ -2294,6 +2392,9 @@ def _render_phase2_analysis_area_tab(
     families_payload = (partition_summary or {}).get("families") or {}
     overlays = _resolve_phase2_overlays_from_state()
     case_counts = _family_case_contribution_counts(overlays)
+    subdetector_case_counts_by_family = {
+        family: _family_subdetector_case_counts(overlays, family) for family in ACTIVE_FAMILIES
+    }
 
     source_suffix = _phase2_signal_source_suffix(partition_summary)
     st.markdown(f"#### 활성 분석 영역{source_suffix}")
@@ -2307,6 +2408,7 @@ def _render_phase2_analysis_area_tab(
                 family,
                 payload,
                 case_count=int(case_counts.get(family, 0) or 0),
+                subdetector_case_counts=subdetector_case_counts_by_family.get(family, {}),
             )
 
     st.markdown("#### 추가 분석 영역 (대기)")
@@ -2326,12 +2428,24 @@ def _render_phase2_family_section_card(
     payload: dict,
     *,
     case_count: int,
+    subdetector_case_counts: dict[str, int] | None = None,
 ) -> None:
     """단일 family 영역 카드 — 헤더(라벨/케이스 수) + 설명 + subdetector 표."""
     label_kr = _FAMILY_LABELS_KR.get(family, family)
+    if family == "timeseries":
+        label_kr = f"{label_kr} (보조)"
     accent = _FAMILY_ACCENT.get(family, "#9CA3AF")
-    purpose = _FAMILY_AUDIT_PURPOSE_KR.get(family, "-")
-    audit_check = _FAMILY_AUDIT_CHECK_KR.get(family, "-")
+    if family == "unsupervised":
+        purpose = (
+            "정해진 룰로 설명하기 어려운 금액·계정·거래속성 조합이 정상 전표 분포에서 "
+            "얼마나 벗어났는지 봅니다."
+        )
+        scenario_html = ""
+        support_note_html = _phase2_vae_family_note_html()
+    else:
+        purpose = _FAMILY_AUDIT_PURPOSE_KR.get(family, "-")
+        scenario_html = _phase2_audit_scenario_chips_html(_FAMILY_AUDIT_SCENARIO_KR.get(family, ""))
+        support_note_html = _phase2_timeseries_support_note_html() if family == "timeseries" else ""
 
     st.markdown(
         f"<div style='border-left:4px solid {accent}; padding:2px 0 4px 12px;"
@@ -2346,132 +2460,578 @@ def _render_phase2_family_section_card(
         f"</div>"
         f"<div style='color:#374151; font-size:0.82rem; margin-top:4px; line-height:1.5;'>"
         f"{purpose}</div>"
-        f"<div style='color:#6B7280; font-size:0.74rem; margin-top:2px;'>"
-        f"감사인 확인 포인트: {audit_check}</div>"
+        f"{scenario_html}"
+        f"{support_note_html}"
         f"</div>",
         unsafe_allow_html=True,
     )
 
     sub_lookup = payload.get("sub_detectors") or {}
+    count_column = "적중 case 수" if subdetector_case_counts is not None else "탐지 hit 수"
     rows: list[dict] = []
     for fam, code, label in SUB_DETECTORS:
         if fam != family:
             continue
         sub_payload = sub_lookup.get(code) or {}
+        if subdetector_case_counts is not None:
+            signal_count = int(subdetector_case_counts.get(code, 0) or 0)
+        else:
+            signal_count = int(sub_payload.get("hit_count") or 0)
         rows.append(
             {
                 "코드": code,
-                "세부 탐지": str(sub_payload.get("label") or label),
-                "적중 건수": int(sub_payload.get("hit_count") or 0),
+                "세부 탐지 내용": _phase2_subdetector_display_label(
+                    code,
+                    str(sub_payload.get("label") or label),
+                    include_code=False,
+                    include_tier=False,
+                ),
+                count_column: signal_count,
             }
         )
     if rows:
         st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
-    else:
-        st.caption("세부 탐지 항목 정보가 없습니다.")
+        if subdetector_case_counts is not None:
+            st.caption(
+                "위 숫자는 세부 탐지별 고유 Phase1 case 수입니다. 한 case가 여러 세부 탐지에 "
+                "걸리면 각 세부 탐지에 중복 집계됩니다."
+            )
+        else:
+            st.caption(
+                "위 숫자는 세부 탐지기의 모집단 hit 수입니다. 감사인이 실제로 검토할 대상은 "
+                "아래 Case 목록에서 우선순위로 추린 case입니다."
+            )
+        _render_phase2_subdetector_descriptions(family, rows)
 
 
-def _render_phase2_risk_signal_tab(
-    snapshot: dict | None,
-    partition: str,
-    partition_summary: dict | None,
-) -> None:
-    """③ 위험 신호별 — Phase 1 검토 케이스 패턴 차용.
-
-    Why: Phase 2 가 5-family Noisy-OR rank 로 평가한 케이스를 우선순위 desc 로
-         정렬해 Top N master 로 보여준다. 즉시검토/검토대상/참고후보 등급은 보조 컬럼.
-    """
-    del snapshot, partition_summary
-    from dashboard._state import KEY_PHASE2_RESULT
-
-    phase2_result = st.session_state.get(KEY_PHASE2_RESULT)
-    overlays, overlay_status = _resolve_display_overlays(phase2_result, partition)
-    empty_state = _resolve_phase2_empty_state(
-        phase2_result=phase2_result,
-        overlays=overlays,
-        phase1_basis_status=str(getattr(phase2_result, "phase1_case_basis_status", "") or "")
-        or None,
-        overlay_status=overlay_status,
-    )
-    if empty_state.state_id != _PHASE2_STATE_AVAILABLE:
-        st.info(empty_state.title or "Phase 2 케이스를 표시할 수 없습니다.")
-        if empty_state.body:
-            st.caption(empty_state.body)
-        return
-
-    st.markdown(
-        """
-<div style="background:#F3F4F6; border:1px solid #E5E7EB; border-radius:8px;
-            padding:0.75rem 1rem; margin:0.25rem 0 1rem; color:#374151;">
-  <div style="font-weight:600; margin-bottom:0.45rem; color:#111827;">
-    ℹ 위험 신호 우선순위 안내
-  </div>
-  <ul style="margin:0; padding-left:1.2rem; font-size:0.88rem; line-height:1.6;">
-    <li><strong>즉시검토 (rank 상위 1.25%)</strong>
-        — Phase 2 가 5개 분석 영역을 종합해 가장 높이 평가한 케이스</li>
-    <li><strong>검토대상 / 참고후보</strong> — rank percentile 기준 차순위 그룹</li>
-    <li>Phase 1 등급과 함께 보면 두 단계 모두에서 잡힌 case 를 빠르게 식별 가능</li>
-  </ul>
-</div>
-""",
-        unsafe_allow_html=True,
-    )
-
-    case_lookup = _resolve_phase1_case_lookup_from_state()
-    case_rows = _phase2_risk_signal_master_rows(overlays, case_lookup, top_n=200)
-    if not case_rows:
-        st.info("표시할 Phase 2 위험 신호 케이스가 없습니다.")
-        return
-
-    frame = pd.DataFrame(case_rows)
-    st.dataframe(frame, width="stretch", hide_index=True)
-    st.caption(
-        "표는 Phase 2 5-family Noisy-OR 점수 desc 로 정렬되어 있습니다. "
-        "Top 200 까지 노출 (행 클릭 시 case drilldown 은 추후 연결)."
+def _phase2_vae_family_note_html() -> str:
+    return (
+        "<div style='margin-top:0.45rem; padding:0.6rem 0.7rem; "
+        "border:1px solid #E5E7EB; border-radius:8px; background:#F9FAFB;'>"
+        "<div style='color:#475569; font-size:0.78rem; line-height:1.55;'>"
+        "<div><b style='color:#111827;'>VAE Deep Learning score</b>는 VAE와 "
+        "Isolation Forest가 학습한 정상 전표 분포에서 각 case가 얼마나 멀리 "
+        "떨어져 있는지를 봅니다.</div>"
+        "<div style='margin-top:4px;'>점수가 클수록 정상 분포의 꼬리에 있는 case이며, "
+        "q95 cutoff 위쪽 꼬리를 감사인 우선 검토 후보로 봅니다.</div>"
+        "<div style='margin-top:4px;'>하위 score 영역은 정상 분포에 가까운 case로 보아 "
+        "검토 우선순위에서 제외합니다.</div>"
+        "</div>"
+        "</div>"
     )
 
 
-def _phase2_risk_signal_master_rows(
+def _render_phase2_family_case_section(
+    family: str,
     overlays: list[dict],
-    case_lookup: dict,
     *,
-    top_n: int = 200,
-) -> list[dict]:
-    """Phase 2 위험 신호 master row — overlay + Phase 1 case 메타 join."""
-    rank_bands = _phase2_rank_bands_by_case(overlays)
+    overlay_status: str,
+    partition: str,
+    phase2_result=None,
+) -> None:
+    """Family 탭 하단 case 목록 — PHASE2 native case 우선, 부재 시 안내.
+
+    S7 변경: 기존 overlay 기반 PHASE1 case master 대신 ``phase2_case_set`` 의
+    family 별 native case row 를 표시. 사용자 lock 결정 5에 따라 case_set 부재
+    시 명시적 안내 + "PHASE2 추론 실행" 버튼만 노출한다.
+    overlays / overlay_status / partition 은 신규 panel 에서 사용하지 않지만,
+    호출부 시그니처 호환을 위해 유지한다.
+    """
+    del overlays, overlay_status, partition  # 신규 panel 는 case_set 직접 사용
+
+    from dashboard._state import KEY_PHASE1_RESULT
+    from dashboard.components.phase2_native_case_panel import (
+        render_phase2_native_case_panel,
+    )
+
+    case_set = getattr(phase2_result, "phase2_case_set", None) if phase2_result else None
+    phase1_lookup = _build_phase2_phase1_priority_lookup(phase2_result)
+    # Why: Phase 1 의 case drilldown 과 같은 "Case 설명 → document_id master →
+    #      원장 라인" 구성을 위해 원장 데이터를 보유한 pr 을 전달.
+    pr = st.session_state.get(KEY_PHASE1_RESULT) or phase2_result
+
+    st.markdown("#### Case 목록")
+    render_phase2_native_case_panel(
+        family,
+        case_set=case_set,
+        phase1_case_lookup=phase1_lookup,
+        pr=pr,
+    )
+
+
+def _build_phase2_family_case_frame(
+    family: str,
+    overlays: list[dict],
+    *,
+    phase2_result=None,
+    max_rows: int = 1_000,
+) -> pd.DataFrame:
+    """Family contribution 이 있는 Phase1 case 목록."""
+    priority_lookup = _build_phase2_phase1_priority_lookup(phase2_result)
     rows: list[dict] = []
-    for overlay in overlays:
+    for overlay in overlays or []:
+        entry = _find_family_contribution(overlay, family)
+        if entry is None or not _family_contribution_has_positive_signal(entry):
+            continue
         case_id = str(overlay.get("phase1_case_id") or "").strip()
         if not case_id:
             continue
-        rank_score = _phase2_overlay_rank_score(overlay)
-        if rank_score <= 0.0:
+        phase1_meta = priority_lookup.get(case_id, {})
+        priority_score = phase1_meta.get("priority_score")
+        tier_token = str(entry.get("evidence_tier") or "").strip().lower()
+        sub_codes = ", ".join(
+            str(sub.get("code") or sub.get("label") or "")
+            for sub in (entry.get("sub_detectors") or [])
+            if isinstance(sub, dict) and (sub.get("code") or sub.get("label"))
+        )
+        row = {
+            "case_id": case_id,
+            "Phase1 등급": str(phase1_meta.get("priority_band", "미확인")).upper(),
+            "Phase1 점수": _format_phase2_numeric(priority_score, digits=3),
+            "ECDF": _format_phase2_numeric(entry.get("ecdf"), digits=4),
+            "대표 영역": _FAMILY_LABELS_KR.get(str(overlay.get("top_family") or ""), "-"),
+            "_phase2_tier_rank": _phase2_tier_rank(tier_token),
+            "_phase1_sort_score": float(priority_score) if priority_score is not None else -1.0,
+            "_ecdf_sort_score": _coerce_float(entry.get("ecdf")),
+            "_tail_score_sort": _coerce_float(entry.get("score")),
+        }
+        if family == "unsupervised":
+            row["꼬리점수"] = _format_phase2_numeric(entry.get("score"), digits=4)
+        else:
+            row["Phase2 강도"] = _PHASE2_EVIDENCE_TIER_KR.get(tier_token, tier_token or "-")
+            row["세부 탐지 내용"] = _phase2_subdetector_codes_to_display(
+                sub_codes,
+                include_code=False,
+                include_tier=False,
+            )
+        rows.append(row)
+    if family == "unsupervised":
+        rows.sort(
+            key=lambda row: (
+                float(row.get("_tail_score_sort") or 0.0),
+                float(row.get("_phase1_sort_score") or -1.0),
+                float(row.get("_ecdf_sort_score") or 0.0),
+            ),
+            reverse=True,
+        )
+    else:
+        rows.sort(
+            key=lambda row: (
+                int(row.get("_phase2_tier_rank") or 0),
+                float(row.get("_phase1_sort_score") or -1.0),
+                float(row.get("_ecdf_sort_score") or 0.0),
+            ),
+            reverse=True,
+        )
+    frame = pd.DataFrame(rows[:max_rows])
+    hidden = [
+        col
+        for col in (
+            "_phase2_tier_rank",
+            "_phase1_sort_score",
+            "_ecdf_sort_score",
+            "_tail_score_sort",
+        )
+        if col in frame.columns
+    ]
+    if hidden:
+        frame = frame.drop(columns=hidden)
+    return frame
+
+
+def _render_phase2_family_case_drilldown(
+    family: str,
+    case_frame: pd.DataFrame,
+    *,
+    phase2_result=None,
+) -> None:
+    """선택된 Phase2 family case 를 Phase1 검토 케이스 상세로 표시."""
+    if case_frame.empty or "case_id" not in case_frame.columns:
+        return
+
+    from dashboard._state import KEY_PHASE1_RESULT
+    from dashboard.tab_phase1 import _render_case_drilldown
+    from src.export.phase1_case_view import build_phase1_case_drilldown
+
+    pr = st.session_state.get(KEY_PHASE1_RESULT) or phase2_result
+    if pr is None:
+        st.caption("Phase 1 case 상세를 표시할 기준 결과가 없습니다.")
+        return
+
+    options = _phase2_family_case_options(case_frame)
+    if not options:
+        return
+
+    st.markdown("#### Case 상세")
+    selected_label = st.selectbox(
+        "Case 선택",
+        options=list(options.keys()),
+        key=f"phase2_family_case_select_{family}",
+    )
+    selected_case_id = options[selected_label]
+    drilldown = build_phase1_case_drilldown(pr, selected_case_id)
+    if drilldown is None:
+        st.info("선택한 case 의 Phase 1 상세 근거를 찾지 못했습니다.")
+        return
+    _render_case_drilldown(
+        drilldown,
+        pr=pr,
+        key_suffix=f"phase2_{family}_{selected_case_id}",
+    )
+
+
+def _render_phase2_family_case_master(
+    family: str,
+    case_frame: pd.DataFrame,
+    *,
+    phase2_result=None,
+) -> None:
+    """Phase1 검토 케이스와 같은 AgGrid master/detail UI."""
+    if case_frame.empty or "case_id" not in case_frame.columns:
+        return
+
+    from dashboard._state import KEY_PHASE1_RESULT
+    from dashboard.tab_phase1 import _render_case_drilldown, _render_rule_case_master
+    from src.export.phase1_case_view import build_phase1_case_drilldown
+
+    pr = st.session_state.get(KEY_PHASE1_RESULT) or phase2_result
+    if pr is None:
+        st.caption("Phase 1 case 상세를 표시할 기준 결과가 없습니다.")
+        return
+
+    case_rows = _phase2_family_case_master_rows(
+        case_frame,
+        family=family,
+        phase2_result=phase2_result,
+    )
+    hide_columns = {"전표 수", "Band"}
+    if family == "unsupervised":
+        hide_columns.update({"세부 탐지 내용", "Phase2 강도"})
+    selected_case_id = _render_rule_case_master(
+        f"phase2_{family}",
+        case_rows,
+        key_suffix=f"phase2_{family}",
+        hide_columns=hide_columns,
+        caption_override="",
+        show_header=False,
+        preserve_order=True,
+        rank_column=True,
+    )
+    if not selected_case_id:
+        st.caption("위 case 목록에서 한 줄을 선택하세요.")
+        return
+
+    drilldown = build_phase1_case_drilldown(pr, selected_case_id)
+    if drilldown is None:
+        st.info("선택한 case 의 Phase 1 상세 근거를 찾지 못했습니다.")
+        return
+    _render_case_drilldown(
+        drilldown,
+        pr=pr,
+        key_suffix=f"phase2_{family}_{selected_case_id}",
+    )
+
+
+def _phase2_family_case_master_rows(
+    case_frame: pd.DataFrame,
+    *,
+    family: str = "",
+    phase2_result=None,
+) -> list[dict]:
+    """Phase1 `_render_rule_case_master` 입력 형태로 변환."""
+    from dashboard._state import KEY_PHASE1_RESULT
+    from dashboard.tab_phase1 import _compact_case_reason, _violation_natural_label
+    from src.export.phase1_case_view import resolve_phase1_case_result
+
+    pr = st.session_state.get(KEY_PHASE1_RESULT) or phase2_result
+    phase1 = resolve_phase1_case_result(pr) if pr is not None else None
+    case_lookup = {
+        str(getattr(case, "case_id", "") or ""): case for case in getattr(phase1, "cases", []) or []
+    }
+
+    rows: list[dict] = []
+    for _index, row in case_frame.iterrows():
+        case_id = str(row.get("case_id") or "").strip()
+        if not case_id:
             continue
         case = case_lookup.get(case_id)
-        top_family = str(overlay.get("top_family") or "")
-        contributions = overlay.get("family_contributions") or []
-        signal_families = ", ".join(
-            _FAMILY_LABELS_KR.get(str(c.get("family")), str(c.get("family")))
-            for c in contributions
-            if _family_contribution_has_positive_signal(c)
-        )
-        phase1_band = str(getattr(case, "priority_band", "-") or "-").upper() if case else "-"
-        phase1_score = round(float(getattr(case, "priority_score", 0.0) or 0.0), 3) if case else 0.0
-        rows.append(
-            {
+        if case is None:
+            out = {
                 "case_id": case_id,
-                "Phase2 점수": round(rank_score, 4),
-                "Phase2 등급": _REVIEW_BAND_LABELS.get(rank_bands.get(case_id, "none"), "후순위"),
-                "대표 영역": _FAMILY_LABELS_KR.get(top_family, top_family or "-"),
-                "신호 영역 조합": signal_families or "-",
-                "Phase1 등급": phase1_band,
-                "Phase1 점수": phase1_score,
-                "전표 수": int(getattr(case, "document_count", 0) or 0) if case else 0,
-                "금액": float(getattr(case, "total_amount", 0.0) or 0.0) if case else 0.0,
+                "natural_label": case_id,
+                "priority_band": str(row.get("Phase1 등급") or "low").lower(),
+                "priority_score": _coerce_float(row.get("Phase1 점수")),
+                "document_count": 0,
+                "total_amount": 0.0,
+                "why": "",
             }
+            if family == "unsupervised":
+                out["꼬리점수"] = str(row.get("꼬리점수") or "-")
+            else:
+                out["세부 탐지 내용"] = str(row.get("세부 탐지 내용") or "-")
+                out["Phase2 강도"] = str(row.get("Phase2 강도") or "-")
+            rows.append(out)
+            continue
+        why = getattr(case, "risk_narrative", "") or getattr(case, "representative_explanation", "")
+        compact_why = _compact_case_reason(why)
+        out = {
+            "case_id": case_id,
+            "natural_label": _violation_natural_label(case),
+            "priority_band": str(getattr(case, "priority_band", "") or "low"),
+            "priority_score": float(getattr(case, "priority_score", 0.0) or 0.0),
+            "document_count": int(getattr(case, "document_count", 0) or 0),
+            "total_amount": float(getattr(case, "total_amount", 0.0) or 0.0),
+            "why": compact_why,
+        }
+        if family == "unsupervised":
+            out["꼬리점수"] = str(row.get("꼬리점수") or "-")
+        else:
+            out["세부 탐지 내용"] = str(row.get("세부 탐지 내용") or "-")
+            out["Phase2 강도"] = str(row.get("Phase2 강도") or "-")
+        rows.append(out)
+    return rows
+
+
+def _phase2_family_case_options(case_frame: pd.DataFrame) -> dict[str, str]:
+    """Family case 상세 selectbox 용 label → case_id map."""
+    options: dict[str, str] = {}
+    for _index, row in case_frame.iterrows():
+        case_id = str(row.get("case_id") or "").strip()
+        if not case_id or case_id in options.values():
+            continue
+        rank = len(options) + 1
+        band = str(row.get("Phase1 등급") or "미확인").strip()
+        tier = str(row.get("Phase2 강도") or "-").strip()
+        detector = str(row.get("세부 탐지 내용") or "-").strip()
+        detector = detector if len(detector) <= 34 else f"{detector[:31]}..."
+        label = f"{rank}. {band} · {tier} · {detector} · {case_id}"
+        options[label] = case_id
+    return options
+
+
+_PHASE2_SUBDETECTOR_LABEL_KR: dict[str, str] = {
+    "VAE-01": "VAE 분포 꼬리",
+    "TS01": "단기간 거래 폭증",
+    "TS02": "비정상 빈도",
+    "R01": "신규 거래처",
+    "R02": "휴면 계정 재활성",
+    "R03": "이전가격 이상",
+    "R04": "관계 정보 누락",
+    "R05": "희소 계정-거래처 조합",
+    "R06": "사용자 계정 범위 급증",
+    "R07": "휴면 거래처 재활성",
+    "L2-03a": "정확 중복",
+    "L2-03b": "유사 중복",
+    "L2-03c": "분할 거래",
+    "L2-03d": "시차 중복",
+    "IC01": "관계사 미대사",
+    "IC02": "관계사 금액 불일치",
+    "IC03": "관계사 시차",
+    "ic_reciprocal_flow_prob": "상호 이전 흐름",
+    "ic_amount_prob": "관계사 금액 차이",
+    "ic_unmatched_prob": "대응 전표 미확인",
+    "ic_timing_prob": "관계사 인식 시차",
+}
+
+_PHASE2_SUBDETECTOR_TIER: dict[str, str] = {
+    "VAE-01": "ml_quantile",
+    "TS01": "moderate",
+    "TS02": "weak",
+    "R01": "strong",
+    "R02": "strong",
+    "R03": "moderate",
+    "R04": "moderate",
+    "R05": "moderate",
+    "R06": "moderate",
+    "R07": "moderate",
+    "L2-03a": "strong",
+    "L2-03b": "moderate",
+    "L2-03c": "moderate",
+    "L2-03d": "weak",
+    "IC01": "strong",
+    "IC02": "moderate",
+    "IC03": "weak",
+    "ic_reciprocal_flow_prob": "strong",
+    "ic_amount_prob": "moderate",
+    "ic_unmatched_prob": "weak",
+    "ic_timing_prob": "weak",
+}
+
+
+def _phase2_subdetector_display_label(
+    code: str,
+    fallback: str = "",
+    *,
+    include_code: bool = True,
+    include_tier: bool = True,
+) -> str:
+    code_text = str(code or "").strip()
+    label = _PHASE2_SUBDETECTOR_LABEL_KR.get(code_text) or str(fallback or code_text)
+    tier = _phase2_subdetector_tier_label(code_text)
+    parts = []
+    if include_code and code_text:
+        parts.append(code_text)
+    parts.append(label)
+    text = " · ".join(parts)
+    return f"{text} ({tier})" if include_tier and tier != "-" else text
+
+
+def _phase2_subdetector_codes_to_display(
+    codes: str,
+    *,
+    include_code: bool = True,
+    include_tier: bool = True,
+) -> str:
+    tokens = [token.strip() for token in str(codes or "").split(",") if token.strip()]
+    if not tokens:
+        return "-"
+    return ", ".join(
+        _phase2_subdetector_display_label(
+            token,
+            include_code=include_code,
+            include_tier=include_tier,
         )
-    rows.sort(key=lambda r: -float(r.get("Phase2 점수") or 0.0))
-    return rows[:top_n]
+        for token in tokens
+    )
+
+
+def _phase2_subdetector_tier_label(code: str) -> str:
+    tier = _PHASE2_SUBDETECTOR_TIER.get(str(code or "").strip(), "")
+    return _PHASE2_EVIDENCE_TIER_KR.get(tier, tier or "-")
+
+
+_PHASE2_SUBDETECTOR_DESCRIPTION_KR: dict[str, str] = {
+    "VAE-01": "금액, 계정, 사용자, 거래 속성 조합이 전체 분포의 꼬리에 있는 case를 잡습니다.",
+    "TS01": "짧은 기간에 같은 작성자, 프로세스, 계정 조합 거래가 몰리는 case를 잡습니다.",
+    "TS02": "평소보다 반복 빈도나 발생 패턴이 튀는 case를 잡습니다.",
+    "R01": "신규 거래처 또는 평소 없던 거래 관계가 등장한 case를 잡습니다.",
+    "R02": "오랫동안 쓰이지 않던 계정이나 관계가 다시 사용된 case를 잡습니다.",
+    "R03": "관계사나 거래처 조합에서 금액 흐름이 일반 패턴과 다른 case를 잡습니다.",
+    "R04": "거래 관계 식별 정보가 부족하거나 매칭되지 않는 case를 잡습니다.",
+    "R05": "평소 드문 계정과 거래처 조합이 등장한 case를 잡습니다.",
+    "R06": "특정 사용자가 짧은 기간에 평소보다 많은 계정을 다룬 case를 잡습니다.",
+    "R07": "오랫동안 거래가 없던 거래처가 다시 등장한 case를 잡습니다.",
+    "L2-03a": "같은 날짜, 계정, 금액 등 핵심 조건이 정확히 겹치는 중복 후보를 잡습니다.",
+    "L2-03b": "거래 조건이 완전히 같지는 않지만 금액과 참조 정보가 유사한 중복 후보를 잡습니다.",
+    "L2-03c": "승인한도 회피나 분할 처리 가능성이 있는 금액 쪼개기 후보를 잡습니다.",
+    "L2-03d": "일자만 조금 다른 동일 또는 유사 금액 반복 거래 후보를 잡습니다.",
+    "IC01": "관계사 거래인데 상대 전표나 대응 참조가 확인되지 않는 case를 잡습니다.",
+    "IC02": "관계사 간 대응 금액이 맞지 않는 case를 잡습니다.",
+    "IC03": "관계사 대응 거래의 인식 시점 차이가 큰 case를 잡습니다.",
+    "ic_reciprocal_flow_prob": (
+        "한 전표 안에서 관계사 채권·채무가 동시에 오가며 상호 이전 흐름이 보이는 case를 잡습니다."
+    ),
+    "ic_amount_prob": "관계사 대응 후보 간 금액 유사도가 낮은 case를 잡습니다.",
+    "ic_unmatched_prob": "관계사 거래인데 대응 후보나 참조 전표가 약한 case를 잡습니다.",
+    "ic_timing_prob": "관계사 대응 후보 간 전표 인식 시점 차이가 큰 case를 잡습니다.",
+}
+
+
+def _render_phase2_subdetector_descriptions(family: str, rows: list[dict]) -> None:
+    """세부 탐지 표 아래에 각 탐지 내용 설명을 별도 블록으로 표시."""
+    if family == "unsupervised":
+        st.markdown(
+            "<div style='margin-top:0.45rem; margin-bottom:0.9rem; padding:0.6rem 0.75rem; "
+            "border:1px solid #E5E7EB; border-radius:8px; background:#F9FAFB; "
+            "color:#475569; font-size:0.78rem; line-height:1.55;'>"
+            "<div><b style='color:#111827;'>VAE Deep Learning score</b>는 VAE와 "
+            "Isolation Forest가 학습한 정상 전표 분포에서 각 case가 얼마나 멀리 "
+            "떨어져 있는지를 봅니다.</div>"
+            "<div style='margin-top:4px;'>점수가 클수록 정상 분포의 꼬리에 있는 case이며, "
+            "q95 cutoff 위쪽 꼬리를 감사인 우선 검토 후보로 봅니다.</div>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        st.write("")
+        return
+
+    descriptions: list[str] = []
+    for row in rows:
+        code = str(row.get("코드") or "").strip()
+        label = _PHASE2_SUBDETECTOR_LABEL_KR.get(code) or str(row.get("세부 탐지 내용") or code)
+        desc = _PHASE2_SUBDETECTOR_DESCRIPTION_KR.get(code)
+        if not desc:
+            continue
+        descriptions.append(
+            "<div style='padding:3px 0; color:#475569; font-size:0.78rem; line-height:1.45;'>"
+            f"<b style='color:#111827;'>{html.escape(label)}</b> — {html.escape(desc)}"
+            "</div>"
+        )
+    if not descriptions:
+        return
+    st.markdown(
+        "<div style='margin-top:0.45rem; margin-bottom:0.9rem; padding:0.55rem 0.7rem; "
+        "border:1px solid #E5E7EB; border-radius:8px; background:#F9FAFB;'>"
+        + "".join(descriptions)
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+    st.write("")
+
+
+def _build_phase2_phase1_priority_lookup(phase2_result=None) -> dict[str, dict]:
+    """phase1_result.cases 에서 case_id → priority metadata."""
+    from dashboard._state import KEY_PHASE1_RESULT
+    from src.export.phase1_case_view import resolve_phase1_case_result
+
+    pr = st.session_state.get(KEY_PHASE1_RESULT) or phase2_result
+    if pr is None:
+        return {}
+    case_result = resolve_phase1_case_result(pr)
+    if case_result is None:
+        return {}
+    lookup: dict[str, dict] = {}
+    for case in case_result.cases:
+        case_id = str(getattr(case, "case_id", "") or "").strip()
+        if not case_id:
+            continue
+        lookup[case_id] = {
+            "priority_band": str(getattr(case, "priority_band", "") or "low"),
+            "priority_score": float(getattr(case, "priority_score", 0.0) or 0.0),
+        }
+    return lookup
+
+
+def _find_family_contribution(overlay: dict, family: str) -> dict | None:
+    for entry in overlay.get("family_contributions") or []:
+        if entry.get("family") == family:
+            return entry
+    return None
+
+
+_PHASE2_EVIDENCE_TIER_KR: dict[str, str] = {
+    "strong": "Strong",
+    "moderate": "Moderate",
+    "weak": "Weak",
+    "ml_quantile": "ML",
+}
+
+_PHASE2_TIER_RANK: dict[str, int] = {
+    "strong": 3,
+    "moderate": 2,
+    "weak": 1,
+    "ml_quantile": 0,
+}
+
+
+def _format_phase2_numeric(value, *, digits: int) -> float | str:
+    if value is None:
+        return "-"
+    try:
+        return round(float(value), digits)
+    except (TypeError, ValueError):
+        return "-"
+
+
+def _coerce_float(value) -> float:
+    try:
+        return float(value or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _phase2_tier_rank(tier: str) -> int:
+    return _PHASE2_TIER_RANK.get(str(tier or "").strip().lower(), -1)
 
 
 def _render_phase2_stats_tab(
@@ -2479,10 +3039,11 @@ def _render_phase2_stats_tab(
     partition: str,
     partition_summary: dict | None,
 ) -> None:
-    """④ 통계결과 — Phase 2 분포 4종.
+    """③ 통계결과 — lane-local Phase 2 분포.
 
-    Why: Phase 2 가 만든 점수·등급·영역·세부 탐지 분포만 모은다. 학습 리포트나
-         리더보드는 별도 화면(모델 기준)에서 다루지 않고 운영 관점에 집중.
+    Why: active product path 에서는 PHASE2 global/integrated score 를 노출하지 않는다.
+         통계 화면은 family별 case-family hit, lane × evidence tier, subdetector 분포만
+         보여준다.
     """
     del snapshot, partition
 
@@ -2492,137 +3053,19 @@ def _render_phase2_stats_tab(
         return
 
     with st.container(border=True):
-        st.markdown("##### 1. Phase 2 Noisy-OR 점수 분포")
-        st.caption("5-family ECDF 를 zero-preserving Noisy-OR 로 결합한 점수")
-        _render_phase2_score_distribution(overlays)
-
-    with st.container(border=True):
-        st.markdown("##### 2. 검토 등급 분포 (rank percentile)")
-        st.caption("즉시검토(상위 1.25%) / 검토대상 / 참고후보 / 후순위 케이스 수")
-        _render_phase2_band_distribution(overlays)
-
-    with st.container(border=True):
-        st.markdown("##### 3. 분석 영역별 case-family 적중 분포")
+        st.markdown("##### 1. 분석 영역별 case-family 적중 분포")
         st.caption("한 case 가 여러 영역에 걸리면 중복 집계")
         _render_phase2_family_case_bar(overlays, chart_key="phase2_stats_family_bar")
 
     with st.container(border=True):
-        st.markdown("##### 4. 세부 탐지 항목별 적중 분포")
-        st.dataframe(
-            _build_subdetector_kr_frame(partition_summary),
-            width="stretch",
-            hide_index=True,
-        )
-
-
-def _render_phase2_score_distribution(overlays: list[dict]) -> None:
-    """Phase 2 Noisy-OR 점수 히스토그램."""
-    import plotly.graph_objects as go
-
-    scores = [s for s in (_phase2_overlay_rank_score(o) for o in overlays) if s > 0.0]
-    if not scores:
-        st.caption("0 점 초과 신호가 없습니다.")
-        return
-    fig = go.Figure(
-        go.Histogram(
-            x=scores,
-            nbinsx=40,
-            marker={"color": "#7C3AED", "line": {"width": 0}},
-        )
-    )
-    fig.update_layout(
-        height=240,
-        margin={"l": 30, "r": 20, "t": 10, "b": 30},
-        xaxis_title="Phase 2 Noisy-OR 점수",
-        yaxis_title="케이스 수",
-        bargap=0.05,
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-    )
-    st.plotly_chart(
-        fig,
-        width="stretch",
-        config={"displayModeBar": False},
-        key="phase2_stats_score_hist",
-    )
-
-
-def _render_phase2_band_distribution(overlays: list[dict]) -> None:
-    """검토 등급별 case 수 막대."""
-    import plotly.graph_objects as go
-
-    counts = _count_phase2_review_bands(overlays)
-    order = ["immediate", "review", "candidate", "none"]
-    labels = [_REVIEW_BAND_LABELS[b] for b in order]
-    values = [int(counts.get(b, 0) or 0) for b in order]
-    colors = ["#EA580C", "#D97706", "#9CA3AF", "#E5E7EB"]
-    fig = go.Figure(
-        go.Bar(
-            x=labels,
-            y=values,
-            marker={"color": colors, "line": {"width": 0}},
-            text=[f"{v:,}" for v in values],
-            textposition="outside",
-            hovertemplate="%{x}: %{y:,}건<extra></extra>",
-        )
-    )
-    fig.update_layout(
-        height=240,
-        margin={"l": 30, "r": 20, "t": 10, "b": 30},
-        yaxis_title="케이스 수",
-        bargap=0.4,
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-    )
-    st.plotly_chart(
-        fig,
-        width="stretch",
-        config={"displayModeBar": False},
-        key="phase2_stats_band_bar",
-    )
-
-
-# ──────────────────────────────────────────────────────────────
-# Deprecated: 기존 분석 영역 신호 / 검토 Lane / 모델 기준 — 호출 제거됨.
-# Why: 새 sub-tab 구조(분석 영역별 / 위험 신호별 / 통계결과)로 대체. 헬퍼는
-#      신규 함수에서 재사용하므로 함수 본체는 cleanup 전까지 유지.
-# ──────────────────────────────────────────────────────────────
-
-
-def _render_family_signal_tab(
-    snapshot: dict | None,
-    partition: str,
-    partition_summary: dict | None,
-) -> None:
-    """② 분석 영역 신호 — 활성 영역 카드 + 세부 탐지 한국어 표 + 대기 영역 expander."""
-    families_payload = (partition_summary or {}).get("families") or {}
-
-    source_suffix = _phase2_signal_source_suffix(partition_summary)
-    st.markdown(f"##### 활성 분석 영역{source_suffix}")
-    _render_phase2_signal_source_caption(partition_summary)
-    st.caption("Phase 2 에서 신호를 잡은 분석 영역 (총 5개)")
-    st.markdown(_FAMILY_CARD_CSS, unsafe_allow_html=True)
-    cards = [
-        _build_family_card_html(family, families_payload.get(family) or {})
-        for family in ACTIVE_FAMILIES
-    ]
-    st.markdown(
-        "<div class='p2-family-grid'>" + "".join(cards) + "</div>",
-        unsafe_allow_html=True,
-    )
+        st.markdown("##### 2. Lane × 근거 강도 matrix")
+        st.caption("표시 lane 별 strong / moderate / weak case-family contribution 수")
+        _render_phase2_lane_matrix(overlays)
 
     with st.container(border=True):
-        st.markdown("**세부 탐지 항목별 적중 현황**")
+        st.markdown("##### 3. 세부 탐지 항목별 적중 분포")
         st.dataframe(
             _build_subdetector_kr_frame(partition_summary),
-            width="stretch",
-            hide_index=True,
-        )
-
-    with st.expander("대기 중인 분석 영역 보기", expanded=False):
-        st.caption("현재 활성화되지 않은 분석 영역 — 데이터 부족 또는 기준 미충족으로 보류된 영역")
-        st.dataframe(
-            _build_dormant_family_frame(snapshot, partition_summary),
             width="stretch",
             hide_index=True,
         )
@@ -2686,6 +3129,22 @@ _FAMILY_AUDIT_CHECK_KR: dict[str, str] = {
     "transformer": "텍스트/범주 데이터 품질과 개인정보 마스킹 정책 확인",
     "sequence": "이벤트 로그 또는 전표 변경 이력이 있을 때 순서 기반으로 확인",
     "stacking": "기본 분석 영역 결과가 충분히 쌓인 뒤 종합 우선순위 보조로 사용",
+}
+
+# family 별 강한 부정/감사 시나리오. _FAMILY_AUDIT_PURPOSE_KR(거래 패턴 일반 묘사)와는
+# 다른 정보로, 도메인 매칭(PCAOB AS 2401 / ISA 240 / 금감원 실증 사례)을 한 줄로 표현한다.
+_FAMILY_AUDIT_SCENARIO_KR: dict[str, str] = {
+    "duplicate": "동일 송장 이중지급, 승인한도 회피 분할, 환급 반복 횡령 (AS 2401 billing schemes)",
+    "relational": (
+        "가공 거래처(phantom vendor), 휴면 거래처 활성화, 권한 외 사용자 거래 (ISA 240 §A29)"
+    ),
+    "timeseries": "결산기 매출 인식 조작, cutoff 조작, 백데이팅 (ISA 240 §A41 period-end)",
+    "intercompany": "관계사 일방 기재 미대사, 전가 가격 조작, 손익 이전 (ISA 550 related party)",
+    "unsupervised": "정해진 룰로 잡히지 않는 신종 패턴, 분포 꼬리 비정형 거래",
+    "supervised": "감사인 과거 검토 라벨과 유사한 패턴 (라벨 확보 후 활성)",
+    "transformer": "적요·거래처·계정·사용자 범주 조합의 문맥 이상",
+    "sequence": "승인-기표-수정-상계 등 전표 흐름 순서 이상",
+    "stacking": "여러 영역이 동시에 약하게 반응한 종합 후보",
 }
 
 _DORMANT_ACTIVATION_KR: dict[str, str] = {
@@ -2842,277 +3301,6 @@ def _build_dormant_family_frame(
     return pd.DataFrame(rows)
 
 
-def _render_review_lane_tab(
-    snapshot: dict | None,
-    partition: str,
-    partition_summary: dict | None,
-) -> None:
-    """③ 검토 Lane — Phase1 priority 병기 + 한국어 lane 라벨.
-
-    Why: PHASE1 역할 원칙(PHASE2는 PHASE1 우선순위를 대체하지 않는다)에 따라,
-         표는 Phase1 priority desc로 정렬하고 추가 신호(evidence_tier)는 보조 컬럼
-         으로 노출한다.
-    """
-    from src.services.phase2_lane_sort import lane_summary, list_active_lanes
-
-    family_roles = _resolve_family_roles_from_snapshot(snapshot, partition_summary)
-    from dashboard._state import KEY_PHASE2_RESULT
-
-    phase2_result = st.session_state.get(KEY_PHASE2_RESULT)
-    overlays, overlay_status = _resolve_display_overlays(phase2_result, partition)
-    # P5-3: phase2_not_run / phase1_basis_unavailable / overlay_missing / valid_no_hit
-    #       각각 다른 빈 상태 메시지 + 차트/Lane 표시 여부.
-    empty_state = _resolve_phase2_empty_state(
-        phase2_result=phase2_result,
-        overlays=overlays,
-        phase1_basis_status=str(getattr(phase2_result, "phase1_case_basis_status", "") or "")
-        or None,
-        overlay_status=overlay_status,
-    )
-    if not family_roles:
-        st.info("Phase 2 분석 영역 role 정보가 없습니다. 학습 리포트를 확인하세요.")
-        return
-    if empty_state.state_id == _PHASE2_STATE_NOT_RUN:
-        st.info("Phase 2 추론 후 검토 Lane 이 표시됩니다.")
-        return
-    if empty_state.state_id == _PHASE2_STATE_PHASE1_BASIS_UNAVAILABLE:
-        st.warning(
-            "Phase 1 검토 케이스가 없어 검토 Lane 을 만들 수 없습니다. "
-            "Phase 1 분석을 먼저 실행하세요."
-        )
-        return
-    if empty_state.state_id == _PHASE2_STATE_OVERLAY_MISSING:
-        st.info(_overlay_status_message(overlay_status or "missing", partition))
-        return
-    if empty_state.state_id == _PHASE2_STATE_VALID_NO_HIT:
-        # R-M1: Phase 2 적중 case 가 없어 Lane 표를 만들 수 없다. fallback 표를
-        # Phase 2 탭에서 노출하면 책임 경계 위반 (Phase 1 우선순위 view 중복) —
-        # Phase 1 결과 탭으로 안내한다.
-        st.info(
-            "분석 완료 — Phase 2 가 어떤 Lane 에도 추가 적중 case 를 부여하지 "
-            "않았습니다. 정상 결과이며, 검토는 Phase 1 결과 탭에서 우선순위 기준으로 "
-            "계속하세요."
-        )
-        if st.button(
-            "Phase 1 결과 탭에서 계속 검토",
-            key="p5_lane_action_goto_phase1_no_hit",
-        ):
-            st.session_state[KEY_ACTIVE_RESULT_TAB] = PAGE_PHASE1
-            st.session_state[KEY_PENDING_RESULT_TAB] = PAGE_PHASE1
-            st.rerun()
-        return
-
-    st.caption(
-        "Phase 1 검토 큐의 보조 view 입니다. Phase 1 우선순위를 변경하지 않습니다. "
-        "Lane 은 추가 신호의 출처(중복 / 관계망 / 시점 / 관계사 / VAE Deep Learning)를 설명합니다."
-    )
-
-    available = list_active_lanes(family_roles)
-    if not available:
-        st.warning("진입한 lane 이 없습니다.")
-        return
-
-    summary_rows: list[dict] = []
-    for family in available:
-        role = family_roles.get(family, "unknown")
-        summary = lane_summary(family, overlays, family_role=role)
-        tier_counts = summary.get("tier_counts") or {}
-        summary_rows.append(
-            {
-                "Lane": _LANE_LABELS_KR.get(family, family),
-                "성격": _LANE_HINTS.get(family, "-"),
-                "케이스 수": int(summary.get("case_count") or 0),
-                "강": int(tier_counts.get("strong") or 0),
-                "중": int(tier_counts.get("moderate") or 0),
-                "약": int(tier_counts.get("weak") or 0),
-                "상태": str(summary.get("badge") or "-"),
-            }
-        )
-    st.dataframe(pd.DataFrame(summary_rows), width="stretch", hide_index=True)
-
-    selected = st.selectbox(
-        "Lane 선택",
-        options=available,
-        format_func=lambda f: _LANE_LABELS_KR.get(f, str(f)),
-        key="phase2_review_lane_selector",
-    )
-    if not isinstance(selected, str):
-        return
-    selected_role = family_roles.get(selected, "unknown")
-    if selected_role == "near-dormant":
-        st.warning(
-            f"`{_LANE_LABELS_KR.get(selected, selected)}` lane 은 대기 상태입니다 (데이터 미보유)."
-        )
-        return
-
-    content_frame = _build_review_lane_frame(selected, overlays, phase2_result=phase2_result)
-    if content_frame.empty:
-        st.info(f"`{_LANE_LABELS_KR.get(selected, selected)}` lane 에 진입한 case 가 없습니다.")
-        return
-
-    st.dataframe(content_frame, width="stretch", hide_index=True)
-    st.caption(
-        "표는 **Phase 1 우선순위(점수 desc)** 로 정렬되어 있습니다. "
-        "근거 강도는 추가 신호의 강/중/약 분류이며 정렬 기준이 아닙니다."
-    )
-
-
-# ── Lane 한국어 라벨 / 힌트 / 배지 ────────────────────────────
-
-_LANE_LABELS_KR: dict[str, str] = {
-    "duplicate": "중복 전표",
-    "relational": "관계망 이상",
-    # 결정 9 (docs/PHASE2_TIMESERIES_ROLE_LOCK.md): timeseries 는 단독 ranker 가 아닌
-    # 결산·시점 컨텍스트 보조 lane.
-    "timeseries": "결산·시점 컨텍스트",
-    "intercompany": "관계사 매칭",
-    "unsupervised": "VAE Deep Learning",
-}
-
-_LANE_HINTS: dict[str, str] = {
-    "duplicate": "같은 거래가 여러 번 기표되었을 가능성",
-    "relational": "신규 거래처·휴면계정 등 관계 이상",
-    # 결정 9: 단독 ranker 가 아닌 결산·시점 맥락 보강 lane (제품 언어, 내부 지표 미노출).
-    "timeseries": (
-        "결산·시점 맥락을 보강하는 보조 lane. 상단 정밀 ranker 가 아니라 "
-        "깊은 검토 범위에서 coverage 보조 용도로 해석하세요."
-    ),
-    "intercompany": "관계사 거래의 미매칭 신호",
-    "unsupervised": "ML 모델이 분포 꼬리로 분류한 케이스",
-}
-
-_EVIDENCE_TIER_BADGE: dict[str, str] = {
-    "strong": "강",
-    "moderate": "중",
-    "weak": "약",
-}
-
-
-def _build_phase1_priority_lookup(phase2_result=None) -> dict[str, dict]:
-    """phase1_result.cases 에서 case_id → priority_band/score lookup."""
-    from dashboard._state import KEY_PHASE1_RESULT
-    from src.export.phase1_case_view import resolve_phase1_case_result
-
-    pr = st.session_state.get(KEY_PHASE1_RESULT) or phase2_result
-    if pr is None:
-        return {}
-    case_result = resolve_phase1_case_result(pr)
-    if case_result is None:
-        return {}
-    lookup: dict[str, dict] = {}
-    for case in case_result.cases:
-        case_id = str(getattr(case, "case_id", "") or "").strip()
-        if not case_id:
-            continue
-        lookup[case_id] = {
-            "priority_band": str(getattr(case, "priority_band", "") or "low"),
-            "priority_score": float(getattr(case, "priority_score", 0.0) or 0.0),
-        }
-    return lookup
-
-
-def _build_review_lane_frame(
-    family: str,
-    overlays: list[dict],
-    *,
-    max_rows: int = 50,
-    phase2_result=None,
-) -> pd.DataFrame:
-    """선택된 lane 의 케이스 표 — Phase 1 priority desc 정렬, 한국어 컬럼.
-
-    Why: lane_membership 으로 1차 필터한 후 Phase 1 priority desc 로 정렬한다.
-         (sort_lane 의 evidence_tier 정렬을 쓰면 상위 N 자르기에서 Phase 1
-         high priority 가 누락될 수 있다.)
-    """
-    priority_lookup = _build_phase1_priority_lookup(phase2_result)
-    rank_bands = _phase2_rank_bands_by_case(overlays)
-    rows: list[dict] = []
-    for overlay in overlays:
-        membership = overlay.get("lane_membership") or []
-        if family not in membership:
-            continue
-        entry = next(
-            (c for c in (overlay.get("family_contributions") or []) if c.get("family") == family),
-            None,
-        )
-        if entry is None:
-            continue
-        case_id = str(overlay.get("phase1_case_id", "") or "")
-        phase1_meta = priority_lookup.get(case_id, {})
-        priority_score = phase1_meta.get("priority_score")
-        sub_codes = ", ".join(
-            str(sub.get("code", ""))
-            for sub in (entry.get("sub_detectors") or [])
-            if isinstance(sub, dict) and sub.get("code")
-        )
-        tier_token = str(entry.get("evidence_tier") or "").strip().lower()
-        top_family = str(overlay.get("top_family") or "")
-        review_band = rank_bands.get(case_id, "none")
-        rows.append(
-            {
-                "case_id": case_id,
-                "Phase1 등급": str(phase1_meta.get("priority_band", "미확인")).upper(),
-                "Phase1 점수": _format_phase1_priority_score(priority_score),
-                "Phase2 구간": _REVIEW_BAND_LABELS.get(review_band, "후순위"),
-                "근거 강도": _EVIDENCE_TIER_BADGE.get(tier_token, tier_token or "-"),
-                "ECDF": _round_lane_value(entry.get("ecdf")),
-                "세부 탐지": sub_codes or "-",
-                "대표 영역": _LANE_LABELS_KR.get(top_family, top_family or "-"),
-                "_phase1_sort_score": float(priority_score) if priority_score is not None else -1.0,
-            }
-        )
-    rows.sort(key=lambda r: -float(r.get("_phase1_sort_score") or -1.0))
-    frame = pd.DataFrame(rows[:max_rows])
-    if "_phase1_sort_score" in frame.columns:
-        frame = frame.drop(columns=["_phase1_sort_score"])
-    return frame
-
-
-def _format_phase1_priority_score(value) -> float | str:
-    if value is None:
-        return "-"
-    try:
-        return round(float(value), 3)
-    except (TypeError, ValueError):
-        return "-"
-
-
-def _round_lane_value(value, digits: int = 4) -> float | str:
-    if value is None:
-        return "-"
-    try:
-        return round(float(value), digits)
-    except (TypeError, ValueError):
-        return "-"
-
-
-def _render_model_basis_tab(snapshot: dict | None, result: PipelineResult) -> None:
-    """④ 모델 기준 — 감사 조서·재현성 목적의 상세 정보를 expander로 정리.
-
-    Why: 학습 기준·리더보드·실행 현황·성능 리포트는 일반 감사 사용자에게는
-         보조 정보이고, 리뷰/재현/감사조서 사용자에게 중요하다. 기본은 접힌 상태로
-         두되 첫 항목(확정 모델)만 펼쳐 두어 빠른 접근성을 보장한다.
-    """
-    st.caption(
-        "감사 조서·재현 검증을 위한 상세 정보입니다. 평소에는 접혀 있으며, "
-        "필요할 때 펼쳐 확인하세요."
-    )
-
-    with st.expander("확정 모델 및 학습 진단", expanded=True):
-        _render_training_snapshot_summary(snapshot)
-
-    with st.expander("리더보드 및 승격 결정", expanded=False):
-        render_leaderboard_view(snapshot)
-
-    with st.expander("탐지기 실행 현황", expanded=False):
-        _render_status_grid(result)
-        st.divider()
-        _render_track_status(result)
-
-    with st.expander("성능 리포트", expanded=False):
-        _render_performance_report(result)
-
-
 def _render_phase2_current_state(result: PipelineResult | None) -> None:
     cards = _build_phase2_provenance_cards(result)
     if not cards:
@@ -3170,34 +3358,6 @@ def _render_phase2_action_panel(
         _start_phase2_training()
     if snapshot and snapshot.get("report_path"):
         st.caption(f"사용 report: {snapshot.get('report_path')}")
-
-
-def _render_phase2_contract_views(
-    snapshot: dict | None,
-    partition_summary: dict | None,
-) -> None:
-    render_family_matrix(snapshot, partition_summary)
-    render_subdetector_grid(partition_summary)
-    render_leaderboard_view(snapshot)
-    _render_phase2_lane_view(snapshot, partition_summary)
-
-
-def _render_phase2_lane_view(
-    snapshot: dict | None,
-    partition_summary: dict | None,
-) -> None:
-    """Phase E — primary queue 보조 lane view.
-
-    snapshot 의 family_diagnostics roles + 현재 inference 의 case overlay 를
-    조회해 lane 별 sort + tier badge 를 표시한다. lane 은 primary queue 의 순위를
-    변경하지 않으며 family signal attribution 용도다.
-    (docs/PHASE2_GOVERNANCE_DESIGN.md 결정 8)
-    """
-    overlays = _resolve_phase2_overlays_from_state()
-    family_roles = _resolve_family_roles_from_snapshot(snapshot, partition_summary)
-    if not family_roles:
-        return
-    render_lane_view(overlays, family_roles)
 
 
 def _resolve_phase2_overlays_from_state() -> list[dict]:
