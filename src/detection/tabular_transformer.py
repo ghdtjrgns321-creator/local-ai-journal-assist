@@ -151,7 +151,9 @@ class TransformerDetector(BaseDetector):
         if self._registry is None:
             raise ValueError("model_registry가 설정되지 않았습니다.")
         return self._registry.save(
-            self.pipeline_, "ft_transformer", mean_f1,
+            self.pipeline_,
+            "ft_transformer",
+            mean_f1,
             params={"optimal_threshold": self.optimal_threshold_},
             training_data_stats=getattr(self, "_train_stats", {}),
             feature_schema_version=getattr(self, "_schema_version", 1),
@@ -165,7 +167,9 @@ class TransformerDetector(BaseDetector):
         )
 
     def load_model(
-        self, model_name: str = "ft_transformer", version: int | None = None,
+        self,
+        model_name: str = "ft_transformer",
+        version: int | None = None,
     ) -> None:
         """ModelRegistry에서 파이프라인 로드 + threshold 복원."""
         if self._registry is None:
@@ -185,8 +189,7 @@ class TransformerDetector(BaseDetector):
     def _check_fitted(self) -> None:
         if not hasattr(self, "pipeline_") or not hasattr(self, "optimal_threshold_"):
             raise NotFittedError(
-                f"{type(self).__name__}은 아직 학습되지 않았습니다. "
-                "train()을 먼저 호출하세요.",
+                f"{type(self).__name__}은 아직 학습되지 않았습니다. train()을 먼저 호출하세요.",
             )
 
     def _validate_labels(self, label_result: LabelResult) -> list[str]:

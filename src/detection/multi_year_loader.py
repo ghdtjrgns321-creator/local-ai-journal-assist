@@ -38,11 +38,11 @@ class EstimationRecord:
 
     fiscal_year: int
     gl_account: str
-    account_name: str      # audit_rules.yaml name 참조
+    account_name: str  # audit_rules.yaml name 참조
     ending_balance: float  # 부호 정규화 완료된 기말 순잔액
-    total_debit: float     # 원시 차변 합계 (= 실제 사용/상각액)
-    total_credit: float    # 원시 대변 합계 (= 당기 설정액 = 경영진 추정치)
-    row_count: int         # 해당 계정 전표 건수
+    total_debit: float  # 원시 차변 합계 (= 실제 사용/상각액)
+    total_credit: float  # 원시 대변 합계 (= 당기 설정액 = 경영진 추정치)
+    row_count: int  # 해당 계정 전표 건수
 
 
 @dataclass(frozen=True)
@@ -180,8 +180,12 @@ def load_multi_year_estimates(
 
         try:
             records = _load_single_year(
-                conn, abs_path, eng.fiscal_year,
-                estimation_accounts, account_names, account_sign_convention,
+                conn,
+                abs_path,
+                eng.fiscal_year,
+                estimation_accounts,
+                account_names,
+                account_sign_convention,
             )
             if records:
                 year_data[eng.fiscal_year] = records
@@ -191,8 +195,11 @@ def load_multi_year_estimates(
 
     # ── 당기: current_df에서 직접 산출 ──
     current_records = _load_current_year(
-        current_df, current_fiscal_year,
-        estimation_accounts, account_names, account_sign_convention,
+        current_df,
+        current_fiscal_year,
+        estimation_accounts,
+        account_names,
+        account_sign_convention,
     )
     if current_records:
         year_data[current_fiscal_year] = current_records
@@ -220,7 +227,9 @@ def load_multi_year_estimates(
 
     # ── estimation error + provision amounts 산출 ──
     estimation_errors, provision_amounts = _compute_errors_and_provisions(
-        records_by_account, fiscal_years, account_sign_convention,
+        records_by_account,
+        fiscal_years,
+        account_sign_convention,
     )
 
     return MultiYearEstimates(
@@ -251,9 +260,7 @@ def _load_single_year(
     alias_hint = f"tb_y{fiscal_year}"
 
     with attached_engagement(conn, db_path, alias_hint) as alias:
-        total_rows = conn.execute(
-            f"SELECT COUNT(*) FROM {alias}.general_ledger"
-        ).fetchone()[0]
+        total_rows = conn.execute(f"SELECT COUNT(*) FROM {alias}.general_ledger").fetchone()[0]
 
         if total_rows == 0:
             return {}

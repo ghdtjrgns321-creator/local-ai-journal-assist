@@ -129,7 +129,9 @@ def nlp01_header_account_mismatch(
 
     # 3. 1:1 cosine — 행 단위 dot product
     sims = embedding_service.cosine_similarity_pairwise(
-        header_emb, label_emb, assume_normalized=True,
+        header_emb,
+        label_emb,
+        assume_normalized=True,
     )
 
     # 4. 임계 미만 → 점수화
@@ -213,7 +215,8 @@ def nlp03_atypical_description(
     # 그룹별 처리 — embeddings 행 인덱스로 fancy slicing
     for account, mask in valid_groups.groupby(valid_groups).groups.items():
         positions = np.asarray(
-            [valid_idx.get_loc(i) for i in mask], dtype=np.int64,
+            [valid_idx.get_loc(i) for i in mask],
+            dtype=np.int64,
         )
         if positions.size < min_group_size:
             continue
@@ -232,7 +235,8 @@ def nlp03_atypical_description(
         # 거리 정규화: threshold 초과분 / (1.0 - threshold) → 0~1
         anomaly_scores = np.clip(
             (distances - threshold_dist) / max(1.0 - threshold_dist, 1e-9),
-            0.0, 1.0,
+            0.0,
+            1.0,
         )
         target_idx = valid_idx[positions]
         scores.loc[target_idx] = anomaly_scores.astype(float)
@@ -277,7 +281,8 @@ def nlp04_ic_description_anomaly(
     distance_threshold = 1.0 - similarity_threshold
     over = np.clip(
         (distances - distance_threshold) / max(1.0 - distance_threshold, 1e-9),
-        0.0, 1.0,
+        0.0,
+        1.0,
     )
 
     target_idx = ic_df.index[valid_pos]
@@ -330,7 +335,8 @@ def nlp05_synonym_evasion(
     # threshold 초과분만 점수화
     over = np.clip(
         (max_sims - synonym_threshold) / max(1.0 - synonym_threshold, 1e-9),
-        0.0, 1.0,
+        0.0,
+        1.0,
     )
     target_idx = candidate_df.index[valid_pos]
     scores.loc[target_idx] = over.astype(float)

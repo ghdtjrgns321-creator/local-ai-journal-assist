@@ -135,7 +135,9 @@ class SupervisedDetector(BaseDetector):
         )
         best_name = cv_result.best_pipeline_name
         self._logger.info(
-            "최적 모델: %s (F1=%.4f)", best_name, cv_result.results[best_name].mean_f1,
+            "최적 모델: %s (F1=%.4f)",
+            best_name,
+            cv_result.results[best_name].mean_f1,
         )
 
         # train split으로 최종 학습
@@ -223,7 +225,9 @@ class SupervisedDetector(BaseDetector):
         if self._registry is None:
             raise ValueError("model_registry가 설정되지 않았습니다.")
         return self._registry.save(
-            self.pipeline_, "supervised", mean_f1,
+            self.pipeline_,
+            "supervised",
+            mean_f1,
             params={"optimal_threshold": self.optimal_threshold_},
             training_data_stats=getattr(self, "_train_stats", {}),
             feature_schema_version=getattr(self, "_schema_version", 1),
@@ -299,8 +303,7 @@ class SupervisedDetector(BaseDetector):
         if label_source not in allowed_sources:
             snapshot = GateDecision(
                 decision="low_signal_fallback",
-                reason=getattr(label_result, "gate_reason", None)
-                or "untrusted_label_source",
+                reason=getattr(label_result, "gate_reason", None) or "untrusted_label_source",
                 label_source=label_source,
                 positive_count=pos_count,
                 positive_rate=positive_rate,
@@ -309,20 +312,16 @@ class SupervisedDetector(BaseDetector):
                 warnings=[],
             ).to_dict()
             raise SupervisedGateError(snapshot["gate_reason"], snapshot)
-        if (
-            not getattr(label_result, "is_supervised_eligible", False)
-            and (
-                getattr(label_result, "gate_status", "unknown") not in {"unknown", "eligible"}
-                or getattr(label_result, "gate_reason", None) is not None
-            )
+        if not getattr(label_result, "is_supervised_eligible", False) and (
+            getattr(label_result, "gate_status", "unknown") not in {"unknown", "eligible"}
+            or getattr(label_result, "gate_reason", None) is not None
         ):
             snapshot = GateDecision(
                 decision=str(
                     getattr(label_result, "gate_decision", "low_signal_fallback")
                     or "low_signal_fallback"
                 ),
-                reason=getattr(label_result, "gate_reason", None)
-                or "ineligible_label_source",
+                reason=getattr(label_result, "gate_reason", None) or "ineligible_label_source",
                 label_source=label_source,
                 positive_count=pos_count,
                 positive_rate=positive_rate,

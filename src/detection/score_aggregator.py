@@ -63,6 +63,7 @@ class _Phase2Timer:
         if self.scope == "phase2_only":
             log_timing(self.tag, time.perf_counter() - self._start, start_ts=self._ts)
 
+
 _TOPSIDE_CONDITIONS = len(TOPSIDE_BONUS_RULES)
 _BATCH_CORROBORATION_CONDITIONS = len(BATCH_CORROBORATION_RULES)
 _WORK_SCOPE_CORROBORATION_CONDITIONS = len(WORK_SCOPE_CORROBORATION_RULES)

@@ -73,26 +73,37 @@ class AccessAuditDetector(BaseDetector):
         aa_config = self._audit_rules.get("access_audit", {})
 
         registry: list[tuple[str, Callable, dict]] = [
-            ("AA01", aa01_document_modification, {
-                "change_log_df": self._change_log_df,
-                "watched_fields": tuple(
-                    aa_config.get("modification_watched_fields",
-                                  ["line_text", "header_text"])
-                ),
-                "high_amount_quantile": s.aa01_high_amount_quantile,
-            }),
+            (
+                "AA01",
+                aa01_document_modification,
+                {
+                    "change_log_df": self._change_log_df,
+                    "watched_fields": tuple(
+                        aa_config.get("modification_watched_fields", ["line_text", "header_text"])
+                    ),
+                    "high_amount_quantile": s.aa01_high_amount_quantile,
+                },
+            ),
             ("AA02", aa02_abnormal_ip_access, {}),
-            ("AA03", aa03_document_number_gap, {
-                "exclude_doc_types": tuple(
-                    aa_config.get("gap_exclude_doc_types", ["ST", "MG"])
-                ),
-            }),
-            ("AA04", aa04_approval_process, {
-                "approval_thresholds": s.approval_thresholds,
-                "max_delay_days": int(
-                    aa_config.get("approval_delay_days", s.aa04_max_delay_days)
-                ),
-            }),
+            (
+                "AA03",
+                aa03_document_number_gap,
+                {
+                    "exclude_doc_types": tuple(
+                        aa_config.get("gap_exclude_doc_types", ["ST", "MG"])
+                    ),
+                },
+            ),
+            (
+                "AA04",
+                aa04_approval_process,
+                {
+                    "approval_thresholds": s.approval_thresholds,
+                    "max_delay_days": int(
+                        aa_config.get("approval_delay_days", s.aa04_max_delay_days)
+                    ),
+                },
+            ),
         ]
         return registry
 
@@ -109,9 +120,7 @@ class AccessAuditDetector(BaseDetector):
         details = pd.DataFrame(index=df.index)
         for rule_id, raw_scores in rule_results.items():
             severity_factor = SEVERITY_MAP[rule_id] / 5.0
-            details[rule_id] = (
-                raw_scores.reindex(df.index, fill_value=0.0) * severity_factor
-            )
+            details[rule_id] = raw_scores.reindex(df.index, fill_value=0.0) * severity_factor
 
         scores = details.max(axis=1).fillna(0.0)
         flagged_indices = scores[scores > 0].index.tolist()
@@ -135,7 +144,10 @@ class AccessAuditDetector(BaseDetector):
         )
 
     def _empty_result(
-        self, df: pd.DataFrame, warnings: list[str], elapsed: float,
+        self,
+        df: pd.DataFrame,
+        warnings: list[str],
+        elapsed: float,
     ) -> DetectionResult:
         return self._make_result(
             flagged_indices=[],

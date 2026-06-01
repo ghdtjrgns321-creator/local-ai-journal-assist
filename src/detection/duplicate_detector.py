@@ -150,7 +150,12 @@ class DuplicateDetector(BaseDetector):
             for rule_id, raw_scores in rule_results.items()
         ]
 
-        pair_artifact = build_duplicate_pair_artifact(df, self._settings)
+        pair_artifact = build_duplicate_pair_artifact(
+            df,
+            self._settings,
+            candidate_scores=scores,
+            candidate_details=details,
+        )
         return self._make_result(
             flagged_indices=flagged_indices,
             scores=scores,

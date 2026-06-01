@@ -82,9 +82,7 @@ class SequenceDetector(BaseDetector):
 
         # 1. 시퀀스 메타데이터 추출 (전처리 전 원본에서)
         if _SEQ_USER_COL not in X.columns or _SEQ_TIME_COL not in X.columns:
-            raise ValueError(
-                f"시퀀스 구성에 {_SEQ_USER_COL}, {_SEQ_TIME_COL} 컬럼이 필요합니다."
-            )
+            raise ValueError(f"시퀀스 구성에 {_SEQ_USER_COL}, {_SEQ_TIME_COL} 컬럼이 필요합니다.")
         user_ids = X[_SEQ_USER_COL].values
         timestamps = self._build_timestamps(X)
 
@@ -120,19 +118,26 @@ class SequenceDetector(BaseDetector):
         stride = self._settings.bilstm_stride
 
         train_seq = build_sequences(
-            X_tr_2d, y_tr, uid_tr, ts_tr,
-            seq_len=seq_len, stride=stride,
+            X_tr_2d,
+            y_tr,
+            uid_tr,
+            ts_tr,
+            seq_len=seq_len,
+            stride=stride,
         )
         val_seq = build_sequences(
-            X_val_2d, y_val, uid_val, ts_val,
-            seq_len=seq_len, stride=stride,
+            X_val_2d,
+            y_val,
+            uid_val,
+            ts_val,
+            seq_len=seq_len,
+            stride=stride,
         )
 
         # 최소 윈도우 수 검증
         if len(train_seq.X_seq) == 0:
             raise ValueError(
-                f"학습 시퀀스가 0개입니다. "
-                f"데이터가 부족하거나 seq_len({seq_len})이 너무 큽니다."
+                f"학습 시퀀스가 0개입니다. 데이터가 부족하거나 seq_len({seq_len})이 너무 큽니다."
             )
         if len(val_seq.X_seq) == 0:
             msg = "검증 시퀀스가 0개입니다. threshold를 기본값(0.5)으로 설정합니다."
@@ -198,8 +203,12 @@ class SequenceDetector(BaseDetector):
 
         # 3. 시퀀스 변환 (detect 시 stride=1 고정 — 모든 행을 평가)
         seq_result = build_sequences(
-            X_2d, y=None, user_ids=user_ids, timestamps=timestamps,
-            seq_len=self._settings.bilstm_seq_len, stride=1,
+            X_2d,
+            y=None,
+            user_ids=user_ids,
+            timestamps=timestamps,
+            seq_len=self._settings.bilstm_seq_len,
+            stride=1,
         )
 
         # 4. 예측
@@ -207,7 +216,8 @@ class SequenceDetector(BaseDetector):
 
         if len(seq_result.X_seq) > 0:
             proba = self.classifier_.predict_proba(
-                seq_result.X_seq, seq_result.mask,
+                seq_result.X_seq,
+                seq_result.mask,
             )[:, 1]
 
             # 5. 윈도우 → 원본 행 매핑 (max 집계)
@@ -258,7 +268,9 @@ class SequenceDetector(BaseDetector):
             "classifier": self.classifier_,
         }
         return self._registry.save(
-            bundle, "bilstm_sequence", mean_f1,
+            bundle,
+            "bilstm_sequence",
+            mean_f1,
             params={"optimal_threshold": self.optimal_threshold_},
             training_data_stats=getattr(self, "_train_stats", {}),
             feature_schema_version=getattr(self, "_schema_version", 1),
@@ -272,7 +284,9 @@ class SequenceDetector(BaseDetector):
         )
 
     def load_model(
-        self, model_name: str = "bilstm_sequence", version: int | None = None,
+        self,
+        model_name: str = "bilstm_sequence",
+        version: int | None = None,
     ) -> None:
         """ModelRegistry에서 모델 번들 로드 + threshold 복원."""
         if self._registry is None:
@@ -294,8 +308,7 @@ class SequenceDetector(BaseDetector):
     def _check_fitted(self) -> None:
         if not hasattr(self, "preprocessor_") or not hasattr(self, "classifier_"):
             raise NotFittedError(
-                f"{type(self).__name__}은 아직 학습되지 않았습니다. "
-                "train()을 먼저 호출하세요.",
+                f"{type(self).__name__}은 아직 학습되지 않았습니다. train()을 먼저 호출하세요.",
             )
 
     @staticmethod
@@ -312,7 +325,8 @@ class SequenceDetector(BaseDetector):
             # Why: posting_time이 string("14:35:22")이거나 datetime.time일 수 있음.
             #      timedelta로 변환 후 더해 정상 타임스탬프 형성. NaT는 그대로 보존.
             tod = pd.to_timedelta(
-                X[_SEQ_TIME_OF_DAY_COL].astype(str), errors="coerce",
+                X[_SEQ_TIME_OF_DAY_COL].astype(str),
+                errors="coerce",
             )
             ts = ts + tod.fillna(pd.Timedelta(0))
         return ts.values
@@ -328,10 +342,7 @@ class SequenceDetector(BaseDetector):
             self._logger.warning(msg)
             warnings.append(msg)
         if label_result.positive_rate < _MIN_POSITIVE_RATE:
-            msg = (
-                f"양성 비율 {label_result.positive_rate:.4f} < {_MIN_POSITIVE_RATE}. "
-                "극단 불균형."
-            )
+            msg = f"양성 비율 {label_result.positive_rate:.4f} < {_MIN_POSITIVE_RATE}. 극단 불균형."
             self._logger.warning(msg)
             warnings.append(msg)
         return warnings
@@ -343,7 +354,8 @@ class SequenceDetector(BaseDetector):
         전표 단위 재현율과 다를 수 있음.
         """
         proba = self.classifier_.predict_proba(
-            val_seq.X_seq, val_seq.mask,
+            val_seq.X_seq,
+            val_seq.mask,
         )[:, 1]
         thresholds = np.linspace(0.1, 0.9, 81)
         best_t, best_f1 = 0.5, 0.0

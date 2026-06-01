@@ -13,6 +13,7 @@ Why: row-level duplicate scores(L2-03a/b/c/d)는 후보 pair를 만든 뒤 max�
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -20,16 +21,20 @@ import numpy as np
 import pandas as pd
 from rapidfuzz import fuzz
 
+from src.services.duplicate_pair_tier import classify_pair_evidence_tier, pair_tier_weight
+
 _RULE_EXACT = "L2-03a"
 _RULE_FUZZY = "L2-03b"
 _RULE_SPLIT = "L2-03c"
 _RULE_TIMESHIFT = "L2-03d"
+_RULE_PROFILE = "L2-03e"
 
 _RULE_TO_SOURCE = {
     _RULE_EXACT: "exact_duplicate_amount",
     _RULE_FUZZY: "fuzzy_duplicate",
     _RULE_SPLIT: "split_transaction",
     _RULE_TIMESHIFT: "time_shifted_duplicate",
+    _RULE_PROFILE: "document_profile_duplicate",
 }
 
 _RE_SPECIAL = re.compile(r"[^\w\s]", re.UNICODE)
@@ -70,11 +75,15 @@ class DuplicatePairArtifact:
 def build_duplicate_pair_artifact(
     df: pd.DataFrame,
     settings: Any,
+    *,
+    candidate_scores: pd.Series | None = None,
+    candidate_details: pd.DataFrame | None = None,
 ) -> DuplicatePairArtifact:
     """Build bounded pair similarity artifact from input frame.
 
     df에서 직접 후보 pair를 만든다. row-level scoring 함수(`duplicate_rules`)와
-    독립적으로 동작하며, blocking은 동일한 도메인 규칙을 따른다.
+    독립적으로 동작하며, blocking은 동일한 도메인 규칙을 따른다. 대용량 입력은
+    전체 artifact skip 대신 row-score 후보 subset에서 pair evidence를 재계산한다.
     """
     artifact = DuplicatePairArtifact()
     if df is None or df.empty:
@@ -88,6 +97,14 @@ def build_duplicate_pair_artifact(
     max_pairs_per_row = max(int(getattr(settings, "duplicate_max_pairs_per_row", 200)), 1)
     max_total_pairs = max(int(getattr(settings, "duplicate_max_total_pairs", 200_000)), 1)
     top_n = max(int(getattr(settings, "duplicate_pair_artifact_top_n", 500)), 1)
+    max_pairs_per_document = max(
+        int(getattr(settings, "duplicate_pair_artifact_max_pairs_per_document", 5)),
+        0,
+    )
+    max_pairs_per_document_pair = max(
+        int(getattr(settings, "duplicate_pair_artifact_max_pairs_per_document_pair", 1)),
+        0,
+    )
 
     coverage = _summarize_coverage(df)
     artifact.coverage = coverage
@@ -96,17 +113,36 @@ def build_duplicate_pair_artifact(
 
     max_input_rows = int(getattr(settings, "duplicate_pair_artifact_max_rows", 50_000))
     if max_input_rows > 0 and len(df) > max_input_rows:
-        # Why: 100k+ 행에서 fuzzy/split blocking sweep 비용이 row scoring SLA 를 깨므로
-        #      artifact 만 graceful skip 한다. row score/details 는 영향 없음.
+        candidate_df, candidate_coverage = _select_large_input_candidate_frame(
+            df,
+            max_rows=max_input_rows,
+            candidate_scores=candidate_scores,
+            candidate_details=candidate_details,
+            candidate_supplement_strategy=str(
+                getattr(
+                    settings,
+                    "duplicate_pair_artifact_candidate_supplement_strategy",
+                    "none",
+                )
+            ),
+            candidate_supplement_max_docs=int(
+                getattr(settings, "duplicate_pair_artifact_candidate_supplement_max_docs", 0)
+            ),
+        )
         artifact.coverage = {
             **coverage,
-            "skipped_for_size": True,
+            **candidate_coverage,
             "input_rows": int(len(df)),
             "max_input_rows": int(max_input_rows),
         }
-        artifact.truncated = True
-        artifact.truncation_reason = "input_too_large"
-        return artifact
+        if candidate_df is None:
+            # Why: 100k+ 행에서 row-score 후보 없이 fuzzy/split blocking sweep 를
+            #      전체 실행하면 row scoring SLA 를 깨므로 artifact 만 graceful skip 한다.
+            artifact.truncated = True
+            artifact.truncation_reason = "input_too_large_no_candidate_subset"
+            return artifact
+        df = candidate_df
+        coverage = artifact.coverage
 
     context = _PairContext(
         df=df,
@@ -116,6 +152,14 @@ def build_duplicate_pair_artifact(
     )
 
     builders = [
+        (
+            _RULE_PROFILE,
+            _document_profile_pairs,
+            {
+                "window_days": time_window_days,
+                "amount_tolerance": amount_tolerance,
+            },
+        ),
         (_RULE_EXACT, _exact_pairs, {}),
         (
             _RULE_FUZZY,
@@ -172,13 +216,488 @@ def build_duplicate_pair_artifact(
         return artifact
 
     candidate_records.sort(key=lambda record: record.get("pair_score", 0.0), reverse=True)
-    sanitized_top = [_sanitize_pair(record, df, coverage) for record in candidate_records[:top_n]]
+    selection_strategy = str(
+        getattr(settings, "duplicate_pair_artifact_selection_strategy", "document_diversity")
+    ).strip()
+    if selection_strategy == "evidence_diversity":
+        selected_records, selection_diagnostics = _select_top_pairs_with_evidence_diversity(
+            candidate_records,
+            df,
+            top_n=top_n,
+        )
+    elif selection_strategy == "rule_balanced_evidence":
+        selected_records, selection_diagnostics = _select_top_pairs_with_rule_balanced_evidence(
+            candidate_records,
+            df,
+            top_n=top_n,
+        )
+    else:
+        selected_records, selection_diagnostics = _select_diverse_top_records(
+            candidate_records,
+            df,
+            top_n=top_n,
+            max_pairs_per_document=max_pairs_per_document,
+            max_pairs_per_document_pair=max_pairs_per_document_pair,
+        )
+        selection_diagnostics["configured_strategy"] = selection_strategy
+    artifact.coverage = {
+        **artifact.coverage,
+        "top_pair_selection": selection_diagnostics,
+    }
+    sanitized_top = [_sanitize_pair(record, df, coverage) for record in selected_records]
     artifact.top_pairs = sanitized_top
     artifact.retained_pairs = len(sanitized_top)
     return artifact
 
 
 # ── Pair context ───────────────────────────────────────────────
+
+
+def _select_large_input_candidate_frame(
+    df: pd.DataFrame,
+    *,
+    max_rows: int,
+    candidate_scores: pd.Series | None,
+    candidate_details: pd.DataFrame | None,
+    candidate_supplement_strategy: str = "none",
+    candidate_supplement_max_docs: int = 0,
+) -> tuple[pd.DataFrame | None, dict[str, Any]]:
+    """Return bounded row-score candidate frame for large-input pair evidence.
+
+    This does not convert row hits into cases. It only narrows expensive pair
+    generation to rows where the duplicate detector already found nonzero review
+    candidate scores, then the normal pair builders must still produce left/right
+    evidence.
+    """
+    strength = pd.Series(0.0, index=df.index, dtype=float)
+    if candidate_scores is not None:
+        strength = strength.combine(
+            pd.to_numeric(candidate_scores.reindex(df.index), errors="coerce").fillna(0.0),
+            max,
+        )
+    if candidate_details is not None and not candidate_details.empty:
+        aligned = candidate_details.reindex(df.index)
+        numeric = aligned.apply(pd.to_numeric, errors="coerce").fillna(0.0)
+        if not numeric.empty:
+            strength = strength.combine(numeric.max(axis=1), max)
+
+    hit_strength = strength[strength > 0]
+    coverage = {
+        "large_input_candidate_mode": "row_score_subset",
+        "row_score_hit_count": int(len(hit_strength)),
+        "selected_candidate_rows": 0,
+        "dropped_candidate_rows_for_artifact_cap": 0,
+        "candidate_supplement_strategy": str(candidate_supplement_strategy or "none"),
+        "candidate_supplement_selected_rows": 0,
+        "candidate_supplement_selected_docs": 0,
+    }
+    if hit_strength.empty:
+        coverage["large_input_candidate_mode"] = "unavailable"
+        return None, coverage
+
+    first_positions: dict[Any, int] = {}
+    for pos, label in enumerate(df.index):
+        first_positions.setdefault(label, pos)
+    selector = pd.DataFrame(
+        {
+            "_strength": hit_strength.astype(float),
+            "_pos": [first_positions.get(label, 0) for label in hit_strength.index],
+        },
+        index=hit_strength.index,
+    )
+    selector = selector.sort_values(
+        ["_strength", "_pos"],
+        ascending=[False, True],
+        kind="mergesort",
+    )
+    supplement_positions: list[int] = []
+    if candidate_supplement_strategy == "observable_profile" and candidate_supplement_max_docs > 0:
+        supplement_positions, supplement_docs = _observable_profile_supplement_positions(
+            df,
+            max_docs=candidate_supplement_max_docs,
+        )
+        coverage["candidate_supplement_selected_rows"] = int(len(supplement_positions))
+        coverage["candidate_supplement_selected_docs"] = int(supplement_docs)
+
+    if len(selector) > max_rows:
+        reserved_rows = min(len(supplement_positions), max_rows)
+        score_budget = max(max_rows - reserved_rows, 0)
+        coverage["dropped_candidate_rows_for_artifact_cap"] = int(len(selector) - score_budget)
+        selector = selector.head(score_budget)
+    selected_positions = list(selector["_pos"].to_numpy(dtype=int))
+    if supplement_positions:
+        selected_position_set = set(selected_positions)
+        for position in supplement_positions:
+            if position in selected_position_set:
+                continue
+            selected_positions.append(position)
+            selected_position_set.add(position)
+            if len(selected_positions) >= max_rows:
+                break
+    coverage["selected_score_candidate_rows"] = int(len(selector))
+    coverage["selected_candidate_rows"] = int(len(selected_positions))
+    coverage["selected_candidate_rows_with_supplement"] = int(len(selected_positions))
+    coverage["skipped_for_size"] = False
+    coverage["bounded_from_large_input"] = True
+    return df.iloc[np.asarray(selected_positions, dtype=int)], coverage
+
+
+def _observable_profile_supplement_positions(
+    df: pd.DataFrame,
+    *,
+    max_docs: int,
+) -> tuple[list[int], int]:
+    """Return bounded row positions for duplicate-shaped document evidence.
+
+    Selector inputs are GL-observable fields only: document row count, P2P
+    process, reference presence, partner presence, and document amount profile.
+    The helper does not read truth labels, owner metadata, PHASE1 rank, or
+    matched results. It only gives lower-score duplicate-like documents a small
+    route into pair generation on large inputs.
+    """
+    required = {"document_id", "debit_amount", "credit_amount"}
+    if max_docs <= 0 or not required.issubset(df.columns):
+        return [], 0
+
+    work = pd.DataFrame(index=df.index)
+    work["_pos"] = np.arange(len(df), dtype=np.int64)
+    work["document_id"] = df["document_id"].astype("string")
+    debit = pd.to_numeric(df["debit_amount"], errors="coerce").fillna(0.0).abs()
+    credit = pd.to_numeric(df["credit_amount"], errors="coerce").fillna(0.0).abs()
+    work["_abs_amount"] = debit + credit
+    work["_has_reference"] = (
+        df["reference"].fillna("").astype(str).str.len() > 0
+        if "reference" in df.columns
+        else False
+    )
+    work["_has_partner"] = (
+        df["trading_partner"].fillna("").astype(str).str.len() > 0
+        if "trading_partner" in df.columns
+        else False
+    )
+    process = (
+        df["business_process"].fillna("").astype(str).str.upper()
+        if "business_process" in df.columns
+        else pd.Series("", index=df.index)
+    )
+    work["_is_p2p"] = process.eq("P2P")
+    grouped = work.groupby("document_id", sort=False, dropna=True).agg(
+        row_count=("_pos", "size"),
+        max_amount=("_abs_amount", "max"),
+        total_amount=("_abs_amount", "sum"),
+        has_reference=("_has_reference", "max"),
+        has_partner=("_has_partner", "max"),
+        is_p2p=("_is_p2p", "max"),
+    )
+    eligible = grouped[
+        grouped["is_p2p"]
+        & grouped["has_reference"]
+        & grouped["has_partner"]
+        & grouped["row_count"].between(2, 3)
+    ].copy()
+    if eligible.empty:
+        return [], 0
+
+    eligible["doc_score"] = (
+        eligible["max_amount"].rank(method="first", pct=True)
+        + eligible["total_amount"].rank(method="first", pct=True)
+        + eligible["has_reference"].astype(float)
+        + eligible["has_partner"].astype(float)
+        + eligible["is_p2p"].astype(float)
+        + eligible["row_count"].between(2, 3).astype(float)
+    )
+    selected_docs = set(
+        eligible.sort_values(
+            ["doc_score", "max_amount", "total_amount"],
+            ascending=[False, False, False],
+            kind="mergesort",
+        )
+        .head(max_docs)
+        .index.astype(str)
+    )
+    if not selected_docs:
+        return [], 0
+
+    selected = work[work["document_id"].astype(str).isin(selected_docs)].copy()
+    selected["_doc_pos"] = selected.groupby("document_id").cumcount()
+    positions = selected.loc[selected["_doc_pos"] < 3, "_pos"].astype(int).tolist()
+    return positions, len(selected_docs)
+
+
+def _select_diverse_top_records(
+    records: list[dict[str, Any]],
+    df: pd.DataFrame,
+    *,
+    top_n: int,
+    max_pairs_per_document: int,
+    max_pairs_per_document_pair: int,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Select metadata top records while preventing repeated document monopolies.
+
+    Candidate generation and scoring are unchanged. This only bounds the retained
+    metadata artifact so a dense routine repeated document group cannot consume
+    the whole auditor review surface.
+    """
+    if top_n <= 0 or not records:
+        return [], {
+            "strategy": "document_diversity",
+            "max_pairs_per_document": int(max_pairs_per_document),
+            "max_pairs_per_document_pair": int(max_pairs_per_document_pair),
+            "selected_by_diversity": 0,
+            "selected_by_fill": 0,
+        }
+
+    if max_pairs_per_document == 0 and max_pairs_per_document_pair == 0:
+        selected = records[:top_n]
+        return selected, {
+            "strategy": "score_only",
+            "max_pairs_per_document": 0,
+            "max_pairs_per_document_pair": 0,
+            "selected_by_diversity": 0,
+            "selected_by_fill": len(selected),
+        }
+
+    selected: list[dict[str, Any]] = []
+    selected_ids: set[int] = set()
+    doc_counts: Counter[Any] = Counter()
+    doc_pair_counts: Counter[tuple[Any, Any]] = Counter()
+
+    for record in records:
+        if len(selected) >= top_n:
+            break
+        left_key, right_key = _record_document_keys(record, df)
+        pair_key = tuple(sorted((left_key, right_key), key=lambda value: str(value)))
+        if max_pairs_per_document_pair and doc_pair_counts[pair_key] >= max_pairs_per_document_pair:
+            continue
+        if max_pairs_per_document and (
+            doc_counts[left_key] >= max_pairs_per_document
+            or doc_counts[right_key] >= max_pairs_per_document
+        ):
+            continue
+        selected.append(record)
+        selected_ids.add(id(record))
+        doc_counts[left_key] += 1
+        doc_counts[right_key] += 1
+        doc_pair_counts[pair_key] += 1
+
+    selected_by_diversity = len(selected)
+    if len(selected) < top_n:
+        for record in records:
+            if len(selected) >= top_n:
+                break
+            if id(record) in selected_ids:
+                continue
+            selected.append(record)
+            selected_ids.add(id(record))
+
+    return selected, {
+        "strategy": "document_diversity",
+        "max_pairs_per_document": int(max_pairs_per_document),
+        "max_pairs_per_document_pair": int(max_pairs_per_document_pair),
+        "selected_by_diversity": int(selected_by_diversity),
+        "selected_by_fill": int(len(selected) - selected_by_diversity),
+        "unique_document_keys_in_diverse_selection": int(len(doc_counts)),
+        "unique_document_pair_keys_in_diverse_selection": int(len(doc_pair_counts)),
+    }
+
+
+def _select_top_pairs_with_evidence_diversity(
+    records: list[dict[str, Any]],
+    df: pd.DataFrame,
+    *,
+    top_n: int,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Select review candidate pair evidence with audit-observable diversity.
+
+    The ordering uses only generated pair evidence: pair score, evidence tier,
+    same-partner/reference/text support, and repeated document/document-pair
+    concentration. It does not read truth labels, scenarios, thresholds, PHASE1
+    priority, or PHASE2 family fusion. Weak pairs are not promoted; they are
+    ranked behind strong/moderate evidence units when comparable evidence exists.
+    """
+    if top_n <= 0 or not records:
+        return [], {
+            "strategy": "evidence_diversity",
+            "selected_by_evidence_diversity": 0,
+            "truth_label_used": False,
+        }
+
+    selected: list[dict[str, Any]] = []
+    selected_ids: set[int] = set()
+    doc_counts: Counter[Any] = Counter()
+    doc_pair_counts: Counter[tuple[Any, Any]] = Counter()
+    pool_size = min(len(records), max(top_n * 100, 50_000))
+    remaining = list(enumerate(records[:pool_size]))
+    while remaining and len(selected) < top_n:
+        best_pos = 0
+        best_key: tuple[float, float, float] | None = None
+        for pos, (idx, record) in enumerate(remaining):
+            left_key, right_key = _record_document_keys(record, df)
+            pair_key = tuple(sorted((left_key, right_key), key=lambda value: str(value)))
+            novelty = int(doc_counts[left_key] == 0) + int(doc_counts[right_key] == 0)
+            repeat_penalty = doc_counts[left_key] + doc_counts[right_key] + (
+                doc_pair_counts[pair_key] * 2
+            )
+            score = (
+                float(record.get("pair_score") or 0.0)
+                + 0.05 * _record_evidence_similarity_score(record)
+                + 0.03 * novelty
+                - 0.01 * repeat_penalty
+                - (0.10 if _pair_evidence_tier_weight(record) <= 1 else 0.0)
+            )
+            key = (score, -float(idx), -float(pos))
+            if best_key is None or key > best_key:
+                best_key = key
+                best_pos = pos
+
+        _idx, record = remaining.pop(best_pos)
+        if id(record) in selected_ids:
+            continue
+        selected.append(record)
+        selected_ids.add(id(record))
+        left_key, right_key = _record_document_keys(record, df)
+        pair_key = tuple(sorted((left_key, right_key), key=lambda value: str(value)))
+        doc_counts[left_key] += 1
+        doc_counts[right_key] += 1
+        doc_pair_counts[pair_key] += 1
+
+    if len(selected) < top_n:
+        for record in records[pool_size:]:
+            if len(selected) >= top_n:
+                break
+            if id(record) in selected_ids:
+                continue
+            selected.append(record)
+            selected_ids.add(id(record))
+
+    weak_count = sum(1 for record in selected if _pair_evidence_tier_weight(record) <= 1)
+    return selected, {
+        "strategy": "evidence_diversity",
+        "selected_by_evidence_diversity": int(len(selected)),
+        "truth_label_used": False,
+        "weak_pair_count": int(weak_count),
+        "unique_document_keys_in_selection": int(len(doc_counts)),
+        "unique_document_pair_keys_in_selection": int(len(doc_pair_counts)),
+    }
+
+
+def _select_top_pairs_with_rule_balanced_evidence(
+    records: list[dict[str, Any]],
+    df: pd.DataFrame,
+    *,
+    top_n: int,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Select top pairs while preserving observable duplicate sub-rule lanes.
+
+    Score-only pair ranking lets abundant exact pairs monopolize the metadata
+    artifact. This selector gives each generated L2-03 sub-rule a bounded pass,
+    prioritizing case-grade evidence inside each rule, then fills the remaining
+    budget with the evidence-diversity selector. It does not read truth labels,
+    scenarios, owner metadata, PHASE1 rank, or matched results.
+    """
+    if top_n <= 0 or not records:
+        return [], {
+            "strategy": "rule_balanced_evidence",
+            "truth_label_used": False,
+            "selected_by_rule_balance": 0,
+            "selected_by_fill": 0,
+        }
+
+    by_rule: dict[str, list[dict[str, Any]]] = {}
+    for record in records:
+        by_rule.setdefault(str(record.get("rule_id") or ""), []).append(record)
+
+    active_rules = [
+        rule
+        for rule in (_RULE_EXACT, _RULE_FUZZY, _RULE_SPLIT, _RULE_TIMESHIFT, _RULE_PROFILE)
+        if by_rule.get(rule)
+    ]
+    if not active_rules:
+        return _select_top_pairs_with_evidence_diversity(records, df, top_n=top_n)
+
+    quota = max(top_n // len(active_rules), 1)
+    selected: list[dict[str, Any]] = []
+    selected_ids: set[int] = set()
+    selected_by_rule: dict[str, int] = {}
+    for rule in active_rules:
+        ordered = sorted(by_rule[rule], key=_rule_balanced_record_key, reverse=True)
+        take = min(quota, len(ordered), top_n - len(selected))
+        if take <= 0:
+            break
+        for record in ordered[:take]:
+            selected.append(record)
+            selected_ids.add(id(record))
+        selected_by_rule[rule] = int(take)
+
+    selected_by_rule_balance = len(selected)
+    if len(selected) < top_n:
+        remaining = [record for record in records if id(record) not in selected_ids]
+        fill, _diagnostics = _select_top_pairs_with_evidence_diversity(
+            remaining,
+            df,
+            top_n=top_n - len(selected),
+        )
+        selected.extend(fill)
+        selected_ids.update(id(record) for record in fill)
+
+    weak_count = sum(1 for record in selected if _pair_evidence_tier_weight(record) <= 1)
+    return selected[:top_n], {
+        "strategy": "rule_balanced_evidence",
+        "truth_label_used": False,
+        "selected_by_rule_balance": int(selected_by_rule_balance),
+        "selected_by_fill": int(max(len(selected[:top_n]) - selected_by_rule_balance, 0)),
+        "selected_by_rule": selected_by_rule,
+        "weak_pair_count": int(weak_count),
+        "active_rules": active_rules,
+    }
+
+
+def _rule_balanced_record_key(record: dict[str, Any]) -> tuple[float, float, float, float]:
+    return (
+        float(_pair_evidence_tier_weight(record)),
+        float(_record_evidence_similarity_score(record)),
+        float(record.get("pair_score") or 0.0),
+        -float(_as_float(record.get("left_pos"))),
+    )
+
+
+def _pair_evidence_tier_weight(record: dict[str, Any]) -> int:
+    features = record.get("features")
+    tier = classify_pair_evidence_tier(features if isinstance(features, dict) else None)
+    return pair_tier_weight(tier)
+
+
+def _record_evidence_similarity_score(record: dict[str, Any]) -> float:
+    features = record.get("features")
+    if not isinstance(features, dict):
+        return 0.0
+    ref = _as_float(features.get("reference_similarity"))
+    text = _as_float(features.get("text_similarity"))
+    partner = 1.0 if features.get("same_partner") is True else 0.0
+    return float(0.4 * ref + 0.3 * text + 0.3 * partner)
+
+
+def _as_float(value: Any) -> float:
+    if value is None:
+        return 0.0
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if num != num:
+        return 0.0
+    return num
+
+
+def _record_document_keys(record: dict[str, Any], df: pd.DataFrame) -> tuple[Any, Any]:
+    left_pos = int(record["left_pos"])
+    right_pos = int(record["right_pos"])
+    if "document_id" in df.columns:
+        left_doc = _safe_str(df["document_id"].iat[left_pos])
+        right_doc = _safe_str(df["document_id"].iat[right_pos])
+        if left_doc is not None and right_doc is not None:
+            return left_doc, right_doc
+    return _json_safe(df.index[left_pos]), _json_safe(df.index[right_pos])
 
 
 class _PairContext:
@@ -212,6 +731,8 @@ class _PairContext:
         self.document_id = (
             df["document_id"].astype("string") if "document_id" in df.columns else None
         )
+        self._repeat_key_counts = self._build_repeat_key_counts()
+        self._same_day_key_counts = self._build_same_day_key_counts()
         self.max_group_size = max_group_size
         self.max_pairs_per_row = max_pairs_per_row
         self.max_total_pairs = max_total_pairs
@@ -221,6 +742,40 @@ class _PairContext:
         # per-row counter via numpy array for speed.
         self._row_counts = np.zeros(len(df), dtype=np.int32)
         self._index = df.index
+
+    def _repeat_key(self, pos: int) -> tuple[str, float, str]:
+        partner = ""
+        if self.partner is not None:
+            value = self.partner.iat[pos]
+            partner = "" if pd.isna(value) else str(value).strip()
+        gl_value = self.gl.iat[pos]
+        gl = "" if pd.isna(gl_value) else str(gl_value).strip()
+        return (gl, round(float(self.amount.iat[pos]), 2), partner)
+
+    def _same_day_key(self, pos: int) -> tuple[str, float, str]:
+        date_value = self.dates.iat[pos]
+        date_text = "" if pd.isna(date_value) else str(pd.Timestamp(date_value).date())
+        gl_value = self.gl.iat[pos]
+        gl = "" if pd.isna(gl_value) else str(gl_value).strip()
+        return (gl, round(float(self.amount.iat[pos]), 2), date_text)
+
+    def _build_repeat_key_counts(self) -> Counter[tuple[str, float, str]]:
+        counts: Counter[tuple[str, float, str]] = Counter()
+        for pos in range(len(self.df)):
+            counts[self._repeat_key(pos)] += 1
+        return counts
+
+    def _build_same_day_key_counts(self) -> Counter[tuple[str, float, str]]:
+        counts: Counter[tuple[str, float, str]] = Counter()
+        for pos in range(len(self.df)):
+            counts[self._same_day_key(pos)] += 1
+        return counts
+
+    def repeat_group_size(self, pos: int) -> int:
+        return int(self._repeat_key_counts[self._repeat_key(pos)])
+
+    def same_day_burst_size(self, pos: int) -> int:
+        return int(self._same_day_key_counts[self._same_day_key(pos)])
 
     @property
     def exhausted(self) -> bool:
@@ -710,6 +1265,133 @@ def _timeshift_pairs(
     return records
 
 
+# ── L2-03e: document-profile duplicate pairs ──────────────────
+
+
+def _document_profile_pairs(
+    context: _PairContext,
+    *,
+    window_days: int,
+    amount_tolerance: float,
+) -> list[dict[str, Any]]:
+    """Build document-level duplicate pair evidence from observable GL fields.
+
+    This complements row-level L2-03a~d for large inputs where the duplicate
+    shape is primarily document-to-document: same partner/process, close posting
+    dates, similar reference, similar document amount, and 2-3 row support.
+    """
+    df = context.df
+    required = {"document_id", "business_process", "trading_partner", "reference"}
+    if not required.issubset(df.columns):
+        return []
+
+    work = pd.DataFrame(
+        {
+            "document_id": df["document_id"].astype("string"),
+            "business_process": df["business_process"].fillna("").astype(str),
+            "trading_partner": df["trading_partner"].fillna("").astype(str),
+            "reference": df["reference"].fillna("").astype(str),
+            "posting_date": context.dates,
+            "amount": context.amount,
+            "_pos": np.arange(len(df), dtype=np.int64),
+        },
+        index=df.index,
+    )
+    if work.empty:
+        return []
+
+    def _first_nonempty(values: pd.Series) -> str:
+        cleaned = values.dropna().astype(str)
+        cleaned = cleaned[cleaned.str.len() > 0]
+        return "" if cleaned.empty else str(cleaned.iat[0])
+
+    docs = work.groupby("document_id", sort=False, dropna=True).agg(
+        row_count=("_pos", "size"),
+        first_pos=("_pos", "first"),
+        max_amount=("amount", "max"),
+        posting_date=("posting_date", "min"),
+        reference=("reference", _first_nonempty),
+        trading_partner=("trading_partner", _first_nonempty),
+        business_process=("business_process", _first_nonempty),
+    )
+    eligible = docs[
+        docs["row_count"].between(2, 3)
+        & docs["business_process"].astype(str).str.upper().eq("P2P")
+        & docs["trading_partner"].astype(str).str.len().gt(0)
+        & docs["reference"].astype(str).str.len().gt(0)
+        & docs["posting_date"].notna()
+        & docs["max_amount"].gt(0)
+    ].copy()
+    if eligible.empty:
+        return []
+
+    tolerance = max(float(amount_tolerance), 0.0)
+    records: list[dict[str, Any]] = []
+    for _key, group in eligible.groupby(["trading_partner", "business_process"], sort=False):
+        if context.exhausted:
+            return records
+        if len(group) < 2:
+            continue
+        ordered = group.sort_values("posting_date", kind="mergesort")
+        rows = list(
+            ordered[
+                ["first_pos", "max_amount", "posting_date", "reference"]
+            ].itertuples(index=False, name=None)
+        )
+        n = len(rows)
+        for left_idx, (left_pos, left_amount, left_date, left_ref) in enumerate(rows):
+            if context.exhausted:
+                return records
+            for right_pos, right_amount, right_date, right_ref in rows[
+                left_idx + 1 : min(n, left_idx + 200)
+            ]:
+                if context.exhausted:
+                    return records
+                day_diff = int((right_date - left_date).days)
+                if day_diff > window_days:
+                    break
+                if day_diff < 1:
+                    continue
+                amount_similarity = float(
+                    max(0.0, 1.0 - _amount_diff_ratio(float(left_amount), float(right_amount)))
+                )
+                if amount_similarity < 1.0 - tolerance:
+                    continue
+                reference_similarity = float(
+                    fuzz.token_sort_ratio(str(left_ref), str(right_ref)) / 100.0
+                )
+                if reference_similarity < 0.70:
+                    continue
+                date_similarity = float(max(0.0, 1.0 - day_diff / max(window_days, 1)))
+                features = _common_features(
+                    context,
+                    left_pos=int(left_pos),
+                    right_pos=int(right_pos),
+                    amount_left=float(left_amount),
+                    amount_right=float(right_amount),
+                )
+                features["same_partner"] = True
+                features["amount_similarity"] = amount_similarity
+                features["reference_similarity"] = reference_similarity
+                features["date_similarity"] = date_similarity
+                features["date_distance_days"] = day_diff
+                score = float(
+                    0.50 * reference_similarity
+                    + 0.35 * amount_similarity
+                    + 0.15 * date_similarity
+                )
+                record = context.try_add(
+                    left_pos=int(left_pos),
+                    right_pos=int(right_pos),
+                    score=score,
+                    rule_id=_RULE_PROFILE,
+                    features=features,
+                )
+                if record is not None:
+                    records.append(record)
+    return records
+
+
 # ── feature helpers ───────────────────────────────────────────
 
 
@@ -730,12 +1412,34 @@ def _common_features(
         if not (pd.isna(context.gl.iat[left_pos]) or pd.isna(context.gl.iat[right_pos]))
         else False
     )
+    left_period_end_distance = _days_to_month_end(context.dates.iat[left_pos])
+    right_period_end_distance = _days_to_month_end(context.dates.iat[right_pos])
+    period_distances = [
+        value
+        for value in (left_period_end_distance, right_period_end_distance)
+        if value is not None
+    ]
+    min_period_end_distance = min(period_distances) if period_distances else None
+    left_repeat_size = context.repeat_group_size(left_pos)
+    right_repeat_size = context.repeat_group_size(right_pos)
+    left_burst_size = context.same_day_burst_size(left_pos)
+    right_burst_size = context.same_day_burst_size(right_pos)
     return {
         "amount_diff_ratio": float(diff_ratio),
         "date_distance_days": date_distance,
         "same_account": same_account,
         "same_partner": same_partner,
         "reference_similarity": reference_similarity,
+        "min_period_end_distance_days": min_period_end_distance,
+        "both_period_end_window_3d": (
+            left_period_end_distance is not None
+            and right_period_end_distance is not None
+            and left_period_end_distance <= 3
+            and right_period_end_distance <= 3
+        ),
+        "repeat_key_group_size_max": int(max(left_repeat_size, right_repeat_size)),
+        "same_day_burst_group_size_max": int(max(left_burst_size, right_burst_size)),
+        "routine_repeat_candidate": bool(max(left_repeat_size, right_repeat_size) >= 12),
     }
 
 
@@ -752,6 +1456,14 @@ def _date_similarity(
     if window_days <= 0:
         return 0.0
     return float(max(0.0, 1.0 - distance / window_days))
+
+
+def _days_to_month_end(value: Any) -> int | None:
+    if pd.isna(value):
+        return None
+    timestamp = pd.Timestamp(value)
+    month_end = timestamp + pd.offsets.MonthEnd(0)
+    return int((month_end.normalize() - timestamp.normalize()).days)
 
 
 def _sanitize_pair(

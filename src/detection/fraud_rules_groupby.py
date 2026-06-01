@@ -284,9 +284,7 @@ def _flag_near_duplicate_entries(
 
     ordered = target.sort_values([*group_cols, "_posting_ts"]).reset_index(names="_row_index")
     group_key = (
-        ordered["_partner_key"].astype(str)
-        + "\x1f"
-        + ordered["gl_account"].astype(str)
+        ordered["_partner_key"].astype(str) + "\x1f" + ordered["gl_account"].astype(str)
     ).to_numpy()
     row_indices = ordered["_row_index"].to_numpy()
     posting_dates = ordered["_posting_ts"].to_numpy(dtype="datetime64[ns]")
@@ -303,8 +301,7 @@ def _flag_near_duplicate_entries(
         for left_pos in range(start, end):
             for right_pos in range(left_pos + 1, end):
                 day_gap = int(
-                    (posting_dates[right_pos] - posting_dates[left_pos])
-                    / pd.Timedelta(days=1),
+                    (posting_dates[right_pos] - posting_dates[left_pos]) / pd.Timedelta(days=1),
                 )
                 if day_gap > window_days:
                     break
@@ -336,9 +333,7 @@ def _flag_split_duplicate_entries(
         return result
 
     target = work.loc[
-        work["_partner_key"].ne("")
-        & work["_document_id"].ne("")
-        & work["_posting_ts"].notna()
+        work["_partner_key"].ne("") & work["_document_id"].ne("") & work["_posting_ts"].notna()
     ].copy()
     if target.empty:
         return result
@@ -351,9 +346,7 @@ def _flag_split_duplicate_entries(
 
     ordered = target.sort_values([*group_cols, "_posting_ts"]).reset_index(names="_row_index")
     group_key = (
-        ordered["_partner_key"].astype(str)
-        + "\x1f"
-        + ordered["gl_account"].astype(str)
+        ordered["_partner_key"].astype(str) + "\x1f" + ordered["gl_account"].astype(str)
     ).to_numpy()
     row_indices = ordered["_row_index"].to_numpy()
     posting_dates = ordered["_posting_ts"].to_numpy(dtype="datetime64[ns]")
@@ -387,18 +380,21 @@ def _flag_split_duplicate_entries(
                 ),
             )
             candidates = [
-                pos for pos in range(left_bound, right_bound)
+                pos
+                for pos in range(left_bound, right_bound)
                 if pos != target_pos
                 and document_ids[pos] != document_ids[target_pos]
                 and 0 < amounts[pos] < target_amount
             ]
             for left_pos, right_pos in combinations(candidates, 2):
                 if (
-                    len({
-                        document_ids[target_pos],
-                        document_ids[left_pos],
-                        document_ids[right_pos],
-                    })
+                    len(
+                        {
+                            document_ids[target_pos],
+                            document_ids[left_pos],
+                            document_ids[right_pos],
+                        }
+                    )
                     < 3
                 ):
                     continue
@@ -425,23 +421,30 @@ def _flag_o2c_offset_duplicate_entries(work: pd.DataFrame, df: pd.DataFrame) -> 
     if not {"business_process", "document_type"}.issubset(df.columns):
         return result
 
-    source = pd.DataFrame({
-        "_document_id": work["_document_id"],
-        "_posting_ts": work["_posting_ts"],
-        "_base_amt": work["_base_amt"],
-        "company_code": (
-            df["company_code"].fillna("").astype(str).str.strip()
-            if "company_code" in df.columns
-            else pd.Series("", index=df.index)
-        ),
-        "business_process": df["business_process"].fillna("").astype(str).str.strip().str.upper(),
-        "document_type": df["document_type"].fillna("").astype(str).str.strip().str.upper(),
-        "reference": (
-            df["reference"].fillna("").astype(str)
-            if "reference" in df.columns
-            else pd.Series("", index=df.index)
-        ),
-    }, index=df.index)
+    source = pd.DataFrame(
+        {
+            "_document_id": work["_document_id"],
+            "_posting_ts": work["_posting_ts"],
+            "_base_amt": work["_base_amt"],
+            "company_code": (
+                df["company_code"].fillna("").astype(str).str.strip()
+                if "company_code" in df.columns
+                else pd.Series("", index=df.index)
+            ),
+            "business_process": df["business_process"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+            .str.upper(),
+            "document_type": df["document_type"].fillna("").astype(str).str.strip().str.upper(),
+            "reference": (
+                df["reference"].fillna("").astype(str)
+                if "reference" in df.columns
+                else pd.Series("", index=df.index)
+            ),
+        },
+        index=df.index,
+    )
     target = source.loc[
         source["_document_id"].ne("")
         & source["_posting_ts"].notna()
@@ -470,7 +473,7 @@ def _flag_o2c_offset_duplicate_entries(work: pd.DataFrame, df: pd.DataFrame) -> 
         ordered = group.sort_values("posting_date")
         records = list(ordered.itertuples())
         for left_pos, left in enumerate(records):
-            for right in records[left_pos + 1:]:
+            for right in records[left_pos + 1 :]:
                 if right.posting_date - left.posting_date > pd.Timedelta(days=1):
                     break
                 if left.document_type == right.document_type:
@@ -502,18 +505,25 @@ def _flag_ic_r2r_split_population(
     if not {"business_process", "document_type"}.issubset(df.columns):
         return result
 
-    source = pd.DataFrame({
-        "_document_id": work["_document_id"],
-        "_posting_ts": work["_posting_ts"],
-        "_base_amt": work["_base_amt"],
-        "business_process": df["business_process"].fillna("").astype(str).str.strip().str.upper(),
-        "document_type": df["document_type"].fillna("").astype(str).str.strip().str.upper(),
-        "reference": (
-            df["reference"].fillna("").astype(str)
-            if "reference" in df.columns
-            else pd.Series("", index=df.index)
-        ),
-    }, index=df.index)
+    source = pd.DataFrame(
+        {
+            "_document_id": work["_document_id"],
+            "_posting_ts": work["_posting_ts"],
+            "_base_amt": work["_base_amt"],
+            "business_process": df["business_process"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+            .str.upper(),
+            "document_type": df["document_type"].fillna("").astype(str).str.strip().str.upper(),
+            "reference": (
+                df["reference"].fillna("").astype(str)
+                if "reference" in df.columns
+                else pd.Series("", index=df.index)
+            ),
+        },
+        index=df.index,
+    )
     target = source.loc[
         source["_document_id"].ne("")
         & source["_posting_ts"].notna()
@@ -534,7 +544,8 @@ def _flag_ic_r2r_split_population(
     max_gap = pd.Timedelta(days=max(split_window_days * 2, split_window_days))
     for target_row in rows:
         candidates = [
-            row for row in rows
+            row
+            for row in rows
             if row[0] != target_row[0]
             and row[3] != target_row[3]
             and abs(row[1] - target_row[1]) <= max_gap
@@ -604,43 +615,46 @@ def _build_document_duplicate_signatures(work: pd.DataFrame, df: pd.DataFrame) -
     if "_document_id" not in work.columns:
         return pd.DataFrame()
 
-    source = pd.DataFrame({
-        "_document_id": work["_document_id"],
-        "_posting_ts": work["_posting_ts"],
-        "_reference_norm": (
-            work["_reference"].map(_normalize_reference)
-            if "_reference" in work.columns
-            else pd.Series("", index=work.index)
-        ),
-        "_partner_key": (
-            work["_partner_key"]
-            if "_partner_key" in work.columns
-            else pd.Series("", index=work.index)
-        ),
-        "_line_text_norm": (
-            work["_line_text"]
-            if "_line_text" in work.columns
-            else pd.Series("", index=work.index)
-        ),
-        "company_code": (
-            df["company_code"].fillna("").astype(str).str.strip()
-            if "company_code" in df.columns
-            else pd.Series("", index=df.index)
-        ),
-        "business_process": (
-            df["business_process"].fillna("").astype(str).str.strip()
-            if "business_process" in df.columns
-            else pd.Series("", index=df.index)
-        ),
-        "document_type": (
-            df["document_type"].fillna("").astype(str).str.strip()
-            if "document_type" in df.columns
-            else pd.Series("", index=df.index)
-        ),
-        "gl_account": df["gl_account"].fillna("").astype(str).str.strip(),
-        "debit_amount": df["debit_amount"].fillna(0.0),
-        "credit_amount": df["credit_amount"].fillna(0.0),
-    }, index=df.index)
+    source = pd.DataFrame(
+        {
+            "_document_id": work["_document_id"],
+            "_posting_ts": work["_posting_ts"],
+            "_reference_norm": (
+                work["_reference"].map(_normalize_reference)
+                if "_reference" in work.columns
+                else pd.Series("", index=work.index)
+            ),
+            "_partner_key": (
+                work["_partner_key"]
+                if "_partner_key" in work.columns
+                else pd.Series("", index=work.index)
+            ),
+            "_line_text_norm": (
+                work["_line_text"]
+                if "_line_text" in work.columns
+                else pd.Series("", index=work.index)
+            ),
+            "company_code": (
+                df["company_code"].fillna("").astype(str).str.strip()
+                if "company_code" in df.columns
+                else pd.Series("", index=df.index)
+            ),
+            "business_process": (
+                df["business_process"].fillna("").astype(str).str.strip()
+                if "business_process" in df.columns
+                else pd.Series("", index=df.index)
+            ),
+            "document_type": (
+                df["document_type"].fillna("").astype(str).str.strip()
+                if "document_type" in df.columns
+                else pd.Series("", index=df.index)
+            ),
+            "gl_account": df["gl_account"].fillna("").astype(str).str.strip(),
+            "debit_amount": df["debit_amount"].fillna(0.0),
+            "credit_amount": df["credit_amount"].fillna(0.0),
+        },
+        index=df.index,
+    )
 
     source = source.loc[source["_document_id"].ne("")].copy()
     if source.empty:
@@ -700,8 +714,7 @@ def _flag_document_duplicate_entries(
     docs["_line_signature_key"] = docs["line_signature"].map(repr)
     ref_docs = docs.loc[docs["reference_norm"].astype(str).ne("")].copy()
     blank_docs = docs.loc[
-        docs["reference_norm"].astype(str).eq("")
-        & docs["partner_key"].astype(str).ne("")
+        docs["reference_norm"].astype(str).eq("") & docs["partner_key"].astype(str).ne("")
     ].copy()
 
     ref_grouping_cols = ["company_code", "business_process", "document_type", "reference_norm"]
@@ -744,7 +757,7 @@ def _flag_document_duplicate_entries(
             ordered = group.sort_values("posting_date").reset_index(drop=True)
             records = list(ordered.itertuples(index=False))
             for left_pos, left in enumerate(records):
-                for right in records[left_pos + 1:]:
+                for right in records[left_pos + 1 :]:
                     day_gap = right.posting_date - left.posting_date
                     if day_gap > window:
                         break
@@ -757,10 +770,7 @@ def _flag_document_duplicate_entries(
                     ):
                         continue
 
-                    same_partner = (
-                        bool(left.partner_key)
-                        and left.partner_key == right.partner_key
-                    )
+                    same_partner = bool(left.partner_key) and left.partner_key == right.partner_key
                     text_similarity = fuzz.token_sort_ratio(
                         left.text_signature,
                         right.text_signature,
@@ -978,11 +988,9 @@ def b04_duplicate_payment(
     text_reference_parts = pd.Series("", index=target.index)
     for text_col in ("line_text", "header_text"):
         if text_col in target.columns:
-            text_reference_parts = (
-                text_reference_parts.astype(str).str.cat(
-                    target[text_col].fillna("").astype(str),
-                    sep=" ",
-                )
+            text_reference_parts = text_reference_parts.astype(str).str.cat(
+                target[text_col].fillna("").astype(str),
+                sep=" ",
             )
     target["_reference_text"] = text_reference_parts.map(_canonical_payment_reference)
 
@@ -1054,11 +1062,13 @@ def b04_duplicate_payment(
                         "day_gap": int(day_gap.days),
                     }
                     break
-            seen.append({
-                "document_id": str(row["document_id"]),
-                "posting_date": row["posting_date"],
-                "amount": amount,
-            })
+            seen.append(
+                {
+                    "document_id": str(row["document_id"]),
+                    "posting_date": row["posting_date"],
+                    "amount": amount,
+                }
+            )
 
     blank_target = doc_target.loc[doc_target["_reference_norm"].eq("")].copy()
     if not blank_target.empty:
@@ -1151,12 +1161,14 @@ def b04_duplicate_payment(
                     "day_gap": int(day_gap.days),
                 }
                 break
-            seen.append({
-                "document_id": str(row["document_id"]),
-                "posting_date": row["posting_date"],
-                "amount": amount,
-                "reference_norm": row_ref,
-            })
+            seen.append(
+                {
+                    "document_id": str(row["document_id"]),
+                    "posting_date": row["posting_date"],
+                    "amount": amount,
+                    "reference_norm": row_ref,
+                }
+            )
 
     if flagged_doc_ids:
         result.loc[target.loc[target["_document_id"].isin(flagged_doc_ids)].index] = True
@@ -1246,15 +1258,18 @@ def b05_duplicate_entry(
         df,
         split_window_days=split_window_days,
     )
-    score_frame = pd.DataFrame({
-        "document_duplicate": document_scores,
-        "exact_duplicate": exact_scores,
-        "reference_duplicate": reference_scores,
-        "near_duplicate": near_scores,
-        "split_duplicate": split_scores,
-        "o2c_offset_duplicate": o2c_offset_scores,
-        "ic_split_duplicate": ic_split_population_scores,
-    }, index=df.index)
+    score_frame = pd.DataFrame(
+        {
+            "document_duplicate": document_scores,
+            "exact_duplicate": exact_scores,
+            "reference_duplicate": reference_scores,
+            "near_duplicate": near_scores,
+            "split_duplicate": split_scores,
+            "o2c_offset_duplicate": o2c_offset_scores,
+            "ic_split_duplicate": ic_split_population_scores,
+        },
+        index=df.index,
+    )
     confidence = score_frame.max(axis=1).fillna(0.0)
     result = confidence > 0
     score_series = _score_l203_duplicate_entries(df, result, confidence, score_frame)
@@ -1346,8 +1361,8 @@ def _row_text(df: pd.DataFrame) -> pd.Series:
     line = df["line_text"] if "line_text" in df.columns else pd.Series("", index=df.index)
     header = df["header_text"] if "header_text" in df.columns else pd.Series("", index=df.index)
     return (
-        line.fillna("").astype(str) + " " + header.fillna("").astype(str)
-    ).str.strip().str.lower()
+        (line.fillna("").astype(str) + " " + header.fillna("").astype(str)).str.strip().str.lower()
+    )
 
 
 def _contains_any_keyword(text: str, keywords: tuple[str, ...]) -> bool:
@@ -1595,10 +1610,7 @@ def b11_expense_capitalization(
         "low_score_docs": len(low_score_doc_ids),
         "population_docs": len(population_doc_ids),
         "reason_counts": reason_counts,
-        "reason_doc_counts": {
-            reason: len(doc_ids)
-            for reason, doc_ids in reason_doc_ids.items()
-        },
+        "reason_doc_counts": {reason: len(doc_ids) for reason, doc_ids in reason_doc_ids.items()},
         "modifier_row_counts": modifier_row_counts,
         "normal_context_suppressed_docs": len(zero_score_doc_ids),
         "zero_score_docs": len(zero_score_doc_ids),

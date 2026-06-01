@@ -49,7 +49,8 @@ def r01_new_counterparty(
 
     Why: ISA 240 — 신규 거래처와의 비정상 대규모 거래는 가공거래 위험.
     """
-    if df.empty or "trading_partner" not in df.columns or "posting_date" not in df.columns:
+    required = {"trading_partner", "posting_date", "debit_amount", "credit_amount"}
+    if df.empty or not required.issubset(df.columns):
         return pd.Series(0.0, index=df.index)
 
     posting = pd.to_datetime(df["posting_date"], errors="coerce")
@@ -98,6 +99,9 @@ def r02_dormant_account_activity(
          → 재활성화 시점(Reactivation Point) 발견 후 윈도우 내 모든 거래를 연좌 플래깅.
     """
     if df.empty or "gl_account" not in df.columns or "posting_date" not in df.columns:
+        return pd.Series(0.0, index=df.index)
+    amount_required = {"debit_amount", "credit_amount"}
+    if min_amount > 0 and not amount_required.issubset(df.columns):
         return pd.Series(0.0, index=df.index)
 
     work = df[["gl_account", "posting_date"]].copy()
@@ -190,7 +194,8 @@ def r03_transfer_pricing_anomaly(
     if not ic_mask.any():
         return pd.Series(0.0, index=df.index)
 
-    if "trading_partner" not in df.columns or "gl_account" not in df.columns:
+    required = {"trading_partner", "gl_account", "debit_amount", "credit_amount"}
+    if not required.issubset(df.columns):
         return pd.Series(0.0, index=df.index)
 
     amount = df[["debit_amount", "credit_amount"]].fillna(0).max(axis=1)

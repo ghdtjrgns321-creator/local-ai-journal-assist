@@ -21,6 +21,7 @@ def _np_max(a: pd.Series, b: pd.Series) -> pd.Series:
     """np.maximum 기반 행별 max — pd.concat.max() 대비 18배 빠름."""
     return pd.Series(np.maximum(a.values, b.values), index=a.index)
 
+
 def _nunique_documents(df: pd.DataFrame, mask: pd.Series) -> int:
     if "document_id" not in df.columns:
         return int(mask.sum())
@@ -74,8 +75,7 @@ def ev01_missing_evidence(
     S3: 동일 거래처·동일일 분할 의심 → 0.8
     """
     if qualified_doc_types is None:
-        qualified_doc_types = ["tax_invoice", "credit_card", "cash_receipt",
-                               "electronic_invoice"]
+        qualified_doc_types = ["tax_invoice", "credit_card", "cash_receipt", "electronic_invoice"]
 
     n = len(df)
     scores = pd.Series(0.0, index=df.index)
@@ -108,11 +108,13 @@ def ev01_missing_evidence(
     partner = _resolve_partner_column(df)
     if partner is not None and "posting_date" in df.columns:
         # Why: 거래처+일자 그룹 내 건수 ≥ N 이고 건당 금액 ≤ split_max_amount → 회피 의심
-        tmp = pd.DataFrame({
-            "partner": partner,
-            "date": pd.to_datetime(df["posting_date"], errors="coerce").dt.date,
-            "amount": amount,
-        })
+        tmp = pd.DataFrame(
+            {
+                "partner": partner,
+                "date": pd.to_datetime(df["posting_date"], errors="coerce").dt.date,
+                "amount": amount,
+            }
+        )
         # partner가 null인 행은 그룹핑 불가 → 제외
         valid = tmp["partner"].notna()
         if valid.any():
@@ -210,13 +212,13 @@ def ev02_cutoff_violation(
     # ── 임계 초과 시 점수 부여 ──
     # Why: max_day_diff를 분모로 정규화 → 0.0~1.0
     max_dd = max(max_day_diff, 1)
-    revenue_score = (
-        (day_diff_series > revenue_cutoff_days) & is_revenue & valid_mask
-    ).astype(float) * (day_diff_series / max_dd)
+    revenue_score = ((day_diff_series > revenue_cutoff_days) & is_revenue & valid_mask).astype(
+        float
+    ) * (day_diff_series / max_dd)
 
-    expense_score = (
-        (day_diff_series > expense_cutoff_days) & is_expense & valid_mask
-    ).astype(float) * (day_diff_series / max_dd)
+    expense_score = ((day_diff_series > expense_cutoff_days) & is_expense & valid_mask).astype(
+        float
+    ) * (day_diff_series / max_dd)
 
     revenue_flag = (day_diff_series > revenue_cutoff_days) & is_revenue & valid_mask
     expense_flag = (day_diff_series > expense_cutoff_days) & is_expense & valid_mask
@@ -253,13 +255,15 @@ def ev02_cutoff_violation(
         "reason_counts": reason_counts,
     }
     if "document_id" in df.columns:
-        breakdown.update({
-            "cutoff_review_docs": _nunique_documents(df, flagged),
-            "revenue_cutoff_docs": _nunique_documents(df, revenue_mask),
-            "expense_cutoff_docs": _nunique_documents(df, expense_mask),
-            "period_end_weighted_docs": _nunique_documents(df, period_end_weighted),
-            "missing_event_date_docs": _nunique_documents(df, missing_event_date),
-        })
+        breakdown.update(
+            {
+                "cutoff_review_docs": _nunique_documents(df, flagged),
+                "revenue_cutoff_docs": _nunique_documents(df, revenue_mask),
+                "expense_cutoff_docs": _nunique_documents(df, expense_mask),
+                "period_end_weighted_docs": _nunique_documents(df, period_end_weighted),
+                "missing_event_date_docs": _nunique_documents(df, missing_event_date),
+            }
+        )
 
     row_annotations: dict[int, dict[str, object]] = {}
     for idx in df.index[flagged]:

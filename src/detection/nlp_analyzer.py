@@ -12,7 +12,8 @@
 ---------
 - GraphDetector 패턴 미러링: _build_registry → 룰 try/except 격리 → _build_result
 - LAYER_WEIGHTS 미등록 — RelationalDetector/GraphDetector 선례. Phase 3 Stacking에서 배분.
-- 임베딩 API 불가 시 graceful 스킵 (empty result + warning, 예외 미전파).
+- active product path에서는 외부 임베딩/API를 자동 초기화하지 않는다.
+- 테스트/실험에서 명시 주입된 embedding_service가 없으면 graceful 스킵한다.
 - 비식별화: nlp_rules 내부 _sanitize_series가 morpheme_tokens / 영문 토큰 처리.
 """
 
@@ -40,11 +41,11 @@ class NLPDetector(BaseDetector):
         self,
         settings: AuditSettings | None = None,
         *,
-        embedding_service: "EmbeddingService | None" = None,
+        embedding_service: EmbeddingService | None = None,
         risk_keywords: list[str] | None = None,
     ) -> None:
         super().__init__(settings)
-        # Why: 둘 다 lazy 초기화 — 테스트 mock 주입 + API 불가 graceful
+        # Why: active path must not auto-create external embedding/API clients.
         self._embedding_service = embedding_service
         self._risk_keywords = risk_keywords  # None이면 risk_keywords.yaml 로드
 
@@ -81,18 +82,13 @@ class NLPDetector(BaseDetector):
 
     # ── 헬퍼 ─────────────────────────────────────────────────
 
-    def _get_embedding_service(self, warnings: list[str]) -> "EmbeddingService | None":
-        """주입된 서비스 또는 싱글톤 lazy 초기화. 실패 시 None + warning."""
+    def _get_embedding_service(self, warnings: list[str]) -> EmbeddingService | None:
+        """Return only an explicitly injected embedding service."""
         if self._embedding_service is not None:
             return self._embedding_service
-        try:
-            from src.llm.embedding_service import get_embedding_service
-
-            return get_embedding_service()
-        except Exception as exc:
-            warnings.append(f"임베딩 서비스 초기화 실패 — NLPDetector 스킵: {exc}")
-            self._logger.warning("EmbeddingService 초기화 실패: %s", exc)
-            return None
+        warnings.append("명시 주입된 로컬 embedding_service 없음 — NLPDetector 스킵")
+        self._logger.info("NLPDetector skipped: no injected embedding_service")
+        return None
 
     def _get_risk_keywords(self) -> list[str]:
         """risk_keywords.yaml에서 high+medium 통합 추출."""
@@ -106,8 +102,9 @@ class NLPDetector(BaseDetector):
             return []
 
     def _build_registry(
-        self, svc: "EmbeddingService",
-    ) -> list[tuple[str, "Callable", dict]]:
+        self,
+        svc: EmbeddingService,
+    ) -> list[tuple[str, Callable, dict]]:
         """서브룰 레지스트리 — settings 파라미터 주입."""
         from src.detection.nlp_rules import (
             nlp01_header_account_mismatch,
@@ -119,29 +116,49 @@ class NLPDetector(BaseDetector):
 
         s = self._settings
         return [
-            ("NLP01", nlp01_header_account_mismatch, {
-                "embedding_service": svc,
-                "similarity_threshold": s.nlp_header_account_threshold,
-            }),
-            ("NLP02", nlp02_process_account_mismatch, {
-                "embedding_service": svc,
-                "similarity_threshold": s.nlp_process_account_threshold,
-            }),
-            ("NLP03", nlp03_atypical_description, {
-                "embedding_service": svc,
-                "anomaly_percentile": s.nlp_anomaly_percentile,
-                "min_group_size": s.nlp_min_group_size,
-            }),
-            ("NLP04", nlp04_ic_description_anomaly, {
-                "embedding_service": svc,
-                "similarity_threshold": s.nlp_ic_similarity_threshold,
-                "min_group_size": s.nlp_min_group_size,
-            }),
-            ("NLP05", nlp05_synonym_evasion, {
-                "embedding_service": svc,
-                "risk_keywords": self._get_risk_keywords(),
-                "synonym_threshold": s.nlp_synonym_threshold,
-            }),
+            (
+                "NLP01",
+                nlp01_header_account_mismatch,
+                {
+                    "embedding_service": svc,
+                    "similarity_threshold": s.nlp_header_account_threshold,
+                },
+            ),
+            (
+                "NLP02",
+                nlp02_process_account_mismatch,
+                {
+                    "embedding_service": svc,
+                    "similarity_threshold": s.nlp_process_account_threshold,
+                },
+            ),
+            (
+                "NLP03",
+                nlp03_atypical_description,
+                {
+                    "embedding_service": svc,
+                    "anomaly_percentile": s.nlp_anomaly_percentile,
+                    "min_group_size": s.nlp_min_group_size,
+                },
+            ),
+            (
+                "NLP04",
+                nlp04_ic_description_anomaly,
+                {
+                    "embedding_service": svc,
+                    "similarity_threshold": s.nlp_ic_similarity_threshold,
+                    "min_group_size": s.nlp_min_group_size,
+                },
+            ),
+            (
+                "NLP05",
+                nlp05_synonym_evasion,
+                {
+                    "embedding_service": svc,
+                    "risk_keywords": self._get_risk_keywords(),
+                    "synonym_threshold": s.nlp_synonym_threshold,
+                },
+            ),
         ]
 
     def _build_result(
@@ -156,9 +173,7 @@ class NLPDetector(BaseDetector):
         details = pd.DataFrame(index=df.index)
         for rule_id, raw_scores in rule_results.items():
             severity_factor = SEVERITY_MAP[rule_id] / 5.0
-            details[rule_id] = (
-                raw_scores.reindex(df.index, fill_value=0.0) * severity_factor
-            )
+            details[rule_id] = raw_scores.reindex(df.index, fill_value=0.0) * severity_factor
 
         # MAX 패턴 — 행별 최대 점수
         scores = details.max(axis=1).fillna(0.0)
@@ -183,7 +198,10 @@ class NLPDetector(BaseDetector):
         )
 
     def _empty_result(
-        self, df: pd.DataFrame, warnings: list[str], elapsed: float,
+        self,
+        df: pd.DataFrame,
+        warnings: list[str],
+        elapsed: float,
     ) -> DetectionResult:
         return self._make_result(
             flagged_indices=[],

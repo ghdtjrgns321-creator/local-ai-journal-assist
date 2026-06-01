@@ -129,8 +129,7 @@ def c07_benford_violation(
             if finding_severity is not None:
                 # Why: 위반 계정 내에서 편차 큰 자릿수만 선별 (전체 행 플래그 방지)
                 bad_digits = {
-                    d for d in range(1, 10)
-                    if _digit_deviation(result.observed, d) > threshold
+                    d for d in range(1, 10) if _digit_deviation(result.observed, d) > threshold
                 }
                 if bad_digits:
                     # Why: 위반 자릿수 중 최대 deviation을 대표값으로 사용
@@ -160,20 +159,24 @@ def c07_benford_violation(
                         "row_score": digit_score,
                         "sample_size": len(group_digits),
                     }
-                    findings.append({
-                        "scope": "company_gl_account" if company_code is not None else "gl_account",
-                        "company_code": None if company_code is None else str(company_code),
-                        "gl_account": str(gl_account),
-                        "sample_size": len(group_digits),
-                        "mad": result.mad,
-                        "chi2_p_value": result.chi2_p_value,
-                        "finding_severity": finding_severity,
-                        "flagged_digits": sorted(bad_digits),
-                        "max_deviation": max_dev,
-                        "candidate_score": digit_score,
-                        "candidate_rows": affected_rows,
-                        "candidate_documents": affected_docs,
-                    })
+                    findings.append(
+                        {
+                            "scope": "company_gl_account"
+                            if company_code is not None
+                            else "gl_account",
+                            "company_code": None if company_code is None else str(company_code),
+                            "gl_account": str(gl_account),
+                            "sample_size": len(group_digits),
+                            "mad": result.mad,
+                            "chi2_p_value": result.chi2_p_value,
+                            "finding_severity": finding_severity,
+                            "flagged_digits": sorted(bad_digits),
+                            "max_deviation": max_dev,
+                            "candidate_score": digit_score,
+                            "candidate_rows": affected_rows,
+                            "candidate_documents": affected_docs,
+                        }
+                    )
 
     meta["benford_group_results"] = group_results
 
@@ -183,7 +186,8 @@ def c07_benford_violation(
     result, _warnings = analyze_benford(df["first_digit"], settings=s)
     meta["benford_result"] = result
     meta["benford_global_finding_severity"] = _benford_finding_severity(
-        result.mad, threshold,
+        result.mad,
+        threshold,
     )
 
     meta["benford_findings"] = findings
@@ -219,10 +223,12 @@ def c09_rare_account_pair(
     debit_null_account_lines = int(debits["gl_account"].isna().sum())
     credit_null_account_lines = int(credits["gl_account"].isna().sum())
     null_account_docs = set(
-        pd.concat([
-            debits.loc[debits["gl_account"].isna(), "document_id"],
-            credits.loc[credits["gl_account"].isna(), "document_id"],
-        ]).dropna()
+        pd.concat(
+            [
+                debits.loc[debits["gl_account"].isna(), "document_id"],
+                credits.loc[credits["gl_account"].isna(), "document_id"],
+            ]
+        ).dropna()
     )
     debits = debits[debits["gl_account"].notna()]
     credits = credits[credits["gl_account"].notna()]
@@ -263,7 +269,8 @@ def c09_rare_account_pair(
     if not bloated.empty:
         logger.warning(
             "L4-04: %d개 전표가 %d행 초과 — Cartesian Product 제한으로 제외",
-            len(bloated), _MAX_LINES_PER_DOC,
+            len(bloated),
+            _MAX_LINES_PER_DOC,
         )
         debits = debits[~debits["document_id"].isin(bloated)]
         credits = credits[~credits["document_id"].isin(bloated)]
@@ -272,9 +279,7 @@ def c09_rare_account_pair(
         return pd.Series(False, index=df.index)
 
     # 2. document_id 기준 inner join → N:M 복합 분개의 모든 쌍 생성
-    normal_pairs = normal_debits.merge(
-        normal_credits, on="document_id", suffixes=("_dr", "_cr")
-    )
+    normal_pairs = normal_debits.merge(normal_credits, on="document_id", suffixes=("_dr", "_cr"))
     large_pairs = (
         large_debits.merge(large_credits, on="document_id", suffixes=("_dr", "_cr"))
         if not large_debits.empty and not large_credits.empty
@@ -306,9 +311,14 @@ def c09_rare_account_pair(
         on=["gl_account_dr", "gl_account_cr"],
         how="left",
     )
-    pairs["_rare"] = pairs["_rare"].where(
-        pairs["_rare"].notna(), pairs["_large_doc_pair"],
-    ).astype(bool)
+    pairs["_rare"] = (
+        pairs["_rare"]
+        .where(
+            pairs["_rare"].notna(),
+            pairs["_large_doc_pair"],
+        )
+        .astype(bool)
+    )
     rare_docs = set(pairs.loc[pairs["_rare"] == True, "document_id"])  # noqa: E712
 
     # 5. Flag every line in documents that contain at least one rare pair.
@@ -382,9 +392,7 @@ def c09_rare_account_pair(
             value = df.at[idx, "gl_account"]
             row_annotations[annotation_key]["gl_account"] = None if pd.isna(value) else value
         if "sample_pair_count" in doc_input:
-            row_annotations[annotation_key]["sample_pair_count"] = doc_input[
-                "sample_pair_count"
-            ]
+            row_annotations[annotation_key]["sample_pair_count"] = doc_input["sample_pair_count"]
 
     large_doc_rare_docs = (
         set(rare_doc_summary[rare_doc_summary["has_large_doc_pair"]].index)
@@ -392,12 +400,10 @@ def c09_rare_account_pair(
         else set()
     )
     single_rare_pair_docs = {
-        doc for doc, bucket in score_bucket_by_doc.items()
-        if bucket == "single_rare_pair"
+        doc for doc, bucket in score_bucket_by_doc.items() if bucket == "single_rare_pair"
     }
     multiple_rare_pair_docs = {
-        doc for doc, bucket in score_bucket_by_doc.items()
-        if bucket == "multiple_rare_pairs"
+        doc for doc, bucket in score_bucket_by_doc.items() if bucket == "multiple_rare_pairs"
     }
     result.attrs["breakdown"] = {
         "interpretation": "rare_debit_credit_pair_review_signal",

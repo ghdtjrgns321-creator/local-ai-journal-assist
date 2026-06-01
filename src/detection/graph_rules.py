@@ -59,7 +59,8 @@ def _filter_edges(
         if len(edges_df) > max_edges:
             logger.warning(
                 "GR01 동일 금액 집중 — 상위 %d행 강제 절단 (원본 %d행)",
-                max_edges, len(edges_df),
+                max_edges,
+                len(edges_df),
             )
             edges_df = edges_df.nlargest(max_edges, "_amount", keep="first").copy()
             raised = 1
@@ -85,9 +86,7 @@ def _recover_implicit_partner(edges_df: pd.DataFrame) -> tuple[pd.DataFrame, int
         .agg(lambda s: list(pd.Series(s).dropna().astype(str).unique()))
         .rename("_doc_companies")
     )
-    edges_df = edges_df.merge(
-        doc_companies, left_on="document_id", right_index=True, how="left"
-    )
+    edges_df = edges_df.merge(doc_companies, left_on="document_id", right_index=True, how="left")
 
     # Why: NULL partner 행에 한해서만 list comprehension 실행 (전체 루프 아님)
     null_mask = edges_df["trading_partner"].isna()
@@ -124,9 +123,7 @@ def _build_graph(
         metadata["gr01_skip_reason"] = "missing_required_columns"
         return None
 
-    edges_df, eff_min, raised = _filter_edges(
-        df, min_amount=min_amount, max_edges=max_edges
-    )
+    edges_df, eff_min, raised = _filter_edges(df, min_amount=min_amount, max_edges=max_edges)
     metadata["gr01_edges_prefiltered"] = int(len(edges_df))
     metadata["gr01_min_amount_effective"] = eff_min
     metadata["gr01_max_edges_raised"] = raised
@@ -262,8 +259,13 @@ def gr03_transfer_pricing_graph(
     if metadata is None:
         metadata = {}
 
-    required = {"is_intercompany", "company_code", "trading_partner",
-                "debit_amount", "credit_amount"}
+    required = {
+        "is_intercompany",
+        "company_code",
+        "trading_partner",
+        "debit_amount",
+        "credit_amount",
+    }
     if not required.issubset(df.columns):
         metadata["gr03_skip_reason"] = "missing_required_columns"
         return scores
@@ -277,7 +279,9 @@ def gr03_transfer_pricing_graph(
     ic_df["_amount"] = ic_df[["debit_amount", "credit_amount"]].fillna(0).max(axis=1)
     if "document_id" in df.columns:
         doc_amount = df[["debit_amount", "credit_amount"]].fillna(0).max(axis=1)
-        ic_df["_doc_amount"] = doc_amount.groupby(df["document_id"]).transform("max").reindex(ic_df.index)
+        ic_df["_doc_amount"] = (
+            doc_amount.groupby(df["document_id"]).transform("max").reindex(ic_df.index)
+        )
     ic_df = ic_df[(ic_df["_amount"] > 0) & ic_df["trading_partner"].notna()]
     if ic_df.empty:
         return scores
@@ -322,11 +326,13 @@ def gr03_transfer_pricing_graph(
 
     # Why: 역방향(B→A) 평균을 정방향(A→B)과 동일 key로 노출하기 위해 _src/_dst 교환.
     #      inner join으로 양방향 쌍만 남김 (단방향 IC 거래는 자동 제외 → FP 방지)
-    reverse = group_mean.rename(columns={
-        "_src": "_dst",
-        "_dst": "_src",
-        "_mean_amount": "_rev_mean",
-    })
+    reverse = group_mean.rename(
+        columns={
+            "_src": "_dst",
+            "_dst": "_src",
+            "_mean_amount": "_rev_mean",
+        }
+    )
     merge_keys = ["_src", "_dst"] + (["_gl"] if "_gl" in group_cols else [])
     bidirectional = group_mean.merge(reverse, on=merge_keys, how="inner")
     if bidirectional.empty:
@@ -338,8 +344,8 @@ def gr03_transfer_pricing_graph(
     # Why: deviation = |mean - rev_mean| / min(mean, rev_mean) — 대칭 비대칭성
     min_vals = bidirectional[["_mean_amount", "_rev_mean"]].min(axis=1).clip(lower=1e-10)
     bidirectional["_deviation"] = (
-        (bidirectional["_mean_amount"] - bidirectional["_rev_mean"]).abs() / min_vals
-    )
+        bidirectional["_mean_amount"] - bidirectional["_rev_mean"]
+    ).abs() / min_vals
     flagged = bidirectional[bidirectional["_deviation"] > deviation_threshold].copy()
     metadata["gr03_flagged_pairs"] = int(len(flagged))
     if flagged.empty:
@@ -386,13 +392,15 @@ def _gr03_reference_pair_scores(
     if doc_pairs.empty:
         return pd.Series(dtype=float)
 
-    reverse = doc_pairs.rename(columns={
-        "company_code": "trading_partner",
-        "trading_partner": "company_code",
-        "document_id": "_counterpart_document_id",
-        "amount": "_counterpart_amount",
-        "row_indices": "_counterpart_row_indices",
-    })
+    reverse = doc_pairs.rename(
+        columns={
+            "company_code": "trading_partner",
+            "trading_partner": "company_code",
+            "document_id": "_counterpart_document_id",
+            "amount": "_counterpart_amount",
+            "row_indices": "_counterpart_row_indices",
+        }
+    )
     joined = doc_pairs.merge(
         reverse,
         on=["_reference", "company_code", "trading_partner"],
@@ -401,7 +409,9 @@ def _gr03_reference_pair_scores(
     if joined.empty:
         return pd.Series(dtype=float)
 
-    joined = joined[joined["document_id"].astype(str) != joined["_counterpart_document_id"].astype(str)]
+    joined = joined[
+        joined["document_id"].astype(str) != joined["_counterpart_document_id"].astype(str)
+    ]
     if joined.empty:
         return pd.Series(dtype=float)
 

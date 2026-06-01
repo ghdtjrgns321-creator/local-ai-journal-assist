@@ -126,8 +126,7 @@ def aa03_document_number_gap(
         exclude_mask = pd.Series(False, index=df.index)
 
     # Why: 파티션 그룹핑 — 회사코드+연도+유형별 독립 번호범위
-    group_cols = [c for c in ("company_code", "fiscal_year", "document_type")
-                  if c in df.columns]
+    group_cols = [c for c in ("company_code", "fiscal_year", "document_type") if c in df.columns]
     if not group_cols:
         group_cols = ["document_type"] if "document_type" in df.columns else []
 
@@ -184,8 +183,12 @@ def aa04_approval_process(
     """
     if approval_thresholds is None:
         approval_thresholds = [
-            10_000_000, 100_000_000, 1_000_000_000,
-            5_000_000_000, 10_000_000_000, 50_000_000_000,
+            10_000_000,
+            100_000_000,
+            1_000_000_000,
+            5_000_000_000,
+            10_000_000_000,
+            50_000_000_000,
         ]
 
     score = pd.Series(0.0, index=df.index)

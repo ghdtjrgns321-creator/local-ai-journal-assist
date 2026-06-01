@@ -298,9 +298,7 @@ def b05d_time_shifted_duplicate(
     date_ns = date_ns[order]
     pos = pos[order]
 
-    group_breaks = np.flatnonzero(
-        (gl_codes[1:] != gl_codes[:-1]) | (floors[1:] != floors[:-1])
-    ) + 1
+    group_breaks = np.flatnonzero((gl_codes[1:] != gl_codes[:-1]) | (floors[1:] != floors[:-1])) + 1
     starts = np.r_[0, group_breaks]
     ends = np.r_[group_breaks, len(order)]
 

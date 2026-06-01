@@ -12,6 +12,14 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+_COUNTERPARTY_KEY_COLUMNS: tuple[str, ...] = (
+    "trading_partner",
+    "affiliate",
+    "counterparty",
+    "counterparty_code",
+    "counterparty_id",
+)
+
 
 # ── YAML 설정 헬퍼 ─────────────────────────────────────────────
 
@@ -100,6 +108,17 @@ def _classify_ic_type(
     return gl_str.map(_get_type)
 
 
+def _first_nonempty_counterparty(side: pd.DataFrame) -> pd.Series:
+    """Return first populated related-party key from accepted counterparty columns."""
+    out = pd.Series("", index=side.index, dtype="object")
+    for col in _COUNTERPARTY_KEY_COLUMNS:
+        if col not in side.columns:
+            continue
+        values = side[col].fillna("").astype(str).str.strip()
+        out = out.where(out.ne(""), values)
+    return out
+
+
 # ── 그룹 매칭 엔진 ─────────────────────────────────────────────
 
 
@@ -144,12 +163,14 @@ def match_ic_groups(
     #      원본 인덱스를 컬럼으로 보존하여 안전하게 추적
     ic_df["_orig_idx"] = ic_df.index
 
+    ic_df["_ic_partner_key"] = _first_nonempty_counterparty(ic_df)
+
     # ── 집계 키 결정 (graceful degradation) ──
     # match_level 매트릭스:
     #   company_code multi + trading_partner 있음 → "exact"     (Level 1)
     #   company_code multi, trading_partner 없음  → "aggregate" (Level 2)
     #   그 외                                    → "fallback"  (Level 3)
-    has_tp = "trading_partner" in ic_df.columns and ic_df["trading_partner"].notna().any()
+    has_tp = ic_df["_ic_partner_key"].ne("").any()
     has_cc = "company_code" in ic_df.columns and ic_df["company_code"].nunique() > 1
     has_ref = (
         "reference" in ic_df.columns
@@ -163,7 +184,7 @@ def match_ic_groups(
     if has_cc:
         group_cols.append("company_code")
     if has_tp:
-        group_cols.append("trading_partner")
+        group_cols.append("_ic_partner_key")
     if not group_cols:
         match_level = "fallback"
     elif has_tp:
@@ -180,7 +201,8 @@ def match_ic_groups(
         "row_indices": ("_orig_idx", list),
     }
     if "posting_date" in ic_df.columns:
-        agg_spec["median_date"] = ("posting_date", "median")
+        ic_df["_posting_date_ts"] = pd.to_datetime(ic_df["posting_date"], errors="coerce")
+        agg_spec["median_date"] = ("_posting_date_ts", "median")
     if has_cur:
         agg_spec["currency_values"] = ("currency", _unique_nonempty_values)
 
@@ -252,13 +274,13 @@ def _apply_group_filter(
     has_tp: bool,
 ) -> pd.Series:
     """그룹 매칭 필터 적용 — 교차 매칭 포함."""
-    if col == "trading_partner" and has_cc:
+    if col == "_ic_partner_key" and has_cc:
         # Why: rec의 trading_partner → pay의 company_code 교차 매칭
-        return mask & (pay_groups["company_code"] == rec_row.get("trading_partner", ""))
+        return mask & (pay_groups["company_code"] == rec_row.get("_ic_partner_key", ""))
     if col == "company_code" and has_tp:
         # Why: rec의 company_code → pay의 trading_partner 교차 매칭
-        if "trading_partner" in pay_groups.columns:
-            return mask & (pay_groups["trading_partner"] == rec_row.get("company_code", ""))
+        if "_ic_partner_key" in pay_groups.columns:
+            return mask & (pay_groups["_ic_partner_key"] == rec_row.get("company_code", ""))
         return mask
     if col in pay_groups.columns:
         return mask & (pay_groups[col] == rec_row[col])
@@ -638,6 +660,7 @@ def _ic_sides(df: pd.DataFrame, pair_map: dict[str, str]) -> tuple[pd.DataFrame,
     credit = pd.to_numeric(credit_src, errors="coerce").fillna(0.0)
     ic_df["_amount"] = debit.where(ic_df["_ic_type"] == "receivable", credit).abs()
     ic_df = ic_df[ic_df["_amount"] > 0]
+    ic_df["_ic_partner_key"] = _first_nonempty_counterparty(ic_df)
 
     rec = ic_df[ic_df["_ic_type"] == "receivable"].copy()
     pay = ic_df[ic_df["_ic_type"] == "payable"].copy()
@@ -952,12 +975,14 @@ def compute_probabilistic_pair_scores(
 
     cc_rec = pairs.get("company_code_rec", pd.Series("", index=pairs.index)).fillna("").astype(str)
     cc_pay = pairs.get("company_code_pay", pd.Series("", index=pairs.index)).fillna("").astype(str)
-    tp_rec = (
-        pairs.get("trading_partner_rec", pd.Series("", index=pairs.index)).fillna("").astype(str)
-    )
-    tp_pay = (
-        pairs.get("trading_partner_pay", pd.Series("", index=pairs.index)).fillna("").astype(str)
-    )
+    tp_rec = pairs.get("_ic_partner_key_rec")
+    if tp_rec is None:
+        tp_rec = pairs.get("trading_partner_rec", pd.Series("", index=pairs.index))
+    tp_rec = tp_rec.fillna("").astype(str)
+    tp_pay = pairs.get("_ic_partner_key_pay")
+    if tp_pay is None:
+        tp_pay = pairs.get("trading_partner_pay", pd.Series("", index=pairs.index))
+    tp_pay = tp_pay.fillna("").astype(str)
     cp_score = pd.Series(
         [
             _counterparty_mapping_score(rcc, rtp, pcc, ptp)
@@ -1159,12 +1184,12 @@ def _build_cp_block_key(side: pd.DataFrame, *, kind: str) -> pd.Series:
     차단한다.
     """
     if kind == "rec":
-        primary = side.get("trading_partner")
+        primary = _first_nonempty_counterparty(side)
         secondary = side.get("company_code")
         empty_tag = "__rec_NA_"
     else:
         primary = side.get("company_code")
-        secondary = side.get("trading_partner")
+        secondary = _first_nonempty_counterparty(side)
         empty_tag = "__pay_NA_"
 
     def _clean(value: pd.Series | None) -> pd.Series:

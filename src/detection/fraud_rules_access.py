@@ -627,9 +627,7 @@ def b14_work_scope_excess_review(
         else pd.Series("", index=df.index)
     )
     source = (
-        _normalized_text(df["source"])
-        if "source" in df.columns
-        else pd.Series("", index=df.index)
+        _normalized_text(df["source"]) if "source" in df.columns else pd.Series("", index=df.index)
     )
     manual_source = source.isin(cfg["manual_sources"])
     system_source = source.isin(cfg["system_sources"])
@@ -755,8 +753,8 @@ def b14_work_scope_excess_review(
             )
         )
         info_only = process_count >= cfg["min_process_info"] and not broad_scope
-        corroborating_count = int(has_manual) + int(has_sensitive) + int(has_period_end) + int(
-            has_high_amount
+        corroborating_count = (
+            int(has_manual) + int(has_sensitive) + int(has_period_end) + int(has_high_amount)
         )
 
         is_candidate_user = broad_scope or info_only
@@ -764,9 +762,7 @@ def b14_work_scope_excess_review(
         if is_automated and is_candidate_user:
             user_score = 0.30 if has_manual and corroborating_count >= 2 else 0.0
             user_bucket = (
-                "system_mixed_scope_review"
-                if user_score > 0
-                else "system_scope_observation"
+                "system_mixed_scope_review" if user_score > 0 else "system_scope_observation"
             )
         elif is_automated:
             user_score = 0.0
@@ -1208,25 +1204,30 @@ def _build_self_approval_group_summary(
     posting_month = _posting_month(df).loc[flagged_index]
     amount = _line_amount(df, cache=cache).loc[flagged_index]
 
-    grouped = pd.DataFrame({
-        "document_id": doc_key,
-        "created_by": created_by,
-        "business_process": business_process,
-        "posting_month": posting_month,
-        "amount": amount,
-        "level": pd.Series("review", index=flagged_index).mask(
-            immediate.loc[flagged_index],
-            "immediate",
-        ),
-        "high_amount": high_amount.loc[flagged_index],
-        "abnormal_time": abnormal_time.loc[flagged_index],
-        "high_risk_account": high_risk_account.loc[flagged_index],
-        "sensitive_process": sensitive_process.loc[flagged_index],
-    }, index=flagged_index).copy()
+    grouped = pd.DataFrame(
+        {
+            "document_id": doc_key,
+            "created_by": created_by,
+            "business_process": business_process,
+            "posting_month": posting_month,
+            "amount": amount,
+            "level": pd.Series("review", index=flagged_index).mask(
+                immediate.loc[flagged_index],
+                "immediate",
+            ),
+            "high_amount": high_amount.loc[flagged_index],
+            "abnormal_time": abnormal_time.loc[flagged_index],
+            "high_risk_account": high_risk_account.loc[flagged_index],
+            "sensitive_process": sensitive_process.loc[flagged_index],
+        },
+        index=flagged_index,
+    ).copy()
 
-    grouped["additional_signal_count"] = grouped[
-        ["high_amount", "abnormal_time", "high_risk_account", "sensitive_process"]
-    ].astype(int).sum(axis=1)
+    grouped["additional_signal_count"] = (
+        grouped[["high_amount", "abnormal_time", "high_risk_account", "sensitive_process"]]
+        .astype(int)
+        .sum(axis=1)
+    )
     grouped["multi_signal_2plus"] = grouped["additional_signal_count"] >= 2
     grouped["other_self_approval"] = grouped["additional_signal_count"] == 0
 
@@ -1467,8 +1468,7 @@ def _get_sod_config(audit_rules: dict | None = None) -> tuple[list[frozenset[str
             ],
         )
     toxic_pairs = [
-        frozenset(str(v).strip().upper() for v in pair if str(v).strip())
-        for pair in raw_pairs
+        frozenset(str(v).strip().upper() for v in pair if str(v).strip()) for pair in raw_pairs
     ]
 
     role_thresholds = patterns.get(
@@ -1559,8 +1559,7 @@ def _get_sod_mitigating_roles(audit_rules: dict | None = None) -> tuple[str, ...
     rules = audit_rules or get_audit_rules()
     cfg = rules.get("patterns", {}).get("sod_mitigating_roles", {})
     return tuple(
-        str(v).strip().lower()
-        for v in cfg.get("user_personas", ["controller", "manager"])
+        str(v).strip().lower() for v in cfg.get("user_personas", ["controller", "manager"])
     )
 
 
@@ -1918,8 +1917,8 @@ def b07_segregation_of_duties(
     if scope_review_users:
         scope_review_mask = human_mask & df["created_by"].isin(scope_review_users)
         if "exceeds_threshold" in df.columns:
-            scope_review_mask = (
-                scope_review_mask & df["exceeds_threshold"].fillna(False).astype(bool)
+            scope_review_mask = scope_review_mask & df["exceeds_threshold"].fillna(False).astype(
+                bool
             )
         else:
             scope_review_mask = pd.Series(False, index=df.index)
@@ -2186,8 +2185,7 @@ def _l107_component_scores(
     else:
         all_lines_missing_approver = no_approval
     data_trace = (
-        no_approval_date.astype(float) * 0.70
-        + all_lines_missing_approver.astype(float) * 0.30
+        no_approval_date.astype(float) * 0.70 + all_lines_missing_approver.astype(float) * 0.30
     ).clip(0.0, 1.0)
 
     source_norm = (
@@ -2197,9 +2195,7 @@ def _l107_component_scores(
     )
     recurring_source = source_norm.eq("recurring")
     has_approval_date = (
-        ~no_approval_date
-        if "approval_date" in df.columns
-        else pd.Series(False, index=index)
+        ~no_approval_date if "approval_date" in df.columns else pd.Series(False, index=index)
     )
     mitigation = (
         system_source.astype(float) * 1.00

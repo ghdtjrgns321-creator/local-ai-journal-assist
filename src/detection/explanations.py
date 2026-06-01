@@ -171,9 +171,7 @@ def build_export_narrative(
     """Build a short export narrative."""
 
     rule_explanations = [build_rule_explanation(rule_id) for rule_id in rules]
-    parts = [
-        f"Document {document_id} was classified as {risk} (anomaly_score={score:.3f})."
-    ]
+    parts = [f"Document {document_id} was classified as {risk} (anomaly_score={score:.3f})."]
     if rule_explanations:
         rule_text = ", ".join(
             _format_rule_export_text(rule["rule_id"], rule["rule_name"], rule["references"])
@@ -185,8 +183,7 @@ def build_export_narrative(
 
     if top_features:
         feature_text = ", ".join(
-            f"{name} (contribution={value:.3f})"
-            for name, value in top_features
+            f"{name} (contribution={value:.3f})" for name, value in top_features
         )
         parts.append(f"Top feature contributions: {feature_text}.")
 

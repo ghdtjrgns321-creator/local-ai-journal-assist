@@ -66,10 +66,7 @@ def find_prior_engagement(
          가장 신뢰도 높은 것(completed > in_progress > 기타)을 반환.
     """
     engagements = repo.list_engagements(company_id)
-    candidates = [
-        e for e in engagements
-        if e.fiscal_year == current_fiscal_year - 1
-    ]
+    candidates = [e for e in engagements if e.fiscal_year == current_fiscal_year - 1]
     if not candidates:
         return None
 
@@ -112,9 +109,7 @@ def load_prior_summary(
         #      DuckDB 스키마 접두사는 파라미터 바인딩 불가 → sanitize 완료된 alias만 f-string 삽입.
         with attached_engagement(conn, abs_path, "prior") as alias:
             # Why: 빈 테이블에서 GROUP BY 집계해도 의미 없음 — 조기 반환
-            total_rows = conn.execute(
-                f"SELECT COUNT(*) FROM {alias}.general_ledger"
-            ).fetchone()[0]
+            total_rows = conn.execute(f"SELECT COUNT(*) FROM {alias}.general_ledger").fetchone()[0]
 
             if total_rows == 0:
                 logger.info("전기 general_ledger 빈 테이블 — Layer D 스킵")
@@ -122,9 +117,7 @@ def load_prior_summary(
 
             columns = {
                 col[0]
-                for col in conn.execute(
-                    f"SELECT * FROM {alias}.general_ledger LIMIT 0"
-                ).description
+                for col in conn.execute(f"SELECT * FROM {alias}.general_ledger LIMIT 0").description
             }
             has_company_code = "company_code" in columns
 
@@ -145,9 +138,7 @@ def load_prior_summary(
             #      파이썬 float() 변환 전 pd.isna() 필터링 필수.
             d02_select = "company_code, gl_account" if has_company_code else "gl_account"
             d02_group_by = "company_code, gl_account" if has_company_code else "gl_account"
-            d02_selected_columns = ", ".join(
-                f"m.{col.strip()}" for col in d02_select.split(",")
-            )
+            d02_selected_columns = ", ".join(f"m.{col.strip()}" for col in d02_select.split(","))
             d02_join = (
                 "m.company_code = a.company_code AND m.gl_account = a.gl_account"
                 if has_company_code

@@ -67,8 +67,7 @@ class TrendBreakDetector(BaseDetector):
                 # Why: 룰 함수는 계정 단위 dict 반환 → 행 단위 pd.Series로 변환
                 account_results: dict[str, dict[str, Any]] = func(**kwargs)
                 flagged_accounts = {
-                    acct for acct, info in account_results.items()
-                    if info.get("flagged", False)
+                    acct for acct, info in account_results.items() if info.get("flagged", False)
                 }
                 rule_results[rule_id] = df["gl_account"].isin(flagged_accounts)
             except Exception as exc:
@@ -83,17 +82,25 @@ class TrendBreakDetector(BaseDetector):
         """룰 레지스트리: (rule_id, callable, kwargs)."""
         s = self._settings
         return [
-            ("TB01", tb01_sign_bias, {
-                "estimation_errors": self._estimates.estimation_errors,
-                "min_periods": s.trendbreak_min_periods,
-                "bias_ratio_threshold": s.trendbreak_bias_ratio,
-            }),
-            ("TB02", tb02_range_extremity, {
-                "provision_amounts": self._estimates.provision_amounts,
-                # Why: TB02는 IQR 계산에 최소 3개 필요. min_periods가 1로 낮아져도 안전.
-                "min_periods": max(s.trendbreak_min_periods + 1, 3),
-                "extremity_quantile": s.trendbreak_extremity_quantile,
-            }),
+            (
+                "TB01",
+                tb01_sign_bias,
+                {
+                    "estimation_errors": self._estimates.estimation_errors,
+                    "min_periods": s.trendbreak_min_periods,
+                    "bias_ratio_threshold": s.trendbreak_bias_ratio,
+                },
+            ),
+            (
+                "TB02",
+                tb02_range_extremity,
+                {
+                    "provision_amounts": self._estimates.provision_amounts,
+                    # Why: TB02는 IQR 계산에 최소 3개 필요. min_periods가 1로 낮아져도 안전.
+                    "min_periods": max(s.trendbreak_min_periods + 1, 3),
+                    "extremity_quantile": s.trendbreak_extremity_quantile,
+                },
+            ),
         ]
 
     def _build_result(

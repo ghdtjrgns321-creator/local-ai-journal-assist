@@ -66,9 +66,7 @@ class GraphDetector(BaseDetector):
                         f"(최종 {meta.get('gr01_min_amount_effective'):.0f}원)"
                     )
                 if meta.get("gr01_skipped_components", 0) > 0:
-                    warnings.append(
-                        f"GR01 대형 component {meta['gr01_skipped_components']}개 skip"
-                    )
+                    warnings.append(f"GR01 대형 component {meta['gr01_skipped_components']}개 skip")
             except Exception as exc:
                 skipped.append(rule_id)
                 warnings.append(f"{rule_id} 실행 실패: {exc}")
@@ -77,9 +75,7 @@ class GraphDetector(BaseDetector):
         elapsed = time.perf_counter() - start
         if not rule_results:
             return self._empty_result(df, warnings, elapsed)
-        return self._build_result(
-            df, rule_results, skipped, warnings, elapsed, rule_metadata
-        )
+        return self._build_result(df, rule_results, skipped, warnings, elapsed, rule_metadata)
 
     def _build_registry(self) -> list[tuple[str, Callable, dict]]:
         """서브룰 레지스트리 — settings 기반 파라미터 주입."""
@@ -90,17 +86,25 @@ class GraphDetector(BaseDetector):
         )
 
         return [
-            ("GR01", gr01_circular_transaction, {
-                "max_cycle_length": s.graph_gr01_max_cycle_length,
-                "min_amount": s.graph_gr01_min_amount,
-                "max_edges": s.graph_gr01_max_edges,
-                "max_component_size": s.graph_gr01_max_component_size,
-                "max_component_edges": s.graph_gr01_max_component_edges,
-            }),
-            ("GR03", gr03_transfer_pricing_graph, {
-                "min_path_length": s.graph_gr03_min_path_length,
-                "deviation_threshold": s.graph_gr03_price_deviation_threshold,
-            }),
+            (
+                "GR01",
+                gr01_circular_transaction,
+                {
+                    "max_cycle_length": s.graph_gr01_max_cycle_length,
+                    "min_amount": s.graph_gr01_min_amount,
+                    "max_edges": s.graph_gr01_max_edges,
+                    "max_component_size": s.graph_gr01_max_component_size,
+                    "max_component_edges": s.graph_gr01_max_component_edges,
+                },
+            ),
+            (
+                "GR03",
+                gr03_transfer_pricing_graph,
+                {
+                    "min_path_length": s.graph_gr03_min_path_length,
+                    "deviation_threshold": s.graph_gr03_price_deviation_threshold,
+                },
+            ),
         ]
 
     def _build_result(
@@ -116,9 +120,7 @@ class GraphDetector(BaseDetector):
         details = pd.DataFrame(index=df.index)
         for rule_id, raw_scores in rule_results.items():
             severity_factor = SEVERITY_MAP[rule_id] / 5.0
-            details[rule_id] = (
-                raw_scores.reindex(df.index, fill_value=0.0) * severity_factor
-            )
+            details[rule_id] = raw_scores.reindex(df.index, fill_value=0.0) * severity_factor
 
         scores = details.max(axis=1).fillna(0.0)
         flagged_indices = scores[scores > 0].index.tolist()
@@ -177,7 +179,10 @@ class GraphDetector(BaseDetector):
         )
 
     def _empty_result(
-        self, df: pd.DataFrame, warnings: list[str], elapsed: float,
+        self,
+        df: pd.DataFrame,
+        warnings: list[str],
+        elapsed: float,
     ) -> DetectionResult:
         return self._make_result(
             flagged_indices=[],

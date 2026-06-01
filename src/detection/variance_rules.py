@@ -39,11 +39,7 @@ def _valid_account_mask(series: pd.Series) -> pd.Series:
 def _company_account_key(company_code: object, gl_account: object) -> str:
     """Return the stable D01 key used when company_code is available."""
 
-    return (
-        f"{_normalise_key_part(company_code)}"
-        f"{_ACCOUNT_KEY_SEP}"
-        f"{_normalise_key_part(gl_account)}"
-    )
+    return f"{_normalise_key_part(company_code)}{_ACCOUNT_KEY_SEP}{_normalise_key_part(gl_account)}"
 
 
 def _normalise_key_part(value: object) -> str:
@@ -160,10 +156,12 @@ def d01_account_activity_variance(
         prior = _lookup_prior_account(prior_aggregates, acct, company_code)
         if prior is None:
             if has_company_code:
-                flagged_company_accounts.add((
-                    _normalise_key_part(company_code),
-                    _normalise_key_part(acct),
-                ))
+                flagged_company_accounts.add(
+                    (
+                        _normalise_key_part(company_code),
+                        _normalise_key_part(acct),
+                    )
+                )
             else:
                 flagged_accounts.add(_normalise_key_part(acct))
             continue
@@ -172,26 +170,28 @@ def d01_account_activity_variance(
             prior["total_amount"], _EPSILON
         )
         count_var = abs(row["count"] - prior["count"]) / max(prior["count"], _EPSILON)
-        avg_var = abs(row["avg_amount"] - prior["avg_amount"]) / max(
-            prior["avg_amount"], _EPSILON
-        )
+        avg_var = abs(row["avg_amount"] - prior["avg_amount"]) / max(prior["avg_amount"], _EPSILON)
 
         weighted = total_var * _W_TOTAL + count_var * _W_COUNT + avg_var * _W_AVG
         if weighted > variance_threshold:
             if has_company_code:
-                flagged_company_accounts.add((
-                    _normalise_key_part(company_code),
-                    _normalise_key_part(acct),
-                ))
+                flagged_company_accounts.add(
+                    (
+                        _normalise_key_part(company_code),
+                        _normalise_key_part(acct),
+                    )
+                )
             else:
                 flagged_accounts.add(_normalise_key_part(acct))
 
     if has_company_code:
         current_keys = pd.Series(
-            list(zip(
-                df["company_code"].map(_normalise_key_part),
-                df["gl_account"].map(_normalise_key_part),
-            )),
+            list(
+                zip(
+                    df["company_code"].map(_normalise_key_part),
+                    df["gl_account"].map(_normalise_key_part),
+                )
+            ),
             index=df.index,
         )
         return current_keys.isin(flagged_company_accounts) & valid_accounts
@@ -296,17 +296,14 @@ def d02_monthly_pattern_diagnostics(
         account_doc_counts = analysis_df.groupby("_d02_group_key")["document_id"].nunique()
     else:
         account_doc_counts = analysis_df.groupby("_d02_group_key").size()
-    group_identity = (
-        analysis_df.groupby("_d02_group_key", dropna=False)
-        .agg(
-            gl_account=("gl_account", "first"),
-            company_code=(
-                "company_code",
-                "first",
-            )
-            if "company_code" in analysis_df.columns
-            else ("gl_account", lambda _series: None),
+    group_identity = analysis_df.groupby("_d02_group_key", dropna=False).agg(
+        gl_account=("gl_account", "first"),
+        company_code=(
+            "company_code",
+            "first",
         )
+        if "company_code" in analysis_df.columns
+        else ("gl_account", lambda _series: None),
     )
 
     rows: list[dict[str, object]] = []
@@ -360,23 +357,25 @@ def d02_monthly_pattern_diagnostics(
             skip_reason = "small_top_month_delta"
 
         jsd = float(jensenshannon(prior_norm, current_norm))
-        rows.append({
-            "d02_group_key": str(group_key),
-            "d02_group_columns": list(effective_group_keys),
-            "company_code": None if pd.isna(company_code) else str(company_code),
-            "gl_account": _normalise_key_part(acct),
-            "jsd": jsd,
-            "flagged": (not skip_reason) and jsd > jsd_threshold,
-            "prior_months": prior_months,
-            "current_months": current_months,
-            "current_doc_count": current_doc_count,
-            "current_annual_amount": current_sum,
-            "prior_top_month": prior_top_month,
-            "current_top_month": current_top_month,
-            "prior_top_ratio": prior_top_ratio,
-            "current_top_ratio": current_top_ratio,
-            "top_month_delta": top_month_delta,
-            "skip_reason": skip_reason,
-        })
+        rows.append(
+            {
+                "d02_group_key": str(group_key),
+                "d02_group_columns": list(effective_group_keys),
+                "company_code": None if pd.isna(company_code) else str(company_code),
+                "gl_account": _normalise_key_part(acct),
+                "jsd": jsd,
+                "flagged": (not skip_reason) and jsd > jsd_threshold,
+                "prior_months": prior_months,
+                "current_months": current_months,
+                "current_doc_count": current_doc_count,
+                "current_annual_amount": current_sum,
+                "prior_top_month": prior_top_month,
+                "current_top_month": current_top_month,
+                "prior_top_ratio": prior_top_ratio,
+                "current_top_ratio": current_top_ratio,
+                "top_month_delta": top_month_delta,
+                "skip_reason": skip_reason,
+            }
+        )
 
     return pd.DataFrame(rows, columns=columns)

@@ -32,8 +32,20 @@ def c13_batch_anomaly(
         return pd.Series(False, index=df.index)
 
     sources = batch_sources or [
-        "batch", "interface", "system", "auto", "automated", "if", "sys",
-        "BATCH", "INTERFACE", "SYSTEM", "AUTO", "AUTOMATED", "IF", "SYS",
+        "batch",
+        "interface",
+        "system",
+        "auto",
+        "automated",
+        "if",
+        "sys",
+        "BATCH",
+        "INTERFACE",
+        "SYSTEM",
+        "AUTO",
+        "AUTOMATED",
+        "IF",
+        "SYS",
     ]
     source_values = df["source"].astype("string").str.strip().str.lower()
     is_batch = source_values.isin({str(source).strip().lower() for source in sources})
@@ -117,16 +129,18 @@ def c13_batch_anomaly(
         },
     }
     if "document_id" in df.columns:
-        breakdown.update({
-            "batch_review_docs": _nunique_documents(df, result),
-            "period_end_concentration_docs": _nunique_documents(df, period_end_flags),
-            "simultaneous_creation_docs": _nunique_documents(df, simultaneous_flags),
-            "amount_outlier_docs": _nunique_documents(df, amount_outlier_flags),
-            "amount_outlier_only_docs": _nunique_documents(df, result & amount_only_flags),
-            "period_end_only_docs": _nunique_documents(df, result & period_end_only_flags),
-            "simultaneous_only_docs": _nunique_documents(df, result & simultaneous_only_flags),
-            "multi_signal_batch_docs": _nunique_documents(df, result & multi_signal_flags),
-        })
+        breakdown.update(
+            {
+                "batch_review_docs": _nunique_documents(df, result),
+                "period_end_concentration_docs": _nunique_documents(df, period_end_flags),
+                "simultaneous_creation_docs": _nunique_documents(df, simultaneous_flags),
+                "amount_outlier_docs": _nunique_documents(df, amount_outlier_flags),
+                "amount_outlier_only_docs": _nunique_documents(df, result & amount_only_flags),
+                "period_end_only_docs": _nunique_documents(df, result & period_end_only_flags),
+                "simultaneous_only_docs": _nunique_documents(df, result & simultaneous_only_flags),
+                "multi_signal_batch_docs": _nunique_documents(df, result & multi_signal_flags),
+            }
+        )
 
     result.attrs["score_series"] = score_series
     result.attrs["breakdown"] = breakdown
@@ -135,7 +149,9 @@ def c13_batch_anomaly(
 
 
 def _batch_period_end_concentration(
-    df: pd.DataFrame, is_batch: pd.Series, ratio: float,
+    df: pd.DataFrame,
+    is_batch: pd.Series,
+    ratio: float,
 ) -> pd.Series:
     """배치 전표 중 기말 비율이 임계 초과 → 해당 배치 전표 전체 플래그.
 
@@ -158,7 +174,9 @@ def _batch_period_end_concentration(
 
 
 def _batch_simultaneous_creation(
-    df: pd.DataFrame, is_batch: pd.Series, threshold: int,
+    df: pd.DataFrame,
+    is_batch: pd.Series,
+    threshold: int,
 ) -> pd.Series:
     """같은 시각/일자에 배치 전표 N건 이상 → 해당 timestamp 배치 행 플래그.
 
@@ -180,7 +198,9 @@ def _batch_simultaneous_creation(
 
 
 def _batch_amount_outlier(
-    df: pd.DataFrame, is_batch: pd.Series, zscore_threshold: float,
+    df: pd.DataFrame,
+    is_batch: pd.Series,
+    zscore_threshold: float,
 ) -> pd.Series:
     """배치 전표 내 Z-score 이상치 → 해당 행 플래그.
 
@@ -193,10 +213,12 @@ def _batch_amount_outlier(
     if "document_id" in df.columns:
         doc_amount = base.groupby(df["document_id"]).transform("max")
         batch_amounts = (
-            pd.DataFrame({
-                "document_id": df.loc[batch_mask, "document_id"],
-                "_doc_amount": doc_amount.loc[batch_mask],
-            })
+            pd.DataFrame(
+                {
+                    "document_id": df.loc[batch_mask, "document_id"],
+                    "_doc_amount": doc_amount.loc[batch_mask],
+                }
+            )
             .dropna(subset=["document_id"])
             .drop_duplicates("document_id")["_doc_amount"]
         )

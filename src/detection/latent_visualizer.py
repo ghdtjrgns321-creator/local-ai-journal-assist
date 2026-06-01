@@ -16,7 +16,8 @@ from sklearn.pipeline import Pipeline
 
 
 def extract_latent_vectors(
-    vae_pipeline: Pipeline, df: pd.DataFrame,
+    vae_pipeline: Pipeline,
+    df: pd.DataFrame,
 ) -> np.ndarray:
     """VAE 파이프라인에서 잠재 벡터(mu) 추출.
 
@@ -53,8 +54,10 @@ def plot_latent_2d(
         random_state: 재현성 시드.
     """
     reducer = TSNE(
-        n_components=2, perplexity=perplexity,
-        random_state=random_state, init="pca",
+        n_components=2,
+        perplexity=perplexity,
+        random_state=random_state,
+        init="pca",
     )
     coords = reducer.fit_transform(latent)
 
@@ -62,12 +65,21 @@ def plot_latent_2d(
     if labels is not None:
         normal_mask = labels == 0
         ax.scatter(
-            coords[normal_mask, 0], coords[normal_mask, 1],
-            c="steelblue", alpha=0.4, s=10, label="Normal",
+            coords[normal_mask, 0],
+            coords[normal_mask, 1],
+            c="steelblue",
+            alpha=0.4,
+            s=10,
+            label="Normal",
         )
         ax.scatter(
-            coords[~normal_mask, 0], coords[~normal_mask, 1],
-            c="crimson", alpha=0.8, s=30, label="Anomaly", marker="x",
+            coords[~normal_mask, 0],
+            coords[~normal_mask, 1],
+            c="crimson",
+            alpha=0.8,
+            s=30,
+            label="Anomaly",
+            marker="x",
         )
         ax.legend()
     else:

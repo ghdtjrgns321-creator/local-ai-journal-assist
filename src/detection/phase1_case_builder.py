@@ -60,6 +60,8 @@ from src.models.phase1_case import (
     RawRuleHitRef,
     ThemeSummary,
 )
+from src.services.phase2_ref_canonical import canonicalize_ref_key
+from src.services.phase2_ref_pseudonymize import hash_ref_key
 
 SCHEMA_VERSION = "1.0.0"
 
@@ -517,7 +519,13 @@ def build_phase1_case_result(
     dataset_id: str | None,
     phase1_case_config: dict[str, Any] | None = None,
     generated_at: datetime | None = None,
+    engagement_salt: str = "",
 ) -> Phase1CaseResult:
+    # Why: ``engagement_salt`` 는 S6.next Phase 1 (옵션 C) — RawRuleHitRef 의
+    # canonical_label_hash / doc_id_hash 산출 시 PHASE2 store 와 동일 salt 를
+    # 그대로 사용한다. 기본값 "" 일 때 신규 hash 필드는 모두 빈 값으로 남고
+    # (invariant #71), salt 가 명시되면 동일 row position 의 PHASE2 row_ref_map
+    # hash 와 동일한 값이 PHASE1 산출물 자체에 채워진다 (invariant #70).
     import time as _time
 
     _build_t0 = _time.perf_counter()
@@ -535,7 +543,13 @@ def build_phase1_case_result(
         top_n=int(config.get("top_n_macro_findings", 100)),
     )
     raw_hits = _collect_raw_hits(df, results)
-    cases = _build_cases(df, raw_hits, config, macro_findings)
+    cases = _build_cases(
+        df,
+        raw_hits,
+        config,
+        macro_findings,
+        engagement_salt=engagement_salt,
+    )
     theme_summaries = _build_theme_summaries(cases, int(config.get("top_n_per_theme", 10)))
     # Why: PHASE1 빌드 + 탐지기 실행 시간 합산. 탐지기별 metadata["elapsed"] 합 + 빌드 시간.
     detector_elapsed = 0.0
@@ -1247,6 +1261,8 @@ def _build_cases(
     config: dict[str, Any],
     macro_findings: list[dict[str, Any]] | None = None,
     profile_callback: Callable[[str, dict[str, Any]], None] | None = None,
+    *,
+    engagement_salt: str = "",
 ) -> list[CaseGroupResult]:
     if not raw_hits:
         return []
@@ -1569,7 +1585,12 @@ def _build_cases(
             line_amounts=line_amounts,
             ref_cache=document_ref_cache,
         )
-        raw_rule_hits = _raw_rule_hit_refs(case_hits, raw_rule_hit_ref_cache)
+        raw_rule_hits = _raw_rule_hit_refs(
+            case_hits,
+            raw_rule_hit_ref_cache,
+            df=df,
+            engagement_salt=engagement_salt,
+        )
         loop_timings["refs"] += time.perf_counter() - segment_start
 
         segment_start = time.perf_counter()
@@ -2351,12 +2372,48 @@ def _build_document_refs(
 def _raw_rule_hit_refs(
     hits: list[_RawHit],
     cache: dict[tuple[str, int], RawRuleHitRef],
+    *,
+    df: pd.DataFrame | None = None,
+    engagement_salt: str = "",
 ) -> list[RawRuleHitRef]:
+    # Why: engagement_salt 가 빈 문자열 / whitespace-only 면 신규 hash 필드는
+    # default(빈 값) 로 유지 — 기존 caller backward compat (invariant #71).
+    # PHASE2 store 의 _is_valid_salt() 와 동일하게 strip() 후 truthy 검사 — 공백
+    # 만 있는 salt 가 hash_ref_key 에 도달해 ValueError 던지는 것 차단.
+    # salt 명시 시 PHASE2 row_ref_map 과 동일 공식 (invariant #70).
+    has_salt = bool(engagement_salt and engagement_salt.strip())
+    has_line_number = has_salt and df is not None and "line_number" in df.columns
+    # Why (S6.next Phase 2): company_code_hash 산출 가드. df 에 company_code 컬럼이
+    # 있어야 hit 의 회사 식별자를 동일 salt 로 hash. invariant #74.
+    has_company_code = has_salt and df is not None and "company_code" in df.columns
     refs: list[RawRuleHitRef] = []
     for hit in hits:
         key = (hit.rule_id, hit.row_index)
         ref = cache.get(key)
         if ref is None:
+            canonical_label_hash = ""
+            doc_id_hash = ""
+            company_code_hash = ""
+            line_number_key: str | None = None
+            if has_salt and df is not None:
+                canonical_label = canonicalize_ref_key(df.index[hit.row_index])
+                canonical_label_hash = hash_ref_key(canonical_label, salt=engagement_salt)
+                if hit.document_id:
+                    doc_id_hash = hash_ref_key(hit.document_id, salt=engagement_salt)
+                if has_company_code:
+                    company_code_value = df["company_code"].iat[hit.row_index]
+                    # Why: NaN/None/빈 문자열은 hash 후보 제외 — PHASE2 store 의
+                    # `_serialize_row_ref` 와 동일 정책 (None → row_ref_map 의
+                    # company_code_hash=null).
+                    if company_code_value is not None and not pd.isna(company_code_value):
+                        company_code_str = str(company_code_value)
+                        if company_code_str:
+                            company_code_hash = hash_ref_key(company_code_str, salt=engagement_salt)
+                if has_line_number:
+                    raw_line = df["line_number"].iat[hit.row_index]
+                    if raw_line is not None:
+                        candidate = canonicalize_ref_key(raw_line)
+                        line_number_key = None if candidate == "n:" else candidate
             ref = RawRuleHitRef(
                 rule_id=hit.rule_id,
                 severity=hit.severity,
@@ -2372,6 +2429,10 @@ def _raw_rule_hit_refs(
                 signal_status=hit.signal_status,
                 detail=hit.detail,
                 evidence_type=hit.evidence_type,
+                canonical_label_hash=canonical_label_hash,
+                doc_id_hash=doc_id_hash,
+                line_number_key=line_number_key,
+                company_code_hash=company_code_hash,
             )
             cache[key] = ref
         refs.append(ref)
@@ -3799,8 +3860,8 @@ def _risk_narrative(
 
     label = _THEME_LABELS.get(theme_id, theme_id)
     if total_amount > 0:
-        return f"{label} 징후가 관찰되었고 총금액은 {total_amount:,.0f}입니다. 관련 근거와 증빙을 확인해야 합니다."
-    return f"{label} 징후가 관찰되었습니다. 관련 근거와 증빙을 확인해야 합니다."
+        return f"{label} 징후 관찰. 총금액 {total_amount:,.0f}. 관련 근거와 증빙 확인 요망."
+    return f"{label} 징후 관찰. 관련 근거와 증빙 확인 요망."
 
 
 def _pick_primary_explanation_evidence_for_theme(
@@ -3944,8 +4005,8 @@ def _representative_explanation(
 
     label = _THEME_LABELS.get(theme_id, theme_id)
     if total_amount > 0:
-        return f"{label} 징후가 관찰되었고 총금액은 {total_amount:,.0f}입니다."
-    return f"{label} 징후가 관찰되었습니다."
+        return f"{label} 징후 관찰. 총금액 {total_amount:,.0f}."
+    return f"{label} 징후 관찰."
 
 
 # Why: 위험 사유 텍스트는 case master 표의 '합계' 컬럼이 별도로 있어 동일한 금액을
@@ -3957,61 +4018,53 @@ def _representative_explanation(
 def _control_explanation(rule_ids: list[str], total_amount: float) -> str:
     labels = _ordered_rule_labels(rule_ids, _CONTROL_RULES) or ["승인 통제 위반"]
     lead = " + ".join(labels[:3])
-    return (
-        f"{lead}이 함께 발생했습니다. 승인·권한 통제 적용과 예외 승인 근거를 우선 확인해야 합니다."
-    )
+    return f"{lead} 함께 관찰. 승인·권한 통제 적용과 예외 승인 근거 우선 확인 요망."
 
 
 def _access_scope_explanation(rule_ids: list[str], total_amount: float) -> str:
     labels = _ordered_rule_labels(rule_ids, _LOGIC_RULES) or ["권한·업무 범위 집중"]
     lead = " + ".join(labels[:3])
     return (
-        f"{lead} 신호가 관찰되었습니다. "
+        f"{lead} 신호 관찰. "
         "L1-06 은 명시적 직무분리 위반을 다루므로, 이 case 는 한 사용자의 광범위한 "
-        "당기 활동 패턴과 보완 통제를 함께 검토해야 합니다."
+        "당기 활동 패턴과 보완 통제 검토 요망."
     )
 
 
 def _outflow_explanation(rule_ids: list[str], total_amount: float) -> str:
     labels = _ordered_rule_labels(rule_ids, _OUTFLOW_RULES)
     lead = " + ".join(labels[:3]) if labels else "지급·중복 징후"
-    return f"{lead}가 관찰되었습니다. 동일 지급·중복 처리 여부와 승인·증빙 대사를 확인해야 합니다."
+    return f"{lead} 관찰. 동일 지급·중복 처리 여부와 승인·증빙 대사 확인 요망."
 
 
 def _logic_explanation(rule_ids: list[str], total_amount: float) -> str:
     labels = _ordered_rule_labels(rule_ids, _LOGIC_RULES)
     lead = " + ".join(labels[:3]) if labels else "회계 처리 논리 이상"
-    return f"{lead}이 관찰되었습니다. 거래의 경제적 실질과 계정 사용이 맞는지 재검토해야 합니다."
+    return f"{lead} 관찰. 거래의 경제적 실질과 계정 사용 적정성 재검토 요망."
 
 
 def _timing_explanation(rule_ids: list[str], total_amount: float) -> str:
     labels = _ordered_rule_labels(rule_ids, _TIMING_RULES)
     lead = " + ".join(labels[:3]) if labels else "기말·시점 이상"
-    return (
-        f"{lead}이 관찰되었습니다. "
-        "결산 시점의 기간 귀속, 결산 조정 승인, 사후 보정 근거를 확인해야 합니다."
-    )
+    return f"{lead} 관찰. 결산 시점의 기간 귀속, 결산 조정 승인, 사후 보정 근거 확인 요망."
 
 
 def _statistical_explanation(rule_ids: list[str], total_amount: float) -> str:
     labels = _ordered_rule_labels(rule_ids, _STAT_RULES)
     lead = " + ".join(labels[:3]) if labels else "통계적 이상치"
-    return f"{lead}가 관찰되었습니다. 일반 분포에서 벗어난 예외 거래인지 확인이 필요합니다."
+    return f"{lead} 관찰. 일반 분포에서 벗어난 예외 거래 여부 확인 요망."
 
 
 def _intercompany_explanation(rule_ids: list[str], total_amount: float) -> str:
     labels = _ordered_rule_labels(rule_ids, _INTERCOMPANY_RULES)
     lead = " + ".join(labels[:3]) if labels else "관계사 거래 검토 신호"
-    return (
-        f"{lead}가 관찰되었습니다. "
-        "거래 상대방, 계약 근거, 정상 가격 및 대사 여부를 확인해야 합니다."
-    )
+    return f"{lead} 관찰. 거래 상대방, 계약 근거, 정상 가격 및 대사 여부 확인 요망."
 
 
 def _integrity_explanation(rule_ids: list[str], total_amount: float) -> str:
     labels = _ordered_rule_labels(rule_ids, _INTEGRITY_RULES)
     lead = " + ".join(labels[:3]) if labels else "데이터 정합성 오류"
-    return f"{lead}가 관찰되었습니다. 원천 데이터와 장부 반영 내역의 정합성을 먼저 점검해야 합니다."
+    return f"{lead} 관찰. 원천 데이터와 장부 반영 내역의 정합성 우선 점검 요망."
 
 
 def _ordered_rule_labels(rule_ids: list[str], mapping: dict[str, str]) -> list[str]:

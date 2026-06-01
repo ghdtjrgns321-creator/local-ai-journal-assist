@@ -114,6 +114,7 @@ def _train_fold_worker(
         "scores": fold_scores,
     }
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -256,7 +257,9 @@ class EnsembleDetector(BaseDetector):
         if self._check_fallback_needed(y):
             self._is_fallback = True
             score_matrix = self._build_score_matrix_from_lists(
-                non_leakage_results, [], df_index,
+                non_leakage_results,
+                [],
+                df_index,
             )
             for col_idx, track_name in enumerate(STACKING_BASE_MODELS):
                 raw = score_matrix[:, col_idx]
@@ -284,8 +287,7 @@ class EnsembleDetector(BaseDetector):
             overlap = train_users & val_users
             if overlap:
                 raise ValueError(
-                    "GroupKFold user leakage detected in train_oof: "
-                    f"{sorted(overlap)[:5]}",
+                    f"GroupKFold user leakage detected in train_oof: {sorted(overlap)[:5]}",
                 )
 
         # Why: 각 fold는 base 모델 3개의 OOF score를 (val_idx, track_name → ndarray) 형식으로 반환.
@@ -306,14 +308,14 @@ class EnsembleDetector(BaseDetector):
         # Why: 각 leakage-prone track의 OOF score를 N행 벡터로 합침.
         #      val_idx로 흩뿌리면 자연스럽게 N개 행 모두 채워진다 (GroupKFold 전수 커버).
         oof_scores: dict[str, np.ndarray] = {
-            track: np.zeros(len(df_index), dtype=np.float64)
-            for track in _LEAKAGE_PRONE_TRACKS
+            track: np.zeros(len(df_index), dtype=np.float64) for track in _LEAKAGE_PRONE_TRACKS
         }
         for fold_out in fold_outputs:
             val_idx = fold_out["val_idx"]
             for track in _LEAKAGE_PRONE_TRACKS:
                 oof_scores[track][val_idx] = fold_out["scores"].get(
-                    track, np.zeros(len(val_idx), dtype=np.float64),
+                    track,
+                    np.zeros(len(val_idx), dtype=np.float64),
                 )
 
         score_matrix = self._build_score_matrix_from_oof(
@@ -324,6 +326,7 @@ class EnsembleDetector(BaseDetector):
 
         # Why: 순환 임포트 방지
         from src.preprocessing.stacking import StackingEnsemble
+
         self._meta = StackingEnsemble(alpha=self._settings.stacking_alpha)
         self._meta.fit(score_matrix, y)
         self._is_fallback = False
@@ -378,6 +381,7 @@ class EnsembleDetector(BaseDetector):
 
         # Why: 순환 임포트 방지 — detection.__init__ → ensemble_detector → stacking → constants
         from src.preprocessing.stacking import StackingEnsemble
+
         self._meta = StackingEnsemble(
             alpha=self._settings.stacking_alpha,
         )
@@ -417,7 +421,9 @@ class EnsembleDetector(BaseDetector):
         )
 
     def load_model(
-        self, model_name: str = "stacking_meta", version: int | None = None,
+        self,
+        model_name: str = "stacking_meta",
+        version: int | None = None,
     ) -> None:
         """ModelRegistry에서 meta-learner 로드."""
         if self._registry is None:
@@ -467,7 +473,8 @@ class EnsembleDetector(BaseDetector):
              non_leakage_results만으로 채우고 나머지는 0.
         """
         return EnsembleDetector._build_score_matrix(
-            list(non_leakage_results) + list(leakage_results), index,
+            list(non_leakage_results) + list(leakage_results),
+            index,
         )
 
     @staticmethod
@@ -533,6 +540,7 @@ class EnsembleDetector(BaseDetector):
             elif np.std(raw) >= 1e-12:
                 # Why: 학습 분포 없으면 (Cold Start) 현재 배치 내 순위로 fallback
                 from scipy.stats import rankdata
+
                 ranked = rankdata(raw, method="average")
                 normalized = (ranked - 1) / max(n - 1, 1)
             else:

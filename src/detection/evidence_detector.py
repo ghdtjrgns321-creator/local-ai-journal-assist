@@ -86,33 +86,45 @@ class EvidenceDetector(BaseDetector):
         s = self._settings
         evidence_cfg = self._audit_rules.get("evidence", {})
         registry = [
-            ("EV01", ev01_missing_evidence, {
-                "qualified_doc_types": evidence_cfg.get("qualified_doc_types"),
-                "tax_threshold": s.ev_tax_threshold,
-                "split_max_amount": s.ev_split_max_amount,
-                "split_min_count": s.ev_split_min_count,
-            }),
-            ("L3-11", ev02_cutoff_violation, {
-                "revenue_cutoff_days": s.ev_revenue_cutoff_days,
-                "expense_cutoff_days": s.ev_expense_cutoff_days,
-                "period_end_weight": s.ev_cutoff_period_end_weight,
-                "max_day_diff": s.ev_cutoff_max_day_diff,
-                "use_business_days": s.ev_cutoff_use_business_days,
-                "custom_holidays": s.custom_holidays or None,
-                # Why: evidence 섹션 우선, 없으면 patterns 섹션 fallback (비대칭 방지)
-                "revenue_account_prefixes": (
-                    evidence_cfg.get("revenue_account_prefixes")
-                    or self._audit_rules.get("patterns", {}).get("revenue_account_prefixes")
-                ),
-                "expense_account_prefixes": evidence_cfg.get(
-                    "expense_account_prefixes",
-                ),
-            }),
-            ("EV03", ev03_amount_mismatch, {
-                "amount_tolerance": s.ev_amount_tolerance,
-                "vat_rate": s.ev_vat_rate,
-                "vat_tolerance": s.ev_vat_tolerance,
-            }),
+            (
+                "EV01",
+                ev01_missing_evidence,
+                {
+                    "qualified_doc_types": evidence_cfg.get("qualified_doc_types"),
+                    "tax_threshold": s.ev_tax_threshold,
+                    "split_max_amount": s.ev_split_max_amount,
+                    "split_min_count": s.ev_split_min_count,
+                },
+            ),
+            (
+                "L3-11",
+                ev02_cutoff_violation,
+                {
+                    "revenue_cutoff_days": s.ev_revenue_cutoff_days,
+                    "expense_cutoff_days": s.ev_expense_cutoff_days,
+                    "period_end_weight": s.ev_cutoff_period_end_weight,
+                    "max_day_diff": s.ev_cutoff_max_day_diff,
+                    "use_business_days": s.ev_cutoff_use_business_days,
+                    "custom_holidays": s.custom_holidays or None,
+                    # Why: evidence 섹션 우선, 없으면 patterns 섹션 fallback (비대칭 방지)
+                    "revenue_account_prefixes": (
+                        evidence_cfg.get("revenue_account_prefixes")
+                        or self._audit_rules.get("patterns", {}).get("revenue_account_prefixes")
+                    ),
+                    "expense_account_prefixes": evidence_cfg.get(
+                        "expense_account_prefixes",
+                    ),
+                },
+            ),
+            (
+                "EV03",
+                ev03_amount_mismatch,
+                {
+                    "amount_tolerance": s.ev_amount_tolerance,
+                    "vat_rate": s.ev_vat_rate,
+                    "vat_tolerance": s.ev_vat_tolerance,
+                },
+            ),
         ]
         if self._rule_ids is None:
             return registry
@@ -134,9 +146,7 @@ class EvidenceDetector(BaseDetector):
         for rule_id, raw_scores in rule_results.items():
             severity_factor = SEVERITY_MAP[rule_id] / 5.0
             score_series = (
-                raw_scores.attrs.get("score_series")
-                if hasattr(raw_scores, "attrs")
-                else None
+                raw_scores.attrs.get("score_series") if hasattr(raw_scores, "attrs") else None
             )
             if score_series is not None:
                 base_scores = pd.Series(score_series, index=df.index).fillna(0.0)
@@ -147,9 +157,7 @@ class EvidenceDetector(BaseDetector):
             if breakdown:
                 rule_breakdowns[rule_id] = breakdown
             annotations = (
-                raw_scores.attrs.get("row_annotations")
-                if hasattr(raw_scores, "attrs")
-                else None
+                raw_scores.attrs.get("row_annotations") if hasattr(raw_scores, "attrs") else None
             )
             if annotations:
                 row_annotations[rule_id] = annotations
@@ -182,7 +190,10 @@ class EvidenceDetector(BaseDetector):
         )
 
     def _empty_result(
-        self, df: pd.DataFrame, warnings: list[str], elapsed: float,
+        self,
+        df: pd.DataFrame,
+        warnings: list[str],
+        elapsed: float,
     ) -> DetectionResult:
         return self._make_result(
             flagged_indices=[],
