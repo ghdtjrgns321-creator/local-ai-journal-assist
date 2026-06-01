@@ -2,7 +2,7 @@
 
 Why: `phase2_case_overlays` 는 `phase2_inference_service` 가 메모리에 attach 하지만,
 DB 의 `upload_batch` 메타 에는 저장되지 않는다. 결과적으로 dashboard 가 새로고침되거나
-같은 batch 를 재로드할 때 overlay 가 사라져 KPI · 검토 Lane 이 빈 상태가 된다.
+같은 batch 를 재로드할 때 overlay 가 사라져 KPI · case-level attribution 이 빈 상태가 된다.
 
 본 모듈은 engagement 폴더에 JSON 파일로 overlay 를 저장/복원한다.
 경로: ``<engagement_dir>/phase2_overlays/<batch_id>.json``.
@@ -15,16 +15,19 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from src.services.artifact_path_safety import (
+    is_safe_batch_id,
+    safe_batch_artifact_file,
+)
+
 logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = "1.0"
-_OVERLAY_DIR_NAME = "phase2_overlays"
 
 
 # Why: load_phase2_overlay_status 가 반환하는 진단 상태. UI 가 status 별로 안내 메시지와
@@ -61,21 +64,8 @@ class OverlayLoadResult:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-# Why: 파일명에 그대로 사용되므로 path traversal · separator 를 차단한다.
-#      batch_id 는 시스템 내부 식별자(UUID/타임스탬프 기반)라 영숫자·_·-·. 만 허용.
-_SAFE_BATCH_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
-
-
-def _is_safe_batch_id(batch_id: str) -> bool:
-    if not batch_id or len(batch_id) > 128:
-        return False
-    if batch_id in {".", ".."}:
-        return False
-    return bool(_SAFE_BATCH_ID_PATTERN.fullmatch(batch_id))
-
-
-def _overlay_dir(ctx: Any) -> Path | None:
-    """`ctx.db_path` 의 parent 를 engagement 폴더로 간주.
+def _engagement_dir(ctx: Any) -> Path | None:
+    """`ctx.db_path` 의 parent 를 engagement 폴더로 변환.
 
     ctx 가 None 이거나 db_path attribute 가 없으면 ``None`` 을 반환한다.
     """
@@ -85,7 +75,7 @@ def _overlay_dir(ctx: Any) -> Path | None:
     if db_path is None:
         return None
     try:
-        return Path(db_path).parent / _OVERLAY_DIR_NAME
+        return Path(db_path).parent
     except (TypeError, ValueError):
         return None
 
@@ -93,13 +83,14 @@ def _overlay_dir(ctx: Any) -> Path | None:
 def _overlay_path(ctx: Any, batch_id: str) -> Path | None:
     """`<engagement_dir>/phase2_overlays/<batch_id>.json` 경로.
 
-    Why: batch_id 가 path separator(``/`` ``\\``) 나 parent traversal(``..``)
-    을 포함하면 None 반환. helper 가 public 이므로 호출자 신뢰에만 의존하지 않는다.
+    Why: PR-pre-1 마이그레이션 — batch_id 안전성 검증 + 디렉토리 합성을
+    `src.services.artifact_path_safety` 단일 출처에 위임. path traversal /
+    separator / unsupported suffix 모두 동일 정책으로 거부한다.
     """
-    base = _overlay_dir(ctx)
-    if base is None or not _is_safe_batch_id(batch_id):
+    engagement_dir = _engagement_dir(ctx)
+    if engagement_dir is None:
         return None
-    return base / f"{batch_id}.json"
+    return safe_batch_artifact_file(engagement_dir, batch_id, suffix=".json")
 
 
 def save_phase2_overlays(
@@ -173,7 +164,7 @@ def load_phase2_overlay_status(
         )
 
     # 2) batch_id 안전성 (path traversal / separator 방지)
-    if not _is_safe_batch_id(batch_id):
+    if not is_safe_batch_id(batch_id):
         return OverlayLoadResult(
             status=OverlayStatus.UNSAFE_BATCH_ID,
             message="batch_id is empty or contains unsafe characters",

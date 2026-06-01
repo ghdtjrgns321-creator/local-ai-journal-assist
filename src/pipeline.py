@@ -35,6 +35,7 @@ from src.ingest.datasynth_metadata import (
 from src.llm.models import CaseNarrative
 from src.metrics.models import PerformanceReport
 from src.models.phase1_case import Phase1CaseResult
+from src.models.phase2_case import Phase2CaseSet
 from src.services._phase_timing import log_timing, now_str  # noqa: F401
 from src.services.phase2_case_contract import build_phase2_case_overlays
 
@@ -56,7 +57,7 @@ class _NullAuditTrail:
 
 _TEXT_EXT = frozenset({".csv", ".tsv", ".txt", ".dat"})
 _EXCEL_EXT = frozenset({".xlsx", ".xls", ".xlsb"})
-_INGEST_CACHE_SCHEMA_VERSION = "ingest-cache-v1"
+_INGEST_CACHE_SCHEMA_VERSION = "ingest-cache-v2"
 _OptionalDetectionResult = DetectionResult | list[DetectionResult] | None
 
 
@@ -269,6 +270,19 @@ class PipelineResult:
     phase1_macro_finding_count: int = 0
     phase1_top_theme_ids: list[str] = field(default_factory=list)
     phase2_case_overlays: list[dict] = field(default_factory=list, repr=False)
+    # Why: S3.next Phase B — orchestrator + linker hook 산출 (invariant #84~87).
+    # case_set 은 5 family native case 묶음, linker_diagnostics 는 매칭 카운트 + key_mode.
+    # 부재 의미 분류 (UI 가 case_set / diagnostics 의 None 조합으로 구분):
+    #   - 둘 다 None: _attach_phase2_case_set graceful skip
+    #     (results / data / batch_id 부재).
+    #   - phase2_case_set != None, phase2_linker_diagnostics is None: PHASE1 부재 →
+    #     orchestrator 결과만 부착, linker 호출 skip (case_set.linked == False, #86).
+    #   - 둘 다 != None: PHASE1 가용 + linker 통과 (linked case_set + diagnostics).
+    phase2_case_set: Phase2CaseSet | None = field(default=None, repr=False)
+    phase2_linker_diagnostics: dict[str, Any] | None = field(default=None, repr=False)
+    # Optional aggregate-only policy summary for native family roles. This is
+    # dashboard/data-path metadata, not a ranking or gate input.
+    phase2_family_policy_summary: dict[str, Any] = field(default_factory=dict, repr=False)
     phase3_case_narratives: list[CaseNarrative] = field(default_factory=list, repr=False)
 
 
@@ -930,6 +944,13 @@ class AuditPipeline:
                 "materiality_amount",
                 float(getattr(self._ctx, "materiality_amount", 0.0) or 0.0),
             )
+            # Why: engagement-scoped salt 를 PHASE1 builder 에 전달 — RawRuleHitRef
+            # 의 canonical_label_hash / doc_id_hash / line_number_key / company_code_hash
+            # 가 채워져야 linker 의 hit hash direct path (S6.next Phase 2, #79) 가
+            # 실효 작동. salt 부재 시 hash 필드 빈 값 → linker 가 position/doc_id
+            # fallback 으로 흘러 reload-safe 약속 깨짐.
+            engagement_id = str(getattr(self._ctx, "engagement_id", "") or "")
+            engagement_salt = f"{engagement_id}|{batch_id}" if engagement_id else ""
             phase1_result = build_phase1_case_result(
                 df,
                 results,
@@ -937,6 +958,7 @@ class AuditPipeline:
                 batch_id=batch_id,
                 dataset_id=batch_id,
                 phase1_case_config=phase1_case_config,
+                engagement_salt=engagement_salt,
             )
             artifact_path = save_phase1_case_result(phase1_result)
             annotate_detection_results_with_phase1_refs(results, phase1_result, artifact_path)
@@ -1338,7 +1360,7 @@ class AuditPipeline:
             settings=settings,
             rules=rules,
             risk_keywords=risk_keywords,
-            include_morpheme_tokens=getattr(settings, "enable_nlp_detection", False),
+            include_morpheme_tokens=False,
         )
         warns = [f"피처 미생성: {feat.missing_columns}"] if feat.missing_columns else []
         if getattr(settings, "enable_feature_cache", True) and cache_key is not None:
@@ -1711,31 +1733,10 @@ class AuditPipeline:
             return None
 
     def _try_nlp_detection(self, df: pd.DataFrame) -> DetectionResult | None:
-        """NLP 탐지기 실행(WU-21). OpenAI API 키 미설정/연결 실패 시 graceful 스킵.
-
-        Why: NLP01~NLP05는 OpenAI 임베딩 API 의존. EmbeddingService 초기화 실패 시
-             NLPDetector 내부에서 empty result 반환. 외부 예외만 추가 방어.
-        """
-        if not getattr(self._ctx.settings, "enable_nlp_detection", False):
-            logger.debug("nlp detection disabled by settings")
-            self._record_detector_status("nlp", run_status="skipped", reason="disabled_by_settings")
-            return None
-        try:
-            from src.detection.nlp_analyzer import NLPDetector
-
-            det = NLPDetector(self._ctx.settings)
-            result = det.detect(df)
-            reason = None
-            run_status = "executed"
-            if result.total_rules_run == 0:
-                run_status = "skipped"
-                reason = "missing_external_api_or_embedding_service"
-            self._record_detector_status("nlp", run_status=run_status, reason=reason, result=result)
-            return result
-        except Exception:
-            logger.warning("NLP 탐지 실패 — 스킵", exc_info=True)
-            self._record_detector_status("nlp", run_status="failed", reason="detector_exception")
-            return None
+        """Skip NLP detection in active local-first product path."""
+        logger.debug("nlp detection disabled by local-first policy")
+        self._record_detector_status("nlp", run_status="skipped", reason="disabled_local_first")
+        return None
 
     def _try_access_audit_detection(self, df: pd.DataFrame) -> DetectionResult | None:
         """Access Audit 탐지기 실행. change_log 없으면 AL1-01만 graceful 스킵.

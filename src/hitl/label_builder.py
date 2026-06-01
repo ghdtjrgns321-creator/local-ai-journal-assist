@@ -20,9 +20,7 @@ def build_document_feedback_labels(events_df: pd.DataFrame) -> list[DocumentFeed
         working = working[working["event_type"].eq("document_feedback")]
     if "decision" in working.columns:
         working = working[
-            working["decision"].isin(
-                {"false_positive", "confirmed_issue", "whitelist_revoked"}
-            )
+            working["decision"].isin({"false_positive", "confirmed_issue", "whitelist_revoked"})
         ]
     if working.empty:
         return []

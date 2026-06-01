@@ -144,9 +144,7 @@ class Phase2TrainingReport:
             "engagement_id": self.engagement_id,
             "created_at": self.created_at,
             "status": self.status.value,
-            "label_summary": (
-                None if self.label_summary is None else self.label_summary.to_dict()
-            ),
+            "label_summary": (None if self.label_summary is None else self.label_summary.to_dict()),
             "supervised_gate": (
                 dict(self.supervised_gate)
                 if self.supervised_gate

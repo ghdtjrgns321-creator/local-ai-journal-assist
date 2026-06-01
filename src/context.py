@@ -109,9 +109,7 @@ class ContextFactory:
         if not has_runtime and cache_key in self._cache:
             return self._cache[cache_key]
 
-        ctx = self._build_context(
-            company_id, engagement_id, preset_overrides, runtime_overrides
-        )
+        ctx = self._build_context(company_id, engagement_id, preset_overrides, runtime_overrides)
 
         # Why: runtime 오버라이드가 있으면 캐시에 저장하지 않음 (비영속).
         if not has_runtime:
@@ -136,8 +134,7 @@ class ContextFactory:
         keys_to_remove = [
             k
             for k in self._cache
-            if k[0] == company_id
-            and (engagement_id is None or k[1] == engagement_id)
+            if k[0] == company_id and (engagement_id is None or k[1] == engagement_id)
         ]
         for k in keys_to_remove:
             del self._cache[k]

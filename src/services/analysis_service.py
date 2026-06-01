@@ -63,8 +63,9 @@ def build_phase1_core_feature_frame(prep_result, settings, ctx=None) -> pd.DataF
         feature_categories_for_rules,
         generate_all_features,
     )
+    from src.ingest.text_mojibake import repair_dataframe_text_mojibake
 
-    base_df = prep_result.data.copy()
+    base_df = repair_dataframe_text_mojibake(prep_result.data.copy())
     rules = getattr(ctx, "audit_rules", None) if ctx is not None else None
     risk_keywords = getattr(ctx, "risk_keywords", None) if ctx is not None else None
     feat = generate_all_features(

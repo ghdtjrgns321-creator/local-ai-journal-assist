@@ -23,18 +23,18 @@ _GLOBAL_ONLY_OVERRIDE_FIELDS = {
 }
 _ENGAGEMENT_BLOCKED_FIELDS = {
     "enable_llm_header_fallback",
+    "enable_nlp_detection",
+}
+_LOCAL_FIRST_FORCED_VALUES = {
+    "enable_nlp_detection": False,
 }
 _LEGACY_ALIAS_MAP = {
     "approval_amount_threshold": "approval_thresholds",
     "approval_threshold": "approval_thresholds",
 }
 
-COMPANY_OVERRIDE_ALLOWED_FIELDS = (
-    set(AuditSettings.model_fields) - _GLOBAL_ONLY_OVERRIDE_FIELDS
-)
-ENGAGEMENT_OVERRIDE_ALLOWED_FIELDS = (
-    COMPANY_OVERRIDE_ALLOWED_FIELDS - _ENGAGEMENT_BLOCKED_FIELDS
-)
+COMPANY_OVERRIDE_ALLOWED_FIELDS = set(AuditSettings.model_fields) - _GLOBAL_ONLY_OVERRIDE_FIELDS
+ENGAGEMENT_OVERRIDE_ALLOWED_FIELDS = COMPANY_OVERRIDE_ALLOWED_FIELDS - _ENGAGEMENT_BLOCKED_FIELDS
 
 
 def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -81,7 +81,7 @@ def resolve_settings(
     if runtime:
         merged = merged.model_copy(update=runtime)
 
-    return merged
+    return merged.model_copy(update=_LOCAL_FIRST_FORCED_VALUES)
 
 
 def resolve_yaml_config(
@@ -108,7 +108,7 @@ def normalize_settings_overrides(
     )
     _warn_ignored_keys(normalized, allowed, scope)
     return {
-        key: copy.deepcopy(value)
+        key: copy.deepcopy(_LOCAL_FIRST_FORCED_VALUES.get(key, value))
         for key, value in normalized.items()
         if key in allowed
     }

@@ -113,6 +113,16 @@ def run_phase2_inference(
         time.perf_counter() - t0,
         start_ts=ts0,
     )
+    # S3.next Phase B — orchestrator + linker hook (invariant #84~87).
+    # PHASE1 가용 + engagement_salt 가용 시 cross-reference 까지 완성한다.
+    t0 = time.perf_counter()
+    ts0 = now_str()
+    _attach_phase2_case_set(result, ctx=ctx, snapshot=snapshot)
+    log_timing(
+        "phase2.inference.attach_phase2_case_set",
+        time.perf_counter() - t0,
+        start_ts=ts0,
+    )
     t0 = time.perf_counter()
     ts0 = now_str()
     persist_warning = _persist_phase2_batch_snapshot(conn=conn, result=result)
@@ -229,7 +239,7 @@ def run_phase2_inference_analysis(
     state[KEY_PIPELINE_RESULT] = result
 
     # Why: overlay 본체를 engagement 폴더 JSON 으로 영속화.
-    #      새로고침 / 같은 batch 재로드 시 KPI · 검토 Lane 이 빈 상태가 되지 않도록.
+    #      새로고침 / 같은 batch 재로드 시 KPI · case-level attribution 이 빈 상태가 되지 않도록.
     t0 = time.perf_counter()
     ts0 = now_str()
     _persist_phase2_overlays_to_disk(state, result)
@@ -458,6 +468,165 @@ def _attach_phase2_case_overlays(result) -> None:
         relational_continuity_depth_by_case=(overlay_inputs.relational_continuity_depth_by_case),
     )
     setattr(result, "phase2_case_overlays", overlays)
+
+
+def _attach_phase2_case_set(result, *, ctx=None, snapshot=None) -> None:
+    """S3.next Phase B — orchestrator + linker hook (invariant #84~87).
+
+    Why: PHASE2 detection 산출 후 5 family native case set 을 조립해 ``result`` 에
+    부착한다. PHASE1 가용 + engagement_salt 가용 시 linker 호출하여
+    cross-reference 까지 완성한다.
+
+    호출자 책임 (attach 정책 lock):
+    - ``result.results`` / ``data`` / ``batch_id`` 부재 → graceful skip (#84).
+    - ``engagement_salt = ctx.engagement_id + batch_id`` (없으면 ``salt=None`` —
+      linker auto resolve 가 position fallback) (#85).
+    - PHASE1 부재 → linker skip, case_set 만 부착 (linked=False) (#86).
+    - unsupervised ``model_id`` / ``schema_hash`` 는 snapshot 에서 도출, 부재 시
+      빈 문자열 (#87).
+    """
+    # circular import 방어 — function-level lazy import (orchestrator / linker 가
+    # 본 모듈을 import 하지는 않지만, 추후 PHASE1 builder 가 inference service 를
+    # 참조할 때를 대비해 한 방향성을 유지한다).
+    from src.services.phase2_case_phase1_linker import link_phase2_to_phase1
+    from src.services.phase2_case_set_orchestrator import build_phase2_case_set
+
+    detection_results = getattr(result, "results", None)
+    df = getattr(result, "data", None)
+    batch_id = getattr(result, "batch_id", "") or ""
+    # invariant #84 — graceful skip. ValueError 던지지 않는다.
+    if not detection_results or df is None or not batch_id:
+        return
+
+    # invariant #87 — snapshot 에서 model_id / schema_hash 도출. 부재 시 빈 문자열.
+    model_id = ""
+    schema_hash = ""
+    if isinstance(snapshot, dict):
+        model_id = str(snapshot.get("report_id") or "")
+        contract = snapshot.get("inference_contract") or {}
+        if isinstance(contract, dict):
+            schema_hash = str(contract.get("schema_hash") or "")
+
+    case_set = build_phase2_case_set(
+        batch_id=batch_id,
+        detection_results=list(detection_results),
+        df=df,
+        unsupervised_model_id=model_id,
+        unsupervised_schema_hash=schema_hash,
+    )
+
+    # invariant #85 — engagement_salt = ctx.engagement_id + batch_id.
+    engagement_id = ""
+    if ctx is not None:
+        engagement_id = str(getattr(ctx, "engagement_id", "") or "")
+    engagement_salt: str | None = f"{engagement_id}|{batch_id}" if engagement_id else None
+
+    # invariant #86 — PHASE1 가용 시 linker 호출. 부재면 case_set 만 부착.
+    phase1 = getattr(result, "phase1_case_result", None)
+    if phase1 is not None:
+        try:
+            linker_result = link_phase2_to_phase1(
+                case_set=case_set,
+                phase1=phase1,
+                row_ref_map=None,  # hit hash direct path (S6.next Phase 2)
+                salt=engagement_salt,
+                key_mode="auto",
+            )
+            case_set = linker_result.case_set
+            setattr(result, "phase2_linker_diagnostics", linker_result.diagnostics)
+        except ValueError as exc:
+            # hash 기반 mode 가 salt 필요한데 도출 실패한 경우의 안전 가드 —
+            # 실제로는 key_mode="auto" 가 salt 부재 시 position 으로 fallback 하므로
+            # 거의 발생하지 않지만, 예기치 못한 ValueError 가 inference 전체를
+            # 막지 않도록 warning 누적 후 case_set 만 부착한다.
+            _append_result_warning(result, f"phase2_case_set linker skipped: {exc}")
+
+    setattr(result, "phase2_case_set", case_set)
+    _attach_phase2_family_policy_summary(result, case_set)
+
+    # invariant #88 (S3.next Phase B Followup) — case_set artifact 영속화.
+    # Why: in-memory PipelineResult 만으로는 dashboard refresh / reload 시 손실.
+    # linker 통과한 linked case_set 을 저장 — manifest.linked_case_hash 가 자연스러움.
+    # ctx / salt 부재 시 store 가 graceful skip (CTX_MISSING / SALT_MISSING) — 본 hook
+    # 은 그 결과를 warning 으로만 기록하고 inference 전체는 계속 진행.
+    if ctx is not None and engagement_salt:
+        try:
+            from src.services.phase2_case_store import save_phase2_case_set
+
+            # Why: store manifest key_mode 는 linker resolved capability 와 정합 (#49).
+            # linker 가 호출돼서 diagnostics 가 있으면 그 값 사용. 아니면 "position".
+            diagnostics = getattr(result, "phase2_linker_diagnostics", None) or {}
+            resolved_key_mode = str(diagnostics.get("key_mode_used") or "position")
+            store_result = save_phase2_case_set(
+                ctx=ctx,
+                batch_id=batch_id,
+                case_set=case_set,
+                salt=engagement_salt,
+                key_mode=resolved_key_mode,
+                phase2_training_report_id=model_id or None,
+            )
+            if store_result.status != "saved":
+                _append_result_warning(
+                    result,
+                    f"phase2_case_set persist skipped: status={store_result.status}",
+                )
+        except Exception as exc:  # noqa: BLE001 — best-effort persistence
+            _append_result_warning(result, f"phase2_case_set persist failed: {exc}")
+
+
+def _attach_phase2_family_policy_summary(result, case_set) -> None:
+    """Attach aggregate-only native family role metadata.
+
+    This metadata lets dashboard/session consumers preserve the IC product role
+    without reading fixed5 diagnostic artifacts or changing UI layout. It is not
+    consumed by detectors, gates, ranking, fusion, or PHASE1 priority logic.
+    """
+    if result is None or case_set is None:
+        return
+    from src.services.phase2_family_policy import (
+        INTERCOMPANY_BROAD_RECALL_EXPANSION_FAMILY,
+        INTERCOMPANY_PRODUCT_ROLE,
+        build_duplicate_policy_summary,
+        build_relational_policy_summary,
+        build_timeseries_policy_summary,
+        build_unsupervised_policy_summary,
+    )
+
+    duplicate_cases = tuple(getattr(case_set, "duplicate_cases", ()) or ())
+    intercompany_cases = tuple(getattr(case_set, "intercompany_cases", ()) or ())
+    relational_cases = tuple(getattr(case_set, "relational_cases", ()) or ())
+    timeseries_cases = tuple(getattr(case_set, "timeseries_cases", ()) or ())
+    unsupervised_cases = tuple(getattr(case_set, "unsupervised_cases", ()) or ())
+    reciprocal_count = sum(
+        1 for case in intercompany_cases if str(getattr(case, "ic_role", "")) == "reciprocal_flow"
+    )
+    mismatch_count = sum(
+        1 for case in intercompany_cases if str(getattr(case, "ic_role", "")) == "amount_mismatch"
+    )
+    summary = dict(getattr(result, "phase2_family_policy_summary", None) or {})
+    summary["intercompany"] = {
+        "primary_product_role": INTERCOMPANY_PRODUCT_ROLE,
+        "broad_recall_expansion_family": INTERCOMPANY_BROAD_RECALL_EXPANSION_FAMILY,
+        "production_adoption": False,
+        "production_ranking_changed": False,
+        "new_policy_adopted": False,
+        "ic_gate_changed": False,
+        "phase2_fusion_changed": False,
+        "phase1_ranking_changed": False,
+        "case_count": len(intercompany_cases),
+        "reciprocal_flow_case_count": reciprocal_count,
+        "amount_mismatch_case_count": mismatch_count,
+        "interpretation": (
+            "Intercompany native cases strengthen PHASE1 review candidates with "
+            "IC-specific reciprocal/pair evidence; production_adoption=false means "
+            "no new ranking or gate policy was adopted, not that IC is disabled."
+        ),
+    }
+    summary["relational"] = build_relational_policy_summary(relational_cases)
+    summary["duplicate"] = build_duplicate_policy_summary(duplicate_cases)
+    summary["timeseries"] = build_timeseries_policy_summary(timeseries_cases)
+    summary["unsupervised"] = build_unsupervised_policy_summary(unsupervised_cases)
+    setattr(result, "phase2_family_policy_summary", summary)
 
 
 # P4: DB load status axis 상수. UI 가 4 status 별 caption 을 분기 표시한다.

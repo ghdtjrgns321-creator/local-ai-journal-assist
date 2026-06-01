@@ -64,9 +64,7 @@ def _atomic_yaml_write(path: Path, data: dict[str, Any]) -> None:
     tmp = path.with_suffix(".yaml.tmp")
     try:
         with open(tmp, "w", encoding="utf-8") as f:
-            yaml.safe_dump(
-                data, f, default_flow_style=False, allow_unicode=True, sort_keys=False
-            )
+            yaml.safe_dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
         os.replace(tmp, path)
     except Exception:
         tmp.unlink(missing_ok=True)
@@ -161,9 +159,7 @@ class CompanyRepository:
 
     # ── Engagement CRUD ──────────────────────────────
 
-    def create_engagement(
-        self, company_id: str, profile: EngagementProfile
-    ) -> Path:
+    def create_engagement(self, company_id: str, profile: EngagementProfile) -> Path:
         """engagements/{engagement_id}/ 디렉토리 + engagement.yaml 생성."""
         profile = EngagementProfile.model_validate(profile.model_dump(mode="json"))
         if not self.company_dir(company_id).exists():
@@ -185,13 +181,9 @@ class CompanyRepository:
         logger.info("Engagement 생성: %s/%s", company_id, profile.engagement_id)
         return yaml_path
 
-    def get_engagement(
-        self, company_id: str, engagement_id: str
-    ) -> EngagementProfile:
+    def get_engagement(self, company_id: str, engagement_id: str) -> EngagementProfile:
         """engagement.yaml 로드 → EngagementProfile."""
-        yaml_path = (
-            self.engagement_dir(company_id, engagement_id) / _ENGAGEMENT_YAML
-        )
+        yaml_path = self.engagement_dir(company_id, engagement_id) / _ENGAGEMENT_YAML
         if not yaml_path.exists():
             msg = f"Engagement를 찾을 수 없습니다: {company_id}/{engagement_id}"
             raise FileNotFoundError(msg)
@@ -238,6 +230,7 @@ class CompanyRepository:
         db_path = self.db_path(company_id, engagement_id)
         try:
             from src.db.connection import _manager  # noqa: PLC0415
+
             _manager.close(db_path)
         except Exception:
             logger.warning("DB 커넥션 close 실패 (계속 진행)", exc_info=True)
@@ -254,8 +247,10 @@ class CompanyRepository:
                 from src.ingest.mapping_profile import (  # noqa: PLC0415
                     delete_profiles_by_fiscal_year,
                 )
+
                 delete_profiles_by_fiscal_year(
-                    fy, profile_dir=self.profile_dir(company_id),
+                    fy,
+                    profile_dir=self.profile_dir(company_id),
                 )
             except Exception:
                 logger.warning("FY %s 프로파일 정리 실패 (계속 진행)", fy, exc_info=True)
@@ -265,9 +260,7 @@ class CompanyRepository:
         logger.info("Engagement 삭제: %s/%s", company_id, engagement_id)
         return True
 
-    def update_engagement(
-        self, company_id: str, profile: EngagementProfile
-    ) -> Path:
+    def update_engagement(self, company_id: str, profile: EngagementProfile) -> Path:
         """engagement.yaml 원자적 덮어쓰기."""
         edir = self.engagement_dir(company_id, profile.engagement_id)
         if not edir.exists():
@@ -285,9 +278,7 @@ class CompanyRepository:
         path = self.company_dir(company_id) / "chart_of_accounts.csv"
         return parse_coa_csv(path)
 
-    def load_company_yaml(
-        self, company_id: str, filename: str
-    ) -> dict[str, Any] | None:
+    def load_company_yaml(self, company_id: str, filename: str) -> dict[str, Any] | None:
         """회사별 YAML 파일 로드. 미존재 시 None."""
         # Why: filename에 경로 탈출 문자 방지 — RC-4 대시보드에서 호출될 수 있음
         safe_filename = Path(filename).name
@@ -298,7 +289,10 @@ class CompanyRepository:
             return yaml.safe_load(f)
 
     def save_company_yaml(
-        self, company_id: str, filename: str, data: dict[str, Any],
+        self,
+        company_id: str,
+        filename: str,
+        data: dict[str, Any],
     ) -> Path:
         """회사별 YAML 파일 원자적 저장.
 
@@ -315,7 +309,9 @@ class CompanyRepository:
         return path
 
     def save_company_keywords(
-        self, company_id: str, keywords: dict[str, Any],
+        self,
+        company_id: str,
+        keywords: dict[str, Any],
     ) -> Path:
         """회사별 keywords.yaml 저장."""
         return self.save_company_yaml(company_id, "keywords.yaml", keywords)
@@ -394,7 +390,10 @@ class CompanyRepository:
         return zip_path
 
     def import_company(
-        self, zip_path: Path, *, overwrite: bool = False,
+        self,
+        zip_path: Path,
+        *,
+        overwrite: bool = False,
     ) -> str:
         """ZIP에서 회사 설정 가져오기.
 
