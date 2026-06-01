@@ -93,9 +93,7 @@ def check_text(path: Path) -> tuple[list[str], list[str]]:
 
     # UTF-8이 아닌 인코딩은 경고
     if encoding.lower() not in ("utf-8", "ascii"):
-        warnings.append(
-            f"인코딩 '{encoding}' 감지됨. UTF-8 변환을 권장합니다."
-        )
+        warnings.append(f"인코딩 '{encoding}' 감지됨. UTF-8 변환을 권장합니다.")
 
     # 실제 읽기 시도 (첫 5줄)
     try:

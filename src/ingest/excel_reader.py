@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 # --- xlsx (openpyxl) ---
 
+
 def _unmerge_and_fill(ws) -> None:
     """워크시트의 병합셀을 해제하고 좌상단 값을 모든 셀에 복제한다.
 
@@ -72,6 +73,7 @@ def _read_xlsx(path: Path) -> ReadResult:
 
 # --- xls (xlrd) ---
 
+
 def _read_xls(path: Path) -> ReadResult:
     """xlrd로 .xls 파일을 읽는다. 병합셀 해제 + 값 복제."""
     import xlrd
@@ -87,9 +89,7 @@ def _read_xls(path: Path) -> ReadResult:
             # 2D 리스트로 변환
             rows = []
             for row_idx in range(sheet.nrows):
-                rows.append(
-                    [sheet.cell_value(row_idx, col) for col in range(sheet.ncols)]
-                )
+                rows.append([sheet.cell_value(row_idx, col) for col in range(sheet.ncols)])
 
             # 병합셀 값 복제 — xlrd의 merged_cells는 (rlo, rhi, clo, chi) 튜플
             for rlo, rhi, clo, chi in sheet.merged_cells:
@@ -116,6 +116,7 @@ def _read_xls(path: Path) -> ReadResult:
 
 
 # --- xlsb (pyxlsb) ---
+
 
 def _read_xlsb(path: Path) -> ReadResult:
     """pyxlsb로 .xlsb 파일을 읽는다. 병합셀 정보 없음 → warning."""

@@ -80,25 +80,25 @@ class BenfordResult:
     """
 
     sample_size: int
-    observed: dict[int, float]       # {1: 0.301, ..., 9: 0.046}
-    expected: dict[int, float]       # Benford 이론값
-    mad: float | None                # Mean Absolute Deviation
-    mad_conformity: str              # "close"|"acceptable"|"marginally"|"nonconforming"
+    observed: dict[int, float]  # {1: 0.301, ..., 9: 0.046}
+    expected: dict[int, float]  # Benford 이론값
+    mad: float | None  # Mean Absolute Deviation
+    mad_conformity: str  # "close"|"acceptable"|"marginally"|"nonconforming"
     chi2_statistic: float | None
     chi2_p_value: float | None
-    ks_statistic: float | None       # 보조 지표 (이산 분포 한계)
-    ks_p_value: float | None         # 보조 지표
-    is_conforming: bool              # 종합 판정 (MAD + Chi-square)
-    confidence: str                  # "high"(≥500) | "moderate"(100~499) | "low"(<100)
+    ks_statistic: float | None  # 보조 지표 (이산 분포 한계)
+    ks_p_value: float | None  # 보조 지표
+    is_conforming: bool  # 종합 판정 (MAD + Chi-square)
+    confidence: str  # "high"(≥500) | "moderate"(100~499) | "low"(<100)
 
 
 @dataclass
 class MonthlyVolatility:
     """월별 변동성 분석 결과."""
 
-    monthly_totals: dict[str, float]            # {"2024-01": 총액, ...}
-    mom_change_rates: dict[str, float]          # MoM % 변화율
-    outlier_months: list[str]                   # |Z-score| > threshold 월
+    monthly_totals: dict[str, float]  # {"2024-01": 총액, ...}
+    mom_change_rates: dict[str, float]  # MoM % 변화율
+    outlier_months: list[str]  # |Z-score| > threshold 월
     seasonality_index: dict[int, float] | None  # 월(1~12)별 계절성 지수
 
 
@@ -108,11 +108,11 @@ class DistributionStats:
 
     shapiro_statistic: float | None
     shapiro_p_value: float | None
-    is_normal: bool | None           # p > alpha → True
+    is_normal: bool | None  # p > alpha → True
     skewness: float | None
-    skewness_label: str | None       # "symmetric"|"right_skewed"|"left_skewed"
+    skewness_label: str | None  # "symmetric"|"right_skewed"|"left_skewed"
     kurtosis: float | None
-    kurtosis_label: str | None       # "mesokurtic"|"leptokurtic"|"platykurtic"
+    kurtosis_label: str | None  # "mesokurtic"|"leptokurtic"|"platykurtic"
     outlier_concentration: float | None  # 이상치 금액 합 / 전체 금액 합
 
 
@@ -121,10 +121,10 @@ class AccountStats:
     """계정별 통계 요약."""
 
     account_count: int
-    cv_by_account: dict[str, float]     # 계정별 변동계수 (CV = std/mean)
-    high_cv_accounts: list[str]         # CV > threshold 계정
-    hhi: float                          # Herfindahl-Hirschman Index
-    hhi_label: str                      # "concentrated"|"moderate"|"diversified"
+    cv_by_account: dict[str, float]  # 계정별 변동계수 (CV = std/mean)
+    high_cv_accounts: list[str]  # CV > threshold 계정
+    hhi: float  # Herfindahl-Hirschman Index
+    hhi_label: str  # "concentrated"|"moderate"|"diversified"
     activity_frequency: dict[str, int]  # 계정별 거래 건수
 
 
@@ -132,10 +132,10 @@ class AccountStats:
 class TemporalPatternStats:
     """시간 패턴 통계."""
 
-    weekday_volume: dict[int, int]          # 0(Mon)~6(Sun) → 건수
+    weekday_volume: dict[int, int]  # 0(Mon)~6(Sun) → 건수
     weekend_ratio: float
-    period_end_concentration: float         # 월말 margin일 거래 비율
-    yoy_change: dict[str, float] | None     # {"01": 0.05, ...} 월별 평균 YoY
+    period_end_concentration: float  # 월말 margin일 거래 비율
+    yoy_change: dict[str, float] | None  # {"01": 0.05, ...} 월별 평균 YoY
 
 
 @dataclass
@@ -143,7 +143,7 @@ class StatisticalResult:
     """L3 통계 검증 종합 결과. JSON-serializable."""
 
     total_rows: int
-    analysis_timestamp: str                 # ISO 8601
+    analysis_timestamp: str  # ISO 8601
     monthly_volatility: MonthlyVolatility
     distribution: DistributionStats
     benford: BenfordResult
@@ -160,12 +160,12 @@ class StatisticalResult:
 class ReconciliationItem:
     """개별 대사 항목 결과 — 계정 유형별 GL vs TB 잔액 비교."""
 
-    recon_type: str              # "AR" | "AP" | "FA" | "TOTAL"
-    gl_balance: float            # GL 라인아이템 합계 (debit - credit)
-    tb_balance: float            # TB closing_balance(당기 순증감액) 합계
-    difference: float            # gl_balance - tb_balance (round(2) 적용 후)
+    recon_type: str  # "AR" | "AP" | "FA" | "TOTAL"
+    gl_balance: float  # GL 라인아이템 합계 (debit - credit)
+    tb_balance: float  # TB closing_balance(당기 순증감액) 합계
+    difference: float  # gl_balance - tb_balance (round(2) 적용 후)
     is_within_materiality: bool  # |difference| <= materiality
-    account_filter: str          # 사용된 계정 접두사 (예: "11,12")
+    account_filter: str  # 사용된 계정 접두사 (예: "11,12")
 
 
 @dataclass
@@ -173,9 +173,9 @@ class ReconciliationResult:
     """TB 교차검증 종합 결과 — validate_tb_reconciliation()이 반환."""
 
     items: list[ReconciliationItem] = field(default_factory=list)
-    total_differences: float = 0.0       # sum(|diff|)
-    all_reconciled: bool = True          # 전체 대사 통과 여부
-    trial_balance_rows: int = 0          # TB 행 수
+    total_differences: float = 0.0  # sum(|diff|)
+    all_reconciled: bool = True  # 전체 대사 통과 여부
+    trial_balance_rows: int = 0  # TB 행 수
     materiality_amount: float = 0.0
     warnings: list[str] = field(default_factory=list)
     # Why: pipeline._load_db()에서 DB 적재용으로 재사용 — 이중 생성 방지

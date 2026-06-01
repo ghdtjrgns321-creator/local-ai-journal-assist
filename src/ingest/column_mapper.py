@@ -51,11 +51,7 @@ def _build_alias_map(keywords: dict) -> dict[str, str]:
 
 def _get_required_columns(schema: dict) -> set[str]:
     """schema.yaml에서 required=true 컬럼명 set 추출."""
-    return {
-        col["name"]
-        for col in schema.get("columns", [])
-        if col.get("required", False)
-    }
+    return {col["name"] for col in schema.get("columns", []) if col.get("required", False)}
 
 
 def _get_all_standard_columns(schema: dict) -> set[str]:
@@ -332,7 +328,7 @@ def _data_pattern_suggest_second_pass(
             abs_vals = non_null.abs()
             max_val = abs_vals.max()
             has_zeros = (non_null == 0).any()
-            if (abs_vals.median() >= 10000 or (has_zeros and max_val >= 10000)):
+            if abs_vals.median() >= 10000 or (has_zeros and max_val >= 10000):
                 if "debit_amount" in assigned and "credit_amount" not in assigned:
                     result[col] = ("credit_amount", 70)
                     assigned.add("credit_amount")
@@ -402,10 +398,7 @@ def prepare_dataframe(
     """
     # 헤더 행에서 컬럼명 추출 — NaN은 빈 문자열로 대체
     header_values = raw_df.iloc[header_row]
-    columns = [
-        str(v).strip() if pd.notna(v) else ""
-        for v in header_values
-    ]
+    columns = [str(v).strip() if pd.notna(v) else "" for v in header_values]
 
     # 중복 컬럼명 방어 — ERP 파일에서 "금액", "금액" 등 드물지 않음
     # Why: 중복 시 pandas 컬럼 선택이 모호해져 조용한 데이터 손실 가능
@@ -432,7 +425,7 @@ def prepare_dataframe(
         columns = deduped
 
     # 헤더 행 아래부터 데이터
-    data_df = raw_df.iloc[header_row + 1:].reset_index(drop=True)
+    data_df = raw_df.iloc[header_row + 1 :].reset_index(drop=True)
     data_df.columns = columns
 
     # 빈 컬럼명("") 제거 — 의미 없는 빈 열
@@ -477,20 +470,24 @@ def _suggest_amount_split(columns: list[str]) -> list[ReviewItem]:
         # 추천 생성: 왼쪽=debit_amount, 오른쪽=credit_amount
         # Why: 인접 패턴은 실무 ERP에서 높은 정확도이나, 시트 변형 가능성이 있어
         # 자동 적용(1.0)이 아닌 0.8로 설정 → action="review"와 함께 사용자 확인 유도
-        items.append(ReviewItem(
-            column=base_name,
-            action="review",
-            confidence=0.8,
-            reason=f"인접 중복 '{base_name}' 감지 → 차변금액(debit_amount) 추천",
-            target_type="debit_amount",
-        ))
-        items.append(ReviewItem(
-            column=col,
-            action="review",
-            confidence=0.8,
-            reason=f"인접 중복 '{base_name}' 감지 → 대변금액(credit_amount) 추천",
-            target_type="credit_amount",
-        ))
+        items.append(
+            ReviewItem(
+                column=base_name,
+                action="review",
+                confidence=0.8,
+                reason=f"인접 중복 '{base_name}' 감지 → 차변금액(debit_amount) 추천",
+                target_type="debit_amount",
+            )
+        )
+        items.append(
+            ReviewItem(
+                column=col,
+                action="review",
+                confidence=0.8,
+                reason=f"인접 중복 '{base_name}' 감지 → 대변금액(credit_amount) 추천",
+                target_type="credit_amount",
+            )
+        )
 
     return items
 
@@ -529,20 +526,23 @@ def _build_review_items(
         if data_df is not None and schema_type_map is not None and col in data_df.columns:
             src_type = infer_column_type(data_df[col])
         reason = "자동 매핑 불가 — 수동 지정 필요"
-        items.append(ReviewItem(
-            column=col, action="review", confidence=0.0, reason=reason,
-            source_type=src_type, target_type=tgt_type,
-        ))
+        items.append(
+            ReviewItem(
+                column=col,
+                action="review",
+                confidence=0.0,
+                reason=reason,
+                source_type=src_type,
+                target_type=tgt_type,
+            )
+        )
 
     return items
 
 
 def _build_schema_type_map(schema: dict) -> dict[str, str]:
     """schema에서 {표준컬럼명: 타입문자열} 맵 생성."""
-    return {
-        col["name"]: col["type"]
-        for col in schema.get("columns", [])
-    }
+    return {col["name"]: col["type"] for col in schema.get("columns", [])}
 
 
 def auto_map_columns(
@@ -599,14 +599,10 @@ def auto_map_columns(
     # fast path: 필수 컬럼이 모두 정확 일치 → 동일 매핑 즉시 반환
     if _is_standard_schema(source_columns, required_columns):
         identity_mapping = {
-            col: col for col in source_columns
-            if col.lower() in {s.lower() for s in all_standard}
+            col: col for col in source_columns if col.lower() in {s.lower() for s in all_standard}
         }
         identity_conf = {col: 1.0 for col in identity_mapping}
-        unmapped_cols = [
-            col for col in source_columns
-            if col not in identity_mapping
-        ]
+        unmapped_cols = [col for col in source_columns if col not in identity_mapping]
         return MappingResult(
             mapping=identity_mapping,
             suggestions={},
@@ -625,8 +621,10 @@ def auto_map_columns(
     unmatched = [col for col in source_columns if col not in matched_sources]
     schema_type_map = _build_schema_type_map(schema) if data_df is not None else None
     fuzzy_results = _fuzzy_match(
-        unmatched, alias_map,
-        data_df=data_df, schema_type_map=schema_type_map,
+        unmatched,
+        alias_map,
+        data_df=data_df,
+        schema_type_map=schema_type_map,
     )
 
     # 합치기 — exact는 score 100으로 통일
@@ -641,21 +639,21 @@ def auto_map_columns(
     #      데이터 값 패턴(날짜, 금액, 코드)으로 표준 컬럼을 추론한다.
     #      score=0인 fuzzy 결과는 무의미하므로 "매칭됨"으로 취급하지 않는다.
     if data_df is not None:
-        meaningful_sources = {
-            src for src, (_, score) in all_candidates.items() if score > 0
-        }
+        meaningful_sources = {src for src, (_, score) in all_candidates.items() if score > 0}
         still_unmatched = [c for c in source_columns if c not in meaningful_sources]
         if still_unmatched:
             # Why: score=0인 fuzzy 결과의 표준 컬럼은 실질적 할당이 아님
-            assigned_standards = {
-                std for std, score in all_candidates.values() if score > 0
-            }
+            assigned_standards = {std for std, score in all_candidates.values() if score > 0}
             pattern_results = _data_pattern_suggest(
-                still_unmatched, data_df, assigned_standards,
+                still_unmatched,
+                data_df,
+                assigned_standards,
             )
             # 2차 패스: 동일 패턴 중복(날짜↔날짜, 금액↔금액) 해결
             pattern_results = _data_pattern_suggest_second_pass(
-                pattern_results, still_unmatched, data_df,
+                pattern_results,
+                still_unmatched,
+                data_df,
                 assigned_standards,
             )
             for src, (std, score) in pattern_results.items():
@@ -663,7 +661,9 @@ def auto_map_columns(
 
     # greedy 1:1 할당 + 3-tier 분류
     mapping, suggestions, confidence, unmapped_list = _greedy_assign(
-        all_candidates, threshold, low_threshold,
+        all_candidates,
+        threshold,
+        low_threshold,
     )
 
     # source_columns 중 candidates에 아예 없는 것도 unmapped에 추가
@@ -680,8 +680,13 @@ def auto_map_columns(
 
     # ReviewItem 생성 — 투명성 레이어
     review_items = _build_review_items(
-        mapping, suggestions, confidence, unmapped_list,
-        exact_results, data_df, schema_type_map,
+        mapping,
+        suggestions,
+        confidence,
+        unmapped_list,
+        exact_results,
+        data_df,
+        schema_type_map,
     )
 
     return MappingResult(

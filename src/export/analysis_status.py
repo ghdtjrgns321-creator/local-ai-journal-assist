@@ -73,9 +73,7 @@ def summarize_export_analysis_status(pr: PipelineResult) -> dict[str, Any]:
     phase3_summary = {
         "available": phase3_insight is not None or bool(phase3_case_narratives),
         "top_risk_count": len(getattr(phase3_insight, "top_risks", []) or []),
-        "significant_tx_count": len(
-            getattr(phase3_insight, "significant_tx_opinions", []) or []
-        ),
+        "significant_tx_count": len(getattr(phase3_insight, "significant_tx_opinions", []) or []),
         "case_narrative_count": len(phase3_case_narratives),
         "phase2_linked": bool(
             getattr(phase3_insight, "phase2_context", {}) or phase2_case_overlays

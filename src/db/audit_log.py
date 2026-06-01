@@ -56,8 +56,7 @@ def record_event(
         execute_write(
             conn,
             "insert_audit_log",
-            (action, actor, company_id, engagement_id,
-             batch_id, target_id, payload),
+            (action, actor, company_id, engagement_id, batch_id, target_id, payload),
         )
     except Exception:
         # Why: execute_write 내부 재시도(IOException/TransactionException 3회)도

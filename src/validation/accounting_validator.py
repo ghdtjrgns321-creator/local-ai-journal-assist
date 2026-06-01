@@ -20,9 +20,7 @@ logger = logging.getLogger(__name__)
 # ── 서브함수 ──────────────────────────────────────────────────
 
 
-def check_balance(
-    df: pd.DataFrame, tolerance: float = 0.01
-) -> tuple[bool, float, list[str]]:
+def check_balance(df: pd.DataFrame, tolerance: float = 0.01) -> tuple[bool, float, list[str]]:
     """document_id별 + 전체 대차일치 검증.
 
     Returns:
@@ -111,9 +109,7 @@ def check_duplicates(df: pd.DataFrame) -> int:
 # ── 오케스트레이터 ────────────────────────────────────────────
 
 
-def validate_accounting(
-    df: pd.DataFrame, tolerance: float = 0.01
-) -> AccountingResult:
+def validate_accounting(df: pd.DataFrame, tolerance: float = 0.01) -> AccountingResult:
     """L2 회계 규칙 검증 — 3개 서브함수 일괄 실행.
 
     Args:

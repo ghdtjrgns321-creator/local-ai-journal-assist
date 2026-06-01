@@ -106,9 +106,7 @@ class PDFExporter:
         return bytes(rendered)
 
     # ── 섹션 ──────────────────────────────────────────────────
-    def _render_cover(
-        self, pdf: FPDF, pr: PipelineResult, config: ExportConfig
-    ) -> None:
+    def _render_cover(self, pdf: FPDF, pr: PipelineResult, config: ExportConfig) -> None:
         pdf.add_page()
         pdf.set_font(_FONT_NAME, size=22)
         pdf.ln(40)
@@ -169,9 +167,7 @@ class PDFExporter:
                 )
                 self._render_table(pdf, phase1_rows, col_widths=[45, 45, 25, 35])
 
-    def _render_process_distribution(
-        self, pdf: FPDF, where_sql: str, params: list[Any]
-    ) -> None:
+    def _render_process_distribution(self, pdf: FPDF, where_sql: str, params: list[Any]) -> None:
         pdf.add_page()
         self._section_title(pdf, "2. 비즈니스 프로세스/시간 분포")
 
@@ -206,13 +202,15 @@ class PDFExporter:
             return
         s = summary.iloc[0]
         pdf.set_font(_FONT_NAME, size=10)
-        pdf.cell(0, 7, f"MAD: {s['mad']} ({s['mad_conformity']})",
-                 new_x="LMARGIN", new_y="NEXT")
-        pdf.cell(0, 7, f"Chi-square p-value: {s['chi2_p_value']}",
-                 new_x="LMARGIN", new_y="NEXT")
-        pdf.cell(0, 7, f"적합 판정: {'예' if s['is_conforming'] else '아니오'} "
-                       f"(신뢰도: {s['confidence']})",
-                 new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, 7, f"MAD: {s['mad']} ({s['mad_conformity']})", new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, 7, f"Chi-square p-value: {s['chi2_p_value']}", new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(
+            0,
+            7,
+            f"적합 판정: {'예' if s['is_conforming'] else '아니오'} (신뢰도: {s['confidence']})",
+            new_x="LMARGIN",
+            new_y="NEXT",
+        )
 
         digits = self._safe_query(
             "SELECT digit, observed_freq, expected_freq, deviation "
@@ -344,9 +342,7 @@ class PDFExporter:
         if len(col_widths) != n_cols:
             page_w = pdf.w - pdf.l_margin - pdf.r_margin
             col_widths = [page_w / n_cols] * n_cols
-            logger.warning(
-                "_render_table col_widths 불일치 → 균등 분배 (n_cols=%d)", n_cols
-            )
+            logger.warning("_render_table col_widths 불일치 → 균등 분배 (n_cols=%d)", n_cols)
 
         pdf.set_font(_FONT_NAME, size=9, style="B")
         for i, value in enumerate(rows[0]):
@@ -399,8 +395,7 @@ class PDFExporter:
             pdf.image(io.BytesIO(png), w=width_mm)
         else:
             pdf.set_font(_FONT_NAME, size=9, style="I")
-            pdf.cell(0, 6, "[차트 렌더링 생략됨 — 아래 표 참조]",
-                     new_x="LMARGIN", new_y="NEXT")
+            pdf.cell(0, 6, "[차트 렌더링 생략됨 — 아래 표 참조]", new_x="LMARGIN", new_y="NEXT")
             self._render_table(pdf, fallback_rows, col_widths)
 
 

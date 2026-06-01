@@ -52,12 +52,14 @@ def score_sheets(
         header_result = header_results.get(sheet_name)
         header_conf = header_result.confidence if header_result else 0.0
 
-        raw_scores.append({
-            "sheet_name": sheet_name,
-            "row_count": row_count,
-            "col_count": col_count,
-            "header_confidence": header_conf,
-        })
+        raw_scores.append(
+            {
+                "sheet_name": sheet_name,
+                "row_count": row_count,
+                "col_count": col_count,
+                "header_confidence": header_conf,
+            }
+        )
 
     # 정규화 기준값 (전체 시트 중 최대)
     max_rows = max((s["row_count"] for s in raw_scores), default=1) or 1
@@ -74,14 +76,16 @@ def score_sheets(
         if s["row_count"] == 0 and s["col_count"] == 0:
             total = 0.0
 
-        scored.append(SheetScore(
-            sheet_name=s["sheet_name"],
-            row_count=s["row_count"],
-            col_count=s["col_count"],
-            header_confidence=s["header_confidence"],
-            total_score=round(total, 4),
-            recommended=False,  # 아래에서 설정
-        ))
+        scored.append(
+            SheetScore(
+                sheet_name=s["sheet_name"],
+                row_count=s["row_count"],
+                col_count=s["col_count"],
+                header_confidence=s["header_confidence"],
+                total_score=round(total, 4),
+                recommended=False,  # 아래에서 설정
+            )
+        )
 
     # total_score 내림차순 정렬
     scored.sort(key=lambda x: x.total_score, reverse=True)

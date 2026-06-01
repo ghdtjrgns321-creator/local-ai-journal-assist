@@ -24,11 +24,11 @@ from src.validation.models import (
 
 # ── 감점 가중치 상수 ──────────────────────────────────────────
 
-_L1_CRITICAL_PENALTY = 50.0   # L1 치명적 에러 시 일괄 감점
-_L1_WARNING_WEIGHT = 20.0     # 경고 비율 × 20 (cap 20)
-_L2_BALANCE_WEIGHT = 15.0     # 불일치 전표 비율 × 15
-_L2_DATE_PENALTY = 5.0        # 일자 불연속 시 고정 감점
-_L2_DUPLICATE_WEIGHT = 10.0   # 중복 비율 × 10
+_L1_CRITICAL_PENALTY = 50.0  # L1 치명적 에러 시 일괄 감점
+_L1_WARNING_WEIGHT = 20.0  # 경고 비율 × 20 (cap 20)
+_L2_BALANCE_WEIGHT = 15.0  # 불일치 전표 비율 × 15
+_L2_DATE_PENALTY = 5.0  # 일자 불연속 시 고정 감점
+_L2_DUPLICATE_WEIGHT = 10.0  # 중복 비율 × 10
 
 
 # ── 퍼블릭 API ────────────────────────────────────────────────
@@ -61,8 +61,11 @@ def generate_report(
     total_cols = len(df.columns)
 
     score = _calculate_validation_score(
-        schema_result, accounting_result,
-        total_rows, total_documents, total_cols,
+        schema_result,
+        accounting_result,
+        total_rows,
+        total_documents,
+        total_cols,
     )
 
     return ValidationReport(
@@ -101,7 +104,8 @@ def _compute_valid_rows(total_rows: int, schema_result: SchemaResult) -> int:
 
 
 def _compute_valid_documents(
-    total_documents: int, accounting_result: AccountingResult,
+    total_documents: int,
+    accounting_result: AccountingResult,
 ) -> int:
     """전체 전표 수에서 대차불일치 전표 수 차감."""
     return max(0, total_documents - len(accounting_result.unbalanced_docs))
@@ -115,32 +119,38 @@ def _build_accounting_issues(result: AccountingResult) -> list[dict]:
     issues: list[dict] = []
 
     if not result.balance_check:
-        issues.append({
-            "check_type": "balance",
-            "severity": "error",
-            "message": f"대차불일치 {len(result.unbalanced_docs)}건, "
-                       f"차이 {result.balance_diff:,.2f}",
-            "detail": {
-                "unbalanced_docs": result.unbalanced_docs,
-                "balance_diff": result.balance_diff,
-            },
-        })
+        issues.append(
+            {
+                "check_type": "balance",
+                "severity": "error",
+                "message": f"대차불일치 {len(result.unbalanced_docs)}건, "
+                f"차이 {result.balance_diff:,.2f}",
+                "detail": {
+                    "unbalanced_docs": result.unbalanced_docs,
+                    "balance_diff": result.balance_diff,
+                },
+            }
+        )
 
     if not result.date_continuity:
-        issues.append({
-            "check_type": "date_continuity",
-            "severity": "warning",
-            "message": f"영업일 누락 {len(result.missing_dates)}건",
-            "detail": {"missing_dates": result.missing_dates},
-        })
+        issues.append(
+            {
+                "check_type": "date_continuity",
+                "severity": "warning",
+                "message": f"영업일 누락 {len(result.missing_dates)}건",
+                "detail": {"missing_dates": result.missing_dates},
+            }
+        )
 
     if result.duplicate_entries > 0:
-        issues.append({
-            "check_type": "duplicate",
-            "severity": "warning",
-            "message": f"완전 중복 행 {result.duplicate_entries}건",
-            "detail": {"duplicate_count": result.duplicate_entries},
-        })
+        issues.append(
+            {
+                "check_type": "duplicate",
+                "severity": "warning",
+                "message": f"완전 중복 행 {result.duplicate_entries}건",
+                "detail": {"duplicate_count": result.duplicate_entries},
+            }
+        )
 
     return issues
 
@@ -170,7 +180,8 @@ def _calculate_validation_score(
     # L2: 대차불일치 비율 감점
     if total_documents > 0:
         balance_rate = min(
-            len(accounting_result.unbalanced_docs) / total_documents, 1.0,
+            len(accounting_result.unbalanced_docs) / total_documents,
+            1.0,
         )
         score -= balance_rate * _L2_BALANCE_WEIGHT
 

@@ -281,7 +281,7 @@ def _count_non_null_batch_rows(
             f"""
             SELECT COUNT(*)
             FROM {table_name}
-            WHERE upload_batch_id = ? AND ({' OR '.join(predicates)})
+            WHERE upload_batch_id = ? AND ({" OR ".join(predicates)})
             """,
             [batch_id],
         ).fetchone()[0]

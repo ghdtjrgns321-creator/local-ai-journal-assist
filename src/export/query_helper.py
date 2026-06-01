@@ -22,9 +22,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def build_where_clause(
-    filters: ExportFilter, batch_id: str
-) -> tuple[str, list[Any]]:
+def build_where_clause(filters: ExportFilter, batch_id: str) -> tuple[str, list[Any]]:
     """ExportFilter → ``AND ...`` SQL 조각 + 파라미터 리스트.
 
     Why:
@@ -60,9 +58,7 @@ def build_where_clause(
     return " ".join(clauses), params
 
 
-def safe_query(
-    conn: duckdb.DuckDBPyConnection, sql: str, params: list[Any]
-) -> pd.DataFrame:
+def safe_query(conn: duckdb.DuckDBPyConnection, sql: str, params: list[Any]) -> pd.DataFrame:
     """쿼리 실패를 분류하여 graceful 처리 또는 상위 전파.
 
     Why:

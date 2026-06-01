@@ -7,6 +7,7 @@ DataSynth CSV(319MB)가 메인 데이터이므로 이 경로가 가장 빈번하
 
 from __future__ import annotations
 
+import codecs
 import csv
 import io
 import logging
@@ -58,11 +59,25 @@ def _detect_encoding(path: Path) -> tuple[str, float | None]:
     import charset_normalizer
 
     raw = path.read_bytes()[:_ENCODING_SAMPLE_BYTES]
+
+    # Why: Korean-heavy UTF-8 CSVs can be misclassified as legacy Cyrillic
+    # encodings (for example ptcp154), which silently corrupts Hangul text.
+    # A strict UTF-8 decode is deterministic, so prefer it when it succeeds.
+    if raw.startswith(b"\xef\xbb\xbf"):
+        return "utf-8-sig", 1.0
+    try:
+        codecs.getincrementaldecoder("utf-8")().decode(raw, final=False)
+    except UnicodeDecodeError:
+        pass
+    else:
+        return "utf-8", 1.0
+
     detection = charset_normalizer.from_bytes(raw).best()
 
     if detection is None:
         logger.warning(
-            "인코딩 감지 실패, utf-8로 폴백합니다: %s", path.name,
+            "인코딩 감지 실패, utf-8로 폴백합니다: %s",
+            path.name,
         )
         return "utf-8", None
 
@@ -113,9 +128,10 @@ def _detect_separator(path: Path, encoding: str) -> str:
         # 줄바꿈 문자는 구분자가 될 수 없음
         if detected in ("\r", "\n"):
             logger.info(
-                "Sniffer가 줄바꿈 '%s'를 구분자로 감지 — "
-                "확장자 폴백 '%s' 사용: %s",
-                repr(detected), fallback, path.name,
+                "Sniffer가 줄바꿈 '%s'를 구분자로 감지 — 확장자 폴백 '%s' 사용: %s",
+                repr(detected),
+                fallback,
+                path.name,
             )
             return fallback
 
@@ -129,9 +145,12 @@ def _detect_separator(path: Path, encoding: str) -> str:
 
             if fb_max > det_max:
                 logger.info(
-                    "Sniffer '%s'(최대 %d컬럼) < 폴백 '%s'(최대 %d컬럼) — "
-                    "폴백 사용: %s",
-                    repr(detected), det_max, fallback, fb_max, path.name,
+                    "Sniffer '%s'(최대 %d컬럼) < 폴백 '%s'(최대 %d컬럼) — 폴백 사용: %s",
+                    repr(detected),
+                    det_max,
+                    fallback,
+                    fb_max,
+                    path.name,
                 )
                 return fallback
 
@@ -155,7 +174,9 @@ def _prescan_max_columns(path: Path, encoding: str, separator: str) -> int:
         return _count_cols_csv(non_empty, separator)
     except Exception as exc:
         logger.warning(
-            "prescan 실패, names 파라미터 없이 진행: %s (%s)", path.name, exc,
+            "prescan 실패, names 파라미터 없이 진행: %s (%s)",
+            path.name,
+            exc,
         )
         return 0
 
@@ -171,6 +192,7 @@ class _DiagAccumulator:
     50K행 청크 단위로 isna를 수행하면 0.3초/청크로,
     읽기 루프에 흡수되어 별도 전체 스캔이 불필요해진다.
     """
+
     empty_row_count: int = 0
     # 컬럼별 "값이 한 번이라도 존재" 플래그 — False인 컬럼이 빈 열
     col_has_value: np.ndarray | None = None
@@ -183,7 +205,8 @@ class _DiagAccumulator:
 
 
 def _accumulate_diagnostics(
-    chunk: pd.DataFrame, accum: _DiagAccumulator,
+    chunk: pd.DataFrame,
+    accum: _DiagAccumulator,
 ) -> None:
     """청크 1개의 진단 결과를 누적기에 반영한다.
 
@@ -204,9 +227,7 @@ def _accumulate_diagnostics(
     # 3) 열 수 불일치: 행별 non-null 카운트 히스토그램 누적
     non_null_counts = (~is_na).sum(axis=1)
     for cnt, freq in non_null_counts.value_counts().items():
-        accum.non_null_histogram[int(cnt)] = (
-            accum.non_null_histogram.get(int(cnt), 0) + int(freq)
-        )
+        accum.non_null_histogram[int(cnt)] = accum.non_null_histogram.get(int(cnt), 0) + int(freq)
 
     # 4) 혼합 구분자: "첫 열만 값" 패턴 후보 검사
     if chunk.shape[1] >= 2:
@@ -315,10 +336,15 @@ def _diagnose_issues(
                     row_id = df.iloc[row_idx, 0]
                     if cnt < mode_cols:
                         missing = mode_cols - cnt
-                        lines.append(f"  행 {row_idx + 1} ({row_id}): {cnt}열만 존재 → {missing}열 누락(NaN)")
+                        lines.append(
+                            f"  행 {row_idx + 1} ({row_id}): {cnt}열만 존재 → {missing}열 누락(NaN)"
+                        )
                     elif cnt > mode_cols:
                         extra_vals = [str(v) for v in df.iloc[row_idx, mode_cols:].dropna()]
-                        lines.append(f"  행 {row_idx + 1} ({row_id}): {cnt}열 → 초과 값 [{', '.join(extra_vals)}] 버려짐")
+                        lines.append(
+                            f"  행 {row_idx + 1} ({row_id}): "
+                            f"{cnt}열 → 초과 값 [{', '.join(extra_vals)}] 버려짐"
+                        )
                 warnings.append("\n".join(lines))
 
     # 4) 혼합 구분자
@@ -339,8 +365,7 @@ def _diagnose_issues(
                     break
         if mixed_count > 0:
             warnings.append(
-                f"혼합 구분자 {mixed_count}행 감지 "
-                f"(주 구분자 '{separator}' 외 다른 구분자 사용)",
+                f"혼합 구분자 {mixed_count}행 감지 (주 구분자 '{separator}' 외 다른 구분자 사용)",
             )
 
     # 5) 미닫힌 따옴표
@@ -350,7 +375,10 @@ def _diagnose_issues(
 
 
 def _check_unclosed_quotes(
-    warnings: list[str], path: Path, csv_kwargs: dict, total_rows: int,
+    warnings: list[str],
+    path: Path,
+    csv_kwargs: dict,
+    total_rows: int,
 ) -> None:
     """미닫힌 따옴표를 파일 앞부분 바이트 기반으로 감지한다."""
     try:
@@ -386,8 +414,11 @@ def repair_dataframe(
     if path is not None and path.exists():
         encoding = read_result.encoding or "utf-8"
         csv_kwargs = {
-            "sep": sep, "encoding": encoding,
-            "header": None, "dtype": str, "on_bad_lines": "warn",
+            "sep": sep,
+            "encoding": encoding,
+            "header": None,
+            "dtype": str,
+            "on_bad_lines": "warn",
         }
         raw_repaired = _repair_unclosed_quotes(df, path, csv_kwargs)
         if len(raw_repaired) > len(df):
@@ -411,7 +442,7 @@ def repair_dataframe(
     # Why: 혼합 구분자 행도 "1열만 값, 나머지 NaN" 형태이므로
     # 줄바꿈 병합이 먼저 실행되면 세미콜론/탭 행을 오인하여 병합한다.
     repaired_df = _repair_mixed_delimiters(df.copy(), sep)
-    mixed_fixed = (repaired_df.isna().sum().sum() < df.isna().sum().sum())
+    mixed_fixed = repaired_df.isna().sum().sum() < df.isna().sum().sum()
     if mixed_fixed:
         df = repaired_df
         repairs.append("혼합 구분자 행 복구")
@@ -487,8 +518,8 @@ def _drop_empty_rows_cols(df: pd.DataFrame) -> pd.DataFrame:
     헤더 탐지·매핑 전에 제거해야 컬럼 수가 맞는다.
     """
     before = df.shape
-    df = df.dropna(how="all")           # 빈 행 제거
-    df = df.dropna(axis=1, how="all")   # 빈 열 제거
+    df = df.dropna(how="all")  # 빈 행 제거
+    df = df.dropna(axis=1, how="all")  # 빈 열 제거
     df = df.reset_index(drop=True)
     after = df.shape
     if before != after:
@@ -504,7 +535,9 @@ def _drop_empty_rows_cols(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _repair_unclosed_quotes(
-    df: pd.DataFrame, path: Path, csv_kwargs: dict,
+    df: pd.DataFrame,
+    path: Path,
+    csv_kwargs: dict,
 ) -> pd.DataFrame:
     """미닫힌 따옴표로 인해 행이 병합된 경우 quoting=NONE으로 재파싱.
 
@@ -526,9 +559,10 @@ def _repair_unclosed_quotes(
         return df
 
     logger.warning(
-        "미닫힌 따옴표 감지 (기대 %d행, 실제 %d행) — "
-        "quoting=NONE으로 재파싱: %s",
-        expected_lines - 1, actual_rows, path.name,
+        "미닫힌 따옴표 감지 (기대 %d행, 실제 %d행) — quoting=NONE으로 재파싱: %s",
+        expected_lines - 1,
+        actual_rows,
+        path.name,
     )
     retry_kwargs = {**csv_kwargs, "quoting": csv.QUOTE_NONE}
     try:
@@ -546,11 +580,7 @@ def _repair_unclosed_quotes(
             # QUOTE_NONE은 따옴표를 데이터로 취급하므로 잔류 따옴표 정리
             for col in df_retry.columns:
                 if df_retry[col].dtype == object:
-                    df_retry[col] = (
-                        df_retry[col]
-                        .str.strip('"')
-                        .str.replace('""', '"', regex=False)
-                    )
+                    df_retry[col] = df_retry[col].str.strip('"').str.replace('""', '"', regex=False)
             return df_retry
     except Exception:
         pass
@@ -592,7 +622,8 @@ def _repair_mixed_delimiters(df: pd.DataFrame, primary_sep: str) -> pd.DataFrame
     if repaired > 0:
         logger.warning(
             "혼합 구분자 %d행 복구 (주 구분자: '%s', 대체 구분자로 재파싱)",
-            repaired, primary_sep,
+            repaired,
+            primary_sep,
         )
 
     return df
@@ -653,7 +684,9 @@ def _read_csv_chunked(
         csv_kwargs_py = {**csv_kwargs, "engine": "python"}
         try:
             reader = pd.read_csv(
-                path, chunksize=_CHUNK_SIZE_ROWS, **csv_kwargs_py,
+                path,
+                chunksize=_CHUNK_SIZE_ROWS,
+                **csv_kwargs_py,
             )
             for chunk in reader:
                 _process_chunk(chunk)
@@ -721,7 +754,11 @@ def read_text(
         total_lines = _count_lines_fast(path)
         progress_cb(0.0, f"파일 읽는 중... (0/{total_lines:,}행)")
         df, data_warnings = _read_csv_chunked(
-            path, csv_kwargs, total_lines, progress_cb, separator=separator,
+            path,
+            csv_kwargs,
+            total_lines,
+            progress_cb,
+            separator=separator,
         )
     else:
         # ── 소형: 한 번에 읽기 + 전체 스캔 진단 ──
@@ -729,7 +766,8 @@ def read_text(
             df = pd.read_csv(path, **csv_kwargs)
         except pd.errors.ParserError:
             logger.warning(
-                "C 파서 실패, python 엔진으로 재시도: %s", path.name,
+                "C 파서 실패, python 엔진으로 재시도: %s",
+                path.name,
             )
             csv_kwargs["engine"] = "python"
             try:

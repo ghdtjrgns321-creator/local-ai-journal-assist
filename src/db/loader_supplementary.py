@@ -102,11 +102,7 @@ def _coerce_types(df: pd.DataFrame, table_name: str) -> pd.DataFrame:
         elif dtype == "DOUBLE":
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
         elif dtype == "INTEGER":
-            df[col] = (
-                pd.to_numeric(df[col], errors="coerce")
-                .fillna(0)
-                .astype("Int64")
-            )
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype("Int64")
         elif dtype == "BOOLEAN":
             # Why: object dtype에서 fillna → 다운캐스팅 경고 방지
             col_ser = df[col]
@@ -172,23 +168,16 @@ def _normalize_nested_doc(
         for ref in refs:
             all_refs.append(ref)
 
-    headers_df = (
-        pd.DataFrame(all_headers) if all_headers
-        else pd.DataFrame(columns=header_columns)
-    )
+    headers_df = pd.DataFrame(all_headers) if all_headers else pd.DataFrame(columns=header_columns)
     headers_df = headers_df.reindex(columns=header_columns)
 
     _lines_cols = lines_columns or []
-    lines_df = (
-        pd.DataFrame(all_lines) if all_lines
-        else pd.DataFrame(columns=_lines_cols)
-    )
+    lines_df = pd.DataFrame(all_lines) if all_lines else pd.DataFrame(columns=_lines_cols)
     if _lines_cols:
         lines_df = lines_df.reindex(columns=_lines_cols)
 
     refs_df = (
-        pd.DataFrame(all_refs) if all_refs
-        else pd.DataFrame(columns=DOCUMENT_REFERENCES_COLUMNS)
+        pd.DataFrame(all_refs) if all_refs else pd.DataFrame(columns=DOCUMENT_REFERENCES_COLUMNS)
     )
     refs_df = refs_df.reindex(columns=DOCUMENT_REFERENCES_COLUMNS)
 
@@ -198,9 +187,7 @@ def _normalize_nested_doc(
 # Why: f-string SQL에 외부 입력이 들어가는 것을 방지 — allowlist 검증
 _ALLOWED_TABLES = frozenset(SUPPLEMENTARY_DDL.keys())
 _CONFLICT_IGNORE_TABLES = frozenset(
-    table_name
-    for table_name, ddl in SUPPLEMENTARY_DDL.items()
-    if "PRIMARY KEY" in ddl.upper()
+    table_name for table_name, ddl in SUPPLEMENTARY_DDL.items() if "PRIMARY KEY" in ddl.upper()
 )
 
 
@@ -234,10 +221,7 @@ def _insert_df(
     before_count = conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
     conn.register("_tmp_df", df)
     try:
-        conn.execute(
-            f"INSERT INTO {table_name} ({col_list}) "
-            f"SELECT * FROM _tmp_df{conflict}"
-        )
+        conn.execute(f"INSERT INTO {table_name} ({col_list}) SELECT * FROM _tmp_df{conflict}")
     finally:
         conn.unregister("_tmp_df")
     after_count = conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
@@ -323,9 +307,7 @@ def load_vendor_invoices(conn, path: Path, batch_id: str) -> int:
     header_count = _insert_df(
         conn, headers_df, "vendor_invoice_headers", VENDOR_INVOICE_HEADERS_COLUMNS
     )
-    line_count = _insert_df(
-        conn, lines_df, "vendor_invoice_lines", VENDOR_INVOICE_LINES_COLUMNS
-    )
+    line_count = _insert_df(conn, lines_df, "vendor_invoice_lines", VENDOR_INVOICE_LINES_COLUMNS)
     _insert_df(
         conn,
         refs_df,
@@ -453,10 +435,7 @@ def load_customer_invoices(conn, path: Path, batch_id: str) -> int:
 
 def _flatten_master_record(record: dict) -> dict:
     """Master Data JSON에서 list/dict 중첩 필드를 제거한 플랫 dict 반환."""
-    return {
-        k: v for k, v in record.items()
-        if not isinstance(v, (list, dict))
-    }
+    return {k: v for k, v in record.items() if not isinstance(v, (list, dict))}
 
 
 def load_vendors(conn, path: Path, batch_id: str) -> int:
@@ -532,10 +511,7 @@ def load_anomaly_labels_json(conn, path: Path, batch_id: str) -> int:
 
     rows = []
     for r in records:
-        flat = {
-            k: v for k, v in r.items()
-            if not isinstance(v, (list, dict))
-        }
+        flat = {k: v for k, v in r.items() if not isinstance(v, (list, dict))}
 
         # Why: anomaly_type이 {"Relational": "UnusualAccountPair"} dict인 경우
         #      category=key, subtype=value로 분해
@@ -568,10 +544,7 @@ def load_fraud_red_flags(conn, path: Path, batch_id: str) -> int:
 
     rows = []
     for r in records:
-        flat = {
-            k: v for k, v in r.items()
-            if k != "details" and not isinstance(v, (list, dict))
-        }
+        flat = {k: v for k, v in r.items() if k != "details" and not isinstance(v, (list, dict))}
         # Why: details dict → JSON 문자열로 직렬화
         details = r.get("details")
         if isinstance(details, dict):

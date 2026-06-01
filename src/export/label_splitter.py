@@ -47,7 +47,9 @@ def split_label_csv(
 
     df = pd.read_csv(src, low_memory=False)
     body_df, labels_df = split_label_columns(
-        df, key_columns=key_columns, label_columns=label_columns,
+        df,
+        key_columns=key_columns,
+        label_columns=label_columns,
     )
 
     body_path.parent.mkdir(parents=True, exist_ok=True)

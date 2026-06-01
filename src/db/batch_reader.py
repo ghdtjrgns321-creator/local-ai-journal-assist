@@ -22,14 +22,16 @@ from src.detection.constants import (
 logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-_RESTORED_CORE_TRACKS: frozenset[str] = frozenset({
-    "layer_a",
-    "layer_b",
-    "layer_c",
-    "benford",
-    "duplicate",
-    "intercompany",
-})
+_RESTORED_CORE_TRACKS: frozenset[str] = frozenset(
+    {
+        "layer_a",
+        "layer_b",
+        "layer_c",
+        "benford",
+        "duplicate",
+        "intercompany",
+    }
+)
 
 
 def list_batches(conn: duckdb.DuckDBPyConnection) -> pd.DataFrame:
@@ -39,16 +41,17 @@ def list_batches(conn: duckdb.DuckDBPyConnection) -> pd.DataFrame:
 
 def load_batch(conn: duckdb.DuckDBPyConnection, batch_id: str):
     """Restore a previously loaded batch into a PipelineResult."""
+    from src.ingest.text_mojibake import repair_dataframe_text_mojibake
     from src.pipeline import PipelineResult
 
     data = execute_preset(conn, "batch_ledger", batch_id=batch_id)
     if data.empty:
         raise ValueError(f"배치를 찾을 수 없습니다: {batch_id}")
+    data = repair_dataframe_text_mojibake(data)
 
     results = _reconstruct_detection_results(conn, batch_id, data)
     risk_summary = (
-        data["risk_level"].value_counts().to_dict()
-        if "risk_level" in data.columns else {}
+        data["risk_level"].value_counts().to_dict() if "risk_level" in data.columns else {}
     )
 
     meta = execute_preset(conn, "batch_meta", params=(batch_id,))
@@ -93,9 +96,7 @@ def load_batch(conn: duckdb.DuckDBPyConnection, batch_id: str):
         phase1_case_path=phase1_meta.get("phase1_case_path"),
         phase1_case_run_id=phase1_meta.get("phase1_case_run_id"),
         phase1_case_count=int(phase1_meta.get("phase1_case_count", 0) or 0),
-        phase1_macro_finding_count=int(
-            phase1_meta.get("phase1_macro_finding_count", 0) or 0
-        ),
+        phase1_macro_finding_count=int(phase1_meta.get("phase1_macro_finding_count", 0) or 0),
         phase1_top_theme_ids=list(phase1_meta.get("phase1_top_theme_ids") or []),
     )
     setattr(
@@ -137,35 +138,39 @@ def _reconstruct_detection_results(
             scores.iloc[max_scores.index.to_numpy()] = max_scores.to_numpy()
 
             rule_columns[rule_code] = scores
-            rule_flags.append(RuleFlag(
-                rule_id=rule_code,
-                rule_name=RULE_CODES.get(rule_code, rule_code),
-                severity=SEVERITY_MAP.get(rule_code, 3),
-                flagged_count=int((scores > 0).sum()),
-                total_count=total_rows,
-            ))
+            rule_flags.append(
+                RuleFlag(
+                    rule_id=rule_code,
+                    rule_name=RULE_CODES.get(rule_code, rule_code),
+                    severity=SEVERITY_MAP.get(rule_code, 3),
+                    flagged_count=int((scores > 0).sum()),
+                    total_count=total_rows,
+                )
+            )
 
         details = pd.DataFrame(rule_columns)
         track_scores = details.max(axis=1) if not details.empty else pd.Series(dtype=float)
         flagged_indices = list(track_scores[track_scores > 0].index)
         profile = get_detector_profile(track_name)
 
-        results.append(DetectionResult(
-            track_name=track_name,
-            flagged_indices=flagged_indices,
-            scores=track_scores,
-            rule_flags=rule_flags,
-            details=details,
-            metadata={
-                "elapsed": 0.0,
-                "restored_from_db": True,
-                "display_name": profile.display_name,
-                "maturity": str(profile.maturity),
-                "default_enabled": profile.default_enabled,
-                "activation_requirements": list(profile.activation_requirements),
-                "run_status": "executed",
-            },
-        ))
+        results.append(
+            DetectionResult(
+                track_name=track_name,
+                flagged_indices=flagged_indices,
+                scores=track_scores,
+                rule_flags=rule_flags,
+                details=details,
+                metadata={
+                    "elapsed": 0.0,
+                    "restored_from_db": True,
+                    "display_name": profile.display_name,
+                    "maturity": str(profile.maturity),
+                    "default_enabled": profile.default_enabled,
+                    "activation_requirements": list(profile.activation_requirements),
+                    "run_status": "executed",
+                },
+            )
+        )
 
     return results
 
@@ -216,9 +221,7 @@ def _resolve_flag_row_indices(
     if "line_number" in flags_df.columns:
         flag_line_numbers = pd.to_numeric(flags_df["line_number"], errors="coerce")
     else:
-        flag_line_numbers = pd.Series(
-            [float("nan")] * len(flag_doc_ids), index=flag_doc_ids.index
-        )
+        flag_line_numbers = pd.Series([float("nan")] * len(flag_doc_ids), index=flag_doc_ids.index)
 
     fallback_count = 0
     indices: list[float] = []
@@ -262,45 +265,51 @@ def _build_detector_statuses(
         result = result_map.get(track_name)
         if result is None:
             if track_name in _RESTORED_CORE_TRACKS:
-                statuses.append({
+                statuses.append(
+                    {
+                        "track_name": track_name,
+                        "display_name": profile.display_name,
+                        "maturity": str(profile.maturity),
+                        "default_enabled": profile.default_enabled,
+                        "activation_requirements": list(profile.activation_requirements),
+                        "run_status": "executed",
+                        "reason": "restored_without_flag_rows",
+                        "flagged_docs": 0,
+                        "rules_run": 0,
+                        "elapsed_sec": 0.0,
+                    }
+                )
+                continue
+            statuses.append(
+                {
                     "track_name": track_name,
                     "display_name": profile.display_name,
                     "maturity": str(profile.maturity),
                     "default_enabled": profile.default_enabled,
                     "activation_requirements": list(profile.activation_requirements),
-                    "run_status": "executed",
-                    "reason": "restored_without_flag_rows",
+                    "run_status": "unknown",
+                    "reason": "restored batch without runtime snapshot",
                     "flagged_docs": 0,
                     "rules_run": 0,
                     "elapsed_sec": 0.0,
-                })
-                continue
-            statuses.append({
-                "track_name": track_name,
-                "display_name": profile.display_name,
-                "maturity": str(profile.maturity),
-                "default_enabled": profile.default_enabled,
-                "activation_requirements": list(profile.activation_requirements),
-                "run_status": "unknown",
-                "reason": "restored batch without runtime snapshot",
-                "flagged_docs": 0,
-                "rules_run": 0,
-                "elapsed_sec": 0.0,
-            })
+                }
+            )
             continue
 
-        statuses.append({
-            "track_name": track_name,
-            "display_name": result.display_name,
-            "maturity": result.maturity,
-            "default_enabled": result.default_enabled,
-            "activation_requirements": result.activation_requirements,
-            "run_status": result.run_status,
-            "reason": result.skip_reason,
-            "flagged_docs": result.flagged_count,
-            "rules_run": result.total_rules_run,
-            "elapsed_sec": round(result.elapsed_seconds, 3),
-        })
+        statuses.append(
+            {
+                "track_name": track_name,
+                "display_name": result.display_name,
+                "maturity": result.maturity,
+                "default_enabled": result.default_enabled,
+                "activation_requirements": result.activation_requirements,
+                "run_status": result.run_status,
+                "reason": result.skip_reason,
+                "flagged_docs": result.flagged_count,
+                "rules_run": result.total_rules_run,
+                "elapsed_sec": round(result.elapsed_seconds, 3),
+            }
+        )
     return statuses
 
 
@@ -312,20 +321,22 @@ def _normalize_detector_status_snapshot(snapshot: list[dict]) -> list[dict]:
         if not track_name:
             continue
         profile = get_detector_profile(track_name)
-        normalized.append({
-            "track_name": track_name,
-            "display_name": item.get("display_name", profile.display_name),
-            "maturity": item.get("maturity", str(profile.maturity)),
-            "default_enabled": item.get("default_enabled", profile.default_enabled),
-            "activation_requirements": list(
-                item.get("activation_requirements", profile.activation_requirements)
-            ),
-            "run_status": item.get("run_status", "unknown"),
-            "reason": item.get("reason"),
-            "flagged_docs": int(item.get("flagged_docs", 0) or 0),
-            "rules_run": int(item.get("rules_run", 0) or 0),
-            "elapsed_sec": float(item.get("elapsed_sec", 0.0) or 0.0),
-        })
+        normalized.append(
+            {
+                "track_name": track_name,
+                "display_name": item.get("display_name", profile.display_name),
+                "maturity": item.get("maturity", str(profile.maturity)),
+                "default_enabled": item.get("default_enabled", profile.default_enabled),
+                "activation_requirements": list(
+                    item.get("activation_requirements", profile.activation_requirements)
+                ),
+                "run_status": item.get("run_status", "unknown"),
+                "reason": item.get("reason"),
+                "flagged_docs": int(item.get("flagged_docs", 0) or 0),
+                "rules_run": int(item.get("rules_run", 0) or 0),
+                "elapsed_sec": float(item.get("elapsed_sec", 0.0) or 0.0),
+            }
+        )
     return sorted(normalized, key=lambda item: order.get(item["track_name"], 999))
 
 

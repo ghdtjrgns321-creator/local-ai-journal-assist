@@ -23,9 +23,7 @@ logger = logging.getLogger(__name__)
 
 # ── Benford 이론 분포 상수 ────────────────────────────────────
 
-BENFORD_EXPECTED: dict[int, float] = {
-    d: math.log10(1 + 1 / d) for d in range(1, 10)
-}
+BENFORD_EXPECTED: dict[int, float] = {d: math.log10(1 + 1 / d) for d in range(1, 10)}
 
 # ── MAD 판정 기준 (Nigrini 2012) ─────────────────────────────
 
@@ -102,9 +100,7 @@ def analyze_benford(
 
     confidence = _assess_confidence(n)
     if n < settings.benford_min_sample:
-        warnings.append(
-            f"Benford 신뢰도 낮음: n={n} < 최소 표본 {settings.benford_min_sample}"
-        )
+        warnings.append(f"Benford 신뢰도 낮음: n={n} < 최소 표본 {settings.benford_min_sample}")
 
     # 실제 분포 계산 (1~9 모든 자릿수 포함, 0건도 0.0)
     counts = clean.value_counts()
@@ -113,9 +109,7 @@ def analyze_benford(
     observed_freq = {d: c / total for d, c in observed.items()}
 
     # MAD 계산
-    mad = float(np.mean([
-        abs(observed_freq[d] - BENFORD_EXPECTED[d]) for d in range(1, 10)
-    ]))
+    mad = float(np.mean([abs(observed_freq[d] - BENFORD_EXPECTED[d]) for d in range(1, 10)]))
     mad_conformity = _classify_mad(mad)
 
     # Chi-square 검정
@@ -139,8 +133,7 @@ def analyze_benford(
 
     # 종합 판정: MAD + Chi-square 기준
     is_conforming = bool(
-        mad <= settings.benford_mad_threshold
-        and chi2_p >= settings.benford_chi2_alpha
+        mad <= settings.benford_mad_threshold and chi2_p >= settings.benford_chi2_alpha
     )
 
     return BenfordResult(

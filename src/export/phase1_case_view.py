@@ -631,6 +631,36 @@ def _clean_case_explanation(text: str) -> str:
     cleaned = re.sub(r"\s*관련 전표 총금액은 [\d,\.]+입니다\.\s*", " ", cleaned)
     cleaned = re.sub(r"\s*관련 금액은 [\d,\.]+입니다\.\s*", " ", cleaned)
     cleaned = re.sub(r"\s*and related entry amount totals [\d,\.]+\.\s*", " ", cleaned)
+    replacements = (
+        (r"(.+?)이 함께 발생했습니다\.", r"\1 함께 관찰."),
+        (r"(.+?)가 함께 발생했습니다\.", r"\1 함께 관찰."),
+        (r"(.+?) 신호가 관찰되었습니다\.", r"\1 신호 관찰."),
+        (r"(.+?)이 관찰되었습니다\.", r"\1 관찰."),
+        (r"(.+?)가 관찰되었습니다\.", r"\1 관찰."),
+        (r"확인해야 합니다", "확인 요망"),
+        (r"확인이 필요합니다", "확인 요망"),
+        (r"함께 검토해야 합니다", "함께 검토 요망"),
+        (r"검토해야 합니다", "검토 요망"),
+        (r"재검토해야 합니다", "재검토 요망"),
+        (r"점검해야 합니다", "점검 요망"),
+    )
+    for pattern, repl in replacements:
+        cleaned = re.sub(pattern, repl, cleaned)
+    cleaned = re.sub(
+        r"([가-힣A-Za-z0-9·/]+)를 (우선 )?확인 요망",
+        r"\1 \2확인 요망",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"([가-힣A-Za-z0-9·/]+)을 (우선 )?확인 요망",
+        r"\1 \2확인 요망",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"([가-힣A-Za-z0-9·/]+)와 ([가-힣A-Za-z0-9·/]+)를 확인 요망",
+        r"\1와 \2 확인 요망",
+        cleaned,
+    )
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     return cleaned
 

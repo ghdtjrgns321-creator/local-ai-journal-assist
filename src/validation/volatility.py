@@ -65,16 +65,11 @@ def analyze_monthly_volatility(
     # 계절성 지수: 월(1~12) 평균 대비 비율
     seasonality: dict[int, float] | None = None
     if len(monthly) >= 3:
-        month_num = pd.Series(
-            monthly.values, index=[p.month for p in monthly.index]
-        )
+        month_num = pd.Series(monthly.values, index=[p.month for p in monthly.index])
         month_avg = month_num.groupby(month_num.index).mean()
         overall_avg = month_num.mean()
         if overall_avg > 0:
-            seasonality = {
-                int(m): round(float(v / overall_avg), 4)
-                for m, v in month_avg.items()
-            }
+            seasonality = {int(m): round(float(v / overall_avg), 4) for m, v in month_avg.items()}
 
     return MonthlyVolatility(totals, mom_rates, outlier_months, seasonality), warnings
 
@@ -185,13 +180,15 @@ def analyze_accounts(
     total_amount = agg["sum"].sum()
     if total_amount > 0:
         shares = agg["sum"] / total_amount
-        hhi = float((shares ** 2).sum())
+        hhi = float((shares**2).sum())
     else:
         hhi = 0.0
 
     hhi_label = (
-        "concentrated" if hhi >= settings.hhi_concentrated_threshold
-        else "moderate" if hhi >= 0.15
+        "concentrated"
+        if hhi >= settings.hhi_concentrated_threshold
+        else "moderate"
+        if hhi >= 0.15
         else "diversified"
     )
 

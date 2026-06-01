@@ -53,11 +53,11 @@ class SheetScore:
     """
 
     sheet_name: str
-    row_count: int            # 빈 행 제외 실제 행 수
-    col_count: int            # 비어있지 않은 열 수
+    row_count: int  # 빈 행 제외 실제 행 수
+    col_count: int  # 비어있지 않은 열 수
     header_confidence: float  # header_detector 신뢰도
-    total_score: float        # 가중 합산
-    recommended: bool         # 최고 점수 여부
+    total_score: float  # 가중 합산
+    recommended: bool  # 최고 점수 여부
 
 
 @dataclass
@@ -68,12 +68,12 @@ class HeaderDetectionResult:
     llm_assisted가 True면 구조 스코어 미달 상태에서 WU-28 LLM 보조로 복원된 결과.
     """
 
-    header_row: int | None        # None = 탐지 실패, UI 개입 필요
-    confidence: float             # 0.0~1.0 스코어
-    matched_keywords: list[str]   # 매칭된 키워드 원본명 (예: ["전표일자", "차변"])
-    total_columns: int            # 해당 행의 전체 컬럼 수
-    message: str                  # 사용자 안내 메시지
-    llm_assisted: bool = False    # WU-28: LLM 보조로 복원되었는지 (UI 메시지 구분용)
+    header_row: int | None  # None = 탐지 실패, UI 개입 필요
+    confidence: float  # 0.0~1.0 스코어
+    matched_keywords: list[str]  # 매칭된 키워드 원본명 (예: ["전표일자", "차변"])
+    total_columns: int  # 해당 행의 전체 컬럼 수
+    message: str  # 사용자 안내 메시지
+    llm_assisted: bool = False  # WU-28: LLM 보조로 복원되었는지 (UI 메시지 구분용)
 
 
 @dataclass
@@ -83,10 +83,10 @@ class ReviewItem:
     80/20 원칙: action="auto"는 자동 처리, "review"는 사용자 확인 필요.
     """
 
-    column: str                     # 대상 컬럼명
-    action: str                     # "auto" | "review" | "blocked" | "empty"
-    confidence: float               # 0.0~1.0
-    reason: str                     # 사람이 읽는 판단 근거
+    column: str  # 대상 컬럼명
+    action: str  # "auto" | "review" | "blocked" | "empty"
+    confidence: float  # 0.0~1.0
+    reason: str  # 사람이 읽는 판단 근거
     source_type: str | None = None  # 추론된 소스 타입 (B1 결과)
     target_type: str | None = None  # 스키마 기대 타입
 
@@ -101,12 +101,12 @@ class MappingResult:
       - unmapped: confidence < low_threshold (매핑 불가)
     """
 
-    mapping: dict[str, str]        # 확정 매핑 {원본: 표준}
-    suggestions: dict[str, str]    # 추천 매핑 {원본: 표준} — UI 확인 대기
-    confidence: dict[str, float]   # mapping+suggestions 전체 (0.0~1.0)
-    unmapped: list[str]            # 매핑 불가 원본 컬럼명
-    missing_required: list[str]    # 필수 표준 컬럼 중 미매핑
-    needs_review: bool             # suggestions 있거나 missing_required 있으면 True
+    mapping: dict[str, str]  # 확정 매핑 {원본: 표준}
+    suggestions: dict[str, str]  # 추천 매핑 {원본: 표준} — UI 확인 대기
+    confidence: dict[str, float]  # mapping+suggestions 전체 (0.0~1.0)
+    unmapped: list[str]  # 매핑 불가 원본 컬럼명
+    missing_required: list[str]  # 필수 표준 컬럼 중 미매핑
+    needs_review: bool  # suggestions 있거나 missing_required 있으면 True
     review_items: list[ReviewItem] = field(default_factory=list)  # 판단 근거 리스트
 
 
@@ -117,11 +117,13 @@ class CastingResult:
     errors가 있으면 파이프라인 중단, warnings는 로깅 후 계속 진행.
     """
 
-    data: pd.DataFrame                          # 캐스팅 완료 DataFrame
-    errors: list[str] = field(default_factory=list)      # 필수 컬럼 캐스팅 실패
-    warnings: list[str] = field(default_factory=list)    # 부분 결측, 권장 컬럼 실패
+    data: pd.DataFrame  # 캐스팅 완료 DataFrame
+    errors: list[str] = field(default_factory=list)  # 필수 컬럼 캐스팅 실패
+    warnings: list[str] = field(default_factory=list)  # 부분 결측, 권장 컬럼 실패
     cast_summary: dict[str, str] = field(default_factory=dict)  # {"col": "object→float64"}
-    skipped_columns: list[str] = field(default_factory=list)    # 이미 올바른 dtype
-    high_null_columns: list[str] = field(default_factory=list)  # 캐스팅 후 결측률 90%+ (오매핑 의심)
-    empty_columns: list[str] = field(default_factory=list)      # 원본부터 100% NaN (유령 컬럼)
-    success: bool = True                        # len(errors) == 0
+    skipped_columns: list[str] = field(default_factory=list)  # 이미 올바른 dtype
+    high_null_columns: list[str] = field(
+        default_factory=list
+    )  # 캐스팅 후 결측률 90%+ (오매핑 의심)
+    empty_columns: list[str] = field(default_factory=list)  # 원본부터 100% NaN (유령 컬럼)
+    success: bool = True  # len(errors) == 0

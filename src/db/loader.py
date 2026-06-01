@@ -42,6 +42,7 @@ def _derive_approval_level(
     """
     if thresholds is None:
         from config.settings import get_settings
+
         thresholds = get_settings().approval_thresholds
 
     if not thresholds:
@@ -84,8 +85,10 @@ class LoadResult:
     @property
     def total_rows(self) -> int:
         return (
-            self.general_ledger_rows + self.anomaly_flags_rows
-            + self.benford_summary_rows + self.benford_digits_rows
+            self.general_ledger_rows
+            + self.anomaly_flags_rows
+            + self.benford_summary_rows
+            + self.benford_digits_rows
             + self.trial_balance_rows
             + sum(self.supplementary_counts.values())
         )
@@ -138,6 +141,7 @@ def load_all(
         # Why: DataSynth 보조 데이터 적재 (document_flows, master_data, labels 등)
         if datasynth_dir is not None:
             from src.db.loader_supplementary import load_supplementary
+
             sup_counts = load_supplementary(conn, datasynth_dir, batch_id)
 
         # Why: 배치 메타 기록 — Streamlit 재시작 후 이력 조회/복원용
@@ -246,8 +250,7 @@ def _ensure_upload_batch_meta_columns(conn) -> None:
     """
     existing = set(
         conn.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_name = 'upload_batches'"
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'upload_batches'"
         ).fetchdf()["column_name"]
     )
     for column, dtype in _UPLOAD_BATCH_META_COLUMNS.items():
@@ -289,9 +292,7 @@ def load_general_ledger(conn, df: pd.DataFrame, batch_id: str) -> int:
             gl_df[col] = gl_df[col].where(gl_df[col].notna(), None)
 
     col_list = ", ".join(GENERAL_LEDGER_COLUMNS)
-    conn.execute(
-        f"INSERT INTO general_ledger ({col_list}) SELECT * FROM gl_df"
-    )
+    conn.execute(f"INSERT INTO general_ledger ({col_list}) SELECT * FROM gl_df")
     return len(gl_df)
 
 
@@ -305,9 +306,7 @@ def _fill_required_gl_fields(gl_df: pd.DataFrame) -> None:
     if {"posting_date", "document_date"} <= set(gl_df.columns):
         missing_posting = gl_df["posting_date"].isna()
         if missing_posting.any():
-            gl_df.loc[missing_posting, "posting_date"] = gl_df.loc[
-                missing_posting, "document_date"
-            ]
+            gl_df.loc[missing_posting, "posting_date"] = gl_df.loc[missing_posting, "document_date"]
             logger.warning(
                 "posting_date missing for %d GL rows; filled from document_date",
                 int(missing_posting.sum()),
@@ -338,21 +337,24 @@ def _fill_required_gl_fields(gl_df: pd.DataFrame) -> None:
 
 
 def load_anomaly_flags(
-    conn, results: list, df: pd.DataFrame, batch_id: str,
+    conn,
+    results: list,
+    df: pd.DataFrame,
+    batch_id: str,
 ) -> int:
     """DetectionResult.details를 melt하여 anomaly_flags 테이블에 적재."""
     flags_df = _build_anomaly_flags_df(results, df, batch_id)
     if flags_df.empty:
         return 0
     af_cols = ", ".join(ANOMALY_FLAGS_COLUMNS)
-    conn.execute(
-        f"INSERT INTO anomaly_flags ({af_cols}) SELECT * FROM flags_df"
-    )
+    conn.execute(f"INSERT INTO anomaly_flags ({af_cols}) SELECT * FROM flags_df")
     return len(flags_df)
 
 
 def load_benford(
-    conn, results: list, batch_id: str,
+    conn,
+    results: list,
+    batch_id: str,
 ) -> tuple[int, int, list[str]]:
     """Benford 분석 결과를 benford_summary + benford_digits에 적재."""
     warnings: list[str] = []
@@ -364,15 +366,11 @@ def load_benford(
 
     summary_df = _build_benford_summary_df(benford, batch_id)
     bs_cols = ", ".join(BENFORD_SUMMARY_COLUMNS)
-    conn.execute(
-        f"INSERT INTO benford_summary ({bs_cols}) SELECT * FROM summary_df"
-    )
+    conn.execute(f"INSERT INTO benford_summary ({bs_cols}) SELECT * FROM summary_df")
 
     digits_df = _build_benford_digits_df(benford, batch_id)
     bd_cols = ", ".join(BENFORD_DIGITS_COLUMNS)
-    conn.execute(
-        f"INSERT INTO benford_digits ({bd_cols}) SELECT * FROM digits_df"
-    )
+    conn.execute(f"INSERT INTO benford_digits ({bd_cols}) SELECT * FROM digits_df")
 
     return len(summary_df), len(digits_df), warnings
 
@@ -389,9 +387,7 @@ def load_trial_balance(conn, tb_df: pd.DataFrame | None, batch_id: str) -> int:
     tb_df["upload_batch_id"] = batch_id
     tb_load = tb_df.reindex(columns=TRIAL_BALANCE_COLUMNS)
     col_list = ", ".join(TRIAL_BALANCE_COLUMNS)
-    conn.execute(
-        f"INSERT INTO trial_balance ({col_list}) SELECT * FROM tb_load"
-    )
+    conn.execute(f"INSERT INTO trial_balance ({col_list}) SELECT * FROM tb_load")
     return len(tb_load)
 
 
@@ -399,7 +395,9 @@ def load_trial_balance(conn, tb_df: pd.DataFrame | None, batch_id: str) -> int:
 
 
 def _build_anomaly_flags_df(
-    results: list, df: pd.DataFrame, batch_id: str,
+    results: list,
+    df: pd.DataFrame,
+    batch_id: str,
 ) -> pd.DataFrame:
     """DetectionResult.details → anomaly_flags DataFrame 변환."""
     empty = pd.DataFrame(columns=ANOMALY_FLAGS_COLUMNS)
@@ -411,7 +409,9 @@ def _build_anomaly_flags_df(
         if not hasattr(result, "details") or result.details.empty:
             continue
         melted = result.details.melt(
-            ignore_index=False, var_name="rule_code", value_name="score",
+            ignore_index=False,
+            var_name="rule_code",
+            value_name="score",
         )
         melted["score"] = pd.to_numeric(melted["score"], errors="coerce")
         melted = melted[melted["score"] > 0].copy()
@@ -419,9 +419,7 @@ def _build_anomaly_flags_df(
             continue
         melted["document_id"] = df.loc[melted.index, "document_id"]
         melted["line_number"] = (
-            df.loc[melted.index, "line_number"]
-            if "line_number" in df.columns
-            else None
+            df.loc[melted.index, "line_number"] if "line_number" in df.columns else None
         )
         melted["track_name"] = result.track_name
         melted["upload_batch_id"] = batch_id
@@ -462,18 +460,22 @@ def _extract_benford(results: list):
 
 def _build_benford_summary_df(br, batch_id: str) -> pd.DataFrame:
     """BenfordResult → benford_summary DataFrame (배치당 1행)."""
-    return pd.DataFrame([{
-        "upload_batch_id": batch_id,
-        "sample_size": br.sample_size,
-        "mad": br.mad,
-        "mad_conformity": br.mad_conformity,
-        "chi2_statistic": br.chi2_statistic,
-        "chi2_p_value": br.chi2_p_value,
-        "ks_statistic": br.ks_statistic,
-        "ks_p_value": br.ks_p_value,
-        "is_conforming": br.is_conforming,
-        "confidence": br.confidence,
-    }]).reindex(columns=BENFORD_SUMMARY_COLUMNS)
+    return pd.DataFrame(
+        [
+            {
+                "upload_batch_id": batch_id,
+                "sample_size": br.sample_size,
+                "mad": br.mad,
+                "mad_conformity": br.mad_conformity,
+                "chi2_statistic": br.chi2_statistic,
+                "chi2_p_value": br.chi2_p_value,
+                "ks_statistic": br.ks_statistic,
+                "ks_p_value": br.ks_p_value,
+                "is_conforming": br.is_conforming,
+                "confidence": br.confidence,
+            }
+        ]
+    ).reindex(columns=BENFORD_SUMMARY_COLUMNS)
 
 
 def _build_benford_digits_df(br, batch_id: str) -> pd.DataFrame:
@@ -482,11 +484,13 @@ def _build_benford_digits_df(br, batch_id: str) -> pd.DataFrame:
     for digit in range(1, 10):
         obs = br.observed.get(digit, 0.0)
         exp = br.expected.get(digit, 0.0)
-        rows.append({
-            "upload_batch_id": batch_id,
-            "digit": digit,
-            "observed_freq": obs,
-            "expected_freq": exp,
-            "deviation": obs - exp,
-        })
+        rows.append(
+            {
+                "upload_batch_id": batch_id,
+                "digit": digit,
+                "observed_freq": obs,
+                "expected_freq": exp,
+                "deviation": obs - exp,
+            }
+        )
     return pd.DataFrame(rows).reindex(columns=BENFORD_DIGITS_COLUMNS)

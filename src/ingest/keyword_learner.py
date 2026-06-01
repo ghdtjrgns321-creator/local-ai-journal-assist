@@ -62,7 +62,8 @@ def learn_from_mapping(
 
         logger.info(
             "키워드 학습: '%s' → %s (회사 keywords에 추가)",
-            source_col, standard_col,
+            source_col,
+            standard_col,
         )
 
     if added_count == 0:
@@ -97,11 +98,11 @@ def _remove_alias_from_all(
         if alias in normalized:
             # 해당 별칭의 모든 occurrence를 제거 (방어적 처리)
             original = list(aliases)
-            keywords[standard_col] = [
-                a for a in aliases if a.strip().lower() != alias
-            ]
+            keywords[standard_col] = [a for a in aliases if a.strip().lower() != alias]
             removed_count = len(original) - len(keywords[standard_col])
             logger.debug(
                 "충돌 해결: '%s' → %s 에서 %d건 제거",
-                alias, standard_col, removed_count,
+                alias,
+                standard_col,
+                removed_count,
             )

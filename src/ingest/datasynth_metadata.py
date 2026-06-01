@@ -95,8 +95,16 @@ def build_validated_metadata(
     df = pd.read_csv(source, low_memory=False)
     df = _attach_label_sidecar_if_needed(df, source)
     observed = _with_label_sidecar_counts(summarize_observed_metadata(df), source)
-    generation_stats = _load_json_if_exists(Path(generation_statistics_path)) if generation_statistics_path else _load_json_if_exists(source.parent / "generation_statistics.json")
-    data_quality = _load_json_if_exists(Path(data_quality_stats_path)) if data_quality_stats_path else _load_json_if_exists(source.parent / "data_quality_stats.json")
+    generation_stats = (
+        _load_json_if_exists(Path(generation_statistics_path))
+        if generation_statistics_path
+        else _load_json_if_exists(source.parent / "generation_statistics.json")
+    )
+    data_quality = (
+        _load_json_if_exists(Path(data_quality_stats_path))
+        if data_quality_stats_path
+        else _load_json_if_exists(source.parent / "data_quality_stats.json")
+    )
     return reconcile_reported_metadata(
         observed=observed,
         generation_statistics=generation_stats,
@@ -185,16 +193,10 @@ def build_validated_metadata_messages(
     messages: list[str] = []
     if reconciliation.critical_mismatches:
         critical_preview = "; ".join(reconciliation.critical_mismatches[:3])
-        messages.append(
-            "DataSynth metadata validation failed: "
-            f"{critical_preview}"
-        )
+        messages.append(f"DataSynth metadata validation failed: {critical_preview}")
     if reconciliation.warning_mismatches:
         warning_preview = "; ".join(reconciliation.warning_mismatches[:3])
-        messages.append(
-            "DataSynth metadata warning: "
-            f"{warning_preview}"
-        )
+        messages.append(f"DataSynth metadata warning: {warning_preview}")
     return messages
 
 
@@ -297,10 +299,7 @@ def summarize_observed_metadata(df: pd.DataFrame) -> ObservedMetadata:
     )
     anomalies_injected = _count_labeled_documents(df)
 
-    missing_masks = {
-        column: _missing_mask(df[column])
-        for column in df.columns
-    }
+    missing_masks = {column: _missing_mask(df[column]) for column in df.columns}
     total_missing = int(sum(mask.sum() for mask in missing_masks.values()))
     records_with_missing_mask = _combine_masks(missing_masks.values())
 
@@ -407,8 +406,12 @@ def reconcile_reported_metadata(
 
     quality_field_map = {
         "records_with_issues": observed.data_quality_stats.get("records_with_issues"),
-        "missing_values.total_missing": observed.data_quality_stats["missing_values"].get("total_missing"),
-        "duplicates.total_duplicates": observed.data_quality_stats["duplicates"].get("total_duplicates"),
+        "missing_values.total_missing": observed.data_quality_stats["missing_values"].get(
+            "total_missing"
+        ),
+        "duplicates.total_duplicates": observed.data_quality_stats["duplicates"].get(
+            "total_duplicates"
+        ),
     }
     for field, observed_value in quality_field_map.items():
         reported_value = _get_nested_value(reported_quality, field)
@@ -544,12 +547,20 @@ def _unbalanced_document_mask(df: pd.DataFrame) -> pd.Series:
 
     debit = pd.to_numeric(df["debit_amount"], errors="coerce").fillna(0.0)
     credit = pd.to_numeric(df["credit_amount"], errors="coerce").fillna(0.0)
-    grouped = pd.DataFrame({
-        "document_id": df["document_id"],
-        "debit_amount": debit,
-        "credit_amount": credit,
-    }).groupby("document_id", dropna=True, sort=False).sum()
-    unbalanced_ids = grouped.index[(grouped["debit_amount"] - grouped["credit_amount"]).abs() > 0.01]
+    grouped = (
+        pd.DataFrame(
+            {
+                "document_id": df["document_id"],
+                "debit_amount": debit,
+                "credit_amount": credit,
+            }
+        )
+        .groupby("document_id", dropna=True, sort=False)
+        .sum()
+    )
+    unbalanced_ids = grouped.index[
+        (grouped["debit_amount"] - grouped["credit_amount"]).abs() > 0.01
+    ]
     if len(unbalanced_ids) == 0:
         return pd.Series(False, index=df.index)
     return df["document_id"].isin(unbalanced_ids)

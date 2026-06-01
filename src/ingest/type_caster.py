@@ -40,6 +40,7 @@ _SCI_NOTATION_RE = re.compile(r"^\d+\.?\d*[eE]\+?\d+$")
 
 # ── config 기반 정규식 빌더 ──────────────────────────────────
 
+
 def _build_currency_re(cleaning_config: dict | None = None) -> re.Pattern:
     """cleaning.yaml의 통화 기호·단위로 정규식 생성.
 
@@ -64,6 +65,7 @@ def _get_amount_null_values(cleaning_config: dict | None = None) -> frozenset[st
 
 
 # ── 내부 헬퍼 ────────────────────────────────────────────────
+
 
 def _is_already_correct_type(series: pd.Series, expected: str) -> bool:
     """이미 올바른 dtype이면 True — Parquet fast path."""
@@ -97,6 +99,7 @@ def _safe_sci_to_int(val: str) -> str:
 
 # ── 공개 캐스터 함수 ─────────────────────────────────────────
 
+
 def cast_amount(series: pd.Series, cleaning_config: dict | None = None) -> pd.Series:
     """금액 컬럼 → float64 변환.
 
@@ -120,7 +123,9 @@ def cast_amount(series: pd.Series, cleaning_config: dict | None = None) -> pd.Se
     s = s.str.strip()
     # 괄호 음수: (1,234) → -1,234
     s = s.str.replace(
-        _PAREN_NEG_RE, lambda m: "-" + m.group(1), regex=True,
+        _PAREN_NEG_RE,
+        lambda m: "-" + m.group(1),
+        regex=True,
     )
     # 천단위 구분자·소수점 정규화 (locale별 분기)
     decimal_fmt = amount_cfg.get("decimal_format", "period")
@@ -165,7 +170,9 @@ def cast_date(
     # 2차: 한국어 날짜 변환 (2025년 3월 19일 → 2025-03-19)
     remaining = s[unconverted_mask].astype(str)
     korean_replaced = remaining.str.replace(
-        _KOREAN_DATE_RE, r"\1-\2-\3", regex=True,
+        _KOREAN_DATE_RE,
+        r"\1-\2-\3",
+        regex=True,
     )
     korean_parsed = pd.to_datetime(korean_replaced, errors="coerce")
     result.loc[unconverted_mask] = korean_parsed.values
@@ -180,7 +187,9 @@ def cast_date(
     if compact_mask_inner.any():
         compact_idx = remaining[compact_mask_inner].index
         compact_parsed = pd.to_datetime(
-            remaining[compact_mask_inner], format="%Y%m%d", errors="coerce",
+            remaining[compact_mask_inner],
+            format="%Y%m%d",
+            errors="coerce",
         )
         result.loc[compact_idx] = compact_parsed.values
 
@@ -199,7 +208,9 @@ def cast_date(
         excel_idx = numeric_vals[excel_mask_inner].index
         excel_parsed = pd.to_datetime(
             numeric_vals[excel_mask_inner],
-            origin="1899-12-30", unit="D", errors="coerce",
+            origin="1899-12-30",
+            unit="D",
+            errors="coerce",
         )
         result.loc[excel_idx] = excel_parsed.values
 
@@ -211,7 +222,9 @@ def cast_date(
     # 5차: 최종 폴백
     remaining = s[unconverted_mask]
     fallback = pd.to_datetime(
-        remaining, errors="coerce", dayfirst=settings.casting_date_dayfirst,
+        remaining,
+        errors="coerce",
+        dayfirst=settings.casting_date_dayfirst,
     )
     result.loc[unconverted_mask] = fallback.values
 
@@ -298,6 +311,7 @@ def _cast_bool(series: pd.Series, cleaning_config: dict | None = None) -> pd.Ser
 
 # ── 차/대변 통합 ─────────────────────────────────────────────
 
+
 def unify_debit_credit(
     df: pd.DataFrame,
     cleaning_config: dict | None = None,
@@ -372,9 +386,7 @@ def cast_dataframe(
     schema_columns: list[dict] = schema.get("columns", [])
 
     # {컬럼명: type문자열} 맵 생성
-    type_map: dict[str, str] = {
-        col["name"]: col["type"] for col in schema_columns
-    }
+    type_map: dict[str, str] = {col["name"]: col["type"] for col in schema_columns}
 
     required_set = _build_required_set(schema_columns)
     result_df = df.copy()
@@ -431,9 +443,7 @@ def cast_dataframe(
                 elif null_ratio > settings.casting_null_demote_threshold:
                     # 캐스팅 후 90%+ 결측 — 오매핑 의심
                     high_null_columns.append(col_name)
-                    warnings.append(
-                        f"{col_name}: 캐스팅 후 결측률 {null_ratio:.1%} — 오매핑 의심"
-                    )
+                    warnings.append(f"{col_name}: 캐스팅 후 결측률 {null_ratio:.1%} — 오매핑 의심")
                 elif null_ratio > settings.casting_null_warn_threshold:
                     warnings.append(
                         f"{col_name}: 캐스팅 후 결측률 {null_ratio:.1%} "

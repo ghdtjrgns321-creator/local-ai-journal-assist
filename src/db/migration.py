@@ -103,9 +103,7 @@ def _get_schema_version(conn: duckdb.DuckDBPyConnection) -> int:
     - ML 컬럼이 이미 존재 → CURRENT_SCHEMA_VERSION (새 DDL로 생성된 DB)
     - ML 컬럼이 없음 → 1 (레거시 DB)
     """
-    row = conn.execute(
-        "SELECT MAX(schema_version) FROM engagement_meta"
-    ).fetchone()
+    row = conn.execute("SELECT MAX(schema_version) FROM engagement_meta").fetchone()
     if row is not None and row[0] is not None:
         return int(row[0])
 
@@ -113,8 +111,7 @@ def _get_schema_version(conn: duckdb.DuckDBPyConnection) -> int:
     #      새 DDL로 생성된 DB는 이미 ML 컬럼 + audit_log 테이블이 있으므로 마이그레이션 불필요.
     existing_cols = set(
         conn.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_name = 'general_ledger'"
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'general_ledger'"
         ).fetchdf()["column_name"]
     )
 
@@ -125,8 +122,7 @@ def _get_schema_version(conn: duckdb.DuckDBPyConnection) -> int:
     # Why: v3 판정은 audit_log 테이블 존재 여부로 분기
     has_audit_log = bool(
         conn.execute(
-            "SELECT 1 FROM information_schema.tables "
-            "WHERE table_name = ?",
+            "SELECT 1 FROM information_schema.tables WHERE table_name = ?",
             [_V3_TABLE],
         ).fetchone()
     )
@@ -135,15 +131,13 @@ def _get_schema_version(conn: duckdb.DuckDBPyConnection) -> int:
 
     has_feedback_events = bool(
         conn.execute(
-            "SELECT 1 FROM information_schema.tables "
-            "WHERE table_name = ?",
+            "SELECT 1 FROM information_schema.tables WHERE table_name = ?",
             [_V4_TABLE],
         ).fetchone()
     )
     has_performance_reports = bool(
         conn.execute(
-            "SELECT 1 FROM information_schema.tables "
-            "WHERE table_name = 'performance_reports'"
+            "SELECT 1 FROM information_schema.tables WHERE table_name = 'performance_reports'"
         ).fetchone()
     )
     if has_feedback_events and not has_performance_reports:
@@ -179,9 +173,7 @@ def _set_schema_version(conn: duckdb.DuckDBPyConnection, version: int) -> None:
          실제 engagement 행이 적재될 때 schema_version DEFAULT로 자동 설정됨.
          비어있는 동안 _get_schema_version()은 information_schema 추론 경로를 탄다.
     """
-    conn.execute(
-        "UPDATE engagement_meta SET schema_version = ?", [version]
-    )
+    conn.execute("UPDATE engagement_meta SET schema_version = ?", [version])
     count = conn.execute("SELECT COUNT(*) FROM engagement_meta").fetchone()[0]
     if count > 0:
         logger.info("engagement_meta schema_version → %d (%d행 업데이트)", version, count)
@@ -200,8 +192,7 @@ def _migrate_v1_to_v2(conn: duckdb.DuckDBPyConnection) -> None:
     """
     existing = set(
         conn.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_name = 'general_ledger'"
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'general_ledger'"
         ).fetchdf()["column_name"]
     )
 
@@ -225,6 +216,7 @@ def _migrate_v2_to_v3(conn: duckdb.DuckDBPyConnection) -> None:
          CREATE ... IF NOT EXISTS로 멱등성 보장.
     """
     from src.db.schema import SCHEMA_DDL
+
     conn.execute(SCHEMA_DDL["audit_log_seq"])
     conn.execute(SCHEMA_DDL["audit_log"])
     logger.info("v2→v3: audit_log 테이블 + 시퀀스 생성 완료")
@@ -239,8 +231,7 @@ def _migrate_v3_to_v4(conn: duckdb.DuckDBPyConnection) -> None:
 
     has_performance_reports = bool(
         conn.execute(
-            "SELECT 1 FROM information_schema.tables "
-            "WHERE table_name = 'performance_reports'"
+            "SELECT 1 FROM information_schema.tables WHERE table_name = 'performance_reports'"
         ).fetchone()
     )
     if not has_performance_reports:
@@ -268,8 +259,7 @@ def _migrate_v4_to_v5(conn: duckdb.DuckDBPyConnection) -> None:
     """Add review-only rule references to general_ledger."""
     existing = set(
         conn.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_name = 'general_ledger'"
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'general_ledger'"
         ).fetchdf()["column_name"]
     )
     added = []
@@ -313,8 +303,7 @@ def _table_exists(conn: duckdb.DuckDBPyConnection, table_name: str) -> bool:
 def _upload_batch_column_set(conn: duckdb.DuckDBPyConnection) -> set[str]:
     return set(
         conn.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_name = 'upload_batches'"
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'upload_batches'"
         ).fetchdf()["column_name"]
     )
 

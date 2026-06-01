@@ -113,40 +113,52 @@ def _collect_flags(monthly, dist, benford, accounts, temporal, settings):
     flags: list[dict[str, str]] = []
 
     if not benford.is_conforming and benford.sample_size > 0:
-        flags.append({
-            "type": "benford_violation",
-            "detail": f"MAD={benford.mad}, {benford.mad_conformity}",
-        })
+        flags.append(
+            {
+                "type": "benford_violation",
+                "detail": f"MAD={benford.mad}, {benford.mad_conformity}",
+            }
+        )
 
     if monthly.outlier_months:
-        flags.append({
-            "type": "monthly_volatility",
-            "detail": f"급변월: {', '.join(monthly.outlier_months)}",
-        })
+        flags.append(
+            {
+                "type": "monthly_volatility",
+                "detail": f"급변월: {', '.join(monthly.outlier_months)}",
+            }
+        )
 
     if dist.is_normal is False:
-        flags.append({
-            "type": "non_normal_distribution",
-            "detail": f"Shapiro p={dist.shapiro_p_value}, {dist.skewness_label}",
-        })
+        flags.append(
+            {
+                "type": "non_normal_distribution",
+                "detail": f"Shapiro p={dist.shapiro_p_value}, {dist.skewness_label}",
+            }
+        )
 
     if dist.outlier_concentration and dist.outlier_concentration > 0.5:
-        flags.append({
-            "type": "high_outlier_concentration",
-            "detail": f"이상치 금액 비중 {dist.outlier_concentration:.1%}",
-        })
+        flags.append(
+            {
+                "type": "high_outlier_concentration",
+                "detail": f"이상치 금액 비중 {dist.outlier_concentration:.1%}",
+            }
+        )
 
     if accounts.hhi_label == "concentrated":
-        flags.append({
-            "type": "account_concentration",
-            "detail": f"HHI={accounts.hhi:.4f}, 소수 계정 집중",
-        })
+        flags.append(
+            {
+                "type": "account_concentration",
+                "detail": f"HHI={accounts.hhi:.4f}, 소수 계정 집중",
+            }
+        )
 
     if temporal.period_end_concentration > 0.5:
-        flags.append({
-            "type": "period_end_concentration",
-            "detail": f"기말 {temporal.period_end_concentration:.1%} 집중",
-        })
+        flags.append(
+            {
+                "type": "period_end_concentration",
+                "detail": f"기말 {temporal.period_end_concentration:.1%} 집중",
+            }
+        )
 
     return flags
 

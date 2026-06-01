@@ -42,10 +42,7 @@ def type_diversity_score(row: pd.Series) -> float:
     if len(valid) == 0:
         return 0.0
 
-    pure_str_count = sum(
-        1 for val in valid
-        if isinstance(val, str) and _is_pure_string(val)
-    )
+    pure_str_count = sum(1 for val in valid if isinstance(val, str) and _is_pure_string(val))
     return pure_str_count / len(valid)
 
 

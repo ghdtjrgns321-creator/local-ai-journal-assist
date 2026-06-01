@@ -11,23 +11,27 @@ from src.metrics.models import PerformanceReport, RuleMetric
 
 def save_report(conn, report: PerformanceReport) -> None:
     """Persist a performance report and its rule metrics."""
-    report_df = pd.DataFrame([{
-        "report_id": report.report_id,
-        "upload_batch_id": report.upload_batch_id,
-        "source_kind": report.source_kind,
-        "phase_scope": report.phase_scope,
-        "metric_confidence": report.metric_confidence,
-        "total_docs": report.total_docs,
-        "flagged_docs": report.flagged_docs,
-        "high_risk_docs": report.high_risk_docs,
-        "high_risk_ratio": report.high_risk_ratio,
-        "precision": report.precision,
-        "recall": report.recall,
-        "f1": report.f1,
-        "whitelist_removed_docs": report.whitelist_removed_docs,
-        "false_positive_docs": report.false_positive_docs,
-        "confirmed_issue_docs": report.confirmed_issue_docs,
-    }])
+    report_df = pd.DataFrame(
+        [
+            {
+                "report_id": report.report_id,
+                "upload_batch_id": report.upload_batch_id,
+                "source_kind": report.source_kind,
+                "phase_scope": report.phase_scope,
+                "metric_confidence": report.metric_confidence,
+                "total_docs": report.total_docs,
+                "flagged_docs": report.flagged_docs,
+                "high_risk_docs": report.high_risk_docs,
+                "high_risk_ratio": report.high_risk_ratio,
+                "precision": report.precision,
+                "recall": report.recall,
+                "f1": report.f1,
+                "whitelist_removed_docs": report.whitelist_removed_docs,
+                "false_positive_docs": report.false_positive_docs,
+                "confirmed_issue_docs": report.confirmed_issue_docs,
+            }
+        ]
+    )
     conn.execute("DELETE FROM performance_rule_metrics WHERE report_id = ?", [report.report_id])
     conn.execute("DELETE FROM performance_reports WHERE report_id = ?", [report.report_id])
     conn.register("report_df", report_df)
@@ -48,21 +52,26 @@ def save_report(conn, report: PerformanceReport) -> None:
 
     _ensure_rule_metric_columns(conn)
 
-    rules_df = pd.DataFrame([{
-        "report_id": report.report_id,
-        "track_name": metric.track_name,
-        "rule_code": metric.rule_code,
-        "label_docs": metric.label_docs,
-        "flagged_docs": metric.flagged_docs,
-        "tp_docs": metric.tp_docs,
-        "fp_docs": metric.fp_docs,
-        "fn_docs": metric.fn_docs,
-        "precision": metric.precision,
-        "recall": metric.recall,
-        "f1": metric.f1,
-        "breakdown_json": json.dumps(metric.breakdown, ensure_ascii=False),
-        "score_bands_json": json.dumps(metric.score_bands, ensure_ascii=False),
-    } for metric in report.rule_metrics])
+    rules_df = pd.DataFrame(
+        [
+            {
+                "report_id": report.report_id,
+                "track_name": metric.track_name,
+                "rule_code": metric.rule_code,
+                "label_docs": metric.label_docs,
+                "flagged_docs": metric.flagged_docs,
+                "tp_docs": metric.tp_docs,
+                "fp_docs": metric.fp_docs,
+                "fn_docs": metric.fn_docs,
+                "precision": metric.precision,
+                "recall": metric.recall,
+                "f1": metric.f1,
+                "breakdown_json": json.dumps(metric.breakdown, ensure_ascii=False),
+                "score_bands_json": json.dumps(metric.score_bands, ensure_ascii=False),
+            }
+            for metric in report.rule_metrics
+        ]
+    )
     conn.register("rules_df", rules_df)
     conn.execute(
         """

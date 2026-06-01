@@ -58,9 +58,7 @@ def build_trial_balance(df: pd.DataFrame) -> pd.DataFrame:
     grouped["opening_balance"] = 0.0
     # Why: round(2)로 부동소수점 집계 오차 방어
     grouped["closing_balance"] = (
-        grouped["opening_balance"]
-        + grouped["debit_total"]
-        - grouped["credit_total"]
+        grouped["opening_balance"] + grouped["debit_total"] - grouped["credit_total"]
     ).round(2)
     grouped["debit_total"] = grouped["debit_total"].round(2)
     grouped["credit_total"] = grouped["credit_total"].round(2)
@@ -169,8 +167,7 @@ def validate_tb_reconciliation(
         items.append(item)
         if not item.is_within_materiality:
             warnings.append(
-                f"{recon_type} 대사 차이 {item.difference:,.2f}"
-                f" (중요성 {materiality:,.2f} 초과)"
+                f"{recon_type} 대사 차이 {item.difference:,.2f} (중요성 {materiality:,.2f} 초과)"
             )
 
     # 4. 전체 대사 (GL 합계 vs TB 합계)
@@ -178,8 +175,7 @@ def validate_tb_reconciliation(
     items.append(total_item)
     if not total_item.is_within_materiality:
         warnings.append(
-            f"전체 대사 차이 {total_item.difference:,.2f}"
-            f" (중요성 {materiality:,.2f} 초과)"
+            f"전체 대사 차이 {total_item.difference:,.2f} (중요성 {materiality:,.2f} 초과)"
         )
 
     total_diff = round(sum(abs(item.difference) for item in items), 2)

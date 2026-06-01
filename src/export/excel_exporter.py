@@ -104,9 +104,7 @@ class ExcelExporter:
         return buffer.getvalue()
 
     # ── 시트별 ────────────────────────────────────────────────
-    def _write_summary_sheet(
-        self, wb: Workbook, pr: PipelineResult, config: ExportConfig
-    ) -> None:
+    def _write_summary_sheet(self, wb: Workbook, pr: PipelineResult, config: ExportConfig) -> None:
         """시트 1: 분석 요약 + 위험 분포 + 면책조항."""
         ws = wb.create_sheet("분석 요약")
         ws.column_dimensions["A"].width = 28
@@ -194,9 +192,7 @@ class ExcelExporter:
 
         # Why: AuditEvidence 문구를 추가 컬럼으로 노출 — 감사인이 한국어로 즉시 이해.
         if not df.empty:
-            df["분석 증거 문구"] = df.apply(
-                lambda row: build_evidence_row(row).narrative, axis=1
-            )
+            df["분석 증거 문구"] = df.apply(lambda row: build_evidence_row(row).narrative, axis=1)
 
         headers = list(df.columns)
         ws.append([self._header_cell(ws, h) for h in headers])

@@ -49,9 +49,9 @@ class AuditEvidence:
     document_id: str
     anomaly_score: float
     risk_level: str
-    violated_rules: list[str]       # 위반 룰 ID 목록
+    violated_rules: list[str]  # 위반 룰 ID 목록
     top_features: list[tuple[str, float]]  # [(피처명, 기여도), ...]
-    narrative: str                  # 감사조서 문구 (한국어)
+    narrative: str  # 감사조서 문구 (한국어)
 
 
 def build_evidence_row(
@@ -136,7 +136,4 @@ def build_evidence_report(
     if "anomaly_score" not in df.columns:
         return []
     filtered = df[df["anomaly_score"] >= min_score]
-    return [
-        build_evidence_row(row, top_feature_k=top_feature_k)
-        for _, row in filtered.iterrows()
-    ]
+    return [build_evidence_row(row, top_feature_k=top_feature_k) for _, row in filtered.iterrows()]

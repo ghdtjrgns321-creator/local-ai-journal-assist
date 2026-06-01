@@ -87,11 +87,13 @@ def _compute_yoy(
     monthly = base.groupby(year_month).sum()
 
     # 피벗: 행=월(1~12), 열=연도
-    pivot = pd.DataFrame({
-        "year": [p.year for p in monthly.index],
-        "month": [p.month for p in monthly.index],
-        "amount": monthly.values,
-    }).pivot_table(index="month", columns="year", values="amount", aggfunc="sum")
+    pivot = pd.DataFrame(
+        {
+            "year": [p.year for p in monthly.index],
+            "month": [p.month for p in monthly.index],
+            "amount": monthly.values,
+        }
+    ).pivot_table(index="month", columns="year", values="amount", aggfunc="sum")
 
     if pivot.shape[1] < 2:
         return None

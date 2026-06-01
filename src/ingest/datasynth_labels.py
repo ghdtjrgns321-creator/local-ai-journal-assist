@@ -11,16 +11,18 @@ SOURCE_PATH_ATTR = "source_path"
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _DEFAULT_DATASYNTH_DIR = _PROJECT_ROOT / "data" / "journal" / "primary" / "datasynth"
 _YEAR_FILE_RE = re.compile(r"^journal_entries_(\d{4})\.csv$", re.IGNORECASE)
-_LABEL_COLUMNS = frozenset({
-    "is_fraud",
-    "fraud_type",
-    "is_anomaly",
-    "anomaly_type",
-    "sod_violation",
-    "sod_conflict_type",
-    "label",
-    "target",
-})
+_LABEL_COLUMNS = frozenset(
+    {
+        "is_fraud",
+        "fraud_type",
+        "is_anomaly",
+        "anomaly_type",
+        "sod_violation",
+        "sod_conflict_type",
+        "label",
+        "target",
+    }
+)
 
 
 def set_source_path(df: pd.DataFrame, source_path: str | Path) -> pd.DataFrame:
@@ -50,7 +52,9 @@ def apply_datasynth_label_mode(
     if normalized_mode not in {"hidden", "visible", "auto"}:
         raise ValueError(f"unsupported datasynth label mode: {mode}")
 
-    resolved_source = resolve_datasynth_source_hint(source_path) if source_path else get_source_path(df)
+    resolved_source = (
+        resolve_datasynth_source_hint(source_path) if source_path else get_source_path(df)
+    )
     out = df.copy()
     if resolved_source is not None:
         out.attrs[SOURCE_PATH_ATTR] = str(resolved_source)
@@ -124,10 +128,14 @@ def find_sidecar_label_csv(source_path: str | Path) -> Path | None:
     year_match = _YEAR_FILE_RE.match(basename)
     candidates = (
         parent / "labels" / "document_labels.csv",
-        parent / "labels" / f"document_labels_{year_match.group(1)}.csv" if year_match else parent / "__missing__",
+        parent / "labels" / f"document_labels_{year_match.group(1)}.csv"
+        if year_match
+        else parent / "__missing__",
         parent / "document_labels.csv",
         _DEFAULT_DATASYNTH_DIR / "labels" / "document_labels.csv",
-        _DEFAULT_DATASYNTH_DIR / "labels" / f"document_labels_{year_match.group(1)}.csv" if year_match else _DEFAULT_DATASYNTH_DIR / "__missing__",
+        _DEFAULT_DATASYNTH_DIR / "labels" / f"document_labels_{year_match.group(1)}.csv"
+        if year_match
+        else _DEFAULT_DATASYNTH_DIR / "__missing__",
     )
     for candidate in candidates:
         if candidate.is_file():
