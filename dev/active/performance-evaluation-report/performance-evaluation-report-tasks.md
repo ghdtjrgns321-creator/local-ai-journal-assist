@@ -103,7 +103,7 @@
   - Size: M
 
 - [ ] **4-4** 지표 문서화
-  - File: `docs/metrics.md`
+  - File: `docs/spec/metrics.md`
   - Details: precision/recall/F1 정의, whitelist proxy metric 해석, synthetic bias 한계를 문서화한다.
   - Acceptance: 문서만 읽어도 각 지표의 의미와 제한을 설명할 수 있다.
   - Size: S

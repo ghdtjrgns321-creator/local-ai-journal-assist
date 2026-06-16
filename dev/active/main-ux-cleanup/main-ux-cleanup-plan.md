@@ -84,7 +84,7 @@
 
 - [ ] app/tab smoke 테스트 추가 또는 갱신 - File: `tests/modules/test_dashboard/*` - Size: M
 - [ ] 메인 탭 순서/노출 조건 검증 추가 - File: `tests/modules/test_dashboard/*` - Size: M
-- [ ] `docs/개선사항.md` 상태 갱신 - File: `docs/개선사항.md` - Size: S
+- [ ] `docs/archive/completed/개선사항.md` 상태 갱신 - File: `docs/archive/completed/개선사항.md` - Size: S
 
 ## Risk Assessment
 

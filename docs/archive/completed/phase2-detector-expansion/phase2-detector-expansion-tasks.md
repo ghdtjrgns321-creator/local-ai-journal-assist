@@ -1,0 +1,205 @@
+# Phase2 Detector Expansion - Task Checklist
+
+## Progress Summary
+29 / 31 tasks complete (94%) - Sprint A3 complete (2026-05-17)
+
+## Phase 1: Planning Baseline and Contract Audit
+- [x] Phase 2 training family 현황 재확인
+  - File: `src/services/phase2_training_service.py`
+  - Details: 현재 family 목록, detector factory map, canonical model map을 정리한다.
+  - Acceptance: 확장 전 기준 family와 map 차이가 명확히 메모된다.
+  - Size: S
+- [x] timeseries detector 재사용 지점 확인
+  - File: `src/detection/timeseries_detector.py`
+  - Details: save/load 필요 여부, 반환 metadata, sub-rule 구성을 확인한다.
+  - Acceptance: train integration 시 필요한 wrapper 요구사항이 문서화된다.
+  - Size: S
+- [x] relational detector 재사용 지점 확인
+  - File: `src/detection/relational_detector.py`
+  - Details: sub-rule, settings 의존성, metadata 구조를 확인한다.
+  - Acceptance: train integration wrapper 요구사항이 문서화된다.
+  - Size: S
+- [x] duplicate detector 재사용 지점 확인
+  - File: `src/detection/duplicate_detector.py`
+  - Details: sub-rule, warnings, large-group skip 정책을 확인한다.
+  - Acceptance: duplicate family trial 입력/출력 계약이 정리된다.
+  - Size: S
+- [x] intercompany matcher 재사용 지점 확인
+  - File: `src/detection/intercompany_matcher.py`
+  - Details: audit_rules/doc flow 입력과 metadata 구성을 확인한다.
+  - Acceptance: intercompany family trial wrapper 요구사항이 정리된다.
+  - Size: S
+
+## Phase 2: Training Family Expansion
+- [x] Phase 2 기본 family 목록 확장
+  - File: `src/services/phase2_training_service.py`
+  - Details: `timeseries`, `relational`, `duplicate`, `intercompany`를 기본 family에 추가한다.
+  - Acceptance: queue 생성 시 확장 family가 포함된다.
+  - Size: S
+- [x] detector factory map 확장
+  - File: `src/services/phase2_training_service.py`
+  - Details: 4개 detector를 factory map에 연결한다.
+  - Acceptance: family 이름으로 detector 인스턴스를 만들 수 있다.
+  - Size: S
+- [x] canonical model key map 확장
+  - File: `src/services/phase2_training_service.py`
+  - Details: promoted/inference contract용 canonical key를 추가한다.
+  - Acceptance: training report의 promoted_versions에 확장 family key가 기록된다.
+  - Size: S
+- [x] generic rule-style trial runner 추가
+  - File: `src/services/phase2_training_service.py`
+  - Details: artifact 없는 detector family도 trial/result/metric을 만들 수 있게 한다.
+  - Acceptance: ML family가 아닌 detector도 leaderboard row를 생성한다.
+  - Size: M
+- [x] timeseries family queue/preset 추가
+  - File: `src/services/phase2_training_service.py`
+  - Details: sensitivity preset 2개 이상을 정의한다.
+  - Acceptance: queue에 timeseries trial이 2개 이상 생긴다.
+  - Size: M
+- [x] relational family queue/preset 추가
+  - File: `src/services/phase2_training_service.py`
+  - Details: lookback/threshold preset을 정의한다.
+  - Acceptance: queue에 relational trial이 2개 이상 생긴다.
+  - Size: M
+- [x] duplicate family queue/preset 추가
+  - File: `src/services/phase2_training_service.py`
+  - Details: fuzzy/window preset을 정의한다.
+  - Acceptance: queue에 duplicate trial이 2개 이상 생긴다.
+  - Size: M
+- [x] intercompany family queue/preset 추가
+  - File: `src/services/phase2_training_service.py`
+  - Details: matching threshold/min pair preset을 정의한다.
+  - Acceptance: queue에 intercompany trial이 2개 이상 생긴다.
+  - Size: M
+
+## Phase 3: Detector Granularity and Sub-Track Metadata
+- [x] trial metadata에 sub-detector key 필드 추가
+  - File: `src/services/phase2_training_models.py`
+  - Details: rule-style family의 내부 detector 목록을 metadata 규격으로 고정한다.
+  - Acceptance: `Phase2TrialResult.to_dict()`에 `sub_detector_keys`가 안전하게 직렬화된다.
+  - Size: S
+- [x] timeseries sub-detector metadata 기록
+  - File: `src/services/phase2_training_service.py`
+  - Details: `transaction_burst`, `unusual_frequency`를 metadata에 남긴다.
+  - Acceptance: timeseries trial report에 두 key가 보인다.
+  - Size: M
+- [x] relational sub-detector metadata 기록
+  - File: `src/services/phase2_training_service.py`
+  - Details: `new_counterparty`, `dormant_account_activity`를 metadata에 남긴다.
+  - Acceptance: relational trial report에 두 key가 보인다.
+  - Size: M
+- [x] duplicate sub-detector metadata 기록
+  - File: `src/services/phase2_training_service.py`
+  - Details: `exact_duplicate_amount` 관련 key를 metadata에 남긴다.
+  - Acceptance: duplicate trial report에 sub-detector key가 보인다.
+  - Size: M
+- [x] intercompany sub-detector metadata 기록
+  - File: `src/services/phase2_training_service.py`
+  - Details: `unmatched_intercompany` 관련 key를 metadata에 남긴다.
+  - Acceptance: intercompany trial report에 sub-detector key가 보인다.
+  - Size: M
+- [x] inference contract에 sub-detector summary 추가
+  - File: `src/services/phase2_training_service.py`
+  - Details: promoted family별 세부 detector key 목록을 contract로 저장한다.
+  - Acceptance: `report.metadata["inference_contract"]`에서 확장 family 요약을 읽을 수 있다.
+  - Size: M
+- [ ] pipeline detector status 정합 강화
+  - File: `src/pipeline.py`
+  - Details: used_version/reason/canonical track이 확장 family에도 일관되게 남게 한다.
+  - Acceptance: detector_status에서 확장 family 정합이 깨지지 않는다.
+  - Size: M
+
+## Phase 4: AutoML Policy Hardening
+- [x] 확장 family search preset 정책 추가
+  - File: `src/services/phase2_training_service.py`
+  - Details: family별 sensitivity/strictness preset을 정의한다.
+  - Acceptance: 확장 family마다 최소 2개 preset이 존재한다.
+  - Size: M
+- [x] rule-style detector metric normalization 추가
+  - File: `src/services/phase2_training_service.py`
+  - Details: flagged ratio, score mean, precision-like proxy를 하나의 비교 metric으로 정규화한다.
+  - Acceptance: leaderboard 정렬 시 rule-style family도 비교 가능한 `metric_value`를 가진다.
+  - Size: M
+- [x] family별 최소 완료 trial 정책 추가
+  - File: `src/services/phase2_training_service.py`
+  - Details: completed trial 수가 너무 적은 family는 승격에서 불리하도록 정책화한다.
+  - Acceptance: promotion_policy metadata에 최소 완료 trial 기준이 저장된다.
+  - Size: M
+- [x] sub-detector summary metadata 추가
+  - File: `src/services/phase2_training_service.py`
+  - Details: family별 어떤 세부 detector가 실제 점수에 기여했는지 요약을 남긴다.
+  - Acceptance: report metadata에 `sub_detector_summaries`가 생긴다.
+  - Size: M
+- [x] selection tie-break 확장
+  - File: `src/services/phase2_training_service.py`
+  - Details: family 특성별 tie-break rule을 metadata에 기록한다.
+  - Acceptance: 승격 판단 근거가 promotion policy에 남는다.
+  - Size: M
+
+## Phase 5: Contract Propagation and Inference Alignment
+- [x] inference service 확장 family contract 반영
+  - File: `src/services/phase2_inference_service.py`
+  - Details: promoted family 및 sub-detector summary를 결과에 실어 준다.
+  - Acceptance: phase2 result에 확장 family contract가 붙는다.
+  - Size: M
+- [ ] DB batch 저장 메타 보강 검토 및 수정
+  - File: `src/db/loader.py`
+  - Details: 확장 family contract가 문자열화되어 저장되는지 확인하고 필요한 필드를 보강한다.
+  - Acceptance: DB에 저장 후 reload 시 contract 일부가 유실되지 않는다.
+  - Size: M
+- [ ] DB batch 복원 메타 보강 검토 및 수정
+  - File: `src/db/batch_reader.py`
+  - Details: 확장 family contract가 다시 `PipelineResult`에 붙도록 정리한다.
+  - Acceptance: restore 결과에 확장 family summary가 남아 있다.
+  - Size: M
+- [x] export provenance 반영 보강
+  - File: `src/export/analysis_status.py`
+  - Details: 확장 family 수와 sub-detector summary를 export provenance에 포함한다.
+  - Acceptance: export summary에 family 확장 흔적이 보인다.
+  - Size: M
+
+## Phase 6: Verification and Documentation
+- [x] training service 확장 family 테스트 추가
+  - File: `tests/modules/test_services/test_phase2_training_service.py`
+  - Details: 확장 family queue, 실행, contract 저장을 검증한다.
+  - Acceptance: 확장 family 관련 테스트가 모두 통과한다.
+  - Size: L
+- [ ] pipeline/inference 회귀 테스트 추가
+  - File: `tests/modules/test_pipeline/test_pipeline.py`
+  - Details: promoted contract와 detector status 정합을 검증한다. Sprint A3에서는 dashboard/pipeline 파일 0수정 정책 때문에 `tests/modules/test_services/test_phase2_inference_service.py`와 신규 service E2E로 inference contract를 고정했다.
+  - Acceptance: Phase B 또는 pipeline sprint에서 detector_status 저장/복원까지 확장한다.
+  - Size: M
+- [x] export provenance 회귀 테스트 추가
+  - File: `tests/modules/test_export/test_excel_exporter.py`
+  - Details: 확장 family provenance가 export 본문에 반영되는지 확인한다.
+  - Acceptance: export 테스트가 통과한다.
+  - Size: M
+- [x] DETECTION_RULES 후속 반영
+  - File: `docs/spec/DETECTION_RULES.md`
+  - Details: 확장 family 구현 상태와 미구현 목록을 갱신한다.
+  - Acceptance: Phase 2 표와 본문이 코드와 다시 일치한다.
+  - Size: S
+- [x] provenance 문서 후속 반영
+  - File: `docs/archive/completed/PHASE_PROVENANCE.md`
+  - Details: 확장 family와 artifact-less rule-style contract를 설명한다.
+  - Acceptance: 문서가 최신 Phase 2 계약을 설명한다.
+  - Size: S
+
+## Deployment Checklist
+- [x] 확장 family queue 생성 테스트 통과
+- [x] training report 직렬화 테스트 통과
+- [x] phase2 infer contract 회귀 테스트 통과
+- [ ] batch 저장/복원 테스트 통과
+- [x] export provenance 테스트 통과
+- [x] 문서 최신화 완료
+
+## Sprint A3 Completion (2026-05-17)
+
+- [x] `_DEFAULT_DETECTOR_FACTORIES`에 `timeseries`, `relational`, `duplicate`, `intercompany` 등록
+- [x] 4개 family search preset / canonical model / promoted track map 등록
+- [x] `leaderboard.json` rows에 4개 family와 `schema_hash: null` 출력 검증
+- [x] `promotion_decision.json` family_decisions에 4개 family 출력 검증
+- [x] `inference_contract.required_models` / `model_versions` / `track_map`에 4개 family 반영
+- [x] rule-style promoted artifact를 calibration metadata로 저장
+- [x] `sequence` D047 guard와 신규 `timeseries` family 분리 문서화
+- [x] dashboard 디렉토리 수정 없음

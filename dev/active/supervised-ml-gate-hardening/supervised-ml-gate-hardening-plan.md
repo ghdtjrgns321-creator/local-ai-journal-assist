@@ -114,7 +114,7 @@ supervised 게이트를 다음 2단으로 분리한다.
 
 - [ ] Task 5-1 - `src/preprocessing/model_registry.py` - registry metadata 필드 추가 및 하위 호환 유지 - Size: S
 - [ ] Task 5-2 - `tests/modules/test_preprocessing/test_model_registry.py` - gate metadata 저장/복원 테스트 추가 - Size: S
-- [ ] Task 5-3 - `docs/개선사항.md` - 3.4 구현 반영 또는 후속 상태 갱신 - Size: S
+- [ ] Task 5-3 - `docs/archive/completed/개선사항.md` - 3.4 구현 반영 또는 후속 상태 갱신 - Size: S
 
 ## Detailed Design
 

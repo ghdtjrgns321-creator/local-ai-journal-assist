@@ -116,4 +116,4 @@
 - [ ] 기본 경로 detector 설명 registry가 채워졌다.
 - [ ] findings/explorer import smoke 검증을 통과했다.
 - [ ] 관련 pytest를 통과했다.
-- [ ] `docs/개선사항.md` 상태를 구현 기준으로 갱신했다.
+- [ ] `docs/archive/completed/개선사항.md` 상태를 구현 기준으로 갱신했다.

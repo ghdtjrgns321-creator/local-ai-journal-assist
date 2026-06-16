@@ -7,7 +7,7 @@
 > - `artifacts/phase2_recall_uplift_options_fixed4_20260523.md` (3가지 옵션 비교 — 본 계획은 옵션 1)
 > - `artifacts/phase2_family_rule_noise_fixed4_20260523.json` (sub-detector noise 측정)
 > - `artifacts/phase2_ic_fix_before_after_fixed4_20260523.md` (IC fix 효과 — 같은 패턴 재현 시 기대치)
-> - `docs/users/13_PHASE2_AGGREGATION_AUDIT.md` (PHASE2 합산식 ablation 결론)
+> - `docs/guide/users/13_PHASE2_AGGREGATION_AUDIT.md` (PHASE2 합산식 ablation 결론)
 >
 > **fitting guard (최우선)**: 본 계획의 어떤 threshold/sigma 값도 **truth recall 보고 결정하지 않는다**. 결정 근거는 ① 정상 (truth-negative) 분포의 분위수 ② 회계 도메인 표준이다. recall 변화는 결과로만 기록한다. `feedback_phase1_truth_recall_guard` 메모리 룰 PHASE2 적용.
 
@@ -233,7 +233,7 @@ uv run python tools/scripts/analyze_family_rule_noise_fixed4.py
 
 ### Step 6 — 운영 문서 갱신
 
-`docs/users/13_PHASE2_AGGREGATION_AUDIT.md` 에 R03/TS01 fix 결과 섹션 추가 (IC fix 갱신과 동일한 형식). §7 family weight 옵션 추가 검토 여부 결정.
+`docs/guide/users/13_PHASE2_AGGREGATION_AUDIT.md` 에 R03/TS01 fix 결과 섹션 추가 (IC fix 갱신과 동일한 형식). §7 family weight 옵션 추가 검토 여부 결정.
 
 `docs/debugging.md` 에 R03/TS01 calibration trouble-shooting 기록.
 
@@ -340,7 +340,7 @@ cat src/detection/timeseries_rules.py  # TS01 정의 확인
 | `artifacts/phase1_phase2_integration_report_fixed4_BEFORE_R03_TS01_FIX.json` | 측정 백업 | Step 4 |
 | `artifacts/phase2_family_combination_audit_fixed4_BEFORE_R03_TS01_FIX.json` | ablation 백업 | Step 4 |
 | `artifacts/phase2_r03_ts01_fix_before_after_fixed4_<DATE>.md` | 전후 비교 보고서 | Step 5 |
-| `docs/users/13_PHASE2_AGGREGATION_AUDIT.md` (§ 추가) | 운영 문서 갱신 | Step 6 |
+| `docs/guide/users/13_PHASE2_AGGREGATION_AUDIT.md` (§ 추가) | 운영 문서 갱신 | Step 6 |
 | `docs/debugging.md` (calibration trouble-shooting) | 디버깅 기록 | Step 6 |
 
 ---
@@ -362,7 +362,7 @@ cat src/detection/timeseries_rules.py  # TS01 정의 확인
 
 - `feedback_phase1_truth_recall_guard` — PHASE2 동일 적용
 - `feedback_ic_matching_traps` — IC02 calibration 사례 (선행 패턴)
-- `docs/PHASE2_GOVERNANCE_DESIGN.md` 결정 8 — 5-family Noisy-OR lock (본 계획은 lock 유지)
-- `docs/TROUBLESHOOT.md` TS-15 — Noisy-OR 채택 근거
-- `docs/users/13_PHASE2_AGGREGATION_AUDIT.md` — 합산식 ablation 결론
+- `docs/spec/PHASE2_GOVERNANCE_DESIGN.md` 결정 8 — 5-family Noisy-OR lock (본 계획은 lock 유지)
+- `docs/spec/TROUBLESHOOT.md` TS-15 — Noisy-OR 채택 근거
+- `docs/guide/users/13_PHASE2_AGGREGATION_AUDIT.md` — 합산식 ablation 결론
 - `AGENTS.md` "review-only signals must not become confirmed violations" (IC01 evidence_level 분리 근거)

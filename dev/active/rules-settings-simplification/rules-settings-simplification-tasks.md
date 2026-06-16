@@ -25,7 +25,7 @@
   - Size: S
 
 - [ ] 문서와 코드가 어긋난 키를 기록한다.
-  - File: `docs/개선사항.md`, `dashboard/components/company_manager.py`
+  - File: `docs/archive/completed/개선사항.md`, `dashboard/components/company_manager.py`
   - Details: `approval_amount_threshold` 같은 잘못된 키를 목록화한다.
   - Acceptance: 수정 대상 키 목록과 치환 규칙이 있다.
   - Size: S
@@ -103,7 +103,7 @@
   - Size: M
 
 - [ ] 문서와 UI smoke 검증을 수행한다.
-  - File: `docs/개선사항.md`, dashboard 관련 테스트 또는 import 검증
+  - File: `docs/archive/completed/개선사항.md`, dashboard 관련 테스트 또는 import 검증
   - Details: 사용자에게 노출되는 설정 키 이름을 실제 코드와 맞춘다.
   - Acceptance: 문서와 UI 캡션에서 제거된 키명이 사라진다.
   - Size: S
@@ -114,4 +114,4 @@
 - [ ] `company.yaml` / `engagement.yaml` 하위호환 확인
 - [ ] settings editor 수동 저장 검증
 - [ ] 관련 pytest 통과
-- [ ] `docs/개선사항.md` 상태 갱신
+- [ ] `docs/archive/completed/개선사항.md` 상태 갱신

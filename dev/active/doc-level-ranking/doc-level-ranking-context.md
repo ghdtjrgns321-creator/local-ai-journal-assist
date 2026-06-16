@@ -65,7 +65,7 @@ PHASE1 case_builder는 한 doc이 여러 topic에 hit하면 topic마다 case를 
 
 ## PHASE1 V1 lock과의 관계
 
-V1 lock(`docs/PHASE1_TOPIC_SCORING_V1_LOCK.md`, 2026-05-08)이 잠근 대상은 **case-level topic_score 산식과 가중치**다. 본 sprint는 V1 lock을 손대지 않는다:
+V1 lock(`docs/spec/PHASE1_TOPIC_SCORING_V1_LOCK.md`, 2026-05-08)이 잠근 대상은 **case-level topic_score 산식과 가중치**다. 본 sprint는 V1 lock을 손대지 않는다:
 
 - case priority_score, composite_sort_score 산식 보존
 - case_builder의 case 생성 정책 보존 (1 doc → multiple case 매핑 그대로)
@@ -88,9 +88,9 @@ V1 lock(`docs/PHASE1_TOPIC_SCORING_V1_LOCK.md`, 2026-05-08)이 잠근 대상은 
 - `dev/active/doc-level-ranking/doc-level-ranking-context.md` (본 문서)
 
 **Modified (단위 정합화)**:
-- `docs/TROUBLESHOOT.md` — TS-12, TS-13 2026-05-19 정정 추가
-- `docs/users/00_INDEX.md` — 단위 결정 문서 항목 추가
-- `docs/users/09_DOC_VS_CASE_DECISION.md` — 신규 (가설 검증 스토리)
+- `docs/spec/TROUBLESHOOT.md` — TS-12, TS-13 2026-05-19 정정 추가
+- `docs/guide/users/00_INDEX.md` — 단위 결정 문서 항목 추가
+- `docs/guide/users/09_DOC_VS_CASE_DECISION.md` — 신규 (가설 검증 스토리)
 
 ## Phase A 측정 결과 (2026-05-19 완료)
 
@@ -152,14 +152,14 @@ phase2_family_top3mean_corrob     5.16%      23.06%      29.84%      31.13%
 - 본 sprint에서는 어떤 src/ 코드도 변경하지 않는다.
 
 ### 문서 정정 (단위 라벨 + 분모 정정)
-- `docs/TROUBLESHOOT.md` TS-12 §6.1, §6.2, §7 — 2026-05-19 정정 추가
-- `docs/TROUBLESHOOT.md` TS-13 §6 (c), §7 — PHASE2 80건 회수 0 측정 결과 추가
-- `docs/users/00_INDEX.md` — 신규 09 문서 항목 추가
-- `docs/users/09_DOC_VS_CASE_DECISION.md` — 신규 (가설 검증 스토리)
+- `docs/spec/TROUBLESHOOT.md` TS-12 §6.1, §6.2, §7 — 2026-05-19 정정 추가
+- `docs/spec/TROUBLESHOOT.md` TS-13 §6 (c), §7 — PHASE2 80건 회수 0 측정 결과 추가
+- `docs/guide/users/00_INDEX.md` — 신규 09 문서 항목 추가
+- `docs/guide/users/09_DOC_VS_CASE_DECISION.md` — 신규 (가설 검증 스토리)
 
 ### 보고 문서 단위 정정 (선택)
-- `docs/DETECTION_RESULTS_MANIPULATION_V7_FIXED3.md` 분모 표기 case 통일 — Phase A.5 후
-- `docs/DETECTION_RESULTS_MANIPULATION_V7_FIXED3_PHASE2.md` 동일 — Phase A.5 후
+- `docs/archive/completed/DETECTION_RESULTS_MANIPULATION_V7_FIXED3.md` 분모 표기 case 통일 — Phase A.5 후
+- `docs/guide/DETECTION_RESULTS_MANIPULATION_V7_FIXED3_PHASE2.md` 동일 — Phase A.5 후
 
 ## Known Issues
 
@@ -175,7 +175,7 @@ phase2_family_top3mean_corrob     5.16%      23.06%      29.84%      31.13%
 ## Next Action
 
 1. **TS-12/TS-13 정정 작업** (본 sprint 즉시)
-2. **docs/users/09_DOC_VS_CASE_DECISION.md 작성** (본 sprint 즉시)
+2. **docs/guide/users/09_DOC_VS_CASE_DECISION.md 작성** (본 sprint 즉시)
 3. **Phase A.5 측정 프롬프트 발행** (다음 행동)
 4. **Phase A.5 결과 보고 ceiling 확정 또는 옵션 나 재검토** (사용자 승인 후)
 

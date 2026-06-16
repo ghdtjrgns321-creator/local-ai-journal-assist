@@ -119,7 +119,7 @@
   - Size: M
 
 - [ ] 문서 상태를 업데이트한다.
-  - File: `docs/개선사항.md`
+  - File: `docs/archive/completed/개선사항.md`
   - Details: 구현 범위와 남은 후속 범위를 실제 기준으로 갱신한다.
   - Acceptance: 계획 문서와 본문 상태가 맞는다.
   - Size: S

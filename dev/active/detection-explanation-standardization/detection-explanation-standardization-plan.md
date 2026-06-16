@@ -75,7 +75,7 @@
 - [ ] builder 단위 테스트 추가 - File: `tests/modules/test_detection/test_explanations.py` - Size: L
 - [ ] findings/explorer smoke 테스트 추가 - File: `tests/modules/test_dashboard/test_tab_findings.py`, `tests/modules/test_dashboard/test_explorer_detail.py` - Size: M
 - [ ] audit evidence narrative 회귀 테스트 추가 - File: `tests/modules/test_export/test_audit_evidence.py` - Size: M
-- [ ] `docs/개선사항.md` 상태 업데이트 - File: `docs/개선사항.md` - Size: S
+- [ ] `docs/archive/completed/개선사항.md` 상태 업데이트 - File: `docs/archive/completed/개선사항.md` - Size: S
 
 ## Risk Assessment
 

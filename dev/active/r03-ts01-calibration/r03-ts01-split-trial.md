@@ -237,7 +237,7 @@ rollback + rollback 양쪽 모두 부정적          -                     PHASE
 
 판정 결과와 무관하게 다음 문서 갱신:
 
-- `docs/users/13_PHASE2_AGGREGATION_AUDIT.md`: 분리 trial 결과 §추가
+- `docs/guide/users/13_PHASE2_AGGREGATION_AUDIT.md`: 분리 trial 결과 §추가
 - `docs/debugging.md`: split trial trouble-shooting 기록
 - `dev/active/r03-ts01-calibration/`: 본 분기 trial 완료 + completed/ 이동 검토
 
@@ -289,7 +289,7 @@ Phase C:
 | `artifacts/*_AFTER_R03_ONLY.{parquet,json}` | Phase A 측정 결과 | Phase A 끝 |
 | `artifacts/*_AFTER_TS01_ONLY.{parquet,json}` | Phase B 측정 결과 | Phase B 끝 |
 | `artifacts/phase2_r03_ts01_split_trial_fixed4_<DATE>.md` | Phase C 종합 비교 보고서 | Phase C |
-| `docs/users/13_PHASE2_AGGREGATION_AUDIT.md` (§ 추가) | 운영 문서 갱신 | Phase C |
+| `docs/guide/users/13_PHASE2_AGGREGATION_AUDIT.md` (§ 추가) | 운영 문서 갱신 | Phase C |
 | `docs/debugging.md` (분리 trial 기록) | 디버깅 기록 | Phase C |
 
 ---
@@ -347,6 +347,6 @@ H1+H2 가 맞다면 R03 단독 적용이 가장 안전한 결론. 단 가설은 
 
 - `feedback_phase1_truth_recall_guard` — PHASE2 동일 적용
 - `feedback_ic_matching_traps` — IC02 calibration 사례
-- `docs/PHASE2_GOVERNANCE_DESIGN.md` 결정 8 — 5-family Noisy-OR lock (본 trial 은 lock 유지)
-- `docs/users/13_PHASE2_AGGREGATION_AUDIT.md` — 합산식 ablation 결론
+- `docs/spec/PHASE2_GOVERNANCE_DESIGN.md` 결정 8 — 5-family Noisy-OR lock (본 trial 은 lock 유지)
+- `docs/guide/users/13_PHASE2_AGGREGATION_AUDIT.md` — 합산식 ablation 결론
 - 직전 trial rollback 사례: `artifacts/phase2_r03_ts01_fix_before_after_fixed4_20260523.md`

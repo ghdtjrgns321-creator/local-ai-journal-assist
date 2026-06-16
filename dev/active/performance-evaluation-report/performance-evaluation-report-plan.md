@@ -77,7 +77,7 @@
 - [ ] Task 4-1 - `src/metrics/report_builder.py` - 성능 평가 Markdown 생성기 추가 - Size: M
 - [ ] Task 4-2 - `dashboard/tab_phase2.py` 또는 신규 `dashboard/components/performance_report.py` - 성능 평가 섹션 추가 - Size: M
 - [ ] Task 4-3 - `tests/modules/test_dashboard/test_tab_phase2.py` - 리포트 섹션 렌더링 검증 추가 - Size: M
-- [ ] Task 4-4 - `docs/metrics.md` - 지표 정의와 해석 기준 문서화 - Size: S
+- [ ] Task 4-4 - `docs/spec/metrics.md` - 지표 정의와 해석 기준 문서화 - Size: S
 
 ### Phase 5: 파이프라인 연결과 생성 경로 정리 (0.5~1일)
 

@@ -27,7 +27,7 @@
 - `src/db/performance_store.py`
 - `tests/modules/test_metrics/test_ground_truth_evaluator.py`
 - `tests/modules/test_metrics/test_operational_evaluator.py`
-- `docs/metrics.md`
+- `docs/spec/metrics.md`
 
 ## Key Decisions
 

@@ -73,7 +73,7 @@
   - Size: M
 
 - [ ] Update detection rules documentation.
-  - File: `docs/DETECTION_RULES.md`
+  - File: `docs/spec/DETECTION_RULES.md`
   - Acceptance: L1-07 section documents component scoring and queue bands.
   - Size: S
 

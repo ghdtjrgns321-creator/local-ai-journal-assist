@@ -44,7 +44,7 @@
 **Goal**: 단순화 기준표를 만들고, dead key/중복 키/책임 혼합 키를 분류한다.
 
 - [ ] `config/settings.py` 필드 인벤토리 작성 - File: `config/settings.py` - Size: M
-- [ ] settings/YAML 책임 매핑표 작성 - File: `docs/개선사항.md`, `dev/active/rules-settings-simplification/rules-settings-simplification-context.md` - Size: S
+- [ ] settings/YAML 책임 매핑표 작성 - File: `docs/archive/completed/개선사항.md`, `dev/active/rules-settings-simplification/rules-settings-simplification-context.md` - Size: S
 - [ ] company/engagement override 실제 사용 키 수집 - File: `src/company/merger.py`, `dashboard/components/company_manager.py`, `tests/test_company/*` - Size: M
 - [ ] 즉시 제거 후보와 하위호환 유지 후보 분리 - File: `config/settings.py`, `src/company/models.py` - Size: S
 
@@ -67,7 +67,7 @@
 ### Phase 4: 문서/마이그레이션/회귀 테스트 정리 (1 day)
 **Goal**: 기존 데이터와 문서를 깨지 않고 새 체계로 수렴시킨다.
 
-- [ ] 문서의 설정 키를 실제 코드 기준으로 정정 - File: `docs/개선사항.md`, 관련 docs - Size: S
+- [ ] 문서의 설정 키를 실제 코드 기준으로 정정 - File: `docs/archive/completed/개선사항.md`, 관련 docs - Size: S
 - [ ] legacy company.yaml / engagement.yaml override 마이그레이션 함수 추가 - File: `src/company/merger.py` or `src/company/repository.py` - Size: M
 - [ ] 설정 로딩/병합/저장 회귀 테스트 추가 - File: `tests/test_settings.py`, `tests/test_company/test_merger.py`, `tests/test_company/test_context.py` - Size: L
 - [ ] 최소 import/smoke 검증과 UI 편집 경로 테스트 - File: `tests/modules/test_dashboard/*` - Size: M

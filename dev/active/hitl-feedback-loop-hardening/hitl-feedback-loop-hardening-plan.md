@@ -162,8 +162,8 @@ HITL 피드백 루프를 아래 3계층으로 표준화한다.
 - [ ] whitelist/rule feedback integration test 추가
   - File: `tests/modules/test_dashboard/*`, `tests/modules/test_llm/*`
   - Size: M
-- [ ] `docs/개선사항.md`와 운영 문서 업데이트
-  - File: `docs/개선사항.md`
+- [ ] `docs/archive/completed/개선사항.md`와 운영 문서 업데이트
+  - File: `docs/archive/completed/개선사항.md`
   - Size: S
 
 ## Risk Assessment

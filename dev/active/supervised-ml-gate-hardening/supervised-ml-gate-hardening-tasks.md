@@ -111,7 +111,7 @@
   - Size: S
 
 - [ ] **5-2** 문서 상태 갱신
-  - File: `docs/개선사항.md`
+  - File: `docs/archive/completed/개선사항.md`
   - Details: 3.4 항목에 구현 결과, gate 정책, 후속 범위(ML03/ML04 확장)를 반영한다.
   - Acceptance: 문서와 코드 기준이 다시 어긋나지 않는다.
   - Size: S

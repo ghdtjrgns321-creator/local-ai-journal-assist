@@ -8,7 +8,8 @@
 - The product goal is to help auditors create review queues from full-population accounting data, not to replace auditor judgment.
 - PHASE1 is not a fraud determination stage and does not try to match a final fraud label. PHASE1 surfaces rule violations, policy violations, anomalies, analytical review signals, and prioritization evidence for auditor review.
 - Treat `is_fraud`, `is_anomaly`, precision, and recall from DataSynth as development validation aids only. Operational language must distinguish confirmed exceptions, review-only candidates, and high-risk review items.
-- Current task status is owned by `docs/TASKS.md`. If `docs/NEW_TASKS.MD` exists, use it for RC / Company-Centric task detail. Do not copy phase progress or long roadmaps into this file.
+- Detection is a 3-surface architecture (C안, SoT: `docs/spec/PHASE1_TIER_EVIDENCE_BASIS.md`): PHASE1-1 rules (journal/row-unit deterministic named violations + ordinal tier), PHASE1-2 family (graph/relational/timeseries structural detectors — the proper home for circular-transaction and employee-vendor patterns, replacing the former intercompany_cycle topic so PHASE1 has 6 topics), and PHASE2 VAE (unsupervised companion surface, not a fraud determination). Invariant: the 3 surfaces are never merged — independent tabs/views/queues, no single combined score. There is no PHASE3 (the former LLM Review Narrator is removed from the active product path).
+- Current task status is owned by active task files under `dev/active/**` and the current user request. Historical RC / Company-Centric task detail is archived at `docs/archive/completed/NEW_TASKS.MD`. Do not copy phase progress or long roadmaps into this file.
 - Keep `CLAUDE.md` for legacy Claude-oriented guidance. This file is the Codex / general agent entry point.
 
 ## Stack
@@ -24,7 +25,7 @@
 
 ## Non-negotiables
 
-- Read the relevant docs before changing code. Start with `docs/TASKS.md`, then the matching `docs/pre-plan/*.md`, `docs/DETECTION_RULES.md`, `docs/DETECTION_REFERENCE.md`, or `docs/DECISION.md` as applicable.
+- Read the relevant docs before changing code. Start with active task context under `dev/active/**`, then the matching archived raw plan under `docs/archive/completed/raw-plan/*.md`, `docs/spec/DETECTION_RULES.md`, `docs/spec/DETECTION_REFERENCE.md`, or `docs/spec/DECISION.md` as applicable.
 - Update relevant docs after behavior, architecture, task status, rules, reports, or DataSynth behavior changes.
 - Do not treat review-only signals as confirmed violations in UI, DB exports, LLM narratives, or reports.
 - Preserve user changes. Never revert files you did not change unless the user explicitly asks.
@@ -99,12 +100,12 @@ uv run streamlit run dashboard/app.py
 
 ## Documentation Rules
 
-- `docs/TASKS.md` is the primary source for phase/task status.
-- `docs/NEW_TASKS.MD` may be referenced by older docs, but if it is absent, do not invent status from memory. Use `docs/TASKS.md` and mention the missing file when relevant.
-- Use `docs/DECISION.md` for architecture decisions and tradeoffs.
-- Use `docs/debugging.md` or `docs/TROUBLESHOOT.md` for meaningful debugging history, failures, and fixes.
-- Use `docs/DETECTION_RULES.md` and related detection result docs for rule semantics and scoring contracts.
-- Use `docs/pre-plan/` as implementation reference, not as always-current task status.
+- Use active task context under `dev/active/**` for in-flight work and `docs/archive/completed/NEW_TASKS.MD` only as historical RC material.
+- If older docs reference `docs/TASKS.md` or `docs/archive/completed/NEW_TASKS.MD`, do not invent status from memory. Mention that `docs/TASKS.md` is absent in the current checkout and use active task context.
+- Use `docs/spec/DECISION.md` for architecture decisions and tradeoffs.
+- Use `docs/debugging.md` or `docs/spec/TROUBLESHOOT.md` for meaningful debugging history, failures, and fixes.
+- Use `docs/spec/DETECTION_RULES.md` and related detection result docs for rule semantics and scoring contracts.
+- Use `docs/archive/completed/raw-plan/` as implementation reference, not as always-current task status.
 - When updating docs, avoid duplicating the same long explanation in multiple places. Prefer one source of truth and links.
 - Keep generated reports and user-facing audit language precise: candidate, exception, review item, finding, and confirmed violation are not interchangeable.
 

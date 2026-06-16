@@ -11,7 +11,7 @@
   - Size: S
 
 - [ ] Update L1-06 scoring docs
-  - File: `docs/DETECTION_PARAMETERS.md`
+  - File: `docs/spec/DETECTION_PARAMETERS.md`
   - Details: Replace binary wording with direct-only graduated scoring; explicitly state L3-12/work-scope signals still do not score L1-06.
   - Acceptance: Document includes the four bands and the L1-06/L3-12 exclusion rule.
   - Size: S

@@ -16,8 +16,8 @@
 
 **Reference Only**:
 - `src/detection/rule_scoring.py` - L1-06 is severity 4, `control_failure`, `strong`; this can remain unchanged unless aggregation math needs explicit metadata.
-- `docs/DETECTION_PARAMETERS.md` - Current L1-06 rule boundary states direct-only and no review band.
-- `docs/TROUBLESHOOT.md` - Historical reason for avoiding broad L1-06 SoD scoring.
+- `docs/spec/DETECTION_PARAMETERS.md` - Current L1-06 rule boundary states direct-only and no review band.
+- `docs/spec/TROUBLESHOOT.md` - Historical reason for avoiding broad L1-06 SoD scoring.
 
 ## Key Decisions
 1. **Keep L1-06 Direct-Only** (2026-04-29)

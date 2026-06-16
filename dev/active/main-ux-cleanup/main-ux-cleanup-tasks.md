@@ -131,7 +131,7 @@
   - Size: S
 
 - [ ] 문서 상태를 갱신한다.
-  - File: `docs/개선사항.md`
+  - File: `docs/archive/completed/개선사항.md`
   - Details: 구현 기준으로 3.7 상태와 핵심 변경 내용을 반영한다.
   - Acceptance: 문서와 실제 UI 구조가 어긋나지 않는다.
   - Size: S

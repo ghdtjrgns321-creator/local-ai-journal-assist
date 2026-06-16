@@ -38,7 +38,7 @@ Recommended floor alignment:
 **Goal**: Define a stable L1-06 scoring policy before touching detector behavior.
 **Tasks**:
 - [ ] Add `l1_06_sod_scoring` policy to `config/audit_rules.yaml` - Size: S
-- [ ] Document band semantics in `docs/DETECTION_PARAMETERS.md` - Size: S
+- [ ] Document band semantics in `docs/spec/DETECTION_PARAMETERS.md` - Size: S
 - [ ] Add unit tests for the scoring helper in `tests/modules/test_detection/test_fraud_rules_access.py` - Size: M
 
 ### Phase 2: Detector Logic
@@ -77,4 +77,4 @@ Recommended floor alignment:
 ## Dependencies
 - Code: `src/detection/fraud_rules_access.py`, `src/detection/score_aggregator.py`, `src/detection/rule_scoring.py`, `src/detection/phase1_case_builder.py`
 - Config: `config/audit_rules.yaml`, `config/phase1_case.yaml`
-- Docs: `docs/DETECTION_PARAMETERS.md`, `docs/DETECTION_RESULTS.md`
+- Docs: `docs/spec/DETECTION_PARAMETERS.md`, historical `docs/archive/completed/DETECTION_RESULTS_D.md`
