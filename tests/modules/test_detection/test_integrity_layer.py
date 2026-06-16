@@ -34,17 +34,19 @@ class TestA01UnbalancedEntry:
 
     def test_tolerance_boundary(self):
         """diff=1.0 → 미플래그, diff=1.01 → 플래그."""
-        df = pd.DataFrame({
-            "document_id": ["D1", "D1", "D2", "D2"],
-            "debit_amount": [100.0, 0.0, 100.0, 0.0],
-            "credit_amount": [0.0, 99.0, 0.0, 98.99],
-            "gl_account": [1000, 2000, 1000, 2000],
-            "company_code": ["C1"] * 4,
-            "fiscal_year": [2025] * 4,
-            "posting_date": pd.to_datetime(["2025-01-01"] * 4),
-            "document_date": pd.to_datetime(["2025-01-01"] * 4),
-            "document_type": ["SA"] * 4,
-        })
+        df = pd.DataFrame(
+            {
+                "document_id": ["D1", "D1", "D2", "D2"],
+                "debit_amount": [100.0, 0.0, 100.0, 0.0],
+                "credit_amount": [0.0, 99.0, 0.0, 98.99],
+                "gl_account": [1000, 2000, 1000, 2000],
+                "company_code": ["C1"] * 4,
+                "fiscal_year": [2025] * 4,
+                "posting_date": pd.to_datetime(["2025-01-01"] * 4),
+                "document_date": pd.to_datetime(["2025-01-01"] * 4),
+                "document_type": ["SA"] * 4,
+            }
+        )
         detector = IntegrityDetector(tolerance=1.0)
         result = detector.detect(df)
 
@@ -55,17 +57,19 @@ class TestA01UnbalancedEntry:
 
     def test_score_reflects_imbalance_ratio(self):
         """L1-01 score increases with imbalance / document total ratio."""
-        df = pd.DataFrame({
-            "document_id": ["D1", "D1", "D2", "D2", "D3", "D3"],
-            "debit_amount": [100_000.0, 0.0, 100_000.0, 0.0, 100_000.0, 0.0],
-            "credit_amount": [0.0, 99_950.0, 0.0, 99_000.0, 0.0, 50_000.0],
-            "gl_account": [1000, 2000, 1000, 2000, 1000, 2000],
-            "company_code": ["C1"] * 6,
-            "fiscal_year": [2025] * 6,
-            "posting_date": pd.to_datetime(["2025-01-01"] * 6),
-            "document_date": pd.to_datetime(["2025-01-01"] * 6),
-            "document_type": ["SA"] * 6,
-        })
+        df = pd.DataFrame(
+            {
+                "document_id": ["D1", "D1", "D2", "D2", "D3", "D3"],
+                "debit_amount": [100_000.0, 0.0, 100_000.0, 0.0, 100_000.0, 0.0],
+                "credit_amount": [0.0, 99_950.0, 0.0, 99_000.0, 0.0, 50_000.0],
+                "gl_account": [1000, 2000, 1000, 2000, 1000, 2000],
+                "company_code": ["C1"] * 6,
+                "fiscal_year": [2025] * 6,
+                "posting_date": pd.to_datetime(["2025-01-01"] * 6),
+                "document_date": pd.to_datetime(["2025-01-01"] * 6),
+                "document_type": ["SA"] * 6,
+            }
+        )
         detector = IntegrityDetector(tolerance=1.0)
         result = detector.detect(df)
 
@@ -79,17 +83,19 @@ class TestA01UnbalancedEntry:
 
     def test_nan_debit_treated_as_zero(self):
         """debit NaN → fillna(0) 처리."""
-        df = pd.DataFrame({
-            "document_id": ["D1", "D1"],
-            "debit_amount": [float("nan"), 0.0],
-            "credit_amount": [0.0, 100.0],
-            "gl_account": [1000, 2000],
-            "company_code": ["C1"] * 2,
-            "fiscal_year": [2025] * 2,
-            "posting_date": pd.to_datetime(["2025-01-01"] * 2),
-            "document_date": pd.to_datetime(["2025-01-01"] * 2),
-            "document_type": ["SA"] * 2,
-        })
+        df = pd.DataFrame(
+            {
+                "document_id": ["D1", "D1"],
+                "debit_amount": [float("nan"), 0.0],
+                "credit_amount": [0.0, 100.0],
+                "gl_account": [1000, 2000],
+                "company_code": ["C1"] * 2,
+                "fiscal_year": [2025] * 2,
+                "posting_date": pd.to_datetime(["2025-01-01"] * 2),
+                "document_date": pd.to_datetime(["2025-01-01"] * 2),
+                "document_type": ["SA"] * 2,
+            }
+        )
         detector = IntegrityDetector()
         result = detector.detect(df)
         # diff = (0-0) + (0-100) = -100 → 플래그
@@ -97,17 +103,19 @@ class TestA01UnbalancedEntry:
 
     def test_nan_document_id_individual_rows(self):
         """NaN document_id → 각 행이 개별 취급 (합산 방지)."""
-        df = pd.DataFrame({
-            "document_id": [None, None, "D1", "D1"],
-            "debit_amount": [100.0, 200.0, 50.0, 0.0],
-            "credit_amount": [0.0, 0.0, 0.0, 50.0],
-            "gl_account": [1000, 2000, 1000, 2000],
-            "company_code": ["C1"] * 4,
-            "fiscal_year": [2025] * 4,
-            "posting_date": pd.to_datetime(["2025-01-01"] * 4),
-            "document_date": pd.to_datetime(["2025-01-01"] * 4),
-            "document_type": ["SA"] * 4,
-        })
+        df = pd.DataFrame(
+            {
+                "document_id": [None, None, "D1", "D1"],
+                "debit_amount": [100.0, 200.0, 50.0, 0.0],
+                "credit_amount": [0.0, 0.0, 0.0, 50.0],
+                "gl_account": [1000, 2000, 1000, 2000],
+                "company_code": ["C1"] * 4,
+                "fiscal_year": [2025] * 4,
+                "posting_date": pd.to_datetime(["2025-01-01"] * 4),
+                "document_date": pd.to_datetime(["2025-01-01"] * 4),
+                "document_type": ["SA"] * 4,
+            }
+        )
         detector = IntegrityDetector()
         result = detector.detect(df)
 
@@ -119,20 +127,21 @@ class TestA01UnbalancedEntry:
 
     def test_no_document_id_skips(self):
         """document_id 컬럼 없는 DF → L1-01 skipped."""
-        df = pd.DataFrame({
-            "debit_amount": [100.0],
-            "credit_amount": [100.0],
-            "gl_account": [1000],
-            "company_code": ["C1"],
-            "fiscal_year": [2025],
-            "posting_date": pd.to_datetime(["2025-01-01"]),
-            "document_date": pd.to_datetime(["2025-01-01"]),
-            "document_type": ["SA"],
-        })
+        df = pd.DataFrame(
+            {
+                "debit_amount": [100.0],
+                "credit_amount": [100.0],
+                "gl_account": [1000],
+                "company_code": ["C1"],
+                "fiscal_year": [2025],
+                "posting_date": pd.to_datetime(["2025-01-01"]),
+                "document_date": pd.to_datetime(["2025-01-01"]),
+                "document_type": ["SA"],
+            }
+        )
         detector = IntegrityDetector()
         result = detector.detect(df)
         assert "L1-01" in result.metadata["skipped_rules"]
-
 
 
 # ── L1-02: 필수필드 누락 ────────────────────────────────────────
@@ -260,6 +269,7 @@ class TestA03InvalidAccount:
     def test_no_coa_skips_with_warning(self, dt_balanced_df):
         """CoA=None + settings 경로 비활성 → L1-03 skipped."""
         from config.settings import AuditSettings
+
         settings = AuditSettings(chart_of_accounts_path="")
         detector = IntegrityDetector(settings=settings, chart_of_accounts=None)
         result = detector.detect(dt_balanced_df)
@@ -272,9 +282,7 @@ class TestA03InvalidAccount:
         a03_scores = result.details.get("L1-03", pd.Series(0.0, index=dt_balanced_df.index))
         assert (a03_scores == 0.0).all()
 
-
-# ── 통합 테스트 ────────────────────────────────────────────────
-
+    # ── 통합 테스트 ────────────────────────────────────────────────
 
     def test_decimal_string_account_matches_coa(self, dt_balanced_df):
         """CSV ingest의 '.0' 포맷 계정도 CoA와 동일 취급."""
@@ -335,18 +343,20 @@ class TestL301MisclassifiedAccount:
         }
 
     def test_o2c_expense_account_flagged(self):
-        df = pd.DataFrame({
-            "document_id": ["D1"],
-            "debit_amount": [100.0],
-            "credit_amount": [100.0],
-            "gl_account": ["5000"],
-            "business_process": ["O2C"],
-            "company_code": ["C1"],
-            "fiscal_year": [2025],
-            "posting_date": pd.to_datetime(["2025-01-01"]),
-            "document_date": pd.to_datetime(["2025-01-01"]),
-            "document_type": ["SA"],
-        })
+        df = pd.DataFrame(
+            {
+                "document_id": ["D1"],
+                "debit_amount": [100.0],
+                "credit_amount": [100.0],
+                "gl_account": ["5000"],
+                "business_process": ["O2C"],
+                "company_code": ["C1"],
+                "fiscal_year": [2025],
+                "posting_date": pd.to_datetime(["2025-01-01"]),
+                "document_date": pd.to_datetime(["2025-01-01"]),
+                "document_type": ["SA"],
+            }
+        )
         detector = IntegrityDetector(
             chart_of_accounts={"5000"},
             audit_rules=self._rules(),
@@ -358,20 +368,52 @@ class TestL301MisclassifiedAccount:
         assert breakdown["exact_denied_rows"] == 1
         assert annotations[0]["reason_code"] == "exact_denied_account"
 
-    def test_p2p_non_denied_revenue_account_not_flagged_when_exact_list_exists(self):
-        df = pd.DataFrame({
-            "document_id": ["D1"],
-            "debit_amount": [100.0],
-            "credit_amount": [100.0],
-            "gl_account": ["4000"],
-            "account_category": ["revenue"],
-            "business_process": ["P2P"],
-            "company_code": ["C1"],
-            "fiscal_year": [2025],
-            "posting_date": pd.to_datetime(["2025-01-01"]),
-            "document_date": pd.to_datetime(["2025-01-01"]),
-            "document_type": ["SA"],
-        })
+    def test_disallowed_category_flags_even_when_exact_list_exists(self):
+        # 정책: exact denied 목록과 disallowed-category는 같은 정책의 두 코드체계 표현.
+        # P2P에 exact 목록([4100])이 있어도, 목록에 없지만 disallowed 카테고리(revenue)인
+        # COA 계정은 category 경로로 flag되어야 한다(exact 목록이 모든 계정코드를 열거하지
+        # 못하는 상황 방어). 과거 ~account_configured 억제 제거의 회귀 가드.
+        df = pd.DataFrame(
+            {
+                "document_id": ["D1"],
+                "debit_amount": [100.0],
+                "credit_amount": [100.0],
+                "gl_account": ["4000"],
+                "account_category": ["revenue"],
+                "business_process": ["P2P"],
+                "company_code": ["C1"],
+                "fiscal_year": [2025],
+                "posting_date": pd.to_datetime(["2025-01-01"]),
+                "document_date": pd.to_datetime(["2025-01-01"]),
+                "document_type": ["SA"],
+            }
+        )
+        detector = IntegrityDetector(
+            chart_of_accounts={"4000", "4100", "5000"},
+            audit_rules=self._rules(),
+        )
+        result = detector.detect(df)
+        assert result.details["L3-01"].iloc[0] == pytest.approx(0.45)
+        annotations = result.metadata["row_annotations"]["L3-01"]
+        assert annotations[0]["reason_code"] == "category_mismatch"
+
+    def test_non_coa_account_excluded_from_l301(self):
+        # COA에 없는 계정은 L1-03(무효계정) 소관이라 L3-01에서 제외.
+        df = pd.DataFrame(
+            {
+                "document_id": ["D1"],
+                "debit_amount": [100.0],
+                "credit_amount": [100.0],
+                "gl_account": ["4000"],
+                "account_category": ["revenue"],
+                "business_process": ["P2P"],
+                "company_code": ["C1"],
+                "fiscal_year": [2025],
+                "posting_date": pd.to_datetime(["2025-01-01"]),
+                "document_date": pd.to_datetime(["2025-01-01"]),
+                "document_type": ["SA"],
+            }
+        )
         detector = IntegrityDetector(
             chart_of_accounts={"5000"},
             audit_rules=self._rules(),
@@ -380,19 +422,21 @@ class TestL301MisclassifiedAccount:
         assert result.details["L3-01"].iloc[0] == 0.0
 
     def test_exact_denied_account_flags_p2p(self):
-        df = pd.DataFrame({
-            "document_id": ["D1"],
-            "debit_amount": [100.0],
-            "credit_amount": [100.0],
-            "gl_account": ["4100"],
-            "account_category": ["revenue"],
-            "business_process": ["P2P"],
-            "company_code": ["C1"],
-            "fiscal_year": [2025],
-            "posting_date": pd.to_datetime(["2025-01-01"]),
-            "document_date": pd.to_datetime(["2025-01-01"]),
-            "document_type": ["SA"],
-        })
+        df = pd.DataFrame(
+            {
+                "document_id": ["D1"],
+                "debit_amount": [100.0],
+                "credit_amount": [100.0],
+                "gl_account": ["4100"],
+                "account_category": ["revenue"],
+                "business_process": ["P2P"],
+                "company_code": ["C1"],
+                "fiscal_year": [2025],
+                "posting_date": pd.to_datetime(["2025-01-01"]),
+                "document_date": pd.to_datetime(["2025-01-01"]),
+                "document_type": ["SA"],
+            }
+        )
         detector = IntegrityDetector(
             chart_of_accounts={"4100"},
             audit_rules=self._rules(),
@@ -405,19 +449,21 @@ class TestL301MisclassifiedAccount:
         assert annotations[0]["reason_code"] == "exact_denied_account"
 
     def test_category_fallback_applies_when_process_has_no_exact_account_list(self):
-        df = pd.DataFrame({
-            "document_id": ["D1"],
-            "debit_amount": [100.0],
-            "credit_amount": [100.0],
-            "gl_account": ["1200"],
-            "account_category": ["inventory"],
-            "business_process": ["TRE"],
-            "company_code": ["C1"],
-            "fiscal_year": [2025],
-            "posting_date": pd.to_datetime(["2025-01-01"]),
-            "document_date": pd.to_datetime(["2025-01-01"]),
-            "document_type": ["SA"],
-        })
+        df = pd.DataFrame(
+            {
+                "document_id": ["D1"],
+                "debit_amount": [100.0],
+                "credit_amount": [100.0],
+                "gl_account": ["1200"],
+                "account_category": ["inventory"],
+                "business_process": ["TRE"],
+                "company_code": ["C1"],
+                "fiscal_year": [2025],
+                "posting_date": pd.to_datetime(["2025-01-01"]),
+                "document_date": pd.to_datetime(["2025-01-01"]),
+                "document_type": ["SA"],
+            }
+        )
         detector = IntegrityDetector(
             chart_of_accounts={"1200"},
             audit_rules=self._rules(),
@@ -430,18 +476,20 @@ class TestL301MisclassifiedAccount:
         assert annotations[0]["reason_code"] == "category_mismatch"
 
     def test_invalid_account_owned_by_l103_not_l301(self):
-        df = pd.DataFrame({
-            "document_id": ["D1"],
-            "debit_amount": [100.0],
-            "credit_amount": [100.0],
-            "gl_account": ["5000"],
-            "business_process": ["O2C"],
-            "company_code": ["C1"],
-            "fiscal_year": [2025],
-            "posting_date": pd.to_datetime(["2025-01-01"]),
-            "document_date": pd.to_datetime(["2025-01-01"]),
-            "document_type": ["SA"],
-        })
+        df = pd.DataFrame(
+            {
+                "document_id": ["D1"],
+                "debit_amount": [100.0],
+                "credit_amount": [100.0],
+                "gl_account": ["5000"],
+                "business_process": ["O2C"],
+                "company_code": ["C1"],
+                "fiscal_year": [2025],
+                "posting_date": pd.to_datetime(["2025-01-01"]),
+                "document_date": pd.to_datetime(["2025-01-01"]),
+                "document_type": ["SA"],
+            }
+        )
         detector = IntegrityDetector(
             chart_of_accounts={"1000"},
             audit_rules=self._rules(),
@@ -453,19 +501,21 @@ class TestL301MisclassifiedAccount:
         assert breakdown["invalid_account_excluded_rows"] == 1
 
     def test_allowed_keyword_suppresses_l301(self):
-        df = pd.DataFrame({
-            "document_id": ["D1"],
-            "debit_amount": [100.0],
-            "credit_amount": [100.0],
-            "gl_account": ["5000"],
-            "business_process": ["O2C"],
-            "header_text": ["판매수수료 미지급비용 설정"],
-            "company_code": ["C1"],
-            "fiscal_year": [2025],
-            "posting_date": pd.to_datetime(["2025-01-01"]),
-            "document_date": pd.to_datetime(["2025-01-01"]),
-            "document_type": ["SA"],
-        })
+        df = pd.DataFrame(
+            {
+                "document_id": ["D1"],
+                "debit_amount": [100.0],
+                "credit_amount": [100.0],
+                "gl_account": ["5000"],
+                "business_process": ["O2C"],
+                "header_text": ["판매수수료 미지급비용 설정"],
+                "company_code": ["C1"],
+                "fiscal_year": [2025],
+                "posting_date": pd.to_datetime(["2025-01-01"]),
+                "document_date": pd.to_datetime(["2025-01-01"]),
+                "document_type": ["SA"],
+            }
+        )
         detector = IntegrityDetector(
             chart_of_accounts={"5000"},
             audit_rules=self._rules(),
@@ -476,26 +526,26 @@ class TestL301MisclassifiedAccount:
         assert breakdown["keyword_suppressed_rows"] == 1
 
     def test_strict_allowed_category_mismatch_gets_review_score(self):
-        df = pd.DataFrame({
-            "document_id": ["D1"],
-            "debit_amount": [100.0],
-            "credit_amount": [100.0],
-            "gl_account": ["4100"],
-            "account_category": ["revenue"],
-            "business_process": ["P2P"],
-            "company_code": ["C1"],
-            "fiscal_year": [2025],
-            "posting_date": pd.to_datetime(["2025-01-01"]),
-            "document_date": pd.to_datetime(["2025-01-01"]),
-            "document_type": ["SA"],
-        })
+        df = pd.DataFrame(
+            {
+                "document_id": ["D1"],
+                "debit_amount": [100.0],
+                "credit_amount": [100.0],
+                "gl_account": ["4100"],
+                "account_category": ["revenue"],
+                "business_process": ["P2P"],
+                "company_code": ["C1"],
+                "fiscal_year": [2025],
+                "posting_date": pd.to_datetime(["2025-01-01"]),
+                "document_date": pd.to_datetime(["2025-01-01"]),
+                "document_type": ["SA"],
+            }
+        )
         rules = self._rules()
         rules["l3_01_misclassified_account"]["strict_allowed_categories"] = True
         rules["l3_01_misclassified_account"]["process_denied_accounts"] = {}
         rules["l3_01_misclassified_account"]["process_disallowed_categories"] = {}
-        rules["l3_01_misclassified_account"]["process_allowed_categories"] = {
-            "P2P": ["expense"]
-        }
+        rules["l3_01_misclassified_account"]["process_allowed_categories"] = {"P2P": ["expense"]}
         detector = IntegrityDetector(
             chart_of_accounts={"4100"},
             audit_rules=rules,
@@ -532,6 +582,7 @@ class TestDetectIntegration:
     def test_skipped_rules_in_metadata(self, dt_balanced_df):
         """CoA=None + settings 경로 비활성 → L1-03 skipped, metadata에 기록."""
         from config.settings import AuditSettings
+
         settings = AuditSettings(chart_of_accounts_path="")
         detector = IntegrityDetector(settings=settings)
         result = detector.detect(dt_balanced_df)

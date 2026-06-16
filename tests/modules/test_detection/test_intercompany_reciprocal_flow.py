@@ -91,6 +91,40 @@ def _wrap_df(rows: list[dict]) -> pd.DataFrame:
     return df
 
 
+def _cross_company_rows(
+    *,
+    reference: str = "IC-REF-001",
+    rec_amount: float = 100_000_000,
+    pay_amount: float = 100_000_000,
+    rec_partner: str = "C002",
+    pay_partner: str = "C001",
+    rec_date: str = "2024-06-15 10:00:00",
+    pay_date: str = "2024-06-15 10:00:00",
+) -> list[dict]:
+    return [
+        {
+            "document_id": "D-rec",
+            "gl_account": "1150",
+            "debit_amount": rec_amount,
+            "credit_amount": 0.0,
+            "company_code": "C001",
+            "trading_partner": rec_partner,
+            "posting_date": rec_date,
+            "reference": reference,
+        },
+        {
+            "document_id": "D-pay",
+            "gl_account": "2050",
+            "debit_amount": 0.0,
+            "credit_amount": pay_amount,
+            "company_code": "C002",
+            "trading_partner": pay_partner,
+            "posting_date": pay_date,
+            "reference": reference,
+        },
+    ]
+
+
 # ── helper 단위 테스트 ────────────────────────────────────────────
 
 
@@ -197,6 +231,42 @@ class TestComputeReciprocalFlowScores:
             audit_rules=AUDIT_RULES,
         )
         assert (scores["ic_reciprocal_flow_prob"] == 0).all(), "정상 split-doc IC 가 score 받음"
+
+    def test_cross_company_reference_reciprocal_pair_scores(self):
+        """#5-1: 회사 간 별도 전표라도 reference+상대회사+계정쌍+금액/일자가 맞으면 reciprocal."""
+        df = _wrap_df(_cross_company_rows())
+        scores, summary = compute_reciprocal_flow_scores(
+            df,
+            pair_map={"1150": "2050", "2050": "1150"},
+            settings=_settings(),
+            audit_rules=AUDIT_RULES,
+        )
+
+        assert scores["ic_reciprocal_flow_prob"].gt(0).all()
+        assert summary["cross_company_candidate_pairs"] == 1
+        assert summary["cross_company_reciprocal_pairs"] == 1
+
+    def test_cross_company_reference_reciprocal_requires_partner_and_amount_match(self):
+        """#5-2: 금액 또는 상대회사 조건이 깨지면 cross-company reciprocal 로 보지 않는다."""
+        amount_bad = _wrap_df(_cross_company_rows(pay_amount=80_000_000))
+        amount_scores, amount_summary = compute_reciprocal_flow_scores(
+            amount_bad,
+            pair_map={"1150": "2050", "2050": "1150"},
+            settings=_settings(ic_reciprocal_amount_similarity_min=0.95),
+            audit_rules=AUDIT_RULES,
+        )
+        assert (amount_scores["ic_reciprocal_flow_prob"] == 0).all()
+        assert amount_summary["cross_company_reciprocal_pairs"] == 0
+
+        partner_bad = _wrap_df(_cross_company_rows(pay_partner="C003"))
+        partner_scores, partner_summary = compute_reciprocal_flow_scores(
+            partner_bad,
+            pair_map={"1150": "2050", "2050": "1150"},
+            settings=_settings(),
+            audit_rules=AUDIT_RULES,
+        )
+        assert (partner_scores["ic_reciprocal_flow_prob"] == 0).all()
+        assert partner_summary["cross_company_reciprocal_pairs"] == 0
 
     def test_amount_mismatch_in_same_doc_not_reciprocal_high(self):
         """#6: 같은 doc 안 receivable+payable 이지만 amount 비대칭 → reciprocal score 낮음.

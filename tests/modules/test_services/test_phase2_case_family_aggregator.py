@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 
 from src.detection.base import DetectionResult
+from src.models.phase2_case import Phase2CaseSet, UnsupervisedCase, make_row_ref
 from src.services.phase2_case_family_aggregator import (
     build_phase2_case_family_overlay_inputs,
 )
@@ -136,12 +137,112 @@ def test_unsupervised_explanation_unknown_feature_falls_back_to_pattern_outlier(
     assert features[0]["label_ko"] == "피처 패턴 이상"
 
 
+def test_unsupervised_document_case_context_overrides_row_surface_for_overlay():
+    """P3: document-case context is the overlay source, not row-native ML02 details.
+
+    The document case keeps family_score as raw max and exposes corroboration/context
+    as display-only metadata.
+    """
+    df = pd.DataFrame({"document_id": ["D1", "D1", "D2"]})
+    phase1 = _phase1_result()
+    row0 = make_row_ref(
+        row_position=0,
+        index_label=0,
+        document_id="D1",
+        raw_line_number="1",
+        company_code="C01",
+    )
+    row1 = make_row_ref(
+        row_position=1,
+        index_label=1,
+        document_id="D1",
+        raw_line_number="2",
+        company_code="C01",
+    )
+    document_case = UnsupervisedCase(
+        phase2_case_id="p2_unsupervised_document_d1",
+        batch_id="bid-1",
+        family="unsupervised",
+        unit_type="document",
+        row_refs=(row0, row1),
+        evidence_tier="ml_quantile",
+        case_generation_reason={"gate": "unsupervised_ecdf"},
+        family_score=0.97,
+        family_ecdf=0.99,
+        anomaly_score=0.97,
+        top_features=(
+            {
+                "feature_id": "num__posting_date_weekend",
+                "contrib": 0.55,
+                "tag": "unusual_timing",
+                "label_ko": "비정상 거래시점",
+                "evidence_type": "statistical_outlier",
+            },
+        ),
+        max_score_top_features=(
+            {
+                "feature_id": "num__amount_z",
+                "contrib": 0.44,
+                "tag": "amount_tail",
+                "label_ko": "금액 tail",
+                "evidence_type": "statistical_outlier",
+            },
+        ),
+        document_id="D1",
+        evidence_row_count=2,
+        top_score_mean=0.91,
+        score_spread=0.12,
+        max_score_row_ref=row1,
+        amount_tail_context=0.8,
+        period_end_context=0.7,
+        account_rarity_context=0.25,
+        process_rarity_context=0.5,
+        repeated_normal_pressure=0.0,
+    )
+    case_set = Phase2CaseSet(unsupervised_cases=(document_case,))
+    unsupervised = _result(
+        "ml_unsupervised",
+        [0.2, 0.3, 0.0],
+        {
+            "ML02": [0.2, 0.3, 0.0],
+            "ML02_top_feature_1": ["row_native_should_not_win", "row_native_2", ""],
+        },
+    )
+
+    inputs = build_phase2_case_family_overlay_inputs(
+        df,
+        [unsupervised],
+        phase1,
+        case_set=case_set,
+    )
+
+    case_id = "case_control_failure_00001"
+    assert inputs.family_scores_by_case[case_id]["unsupervised"] == pytest.approx(0.97)
+    assert inputs.family_ecdf_by_case[case_id]["unsupervised"] == pytest.approx(0.99)
+    features = inputs.family_explanation_features_by_case[case_id]["unsupervised"]
+    assert features[0]["feature_id"] == "num__posting_date_weekend"
+    assert features[0]["feature"] == "num__posting_date_weekend"
+    context = inputs.family_document_context_by_case[case_id]["unsupervised"]
+    assert context["unit_type"] == "document"
+    assert context["evidence_row_count"] == 2
+    assert context["top_score_mean"] == pytest.approx(0.91)
+    assert context["score_spread"] == pytest.approx(0.12)
+    assert context["amount_tail_context"] == pytest.approx(0.8)
+    assert context["period_end_context"] == pytest.approx(0.7)
+    assert context["account_rarity_context"] == pytest.approx(0.25)
+    assert context["process_rarity_context"] == pytest.approx(0.5)
+    assert context["repeated_normal_pressure"] == pytest.approx(0.0)
+    assert "document_id" not in context
+    assert "max_score_row_ref" not in context
+    assert context["reason_tags"] == ["unusual_timing"]
+
+
 def test_intercompany_internal_prob_columns_emit_subdetectors():
     """PHASE2 internal probability column 4개 (`ic_reciprocal_flow_prob` /
     `ic_amount_prob` / `ic_unmatched_prob` / `ic_timing_prob`) 는
     phase2_subdetector_tiers.yaml 에 등록됐으므로 sub_detectors entry 로 노출되어
     lane sort ic_role_priority 차원에서 evidence_role 분리가 가능해야 한다
-    (2026-05-25 옵션 2 적용, docs/PHASE2_INTERFACE_DESIGN.md §IC role priority).
+    (2026-05-25 옵션 2 적용, docs/spec/PHASE2_INTERFACE_DESIGN.md §IC role priority).
     """
     df = pd.DataFrame({"document_id": ["D1", "D1", "D2"]})
     phase1 = _phase1_result()

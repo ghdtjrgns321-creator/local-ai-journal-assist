@@ -255,3 +255,39 @@ class TestL4_06:
 
         assert not result.any()
         assert result.attrs["breakdown"]["simultaneous_creation_docs"] == 0
+
+
+class TestL4_06LoneBatchIdentity:
+    def test_lone_automated_without_identity_flagged(self) -> None:
+        """자동 source인데 batch/job id 없음 + 같은 날 동류 임계 이하 → lone_batch_identity 플래그."""
+        df = pd.DataFrame({
+            "source": ["automated"] * 3 + ["manual"] * 2,
+            "document_id": [f"D{i}" for i in range(5)],
+            "is_period_end": [False] * 5,
+            "debit_amount": [100.0] * 5,
+            "credit_amount": [0.0] * 5,
+            "posting_date": ["2025-06-01"] * 5,
+            "batch_id": [None] * 5,
+            "job_id": [None] * 5,
+        })
+        result = c13_batch_anomaly(df, period_end_ratio=0.99, simultaneous_threshold=50)
+        assert result[:3].all()
+        assert not result[3:].any()
+        assert result.attrs["row_annotations"][0]["reason_codes"] == ["lone_batch_identity"]
+        assert result.attrs["score_series"].loc[0] == 0.45
+        assert result.attrs["breakdown"]["lone_batch_identity_rows"] == 3
+
+    def test_batch_identity_present_not_flagged(self) -> None:
+        """batch_id가 있으면 단독이어도 위장 의심 아님."""
+        df = pd.DataFrame({
+            "source": ["automated"] * 3,
+            "document_id": [f"D{i}" for i in range(3)],
+            "is_period_end": [False] * 3,
+            "debit_amount": [100.0] * 3,
+            "credit_amount": [0.0] * 3,
+            "posting_date": ["2025-06-01"] * 3,
+            "batch_id": ["B1"] * 3,
+            "job_id": ["J1"] * 3,
+        })
+        result = c13_batch_anomaly(df, period_end_ratio=0.99, simultaneous_threshold=50)
+        assert not result.any()

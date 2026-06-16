@@ -566,6 +566,6 @@ document_rule_detail             431         3
 
 | 문서 | 내용 |
 |:-----|:-----|
-| [docs/pre-plan/06-db.md](../../../docs/pre-plan/06-db.md) | DB 레이어 설계 |
+| [docs/archive/completed/raw-plan/06-db.md](../../../../docs/archive/completed/raw-plan/06-db.md) | DB 레이어 설계 |
 | [db-all-results.md](db-all-results.md) | DB unit test 결과 (34 passed) |
 | [e2e-detection-datasynth.md](../../test_detection/test-results/e2e-detection-datasynth.md) | Detection E2E 결과 |

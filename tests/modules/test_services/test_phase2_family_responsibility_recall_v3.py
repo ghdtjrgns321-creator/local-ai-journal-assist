@@ -24,10 +24,10 @@ TRUTH_CSV = ROOT.joinpath(
     "manipulated_entry_truth.csv",
 )
 DOCS = [
-    ROOT / "docs" / "debugging" / "PHASE2_FAMILY_RESPONSIBILITY_RECALL_20260530.md",
-    ROOT / "docs" / "users" / "16_PHASE2_RESPONSIBILITY_MAP_DECISION.md",
-    ROOT / "docs" / "TROUBLESHOOT.md",
-    ROOT / "docs" / "DETECTION_RESULTS_MANIPULATION_V7_FIXED4_PHASE2.md",
+    ROOT / "docs" / "spec" / "debugging" / "PHASE2_FAMILY_RESPONSIBILITY_RECALL_20260530.md",
+    ROOT / "docs" / "guide" / "users" / "16_PHASE2_RESPONSIBILITY_MAP_DECISION.md",
+    ROOT / "docs" / "spec" / "TROUBLESHOOT.md",
+    ROOT / "docs" / "guide" / "DETECTION_RESULTS_MANIPULATION_V7_FIXED4_PHASE2.md",
 ]
 
 

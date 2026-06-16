@@ -131,7 +131,7 @@ def _make_unsupervised_case(
     model_id: str = "model-A",
     schema_hash: str = "schema-A",
 ) -> UnsupervisedCase:
-    """UnsupervisedCase fixture — row 단위 anomaly case."""
+    """UnsupervisedCase fixture — document 단위 anomaly review case."""
     ref = _make_row_ref(
         row_position=row_pos,
         index_label=row_pos,
@@ -144,7 +144,7 @@ def _make_unsupervised_case(
     case_id = make_phase2_case_id(
         batch_id=batch_id,
         family="unsupervised",
-        unit_type="row",
+        unit_type="document",
         canonical_refs=canonical_refs,
         evidence_signature=f"model={model_id}|schema={schema_hash}",
     )
@@ -152,7 +152,7 @@ def _make_unsupervised_case(
         phase2_case_id=case_id,
         batch_id=batch_id,
         family="unsupervised",
-        unit_type="row",
+        unit_type="document",
         row_refs=(ref,),
         evidence_tier="ml_quantile",
         case_generation_reason={"gate": "unsupervised_ecdf", "threshold": 0.95},
@@ -160,7 +160,13 @@ def _make_unsupervised_case(
         family_ecdf=0.97,
         phase1_case_refs=(),
         anomaly_score=0.88,
+        document_id="DOC020",
+        evidence_row_count=1,
+        max_score_row_ref=ref,
         top_features=({"feature_id": "f1", "contrib": 0.5, "tag": "tag_a", "label_ko": "라벨A"},),
+        max_score_top_features=(
+            {"feature_id": "f1", "contrib": 0.5, "tag": "tag_a", "label_ko": "라벨A"},
+        ),
         model_id=model_id,
         schema_hash=schema_hash,
     )

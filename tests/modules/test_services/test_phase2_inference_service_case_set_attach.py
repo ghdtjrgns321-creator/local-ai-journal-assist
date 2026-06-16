@@ -20,6 +20,7 @@ from typing import Any
 
 import pandas as pd
 
+from src.detection.base import DetectionResult
 from src.models.phase2_case import (
     DuplicateCase,
     IntercompanyCase,
@@ -30,7 +31,11 @@ from src.models.phase2_case import (
     make_row_ref,
 )
 from src.services.phase2_case_phase1_linker import LinkerResult
-from src.services.phase2_inference_service import _attach_phase2_case_set
+from src.services.phase2_inference_service import (
+    _attach_phase2_case_overlays,
+    _attach_phase2_case_set,
+)
+from tests.modules.test_services.test_phase2_case_contract import _phase1_result
 
 # ---------------------------------------------------------------------------
 # 공용 fixture / helper
@@ -201,10 +206,10 @@ def _make_unsupervised_case_set() -> Phase2CaseSet:
         company_code="C01",
     )
     lower_score_first = UnsupervisedCase(
-        phase2_case_id="p2_unsupervised_row_first001",
+        phase2_case_id="p2_unsupervised_document_first001",
         batch_id="bid-1",
         family="unsupervised",
-        unit_type="row",
+        unit_type="document",
         row_refs=(first_ref,),
         evidence_tier="strong",
         case_generation_reason={"gate": "q95_ecdf"},
@@ -216,10 +221,10 @@ def _make_unsupervised_case_set() -> Phase2CaseSet:
         schema_hash="schema-fixture",
     )
     higher_score_second = UnsupervisedCase(
-        phase2_case_id="p2_unsupervised_row_second002",
+        phase2_case_id="p2_unsupervised_document_second002",
         batch_id="bid-1",
         family="unsupervised",
-        unit_type="row",
+        unit_type="document",
         row_refs=(second_ref,),
         evidence_tier="strong",
         case_generation_reason={"gate": "q95_ecdf"},
@@ -772,10 +777,10 @@ def test_attach_records_timeseries_default_stabilized_policy(
     }
 
 
-def test_attach_records_unsupervised_default_document_review_priority_policy(
+def test_attach_records_unsupervised_document_case_default_policy(
     monkeypatch,
 ) -> None:
-    """Unsupervised metadata records default soft-guard display ordering."""
+    """Unsupervised metadata records document-case default display ordering."""
     sentinel_case_set = _make_unsupervised_case_set()
     native_order_before = tuple(
         case.phase2_case_id for case in sentinel_case_set.unsupervised_cases
@@ -801,12 +806,17 @@ def test_attach_records_unsupervised_default_document_review_priority_policy(
     assert summary["fraud_primary_recall_family"] is False
     assert summary["primary_recall_metric_role"] == "diagnostic_only_not_product_judgement"
     assert summary["native_row_ordering_changed"] is True
-    assert summary["production_default_ranking_changed"] is True
+    assert summary["production_default_ranking_changed"] is False
     assert summary["production_adoption"] is True
     assert summary["adoption_candidate"] is False
-    assert summary["recommended_surface"] == "hybrid_with_soft_repeated_normal_guard"
-    assert summary["default_display_ordering"] == "hybrid_with_soft_repeated_normal_guard"
-    assert summary["case_generation_changed"] is False
+    assert summary["recommended_surface"] == "document_case_max_score_order"
+    assert summary["default_display_ordering"] == "document_case_max_score_order"
+    # P3 lock update: unsupervised native generation now emits document review
+    # cases instead of row cases. Ranking/fusion/threshold guardrails remain locked.
+    assert summary["case_generation_changed"] is True
+    assert summary["case_generation_change"] == "row_case_to_document_case"
+    assert summary["ordering_context_policy"]["detector_score_weight_changed"] is False
+    assert summary["ordering_context_policy"]["overlay_context_used_for_primary_queue"] is False
     assert summary["evidence_quality_ready"] is True
     assert summary["evidence_quality_improved"] is True
     assert summary["top_features_connected"] is True
@@ -823,9 +833,9 @@ def test_attach_records_unsupervised_default_document_review_priority_policy(
     assert companion["v31_owner_surface_artifact_path"] == (
         "artifacts/unsupervised_v31_owner_surface_fixed5_20260531.json"
     )
-    assert companion["adoption_state"] == "adopted_default_display_ordering"
-    assert companion["descriptor_only"] is False
-    assert companion["replaces_native_case_ordering"] is True
+    assert companion["adoption_state"] == "historical_diagnostic_not_current_default"
+    assert companion["descriptor_only"] is True
+    assert companion["replaces_native_case_ordering"] is False
     assert companion["top_features_used_for_ranking"] is False
     assert companion["aggregate_counts"]["native_top500_truth_docs_fixed5"] == 39
     assert companion["aggregate_counts"]["recommended_surface_top500_truth_docs_fixed5"] == 151
@@ -902,9 +912,9 @@ def test_attach_records_unsupervised_default_document_review_priority_policy(
     assert readiness["default_native_ordering_unchanged"] is False
     assert (
         readiness["soft_guard_role"]
-        == "broad_statistical_companion_default_document_review_priority"
+        == "historical_document_review_priority_diagnostic"
     )
-    assert readiness["product_default_adoption"] is True
+    assert readiness["product_default_adoption"] is False
     assert readiness["primary_top500_lift_vs_native"] == 87
     assert readiness["primary_lift_metric_role"] == "debug_only_historical_v31"
     assert readiness["companion_top500_lift_vs_native"] == -1
@@ -1181,3 +1191,81 @@ def test_attach_records_warning_when_store_raises_exception(monkeypatch) -> None
     assert any("disk full simulated" in w for w in warnings)
     # exception 후에도 case_set 은 부착되어 있어야 함 (in-memory 보존).
     assert result.phase2_case_set is not None
+
+
+def test_attach_phase2_case_overlays_uses_document_case_set_context() -> None:
+    """P3 wiring: inference overlay consumes attached document-case context."""
+    df = pd.DataFrame({"document_id": ["D1", "D1", "D2"]})
+    row0 = make_row_ref(
+        row_position=0,
+        index_label=0,
+        document_id="D1",
+        raw_line_number="1",
+        company_code="C01",
+    )
+    row1 = make_row_ref(
+        row_position=1,
+        index_label=1,
+        document_id="D1",
+        raw_line_number="2",
+        company_code="C01",
+    )
+    document_case = UnsupervisedCase(
+        phase2_case_id="p2_unsupervised_document_d1",
+        batch_id="bid-1",
+        family="unsupervised",
+        unit_type="document",
+        row_refs=(row0, row1),
+        evidence_tier="ml_quantile",
+        case_generation_reason={"gate": "unsupervised_ecdf"},
+        family_score=0.97,
+        family_ecdf=0.99,
+        anomaly_score=0.97,
+        top_features=(
+            {
+                "feature_id": "num__posting_date_weekend",
+                "contrib": 0.55,
+                "tag": "unusual_timing",
+                "label_ko": "비정상 거래시점",
+            },
+        ),
+        document_id="D1",
+        evidence_row_count=2,
+        top_score_mean=0.91,
+        score_spread=0.12,
+        max_score_row_ref=row1,
+        amount_tail_context=0.8,
+        period_end_context=0.7,
+        account_rarity_context=0.25,
+        process_rarity_context=0.5,
+        repeated_normal_pressure=0.0,
+    )
+    result = SimpleNamespace(
+        data=df,
+        results=[
+            DetectionResult(
+                track_name="ml_unsupervised",
+                flagged_indices=[0, 1],
+                scores=pd.Series([0.2, 0.3, 0.0], index=df.index),
+                rule_flags=[],
+                details=pd.DataFrame({"ML02": [0.2, 0.3, 0.0]}, index=df.index),
+                metadata={},
+            )
+        ],
+        phase1_case_result=_phase1_result(),
+        phase2_case_set=Phase2CaseSet(unsupervised_cases=(document_case,)),
+        detector_statuses=[],
+    )
+
+    _attach_phase2_case_overlays(result)
+
+    overlay = result.phase2_case_overlays[0]
+    contribution = next(
+        item for item in overlay["family_contributions"] if item["family"] == "unsupervised"
+    )
+    assert overlay["phase2_family_scores"]["unsupervised"] == 0.97
+    assert contribution["unit_type"] == "document"
+    assert contribution["evidence_row_count"] == 2
+    assert contribution["top_score_mean"] == 0.91
+    assert "document_id" not in contribution["document_context"]
+    assert "max_score_row_ref" not in contribution["document_context"]

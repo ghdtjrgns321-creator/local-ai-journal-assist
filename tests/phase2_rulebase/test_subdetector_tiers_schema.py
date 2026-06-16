@@ -130,7 +130,7 @@ class TestTimeseriesRoleLock:
     """결정 9 (2026-05-25): timeseries family 는 context lane 으로 역할 고정.
 
     TS01/TS02 단독 ranker 추격(특히 TOP100/500 recall 튜닝)을 yaml 단에서 차단.
-    docs/PHASE2_TIMESERIES_ROLE_LOCK.md 변경 절차 통과 없이 수정 금지.
+    docs/spec/PHASE2_TIMESERIES_ROLE_LOCK.md 변경 절차 통과 없이 수정 금지.
     """
 
     def test_ts01_role_lock_is_context_lane(self, tier_index):

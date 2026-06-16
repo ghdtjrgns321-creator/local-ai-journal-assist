@@ -81,7 +81,8 @@ class TestAnonymousSkipsLayerD:
         track_names = {r.track_name for r in result.results}
         assert "layer_d" not in track_names
         assert {"layer_a", "layer_b", "layer_c", "benford"}.issubset(track_names)
-        assert "evidence" not in track_names
+        # Why: L3-11 기본 실행(DETECTION_RULES.md §306) — evidence 트랙은 default scope에 항상 포함
+        assert "evidence" in track_names
 
 
 class TestNamedWithPrior:
@@ -109,9 +110,14 @@ class TestNamedWithPrior:
         track_names = {r.track_name for r in result.results}
         assert "layer_d" in track_names
         assert {
-            "layer_a", "layer_b", "layer_c", "benford", "layer_d",
+            "layer_a",
+            "layer_b",
+            "layer_c",
+            "benford",
+            "layer_d",
         }.issubset(track_names)
-        assert "evidence" not in track_names
+        # Why: L3-11 기본 실행(DETECTION_RULES.md §306) — evidence 트랙은 default scope에 항상 포함
+        assert "evidence" in track_names
 
     @patch("src.detection.prior_data_loader.load_prior_summary")
     @patch("src.detection.prior_data_loader.find_prior_engagement")
@@ -142,14 +148,15 @@ class TestNamedWithPrior:
 class TestNopriorFallback:
     @patch("src.detection.prior_data_loader.find_prior_engagement", return_value=None)
     def test_no_prior_four_layers(self, _mock, named_ctx, mock_repo, small_gl_df):
-        result = AuditPipeline(
-            context=named_ctx, skip_db=True, repo=mock_repo
-        ).run_from_dataframe(small_gl_df)
+        result = AuditPipeline(context=named_ctx, skip_db=True, repo=mock_repo).run_from_dataframe(
+            small_gl_df
+        )
 
         track_names = {r.track_name for r in result.results}
         assert "layer_d" not in track_names
         assert {"layer_a", "layer_b", "layer_c", "benford"}.issubset(track_names)
-        assert "evidence" not in track_names
+        # Why: L3-11 기본 실행(DETECTION_RULES.md §306) — evidence 트랙은 default scope에 항상 포함
+        assert "evidence" in track_names
 
 
 class TestWeightAutoSelection:
@@ -189,14 +196,13 @@ class TestWeightAutoSelection:
 
 class TestBackwardCompatNoRepo:
     def test_no_repo_skips_layer_d(self, named_ctx, small_gl_df):
-        result = AuditPipeline(context=named_ctx, skip_db=True).run_from_dataframe(
-            small_gl_df
-        )
+        result = AuditPipeline(context=named_ctx, skip_db=True).run_from_dataframe(small_gl_df)
 
         track_names = {r.track_name for r in result.results}
         assert "layer_d" not in track_names
         assert {"layer_a", "layer_b", "layer_c", "benford"}.issubset(track_names)
-        assert "evidence" not in track_names
+        # Why: L3-11 기본 실행(DETECTION_RULES.md §306) — evidence 트랙은 default scope에 항상 포함
+        assert "evidence" in track_names
 
 
 class TestLayerDIsolation:
@@ -212,7 +218,8 @@ class TestLayerDIsolation:
         track_names = {r.track_name for r in result.results}
         assert "layer_d" not in track_names
         assert {"layer_a", "layer_b", "layer_c", "benford"}.issubset(track_names)
-        assert "evidence" not in track_names
+        # Why: L3-11 기본 실행(DETECTION_RULES.md §306) — evidence 트랙은 default scope에 항상 포함
+        assert "evidence" in track_names
 
 
 class TestRedetectWithVariance:
@@ -233,15 +240,18 @@ class TestRedetectWithVariance:
         mock_load.return_value = sample_prior_summary
         mock_repo.db_path.return_value = Path("/fake/prior.duckdb")
 
-        pipeline = AuditPipeline(
-            context=named_ctx, skip_db=True, repo=mock_repo, conn=mock_conn
-        )
+        pipeline = AuditPipeline(context=named_ctx, skip_db=True, repo=mock_repo, conn=mock_conn)
         first = pipeline.run_from_dataframe(small_gl_df)
         result = pipeline.redetect(first.featured_data)
 
         track_names = {r.track_name for r in result.results}
         assert "layer_d" in track_names
         assert {
-            "layer_a", "layer_b", "layer_c", "benford", "layer_d",
+            "layer_a",
+            "layer_b",
+            "layer_c",
+            "benford",
+            "layer_d",
         }.issubset(track_names)
-        assert "evidence" not in track_names
+        # Why: L3-11 기본 실행(DETECTION_RULES.md §306) — evidence 트랙은 default scope에 항상 포함
+        assert "evidence" in track_names

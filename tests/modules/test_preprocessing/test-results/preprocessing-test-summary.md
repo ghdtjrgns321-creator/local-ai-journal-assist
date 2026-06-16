@@ -179,7 +179,7 @@ predict_proba: sigmoid((error - threshold) / scale) → [P(정상), P(이상)]
 | 4  | `label_strategy.py`   | `_hybrid():128` | 양성 0건 + scores 있을 때 pseudo 폴백 누락       | 로직   | `positive_rate == 0 and scores` 분기 추가              |
 | 5  | `cv_selector.py`      | `compare_pipelines` | VAE Pipeline이 n_jobs>1에서 VRAM 경합         | 견고성 | `_has_vae()` 감지 → n_jobs=1 강제                      |
 
-> 해결 위치: [05-detection §선행이슈](../../docs/pre-plan/05-detection.md#선행-모듈에서-넘어온-미해결-이슈-교차-참조)
+> 해결 위치: [05-detection §선행이슈](../../../../docs/archive/completed/raw-plan/05-detection.md#선행-모듈에서-넘어온-미해결-이슈-교차-참조)
 
 ---
 

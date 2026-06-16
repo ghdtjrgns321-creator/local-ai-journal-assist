@@ -4,7 +4,7 @@ Phase D Phase2CaseOverlay 확장 + Phase E lane UI 도입 후에도 기존 queue
 2-way RRF 결과(`compute_rrf_score({"phase1_composite": ..., "phase2_unsupervised": ...})`)
 가 그대로 보존되어야 한다.
 
-docs/PHASE2_GOVERNANCE_DESIGN.md 결정 8 — primary queue 변경 0.
+docs/spec/PHASE2_GOVERNANCE_DESIGN.md 결정 8 — primary queue 변경 0.
 """
 
 from __future__ import annotations

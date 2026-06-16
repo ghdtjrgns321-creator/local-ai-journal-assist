@@ -29,15 +29,24 @@ class TestRunFromDataframe:
         result = AuditPipeline(skip_db=True).run_from_dataframe(small_gl_df)
 
         track_names = {r.track_name for r in result.results}
-        assert {"layer_a", "layer_b", "layer_c", "benford"}.issubset(track_names)
-        assert "evidence" not in track_names
+        # Why: L3-11(매출 컷오프)은 canonical 32 룰 — DETECTION_RULES.md §306 스펙대로
+        #      기본 경로에 evidence 트랙(L3-11 한정)이 포함되어야 한다.
+        assert {"layer_a", "layer_b", "layer_c", "benford", "evidence"}.issubset(track_names)
         assert "nlp" not in track_names
 
-        detector_statuses = {
-            status["track_name"]: status for status in result.detector_statuses
-        }
+        detector_statuses = {status["track_name"]: status for status in result.detector_statuses}
         assert "nlp" in detector_statuses
         assert detector_statuses["nlp"]["run_status"] == "not_in_path"
+
+    def test_default_path_evidence_track_runs_l311_only(self, small_gl_df):
+        """기본 경로 evidence 트랙은 L3-11만 실행 — EV01/EV03 확장 제외 (DETECTION_RULES.md §306~307 잠금)."""
+        result = AuditPipeline(skip_db=True).run_from_dataframe(small_gl_df)
+
+        evidence = next(r for r in result.results if r.track_name == "evidence")
+        rule_columns = set(evidence.details.columns)
+        assert rule_columns == {"L3-11"}, (
+            f"기본 경로 evidence 트랙은 L3-11만 실행해야 함 — 실제: {sorted(rule_columns)}"
+        )
 
     def test_batch_id_format(self, small_gl_df):
         result = AuditPipeline(skip_db=True).run_from_dataframe(small_gl_df)
@@ -95,7 +104,9 @@ class TestRunFromDataframe:
         assert result.performance_report.source_kind == "ground_truth"
 
     def test_falls_back_to_operational_report_without_datasynth_labels(
-        self, monkeypatch, small_gl_df,
+        self,
+        monkeypatch,
+        small_gl_df,
     ):
         monkeypatch.setattr("src.pipeline.load_document_labels", lambda source_path: None)
 
@@ -165,11 +176,11 @@ class TestRunFromDataframe:
         stat = source.stat()
         meta_path.write_text(
             (
-                '{\n'
+                "{\n"
                 '  "schema": "ingest-cache-v1",\n'
                 f'  "source_size": {stat.st_size},\n'
                 f'  "source_mtime_ns": {stat.st_mtime_ns}\n'
-                '}\n'
+                "}\n"
             ),
             encoding="utf-8",
         )
@@ -408,7 +419,9 @@ class TestRunFromDataframe:
         ]
 
     def test_phase2_only_loads_contract_pinned_unsupervised_version(
-        self, monkeypatch, small_gl_df,
+        self,
+        monkeypatch,
+        small_gl_df,
     ):
         load_calls = []
         supervised_load_calls = []
@@ -620,7 +633,9 @@ class TestRunFromDataframe:
         }
 
     def test_default_redetect_still_invokes_stacking_when_ml_enabled(
-        self, monkeypatch, small_gl_df,
+        self,
+        monkeypatch,
+        small_gl_df,
     ):
         stacking_calls = []
 
@@ -639,7 +654,9 @@ class TestRunFromDataframe:
         assert stacking_calls
 
     def test_phase2_only_without_contract_uses_latest_unsupervised_fallback(
-        self, monkeypatch, small_gl_df,
+        self,
+        monkeypatch,
+        small_gl_df,
     ):
         load_calls = []
 

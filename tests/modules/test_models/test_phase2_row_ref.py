@@ -175,7 +175,7 @@ def _make_unsupervised(case_id: str) -> UnsupervisedCase:
         phase2_case_id=case_id,
         batch_id="batch-001",
         family="unsupervised",
-        unit_type="row",
+        unit_type="document",
         row_refs=(),
         evidence_tier="ml_quantile",
         case_generation_reason={"trigger": "vae_top"},

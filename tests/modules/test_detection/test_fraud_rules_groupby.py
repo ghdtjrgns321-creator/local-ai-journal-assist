@@ -54,7 +54,34 @@ def dup_entry_df() -> pd.DataFrame:
 
 
 class TestL2_02:
+    @staticmethod
+    def _fallback_df(
+        *,
+        document_id: list[str],
+        amount: list[float],
+        posting_date: list[str],
+        reference: list[str | None],
+        partner: list[str] | None = None,
+        source: list[str] | None = None,
+    ) -> pd.DataFrame:
+        rows = len(document_id)
+        data: dict[str, object] = {
+            "document_id": document_id,
+            "document_type": ["KZ"] * rows,
+            "auxiliary_account_number": partner or ["V001"] * rows,
+            "debit_amount": amount,
+            "credit_amount": [0.0] * rows,
+            "posting_date": pd.to_datetime(posting_date),
+            "business_process": ["P2P"] * rows,
+            "reference": reference,
+        }
+        if source is not None:
+            data["source"] = source
+        return pd.DataFrame(data)
+
     def test_within_window_flagged(self, dup_payment_df: pd.DataFrame) -> None:
+        dup_payment_df = dup_payment_df.copy()
+        dup_payment_df["reference"] = ["INV-1", "INV-1", "INV-3", "INV-4"]
         result = b04_duplicate_payment(dup_payment_df, window_days=45)
         assert result[1]
         assert not result[0]
@@ -84,6 +111,7 @@ class TestL2_02:
             "credit_amount": [0.0] * 3,
             "posting_date": pd.to_datetime(["2025-01-01", "2025-01-05", "2025-01-20"]),
             "business_process": ["P2P"] * 3,
+            "reference": ["INV-1", "INV-1", "INV-1"],
         })
         result = b04_duplicate_payment(df, window_days=45)
         assert not result[0]
@@ -99,6 +127,7 @@ class TestL2_02:
             "credit_amount": [0.0, 0.0],
             "posting_date": pd.to_datetime(["2025-01-01", "2025-02-15"]),
             "business_process": ["P2P", "P2P"],
+            "reference": ["INV-1", "INV-1"],
         })
         result = b04_duplicate_payment(df, window_days=45)
         assert not result[0]
@@ -157,6 +186,7 @@ class TestL2_02:
             "credit_amount": [0.0, 0.0],
             "posting_date": pd.to_datetime(["2025-01-03", "2025-01-25"]),
             "business_process": ["P2P", "P2P"],
+            "reference": ["INV-1", "INV-1"],
         })
         result = b04_duplicate_payment(df, window_days=45)
         assert not result[0]
@@ -174,6 +204,132 @@ class TestL2_02:
             "reference": [None, None, None],
         })
         assert not b04_duplicate_payment(df, window_days=45).any()
+
+    def test_blank_reference_exact_amount_fallback_flags_later_document(self) -> None:
+        df = self._fallback_df(
+            document_id=["D001", "D002"],
+            amount=[1_000_000.0, 1_000_000.0],
+            posting_date=["2025-01-01", "2025-01-31"],
+            reference=["", ""],
+        )
+
+        result = b04_duplicate_payment(df, window_days=45)
+
+        assert not result[0]
+        assert result[1]
+        assert result.attrs["score_series"].tolist() == [0.0, 0.6]
+        assert result.attrs["breakdown"]["blank_reference_fallback_docs"] == 1
+        assert result.attrs["row_annotations"][1]["reason_code"] == "blank_reference_fallback"
+        assert result.attrs["row_annotations"][1]["confidence"] == pytest.approx(0.60)
+        assert result.attrs["row_annotations"][1]["matched_document_id"] == "D001"
+
+    def test_mixed_reference_fallback_allows_near_amount_gap(self) -> None:
+        df = self._fallback_df(
+            document_id=["D001", "D002"],
+            amount=[1_000_000.0, 1_015_000.0],
+            posting_date=["2025-01-01", "2025-01-20"],
+            reference=["INV-100", ""],
+        )
+
+        result = b04_duplicate_payment(df, window_days=45)
+
+        assert not result[0]
+        assert result[1]
+        assert result.attrs["score_series"].tolist() == [0.0, 0.7]
+        assert result.attrs["breakdown"]["mixed_reference_fallback_docs"] == 1
+        assert result.attrs["row_annotations"][1]["reason_code"] == "mixed_reference_fallback"
+        assert result.attrs["row_annotations"][1]["confidence"] == pytest.approx(0.70)
+
+    def test_amount_partner_fallback_flags_different_references_with_near_amount(self) -> None:
+        df = self._fallback_df(
+            document_id=["D001", "D002"],
+            amount=[1_000_000.0, 1_010_000.0],
+            posting_date=["2025-01-01", "2025-01-22"],
+            reference=["INV-100", "INV-200"],
+        )
+
+        result = b04_duplicate_payment(df, window_days=45)
+
+        assert not result[0]
+        assert result[1]
+        assert result.attrs["score_series"].tolist() == [0.0, 0.65]
+        assert result.attrs["breakdown"]["amount_partner_fallback_docs"] == 1
+        assert result.attrs["row_annotations"][1]["reason_code"] == "amount_partner_fallback"
+        assert result.attrs["row_annotations"][1]["confidence"] == pytest.approx(0.65)
+
+    def test_blank_reference_fallback_requires_exact_amount(self) -> None:
+        df = self._fallback_df(
+            document_id=["D001", "D002"],
+            amount=[1_000_000.0, 1_010_000.0],
+            posting_date=["2025-01-01", "2025-01-20"],
+            reference=["", ""],
+        )
+
+        result = b04_duplicate_payment(df, window_days=45)
+
+        assert not result.any()
+        assert result.attrs["breakdown"]["blank_reference_fallback_docs"] == 0
+
+    def test_fallback_ignores_pairs_outside_45_day_window(self) -> None:
+        df = self._fallback_df(
+            document_id=["D001", "D002"],
+            amount=[1_000_000.0, 1_000_000.0],
+            posting_date=["2025-01-01", "2025-02-16"],
+            reference=["", ""],
+        )
+
+        result = b04_duplicate_payment(df, window_days=45)
+
+        assert not result.any()
+        assert result.attrs["breakdown"]["blank_reference_fallback_docs"] == 0
+
+    def test_fallback_suppresses_monthly_recurring_series(self) -> None:
+        df = self._fallback_df(
+            document_id=["D001", "D002", "D003"],
+            amount=[1_000_000.0, 1_000_000.0, 1_000_000.0],
+            posting_date=["2025-01-31", "2025-02-28", "2025-03-31"],
+            reference=["", "", ""],
+        )
+
+        result = b04_duplicate_payment(df, window_days=45)
+
+        assert not result.any()
+        assert result.attrs["breakdown"]["blank_reference_fallback_docs"] == 0
+        assert result.attrs["breakdown"]["recurring_suppressed_docs"] >= 1
+
+    def test_fallback_breakdown_counts_each_reason(self) -> None:
+        df = self._fallback_df(
+            document_id=["D001", "D002", "D003", "D004", "D005", "D006"],
+            amount=[
+                1_000_000.0,
+                1_000_000.0,
+                2_000_000.0,
+                2_030_000.0,
+                3_000_000.0,
+                3_015_000.0,
+            ],
+            posting_date=[
+                "2025-01-01",
+                "2025-01-15",
+                "2025-02-01",
+                "2025-02-20",
+                "2025-03-01",
+                "2025-03-20",
+            ],
+            reference=["", "", "INV-200", "", "INV-300", "INV-301"],
+            partner=["V001", "V001", "V002", "V002", "V003", "V003"],
+        )
+
+        result = b04_duplicate_payment(df, window_days=45)
+        breakdown = result.attrs["breakdown"]
+
+        assert result.tolist() == [False, True, False, True, False, True]
+        assert breakdown["blank_reference_fallback_docs"] == 1
+        assert breakdown["mixed_reference_fallback_docs"] == 1
+        assert breakdown["amount_partner_fallback_docs"] == 1
+        assert breakdown["reason_counts"]["blank_reference_fallback"] == 1
+        assert breakdown["reason_counts"]["mixed_reference_fallback"] == 1
+        assert breakdown["reason_counts"]["amount_partner_fallback"] == 1
 
     def test_reference_variant_normalization_flagged(self) -> None:
         df = pd.DataFrame({
@@ -245,7 +401,7 @@ class TestL2_02:
         assert result[1]
         assert result.attrs["breakdown"]["reference_match_docs"] == 1
 
-    def test_reference_mismatch_same_partner_amount_flagged(self) -> None:
+    def test_reference_mismatch_same_partner_amount_fallback_flagged(self) -> None:
         df = pd.DataFrame({
             "document_id": ["D001", "D002"],
             "document_type": ["KR", "KZ"],
@@ -281,8 +437,8 @@ class TestL2_02:
             "reference": [
                 "PO-C002-2025-001493",
                 "PO-C002-2025-001493",
-                "PO-C002-2025-000260",
-                "PO-C002-2025-000260",
+                "PO-C002-2025-001493",
+                "PO-C002-2025-001493",
             ],
         })
 
@@ -290,7 +446,7 @@ class TestL2_02:
 
         assert not result.iloc[:2].any()
         assert result.iloc[2:].all()
-        assert result.attrs["breakdown"]["amount_partner_fallback_docs"] == 1
+        assert result.attrs["breakdown"]["reference_match_docs"] == 1
 
     def test_same_reference_near_amount_flagged_by_default(self) -> None:
         df = pd.DataFrame({
@@ -320,7 +476,7 @@ class TestL2_02:
         })
         assert not b04_duplicate_payment(df).any()
 
-    def test_blank_reference_duplicate_flagged_against_original_reference(self) -> None:
+    def test_blank_reference_duplicate_against_original_reference_uses_mixed_fallback(self) -> None:
         df = pd.DataFrame({
             "document_id": ["D001", "D002"],
             "document_type": ["KZ", "KZ"],
@@ -334,7 +490,6 @@ class TestL2_02:
         result = b04_duplicate_payment(df, window_days=45)
         assert not result[0]
         assert result[1]
-        assert result.attrs["score_series"].tolist() == [0.0, 0.7]
         assert result.attrs["breakdown"]["mixed_reference_fallback_docs"] == 1
         assert result.attrs["row_annotations"][1]["reason_code"] == "mixed_reference_fallback"
 
@@ -357,7 +512,7 @@ class TestL2_02:
         assert result[1]
         assert result.attrs["breakdown"]["reference_match_docs"] == 1
 
-    def test_blank_reference_fallback_exposes_weaker_score(self) -> None:
+    def test_blank_reference_fallback_flags_without_near_extra(self) -> None:
         df = pd.DataFrame({
             "document_id": ["D001", "D002"],
             "document_type": ["KZ", "KZ"],
@@ -371,9 +526,30 @@ class TestL2_02:
         result = b04_duplicate_payment(df, window_days=45)
         assert not result[0]
         assert result[1]
-        assert result.attrs["score_series"].tolist() == [0.0, 0.6]
         assert result.attrs["breakdown"]["blank_reference_fallback_docs"] == 1
-        assert result.attrs["row_annotations"][1]["confidence_band"] == "medium"
+        assert result.attrs["row_annotations"][1]["reason_code"] == "blank_reference_fallback"
+
+    def test_off_cycle_near_extra_breaking_regular_payment_series_flagged(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D001", "D002", "D003", "D004"],
+            "document_type": ["KZ", "KZ", "KZ", "KZ"],
+            "auxiliary_account_number": ["V001", "V001", "V001", "V001"],
+            "debit_amount": [1_000_000, 1_000_000, 1_000_000, 1_000_000],
+            "credit_amount": [0.0, 0.0, 0.0, 0.0],
+            "posting_date": pd.to_datetime(
+                ["2025-01-31", "2025-02-28", "2025-03-31", "2025-04-03"]
+            ),
+            "business_process": ["P2P", "P2P", "P2P", "P2P"],
+            "reference": ["RENT-JAN", "RENT-FEB", "RENT-MAR", "RENT-APR-EXTRA"],
+            "source": ["recurring", "recurring", "recurring", "manual"],
+        })
+
+        result = b04_duplicate_payment(df, window_days=45)
+
+        assert not result.iloc[:3].any()
+        assert result.iloc[3]
+        assert result.attrs["breakdown"]["near_extra_docs"] == 1
+        assert result.attrs["row_annotations"][3]["reason_code"] == "near_extra"
 
     def test_kr_p2p_documents_included(self) -> None:
         df = pd.DataFrame({

@@ -404,7 +404,7 @@ def generate_report(
     md.append("\n---\n\n## 10. 관련 문서\n")
     md.append("| 문서 | 내용 |")
     md.append("|:-----|:-----|")
-    md.append("| [docs/pre-plan/06-db.md](../../../docs/pre-plan/06-db.md) | DB 레이어 설계 |")
+    md.append("| [docs/archive/completed/raw-plan/06-db.md](../../../docs/archive/completed/raw-plan/06-db.md) | DB 레이어 설계 |")
     md.append("| [db-all-results.md](db-all-results.md) | DB unit test 결과 (34 passed) |")
     md.append(
         "| [e2e-detection-datasynth.md]"

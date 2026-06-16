@@ -7,11 +7,15 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import pandas as pd
+
 from dashboard.components import phase2_native_case_metrics as native_metrics
 from dashboard.components import phase2_native_case_panel as native_panel
+from src.detection.base import DetectionResult
 from src.export.analysis_status import summarize_export_analysis_status
 from src.models.phase2_case import Phase2CaseSet, UnsupervisedCase, make_row_ref
 from src.services.phase2_inference_service import _attach_phase2_family_policy_summary
+from src.services.phase2_unsupervised_case_builder import build_unsupervised_cases
 
 ROOT = Path(__file__).resolve().parents[3]
 ARTIFACT = ROOT / "artifacts" / "unsupervised_soft_guard_stability_fixed5_20260530.json"
@@ -34,7 +38,7 @@ def _case(case_id: str, score: float, row_position: int) -> UnsupervisedCase:
         phase2_case_id=case_id,
         batch_id="bid-1",
         family="unsupervised",
-        unit_type="row",
+        unit_type="document",
         row_refs=(ref,),
         evidence_tier="strong",
         case_generation_reason={"gate": "q95_ecdf"},
@@ -48,8 +52,8 @@ def _case(case_id: str, score: float, row_position: int) -> UnsupervisedCase:
 
 
 def _case_set() -> Phase2CaseSet:
-    lower_score_first = _case("p2_unsupervised_row_first001", 0.20, 0)
-    higher_score_second = _case("p2_unsupervised_row_second002", 0.90, 1)
+    lower_score_first = _case("p2_unsupervised_document_first001", 0.20, 0)
+    higher_score_second = _case("p2_unsupervised_document_second002", 0.90, 1)
     return Phase2CaseSet(unsupervised_cases=(lower_score_first, higher_score_second))
 
 
@@ -91,7 +95,7 @@ def test_soft_guard_action_tier_incremental_values_are_locked():
     assert metrics["top10000_phase1_candidate_or_above_outside_truth_docs"] == 47
 
 
-def test_companion_policy_summary_records_default_soft_guard_ordering():
+def test_companion_policy_summary_records_document_case_default_ordering():
     case_set = _case_set()
     result = SimpleNamespace(phase2_family_policy_summary={})
     native_order_before = tuple(case.phase2_case_id for case in case_set.unsupervised_cases)
@@ -101,20 +105,34 @@ def test_companion_policy_summary_records_default_soft_guard_ordering():
     summary = result.phase2_family_policy_summary["unsupervised"]
     assert summary["production_adoption"] is True
     assert summary["adoption_candidate"] is False
-    assert summary["production_default_ranking_changed"] is True
+    assert summary["production_default_ranking_changed"] is False
     assert summary["native_row_ordering_changed"] is True
-    assert summary["case_generation_changed"] is False
+    # P3 lock update: row-case emission was intentionally replaced by document-case
+    # emission. This is a product-surface generation change, while q95/score/
+    # threshold and PHASE1/PHASE2 fusion guardrails below remain unchanged.
+    assert summary["case_generation_changed"] is True
+    assert summary["case_generation_change"] == "row_case_to_document_case"
+    assert summary["ordering_context_policy"] == {
+        "ordering_layer_uses_document_context": False,
+        "used_context_fields": (),
+        "context_fields_display_only": True,
+        "detector_score_weight_changed": False,
+        "phase1_ranking_changed": False,
+        "phase2_fusion_changed": False,
+        "overlay_context_used_for_primary_queue": False,
+    }
     assert summary["top_features_connected"] is True
     assert summary["q95_gate_change_recommended"] is False
     assert tuple(case.phase2_case_id for case in case_set.unsupervised_cases) == native_order_before
     assert summary["product_role"] == "broad_statistical_review_companion_evidence_surface"
     assert summary["fraud_primary_recall_family"] is False
     assert summary["primary_recall_metric_role"] == "diagnostic_only_not_product_judgement"
-    assert summary["optional_companion_surface"]["replaces_native_case_ordering"] is True
+    assert summary["optional_companion_surface"]["replaces_native_case_ordering"] is False
     assert (
         summary["optional_companion_surface"]["adoption_state"]
-        == "adopted_default_display_ordering"
+        == "historical_diagnostic_not_current_default"
     )
+    assert summary["optional_companion_surface"]["descriptor_only"] is True
     assert (
         summary["responsibility_target"]["primary_target_status"]
         == "debug_only_historical_v31_not_product_goal"
@@ -175,9 +193,52 @@ def test_downstream_helpers_ignore_optional_companion_descriptor():
         phase1_case_lookup={},
     )
     assert list(frame["_full_case_id"]) == [
-        "p2_unsupervised_row_first001",
-        "p2_unsupervised_row_second002",
+        "p2_unsupervised_document_first001",
+        "p2_unsupervised_document_second002",
     ]
     export_status = summarize_export_analysis_status(result)
     assert export_status["status"] == "unknown"
     assert "phase2_contract" in export_status
+
+
+def test_companion_fixture_missing_document_id_uses_f1_singleton_fallback():
+    df = pd.DataFrame(
+        {
+            "document_id": [pd.NA],
+            "line_number": [1],
+            "company_code": ["C01"],
+            "amount": [1_000.0],
+        },
+        index=pd.Index([0]),
+    ).astype({"document_id": "object"})
+    scores = pd.Series([0.99], index=df.index)
+    details = pd.DataFrame(
+        {
+            "ML02_top_feature_1": ["amount_abs"],
+            "ML02_top_feature_1_contrib": [0.3],
+        },
+        index=df.index,
+    )
+    result = DetectionResult(
+        track_name="ml_unsupervised",
+        flagged_indices=[0],
+        scores=scores,
+        rule_flags=[],
+        details=details,
+        metadata={},
+    )
+
+    cases = build_unsupervised_cases(
+        batch_id="bid-1",
+        detection_result=result,
+        df=df,
+        model_id="vae-fixture",
+        schema_hash="schema-fixture",
+        ecdf_gate=0.95,
+        ordering_strategy="native",
+    )
+
+    assert len(cases) == 1
+    assert cases[0].unit_type == "document"
+    assert cases[0].document_id is None
+    assert cases[0].case_generation_reason["document_grouping"] == "fallback_row_identity"

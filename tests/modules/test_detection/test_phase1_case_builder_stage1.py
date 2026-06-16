@@ -98,12 +98,10 @@ def _build(
 # ---- anti-disappear ----------------------------------------------------------
 
 
-def test_stage1_multiple_core_required_fields_missing_stays_above_090():
-    """L1-02 다중 핵심 필드 누락이 topic_scoring 활성 환경에서도 0.90 유지.
+def test_stage1_l102_separated_into_data_integrity_track():
+    """L1-02(필수필드 누락)은 데이터 정합성 트랙으로 분리(2026-06-15).
 
-    floor 매칭은 ``_hit_missing_fields(hit)`` 가 ``hit.annotation["missing_fields"]`` 를
-    읽는 annotation 기반 경로 — row 컬럼 NaN 여부와 무관하다. 따라서 row 의 컬럼이
-    실제 채워져 있더라도 row_annotation 에 missing_fields 가 있으면 floor 가 적용된다.
+    위험 큐(case)와 priority floor 대상이 아니다. 별도 data_integrity_findings 로만 집계.
     """
 
     df = _row()
@@ -136,13 +134,10 @@ def test_stage1_multiple_core_required_fields_missing_stays_above_090():
         },
         priority_floors=floors,
     )
-    assert result.cases, "expected at least one case"
-    case = result.cases[0]
-    assert case.priority_score >= 0.90, (
-        f"priority_score={case.priority_score} (topic 덮어쓰기로 floor가 죽으면 < 0.90)"
-    )
-    assert "multiple_core_required_fields_missing" in case.priority_adjustment_reasons
-    assert case.priority_band == "high"
+    assert result.cases == [], "L1-02는 위험 큐 미생성(데이터 정합성 트랙)"
+    di = {f["rule_id"]: f for f in result.metadata["data_integrity_findings"]}
+    assert di["L1-02"]["flagged_row_count"] == 1
+    assert di["L1-02"]["track"] == "data_integrity"
 
 
 def test_stage1_sod_direct_critical_stays_above_090():

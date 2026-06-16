@@ -91,6 +91,7 @@ class TestPairArtifactContract:
                 "credit_amount": [0.0, 0.0, 0.0],
                 "posting_date": pd.to_datetime(["2025-03-01", "2025-03-01", "2025-03-01"]),
                 "line_text": ["매입", "매입", "기타"],
+                "reference": ["INV-001", "INV-001", "INV-003"],
             }
         )
         result = DuplicateDetector().detect(df)
@@ -111,6 +112,7 @@ class TestPairArtifactExact:
                 "credit_amount": [0.0, 0.0, 0.0],
                 "posting_date": pd.to_datetime(["2025-03-01", "2025-03-01", "2025-03-01"]),
                 "line_text": ["매입", "매입", "기타"],
+                "reference": ["INV-001", "INV-001", "INV-003"],
             }
         )
         artifact = _pair_artifact(DuplicateDetector().detect(df))
@@ -121,6 +123,58 @@ class TestPairArtifactExact:
         assert pair["features"]["amount_similarity"] == pytest.approx(1.0)
         assert pair["features"]["same_account"] is True
         assert pair["rule_source"] == "exact_duplicate_amount"
+
+    def test_exact_same_document_line_pair_is_dropped(self) -> None:
+        df = pd.DataFrame(
+            {
+                "document_id": ["DOC-1", "DOC-1"],
+                "gl_account": [1000, 1000],
+                "debit_amount": [500.0, 500.0],
+                "credit_amount": [0.0, 0.0],
+                "posting_date": pd.to_datetime(["2025-03-01", "2025-03-01"]),
+                "line_text": ["매입", "매입"],
+                "reference": ["INV-001", "INV-001"],
+            }
+        )
+        artifact = _pair_artifact(DuplicateDetector().detect(df))
+
+        assert artifact["retained_pairs"] == 0
+        assert _pairs_by_rule(artifact, "L2-03a") == []
+
+    def test_exact_cross_document_pair_is_retained(self) -> None:
+        df = pd.DataFrame(
+            {
+                "document_id": ["DOC-1", "DOC-2"],
+                "gl_account": [1000, 1000],
+                "debit_amount": [500.0, 500.0],
+                "credit_amount": [0.0, 0.0],
+                "posting_date": pd.to_datetime(["2025-03-01", "2025-03-01"]),
+                "line_text": ["매입", "매입"],
+                "reference": ["INV-001", "INV-001"],
+            }
+        )
+        artifact = _pair_artifact(DuplicateDetector().detect(df))
+
+        assert len(_pairs_by_rule(artifact, "L2-03a")) == 1
+
+    def test_reversal_link_pair_is_excluded_from_duplicate_artifact(self) -> None:
+        df = pd.DataFrame(
+            {
+                "document_id": ["DOC-ORIG", "DOC-REV"],
+                "gl_account": [1000, 1000],
+                "debit_amount": [500.0, 500.0],
+                "credit_amount": [0.0, 0.0],
+                "posting_date": pd.to_datetime(["2025-03-01", "2025-03-01"]),
+                "line_text": ["monthly accrual", "monthly accrual reversal"],
+                "reference": ["ACCR-001", "ACCR-001"],
+                "original_document_id": ["", "DOC-ORIG"],
+                "reversal_document_id": ["DOC-REV", ""],
+            }
+        )
+        artifact = _pair_artifact(DuplicateDetector().detect(df))
+
+        assert artifact["retained_pairs"] == 0
+        assert artifact["top_pairs"] == []
 
 
 class TestPairArtifactFuzzy:
@@ -136,6 +190,7 @@ class TestPairArtifactFuzzy:
                     "삼성전자 법인카드 결제건",
                     "기타",
                 ],
+                "reference": ["CARD-001", "CARD-001", "ETC-001"],
             }
         )
         artifact = _pair_artifact(DuplicateDetector().detect(df))
@@ -163,6 +218,7 @@ class TestPairArtifactFuzzy:
                     "삼성전자 법인카드 결제건",
                     "기타",
                 ],
+                "reference": ["CARD-001", "CARD-001", "ETC-001"],
             }
         )
         artifact = _pair_artifact(DuplicateDetector().detect(df))
@@ -184,6 +240,7 @@ class TestPairArtifactSplit:
                     ["2025-03-01", "2025-03-02", "2025-03-02", "2025-03-01"]
                 ),
                 "line_text": ["대금", "분할1", "분할2", "기타"],
+                "reference": ["INV-SPLIT", "INV-SPLIT", "INV-SPLIT", "ETC"],
             }
         )
         artifact = _pair_artifact(DuplicateDetector().detect(df))
@@ -193,6 +250,22 @@ class TestPairArtifactSplit:
         assert pair["rule_source"] == "split_transaction"
         assert pair["features"]["target_amount"] == pytest.approx(1_000_000.0)
         assert 0.0 < pair["pair_score"] <= 1.0
+
+    def test_split_same_document_line_pair_is_dropped(self) -> None:
+        df = pd.DataFrame(
+            {
+                "document_id": ["DOC-1", "DOC-1", "DOC-1"],
+                "gl_account": [1000, 1000, 1000],
+                "debit_amount": [1_000_000.0, 500_000.0, 500_000.0],
+                "credit_amount": [0.0, 0.0, 0.0],
+                "posting_date": pd.to_datetime(["2025-03-01", "2025-03-02", "2025-03-02"]),
+                "line_text": ["대금", "분할1", "분할2"],
+                "reference": ["INV-SPLIT", "INV-SPLIT", "INV-SPLIT"],
+            }
+        )
+        artifact = _pair_artifact(DuplicateDetector().detect(df))
+
+        assert _pairs_by_rule(artifact, "L2-03c") == []
 
 
 class TestPairArtifactTimeShift:
@@ -204,6 +277,7 @@ class TestPairArtifactTimeShift:
                 "credit_amount": [0.0, 0.0, 0.0],
                 "posting_date": pd.to_datetime(["2025-03-01", "2025-03-04", "2025-03-01"]),
                 "line_text": ["매입", "매입", "기타"],
+                "reference": ["INV-001", "INV-001", "ETC-001"],
             }
         )
         artifact = _pair_artifact(DuplicateDetector().detect(df))
@@ -264,7 +338,8 @@ class TestPairArtifactDegradation:
         artifact = _pair_artifact(DuplicateDetector().detect(df))
         assert artifact["coverage"]["has_line_text"] is False
         assert artifact["rule_pair_counts"].get("L2-03b", 0) == 0
-        assert artifact["rule_pair_counts"].get("L2-03a", 0) == 1
+        assert artifact["rule_pair_counts"].get("L2-03a", 0) == 0
+        assert artifact["coverage"]["recurring_ambiguous_dropped_pairs"] == 1
 
     def test_missing_gl_account_empty_artifact(self) -> None:
         df = pd.DataFrame(
@@ -288,6 +363,7 @@ class TestPairArtifactDegradation:
                 "credit_amount": [0.0, 0.0],
                 "posting_date": pd.to_datetime(["2025-03-01", "2025-03-01"]),
                 "line_text": ["매입", "매입"],
+                "reference": ["INV-001", "INV-001"],
             }
         )
         artifact = _pair_artifact(DuplicateDetector().detect(df))
@@ -439,8 +515,8 @@ class TestPairArtifactCaps:
             "max_group_size",
         }
 
-    def test_top_n_cap_bounds_metadata(self) -> None:
-        """top_n=2 → metadata에는 score 상위 2개만."""
+    def test_top_n_no_longer_bounds_measurement_metadata(self) -> None:
+        """P2-3: top_n은 measurement artifact를 자르지 않는다."""
         settings = AuditSettings(duplicate_pair_artifact_top_n=2)
         df = pd.DataFrame(
             {
@@ -449,10 +525,12 @@ class TestPairArtifactCaps:
                 "credit_amount": [0.0] * 5,
                 "posting_date": pd.to_datetime(["2025-03-01"] * 5),
                 "line_text": ["매입"] * 5,
+                "reference": ["INV-001"] * 5,
             }
         )
         artifact = _pair_artifact(DuplicateDetector(settings).detect(df))
-        assert len(artifact["top_pairs"]) <= 2
+        assert len(artifact["top_pairs"]) > 2
+        assert artifact["coverage"]["top_pair_selection"]["top_n_cap_applied"] is False
 
     def test_top_n_retention_uses_document_diversity(self) -> None:
         """동일 dense 문서군이 top_pairs 전체를 점유하지 않게 보존한다."""
@@ -484,7 +562,9 @@ class TestPairArtifactCaps:
 
         assert "DOC-5" in docs
         assert "DOC-6" in docs
-        assert artifact["coverage"]["top_pair_selection"]["strategy"] == "document_diversity"
+        assert artifact["coverage"]["top_pair_selection"]["strategy"] == (
+            "complete_measurement_population"
+        )
 
     def test_document_diversity_soft_cap_fills_when_needed(self) -> None:
         """diversity pass가 top_n을 못 채우면 score 순 fill로 metadata를 채운다."""
@@ -510,9 +590,9 @@ class TestPairArtifactCaps:
         artifact = _pair_artifact(DuplicateDetector(settings).detect(df))
         selection = artifact["coverage"]["top_pair_selection"]
 
-        assert len(artifact["top_pairs"]) == 3
-        assert selection["selected_by_diversity"] == 1
-        assert selection["selected_by_fill"] == 2
+        assert len(artifact["top_pairs"]) == artifact["retained_pairs"]
+        assert selection["strategy"] == "complete_measurement_population"
+        assert selection["top_n_cap_applied"] is False
 
 
 class TestEvidenceDiversityRetention:
@@ -666,7 +746,9 @@ class TestEvidenceDiversityRetention:
 
         artifact = _pair_artifact(DuplicateDetector(settings).detect(df))
 
-        assert artifact["coverage"]["top_pair_selection"]["strategy"] == "evidence_diversity"
+        assert artifact["coverage"]["top_pair_selection"]["strategy"] == (
+            "complete_measurement_population"
+        )
 
 
 class TestRuleBalancedEvidenceRetention:
@@ -738,5 +820,5 @@ class TestRuleBalancedEvidenceRetention:
         artifact = _pair_artifact(DuplicateDetector(settings).detect(df))
 
         assert artifact["coverage"]["top_pair_selection"]["strategy"] == (
-            "rule_balanced_evidence"
+            "complete_measurement_population"
         )

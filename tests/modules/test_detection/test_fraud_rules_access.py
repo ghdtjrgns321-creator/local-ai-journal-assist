@@ -406,6 +406,61 @@ class TestL1_05:
         assert result.attrs["score_series"].iloc[0] == 0.0
         assert result.attrs["row_annotations"][0]["bucket"] == "allowed_system"
 
+    def test_lone_automated_source_self_approval_is_not_allowed_system(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D1"],
+            "created_by": ["BATCHUSER"],
+            "approved_by": ["BATCHUSER"],
+            "source": ["automated"],
+            "posting_date": pd.to_datetime(["2025-01-02"]),
+            "batch_id": [None],
+            "job_id": [None],
+        })
+
+        result = b06_self_approval(df)
+
+        assert result[0]
+        assert result.attrs["breakdown"]["actionable_rows"] == 1
+        assert result.attrs["breakdown"]["allowed_system_rows"] == 0
+        assert result.attrs["score_series"].iloc[0] == 0.8
+        assert result.attrs["row_annotations"][0]["bucket"] == "immediate"
+
+    def test_batched_automated_source_self_approval_remains_allowed_system(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D1"],
+            "created_by": ["BATCHUSER"],
+            "approved_by": ["BATCHUSER"],
+            "source": ["automated"],
+            "posting_date": pd.to_datetime(["2025-01-02"]),
+            "batch_id": ["BATCH-1"],
+            "job_id": [None],
+        })
+
+        result = b06_self_approval(df)
+
+        assert result[0]
+        assert result.attrs["breakdown"]["actionable_rows"] == 0
+        assert result.attrs["breakdown"]["allowed_system_rows"] == 1
+        assert result.attrs["score_series"].iloc[0] == 0.0
+        assert result.attrs["row_annotations"][0]["bucket"] == "allowed_system"
+
+    def test_missing_identity_columns_keep_self_approval_source_allowance_unchanged(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D1"],
+            "created_by": ["BATCHUSER"],
+            "approved_by": ["BATCHUSER"],
+            "source": ["automated"],
+            "posting_date": pd.to_datetime(["2025-01-02"]),
+        })
+
+        result = b06_self_approval(df)
+
+        assert result[0]
+        assert result.attrs["breakdown"]["actionable_rows"] == 0
+        assert result.attrs["breakdown"]["allowed_system_rows"] == 1
+        assert result.attrs["score_series"].iloc[0] == 0.0
+        assert result.attrs["row_annotations"][0]["bucket"] == "allowed_system"
+
     def test_r2r_self_approval_defaults_to_review(self) -> None:
         df = pd.DataFrame({
             "created_by": ["CTRL-001"],
@@ -856,6 +911,74 @@ class TestL1_06:
 
 
 class TestL1_07:
+    def test_unknown_approver_in_master_is_flagged_with_fixed_score(self) -> None:
+        df = pd.DataFrame({
+            "approved_by": ["APR-GHOST"],
+            "approver_in_master": pd.Series([False], dtype="boolean"),
+            "source": ["Manual"],
+            "exceeds_threshold": [False],
+        })
+
+        result = b09_skipped_approval(df)
+
+        assert result.tolist() == [True]
+        assert result.attrs["score_series"].tolist() == [0.55]
+        assert result.attrs["review_score_series"].tolist() == [0.0]
+        assert result.attrs["breakdown"]["unknown_approver_rows"] == 1
+        assert result.attrs["breakdown"]["candidate_rows"] == 1
+        assert result.attrs["row_annotations"][0]["queue_label"] == "unknown_approver"
+        assert result.attrs["row_annotations"][0]["reason_code"] == "unknown_approver"
+        assert result.attrs["row_annotations"][0]["bucket"] == "unknown_approver"
+        assert result.attrs["row_annotations"][0]["approved_by"] == "APR-GHOST"
+
+    def test_known_approver_in_master_does_not_trigger_unknown_subpattern(self) -> None:
+        df = pd.DataFrame({
+            "approved_by": ["APR-001"],
+            "approver_in_master": pd.Series([True], dtype="boolean"),
+            "source": ["Manual"],
+            "exceeds_threshold": [True],
+        })
+
+        result = b09_skipped_approval(df)
+
+        assert not result.any()
+        assert result.attrs["score_series"].tolist() == [0.0]
+        assert result.attrs["breakdown"]["unknown_approver_rows"] == 0
+        assert result.attrs["breakdown"]["candidate_rows"] == 0
+
+    def test_blank_approver_with_membership_na_keeps_existing_l107_path(self) -> None:
+        df = pd.DataFrame({
+            "exceeds_threshold": [True],
+            "source": ["Manual"],
+            "approved_by": [""],
+            "approver_in_master": pd.Series([pd.NA], dtype="boolean"),
+            "approval_date": [None],
+        })
+
+        result = b09_skipped_approval(df)
+
+        assert result.tolist() == [True]
+        assert result.attrs["breakdown"]["unknown_approver_rows"] == 0
+        assert result.attrs["breakdown"]["immediate_rows"] == 1
+        assert result.attrs["row_annotations"][0]["queue_label"] == "immediate"
+        assert "unknown_approver" not in result.attrs["row_annotations"][0]["evidence_reasons"]
+
+    def test_missing_approver_membership_column_preserves_existing_output_shape(self) -> None:
+        df = pd.DataFrame({
+            "exceeds_threshold": [False],
+            "source": ["Manual"],
+            "approved_by": ["APR-001"],
+        })
+
+        result = b09_skipped_approval(df)
+
+        assert not result.any()
+        assert result.attrs["score_series"].tolist() == [0.0]
+        assert result.attrs["review_score_series"].tolist() == [0.0]
+        assert result.attrs["row_annotations"] == {}
+        assert "unknown_approver_rows" not in result.attrs["breakdown"]
+        assert result.attrs["breakdown"]["candidate_rows"] == 0
+
     def test_manual_missing_approval_with_extra_evidence_is_immediate(self) -> None:
         df = pd.DataFrame({
             "exceeds_threshold": [True],

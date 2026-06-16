@@ -25,10 +25,10 @@ TRUTH_CSV = ROOT.joinpath(
     "manipulated_entry_truth.csv",
 )
 DOCS = [
-    ROOT / "docs" / "debugging" / "PHASE2_FAMILY_RESPONSIBILITY_RECALL_20260530.md",
-    ROOT / "docs" / "users" / "16_PHASE2_RESPONSIBILITY_MAP_DECISION.md",
-    ROOT / "docs" / "TROUBLESHOOT.md",
-    ROOT / "docs" / "DETECTION_RESULTS_MANIPULATION_V7_FIXED4_PHASE2.md",
+    ROOT / "docs" / "spec" / "debugging" / "PHASE2_FAMILY_RESPONSIBILITY_RECALL_20260530.md",
+    ROOT / "docs" / "guide" / "users" / "16_PHASE2_RESPONSIBILITY_MAP_DECISION.md",
+    ROOT / "docs" / "spec" / "TROUBLESHOOT.md",
+    ROOT / "docs" / "guide" / "DETECTION_RESULTS_MANIPULATION_V7_FIXED4_PHASE2.md",
 ]
 
 
@@ -181,7 +181,8 @@ def test_v31_docs_remove_stale_supersedes_phrase_and_add_reconciled_language():
     combined = "\n".join(path.read_text(encoding="utf-8") for path in DOCS)
 
     assert "v3 supersedes v2.1" not in combined
-    assert "v3.3b = current canonical responsibility map candidate" in combined
+    assert "v3.3d = current canonical responsibility map candidate" in combined
+    assert "v3.3b = historical responsibility map" in combined
     assert "v1/v2/v2.1/v3/v3.1 = historical iterations" in combined
     assert "v3 = traceability experiment, not final policy" in combined
     assert "v3 relocated owner policy into DataSynth metadata for traceability." in combined

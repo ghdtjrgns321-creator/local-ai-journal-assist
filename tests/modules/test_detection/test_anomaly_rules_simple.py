@@ -15,6 +15,7 @@ from src.detection.anomaly_rules_simple import (
     c06_missing_or_corrupted_description,
     c08_amount_outlier,
     c10_suspense_account,
+    c12_abnormal_hours_concentration,
 )
 
 
@@ -297,6 +298,58 @@ class TestL3_06:
         assert result.attrs["breakdown"]["normal_system_context_rows"] == 1
         assert result.attrs["row_annotations"][0]["bucket"] == "confirmed_after_hours"
         assert result.attrs["row_annotations"][1]["bucket"] == "normal_system_context"
+
+    def test_lone_automated_source_does_not_receive_system_context_discount(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D1"],
+            "is_after_hours": [True],
+            "posting_date": pd.to_datetime(["2025-01-02 23:30:00"]),
+            "source": ["automated"],
+            "batch_id": [None],
+            "job_id": [None],
+            "created_by": ["USR01"],
+        })
+
+        result = c03_after_hours_entry(df)
+
+        assert result[0]
+        assert result.attrs["score_series"].tolist() == [0.45]
+        assert result.attrs["breakdown"]["confirmed_after_hours_rows"] == 1
+        assert result.attrs["breakdown"]["normal_system_context_rows"] == 0
+        assert result.attrs["row_annotations"][0]["bucket"] == "confirmed_after_hours"
+
+    def test_batched_automated_source_keeps_after_hours_system_context_discount(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D1"],
+            "is_after_hours": [True],
+            "posting_date": pd.to_datetime(["2025-01-02 23:30:00"]),
+            "source": ["automated"],
+            "batch_id": ["BATCH-1"],
+            "job_id": [None],
+            "created_by": ["USR01"],
+        })
+
+        result = c03_after_hours_entry(df)
+
+        assert result.attrs["score_series"].tolist() == [0.20]
+        assert result.attrs["breakdown"]["confirmed_after_hours_rows"] == 0
+        assert result.attrs["breakdown"]["normal_system_context_rows"] == 1
+        assert result.attrs["row_annotations"][0]["bucket"] == "normal_system_context"
+
+    def test_missing_identity_columns_keep_after_hours_system_context_unchanged(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D1"],
+            "is_after_hours": [True],
+            "posting_date": pd.to_datetime(["2025-01-02 23:30:00"]),
+            "source": ["automated"],
+            "created_by": ["USR01"],
+        })
+
+        result = c03_after_hours_entry(df)
+
+        assert result.attrs["score_series"].tolist() == [0.20]
+        assert result.attrs["breakdown"]["normal_system_context_rows"] == 1
+        assert result.attrs["row_annotations"][0]["bucket"] == "normal_system_context"
 
 
 # ── L3-07 전기일-문서일 장기 괴리 ─────────────────────────────
@@ -698,3 +751,82 @@ class TestL3_09:
         """필수 컬럼 부족 → 전체 False."""
         df = pd.DataFrame({"debit_amount": [100.0]})
         assert not c10_suspense_account(df).any()
+
+
+class TestL4_05:
+    def test_lone_automated_source_is_included_in_behavior_population(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D1", "D2", "D3"],
+            "created_by": ["AUTOUSER"] * 3,
+            "approved_by": ["MGR"] * 3,
+            "posting_date": pd.to_datetime([
+                "2025-01-02 00:01:00",
+                "2025-01-02 00:02:00",
+                "2025-01-02 00:03:00",
+            ]),
+            "approval_date": pd.to_datetime([
+                "2025-01-02 00:20:00",
+                "2025-01-02 00:20:00",
+                "2025-01-02 00:20:00",
+            ]),
+            "time_zone_category": ["midnight"] * 3,
+            "source": ["automated"] * 3,
+            "batch_id": [None] * 3,
+            "job_id": [None] * 3,
+        })
+
+        result = c12_abnormal_hours_concentration(df, auto_entry_sources=["automated"])
+
+        assert result.tolist() == [True, True, True]
+        assert result.attrs["breakdown"]["low_volume_midnight_rows"] == 3
+        assert result.attrs["breakdown"]["manual_user_count"] == 1
+
+    def test_batched_automated_source_stays_out_of_behavior_population(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D1", "D2", "D3"],
+            "created_by": ["AUTOUSER"] * 3,
+            "approved_by": ["MGR"] * 3,
+            "posting_date": pd.to_datetime([
+                "2025-01-02 00:01:00",
+                "2025-01-02 00:02:00",
+                "2025-01-02 00:03:00",
+            ]),
+            "approval_date": pd.to_datetime([
+                "2025-01-02 00:20:00",
+                "2025-01-02 00:20:00",
+                "2025-01-02 00:20:00",
+            ]),
+            "time_zone_category": ["midnight"] * 3,
+            "source": ["automated"] * 3,
+            "batch_id": ["BATCH-1"] * 3,
+            "job_id": [None] * 3,
+        })
+
+        result = c12_abnormal_hours_concentration(df, auto_entry_sources=["automated"])
+
+        assert result.tolist() == [False, False, False]
+        assert result.attrs["breakdown"]["manual_user_count"] == 0
+
+    def test_missing_identity_columns_keep_behavior_population_exclusion_unchanged(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D1", "D2", "D3"],
+            "created_by": ["AUTOUSER"] * 3,
+            "approved_by": ["MGR"] * 3,
+            "posting_date": pd.to_datetime([
+                "2025-01-02 00:01:00",
+                "2025-01-02 00:02:00",
+                "2025-01-02 00:03:00",
+            ]),
+            "approval_date": pd.to_datetime([
+                "2025-01-02 00:20:00",
+                "2025-01-02 00:20:00",
+                "2025-01-02 00:20:00",
+            ]),
+            "time_zone_category": ["midnight"] * 3,
+            "source": ["automated"] * 3,
+        })
+
+        result = c12_abnormal_hours_concentration(df, auto_entry_sources=["automated"])
+
+        assert result.tolist() == [False, False, False]
+        assert result.attrs["breakdown"]["manual_user_count"] == 0

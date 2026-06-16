@@ -20,7 +20,7 @@ class TestRuleCodesIntegrity:
     def test_rule_count(self) -> None:
         # Why: Current registry includes L1-L4, analytical, graph, evidence, access,
         # trendbreak, NLP, and Phase2 ML rule codes.
-        assert len(RULE_CODES) == 67
+        assert len(RULE_CODES) == 70
 
     def test_layer_a_ids(self) -> None:
         for rid in ("L1-01", "L1-02", "L1-03"):
@@ -98,10 +98,24 @@ class TestEnums:
     def test_layer_values(self) -> None:
         # Why: 신규 트랙 추가 시 갱신. 기본 5종 + Phase 2/3 확장 레이어.
         expected = {
-            "layer_a", "layer_b", "layer_c", "benford", "layer_d",
-            "duplicate", "timeseries", "intercompany", "relational",
-            "ml_supervised", "ml_unsupervised", "ml_transformer", "ml_sequence",
-            "ensemble", "access_audit", "evidence", "trendbreak",
-            "graph", "nlp",
+            "layer_a",
+            "layer_b",
+            "layer_c",
+            "benford",
+            "layer_d",
+            "duplicate",
+            "timeseries",
+            "intercompany",
+            "relational",
+            "ml_supervised",
+            "ml_unsupervised",
+            "ml_transformer",
+            "ml_sequence",
+            "ensemble",
+            "access_audit",
+            "evidence",
+            "trendbreak",
+            "graph",
+            "nlp",
         }
         assert set(Layer) == expected

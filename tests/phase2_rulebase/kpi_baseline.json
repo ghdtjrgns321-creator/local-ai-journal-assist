@@ -2,7 +2,7 @@
   "_meta": {
     "status": "skeleton",
     "designed_at": "2026-05-15",
-    "design_source": "docs/PHASE2_GOVERNANCE_DESIGN.md",
+    "design_source": "docs/spec/PHASE2_GOVERNANCE_DESIGN.md",
     "measured_at": null,
     "datasets": {
       "manipulation_v2": {
@@ -26,7 +26,7 @@
       }
     },
     "freshness_days": 30,
-    "policy": "Layer A/B HARD FAIL on regression. Layer C SOFT WARN only (no truth-recall improvement enforcement). Reference: docs/PHASE2_GOVERNANCE_DESIGN.md",
+    "policy": "Layer A/B HARD FAIL on regression. Layer C SOFT WARN only (no truth-recall improvement enforcement). Reference: docs/spec/PHASE2_GOVERNANCE_DESIGN.md",
     "principle": "PHASE2 향상은 도메인 정합성과 학습 무결성으로만 발생시킨다. truth recall은 부수효과(회귀 방지선)로만 측정한다. supervised 활성화 시 별도 design PR 의무.",
     "phase1_reference": "tests/phase1_rulebase/kpi_baseline.json",
     "soft_warn_history": "artifacts/_phase2_kpi_guard_softwarn_history.json"
@@ -195,7 +195,7 @@
       "fail_mode": "SOFT_WARN",
       "source": "training_report.metadata.family_diagnostics — row_nonzero_rate / rank_resolution / top_tail_resolution 3 metric 의 직전 학습 대비 변동률",
       "rationale": "PHASE2 family role 자동 판정(active-ranker / coarse-booster / near-dormant / tail-only-fallback) 안정성 회귀 감지. 결정 8 §8.6 lane visibility 일관성 보호. 향상 강제 아님 — baseline × 0.7 하한.",
-      "decision_link": "docs/PHASE2_GOVERNANCE_DESIGN.md 결정 8 (lane/overlay governance), config/phase2_subdetector_tiers.yaml, artifacts/phase2_family_ranking_measurement_20260519.md"
+      "decision_link": "docs/spec/PHASE2_GOVERNANCE_DESIGN.md 결정 8 (lane/overlay governance), config/phase2_subdetector_tiers.yaml, artifacts/phase2_family_ranking_measurement_20260519.md"
     }
   },
   "meta_guard_integrity": {
@@ -207,7 +207,7 @@
     "m2_feature_id_phase3_enum_consistent": {
       "required": "training_report.feature_metadata.feature_ids ⊆ PHASE3_FEATURE_ENUM",
       "fail_mode": "HARD",
-      "rationale": "SHAP / feature_importance → narrator 인용 일관성. PHASE3 의 rule_id/feature_id 인용 계약 (docs/PHASE3_REVIEW_NARRATOR_SPEC.md)."
+      "rationale": "SHAP / feature_importance → narrator 인용 일관성. PHASE3 의 rule_id/feature_id 인용 계약 (docs/archive/abandoned/PHASE3_REVIEW_NARRATOR_SPEC.md)."
     },
     "m3_training_metadata_required": {
       "required_keys": [

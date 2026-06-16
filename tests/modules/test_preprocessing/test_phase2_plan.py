@@ -86,6 +86,43 @@ def test_phase2_preprocessing_plan_excludes_v7_derived_deny_columns():
     assert decisions["operating_feature"].action == "include"
 
 
+def test_phase2_preprocessing_plan_excludes_synthetic_row_markers():
+    df = pd.DataFrame(
+        {
+            "is_synthetic": [False, False, True],
+            "is_mutated": [False, True, False],
+            "operating_feature": [10.0, 11.0, 12.0],
+        }
+    )
+
+    plan = build_phase2_preprocessing_plan(profile_dataframe(df))
+    decisions = _decisions_by_column(plan)
+
+    for column in ("is_synthetic", "is_mutated"):
+        assert decisions[column].action == "exclude"
+        assert decisions[column].reason_code == "leakage_deny_column"
+    assert decisions["operating_feature"].action == "include"
+
+
+def test_phase2_preprocessing_plan_treats_account_codes_as_categorical():
+    df = pd.DataFrame(
+        {
+            "gl_account": [1000, 1100, 1200, 1300],
+            "account_code": [1000, 1100, 1200, 1300],
+            "amount": [10.0, 20.0, 30.0, 40.0],
+        }
+    )
+
+    plan = build_phase2_preprocessing_plan(profile_dataframe(df), high_card_threshold=3)
+    decisions = _decisions_by_column(plan)
+
+    for column in ("gl_account", "account_code"):
+        assert decisions[column].action == "include"
+        assert decisions[column].role == "categorical_high"
+        assert decisions[column].reason_code == "domain_code_categorical"
+    assert decisions["amount"].role == "numeric"
+
+
 def test_phase2_preprocessing_plan_column_decision_snapshot():
     df = pd.DataFrame(
         {

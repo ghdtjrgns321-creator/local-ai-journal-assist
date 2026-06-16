@@ -47,12 +47,12 @@
 
 | #  | 이슈                                                          | 대상 파일              | 처리 시점                | 해결 위치 (pre-plan)                                                              |
 |----|---------------------------------------------------------------|------------------------|--------------------------|-----------------------------------------------------------------------------------|
-| 1  | `datetime_profiler` `.values` → `.array` 전환 (타임존 보존)   | datetime_profiler.py   | Phase 1c 타임존 지원 시  | [07-dashboard §미해결](../../docs/pre-plan/07-dashboard.md#미해결-이슈-phase-1c에서-해결--발견-위치-교차-참조) |
-| 2  | `top_values` tuple→list 변환 계약 문서화                      | category_profiler.py   | Phase 1c 대시보드 연동 시 | [07-dashboard §미해결](../../docs/pre-plan/07-dashboard.md#미해결-이슈-phase-1c에서-해결--발견-위치-교차-참조) |
-| 3  | `_generate_warnings` 룰 코드 상수화 (L1-02 등)                  | report.py              | Phase 1b detection 연동 시 | [05-detection §선행이슈](../../docs/pre-plan/05-detection.md#선행-모듈에서-넘어온-미해결-이슈-교차-참조) |
+| 1  | `datetime_profiler` `.values` → `.array` 전환 (타임존 보존)   | datetime_profiler.py   | Phase 1c 타임존 지원 시  | [07-dashboard §미해결](../../../../docs/archive/completed/raw-plan/07-dashboard.md#미해결-이슈-phase-1c에서-해결--발견-위치-교차-참조) |
+| 2  | `top_values` tuple→list 변환 계약 문서화                      | category_profiler.py   | Phase 1c 대시보드 연동 시 | [07-dashboard §미해결](../../../../docs/archive/completed/raw-plan/07-dashboard.md#미해결-이슈-phase-1c에서-해결--발견-위치-교차-참조) |
+| 3  | `_generate_warnings` 룰 코드 상수화 (L1-02 등)                  | report.py              | Phase 1b detection 연동 시 | [05-detection §선행이슈](../../../../docs/archive/completed/raw-plan/05-detection.md#선행-모듈에서-넘어온-미해결-이슈-교차-참조) |
 
 ## 개선 방안 (후속 Phase)
 
-- Phase 2: 상관관계 분석 (수치 컬럼 간 pearson/spearman) → [03a-preprocessing §Phase구분](../../docs/pre-plan/03a-preprocessing.md#phase-구분)
-- Phase 2: sklearn Pipeline 전처리 전략 자동 제안 → [03a-preprocessing §②](../../docs/pre-plan/03a-preprocessing.md#-sklearn-pipeline-전처리---구현-예정-phase-2)
-- Phase 3: EDAProfile → LLM 프롬프트 입력 (profile_to_llm_context) → [03a-preprocessing §③](../../docs/pre-plan/03a-preprocessing.md#-llm-전처리-제안---구현-예정-phase-3)
+- Phase 2: 상관관계 분석 (수치 컬럼 간 pearson/spearman) → [03a-preprocessing §Phase구분](../../../../docs/archive/completed/raw-plan/03a-preprocessing.md#phase-구분)
+- Phase 2: sklearn Pipeline 전처리 전략 자동 제안 → [03a-preprocessing §②](../../../../docs/archive/completed/raw-plan/03a-preprocessing.md#-sklearn-pipeline-전처리---구현-예정-phase-2)
+- Phase 3: EDAProfile → LLM 프롬프트 입력 (profile_to_llm_context) → [03a-preprocessing §③](../../../../docs/archive/completed/raw-plan/03a-preprocessing.md#-llm-전처리-제안---구현-예정-phase-3)

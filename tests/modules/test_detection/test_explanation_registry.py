@@ -17,7 +17,10 @@ from src.detection.rule_detail_metadata import (
 
 
 def test_active_rules_all_have_rule_explanations() -> None:
-    expected_rule_ids = tuple(sorted((*get_canonical_transaction_rule_ids(), "D01", "D02")))
+    # canonical(31) + macro 3종(L4-02/D01/D02, PHASE1-2 귀속이나 설명 텍스트 유지)
+    expected_rule_ids = tuple(
+        sorted((*get_canonical_transaction_rule_ids(), "L4-02", "D01", "D02"))
+    )
 
     assert ACTIVE_RULE_IDS == expected_rule_ids
     assert list_rules_without_explanation() == []

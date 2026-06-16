@@ -431,6 +431,92 @@ def test_overlay_keeps_intercompany_review_only_without_phase2_score_inflation()
     assert contribution["review_reasons"] == ["missing_partner", "mapping_uncertain"]
 
 
+def test_overlay_attaches_unsupervised_document_context_display_only():
+    """P3: document evidence/context is surfaced on the contribution only.
+
+    The context values must not change adjusted priority, banding, or contribution sort
+    because B3 keeps family_score as the raw max score.
+    """
+    phase1 = _phase1_result()
+    base_kwargs = {
+        "phase1": phase1,
+        "family_scores_by_case": {
+            "case_control_failure_00001": {"unsupervised": 0.97, "duplicate": 0.6}
+        },
+        "family_ecdf_by_case": {
+            "case_control_failure_00001": {"unsupervised": 0.99, "duplicate": 0.95}
+        },
+        "family_top_subdetectors_by_case": {
+            "case_control_failure_00001": {
+                "unsupervised": [("VAE-01", "audit_vae_reconstruction")],
+                "duplicate": [("L2-03a", "exact_duplicate_amount")],
+            }
+        },
+        "family_roles": {"unsupervised": "active-ranker", "duplicate": "active-ranker"},
+        "family_q95_thresholds": {"unsupervised": 0.95, "duplicate": 0.5},
+    }
+    without_context = build_phase2_case_overlays(**base_kwargs)[0]
+    with_context = build_phase2_case_overlays(
+        **base_kwargs,
+        family_explanation_features_by_case={
+            "case_control_failure_00001": {
+                "unsupervised": [
+                    {
+                        "feature_id": "num__posting_date_weekend",
+                        "feature": "num__posting_date_weekend",
+                        "contrib": 0.55,
+                        "tag": "unusual_timing",
+                        "label_ko": "비정상 거래시점",
+                        "evidence_type": "statistical_outlier",
+                    }
+                ]
+            }
+        },
+        family_document_context_by_case={
+            "case_control_failure_00001": {
+                "unsupervised": {
+                    "unit_type": "document",
+                    "document_id": "D1",
+                    "evidence_row_count": 2,
+                    "top_score_mean": 0.91,
+                    "score_spread": 0.12,
+                    "amount_tail_context": 1.0,
+                    "period_end_context": 1.0,
+                    "account_rarity_context": 1.0,
+                    "process_rarity_context": 1.0,
+                    "repeated_normal_pressure": 0.0,
+                    "reason_tags": ["unusual_timing"],
+                    "max_score_row_ref": {"row_position": 1, "document_id": "D1"},
+                    "max_score_top_features": [{"feature_id": "num__amount_z"}],
+                }
+            }
+        },
+    )[0]
+
+    assert with_context["phase2_adjusted_priority"] == without_context["phase2_adjusted_priority"]
+    assert with_context["phase2_review_band"] == without_context["phase2_review_band"]
+    assert with_context["top_family"] == without_context["top_family"]
+    contribution = next(
+        item for item in with_context["family_contributions"] if item["family"] == "unsupervised"
+    )
+    assert contribution["evidence_type"] == "statistical_outlier"
+    assert contribution["explanation_features"][0]["feature_id"] == "num__posting_date_weekend"
+    assert contribution["unit_type"] == "document"
+    assert contribution["evidence_row_count"] == 2
+    assert contribution["top_score_mean"] == pytest.approx(0.91)
+    assert contribution["score_spread"] == pytest.approx(0.12)
+    assert contribution["amount_tail_context"] == pytest.approx(1.0)
+    assert contribution["period_end_context"] == pytest.approx(1.0)
+    assert contribution["account_rarity_context"] == pytest.approx(1.0)
+    assert contribution["process_rarity_context"] == pytest.approx(1.0)
+    assert contribution["repeated_normal_pressure"] == pytest.approx(0.0)
+    assert contribution["reason_tags"] == ["unusual_timing"]
+    assert "document_id" not in contribution
+    assert "document_id" not in contribution["document_context"]
+    assert "max_score_row_ref" not in contribution
+    assert "max_score_row_ref" not in contribution["document_context"]
+
+
 def test_tie_break_preserves_primary_order_outside_near_tie():
     """primary RRF score 차이가 near_tie_eps 초과 시 primary 순위 유지 (가드)."""
     primary = {"case_A": 0.10, "case_B": 0.05, "case_C": 0.01}
@@ -748,7 +834,7 @@ def test_overlay_pair_evidence_weak_tier_is_attached_with_weight_one():
 # `_build_family_contributions` 에서 family entry 의 `evidence_tier` 로 승격되며,
 # 결과적으로 `classify_phase2_review_band` 가 max_evidence_tier 기반으로 분류한다.
 # 이 chain 은 옵션 2 의 의도된 부수효과 (audit semantic — ISA 550 ¶A20 인용 정합)
-# 이며 본 회귀가 계약을 고정한다. docs/PHASE2_INTERFACE_DESIGN.md §4.3.2 참조.
+# 이며 본 회귀가 계약을 고정한다. docs/spec/PHASE2_INTERFACE_DESIGN.md §4.3.2 참조.
 # ──────────────────────────────────────────────────────────────────────────────
 
 

@@ -14,6 +14,7 @@ from src.feature import amount_features as amount_features_module
 from src.feature.amount_features import (
     _compute_base_amount,
     _compute_document_amount,
+    _compute_approver_info,
     _map_coa_category,
     add_all_amount_features,
     add_amount_magnitude,
@@ -438,6 +439,77 @@ class TestExceedsThresholdApproverLimit:
             "severe",
             "critical",
         ]
+
+
+class TestApproverMasterMembership:
+    THRESHOLDS = [10_000_000, 100_000_000, 1_000_000_000]
+
+    def test_approver_info_marks_known_unknown_and_blank_approvers(self, monkeypatch):
+        monkeypatch.setattr(
+            amount_features_module,
+            "_resolve_employee_master_path",
+            lambda df: Path("dummy-employees.json"),
+        )
+        monkeypatch.setattr(
+            amount_features_module,
+            "_load_employee_approval_map",
+            lambda path: {"APR-001": (100_000_000.0, True)},
+        )
+        df = pd.DataFrame({
+            "approved_by": ["APR-001", "APR-GHOST", ""],
+            "debit_amount": [1_000_000, 1_000_000, 1_000_000],
+            "credit_amount": [0, 0, 0],
+        })
+
+        info = _compute_approver_info(df)
+
+        assert info is not None
+        assert str(info["approver_in_master"].dtype) == "boolean"
+        assert info["approver_in_master"].iloc[:2].tolist() == [True, False]
+        assert pd.isna(info["approver_in_master"].iloc[2])
+
+    def test_approver_membership_is_attached_with_approval_features(self, monkeypatch):
+        monkeypatch.setattr(
+            amount_features_module,
+            "_resolve_employee_master_path",
+            lambda df: Path("dummy-employees.json"),
+        )
+        monkeypatch.setattr(
+            amount_features_module,
+            "_load_employee_approval_map",
+            lambda path: {"APR-001": (100_000_000.0, True)},
+        )
+        df = pd.DataFrame({
+            "document_id": ["A", "B", "C"],
+            "approved_by": ["APR-001", "APR-GHOST", ""],
+            "debit_amount": [1_000_000, 1_000_000, 1_000_000],
+            "credit_amount": [0, 0, 0],
+        })
+        base = _compute_base_amount(df)
+
+        add_exceeds_threshold(df, base, self.THRESHOLDS)
+
+        assert df["approver_in_master"].iloc[:2].tolist() == [True, False]
+        assert pd.isna(df["approver_in_master"].iloc[2])
+
+    def test_missing_employee_master_leaves_membership_column_absent(self, monkeypatch):
+        monkeypatch.setattr(
+            amount_features_module,
+            "_resolve_employee_master_path",
+            lambda df: None,
+        )
+        df = pd.DataFrame({
+            "document_id": ["A"],
+            "approved_by": ["APR-001"],
+            "debit_amount": [1_000_000],
+            "credit_amount": [0],
+        })
+        base = _compute_base_amount(df)
+
+        add_exceeds_threshold(df, base, self.THRESHOLDS)
+
+        assert _compute_approver_info(df) is None
+        assert "approver_in_master" not in df.columns
 
 
 class TestMapCoaCategory:

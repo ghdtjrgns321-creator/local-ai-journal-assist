@@ -118,11 +118,13 @@ def test_canonicalization_policy() -> None:
     assert canonicalize_rule_id("L1-01") == "L1-01"
 
 
-def test_canonical_transaction_count_is_32() -> None:
+def test_canonical_transaction_count_is_31() -> None:
+    # L4-02(Benford macro)를 PHASE1-2 family 로 이관(2026-06-15) → canonical L1~L4 count 32→31.
     canonical_rule_ids = get_canonical_transaction_rule_ids()
 
-    assert len(canonical_rule_ids) == 32
-    assert len(set(canonical_rule_ids)) == 32
+    assert len(canonical_rule_ids) == 31
+    assert len(set(canonical_rule_ids)) == 31
+    assert "L4-02" not in canonical_rule_ids
 
 
 def test_row_detail_eligibility_is_surface_and_flag_gated() -> None:
@@ -166,9 +168,10 @@ def test_required_ledger_columns_validate_against_schema(monkeypatch) -> None:
     assert any("not_in_schema" in error for error in errors)
 
 
-def test_l402_counted_but_not_row_detail() -> None:
-    assert include_in_l1_l4_transaction_count("L4-02") is True
-    assert "L4-02" in get_canonical_transaction_rule_ids()
+def test_l402_excluded_from_count_and_not_row_detail() -> None:
+    # L4-02(Benford macro) PHASE1-2 family 이관(2026-06-15): canonical count 제외, 행 detail 불가.
+    assert include_in_l1_l4_transaction_count("L4-02") is False
+    assert "L4-02" not in get_canonical_transaction_rule_ids()
     assert can_render_row_violation_detail("L4-02") is False
 
 

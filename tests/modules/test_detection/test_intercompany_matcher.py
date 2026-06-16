@@ -181,6 +181,36 @@ class TestIC01Unmatched:
         result = _detector().detect(df)
         assert result.details["IC01"].iloc[0] > 0  # IC 행 flagged
 
+    def test_ic01_known_affiliate_unmatched_timing_conditional(self):
+        """옵션3: 아는 그룹사 미대사 → 결산기 근접은 review(Low), 이탈은 review_stale(Medium).
+
+        D065 유지: 두 경우 모두 details score 0 (확정 위반 아님). aggregator floor만 분기.
+        """
+        from src.detection.intercompany_rules import ic01_unmatched_intercompany
+
+        df = pd.DataFrame(
+            {
+                "is_intercompany": [True, True],
+                "trading_partner": ["C003", "C003"],
+                "company_code": ["C001", "C001"],
+                "gl_account": ["1150", "1150"],
+                "is_period_end": [True, False],  # row0 결산 근접, row1 결산 이탈
+            }
+        )
+        match_df = pd.DataFrame(
+            {"has_counterpart": [False, False], "diff_ratio": [0.0, 0.0]},
+            index=df.index,
+        )
+        score, evidence_level, _reason = ic01_unmatched_intercompany(
+            df,
+            match_df=match_df,
+            related_party_master={"C001", "C003"},  # C003 = 아는 그룹사
+            partner_format_policy={},
+        )
+        assert evidence_level.iloc[0] == "review"  # 결산 근접 → 타이밍 설명 가능
+        assert evidence_level.iloc[1] == "review_stale"  # 결산 이탈 → 우선순위 상향
+        assert score.iloc[0] == 0.0 and score.iloc[1] == 0.0  # D065: details score 0
+
     def test_n_to_m_matching(self):
         """#6: N:M 매칭 — A사 3건 소액 vs B사 1건 통합 → 합계 일치 시 score 0."""
         df = _make_ic_df(

@@ -9,6 +9,13 @@ import pytest
 
 from src.detection.base import DetectionResult, RuleFlag
 from src.detection.phase1_case_builder import (
+    _build_audit_evidence_context,
+    _build_macro_context_index,
+    _case_audit_evidence_scores,
+    _collect_raw_hits,
+    _macro_only_evidences,
+    _priority_band,
+    _unit_audit_evidence_scores,
     build_phase1_case_reference,
     build_phase1_case_result,
     build_phase1_case_run_id,
@@ -77,6 +84,79 @@ def _single_rule_detection_result(
     )
 
 
+def test_unit_audit_evidence_fast_context_matches_case_reference() -> None:
+    df = pd.DataFrame(
+        {
+            "document_id": ["DOC-1", "DOC-1", "DOC-2"],
+            "posting_date": pd.to_datetime(["2026-04-30", "2026-05-02", "2026-06-30"]),
+            "document_date": pd.to_datetime(["2026-04-20", "2026-04-20", "2026-06-25"]),
+            "created_by": ["kim", "SYSTEM_BATCH", "lee"],
+            "approved_by": ["", "SYSTEM_BATCH", "lee"],
+            "source": ["manual", "system", "manual"],
+            "user_persona": ["accountant", "system", "manager"],
+            "business_process": ["P2P", "Intercompany", "R2R"],
+            "reference": ["INV-1", "IC-77", "REV-1"],
+            "trading_partner": ["", "C002", ""],
+            "auxiliary_account_number": ["V001", "", ""],
+            "master_counterparty_inactive": [True, False, False],
+            "master_counterparty_known": [False, True, False],
+            "document_flow_orphan": [False, True, False],
+            "ic_matched_pair_found": [False, True, False],
+            "ic_unmatched_reference": [False, False, False],
+            "approval_matrix_gap": [False, False, False],
+            "approval_limit_exceeded_independent": [True, False, False],
+            "has_attachment": [False, True, True],
+            "supporting_doc_type": ["", "invoice", "invoice"],
+            "settlement_status": ["", "", "reversed"],
+            "gl_account": ["410000", "510000", "620000"],
+            "debit_amount": [100.0, 200.0, 300.0],
+            "credit_amount": [0.0, 0.0, 0.0],
+            "company_code": ["kr01"] * 3,
+            "document_type": ["SA"] * 3,
+        }
+    )
+    details = pd.DataFrame(
+        {
+            "L2-05": [0.8, 0.0, 0.8],
+            "L3-04": [0.0, 0.6, 0.0],
+            "L4-03": [0.6, 0.0, 0.0],
+        },
+        index=df.index,
+    )
+    result = DetectionResult(
+        track_name="audit_context",
+        flagged_indices=[0, 1, 2],
+        scores=details.max(axis=1),
+        rule_flags=[
+            RuleFlag("L2-05", "Reversal", 4, 2, len(df)),
+            RuleFlag("L3-04", "PeriodEnd", 3, 1, len(df)),
+            RuleFlag("L4-03", "Large", 4, 1, len(df)),
+        ],
+        details=details,
+        metadata={},
+    )
+    hits = _collect_raw_hits(df, [result])
+    context = _build_audit_evidence_context(df)
+
+    for positions in ([0], [1], [0, 1], [2], [0, 1, 2]):
+        case_hits = [hit for hit in hits if hit.row_index in positions]
+        rows = df.iloc[positions]
+        expected = _case_audit_evidence_scores(
+            rows=rows,
+            case_hits=case_hits,
+            amount_score=0.75,
+            repeat_score=0.50,
+        )
+        actual = _unit_audit_evidence_scores(
+            row_positions=list(positions),
+            case_hits=case_hits,
+            amount_score=0.75,
+            repeat_score=0.50,
+            context=context,
+        )
+        assert actual == expected
+
+
 def _build_single_rule_case_result(
     rule_id: str,
     *,
@@ -102,6 +182,12 @@ def _build_single_rule_case_result(
         phase1_case_config={"phase1_case": {"top_n_cases": 50, "top_n_per_theme": 10}},
         generated_at=datetime(2026, 4, 22, 3, 15, 22, tzinfo=UTC),
     )
+
+
+def test_priority_band_does_not_promote_low_score_repeated_case() -> None:
+    config = {"priority_band": {"high": 0.90, "medium": 0.75}}
+
+    assert _priority_band(0.50, config) == "low"
 
 
 def test_run_id_prefers_company_and_batch():
@@ -399,7 +485,8 @@ def test_build_phase1_case_result_collects_secondary_tags_from_same_rows():
     assert "statistical_outlier" in control_case.secondary_tags
 
 
-def test_build_phase1_case_result_uses_l101_split_score_in_logic_score():
+def test_l101_separated_into_data_integrity_track():
+    # 2026-06-15: L1-01(차대불일치)은 부정 위험이 아니라 데이터 품질 문제 → 위험 큐에서 분리.
     df = pd.DataFrame(
         {
             "document_id": ["DOC-LOW", "DOC-HIGH"],
@@ -440,16 +527,15 @@ def test_build_phase1_case_result_uses_l101_split_score_in_logic_score():
         generated_at=datetime(2026, 4, 22, 3, 15, 22, tzinfo=UTC),
     )
 
-    cases = {case.documents[0].document_id: case for case in result.cases}
-    assert cases["DOC-LOW"].logic_score == pytest.approx(0.15)
-    assert cases["DOC-HIGH"].logic_score == pytest.approx(0.90)
-    assert (
-        cases["DOC-HIGH"].raw_rule_hits[0].normalized_score
-        > cases["DOC-LOW"].raw_rule_hits[0].normalized_score
-    )
+    # 위험 큐(case) 미생성 — L1-01은 위험 점수/등급에 기여하지 않는다.
+    assert result.cases == []
+    di = {f["rule_id"]: f for f in result.metadata["data_integrity_findings"]}
+    assert di["L1-01"]["flagged_row_count"] == 2
+    assert di["L1-01"]["track"] == "data_integrity"
 
 
-def test_build_phase1_case_result_uses_l103_bucket_score_in_logic_score():
+def test_l103_separated_into_data_integrity_track():
+    # 2026-06-15: L1-03(무효 계정)도 데이터 정합성 트랙 → 위험 큐 미생성.
     df = pd.DataFrame(
         {
             "document_id": ["DOC-UNKNOWN", "DOC-PLACEHOLDER"],
@@ -490,11 +576,10 @@ def test_build_phase1_case_result_uses_l103_bucket_score_in_logic_score():
         generated_at=datetime(2026, 4, 22, 3, 15, 22, tzinfo=UTC),
     )
 
-    cases = {case.documents[0].document_id: case for case in result.cases}
-    unknown = cases["DOC-UNKNOWN"]
-    placeholder = cases["DOC-PLACEHOLDER"]
-    assert placeholder.logic_score > unknown.logic_score
-    assert placeholder.raw_rule_hits[0].normalized_score > unknown.raw_rule_hits[0].normalized_score
+    assert result.cases == []
+    di = {f["rule_id"]: f for f in result.metadata["data_integrity_findings"]}
+    assert di["L1-03"]["flagged_row_count"] == 2
+    assert di["L1-03"]["track"] == "data_integrity"
 
 
 def test_build_phase1_case_result_uses_l108_annotation_score_for_priority():
@@ -564,7 +649,8 @@ def test_build_phase1_case_result_uses_l108_annotation_score_for_priority():
     assert "l108_context=high_amount,manual_entry,period_end" in (case.priority_adjustment_reasons)
 
 
-def test_l103_case_normalized_score_preserves_raw_score_when_label_is_coarse():
+def test_l103_data_integrity_track_counts_all_flagged_rows():
+    # 2026-06-15: L1-03은 위험 큐가 아니라 데이터 정합성 트랙에서 발화 건수로만 집계.
     df = pd.DataFrame(
         {
             "document_id": ["DOC-LOW", "DOC-MID", "DOC-HIGH"],
@@ -606,14 +692,9 @@ def test_l103_case_normalized_score_preserves_raw_score_when_label_is_coarse():
         generated_at=datetime(2026, 4, 22, 3, 15, 22, tzinfo=UTC),
     )
 
-    by_doc = {case.documents[0].document_id: case for case in result.cases}
-    normalized = [
-        by_doc["DOC-LOW"].raw_rule_hits[0].normalized_score,
-        by_doc["DOC-MID"].raw_rule_hits[0].normalized_score,
-        by_doc["DOC-HIGH"].raw_rule_hits[0].normalized_score,
-    ]
-    assert normalized == pytest.approx([0.45, 0.5625, 0.675])
-    assert by_doc["DOC-HIGH"].priority_score > by_doc["DOC-LOW"].priority_score
+    assert result.cases == []
+    di = {f["rule_id"]: f for f in result.metadata["data_integrity_findings"]}
+    assert di["L1-03"]["flagged_row_count"] == 3
 
 
 def test_l310_alone_does_not_seed_case_queue():
@@ -730,6 +811,9 @@ def test_l203_internal_reason_codes_canonicalize_without_extra_case_or_rule_coun
     assert case.rule_evidence_summary[0]["requested_rule_id"] in {"L2-03", "L2-03a", "L2-03d"}
 
 
+@pytest.mark.skip(
+    reason="intercompany_cycle 주제 제거(IC/GR PHASE1 제외, 2026-06-14) — 검증 대상 폐지."
+)
 def test_intercompany_sidecar_rule_keeps_topic_seed_without_l1_l4_transaction_count():
     result = _build_single_rule_case_result("IC01")
 
@@ -1945,6 +2029,37 @@ def test_l404_only_recurring_case_gets_priority_penalty():
     assert case.priority_band == "low"
 
 
+def test_l402_benford_not_attached_to_transaction_cases():
+    # #20② 재판정 — L4-02(Benford)는 모집단 신호로 거래 case 부착 제외(by_account 미포함).
+    # Benford detector 가 위반 문서 목록을 안 만들어 broad 부착 시 OOM 유발 → macro 큐에만 표면화.
+    findings = [
+        {"rule_id": "L4-02", "gl_account": "8010", "finding_id": "L4-02:0001"},
+        {
+            "rule_id": "D01",
+            "gl_account": "1190",
+            "finding_id": "D01:0001",
+            "queue_bucket": "confirmed_account_shift",
+        },
+    ]
+    index = _build_macro_context_index(findings)
+    assert "8010" not in index["by_account"], "L4-02 Benford 가 거래 case 에 부착되면 안 됨"
+    assert "1190" in index["by_account"], "D01 은 타깃 단위라 부착 유지"
+
+
+def test_macro_only_evidences_score_by_scoring_effect():
+    # #20① — scoring_effect 별 normalized_score 환산 (confirmed=1.0, corroborated=0.67, context_only=0)
+    contexts = [
+        {"rule_id": "D01", "scoring_effect": "priority_booster"},
+        {"rule_id": "GR01", "scoring_effect": "weak_priority_booster"},
+        {"rule_id": "L4-02", "scoring_effect": "context_only"},
+    ]
+    evidences = {ev["rule_id"]: ev for ev in _macro_only_evidences(contexts)}
+    assert all(ev["scoring_role"] == "macro_only" for ev in evidences.values())
+    assert evidences["D01"]["normalized_score"] == pytest.approx(1.0)
+    assert evidences["GR01"]["normalized_score"] == pytest.approx(0.67)
+    assert evidences["L4-02"]["normalized_score"] == pytest.approx(0.0)
+
+
 def test_macro_findings_do_not_enter_transaction_queue():
     df = pd.DataFrame(
         {
@@ -2247,6 +2362,7 @@ def test_d01_d02_macro_contexts_flow_into_matching_transaction_cases():
     assert "d02_macro_context" in case.evidence_tags
 
 
+@pytest.mark.skip(reason="GR macro 제거(IC/GR PHASE1 제외, 2026-06-14) — 검증 대상 폐지.")
 def test_graph_macro_findings_remain_context_without_rankable_transaction_seed():
     df = pd.DataFrame(
         {
@@ -2301,6 +2417,7 @@ def test_graph_macro_findings_remain_context_without_rankable_transaction_seed()
     assert result.cases == []
 
 
+@pytest.mark.skip(reason="intercompany axis 제거(IC/GR PHASE1 제외, 2026-06-14) — 검증 대상 폐지.")
 def test_case_scores_expose_integrity_and_intercompany_axes():
     df = pd.DataFrame(
         {
@@ -2524,7 +2641,10 @@ def test_fraud_combo_floor_is_written_to_case_topic_breakdown():
     case = next(case for case in result.cases if case.primary_topic == "closing_timing")
     breakdown = case.topic_score_breakdown["closing_timing"]
 
-    assert case.topic_scores["closing_timing"] == pytest.approx(0.75)
+    # period_end_adjustment_high combo → closing_timing tier HIGH. topic_scores 는 이제 tier
+    # 대표값(가중합 .score 아님): HIGH=0.90. band 도 high.
+    assert case.topic_scores["closing_timing"] == pytest.approx(0.90)
+    assert case.priority_band == "high"
     assert "period_end_adjustment_risk" in case.fraud_scenario_tags
     assert "period_end_adjustment_risk" in breakdown["fraud_combo_tags"]
     assert (
@@ -2731,7 +2851,8 @@ def test_l106_score_bands_get_distinct_case_priority_floors():
     assert by_doc["DOC-4"].priority_band == "high"
 
 
-def test_l102_core_missing_field_gets_medium_case_priority_floor():
+def test_l102_separated_into_data_integrity_track():
+    # 2026-06-15: L1-02(필수필드 누락)도 데이터 정합성 트랙 → 위험 큐/floor 미적용.
     df = pd.DataFrame(
         {
             "document_id": ["DOC-1"],
@@ -2786,13 +2907,14 @@ def test_l102_core_missing_field_gets_medium_case_priority_floor():
         generated_at=datetime(2026, 4, 22, 3, 15, 22, tzinfo=UTC),
     )
 
-    case = next(case for case in result.cases if case.primary_theme == "data_integrity_failure")
-    assert case.priority_score == pytest.approx(0.55)
-    assert case.priority_band == "medium"
-    assert "missing_core_required_field_blocker" in case.priority_adjustment_reasons
+    assert result.cases == []
+    di = {f["rule_id"]: f for f in result.metadata["data_integrity_findings"]}
+    assert di["L1-02"]["flagged_row_count"] == 1
+    assert di["L1-02"]["track"] == "data_integrity"
 
 
-def test_l102_multiple_core_missing_fields_gets_high_case_priority_floor():
+def test_l102_multiple_missing_separated_into_data_integrity_track():
+    # 2026-06-15: 여러 필수필드 누락도 위험 큐가 아니라 데이터 정합성 트랙에서만 집계.
     df = pd.DataFrame(
         {
             "document_id": ["DOC-1"],
@@ -2856,10 +2978,9 @@ def test_l102_multiple_core_missing_fields_gets_high_case_priority_floor():
         generated_at=datetime(2026, 4, 22, 3, 15, 22, tzinfo=UTC),
     )
 
-    case = next(case for case in result.cases if case.primary_theme == "data_integrity_failure")
-    assert case.priority_score == pytest.approx(0.75)
-    assert case.priority_band == "high"
-    assert "multiple_core_required_fields_missing" in case.priority_adjustment_reasons
+    assert result.cases == []
+    di = {f["rule_id"]: f for f in result.metadata["data_integrity_findings"]}
+    assert di["L1-02"]["flagged_row_count"] == 1
 
 
 def test_save_and_load_phase1_case_result_roundtrip(monkeypatch):
@@ -2929,9 +3050,9 @@ def _topic_scoring_config() -> dict:
     }
 
 
-def test_composite_sort_score_components_match_audit_formula():
-    # §9.3 공식: 1.0*topic + 0.3*max_primary + 0.3*audit_evidence + 0.3*corroboration
-    #             + 0.1*min(independent_evidence/5, 1.0)
+def test_tier_sort_score_components_are_ordinal_keys():
+    # PHASE1_TIER_SCORING_SPEC §4: tier sort = 순서형 (tier_rank, 독립 primary 수, rule_count,
+    # materiality). 가중합/composite 공식 폐기. components 는 이 4개 순서형 키.
     df = _single_row_df()
     detection_result = _single_rule_detection_result(df, "L1-05", score=0.8, severity=4)
     result = build_phase1_case_result(
@@ -2947,16 +3068,14 @@ def test_composite_sort_score_components_match_audit_formula():
     assert len(result.cases) == 1
     case = result.cases[0]
     comps = case.composite_sort_score_components
-    expected = (
-        1.0 * comps["topic_score"]
-        + 0.3 * comps["max_primary_rule_score"]
-        + 0.3 * comps["audit_evidence_score"]
-        + 0.3 * comps["corroboration_score"]
-        + 0.1 * comps["independent_evidence_norm"]
-    )
-    assert case.composite_sort_score == pytest.approx(expected, abs=1e-9)
-    assert comps["topic_score"] > 0
-    assert comps["independent_evidence_count"] >= 1
+    assert set(comps) == {
+        "tier_rank",
+        "independent_primary_count",
+        "rule_count",
+        "materiality_score",
+    }
+    assert comps["independent_primary_count"] >= 1
+    assert comps["tier_rank"] >= 1  # L1-05 primary → 최소 LOW tier
 
 
 def test_composite_sort_score_falls_back_to_priority_score_without_topic_scoring():
@@ -2978,13 +3097,13 @@ def test_composite_sort_score_falls_back_to_priority_score_without_topic_scoring
     assert case.composite_sort_score_components == {"fallback_score": case.priority_score}
 
 
-def test_composite_sort_score_orders_high_max_primary_above_high_amount():
-    # §9.3 audit §2.1: approval_control:high 에서 truth case 는 nontruth 보다 max_primary_rule_score
-    # 가 크고 total_amount 는 작다. composite_sort_score 정렬에서 max_primary 가 큰 case 가 위에
-    # 와야 한다.
+def test_tier_sort_orders_more_signals_above_high_amount():
+    # PHASE1_TIER_SCORING_SPEC §4: 같은 tier 안에서 서로 다른 신호(독립 primary 룰)가 더 많은
+    # case 가 위. 금액(materiality)은 최후 tiebreak 이므로, 신호 적지만 고액인 case 를
+    # 신호 많은 case 가 누른다(§9.3 anti-burying lock 호환).
     df = pd.DataFrame(
         {
-            "document_id": ["DOC-TRUTH", "DOC-AMOUNT"],
+            "document_id": ["DOC-MANY", "DOC-AMOUNT"],
             "posting_date": pd.to_datetime(["2026-04-30", "2026-04-29"]),
             "created_by": ["kim", "lee"],
             "business_process": ["P2P", "P2P"],
@@ -2996,13 +3115,19 @@ def test_composite_sort_score_orders_high_max_primary_above_high_amount():
             "document_type": ["KR", "KR"],
         }
     )
-    # L1-05 (self-approval) 가 truth 행에서는 강한 점수, amount 큰 nontruth 행에서는 약한 점수.
-    details = pd.DataFrame({"L1-05": [0.95, 0.55]}, index=df.index)
+    # DOC-MANY: 독립 primary 2개(L1-05+L1-06), 소액. DOC-AMOUNT: 1개(L1-05), 고액.
+    details = pd.DataFrame(
+        {"L1-05": [0.8, 0.8], "L1-06": [0.8, 0.0]},
+        index=df.index,
+    )
     detection_result = DetectionResult(
         track_name="layer_b",
         flagged_indices=[0, 1],
         scores=details.max(axis=1),
-        rule_flags=[RuleFlag("L1-05", "SelfApproval", 4, 2, len(df))],
+        rule_flags=[
+            RuleFlag("L1-05", "SelfApproval", 4, 2, len(df)),
+            RuleFlag("L1-06", "SegregationOfDuties", 4, 1, len(df)),
+        ],
         details=details,
         metadata={},
     )
@@ -3017,19 +3142,19 @@ def test_composite_sort_score_orders_high_max_primary_above_high_amount():
     )
 
     assert len(result.cases) >= 2
-    truth_case = next(
+    many_case = next(
         case
         for case in result.cases
-        if any(hit.document_id == "DOC-TRUTH" for hit in case.raw_rule_hits)
+        if any(hit.document_id == "DOC-MANY" for hit in case.raw_rule_hits)
     )
     amount_case = next(
         case
         for case in result.cases
         if any(hit.document_id == "DOC-AMOUNT" for hit in case.raw_rule_hits)
     )
-    # composite_sort_score 정렬에서 truth (max_primary=0.95) 가 amount (max_primary=0.55) 보다 위.
-    assert truth_case.composite_sort_score > amount_case.composite_sort_score
-    assert (truth_case.exposure_rank or 0) < (amount_case.exposure_rank or 0)
+    # 신호 많은 case 가 고액 case 보다 위 (금액은 최후 tiebreak).
+    assert many_case.composite_sort_score > amount_case.composite_sort_score
+    assert (many_case.exposure_rank or 0) < (amount_case.exposure_rank or 0)
 
 
 _COMPOSITE_GUARD_ARTIFACT = Path(

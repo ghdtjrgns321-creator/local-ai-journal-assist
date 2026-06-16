@@ -2,8 +2,8 @@
 
 from config.settings import (
     AuditSettings,
-    get_phase1_case,
     get_keywords,
+    get_phase1_case,
     get_risk_keywords,
     get_schema,
     get_settings,
@@ -24,7 +24,14 @@ class TestAuditSettings:
         s = AuditSettings()
         assert s.max_file_size_mb == 100
         assert s.fuzzy_threshold == 80
-        assert s.approval_thresholds == [10_000_000, 100_000_000, 1_000_000_000, 5_000_000_000, 10_000_000_000, 50_000_000_000]
+        assert s.approval_thresholds == [
+            10_000_000,
+            100_000_000,
+            1_000_000_000,
+            5_000_000_000,
+            10_000_000_000,
+            50_000_000_000,
+        ]
         # computed_field: 최고 한도와 자동 동기화
         assert s.approval_threshold == 50_000_000_000
         assert s.midnight_start == 22
@@ -54,7 +61,13 @@ class TestYamlLoaders:
         """필수 컬럼(DETECTION_RULES.md 부록 B 기준)이 존재해야 한다."""
         schema = get_schema()
         names = [col["name"] for col in schema["columns"]]
-        for required in ["document_id", "posting_date", "gl_account", "debit_amount", "credit_amount"]:
+        for required in [
+            "document_id",
+            "posting_date",
+            "gl_account",
+            "debit_amount",
+            "credit_amount",
+        ]:
             assert required in names
 
     def test_keywords_has_standard_columns(self):
@@ -77,8 +90,8 @@ class TestYamlLoaders:
         assert "phase1_case" in cfg
         phase1 = cfg["phase1_case"]
         assert phase1["secondary_tag_min_score"] == 0.40
-        assert phase1["priority_band"]["high"] == 0.75
-        assert phase1["priority_band"]["medium"] == 0.45
+        assert phase1["priority_band"]["high"] == 0.90
+        assert phase1["priority_band"]["medium"] == 0.75
         assert phase1["counterparty_columns"][0] == "auxiliary_account_number"
         assert phase1["priority_weights"]["control"] == 0.25
         assert phase1["priority_weights"]["outflow"] == 0.15

@@ -109,6 +109,35 @@ def _mismatch_df() -> pd.DataFrame:
     )
 
 
+def _cross_company_reciprocal_df() -> pd.DataFrame:
+    return _ic_df(
+        [
+            {
+                "document_id": "DOC-REC",
+                "gl_account": "1150-001",
+                "debit_amount": 1_000_000.0,
+                "credit_amount": 0.0,
+                "company_code": "C01",
+                "trading_partner": "C02",
+                "posting_date": "2024-02-10",
+                "reference": "REF-XCO",
+                "currency": "KRW",
+            },
+            {
+                "document_id": "DOC-PAY",
+                "gl_account": "2050-001",
+                "debit_amount": 0.0,
+                "credit_amount": 1_000_000.0,
+                "company_code": "C02",
+                "trading_partner": "C01",
+                "posting_date": "2024-02-10",
+                "reference": "REF-XCO",
+                "currency": "KRW",
+            },
+        ]
+    )
+
+
 def _unmatched_df() -> pd.DataFrame:
     """IC01 unmatched (partner master 에 없는 high evidence row)."""
     return _ic_df(
@@ -193,6 +222,22 @@ def test_reciprocal_pairs_extracted_for_single_document_with_receivable_payable(
     assert entry["payable_amount"] == pytest.approx(1_000_000.0)
     assert 0.0 <= entry["amount_symmetry"] <= 1.0
     assert entry["amount_symmetry"] >= 0.95
+
+
+def test_reciprocal_pairs_extracted_for_cross_company_reference_pair():
+    """별도 회사 전표 rec/pay 가 reference+상대회사+금액으로 맞으면 reciprocal artifact."""
+    df = _cross_company_reciprocal_df()
+    result = _detector().detect(df)
+    artifact = result.metadata["ic_pair_artifact"]
+    reciprocal = artifact["reciprocal_pairs"]
+
+    assert len(reciprocal) == 1
+    entry = reciprocal[0]
+    assert entry["flow_scope"] == "cross_company_reference"
+    assert entry["receivable_document_ids"] == ["DOC-REC"]
+    assert entry["payable_document_ids"] == ["DOC-PAY"]
+    assert entry["amount_symmetry"] == pytest.approx(1.0)
+    assert artifact["coverage"]["reciprocal_pair_count"] == 1
 
 
 def test_mismatch_pairs_extracted_for_amount_mismatch_with_ratio():

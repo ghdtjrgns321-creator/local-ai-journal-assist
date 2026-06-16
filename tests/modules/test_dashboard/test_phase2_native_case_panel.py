@@ -7,6 +7,8 @@ Why: Streamlit 렌더링 (AgGrid / st.dataframe) 자체는 단위 테스트로 �
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pandas as pd
 
 from dashboard.components import phase2_native_case_panel as panel
@@ -314,32 +316,87 @@ def test_render_relational_panel_preserves_case_set_order_without_schema_change(
 
 def test_build_unsupervised_row_top_feature():
     case = UnsupervisedCase(
-        phase2_case_id="p2_unsupervised_row_unsup0000001",
+        phase2_case_id="p2_unsupervised_document_unsup0000001",
         batch_id="batch-1",
         family="unsupervised",
-        unit_type="row",
-        row_refs=(_row_ref(),),
+        unit_type="document",
+        row_refs=(_row_ref("DOC-A", 1), _row_ref("DOC-A", 2)),
         evidence_tier="ml_quantile",
         case_generation_reason={},
         family_score=0.92,
         family_ecdf=0.97,
         anomaly_score=3.456789,
-        top_features=({"feature_id": "amount_z", "contrib": 0.45},),
+        top_features=(
+            {
+                "feature_id": "amount_z",
+                "contrib": 0.45,
+                "tag": "amount_outlier",
+                "label_ko": "금액 꼬리",
+            },
+        ),
+        document_id="DOC-A",
+        evidence_row_count=2,
+        amount_tail_context=0.98,
+        period_end_context=0.9,
+        account_rarity_context=0.5,
+        process_rarity_context=0.25,
         model_id="model-1",
         schema_hash="hash-1",
     )
     row = panel._build_unsupervised_row(case)
     assert row["evidence_tier"] == "ML"
-    assert row["anomaly_score"] == 3.4568
-    assert row["top_feature_1"] == "amount_z"
+    assert row["review_unit"] == "DOC-A"
+    assert row["reason_tag"] == "금액 꼬리"
+    assert row["top_feature"] == "금액 꼬리"
+    assert row["amount_tail"] == "0.98"
+    assert row["period_end"] == "0.90"
+    assert row["account_process_rarity"] == "acct 0.50 / proc 0.25"
+    assert row["evidence_row_count"] == 2
+
+
+def test_build_unsupervised_row_uses_document_review_surface_columns():
+    case = UnsupervisedCase(
+        phase2_case_id="p2_unsupervised_document_unsup0000005",
+        batch_id="batch-1",
+        family="unsupervised",
+        unit_type="document",
+        row_refs=(_row_ref("DOC-A", 1), _row_ref("DOC-A", 2)),
+        evidence_tier="ml_quantile",
+        case_generation_reason={"document_grouping": "document_id"},
+        family_score=0.92,
+        family_ecdf=0.97,
+        anomaly_score=0.92,
+        top_features=(
+            {
+                "feature_id": "amount_z",
+                "contrib": 0.45,
+                "tag": "amount_outlier",
+                "label_ko": "금액 꼬리",
+            },
+        ),
+        document_id="DOC-A",
+        evidence_row_count=2,
+        amount_tail_context=0.98,
+        period_end_context=0.9,
+        account_rarity_context=0.5,
+        process_rarity_context=0.25,
+    )
+
+    row = panel._build_unsupervised_row(case)
+
+    assert "anomaly_score" not in row
+    assert "account_rarity" not in row
+    assert "process_rarity" not in row
+    assert row["account_process_rarity"] == "acct 0.50 / proc 0.25"
+    assert row["evidence_row_count"] == 2
 
 
 def test_build_unsupervised_row_empty_top_features():
     case = UnsupervisedCase(
-        phase2_case_id="p2_unsupervised_row_unsup0000002",
+        phase2_case_id="p2_unsupervised_document_unsup0000002",
         batch_id="batch-1",
         family="unsupervised",
-        unit_type="row",
+        unit_type="document",
         row_refs=(_row_ref(),),
         evidence_tier="ml_quantile",
         case_generation_reason={},
@@ -351,7 +408,102 @@ def test_build_unsupervised_row_empty_top_features():
         schema_hash="",
     )
     row = panel._build_unsupervised_row(case)
-    assert row["top_feature_1"] == "—"
+    assert row["reason_tag"] == "—"
+    assert row["top_feature"] == "—"
+
+
+def test_build_unsupervised_row_fallback_singleton_does_not_imply_document_group():
+    case = UnsupervisedCase(
+        phase2_case_id="p2_unsupervised_document_unsup0000003",
+        batch_id="batch-1",
+        family="unsupervised",
+        unit_type="document",
+        row_refs=(
+            make_row_ref(
+                row_position=0,
+                index_label=0,
+                document_id=None,
+                raw_line_number=1,
+                company_code="kr01",
+            ),
+        ),
+        evidence_tier="ml_quantile",
+        case_generation_reason={"document_grouping": "fallback_row_identity"},
+        family_score=0.5,
+        family_ecdf=0.96,
+        anomaly_score=1.0,
+        evidence_row_count=1,
+    )
+
+    row = panel._build_unsupervised_row(case)
+    narrative = panel._build_case_narrative(case)
+
+    assert row["review_unit"] == "전표 ID 없음 · 단일 행 review"
+    assert "전표 묶음" not in row["review_unit"]
+    assert "전표 식별자가 없어 단일 행 기준으로 표시" in narrative
+
+
+def test_unsupervised_evidence_rows_puts_max_score_row_first():
+    max_ref = _row_ref("DOC-A", 2)
+    case = UnsupervisedCase(
+        phase2_case_id="p2_unsupervised_document_unsup0000004",
+        batch_id="batch-1",
+        family="unsupervised",
+        unit_type="document",
+        row_refs=(_row_ref("DOC-A", 1), max_ref, _row_ref("DOC-A", 3)),
+        evidence_tier="ml_quantile",
+        case_generation_reason={"document_grouping": "document_id"},
+        family_score=0.9,
+        family_ecdf=0.99,
+        anomaly_score=0.9,
+        evidence_row_count=3,
+        max_score_row_ref=max_ref,
+    )
+
+    ordered = panel._ordered_unsupervised_row_refs(case)
+
+    assert ordered[0] == max_ref
+
+
+def test_unsupervised_evidence_rows_trace_orders_by_score_ecdf_desc():
+    low_ref = _row_ref("DOC-A", 1)
+    high_ref = _row_ref("DOC-A", 2)
+    case = UnsupervisedCase(
+        phase2_case_id="p2_unsupervised_document_unsup0000006",
+        batch_id="batch-1",
+        family="unsupervised",
+        unit_type="document",
+        row_refs=(low_ref, high_ref),
+        evidence_tier="ml_quantile",
+        case_generation_reason={
+            "document_grouping": "document_id",
+            "evidence_rows": [
+                {
+                    "row_position": low_ref.row_position,
+                    "score": 0.80,
+                    "ecdf": 0.95,
+                },
+                {
+                    "row_position": high_ref.row_position,
+                    "score": 0.90,
+                    "ecdf": 0.99,
+                },
+            ],
+        },
+        family_score=0.9,
+        family_ecdf=0.99,
+        anomaly_score=0.9,
+        evidence_row_count=2,
+        max_score_row_ref=high_ref,
+    )
+
+    rows = panel._unsupervised_evidence_row_display_rows(case)
+
+    assert rows[0]["row_ref"] == panel._row_label(high_ref)
+    assert rows[0]["score"] == "0.9000"
+    assert rows[0]["ecdf"] == "0.9900"
+    assert "index" not in rows[0]
+    assert "company" not in rows[0]
 
 
 def test_build_timeseries_row_window_formatting():
@@ -428,3 +580,55 @@ def test_render_panel_empty_family_shows_info(monkeypatch):
     panel.render_phase2_native_case_panel("duplicate", case_set=empty_set)
     assert captured["info"], "0건 안내 표시 필요"
     assert "duplicate" in captured["info"][0]
+
+
+def test_phase2_document_drilldown_preserves_company_boundary():
+    case = UnsupervisedCase(
+        phase2_case_id="p2_unsupervised_document_company0001",
+        batch_id="batch-1",
+        family="unsupervised",
+        unit_type="document",
+        row_refs=(
+            make_row_ref(
+                row_position=0,
+                index_label=0,
+                document_id="DOC-SAME",
+                raw_line_number=1,
+                company_code="C001",
+            ),
+        ),
+        evidence_tier="ml_quantile",
+        case_generation_reason={"document_grouping": "document_id"},
+        family_score=0.9,
+        family_ecdf=0.99,
+        anomaly_score=0.9,
+        evidence_row_count=1,
+    )
+    pr = SimpleNamespace(
+        data=pd.DataFrame(
+            {
+                "company_code": ["C001", "C002"],
+                "document_id": ["DOC-SAME", "DOC-SAME"],
+                "posting_date": ["2026-06-01", "2026-06-01"],
+                "gl_account": ["1000", "2000"],
+                "debit_amount": [10.0, 99.0],
+                "credit_amount": [0.0, 0.0],
+            }
+        )
+    )
+
+    documents = panel._build_phase2_documents_list(case, ["DOC-SAME"], pr=pr)
+    raw_lines = panel._phase2_case_document_raw_lines(pr, case, "DOC-SAME")
+
+    assert len(documents) == 1
+    assert documents[0]["debit_amount"] == 10.0
+    assert raw_lines == [
+        {
+            "company_code": "C001",
+            "document_id": "DOC-SAME",
+            "posting_date": "2026-06-01",
+            "gl_account": "1000",
+            "debit_amount": 10.0,
+            "credit_amount": 0.0,
+        }
+    ]

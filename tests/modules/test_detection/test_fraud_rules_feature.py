@@ -231,6 +231,63 @@ class TestL1_04:
         assert result.attrs["breakdown"]["immediate_rows"] == 1
         assert result.attrs["breakdown"]["review_rows"] == 1
 
+    def test_lone_automated_source_approval_excess_keeps_original_bucket(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D1"],
+            "exceeds_threshold": [True],
+            "approval_excess_bucket": ["critical"],
+            "approval_limit_resolved": [True],
+            "source": ["automated"],
+            "posting_date": pd.to_datetime(["2025-01-02"]),
+            "batch_id": [None],
+            "job_id": [None],
+        })
+
+        result = b03_exceeds_threshold(df)
+
+        assert result.tolist() == [True]
+        assert result.attrs["score_series"].tolist() == [0.90]
+        assert result.attrs["review_score_series"].tolist() == [0.0]
+        assert result.attrs["breakdown"]["immediate_rows"] == 1
+        assert result.attrs["breakdown"]["review_rows"] == 0
+
+    def test_batched_automated_source_approval_excess_remains_review(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D1"],
+            "exceeds_threshold": [True],
+            "approval_excess_bucket": ["critical"],
+            "approval_limit_resolved": [True],
+            "source": ["automated"],
+            "posting_date": pd.to_datetime(["2025-01-02"]),
+            "batch_id": ["BATCH-1"],
+            "job_id": [None],
+        })
+
+        result = b03_exceeds_threshold(df)
+
+        assert result.tolist() == [False]
+        assert result.attrs["score_series"].tolist() == [0.0]
+        assert result.attrs["review_score_series"].tolist() == [0.4]
+        assert result.attrs["breakdown"]["immediate_rows"] == 0
+        assert result.attrs["breakdown"]["review_rows"] == 1
+
+    def test_missing_identity_columns_keep_approval_excess_source_review_unchanged(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D1"],
+            "exceeds_threshold": [True],
+            "approval_excess_bucket": ["critical"],
+            "approval_limit_resolved": [True],
+            "source": ["automated"],
+            "posting_date": pd.to_datetime(["2025-01-02"]),
+        })
+
+        result = b03_exceeds_threshold(df)
+
+        assert result.tolist() == [False]
+        assert result.attrs["score_series"].tolist() == [0.0]
+        assert result.attrs["review_score_series"].tolist() == [0.4]
+        assert result.attrs["breakdown"]["review_rows"] == 1
+
 
 class TestL3_02:
     def test_manual_entry_priority_flagged_and_population_reviewed(
