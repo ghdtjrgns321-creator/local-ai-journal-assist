@@ -32,7 +32,7 @@ data/companies/_ci_baseline/engagements/2026/models/phase2_unsupervised/v1/*
 !data/companies/_ci_baseline/engagements/2026/models/phase2_unsupervised/v1/training_report.json
 
 # 면접용 개인 문서 (외부 공개 안 함)
-docs/users/
+docs/guide/users/
 
 # DuckDB
 *.duckdb
@@ -100,3 +100,6 @@ tools/tmp_*.py
 
 # 런타임 생성물 (케이스/리포트 등)
 artifacts/
+
+# 배포 시크릿 (basic auth 비밀번호 해시 — 서버에서 생성, 커밋 금지)
+deploy/nginx/.htpasswd

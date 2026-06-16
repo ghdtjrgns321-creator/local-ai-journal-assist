@@ -119,5 +119,5 @@ Rows with zero or missing `tax_amount` are not automatically suspicious. Decide 
 - `src/feature/`
 - `dashboard/`
 - `src/export/`
-- `docs/pre-plan/04-validation.md`
-- `docs/DETECTION_RULES.md` when thresholds or tax rules change
+- `docs/archive/completed/raw-plan/04-validation.md`
+- `docs/spec/DETECTION_RULES.md` when thresholds or tax rules change

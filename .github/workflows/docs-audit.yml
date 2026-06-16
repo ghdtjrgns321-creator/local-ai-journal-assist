@@ -3,8 +3,8 @@ name: Docs Audit
 on:
   pull_request:
     paths:
-      - "docs/DECISION.md"
-      - "docs/CONSTRAINTS.md"
+      - "docs/spec/DECISION.md"
+      - "docs/spec/CONSTRAINTS.md"
       - "src/preprocessing/constants.py"
       - "tools/scripts/audit_decision_ids.py"
       - "tools/scripts/audit_leakage_deny_rules.py"
@@ -14,8 +14,8 @@ on:
       - main
       - develop
     paths:
-      - "docs/DECISION.md"
-      - "docs/CONSTRAINTS.md"
+      - "docs/spec/DECISION.md"
+      - "docs/spec/CONSTRAINTS.md"
       - "src/preprocessing/constants.py"
       - "tools/scripts/audit_decision_ids.py"
       - "tools/scripts/audit_leakage_deny_rules.py"
@@ -32,7 +32,7 @@ jobs:
           python-version: "3.11"
       - name: Audit DECISION.md D<n> headers
         run: |
-          python tools/scripts/audit_decision_ids.py docs/DECISION.md
+          python tools/scripts/audit_decision_ids.py docs/spec/DECISION.md
       - name: Audit LEAKAGE_DENY_RULES docs sync
         run: |
           python tools/scripts/audit_leakage_deny_rules.py

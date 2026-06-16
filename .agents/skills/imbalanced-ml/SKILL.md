@@ -122,5 +122,5 @@ Do not use `scipy.stats.rankdata` on each inference batch for persisted threshol
 - `src/ml/` or any new Phase 2 ML module.
 - `src/detection/` when ML scores enter review queues.
 - `config/settings.py` for thresholds and contamination settings.
-- `docs/pre-plan/05a-detection-ml.md`
+- `docs/archive/completed/raw-plan/05a-detection-ml.md`
 - `docs/TASKS.md` for current Phase 2 status.

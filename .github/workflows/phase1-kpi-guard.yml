@@ -132,7 +132,7 @@ jobs:
             const milestone = consecutive >= 6 ? 6 : (consecutive >= 3 ? 3 : 0);
             // 정상 run(softWarns === 0)으로 streak가 끊기면 milestones lineage도 초기화한다.
             // 이후 같은 회귀가 다시 누적되면 새로운 streak로 보고 milestone 3/6 issue가 재발화된다.
-            // 정책 단일 출처: docs/CONSTRAINTS.md §"SOFT WARN 누적 대응 절차" — 옵션 A (streak-reset).
+            // 정책 단일 출처: docs/spec/CONSTRAINTS.md §"SOFT WARN 누적 대응 절차" — 옵션 A (streak-reset).
             const milestonesOpened = softWarns === 0
               ? []
               : (Array.isArray(history.milestones_opened) ? history.milestones_opened : []);

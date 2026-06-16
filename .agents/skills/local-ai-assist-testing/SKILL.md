@@ -43,7 +43,7 @@ Local entry points are acceptable when the repo workflow already uses them:
 
 ### Ingest / Validation
 
-- Read the relevant `docs/pre-plan/02-ingest.md` or `docs/pre-plan/04-validation.md` section before editing.
+- Read the relevant `docs/archive/completed/raw-plan/02-ingest.md` or `docs/archive/completed/raw-plan/04-validation.md` section before editing.
 - Prefer tests around file validation, header detection, column mapping, type casting, Pandera schemas, and accounting validators.
 - Include edge cases for Korean ERP exports, encoding fallback, required/recommended mappings, and missing optional columns.
 - Verify graceful degradation: a missing optional input should not be reported as a code defect.

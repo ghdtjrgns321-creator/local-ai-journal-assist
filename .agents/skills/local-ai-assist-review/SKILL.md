@@ -118,10 +118,10 @@ Reject or flag changes that:
 Check whether the change requires updates to:
 
 - `docs/TASKS.md` for actual task status changes.
-- `docs/debugging.md` or `docs/TROUBLESHOOT.md` for meaningful bugs and fixes.
-- `docs/DECISION.md` for architecture or policy decisions.
-- `docs/DETECTION_RULES.md` or detection result contracts for rule/scoring semantics.
-- `docs/pre-plan/` only when the design reference itself changed.
+- `docs/debugging.md` or `docs/spec/TROUBLESHOOT.md` for meaningful bugs and fixes.
+- `docs/spec/DECISION.md` for architecture or policy decisions.
+- `docs/spec/DETECTION_RULES.md` or detection result contracts for rule/scoring semantics.
+- `docs/archive/completed/raw-plan/` only when the design reference itself changed.
 
 ## Verification Expectations
 

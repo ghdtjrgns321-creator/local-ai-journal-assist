@@ -137,4 +137,4 @@ For GL-to-TB checks:
 - `src/ingest/`
 - `src/pipeline.py`
 - `config/settings.py`
-- `docs/pre-plan/04-validation.md`
+- `docs/archive/completed/raw-plan/04-validation.md`
