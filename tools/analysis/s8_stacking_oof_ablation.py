@@ -17,7 +17,7 @@ Ablation 매트릭스:
 
 산출:
   artifacts/S8_stacking_oof_ablation.json
-  docs/S8_stacking_oof_audit.md
+  docs/archive/completed/S8_stacking_oof_audit.md
   docs/S8_stacking_policy_patch.md  (필요 시 자동 작성)
 
 실행:
@@ -788,7 +788,7 @@ def write_policy_patch(payload: dict) -> None:
     lines = [
         "# S8 — Stacking OOF policy patch (권고)",
         "",
-        "> 산출 사유: `docs/S8_stacking_oof_audit.md` 판정 결과 정책 변경 권고",
+        "> 산출 사유: `docs/archive/completed/S8_stacking_oof_audit.md` 판정 결과 정책 변경 권고",
         f"> AUPRC(A) − AUPRC(B) = {v['delta_auprc_A_minus_B']:+.4f}",
         f"> 룰 가중치 비중 = {v['rule_weight_share_A']:.4f}",
         "",

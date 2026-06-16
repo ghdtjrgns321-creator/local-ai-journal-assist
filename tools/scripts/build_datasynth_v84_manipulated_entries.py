@@ -330,7 +330,7 @@ def main() -> None:
         "year_counts": {str(k): int(v) for k, v in truth["fiscal_year"].value_counts().sort_index().to_dict().items()},
         "scenario_counts": {str(k): int(v) for k, v in truth["manipulation_scenario"].value_counts().to_dict().items()},
         "anti_fitting_note": "These are not designed for one detector rule. Some manipulated entries may be weakly detected or missed by L1-L4, which is expected.",
-        "source_reference": "docs/DETECTION_REFERENCE.md FSS manipulation pattern mix",
+        "source_reference": "docs/spec/DETECTION_REFERENCE.md FSS manipulation pattern mix",
     }
     (DEST / "V84_MANIPULATED_ENTRY_TRUTH.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2),

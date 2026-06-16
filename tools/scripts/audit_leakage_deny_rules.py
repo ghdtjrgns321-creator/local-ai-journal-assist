@@ -53,7 +53,7 @@ def _read_constraints_rules(path: Path) -> list[str]:
 def main() -> int:
     repo = Path(__file__).resolve().parents[2]
     constant_rules = _read_constant_rules(repo / "src/preprocessing/constants.py")
-    constraints_rules = _read_constraints_rules(repo / "docs/CONSTRAINTS.md")
+    constraints_rules = _read_constraints_rules(repo / "docs/spec/CONSTRAINTS.md")
     if constant_rules != constraints_rules:
         print("LEAKAGE_DENY_RULES mismatch between constants.py and CONSTRAINTS.md section 6")
         print(f"constants.py:     {constant_rules}")

@@ -1,4 +1,4 @@
-"""docs/DECISION.md 의 ``### D{n}:`` 헤더 unique 회귀 가드.
+"""docs/spec/DECISION.md 의 ``### D{n}:`` 헤더 unique 회귀 가드.
 
 2026-05-15 D040/D041/D042 ID 충돌 정정 이후 동일 사고가 재발하지 않도록
 CI 에서 강제한다. DECISION.md 를 파싱해 모든 ``### D<digits>:`` 헤더를
@@ -7,7 +7,7 @@ code 로 GitHub Actions 를 fail 시킨다.
 
 사용:
     uv run python tools/scripts/audit_decision_ids.py
-    uv run python tools/scripts/audit_decision_ids.py docs/DECISION.md
+    uv run python tools/scripts/audit_decision_ids.py docs/spec/DECISION.md
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from pathlib import Path
 # ``### D<digits>:`` 형태만 받는다. ``###`` 다음 공백 1개, D + 숫자, 콜론.
 HEADER_PATTERN = re.compile(r"^### (D\d+):")
 
-DEFAULT_DECISION_PATH = Path(__file__).resolve().parents[2] / "docs" / "DECISION.md"
+DEFAULT_DECISION_PATH = Path(__file__).resolve().parents[2] / "docs" / "spec" / "DECISION.md"
 
 
 def collect_decision_ids(path: Path) -> list[tuple[int, str]]:

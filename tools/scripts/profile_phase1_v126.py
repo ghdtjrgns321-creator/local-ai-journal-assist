@@ -68,6 +68,9 @@ PHASE1_USECOLS = {
     "created_by",
     "user_persona",
     "source",
+    # Why: L4-06 lone_batch_identity(source 위장 의심)가 배치 정체성 검증에 사용 (2026-06-12)
+    "batch_id",
+    "job_id",
     "business_process",
     "semantic_scenario_id",
     "counterparty_type",
@@ -140,7 +143,11 @@ def _read_data(data_dir: Path, checkpoint: Path, summary: dict[str, Any]) -> pd.
     df = pd.read_csv(source, usecols=lambda column: column in PHASE1_USECOLS, low_memory=False)
     for column in DATE_COLUMNS:
         if column in df.columns:
-            df[column] = pd.to_datetime(df[column], errors="coerce")
+            # Why: 한 컬럼에 date_only("2024-12-31")와 datetime("2024-12-31 18:10:00")이
+            #      섞이면 format 미지정 to_datetime이 다수 형식으로 추론해 소수를 NaT로 만든다
+            #      (예: document_date 시각 포함 행 → 거짓 L1-02 필수필드 누락). ISO8601은
+            #      시각 유무 모두 파싱하므로 혼합 형식에 견고하다.
+            df[column] = pd.to_datetime(df[column], errors="coerce", format="ISO8601")
     df = set_source_path(df, source)
     summary["stages"]["read_csv"] = {
         "elapsed_sec": _elapsed(t0),

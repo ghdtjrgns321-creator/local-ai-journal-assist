@@ -7,7 +7,7 @@ TOP 100/500/1000/2000/5000 document recall 산출.
 임계값 어디에도 truth 미사용.
 
 설계 출처: dev/active/phase2-family-ranking/phase2-family-ranking-plan.md
-거버넌스: docs/PHASE2_GOVERNANCE_DESIGN.md 결정 8 (재평가 입력)
+거버넌스: docs/spec/PHASE2_GOVERNANCE_DESIGN.md 결정 8 (재평가 입력)
 """
 
 # ruff: noqa: E402
@@ -462,7 +462,7 @@ def build_markdown(payload: dict[str, Any]) -> str:
             "",
             "- 분포 진단: `artifacts/phase2_family_correlation_matrix_20260519.md`",
             "- hierarchical RRF 측정 (reject): `artifacts/phase2_family_ranking_measurement_20260519.md`",
-            "- 정책 출처: `docs/PHASE2_GOVERNANCE_DESIGN.md` 결정 8",
+            "- 정책 출처: `docs/spec/PHASE2_GOVERNANCE_DESIGN.md` 결정 8",
             "",
         ]
     )

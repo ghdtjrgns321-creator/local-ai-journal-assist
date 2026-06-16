@@ -43,8 +43,8 @@ def family_nonzero(payload: dict[str, Any], family: str) -> int:
 def main() -> int:
     payload: dict[str, Any] = {
         "source": {
-            "fixed3_doc": "docs/DETECTION_RESULTS_MANIPULATION_V7_FIXED3_PHASE2.md",
-            "fixed4_doc": "docs/DETECTION_RESULTS_MANIPULATION_V7_FIXED4_PHASE2.md",
+            "fixed3_doc": "docs/guide/DETECTION_RESULTS_MANIPULATION_V7_FIXED3_PHASE2.md",
+            "fixed4_doc": "docs/guide/DETECTION_RESULTS_MANIPULATION_V7_FIXED4_PHASE2.md",
             "fixed3_prefix": "phase2_inference_v7_fixed3",
             "fixed4_prefix": "phase2_inference_v7_fixed4",
         },
@@ -163,8 +163,8 @@ def render_markdown(payload: dict[str, Any]) -> str:
         "fixed4는 DataSynth main `journal_entries.csv`에 IC seller/buyer 전표를 포함한 재생성본이다. "
         "그 결과 PHASE2 `intercompany` family가 fixed3의 0건 상태에서 IC01 unmatched reference와 IC02 금액 불일치까지 산출하는 상태로 회복됐다.",
         "",
-        "기존 fixed3 문서: `docs/DETECTION_RESULTS_MANIPULATION_V7_FIXED3_PHASE2.md`",
-        "fixed4 문서: `docs/DETECTION_RESULTS_MANIPULATION_V7_FIXED4_PHASE2.md`",
+        "기존 fixed3 문서: `docs/guide/DETECTION_RESULTS_MANIPULATION_V7_FIXED3_PHASE2.md`",
+        "fixed4 문서: `docs/guide/DETECTION_RESULTS_MANIPULATION_V7_FIXED4_PHASE2.md`",
         "",
         "## 전체 크기 변화",
         "",
