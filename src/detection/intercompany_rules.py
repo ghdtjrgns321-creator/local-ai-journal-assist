@@ -10,6 +10,8 @@ import logging
 
 import pandas as pd
 
+from src.detection.boolean_utils import bool_column
+
 logger = logging.getLogger(__name__)
 
 _COUNTERPARTY_KEY_COLUMNS: tuple[str, ...] = (
@@ -414,7 +416,7 @@ def ic01_unmatched_intercompany(
     Returns:
         (score, evidence_level, review_reason)
         - score: 0.0 또는 1.0 (high + review 합산 단일 series)
-        - evidence_level: "high" / "review" / ""
+        - evidence_level: "high" / "review_stale" / "review" / ""
         - review_reason: "missing_partner" / "nonstandard_format" / "mapping_uncertain" / ""
     """
     index = df.index
@@ -422,7 +424,7 @@ def ic01_unmatched_intercompany(
     evidence_level = pd.Series("", index=index, dtype="object")
     review_reason = pd.Series("", index=index, dtype="object")
 
-    ic_rows = df.get("is_intercompany", pd.Series(False, index=index)).fillna(False).astype(bool)
+    ic_rows = bool_column(df, "is_intercompany")
 
     if match_df.empty or "has_counterpart" not in match_df.columns:
         return score, evidence_level, review_reason
@@ -486,6 +488,18 @@ def ic01_unmatched_intercompany(
     review_mask = missing_partner_mask | nonstandard_format_mask | mapping_uncertain_mask
     evidence_level.loc[review_mask] = "review"
     evidence_level.loc[high_mask] = "high"
+
+    # 옵션3(timing 조건부): 결산기에서 벗어난 미대사는 타이밍(cutoff lag)으로 설명되지
+    # 않으므로 review_stale 로 상향한다. is_period_end(결산 ±margin) 행은 양측 결산 시점
+    # 차이로 짝이 늦게 올라올 수 있어 review(Low) 유지. is_period_end 컬럼 부재 시에는
+    # 보수적으로 상향하지 않는다(전부 review 유지). 근거: ISA 600 그룹감사 — 결산 한참
+    # 지난 그룹 내 미대사는 우선순위를 높여야 한다.
+    if "is_period_end" in df.columns:
+        near_period_end = bool_column(df, "is_period_end")
+    else:
+        near_period_end = pd.Series(True, index=index)
+    stale_mask = review_mask & ~near_period_end
+    evidence_level.loc[stale_mask] = "review_stale"
 
     # D065: review-only 신호는 flagged_rules / case seed / GT 평가에 confirmed
     # violation 으로 흐르면 안 된다. score 는 high 만 1.0, review 는 0.0 으로 유지하고
@@ -633,7 +647,7 @@ def _ic_sides(df: pd.DataFrame, pair_map: dict[str, str]) -> tuple[pd.DataFrame,
         empty = pd.DataFrame(index=pd.Index([], dtype=df.index.dtype))
         return empty, empty
 
-    ic_mask = df["is_intercompany"].fillna(False).astype(bool)
+    ic_mask = bool_column(df, "is_intercompany")
     if not ic_mask.any():
         empty = pd.DataFrame(index=pd.Index([], dtype=df.index.dtype))
         return empty, empty
@@ -1444,7 +1458,7 @@ def _is_weak_cp_block(block_series: pd.Series) -> pd.Series:
 def _renormalize_weights_for_tier(weights: dict[str, float], tier: str) -> dict[str, float]:
     """L2_aggregate 면 reference weight 0 + 나머지 합 1 재정규화.
 
-    Why: docs/phase2_reorgani.md §5 L2 계약은 "reference term 0 + 나머지 weight
+    Why: docs/spec/phase2_reorgani.md §5 L2 계약은 "reference term 0 + 나머지 weight
          재정규화". 재정규화 없이 weight 0.20 짜리 reference 만 잃으면 완전 매칭
          row 도 match_score 최대 0.80 → ic_unmatched_prob 최소 0.20 으로 남아
          정상 IC row 가 모두 nonzero family score 를 받는 false positive 가 생긴다.
@@ -1498,6 +1512,14 @@ def _gl_starts_with_any(gl_series: pd.Series, prefixes: set[str]) -> pd.Series:
     for p in prefixes:
         mask = mask | gl.str.startswith(p)
     return mask
+
+
+def _first_matching_prefix(value: object, prefixes: set[str]) -> str:
+    text = "" if pd.isna(value) else str(value).strip()
+    for prefix in sorted(prefixes, key=len, reverse=True):
+        if text.startswith(prefix):
+            return prefix
+    return ""
 
 
 def _doc_amount_symmetry(
@@ -1580,6 +1602,169 @@ def _doc_context_scores(
     )
 
 
+def _cross_company_reciprocal_entries(
+    df: pd.DataFrame,
+    pair_map: dict[str, str],
+    *,
+    rec_prefixes: set[str],
+    pay_prefixes: set[str],
+    amount_similarity_min: float,
+    date_window_days: int,
+) -> tuple[list[dict[str, object]], int]:
+    required = {
+        "document_id",
+        "company_code",
+        "trading_partner",
+        "reference",
+        "gl_account",
+        "posting_date",
+        "debit_amount",
+        "credit_amount",
+    }
+    if not required.issubset(df.columns):
+        return [], 0
+
+    positions = pd.Series(range(len(df)), index=df.index, dtype="int64")
+    gl = df["gl_account"].fillna("").astype(str).str.strip()
+    is_rec = _gl_starts_with_any(gl, rec_prefixes)
+    is_pay = _gl_starts_with_any(gl, pay_prefixes)
+    debit = pd.to_numeric(df["debit_amount"], errors="coerce").fillna(0.0).abs()
+    credit = pd.to_numeric(df["credit_amount"], errors="coerce").fillna(0.0).abs()
+
+    work = pd.DataFrame(
+        {
+            "_position": positions,
+            "document_id": df["document_id"].fillna("").astype(str).str.strip(),
+            "company_code": df["company_code"].fillna("").astype(str).str.strip(),
+            "trading_partner": df["trading_partner"].fillna("").astype(str).str.strip(),
+            "reference": df["reference"].fillna("").astype(str).str.strip(),
+            "gl_account": gl,
+            "posting_date": pd.to_datetime(df["posting_date"], errors="coerce"),
+            "debit_amount": debit,
+            "credit_amount": credit,
+            "_is_rec": is_rec,
+            "_is_pay": is_pay,
+        },
+        index=df.index,
+    )
+    rec = work[
+        work["_is_rec"]
+        & work["debit_amount"].gt(0)
+        & work["document_id"].ne("")
+        & work["company_code"].ne("")
+        & work["trading_partner"].ne("")
+        & work["reference"].ne("")
+        & work["posting_date"].notna()
+    ].copy()
+    pay = work[
+        work["_is_pay"]
+        & work["credit_amount"].gt(0)
+        & work["document_id"].ne("")
+        & work["company_code"].ne("")
+        & work["trading_partner"].ne("")
+        & work["reference"].ne("")
+        & work["posting_date"].notna()
+    ].copy()
+    if rec.empty or pay.empty:
+        return [], 0
+
+    rec["_rec_prefix"] = rec["gl_account"].map(
+        lambda value: _first_matching_prefix(value, rec_prefixes)
+    )
+    rec["_pay_prefix"] = rec["_rec_prefix"].map(lambda value: str(pair_map.get(value, "")))
+    pay["_pay_prefix"] = pay["gl_account"].map(
+        lambda value: _first_matching_prefix(value, pay_prefixes)
+    )
+    pay["_rec_prefix"] = pay["_pay_prefix"].map(lambda value: str(pair_map.get(value, "")))
+    rec = rec[rec["_rec_prefix"].ne("") & rec["_pay_prefix"].ne("")]
+    pay = pay[pay["_pay_prefix"].ne("") & pay["_rec_prefix"].ne("")]
+    if rec.empty or pay.empty:
+        return [], 0
+
+    def _list_int(values: pd.Series) -> list[int]:
+        return [int(value) for value in values.tolist()]
+
+    def _list_str(values: pd.Series) -> list[str]:
+        return sorted({str(value) for value in values.tolist() if str(value)})
+
+    rec_g = (
+        rec.groupby(
+            ["reference", "company_code", "trading_partner", "_rec_prefix", "_pay_prefix"],
+            dropna=False,
+            sort=False,
+        )
+        .agg(
+            receivable_amount=("debit_amount", "sum"),
+            receivable_date=("posting_date", "min"),
+            receivable_positions=("_position", _list_int),
+            receivable_document_ids=("document_id", _list_str),
+        )
+        .reset_index()
+    )
+    pay_g = (
+        pay.groupby(
+            ["reference", "company_code", "trading_partner", "_pay_prefix", "_rec_prefix"],
+            dropna=False,
+            sort=False,
+        )
+        .agg(
+            payable_amount=("credit_amount", "sum"),
+            payable_date=("posting_date", "min"),
+            payable_positions=("_position", _list_int),
+            payable_document_ids=("document_id", _list_str),
+        )
+        .reset_index()
+    )
+    merged = rec_g.merge(
+        pay_g,
+        left_on=["reference", "company_code", "trading_partner", "_rec_prefix", "_pay_prefix"],
+        right_on=["reference", "trading_partner", "company_code", "_rec_prefix", "_pay_prefix"],
+        how="inner",
+        suffixes=("_rec", "_pay"),
+    )
+    candidate_count = int(len(merged))
+    if merged.empty:
+        return [], candidate_count
+
+    denom = merged[["receivable_amount", "payable_amount"]].max(axis=1).clip(lower=1e-6)
+    amount_symmetry = (
+        1.0 - (merged["receivable_amount"] - merged["payable_amount"]).abs() / denom
+    ).clip(lower=0.0, upper=1.0)
+    date_diff = (
+        (
+            pd.to_datetime(merged["receivable_date"], errors="coerce")
+            - pd.to_datetime(merged["payable_date"], errors="coerce")
+        )
+        .abs()
+        .dt.days.fillna(9999)
+    )
+    matched = merged[(amount_symmetry >= amount_similarity_min) & (date_diff <= date_window_days)]
+    if matched.empty:
+        return [], candidate_count
+
+    entries: list[dict[str, object]] = []
+    for idx, row in matched.iterrows():
+        entries.append(
+            {
+                "document_id": "",
+                "flow_scope": "cross_company_reference",
+                "receivable_document_ids": list(row["receivable_document_ids"]),
+                "payable_document_ids": list(row["payable_document_ids"]),
+                "receivable_positions": list(row["receivable_positions"]),
+                "payable_positions": list(row["payable_positions"]),
+                "receivable_amount": float(row["receivable_amount"]),
+                "payable_amount": float(row["payable_amount"]),
+                "amount_symmetry": float(amount_symmetry.loc[idx]),
+                "date_diff_days": int(date_diff.loc[idx]),
+                "company_pair": [str(row["company_code_rec"]), str(row["company_code_pay"])],
+                "account_pair": [str(row["_rec_prefix"]), str(row["_pay_prefix"])],
+                "row_index": int(row["receivable_positions"][0]),
+                "row_position": int(row["receivable_positions"][0]),
+            }
+        )
+    return entries, candidate_count
+
+
 def compute_reciprocal_flow_scores(
     df: pd.DataFrame,
     pair_map: dict[str, str],
@@ -1613,6 +1798,9 @@ def compute_reciprocal_flow_scores(
         "score_q95": 0.0,
         "score_q99": 0.0,
         "score_max": 0.0,
+        "cross_company_candidate_pairs": 0,
+        "cross_company_reciprocal_pairs": 0,
+        "cross_company_reciprocal_entries": [],
         "warnings": [],
         "params": {
             "structural_weight": float(getattr(settings, "ic_reciprocal_structural_weight", 0.7)),
@@ -1626,6 +1814,13 @@ def compute_reciprocal_flow_scores(
             "period_end_days": int(getattr(settings, "ic_reciprocal_context_period_end_days", 5)),
             "round_amount_unit": float(
                 getattr(settings, "ic_reciprocal_context_round_amount_unit", 1_000_000.0)
+            ),
+            "cross_company_date_window_days": int(
+                getattr(
+                    settings,
+                    "ic_reciprocal_cross_company_date_window_days",
+                    getattr(settings, "ic_date_window_days", 5),
+                )
             ),
         },
     }
@@ -1688,7 +1883,19 @@ def compute_reciprocal_flow_scores(
     structural_doc = (has_both & is_symmetric).astype(float)
     summary["structural_candidate_docs"] = int(structural_doc.sum())
 
-    if structural_doc.sum() == 0:
+    cross_entries, cross_candidate_count = _cross_company_reciprocal_entries(
+        df,
+        pair_map,
+        rec_prefixes=receivable_prefixes,
+        pay_prefixes=payable_prefixes,
+        amount_similarity_min=sim_threshold,
+        date_window_days=int(summary["params"]["cross_company_date_window_days"]),
+    )
+    summary["cross_company_candidate_pairs"] = int(cross_candidate_count)
+    summary["cross_company_reciprocal_pairs"] = int(len(cross_entries))
+    summary["cross_company_reciprocal_entries"] = cross_entries
+
+    if structural_doc.sum() == 0 and not cross_entries:
         return empty, summary
 
     # context boost — period_end / after_hours / round_amount
@@ -1718,6 +1925,18 @@ def compute_reciprocal_flow_scores(
     row_scores = pd.Series(0.0, index=df.index, dtype=float)
     ic_doc = df.loc[ic_mask, "document_id"].astype(str)
     row_scores.loc[ic_mask] = ic_doc.map(doc_score_map).fillna(0.0).values
+    cross_score = float(max(min(s_weight, 1.0), 0.0))
+    for entry in cross_entries:
+        positions = [
+            int(pos)
+            for pos in [
+                *(entry.get("receivable_positions") or []),
+                *(entry.get("payable_positions") or []),
+            ]
+            if 0 <= int(pos) < len(df)
+        ]
+        if positions:
+            row_scores.iloc[positions] = row_scores.iloc[positions].clip(lower=cross_score)
 
     summary["score_q95"] = float(row_scores.quantile(0.95))
     summary["score_q99"] = float(row_scores.quantile(0.99))

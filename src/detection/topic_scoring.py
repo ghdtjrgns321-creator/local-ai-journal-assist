@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from src.detection.rule_scoring import RULE_SCORING_REGISTRY, TOPIC_REGISTRY
 
@@ -21,8 +22,7 @@ TOPIC_SCORE_WEIGHTS: dict[str, float] = {
 DEFAULT_TOPIC_CAP = 1.0
 DEFAULT_TOPIC_FLOORS: dict[str, float] = {
     "approval_control_high": 0.75,
-    "duplicate_outflow_high": 0.75,
-    "intercompany_exception": 0.45,
+    "duplicate_reference_match": 0.45,
 }
 DEFAULT_COMBO_FLOORS: dict[str, float] = {
     "batch_combo": 0.45,
@@ -33,8 +33,7 @@ DEFAULT_COMBO_FLOORS: dict[str, float] = {
     "period_end_adjustment_high": 0.75,
     "embezzlement_concealment_medium": 0.60,
     "embezzlement_concealment_high": 0.75,
-    "circular_transaction_medium": 0.45,
-    "circular_transaction_high": 0.75,
+    "suspense_concealment_high": 0.75,
     "approval_bypass_medium": 0.60,
     "approval_bypass_high": 0.75,
 }
@@ -44,9 +43,22 @@ _REVENUE_OR_AMOUNT_RULES = {"L4-01", "L4-03"}
 _TIMING_SEED_RULES = {"L3-04", "L3-07", "L3-11", "L1-08"}
 _OUTFLOW_RULES = {"L2-02", "L2-05"} | _DUPLICATE_ENTRY_RULES
 _APPROVAL_BYPASS_RULES = {"L1-04", "L1-05", "L1-06", "L1-07"}
-_RELATED_PARTY_RULES = {"L3-03", "IC01", "IC02", "IC03"}
-_AMOUNT_OR_TIMING_RULES = {"L4-03", "L3-04", "L3-05", "L3-11"}
 _WEAK_DESCRIPTION_OR_SENSITIVE_ACCOUNT_RULES = {"L3-08", "L3-10", "L4-04"}
+# Why: 가공전표(fictitious_entry_high) 조합의 "셋째 다리"(2차 정황) 풀.
+#      FSS HIGH 17건 재감사(A안, HIGH_COMBO_GROUNDING.md §5b / DECISION D075)에서
+#      같은 가공전표 스토리인데 셋째 정황만 다른 11건이 그물을 빠져나간 것을 확인 →
+#      기존 (L4-04·중복L2-03)에 관계사·민감계정·자기승인·cutoff 를 실증에 맞게 추가.
+#      과탐 가드(정상 v42j 측정, HIGH ≤ 2%): 후보였던 L3-04(기말)·L1-09(승인일공백)는
+#      정상 결산전표에 흔해(기말 734/738·승인일공백 334/738) 과발화 → 제외. 기말 fraud 는
+#      closing_timing 조합의 영역이고 L1-09 는 근거 약한 룰(§2-2)이라 둘 다 부적합.
+#      유지한 L3-03·L3-10·L1-05·L3-11 은 정상 발화 0~54 로 특이적이며 FSS 10/11건을 커버한다.
+_FICTITIOUS_SECONDARY_RULES = {
+    "L4-04",  # 희소계정쌍
+    "L3-03",  # 관계사 거래 (분식 실행 통로)
+    "L3-10",  # 민감/고위험 계정
+    "L1-05",  # 자기승인
+    "L3-11",  # cutoff 위반
+} | _DUPLICATE_ENTRY_RULES
 
 
 @dataclass(frozen=True)
@@ -79,6 +91,23 @@ class TopicScoreBreakdown:
     has_combo_floor: bool
 
 
+# PHASE1 tier (PHASE1_TIER_SCORING_SPEC.md §2). 순서형 — 크기 의미 없음.
+TIER_RANK: dict[str, int] = {"HIGH": 3, "MEDIUM": 2, "LOW": 1, "CONTEXT": 0}
+# 기존 floor/combo 숫자값을 tier 라벨로 분류만 한다(값 자체는 band 결정에 노출 안 함).
+_HIGH_FLOOR_MIN = 0.75
+_MEDIUM_FLOOR_MIN = 0.45
+
+
+@dataclass(frozen=True)
+class TierBreakdown:
+    """PHASE1 tier per topic (PHASE1_TIER_SCORING_SPEC §6)."""
+
+    topic_id: str
+    tier: str
+    fired_triggers: tuple[str, ...]
+    has_rankable_primary: bool
+
+
 @dataclass(frozen=True)
 class _EvidenceView:
     rule_id: str
@@ -101,6 +130,7 @@ def compute_topic_scores(
     topic_caps: Mapping[str, float] | None = None,
     topic_floor_policies: Mapping[str, float] | None = None,
     combo_floor_policies: Mapping[str, float] | None = None,
+    fraud_combo_rule_scope: AbstractSet[str] | None = None,
     return_breakdown: bool = False,
 ) -> dict[str, float] | dict[str, TopicScoreBreakdown]:
     """Compute PHASE1 v1 topic scores for one row or case.
@@ -121,11 +151,25 @@ def compute_topic_scores(
         views,
         combo_policies=combo_policies,
         repeat_by_topic=repeat_by_topic,
+        rule_scope=fraud_combo_rule_scope,
     )
+
+    topic_views_by_topic: dict[str, list[_EvidenceView]] = {
+        topic_id: [] for topic_id in TOPIC_REGISTRY
+    }
+    for view in views:
+        touched_topics: set[str] = set()
+        if view.final_topic in topic_views_by_topic:
+            touched_topics.add(str(view.final_topic))
+        touched_topics.update(
+            topic_id for topic_id in view.secondary_topics if topic_id in topic_views_by_topic
+        )
+        for topic_id in touched_topics:
+            topic_views_by_topic[topic_id].append(view)
 
     breakdowns: dict[str, TopicScoreBreakdown] = {}
     for topic_id in TOPIC_REGISTRY:
-        topic_views = [view for view in views if _touches_topic(view, topic_id)]
+        topic_views = topic_views_by_topic[topic_id]
         primary_views = [
             view
             for view in topic_views
@@ -190,6 +234,7 @@ def compute_topic_scores(
             require_primary=has_rankable_primary,
             return_policy_ids=True,
             repeat_score=repeat_by_topic,
+            fraud_combo_rule_scope=fraud_combo_rule_scope,
         )
         fraud_floors_for_topic = fraud_combo_floors.get(topic_id, ())
         fraud_combo_policy_ids = tuple(floor.reason for floor in fraud_floors_for_topic)
@@ -259,6 +304,7 @@ def apply_combo_floors(
     require_primary: bool = True,
     return_policy_ids: bool = False,
     repeat_score: float | Mapping[str, float] = 0.0,
+    fraud_combo_rule_scope: AbstractSet[str] | None = None,
 ) -> dict[str, float] | tuple[dict[str, float], dict[str, tuple[str, ...]]]:
     """Apply combo-only and fraud-combo floors to existing official topics."""
 
@@ -286,6 +332,7 @@ def apply_combo_floors(
         views,
         combo_policies=policies,
         repeat_by_topic=repeat_by_topic,
+        rule_scope=fraud_combo_rule_scope,
     ).items():
         if topic_id not in scores:
             continue
@@ -325,7 +372,119 @@ def pick_primary_topic(topic_scores: Mapping[str, float]) -> str | None:
     return best_topic
 
 
+def _floor_value_tier(value: float) -> str | None:
+    """floor/combo 숫자값을 tier 라벨로 분류 (값 자체는 폐기, 분류에만 사용)."""
+    if value >= _HIGH_FLOOR_MIN:
+        return "HIGH"
+    if value >= _MEDIUM_FLOOR_MIN:
+        return "MEDIUM"
+    return None
+
+
+def compute_topic_tiers(
+    evidences: Iterable[Any],
+    *,
+    topic_floor_policies: Mapping[str, float] | None = None,
+    combo_floor_policies: Mapping[str, float] | None = None,
+    fraud_combo_rule_scope: AbstractSet[str] | None = None,
+    breakdowns: Mapping[str, TopicScoreBreakdown] | None = None,
+) -> dict[str, TierBreakdown]:
+    """PHASE1 v2 tier per topic (PHASE1_TIER_SCORING_SPEC §2-§3).
+
+    가중합/floor 숫자 컷을 band 결정에 쓰지 않는다. 기존 트리거 조건(floor/combo/
+    fraud-combo)의 발화 여부 + has_rankable_primary 로 순서형 tier 를 정한다.
+
+    - HIGH    : HIGH 트리거(분류값 >= 0.75) 발화 + has_rankable_primary
+    - MEDIUM  : MEDIUM 트리거(분류값 >= 0.45) 발화 + has_rankable_primary
+    - LOW     : standalone primary seed 만 존재
+    - CONTEXT : booster/macro/combo_only 신호만 (단독 큐 불가)
+
+    `breakdowns`: 호출부가 이미 동일 인자로 compute_topic_scores(return_breakdown=True)를
+    구한 경우 그걸 전달하면 재계산을 생략한다(전수 빌드 성능). tier 는 has_rankable_primary·
+    floor_policy_ids·combo_policy_ids 만 쓰므로 materiality/repeat/audit 인자와 무관.
+    """
+    views = [_coerce_evidence(evidence) for evidence in evidences]
+    if breakdowns is None:
+        breakdowns = cast(
+            "dict[str, TopicScoreBreakdown]",
+            compute_topic_scores(
+                views,
+                topic_floor_policies=topic_floor_policies,
+                combo_floor_policies=combo_floor_policies,
+                fraud_combo_rule_scope=fraud_combo_rule_scope,
+                return_breakdown=True,
+            ),
+        )
+    floor_policies = {**DEFAULT_TOPIC_FLOORS, **(topic_floor_policies or {})}
+    combo_policies = {**DEFAULT_COMBO_FLOORS, **(combo_floor_policies or {})}
+    repeat_by_topic = {topic_id: 0.0 for topic_id in TOPIC_REGISTRY}
+    fraud_floors = _fraud_combo_floor_results(
+        views,
+        combo_policies=combo_policies,
+        repeat_by_topic=repeat_by_topic,
+        rule_scope=fraud_combo_rule_scope,
+    )
+
+    result: dict[str, TierBreakdown] = {}
+    for topic_id, breakdown in breakdowns.items():
+        triggers: list[str] = []
+        tier = "CONTEXT"
+        # has_rankable_primary gate: booster/macro/combo_only 단독으로는 tier 승격 불가.
+        if breakdown.has_rankable_primary:
+            tier = "LOW"
+
+            def _lift(policy_id: str, value: float) -> None:
+                nonlocal tier
+                candidate = _floor_value_tier(value)
+                if candidate is None:
+                    return
+                triggers.append(policy_id)
+                if TIER_RANK[candidate] > TIER_RANK[tier]:
+                    tier = candidate
+
+            for policy_id in breakdown.floor_policy_ids:
+                _lift(policy_id, floor_policies.get(policy_id, 0.0))
+            for policy_id in breakdown.combo_policy_ids:
+                _lift(policy_id, combo_policies.get(policy_id, 0.0))
+            for floor in fraud_floors.get(topic_id, ()):
+                _lift(floor.policy_id, floor.floor)
+
+        result[topic_id] = TierBreakdown(
+            topic_id=topic_id,
+            tier=tier,
+            fired_triggers=tuple(dict.fromkeys(triggers)),
+            has_rankable_primary=breakdown.has_rankable_primary,
+        )
+    return result
+
+
+def case_tier(tiers: Mapping[str, TierBreakdown]) -> str:
+    """case 의 최고 tier (HIGH > MEDIUM > LOW > CONTEXT)."""
+    best = "CONTEXT"
+    for breakdown in tiers.values():
+        if TIER_RANK.get(breakdown.tier, 0) > TIER_RANK.get(best, 0):
+            best = breakdown.tier
+    return best
+
+
+def pick_primary_topic_by_tier(tiers: Mapping[str, TierBreakdown]) -> str | None:
+    """최고 tier 토픽을 primary 로 선택 (동률 시 TOPIC_REGISTRY 순서)."""
+    best_topic: str | None = None
+    best_rank = 0
+    for topic_id in TOPIC_REGISTRY:
+        breakdown = tiers.get(topic_id)
+        if breakdown is None:
+            continue
+        rank = TIER_RANK.get(breakdown.tier, 0)
+        if rank > best_rank:
+            best_rank = rank
+            best_topic = topic_id
+    return best_topic if best_rank > 0 else None
+
+
 def _coerce_evidence(evidence: Any) -> _EvidenceView:
+    if isinstance(evidence, _EvidenceView):
+        return evidence
     getter = (
         evidence.get
         if isinstance(evidence, Mapping)
@@ -380,10 +539,16 @@ def _fraud_combo_floor_results(
     *,
     combo_policies: Mapping[str, float] | None = None,
     repeat_by_topic: Mapping[str, float] | None = None,
+    rule_scope: AbstractSet[str] | None = None,
 ) -> dict[str, tuple[_FraudComboFloor, ...]]:
     policies = {**DEFAULT_COMBO_FLOORS, **(combo_policies or {})}
     views = [view for view in evidences if view.normalized_score > 0]
     rule_ids = {view.rule_id for view in views}
+    # Why: fraud combo는 사람 행위(승인 우회·수기 조정·기말 조작)를 전제한다. 신뢰 가능한
+    #      자동 전표에서만 발화한 룰은 콤보 트리거가 될 수 없다 — rule_scope가 주어지면
+    #      그 안의 룰(비자동/위장의심 행 발화)만 콤보 평가에 쓴다 (OPEN_ISSUES #14).
+    if rule_scope is not None:
+        rule_ids = rule_ids & set(rule_scope)
     results: dict[str, list[_FraudComboFloor]] = {}
 
     def add(topic_id: str, policy_id: str, tag: str, reason: str) -> None:
@@ -401,12 +566,9 @@ def _fraud_combo_floor_results(
         )
 
     has_revenue_or_amount = bool(rule_ids & _REVENUE_OR_AMOUNT_RULES)
-    has_duplicate_entry = bool(rule_ids & _DUPLICATE_ENTRY_RULES)
     has_timing_seed = bool(rule_ids & _TIMING_SEED_RULES)
     has_outflow = bool(rule_ids & _OUTFLOW_RULES)
     has_approval_bypass = bool(rule_ids & _APPROVAL_BYPASS_RULES)
-    has_related_party = bool(rule_ids & _RELATED_PARTY_RULES)
-    has_amount_or_timing = bool(rule_ids & _AMOUNT_OR_TIMING_RULES)
     has_weak_description_or_sensitive = bool(
         rule_ids & _WEAK_DESCRIPTION_OR_SENSITIVE_ACCOUNT_RULES
     )
@@ -414,13 +576,13 @@ def _fraud_combo_floor_results(
     if (
         has_revenue_or_amount
         and "L3-02" in rule_ids
-        and ("L4-04" in rule_ids or has_duplicate_entry)
+        and bool(rule_ids & _FICTITIOUS_SECONDARY_RULES)
     ):
         add(
             "revenue_statistical",
             "fictitious_entry_high",
             "fictitious_entry_risk",
-            "revenue_or_amount_outlier + manual_adjustment + rare_or_duplicate_pattern",
+            "revenue_or_amount_outlier + manual_adjustment + secondary_red_flag",
         )
     elif ("L4-01" in rule_ids and "L3-04" in rule_ids) or (
         "L4-03" in rule_ids and "L4-06" in rule_ids and "L3-02" in rule_ids
@@ -447,12 +609,17 @@ def _fraud_combo_floor_results(
             "cutoff_mismatch + revenue_or_high_amount",
         )
 
-    if has_outflow and has_approval_bypass:
+    # A안(DECISION D075): 횡령은폐가 항상 승인 흔적을 남기지는 않는다. FSS 감리2013-1-가·
+    # A-6유형-가는 역분개(L2-05) + 수기(L3-02) + 고액(L4-03)으로만 나타나 승인우회 필수
+    # 조건에서 탈락했다 → 승인우회 OR (역분개 + 수기 + 고액) 분기 추가. 고액(L4-03)을
+    # 함께 요구해 정상 reversal+manual clearing(anti-fitting 가드 대상)과 구분한다.
+    has_reversal_manual_concealment = {"L2-05", "L3-02", "L4-03"}.issubset(rule_ids)
+    if has_outflow and (has_approval_bypass or has_reversal_manual_concealment):
         add(
             "duplicate_outflow",
             "embezzlement_concealment_high",
             "embezzlement_concealment_risk",
-            "outflow_or_duplicate + approval_bypass",
+            "outflow_or_duplicate + (approval_bypass or reversal_with_manual)",
         )
     elif "L2-01" in rule_ids and {"L1-04", "L1-05"} & rule_ids:
         add(
@@ -462,35 +629,20 @@ def _fraud_combo_floor_results(
             "threshold_splitting + approval_bypass",
         )
 
-    intercompany_repeat = _topic_component(repeat_by_topic or 0.0, "intercompany_cycle")
-    if has_related_party and has_amount_or_timing and intercompany_repeat > 0:
+    # Why: 가수금·미결제 계정(L3-09)은 횡령 자금이 정착하는 은폐 통로다. FSS 실증(P1 9개
+    #      HIGH 사례 직접 확인)에서 L3-09 HIGH는 이상고액(L4-03) 8/9·횡령룰 7/9와 동반하나
+    #      수기(L3-02)는 1/9뿐 — 조합을 outflow+L4-03으로 고정. 6/6 HIGH, 그중 3건은 승인우회
+    #      조합이 못 잡는 신규 포착이라 독립 if로 둔다(high_combo_grounding.md §8 결정1).
+    if "L3-09" in rule_ids and has_outflow and "L4-03" in rule_ids:
         add(
-            "intercompany_cycle",
-            "circular_transaction_high",
-            "circular_transaction_risk",
-            "related_party_or_ic + amount_or_timing_anomaly + repeat_or_counterparty_cycle",
+            "duplicate_outflow",
+            "suspense_concealment_high",
+            "embezzlement_concealment_risk",
+            "suspense_aging + outflow_or_duplicate + high_amount",
         )
-    elif has_related_party and has_amount_or_timing:
-        add(
-            "intercompany_cycle",
-            "circular_transaction_medium",
-            "circular_transaction_risk",
-            "related_party_or_ic + amount_or_timing_anomaly",
-        )
-    elif "L3-03" in rule_ids and "L4-04" in rule_ids:
-        add(
-            "intercompany_cycle",
-            "circular_transaction_medium",
-            "circular_transaction_risk",
-            "related_party_or_ic + rare_account_pair",
-        )
-    elif {"IC01", "IC02", "IC03"} & rule_ids:
-        add(
-            "intercompany_cycle",
-            "circular_transaction_medium",
-            "circular_transaction_risk",
-            "related_party_or_ic + intercompany_exception",
-        )
+
+    # intercompany_cycle circular_transaction combo 제거 (2026-06-14): IC/GR 제거에 따라
+    # 관계사·순환 주제 자체가 폐지됨.
 
     has_strong_approval_context = (
         "L4-03" in rule_ids

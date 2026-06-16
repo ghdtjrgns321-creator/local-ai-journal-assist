@@ -1,7 +1,7 @@
 """PHASE2 sub-detector evidence_tier loader.
 
 config/phase2_subdetector_tiers.yaml 을 dataclass 로 노출한다. tier 변경은
-docs/DECISION.md D044 fitting-risk check 통과 후에만 허용된다.
+docs/spec/DECISION.md D044 fitting-risk check 통과 후에만 허용된다.
 
 본 모듈은 tie-break ladder (Phase2 family ranking Layer 4 §5) 에서만 사용되며,
 truth recall 향상 목적으로 호출되어서는 안 된다.

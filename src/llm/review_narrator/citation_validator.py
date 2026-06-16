@@ -9,7 +9,7 @@ feature_id / journal_id)를 인용하는지 검증한다. 실패 건은 `confide
 - rule_id / feature_id / journal_id는 입력에 실제 존재해야 한다.
 - 실패 시 confidence=low + priority_rank 후순위.
 
-단일 출처: docs/PHASE3_REVIEW_NARRATOR_SPEC.md.
+단일 출처: docs/archive/abandoned/PHASE3_REVIEW_NARRATOR_SPEC.md.
 """
 
 from __future__ import annotations

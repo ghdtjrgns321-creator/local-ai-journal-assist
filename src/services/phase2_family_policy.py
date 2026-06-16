@@ -29,6 +29,7 @@ RELATIONAL_CONTEXT_LANE_SUB_RULES = ("R05", "R06")
 
 UNSUPERVISED_COMPANION_POLICY_ID = "unsupervised_document_review_priority_soft_guard_v1"
 UNSUPERVISED_COMPANION_SURFACE_NAME = "hybrid_with_soft_repeated_normal_guard"
+UNSUPERVISED_DEFAULT_DISPLAY_ORDERING = "document_case_max_score_order"
 UNSUPERVISED_PRODUCT_ROLE = "broad_statistical_review_companion_evidence_surface"
 UNSUPERVISED_COMPANION_ARTIFACT_PATH = (
     "artifacts/unsupervised_soft_guard_stability_fixed5_20260530.json"
@@ -37,9 +38,10 @@ UNSUPERVISED_V31_OWNER_SURFACE_ARTIFACT_PATH = (
     "artifacts/unsupervised_v31_owner_surface_fixed5_20260531.json"
 )
 UNSUPERVISED_ADOPTION_NOTE = (
-    "default display ordering uses document-level review priority; q95 gate, "
-    "VAE score, threshold, case generation, PHASE1 ranking, and PHASE2 fusion "
-    "remain unchanged"
+    "default display ordering uses document-level max-score order with context "
+    "fields display-only; q95 gate, VAE score, detector threshold/weight, PHASE1 "
+    "ranking, and PHASE2 fusion remain unchanged; case generation intentionally "
+    "changed from row cases to document review cases"
 )
 
 DUPLICATE_PRODUCT_ROLE = "bounded_pair_evidence_first_review_with_case_grade_sidecar"
@@ -161,12 +163,22 @@ def build_unsupervised_policy_summary(unsupervised_cases: tuple[object, ...]) ->
         "fraud_primary_recall_family": False,
         "primary_recall_metric_role": "diagnostic_only_not_product_judgement",
         "native_row_ordering_changed": True,
-        "production_default_ranking_changed": True,
+        "production_default_ranking_changed": False,
         "production_adoption": True,
         "adoption_candidate": False,
-        "recommended_surface": UNSUPERVISED_COMPANION_SURFACE_NAME,
-        "default_display_ordering": UNSUPERVISED_COMPANION_SURFACE_NAME,
-        "case_generation_changed": False,
+        "recommended_surface": UNSUPERVISED_DEFAULT_DISPLAY_ORDERING,
+        "default_display_ordering": UNSUPERVISED_DEFAULT_DISPLAY_ORDERING,
+        "case_generation_changed": True,
+        "case_generation_change": "row_case_to_document_case",
+        "ordering_context_policy": {
+            "ordering_layer_uses_document_context": False,
+            "used_context_fields": (),
+            "context_fields_display_only": True,
+            "detector_score_weight_changed": False,
+            "phase1_ranking_changed": False,
+            "phase2_fusion_changed": False,
+            "overlay_context_used_for_primary_queue": False,
+        },
         "evidence_quality_ready": True,
         "evidence_quality_improved": True,
         "top_features_connected": True,
@@ -181,10 +193,13 @@ def build_unsupervised_policy_summary(unsupervised_cases: tuple[object, ...]) ->
             "v31_owner_surface_artifact_path": (
                 UNSUPERVISED_V31_OWNER_SURFACE_ARTIFACT_PATH
             ),
-            "adoption_state": "adopted_default_display_ordering",
-            "descriptor_only": False,
-            "replaces_native_case_ordering": True,
+            "adoption_state": "historical_diagnostic_not_current_default",
+            "descriptor_only": True,
+            "replaces_native_case_ordering": False,
             "top_features_used_for_ranking": False,
+            "p5_pressure_watchpoint": (
+                "document_case_top500_pressure_spike_measurement_first_followup_required"
+            ),
             "aggregate_counts": {
                 "native_top500_truth_docs_fixed5": 39,
                 "recommended_surface_top500_truth_docs_fixed5": 151,
@@ -246,9 +261,9 @@ def build_unsupervised_policy_summary(unsupervised_cases: tuple[object, ...]) ->
         "v31_adoption_readiness": {
             "default_native_ordering_unchanged": False,
             "soft_guard_role": (
-                "broad_statistical_companion_default_document_review_priority"
+                "historical_document_review_priority_diagnostic"
             ),
-            "product_default_adoption": True,
+            "product_default_adoption": False,
             "primary_top500_lift_vs_native": 87,
             "primary_lift_metric_role": "debug_only_historical_v31",
             "companion_top500_lift_vs_native": -1,

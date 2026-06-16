@@ -7,7 +7,7 @@ Usage:
     from dashboard.components.ml_tooltips import ML_TOOLTIPS
     st.metric(label="AUPRC", value="0.85", help=ML_TOOLTIPS["AUPRC"])
 
-참고: docs/pre-plan/07-dashboard.md §604~614
+참고: docs/archive/completed/raw-plan/07-dashboard.md §604~614
 """
 
 from __future__ import annotations

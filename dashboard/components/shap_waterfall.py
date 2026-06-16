@@ -5,7 +5,7 @@ Why: 감사인이 "왜 이 전표가 이상으로 판정됐는가?"를 이해하
      Waterfall 차트는 base_value(평균 예측)에서 시작해 각 피처의 기여도를
      계단식으로 누적하여 최종 예측값에 도달하는 과정을 시각화한다.
 
-참고: docs/pre-plan/07-dashboard.md §346 (Phase 2 확장)
+참고: docs/archive/completed/raw-plan/07-dashboard.md §346 (Phase 2 확장)
 """
 
 from __future__ import annotations

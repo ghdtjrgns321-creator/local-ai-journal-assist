@@ -6,6 +6,8 @@ import numpy as np
 import pandas as pd
 
 from config.settings import get_audit_rules
+from src.detection.boolean_utils import bool_column
+from src.detection.source_trust import lone_automated_mask
 
 
 def _check_features(df: pd.DataFrame, required: list[str]) -> list[str]:
@@ -95,7 +97,7 @@ def b02_near_threshold(df: pd.DataFrame) -> pd.Series:
     """L2-01 just below approval threshold."""
     if "is_near_threshold" not in df.columns:
         return pd.Series(False, index=df.index)
-    result = df["is_near_threshold"].fillna(False).astype(bool)
+    result = bool_column(df, "is_near_threshold")
 
     bucket = (
         df["near_threshold_bucket"].fillna("none").astype(str)
@@ -210,9 +212,9 @@ def b03_exceeds_threshold(
     """L1-04 approval limit exceeded."""
     if "exceeds_threshold" not in df.columns:
         return pd.Series(False, index=df.index)
-    candidate = df["exceeds_threshold"].fillna(False).astype(bool)
+    candidate = bool_column(df, "exceeds_threshold")
     if "approval_limit_resolved" in df.columns:
-        candidate = candidate & df["approval_limit_resolved"].fillna(False).astype(bool)
+        candidate = candidate & bool_column(df, "approval_limit_resolved")
     if not candidate.any():
         return candidate
 
@@ -228,7 +230,13 @@ def b03_exceeds_threshold(
         source_norm = (
             df["source"].where(df["source"].notna(), "").astype(str).str.strip().str.lower()
         )
-        review = review | (candidate & source_norm.isin(review_policy["sources"]))
+        lone_automated = lone_automated_mask(
+            df,
+            source_tokens=set(review_policy["sources"]),
+        ).reindex(df.index, fill_value=False)
+        review = review | (
+            candidate & source_norm.isin(review_policy["sources"]) & ~lone_automated
+        )
     if "user_persona" in df.columns and review_policy["user_personas"]:
         persona_norm = (
             df["user_persona"]
@@ -327,7 +335,7 @@ def b08_manual_override(
     )
 
     if "is_manual_je" in df.columns:
-        candidate = df["is_manual_je"].fillna(False).astype(bool)
+        candidate = bool_column(df, "is_manual_je")
     elif "source" in df.columns:
         if not manual_sources:
             candidate = pd.Series(False, index=df.index)
@@ -362,7 +370,7 @@ def b08_manual_override(
     )
     self_approval = created.ne("") & created.eq(approved)
     exceeds_threshold = (
-        df["exceeds_threshold"].fillna(False).astype(bool)
+        bool_column(df, "exceeds_threshold")
         if "exceeds_threshold" in df.columns
         else pd.Series(False, index=df.index)
     )
@@ -372,14 +380,14 @@ def b08_manual_override(
     abnormal_time = pd.Series(False, index=df.index)
     for column in ("is_after_hours", "is_weekend", "is_holiday"):
         if column in df.columns:
-            abnormal_time = abnormal_time | df[column].fillna(False).astype(bool)
+            abnormal_time = abnormal_time | bool_column(df, column)
     if "time_zone_category" in df.columns:
         abnormal_time = abnormal_time | df["time_zone_category"].fillna("").astype(
             str
         ).str.strip().str.lower().isin({"overtime", "midnight"})
 
     period_end = (
-        df["is_period_end"].fillna(False).astype(bool)
+        bool_column(df, "is_period_end")
         if "is_period_end" in df.columns
         else pd.Series(False, index=df.index)
     )
@@ -488,7 +496,8 @@ def b08_manual_override(
         for reason, mask in reason_masks.items()
     }
     bucket_values = bucket.loc[candidate_index].astype(str).to_numpy()
-    # Why: Series.combine(other, max)는 element-wise getitem 2.16M회를 유발 (cProfile cumtime 8.88s).
+    # Why: Series.combine(other, max)는 element-wise getitem 2.16M회를 유발
+    #      (cProfile cumtime 8.88s).
     #      두 series 모두 df.index 기반이라 np.maximum element-wise와 수학적 동치.
     score_values = np.maximum(
         score_series.loc[candidate_index].to_numpy(),

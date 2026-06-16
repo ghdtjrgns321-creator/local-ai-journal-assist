@@ -78,8 +78,9 @@ def build_phase2_case_set(
         unsupervised_ecdf_gate: unsupervised builder 전용 — ECDF gate 임계
             (default 0.95). 이 값 이상인 row 만 case 화.
         unsupervised_ordering_strategy: unsupervised builder 전용. 기본
-            ``"hybrid_with_soft_repeated_normal_guard"`` 는 document-level review
-            ordering 을 적용한다. ``"native"`` 명시 시 row queue 순서 보존.
+            ``"hybrid_with_soft_repeated_normal_guard"`` 시그니처는 이전 진단
+            호환용이며 현재는 context 필드를 쓰지 않는 document max-score 순서를
+            적용한다. ``"native"`` 도 row-native 가 아니라 document max-score 순서다.
         timeseries_ordering_strategy: timeseries builder 전용. 기본
             ``"ts_specific_top100_stabilized_surface"`` 는 TS-primary stabilized
             ordering 을 적용한다. ``"native"`` 명시 시 artifact 순서 보존.

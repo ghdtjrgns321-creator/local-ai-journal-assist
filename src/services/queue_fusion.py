@@ -123,8 +123,8 @@ def _validate_rankers(rankers: dict[str, pd.Series]) -> None:
 # 정합:
 #   - parameter 0개, weight 0개, truth 미사용 → fitting 위험 0
 #   - PHASE1 truth-recall-guard / 옵션 R / 옵션 Z 무충돌
-#   - 거버넌스: docs/PHASE2_GOVERNANCE_DESIGN.md 결정 8 (Noisy-OR separated 채택)
-#   - 정정 기록: docs/TROUBLESHOOT.md TS-15
+#   - 거버넌스: docs/spec/PHASE2_GOVERNANCE_DESIGN.md 결정 8 (Noisy-OR separated 채택)
+#   - 정정 기록: docs/spec/TROUBLESHOOT.md TS-15
 #   - 측정 산출물: artifacts/phase2_family_ranking_alt_aggregators_20260519.{json,md}
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -158,8 +158,8 @@ def to_ecdf(scores: pd.Series) -> pd.Series:
 
     ## 거버넌스 출처
 
-    - `docs/PHASE2_GOVERNANCE_DESIGN.md` 결정 8 §8.3 Noisy-OR 식
-    - `docs/TROUBLESHOOT.md` TS-15
+    - `docs/spec/PHASE2_GOVERNANCE_DESIGN.md` 결정 8 §8.3 Noisy-OR 식
+    - `docs/spec/TROUBLESHOOT.md` TS-15
     """
     numeric = pd.to_numeric(scores, errors="coerce").fillna(0.0).astype(float)
     out = pd.Series(0.0, index=scores.index, dtype=np.float64)
@@ -246,7 +246,7 @@ def compute_phase2_internal_noisy_or(
 #   - tools/scripts/phase2_family_ranking_dry_run.py
 #
 # 거버넌스 결정:
-#   docs/PHASE2_GOVERNANCE_DESIGN.md 결정 8 — RRF 적용 범위를 PHASE1↔VAE 같은
+#   docs/spec/PHASE2_GOVERNANCE_DESIGN.md 결정 8 — RRF 적용 범위를 PHASE1↔VAE 같은
 #   전역 연속 ranker 결합으로 제한. PHASE2 family signal 은 lane/overlay/tie-break
 #   으로만 사용.
 #

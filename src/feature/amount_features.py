@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 
 from config.settings import AuditSettings, get_settings
+from src.detection.boolean_utils import bool_column
 from src.ingest.datasynth_labels import get_source_path
 
 logger = logging.getLogger(__name__)
@@ -140,8 +141,15 @@ def _compute_approver_info(df: pd.DataFrame) -> pd.DataFrame | None:
     }
     limits = pd.to_numeric(approver.map(limit_map), errors="coerce")
     can_approve = approver.map(can_approve_map).astype("boolean")
+    approver_in_master = pd.Series(pd.NA, index=df.index, dtype="boolean")
+    has_approver = approver.ne("")
+    approver_in_master.loc[has_approver] = approver.loc[has_approver].isin(approval_map)
     return pd.DataFrame(
-        {"approval_limit": limits, "can_approve_je": can_approve},
+        {
+            "approval_limit": limits,
+            "can_approve_je": can_approve,
+            "approver_in_master": approver_in_master,
+        },
         index=df.index,
     )
 
@@ -319,12 +327,15 @@ def add_exceeds_threshold(
          approval_level은 초과한 가장 낮은 한도의 인덱스(1~6). 미초과=0.
     """
     if not thresholds:
+        approver_info = _compute_approver_info(df)
         df["exceeds_threshold"] = False
         df["approval_level"] = 0
         df["document_approval_amount"] = _compute_document_amount(df, base)
         df["approver_limit_amount"] = np.nan
         df["approval_limit_resolved"] = False
         df["approver_can_approve_je"] = pd.Series(pd.NA, index=df.index, dtype="boolean")
+        if approver_info is not None:
+            df["approver_in_master"] = approver_info["approver_in_master"]
         df["approval_excess_amount"] = 0.0
         df["approval_excess_ratio"] = np.nan
         df["approval_excess_bucket"] = "none"
@@ -373,7 +384,7 @@ def _add_approval_excess_details(
         can_approve = approver_info["can_approve_je"]
     effective_limit = approver_limit
 
-    exceeds = df["exceeds_threshold"].fillna(False).astype(bool)
+    exceeds = bool_column(df, "exceeds_threshold")
     resolved = approver_limit.notna()
     excess_amount = (threshold_amount - effective_limit).where(exceeds, 0.0)
     ratio_denominator = effective_limit.where(effective_limit > 0)
@@ -383,6 +394,8 @@ def _add_approval_excess_details(
     df["approver_limit_amount"] = approver_limit
     df["approval_limit_resolved"] = resolved
     df["approver_can_approve_je"] = can_approve
+    if approver_info is not None:
+        df["approver_in_master"] = approver_info["approver_in_master"]
     df["approval_excess_amount"] = excess_amount.fillna(0.0)
     df["approval_excess_ratio"] = excess_ratio
     df["approval_excess_bucket"] = _approval_excess_bucket(

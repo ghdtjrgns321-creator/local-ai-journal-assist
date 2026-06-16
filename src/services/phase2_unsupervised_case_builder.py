@@ -28,7 +28,7 @@ _UNSUPERVISED_TOP_K = 3
 _FEATURE_COL_PREFIX = "ML02_top_feature_"
 _CONTRIB_SUFFIX = "_contrib"
 _FAMILY = "unsupervised"
-_UNIT_TYPE = "row"
+_UNIT_TYPE = "document"
 _EVIDENCE_TIER = "ml_quantile"
 UNSUPERVISED_ORDERING_NATIVE = "native"
 UNSUPERVISED_ORDERING_SOFT_GUARD = "hybrid_with_soft_repeated_normal_guard"
@@ -52,10 +52,11 @@ def build_unsupervised_cases(
     빈 details / scores 는 빈 tuple 로 graceful fallback (invariant #16).
 
     Ordering:
-        기본 ``"hybrid_with_soft_repeated_normal_guard"`` 는 document-level review
-        priority 표시 순서를 적용한다. q95 gate / VAE score / threshold 는 바꾸지
+        기본 ``"hybrid_with_soft_repeated_normal_guard"`` 시그니처는 이전 진단
+        호환을 위해 남아 있지만, 현재 product ordering 은 context 필드를 쓰지 않는
+        document max-score order 이다. q95 gate / VAE score / threshold 는 바꾸지
         않고, truth/scenario/owner metadata/PHASE1 rank 는 입력으로 쓰지 않는다.
-        ``"native"`` 를 명시하면 기존 row queue 순서를 보존한다.
+        ``"native"`` 도 row-native 가 아니라 document max-score order 이다.
 
     Returns:
         ``tuple[UnsupervisedCase, ...]`` — list 가 아니라 tuple (invariant #11).
@@ -71,7 +72,7 @@ def build_unsupervised_cases(
     ecdf_series = _zero_preserving_ecdf(scores)
     evidence_signature = f"model={model_id}|schema={schema_hash}"
 
-    cases: list[UnsupervisedCase] = []
+    records: list[dict[str, Any]] = []
     for label in scores.index:
         ecdf_value = float(ecdf_series.loc[label])
         # invariant #15 — gate 미달 row 는 case 화하지 않는다.
@@ -84,7 +85,33 @@ def build_unsupervised_cases(
         # invariant #16 — df 에 부재한 label 은 graceful skip (KeyError 회피).
         if row_ref is None:
             continue
-        canonical_refs = (canonicalize_ref_key(label),)
+        records.append(
+            {
+                "label": label,
+                "row_ref": row_ref,
+                "score": float(scores.loc[label]),
+                "ecdf": ecdf_value,
+                "top_features": _extract_top_features(details.loc[label]),
+            }
+        )
+    if not records:
+        return ()
+
+    grouped = _group_records_by_document(records)
+    context_by_group = _document_context_by_group(grouped, df)
+    cases: list[UnsupervisedCase] = []
+    for group_key, group_records in grouped.items():
+        max_record = _max_score_record(group_records)
+        scores_in_group = [float(record["score"]) for record in group_records]
+        ecdfs_in_group = [float(record["ecdf"]) for record in group_records]
+        row_refs = tuple(record["row_ref"] for record in group_records)
+        grouping_mode = "document_id" if group_key[0] == "document" else "fallback_row_identity"
+        doc_key = dict(group_key[1])
+        canonical_refs = (
+            canonicalize_ref_key((doc_key["company_code"], doc_key["document_id"]))
+            if group_key[0] == "document"
+            else str(doc_key["index_label"]),
+        )
         case_id = make_phase2_case_id(
             batch_id=batch_id,
             family=_FAMILY,
@@ -92,33 +119,202 @@ def build_unsupervised_cases(
             canonical_refs=canonical_refs,
             evidence_signature=evidence_signature,
         )
-        top_features = _extract_top_features(details.loc[label])
-        anomaly_score = float(scores.loc[label])
+        anomaly_score = max(scores_in_group)
+        family_ecdf = max(ecdfs_in_group)
+        context = context_by_group.get(group_key, {})
         cases.append(
             UnsupervisedCase(
                 phase2_case_id=case_id,
                 batch_id=batch_id,
                 family=_FAMILY,
                 unit_type=_UNIT_TYPE,
-                row_refs=(row_ref,),
+                row_refs=row_refs,
                 evidence_tier=_EVIDENCE_TIER,
                 # Why: gate 종류 / 임계 / 실제 ecdf 분리.
                 #   ecdf_gate 가 0.95 외 값일 때도 metadata 정합 유지.
                 case_generation_reason={
                     "gate": "unsupervised_ecdf",
                     "threshold": ecdf_gate,
-                    "ecdf": ecdf_value,
+                    "ecdf": family_ecdf,
+                    "document_grouping": grouping_mode,
+                    "ordering_context_policy": "context_fields_display_only",
+                    "evidence_rows": _evidence_row_trace(group_records),
                 },
                 family_score=anomaly_score,
-                family_ecdf=ecdf_value,
+                family_ecdf=family_ecdf,
                 # invariant #17 — phase1_case_refs default, S4 linker 부착 대상.
                 anomaly_score=anomaly_score,
-                top_features=top_features,
+                top_features=_merge_top_features(group_records),
+                max_score_top_features=tuple(max_record["top_features"]),
                 model_id=model_id,
                 schema_hash=schema_hash,
+                document_id=str(doc_key["document_id"]) if group_key[0] == "document" else None,
+                evidence_row_count=len(group_records),
+                top_score_mean=float(np.mean(scores_in_group)),
+                score_spread=max(scores_in_group) - min(scores_in_group),
+                max_score_row_ref=max_record["row_ref"],
+                amount_tail_context=context.get("amount_tail_context"),
+                period_end_context=context.get("period_end_context"),
+                account_rarity_context=context.get("account_rarity_context"),
+                process_rarity_context=context.get("process_rarity_context"),
+                repeated_normal_pressure=0.0,
             )
         )
     return _apply_ordering_strategy(cases, df=df, ordering_strategy=ordering_strategy)
+
+
+def _evidence_row_trace(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Display-only evidence row score/ecdf trace for document detail ordering."""
+    rows: list[dict[str, Any]] = []
+    for record in sorted(
+        records,
+        key=lambda item: (
+            -float(item.get("score") or 0.0),
+            -float(item.get("ecdf") or 0.0),
+            int(getattr(item.get("row_ref"), "row_position", 0) or 0),
+        ),
+    ):
+        row_ref = record["row_ref"]
+        rows.append(
+            {
+                "row_position": int(row_ref.row_position),
+                "score": float(record["score"]),
+                "ecdf": float(record["ecdf"]),
+            }
+        )
+    return rows
+
+
+def _group_records_by_document(
+    records: list[dict[str, Any]],
+) -> dict[tuple[str, tuple[tuple[str, str | None], ...]], list[dict[str, Any]]]:
+    grouped: dict[tuple[str, tuple[tuple[str, str | None], ...]], list[dict[str, Any]]] = {}
+    for record in records:
+        row_ref = record["row_ref"]
+        document_id = str(row_ref.document_id or "").strip()
+        company_code = str(row_ref.company_code or "").strip() or None
+        key = (
+            (
+                "document",
+                (
+                    ("company_code", company_code),
+                    ("document_id", document_id),
+                ),
+            )
+            if document_id
+            else (
+                "fallback",
+                (
+                    ("company_code", company_code),
+                    ("index_label", str(row_ref.index_label)),
+                ),
+            )
+        )
+        grouped.setdefault(key, []).append(record)
+    return grouped
+
+
+def _max_score_record(records: list[dict[str, Any]]) -> dict[str, Any]:
+    return max(
+        records,
+        key=lambda record: (
+            float(record["score"]),
+            -int(getattr(record["row_ref"], "row_position", 0) or 0),
+        ),
+    )
+
+
+def _merge_top_features(records: list[dict[str, Any]]) -> tuple[dict, ...]:
+    by_feature: dict[tuple[str, str], dict] = {}
+    for record in records:
+        for feature in record["top_features"]:
+            copied = dict(feature)
+            key = (str(copied.get("feature_id") or ""), str(copied.get("tag") or ""))
+            current = by_feature.get(key)
+            if current is None or abs(float(copied.get("contrib") or 0.0)) > abs(
+                float(current.get("contrib") or 0.0)
+            ):
+                by_feature[key] = copied
+    features = list(by_feature.values())
+    features.sort(
+        key=lambda feature: (
+            -abs(float(feature.get("contrib") or 0.0)),
+            str(feature.get("feature_id") or ""),
+            str(feature.get("tag") or ""),
+        )
+    )
+    return tuple(features[:_UNSUPERVISED_TOP_K])
+
+
+def _document_context_by_group(
+    grouped: dict[tuple[str, tuple[tuple[str, str | None], ...]], list[dict[str, Any]]],
+    df: pd.DataFrame,
+) -> dict[tuple[str, tuple[tuple[str, str | None], ...]], dict[str, float | None]]:
+    max_amounts = {
+        key: max(_row_amount(df, record["row_ref"].row_position) or 0.0 for record in records)
+        for key, records in grouped.items()
+    }
+    amount_percentiles = _percentile_map({str(key): value for key, value in max_amounts.items()})
+    account_counts = _value_counts_for_context(df, "gl_account")
+    process_counts = _value_counts_for_context(df, "business_process")
+    return {
+        key: {
+            "amount_tail_context": amount_percentiles.get(str(key), 0.0),
+            "period_end_context": _group_period_end_context(records, df),
+            "account_rarity_context": _group_rarity_context(
+                records,
+                df,
+                "gl_account",
+                account_counts,
+            ),
+            "process_rarity_context": _group_rarity_context(
+                records,
+                df,
+                "business_process",
+                process_counts,
+            ),
+        }
+        for key, records in grouped.items()
+    }
+
+
+def _group_period_end_context(records: list[dict[str, Any]], df: pd.DataFrame) -> float:
+    days = [
+        _row_period_end_proximity_days(df, record["row_ref"].row_position)
+        for record in records
+    ]
+    valid = [day for day in days if day is not None]
+    if not valid:
+        return 0.0
+    return _period_end_score(min(valid))
+
+
+def _group_rarity_context(
+    records: list[dict[str, Any]],
+    df: pd.DataFrame,
+    column: str,
+    counts: pd.Series | None = None,
+) -> float | None:
+    if column not in df.columns or df.empty:
+        return None
+    if counts is None:
+        counts = _value_counts_for_context(df, column)
+    values: list[str] = []
+    for record in records:
+        value = _column_value(df, column, record["row_ref"].row_position)
+        if value is not None and str(value).strip():
+            values.append(str(value).strip())
+    if counts.empty or not values:
+        return None
+    rarest_count = min(int(counts.get(value, len(df))) for value in values)
+    return float(1.0 / rarest_count) if rarest_count > 0 else None
+
+
+def _value_counts_for_context(df: pd.DataFrame, column: str) -> pd.Series:
+    if column not in df.columns or df.empty:
+        return pd.Series(dtype="int64")
+    counts = df[column].dropna().astype(str).str.strip()
+    return counts[counts != ""].value_counts()
 
 
 def _apply_ordering_strategy(
@@ -127,111 +323,22 @@ def _apply_ordering_strategy(
     df: pd.DataFrame,
     ordering_strategy: UnsupervisedOrderingStrategy,
 ) -> tuple[UnsupervisedCase, ...]:
-    if ordering_strategy == UNSUPERVISED_ORDERING_NATIVE:
-        return tuple(cases)
-    if ordering_strategy != UNSUPERVISED_ORDERING_SOFT_GUARD:
-        raise ValueError(
-            "unsupported unsupervised ordering_strategy: "
-            f"{ordering_strategy!r}; expected 'native' or "
-            f"{UNSUPERVISED_ORDERING_SOFT_GUARD!r}"
-        )
-    return tuple(_order_cases_by_soft_document_review_priority(cases, df))
-
-
-def _order_cases_by_soft_document_review_priority(
-    cases: list[UnsupervisedCase],
-    df: pd.DataFrame,
-) -> list[UnsupervisedCase]:
-    """Default VAE family display order: document-level review priority.
-
-    The q95 gate and row case generation stay unchanged. This ordering uses only
-    runtime-observable case/GL context: row anomaly score, same-document case
-    count, amount-tail percentile, and period-end proximity. It intentionally
-    does not use truth labels, scenario labels, owner metadata, PHASE1 ranks, or
-    matched results.
-    """
-    if len(cases) <= 1:
-        return cases
-
-    records = _unsupervised_document_records(cases, df)
-    if not records:
-        return sorted(
-            cases,
-            key=lambda case: (-float(case.family_score or 0.0), case.phase2_case_id),
-        )
-
-    amount_percentiles = _percentile_map(
-        {doc: float(record["max_amount"]) for doc, record in records.items()}
-    )
-    scored_docs: list[tuple[str, float]] = []
-    for doc, record in records.items():
-        scores = record["scores"]
-        max_score = max(scores) if scores else 0.0
-        amount_tail = amount_percentiles.get(doc, 0.0)
-        period_end = _period_end_score(record.get("min_period_end_proximity_days"))
-        hybrid = (0.70 * max_score) + (0.20 * amount_tail) + (0.10 * period_end)
-        repeated_proxy = min(float(record.get("case_count") or 0) / 5.0, 1.0)
-        scored_docs.append((doc, hybrid * (1.0 - (0.12 * repeated_proxy))))
-
-    doc_rank = {
-        doc: rank
-        for rank, (doc, _score) in enumerate(
-            sorted(scored_docs, key=lambda item: (-float(item[1]), str(item[0])))
-        )
-    }
-    fallback_rank = len(doc_rank)
-
-    return sorted(
-        cases,
-        key=lambda case: (
-            doc_rank.get(_case_document_id(case), fallback_rank),
-            -float(case.family_score or 0.0),
-            case.phase2_case_id,
-        ),
-    )
-
-
-def _case_document_id(case: UnsupervisedCase) -> str | None:
-    if not case.row_refs:
-        return None
-    value = case.row_refs[0].document_id
-    if value in (None, ""):
-        return None
-    return str(value)
-
-
-def _unsupervised_document_records(
-    cases: list[UnsupervisedCase],
-    df: pd.DataFrame,
-) -> dict[str, dict[str, Any]]:
-    records: dict[str, dict[str, Any]] = {}
-    for case in cases:
-        doc = _case_document_id(case)
-        if doc is None:
-            continue
-        ref = case.row_refs[0] if case.row_refs else None
-        row_position = getattr(ref, "row_position", None) if ref is not None else None
-        record = records.setdefault(
-            doc,
-            {
-                "scores": [],
-                "case_count": 0,
-                "max_amount": 0.0,
-                "min_period_end_proximity_days": None,
-            },
-        )
-        record["scores"].append(float(case.family_score or 0.0))
-        record["case_count"] += 1
-        amount = _row_amount(df, row_position)
-        if amount is not None:
-            record["max_amount"] = max(float(record["max_amount"]), amount)
-        period_end_days = _row_period_end_proximity_days(df, row_position)
-        if period_end_days is not None:
-            existing = record["min_period_end_proximity_days"]
-            record["min_period_end_proximity_days"] = (
-                period_end_days if existing is None else min(int(existing), period_end_days)
+    del df
+    if ordering_strategy in {
+        UNSUPERVISED_ORDERING_NATIVE,
+        UNSUPERVISED_ORDERING_SOFT_GUARD,
+    }:
+        return tuple(
+            sorted(
+                cases,
+                key=lambda case: (-float(case.family_score or 0.0), case.phase2_case_id),
             )
-    return records
+        )
+    raise ValueError(
+        "unsupported unsupervised ordering_strategy: "
+        f"{ordering_strategy!r}; expected 'native' or "
+        f"{UNSUPERVISED_ORDERING_SOFT_GUARD!r}"
+    )
 
 
 def _row_amount(df: pd.DataFrame, row_position: int | None) -> float | None:

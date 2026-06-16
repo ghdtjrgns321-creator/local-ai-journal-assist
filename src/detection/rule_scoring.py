@@ -57,7 +57,6 @@ TOPIC_REGISTRY: dict[str, TopicMetadata] = {
     "closing_timing": TopicMetadata("closing_timing", "결산·기간귀속·입력시점"),
     "account_logic": TopicMetadata("account_logic", "계정분류·거래실질 불일치"),
     "duplicate_outflow": TopicMetadata("duplicate_outflow", "중복·상계·자금유출"),
-    "intercompany_cycle": TopicMetadata("intercompany_cycle", "관계사·내부거래·순환구조"),
     "revenue_statistical": TopicMetadata("revenue_statistical", "수익·금액·모집단 통계 이상"),
 }
 
@@ -133,6 +132,7 @@ class RuleScoringMetadata:
     secondary_topics: tuple[str, ...] = field(default_factory=tuple)
     standalone_rankable: bool = True
     floor_policy_ids: tuple[str, ...] = field(default_factory=tuple)
+    floor_eligible_labels: frozenset[str] | None = None
     combo_policy_ids: tuple[str, ...] = field(default_factory=tuple)
     fraud_scenario_tags: tuple[str, ...] = field(default_factory=tuple)
 
@@ -189,6 +189,7 @@ RULE_SCORING_REGISTRY: dict[str, RuleScoringMetadata] = {
         "strong",
         final_topic="approval_control",
         floor_policy_ids=("approval_control_high",),
+        floor_eligible_labels=frozenset({"critical", "non_approver"}),
         fraud_scenario_tags=("approval_bypass",),
     ),
     "L1-05": RuleScoringMetadata(
@@ -242,7 +243,8 @@ RULE_SCORING_REGISTRY: dict[str, RuleScoringMetadata] = {
         "duplicate_or_outflow",
         "strong",
         final_topic="duplicate_outflow",
-        floor_policy_ids=("duplicate_outflow_high",),
+        floor_policy_ids=("duplicate_reference_match",),
+        floor_eligible_labels=frozenset({"reference_match"}),
         fraud_scenario_tags=("duplicate_payment",),
     ),
     "L2-03": RuleScoringMetadata(
@@ -310,11 +312,11 @@ RULE_SCORING_REGISTRY: dict[str, RuleScoringMetadata] = {
     ),
     "L3-03": RuleScoringMetadata(
         "L3-03",
-        "intercompany_structure",
+        # intercompany_cycle 제거(2026-06-14) → account_logic 계열로 재배치.
+        "logic_mismatch",
         "weak",
         "booster",
-        final_topic="intercompany_cycle",
-        secondary_topics=("account_logic",),
+        final_topic="account_logic",
         standalone_rankable=False,
         fraud_scenario_tags=("intercompany_population_context",),
     ),
@@ -404,6 +406,11 @@ RULE_SCORING_REGISTRY: dict[str, RuleScoringMetadata] = {
         final_topic="revenue_statistical",
         fraud_scenario_tags=("amount_outlier",),
     ),
+    # macro(L4-02/Benford·D01·D02)는 PHASE1-2 family 귀속(계정/월 모집단, 2026-06-15 결정).
+    # 단 registry 에는 macro_only 로 유지한다 — role_factor=0 으로 PHASE1-1 row anomaly_score·
+    # case score 에 0 기여하도록 "중화"하는 역할. 항목을 지우면 normalize_rule_evidence 가
+    # 기본값(primary)으로 폴백해 오히려 점수가 붙는다(score_aggregator). PHASE1-2 재정립 시
+    # PHASE1-2 surface 로 이동.
     "L4-02": RuleScoringMetadata(
         "L4-02",
         "statistical_outlier",
@@ -436,7 +443,6 @@ RULE_SCORING_REGISTRY: dict[str, RuleScoringMetadata] = {
         "logic_mismatch",
         "medium",
         final_topic="account_logic",
-        secondary_topics=("intercompany_cycle",),
         fraud_scenario_tags=("rare_account_partner_pair",),
     ),
     "L4-05": RuleScoringMetadata(
@@ -459,37 +465,18 @@ RULE_SCORING_REGISTRY: dict[str, RuleScoringMetadata] = {
         combo_policy_ids=("batch_combo",),
         fraud_scenario_tags=("batch_population_anomaly",),
     ),
-    "IC01": RuleScoringMetadata(
-        "IC01",
-        "intercompany_structure",
-        "medium",
-        final_topic="intercompany_cycle",
-        floor_policy_ids=("intercompany_exception",),
-        fraud_scenario_tags=("intercompany_reconciliation_exception",),
-    ),
-    "IC02": RuleScoringMetadata(
-        "IC02",
-        "intercompany_structure",
-        "medium",
-        final_topic="intercompany_cycle",
-        floor_policy_ids=("intercompany_exception",),
-        fraud_scenario_tags=("intercompany_amount_difference",),
-    ),
-    "IC03": RuleScoringMetadata(
-        "IC03",
-        "intercompany_structure",
-        "medium",
-        final_topic="intercompany_cycle",
-        floor_policy_ids=("intercompany_exception",),
-        fraud_scenario_tags=("intercompany_cycle_exception",),
-    ),
+    # IC01~03·GR01/03 제거 (2026-06-14): intercompany/graph 는 PHASE2 family 영역으로,
+    # PHASE1 정규 32룰이 아니다(RULE_DETAIL_METADATA_V1_LOCK §). PHASE1 점수경로에서 제외.
+    # 탐지기 파일(intercompany_matcher·graph_detector)은 PHASE2 가 사용하므로 유지.
+    # D01/D02 도 macro_only 유지(중화). PHASE1-2 family(TS) 귀속이나 위 L4-02 와 동일 사유로
+    # registry 항목 유지 — 지우면 폴백 점수가 붙는다.
     "D01": RuleScoringMetadata(
         "D01",
         "macro_finding",
         "medium",
         "macro_only",
         final_topic="account_logic",
-        secondary_topics=("intercompany_cycle", "revenue_statistical"),
+        secondary_topics=("revenue_statistical",),
         standalone_rankable=False,
         fraud_scenario_tags=("macro_account_logic_anomaly",),
     ),
@@ -499,27 +486,9 @@ RULE_SCORING_REGISTRY: dict[str, RuleScoringMetadata] = {
         "medium",
         "macro_only",
         final_topic="closing_timing",
-        secondary_topics=("intercompany_cycle", "revenue_statistical"),
+        secondary_topics=("revenue_statistical",),
         standalone_rankable=False,
         fraud_scenario_tags=("macro_timing_anomaly",),
-    ),
-    "GR01": RuleScoringMetadata(
-        "GR01",
-        "intercompany_structure",
-        "medium",
-        "macro_only",
-        final_topic="intercompany_cycle",
-        standalone_rankable=False,
-        fraud_scenario_tags=("group_relationship_context",),
-    ),
-    "GR03": RuleScoringMetadata(
-        "GR03",
-        "intercompany_structure",
-        "medium",
-        "macro_only",
-        final_topic="intercompany_cycle",
-        standalone_rankable=False,
-        fraud_scenario_tags=("group_relationship_context",),
     ),
 }
 
@@ -588,6 +557,10 @@ def normalize_rule_evidence(
         * role_factor
         * metadata.contribution_weight
     )
+    label_key = str(display_label or "").strip().lower()
+    floor_eligible = (
+        metadata.floor_eligible_labels is None or label_key in metadata.floor_eligible_labels
+    )
     return NormalizedRuleEvidence(
         rule_id=rule_id,
         evidence_type=evidence_type,
@@ -600,7 +573,7 @@ def normalize_rule_evidence(
         final_topic=metadata.final_topic,
         secondary_topics=metadata.secondary_topics,
         standalone_rankable=metadata.standalone_rankable,
-        floor_policy_ids=metadata.floor_policy_ids,
+        floor_policy_ids=metadata.floor_policy_ids if floor_eligible else (),
         combo_policy_ids=metadata.combo_policy_ids,
         fraud_scenario_tags=metadata.fraud_scenario_tags,
     )

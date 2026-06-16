@@ -12,7 +12,7 @@ LLM(상용 API) 전송 전에 PII 식별자를 비식별 처리한다. CONSTRAIN
 - None / "" / NaN 모든 결측 입력은 빈 문자열 반환 (회귀 안전).
 - 적요 내 패턴(이름·계좌·사업자번호)은 정규식 기반 단순 마스킹. 본격 NER는 비범위.
 
-단일 출처: docs/CONSTRAINTS.md §데이터 비식별화 + docs/PHASE3_REVIEW_NARRATOR_SPEC.md.
+단일 출처: docs/spec/CONSTRAINTS.md §데이터 비식별화 + docs/archive/abandoned/PHASE3_REVIEW_NARRATOR_SPEC.md.
 """
 
 from __future__ import annotations

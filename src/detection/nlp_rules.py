@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 
+from src.detection.boolean_utils import bool_column
+
 if TYPE_CHECKING:
     from src.llm.embedding_service import EmbeddingService
 
@@ -66,7 +68,7 @@ def _sanitize_series(
 
 
 def _embed_with_positions(
-    svc: "EmbeddingService",
+    svc: EmbeddingService,
     series: pd.Series,
 ) -> tuple[np.ndarray, np.ndarray]:
     """비어있지 않은 텍스트만 임베딩 → (embeddings, positional_idx).
@@ -92,7 +94,7 @@ def _embed_with_positions(
 def nlp01_header_account_mismatch(
     df: pd.DataFrame,
     *,
-    embedding_service: "EmbeddingService",
+    embedding_service: EmbeddingService,
     similarity_threshold: float = 0.30,
 ) -> pd.Series:
     """NLP01: header_text 의미와 gl_account 카테고리의 임베딩 유사도 < threshold.
@@ -147,7 +149,7 @@ def nlp01_header_account_mismatch(
 def nlp02_process_account_mismatch(
     df: pd.DataFrame,
     *,
-    embedding_service: "EmbeddingService",
+    embedding_service: EmbeddingService,
     similarity_threshold: float = 0.30,
 ) -> pd.Series:
     """NLP02: business_process와 gl_account 카테고리의 임베딩 유사도 < threshold.
@@ -191,7 +193,7 @@ def nlp02_process_account_mismatch(
 def nlp03_atypical_description(
     df: pd.DataFrame,
     *,
-    embedding_service: "EmbeddingService",
+    embedding_service: EmbeddingService,
     anomaly_percentile: float = 0.95,
     min_group_size: int = 5,
 ) -> pd.Series:
@@ -250,7 +252,7 @@ def nlp03_atypical_description(
 def nlp04_ic_description_anomaly(
     df: pd.DataFrame,
     *,
-    embedding_service: "EmbeddingService",
+    embedding_service: EmbeddingService,
     similarity_threshold: float = 0.50,
     min_group_size: int = 5,
 ) -> pd.Series:
@@ -262,7 +264,7 @@ def nlp04_ic_description_anomaly(
     if "is_intercompany" not in df.columns:
         return scores
 
-    ic_mask = df["is_intercompany"].fillna(False).astype(bool)
+    ic_mask = bool_column(df, "is_intercompany")
     if ic_mask.sum() < min_group_size:
         return scores
 
@@ -296,7 +298,7 @@ def nlp04_ic_description_anomaly(
 def nlp05_synonym_evasion(
     df: pd.DataFrame,
     *,
-    embedding_service: "EmbeddingService",
+    embedding_service: EmbeddingService,
     risk_keywords: list[str],
     synonym_threshold: float = 0.70,
 ) -> pd.Series:

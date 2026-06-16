@@ -30,7 +30,7 @@ PHASE2 sub-detector tier registry 등록 (2026-05-25, 옵션 2):
     ic_unmatched_prob=weak, ic_timing_prob=weak). IntercompanyMatcher 의 score
     합성·output column 자체는 변경 없으며, family overlay 의 lane sort
     `ic_role_priority` secondary dim + `phase2_review_band` 승격 chain 만
-    영향받는다. 자세한 계약은 docs/PHASE2_INTERFACE_DESIGN.md §4.3.2 참조.
+    영향받는다. 자세한 계약은 docs/spec/PHASE2_INTERFACE_DESIGN.md §4.3.2 참조.
 
 PHASE2 IC pair artifact (additive, 2026-05-27, S5 Phase A):
     metadata 에 새 key ``ic_pair_artifact`` 를 추가한다. 5종 sanitized
@@ -57,6 +57,7 @@ import pandas as pd
 
 from config.settings import AuditSettings
 from src.detection.base import BaseDetector, DetectionResult, validate_input
+from src.detection.boolean_utils import bool_column
 from src.detection.constants import SEVERITY_MAP
 from src.detection.intercompany_rules import (
     _classify_rec_pay_prefixes,
@@ -87,10 +88,10 @@ _PROBABILISTIC_COLUMNS: tuple[str, ...] = (
 )
 _RECIPROCAL_FLOW_COLUMN: str = "ic_reciprocal_flow_prob"
 
-_CANDIDATE_PAIR_CAP: int = 200  # operational visibility cap — 디버깅용
+_CANDIDATE_PAIR_CAP: int = 10_000  # operational visibility cap — 디버깅용
 _UNMATCHED_ROW_CAP: int = 500
 _MISMATCH_PAIR_CAP: int = 500
-_RECIPROCAL_PAIR_CAP: int = 500
+_RECIPROCAL_PAIR_CAP: int = 10_000
 
 
 def _ic_json_safe(value: Any) -> Any:
@@ -186,11 +187,17 @@ def build_intercompany_pair_artifact(
     artifact = IntercompanyPairArtifact()
 
     # ── coverage 통계 ────────────────────────────────────────────
-    ic_mask = df.get("is_intercompany", pd.Series(False, index=df.index)).fillna(False).astype(bool)
+    ic_mask = bool_column(df, "is_intercompany")
     total_ic_rows = int(ic_mask.sum())
 
     # ── reciprocal_pairs ───────────────────────────────────────
-    artifact.reciprocal_pairs = _extract_reciprocal_pairs(df, pair_map, reciprocal_scores, settings)
+    artifact.reciprocal_pairs = _extract_reciprocal_pairs(
+        df,
+        pair_map,
+        reciprocal_scores,
+        settings,
+        reciprocal_summary=reciprocal_summary,
+    )
 
     # ── mismatch_pairs (IC02 score > 0) ────────────────────────
     artifact.mismatch_pairs = _extract_mismatch_pairs(df, match_df, rule_results)
@@ -205,9 +212,14 @@ def build_intercompany_pair_artifact(
     artifact.coverage = {
         "total_ic_rows": total_ic_rows,
         "candidate_pair_count": len(artifact.candidate_pairs),
+        "candidate_pair_available_count": int(prob_summary.get("pair_candidate_count", 0) or 0),
+        "candidate_pair_truncated": bool(len(artifact.candidate_pairs) >= _CANDIDATE_PAIR_CAP),
         "unmatched_row_count": len(artifact.unmatched_rows),
+        "unmatched_row_truncated": bool(len(artifact.unmatched_rows) >= _UNMATCHED_ROW_CAP),
         "mismatch_pair_count": len(artifact.mismatch_pairs),
+        "mismatch_pair_truncated": bool(len(artifact.mismatch_pairs) >= _MISMATCH_PAIR_CAP),
         "reciprocal_pair_count": len(artifact.reciprocal_pairs),
+        "reciprocal_pair_truncated": bool(len(artifact.reciprocal_pairs) >= _RECIPROCAL_PAIR_CAP),
     }
 
     return artifact
@@ -218,6 +230,8 @@ def _extract_reciprocal_pairs(
     pair_map: dict[str, str],
     reciprocal_scores: pd.DataFrame,
     settings: AuditSettings,
+    *,
+    reciprocal_summary: dict | None = None,
 ) -> list[dict[str, Any]]:
     """단일 document 안 receivable + payable 동시 + amount symmetry ≥ threshold.
 
@@ -230,14 +244,21 @@ def _extract_reciprocal_pairs(
     채워야 "무엇과 무엇이 reciprocal" 질문에 답할 수 있고, PHASE1 cross-ref 가 반대쪽
     row 의 hit 도 누락 없이 회수할 수 있다 (invariant #58).
     """
+    entries: list[dict[str, Any]] = []
+    if reciprocal_summary:
+        for entry in reciprocal_summary.get("cross_company_reciprocal_entries") or []:
+            if isinstance(entry, dict):
+                entries.append(dict(entry))
+                if len(entries) >= _RECIPROCAL_PAIR_CAP:
+                    return entries
     if reciprocal_scores is None or reciprocal_scores.empty:
-        return []
+        return entries
     if _RECIPROCAL_FLOW_COLUMN not in reciprocal_scores.columns:
-        return []
+        return entries
     if "document_id" not in df.columns or "gl_account" not in df.columns:
-        return []
+        return entries
     if not pair_map:
-        return []
+        return entries
 
     # Why: reciprocal_scores 가 0 보다 큰 row 의 doc — structural pass (양쪽 존재 +
     # amount symmetry ≥ amount_similarity_min) 통과한 case 만 score > 0. 추가
@@ -246,11 +267,11 @@ def _extract_reciprocal_pairs(
     flow_prob = reciprocal_scores[_RECIPROCAL_FLOW_COLUMN].reindex(df.index, fill_value=0.0)
     strong_mask = flow_prob > 0.0
     if not strong_mask.any():
-        return []
+        return entries
 
     rec_prefixes, pay_prefixes = _classify_rec_pay_prefixes(pair_map)
     if not rec_prefixes or not pay_prefixes:
-        return []
+        return entries
 
     is_rec = _gl_starts_with_any(df["gl_account"], rec_prefixes)
     is_pay = _gl_starts_with_any(df["gl_account"], pay_prefixes)
@@ -263,7 +284,6 @@ def _extract_reciprocal_pairs(
     doc_series_full = df["document_id"].astype(str)
 
     # 도메인적으로 단일 document 안의 self-balanced rec+pay → doc 단위 집계.
-    entries: list[dict[str, Any]] = []
     seen_docs: set[str] = set()
     for label in strong_idx:
         doc_id = _ic_safe_str(doc_series.loc[label]) if label in doc_series.index else ""
@@ -571,7 +591,7 @@ class IntercompanyMatcher(BaseDetector):
             work_df["is_intercompany"] = inferred
             return work_df
 
-        existing = df["is_intercompany"].fillna(False).astype(bool)
+        existing = bool_column(df, "is_intercompany")
         combined = existing | inferred
         if combined.equals(existing):
             return df

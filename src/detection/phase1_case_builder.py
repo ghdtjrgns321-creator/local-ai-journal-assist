@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import time
 from collections import defaultdict
 from collections.abc import Callable
@@ -14,9 +16,10 @@ from typing import Any
 
 import pandas as pd
 
-from config.settings import PROJECT_ROOT
+from config.settings import PROJECT_ROOT, AuditSettings
 from src.detection.base import DetectionResult
-from src.detection.constants import BATCH_CORROBORATION_RULES, TOPSIDE_BONUS_RULES
+from src.detection.boolean_utils import bool_column, coerce_bool_value
+from src.detection.constants import BATCH_CORROBORATION_RULES, SEVERITY_MAP, TOPSIDE_BONUS_RULES
 from src.detection.phase1_rule_catalog import (
     EVIDENCE_QUEUE_MAP as _EVIDENCE_QUEUE_MAP,
 )
@@ -48,9 +51,13 @@ from src.detection.rule_scoring import (
     TOPIC_REGISTRY,
     normalize_rule_evidence,
 )
+from src.detection.source_trust import trusted_automated_mask
 from src.detection.topic_scoring import (
+    TIER_RANK,
+    case_tier,
     compute_fraud_scenario_tags,
     compute_topic_scores,
+    compute_topic_tiers,
     pick_primary_topic,
 )
 from src.models.phase1_case import (
@@ -60,6 +67,7 @@ from src.models.phase1_case import (
     RawRuleHitRef,
     ThemeSummary,
 )
+from src.models.phase1_unit import DocumentUnit, FlowUnit, Phase1Unit
 from src.services.phase2_ref_canonical import canonicalize_ref_key
 from src.services.phase2_ref_pseudonymize import hash_ref_key
 
@@ -103,7 +111,61 @@ _STRONG_TRIAGE_RULES = {
 
 _STRENGTH_RANK = {"strong": 3, "medium": 2, "weak": 1}
 
-_MACRO_FINDING_RULES = {"L4-02", "D01", "D02", "GR01", "GR03"}
+# GR01/GR03 제거 (2026-06-14): graph 는 PHASE2 family 영역. macro finding 은 L4-02·D01·D02 만.
+_MACRO_FINDING_RULES = {"L4-02", "D01", "D02"}
+
+# 데이터 정합성 트랙 (2026-06-15 결정): 차대불일치·필수필드·무효계정은 부정 위험이 아니라
+# 데이터 품질 문제다. 위험 큐(topic/tier/priority)에서 분리해 별도 트랙으로만 보여준다.
+# macro 와 동일하게 case_hits 에서 제외 → topic·tier·priority 기여 0. 별도 수집은
+# _build_data_integrity_findings 가 raw 탐지 결과에서 직접 한다. L1-08(기간불일치)은 위험 큐 잔류.
+# L3-08(적요 결손)은 데이터 품질이지만 fraud combo(고액+기말+적요없음 = period_end_adjustment_high
+# 의 weak-description 다리) 보강 신호라 위험 큐에 잔류한다(2026-06-15 사용자 결정). 데이터 트랙 제외.
+_DATA_INTEGRITY_TRACK_RULES = {"L1-01", "L1-02", "L1-03"}
+
+_DOCUMENT_UNIT_RULES = {
+    "L1-01",
+    "L1-02",
+    "L1-03",
+    "L1-04",
+    "L1-05",
+    "L1-06",
+    "L1-07",
+    "L1-08",
+    "L1-09",
+    "L2-01",
+    "L2-04",
+    "L3-01",
+    "L3-02",
+    "L3-03",
+    "L3-04",
+    "L3-05",
+    "L3-06",
+    "L3-07",
+    "L3-08",
+    "L3-09",
+    "L3-10",
+    "L3-11",
+    "L4-01",
+    "L4-03",
+    "L4-04",
+}
+
+_FLOW_UNIT_RULES = {"L2-02", "L2-03", "L2-05", "IC01", "IC02", "IC03", "GR01", "GR03"}
+_REVIEW_POPULATION_RULES = {"L4-02", "D01", "D02", "L3-12", "L4-05", "L4-06"}
+
+_FLOW_ID_SCHEMA_VERSION = "p1_flow_v1"
+_DUPLICATE_DETAIL_RULE_IDS = ("L2-03", "L2-03a", "L2-03b", "L2-03c", "L2-03d", "L2-03e")
+_IC_CANDIDATE_PAIR_CAP = 10_000
+_IC_UNMATCHED_ROW_CAP = 500
+_IC_MISMATCH_PAIR_CAP = 500
+_IC_RECIPROCAL_PAIR_CAP = 10_000
+_REVERSAL_REFERENCE_COLUMNS = (
+    "reversal_document_id",
+    "original_document_id",
+    "reversed_document_id",
+    "reverse_document_id",
+)
+_FLOW_SETTINGS = AuditSettings()
 
 _THEME_EXPLANATION_PRIORITY = {
     "control_failure": (
@@ -479,6 +541,62 @@ class _RawHit:
     fraud_scenario_tags: tuple[str, ...] = ()
 
 
+@dataclass
+class _UnitScoreProjection:
+    priority_score: float = 0.0
+    base_priority_score: float = 0.0
+    composite_sort_score: float = 0.0
+    composite_sort_score_components: dict[str, float] | None = None
+    topic_scores: dict[str, float] | None = None
+    topic_score_breakdown: dict[str, dict[str, Any]] | None = None
+    priority_band: str = "low"
+    triage_rank_score: float = 0.0
+    triage_rank_reasons: list[str] | None = None
+
+
+@dataclass
+class _AuditEvidenceContext:
+    posting_months: list[str]
+    manual_context: list[bool]
+    support_gap: list[bool]
+    approval_gap: list[bool]
+    post_close_gap: list[bool]
+    related_party_context: list[bool]
+    reversal_context: list[bool]
+    partner_value: list[bool]
+    master_counterparty_inactive: list[bool]
+    master_counterparty_known: list[bool]
+    document_flow_orphan: list[bool]
+    ic_matched_pair_found: list[bool]
+    ic_unmatched_reference: list[bool]
+    approval_matrix_gap: list[bool]
+    approval_limit_exceeded_independent: list[bool]
+    trusted_automated: list[bool]
+
+
+def _fraud_combo_rule_scope(hits, audit_context: _AuditEvidenceContext) -> set[str]:
+    """fraud combo 트리거로 인정할 룰 — 신뢰 자동 행에서만 발화한 룰은 제외.
+
+    Why: 자동 결산 배치 전표는 승인 부재·결산기 집중이 정상이라 사람 행위 전제의
+         fraud combo를 구성할 수 없다. 위장 의심(단독 자동) 행은 신뢰하지 않으므로
+         그 발화는 콤보 트리거로 유지된다 (OPEN_ISSUES #14·#16).
+    """
+    trusted = audit_context.trusted_automated
+    size = len(trusted)
+    scope: set[str] = set()
+    for hit in hits:
+        position = getattr(hit, "row_index", None)
+        try:
+            pos = int(position) if position is not None else -1
+        except (TypeError, ValueError):
+            pos = -1
+        on_trusted = 0 <= pos < size and trusted[pos]
+        if not on_trusted:
+            scope.add(str(getattr(hit, "rule_id", "")))
+    scope.discard("")
+    return scope
+
+
 def build_phase1_case_run_id(
     *,
     company_id: str | None,
@@ -542,7 +660,48 @@ def build_phase1_case_result(
         df=df,
         top_n=int(config.get("top_n_macro_findings", 100)),
     )
+    data_integrity_findings = _build_data_integrity_findings(results)
+    import os as _os_dbg
+
+    _dbg = bool(_os_dbg.environ.get("PHASE1_BUILD_STAGE_TIMING"))
+
+    def _stage(name: str, t0: float) -> float:
+        if _dbg:
+            print(f"[stage] {name}: {_time.perf_counter() - t0:.2f}s", flush=True)
+        return _time.perf_counter()
+
+    _st = _time.perf_counter()
     raw_hits = _collect_raw_hits(df, results)
+    _st = _stage("collect_raw_hits", _st)
+    flow_units = _build_flow_units(
+        df,
+        results,
+        engagement_salt=engagement_salt,
+    )
+    _st = _stage("build_flow_units", _st)
+    flow_member_document_ids = _measurement_eligible_flow_member_document_ids(flow_units)
+    document_units = _build_document_units(
+        raw_hits,
+        df=df,
+        absorbed_document_ids=flow_member_document_ids,
+        engagement_salt=engagement_salt,
+    )
+    _st = _stage("build_document_units", _st)
+    flow_units = _absorb_document_hits_into_flow_units(
+        raw_hits,
+        flow_units,
+        df,
+        engagement_salt=engagement_salt,
+    )
+    _st = _stage("absorb_document_hits", _st)
+    units = [*document_units, *flow_units]
+    units = _score_phase1_units(
+        units,
+        raw_hits,
+        df,
+        config,
+    )
+    _st = _stage("score_phase1_units", _st)
     cases = _build_cases(
         df,
         raw_hits,
@@ -550,6 +709,9 @@ def build_phase1_case_result(
         macro_findings,
         engagement_salt=engagement_salt,
     )
+    _st = _stage("build_cases", _st)
+    cases = _derive_case_scores_from_units(cases, units, config)
+    _st = _stage("derive_case_scores", _st)
     theme_summaries = _build_theme_summaries(cases, int(config.get("top_n_per_theme", 10)))
     # Why: PHASE1 빌드 + 탐지기 실행 시간 합산. 탐지기별 metadata["elapsed"] 합 + 빌드 시간.
     detector_elapsed = 0.0
@@ -572,6 +734,7 @@ def build_phase1_case_result(
         top_n_per_theme=int(config.get("top_n_per_theme", 10)),
         theme_summaries=theme_summaries,
         cases=cases,
+        units=units,
         raw_rule_reference={
             "source": "detection_results",
             "track_names": [result.track_name for result in results],
@@ -591,6 +754,14 @@ def build_phase1_case_result(
             "macro_finding_policy": (
                 "L4-02/D01/D02/GR01/GR03 are Account/Process Queue findings. They do not create "
                 "transaction queue priority_score or row-level anomaly_score by themselves."
+            ),
+            "data_integrity_findings": data_integrity_findings,
+            "data_integrity_finding_count": sum(
+                int(item.get("flagged_row_count", 0)) for item in data_integrity_findings
+            ),
+            "data_integrity_policy": (
+                "L1-01/L1-02/L1-03/L3-08 are data-quality checks shown in a separate data-integrity "
+                "track. They do not contribute to risk topic/tier/priority (HIGH/MEDIUM/LOW)."
             ),
             "elapsed_seconds": float(elapsed_seconds),
             "detector_elapsed_seconds": float(detector_elapsed),
@@ -644,7 +815,7 @@ def _build_macro_findings(
         findings.extend(_build_l402_macro_findings(result.track_name, metadata))
         findings.extend(_build_d01_macro_findings(result.track_name, metadata))
         findings.extend(_build_d02_macro_findings(result.track_name, metadata))
-        findings.extend(_build_graph_macro_findings(result.track_name, result.details, df))
+        # GR macro finding 제거 (2026-06-14): graph(GR01/03)는 PHASE2 family.
 
     findings.sort(
         key=lambda item: (
@@ -656,6 +827,58 @@ def _build_macro_findings(
     if top_n > 0:
         findings = findings[:top_n]
     return [_json_safe_mapping(item) for item in findings]
+
+
+_DATA_INTEGRITY_RULE_LABELS: dict[str, str] = {
+    "L1-01": "차대변 불일치",
+    "L1-02": "필수필드 누락",
+    "L1-03": "무효 계정",
+}
+
+
+def _build_data_integrity_findings(
+    results: list[DetectionResult],
+) -> list[dict[str, Any]]:
+    """데이터 정합성 트랙(L1-01/L1-02/L1-03/L3-08) 별도 수집.
+
+    이 룰들은 부정 위험이 아니라 데이터 품질 문제라 위험 큐(topic/tier/priority)에서
+    제외(_DATA_INTEGRITY_TRACK_RULES)된다. 여기서는 raw 탐지 결과에서 룰별 발화 건수만
+    집계해 별도 트랙으로 표시하게 한다(위험 점수 기여 없음). 표시는 룰별 기존 화면 사용.
+    """
+
+    counts: dict[str, int] = {}
+    for result in results:
+        details = result.details
+        for rule_flag in result.rule_flags:
+            canonical_rule_id = canonicalize_rule_id(str(rule_flag.rule_id))
+            if canonical_rule_id not in _DATA_INTEGRITY_TRACK_RULES:
+                continue
+            flagged = 0
+            if details is not None:
+                detail_column = (
+                    str(rule_flag.rule_id)
+                    if str(rule_flag.rule_id) in details.columns
+                    else canonical_rule_id
+                )
+                if detail_column in details.columns:
+                    scores = pd.to_numeric(details[detail_column], errors="coerce").fillna(0.0)
+                    flagged = int(scores.gt(0).sum())
+            counts[canonical_rule_id] = counts.get(canonical_rule_id, 0) + flagged
+
+    findings: list[dict[str, Any]] = []
+    for rule_id in sorted(_DATA_INTEGRITY_TRACK_RULES):
+        findings.append(
+            {
+                "rule_id": rule_id,
+                "rule_label": _DATA_INTEGRITY_RULE_LABELS.get(rule_id, rule_id),
+                "track": "data_integrity",
+                "flagged_row_count": int(counts.get(rule_id, 0)),
+                "interpretation": (
+                    "데이터 품질·정합성 점검 신호. 부정 위험 등급(HIGH/MEDIUM/LOW)과 분리해 본다."
+                ),
+            }
+        )
+    return findings
 
 
 def _build_l402_macro_findings(
@@ -1087,6 +1310,9 @@ def _collect_raw_hits_profiled(
             rule_detail_metadata = _safe_rule_detail_metadata(requested_rule_id)
             if canonical_rule_id in _MACRO_FINDING_RULES:
                 continue
+            # 데이터 정합성 트랙: 위험 큐에서 분리(별도 트랙 표시). 위험 topic/tier/priority 기여 0.
+            if canonical_rule_id in _DATA_INTEGRITY_TRACK_RULES:
+                continue
             metadata = RULE_SCORING_REGISTRY.get(canonical_rule_id) or RULE_SCORING_REGISTRY.get(
                 requested_rule_id
             )
@@ -1271,8 +1497,10 @@ def _build_cases(
     step_start = build_start
     line_amounts = _line_amount_series(df)
     document_amounts = _document_amounts_by_id(df, line_amounts)
+    document_ref_columns = _document_ref_columns(df, config)
     macro_index = _build_macro_context_index(macro_findings or [])
     macro_row_context = _build_macro_row_context(df)
+    audit_context = _build_audit_evidence_context(df)
     if profile_callback is not None:
         profile_callback(
             "build_cases.init_amount_cache",
@@ -1406,7 +1634,7 @@ def _build_cases(
             1.0,
         )
         behavior_score = max(min(len(indices) / 10.0, 1.0), access_scope_score)
-        repeat_months = _repeat_months(rows)
+        repeat_months = _repeat_months_from_positions(indices, audit_context.posting_months)
         repeat_score = min(max(repeat_months - 1, 0) / 2.0, 1.0)
         secondary_tags = _secondary_tags(legacy_theme_id, evidence_scores, config)
         priority_score = _priority_score(
@@ -1476,27 +1704,51 @@ def _build_cases(
         # topic_scoring 경로에서는 보너스가 머지 후보에서 배제되므로 사유도 audit 설명에서 제외.
         loop_timings["macro_context"] += time.perf_counter() - segment_start
 
+        # macro(D01/D02/L4-02·Benford)는 PHASE1-1 점수경로에서 제외(2026-06-15, PHASE1-2 귀속).
+        # case_hits 만으로 topic score/tier 산출. macro_findings/contexts 는 별도 표시 surface.
+
         segment_start = time.perf_counter()
         topic_breakdowns = compute_topic_scores(
             case_hits,
             materiality_score=amount_score,
             repeat_score=repeat_score,
-            audit_evidence_score=_case_audit_evidence_scores(
-                rows=rows,
+            audit_evidence_score=_unit_audit_evidence_scores(
+                row_positions=indices,
                 case_hits=case_hits,
                 amount_score=amount_score,
                 repeat_score=repeat_score,
+                context=audit_context,
             ),
             topic_caps=_topic_caps(config),
             topic_floor_policies=_topic_floor_policies(config),
             combo_floor_policies=_combo_floor_policies(config),
+            fraud_combo_rule_scope=_fraud_combo_rule_scope(case_hits, audit_context),
             return_breakdown=True,
         )
-        topic_scores = {
-            topic_id: breakdown.score
-            for topic_id, breakdown in topic_breakdowns.items()
-            if breakdown.score > 0 and (breakdown.has_rankable_primary or breakdown.has_combo_floor)
-        }
+        # PHASE1_TIER_SCORING_SPEC: 주제 점수·선택·band·정렬 전부 tier(가중합 .score 폐기).
+        if use_topic_scoring:
+            topic_tiers = compute_topic_tiers(
+                case_hits,
+                topic_floor_policies=_topic_floor_policies(config),
+                combo_floor_policies=_combo_floor_policies(config),
+                fraud_combo_rule_scope=_fraud_combo_rule_scope(case_hits, audit_context),
+                breakdowns=topic_breakdowns,  # 이미 위에서 계산 — 재계산 생략(성능)
+            )
+            # topic_scores = tier 대표값(가중합 아님). CONTEXT 제외. pick_primary_topic 은 max 라
+            # 자동으로 최고 tier 주제를 선택(동률은 TOPIC_REGISTRY 순서).
+            topic_scores = {
+                topic_id: _TIER_TO_PRIORITY_SCORE[tier_breakdown.tier]
+                for topic_id, tier_breakdown in topic_tiers.items()
+                if tier_breakdown.tier != "CONTEXT"
+            }
+        else:
+            topic_tiers = {}
+            topic_scores = {
+                topic_id: breakdown.score
+                for topic_id, breakdown in topic_breakdowns.items()
+                if breakdown.score > 0
+                and (breakdown.has_rankable_primary or breakdown.has_combo_floor)
+            }
         primary_topic = (
             theme_id if topic_scores.get(theme_id, 0.0) > 0 else pick_primary_topic(topic_scores)
         )
@@ -1515,25 +1767,26 @@ def _build_cases(
         }
         legacy_priority_score = priority_score
         if use_topic_scoring:
-            # Why: Stage 1 - priority_floors (0.90 floor 포함) 가 topic_scoring 에 의해
-            # 덮이지 않도록 max 머지. 머지 후보는 macro 이전 점수 (priority_score_pre_macro)
-            # 로 두어 topic_scoring 의 macro_context_score 와 이중가산되지 않게 한다.
-            topic_priority_score = max(topic_scores.values(), default=0.0)
-            priority_score = max(topic_priority_score, priority_score_pre_macro)
+            # band·정렬은 tier 가 결정(가중합 아님). priority_score 는 tier 대표값(소비처 [0,1] 호환).
+            case_tier_value = case_tier(topic_tiers)
+            priority_band = _TIER_TO_BAND.get(case_tier_value, "low")
+            priority_score = _TIER_TO_PRIORITY_SCORE.get(case_tier_value, 0.0)
+            composite_sort_score, composite_sort_score_components = _tier_sort_score(
+                case_tier_value, case_hits, amount_score
+            )
         else:
-            # legacy 경로에서는 macro 보너스가 priority_score 에 반영되어 있으므로
-            # 해당 사유를 audit 설명에 보존한다.
+            # legacy 경로(비활성)에서는 macro 보너스가 priority_score 에 반영되어 있으므로
+            # 해당 사유를 audit 설명에 보존하고 기존 band/composite 식을 유지한다.
             adjustment_reasons.extend(macro_reasons)
-        priority_band = _priority_band(priority_score, config, repeat_score)
-        # §9.3 composite_sort_score: 7개 주제 공통 정렬 식. primary_topic 의 breakdown 으로 산출.
-        composite_sort_score, composite_sort_score_components = _composite_sort_score(
-            primary_topic=primary_topic,
-            topic_scores=topic_scores,
-            topic_breakdowns=topic_breakdowns,
-            case_hits=case_hits,
-            fallback_score=priority_score,
-            use_topic_scoring=use_topic_scoring,
-        )
+            priority_band = _priority_band(priority_score, config)
+            composite_sort_score, composite_sort_score_components = _composite_sort_score(
+                primary_topic=primary_topic,
+                topic_scores=topic_scores,
+                topic_breakdowns=topic_breakdowns,
+                case_hits=case_hits,
+                fallback_score=priority_score,
+                use_topic_scoring=use_topic_scoring,
+            )
         l304_repeat_pattern = _is_l304_repeat_pattern_case(
             df,
             rows,
@@ -1584,6 +1837,7 @@ def _build_cases(
             document_amounts=document_amounts,
             line_amounts=line_amounts,
             ref_cache=document_ref_cache,
+            document_ref_columns=document_ref_columns,
         )
         raw_rule_hits = _raw_rule_hit_refs(
             case_hits,
@@ -1723,6 +1977,2107 @@ def _build_cases(
     return cases
 
 
+def _build_document_units(
+    raw_hits: list[_RawHit],
+    *,
+    df: pd.DataFrame,
+    absorbed_document_ids: set[str] | None = None,
+    engagement_salt: str = "",
+) -> list[Phase1Unit]:
+    absorbed_document_ids = absorbed_document_ids or set()
+    document_hits: dict[str, list[_RawHit]] = defaultdict(list)
+    for hit in raw_hits:
+        if hit.signal_status != "confirmed":
+            continue
+        if hit.document_id in absorbed_document_ids:
+            continue
+        if hit.rule_id in _FLOW_UNIT_RULES or hit.rule_id in _REVIEW_POPULATION_RULES:
+            continue
+        if hit.rule_id not in _DOCUMENT_UNIT_RULES:
+            continue
+        document_hits[hit.document_id].append(hit)
+
+    units: list[Phase1Unit] = []
+    raw_rule_hit_ref_cache: dict[tuple[str, int], RawRuleHitRef] = {}
+    for document_id in sorted(document_hits):
+        hits = sorted(document_hits[document_id], key=lambda item: (item.row_index, item.rule_id))
+        evidence_rows = _raw_rule_hit_refs(
+            hits,
+            raw_rule_hit_ref_cache,
+            df=df,
+            engagement_salt=engagement_salt,
+        )
+        units.append(DocumentUnit(unit_id=document_id, evidence_rows=evidence_rows))
+    return units
+
+
+def _score_phase1_units(
+    units: list[Phase1Unit],
+    raw_hits: list[_RawHit],
+    df: pd.DataFrame,
+    config: dict[str, Any],
+) -> list[Phase1Unit]:
+    if not units:
+        return units
+    hit_lookup = {(hit.rule_id, hit.row_index): hit for hit in raw_hits}
+    hits_by_document: dict[str, list[_RawHit]] = defaultdict(list)
+    for hit in raw_hits:
+        if hit.document_id:
+            hits_by_document[hit.document_id].append(hit)
+    unit_hits: dict[str, list[_RawHit]] = {}
+    line_amounts = _line_amount_series(df)
+    audit_context = _build_audit_evidence_context(df)
+    # Why(성능): document_id→positions 맵을 1회만 구축해 _unit_total_amount 의 per-unit 910k 전체
+    #      스캔을 제거(O(units×n)→O(n+units)). 정규화는 기존 스캔과 동일(fillna("")+astype(str)).
+    doc_positions: dict[str, list[int]] = defaultdict(list)
+    if "document_id" in df.columns:
+        for _pos, _doc_id in enumerate(df["document_id"].fillna("").astype(str).tolist()):
+            doc_positions[_doc_id].append(_pos)
+    unit_amounts: dict[str, float] = {}
+    for unit in units:
+        hits = _unit_scoring_hits(unit, hit_lookup, hits_by_document)
+        unit_hits[unit.unit_id] = hits
+        unit_amounts[unit.unit_id] = _unit_total_amount(
+            df,
+            unit,
+            hits,
+            line_amounts=line_amounts,
+            doc_positions=doc_positions,
+        )
+    max_amount = max(unit_amounts.values(), default=0.0) or 1.0
+
+    scored_units: list[Phase1Unit] = []
+    for unit in units:
+        hits = unit_hits.get(unit.unit_id, [])
+        if not hits:
+            scored_units.append(unit)
+            continue
+        projection = _score_unit_hits(
+            df=df,
+            unit=unit,
+            hits=hits,
+            total_amount=unit_amounts.get(unit.unit_id, 0.0),
+            max_amount=max_amount,
+            config=config,
+            audit_context=audit_context,
+        )
+        scored_units.append(
+            unit.model_copy(
+                update={
+                    "priority_score": projection.priority_score,
+                    "base_priority_score": projection.base_priority_score,
+                    "composite_sort_score": projection.composite_sort_score,
+                    "composite_sort_score_components": projection.composite_sort_score_components
+                    or {},
+                    "topic_scores": projection.topic_scores or {},
+                    "topic_score_breakdown": projection.topic_score_breakdown or {},
+                    "priority_band": projection.priority_band,
+                    "triage_rank_score": projection.triage_rank_score,
+                    "triage_rank_reasons": projection.triage_rank_reasons or [],
+                }
+            )
+        )
+    return scored_units
+
+
+def _unit_scoring_hits(
+    unit: Phase1Unit,
+    hit_lookup: dict[tuple[str, int], _RawHit],
+    hits_by_document: dict[str, list[_RawHit]],
+) -> list[_RawHit]:
+    hits = [
+        hit_lookup[key]
+        for ref in unit.evidence_rows
+        if (key := (ref.rule_id, ref.row_index)) in hit_lookup
+    ]
+    if isinstance(unit, DocumentUnit):
+        hits.extend(
+            hit
+            for hit in hits_by_document.get(unit.unit_id, [])
+            if hit.document_id == unit.unit_id
+            and hit.signal_status == "confirmed"
+            and hit.rule_id not in _REVIEW_POPULATION_RULES
+        )
+    deduped = {(hit.rule_id, hit.row_index, hit.document_id): hit for hit in hits}
+    return sorted(deduped.values(), key=lambda hit: (hit.row_index, hit.rule_id))
+
+
+def _unit_total_amount(
+    df: pd.DataFrame,
+    unit: Phase1Unit,
+    hits: list[_RawHit],
+    *,
+    line_amounts: pd.Series,
+    doc_positions: dict[str, list[int]] | None = None,
+) -> float:
+    if isinstance(unit, FlowUnit) and unit.member_document_ids and "document_id" in df.columns:
+        doc_ids = set(unit.member_document_ids)
+        if doc_positions is not None:
+            # Why(성능): doc_positions 는 호출부에서 1회 구축한 document_id→positions 맵.
+            #      과거엔 FlowUnit 마다 df["document_id"] 910k 행 전체를 스캔(O(units×n))해
+            #      score_phase1_units 가 수 분 소요. 맵 조회로 대체 — 동일 정규화(fillna("")+astype(str))
+            #      라 같은 positions 집합 반환(동작 보존).
+            positions = sorted({pos for doc in doc_ids for pos in doc_positions.get(doc, ())})
+        else:
+            positions = [
+                int(pos)
+                for pos, document_id in enumerate(df["document_id"].fillna("").astype(str).tolist())
+                if document_id in doc_ids
+            ]
+    else:
+        positions = sorted({hit.row_index for hit in hits})
+    return _case_total_amount(df, positions, line_amounts=line_amounts)
+
+
+def _score_unit_hits(
+    *,
+    df: pd.DataFrame,
+    unit: Phase1Unit,
+    hits: list[_RawHit],
+    total_amount: float,
+    max_amount: float,
+    config: dict[str, Any],
+    audit_context: _AuditEvidenceContext,
+) -> _UnitScoreProjection:
+    indices = sorted({hit.row_index for hit in hits})
+    rows = df.iloc[indices]
+    evidence_types = sorted({hit.evidence_type for hit in hits})
+    evidence_scores = _theme_scores(hits, config)
+    amount_score = _amount_score(total_amount, max_amount, config)
+    access_scope_score = min(evidence_scores.get("access_scope_review", 0.0), 1.0)
+    control_score = min(evidence_scores.get("control_failure", 0.0), 1.0)
+    duplicate_or_outflow_score = min(evidence_scores.get("duplicate_or_outflow", 0.0), 1.0)
+    timing_score = min(evidence_scores.get("timing_anomaly", 0.0), 1.0)
+    data_integrity_score = min(evidence_scores.get("data_integrity_failure", 0.0), 1.0)
+    intercompany_score = min(evidence_scores.get("intercompany_structure", 0.0), 1.0)
+    logic_score = min(
+        max(
+            evidence_scores.get("logic_mismatch", 0.0),
+            intercompany_score,
+            data_integrity_score,
+        ),
+        1.0,
+    )
+    behavior_score = max(min(len(indices) / 10.0, 1.0), access_scope_score)
+    repeat_months = _repeat_months_from_positions(indices, audit_context.posting_months)
+    repeat_score = min(max(repeat_months - 1, 0) / 2.0, 1.0)
+    priority_score = _priority_score(
+        amount_score=amount_score,
+        control_score=control_score,
+        duplicate_or_outflow_score=duplicate_or_outflow_score,
+        logic_score=logic_score,
+        timing_score=timing_score,
+        behavior_score=behavior_score,
+        config=config,
+    )
+    base_priority_score = priority_score
+    priority_score, behavior_score, adjustment_reasons, _bonuses = _apply_priority_adjustments(
+        rows=rows,
+        case_hits=hits,
+        evidence_types=evidence_types,
+        amount_score=amount_score,
+        total_amount=total_amount,
+        priority_score=priority_score,
+        behavior_score=behavior_score,
+        config=config,
+    )
+    priority_score, floor_reasons = _apply_priority_floors(
+        case_hits=hits,
+        priority_score=priority_score,
+        config=config,
+    )
+    adjustment_reasons.extend(floor_reasons)
+    if _is_low_risk_linked_l205_reversal(unit, rows):
+        priority_score = min(
+            priority_score, float(config.get("l205_linked_reversal_low_cap", 0.35))
+        )
+        adjustment_reasons = [*adjustment_reasons, "l205_linked_accrual_reversal_low"]
+    use_topic_scoring = isinstance(config.get("topic_scoring"), dict)
+    topic_breakdowns = compute_topic_scores(
+        hits,
+        materiality_score=amount_score,
+        repeat_score=repeat_score,
+        audit_evidence_score=_unit_audit_evidence_scores(
+            row_positions=indices,
+            case_hits=hits,
+            amount_score=amount_score,
+            repeat_score=repeat_score,
+            context=audit_context,
+        ),
+        topic_caps=_topic_caps(config),
+        topic_floor_policies=_topic_floor_policies(config),
+        combo_floor_policies=_combo_floor_policies(config),
+        fraud_combo_rule_scope=_fraud_combo_rule_scope(hits, audit_context),
+        return_breakdown=True,
+    )
+    # PHASE1_TIER_SCORING_SPEC: unit topic 점수·band·정렬 전부 tier(가중합 .score 폐기).
+    # _derive_case_scores_from_units 가 이 unit 점수를 case 로 전파하므로 활성 경로는 여기다.
+    if use_topic_scoring:
+        topic_tiers = compute_topic_tiers(
+            hits,
+            topic_floor_policies=_topic_floor_policies(config),
+            combo_floor_policies=_combo_floor_policies(config),
+            fraud_combo_rule_scope=_fraud_combo_rule_scope(hits, audit_context),
+            breakdowns=topic_breakdowns,  # 이미 위에서 계산 — 재계산 생략(성능)
+        )
+        # topic_scores = tier 대표값(가중합 아님). pick_primary_topic 이 max 라 자동 최고 tier.
+        topic_scores = {
+            topic_id: _TIER_TO_PRIORITY_SCORE[tier_breakdown.tier]
+            for topic_id, tier_breakdown in topic_tiers.items()
+            if tier_breakdown.tier != "CONTEXT"
+        }
+    else:
+        topic_tiers = {}
+        topic_scores = {
+            topic_id: breakdown.score
+            for topic_id, breakdown in topic_breakdowns.items()
+            if breakdown.score > 0 and (breakdown.has_rankable_primary or breakdown.has_combo_floor)
+        }
+    primary_topic = pick_primary_topic(topic_scores)
+    if use_topic_scoring:
+        # priority_score = tier 대표값([0,1]) → _derive 의 _priority_band 가 올바른 band 자동 전파.
+        topic_tier = case_tier(topic_tiers)
+        # config priority_floors(명시 도메인 조건: SoD critical·승인생략·핵심필드 누락 등)도
+        # tier 트리거다. floor-only 점수(가중합 배제, 0.0 기준)로 산출해 합류.
+        floor_only_score, _ = _apply_priority_floors(
+            case_hits=hits, priority_score=0.0, config=config
+        )
+        floor_tier = _legacy_floor_tier(floor_only_score)
+        unit_tier = topic_tier if TIER_RANK[topic_tier] >= TIER_RANK[floor_tier] else floor_tier
+        priority_score = _TIER_TO_PRIORITY_SCORE.get(unit_tier, 0.0)
+        priority_band = _TIER_TO_BAND.get(unit_tier, "low")
+        composite_sort_score, composite_sort_score_components = _tier_sort_score(
+            unit_tier, hits, amount_score
+        )
+    else:
+        priority_band = _priority_band(priority_score, config)
+        composite_sort_score, composite_sort_score_components = _composite_sort_score(
+            primary_topic=primary_topic,
+            topic_scores=topic_scores,
+            topic_breakdowns=topic_breakdowns,
+            case_hits=hits,
+            fallback_score=priority_score,
+            use_topic_scoring=use_topic_scoring,
+        )
+    if _is_low_risk_linked_l205_reversal(unit, rows):
+        # tier 경로는 priority_score 를 tier 대표값으로 덮으므로 low cap 을 여기서 재적용.
+        # _derive_case_scores_from_units 가 priority_score 로 case band 를 재계산하기 때문.
+        priority_score = min(
+            priority_score, float(config.get("l205_linked_reversal_low_cap", 0.35))
+        )
+        composite_sort_score = min(composite_sort_score, priority_score)
+        priority_band = "low"
+    return _UnitScoreProjection(
+        priority_score=float(priority_score),
+        base_priority_score=float(base_priority_score),
+        composite_sort_score=float(composite_sort_score),
+        composite_sort_score_components=composite_sort_score_components,
+        topic_scores=topic_scores,
+        topic_score_breakdown={
+            topic_id: asdict(breakdown)
+            for topic_id, breakdown in topic_breakdowns.items()
+            if topic_id in topic_scores
+        },
+        priority_band=priority_band,
+        triage_rank_score=float(priority_score),
+        triage_rank_reasons=adjustment_reasons,
+    )
+
+
+def _is_low_risk_linked_l205_reversal(unit: Phase1Unit, rows: pd.DataFrame) -> bool:
+    if not isinstance(unit, FlowUnit) or unit.flow_type != "reversal":
+        return False
+    link_type = str(unit.link_key.get("link_type") or "").strip().lower()
+    if link_type != "structural_reference":
+        return False
+    text = " ".join(
+        str(value).lower()
+        for column in ("line_text", "header_text", "description", "business_process")
+        if column in rows.columns
+        for value in rows[column].fillna("").tolist()
+    )
+    return any(token in text for token in ("accrual", "reversal", "미지급", "발생", "역분개"))
+
+
+def _build_audit_evidence_context(df: pd.DataFrame) -> _AuditEvidenceContext:
+    if "posting_date" in df.columns:
+        posting_months = (
+            pd.to_datetime(df["posting_date"], errors="coerce")
+            .dt.strftime("%Y-%m")
+            .fillna("")
+            .astype(str)
+            .tolist()
+        )
+    else:
+        posting_months = [""] * len(df)
+
+    source = _precomputed_string_column(df, "source")
+    persona = _precomputed_string_column(df, "user_persona")
+    created_by = _precomputed_string_column(df, "created_by")
+    approved_by = _precomputed_string_column(df, "approved_by")
+    business_process = _precomputed_string_column(df, "business_process")
+    reference = _precomputed_string_column(df, "reference")
+    trading_partner = _precomputed_string_column(df, "trading_partner")
+    auxiliary = _precomputed_string_column(df, "auxiliary_account_number")
+    lettrage = _precomputed_string_column(df, "lettrage")
+    settlement = _precomputed_string_column(df, "settlement_status")
+
+    manual_context = (
+        source.str.contains("manual", case=False, na=False)
+        | persona.str.contains("manual|accountant|manager", case=False, na=False)
+        | (~created_by.str.upper().str.startswith("SYSTEM", na=False))
+    ).tolist()
+
+    support_gap = pd.Series(False, index=df.index)
+    if "has_attachment" in df.columns:
+        attachment = _precomputed_string_column(df, "has_attachment").str.strip().str.lower()
+        support_gap = support_gap | attachment.isin({"false", "0", "nan", "none", ""})
+    if "supporting_doc_type" in df.columns:
+        support_type = _precomputed_string_column(df, "supporting_doc_type").str.strip().str.lower()
+        support_gap = support_gap | support_type.isin({"", "nan", "none", "null"})
+
+    created_strip = created_by.str.strip()
+    approved_strip = approved_by.str.strip()
+    manual_rows = ~created_strip.str.upper().str.startswith("SYSTEM", na=False)
+    approver_missing = approved_strip.eq("") | approved_strip.str.lower().isin(
+        {"nan", "none", "null"}
+    )
+    self_approval = created_strip.ne("") & approved_strip.ne("") & created_strip.eq(approved_strip)
+    approval_gap = manual_rows & (approver_missing | self_approval)
+    if {"posting_date", "approval_date"}.issubset(df.columns):
+        posting = pd.to_datetime(df["posting_date"], errors="coerce")
+        approval = pd.to_datetime(df["approval_date"], errors="coerce")
+        approval_gap = approval_gap | (approval.notna() & posting.notna() & (approval < posting))
+
+    if "posting_date" in df.columns:
+        posting = pd.to_datetime(df["posting_date"], errors="coerce")
+        post_close_gap = posting.dt.day.ge(28) | posting.dt.month.isin({3, 6, 9, 12})
+    else:
+        post_close_gap = pd.Series(False, index=df.index)
+
+    related_party_context = (
+        trading_partner.str.strip().ne("")
+        | business_process.str.contains("IC|intercompany", case=False, na=False)
+        | reference.str.contains(r"\bIC", case=False, regex=True, na=False)
+    )
+    reversal_context = lettrage.str.strip().ne("") | settlement.str.contains(
+        "revers|offset|clear|settled",
+        case=False,
+        na=False,
+    )
+    if "is_cleared" in df.columns:
+        cleared = _precomputed_string_column(df, "is_cleared").str.strip().str.lower()
+        reversal_context = reversal_context | cleared.isin({"true", "1"})
+
+    return _AuditEvidenceContext(
+        posting_months=posting_months,
+        manual_context=[bool(value) for value in manual_context],
+        support_gap=[bool(value) for value in support_gap.tolist()],
+        approval_gap=[bool(value) for value in approval_gap.tolist()],
+        post_close_gap=[bool(value) for value in post_close_gap.fillna(False).tolist()],
+        related_party_context=[bool(value) for value in related_party_context.tolist()],
+        reversal_context=[bool(value) for value in reversal_context.tolist()],
+        partner_value=[
+            bool(value)
+            for value in (
+                auxiliary.str.strip().ne("") | trading_partner.str.strip().ne("")
+            ).tolist()
+        ],
+        master_counterparty_inactive=_precomputed_true_column(df, "master_counterparty_inactive"),
+        master_counterparty_known=_precomputed_true_column(df, "master_counterparty_known"),
+        document_flow_orphan=_precomputed_true_column(df, "document_flow_orphan"),
+        ic_matched_pair_found=_precomputed_true_column(df, "ic_matched_pair_found"),
+        ic_unmatched_reference=_precomputed_true_column(df, "ic_unmatched_reference"),
+        approval_matrix_gap=_precomputed_true_column(df, "approval_matrix_gap"),
+        # Why: fraud-combo floor 게이트 — 신뢰 자동 전표(무리지은 배치) 행 표시 (이슈 #14)
+        trusted_automated=[bool(value) for value in trusted_automated_mask(df).tolist()],
+        approval_limit_exceeded_independent=_precomputed_true_column(
+            df,
+            "approval_limit_exceeded_independent",
+        ),
+    )
+
+
+def _precomputed_string_column(df: pd.DataFrame, column: str) -> pd.Series:
+    if column not in df.columns:
+        return pd.Series("", index=df.index, dtype="string")
+    # Why: nullable dtype(예: has_attachment 의 pandas "boolean") 컬럼은 fillna("")가
+    #      TypeError('Invalid value "" for dtype boolean'). object 로 변환 후 NA→"" 로
+    #      처리해 어떤 dtype 이 와도 문자열 컬럼을 보장한다 (함수 계약: string column).
+    series = df[column]
+    return series.astype(object).where(series.notna(), "").astype(str)
+
+
+def _precomputed_true_column(df: pd.DataFrame, column: str) -> list[bool]:
+    if column not in df.columns:
+        return [False] * len(df)
+    return [bool(value) for value in bool_column(df, column).tolist()]
+
+
+def _unit_audit_evidence_scores(
+    *,
+    row_positions: list[int],
+    case_hits: list[_RawHit],
+    amount_score: float,
+    repeat_score: float,
+    context: _AuditEvidenceContext,
+) -> dict[str, float]:
+    rule_ids = {hit.rule_id for hit in case_hits if hit.normalized_score > 0}
+    manual_context = _any_context(context.manual_context, row_positions)
+    support_gap = _any_context(context.support_gap, row_positions)
+    approval_gap = _any_context(context.approval_gap, row_positions)
+    post_close_gap = _any_context(context.post_close_gap, row_positions)
+    reversal_context = _any_context(context.reversal_context, row_positions)
+    master_gap = _any_context(context.master_counterparty_inactive, row_positions) or (
+        _any_context(context.partner_value, row_positions)
+        and not _any_context(context.master_counterparty_known, row_positions)
+    )
+    document_flow_orphan = _any_context(context.document_flow_orphan, row_positions)
+    high_amount = amount_score >= 0.50
+
+    scores = {topic_id: 0.0 for topic_id in TOPIC_REGISTRY}
+
+    if approval_gap or _any_context(context.approval_matrix_gap, row_positions):
+        scores["approval_control"] = max(scores["approval_control"], 0.70)
+    if (approval_gap or _any_context(context.approval_matrix_gap, row_positions)) and (
+        high_amount or _any_context(context.approval_limit_exceeded_independent, row_positions)
+    ):
+        scores["approval_control"] = max(scores["approval_control"], 0.85)
+
+    if (
+        (support_gap or document_flow_orphan)
+        and manual_context
+        and (high_amount or rule_ids & {"L4-01", "L4-03"})
+    ):
+        scores["revenue_statistical"] = max(scores["revenue_statistical"], 0.45)
+        scores["account_logic"] = max(scores["account_logic"], 0.35)
+
+    if master_gap and high_amount:
+        scores["account_logic"] = max(scores["account_logic"], 0.45)
+        scores["duplicate_outflow"] = max(scores["duplicate_outflow"], 0.35)
+
+    if post_close_gap and (high_amount or rule_ids & {"L3-04", "L3-11"}):
+        scores["closing_timing"] = max(scores["closing_timing"], 0.55)
+
+    if reversal_context and (rule_ids & {"L2-02", "L2-03", "L2-05"}):
+        scores["duplicate_outflow"] = max(scores["duplicate_outflow"], 0.45)
+
+    # intercompany_cycle audit_evidence 가산 제거 (2026-06-14): IC/GR 제거로 주제 폐지.
+
+    return scores
+
+
+def _repeat_months_from_positions(row_positions: list[int], posting_months: list[str]) -> int:
+    return len(
+        {
+            posting_months[pos]
+            for pos in row_positions
+            if 0 <= pos < len(posting_months) and posting_months[pos]
+        }
+    )
+
+
+def _any_context(values: list[bool], row_positions: list[int]) -> bool:
+    return any(values[pos] for pos in row_positions if 0 <= pos < len(values))
+
+
+def _derive_case_scores_from_units(
+    cases: list[CaseGroupResult],
+    units: list[Phase1Unit],
+    config: dict[str, Any],
+) -> list[CaseGroupResult]:
+    if not cases or not units:
+        return cases
+    # Why: 과거 case마다 전체 units 를 스캔해 ref 교집합 → O(cases*units) 준-이차로
+    #      전수(984k)에서 스톨. (rule_id,row_index) → unit 역인덱스로 case 당 실제 공유 ref
+    #      를 가진 unit 만 수집(근사선형). unit_index 로 원래 units 순서를 복원해 동작
+    #      (max 동점 처리·topic dict 삽입순서)을 정확히 보존한다.
+    unit_index: dict[str, int] = {unit.unit_id: i for i, unit in enumerate(units)}
+    units_by_id: dict[str, Phase1Unit] = {unit.unit_id: unit for unit in units}
+    ref_to_units: dict[tuple[str, int], list[str]] = {}
+    for unit in units:
+        for ref in unit.evidence_rows:
+            ref_to_units.setdefault((ref.rule_id, ref.row_index), []).append(unit.unit_id)
+    derived_cases: list[CaseGroupResult] = []
+    for case in cases:
+        case_refs = {(ref.rule_id, ref.row_index) for ref in case.raw_rule_hits}
+        linked_ids: set[str] = set()
+        for ref in case_refs:
+            linked_ids.update(ref_to_units.get(ref, ()))
+        linked_units = [units_by_id[uid] for uid in sorted(linked_ids, key=lambda u: unit_index[u])]
+        if not linked_units:
+            derived_cases.append(
+                case.model_copy(
+                    update={
+                        "priority_score": 0.0,
+                        "base_priority_score": 0.0,
+                        "composite_sort_score": 0.0,
+                        "composite_sort_score_components": {"derived_unit_count": 0.0},
+                        "topic_scores": {},
+                        "topic_score_breakdown": {},
+                        "priority_band": "low",
+                    }
+                )
+            )
+            continue
+        max_unit = max(linked_units, key=lambda unit: unit.priority_score)
+        max_composite = max(linked_units, key=lambda unit: unit.composite_sort_score)
+        topic_scores: dict[str, float] = {}
+        topic_score_breakdown: dict[str, dict[str, Any]] = {}
+        for unit in linked_units:
+            for topic_id, score in unit.topic_scores.items():
+                if score > topic_scores.get(topic_id, 0.0):
+                    topic_scores[topic_id] = score
+                    topic_score_breakdown[topic_id] = unit.topic_score_breakdown.get(topic_id, {})
+        derived_priority = float(max_unit.priority_score)
+        derived_composite = float(max_composite.composite_sort_score)
+        derived_cases.append(
+            case.model_copy(
+                update={
+                    "priority_score": derived_priority,
+                    "base_priority_score": max(
+                        float(unit.base_priority_score) for unit in linked_units
+                    ),
+                    "composite_sort_score": derived_composite,
+                    "composite_sort_score_components": max_composite.composite_sort_score_components,
+                    "topic_scores": topic_scores,
+                    "topic_score_breakdown": topic_score_breakdown,
+                    "priority_band": _priority_band(derived_priority, config),
+                    "triage_rank_score": max(
+                        float(unit.triage_rank_score) for unit in linked_units
+                    ),
+                    "triage_rank_reasons": sorted(
+                        {reason for unit in linked_units for reason in unit.triage_rank_reasons}
+                    ),
+                }
+            )
+        )
+    derived_cases.sort(
+        key=lambda item: (
+            item.composite_sort_score,
+            item.triage_rank_score,
+            item.total_amount,
+            item.rule_count,
+        ),
+        reverse=True,
+    )
+    for index, case in enumerate(derived_cases, start=1):
+        case.exposure_rank = index
+        case.is_top_case = index <= int(config.get("top_n_cases", 50))
+    _apply_theme_ranks(derived_cases)
+    return derived_cases
+
+
+def _measurement_eligible_flow_member_document_ids(units: list[Phase1Unit]) -> set[str]:
+    member_document_ids: set[str] = set()
+    for unit in units:
+        if not isinstance(unit, FlowUnit) or not unit.measurement_eligible:
+            continue
+        member_document_ids.update(str(doc_id) for doc_id in unit.member_document_ids if doc_id)
+    return member_document_ids
+
+
+def _absorb_document_hits_into_flow_units(
+    raw_hits: list[_RawHit],
+    flow_units: list[Phase1Unit],
+    df: pd.DataFrame,
+    *,
+    engagement_salt: str = "",
+) -> list[Phase1Unit]:
+    confirmed_document_hits: dict[str, list[_RawHit]] = defaultdict(list)
+    for hit in raw_hits:
+        if hit.signal_status != "confirmed":
+            continue
+        if hit.rule_id in _FLOW_UNIT_RULES or hit.rule_id in _REVIEW_POPULATION_RULES:
+            continue
+        if hit.rule_id not in _DOCUMENT_UNIT_RULES:
+            continue
+        confirmed_document_hits[hit.document_id].append(hit)
+
+    eligible_flow_units = [
+        unit for unit in flow_units if isinstance(unit, FlowUnit) and unit.measurement_eligible
+    ]
+    primary_flow_by_document = _primary_measurement_flow_by_document(eligible_flow_units)
+    cross_ref_flow_ids_by_document = _cross_ref_flow_ids_by_document(eligible_flow_units)
+
+    raw_rule_hit_ref_cache: dict[tuple[str, int], RawRuleHitRef] = {}
+    absorbed_units: list[Phase1Unit] = []
+    for unit in flow_units:
+        if not isinstance(unit, FlowUnit) or not unit.measurement_eligible:
+            absorbed_units.append(unit)
+            continue
+        hits: list[_RawHit] = []
+        for document_id in unit.member_document_ids:
+            document_id = str(document_id)
+            if primary_flow_by_document.get(document_id) != unit.unit_id:
+                continue
+            hits.extend(confirmed_document_hits.get(document_id, []))
+        if not hits:
+            absorbed_units.append(unit)
+            continue
+        hits = sorted(hits, key=lambda item: (item.document_id, item.row_index, item.rule_id))
+        absorbed_refs = _raw_rule_hit_refs(
+            hits,
+            raw_rule_hit_ref_cache,
+            df=df,
+            engagement_salt=engagement_salt,
+        )
+        absorbed_document_ids = sorted({hit.document_id for hit in hits})
+        cross_ref_flow_ids = sorted(
+            {
+                flow_id
+                for document_id in absorbed_document_ids
+                for flow_id in cross_ref_flow_ids_by_document.get(document_id, [])
+                if flow_id != unit.unit_id
+            }
+        )
+        absorbed_units.append(
+            unit.model_copy(
+                update={
+                    "evidence_rows": [*unit.evidence_rows, *absorbed_refs],
+                    "absorbed_document_ids": absorbed_document_ids,
+                    "absorbed_rule_hits": absorbed_refs,
+                    "measurement_owner_unit_id": unit.unit_id,
+                    "cross_ref_flow_ids": cross_ref_flow_ids,
+                }
+            )
+        )
+    return absorbed_units
+
+
+def _primary_measurement_flow_by_document(flow_units: list[FlowUnit]) -> dict[str, str]:
+    by_document: dict[str, list[FlowUnit]] = defaultdict(list)
+    for unit in flow_units:
+        for document_id in unit.member_document_ids:
+            if document_id:
+                by_document[str(document_id)].append(unit)
+    return {
+        document_id: sorted(candidates, key=_flow_measurement_owner_priority)[0].unit_id
+        for document_id, candidates in by_document.items()
+        if candidates
+    }
+
+
+def _cross_ref_flow_ids_by_document(flow_units: list[FlowUnit]) -> dict[str, list[str]]:
+    by_document: dict[str, set[str]] = defaultdict(set)
+    for unit in flow_units:
+        for document_id in unit.member_document_ids:
+            if document_id:
+                by_document[str(document_id)].add(unit.unit_id)
+    return {document_id: sorted(flow_ids) for document_id, flow_ids in by_document.items()}
+
+
+def _flow_measurement_owner_priority(unit: FlowUnit) -> tuple[int, int, str]:
+    rule_ids = {hit.rule_id for hit in unit.evidence_rows}
+    max_severity = max((SEVERITY_MAP.get(rule_id, 0) for rule_id in rule_ids), default=0)
+    member_count = unit.member_count or len(unit.member_document_ids)
+    return (-max_severity, member_count, unit.unit_id)
+
+
+def _build_flow_units(
+    df: pd.DataFrame,
+    results: list[DetectionResult],
+    *,
+    engagement_salt: str = "",
+) -> list[Phase1Unit]:
+    units: list[Phase1Unit] = []
+    for result in results:
+        metadata = result.metadata or {}
+        units.extend(
+            _flow_units_from_duplicate_artifact(
+                df,
+                result,
+                metadata.get("pair_artifact"),
+                engagement_salt=engagement_salt,
+            )
+        )
+        units.extend(
+            _flow_units_from_ic_artifact(
+                df,
+                result,
+                metadata.get("ic_pair_artifact"),
+                engagement_salt=engagement_salt,
+            )
+        )
+        units.extend(
+            _flow_units_from_l202_minimal_link_keys(
+                df,
+                result,
+                engagement_salt=engagement_salt,
+            )
+        )
+        units.extend(
+            _flow_units_from_l205_minimal_link_keys(
+                df,
+                result,
+                engagement_salt=engagement_salt,
+            )
+        )
+        units.extend(_flow_units_from_graph_result(df, result, engagement_salt=engagement_salt))
+
+    units.sort(key=lambda unit: (unit.unit_type, unit.unit_id))
+    return units
+
+
+def _flow_units_from_l202_minimal_link_keys(
+    df: pd.DataFrame,
+    result: DetectionResult,
+    *,
+    engagement_salt: str = "",
+) -> list[FlowUnit]:
+    row_positions = _positive_rule_positions(df, result, "L2-02")
+    if not row_positions:
+        return []
+    annotation_units = _l202_flow_units_from_annotations(
+        df,
+        result,
+        row_positions,
+        engagement_salt=engagement_salt,
+    )
+    if annotation_units:
+        return annotation_units
+    doc_rows = _l202_document_rows(df, row_positions)
+    if doc_rows.empty:
+        return []
+
+    units: list[FlowUnit] = []
+    for _, group in doc_rows.groupby("_link_group", sort=True):
+        member_document_ids = sorted(set(group["document_id"].astype(str)))
+        if len(member_document_ids) < 2:
+            continue
+        if _l202_is_regular_repetition(group):
+            continue
+        if not (
+            group["reference_norm"].astype(str).ne("").any()
+            and group["reference_norm"].nunique(dropna=False) == 1
+        ):
+            continue
+        link_key = {
+            "rule_id": "L2-02",
+            "partner_key": str(group["partner_key"].iloc[0]),
+            "amount_bucket_minor": int(group["amount_bucket_minor"].iloc[0]),
+            "period_bucket": str(group["period_bucket"].iloc[0]),
+            "reference_norm": str(group["reference_norm"].iloc[0]),
+            "document_type": str(group["document_type_norm"].iloc[0]),
+        }
+        flow_type = "duplicate_payment"
+        flow_id = _deterministic_flow_id(
+            company_id=_flow_company_scope(df),
+            rule_id="L2-02",
+            flow_type=flow_type,
+            link_key=link_key,
+            member_document_ids=member_document_ids,
+        )
+        positions = sorted({pos for values in group["row_positions"] for pos in values})
+        units.append(
+            FlowUnit(
+                unit_id=flow_id,
+                flow_id=flow_id,
+                flow_type=flow_type,
+                link_key=link_key,
+                member_document_ids=member_document_ids,
+                evidence_rows=_flow_evidence_rows(
+                    df,
+                    result,
+                    rule_id="L2-02",
+                    row_positions=positions,
+                    engagement_salt=engagement_salt,
+                ),
+                artifact_completeness="complete",
+                truncated=False,
+                cap_reason=None,
+                source_artifact_schema="l202_minimal_link_key.v1",
+                candidate_count=1,
+                retained_count=1,
+                member_count=len(member_document_ids),
+                measurement_eligible=True,
+            )
+        )
+    return units
+
+
+def _l202_flow_units_from_annotations(
+    df: pd.DataFrame,
+    result: DetectionResult,
+    row_positions: list[int],
+    *,
+    engagement_salt: str = "",
+) -> list[FlowUnit]:
+    annotations_by_rule = (result.metadata or {}).get("row_annotations")
+    if not isinstance(annotations_by_rule, dict):
+        return []
+    annotations = annotations_by_rule.get("L2-02")
+    if not isinstance(annotations, dict) or not annotations:
+        return []
+    doc_positions = _document_positions_map(df)
+    scoped_positions = set(row_positions)
+    entries: list[dict[str, Any]] = []
+    for row_label, annotation in annotations.items():
+        if not isinstance(annotation, dict):
+            continue
+        row_pos = _position_from_index_label(df, row_label)
+        if row_pos is None or row_pos not in scoped_positions:
+            continue
+        doc_id = _document_id_at_position(df, row_pos)
+        matched_doc = _optional_string(annotation.get("matched_document_id"))
+        if not doc_id or not matched_doc or matched_doc == doc_id:
+            continue
+        matched_positions = doc_positions.get(matched_doc, [])
+        if not matched_positions:
+            continue
+        member_document_ids = sorted({doc_id, matched_doc})
+        link_key = {
+            "rule_id": "L2-02",
+            "link_source": "detector_row_annotation",
+            "reason_code": _optional_string(annotation.get("reason_code")) or "",
+            "partner_key": _normalize_flow_token(annotation.get("partner_key")),
+            "amount_bucket_minor": _amount_minor_bucket(annotation.get("amount")),
+            "matched_amount_bucket_minor": _amount_minor_bucket(annotation.get("matched_amount")),
+            "day_gap": _safe_int(annotation.get("day_gap")),
+            "reference_norm": _normalize_flow_token(annotation.get("reference_norm")),
+            "matched_reference_norm": _normalize_flow_token(
+                annotation.get("matched_reference_norm")
+            ),
+        }
+        entries.append(
+            {
+                "member_document_ids": member_document_ids,
+                "row_positions": sorted({row_pos, *matched_positions}),
+                "link_key": link_key,
+            }
+        )
+
+    units: list[FlowUnit] = []
+    seen: set[tuple[str, ...]] = set()
+    for entry in entries:
+        member_document_ids = entry["member_document_ids"]
+        doc_key = tuple(member_document_ids)
+        if doc_key in seen:
+            continue
+        seen.add(doc_key)
+        flow_type = "duplicate_payment"
+        flow_id = _deterministic_flow_id(
+            company_id=_flow_company_scope(df),
+            rule_id="L2-02",
+            flow_type=flow_type,
+            link_key=entry["link_key"],
+            member_document_ids=member_document_ids,
+        )
+        units.append(
+            FlowUnit(
+                unit_id=flow_id,
+                flow_id=flow_id,
+                flow_type=flow_type,
+                link_key=entry["link_key"],
+                member_document_ids=member_document_ids,
+                evidence_rows=_flow_evidence_rows(
+                    df,
+                    result,
+                    rule_id="L2-02",
+                    row_positions=entry["row_positions"],
+                    engagement_salt=engagement_salt,
+                ),
+                artifact_completeness="complete",
+                truncated=False,
+                cap_reason=None,
+                source_artifact_schema="l202_detector_annotation_link_key.v1",
+                candidate_count=1,
+                retained_count=1,
+                member_count=len(member_document_ids),
+                measurement_eligible=True,
+            )
+        )
+    return units
+
+
+def _l202_document_rows(df: pd.DataFrame, row_positions: list[int]) -> pd.DataFrame:
+    required = {"document_id", "posting_date", "debit_amount", "credit_amount"}
+    if not required.issubset(df.columns):
+        return pd.DataFrame()
+    scoped = df.iloc[row_positions].copy()
+    if "business_process" in scoped.columns:
+        scoped = scoped[scoped["business_process"].fillna("").astype(str).str.upper().eq("P2P")]
+    if "document_type" in scoped.columns:
+        scoped = scoped[
+            scoped["document_type"].fillna("").astype(str).str.upper().isin({"KZ", "KR"})
+        ]
+    if scoped.empty:
+        return pd.DataFrame()
+    partner_key = _l202_partner_key(scoped)
+    scoped = scoped.loc[partner_key.ne("")].copy()
+    if scoped.empty:
+        return pd.DataFrame()
+    scoped["_partner_key"] = partner_key.loc[scoped.index]
+    scoped["_base_amount"] = _base_amount_series(scoped)
+    scoped["_row_position"] = [_position_from_index_label(df, index) for index in scoped.index]
+    scoped = scoped[scoped["_row_position"].notna()]
+    if scoped.empty:
+        return pd.DataFrame()
+
+    group_cols = ["document_id"]
+    agg_spec: dict[str, Any] = {
+        "posting_date": ("posting_date", "min"),
+        "partner_key": ("_partner_key", "first"),
+        "amount": ("_base_amount", "sum"),
+        "row_positions": ("_row_position", lambda values: sorted(int(value) for value in values)),
+    }
+    for column in ("company_code", "reference", "document_type", "source", "business_process"):
+        if column in scoped.columns:
+            agg_spec[column] = (column, "first")
+    docs = scoped.groupby(group_cols, sort=False).agg(**agg_spec).reset_index()
+    docs["posting_date"] = pd.to_datetime(docs["posting_date"], errors="coerce")
+    docs = docs.dropna(subset=["posting_date"])
+    docs["reference_norm"] = docs.get("reference", pd.Series("", index=docs.index)).map(
+        _normalize_flow_token
+    )
+    docs["document_type_norm"] = docs.get("document_type", pd.Series("", index=docs.index)).map(
+        _normalize_flow_token
+    )
+    docs["source_norm"] = docs.get("source", pd.Series("", index=docs.index)).map(
+        lambda value: str(value or "").strip().lower()
+    )
+    docs["amount_bucket_minor"] = docs["amount"].map(_amount_minor_bucket)
+    window_days = max(int(getattr(_FLOW_SETTINGS, "duplicate_payment_window_days", 45)), 1)
+    docs["period_bucket"] = (
+        (docs["posting_date"].astype("int64") // (window_days * 24 * 60 * 60 * 1_000_000_000))
+        .astype("int64")
+        .astype(str)
+    )
+    docs["_link_group"] = (
+        docs[
+            [
+                "partner_key",
+                "amount_bucket_minor",
+                "period_bucket",
+                "reference_norm",
+                "document_type_norm",
+            ]
+        ]
+        .astype(str)
+        .agg("\x1f".join, axis=1)
+    )
+    return docs
+
+
+def _l202_partner_key(df: pd.DataFrame) -> pd.Series:
+    result = pd.Series("", index=df.index, dtype="object")
+    for column in (
+        "auxiliary_account_number",
+        "trading_partner",
+        "vendor_id",
+        "vendor_name",
+        "counterparty_code",
+        "counterparty_name",
+    ):
+        if column not in df.columns:
+            continue
+        values = df[column].fillna("").astype(str).str.strip()
+        result = result.where(result.ne(""), values)
+    return result.map(_normalize_flow_token)
+
+
+def _l202_is_regular_repetition(group: pd.DataFrame) -> bool:
+    if len(group) < int(getattr(_FLOW_SETTINGS, "duplicate_recurring_min_series_length", 3)):
+        return False
+    if group["reference_norm"].nunique(dropna=False) <= 1:
+        return False
+    ordered = group.sort_values("posting_date")
+    gaps = ordered["posting_date"].diff().dt.days.dropna()
+    if len(gaps) < 2:
+        return False
+    min_days = int(getattr(_FLOW_SETTINGS, "duplicate_recurring_min_interval_days", 21))
+    max_days = int(getattr(_FLOW_SETTINGS, "duplicate_recurring_max_interval_days", 100))
+    if not bool(gaps.between(min_days, max_days).all()):
+        return False
+    mean_gap = float(gaps.mean())
+    if mean_gap <= 0:
+        return False
+    cv = float(gaps.std(ddof=0) / mean_gap)
+    threshold = float(getattr(_FLOW_SETTINGS, "duplicate_recurring_interval_cv_threshold", 0.20))
+    return cv <= threshold
+
+
+def _flow_units_from_l205_minimal_link_keys(
+    df: pd.DataFrame,
+    result: DetectionResult,
+    *,
+    engagement_salt: str = "",
+) -> list[FlowUnit]:
+    row_positions = _positive_rule_positions(df, result, "L2-05")
+    if not row_positions:
+        return []
+    units: list[FlowUnit] = []
+    seen_doc_sets: set[tuple[str, ...]] = set()
+    # Why: 세 빌더(structural→one_to_one→rolling)가 같은 L2-05 역분개 문서를 각각 별도 flow로
+    #      만들 수 있다. seen_doc_sets는 완전 동일 집합만 dedup하므로 부분 겹침(한 문서가 두 flow에)을
+    #      못 막아 단위 disjoint를 깬다(예: one_to_one {A,B} + rolling {A,B,C} → A,B 중복). 문서 단위
+    #      seen_documents로, 이미 다른 reversal flow에 흡수된 문서를 포함하는 후속 flow는 skip한다
+    #      (우선순위: structural > one_to_one > rolling). 한 문서는 단일 primary flow로만 흡수.
+    seen_documents: set[str] = set()
+    for builder in (
+        _l205_structural_pairs,
+        _l205_one_to_one_pairs,
+        _l205_rolling_zero_out_sets,
+    ):
+        for entry in builder(df, row_positions):
+            doc_key = tuple(entry["member_document_ids"])
+            if doc_key in seen_doc_sets:
+                continue
+            if set(entry["member_document_ids"]) & seen_documents:
+                continue
+            unit = _l205_flow_unit_from_entry(
+                df,
+                result,
+                entry,
+                engagement_salt=engagement_salt,
+            )
+            if unit is None:
+                continue
+            seen_doc_sets.add(tuple(unit.member_document_ids))
+            seen_documents |= set(unit.member_document_ids)
+            units.append(unit)
+    return units
+
+
+def _l205_structural_pairs(df: pd.DataFrame, row_positions: list[int]) -> list[dict[str, Any]]:
+    if "document_id" not in df.columns:
+        return []
+    scoped_positions = set(row_positions)
+    doc_positions = _document_positions_map(df)
+    entries: list[dict[str, Any]] = []
+    for row_pos in row_positions:
+        doc_id = _document_id_at_position(df, row_pos)
+        if not doc_id:
+            continue
+        for column in _REVERSAL_REFERENCE_COLUMNS:
+            if column not in df.columns:
+                continue
+            ref_doc = _optional_string(df[column].iat[row_pos])
+            if not ref_doc or ref_doc == doc_id or ref_doc not in doc_positions:
+                continue
+            other_positions = doc_positions[ref_doc]
+            if not scoped_positions.intersection(other_positions):
+                continue
+            member_document_ids = sorted({doc_id, ref_doc})
+            if len(member_document_ids) < 2:
+                continue
+            entries.append(
+                {
+                    "link_type": "structural_reference",
+                    "member_document_ids": member_document_ids,
+                    "row_positions": sorted({row_pos, *other_positions}),
+                    "reference_column": column,
+                    "reference_direction": f"{doc_id}->{ref_doc}",
+                    "link_key": {
+                        "rule_id": "L2-05",
+                        "link_type": "structural_reference",
+                        "reference_column": column,
+                        "reference_document_pair": member_document_ids,
+                    },
+                }
+            )
+    return _dedupe_flow_entries(entries)
+
+
+def _l205_one_to_one_pairs(df: pd.DataFrame, row_positions: list[int]) -> list[dict[str, Any]]:
+    required = {"document_id", "gl_account", "posting_date", "debit_amount", "credit_amount"}
+    if not required.issubset(df.columns):
+        return []
+    docs = _l205_document_rows(df, row_positions)
+    if docs.empty:
+        return []
+    positives = docs[docs["net"].gt(0)]
+    negatives = docs[docs["net"].lt(0)]
+    if positives.empty or negatives.empty:
+        return []
+    window_days = int(getattr(_FLOW_SETTINGS, "reversal_match_window_days", 1))
+    entries: list[dict[str, Any]] = []
+    merged = positives.merge(
+        negatives,
+        on=["gl_account", "abs_amount"],
+        suffixes=("_pos", "_neg"),
+    )
+    for row in merged.itertuples(index=False):
+        pos_doc = str(row.document_id_pos)
+        neg_doc = str(row.document_id_neg)
+        if pos_doc == neg_doc:
+            continue
+        date_gap = abs((row.posting_date_pos - row.posting_date_neg).days)
+        if date_gap > window_days:
+            continue
+        context_score = _l205_pair_context_score(row)
+        if context_score < 2:
+            continue
+        member_document_ids = sorted({pos_doc, neg_doc})
+        entries.append(
+            {
+                "link_type": "one_to_one_match",
+                "member_document_ids": member_document_ids,
+                "row_positions": sorted({*row.row_positions_pos, *row.row_positions_neg}),
+                "link_key": {
+                    "rule_id": "L2-05",
+                    "link_type": "one_to_one_match",
+                    "gl_account": str(row.gl_account),
+                    "abs_amount_minor": int(row.abs_amount),
+                    "date_gap_days": int(date_gap),
+                    "context_score": int(context_score),
+                    "reference_norm": str(row.reference_norm_pos)
+                    if str(row.reference_norm_pos) == str(row.reference_norm_neg)
+                    else "",
+                },
+            }
+        )
+    return _dedupe_flow_entries(entries)
+
+
+def _l205_rolling_zero_out_sets(df: pd.DataFrame, row_positions: list[int]) -> list[dict[str, Any]]:
+    required = {"document_id", "gl_account", "posting_date", "debit_amount", "credit_amount"}
+    if not required.issubset(df.columns):
+        return []
+    docs = _l205_document_rows(df, row_positions)
+    if docs.empty:
+        return []
+    threshold = float(getattr(_FLOW_SETTINGS, "reversal_zero_threshold", 1000.0))
+    window_days = int(getattr(_FLOW_SETTINGS, "reversal_rolling_window_days", 7))
+    entries: list[dict[str, Any]] = []
+    group_cols = ["gl_account", "created_by_norm"]
+    for _, group in docs.groupby(group_cols, sort=False):
+        if len(group) < 2:
+            continue
+        ordered = group.sort_values("posting_date").reset_index(drop=True)
+        for left in range(len(ordered)):
+            for right in range(left + 1, len(ordered)):
+                window = ordered.iloc[left : right + 1]
+                day_span = int((window["posting_date"].max() - window["posting_date"].min()).days)
+                if day_span > window_days:
+                    break
+                if window["document_id"].nunique() < 2:
+                    continue
+                if not (window["net"].gt(0).any() and window["net"].lt(0).any()):
+                    continue
+                net = float(window["net"].sum())
+                gross = float(window["gross"].sum())
+                if gross <= 0 or abs(net) > threshold or abs(net) / gross >= 0.05:
+                    continue
+                if _l205_window_context_score(window) < 2:
+                    continue
+                member_document_ids = sorted(set(window["document_id"].astype(str)))
+                entries.append(
+                    {
+                        "link_type": "rolling_zero_out_set",
+                        "member_document_ids": member_document_ids,
+                        "row_positions": sorted(
+                            {pos for values in window["row_positions"] for pos in values}
+                        ),
+                        "link_key": {
+                            "rule_id": "L2-05",
+                            "link_type": "rolling_zero_out_set",
+                            "gl_account": str(window["gl_account"].iloc[0]),
+                            "created_by_norm": str(window["created_by_norm"].iloc[0]),
+                            "period_start": _date_string(window["posting_date"].min()),
+                            "period_end": _date_string(window["posting_date"].max()),
+                            "net_minor": _amount_minor_bucket(net),
+                        },
+                    }
+                )
+                break
+    return _dedupe_flow_entries(entries)
+
+
+def _l205_document_rows(df: pd.DataFrame, row_positions: list[int]) -> pd.DataFrame:
+    scoped = df.iloc[row_positions].copy()
+    scoped["_row_position"] = [_position_from_index_label(df, index) for index in scoped.index]
+    scoped = scoped[scoped["_row_position"].notna()]
+    if scoped.empty:
+        return pd.DataFrame()
+    scoped["_net"] = _net_amount_series(scoped)
+    scoped["_gross"] = _gross_amount_series(scoped)
+    agg_spec: dict[str, Any] = {
+        "posting_date": ("posting_date", "min"),
+        "net": ("_net", "sum"),
+        "gross": ("_gross", "sum"),
+        "row_positions": ("_row_position", lambda values: sorted(int(value) for value in values)),
+    }
+    for column in (
+        "created_by",
+        "reference",
+        "document_type",
+        "source",
+        "line_text",
+        "header_text",
+    ):
+        if column in scoped.columns:
+            agg_spec[column] = (column, "first")
+    docs = scoped.groupby(["document_id", "gl_account"], sort=False).agg(**agg_spec).reset_index()
+    docs["posting_date"] = pd.to_datetime(docs["posting_date"], errors="coerce")
+    docs = docs.dropna(subset=["posting_date"])
+    docs["abs_amount"] = docs["net"].abs().map(_amount_minor_bucket)
+    docs["created_by_norm"] = docs.get("created_by", pd.Series("", index=docs.index)).map(
+        _normalize_flow_token
+    )
+    docs["reference_norm"] = docs.get("reference", pd.Series("", index=docs.index)).map(
+        _normalize_flow_token
+    )
+    docs["document_type_norm"] = docs.get("document_type", pd.Series("", index=docs.index)).map(
+        _normalize_flow_token
+    )
+    docs["line_text_norm"] = docs.get("line_text", pd.Series("", index=docs.index)).map(
+        _normalize_flow_text
+    )
+    docs["header_text_norm"] = docs.get("header_text", pd.Series("", index=docs.index)).map(
+        _normalize_flow_text
+    )
+    return docs[docs["net"].ne(0.0)]
+
+
+def _l205_pair_context_score(row: Any) -> int:
+    score = 0
+    if str(row.reference_norm_pos) and str(row.reference_norm_pos) == str(row.reference_norm_neg):
+        score += 2
+    if str(row.created_by_norm_pos) and str(row.created_by_norm_pos) == str(
+        row.created_by_norm_neg
+    ):
+        score += 1
+    if str(row.document_type_norm_pos) and str(row.document_type_norm_pos) == str(
+        row.document_type_norm_neg
+    ):
+        score += 1
+    if str(row.line_text_norm_pos) and str(row.line_text_norm_pos) == str(row.line_text_norm_neg):
+        score += 1
+    if str(row.header_text_norm_pos) and str(row.header_text_norm_pos) == str(
+        row.header_text_norm_neg
+    ):
+        score += 1
+    return score
+
+
+def _l205_window_context_score(window: pd.DataFrame) -> int:
+    score = 0
+    for column, weight in (
+        ("reference_norm", 2),
+        ("created_by_norm", 1),
+        ("document_type_norm", 1),
+        ("line_text_norm", 1),
+    ):
+        values = {str(value) for value in window[column].tolist() if str(value)}
+        if len(values) == 1:
+            score += weight
+    return score
+
+
+def _l205_flow_unit_from_entry(
+    df: pd.DataFrame,
+    result: DetectionResult,
+    entry: dict[str, Any],
+    *,
+    engagement_salt: str = "",
+) -> FlowUnit | None:
+    member_document_ids = sorted(str(value) for value in entry["member_document_ids"] if str(value))
+    if len(member_document_ids) < 2:
+        return None
+    link_key = _json_stable(entry["link_key"])
+    flow_type = "reversal"
+    flow_id = _deterministic_flow_id(
+        company_id=_flow_company_scope(df),
+        rule_id="L2-05",
+        flow_type=flow_type,
+        link_key=link_key,
+        member_document_ids=member_document_ids,
+    )
+    row_positions = sorted({pos for pos in entry["row_positions"] if 0 <= pos < len(df)})
+    return FlowUnit(
+        unit_id=flow_id,
+        flow_id=flow_id,
+        flow_type=flow_type,
+        link_key=link_key,
+        member_document_ids=member_document_ids,
+        evidence_rows=_flow_evidence_rows(
+            df,
+            result,
+            rule_id="L2-05",
+            row_positions=row_positions,
+            engagement_salt=engagement_salt,
+        ),
+        artifact_completeness="complete",
+        truncated=False,
+        cap_reason=None,
+        source_artifact_schema="l205_minimal_link_key.v1",
+        candidate_count=1,
+        retained_count=1,
+        member_count=len(member_document_ids),
+        measurement_eligible=True,
+    )
+
+
+def _dedupe_flow_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[tuple[str, tuple[str, ...]]] = set()
+    deduped: list[dict[str, Any]] = []
+    for entry in entries:
+        key = (str(entry.get("link_type")), tuple(entry.get("member_document_ids") or []))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(entry)
+    return deduped
+
+
+def _positive_rule_positions(df: pd.DataFrame, result: DetectionResult, rule_id: str) -> list[int]:
+    flag_series = _rule_flag_series(result, rule_id)
+    if flag_series is not None:
+        flags = flag_series.reindex(df.index, fill_value=False).astype(bool)
+        positions = [int(pos) for pos, value in enumerate(flags.tolist()) if bool(value)]
+        if positions:
+            return positions
+    if result.details is None or rule_id not in result.details.columns:
+        return []
+    scores = pd.to_numeric(result.details[rule_id].reindex(df.index), errors="coerce").fillna(0.0)
+    return [int(pos) for pos, value in enumerate(scores.tolist()) if float(value) > 0.0]
+
+
+def _rule_flag_series(result: DetectionResult, rule_id: str) -> pd.Series | None:
+    series_frame = (result.metadata or {}).get("rule_flag_series")
+    if isinstance(series_frame, pd.DataFrame) and rule_id in series_frame.columns:
+        return series_frame[rule_id]
+    return None
+
+
+def _rule_flag_at_position(result: DetectionResult, rule_id: str, row_pos: int) -> bool:
+    flag_series = _rule_flag_series(result, rule_id)
+    if flag_series is None:
+        return False
+    try:
+        return bool(flag_series.iloc[row_pos])
+    except IndexError:
+        return False
+
+
+def _flow_units_from_duplicate_artifact(
+    df: pd.DataFrame,
+    result: DetectionResult,
+    artifact: Any,
+    *,
+    engagement_salt: str = "",
+) -> list[FlowUnit]:
+    if not isinstance(artifact, dict):
+        return []
+    top_pairs = artifact.get("top_pairs") or []
+    if not isinstance(top_pairs, list) or not top_pairs:
+        return []
+
+    truncated = bool(artifact.get("truncated", False))
+    cap_reason = _optional_string(artifact.get("truncation_reason"))
+    completeness = "bounded" if truncated else "complete"
+    measurement_eligible = completeness == "complete"
+
+    units: list[FlowUnit] = []
+    for pair in top_pairs:
+        if not isinstance(pair, dict):
+            continue
+        left_doc = _optional_string(pair.get("left_document_id"))
+        right_doc = _optional_string(pair.get("right_document_id"))
+        member_document_ids = sorted({doc for doc in (left_doc, right_doc) if doc})
+        if len(member_document_ids) < 2:
+            continue
+        row_positions = _artifact_positions_from_pair(df, pair)
+        link_key = {
+            "rule_id": "L2-03",
+            "pair_rule_id": _optional_string(pair.get("rule_id")) or "L2-03",
+            "rule_source": _optional_string(pair.get("rule_source")) or "",
+            "pair_score": _safe_float(pair.get("pair_score")),
+            "features": _json_stable(
+                pair.get("features") if isinstance(pair.get("features"), dict) else {}
+            ),
+        }
+        flow_type = "duplicate_entry"
+        flow_id = _deterministic_flow_id(
+            company_id=_flow_company_scope(df),
+            rule_id="L2-03",
+            flow_type=flow_type,
+            link_key=link_key,
+            member_document_ids=member_document_ids,
+        )
+        units.append(
+            FlowUnit(
+                unit_id=flow_id,
+                flow_id=flow_id,
+                flow_type=flow_type,
+                link_key=link_key,
+                member_document_ids=member_document_ids,
+                evidence_rows=_flow_evidence_rows(
+                    df,
+                    result,
+                    rule_id="L2-03",
+                    row_positions=row_positions,
+                    engagement_salt=engagement_salt,
+                ),
+                artifact_completeness=completeness,
+                truncated=truncated,
+                cap_reason=cap_reason,
+                source_artifact_schema=f"duplicate_pair_artifact.v{artifact.get('schema_version', 1)}",
+                candidate_count=1,
+                retained_count=1,
+                member_count=len(member_document_ids),
+                measurement_eligible=measurement_eligible,
+            )
+        )
+    return units
+
+
+def _flow_units_from_ic_artifact(
+    df: pd.DataFrame,
+    result: DetectionResult,
+    artifact: Any,
+    *,
+    engagement_salt: str = "",
+) -> list[FlowUnit]:
+    if not isinstance(artifact, dict):
+        return []
+
+    units: list[FlowUnit] = []
+
+    # IC unmatched rows are review-only mapping uncertainty. They stay in the
+    # detector artifact/sidecar, but a one-document row is not a flow unit.
+    for entry in artifact.get("mismatch_pairs") or []:
+        if isinstance(entry, dict):
+            cap_reason = _ic_structural_cap_reason(artifact, "mismatch_pair")
+            completeness = "bounded" if cap_reason else "complete"
+            units.extend(
+                _ic_entry_flow_unit(
+                    df,
+                    result,
+                    entry,
+                    artifact=artifact,
+                    flow_type="intercompany_mismatch",
+                    rule_id="IC02",
+                    positions=(
+                        _safe_int(entry.get("left_position"), default=-1),
+                        _safe_int(entry.get("right_position"), default=-1),
+                    ),
+                    completeness=completeness,
+                    cap_reason=cap_reason,
+                    measurement_eligible=completeness == "complete",
+                    engagement_salt=engagement_salt,
+                )
+            )
+    for entry in artifact.get("reciprocal_pairs") or []:
+        if not isinstance(entry, dict):
+            continue
+        positions = tuple(
+            pos
+            for pos in [
+                *(_int_list(entry.get("receivable_positions"))),
+                *(_int_list(entry.get("payable_positions"))),
+            ]
+            if pos >= 0
+        )
+        cap_reason = _ic_structural_cap_reason(artifact, "reciprocal_pair")
+        completeness = "bounded" if cap_reason else "complete"
+        units.extend(
+            _ic_entry_flow_unit(
+                df,
+                result,
+                entry,
+                artifact=artifact,
+                flow_type="intercompany_reciprocal",
+                rule_id="IC03",
+                positions=positions,
+                completeness=completeness,
+                cap_reason=cap_reason,
+                measurement_eligible=completeness == "complete",
+                engagement_salt=engagement_salt,
+            )
+        )
+    return units
+
+
+def _ic_entry_flow_unit(
+    df: pd.DataFrame,
+    result: DetectionResult,
+    entry: dict[str, Any],
+    *,
+    artifact: dict[str, Any],
+    flow_type: str,
+    rule_id: str,
+    positions: tuple[int, ...],
+    completeness: str,
+    cap_reason: str | None,
+    measurement_eligible: bool,
+    engagement_salt: str,
+) -> list[FlowUnit]:
+    row_positions = sorted({pos for pos in positions if 0 <= pos < len(df)})
+    member_document_ids = _member_documents_from_positions(df, row_positions)
+    if not member_document_ids:
+        doc_id = _optional_string(entry.get("document_id"))
+        member_document_ids = [doc_id] if doc_id else []
+    if not member_document_ids:
+        return []
+
+    link_key = {
+        "rule_id": rule_id,
+        "entry": _json_stable(
+            {
+                key: value
+                for key, value in entry.items()
+                if key
+                not in {
+                    "review_reason",
+                    "row_index",
+                    "left_index",
+                    "right_index",
+                    "receivable_indices",
+                    "payable_indices",
+                }
+            }
+        ),
+    }
+    flow_id = _deterministic_flow_id(
+        company_id=_flow_company_scope(df),
+        rule_id=rule_id,
+        flow_type=flow_type,
+        link_key=link_key,
+        member_document_ids=member_document_ids,
+    )
+    return [
+        FlowUnit(
+            unit_id=flow_id,
+            flow_id=flow_id,
+            flow_type=flow_type,
+            link_key=link_key,
+            member_document_ids=member_document_ids,
+            evidence_rows=_flow_evidence_rows(
+                df,
+                result,
+                rule_id=rule_id,
+                row_positions=row_positions,
+                engagement_salt=engagement_salt,
+            ),
+            artifact_completeness=completeness,
+            truncated=bool(cap_reason),
+            cap_reason=cap_reason,
+            source_artifact_schema=f"ic_pair_artifact.v{artifact.get('schema_version', 1)}",
+            candidate_count=1,
+            retained_count=1,
+            member_count=len(member_document_ids),
+            measurement_eligible=measurement_eligible,
+        )
+    ]
+
+
+def _flow_units_from_graph_result(
+    df: pd.DataFrame,
+    result: DetectionResult,
+    *,
+    engagement_salt: str = "",
+) -> list[FlowUnit]:
+    if result.details is None or result.details.empty:
+        return []
+    metadata = result.metadata or {}
+    units: list[FlowUnit] = []
+    units.extend(_graph_cycle_flow_units(df, result, metadata, engagement_salt=engagement_salt))
+    if units:
+        return units
+    for rule_id, flow_type in (("GR01", "graph_circular"), ("GR03", "graph_transfer_pricing")):
+        if rule_id not in result.details.columns:
+            continue
+        scores = pd.to_numeric(result.details[rule_id].reindex(df.index), errors="coerce").fillna(
+            0.0
+        )
+        row_positions = [int(pos) for pos, value in enumerate(scores.tolist()) if float(value) > 0]
+        if not row_positions:
+            continue
+        member_document_ids = _member_documents_from_positions(df, row_positions)
+        if not member_document_ids:
+            continue
+        cap_reason = _graph_cap_reason(rule_id, metadata)
+        skipped = _optional_string(metadata.get(f"{rule_id.lower()}_skip_reason"))
+        if skipped:
+            completeness = "skipped"
+        else:
+            completeness = "bounded" if cap_reason else "complete"
+        measurement_eligible = completeness == "complete"
+        candidate_count = _graph_candidate_count(rule_id, metadata, default=len(row_positions))
+        retained_count = len(row_positions)
+        link_key = {
+            "rule_id": rule_id,
+            "graph_scope": "positive_rows",
+            "metadata": _json_stable(
+                {
+                    key: value
+                    for key, value in metadata.items()
+                    if str(key).lower().startswith(rule_id.lower())
+                }
+            ),
+        }
+        flow_id = _deterministic_flow_id(
+            company_id=_flow_company_scope(df),
+            rule_id=rule_id,
+            flow_type=flow_type,
+            link_key=link_key,
+            member_document_ids=member_document_ids,
+        )
+        units.append(
+            FlowUnit(
+                unit_id=flow_id,
+                flow_id=flow_id,
+                flow_type=flow_type,
+                link_key=link_key,
+                member_document_ids=member_document_ids,
+                evidence_rows=_flow_evidence_rows(
+                    df,
+                    result,
+                    rule_id=rule_id,
+                    row_positions=row_positions,
+                    engagement_salt=engagement_salt,
+                ),
+                artifact_completeness=completeness,
+                truncated=bool(cap_reason or skipped),
+                cap_reason=cap_reason or skipped,
+                source_artifact_schema="graph_detector_metadata.v1",
+                candidate_count=candidate_count,
+                retained_count=retained_count,
+                member_count=len(member_document_ids),
+                measurement_eligible=measurement_eligible,
+            )
+        )
+    return units
+
+
+def _graph_cycle_flow_units(
+    df: pd.DataFrame,
+    result: DetectionResult,
+    metadata: dict[str, Any],
+    *,
+    engagement_salt: str = "",
+) -> list[FlowUnit]:
+    units: list[FlowUnit] = []
+    specs = (
+        ("GR01", "graph_circular", "gr01_cycle_instances", "cycle_id"),
+        ("GR03", "graph_transfer_pricing", "gr03_pair_instances", "pair_id"),
+    )
+    for rule_id, flow_type, metadata_key, id_key in specs:
+        instances = metadata.get(metadata_key)
+        if not isinstance(instances, list) or not instances:
+            continue
+        cap_reason = _graph_cap_reason(rule_id, metadata)
+        skipped = _optional_string(metadata.get(f"{rule_id.lower()}_skip_reason"))
+        completeness = "skipped" if skipped else ("bounded" if cap_reason else "complete")
+        for idx, instance in enumerate(instances, start=1):
+            if not isinstance(instance, dict):
+                continue
+            row_positions = [
+                pos for pos in _int_list(instance.get("row_positions")) if 0 <= pos < len(df)
+            ]
+            member_document_ids = [
+                value
+                for value in sorted(
+                    {
+                        *(_member_documents_from_positions(df, row_positions)),
+                        *[
+                            _optional_string(item) or ""
+                            for item in (instance.get("document_ids") or [])
+                        ],
+                    }
+                )
+                if value
+            ]
+            if not member_document_ids:
+                continue
+            instance_id = _optional_string(instance.get(id_key)) or f"{metadata_key}-{idx}"
+            link_key = {
+                "rule_id": rule_id,
+                id_key: instance_id,
+                "nodes": list(instance.get("nodes") or []),
+                "group_key": list(instance.get("group_key") or []),
+            }
+            flow_id = _deterministic_flow_id(
+                company_id=_flow_company_scope(df),
+                rule_id=rule_id,
+                flow_type=flow_type,
+                link_key=link_key,
+                member_document_ids=member_document_ids,
+            )
+            units.append(
+                FlowUnit(
+                    unit_id=flow_id,
+                    flow_id=flow_id,
+                    flow_type=flow_type,
+                    link_key=link_key,
+                    member_document_ids=member_document_ids,
+                    evidence_rows=_flow_evidence_rows(
+                        df,
+                        result,
+                        rule_id=rule_id,
+                        row_positions=row_positions,
+                        engagement_salt=engagement_salt,
+                    ),
+                    artifact_completeness=completeness,
+                    truncated=bool(cap_reason or skipped),
+                    cap_reason=cap_reason or skipped,
+                    source_artifact_schema="graph_detector_cycle_instances.v1",
+                    candidate_count=1,
+                    retained_count=1,
+                    member_count=len(member_document_ids),
+                    measurement_eligible=completeness == "complete",
+                )
+            )
+    return units
+
+
+def _flow_evidence_rows(
+    df: pd.DataFrame,
+    result: DetectionResult,
+    *,
+    rule_id: str,
+    row_positions: list[int],
+    engagement_salt: str = "",
+) -> list[RawRuleHitRef]:
+    if not row_positions:
+        return []
+    details = result.details if result.details is not None else pd.DataFrame(index=df.index)
+    detail_rule_ids = _flow_detail_rule_ids(rule_id, details)
+    if not detail_rule_ids:
+        return []
+    severity = _rule_flag_severity(result, rule_id)
+    evidence_type = _flow_evidence_type(rule_id)
+    refs: list[RawRuleHitRef] = []
+    has_salt = bool(engagement_salt and engagement_salt.strip())
+    has_line_number = has_salt and "line_number" in df.columns
+    has_company_code = has_salt and "company_code" in df.columns
+    for row_pos in sorted({pos for pos in row_positions if 0 <= pos < len(df)}):
+        score = max(
+            _safe_float(details[detail_rule_id].iat[row_pos]) for detail_rule_id in detail_rule_ids
+        )
+        if score <= 0 and not _rule_flag_at_position(result, rule_id, row_pos):
+            continue
+        document_id = _document_id_at_position(df, row_pos) or f"row-{row_pos}"
+        canonical_label_hash = ""
+        doc_id_hash = ""
+        company_code_hash = ""
+        line_number_key: str | None = None
+        if has_salt:
+            canonical_label = canonicalize_ref_key(df.index[row_pos])
+            canonical_label_hash = hash_ref_key(canonical_label, salt=engagement_salt)
+            doc_id_hash = hash_ref_key(document_id, salt=engagement_salt)
+            if has_company_code:
+                company_code_value = df["company_code"].iat[row_pos]
+                if company_code_value is not None and not pd.isna(company_code_value):
+                    company_code_str = str(company_code_value)
+                    if company_code_str:
+                        company_code_hash = hash_ref_key(company_code_str, salt=engagement_salt)
+            if has_line_number:
+                candidate = canonicalize_ref_key(df["line_number"].iat[row_pos])
+                line_number_key = None if candidate == "n:" else candidate
+        refs.append(
+            RawRuleHitRef(
+                rule_id=rule_id,
+                severity=severity,
+                document_id=document_id,
+                row_index=row_pos,
+                record_id=_record_id_at_position(df, row_pos),
+                score=score,
+                signal_strength=score,
+                normalized_score=score,
+                evidence_strength="medium",
+                scoring_role="primary",
+                display_label="",
+                signal_status="confirmed",
+                detail=None,
+                evidence_type=evidence_type,
+                canonical_label_hash=canonical_label_hash,
+                doc_id_hash=doc_id_hash,
+                line_number_key=line_number_key,
+                company_code_hash=company_code_hash,
+            )
+        )
+    return refs
+
+
+def _flow_detail_rule_ids(rule_id: str, details: pd.DataFrame) -> list[str]:
+    if rule_id == "L2-03":
+        return [
+            candidate for candidate in _DUPLICATE_DETAIL_RULE_IDS if candidate in details.columns
+        ]
+    return [rule_id] if rule_id in details.columns else []
+
+
+def _document_positions_map(df: pd.DataFrame) -> dict[str, list[int]]:
+    mapping: dict[str, list[int]] = defaultdict(list)
+    if "document_id" not in df.columns:
+        return mapping
+    for pos, value in enumerate(df["document_id"].tolist()):
+        doc_id = _optional_string(value)
+        if doc_id:
+            mapping[doc_id].append(pos)
+    return {key: sorted(values) for key, values in mapping.items()}
+
+
+def _base_amount_series(df: pd.DataFrame) -> pd.Series:
+    debit = pd.to_numeric(
+        df.get("debit_amount", pd.Series(0.0, index=df.index)), errors="coerce"
+    ).fillna(0.0)
+    credit = pd.to_numeric(
+        df.get("credit_amount", pd.Series(0.0, index=df.index)), errors="coerce"
+    ).fillna(0.0)
+    return pd.concat([debit.abs(), credit.abs()], axis=1).max(axis=1)
+
+
+def _net_amount_series(df: pd.DataFrame) -> pd.Series:
+    debit = pd.to_numeric(
+        df.get("debit_amount", pd.Series(0.0, index=df.index)), errors="coerce"
+    ).fillna(0.0)
+    credit = pd.to_numeric(
+        df.get("credit_amount", pd.Series(0.0, index=df.index)), errors="coerce"
+    ).fillna(0.0)
+    return debit - credit
+
+
+def _gross_amount_series(df: pd.DataFrame) -> pd.Series:
+    debit = pd.to_numeric(
+        df.get("debit_amount", pd.Series(0.0, index=df.index)), errors="coerce"
+    ).fillna(0.0)
+    credit = pd.to_numeric(
+        df.get("credit_amount", pd.Series(0.0, index=df.index)), errors="coerce"
+    ).fillna(0.0)
+    return debit.abs() + credit.abs()
+
+
+def _amount_minor_bucket(value: Any) -> int:
+    return int(round(_safe_float(value) * 100))
+
+
+def _normalize_flow_token(value: Any) -> str:
+    text = _string_value(value).lower()
+    return "".join(char for char in text if char.isalnum())
+
+
+def _normalize_flow_text(value: Any) -> str:
+    text = _string_value(value).lower()
+    compact = [" " if not char.isalnum() else char for char in text]
+    return " ".join("".join(compact).split())
+
+
+def _deterministic_flow_id(
+    *,
+    company_id: str,
+    rule_id: str,
+    flow_type: str,
+    link_key: dict[str, Any],
+    member_document_ids: list[str],
+) -> str:
+    payload = {
+        "schema": _FLOW_ID_SCHEMA_VERSION,
+        "company": company_id,
+        "rule_id": rule_id,
+        "flow_type": flow_type,
+        "link_key": _json_stable(link_key),
+        "member_document_ids": sorted(str(value) for value in member_document_ids),
+    }
+    digest = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode(
+            "utf-8"
+        )
+    ).hexdigest()[:24]
+    return f"{_FLOW_ID_SCHEMA_VERSION}_{flow_type}_{digest}"
+
+
+def _json_stable(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            str(key): _json_stable(value[key]) for key in sorted(value, key=lambda item: str(item))
+        }
+    if isinstance(value, list):
+        return [_json_stable(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_stable(item) for item in value]
+    if isinstance(value, (str, int, bool)) or value is None:
+        return value
+    if isinstance(value, float):
+        return None if value != value else float(value)
+    if hasattr(value, "item"):
+        try:
+            return _json_stable(value.item())
+        except Exception:
+            return str(value)
+    return str(value)
+
+
+def _artifact_positions_from_pair(df: pd.DataFrame, pair: dict[str, Any]) -> list[int]:
+    positions: list[int] = []
+    for key in ("left_position", "right_position"):
+        pos = _safe_int(pair.get(key), default=-1)
+        if 0 <= pos < len(df):
+            positions.append(pos)
+    if positions:
+        return positions
+    for key in ("left_index", "right_index"):
+        pos = _position_from_index_label(df, pair.get(key))
+        if pos is not None:
+            positions.append(pos)
+    return sorted(set(positions))
+
+
+def _position_from_index_label(df: pd.DataFrame, label: Any) -> int | None:
+    if label in df.index:
+        loc = df.index.get_loc(label)
+        if isinstance(loc, int):
+            return int(loc)
+    try:
+        pos = int(label)
+    except (TypeError, ValueError):
+        return None
+    return pos if 0 <= pos < len(df) else None
+
+
+def _member_documents_from_positions(df: pd.DataFrame, positions: list[int]) -> list[str]:
+    docs = {_document_id_at_position(df, pos) for pos in positions if 0 <= pos < len(df)}
+    return sorted(doc for doc in docs if doc)
+
+
+def _document_id_at_position(df: pd.DataFrame, row_pos: int) -> str:
+    if "document_id" not in df.columns or not (0 <= row_pos < len(df)):
+        return ""
+    return _optional_string(df["document_id"].iat[row_pos]) or ""
+
+
+def _record_id_at_position(df: pd.DataFrame, row_pos: int) -> str | None:
+    if "record_id" not in df.columns or not (0 <= row_pos < len(df)):
+        return None
+    return _optional_string(df["record_id"].iat[row_pos])
+
+
+_FLOW_COMPANY_SCOPE_CACHE: tuple[Any, str] | None = None
+
+
+def _flow_company_scope(df: pd.DataFrame) -> str:
+    # Why(성능): 결과는 df의 company_code 에만 의존(group·호출처 무관). flow 빌더 루프들이 group/entry
+    #      마다 이 함수를 호출해 910k 행 전체를 매번 스캔(O(groups×n) = 수십 분 병목, recall v42j_r3
+    #      L2-02 21,572 hit 케이스에서 build_flow_units 30분+). 같은 df 객체면 1회만 계산해 재사용한다.
+    #      weakref 키로 '동일 살아있는 객체'일 때만 캐시 히트 — df 가 GC 되면 ref()가 None 이 되어
+    #      cross-build id 재사용에도 stale 값을 반환하지 않는다(동작 100% 보존).
+    global _FLOW_COMPANY_SCOPE_CACHE
+    import weakref as _weakref
+
+    if _FLOW_COMPANY_SCOPE_CACHE is not None:
+        _ref, _val = _FLOW_COMPANY_SCOPE_CACHE
+        if _ref() is df:
+            return _val
+    if "company_code" not in df.columns or df.empty:
+        result = ""
+    else:
+        values = sorted(
+            {
+                value
+                for value in (_optional_string(item) for item in df["company_code"].tolist())
+                if value
+            }
+        )
+        result = "|".join(values[:10])
+    try:
+        _FLOW_COMPANY_SCOPE_CACHE = (_weakref.ref(df), result)
+    except TypeError:
+        _FLOW_COMPANY_SCOPE_CACHE = None
+    return result
+
+
+def _rule_flag_severity(result: DetectionResult, rule_id: str) -> int:
+    for flag in result.rule_flags:
+        if str(flag.rule_id) == rule_id:
+            return int(flag.severity)
+    return int(SEVERITY_MAP.get(rule_id, 3))
+
+
+def _flow_evidence_type(rule_id: str) -> str:
+    metadata = RULE_SCORING_REGISTRY.get(rule_id)
+    if metadata is not None:
+        return str(metadata.evidence_type)
+    return "flow_evidence"
+
+
+def _ic_cap_reason(artifact: dict[str, Any]) -> str | None:
+    lengths = {
+        "candidate_pairs": len(artifact.get("candidate_pairs") or []),
+        "unmatched_rows": len(artifact.get("unmatched_rows") or []),
+        "mismatch_pairs": len(artifact.get("mismatch_pairs") or []),
+        "reciprocal_pairs": len(artifact.get("reciprocal_pairs") or []),
+    }
+    caps = {
+        "candidate_pairs": _IC_CANDIDATE_PAIR_CAP,
+        "unmatched_rows": _IC_UNMATCHED_ROW_CAP,
+        "mismatch_pairs": _IC_MISMATCH_PAIR_CAP,
+        "reciprocal_pairs": _IC_RECIPROCAL_PAIR_CAP,
+    }
+    hit_caps = [name for name, count in lengths.items() if count >= caps[name]]
+    return "ic_pair_artifact_cap:" + ",".join(hit_caps) if hit_caps else None
+
+
+def _ic_structural_cap_reason(artifact: dict[str, Any], list_kind: str) -> str | None:
+    coverage = artifact.get("coverage") if isinstance(artifact.get("coverage"), dict) else {}
+    flag_key = f"{list_kind}_truncated"
+    if bool(coverage.get(flag_key)):
+        return f"ic_pair_artifact_cap:{list_kind}"
+    count_key = f"{list_kind}_count"
+    cap = {
+        "unmatched_row": _IC_UNMATCHED_ROW_CAP,
+        "mismatch_pair": _IC_MISMATCH_PAIR_CAP,
+        "reciprocal_pair": _IC_RECIPROCAL_PAIR_CAP,
+    }.get(list_kind, 0)
+    available_key = f"{list_kind}_available_count"
+    available = _safe_int(coverage.get(available_key), default=-1)
+    retained = _safe_int(coverage.get(count_key), default=0)
+    if available >= 0:
+        return f"ic_pair_artifact_cap:{list_kind}" if available > retained else None
+    return f"ic_pair_artifact_cap:{list_kind}" if cap and retained >= cap else None
+
+
+def _graph_cap_reason(rule_id: str, metadata: dict[str, Any]) -> str | None:
+    prefix = rule_id.lower()
+    if rule_id == "GR01":
+        if metadata.get("gr01_max_edges_raised"):
+            return "max_edges_threshold_raised"
+        if _safe_int(metadata.get("gr01_skipped_components")) > 0:
+            return "component_limit_skipped"
+    for issue in metadata.get("coverage_issues") or []:
+        if isinstance(issue, dict) and str(issue.get("rule_id")) == rule_id:
+            return _optional_string(issue.get("reason")) or _optional_string(issue.get("kind"))
+    return _optional_string(metadata.get(f"{prefix}_skip_reason"))
+
+
+def _graph_candidate_count(rule_id: str, metadata: dict[str, Any], *, default: int) -> int:
+    if rule_id == "GR01":
+        return max(
+            default,
+            _safe_int(metadata.get("gr01_edges_prefiltered")),
+            _safe_int(metadata.get("gr01_edges_built")),
+        )
+    return max(
+        default,
+        _safe_int(metadata.get("gr03_bidirectional_pairs")),
+        _safe_int(metadata.get("gr03_flagged_pairs")),
+        _safe_int(metadata.get("gr03_reference_rows")),
+    )
+
+
+def _safe_int(value: Any, *, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_float(value: Any, *, default: float = 0.0) -> float:
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return default
+    return default if result != result else result
+
+
+def _int_list(value: Any) -> list[int]:
+    if not isinstance(value, list):
+        return []
+    return [_safe_int(item, default=-1) for item in value]
+
+
 def _build_theme_summaries(
     cases: list[CaseGroupResult],
     top_n_per_theme: int,
@@ -1853,7 +4208,9 @@ def _build_macro_context_index(macro_findings: list[dict[str, Any]]) -> dict[str
     by_account: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for finding in macro_findings:
         rule_id = str(finding.get("rule_id") or "")
-        if rule_id not in {"D01", "D02", "GR01", "GR03"}:
+        # macro_context 부착 대상은 D01/D02 만 (2026-06-14): GR01/GR03 제거(PHASE2 family),
+        # L4-02(Benford)는 모집단 신호로 거래 case 부착 제외(부착 시 broad fan-out OOM).
+        if rule_id not in {"D01", "D02"}:
             continue
         macro_account = _macro_key_part(finding.get("gl_account"))
         if not macro_account:
@@ -2002,6 +4359,38 @@ def _macro_context_scoring_effect(finding: dict[str, Any]) -> str:
     return "context_only"
 
 
+# Why: #20① — macro_context 의 scoring_effect 를 topic_scoring macro_context_score 의
+# normalized_score 로 환산. confirmed=1.0(full), corroborated=0.67(weak), context_only=0
+# (정보성 부착만). 가중치 0.03 과 곱해져 최대 기여 0.03 으로 bounded — macro 단독 seed 불가.
+_MACRO_SCORING_EFFECT_SCORE: dict[str, float] = {
+    "priority_booster": 1.0,
+    "weak_priority_booster": 0.67,
+}
+
+
+def _macro_only_evidences(macro_contexts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """macro_context 를 compute_topic_scores 용 macro_only evidence 로 변환 (#20①).
+
+    final_topic/secondary/standalone_rankable 은 RULE_SCORING_REGISTRY 에서 해소되도록
+    rule_id 만 넘긴다. score 0(context_only) evidence 도 포함 — circular 콤보의 graph_cycle
+    감지(#20③)가 점수 무관하게 GR01/GR03 존재를 보게 하기 위함.
+    """
+    evidences: list[dict[str, Any]] = []
+    for context in macro_contexts:
+        rule_id = str(context.get("rule_id") or "")
+        if not rule_id:
+            continue
+        score = _MACRO_SCORING_EFFECT_SCORE.get(str(context.get("scoring_effect") or ""), 0.0)
+        evidences.append(
+            {
+                "rule_id": rule_id,
+                "scoring_role": "macro_only",
+                "normalized_score": score,
+            }
+        )
+    return evidences
+
+
 def _apply_macro_context_priority(
     priority_score: float,
     macro_contexts: list[dict[str, Any]],
@@ -2120,7 +4509,7 @@ def _build_case_key_context(
         else ["UNKNOWN_MONTH"] * len(work)
     )
     is_period_end = (
-        work["is_period_end"].fillna(False).astype(bool).tolist()
+        bool_column(work, "is_period_end").tolist()
         if "is_period_end" in work.columns
         else [False] * len(work)
     )
@@ -2322,6 +4711,17 @@ def _load_batch_values(df: pd.DataFrame, config: dict[str, Any]) -> list[str]:
     return [value or "UNKNOWN_BATCH" for value in result]
 
 
+def _document_ref_columns(df: pd.DataFrame, config: dict[str, Any]) -> dict[str, Any]:
+    """문서 ref 생성에 쓰는 전체 df 컬럼 캐시 — case 루프 밖에서 1회 만들어 재사용한다."""
+    return {
+        "posting_dates": (df["posting_date"].tolist() if "posting_date" in df.columns else None),
+        "created_by": _string_column(df, "created_by"),
+        "business_process": _string_column(df, "business_process"),
+        "gl_account": _string_column(df, "gl_account"),
+        "counterparty": _counterparty_values(df, config),
+    }
+
+
 def _build_document_refs(
     df: pd.DataFrame,
     hits: list[_RawHit],
@@ -2330,11 +4730,25 @@ def _build_document_refs(
     document_amounts: dict[str, float] | None = None,
     line_amounts: pd.Series | None = None,
     ref_cache: dict[tuple[str, tuple[tuple[str, int, str], ...]], CaseDocumentRef] | None = None,
+    document_ref_columns: dict[str, Any] | None = None,
 ) -> list[CaseDocumentRef]:
     by_doc: dict[str, list[_RawHit]] = defaultdict(list)
     for hit in hits:
         by_doc[hit.document_id].append(hit)
     refs: list[CaseDocumentRef] = []
+    # Why: 컬럼 캐시(전체 df 기준)는 case 루프 밖에서 1회 만들어 전달한다. case마다
+    #      _build_document_refs가 전체 df를 tolist 하면 O(case 수 × 전체 행)로 폭증한다
+    #      (2026-06-13 R-PERF 회귀). document_ref_columns 미전달 시에만 backward compat 생성.
+    cols = (
+        document_ref_columns
+        if document_ref_columns is not None
+        else _document_ref_columns(df, config)
+    )
+    posting_dates = cols["posting_dates"]
+    created_by_values = cols["created_by"]
+    business_process_values = cols["business_process"]
+    gl_account_values = cols["gl_account"]
+    counterparty_values = cols["counterparty"]
     for document_id, doc_hits in by_doc.items():
         cache_key = (
             document_id,
@@ -2344,14 +4758,16 @@ def _build_document_refs(
             refs.append(ref_cache[cache_key])
             continue
         hit_positions = [hit.row_index for hit in doc_hits]
-        row = df.iloc[doc_hits[0].row_index]
+        first_pos = doc_hits[0].row_index
         ref = CaseDocumentRef(
             document_id=document_id,
-            posting_date=_date_string(row.get("posting_date")),
-            created_by=_optional_string(row.get("created_by")),
-            business_process=_optional_string(row.get("business_process")),
-            gl_account=_optional_string(row.get("gl_account")),
-            counterparty=_counterparty(row, config),
+            posting_date=(
+                _date_string(posting_dates[first_pos]) if posting_dates is not None else None
+            ),
+            created_by=created_by_values[first_pos] or None,
+            business_process=business_process_values[first_pos] or None,
+            gl_account=gl_account_values[first_pos] or None,
+            counterparty=counterparty_values[first_pos],
             amount=_document_amount(
                 df,
                 document_id,
@@ -2660,14 +5076,11 @@ def _case_audit_evidence_scores(
     support_gap = _case_has_support_gap(rows)
     approval_gap = _case_has_approval_relationship_gap(rows)
     post_close_gap = _case_has_post_close_context(rows)
-    related_party_context = _case_has_related_party_context(rows)
     reversal_context = _case_has_reversal_or_clearing_context(rows)
     master_gap = _case_has_any_true(rows, "master_counterparty_inactive") or (
         _case_has_partner_value(rows) and not _case_has_any_true(rows, "master_counterparty_known")
     )
     document_flow_orphan = _case_has_any_true(rows, "document_flow_orphan")
-    ic_match_context = _case_has_any_true(rows, "ic_matched_pair_found")
-    ic_unmatched = _case_has_any_true(rows, "ic_unmatched_reference")
     high_amount = amount_score >= 0.50
 
     scores = {topic_id: 0.0 for topic_id in TOPIC_REGISTRY}
@@ -2697,10 +5110,7 @@ def _case_audit_evidence_scores(
     if reversal_context and (rule_ids & {"L2-02", "L2-03", "L2-05"}):
         scores["duplicate_outflow"] = max(scores["duplicate_outflow"], 0.45)
 
-    if related_party_context or ic_match_context or ic_unmatched:
-        scores["intercompany_cycle"] = max(scores["intercompany_cycle"], 0.45)
-        if repeat_score >= 0.50 or high_amount or ic_unmatched:
-            scores["intercompany_cycle"] = max(scores["intercompany_cycle"], 0.60)
+    # intercompany_cycle audit_evidence 가산 제거 (2026-06-14): IC/GR 제거로 주제 폐지.
 
     return scores
 
@@ -2818,6 +5228,68 @@ _COMPOSITE_SORT_WEIGHTS = {
     "independent_evidence_norm": 0.1,
 }
 _COMPOSITE_SORT_INDEPENDENT_EVIDENCE_CAP = 5.0
+
+
+# PHASE1 tier → band 매핑 (PHASE1_TIER_SCORING_SPEC §2). band 결정은 가중합이 아니라 tier.
+_TIER_TO_BAND: dict[str, str] = {
+    "HIGH": "high",
+    "MEDIUM": "medium",
+    "LOW": "low",
+    "CONTEXT": "low",
+}
+
+# priority_score(deprecated) 호환 shim: tier 대표값. band 결정은 tier 가 하고, 이 값은
+# [0,1] 을 가정하는 기존 소비처(export/phase2 linker)와의 호환을 위해서만 둔다.
+_TIER_TO_PRIORITY_SCORE: dict[str, float] = {
+    "HIGH": 0.90,
+    "MEDIUM": 0.75,
+    "LOW": 0.40,
+    "CONTEXT": 0.0,
+}
+
+
+def _legacy_floor_tier(floor_only_score: float) -> str:
+    """config priority_floors(명시 도메인 조건) 의 min_priority_score 를 tier 로 매핑.
+
+    이 floor 들은 가중합이 아니라 명시 조건(SoD critical·승인생략·자기승인 material·핵심필드
+    누락 등)이라 tier 트리거로 유효하다. band cut 관례(high>=0.90, medium>=0.75)를 따른다.
+    """
+    if floor_only_score >= 0.90:
+        return "HIGH"
+    if floor_only_score >= 0.75:
+        return "MEDIUM"
+    return "CONTEXT"
+
+
+def _tier_sort_score(
+    case_tier_value: str,
+    case_hits: list[_RawHit],
+    materiality_score: float,
+) -> tuple[float, dict[str, float]]:
+    """within-tier 순서형 정렬 (PHASE1_TIER_SCORING_SPEC §4, option 1 + 금액 최후 tiebreak).
+
+    가중합이 아니라 (tier_rank, 독립 primary 수, rule_count, materiality) lexicographic
+    순서를 단일 정렬 scalar 로 packing 한다. 금액(materiality)은 최후 tiebreak 로, 고액
+    routine 이 신호 케이스를 묻지 않게 한다(§9.3 audit anti-burying lock 호환).
+    이 scalar 는 정렬 전용이며 위험도 크기 아님.
+    """
+    tier_rank = TIER_RANK.get(case_tier_value, 0)
+    independent_primary = len({hit.rule_id for hit in case_hits if hit.scoring_role == "primary"})
+    rule_count = len({hit.rule_id for hit in case_hits})
+    materiality = max(0.0, min(float(materiality_score), 1.0))
+    score = (
+        tier_rank * 1_000_000
+        + min(independent_primary, 99) * 10_000
+        + min(rule_count, 99) * 100
+        + round(materiality * 99)
+    )
+    components = {
+        "tier_rank": float(tier_rank),
+        "independent_primary_count": float(independent_primary),
+        "rule_count": float(rule_count),
+        "materiality_score": materiality,
+    }
+    return float(score), components
 
 
 def _composite_sort_score(
@@ -3460,7 +5932,7 @@ def _l308_has_corroborating_rule(rule_ids: set[str], config: dict[str, Any]) -> 
 def _case_has_true(rows: pd.DataFrame, column: str) -> bool:
     if column not in rows.columns:
         return False
-    return bool(rows[column].fillna(False).astype(bool).any())
+    return bool(bool_column(rows, column).any())
 
 
 def _case_source_ratio(rows: pd.DataFrame, source_values: list[str]) -> float:
@@ -3473,16 +5945,13 @@ def _case_source_ratio(rows: pd.DataFrame, source_values: list[str]) -> float:
     return float(normalized.isin(source_set).mean())
 
 
-def _priority_band(priority_score: float, config: dict[str, Any], repeat_score: float) -> str:
+def _priority_band(priority_score: float, config: dict[str, Any]) -> str:
     bands = config.get("priority_band", {})
     high = float(bands.get("high", 0.90))
     medium = float(bands.get("medium", 0.75))
-    promote_cutoff = float(config.get("repeat_score_promote", 0.70))
     if priority_score >= high:
         return "high"
     if priority_score >= medium:
-        return "medium"
-    if repeat_score >= promote_cutoff:
         return "medium"
     return "low"
 
@@ -4138,7 +6607,7 @@ def _period_end_window(row: pd.Series, days: int) -> str:
     timestamp = _timestamp(row.get("posting_date"))
     if timestamp is None:
         return "UNKNOWN_PERIOD_WINDOW"
-    if bool(row.get("is_period_end", False)):
+    if coerce_bool_value(row.get("is_period_end", False)):
         return f"{timestamp.strftime('%Y-%m')}-period_end"
     month_end = timestamp + pd.offsets.MonthEnd(0)
     if abs((month_end - timestamp).days) <= days:

@@ -423,15 +423,15 @@ def _case_from_dict(family: str, payload: dict[str, Any]) -> Any:
     for f_name, f_value in payload.items():
         if f_name == "row_refs":
             kwargs[f_name] = _restore_row_refs(f_value) or ()
-        elif f_name in {"left_ref", "right_ref"}:
+        elif f_name in {"left_ref", "right_ref", "max_score_row_ref"}:
             kwargs[f_name] = _restore_row_refs(f_value)
         elif f_name == "phase1_case_refs":
             kwargs[f_name] = tuple(f_value) if isinstance(f_value, list) else ()
         elif f_name == "counterparty_pair" and isinstance(f_value, list):
             # IntercompanyCase 의 counterparty_pair 는 tuple[str, str] 이지만 JSON 은 list.
             kwargs[f_name] = tuple(f_value)
-        elif f_name == "top_features" and isinstance(f_value, list):
-            # UnsupervisedCase.top_features 는 tuple[dict, ...]
+        elif f_name in {"top_features", "max_score_top_features"} and isinstance(f_value, list):
+            # UnsupervisedCase feature trace fields are tuple[dict, ...].
             kwargs[f_name] = tuple(f_value)
         else:
             kwargs[f_name] = f_value

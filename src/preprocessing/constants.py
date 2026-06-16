@@ -27,6 +27,8 @@ SYNTHETIC_ONLY_COLUMNS = LABEL_COLUMNS | frozenset(
         "mutation_mutated_value",
         "mutation_reason",
         "detection_surface_hints",
+        "is_mutated",
+        "is_synthetic",
         "semantic_scenario_id",
     }
 )
@@ -40,6 +42,8 @@ LEAKAGE_DENY_COLUMNS_BASE = frozenset(
         "document_number",
         "header_text",
         "ip_address",
+        "is_mutated",
+        "is_synthetic",
         "mutation_base_event_type",
         "mutation_mutated_field",
         "mutation_mutated_value",

@@ -109,8 +109,8 @@ class VarianceDetector(BaseDetector):
             rule_results["D02"] = self._d02_flags_from_diagnostics(df, d02_diagnostics)
         except Exception as exc:
             skipped.append("D02")
-            warnings.append(f"D02 ?ㅽ뻾 ?ㅽ뙣: {exc}")
-            self._logger.warning("%s ?ㅽ뻾 ?ㅽ뙣: %s", "D02", exc)
+            warnings.append(f"D02 실행 실패: {exc}")
+            self._logger.warning("%s 실행 실패: %s", "D02", exc)
 
         elapsed = time.perf_counter() - start
         return self._build_result(

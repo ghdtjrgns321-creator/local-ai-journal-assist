@@ -1093,7 +1093,7 @@ def _build_kpi_card(
 # Why: PHASE2 통합 점수의 전기 대비 변화가 아니라, family(분석 영역) 별 보조 신호의
 #      증감을 본다. PHASE2 철학상 통합 위험 등급화·순위 비교는 의미가 없고,
 #      "어느 영역에서 검토 후보가 늘었는가"가 감사인이 받아 가야 할 정보다.
-#      (docs/PHASE2_GOVERNANCE_DESIGN.md 결정 8, PHASE2_TIMESERIES_ROLE_LOCK 결정 9)
+#      (docs/spec/PHASE2_GOVERNANCE_DESIGN.md 결정 8, PHASE2_TIMESERIES_ROLE_LOCK 결정 9)
 
 # 표시 순서는 active ranker 4개(중복/관계망/관계사/시점) 다음에 VAE.
 # VAE 는 ml_quantile 단위라 strong/moderate/weak 축과 측정 단위가 다르다.

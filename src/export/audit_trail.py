@@ -1,7 +1,7 @@
 """WU-23 사용자 활동 기록기 — 기존 audit_log 테이블을 재사용하는 OOP 래퍼.
 
 Why:
-    가이드(docs/pre-plan/09-export.md §374-407)는 새 audit_trail 테이블과
+    가이드(docs/archive/completed/raw-plan/09-export.md §374-407)는 새 audit_trail 테이블과
     AuditTrail 클래스를 요구하지만, 프로젝트에는 이미
       - src/db/schema.py::audit_log 테이블
       - src/db/audit_log.py::record_event() 함수 (재시도+graceful)

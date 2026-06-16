@@ -141,7 +141,8 @@ CANONICAL_TRANSACTION_RULE_IDS = (
     "L3-11",
     "L3-12",
     "L4-01",
-    "L4-02",
+    # L4-02 제거 (2026-06-15): macro(Benford 모집단 자릿수 분포)는 전표 단위 PHASE1-1 룰이
+    # 아니라 PHASE1-2 family 로 이관 → canonical L1~L4 count 32→31.
     "L4-03",
     "L4-04",
     "L4-05",
@@ -723,6 +724,7 @@ RULE_DETAIL_METADATA_REGISTRY: dict[str, RuleDetailMetadata] = {
         secondary_topics=("revenue_statistical",),
         scoring_role=ScoringRole.MACRO_ONLY,
         standalone_rankable=False,
+        include_in_l1_l4_transaction_count=False,
         allow_standalone_violation_copy=False,
         title="Benford distribution macro signal",
         tone="macro_review",
@@ -741,7 +743,7 @@ RULE_DETAIL_METADATA_REGISTRY: dict[str, RuleDetailMetadata] = {
                 "metrics",
             ),
         ),
-        conflict_note="Included in canonical count but rendered as macro, not row detail.",
+        conflict_note="PHASE1-2 family(Benford 모집단통계)로 이관 — canonical L1~L4 count 제외(2026-06-15).",
     ),
     "Benford": _entry(
         "Benford",
@@ -1057,7 +1059,7 @@ def can_generate_standalone_violation_copy(rule_id: str) -> bool:
 
 
 def include_in_l1_l4_transaction_count(rule_id: str) -> bool:
-    """Return whether a registry entry contributes to the canonical 32 count."""
+    """Return whether a registry entry contributes to the canonical 31 count."""
 
     return get_rule_detail_metadata(rule_id).include_in_l1_l4_transaction_count
 
@@ -1129,14 +1131,15 @@ def validate_rule_detail_metadata_registry(schema_path: Path | None = None) -> l
             missing = ", ".join(sorted(missing_required))
             errors.append(f"{rule_id}: required ledger columns absent from schema: {missing}")
 
-    if len(canonical_seen) != 32:
-        errors.append(f"canonical transaction/detail count is {len(canonical_seen)}, expected 32")
+    if len(canonical_seen) != 31:
+        errors.append(f"canonical transaction/detail count is {len(canonical_seen)}, expected 31")
     if "Benford" in canonical_seen:
         errors.append("Benford counted separately from L4-02")
     if {"L2-03a", "L2-03b", "L2-03c", "L2-03d"} & canonical_seen:
         errors.append("L2-03 internal reason codes counted separately from L2-03")
-    if "L4-02" not in canonical_seen:
-        errors.append("L4-02 missing from canonical transaction/detail count")
+    # L4-02(Benford macro)는 PHASE1-2 family 로 이관(2026-06-15) → canonical L1~L4 count 제외.
+    if "L4-02" in canonical_seen:
+        errors.append("L4-02 must be excluded from canonical count (moved to PHASE1-2 family)")
     return errors
 
 

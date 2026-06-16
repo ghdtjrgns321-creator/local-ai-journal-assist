@@ -974,6 +974,7 @@ class AuditPipeline:
         phase1_case_result: Phase1CaseResult | None,
         *,
         detector_statuses: list[dict],
+        phase2_case_set: Phase2CaseSet | None = None,
     ) -> list[dict]:
         from src.services.phase2_case_family_aggregator import (
             build_phase2_case_family_overlay_inputs,
@@ -983,18 +984,21 @@ class AuditPipeline:
             df,
             results,
             phase1_case_result,
+            case_set=phase2_case_set,
         )
         return build_phase2_case_overlays(
             phase1_case_result,
             family_scores_by_case=overlay_inputs.family_scores_by_case,
             family_ecdf_by_case=overlay_inputs.family_ecdf_by_case,
             family_top_subdetectors_by_case=overlay_inputs.family_top_subdetectors_by_case,
+            family_review_only_by_case=overlay_inputs.family_review_only_by_case,
             family_roles=overlay_inputs.family_roles,
             family_q95_thresholds=overlay_inputs.family_q95_thresholds,
             detector_statuses=detector_statuses,
             family_explanation_features_by_case=(
                 overlay_inputs.family_explanation_features_by_case
             ),
+            family_document_context_by_case=(overlay_inputs.family_document_context_by_case),
             relational_continuity_depth_by_case=(
                 overlay_inputs.relational_continuity_depth_by_case
             ),
@@ -1379,6 +1383,7 @@ class AuditPipeline:
     ) -> tuple[list[DetectionResult], list[str]]:
         from src.detection.anomaly_layer import AnomalyDetector
         from src.detection.benford_detector import BenfordDetector
+        from src.detection.evidence_detector import EvidenceDetector
         from src.detection.fraud_layer import FraudLayer
         from src.detection.integrity_layer import IntegrityDetector
 
@@ -1399,6 +1404,14 @@ class AuditPipeline:
                 FraudLayer(self._ctx.settings, audit_rules=self._ctx.audit_rules),
                 AnomalyDetector(self._ctx.settings, audit_rules=self._ctx.audit_rules),
                 BenfordDetector(self._ctx.settings),
+                # Why: L3-11(매출 컷오프)은 canonical 31 룰 — DETECTION_RULES.md §306 스펙대로
+                #      기본 경로에서 cutoff 룰만 실행한다. EV01/EV03 확장은
+                #      enable_evidence_detection 영역으로 기본 제외 (§307).
+                EvidenceDetector(
+                    self._ctx.settings,
+                    audit_rules=self._ctx.audit_rules,
+                    rule_ids=("L3-11",),
+                ),
             ]
             _t = time.monotonic()
             results, base_warns = _run_detectors_parallel(

@@ -508,17 +508,20 @@ class IntegrityDetector(BaseDetector):
             cfg.get("process_denied_accounts", {}),
             default=False,
         )
-        account_configured = _process_presence_match(
-            process,
-            cfg.get("process_denied_accounts", {}),
-        )
         disallowed = _process_category_match(
             process,
             category,
             cfg.get("process_disallowed_categories", {}),
             default=False,
         )
-        category_mismatch = ~account_configured & disallowed
+        # Why: exact denied-account 목록과 disallowed-category는 같은 정책을 두 계정
+        #      코드체계로 표현한 것(예: O2C에 expense 불허). 데이터가 exact 목록과 다른
+        #      자리수(4자리 6300 등)를 쓰면 exact는 놓치므로 category도 함께 적용한다.
+        #      exact가 score 우선(0.65>0.45)이라 중복 점수 없음. 과거 ~account_configured
+        #      억제는 denied 목록이 설정됐다는 이유만으로 category를 봉쇄해 L3-01을 전
+        #      프로세스 no-op(emitted 0)으로 만들었다. 정상 v29 5개 프로세스 모두
+        #      disallowed-category 위반 0건 측정 → category 활성화 시 과탐 0.
+        category_mismatch = disallowed
         allowed_keywords = _process_keyword_match(
             process,
             _combine_text_columns(df, ("line_text", "header_text")),

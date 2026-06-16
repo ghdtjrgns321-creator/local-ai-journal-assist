@@ -11,6 +11,9 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from src.detection.boolean_utils import bool_column
+from src.detection.source_trust import lone_automated_mask
+
 
 def c01_period_end_large(
     df: pd.DataFrame,
@@ -38,14 +41,14 @@ def c01_period_end_large(
     q90 = _qts[0.90]
     q95 = _qts[0.95]
 
-    period_end = df["is_period_end"].fillna(False)
+    period_end = bool_column(df, "is_period_end")
     high_amount = base > q75
     manual_entry = (
-        df["is_manual_je"].fillna(False).astype(bool)
+        bool_column(df, "is_manual_je")
         if "is_manual_je" in df.columns
         else pd.Series(False, index=df.index)
     )
-    flagged = period_end.astype(bool)
+    flagged = period_end
     whitelist_matched = (
         flagged & _matches_period_end_whitelist(df, whitelist_patterns)
         if whitelist_patterns
@@ -216,7 +219,7 @@ def _abnormal_time_mask(df: pd.DataFrame) -> pd.Series:
     abnormal = pd.Series(False, index=df.index)
     for column in ("is_after_hours", "is_weekend", "is_holiday"):
         if column in df.columns:
-            abnormal = abnormal | df[column].fillna(False).astype(bool)
+            abnormal = abnormal | bool_column(df, column)
     if "time_zone_category" in df.columns:
         time_zone = df["time_zone_category"].fillna("").astype(str).str.strip().str.lower()
         abnormal = abnormal | time_zone.isin({"overtime", "midnight"})
@@ -238,7 +241,7 @@ def _approval_control_reason_masks(df: pd.DataFrame) -> dict[str, pd.Series]:
         masks["self_approval"] = created.ne("") & created.eq(approved)
     if "approved_by" in df.columns and "exceeds_threshold" in df.columns:
         no_approver = df["approved_by"].fillna("").astype(str).str.strip().eq("")
-        masks["skipped_approval"] = df["exceeds_threshold"].fillna(False).astype(bool) & no_approver
+        masks["skipped_approval"] = bool_column(df, "exceeds_threshold") & no_approver
     if {"approved_by", "approval_date"}.issubset(df.columns):
         has_approver = df["approved_by"].fillna("").astype(str).str.strip().ne("")
         no_approval_date = df["approval_date"].fillna("").astype(str).str.strip().eq("")
@@ -255,7 +258,7 @@ def _approval_control_reasons(df: pd.DataFrame, idx: Any) -> list[str]:
             reasons.append("self_approval")
     if "approved_by" in df.columns and "exceeds_threshold" in df.columns:
         no_approver = str(df.at[idx, "approved_by"] or "").strip() == ""
-        if bool(df.at[idx, "exceeds_threshold"]) and no_approver:
+        if bool_column(df, "exceeds_threshold").at[idx] and no_approver:
             reasons.append("skipped_approval")
     if {"approved_by", "approval_date"}.issubset(df.columns):
         has_approver = str(df.at[idx, "approved_by"] or "").strip() != ""
@@ -455,8 +458,8 @@ def c02_weekend_entry(df: pd.DataFrame) -> pd.Series:
 
     Why: PCAOB AS 240 A49(c) — 비정상 시점 거래는 승인 우회 의심.
     """
-    weekend = df.get("is_weekend", pd.Series(False, index=df.index)).fillna(False).astype(bool)
-    holiday = df.get("is_holiday", pd.Series(False, index=df.index)).fillna(False).astype(bool)
+    weekend = bool_column(df, "is_weekend")
+    holiday = bool_column(df, "is_holiday")
     flagged = weekend | holiday
     weekend_holiday = weekend & holiday
     weekend_only = weekend & ~holiday
@@ -521,7 +524,7 @@ def c03_after_hours_entry(df: pd.DataFrame) -> pd.Series:
     if "is_after_hours" not in df.columns:
         return pd.Series(False, index=df.index)
 
-    result = df["is_after_hours"].fillna(False).astype(bool)
+    result = bool_column(df, "is_after_hours")
     if not result.any():
         return result
 
@@ -540,7 +543,12 @@ def c03_after_hours_entry(df: pd.DataFrame) -> pd.Series:
         if "created_by" in df.columns
         else pd.Series("", index=df.index)
     )
-    system_source = source_norm.isin({"automated", "batch", "interface", "system"})
+    system_source_tokens = {"automated", "batch", "interface", "system"}
+    lone_automated = lone_automated_mask(
+        df,
+        source_tokens=system_source_tokens,
+    ).reindex(df.index, fill_value=False)
+    system_source = source_norm.isin(system_source_tokens) & ~lone_automated
     system_persona = persona_norm.eq("automated_system")
     system_actor = pd.Series(False, index=df.index)
     for token in ("batch", "system", "auto", "if_", "svc_"):
@@ -728,7 +736,7 @@ def _period_distance(actual: object, expected: object) -> int | None:
 def _l108_context_mask(df: pd.DataFrame, column: str) -> pd.Series:
     if column not in df.columns:
         return pd.Series(False, index=df.index, dtype=bool)
-    return df[column].fillna(False).astype(bool)
+    return bool_column(df, column)
 
 
 def _l108_amount_context(df: pd.DataFrame) -> pd.Series:
@@ -1492,7 +1500,12 @@ def _manual_user_mask(
             str(source).strip().lower() for source in auto_entry_sources if str(source).strip()
         }
         source = _normalized_string(df["source"])
-        mask = mask & ~source.isin(auto_sources)
+        lone_automated = lone_automated_mask(
+            df,
+            source_tokens=auto_sources,
+        ).reindex(df.index, fill_value=False)
+        system_source = source.isin(auto_sources) & ~lone_automated
+        mask = mask & ~system_source
 
     if "user_persona" in df.columns:
         persona = _normalized_string(df["user_persona"]).str.replace(

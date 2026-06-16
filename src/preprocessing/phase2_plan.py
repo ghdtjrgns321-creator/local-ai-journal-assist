@@ -18,6 +18,7 @@ from src.services.phase2_training_models import (
 
 _ID_NAMES = {"document_id", "doc_id", "row_id", "id", "transaction_id", "journal_id"}
 _LOW_CARD_DOMAIN_COLUMNS = {"user_persona"}
+_CODE_CATEGORICAL_COLUMNS = {"account_code", "gl_account"}
 _HIGH_MISSING_THRESHOLD = 0.90
 
 # DataSynth v3 S4 §3 measured `f_manual` as normal=0.41 vs manipulated=1.00.
@@ -123,7 +124,23 @@ def _decide_column(
         return _decision(name, column, "datetime", "exclude", "datetime_raw")
     if column.missing_rate >= _HIGH_MISSING_THRESHOLD:
         return _decision(name, column, "feature", "exclude", "high_missing")
-    if name in _LOW_CARD_DOMAIN_COLUMNS:
+    if normalized_name in _CODE_CATEGORICAL_COLUMNS:
+        if column.unique_count >= high_card_threshold:
+            return _decision(
+                name,
+                column,
+                "categorical_high",
+                "include",
+                "domain_code_categorical",
+            )
+        return _decision(
+            name,
+            column,
+            "categorical_low",
+            "include",
+            "domain_code_categorical",
+        )
+    if normalized_name in _LOW_CARD_DOMAIN_COLUMNS:
         return _decision(name, column, "categorical_low", "include", "domain_low_card")
     if column.dtype_group == "boolean":
         return _decision(name, column, "boolean", "include", "boolean")

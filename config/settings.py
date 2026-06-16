@@ -138,6 +138,39 @@ class AuditSettings(BaseSettings):
     # lower score can otherwise exclude before pair evidence is generated.
     duplicate_pair_artifact_candidate_supplement_strategy: str = "observable_profile"
     duplicate_pair_artifact_candidate_supplement_max_docs: int = 500
+    duplicate_recurring_suppress_enabled: bool = True
+    duplicate_recurring_min_series_length: int = 3
+    duplicate_recurring_min_interval_days: int = 21
+    duplicate_recurring_max_interval_days: int = 100
+    duplicate_recurring_interval_cv_threshold: float = 0.20
+    duplicate_recurring_near_extra_ratio: float = 0.50
+    duplicate_recurring_amount_band_ratio: float = 0.01
+    duplicate_recurring_amount_band_min: float = 1000.0
+    duplicate_recurring_near_extra_allowed_sources: list[str] = ["manual", "adjustment"]
+    duplicate_recurring_near_extra_suppressed_sources: list[str] = [
+        "automated",
+        "auto",
+        "recurring",
+        "batch",
+        "interface",
+        "system",
+    ]
+    duplicate_recurring_near_extra_suppressed_processes: list[str] = [
+        "R2R",
+        "Intercompany",
+    ]
+    duplicate_recurring_near_extra_suppressed_process_tokens: list[str] = [
+        "closing",
+        "close",
+        "accrual",
+        "period_end",
+        "period end",
+        "month_end",
+        "month end",
+        "결산",
+        "미지급",
+        "발생",
+    ]
 
     # --- Detection Layer C 관련 ---
     backdated_threshold_days: int = 30  # C04: 전기일-문서일 괴리 임계 일수

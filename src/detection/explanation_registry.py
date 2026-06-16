@@ -20,8 +20,10 @@ ACTIVE_RULE_EXPLANATIONS: dict[str, RuleExplanation] = {
     **VARIANCE_RULE_EXPLANATIONS,
 }
 
+# L4-02(Benford)·D01·D02 는 canonical L1~L4 count 밖(macro, PHASE1-2 family 귀속)이지만
+# 감사인 설명 텍스트는 유지한다 — active 설명 집합에 명시 포함.
 ACTIVE_RULE_IDS: tuple[str, ...] = tuple(
-    sorted((*get_canonical_transaction_rule_ids(), "D01", "D02"))
+    sorted((*get_canonical_transaction_rule_ids(), "L4-02", "D01", "D02"))
 )
 
 

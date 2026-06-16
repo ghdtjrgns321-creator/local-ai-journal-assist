@@ -1,6 +1,6 @@
 """Phase 3 v2 Review Narrator — LLM 호출 + 응답 파싱.
 
-스펙 §흐름 (PHASE3_REVIEW_NARRATOR_SPEC.md):
+스펙 §흐름 (docs/archive/abandoned/PHASE3_REVIEW_NARRATOR_SPEC.md):
     Candidate → Sanitizer(이미 처리됨) → LLM (Structured Output) → Citation Validator
 
 호출 전략 (스펙 §4 + §4.2):

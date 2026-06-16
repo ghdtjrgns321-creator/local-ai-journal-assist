@@ -30,6 +30,7 @@ from src.models.phase2_case import (
 
 # evidence_tier 정렬 우선순위 — 높은 tier 가 먼저
 _TIER_ORDER: dict[str, int] = {"strong": 3, "moderate": 2, "ml_quantile": 1, "weak": 0}
+_UNSUPERVISED_DETAIL_EVIDENCE_LIMIT = 10
 
 # family → Phase2CaseSet 필드 매핑
 _FAMILY_TO_ATTR: dict[str, str] = {
@@ -173,6 +174,57 @@ def _fmt_amount(value: float | int | None) -> str:
         return str(value)
 
 
+def _fmt_context_score(value: float | int | None) -> str:
+    """Display document-context ratios without implying a hard finding."""
+    if value is None:
+        return "—"
+    try:
+        return f"{float(value):.2f}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _fmt_account_process_rarity(
+    account_value: float | int | None,
+    process_value: float | int | None,
+) -> str:
+    account = _fmt_context_score(account_value)
+    process = _fmt_context_score(process_value)
+    if account == "—" and process == "—":
+        return "—"
+    return f"acct {account} / proc {process}"
+
+
+def _fmt_reason_tags(top_features: tuple[dict, ...]) -> str:
+    tags: list[str] = []
+    for feature in top_features or ():
+        if not isinstance(feature, dict):
+            continue
+        label = str(feature.get("label_ko") or feature.get("tag") or "").strip()
+        if label and label not in tags:
+            tags.append(label)
+    if not tags:
+        return "—"
+    head = tags[:3]
+    suffix = f" +{len(tags) - 3}" if len(tags) > 3 else ""
+    return ", ".join(head) + suffix
+
+
+def _fmt_top_feature(top_features: tuple[dict, ...]) -> str:
+    top = top_features[0] if top_features else None
+    if not isinstance(top, dict):
+        return "—"
+    return str(top.get("label_ko") or top.get("feature_id") or "—")
+
+
+def _unsupervised_review_unit(case: UnsupervisedCase) -> str:
+    grouping = str((case.case_generation_reason or {}).get("document_grouping") or "")
+    if grouping == "fallback_row_identity":
+        return "전표 ID 없음 · 단일 행 review"
+    document_ids = _document_ids_from_row_refs(case.row_refs)
+    return str(case.document_id or (document_ids[0] if document_ids else "") or "—")
+
+
 # ---------------------------------------------------------------------------
 # Family 별 row builder
 # ---------------------------------------------------------------------------
@@ -253,21 +305,20 @@ def _build_relational_row(case: RelationalCase) -> dict[str, Any]:  # type: igno
 
 
 def _build_unsupervised_row(case: UnsupervisedCase) -> dict[str, Any]:  # type: ignore[override]
-    top = case.top_features[0] if case.top_features else None
-    if isinstance(top, dict):
-        top_feature_1 = str(top.get("feature_id") or top.get("label_ko") or "—")
-    else:
-        top_feature_1 = "—"
-    try:
-        anomaly_text = round(float(case.anomaly_score or 0.0), 4)
-    except (TypeError, ValueError):
-        anomaly_text = case.anomaly_score
     return {
         "case_id": _short_case_id(case.phase2_case_id),
         "_full_case_id": case.phase2_case_id,
         "evidence_tier": _tier_cell(case.evidence_tier),
-        "anomaly_score": anomaly_text,
-        "top_feature_1": top_feature_1,
+        "review_unit": _unsupervised_review_unit(case),
+        "reason_tag": _fmt_reason_tags(case.top_features),
+        "top_feature": _fmt_top_feature(case.top_features),
+        "amount_tail": _fmt_context_score(case.amount_tail_context),
+        "period_end": _fmt_context_score(case.period_end_context),
+        "account_process_rarity": _fmt_account_process_rarity(
+            case.account_rarity_context,
+            case.process_rarity_context,
+        ),
+        "evidence_row_count": int(case.evidence_row_count or len(case.row_refs or ())),
         "linked_to": _linked_to_text(case.phase1_case_refs),
     }
 
@@ -402,6 +453,9 @@ def _render_case_detail(
         narrative = _build_case_narrative(case)
         st.markdown(f"**Case 설명**  \n{narrative}")
 
+        if isinstance(case, UnsupervisedCase):
+            _render_unsupervised_evidence_rows(case)
+
         # 문서 master + 라인: pr 필요. pr 미주입 시 row_refs 텍스트 fallback.
         document_ids = _document_ids_from_row_refs(case.row_refs)
         if pr is not None and document_ids:
@@ -438,7 +492,7 @@ _FAMILY_NARRATIVE_LABEL: dict[str, str] = {
     "duplicate": "중복 전표 신호",
     "intercompany": "관계사 거래 신호",
     "relational": "관계망 신호",
-    "unsupervised": "비지도 이상치 신호",
+    "unsupervised": "비지도 statistical outlier 신호",
     "timeseries": "시점 컨텍스트 신호",
 }
 
@@ -503,15 +557,22 @@ def _family_specific_detail(case: Phase2CaseBase) -> str:
     if isinstance(case, UnsupervisedCase):
         parts = []
         try:
-            parts.append(f"anomaly={float(case.anomaly_score):.4f}")
+            parts.append(f"statistical outlier score={float(case.anomaly_score):.4f}")
         except (TypeError, ValueError):
             pass
+        total = int(case.evidence_row_count or len(case.row_refs or ()))
+        if total:
+            parts.append(f"evidence rows {total}")
         if case.top_features:
-            top = case.top_features[0]
-            if isinstance(top, dict):
-                feature_id = str(top.get("label_ko") or top.get("feature_id") or "")
-                if feature_id:
-                    parts.append(f"top feature {feature_id}")
+            feature = _fmt_top_feature(case.top_features)
+            if feature != "—":
+                parts.append(f"top feature {feature}")
+            reason_tags = _fmt_reason_tags(case.top_features)
+            if reason_tags != "—":
+                parts.append(f"reason tag {reason_tags}")
+        grouping = str((case.case_generation_reason or {}).get("document_grouping") or "")
+        if grouping == "fallback_row_identity":
+            parts.append("전표 식별자가 없어 단일 행 기준으로 표시")
         return " · ".join(parts)
     if isinstance(case, TimeseriesCase):
         parts = []
@@ -557,7 +618,6 @@ def _render_phase2_case_documents(
     """문서 master(AgGrid) + 선택된 문서의 원장 라인 — Phase 1 와 같은 UX."""
     # Phase 1 의 검증된 헬퍼를 재사용해 표/포맷/라인 표시 정합.
     from dashboard.tab_phase1 import (
-        _case_document_raw_lines,
         _render_case_drilldown_document_master,
         _render_raw_lines_table,
     )
@@ -575,11 +635,121 @@ def _render_phase2_case_documents(
     if not selected_doc:
         return
 
-    raw_lines = _case_document_raw_lines(pr, selected_doc)
+    raw_lines = _phase2_case_document_raw_lines(pr, case, selected_doc)
     if not raw_lines:
         st.caption("선택된 전표의 원장 라인을 찾지 못했습니다.")
         return
     _render_raw_lines_table("", raw_lines, key_suffix=f"phase2_case_{safe_key}")
+
+
+def _render_unsupervised_evidence_rows(
+    case: UnsupervisedCase,
+    *,
+    limit: int = _UNSUPERVISED_DETAIL_EVIDENCE_LIMIT,
+) -> None:
+    """D2 detail: show top-N evidence row refs and the total evidence count."""
+    total = int(case.evidence_row_count or len(case.row_refs or ()))
+    if total <= 0 or not case.row_refs:
+        return
+
+    display_rows = _unsupervised_evidence_row_display_rows(case)
+    visible = display_rows[:limit]
+    st.markdown(f"**Evidence rows ({len(visible)} / {total})**")
+    st.dataframe(pd.DataFrame(visible), width="stretch", hide_index=True)
+    if total > len(visible):
+        st.caption(f"전체 evidence row {total:,}건 중 상위 {len(visible):,}건만 표시합니다.")
+
+
+def _unsupervised_evidence_row_display_rows(case: UnsupervisedCase) -> list[dict[str, str]]:
+    trace_rows = case.case_generation_reason.get("evidence_rows") or []
+    ref_by_key = {ref.index_label: ref for ref in case.row_refs or ()}
+    ref_by_position = {int(ref.row_position): ref for ref in case.row_refs or ()}
+    ref_by_line = {_line_number_int(ref): ref for ref in case.row_refs or ()}
+    rows: list[dict[str, str]] = []
+    if isinstance(trace_rows, list):
+        for item in sorted(
+            (row for row in trace_rows if isinstance(row, dict)),
+            key=lambda row: (
+                -_as_float(row.get("score")),
+                -_as_float(row.get("ecdf")),
+                int(row.get("row_position") or 0),
+            ),
+        ):
+            ref = ref_by_key.get(str(item.get("row_ref") or ""))
+            row_position = _optional_int(item.get("row_position"))
+            ref = ref or ref_by_position.get(row_position)
+            ref = ref or ref_by_line.get(row_position)
+            rows.append(
+                {
+                    "row_ref": _row_label(ref) if ref else "—",
+                    "score": _fmt_decimal(item.get("score")),
+                    "ecdf": _fmt_decimal(item.get("ecdf")),
+                    "trace": "max score row" if _same_row_ref(ref, case.max_score_row_ref) else "",
+                }
+            )
+    if rows:
+        return rows
+
+    return [
+        {
+            "row_ref": _row_label(ref),
+            "score": "—",
+            "ecdf": "—",
+            "trace": "max score row" if _same_row_ref(ref, case.max_score_row_ref) else "",
+        }
+        for ref in _ordered_unsupervised_row_refs(case)
+    ]
+
+
+def _line_number_int(ref: Phase2RowRef) -> int:
+    value = getattr(ref, "line_number_key", None)
+    if value is None:
+        return -1
+    try:
+        return int(str(value).removeprefix("i:"))
+    except ValueError:
+        return -1
+
+
+def _optional_int(value: Any) -> int:
+    if value is None:
+        return -1
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return -1
+
+
+def _as_float(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _fmt_decimal(value: Any) -> str:
+    try:
+        return f"{float(value):.4f}"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _ordered_unsupervised_row_refs(case: UnsupervisedCase) -> list[Phase2RowRef]:
+    refs = list(case.row_refs or ())
+    max_ref = case.max_score_row_ref
+    if max_ref is None:
+        return refs
+    return sorted(refs, key=lambda ref: (0 if _same_row_ref(ref, max_ref) else 1, ref.row_position))
+
+
+def _same_row_ref(left: Phase2RowRef | None, right: Phase2RowRef | None) -> bool:
+    if left is None or right is None:
+        return False
+    return (
+        left.row_position == right.row_position
+        and left.index_label == right.index_label
+        and left.document_id == right.document_id
+    )
 
 
 def _build_phase2_documents_list(
@@ -601,8 +771,10 @@ def _build_phase2_documents_list(
     if df is None or df.empty or "document_id" not in df.columns:
         return []
 
-    document_id_str = df["document_id"].astype(str)
-    subset = df[document_id_str.isin(set(document_ids))]
+    subset = _phase2_case_document_subset(df, case)
+    if subset.empty:
+        document_id_str = df["document_id"].astype(str)
+        subset = df[document_id_str.isin(set(document_ids))]
     if subset.empty:
         return []
 
@@ -626,6 +798,62 @@ def _build_phase2_documents_list(
         row["matched_rules"] = phase2_signal_label
         documents.append(row)
     return documents
+
+
+def _phase2_case_document_raw_lines(
+    pr,
+    case: Phase2CaseBase,
+    selected_doc: str,
+) -> list[dict[str, Any]]:
+    df = getattr(pr, "featured_data", None)
+    if df is None or getattr(df, "empty", True):
+        df = getattr(pr, "data", None)
+    if df is None or df.empty or "document_id" not in df.columns:
+        return []
+    subset = _phase2_case_document_subset(df, case)
+    if subset.empty:
+        subset = df[df["document_id"].astype(str) == str(selected_doc)]
+    else:
+        subset = subset[subset["document_id"].astype(str) == str(selected_doc)]
+    if subset.empty:
+        return []
+    return subset.to_dict("records")
+
+
+def _phase2_case_document_subset(df: pd.DataFrame, case: Phase2CaseBase) -> pd.DataFrame:
+    """Return ledger rows matching case document keys, preserving company isolation."""
+    if df.empty or "document_id" not in df.columns:
+        return df.iloc[0:0]
+    keys = _document_keys_from_row_refs(case.row_refs)
+    if not keys:
+        return df.iloc[0:0]
+    mask = pd.Series(False, index=df.index)
+    doc_values = df["document_id"].astype(str)
+    company_values = df["company_code"].astype(str) if "company_code" in df.columns else None
+    for company_code, document_id in keys:
+        key_mask = doc_values == document_id
+        if company_values is not None and company_code:
+            key_mask &= company_values == company_code
+        mask |= key_mask
+    return df[mask]
+
+
+def _document_keys_from_row_refs(
+    row_refs: tuple[Phase2RowRef, ...],
+) -> list[tuple[str | None, str]]:
+    seen: set[tuple[str | None, str]] = set()
+    out: list[tuple[str | None, str]] = []
+    for ref in row_refs or ():
+        doc_id = str(ref.document_id or "").strip()
+        if not doc_id:
+            continue
+        company_code = str(ref.company_code or "").strip() or None
+        key = (company_code, doc_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(key)
+    return out
 
 
 def _phase2_signal_label(case: Phase2CaseBase) -> str:

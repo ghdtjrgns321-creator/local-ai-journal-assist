@@ -105,6 +105,9 @@ def build_duplicate_pair_artifact(
         int(getattr(settings, "duplicate_pair_artifact_max_pairs_per_document_pair", 1)),
         0,
     )
+    recurring_suppress_enabled = bool(
+        getattr(settings, "duplicate_recurring_suppress_enabled", True)
+    )
 
     coverage = _summarize_coverage(df)
     artifact.coverage = coverage
@@ -202,44 +205,42 @@ def build_duplicate_pair_artifact(
         rule_counts[rule_id] = len(rule_records)
         candidate_records.extend(rule_records)
 
+    suppress_diagnostics: dict[str, Any] = {}
+    if recurring_suppress_enabled and candidate_records:
+        candidate_records, suppress_diagnostics = _suppress_recurring_duplicate_records(
+            candidate_records,
+            context,
+            settings,
+        )
+        rule_counts = dict(Counter(record.get("rule_id", "") for record in candidate_records))
+
     artifact.rule_pair_counts = rule_counts
-    # total_candidate_pairs = cap 적용 후 helper 가 실제 생성한 pair 총수
-    # candidate_pairs_after_caps = candidate_records (sort 전 모집단, total_candidate_pairs 와 동일)
-    # retained_pairs = sanitize 후 metadata 에 보존되는 top pair 수 (top_n 적용)
-    artifact.total_candidate_pairs = context.total_pairs
+    # total_candidate_pairs = suppress 후 measurement candidate pair 총수.
+    # retained_pairs = metadata 에 보존되는 pair 수.
+    # P2-3 measurement 에서는 임의 top-N cap 을 쓰지 않는다.
+    artifact.total_candidate_pairs = len(candidate_records)
     artifact.candidate_pairs_after_caps = len(candidate_records)
     artifact.truncated = context.truncated
     artifact.truncation_reason = context.truncation_reason
+    if suppress_diagnostics:
+        artifact.coverage = {
+            **artifact.coverage,
+            **suppress_diagnostics,
+        }
 
     if not candidate_records:
         artifact.retained_pairs = 0
         return artifact
 
     candidate_records.sort(key=lambda record: record.get("pair_score", 0.0), reverse=True)
-    selection_strategy = str(
-        getattr(settings, "duplicate_pair_artifact_selection_strategy", "document_diversity")
-    ).strip()
-    if selection_strategy == "evidence_diversity":
-        selected_records, selection_diagnostics = _select_top_pairs_with_evidence_diversity(
-            candidate_records,
-            df,
-            top_n=top_n,
-        )
-    elif selection_strategy == "rule_balanced_evidence":
-        selected_records, selection_diagnostics = _select_top_pairs_with_rule_balanced_evidence(
-            candidate_records,
-            df,
-            top_n=top_n,
-        )
-    else:
-        selected_records, selection_diagnostics = _select_diverse_top_records(
-            candidate_records,
-            df,
-            top_n=top_n,
-            max_pairs_per_document=max_pairs_per_document,
-            max_pairs_per_document_pair=max_pairs_per_document_pair,
-        )
-        selection_diagnostics["configured_strategy"] = selection_strategy
+    selected_records = candidate_records
+    selection_diagnostics = {
+        "strategy": "complete_measurement_population",
+        "configured_top_n": int(top_n),
+        "top_n_cap_applied": False,
+        "max_pairs_per_document": int(max_pairs_per_document),
+        "max_pairs_per_document_pair": int(max_pairs_per_document_pair),
+    }
     artifact.coverage = {
         **artifact.coverage,
         "top_pair_selection": selection_diagnostics,
@@ -422,6 +423,271 @@ def _observable_profile_supplement_positions(
     selected["_doc_pos"] = selected.groupby("document_id").cumcount()
     positions = selected.loc[selected["_doc_pos"] < 3, "_pos"].astype(int).tolist()
     return positions, len(selected_docs)
+
+
+def _suppress_recurring_duplicate_records(
+    records: list[dict[str, Any]],
+    context: _PairContext,
+    settings: Any,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    min_len = max(int(getattr(settings, "duplicate_recurring_min_series_length", 3)), 3)
+    min_interval = max(int(getattr(settings, "duplicate_recurring_min_interval_days", 21)), 1)
+    max_interval = max(
+        int(getattr(settings, "duplicate_recurring_max_interval_days", 100)),
+        min_interval,
+    )
+    cv_threshold = max(
+        float(getattr(settings, "duplicate_recurring_interval_cv_threshold", 0.20)),
+        0.0,
+    )
+    near_ratio = max(float(getattr(settings, "duplicate_recurring_near_extra_ratio", 0.50)), 0.0)
+    amount_band_ratio = max(
+        float(getattr(settings, "duplicate_recurring_amount_band_ratio", 0.01)),
+        0.0,
+    )
+    amount_band_min = max(
+        float(getattr(settings, "duplicate_recurring_amount_band_min", 1000.0)),
+        1.0,
+    )
+    near_extra_allowed_sources = _normalized_config_values(
+        getattr(
+            settings,
+            "duplicate_recurring_near_extra_allowed_sources",
+            ["manual", "adjustment"],
+        )
+    )
+    near_extra_suppressed_sources = _normalized_config_values(
+        getattr(
+            settings,
+            "duplicate_recurring_near_extra_suppressed_sources",
+            ["automated", "auto", "recurring", "batch", "interface", "system"],
+        )
+    )
+    near_extra_suppressed_processes = _normalized_config_values(
+        getattr(
+            settings,
+            "duplicate_recurring_near_extra_suppressed_processes",
+            ["R2R", "Intercompany"],
+        )
+    )
+    near_extra_suppressed_process_tokens = _normalized_config_values(
+        getattr(
+            settings,
+            "duplicate_recurring_near_extra_suppressed_process_tokens",
+            ["closing", "close", "accrual", "period_end", "period end", "month_end", "month end"],
+        )
+    )
+
+    profiles = _recurring_group_profiles(
+        context,
+        min_len=min_len,
+        min_interval=min_interval,
+        max_interval=max_interval,
+        cv_threshold=cv_threshold,
+        amount_band_ratio=amount_band_ratio,
+        amount_band_min=amount_band_min,
+    )
+    kept: list[dict[str, Any]] = []
+    suppressed = 0
+    same_reference_kept = 0
+    near_extra_kept = 0
+    near_extra_context_suppressed = 0
+    ambiguous_dropped = 0
+    for record in records:
+        features = dict(record.get("features", {}))
+        left_pos = int(record["left_pos"])
+        right_pos = int(record["right_pos"])
+        if _same_reference_or_document_number(context, left_pos, right_pos):
+            features["same_reference"] = True
+            features["recurring_suppress_decision"] = "same_reference_kept"
+            record["features"] = features
+            kept.append(record)
+            same_reference_kept += 1
+            continue
+        features["same_reference"] = False
+        profile = profiles.get(
+            _recurring_group_key(context, left_pos, amount_band_ratio, amount_band_min)
+        )
+        day_diff = _date_distance_days(context.dates.iat[left_pos], context.dates.iat[right_pos])
+        if profile is not None and day_diff is not None:
+            near_threshold = max(1.0, float(profile["median_interval_days"]) * near_ratio)
+            if day_diff <= near_threshold:
+                features["recurring_series_median_interval_days"] = float(
+                    profile["median_interval_days"]
+                )
+                if _near_extra_is_manual_off_cycle(
+                    context,
+                    left_pos,
+                    right_pos,
+                    allowed_sources=near_extra_allowed_sources,
+                    suppressed_sources=near_extra_suppressed_sources,
+                    suppressed_processes=near_extra_suppressed_processes,
+                    suppressed_process_tokens=near_extra_suppressed_process_tokens,
+                ):
+                    features["recurring_suppress_decision"] = "near_extra_kept"
+                    record["features"] = features
+                    kept.append(record)
+                    near_extra_kept += 1
+                    continue
+                features["recurring_suppress_decision"] = "near_extra_context_suppressed"
+                record["features"] = features
+                near_extra_context_suppressed += 1
+                continue
+            features["recurring_suppress_decision"] = "periodic_series_suppressed"
+            suppressed += 1
+            continue
+        features["recurring_suppress_decision"] = "ambiguous_different_reference_dropped"
+        ambiguous_dropped += 1
+
+    return kept, {
+        "recurring_suppressed_pairs": int(suppressed),
+        "recurring_same_reference_kept_pairs": int(same_reference_kept),
+        "recurring_near_extra_kept_pairs": int(near_extra_kept),
+        "recurring_near_extra_context_suppressed_pairs": int(near_extra_context_suppressed),
+        "recurring_ambiguous_dropped_pairs": int(ambiguous_dropped),
+        "recurring_profile_group_count": int(len(profiles)),
+    }
+
+
+def _normalized_config_values(values: Any) -> set[str]:
+    if values is None:
+        return set()
+    if isinstance(values, str):
+        raw_values = [values]
+    else:
+        raw_values = list(values)
+    return {_normalize_text(str(value)) for value in raw_values if _normalize_text(str(value))}
+
+
+def _near_extra_is_manual_off_cycle(
+    context: _PairContext,
+    left_pos: int,
+    right_pos: int,
+    *,
+    allowed_sources: set[str],
+    suppressed_sources: set[str],
+    suppressed_processes: set[str],
+    suppressed_process_tokens: set[str],
+) -> bool:
+    source_values = _pair_column_values(context, "source", left_pos, right_pos)
+    normalized_sources = {_normalize_text(value) for value in source_values if value}
+    if normalized_sources & suppressed_sources:
+        return False
+    if allowed_sources and not normalized_sources:
+        return False
+    if allowed_sources and not normalized_sources.issubset(allowed_sources):
+        return False
+
+    process_values = _pair_column_values(context, "business_process", left_pos, right_pos)
+    normalized_processes = {_normalize_text(value) for value in process_values if value}
+    if normalized_processes & suppressed_processes:
+        return False
+
+    text_values: list[str] = []
+    for column in (
+        "business_process",
+        "line_text",
+        "source",
+        "document_type",
+        "scenario_id",
+        "event_type",
+    ):
+        text_values.extend(_pair_column_values(context, column, left_pos, right_pos))
+    context_text = " ".join(text_values)
+    normalized_context = _normalize_text(context_text)
+    return not any(token in normalized_context for token in suppressed_process_tokens)
+
+
+def _pair_column_values(
+    context: _PairContext,
+    column: str,
+    left_pos: int,
+    right_pos: int,
+) -> list[str]:
+    if column not in context.df.columns:
+        return []
+    return [
+        "" if pd.isna(value) else str(value)
+        for value in (context.df[column].iat[left_pos], context.df[column].iat[right_pos])
+    ]
+
+
+def _recurring_group_profiles(
+    context: _PairContext,
+    *,
+    min_len: int,
+    min_interval: int,
+    max_interval: int,
+    cv_threshold: float,
+    amount_band_ratio: float,
+    amount_band_min: float,
+) -> dict[tuple[str, str, int], dict[str, float]]:
+    work = pd.DataFrame(
+        {
+            "key": [
+                _recurring_group_key(context, pos, amount_band_ratio, amount_band_min)
+                for pos in range(len(context.df))
+            ],
+            "date": context.dates,
+        },
+        index=context.df.index,
+    ).dropna(subset=["date"])
+    profiles: dict[tuple[str, str, int], dict[str, float]] = {}
+    for key, group in work.groupby("key", sort=False):
+        if len(group) < min_len:
+            continue
+        dates = pd.to_datetime(group["date"], errors="coerce").dropna().sort_values()
+        if len(dates) < min_len:
+            continue
+        intervals = dates.diff().dropna().dt.days.astype(float)
+        intervals = intervals[intervals > 0]
+        regular_intervals = intervals[intervals >= min_interval]
+        if len(regular_intervals) < max(min_len - 2, 1):
+            continue
+        median = float(regular_intervals.median())
+        if median < min_interval or median > max_interval:
+            continue
+        cv = float(regular_intervals.std(ddof=0) / median) if median > 0 else float("inf")
+        if cv <= cv_threshold:
+            profiles[key] = {
+                "median_interval_days": median,
+                "interval_cv": cv,
+                "series_length": float(len(dates)),
+            }
+    return profiles
+
+
+def _recurring_group_key(
+    context: _PairContext,
+    pos: int,
+    amount_band_ratio: float,
+    amount_band_min: float,
+) -> tuple[str, str, int]:
+    partner = ""
+    if context.partner is not None:
+        value = context.partner.iat[pos]
+        partner = "" if pd.isna(value) else str(value).strip()
+    gl_value = context.gl.iat[pos]
+    gl = "" if pd.isna(gl_value) else str(gl_value).strip()
+    amount = abs(float(context.amount.iat[pos] or 0.0))
+    band_size = max(amount * amount_band_ratio, amount_band_min)
+    amount_band = int(round(amount / band_size)) if band_size > 0 else int(round(amount))
+    return (partner, gl, amount_band)
+
+
+def _same_reference_or_document_number(
+    context: _PairContext,
+    left_pos: int,
+    right_pos: int,
+) -> bool:
+    for column in ("reference", "document_number"):
+        if column not in context.df.columns:
+            continue
+        left = _safe_str(context.df[column].iat[left_pos])
+        right = _safe_str(context.df[column].iat[right_pos])
+        if left and right and left == right:
+            return True
+    return False
 
 
 def _select_diverse_top_records(
@@ -795,6 +1061,10 @@ class _PairContext:
         rule_id: str,
         features: dict[str, Any],
     ) -> dict[str, Any] | None:
+        if self.same_document_pair(left_pos, right_pos):
+            return None
+        if self.known_flow_link_pair(left_pos, right_pos):
+            return None
         if self.exhausted:
             self.truncated = True
             self.truncation_reason = self.truncation_reason or "max_total_pairs"
@@ -816,6 +1086,65 @@ class _PairContext:
             "rule_id": rule_id,
             "features": features,
         }
+
+    def same_document_pair(self, left_pos: int, right_pos: int) -> bool:
+        if self.document_id is None:
+            return False
+        left = self.document_id.iat[left_pos]
+        right = self.document_id.iat[right_pos]
+        if pd.isna(left) or pd.isna(right):
+            return False
+        left_text = str(left).strip()
+        right_text = str(right).strip()
+        return bool(left_text and right_text and left_text == right_text)
+
+    def known_flow_link_pair(self, left_pos: int, right_pos: int) -> bool:
+        """Return true for pairs that are explicit non-duplicate flow links."""
+
+        left_doc = self._document_id_at(left_pos)
+        right_doc = self._document_id_at(right_pos)
+        if not left_doc or not right_doc:
+            return False
+        if self._structural_reversal_link(left_pos, right_pos, left_doc, right_doc):
+            return True
+        return self._invoice_payment_cross_role_link(left_pos, right_pos)
+
+    def _document_id_at(self, pos: int) -> str:
+        if self.document_id is None:
+            return ""
+        value = self.document_id.iat[pos]
+        if pd.isna(value):
+            return ""
+        return str(value).strip()
+
+    def _structural_reversal_link(
+        self,
+        left_pos: int,
+        right_pos: int,
+        left_doc: str,
+        right_doc: str,
+    ) -> bool:
+        for column in ("reversal_document_id", "original_document_id"):
+            if column not in self.df.columns:
+                continue
+            left_link = _safe_str(self.df[column].iat[left_pos])
+            right_link = _safe_str(self.df[column].iat[right_pos])
+            if left_link == right_doc or right_link == left_doc:
+                return True
+        return False
+
+    def _invoice_payment_cross_role_link(self, left_pos: int, right_pos: int) -> bool:
+        if "document_type" not in self.df.columns:
+            return False
+        if not _same_reference_or_document_number(self, left_pos, right_pos):
+            return False
+        left_type = _normalize_text(_safe_str(self.df["document_type"].iat[left_pos]) or "")
+        right_type = _normalize_text(_safe_str(self.df["document_type"].iat[right_pos]) or "")
+        invoice_types = {"kr", "dr", "re", "invoice", "vendorinvoice", "customerinvoice"}
+        payment_types = {"kz", "dz", "bk", "tr", "payment", "receipt", "bank"}
+        return (left_type in invoice_types and right_type in payment_types) or (
+            right_type in invoice_types and left_type in payment_types
+        )
 
 
 # ── helpers ────────────────────────────────────────────────────
@@ -1407,6 +1736,7 @@ def _common_features(
     date_distance = _date_distance_days(context.dates.iat[left_pos], context.dates.iat[right_pos])
     same_partner = _same_partner(context, left_pos, right_pos)
     reference_similarity = _reference_similarity(context, left_pos, right_pos)
+    same_reference = _same_reference_or_document_number(context, left_pos, right_pos)
     same_account = (
         bool(context.gl.iat[left_pos] == context.gl.iat[right_pos])
         if not (pd.isna(context.gl.iat[left_pos]) or pd.isna(context.gl.iat[right_pos]))
@@ -1429,6 +1759,7 @@ def _common_features(
         "date_distance_days": date_distance,
         "same_account": same_account,
         "same_partner": same_partner,
+        "same_reference": same_reference,
         "reference_similarity": reference_similarity,
         "min_period_end_distance_days": min_period_end_distance,
         "both_period_end_window_3d": (

@@ -1,0 +1,58 @@
+{
+  "summary": [
+    {
+      "version": "v17",
+      "bucket": "standard_expected",
+      "units": 62,
+      "caught": 62,
+      "missed": 0
+    },
+    {
+      "version": "v17",
+      "bucket": "standard_blind_or_population",
+      "units": 16,
+      "caught": 0,
+      "missed": 16
+    },
+    {
+      "version": "v17",
+      "bucket": "evasion",
+      "units": 78,
+      "caught": 0,
+      "missed": 78
+    },
+    {
+      "version": "v23",
+      "bucket": "standard_expected",
+      "units": 62,
+      "caught": 62,
+      "missed": 0
+    },
+    {
+      "version": "v23",
+      "bucket": "standard_blind_or_population",
+      "units": 16,
+      "caught": 0,
+      "missed": 16
+    },
+    {
+      "version": "v23",
+      "bucket": "evasion",
+      "units": 78,
+      "caught": 0,
+      "missed": 78
+    }
+  ],
+  "examples": {
+    "v17": {
+      "shortcut_findings": 16,
+      "standard_misses": [],
+      "evasion_caught": []
+    },
+    "v23": {
+      "shortcut_findings": 0,
+      "standard_misses": [],
+      "evasion_caught": []
+    }
+  }
+}

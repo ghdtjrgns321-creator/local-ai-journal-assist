@@ -15,7 +15,6 @@ TOPIC_LEGACY_THEME_MAP: dict[str, str] = {
     "closing_timing": "timing_anomaly",
     "account_logic": "logic_mismatch",
     "duplicate_outflow": "duplicate_or_outflow",
-    "intercompany_cycle": "intercompany_structure",
     "revenue_statistical": "statistical_outlier",
 }
 
@@ -30,7 +29,6 @@ ISSUE_QUEUE_LABELS: dict[str, str] = {
     "amount_statistical": "금액/통계",
     "duplicate_outflow": "중복/유출",
     "account_logic": "계정/논리",
-    "intercompany_cycle": "관계사/순환",
     "manipulation_candidate": "조작 후보 종합",
 }
 
@@ -42,7 +40,6 @@ THEME_QUEUE_MAP: dict[str, str] = {
     "statistical_outlier": "amount_statistical",
     "duplicate_or_outflow": "duplicate_outflow",
     "logic_mismatch": "account_logic",
-    "intercompany_structure": "intercompany_cycle",
 }
 
 EVIDENCE_QUEUE_MAP: dict[str, str] = dict(THEME_QUEUE_MAP)
@@ -59,12 +56,6 @@ RULE_QUEUE_MAP: dict[str, str] = {
     if metadata.evidence_type in EVIDENCE_QUEUE_MAP
 }
 
-RULE_QUEUE_MAP.update(
-    {
-        "GR01": "intercompany_cycle",
-        "GR03": "intercompany_cycle",
-    }
-)
 
 PHASE1_RULE_IDS: tuple[str, ...] = (
     "L1-01",
@@ -147,15 +138,6 @@ TOPIC_RULE_WHITELIST: dict[str, set[str]] = {
         "L2-03",
         "L2-05",
         "L3-12",
-    },
-    "intercompany_cycle": {
-        "IC01",
-        "IC02",
-        "IC03",
-        "L3-03",
-        "L4-04",
-        "D01",
-        "D02",
     },
     "revenue_statistical": {
         "L3-10",

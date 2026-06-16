@@ -1209,8 +1209,8 @@ def _render_phase2_vae_distribution(
             "padding-left:1.1rem; line-height:1.6;'>"
             "<li><b>VAE</b>(Variational Autoencoder) + <b>Isolation Forest</b> 두 비지도 "
             "ML 모델이 정상 전표 분포를 학습합니다.</li>"
-            "<li>각 case 의 <b>anomaly score</b> = 정상 분포에서 떨어진 정도.</li>"
-            "<li><b>score 가 클수록</b> 정상 분포에서 멀리 떨어진 case (비정상 의심).</li>"
+            "<li>각 case 의 <b>statistical outlier score</b> = 정상 분포에서 떨어진 정도.</li>"
+            "<li><b>score 가 클수록</b> 정상 분포에서 멀리 떨어진 이상 패턴 case.</li>"
             "<li>점선 <b>q95 cutoff</b>(상위 5%) — 이 위쪽 꼬리가 감사인 우선 검토 후보.</li>"
             "<li>하위 score 영역은 정상 분포에 가까운 case → 검토 우선순위 <b>제외</b>.</li>"
             "</ul>"
@@ -1299,7 +1299,7 @@ def _render_phase2_vae_meta(
         "<div style='color:#0F172A; font-size:0.875rem; font-weight:600;'>"
         "VAE 분포 요약</div>"
         "<div style='color:#64748B; font-size:0.72rem; margin-top:2px;'>"
-        "anomaly score 분포의 핵심 cutoff 와 분위 통계</div>"
+        "statistical outlier score 분포의 핵심 cutoff 와 분위 통계</div>"
         "</div>",
         unsafe_allow_html=True,
     )

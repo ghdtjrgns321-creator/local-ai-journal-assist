@@ -1029,7 +1029,7 @@ def _apply_intercompany_exception_corroboration(
     """Promote intercompany reconciliation exceptions in row-level scoring.
 
     근거: IFRS 10 §B86 / K-IFRS 1110 / 1024 / KICPA Issue Paper 46 / ISA 600.
-          L3-03 는 약한 모집단 신호이고, IC01/IC02/IC03 은 32 canonical 룰 외부
+          L3-03 는 약한 모집단 신호이고, IC01/IC02/IC03 은 31 canonical 룰 외부
           finding 이므로 row-level anomaly_score 에서 숨지 않도록 별도 floor 적용.
 
     IC01 evidence level 정책 (D0xx, D055 supersede):
@@ -1046,7 +1046,7 @@ def _apply_intercompany_exception_corroboration(
         .str.strip()
         .str.lower()
     )
-    ic01_evidence_hit = evidence_level.isin({"high", "review"})
+    ic01_evidence_hit = evidence_level.isin({"high", "review_stale", "review"})
     if "IC01" not in combined and ic01_evidence_hit.any():
         combined["IC01"] = 0.0
     exception_rules = [rule_id for rule_id in ("IC01", "IC02", "IC03") if rule_id in combined]
@@ -1066,13 +1066,15 @@ def _apply_intercompany_exception_corroboration(
     exception_count = exception_hits.sum(axis=1)
     any_exception = exception_count.gt(0)
     ic01_high = ic01_hit & evidence_level.eq("high")
+    ic01_review_stale = ic01_hit & evidence_level.eq("review_stale")
     ic01_review = ic01_hit & evidence_level.eq("review")
 
     raw_score = pd.Series(0.0, index=agg_df.index)
     raw_score = raw_score.mask(any_exception, RISK_THRESHOLDS[RiskLevel.LOW])
-    # Medium floor: IC01[high] 단독 또는 2 개 이상 IC 예외 결합
+    # Medium floor: IC01[high] / IC01[review_stale](결산기 이탈 미대사) 단독, 또는
+    # 2 개 이상 IC 예외 결합. review(결산기 근접, 타이밍 설명 가능)는 Low 유지.
     raw_score = raw_score.mask(
-        ic01_high | exception_count.ge(2),
+        ic01_high | ic01_review_stale | exception_count.ge(2),
         RISK_THRESHOLDS[RiskLevel.MEDIUM],
     )
 
@@ -1082,8 +1084,12 @@ def _apply_intercompany_exception_corroboration(
         if rule_id == "IC01":
             # IC01 hit 에는 evidence level qualifier 부착
             high_label_mask = rule_mask & ic01_high
+            review_stale_label_mask = rule_mask & ic01_review_stale
             review_label_mask = rule_mask & ic01_review
             reason_parts = _append_reason(reason_parts, high_label_mask, "IC01[high]")
+            reason_parts = _append_reason(
+                reason_parts, review_stale_label_mask, "IC01[review_stale]"
+            )
             reason_parts = _append_reason(reason_parts, review_label_mask, "IC01[review]")
         else:
             reason_parts = _append_reason(reason_parts, rule_mask, rule_id)

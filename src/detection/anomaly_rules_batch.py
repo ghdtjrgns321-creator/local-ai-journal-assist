@@ -9,6 +9,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from src.detection.source_trust import lone_automated_mask
+
 
 def _nunique_documents(df: pd.DataFrame, mask: pd.Series) -> int:
     if "document_id" not in df.columns:
@@ -55,27 +57,48 @@ def c13_batch_anomaly(
     period_end_flags = _batch_period_end_concentration(df, is_batch, period_end_ratio)
     simultaneous_flags = _batch_simultaneous_creation(df, is_batch, simultaneous_threshold)
     amount_outlier_flags = _batch_amount_outlier(df, is_batch, amount_zscore)
-    result = (period_end_flags | simultaneous_flags | amount_outlier_flags).astype(bool)
+    # Why: 자동이라 주장하지만 배치 정체성(batch/job id)도 같은 날 동류 무리도 없는
+    #      단독 전표 — source 위조(자동 위장) 의심. 정상 자동 전표는 무리지어 다닌다
+    #      (v41 실측: 정상 자동 202,102 문서 중 82건만 해당). OPEN_ISSUES #16.
+    lone_identity_flags = lone_automated_mask(
+        df,
+        source_tokens={str(source).strip().lower() for source in sources},
+    ).reindex(df.index, fill_value=False)
+    result = (
+        period_end_flags | simultaneous_flags | amount_outlier_flags | lone_identity_flags
+    ).astype(bool)
 
     multi_signal_flags = (
         period_end_flags.astype(int)
         + simultaneous_flags.astype(int)
         + amount_outlier_flags.astype(int)
+        + lone_identity_flags.astype(int)
     ).ge(2)
-    amount_only_flags = amount_outlier_flags & ~period_end_flags & ~simultaneous_flags
-    simultaneous_only_flags = simultaneous_flags & ~period_end_flags & ~amount_outlier_flags
-    period_end_only_flags = period_end_flags & ~simultaneous_flags & ~amount_outlier_flags
+    amount_only_flags = (
+        amount_outlier_flags & ~period_end_flags & ~simultaneous_flags & ~lone_identity_flags
+    )
+    simultaneous_only_flags = (
+        simultaneous_flags & ~period_end_flags & ~amount_outlier_flags & ~lone_identity_flags
+    )
+    period_end_only_flags = (
+        period_end_flags & ~simultaneous_flags & ~amount_outlier_flags & ~lone_identity_flags
+    )
+    lone_identity_only_flags = (
+        lone_identity_flags & ~period_end_flags & ~simultaneous_flags & ~amount_outlier_flags
+    )
 
     score_series = pd.Series(0.0, index=df.index, dtype="float64")
     score_series.loc[amount_only_flags] = 0.25
     score_series.loc[period_end_only_flags] = 0.45
     score_series.loc[simultaneous_only_flags] = 0.45
+    score_series.loc[lone_identity_only_flags] = 0.45
     score_series.loc[result & multi_signal_flags] = 0.65
 
     score_bucket = pd.Series("", index=df.index, dtype="object")
     score_bucket.loc[amount_only_flags] = "amount_outlier_only"
     score_bucket.loc[period_end_only_flags] = "period_end_concentration"
     score_bucket.loc[simultaneous_only_flags] = "simultaneous_creation"
+    score_bucket.loc[lone_identity_only_flags] = "lone_batch_identity"
     score_bucket.loc[result & multi_signal_flags] = "multi_signal_batch"
 
     row_annotations: dict[object, dict[str, object]] = {}
@@ -95,6 +118,8 @@ def c13_batch_anomaly(
             reason_codes.append("simultaneous_creation")
         if bool(amount_outlier_flags.loc[idx]):
             reason_codes.append("amount_outlier")
+        if bool(lone_identity_flags.loc[idx]):
+            reason_codes.append("lone_batch_identity")
         annotation: dict[str, object] = {
             "reason_codes": reason_codes,
             "primary_reason": reason_codes[-1] if reason_codes else "batch_review",
@@ -114,9 +139,11 @@ def c13_batch_anomaly(
         "period_end_concentration_rows": int(period_end_flags.sum()),
         "simultaneous_creation_rows": int(simultaneous_flags.sum()),
         "amount_outlier_rows": int(amount_outlier_flags.sum()),
+        "lone_batch_identity_rows": int(lone_identity_flags.sum()),
         "amount_outlier_only_rows": int((result & amount_only_flags).sum()),
         "period_end_only_rows": int((result & period_end_only_flags).sum()),
         "simultaneous_only_rows": int((result & simultaneous_only_flags).sum()),
+        "lone_identity_only_rows": int((result & lone_identity_only_flags).sum()),
         "multi_signal_batch_rows": int((result & multi_signal_flags).sum()),
         "period_end_ratio_threshold": float(period_end_ratio),
         "simultaneous_threshold": int(simultaneous_threshold),
@@ -125,6 +152,7 @@ def c13_batch_anomaly(
             "amount_outlier_only": 0.25,
             "period_end_concentration": 0.45,
             "simultaneous_creation": 0.45,
+            "lone_batch_identity": 0.45,
             "multi_signal_batch": 0.65,
         },
     }
@@ -193,7 +221,7 @@ def _batch_simultaneous_creation(
         daily_counts = batch_only.groupby("posting_date")["document_id"].nunique()
     else:
         daily_counts = batch_only.groupby("posting_date").size()
-    flagged_dates = daily_counts[daily_counts >= threshold].index
+    flagged_dates = daily_counts.loc[daily_counts >= threshold].index.tolist()
     return is_batch & df["posting_date"].isin(flagged_dates)
 
 

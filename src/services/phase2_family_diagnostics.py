@@ -10,7 +10,7 @@ family ranking role 자동 판정의 입력 metric 3종을 계산한다.
 본 metric 은 training 시점에 측정하고 `training_report.json` 의
 `family_diagnostics` 에 pin 한다. inference 마다 재계산하면 family role 이
 진동하므로 hysteresis 는 재학습 trigger 로만 통제한다.
-(docs/PHASE2_GOVERNANCE_DESIGN.md §6.2 trigger matrix 정합)
+(docs/spec/PHASE2_GOVERNANCE_DESIGN.md §6.2 trigger matrix 정합)
 """
 
 from __future__ import annotations
@@ -124,7 +124,7 @@ def classify_family_role(diagnostics: FamilyDiagnostics) -> FamilyRole:
       top_tail_resolution < 0.2                       → tail-only-fallback (booster 보다 더 약함)
       else                                            → active-ranker
 
-    임계값 변경은 `docs/PHASE2_GOVERNANCE_DESIGN.md` 결정 8 lock 후 PR 의무.
+    임계값 변경은 `docs/spec/PHASE2_GOVERNANCE_DESIGN.md` 결정 8 lock 후 PR 의무.
     """
     if diagnostics.row_nonzero_rate < 0.001:
         return "near-dormant"

@@ -107,9 +107,9 @@ def run_phase2_inference(
     setattr(result, "phase2_inference_mode", phase2_inference_mode)
     t0 = time.perf_counter()
     ts0 = now_str()
-    _attach_phase2_case_overlays(result)
+    _attach_phase2_case_set(result, ctx=ctx, snapshot=snapshot)
     log_timing(
-        "phase2.inference.attach_phase2_case_overlays",
+        "phase2.inference.attach_phase2_case_set",
         time.perf_counter() - t0,
         start_ts=ts0,
     )
@@ -117,9 +117,9 @@ def run_phase2_inference(
     # PHASE1 가용 + engagement_salt 가용 시 cross-reference 까지 완성한다.
     t0 = time.perf_counter()
     ts0 = now_str()
-    _attach_phase2_case_set(result, ctx=ctx, snapshot=snapshot)
+    _attach_phase2_case_overlays(result)
     log_timing(
-        "phase2.inference.attach_phase2_case_set",
+        "phase2.inference.attach_phase2_case_overlays",
         time.perf_counter() - t0,
         start_ts=ts0,
     )
@@ -451,6 +451,7 @@ def _attach_phase2_case_overlays(result) -> None:
         getattr(result, "data", None),
         list(getattr(result, "results", []) or []),
         phase1,
+        case_set=getattr(result, "phase2_case_set", None),
     )
     overlays = build_phase2_case_overlays(
         phase1,
@@ -465,6 +466,7 @@ def _attach_phase2_case_overlays(result) -> None:
         phase2_training_report_id=getattr(result, "phase2_training_report_id", None),
         duplicate_pair_evidence_by_case=overlay_inputs.duplicate_pair_evidence_by_case,
         family_explanation_features_by_case=(overlay_inputs.family_explanation_features_by_case),
+        family_document_context_by_case=(overlay_inputs.family_document_context_by_case),
         relational_continuity_depth_by_case=(overlay_inputs.relational_continuity_depth_by_case),
     )
     setattr(result, "phase2_case_overlays", overlays)

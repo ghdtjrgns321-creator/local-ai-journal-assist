@@ -44,7 +44,7 @@ phase1_case:
       revenue_statistical: 1.0
     topic_floors:
       approval_control_high: 0.75
-      duplicate_outflow_high: 0.75
+      duplicate_reference_match: 0.45
       intercompany_exception: 0.45
     combo_floors:
       batch_combo: 0.45
@@ -55,6 +55,7 @@ phase1_case:
       period_end_adjustment_high: 0.75
       embezzlement_concealment_medium: 0.60
       embezzlement_concealment_high: 0.75
+      suspense_concealment_high: 0.75
       circular_transaction_medium: 0.45
       circular_transaction_high: 0.75
       approval_bypass_medium: 0.60
@@ -87,9 +88,10 @@ phase1_case:
             - L3-02|L3-05|L3-06
           policy: approval_medium_not_high
       supported_high_floor_requirements:
-        fictitious_entry: revenue_or_amount_outlier_plus_manual_plus_rare_or_duplicate
+        fictitious_entry: revenue_or_amount_outlier_plus_manual_plus_secondary_red_flag  # A안(D075): 2차정황 = L4-04|dup_L2-03|L3-03|L3-04|L3-10|L1-05|L1-09|L3-11
         period_end_adjustment: timing_seed_plus_high_amount_plus_description_or_sensitive_or_rare
-        embezzlement_concealment: outflow_or_duplicate_plus_approval_bypass
+        embezzlement_concealment: outflow_or_duplicate_plus_approval_bypass_or_reversal_with_manual  # A안(D075): 승인우회 OR (L2-05 역분개 + L3-02 수기)
+        suspense_concealment: suspense_aging_plus_outflow_or_duplicate_plus_high_amount
         circular_transaction: related_party_or_ic_plus_amount_or_timing_plus_repeat_or_cycle
         approval_bypass: approval_bypass_plus_high_amount_or_cutoff_or_manual_closing_or_manual_after_hours
     macro_context_bonus:
@@ -384,7 +386,6 @@ phase1_case:
       critical_context_count: 3
       critical_context_floor: 0.95
 
-  repeat_score_promote: 0.70
   repeat_months_tiebreak: 3
 
   timing_priority:

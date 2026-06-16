@@ -9,6 +9,7 @@ import pandas as pd
 
 from src.detection.base import DetectionResult
 from src.models.phase1_case import Phase1CaseResult
+from src.models.phase2_case import Phase2CaseSet, UnsupervisedCase
 from src.services.duplicate_pair_tier import (
     best_pair_tier,
     classify_pair_evidence_tier,
@@ -53,6 +54,10 @@ class Phase2CaseFamilyOverlayInputs:
     family_explanation_features_by_case: dict[str, dict[str, list[dict[str, Any]]]] = field(
         default_factory=dict
     )
+    # PHASE2 unsupervised document-case review context. display-only, score/ranking 입력 금지.
+    family_document_context_by_case: dict[str, dict[str, dict[str, Any]]] = field(
+        default_factory=dict
+    )
 
     def has_family_signal(self) -> bool:
         return any(bool(scores) for scores in self.family_scores_by_case.values())
@@ -62,6 +67,8 @@ def build_phase2_case_family_overlay_inputs(
     df: pd.DataFrame | None,
     detection_results: list[DetectionResult] | None,
     phase1: Phase1CaseResult | None,
+    *,
+    case_set: Phase2CaseSet | None = None,
 ) -> Phase2CaseFamilyOverlayInputs:
     """Return case-level Phase 2 family inputs for ``build_phase2_case_overlays``.
 
@@ -98,6 +105,7 @@ def build_phase2_case_family_overlay_inputs(
     }
     intercompany_review_only = _intercompany_review_only_sidecar(detection_results, df.index)
     duplicate_pair_tier_by_label = _duplicate_pair_tier_by_label(result_by_family.get("duplicate"))
+    unsupervised_cases_by_label = _unsupervised_cases_by_label(case_set, label_by_position)
 
     for case in phase1.cases:
         labels = _case_index_labels(case, label_by_position, positions_by_doc)
@@ -107,6 +115,25 @@ def build_phase2_case_family_overlay_inputs(
         case_ecdfs: dict[str, float] = {}
         case_subdetectors: dict[str, list[tuple[str, str]]] = {}
         for family, scores in family_score_series.items():
+            if family == "unsupervised" and unsupervised_cases_by_label:
+                document_cases = _unsupervised_cases_for_labels(
+                    labels,
+                    unsupervised_cases_by_label,
+                )
+                if document_cases:
+                    representative = _representative_unsupervised_case(document_cases)
+                    case_scores[family] = float(representative.family_score or 0.0)
+                    case_ecdfs[family] = float(representative.family_ecdf or 0.0)
+                    case_subdetectors[family] = [_UNSUPERVISED_SUBDETECTOR]
+                    explanation = _unsupervised_document_explanation_features(representative)
+                    if explanation:
+                        inputs.family_explanation_features_by_case[case.case_id] = {
+                            "unsupervised": explanation,
+                        }
+                    inputs.family_document_context_by_case[case.case_id] = {
+                        "unsupervised": _unsupervised_document_context(representative),
+                    }
+                    continue
             selected = scores.reindex(labels).fillna(0.0)
             max_score = float(selected.max()) if not selected.empty else 0.0
             if max_score <= 0:
@@ -141,7 +168,9 @@ def build_phase2_case_family_overlay_inputs(
             if depth > 0:
                 inputs.relational_continuity_depth_by_case[case.case_id] = depth
         # PHASE2 unsupervised explanation surface — score 입력 비허용.
-        if "unsupervised" in case_scores:
+        if "unsupervised" in case_scores and case.case_id not in (
+            inputs.family_explanation_features_by_case
+        ):
             unsupervised_result = result_by_family.get("unsupervised")
             explanation = _unsupervised_explanation_features_for_case(
                 unsupervised_result,
@@ -153,6 +182,84 @@ def build_phase2_case_family_overlay_inputs(
                     "unsupervised": explanation,
                 }
     return inputs
+
+
+def _unsupervised_cases_by_label(
+    case_set: Phase2CaseSet | None,
+    label_by_position: dict[int, Any],
+) -> dict[Any, list[UnsupervisedCase]]:
+    if case_set is None:
+        return {}
+    cases = tuple(getattr(case_set, "unsupervised_cases", ()) or ())
+    by_label: dict[Any, list[UnsupervisedCase]] = {}
+    for case in cases:
+        if str(getattr(case, "unit_type", "")) != "document":
+            continue
+        for ref in getattr(case, "row_refs", ()) or ():
+            label = label_by_position.get(int(getattr(ref, "row_position", -1)))
+            if label is not None:
+                by_label.setdefault(label, []).append(case)
+    return by_label
+
+
+def _unsupervised_cases_for_labels(
+    labels: list[Any],
+    cases_by_label: dict[Any, list[UnsupervisedCase]],
+) -> tuple[UnsupervisedCase, ...]:
+    selected: dict[str, UnsupervisedCase] = {}
+    for label in labels:
+        for case in cases_by_label.get(label, ()):
+            selected[case.phase2_case_id] = case
+    return tuple(selected.values())
+
+
+def _representative_unsupervised_case(
+    cases: tuple[UnsupervisedCase, ...],
+) -> UnsupervisedCase:
+    return max(
+        cases,
+        key=lambda case: (
+            float(case.family_score or 0.0),
+            float(case.family_ecdf or 0.0),
+            str(case.phase2_case_id),
+        ),
+    )
+
+
+def _unsupervised_document_explanation_features(case: UnsupervisedCase) -> list[dict[str, Any]]:
+    features: list[dict[str, Any]] = []
+    for item in tuple(getattr(case, "top_features", ()) or ()):
+        payload = dict(item)
+        feature_id = str(payload.get("feature_id") or payload.get("feature") or "").strip()
+        if not feature_id:
+            continue
+        payload["feature_id"] = feature_id
+        payload.setdefault("feature", feature_id)
+        features.append(payload)
+    return features
+
+
+def _unsupervised_document_context(case: UnsupervisedCase) -> dict[str, Any]:
+    features = _unsupervised_document_explanation_features(case)
+    return {
+        "unit_type": case.unit_type,
+        "evidence_row_count": int(case.evidence_row_count),
+        "top_score_mean": case.top_score_mean,
+        "score_spread": case.score_spread,
+        "amount_tail_context": case.amount_tail_context,
+        "period_end_context": case.period_end_context,
+        "account_rarity_context": case.account_rarity_context,
+        "process_rarity_context": case.process_rarity_context,
+        "repeated_normal_pressure": case.repeated_normal_pressure,
+        "max_score_top_features": [dict(item) for item in case.max_score_top_features],
+        "reason_tags": sorted(
+            {
+                str(feature.get("tag") or "").strip()
+                for feature in features
+                if str(feature.get("tag") or "").strip()
+            }
+        ),
+    }
 
 
 def _duplicate_pair_tier_by_label(
@@ -467,7 +574,9 @@ def _intercompany_review_only_sidecar(
             )
         else:
             ic01_score = pd.Series(0.0, index=index, dtype=float)
-        review_only = evidence_level.eq("review") & ic01_score.le(0.0)
+        # review / review_stale 모두 details 점수 0(확정 위반 아님)인 review-only 신호.
+        # review_stale는 aggregator에서 Medium floor를 받지만 IC01 details는 0이므로 동일 집계.
+        review_only = evidence_level.isin({"review", "review_stale"}) & ic01_score.le(0.0)
         return pd.DataFrame(
             {
                 "review_only": review_only,

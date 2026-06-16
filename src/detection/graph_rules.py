@@ -19,6 +19,8 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 
+from src.detection.boolean_utils import bool_column
+
 logger = logging.getLogger(__name__)
 
 _REQUIRED_COLS = ("company_code", "debit_amount", "credit_amount", "is_intercompany")
@@ -38,7 +40,7 @@ def _filter_edges(
     Returns:
         (filtered_df, effective_min_amount, raised_flag)
     """
-    ic_mask = df["is_intercompany"].fillna(False).astype(bool)
+    ic_mask = bool_column(df, "is_intercompany")
     amount = df[["debit_amount", "credit_amount"]].fillna(0).max(axis=1)
     mask = ic_mask & (amount >= min_amount)
     edges_df = df.loc[mask].copy()
@@ -203,6 +205,7 @@ def gr01_circular_transaction(
 
     cycles_found = 0
     skipped_components = 0
+    cycle_instances: list[dict[str, object]] = []
 
     for component in nx.weakly_connected_components(graph):
         subgraph = graph.subgraph(component)
@@ -222,6 +225,8 @@ def gr01_circular_transaction(
             for cycle in nx.simple_cycles(subgraph, length_bound=max_cycle_length):
                 cycles_found += 1
                 cycle_nodes = list(cycle) + [cycle[0]]
+                row_indices: list[int] = []
+                document_ids: list[str] = []
                 for i in range(len(cycle_nodes) - 1):
                     u, v = cycle_nodes[i], cycle_nodes[i + 1]
                     edge_map = subgraph.get_edge_data(u, v) or {}
@@ -229,10 +234,24 @@ def gr01_circular_transaction(
                         row_idx = edge_data.get("_row_idx")
                         if row_idx is not None and row_idx in scores.index:
                             scores.at[row_idx] = 1.0
+                            row_indices.append(int(row_idx))
+                        doc_id = edge_data.get("document_id")
+                        if doc_id:
+                            document_ids.append(str(doc_id))
+                if row_indices:
+                    cycle_instances.append(
+                        {
+                            "cycle_id": f"gr01-cycle-{cycles_found}",
+                            "nodes": [str(node) for node in cycle],
+                            "row_positions": sorted(set(row_indices)),
+                            "document_ids": sorted(set(document_ids)),
+                        }
+                    )
         except Exception as exc:
             logger.warning("GR01 simple_cycles 실행 실패: %s", exc)
 
     metadata["gr01_cycles_found"] = cycles_found
+    metadata["gr01_cycle_instances"] = cycle_instances
     metadata["gr01_skipped_components"] = skipped_components
     metadata["gr01_max_component_size"] = max_component_size
     metadata["gr01_max_component_edges"] = max_component_edges
@@ -270,7 +289,7 @@ def gr03_transfer_pricing_graph(
         metadata["gr03_skip_reason"] = "missing_required_columns"
         return scores
 
-    ic_mask = df["is_intercompany"].fillna(False).astype(bool)
+    ic_mask = bool_column(df, "is_intercompany")
     if not ic_mask.any():
         return scores
 
@@ -349,6 +368,7 @@ def gr03_transfer_pricing_graph(
     flagged = bidirectional[bidirectional["_deviation"] > deviation_threshold].copy()
     metadata["gr03_flagged_pairs"] = int(len(flagged))
     if flagged.empty:
+        metadata["gr03_pair_instances"] = []
         return scores
 
     # Why: 원본 행 index 보존을 위해 merge 전 reset_index
@@ -356,12 +376,35 @@ def gr03_transfer_pricing_graph(
     flagged_subset = flagged[merge_keys + ["_deviation"]]
     joined = ic_df.merge(flagged_subset, on=merge_keys, how="inner")
     if joined.empty:
+        metadata["gr03_pair_instances"] = []
         return scores
 
     # Why: score = min(1.0, deviation / (threshold * 3)) — R03 수식 재사용
     score_vec = (joined["_deviation"] / (deviation_threshold * 3)).clip(upper=1.0)
     for orig_idx, score in zip(joined["_orig_idx"].values, score_vec.values):
         scores.at[orig_idx] = max(scores.at[orig_idx], float(score))
+    pair_instances: list[dict[str, object]] = []
+    for instance_no, (key, group) in enumerate(joined.groupby(merge_keys, sort=False), start=1):
+        if not isinstance(key, tuple):
+            key = (key,)
+        row_positions = [int(value) for value in group["_orig_idx"].tolist()]
+        document_ids = (
+            sorted(set(group["document_id"].dropna().astype(str).tolist()))
+            if "document_id" in group.columns
+            else []
+        )
+        nodes = sorted({str(group["_src"].iloc[0]), str(group["_dst"].iloc[0])})
+        pair_instances.append(
+            {
+                "pair_id": f"gr03-pair-{instance_no}",
+                "nodes": nodes,
+                "group_key": [str(value) for value in key],
+                "row_positions": row_positions,
+                "document_ids": document_ids,
+                "max_deviation": float(group["_deviation"].max()),
+            }
+        )
+    metadata["gr03_pair_instances"] = pair_instances
     return scores
 
 

@@ -9,7 +9,12 @@ import numpy as np
 import pandas as pd
 from rapidfuzz import fuzz
 
-from config.settings import get_audit_rules
+from config.settings import AuditSettings, get_audit_rules
+
+L202_REFERENCE_MATCH_CONFIDENCE = 0.90
+L202_MIXED_REFERENCE_FALLBACK_CONFIDENCE = 0.70
+L202_AMOUNT_PARTNER_FALLBACK_CONFIDENCE = 0.65
+L202_BLANK_REFERENCE_FALLBACK_CONFIDENCE = 0.60
 
 
 def _compute_base_amount(df: pd.DataFrame) -> pd.Series:
@@ -70,6 +75,78 @@ def _is_recurring_payment_series(group: pd.DataFrame) -> pd.Series:
         return pd.Series(True, index=group.index)
 
     return pd.Series(False, index=group.index)
+
+
+def _l202_recurring_profile(
+    group: pd.DataFrame,
+    *,
+    min_len: int,
+    min_interval_days: int,
+    max_interval_days: int,
+    cv_threshold: float,
+    require_reference_variation: bool = True,
+) -> dict[str, float] | None:
+    if len(group) < min_len:
+        return None
+    dates = pd.to_datetime(group["posting_date"], errors="coerce").dropna().sort_values()
+    if len(dates) < min_len:
+        return None
+    intervals = dates.diff().dropna().dt.days.astype(float)
+    intervals = intervals[intervals > 0]
+    regular_intervals = intervals[
+        (intervals >= float(min_interval_days)) & (intervals <= float(max_interval_days))
+    ]
+    if len(regular_intervals) < max(min_len - 2, 1):
+        return None
+    median = float(regular_intervals.median())
+    if median <= 0:
+        return None
+    cv = float(regular_intervals.std(ddof=0) / median)
+    if cv > cv_threshold:
+        return None
+    if require_reference_variation:
+        refs = group.get("_reference_norm", pd.Series("", index=group.index)).astype(str)
+        if refs.nunique(dropna=False) <= 1:
+            return None
+    return {"median_interval_days": median, "interval_cv": cv}
+
+
+def _l202_is_manual_off_cycle(row: pd.Series, *, settings: AuditSettings) -> bool:
+    source = _normalize_text(row.get("source", ""))
+    allowed_sources = {
+        _normalize_text(value)
+        for value in settings.duplicate_recurring_near_extra_allowed_sources
+        if _normalize_text(value)
+    }
+    suppressed_sources = {
+        _normalize_text(value)
+        for value in settings.duplicate_recurring_near_extra_suppressed_sources
+        if _normalize_text(value)
+    }
+    if source in suppressed_sources:
+        return False
+    if allowed_sources and source not in allowed_sources:
+        return False
+
+    process = _normalize_text(row.get("business_process", ""))
+    suppressed_processes = {
+        _normalize_text(value)
+        for value in settings.duplicate_recurring_near_extra_suppressed_processes
+        if _normalize_text(value)
+    }
+    if process in suppressed_processes:
+        return False
+    context_text = " ".join(
+        str(row.get(column, ""))
+        for column in ("business_process", "line_text", "header_text", "source", "document_type")
+    )
+    normalized_context = _normalize_text(context_text)
+    suppressed_tokens = {
+        _normalize_text(value)
+        for value in settings.duplicate_recurring_near_extra_suppressed_process_tokens
+        if _normalize_text(value)
+    }
+    return not any(token in normalized_context for token in suppressed_tokens)
 
 
 _RE_SPECIAL = re.compile(r"[^\w\s]", re.UNICODE)
@@ -952,6 +1029,7 @@ def b04_duplicate_payment(
     partner_key = _resolve_b04_partner_key(df)
     if partner_key is None:
         return result
+    settings = AuditSettings()
 
     if "business_process" in df.columns:
         p2p_mask = df["business_process"] == "P2P"
@@ -1004,6 +1082,9 @@ def b04_duplicate_payment(
     }
     if "company_code" in target.columns:
         agg_spec["company_code"] = "first"
+    for context_col in ("source", "business_process", "line_text", "header_text"):
+        if context_col in target.columns:
+            agg_spec[context_col] = "first"
 
     doc_target = (
         target.groupby("_document_id", as_index=False)
@@ -1028,6 +1109,9 @@ def b04_duplicate_payment(
     flagged_doc_ids: set[str] = set()
     doc_annotations: dict[str, dict[str, object]] = {}
     suppressed_doc_ids: set[str] = set()
+    ambiguous_fallback_dropped = 0
+    near_extra_docs = 0
+    near_extra_context_suppressed_docs = 0
 
     ref_cols = ["_partner_key", "_reference_norm"]
     if "company_code" in doc_target.columns:
@@ -1045,14 +1129,14 @@ def b04_duplicate_payment(
             amount = float(row["_base_amt"])
             ratio_tolerance = abs(amount) * reference_amount_tolerance
             tolerance = max(min(ratio_tolerance, reference_amount_cap), 1.0)
-            for prev in seen:
+            for prev in reversed(seen):
                 day_gap = row["posting_date"] - prev["posting_date"]
                 if abs(amount - float(prev["amount"])) <= tolerance and day_gap <= window:
                     doc_id = str(row["document_id"])
                     flagged_doc_ids.add(doc_id)
                     doc_annotations[doc_id] = {
                         "reason_code": "reference_match",
-                        "confidence": 0.9,
+                        "confidence": L202_REFERENCE_MATCH_CONFIDENCE,
                         "confidence_band": "high",
                         "matched_document_id": str(prev["document_id"]),
                         "partner_key": str(row["_partner_key"]),
@@ -1070,57 +1154,60 @@ def b04_duplicate_payment(
                 }
             )
 
-    blank_target = doc_target.loc[doc_target["_reference_norm"].eq("")].copy()
-    if not blank_target.empty:
-        recurring_mask = pd.Series(False, index=blank_target.index)
-        null_cols = ["_partner_key", "_base_amt"]
-        if "company_code" in blank_target.columns:
-            null_cols.insert(0, "company_code")
-        for _, group in blank_target.groupby(null_cols, group_keys=False):
-            recurring_mask.loc[group.index] = _is_recurring_payment_series(group[["posting_date"]])
-        suppressed_doc_ids.update(blank_target.loc[recurring_mask, "document_id"].astype(str))
-        blank_target = blank_target.loc[~recurring_mask]
-
-        all_null_cols = list(null_cols)
-        for _, group in doc_target.groupby(all_null_cols, group_keys=False):
-            blank_group = blank_target.loc[blank_target.index.intersection(group.index)]
-            blank_ids = set(blank_group["document_id"].astype(str))
-            if not blank_ids:
-                continue
-            ordered = group.sort_values("posting_date")
-            prev_row: pd.Series | None = None
-            for _, row in ordered.iterrows():
-                if pd.isna(row["posting_date"]):
-                    continue
-                doc_id = str(row["document_id"])
-                if doc_id in blank_ids and prev_row is not None:
-                    day_gap = row["posting_date"] - prev_row["posting_date"]
-                    if day_gap <= window:
-                        matched_reference = str(prev_row["_reference_norm"])
-                        reason_code = (
-                            "mixed_reference_fallback"
-                            if matched_reference
-                            else "blank_reference_fallback"
-                        )
-                        confidence = 0.7 if matched_reference else 0.6
-                        flagged_doc_ids.add(doc_id)
-                        doc_annotations[doc_id] = {
-                            "reason_code": reason_code,
-                            "confidence": confidence,
-                            "confidence_band": "medium",
-                            "matched_document_id": str(prev_row["document_id"]),
-                            "partner_key": str(row["_partner_key"]),
-                            "reference_norm": str(row["_reference_norm"]),
-                            "amount": float(row["_base_amt"]),
-                            "matched_amount": float(prev_row["_base_amt"]),
-                            "day_gap": int(day_gap.days),
-                        }
-                prev_row = row
-
     amount_cols = ["_partner_key"]
     if "company_code" in doc_target.columns:
         amount_cols.insert(0, "company_code")
     amount_target = doc_target.loc[doc_target["_base_amt"].gt(0)].copy()
+    recurring_suppressed_doc_ids: set[str] = set()
+    recurring_cols = [*amount_cols, "_base_amt"]
+    for _, group in amount_target.groupby(recurring_cols, group_keys=False):
+        recurring_profile = _l202_recurring_profile(
+            group.sort_values("posting_date"),
+            min_len=max(int(settings.duplicate_recurring_min_series_length), 3),
+            min_interval_days=max(int(settings.duplicate_recurring_min_interval_days), 1),
+            max_interval_days=max(
+                int(settings.duplicate_recurring_max_interval_days),
+                int(settings.duplicate_recurring_min_interval_days),
+            ),
+            cv_threshold=max(float(settings.duplicate_recurring_interval_cv_threshold), 0.0),
+            require_reference_variation=False,
+        )
+        if recurring_profile is not None:
+            recurring_suppressed_doc_ids.update(group["document_id"].astype(str))
+
+    fallback_rank = {
+        "mixed_reference_fallback": 0,
+        "amount_partner_fallback": 1,
+        "blank_reference_fallback": 2,
+    }
+    fallback_confidence = {
+        "mixed_reference_fallback": L202_MIXED_REFERENCE_FALLBACK_CONFIDENCE,
+        "amount_partner_fallback": L202_AMOUNT_PARTNER_FALLBACK_CONFIDENCE,
+        "blank_reference_fallback": L202_BLANK_REFERENCE_FALLBACK_CONFIDENCE,
+    }
+    fallback_band = {
+        "mixed_reference_fallback": "medium",
+        "amount_partner_fallback": "medium",
+        "blank_reference_fallback": "low",
+    }
+
+    def _fallback_reason(
+        prev_ref: str,
+        row_ref: str,
+        amount: float,
+        prev_amount: float,
+        tolerance: float,
+    ) -> str | None:
+        if prev_ref and not row_ref and abs(amount - prev_amount) <= tolerance:
+            return "mixed_reference_fallback"
+        if not prev_ref and not row_ref:
+            if amount == prev_amount:
+                return "blank_reference_fallback"
+            return None
+        if prev_ref != row_ref and abs(amount - prev_amount) <= tolerance:
+            return "amount_partner_fallback"
+        return None
+
     for _, group in amount_target.groupby(amount_cols, group_keys=False):
         if len(group) < 2:
             continue
@@ -1129,11 +1216,110 @@ def b04_duplicate_payment(
         for _, row in ordered.iterrows():
             if pd.isna(row["posting_date"]):
                 continue
+            doc_id = str(row["document_id"])
+            amount = float(row["_base_amt"])
+            row_ref = str(row["_reference_norm"])
+            if doc_id in doc_annotations:
+                seen.append(
+                    {
+                        "document_id": doc_id,
+                        "posting_date": row["posting_date"],
+                        "amount": amount,
+                        "reference_norm": row_ref,
+                    }
+                )
+                continue
+            ratio_tolerance = abs(amount) * reference_amount_tolerance
+            tolerance = max(min(ratio_tolerance, reference_amount_cap), 1.0)
+            best_match: dict[str, object] | None = None
+            for prev in reversed(seen):
+                day_gap = row["posting_date"] - prev["posting_date"]
+                if day_gap > window:
+                    continue
+                prev_ref = str(prev["reference_norm"])
+                if row_ref and prev_ref and row_ref == prev_ref:
+                    continue
+                reason_code = _fallback_reason(
+                    prev_ref,
+                    row_ref,
+                    amount,
+                    float(prev["amount"]),
+                    tolerance,
+                )
+                if reason_code is None:
+                    continue
+                if doc_id in recurring_suppressed_doc_ids:
+                    break
+                candidate = {
+                    "reason_code": reason_code,
+                    "matched_document_id": str(prev["document_id"]),
+                    "matched_amount": float(prev["amount"]),
+                    "matched_reference_norm": prev_ref,
+                    "day_gap": int(day_gap.days),
+                }
+                if best_match is None or fallback_rank[reason_code] < fallback_rank[
+                    str(best_match["reason_code"])
+                ]:
+                    best_match = candidate
+                    if fallback_rank[reason_code] == 0:
+                        break
+            if doc_id in recurring_suppressed_doc_ids:
+                seen.append(
+                    {
+                        "document_id": doc_id,
+                        "posting_date": row["posting_date"],
+                        "amount": amount,
+                        "reference_norm": row_ref,
+                    }
+                )
+                continue
+            if best_match is not None:
+                reason_code = str(best_match["reason_code"])
+                flagged_doc_ids.add(doc_id)
+                doc_annotations[doc_id] = {
+                    "reason_code": reason_code,
+                    "confidence": fallback_confidence[reason_code],
+                    "confidence_band": fallback_band[reason_code],
+                    "matched_document_id": str(best_match["matched_document_id"]),
+                    "partner_key": str(row["_partner_key"]),
+                    "reference_norm": row_ref,
+                    "matched_reference_norm": str(best_match["matched_reference_norm"]),
+                    "amount": amount,
+                    "matched_amount": float(best_match["matched_amount"]),
+                    "day_gap": int(best_match["day_gap"]),
+                }
+            seen.append(
+                {
+                    "document_id": doc_id,
+                    "posting_date": row["posting_date"],
+                    "amount": amount,
+                    "reference_norm": row_ref,
+                }
+            )
+
+    for _, group in amount_target.groupby(amount_cols, group_keys=False):
+        if len(group) < 2:
+            continue
+        ordered = group.sort_values("posting_date")
+        recurring_profile = _l202_recurring_profile(
+            ordered,
+            min_len=max(int(settings.duplicate_recurring_min_series_length), 3),
+            min_interval_days=max(int(settings.duplicate_recurring_min_interval_days), 1),
+            max_interval_days=max(
+                int(settings.duplicate_recurring_max_interval_days),
+                int(settings.duplicate_recurring_min_interval_days),
+            ),
+            cv_threshold=max(float(settings.duplicate_recurring_interval_cv_threshold), 0.0),
+        )
+        seen: list[dict[str, object]] = []
+        for _, row in ordered.iterrows():
+            if pd.isna(row["posting_date"]):
+                continue
             amount = float(row["_base_amt"])
             ratio_tolerance = abs(amount) * reference_amount_tolerance
             tolerance = max(min(ratio_tolerance, reference_amount_cap), 1.0)
             row_ref = str(row["_reference_norm"])
-            for prev in seen:
+            for prev in reversed(seen):
                 day_gap = row["posting_date"] - prev["posting_date"]
                 if day_gap > window:
                     continue
@@ -1147,10 +1333,29 @@ def b04_duplicate_payment(
                     continue
                 if doc_id in doc_annotations:
                     break
+                keep_near_extra = False
+                if recurring_profile is not None:
+                    near_threshold = max(
+                        1.0,
+                        float(recurring_profile["median_interval_days"])
+                        * max(float(settings.duplicate_recurring_near_extra_ratio), 0.0),
+                    )
+                    if int(day_gap.days) <= near_threshold:
+                        if _l202_is_manual_off_cycle(row, settings=settings):
+                            keep_near_extra = True
+                        else:
+                            near_extra_context_suppressed_docs += 1
+                            break
+                    else:
+                        suppressed_doc_ids.add(doc_id)
+                        break
+                if not keep_near_extra:
+                    ambiguous_fallback_dropped += 1
+                    break
                 flagged_doc_ids.add(doc_id)
                 doc_annotations[doc_id] = {
-                    "reason_code": "amount_partner_fallback",
-                    "confidence": 0.65,
+                    "reason_code": "near_extra",
+                    "confidence": L202_AMOUNT_PARTNER_FALLBACK_CONFIDENCE,
                     "confidence_band": "medium",
                     "matched_document_id": str(prev["document_id"]),
                     "partner_key": str(row["_partner_key"]),
@@ -1159,7 +1364,11 @@ def b04_duplicate_payment(
                     "amount": amount,
                     "matched_amount": float(prev["amount"]),
                     "day_gap": int(day_gap.days),
+                    "recurring_series_median_interval_days": float(
+                        recurring_profile["median_interval_days"]
+                    ),
                 }
+                near_extra_docs += 1
                 break
             seen.append(
                 {
@@ -1180,6 +1389,7 @@ def b04_duplicate_payment(
         "mixed_reference_fallback": 0,
         "blank_reference_fallback": 0,
         "amount_partner_fallback": 0,
+        "near_extra": 0,
     }
     for doc_id, annotation in doc_annotations.items():
         doc_row_indices = target.loc[target["_document_id"].eq(doc_id)].index
@@ -1201,7 +1411,12 @@ def b04_duplicate_payment(
         "mixed_reference_fallback_docs": int(reason_counts.get("mixed_reference_fallback", 0)),
         "blank_reference_fallback_docs": int(reason_counts.get("blank_reference_fallback", 0)),
         "amount_partner_fallback_docs": int(reason_counts.get("amount_partner_fallback", 0)),
-        "recurring_suppressed_docs": int(len(suppressed_doc_ids)),
+        "near_extra_docs": int(reason_counts.get("near_extra", 0)),
+        "ambiguous_fallback_dropped_docs": int(ambiguous_fallback_dropped),
+        "near_extra_context_suppressed_docs": int(near_extra_context_suppressed_docs),
+        "recurring_suppressed_docs": int(
+            len(suppressed_doc_ids | recurring_suppressed_doc_ids)
+        ),
         "partner_key_coverage_ratio": float(populated_partner.mean()),
     }
     result.attrs["row_annotations"] = row_annotations

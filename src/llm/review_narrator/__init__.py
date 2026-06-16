@@ -6,7 +6,7 @@ PHASE1 룰 히트 + PHASE2 ML 스코어 + 전표 메타를 입력받아 LLM이
 Sprint A 산출물: models.py (Pydantic 스키마) + citation_validator.py.
 나머지 모듈은 후속 Sprint(B~F)에서 추가된다.
 
-단일 출처: docs/PHASE3_REVIEW_NARRATOR_SPEC.md
+단일 출처: docs/archive/abandoned/PHASE3_REVIEW_NARRATOR_SPEC.md
 """
 
 from src.llm.review_narrator.audit_logger import log_narrate_event

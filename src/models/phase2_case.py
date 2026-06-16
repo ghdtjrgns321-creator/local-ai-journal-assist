@@ -151,13 +151,52 @@ class RelationalCase(Phase2CaseBase):
 
 @dataclass(frozen=True)
 class UnsupervisedCase(Phase2CaseBase):
-    """비지도 이상치 (VAE/IsolationForest) — row 단위 anomaly score."""
+    """비지도 이상치 (VAE/IsolationForest) — document 단위 review case.
+
+    invariant:
+      - 새 unsupervised case 는 ``unit_type == "document"`` 여야 한다.
+      - ``row_refs`` 는 document case 내부의 anomalous evidence row tuple 이다.
+      - score/context trace 필드는 표시·진단용이며 PHASE1 ranking 입력이 아니다.
+    """
 
     anomaly_score: float = 0.0
     # [{feature_id, contrib, tag, label_ko}, ...] — SHAP/contrib 상위 피처
     top_features: tuple[dict, ...] = ()
+    max_score_top_features: tuple[dict, ...] = ()
     model_id: str = ""
     schema_hash: str = ""
+    document_id: str | None = None
+    evidence_row_count: int = 0
+    top_score_mean: float | None = None
+    score_spread: float | None = None
+    max_score_row_ref: Phase2RowRef | None = None
+    amount_tail_context: float | None = None
+    period_end_context: float | None = None
+    account_rarity_context: float | None = None
+    process_rarity_context: float | None = None
+    repeated_normal_pressure: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.unit_type != "document":
+            raise ValueError('UnsupervisedCase.unit_type must be unit_type="document"')
+        if not isinstance(self.row_refs, tuple):
+            object.__setattr__(self, "row_refs", tuple(self.row_refs))
+        if not isinstance(self.top_features, tuple):
+            object.__setattr__(self, "top_features", tuple(self.top_features))
+        if not isinstance(self.max_score_top_features, tuple):
+            object.__setattr__(
+                self,
+                "max_score_top_features",
+                tuple(self.max_score_top_features),
+            )
+        if not isinstance(self.phase1_case_refs, tuple):
+            object.__setattr__(self, "phase1_case_refs", tuple(self.phase1_case_refs))
+        if self.evidence_row_count < 0:
+            raise ValueError("UnsupervisedCase.evidence_row_count must be non-negative")
+        if self.max_score_row_ref is not None and not isinstance(
+            self.max_score_row_ref, Phase2RowRef
+        ):
+            raise TypeError("UnsupervisedCase.max_score_row_ref must be Phase2RowRef or None")
 
 
 @dataclass(frozen=True)

@@ -8,7 +8,7 @@ OpenAI Structured Output(`strict: True`)에서 사용한다. 스펙 §출력 계
 - 검증은 citation_validator에서 type별 필수 필드 존재 여부를 확인한다.
 - `priority_score`는 [0,1] 범위 강제. `priority_rank`는 1부터 시작 (1=highest).
 
-단일 출처: docs/PHASE3_REVIEW_NARRATOR_SPEC.md §출력 계약.
+단일 출처: docs/archive/abandoned/PHASE3_REVIEW_NARRATOR_SPEC.md §출력 계약.
 """
 
 from __future__ import annotations

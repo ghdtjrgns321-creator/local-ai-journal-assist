@@ -298,10 +298,17 @@ def load_general_ledger(conn, df: pd.DataFrame, batch_id: str) -> int:
 
 def _fill_required_gl_fields(gl_df: pd.DataFrame) -> None:
     """Fill DB NOT NULL columns from nearby source fields before insert."""
+    # Why: 한 컬럼에 date_only("2024-12-31")와 datetime("2024-12-31 18:10:00")이 섞이면
+    #      format 미지정 to_datetime이 다수 형식 추론으로 소수를 NaT화한다(거짓 결측). ISO8601은
+    #      시각 유무 모두 파싱해 혼합에 견고. 비ISO 외부 형식은 ingest type_caster 관문이 담당.
     if "posting_date" in gl_df.columns:
-        gl_df["posting_date"] = pd.to_datetime(gl_df["posting_date"], errors="coerce")
+        gl_df["posting_date"] = pd.to_datetime(
+            gl_df["posting_date"], errors="coerce", format="ISO8601"
+        )
     if "document_date" in gl_df.columns:
-        gl_df["document_date"] = pd.to_datetime(gl_df["document_date"], errors="coerce")
+        gl_df["document_date"] = pd.to_datetime(
+            gl_df["document_date"], errors="coerce", format="ISO8601"
+        )
 
     if {"posting_date", "document_date"} <= set(gl_df.columns):
         missing_posting = gl_df["posting_date"].isna()

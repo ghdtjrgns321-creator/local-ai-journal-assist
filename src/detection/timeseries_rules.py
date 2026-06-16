@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
+from src.detection.boolean_utils import bool_column
+
 _MAD_SCALE = 0.6745  # modified z-score (normal consistent constant)
 
 
@@ -635,9 +637,9 @@ def after_hours_or_weekend_score(df: pd.DataFrame) -> SubSignalResult:
 
     flag = pd.Series(False, index=df.index)
     if has_after_hours:
-        flag = flag | df["is_after_hours"].fillna(False).astype(bool)
+        flag = flag | bool_column(df, "is_after_hours")
     if has_weekend:
-        flag = flag | df["is_weekend"].fillna(False).astype(bool)
+        flag = flag | bool_column(df, "is_weekend")
 
     # Why: 0.5 는 boolean context 의 sub-signal score (rarity_tail 산입 금지, context_count
     #      판정 입력만). composite gate 통과 시 합산되지 않고 raw 신호로만 사용.
@@ -687,7 +689,7 @@ def manual_or_adjustment_score(
     flag = pd.Series(False, index=df.index)
     used: list[str] = []
     if "is_manual_je" in df.columns:
-        flag = flag | df["is_manual_je"].fillna(False).astype(bool)
+        flag = flag | bool_column(df, "is_manual_je")
         used.append("is_manual_je")
     if "source" in df.columns:
         manual_set = {str(v).strip().lower() for v in manual_source_values}
@@ -735,7 +737,7 @@ def round_amount_score(
         )
 
     if "is_round_number" in df.columns:
-        flag = df["is_round_number"].fillna(False).astype(bool)
+        flag = bool_column(df, "is_round_number")
         score = flag.astype(float) * 0.5
         return SubSignalResult(
             name=name,

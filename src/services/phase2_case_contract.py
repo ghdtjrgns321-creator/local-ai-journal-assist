@@ -83,7 +83,7 @@ class Phase2CaseOverlay:
     max_evidence_tier / lane_membership / coverage_gap_families 는 family signal
     을 lane·overlay·tie-break 으로 노출하기 위한 explainability 필드다. RRF
     voter 로는 사용하지 않으며 primary PHASE1+VAE 2-way RRF 결과를 덮어쓰지
-    않는다. (docs/PHASE2_GOVERNANCE_DESIGN.md 결정 8)
+    않는다. (docs/spec/PHASE2_GOVERNANCE_DESIGN.md 결정 8)
     """
 
     phase1_case_id: str
@@ -162,6 +162,7 @@ def build_phase2_case_overlays(
     phase2_training_report_id: str | None = None,
     duplicate_pair_evidence_by_case: dict[str, str] | None = None,
     family_explanation_features_by_case: (dict[str, dict[str, list[dict[str, Any]]]] | None) = None,
+    family_document_context_by_case: dict[str, dict[str, dict[str, Any]]] | None = None,
     relational_continuity_depth_by_case: dict[str, float] | None = None,
 ) -> list[dict[str, Any]]:
     """Build neutral overlays keyed by PHASE1 case id.
@@ -171,7 +172,7 @@ def build_phase2_case_overlays(
     max_evidence_tier, lane_membership, coverage_gap_families) 는 family signal
     을 lane/overlay/tie-break 으로 노출하기 위한 explainability 용도이며,
     primary PHASE1+VAE 2-way RRF 결과를 변경하지 않는다.
-    (docs/PHASE2_GOVERNANCE_DESIGN.md 결정 8 / dev/active/phase2-family-ranking)
+    (docs/spec/PHASE2_GOVERNANCE_DESIGN.md 결정 8 / dev/active/phase2-family-ranking)
 
     Args:
         family_scores_by_case: ``{case_id: {family: score}}`` — case 의 max family score.
@@ -195,6 +196,7 @@ def build_phase2_case_overlays(
     detector_statuses = detector_statuses or []
     duplicate_pair_evidence_by_case = duplicate_pair_evidence_by_case or {}
     family_explanation_features_by_case = family_explanation_features_by_case or {}
+    family_document_context_by_case = family_document_context_by_case or {}
     relational_continuity_depth_by_case = relational_continuity_depth_by_case or {}
     coverage_gap = sorted(family for family, role in family_roles.items() if role == "near-dormant")
 
@@ -219,6 +221,9 @@ def build_phase2_case_overlays(
         )
         _attach_explanation_features(
             contributions, family_explanation_features_by_case.get(case.case_id)
+        )
+        _attach_document_context(
+            contributions, family_document_context_by_case.get(case.case_id)
         )
         top_family = _select_top_family(contributions)
         breadth = _coverage_breadth_q95(
@@ -474,6 +479,47 @@ def _attach_explanation_features(
         entry["evidence_type"] = _UNSUPERVISED_EVIDENCE_TYPE
 
 
+_UNSUPERVISED_DOCUMENT_CONTEXT_FIELDS: tuple[str, ...] = (
+    "unit_type",
+    "evidence_row_count",
+    "top_score_mean",
+    "score_spread",
+    "amount_tail_context",
+    "period_end_context",
+    "account_rarity_context",
+    "process_rarity_context",
+    "repeated_normal_pressure",
+    "reason_tags",
+)
+
+
+def _attach_document_context(
+    contributions: list[dict[str, Any]],
+    context_by_family: dict[str, dict[str, Any]] | None,
+) -> None:
+    """Attach unsupervised document-case context as display-only contribution fields."""
+    if not context_by_family:
+        return
+    unsupervised_context = context_by_family.get("unsupervised")
+    if not isinstance(unsupervised_context, dict) or not unsupervised_context:
+        return
+    context = {
+        key: value
+        for key, value in unsupervised_context.items()
+        if key not in {"document_id", "max_score_row_ref"}
+    }
+    for entry in contributions:
+        if str(entry.get("family")) != "unsupervised":
+            continue
+        entry["document_context"] = context
+        for field_name in _UNSUPERVISED_DOCUMENT_CONTEXT_FIELDS:
+            if field_name in context:
+                entry[field_name] = context[field_name]
+        if "max_score_top_features" in context:
+            entry["max_score_top_features"] = context["max_score_top_features"]
+        return
+
+
 def _attach_duplicate_pair_evidence(
     contributions: list[dict[str, Any]],
     pair_tier: str | None,
@@ -531,7 +577,7 @@ def _coverage_breadth_q95(
     """family 가 자체 q95 임계 이상 진입한 개수.
 
     - near-dormant family 는 카운트에서 제외 (q95=0 이면 score=0 도 매칭되어 모든
-      case 의 breadth 를 부풀리는 문제 방지). docs/PHASE2_GOVERNANCE_DESIGN.md
+      case 의 breadth 를 부풀리는 문제 방지). docs/spec/PHASE2_GOVERNANCE_DESIGN.md
       결정 8 §8.6 정합.
     - threshold ≤ 0 일 때는 positive guard 적용: 실제 score > 0 인 경우만 카운트.
     """
@@ -679,7 +725,7 @@ def _feature_columns() -> list[str]:
 # ──────────────────────────────────────────────────────────────────────────────
 # Tie-break ladder — primary RRF 동률/near-tie 한정 보조 정렬
 #
-# 거버넌스 가드 (docs/PHASE2_GOVERNANCE_DESIGN.md 결정 8):
+# 거버넌스 가드 (docs/spec/PHASE2_GOVERNANCE_DESIGN.md 결정 8):
 #   Tie-break ladder는 primary RRF의 동률 또는 near-tie 보조 정렬에만 사용하며,
 #   primary queue의 기본 순위를 뒤집는 별도 weighted score로 사용하지 않는다.
 #

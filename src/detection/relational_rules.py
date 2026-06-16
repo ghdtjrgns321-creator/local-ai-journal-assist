@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from src.detection.boolean_utils import bool_column
 from src.detection.relational_graph_features import (
     build_pair_key,
     compute_first_seen_recency_strength,
@@ -190,7 +191,7 @@ def r03_transfer_pricing_anomaly(
     if df.empty or "is_intercompany" not in df.columns:
         return pd.Series(0.0, index=df.index)
 
-    ic_mask = df["is_intercompany"].fillna(False).astype(bool)
+    ic_mask = bool_column(df, "is_intercompany")
     if not ic_mask.any():
         return pd.Series(0.0, index=df.index)
 
