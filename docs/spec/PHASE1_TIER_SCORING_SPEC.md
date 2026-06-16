@@ -42,7 +42,7 @@ primary_topic = 최고 tier 토픽 (동률 시 TOPIC_REGISTRY 순서)
 
 | 토픽 | 조건 (현재 코드) | FSS 패턴 |
 |------|------------------|----------|
-| revenue_statistical | `(L4-01 or L4-03) ∧ L3-02 ∧ 2차정황1개` <br>2차정황 = `L4-04 / L2-03 / L3-03 / L3-04 / L3-10 / L1-05 / L1-09 / L3-11` 중 하나 (A안 확장, §3.5) | 가공전표 |
+| revenue_statistical | `(L4-01 or L4-03) ∧ L3-02 ∧ 2차정황1개` <br>2차정황 = `L4-04 / L2-03 / L3-03 / L3-10 / L1-05 / L3-11` 중 하나 (A안 확장, L3-04·L1-09는 과탐 가드 제외 §3.5) | 가공전표 |
 | closing_timing | `시점seed(L3-04/07/11/L1-08) ∧ L4-03 ∧ (L3-08/L3-10/L4-04)` | 결산수정 |
 | closing_timing | `L3-11 ∧ (L4-01 or L4-03)` | 결산수정(cutoff) |
 | duplicate_outflow | `자금유출(L2-02/03/05) ∧ [승인우회(L1-04/05/06/07) or (L2-05 ∧ L3-02)]` (A안 완화, §3.5) | 횡령은폐 |
@@ -74,18 +74,18 @@ primary_topic = 최고 tier 토픽 (동률 시 TOPIC_REGISTRY 순서)
 - `standalone_rankable=False`(booster/macro) 룰은 단독 seed 불가.
 - macro_only(L4-02/Benford/D01/D02)는 같은 계정/월 primary hit가 있을 때만 맥락 연결(CONTEXT). 단독 case 생성 금지.
 
-### 3.5 A안 셋째 다리 확장 (2026-06-16, 코드 미반영)
+### 3.5 A안 셋째 다리 확장 (2026-06-16 설계 → 2026-06-17 코드 반영·측정 완료)
 
 FSS HIGH 17건 재감사(근거 SoT §4.5, `HIGH_COMBO_GROUNDING.md` §5b)에 따라 HIGH 트리거 2개를 넓혔다. **신규 조합·신규 floor 추가가 아니라 기존 조합의 2차정황 OR 풀 확장**이다.
 
-| 트리거 | 기존 | A안 확장 |
+| 트리거 | 기존 | A안 확장(최종) |
 |--------|------|----------|
-| revenue_statistical(가공전표) 셋째 다리 | `(L4-04 or L2-03)` | `+ L3-03·L3-04·L3-10·L1-05·L1-09·L3-11` 추가 |
-| duplicate_outflow(횡령은폐) 통제 분기 | `승인우회(L1-04~07)` 필수 | `or (L2-05 역분개 ∧ L3-02 수기)` 분기 추가 |
+| revenue_statistical(가공전표) 셋째 다리 | `(L4-04 or L2-03)` | `+ L3-03·L3-10·L1-05·L3-11` 추가 (L3-04·L1-09는 과탐 가드 제외) |
+| duplicate_outflow(횡령은폐) 통제 분기 | `승인우회(L1-04~07)` 필수 | `or (L2-05 역분개 ∧ L3-02 수기 ∧ L4-03 고액)` 분기 추가 |
 
-코드 반영 위치(다음 세션): `src/detection/topic_scoring.py::_fraud_combo_floor_results` — 조합1 `fictitious_entry_high`(약 562~572행) 셋째 다리 OR 분기, 조합2 `embezzlement_concealment_high`(약 598~604행) 통제 OR 분기.
+코드: `src/detection/topic_scoring.py::_FICTITIOUS_SECONDARY_RULES`(신설) = `{L4-04, L3-03, L3-10, L1-05, L3-11} | _DUPLICATE_ENTRY_RULES`; 조합2 `has_reversal_manual_concealment = {L2-05,L3-02,L4-03}.issubset`.
 
-> **과탐 HARD 가드**: 셋째 다리 확장 후 정상 데이터로 HIGH 비율 재측정 필수. 현재 HIGH baseline 대비 **HIGH ≤ 2%** 초과 시 FAIL → 해당 다리(특히 L3-04 기말·L1-05 자기승인) 좁히기. 측정 전 코드 반영·완료 선언 금지(§8 테스트·검증).
+> **과탐 HARD 가드 (측정 완료)**: 정상 v42j 2022(14,070 case) 측정 — wide(6 신규 다리) **5.245% FAIL**(L3-04 기말 734·L1-09 승인일공백 334 과발화) → L3-04·L1-09 제외 narrowed **0.334% PASS**(≤2%). 횡령은폐 분기는 정상 reversal+manual clearing 오발화 방지를 위해 고액(L4-03)을 동반 요구(anti-fitting 가드). 측정: `tools/scripts/measure_a_an_high_ratio.py`.
 
 ## 4. within-tier 정렬 (확정: 단순 tiebreak, 2026-06-14)
 
