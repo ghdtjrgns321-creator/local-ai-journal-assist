@@ -32,7 +32,7 @@ def test_l304_period_end_does_not_treat_false_string_as_true() -> None:
         }
     )
 
-    result = c01_period_end_large(df, min_group_size=1)
+    result = c01_period_end_large(df)
 
     assert result.tolist() == [False, True, False]
 

@@ -128,7 +128,7 @@ def test_stage1_l102_separated_into_data_integrity_track():
             "L1-02": {
                 0: {
                     "missing_fields": ["gl_account", "posting_date", "debit_amount"],
-                    "score": 0.90,
+                    "missing_category": 1,
                 }
             }
         },

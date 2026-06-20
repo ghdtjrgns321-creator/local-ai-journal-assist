@@ -55,8 +55,8 @@ class TestA01UnbalancedEntry:
         # D2: diff=1.01 → tolerance 초과, 플래그
         assert result.scores.iloc[2] > 0.0
 
-    def test_score_reflects_imbalance_ratio(self):
-        """L1-01 score increases with imbalance / document total ratio."""
+    def test_flagged_rows_have_uniform_score_and_sort_annotations(self):
+        """L1-01 keeps only uniform data-integrity score plus sorting fields."""
         df = pd.DataFrame(
             {
                 "document_id": ["D1", "D1", "D2", "D2", "D3", "D3"],
@@ -73,13 +73,17 @@ class TestA01UnbalancedEntry:
         detector = IntegrityDetector(tolerance=1.0)
         result = detector.detect(df)
 
-        assert result.details["L1-01"].iloc[0] == pytest.approx(0.15)
-        assert result.details["L1-01"].iloc[2] == pytest.approx(0.30)
-        assert result.details["L1-01"].iloc[4] == pytest.approx(0.90)
+        assert result.details["L1-01"].iloc[[0, 2, 4]].tolist() == pytest.approx(
+            [1.0, 1.0, 1.0]
+        )
         annotations = result.metadata["row_annotations"]["L1-01"]
-        assert annotations[0]["bucket"] == "rounding_scale"
-        assert annotations[2]["bucket"] == "minor"
-        assert annotations[4]["bucket"] == "severe"
+        assert annotations[0] == {
+            "imbalance_amount": pytest.approx(50.0),
+            "debit_sum": pytest.approx(100_000.0),
+            "credit_sum": pytest.approx(99_950.0),
+        }
+        assert "bucket" not in annotations[0]
+        assert "score" not in annotations[0]
 
     def test_nan_debit_treated_as_zero(self):
         """debit NaN → fillna(0) 처리."""
@@ -154,7 +158,7 @@ class TestA02MissingRequired:
         """필수 필드 모두 채움 → 0.0."""
         detector = IntegrityDetector()
         result = detector.detect(dt_balanced_df)
-        # L1-02 uses field-aware scores when flagged.
+        # L1-02 uses uniform data-integrity scores when flagged.
         a02_scores = result.details.get("L1-02", pd.Series(0.0, index=dt_balanced_df.index))
         assert (a02_scores == 0.0).all()
 
@@ -167,31 +171,33 @@ class TestA02MissingRequired:
         # idx 0: 정상
         assert result.details["L1-02"].iloc[0] == 0.0
 
-    def test_multiple_nulls_raise_score_above_single_field(self, dt_missing_fields_df):
-        """Multiple missing required fields increase the row score."""
+    def test_multiple_nulls_keep_uniform_score(self, dt_missing_fields_df):
+        """Multiple missing required fields do not change the uniform score."""
         detector = IntegrityDetector()
         single = dt_missing_fields_df.copy()
         single.loc[1, "posting_date"] = pd.Timestamp("2025-01-02")
 
         single_result = detector.detect(single)
         multi_result = detector.detect(dt_missing_fields_df)
-        assert multi_result.details["L1-02"].iloc[1] > single_result.details["L1-02"].iloc[1]
+        assert single_result.details["L1-02"].iloc[1] == pytest.approx(1.0)
+        assert multi_result.details["L1-02"].iloc[1] == pytest.approx(1.0)
 
-    def test_missing_field_importance_changes_l102_score(self, dt_missing_fields_df):
-        low = dt_missing_fields_df.copy()
-        high = dt_missing_fields_df.copy()
-        low.loc[1, ["gl_account", "posting_date"]] = [2000, pd.Timestamp("2025-01-02")]
-        high.loc[1, ["gl_account", "posting_date"]] = [2000, pd.Timestamp("2025-01-02")]
-        low.loc[1, "document_date"] = pd.NaT
-        high.loc[1, "document_id"] = None
+    def test_missing_field_category_tags_cat1_before_cat2(self, dt_missing_fields_df):
+        cat2 = dt_missing_fields_df.copy()
+        cat1 = dt_missing_fields_df.copy()
+        cat2.loc[1, ["gl_account", "posting_date"]] = [2000, pd.Timestamp("2025-01-02")]
+        cat1.loc[1, ["gl_account", "posting_date"]] = [2000, pd.Timestamp("2025-01-02")]
+        cat2.loc[1, "document_date"] = pd.NaT
+        cat1.loc[1, "document_id"] = None
 
         detector = IntegrityDetector()
-        low_score = detector.detect(low).details["L1-02"].iloc[1]
-        high_score = detector.detect(high).details["L1-02"].iloc[1]
+        cat2_result = detector.detect(cat2)
+        cat1_result = detector.detect(cat1)
 
-        assert low_score == pytest.approx(0.42)
-        assert high_score == pytest.approx(0.80)
-        assert high_score > low_score
+        assert cat2_result.details["L1-02"].iloc[1] == pytest.approx(1.0)
+        assert cat1_result.details["L1-02"].iloc[1] == pytest.approx(1.0)
+        assert cat2_result.metadata["row_annotations"]["L1-02"][1]["missing_category"] == 2
+        assert cat1_result.metadata["row_annotations"]["L1-02"][1]["missing_category"] == 1
 
     def test_blank_string_required_field_counts_as_missing(self, dt_missing_fields_df):
         df = dt_missing_fields_df.copy()
@@ -200,7 +206,10 @@ class TestA02MissingRequired:
 
         result = IntegrityDetector().detect(df)
 
-        assert result.details["L1-02"].iloc[1] == pytest.approx(0.48)
+        assert result.details["L1-02"].iloc[1] == pytest.approx(1.0)
+        annotation = result.metadata["row_annotations"]["L1-02"][1]
+        assert annotation["missing_fields"] == ["document_type"]
+        assert annotation["missing_category"] == 2
 
 
 # ── L1-03: 무효 계정 ────────────────────────────────────────────
@@ -216,29 +225,24 @@ class TestA03InvalidAccount:
         a03_scores = result.details.get("L1-03", pd.Series(0.0, index=dt_balanced_df.index))
         assert (a03_scores == 0.0).all()
 
-    def test_invalid_account_scores_reflect_account_quality(self, dt_balanced_df):
-        """L1-03 score separates ordinary unknown, unknown family, malformed, and placeholders."""
+    def test_invalid_account_scores_are_uniform(self, dt_balanced_df):
+        """L1-03 no longer separates account quality buckets."""
         df = pd.concat([dt_balanced_df.iloc[[0]]] * 4, ignore_index=True)
         df["document_id"] = ["D1", "D2", "D3", "D4"]
         df["gl_account"] = ["1999", "9000", "ABC", "9999"]
         detector = IntegrityDetector(chart_of_accounts={"1000", "2000"})
         result = detector.detect(df)
 
-        assert result.details["L1-03"].tolist() == pytest.approx([0.60, 0.70, 0.75, 0.80])
+        assert result.details["L1-03"].tolist() == pytest.approx([1.0, 1.0, 1.0, 1.0])
         annotations = result.metadata["row_annotations"]["L1-03"]
-        assert annotations[0]["bucket"] == "unknown_account"
-        assert annotations[1]["bucket"] == "unknown_account_family"
-        assert annotations[2]["bucket"] == "malformed_account"
-        assert annotations[3]["bucket"] == "placeholder_or_reserved"
-        assert result.metadata["rule_breakdowns"]["L1-03"]["score_bands"] == {
-            "unknown_account": 1,
-            "unknown_account_family": 1,
-            "malformed_account": 1,
-            "placeholder_or_reserved": 1,
-        }
+        assert annotations[0] == {"gl_account": "1999"}
+        assert annotations[1] == {"gl_account": "9000"}
+        assert annotations[2] == {"gl_account": "ABC"}
+        assert annotations[3] == {"gl_account": "9999"}
+        assert "score_bands" not in result.metadata["rule_breakdowns"]["L1-03"]
 
-    def test_invalid_account_context_boost_is_capped(self, dt_balanced_df):
-        """High amount/manual/period-end context can raise L1-03 without exceeding the cap."""
+    def test_invalid_account_context_does_not_change_score(self, dt_balanced_df):
+        """High amount/manual/period-end context does not alter L1-03 score."""
         df = pd.concat([dt_balanced_df.iloc[[0]]] * 3, ignore_index=True)
         df["document_id"] = ["D1", "D2", "D3"]
         df["gl_account"] = ["1999", "9999", "9999"]
@@ -250,12 +254,10 @@ class TestA03InvalidAccount:
         detector = IntegrityDetector(chart_of_accounts={"1000", "2000"})
         result = detector.detect(df)
 
-        assert result.details["L1-03"].iloc[0] == pytest.approx(0.60)
-        assert result.details["L1-03"].iloc[2] == pytest.approx(0.90)
+        assert result.details["L1-03"].iloc[0] == pytest.approx(1.0)
+        assert result.details["L1-03"].iloc[2] == pytest.approx(1.0)
         annotations = result.metadata["row_annotations"]["L1-03"]
-        assert annotations[2]["context_boost"] == pytest.approx(0.10)
-        assert "manual_or_adjustment_context" in annotations[2]["context_reasons"]
-        assert "period_end_context" in annotations[2]["context_reasons"]
+        assert annotations[2] == {"gl_account": "9999"}
 
     def test_invalid_account_flagged(self, dt_balanced_df, dt_coa):
         """CoA에 없는 계정 → 플래그."""
@@ -264,7 +266,7 @@ class TestA03InvalidAccount:
         df.loc[0, "gl_account"] = 1999
         detector = IntegrityDetector(chart_of_accounts=dt_coa)
         result = detector.detect(df)
-        assert result.details["L1-03"].iloc[0] == pytest.approx(0.60)
+        assert result.details["L1-03"].iloc[0] == pytest.approx(1.0)
 
     def test_no_coa_skips_with_warning(self, dt_balanced_df):
         """CoA=None + settings 경로 비활성 → L1-03 skipped."""
@@ -300,7 +302,7 @@ class TestA03InvalidAccount:
         df.loc[0, "gl_account"] = "9999.0"
         detector = IntegrityDetector(chart_of_accounts={"1000", "2000"})
         result = detector.detect(df)
-        assert result.details["L1-03"].iloc[0] == pytest.approx(0.80)
+        assert result.details["L1-03"].iloc[0] == pytest.approx(1.0)
 
     def test_blank_account_is_not_l103(self, dt_balanced_df):
         """빈 계정은 L1-03이 아니라 L1-02에서 처리한다."""
@@ -311,249 +313,6 @@ class TestA03InvalidAccount:
         result = detector.detect(df)
         assert result.details["L1-03"].iloc[0] == 0.0
         assert result.details["L1-02"].iloc[0] > 0.0
-
-
-class TestL301MisclassifiedAccount:
-    def _rules(self) -> dict:
-        return {
-            "l3_01_misclassified_account": {
-                "enabled": True,
-                "strict_allowed_categories": False,
-                "account_category_prefixes": {
-                    "asset": ["1"],
-                    "liability": ["2"],
-                    "equity": ["3"],
-                    "revenue": ["4"],
-                    "expense": ["5", "6", "7", "8"],
-                    "payroll": ["54"],
-                },
-                "process_disallowed_categories": {
-                    "O2C": ["expense"],
-                    "P2P": ["revenue"],
-                    "TRE": ["inventory"],
-                },
-                "process_denied_accounts": {
-                    "O2C": ["5000"],
-                    "P2P": ["4100"],
-                },
-                "process_allowed_keywords": {
-                    "O2C": ["판매수수료", "rebate"],
-                },
-            }
-        }
-
-    def test_o2c_expense_account_flagged(self):
-        df = pd.DataFrame(
-            {
-                "document_id": ["D1"],
-                "debit_amount": [100.0],
-                "credit_amount": [100.0],
-                "gl_account": ["5000"],
-                "business_process": ["O2C"],
-                "company_code": ["C1"],
-                "fiscal_year": [2025],
-                "posting_date": pd.to_datetime(["2025-01-01"]),
-                "document_date": pd.to_datetime(["2025-01-01"]),
-                "document_type": ["SA"],
-            }
-        )
-        detector = IntegrityDetector(
-            chart_of_accounts={"5000"},
-            audit_rules=self._rules(),
-        )
-        result = detector.detect(df)
-        assert result.details["L3-01"].iloc[0] == pytest.approx(0.65)
-        breakdown = result.metadata["rule_breakdowns"]["L3-01"]
-        annotations = result.metadata["row_annotations"]["L3-01"]
-        assert breakdown["exact_denied_rows"] == 1
-        assert annotations[0]["reason_code"] == "exact_denied_account"
-
-    def test_disallowed_category_flags_even_when_exact_list_exists(self):
-        # 정책: exact denied 목록과 disallowed-category는 같은 정책의 두 코드체계 표현.
-        # P2P에 exact 목록([4100])이 있어도, 목록에 없지만 disallowed 카테고리(revenue)인
-        # COA 계정은 category 경로로 flag되어야 한다(exact 목록이 모든 계정코드를 열거하지
-        # 못하는 상황 방어). 과거 ~account_configured 억제 제거의 회귀 가드.
-        df = pd.DataFrame(
-            {
-                "document_id": ["D1"],
-                "debit_amount": [100.0],
-                "credit_amount": [100.0],
-                "gl_account": ["4000"],
-                "account_category": ["revenue"],
-                "business_process": ["P2P"],
-                "company_code": ["C1"],
-                "fiscal_year": [2025],
-                "posting_date": pd.to_datetime(["2025-01-01"]),
-                "document_date": pd.to_datetime(["2025-01-01"]),
-                "document_type": ["SA"],
-            }
-        )
-        detector = IntegrityDetector(
-            chart_of_accounts={"4000", "4100", "5000"},
-            audit_rules=self._rules(),
-        )
-        result = detector.detect(df)
-        assert result.details["L3-01"].iloc[0] == pytest.approx(0.45)
-        annotations = result.metadata["row_annotations"]["L3-01"]
-        assert annotations[0]["reason_code"] == "category_mismatch"
-
-    def test_non_coa_account_excluded_from_l301(self):
-        # COA에 없는 계정은 L1-03(무효계정) 소관이라 L3-01에서 제외.
-        df = pd.DataFrame(
-            {
-                "document_id": ["D1"],
-                "debit_amount": [100.0],
-                "credit_amount": [100.0],
-                "gl_account": ["4000"],
-                "account_category": ["revenue"],
-                "business_process": ["P2P"],
-                "company_code": ["C1"],
-                "fiscal_year": [2025],
-                "posting_date": pd.to_datetime(["2025-01-01"]),
-                "document_date": pd.to_datetime(["2025-01-01"]),
-                "document_type": ["SA"],
-            }
-        )
-        detector = IntegrityDetector(
-            chart_of_accounts={"5000"},
-            audit_rules=self._rules(),
-        )
-        result = detector.detect(df)
-        assert result.details["L3-01"].iloc[0] == 0.0
-
-    def test_exact_denied_account_flags_p2p(self):
-        df = pd.DataFrame(
-            {
-                "document_id": ["D1"],
-                "debit_amount": [100.0],
-                "credit_amount": [100.0],
-                "gl_account": ["4100"],
-                "account_category": ["revenue"],
-                "business_process": ["P2P"],
-                "company_code": ["C1"],
-                "fiscal_year": [2025],
-                "posting_date": pd.to_datetime(["2025-01-01"]),
-                "document_date": pd.to_datetime(["2025-01-01"]),
-                "document_type": ["SA"],
-            }
-        )
-        detector = IntegrityDetector(
-            chart_of_accounts={"4100"},
-            audit_rules=self._rules(),
-        )
-        result = detector.detect(df)
-        assert result.details["L3-01"].iloc[0] == pytest.approx(0.65)
-        breakdown = result.metadata["rule_breakdowns"]["L3-01"]
-        annotations = result.metadata["row_annotations"]["L3-01"]
-        assert breakdown["exact_denied_docs"] == 1
-        assert annotations[0]["reason_code"] == "exact_denied_account"
-
-    def test_category_fallback_applies_when_process_has_no_exact_account_list(self):
-        df = pd.DataFrame(
-            {
-                "document_id": ["D1"],
-                "debit_amount": [100.0],
-                "credit_amount": [100.0],
-                "gl_account": ["1200"],
-                "account_category": ["inventory"],
-                "business_process": ["TRE"],
-                "company_code": ["C1"],
-                "fiscal_year": [2025],
-                "posting_date": pd.to_datetime(["2025-01-01"]),
-                "document_date": pd.to_datetime(["2025-01-01"]),
-                "document_type": ["SA"],
-            }
-        )
-        detector = IntegrityDetector(
-            chart_of_accounts={"1200"},
-            audit_rules=self._rules(),
-        )
-        result = detector.detect(df)
-        assert result.details["L3-01"].iloc[0] == pytest.approx(0.45)
-        breakdown = result.metadata["rule_breakdowns"]["L3-01"]
-        annotations = result.metadata["row_annotations"]["L3-01"]
-        assert breakdown["category_mismatch_docs"] == 1
-        assert annotations[0]["reason_code"] == "category_mismatch"
-
-    def test_invalid_account_owned_by_l103_not_l301(self):
-        df = pd.DataFrame(
-            {
-                "document_id": ["D1"],
-                "debit_amount": [100.0],
-                "credit_amount": [100.0],
-                "gl_account": ["5000"],
-                "business_process": ["O2C"],
-                "company_code": ["C1"],
-                "fiscal_year": [2025],
-                "posting_date": pd.to_datetime(["2025-01-01"]),
-                "document_date": pd.to_datetime(["2025-01-01"]),
-                "document_type": ["SA"],
-            }
-        )
-        detector = IntegrityDetector(
-            chart_of_accounts={"1000"},
-            audit_rules=self._rules(),
-        )
-        result = detector.detect(df)
-        assert result.details["L1-03"].iloc[0] > 0.0
-        assert result.details["L3-01"].iloc[0] == 0.0
-        breakdown = result.metadata["rule_breakdowns"]["L3-01"]
-        assert breakdown["invalid_account_excluded_rows"] == 1
-
-    def test_allowed_keyword_suppresses_l301(self):
-        df = pd.DataFrame(
-            {
-                "document_id": ["D1"],
-                "debit_amount": [100.0],
-                "credit_amount": [100.0],
-                "gl_account": ["5000"],
-                "business_process": ["O2C"],
-                "header_text": ["판매수수료 미지급비용 설정"],
-                "company_code": ["C1"],
-                "fiscal_year": [2025],
-                "posting_date": pd.to_datetime(["2025-01-01"]),
-                "document_date": pd.to_datetime(["2025-01-01"]),
-                "document_type": ["SA"],
-            }
-        )
-        detector = IntegrityDetector(
-            chart_of_accounts={"5000"},
-            audit_rules=self._rules(),
-        )
-        result = detector.detect(df)
-        assert result.details["L3-01"].iloc[0] == 0.0
-        breakdown = result.metadata["rule_breakdowns"]["L3-01"]
-        assert breakdown["keyword_suppressed_rows"] == 1
-
-    def test_strict_allowed_category_mismatch_gets_review_score(self):
-        df = pd.DataFrame(
-            {
-                "document_id": ["D1"],
-                "debit_amount": [100.0],
-                "credit_amount": [100.0],
-                "gl_account": ["4100"],
-                "account_category": ["revenue"],
-                "business_process": ["P2P"],
-                "company_code": ["C1"],
-                "fiscal_year": [2025],
-                "posting_date": pd.to_datetime(["2025-01-01"]),
-                "document_date": pd.to_datetime(["2025-01-01"]),
-                "document_type": ["SA"],
-            }
-        )
-        rules = self._rules()
-        rules["l3_01_misclassified_account"]["strict_allowed_categories"] = True
-        rules["l3_01_misclassified_account"]["process_denied_accounts"] = {}
-        rules["l3_01_misclassified_account"]["process_disallowed_categories"] = {}
-        rules["l3_01_misclassified_account"]["process_allowed_categories"] = {"P2P": ["expense"]}
-        detector = IntegrityDetector(
-            chart_of_accounts={"4100"},
-            audit_rules=rules,
-        )
-        result = detector.detect(df)
-        assert result.details["L3-01"].iloc[0] == pytest.approx(0.40)
-        annotations = result.metadata["row_annotations"]["L3-01"]
-        assert annotations[0]["reason_code"] == "strict_allowed_category_mismatch"
 
 
 class TestDetectIntegration:
@@ -574,9 +333,9 @@ class TestDetectIntegration:
         detector = IntegrityDetector(chart_of_accounts=dt_coa)
         result = detector.detect(df)
 
-        a01_score = 0.90  # imbalance ratio 50 / 100 = 50%
-        a03_score = 0.80  # placeholder/reserved invalid account
-        # idx 2: L1-01+L1-03 동시 위반 → max(0.90, 0.80) = 0.90
+        a01_score = 1.0
+        a03_score = 1.0
+        # idx 2: L1-01+L1-03 동시 위반 → uniform max = 1.0
         assert result.scores.iloc[2] == pytest.approx(max(a01_score, a03_score))
 
     def test_skipped_rules_in_metadata(self, dt_balanced_df):

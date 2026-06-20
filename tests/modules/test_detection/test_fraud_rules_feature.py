@@ -59,7 +59,7 @@ class TestL4_01:
         result = b01_revenue_manipulation(df)
         assert not result.any()
 
-    def test_exposes_bucket_scores_and_annotations(self) -> None:
+    def test_exposes_binary_scores_and_annotations(self) -> None:
         df = pd.DataFrame({
             "gl_account": ["4100", "4100", "4100", "5100"],
             "is_revenue_account": [True, True, True, False],
@@ -95,7 +95,7 @@ class TestL2_01:
         df = pd.DataFrame({"debit_amount": [100.0]})
         assert not b02_near_threshold(df).any()
 
-    def test_exposes_bucket_scores_and_annotations(self) -> None:
+    def test_exposes_binary_scores_and_annotations(self) -> None:
         df = pd.DataFrame({
             "is_near_threshold": [True, True, True, False, False],
             "source": ["manual", "manual", "manual", "manual", "manual"],
@@ -117,7 +117,7 @@ class TestL2_01:
         result = b02_near_threshold(df)
 
         assert result.tolist() == [True, True, True, False, False]
-        assert result.attrs["score_series"].tolist() == [0.45, 0.60, 0.75, 0.0, 0.0]
+        assert result.attrs["score_series"].tolist() == [1.0, 1.0, 1.0, 0.0, 0.0]
         assert result.attrs["breakdown"]["bucket_counts"] == {
             "lower_band": 1,
             "close_band": 1,
@@ -130,7 +130,7 @@ class TestL2_01:
         assert result.attrs["row_annotations"][2]["queue_label"] == "priority_review"
         assert result.attrs["row_annotations"][2]["near_threshold_gap_ratio"] == 0.01
 
-    def test_routine_source_lower_and_close_band_are_zero_score_population(self) -> None:
+    def test_routine_source_hits_are_binary_flags(self) -> None:
         df = pd.DataFrame({
             "is_near_threshold": [True, True, True, True],
             "source": ["automated", "recurring", "automated", "manual"],
@@ -140,12 +140,12 @@ class TestL2_01:
         result = b02_near_threshold(df)
 
         assert result.tolist() == [True, True, True, True]
-        assert result.attrs["score_series"].tolist() == [0.0, 0.0, 0.35, 0.60]
+        assert result.attrs["score_series"].tolist() == [1.0, 1.0, 1.0, 1.0]
         assert result.attrs["breakdown"]["flagged_rows"] == 4
-        assert result.attrs["breakdown"]["scored_rows"] == 2
-        assert result.attrs["breakdown"]["zero_score_rows"] == 2
-        assert result.attrs["row_annotations"][0]["queue_label"] == "normal_population"
-        assert result.attrs["row_annotations"][2]["queue_label"] == "routine_razor_review"
+        assert result.attrs["breakdown"]["scored_rows"] == 4
+        assert result.attrs["breakdown"]["zero_score_rows"] == 0
+        assert result.attrs["row_annotations"][0]["queue_label"] == "priority_review"
+        assert result.attrs["row_annotations"][2]["queue_label"] == "priority_review"
 
     def test_annotations_preserve_non_integer_index(self) -> None:
         df = pd.DataFrame(
@@ -187,34 +187,76 @@ class TestL1_04:
 
         result = b03_exceeds_threshold(df)
 
-        assert result.tolist() == [False, True, True, False]
-        assert result.attrs["score_series"].tolist() == [0.0, 0.75, 0.90, 0.0]
-        assert result.attrs["review_score_series"].tolist() == [0.4, 0.0, 0.0, 0.0]
+        assert result.tolist() == [True, True, True, False]
+        assert result.attrs["score_series"].tolist() == [1.0, 1.0, 1.0, 0.0]
+        assert result.attrs["review_score_series"].tolist() == [0.0, 0.0, 0.0, 0.0]
         assert result.attrs["breakdown"]["bucket_counts"] == {
             "boundary": 1,
             "severe": 1,
             "non_approver": 1,
         }
-        assert result.attrs["breakdown"]["immediate_rows"] == 2
-        assert result.attrs["breakdown"]["review_rows"] == 1
-        assert result.attrs["row_annotations"][0]["queue_label"] == "review"
+        assert result.attrs["breakdown"]["immediate_rows"] == 3
+        assert result.attrs["breakdown"]["review_rows"] == 0
+        assert result.attrs["row_annotations"][0]["queue_label"] == "binary_flag"
         assert result.attrs["row_annotations"][1]["bucket"] == "severe"
         assert result.attrs["row_annotations"][1]["approval_excess_ratio"] == 0.75
 
-    def test_unresolved_limit_is_suppressed(self) -> None:
+    def test_unresolved_limit_with_approver_is_binary_flag(self) -> None:
         df = pd.DataFrame({
             "exceeds_threshold": [True, True],
             "approval_excess_bucket": ["boundary", "unresolved_limit"],
             "approval_limit_resolved": [True, False],
+            "approved_by": ["APR1", "APR2"],
         })
 
         result = b03_exceeds_threshold(df)
 
-        assert result.tolist() == [False, False]
-        assert result.attrs["breakdown"]["bucket_counts"] == {"boundary": 1}
-        assert result.attrs["breakdown"]["review_rows"] == 1
+        assert result.tolist() == [True, True]
+        assert result.attrs["breakdown"]["bucket_counts"] == {"boundary": 1, "unresolved_limit": 1}
+        assert result.attrs["breakdown"]["review_rows"] == 0
 
-    def test_automated_context_is_review_not_confirmed(self) -> None:
+    def test_blank_approver_is_not_l104(self) -> None:
+        df = pd.DataFrame({
+            "exceeds_threshold": [True],
+            "approval_limit_resolved": [False],
+            "approved_by": [""],
+        })
+
+        assert not b03_exceeds_threshold(df).any()
+
+    def test_unknown_approver_is_not_l104_even_when_limit_unresolved(self) -> None:
+        df = pd.DataFrame({
+            "exceeds_threshold": [False],
+            "approval_limit_resolved": [False],
+            "approved_by": ["APR-GHOST"],
+            "approver_in_master": pd.Series([False], dtype="boolean"),
+            "approver_can_approve_je": pd.Series([pd.NA], dtype="boolean"),
+        })
+
+        result = b03_exceeds_threshold(df)
+
+        assert result.tolist() == [False]
+
+    def test_real_approver_over_limit_remains_l104(self) -> None:
+        df = pd.DataFrame({
+            "exceeds_threshold": [True],
+            "approval_excess_bucket": ["severe"],
+            "approval_limit_resolved": [True],
+            "approved_by": ["APR-REAL"],
+            "approver_in_master": pd.Series([True], dtype="boolean"),
+            "approver_can_approve_je": pd.Series([True], dtype="boolean"),
+            "document_approval_amount": [1_500.0],
+            "approver_limit_amount": [1_000.0],
+            "approval_excess_amount": [500.0],
+            "approval_excess_ratio": [0.5],
+        })
+
+        result = b03_exceeds_threshold(df)
+
+        assert result.tolist() == [True]
+        assert result.attrs["score_series"].tolist() == [1.0]
+
+    def test_automated_context_is_binary_flag(self) -> None:
         df = pd.DataFrame({
             "exceeds_threshold": [True, True],
             "approval_excess_bucket": ["severe", "critical"],
@@ -225,11 +267,11 @@ class TestL1_04:
 
         result = b03_exceeds_threshold(df)
 
-        assert result.tolist() == [False, True]
-        assert result.attrs["score_series"].tolist() == [0.0, 0.90]
-        assert result.attrs["review_score_series"].tolist() == [0.4, 0.0]
-        assert result.attrs["breakdown"]["immediate_rows"] == 1
-        assert result.attrs["breakdown"]["review_rows"] == 1
+        assert result.tolist() == [True, True]
+        assert result.attrs["score_series"].tolist() == [1.0, 1.0]
+        assert result.attrs["review_score_series"].tolist() == [0.0, 0.0]
+        assert result.attrs["breakdown"]["immediate_rows"] == 2
+        assert result.attrs["breakdown"]["review_rows"] == 0
 
     def test_lone_automated_source_approval_excess_keeps_original_bucket(self) -> None:
         df = pd.DataFrame({
@@ -246,12 +288,12 @@ class TestL1_04:
         result = b03_exceeds_threshold(df)
 
         assert result.tolist() == [True]
-        assert result.attrs["score_series"].tolist() == [0.90]
+        assert result.attrs["score_series"].tolist() == [1.0]
         assert result.attrs["review_score_series"].tolist() == [0.0]
         assert result.attrs["breakdown"]["immediate_rows"] == 1
         assert result.attrs["breakdown"]["review_rows"] == 0
 
-    def test_batched_automated_source_approval_excess_remains_review(self) -> None:
+    def test_batched_automated_source_approval_excess_is_binary_flag(self) -> None:
         df = pd.DataFrame({
             "document_id": ["D1"],
             "exceeds_threshold": [True],
@@ -265,13 +307,13 @@ class TestL1_04:
 
         result = b03_exceeds_threshold(df)
 
-        assert result.tolist() == [False]
-        assert result.attrs["score_series"].tolist() == [0.0]
-        assert result.attrs["review_score_series"].tolist() == [0.4]
-        assert result.attrs["breakdown"]["immediate_rows"] == 0
-        assert result.attrs["breakdown"]["review_rows"] == 1
+        assert result.tolist() == [True]
+        assert result.attrs["score_series"].tolist() == [1.0]
+        assert result.attrs["review_score_series"].tolist() == [0.0]
+        assert result.attrs["breakdown"]["immediate_rows"] == 1
+        assert result.attrs["breakdown"]["review_rows"] == 0
 
-    def test_missing_identity_columns_keep_approval_excess_source_review_unchanged(self) -> None:
+    def test_missing_identity_columns_still_binary_flag(self) -> None:
         df = pd.DataFrame({
             "document_id": ["D1"],
             "exceeds_threshold": [True],
@@ -283,27 +325,26 @@ class TestL1_04:
 
         result = b03_exceeds_threshold(df)
 
-        assert result.tolist() == [False]
-        assert result.attrs["score_series"].tolist() == [0.0]
-        assert result.attrs["review_score_series"].tolist() == [0.4]
-        assert result.attrs["breakdown"]["review_rows"] == 1
+        assert result.tolist() == [True]
+        assert result.attrs["score_series"].tolist() == [1.0]
+        assert result.attrs["review_score_series"].tolist() == [0.0]
+        assert result.attrs["breakdown"]["review_rows"] == 0
 
 
 class TestL3_02:
-    def test_manual_entry_priority_flagged_and_population_reviewed(
+    def test_manual_entry_scores_binary(
         self,
         feature_df: pd.DataFrame,
     ) -> None:
         result = b08_manual_override(feature_df)
         assert result[0]
         assert result[3]
-        assert not result[4]
-        assert result.attrs["score_series"].iloc[0] == 0.60
-        assert result.attrs["score_series"].iloc[4] == 0.0
-        assert result.attrs["review_score_series"].iloc[4] == 0.35
-        assert result.attrs["breakdown"]["flagged_rows"] == 2
-        assert result.attrs["breakdown"]["candidate_rows"] == 3
-        assert result.attrs["breakdown"]["review_rows"] == 1
+        assert result[4]
+        assert result.attrs["score_series"].tolist() == [1.0, 0.0, 0.0, 1.0, 1.0, 0.0]
+        assert "review_score_series" not in result.attrs
+        assert result.attrs["breakdown"]["flagged_rows"] == 3
+        assert result.attrs["breakdown"]["manual_rows"] == 3
+        assert result.attrs["breakdown"]["adjustment_rows"] == 0
 
     def test_non_manual_not_flagged(self, feature_df: pd.DataFrame) -> None:
         result = b08_manual_override(feature_df)
@@ -314,16 +355,11 @@ class TestL3_02:
     def test_source_fallback_uses_manual_source_codes(self) -> None:
         df = pd.DataFrame({"source": ["Manual", "Adjustment", "automated", None]})
         result = b08_manual_override(df)
-        assert result.tolist() == [False, False, False, False]
-        assert result.attrs["review_score_series"].tolist() == [0.35, 0.35, 0.0, 0.0]
+        assert result.tolist() == [True, True, False, False]
+        assert result.attrs["score_series"].tolist() == [1.0, 1.0, 0.0, 0.0]
         assert result.attrs["breakdown"]["manual_rows"] == 1
         assert result.attrs["breakdown"]["adjustment_rows"] == 1
-        assert result.attrs["breakdown"]["candidate_rows"] == 2
-        assert result.attrs["breakdown"]["review_rows"] == 2
-        assert result.attrs["breakdown"]["bucket_counts"] == {
-            "manual_population": 1,
-            "adjustment_population": 1,
-        }
+        assert result.attrs["breakdown"]["flagged_rows"] == 2
 
     def test_source_fallback_uses_injected_manual_source_codes(self) -> None:
         df = pd.DataFrame({"source": ["LegacyManual", "Manual", "Adjustment"]})
@@ -331,10 +367,10 @@ class TestL3_02:
             df,
             audit_rules={"patterns": {"manual_source_codes": ["LegacyManual"]}},
         )
-        assert result.tolist() == [False, False, False]
-        assert result.attrs["review_score_series"].tolist() == [0.35, 0.0, 0.0]
+        assert result.tolist() == [True, False, False]
+        assert result.attrs["score_series"].tolist() == [1.0, 0.0, 0.0]
 
-    def test_exposes_priority_and_control_bypass_annotations(self) -> None:
+    def test_annotations_keep_fact_values_only(self) -> None:
         df = pd.DataFrame({
             "document_id": ["D1", "D2", "D3"],
             "source": ["Manual", "Adjustment", "Manual"],
@@ -350,17 +386,10 @@ class TestL3_02:
 
         result = b08_manual_override(df)
 
-        assert result.attrs["score_series"].tolist() == [0.75, 0.75, 0.75]
-        assert result.attrs["breakdown"]["control_bypass_rows"] == 3
-        assert result.attrs["breakdown"]["priority_rows"] == 2
-        assert result.attrs["row_annotations"][0]["bucket"] == "manual_control_bypass"
-        assert result.attrs["row_annotations"][1]["priority_reasons"] == [
-            "missing_approval_date",
-            "period_end",
-            "weak_description",
-            "high_risk_account",
-        ]
-        assert result.attrs["row_annotations"][2]["priority_reasons"] == [
-            "skipped_approval",
-            "high_amount",
-        ]
+        assert result.attrs["score_series"].tolist() == [1.0, 1.0, 1.0]
+        assert result.attrs["breakdown"]["flagged_rows"] == 3
+        assert result.attrs["breakdown"]["adjustment_rows"] == 1
+        assert result.attrs["row_annotations"][0]["score"] == 1.0
+        assert result.attrs["row_annotations"][0]["document_id"] == "D1"
+        assert "bucket" not in result.attrs["row_annotations"][0]
+        assert "priority_reasons" not in result.attrs["row_annotations"][1]

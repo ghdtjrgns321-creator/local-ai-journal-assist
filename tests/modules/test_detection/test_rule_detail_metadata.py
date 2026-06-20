@@ -26,7 +26,7 @@ EXPECTED_RULE_IDS = {
     "L1-06",
     "L1-07",
     "L1-08",
-    "L1-09",
+    "L1-07-02",
     "L2-01",
     "L2-02",
     "L2-03",
@@ -36,7 +36,6 @@ EXPECTED_RULE_IDS = {
     "L2-03d",
     "L2-04",
     "L2-05",
-    "L3-01",
     "L3-02",
     "L3-03",
     "L3-04",
@@ -118,12 +117,12 @@ def test_canonicalization_policy() -> None:
     assert canonicalize_rule_id("L1-01") == "L1-01"
 
 
-def test_canonical_transaction_count_is_31() -> None:
-    # L4-02(Benford macro)를 PHASE1-2 family 로 이관(2026-06-15) → canonical L1~L4 count 32→31.
+def test_canonical_transaction_count_is_30() -> None:
+    # L4-02(Benford macro)와 2026-06-20 폐기 룰을 제외해 canonical L1~L4 count 30.
     canonical_rule_ids = get_canonical_transaction_rule_ids()
 
-    assert len(canonical_rule_ids) == 31
-    assert len(set(canonical_rule_ids)) == 31
+    assert len(canonical_rule_ids) == 30
+    assert len(set(canonical_rule_ids)) == 30
     assert "L4-02" not in canonical_rule_ids
 
 

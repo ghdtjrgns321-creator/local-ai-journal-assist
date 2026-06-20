@@ -32,11 +32,10 @@ def test_macro_only_is_context():
     assert tiers["ledger_integrity"].tier == "CONTEXT"
 
 
-def test_duplicate_reference_match_is_medium():
-    # L2-02 reference_match floor (0.45) → MEDIUM
-    tiers = compute_topic_tiers([_ev("L2-02", 0.9)])
-    assert tiers["duplicate_outflow"].tier == "MEDIUM"
-    assert "duplicate_reference_match" in tiers["duplicate_outflow"].fired_triggers
+def test_duplicate_reference_match_single_primary_is_low():
+    tiers = compute_topic_tiers([_ev("L2-02", 0.6)])
+    assert tiers["duplicate_outflow"].tier == "LOW"
+    assert "duplicate_reference_match" not in tiers["duplicate_outflow"].fired_triggers
 
 
 def test_outflow_plus_approval_bypass_is_high():
@@ -74,22 +73,24 @@ def test_fictitious_high_via_related_party_third_leg():
     assert tiers["revenue_statistical"].tier == "HIGH"
 
 
-def test_fictitious_high_via_sensitive_account_third_leg():
-    # 가공전표 + 민감계정(L3-10) 2차정황 → HIGH
+def test_fictitious_not_high_via_sensitive_account_leg_excluded():
+    # §3.0 HIGH-1 2차정황 풀 {L4-04|L2-03|L3-03|L1-05|L3-11}에 민감계정(L3-10) 없음.
+    # §8(5) HIGH-1 2차정황 L3-10(0/67) 헛다리 삭제 → L3-10 만으로는 HIGH 불가, 약화형 MEDIUM.
     tiers = compute_topic_tiers([_ev("L4-03", 0.9), _ev("L3-02", 0.8), _ev("L3-10", 0.8)])
-    assert tiers["revenue_statistical"].tier == "HIGH"
+    assert tiers["revenue_statistical"].tier == "MEDIUM"
 
 
-def test_embezzlement_high_via_reversal_manual_without_approval():
-    # 횡령은폐 HIGH: 승인 흔적 없이 역분개(L2-05) + 수기(L3-02) + 고액(L4-03) — A안 신규 분기.
-    # 고액(L4-03)을 함께 요구해 정상 reversal+manual clearing 과 구분한다.
+def test_embezzlement_high_via_manual_and_high_amount():
+    # §3.0 HIGH-2 둘째 분기: (L2-02|L2-03|L2-05) & L3-02 & L4-03 → HIGH.
+    # §8(6) 자금유출+수기+고액 일반형. 역분개(L2-05)+수기(L3-02)+고액(L4-03)으로 검증.
     tiers = compute_topic_tiers([_ev("L2-05", 0.9), _ev("L3-02", 0.8), _ev("L4-03", 0.9)])
     assert tiers["duplicate_outflow"].tier == "HIGH"
     assert "embezzlement_concealment_high" in tiers["duplicate_outflow"].fired_triggers
 
 
-def test_embezzlement_not_high_reversal_manual_without_high_amount():
-    # 음성: 역분개(L2-05) + 수기(L3-02) 뿐, 고액(L4-03) 없음 → HIGH 아님 (정상 clearing 보호)
+def test_embezzlement_not_high_reversal_manual_without_bypass_or_high_amount():
+    # §3.0 HIGH-2: bypass 없고 L4-03(고액) 없으면 역분개+수기만으로는 HIGH 불가.
+    # §8(1) 고액 L4-03 복원 — 둘째 분기는 고액을 AND 로 요구한다.
     tiers = compute_topic_tiers([_ev("L2-05", 0.9), _ev("L3-02", 0.8)])
     assert tiers["duplicate_outflow"].tier != "HIGH"
 
@@ -112,13 +113,17 @@ def test_high_trigger_without_primary_does_not_escalate():
 
 
 def test_case_tier_takes_max():
-    # L2-02 + L1-05 → duplicate_outflow HIGH, approval_control LOW → case HIGH
+    # L2-02 + L1-05 → duplicate_outflow HIGH(outflow&bypass), approval_control 도
+    # HIGH(§3.0 bypass & L2-02 corroborant) → case HIGH(최고 tier).
     tiers = compute_topic_tiers([_ev("L2-02", 0.9), _ev("L1-05", 0.8)])
     assert case_tier(tiers) == "HIGH"
 
 
 def test_pick_primary_topic_by_tier():
-    tiers = compute_topic_tiers([_ev("L2-02", 0.9), _ev("L1-05", 0.8)])
+    # §3.0 HIGH-2: 역분개(L2-05, outflow) + 자기승인(L1-05, bypass) → duplicate_outflow HIGH.
+    # approval_control 은 corroborant(L4-03|L2-02|L2-03) 부재로 LOW → duplicate_outflow 가 primary.
+    tiers = compute_topic_tiers([_ev("L2-05", 0.9), _ev("L1-05", 0.8)])
+    assert tiers["duplicate_outflow"].tier == "HIGH"
     assert pick_primary_topic_by_tier(tiers) == "duplicate_outflow"
 
 

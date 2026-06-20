@@ -7,6 +7,7 @@ from pathlib import Path
 import pandas as pd
 
 from src.detection.base import DetectionResult, RuleFlag
+from src.ingest.datasynth_labels import SOURCE_PATH_ATTR
 from src.metrics.ground_truth_evaluator import (
     _label_doc_set_for_rule,
     build_benford_population_benchmarks,
@@ -16,7 +17,6 @@ from src.metrics.ground_truth_evaluator import (
     per_rule_label_analysis,
     uncovered_label_analysis,
 )
-from src.ingest.datasynth_labels import SOURCE_PATH_ATTR
 
 
 def _make_result(
@@ -500,7 +500,7 @@ class TestGroundTruthEvaluator:
         assert l309["breakdown"]["open_amount_bucket_counts"]["open_amount_high"] == 1
         assert l309["review_queue_docs"] == 2
 
-    def test_l2_03_keeps_confidence_bands_and_review_queue(self):
+    def test_l2_03_keeps_binary_scores_and_review_queue(self):
         df = pd.DataFrame(
             {
                 "document_id": ["D1", "D2", "D3", "D4"],
@@ -509,19 +509,16 @@ class TestGroundTruthEvaluator:
         )
         result = _make_result(
             "layer_b",
-            pd.DataFrame({"L2-03": [0.90, 0.75, 0.55, 0.0]}, index=df.index),
+            pd.DataFrame({"L2-03": [1.0, 1.0, 0.0, 0.0]}, index=df.index),
             metadata={
                 "rule_breakdowns": {
                     "L2-03": {
                         "reason_counts": {
                             "reference_duplicate": 1,
-                            "split_duplicate": 1,
-                            "near_duplicate": 1,
+                            "exact_duplicate": 1,
                         },
                         "confidence_band_counts": {
-                            "high": 1,
-                            "medium": 1,
-                            "low": 1,
+                            "binary": 2,
                         },
                     }
                 }
@@ -538,18 +535,19 @@ class TestGroundTruthEvaluator:
         l203 = next(item for item in analysis if item["rule_id"] == "L2-03")
 
         assert l203["score_bands"] == {
-            "high_confidence_docs": 1,
-            "medium_confidence_docs": 1,
-            "low_confidence_docs": 1,
+            "high_confidence_docs": 2,
+            "medium_confidence_docs": 0,
+            "low_confidence_docs": 0,
         }
-        assert l203["breakdown"]["confidence_band_counts"]["high"] == 1
+        assert l203["breakdown"]["confidence_band_counts"]["binary"] == 2
         assert l203["breakdown"]["reason_counts"]["reference_duplicate"] == 1
-        assert l203["review_queue_docs"] == 2
+        assert l203["breakdown"]["reason_counts"]["exact_duplicate"] == 1
+        assert l203["review_queue_docs"] == 0
         assert l203["status"] == "coverage_anchor"
         assert l203["truth_basis"] == (
-            "DuplicateEntry/ExactDuplicateAmount labels with confidence-band review queue"
+            "DuplicateEntry/ExactDuplicateAmount labels with binary re-posting evidence"
         )
-        assert "high/medium/low confidence bands" in l203["reason"]
+        assert "explicit reference re-posting or full row-clone evidence" in l203["reason"]
 
     def test_l2_01_keeps_threshold_proximity_bands(self):
         df = pd.DataFrame(
@@ -622,7 +620,7 @@ class TestGroundTruthEvaluator:
         )
         assert "pair-oriented" in l202["reason"]
 
-    def test_l2_03_score_bands_use_document_max_score(self):
+    def test_l2_03_binary_score_bands_use_document_max_score(self):
         df = pd.DataFrame(
             {
                 "document_id": ["D1", "D1", "D2", "D3"],
@@ -630,7 +628,7 @@ class TestGroundTruthEvaluator:
         )
         result = _make_result(
             "layer_b",
-            pd.DataFrame({"L2-03": [0.90, 0.55, 0.75, 0.0]}, index=df.index),
+            pd.DataFrame({"L2-03": [1.0, 1.0, 1.0, 0.0]}, index=df.index),
         )
         labels = pd.DataFrame(
             {"document_id": ["D1"], "anomaly_type": ["DuplicateEntry"]}
@@ -640,11 +638,11 @@ class TestGroundTruthEvaluator:
         l203 = next(item for item in analysis if item["rule_id"] == "L2-03")
 
         assert l203["score_bands"] == {
-            "high_confidence_docs": 1,
-            "medium_confidence_docs": 1,
+            "high_confidence_docs": 2,
+            "medium_confidence_docs": 0,
             "low_confidence_docs": 0,
         }
-        assert l203["review_queue_docs"] == 1
+        assert l203["review_queue_docs"] == 0
 
     def test_l2_05_keeps_reversal_interpretation_bands(self):
         df = pd.DataFrame(
@@ -749,7 +747,7 @@ class TestGroundTruthEvaluator:
         assert l303["breakdown"]["ic_population_docs"] == 3
         assert l303["review_queue_docs"] == 3
 
-    def test_l3_06_keeps_confirmed_and_normal_context_bands(self):
+    def test_l3_06_reports_single_after_hours_band(self):
         df = pd.DataFrame(
             {
                 "document_id": ["D1", "D2", "D3"],
@@ -758,12 +756,12 @@ class TestGroundTruthEvaluator:
         )
         result = _make_result(
             "layer_c",
-            pd.DataFrame({"L3-06": [0.45, 0.20, 0.0]}, index=df.index),
+            pd.DataFrame({"L3-06": [1.0, 1.0, 0.0]}, index=df.index),
             metadata={
                 "rule_breakdowns": {
                     "L3-06": {
-                        "confirmed_after_hours_rows": 1,
-                        "normal_system_context_rows": 1,
+                        "flagged_rows": 2,
+                        "after_hours_rows": 2,
                     }
                 }
             },
@@ -778,12 +776,9 @@ class TestGroundTruthEvaluator:
         analysis = per_rule_label_analysis(df, {"layer_c": result}, labels)
         l306 = next(item for item in analysis if item["rule_id"] == "L3-06")
 
-        assert l306["score_bands"] == {
-            "confirmed_after_hours_docs": 1,
-            "normal_system_context_docs": 1,
-        }
-        assert l306["breakdown"]["normal_system_context_rows"] == 1
-        assert l306["review_queue_docs"] == 1
+        assert l306["score_bands"] == {"after_hours_docs": 2}
+        assert l306["breakdown"]["after_hours_rows"] == 2
+        assert l306["review_queue_docs"] == 2
 
     def test_l3_07_keeps_direction_and_gap_size_bands(self):
         df = pd.DataFrame({"document_id": ["D1", "D2", "D3", "D4"]})
@@ -1046,44 +1041,6 @@ class TestGroundTruthEvaluator:
         }
         assert l311["breakdown"]["period_end_weighted_docs"] == 1
         assert l311["review_queue_docs"] == 3
-
-    def test_l3_01_keeps_exact_and_category_review_bands(self):
-        df = pd.DataFrame(
-            {
-                "document_id": ["D1", "D2", "D3", "D4"],
-                "gl_account": ["4100", "1200", "4100", "1000"],
-            }
-        )
-        result = _make_result(
-            "layer_a",
-            pd.DataFrame({"L3-01": [0.65, 0.45, 0.40, 0.0]}, index=df.index),
-            metadata={
-                "rule_breakdowns": {
-                    "L3-01": {
-                        "exact_denied_docs": 1,
-                        "category_mismatch_docs": 1,
-                        "strict_allowed_mismatch_docs": 1,
-                        "keyword_suppressed_docs": 1,
-                    }
-                }
-            },
-        )
-        labels = pd.DataFrame(
-            {
-                "document_id": ["D1"],
-                "anomaly_type": ["MisclassifiedAccount"],
-            }
-        )
-
-        analysis = per_rule_label_analysis(df, {"layer_a": result}, labels)
-        l301 = next(item for item in analysis if item["rule_id"] == "L3-01")
-
-        assert l301["score_bands"] == {
-            "exact_denied_docs": 1,
-            "category_review_docs": 2,
-        }
-        assert l301["breakdown"]["strict_allowed_mismatch_docs"] == 1
-        assert l301["review_queue_docs"] == 2
 
     def test_l4_05_keeps_behavior_bands_and_review_queue(self):
         df = pd.DataFrame(

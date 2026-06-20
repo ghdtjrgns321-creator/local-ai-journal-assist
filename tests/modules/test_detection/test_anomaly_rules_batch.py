@@ -11,25 +11,27 @@ class TestL4_06:
     def test_batch_period_end_concentration(self) -> None:
         """배치 전표 중 기말 비율 > 임계 → 배치 전체 플래그."""
         df = pd.DataFrame({
-            "source": ["batch"] * 10 + ["manual"] * 5,
-            "is_period_end": [True] * 8 + [False] * 2 + [True] * 5,
-            "debit_amount": [100.0] * 15,
-            "credit_amount": [0.0] * 15,
-            "posting_date": pd.date_range("2025-12-25", periods=15, freq="h"),
+            "source": ["batch"] * 11 + ["manual"] * 5,
+            "is_period_end": [True] * 9 + [False] * 2 + [True] * 5,
+            "debit_amount": [100.0] * 16,
+            "credit_amount": [0.0] * 16,
+            "posting_date": [pd.Timestamp("2025-12-25")] * 16,
+            "batch_id": ["B1"] * 16,
+            "job_id": ["J1"] * 16,
         })
-        # Why: 배치 10건 중 기말 8건 = 80% > 50% 임계
+        # Why: 배치 11건 중 기말 9건 > 50% 임계
         result = c13_batch_anomaly(df, period_end_ratio=0.5)
         assert result.attrs["score_series"].loc[result].eq(0.45).all()
-        assert result.attrs["breakdown"]["period_end_concentration_rows"] == 10
-        assert result.attrs["breakdown"]["period_end_only_rows"] == 10
+        assert result.attrs["breakdown"]["period_end_concentration_rows"] == 11
+        assert result.attrs["breakdown"]["period_end_only_rows"] == 11
         assert result.attrs["row_annotations"][0]["reason_codes"] == [
             "period_end_concentration",
         ]
         assert result.attrs["row_annotations"][0]["score_bucket"] == (
             "period_end_concentration"
         )
-        assert result[:10].all()   # 배치 전체 플래그
-        assert not result[10:].any()  # 수기 전표는 미플래그
+        assert result[:11].all()   # 배치 전체 플래그
+        assert not result[11:].any()  # 수기 전표는 미플래그
 
     def test_batch_simultaneous_creation(self) -> None:
         """같은 날 배치 N건 이상 → 해당 일자 배치 플래그."""
@@ -41,11 +43,15 @@ class TestL4_06:
             "debit_amount": [100.0] * 65,
             "credit_amount": [0.0] * 65,
             "posting_date": pd.to_datetime(dates),
+            "batch_id": ["B1"] * 65,
+            "job_id": ["J1"] * 65,
         })
         result = c13_batch_anomaly(df, simultaneous_threshold=50, period_end_ratio=0.99)
-        # Why: 12/01 60건 ≥ 50 → 플래그, 12/02 5건 < 50 → 미플래그
+        # Why: 12/01 60건 ≥ 50 → simultaneous, 12/02 5건은 신규 lone branch로 플래그
         assert result[:60].all()
-        assert not result[60:].any()
+        assert result[60:].all()
+        assert result.attrs["breakdown"]["simultaneous_creation_rows"] == 60
+        assert result.attrs["breakdown"]["lone_batch_identity_rows"] == 5
 
     def test_batch_simultaneous_creation_uses_document_count_not_line_count(self) -> None:
         """동일 timestamp의 multi-line 전표 1건은 대량 동시 생성으로 보지 않는다."""
@@ -56,9 +62,13 @@ class TestL4_06:
             "debit_amount": [100.0] * 60,
             "credit_amount": [0.0] * 60,
             "posting_date": [pd.Timestamp("2025-12-01 09:00:00")] * 60,
+            "batch_id": ["B1"] * 60,
+            "job_id": ["J1"] * 60,
         })
         result = c13_batch_anomaly(df, simultaneous_threshold=50, period_end_ratio=0.99)
-        assert not result.any()
+        assert result.all()
+        assert result.attrs["breakdown"]["simultaneous_creation_rows"] == 0
+        assert result.attrs["breakdown"]["lone_batch_identity_rows"] == 60
 
     def test_batch_simultaneous_creation_falls_back_to_row_count_without_document_id(self) -> None:
         """document_id가 없으면 기존처럼 row count 기준으로 graceful fallback."""
@@ -79,7 +89,9 @@ class TestL4_06:
             "is_period_end": [False] * 20,
             "debit_amount": [100.0] * 19 + [10000.0],  # 마지막 행 이상치
             "credit_amount": [0.0] * 20,
-            "posting_date": pd.date_range("2025-01-01", periods=20),
+            "posting_date": [pd.Timestamp("2025-01-01")] * 20,
+            "batch_id": ["B1"] * 20,
+            "job_id": ["J1"] * 20,
         })
         result = c13_batch_anomaly(
             df, period_end_ratio=0.99, simultaneous_threshold=100, amount_zscore=2.0,
@@ -191,11 +203,13 @@ class TestL4_06:
     def test_uniform_amounts_std_zero_safe(self) -> None:
         """배치 전표 금액이 모두 동일(std=0) → Z-score 에러 없이 False."""
         df = pd.DataFrame({
-            "source": ["batch"] * 10,
-            "is_period_end": [False] * 10,
-            "debit_amount": [500.0] * 10,
-            "credit_amount": [0.0] * 10,
-            "posting_date": pd.date_range("2025-06-01", periods=10),
+            "source": ["batch"] * 11,
+            "is_period_end": [False] * 11,
+            "debit_amount": [500.0] * 11,
+            "credit_amount": [0.0] * 11,
+            "posting_date": [pd.Timestamp("2025-06-01")] * 11,
+            "batch_id": ["B1"] * 11,
+            "job_id": ["J1"] * 11,
         })
         result = c13_batch_anomaly(
             df, period_end_ratio=0.99, simultaneous_threshold=100,
@@ -234,11 +248,11 @@ class TestL4_06:
     def test_batch_simultaneous_creation_uses_exact_timestamp_not_calendar_day(self) -> None:
         """Batch runs are grouped by exact posting timestamp, not the whole day."""
         df = pd.DataFrame({
-            "source": ["automated"] * 55 + ["automated"] * 5,
-            "document_id": [f"D{i:03d}" for i in range(60)],
-            "is_period_end": [False] * 60,
-            "debit_amount": [100.0] * 60,
-            "credit_amount": [0.0] * 60,
+            "source": ["automated"] * 55 + ["automated"] * 11,
+            "document_id": [f"D{i:03d}" for i in range(66)],
+            "is_period_end": [False] * 66,
+            "debit_amount": [100.0] * 66,
+            "credit_amount": [0.0] * 66,
             "posting_date": (
                 [
                     pd.Timestamp("2025-12-01 09:00:00") + pd.Timedelta(minutes=i)
@@ -246,9 +260,11 @@ class TestL4_06:
                 ]
                 + [
                     pd.Timestamp("2025-12-02 09:00:00") + pd.Timedelta(minutes=i)
-                    for i in range(5)
+                    for i in range(11)
                 ]
             ),
+            "batch_id": ["B1"] * 66,
+            "job_id": ["J1"] * 66,
         })
 
         result = c13_batch_anomaly(df, simultaneous_threshold=50, period_end_ratio=0.99)
@@ -277,8 +293,8 @@ class TestL4_06LoneBatchIdentity:
         assert result.attrs["score_series"].loc[0] == 0.45
         assert result.attrs["breakdown"]["lone_batch_identity_rows"] == 3
 
-    def test_batch_identity_present_not_flagged(self) -> None:
-        """batch_id가 있으면 단독이어도 위장 의심 아님."""
+    def test_batch_identity_present_but_same_day_lone_is_flagged(self) -> None:
+        """신규 OR 정의에서는 identity가 있어도 같은날 자동 전표가 임계 이하이면 위장 의심."""
         df = pd.DataFrame({
             "source": ["automated"] * 3,
             "document_id": [f"D{i}" for i in range(3)],
@@ -290,4 +306,5 @@ class TestL4_06LoneBatchIdentity:
             "job_id": ["J1"] * 3,
         })
         result = c13_batch_anomaly(df, period_end_ratio=0.99, simultaneous_threshold=50)
-        assert not result.any()
+        assert result.all()
+        assert result.attrs["breakdown"]["lone_batch_identity_rows"] == 3

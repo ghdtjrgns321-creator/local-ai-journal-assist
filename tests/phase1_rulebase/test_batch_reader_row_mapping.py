@@ -73,7 +73,7 @@ def test_string_line_number_is_coerced():
     """line_number 가 문자열로 저장된 옛 batch 도 정수로 강제 변환되어 매칭."""
     ledger = _make_ledger()
     flags = pd.DataFrame(
-        [{"document_id": "doc_A", "line_number": "2", "rule_code": "L3-01", "score": 0.6}]
+        [{"document_id": "doc_A", "line_number": "2", "rule_code": "L4-04", "score": 0.6}]
     )
     indices = _resolve_flag_row_indices(ledger, flags)
     assert indices.tolist() == [1.0]

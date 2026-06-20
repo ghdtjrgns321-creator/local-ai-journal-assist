@@ -129,17 +129,19 @@ class TestAnomalyDetectorIntegration:
             "credit_amount": [0.0, 0.0, 0.0, 0.0],
             "is_weekend": [True, False, True, False],
             "is_holiday": [False, True, True, False],
+            "source": ["batch", "manual", "system", "manual"],
         })
         result = AnomalyDetector().detect(df)
 
-        assert result.details["L3-05"].tolist() == [0.40, 0.35, 0.45, 0.0]
+        assert result.details["L3-05"].tolist() == [1.0, 1.0, 1.0, 0.0]
         breakdown = result.metadata["rule_breakdowns"]["L3-05"]
-        assert breakdown["calendar_review_docs"] == 3
-        assert breakdown["weekday_holiday_docs"] == 1
+        assert breakdown["flagged_docs"] == 3
+        assert breakdown["source_counts"] == {"batch": 1, "manual": 1, "system": 1}
         annotations = result.metadata["row_annotations"]["L3-05"]
-        assert annotations[0]["reason_code"] == "weekend"
-        assert annotations[1]["reason_code"] == "weekday_holiday"
-        assert annotations[2]["reason_code"] == "weekend_holiday"
+        assert annotations[0]["score"] == 1.0
+        assert annotations[0]["source"] == "batch"
+        assert annotations[1]["is_holiday"] is True
+        assert annotations[2]["is_weekend"] is True
 
     def test_flagged_indices_valid(self, full_anomaly_df: pd.DataFrame) -> None:
         """flagged_indices가 원본 인덱스 범위 내."""
@@ -171,8 +173,8 @@ class TestAnomalyDetectorIntegration:
         assert "L4-02" not in result.details.columns
         assert "benford_result" not in result.metadata
 
-    def test_l304_sensitive_account_bonus_does_not_create_flags(self) -> None:
-        """민감 계정 가중은 기존 L3-04 플래그에만 점수를 더한다."""
+    def test_l304_binary_score_ignores_amount_and_sensitive_account_bonus(self) -> None:
+        """L3-04는 기말/기초 여부만 1/0으로 점수화한다."""
         df = pd.DataFrame({
             "debit_amount": [1000.0, 10.0, 900.0, 20.0],
             "credit_amount": [0.0, 0.0, 0.0, 0.0],
@@ -183,17 +185,12 @@ class TestAnomalyDetectorIntegration:
         })
         detector = AnomalyDetector(
             audit_rules={
-                "patterns": {
-                    "period_end_sensitive_accounts": {
-                        "account_groups": ["revenue", "inventory"],
-                    },
-                    "period_end_whitelist": [],
-                },
+                "patterns": {},
             },
         )
 
         result = detector.detect(df)
 
-        assert result.details["L3-04"].iloc[0] > 0.6
+        assert result.details["L3-04"].tolist() == [1.0, 1.0, 0.0, 1.0]
+        assert set(result.details["L3-04"].unique()) == {0.0, 1.0}
         assert result.details["L3-04"].iloc[2] == 0.0
-        assert result.details["L3-04"].iloc[3] == 0.0

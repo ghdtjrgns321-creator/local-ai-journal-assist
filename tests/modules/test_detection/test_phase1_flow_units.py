@@ -495,7 +495,7 @@ def test_eligible_flow_absorbs_member_document_rule_hits() -> None:
     details = pd.DataFrame(
         {
             "IC03": [0.7, 0.7, 0.0],
-            "L3-03": [0.4, 0.4, 0.0],
+            "L3-03": [1.0, 1.0, 0.0],
         },
         index=df.index,
     )
@@ -556,7 +556,7 @@ def test_document_hits_absorb_into_one_primary_flow_when_document_has_multiple_f
     ic_details = pd.DataFrame(
         {
             "IC03": [0.7, 0.7, 0.0],
-            "L3-03": [0.4, 0.4, 0.0],
+            "L3-03": [1.0, 1.0, 0.0],
         },
         index=df.index,
     )

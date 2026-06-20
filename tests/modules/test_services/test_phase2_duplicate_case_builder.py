@@ -183,7 +183,7 @@ def test_moderate_tier_pair_included():
         top_pairs=[
             {
                 "rule_id": "L2-03b",
-                "rule_source": "near_duplicate_amount",
+                "rule_source": "reference_duplicate",
                 "pair_score": 0.70,
                 "left_index": 10,
                 "right_index": 12,

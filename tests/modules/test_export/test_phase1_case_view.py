@@ -20,10 +20,12 @@ from src.export.phase1_case_view import (
     build_phase1_macro_finding_queue,
     build_phase1_raw_rule_truth_index,
     build_phase1_review_candidate_summary,
+    build_phase1_rule_coverage,
     build_phase1_rule_document_counts,
     build_phase1_rule_document_detail,
     build_phase1_rule_documents,
     build_phase1_topic_top_n,
+    build_phase1_transaction_queue,
     resolve_phase1_case_result,
     summarize_phase1_case_result,
 )
@@ -33,6 +35,7 @@ from src.models.phase1_case import (
     Phase1CaseResult,
     RawRuleHitRef,
 )
+from src.models.phase1_unit import DocumentUnit
 
 BANNED_LEGACY_LABELS = {
     "Audit Risk",
@@ -220,10 +223,9 @@ def test_summarize_phase1_case_result_returns_theme_summary() -> None:
 
 
 def test_summarize_phase1_case_result_exposes_only_seven_topic_labels() -> None:
-    pipeline_result = _phase1([
-        _case(topic_id, primary_topic=topic_id, priority_score=0.5)
-        for topic_id in TOPIC_REGISTRY
-    ])
+    pipeline_result = _phase1(
+        [_case(topic_id, primary_topic=topic_id, priority_score=0.5) for topic_id in TOPIC_REGISTRY]
+    )
 
     summary = summarize_phase1_case_result(pipeline_result)
 
@@ -270,18 +272,20 @@ def test_build_phase1_case_queue_and_drilldown_return_projection_rows() -> None:
 
 
 def test_case_queue_and_topic_ranking_do_not_emit_banned_legacy_labels() -> None:
-    pipeline_result = _phase1([
-        _case(
-            "legacy",
-            primary_topic="duplicate_outflow",
-            primary_queue="manipulation_candidate",
-            primary_queue_label="조작 후보",
-            secondary_topics=["approval_control"],
-            secondary_queues=["low_signal_candidate"],
-            secondary_queue_labels=["저우선 위험신호"],
-            topic_scores={"duplicate_outflow": 0.72, "approval_control": 0.31},
-        )
-    ])
+    pipeline_result = _phase1(
+        [
+            _case(
+                "legacy",
+                primary_topic="duplicate_outflow",
+                primary_queue="manipulation_candidate",
+                primary_queue_label="조작 후보",
+                secondary_topics=["approval_control"],
+                secondary_queues=["low_signal_candidate"],
+                secondary_queue_labels=["저우선 위험신호"],
+                topic_scores={"duplicate_outflow": 0.72, "approval_control": 0.31},
+            )
+        ]
+    )
 
     queue_rows = build_phase1_case_queue(
         pipeline_result,
@@ -314,29 +318,30 @@ def test_build_phase1_case_queue_filters_by_issue_queue() -> None:
 
     queue = build_phase1_case_queue(
         pipeline_result,
-        queue_id="control_approval",
+        queue_id="approval_control",
         top_n=10,
     )
 
     assert queue
     assert all(
-        row["primary_queue"] == "control_approval"
-        or "control_approval" in row["secondary_queues"]
+        row["primary_queue"] == "approval_control" or "approval_control" in row["secondary_queues"]
         for row in queue
     )
 
 
 def test_legacy_artifact_primary_queue_falls_back_to_locked_topic() -> None:
-    pipeline_result = _phase1([
-        _case(
-            "legacy-control",
-            primary_topic="",
-            primary_queue="control_approval",
-            primary_queue_label="Audit Risk",
-            topic_scores={},
-            priority_score=0.67,
-        )
-    ])
+    pipeline_result = _phase1(
+        [
+            _case(
+                "legacy-control",
+                primary_topic="",
+                primary_queue="control_approval",
+                primary_queue_label="Audit Risk",
+                topic_scores={},
+                priority_score=0.67,
+            )
+        ]
+    )
 
     queue = build_phase1_case_queue(
         pipeline_result,
@@ -372,18 +377,20 @@ def test_build_phase1_case_queue_returns_low_signal_candidates_separately() -> N
 
 
 def test_fraud_scenario_tags_are_badges_not_queue_labels() -> None:
-    pipeline_result = _phase1([
-        _case(
-            "fraud-tags",
-            primary_topic="duplicate_outflow",
-            topic_scores={"duplicate_outflow": 0.8},
-            fraud_scenario_tags=[
-                "threshold_splitting",
-                "duplicate_payment",
-                "embezzlement_concealment_risk",
-            ],
-        )
-    ])
+    pipeline_result = _phase1(
+        [
+            _case(
+                "fraud-tags",
+                primary_topic="duplicate_outflow",
+                topic_scores={"duplicate_outflow": 0.8},
+                fraud_scenario_tags=[
+                    "threshold_splitting",
+                    "duplicate_payment",
+                    "embezzlement_concealment_risk",
+                ],
+            )
+        ]
+    )
 
     queue = build_phase1_case_queue(pipeline_result, top_n=10)
     drilldown = build_phase1_case_drilldown(pipeline_result, "fraud-tags")
@@ -411,22 +418,24 @@ def test_fraud_scenario_tags_are_badges_not_queue_labels() -> None:
 
 
 def test_topic_top_n_sorts_by_topic_score_not_priority_score() -> None:
-    pipeline_result = _phase1([
-        _case(
-            "higher-priority-lower-topic",
-            primary_topic="duplicate_outflow",
-            topic_scores={"duplicate_outflow": 0.4},
-            priority_score=0.99,
-            triage_rank_score=0.99,
-        ),
-        _case(
-            "lower-priority-higher-topic",
-            primary_topic="duplicate_outflow",
-            topic_scores={"duplicate_outflow": 0.8},
-            priority_score=0.2,
-            triage_rank_score=0.2,
-        ),
-    ])
+    pipeline_result = _phase1(
+        [
+            _case(
+                "higher-priority-lower-topic",
+                primary_topic="duplicate_outflow",
+                topic_scores={"duplicate_outflow": 0.4},
+                priority_score=0.99,
+                triage_rank_score=0.99,
+            ),
+            _case(
+                "lower-priority-higher-topic",
+                primary_topic="duplicate_outflow",
+                topic_scores={"duplicate_outflow": 0.8},
+                priority_score=0.2,
+                triage_rank_score=0.2,
+            ),
+        ]
+    )
 
     rows = build_phase1_topic_top_n(
         pipeline_result,
@@ -663,7 +672,6 @@ def _make_row_level_row_index_result(rule_id: str) -> SimpleNamespace:
         "L1-02",
         "L1-03",
         "L2-04",
-        "L3-01",
         "L3-03",
         "L3-05",
         "L3-06",
@@ -888,7 +896,7 @@ def _make_document_amount_policy_result(rule_id: str) -> SimpleNamespace:
 
 
 def test_approval_document_level_rules_use_document_amount_policy() -> None:
-    for rule_id in ("L1-04", "L1-05", "L1-07", "L1-09", "L2-01"):
+    for rule_id in ("L1-04", "L1-05", "L1-07", "L2-01"):
         rows = build_phase1_rule_documents(
             _make_document_amount_policy_result(rule_id),
             rule_id,
@@ -916,10 +924,7 @@ def test_document_level_difference_values_use_document_amount_policy() -> None:
 
 
 def _detail_map(row: dict) -> dict[str, object]:
-    return {
-        str(item["label"]): item.get("value")
-        for item in row.get("violation_details", [])
-    }
+    return {str(item["label"]): item.get("value") for item in row.get("violation_details", [])}
 
 
 def _make_pair_group_result(rule_id: str, fields: dict[str, object]) -> SimpleNamespace:
@@ -993,7 +998,7 @@ def test_l203_pair_group_evidence_exposes_signature_group_and_reason() -> None:
                 "duplicate_group_id": "JRN-GRP-1",
                 "duplicate_signature": "kr01|2026-04-30|210000|120",
                 "internal_reason_code": "L2-03a",
-                "matched_reason_codes": "document_duplicate,reference_duplicate",
+                "matched_reason_codes": "exact_duplicate,reference_duplicate",
             },
         ),
         "L2-03a",
@@ -1003,7 +1008,7 @@ def test_l203_pair_group_evidence_exposes_signature_group_and_reason() -> None:
     assert details["Duplicate group"] == "JRN-GRP-1"
     assert details["Duplicate signature"] == "kr01|2026-04-30|210000|120"
     assert details["Reason code"] == "L2-03a"
-    assert details["Matched reasons"] == "document_duplicate,reference_duplicate"
+    assert details["Matched reasons"] == "exact_duplicate,reference_duplicate"
 
 
 def test_l205_pair_group_evidence_exposes_reversal_pair_fields() -> None:
@@ -1039,7 +1044,6 @@ def test_phase1_rule_document_builders_cover_all_current_rules() -> None:
         "L1-06",
         "L1-07",
         "L1-08",
-        "L1-09",
         "L2-01",
         "L2-02",
         "L2-03",
@@ -1049,7 +1053,6 @@ def test_phase1_rule_document_builders_cover_all_current_rules() -> None:
         "L2-03d",
         "L2-04",
         "L2-05",
-        "L3-01",
         "L3-02",
         "L3-03",
         "L3-04",
@@ -1134,7 +1137,9 @@ def test_resolve_phase1_case_result_returns_none_when_artifact_is_missing() -> N
     pipeline_result = _make_pipeline_result()
     pipeline_result.phase1_case_result = None
     pipeline_result.phase1_case_path = str(
-        Path("C:/Users/ghdtj/workspace/portfolio/local-ai-assist/.tmp_phase1_case_view_tests/missing.json")
+        Path(
+            "C:/Users/ghdtj/workspace/portfolio/local-ai-assist/.tmp_phase1_case_view_tests/missing.json"
+        )
     )
 
     loaded = resolve_phase1_case_result(pipeline_result)
@@ -1146,7 +1151,6 @@ def test_resolve_phase1_case_result_returns_none_when_artifact_is_missing() -> N
 
 
 from src.export.phase1_case_view import (  # noqa: E402
-    Phase1CaseBasis,
     Phase1CaseBasisStatus,
     classify_phase1_case_basis,
 )
@@ -1229,3 +1233,160 @@ def test_classify_returns_fallback_when_phase1_none_but_redetect_has_cases() -> 
     basis = classify_phase1_case_basis(None, redetect_result=redetect)
     assert basis.status == Phase1CaseBasisStatus.FALLBACK_REDETECT
     assert basis.case_result is redetect.phase1_case_result
+
+
+# ── unit 단위 검토 큐 + 룰별 커버리지 (UNIT_MEASUREMENT_POLICY §1 Layer 1) ──
+
+
+def _unit_evidence(rule_id: str, document_id: str, row_index: int) -> RawRuleHitRef:
+    return RawRuleHitRef(
+        rule_id=rule_id,
+        severity=4,
+        document_id=document_id,
+        row_index=row_index,
+        evidence_type="duplicate_or_outflow",
+    )
+
+
+def _document_unit(
+    unit_id: str,
+    *,
+    priority_band: str,
+    rule_ids: list[str],
+    total_amount: float = 1000.0,
+    time_severity_score: int = 0,
+    triage_rank_score: float = 0.5,
+    topic_scores: dict[str, float] | None = None,
+) -> DocumentUnit:
+    return DocumentUnit(
+        unit_id=unit_id,
+        priority_band=priority_band,
+        triage_rank_score=triage_rank_score,
+        total_amount=total_amount,
+        time_severity_score=time_severity_score,
+        topic_scores=topic_scores or {"duplicate_outflow": 0.9},
+        evidence_rows=[
+            _unit_evidence(rule_id, unit_id, idx) for idx, rule_id in enumerate(rule_ids)
+        ],
+    )
+
+
+def _phase1_with_units(units: list[object]) -> SimpleNamespace:
+    # resolve_phase1_case_result 는 cases 가 비면 placeholder 로 보고 None 을 반환하므로
+    # 최소 1개 placeholder case 를 둔다. 큐·커버리지의 축은 units 다(case 는 미사용).
+    result = Phase1CaseResult(
+        run_id="unit-test",
+        company_id="kr01",
+        generated_at=datetime(2026, 4, 22, 3, 15, 22, tzinfo=UTC),
+        cases=[_case("placeholder")],
+        units=units,
+    )
+    return SimpleNamespace(phase1_case_result=result)
+
+
+def test_transaction_queue_excludes_low_units_keeps_high_and_medium() -> None:
+    # 정책: HIGH/MEDIUM tier unit 만 큐에 1줄씩. LOW 는 제외(커버리지 표로만 surface).
+    pr = _phase1_with_units(
+        [
+            _document_unit("DOC-HIGH", priority_band="high", rule_ids=["L2-02"]),
+            _document_unit("DOC-MED", priority_band="medium", rule_ids=["L2-02"]),
+            _document_unit("DOC-LOW", priority_band="low", rule_ids=["L2-02"]),
+        ]
+    )
+
+    rows = build_phase1_transaction_queue(pr)
+
+    unit_ids = {row["unit_id"] for row in rows}
+    # 빈 큐 PASS 금지 — HIGH/MEDIUM 최소 2줄 기대.
+    assert len(rows) == 2
+    assert "DOC-HIGH" in unit_ids
+    assert "DOC-MED" in unit_ids
+    assert "DOC-LOW" not in unit_ids
+    bands = {row["unit_id"]: row["priority_band"] for row in rows}
+    assert bands["DOC-HIGH"] == "high"
+    assert bands["DOC-MED"] == "medium"
+
+
+def test_transaction_queue_orders_high_before_medium() -> None:
+    # band 컷·정렬은 _band_rank 경유. HIGH 가 MEDIUM 보다 먼저.
+    pr = _phase1_with_units(
+        [
+            _document_unit("DOC-MED", priority_band="medium", rule_ids=["L2-02"]),
+            _document_unit("DOC-HIGH", priority_band="high", rule_ids=["L2-02"]),
+        ]
+    )
+
+    rows = build_phase1_transaction_queue(pr)
+
+    assert [row["unit_id"] for row in rows] == ["DOC-HIGH", "DOC-MED"]
+
+
+def test_transaction_queue_time_severity_outranks_amount_within_band() -> None:
+    # 정책: 동일 band·triage 에서 time_severity 가 금액보다 위(anti-burying).
+    pr = _phase1_with_units(
+        [
+            _document_unit(
+                "DOC-BIG-AMOUNT",
+                priority_band="high",
+                rule_ids=["L2-02"],
+                total_amount=9_999_999.0,
+                time_severity_score=0,
+                triage_rank_score=0.5,
+            ),
+            _document_unit(
+                "DOC-OFFTIME",
+                priority_band="high",
+                rule_ids=["L2-02"],
+                total_amount=1.0,
+                time_severity_score=2,
+                triage_rank_score=0.5,
+            ),
+        ]
+    )
+
+    rows = build_phase1_transaction_queue(pr)
+
+    assert [row["unit_id"] for row in rows] == ["DOC-OFFTIME", "DOC-BIG-AMOUNT"]
+
+
+def test_rule_coverage_counts_all_units_and_only_standalone_primary() -> None:
+    # 정책: 모든 unit(HIGH/MEDIUM/LOW) 의 evidence_rows 를 룰별 전수 집계.
+    # 행 대상 = standalone primary 룰만. booster(L3-05) 는 제외.
+    pr = _phase1_with_units(
+        [
+            _document_unit("DOC-A", priority_band="high", rule_ids=["L2-02", "L3-05"]),
+            _document_unit("DOC-B", priority_band="medium", rule_ids=["L2-02"]),
+            _document_unit("DOC-C", priority_band="low", rule_ids=["L2-02"]),
+        ]
+    )
+
+    coverage = build_phase1_rule_coverage(pr)
+
+    assert coverage["available"] is True
+    items = {item["rule_id"]: item for item in coverage["items"]}
+    # 빈 커버리지 PASS 금지 — standalone primary 룰 L2-02 최소 1행.
+    assert "L2-02" in items
+    # booster L3-05 는 커버리지 행 대상이 아님(standalone_rankable=False).
+    assert "L3-05" not in items
+    l202 = items["L2-02"]
+    # 3개 document 모두에서 L2-02 발화 → distinct document 3.
+    assert l202["documents"] == 3
+    # tier 분해: HIGH unit 1, MEDIUM unit 1, LOW unit 1.
+    assert l202["high"] == 1
+    assert l202["medium"] == 1
+    assert l202["low"] == 1
+
+
+def test_rule_coverage_includes_high_unit_rule_firing_in_document_count() -> None:
+    # 정책: HIGH unit 의 룰 발화도 documents 카운트에 포함(tier 무관 전수).
+    pr = _phase1_with_units(
+        [
+            _document_unit("DOC-HIGH", priority_band="high", rule_ids=["L2-02"]),
+        ]
+    )
+
+    coverage = build_phase1_rule_coverage(pr)
+
+    items = {item["rule_id"]: item for item in coverage["items"]}
+    assert items["L2-02"]["documents"] == 1
+    assert items["L2-02"]["high"] == 1

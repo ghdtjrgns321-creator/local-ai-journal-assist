@@ -45,12 +45,12 @@ class TestLoneAutomatedMask:
         mask = lone_automated_mask(df, lone_threshold=10)
         assert mask.all()
 
-    def test_batch_identity_present_is_not_lone(self) -> None:
+    def test_partial_batch_identity_is_lone(self) -> None:
         df = _frame(batch_id=["B1"] * 6, job_id=[None] * 6)
-        assert not lone_automated_mask(df, lone_threshold=10).any()
+        assert lone_automated_mask(df, lone_threshold=10).all()
 
-    def test_crowd_of_same_day_automated_is_not_lone(self) -> None:
-        # Why: 같은 날 동류 전표가 임계보다 많으면 정상 배치 무리로 본다
+    def test_crowd_with_missing_identity_is_lone(self) -> None:
+        # Why: 신규 정의는 식별자 일부/전체 공백이면 같은 날 무리 여부와 무관하게 위장 의심이다.
         n = 30
         df = pd.DataFrame(
             {
@@ -61,7 +61,15 @@ class TestLoneAutomatedMask:
                 "job_id": [None] * n,
             }
         )
-        assert not lone_automated_mask(df, lone_threshold=10).any()
+        assert lone_automated_mask(df, lone_threshold=10).all()
+
+    def test_missing_identity_columns_use_same_day_lone_branch_only(self) -> None:
+        df = _frame().drop(columns=["batch_id", "job_id"])
+        assert lone_automated_mask(df, lone_threshold=10).all()
+
+        crowded = pd.concat([df] * 3, ignore_index=True)
+        crowded["document_id"] = [f"D{i}" for i in range(len(crowded))]
+        assert not lone_automated_mask(crowded, lone_threshold=10).any()
 
     def test_manual_rows_never_lone(self) -> None:
         df = _frame(source=["manual"] * 6, batch_id=[None] * 6, job_id=[None] * 6)
@@ -80,5 +88,5 @@ class TestTrustedAutomatedMask:
             }
         )
         mask = trusted_automated_mask(df, lone_threshold=10)
-        # D1: 자동+배치ID → 신뢰. D2: 자동+정체성 없음+단독 → 비신뢰. D3: 수기 → 자동 아님.
-        assert mask.tolist() == [True, False, False]
+        # D1/D2: job_id 공백 또는 단독일자 → 비신뢰. D3: 수기 → 자동 아님.
+        assert mask.tolist() == [False, False, False]

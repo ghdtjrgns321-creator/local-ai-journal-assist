@@ -21,7 +21,8 @@ def test_l1_06_review_pair_is_excluded_from_l106_score() -> None:
     assert l106.flagged_count == 0
     assert result.details["L1-06"].eq(0.0).all()
     assert result.metadata["rule_breakdowns"]["L1-06"]["review_rows"] == 0
-    assert result.metadata["rule_breakdowns"]["L1-06"]["work_scope_review_rows_excluded"] == 2
+    assert result.metadata["rule_breakdowns"]["L1-06"]["yellow_rows"] == 2
+    assert result.metadata["row_annotations"]["L1-06"][0]["signal_class"] == "yellow"
 
 
 def test_l1_06_review_is_not_promoted_by_self_approval() -> None:
@@ -41,3 +42,4 @@ def test_l1_06_review_is_not_promoted_by_self_approval() -> None:
     assert l106.flagged_count == 0
     assert result.details["L1-06"].eq(0.0).all()
     assert result.metadata["rule_breakdowns"]["L1-06"]["corroborated_review_rows"] == 0
+    assert result.metadata["rule_breakdowns"]["L1-06"]["yellow_rows"] == 2

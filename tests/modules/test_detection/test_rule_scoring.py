@@ -13,8 +13,66 @@ from src.detection.topic_scoring import (
     apply_topic_floors,
     compute_fraud_scenario_tags,
     compute_topic_scores,
+    compute_topic_tiers,
     pick_primary_topic,
 )
+
+
+def _ev(rule_id: str, score: float = 0.6) -> dict[str, object]:
+    """레드플래그 on 한 룰 evidence (나머지 메타는 RULE_SCORING_REGISTRY 폴백)."""
+    return {"rule_id": rule_id, "normalized_score": score}
+
+
+def test_related_party_reversal_is_medium_after_high7_handoff():
+    # §3.0 / §8(4) HIGH-7 → MEDIUM 이관: 역분개(L2-05) & 관계사(L3-03) → duplicate_outflow MEDIUM
+    # (related_party_reversal_medium). 기말 L3-04 필수 제외 — L2-05/L3-03 단독으로 승격되어야 한다.
+    tiers = compute_topic_tiers([_ev("L2-05"), _ev("L3-03")])
+    assert tiers["duplicate_outflow"].tier == "MEDIUM"
+
+
+def test_expense_capitalization_fires_account_logic_high_via_period_end_leg():
+    # §3.0 HIGH-9: L2-04 비용자산화 & L3-02 수기 & (L4-03|L3-04|L1-06) 셋째다리. 여기선 L3-04.
+    tiers = compute_topic_tiers([_ev("L2-04"), _ev("L3-02"), _ev("L3-04")])
+    assert tiers["account_logic"].tier == "HIGH"
+
+
+def test_period_end_high_fires_via_corroborant_leg():
+    # §3.0 HIGH-4: (L3-04|L3-11) & (L3-10|L4-04|L4-03). timing_seed(L3-04) + corroborant(L4-04).
+    # §8(5) 적요부실 L3-08(0/22)은 corroborant 풀에서 삭제됨.
+    tiers = compute_topic_tiers([_ev("L3-04"), _ev("L4-04")])
+    assert tiers["closing_timing"].tier == "HIGH"
+
+
+def test_period_end_not_high_via_removed_weak_description_leg():
+    # §8(5) HIGH-4 적요부실 L3-08 헛다리 삭제: L3-04 + L3-08 만으로는 HIGH 불가.
+    tiers = compute_topic_tiers([_ev("L3-04"), _ev("L3-08")])
+    assert tiers["closing_timing"].tier != "HIGH"
+
+
+def test_embezzlement_reversal_is_not_high_without_bypass_or_high_amount():
+    # §3.0 HIGH-2 / §8(1) 고액 복원: 역분개(L2-05)+수기(L3-02)는 bypass 도 고액(L4-03)도 없으면
+    # HIGH 불가(둘째 분기가 L4-03 을 AND 로 요구).
+    tiers = compute_topic_tiers([_ev("L2-05"), _ev("L3-02")])
+    assert tiers["duplicate_outflow"].tier != "HIGH"
+
+
+def test_embezzlement_reversal_fires_high_with_manual_and_high_amount():
+    # §3.0 HIGH-2 둘째 분기: (L2-02|L2-03|L2-05) & L3-02 & L4-03 → HIGH.
+    tiers = compute_topic_tiers([_ev("L2-05"), _ev("L3-02"), _ev("L4-03")])
+    assert tiers["duplicate_outflow"].tier == "HIGH"
+
+
+def test_unknown_approver_with_cutoff_is_not_approval_high():
+    # §3.0 HIGH-5: bypass & (L4-03|L2-02|L2-03). cutoff(L3-11)은 corroborant 가 아니므로
+    # 유령승인자(L1-07-02)+cutoff 만으로는 approval HIGH 불가(§8(5) 강맥락 L3-11 삭제).
+    tiers = compute_topic_tiers([_ev("L1-07-02"), _ev("L3-11")])
+    assert tiers["approval_control"].tier != "HIGH"
+
+
+def test_high_amount_corroborant_lifts_approval_bypass_to_high():
+    # §3.0 HIGH-5 / §8(1) 고액 복원: 승인우회(L1-05) & 고액(L4-03) → approval HIGH.
+    tiers = compute_topic_tiers([_ev("L1-05"), _ev("L4-03")])
+    assert tiers["approval_control"].tier == "HIGH"
 
 
 def test_rule_scoring_registry_covers_phase1_transaction_rules():
@@ -109,17 +167,16 @@ def test_rule_score_uses_rule_signal_not_severity_only():
     assert weak_signal.normalized_score < strong_signal.normalized_score
 
 
-def test_l101_normalized_score_preserves_imbalance_signal():
+def test_l101_normalized_score_accepts_uniform_data_integrity_signal():
     evidence = normalize_rule_evidence(
         rule_id="L1-01",
         evidence_type="data_integrity_failure",
         severity=5,
-        raw_value=0.15,
-        display_label="rounding_scale",
+        raw_value=1.0,
     )
 
-    assert evidence.signal_strength == pytest.approx(0.15)
-    assert evidence.normalized_score == pytest.approx(0.15)
+    assert evidence.signal_strength == pytest.approx(1.0)
+    assert evidence.normalized_score == pytest.approx(1.0)
 
 
 def test_l104_bucket_normalization_preserves_phase1_risk_order():
@@ -163,7 +220,7 @@ def test_l104_boundary_bucket_does_not_receive_topic_floor():
     assert scores["approval_control"] < 0.75
 
 
-def test_l104_critical_bucket_keeps_approval_topic_floor():
+def test_l104_critical_bucket_does_not_receive_topic_floor():
     evidence = normalize_rule_evidence(
         rule_id="L1-04",
         evidence_type="control_failure",
@@ -172,84 +229,50 @@ def test_l104_critical_bucket_keeps_approval_topic_floor():
         display_label="critical",
     )
 
-    assert RULE_SCORING_REGISTRY["L1-04"].floor_eligible_labels == frozenset(
-        {"critical", "non_approver"}
-    )
-    assert evidence.floor_policy_ids == ("approval_control_high",)
+    assert RULE_SCORING_REGISTRY["L1-04"].floor_policy_ids == ()
+    assert RULE_SCORING_REGISTRY["L1-04"].floor_eligible_labels is None
+    assert evidence.floor_policy_ids == ()
 
 
-def test_l201_near_threshold_buckets_are_monotonic_after_phase1_normalization():
+def test_l201_near_threshold_buckets_are_uniform_after_phase1_normalization():
     normalized = [
         normalize_rule_evidence(
             rule_id="L2-01",
             evidence_type="duplicate_or_outflow",
             severity=3,
-            raw_value=raw_score,
+            raw_value=1.0,
             display_label=bucket,
         ).normalized_score
-        for bucket, raw_score in [
-            ("lower_band", 0.45),
-            ("close_band", 0.60),
-            ("razor_band", 0.75),
-        ]
+        for bucket in ("lower_band", "close_band", "razor_band")
     ]
 
-    assert normalized == pytest.approx([0.27, 0.36, 0.45])
-    assert normalized == sorted(normalized)
+    assert normalized == pytest.approx([0.45, 0.45, 0.45])
 
 
-def test_l201_routine_razor_scores_below_manual_lower_band():
+def test_l201_routine_hit_has_zero_signal():
     routine = normalize_rule_evidence(
         rule_id="L2-01",
         evidence_type="duplicate_or_outflow",
         severity=3,
-        raw_value=0.35,
+        raw_value=0.0,
         display_label="razor_band",
     )
-    manual_lower = normalize_rule_evidence(
-        rule_id="L2-01",
-        evidence_type="duplicate_or_outflow",
+
+    assert routine.signal_strength == 0.0
+    assert routine.normalized_score == 0.0
+
+
+def test_l103_uniform_signal_has_no_bucket_override():
+    evidence = normalize_rule_evidence(
+        rule_id="L1-03",
+        evidence_type="logic_mismatch",
         severity=3,
-        raw_value=0.45,
-        display_label="lower_band",
+        raw_value=1.0,
+        display_label="placeholder_or_reserved",
     )
 
-    assert routine.normalized_score == pytest.approx(0.2025)
-    assert routine.normalized_score < manual_lower.normalized_score
-
-
-def test_l103_raw_score_is_not_folded_by_coarse_label():
-    normalized = [
-        normalize_rule_evidence(
-            rule_id="L1-03",
-            evidence_type="logic_mismatch",
-            severity=3,
-            raw_value=score,
-            display_label="high",
-        ).normalized_score
-        for score in [0.60, 0.75, 0.90]
-    ]
-
-    assert normalized == pytest.approx([0.45, 0.5625, 0.675])
-    assert normalized == sorted(normalized)
-    assert len(set(normalized)) == 3
-
-
-def test_l301_raw_score_order_is_preserved_after_normalization():
-    normalized = {
-        score: normalize_rule_evidence(
-            rule_id="L3-01",
-            evidence_type="logic_mismatch",
-            severity=3,
-            raw_value=score,
-        ).normalized_score
-        for score in [0.65, 0.45, 0.40]
-    }
-
-    assert normalized[0.65] == pytest.approx(0.2925)
-    assert normalized[0.45] == pytest.approx(0.2025)
-    assert normalized[0.40] == pytest.approx(0.18)
-    assert normalized[0.65] > normalized[0.45] > normalized[0.40]
+    assert evidence.signal_strength == pytest.approx(1.0)
+    assert evidence.normalized_score == pytest.approx(0.75)
 
 
 def test_l310_signal_bands_preserve_phase1_priority_order():
@@ -317,7 +340,7 @@ def test_l107_component_score_is_preserved_for_phase1_priority():
     assert normalized == sorted(normalized)
 
 
-def test_l305_calendar_scores_preserve_phase1_risk_order():
+def test_l305_calendar_scores_are_binary_after_phase1_normalization():
     normalized = [
         normalize_rule_evidence(
             rule_id="L3-05",
@@ -327,14 +350,13 @@ def test_l305_calendar_scores_preserve_phase1_risk_order():
             display_label=label,
         ).normalized_score
         for score, label in [
-            (0.35, "weekday_holiday"),
-            (0.40, "weekend"),
-            (0.45, "weekend_holiday"),
+            (0.0, ""),
+            (1.0, "weekend"),
+            (1.0, "holiday"),
         ]
     ]
 
-    assert normalized == pytest.approx([0.08775, 0.09945, 0.117])
-    assert normalized == sorted(normalized)
+    assert normalized == pytest.approx([0.0, 0.117, 0.117])
 
 
 def test_l307_gap_buckets_are_monotonic_after_phase1_normalization():
@@ -544,28 +566,6 @@ def test_topic_scoring_uses_primary_secondary_and_tags():
     )
 
 
-def test_audit_evidence_score_boosts_but_does_not_seed_topic_score():
-    no_rule_scores = compute_topic_scores(
-        [],
-        audit_evidence_score={"approval_control": 1.0},
-    )
-    primary = normalize_rule_evidence(
-        rule_id="L1-05",
-        evidence_type="control_failure",
-        severity=3,
-        raw_value=0.6,
-    )
-    without_context = compute_topic_scores([primary])
-    with_context = compute_topic_scores(
-        [primary],
-        audit_evidence_score={"approval_control": 1.0},
-    )
-
-    assert max(no_rule_scores.values()) == 0.0
-    assert with_context["approval_control"] > without_context["approval_control"]
-    assert with_context["approval_control"] < 0.75
-
-
 def _topic_evidences(rule_specs):
     return [
         normalize_rule_evidence(
@@ -586,18 +586,19 @@ def _topic_evidences(rule_specs):
             "closing_timing",
             "period_end_adjustment_risk",
             0.75,
-            "period_end_or_late_posting + high_amount + weak_description_or_sensitive_account",
+            "period_end_or_late_posting + weak_description_or_sensitive_account",
             [
+                # §3.0 HIGH-4 corroborant 풀 (L3-10|L4-04|L4-03).
+                # L3-08 은 §8(5) 삭제됨 → L4-04 사용.
                 ("L3-04", "timing_anomaly", 3, 0.6, ""),
-                ("L4-03", "statistical_outlier", 3, 0.7, "high_zscore"),
-                ("L3-08", "timing_anomaly", 1, 0.6, ""),
+                ("L4-04", "logic_mismatch", 2, 0.6, ""),
             ],
         ),
         (
             "duplicate_outflow",
             "embezzlement_concealment_risk",
             0.75,
-            "outflow_or_duplicate + (approval_bypass or reversal_with_manual)",
+            "outflow_or_duplicate + (approval_bypass or manual_with_high_amount)",
             [
                 ("L2-05", "duplicate_or_outflow", 3, 0.8, ""),
                 ("L1-05", "control_failure", 4, 0.8, ""),
@@ -618,10 +619,12 @@ def _topic_evidences(rule_specs):
             "approval_control",
             "approval_bypass_risk",
             0.75,
-            "approval_bypass + high_amount_or_cutoff_or_strong_abnormal_timing",
+            "approval_bypass + high_amount_or_duplicate",
             [
+                # §3.0 HIGH-5 corroborant 풀 (L4-03|L2-02|L2-03).
+                # cutoff(L3-11) 은 §8(5) 삭제됨 → L4-03 사용.
                 ("L1-07", "control_failure", 4, 0.8, ""),
-                ("L4-03", "statistical_outlier", 3, 0.8, "high_zscore"),
+                ("L4-03", "statistical_outlier", 3, 0.7, ""),
             ],
         ),
     ],
@@ -678,86 +681,71 @@ def test_approval_manual_scope_does_not_create_embezzlement_floor():
     assert breakdowns["duplicate_outflow"].fraud_combo_policy_ids == ()
 
 
+# §3.0 / §8(5): approval_bypass_medium 전 분기 폐기. 승인우회 + 약맥락(수기·비영업일·야간)은
+#   더 이상 어떤 approval combo floor 도 발화하지 않는다(HIGH-5 corroborant = L4-03|L2-02|L2-03 만).
 @pytest.mark.parametrize(
-    ("rule_specs", "blocked_reason", "expected_medium_reason"),
+    "rule_specs",
     [
-        (
-            [
-                ("L1-07", "control_failure", 4, 0.8, ""),
-                ("L3-02", "control_failure", 3, 0.8, ""),
-            ],
-            "approval_bypass + manual_adjustment",
-            "approval_bypass + manual_adjustment_context",
-        ),
-        (
-            [
-                ("L1-07", "control_failure", 4, 0.8, ""),
-                ("L3-05", "timing_anomaly", 3, 0.6, ""),
-            ],
-            "approval_bypass + non_business_day_timing",
-            "approval_bypass + non_business_day_context",
-        ),
-        (
-            [
-                ("L1-07", "control_failure", 4, 0.8, ""),
-                ("L3-06", "timing_anomaly", 3, 0.6, ""),
-            ],
-            "approval_bypass + abnormal_time",
-            "approval_bypass + after_hours_context",
-        ),
+        [
+            ("L1-07", "control_failure", 4, 0.8, ""),
+            ("L3-02", "control_failure", 3, 0.8, ""),
+        ],
+        [
+            ("L1-07", "control_failure", 4, 0.8, ""),
+            ("L3-05", "timing_anomaly", 3, 0.6, ""),
+        ],
+        [
+            ("L1-07", "control_failure", 4, 0.8, ""),
+            ("L3-06", "timing_anomaly", 3, 0.6, ""),
+        ],
     ],
 )
-def test_approval_bypass_with_weak_timing_or_manual_context_is_medium_not_high(
-    rule_specs,
-    blocked_reason,
-    expected_medium_reason,
-):
+def test_approval_bypass_with_weak_context_fires_no_approval_combo_floor(rule_specs):
     evidences = _topic_evidences(rule_specs)
 
     breakdowns = compute_topic_scores(evidences, return_breakdown=True)
 
-    assert breakdowns["approval_control"].score >= 0.60
+    # combo floor 미발화 → score 가 HIGH(0.75) 미만이고 fraud_combo policy 가 비어 있다.
     assert breakdowns["approval_control"].score < 0.75
-    assert blocked_reason not in breakdowns["approval_control"].fraud_combo_policy_ids
-    assert expected_medium_reason in breakdowns["approval_control"].fraud_combo_policy_ids
+    assert breakdowns["approval_control"].fraud_combo_policy_ids == ()
 
 
+# §3.0 / §8(1) 고액 복원·§8(6) 조합 정합 이후, 근거 충족 HIGH 조합은 복원된 leg 로 발화한다.
+#   - closing_timing: (L3-04|L3-11) & (L3-10|L4-04|L4-03)   ※L3-08 corroborant 삭제됨
+#   - duplicate_outflow: (L2-02|L2-03|L2-05) & L3-02 & L4-03 (고액 AND)  ※bypass 없는 분기
 @pytest.mark.parametrize(
-    ("topic_id", "rule_specs", "blocked_reason"),
+    ("topic_id", "rule_specs", "expected_reason"),
     [
         (
             "closing_timing",
             [
                 ("L3-04", "timing_anomaly", 3, 0.6, ""),
-                ("L3-02", "control_failure", 3, 0.8, ""),
-                ("L3-08", "timing_anomaly", 1, 0.6, ""),
+                ("L4-03", "statistical_outlier", 3, 0.7, ""),
             ],
-            "period_end + manual_adjustment + weak_description",
+            "period_end_or_late_posting + weak_description_or_sensitive_account",
         ),
         (
             "duplicate_outflow",
             [
                 ("L2-05", "duplicate_or_outflow", 3, 0.8, ""),
-                ("L3-12", "access_scope_review", 3, 0.8, ""),
                 ("L3-02", "control_failure", 3, 0.8, ""),
+                ("L4-03", "statistical_outlier", 3, 0.7, ""),
             ],
-            "reversal_or_offset + work_scope_concentration + manual_adjustment",
+            "outflow_or_duplicate + (approval_bypass or manual_with_high_amount)",
         ),
     ],
 )
-def test_weak_context_combinations_do_not_create_medium_floor(
+def test_grounded_combos_fire_high_with_restored_legs(
     topic_id,
     rule_specs,
-    blocked_reason,
+    expected_reason,
 ):
     evidences = _topic_evidences(rule_specs)
 
     breakdowns = compute_topic_scores(evidences, return_breakdown=True)
-    tags = compute_fraud_scenario_tags(evidences)
 
-    assert breakdowns[topic_id].score < 0.60
-    assert blocked_reason not in breakdowns[topic_id].fraud_combo_policy_ids
-    assert not any(tag.endswith("_risk") for tag in tags)
+    assert breakdowns[topic_id].score >= 0.75
+    assert expected_reason in breakdowns[topic_id].fraud_combo_policy_ids
 
 
 @pytest.mark.parametrize(
@@ -778,12 +766,12 @@ def test_single_rules_do_not_apply_fraud_combo_floor(rule_specs):
     assert not any(tag.endswith("_risk") for tag in compute_fraud_scenario_tags(evidences))
 
 
-def test_l202_duplicate_payment_confidence_order_is_preserved():
+def test_l202_duplicate_payment_reasons_are_uniform_binary():
     cases = [
-        ("reference_match", 0.90),
-        ("mixed_reference_fallback", 0.70),
-        ("amount_partner_fallback", 0.65),
-        ("blank_reference_fallback", 0.60),
+        ("reference_match", 1.0),
+        ("mixed_reference_fallback", 1.0),
+        ("amount_partner_fallback", 1.0),
+        ("blank_reference_fallback", 1.0),
     ]
 
     normalized = [
@@ -797,8 +785,7 @@ def test_l202_duplicate_payment_confidence_order_is_preserved():
         for label, raw_value in cases
     ]
 
-    assert normalized == pytest.approx([0.54, 0.42, 0.39, 0.36])
-    assert normalized == sorted(normalized, reverse=True)
+    assert normalized == pytest.approx([0.60, 0.60, 0.60, 0.60])
 
 
 def test_l202_near_extra_reason_does_not_receive_topic_floor():
@@ -813,12 +800,12 @@ def test_l202_near_extra_reason_does_not_receive_topic_floor():
     assert evidence.floor_policy_ids == ()
 
 
-def test_l202_reference_match_applies_medium_topic_floor_only():
+def test_l202_reference_match_has_no_topic_floor():
     evidence = normalize_rule_evidence(
         rule_id="L2-02",
         evidence_type="duplicate_or_outflow",
         severity=3,
-        raw_value=0.90,
+        raw_value=1.0,
         display_label="reference_match",
     )
 
@@ -827,9 +814,8 @@ def test_l202_reference_match_applies_medium_topic_floor_only():
         [evidence],
     )
 
-    assert evidence.floor_policy_ids == ("duplicate_reference_match",)
-    assert scores["duplicate_outflow"] == pytest.approx(0.45)
-    assert scores["duplicate_outflow"] < 0.75
+    assert evidence.floor_policy_ids == ()
+    assert scores["duplicate_outflow"] == pytest.approx(0.0)
 
 
 def test_fraud_combo_rule_scope_gates_automated_only_hits():

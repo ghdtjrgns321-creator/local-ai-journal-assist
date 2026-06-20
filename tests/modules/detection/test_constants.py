@@ -20,7 +20,7 @@ class TestRuleCodesIntegrity:
     def test_rule_count(self) -> None:
         # Why: Current registry includes L1-L4, analytical, graph, evidence, access,
         # trendbreak, NLP, and Phase2 ML rule codes.
-        assert len(RULE_CODES) == 70
+        assert len(RULE_CODES) == 69
 
     def test_layer_a_ids(self) -> None:
         for rid in ("L1-01", "L1-02", "L1-03"):
@@ -32,7 +32,6 @@ class TestRuleCodesIntegrity:
 
     def test_layer_c_ids(self) -> None:
         for rid in (
-            "L3-01",
             "L3-02",
             "L3-03",
             "L3-04",

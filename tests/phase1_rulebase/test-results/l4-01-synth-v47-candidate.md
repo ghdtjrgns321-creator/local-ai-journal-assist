@@ -32,7 +32,7 @@ Existing broad `RevenueManipulation` labels remain in the dataset. Total `Revenu
 | `reversal_return_credit` | mostly low or moderate z-score | reversal/return coverage, not L4-01 direct truth |
 | `period_end_push` | around z-score 2, below direct threshold | L3-04 + revenue coverage |
 | `manual_revenue_entry` | around z-score 1.5 | L3-02 + revenue coverage |
-| `process_account_mismatch` | around z-score 1.5 | L3-01 + revenue coverage |
+| `process_account_mismatch` | around z-score 1.5 | L4-04 + revenue coverage |
 | `composite_low_amount_dispersion` | below direct threshold | Phase 2/3 weak-signal coverage |
 
 This is not a zero-FP/zero-FN fitting dataset. It makes only the high-value subtype directly friendly to L4-01 and keeps the other revenue-manipulation scenarios as combination or downstream coverage.

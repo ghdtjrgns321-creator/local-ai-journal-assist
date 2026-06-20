@@ -7,7 +7,6 @@ import pytest
 
 from src.detection.anomaly_rules_simple import (
     c01_period_end_large,
-    c01_period_end_sensitive_account,
     c02_weekend_entry,
     c03_after_hours_entry,
     c04_backdated_entry,
@@ -43,30 +42,24 @@ def anomaly_feature_df() -> pd.DataFrame:
 
 
 class TestL3_04:
-    def test_period_end_high_amount_flagged(self, anomaly_feature_df: pd.DataFrame) -> None:
-        """월말 + 금액 > Q3 → flagged."""
-        result = c01_period_end_large(anomaly_feature_df, quantile=0.75)
-        # 행5: is_period_end=True, amount=200e6 (최고액) → True
-        assert result[5]
-
-    def test_period_end_low_amount_not_flagged(self, anomaly_feature_df: pd.DataFrame) -> None:
-        """월말이지만 금액 ≤ Q3 → not flagged."""
-        result = c01_period_end_large(anomaly_feature_df, quantile=0.75)
-        # 행2: is_period_end=True, amount=10e6 (하위) → False
-        assert result[2]
-        assert result.attrs["score_series"].iloc[2] == 0.0
-
-    def test_period_end_manual_low_amount_flagged(self, anomaly_feature_df: pd.DataFrame) -> None:
-        """Period-end manual entries are included even when not high amount."""
-        anomaly_feature_df["is_manual_je"] = [
-            False, False, True, False, False, False, False, False,
+    def test_period_end_flagged_binary(self, anomaly_feature_df: pd.DataFrame) -> None:
+        """기말/기초 피처가 True면 금액과 무관하게 binary flagged."""
+        result = c01_period_end_large(anomaly_feature_df)
+        assert result.tolist() == [True, False, True, False, True, True, False, False]
+        assert result.attrs["score_series"].tolist() == [
+            1.0,
+            0.0,
+            1.0,
+            0.0,
+            1.0,
+            1.0,
+            0.0,
+            0.0,
         ]
-        result = c01_period_end_large(anomaly_feature_df, quantile=0.75)
-        assert result[2]
 
     def test_non_period_end_not_flagged(self, anomaly_feature_df: pd.DataFrame) -> None:
         """월말 아닌 행은 고액이어도 not flagged."""
-        result = c01_period_end_large(anomaly_feature_df, quantile=0.75)
+        result = c01_period_end_large(anomaly_feature_df)
         assert not result[3]  # is_period_end=False, amount=80e6
 
     def test_missing_feature_returns_false(self) -> None:
@@ -74,125 +67,66 @@ class TestL3_04:
         df = pd.DataFrame({"debit_amount": [100.0], "credit_amount": [0.0]})
         assert not c01_period_end_large(df).any()
 
-    def test_grouped_q3_per_account_group(self) -> None:
-        """account_group별 Q3 적용 — 그룹 내 상대적 고액만 플래그."""
-        # Why: expense [10, 20, 30, 100] → Q3=47.5, revenue [1000, 2000, 3000, 10000] → Q3=4750
+    def test_period_end_start_and_mid_month_toy_cases(self) -> None:
+        """toy 3케이스: 기말=1, 기초=1, 월중=0."""
         df = pd.DataFrame({
-            "debit_amount":  [10, 20, 30, 100, 1000, 2000, 3000, 10000],
-            "credit_amount": [0] * 8,
-            "is_period_end": [True] * 8,
-            "account_group": ["expense"] * 4 + ["revenue"] * 4,
-        })
-        result = c01_period_end_large(df, quantile=0.75, min_group_size=3)
-        # expense: 100 > Q3(47.5) → True
-        assert result[3]
-        # expense: 10, 20, 30 ≤ Q3 → False
-        assert result[0] and result[1] and result[2]
-        assert result.attrs["score_series"].iloc[0] == 0.0
-        # revenue: 10000 > Q3(4750) → True
-        assert result[7]
-        # revenue: 1000, 2000, 3000 ≤ Q3 → False
-        assert result[4] and result[5]
-
-    def test_small_group_fallback_to_global(self) -> None:
-        """n < min_group_size인 그룹은 전체 Q3로 fallback."""
-        df = pd.DataFrame({
-            "debit_amount":  [10, 20, 80, 90, 9000],
-            "credit_amount": [0] * 5,
-            "is_period_end": [True] * 5,
-            # Why: 'rare' 그룹은 1건뿐 → 전체 Q3 fallback
-            "account_group": ["expense"] * 4 + ["rare"],
-        })
-        result = c01_period_end_large(df, quantile=0.75, min_group_size=3)
-        # rare(idx=4): 9000 > 전체 Q3(≈86.25) → True
-        assert result[4]
-
-    def test_no_account_group_uses_global(self, anomaly_feature_df: pd.DataFrame) -> None:
-        """account_group 미존재 시 기존 전체 Q3 동작과 동일."""
-        result_with_param = c01_period_end_large(
-            anomaly_feature_df, quantile=0.75, min_group_size=30,
-        )
-        result_without = c01_period_end_large(anomaly_feature_df, quantile=0.75)
-        pd.testing.assert_series_equal(result_with_param, result_without)
-
-    def test_whitelist_downgrades_approved_recurring_closing_pattern(self) -> None:
-        """Auditor-approved recurring closing patterns remain flagged with lower priority."""
-        df = pd.DataFrame({
-            "debit_amount": [1000.0, 1000.0, 10.0, 20.0],
-            "credit_amount": [0.0, 0.0, 0.0, 0.0],
-            "is_period_end": [True, True, True, True],
-            "source": ["batch", "manual", "batch", "manual"],
-            "created_by": ["SAP_BATCH", "USER01", "SAP_BATCH", "USER02"],
-            "document_type": ["AF", "SA", "AF", "SA"],
-            "account_group": ["fixed_assets", "revenue", "fixed_assets", "expense"],
-            "line_text": ["monthly depreciation", "manual revenue adj", "monthly depreciation", ""],
-        })
-        whitelist = [{
-            "source": ["batch"],
-            "created_by": ["SAP_BATCH"],
-            "document_type": ["AF"],
-            "account_group": ["fixed_assets"],
-            "description_contains": ["depreciation"],
-        }]
-
-        result = c01_period_end_large(
-            df,
-            quantile=0.5,
-            min_group_size=30,
-            whitelist_patterns=whitelist,
-        )
-
-        assert result[0]
-        assert result[1]
-        assert result.attrs["score_series"].tolist()[0] == 0.20
-        assert result.attrs["row_annotations"][0]["bucket"] == "closing_recurring_low_priority"
-        assert result.attrs["row_annotations"][0]["whitelist_matched"] is True
-        assert result.attrs["breakdown"]["whitelisted_recurring_rows"] == 2
-
-    def test_exposes_l304_scores_breakdown_and_annotations(self) -> None:
-        df = pd.DataFrame({
-            "document_id": ["D1", "D2", "D3", "D4"],
-            "debit_amount": [1000.0, 100.0, 500.0, 900.0],
-            "credit_amount": [0.0, 0.0, 0.0, 0.0],
-            "is_period_end": [True, True, True, False],
-            "is_manual_je": [False, True, True, False],
-            "created_by": ["u1", "u2", "u3", "u4"],
-            "approved_by": ["mgr", "mgr", "u3", "mgr"],
-            "approval_date": ["2025-01-01", "2025-01-01", "2025-01-01", "2025-01-01"],
-            "description_quality": ["normal", "normal", "poor", "normal"],
+            "document_id": ["END", "START", "MID"],
+            "posting_date": pd.to_datetime(["2025-01-30", "2025-02-03", "2025-02-15"]),
+            "debit_amount": [1.0, 2.0, 999999.0],
+            "credit_amount": [0.0, 0.0, 0.0],
+            "is_period_end": [True, True, False],
+            "source": ["manual", "manual", "manual"],
         })
 
-        result = c01_period_end_large(df, quantile=0.5)
+        result = c01_period_end_large(df, period_end_margin_days=5)
 
-        assert result.tolist() == [True, True, True, False]
-        assert result.attrs["score_series"].tolist() == [0.70, 0.0, 0.0, 0.0]
-        assert result.attrs["breakdown"]["bucket_counts"] == {
-            "closing_amount_p95": 1,
-            "closing_base": 2,
+        assert result.tolist() == [True, True, False]
+        assert result.attrs["score_series"].tolist() == [1.0, 1.0, 0.0]
+        assert result.attrs["row_annotations"][0]["period_phase"] == "end"
+        assert result.attrs["row_annotations"][1]["period_phase"] == "start"
+        assert result.attrs["breakdown"]["period_end_rows"] == 1
+        assert result.attrs["breakdown"]["period_start_rows"] == 1
+
+    def test_period_start_column_is_used_before_date_inference(self) -> None:
+        df = pd.DataFrame({
+            "posting_date": pd.to_datetime(["2025-02-15"]),
+            "is_period_end": [False],
+            "is_period_start": [True],
+        })
+
+        result = c01_period_end_large(df)
+
+        assert result.tolist() == [True]
+        assert result.attrs["score_series"].tolist() == [1.0]
+        assert result.attrs["row_annotations"][0]["period_phase"] == "start"
+
+    def test_exposes_l304_binary_breakdown_and_annotations(self) -> None:
+        df = pd.DataFrame({
+            "document_id": ["D1", "D2", "D3"],
+            "posting_date": pd.to_datetime(["2025-01-31", "2025-02-01", "2025-02-10"]),
+            "debit_amount": [1000.0, 100.0, 500.0],
+            "credit_amount": [0.0, 0.0, 0.0],
+            "is_period_end": [True, True, False],
+            "created_by": ["u1", "u2", "u3"],
+            "approved_by": ["mgr", "mgr", "u3"],
+            "source": ["manual", "batch", "manual"],
+            "business_process": ["R2R", "R2R", "P2P"],
+            "account_group": ["revenue", "expense", "expense"],
+            "gl_account": ["4000", "5000", "5000"],
+        })
+
+        result = c01_period_end_large(df)
+
+        assert set(result.attrs["score_series"].unique()) == {0.0, 1.0}
+        assert result.attrs["breakdown"] == {
+            "flagged_rows": 2,
+            "period_end_rows": 1,
+            "period_start_rows": 1,
+            "source_counts": {"manual": 1, "batch": 1},
         }
-        assert result.attrs["breakdown"]["priority_rows"] == 1
-        assert result.attrs["row_annotations"][2]["bucket"] == "closing_base"
-        assert result.attrs["row_annotations"][2]["priority_reasons"] == [
-            "manual_entry",
-            "weak_description",
-            "self_approval",
-        ]
-
-    def test_sensitive_account_mask_matches_group_and_prefix(self) -> None:
-        """민감 계정 설정은 account_group과 gl_account prefix 둘 다 지원."""
-        df = pd.DataFrame({
-            "account_group": ["revenue", "expense", "other"],
-            "gl_account": ["4000", "6200", "1205"],
-        })
-        result = c01_period_end_sensitive_account(
-            df,
-            {
-                "account_groups": ["revenue"],
-                "account_prefixes": ["12"],
-            },
-        )
-        assert result.tolist() == [True, False, True]
-
+        assert result.attrs["row_annotations"][0]["period_phase"] == "end"
+        assert result.attrs["row_annotations"][0]["document_id"] == "D1"
+        assert result.attrs["row_annotations"][1]["period_phase"] == "start"
 
 # ── L3-05 주말 전기 ──────────────────────────────────────────
 
@@ -224,21 +158,35 @@ class TestL3_05:
             "document_id": ["D1", "D2", "D3", "D4"],
             "is_weekend": [True, False, True, False],
             "is_holiday": [False, True, True, False],
+            "source": ["batch", "manual", "system", "manual"],
         })
 
         result = c02_weekend_entry(df)
 
         assert result.tolist() == [True, True, True, False]
-        assert result.attrs["score_series"].tolist() == [0.40, 0.35, 0.45, 0.0]
+        assert result.attrs["score_series"].tolist() == [1.0, 1.0, 1.0, 0.0]
         breakdown = result.attrs["breakdown"]
-        assert breakdown["calendar_review_docs"] == 3
-        assert breakdown["weekend_only_docs"] == 1
-        assert breakdown["weekday_holiday_docs"] == 1
-        assert breakdown["weekend_holiday_docs"] == 1
+        assert breakdown["flagged_docs"] == 3
+        assert breakdown["weekend_rows"] == 2
+        assert breakdown["holiday_rows"] == 2
+        assert breakdown["source_counts"] == {"batch": 1, "manual": 1, "system": 1}
         annotations = result.attrs["row_annotations"]
-        assert annotations[0]["reason_code"] == "weekend"
-        assert annotations[1]["reason_code"] == "weekday_holiday"
-        assert annotations[2]["reason_code"] == "weekend_holiday"
+        assert annotations[0]["score"] == 1.0
+        assert annotations[0]["source"] == "batch"
+        assert annotations[1]["is_holiday"] is True
+        assert annotations[2]["is_weekend"] is True
+
+    def test_weekend_entry_scores_automated_source_as_binary_hit(self) -> None:
+        df = pd.DataFrame({
+            "is_weekend": [True, True],
+            "is_holiday": [False, False],
+            "source": ["batch", "manual"],
+        })
+
+        result = c02_weekend_entry(df)
+
+        assert result.tolist() == [True, True]
+        assert result.attrs["score_series"].tolist() == [1.0, 1.0]
 
 
 class TestL3_06:
@@ -277,7 +225,7 @@ class TestL3_06:
         result = c03_after_hours_entry(df)
         assert result.tolist() == [True, False, False, False]
 
-    def test_after_hours_metadata_splits_human_and_system_context(self) -> None:
+    def test_after_hours_metadata_is_binary_and_source_neutral(self) -> None:
         df = pd.DataFrame({
             "document_id": ["D1", "D2", "D3"],
             "debit_amount": [100.0, 100.0, 100.0],
@@ -293,63 +241,44 @@ class TestL3_06:
 
         result = c03_after_hours_entry(df)
 
-        assert result.attrs["score_series"].tolist() == [0.45, 0.20, 0.0]
-        assert result.attrs["breakdown"]["confirmed_after_hours_rows"] == 1
-        assert result.attrs["breakdown"]["normal_system_context_rows"] == 1
-        assert result.attrs["row_annotations"][0]["bucket"] == "confirmed_after_hours"
-        assert result.attrs["row_annotations"][1]["bucket"] == "normal_system_context"
+        assert result.tolist() == [True, True, False]
+        assert result.attrs["score_series"].tolist() == [1.0, 1.0, 0.0]
+        assert result.attrs["breakdown"]["flagged_rows"] == 2
+        assert result.attrs["breakdown"]["after_hours_rows"] == 2
+        assert "bucket" not in result.attrs["row_annotations"][0]
+        assert "source_category" not in result.attrs["row_annotations"][1]
+        assert result.attrs["row_annotations"][0]["score"] == 1.0
+        assert result.attrs["row_annotations"][1]["score"] == 1.0
 
-    def test_lone_automated_source_does_not_receive_system_context_discount(self) -> None:
+    def test_automated_source_after_hours_scores_one(self) -> None:
         df = pd.DataFrame({
-            "document_id": ["D1"],
-            "is_after_hours": [True],
-            "posting_date": pd.to_datetime(["2025-01-02 23:30:00"]),
-            "source": ["automated"],
-            "batch_id": [None],
-            "job_id": [None],
-            "created_by": ["USR01"],
+            "document_id": ["D1", "D2"],
+            "is_after_hours": [True, True],
+            "posting_date": pd.to_datetime([
+                "2025-01-02 23:30:00",
+                "2025-01-03 02:30:00",
+            ]),
+            "source": ["automated", "manual"],
+            "created_by": ["USR01", "USR02"],
         })
 
         result = c03_after_hours_entry(df)
 
-        assert result[0]
-        assert result.attrs["score_series"].tolist() == [0.45]
-        assert result.attrs["breakdown"]["confirmed_after_hours_rows"] == 1
-        assert result.attrs["breakdown"]["normal_system_context_rows"] == 0
-        assert result.attrs["row_annotations"][0]["bucket"] == "confirmed_after_hours"
+        assert result.tolist() == [True, True]
+        assert result.attrs["score_series"].tolist() == [1.0, 1.0]
+        assert result.attrs["breakdown"]["source_counts"] == {"automated": 1, "manual": 1}
 
-    def test_batched_automated_source_keeps_after_hours_system_context_discount(self) -> None:
+    def test_binary_scores_include_non_after_hours_zero(self) -> None:
         df = pd.DataFrame({
-            "document_id": ["D1"],
-            "is_after_hours": [True],
-            "posting_date": pd.to_datetime(["2025-01-02 23:30:00"]),
-            "source": ["automated"],
-            "batch_id": ["BATCH-1"],
-            "job_id": [None],
-            "created_by": ["USR01"],
+            "document_id": ["D1", "D2"],
+            "is_after_hours": [True, False],
+            "source": ["automated", "manual"],
         })
 
         result = c03_after_hours_entry(df)
 
-        assert result.attrs["score_series"].tolist() == [0.20]
-        assert result.attrs["breakdown"]["confirmed_after_hours_rows"] == 0
-        assert result.attrs["breakdown"]["normal_system_context_rows"] == 1
-        assert result.attrs["row_annotations"][0]["bucket"] == "normal_system_context"
-
-    def test_missing_identity_columns_keep_after_hours_system_context_unchanged(self) -> None:
-        df = pd.DataFrame({
-            "document_id": ["D1"],
-            "is_after_hours": [True],
-            "posting_date": pd.to_datetime(["2025-01-02 23:30:00"]),
-            "source": ["automated"],
-            "created_by": ["USR01"],
-        })
-
-        result = c03_after_hours_entry(df)
-
-        assert result.attrs["score_series"].tolist() == [0.20]
-        assert result.attrs["breakdown"]["normal_system_context_rows"] == 1
-        assert result.attrs["row_annotations"][0]["bucket"] == "normal_system_context"
+        assert result.tolist() == [True, False]
+        assert result.attrs["score_series"].tolist() == [1.0, 0.0]
 
 
 # ── L3-07 전기일-문서일 장기 괴리 ─────────────────────────────
@@ -508,14 +437,15 @@ class TestL1_08:
         result = c05_fiscal_period_mismatch(df)
 
         assert result.tolist() == [True, False]
-        assert result.attrs["score_series"].tolist() == [0.95, 0.0]
+        # L1-08 is a binary PHASE1 rule; context reasons annotate, not score-escalate.
+        assert result.attrs["score_series"].tolist() == [1.0, 0.0]
         assert result.attrs["breakdown"]["corroborated_rows"] == 1
         annotation = result.attrs["row_annotations"][0]
         assert annotation["bucket"] == "period_mismatch_corroborated"
         assert annotation["actual_period"] == 1
         assert annotation["expected_period"] == 3
         assert annotation["period_distance"] == 2
-        assert annotation["score"] == 0.95
+        assert annotation["score"] == 1.0
         assert set(annotation["context_reasons"]) == {
             "period_end",
             "manual_entry",
@@ -781,7 +711,7 @@ class TestL4_05:
         assert result.attrs["breakdown"]["low_volume_midnight_rows"] == 3
         assert result.attrs["breakdown"]["manual_user_count"] == 1
 
-    def test_batched_automated_source_stays_out_of_behavior_population(self) -> None:
+    def test_partial_identity_automated_source_enters_behavior_population(self) -> None:
         df = pd.DataFrame({
             "document_id": ["D1", "D2", "D3"],
             "created_by": ["AUTOUSER"] * 3,
@@ -804,10 +734,10 @@ class TestL4_05:
 
         result = c12_abnormal_hours_concentration(df, auto_entry_sources=["automated"])
 
-        assert result.tolist() == [False, False, False]
-        assert result.attrs["breakdown"]["manual_user_count"] == 0
+        assert result.tolist() == [True, True, True]
+        assert result.attrs["breakdown"]["manual_user_count"] == 1
 
-    def test_missing_identity_columns_keep_behavior_population_exclusion_unchanged(self) -> None:
+    def test_missing_identity_columns_use_lone_branch_for_behavior_population(self) -> None:
         df = pd.DataFrame({
             "document_id": ["D1", "D2", "D3"],
             "created_by": ["AUTOUSER"] * 3,
@@ -828,5 +758,5 @@ class TestL4_05:
 
         result = c12_abnormal_hours_concentration(df, auto_entry_sources=["automated"])
 
-        assert result.tolist() == [False, False, False]
-        assert result.attrs["breakdown"]["manual_user_count"] == 0
+        assert result.tolist() == [True, True, True]
+        assert result.attrs["breakdown"]["manual_user_count"] == 1

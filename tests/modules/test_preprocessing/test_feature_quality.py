@@ -147,7 +147,6 @@ def test_leakage_deny_rules_drop_top5_and_keep_remaining_rule_inputs() -> None:
         "rule_L2-02",
         "rule_L2-04",
         "rule_L2-05",
-        "rule_L3-01",
         "rule_L3-03",
         "rule_L3-04",
         "rule_L3-05",
@@ -159,7 +158,7 @@ def test_leakage_deny_rules_drop_top5_and_keep_remaining_rule_inputs() -> None:
         "rule_L4-03",
         "rule_L4-04",
     ]
-    assert len(remaining_rule_columns) == 22
+    assert len(remaining_rule_columns) == 21
     df = pd.DataFrame({
         "debit_amount": [100, 200],
         **{col: [1, 0] for col in LEAKAGE_DENY_RULES},

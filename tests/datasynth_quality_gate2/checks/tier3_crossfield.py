@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import time
-from typing import Any
 
 import duckdb
 
@@ -21,8 +20,8 @@ def _elapsed(start: float) -> float:
     return (time.perf_counter() - start) * 1000
 
 
-def l3_01_persona_gl_correlation(con: duckdb.DuckDBPyConnection) -> CheckResult:
-    """L3-01: 작성자 persona와 GL 상관관계.
+def t3_01_persona_gl_correlation(con: duckdb.DuckDBPyConnection) -> CheckResult:
+    """T3-01: 작성자 persona와 GL 상관관계.
 
     실무에서 junior는 경비/소모품(5xxx/6xxx), controller는 세금/결산(2xxx/9xxx).
     persona별 GL 분포가 완전 균일하면 비현실적.
@@ -61,9 +60,10 @@ def l3_01_persona_gl_correlation(con: duckdb.DuckDBPyConnection) -> CheckResult:
             low_hhi_personas.append({"persona": persona, "hhi": f"{hhi:.3f}", "total": total})
 
     # Why: 모든 persona의 HHI가 0.15 미만이면 모두 동일 분포 = 비현실적
-    status = "WARNING" if len(low_hhi_personas) == len([p for p in persona_totals if persona_totals[p] >= 1000]) else "PASS"
+    eligible_personas = [p for p in persona_totals if persona_totals[p] >= 1000]
+    status = "WARNING" if len(low_hhi_personas) == len(eligible_personas) else "PASS"
     return CheckResult(
-        check_id="L3-01", tier=3, name="persona-GL correlation",
+        check_id="T3-01", tier=3, name="persona-GL correlation",
         status=status,
         expected="persona별 GL 집중도 차이 존재",
         actual=f"저집중도 persona {len(low_hhi_personas)}개",
@@ -86,8 +86,10 @@ def l3_02_process_time_correlation(con: duckdb.DuckDBPyConnection) -> CheckResul
         FROM (
             SELECT business_process,
                 CASE
-                    WHEN CAST(SUBSTR(CAST(posting_date AS VARCHAR), 12, 2) AS INT) BETWEEN 6 AND 11 THEN 'morning'
-                    WHEN CAST(SUBSTR(CAST(posting_date AS VARCHAR), 12, 2) AS INT) BETWEEN 12 AND 17 THEN 'afternoon'
+                    WHEN CAST(SUBSTR(CAST(posting_date AS VARCHAR), 12, 2) AS INT)
+                        BETWEEN 6 AND 11 THEN 'morning'
+                    WHEN CAST(SUBSTR(CAST(posting_date AS VARCHAR), 12, 2) AS INT)
+                        BETWEEN 12 AND 17 THEN 'afternoon'
                     ELSE 'evening'
                 END AS period
             FROM je
@@ -241,7 +243,7 @@ def l3_04_normal_data_completeness(con: duckdb.DuckDBPyConnection) -> CheckResul
 def run_tier3(con: duckdb.DuckDBPyConnection) -> list[CheckResult]:
     """Tier 3 전체 실행."""
     return [
-        l3_01_persona_gl_correlation(con),
+        t3_01_persona_gl_correlation(con),
         l3_02_process_time_correlation(con),
         l3_03_recurring_pattern(con),
         l3_04_normal_data_completeness(con),
