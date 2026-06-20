@@ -25,8 +25,8 @@ This document resolves the `CONDITIONAL GO` items from Context E. Implementers m
 
 Locked decisions:
 
-- L1~L4 canonical transaction/detail rule count is exactly **31** (2026-06-15: was 32; `L4-02` moved to PHASE1-2 family).
-- Legacy "32/33 rules" means `31 canonical L1~L4 transaction rows + L4-02/Benford macro (now PHASE1-2 family)`; it never means 33 canonical transaction rules.
+- L1~L4 canonical transaction/detail rule count is exactly **30** (2026-06-20: was 31; `L3-01` MisclassifiedAccount 폐기 → L4-04 희소쌍이 역할 대체. 2026-06-15: was 32; `L4-02` moved to PHASE1-2 family).
+- Legacy "32/33 rules" means `30 canonical L1~L4 transaction rows + L4-02/Benford macro (now PHASE1-2 family)`; it never means 33 canonical transaction rules.
 - `L2-03a~d` are internal reason codes under `L2-03`.
 - `Benford` is a display alias for `L4-02`.
 - `D01/D02`, `L4-02/Benford`, `IC01~IC03`, and `GR01/GR03` are not L1~L4 transaction/detail rules (macro/family — PHASE1-2 또는 별도 surface).
@@ -36,19 +36,20 @@ Locked decisions:
 
 ## Rule Count Policy
 
-The v1 canonical L1~L4 transaction/detail rule count is fixed at **31** (2026-06-15: was 32).
+The v1 canonical L1~L4 transaction/detail rule count is fixed at **30** (2026-06-20: was 31, `L3-01` 폐기; 2026-06-15: was 32).
 
-The 31 are all `presenter_surface=transaction_detail` 행/review row cards (review-only `L3-12` 포함). `L4-02`(Benford macro)는 2026-06-15 PHASE1-2 family로 이관되어 더 이상 count에 포함되지 않는다(이전엔 "31 row + 1 macro card = 32" 분해였음).
+The 30 are all `presenter_surface=transaction_detail` 행/review row cards (review-only `L3-12` 포함). `L4-02`(Benford macro)는 2026-06-15 PHASE1-2 family로 이관되어 더 이상 count에 포함되지 않는다. `L3-01`(MisclassifiedAccount)은 2026-06-20 폐기되어 count에서 제외된다.
 
-Any external doc may state the total `31`, but must not claim a different split such as `31 + 1 macro`, `32`, `33 rules`, or count `Benford`/`L4-02` in the canonical L1~L4 transaction count.
+Any external doc may state the total `30`, but must not claim a different split such as `30 + 1 macro`, `31`, `32`, `33 rules`, or count `Benford`/`L4-02`/`L3-01` in the canonical L1~L4 transaction count.
 
-Included in the 31:
+Included in the 30:
 
-- Canonical `L1-01` through `L4-06` 행 rows as defined by the L1~L4 rule set, **except `L4-02`**.
+- Canonical `L1-01` through `L4-06` 행 rows as defined by the L1~L4 rule set, **except `L4-02` and `L3-01`(폐기 2026-06-20)**.
 - `L3-12`, even though it is review/context oriented.
 
 Excluded from the canonical transaction/detail count:
 
+- `L3-01` (MisclassifiedAccount 폐기 → L4-04 역할 대체, 2026-06-20)
 - `L4-02` (Benford macro → PHASE1-2 family, 2026-06-15)
 - `Benford` (alias of `L4-02`)
 - `L2-03a`, `L2-03b`, `L2-03c`, `L2-03d`
@@ -60,7 +61,7 @@ Display and reporting rules:
 
 - Count, coverage, selectors, export headings, and canonical display titles must use canonical IDs.
 - `Benford` may appear as a user-facing alias only when the UI needs to preserve familiar wording.
-- Any legacy dashboard or document text saying "32/33 rules" must be interpreted as `31 canonical + L4-02/Benford macro(PHASE1-2)`.
+- Any legacy dashboard or document text saying "32/33 rules" must be interpreted as `30 canonical + L4-02/Benford macro(PHASE1-2)` (L3-01 폐기 반영).
 - `D01/D02` belong to account/process analytical review, not the L1~L4 transaction rule count.
 - `IC01~IC03` belong to intercompany sidecar details/seeds, not the L1~L4 transaction rule count.
 - `GR01/GR03` belong to graph sidecar details, not the L1~L4 transaction rule count.
@@ -69,13 +70,13 @@ Display and reporting rules:
 
 Canonical mappings are locked as follows:
 
-| requested_rule_id | canonical_rule_id | status | presenter_surface |
-|---|---|---|---|
-| `L2-03a` | `L2-03` | `internal_reason_code` | `drilldown_reason` |
-| `L2-03b` | `L2-03` | `internal_reason_code` | `drilldown_reason` |
-| `L2-03c` | `L2-03` | `internal_reason_code` | `drilldown_reason` |
-| `L2-03d` | `L2-03` | `internal_reason_code` | `drilldown_reason` |
-| `Benford` | `L4-02` | `alias` | `account_process_macro` |
+| requested_rule_id | canonical_rule_id | status                 | presenter_surface       |
+| ----------------- | ----------------- | ---------------------- | ----------------------- |
+| `L2-03a`          | `L2-03`           | `internal_reason_code` | `drilldown_reason`      |
+| `L2-03b`          | `L2-03`           | `internal_reason_code` | `drilldown_reason`      |
+| `L2-03c`          | `L2-03`           | `internal_reason_code` | `drilldown_reason`      |
+| `L2-03d`          | `L2-03`           | `internal_reason_code` | `drilldown_reason`      |
+| `Benford`         | `L4-02`           | `alias`                | `account_process_macro` |
 
 Required behavior:
 
@@ -139,13 +140,13 @@ Column metadata must separate ledger inputs from generated outputs. Context C co
 
 Locked column source groups:
 
-| group | meaning | may be row-level ledger required? |
-|---|---|---|
-| `required_ledger_columns` | Columns physically present in `config/schema.yaml` with `required: true`, or a smaller subset that the specific transaction-detail rule cannot run without. | Yes |
-| `optional_ledger_columns` | Columns physically present in `config/schema.yaml` with `required: false`. Missing values reduce evidence quality or display richness. | No hard fail by default |
-| `derived_columns` | Values computed by feature, detector, aggregator, case builder, or projection logic. | No |
-| `sidecar_output_columns` | Columns produced by intercompany or graph sidecar processes, including target/counterpart/path IDs. | No |
-| `macro_output_columns` | Columns produced by account/process macro finding logic. | No |
+| group                     | meaning                                                                                                                                                     | may be row-level ledger required? |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
+| `required_ledger_columns` | Columns physically present in `config/schema.yaml` with `required: true`, or a smaller subset that the specific transaction-detail rule cannot run without. | Yes                               |
+| `optional_ledger_columns` | Columns physically present in `config/schema.yaml` with `required: false`. Missing values reduce evidence quality or display richness.                      | No hard fail by default           |
+| `derived_columns`         | Values computed by feature, detector, aggregator, case builder, or projection logic.                                                                        | No                                |
+| `sidecar_output_columns`  | Columns produced by intercompany or graph sidecar processes, including target/counterpart/path IDs.                                                         | No                                |
+| `macro_output_columns`    | Columns produced by account/process macro finding logic.                                                                                                    | No                                |
 
 Actual ledger schema baseline:
 
@@ -177,7 +178,7 @@ Hard errors:
 - Unknown `scoring_role`.
 - Canonicalization loop, including `A -> B -> A`.
 - `canonical_rule_id` missing for any metadata entry.
-- A canonical transaction count other than 31.
+- A canonical transaction count other than 30.
 - Alias/internal reason code included in the canonical transaction count.
 - Duplicate canonical count entries for the same canonical transaction rule.
 - `Benford` counted separately from `L4-02`.
@@ -193,7 +194,7 @@ Warnings:
 - Legacy artifact missing `scoring_role`.
 - Legacy artifact has stale `scoring_role` but metadata can correct the final surface.
 - `missing_column_message` is used because evidence is incomplete.
-- Legacy "33 rules" copy is encountered and normalized to `31 canonical + L4-02/Benford macro(PHASE1-2)`.
+- Legacy "33 rules" copy is encountered and normalized to `30 canonical + L4-02/Benford macro(PHASE1-2)`.
 - `approved_at` or `reference_number` is encountered and mapped to `approval_date` or `reference`.
 
 Allowed fallbacks:
@@ -210,23 +211,23 @@ The first implementation must not attempt the full Context D nested schema. v1 s
 
 Required fields:
 
-| field | required meaning |
-|---|---|
-| `rule_id` | Requested or registry entry ID. |
-| `canonical_rule_id` | Canonical ID used for count, aggregation, display, and export. |
-| `status` | One of `active`, `macro`, `sidecar`, `alias`, `internal_reason_code`. |
-| `presenter_surface` | One of `transaction_detail`, `context_badge`, `account_process_macro`, `intercompany_sidecar`, `graph_sidecar`, `drilldown_reason`. |
-| `final_topic` | One of the six locked PHASE1 topics (7→6, intercompany_cycle 삭제→PHASE1-2 family 이관, SoT §7.3), or null only if explicitly non-topic internal metadata. |
-| `secondary_topics` | Ordered list of secondary locked topics. Empty list is allowed. |
-| `scoring_role` | One of `primary`, `booster`, `combo_only`, `macro_only`. |
-| `standalone_rankable` | Whether the rule can seed ranking/case selection by itself. |
-| `include_in_l1_l4_transaction_count` | Whether this entry contributes to the canonical 31 count. |
-| `allow_row_violation_detail` | Whether row violation detail can be generated. |
-| `allow_standalone_violation_copy` | Whether direct standalone violation copy can be generated. |
-| `allow_topic_seed` | Whether the entry can seed a topic under its own surface policy. |
-| `display_copy` | B-sourced display title/question/review guidance or a compact equivalent object. |
-| `column_sources` | Split column groups: `required_ledger_columns`, `optional_ledger_columns`, `derived_columns`, `sidecar_output_columns`, `macro_output_columns`. |
-| `conflict_note` | Required when A/B/C/D/legacy behavior needed a lock decision; otherwise empty string. |
+| field                                | required meaning                                                                                                                                           |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `rule_id`                            | Requested or registry entry ID.                                                                                                                            |
+| `canonical_rule_id`                  | Canonical ID used for count, aggregation, display, and export.                                                                                             |
+| `status`                             | One of `active`, `macro`, `sidecar`, `alias`, `internal_reason_code`.                                                                                      |
+| `presenter_surface`                  | One of `transaction_detail`, `context_badge`, `account_process_macro`, `intercompany_sidecar`, `graph_sidecar`, `drilldown_reason`.                        |
+| `final_topic`                        | One of the six locked PHASE1 topics (7→6, intercompany_cycle 삭제→PHASE1-2 family 이관, SoT §7.3), or null only if explicitly non-topic internal metadata. |
+| `secondary_topics`                   | Ordered list of secondary locked topics. Empty list is allowed.                                                                                            |
+| `scoring_role`                       | One of `primary`, `booster`, `combo_only`, `macro_only`.                                                                                                   |
+| `standalone_rankable`                | Whether the rule can seed ranking/case selection by itself.                                                                                                |
+| `include_in_l1_l4_transaction_count` | Whether this entry contributes to the canonical 30 count.                                                                                                  |
+| `allow_row_violation_detail`         | Whether row violation detail can be generated.                                                                                                             |
+| `allow_standalone_violation_copy`    | Whether direct standalone violation copy can be generated.                                                                                                 |
+| `allow_topic_seed`                   | Whether the entry can seed a topic under its own surface policy.                                                                                           |
+| `display_copy`                       | B-sourced display title/question/review guidance or a compact equivalent object.                                                                           |
+| `column_sources`                     | Split column groups: `required_ledger_columns`, `optional_ledger_columns`, `derived_columns`, `sidecar_output_columns`, `macro_output_columns`.            |
+| `conflict_note`                      | Required when A/B/C/D/legacy behavior needed a lock decision; otherwise empty string.                                                                      |
 
 Derived or later fields may be added after v1 gates pass, but they must not weaken these required fields.
 
@@ -239,7 +240,7 @@ Implement in this exact linear order. Do not split this into parallel workstream
 3. Define the minimal `RuleDetailMetadata` schema and enums.
 4. Add only identity/policy entries from Context A: `rule_id`, `canonical_rule_id`, `status`, `presenter_surface`, `final_topic`, `secondary_topics`, `scoring_role`, `standalone_rankable`, count and eligibility flags.
 5. Implement `canonicalize_rule_id()` for `L2-03a~d -> L2-03` and `Benford -> L4-02`.
-6. Implement transaction count validation and assert the canonical count is 31.
+6. Implement transaction count validation and assert the canonical count is 30.
 7. Implement `can_render_row_violation_detail()` and block non-transaction surfaces at the accessor level.
 8. Add B-derived `display_copy` for the minimal registry entries, prioritizing non-conclusive wording for context/macro/sidecar/reason entries.
 9. Add forbidden-copy validation for standalone-excluded rules and non-row surfaces.
@@ -264,7 +265,7 @@ Required tests:
 - Metadata registry coverage includes every A/B/C/D rule ID and required v1 field.
 - Canonicalization returns `L2-03` for `L2-03a~d`.
 - Canonicalization returns `L4-02` for `Benford`.
-- Canonical transaction/detail count is exactly 31.
+- Canonical transaction/detail count is exactly 30.
 - `Benford`, `L2-03a~d`, `D01/D02`, `IC01~IC03`, and `GR01/GR03` do not increase the canonical transaction count.
 - `L4-02` is excluded from the canonical count (PHASE1-2 family, 2026-06-15) and cannot render transaction row violation detail.
 - Only `presenter_surface=transaction_detail` plus `allow_row_violation_detail=True` can render row violation detail.
@@ -275,7 +276,7 @@ Required tests:
 - Column validation rejects non-schema fields in `required_ledger_columns`.
 - Optional ledger column absence produces warning or missing-column guidance, not default hard fail.
 - Legacy artifacts with missing or stale `scoring_role` are corrected by metadata surface and role.
-- Legacy "33 rules" display paths normalize to `31 canonical + L4-02/Benford macro(PHASE1-2)`.
+- Legacy "33 rules" display paths normalize to `30 canonical + L4-02/Benford macro(PHASE1-2)`.
 - Export headings and dashboard selectors use canonical IDs.
 
 Recommended command groups:
@@ -300,7 +301,7 @@ Deferred beyond v1:
 
 > 이관 (2026-06-14): intercompany_cycle topic 삭제에 따라 IC01~IC03은 PHASE1-1 점수 topic이 아니라 **PHASE1-2 family(graph/relational)의 정식 대상**으로 이동했다(SoT `docs/spec/PHASE1_TIER_EVIDENCE_BASIS.md` §7.3). canonical 31 transaction/detail rule count와 `intercompany_sidecar` surface 분류(count 외부, row violation detail 금지)는 변경 없이 유지된다. 아래 IC01 evidence level sidecar 정책은 sidecar 산출물 계약으로 유효하나, PHASE1-1 점수경로 연결 부분(score_aggregator floor 차별 등)은 family 이관 시 정합 처리한다.
 
-본 절은 IC01 의 evidence level sidecar 정책을 별도 lock 으로 명시한다. canonical 31 transaction/detail rule count 정책 (§Rule Count Policy) 과 `RULE_DETAIL_METADATA_REGISTRY` 본문은 변경하지 않는다.
+본 절은 IC01 의 evidence level sidecar 정책을 별도 lock 으로 명시한다. canonical 30 transaction/detail rule count 정책 (§Rule Count Policy) 과 `RULE_DETAIL_METADATA_REGISTRY` 본문은 변경하지 않는다.
 
 Locked decisions:
 
@@ -308,7 +309,7 @@ Locked decisions:
 - `IC01`, `IC02`, `IC03` 의 canonical excluded 분류는 그대로 유지된다 (`Excluded from the canonical transaction/detail count` §). `intercompany_sidecar` surface 정책 변경 없음.
 - `SEVERITY_MAP` 의 IC01/IC02/IC03 점수 (`IC01=3, IC02=2, IC03=2`) 는 변경하지 않는다 (`src/detection/constants.py:195`).
 
-신규 sidecar column 2 종 (canonical 31 count 외부, `intercompany_sidecar` surface 의 일부):
+신규 sidecar column 2 종 (canonical 30 count 외부, `intercompany_sidecar` surface 의 일부):
 
 ```
 column                      값                                             의미
@@ -354,7 +355,7 @@ Lock 조건:
 
 - `docs/spec/DECISION.md` D065 (2026-05-23) — IC01 sidecar 직접 의존 제거, evidence level 정책 도입.
 - `docs/spec/DETECTION_RULES.md` L3-03 절 evidence level sidecar 정책 표.
-- `docs/archive/completed/PHASE1_TOPIC_SCORING_V1_LOCK.md` 관계사·내부거래·순환구조 topic floor 차별 보조 절. 단, 해당 topic은 PHASE1-2 family로 이관됨(SoT `docs/spec/PHASE1_TIER_EVIDENCE_BASIS.md` §7.3, 2026-06-14). IC01~IC03은 PHASE1-1 점수 topic이 아니라 PHASE1-2 family(graph/relational)의 정식 대상이며, 아래 sidecar/evidence level 정책은 family 이관 시 정합 처리한다. canonical 31 transaction/detail rule count 정책은 변경 없음.
+- `docs/archive/completed/PHASE1_TOPIC_SCORING_V1_LOCK.md` 관계사·내부거래·순환구조 topic floor 차별 보조 절. 단, 해당 topic은 PHASE1-2 family로 이관됨(SoT `docs/spec/PHASE1_TIER_EVIDENCE_BASIS.md` §7.3, 2026-06-14). IC01~IC03은 PHASE1-1 점수 topic이 아니라 PHASE1-2 family(graph/relational)의 정식 대상이며, 아래 sidecar/evidence level 정책은 family 이관 시 정합 처리한다. canonical 30 transaction/detail rule count 정책은 변경 없음.
 
 ## RuleExplanation Extension Area (2026-05-17)
 
@@ -362,12 +363,12 @@ Sprint B3-meta adds a separate explanation extension without changing the locked
 
 Required `RuleExplanation` fields:
 
-| field | meaning |
-|---|---|
-| `principle` | Audit principle or control expectation behind the rule. |
-| `violation_reason` | Why the rule flags or raises review context. |
+| field               | meaning                                                          |
+| ------------------- | ---------------------------------------------------------------- |
+| `principle`         | Audit principle or control expectation behind the rule.          |
+| `violation_reason`  | Why the rule flags or raises review context.                     |
 | `audit_next_action` | Auditor's next review action; must not conclude fraud by itself. |
-| `reference` | PCAOB/ISA or analytical-review reference string. |
+| `reference`         | PCAOB/ISA or analytical-review reference string.                 |
 
 Extension rules:
 

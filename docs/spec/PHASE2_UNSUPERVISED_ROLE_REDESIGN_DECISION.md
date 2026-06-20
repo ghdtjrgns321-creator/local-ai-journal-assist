@@ -370,3 +370,18 @@ provenance가 100% 기록될 것을 요구한다(dataset-regeneration-contract a
 동일). 이 요구는 데이터 트랙에 입력 요건으로 전달한다.
 
 > **상태**: §7 동결. 데이터 트랙 완료 시 → 비지도 학습 + A1~A5 1회 검증. 그 전 착수 없음.
+
+## 8. Known issue — PHASE1 priority machinery의 근거없는 magic-number feature 유입 (2026-06-17, 재설계 시 처리)
+
+PHASE1 가중합 topic 점수는 tier(순서형)로 폐기됐다(D071, `PHASE1_TIER_SCORING_SPEC.md` §5). 그러나 PHASE1 case builder의 **legacy priority machinery**가 산출하는 일부 case 필드가 **근거 없는 magic number**인데, 그대로 **PHASE2 case-level feature(`phase2_case_contract.PHASE2_CASE_FEATURE_COLUMNS`)로 유입**된다. PHASE2가 학습되면 근거 없는 입력으로 학습하게 되므로, PHASE2 재설계 시 함께 정리한다.
+
+| feature | 산출 식 (근거 없음) | 코드 위치 |
+|---------|---------------------|-----------|
+| `behavior_score` | `max(min(len(rows)/10, 1.0), access_scope_score)` — **전표 줄 수 ÷ 10** (임의 제수 10) | `phase1_case_builder.py:1636/2151` (`_apply_timing_priority_adjustments` 보정) |
+| `repeat_score` | `min(max(repeat_months-1, 0)/2.0, 1.0)` — **(반복월수−1) ÷ 2** (임의 −1·÷2) | `phase1_case_builder.py:1638` |
+| (보정 계수) | L3-04 case 우선순위 ±0.10~0.20 손튜닝(`l304_*_bonus/penalty`) | `_apply_timing_priority_adjustments` |
+
+- 이 값들은 **가중합 0.62/0.08과 같은 종류의 임의 숫자**이며, 도메인·기준서 근거가 없다.
+- 현재 PHASE1 운영(tier) 경로의 **band·정렬에는 영향이 없다**(tier가 결정). 이 필드들은 export 표시 + PHASE2 feature/overlay로만 흐른다.
+- **2026-06-17 결정(사용자)**: PHASE1 가중합 topic 점수 제거 + 죽은 legacy band 경로 제거는 즉시 수행하되, 위 `behavior_score`/`repeat_score`/L3-04 보정은 **PHASE2가 이 feature를 실제 학습 입력으로 쓰는 시점에 통합 제거/근거화**한다. PHASE2 재설계(본 문서 §6~§7) 작업 시 `PHASE2_CASE_FEATURE_COLUMNS`에서 근거 없는 feature를 빼거나, 근거 있는 정의로 대체한다.
+- 관련: `PHASE2_INTERFACE_DESIGN.md`(feature contract), `PHASE1_TIER_SCORING_SPEC.md` §5, `TROUBLESHOOT.md` TS-15.

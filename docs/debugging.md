@@ -10,6 +10,28 @@
 
 > 이 문서는 시점별 디버깅 기록이다. 현재 실사용 DataSynth 기준본은 `data/journal/primary/datasynth/`의 `v126` freeze (2026-05-02) + `datasynth_manipulation_v4_candidate` (manipulation v4, 2026-05-16 active) 이며, 과거 DataSynth 수치와 핫픽스 설명은 기록 시점 기준일 수 있다. 최신 baseline 출처: [PROJECT_OVERVIEW.md](guide/PROJECT_OVERVIEW.md) §활성 문서 인덱스.
 
+## 2026-06-17: A안 셋째 다리 확장 코드 반영 + 과탐 가드 측정 + fillna 버그
+
+### 상황
+
+HIGH 17건 재감사(A안, DECISION D075) 셋째 다리 확장을 `topic_scoring.py`에 코드 반영하고 정상 데이터로 과탐 가드(HIGH ≤ 2%)를 측정.
+
+### 핵심 발견 3가지
+
+1. **과탐: 기말(L3-04)이 주범, 핸드오프 추측과 달랐다.** 조합1 셋째 다리에 6개(L3-03·L3-04·L3-10·L1-05·L1-09·L3-11)를 모두 넣자 정상 v42j 2022(14,070 case)에서 HIGH 738건(5.245%) — 가드 FAIL. 다리별 분해 결과 **L3-04(기말) 734/738·L1-09(승인일공백) 334**가 과발화 주범이고, 핸드오프가 위험으로 지목한 L1-05(자기승인)·L3-03·L3-10은 정상 발화 0이었다. 수기+고액+기말은 정상 결산전표의 흔한 모습이라 기말은 가공전표 2차정황으로 부적합(closing_timing 조합의 영역). L1-09는 근거 약한 룰(grounding §2-2). → 둘을 제외하니 narrowed HIGH 47건(0.334%) PASS. 최종 2차정황 = `L4-04·L2-03·L3-03·L3-10·L1-05·L3-11`(`_FICTITIOUS_SECONDARY_RULES`).
+
+2. **조합2(횡령은폐) 분기는 고액(L4-03)을 동반 요구해야 한다.** 처음 `(L2-05 역분개 + L3-02 수기)`만으로 분기를 추가하자 anti-fitting 테스트(`reversal_or_offset + work_scope + manual` = 정상 clearing)가 깨졌다. FSS 실증(감리2013-1-가)도 역분개+수기+**고액**이었으므로 `{L2-05,L3-02,L4-03}.issubset`로 조정 → 정상 clearing과 구분되고 테스트 통과.
+
+3. **선행 버그: `_precomputed_string_column` nullable-boolean fillna 크래시.** 전체연도(330k행) phase1 case 빌드가 `phase1_case_builder.py:2404 df["has_attachment"].fillna("").astype(str)`에서 `TypeError: Invalid value '' for dtype 'boolean'`로 실패(8000행 슬라이스에선 재현 안 됨 — has_attachment가 그 구간에선 object dtype). nullable boolean 컬럼에 빈 문자열 fillna가 거부됨. → `series.astype(object).where(series.notna(), "").astype(str)`로 dtype 무관 문자열 보장. 측정 도구의 `model_dump_json` 직렬화 OOM은 측정 시 save를 no-op 패치해 회피.
+
+### 검증
+
+- 단위/회귀: `test_topic_tiers.py`(신규 8) + `test_rule_scoring.py` + `test_phase1_case_builder.py` 등 158 passed, 3 skipped.
+- 과탐: 측정 도구 `tools/scripts/measure_a_an_high_ratio.py`, 결과 `artifacts/a_an_{wide_diag,narrowed}_2022.txt`. wide 5.245% FAIL → narrowed 0.334% PASS.
+- 문서: HIGH_COMBO_GROUNDING §5b/§7/§8/§9, TIER_EVIDENCE_BASIS §4.1/§4.5, TIER_SCORING_SPEC §3.1/§3.5, DETECTION_RANKING_CRITERIA, DECISION D075, TROUBLESHOOT TS-15 정합.
+
+---
+
 ## 2026-05-26: PHASE3 LLM removal / local-first boundary
 
 PHASE3 LLM narrator and selected-case AI memo were removed from active product path. The feature duplicated existing PHASE1 case evidence and required sending case metadata/rule evidence to an external LLM, which conflicted with the local ledger analysis product boundary.
