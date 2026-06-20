@@ -155,8 +155,8 @@ sub_detectors:
     tier: moderate
     source_type: standard
     source_citation: "PCAOB AS 2401 §B7 (보조) — near-duplicate transactions; RapidFuzz threshold 의존"
-    distribution_metric: "V7 fixed3 2024 hit=34,655 — fuzzy threshold 의존, 정상 routine 거래 포함 가능 (docs/spec/DETECTION_RULES.md §L2-03 high/medium/low confidence 분류)"
-    rationale: "유사 중복은 fuzzy threshold 임의성. 보강 증거 함께 사용. high_confidence_corroborated 보정 별도."
+    distribution_metric: "V7 fixed3 2024 hit=34,655 — fuzzy threshold 의존, 정상 routine 거래 포함 가능. PHASE1-1 L2-03 primary에서는 제외되고 duplicate family 보조 신호로만 해석."
+    rationale: "유사 중복은 fuzzy threshold 임의성. PHASE1-1 binary 재기표 룰이 아니라 PHASE1-2 duplicate family 보조 evidence로만 사용."
 
   - family: duplicate
     code: L2-03c
@@ -165,7 +165,7 @@ sub_detectors:
     source_type: standard
     source_citation: "PCAOB AS 2401 §B7 (보조) — split transactions to circumvent approval thresholds"
     distribution_metric: "V7 fixed3 2024 hit=16,784 — date window·two-sum range 의존 (Diag-2 후 최적화)"
-    rationale: "분할 거래는 회계 substance 신호이나 window threshold 임의성. 보강 증거 권장."
+    rationale: "분할 거래는 구조 단위 신호이므로 PHASE1-1 row primary가 아니라 PHASE1-2 structuring/duplicate family 보조 evidence로 해석."
 
   - family: duplicate
     code: L2-03d

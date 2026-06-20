@@ -104,17 +104,18 @@ class AuditSettings(BaseSettings):
     custom_holidays: list[str] = []  # 회사 지정 휴일 ["2025-07-01"]
 
     # --- Detection Layer B 관련 ---
-    duplicate_payment_window_days: int = 45  # B04: 중복 지급 판정 기간 (일)
+    duplicate_payment_window_days: int = 90  # B04: 중복 지급 판정 기간 (일)
     sod_process_threshold: int = 3  # L3-12: 업무범위 검토 fallback 프로세스 수 임계
     topside_threshold: int = 2  # B19: Top-side JE 가점 임계 (5점 만점, 수기 전제)
     expense_capitalization_amount_tolerance: float = 0.02  # B11: 자산/비용 금액 허용 오차 (2%)
     expense_capitalization_min_amount: float = 0.0  # B11: 소액 라인 제외 기준 (0=미적용)
-    expense_capitalization_review_threshold: float = 0.45  # B11: 검토 필요 점수 임계
-    expense_capitalization_immediate_threshold: float = 0.75  # B11: 즉시 검토 점수 임계
 
     # --- DuplicateDetector (WU-05) ---
     duplicate_fuzzy_threshold: int = 80  # B05b: 적요 유사도 임계 (rapidfuzz 0~100)
     duplicate_amount_tolerance: float = 0.02  # B05b/c: 금액 허용 오차 (2%)
+    duplicate_reference_max_frequency_ratio: float = 0.10  # L2-03: 특정 reference 반복률 상한
+    duplicate_reference_min_unique_ratio: float = 0.20  # L2-03: reference 전체 고유율 하한
+    duplicate_reference_nonunique_min_count: int = 10  # L2-03: 비고유 가드 최소 반복 건수
     duplicate_split_window_days: int = 3  # B05c: 분할 거래 윈도우 (일)
     duplicate_time_window_days: int = 7  # B05d: 시차 중복 윈도우 (일)
     duplicate_max_group_size: int = 1000  # 그룹 크기 제한 (초과 시 스킵)
@@ -177,9 +178,6 @@ class AuditSettings(BaseSettings):
     suspense_aging_days: int = 30  # C10: 가계정 장기체류 기본 임계 일수
     suspense_min_open_amount: float = 0.0  # C10: 장기체류 판정 최소 미정리 금액
     account_pair_rare_percentile: float = 0.01  # C09: 희소 쌍 하위 백분위
-    period_end_amount_quantile: float = 0.75  # C01: L3-04 결산 후보군 금액 분위수 (Q3)
-    c01_min_group_size: int = 30  # C01: 계정그룹별 Q3 최소 표본 수
-    period_end_sensitive_bonus: float = 0.15  # C01: 민감 계정군 L3-04 점수 가산
 
     # --- Detection Layer C: C13 배치 전표 이상 ---
     batch_source_values: list[str] = [
@@ -203,10 +201,7 @@ class AuditSettings(BaseSettings):
     batch_amount_zscore: float = 3.0  # 배치 내 금액 Z-score 임계
 
     # --- Detection Layer C: C11 역분개 ---
-    reversal_match_window_days: int = 1  # S1: 1:1 매칭 허용 일수
-    reversal_rolling_window_days: int = 7  # S2: N:M 롤링 윈도우 (일)
-    reversal_zero_threshold: float = 1000.0  # S2: 순액 0 수렴 허용 오차 (KRW)
-    reversal_score_threshold: float = 0.3  # 종합 점수 플래그 임계값
+    reversal_mirror_window_days: int = 90  # L2-05: 1:1 거울 쌍 매칭 허용 일수
 
     # --- RelationalDetector (WU-08) ---
     rel_new_cp_large_quantile: float = 0.90  # R01: 대액 기준 분위수
