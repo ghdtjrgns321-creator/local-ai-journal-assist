@@ -68,28 +68,6 @@ L104_BUCKET_SIGNAL_STRENGTH: dict[str, float] = {
     "non_approver": 1.0,
 }
 
-L201_BUCKET_SIGNAL_STRENGTH: dict[str, float] = {
-    "lower_band": 0.60,
-    "close_band": 0.80,
-    "razor_band": 1.00,
-    "routine_razor_review": 0.45,
-    "normal_population": 0.0,
-}
-
-L103_BUCKET_SIGNAL_STRENGTH: dict[str, float] = {
-    "unknown_account": 0.75,
-    "unknown_account_family": 0.85,
-    "malformed_account": 0.92,
-    "placeholder_or_reserved": 1.0,
-}
-
-L305_CALENDAR_SIGNAL_STRENGTH: dict[str, float] = {
-    "weekday_holiday": 0.75,
-    "holiday": 0.75,
-    "weekend": 0.85,
-    "weekend_holiday": 1.0,
-}
-
 L307_BUCKET_SIGNAL_STRENGTH: dict[str, float] = {
     "moderate_gap": 0.55,
     "large_gap": 0.75,
@@ -110,14 +88,6 @@ L309_AGING_BUCKET_SIGNAL_STRENGTH: dict[str, float] = {
     "aging_60_90": 1.0,
     "aging_over_90": 1.25,
 }
-
-L202_DUPLICATE_PAYMENT_SIGNAL_STRENGTH: dict[str, float] = {
-    "reference_match": 0.90,
-    "mixed_reference_fallback": 0.70,
-    "amount_partner_fallback": 0.65,
-    "blank_reference_fallback": 0.60,
-}
-
 
 @dataclass(frozen=True)
 class RuleScoringMetadata:
@@ -188,8 +158,6 @@ RULE_SCORING_REGISTRY: dict[str, RuleScoringMetadata] = {
         "control_failure",
         "strong",
         final_topic="approval_control",
-        floor_policy_ids=("approval_control_high",),
-        floor_eligible_labels=frozenset({"critical", "non_approver"}),
         fraud_scenario_tags=("approval_bypass",),
     ),
     "L1-05": RuleScoringMetadata(
@@ -223,12 +191,13 @@ RULE_SCORING_REGISTRY: dict[str, RuleScoringMetadata] = {
         secondary_topics=("ledger_integrity",),
         fraud_scenario_tags=("cutoff_or_period_mismatch",),
     ),
-    "L1-09": RuleScoringMetadata(
-        "L1-09",
+    "L1-07-02": RuleScoringMetadata(
+        "L1-07-02",
         "control_failure",
-        "medium",
+        "strong",
         final_topic="approval_control",
-        fraud_scenario_tags=("missing_approval_trace",),
+        secondary_topics=("duplicate_outflow",),
+        fraud_scenario_tags=("approval_bypass",),
     ),
     "L2-01": RuleScoringMetadata(
         "L2-01",
@@ -243,8 +212,6 @@ RULE_SCORING_REGISTRY: dict[str, RuleScoringMetadata] = {
         "duplicate_or_outflow",
         "strong",
         final_topic="duplicate_outflow",
-        floor_policy_ids=("duplicate_reference_match",),
-        floor_eligible_labels=frozenset({"reference_match"}),
         fraud_scenario_tags=("duplicate_payment",),
     ),
     "L2-03": RuleScoringMetadata(
@@ -295,13 +262,6 @@ RULE_SCORING_REGISTRY: dict[str, RuleScoringMetadata] = {
         "medium",
         final_topic="duplicate_outflow",
         fraud_scenario_tags=("topside_or_outflow_pattern",),
-    ),
-    "L3-01": RuleScoringMetadata(
-        "L3-01",
-        "logic_mismatch",
-        "medium",
-        final_topic="account_logic",
-        fraud_scenario_tags=("sensitive_account_pattern",),
     ),
     "L3-02": RuleScoringMetadata(
         "L3-02",
@@ -589,35 +549,10 @@ def _rule_specific_signal_strength(
     label = str(display_label or "").strip().lower()
     if rule_id == "L1-04" and label in L104_BUCKET_SIGNAL_STRENGTH:
         return L104_BUCKET_SIGNAL_STRENGTH[label]
-    if rule_id == "L2-02":
-        if label in L202_DUPLICATE_PAYMENT_SIGNAL_STRENGTH:
-            return L202_DUPLICATE_PAYMENT_SIGNAL_STRENGTH[label]
-        try:
-            return min(max(float(raw_value), 0.0), 1.0)
-        except (TypeError, ValueError):
-            return normalize_signal_strength(
-                raw_value,
-                severity=severity,
-                display_label=display_label,
-            )
-    if rule_id == "L2-01":
-        try:
-            numeric = max(float(raw_value), 0.0)
-        except (TypeError, ValueError):
-            numeric = 0.0
-        if label == "normal_population" or numeric <= 0:
-            return 0.0
-        if label == "routine_razor_review" or numeric <= 0.35:
-            return L201_BUCKET_SIGNAL_STRENGTH["routine_razor_review"]
-        if label in L201_BUCKET_SIGNAL_STRENGTH:
-            return L201_BUCKET_SIGNAL_STRENGTH[label]
-        return min(numeric, 1.0)
     if rule_id == "L1-03":
         try:
             numeric = max(float(raw_value), 0.0)
         except (TypeError, ValueError):
-            if label in L103_BUCKET_SIGNAL_STRENGTH:
-                return L103_BUCKET_SIGNAL_STRENGTH[label]
             return normalize_signal_strength(
                 raw_value,
                 severity=severity,
@@ -649,37 +584,6 @@ def _rule_specific_signal_strength(
             )
         severity_factor = max(min(float(severity) / 5.0, 1.0), 0.01)
         return min(numeric, 1.0) / severity_factor
-    if rule_id == "L3-05":
-        if label in L305_CALENDAR_SIGNAL_STRENGTH:
-            return L305_CALENDAR_SIGNAL_STRENGTH[label]
-        try:
-            numeric = max(float(raw_value), 0.0)
-        except (TypeError, ValueError):
-            return normalize_signal_strength(
-                raw_value,
-                severity=severity,
-                display_label=display_label,
-            )
-        if numeric >= 0.45:
-            return L305_CALENDAR_SIGNAL_STRENGTH["weekend_holiday"]
-        if numeric >= 0.40:
-            return L305_CALENDAR_SIGNAL_STRENGTH["weekend"]
-        if numeric >= 0.35:
-            return L305_CALENDAR_SIGNAL_STRENGTH["weekday_holiday"]
-        return normalize_signal_strength(
-            numeric,
-            severity=severity,
-            display_label=display_label,
-        )
-    if rule_id == "L3-01":
-        try:
-            return min(max(float(raw_value), 0.0), 1.0)
-        except (TypeError, ValueError):
-            return normalize_signal_strength(
-                raw_value,
-                severity=severity,
-                display_label=display_label,
-            )
     if rule_id == "L3-10":
         try:
             return min(max(float(raw_value), 0.0), 1.0)

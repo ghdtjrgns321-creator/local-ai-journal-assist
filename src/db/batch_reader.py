@@ -182,7 +182,7 @@ def _resolve_flag_row_indices(
     """anomaly_flags row 를 ledger DataFrame 의 row index 로 매핑.
 
     Why: 같은 document_id 안에서도 line_number 가 다른 라인이 별도 위반을 가질 수
-         있다(L1-02 적요 누락은 빈 적요 라인에만, L3-01 계정-거래 부정합은 특정 라인에
+         있다(L1-02 적요 누락 등 행 단위 위반은 특정 라인에
          만). 이전 구현은 doc_id 만 보고 doc 의 첫 row 에 score 를 부여해, 첫 라인이
          아닌 위반 라인이 화면에서 첫 라인으로 이동하는 버그가 있었다.
 

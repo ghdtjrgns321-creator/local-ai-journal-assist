@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import pandas as pd
+import yaml
 
 from config.settings import get_audit_rules
 from src.detection.boolean_utils import bool_column, coerce_bool_value
@@ -209,34 +211,6 @@ def _get_skipped_approval_immediate_config(
             for v in cfg.get("business_processes", ["TRE", "P2P", "O2C", "H2R"])
         ),
         "min_evidence_count": int(cfg.get("min_evidence_count", 2)),
-    }
-
-
-def _get_missing_approval_date_config(
-    audit_rules: dict | None = None,
-) -> dict[str, tuple[str, ...]]:
-    """Load L1-09 queue split policy."""
-
-    rules = audit_rules or get_audit_rules()
-    patterns = rules.get("patterns", {})
-    cfg = patterns.get("missing_approval_date_immediate", {})
-    manual_sources = cfg.get(
-        "manual_sources",
-        patterns.get("manual_source_codes", ["manual", "adjustment"]),
-    )
-    return {
-        "manual_sources": tuple(str(v).strip().lower() for v in manual_sources),
-        "system_sources": tuple(
-            str(v).strip().lower()
-            for v in cfg.get(
-                "system_sources",
-                ["automated", "batch", "interface", "system", "recurring"],
-            )
-        ),
-        "business_processes": tuple(
-            str(v).strip().upper()
-            for v in cfg.get("business_processes", ["TRE", "P2P", "O2C", "H2R"])
-        ),
     }
 
 
@@ -447,10 +421,10 @@ def _high_risk_account_signal_category(row: pd.Series) -> tuple[str, str]:
     }:
         priority_reasons.append("uncleared")
 
-    if coerce_bool_value(row.get("has_missing_approval_date", False)):
-        priority_reasons.append("missing_approval_date")
-    if _row_missing_approval_date(row):
-        priority_reasons.append("missing_approval_date")
+    if coerce_bool_value(row.get("has_approval_date_absent", False)):
+        priority_reasons.append("approval_date_absent")
+    if _row_approval_date_absent(row):
+        priority_reasons.append("approval_date_absent")
 
     for column, reason in (
         ("is_period_end", "period_end"),
@@ -469,7 +443,7 @@ def _high_risk_account_signal_category(row: pd.Series) -> tuple[str, str]:
     return "raw_signal", "sensitive_account_touch"
 
 
-def _row_missing_approval_date(row: pd.Series) -> bool:
+def _row_approval_date_absent(row: pd.Series) -> bool:
     approved_by = str(row.get("approved_by", "")).strip().lower()
     approval_date = str(row.get("approval_date", "")).strip().lower()
     if approved_by in {"", "nan", "nat", "none"}:
@@ -864,185 +838,6 @@ def b14_work_scope_excess_review(
     return result
 
 
-def b12_missing_approval_date(
-    df: pd.DataFrame,
-    audit_rules: dict | None = None,
-    cache: AccessRuleCache | None = None,
-) -> pd.Series:
-    """L1-09 approval date missing, with score split by approval context."""
-
-    if "approval_date" not in df.columns:
-        return pd.Series(False, index=df.index)
-    if _approval_contract_degraded(df):
-        return _degraded_approval_result(df, "L1-09")
-    cfg = _get_missing_approval_date_config(audit_rules)
-    missing_date = _cached_text(df, "approval_date", cache).eq("")
-    candidate = missing_date
-    if not candidate.any():
-        return candidate
-    has_approver = (
-        _cached_text(df, "approved_by", cache).ne("")
-        if "approved_by" in df.columns
-        else pd.Series(False, index=df.index)
-    )
-
-    if "source" in df.columns:
-        source_norm = _cached_text(df, "source", cache)
-        system_source = source_norm.isin(cfg["system_sources"])
-        manual_source = source_norm.isin(cfg["manual_sources"])
-    else:
-        source_norm = pd.Series("", index=df.index)
-        system_source = pd.Series(False, index=df.index)
-        manual_source = pd.Series(True, index=df.index)
-
-    high_risk_process = (
-        _cached_process(df, "business_process", cache).isin(cfg["business_processes"])
-        if "business_process" in df.columns
-        else pd.Series(False, index=df.index)
-    )
-    high_amount = bool_column(df, "exceeds_threshold")
-    manual_entry = bool_column(df, "is_manual_je")
-    manual_context = manual_source | manual_entry
-    abnormal_time = _is_abnormal_self_approval_time(df, cache=cache)
-    period_end = bool_column(df, "is_period_end")
-    high_risk_cfg = _get_high_risk_account_config(audit_rules)
-    high_risk_account = _is_high_risk_account(
-        df,
-        exact_accounts=high_risk_cfg["accounts"],
-        account_prefixes=high_risk_cfg["account_prefixes"],
-        cache=cache,
-    )
-
-    primary_evidence = manual_context | high_risk_process | high_amount
-    immediate = candidate & has_approver & ~system_source & primary_evidence
-    review = candidate & has_approver & ~immediate
-    low_priority = candidate & ~has_approver
-    system_review = review & system_source
-    weak_review = review & ~system_source
-
-    score_series = pd.Series(0.0, index=df.index, dtype="float64")
-    score_series.loc[immediate] = 0.55
-    score_series.loc[immediate & high_amount] = 0.65
-    score_series.loc[immediate & manual_context & high_risk_process] = 0.65
-    score_series.loc[immediate & high_amount & (manual_context | high_risk_process)] = 0.70
-    corroborated = immediate & (
-        (high_amount & (period_end | abnormal_time | high_risk_account))
-        | (manual_context & high_risk_process & (high_amount | period_end | abnormal_time))
-    )
-    score_series.loc[corroborated] = 0.80
-    review_score_series = pd.Series(0.0, index=df.index, dtype="float64")
-    review_score_series.loc[system_review] = 0.25
-    review_score_series.loc[
-        system_review & (high_amount | high_risk_process | high_risk_account)
-    ] = 0.35
-    review_score_series.loc[weak_review] = 0.35
-    review_score_series.loc[low_priority] = 0.1
-
-    queue_label = pd.Series("none", index=df.index, dtype="object")
-    queue_label.loc[low_priority] = "low_priority"
-    queue_label.loc[review] = "review"
-    queue_label.loc[immediate] = "immediate"
-
-    row_annotations: dict[int, dict[str, object]] = {}
-    for idx in candidate[candidate].index:
-        evidence_reasons: list[str] = []
-        if bool(manual_source.loc[idx]):
-            evidence_reasons.append("manual_source")
-        if bool(manual_entry.loc[idx]):
-            evidence_reasons.append("manual_entry")
-        if bool(high_risk_process.loc[idx]):
-            evidence_reasons.append("high_risk_process")
-        if bool(high_amount.loc[idx]):
-            evidence_reasons.append("high_amount")
-        if bool(period_end.loc[idx]):
-            evidence_reasons.append("period_end")
-        if bool(abnormal_time.loc[idx]):
-            evidence_reasons.append("abnormal_time")
-        if bool(high_risk_account.loc[idx]):
-            evidence_reasons.append("high_risk_account")
-
-        if bool(low_priority.loc[idx]):
-            score_bucket = "missing_approver"
-        elif bool(system_review.loc[idx]):
-            score_bucket = "system_review"
-        elif bool(weak_review.loc[idx]):
-            score_bucket = "weak_review"
-        elif float(score_series.loc[idx]) >= 0.80:
-            score_bucket = "corroborated_material"
-        elif float(score_series.loc[idx]) >= 0.70:
-            score_bucket = "material_control_gap"
-        elif float(score_series.loc[idx]) >= 0.65:
-            score_bucket = "corroborated_control_gap"
-        else:
-            score_bucket = "single_control_gap"
-
-        annotation: dict[str, object] = {
-            "queue_label": str(queue_label.loc[idx]),
-            "bucket": score_bucket,
-            "score": round(float(score_series.loc[idx]), 4),
-            "review_score": round(float(review_score_series.loc[idx]), 4),
-            "evidence_count": len(set(evidence_reasons)),
-            "evidence_reasons": evidence_reasons,
-            "source_category": (
-                "missing_approver"
-                if not bool(has_approver.loc[idx])
-                else "system_review"
-                if bool(system_source.loc[idx])
-                else "manual"
-                if bool(manual_source.loc[idx])
-                else "non_system_review"
-            ),
-        }
-        for column in (
-            "document_id",
-            "source",
-            "approved_by",
-            "approval_date",
-            "business_process",
-            "exceeds_threshold",
-            "is_manual_je",
-            "is_period_end",
-            "is_after_hours",
-            "is_weekend",
-            "is_holiday",
-            "time_zone_category",
-            "gl_account",
-        ):
-            if column in df.columns:
-                value = df.at[idx, column]
-                annotation[column] = None if pd.isna(value) else value
-        row_annotations[int(idx)] = annotation
-
-    candidate.attrs["score_series"] = score_series
-    candidate.attrs["review_score_series"] = review_score_series
-    candidate.attrs["breakdown"] = {
-        "candidate_rows": int(candidate.sum()),
-        "immediate_rows": int(immediate.sum()),
-        "review_rows": int(review.sum()),
-        "system_review_rows": int(system_review.sum()),
-        "weak_review_rows": int(weak_review.sum()),
-        "low_priority_rows": int(low_priority.sum()),
-        "missing_approver_rows": int((candidate & ~has_approver).sum()),
-        "has_approver_rows": int((candidate & has_approver).sum()),
-        "manual_source_rows": int((candidate & manual_source).sum()),
-        "manual_entry_rows": int((candidate & manual_entry).sum()),
-        "system_source_review_rows": int((candidate & system_source).sum()),
-        "high_risk_process_rows": int((candidate & high_risk_process).sum()),
-        "high_amount_rows": int((candidate & high_amount).sum()),
-        "period_end_rows": int((candidate & period_end).sum()),
-        "abnormal_time_rows": int((candidate & abnormal_time).sum()),
-        "high_risk_account_rows": int((candidate & high_risk_account).sum()),
-        "score_bands": {
-            f"{float(score):.2f}": int((score_series.eq(score) & candidate).sum())
-            for score in sorted(score_series.loc[candidate].unique())
-            if float(score) > 0
-        },
-        "source_counts": source_norm.loc[candidate].value_counts().to_dict(),
-    }
-    candidate.attrs["row_annotations"] = row_annotations
-    return candidate
-
-
 def b13_high_risk_account_use(
     df: pd.DataFrame,
     audit_rules: dict | None = None,
@@ -1299,53 +1094,35 @@ def b06_self_approval(
 
     allow = _get_self_approval_allow_config(audit_rules)
     allowed = pd.Series(False, index=df.index)
+    lone_automated = (
+        lone_automated_mask(df, source_tokens=set(allow["sources"])).reindex(
+            df.index,
+            fill_value=False,
+        )
+        if "source" in df.columns and allow["sources"]
+        else pd.Series(False, index=df.index)
+    )
 
     if "user_persona" in df.columns and allow["user_personas"]:
-        allowed = allowed | _cached_text(df, "user_persona", cache).isin(allow["user_personas"])
+        allowed = allowed | (
+            _cached_text(df, "user_persona", cache).isin(allow["user_personas"])
+            & ~lone_automated
+        )
     if "source" in df.columns and allow["sources"]:
-        lone_automated = lone_automated_mask(
-            df,
-            source_tokens=set(allow["sources"]),
-        ).reindex(df.index, fill_value=False)
         source_allowed = _cached_text(df, "source", cache).isin(allow["sources"]) & ~lone_automated
         allowed = allowed | source_allowed
     if "company_code" in df.columns and allow["company_codes"]:
         allowed = allowed | _cached_text(df, "company_code", cache).isin(allow["company_codes"])
 
-    # L1-05 first captures every observed self-approval fact. Allowed system
-    # cases are retained as candidates/evidence but scored as 0 below.
-    flagged = same_person
-    actionable = flagged & ~allowed
-    review_base = actionable & _self_approval_review_mask(df, audit_rules, cache=cache)
-    override_immediate, override_counts = _self_approval_immediate_override_mask(
-        df,
-        audit_rules,
-        cache=cache,
-    )
+    # L1-05 is binary. Trusted system automation is excluded, but lone automated
+    # rows are treated as disguise-suspect and remain actionable.
+    actionable = same_person & ~allowed
+    flagged = actionable
+    immediate = flagged
+    review = pd.Series(False, index=df.index)
     high_amount = pd.Series(False, index=df.index)
-    if float(_get_self_approval_immediate_override_config(audit_rules)["materiality_amount"]) > 0:
-        override_cfg = _get_self_approval_immediate_override_config(audit_rules)
-        high_amount = _is_manual_source(df, override_cfg["manual_sources"], cache=cache) & (
-            _line_amount(df, cache=cache) >= float(override_cfg["materiality_amount"])
-        )
-        abnormal_time = _is_abnormal_self_approval_time(df, cache=cache)
-        high_risk_account = _is_high_risk_account(
-            df,
-            exact_accounts=override_cfg["high_risk_accounts"],
-            account_prefixes=override_cfg["high_risk_account_prefixes"],
-            cache=cache,
-        )
-    else:
-        override_cfg = _get_self_approval_immediate_override_config(audit_rules)
-        abnormal_time = _is_abnormal_self_approval_time(df, cache=cache)
-        high_risk_account = _is_high_risk_account(
-            df,
-            exact_accounts=override_cfg["high_risk_accounts"],
-            account_prefixes=override_cfg["high_risk_account_prefixes"],
-            cache=cache,
-        )
-    review = review_base & ~override_immediate
-    immediate = actionable & ~review
+    abnormal_time = pd.Series(False, index=df.index)
+    high_risk_account = pd.Series(False, index=df.index)
     process_series = (
         _cached_process(df, "business_process", cache)
         if "business_process" in df.columns
@@ -1364,22 +1141,13 @@ def b06_self_approval(
         cache=cache,
     )
 
-    materiality_escalated = flagged & review_base & high_amount
-    abnormal_time_escalated = flagged & review_base & abnormal_time
-    high_risk_account_escalated = flagged & review_base & high_risk_account
-
     bucket = pd.Series("none", index=df.index, dtype="object")
-    bucket.loc[same_person & allowed] = "allowed_system"
-    bucket.loc[review] = "review"
-    bucket.loc[immediate] = "immediate"
-    bucket.loc[materiality_escalated] = "escalated_materiality"
-    bucket.loc[abnormal_time_escalated] = "escalated_abnormal_time"
-    bucket.loc[high_risk_account_escalated] = "escalated_high_risk_account"
+    bucket.loc[same_person & allowed] = "trusted_system_excluded"
+    bucket.loc[immediate] = "binary_flag"
 
     score_series = pd.Series(0.0, index=df.index, dtype="float64")
-    score_series.loc[immediate] = 0.8
+    score_series.loc[immediate] = 1.0
     review_score_series = pd.Series(0.0, index=df.index, dtype="float64")
-    review_score_series.loc[review] = 0.4
 
     row_annotations: dict[int, dict[str, object]] = {}
     annotation_columns = (
@@ -1391,20 +1159,13 @@ def b06_self_approval(
         "user_persona",
         "gl_account",
     )
-    for idx in flagged[flagged].index:
-        override_reasons: list[str] = []
-        if bool(high_amount.loc[idx]):
-            override_reasons.append("materiality")
-        if bool(abnormal_time.loc[idx]):
-            override_reasons.append("abnormal_time")
-        if bool(high_risk_account.loc[idx]):
-            override_reasons.append("high_risk_account")
-
+    for idx in same_person[same_person].index:
         annotation: dict[str, object] = {
             "bucket": str(bucket.loc[idx]),
             "score": round(float(score_series.loc[idx]), 4),
             "review_score": round(float(review_score_series.loc[idx]), 4),
-            "override_reasons": override_reasons,
+            "reason_code": "self_approval",
+            "lone_automated": bool(lone_automated.loc[idx]),
         }
         for column in annotation_columns:
             if column in df.columns:
@@ -1425,7 +1186,8 @@ def b06_self_approval(
         "review_indices": [int(idx) for idx in review[review].index],
         "immediate_label": "immediate",
         "review_label": "review",
-        "override_counts": override_counts,
+        "override_counts": {},
+        "lone_automated_rows": int((same_person & lone_automated).sum()),
         "observed_summary": observed_summary,
     }
     flagged.attrs["row_annotations"] = row_annotations
@@ -1686,96 +1448,51 @@ def manual_override_signal_mask(
     return result
 
 
-def _score_l106_sod_rows(
-    df: pd.DataFrame,
+def _load_l106_toxic_signals() -> dict[str, list[dict[str, object]]]:
+    path = Path(__file__).resolve().parents[2] / "config" / "sod_toxic_combinations.yaml"
+    payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    pairs: list[dict[str, object]] = []
+    for item in payload.get("sod_toxic_combinations", []):
+        pair = frozenset(str(value).strip().upper() for value in item.get("pair", []) if value)
+        signal_class = str(item.get("signal_class", "red")).strip().lower()
+        if len(pair) == 2 and signal_class in {"red", "yellow"}:
+            pairs.append({
+                "processes": pair,
+                "signal_class": signal_class,
+                "conflict_type": str(item.get("conflict_type", "")),
+            })
+
+    within: list[dict[str, object]] = []
+    for item in payload.get("within_process_toxic", []):
+        process = str(item.get("process", "")).strip().upper()
+        signal_class = str(item.get("signal_class", "red")).strip().lower()
+        if process and signal_class in {"red", "yellow"}:
+            within.append({
+                "processes": frozenset({process}),
+                "signal_class": signal_class,
+                "conflict_type": str(item.get("conflict_type", "")),
+            })
+    return {"pairs": pairs, "within": within}
+
+
+def _l106_match_for_process(
     *,
-    immediate_mask: pd.Series,
-    direct_sod_violation: pd.Series,
-    within_process_conflict: pd.Series,
-    it_admin_high_risk: pd.Series,
-    audit_rules: dict | None = None,
-    cache: AccessRuleCache | None = None,
-) -> tuple[pd.Series, pd.Series, dict[int, dict[str, object]]]:
-    """Return direct-only L1-06 score bands and row annotations."""
-
-    cfg = _get_l106_sod_scoring_config(audit_rules)
-    score_series = pd.Series(0.0, index=df.index, dtype="float64")
-    bucket = pd.Series("none", index=df.index, dtype="object")
-    reason = pd.Series("", index=df.index, dtype="object")
-    if not immediate_mask.any():
-        return score_series, bucket, {}
-
-    process_norm = (
-        _cached_process(df, "business_process", cache)
-        if "business_process" in df.columns
-        else pd.Series("", index=df.index)
-    )
-    conflict_norm = (
-        _cached_text(df, "sod_conflict_type", cache)
-        if "sod_conflict_type" in df.columns
-        else pd.Series("", index=df.index)
-    )
-    protected_process = process_norm.isin(cfg["protected_processes"])
-    high_risk_conflict = conflict_norm.isin(cfg["high_risk_conflict_types"])
-    threshold_excess = (
-        bool_column(df, "exceeds_threshold")
-        if "exceeds_threshold" in df.columns
-        else pd.Series(False, index=df.index)
-    )
-    has_amount = _line_amount(df, cache=cache).gt(0)
-
-    direct_low = immediate_mask
-    direct_medium = immediate_mask & (
-        direct_sod_violation | (within_process_conflict & (protected_process | has_amount))
-    )
-    direct_high = immediate_mask & (high_risk_conflict | threshold_excess)
-    direct_critical = immediate_mask & it_admin_high_risk
-
-    score_series.loc[direct_low] = float(cfg["direct_low"])
-    bucket.loc[direct_low] = "direct_low"
-    reason.loc[direct_low] = "direct_conflict_marker"
-
-    score_series.loc[direct_medium] = float(cfg["direct_medium"])
-    bucket.loc[direct_medium] = "direct_medium"
-    reason.loc[direct_medium] = "direct_conflict_with_process_or_amount"
-
-    score_series.loc[direct_high] = float(cfg["direct_high"])
-    bucket.loc[direct_high] = "direct_high"
-    reason.loc[direct_high] = "high_risk_direct_sod"
-
-    score_series.loc[direct_critical] = float(cfg["direct_critical"])
-    bucket.loc[direct_critical] = "direct_critical"
-    reason.loc[direct_critical] = "it_admin_protected_business_posting"
-
-    row_annotations: dict[int, dict[str, object]] = {}
-    annotation_columns = (
-        "document_id",
-        "created_by",
-        "approved_by",
-        "business_process",
-        "source",
-        "user_persona",
-        "sod_conflict_type",
-    )
-    for idx in immediate_mask[immediate_mask].index:
-        annotation: dict[str, object] = {
-            "bucket": str(bucket.loc[idx]),
-            "score": round(float(score_series.loc[idx]), 4),
-            "score_reason": str(reason.loc[idx]),
-            "direct_sod_violation": bool(direct_sod_violation.loc[idx]),
-            "within_process_conflict": bool(within_process_conflict.loc[idx]),
-            "it_admin_high_risk": bool(it_admin_high_risk.loc[idx]),
-            "protected_process": bool(protected_process.loc[idx]),
-            "high_risk_conflict": bool(high_risk_conflict.loc[idx]),
-            "threshold_excess": bool(threshold_excess.loc[idx]),
-        }
-        for column in annotation_columns:
-            if column in df.columns:
-                value = df.at[idx, column]
-                annotation[column] = None if pd.isna(value) else value
-        row_annotations[int(idx)] = annotation
-
-    return score_series, bucket, row_annotations
+    person_processes: frozenset[str],
+    row_process: str,
+    signals: dict[str, list[dict[str, object]]],
+) -> dict[str, object] | None:
+    matches: list[dict[str, object]] = []
+    for item in signals["pairs"]:
+        processes = item["processes"]
+        if row_process in processes and processes.issubset(person_processes):
+            matches.append(item)
+    for item in signals["within"]:
+        processes = item["processes"]
+        if row_process in processes and person_processes == processes:
+            matches.append(item)
+    if not matches:
+        return None
+    return next((item for item in matches if item["signal_class"] == "red"), matches[0])
 
 
 def b07_segregation_of_duties(
@@ -1784,156 +1501,77 @@ def b07_segregation_of_duties(
     audit_rules: dict | None = None,
     cache: AccessRuleCache | None = None,
 ) -> pd.Series:
-    """L1-06 direct segregation-of-duties violations.
-
-    L1-06 is restricted to document-level SoD conflicts:
-      - direct within-process SoD conflict markers
-      - source-provided document-level SoD violation markers
-      - IT super-user monetary postings in protected processes
-
-    User history, configured review pairs, and role-threshold excess are work
-    scope review signals. They are reported in breakdown metadata only and
-    must not produce L1-06 score or review score.
-    """
+    """L1-06 binary segregation-of-duties signal derived from person process coverage."""
 
     required = ["created_by", "business_process"]
     missing = [c for c in required if c not in df.columns]
     if missing:
         return pd.Series(False, index=df.index)
 
-    toxic_pairs, role_thresholds = _get_sod_config(audit_rules)
-    it_admin_cfg = _get_sod_it_admin_config(audit_rules)
-    strong_review_pairs, weak_review_pairs = _split_sod_pairs(toxic_pairs)
+    signals = _load_l106_toxic_signals()
+    person = _cached_actor(df, "created_by", cache)
+    process = _cached_process(df, "business_process", cache)
+    human_mask = _human_sod_mask(df, audit_rules=audit_rules, cache=cache)
+    valid = person.ne("") & process.ne("") & human_mask
+    person_processes = process[valid].groupby(person[valid]).agg(
+        lambda values: frozenset(value for value in values.unique() if value)
+    )
+
     result = pd.Series(False, index=df.index)
+    score_series = pd.Series(0.0, index=df.index, dtype="float64")
+    signal_class = pd.Series("none", index=df.index, dtype="object")
+    row_annotations: dict[int, dict[str, object]] = {}
 
-    persona_norm = (
-        _cached_persona(df, "user_persona", cache)
-        if "user_persona" in df.columns
-        else pd.Series("", index=df.index)
-    )
-    human_mask = _human_sod_mask(df, audit_rules, cache=cache)
-
-    human_df = df[human_mask]
-
-    toxic_pair_users: set[str] = set()
-    review_users: set[str] = set()
-    role_violators: set[str] = set()
-    fallback_scope_users: set[str] = set()
-    if not human_df.empty:
-        normalized_process = _cached_process(df, "business_process", cache).loc[human_df.index]
-        user_processes = normalized_process.groupby(human_df["created_by"]).apply(
-            lambda x: frozenset(v for v in x.unique() if v)
+    for idx in df.index[valid]:
+        row_person = person.loc[idx]
+        row_process = process.loc[idx]
+        match = _l106_match_for_process(
+            person_processes=person_processes.get(row_person, frozenset()),
+            row_process=row_process,
+            signals=signals,
         )
+        if match is None:
+            continue
+        class_value = str(match["signal_class"])
+        signal_class.loc[idx] = class_value
+        if class_value == "red":
+            result.loc[idx] = True
+            score_series.loc[idx] = 1.0
+        toxic_pair = sorted(match["processes"])
+        annotation: dict[str, object] = {
+            "bucket": class_value,
+            "score": round(float(score_series.loc[idx]), 4),
+            "signal_class": class_value,
+            "toxic_pair": toxic_pair,
+            "conflict_type": match["conflict_type"],
+            "person_processes": sorted(person_processes.get(row_person, frozenset())),
+        }
+        for column in ("document_id", "created_by", "approved_by", "business_process"):
+            if column in df.columns:
+                value = df.at[idx, column]
+                annotation[column] = None if pd.isna(value) else value
+        row_annotations[int(idx)] = annotation
 
-        for user, procs in user_processes.items():
-            for pair in strong_review_pairs:
-                if pair.issubset(procs):
-                    toxic_pair_users.add(user)
-                    break
-
-        for user, procs in user_processes.items():
-            for pair in weak_review_pairs:
-                if pair.issubset(procs):
-                    review_users.add(user)
-                    break
-
-        if "user_persona" in df.columns and role_thresholds:
-            counts = human_df.groupby("created_by")["business_process"].nunique()
-            persona_map = _normalized_persona(
-                human_df.drop_duplicates("created_by").set_index("created_by")["user_persona"]
-            )
-
-            for user, count in counts.items():
-                persona = persona_map.get(user)
-                if persona and persona in role_thresholds and count > role_thresholds[persona]:
-                    role_violators.add(user)
-        else:
-            counts = human_df.groupby("created_by")["business_process"].nunique()
-            fallback_scope_users = set(counts[counts >= sod_threshold].index)
-
-    immediate_mask = pd.Series(False, index=df.index)
-
-    direct_sod_violation = pd.Series(False, index=df.index)
-    if "sod_violation" in df.columns:
-        direct_sod_violation = human_mask & bool_column(df, "sod_violation")
-    direct_sod_violation_observed = direct_sod_violation.copy()
-
-    within_process_conflict = pd.Series(False, index=df.index)
-    if "sod_conflict_type" in df.columns:
-        within_process_conflict = (
-            human_mask
-            & df["sod_conflict_type"].notna()
-            & (df["sod_conflict_type"].astype(str).str.strip() != "")
-        )
-        direct_sod_violation = direct_sod_violation & within_process_conflict
-
-    immediate_mask = immediate_mask | direct_sod_violation | within_process_conflict
-
-    it_admin_high_risk = pd.Series(False, index=df.index)
-    if "user_persona" in df.columns:
-        protected_processes = set(it_admin_cfg["business_processes"])
-        if protected_processes:
-            process_norm = _cached_process(df, "business_process", cache)
-            protected_mask = process_norm.isin(protected_processes)
-        else:
-            protected_mask = pd.Series(True, index=df.index)
-
-        amount_mask = _line_amount(df, cache=cache) > 0
-        materiality_amount = float(it_admin_cfg["materiality_amount"])
-        if materiality_amount > 0:
-            amount_mask = amount_mask & (_line_amount(df, cache=cache) >= materiality_amount)
-
-        it_admin_persona = persona_norm.isin(it_admin_cfg["user_personas"])
-        it_admin_high_risk = human_mask & it_admin_persona & protected_mask & amount_mask
-        immediate_mask = immediate_mask | it_admin_high_risk
-
-    mitigating_roles = _get_sod_mitigating_roles(audit_rules)
-    scope_review_mask = pd.Series(False, index=df.index)
-    scope_review_users = toxic_pair_users | review_users | role_violators | fallback_scope_users
-    if scope_review_users:
-        scope_review_mask = human_mask & df["created_by"].isin(scope_review_users)
-        if "exceeds_threshold" in df.columns:
-            scope_review_mask = scope_review_mask & bool_column(df, "exceeds_threshold")
-        else:
-            scope_review_mask = pd.Series(False, index=df.index)
-        if mitigating_roles and "user_persona" in df.columns:
-            scope_review_mask = scope_review_mask & ~persona_norm.isin(mitigating_roles)
-        scope_review_mask = scope_review_mask & ~immediate_mask
-
-    result = immediate_mask
-    score_series, score_bucket, row_annotations = _score_l106_sod_rows(
-        df,
-        immediate_mask=immediate_mask,
-        direct_sod_violation=direct_sod_violation,
-        within_process_conflict=within_process_conflict,
-        it_admin_high_risk=it_admin_high_risk,
-        audit_rules=audit_rules,
-        cache=cache,
-    )
     review_score_series = pd.Series(0.0, index=df.index)
 
     result.attrs["score_series"] = score_series
     result.attrs["review_score_series"] = review_score_series
     result.attrs["breakdown"] = {
-        "immediate_rows": int(immediate_mask.sum()),
+        "immediate_rows": int(result.sum()),
         "review_rows": 0,
-        "immediate_users": 0,
-        "review_users": 0,
-        "toxic_pair_review_users": len(toxic_pair_users),
-        "work_scope_review_rows_excluded": int(scope_review_mask.sum()),
-        "work_scope_review_users_excluded": len(scope_review_users),
-        "role_threshold_review_users_excluded": len(role_violators),
-        "fallback_scope_review_users_excluded": len(fallback_scope_users),
-        "strong_review_pairs": [sorted(pair) for pair in strong_review_pairs],
-        "weak_review_pairs": [sorted(pair) for pair in weak_review_pairs],
-        "direct_sod_violation_rows": int(direct_sod_violation_observed.sum()),
-        "within_process_conflict_rows": int(within_process_conflict.sum()),
-        "it_admin_high_risk_rows": int(it_admin_high_risk.sum()),
+        "red_rows": int(signal_class.eq("red").sum()),
+        "yellow_rows": int(signal_class.eq("yellow").sum()),
+        "red_users": int(person[result].nunique()),
+        "yellow_users": int(person[signal_class.eq("yellow")].nunique()),
+        "pair_config_count": len(signals["pairs"]),
+        "within_process_config_count": len(signals["within"]),
+        "excluded_system_rows": int((~human_mask).sum()),
+        "signal_class_counts": signal_class[signal_class.ne("none")].value_counts().to_dict(),
         "corroborated_review_rows": 0,
         "self_approval_rows": 0,
         "skipped_approval_rows": 0,
         "manual_override_rows": 0,
-        "score_bucket_counts": score_bucket[score_bucket.ne("none")].value_counts().to_dict(),
+        "score_bucket_counts": signal_class[signal_class.ne("none")].value_counts().to_dict(),
     }
     result.attrs["row_annotations"] = row_annotations
     return result
@@ -2197,141 +1835,35 @@ def b09_skipped_approval(
     audit_rules: dict | None = None,
     cache: AccessRuleCache | None = None,
 ) -> pd.Series:
-    """L1-07 skipped approval: approval required but approver missing."""
+    """L1-07 skipped approval: blank approver is a binary control flag."""
 
     if "approved_by" not in df.columns:
-        return pd.Series(False, index=df.index)
+        return pd.Series(False, index=df.index, dtype=bool)
     if _approval_contract_degraded(df):
         return _degraded_approval_result(df, "L1-07")
     if cache is not None and "b09_skipped_approval_result" in cache.bool_masks:
         return cache.bool_masks["b09_skipped_approval_result"]
 
-    components = _skipped_approval_components(df, audit_rules=audit_rules, cache=cache)
-    cfg = components["cfg"]
-    exceeds = components["exceeds"]
-    approval_required = components["approval_required"]
-    level_review_required = components["level_review_required"]
-    system_source = components["system_source"]
-    no_approval = components["no_approval"]
-    candidate = components["candidate"]
-    manual_source = components["manual_source"]
-    no_approval_date = components["no_approval_date"]
-    manual_entry = components["manual_entry"]
-    abnormal_time = components["abnormal_time"]
-    high_risk_process = components["high_risk_process"]
-    high_approval_level = components["high_approval_level"]
-    evidence_count = components["evidence_count"]
-    immediate = components["immediate"]
-    review = components["review"]
-    low_priority = components["low_priority"]
-    missing_approval_candidate = candidate
-    has_approver = _cached_text(df, "approved_by", cache).ne("")
-    has_approver_membership = "approver_in_master" in df.columns
-    if has_approver_membership:
-        approver_in_master = df["approver_in_master"].astype("boolean")
-        unknown_approver = has_approver & approver_in_master.eq(False).fillna(False).astype(bool)
-    else:
-        unknown_approver = pd.Series(False, index=df.index, dtype=bool)
-    candidate = missing_approval_candidate | unknown_approver
-    queue_label = pd.Series("none", index=df.index, dtype="object")
-    queue_label.loc[low_priority] = "low_priority"
-    queue_label.loc[review] = "review"
-    queue_label.loc[immediate] = "immediate"
-    queue_label.loc[unknown_approver] = "unknown_approver"
+    approved_by = _cached_text(df, "approved_by", cache)
+    candidate = approved_by.eq("")
+    score_series = pd.Series(0.0, index=df.index, dtype="float64")
+    score_series.loc[candidate] = 1.0
+    review_score_series = pd.Series(0.0, index=df.index, dtype="float64")
 
-    component_scores = _l107_component_scores(df, components, cache=cache)
-    raw_l107_score = component_scores["raw_score"]
-    score_series = pd.Series(0.0, index=df.index)
-    score_series.loc[immediate] = raw_l107_score.loc[immediate].clip(lower=0.70)
-    score_series.loc[unknown_approver] = score_series.loc[unknown_approver].clip(lower=0.55)
-    review_score_series = pd.Series(0.0, index=df.index)
-    review_score_series.loc[review] = raw_l107_score.loc[review].clip(lower=0.45, upper=0.69)
-    review_score_series.loc[low_priority] = raw_l107_score.loc[low_priority].clip(
-        lower=0.10,
-        upper=0.44,
-    )
-    effective_score = pd.concat([score_series, review_score_series], axis=1).max(axis=1)
-
-    evidence_reasons_by_row: dict[int, list[str]] = {}
     row_annotations: dict[int, dict[str, object]] = {}
-    for idx in missing_approval_candidate[missing_approval_candidate].index:
-        reasons: list[str] = []
-        if bool(manual_source.loc[idx]):
-            reasons.append("manual_source")
-        if bool(no_approval_date.loc[idx]):
-            reasons.append("no_approval_date")
-        if bool(manual_entry.loc[idx]):
-            reasons.append("manual_entry")
-        if bool(abnormal_time.loc[idx]):
-            reasons.append("abnormal_time")
-        if bool(high_risk_process.loc[idx]):
-            reasons.append("high_risk_process")
-        if bool(high_approval_level.loc[idx]):
-            reasons.append("high_approval_level")
-        evidence_reasons_by_row[int(idx)] = reasons
-
+    for idx in candidate[candidate].index:
         annotation: dict[str, object] = {
-            "queue_label": str(queue_label.loc[idx]),
-            "score": round(float(score_series.loc[idx]), 4),
-            "review_score": round(float(review_score_series.loc[idx]), 4),
-            "severity_score": round(float(raw_l107_score.loc[idx]), 4),
-            "score_components": {
-                key: round(float(series.loc[idx]), 4)
-                for key, series in component_scores.items()
-                if key != "raw_score"
-            },
-            "evidence_count": int(evidence_count.loc[idx]),
-            "evidence_reasons": reasons,
-            "source_category": (
-                "system_exception"
-                if bool(system_source.loc[idx])
-                else "not_approval_required"
-                if not bool(approval_required.loc[idx])
-                else "manual"
-                if bool(manual_source.loc[idx])
-                else "non_system_review"
-            ),
-            "has_approval_date": not bool(no_approval_date.loc[idx]),
-            "min_evidence_count": int(cfg["min_evidence_count"]),
-        }
-        annotation["score_reason_summary"] = [
-            key
-            for key, value in annotation["score_components"].items()
-            if key != "mitigation_likelihood" and float(value) >= 0.5
-        ]
-        if annotation["score_components"]["mitigation_likelihood"] >= 0.5:
-            annotation["score_reason_summary"].append("mitigation_likelihood")
-        for column in (
-            "document_id",
-            "source",
-            "approved_by",
-            "approval_date",
-            "business_process",
-            "approval_level",
-            "created_by",
-        ):
-            if column in df.columns:
-                value = df.at[idx, column]
-                annotation[column] = None if pd.isna(value) else value
-        row_annotations[int(idx)] = annotation
-
-    for idx in unknown_approver[unknown_approver].index:
-        annotation = {
-            "queue_label": "unknown_approver",
-            "reason_code": "unknown_approver",
-            "bucket": "unknown_approver",
-            "score": round(float(score_series.loc[idx]), 4),
+            "queue_label": "binary_flag",
+            "reason_code": "blank_approved_by",
+            "bucket": "binary_flag",
+            "score": 1.0,
             "review_score": 0.0,
-            "severity_score": round(float(score_series.loc[idx]), 4),
+            "severity_score": 1.0,
             "score_components": {},
-            "score_reason_summary": ["unknown_approver"],
+            "score_reason_summary": ["blank_approved_by"],
             "evidence_count": 1,
-            "evidence_reasons": ["unknown_approver"],
-            "source_category": "unknown_approver",
-            "has_approval_date": bool(
-                "approval_date" in df.columns and str(df.at[idx, "approval_date"]).strip() != ""
-            ),
-            "min_evidence_count": int(cfg["min_evidence_count"]),
+            "evidence_reasons": ["blank_approved_by"],
+            "source_category": "blank_approved_by",
         }
         for column in (
             "document_id",
@@ -2346,64 +1878,129 @@ def b09_skipped_approval(
                 value = df.at[idx, column]
                 annotation[column] = None if pd.isna(value) else value
         row_annotations[int(idx)] = annotation
-
-    evidence_count_bands = {
-        str(int(count)): int(((missing_approval_candidate) & evidence_count.eq(count)).sum())
-        for count in sorted(evidence_count[missing_approval_candidate].dropna().unique())
-    }
-    evidence_reason_counts: dict[str, int] = {}
-    for reasons in evidence_reasons_by_row.values():
-        for reason in reasons:
-            evidence_reason_counts[reason] = evidence_reason_counts.get(reason, 0) + 1
 
     candidate.attrs["score_series"] = score_series
     candidate.attrs["review_score_series"] = review_score_series
     candidate.attrs["breakdown"] = {
-        "immediate_rows": int(immediate.sum()),
-        "review_rows": int(review.sum()),
-        "low_priority_rows": int(low_priority.sum()),
-        "confirmed_rows": int(immediate.sum()),
         "candidate_rows": int(candidate.sum()),
-        "immediate_indices": [int(idx) for idx in immediate[immediate].index],
-        "review_indices": [int(idx) for idx in review[review].index],
-        "immediate_label": "immediate",
-        "review_label": "review",
-        "manual_source_rows": int((missing_approval_candidate & manual_source).sum()),
-        "no_approval_date_rows": int((missing_approval_candidate & no_approval_date).sum()),
-        "manual_entry_rows": int((missing_approval_candidate & manual_entry).sum()),
-        "abnormal_time_rows": int((missing_approval_candidate & abnormal_time).sum()),
-        "high_risk_process_rows": int((missing_approval_candidate & high_risk_process).sum()),
-        "high_approval_level_rows": int((missing_approval_candidate & high_approval_level).sum()),
-        "approval_level_review_rows": int(
-            (missing_approval_candidate & level_review_required & ~exceeds).sum()
-        ),
-        "missing_approver_rows": int(missing_approval_candidate.sum()),
-        "actionable_missing_approver_rows": int(
-            (approval_required & ~system_source & no_approval).sum()
-        ),
-        "no_approval_required_rows": int((missing_approval_candidate & ~approval_required).sum()),
-        "no_approval_trace_rows": int((missing_approval_candidate & no_approval_date).sum()),
-        "allowed_system_rows": int((missing_approval_candidate & system_source).sum()),
-        "evidence_count_bands": evidence_count_bands,
-        "evidence_reason_counts": evidence_reason_counts,
-        "min_evidence_count": int(cfg["min_evidence_count"]),
-        "score_bands": {
-            "critical": int((candidate & effective_score.ge(0.85)).sum()),
-            "high": int((candidate & effective_score.ge(0.70) & effective_score.lt(0.85)).sum()),
-            "review": int((candidate & effective_score.ge(0.45) & effective_score.lt(0.70)).sum()),
-            "low": int((candidate & effective_score.gt(0.0) & effective_score.lt(0.45)).sum()),
-        },
+        "confirmed_rows": int(candidate.sum()),
+        "missing_approver_rows": int(candidate.sum()),
+        "blank_approved_by_rows": int(candidate.sum()),
+        "score_bands": {"binary_flag": int(candidate.sum())},
+        "rule_id": "L1-07",
     }
-    if has_approver_membership:
-        candidate.attrs["breakdown"]["unknown_approver_rows"] = int(unknown_approver.sum())
     candidate.attrs["row_annotations"] = row_annotations
-    immediate.attrs = candidate.attrs.copy()
     if cache is not None:
         cache.bool_masks["b09_skipped_approval_result"] = candidate
     return candidate
 
 
-def b10_intercompany_review_signal(df: pd.DataFrame) -> pd.Series:
+def b09b_unknown_approver(
+    df: pd.DataFrame,
+    audit_rules: dict | None = None,
+    cache: AccessRuleCache | None = None,
+) -> pd.Series:
+    """L1-07-02 ghost approver: nonblank approver absent from employee master."""
+
+    if _approval_contract_degraded(df):
+        return _degraded_approval_result(df, "L1-07-02")
+    if "approved_by" not in df.columns or "approver_in_master" not in df.columns:
+        result = pd.Series(False, index=df.index, dtype=bool)
+        result.attrs["score_series"] = pd.Series(0.0, index=df.index, dtype="float64")
+        result.attrs["review_score_series"] = pd.Series(0.0, index=df.index, dtype="float64")
+        result.attrs["breakdown"] = {
+            "candidate_rows": 0,
+            "unknown_approver_rows": 0,
+            "rule_id": "L1-07-02",
+            "coverage_degraded": "approver_in_master_missing"
+            if "approver_in_master" not in df.columns
+            else "approved_by_missing",
+        }
+        result.attrs["row_annotations"] = {}
+        return result
+    if cache is not None and "b09b_unknown_approver_result" in cache.bool_masks:
+        return cache.bool_masks["b09b_unknown_approver_result"]
+
+    has_approver = _cached_text(df, "approved_by", cache).ne("")
+    approver_in_master = df["approver_in_master"].astype("boolean")
+    candidate = has_approver & approver_in_master.eq(False).fillna(False).astype(bool)
+    score_series = pd.Series(0.0, index=df.index, dtype="float64")
+    score_series.loc[candidate] = 1.0
+    review_score_series = pd.Series(0.0, index=df.index, dtype="float64")
+
+    row_annotations: dict[int, dict[str, object]] = {}
+    for idx in candidate[candidate].index:
+        annotation: dict[str, object] = {
+            "queue_label": "unknown_approver",
+            "reason_code": "unknown_approver",
+            "bucket": "binary_flag",
+            "score": 1.0,
+            "review_score": 0.0,
+            "severity_score": 1.0,
+            "score_components": {},
+            "score_reason_summary": ["unknown_approver"],
+            "evidence_count": 1,
+            "evidence_reasons": ["unknown_approver"],
+            "source_category": "unknown_approver",
+        }
+        for column in (
+            "document_id",
+            "source",
+            "approved_by",
+            "approval_date",
+            "business_process",
+            "approval_level",
+            "created_by",
+        ):
+            if column in df.columns:
+                value = df.at[idx, column]
+                annotation[column] = None if pd.isna(value) else value
+        row_annotations[int(idx)] = annotation
+
+    candidate.attrs["score_series"] = score_series
+    candidate.attrs["review_score_series"] = review_score_series
+    candidate.attrs["breakdown"] = {
+        "candidate_rows": int(candidate.sum()),
+        "confirmed_rows": int(candidate.sum()),
+        "unknown_approver_rows": int(candidate.sum()),
+        "score_bands": {"binary_flag": int(candidate.sum())},
+        "rule_id": "L1-07-02",
+    }
+    candidate.attrs["row_annotations"] = row_annotations
+    if cache is not None:
+        cache.bool_masks["b09b_unknown_approver_result"] = candidate
+    return candidate
+
+
+def _intercompany_prefix_mask(
+    df: pd.DataFrame,
+    audit_rules: dict | None = None,
+) -> pd.Series:
+    result = pd.Series(False, index=df.index, dtype=bool)
+    if "gl_account" not in df.columns:
+        return result
+
+    rules = audit_rules or get_audit_rules()
+    patterns = rules.get("patterns", rules)
+    prefixes = tuple(
+        str(value).strip()
+        for value in patterns.get(
+            "intercompany_identifiers",
+            ["1150", "2050", "4500", "2700"],
+        )
+        if str(value).strip()
+    )
+    if not prefixes:
+        return result
+
+    gl_account = df["gl_account"].fillna("").astype(str).str.strip()
+    return gl_account.str.startswith(prefixes).fillna(False)
+
+
+def b10_intercompany_review_signal(
+    df: pd.DataFrame,
+    audit_rules: dict | None = None,
+) -> pd.Series:
     """L3-03 related-party transaction review signal.
 
     Phase 1 only identifies entries posted to configured intercompany account
@@ -2411,10 +2008,15 @@ def b10_intercompany_review_signal(df: pd.DataFrame) -> pd.Series:
     handled by GR01 in GraphDetector.
     """
 
-    if "is_intercompany" not in df.columns:
+    if "is_intercompany" not in df.columns and "gl_account" not in df.columns:
         return pd.Series(False, index=df.index)
 
-    ic_mask = bool_column(df, "is_intercompany")
+    ic_mask = (
+        bool_column(df, "is_intercompany")
+        if "is_intercompany" in df.columns
+        else pd.Series(False, index=df.index, dtype=bool)
+    )
+    ic_mask = ic_mask | _intercompany_prefix_mask(df, audit_rules)
     if not ic_mask.any():
         return pd.Series(False, index=df.index)
 
@@ -2435,13 +2037,13 @@ def b10_intercompany_review_signal(df: pd.DataFrame) -> pd.Series:
         )
 
     score_series = pd.Series(0.0, index=df.index)
-    score_series.loc[ic_mask] = 0.4
+    score_series.loc[ic_mask] = 1.0
     ic_mask.attrs["score_series"] = score_series
     ic_mask.attrs["breakdown"] = breakdown
     ic_mask.attrs["row_annotations"] = {
         idx: {
             "signal_category": "ic_population",
-            "score": 0.4,
+            "score": 1.0,
             "company_code": (
                 str(df.at[idx, "company_code"]) if "company_code" in df.columns else ""
             ),

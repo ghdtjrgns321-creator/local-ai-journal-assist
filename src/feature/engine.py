@@ -60,7 +60,6 @@ _RULE_FEATURE_CATEGORIES: dict[str, set[FeatureCategory]] = {
     "L1-01": set(),
     "L1-02": set(),
     "L1-03": set(),
-    "L3-01": set(),
     # Approval / amount-control rules.
     "L2-01": {FeatureCategory.AMOUNT},
     "L1-04": {FeatureCategory.AMOUNT},
@@ -68,7 +67,7 @@ _RULE_FEATURE_CATEGORIES: dict[str, set[FeatureCategory]] = {
     "L1-06": set(),
     "L1-07": {FeatureCategory.AMOUNT},
     "L1-08": {FeatureCategory.TIME},
-    "L1-09": set(),
+    "L1-07-02": {FeatureCategory.AMOUNT},
     # Fraud and review signals.
     "L2-02": set(),
     "L2-03": set(),

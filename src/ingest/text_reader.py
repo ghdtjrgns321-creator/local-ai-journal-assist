@@ -60,7 +60,7 @@ def _detect_encoding(path: Path) -> tuple[str, float | None]:
 
     raw = path.read_bytes()[:_ENCODING_SAMPLE_BYTES]
 
-    # Why: Korean-heavy UTF-8 CSVs can be misclassified as legacy Cyrillic
+    # Why: Korean-heavy UTF-8 CSVs can be detected as legacy Cyrillic
     # encodings (for example ptcp154), which silently corrupts Hangul text.
     # A strict UTF-8 decode is deterministic, so prefer it when it succeeds.
     if raw.startswith(b"\xef\xbb\xbf"):

@@ -122,13 +122,12 @@ CANONICAL_TRANSACTION_RULE_IDS = (
     "L1-06",
     "L1-07",
     "L1-08",
-    "L1-09",
+    "L1-07-02",
     "L2-01",
     "L2-02",
     "L2-03",
     "L2-04",
     "L2-05",
-    "L3-01",
     "L3-02",
     "L3-03",
     "L3-04",
@@ -142,7 +141,7 @@ CANONICAL_TRANSACTION_RULE_IDS = (
     "L3-12",
     "L4-01",
     # L4-02 제거 (2026-06-15): macro(Benford 모집단 자릿수 분포)는 전표 단위 PHASE1-1 룰이
-    # 아니라 PHASE1-2 family 로 이관 → canonical L1~L4 count 32→31.
+    # 아니라 PHASE1-2 family 로 이관. 2026-06-20 폐기 룰까지 반영해 count 30.
     "L4-03",
     "L4-04",
     "L4-05",
@@ -159,13 +158,12 @@ _ROW_DETAIL_RULE_IDS = frozenset(
         "L1-06",
         "L1-07",
         "L1-08",
-        "L1-09",
+        "L1-07-02",
         "L2-01",
         "L2-02",
         "L2-03",
         "L2-04",
         "L2-05",
-        "L3-01",
         "L3-02",
         "L3-04",
         "L3-07",
@@ -286,7 +284,7 @@ RULE_DETAIL_METADATA_REGISTRY: dict[str, RuleDetailMetadata] = {
             "gl_account",
             "debit_amount",
             "credit_amount",
-            derived=("difference_value", "expected_value", "actual_value"),
+            derived=("imbalance_amount", "debit_sum", "credit_sum"),
         ),
     ),
     "L1-02": _entry(
@@ -301,7 +299,7 @@ RULE_DETAIL_METADATA_REGISTRY: dict[str, RuleDetailMetadata] = {
             "gl_account",
             "debit_amount",
             "credit_amount",
-            derived=("missing_fields", "difference_value"),
+            derived=("missing_fields", "missing_category"),
         ),
     ),
     "L1-03": _entry(
@@ -311,7 +309,6 @@ RULE_DETAIL_METADATA_REGISTRY: dict[str, RuleDetailMetadata] = {
         column_sources=_transaction_columns(
             "document_type",
             "gl_account",
-            derived=("account_family", "expected_value", "actual_value"),
         ),
     ),
     "L1-04": _entry(
@@ -382,21 +379,15 @@ RULE_DETAIL_METADATA_REGISTRY: dict[str, RuleDetailMetadata] = {
         ),
         conflict_note="Final topic locked to closing_timing for v1.",
     ),
-    "L1-09": _entry(
-        "L1-09",
+    "L1-07-02": _entry(
+        "L1-07-02",
         final_topic="approval_control",
-        allow_topic_seed=False,
-        title="Missing approval trace",
+        title="Unknown approver",
         column_sources=_transaction_columns(
             "created_by",
             "approved_by",
-            "approval_date",
             "source",
-            derived=("approved_at", "display_label"),
-        ),
-        conflict_note=(
-            "Case seeder authority revoked (§9.1 light_seeder audit 2026-05-14). "
-            "Retains standalone_rankable + topic_score contribution as corroborating evidence."
+            derived=("approver_in_master", "display_label"),
         ),
     ),
     "L2-01": _entry(
@@ -518,18 +509,6 @@ RULE_DETAIL_METADATA_REGISTRY: dict[str, RuleDetailMetadata] = {
             "lettrage_date",
             "gl_account",
             derived=("counterparty", "reversal_pair_id", "difference_value"),
-        ),
-    ),
-    "L3-01": _entry(
-        "L3-01",
-        final_topic="account_logic",
-        title="Account and process mismatch",
-        column_sources=_transaction_columns(
-            "business_process",
-            "gl_account",
-            "source",
-            "created_by",
-            derived=("account_family", "expected_value", "actual_value"),
         ),
     ),
     "L3-02": _entry(
@@ -743,7 +722,10 @@ RULE_DETAIL_METADATA_REGISTRY: dict[str, RuleDetailMetadata] = {
                 "metrics",
             ),
         ),
-        conflict_note="PHASE1-2 family(Benford 모집단통계)로 이관 — canonical L1~L4 count 제외(2026-06-15).",
+        conflict_note=(
+            "PHASE1-2 family(Benford 모집단통계)로 이관 — "
+            "canonical L1~L4 count 제외(2026-06-15)."
+        ),
     ),
     "Benford": _entry(
         "Benford",
@@ -1059,7 +1041,7 @@ def can_generate_standalone_violation_copy(rule_id: str) -> bool:
 
 
 def include_in_l1_l4_transaction_count(rule_id: str) -> bool:
-    """Return whether a registry entry contributes to the canonical 31 count."""
+    """Return whether a registry entry contributes to the canonical 30 count."""
 
     return get_rule_detail_metadata(rule_id).include_in_l1_l4_transaction_count
 
@@ -1131,8 +1113,8 @@ def validate_rule_detail_metadata_registry(schema_path: Path | None = None) -> l
             missing = ", ".join(sorted(missing_required))
             errors.append(f"{rule_id}: required ledger columns absent from schema: {missing}")
 
-    if len(canonical_seen) != 31:
-        errors.append(f"canonical transaction/detail count is {len(canonical_seen)}, expected 31")
+    if len(canonical_seen) != 30:
+        errors.append(f"canonical transaction/detail count is {len(canonical_seen)}, expected 30")
     if "Benford" in canonical_seen:
         errors.append("Benford counted separately from L4-02")
     if {"L2-03a", "L2-03b", "L2-03c", "L2-03d"} & canonical_seen:

@@ -721,20 +721,6 @@ def _rule_score_bands(
             "immediate_docs": immediate_docs,
             "review_docs": review_docs,
         }
-    if rule_id == "L3-01":
-        exact_denied_docs = df.loc[scores >= 0.65, "document_id"].dropna().nunique()
-        category_review_docs = (
-            df.loc[
-                (scores > 0) & (scores < 0.65),
-                "document_id",
-            ]
-            .dropna()
-            .nunique()
-        )
-        return {
-            "exact_denied_docs": int(exact_denied_docs),
-            "category_review_docs": int(category_review_docs),
-        }
     if rule_id == "L2-03":
         doc_scores = _document_max_scores(df, scores)
         high_docs = int((doc_scores >= 0.85).sum())
@@ -762,19 +748,8 @@ def _rule_score_bands(
             "candidate_clearing_reclass_docs": candidate_docs,
         }
     if rule_id == "L3-06":
-        confirmed_docs = df.loc[scores >= 0.40, "document_id"].dropna().nunique()
-        normal_context_docs = (
-            df.loc[
-                (scores > 0) & (scores < 0.40),
-                "document_id",
-            ]
-            .dropna()
-            .nunique()
-        )
-        return {
-            "confirmed_after_hours_docs": int(confirmed_docs),
-            "normal_system_context_docs": int(normal_context_docs),
-        }
+        after_hours_docs = df.loc[scores > 0, "document_id"].dropna().nunique()
+        return {"after_hours_docs": int(after_hours_docs)}
     if rule_id == "L3-07":
         annotations = _rule_row_annotations(rule_id, result)
         if annotations:
@@ -1033,8 +1008,8 @@ def _review_queue_docs(rule_id: str, fp_docs: int, score_bands: dict[str, int]) 
         return int(score_bands["ic_population_docs"])
     if rule_id == "L3-05" and "calendar_review_docs" in score_bands:
         return int(score_bands["calendar_review_docs"])
-    if rule_id == "L3-06" and "confirmed_after_hours_docs" in score_bands:
-        return int(score_bands["confirmed_after_hours_docs"])
+    if rule_id == "L3-06" and "after_hours_docs" in score_bands:
+        return int(score_bands["after_hours_docs"])
     if rule_id == "L3-07" and "moderate_gap_docs" in score_bands:
         return (
             int(score_bands.get("moderate_gap_docs", 0))
@@ -1069,8 +1044,6 @@ def _review_queue_docs(rule_id: str, fp_docs: int, score_bands: dict[str, int]) 
         )
     if rule_id == "L2-05" and "candidate_clearing_reclass_docs" in score_bands:
         return int(score_bands["candidate_clearing_reclass_docs"])
-    if rule_id == "L3-01" and "category_review_docs" in score_bands:
-        return int(score_bands["category_review_docs"])
     if rule_id == "L4-05" and "behavior_review_docs" in score_bands:
         return int(score_bands["behavior_review_docs"])
     if rule_id == "L4-06" and "batch_review_docs" in score_bands:

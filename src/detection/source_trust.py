@@ -43,34 +43,32 @@ def lone_automated_mask(
     lone_threshold: int = DEFAULT_LONE_THRESHOLD,
     source_tokens: frozenset[str] | set[str] | None = None,
 ) -> pd.Series:
-    """위장 의심: 자동 계열 source인데 배치 정체성이 없고 같은 날 동류도 없는 단독 전표.
+    """위장 의심: 자동 계열 source인데 배치 정체성이 약하거나 같은 날 동류가 적은 전표.
 
-    조건 (모두 충족):
+    조건:
     1. source 자동 계열
-    2. batch_id·job_id 모두 결측/공백 (컬럼이 둘 다 없으면 정체성 검증 불가 → 의심 없음)
-    3. 같은 날 같은 조건(자동+정체성 없음)의 전표 수 ≤ lone_threshold
+    2. batch_id 또는 job_id 결측/공백, 또는 같은 날 자동 전표 수 ≤ lone_threshold
+       (batch_id·job_id 컬럼이 둘 다 없으면 식별자 분기는 평가하지 않음)
     """
     automated = automated_source_mask(df, source_tokens=source_tokens)
     if not automated.any():
         return pd.Series(False, index=df.index)
 
     identity_columns = [column for column in ("batch_id", "job_id") if column in df.columns]
-    if not identity_columns:
-        return pd.Series(False, index=df.index)
-    no_identity = pd.Series(True, index=df.index)
+    weak_identity = pd.Series(False, index=df.index)
     for column in identity_columns:
         values = df[column].astype("string").str.strip()
-        no_identity &= values.isna() | values.eq("")
+        weak_identity |= values.isna() | values.eq("")
 
     if "posting_date" not in df.columns:
-        return pd.Series(False, index=df.index)
+        return automated & weak_identity if identity_columns else pd.Series(False, index=df.index)
     dates = pd.to_datetime(df["posting_date"], errors="coerce", format="ISO8601")
     # Why: NaT 날짜는 단독성 판정 불가 — candidates에서 제외해 "<NA>" 키가 무리로 묶이지 않게 함
-    candidates = automated & no_identity & dates.notna()
+    candidates = automated & dates.notna()
     if not candidates.any():
-        return pd.Series(False, index=df.index)
+        return automated & weak_identity if identity_columns else pd.Series(False, index=df.index)
 
-    # Why: 같은 날 동류 전표 수 — document_id가 있으면 전표 단위로 센다 (GL 다중 line 방지)
+    # Why: 같은 날 자동 전표 수 — document_id가 있으면 전표 단위로 센다 (GL 다중 line 방지)
     day = dates.dt.date.astype("string")
     subset = df.loc[candidates]
     if "document_id" in df.columns:
@@ -82,7 +80,9 @@ def lone_automated_mask(
     else:
         per_day = day.loc[candidates].value_counts()
     lone_days = set(per_day.loc[per_day <= lone_threshold].index)
-    return candidates & day.isin(lone_days).fillna(False)
+    lone_same_day = candidates & day.isin(lone_days).fillna(False)
+    identity_branch = automated & weak_identity if identity_columns else pd.Series(False, index=df.index)
+    return automated & (identity_branch | lone_same_day)
 
 
 def trusted_automated_mask(

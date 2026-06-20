@@ -693,7 +693,6 @@ def _case_provenance_row(case: CaseGroupResult) -> dict[str, Any]:
             "topside_bonus": case.topside_bonus,
             "batch_combo_bonus": case.batch_combo_bonus,
             "weak_evidence_bonus": case.weak_evidence_bonus,
-            "l301_priority_bonus": case.l301_priority_bonus,
             "reasons": list(case.priority_adjustment_reasons),
         },
     }

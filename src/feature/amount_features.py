@@ -346,10 +346,24 @@ def add_exceeds_threshold(
     approver_info = _compute_approver_info(df)
     approver_limit = approver_info["approval_limit"] if approver_info is not None else None
 
-    # Why: 최저 한도 미만이면 어떤 레벨도 초과하지 않음 → False
+    # Why: L1-04 is binary: amount above a resolved approver limit, or approval
+    # by a user without JE approval authority / without a defined limit.
     if approver_limit is not None:
         resolved = approver_limit.notna()
-        df["exceeds_threshold"] = resolved & (threshold_amount > approver_limit)
+        approver = (
+            df["approved_by"].fillna("").astype(str).str.strip()
+            if "approved_by" in df.columns
+            else pd.Series("", index=df.index)
+        )
+        has_approver = approver.ne("")
+        can_approve = approver_info["can_approve_je"].fillna(True).astype(bool)
+        real_approver = approver_info["approver_in_master"].fillna(True).astype(bool)
+        no_approval_authority = has_approver & real_approver & (
+            can_approve.eq(False) | ~resolved
+        )
+        df["exceeds_threshold"] = has_approver & (
+            (resolved & (threshold_amount > approver_limit)) | no_approval_authority
+        )
     else:
         resolved = pd.Series(False, index=df.index)
         df["exceeds_threshold"] = False

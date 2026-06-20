@@ -124,7 +124,7 @@ LEAKAGE_DENY_COLUMNS = (
 #
 # Stage 5 v4 rerun (artifacts/manipulation_v4_audit_rerun_summary_20260516.md):
 # 24-dim AUPRC 0.397, Top-5 deny 후 0.056 (잔존 14.0%, drop ratio 0.86).
-# v3 에서 강했던 L1-09, L2-02 는 v4 shortcut noise 로 약화되어 deny 에서 제외.
+# v3 에서 강했던 L1-07-02, L2-02 는 v4 shortcut noise 로 약화되어 deny 에서 제외.
 LEAKAGE_DENY_RULES = frozenset(
     {
         "rule_L3-02",  # 수기 전표 (v4 univariate AUPRC 0.1472)

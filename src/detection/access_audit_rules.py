@@ -1,9 +1,9 @@
-"""접근감사/감사추적 룰 — AL1-01, AL1-02, AL1-03, AL3-01.
+"""접근감사/감사추적 룰 — AL1-01, AL1-02, AL1-03, AL3 01.
 
 AL1-01: 전표 수정/삭제 이력 (KLCA IT 변경관리 4.3~4.5)
 AL1-02: IP 비정상 접근 (스켈레톤 — ip_address 컬럼 추가 후 구현)
 AL1-03: 전표번호 연속성 갭 (감사기준서 240/315호)
-AL3-01: 승인 프로세스 검증 (감사기준서 315/330호 ITGC)
+AL3 01: 승인 프로세스 검증 (감사기준서 315/330호 ITGC)
 """
 
 from __future__ import annotations
@@ -171,7 +171,7 @@ def aa04_approval_process(
     approval_thresholds: list[int] | None = None,
     max_delay_days: int = 3,
 ) -> pd.Series:
-    """AL3-01 승인 프로세스 검증: 누락+지연+레벨 건너뜀 3중 검증.
+    """AL3 01 승인 프로세스 검증: 누락+지연+레벨 건너뜀 3중 검증.
 
     Why: 감사기준서 315/330호 — ITGC 통제 테스트(TOE).
          기존 L1-07(bool 승인생략)를 float 연속 점수로 정밀화.

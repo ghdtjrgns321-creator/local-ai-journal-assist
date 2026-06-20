@@ -73,6 +73,27 @@ from src.services.phase2_ref_pseudonymize import hash_ref_key
 
 SCHEMA_VERSION = "1.0.0"
 
+# OFF-TIME 보조축: 근무시간 외 입력 신호 묶음 (주말·공휴일 | 심야 | 작성자 비정상시간 집중).
+# tier 게이트에는 참여하지 않으며 within-tier 정렬·UI 표시 전용이다.
+# 근거 SoT: docs/spec/HIGH_COMBO_GROUNDING.md §2(5), PHASE1_TIER_SCORING_SPEC.md §4.
+# 기간귀속(L3-04 기말·L3-11 컷오프)은 off-time이 아니므로 절대 포함하지 않는다.
+OFF_TIME_SET = {"L3-05", "L3-06", "L4-05"}
+
+
+def compute_time_severity_score(fired_rule_ids: set[str]) -> int:
+    """case가 발화한 룰ID 집합으로 OFF-TIME 보조축 점수를 계산한다.
+
+    high(2점): L3-05(주말·공휴일) 또는 L4-05(작성자 집중)
+    med(1점) : L3-06(심야)
+    합산(상한 없음). 금액·시각 임계·연도 리터럴 미사용 — 룰ID 발화 여부만 본다.
+    """
+    return (
+        (2 if "L3-05" in fired_rule_ids else 0)
+        + (2 if "L4-05" in fired_rule_ids else 0)
+        + (1 if "L3-06" in fired_rule_ids else 0)
+    )
+
+
 _EXPLANATION_PRIORITY = (
     "control_failure",
     "access_scope_review",
@@ -99,7 +120,7 @@ _STRONG_TRIAGE_RULES = {
     "L1-05",
     "L1-06",
     "L1-07",
-    "L1-09",
+    "L1-07-02",
     "L2-02",
     "L2-03",
     "L2-05",
@@ -121,6 +142,7 @@ _MACRO_FINDING_RULES = {"L4-02", "D01", "D02"}
 # L3-08(적요 결손)은 데이터 품질이지만 fraud combo(고액+기말+적요없음 = period_end_adjustment_high
 # 의 weak-description 다리) 보강 신호라 위험 큐에 잔류한다(2026-06-15 사용자 결정). 데이터 트랙 제외.
 _DATA_INTEGRITY_TRACK_RULES = {"L1-01", "L1-02", "L1-03"}
+_DUAL_INTEGRITY_TRACK_RULES = {"L1-08"}
 
 _DOCUMENT_UNIT_RULES = {
     "L1-01",
@@ -131,10 +153,9 @@ _DOCUMENT_UNIT_RULES = {
     "L1-06",
     "L1-07",
     "L1-08",
-    "L1-09",
+    "L1-07-02",
     "L2-01",
     "L2-04",
-    "L3-01",
     "L3-02",
     "L3-03",
     "L3-04",
@@ -276,10 +297,13 @@ _RULE_EXPRESSION_METADATA: dict[str, dict[str, Any]] = {
         "focus": "period_mismatch",
         "action": ["전기일과 회계기간 정합성 확인", "기간 귀속 조정 근거 확인"],
     },
-    "L1-09": {
+    "L1-07-02": {
         "evidence_strength": "medium",
-        "focus": "approval_traceability_gap",
-        "action": ["승인일 로그 존재 여부 확인", "승인자와 승인 시점의 추적 가능성 확인"],
+        "focus": "unknown_approver",
+        "action": [
+            "승인자가 직원 마스터에 존재하는지 확인",
+            "승인자 값의 출처와 우회 입력 여부 확인",
+        ],
     },
     "L2-01": {
         "evidence_strength": "medium",
@@ -325,11 +349,6 @@ _RULE_EXPRESSION_METADATA: dict[str, dict[str, Any]] = {
         "evidence_strength": "medium",
         "focus": "reversal_or_offset_pattern",
         "action": ["후속 역분개·상계 전표 연결 확인", "원거래와 정리 전표의 사업 목적 확인"],
-    },
-    "L3-01": {
-        "evidence_strength": "medium",
-        "focus": "account_process_mismatch",
-        "action": ["업무 프로세스와 계정 조합 정합성 확인", "예외 계정 사용 승인 여부 확인"],
     },
     "L3-02": {
         "evidence_strength": "medium",
@@ -456,7 +475,7 @@ _CONTROL_RULES = {
     "L1-05": "자기승인",
     "L1-06": "직무분리 위반",
     "L1-07": "승인 생략",
-    "L1-09": "승인일 누락",
+    "L1-07-02": "유령 승인자",
     "L3-02": "수기 입력",
 }
 
@@ -476,7 +495,6 @@ _LOGIC_RULES = {
     "L3-10": "고위험 계정 사용",
     "L1-03": "무효 계정",
     "L2-04": "비용 자산화 의심",
-    "L3-01": "계정 분류 불일치",
     "L3-09": "가수금 장기체류",
     "L4-04": "희소 차대 계정쌍",
 }
@@ -833,6 +851,7 @@ _DATA_INTEGRITY_RULE_LABELS: dict[str, str] = {
     "L1-01": "차대변 불일치",
     "L1-02": "필수필드 누락",
     "L1-03": "무효 계정",
+    "L1-08": "회계기간 불일치(데이터 품질)",
 }
 
 
@@ -844,11 +863,14 @@ def _build_data_integrity_findings(
     이 룰들은 부정 위험이 아니라 데이터 품질 문제라 위험 큐(topic/tier/priority)에서
     제외(_DATA_INTEGRITY_TRACK_RULES)된다. 여기서는 raw 탐지 결과에서 룰별 발화 건수만
     집계해 별도 트랙으로 표시하게 한다(위험 점수 기여 없음). 표시는 룰별 기존 화면 사용.
+    L1-08은 dual 트랙: 정합성 finding은 raw mismatch를 집계하고 부정 큐에는 final mismatch가 잔류한다.
     """
 
     counts: dict[str, int] = {}
+    sort_metadata: dict[str, dict[str, Any]] = {}
     for result in results:
         details = result.details
+        row_annotations = result.metadata.get("row_annotations", {}) if result.metadata else {}
         for rule_flag in result.rule_flags:
             canonical_rule_id = canonicalize_rule_id(str(rule_flag.rule_id))
             if canonical_rule_id not in _DATA_INTEGRITY_TRACK_RULES:
@@ -864,20 +886,68 @@ def _build_data_integrity_findings(
                     scores = pd.to_numeric(details[detail_column], errors="coerce").fillna(0.0)
                     flagged = int(scores.gt(0).sum())
             counts[canonical_rule_id] = counts.get(canonical_rule_id, 0) + flagged
+            annotations = row_annotations.get(canonical_rule_id, {})
+            if isinstance(annotations, dict):
+                metadata = sort_metadata.setdefault(canonical_rule_id, {})
+                if canonical_rule_id == "L1-01":
+                    amounts = [
+                        float(annotation.get("imbalance_amount", 0.0) or 0.0)
+                        for annotation in annotations.values()
+                        if isinstance(annotation, dict)
+                    ]
+                    if amounts:
+                        metadata["sort_key"] = "imbalance_amount_desc"
+                        metadata["max_imbalance_amount"] = max(
+                            float(metadata.get("max_imbalance_amount", 0.0)),
+                            max(amounts),
+                        )
+                elif canonical_rule_id == "L1-02":
+                    categories = [
+                        int(annotation.get("missing_category"))
+                        for annotation in annotations.values()
+                        if isinstance(annotation, dict)
+                        and annotation.get("missing_category") in (1, 2)
+                    ]
+                    if categories:
+                        metadata["sort_key"] = "missing_category_asc"
+                        metadata["min_missing_category"] = min(
+                            int(metadata.get("min_missing_category", 2)),
+                            min(categories),
+                        )
+
+        rule_breakdowns = result.metadata.get("rule_breakdowns", {}) if result.metadata else {}
+        for rule_id in _DUAL_INTEGRITY_TRACK_RULES:
+            breakdown = rule_breakdowns.get(rule_id, {})
+            raw_count = 0
+            if isinstance(breakdown, dict):
+                raw_count = int(
+                    breakdown.get("raw_fiscal_period_mismatch_rows")
+                    or breakdown.get("raw_fiscal_period_mismatch_count")
+                    or 0
+                )
+            raw_count = int(
+                result.metadata.get("raw_fiscal_period_mismatch_count", raw_count)
+                if result.metadata
+                else raw_count
+            )
+            counts[rule_id] = counts.get(rule_id, 0) + raw_count
 
     findings: list[dict[str, Any]] = []
-    for rule_id in sorted(_DATA_INTEGRITY_TRACK_RULES):
-        findings.append(
-            {
-                "rule_id": rule_id,
-                "rule_label": _DATA_INTEGRITY_RULE_LABELS.get(rule_id, rule_id),
-                "track": "data_integrity",
-                "flagged_row_count": int(counts.get(rule_id, 0)),
-                "interpretation": (
-                    "데이터 품질·정합성 점검 신호. 부정 위험 등급(HIGH/MEDIUM/LOW)과 분리해 본다."
-                ),
-            }
+    for rule_id in sorted(_DATA_INTEGRITY_TRACK_RULES | _DUAL_INTEGRITY_TRACK_RULES):
+        interpretation = (
+            "기간 귀속 점검 신호. cutoff 부정후보(위험 큐)와 별도로 본다."
+            if rule_id in _DUAL_INTEGRITY_TRACK_RULES
+            else "데이터 품질·정합성 점검 신호. 부정 위험 등급(HIGH/MEDIUM/LOW)과 분리해 본다."
         )
+        finding = {
+            "rule_id": rule_id,
+            "rule_label": _DATA_INTEGRITY_RULE_LABELS.get(rule_id, rule_id),
+            "track": "data_integrity",
+            "flagged_row_count": int(counts.get(rule_id, 0)),
+            "interpretation": interpretation,
+        }
+        finding.update(sort_metadata.get(rule_id, {}))
+        findings.append(finding)
     return findings
 
 
@@ -1515,12 +1585,10 @@ def _build_cases(
     hits_by_row: dict[int, list[_RawHit]] = defaultdict(list)
     theme_row_pairs: dict[tuple[str, int], None] = {}
     row_cache: dict[int, pd.Series] = {}
-    use_topic_scoring = isinstance(config.get("topic_scoring"), dict)
     for hit in raw_hits:
         hits_by_row[hit.row_index].append(hit)
         if hit.can_seed_case:
-            seed_theme_id = hit.topic_id if use_topic_scoring else hit.theme_id
-            theme_row_pairs.setdefault((seed_theme_id, hit.row_index), None)
+            theme_row_pairs.setdefault((hit.topic_id, hit.row_index), None)
     case_key_context = _build_case_key_context(
         df,
         line_amounts,
@@ -1692,63 +1760,34 @@ def _build_cases(
             macro_index=macro_index,
             macro_row_context=macro_row_context,
         )
-        # Why: Stage 1 - macro 이중가산 방지. topic_scoring 의 macro_context_score 가중치가
-        # macro 신호를 한 번 반영하므로, use_topic_scoring 경로의 머지 후보는 macro 이전 점수로 캐시한다.
-        priority_score_pre_macro = priority_score
-        priority_score, macro_reasons = _apply_macro_context_priority(
-            priority_score,
-            macro_contexts,
-        )
-        # macro_reasons append 는 use_topic_scoring 결정 후 진행 — line 1614 참조.
-        # legacy 경로에서는 macro 보너스가 최종 priority_score 에 반영되므로 사유 보존,
-        # topic_scoring 경로에서는 보너스가 머지 후보에서 배제되므로 사유도 audit 설명에서 제외.
-        loop_timings["macro_context"] += time.perf_counter() - segment_start
-
         # macro(D01/D02/L4-02·Benford)는 PHASE1-1 점수경로에서 제외(2026-06-15, PHASE1-2 귀속).
-        # case_hits 만으로 topic score/tier 산출. macro_findings/contexts 는 별도 표시 surface.
+        # case_hits 만으로 topic score/tier 산출. macro_contexts 는 _macro_context_tags 로 별도
+        # 표시 surface 에만 반영, priority_score 에는 가산하지 않는다.
+        loop_timings["macro_context"] += time.perf_counter() - segment_start
 
         segment_start = time.perf_counter()
         topic_breakdowns = compute_topic_scores(
             case_hits,
-            materiality_score=amount_score,
-            repeat_score=repeat_score,
-            audit_evidence_score=_unit_audit_evidence_scores(
-                row_positions=indices,
-                case_hits=case_hits,
-                amount_score=amount_score,
-                repeat_score=repeat_score,
-                context=audit_context,
-            ),
-            topic_caps=_topic_caps(config),
             topic_floor_policies=_topic_floor_policies(config),
             combo_floor_policies=_combo_floor_policies(config),
             fraud_combo_rule_scope=_fraud_combo_rule_scope(case_hits, audit_context),
             return_breakdown=True,
         )
         # PHASE1_TIER_SCORING_SPEC: 주제 점수·선택·band·정렬 전부 tier(가중합 .score 폐기).
-        if use_topic_scoring:
-            topic_tiers = compute_topic_tiers(
-                case_hits,
-                topic_floor_policies=_topic_floor_policies(config),
-                combo_floor_policies=_combo_floor_policies(config),
-                fraud_combo_rule_scope=_fraud_combo_rule_scope(case_hits, audit_context),
-                breakdowns=topic_breakdowns,  # 이미 위에서 계산 — 재계산 생략(성능)
-            )
-            # topic_scores = tier 대표값(가중합 아님). CONTEXT 제외. pick_primary_topic 은 max 라
-            # 자동으로 최고 tier 주제를 선택(동률은 TOPIC_REGISTRY 순서).
-            topic_scores = {
-                topic_id: _TIER_TO_PRIORITY_SCORE[tier_breakdown.tier]
-                for topic_id, tier_breakdown in topic_tiers.items()
-                if tier_breakdown.tier != "CONTEXT"
-            }
-        else:
-            topic_tiers = {}
-            topic_scores = {
-                topic_id: breakdown.score
-                for topic_id, breakdown in topic_breakdowns.items()
-                if breakdown.score > 0
-                and (breakdown.has_rankable_primary or breakdown.has_combo_floor)
-            }
+        topic_tiers = compute_topic_tiers(
+            case_hits,
+            topic_floor_policies=_topic_floor_policies(config),
+            combo_floor_policies=_combo_floor_policies(config),
+            fraud_combo_rule_scope=_fraud_combo_rule_scope(case_hits, audit_context),
+            breakdowns=topic_breakdowns,  # 이미 위에서 계산 — 재계산 생략(성능)
+        )
+        # topic_scores = tier 대표값(가중합 아님). CONTEXT 제외. pick_primary_topic 은 max 라
+        # 자동으로 최고 tier 주제를 선택(동률은 TOPIC_REGISTRY 순서).
+        topic_scores = {
+            topic_id: _TIER_TO_PRIORITY_SCORE[tier_breakdown.tier]
+            for topic_id, tier_breakdown in topic_tiers.items()
+            if tier_breakdown.tier != "CONTEXT"
+        }
         primary_topic = (
             theme_id if topic_scores.get(theme_id, 0.0) > 0 else pick_primary_topic(topic_scores)
         )
@@ -1765,28 +1804,13 @@ def _build_cases(
             for topic_id, breakdown in topic_breakdowns.items()
             if topic_id in topic_scores
         }
-        legacy_priority_score = priority_score
-        if use_topic_scoring:
-            # band·정렬은 tier 가 결정(가중합 아님). priority_score 는 tier 대표값(소비처 [0,1] 호환).
-            case_tier_value = case_tier(topic_tiers)
-            priority_band = _TIER_TO_BAND.get(case_tier_value, "low")
-            priority_score = _TIER_TO_PRIORITY_SCORE.get(case_tier_value, 0.0)
-            composite_sort_score, composite_sort_score_components = _tier_sort_score(
-                case_tier_value, case_hits, amount_score
-            )
-        else:
-            # legacy 경로(비활성)에서는 macro 보너스가 priority_score 에 반영되어 있으므로
-            # 해당 사유를 audit 설명에 보존하고 기존 band/composite 식을 유지한다.
-            adjustment_reasons.extend(macro_reasons)
-            priority_band = _priority_band(priority_score, config)
-            composite_sort_score, composite_sort_score_components = _composite_sort_score(
-                primary_topic=primary_topic,
-                topic_scores=topic_scores,
-                topic_breakdowns=topic_breakdowns,
-                case_hits=case_hits,
-                fallback_score=priority_score,
-                use_topic_scoring=use_topic_scoring,
-            )
+        # band·정렬은 tier 가 결정(가중합 아님). priority_score 는 tier 대표값(소비처 [0,1] 호환).
+        case_tier_value = case_tier(topic_tiers)
+        priority_band = _TIER_TO_BAND.get(case_tier_value, "low")
+        priority_score = _TIER_TO_PRIORITY_SCORE.get(case_tier_value, 0.0)
+        composite_sort_score, composite_sort_score_components = _tier_sort_score(
+            case_tier_value, case_hits, amount_score
+        )
         l304_repeat_pattern = _is_l304_repeat_pattern_case(
             df,
             rows,
@@ -1799,19 +1823,11 @@ def _build_cases(
             case_hits,
             evidence_types,
         )
-        if use_topic_scoring:
-            primary_theme = primary_topic
-            primary_queue = primary_topic
-            primary_queue_label = primary_topic_label
-            secondary_queues = secondary_topics
-            secondary_queue_labels = [_topic_label(queue) for queue in secondary_queues]
-        else:
-            primary_theme = legacy_theme_id
-            primary_queue = legacy_primary_queue
-            primary_queue_label = _queue_label(primary_queue)
-            secondary_queues = legacy_secondary_queues
-            secondary_queue_labels = [_queue_label(queue) for queue in secondary_queues]
-            priority_score = legacy_priority_score
+        primary_theme = primary_topic
+        primary_queue = primary_topic
+        primary_queue_label = primary_topic_label
+        secondary_queues = secondary_topics
+        secondary_queue_labels = [_topic_label(queue) for queue in secondary_queues]
         triage_rank_score, triage_rank_reasons = _triage_rank_score(
             primary_queue=legacy_primary_queue,
             secondary_queues=legacy_secondary_queues,
@@ -1873,7 +1889,6 @@ def _build_cases(
                 topside_bonus=bonuses["topside_bonus"],
                 batch_combo_bonus=bonuses["batch_combo_bonus"],
                 weak_evidence_bonus=bonuses["weak_evidence_bonus"],
-                l301_priority_bonus=bonuses["l301_priority_bonus"],
                 priority_adjustment_reasons=adjustment_reasons,
                 priority_band=priority_band,
                 triage_rank_score=triage_rank_score,
@@ -1887,6 +1902,7 @@ def _build_cases(
                 timing_score=timing_score,
                 behavior_score=behavior_score,
                 repeat_score=repeat_score,
+                time_severity_score=compute_time_severity_score({hit.rule_id for hit in case_hits}),
                 rule_count=len({hit.rule_id for hit in case_hits}),
                 evidence_count=len(case_hits),
                 document_count=len({hit.document_id for hit in case_hits}),
@@ -2048,15 +2064,29 @@ def _score_phase1_units(
 
     scored_units: list[Phase1Unit] = []
     for unit in units:
+        # 이 unit이 발화한 룰ID 집합 = evidence_rows + (FlowUnit) absorbed_rule_hits.
+        # compute_time_severity_score 는 시각·연도 리터럴 없이 룰ID 발화 여부만 본다.
+        fired_rule_ids = {ref.rule_id for ref in unit.evidence_rows}
+        if isinstance(unit, FlowUnit):
+            fired_rule_ids.update(ref.rule_id for ref in unit.absorbed_rule_hits)
+        unit_total_amount = unit_amounts.get(unit.unit_id, 0.0)
+        unit_time_severity = compute_time_severity_score(fired_rule_ids)
         hits = unit_hits.get(unit.unit_id, [])
         if not hits:
-            scored_units.append(unit)
+            scored_units.append(
+                unit.model_copy(
+                    update={
+                        "total_amount": unit_total_amount,
+                        "time_severity_score": unit_time_severity,
+                    }
+                )
+            )
             continue
         projection = _score_unit_hits(
             df=df,
             unit=unit,
             hits=hits,
-            total_amount=unit_amounts.get(unit.unit_id, 0.0),
+            total_amount=unit_total_amount,
             max_amount=max_amount,
             config=config,
             audit_context=audit_context,
@@ -2074,6 +2104,8 @@ def _score_phase1_units(
                     "priority_band": projection.priority_band,
                     "triage_rank_score": projection.triage_rank_score,
                     "triage_rank_reasons": projection.triage_rank_reasons or [],
+                    "total_amount": unit_total_amount,
+                    "time_severity_score": unit_time_severity,
                 }
             )
         )
@@ -2159,8 +2191,6 @@ def _score_unit_hits(
         1.0,
     )
     behavior_score = max(min(len(indices) / 10.0, 1.0), access_scope_score)
-    repeat_months = _repeat_months_from_positions(indices, audit_context.posting_months)
-    repeat_score = min(max(repeat_months - 1, 0) / 2.0, 1.0)
     priority_score = _priority_score(
         amount_score=amount_score,
         control_score=control_score,
@@ -2192,19 +2222,8 @@ def _score_unit_hits(
             priority_score, float(config.get("l205_linked_reversal_low_cap", 0.35))
         )
         adjustment_reasons = [*adjustment_reasons, "l205_linked_accrual_reversal_low"]
-    use_topic_scoring = isinstance(config.get("topic_scoring"), dict)
     topic_breakdowns = compute_topic_scores(
         hits,
-        materiality_score=amount_score,
-        repeat_score=repeat_score,
-        audit_evidence_score=_unit_audit_evidence_scores(
-            row_positions=indices,
-            case_hits=hits,
-            amount_score=amount_score,
-            repeat_score=repeat_score,
-            context=audit_context,
-        ),
-        topic_caps=_topic_caps(config),
         topic_floor_policies=_topic_floor_policies(config),
         combo_floor_policies=_combo_floor_policies(config),
         fraud_combo_rule_scope=_fraud_combo_rule_scope(hits, audit_context),
@@ -2212,53 +2231,31 @@ def _score_unit_hits(
     )
     # PHASE1_TIER_SCORING_SPEC: unit topic 점수·band·정렬 전부 tier(가중합 .score 폐기).
     # _derive_case_scores_from_units 가 이 unit 점수를 case 로 전파하므로 활성 경로는 여기다.
-    if use_topic_scoring:
-        topic_tiers = compute_topic_tiers(
-            hits,
-            topic_floor_policies=_topic_floor_policies(config),
-            combo_floor_policies=_combo_floor_policies(config),
-            fraud_combo_rule_scope=_fraud_combo_rule_scope(hits, audit_context),
-            breakdowns=topic_breakdowns,  # 이미 위에서 계산 — 재계산 생략(성능)
-        )
-        # topic_scores = tier 대표값(가중합 아님). pick_primary_topic 이 max 라 자동 최고 tier.
-        topic_scores = {
-            topic_id: _TIER_TO_PRIORITY_SCORE[tier_breakdown.tier]
-            for topic_id, tier_breakdown in topic_tiers.items()
-            if tier_breakdown.tier != "CONTEXT"
-        }
-    else:
-        topic_tiers = {}
-        topic_scores = {
-            topic_id: breakdown.score
-            for topic_id, breakdown in topic_breakdowns.items()
-            if breakdown.score > 0 and (breakdown.has_rankable_primary or breakdown.has_combo_floor)
-        }
-    primary_topic = pick_primary_topic(topic_scores)
-    if use_topic_scoring:
-        # priority_score = tier 대표값([0,1]) → _derive 의 _priority_band 가 올바른 band 자동 전파.
-        topic_tier = case_tier(topic_tiers)
-        # config priority_floors(명시 도메인 조건: SoD critical·승인생략·핵심필드 누락 등)도
-        # tier 트리거다. floor-only 점수(가중합 배제, 0.0 기준)로 산출해 합류.
-        floor_only_score, _ = _apply_priority_floors(
-            case_hits=hits, priority_score=0.0, config=config
-        )
-        floor_tier = _legacy_floor_tier(floor_only_score)
-        unit_tier = topic_tier if TIER_RANK[topic_tier] >= TIER_RANK[floor_tier] else floor_tier
-        priority_score = _TIER_TO_PRIORITY_SCORE.get(unit_tier, 0.0)
-        priority_band = _TIER_TO_BAND.get(unit_tier, "low")
-        composite_sort_score, composite_sort_score_components = _tier_sort_score(
-            unit_tier, hits, amount_score
-        )
-    else:
-        priority_band = _priority_band(priority_score, config)
-        composite_sort_score, composite_sort_score_components = _composite_sort_score(
-            primary_topic=primary_topic,
-            topic_scores=topic_scores,
-            topic_breakdowns=topic_breakdowns,
-            case_hits=hits,
-            fallback_score=priority_score,
-            use_topic_scoring=use_topic_scoring,
-        )
+    topic_tiers = compute_topic_tiers(
+        hits,
+        topic_floor_policies=_topic_floor_policies(config),
+        combo_floor_policies=_combo_floor_policies(config),
+        fraud_combo_rule_scope=_fraud_combo_rule_scope(hits, audit_context),
+        breakdowns=topic_breakdowns,  # 이미 위에서 계산 — 재계산 생략(성능)
+    )
+    # topic_scores = tier 대표값(가중합 아님). pick_primary_topic 이 max 라 자동 최고 tier.
+    topic_scores = {
+        topic_id: _TIER_TO_PRIORITY_SCORE[tier_breakdown.tier]
+        for topic_id, tier_breakdown in topic_tiers.items()
+        if tier_breakdown.tier != "CONTEXT"
+    }
+    # priority_score = tier 대표값([0,1]) → _derive 의 _priority_band 가 올바른 band 자동 전파.
+    topic_tier = case_tier(topic_tiers)
+    # config priority_floors(명시 도메인 조건: SoD critical·승인생략·핵심필드 누락 등)도
+    # tier 트리거다. floor-only 점수(가중합 배제, 0.0 기준)로 산출해 합류.
+    floor_only_score, _ = _apply_priority_floors(case_hits=hits, priority_score=0.0, config=config)
+    floor_tier = _legacy_floor_tier(floor_only_score)
+    unit_tier = topic_tier if TIER_RANK[topic_tier] >= TIER_RANK[floor_tier] else floor_tier
+    priority_score = _TIER_TO_PRIORITY_SCORE.get(unit_tier, 0.0)
+    priority_band = _TIER_TO_BAND.get(unit_tier, "low")
+    composite_sort_score, composite_sort_score_components = _tier_sort_score(
+        unit_tier, hits, amount_score
+    )
     if _is_low_risk_linked_l205_reversal(unit, rows):
         # tier 경로는 priority_score 를 tier 대표값으로 덮으므로 low cap 을 여기서 재적용.
         # _derive_case_scores_from_units 가 priority_score 로 case band 를 재계산하기 때문.
@@ -2414,59 +2411,6 @@ def _precomputed_true_column(df: pd.DataFrame, column: str) -> list[bool]:
     return [bool(value) for value in bool_column(df, column).tolist()]
 
 
-def _unit_audit_evidence_scores(
-    *,
-    row_positions: list[int],
-    case_hits: list[_RawHit],
-    amount_score: float,
-    repeat_score: float,
-    context: _AuditEvidenceContext,
-) -> dict[str, float]:
-    rule_ids = {hit.rule_id for hit in case_hits if hit.normalized_score > 0}
-    manual_context = _any_context(context.manual_context, row_positions)
-    support_gap = _any_context(context.support_gap, row_positions)
-    approval_gap = _any_context(context.approval_gap, row_positions)
-    post_close_gap = _any_context(context.post_close_gap, row_positions)
-    reversal_context = _any_context(context.reversal_context, row_positions)
-    master_gap = _any_context(context.master_counterparty_inactive, row_positions) or (
-        _any_context(context.partner_value, row_positions)
-        and not _any_context(context.master_counterparty_known, row_positions)
-    )
-    document_flow_orphan = _any_context(context.document_flow_orphan, row_positions)
-    high_amount = amount_score >= 0.50
-
-    scores = {topic_id: 0.0 for topic_id in TOPIC_REGISTRY}
-
-    if approval_gap or _any_context(context.approval_matrix_gap, row_positions):
-        scores["approval_control"] = max(scores["approval_control"], 0.70)
-    if (approval_gap or _any_context(context.approval_matrix_gap, row_positions)) and (
-        high_amount or _any_context(context.approval_limit_exceeded_independent, row_positions)
-    ):
-        scores["approval_control"] = max(scores["approval_control"], 0.85)
-
-    if (
-        (support_gap or document_flow_orphan)
-        and manual_context
-        and (high_amount or rule_ids & {"L4-01", "L4-03"})
-    ):
-        scores["revenue_statistical"] = max(scores["revenue_statistical"], 0.45)
-        scores["account_logic"] = max(scores["account_logic"], 0.35)
-
-    if master_gap and high_amount:
-        scores["account_logic"] = max(scores["account_logic"], 0.45)
-        scores["duplicate_outflow"] = max(scores["duplicate_outflow"], 0.35)
-
-    if post_close_gap and (high_amount or rule_ids & {"L3-04", "L3-11"}):
-        scores["closing_timing"] = max(scores["closing_timing"], 0.55)
-
-    if reversal_context and (rule_ids & {"L2-02", "L2-03", "L2-05"}):
-        scores["duplicate_outflow"] = max(scores["duplicate_outflow"], 0.45)
-
-    # intercompany_cycle audit_evidence 가산 제거 (2026-06-14): IC/GR 제거로 주제 폐지.
-
-    return scores
-
-
 def _repeat_months_from_positions(row_positions: list[int], posting_months: list[str]) -> int:
     return len(
         {
@@ -2475,10 +2419,6 @@ def _repeat_months_from_positions(row_positions: list[int], posting_months: list
             if 0 <= pos < len(posting_months) and posting_months[pos]
         }
     )
-
-
-def _any_context(values: list[bool], row_positions: list[int]) -> bool:
-    return any(values[pos] for pos in row_positions if 0 <= pos < len(values))
 
 
 def _derive_case_scores_from_units(
@@ -2937,7 +2877,7 @@ def _l202_document_rows(df: pd.DataFrame, row_positions: list[int]) -> pd.DataFr
         lambda value: str(value or "").strip().lower()
     )
     docs["amount_bucket_minor"] = docs["amount"].map(_amount_minor_bucket)
-    window_days = max(int(getattr(_FLOW_SETTINGS, "duplicate_payment_window_days", 45)), 1)
+    window_days = max(int(getattr(_FLOW_SETTINGS, "duplicate_payment_window_days", 90)), 1)
     docs["period_bucket"] = (
         (docs["posting_date"].astype("int64") // (window_days * 24 * 60 * 60 * 1_000_000_000))
         .astype("int64")
@@ -3090,7 +3030,7 @@ def _l205_one_to_one_pairs(df: pd.DataFrame, row_positions: list[int]) -> list[d
     negatives = docs[docs["net"].lt(0)]
     if positives.empty or negatives.empty:
         return []
-    window_days = int(getattr(_FLOW_SETTINGS, "reversal_match_window_days", 1))
+    window_days = int(getattr(_FLOW_SETTINGS, "reversal_mirror_window_days", 90))
     entries: list[dict[str, Any]] = []
     merged = positives.merge(
         negatives,
@@ -4391,29 +4331,6 @@ def _macro_only_evidences(macro_contexts: list[dict[str, Any]]) -> list[dict[str
     return evidences
 
 
-def _apply_macro_context_priority(
-    priority_score: float,
-    macro_contexts: list[dict[str, Any]],
-) -> tuple[float, list[str]]:
-    bonus = 0.0
-    reasons: list[str] = []
-    for context in macro_contexts:
-        effect = str(context.get("scoring_effect") or "")
-        if effect == "priority_booster":
-            increment = 0.06
-        elif effect == "weak_priority_booster":
-            increment = 0.04
-        else:
-            continue
-        bonus += increment
-        reasons.append(
-            f"macro_context={context.get('rule_id')}:{context.get('queue_bucket')}+{increment:.2f}"
-        )
-    if not bonus:
-        return priority_score, []
-    return min(priority_score + min(bonus, 0.10), 1.0), reasons
-
-
 def _macro_context_tags(macro_contexts: list[dict[str, Any]]) -> set[str]:
     tags: set[str] = set()
     for context in macro_contexts:
@@ -5013,16 +4930,6 @@ def _legacy_theme_for_topic(topic_id: str) -> str:
     return _TOPIC_LEGACY_THEME_MAP.get(topic_id, topic_id)
 
 
-def _topic_caps(config: dict[str, Any]) -> dict[str, float]:
-    topic_scoring = config.get("topic_scoring", {})
-    if not isinstance(topic_scoring, dict):
-        return {}
-    caps = topic_scoring.get("topic_caps", {})
-    if not isinstance(caps, dict):
-        return {}
-    return {str(topic_id): float(value) for topic_id, value in caps.items()}
-
-
 def _topic_floor_policies(config: dict[str, Any]) -> dict[str, float]:
     topic_scoring = config.get("topic_scoring", {})
     if not isinstance(topic_scoring, dict):
@@ -5055,179 +4962,6 @@ def _case_secondary_topics(
             continue
         topics.extend(topic for topic in hit.secondary_topics if topic in TOPIC_REGISTRY)
     return _ordered_unique(topics)
-
-
-def _case_audit_evidence_scores(
-    *,
-    rows: pd.DataFrame,
-    case_hits: list[_RawHit],
-    amount_score: float,
-    repeat_score: float,
-) -> dict[str, float]:
-    """Score case context that is independent from DataSynth labels.
-
-    These signals are deliberately small boosters. They can reorder cases that
-    already have a rankable rule hit, but cannot create a topic score or High
-    floor by themselves.
-    """
-
-    rule_ids = {hit.rule_id for hit in case_hits if hit.normalized_score > 0}
-    manual_context = _case_has_manual_context(rows)
-    support_gap = _case_has_support_gap(rows)
-    approval_gap = _case_has_approval_relationship_gap(rows)
-    post_close_gap = _case_has_post_close_context(rows)
-    reversal_context = _case_has_reversal_or_clearing_context(rows)
-    master_gap = _case_has_any_true(rows, "master_counterparty_inactive") or (
-        _case_has_partner_value(rows) and not _case_has_any_true(rows, "master_counterparty_known")
-    )
-    document_flow_orphan = _case_has_any_true(rows, "document_flow_orphan")
-    high_amount = amount_score >= 0.50
-
-    scores = {topic_id: 0.0 for topic_id in TOPIC_REGISTRY}
-
-    if approval_gap or _case_has_any_true(rows, "approval_matrix_gap"):
-        scores["approval_control"] = max(scores["approval_control"], 0.70)
-    if (approval_gap or _case_has_any_true(rows, "approval_matrix_gap")) and (
-        high_amount or _case_has_any_true(rows, "approval_limit_exceeded_independent")
-    ):
-        scores["approval_control"] = max(scores["approval_control"], 0.85)
-
-    if (
-        (support_gap or document_flow_orphan)
-        and manual_context
-        and (high_amount or rule_ids & {"L4-01", "L4-03"})
-    ):
-        scores["revenue_statistical"] = max(scores["revenue_statistical"], 0.45)
-        scores["account_logic"] = max(scores["account_logic"], 0.35)
-
-    if master_gap and high_amount:
-        scores["account_logic"] = max(scores["account_logic"], 0.45)
-        scores["duplicate_outflow"] = max(scores["duplicate_outflow"], 0.35)
-
-    if post_close_gap and (high_amount or rule_ids & {"L3-04", "L3-11"}):
-        scores["closing_timing"] = max(scores["closing_timing"], 0.55)
-
-    if reversal_context and (rule_ids & {"L2-02", "L2-03", "L2-05"}):
-        scores["duplicate_outflow"] = max(scores["duplicate_outflow"], 0.45)
-
-    # intercompany_cycle audit_evidence 가산 제거 (2026-06-14): IC/GR 제거로 주제 폐지.
-
-    return scores
-
-
-def _case_has_manual_context(rows: pd.DataFrame) -> bool:
-    source = _case_string_column(rows, "source")
-    persona = _case_string_column(rows, "user_persona")
-    created_by = _case_string_column(rows, "created_by")
-    return bool(
-        source.str.contains("manual", case=False, na=False).any()
-        or persona.str.contains("manual|accountant|manager", case=False, na=False).any()
-        or (~created_by.str.upper().str.startswith("SYSTEM", na=False)).any()
-    )
-
-
-def _case_has_support_gap(rows: pd.DataFrame) -> bool:
-    if rows.empty:
-        return False
-    no_attachment = False
-    if "has_attachment" in rows.columns:
-        attachment = rows["has_attachment"].astype(str).str.strip().str.lower()
-        no_attachment = bool(attachment.isin({"false", "0", "nan", "none", ""}).any())
-    no_support_type = False
-    if "supporting_doc_type" in rows.columns:
-        support_type = rows["supporting_doc_type"].astype(str).str.strip().str.lower()
-        no_support_type = bool(support_type.isin({"", "nan", "none", "null"}).any())
-    return no_attachment or no_support_type
-
-
-def _case_has_approval_relationship_gap(rows: pd.DataFrame) -> bool:
-    if rows.empty:
-        return False
-    created_by = _case_string_column(rows, "created_by").str.strip()
-    approved_by = _case_string_column(rows, "approved_by").str.strip()
-    manual_rows = ~created_by.str.upper().str.startswith("SYSTEM", na=False)
-    approver_missing = approved_by.eq("") | approved_by.str.lower().isin({"nan", "none", "null"})
-    self_approval = created_by.ne("") & approved_by.ne("") & created_by.eq(approved_by)
-    if bool((manual_rows & (approver_missing | self_approval)).any()):
-        return True
-    if {"posting_date", "approval_date"}.issubset(rows.columns):
-        posting = pd.to_datetime(rows["posting_date"], errors="coerce")
-        approval = pd.to_datetime(rows["approval_date"], errors="coerce")
-        return bool((approval.notna() & posting.notna() & (approval < posting)).any())
-    return False
-
-
-def _case_has_post_close_context(rows: pd.DataFrame) -> bool:
-    if rows.empty or "posting_date" not in rows.columns:
-        return False
-    posting = pd.to_datetime(rows["posting_date"], errors="coerce")
-    period_end = bool(posting.dt.day.ge(28).any() or posting.dt.month.isin({3, 6, 9, 12}).any())
-    if not period_end:
-        return False
-    if "document_date" not in rows.columns:
-        return period_end
-    document = pd.to_datetime(rows["document_date"], errors="coerce")
-    lag_days = (posting - document).dt.days
-    return bool(lag_days.ge(7).any() or period_end)
-
-
-def _case_has_related_party_context(rows: pd.DataFrame) -> bool:
-    trading_partner = _case_string_column(rows, "trading_partner")
-    business_process = _case_string_column(rows, "business_process")
-    reference = _case_string_column(rows, "reference")
-    return bool(
-        trading_partner.str.strip().ne("").any()
-        or business_process.str.contains("IC|intercompany", case=False, na=False).any()
-        or reference.str.contains(r"\bIC", case=False, regex=True, na=False).any()
-    )
-
-
-def _case_has_reversal_or_clearing_context(rows: pd.DataFrame) -> bool:
-    if (
-        "lettrage" in rows.columns
-        and _case_string_column(rows, "lettrage").str.strip().ne("").any()
-    ):
-        return True
-    if "settlement_status" in rows.columns:
-        settlement = _case_string_column(rows, "settlement_status")
-        if settlement.str.contains("revers|offset|clear|settled", case=False, na=False).any():
-            return True
-    if "is_cleared" in rows.columns:
-        cleared = rows["is_cleared"].astype(str).str.strip().str.lower()
-        return bool(cleared.isin({"true", "1"}).any())
-    return False
-
-
-def _case_has_partner_value(rows: pd.DataFrame) -> bool:
-    return bool(
-        _case_string_column(rows, "auxiliary_account_number").str.strip().ne("").any()
-        or _case_string_column(rows, "trading_partner").str.strip().ne("").any()
-    )
-
-
-def _case_has_any_true(rows: pd.DataFrame, column: str) -> bool:
-    if column not in rows.columns:
-        return False
-    values = rows[column]
-    if values.dtype == bool:
-        return bool(values.any())
-    return bool(values.astype(str).str.strip().str.lower().isin({"true", "1", "yes"}).any())
-
-
-def _case_string_column(rows: pd.DataFrame, column: str) -> pd.Series:
-    if column not in rows.columns:
-        return pd.Series("", index=rows.index, dtype="string")
-    return rows[column].fillna("").astype(str)
-
-
-_COMPOSITE_SORT_WEIGHTS = {
-    "topic_score": 1.0,
-    "max_primary_rule_score": 0.3,
-    "audit_evidence_score": 0.3,
-    "corroboration_score": 0.3,
-    "independent_evidence_norm": 0.1,
-}
-_COMPOSITE_SORT_INDEPENDENT_EVIDENCE_CAP = 5.0
 
 
 # PHASE1 tier → band 매핑 (PHASE1_TIER_SCORING_SPEC §2). band 결정은 가중합이 아니라 tier.
@@ -5289,53 +5023,6 @@ def _tier_sort_score(
         "rule_count": float(rule_count),
         "materiality_score": materiality,
     }
-    return float(score), components
-
-
-def _composite_sort_score(
-    *,
-    primary_topic: str | None,
-    topic_scores: dict[str, float],
-    topic_breakdowns: dict[str, Any],
-    case_hits: list[_RawHit],
-    fallback_score: float,
-    use_topic_scoring: bool,
-) -> tuple[float, dict[str, float]]:
-    """§9.3 composite_sort_score: 7개 주제 공통 정렬 식.
-
-    Why: topic_score 단독 정렬은 approval_control:high 의 0.75 한 점 묶음 + total_amount 우선
-         tiebreak 로 truth case 가 nontruth amount 뒤로 밀린다. PHASE1 한계 내에서 universal
-         +방향 보조 키(max_primary_rule_score / audit_evidence_score / corroboration_score /
-         independent_evidence_count) 를 작은 가중치로 합산하여 7개 주제 모두에서 baseline 손실
-         없이 truth 회수율을 올린다 (audit §4.1).
-    """
-
-    breakdown = topic_breakdowns.get(primary_topic) if primary_topic else None
-    if not use_topic_scoring or breakdown is None:
-        return float(fallback_score), {"fallback_score": float(fallback_score)}
-    independent_evidence = len({hit.rule_id for hit in case_hits if hit.scoring_role == "primary"})
-    independent_evidence_norm = min(
-        independent_evidence / _COMPOSITE_SORT_INDEPENDENT_EVIDENCE_CAP, 1.0
-    )
-    topic_score = float(topic_scores.get(primary_topic, 0.0))
-    max_primary_rule_score = float(getattr(breakdown, "max_primary_rule_score", 0.0) or 0.0)
-    audit_evidence_score = float(getattr(breakdown, "audit_evidence_score", 0.0) or 0.0)
-    corroboration_score = float(getattr(breakdown, "corroboration_score", 0.0) or 0.0)
-    components = {
-        "topic_score": topic_score,
-        "max_primary_rule_score": max_primary_rule_score,
-        "audit_evidence_score": audit_evidence_score,
-        "corroboration_score": corroboration_score,
-        "independent_evidence_count": float(independent_evidence),
-        "independent_evidence_norm": independent_evidence_norm,
-    }
-    score = (
-        _COMPOSITE_SORT_WEIGHTS["topic_score"] * topic_score
-        + _COMPOSITE_SORT_WEIGHTS["max_primary_rule_score"] * max_primary_rule_score
-        + _COMPOSITE_SORT_WEIGHTS["audit_evidence_score"] * audit_evidence_score
-        + _COMPOSITE_SORT_WEIGHTS["corroboration_score"] * corroboration_score
-        + _COMPOSITE_SORT_WEIGHTS["independent_evidence_norm"] * independent_evidence_norm
-    )
     return float(score), components
 
 
@@ -5494,7 +5181,6 @@ def _apply_priority_adjustments(
         "topside_bonus": 0.0,
         "batch_combo_bonus": 0.0,
         "weak_evidence_bonus": 0.0,
-        "l301_priority_bonus": 0.0,
         "l203_duplicate_bonus": 0.0,
     }
     if adjustments.get("enabled", True) is False:
@@ -5553,24 +5239,6 @@ def _apply_priority_adjustments(
         adjusted_priority += l108_bonus
         reasons.extend(l108_reasons)
 
-    duplicate_entry_cfg = dict(adjustments.get("duplicate_entry", {}))
-    duplicate_entry_cfg["_phase1_materiality_amount"] = config.get("materiality_amount", 0.0)
-    l203_bonus, l203_floor, l203_reasons = _l203_priority_adjustment(
-        case_hits=case_hits,
-        evidence_types=evidence_types,
-        amount_score=amount_score,
-        total_amount=total_amount,
-        config=duplicate_entry_cfg,
-    )
-    if l203_floor is not None:
-        if adjusted_priority + l203_bonus < l203_floor:
-            adjusted_priority = l203_floor
-        elif l203_bonus > 0:
-            bonuses["l203_duplicate_bonus"] = l203_bonus
-    elif l203_bonus > 0:
-        bonuses["l203_duplicate_bonus"] = l203_bonus
-    reasons.extend(l203_reasons)
-
     rare_pair_cfg = adjustments.get("rare_account_pair", {})
     if rare_pair_cfg.get("enabled", True) and "L4-04" in rule_ids:
         non_l404_rules = rule_ids - {"L4-04"}
@@ -5591,86 +5259,8 @@ def _apply_priority_adjustments(
             adjusted_priority -= penalty
             reasons.append(f"l404_recurring_source_penalty=-{penalty:.2f}")
 
-    _l301_priority, l301_bonus, l301_reasons = _l301_priority_adjustment(
-        rows=rows,
-        rule_ids=rule_ids,
-        priority_score=adjusted_priority,
-        config=adjustments.get("l301_context_priority", {}),
-    )
-    if l301_bonus > 0:
-        bonuses["l301_priority_bonus"] = l301_bonus
-        reasons.extend(l301_reasons)
-
     adjusted_priority += sum(bonuses.values())
     return max(0.0, min(adjusted_priority, 1.0)), adjusted_behavior, reasons, bonuses
-
-
-def _l203_priority_adjustment(
-    *,
-    case_hits: list[_RawHit],
-    evidence_types: list[str],
-    amount_score: float,
-    total_amount: float,
-    config: dict[str, Any],
-) -> tuple[float, float | None, list[str]]:
-    """Elevate only corroborated high-confidence duplicate-entry candidates."""
-
-    if config.get("enabled", True) is False:
-        return 0.0, None, []
-
-    l203_hits = [
-        hit for hit in case_hits if hit.rule_id in {"L2-03", "L2-03a", "L2-03b", "L2-03c", "L2-03d"}
-    ]
-    if not l203_hits:
-        return 0.0, None, []
-
-    high_confidence_score = float(config.get("high_confidence_score", 0.85))
-    has_high_confidence = any(
-        hit.score >= high_confidence_score
-        or str((hit.annotation or {}).get("confidence_band", "")).strip().lower() == "high"
-        or _annotation_confidence(hit.annotation) >= high_confidence_score
-        for hit in l203_hits
-    )
-    if not has_high_confidence:
-        return 0.0, None, []
-
-    corroborating_evidence = set(
-        config.get(
-            "corroborating_evidence_types",
-            [
-                "control_failure",
-                "timing_anomaly",
-                "logic_mismatch",
-                "statistical_outlier",
-                "data_integrity_failure",
-                "access_scope_review",
-                "intercompany_structure",
-            ],
-        )
-    )
-    has_independent_signal = bool(set(evidence_types) & corroborating_evidence)
-
-    materiality_amount = float(config.get("materiality_amount", 0.0) or 0.0)
-    if materiality_amount <= 0:
-        materiality_amount = float(config.get("_phase1_materiality_amount", 0.0) or 0.0)
-    min_total_amount = float(config.get("min_total_amount", 0.0) or 0.0)
-    amount_threshold = float(config.get("amount_score_threshold", 0.75))
-    has_amount_support = amount_score >= amount_threshold and (
-        (materiality_amount > 0 and total_amount >= materiality_amount * amount_threshold)
-        or (min_total_amount > 0 and total_amount >= min_total_amount)
-    )
-
-    if not (has_independent_signal or has_amount_support):
-        return 0.0, None, []
-
-    bonus = float(config.get("bonus", 0.08))
-    floor = float(config.get("min_priority_score", 0.45))
-    reason = (
-        "l203_high_confidence_corroborated"
-        if has_independent_signal
-        else "l203_high_confidence_material"
-    )
-    return bonus, floor, [reason]
 
 
 def _l108_priority_adjustment(
@@ -5705,126 +5295,6 @@ def _l108_priority_adjustment(
     max_bonus = float(config.get("max_bonus", 0.12))
     bonus = min(len(context_reasons) * per_context_bonus, max_bonus)
     return bonus, ["l108_context=" + ",".join(sorted(context_reasons))]
-
-
-def _l301_priority_adjustment(
-    *,
-    rows: pd.DataFrame,
-    rule_ids: set[str],
-    priority_score: float,
-    config: dict[str, Any],
-) -> tuple[float, float, list[str]]:
-    """Raise L3-01 review queue priority only when corroborating context exists."""
-
-    if "L3-01" not in rule_ids or config.get("enabled", True) is False:
-        return priority_score, 0.0, []
-
-    tags = _l301_context_tags(rows, rule_ids, config)
-    if not tags:
-        return priority_score, 0.0, ["l301_raw_population_only"]
-
-    tag_bonus = {
-        "manual_entry": float(config.get("manual_bonus", 0.12)),
-        "high_amount": float(config.get("high_amount_bonus", 0.12)),
-        "period_end": float(config.get("period_end_bonus", 0.10)),
-        "approval_issue": float(config.get("approval_issue_bonus", 0.18)),
-        "abnormal_time": float(config.get("abnormal_time_bonus", 0.08)),
-        "intercompany": float(config.get("intercompany_bonus", 0.14)),
-        "repeat_pattern": float(config.get("repeat_pattern_bonus", 0.12)),
-        "logic_combo": float(config.get("logic_combo_bonus", 0.08)),
-    }
-    raw_bonus = sum(tag_bonus.get(tag, 0.0) for tag in tags)
-    adjusted = float(priority_score)
-
-    if "manual_entry" in tags:
-        adjusted = max(adjusted, float(config.get("manual_floor", 0.75)))
-    if "high_amount" in tags or "period_end" in tags:
-        adjusted = max(adjusted, float(config.get("amount_or_period_floor", 0.80)))
-    if {"high_amount", "period_end"}.issubset(tags):
-        adjusted = max(adjusted, float(config.get("amount_and_period_floor", 0.85)))
-    if {"approval_issue", "intercompany", "repeat_pattern"} & set(tags):
-        adjusted = max(adjusted, float(config.get("strong_context_floor", 0.90)))
-    if len(tags) >= int(config.get("critical_context_count", 3)):
-        adjusted = max(adjusted, float(config.get("critical_context_floor", 0.95)))
-
-    floor_delta = max(0.0, adjusted - float(priority_score))
-    bonus = min(
-        max(raw_bonus, floor_delta),
-        float(config.get("max_bonus", 0.70)),
-    )
-    return priority_score, bonus, ["l301_context=" + ",".join(tags)]
-
-
-def _l301_context_tags(
-    rows: pd.DataFrame,
-    rule_ids: set[str],
-    config: dict[str, Any],
-) -> list[str]:
-    tags: list[str] = []
-    if (
-        _case_has_true(rows, "is_manual_je")
-        or _case_source_ratio(
-            rows,
-            config.get("manual_sources", ["manual", "adjustment"]),
-        )
-        > 0
-    ):
-        tags.append("manual_entry")
-
-    if _case_has_high_amount(rows, config):
-        tags.append("high_amount")
-
-    if _case_has_true(rows, "is_period_end") or "L3-04" in rule_ids:
-        tags.append("period_end")
-
-    if rule_ids & set(config.get("approval_rules", ["L1-04", "L1-05", "L1-07", "L1-09"])):
-        tags.append("approval_issue")
-
-    if rule_ids & set(config.get("abnormal_time_rules", ["L3-05", "L3-06", "L4-05"])):
-        tags.append("abnormal_time")
-
-    if (
-        rule_ids & set(config.get("intercompany_rules", ["L3-03", "IC01", "IC02", "IC03"]))
-    ) or _case_has_true(rows, "is_intercompany"):
-        tags.append("intercompany")
-
-    if _case_has_repeat_context(rows, config):
-        tags.append("repeat_pattern")
-
-    if rule_ids & set(config.get("logic_combo_rules", ["L2-04", "L3-10", "L4-04"])):
-        tags.append("logic_combo")
-
-    return sorted(set(tags))
-
-
-def _case_has_high_amount(rows: pd.DataFrame, config: dict[str, Any]) -> bool:
-    if rows.empty:
-        return False
-    amount_threshold = float(config.get("high_amount_threshold", 100_000_000.0) or 0.0)
-    amounts = _line_amount_series(rows)
-    if amount_threshold > 0:
-        return bool((amounts >= amount_threshold).any())
-    quantile = float(config.get("high_amount_quantile", 0.90))
-    if amounts.empty:
-        return False
-    threshold = float(amounts.quantile(quantile))
-    return bool((amounts >= threshold).any() and amounts.max() > 0)
-
-
-def _case_has_repeat_context(rows: pd.DataFrame, config: dict[str, Any]) -> bool:
-    if len(rows) < int(config.get("repeat_min_rows", 3)):
-        return False
-    group_cols = [
-        col
-        for col in config.get(
-            "repeat_group_columns", ["business_process", "gl_account", "created_by"]
-        )
-        if col in rows.columns
-    ]
-    if not group_cols:
-        return False
-    min_count = int(config.get("repeat_min_count", 3))
-    return bool(rows.groupby(group_cols, dropna=False).size().ge(min_count).any())
 
 
 def _case_topside_score(
@@ -5902,7 +5372,7 @@ def _l308_has_corroborating_rule(rule_ids: set[str], config: dict[str, Any]) -> 
         "L1-03",
         "L1-05",
         "L1-07",
-        "L1-09",
+        "L1-07-02",
         "L2-02",
         "L2-03",
         "L2-05",

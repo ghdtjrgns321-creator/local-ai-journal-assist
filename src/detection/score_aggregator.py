@@ -28,11 +28,7 @@ from src.detection.constants import (
 )
 from src.detection.rule_scoring import (
     EVIDENCE_STRENGTH_FACTOR,
-    L103_BUCKET_SIGNAL_STRENGTH,
     L104_BUCKET_SIGNAL_STRENGTH,
-    L201_BUCKET_SIGNAL_STRENGTH,
-    L202_DUPLICATE_PAYMENT_SIGNAL_STRENGTH,
-    L305_CALENDAR_SIGNAL_STRENGTH,
     L307_BUCKET_SIGNAL_STRENGTH,
     L309_AGING_BUCKET_SIGNAL_STRENGTH,
     L403_ZSCORE_BUCKET_SIGNAL_STRENGTH,
@@ -67,6 +63,7 @@ class _Phase2Timer:
 _TOPSIDE_CONDITIONS = len(TOPSIDE_BONUS_RULES)
 _BATCH_CORROBORATION_CONDITIONS = len(BATCH_CORROBORATION_RULES)
 _WORK_SCOPE_CORROBORATION_CONDITIONS = len(WORK_SCOPE_CORROBORATION_RULES)
+_DATA_INTEGRITY_TRACK_RULES = {"L1-01", "L1-02", "L1-03"}
 
 _POLICY_HIGH_RULES = {"L1-04"}
 _POLICY_HIGH_LABELS = {
@@ -292,6 +289,9 @@ def _combined_normalized_rule_details(
             rule_code = str(rule_id)
             if not _is_rule_level_code(rule_code):
                 continue
+            if rule_code in _DATA_INTEGRITY_TRACK_RULES:
+                normalized_columns.append(pd.Series(0.0, index=index, name=rule_code))
+                continue
             metadata = RULE_SCORING_REGISTRY.get(rule_code)
             if metadata is not None and metadata.scoring_role == "macro_only":
                 normalized_columns.append(pd.Series(0.0, index=index, name=rule_code))
@@ -500,7 +500,7 @@ def _apply_policy_risk_floors(
             high_mask = high_mask | mask
             reasons = _append_reason(reasons, mask, f"{rule_id}:immediate")
 
-    for rule_id in ("L1-05", "L1-07"):
+    for rule_id in ("L1-05",):
         label_by_index = _row_labels_for_rule(results, rule_id, agg_df.index)
         for label in _POLICY_HIGH_LABELS:
             mask = label_by_index.eq(label)
@@ -526,52 +526,11 @@ def _apply_policy_risk_floors(
         reasons = _append_reason(reasons, l106_high, "L1-06:direct_high")
         reasons = _append_reason(reasons, l106_critical, "L1-06:direct_critical")
 
-    if "L1-09" in combined.columns:
-        l109_score = pd.to_numeric(combined["L1-09"], errors="coerce").fillna(0.0).astype(float)
-        other_control_cols = [
-            col for col in ("L1-04", "L1-05", "L1-06", "L1-07") if col in combined.columns
-        ]
-        if other_control_cols:
-            other_strong_control = (
-                combined[other_control_cols]
-                .apply(pd.to_numeric, errors="coerce")
-                .fillna(0.0)
-                .ge(0.70)
-                .any(axis=1)
-            )
-        else:
-            other_strong_control = pd.Series(False, index=agg_df.index)
-
-        l109_high = l109_score.ge(0.55) & other_strong_control
-        high_mask = high_mask | l109_high
-        reasons = _append_reason(reasons, l109_high, "L1-09:corroborated_control")
-
     if high_mask.any():
         agg_df.loc[high_mask, "anomaly_score"] = agg_df.loc[high_mask, "anomaly_score"].clip(
             lower=RISK_THRESHOLDS[RiskLevel.HIGH]
         )
         agg_df.loc[high_mask, "risk_level"] = RiskLevel.HIGH
-
-    if "L1-09" in combined.columns:
-        l109_score = pd.to_numeric(combined["L1-09"], errors="coerce").fillna(0.0).astype(float)
-        l109_medium = l109_score.ge(0.70) & ~high_mask
-        l109_low = l109_score.ge(0.55) & l109_score.lt(0.70) & ~high_mask
-        if l109_medium.any():
-            agg_df.loc[l109_medium, "anomaly_score"] = agg_df.loc[
-                l109_medium,
-                "anomaly_score",
-            ].clip(lower=RISK_THRESHOLDS[RiskLevel.MEDIUM])
-            current_high = agg_df["risk_level"].eq(RiskLevel.HIGH)
-            agg_df.loc[l109_medium & ~current_high, "risk_level"] = RiskLevel.MEDIUM
-            reasons = _append_reason(reasons, l109_medium, "L1-09:material_missing_date")
-        if l109_low.any():
-            agg_df.loc[l109_low, "anomaly_score"] = agg_df.loc[
-                l109_low,
-                "anomaly_score",
-            ].clip(lower=RISK_THRESHOLDS[RiskLevel.LOW])
-            current_medium_or_high = agg_df["risk_level"].isin([RiskLevel.MEDIUM, RiskLevel.HIGH])
-            agg_df.loc[l109_low & ~current_medium_or_high, "risk_level"] = RiskLevel.LOW
-            reasons = _append_reason(reasons, l109_low, "L1-09:manual_missing_date")
 
     if "L1-06" in combined.columns:
         l106_score = pd.to_numeric(combined["L1-06"], errors="coerce").fillna(0.0).astype(float)
@@ -603,27 +562,6 @@ def _apply_policy_risk_floors(
             ].clip(lower=RISK_THRESHOLDS[RiskLevel.LOW])
             current_medium_or_high = agg_df["risk_level"].isin([RiskLevel.MEDIUM, RiskLevel.HIGH])
             agg_df.loc[l106_low & ~current_medium_or_high, "risk_level"] = RiskLevel.LOW
-
-    if "L1-01" in combined.columns:
-        l101_score = pd.to_numeric(combined["L1-01"], errors="coerce").fillna(0.0).astype(float)
-        l101_severe = l101_score.ge(0.90) & l101_score.lt(1.0)
-        l101_material = l101_score.ge(0.65) & l101_score.lt(0.90)
-        if l101_severe.any():
-            agg_df.loc[l101_severe, "anomaly_score"] = agg_df.loc[
-                l101_severe,
-                "anomaly_score",
-            ].clip(lower=RISK_THRESHOLDS[RiskLevel.MEDIUM])
-            current_high = agg_df["risk_level"].eq(RiskLevel.HIGH)
-            agg_df.loc[l101_severe & ~current_high, "risk_level"] = RiskLevel.MEDIUM
-            reasons = _append_reason(reasons, l101_severe, "L1-01:severe_imbalance")
-        if l101_material.any():
-            agg_df.loc[l101_material, "anomaly_score"] = agg_df.loc[
-                l101_material,
-                "anomaly_score",
-            ].clip(lower=RISK_THRESHOLDS[RiskLevel.LOW])
-            current_medium_or_high = agg_df["risk_level"].isin([RiskLevel.MEDIUM, RiskLevel.HIGH])
-            agg_df.loc[l101_material & ~current_medium_or_high, "risk_level"] = RiskLevel.LOW
-            reasons = _append_reason(reasons, l101_material, "L1-01:material_imbalance")
 
     agg_df["risk_floor_reasons"] = reasons.fillna("")
     return agg_df
@@ -730,45 +668,12 @@ def _vector_signal_strength(
 
     if rule_id == "L1-04":
         return labels.map(L104_BUCKET_SIGNAL_STRENGTH).fillna(default).astype("float64")
-    if rule_id == "L2-02":
-        return (
-            labels.map(L202_DUPLICATE_PAYMENT_SIGNAL_STRENGTH)
-            .fillna(
-                numeric.clip(upper=1.0),
-            )
-            .astype("float64")
-        )
-    if rule_id == "L2-01":
-        signal = numeric.clip(upper=1.0)
-        signal = signal.mask(numeric.le(0), 0.0)
-        signal = signal.mask(labels.eq("normal_population"), 0.0)
-        signal = signal.mask(
-            labels.eq("routine_razor_review") | numeric.le(0.35),
-            L201_BUCKET_SIGNAL_STRENGTH["routine_razor_review"],
-        )
-        mapped = labels.map(L201_BUCKET_SIGNAL_STRENGTH)
-        return signal.where(mapped.isna(), mapped).astype("float64")
     if rule_id in {"L1-03", "L1-07", "L3-09", "L4-04"}:
         signal = numeric.clip(upper=1.0) / severity_factor
-        if rule_id == "L1-03":
-            signal = labels.map(L103_BUCKET_SIGNAL_STRENGTH).fillna(signal)
-        elif rule_id == "L3-09":
+        if rule_id == "L3-09":
             signal = labels.map(L309_AGING_BUCKET_SIGNAL_STRENGTH).fillna(signal)
         return signal.astype("float64")
-    if rule_id == "L3-05":
-        signal = default.copy()
-        signal = signal.mask(numeric.ge(0.45), L305_CALENDAR_SIGNAL_STRENGTH["weekend_holiday"])
-        signal = signal.mask(
-            numeric.ge(0.40) & numeric.lt(0.45),
-            L305_CALENDAR_SIGNAL_STRENGTH["weekend"],
-        )
-        signal = signal.mask(
-            numeric.ge(0.35) & numeric.lt(0.40),
-            L305_CALENDAR_SIGNAL_STRENGTH["weekday_holiday"],
-        )
-        mapped = labels.map(L305_CALENDAR_SIGNAL_STRENGTH)
-        return signal.where(mapped.isna(), mapped).astype("float64")
-    if rule_id in {"L3-01", "L3-10", "L3-12", "L3-06", "L4-05"}:
+    if rule_id in {"L3-10", "L3-12", "L3-05", "L3-06", "L4-05"}:
         return numeric.clip(upper=1.0).astype("float64")
     if rule_id == "L3-07":
         signal = default.copy()

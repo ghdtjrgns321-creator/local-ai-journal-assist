@@ -37,7 +37,6 @@ class CaseGroupResult(BaseModel):
     topside_bonus: float = 0.0
     batch_combo_bonus: float = 0.0
     weak_evidence_bonus: float = 0.0
-    l301_priority_bonus: float = 0.0
     priority_adjustment_reasons: list[str] = Field(default_factory=list)
     priority_band: str = "low"
     triage_rank_score: float = 0.0
@@ -51,6 +50,8 @@ class CaseGroupResult(BaseModel):
     timing_score: float = 0.0
     behavior_score: float = 0.0
     repeat_score: float = 0.0
+    # OFF-TIME 보조축(주말·심야·작성자 집중) 합산. tier 게이트 미참여, within-tier 정렬·UI 전용.
+    time_severity_score: int = 0
     rule_count: int = 0
     evidence_count: int = 0
     document_count: int = 0

@@ -87,7 +87,6 @@ RULE_CODES: dict[str, str] = {
     "L1-01": "Unbalanced Entry",
     "L1-02": "Missing Required Field",
     "L1-03": "Invalid Account",
-    "L3-01": "Misclassified Account",
     "L4-01": "Revenue Outlier",
     "L2-01": "Just Below Approval Threshold",
     "L1-04": "Exceeded Approval Limit",
@@ -101,7 +100,7 @@ RULE_CODES: dict[str, str] = {
     "L1-06": "Segregation of Duties Violation",
     "L3-02": "Manual Entry Override",
     "L1-07": "Skipped Approval",
-    "L1-09": "Approval Date Missing",
+    "L1-07-02": "Unknown Approver",
     "L3-03": "Related Party Transaction Review Signal",
     "L2-04": "Expense Capitalization Signal",
     "L2-05": "Reversal Pattern",
@@ -160,7 +159,6 @@ SEVERITY_MAP: dict[str, int] = {
     "L1-01": 5,
     "L1-02": 2,
     "L1-03": 3,
-    "L3-01": 3,
     "L4-01": 5,
     "L2-01": 3,
     "L1-04": 3,
@@ -174,7 +172,7 @@ SEVERITY_MAP: dict[str, int] = {
     "L1-06": 4,
     "L3-02": 4,
     "L1-07": 4,
-    "L1-09": 3,
+    "L1-07-02": 4,
     "L3-03": 4,
     "L2-04": 4,
     "L2-05": 4,
@@ -535,10 +533,10 @@ RULE_EXPLANATIONS: dict[str, RuleExplanation] = {
         plain_reason="Approval appears to be missing despite approval being required.",
         used_columns=("approved_by", "source", "debit_amount", "credit_amount"),
     ),
-    "L1-09": RuleExplanation(
-        rule_id="L1-09",
-        plain_reason="An approver is present but the approval date is missing.",
-        used_columns=("approved_by", "approval_date"),
+    "L1-07-02": RuleExplanation(
+        rule_id="L1-07-02",
+        plain_reason="An approver is populated but absent from the employee master.",
+        used_columns=("approved_by", "approver_in_master"),
     ),
     "L1-08": RuleExplanation(
         rule_id="L1-08",
@@ -572,11 +570,6 @@ RULE_EXPLANATIONS: dict[str, RuleExplanation] = {
         plain_reason=(
             "A high-confidence reversal or a reversal-like clearing/reclass pattern was detected."
         ),
-    ),
-    "L3-01": RuleExplanation(
-        rule_id="L3-01",
-        plain_reason="The account is used in a business process that looks atypical.",
-        used_columns=("business_process", "gl_account"),
     ),
     "L3-02": RuleExplanation(
         rule_id="L3-02",
@@ -789,7 +782,7 @@ WORK_SCOPE_CORROBORATION_RULES: list[tuple[str, list[tuple[str, str]]]] = [
             ("L1-05", "layer_b"),
             ("L1-06", "layer_b"),
             ("L1-07", "layer_b"),
-            ("L1-09", "layer_b"),
+            ("L1-07-02", "layer_b"),
         ],
     ),
     (

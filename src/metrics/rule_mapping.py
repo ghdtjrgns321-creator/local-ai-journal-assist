@@ -8,7 +8,6 @@ RULE_TO_LABEL: dict[str, list[str]] = {
     "L1-01": ["UnbalancedEntry"],
     "L1-02": ["MissingField"],
     "L1-03": ["InvalidAccount"],
-    "L3-01": ["MisclassifiedAccount"],
     "L4-01": ["RevenueManipulation"],
     "L2-01": ["JustBelowThreshold"],
     "L1-04": ["ExceededApprovalLimit"],
@@ -18,7 +17,7 @@ RULE_TO_LABEL: dict[str, list[str]] = {
     "L1-06": ["SegregationOfDutiesViolation"],
     "L3-02": ["ManualOverride"],
     "L1-07": ["SkippedApproval"],
-    "L1-09": ["ApprovalDateMissing"],
+    "L1-07-02": ["UnknownApprover"],
     "L3-03": ["CircularIntercompany"],
     "L2-04": ["ExpenseCapitalization", "ImproperCapitalization"],
     "L3-04": ["RushedPeriodEnd"],
@@ -70,7 +69,7 @@ RULE_TO_TRUTH_BASIS: dict[str, str] = {
     ),
     "L2-01": "JustBelowThreshold labels with threshold-proximity bands",
     "L2-02": "DuplicatePayment labels; detector evidence is document-pair based",
-    "L2-03": "DuplicateEntry/ExactDuplicateAmount labels with confidence-band review queue",
+    "L2-03": "DuplicateEntry/ExactDuplicateAmount labels with binary re-posting evidence",
     "L2-04": (
         "expense-capitalization family labels; strict ImproperCapitalization "
         "is an auxiliary confirmed subset"
@@ -125,7 +124,7 @@ RULE_TO_TRUTH_DISPLAY: dict[str, str] = {
     "L4-01": "RevenueManipulation/high-value outlier subset",
     "L2-01": "JustBelowThreshold proximity bands",
     "L2-02": "DuplicatePayment pair candidates",
-    "L2-03": "duplicate-entry confidence bands",
+    "L2-03": "binary duplicate-entry scores",
     "L2-04": "ExpenseCapitalization family",
     "L2-05": "ReversedAmount confirmed subset",
     "L1-06": "SegregationOfDutiesViolation immediate subset",
@@ -173,9 +172,9 @@ RULE_TO_EVALUATION_NOTE: dict[str, str] = {
         "bands drive downstream priority rather than truth inclusion."
     ),
     "L2-03": (
-        "Duplicate-entry screen mixes exact, reference, near, and split patterns. "
-        "Use high/medium/low confidence bands instead of reading every hit as a "
-        "confirmed duplicate."
+        "Duplicate-entry screen is binary and limited to explicit reference "
+        "re-posting or full row-clone evidence. Near, document-profile, and split "
+        "patterns are not L2-03 primary hits."
     ),
     "L2-04": (
         "Expense-capitalization review rule. Score family coverage separately from "
@@ -249,7 +248,6 @@ RULE_TO_TRACK: dict[str, str] = {
     "L1-01": "layer_a",
     "L1-02": "layer_a",
     "L1-03": "layer_a",
-    "L3-01": "layer_a",
     "L4-01": "layer_b",
     "L2-01": "layer_b",
     "L1-04": "layer_b",
@@ -263,7 +261,7 @@ RULE_TO_TRACK: dict[str, str] = {
     "L1-06": "layer_b",
     "L3-02": "layer_b",
     "L1-07": "layer_b",
-    "L1-09": "layer_b",
+    "L1-07-02": "layer_b",
     "L3-03": "layer_b",
     "L2-04": "layer_b",
     "L3-10": "layer_b",
@@ -320,9 +318,9 @@ RULE_EVALUATION_PROFILES: dict[str, RuleEvaluationProfile] = {
         note=RULE_TO_EVALUATION_NOTE["L2-02"],
     ),
     "L2-03": RuleEvaluationProfile(
-        rule_objective="Duplicate-entry candidate with confidence bands",
+        rule_objective="Duplicate-entry binary re-posting candidate",
         broad_fraud_type="DuplicateEntry",
-        expected_coverage="confidence-banded review",
+        expected_coverage="binary re-posting review",
         status="coverage_anchor",
         note=RULE_TO_EVALUATION_NOTE["L2-03"],
     ),
@@ -436,7 +434,6 @@ RULE_TO_ACTION_LAYER: dict[str, str] = {
     "L1-01": "confirmed_issue",
     "L1-02": "confirmed_issue",
     "L1-03": "confirmed_issue",
-    "L3-01": "review_needed",
     "L4-01": "stat_outlier",
     "L2-01": "fraud_signal",
     "L1-04": "confirmed_issue",
@@ -450,7 +447,7 @@ RULE_TO_ACTION_LAYER: dict[str, str] = {
     "L1-06": "confirmed_issue",
     "L3-02": "review_needed",
     "L1-07": "confirmed_issue",
-    "L1-09": "confirmed_issue",
+    "L1-07-02": "confirmed_issue",
     "L3-03": "review_needed",
     "L2-04": "fraud_signal",
     "L3-04": "review_needed",

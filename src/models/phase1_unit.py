@@ -25,6 +25,11 @@ class BasePhase1Unit(BaseModel):
     priority_band: str = "low"
     triage_rank_score: float = 0.0
     triage_rank_reasons: list[str] = Field(default_factory=list)
+    # 이 unit(전표/흐름)의 대표 금액(materiality proxy). case 동명 필드와 의미 동일.
+    total_amount: float = 0.0
+    # OFF-TIME 보조축(주말·심야·작성자 집중) 합산. tier 게이트 미참여, within-tier 정렬·UI 전용.
+    # case 동명 필드와 의미 동일.
+    time_severity_score: int = 0
 
 
 class DocumentUnit(BasePhase1Unit):

@@ -16,7 +16,6 @@ from src.detection.anomaly_rules_batch import c13_batch_anomaly
 from src.detection.anomaly_rules_reversal import c11_reversal_entry
 from src.detection.anomaly_rules_simple import (
     c01_period_end_large,
-    c01_period_end_sensitive_account,
     c02_weekend_entry,
     c03_after_hours_entry,
     c04_backdated_entry,
@@ -43,10 +42,10 @@ ANOMALY_RULE_EXPLANATIONS: dict[str, RuleExplanation] = {
     "L3-04": RuleExplanation(
         principle="Period-end postings should be supported by clear cutoff rationale.",
         violation_reason=(
-            "The entry occurs near period end or period start with review-relevant context."
+            "The entry occurs near period end or period start."
         ),
         audit_next_action=(
-            "Inspect cutoff support, manual source, amount size, and sensitive-account context."
+            "Inspect cutoff support and corroborating amount, approval, source, or account context."
         ),
         reference="PCAOB AS 2401; ISA 240",
     ),
@@ -218,9 +217,7 @@ class AnomalyDetector(BaseDetector):
                 "L3-04",
                 c01_period_end_large,
                 {
-                    "quantile": s.period_end_amount_quantile,
-                    "min_group_size": s.c01_min_group_size,
-                    "whitelist_patterns": patterns.get("period_end_whitelist", []),
+                    "period_end_margin_days": s.period_end_margin_days,
                 },
             ),
             ("L3-05", c02_weekend_entry, {}),
@@ -256,10 +253,7 @@ class AnomalyDetector(BaseDetector):
                 "L2-05",
                 c11_reversal_entry,
                 {
-                    "match_window_days": s.reversal_match_window_days,
-                    "rolling_window_days": s.reversal_rolling_window_days,
-                    "zero_threshold": s.reversal_zero_threshold,
-                    "score_threshold": s.reversal_score_threshold,
+                    "match_window_days": s.reversal_mirror_window_days,
                 },
             ),
             (
@@ -310,8 +304,6 @@ class AnomalyDetector(BaseDetector):
             score_series = flagged.attrs.get("score_series") if hasattr(flagged, "attrs") else None
             if score_series is not None:
                 score = pd.Series(score_series, index=df.index).fillna(0.0).astype(float)
-                if rule_id == "L3-04":
-                    score = self._score_l304(df, flagged, severity_score, base_score=score)
                 details[rule_id] = score
             elif rule_id == "L3-04":
                 details[rule_id] = self._score_l304(df, flagged, severity_score)
@@ -370,18 +362,10 @@ class AnomalyDetector(BaseDetector):
         severity_score: float,
         base_score: pd.Series | None = None,
     ) -> pd.Series:
-        """Apply sensitive-account priority bonus without creating new L3-04 flags."""
-        score = (
-            base_score.copy() if base_score is not None else flagged.astype(float) * severity_score
-        )
-        patterns = self._audit_rules.get("patterns", {})
-        sensitive = c01_period_end_sensitive_account(
-            df,
-            patterns.get("period_end_sensitive_accounts", {}),
-        )
-        bonus = float(getattr(self._settings, "period_end_sensitive_bonus", 0.15))
-        bonus_mask = flagged & sensitive & score.gt(0)
-        return (score + bonus_mask.astype(float) * bonus).clip(upper=1.0)
+        """Return binary L3-04 score without amount or sensitive-account escalation."""
+        if base_score is not None:
+            return base_score.copy()
+        return flagged.astype(float) * severity_score
 
     def _l307_detail(self, df: pd.DataFrame, flagged: pd.Series) -> str | None:
         """Summarize L3-07 direction without changing score columns."""

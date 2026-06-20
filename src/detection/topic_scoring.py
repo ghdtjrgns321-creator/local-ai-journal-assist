@@ -9,53 +9,43 @@ from typing import Any, cast
 
 from src.detection.rule_scoring import RULE_SCORING_REGISTRY, TOPIC_REGISTRY
 
-TOPIC_SCORE_WEIGHTS: dict[str, float] = {
-    "max_primary_rule_score": 0.62,
-    "secondary_evidence_score": 0.08,
-    "corroboration_score": 0.08,
-    "materiality_score": 0.08,
-    "repeat_score": 0.05,
-    "macro_context_score": 0.03,
-    "audit_evidence_score": 0.06,
-}
-
 DEFAULT_TOPIC_CAP = 1.0
-DEFAULT_TOPIC_FLOORS: dict[str, float] = {
-    "approval_control_high": 0.75,
-    "duplicate_reference_match": 0.45,
-}
+DEFAULT_TOPIC_FLOORS: dict[str, float] = {}
 DEFAULT_COMBO_FLOORS: dict[str, float] = {
-    "batch_combo": 0.45,
-    "work_scope_combo": 0.45,
     "fictitious_entry_medium": 0.60,
     "fictitious_entry_high": 0.75,
-    "period_end_adjustment_medium": 0.60,
     "period_end_adjustment_high": 0.75,
     "embezzlement_concealment_medium": 0.60,
     "embezzlement_concealment_high": 0.75,
+    "suspense_concealment_medium": 0.60,
     "suspense_concealment_high": 0.75,
-    "approval_bypass_medium": 0.60,
+    "expense_capitalization_medium": 0.60,
+    "expense_capitalization_high": 0.75,
+    "related_party_reversal_medium": 0.60,
+    "rare_account_bypass_medium": 0.60,
     "approval_bypass_high": 0.75,
 }
 
 _DUPLICATE_ENTRY_RULES = {"L2-03", "L2-03a", "L2-03b", "L2-03c", "L2-03d"}
 _REVENUE_OR_AMOUNT_RULES = {"L4-01", "L4-03"}
-_TIMING_SEED_RULES = {"L3-04", "L3-07", "L3-11", "L1-08"}
+# §3.0 HIGH-4 첫 leg (L3-04|L3-11). §8(5) "L3-07·L1-08@H4 헛다리 삭제"로 두 룰 제거.
+_TIMING_SEED_RULES = {"L3-04", "L3-11"}
 _OUTFLOW_RULES = {"L2-02", "L2-05"} | _DUPLICATE_ENTRY_RULES
-_APPROVAL_BYPASS_RULES = {"L1-04", "L1-05", "L1-06", "L1-07"}
-_WEAK_DESCRIPTION_OR_SENSITIVE_ACCOUNT_RULES = {"L3-08", "L3-10", "L4-04"}
+_APPROVAL_BYPASS_RULES = {"L1-04", "L1-05", "L1-06", "L1-07", "L1-07-02"}
+# §3.0 HIGH-4 둘째 leg (L3-10|L4-04|L4-03). §8(1) 고액 L4-03 복원, §8(5) 적요부실 L3-08 제거.
+_PERIOD_END_CORROBORANT_RULES = {"L3-10", "L4-04", "L4-03"}
 # Why: 가공전표(fictitious_entry_high) 조합의 "셋째 다리"(2차 정황) 풀.
 #      FSS HIGH 17건 재감사(A안, HIGH_COMBO_GROUNDING.md §5b / DECISION D075)에서
 #      같은 가공전표 스토리인데 셋째 정황만 다른 11건이 그물을 빠져나간 것을 확인 →
 #      기존 (L4-04·중복L2-03)에 관계사·민감계정·자기승인·cutoff 를 실증에 맞게 추가.
-#      과탐 가드(정상 v42j 측정, HIGH ≤ 2%): 후보였던 L3-04(기말)·L1-09(승인일공백)는
-#      정상 결산전표에 흔해(기말 734/738·승인일공백 334/738) 과발화 → 제외. 기말 fraud 는
-#      closing_timing 조합의 영역이고 L1-09 는 근거 약한 룰(§2-2)이라 둘 다 부적합.
-#      유지한 L3-03·L3-10·L1-05·L3-11 은 정상 발화 0~54 로 특이적이며 FSS 10/11건을 커버한다.
+#      과탐 가드(정상 v42j 측정, HIGH ≤ 2%): 후보였던 L3-04(기말)·승인일공백은
+#      정상 결산전표에 흔해 과발화 → 제외. 기말 fraud 는 closing_timing 조합의 영역이다.
+#      유지한 L3-03·L1-05·L3-11 은 정상 발화 0~54 로 특이적이며 FSS 10/11건을 커버한다.
+#      L3-10 제거(§8(5) HIGH-1 2차정황 0/67 헛다리 삭제) → §3.0 HIGH-1 풀
+#      {L4-04|L2-03|L3-03|L1-05|L3-11} 와 일치(L2-03=_DUPLICATE_ENTRY_RULES).
 _FICTITIOUS_SECONDARY_RULES = {
     "L4-04",  # 희소계정쌍
     "L3-03",  # 관계사 거래 (분식 실행 통로)
-    "L3-10",  # 민감/고위험 계정
     "L1-05",  # 자기승인
     "L3-11",  # cutoff 위반
 } | _DUPLICATE_ENTRY_RULES
@@ -72,17 +62,15 @@ class _FraudComboFloor:
 
 @dataclass(frozen=True)
 class TopicScoreBreakdown:
-    """Component scores behind one PHASE1 topic score."""
+    """PHASE1 topic 트리거 분해 (가중합 점수 폐기 — tier 트리거 정보만 보유).
+
+    `score`는 가중합이 아니라 발화한 floor/combo 의 tier 컷값(0.75/0.60/0.45 등)이다.
+    band·정렬은 tier(`compute_topic_tiers`)가 결정하며, 본 구조는 어떤 트리거가
+    발화했는지(floor/combo policy ids)와 has_rankable_primary 만 운반한다.
+    """
 
     topic_id: str
     score: float
-    max_primary_rule_score: float
-    secondary_evidence_score: float
-    corroboration_score: float
-    materiality_score: float
-    repeat_score: float
-    macro_context_score: float
-    audit_evidence_score: float
     floor_policy_ids: tuple[str, ...]
     combo_policy_ids: tuple[str, ...]
     fraud_combo_policy_ids: tuple[str, ...]
@@ -124,33 +112,24 @@ class _EvidenceView:
 def compute_topic_scores(
     evidences: Iterable[Any],
     *,
-    materiality_score: float | Mapping[str, float] = 0.0,
-    repeat_score: float | Mapping[str, float] = 0.0,
-    audit_evidence_score: float | Mapping[str, float] = 0.0,
-    topic_caps: Mapping[str, float] | None = None,
     topic_floor_policies: Mapping[str, float] | None = None,
     combo_floor_policies: Mapping[str, float] | None = None,
     fraud_combo_rule_scope: AbstractSet[str] | None = None,
     return_breakdown: bool = False,
 ) -> dict[str, float] | dict[str, TopicScoreBreakdown]:
-    """Compute PHASE1 v1 topic scores for one row or case.
+    """PHASE1 topic 트리거 분해를 산출한다 (가중합 점수 폐기).
 
-    A topic only receives a non-zero standalone ranking score when it has at
-    least one rankable primary rule. Booster, combo-only, and macro-only rules
-    can lift an existing topic but cannot seed a Top N row by themselves.
+    band·정렬은 tier(`compute_topic_tiers`)가 결정한다. 본 함수는 가중합을 계산하지
+    않고, floor/combo 트리거의 발화 여부만 평가한다. 각 topic 의 `score`는 발화한
+    floor/combo 의 tier 컷값(미발화 시 0)이며, has_rankable_primary 게이트로 booster/
+    macro/combo-only 단독 승격을 막는다.
     """
 
     views = [_coerce_evidence(evidence) for evidence in evidences]
-    caps = {topic_id: DEFAULT_TOPIC_CAP for topic_id in TOPIC_REGISTRY}
-    caps.update({str(k): float(v) for k, v in (topic_caps or {}).items()})
-    repeat_by_topic = {
-        topic_id: _topic_component(repeat_score, topic_id) for topic_id in TOPIC_REGISTRY
-    }
     combo_policies = {**DEFAULT_COMBO_FLOORS, **(combo_floor_policies or {})}
     fraud_combo_floors = _fraud_combo_floor_results(
         views,
         combo_policies=combo_policies,
-        repeat_by_topic=repeat_by_topic,
         rule_scope=fraud_combo_rule_scope,
     )
 
@@ -181,47 +160,11 @@ def compute_topic_scores(
             )
         ]
         has_rankable_primary = bool(primary_views)
-        max_primary = max((view.normalized_score for view in primary_views), default=0.0)
 
-        if has_rankable_primary:
-            secondary = max(
-                (
-                    view.normalized_score
-                    for view in topic_views
-                    if topic_id in view.secondary_topics and view.normalized_score > 0
-                ),
-                default=0.0,
-            )
-            corroboration = _corroboration_score(topic_views, primary_views)
-            macro_context = max(
-                (
-                    view.normalized_score
-                    for view in topic_views
-                    if view.scoring_role == "macro_only" and view.normalized_score > 0
-                ),
-                default=0.0,
-            )
-            audit_evidence = _topic_component(audit_evidence_score, topic_id)
-        else:
-            secondary = 0.0
-            corroboration = 0.0
-            macro_context = 0.0
-            audit_evidence = 0.0
-
-        materiality = _topic_component(materiality_score, topic_id)
-        repeat = _topic_component(repeat_score, topic_id)
-        base_score = (
-            TOPIC_SCORE_WEIGHTS["max_primary_rule_score"] * max_primary
-            + TOPIC_SCORE_WEIGHTS["secondary_evidence_score"] * secondary
-            + TOPIC_SCORE_WEIGHTS["corroboration_score"] * corroboration
-            + TOPIC_SCORE_WEIGHTS["materiality_score"] * materiality
-            + TOPIC_SCORE_WEIGHTS["repeat_score"] * repeat
-            + TOPIC_SCORE_WEIGHTS["macro_context_score"] * macro_context
-            + TOPIC_SCORE_WEIGHTS["audit_evidence_score"] * audit_evidence
-        )
-        score = min(base_score, caps.get(topic_id, DEFAULT_TOPIC_CAP))
+        # 가중합 점수 폐기(2026-06-17): score 시작값 0 → floor/combo 적용값(tier 컷)만 남는다.
+        # tier(band)는 발화한 floor/combo policy_ids + has_rankable_primary 로 결정한다.
         floor_score, floor_policy_ids = apply_topic_floors(
-            {topic_id: score},
+            {topic_id: 0.0},
             topic_views,
             floor_policies=topic_floor_policies,
             require_primary=has_rankable_primary,
@@ -233,23 +176,14 @@ def compute_topic_scores(
             combo_policies=combo_policies,
             require_primary=has_rankable_primary,
             return_policy_ids=True,
-            repeat_score=repeat_by_topic,
             fraud_combo_rule_scope=fraud_combo_rule_scope,
         )
         fraud_floors_for_topic = fraud_combo_floors.get(topic_id, ())
         fraud_combo_policy_ids = tuple(floor.reason for floor in fraud_floors_for_topic)
         fraud_combo_tags = tuple(dict.fromkeys(floor.tag for floor in fraud_floors_for_topic))
-        final_score = min(combo_score[topic_id], caps.get(topic_id, DEFAULT_TOPIC_CAP))
         breakdowns[topic_id] = TopicScoreBreakdown(
             topic_id=topic_id,
-            score=_clamp(final_score),
-            max_primary_rule_score=_clamp(max_primary),
-            secondary_evidence_score=_clamp(secondary),
-            corroboration_score=_clamp(corroboration),
-            materiality_score=_clamp(materiality),
-            repeat_score=_clamp(repeat),
-            macro_context_score=_clamp(macro_context),
-            audit_evidence_score=_clamp(audit_evidence),
+            score=_clamp(combo_score[topic_id]),
             floor_policy_ids=tuple(floor_policy_ids.get(topic_id, ())),
             combo_policy_ids=tuple(combo_policy_ids.get(topic_id, ())),
             fraud_combo_policy_ids=fraud_combo_policy_ids,
@@ -515,25 +449,6 @@ def _coerce_evidence(evidence: Any) -> _EvidenceView:
     )
 
 
-def _touches_topic(evidence: _EvidenceView, topic_id: str) -> bool:
-    return evidence.final_topic == topic_id or topic_id in evidence.secondary_topics
-
-
-def _corroboration_score(
-    topic_views: list[_EvidenceView],
-    primary_views: list[_EvidenceView],
-) -> float:
-    primary_ids = {view.rule_id for view in primary_views}
-    corroborating_ids = {
-        view.rule_id
-        for view in topic_views
-        if view.normalized_score > 0
-        and view.rule_id not in primary_ids
-        and view.scoring_role in {"primary", "booster", "combo_only"}
-    }
-    return _clamp(len(corroborating_ids) / 3.0)
-
-
 def _fraud_combo_floor_results(
     evidences: Iterable[_EvidenceView],
     *,
@@ -569,9 +484,7 @@ def _fraud_combo_floor_results(
     has_timing_seed = bool(rule_ids & _TIMING_SEED_RULES)
     has_outflow = bool(rule_ids & _OUTFLOW_RULES)
     has_approval_bypass = bool(rule_ids & _APPROVAL_BYPASS_RULES)
-    has_weak_description_or_sensitive = bool(
-        rule_ids & _WEAK_DESCRIPTION_OR_SENSITIVE_ACCOUNT_RULES
-    )
+    has_period_end_corroborant = bool(rule_ids & _PERIOD_END_CORROBORANT_RULES)
 
     if (
         has_revenue_or_amount
@@ -584,49 +497,51 @@ def _fraud_combo_floor_results(
             "fictitious_entry_risk",
             "revenue_or_amount_outlier + manual_adjustment + secondary_red_flag",
         )
-    elif ("L4-01" in rule_ids and "L3-04" in rule_ids) or (
-        "L4-03" in rule_ids and "L4-06" in rule_ids and "L3-02" in rule_ids
-    ):
+    elif has_revenue_or_amount and "L3-02" in rule_ids:
+        # §3.0 MEDIUM(b) 약화형 가공전표(HIGH-1): (L4-01|L4-03) & L3-02, 2차정황 없음.
         add(
             "revenue_statistical",
             "fictitious_entry_medium",
             "fictitious_entry_risk",
-            "revenue_or_amount_outlier + closing_or_batch_context",
+            "revenue_or_amount_outlier + manual_adjustment (no_secondary)",
         )
 
-    if has_timing_seed and "L4-03" in rule_ids and has_weak_description_or_sensitive:
+    # 고액(L4-03) 게이트 제거(2026-06-17): AS2401 §61 부정전표 특성 목록에 "고액"이 없다
+    #   (라운드넘버는 §61(e)이나 금액 크기는 아님). 결산조작 근거는 ISA240 §32(b) 추정 편의지
+    #   금액이 아니다. 고액은 중요성(ISA320)·tier 내부 랭킹 렌즈로만 쓰고 combo 게이트에서 뺀다.
+    # §3.0 HIGH-4: (L3-04|L3-11) & (L3-10|L4-04|L4-03). 고액 L4-03 복원(§8(1)).
+    # cutoff 분기(L3-11&(L4-01|L4-03))는 §8(5) "H4 미수정" — FSS 신규 0건(H1 흡수)으로 폐기.
+    # period_end_adjustment_medium 분기도 폐기 확정(§3-3 B).
+    if has_timing_seed and has_period_end_corroborant:
         add(
             "closing_timing",
             "period_end_adjustment_high",
             "period_end_adjustment_risk",
-            "period_end_or_late_posting + high_amount + weak_description_or_sensitive_account",
-        )
-    elif "L3-11" in rule_ids and has_revenue_or_amount:
-        add(
-            "closing_timing",
-            "period_end_adjustment_high",
-            "period_end_adjustment_risk",
-            "cutoff_mismatch + revenue_or_high_amount",
+            "period_end_or_late_posting + weak_description_or_sensitive_account",
         )
 
     # A안(DECISION D075): 횡령은폐가 항상 승인 흔적을 남기지는 않는다. FSS 감리2013-1-가·
-    # A-6유형-가는 역분개(L2-05) + 수기(L3-02) + 고액(L4-03)으로만 나타나 승인우회 필수
-    # 조건에서 탈락했다 → 승인우회 OR (역분개 + 수기 + 고액) 분기 추가. 고액(L4-03)을
-    # 함께 요구해 정상 reversal+manual clearing(anti-fitting 가드 대상)과 구분한다.
-    has_reversal_manual_concealment = {"L2-05", "L3-02", "L4-03"}.issubset(rule_ids)
-    if has_outflow and (has_approval_bypass or has_reversal_manual_concealment):
+    # A-6유형-가는 역분개(L2-05) + 수기(L3-02)로 나타나 승인우회 필수 조건에서 탈락했다
+    # → 승인우회 OR (역분개 + 수기) 분기 추가. 고액(L4-03) 게이트 제거(2026-06-17): 과탐가드용
+    # 패딩이었고 AS2401 §61에 고액 특성 없음. 정상 reversal+clearing 과탐은 L2-05/L2-03 룰의
+    # 발화조건(step3)에서 다루고 고액으로 되막지 않는다.
+    # §3.0 HIGH-2: ((L2-02|L2-03|L2-05)&bypass) | ((L2-02|L2-03|L2-05)&L3-02&L4-03).
+    #   §8(6) H2 일반화 — 자금유출+수기+고액 일반형(역분개 L2-05 한정 해제).
+    if has_outflow and (has_approval_bypass or ("L3-02" in rule_ids and "L4-03" in rule_ids)):
         add(
             "duplicate_outflow",
             "embezzlement_concealment_high",
             "embezzlement_concealment_risk",
-            "outflow_or_duplicate + (approval_bypass or reversal_with_manual)",
+            "outflow_or_duplicate + (approval_bypass or manual_with_high_amount)",
         )
-    elif "L2-01" in rule_ids and {"L1-04", "L1-05"} & rule_ids:
+    elif "L2-01" in rule_ids and (rule_ids & {"L1-05", "L1-06", "L1-07", "L1-07-02"}):
+        # §3.0 MEDIUM(a) 한도직하 분할: L2-01 & (L1-05|L1-06|L1-07|L1-07-02).
+        #   §8(7) M2 — 한도초과 L1-04 는 한도분할과 논리 모순이라 bypass 에서 제외.
         add(
             "duplicate_outflow",
             "embezzlement_concealment_medium",
             "embezzlement_concealment_risk",
-            "threshold_splitting + approval_bypass",
+            "threshold_splitting + approval_bypass(no_L1-04)",
         )
 
     # Why: 가수금·미결제 계정(L3-09)은 횡령 자금이 정착하는 은폐 통로다. FSS 실증(P1 9개
@@ -640,57 +555,70 @@ def _fraud_combo_floor_results(
             "embezzlement_concealment_risk",
             "suspense_aging + outflow_or_duplicate + high_amount",
         )
+    elif "L3-09" in rule_ids and has_outflow:
+        # §3.0 MEDIUM(b) 약화형 가수금(HIGH-3): L3-09 & (L2-02|L2-03|L2-05), 고액 없음.
+        add(
+            "duplicate_outflow",
+            "suspense_concealment_medium",
+            "embezzlement_concealment_risk",
+            "suspense_aging + outflow (no_high_amount)",
+        )
+
+    # HIGH-7 → MEDIUM 이관(§8(4)): 역분개(L2-05)&관계사(L3-03) FSS HIGH 0/158, ISA550/240
+    #   개념근거-only. §4a-4 형태 `L3-03 & L2-05`로 재정의(기말 L3-04 필수 제외).
+    #   host=duplicate_outflow: 기말(L3-04) 제외로 closing_timing엔 standalone primary seed가
+    #   없어 has_rankable_primary=False → CONTEXT로 죽는다. L2-05가 duplicate_outflow primary
+    #   seed이므로 host를 그쪽으로 이관해 combo floor가 tier로 승격되게 한다(L3-03은 booster·
+    #   standalone_rankable=False라 seed 불가).
+    if {"L2-05", "L3-03"}.issubset(rule_ids):
+        add(
+            "duplicate_outflow",
+            "related_party_reversal_medium",
+            "related_party_reversal_risk",
+            "reversal + related_party (no_period_end)",
+        )
+
+    # §3.0 HIGH-9 비용자산화: L2-04 & L3-02 & (L4-03|L3-04|L1-06). §8(6) H9 셋째슬롯 확장
+    #   (L1-06 직무분리 동반 회복). host=account_logic(L2-04 primary seed).
+    if {"L2-04", "L3-02"}.issubset(rule_ids) and (rule_ids & {"L4-03", "L3-04", "L1-06"}):
+        add(
+            "account_logic",
+            "expense_capitalization_high",
+            "expense_capitalization_risk",
+            "expense_capitalization + manual + period_end",
+        )
+    elif {"L2-04", "L3-02"}.issubset(rule_ids):
+        # §3.0 MEDIUM(b) 약화형 비용자산화(HIGH-9): L2-04 & L3-02, 셋째다리 없음.
+        add(
+            "account_logic",
+            "expense_capitalization_medium",
+            "expense_capitalization_risk",
+            "expense_capitalization + manual (no_third_leg)",
+        )
+
+    # §3.0 MEDIUM(a) 희소계정쌍+승인우회: L4-04 & bypass. §8(7) M1 — bypass 세트 전체.
+    #   host=account_logic(L4-04 primary seed).
+    if "L4-04" in rule_ids and has_approval_bypass:
+        add(
+            "account_logic",
+            "rare_account_bypass_medium",
+            "rare_account_bypass_risk",
+            "rare_account_pair + approval_bypass",
+        )
 
     # intercompany_cycle circular_transaction combo 제거 (2026-06-14): IC/GR 제거에 따라
     # 관계사·순환 주제 자체가 폐지됨.
 
-    has_strong_approval_context = (
-        "L4-03" in rule_ids
-        or "L3-11" in rule_ids
-        or {"L3-04", "L3-02"}.issubset(rule_ids)
-        or {"L3-06", "L3-02"}.issubset(rule_ids)
-    )
-    if has_approval_bypass and has_strong_approval_context:
+    # §3.0 HIGH-5 승인통제: bypass & (L4-03|L2-02|L2-03). §8(6) corroborant 확장
+    #   (고액·중복지급·중복전표). approval_bypass_medium 전 분기 폐기(§8(5)).
+    if has_approval_bypass and (
+        "L4-03" in rule_ids or "L2-02" in rule_ids or bool(rule_ids & _DUPLICATE_ENTRY_RULES)
+    ):
         add(
             "approval_control",
             "approval_bypass_high",
             "approval_bypass_risk",
-            "approval_bypass + high_amount_or_cutoff_or_strong_abnormal_timing",
-        )
-    elif {"L1-09", "L4-03", "L3-02"}.issubset(rule_ids):
-        add(
-            "approval_control",
-            "approval_bypass_medium",
-            "approval_bypass_risk",
-            "missing_approval_trace + high_amount + manual_adjustment",
-        )
-    elif has_approval_bypass and "L3-02" in rule_ids:
-        add(
-            "approval_control",
-            "approval_bypass_medium",
-            "approval_bypass_risk",
-            "approval_bypass + manual_adjustment_context",
-        )
-    elif has_approval_bypass and "L3-06" in rule_ids:
-        add(
-            "approval_control",
-            "approval_bypass_medium",
-            "approval_bypass_risk",
-            "approval_bypass + after_hours_context",
-        )
-    elif has_approval_bypass and "L3-05" in rule_ids:
-        add(
-            "approval_control",
-            "approval_bypass_medium",
-            "approval_bypass_risk",
-            "approval_bypass + non_business_day_context",
-        )
-    elif "L3-12" in rule_ids and {"L1-05", "L1-07"} & rule_ids:
-        add(
-            "approval_control",
-            "approval_bypass_medium",
-            "approval_bypass_risk",
-            "work_scope_concentration + approval_bypass",
+            "approval_bypass + high_amount_or_duplicate",
         )
 
     return {topic_id: tuple(floors) for topic_id, floors in results.items()}

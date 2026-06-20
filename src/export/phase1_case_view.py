@@ -21,7 +21,7 @@ from src.detection.rule_detail_metadata import (
     canonicalize_rule_id,
     get_rule_detail_metadata,
 )
-from src.detection.rule_scoring import TOPIC_REGISTRY
+from src.detection.rule_scoring import RULE_SCORING_REGISTRY, TOPIC_REGISTRY
 from src.models.phase1_case import CaseGroupResult, Phase1CaseResult
 
 if TYPE_CHECKING:
@@ -34,11 +34,10 @@ _LOW_SIGNAL_QUEUE_LABEL = "Low-signal 후보"
 _LOW_SIGNAL_MAX_DOCS = 5_000
 _LOW_SIGNAL_RELEVANT_RULES = {
     "L1-07",
-    "L1-09",
+    "L1-07-02",
     "L2-01",
     "L2-02",
     "L2-03",
-    "L3-01",
     "L3-02",
     "L3-03",
     "L3-04",
@@ -69,13 +68,20 @@ def resolve_phase1_case_result(
     *,
     load_artifact: bool = True,
 ) -> Phase1CaseResult | None:
-    """Return an in-memory case result or load it from the saved artifact path."""
+    """Return an in-memory case result or load it from the saved artifact path.
+
+    UNIT_MEASUREMENT_POLICY §1·§5 인계: 주 검토 큐의 축은 ``units``(document/flow)다.
+    cases 가 비어도 units 가 있으면 unit 큐·커버리지가 동작해야 하므로, 결과의 존재
+    판정은 ``cases or units`` 로 한다. 기존 None 가정 소비처(집계뷰)는 cases 가 비면
+    여전히 빈 목록을 받으므로 동작이 깨지지 않는다.
+    """
     existing = getattr(pr, "phase1_case_result", None)
     if existing is not None:
         # A restored/partially-built result can carry an empty placeholder object.
         # Treat that as absent so all dashboard aggregations fall through to the
-        # persisted artifact instead of reporting 0 case breakdowns.
-        if getattr(existing, "cases", None):
+        # persisted artifact instead of reporting 0 case breakdowns. units 가 있으면
+        # 빈 placeholder 가 아니므로 unit 큐를 위해 그대로 반환한다.
+        if getattr(existing, "cases", None) or getattr(existing, "units", None):
             return existing
         try:
             pr.phase1_case_result = None
@@ -91,7 +97,7 @@ def resolve_phase1_case_result(
     except Exception:
         logger.warning("PHASE1 case artifact load failed: %s", artifact_path, exc_info=True)
         return None
-    if not getattr(loaded, "cases", None):
+    if not (getattr(loaded, "cases", None) or getattr(loaded, "units", None)):
         return None
     try:
         pr.phase1_case_result = loaded
@@ -319,7 +325,14 @@ def build_phase1_case_queue(
     theme_id: str | None = None,
     top_n: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Return queue rows for case list views."""
+    """[DEPRECATED 주 검토 큐 역할] case 리스트 집계뷰 행을 반환한다.
+
+    UNIT_MEASUREMENT_POLICY §5: 주 검토 큐의 단위는 case 가 아니라 unit(document/flow)다.
+    주 검토 큐는 ``build_phase1_transaction_queue`` 로 이관됐다. 본 함수는 대시보드
+    caller 전환(stage3c) 전까지 하위 호환용으로만 유지한다. 아래 정렬의
+    ``_band_rank(case.priority_band)`` 는 집계뷰 표시 정렬일 뿐 정답/우선순위 truth 축이
+    아니다(정책 §5).
+    """
     phase1 = resolve_phase1_case_result(pr)
     if phase1 is None:
         return []
@@ -348,6 +361,7 @@ def build_phase1_case_queue(
             _case_topic_score(case, topic_id),
             case.triage_rank_score,
             case.repeat_months,
+            case.time_severity_score,
             case.total_amount,
             case.rule_count,
         ),
@@ -452,7 +466,7 @@ def build_phase1_integrity_rule_view(
     """Aggregate case-level rule hits for the supplied rule whitelist.
 
     데이터 정합성 탭에서 evidence_type 이 data_integrity_failure 가 아닌
-    룰(L1-04~L1-09 control_failure, L1-03/L3-01 logic_mismatch,
+    룰(L1-04~L1-07-02 control_failure, L1-03 logic_mismatch,
     L3-04/L3-07 timing_anomaly 등)을 카테고리별 보조 카드로 노출하기 위해
     phase1.cases 의 raw_rule_hits 를 룰 단위로 집계한다.
     """
@@ -531,6 +545,159 @@ def build_phase1_integrity_rule_view(
             {doc for value in rule_items.values() for doc in value["document_ids"]}
         ),
         "case_count": len(matched_case_ids),
+    }
+
+
+# ── 전표/흐름(unit) 단위 검토 큐 + 룰별 커버리지 (UNIT_MEASUREMENT_POLICY §1 Layer 1) ──
+# tier(정답)는 document/flow 단위에만 붙는다. 아래 함수들은 case 집계뷰가 아니라
+# phase1.units(document/flow)를 직접 축으로 쓴다. 기존 case 큐 빌더는 건드리지 않는다(신설만).
+
+
+def _unit_band_rank(unit: Any) -> int:
+    """unit.priority_band 의 순서 랭크. band 문자 직접 분기 금지 — _band_rank 재사용."""
+    return _band_rank(unit.priority_band)
+
+
+def _unit_sort_key(unit: Any) -> tuple[int, float, int, float, int]:
+    """case 정렬튜플 구조를 unit 필드로 옮긴 공통 sort_key.
+
+    (band_rank, triage_rank_score, time_severity_score, total_amount, rule_count).
+    time_severity 를 금액 위에 두어 truth 가 금액 큰 nontruth 에 묻히지 않게 한다
+    (anti-burying, stage2 와 일관). repeat_months 는 unit 에 없으므로 제외.
+    """
+    return (
+        _band_rank(unit.priority_band),
+        unit.triage_rank_score,
+        unit.time_severity_score,
+        unit.total_amount,
+        len(unit.evidence_rows),
+    )
+
+
+def build_phase1_transaction_queue(
+    pr: PipelineResult,
+    *,
+    topic_id: str | None = None,
+    top_n: int | None = None,
+) -> list[dict[str, Any]]:
+    """전표/흐름(unit) 단위 검토 큐. HIGH/MEDIUM tier unit 만, 1 unit = 1 줄.
+
+    LOW/CONTEXT unit 은 큐에서 빠지고 build_phase1_rule_coverage 로만 surface 된다.
+    band 컷은 _band_rank("medium") 경유 — band 문자 리터럴 분기 금지.
+    """
+    phase1 = resolve_phase1_case_result(pr)
+    if phase1 is None:
+        return []
+    medium_cut = _band_rank("medium")
+    units = [unit for unit in phase1.units if _band_rank(unit.priority_band) >= medium_cut]
+    if topic_id:
+        units = [unit for unit in units if topic_id in unit.topic_scores]
+    units = sorted(units, key=_unit_sort_key, reverse=True)
+    if top_n is not None:
+        units = units[:top_n]
+    return [_unit_row(unit, phase1) for unit in units]
+
+
+def _unit_row(unit: Any, phase1: Phase1CaseResult) -> dict[str, Any]:
+    """unit → dict. _case_row 와 동형. 발화 룰·근거 필드는 기존 unit 속성 사용."""
+    fired_rules = sorted({ref.rule_id for ref in unit.evidence_rows})
+    fired_rule_labels = [_rule_label(rule_id) for rule_id in fired_rules]
+    is_flow = unit.unit_type == "flow"
+    document_ids = (
+        sorted(set(getattr(unit, "member_document_ids", []) or [])) if is_flow else [unit.unit_id]
+    )
+    return {
+        "unit_id": unit.unit_id,
+        "unit_type": unit.unit_type,
+        "flow_id": getattr(unit, "flow_id", None) if is_flow else None,
+        "flow_type": getattr(unit, "flow_type", None) if is_flow else None,
+        "priority_band": unit.priority_band,
+        "priority_score": unit.priority_score,
+        "base_priority_score": unit.base_priority_score,
+        "composite_sort_score": unit.composite_sort_score,
+        "triage_rank_score": unit.triage_rank_score,
+        "triage_rank_reasons": list(unit.triage_rank_reasons),
+        "time_severity_score": unit.time_severity_score,
+        "total_amount": unit.total_amount,
+        "topic_scores": dict(unit.topic_scores),
+        "topic_score_breakdown": dict(unit.topic_score_breakdown),
+        "fired_rules": fired_rules,
+        "fired_rule_labels": fired_rule_labels,
+        "rule_count": len(fired_rules),
+        "evidence_count": len(unit.evidence_rows),
+        "document_ids": document_ids,
+        "document_count": len(document_ids),
+    }
+
+
+def build_phase1_rule_coverage(pr: PipelineResult) -> dict[str, Any]:
+    """룰별 커버리지 표. 모든 unit 의 evidence_rows 를 룰별로 전수 집계(tier 무관).
+
+    행 대상 = RULE_SCORING_REGISTRY 에서 scoring_role=="primary" 이고 standalone_rankable
+    인 룰만(booster/macro/combo_only 제외). 룰ID 화이트리스트 나열 금지 — 메타로 판별.
+    룰별 distinct document_id 수(전표 발화 수) + tier 분해(high/medium/low unit 수).
+    """
+    phase1 = resolve_phase1_case_result(pr)
+    if phase1 is None:
+        return {"available": False, "items": []}
+
+    rule_items: dict[str, dict[str, Any]] = {}
+    for unit in phase1.units:
+        band_rank = _band_rank(unit.priority_band)
+        # 이 unit 이 어느 document 들에 귀속되는지(flow 면 member 전체, document 면 자기 자신).
+        if unit.unit_type == "flow":
+            unit_document_ids = set(getattr(unit, "member_document_ids", []) or [])
+        else:
+            unit_document_ids = {unit.unit_id}
+        for ref in unit.evidence_rows:
+            rule_id = ref.rule_id
+            meta = RULE_SCORING_REGISTRY.get(rule_id)
+            # standalone primary 만 행 대상. 메타 없으면(미등록) 제외.
+            if meta is None or meta.scoring_role != "primary" or not meta.standalone_rankable:
+                continue
+            item = rule_items.setdefault(
+                rule_id,
+                {
+                    "rule_id": rule_id,
+                    "rule_label": _rule_label(rule_id),
+                    "document_ids": set(),
+                    "high_unit_ids": set(),
+                    "medium_unit_ids": set(),
+                    "low_unit_ids": set(),
+                },
+            )
+            # 전표 발화 수 = distinct document_id. ref document_id + unit 귀속 document 반영.
+            if ref.document_id:
+                item["document_ids"].add(ref.document_id)
+            item["document_ids"].update(unit_document_ids)
+            if band_rank >= _band_rank("high"):
+                item["high_unit_ids"].add(unit.unit_id)
+            elif band_rank >= _band_rank("medium"):
+                item["medium_unit_ids"].add(unit.unit_id)
+            else:
+                item["low_unit_ids"].add(unit.unit_id)
+
+    items = [
+        {
+            "rule_id": value["rule_id"],
+            "rule_label": value["rule_label"],
+            "documents": len(value["document_ids"]),
+            "high": len(value["high_unit_ids"]),
+            "medium": len(value["medium_unit_ids"]),
+            "low": len(value["low_unit_ids"]),
+        }
+        for value in rule_items.values()
+    ]
+    items.sort(
+        key=lambda row: (row["documents"], row["high"], row["medium"], row["rule_id"]),
+        reverse=True,
+    )
+    return {
+        "available": True,
+        "items": items,
+        "document_count": len(
+            {doc for value in rule_items.values() for doc in value["document_ids"]}
+        ),
     }
 
 
@@ -1385,8 +1552,21 @@ def _approval_missing_evidence(
     doc_rows: Any,
     amount: float,
 ) -> dict[str, Any]:
-    field = "approval_date" if rule_id == "L1-09" else "approved_by"
-    field_label = "승인일자" if field == "approval_date" else "승인자"
+    field = "approved_by"
+    field_label = "승인자"
+    if rule_id == "L1-07-02":
+        return _ev(
+            "승인자 명부 부재",
+            "승인자 마스터 존재",
+            _value(record, field, "누락"),
+            "마스터 부재",
+            "승인자가 직원 마스터 또는 승인권한 테이블에 존재하는지 확인하세요.",
+            amount,
+            details=[
+                _detail_item("승인자", _value(record, "approved_by"), kind="user"),
+                _detail_item("명부 존재 여부", _value(record, "approver_in_master"), kind="text"),
+            ],
+        )
     return _ev(
         f"{field_label} 누락",
         f"{field_label} 입력됨",
@@ -1612,12 +1792,6 @@ _CLASSIFICATION_RULES = {
         "difference": "분류 불일치",
         "review": "송장 성격·자본화 메모·자산 마스터 생성 여부를 점검하세요.",
     },
-    "L3-01": {
-        "summary": "{process} 프로세스에 {family} 계정 사용",
-        "expected": "프로세스에 부합하는 계정 분류",
-        "difference": "프로세스/계정 불일치",
-        "review": "계정과목 분류·프로세스 컨텍스트·예외 승인을 확인하세요.",
-    },
     "L3-09": {
         "summary": "장기 미해소 임시·반제 계정 {account}",
         "expected": "정책 윈도우 내 해소",
@@ -1828,7 +2002,7 @@ _EVIDENCE_BUILDERS = {
     "L1-06": _sod_evidence,
     "L1-07": _approval_missing_evidence,
     "L1-08": _period_evidence,
-    "L1-09": _approval_missing_evidence,
+    "L1-07-02": _approval_missing_evidence,
     "L2-01": _near_limit_evidence,
     **{rule: _pair_relationship_evidence for rule in _RELATIONSHIP_RULES},
     **{rule: _classification_evidence for rule in _CLASSIFICATION_RULES},
@@ -1907,7 +2081,7 @@ _DOCUMENT_LEVEL_RULES: frozenset[str] = frozenset(
         "L1-05",
         "L1-07",
         "L1-08",
-        "L1-09",
+        "L1-07-02",
         "L2-01",
     }
 )
@@ -1960,7 +2134,13 @@ def build_phase1_audit_risk_queue(
     top_n: int | None = 10,
     queue_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Return the actual audit-risk Top-N, excluding data-quality gate items."""
+    """[DEPRECATED 주 검토 큐 역할] audit-risk Top-N case 집계뷰.
+
+    UNIT_MEASUREMENT_POLICY §5: 주 검토 큐 단위는 unit(document/flow)다. 주 큐는
+    ``build_phase1_transaction_queue`` 로 이관됐다. caller 전환(stage3c) 전까지 유지.
+    아래 정렬의 ``_band_rank(case.priority_band)`` 는 집계뷰 표시 정렬일 뿐 정답/우선순위
+    truth 축이 아니다(정책 §5).
+    """
     phase1 = resolve_phase1_case_result(pr)
     if phase1 is None:
         return []
@@ -1978,6 +2158,7 @@ def build_phase1_audit_risk_queue(
             for case in items
             if case.primary_queue == queue_id or queue_id in case.secondary_queues
         ]
+    # 정렬은 집계뷰 표시용 — band 는 정답/우선순위 truth 축이 아니다(정책 §5).
     items = sorted(
         items,
         key=lambda case: (
@@ -1985,6 +2166,7 @@ def build_phase1_audit_risk_queue(
             case.priority_score,
             _queue_tiebreaker(case, queue_id or case.primary_queue)["score"],
             case.triage_rank_score,
+            case.time_severity_score,
             case.total_amount,
             case.rule_count,
             -case.document_count,
@@ -2002,7 +2184,13 @@ def build_phase1_topic_top_n(
     topic_id: str,
     top_n: int | None = 10,
 ) -> list[dict[str, Any]]:
-    """Return one official topic's Top-N cases sorted by topic_score desc."""
+    """[DEPRECATED 주 검토 큐 역할] 한 topic 의 Top-N case 집계뷰(topic_score desc).
+
+    UNIT_MEASUREMENT_POLICY §5: 주 검토 큐 단위는 unit(document/flow)다. 주 큐는
+    ``build_phase1_transaction_queue`` 로 이관됐다(topic_id 인자 동일). caller 전환
+    (stage3c) 전까지 유지. 아래 정렬의 ``_band_rank(case.priority_band)`` 는 집계뷰 표시
+    정렬일 뿐 정답/우선순위 truth 축이 아니다(정책 §5).
+    """
     phase1 = resolve_phase1_case_result(pr)
     resolved_topic = _topic_id_from_legacy(topic_id)
     if phase1 is None or resolved_topic is None:
@@ -2012,11 +2200,13 @@ def build_phase1_topic_top_n(
         for case in phase1.cases
         if resolved_topic in _case_topic_ids(case) and _case_topic_score(case, resolved_topic) > 0
     ]
+    # 정렬은 집계뷰 표시용 — band 는 정답/우선순위 truth 축이 아니다(정책 §5).
     members.sort(
         key=lambda case: (
             _case_topic_score(case, resolved_topic),
             _band_rank(case.priority_band),
             case.triage_rank_score,
+            case.time_severity_score,
             case.total_amount,
             case.rule_count,
             -case.document_count,
@@ -2033,7 +2223,13 @@ def build_phase1_audit_risk_by_queue(
     *,
     top_n_per_queue: int = 5,
 ) -> dict[str, Any]:
-    """Return PHASE1 Top-N grouped by the seven locked auditor topics."""
+    """[DEPRECATED 주 검토 큐 역할] 7개 topic 별 Top-N case 집계뷰.
+
+    UNIT_MEASUREMENT_POLICY §5: 주 검토 큐 단위는 unit(document/flow)다. 주 큐는
+    ``build_phase1_transaction_queue``(topic_id 인자) 로 이관됐다. caller 전환(stage3c)
+    전까지 유지. 아래 정렬의 ``_band_rank(case.priority_band)`` 는 집계뷰 표시 정렬일 뿐
+    정답/우선순위 truth 축이 아니다(정책 §5).
+    """
     phase1 = resolve_phase1_case_result(pr)
     if phase1 is None:
         return {"available": False, "queues": []}
@@ -2047,12 +2243,14 @@ def build_phase1_audit_risk_by_queue(
         ]
         if not members:
             continue
+        # 정렬은 집계뷰 표시용 — band 는 정답/우선순위 truth 축이 아니다(정책 §5).
         members = sorted(
             members,
             key=lambda case: (
                 _case_topic_score(case, queue_id),
                 _band_rank(case.priority_band),
                 case.triage_rank_score,
+                case.time_severity_score,
                 case.total_amount,
                 case.rule_count,
                 -case.document_count,
@@ -2073,7 +2271,11 @@ def build_phase1_audit_risk_by_queue(
 
 
 def build_phase1_review_candidate_summary(pr: PipelineResult) -> dict[str, Any]:
-    """Return review/sidecar candidates as type counts, not a Top-N ranking."""
+    """[집계뷰] review/sidecar 후보를 type 카운트로 반환(Top-N 랭킹 아님).
+
+    UNIT_MEASUREMENT_POLICY §5: high/medium/low 카운트는 case band 가 아니라 소속 unit
+    등급(_topic_unit_band_counts)을 센다. cases 카운트·documents 는 묶음 표시값이다.
+    """
     phase1 = resolve_phase1_case_result(pr)
     if phase1 is None:
         return {"available": False, "items": []}
@@ -2096,13 +2298,12 @@ def build_phase1_review_candidate_summary(pr: PipelineResult) -> dict[str, Any]:
             {
                 "queue_id": key,
                 "queue_label": _topic_label(topic_id) if topic_id else key.replace("_", " "),
+                # 소속 unit 등급 카운트를 채울 canonical topic(없으면 unit 귀속 불가 → 0).
+                "topic_id": topic_id,
                 "cases": 0,
                 "documents": set(),
                 "review_hits": 0,
                 "direct_hits": 0,
-                "high_cases": 0,
-                "medium_cases": 0,
-                "low_cases": 0,
                 "sample_case_ids": [],
                 "review_focus": [],
                 "actions": [],
@@ -2113,12 +2314,6 @@ def build_phase1_review_candidate_summary(pr: PipelineResult) -> dict[str, Any]:
         row["direct_hits"] += signal_counts["direct_risk"]
         for doc in case.documents:
             row["documents"].add(doc.document_id)
-        if case.priority_band == "high":
-            row["high_cases"] += 1
-        elif case.priority_band == "medium":
-            row["medium_cases"] += 1
-        else:
-            row["low_cases"] += 1
         if len(row["sample_case_ids"]) < 5:
             row["sample_case_ids"].append(case.case_id)
         for focus in case.review_focus:
@@ -2130,6 +2325,14 @@ def build_phase1_review_candidate_summary(pr: PipelineResult) -> dict[str, Any]:
 
     items = []
     for row in rows.values():
+        # high/medium/low 는 case band 가 아니라 소속 unit 등급을 센다(정책 §5).
+        # 그룹 키가 canonical topic 이 아니면 unit 귀속 불가 → 0.
+        topic_for_units = row.get("topic_id")
+        band_counts = (
+            _topic_unit_band_counts(phase1, topic_for_units)
+            if topic_for_units
+            else {"high": 0, "medium": 0, "low": 0}
+        )
         items.append(
             {
                 "queue_id": row["queue_id"],
@@ -2138,9 +2341,9 @@ def build_phase1_review_candidate_summary(pr: PipelineResult) -> dict[str, Any]:
                 "documents": len(row["documents"]),
                 "review_hits": row["review_hits"],
                 "direct_hits": row["direct_hits"],
-                "high_cases": row["high_cases"],
-                "medium_cases": row["medium_cases"],
-                "low_cases": row["low_cases"],
+                "high_cases": band_counts["high"],
+                "medium_cases": band_counts["medium"],
+                "low_cases": band_counts["low"],
                 "sample_case_ids": row["sample_case_ids"],
                 "review_focus": row["review_focus"][:5],
                 "actions": row["actions"][:5],
@@ -2319,8 +2522,9 @@ def _case_row(
         "topside_bonus": case.topside_bonus,
         "batch_combo_bonus": case.batch_combo_bonus,
         "weak_evidence_bonus": case.weak_evidence_bonus,
-        "l301_priority_bonus": case.l301_priority_bonus,
         "priority_adjustment_reasons": list(case.priority_adjustment_reasons),
+        # 집계뷰 파생 표시값 — 정답/우선순위 truth 축 아님(정책 §5). 주 검토 큐 tier 는
+        # unit(document/flow)에만 붙는다(build_phase1_transaction_queue).
         "priority_band": case.priority_band,
         "triage_rank_score": case.triage_rank_score,
         "triage_rank_reasons": list(case.triage_rank_reasons),
@@ -2546,7 +2750,6 @@ def _low_signal_case_row(item: dict[str, Any]) -> dict[str, Any]:
         "topside_bonus": 0.0,
         "batch_combo_bonus": 0.0,
         "weak_evidence_bonus": 0.0,
-        "l301_priority_bonus": 0.0,
         "priority_adjustment_reasons": [],
         "priority_band": "low",
         "triage_rank_score": min(score + min(len(rules), 5) * 0.03, 1.0),
@@ -2591,6 +2794,29 @@ def _low_signal_case_row(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _topic_unit_band_counts(phase1: Phase1CaseResult, topic_id: str) -> dict[str, int]:
+    """topic 에 걸린 unit(document/flow)들의 priority_band 등급 카운트.
+
+    UNIT_MEASUREMENT_POLICY §5: 집계뷰의 high/medium/low 숫자는 case band 가 아니라
+    소속 unit 의 등급을 센다. band 문자 직접 분기 금지 — _band_rank 경유.
+    unit 의 topic 소속은 build_phase1_transaction_queue 와 동일하게 topic_scores 키로 판정.
+    """
+    high_cut = _band_rank("high")
+    medium_cut = _band_rank("medium")
+    high = medium = low = 0
+    for unit in getattr(phase1, "units", None) or []:
+        if topic_id not in getattr(unit, "topic_scores", {}):
+            continue
+        rank = _band_rank(unit.priority_band)
+        if rank >= high_cut:
+            high += 1
+        elif rank >= medium_cut:
+            medium += 1
+        else:
+            low += 1
+    return {"high": high, "medium": medium, "low": low}
+
+
 def _topic_summaries(phase1: Phase1CaseResult) -> list[dict[str, Any]]:
     summaries: list[dict[str, Any]] = []
     for topic_id in _TOPIC_IDS:
@@ -2599,27 +2825,28 @@ def _topic_summaries(phase1: Phase1CaseResult) -> list[dict[str, Any]]:
             for case in phase1.cases
             if topic_id in _case_topic_ids(case) and _case_topic_score(case, topic_id) > 0
         ]
+        # case 정렬은 집계뷰 표시용일 뿐 정답/우선순위 truth 축이 아니다(정책 §5).
         members.sort(
             key=lambda case: (
                 _case_topic_score(case, topic_id),
                 _band_rank(case.priority_band),
                 case.triage_rank_score,
+                case.time_severity_score,
                 case.total_amount,
                 case.rule_count,
             ),
             reverse=True,
         )
-        high = sum(1 for case in members if str(case.priority_band).lower() == "high")
-        medium = sum(1 for case in members if str(case.priority_band).lower() == "medium")
-        low = len(members) - high - medium
+        # high/medium/low 카운트는 case band 가 아니라 소속 unit 등급을 센다(정책 §5).
+        band_counts = _topic_unit_band_counts(phase1, topic_id)
         summaries.append(
             {
                 "topic_id": topic_id,
                 "topic_label": _topic_label(topic_id),
                 "case_count": len(members),
-                "high_count": high,
-                "medium_count": medium,
-                "low_count": low,
+                "high_count": band_counts["high"],
+                "medium_count": band_counts["medium"],
+                "low_count": band_counts["low"],
                 "total_amount": sum(float(case.total_amount or 0.0) for case in members),
                 "top_case_ids": [case.case_id for case in members[:10]],
             }
@@ -2913,7 +3140,7 @@ def _queue_tiebreaker(case: CaseGroupResult, queue_id: str | None) -> dict[str, 
                 ("control rule strength", min(float(case.control_score or 0.0), 1.0), 0.30),
                 (
                     "L1 control rules",
-                    _rule_presence(rule_ids, {"L1-04", "L1-05", "L1-06", "L1-07", "L1-09"}),
+                    _rule_presence(rule_ids, {"L1-04", "L1-05", "L1-06", "L1-07", "L1-07-02"}),
                     0.20,
                 ),
             ]
@@ -2938,7 +3165,7 @@ def _queue_tiebreaker(case: CaseGroupResult, queue_id: str | None) -> dict[str, 
                     "statistical rules",
                     _rule_presence(
                         rule_ids,
-                        {"L3-01", "L4-01", "L4-03", "L4-04", "L4-05", "L4-06"},
+                        {"L4-01", "L4-03", "L4-04", "L4-05", "L4-06"},
                     ),
                     0.20,
                 ),
@@ -3023,7 +3250,6 @@ _INTEGRITY_RULES = {"L1-01", "L1-02", "L1-03", "L1-08"}
 _MACRO_RULES = {"L4-02", "D01", "D02", "GR01", "GR03"}
 _REVIEW_CONTEXT_RULES = {"L3-03", "L3-05", "L3-06", "L3-08", "L3-12", "L4-06"}
 _L302_DIRECT_BUCKETS = {"manual_control_bypass"}
-_L304_DIRECT_BUCKETS = {"closing_amount_p90", "closing_amount_p95"}
 
 
 def _case_signal_counts(case: CaseGroupResult) -> dict[str, int]:
@@ -3075,8 +3301,6 @@ def _signal_type(hit: Any) -> str:
     if rule_id in _REVIEW_CONTEXT_RULES:
         return "review_context"
     if rule_id == "L3-02" and label not in _L302_DIRECT_BUCKETS:
-        return "review_context"
-    if rule_id == "L3-04" and label and label not in _L304_DIRECT_BUCKETS:
         return "review_context"
     return "direct_risk"
 

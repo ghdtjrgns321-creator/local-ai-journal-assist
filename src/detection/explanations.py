@@ -304,8 +304,6 @@ def _rule_trigger_text(
             return f"Missing required fields: {', '.join(missing)}"
     if rule_id == "L1-03" and gl_account:
         return f"Invalid GL account {gl_account}"
-    if rule_id == "L3-01" and gl_account and business_process:
-        return f"Account {gl_account} is unusual for process {business_process}"
     if rule_id == "L2-01":
         return f"Amount is just below approval threshold ({_format_amount(amount)})"
     if rule_id == "L1-04":
@@ -322,6 +320,8 @@ def _rule_trigger_text(
         return f"Manual entry path source={source or '-'}"
     if rule_id == "L1-07":
         return f"Approval missing or skipped (approver={approver or 'NULL'})"
+    if rule_id == "L1-07-02":
+        return f"Unknown approver in employee master (approver={approver or 'NULL'})"
     if rule_id == "L3-03":
         return "Related-party account review signal"
     if rule_id == "L3-04":

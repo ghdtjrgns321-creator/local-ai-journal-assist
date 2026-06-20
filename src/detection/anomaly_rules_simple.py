@@ -17,102 +17,23 @@ from src.detection.source_trust import lone_automated_mask
 
 def c01_period_end_large(
     df: pd.DataFrame,
-    quantile: float = 0.75,
-    min_group_size: int = 30,
-    whitelist_patterns: list[dict[str, Any]] | None = None,
+    period_end_margin_days: int = 5,
 ) -> pd.Series:
-    """L3-04 period-end/start review population.
-
-    The raw hit is the configured period-end/start window (`is_period_end`).
-    Amount bands, manual source, approval issues, and other context signals
-    only affect row score, bucket, and downstream priority.
-    """
-    if "is_period_end" not in df.columns:
+    """L3-04 period-end/start binary review population."""
+    if "is_period_end" not in df.columns and "is_period_start" not in df.columns:
         return pd.Series(False, index=df.index)
-    # Why: max(debit, credit)로 대표 금액 산출 — fraud_rules_groupby 패턴 동일
-    base = df[["debit_amount", "credit_amount"]].fillna(0).max(axis=1)
-
-    # Why: account_group 존재 시 그룹별 Q3 — 계정 특성 반영
-    #      미존재 시 전체 단일 Q3 (Phase 1 하위 호환)
-    #      4개 quantile을 단일 groupby로 통합 — _amount_threshold 4회 호출과 동치
-    _qts = _amount_quantiles(base, df, [0.50, quantile, 0.90, 0.95], min_group_size)
-    q50 = _qts[0.50]
-    q75 = _qts[float(quantile)]
-    q90 = _qts[0.90]
-    q95 = _qts[0.95]
 
     period_end = bool_column(df, "is_period_end")
-    high_amount = base > q75
-    manual_entry = (
-        bool_column(df, "is_manual_je")
-        if "is_manual_je" in df.columns
-        else pd.Series(False, index=df.index)
-    )
-    flagged = period_end
-    whitelist_matched = (
-        flagged & _matches_period_end_whitelist(df, whitelist_patterns)
-        if whitelist_patterns
-        else pd.Series(False, index=df.index)
-    )
+    period_start = bool_column(df, "is_period_start")
+    flagged = period_end | period_start
     flagged = flagged.astype(bool)
-
-    abnormal_time = _abnormal_time_mask(df)
-    # Why: 동일 컬럼에 strip().lower()를 isin 직전에만 1회 적용 — chain 평가 횟수 1회로 고정
-    if "description_quality" in df.columns:
-        _desc_norm = df["description_quality"].fillna("").astype(str).str.strip().str.lower()
-        weak_description = _desc_norm.isin({"missing", "corrupted", "poor"})
-    else:
-        weak_description = pd.Series(False, index=df.index)
-    day_gap = (
-        pd.to_numeric(df["days_backdated"], errors="coerce").fillna(0).abs()
-        if "days_backdated" in df.columns
-        else pd.Series(0.0, index=df.index)
+    score_series = flagged.astype(float)
+    period_phase = _period_phase_series(
+        df,
+        period_start=period_start,
+        period_end=period_end,
+        margin_days=period_end_margin_days,
     )
-    long_day_gap = day_gap.gt(30)
-    # Why: _approval_control_signal_mask 내부도 동일 dict을 계산 → 1회만 계산하여 OR 누적
-    control_reason_masks = _approval_control_reason_masks(df)
-    control_signal = pd.Series(False, index=df.index)
-    for _ctrl_mask in control_reason_masks.values():
-        control_signal = control_signal | _ctrl_mask
-    priority_signal = abnormal_time | weak_description | long_day_gap | control_signal
-
-    amount_p50 = flagged & base.gt(q50)
-    amount_p75 = flagged & base.gt(q75)
-    amount_p90 = flagged & base.gt(q90)
-    amount_p95 = flagged & base.gt(q95)
-
-    bucket = pd.Series("none", index=df.index, dtype="object")
-    bucket.loc[flagged] = "closing_base"
-    bucket.loc[amount_p50] = "closing_amount_p50"
-    bucket.loc[amount_p75] = "closing_amount_p75"
-    bucket.loc[amount_p90] = "closing_amount_p90"
-    bucket.loc[amount_p95] = "closing_amount_p95"
-    bucket.loc[whitelist_matched] = "closing_recurring_low_priority"
-
-    score_series = pd.Series(0.0, index=df.index, dtype="float64")
-    score_series.loc[amount_p50] = 0.20
-    score_series.loc[amount_p75] = 0.35
-    score_series.loc[amount_p90] = 0.55
-    score_series.loc[amount_p95] = 0.70
-    score_series.loc[whitelist_matched] = score_series.loc[whitelist_matched].clip(upper=0.20)
-
-    # Why: control_reason_masks는 위에서 이미 계산됨 — 재호출 제거
-    reason_masks = {
-        "amount_p50": amount_p50,
-        "amount_p75": amount_p75,
-        "amount_p90": amount_p90,
-        "amount_p95": amount_p95,
-        "manual_entry": manual_entry,
-        "abnormal_time": abnormal_time,
-        "weak_description": weak_description,
-        "long_day_gap": long_day_gap,
-        **control_reason_masks,
-    }
-    priority_reason_counts: dict[str, int] = {}
-    for reason, mask in reason_masks.items():
-        count = int((flagged & mask).sum())
-        if count:
-            priority_reason_counts[reason] = count
 
     flagged_index = flagged[flagged].index
     row_annotations: dict[int, dict[str, object]] = {}
@@ -122,15 +43,11 @@ def c01_period_end_large(
             "document_id",
             "posting_date",
             "source",
-            "is_manual_je",
             "created_by",
             "approved_by",
-            "approval_date",
             "business_process",
             "account_group",
             "gl_account",
-            "description_quality",
-            "days_backdated",
         )
         if column in df.columns
     ]
@@ -142,31 +59,10 @@ def c01_period_end_large(
         if optional_columns
         else {}
     )
-    # Why: reason masks를 (n_reasons, n_flagged) boolean matrix로 모아 row별 active reason을
-    #      np.flatnonzero로 일괄 추출 — 480k 회 dict comprehension 회피
-    reason_keys = list(reason_masks.keys())
-    if reason_keys and len(flagged_index) > 0:
-        reason_matrix = np.stack(
-            [reason_masks[k].loc[flagged_index].to_numpy(dtype=bool) for k in reason_keys],
-            axis=0,
-        )
-    else:
-        reason_matrix = np.zeros((len(reason_keys), len(flagged_index)), dtype=bool)
-    q50_values = _threshold_values(q50, flagged_index)
-    q75_values = _threshold_values(q75, flagged_index)
-    q90_values = _threshold_values(q90, flagged_index)
-    q95_values = _threshold_values(q95, flagged_index)
     annotation_frame = pd.DataFrame(
         {
-            "bucket": bucket.loc[flagged_index].astype(str),
+            "period_phase": period_phase.loc[flagged_index].astype(object),
             "score": score_series.loc[flagged_index].round(4),
-            "whitelist_matched": whitelist_matched.loc[flagged_index].astype(bool),
-            "amount": base.loc[flagged_index],
-            "threshold_amount": q75_values,
-            "amount_q50": q50_values,
-            "amount_q75": q75_values,
-            "amount_q90": q90_values,
-            "amount_q95": q95_values,
         },
         index=flagged_index,
     ).astype(object)
@@ -174,45 +70,52 @@ def c01_period_end_large(
 
     # Why: 480k 회 .loc[idx].to_dict() (~22s) → 단일 to_dict(orient="index") (~5s)
     annotation_dict = annotation_frame.to_dict(orient="index")
-    for pos, idx in enumerate(flagged_index):
+    for idx in flagged_index:
         annotation = annotation_dict[idx]
         annotation["score"] = float(annotation["score"])
-        annotation["whitelist_matched"] = bool(annotation["whitelist_matched"])
-        if annotation["amount"] is not None:
-            annotation["amount"] = float(annotation["amount"])
-        if annotation["threshold_amount"] is not None:
-            annotation["threshold_amount"] = float(annotation["threshold_amount"])
-        active = np.flatnonzero(reason_matrix[:, pos])
-        annotation["priority_reasons"] = [reason_keys[i] for i in active]
         annotation.update(optional_values.get(idx, {}))
         row_annotations[int(idx)] = annotation
 
     flagged.attrs["score_series"] = score_series
     flagged.attrs["breakdown"] = {
         "flagged_rows": int(flagged.sum()),
-        "high_amount_rows": int((flagged & high_amount).sum()),
-        "manual_rows": int((flagged & manual_entry).sum()),
-        "priority_rows": int((flagged & priority_signal & ~whitelist_matched).sum()),
-        "whitelisted_recurring_rows": int(whitelist_matched.sum()),
-        "bucket_counts": bucket.loc[flagged].value_counts().to_dict(),
-        "amount_band_counts": {
-            "base_zero_score_rows": int((flagged & score_series.eq(0.0)).sum()),
-            "amount_p50_rows": int(amount_p50.sum()),
-            "amount_p75_rows": int(amount_p75.sum()),
-            "amount_p90_rows": int(amount_p90.sum()),
-            "amount_p95_rows": int(amount_p95.sum()),
-        },
-        "priority_reason_counts": priority_reason_counts,
-        "quantile": float(quantile),
-        "min_group_size": int(min_group_size),
+        "period_end_rows": int((flagged & period_phase.eq("end")).sum()),
+        "period_start_rows": int((flagged & period_phase.eq("start")).sum()),
+        "source_counts": (
+            df.loc[flagged, "source"].fillna("<missing>").astype(str).value_counts().to_dict()
+            if "source" in df.columns
+            else {}
+        ),
     }
-    if "document_id" in df.columns:
-        flagged.attrs["breakdown"]["whitelisted_recurring_docs"] = _nunique_documents(
-            df,
-            whitelist_matched,
-        )
     flagged.attrs["row_annotations"] = row_annotations
     return flagged
+
+
+def _period_phase_series(
+    df: pd.DataFrame,
+    *,
+    period_start: pd.Series,
+    period_end: pd.Series,
+    margin_days: int,
+) -> pd.Series:
+    """Return L3-04 phase labels: start, end, or none."""
+    phase = pd.Series("none", index=df.index, dtype="object")
+    phase.loc[period_end] = "end"
+    phase.loc[period_start] = "start"
+
+    if "posting_date" not in df.columns:
+        return phase
+
+    posting_date = pd.to_datetime(df["posting_date"], errors="coerce")
+    day = posting_date.dt.day
+    days_in_month = posting_date.dt.days_in_month
+    margin = max(int(margin_days), 1)
+    inferred_start = day.between(1, margin, inclusive="both").fillna(False)
+    inferred_end = day.ge(days_in_month - margin + 1).fillna(False)
+    inferable = period_end & ~period_start
+    phase.loc[inferable & inferred_start] = "start"
+    phase.loc[inferable & inferred_end] = "end"
+    return phase
 
 
 def _abnormal_time_mask(df: pd.DataFrame) -> pd.Series:
@@ -245,7 +148,7 @@ def _approval_control_reason_masks(df: pd.DataFrame) -> dict[str, pd.Series]:
     if {"approved_by", "approval_date"}.issubset(df.columns):
         has_approver = df["approved_by"].fillna("").astype(str).str.strip().ne("")
         no_approval_date = df["approval_date"].fillna("").astype(str).str.strip().eq("")
-        masks["missing_approval_date"] = has_approver & no_approval_date
+        masks["approval_date_absent"] = has_approver & no_approval_date
     return masks
 
 
@@ -264,7 +167,7 @@ def _approval_control_reasons(df: pd.DataFrame, idx: Any) -> list[str]:
         has_approver = str(df.at[idx, "approved_by"] or "").strip() != ""
         no_approval_date = str(df.at[idx, "approval_date"] or "").strip() == ""
         if has_approver and no_approval_date:
-            reasons.append("missing_approval_date")
+            reasons.append("approval_date_absent")
     return reasons
 
 
@@ -287,170 +190,11 @@ def _coerce_nullable_bool(series: pd.Series) -> pd.Series:
     return result
 
 
-def c01_period_end_sensitive_account(
-    df: pd.DataFrame,
-    sensitive_config: dict[str, Any] | None = None,
-) -> pd.Series:
-    """Return rows touching L3-04-sensitive closing accounts.
-
-    Why: sensitive accounts should raise review priority only after L3-04 triggers.
-    This helper intentionally does not create additional L3-04 flags.
-    """
-    if not sensitive_config:
-        return pd.Series(False, index=df.index)
-
-    result = pd.Series(False, index=df.index)
-
-    groups = _normalize_list(sensitive_config.get("account_groups"))
-    if groups and "account_group" in df.columns:
-        result = result | df["account_group"].astype(str).str.strip().str.lower().isin(groups)
-
-    accounts = _normalize_list(sensitive_config.get("accounts"))
-    prefixes = _normalize_list(sensitive_config.get("account_prefixes"))
-    if (accounts or prefixes) and "gl_account" in df.columns:
-        gl = df["gl_account"].astype(str).str.strip().str.lower()
-        if accounts:
-            result = result | gl.isin(accounts)
-        if prefixes:
-            result = result | gl.str.startswith(tuple(prefixes), na=False)
-
-    return result.fillna(False)
-
-
-def _matches_period_end_whitelist(
-    df: pd.DataFrame,
-    patterns: list[dict[str, Any]],
-) -> pd.Series:
-    """Match auditor-approved recurring closing-entry whitelist patterns."""
-    result = pd.Series(False, index=df.index)
-    for pattern in patterns:
-        if not isinstance(pattern, dict):
-            continue
-        mask = pd.Series(True, index=df.index)
-        has_condition = False
-
-        for key in ("source", "created_by", "document_type", "account_group"):
-            values = _normalize_list(pattern.get(key))
-            if not values:
-                continue
-            has_condition = True
-            if key not in df.columns:
-                mask = mask & False
-            else:
-                series = df[key].astype(str).str.strip().str.lower()
-                mask = mask & series.isin(values)
-
-        desc_values = _normalize_list(pattern.get("description_contains"))
-        if desc_values:
-            has_condition = True
-            mask = mask & _description_contains_any(df, desc_values)
-
-        if has_condition:
-            result = result | mask
-    return result.fillna(False)
-
-
-def _description_contains_any(df: pd.DataFrame, needles: list[str]) -> pd.Series:
-    text = pd.Series("", index=df.index, dtype="object")
-    for col in ("line_text", "header_text", "description"):
-        if col in df.columns:
-            text = text.str.cat(df[col].fillna("").astype(str), sep=" ")
-    normalized = text.str.lower()
-    mask = pd.Series(False, index=df.index)
-    for needle in needles:
-        mask = mask | normalized.str.contains(needle, regex=False, na=False)
-    return mask
-
-
-def _normalize_list(value: Any) -> list[str]:
-    if value is None:
-        return []
-    if isinstance(value, str):
-        values = [value]
-    elif isinstance(value, (list, tuple, set)):
-        values = list(value)
-    else:
-        values = [value]
-    return [str(item).strip().lower() for item in values if str(item).strip()]
-
-
 def _nunique_documents(df: pd.DataFrame, mask: pd.Series) -> int:
     """Return distinct document count for rows selected by mask."""
     if "document_id" not in df.columns:
         return 0
     return int(df.loc[mask.reindex(df.index, fill_value=False), "document_id"].dropna().nunique())
-
-
-def _grouped_quantile(
-    base: pd.Series,
-    groups: pd.Series,
-    quantile: float,
-    min_size: int,
-) -> pd.Series:
-    """그룹별 quantile 계산. 소그룹(n < min_size)은 전체 Q3 fallback.
-
-    Why: n이 너무 작으면 분위수 추정이 불안정 → 전체 Q3가 더 신뢰성 있음.
-         groupby().quantile() + map() 패턴으로 transform보다 빠르게 처리.
-    """
-    global_q = base.quantile(quantile)
-    # Why: transform("quantile")은 Python 루프 → groupby().quantile()+map()이 빠름
-    group_q_map = base.groupby(groups).quantile(quantile)
-    group_size_map = base.groupby(groups).size()
-    mapped_q = groups.map(group_q_map)
-    mapped_size = groups.map(group_size_map)
-    return mapped_q.where(mapped_size >= min_size, global_q)
-
-
-def _amount_threshold(
-    base: pd.Series,
-    df: pd.DataFrame,
-    quantile: float,
-    min_group_size: int,
-) -> pd.Series | float:
-    """Return global or account-group quantile threshold for L3-04 amount scoring."""
-
-    if "account_group" in df.columns:
-        return _grouped_quantile(base, df["account_group"], quantile, min_group_size)
-    return float(base.quantile(quantile))
-
-
-def _amount_quantiles(
-    base: pd.Series,
-    df: pd.DataFrame,
-    quantiles: list[float],
-    min_group_size: int,
-) -> dict[float, pd.Series | float]:
-    """L3-04용 다중 quantile threshold 일괄 계산.
-
-    Why: 동일 groupby에 대해 quantile 4번 호출(4 group materialize + 4 quantile)을
-         단일 groupby + quantile 벡터 호출로 통합. _grouped_quantile과 수학적 동치.
-    """
-    requested = list(dict.fromkeys(float(q) for q in quantiles))  # preserve order + dedup
-    if "account_group" not in df.columns:
-        global_q = base.quantile(requested)
-        return {float(q): float(global_q.loc[q]) for q in requested}
-
-    groups = df["account_group"]
-    grouped = base.groupby(groups)
-    # quantile([list]) → MultiIndex (group, quantile) → unstack 후 quantile별 컬럼 사용
-    quantile_df = grouped.quantile(requested).unstack(-1)
-    size_map = grouped.size()
-    mapped_size = groups.map(size_map)
-    global_q_map = base.quantile(requested)
-
-    out: dict[float, pd.Series | float] = {}
-    for q in requested:
-        mapped_q = groups.map(quantile_df[q])
-        out[q] = mapped_q.where(mapped_size >= min_group_size, float(global_q_map.loc[q]))
-    return out
-
-
-def _threshold_values(threshold: pd.Series | float, index: pd.Index) -> pd.Series:
-    """Align scalar or series threshold values to an annotation index."""
-
-    if isinstance(threshold, pd.Series):
-        return threshold.loc[index]
-    return pd.Series(threshold, index=index)
 
 
 def c02_weekend_entry(df: pd.DataFrame) -> pd.Series:
@@ -461,51 +205,49 @@ def c02_weekend_entry(df: pd.DataFrame) -> pd.Series:
     weekend = bool_column(df, "is_weekend")
     holiday = bool_column(df, "is_holiday")
     flagged = weekend | holiday
-    weekend_holiday = weekend & holiday
-    weekend_only = weekend & ~holiday
-    weekday_holiday = holiday & ~weekend
-
-    score_series = pd.Series(0.0, index=df.index)
-    score_series.loc[weekday_holiday] = 0.35
-    score_series.loc[weekend_only] = 0.40
-    score_series.loc[weekend_holiday] = 0.45
+    score_series = flagged.astype(float)
 
     breakdown = {
-        "calendar_review_rows": int(flagged.sum()),
+        "flagged_rows": int(flagged.sum()),
         "weekend_rows": int(weekend.sum()),
         "holiday_rows": int(holiday.sum()),
-        "weekend_only_rows": int(weekend_only.sum()),
-        "weekday_holiday_rows": int(weekday_holiday.sum()),
-        "weekend_holiday_rows": int(weekend_holiday.sum()),
+        "source_counts": (
+            df.loc[flagged, "source"].fillna("<missing>").astype(str).value_counts().to_dict()
+            if "source" in df.columns
+            else {}
+        ),
     }
     if "document_id" in df.columns:
         breakdown.update(
             {
-                "calendar_review_docs": _nunique_documents(df, flagged),
+                "flagged_docs": _nunique_documents(df, flagged),
                 "weekend_docs": _nunique_documents(df, weekend),
                 "holiday_docs": _nunique_documents(df, holiday),
-                "weekend_only_docs": _nunique_documents(df, weekend_only),
-                "weekday_holiday_docs": _nunique_documents(df, weekday_holiday),
-                "weekend_holiday_docs": _nunique_documents(df, weekend_holiday),
             }
         )
 
     row_annotations: dict[int, dict[str, object]] = {}
+    optional_columns = [
+        column
+        for column in ("document_id", "posting_date", "source")
+        if column in df.columns
+    ]
+    optional_values = (
+        df.loc[flagged, optional_columns]
+        .astype(object)
+        .where(pd.notna(df.loc[flagged, optional_columns]), None)
+        .to_dict(orient="index")
+        if optional_columns
+        else {}
+    )
     for idx in df.index[flagged]:
-        if bool(weekend_holiday.loc[idx]):
-            reason_code = "weekend_holiday"
-        elif bool(weekend.loc[idx]):
-            reason_code = "weekend"
-        elif bool(weekday_holiday.loc[idx]):
-            reason_code = "weekday_holiday"
-        else:
-            reason_code = "holiday"
-        row_annotations[int(idx)] = {
-            "reason_code": reason_code,
-            "score": float(score_series.loc[idx]),
+        annotation = {
+            "score": 1.0,
             "is_weekend": bool(weekend.loc[idx]),
             "is_holiday": bool(holiday.loc[idx]),
         }
+        annotation.update(optional_values.get(idx, {}))
+        row_annotations[int(idx)] = annotation
 
     result = flagged.astype(bool)
     result.attrs["score_series"] = score_series
@@ -524,51 +266,23 @@ def c03_after_hours_entry(df: pd.DataFrame) -> pd.Series:
     if "is_after_hours" not in df.columns:
         return pd.Series(False, index=df.index)
 
-    result = bool_column(df, "is_after_hours")
-    if not result.any():
-        return result
-
-    source_norm = (
-        df["source"].fillna("").astype(str).str.strip().str.lower()
-        if "source" in df.columns
-        else pd.Series("", index=df.index)
-    )
-    persona_norm = (
-        df["user_persona"].fillna("").astype(str).str.strip().str.lower()
-        if "user_persona" in df.columns
-        else pd.Series("", index=df.index)
-    )
-    actor_norm = (
-        df["created_by"].fillna("").astype(str).str.strip().str.lower()
-        if "created_by" in df.columns
-        else pd.Series("", index=df.index)
-    )
-    system_source_tokens = {"automated", "batch", "interface", "system"}
-    lone_automated = lone_automated_mask(
-        df,
-        source_tokens=system_source_tokens,
-    ).reindex(df.index, fill_value=False)
-    system_source = source_norm.isin(system_source_tokens) & ~lone_automated
-    system_persona = persona_norm.eq("automated_system")
-    system_actor = pd.Series(False, index=df.index)
-    for token in ("batch", "system", "auto", "if_", "svc_"):
-        system_actor = system_actor | actor_norm.str.contains(token, regex=False)
-    normal_system_context = result & (system_source | system_persona | system_actor)
-    confirmed_after_hours = result & ~normal_system_context
-
-    score_series = pd.Series(0.0, index=df.index)
-    score_series.loc[normal_system_context] = 0.20
-    score_series.loc[confirmed_after_hours] = 0.45
-
+    result = bool_column(df, "is_after_hours").astype(bool)
+    score_series = result.astype(float)
     posting = (
         pd.to_datetime(df["posting_date"], errors="coerce")
         if "posting_date" in df.columns
         else pd.Series(pd.NaT, index=df.index)
     )
+    source_values = (
+        df["source"].fillna("").astype(str).str.strip()
+        if "source" in df.columns
+        else pd.Series("", index=df.index)
+    )
     time_buckets: dict[str, int] = {}
     row_annotations: dict[int, dict[str, object]] = {}
     for idx in result[result].index:
-        hour = posting.loc[idx].hour if pd.notna(posting.loc[idx]) else None
+        posting_value = posting.loc[idx]
+        hour = posting_value.hour if pd.notna(posting_value) else None
         if hour is None:
             time_bucket = "unknown_time"
         elif hour < 6:
@@ -577,27 +291,20 @@ def c03_after_hours_entry(df: pd.DataFrame) -> pd.Series:
             time_bucket = "late_evening_22_23"
         time_buckets[time_bucket] = time_buckets.get(time_bucket, 0) + 1
         row_annotations[int(idx)] = {
-            "bucket": (
-                "normal_system_context"
-                if bool(normal_system_context.loc[idx])
-                else "confirmed_after_hours"
-            ),
-            "score": round(float(score_series.loc[idx]), 4),
-            "source_category": (
-                "system_or_batch" if bool(normal_system_context.loc[idx]) else "human_or_unknown"
-            ),
+            "score": 1.0,
             "time_bucket": time_bucket,
+            "posting_date": posting_value.isoformat() if pd.notna(posting_value) else "",
             "source": str(df.at[idx, "source"]) if "source" in df.columns else "",
             "created_by": str(df.at[idx, "created_by"]) if "created_by" in df.columns else "",
         }
 
     result.attrs["score_series"] = score_series
     result.attrs["breakdown"] = {
-        "confirmed_after_hours_rows": int(confirmed_after_hours.sum()),
-        "normal_system_context_rows": int(normal_system_context.sum()),
+        "flagged_rows": int(result.sum()),
+        "after_hours_rows": int(result.sum()),
         "source_counts": {
             str(key): int(value)
-            for key, value in source_norm.loc[result].value_counts(dropna=False).items()
+            for key, value in source_values.loc[result].value_counts(dropna=False).items()
             if str(key)
         },
         "time_bucket_counts": time_buckets,
@@ -817,14 +524,15 @@ def c05_fiscal_period_mismatch(
                 exempted |= (source_mask & ~has_null & basis_match).fillna(False)
 
     final = (raw & ~exempted).astype("boolean").fillna(False)
-    score_series = pd.Series(0.80, index=df.index, dtype="float64")
+    score_series = pd.Series(0.0, index=df.index, dtype="float64")
+    score_series.loc[final.astype(bool)] = 1.0
     context_masks = {
         "period_end": _l108_context_mask(df, "is_period_end"),
         "manual_entry": _l108_context_mask(df, "is_manual_je"),
         "high_amount": _l108_amount_context(df),
         "date_gap": _l108_context_mask(df, "has_date_gap")
         | _l108_context_mask(df, "backdated_flag"),
-        "approval_issue": _l108_context_mask(df, "has_missing_approval_date")
+        "approval_issue": _l108_context_mask(df, "has_approval_date_absent")
         | _l108_context_mask(df, "approval_missing")
         | _l108_context_mask(df, "approval_bypass"),
     }
@@ -838,7 +546,6 @@ def c05_fiscal_period_mismatch(
         )
 
     context_count = sum(mask.astype(int) for mask in context_masks.values())
-    score_series = (score_series + (context_count * 0.05)).clip(upper=0.95)
 
     expected_period = (
         _expected_period(df["posting_date"], fiscal_year_start)

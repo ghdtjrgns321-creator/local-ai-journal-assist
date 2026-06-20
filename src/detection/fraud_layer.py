@@ -14,8 +14,8 @@ from src.detection.fraud_rules_access import (
     b06_self_approval,
     b07_segregation_of_duties,
     b09_skipped_approval,
+    b09b_unknown_approver,
     b10_intercompany_review_signal,
-    b12_missing_approval_date,
     b13_high_risk_account_use,
     b14_work_scope_excess_review,
     build_access_rule_cache,
@@ -126,13 +126,13 @@ FRAUD_RULE_EXPLANATIONS: dict[str, RuleExplanation] = {
         ),
         reference="PCAOB AS 1105; ISA 330",
     ),
-    "L1-09": RuleExplanation(
-        principle="Approval traces should include timing evidence.",
-        violation_reason="Approval date or equivalent approval trace is missing.",
+    "L1-07-02": RuleExplanation(
+        principle="Approval workflow should reference an identifiable authorized approver.",
+        violation_reason="The approver value is populated but absent from the employee master.",
         audit_next_action=(
-            "Reconcile approval logs to the posting and assess whether evidence is incomplete."
+            "Confirm whether the approver is a valid employee or a workflow bypass artifact."
         ),
-        reference="PCAOB AS 1105; ISA 500",
+        reference="PCAOB AS 1105; ISA 330",
     ),
     "L3-10": RuleExplanation(
         principle=(
@@ -235,7 +235,7 @@ class FraudLayer(BaseDetector):
                 continue
 
             try:
-                if rule_id in {"L1-05", "L1-06", "L1-07", "L1-09"}:
+                if rule_id in {"L1-05", "L1-06", "L1-07", "L1-07-02"}:
                     kwargs = {**kwargs, "cache": access_cache}
                 rule_results[rule_id] = func(df, **kwargs)
                 coverage_issues.extend(self._coverage_issues(rule_id, df))
@@ -272,6 +272,9 @@ class FraudLayer(BaseDetector):
                     "window_days": s.duplicate_time_window_days,
                     "split_window_days": s.duplicate_split_window_days,
                     "max_group_size": s.duplicate_max_group_size,
+                    "reference_max_frequency_ratio": s.duplicate_reference_max_frequency_ratio,
+                    "reference_min_unique_ratio": s.duplicate_reference_min_unique_ratio,
+                    "reference_nonunique_min_count": s.duplicate_reference_nonunique_min_count,
                 },
             ),
             (
@@ -286,10 +289,10 @@ class FraudLayer(BaseDetector):
             ),
             ("L3-02", b08_manual_override, {"audit_rules": self._audit_rules}),
             ("L1-07", b09_skipped_approval, {"audit_rules": self._audit_rules}),
-            ("L1-09", b12_missing_approval_date, {"audit_rules": self._audit_rules}),
+            ("L1-07-02", b09b_unknown_approver, {"audit_rules": self._audit_rules}),
             ("L3-10", b13_high_risk_account_use, {"audit_rules": self._audit_rules}),
             ("L3-12", b14_work_scope_excess_review, {"audit_rules": self._audit_rules}),
-            ("L3-03", b10_intercompany_review_signal, {}),
+            ("L3-03", b10_intercompany_review_signal, {"audit_rules": self._audit_rules}),
             (
                 "L2-04",
                 b11_expense_capitalization,
@@ -297,8 +300,6 @@ class FraudLayer(BaseDetector):
                     "audit_rules": self._audit_rules,
                     "amount_tolerance": s.expense_capitalization_amount_tolerance,
                     "min_amount": s.expense_capitalization_min_amount,
-                    "review_threshold": s.expense_capitalization_review_threshold,
-                    "immediate_threshold": s.expense_capitalization_immediate_threshold,
                 },
             ),
         ]
@@ -313,12 +314,14 @@ class FraudLayer(BaseDetector):
             "L2-03": ["document_id", "gl_account", "posting_date", "debit_amount", "credit_amount"],
             "L1-06": ["created_by", "business_process"],
             "L1-07": ["approved_by"],
-            "L1-09": ["approval_date"],
             "L3-10": ["gl_account"],
             "L3-12": ["created_by", "business_process"],
-            "L3-03": ["is_intercompany"],
             "L2-04": ["document_id", "gl_account", "debit_amount", "credit_amount"],
         }
+        if rule_id == "L3-03":
+            if "is_intercompany" in df.columns or "gl_account" in df.columns:
+                return []
+            return ["is_intercompany|gl_account"]
         if rule_id == "L3-02":
             if "is_manual_je" in df.columns or "source" in df.columns:
                 return []
