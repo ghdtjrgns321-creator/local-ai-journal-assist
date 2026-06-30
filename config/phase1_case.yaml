@@ -40,61 +40,32 @@ phase1_case:
       closing_timing: 1.0
       account_logic: 1.0
       duplicate_outflow: 1.0
-      intercompany_cycle: 1.0
       revenue_statistical: 1.0
-    topic_floors:
-      approval_control_high: 0.75
-      duplicate_reference_match: 0.45
-      intercompany_exception: 0.45
+    # topic_caps intercompany_cycle 제거(2026-06-21): TOPIC_REGISTRY 6 topic 에 없는 죽은 cap.
+    # topic_floors 섹션 제거(2026-06-21): registry 에 floor_policy_ids 보유 룰 0개라 코드 미참조
+    # (approval_control_high·duplicate_reference_match·intercompany_exception 전부 죽은 키).
     combo_floors:
-      batch_combo: 0.45
-      work_scope_combo: 0.45
+      # 코드 _fraud_combo_floor_results 가 실제 add 하는 policy_id 만 유지(2026-06-21 죽은키 제거).
+      # 제거: period_end_adjustment_medium·related_party_reversal_high·circular_transaction_*·
+      #       approval_bypass_medium (명세 폐기/이관 또는 IC·GR 제거로 코드 미발화).
       fictitious_entry_medium: 0.60
       fictitious_entry_high: 0.75
-      period_end_adjustment_medium: 0.60
       period_end_adjustment_high: 0.75
       embezzlement_concealment_medium: 0.60
       embezzlement_concealment_high: 0.75
       suspense_concealment_high: 0.75
-      related_party_reversal_high: 0.75
       expense_capitalization_high: 0.75
-      circular_transaction_medium: 0.45
-      circular_transaction_high: 0.75
-      approval_bypass_medium: 0.60
       approval_bypass_high: 0.75
     anti_fitting_policy:
       principle: "Domain-supported floor first; datasynth truth recall is informational only."
       truth_recall_role: informational_only
-      weak_floor_handling:
-        manual_closing_scope:
-          rules:
-            - L3-02
-            - L3-04
-            - L3-12
-          policy: no_fraud_floor
-        approval_manual_scope:
-          rules:
-            - L1-04|L1-05|L1-06|L1-07
-            - L3-02
-            - L3-12
-          policy: approval_context_only
-        related_party_weekend_manual_scope:
-          rules:
-            - L3-03
-            - L3-05
-            - L3-02|L3-12
-          policy: no_circular_high_floor
-        approval_weak_context:
-          rules:
-            - L1-04|L1-05|L1-06|L1-07
-            - L3-02|L3-05|L3-06
-          policy: approval_medium_not_high
+      # weak_floor_handling 블록 제거(2026-06-21): src 코드 참조 0(죽은 config).
       supported_high_floor_requirements:
-        fictitious_entry: revenue_or_amount_outlier_plus_manual_plus_secondary_red_flag  # A안(D075): 2차정황 = L4-04|dup_L2-03|L3-03|L3-04|L3-10|L1-05|L1-07-02|L3-11
+        fictitious_entry: revenue_or_amount_outlier_plus_manual_plus_secondary_red_flag  # 2차정황(코드 _FICTITIOUS_SECONDARY_RULES) = L4-04|L2-03(a~d)|L3-03|L1-05|L3-11. §8(5) L3-10·L3-04·L1-07-02 제외(헛다리/오기).
         period_end_adjustment: timing_seed_plus_high_amount_plus_description_or_sensitive_or_rare
         embezzlement_concealment: outflow_or_duplicate_plus_approval_bypass_or_reversal_with_manual  # A안(D075): 승인우회 OR (L2-05 역분개 + L3-02 수기)
         suspense_concealment: suspense_aging_plus_outflow_or_duplicate_plus_high_amount
-        circular_transaction: related_party_or_ic_plus_amount_or_timing_plus_repeat_or_cycle
+        # circular_transaction 제거(2026-06-21): IC/GR PHASE1-2 이관으로 죽은 scheme.
         approval_bypass: approval_bypass_plus_high_amount_or_cutoff_or_manual_closing_or_manual_after_hours
     macro_context_bonus:
       max_bonus: 0.10
@@ -108,7 +79,6 @@ phase1_case:
       - fictitious_entry_risk
       - period_end_adjustment_risk
       - embezzlement_concealment_risk
-      - circular_transaction_risk
       - approval_bypass_risk
       - approval_bypass
       - segregation_of_duties
@@ -116,7 +86,6 @@ phase1_case:
       - threshold_splitting
       - reversal_or_offset_pattern
       - cutoff_or_period_mismatch
-      - intercompany_reconciliation_exception
       - rare_account_partner_pair
       - amount_outlier
       - benford_distribution_anomaly
@@ -240,13 +209,8 @@ phase1_case:
       medium_bonus: 0.10
       high_threshold: 0.60
       high_bonus: 0.20
-    batch_combo:
-      medium_group_count: 2
-      medium_bonus: 0.08
-      medium_behavior_floor: 0.70
-      high_group_count: 3
-      high_bonus: 0.15
-      high_behavior_floor: 1.00
+    # batch_combo 제거(2026-06-21): L4-06 PHASE1-2 family 귀속. _apply_priority_adjustments 의
+    # batch 가산 코드도 함께 제거됨(case priority 기여 0).
     weak_evidence:
       require_strong_evidence: true
       per_tag_bonus: 0.03
@@ -257,29 +221,6 @@ phase1_case:
         - significant_unusual_transaction
         - is_period_end_manual
         - sensitive_account_touch
-      include_l3_08_as_weak_description: true
-      # L3-08 alone remains review context only. It becomes a weak-description
-      # priority booster only when one of these independent rules is also present.
-      l3_08_corroborating_rules:
-        - L1-03
-        - L1-05
-        - L1-07
-        - L1-07-02
-        - L2-02
-        - L2-03
-        - L2-05
-        - L3-02
-        - L3-04
-        - L3-05
-        - L3-06
-        - L3-07
-        - L3-09
-        - L3-10
-        - L3-11
-        - L4-03
-        - L4-04
-        - L4-05
-        - L4-06
       derive_manual_period_end: true
     l108_context_priority:
       enabled: true

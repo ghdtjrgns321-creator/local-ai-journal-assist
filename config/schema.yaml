@@ -134,7 +134,7 @@ columns:
   - name: profit_center        # ACDOCA: prctr
     type: str
     required: false
-  - name: line_text            # ACDOCA: sgtxt — L3-08(위험 적요) 판정용
+  - name: line_text            # ACDOCA: sgtxt — 적요/위험 텍스트 컬럼
     type: str
     required: false
   - name: tax_code             # 세금코드 (nullable)

@@ -10,39 +10,38 @@ patterns:
     - "Manual"
     - "Adjustment"
 
-  # L3-10: standalone high-risk account usage.
-  # Customize these per client CoA.
-  high_risk_account_use:
+  estimate_account_use:
+    # L3-10 회계추정치(ISA 540) 계정 — 결산 이익조정 단골(cookie jar). binary flag.
+    # 1차 account_name 키워드(CoA 무관), 2차 클라이언트 확정 코드. 둘 다 비면 발화 0.
+    account_name_keywords:
+      - 대손충당금
+      - 평가충당금
+      - 손상차손
+      - 손상누계
+      - 충당부채
+      - 환불부채
+      - 반품충당
+      - 미청구공사
+      - 계약자산
+      - 퇴직급여
+      - 확정급여
+      - 이연법인세
     accounts:
-      - "1190"
-      - "2190"
-    account_prefixes:
-      - "111"
-      - "112"
-      - "113"
-    # User-adjustable sensitive account families for Phase 1 review queues.
-    # These group names are surfaced in L3-10 annotations and can be tuned per client CoA.
-    sensitive_account_groups:
-      cash_equivalent:
-        accounts: []
-        account_prefixes:
-          - "111"
-          - "112"
-          - "113"
-      suspense_clearing:
-        accounts:
-          - "1190"
-          - "2190"
-        account_prefixes: []
-      employee_advance_loan:
-        accounts: []
-        account_prefixes: []
-      prepaid_deferred:
-        accounts: []
-        account_prefixes: []
-      voucher_coupon:
-        accounts: []
-        account_prefixes: []
+      - "116100"  # 계약자산
+      - "119100"  # 대손충당금
+      - "169100"  # 투자자산평가충당금
+      - "237100"  # 충당부채
+      - "682100"  # 손상차손
+    account_prefixes: []
+    estimate_account_groups:
+      allowance_impairment:
+        keywords: [대손충당금, 재고자산평가충당금, 평가충당금, 손상차손, 손상누계]
+      provision:
+        keywords: [판매보증충당부채, 하자보수충당부채, 복구충당부채, 소송충당부채, 구조조정충당부채, 충당부채]
+      revenue_estimate:
+        keywords: [환불부채, 반품충당, 미청구공사, 계약자산]
+      actuarial_tax:
+        keywords: [퇴직급여, 확정급여, 이연법인세]
 
   # L3-12: one-user work-scope concentration review.
   # This does not define SoD/authorization violations; L1-06 owns explicit
@@ -95,12 +94,16 @@ patterns:
 
   # L1-05: only system-driven self-approval is allowed by default.
   # Approval omission is handled by L1-07, so this section only defines explicit allow cases.
+  # recurring(정기 자동 반복 전표: 감가상각·보험료 안분 등)은 automated 와 동일한 무인 자동
+  # 전표라 면제 대상에 포함한다. 단 batch_id/job_id 없는 위장 의심 행은 lone_automated_mask 가
+  # 면제를 취소한다(source_trust). gate AUTOMATED_SOURCE_TOKENS 와 정합.
   self_approval_allow:
     user_personas:
       - "automated_system"
     company_codes: []
     sources:
       - "automated"
+      - "recurring"
 
   # L1-05: human self-approval is always detected, but some areas default to review-required
   # instead of immediate violation. Adjust these buckets per client policy.
@@ -302,7 +305,7 @@ patterns:
     senior_accountant: 3     # 기본 1 + 겸직 2까지 허용
     # controller, manager, automated_system: 제한 없음 (toxic pair만 감시)
 
-  # L2-04/L3-08: 가계정/미결산계정 키워드 (정규식 지원)
+  # L2-04: 가계정/미결산계정 키워드 (정규식 지원)
   # 한글 키워드: 정확 포함 일치 / 영문 키워드: [Xx] 형태로 대소문자 무관 매칭
   # DataSynth v1.2.0 적요가 영문이므로 영문 키워드 병기
   l1_06_sod_scoring:
@@ -337,7 +340,7 @@ patterns:
     - "1150"    # IC Receivable 정산
     - "2050"    # IC Payable 정산
 
-  # L2-04/L3-08: 가계정/청산계정 GL 코드 prefix (gl_account 기반 판별)
+  # L2-04: 가계정/청산계정 GL 코드 prefix (gl_account 기반 판별)
   # 텍스트 키워드 매칭과 OR 결합 — 실무에서는 GL 코드가 1순위 탐지 기준
   # K-IFRS 기준 가계정/청산계정 대역, 회사 CoA에 맞춰 조정
   suspense_account_codes:
@@ -346,6 +349,46 @@ patterns:
     - "2190"    # 가수금 (Suspense Payable)
     - "2900"    # GR/IR 청산계정
     - "9990"    # 임시/잡계정
+
+  # L4-03: 수행중요성 절대임계 기반 고액 탐지 설정
+  # Why: PCAOB AS 2101 / ISA 320 — 수행중요성(PM) 초과 금액은 전표 단위 감사 대상.
+  #      z-score 통계 모집단보다 감사 표준 기반 절대임계가 감사인에게 더 직접적인 근거.
+  # pbt_pct: 법인세차감전순이익 대비 PM 비율 (통상 5~10%)
+  # rev_pct: 매출액 대비 PM 비율 (pbt 음수 시 fallback, 통상 0.5~1%)
+  # pm_ratio: PM 대비 수행중요성 비율 (통상 0.60~0.80)
+  # materiality_amount: >0 이면 비율 계산 무시하고 이 값을 직접 사용 (override)
+  l403_materiality:
+    revenue_subtype_patterns:
+      - "REVENUE"
+    expense_subtype_patterns:
+      - "COGS"
+      - "COST_OF_GOODS"
+      - "OPEX"
+      - "INTEREST_EXPENSE"
+      - "DEPRECIATION_EXPENSE"
+      - "AMORTIZATION_EXPENSE"
+      - "PAYROLL_EXPENSE"
+      - "PAYROLL"
+      - "OPERATING_EXPENSES"
+      - "IMPAIRMENT"
+    exclude_subtype_patterns:
+      - "ACCUMULATED"
+      - "ACCRUED"
+      - "PAYABLE"
+      - "RECEIVABLE"
+    closing_subtype: "income_statement_close"
+    # 마감분개로 NI를 역산할 손익계정 prefix (B18 계정코드 정합 기준). 마감분개가 닫는
+    # 손익계정만 골라 (차변-대변)=순이익(NI)을 키워드 분류 없이 정확히 산출한다.
+    income_account_prefixes:
+      - "4"
+      - "5"
+      - "6"
+      - "7"
+      - "8"
+    pbt_pct: 0.05
+    rev_pct: 0.005
+    pm_ratio: 0.75
+    materiality_amount: 0
 
 # WU-16: TrendBreak — 회계추정치 편의(bias) 탐지 대상 계정
 # ISA 540 소급 검토 대상: 충당금, 감가상각, 보증 관련 추정치 계정

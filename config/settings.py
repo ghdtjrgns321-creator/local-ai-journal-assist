@@ -95,8 +95,7 @@ class AuditSettings(BaseSettings):
 
     near_threshold_ratio: float = 0.90  # 한도의 90% 이상이면 플래그
     round_unit: int = 1_000_000  # B04: 정수 단위 판정 기준 (100만원)
-    zscore_threshold: float = 3.0  # C08: 이상치 기준 (detection에서 사용)
-    l403_min_amount_quantile: float = 0.90  # L4-03: 전역 상위 금액 분위수 가드
+    zscore_threshold: float = 3.0  # L4-01(b01_revenue_manipulation) 등 통계 이상치 기준
     midnight_start: float = 22.0  # C03: 심야 전기
     midnight_end: float = 6.0  # C03: 심야 전기
     period_end_margin_days: int = 5  # C01: 기말 판정 마진 (월말 전후 n일)
@@ -177,7 +176,7 @@ class AuditSettings(BaseSettings):
     backdated_threshold_days: int = 30  # C04: 전기일-문서일 괴리 임계 일수
     suspense_aging_days: int = 30  # C10: 가계정 장기체류 기본 임계 일수
     suspense_min_open_amount: float = 0.0  # C10: 장기체류 판정 최소 미정리 금액
-    account_pair_rare_percentile: float = 0.01  # C09: 희소 쌍 하위 백분위
+    rare_account_pair_cadence_per_quarter: float = 1.0  # L4-04: 분기당 정상 반복 횟수(cadence)
 
     # --- Detection Layer C: C13 배치 전표 이상 ---
     batch_source_values: list[str] = [
@@ -577,7 +576,6 @@ class AuditSettings(BaseSettings):
     #      L3-11 cutoff runs by default through the PHASE1 base detector path.
     enable_timeseries_detection: bool = False
     enable_relational_detection: bool = False
-    enable_graph_detection: bool = False
     enable_nlp_detection: bool = False
     enable_access_audit_detection: bool = False
     enable_evidence_detection: bool = False

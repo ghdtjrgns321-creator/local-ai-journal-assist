@@ -368,8 +368,8 @@ anomaly_strategies:
     accounts: ["199999", "299999", "399999", "999999"]
   description:
     # Why: Phase 3 NLP/semantic signals use risk_keywords.yaml.
-    #      Phase 1 L3-08 only detects missing/corrupted descriptions.
-    #      "Other", "Misc" 등 영어는 L3-08 판정 대상이 아니라 의미 분석 후보임.
+    #      Phase 1 적요 품질 검사는 빈칸/파손만 본다(의미적 충분성은 판정 안 함).
+    #      "Other", "Misc" 등 영어는 빈칸/파손 판정 대상이 아니라 의미 분석 후보임.
     vague_descriptions:
       - "가계정"      # high_risk
       - "가수금"      # high_risk
