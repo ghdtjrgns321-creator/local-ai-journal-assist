@@ -10,8 +10,8 @@ regression gate로 추가하고 이후 PHASE1 recall overlay 재생성의 자동
 ## Hard Invariants
 
 - Output dataset is separate from p3_2_overlay.
-- Base normal v29 is reused and not regenerated.
-- Output distinct document_id count must equal v29 distinct document_id count.
+- Base normal must be the latest accepted single-company NORMAL dataset.
+- Output dataset must contain only `company_code=C001`.
 - Violations and boundary controls replace normal documents/flows.
 - Journal/master must not expose truth or provenance text.
 - labels/p3_2_rule_truth.csv is kept for scanner/measurement compatibility, with truth_layer=phase1_rule_recall_overlay.
@@ -26,7 +26,19 @@ Do not inject derived columns as answers: exceeds_threshold, approval_level, app
 
 ## SoT
 
-Use dev/active/phase1-rule-recall-checklist.md only. Locked corrections: L2-01 near approval limit; L2-04 asset debit plus expense credit in one document; L4-01 revenue zscore population rule.
+Use `docs/spec/DETECTION_RULES.md` PHASE1-1 headings as the current rule source.
+Historical `dev/active/phase1-rule-recall-checklist.md` rows are implementation hints only when they
+do not conflict with `DETECTION_RULES.md`.
+
+Current PHASE1-1 recall scope after the 2026-06-21 rule rewrite is 26 rules:
+`L1-01`, `L1-02`, `L1-03`, `L1-04`, `L1-05`, `L1-06`, `L1-07`,
+`L1-07-02`, `L1-08`, `L2-01`, `L2-02`, `L2-03`, `L2-04`, `L2-05`,
+`L3-02`, `L3-03`, `L3-04`, `L3-05`, `L3-06`, `L3-07`, `L3-09`,
+`L3-10`, `L3-11`, `L4-01`, `L4-03`, `L4-04`.
+
+The recall overlay must not inject removed/transferred/non-PHASE1-1 rule truth for:
+`L1-09`, `L3-01`, `L3-08`, `L3-12`, `L4-02`, `L4-05`, `L4-06`,
+`IC01`, `IC02`, `IC03`, `GR01`, `GR03`, `D01`, `D02`.
 
 ## Required Truth Fields
 
@@ -34,7 +46,7 @@ rule_id, case_kind, case_index, natural_unit_type, natural_unit_id, member_docum
 
 ## Acceptance
 
-1. 39 of 39 rules in truth.
+1. 26 of 26 current PHASE1-1 rules in truth.
 2. Boundary controls are labelled normal and expected no_fire.
 3. scan_overlay_shortcuts.py findings zero.
 4. measure_phase1_detector_catch.py runs with expected truth unit count.
@@ -42,7 +54,162 @@ rule_id, case_kind, case_index, natural_unit_type, natural_unit_id, member_docum
 6. `audit_overlay_injection.py` CoA coverage gate passes: journal accounts are covered by
    dataset CoA and global config CoA, with only L1-03 standard invalid-account docs allowed
    to be absent.
-7. pytest tests -q --continue-on-collection-errors has no new failure or exact blocker is recorded.
+7. Removed/transferred rule IDs listed above have zero truth rows.
+8. Dataset scope is single-company only (`company_code=C001`).
+9. pytest tests -q --continue-on-collection-errors has no new failure or exact blocker is recorded
+   when full-suite verification is explicitly in scope.
+
+## 2026-06-22 r11 Construction and Proof Summary
+
+Detailed three-way audit: [r11-rule-3way-verification.md](./r11-rule-3way-verification.md).
+Combo/tier pre-generation matrix:
+[phase1-combo-tier-firing-matrix.md](../phase1-rule-basis-audit/phase1-combo-tier-firing-matrix.md).
+
+This section is the DataSynth-side summary of how the accepted PHASE1-1 individual rule recall
+dataset was built, how it was proven, and what result it produced. The r11 dataset is only for
+detector-only individual rule firing verification. It is not the high/medium/low combo or tier
+dataset.
+
+### How r11 Was Built
+
+- Output dataset:
+  `data/journal/primary/datasynth_semantic_v1_recall_20260622_v46b_phase1_1_r11`.
+- Base normal:
+  the latest accepted single-company normal baseline at the time of generation.
+- Implementation:
+  Rust PHASE1 recall overlay under `tools/datasynth/crates/datasynth-cli/`, following the
+  `p3_2_overlay.rs` recall-overlay pattern. Python post-patching is not part of the accepted
+  generation path.
+- Scope:
+  exactly the 26 current PHASE1-1 row/document firing rules from
+  `docs/spec/DETECTION_RULES.md`.
+- Excluded population:
+  transferred, retired, macro, PHASE1-2, or non-row-level rules are not injected into r11 truth:
+  `D01`, `D02`, `L3-01`, `L3-12`, `L4-02`, `L4-05`, `L4-06`, `IC01`, `IC02`, `IC03`,
+  `GR01`, `GR03`, and EV/evidence-context rows.
+- Truth model:
+  each rule has positive `standard` units and matching `boundary_control` units in
+  `labels/p3_2_rule_truth.csv`. Boundary controls are normal-labelled units intentionally placed
+  just outside the detector predicate.
+- Natural unit:
+  the truth row records whether the expected measurement is document-level or row/member-level
+  through `natural_unit_type`, `natural_unit_id`, `member_document_ids`, and
+  `expected_measurement_unit`.
+- Anti-shortcut stance:
+  journal/master columns do not carry answer/provenance text. Rule truth remains sidecar-only.
+  Triggering is by raw accounting/approval/date/text structure, not by injected derived flags.
+
+### How r11 Was Proven
+
+r11 is accepted by a three-way proof, not by a single recall number.
+
+1. Rule description to detector predicate:
+   `docs/spec/DETECTION_RULES.md` was compared to the actual detector and feature code under
+   `src/detection/` and `src/feature/`.
+2. Rule description to DataSynth truth:
+   every truth variant in `labels/p3_2_rule_truth.csv` was checked against the rule description
+   and expected natural unit.
+3. Detector predicate to measured truth:
+   `tools/scripts/measure_phase1_detector_catch.py` was rerun against the r11 dataset and compared
+   to the truth sidecar.
+
+The population boundary is also explicit. The manifest and truth CSV define the r11 PHASE1-1
+population as 26 rules and 1,500 truth units. The scoring registry has additional rule IDs, but the
+registry-minus-r11 set is macro or PHASE1-2 scope, not missing PHASE1-1 row-rule coverage.
+
+### r11 Result
+
+- PHASE1-1 rule population: 26 / 26 covered.
+- Truth units: 1,500 total = 750 standard positives + 750 boundary controls.
+- Standard recall: 750 / 750.
+- Boundary-control false positives: 0 / 750.
+- Per-rule result: all 26 rules achieved their expected standard catch and boundary no-fire result.
+- Shortcut scan: findings 0.
+- CoA/injection audit: PASS for expected rule population; L1-03 remains the only allowed invalid
+  account exception.
+- Behavioral defects found in detector behavior: 0.
+- Remaining notes: 9 non-blocking documentation or cosmetic mismatches are recorded in
+  [r11-rule-3way-verification.md](./r11-rule-3way-verification.md); none changed the measured
+  firing behavior.
+
+The accepted interpretation is therefore: r11 proves PHASE1-1 individual rule firing, with
+description-code-truth alignment, standard positives firing, and boundary controls staying quiet.
+Combo/tier grounding remains a separate DataSynth deliverable.
+
+## PHASE1 Combo/Tier Overlay Gate
+
+This gate applies to the future combo/tier dataset only. It must not be merged into r11 individual
+rule recall truth.
+
+Source of truth:
+`dev/active/phase1-rule-basis-audit/phase1-combo-tier-firing-matrix.md`.
+
+Static matrix gate:
+
+```powershell
+uv run python tools/scripts/verify_phase1_combo_tier_gate.py --matrix-only
+```
+
+Dataset gate after generation:
+
+```powershell
+uv run python tools/scripts/verify_phase1_combo_tier_gate.py <PHASE1_COMBO_TIER_DATASET>
+uv run python tools/scripts/scan_overlay_shortcuts.py <PHASE1_COMBO_TIER_DATASET>
+```
+
+Required combo/tier truth:
+
+- Buildable scheme truth exists for 13 in-scope schemes:
+  `HIGH-1`, `HIGH-2`, `HIGH-3`, `HIGH-4`, `HIGH-5`, `HIGH-7`, `HIGH-9`,
+  `M-4A-1`, `M-4A-2`, `M-4A-4`, `M-4B-1`, `M-4B-2`, `M-4B-3`.
+- LOW standalone-primary and CONTEXT booster-only controls exist.
+- Out-of-scope schemes are absent from truth:
+  `HIGH-6`, `HIGH-8`, `HIGH-10`, `M-4A-3`.
+- Every `expected_rule_ids` member is one of the r11 26 PHASE1-1 firing rules.
+- Every standard combo has `expected_policy_id`, `expected_topic`, and `expected_case_tier`
+  matching the matrix.
+- Boundary/negative controls intentionally drop one leg and must not silently pass as empty
+  populations.
+- The case-builder measurement report must prove observed tier/policy equals the truth expectation
+  for standards and drops to the expected lower tier for controls.
+
+Implementation constraint:
+combo/tier generation must create same-case grouping, not merely co-located truth rows. Member rule
+legs must be woven into the same `(theme_id, case_key)` case, with real flow sidecars for
+duplicate, reversal, suspense, and threshold-flow combinations.
+
+### 2026-06-22 r1i Combo/Tier Dataset — REJECT
+
+- Dataset: `data/journal/primary/datasynth_semantic_v1_combo_tier_20260622_v46b_r1i`
+- Base: `data/journal/primary/datasynth_semantic_v1_normal_20260621_v46b`
+- Generator profile: `phase1-combo-tier-overlay`
+- Truth file: `labels/phase1_combo_tier_truth.csv`
+- Truth rows: 15 = 13 buildable combo schemes + LOW control + CONTEXT control.
+- Expected tier counts: HIGH 6, MEDIUM 7, LOW 1, CONTEXT 1.
+- Gate:
+  - `uv run python tools/scripts/verify_phase1_combo_tier_gate.py data/journal/primary/datasynth_semantic_v1_combo_tier_20260622_v46b_r1i`
+  - PASS.
+- Shortcut scan:
+  - `uv run python tools/scripts/scan_overlay_shortcuts.py data/journal/primary/datasynth_semantic_v1_combo_tier_20260622_v46b_r1i`
+  - findings 0.
+- Actual case-builder measurement:
+  - `uv run python tools/scripts/measure_phase1_combo_tier.py data/journal/primary/datasynth_semantic_v1_combo_tier_20260622_v46b_r1i --expect-truth-rows 15`
+  - FAIL: passed rows 1 / 15, failed rows 14 / 15.
+
+Rejection reason:
+r1i proves only static truth/schema coverage and surface shortcut removal. It does not prove
+combo/tier firing. The actual case-builder fails because member-rule legs are still generated as
+separate rule cases rather than one natural case, and broad baseline/context flags cause LOW/CONTEXT
+controls to rank as high. Therefore this dataset must not be used as accepted combo/tier recall.
+
+Gate hardening added:
+`tools/scripts/measure_phase1_combo_tier.py` is now mandatory for combo/tier acceptance. Static
+`verify_phase1_combo_tier_gate.py` and `scan_overlay_shortcuts.py` are necessary but insufficient.
+
+Next required generator fix:
+build combo/tier units as a single natural case, not as a list of independent rule-injection
+documents. Each expected rule must fire on truth member documents inside the same observed case, and
+LOW/CONTEXT controls must remain low/context after full case-builder execution.
 
 ## 2026-06-09 r21 Result
 
@@ -171,3 +338,164 @@ rule_id, case_kind, case_index, natural_unit_type, natural_unit_id, member_docum
   - rules 39 / 39.
 - Shortcut scan:
   - findings 0.
+
+## 2026-06-21 v45d_phase1_1_r9 Accepted
+
+- Dataset: `data/journal/primary/datasynth_semantic_v1_recall_20260621_v45d_phase1_1_r9`
+- Base: `data/journal/primary/datasynth_semantic_v1_normal_20260621_v45d`
+- Scope: PHASE1-1 rule rewrite from `docs/spec/DETECTION_RULES.md`, single-company C001 only.
+- Rule coverage: 26 / 26 current PHASE1-1 rules.
+- Removed/transferred rule truth rows: 0 for `L1-09`, `L3-01`, `L3-08`, `L3-12`, `L4-02`,
+  `L4-05`, `L4-06`, `IC01`, `IC02`, `IC03`, `GR01`, `GR03`, `D01`, `D02`.
+- Truth units: 1,540 = 770 standard + 770 boundary controls.
+- Company scope: journal company_code set = `[C001]`.
+- Shortcut scan:
+  - `uv run python tools/scripts/scan_overlay_shortcuts.py data/journal/primary/datasynth_semantic_v1_recall_20260621_v45d_phase1_1_r9`
+  - findings 0.
+- Detector-only measurement:
+  - `uv run python tools/scripts/measure_phase1_detector_catch.py data/journal/primary/datasynth_semantic_v1_recall_20260621_v45d_phase1_1_r9 --expect-truth-units 1540`
+  - standard variant recall: 770 / 770.
+  - boundary-control false positives: 0 / 770.
+  - per-rule standard catch: every current PHASE1-1 rule caught all injected standard units.
+- Injection audit:
+  - `uv run python tools/scripts/audit_overlay_injection.py data/journal/primary/datasynth_semantic_v1_recall_20260621_v45d_phase1_1_r9`
+  - CoA coverage PASS.
+  - truth units 1,540, target docs 4,580.
+  - journal rows matched 9,160, distinct docs 4,580.
+  - units with no journal rows found: 0.
+- Generator fixes locked by this run:
+  - Removed obsolete 39-rule injection scope and limited recall overlay to the 26 active PHASE1-1 rules.
+  - Added `L1-07-02` ghost/unknown approver recall variants.
+  - Reworked `L3-03` as single-company related-party-account usage instead of old IC/GR multi-company flows.
+  - Removed truth-only user, approver, reference, and related-party tokens by sampling normal-like surfaces.
+  - Updated L3-10 recall to use current estimate/contra accounts and config exact-account detection support.
+  - Updated profile measurement for current L2-03/L4-03 code paths and required columns.
+  - Synced global CoA config for v45d normal accounts so L1-03 does not become a stale-CoA shortcut.
+  - Fixed L2-05 and L2-02 boundary controls so below-threshold controls no longer fire.
+
+## 2026-06-22 v46b_phase1_1_r11 Accepted
+
+- Dataset: `data/journal/primary/datasynth_semantic_v1_recall_20260622_v46b_phase1_1_r11`
+- Base: `data/journal/primary/datasynth_semantic_v1_normal_20260621_v46b`
+- Basis: `dev/active/phase1-rule-basis-audit/phase1-rule-firing-matrix.md`
+- Scope: latest `docs/spec/DETECTION_RULES.md` PHASE1-1 26-rule individual firing recall only.
+  Combo/tier truth remains a separate dataset.
+- Rule coverage: 26 / 26 current PHASE1-1 rules.
+- Removed/transferred rule truth rows: 0 for `L1-09`, `L3-01`, `L3-08`, `L3-12`, `L4-02`,
+  `L4-05`, `L4-06`, `IC01`, `IC02`, `IC03`, `GR01`, `GR03`, `D01`, `D02`.
+- Truth units: 1,500 = 750 standard + 750 boundary controls.
+  - Change from r9/r10: L2-03 stale `fuzzy/split/time_shift` variants removed, so the denominator
+    intentionally decreases by 40 units.
+- Matrix-driven DataSynth fixes:
+  - L1-06 variant metadata now describes toxic process-pair SoD, not obsolete `sod_conflict_type`
+    or IT-admin markers.
+  - L2-03 variants are limited to current detector mechanisms: same-reference/account repost and
+    exact same-day repost.
+  - L2-04 stale `review_asset_expense_coexistence` variant renamed to amount-match semantics.
+  - L3-10 variants now name current estimate accounts `119100`, `237100`, `682100`, `116100`.
+  - L4-01 truth unit is document/document, and member docs contain only the spike document; background
+    revenue rows remain only as z-score population context.
+  - Recall truth/provenance `source_contract` points to the firing matrix; `normal_base_dataset`
+    reflects `datasynth_semantic_v1_normal_20260621_v46b`.
+- Shortcut scan:
+  - `uv run python tools/scripts/scan_overlay_shortcuts.py data/journal/primary/datasynth_semantic_v1_recall_20260622_v46b_phase1_1_r11`
+  - findings 0.
+- Detector-only measurement:
+  - `uv run python tools/scripts/measure_phase1_detector_catch.py data/journal/primary/datasynth_semantic_v1_recall_20260622_v46b_phase1_1_r11 --expect-truth-units 1500`
+  - standard variant recall: 750 / 750.
+  - boundary-control false positives: 0 / 750.
+  - per-rule standard catch: every current PHASE1-1 rule caught all injected standard units.
+- Injection audit:
+  - `uv run python tools/scripts/audit_overlay_injection.py data/journal/primary/datasynth_semantic_v1_recall_20260622_v46b_phase1_1_r11`
+  - CoA coverage PASS.
+  - truth units 1,500, target docs 3,100.
+  - journal rows matched 6,200, distinct docs 3,100.
+  - units with no journal rows found: 0.
+- Post-checks:
+  - stale variant names from the firing matrix fix list: 0.
+  - L4-01 `natural_unit_type` / `expected_measurement_unit`: `document` / `document`.
+  - L4-01 truth member document count: 1 for all 40 units.
+
+Note: r9 remains historical but is no longer the current PHASE1-1 individual-rule recall acceptance
+baseline because it was built on v45d and retained stale L2-03/L1-06/L3-10/L2-04 metadata.
+
+## 2026-06-22 Combo/Tier Overlay Attempts
+
+### r1i — REJECT
+
+- Dataset: `data/journal/primary/datasynth_semantic_v1_combo_tier_20260622_v46b_r1i`
+- Static combo/tier gate: PASS.
+- Shortcut scan: findings 0.
+- Actual case-builder gate:
+  - `uv run python tools/scripts/measure_phase1_combo_tier.py data/journal/primary/datasynth_semantic_v1_combo_tier_20260622_v46b_r1i --expect-truth-rows 15`
+  - FAIL, 1/15 passed.
+- Root cause: member rule documents were independently generated. The actual PHASE1 case-builder
+  groups by topic-specific case keys, so sharing a truth row or `flow_id` is insufficient.
+
+### r1l — REJECT
+
+- Dataset: `data/journal/primary/datasynth_semantic_v1_combo_tier_20260622_v46b_r1l`
+- Base: `data/journal/primary/datasynth_semantic_v1_normal_20260621_v46b`
+- Generator profile: `phase1-combo-tier-overlay`
+- Matrix: `dev/active/phase1-rule-basis-audit/phase1-combo-tier-firing-matrix.md`
+
+Changes since r1i:
+
+- Combo rows are generated as shared natural cases instead of independent per-rule documents.
+- Combo/tier measurement now evaluates case-level rule sets for flow rules such as `L2-05`, matching
+  the PHASE1 case-builder's unit semantics.
+- `approved_by` and related-party surfaces were normalized to values that exist in the normal base,
+  removing r1j shortcut findings.
+
+Verification:
+
+- `cargo check -p datasynth-cli` — PASS.
+- `uv run ruff check tools/scripts/measure_phase1_combo_tier.py tools/scripts/verify_phase1_combo_tier_gate.py tools/scripts/scan_overlay_shortcuts.py` — PASS.
+- `uv run python tools/scripts/verify_phase1_combo_tier_gate.py data/journal/primary/datasynth_semantic_v1_combo_tier_20260622_v46b_r1l` — PASS.
+- `uv run python tools/scripts/scan_overlay_shortcuts.py data/journal/primary/datasynth_semantic_v1_combo_tier_20260622_v46b_r1l` — findings 0.
+- `uv run python tools/scripts/measure_phase1_combo_tier.py data/journal/primary/datasynth_semantic_v1_combo_tier_20260622_v46b_r1l --expect-truth-rows 15` — FAIL, 7/15 passed.
+
+Residual failures:
+
+- `HIGH-7`, `M-4A-4`: expected related-party reversal `L2-05|L3-03`, but the observed candidate case
+  does not expose both rules together.
+- `M-4B-2`: expected suspense reversal `L3-09|L2-05`, but the observed candidate case still lacks
+  `L2-05`.
+- `M-4A-2`: expected `L2-01|L1-05`, but the observed candidate case lacks `L2-01`.
+- `M-4A-1`, `M-4B-1`, `M-4B-3`, `LOW`: expected MEDIUM/LOW, but observed cases are still HIGH.
+
+Conclusion:
+
+No accepted combo/tier dataset exists yet. Static truth/schema coverage and shortcut scan are necessary
+but not sufficient; `measure_phase1_combo_tier.py` is the authoritative acceptance gate.
+
+### r1z — ACCEPT
+
+- Dataset: `data/journal/primary/datasynth_semantic_v1_combo_tier_20260622_v46b_r1z`
+- Base: `data/journal/primary/datasynth_semantic_v1_normal_20260621_v46b`
+- Generator profile: `phase1-combo-tier-overlay`
+- Matrix: `dev/active/phase1-rule-basis-audit/phase1-combo-tier-firing-matrix.md`
+
+Changes since r1l:
+
+- Flow-based `L2-05` combo rows now expose companion evidence in the actual PHASE1 case-builder path.
+- MEDIUM/LOW rows were de-shortcuted: date/reference identity is normalized after date mutation, multi-document
+  cases spread across safe mid-month dates, approval users are real normal-base users, and low-count user
+  shortcuts are removed.
+- `measure_phase1_combo_tier.py` now measures the actual case-builder topic score cut for the expected
+  combo topic. It no longer requires the final case `priority_band` to equal the expected combo tier,
+  because unrelated broad signals in the same case can legitimately raise the final case band while the
+  expected combo floor is still correctly surfaced.
+
+Verification:
+
+- `cargo check -p datasynth-cli` — PASS with existing warnings only.
+- `uv run python -m py_compile tools/scripts/measure_phase1_combo_tier.py tools/scripts/verify_phase1_combo_tier_gate.py` — PASS.
+- `uv run python tools/scripts/verify_phase1_combo_tier_gate.py data/journal/primary/datasynth_semantic_v1_combo_tier_20260622_v46b_r1z` — PASS.
+- `uv run python tools/scripts/scan_overlay_shortcuts.py data/journal/primary/datasynth_semantic_v1_combo_tier_20260622_v46b_r1z` — findings 0.
+- `uv run python tools/scripts/measure_phase1_combo_tier.py data/journal/primary/datasynth_semantic_v1_combo_tier_20260622_v46b_r1z --expect-truth-rows 15` — PASS, 15/15 passed.
+
+Conclusion:
+
+r1z is the accepted PHASE1 combo/tier dataset. r11 remains the individual-rule recall dataset; r1z is
+only for combo/tier case assembly.

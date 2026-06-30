@@ -22,25 +22,36 @@
   않고 거래 archetype 단위로 함께 뽑는다.
 - 자연 noise는 존재해야 하지만 계정/프로세스/정답 라벨의 shortcut이 되면 안 된다.
 - 세무 처리는 랜덤이 아니라 거래 archetype과 증빙 성격에 따라 과세/영세/면세/비과세가 결정되어야 한다.
-- 내부거래, 정상 반복거래, batch 전표, 연말마감 전표처럼 이후 룰 검증의 정상 비교군이 될 구조를
+- 이 프로젝트의 NORMAL baseline은 단일법인 원장이다. journal 안에는 하나의 회사코드(C001)만 존재해야
+  하며, 관계사/내부거래/회사간 순환은 normal에 넣지 않는다. IC/GR 계열 부정이나 오류 검증은 별도
+  PHASE1/PHASE2 overlay 데이터셋에서 명시 라벨과 함께 만든다.
+- 정상 반복거래, batch 전표, 연말마감 전표처럼 단일법인 내부에서 이후 룰 검증의 정상 비교군이 될 구조를
   소량 샘플이 아니라 충분한 모집단으로 생성한다.
 - 재무제표 정합은 전표 단위 균형과 별개로 검증한다. TB, roll-forward, closing, subledger는 hollow
   PASS가 아니라 산출물 기반 숫자로 판정한다.
+- 손익계산서 현실성은 별도 hard gate다. 차대변, TB, BS equation이 맞아도 매출원가·판관비·이자비용·세금이
+  매출과 무관하게 생성되면 NORMAL로 인정하지 않는다. 회사×연도별 revenue, COGS, SGA, interest, tax 비율과
+  exported financial_statements.json의 수익 부호·GL rollup 매핑을 전수 검증한다.
+- 계정코드 prefix와 계정성격은 독립 샘플링하지 않는다. 4번대 수익, 5번대 매출원가, 6번대 판관비,
+  7번대 기타수익, 8번대 기타비용/손실, 1~3번대 BS 계정 규약을 지키며 CoA master와 journal이 같은
+  의미를 가져야 한다.
 
-## v20까지 닫은 축
+## v20~v44에서 폐기된 다법인 축
 
-- `is_intercompany`를 journal CSV에 출력하고 정상 IC matched pair를 36개월 x 3법인에 분산 생성했다.
-- 정상 회사 노드 기반 3-hop cycle 배경을 생성해 GraphDetector smoke가 0/skip이 아니게 했다.
-- IC 계정은 COA에 존재하는 `1150`, `2050`, `4500`, `2700` 계열과 `trading_partner=회사코드` 구조로
-  맞췄다.
+v20~v44에서는 `is_intercompany`와 정상 IC matched pair, 3법인 회사 노드 기반 3-hop cycle 배경을 NORMAL에
+넣었다. 이 방향은 단일법인 입사용 제품 범위와 맞지 않아 v45부터 폐기한다. NORMAL에서는 C001만 남기고
+`is_intercompany`, IC/INTERCOMPANY/RELATED surface, company-code trading_partner, company-node cycle을
+0으로 검증한다.
+
+## 단일법인 NORMAL에서 유지하는 축
+
 - 정상 batch 전표는 급여 지급, vendor payment, 감가상각 run으로 매월 생성한다.
-- O02 synthetic marker scan에서 IC 구조 필드는 K01~K07 전용 검증으로 분리하고, 비구조 단일값 marker는
-  별도 FAIL로 잡는다.
+- O02 synthetic marker scan은 비구조 단일값 marker를 FAIL로 잡고, K01~K07은 단일법인 범위 위반을 전담한다.
 
 ## v21에서 추가한 축
 
 - `opening_balances.json`과 `period_close/trial_balances.json` 산출을 켰다.
-- 다법인 TB 검증을 위해 `PeriodTrialBalance.company_code`를 출력한다.
+- TB 검증을 위해 `PeriodTrialBalance.company_code`를 출력하되, NORMAL에서는 값이 C001 하나여야 한다.
 - TB는 계정별 차변/대변 총액이 아니라 순잔액을 정상 잔액 방향에 표시한다.
 - tax backfill과 최종 semantic/balance hard gate 이후 재무제표/TB를 다시 산출해 최종 journal과 TB가
   같은 원장을 보도록 했다.
@@ -48,8 +59,6 @@
   식별하며, 일반 R2R 전표와 구분한다.
 - annual closing은 모든 P&L 계정을 닫는 정상 결산 전표이므로 일반 line role allowlist와 revenue
   customer-counterparty rule의 좁은 예외로 처리한다.
-- IC buyer expense cost center는 IC 전용 `CC100` 하드코딩을 제거하고 일반 정상 cost center pool과
-  겹치게 했다.
 - 계정 분류표에서 `4500`은 IC receivable, `5300`은 비용 계정으로 분류되도록 보정했다.
 
 ## 현재 v21 검증 상태
@@ -71,7 +80,7 @@
 - natural noise rates: PASS
 - amount/grid dominance: PASS
 - O02 synthetic marker scan: PASS
-- K01~K07 IC/Graph normal background: PASS
+- K01~K07은 v45부터 단일법인 scope gate로 재정의됐다.
 - J08 batch explainability: PASS
 - M03 roll-forward arithmetic: PASS
 - M04 period continuity: PASS

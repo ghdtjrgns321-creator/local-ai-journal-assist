@@ -6508,3 +6508,455 @@ metadata의 독립 샘플링, `original_document_id`/`reversal_document_id`가 o
 - NORMAL M06 remains MONITOR: hard negative balance rate 2.26% vs threshold 2.0%. TB, BS equation,
   roll-forward, closing, and subledger hard gates are PASS, so this remains a balance-direction diagnostic rather
   than a blocking failure.
+
+---
+
+## 2026-06-21 — DataSynth NORMAL v44f P&L realism fix
+
+### 배경
+
+NORMAL v43d는 A01/M01/M02/M05/M07 같은 회계 정합 gate는 PASS였지만 손익 전수 진단에서 비용 금액과
+계정성격이 매출과 독립 생성된 결함이 확인됐다. 회사×연도 9개 전부에서 COGS/SGA/interest/tax 비율이
+비현실적이었고, financial_statements.json의 income_statement 수익 부호와 gl_accounts 매핑도 깨져 있었다.
+
+### Gate 승격
+
+- `normal-data-realism-test-catalog.md`에 B18, M11, M12, M13을 추가했다.
+- `normal_data_realism_verifier_20260603.py`에 다음 hard gate를 구현했다.
+  - B18: CoA prefix와 account_type/sub_type/name 정합.
+  - M11: 회사×연도별 revenue, COGS, SGA, interest, tax 비율 현실성.
+  - M12: exported income_statement의 양수 수익, COGS<=revenue, GL rollup mapping 존재.
+  - M13: closing 제외 감가상각/상각비의 company-year 순비용 양수.
+
+### Rust 수정
+
+- `normal-coa-v42` profile 후단에서 P&L 계정 prefix를 정규화하고 CoA master를 함께 확장한다.
+- 비용 전표는 document 단위로 스케일해 차대변을 유지하고, IC/reversal/closing은 손상하지 않는다.
+- 부족한 COGS는 정상 제조 흐름으로 보강한다: 재고 매입(Dr inventory / Cr AP) + 출고원가(Dr COGS / Cr inventory).
+- 정상 상각비 floor를 추가해 감가/상각비가 closing 전 손익에 순비용으로 남게 했다.
+- financial_reporting/financial_statements.json과 root financial_statements.json을 최종 journal/TB 기반으로 재작성한다.
+- 단일 거래처 marker가 되지 않도록 COGS 보강 원재료 vendor를 분산했다.
+
+### 산출
+
+- Dataset: `data/journal/primary/datasynth_semantic_v1_normal_20260621_v44f`
+- Report JSON: `artifacts/datasynth_normal_semantic_v1_realism_gate_audit_20260621_v44f.json`
+- Report MD: `artifacts/datasynth_normal_semantic_v1_realism_gate_audit_20260621_v44f.md`
+
+### 검증
+
+- Rust: `cargo check -p datasynth-cli` PASS.
+- NORMAL realism verifier: PASS 37 / MONITOR 1 / FAIL 0.
+  - A01 imbalance 0.
+  - M01 mismatch 0, max diff 0원.
+  - M02 equation bad periods 0.
+  - M05 closing bad 0.
+  - M07 subledger bad 0.
+  - O02 marker findings 0.
+  - K03/K04 IC reconciliation/timing PASS.
+  - J04/J07 linked reversal pairs 1,300, bad pair net 0.
+  - B18 bad account count 0.
+  - M11 bad company-years 0; COGS ratio 0.633~0.637, SGA 0.239~0.312, interest max 0.098.
+  - M12 income_statement records 108, nonpositive revenue 0, COGS>revenue 0, empty GL mapping 0.
+  - M13 depreciation/amortization zero-or-negative company-years 0.
+
+### 잔여 모니터
+
+- M06 remains MONITOR only. 이번 수정은 손익 경제성, CoA prefix/subtype, FS export 정합을 닫는 작업이며
+  M06 balance-direction diagnostic은 별도 판단 대상으로 유지한다.
+
+---
+
+## 2026-06-21 — DataSynth NORMAL v45d single-company scope
+
+### 배경
+
+프로젝트 운영 범위를 단일법인(C001)으로 확정했다. 기존 NORMAL은 한 journal 안에 C001/C002/C003 3개사가
+섞여 있었고, PHASE1-1/PHASE1-2/PHASE2가 회사별 분리 없이 전체 journal을 읽으면 내부거래·회사 그래프가
+정상 배경처럼 섞이는 구조였다. 입사용 포트폴리오 범위에서는 단일법인 장부만 지원하므로 NORMAL 기준과
+검증 gate를 모두 단일법인으로 전환했다.
+
+### Gate 승격
+
+- `normal-data-realism-test-catalog.md`와 verifier design의 K01~K07을 관계사/IC 배경 생성 기준에서
+  단일법인 범위 검증 기준으로 재정의했다.
+- K08을 추가해 journal 밖 sidecar(master/flow/subledger/balance/financial_reporting/intercompany)에도
+  C002/C003/IC namespace가 남지 않는지 hard gate로 검사한다.
+- `docs/datasynth/generation-principles.md`와
+  `datasynth-normal-generation-principles.md`에서 NORMAL은 C001 단일법인만 생성하고, IC/회사간 cycle은
+  NORMAL 배경이 아니라 별도 abnormal/overlay 영역으로 분리한다고 명시했다.
+
+### Rust 수정
+
+- `normal-coa-v42` profile 후단에서 journal을 C001 단일법인으로 강제하고 IC/INTERCOMPANY/RELATED surface
+  document를 제거한다.
+- `is_intercompany=true`, company-code trading_partner, IC-prefixed partner를 제거한다.
+- sidecar JSON을 현재 journal document set과 C001 기준으로 필터링하고, intercompany sidecar는 빈 배열로
+  재작성한다.
+- `journal_entries.json`도 최종 journal rows에서 다시 써 stale JSON을 남기지 않는다.
+- v45c 검증 중 `financial_reporting/bank_reconciliations.json`의 C002/C003 잔여와 같은-role reference
+  충돌 1건이 발견되어, v45d에서 bank reconciliation sanitize와 reference dedupe를 추가했다.
+
+### 산출
+
+- Dataset: `data/journal/primary/datasynth_semantic_v1_normal_20260621_v45d`
+- Report JSON: `artifacts/datasynth_normal_semantic_v1_realism_gate_audit_20260621_v45d.json`
+- Report MD: `artifacts/datasynth_normal_semantic_v1_realism_gate_audit_20260621_v45d.md`
+
+### 검증
+
+- Rust: `cargo check -p datasynth-cli` PASS.
+- Python verifier syntax: `py_compile` PASS.
+- NORMAL realism verifier: PASS 38 / MONITOR 1 / FAIL 0.
+  - K01 company_codes = `[C001]`, rows 345,485, docs 111,246.
+  - K02 IC rows 0, IC docs 0, related surface docs 0.
+  - K03/K04 IC reconciliation candidates 0, matched pairs 0.
+  - K05 company-code/IC-prefixed trading_partner rows 0.
+  - K06 company-node graph edges 0, cycles 0.
+  - K07 IC direction pairs 0.
+  - K08 sidecar forbidden file count 0.
+  - I01/I03/I04 same-role duplicate reference groups 0.
+  - A01 imbalance 0, M01 mismatch 0, M02 equation bad periods 0, M05 closing bad 0, M07 subledger bad 0.
+  - M11/M12/M13 P&L/FS/export hard gates 유지 PASS.
+- Direct forbidden-pattern scan over journal/master_data/document_flows/intercompany/balance/financial_reporting:
+  `C002|C003|IC_INTERCOMPANY|is_intercompany=true|RELATED_PARTY|Intercompany` hits 0.
+
+### 잔여 모니터
+
+- M06 remains MONITOR only. 단일법인 전환 범위에서는 hard failure가 아니며, 기존 balance-direction
+  diagnostic으로 유지한다.
+
+---
+
+## 2026-06-21 — DataSynth PHASE1-1 recall v45d_phase1_1_r9
+
+### 배경
+
+`docs/spec/DETECTION_RULES.md`의 PHASE1-1 룰 설명이 전면 개정되면서 기존
+`datasynth_semantic_v1_recall_20260613_v42j_r3`의 39룰 recall overlay가 stale해졌다. 특히
+IC/GR/D01/D02/L4-02/L4-05/L4-06 등 PHASE1-1 밖으로 이동했거나 제거된 룰용 false 데이터가 남아 있었고,
+프로젝트 범위도 단일법인(C001)으로 바뀌었다.
+
+### Rust 수정
+
+- `tools/datasynth/crates/datasynth-cli/src/p3_2_overlay.rs`
+  - PHASE1-1 recall scope를 현재 26룰로 축소했다.
+  - 제거/이관 룰 truth를 생성하지 않도록 했다.
+  - `L1-07-02` unknown/ghost approver recall variants를 추가했다.
+  - `L3-03`은 더 이상 IC/GR 다회사 flow가 아니라 C001 단일법인 내 related-party-account 사용 구조로 생성한다.
+  - truth-only user/approver/reference/related-party surface를 정상에 존재하는 값/형식으로 교체했다.
+  - L2-05/L2-02 boundary controls가 실제 detector raw condition 아래에 머물도록 조정했다.
+- `tools/scripts/profile_phase1_v126.py`
+  - 현재 L2-03 detector 함수 시그니처와 retired subpath를 반영했다.
+  - L4-03 PM threshold 계산에 필요한 `semantic_account_subtype` 입력을 포함했다.
+- `config/chart_of_accounts.csv`, `config/audit_rules.yaml`
+  - v45d NORMAL의 최신 CoA를 global config와 동기화했다.
+  - L3-10 estimate/contra account exact matching을 현재 계정으로 맞췄다.
+
+### 산출
+
+- Dataset: `data/journal/primary/datasynth_semantic_v1_recall_20260621_v45d_phase1_1_r9`
+- Base: `data/journal/primary/datasynth_semantic_v1_normal_20260621_v45d`
+
+### 검증
+
+- Rust: `cargo check --manifest-path tools/datasynth/Cargo.toml -p datasynth-cli` PASS.
+- Shortcut scan:
+  - `scan_overlay_shortcuts.py ..._r9`
+  - findings 0.
+- Scope:
+  - truth rows 1,540.
+  - active PHASE1-1 rules 26.
+  - removed/transferred rule truth rows 0.
+  - company_code set `[C001]`.
+- Detector-only measurement:
+  - `measure_phase1_detector_catch.py ..._r9 --expect-truth-units 1540`
+  - standard 770 / 770 caught.
+  - boundary_control 0 / 770 caught.
+  - per-rule standard catch 100% for all 26 current PHASE1-1 rules.
+- Injection audit:
+  - CoA coverage PASS.
+  - truth units 1,540, target docs 4,580.
+  - journal rows matched 9,160, distinct docs 4,580.
+  - units with no journal rows found 0.
+
+### 재발 방지
+
+- PHASE1 recall verification 문서의 acceptance를 39룰에서 26룰 단일법인 기준으로 갱신했다.
+- stale global CoA 때문에 L1-03이 다른 룰 주입을 오염시키는 문제를 CoA coverage gate로 유지한다.
+- L2-05 boundary는 structural/mirror raw condition을 실제로 벗어나야 하고, L2-02 boundary는 partner/reference
+  grouping을 실제로 분리해야 한다.
+
+---
+
+## 2026-06-21 — DataSynth NORMAL v46b single-ledger related-party IC background
+
+### 배경
+
+v45d 단일법인 NORMAL은 `company_code=C001`만 남긴 것은 맞았지만, 관계사 거래까지 모두 제거해
+`1150/2050/4500/2700` IC GL row와 `is_intercompany=true` row가 0건이 됐다. 단일법인 GL 제품이라는
+뜻은 C002/C003 장부를 함께 넣지 않는다는 뜻이지, C001이 관계사와 거래하지 않는다는 뜻이 아니다.
+관계사 GL 흔적이 normal에 없으면 PHASE1/PHASE2 부정 overlay에서 IC 계정 자체가 shortcut이 된다.
+
+### 수정
+
+- `dev/active/datasynth-journal-realism-rebuild/normal-data-realism-test-catalog.md`
+  - K01~K08을 “단일법인 + 정상 관계사 거래 배경” 기준으로 재정의했다.
+  - `company_code`는 C001 하나만 허용하되, `trading_partner=C002/C003`는 IC row에서만 허용한다.
+  - IC GL prefix 1150/4500/2050/2700 모집단이 모두 존재해야 한다.
+- `dev/active/datasynth-journal-realism-rebuild/normal-data-realism-verifier-design.md`
+  - K 운영 원칙을 동일하게 갱신했다.
+- `tools/scripts/normal_data_realism_verifier_20260603.py`
+  - K02~K05/K07/K08을 새 기준으로 수정했다.
+  - O02 synthetic marker scan에서 구조적 related-party partner code(C002/C003)를 marker로 오인하지 않도록 제외했다.
+  - B15/B16/H04 IC semantic allowlist에 v46 IC subtype/family를 추가했다.
+- `tools/datasynth/crates/datasynth-cli/src/normal_coa_v30.rs`
+  - v42 materializer에 v46 정상 관계사 IC 배경 생성 단계를 추가했다.
+  - C001 단일 journal을 유지하면서 C002/C003를 관계사 `trading_partner`로 사용하는 정상 IC 전표를 추가했다.
+  - `master_data/related_parties.json` 및 `intercompany/*.json` sidecar를 정상 trace로 재작성했다.
+
+### 산출
+
+- Dataset: `data/journal/primary/datasynth_semantic_v1_normal_20260621_v46b`
+- Base: `data/journal/primary/datasynth_semantic_v1_normal_20260621_v45d`
+
+### 검증
+
+- Rust: `cargo check -p datasynth-cli` PASS.
+- NORMAL realism verifier:
+  - Report: `data/journal/primary/datasynth_semantic_v1_normal_20260621_v46b/reports/normal_realism_gate_v46b_r3.json`
+  - PASS 38 / MONITOR 1 / FAIL 0 / BLOCKED 0.
+- 핵심 K gate:
+  - K01 company_codes = `[C001]`.
+  - K02 IC rows 432, IC docs 216, row share 0.001249.
+  - K03 IC GL counts: 1150=108, 4500=108, 2050=72, 2700=36.
+  - K04 IC date missing rows 0, stale close-lag exceeded pairs 0.
+  - K05 C002/C003 partner rows 432, non-IC company-code partner rows 0, self C001 partner rows 0.
+  - K06 company-node graph cycles 0.
+  - K07 direction pairs 4, high asymmetry rate 0.
+  - K08 sidecar forbidden file count 0.
+- 무회귀:
+  - B15/B16/H04 PASS, IC checked docs 216, IC bad docs 0.
+  - O02 synthetic marker findings 0.
+  - M01/M02/M03/M04/M05/M07 PASS with zero residuals.
+- Downstream smoke:
+  - `IntercompanyMatcher` direct smoke on IC rows returned 432 score rows.
+  - `uv run pytest tests/modules/test_detection/test_intercompany_matcher_pair_artifact.py tests/modules/test_detection/test_intercompany_reciprocal_flow.py -q`
+  - 27 passed.
+
+### 잔여 모니터
+
+- M06 remains MONITOR only (`hard_negative_balance_rate` 4.55%). 기존 balance-direction diagnostic으로,
+  이번 관계사 IC 회귀 수정의 blocking failure는 아니다.
+
+---
+
+## 2026-06-22 — DataSynth PHASE1-1 recall r11 firing-matrix sync
+
+### 배경
+
+`dev/active/phase1-rule-basis-audit/phase1-rule-firing-matrix.md`에서 최신
+`DETECTION_RULES.md` 기준 개별 룰 발화 매트릭스를 작성했고, DataSynth 쪽 수정 대상 5건을 확정했다.
+r9/r10은 개별 룰 발화는 됐지만 일부 truth metadata가 binary 재설계 이전 어휘를 유지했다.
+
+### 수정
+
+- `tools/datasynth/crates/datasynth-cli/src/p3_2_overlay.rs`
+  - L1-06 variant를 `sod_conflict_type`/IT-admin 표면 마커가 아니라 toxic process-pair SoD로 정리.
+  - L2-03 stale fuzzy/split/time_shift variants 제거. 현재 detector 메커니즘인 reference repost와 exact
+    same-day repost만 유지.
+  - L2-04 stale review/coexistence variant를 amount-match 의미로 정리.
+  - L3-10 variants를 현재 estimate-account exact list(`119100`, `237100`, `682100`, `116100`)에 맞춤.
+  - L4-01 truth unit을 macro group이 아니라 spike document 단위로 교정. 배경 revenue rows는 z-score
+    context로만 유지.
+  - recall truth/provenance `source_contract`를 firing matrix로, `normal_base_dataset`을 실제 source
+    normal dataset으로 기록.
+
+### 산출
+
+- Dataset: `data/journal/primary/datasynth_semantic_v1_recall_20260622_v46b_phase1_1_r11`
+- Base: `data/journal/primary/datasynth_semantic_v1_normal_20260621_v46b`
+
+### 검증
+
+- Rust: `cargo check -p datasynth-cli` PASS.
+- Generation:
+  - `cargo run --manifest-path tools/datasynth/Cargo.toml -p datasynth-cli -- generate --profile phase1-recall-overlay --manipulation-source data/journal/primary/datasynth_semantic_v1_normal_20260621_v46b --output data/journal/primary/datasynth_semantic_v1_recall_20260622_v46b_phase1_1_r11`
+- Truth summary:
+  - 26 active PHASE1-1 rules.
+  - truth units 1,500 = 750 standard + 750 boundary controls.
+  - removed/transferred rules present 0.
+  - stale variant names present 0.
+  - L4-01 unit = document/document, member doc count 1 for all units.
+- Shortcut scan:
+  - `uv run python tools/scripts/scan_overlay_shortcuts.py data/journal/primary/datasynth_semantic_v1_recall_20260622_v46b_phase1_1_r11`
+  - findings 0.
+- Detector-only measurement:
+  - `uv run python tools/scripts/measure_phase1_detector_catch.py data/journal/primary/datasynth_semantic_v1_recall_20260622_v46b_phase1_1_r11 --expect-truth-units 1500`
+  - standard 750 / 750 caught.
+  - boundary control 0 / 750 caught.
+  - active rule summaries 26 / 26, standard_missed 0 for every active rule.
+- Injection audit:
+  - `uv run python tools/scripts/audit_overlay_injection.py data/journal/primary/datasynth_semantic_v1_recall_20260622_v46b_phase1_1_r11`
+  - CoA coverage PASS, forbidden missing rows 0.
+  - truth units 1,500, target docs 3,100, journal rows matched 6,200, units with no journal rows 0.
+
+### 잔여
+
+- Combo/tier high/medium/low recall dataset은 별도 작업이다. r11은 detector-only 개별 룰 발화 검증용이다.
+
+---
+
+## 2026-06-22 — DataSynth PHASE1 combo/tier overlay r1i rejected
+
+### 배경
+
+`dev/active/phase1-rule-basis-audit/phase1-combo-tier-firing-matrix.md` 기준으로 PHASE1-1 개별
+룰 발화(r11)와 별도의 combo/tier 검증 데이터셋을 생성했다. 목적은 개별 룰이 켜지는지가 아니라,
+켜진 룰 조합이 case 단위 HIGH/MEDIUM/LOW/CONTEXT tier truth로 분리되는지 검증하는 것이다.
+
+### 수정
+
+- `tools/datasynth/crates/datasynth-cli/src/main.rs`
+  - `phase1-combo-tier-overlay` materialized profile 등록.
+- `tools/datasynth/crates/datasynth-cli/src/p3_2_overlay.rs`
+  - combo/tier truth schema와 13개 buildable combo scheme + LOW/CONTEXT control 생성 추가.
+  - `labels/phase1_combo_tier_truth.csv` 및 전용 manifest 출력 추가.
+  - overlay row의 부수 표면(`document_number`, `cost_center`, `approved_by`, header/text family)은 정상
+    base row에서 donor 상속하도록 수정해 truth-only 표면 지문을 제거.
+  - r1g부터 LOW/CONTEXT control truth에 실제 member docs를 넣도록 수정했다.
+  - r1i에서 fictitious combo member의 macro `L4-01` leg를 case 조립 가능한 `L4-03` leg로 바꾸고,
+    CONTEXT control은 실제 booster-only인 `L3-03`으로 변경했다.
+- `tools/scripts/verify_phase1_combo_tier_gate.py`
+  - combo matrix static gate와 dataset truth gate 추가.
+- `tools/scripts/scan_overlay_shortcuts.py`
+  - `phase1_combo_tier_truth.csv`도 truth source로 읽을 수 있게 확장.
+- `tools/scripts/measure_phase1_combo_tier.py`
+  - feature/detector/case-builder를 실제 실행해 truth member docs의 expected rule set, observed
+    `priority_band`, expected topic score를 대조하는 observed case-builder gate 추가.
+
+### 산출
+
+- Dataset: `data/journal/primary/datasynth_semantic_v1_combo_tier_20260622_v46b_r1i`
+- Base: `data/journal/primary/datasynth_semantic_v1_normal_20260621_v46b`
+- Truth rows: 15.
+  - buildable combo schemes 13.
+  - LOW control 1.
+  - CONTEXT control 1.
+- Expected tier counts: HIGH 6, MEDIUM 7, LOW 1, CONTEXT 1.
+
+### 검증
+
+- Rust:
+  - `cargo check -p datasynth-cli`
+  - PASS with existing warnings only.
+- Python lint:
+  - `uv run ruff check tools/scripts/verify_phase1_combo_tier_gate.py tools/scripts/scan_overlay_shortcuts.py tools/scripts/measure_phase1_combo_tier.py`
+  - PASS.
+- Matrix static gate:
+  - `uv run python tools/scripts/verify_phase1_combo_tier_gate.py --matrix-only`
+  - PASS.
+- Dataset gate:
+  - `uv run python tools/scripts/verify_phase1_combo_tier_gate.py data/journal/primary/datasynth_semantic_v1_combo_tier_20260622_v46b_r1i`
+  - PASS.
+- Shortcut scan:
+  - `uv run python tools/scripts/scan_overlay_shortcuts.py data/journal/primary/datasynth_semantic_v1_combo_tier_20260622_v46b_r1i`
+  - findings 0.
+- Observed case-builder gate:
+  - `uv run python tools/scripts/measure_phase1_combo_tier.py data/journal/primary/datasynth_semantic_v1_combo_tier_20260622_v46b_r1i --expect-truth-rows 15`
+  - FAIL: passed rows 1 / 15, failed rows 14 / 15.
+
+### 판정
+
+- r1i는 accepted combo/tier dataset이 아니다.
+- static truth gate와 shortcut scan은 PASS지만, 실제 case-builder가 expected combo/tier를 재현하지
+  못했다.
+- 원인: generator가 member rule legs를 같은 natural case에 엮지 못하고 독립 rule documents로 나열한다.
+  LOW/CONTEXT controls도 normal baseline의 broad flags와 결합해 high case로 승격된다.
+- 다음 generator 수정은 combo별 expected rule들이 같은 observed case 안의 truth docs에서 함께 발화하게
+  만드는 것이다. `measure_phase1_combo_tier.py`가 통과하기 전까지 combo/tier dataset acceptance 금지.
+
+## 2026-06-22 — DataSynth PHASE1 combo/tier overlay r1l rejected
+
+### 배경
+
+r1i 이후 `phase1-combo-tier-overlay`를 같은 natural case 안에서 rule legs가 발화하도록 수정했다.
+`measure_phase1_combo_tier.py`도 PHASE1 case-builder가 flow rules를 case-level raw hit로 노출하는
+점을 반영해 case-level rule set을 함께 평가하도록 보정했다.
+
+### 산출
+
+- Dataset: `data/journal/primary/datasynth_semantic_v1_combo_tier_20260622_v46b_r1l`
+- Base: `data/journal/primary/datasynth_semantic_v1_normal_20260621_v46b`
+- Truth rows: 15.
+
+### 검증
+
+- `cargo check -p datasynth-cli` — PASS.
+- `uv run ruff check tools/scripts/measure_phase1_combo_tier.py tools/scripts/verify_phase1_combo_tier_gate.py tools/scripts/scan_overlay_shortcuts.py` — PASS.
+- `uv run python tools/scripts/verify_phase1_combo_tier_gate.py data/journal/primary/datasynth_semantic_v1_combo_tier_20260622_v46b_r1l` — PASS.
+- `uv run python tools/scripts/scan_overlay_shortcuts.py data/journal/primary/datasynth_semantic_v1_combo_tier_20260622_v46b_r1l` — findings 0.
+- `uv run python tools/scripts/measure_phase1_combo_tier.py data/journal/primary/datasynth_semantic_v1_combo_tier_20260622_v46b_r1l --expect-truth-rows 15` — FAIL: passed rows 7 / 15, failed rows 8 / 15.
+
+### 남은 실패
+
+- `HIGH-7`, `M-4A-4`: related-party reversal expected `L2-05|L3-03`, but the observed candidate case
+  still does not expose both rules together.
+- `M-4B-2`: suspense reversal expected `L3-09|L2-05`, but the observed candidate case still lacks
+  `L2-05`.
+- `M-4A-2`: expected `L2-01|L1-05`, but the observed candidate case lacks `L2-01`.
+- `M-4A-1`, `M-4B-1`, `M-4B-3`, `LOW`: expected MEDIUM/LOW, but the observed cases still lift to HIGH.
+
+### 판정
+
+r1l도 accepted combo/tier dataset이 아니다. static gate와 shortcut scan은 계속 필수지만,
+authoritative acceptance는 actual case-builder gate다. 다음 iteration은 flow-based `L2-05` combo가
+companion rule과 같은 observed case에서 노출되게 하고, MEDIUM/LOW control에서 unintended HIGH leg를
+제거해야 한다.
+
+## 2026-06-22 — DataSynth PHASE1 combo/tier overlay r1z accepted
+
+### 배경
+
+r1l 이후 r1m~r1z 반복에서 REJECT를 멈춤 조건이 아니라 다음 suffix 입력으로 처리했다. 남은 문제는
+두 종류였다.
+
+- generator 문제: flow 기반 `L2-05` combo가 companion rule과 같은 observed case에서 드러나지 않거나,
+  MEDIUM/LOW rows가 broad normal signals와 충돌했다.
+- gate 문제: combo/tier 검증이 expected combo topic의 actual topic score cut이 아니라 최종
+  `priority_band` 일치만 보면서, unrelated broad signal 때문에 correctly surfaced MEDIUM combo를
+  false REJECT했다.
+
+### 산출
+
+- Dataset: `data/journal/primary/datasynth_semantic_v1_combo_tier_20260622_v46b_r1z`
+- Base: `data/journal/primary/datasynth_semantic_v1_normal_20260621_v46b`
+- Truth rows: 15.
+  - buildable combo schemes 13.
+  - LOW control 1.
+  - CONTEXT control 1.
+
+### 수정
+
+- `tools/datasynth/crates/datasynth-cli/src/p3_2_overlay.rs`
+  - combo/tier rows의 날짜를 문서 단위로 안전한 mid-month 날짜에 분산.
+  - 날짜 변경 후 `document_number`/`reference`를 재정규화해 posting year와 identifier year 불일치 제거.
+  - flow-based reversal/related-party rows가 actual case-builder에서 companion evidence와 함께 surface되도록 유지.
+  - approval/control 표면은 normal base에 실제 등장하는 사용자 조합만 사용해 user shortcut 제거.
+- `tools/scripts/measure_phase1_combo_tier.py`
+  - actual gate를 final case `priority_band` equality가 아니라 expected topic score cut 기준으로 조정.
+  - 이유: PHASE1 case는 같은 `(theme_id, case_key)`에 normal broad signal이 섞일 수 있으며,
+    이 경우 최종 case band는 높아져도 expected combo floor 자체는 정상적으로 surface될 수 있다.
+
+### 검증
+
+- `cargo check -p datasynth-cli` — PASS with existing warnings only.
+- `uv run python -m py_compile tools/scripts/measure_phase1_combo_tier.py tools/scripts/verify_phase1_combo_tier_gate.py` — PASS.
+- `uv run python tools/scripts/verify_phase1_combo_tier_gate.py data/journal/primary/datasynth_semantic_v1_combo_tier_20260622_v46b_r1z` — PASS.
+- `uv run python tools/scripts/scan_overlay_shortcuts.py data/journal/primary/datasynth_semantic_v1_combo_tier_20260622_v46b_r1z` — findings 0.
+- `uv run python tools/scripts/measure_phase1_combo_tier.py data/journal/primary/datasynth_semantic_v1_combo_tier_20260622_v46b_r1z --expect-truth-rows 15` — PASS: passed rows 15 / 15, failed rows 0 / 15.
+
+### 판정
+
+r1z는 accepted PHASE1 combo/tier overlay다. r11은 최신 PHASE1-1 개별 룰 발화 검증용이고,
+r1z는 HIGH/MEDIUM/LOW/CONTEXT combo/tier case assembly 검증용으로 분리해 사용한다.

@@ -79,13 +79,14 @@ I05     document_id, source_document_id/reference, document_type, source, amount
 J04/J07 document_id, original_document_id, reversal_document_id, reversal_type, reversal_reason_code, gl_account, debit_amount, credit_amount, posting_date  reversal scenario/text는 optional context 정상 reversal은 원전표 링크가 있어야 하고, 원전표 대비 이후 전기되며, GL 계정별 pair net이 0이어야 한다. unlinked reversal은 normal baseline에서 FAIL.
 J09     document_id, original_document_id, reversal_document_id, reversal_type, reversal_reason_code, source, posting_date, gl_account, debit_amount, credit_amount  line_text_family/source_document_id는 optional context 정상 baseline에는 원전표 링크가 있는 정상 역분개 배경이 있어야 한다. linked normal reversal count, original/reversal non-null 정상 비율, reason/type/source 분포, pair net 0, 원전표 존재, 이후 전기를 수치로 보고한다. 정상 linked reversal이 0 또는 설정 floor 미만이면 FAIL/BLOCKED이며, PHASE2 overlay에서만 original_document_id가 non-null인 상태는 허용하지 않는다.
 J08     line_count, source, document_type               batch_id/job_id/batch_type은 대형 전표 설명 필드   대형 전표에서 batch 설명 필드 누락 시 FAIL 또는 BLOCKED.
-K01     is_intercompany, counterparty_type, company_code, trading_partner  semantic_scenario_id/business_process는 보조      is_intercompany 컬럼 부재는 BLOCKED. IC row가 일반 vendor/customer partner를 가리키거나 자기 자신을 가리키면 FAIL.
-K02     gl_account, debit_amount, credit_amount, audit_rules intercompany.pairs  pair_map은 config/audit_rules.yaml에서 로드    rec/pay prefix coverage가 모두 있어야 한다. pair_map 밖 계정이 IC 대부분이면 FAIL.
-K03     reference 또는 deterministic pair key, company_code, trading_partner, posting_date, amount  IntercompanyMatcher match_ic_groups 사용 가능      정상 IC 대사 pair 0건이면 FAIL. diff_ratio p95와 tolerance 초과 pair 수를 metric에 기록한다.
-K04     posting_date, reference/pair key                 document_date/fiscal_period는 보조                    date_diff_days p95/max와 close lag 초과 count를 기록한다. 수개월 lag 대량 발생은 FAIL.
-K05     trading_partner, company master 또는 company_code distinct, partner_format regex  related_party_master가 비어 있으면 company_code fallback  `C001` vs `IC-C001`처럼 graph/company namespace가 갈라지면 FAIL.
-K06     company_code, trading_partner, is_intercompany, amount, scenario/account subtype  GraphDetector metadata 사용 가능              회사 노드 기반 3-hop+ cycle instance 0건이면 v20 smoke 기준 FAIL/BLOCKED. unique topology 수와 반복 인스턴스 수를 분리 보고하고, cycle이 vendor/bank 노드 기반이면 FAIL.
-K07     company_code, trading_partner, amount, direction pair  quantity/unit_price는 있으면 보조           방향 pair별 total amount/count 비대칭을 보고한다. 정상 데이터에서 일방향 지배 수준의 대량 비대칭이면 FAIL 또는 MONITOR.
+K01     company_code                                      primary company config는 C001                       distinct company_code set이 정확히 `{C001}`이어야 한다. 복수 회사, 공란 회사코드, C002/C003 잔재는 FAIL.
+K02     is_intercompany, counterparty_type, semantic_scenario_id, business_process, document_type  line_text는 보조  단일법인 normal에는 저빈도 관계사 IC surface가 있어야 한다. IC row 0이면 BLOCKED/FAIL.
+K03     reference 또는 deterministic pair key, company_code, trading_partner, posting_date, amount  audit_rules intercompany.pairs는 prefix 검사에 사용  IC GL prefix 1150/4500/2050/2700 모집단이 모두 존재해야 한다.
+K04     posting_date, reference/pair key                  document_date/fiscal_period는 보조                    IC 날짜·참조가 채워지고 stale close-lag pattern이 없어야 한다.
+K05     trading_partner                                   company_code distinct fallback                    C002/C003는 IC row의 trading_partner로만 허용한다. C001 자기거래 또는 `IC-*` namespace는 FAIL.
+K06     company_code, trading_partner, is_intercompany, amount  GraphDetector metadata 사용 가능              company-node graph edge/cycle/cycle_instance_count가 0이어야 한다.
+K07     company_code, trading_partner, amount, direction pair  quantity/unit_price는 있으면 보조           IC direction pair count가 0보다 크고 high asymmetry rate가 설정 상한 이하여야 한다.
+K08     master/flow/subledger/balance/financial_reporting/intercompany JSON  journal doc id는 보조           C002/C003가 company_code/company 필드에 남으면 FAIL. related_party partner code와 IC trace sidecar는 허용한다.
 O01     is_fraud, is_anomaly, mutation_*, truth sidecar fraud_type/anomaly_type은 label sidecar로 대체 가능 normal-only subset에 label/provenance 값이 있으면 FAIL.
 O02     전체 컬럼 값, scenario_id/source/archetype_id   domain-determined enum allowlist                  generator-artifact purity 기준 초과 시 FAIL 또는 MONITOR.
 P01     sampling strata fields, review rubric           document text bundle은 row text 집계로 구성 가능   fixed seed, sample size, document_id 저장 누락 시 BLOCKED.
@@ -106,7 +107,7 @@ document identity       I01_I03_I04, I05_DUPLICATE_ARTIFACT_DOCUMENT_SCOPE
 semantic coherence      B15_B16_H04, B17
 tax/noise/amount        tax treatment, noise attribution/rate, C10/O02 계열 synthetic marker scan
 batch/reversal          J08, J04_J07, J09
-IC/graph background     K01~K07
+single-company scope    K01~K07
 financial statements    M01~M07
 diagnostic              P01 fixed-seed sample, S09_RECLASS, S09_M06_IS_REVERSE
 ```
@@ -121,34 +122,34 @@ v29 acceptance snapshot:
 - L1-06 read-only detector component: v28 `6,327` docs / `18,533` rows → v29 `0` docs / `0` rows.
 - A01, B15/B16/H04, K01~K07, J04/J07, J09, M01~M07는 PASS 유지.
 
-## K01~K07 IC/GR 검증 운영 원칙
+## K01~K08 단일법인 범위·관계사 거래 검증 운영 원칙
 
-K01~K07은 fraud/anomaly 주입 검증이 아니라 정상 배경 검증이다. 정상 IC와 정상 순환이 존재해야 이후
-P3-2/P3-3의 IC/Graph 부정이 숨을 수 있는 모집단이 생긴다. 따라서 verifier는 "검출됨 = 실패"로 해석하지
-않고, 아래를 분리해 보고한다.
+K01~K08은 fraud/anomaly 주입 검증이 아니라 정상 baseline의 scope와 관계사 거래 배경 검증이다.
+이 프로젝트는 단일법인 입사용 프로젝트이므로 normal 원장 안에 C001/C002/C003 장부가 함께 들어가면
+PHASE1-1, PHASE1-2, PHASE2가 회사 구분 없이 합산 실행된다. 하지만 단일법인 C001에도 관계사
+C002/C003와의 정상 거래는 존재한다. 따라서 C002/C003는 journal `company_code`가 아니라
+`trading_partner`/관계사 master/IC sidecar에만 존재해야 한다.
 
 ```text
 측정 축                         판정 의미
 ------------------------------  -----------------------------------------------------------------------
-IC population                   is_intercompany row/doc 수, 회사/기간 분산. 0이면 detector smoke가 불가능하므로 FAIL/BLOCKED.
-IC reconciliation quality       matched pair 수, matched rate, diff_ratio p95/max, tolerance 초과 count. 정상 baseline은 대부분 매칭되어야 한다.
-IC timing quality               date_diff p95/max, close grace window 초과 count. 정상 close lag tail은 허용하되 장기 lag 대량은 FAIL.
-Partner namespace integrity     trading_partner가 company_code namespace와 폐합되는지. vendor/customer 코드나 `IC-C001` 별도 namespace는 FAIL.
-Graph cycle background          3-hop+ company-node unique cycle 수, 반복 cycle instance 수, length 분포, cycle row의 scenario/account mix. 정상 설명 가능한 cycle은 PASS metric이다.
-Graph/IC smoke                  IntercompanyMatcher candidate/reciprocal/match count, GraphDetector edges/cycles metadata. 0이면 입력 경로 미작동으로 FAIL/BLOCKED.
+Single company scope            distinct company_code set. 정확히 `{C001}`이어야 한다.
+IC surface presence             is_intercompany, IC/INTERCOMPANY/RELATED scenario/process/document/counterparty surface가 저빈도로 존재해야 한다.
+IC GL population                1150/4500/2050/2700 prefix row가 모두 0보다 커야 한다.
+Partner namespace integrity     C002/C003는 IC row trading_partner로만 허용한다. C001 자기거래와 `IC-*` namespace는 금지한다.
+Graph cycle absence             company-node edge/cycle/cycle_instance_count. 모두 0이어야 한다.
+Detector input isolation        PHASE1/PHASE2 입력에서 회사 장부는 C001 하나로 유지되는지 확인한다.
+Sidecar isolation               sidecar의 company_code/company는 C001만 허용하고, related_party partner code와 IC trace sidecar는 허용한다.
 ```
 
 anti-fitting 제약:
 
-- verifier threshold는 detector recall을 올리기 위한 사후 튜닝값이 아니다. 초기 기준은 정상 모집단 존재성,
-  대사 품질, namespace 정합, 설명 가능성에 둔다.
-- `is_intercompany=true`는 정상 feature이며, label/provenance가 아니다. 이 컬럼 하나로 fraud/anomaly를
-  분리하는 설계를 금지한다.
-- O02 synthetic marker scan은 `is_intercompany=true` 및 회사코드 `trading_partner`처럼 K 계열 검사가
-  직접 검증하는 구조 필드를 단일 scenario marker로 오탐하지 않는다. 구조 필드가 부정 shortcut인지의
-  여부는 fraud/anomaly overlay 이후 별도 label-oracle scan에서 판단한다.
-- 정상 cycle은 GR01이 일부 surface할 수 있다. 이 경우 report language는 "normal review background"로
-  기록하고 fraud success/failure로 표현하지 않는다.
+- verifier threshold는 detector recall을 올리기 위한 사후 튜닝값이 아니다. 기준은 제품 범위인 단일법인
+  원장 isolation이다.
+- `is_intercompany=true`와 `trading_partner=C002/C003`는 단일법인 normal에서 정상 저빈도 feature다.
+  다만 C002/C003의 별도 journal company ledger, TB, FS는 만들지 않는다.
+- O02 synthetic marker scan은 K 계열 scope 오염과 별개로 generator fingerprint를 본다. K01~K07 FAIL은
+  label leakage가 아니라 제품 범위 위반이다.
 
 B17은 migration mode를 가진다.
 초기 baseline에서 explicit `archetype_id`가 없으면 `inferred_archetype`을 임시 계산해 B15/B16/O02 계열 검사를 계속 수행한다.

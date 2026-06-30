@@ -6,8 +6,9 @@
 
 | 계층 | 설명 | 현재 기준 |
 | --- | --- | --- |
-| NORMAL | 정상 전표, 정상 master, 정상 flow, 정상 결산 산출물 | `datasynth_semantic_v1_normal_20260614_v43d` |
-| PHASE1 recall | 39개 PHASE1 룰의 standard/boundary 검증 overlay | `datasynth_semantic_v1_recall_20260613_v42j_r3` |
+| NORMAL | 정상 전표, 정상 master, 정상 flow, 정상 결산 산출물 | `datasynth_semantic_v1_normal_20260621_v46b` |
+| PHASE1-1 recall | 26개 최신 PHASE1-1 개별 룰의 standard/boundary 검증 overlay | `datasynth_semantic_v1_recall_20260622_v46b_phase1_1_r11` |
+| PHASE1 combo/tier | 켜진 룰 조합이 case 단위 HIGH/MEDIUM/LOW/CONTEXT tier로 조립되는지 검증하는 별도 overlay | `datasynth_semantic_v1_combo_tier_20260622_v46b_r1z` |
 | PHASE2 fraud | 14개 구조적 fraud scheme overlay | `datasynth_semantic_v1_phase2_fraud_20260614_v1_r4m_h` |
 | historical contract | 과거 PHASE1 contract truth/sidecar freeze | `datasynth` v126 |
 | historical manipulation | 과거 manipulation v2~v7/fixed 계열 | archive/reference only |
@@ -71,27 +72,118 @@ v42j는 이 결함들을 수정했고, NORMAL verifier FAIL/BLOCKED 0, balance a
 v43d는 linked normal reversal background 1,300쌍을 추가하고, NORMAL direct SoD marker 정책과 document-number gate를 조정했다.
 검증 결과는 NORMAL realism verifier PASS 33 / MONITOR 1 / FAIL 0, balance audit PASS다.
 
-## PHASE1 recall overlay
+### v45~v46b: 단일법인 전환과 관계사 거래 흔적 복구
 
-PHASE1 recall overlay는 PHASE1-1 39개 룰의 raw trigger 검증용이다.
-current accepted dataset은 `datasynth_semantic_v1_recall_20260613_v42j_r3`이다.
+v45 계열은 입사용 프로젝트 범위에 맞춰 journal을 단일법인 C001 기준으로 정리했다.
+다만 단일법인 GL-only 제품이라는 뜻은 관계사 거래가 전혀 없다는 뜻이 아니다.
+PHASE1/PHASE2가 `1150`, `4500`, `2050`, `2700` IC 계정을 해석하려면 정상 원장에도 소량의 관계사 거래 흔적이 필요하다.
+
+v46b 기준은 다음과 같다.
+
+- `company_code`는 C001 하나만 존재한다.
+- C002/C003는 별도 회사 원장이 아니라 C001의 관계사 `trading_partner`로만 존재한다.
+- 정상 IC row는 432행, 216문서, 전체 row share 약 0.12%다.
+- IC GL prefix count는 1150=108, 4500=108, 2050=72, 2700=36이다.
+- company-node graph cycle은 NORMAL에서 0이다. 순환/부정 graph는 overlay 영역이다.
+- `master_data/related_parties.json`과 `intercompany/*.json` sidecar는 정상 trace로 존재한다.
+- verifier 결과는 PASS 38 / MONITOR 1 / FAIL 0 / BLOCKED 0이다.
+
+따라서 현재 NORMAL의 핵심 원칙은 "단일법인 C001 원장 + 관계사 거래 흔적 존재 + 회사간 순환 없음"이다.
+과거 문서의 "NORMAL에는 관계사/IC 흔적 0" 표현은 폐기한다.
+
+## PHASE1-1 recall overlay
+
+PHASE1-1 recall overlay는 최신 `docs/spec/DETECTION_RULES.md` 기준 26개 개별 룰의 raw trigger
+검증용이다. current accepted dataset은
+`datasynth_semantic_v1_recall_20260622_v46b_phase1_1_r11`이다.
 
 핵심 구조:
 
-- truth rows 2,160.
-- 108 rule-variant pairs x standard/boundary control.
-- output docs 325,365로 base와 동일.
-- standard 1,080 / 1,080 caught.
-- boundary control 0 / 1,080 caught.
-- rules 39 / 39.
+- truth units 1,500.
+- 26 current PHASE1-1 rules x standard/boundary control variants.
+- standard 750 / 750 caught.
+- boundary control 0 / 750 caught.
+- rules 26 / 26.
 - shortcut scan findings 0.
 - CoA coverage PASS. `999998`은 L1-03 invalid-account standard 문서에만 허용.
 
 주의:
 
-- v42j_r3는 PHASE1 룰 검증 전용이다.
-- oracle scan에서 ML 관점의 raw marker가 일부 보고됐지만 PHASE1 detector가 쓰지 않는 표면이거나 PHASE1에 무해한 값으로 재판정됐다.
-- PHASE2 ML dataset으로 재사용하면 안 된다.
+- r11은 PHASE1-1 개별 룰 발화 검증 전용이다.
+- combo/tier case 조립 검증과 PHASE2 ML 학습에는 재사용하지 않는다.
+- 근거 문서:
+  `dev/active/datasynth-journal-realism-rebuild/r11-rule-3way-verification.md`,
+  `dev/active/datasynth-journal-realism-rebuild/phase1-rule-recall-overlay-verification.md`.
+
+## PHASE1 combo/tier overlay
+
+combo/tier overlay는 r11 이후 별도로 생성한다.
+권위 문서는 `dev/active/phase1-rule-basis-audit/phase1-combo-tier-firing-matrix.md`이다.
+current accepted dataset은 `datasynth_semantic_v1_combo_tier_20260622_v46b_r1z`이다.
+
+목적:
+
+- 개별 룰이 켜지는지가 아니라, 같은 case 그룹에서 켜진 룰 조합이 `topic_scoring.py`의
+  combo floor와 `compute_topic_tiers()`를 통해 의도한 tier로 승격 또는 비승격되는지 검증한다.
+- 생성 단위는 단일 전표가 아니라 `(theme_id, case_key)` case이다.
+- flow 포함 combo는 중복쌍, 역분개쌍, 가수금 open item 같은 member 문서가 실제 flow sidecar에
+  연결되어 같은 case로 묶여야 한다.
+
+대상:
+
+- buildable combo scheme 13개:
+  `HIGH-1`, `HIGH-2`, `HIGH-3`, `HIGH-4`, `HIGH-5`, `HIGH-7`, `HIGH-9`,
+  `M-4A-1`, `M-4A-2`, `M-4A-4`, `M-4B-1`, `M-4B-2`, `M-4B-3`.
+- control scheme 2개: `LOW`, `CONTEXT`.
+- 생성 금지/out-of-scope 4개:
+  `HIGH-6`, `HIGH-8`, `HIGH-10`, `M-4A-3`.
+
+필수 truth:
+
+- `combo_scheme_id`
+- `case_kind`
+- `expected_case_tier`
+- `expected_policy_id`
+- `expected_topic`
+- `expected_rule_ids`
+- `expected_detector_outcome`
+- `natural_unit_id`
+- `member_document_ids`
+- `source_contract`
+
+검증:
+
+- static gate: `uv run python tools/scripts/verify_phase1_combo_tier_gate.py --matrix-only`
+- dataset gate: `uv run python tools/scripts/verify_phase1_combo_tier_gate.py <PHASE1_COMBO_TIER_DATASET>`
+- shortcut scan: `uv run python tools/scripts/scan_overlay_shortcuts.py <PHASE1_COMBO_TIER_DATASET>`
+- observed case-builder gate:
+  `uv run python tools/scripts/measure_phase1_combo_tier.py <PHASE1_COMBO_TIER_DATASET> --expect-truth-rows 15`
+
+r1l 결과:
+
+- truth rows 15 = buildable combo scheme 13 + LOW 1 + CONTEXT 1.
+- expected tier counts: HIGH 6, MEDIUM 7, LOW 1, CONTEXT 1.
+- out-of-scope scheme truth 0.
+- combo/tier static gate PASS.
+- shortcut scan findings 0.
+- actual case-builder gate FAIL: passed rows 7 / 15, failed rows 8 / 15.
+
+historical r1l REJECT 원인:
+
+- 일부 flow-based combo에서 `L2-05`가 detector row로는 발화하지만 companion rule과 같은 observed
+  case rule set으로 노출되지 않는다.
+- 일부 MEDIUM/LOW controls가 normal baseline broad flags 또는 unintended combo legs와 결합해 high case로
+  승격된다.
+- 따라서 r1l은 accepted combo/tier recall dataset이 아니다.
+
+r1z ACCEPT:
+
+- static combo/tier gate PASS.
+- shortcut scan findings 0.
+- actual case-builder gate PASS: truth rows 15, passed rows 15, failed rows 0.
+- `measure_phase1_combo_tier.py`의 authoritative 기준은 expected combo topic의 actual topic score cut이다.
+  최종 case `priority_band`는 정상 broad signal이 같은 case에 섞이면 더 높아질 수 있으므로 combo/tier
+  truth 자체의 acceptance 기준으로 쓰지 않는다.
 
 ## PHASE2 fraud overlay
 
@@ -115,6 +207,12 @@ r4m_h accepted 이유:
 - round amount marker를 자연 단수와 정상 support로 완화했다.
 - representative와 seed1 모두 shortcut, regression, surface scan, full-column scan을 통과했다.
 
+현재 gap:
+
+- r4m_h는 accepted PHASE2 fraud overlay지만, 최신 NORMAL v46b 위에서 재생성된 산출물은 아니다.
+- v46b의 단일법인+관계사 흔적 기준을 PHASE2에 반영하려면, r4m_h의 regression/shortcut/full-column/seed gate를 유지한 상태로 base를 v46b로 교체해 재검증해야 한다.
+- 이 gap은 r4m_h를 폐기한다는 뜻이 아니라, PHASE2 overlay의 최신 base 동기화가 아직 별도 작업이라는 뜻이다.
+
 ## Seed rotation
 
 seed rotation은 단순히 document id나 company label만 바꾸는 것이 아니다.
@@ -126,4 +224,3 @@ accepted seed set은 다음을 만족해야 한다.
 - seed끼리 동일 assignment vector가 0.
 - density, scheme count, accounting mechanics는 보존.
 - seed-only identifier, reference range, amount bucket, support metadata 조합, reversal link surface가 생기지 않음.
-

@@ -15,12 +15,12 @@
 
 과거에는 `0.62 * max_primary + 0.08 * secondary + ...` 같은 weighted score와 floor 숫자, band cut으로 priority를 만들었다. 2026-06 대규모 수정에서 이 방식은 폐기됐다.
 
-| 폐기 대상 | 문제 |
-|-----------|------|
-| weighted score 계수 | 0.62, 0.08 같은 계수가 감사기준이나 실증 근거에서 나온 값이 아니었다. |
+| 폐기 대상                  | 문제                                                                                     |
+| -------------------------- | ---------------------------------------------------------------------------------------- |
+| weighted score 계수        | 0.62, 0.08 같은 계수가 감사기준이나 실증 근거에서 나온 값이 아니었다.                    |
 | floor 숫자를 점수처럼 해석 | 실제 HIGH/MEDIUM은 대부분 조합/floor가 만들었고 weighted score 단독으로 설명되지 않았다. |
-| band cut | high≥0.90, medium≥0.75 같은 숫자는 queue 라벨 호환값일 뿐 위험 확률이 아니다. |
-| 단일 combined score | PHASE1-1, PHASE1-2, PHASE2의 출력 단위와 신뢰도가 달라 하나로 합치면 의미가 깨진다. |
+| band cut                   | high≥0.90, medium≥0.75 같은 숫자는 queue 라벨 호환값일 뿐 위험 확률이 아니다.            |
+| 단일 combined score        | PHASE1-1, PHASE1-2, PHASE2의 출력 단위와 신뢰도가 달라 하나로 합치면 의미가 깨진다.      |
 
 최신 체계는 "어떤 근거 있는 트리거가 발화했는가"를 먼저 보고, 그 결과를 tier로 직접 매핑한다.
 
@@ -50,14 +50,14 @@ raw rule result
 
 `compute_topic_tiers()`의 현재 cascade는 다음과 같다.
 
-| tier | 조건 | 의미 |
-|------|------|------|
-| HIGH | HIGH trigger가 발화하고, 해당 topic에 `has_rankable_primary`가 있음 | 감사인이 가장 먼저 볼 review item |
-| MEDIUM | HIGH가 없고 MEDIUM trigger가 발화하며, `has_rankable_primary`가 있음 | 다음 우선순위 review item |
-| LOW | 조합/floor 없이 standalone primary seed만 있음 | 단일 룰 발화 |
-| CONTEXT | booster, combo_only, macro_only만 있음 | 단독 queue 불가. 다른 신호의 맥락 |
+| tier    | 조건                                                                 | 의미                              |
+| ------- | -------------------------------------------------------------------- | --------------------------------- |
+| HIGH    | HIGH trigger가 발화하고, 해당 topic에 `has_rankable_primary`가 있음  | 감사인이 가장 먼저 볼 review item |
+| MEDIUM  | HIGH가 없고 MEDIUM trigger가 발화하며, `has_rankable_primary`가 있음 | 다음 우선순위 review item         |
+| LOW     | 조합/floor 없이 standalone primary seed만 있음                       | 단일 룰 발화                      |
+| CONTEXT | booster, combo_only, macro_only만 있음                               | 단독 queue 불가. 다른 신호의 맥락 |
 
-`has_rankable_primary` gate가 중요하다. `L3-03`, `L3-05`, `L3-06`, `L3-08`, `L3-10`, `L3-12`, `L4-05`, `L4-06`, `L4-02`, `D01`, `D02` 같은 보강/거시 신호만으로는 HIGH/MEDIUM/LOW queue를 만들 수 없다.
+`has_rankable_primary` gate가 중요하다. `L3-03`, `L3-05`, `L3-06`, `L3-10`, `L3-12`, `L4-05`, `L4-06`, `L4-02`, `D01`, `D02` 같은 보강/거시 신호만으로는 HIGH/MEDIUM/LOW queue를 만들 수 없다.
 
 ## Case tier와 primary topic
 
@@ -73,12 +73,12 @@ Primary topic도 최고 tier topic에서 고른다. 동률이면 `TOPIC_REGISTRY
 
 현재 `phase1_case_builder.py`에는 다음 mapping이 있다.
 
-| tier | priority_band | priority_score |
-|------|---------------|----------------|
-| HIGH | high | 0.90 |
-| MEDIUM | medium | 0.75 |
-| LOW | low | 0.40 |
-| CONTEXT | low | 0.0 |
+| tier    | priority_band | priority_score |
+| ------- | ------------- | -------------- |
+| HIGH    | high          | 0.90           |
+| MEDIUM  | medium        | 0.75           |
+| LOW     | low           | 0.40           |
+| CONTEXT | low           | 0.0            |
 
 이 값은 legacy export, PHASE2 linker, UI threshold처럼 `[0,1]` 숫자를 기대하는 소비처를 깨지 않기 위한 호환값이다. `0.90`은 "90% 위험"이 아니라 "HIGH tier를 기존 숫자 칸에 실어 보낸 값"이다.
 
@@ -92,56 +92,59 @@ Primary topic도 최고 tier topic에서 고른다. 동률이면 `TOPIC_REGISTRY
 
 이 순서를 단일 scalar로 packing한다.
 
-| 정렬 요소 | 의미 |
-|-----------|------|
-| `tier_rank` | HIGH, MEDIUM, LOW, CONTEXT 순서 |
+| 정렬 요소                   | 의미                                                        |
+| --------------------------- | ----------------------------------------------------------- |
+| `tier_rank`                 | HIGH, MEDIUM, LOW, CONTEXT 순서                             |
 | `independent_primary_count` | 독립 primary 룰 수. 여러 독립 신호가 겹친 case를 먼저 본다. |
-| `rule_count` | 발화한 고유 룰 수. 근거 밀도를 본다. |
-| `materiality_score` | 금액 중요성. 마지막 tie-breaker다. |
+| `rule_count`                | 발화한 고유 룰 수. 근거 밀도를 본다.                        |
+| `materiality_score`         | 금액 중요성. 마지막 tie-breaker다.                          |
 
 금액은 마지막 tie-breaker다. 고액 routine case가 복수 신호 case를 묻지 않게 하기 위한 결정이다.
 
 ## 현재 HIGH trigger
 
-아래는 2026-06-17 코드 기준의 HIGH 발화다. `HIGH_COMBO_GROUNDING.md`의 HIGH 10개 중 코드에 구현된 것은 7개이며, 가공거래처, 재고 과대평가, topside/연결조정은 현재 PHASE1-1 코드가 직접 발화하지 못하는 탐지갭이다.
+아래는 코드 기준(`topic_scoring.py::_fraud_combo_floor_results`, 2026-06-22 동기화)의 HIGH 발화다. `HIGH_COMBO_GROUNDING.md`의 HIGH 10개 중 코드에 구현된 것은 **6개**이며(HIGH-7 역분개+관계사는 §8(4)로 MEDIUM 이관), 가공거래처·재고 과대평가·topside/연결조정은 HIGH 자격은 유지하되 **GL-only 범위 외**(마스터·보조원장·연결 산출물 비보유)로 PHASE1-1 primary 룰을 신설하지 않는다([CONSTRAINTS.md](../spec/CONSTRAINTS.md)).
 
-| trigger | topic | 조건 | 해석 |
-|---------|-------|------|------|
-| `fictitious_entry_high` | revenue_statistical | `(L4-01 or L4-03) + L3-02 + 2차정황` | 가공전표/수익 조작. 2차정황은 `L4-04`, `L2-03`, `L3-03`, `L3-10`, `L1-05`, `L3-11`. |
-| `period_end_adjustment_high` | closing_timing | `(L3-04 or L3-07 or L3-11 or L1-08) + (L3-08 or L3-10 or L4-04)` | 결산/충당금·손상 조작. 최신 코드에서 단순 고액 필수 게이트는 제거됐다. 정상 기말전표 과발화는 L3-08/L3-10 임계 조정 대상이다. |
-| `embezzlement_concealment_high` | duplicate_outflow | outflow/duplicate + approval bypass 또는 `L2-05 + L3-02` | 횡령은폐. 승인흔적 없는 역분개+수기 분기도 포함한다. |
-| `suspense_concealment_high` | duplicate_outflow | `L3-09 + outflow/duplicate + L4-03` | 가수금/미결제 계정 은폐. |
-| `related_party_reversal_high` | closing_timing | `L2-05 + L3-03 + L3-04` | 관계사 역분개와 기말 조정. 2026-06-17 코드 반영. |
-| `expense_capitalization_high` | account_logic | `L2-04 + L3-02 + L3-04` | 비용자산화 조작. 2026-06-17 코드 반영. |
-| `approval_bypass_high` | approval_control | approval bypass + `L3-11` 또는 `L3-04+L3-02` 또는 `L3-06+L3-02` | 승인우회와 강한 시점/수기 맥락. 최신 코드에서 단순 고액 게이트는 제거됐다. |
-| `approval_control_high` | approval_control | `L1-04` label이 `critical` 또는 `non_approver` | 명백한 승인한도/승인권 위반. |
+> 약어: `bypass` = `(L1-04|L1-05|L1-06|L1-07|L1-07-02)` 승인우회 · `outflow` = `(L2-02|L2-03|L2-05)` 자금유출.
+
+| trigger                         | topic               | 조건(코드 실제)                                | 해석                                                                                                                 |
+| ------------------------------- | ------------------- | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `fictitious_entry_high`         | revenue_statistical | `(L4-01 or L4-03) + L3-02 + 2차정황`           | 가공전표/수익 조작. 2차정황 = `L4-04`·`L2-03`·`L3-03`·`L1-05`·`L3-11`(§8(5) `L3-10` 헛다리 삭제).                    |
+| `period_end_adjustment_high`    | closing_timing      | `(L3-04 or L3-11) + (L3-10 or L4-04 or L4-03)` | 결산/충당금·손상 조작. §8(5) `L3-07`·`L1-08` 삭제, §8(1) 고액 `L4-03` 복원. 정상 기말 과발화는 L3-10 임계 조정 대상. |
+| `embezzlement_concealment_high` | duplicate_outflow   | `outflow + (bypass or (L3-02 + L4-03))`        | 횡령은폐. 승인흔적 없는 수기+고액 분기 포함(§8(6) 자금유출+수기+고액 일반형).                                        |
+| `suspense_concealment_high`     | duplicate_outflow   | `L3-09 + outflow + L4-03`                      | 가수금/미결제 계정 은폐.                                                                                             |
+| `expense_capitalization_high`   | account_logic       | `L2-04 + L3-02 + (L4-03 or L3-04 or L1-06)`    | 비용자산화 조작. §8(6) 셋째다리에 직무분리 `L1-06` 추가.                                                             |
+| `approval_bypass_high`          | approval_control    | `bypass + (L4-03 or L2-02 or L2-03)`           | 승인우회 + 고액/중복(§8(6) corroborant 확장). 구 `L3-11`/`L3-04+L3-02`/`L3-06+L3-02` 게이트 폐기.                    |
 
 미구현 HIGH 자격 scheme은 다음과 같이 별도 관리한다.
 
-| scheme | 상태 |
-|--------|------|
-| 가공거래처(페이퍼·차명회사) | 거래처/vendor master 전용 룰 부재. HIGH 자격 탐지갭. |
-| 재고 과대평가(조작형) | 재고 수량, 단가, NRV, 감모 측정 룰 부재. HIGH 자격 탐지갭. |
-| topside/연결조정 전표 | 연결/통합조정 전표가 현재 PHASE1 입력에 들어오는지 데이터 단위 확인 필요. HIGH 자격이나 미구현. |
+| scheme                      | 상태                                                                                                                                               |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 가공거래처(페이퍼·차명회사) | **GL-only 범위 외** — 거래처 마스터 비보유, PHASE1-1 primary 룰 신설 안 함([CONSTRAINTS.md](../spec/CONSTRAINTS.md)). HIGH 등급 유지.              |
+| 재고 과대평가(조작형)       | **GL-only 범위 외** — 재고 보조원장(수량·단가·NRV) 비보유, 룰 신설 안 함([CONSTRAINTS.md](../spec/CONSTRAINTS.md) §재고). HIGH 등급 유지.          |
+| topside/연결조정 전표       | **GL-only 범위 외** — 연결 산출물(eliminations) PHASE1 입력 밖, 룰 신설 안 함([CONSTRAINTS.md](../spec/CONSTRAINTS.md) §연결조정). HIGH 등급 유지. |
 
 ## 현재 MEDIUM trigger
 
-| trigger | topic | 조건 | 해석 |
-|---------|-------|------|------|
-| `fictitious_entry_medium` | revenue_statistical | `L4-01 + L3-04` 또는 `L4-03 + L4-06 + L3-02` | 가공전표 약한 조합. |
-| `embezzlement_concealment_medium` | duplicate_outflow | `L2-01 + (L1-04 or L1-05)` | 승인한도 직하 분할과 승인통제 맥락. |
-| `approval_bypass_medium` | approval_control | `L1-09 + L3-02`, approval bypass + `L3-02`/`L3-06`/`L3-05`, 또는 `L3-12 + (L1-05 or L1-07)` | 승인 추적성/우회와 약한 맥락. |
-| `batch_combo` | revenue_statistical | `L4-06` combo 발화 | 배치성 전표 보강. |
-| `work_scope_combo` | approval_control | `L3-12` combo 발화 | 업무범위 집중 보강. |
-| `duplicate_reference_match` | duplicate_outflow | `L2-02` label `reference_match` | 강한 중복지급 후보. |
+| trigger                           | topic               | 조건(코드 실제)                                 | 해석                                                                                |
+| --------------------------------- | ------------------- | ----------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `fictitious_entry_medium`         | revenue_statistical | `(L4-01 or L4-03) + L3-02` (2차정황 없음)       | 약화형 가공전표(HIGH-1 약화, §4b-1).                                                |
+| `embezzlement_concealment_medium` | duplicate_outflow   | `L2-01 + (L1-05 or L1-06 or L1-07 or L1-07-02)` | 한도직하 분할(§4a-2). §8(7) 한도초과 `L1-04` 제외.                                  |
+| `suspense_concealment_medium`     | duplicate_outflow   | `L3-09 + outflow` (고액 없음)                   | 약화형 가수금(HIGH-3 약화, §4b-2).                                                  |
+| `related_party_reversal_medium`   | duplicate_outflow   | `L2-05 + L3-03`                                 | 관계사 역분개(§4a-4, §8(4) HIGH-7 MEDIUM 이관). host=duplicate_outflow(L2-05 seed). |
+| `expense_capitalization_medium`   | account_logic       | `L2-04 + L3-02` (셋째다리 없음)                 | 약화형 비용자산화(HIGH-9 약화, §4b-3).                                              |
+| `rare_account_bypass_medium`      | account_logic       | `L4-04 + bypass`                                | 희소계정쌍+승인우회(§4a-1, §8(7) bypass 전체).                                      |
 
-`HIGH_COMBO_GROUNDING.md`의 독립 MEDIUM scheme 3개는 다음과 같이 다룬다.
+> 폐기(§8(5), LOW 강등): `batch_combo`·`work_scope_combo`·`duplicate_reference_match`·`approval_bypass_medium`. 근거 없어 MEDIUM에서 제거됐고 코드에도 없다.
 
-| scheme | 현재 상태 |
-|--------|-----------|
-| 희소계정쌍 + 승인생략 | 독립 HIGH floor 없음. 다른 정황과 겹칠 때 HIGH-1 2차정황으로 흡수된다. |
-| 한도직하 분할 + 기말 | 독립 floor 없음. 현재 구현의 `embezzlement_concealment_medium`은 `L2-01 + (L1-04 or L1-05)` 약화형이다. |
-| split-invoice | 전용 룰 없음. L2-01 한도직하와 구분되는 거래레벨 행동탐지 gap이다. |
+`HIGH_COMBO_GROUNDING.md`의 독립 MEDIUM scheme(§4a)은 다음과 같이 코드에 반영돼 있다.
+
+| scheme                | 현재 상태                                                                                                                                        |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 희소계정쌍 + 승인우회 | `rare_account_bypass_medium` = `L4-04 & bypass`(§8(7) bypass 전체). 독립 MEDIUM이며 HIGH-1 2차정황으로 흡수되지 않는다(HIGH-1 풀에 bypass 없음). |
+| 한도직하 분할         | `embezzlement_concealment_medium` = `L2-01 & (L1-05\|L1-06\|L1-07\|L1-07-02)`(§8(7) 한도초과 L1-04 제외). 구 "+기말" 라벨은 근거 없어 삭제.      |
+| 관계사역분개          | `related_party_reversal_medium` = `L2-05 & L3-03`(§8(4) HIGH-7 MEDIUM 이관).                                                                     |
+| split-invoice         | 전용 룰 없음. L2-01 한도직하와 구분되는 거래레벨 행동탐지 gap(미구현).                                                                           |
 
 ## LOW와 CONTEXT 발화
 

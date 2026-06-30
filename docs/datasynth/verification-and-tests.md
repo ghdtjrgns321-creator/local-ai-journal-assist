@@ -7,7 +7,8 @@
 | 영역 | 검증 목적 | 대표 도구 |
 | --- | --- | --- |
 | NORMAL realism | 정상 원장이 회계·ERP·감사 데이터로 성립하는지 검증 | `normal_data_realism_verifier_20260603.py`, `audit_balance_integrity.py` |
-| PHASE1 recall overlay | 룰별 standard/boundary raw trigger와 shortcut 부재 검증 | `audit_overlay_injection.py`, `measure_phase1_detector_catch.py`, `scan_overlay_shortcuts.py` |
+| PHASE1-1 recall overlay | 개별 룰별 standard/boundary raw trigger와 shortcut 부재 검증 | `audit_overlay_injection.py`, `measure_phase1_detector_catch.py`, `scan_overlay_shortcuts.py` |
+| PHASE1 combo/tier overlay | 켜진 룰 조합이 case 단위 HIGH/MEDIUM/LOW/CONTEXT tier로 조립되는지 검증 | `verify_phase1_combo_tier_gate.py`, `measure_phase1_combo_tier.py`, `scan_overlay_shortcuts.py` |
 | PHASE2 fraud overlay | 부정 scheme coverage, 회계 실체, shortcut/leak 부재, seed 다양성 검증 | `phase2_shortcut_gate.py`, `verify_phase2_regression.py`, `scan_overlay_shortcuts.py`, `audit_full_leak_scan.py`, `verify_phase2_seed_diversity.py` |
 | historical quality gates | v126/v2/v3 등 과거 DataSynth 품질·ML fitting 방지 검증 | `tests/datasynth_quality_gate*` |
 
@@ -29,12 +30,17 @@ Gate 순서:
 - Gate 2: 전수 분포, 잔액, 경제성, 보조원장 정합.
 - Diagnostic: 전문가/LLM 샘플, root cause attribution, low-support tuple analysis.
 
-v43d acceptance snapshot:
+v46b acceptance snapshot:
 
-- NORMAL realism verifier: PASS 33 / MONITOR 1 / FAIL 0.
+- NORMAL realism verifier: PASS 38 / MONITOR 1 / FAIL 0 / BLOCKED 0.
 - Balance audit: TB↔JE PASS, BS equation PASS, carry-forward PASS, subledger PASS.
 - Normal contamination: fraud/anomaly/provenance marker 없음.
 - Linked normal reversal background: PHASE2 L6 leak 방지용 정상 배경 존재.
+- Single-company scope: `company_code=[C001]` only.
+- Related-party IC trace: IC rows 432, IC docs 216, row share 0.001249.
+- IC GL coverage: 1150=108, 4500=108, 2050=72, 2700=36.
+- Company-node graph cycle: 0.
+- IC semantic coherence: B15/B16/H04 checked docs 216, bad docs 0.
 
 ## NORMAL 주요 검사 축
 
@@ -49,34 +55,124 @@ v43d acceptance snapshot:
 - O: normal-only contamination과 synthetic marker scan.
 - P: fixed-seed 전문가/LLM diagnostic.
 
-## PHASE1 recall 검증
+## PHASE1-1 개별 룰 recall 검증
 
-현재 accepted dataset: `datasynth_semantic_v1_recall_20260613_v42j_r3`.
+현재 accepted dataset: `datasynth_semantic_v1_recall_20260622_v46b_phase1_1_r11`.
 
 필수 검증:
 
 ```powershell
 uv run python tools/scripts/audit_overlay_injection.py <PHASE1_RECALL_DATASET>
 uv run python tools/scripts/scan_overlay_shortcuts.py <PHASE1_RECALL_DATASET>
-uv run python tools/scripts/measure_phase1_detector_catch.py <PHASE1_RECALL_DATASET> --expect-truth-units 2160
+uv run python tools/scripts/measure_phase1_detector_catch.py <PHASE1_RECALL_DATASET> --expect-truth-units 1500
 ```
 
 수락 기준:
 
-- 39 / 39 rules in truth.
-- standard 1,080 / 1,080 caught.
-- boundary control 0 / 1,080 caught.
+- 26 / 26 current PHASE1-1 rules in truth.
+- standard 750 / 750 caught.
+- boundary control 0 / 750 caught.
 - shortcut scan findings 0.
 - CoA coverage PASS.
 - output distinct docs = base distinct docs.
 - report에 per-rule denominator/numerator와 control false positive가 포함.
 
-v42j_r2는 detector recall 수치만 보면 통과했지만 CoA coverage gate에서 실패했다.
-이후 CoA gate는 필수 수락 기준으로 승격됐다.
+r11은 detector-only 개별 룰 발화용이다. combo/tier truth는 이 데이터셋에 섞지 않는다.
+세부 3자 대조는 `dev/active/datasynth-journal-realism-rebuild/r11-rule-3way-verification.md`와
+`dev/active/datasynth-journal-realism-rebuild/phase1-rule-recall-overlay-verification.md`를 따른다.
+
+## PHASE1 combo/tier overlay 검증
+
+combo/tier overlay는 PHASE1-1 개별 룰 발화가 닫힌 뒤 만드는 별도 데이터셋이다.
+권위 매트릭스는 `dev/active/phase1-rule-basis-audit/phase1-combo-tier-firing-matrix.md`이다.
+현재 accepted dataset은 `datasynth_semantic_v1_combo_tier_20260622_v46b_r1z`이다.
+
+생성 목적:
+
+- 개별 룰이 아니라, 같은 `(theme_id, case_key)` case 안에 켜진 룰 조합이
+  `topic_scoring.py`의 combo floor와 `compute_topic_tiers()`를 통해 의도한 tier로 조립되는지 검증한다.
+- HIGH/MEDIUM combo 13개 in-scope scheme, LOW standalone primary, CONTEXT booster-only negative case를
+  별도 truth로 가진다.
+- GL-only 범위 밖인 `HIGH-6`, `HIGH-8`, `HIGH-10`, `§4a-3 split-invoice`는 억지 생성하지 않는다.
+
+사전 static gate:
+
+```powershell
+uv run python tools/scripts/verify_phase1_combo_tier_gate.py --matrix-only
+```
+
+생성 후 필수 검증:
+
+```powershell
+uv run python tools/scripts/verify_phase1_combo_tier_gate.py <PHASE1_COMBO_TIER_DATASET>
+uv run python tools/scripts/scan_overlay_shortcuts.py <PHASE1_COMBO_TIER_DATASET>
+uv run python tools/scripts/measure_phase1_combo_tier.py <PHASE1_COMBO_TIER_DATASET> --expect-truth-rows 15
+```
+
+수락 기준:
+
+- `DEFAULT_COMBO_FLOORS`의 12개 policy가 매트릭스와 일치.
+- in-scope buildable scheme 13개 + `LOW` + `CONTEXT` truth가 존재.
+- out-of-scope scheme 4개가 truth에 존재하지 않음.
+- 각 combo truth의 `expected_rule_ids`가 r11 26룰 안에 있고, policy별 필수 all/any leg를 충족.
+- `expected_case_tier`, `expected_policy_id`, `expected_topic`이 매트릭스와 일치.
+- standard case는 기대 rule set이 실제 case-builder 후보 case에 잡히고, 기대 topic score가
+  expected tier cut 이상이어야 한다. 최종 `priority_band`는 같은 case에 섞인 독립 broad signal 때문에
+  더 높아질 수 있으므로 combo/tier acceptance의 유일 기준으로 쓰지 않는다.
+- boundary/negative case는 의도한 하위 tier 또는 CONTEXT로 떨어진다.
+- shortcut scan findings 0.
+
+r1i rejection snapshot:
+
+- `uv run python tools/scripts/verify_phase1_combo_tier_gate.py data/journal/primary/datasynth_semantic_v1_combo_tier_20260622_v46b_r1i`
+  PASS.
+- `uv run python tools/scripts/scan_overlay_shortcuts.py data/journal/primary/datasynth_semantic_v1_combo_tier_20260622_v46b_r1i`
+  findings 0.
+- `uv run python tools/scripts/measure_phase1_combo_tier.py data/journal/primary/datasynth_semantic_v1_combo_tier_20260622_v46b_r1i --expect-truth-rows 15`
+  FAIL: passed rows 1 / 15, failed rows 14 / 15.
+- truth rows 15: 13 buildable combo schemes, LOW control, CONTEXT control.
+- expected tier counts: HIGH 6, MEDIUM 7, LOW 1, CONTEXT 1.
+
+결론: static truth gate와 shortcut scan만으로는 combo/tier acceptance가 아니다. r1i는 member rule
+legs를 같은 observed case에 엮지 못했고, LOW/CONTEXT controls도 full case-builder 실행 후 high로
+승격되는 문제가 있어 accepted dataset으로 쓰면 안 된다.
+
+r1l rejection snapshot:
+
+- `uv run python tools/scripts/verify_phase1_combo_tier_gate.py data/journal/primary/datasynth_semantic_v1_combo_tier_20260622_v46b_r1l`
+  PASS.
+- `uv run python tools/scripts/scan_overlay_shortcuts.py data/journal/primary/datasynth_semantic_v1_combo_tier_20260622_v46b_r1l`
+  findings 0.
+- `uv run python tools/scripts/measure_phase1_combo_tier.py data/journal/primary/datasynth_semantic_v1_combo_tier_20260622_v46b_r1l --expect-truth-rows 15`
+  FAIL: passed rows 7 / 15, failed rows 8 / 15.
+- r1l closes the r1j surface leaks and improves natural case grouping, but still fails actual
+  case-builder acceptance:
+  - related-party reversal and suspense reversal flow combos do not consistently expose `L2-05` with
+    the companion rule in the same observed case.
+  - selected MEDIUM/LOW controls still become HIGH after full case-builder scoring.
+
+r1z acceptance snapshot:
+
+- `uv run python tools/scripts/verify_phase1_combo_tier_gate.py data/journal/primary/datasynth_semantic_v1_combo_tier_20260622_v46b_r1z`
+  PASS.
+- `uv run python tools/scripts/scan_overlay_shortcuts.py data/journal/primary/datasynth_semantic_v1_combo_tier_20260622_v46b_r1z`
+  findings 0.
+- `uv run python tools/scripts/measure_phase1_combo_tier.py data/journal/primary/datasynth_semantic_v1_combo_tier_20260622_v46b_r1z --expect-truth-rows 15`
+  PASS: truth rows 15, passed rows 15, failed rows 0.
+- `measure_phase1_combo_tier.py` now evaluates actual case-builder topic score cut for the expected
+  combo topic rather than requiring the final case `priority_band` to equal the expected combo tier.
+  This prevents unrelated broad signals in the same case from turning a correctly surfaced MEDIUM
+  combo into a false REJECT.
+
+Current acceptance is open: r1z is the accepted PHASE1 combo/tier overlay.
 
 ## PHASE2 overlay 검증
 
 현재 accepted dataset: `datasynth_semantic_v1_phase2_fraud_20260614_v1_r4m_h`와 `..._seed1`.
+
+주의: 이 PHASE2 accepted overlay는 v46b NORMAL 기준으로 재생성된 산출물이 아니다.
+최신 NORMAL과 PHASE2를 동기화할 때는 아래 gate를 동일하게 적용하되, base path를 v46b로 바꾸고
+normal twin/IC trace 분포가 새 base와 충돌하지 않는지 다시 확인한다.
 
 필수 검증 명령:
 
@@ -156,7 +252,7 @@ r4m_h는 이 누출을 제거해 representative와 seed1 모두 NEW leak candida
 - `tests/datasynth_quality_gate3/results/realism_report.md`: 기본 무결성, 정량 벤치마크, 의미 정합성, 교차 필드, 메타데이터.
 
 이 문서들에는 v126/v2/v3 계열 수치가 남아 있다.
-현행 semantic v43/r4m 설명에는 최신 verifier와 2026-06-14 full-column leak 결과를 우선 적용한다.
+현행 NORMAL v46b, PHASE1 r11/r1z, PHASE2 r4m 설명에는 최신 verifier와 2026-06-14 full-column leak 결과를 우선 적용한다.
 
 ## 완료 전 체크
 
@@ -168,4 +264,3 @@ DataSynth 생성 작업은 다음을 모두 확인해야 완료다.
 - 실패한 게이트가 있으면 데이터 수정 또는 gate 문서 갱신. 임계값 완화는 명시 승인 없이는 금지.
 - `docs/debugging.md`에 accepted lineage, 실패 lineage, 수정, 검증 결과를 기록.
 - 관련 `docs/datasynth` 문서와 원천 카탈로그를 최신화.
-

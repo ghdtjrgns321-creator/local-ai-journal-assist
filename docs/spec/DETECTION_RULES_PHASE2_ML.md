@@ -1,6 +1,13 @@
 # Detection Rules — Phase 2: ML / DL 보조 분석
 
-> 2026-06-17 [DETECTION_RULES.md](DETECTION_RULES.md)에서 분리. 본 문서는 PHASE2(VAE companion surface 등 ML/DL 보조 분석) 영역이다. PHASE1-1 룰(전표 행 단위)·PHASE1-2 family([DETECTION_RULES_PHASE1-2.MD](DETECTION_RULES_PHASE1-2.MD))와 비병합 독립 surface(3-surface 불변식).
+> 2026-06-17 [DETECTION_RULES.md](DETECTION_RULES.md)에서 분리. 본 문서는 PHASE2(VAE companion surface 등 ML/DL 보조 분석) 영역이다. PHASE1-1 룰(전표 행 단위)·PHASE1-2 분석적 검토([DETECTION_RULES_PHASE1-2.MD](DETECTION_RULES_PHASE1-2.MD))와 비병합 독립 surface(3-surface 불변식).
+
+> **⚠️ 범위 재정의 (2026-06-21~30 grill)**: PHASE2 MVP = **VAE/IF 비지도 anomaly ranking(전표 단위) 단독**으로 한정한다(SoT: [CONSTRAINTS.md PHASE1/PHASE2 경계 원칙](CONSTRAINTS.md)). 과거 "active default"였던 stateless rule-style family 4종은 **모두 PHASE2가 아니다** — 결정론 룰이라 PHASE2(학습 모델)에 두지 않고 행방을 아래로 정리한다:
+> - **relational(R01·R05·R07)** → PHASE1-2 **자기 큐 + 배지**(거래처 단위 "원장 첫 등장·희소" 전수 목록 + 전표 배지, 약신호). R02/R04/R06 드롭. [DETECTION_RULES_PHASE1-2.MD](DETECTION_RULES_PHASE1-2.MD).
+> - **intercompany(IC01~03)** → **완전 삭제**(단일 법인 확정, 회사 가로지름 → 영구 불가). L3-03 관계사 꼬리표만 잔존. [CONSTRAINTS.md §단일 법인 분석으로 한정](CONSTRAINTS.md).
+> - **duplicate** → 중복지급은 **PHASE1-1 `L2-03` 소관**(매칭 확장으로 시차중복 흡수), fuzzy·split **드롭**. PHASE1-2 신설 없음.
+> - **timeseries** → **PHASE1-2 자기 큐로 이동**(당기 내 거래 집중, D01/D02 전기비교 보완). 구 "PHASE2 결산 lane" lock은 supersede([PHASE2_TIMESERIES_ROLE_LOCK.md](PHASE2_TIMESERIES_ROLE_LOCK.md)). 실패한 TS01/TS02 코드는 통계만 재활용해 PHASE1-2에서 신규 설계.
+> - 아래 §3.3 A3 Family Matrix의 rule-style "active default" 표기는 위 재정의로 **supersede**된다(역사 보존). **현행 PHASE2 운영 family = unsupervised(VAE/IF) 단독.**
 
 ---
 
@@ -144,19 +151,21 @@ Phase 2는 하나의 모델이 아니라 여러 family를 병렬로 비교하고
 
 #### A3 Family Matrix (2026-05-17)
 
-| Family | 동작 여부 | 학습 필요 여부 | Metric | `schema_hash` |
-|---|---|---|---|---|
-| `unsupervised` | active default | VAE/IF 학습 필요 | `unsupervised_selection_score` | string |
-| `timeseries` | active default | stateless rule + calibration metadata | `burst_detection_rate` | null |
-| `relational` | active default | stateless rule + calibration metadata | `new_counterparty_precision` | null |
-| `duplicate` | active default | stateless rule + calibration metadata | `fuzzy_match_f1` | null |
-| `intercompany` | active default | stateless rule + calibration metadata | `ic_match_completeness` | null |
-| `supervised` | dormant | label gate 통과 시 학습 | `f1_macro` | string |
-| `transformer` | dormant | label gate 통과 시 학습 | `f1_macro` | string |
-| `sequence` | dormant, D047 guard 적용 | D047 통과 후 학습 | `f1_macro` | string |
-| `stacking` | dormant | base family 결과 필요 | `f1_macro` | string 또는 null |
+| Family         | 동작 여부                | 학습 필요 여부                        | Metric                         | `schema_hash`    |
+| -------------- | ------------------------ | ------------------------------------- | ------------------------------ | ---------------- |
+| `unsupervised` | active default           | VAE/IF 학습 필요                      | `unsupervised_selection_score` | string           |
+| `timeseries`   | active default           | stateless rule + calibration metadata | `burst_detection_rate`         | null             |
+| `relational`   | active default           | stateless rule + calibration metadata | `new_counterparty_precision`   | null             |
+| `duplicate`    | active default           | stateless rule + calibration metadata | `fuzzy_match_f1`               | null             |
+| `intercompany` | active default           | stateless rule + calibration metadata | `ic_match_completeness`        | null             |
+| `supervised`   | dormant                  | label gate 통과 시 학습               | `f1_macro`                     | string           |
+| `transformer`  | dormant                  | label gate 통과 시 학습               | `f1_macro`                     | string           |
+| `sequence`     | dormant, D047 guard 적용 | D047 통과 후 학습                     | `f1_macro`                     | string           |
+| `stacking`     | dormant                  | base family 결과 필요                 | `f1_macro`                     | string 또는 null |
 
 A3 기준 기본 운영 트랙은 `unsupervised`, `timeseries`, `relational`, `duplicate`, `intercompany` 5개다. `supervised`, `transformer`, `sequence`, `stacking`은 registry에는 남아 있지만 기본 실행 family에는 포함하지 않는다.
+
+> **⚠️ supersede (2026-06-21~30, 문서 상단 범위 재정의)**: 위 표·문장의 `timeseries`·`relational`·`duplicate`·`intercompany` "active default"는 **현행 운영이 아니다**(역사 보존). **현행 PHASE2 운영 family = `unsupervised`(VAE/IF) 단독.** `timeseries`→PHASE1-2 자기 큐(당기 내 집중), `relational`→PHASE1-2 자기 큐+배지, `intercompany`→완전 삭제(단일 법인), `duplicate`→PHASE1-1 L2-03 소관. 상세는 본 문서 상단 "범위 재정의" 배너.
 
 Rule-style family는 `model_bundle.pt`를 생성하지 않는다. 승격 시 `{model_dir}/phase2_<family>/vNNNN/calibration_metadata.json`에 preset, sub-detector, metric, flagged count, `schema_hash: null`을 저장한다. 이 score는 truth recall이 아니라 selection/provenance용 `rule_proxy_score` 해석이다.
 
