@@ -10,7 +10,6 @@ import pytest
 
 from src.detection.base import DetectionResult, RuleFlag
 from src.detection.phase1_case_builder import (
-    OFF_TIME_SET,
     _build_macro_context_index,
     _macro_only_evidences,
     _priority_band,
@@ -21,7 +20,11 @@ from src.detection.phase1_case_builder import (
     load_phase1_case_result,
     save_phase1_case_result,
 )
-from src.detection.rule_scoring import RULE_SCORING_REGISTRY, normalize_rule_evidence
+from src.detection.rule_scoring import (
+    OFF_TIME_SET,
+    RULE_SCORING_REGISTRY,
+    normalize_rule_evidence,
+)
 from src.export.phase1_case_view import build_phase1_topic_top_n
 
 
@@ -542,7 +545,7 @@ def test_l310_alone_does_not_seed_case_queue():
 
 @pytest.mark.parametrize(
     "rule_id",
-    ("L3-05", "L3-06", "L3-08", "L3-10", "L3-12", "L4-05", "L4-06"),
+    ("L3-05", "L3-06", "L3-10", "L3-12", "L4-05", "L4-06"),
 )
 def test_metadata_standalone_false_rules_do_not_seed_cases(rule_id: str):
     result = _build_single_rule_case_result(rule_id)
@@ -1243,43 +1246,6 @@ def test_case_scores_expose_integrity_and_intercompany_axes():
     assert intercompany_case.data_integrity_score == 0
 
 
-def test_l308_alone_does_not_seed_case_queue():
-    df = pd.DataFrame(
-        {
-            "document_id": ["DOC-1"],
-            "posting_date": pd.to_datetime(["2026-04-30"]),
-            "created_by": ["kim"],
-            "business_process": ["R2R"],
-            "gl_account": ["410000"],
-            "debit_amount": [10_000_000.0],
-            "credit_amount": [0.0],
-            "company_code": ["kr01"],
-            "document_type": ["SA"],
-        }
-    )
-    details = pd.DataFrame({"L3-08": [0.55]}, index=df.index)
-    detection_result = DetectionResult(
-        track_name="layer_c",
-        flagged_indices=[0],
-        scores=details.max(axis=1),
-        rule_flags=[RuleFlag("L3-08", "MissingDescription", 1, 1, len(df))],
-        details=details,
-        metadata={},
-    )
-
-    result = build_phase1_case_result(
-        df,
-        [detection_result],
-        company_id="kr01",
-        batch_id="batch42",
-        dataset_id=None,
-        phase1_case_config={"phase1_case": {"top_n_cases": 50, "top_n_per_theme": 10}},
-        generated_at=datetime(2026, 4, 22, 3, 15, 22, tzinfo=UTC),
-    )
-
-    assert result.cases == []
-
-
 def test_fraud_combo_floor_is_written_to_case_topic_breakdown():
     df = pd.DataFrame(
         {
@@ -1295,7 +1261,7 @@ def test_fraud_combo_floor_is_written_to_case_topic_breakdown():
         }
     )
     details = pd.DataFrame(
-        {"L3-04": [0.60], "L4-03": [0.70], "L3-08": [0.60]},
+        {"L3-04": [0.60], "L4-03": [0.70]},
         index=df.index,
     )
     detection_result = DetectionResult(
@@ -1305,7 +1271,6 @@ def test_fraud_combo_floor_is_written_to_case_topic_breakdown():
         rule_flags=[
             RuleFlag("L3-04", "PeriodEnd", 3, 1, len(df)),
             RuleFlag("L4-03", "HighAmount", 3, 1, len(df)),
-            RuleFlag("L3-08", "MissingDescription", 1, 1, len(df)),
         ],
         details=details,
         metadata={"row_annotations": {"L4-03": {0: {"bucket": "high_zscore"}}}},

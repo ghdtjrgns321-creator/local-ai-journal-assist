@@ -55,7 +55,6 @@ def test_overlay_helper_does_not_touch_primary_rrf():
         priority_score=0.5,
         base_priority_score=0.5,
         topside_bonus=0.0,
-        batch_combo_bonus=0.0,
         priority_adjustment_reasons=[],
         priority_band="medium",
         amount_score=0.5,

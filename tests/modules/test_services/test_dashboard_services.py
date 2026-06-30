@@ -33,7 +33,6 @@ from src.services.session_service import (
 class _FakeSettings:
     enable_variance_detection: bool = True
     enable_relational_detection: bool = True
-    enable_graph_detection: bool = True
     enable_nlp_detection: bool = True
     enable_access_audit_detection: bool = True
     enable_evidence_detection: bool = True
@@ -426,7 +425,6 @@ def test_make_phase_settings_enables_ml_only_for_phase2():
     assert phase2.enable_ml_detection is True
     assert phase1.enable_variance_detection is True
     assert phase2.enable_variance_detection is True
-    assert phase1.enable_graph_detection is False
     assert phase1.enable_nlp_detection is False
     assert phase2.enable_nlp_detection is False
 

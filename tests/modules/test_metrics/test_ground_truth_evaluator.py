@@ -64,18 +64,22 @@ class TestGroundTruthEvaluator:
         try:
             labels_dir.mkdir(parents=True)
             (data_dir / "journal_entries.csv").write_text("", encoding="utf-8")
-            pd.DataFrame({
-                "document_id": ["D1", "D2", "D3"],
-                "rule_id": ["L2-01", "L2-01", "L2-01"],
-                "expected_hit": [True, "true", False],
-            }).to_csv(labels_dir / "rule_truth_L2_01.csv", index=False)
+            pd.DataFrame(
+                {
+                    "document_id": ["D1", "D2", "D3"],
+                    "rule_id": ["L2-01", "L2-01", "L2-01"],
+                    "expected_hit": [True, "true", False],
+                }
+            ).to_csv(labels_dir / "rule_truth_L2_01.csv", index=False)
 
             df = pd.DataFrame({"document_id": ["D1", "D2", "D3"]})
             df.attrs[SOURCE_PATH_ATTR] = str(data_dir / "journal_entries.csv")
-            labels = pd.DataFrame({
-                "document_id": ["D3"],
-                "anomaly_type": ["JustBelowThreshold"],
-            })
+            labels = pd.DataFrame(
+                {
+                    "document_id": ["D3"],
+                    "anomaly_type": ["JustBelowThreshold"],
+                }
+            )
 
             assert _label_doc_set_for_rule("L2-01", df, labels) == {"D1", "D2"}
         finally:
@@ -143,9 +147,7 @@ class TestGroundTruthEvaluator:
 
     def test_per_rule_label_analysis_marks_missing_rule_as_skipped(self):
         df = pd.DataFrame({"document_id": ["D1"]})
-        labels = pd.DataFrame(
-            {"document_id": ["D1"], "anomaly_type": ["UnbalancedEntry"]}
-        )
+        labels = pd.DataFrame({"document_id": ["D1"], "anomaly_type": ["UnbalancedEntry"]})
 
         analysis = per_rule_label_analysis(df, {}, labels)
         a01 = next(item for item in analysis if item["rule_id"] == "L1-01")
@@ -175,10 +177,12 @@ class TestGroundTruthEvaluator:
                 "document_id": ["D1", "D3"],
                 "anomaly_type": ["RevenueManipulation", "RevenueManipulation"],
                 "metadata_json": [
-                    json.dumps({
-                        "revenue_subtype": "high_value_revenue_outlier",
-                        "is_l401_direct_truth": True,
-                    }),
+                    json.dumps(
+                        {
+                            "revenue_subtype": "high_value_revenue_outlier",
+                            "is_l401_direct_truth": True,
+                        }
+                    ),
                     json.dumps({"revenue_subtype": "period_end_push"}),
                 ],
             }
@@ -400,7 +404,7 @@ class TestGroundTruthEvaluator:
                         "priority_rows": 2,
                         "control_bypass_rows": 1,
                     }
-                }
+                },
             },
         )
         labels = pd.DataFrame({"document_id": [], "anomaly_type": []})
@@ -441,9 +445,7 @@ class TestGroundTruthEvaluator:
                 }
             },
         )
-        labels = pd.DataFrame(
-            {"document_id": ["D3"], "anomaly_type": ["RushedPeriodEnd"]}
-        )
+        labels = pd.DataFrame({"document_id": ["D3"], "anomaly_type": ["RushedPeriodEnd"]})
 
         analysis = per_rule_label_analysis(df, {"layer_c": result}, labels)
         l304 = next(item for item in analysis if item["rule_id"] == "L3-04")
@@ -456,7 +458,7 @@ class TestGroundTruthEvaluator:
         assert l304["breakdown"]["priority_rows"] == 2
         assert l304["review_queue_docs"] == 2
 
-    def test_l3_09_keeps_suspense_aging_bands(self):
+    def test_l3_09_binary_flagged_docs(self):
         df = pd.DataFrame(
             {
                 "document_id": ["D1", "D2", "D3", "D4"],
@@ -484,21 +486,16 @@ class TestGroundTruthEvaluator:
                 }
             },
         )
-        labels = pd.DataFrame(
-            {"document_id": ["D3"], "anomaly_type": ["SuspenseAccountAbuse"]}
-        )
+        labels = pd.DataFrame({"document_id": ["D3"], "anomaly_type": ["SuspenseAccountAbuse"]})
 
         analysis = per_rule_label_analysis(df, {"layer_c": result}, labels)
         l309 = next(item for item in analysis if item["rule_id"] == "L3-09")
 
         assert l309["status"] == "population"
-        assert l309["score_bands"] == {
-            "suspense_aging_review_docs": 1,
-            "suspense_aging_priority_docs": 1,
-            "suspense_aging_high_docs": 1,
-        }
+        # L3-09 binary 통일(2026-06-20): aging 등급 밴드 폐기 → flagged_docs 단일 집계.
+        assert l309["score_bands"] == {"flagged_docs": 3}
         assert l309["breakdown"]["open_amount_bucket_counts"]["open_amount_high"] == 1
-        assert l309["review_queue_docs"] == 2
+        assert l309["review_queue_docs"] == 3
 
     def test_l2_03_keeps_binary_scores_and_review_queue(self):
         df = pd.DataFrame(
@@ -568,9 +565,7 @@ class TestGroundTruthEvaluator:
                 }
             },
         )
-        labels = pd.DataFrame(
-            {"document_id": ["D3"], "anomaly_type": ["JustBelowThreshold"]}
-        )
+        labels = pd.DataFrame({"document_id": ["D3"], "anomaly_type": ["JustBelowThreshold"]})
 
         analysis = per_rule_label_analysis(df, {"layer_b": result}, labels)
         l201 = next(item for item in analysis if item["rule_id"] == "L2-01")
@@ -601,9 +596,7 @@ class TestGroundTruthEvaluator:
                 }
             },
         )
-        labels = pd.DataFrame(
-            {"document_id": ["D1"], "anomaly_type": ["DuplicatePayment"]}
-        )
+        labels = pd.DataFrame({"document_id": ["D1"], "anomaly_type": ["DuplicatePayment"]})
 
         analysis = per_rule_label_analysis(df, {"layer_b": result}, labels)
         l202 = next(item for item in analysis if item["rule_id"] == "L2-02")
@@ -630,9 +623,7 @@ class TestGroundTruthEvaluator:
             "layer_b",
             pd.DataFrame({"L2-03": [1.0, 1.0, 1.0, 0.0]}, index=df.index),
         )
-        labels = pd.DataFrame(
-            {"document_id": ["D1"], "anomaly_type": ["DuplicateEntry"]}
-        )
+        labels = pd.DataFrame({"document_id": ["D1"], "anomaly_type": ["DuplicateEntry"]})
 
         analysis = per_rule_label_analysis(df, {"layer_b": result}, labels)
         l203 = next(item for item in analysis if item["rule_id"] == "L2-03")
@@ -664,11 +655,7 @@ class TestGroundTruthEvaluator:
                 "row_annotations": {
                     "L2-05": {
                         0: {"interpretation_code": "high_confidence_reversal"},
-                        1: {
-                            "interpretation_code": (
-                                "candidate_reversal_clearing_reclass"
-                            )
-                        },
+                        1: {"interpretation_code": ("candidate_reversal_clearing_reclass")},
                     }
                 },
             },
@@ -697,7 +684,7 @@ class TestGroundTruthEvaluator:
         )
         assert "candidate clearing/reclass" in l205["reason"]
 
-    def test_l3_03_keeps_population_and_ic_graph_overlap_bands(self):
+    def test_l3_03_keeps_population_and_ic_overlap_bands(self):
         df = pd.DataFrame(
             {
                 "document_id": ["D1", "D2", "D3", "D4"],
@@ -720,10 +707,6 @@ class TestGroundTruthEvaluator:
             "intercompany",
             pd.DataFrame({"IC01": [0.0, 0.8, 0.0, 0.0]}, index=df.index),
         )
-        graph = _make_result(
-            "graph",
-            pd.DataFrame({"GR01": [0.0, 0.0, 0.0, 0.8]}, index=df.index),
-        )
         labels = pd.DataFrame(
             {
                 "document_id": ["D4"],
@@ -733,7 +716,7 @@ class TestGroundTruthEvaluator:
 
         analysis = per_rule_label_analysis(
             df,
-            {"layer_b": layer_b, "intercompany": intercompany, "graph": graph},
+            {"layer_b": layer_b, "intercompany": intercompany},
             labels,
         )
         l303 = next(item for item in analysis if item["rule_id"] == "L3-03")
@@ -742,7 +725,6 @@ class TestGroundTruthEvaluator:
         assert l303["score_bands"] == {
             "ic_population_docs": 3,
             "ic_exception_overlap_docs": 1,
-            "graph_overlap_docs": 1,
         }
         assert l303["breakdown"]["ic_population_docs"] == 3
         assert l303["review_queue_docs"] == 3
@@ -780,7 +762,7 @@ class TestGroundTruthEvaluator:
         assert l306["breakdown"]["after_hours_rows"] == 2
         assert l306["review_queue_docs"] == 2
 
-    def test_l3_07_keeps_direction_and_gap_size_bands(self):
+    def test_l3_07_binary_flagged_docs(self):
         df = pd.DataFrame({"document_id": ["D1", "D2", "D3", "D4"]})
         result = _make_result(
             "layer_c",
@@ -809,57 +791,11 @@ class TestGroundTruthEvaluator:
         analysis = per_rule_label_analysis(df, {"layer_c": result}, labels)
         l307 = next(item for item in analysis if item["rule_id"] == "L3-07")
 
-        assert l307["score_bands"] == {
-            "late_posting_docs": 2,
-            "forward_date_gap_docs": 1,
-            "moderate_gap_docs": 1,
-            "large_gap_docs": 1,
-            "extreme_gap_docs": 1,
-        }
+        # L3-07 binary 통일(2026-06-20): direction/gap 등급 밴드 폐기 → flagged_docs 단일 집계.
+        assert l307["score_bands"] == {"flagged_docs": 3}
         assert l307["review_queue_docs"] == 3
 
-    def test_l3_08_keeps_description_quality_bands(self):
-        df = pd.DataFrame(
-            {
-                "document_id": ["D1", "D2", "D3", "D4"],
-                "description_quality": ["missing", "corrupted", "poor", "normal"],
-            }
-        )
-        result = _make_result(
-            "layer_c",
-            pd.DataFrame({"L3-08": [0.45, 0.55, 0.50, 0.0]}, index=df.index),
-            metadata={
-                "rule_breakdowns": {
-                    "L3-08": {
-                        "missing_rows": 1,
-                        "corrupted_rows": 1,
-                        "poor_legacy_rows": 1,
-                    }
-                }
-            },
-        )
-        labels = pd.DataFrame(
-            {
-                "document_id": ["D1", "D2"],
-                "anomaly_type": [
-                    "MissingOrCorruptedDescription",
-                    "MissingOrCorruptedDescription",
-                ],
-            }
-        )
-
-        analysis = per_rule_label_analysis(df, {"layer_c": result}, labels)
-        l308 = next(item for item in analysis if item["rule_id"] == "L3-08")
-
-        assert l308["score_bands"] == {
-            "missing_description_docs": 1,
-            "corrupted_description_docs": 1,
-            "poor_legacy_docs": 1,
-        }
-        assert l308["breakdown"]["poor_legacy_rows"] == 1
-        assert l308["review_queue_docs"] == 3
-
-    def test_l3_10_keeps_sensitive_account_signal_bands(self):
+    def test_l3_10_binary_flagged_band(self):
         df = pd.DataFrame(
             {
                 "document_id": ["D1", "D2", "D3", "D4"],
@@ -868,20 +804,12 @@ class TestGroundTruthEvaluator:
         )
         result = _make_result(
             "layer_b",
-            pd.DataFrame({"L3-10": [0.65, 0.35, 0.20, 0.0]}, index=df.index),
+            # Why: L3-10 binary — 민감계정 발화는 0/1, 3-tier 차등 폐기
+            pd.DataFrame({"L3-10": [1.0, 1.0, 1.0, 0.0]}, index=df.index),
             metadata={
                 "rule_breakdowns": {
                     "L3-10": {
-                        "priority_case_rows": 1,
-                        "raw_signal_rows": 1,
-                        "normal_control_candidate_rows": 1,
-                    }
-                },
-                "row_annotations": {
-                    "L3-10": {
-                        0: {"signal_category": "priority_case"},
-                        1: {"signal_category": "raw_signal"},
-                        2: {"signal_category": "normal_control_candidate"},
+                        "sensitive_account_rows": 3,
                     }
                 },
             },
@@ -891,13 +819,8 @@ class TestGroundTruthEvaluator:
         analysis = per_rule_label_analysis(df, {"layer_b": result}, labels)
         l310 = next(item for item in analysis if item["rule_id"] == "L3-10")
 
-        assert l310["score_bands"] == {
-            "raw_sensitive_touch_docs": 1,
-            "priority_case_docs": 1,
-            "normal_control_docs": 1,
-        }
-        assert l310["breakdown"]["raw_signal_rows"] == 1
-        assert l310["review_queue_docs"] == 1
+        assert l310["score_bands"] == {"flagged_docs": 3}
+        assert l310["review_queue_docs"] == 3
 
     def test_l2_04_keeps_immediate_and_review_bands(self):
         df = pd.DataFrame(
@@ -950,9 +873,7 @@ class TestGroundTruthEvaluator:
             "layer_b",
             pd.DataFrame({"L2-04": [0.80, 0.65, 0.65, 0.0]}, index=df.index),
         )
-        labels = pd.DataFrame(
-            {"document_id": ["D1"], "anomaly_type": ["ImproperCapitalization"]}
-        )
+        labels = pd.DataFrame({"document_id": ["D1"], "anomaly_type": ["ImproperCapitalization"]})
 
         analysis = per_rule_label_analysis(df, {"layer_b": result}, labels)
         l204 = next(item for item in analysis if item["rule_id"] == "L2-04")
@@ -1002,7 +923,7 @@ class TestGroundTruthEvaluator:
         assert l305["breakdown"]["weekday_holiday_docs"] == 1
         assert l305["review_queue_docs"] == 3
 
-    def test_l3_11_keeps_cutoff_review_bands(self):
+    def test_l3_11_binary_cutoff_review_band(self):
         df = pd.DataFrame(
             {
                 "document_id": ["D1", "D2", "D3", "D4"],
@@ -1011,14 +932,14 @@ class TestGroundTruthEvaluator:
         )
         result = _make_result(
             "evidence",
-            pd.DataFrame({"L3-11": [0.28, 0.38, 0.62, 0.0]}, index=df.index),
+            # Why: L3-11 binary — 발화는 0/1, D2·D3만 경계 넘김
+            pd.DataFrame({"L3-11": [0.0, 1.0, 1.0, 0.0]}, index=df.index),
             metadata={
                 "rule_breakdowns": {
                     "L3-11": {
-                        "cutoff_review_docs": 3,
-                        "revenue_cutoff_docs": 2,
+                        "cutoff_review_docs": 2,
+                        "revenue_cutoff_docs": 1,
                         "expense_cutoff_docs": 1,
-                        "period_end_weighted_docs": 1,
                     }
                 }
             },
@@ -1034,13 +955,9 @@ class TestGroundTruthEvaluator:
         l311 = next(item for item in analysis if item["rule_id"] == "L3-11")
 
         assert l311["status"] == "population"
-        assert l311["score_bands"] == {
-            "cutoff_review_docs": 3,
-            "cutoff_priority_docs": 2,
-            "cutoff_high_docs": 1,
-        }
-        assert l311["breakdown"]["period_end_weighted_docs"] == 1
-        assert l311["review_queue_docs"] == 3
+        assert l311["score_bands"] == {"cutoff_review_docs": 2}
+        assert l311["breakdown"]["revenue_cutoff_docs"] == 1
+        assert l311["review_queue_docs"] == 2
 
     def test_l4_05_keeps_behavior_bands_and_review_queue(self):
         df = pd.DataFrame(
@@ -1091,30 +1008,43 @@ class TestGroundTruthEvaluator:
         assert l405["review_queue_docs"] == 3
         assert l405["rule_objective"] == "User-level abnormal-hours behavior concentration"
 
-    def test_l4_03_keeps_high_amount_review_bands_and_queue(self):
+    def test_l4_03_binary_score_bands_and_queue(self):
+        """L4-03 binary 전환 — score_bands는 high_amount_review_docs 단일 키만 가진다."""
         df = pd.DataFrame(
             {
                 "document_id": ["D1", "D2", "D3", "D4"],
-                "amount_zscore": [3.5, 4.5, 6.5, 1.0],
             }
         )
         result = _make_result(
             "layer_c",
-            pd.DataFrame({"L4-03": [0.45, 0.60, 0.75, 0.0]}, index=df.index),
+            pd.DataFrame({"L4-03": [1.0, 1.0, 1.0, 0.0]}, index=df.index),
             metadata={
                 "rule_breakdowns": {
                     "L4-03": {
                         "high_amount_review_docs": 3,
-                        "review_zscore_docs": 1,
-                        "strong_zscore_docs": 1,
-                        "extreme_zscore_docs": 1,
+                        "threshold_unset_company_years": 0,
                     }
                 },
                 "row_annotations": {
                     "L4-03": {
-                        0: {"bucket": "review_zscore"},
-                        1: {"bucket": "strong_zscore"},
-                        2: {"bucket": "extreme_zscore"},
+                        0: {
+                            "base_amount": 500.0,
+                            "threshold": 150.0,
+                            "threshold_basis": "pbt",
+                            "exceed_ratio": 3.33,
+                        },
+                        1: {
+                            "base_amount": 300.0,
+                            "threshold": 150.0,
+                            "threshold_basis": "pbt",
+                            "exceed_ratio": 2.0,
+                        },
+                        2: {
+                            "base_amount": 200.0,
+                            "threshold": 150.0,
+                            "threshold_basis": "pbt",
+                            "exceed_ratio": 1.33,
+                        },
                     }
                 },
             },
@@ -1131,11 +1061,9 @@ class TestGroundTruthEvaluator:
 
         assert l403["status"] == "coverage_anchor"
         assert l403["truth_display"] == "high-amount confirmed subset"
+        # binary 전환: score_bands에 bucket 키(review/strong/extreme_zscore) 없음
         assert l403["score_bands"] == {
             "high_amount_review_docs": 3,
-            "review_zscore_docs": 1,
-            "strong_zscore_docs": 1,
-            "extreme_zscore_docs": 1,
         }
         assert l403["review_queue_docs"] == 3
         assert l403["rule_objective"] == "High-amount positive z-score review anchor"
@@ -1317,33 +1245,43 @@ class TestGroundTruthEvaluator:
             shutil.rmtree(labels_dir.parent)
         labels_dir.mkdir(parents=True)
         try:
-            pd.DataFrame({
-                "fiscal_year": [2024, 2024],
-                "company_code": ["C001", "C002"],
-                "gl_account": ["1000", "2000"],
-            }).to_csv(labels_dir / "benford_finding_truth_2024.csv", index=False)
-            pd.DataFrame({
-                "fiscal_year": [2024],
-                "company_code": ["C003"],
-                "gl_account": ["3000"],
-            }).to_csv(labels_dir / "benford_normal_groups_2024.csv", index=False)
-            pd.DataFrame({
-                "document_id": ["D1"],
-                "line_number": [1],
-            }).to_csv(labels_dir / "benford_drilldown_candidates_2024.csv", index=False)
-            pd.DataFrame({
-                "fiscal_year": [2024, 2024],
-                "company_code": ["C001", "C004"],
-                "gl_account": ["1000", "4000"],
-            }).to_csv(labels_dir / "benford_adversarial_holdout_2024.csv", index=False)
+            pd.DataFrame(
+                {
+                    "fiscal_year": [2024, 2024],
+                    "company_code": ["C001", "C002"],
+                    "gl_account": ["1000", "2000"],
+                }
+            ).to_csv(labels_dir / "benford_finding_truth_2024.csv", index=False)
+            pd.DataFrame(
+                {
+                    "fiscal_year": [2024],
+                    "company_code": ["C003"],
+                    "gl_account": ["3000"],
+                }
+            ).to_csv(labels_dir / "benford_normal_groups_2024.csv", index=False)
+            pd.DataFrame(
+                {
+                    "document_id": ["D1"],
+                    "line_number": [1],
+                }
+            ).to_csv(labels_dir / "benford_drilldown_candidates_2024.csv", index=False)
+            pd.DataFrame(
+                {
+                    "fiscal_year": [2024, 2024],
+                    "company_code": ["C001", "C004"],
+                    "gl_account": ["1000", "4000"],
+                }
+            ).to_csv(labels_dir / "benford_adversarial_holdout_2024.csv", index=False)
 
-            df = pd.DataFrame({
-                "fiscal_year": [2024, 2024, 2024],
-                "document_id": ["D1", "D2", "D3"],
-                "line_number": [1, 1, 1],
-                "company_code": ["C001", "C002", "C003"],
-                "gl_account": ["1000", "2000", "3000"],
-            })
+            df = pd.DataFrame(
+                {
+                    "fiscal_year": [2024, 2024, 2024],
+                    "document_id": ["D1", "D2", "D3"],
+                    "line_number": [1, 1, 1],
+                    "company_code": ["C001", "C002", "C003"],
+                    "gl_account": ["1000", "2000", "3000"],
+                }
+            )
             result = _make_result(
                 "benford",
                 pd.DataFrame({"L4-02": [0.0, 0.0, 0.0]}, index=df.index),
@@ -1376,19 +1314,23 @@ class TestGroundTruthEvaluator:
             shutil.rmtree(labels_dir.parent)
         labels_dir.mkdir(parents=True)
         try:
-            pd.DataFrame({
-                "fiscal_year": [2024],
-                "company_code": ["C001"],
-                "gl_account": ["1000"],
-            }).to_csv(labels_dir / "benford_finding_truth_2024.csv", index=False)
+            pd.DataFrame(
+                {
+                    "fiscal_year": [2024],
+                    "company_code": ["C001"],
+                    "gl_account": ["1000"],
+                }
+            ).to_csv(labels_dir / "benford_finding_truth_2024.csv", index=False)
 
-            df = pd.DataFrame({
-                "fiscal_year": [2024],
-                "document_id": ["D1"],
-                "line_number": [1],
-                "debit_amount": [100.0],
-                "credit_amount": [0.0],
-            })
+            df = pd.DataFrame(
+                {
+                    "fiscal_year": [2024],
+                    "document_id": ["D1"],
+                    "line_number": [1],
+                    "debit_amount": [100.0],
+                    "credit_amount": [0.0],
+                }
+            )
             agg_df = pd.DataFrame({"anomaly_score": [0.0]})
             result = _make_result(
                 "benford",
@@ -1422,13 +1364,15 @@ class TestGroundTruthEvaluator:
             shutil.rmtree(labels_dir.parent)
         labels_dir.mkdir(parents=True)
         try:
-            df = pd.DataFrame({
-                "fiscal_year": [2024],
-                "document_id": ["D1"],
-                "line_number": [1],
-                "debit_amount": [100.0],
-                "credit_amount": [0.0],
-            })
+            df = pd.DataFrame(
+                {
+                    "fiscal_year": [2024],
+                    "document_id": ["D1"],
+                    "line_number": [1],
+                    "debit_amount": [100.0],
+                    "credit_amount": [0.0],
+                }
+            )
             agg_df = pd.DataFrame({"anomaly_score": [0.0]})
             result = _make_result(
                 "benford",
@@ -1459,12 +1403,14 @@ class TestGroundTruthEvaluator:
             shutil.rmtree(labels_dir.parent)
         labels_dir.mkdir(parents=True)
         try:
-            df = pd.DataFrame({
-                "fiscal_year": [2024],
-                "company_code": ["C001"],
-                "gl_account": ["1000"],
-                "document_id": ["D1"],
-            })
+            df = pd.DataFrame(
+                {
+                    "fiscal_year": [2024],
+                    "company_code": ["C001"],
+                    "gl_account": ["1000"],
+                    "document_id": ["D1"],
+                }
+            )
             agg_df = pd.DataFrame({"anomaly_score": [0.0]}, index=df.index)
             variance_result = _make_result(
                 "layer_d",
@@ -1503,52 +1449,64 @@ class TestGroundTruthEvaluator:
             shutil.rmtree(labels_dir.parent)
         labels_dir.mkdir(parents=True)
         try:
-            pd.DataFrame({
-                "fiscal_year": [2024],
-                "company_code": ["C001"],
-                "gl_account": ["1000"],
-            }).to_csv(labels_dir / "account_activity_variance_truth_2024.csv", index=False)
-            pd.DataFrame({
-                "fiscal_year": [2024],
-                "company_code": ["C002"],
-                "gl_account": ["2000"],
-            }).to_csv(
+            pd.DataFrame(
+                {
+                    "fiscal_year": [2024],
+                    "company_code": ["C001"],
+                    "gl_account": ["1000"],
+                }
+            ).to_csv(labels_dir / "account_activity_variance_truth_2024.csv", index=False)
+            pd.DataFrame(
+                {
+                    "fiscal_year": [2024],
+                    "company_code": ["C002"],
+                    "gl_account": ["2000"],
+                }
+            ).to_csv(
                 labels_dir / "account_activity_variance_normal_controls_2024.csv",
                 index=False,
             )
-            pd.DataFrame({
-                "fiscal_year": [2024, 2024],
-                "company_code": ["C001", "C002"],
-                "gl_account": ["1000", "2000"],
-            }).to_csv(
+            pd.DataFrame(
+                {
+                    "fiscal_year": [2024, 2024],
+                    "company_code": ["C001", "C002"],
+                    "gl_account": ["1000", "2000"],
+                }
+            ).to_csv(
                 labels_dir / "account_activity_variance_review_population_2024.csv",
                 index=False,
             )
-            pd.DataFrame({
-                "fiscal_year": [2024],
-                "company_code": ["C001"],
-                "gl_account": ["3000"],
-            }).to_csv(
+            pd.DataFrame(
+                {
+                    "fiscal_year": [2024],
+                    "company_code": ["C001"],
+                    "gl_account": ["3000"],
+                }
+            ).to_csv(
                 labels_dir / "monthly_pattern_shift_confirmed_anomalies_2024.csv",
                 index=False,
             )
-            pd.DataFrame({
-                "fiscal_year": [2024],
-                "company_code": ["C001"],
-                "gl_account": ["3000"],
-            }).to_csv(
+            pd.DataFrame(
+                {
+                    "fiscal_year": [2024],
+                    "company_code": ["C001"],
+                    "gl_account": ["3000"],
+                }
+            ).to_csv(
                 labels_dir / "monthly_pattern_shift_review_population_2024.csv",
                 index=False,
             )
 
-            df = pd.DataFrame({
-                "fiscal_year": [2024, 2024, 2024],
-                "company_code": ["C001", "C002", "C001"],
-                "gl_account": ["1000", "2000", "3000"],
-                "document_id": ["D1", "D2", "D3"],
-                "debit_amount": [100.0, 200.0, 300.0],
-                "credit_amount": [0.0, 0.0, 0.0],
-            })
+            df = pd.DataFrame(
+                {
+                    "fiscal_year": [2024, 2024, 2024],
+                    "company_code": ["C001", "C002", "C001"],
+                    "gl_account": ["1000", "2000", "3000"],
+                    "document_id": ["D1", "D2", "D3"],
+                    "debit_amount": [100.0, 200.0, 300.0],
+                    "credit_amount": [0.0, 0.0, 0.0],
+                }
+            )
             agg_df = pd.DataFrame({"anomaly_score": [0.0, 0.0, 0.0]}, index=df.index)
             variance_result = _make_result(
                 "layer_d",

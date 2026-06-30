@@ -67,12 +67,14 @@ class TestEV01:
 
     def test_split_transaction_detection(self):
         """S3: 동일 거래처+동일일 분할 의심 → 0.8."""
-        df = pd.DataFrame({
-            "debit_amount": [25_000.0, 28_000.0, 29_000.0, 100_000.0],
-            "credit_amount": [0.0, 0.0, 0.0, 0.0],
-            "trading_partner": ["VENDOR_A", "VENDOR_A", "VENDOR_A", "VENDOR_B"],
-            "posting_date": pd.to_datetime(["2025-03-01"] * 4),
-        })
+        df = pd.DataFrame(
+            {
+                "debit_amount": [25_000.0, 28_000.0, 29_000.0, 100_000.0],
+                "credit_amount": [0.0, 0.0, 0.0, 0.0],
+                "trading_partner": ["VENDOR_A", "VENDOR_A", "VENDOR_A", "VENDOR_B"],
+                "posting_date": pd.to_datetime(["2025-03-01"] * 4),
+            }
+        )
         result = ev01_missing_evidence(
             df,
             split_max_amount=29_000,
@@ -118,135 +120,118 @@ class TestEV01:
 
 
 class TestL3_11:
-    """L3-11 컷오프 검증 — 8개 테스트."""
+    """L3-11 기말 컷오프 불일치 (binary 회계연도 경계)."""
 
-    def test_revenue_cutoff_violation(self):
-        """매출 계정: posting - delivery > 5일 → 점수 부여."""
-        df = pd.DataFrame({
-            "debit_amount": [1_000_000.0],
-            "credit_amount": [0.0],
-            "posting_date": pd.to_datetime(["2025-03-15"]),
-            "delivery_date": pd.to_datetime(["2025-03-01"]),
-            "gl_account": ["4100"],
-            "is_revenue_account": [True],
-        })
-        result = ev02_cutoff_violation(
-            df,
-            revenue_cutoff_days=5,
-            max_day_diff=30,
-            use_business_days=False,
+    def test_revenue_pull_forward_fires(self):
+        """매출 당겨잡기: 차년 납품을 당년 인식 → 회계연도 경계 → 1.0."""
+        df = pd.DataFrame(
+            {
+                "document_id": ["D1"],
+                "posting_date": pd.to_datetime(["2024-12-31"]),
+                "delivery_date": pd.to_datetime(["2025-01-03"]),
+                "gl_account": ["4100"],
+                "is_revenue_account": [True],
+            }
         )
-        # 14일 차이 > 5일, score = 14/30 ≈ 0.467
-        assert result.iloc[0] > 0.4
+        result = ev02_cutoff_violation(df)
+        assert result.iloc[0] == 1.0
 
-    def test_expense_cutoff_violation(self):
-        """비용 계정: posting - delivery > 7일 → 점수 부여."""
-        df = pd.DataFrame({
-            "debit_amount": [500_000.0],
-            "credit_amount": [0.0],
-            "posting_date": pd.to_datetime(["2025-03-20"]),
-            "delivery_date": pd.to_datetime(["2025-03-01"]),
-            "gl_account": ["5100"],
-        })
-        result = ev02_cutoff_violation(
-            df,
-            expense_cutoff_days=7,
-            max_day_diff=30,
-            use_business_days=False,
-            expense_account_prefixes=["5"],
+    def test_expense_defer_fires(self):
+        """비용 미루기: 당년 납품을 차년 인식 → 경계 → 1.0."""
+        df = pd.DataFrame(
+            {
+                "document_id": ["D1"],
+                "posting_date": pd.to_datetime(["2025-01-05"]),
+                "delivery_date": pd.to_datetime(["2024-12-28"]),
+                "gl_account": ["5100"],
+            }
         )
-        # 19일 > 7일, score = 19/30 ≈ 0.633
-        assert result.iloc[0] > 0.5
+        result = ev02_cutoff_violation(df)
+        assert result.iloc[0] == 1.0
 
-    def test_period_end_weight(self):
-        """기말 가중: is_period_end=True → 점수 × 1.5."""
-        df = pd.DataFrame({
-            "debit_amount": [1_000_000.0],
-            "credit_amount": [0.0],
-            "posting_date": pd.to_datetime(["2025-03-30"]),
-            "delivery_date": pd.to_datetime(["2025-03-15"]),
-            "gl_account": ["4100"],
-            "is_revenue_account": [True],
-            "is_period_end": [True],
-        })
-        without_weight = ev02_cutoff_violation(
-            df,
-            revenue_cutoff_days=5,
-            period_end_weight=1.0,
-            use_business_days=False,
-        ).iloc[0]
-        with_weight = ev02_cutoff_violation(
-            df,
-            revenue_cutoff_days=5,
-            period_end_weight=1.5,
-            use_business_days=False,
-        ).iloc[0]
-        assert with_weight > without_weight
+    def test_same_year_long_gap_no_fire(self):
+        """같은 회계연도 안의 장기 지연(일수 큼)은 발화하지 않는다."""
+        df = pd.DataFrame(
+            {
+                "posting_date": pd.to_datetime(["2025-03-25"]),
+                "delivery_date": pd.to_datetime(["2025-03-01"]),
+                "gl_account": ["4100"],
+                "is_revenue_account": [True],
+            }
+        )
+        result = ev02_cutoff_violation(df)
+        assert result.iloc[0] == 0.0
+
+    def test_fiscal_year_column_overrides_posting(self):
+        """인식연도는 fiscal_year 우선 — 납품과 같은 연도면 경계 없음."""
+        df = pd.DataFrame(
+            {
+                "posting_date": pd.to_datetime(["2025-01-02"]),
+                "delivery_date": pd.to_datetime(["2024-12-28"]),
+                "fiscal_year": [2024],  # 인식 2024 = 납품 2024 → 경계 없음
+                "gl_account": ["4100"],
+                "is_revenue_account": [True],
+            }
+        )
+        result = ev02_cutoff_violation(df)
+        assert result.iloc[0] == 0.0
+
+    def test_out_of_scope_account_no_fire(self):
+        """매출/비용이 아닌 계정은 경계를 넘어도 발화하지 않는다."""
+        df = pd.DataFrame(
+            {
+                "posting_date": pd.to_datetime(["2024-12-31"]),
+                "delivery_date": pd.to_datetime(["2025-01-03"]),
+                "gl_account": ["1100"],  # 자산
+            }
+        )
+        result = ev02_cutoff_violation(df)
+        assert result.iloc[0] == 0.0
+
+    def test_binary_score_values_only(self):
+        """반환 점수 고유값은 {0.0, 1.0} 뿐."""
+        df = pd.DataFrame(
+            {
+                "posting_date": pd.to_datetime(["2024-12-31", "2025-03-25", "2025-01-05"]),
+                "delivery_date": pd.to_datetime(["2025-01-03", "2025-03-01", "2024-12-28"]),
+                "gl_account": ["4100", "4100", "5100"],
+                "is_revenue_account": [True, True, False],
+            }
+        )
+        result = ev02_cutoff_violation(df)
+        assert set(result.unique()).issubset({0.0, 1.0})
+        assert result.iloc[0] == 1.0
+        assert result.iloc[1] == 0.0
+        assert result.iloc[2] == 1.0
 
     def test_delivery_date_all_nat(self):
-        """delivery_date 전체 NaT → 전체 0.0."""
-        df = pd.DataFrame({
-            "debit_amount": [100_000.0],
-            "credit_amount": [0.0],
-            "posting_date": pd.to_datetime(["2025-03-01"]),
-            "delivery_date": [pd.NaT],
-            "gl_account": ["4100"],
-        })
-        result = ev02_cutoff_violation(df, use_business_days=False)
+        """delivery_date 전체 NaT → 미검증 → 전체 0.0."""
+        df = pd.DataFrame(
+            {
+                "posting_date": pd.to_datetime(["2024-12-31"]),
+                "delivery_date": [pd.NaT],
+                "gl_account": ["4100"],
+                "is_revenue_account": [True],
+            }
+        )
+        result = ev02_cutoff_violation(df)
         assert result.iloc[0] == 0.0
 
     def test_partial_nat_no_crash(self):
-        """부분 NaT 혼재 시 ValueError 없이 정상 실행."""
-        df = pd.DataFrame({
-            "debit_amount": [100_000.0, 200_000.0, 300_000.0],
-            "credit_amount": [0.0, 0.0, 0.0],
-            "posting_date": pd.to_datetime(["2025-03-15", "2025-03-15", "2025-03-15"]),
-            "delivery_date": pd.to_datetime(["2025-03-01", pd.NaT, "2025-03-10"]),
-            "gl_account": ["4100", "4200", "4300"],
-            "is_revenue_account": [True, True, True],
-        })
-        # Why: NaT 1개라도 있으면 np.busday_count가 ValueError → 마스킹 필수
-        result = ev02_cutoff_violation(
-            df,
-            revenue_cutoff_days=5,
-            use_business_days=True,
+        """부분 NaT 혼재 시 예외 없이 실행, NaT 행은 0.0."""
+        df = pd.DataFrame(
+            {
+                "posting_date": pd.to_datetime(["2024-12-31", "2024-12-31", "2025-03-15"]),
+                "delivery_date": pd.to_datetime(["2025-01-03", pd.NaT, "2025-03-10"]),
+                "gl_account": ["4100", "4200", "4300"],
+                "is_revenue_account": [True, True, True],
+            }
         )
+        result = ev02_cutoff_violation(df)
         assert len(result) == 3
-        assert result.iloc[0] > 0   # 14일 차이
-        assert result.iloc[1] == 0.0  # NaT → 0
-        assert result.iloc[2] >= 0   # 5일 차이
-
-    def test_business_days_vs_calendar(self):
-        """영업일 vs 달력일 계산 결과 차이 확인."""
-        df = pd.DataFrame({
-            "debit_amount": [1_000_000.0],
-            "credit_amount": [0.0],
-            "posting_date": pd.to_datetime(["2025-03-14"]),  # 금요일
-            "delivery_date": pd.to_datetime(["2025-03-03"]),  # 월요일
-            "gl_account": ["4100"],
-            "is_revenue_account": [True],
-        })
-        biz = ev02_cutoff_violation(df, revenue_cutoff_days=5, use_business_days=True)
-        cal = ev02_cutoff_violation(df, revenue_cutoff_days=5, use_business_days=False)
-        # 달력일=11일, 영업일=9일 → 둘 다 임계 초과지만 수치 다름
-        assert biz.iloc[0] != cal.iloc[0]
-
-    def test_normal_within_threshold(self):
-        """임계 이내 → 점수 0."""
-        df = pd.DataFrame({
-            "debit_amount": [100_000.0],
-            "credit_amount": [0.0],
-            "posting_date": pd.to_datetime(["2025-03-05"]),
-            "delivery_date": pd.to_datetime(["2025-03-03"]),
-            "gl_account": ["4100"],
-            "is_revenue_account": [True],
-        })
-        result = ev02_cutoff_violation(
-            df,
-            revenue_cutoff_days=5,
-            use_business_days=False,
-        )
-        assert result.iloc[0] == 0.0  # 2일 ≤ 5일
+        assert result.iloc[0] == 1.0  # 경계 넘김
+        assert result.iloc[1] == 0.0  # delivery NaT → 미검증
+        assert result.iloc[2] == 0.0  # 같은 해
 
     def test_empty_dataframe(self):
         """빈 DataFrame → 빈 Series."""
@@ -254,57 +239,55 @@ class TestL3_11:
         result = ev02_cutoff_violation(df)
         assert len(result) == 0
 
-
-# ══════════════════════════════════════════════════════════════
-# EV03: 증빙 금액 불일치
-# ══════════════════════════════════════════════════════════════
-
-
     def test_cutoff_violation_exposes_breakdown_and_annotations(self):
-        df = pd.DataFrame({
-            "document_id": ["D1", "D2", "D3", "D4"],
-            "debit_amount": [100_000.0] * 4,
-            "credit_amount": [0.0] * 4,
-            "posting_date": pd.to_datetime([
-                "2025-03-15",
-                "2025-03-20",
-                "2025-03-05",
-                "2025-03-10",
-            ]),
-            "delivery_date": pd.to_datetime([
-                "2025-03-01",
-                "2025-03-01",
-                "2025-03-03",
-                pd.NaT,
-            ]),
-            "gl_account": ["4100", "5100", "4100", "4100"],
-            "is_revenue_account": [True, False, True, True],
-            "is_period_end": [True, False, False, False],
-        })
-
-        result = ev02_cutoff_violation(
-            df,
-            revenue_cutoff_days=5,
-            expense_cutoff_days=7,
-            period_end_weight=1.5,
-            max_day_diff=30,
-            use_business_days=False,
+        """breakdown·row_annotations binary 계약."""
+        df = pd.DataFrame(
+            {
+                "document_id": ["D1", "D2", "D3", "D4"],
+                "posting_date": pd.to_datetime(
+                    [
+                        "2024-12-31",  # 매출 경계 넘김
+                        "2025-01-05",  # 비용 경계 넘김
+                        "2025-03-25",  # 같은 해
+                        "2024-12-31",  # delivery NaT → 미검증
+                    ]
+                ),
+                "delivery_date": pd.to_datetime(
+                    [
+                        "2025-01-03",
+                        "2024-12-28",
+                        "2025-03-01",
+                        pd.NaT,
+                    ]
+                ),
+                "gl_account": ["4100", "5100", "4100", "4100"],
+                "is_revenue_account": [True, False, True, True],
+            }
         )
 
-        assert result.iloc[0] == pytest.approx(0.70)
-        assert result.iloc[1] == pytest.approx(19 / 30)
+        result = ev02_cutoff_violation(df)
+
+        assert result.iloc[0] == 1.0
+        assert result.iloc[1] == 1.0
         assert result.iloc[2] == 0.0
+        assert result.iloc[3] == 0.0
         breakdown = result.attrs["breakdown"]
         assert breakdown["cutoff_review_docs"] == 2
         assert breakdown["revenue_cutoff_docs"] == 1
         assert breakdown["expense_cutoff_docs"] == 1
-        assert breakdown["period_end_weighted_docs"] == 1
         assert breakdown["missing_event_date_docs"] == 1
         annotations = result.attrs["row_annotations"]
         assert annotations[0]["reason_code"] == "revenue_cutoff_gap"
-        assert annotations[0]["period_end_weighted"] is True
+        assert annotations[0]["account_type"] == "revenue"
+        assert annotations[0]["delivery_year"] == 2025
+        assert annotations[0]["recognition_year"] == 2024
         assert annotations[1]["reason_code"] == "expense_cutoff_gap"
-        assert annotations[1]["day_diff"] == 19.0
+        assert annotations[1]["day_diff"] == 8.0
+
+
+# ══════════════════════════════════════════════════════════════
+# EV03: 증빙 금액 불일치
+# ══════════════════════════════════════════════════════════════
 
 
 class TestEV03:
@@ -312,11 +295,13 @@ class TestEV03:
 
     def test_three_way_mismatch(self):
         """S1: 전기 금액 vs 세금계산서 금액 불일치."""
-        df = pd.DataFrame({
-            "debit_amount": [110_000.0, 100_000.0],
-            "credit_amount": [0.0, 0.0],
-            "invoice_amount": [100_000.0, 100_000.0],
-        })
+        df = pd.DataFrame(
+            {
+                "debit_amount": [110_000.0, 100_000.0],
+                "credit_amount": [0.0, 0.0],
+                "invoice_amount": [100_000.0, 100_000.0],
+            }
+        )
         result = ev03_amount_mismatch(df, amount_tolerance=1.0)
         # 행 0: |110k - 100k| = 10k > 1 → score = 10k/(100k*0.1) = 1.0
         assert result.iloc[0] == pytest.approx(1.0)
@@ -325,24 +310,28 @@ class TestEV03:
 
     def test_vat_error(self):
         """S2: 부가세 계산 오류 탐지."""
-        df = pd.DataFrame({
-            "debit_amount": [110_000.0, 110_000.0],
-            "credit_amount": [0.0, 0.0],
-            "supply_amount": [100_000.0, 100_000.0],
-            "tax_amount": [15_000.0, 10_000.0],  # 첫 번째만 오류 (정상은 10k)
-        })
+        df = pd.DataFrame(
+            {
+                "debit_amount": [110_000.0, 110_000.0],
+                "credit_amount": [0.0, 0.0],
+                "supply_amount": [100_000.0, 100_000.0],
+                "tax_amount": [15_000.0, 10_000.0],  # 첫 번째만 오류 (정상은 10k)
+            }
+        )
         result = ev03_amount_mismatch(df, vat_rate=0.10, vat_tolerance=1.0)
         assert result.iloc[0] == pytest.approx(0.7)  # |15k - 10k| = 5k > 1
         assert result.iloc[1] == 0.0  # 정상
 
     def test_tax_exempt_excluded(self):
         """면세/영세율 거래(tax_amount=0) → S2 검증 대상에서 제외."""
-        df = pd.DataFrame({
-            "debit_amount": [1_000_000.0, 500_000.0],
-            "credit_amount": [0.0, 0.0],
-            "supply_amount": [1_000_000.0, 500_000.0],
-            "tax_amount": [0.0, np.nan],  # 면세 + 영세율
-        })
+        df = pd.DataFrame(
+            {
+                "debit_amount": [1_000_000.0, 500_000.0],
+                "credit_amount": [0.0, 0.0],
+                "supply_amount": [1_000_000.0, 500_000.0],
+                "tax_amount": [0.0, np.nan],  # 면세 + 영세율
+            }
+        )
         result = ev03_amount_mismatch(df, vat_rate=0.10, vat_tolerance=1.0)
         # Why: tax_amount=0 또는 NaN → 면세/영세율 → S2 미적용
         assert result.iloc[0] == 0.0
@@ -350,31 +339,37 @@ class TestEV03:
 
     def test_within_tolerance(self):
         """허용 오차 이내 → 0.0."""
-        df = pd.DataFrame({
-            "debit_amount": [100_001.0],
-            "credit_amount": [0.0],
-            "invoice_amount": [100_000.0],
-        })
+        df = pd.DataFrame(
+            {
+                "debit_amount": [100_001.0],
+                "credit_amount": [0.0],
+                "invoice_amount": [100_000.0],
+            }
+        )
         result = ev03_amount_mismatch(df, amount_tolerance=5.0)
         # |100001 - 100000| = 1 ≤ 5 → 0.0
         assert result.iloc[0] == 0.0
 
     def test_missing_columns(self):
         """invoice_amount, supply_amount, tax_amount 모두 부재 → 전체 0.0."""
-        df = pd.DataFrame({
-            "debit_amount": [100_000.0],
-            "credit_amount": [0.0],
-        })
+        df = pd.DataFrame(
+            {
+                "debit_amount": [100_000.0],
+                "credit_amount": [0.0],
+            }
+        )
         result = ev03_amount_mismatch(df)
         assert result.iloc[0] == 0.0
 
     def test_zero_amount_defense(self):
         """invoice_amount=0 → 분모 clip(1.0)으로 나눗셈 오류 방지."""
-        df = pd.DataFrame({
-            "debit_amount": [100.0],
-            "credit_amount": [0.0],
-            "invoice_amount": [0.0],
-        })
+        df = pd.DataFrame(
+            {
+                "debit_amount": [100.0],
+                "credit_amount": [0.0],
+                "invoice_amount": [0.0],
+            }
+        )
         # invoice_amount=0 → has_invoice=False → S1 미적용
         result = ev03_amount_mismatch(df, amount_tolerance=1.0)
         assert result.iloc[0] == 0.0

@@ -42,7 +42,6 @@ EXPECTED_RULE_IDS = {
     "L3-05",
     "L3-06",
     "L3-07",
-    "L3-08",
     "L3-09",
     "L3-10",
     "L3-11",
@@ -59,8 +58,6 @@ EXPECTED_RULE_IDS = {
     "IC01",
     "IC02",
     "IC03",
-    "GR01",
-    "GR03",
 }
 
 
@@ -117,13 +114,14 @@ def test_canonicalization_policy() -> None:
     assert canonicalize_rule_id("L1-01") == "L1-01"
 
 
-def test_canonical_transaction_count_is_30() -> None:
-    # L4-02(Benford macro)와 2026-06-20 폐기 룰을 제외해 canonical L1~L4 count 30.
+def test_canonical_transaction_count_is_29() -> None:
+    # L4-02(Benford macro)·L3-08(적요부실 폐기)·2026-06-20 폐기 룰을 제외해 canonical L1~L4 count 29.
     canonical_rule_ids = get_canonical_transaction_rule_ids()
 
-    assert len(canonical_rule_ids) == 30
-    assert len(set(canonical_rule_ids)) == 30
+    assert len(canonical_rule_ids) == 29
+    assert len(set(canonical_rule_ids)) == 29
     assert "L4-02" not in canonical_rule_ids
+    assert "L3-08" not in canonical_rule_ids
 
 
 def test_row_detail_eligibility_is_surface_and_flag_gated() -> None:
@@ -137,16 +135,15 @@ def test_row_detail_eligibility_is_surface_and_flag_gated() -> None:
     for surface_rule in (
         "L4-02",
         "IC01",
-        "GR01",
         "L2-03a",
     ):
         assert can_render_row_violation_detail(surface_rule) is False
-    for context_rule in ("L3-03", "L3-05", "L3-06", "L3-08", "L3-10", "L3-12", "L4-05", "L4-06"):
+    for context_rule in ("L3-03", "L3-05", "L3-06", "L3-10", "L3-12", "L4-05", "L4-06"):
         assert can_render_row_violation_detail(context_rule) is True
 
 
 def test_standalone_violation_copy_is_forbidden_for_locked_context_rules() -> None:
-    for rule_id in ("L3-05", "L3-06", "L3-08", "L3-10", "L3-12", "L4-05", "L4-06"):
+    for rule_id in ("L3-05", "L3-06", "L3-10", "L3-12", "L4-05", "L4-06"):
         assert can_generate_standalone_violation_copy(rule_id) is False
 
     for rule_id in ("L1-01", "L2-02", "L4-03"):
@@ -186,8 +183,6 @@ def test_alias_reason_macro_and_sidecar_rules_do_not_increase_count() -> None:
         "IC01",
         "IC02",
         "IC03",
-        "GR01",
-        "GR03",
     )
 
     for rule_id in excluded_rule_ids:

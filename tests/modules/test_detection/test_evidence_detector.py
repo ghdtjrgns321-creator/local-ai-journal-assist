@@ -11,25 +11,37 @@ from src.detection.evidence_detector import EvidenceDetector
 @pytest.fixture
 def full_evidence_df() -> pd.DataFrame:
     """EV01~EV03 모두 활성화 가능한 컬럼 세트."""
-    return pd.DataFrame({
-        "debit_amount": [50_000.0, 20_000.0, 110_000.0, 100_000.0],
-        "credit_amount": [0.0, 0.0, 0.0, 0.0],
-        "posting_date": pd.to_datetime([
-            "2025-03-15", "2025-03-01", "2025-03-20", "2025-03-05",
-        ]),
-        "delivery_date": pd.to_datetime([
-            "2025-03-01", "2025-03-01", "2025-03-01", "2025-03-03",
-        ]),
-        "has_attachment": [False, True, False, True],
-        "is_manual_je": [True, False, True, False],
-        "supporting_doc_type": ["receipt", "tax_invoice", None, "credit_card"],
-        "gl_account": ["4100", "5200", "4300", "5100"],
-        "is_revenue_account": [True, False, True, False],
-        "invoice_amount": [50_000.0, 20_000.0, 100_000.0, 100_000.0],
-        "supply_amount": [45_000.0, 18_000.0, 90_000.0, 90_909.0],
-        "tax_amount": [5_000.0, 2_000.0, 15_000.0, 9_091.0],
-        "trading_partner": ["V1", "V2", "V3", "V4"],
-    })
+    return pd.DataFrame(
+        {
+            "debit_amount": [50_000.0, 20_000.0, 110_000.0, 100_000.0],
+            "credit_amount": [0.0, 0.0, 0.0, 0.0],
+            "posting_date": pd.to_datetime(
+                [
+                    "2025-03-15",
+                    "2025-03-01",
+                    "2025-03-20",
+                    "2025-03-05",
+                ]
+            ),
+            "delivery_date": pd.to_datetime(
+                [
+                    "2025-03-01",
+                    "2025-03-01",
+                    "2025-03-01",
+                    "2025-03-03",
+                ]
+            ),
+            "has_attachment": [False, True, False, True],
+            "is_manual_je": [True, False, True, False],
+            "supporting_doc_type": ["receipt", "tax_invoice", None, "credit_card"],
+            "gl_account": ["4100", "5200", "4300", "5100"],
+            "is_revenue_account": [True, False, True, False],
+            "invoice_amount": [50_000.0, 20_000.0, 100_000.0, 100_000.0],
+            "supply_amount": [45_000.0, 18_000.0, 90_000.0, 90_909.0],
+            "tax_amount": [5_000.0, 2_000.0, 15_000.0, 9_091.0],
+            "trading_partner": ["V1", "V2", "V3", "V4"],
+        }
+    )
 
 
 @pytest.fixture
@@ -37,7 +49,9 @@ def audit_rules() -> dict:
     return {
         "evidence": {
             "qualified_doc_types": [
-                "tax_invoice", "credit_card", "cash_receipt",
+                "tax_invoice",
+                "credit_card",
+                "cash_receipt",
             ],
             "expense_account_prefixes": ["5"],
         },
@@ -73,12 +87,14 @@ class TestEvidenceDetector:
 
     def test_partial_columns_graceful(self, audit_rules):
         """증빙 컬럼 일부 부재 시 해당 룰만 스킵, 나머지 정상."""
-        df = pd.DataFrame({
-            "debit_amount": [110_000.0],
-            "credit_amount": [0.0],
-            "invoice_amount": [100_000.0],
-            # has_attachment, delivery_date 없음 → EV01.S1, L3-11 비활성
-        })
+        df = pd.DataFrame(
+            {
+                "debit_amount": [110_000.0],
+                "credit_amount": [0.0],
+                "invoice_amount": [100_000.0],
+                # has_attachment, delivery_date 없음 → EV01.S1, L3-11 비활성
+            }
+        )
         det = EvidenceDetector(audit_rules=audit_rules)
         result = det.detect(df)
         # EV03만 실행 → 금액 불일치 탐지
@@ -86,9 +102,13 @@ class TestEvidenceDetector:
 
     def test_empty_dataframe(self):
         """빈 DataFrame → 빈 결과."""
-        df = pd.DataFrame(columns=[
-            "debit_amount", "credit_amount", "posting_date",
-        ])
+        df = pd.DataFrame(
+            columns=[
+                "debit_amount",
+                "credit_amount",
+                "posting_date",
+            ]
+        )
         det = EvidenceDetector()
         result = det.detect(df)
         assert len(result.scores) == 0
@@ -102,21 +122,25 @@ class TestEvidenceDetector:
         assert (result.scores <= 1).all()
 
     def test_l311_metadata_is_propagated(self, audit_rules):
-        df = pd.DataFrame({
-            "document_id": ["D1", "D2"],
-            "debit_amount": [100_000.0, 100_000.0],
-            "credit_amount": [0.0, 0.0],
-            "posting_date": pd.to_datetime(["2025-03-15", "2025-03-20"]),
-            "delivery_date": pd.to_datetime(["2025-03-01", "2025-03-01"]),
-            "gl_account": ["4100", "5100"],
-            "is_revenue_account": [True, False],
-            "is_period_end": [False, False],
-        })
+        # Why: binary 회계연도 경계 — D1 매출 당겨잡기, D2 비용 미루기
+        df = pd.DataFrame(
+            {
+                "document_id": ["D1", "D2"],
+                "debit_amount": [100_000.0, 100_000.0],
+                "credit_amount": [0.0, 0.0],
+                "posting_date": pd.to_datetime(["2024-12-31", "2025-01-05"]),
+                "delivery_date": pd.to_datetime(["2025-01-03", "2024-12-28"]),
+                "gl_account": ["4100", "5100"],
+                "is_revenue_account": [True, False],
+                "is_period_end": [False, False],
+            }
+        )
         det = EvidenceDetector(audit_rules=audit_rules)
 
         result = det.detect(df)
 
-        assert result.details["L3-11"].iloc[0] == pytest.approx((10 / 30) * 0.6)
+        # Why: 발화 1.0 × severity_factor(3/5) = 0.6 (통합점수 기준 불변)
+        assert result.details["L3-11"].iloc[0] == pytest.approx(0.6)
         breakdown = result.metadata["rule_breakdowns"]["L3-11"]
         assert breakdown["cutoff_review_docs"] == 2
         assert breakdown["revenue_cutoff_docs"] == 1

@@ -42,11 +42,13 @@ def test_render_before_uses_line_count_for_total_journals(monkeypatch):
     )
 
     result = SimpleNamespace(
-        data=pd.DataFrame({
-            "document_id": ["D1", "D1", "D2"],
-            "posting_date": pd.to_datetime(["2022-01-01", "2022-01-01", "2022-01-02"]),
-            "debit_amount": [100.0, 0.0, 50.0],
-        })
+        data=pd.DataFrame(
+            {
+                "document_id": ["D1", "D1", "D2"],
+                "posting_date": pd.to_datetime(["2022-01-01", "2022-01-01", "2022-01-02"]),
+                "debit_amount": [100.0, 0.0, 50.0],
+            }
+        )
     )
 
     tab_overview._render_before(result)
@@ -66,10 +68,12 @@ def test_monthly_trend_uses_line_count_not_distinct_documents(monkeypatch):
         lambda fig, *args, **kwargs: plotted.setdefault("fig", fig),
     )
 
-    df = pd.DataFrame({
-        "document_id": ["D1", "D1", "D2"],
-        "posting_date": pd.to_datetime(["2022-01-01", "2022-01-01", "2022-02-01"]),
-    })
+    df = pd.DataFrame(
+        {
+            "document_id": ["D1", "D1", "D2"],
+            "posting_date": pd.to_datetime(["2022-01-01", "2022-01-01", "2022-02-01"]),
+        }
+    )
 
     tab_overview._render_monthly_trend_line(df)
 
@@ -79,15 +83,17 @@ def test_monthly_trend_uses_line_count_not_distinct_documents(monkeypatch):
 
 
 def test_quality_checks_label_line_and_document_basis() -> None:
-    df = pd.DataFrame({
-        "document_id": ["D1", "D1", "D2"],
-        "created_by": ["U1", "U1", "U2"],
-        "approved_by": ["U1", "U3", "U4"],
-        "source": ["manual", "manual", "automated"],
-        "posting_date": pd.to_datetime(["2022-12-28", "2022-12-29", "2022-01-03"]),
-        "debit_amount": [100.0, 0.0, 50.0],
-        "credit_amount": [0.0, 100.0, 50.0],
-    })
+    df = pd.DataFrame(
+        {
+            "document_id": ["D1", "D1", "D2"],
+            "created_by": ["U1", "U1", "U2"],
+            "approved_by": ["U1", "U3", "U4"],
+            "source": ["manual", "manual", "automated"],
+            "posting_date": pd.to_datetime(["2022-12-28", "2022-12-29", "2022-01-03"]),
+            "debit_amount": [100.0, 0.0, 50.0],
+            "credit_amount": [0.0, 100.0, 50.0],
+        }
+    )
 
     assert tab_overview._check_self_approval(df)[1] == "자기승인 라인"
     assert tab_overview._check_manual_je(df)[1] == "수기 라인 비율"
@@ -165,7 +171,7 @@ def test_build_datasynth_rule_tables_keeps_no_label_non_benchmark_rules_in_groun
         rule_metrics=[
             RuleMetric(
                 track_name="layer_c",
-                rule_code="L3-08",
+                rule_code="L3-05",
                 evaluation_status="no_label",
                 label_docs=0,
                 flagged_docs=10,
@@ -181,7 +187,7 @@ def test_build_datasynth_rule_tables_keeps_no_label_non_benchmark_rules_in_groun
 
     evaluated_df, separate_df = tab_overview._build_datasynth_rule_tables(report)
 
-    assert list(evaluated_df["Rule ID"]) == ["L3-08"]
+    assert list(evaluated_df["Rule ID"]) == ["L3-05"]
     assert list(evaluated_df["Status"]) == ["No Label"]
     assert list(evaluated_df["Precision"]) == ["N/A"]
     assert separate_df.empty

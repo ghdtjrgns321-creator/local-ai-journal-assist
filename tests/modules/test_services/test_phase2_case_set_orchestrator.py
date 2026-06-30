@@ -19,7 +19,6 @@ import pytest
 
 from src.detection.base import DetectionResult
 from src.models.phase2_case import (
-    DuplicateCase,
     IntercompanyCase,
     Phase2CaseSet,
     RelationalCase,
@@ -54,22 +53,6 @@ def _make_result(track_name: str, **metadata_extra: Any) -> DetectionResult:
         rule_flags=[],
         details=pd.DataFrame(),
         metadata=metadata,
-    )
-
-
-def _make_dup_case(case_id: str = "dup-1") -> DuplicateCase:
-    """라우팅 검증용 sentinel DuplicateCase. row_refs 는 empty tuple 로 충분."""
-    return DuplicateCase(
-        phase2_case_id=case_id,
-        batch_id="b1",
-        family="duplicate",
-        unit_type="pair",
-        row_refs=(),
-        evidence_tier="strong",
-        case_generation_reason={"gate": "duplicate_tier"},
-        family_score=0.9,
-        family_ecdf=0.99,
-        sub_rule="L2-03a",
     )
 
 
@@ -152,19 +135,17 @@ class _StubRecorder:
 
 @pytest.fixture
 def stubs(monkeypatch: pytest.MonkeyPatch) -> dict[str, _StubRecorder]:
-    """5 builder 를 모두 capture-stub 으로 대체한다. 기본 반환값은 빈 tuple.
+    """4 builder 를 모두 capture-stub 으로 대체한다. 기본 반환값은 빈 tuple.
 
-    Test 함수가 stubs["duplicate"].return_value = (case,) 처럼 덮어 쓰면
+    Test 함수가 stubs["relational"].return_value = (case,) 처럼 덮어 쓰면
     해당 family 만 의미 있는 case 를 돌려준다.
     """
     recorders = {
-        "duplicate": _StubRecorder(()),
         "unsupervised": _StubRecorder(()),
         "intercompany": _StubRecorder(()),
         "relational": _StubRecorder(()),
         "timeseries": _StubRecorder(()),
     }
-    monkeypatch.setattr(orchestrator_module, "build_duplicate_cases", recorders["duplicate"])
     monkeypatch.setattr(orchestrator_module, "build_unsupervised_cases", recorders["unsupervised"])
     monkeypatch.setattr(orchestrator_module, "build_intercompany_cases", recorders["intercompany"])
     monkeypatch.setattr(orchestrator_module, "build_relational_cases", recorders["relational"])
@@ -188,7 +169,6 @@ def test_empty_detection_results_returns_empty_case_set(
     )
 
     assert isinstance(case_set, Phase2CaseSet)
-    assert case_set.duplicate_cases == ()
     assert case_set.unsupervised_cases == ()
     assert case_set.intercompany_cases == ()
     assert case_set.relational_cases == ()
@@ -209,43 +189,12 @@ def test_unknown_track_name_ignored(stubs: dict[str, _StubRecorder]) -> None:
         df=_make_df(),
     )
 
-    assert case_set.duplicate_cases == ()
     assert case_set.unsupervised_cases == ()
     assert case_set.intercompany_cases == ()
     assert case_set.relational_cases == ()
     assert case_set.timeseries_cases == ()
     for recorder in stubs.values():
         assert recorder.calls == []
-
-
-def test_duplicate_detection_result_routes_to_duplicate_builder(
-    stubs: dict[str, _StubRecorder],
-) -> None:
-    """track='duplicate' → build_duplicate_cases. (batch_id, detection_result, df) 만 전달."""
-    expected_case = _make_dup_case()
-    stubs["duplicate"].return_value = (expected_case,)
-    df = _make_df()
-    dup_result = _make_result("duplicate")
-
-    case_set = build_phase2_case_set(
-        batch_id="batch-42",
-        detection_results=[dup_result],
-        df=df,
-    )
-
-    assert case_set.duplicate_cases == (expected_case,)
-    # 다른 family stub 은 호출 0
-    assert stubs["unsupervised"].calls == []
-    assert stubs["intercompany"].calls == []
-    assert stubs["relational"].calls == []
-    assert stubs["timeseries"].calls == []
-    # duplicate stub 인자 검증: 3개만 — extra kwarg 금지 (invariant #81).
-    assert len(stubs["duplicate"].calls) == 1
-    call = stubs["duplicate"].calls[0]
-    assert call["batch_id"] == "batch-42"
-    assert call["detection_result"] is dup_result
-    assert call["df"] is df
-    assert set(call.keys()) == {"batch_id", "detection_result", "df"}
 
 
 def test_unsupervised_detection_result_routes_with_model_and_schema_params(
@@ -267,7 +216,6 @@ def test_unsupervised_detection_result_routes_with_model_and_schema_params(
     )
 
     assert case_set.unsupervised_cases == (expected_case,)
-    assert stubs["duplicate"].calls == []
     assert stubs["intercompany"].calls == []
     assert stubs["relational"].calls == []
     assert stubs["timeseries"].calls == []
@@ -307,7 +255,6 @@ def test_intercompany_detection_result_routes_to_intercompany_builder(
     )
 
     assert case_set.intercompany_cases == (expected_case,)
-    assert stubs["duplicate"].calls == []
     assert stubs["unsupervised"].calls == []
     assert stubs["relational"].calls == []
     assert stubs["timeseries"].calls == []
@@ -335,7 +282,6 @@ def test_relational_detection_result_routes_to_relational_builder(
     )
 
     assert case_set.relational_cases == (expected_case,)
-    assert stubs["duplicate"].calls == []
     assert stubs["unsupervised"].calls == []
     assert stubs["intercompany"].calls == []
     assert stubs["timeseries"].calls == []
@@ -363,7 +309,6 @@ def test_timeseries_detection_result_routes_to_timeseries_builder(
     )
 
     assert case_set.timeseries_cases == (expected_case,)
-    assert stubs["duplicate"].calls == []
     assert stubs["unsupervised"].calls == []
     assert stubs["intercompany"].calls == []
     assert stubs["relational"].calls == []
@@ -401,13 +346,11 @@ def test_timeseries_explicit_ordering_strategy_passed_to_builder(
 def test_multiple_families_combine_into_single_case_set(
     stubs: dict[str, _StubRecorder],
 ) -> None:
-    """5 family 가 모두 들어오면 각 builder 호출 후 단일 Phase2CaseSet 조립."""
-    dup_case = _make_dup_case("dup-X")
+    """4 family 가 모두 들어오면 각 builder 호출 후 단일 Phase2CaseSet 조립."""
     uns_case = _make_unsup_case("uns-X")
     ic_case = _make_ic_case("ic-X")
     rel_case = _make_rel_case("rel-X")
     ts_case = _make_ts_case("ts-X")
-    stubs["duplicate"].return_value = (dup_case,)
     stubs["unsupervised"].return_value = (uns_case,)
     stubs["intercompany"].return_value = (ic_case,)
     stubs["relational"].return_value = (rel_case,)
@@ -416,7 +359,6 @@ def test_multiple_families_combine_into_single_case_set(
     case_set = build_phase2_case_set(
         batch_id="b1",
         detection_results=[
-            _make_result("duplicate"),
             _make_result("ml_unsupervised"),
             _make_result("intercompany"),
             _make_result("relational"),
@@ -428,13 +370,11 @@ def test_multiple_families_combine_into_single_case_set(
         unsupervised_schema_hash="s",
     )
 
-    assert case_set.duplicate_cases == (dup_case,)
     assert case_set.unsupervised_cases == (uns_case,)
     assert case_set.intercompany_cases == (ic_case,)
     assert case_set.relational_cases == (rel_case,)
     assert case_set.timeseries_cases == (ts_case,)
-    # 5 builder 각 1회만 호출 — unknown 은 invocation 0
-    assert len(stubs["duplicate"].calls) == 1
+    # 4 builder 각 1회만 호출 — unknown 은 invocation 0
     assert len(stubs["unsupervised"].calls) == 1
     assert len(stubs["intercompany"].calls) == 1
     assert len(stubs["relational"].calls) == 1
@@ -445,16 +385,16 @@ def test_returns_phase2_case_set_with_linked_false_default(
     stubs: dict[str, _StubRecorder],
 ) -> None:
     """orchestrator 출력은 항상 linked=False (invariant #82) — linker 가 후속 단계에서 부착."""
-    stubs["duplicate"].return_value = (_make_dup_case(),)
+    stubs["relational"].return_value = (_make_rel_case(),)
 
     case_set = build_phase2_case_set(
         batch_id="b1",
-        detection_results=[_make_result("duplicate")],
+        detection_results=[_make_result("relational")],
         df=_make_df(),
     )
 
     assert case_set.linked is False
-    # 5 family 모두 비어 있어도 linked=False
+    # 4 family 모두 비어 있어도 linked=False
     empty_set = build_phase2_case_set(
         batch_id="b1",
         detection_results=[],
@@ -476,20 +416,20 @@ def test_orchestrator_does_not_touch_phase1_prior(
     default () 인지 검증한다.
     """
     # builder stub 은 진짜 builder 와 마찬가지로 phase1_case_refs default () 인 case 반환
-    dup_case = _make_dup_case()
-    stubs["duplicate"].return_value = (dup_case,)
+    rel_case = _make_rel_case()
+    stubs["relational"].return_value = (rel_case,)
 
     case_set = build_phase2_case_set(
         batch_id="b1",
-        detection_results=[_make_result("duplicate")],
+        detection_results=[_make_result("relational")],
         df=_make_df(),
     )
 
     # orchestrator 가 phase1_case_refs 를 손대지 않아야 함 — default () 유지
-    assert case_set.duplicate_cases[0].phase1_case_refs == ()
+    assert case_set.relational_cases[0].phase1_case_refs == ()
     assert case_set.linked is False
     # orchestrator 가 stub 에 PHASE1-관련 kwarg 를 절대 넣지 않는다
-    call = stubs["duplicate"].calls[0]
+    call = stubs["relational"].calls[0]
     forbidden_keys = {
         "phase1_cases",
         "priority_score",
@@ -505,7 +445,7 @@ def test_orchestrator_does_not_touch_phase1_prior(
 # ---------------------------------------------------------------------------
 
 
-def test_duplicate_track_name_last_result_wins(
+def test_repeated_track_name_last_result_wins(
     stubs: dict[str, _StubRecorder],
 ) -> None:
     """동일 track_name 의 detection_result 가 여러 개면 마지막 것만 builder 에 전달.
@@ -514,19 +454,19 @@ def test_duplicate_track_name_last_result_wins(
     회귀로 잠근다. Phase B 의 detection_results 조립 순서가 builder 입력에 직접
     영향하므로 silent 변경 차단.
     """
-    first = _make_result("duplicate", marker="first")
-    second = _make_result("duplicate", marker="second")
+    first = _make_result("relational", marker="first")
+    second = _make_result("relational", marker="second")
     # by_track dict 갱신 패턴 — 마지막 등장 결과가 dispatch.
     build_phase2_case_set(
         batch_id="b1",
         detection_results=[first, second],
         df=_make_df(),
     )
-    dup_recorder = stubs["duplicate"]
-    assert len(dup_recorder.calls) == 1, (
+    rel_recorder = stubs["relational"]
+    assert len(rel_recorder.calls) == 1, (
         "동일 track_name 의 detection_result 가 여러 개여도 builder 는 한 번만 호출"
     )
-    call = dup_recorder.calls[0]
+    call = rel_recorder.calls[0]
     # 두 번째 결과 (marker="second") 가 전달되어야 함.
     assert call["detection_result"].metadata.get("marker") == "second", (
         "마지막 detection_result 가 builder 에 전달되어야 한다 — 호출자 책임 docstring 정합"

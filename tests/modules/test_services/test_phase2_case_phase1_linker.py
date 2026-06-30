@@ -18,9 +18,9 @@ from src.models.phase1_case import (
     RawRuleHitRef,
 )
 from src.models.phase2_case import (
-    DuplicateCase,
     Phase2CaseSet,
     Phase2RowRef,
+    RelationalCase,
     UnsupervisedCase,
 )
 from src.services.phase2_case_phase1_linker import (
@@ -56,24 +56,20 @@ def _duplicate_case(
     family_score: float = 0.8,
     family_ecdf: float = 0.5,
     reason: dict | None = None,
-) -> DuplicateCase:
+) -> RelationalCase:
     left = _row_ref(left_pos, doc="DOC_L")
     right = _row_ref(right_pos, doc="DOC_R")
-    return DuplicateCase(
+    return RelationalCase(
         phase2_case_id=case_id,
         batch_id="batch_test",
-        family="duplicate",
+        family="relational",
         unit_type="pair",
         row_refs=(left, right),
         evidence_tier="strong",
         case_generation_reason=reason or {"sub_rule": "L2-03a"},
         family_score=family_score,
         family_ecdf=family_ecdf,
-        pair_id="pair_001",
         sub_rule="L2-03a",
-        left_ref=left,
-        right_ref=right,
-        pair_evidence_tier="strong",
     )
 
 
@@ -167,14 +163,14 @@ def test_empty_case_set_returns_empty_linked() -> None:
 def test_empty_phase1_returns_case_set_with_no_refs() -> None:
     """PHASE1 cases 가 비어 있으면 모든 PHASE2 case 의 phase1_case_refs 는 빈 tuple."""
     case_set = Phase2CaseSet(
-        duplicate_cases=(_duplicate_case(case_id="d1", left_pos=0, right_pos=1),),
+        relational_cases=(_duplicate_case(case_id="d1", left_pos=0, right_pos=1),),
     )
     phase1 = _empty_phase1()
 
     result = link_phase2_to_phase1(case_set=case_set, phase1=phase1, key_mode="position")
 
     assert result.case_set.linked is True
-    assert result.case_set.duplicate_cases[0].phase1_case_refs == ()
+    assert result.case_set.relational_cases[0].phase1_case_refs == ()
     assert result.diagnostics["linked_count"] == 0
     assert result.diagnostics["unmatched_phase2_count"] == 1
 
@@ -182,7 +178,7 @@ def test_empty_phase1_returns_case_set_with_no_refs() -> None:
 def test_position_match_creates_phase1_case_refs() -> None:
     """row_position 등가 시 phase1_case_refs 에 PHASE1 case_id 가 부착된다."""
     case_set = Phase2CaseSet(
-        duplicate_cases=(_duplicate_case(case_id="dup_001", left_pos=5, right_pos=7),),
+        relational_cases=(_duplicate_case(case_id="dup_001", left_pos=5, right_pos=7),),
     )
     phase1 = _phase1_result(
         cases=[_phase1_case(case_id="p1_alpha", row_positions=(5,))],
@@ -190,13 +186,13 @@ def test_position_match_creates_phase1_case_refs() -> None:
 
     result = link_phase2_to_phase1(case_set=case_set, phase1=phase1, key_mode="position")
 
-    assert result.case_set.duplicate_cases[0].phase1_case_refs == ("p1_alpha",)
+    assert result.case_set.relational_cases[0].phase1_case_refs == ("p1_alpha",)
 
 
 def test_no_position_overlap_returns_empty_phase1_refs() -> None:
     """row_position 이 겹치지 않으면 phase1_case_refs 는 빈 tuple 유지."""
     case_set = Phase2CaseSet(
-        duplicate_cases=(_duplicate_case(case_id="dup_001", left_pos=100, right_pos=101),),
+        relational_cases=(_duplicate_case(case_id="dup_001", left_pos=100, right_pos=101),),
     )
     phase1 = _phase1_result(
         cases=[_phase1_case(case_id="p1_alpha", row_positions=(5, 6))],
@@ -204,7 +200,7 @@ def test_no_position_overlap_returns_empty_phase1_refs() -> None:
 
     result = link_phase2_to_phase1(case_set=case_set, phase1=phase1, key_mode="position")
 
-    assert result.case_set.duplicate_cases[0].phase1_case_refs == ()
+    assert result.case_set.relational_cases[0].phase1_case_refs == ()
     assert result.diagnostics["linked_count"] == 0
     assert result.diagnostics["unmatched_phase2_count"] == 1
 
@@ -232,7 +228,7 @@ def test_multiple_phase1_cases_overlap_returns_sorted_refs() -> None:
 def test_linker_returns_case_set_with_linked_true() -> None:
     """linked 플래그가 True 로 전환된다 (매칭 0건이어도)."""
     case_set = Phase2CaseSet(
-        duplicate_cases=(_duplicate_case(case_id="dup_001", left_pos=0, right_pos=1),),
+        relational_cases=(_duplicate_case(case_id="dup_001", left_pos=0, right_pos=1),),
     )
     phase1 = _empty_phase1()
     assert case_set.linked is False
@@ -251,7 +247,7 @@ def test_linker_preserves_phase1_priority_score() -> None:
     )
     phase1 = _phase1_result(cases=[phase1_case])
     case_set = Phase2CaseSet(
-        duplicate_cases=(_duplicate_case(case_id="dup_001", left_pos=5, right_pos=7),),
+        relational_cases=(_duplicate_case(case_id="dup_001", left_pos=5, right_pos=7),),
     )
 
     before_priority = phase1.cases[0].priority_score
@@ -273,14 +269,14 @@ def test_linker_preserves_phase2_family_score() -> None:
         family_score=0.83,
         family_ecdf=0.61,
     )
-    case_set = Phase2CaseSet(duplicate_cases=(case,))
+    case_set = Phase2CaseSet(relational_cases=(case,))
     phase1 = _phase1_result(
         cases=[_phase1_case(case_id="p1_alpha", row_positions=(5,))],
     )
 
     result = link_phase2_to_phase1(case_set=case_set, phase1=phase1, key_mode="position")
 
-    linked = result.case_set.duplicate_cases[0]
+    linked = result.case_set.relational_cases[0]
     assert linked.family_score == pytest.approx(0.83)
     assert linked.family_ecdf == pytest.approx(0.61)
 
@@ -294,20 +290,20 @@ def test_linker_preserves_phase2_case_generation_reason() -> None:
         right_pos=7,
         reason=reason,
     )
-    case_set = Phase2CaseSet(duplicate_cases=(case,))
+    case_set = Phase2CaseSet(relational_cases=(case,))
     phase1 = _phase1_result(
         cases=[_phase1_case(case_id="p1_alpha", row_positions=(5,))],
     )
 
     result = link_phase2_to_phase1(case_set=case_set, phase1=phase1, key_mode="position")
 
-    assert result.case_set.duplicate_cases[0].case_generation_reason == reason
+    assert result.case_set.relational_cases[0].case_generation_reason == reason
 
 
 def test_linker_idempotent_when_case_set_already_linked() -> None:
     """invariant #38 — 이미 linked 된 case_set 재호출 시 동일 refs."""
     case_set = Phase2CaseSet(
-        duplicate_cases=(_duplicate_case(case_id="dup_001", left_pos=5, right_pos=7),),
+        relational_cases=(_duplicate_case(case_id="dup_001", left_pos=5, right_pos=7),),
     )
     phase1 = _phase1_result(
         cases=[_phase1_case(case_id="p1_alpha", row_positions=(5,))],
@@ -316,8 +312,8 @@ def test_linker_idempotent_when_case_set_already_linked() -> None:
     first = link_phase2_to_phase1(case_set=case_set, phase1=phase1, key_mode="position")
     second = link_phase2_to_phase1(case_set=first.case_set, phase1=phase1, key_mode="position")
 
-    first_refs = first.case_set.duplicate_cases[0].phase1_case_refs
-    second_refs = second.case_set.duplicate_cases[0].phase1_case_refs
+    first_refs = first.case_set.relational_cases[0].phase1_case_refs
+    second_refs = second.case_set.relational_cases[0].phase1_case_refs
     assert first_refs == second_refs == ("p1_alpha",)
     assert second.case_set.linked is True
 
@@ -325,7 +321,7 @@ def test_linker_idempotent_when_case_set_already_linked() -> None:
 def test_linker_diagnostics_includes_match_counts() -> None:
     """diagnostics 에 linked_count / phase1_hit_count / unmatched_phase2_count 노출."""
     case_set = Phase2CaseSet(
-        duplicate_cases=(
+        relational_cases=(
             _duplicate_case(case_id="dup_001", left_pos=5, right_pos=7),
             _duplicate_case(case_id="dup_002", left_pos=900, right_pos=901),
         ),
@@ -350,7 +346,7 @@ def test_linker_diagnostics_includes_match_counts() -> None:
 def test_phase1_case_refs_sorted_alphabetically_in_tuple() -> None:
     """invariant #36 — phase1_case_refs 는 set 의 sorted() 결과 = 사전순 tuple."""
     case_set = Phase2CaseSet(
-        duplicate_cases=(_duplicate_case(case_id="dup_001", left_pos=1, right_pos=2),),
+        relational_cases=(_duplicate_case(case_id="dup_001", left_pos=1, right_pos=2),),
     )
     # 동일 row_position 에 여러 PHASE1 hit — 순서 섞어서 입력.
     phase1 = _phase1_result(
@@ -363,41 +359,41 @@ def test_phase1_case_refs_sorted_alphabetically_in_tuple() -> None:
 
     result = link_phase2_to_phase1(case_set=case_set, phase1=phase1, key_mode="position")
 
-    refs = result.case_set.duplicate_cases[0].phase1_case_refs
+    refs = result.case_set.relational_cases[0].phase1_case_refs
     assert list(refs) == sorted(refs)
     assert refs == ("aaa_first", "mmm_mid", "zzz_last")
 
 
-def test_duplicate_case_left_ref_position_matches_phase1() -> None:
-    """invariant #37 — DuplicateCase.left_ref 의 row_position 도 cross-ref 대상."""
+def test_pair_case_left_row_position_matches_phase1() -> None:
+    """invariant #37 — pair case 의 첫 row_ref(row_position) 도 cross-ref 대상."""
     case = _duplicate_case(case_id="dup_001", left_pos=42, right_pos=99)
-    case_set = Phase2CaseSet(duplicate_cases=(case,))
+    case_set = Phase2CaseSet(relational_cases=(case,))
     phase1 = _phase1_result(
         cases=[_phase1_case(case_id="p1_left_only", row_positions=(42,))],
     )
 
     result = link_phase2_to_phase1(case_set=case_set, phase1=phase1, key_mode="position")
 
-    assert result.case_set.duplicate_cases[0].phase1_case_refs == ("p1_left_only",)
+    assert result.case_set.relational_cases[0].phase1_case_refs == ("p1_left_only",)
 
 
-def test_duplicate_case_right_ref_position_matches_phase1() -> None:
-    """invariant #37 — DuplicateCase.right_ref 의 row_position 도 cross-ref 대상."""
+def test_pair_case_right_row_position_matches_phase1() -> None:
+    """invariant #37 — pair case 의 둘째 row_ref(row_position) 도 cross-ref 대상."""
     case = _duplicate_case(case_id="dup_001", left_pos=42, right_pos=99)
-    case_set = Phase2CaseSet(duplicate_cases=(case,))
+    case_set = Phase2CaseSet(relational_cases=(case,))
     phase1 = _phase1_result(
         cases=[_phase1_case(case_id="p1_right_only", row_positions=(99,))],
     )
 
     result = link_phase2_to_phase1(case_set=case_set, phase1=phase1, key_mode="position")
 
-    assert result.case_set.duplicate_cases[0].phase1_case_refs == ("p1_right_only",)
+    assert result.case_set.relational_cases[0].phase1_case_refs == ("p1_right_only",)
 
 
 def test_phase2_cases_without_phase1_overlap_keep_empty_refs() -> None:
     """invariant #35 — position 매칭 0인 case 는 phase1_case_refs=() 유지, linked=True."""
     case_set = Phase2CaseSet(
-        duplicate_cases=(_duplicate_case(case_id="dup_match", left_pos=1, right_pos=2),),
+        relational_cases=(_duplicate_case(case_id="dup_match", left_pos=1, right_pos=2),),
         unsupervised_cases=(_unsupervised_case(case_id="uns_nomatch", positions=(500, 501)),),
     )
     phase1 = _phase1_result(
@@ -407,7 +403,7 @@ def test_phase2_cases_without_phase1_overlap_keep_empty_refs() -> None:
     result = link_phase2_to_phase1(case_set=case_set, phase1=phase1, key_mode="position")
 
     assert result.case_set.linked is True
-    assert result.case_set.duplicate_cases[0].phase1_case_refs == ("p1_alpha",)
+    assert result.case_set.relational_cases[0].phase1_case_refs == ("p1_alpha",)
     assert result.case_set.unsupervised_cases[0].phase1_case_refs == ()
 
 
@@ -454,20 +450,20 @@ def test_linker_resets_stale_refs_when_phase1_becomes_empty() -> None:
     linker 가 모든 case 에 명시적으로 refs (매칭 0 면 ()) 를 제공해야 stale 방지.
     """
     case_set = Phase2CaseSet(
-        duplicate_cases=(_duplicate_case(case_id="p2_dup_1", left_pos=10, right_pos=11),),
+        relational_cases=(_duplicate_case(case_id="p2_dup_1", left_pos=10, right_pos=11),),
     )
     phase1_initial = _phase1_with_cases(cases_data=(("p1_alpha", (10,)),))
     linked_once = link_phase2_to_phase1(
         case_set=case_set, phase1=phase1_initial, key_mode="position"
     )
-    assert linked_once.case_set.duplicate_cases[0].phase1_case_refs == ("p1_alpha",)
+    assert linked_once.case_set.relational_cases[0].phase1_case_refs == ("p1_alpha",)
 
     # 빈 phase1 로 재호출 — refs 가 () 로 reset 되어야 함.
     phase1_empty = _phase1_with_cases(cases_data=())
     linked_again = link_phase2_to_phase1(
         case_set=linked_once.case_set, phase1=phase1_empty, key_mode="position"
     )
-    assert linked_again.case_set.duplicate_cases[0].phase1_case_refs == ()
+    assert linked_again.case_set.relational_cases[0].phase1_case_refs == ()
     assert linked_again.case_set.linked is True
     assert linked_again.diagnostics["linked_count"] == 0
     assert linked_again.diagnostics["unmatched_phase2_count"] == 1
@@ -476,7 +472,7 @@ def test_linker_resets_stale_refs_when_phase1_becomes_empty() -> None:
 def test_linker_resets_stale_refs_when_phase1_positions_change() -> None:
     """phase1 case 의 position 이 바뀌어 매칭이 사라진 case 는 refs 가 () 로 reset."""
     case_set = Phase2CaseSet(
-        duplicate_cases=(
+        relational_cases=(
             _duplicate_case(case_id="p2_dup_a", left_pos=10, right_pos=11),
             _duplicate_case(case_id="p2_dup_b", left_pos=20, right_pos=21),
         ),
@@ -486,22 +482,22 @@ def test_linker_resets_stale_refs_when_phase1_positions_change() -> None:
     linked_first = link_phase2_to_phase1(
         case_set=case_set, phase1=phase1_first, key_mode="position"
     )
-    assert linked_first.case_set.duplicate_cases[0].phase1_case_refs == ("p1_alpha",)
-    assert linked_first.case_set.duplicate_cases[1].phase1_case_refs == ("p1_alpha",)
+    assert linked_first.case_set.relational_cases[0].phase1_case_refs == ("p1_alpha",)
+    assert linked_first.case_set.relational_cases[1].phase1_case_refs == ("p1_alpha",)
 
     # 2차: position 이 모두 99 로 이동 — 두 case 모두 매칭 0 으로 변경.
     phase1_changed = _phase1_with_cases(cases_data=(("p1_alpha", (99,)),))
     linked_second = link_phase2_to_phase1(
         case_set=linked_first.case_set, phase1=phase1_changed, key_mode="position"
     )
-    assert linked_second.case_set.duplicate_cases[0].phase1_case_refs == ()
-    assert linked_second.case_set.duplicate_cases[1].phase1_case_refs == ()
+    assert linked_second.case_set.relational_cases[0].phase1_case_refs == ()
+    assert linked_second.case_set.relational_cases[1].phase1_case_refs == ()
 
 
 def test_linker_preserves_match_for_some_resets_others() -> None:
     """일부 case 는 매칭 유지, 다른 case 는 reset — mixed transition 검증."""
     case_set = Phase2CaseSet(
-        duplicate_cases=(
+        relational_cases=(
             _duplicate_case(case_id="p2_dup_a", left_pos=10, right_pos=11),
             _duplicate_case(case_id="p2_dup_b", left_pos=20, right_pos=21),
         ),
@@ -515,8 +511,8 @@ def test_linker_preserves_match_for_some_resets_others() -> None:
     linked_second = link_phase2_to_phase1(
         case_set=linked_first.case_set, phase1=phase1_partial, key_mode="position"
     )
-    assert linked_second.case_set.duplicate_cases[0].phase1_case_refs == ("p1_alpha",)
-    assert linked_second.case_set.duplicate_cases[1].phase1_case_refs == ()
+    assert linked_second.case_set.relational_cases[0].phase1_case_refs == ("p1_alpha",)
+    assert linked_second.case_set.relational_cases[1].phase1_case_refs == ()
     assert linked_second.diagnostics["linked_count"] == 1
     assert linked_second.diagnostics["unmatched_phase2_count"] == 1
 
@@ -548,25 +544,21 @@ def _duplicate_case_with_docs(
     right_pos: int,
     left_doc: str | None,
     right_doc: str | None,
-) -> DuplicateCase:
-    """left/right 의 document_id 를 명시 지정한 DuplicateCase fixture."""
+) -> RelationalCase:
+    """left/right 의 document_id 를 명시 지정한 RelationalCase fixture."""
     left = _row_ref_doc(left_pos, left_doc)
     right = _row_ref_doc(right_pos, right_doc)
-    return DuplicateCase(
+    return RelationalCase(
         phase2_case_id=case_id,
         batch_id="batch_test",
-        family="duplicate",
+        family="relational",
         unit_type="pair",
         row_refs=(left, right),
         evidence_tier="strong",
         case_generation_reason={"sub_rule": "L2-03a"},
         family_score=0.8,
         family_ecdf=0.5,
-        pair_id="pair_001",
         sub_rule="L2-03a",
-        left_ref=left,
-        right_ref=right,
-        pair_evidence_tier="strong",
     )
 
 
@@ -609,7 +601,7 @@ def test_doc_id_mode_matches_via_document_id() -> None:
         left_doc="DOC_X",
         right_doc="DOC_Y",
     )
-    case_set = Phase2CaseSet(duplicate_cases=(case,))
+    case_set = Phase2CaseSet(relational_cases=(case,))
     # row_index 는 일부러 다르게 — doc_id 가 같으면 매칭되어야 함.
     phase1 = _phase1_result(
         cases=[_phase1_case_with_docs(case_id="p1_alpha", hits=((999, "DOC_X"),))],
@@ -617,7 +609,7 @@ def test_doc_id_mode_matches_via_document_id() -> None:
 
     result = link_phase2_to_phase1(case_set=case_set, phase1=phase1, key_mode="doc_id")
 
-    assert result.case_set.duplicate_cases[0].phase1_case_refs == ("p1_alpha",)
+    assert result.case_set.relational_cases[0].phase1_case_refs == ("p1_alpha",)
     assert result.diagnostics["key_mode_used"] == "doc_id"
 
 
@@ -633,7 +625,7 @@ def test_doc_id_mode_matches_across_different_positions() -> None:
         left_doc="DOC_RELOAD",
         right_doc="DOC_OTHER",
     )
-    case_set = Phase2CaseSet(duplicate_cases=(case,))
+    case_set = Phase2CaseSet(relational_cases=(case,))
     # PHASE1 의 row_index 는 PHASE2 position 과 무관 (42)
     phase1 = _phase1_result(
         cases=[_phase1_case_with_docs(case_id="p1_reload", hits=((42, "DOC_RELOAD"),))],
@@ -641,7 +633,7 @@ def test_doc_id_mode_matches_across_different_positions() -> None:
 
     result = link_phase2_to_phase1(case_set=case_set, phase1=phase1, key_mode="doc_id")
 
-    assert result.case_set.duplicate_cases[0].phase1_case_refs == ("p1_reload",)
+    assert result.case_set.relational_cases[0].phase1_case_refs == ("p1_reload",)
     assert result.diagnostics["linked_count"] == 1
 
 
@@ -654,7 +646,7 @@ def test_doc_id_mode_excludes_phase2_refs_without_document_id() -> None:
         left_doc=None,
         right_doc=None,
     )
-    case_set = Phase2CaseSet(duplicate_cases=(case,))
+    case_set = Phase2CaseSet(relational_cases=(case,))
     # PHASE1 측은 정상 document_id 가 있어도 PHASE2 가 None 이므로 매칭 0.
     phase1 = _phase1_result(
         cases=[_phase1_case_with_docs(case_id="p1_alpha", hits=((5, "DOC_X"),))],
@@ -662,7 +654,7 @@ def test_doc_id_mode_excludes_phase2_refs_without_document_id() -> None:
 
     result = link_phase2_to_phase1(case_set=case_set, phase1=phase1, key_mode="doc_id")
 
-    assert result.case_set.duplicate_cases[0].phase1_case_refs == ()
+    assert result.case_set.relational_cases[0].phase1_case_refs == ()
     assert result.diagnostics["linked_count"] == 0
 
 
@@ -675,14 +667,14 @@ def test_doc_id_mode_excludes_phase1_hits_without_document_id() -> None:
         left_doc="DOC_X",
         right_doc="DOC_Y",
     )
-    case_set = Phase2CaseSet(duplicate_cases=(case,))
+    case_set = Phase2CaseSet(relational_cases=(case,))
     phase1 = _phase1_result(
         cases=[_phase1_case_with_docs(case_id="p1_alpha", hits=((5, ""),))],
     )
 
     result = link_phase2_to_phase1(case_set=case_set, phase1=phase1, key_mode="doc_id")
 
-    assert result.case_set.duplicate_cases[0].phase1_case_refs == ()
+    assert result.case_set.relational_cases[0].phase1_case_refs == ()
     assert result.diagnostics["phase1_hit_count"] == 0
 
 
@@ -695,7 +687,7 @@ def test_doc_id_mode_diagnostics_records_key_mode_used() -> None:
         left_doc="DOC_X",
         right_doc="DOC_Y",
     )
-    case_set = Phase2CaseSet(duplicate_cases=(case,))
+    case_set = Phase2CaseSet(relational_cases=(case,))
     phase1 = _phase1_result(
         cases=[_phase1_case_with_docs(case_id="p1_alpha", hits=((5, "DOC_X"),))],
     )
@@ -715,7 +707,7 @@ def test_auto_mode_falls_back_to_position_when_some_phase2_refs_lack_document_id
         left_doc=None,
         right_doc="DOC_Y",
     )
-    case_set = Phase2CaseSet(duplicate_cases=(case,))
+    case_set = Phase2CaseSet(relational_cases=(case,))
     # position 5 매칭 → fallback 검증.
     phase1 = _phase1_result(
         cases=[_phase1_case_with_docs(case_id="p1_alpha", hits=((5, "DOC_X"),))],
@@ -725,7 +717,7 @@ def test_auto_mode_falls_back_to_position_when_some_phase2_refs_lack_document_id
 
     assert result.diagnostics["key_mode_used"] == "position"
     # position 매칭은 row_index 5 == row_position 5 → matched.
-    assert result.case_set.duplicate_cases[0].phase1_case_refs == ("p1_alpha",)
+    assert result.case_set.relational_cases[0].phase1_case_refs == ("p1_alpha",)
 
 
 def test_auto_mode_uses_doc_id_when_all_phase2_refs_have_document_id() -> None:
@@ -737,7 +729,7 @@ def test_auto_mode_uses_doc_id_when_all_phase2_refs_have_document_id() -> None:
         left_doc="DOC_X",
         right_doc="DOC_Y",
     )
-    case_set = Phase2CaseSet(duplicate_cases=(case,))
+    case_set = Phase2CaseSet(relational_cases=(case,))
     # PHASE1 row_index 와 PHASE2 position 이 달라도 doc_id 가 같으면 매칭.
     phase1 = _phase1_result(
         cases=[_phase1_case_with_docs(case_id="p1_alpha", hits=((999, "DOC_X"),))],
@@ -746,7 +738,7 @@ def test_auto_mode_uses_doc_id_when_all_phase2_refs_have_document_id() -> None:
     result = link_phase2_to_phase1(case_set=case_set, phase1=phase1, key_mode="auto")
 
     assert result.diagnostics["key_mode_used"] == "doc_id"
-    assert result.case_set.duplicate_cases[0].phase1_case_refs == ("p1_alpha",)
+    assert result.case_set.relational_cases[0].phase1_case_refs == ("p1_alpha",)
 
 
 def test_auto_mode_diagnostics_records_resolved_key_mode() -> None:
@@ -769,14 +761,14 @@ def test_auto_mode_diagnostics_records_resolved_key_mode() -> None:
 
     # 1) 모두 document_id 가용 → "doc_id"
     res_doc = link_phase2_to_phase1(
-        case_set=Phase2CaseSet(duplicate_cases=(case_doc,)),
+        case_set=Phase2CaseSet(relational_cases=(case_doc,)),
         phase1=phase1,
         key_mode="auto",
     )
     assert res_doc.diagnostics["key_mode_used"] == "doc_id"
     # 2) 하나라도 None → "position"
     res_pos = link_phase2_to_phase1(
-        case_set=Phase2CaseSet(duplicate_cases=(case_no_doc,)),
+        case_set=Phase2CaseSet(relational_cases=(case_no_doc,)),
         phase1=phase1,
         key_mode="auto",
     )
@@ -795,7 +787,7 @@ def test_position_mode_explicit_still_works() -> None:
         left_doc="DOC_X",
         right_doc="DOC_Y",
     )
-    case_set = Phase2CaseSet(duplicate_cases=(case,))
+    case_set = Phase2CaseSet(relational_cases=(case,))
     # doc_id 는 매칭되지만 position 매칭은 row_index 5 ↔ row_position 5 만 작동.
     phase1 = _phase1_result(
         cases=[_phase1_case_with_docs(case_id="p1_alpha", hits=((5, "OTHER_DOC"),))],
@@ -805,13 +797,13 @@ def test_position_mode_explicit_still_works() -> None:
 
     assert result.diagnostics["key_mode_used"] == "position"
     # position 등가만으로 매칭 — document_id 차이 무관.
-    assert result.case_set.duplicate_cases[0].phase1_case_refs == ("p1_alpha",)
+    assert result.case_set.relational_cases[0].phase1_case_refs == ("p1_alpha",)
 
 
 def test_invalid_key_mode_raises_value_error() -> None:
     """invariant #44 — 허용 외 key_mode 입력은 silent fallback 없이 ValueError."""
     case_set = Phase2CaseSet(
-        duplicate_cases=(_duplicate_case(case_id="dup_x", left_pos=0, right_pos=1),),
+        relational_cases=(_duplicate_case(case_id="dup_x", left_pos=0, right_pos=1),),
     )
     phase1 = _empty_phase1()
 
@@ -827,7 +819,7 @@ def test_invalid_key_mode_raises_value_error() -> None:
 def test_diagnostics_records_match_precision_row_for_position_mode() -> None:
     """key_mode='position' → match_precision='row' (row-level)."""
     case_set = Phase2CaseSet(
-        duplicate_cases=(_duplicate_case(case_id="dup_p", left_pos=10, right_pos=11),),
+        relational_cases=(_duplicate_case(case_id="dup_p", left_pos=10, right_pos=11),),
     )
     phase1 = _empty_phase1()
     result = link_phase2_to_phase1(case_set=case_set, phase1=phase1, key_mode="position")
@@ -837,7 +829,7 @@ def test_diagnostics_records_match_precision_row_for_position_mode() -> None:
 def test_diagnostics_records_match_precision_document_for_doc_id_mode() -> None:
     """key_mode='doc_id' → match_precision='document' — looser 매칭임을 명시."""
     case_set = Phase2CaseSet(
-        duplicate_cases=(
+        relational_cases=(
             _duplicate_case_with_docs(
                 case_id="dup_d", left_pos=10, right_pos=11, left_doc="D_L", right_doc="D_R"
             ),
@@ -852,7 +844,7 @@ def test_diagnostics_match_precision_follows_auto_resolution() -> None:
     """auto 가 doc_id 로 resolve 되면 match_precision='document', position 이면 'row'."""
     # 모든 ref 가 document_id 가용 → auto → doc_id → document.
     case_set_doc = Phase2CaseSet(
-        duplicate_cases=(
+        relational_cases=(
             _duplicate_case_with_docs(
                 case_id="dup_a", left_pos=10, right_pos=11, left_doc="D_L", right_doc="D_R"
             ),
@@ -867,7 +859,7 @@ def test_diagnostics_match_precision_follows_auto_resolution() -> None:
     # 하나라도 document_id 없음 → auto → position → row.
     # _row_ref_doc(pos, None) 은 document_id 를 None 으로 명시 설정한 ref.
     case_set_pos = Phase2CaseSet(
-        duplicate_cases=(
+        relational_cases=(
             _duplicate_case_with_docs(
                 case_id="dup_b", left_pos=10, right_pos=11, left_doc=None, right_doc=None
             ),
@@ -926,23 +918,19 @@ def _duplicate_case_full(
     case_id: str,
     left: Phase2RowRef,
     right: Phase2RowRef,
-) -> DuplicateCase:
-    """row_ref 두 개를 받아 DuplicateCase 를 만드는 fixture."""
-    return DuplicateCase(
+) -> RelationalCase:
+    """row_ref 두 개를 받아 RelationalCase 를 만드는 fixture."""
+    return RelationalCase(
         phase2_case_id=case_id,
         batch_id="batch_test",
-        family="duplicate",
+        family="relational",
         unit_type="pair",
         row_refs=(left, right),
         evidence_tier="strong",
         case_generation_reason={"sub_rule": "L2-03a"},
         family_score=0.8,
         family_ecdf=0.5,
-        pair_id="pair_001",
         sub_rule="L2-03a",
-        left_ref=left,
-        right_ref=right,
-        pair_evidence_tier="strong",
     )
 
 
@@ -1003,7 +991,7 @@ def test_doc_line_mode_accepts_none_row_ref_map_after_phase2() -> None:
     left = _row_ref_full(5, document_id="DOC_X", raw_line_number="0001")
     right = _row_ref_full(6, document_id="DOC_X", raw_line_number="0002")
     case_set = Phase2CaseSet(
-        duplicate_cases=(_duplicate_case_full(case_id="dup_x", left=left, right=right),),
+        relational_cases=(_duplicate_case_full(case_id="dup_x", left=left, right=right),),
     )
     # row_ref_map=None + salt 가용 — ValueError 없이 진행. PHASE1 empty 라 매칭 0.
     result = link_phase2_to_phase1(
@@ -1021,7 +1009,7 @@ def test_doc_line_mode_requires_salt() -> None:
     left = _row_ref_full(5, document_id="DOC_X", raw_line_number="0001")
     right = _row_ref_full(6, document_id="DOC_X", raw_line_number="0002")
     case_set = Phase2CaseSet(
-        duplicate_cases=(_duplicate_case_full(case_id="dup_x", left=left, right=right),),
+        relational_cases=(_duplicate_case_full(case_id="dup_x", left=left, right=right),),
     )
     rrm = [
         _row_ref_map_entry(
@@ -1055,7 +1043,7 @@ def test_company_doc_mode_requires_salt_only_after_phase2() -> None:
     left = _row_ref_full(5, document_id="DOC_X", company_code="CO_A")
     right = _row_ref_full(6, document_id="DOC_Y", company_code="CO_A")
     case_set = Phase2CaseSet(
-        duplicate_cases=(_duplicate_case_full(case_id="dup_x", left=left, right=right),),
+        relational_cases=(_duplicate_case_full(case_id="dup_x", left=left, right=right),),
     )
     # row_ref_map=None 도 허용 (이전 ValueError → graceful pass).
     result = link_phase2_to_phase1(
@@ -1082,7 +1070,7 @@ def test_label_mode_requires_salt_only_after_phase2() -> None:
     left = _row_ref_full(5, document_id="DOC_X")
     right = _row_ref_full(6, document_id="DOC_Y")
     case_set = Phase2CaseSet(
-        duplicate_cases=(_duplicate_case_full(case_id="dup_x", left=left, right=right),),
+        relational_cases=(_duplicate_case_full(case_id="dup_x", left=left, right=right),),
     )
     # row_ref_map=None — graceful pass (이전 ValueError → 허용).
     result = link_phase2_to_phase1(
@@ -1104,7 +1092,7 @@ def test_doc_line_mode_matches_via_doc_and_normalized_line() -> None:
     left = _row_ref_full(5, document_id="DOC_X", raw_line_number="0001")
     right = _row_ref_full(6, document_id="DOC_X", raw_line_number="0002")
     case = _duplicate_case_full(case_id="dup_doc_line", left=left, right=right)
-    case_set = Phase2CaseSet(duplicate_cases=(case,))
+    case_set = Phase2CaseSet(relational_cases=(case,))
     rrm = [
         _row_ref_map_entry(
             position=5,
@@ -1134,7 +1122,7 @@ def test_doc_line_mode_matches_via_doc_and_normalized_line() -> None:
         key_mode="doc_line",
     )
 
-    assert result.case_set.duplicate_cases[0].phase1_case_refs == ("p1_dl_alpha",)
+    assert result.case_set.relational_cases[0].phase1_case_refs == ("p1_dl_alpha",)
     assert result.diagnostics["key_mode_used"] == "doc_line"
     assert result.diagnostics["match_precision"] == "row"
 
@@ -1145,7 +1133,7 @@ def test_doc_line_mode_distinguishes_lines_in_same_document() -> None:
     left = _row_ref_full(5, document_id="DOC_X", raw_line_number="0001")
     right = _row_ref_full(6, document_id="DOC_Y", raw_line_number=None)
     case = _duplicate_case_full(case_id="dup_distinguish", left=left, right=right)
-    case_set = Phase2CaseSet(duplicate_cases=(case,))
+    case_set = Phase2CaseSet(relational_cases=(case,))
     rrm = [
         _row_ref_map_entry(
             position=5,
@@ -1187,7 +1175,7 @@ def test_doc_line_mode_distinguishes_lines_in_same_document() -> None:
 
     # left 는 (DOC_X, "1"), PHASE1 hit 는 (DOC_X, "99") — 같은 doc 다른 line.
     # row-precise 매칭이므로 phase1_case_refs == ().
-    assert result.case_set.duplicate_cases[0].phase1_case_refs == ()
+    assert result.case_set.relational_cases[0].phase1_case_refs == ()
 
 
 # -- company_doc mode 매칭 (#47) --------------------------------------------
@@ -1198,7 +1186,7 @@ def test_company_doc_mode_matches_via_company_and_doc() -> None:
     left = _row_ref_full(5, document_id="DOC_X", company_code="CO_A")
     right = _row_ref_full(6, document_id="DOC_Y", company_code="CO_A")
     case = _duplicate_case_full(case_id="dup_cd", left=left, right=right)
-    case_set = Phase2CaseSet(duplicate_cases=(case,))
+    case_set = Phase2CaseSet(relational_cases=(case,))
     rrm = [
         _row_ref_map_entry(
             position=5,
@@ -1235,7 +1223,7 @@ def test_company_doc_mode_matches_via_company_and_doc() -> None:
         key_mode="company_doc",
     )
 
-    assert result.case_set.duplicate_cases[0].phase1_case_refs == ("p1_cd_alpha",)
+    assert result.case_set.relational_cases[0].phase1_case_refs == ("p1_cd_alpha",)
     assert result.diagnostics["key_mode_used"] == "company_doc"
     assert result.diagnostics["match_precision"] == "document"
 
@@ -1245,7 +1233,7 @@ def test_company_doc_mode_disambiguates_across_companies() -> None:
     left = _row_ref_full(5, document_id="DOC_X", company_code="CO_A")
     right = _row_ref_full(6, document_id="DOC_Y", company_code="CO_A")
     case = _duplicate_case_full(case_id="dup_disambig", left=left, right=right)
-    case_set = Phase2CaseSet(duplicate_cases=(case,))
+    case_set = Phase2CaseSet(relational_cases=(case,))
     rrm = [
         _row_ref_map_entry(
             position=5,
@@ -1282,7 +1270,7 @@ def test_company_doc_mode_disambiguates_across_companies() -> None:
     )
 
     # CO_A:DOC_X 와 CO_B:DOC_X 는 다른 페어 → 매칭 0.
-    assert result.case_set.duplicate_cases[0].phase1_case_refs == ()
+    assert result.case_set.relational_cases[0].phase1_case_refs == ()
 
 
 # -- label mode 매칭 + row-precision -----------------------------------------
@@ -1293,7 +1281,7 @@ def test_label_mode_matches_via_canonical_label_hash() -> None:
     left = _row_ref_full(5, index_label_raw=5, document_id="DOC_X")
     right = _row_ref_full(6, index_label_raw=6, document_id="DOC_Y")
     case = _duplicate_case_full(case_id="dup_label", left=left, right=right)
-    case_set = Phase2CaseSet(duplicate_cases=(case,))
+    case_set = Phase2CaseSet(relational_cases=(case,))
     rrm = [
         _row_ref_map_entry(
             position=5,
@@ -1322,7 +1310,7 @@ def test_label_mode_matches_via_canonical_label_hash() -> None:
         key_mode="label",
     )
 
-    assert result.case_set.duplicate_cases[0].phase1_case_refs == ("p1_label_alpha",)
+    assert result.case_set.relational_cases[0].phase1_case_refs == ("p1_label_alpha",)
 
 
 def test_label_mode_returns_row_precision_in_diagnostics() -> None:
@@ -1330,7 +1318,7 @@ def test_label_mode_returns_row_precision_in_diagnostics() -> None:
     left = _row_ref_full(5, index_label_raw=5, document_id="DOC_X")
     right = _row_ref_full(6, index_label_raw=6, document_id="DOC_Y")
     case = _duplicate_case_full(case_id="dup_lp", left=left, right=right)
-    case_set = Phase2CaseSet(duplicate_cases=(case,))
+    case_set = Phase2CaseSet(relational_cases=(case,))
     rrm = [
         _row_ref_map_entry(
             position=5,
@@ -1367,7 +1355,7 @@ def test_auto_resolves_to_label_when_row_ref_map_and_salt_available() -> None:
     left = _row_ref_full(5, index_label_raw=5, document_id="DOC_X")
     right = _row_ref_full(6, index_label_raw=6, document_id="DOC_Y")
     case = _duplicate_case_full(case_id="dup_auto_label", left=left, right=right)
-    case_set = Phase2CaseSet(duplicate_cases=(case,))
+    case_set = Phase2CaseSet(relational_cases=(case,))
     rrm = [
         _row_ref_map_entry(
             position=5,
@@ -1401,7 +1389,7 @@ def test_auto_falls_back_to_doc_id_without_row_ref_map_when_doc_ids_present() ->
     left = _row_ref_full(5, document_id="DOC_X")
     right = _row_ref_full(6, document_id="DOC_Y")
     case = _duplicate_case_full(case_id="dup_auto_doc", left=left, right=right)
-    case_set = Phase2CaseSet(duplicate_cases=(case,))
+    case_set = Phase2CaseSet(relational_cases=(case,))
 
     result = link_phase2_to_phase1(
         case_set=case_set,
@@ -1419,7 +1407,7 @@ def test_auto_falls_back_to_position_without_row_ref_map_or_doc_ids() -> None:
     left = _row_ref_full(5, document_id=None)
     right = _row_ref_full(6, document_id="DOC_Y")
     case = _duplicate_case_full(case_id="dup_auto_pos", left=left, right=right)
-    case_set = Phase2CaseSet(duplicate_cases=(case,))
+    case_set = Phase2CaseSet(relational_cases=(case,))
 
     result = link_phase2_to_phase1(
         case_set=case_set,
@@ -1440,7 +1428,7 @@ def test_match_precision_row_for_label_doc_line_position() -> None:
     left = _row_ref_full(5, document_id="DOC_X", raw_line_number="0001")
     right = _row_ref_full(6, document_id="DOC_X", raw_line_number="0002")
     case_set = Phase2CaseSet(
-        duplicate_cases=(_duplicate_case_full(case_id="dup_prec", left=left, right=right),),
+        relational_cases=(_duplicate_case_full(case_id="dup_prec", left=left, right=right),),
     )
     rrm = [
         _row_ref_map_entry(
@@ -1474,7 +1462,7 @@ def test_match_precision_document_for_doc_id_company_doc() -> None:
     left = _row_ref_full(5, document_id="DOC_X", company_code="CO_A")
     right = _row_ref_full(6, document_id="DOC_Y", company_code="CO_A")
     case_set = Phase2CaseSet(
-        duplicate_cases=(_duplicate_case_full(case_id="dup_dprec", left=left, right=right),),
+        relational_cases=(_duplicate_case_full(case_id="dup_dprec", left=left, right=right),),
     )
     rrm = [
         _row_ref_map_entry(
@@ -1516,7 +1504,7 @@ def test_label_mode_accepts_empty_row_ref_map_with_hit_hash_direct() -> None:
     이전 invariant #50 의 empty row_ref_map 거절은 정정됨.
     """
     case_set = Phase2CaseSet(
-        duplicate_cases=(_duplicate_case(case_id="dup_x", left_pos=0, right_pos=1),),
+        relational_cases=(_duplicate_case(case_id="dup_x", left_pos=0, right_pos=1),),
     )
     # salt 만 있고 row_ref_map=[] — ValueError 안 던짐. PHASE1 empty 이므로 매칭 0.
     result = link_phase2_to_phase1(
@@ -1532,7 +1520,7 @@ def test_label_mode_accepts_empty_row_ref_map_with_hit_hash_direct() -> None:
 def test_doc_line_mode_accepts_empty_row_ref_map_with_hit_hash_direct() -> None:
     """invariant #78 — doc_line 도 row_ref_map 없이 hit hash 직접 사용 가능."""
     case_set = Phase2CaseSet(
-        duplicate_cases=(_duplicate_case(case_id="dup_y", left_pos=0, right_pos=1),),
+        relational_cases=(_duplicate_case(case_id="dup_y", left_pos=0, right_pos=1),),
     )
     result = link_phase2_to_phase1(
         case_set=case_set,
@@ -1547,7 +1535,7 @@ def test_doc_line_mode_accepts_empty_row_ref_map_with_hit_hash_direct() -> None:
 def test_company_doc_mode_accepts_empty_row_ref_map_with_hit_hash_direct() -> None:
     """invariant #78 — company_doc 도 동일."""
     case_set = Phase2CaseSet(
-        duplicate_cases=(_duplicate_case(case_id="dup_z", left_pos=0, right_pos=1),),
+        relational_cases=(_duplicate_case(case_id="dup_z", left_pos=0, right_pos=1),),
     )
     result = link_phase2_to_phase1(
         case_set=case_set,
@@ -1562,7 +1550,7 @@ def test_company_doc_mode_accepts_empty_row_ref_map_with_hit_hash_direct() -> No
 def test_hash_mode_still_requires_salt() -> None:
     """invariant #78 — row_ref_map 은 optional 이 됐지만 salt 는 여전히 필수."""
     case_set = Phase2CaseSet(
-        duplicate_cases=(_duplicate_case(case_id="dup_s", left_pos=0, right_pos=1),),
+        relational_cases=(_duplicate_case(case_id="dup_s", left_pos=0, right_pos=1),),
     )
     for mode in ("label", "doc_line", "company_doc"):
         with pytest.raises(ValueError, match="non-empty salt"):
@@ -1583,7 +1571,7 @@ def test_auto_with_partial_phase1_hash_coverage_falls_back() -> None:
     silent unmatched 위험 → doc_id 또는 position 으로 fallback.
     """
     case_set = Phase2CaseSet(
-        duplicate_cases=(
+        relational_cases=(
             _duplicate_case_with_docs(
                 case_id="dup_auto",
                 left_pos=0,
@@ -1611,7 +1599,7 @@ def test_auto_resolves_to_label_with_hit_hash_coverage_no_row_ref_map() -> None:
     없이도 auto 가 label 채택.
     """
     case_set = Phase2CaseSet(
-        duplicate_cases=(
+        relational_cases=(
             _duplicate_case_with_docs(
                 case_id="dup_full_hash",
                 left_pos=0,
@@ -1665,7 +1653,7 @@ def _rrm_entry_for_position(pos: int, doc: str | None = "D", line: str | None = 
 def test_auto_with_full_phase1_position_coverage_chooses_label() -> None:
     """PHASE1 hit position 모두 row_ref_map 에 있으면 auto → label 선택."""
     case_set = Phase2CaseSet(
-        duplicate_cases=(
+        relational_cases=(
             _duplicate_case_with_docs(
                 case_id="dup_cov", left_pos=10, right_pos=11, left_doc="D_L", right_doc="D_R"
             ),
@@ -1687,7 +1675,7 @@ def test_auto_with_full_phase1_position_coverage_chooses_label() -> None:
 def test_auto_with_partial_phase1_position_coverage_falls_back() -> None:
     """PHASE1 hit position 중 일부가 row_ref_map 에 없으면 auto → label 회피, fallback."""
     case_set = Phase2CaseSet(
-        duplicate_cases=(
+        relational_cases=(
             _duplicate_case_with_docs(
                 case_id="dup_partial", left_pos=10, right_pos=11, left_doc="D_L", right_doc="D_R"
             ),
@@ -1711,7 +1699,7 @@ def test_auto_with_partial_phase1_position_coverage_falls_back() -> None:
 def test_auto_with_empty_phase1_cases_chooses_label_when_rrm_available() -> None:
     """PHASE1 cases 가 빈 경우 coverage 검사 무의미 → label 자동 채택."""
     case_set = Phase2CaseSet(
-        duplicate_cases=(
+        relational_cases=(
             _duplicate_case_with_docs(
                 case_id="dup_empty_p1", left_pos=10, right_pos=11, left_doc="D_L", right_doc="D_R"
             ),
@@ -1735,7 +1723,7 @@ def test_explicit_label_with_partial_coverage_still_works_but_warns() -> None:
     그 의도를 존중. 단 매칭 결과는 row_ref_map 에 있는 PHASE1 position 만 link.
     """
     case_set = Phase2CaseSet(
-        duplicate_cases=(
+        relational_cases=(
             _duplicate_case_with_docs(
                 case_id="dup_explicit", left_pos=10, right_pos=11, left_doc="D_L", right_doc="D_R"
             ),
@@ -1768,7 +1756,7 @@ def test_auto_coverage_check_accepts_string_position_entries() -> None:
     정규화 (`_build_position_to_entry.keys()`) 를 공유하므로 이제 정합.
     """
     case_set = Phase2CaseSet(
-        duplicate_cases=(
+        relational_cases=(
             _duplicate_case_with_docs(
                 case_id="dup_str_pos",
                 left_pos=10,
@@ -1844,7 +1832,7 @@ def test_label_mode_uses_hit_canonical_label_hash_when_present() -> None:
     left = _row_ref_full(5, index_label_raw=5, document_id="DOC_X")
     right = _row_ref_full(6, index_label_raw=6, document_id="DOC_Y")
     case_set = Phase2CaseSet(
-        duplicate_cases=(_duplicate_case_full(case_id="dup_hit_hash", left=left, right=right),),
+        relational_cases=(_duplicate_case_full(case_id="dup_hit_hash", left=left, right=right),),
     )
     # row_ref_map 에는 position 5 의 entry 가 **없음** — 그러나 hit 측 hash 가 있어 매칭.
     rrm = [
@@ -1883,7 +1871,7 @@ def test_label_mode_uses_hit_canonical_label_hash_when_present() -> None:
         key_mode="label",
     )
 
-    assert result.case_set.duplicate_cases[0].phase1_case_refs == ("p1_hit_hash",)
+    assert result.case_set.relational_cases[0].phase1_case_refs == ("p1_hit_hash",)
 
 
 def test_label_mode_falls_back_to_row_ref_map_when_hit_hash_empty() -> None:
@@ -1891,7 +1879,7 @@ def test_label_mode_falls_back_to_row_ref_map_when_hit_hash_empty() -> None:
     left = _row_ref_full(5, index_label_raw=5, document_id="DOC_X")
     right = _row_ref_full(6, index_label_raw=6, document_id="DOC_Y")
     case_set = Phase2CaseSet(
-        duplicate_cases=(_duplicate_case_full(case_id="dup_fallback", left=left, right=right),),
+        relational_cases=(_duplicate_case_full(case_id="dup_fallback", left=left, right=right),),
     )
     # row_ref_map 의 position 5 entry — hash 가 PHASE2 left ref 와 동일하게 산출됨.
     rrm = [
@@ -1928,7 +1916,7 @@ def test_label_mode_falls_back_to_row_ref_map_when_hit_hash_empty() -> None:
         key_mode="label",
     )
 
-    assert result.case_set.duplicate_cases[0].phase1_case_refs == ("p1_legacy",)
+    assert result.case_set.relational_cases[0].phase1_case_refs == ("p1_legacy",)
 
 
 # -- doc_line mode: hit hash 우선 (#75) -------------------------------------
@@ -1939,7 +1927,7 @@ def test_doc_line_mode_uses_hit_doc_and_line_hash_when_present() -> None:
     left = _row_ref_full(5, document_id="DOC_X", raw_line_number="0001")
     right = _row_ref_full(6, document_id="DOC_X", raw_line_number="0002")
     case = _duplicate_case_full(case_id="dup_dl_hit", left=left, right=right)
-    case_set = Phase2CaseSet(duplicate_cases=(case,))
+    case_set = Phase2CaseSet(relational_cases=(case,))
     # row_ref_map 에는 PHASE1 hit position 부재. hit 의 hash 만으로 매칭.
     rrm = [
         _row_ref_map_entry(
@@ -1982,7 +1970,7 @@ def test_doc_line_mode_uses_hit_doc_and_line_hash_when_present() -> None:
         key_mode="doc_line",
     )
 
-    assert result.case_set.duplicate_cases[0].phase1_case_refs == ("p1_dl_hit",)
+    assert result.case_set.relational_cases[0].phase1_case_refs == ("p1_dl_hit",)
 
 
 def test_doc_line_mode_falls_back_to_row_ref_map_when_hit_hash_empty() -> None:
@@ -1990,7 +1978,7 @@ def test_doc_line_mode_falls_back_to_row_ref_map_when_hit_hash_empty() -> None:
     left = _row_ref_full(5, document_id="DOC_X", raw_line_number="0001")
     right = _row_ref_full(6, document_id="DOC_X", raw_line_number="0002")
     case = _duplicate_case_full(case_id="dup_dl_legacy", left=left, right=right)
-    case_set = Phase2CaseSet(duplicate_cases=(case,))
+    case_set = Phase2CaseSet(relational_cases=(case,))
     rrm = [
         _row_ref_map_entry(
             position=5,
@@ -2025,7 +2013,7 @@ def test_doc_line_mode_falls_back_to_row_ref_map_when_hit_hash_empty() -> None:
         key_mode="doc_line",
     )
 
-    assert result.case_set.duplicate_cases[0].phase1_case_refs == ("p1_dl_legacy",)
+    assert result.case_set.relational_cases[0].phase1_case_refs == ("p1_dl_legacy",)
 
 
 # -- company_doc mode: hit hash 우선 (#75) ----------------------------------
@@ -2036,7 +2024,7 @@ def test_company_doc_mode_uses_hit_hashes_when_present() -> None:
     left = _row_ref_full(5, document_id="DOC_X", company_code="CO_A")
     right = _row_ref_full(6, document_id="DOC_Y", company_code="CO_A")
     case = _duplicate_case_full(case_id="dup_cd_hit", left=left, right=right)
-    case_set = Phase2CaseSet(duplicate_cases=(case,))
+    case_set = Phase2CaseSet(relational_cases=(case,))
     rrm = [
         _row_ref_map_entry(
             position=5,
@@ -2080,7 +2068,7 @@ def test_company_doc_mode_uses_hit_hashes_when_present() -> None:
         key_mode="company_doc",
     )
 
-    assert result.case_set.duplicate_cases[0].phase1_case_refs == ("p1_cd_hit",)
+    assert result.case_set.relational_cases[0].phase1_case_refs == ("p1_cd_hit",)
 
 
 def test_company_doc_mode_falls_back_to_row_ref_map_when_hit_hash_empty() -> None:
@@ -2088,7 +2076,7 @@ def test_company_doc_mode_falls_back_to_row_ref_map_when_hit_hash_empty() -> Non
     left = _row_ref_full(5, document_id="DOC_X", company_code="CO_A")
     right = _row_ref_full(6, document_id="DOC_Y", company_code="CO_A")
     case = _duplicate_case_full(case_id="dup_cd_legacy", left=left, right=right)
-    case_set = Phase2CaseSet(duplicate_cases=(case,))
+    case_set = Phase2CaseSet(relational_cases=(case,))
     rrm = [
         _row_ref_map_entry(
             position=5,
@@ -2122,7 +2110,7 @@ def test_company_doc_mode_falls_back_to_row_ref_map_when_hit_hash_empty() -> Non
         key_mode="company_doc",
     )
 
-    assert result.case_set.duplicate_cases[0].phase1_case_refs == ("p1_cd_legacy",)
+    assert result.case_set.relational_cases[0].phase1_case_refs == ("p1_cd_legacy",)
 
 
 # -- coverage helper hash field 우선 (#76) ----------------------------------
@@ -2137,7 +2125,7 @@ def test_auto_coverage_passes_when_all_hits_have_canonical_label_hash() -> None:
     left = _row_ref_full(5, index_label_raw=5, document_id="DOC_X")
     right = _row_ref_full(6, index_label_raw=6, document_id="DOC_Y")
     case_set = Phase2CaseSet(
-        duplicate_cases=(_duplicate_case_full(case_id="dup_cov_hit", left=left, right=right),),
+        relational_cases=(_duplicate_case_full(case_id="dup_cov_hit", left=left, right=right),),
     )
     # row_ref_map 에는 PHASE2 ref position 만 있음. PHASE1 hit position 9999 부재.
     rrm = [
@@ -2183,7 +2171,7 @@ def test_auto_coverage_passes_when_all_hits_have_canonical_label_hash() -> None:
 
     # invariant #76 — hit hash 가 가용하므로 label 채택, 매칭 성공.
     assert result.diagnostics["key_mode_used"] == "label"
-    assert result.case_set.duplicate_cases[0].phase1_case_refs == ("p1_cov_hit",)
+    assert result.case_set.relational_cases[0].phase1_case_refs == ("p1_cov_hit",)
 
 
 def test_auto_coverage_mixed_hits_uses_row_ref_map_fallback_for_legacy_hits() -> None:
@@ -2195,7 +2183,7 @@ def test_auto_coverage_mixed_hits_uses_row_ref_map_fallback_for_legacy_hits() ->
     left = _row_ref_full(5, index_label_raw=5, document_id="DOC_X")
     right = _row_ref_full(6, index_label_raw=6, document_id="DOC_Y")
     case_set = Phase2CaseSet(
-        duplicate_cases=(_duplicate_case_full(case_id="dup_mixed", left=left, right=right),),
+        relational_cases=(_duplicate_case_full(case_id="dup_mixed", left=left, right=right),),
     )
     # row_ref_map 은 position 5 / 6 만 보유.
     rrm = [
@@ -2243,7 +2231,7 @@ def test_auto_coverage_mixed_hits_uses_row_ref_map_fallback_for_legacy_hits() ->
 
     # 둘 다 coverage 통과 → label 채택.
     assert result.diagnostics["key_mode_used"] == "label"
-    assert result.case_set.duplicate_cases[0].phase1_case_refs == ("p1_mixed",)
+    assert result.case_set.relational_cases[0].phase1_case_refs == ("p1_mixed",)
 
 
 def test_auto_coverage_fails_when_hit_lacks_hash_and_row_ref_map() -> None:
@@ -2251,7 +2239,7 @@ def test_auto_coverage_fails_when_hit_lacks_hash_and_row_ref_map() -> None:
     left = _row_ref_full(5, index_label_raw=5, document_id="DOC_X")
     right = _row_ref_full(6, index_label_raw=6, document_id="DOC_Y")
     case_set = Phase2CaseSet(
-        duplicate_cases=(_duplicate_case_full(case_id="dup_no_cov", left=left, right=right),),
+        relational_cases=(_duplicate_case_full(case_id="dup_no_cov", left=left, right=right),),
     )
     # row_ref_map 의 position 은 (5, 6) 만 — PHASE1 hit 9999 미수용.
     rrm = [
@@ -2303,7 +2291,7 @@ def test_label_mode_different_salt_yields_zero_match() -> None:
     left = _row_ref_full(5, index_label_raw=5, document_id="DOC_X")
     right = _row_ref_full(6, index_label_raw=6, document_id="DOC_Y")
     case_set = Phase2CaseSet(
-        duplicate_cases=(
+        relational_cases=(
             _duplicate_case_full(case_id="dup_salt_mismatch", left=left, right=right),
         ),
     )
@@ -2349,5 +2337,5 @@ def test_label_mode_different_salt_yields_zero_match() -> None:
     )
 
     # silent zero-match — ValueError 던지지 않음, 단순히 매칭 0.
-    assert result.case_set.duplicate_cases[0].phase1_case_refs == ()
+    assert result.case_set.relational_cases[0].phase1_case_refs == ()
     assert result.diagnostics["linked_count"] == 0

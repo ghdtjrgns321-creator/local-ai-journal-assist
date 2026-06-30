@@ -31,8 +31,7 @@ def _phase1_result() -> Phase1CaseResult:
         priority_score=0.8,
         base_priority_score=0.65,
         topside_bonus=0.10,
-        batch_combo_bonus=0.05,
-        priority_adjustment_reasons=["topside_score=0.40", "batch_combo_groups=2"],
+        priority_adjustment_reasons=["topside_score=0.40"],
         priority_band="high",
         amount_score=0.7,
         control_score=0.9,
@@ -155,7 +154,6 @@ def test_phase2_case_provenance_contains_display_only_fields():
     assert provenance[0]["phase1_priority_adjustments"]["topside_bonus"] == 0.10
     assert provenance[0]["phase1_priority_adjustments"]["reasons"] == [
         "topside_score=0.40",
-        "batch_combo_groups=2",
     ]
 
 
@@ -255,7 +253,6 @@ def _phase1_two_cases() -> Phase1CaseResult:  # noqa: F841 — 향후 multi-case
             priority_score=0.50,
             base_priority_score=0.50,
             topside_bonus=0.0,
-            batch_combo_bonus=0.0,
             priority_adjustment_reasons=[],
             priority_band="medium",
             amount_score=0.5,
@@ -287,7 +284,6 @@ def _phase1_two_cases() -> Phase1CaseResult:  # noqa: F841 — 향후 multi-case
             priority_score=0.50,
             base_priority_score=0.50,
             topside_bonus=0.0,
-            batch_combo_bonus=0.0,
             priority_adjustment_reasons=[],
             priority_band="medium",
             amount_score=0.5,
@@ -762,69 +758,6 @@ def test_family_contributions_attach_evidence_tier_per_sub_detector():
     ts_subs = {s["code"]: s for s in timeseries_entry["sub_detectors"]}
     # TS01 = moderate
     assert ts_subs["TS01"]["evidence_tier"] == "moderate"
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Duplicate lane pair_evidence_tier 부착 회귀 (sort 보조키 한정)
-# ──────────────────────────────────────────────────────────────────────────────
-
-
-def test_overlay_attaches_pair_evidence_tier_to_duplicate_entry_only():
-    """duplicate_pair_evidence_by_case 가 전달되면 duplicate entry 에만 부착."""
-    phase1 = _phase1_result()
-    overlays = build_phase2_case_overlays(
-        phase1,
-        family_scores_by_case={"case_control_failure_00001": {"duplicate": 0.6, "timeseries": 0.4}},
-        family_top_subdetectors_by_case={
-            "case_control_failure_00001": {
-                "duplicate": [("L2-03a", "exact_duplicate_amount")],
-                "timeseries": [("TS01", "transaction_burst")],
-            }
-        },
-        duplicate_pair_evidence_by_case={"case_control_failure_00001": "strong"},
-    )
-    contributions = overlays[0]["family_contributions"]
-    duplicate_entry = next(c for c in contributions if c["family"] == "duplicate")
-    timeseries_entry = next(c for c in contributions if c["family"] == "timeseries")
-    assert duplicate_entry["pair_evidence_tier"] == "strong"
-    assert duplicate_entry["pair_evidence_tier_weight"] == 3
-    # 다른 family entry 에는 pair_evidence_tier 가 부착되지 않음 (영향 0).
-    assert "pair_evidence_tier" not in timeseries_entry
-    assert "pair_evidence_tier_weight" not in timeseries_entry
-
-
-def test_overlay_pair_evidence_missing_keeps_duplicate_entry_unchanged():
-    """duplicate_pair_evidence_by_case 가 비어 있으면 duplicate entry 도 부착되지 않음."""
-    phase1 = _phase1_result()
-    overlays = build_phase2_case_overlays(
-        phase1,
-        family_scores_by_case={"case_control_failure_00001": {"duplicate": 0.6}},
-        family_top_subdetectors_by_case={
-            "case_control_failure_00001": {"duplicate": [("L2-03a", "exact_duplicate_amount")]}
-        },
-        # duplicate_pair_evidence_by_case 미전달 (graceful fallback)
-    )
-    contributions = overlays[0]["family_contributions"]
-    duplicate_entry = next(c for c in contributions if c["family"] == "duplicate")
-    assert "pair_evidence_tier" not in duplicate_entry
-    assert "pair_evidence_tier_weight" not in duplicate_entry
-
-
-def test_overlay_pair_evidence_weak_tier_is_attached_with_weight_one():
-    """weak tier 도 weight=1 로 부착되어 sort 보조키에서 차등화된다."""
-    phase1 = _phase1_result()
-    overlays = build_phase2_case_overlays(
-        phase1,
-        family_scores_by_case={"case_control_failure_00001": {"duplicate": 0.6}},
-        family_top_subdetectors_by_case={
-            "case_control_failure_00001": {"duplicate": [("L2-03a", "exact_duplicate_amount")]}
-        },
-        duplicate_pair_evidence_by_case={"case_control_failure_00001": "weak"},
-    )
-    contributions = overlays[0]["family_contributions"]
-    duplicate_entry = next(c for c in contributions if c["family"] == "duplicate")
-    assert duplicate_entry["pair_evidence_tier"] == "weak"
-    assert duplicate_entry["pair_evidence_tier_weight"] == 1
 
 
 # ──────────────────────────────────────────────────────────────────────────────

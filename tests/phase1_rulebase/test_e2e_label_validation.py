@@ -62,7 +62,6 @@ RULE_TO_LABEL: dict[str, list[str]] = {
     "L3-06": ["AfterHoursPosting"],
     "L3-07": ["BackdatedEntry", "LatePosting"],
     "L1-08": ["WrongPeriod"],
-    "L3-08": ["MissingOrCorruptedDescription"],
     "L4-02": ["BenfordViolation"],
     "L4-03": ["UnusuallyHighAmount", "StatisticalOutlier"],
     "L4-04": ["UnusualAccountPair"],
@@ -73,15 +72,31 @@ RULE_TO_LABEL: dict[str, list[str]] = {
 
 # Why: 룰이 속한 레이어 (details 컬럼에서 조회할 트랙명)
 RULE_TO_LAYER: dict[str, str] = {
-    "L1-01": "layer_a", "L1-02": "layer_a", "L1-03": "layer_a",
-    "L4-01": "layer_b", "L2-01": "layer_b", "L1-04": "layer_b",
-    "L2-02": "layer_b", "L2-03": "layer_b", "L1-05": "layer_b",
-    "L1-06": "layer_b", "L3-02": "layer_b", "L1-07": "layer_b",
-    "L3-03": "layer_b", "L2-04": "layer_b",
-    "L3-04": "layer_c", "L3-05": "layer_c", "L3-06": "layer_c",
-    "L3-07": "layer_c", "L1-08": "layer_c", "L3-08": "layer_c",
-    "L4-02": "benford", "L4-03": "layer_c", "L4-04": "layer_c",
-    "L3-09": "layer_c", "L2-05": "layer_c", "L4-05": "layer_c",
+    "L1-01": "layer_a",
+    "L1-02": "layer_a",
+    "L1-03": "layer_a",
+    "L4-01": "layer_b",
+    "L2-01": "layer_b",
+    "L1-04": "layer_b",
+    "L2-02": "layer_b",
+    "L2-03": "layer_b",
+    "L1-05": "layer_b",
+    "L1-06": "layer_b",
+    "L3-02": "layer_b",
+    "L1-07": "layer_b",
+    "L3-03": "layer_b",
+    "L2-04": "layer_b",
+    "L3-04": "layer_c",
+    "L3-05": "layer_c",
+    "L3-06": "layer_c",
+    "L3-07": "layer_c",
+    "L1-08": "layer_c",
+    "L4-02": "benford",
+    "L4-03": "layer_c",
+    "L4-04": "layer_c",
+    "L3-09": "layer_c",
+    "L2-05": "layer_c",
+    "L4-05": "layer_c",
 }
 
 
@@ -157,24 +172,26 @@ def per_rule_label_analysis(
 
         # Why: 해당 레이어 결과가 없거나 룰이 details에 없으면 skip 처리
         if result is None or rule_id not in result.details.columns:
-            analysis.append({
-                "rule_id": rule_id,
-                "label_types": label_types,
-                "truth_display": get_truth_display(rule_id),
-                "truth_basis": get_truth_basis(rule_id),
-                "status": "skipped",
-                "reason": f"룰 미실행 (레이어: {layer_name})",
-                "label_docs": 0,
-                "flagged_rows": 0,
-                "flagged_docs": 0,
-                "tp_docs": 0,
-                "fp_docs": 0,
-                "fn_docs": 0,
-                "recall": 0.0,
-                "precision": 0.0,
-                "sample_fn": [],
-                "sample_fp": [],
-            })
+            analysis.append(
+                {
+                    "rule_id": rule_id,
+                    "label_types": label_types,
+                    "truth_display": get_truth_display(rule_id),
+                    "truth_basis": get_truth_basis(rule_id),
+                    "status": "skipped",
+                    "reason": f"룰 미실행 (레이어: {layer_name})",
+                    "label_docs": 0,
+                    "flagged_rows": 0,
+                    "flagged_docs": 0,
+                    "tp_docs": 0,
+                    "fp_docs": 0,
+                    "fn_docs": 0,
+                    "recall": 0.0,
+                    "precision": 0.0,
+                    "sample_fn": [],
+                    "sample_fp": [],
+                }
+            )
             continue
 
         # Why: details에서 해당 룰 컬럼 > 0인 행 인덱스 추출
@@ -203,24 +220,26 @@ def per_rule_label_analysis(
         sample_fp = sorted(fp_docs)[:5]
 
         status = "no_label" if not label_types else "ok"
-        analysis.append({
-            "rule_id": rule_id,
-            "label_types": label_types,
-            "truth_display": get_truth_display(rule_id),
-            "truth_basis": get_truth_basis(rule_id),
-            "status": status,
-            "reason": get_evaluation_note(rule_id),
-            "label_docs": label_count,
-            "flagged_rows": flagged_rows,
-            "flagged_docs": len(flagged_doc_set),
-            "tp_docs": tp,
-            "fp_docs": fp,
-            "fn_docs": fn,
-            "recall": recall,
-            "precision": precision,
-            "sample_fn": sample_fn,
-            "sample_fp": sample_fp,
-        })
+        analysis.append(
+            {
+                "rule_id": rule_id,
+                "label_types": label_types,
+                "truth_display": get_truth_display(rule_id),
+                "truth_basis": get_truth_basis(rule_id),
+                "status": status,
+                "reason": get_evaluation_note(rule_id),
+                "label_docs": label_count,
+                "flagged_rows": flagged_rows,
+                "flagged_docs": len(flagged_doc_set),
+                "tp_docs": tp,
+                "fp_docs": fp,
+                "fn_docs": fn,
+                "recall": recall,
+                "precision": precision,
+                "sample_fn": sample_fn,
+                "sample_fp": sample_fp,
+            }
+        )
 
     return analysis
 
@@ -311,21 +330,23 @@ def generate_report(
     total_rules = sum(len(r.rule_flags) for r in results.values())
 
     md.append(f"| {'항목':24s} | {'값':>30s} |")
-    md.append(f"|:{'-'*24}|{'-'*30}:|")
+    md.append(f"|:{'-' * 24}|{'-' * 30}:|")
     md.append(f"| {'입력 행수':24s} | {n:>30,d} |")
-    md.append(f"| {'플래그된 행':24s} | {flagged_count:>20,d} ({flagged_count/n*100:.1f}%) |")
+    md.append(f"| {'플래그된 행':24s} | {flagged_count:>20,d} ({flagged_count / n * 100:.1f}%) |")
     md.append(f"| {'실행된 룰 수':24s} | {total_rules:>30d} |")
     md.append(f"| {'라벨 문서 수 (전체)':24s} | {overall['total_labeled']:>30,d} |")
     md.append(f"| {'라벨 문서 수 (Phase 1)':24s} | {overall['phase1_labeled']:>30,d} |")
     md.append(f"| {'라벨 문서 수 (Phase 2/3)':24s} | {overall['phase23_labeled']:>30,d} |")
     for level in ["High", "Medium", "Low", "Normal"]:
         cnt = int(risk_counts.get(level, 0))
-        md.append(f"| {'  ' + level:24s} | {cnt:>20,d} ({cnt/n*100:.1f}%) |")
+        md.append(f"| {'  ' + level:24s} | {cnt:>20,d} ({cnt / n * 100:.1f}%) |")
 
     # ── §2 전체 recall/precision ──
     md.append("\n## 2. 전체 Recall / Precision (문서 단위)\n")
-    md.append(f"| {'구분':24s} | {'라벨':>8s} | {'탐지':>8s} | {'TP':>6s} | {'Recall':>8s} | {'Precision':>10s} |")
-    md.append(f"|:{'-'*24}|{'-'*8}:|{'-'*8}:|{'-'*6}:|{'-'*8}:|{'-'*10}:|")
+    md.append(
+        f"| {'구분':24s} | {'라벨':>8s} | {'탐지':>8s} | {'TP':>6s} | {'Recall':>8s} | {'Precision':>10s} |"
+    )
+    md.append(f"|:{'-' * 24}|{'-' * 8}:|{'-' * 8}:|{'-' * 6}:|{'-' * 8}:|{'-' * 10}:|")
     md.append(
         f"| {'전체 (all labels)':24s} "
         f"| {overall['total_labeled']:>8d} "
@@ -358,12 +379,14 @@ def generate_report(
         f"| {'TP':>4s} | {'FP':>5s} | {'FN':>4s} | {'Recall':>7s} | {'Prec':>6s} |"
     )
     md.append(
-        f"|:{'-'*5}|:{'-'*28}|{'-'*5}:|{'-'*8}:|{'-'*6}:"
-        f"|{'-'*4}:|{'-'*5}:|{'-'*4}:|{'-'*7}:|{'-'*6}:|"
+        f"|:{'-' * 5}|:{'-' * 28}|{'-' * 5}:|{'-' * 8}:|{'-' * 6}:"
+        f"|{'-' * 4}:|{'-' * 5}:|{'-' * 4}:|{'-' * 7}:|{'-' * 6}:|"
     )
 
     for r in per_rule:
-        label_str = r.get("truth_display") or (",".join(r["label_types"]) if r["label_types"] else "(없음)")
+        label_str = r.get("truth_display") or (
+            ",".join(r["label_types"]) if r["label_types"] else "(없음)"
+        )
         if len(label_str) > 28:
             label_str = label_str[:25] + "..."
         recall_str = f"{r['recall']:.0%}" if r["recall"] is not None else "—"
@@ -400,9 +423,11 @@ def generate_report(
     high_fp = [r for r in per_rule if r["fp_docs"] > 100]
     if high_fp:
         md.append(f"| {'룰':5s} | {'FP 문서':>8s} | {'비고':40s} |")
-        md.append(f"|:{'-'*5}|{'-'*8}:|:{'-'*40}|")
+        md.append(f"|:{'-' * 5}|{'-' * 8}:|:{'-' * 40}|")
         for r in sorted(high_fp, key=lambda x: -x["fp_docs"]):
-            md.append(f"| {r['rule_id']:5s} | {r['fp_docs']:>8,d} | 교차 탐지 또는 과탐 확인 필요 |")
+            md.append(
+                f"| {r['rule_id']:5s} | {r['fp_docs']:>8,d} | 교차 탐지 또는 과탐 확인 필요 |"
+            )
     else:
         md.append("FP > 100건인 룰 없음.\n")
 
@@ -410,7 +435,7 @@ def generate_report(
     md.append("\n## 6. Phase 1 미커버 라벨 타입 (Phase 2/3 대상)\n")
     if uncovered:
         md.append(f"| {'anomaly_type':30s} | {'건수':>6s} | {'대상 Phase':>12s} |")
-        md.append(f"|:{'-'*30}|{'-'*6}:|:{'-'*12}|")
+        md.append(f"|:{'-' * 30}|{'-' * 6}:|:{'-' * 12}|")
         for u in uncovered:
             md.append(f"| {u['anomaly_type']:30s} | {u['count']:>6d} | Phase 2/3 |")
     else:
@@ -419,7 +444,7 @@ def generate_report(
     # ── §7 L1~L4 성능 ──
     md.append("\n## 7. L1~L4 실행 성능\n")
     md.append(f"| {'단계':20s} | {'소요(s)':>10s} | {'룰 수':>6s} |")
-    md.append(f"|:{'-'*20}|{'-'*10}:|{'-'*6}:|")
+    md.append(f"|:{'-' * 20}|{'-' * 10}:|{'-' * 6}:|")
     for track, title in [
         ("layer_a", "L1"),
         ("layer_b", "L2"),
@@ -441,8 +466,10 @@ def generate_report(
     ]:
         r = results[track]
         md.append(f"### {title}\n")
-        md.append(f"| {'룰':6s} | {'이름':16s} | {'flagged':>10s} | {'비율':>8s} | {'severity':>8s} |")
-        md.append(f"|:{'-'*6}|:{'-'*16}|{'-'*10}:|{'-'*8}:|{'-'*8}:|")
+        md.append(
+            f"| {'룰':6s} | {'이름':16s} | {'flagged':>10s} | {'비율':>8s} | {'severity':>8s} |"
+        )
+        md.append(f"|:{'-' * 6}|:{'-' * 16}|{'-' * 10}:|{'-' * 8}:|{'-' * 8}:|")
         for rf in sorted(r.rule_flags, key=lambda x: x.rule_id):
             rate = f"{rf.flagged_count / n * 100:.2f}%" if n > 0 else "0.00%"
             md.append(
@@ -454,24 +481,43 @@ def generate_report(
     md.append("\n## 9. 종합 판정\n")
 
     # 코드 버그 판별
-    all_false = [r for r in per_rule if r["status"] == "ok" and r["flagged_rows"] == 0 and r["label_docs"] > 0]
-    zero_recall = [r for r in per_rule if r["status"] == "ok" and r["recall"] == 0.0 and r["label_docs"] > 0]
-    low_recall = [r for r in per_rule if r["status"] == "ok" and r["recall"] is not None and 0 < r["recall"] < 0.3 and r["label_docs"] >= 5]
+    all_false = [
+        r
+        for r in per_rule
+        if r["status"] == "ok" and r["flagged_rows"] == 0 and r["label_docs"] > 0
+    ]
+    zero_recall = [
+        r for r in per_rule if r["status"] == "ok" and r["recall"] == 0.0 and r["label_docs"] > 0
+    ]
+    low_recall = [
+        r
+        for r in per_rule
+        if r["status"] == "ok"
+        and r["recall"] is not None
+        and 0 < r["recall"] < 0.3
+        and r["label_docs"] >= 5
+    ]
 
     md.append("### 코드 버그 의심\n")
     if all_false:
         for r in all_false:
-            md.append(f"- **{r['rule_id']}**: 라벨 {r['label_docs']}건 존재하나 탐지 0건 → 코드 또는 데이터 불일치 확인 필요")
+            md.append(
+                f"- **{r['rule_id']}**: 라벨 {r['label_docs']}건 존재하나 탐지 0건 → 코드 또는 데이터 불일치 확인 필요"
+            )
     elif zero_recall:
         for r in zero_recall:
-            md.append(f"- **{r['rule_id']}**: recall=0% (라벨 {r['label_docs']}건) → 탐지 로직 점검 필요")
+            md.append(
+                f"- **{r['rule_id']}**: recall=0% (라벨 {r['label_docs']}건) → 탐지 로직 점검 필요"
+            )
     else:
         md.append("없음.\n")
 
     md.append("\n### 낮은 recall (< 30%)\n")
     if low_recall:
         for r in low_recall:
-            md.append(f"- **{r['rule_id']}**: recall={r['recall']:.0%} (라벨 {r['label_docs']}건, TP {r['tp_docs']}건)")
+            md.append(
+                f"- **{r['rule_id']}**: recall={r['recall']:.0%} (라벨 {r['label_docs']}건, TP {r['tp_docs']}건)"
+            )
     else:
         md.append("없음.\n")
 
@@ -526,8 +572,12 @@ def main() -> None:
     uncovered = gt_eval.uncovered_label_analysis(labels)
 
     # 요약 출력
-    print(f"      → Phase 1 Recall: {overall['phase1_recall']:.1%} ({overall['phase1_tp']}/{overall['phase1_labeled']})")
-    print(f"      → 전체 Recall: {overall['total_recall']:.1%} ({overall['total_tp']}/{overall['total_labeled']})")
+    print(
+        f"      → Phase 1 Recall: {overall['phase1_recall']:.1%} ({overall['phase1_tp']}/{overall['phase1_labeled']})"
+    )
+    print(
+        f"      → 전체 Recall: {overall['total_recall']:.1%} ({overall['total_tp']}/{overall['total_labeled']})"
+    )
 
     # 5. 리포트 생성
     total_elapsed = time.perf_counter() - total_start
@@ -540,7 +590,9 @@ def main() -> None:
 
     # 룰별 요약
     print("\n=== 룰별 요약 ===")
-    print(f"{'룰':5s} {'라벨':>5s} {'탐지행':>8s} {'TP':>5s} {'FN':>4s} {'Recall':>7s} {'Prec':>6s}")
+    print(
+        f"{'룰':5s} {'라벨':>5s} {'탐지행':>8s} {'TP':>5s} {'FN':>4s} {'Recall':>7s} {'Prec':>6s}"
+    )
     print("-" * 50)
     for r in per_rule:
         if r["status"] == "skipped":

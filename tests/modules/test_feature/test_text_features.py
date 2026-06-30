@@ -27,37 +27,45 @@ class TestCombineText:
 
     def test_both_present(self):
         """둘 다 있으면 공백으로 concat."""
-        df = pd.DataFrame({
-            "line_text": ["식대"],
-            "header_text": ["3월 영업부"],
-        })
+        df = pd.DataFrame(
+            {
+                "line_text": ["식대"],
+                "header_text": ["3월 영업부"],
+            }
+        )
         result = _combine_text(df)
         assert result.iloc[0] == "식대 3월 영업부"
 
     def test_only_line(self):
         """line만 있으면 line 사용."""
-        df = pd.DataFrame({
-            "line_text": ["매출"],
-            "header_text": [None],
-        })
+        df = pd.DataFrame(
+            {
+                "line_text": ["매출"],
+                "header_text": [None],
+            }
+        )
         result = _combine_text(df)
         assert result.iloc[0] == "매출"
 
     def test_only_header(self):
         """header만 있으면 header 사용."""
-        df = pd.DataFrame({
-            "line_text": [None],
-            "header_text": ["결산"],
-        })
+        df = pd.DataFrame(
+            {
+                "line_text": [None],
+                "header_text": ["결산"],
+            }
+        )
         result = _combine_text(df)
         assert result.iloc[0] == "결산"
 
     def test_both_none(self):
         """둘 다 None이면 NaN."""
-        df = pd.DataFrame({
-            "line_text": [None],
-            "header_text": [None],
-        })
+        df = pd.DataFrame(
+            {
+                "line_text": [None],
+                "header_text": [None],
+            }
+        )
         result = _combine_text(df)
         assert pd.isna(result.iloc[0])
 
@@ -274,7 +282,7 @@ class TestDescriptionQuality:
         assert q.iloc[4] == "normal"
 
     def test_custom_min_length(self):
-        """min_length는 과거 API 호환용이며 L3-08 판정에 쓰지 않는다."""
+        """min_length는 과거 API 호환용이며 적요 품질 판정에 쓰지 않는다."""
         df = pd.DataFrame({"line_text": ["ABCD"], "header_text": [None]})
         result = add_description_quality(df, min_length=5)
         assert result["description_quality"].iloc[0] == "normal"
@@ -289,66 +297,84 @@ class TestDescriptionQuality:
     # ── Phase 1 scope: 의미적 충분성 판정 제외 ────────────────
 
     def test_low_ttr_is_not_flagged_by_phase1(self):
-        """동일 단어 반복은 Phase 1 L3-08에서 의미 판단하지 않는다."""
-        df = pd.DataFrame({
-            "line_text": ["비품 비품 비품 비품 비품"],
-            "header_text": [None],
-        })
+        """동일 단어 반복은 Phase 1 적요 품질 판정에서 의미 판단하지 않는다."""
+        df = pd.DataFrame(
+            {
+                "line_text": ["비품 비품 비품 비품 비품"],
+                "header_text": [None],
+            }
+        )
         result = add_description_quality(df, ttr_threshold=0.3)
         assert result["description_quality"].iloc[0] == "normal"
 
     def test_low_entropy_is_not_flagged_by_phase1(self):
         """저엔트로피라도 명백한 garbage가 아니면 normal."""
-        df = pd.DataFrame({
-            "line_text": ["aaab"],
-            "header_text": [None],
-        })
+        df = pd.DataFrame(
+            {
+                "line_text": ["aaab"],
+                "header_text": [None],
+            }
+        )
         result = add_description_quality(df, entropy_threshold=1.0)
         assert result["description_quality"].iloc[0] == "normal"
 
     def test_normal_ttr_and_entropy(self):
         """정상 적요는 TTR/entropy 체크를 통과하여 여전히 normal."""
-        df = pd.DataFrame({
-            "line_text": ["3월 영업부 법인카드 결산 정리"],
-            "header_text": [None],
-        })
+        df = pd.DataFrame(
+            {
+                "line_text": ["3월 영업부 법인카드 결산 정리"],
+                "header_text": [None],
+            }
+        )
         result = add_description_quality(df)
         assert result["description_quality"].iloc[0] == "normal"
 
     def test_multi_char_repeat_noise_is_poor(self):
         """공백 없는 다문자 반복 → corrupted."""
-        df = pd.DataFrame({
-            "line_text": ["비품비품비품"],
-            "header_text": [None],
-        })
+        df = pd.DataFrame(
+            {
+                "line_text": ["비품비품비품"],
+                "header_text": [None],
+            }
+        )
         result = add_description_quality(df)
         assert result["description_quality"].iloc[0] == "corrupted"
 
     def test_diagnostic_flags(self):
         """line/header 결손 상태를 rule flag와 별도로 남긴다."""
-        df = pd.DataFrame({
-            "line_text": [None, None, "x", "정상"],
-            "header_text": [None, "헤더 설명", None, None],
-        })
+        df = pd.DataFrame(
+            {
+                "line_text": [None, None, "x", "정상"],
+                "header_text": [None, "헤더 설명", None, None],
+            }
+        )
         result = add_description_quality(df)
 
         assert result["description_both_missing"].tolist() == [True, False, False, False]
         assert result["description_line_missing_header_present"].tolist() == [
-            False, True, False, False,
+            False,
+            True,
+            False,
+            False,
         ]
         assert result["description_is_missing_or_corrupted"].tolist() == [
-            True, False, True, False,
+            True,
+            False,
+            True,
+            False,
         ]
 
     def test_description_quality_profile(self):
         """source/process/document_type별 결손률 프로파일 생성."""
-        df = pd.DataFrame({
-            "source": ["manual", "manual", "batch", "batch"],
-            "business_process": ["R2R", "R2R", "P2P", "P2P"],
-            "document_type": ["SA", "SA", "KR", "KR"],
-            "line_text": [None, "정상", None, None],
-            "header_text": [None, None, "헤더 설명", None],
-        })
+        df = pd.DataFrame(
+            {
+                "source": ["manual", "manual", "batch", "batch"],
+                "business_process": ["R2R", "R2R", "P2P", "P2P"],
+                "document_type": ["SA", "SA", "KR", "KR"],
+                "line_text": [None, "정상", None, None],
+                "header_text": [None, None, "헤더 설명", None],
+            }
+        )
         add_description_quality(df)
         profile = build_description_quality_profile(df)
 

@@ -291,8 +291,8 @@ def test_company_partition_summary_rebuilds_from_overlays_when_results_missing()
                 "phase1_case_id": "c1",
                 "family_contributions": [
                     {
-                        "family": "duplicate",
-                        "sub_detectors": [{"code": "exact_duplicate_amount"}],
+                        "family": "relational",
+                        "sub_detectors": [{"code": "R01"}],
                     }
                 ],
             },
@@ -300,8 +300,8 @@ def test_company_partition_summary_rebuilds_from_overlays_when_results_missing()
                 "phase1_case_id": "c2",
                 "family_contributions": [
                     {
-                        "family": "duplicate",
-                        "sub_detectors": [{"code": "exact_duplicate_amount"}],
+                        "family": "relational",
+                        "sub_detectors": [{"code": "R01"}],
                     }
                 ],
             },
@@ -311,20 +311,20 @@ def test_company_partition_summary_rebuilds_from_overlays_when_results_missing()
     summary = tab_phase2._build_company_partition_summary(phase2_result, "전체")
 
     assert summary is not None
-    family = summary["families"]["duplicate"]
+    family = summary["families"]["relational"]
     assert family["rows_scored"] == 2
     assert family["score_distribution"]["nonzero_count"] == 2
-    assert family["sub_detectors"]["exact_duplicate_amount"]["hit_count"] == 2
+    assert family["sub_detectors"]["R01"]["hit_count"] == 2
 
 
 def test_family_overview_frame_centers_audit_family_meaning():
     partition_summary = {
         "families": {
-            "duplicate": {
+            "relational": {
                 "score_distribution": {"nonzero_count": 12},
                 "sub_detectors": {
-                    "exact_duplicate_amount": {"hit_count": 4},
-                    "fuzzy_duplicate_near_amount": {"hit_count": 0},
+                    "R01": {"hit_count": 4},
+                    "R04": {"hit_count": 0},
                 },
             },
             "unsupervised": {"high_count_q95": 3},
@@ -337,9 +337,9 @@ def test_family_overview_frame_centers_audit_family_meaning():
     assert "무엇을 잡나" in frame.columns
     assert "감사인이 확인할 것" in frame.columns
     assert set(frame["상태"]) == {"활성", "대기"}
-    duplicate = frame.loc[frame["분석 영역"] == "중복 전표"].iloc[0]
-    assert duplicate["이번 데이터 반응"] == "12건 신호"
-    assert "중복 지급" in duplicate["무엇을 잡나"]
+    relational = frame.loc[frame["분석 영역"] == "관계망 이상"].iloc[0]
+    assert relational["이번 데이터 반응"] == "12건 신호"
+    assert "신규 거래처" in relational["무엇을 잡나"]
     supervised = frame.loc[frame["분석 영역"] == "지도 학습"].iloc[0]
     assert supervised["이번 데이터 반응"] == "조건 충족 전"
     assert "라벨" in supervised["활성 조건/비고"]
@@ -384,17 +384,17 @@ def test_phase2_family_summary_row_renders_dormant_without_support_note_error():
 def test_family_signal_chart_frame_uses_relative_reaction_score():
     partition_summary = {
         "families": {
-            "duplicate": {"score_distribution": {"nonzero_count": 200}},
+            "relational": {"score_distribution": {"nonzero_count": 200}},
             "timeseries": {"score_distribution": {"nonzero_count": 50}},
         }
     }
 
     frame = tab_phase2._build_family_signal_chart_frame(partition_summary)
 
-    duplicate = frame.loc[frame["분석 영역"] == "중복 전표"].iloc[0]
+    relational = frame.loc[frame["분석 영역"] == "관계망 이상"].iloc[0]
     timeseries = frame.loc[frame["분석 영역"] == "시점 이상"].iloc[0]
     supervised = frame.loc[frame["분석 영역"] == "지도 학습"].iloc[0]
-    assert duplicate["반응도"] == 100.0
+    assert relational["반응도"] == 100.0
     assert timeseries["반응도"] == 25.0
     assert supervised["반응도"] == 0.0
 
@@ -404,14 +404,14 @@ def test_lane_tier_counts_aggregates_family_contributions_by_evidence_tier():
         {
             "phase1_case_id": "case_1",
             "family_contributions": [
-                {"family": "duplicate", "evidence_tier": "strong", "score": 1.0},
+                {"family": "relational", "evidence_tier": "strong", "score": 1.0},
                 {"family": "unsupervised", "evidence_tier": "ml_quantile", "score": 0.9},
             ],
         },
         {
             "phase1_case_id": "case_2",
             "family_contributions": [
-                {"family": "duplicate", "evidence_tier": "weak", "score": 0.3},
+                {"family": "relational", "evidence_tier": "weak", "score": 0.3},
                 {"family": "timeseries", "evidence_tier": "weak", "score": 0.4},
             ],
         },
@@ -426,8 +426,7 @@ def test_lane_tier_counts_aggregates_family_contributions_by_evidence_tier():
 
     counts = tab_phase2._lane_tier_counts(overlays)
 
-    assert counts["duplicate"] == {"strong": 1, "moderate": 0, "weak": 1, "ml_quantile": 0}
-    assert counts["relational"] == {"strong": 1, "moderate": 0, "weak": 0, "ml_quantile": 0}
+    assert counts["relational"] == {"strong": 2, "moderate": 0, "weak": 1, "ml_quantile": 0}
     assert counts["intercompany"] == {"strong": 0, "moderate": 1, "weak": 0, "ml_quantile": 0}
     assert counts["timeseries"] == {"strong": 0, "moderate": 0, "weak": 1, "ml_quantile": 0}
     # unsupervised(VAE) 는 lane matrix 에서 분리돼 카운트 dict 에 포함되지 않는다.
@@ -441,18 +440,18 @@ def test_lane_tier_counts_ignores_unknown_family_and_tier_values():
             "family_contributions": [
                 {"family": "supervised", "evidence_tier": "strong", "score": 1.0},  # unknown lane
                 {
-                    "family": "duplicate",
+                    "family": "relational",
                     "evidence_tier": "bogus_tier",
                     "score": 0.5,
                 },  # unknown tier
-                {"family": "duplicate", "evidence_tier": "strong", "score": 1.0},
+                {"family": "relational", "evidence_tier": "strong", "score": 1.0},
             ],
         }
     ]
 
     counts = tab_phase2._lane_tier_counts(overlays)
 
-    assert counts["duplicate"] == {"strong": 1, "moderate": 0, "weak": 0, "ml_quantile": 0}
+    assert counts["relational"] == {"strong": 1, "moderate": 0, "weak": 0, "ml_quantile": 0}
     assert "supervised" not in counts
 
 
@@ -491,7 +490,7 @@ def test_lane_tier_counts_ignore_explicit_zero_signal_entries():
             "phase1_case_id": "case_1",
             "family_contributions": [
                 {
-                    "family": "duplicate",
+                    "family": "relational",
                     "evidence_tier": "weak",
                     "score": 0.0,
                     "ecdf": 0.0,
@@ -508,7 +507,7 @@ def test_lane_tier_counts_ignore_explicit_zero_signal_entries():
 
     counts = tab_phase2._lane_tier_counts(overlays)
 
-    assert counts["duplicate"] == {"strong": 0, "moderate": 0, "weak": 0, "ml_quantile": 0}
+    assert counts["relational"] == {"strong": 0, "moderate": 0, "weak": 0, "ml_quantile": 0}
     # unsupervised(VAE) 는 lane matrix 에서 분리돼 카운트 dict 에 포함되지 않는다.
     assert "unsupervised" not in counts
 
@@ -518,7 +517,7 @@ def test_family_case_contribution_counts_ignore_explicit_zero_signal_entries():
         {
             "phase1_case_id": "case_1",
             "family_contributions": [
-                {"family": "duplicate", "score": 0.0, "ecdf": 0.0},
+                {"family": "timeseries", "score": 0.0, "ecdf": 0.0},
                 {"family": "relational", "score": 0.4, "ecdf": 0.8},
             ],
         }
@@ -526,7 +525,7 @@ def test_family_case_contribution_counts_ignore_explicit_zero_signal_entries():
 
     counts = tab_phase2._family_case_contribution_counts(overlays)
 
-    assert counts["duplicate"] == 0
+    assert counts["timeseries"] == 0
     assert counts["relational"] == 1
 
 
@@ -664,7 +663,7 @@ def test_count_active_families_prefers_overlay_case_contributions_over_partition
 def test_count_active_families_falls_back_to_partition_summary_without_overlays():
     partition_summary = {
         "families": {
-            "duplicate": {"score_distribution": {"nonzero_count": 1}},
+            "timeseries": {"score_distribution": {"nonzero_count": 1}},
             "relational": {"score_distribution": {"nonzero_count": 0}},
             "unsupervised": {"high_count_q95": 1},
         }

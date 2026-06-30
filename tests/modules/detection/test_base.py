@@ -61,7 +61,7 @@ class TestRuleFlag:
         assert flag.flag_rate == pytest.approx(0.25)
 
     def test_flag_rate_zero_total(self) -> None:
-        flag = RuleFlag("L3-08", "위험 적요", 1, 0, 0)
+        flag = RuleFlag("L4-05", "비정상 시간대 집중", 1, 0, 0)
         assert flag.flag_rate == 0.0
 
     def test_detail_default_none(self) -> None:

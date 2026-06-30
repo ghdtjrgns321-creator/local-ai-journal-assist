@@ -624,12 +624,11 @@ class TestRunFromDataframe:
 
         statuses = {status["track_name"]: status for status in result.detector_statuses}
         assert statuses["ensemble"]["run_status"] != "executed"
+        # PHASE1-2 재설계(2026-06-30): relational/duplicate/intercompany 는 phase2 inference 에서 제거.
+        # timeseries(당기내 집중 자기큐 재설계 전 잔류) + VAE(ml_unsupervised) 만 실행.
         assert {item.track_name for item in result.results} == {
             "ml_unsupervised",
             "timeseries",
-            "relational",
-            "duplicate",
-            "intercompany",
         }
 
     def test_default_redetect_still_invokes_stacking_when_ml_enabled(

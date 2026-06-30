@@ -20,11 +20,9 @@ def _overlay(
     score: float,
     ecdf: float,
     tier: str | None,
-    pair_tier: str | None = None,
     relational_continuity_depth: float | None = None,
 ) -> dict:
     weight_map = {"strong": 3, "moderate": 2, "weak": 1, "ml_quantile": 0}
-    pair_weight_map = {"strong": 3, "moderate": 2, "weak": 1}
     entry: dict = {
         "family": family,
         "score": score,
@@ -34,9 +32,6 @@ def _overlay(
         "evidence_tier_weight": weight_map.get(tier or "", 0),
         "sub_detectors": [],
     }
-    if pair_tier is not None:
-        entry["pair_evidence_tier"] = pair_tier
-        entry["pair_evidence_tier_weight"] = pair_weight_map.get(pair_tier, 0)
     if relational_continuity_depth is not None:
         entry["relational_continuity_depth"] = relational_continuity_depth
     return {
@@ -222,77 +217,6 @@ class TestSortLane:
         ids = [o["phase1_case_id"] for o in result]
         assert ids == ["c_strong_low_depth", "c_moderate_high_depth"]
 
-    def test_duplicate_lane_pair_tier_tiebreak_within_same_evidence_tier(self):
-        # 같은 evidence_tier_weight + 같은 ecdf + 같은 score 일 때,
-        # pair_evidence_tier 가 strong > moderate > weak > 미부착(=0) 순으로 정렬.
-        overlays = [
-            _overlay("c_pw", "duplicate", score=0.5, ecdf=0.6, tier="moderate", pair_tier="weak"),
-            _overlay(
-                "c_pm", "duplicate", score=0.5, ecdf=0.6, tier="moderate", pair_tier="moderate"
-            ),
-            _overlay("c_ps", "duplicate", score=0.5, ecdf=0.6, tier="moderate", pair_tier="strong"),
-            _overlay("c_none", "duplicate", score=0.5, ecdf=0.6, tier="moderate"),
-        ]
-        result = sort_lane("duplicate", overlays)
-        ids = [o["phase1_case_id"] for o in result]
-        assert ids == ["c_ps", "c_pm", "c_pw", "c_none"]
-
-    def test_duplicate_pair_tier_does_not_override_evidence_tier(self):
-        # evidence_tier_weight (strong sub-detector) 가 pair_tier 보다 우선.
-        # strong sub + 미부착 pair 가 moderate sub + strong pair 보다 먼저.
-        overlays = [
-            _overlay(
-                "c_mod_strongpair",
-                "duplicate",
-                score=0.5,
-                ecdf=0.9,
-                tier="moderate",
-                pair_tier="strong",
-            ),
-            _overlay("c_strong_nopair", "duplicate", score=0.5, ecdf=0.6, tier="strong"),
-        ]
-        result = sort_lane("duplicate", overlays)
-        ids = [o["phase1_case_id"] for o in result]
-        assert ids == ["c_strong_nopair", "c_mod_strongpair"]
-
-    def test_other_family_lane_ignores_pair_tier_field(self):
-        # relational lane 에서는 pair_evidence_tier_weight 가 sort_key 에 들어가지 않음.
-        # 같은 tier·score·ecdf 면 pair_tier 가 strong 이어도 순서는 비결정적이지 않게
-        # 고정되어야 함 — 즉 pair_tier 영향 0.
-        overlays = [
-            _overlay(
-                "c_with_pair",
-                "relational",
-                score=0.5,
-                ecdf=0.6,
-                tier="moderate",
-                pair_tier="strong",
-            ),
-            _overlay("c_without_pair", "relational", score=0.5, ecdf=0.9, tier="moderate"),
-        ]
-        result = sort_lane("relational", overlays)
-        ids = [o["phase1_case_id"] for o in result]
-        # ecdf 0.9 가 0.6 보다 위 — pair_tier 무관.
-        assert ids == ["c_without_pair", "c_with_pair"]
-
-    def test_duplicate_pair_tier_missing_field_treated_as_zero(self):
-        # pair_evidence_tier_weight 가 entry 에 없으면 0 (graceful fallback).
-        overlays = [
-            _overlay("c_no_pair", "duplicate", score=0.5, ecdf=0.6, tier="moderate"),
-            _overlay(
-                "c_weak_pair",
-                "duplicate",
-                score=0.5,
-                ecdf=0.6,
-                tier="moderate",
-                pair_tier="weak",
-            ),
-        ]
-        result = sort_lane("duplicate", overlays)
-        ids = [o["phase1_case_id"] for o in result]
-        # weak pair (weight=1) > 미부착 (weight=0).
-        assert ids == ["c_weak_pair", "c_no_pair"]
-
 
 class TestIntercompanyRolePriority:
     """IC lane 한정 ic_role_priority 차원 회귀 테스트 (2026-05-25 옵션 2).
@@ -441,7 +365,6 @@ class TestListActiveLanes:
     def test_excludes_unsupervised_from_lanes(self):
         roles = {
             "unsupervised": "active-ranker",
-            "duplicate": "active-ranker",
             "relational": "active-ranker",
             "timeseries": "coarse-booster",
             "intercompany": "near-dormant",
@@ -450,16 +373,16 @@ class TestListActiveLanes:
         assert "unsupervised" not in lanes
         # near-dormant 도 기본 포함 (coverage gap 표시)
         assert "intercompany" in lanes
-        assert set(lanes) == {"duplicate", "relational", "timeseries", "intercompany"}
+        assert set(lanes) == {"relational", "timeseries", "intercompany"}
 
     def test_excludes_near_dormant_when_requested(self):
         roles = {
-            "duplicate": "active-ranker",
+            "relational": "active-ranker",
             "intercompany": "near-dormant",
         }
         lanes = list_active_lanes(roles, include_near_dormant=False)
         assert "intercompany" not in lanes
-        assert lanes == ["duplicate"]
+        assert lanes == ["relational"]
 
 
 class TestBestSubdetectorTier:

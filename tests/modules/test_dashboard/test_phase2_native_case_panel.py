@@ -13,7 +13,6 @@ import pandas as pd
 
 from dashboard.components import phase2_native_case_panel as panel
 from src.models.phase2_case import (
-    DuplicateCase,
     IntercompanyCase,
     Phase2CaseSet,
     Phase2RowRef,
@@ -34,27 +33,28 @@ def _row_ref(doc_id: str = "DOC-A", line: int = 3) -> Phase2RowRef:
     )
 
 
-def _duplicate(
+def _relational(
     *,
-    case_id: str = "p2_duplicate_pair_abc1234567",
+    case_id: str = "p2_relational_edge_abc1234567",
     tier: str = "strong",
     score: float = 0.9,
-) -> DuplicateCase:
-    return DuplicateCase(
+) -> RelationalCase:
+    """case 인프라 generic fixture — 정렬·프레임 빌더 검증용 RelationalCase."""
+    return RelationalCase(
         phase2_case_id=case_id,
         batch_id="batch-1",
-        family="duplicate",
-        unit_type="pair",
+        family="relational",
+        unit_type="edge",
         row_refs=(_row_ref("DOC-A", 3), _row_ref("DOC-B", 7)),
         evidence_tier=tier,
-        case_generation_reason={"gate": "evidence_tier_strong"},
+        case_generation_reason={"gate": "relational_edge"},
         family_score=score,
         family_ecdf=0.0,
-        pair_id="pair-1",
-        sub_rule="L2-03a",
-        left_ref=_row_ref("DOC-A", 3),
-        right_ref=_row_ref("DOC-B", 7),
-        pair_evidence_tier=tier,
+        sub_rule="R01",
+        edge_a="acct:1100",
+        edge_b="cp:1234",
+        metric_name="novelty",
+        metric_value=0.5,
     )
 
 
@@ -74,25 +74,13 @@ def test_linked_to_text_truncates_at_three():
 
 def test_sort_key_orders_by_tier_then_score():
     """evidence_tier 우선 → 같은 tier 안에서 family_score 내림차순."""
-    a = _duplicate(case_id="p2_duplicate_pair_aaaaaaaa01", tier="moderate", score=0.95)
-    b = _duplicate(case_id="p2_duplicate_pair_aaaaaaaa02", tier="strong", score=0.30)
-    c = _duplicate(case_id="p2_duplicate_pair_aaaaaaaa03", tier="strong", score=0.80)
-    d = _duplicate(case_id="p2_duplicate_pair_aaaaaaaa04", tier="weak", score=0.99)
+    a = _relational(case_id="p2_relational_edge_aaaaaaaa01", tier="moderate", score=0.95)
+    b = _relational(case_id="p2_relational_edge_aaaaaaaa02", tier="strong", score=0.30)
+    c = _relational(case_id="p2_relational_edge_aaaaaaaa03", tier="strong", score=0.80)
+    d = _relational(case_id="p2_relational_edge_aaaaaaaa04", tier="weak", score=0.99)
     cases = sorted([a, b, c, d], key=panel._sort_key)
     # strong (높은 score 우선) → moderate → weak
     assert [case.phase2_case_id[-2:] for case in cases] == ["03", "02", "01", "04"]
-
-
-def test_build_duplicate_row_spec_columns():
-    case = _duplicate()
-    row = panel._build_duplicate_row(case)
-    assert row["case_id"] == "abc1234567"
-    assert row["evidence_tier"] == "Strong"
-    assert row["sub_rule"] == "L2-03a"
-    assert "DOC-A" in row["left_doc"]
-    assert "DOC-B" in row["right_doc"]
-    assert row["family_score"] == 0.9
-    assert row["linked_to"] == "—"
 
 
 def test_build_intercompany_row_counterparty_pair_formatting():
@@ -551,12 +539,12 @@ def test_build_timeseries_row_window_formatting():
 
 
 def test_build_family_frame_returns_dataframe_for_each_family():
-    dup = _duplicate()
-    frame = panel._build_family_frame("duplicate", [dup], phase1_case_lookup={})
+    rel = _relational()
+    frame = panel._build_family_frame("relational", [rel], phase1_case_lookup={})
     assert isinstance(frame, pd.DataFrame)
     assert "case_id" in frame.columns
     assert "_full_case_id" in frame.columns
-    assert frame.iloc[0]["_full_case_id"] == dup.phase2_case_id
+    assert frame.iloc[0]["_full_case_id"] == rel.phase2_case_id
 
 
 def test_render_panel_when_case_set_none_shows_info(monkeypatch):
@@ -567,7 +555,7 @@ def test_render_panel_when_case_set_none_shows_info(monkeypatch):
     monkeypatch.setattr(panel.st, "button", lambda *args, **kwargs: False)
     monkeypatch.setattr(panel.st, "rerun", lambda: captured.update(rerun=True))
 
-    panel.render_phase2_native_case_panel("duplicate", case_set=None)
+    panel.render_phase2_native_case_panel("relational", case_set=None)
     assert any("실행되지 않았습니다" in msg for msg in captured["info"])
     assert captured["rerun"] is False
 
@@ -577,9 +565,9 @@ def test_render_panel_empty_family_shows_info(monkeypatch):
     captured = {"info": []}
     monkeypatch.setattr(panel.st, "info", lambda msg: captured["info"].append(msg))
     empty_set = Phase2CaseSet()
-    panel.render_phase2_native_case_panel("duplicate", case_set=empty_set)
+    panel.render_phase2_native_case_panel("relational", case_set=empty_set)
     assert captured["info"], "0건 안내 표시 필요"
-    assert "duplicate" in captured["info"][0]
+    assert "relational" in captured["info"][0]
 
 
 def test_phase2_document_drilldown_preserves_company_boundary():

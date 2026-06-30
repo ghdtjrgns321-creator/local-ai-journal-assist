@@ -20,6 +20,7 @@ from src.detection.constants import (
 )
 from src.detection.rule_scoring import (
     EVIDENCE_STRENGTH_FACTOR,
+    OFF_TIME_SET,
     SIGNAL_STRENGTH_MAP,
     normalize_rule_evidence,
 )
@@ -169,18 +170,13 @@ class TestAggregateScores:
         expected_row4 = 0.0
         assert result["anomaly_score"].iloc[4] == pytest.approx(expected_row4)
 
+        # batch/work_scope/intercompany corroboration 컬럼 제거(2026-06-21): PHASE1-2 family 귀속.
         assert list(result.columns) == [
             "anomaly_score",
             "risk_level",
             "flagged_rules",
             "review_rules",
             "risk_floor_reasons",
-            "intercompany_exception_score",
-            "intercompany_exception_reasons",
-            "batch_combo_score",
-            "batch_combo_reasons",
-            "work_scope_combo_score",
-            "work_scope_combo_reasons",
             "topside_score",
         ]
 
@@ -211,31 +207,12 @@ class TestAggregateScores:
         assert result["anomaly_score"].tolist() == pytest.approx([0.0, 0.0, 0.0, 0.0])
         assert result["risk_level"].tolist() == [RiskLevel.NORMAL] * 4
 
-    def test_ic01_review_only_sidecar_gets_low_floor_without_confirmed_score(self):
-        """IC01 review-only sidecar must not disappear when numeric score is zero."""
-        df = pd.DataFrame({"val": range(3)})
-        ic = _make_result(
-            "intercompany",
-            [0.0, 0.0, 0.0],
-            {"IC01": [0.0, 0.0, 0.0]},
-            index=[0, 1, 2],
-            metadata={
-                "row_sidecar": {
-                    "ic01_evidence_level": pd.Series(["review", "", ""], index=[0, 1, 2])
-                }
-            },
-        )
+    def test_ic01_sidecar_no_longer_floors_anomaly_score(self):
+        """IC01(IC matcher)은 PHASE1-2 family 귀속 — row anomaly_score corroboration floor 폐기(2026-06-21).
 
-        result = aggregate_scores(df, [ic], detection_scope="phase2_only")
-
-        assert result.loc[0, "intercompany_exception_score"] == RISK_THRESHOLDS[RiskLevel.LOW]
-        assert result.loc[0, "anomaly_score"] == RISK_THRESHOLDS[RiskLevel.LOW]
-        assert result.loc[0, "risk_level"] == RiskLevel.LOW
-        assert result.loc[0, "intercompany_exception_reasons"] == "IC01[review]"
-        assert result.loc[0, "flagged_rules"] == ""
-
-    def test_ic01_high_sidecar_gets_medium_floor_without_confirmed_score(self):
-        """IC01 high sidecar receives the documented Medium floor even with score 0."""
+        과거 high/review evidence sidecar 가 Medium/Low floor 를 걸었으나, IC 를 PHASE1-1
+        통합점수에서 완전 제거하면서 floor 와 보조 컬럼을 모두 없앴다.
+        """
         df = pd.DataFrame({"val": range(2)})
         ic = _make_result(
             "intercompany",
@@ -243,44 +220,34 @@ class TestAggregateScores:
             {"IC01": [0.0, 0.0]},
             index=[0, 1],
             metadata={
-                "row_sidecar": {
-                    "ic01_evidence_level": pd.Series(["high", ""], index=[0, 1])
-                }
+                "row_sidecar": {"ic01_evidence_level": pd.Series(["high", ""], index=[0, 1])}
             },
         )
 
         result = aggregate_scores(df, [ic], detection_scope="phase2_only")
 
-        assert result.loc[0, "intercompany_exception_score"] == RISK_THRESHOLDS[RiskLevel.MEDIUM]
-        assert result.loc[0, "anomaly_score"] == RISK_THRESHOLDS[RiskLevel.MEDIUM]
-        assert result.loc[0, "risk_level"] == RiskLevel.MEDIUM
-        assert result.loc[0, "intercompany_exception_reasons"] == "IC01[high]"
+        assert result.loc[0, "anomaly_score"] == pytest.approx(0.0)
+        assert result.loc[0, "risk_level"] == RiskLevel.NORMAL
+        assert "intercompany_exception_score" not in result.columns
 
-    def test_l307_bucket_scores_are_monotonic_in_rule_level_score(self, base_df):
-        """L3-07 gap buckets should not invert when folded into PHASE1 scoring."""
+    def test_l307_binary_scores_are_uniform_in_rule_level_score(self, base_df):
+        """L3-07 은 binary 통일(2026-06-20) — gap 크기 무관 동일 anomaly_score."""
         df = base_df.iloc[:3].copy()
-        details = pd.DataFrame({"L3-07": [0.45, 0.60, 0.75]}, index=df.index)
+        details = pd.DataFrame({"L3-07": [1.0, 1.0, 1.0]}, index=df.index)
         layer_c = DetectionResult(
             track_name="layer_c",
             flagged_indices=df.index.tolist(),
             scores=details["L3-07"],
             rule_flags=[RuleFlag("L3-07", "Posting-Document Date Gap", 3, 3, len(df))],
             details=details,
-            metadata={
-                "row_annotations": {
-                    "L3-07": {
-                        0: {"bucket": "late_moderate_gap", "score": 0.45},
-                        1: {"bucket": "late_large_gap", "score": 0.60},
-                        2: {"bucket": "late_extreme_gap", "score": 0.75},
-                    }
-                }
-            },
+            metadata={},
         )
 
         result = aggregate_scores(df, [layer_c])
 
-        assert result["anomaly_score"].tolist() == pytest.approx([0.0495, 0.0675, 0.09])
-        assert result["anomaly_score"].tolist() == sorted(result["anomaly_score"].tolist())
+        scores = result["anomaly_score"].tolist()
+        # binary: 모든 hit 동일 점수(등급 없음)
+        assert len({round(s, 6) for s in scores}) == 1
 
     def test_l306_after_hours_source_context_scores_equally_in_phase1(self, base_df):
         """L3-06 is binary; source context must not discount after-hours rows."""
@@ -304,7 +271,10 @@ class TestAggregateScores:
 
         result = aggregate_scores(df, [layer_c])
 
+        # OFF-TIME(L3-06)은 row anomaly_score 0 기여 — "서로 같다"만이 아니라 실제 0 임을 명시 검증.
         assert result["anomaly_score"].iloc[0] == pytest.approx(result["anomaly_score"].iloc[1])
+        assert result["anomaly_score"].iloc[0] == pytest.approx(0.0)
+        assert result["anomaly_score"].iloc[1] == pytest.approx(0.0)
         assert result["anomaly_score"].iloc[2] == pytest.approx(0.0)
 
     def test_missing_layer(self, base_df):
@@ -701,63 +671,6 @@ class TestPolicyRiskFloors:
         assert _POLICY_LABEL_FLOORS["immediate"] == pytest.approx(RISK_THRESHOLDS[RiskLevel.HIGH])
 
 
-class TestBatchCorroboration:
-    """L4-06 batch 신호는 결합될 때만 우선순위를 올린다."""
-
-    def test_l406_only_stays_low_priority(self, base_df):
-        layer_c = _make_result(
-            "layer_c",
-            [0.4, 0.0, 0.0, 0.0, 0.0],
-            {"L4-06": [0.4, 0.0, 0.0, 0.0, 0.0]},
-        )
-        result = aggregate_scores(base_df, [layer_c])
-        assert result["batch_combo_score"].iloc[0] == pytest.approx(0.0)
-        assert result["risk_level"].iloc[0] == RiskLevel.NORMAL
-
-    def test_l406_plus_two_groups_promotes_medium(self, base_df):
-        layer_b = _make_result(
-            "layer_b",
-            [0.6, 0.0, 0.0, 0.0, 0.0],
-            {"L1-07": [0.6, 0.0, 0.0, 0.0, 0.0]},
-        )
-        layer_c = _make_result(
-            "layer_c",
-            [0.4, 0.0, 0.0, 0.0, 0.0],
-            {
-                "L4-06": [0.4, 0.0, 0.0, 0.0, 0.0],
-                "L3-04": [0.6, 0.0, 0.0, 0.0, 0.0],
-            },
-        )
-        result = aggregate_scores(base_df, [layer_b, layer_c])
-        assert result["batch_combo_score"].iloc[0] == pytest.approx(0.4)
-        assert result["risk_level"].iloc[0] == RiskLevel.MEDIUM
-        assert result["anomaly_score"].iloc[0] >= RISK_THRESHOLDS[RiskLevel.MEDIUM]
-        assert result["batch_combo_reasons"].iloc[0] == "closing_or_cutoff,control_failure"
-
-    def test_l406_plus_three_groups_promotes_high(self, base_df):
-        layer_b = _make_result(
-            "layer_b",
-            [0.6, 0.0, 0.0, 0.0, 0.0],
-            {"L1-07": [0.6, 0.0, 0.0, 0.0, 0.0]},
-        )
-        layer_c = _make_result(
-            "layer_c",
-            [0.6, 0.0, 0.0, 0.0, 0.0],
-            {
-                "L4-06": [0.4, 0.0, 0.0, 0.0, 0.0],
-                "L3-04": [0.6, 0.0, 0.0, 0.0, 0.0],
-                "L4-03": [0.6, 0.0, 0.0, 0.0, 0.0],
-            },
-        )
-        result = aggregate_scores(base_df, [layer_b, layer_c])
-        assert result["batch_combo_score"].iloc[0] == pytest.approx(0.6)
-        assert result["risk_level"].iloc[0] == RiskLevel.HIGH
-        assert result["anomaly_score"].iloc[0] >= RISK_THRESHOLDS[RiskLevel.HIGH]
-
-
-# ── TestFlaggedRules ──────────────────────────────────────
-
-
 class TestDataIntegrityTrackRules:
     def test_l101_does_not_promote_risk_level(self, base_df):
         layer_a = _make_result(
@@ -791,85 +704,6 @@ class TestDataIntegrityTrackRules:
         assert result["anomaly_score"].iloc[0] == pytest.approx(0.0)
         assert result["risk_level"].iloc[0] == RiskLevel.NORMAL
         assert result["flagged_rules"].iloc[0] == "L1-03"
-
-
-class TestWorkScopeCorroboration:
-    """L3-12 work-scope signal is promoted only with independent corroboration."""
-
-    def test_l312_only_stays_low_score(self, base_df):
-        layer_b = _make_result(
-            "layer_b",
-            [0.0, 0.0, 0.0, 0.0, 0.0],
-            {"L3-12": [0.0, 0.0, 0.0, 0.0, 0.0]},
-            metadata={
-                "row_annotations": {
-                    "L3-12": {0: {"bucket": "compound_scope_concentration", "review_score": 0.65}}
-                }
-            },
-        )
-
-        result = aggregate_scores(base_df, [layer_b])
-
-        assert result["work_scope_combo_score"].iloc[0] == pytest.approx(0.0)
-        assert result["work_scope_combo_reasons"].iloc[0] == ""
-        assert result["risk_level"].iloc[0] == RiskLevel.NORMAL
-        assert result["flagged_rules"].iloc[0] == ""
-        assert "L3-12" in result["review_rules"].iloc[0]
-
-    def test_l312_plus_two_groups_promotes_medium(self, base_df):
-        layer_b = _make_result(
-            "layer_b",
-            [0.65, 0.0, 0.0, 0.0, 0.0],
-            {
-                "L3-12": [0.0, 0.0, 0.0, 0.0, 0.0],
-                "L3-02": [1.0, 0.0, 0.0, 0.0, 0.0],
-                "L3-10": [0.50, 0.0, 0.0, 0.0, 0.0],
-            },
-            metadata={
-                "row_annotations": {
-                    "L3-12": {0: {"bucket": "compound_scope_concentration", "review_score": 0.65}}
-                }
-            },
-        )
-
-        result = aggregate_scores(base_df, [layer_b])
-
-        assert result["work_scope_combo_score"].iloc[0] == pytest.approx(0.4)
-        assert result["work_scope_combo_reasons"].iloc[0] == (
-            "manual_or_control,sensitive_or_amount"
-        )
-        assert result["risk_level"].iloc[0] == RiskLevel.MEDIUM
-        assert result["anomaly_score"].iloc[0] >= RISK_THRESHOLDS[RiskLevel.MEDIUM]
-
-    def test_l312_plus_three_groups_promotes_high(self, base_df):
-        layer_b = _make_result(
-            "layer_b",
-            [0.65, 0.0, 0.0, 0.0, 0.0],
-            {
-                "L3-12": [0.0, 0.0, 0.0, 0.0, 0.0],
-                "L3-02": [1.0, 0.0, 0.0, 0.0, 0.0],
-                "L3-10": [0.50, 0.0, 0.0, 0.0, 0.0],
-            },
-            metadata={
-                "row_annotations": {
-                    "L3-12": {0: {"bucket": "compound_scope_concentration", "review_score": 0.65}}
-                }
-            },
-        )
-        layer_c = _make_result(
-            "layer_c",
-            [0.60, 0.0, 0.0, 0.0, 0.0],
-            {"L3-04": [0.60, 0.0, 0.0, 0.0, 0.0]},
-        )
-
-        result = aggregate_scores(base_df, [layer_b, layer_c])
-
-        assert result["work_scope_combo_score"].iloc[0] == pytest.approx(0.6)
-        assert result["work_scope_combo_reasons"].iloc[0] == (
-            "manual_or_control,sensitive_or_amount,closing_or_timing"
-        )
-        assert result["risk_level"].iloc[0] == RiskLevel.HIGH
-        assert result["anomaly_score"].iloc[0] >= RISK_THRESHOLDS[RiskLevel.HIGH]
 
 
 class TestFlaggedRules:
@@ -976,7 +810,6 @@ def _topside_layers(
     a03: list[float] | None = None,
     c09: list[float] | None = None,
     c08: list[float] | None = None,
-    c06: list[float] | None = None,
 ) -> list:
     """Top-side JE 테스트용 4개 레이어 결과 생성 헬퍼."""
     z = [0.0] * n
@@ -992,7 +825,6 @@ def _topside_layers(
     layer_b = _make_result("layer_b", b_scores, layer_b_details)
     layer_c_details = {
         "L3-04": c01 or z,
-        "L3-08": c06 or z,
         "L4-03": c08 or z,
         "L4-04": c09 or z,
     }
@@ -1006,21 +838,20 @@ class TestTopsideDetection:
     """Top-side JE internal score feature."""
 
     def test_all_conditions_met(self):
-        """수기 + 5개 가점 전부 → topside_score 만점."""
+        """수기 + 4개 가점 전부 → topside_score 만점."""
         df = pd.DataFrame({"is_manual_je": [True] * 5})
         layers = _topside_layers(
             c01=[0.6] * 5,
             b06=[0.6] * 5,
             a03=[0.6] * 5,
             c08=[0.6] * 5,
-            c06=[0.2] * 5,
         )
         result = aggregate_scores(df, layers)
         assert "L2-05" not in result["flagged_rules"].iloc[0]
         assert result["topside_score"].iloc[0] == pytest.approx(1.0)
 
     def test_threshold_boundary(self):
-        """수기 + 정확히 2개 가점 → topside_score 0.4."""
+        """수기 + 정확히 2개 가점 → topside_score 0.5 (4개 조건 중 2개)."""
         df = pd.DataFrame({"is_manual_je": [True, False, True, True, True]})
         layers = _topside_layers(
             c01=[0.6, 0.0, 0.6, 0.0, 0.0],
@@ -1028,7 +859,7 @@ class TestTopsideDetection:
         )
         result = aggregate_scores(df, layers)
         assert "L2-05" not in result["flagged_rules"].iloc[0]
-        assert result["topside_score"].iloc[0] == pytest.approx(0.4)
+        assert result["topside_score"].iloc[0] == pytest.approx(0.5)
         # 행 1: 자동 + L3-04 + L4-03 = 0점 (게이트키퍼) → 미플래그
         assert "L2-05" not in result["flagged_rules"].iloc[1]
 
@@ -1040,14 +871,13 @@ class TestTopsideDetection:
         assert "L2-05" not in result["flagged_rules"].iloc[0]
 
     def test_automated_je_blocked(self):
-        """자동 전표 + 5개 가점 전부 → L2-05 미플래그 (게이트키퍼 핵심 테스트)."""
+        """자동 전표 + 4개 가점 전부 → L2-05 미플래그 (게이트키퍼 핵심 테스트)."""
         df = pd.DataFrame({"is_manual_je": [False] * 5})
         layers = _topside_layers(
             c01=[0.6] * 5,
             b06=[0.6] * 5,
             a03=[0.6] * 5,
             c08=[0.6] * 5,
-            c06=[0.2] * 5,
         )
         result = aggregate_scores(df, layers)
         # Why: 자동 전표는 가점 만점이어도 Top-side JE 아님
@@ -1062,7 +892,6 @@ class TestTopsideDetection:
             b06=[0.6] * 5,
             a03=[0.6] * 5,
             c08=[0.6] * 5,
-            c06=[0.2] * 5,
         )
         result = aggregate_scores(df, layers)
         assert "L2-05" not in result["flagged_rules"].iloc[0]
@@ -1071,20 +900,19 @@ class TestTopsideDetection:
     def test_missing_layers(self):
         """일부 레이어 없음 → 해당 조건 0점, 에러 없음."""
         df = pd.DataFrame({"is_manual_je": [True] * 3})
-        # layer_a, layer_b 없이 layer_c만 전달
+        # layer_a, layer_b 없이 layer_c만 전달 → 4개 조건 중 period_end·high_amount 2개만 충족.
         layer_c = _make_result(
             "layer_c",
             [0.6] * 3,
             {
                 "L3-04": [0.6] * 3,
                 "L4-03": [0.6] * 3,
-                "L3-08": [0.2] * 3,
             },
         )
         benford = _make_result("benford", [0.0] * 3, {"L4-02": [0.0] * 3})
         result = aggregate_scores(df, [layer_c, benford])
         assert "L2-05" not in result["flagged_rules"].iloc[0]
-        assert result["topside_score"].iloc[0] == pytest.approx(0.6)
+        assert result["topside_score"].iloc[0] == pytest.approx(0.5)
 
     def test_topside_score_column(self):
         """결과에 topside_score 컬럼 존재 (0.0~1.0 범위)."""
@@ -1120,190 +948,6 @@ class TestTopsideDetection:
         result = aggregate_scores(df, [layer_a, layer_b, layer_c, benford])
         assert result["risk_level"].iloc[0] == RiskLevel.HIGH
         assert "L2-05" not in result["flagged_rules"].iloc[0]
-
-
-class TestIntercompanyExceptionScoring:
-    """L3-03 population signal and IC exception floors."""
-
-    def test_l303_population_only_stays_low(self):
-        """L3-03 단독은 PHASE1 모집단 신호로만 낮게 반영."""
-        df = pd.DataFrame({"is_intercompany": [True]})
-        layer_b = DetectionResult(
-            track_name="layer_b",
-            flagged_indices=[0],
-            scores=pd.Series([1.0]),
-            rule_flags=[RuleFlag("L3-03", "L3-03", 4, 1, 1)],
-            details=pd.DataFrame({"L3-03": [1.0]}),
-            metadata={"elapsed": 0.01, "skipped_rules": []},
-            warnings=[],
-        )
-
-        result = aggregate_scores(df, [layer_b])
-
-        assert result["anomaly_score"].iloc[0] < RISK_THRESHOLDS[RiskLevel.LOW]
-        assert result["risk_level"].iloc[0] == RiskLevel.NORMAL
-        assert result["intercompany_exception_score"].iloc[0] == pytest.approx(0.0)
-
-    def test_ic01_exception_gets_medium_floor(self):
-        """IC01[high] 미대사 예외는 row-level 대표 점수에서 Medium 이상 노출.
-
-        D0xx (D055 supersede) 정책: evidence=high 만 Medium floor.
-        """
-        df = pd.DataFrame({"is_intercompany": [True]})
-        layer_b = DetectionResult(
-            track_name="layer_b",
-            flagged_indices=[0],
-            scores=pd.Series([1.0]),
-            rule_flags=[RuleFlag("L3-03", "L3-03", 4, 1, 1)],
-            details=pd.DataFrame({"L3-03": [1.0]}),
-            metadata={"elapsed": 0.01, "skipped_rules": []},
-            warnings=[],
-        )
-        intercompany = DetectionResult(
-            track_name="intercompany",
-            flagged_indices=[0],
-            scores=pd.Series([0.6]),
-            rule_flags=[RuleFlag("IC01", "IC01", 3, 1, 1)],
-            details=pd.DataFrame(
-                {
-                    "IC01": [0.6],
-                    "ic01_evidence_level": ["high"],
-                    "ic01_review_reason": [""],
-                }
-            ),
-            metadata={"elapsed": 0.01, "skipped_rules": []},
-            warnings=[],
-        )
-
-        result = aggregate_scores(df, [layer_b, intercompany])
-
-        assert result["anomaly_score"].iloc[0] == pytest.approx(RISK_THRESHOLDS[RiskLevel.MEDIUM])
-        assert result["risk_level"].iloc[0] == RiskLevel.MEDIUM
-        assert result["intercompany_exception_score"].iloc[0] == pytest.approx(
-            RISK_THRESHOLDS[RiskLevel.MEDIUM]
-        )
-        assert result["intercompany_exception_reasons"].iloc[0] == "IC01[high]"
-
-    def test_single_ic02_exception_gets_low_floor(self):
-        """IC02 단독 금액 차이는 Low floor로 표시."""
-        df = pd.DataFrame({"is_intercompany": [True]})
-        intercompany = DetectionResult(
-            track_name="intercompany",
-            flagged_indices=[0],
-            scores=pd.Series([0.4]),
-            rule_flags=[RuleFlag("IC02", "IC02", 2, 1, 1)],
-            details=pd.DataFrame({"IC02": [0.4]}),
-            metadata={"elapsed": 0.01, "skipped_rules": []},
-            warnings=[],
-        )
-
-        result = aggregate_scores(df, [intercompany])
-
-        assert result["anomaly_score"].iloc[0] == pytest.approx(RISK_THRESHOLDS[RiskLevel.LOW])
-        assert result["risk_level"].iloc[0] == RiskLevel.LOW
-        assert result["intercompany_exception_reasons"].iloc[0] == "IC02"
-
-    def test_multiple_ic_exceptions_get_medium_floor(self):
-        """금액 차이와 시차 이상이 같이 있으면 Medium floor로 승격."""
-        df = pd.DataFrame({"is_intercompany": [True]})
-        intercompany = DetectionResult(
-            track_name="intercompany",
-            flagged_indices=[0],
-            scores=pd.Series([0.4]),
-            rule_flags=[
-                RuleFlag("IC02", "IC02", 2, 1, 1),
-                RuleFlag("IC03", "IC03", 2, 1, 1),
-            ],
-            details=pd.DataFrame({"IC02": [0.4], "IC03": [0.4]}),
-            metadata={"elapsed": 0.01, "skipped_rules": []},
-            warnings=[],
-        )
-
-        result = aggregate_scores(df, [intercompany])
-
-        assert result["anomaly_score"].iloc[0] == pytest.approx(RISK_THRESHOLDS[RiskLevel.MEDIUM])
-        assert result["risk_level"].iloc[0] == RiskLevel.MEDIUM
-        assert result["intercompany_exception_reasons"].iloc[0] == "IC02,IC03"
-
-
-# ── IC01 evidence level floor 차별 (T-P5-3, D065) ──────────────
-
-
-class TestIC01EvidenceLevelFloor:
-    """D065 정책 — evidence=high 만 Medium floor 자격, review 는 Low."""
-
-    @staticmethod
-    def _build_ic_result(
-        ic01: float, evidence_level: str, ic02: float = 0.0, ic03: float = 0.0
-    ) -> DetectionResult:
-        details_data: dict = {
-            "IC01": [ic01],
-            "ic01_evidence_level": [evidence_level],
-            "ic01_review_reason": [""],
-        }
-        rule_flags: list[RuleFlag] = []
-        if ic01 > 0:
-            rule_flags.append(RuleFlag("IC01", "IC01", 3, 1, 1))
-        if ic02 > 0:
-            details_data["IC02"] = [ic02]
-            rule_flags.append(RuleFlag("IC02", "IC02", 2, 1, 1))
-        if ic03 > 0:
-            details_data["IC03"] = [ic03]
-            rule_flags.append(RuleFlag("IC03", "IC03", 2, 1, 1))
-        return DetectionResult(
-            track_name="intercompany",
-            flagged_indices=[0],
-            scores=pd.Series([max(ic01, ic02, ic03)]),
-            rule_flags=rule_flags,
-            details=pd.DataFrame(details_data),
-            metadata={"elapsed": 0.01, "skipped_rules": []},
-            warnings=[],
-        )
-
-    def test_ic01_high_alone_medium(self):
-        """IC01[high] 단독 → Medium floor."""
-        df = pd.DataFrame({"is_intercompany": [True]})
-        ic = self._build_ic_result(ic01=0.6, evidence_level="high")
-        result = aggregate_scores(df, [ic])
-        assert result["anomaly_score"].iloc[0] == pytest.approx(RISK_THRESHOLDS[RiskLevel.MEDIUM])
-        assert result["risk_level"].iloc[0] == RiskLevel.MEDIUM
-        assert "IC01[high]" in result["intercompany_exception_reasons"].iloc[0]
-
-    def test_ic01_review_alone_low(self):
-        """IC01[review] 단독 → Low floor (Medium 자격 없음)."""
-        df = pd.DataFrame({"is_intercompany": [True]})
-        ic = self._build_ic_result(ic01=0.6, evidence_level="review")
-        result = aggregate_scores(df, [ic])
-        assert result["anomaly_score"].iloc[0] == pytest.approx(RISK_THRESHOLDS[RiskLevel.LOW])
-        assert result["risk_level"].iloc[0] == RiskLevel.LOW
-        assert "IC01[review]" in result["intercompany_exception_reasons"].iloc[0]
-
-    def test_ic02_ic03_combo_medium(self):
-        """IC02 + IC03 (IC01 없음) → Medium floor (2 개 이상 결합 유지)."""
-        df = pd.DataFrame({"is_intercompany": [True]})
-        ic = self._build_ic_result(ic01=0.0, evidence_level="", ic02=0.4, ic03=0.4)
-        result = aggregate_scores(df, [ic])
-        assert result["anomaly_score"].iloc[0] == pytest.approx(RISK_THRESHOLDS[RiskLevel.MEDIUM])
-        assert result["risk_level"].iloc[0] == RiskLevel.MEDIUM
-
-    def test_ic01_high_with_ic02_medium(self):
-        """IC01[high] + IC02 → Medium floor 유지."""
-        df = pd.DataFrame({"is_intercompany": [True]})
-        ic = self._build_ic_result(ic01=0.6, evidence_level="high", ic02=0.4)
-        result = aggregate_scores(df, [ic])
-        assert result["anomaly_score"].iloc[0] == pytest.approx(RISK_THRESHOLDS[RiskLevel.MEDIUM])
-        assert result["risk_level"].iloc[0] == RiskLevel.MEDIUM
-
-    def test_ic01_review_with_ic02_medium(self):
-        """IC01[review] + IC02 → Medium floor (2 개 이상 결합 유지)."""
-        df = pd.DataFrame({"is_intercompany": [True]})
-        ic = self._build_ic_result(ic01=0.6, evidence_level="review", ic02=0.4)
-        result = aggregate_scores(df, [ic])
-        assert result["anomaly_score"].iloc[0] == pytest.approx(RISK_THRESHOLDS[RiskLevel.MEDIUM])
-        assert result["risk_level"].iloc[0] == RiskLevel.MEDIUM
-
-
-# ── TestMLWeights ────────────────────────────────────────
 
 
 class TestMLWeights:
@@ -1410,10 +1054,14 @@ def test_normalize_rule_values_covers_uncovered_rules(
         display_label=label,
     ).normalized_score
     level = rule_id.split("-", 1)[0]
-    expected = 0.0 if rule_id in {"L1-01", "L1-02", "L1-03"} else (
-        expected_normalized * RULE_LEVEL_WEIGHTS[level]
+    # OFF-TIME(L3-05·L3-06·L4-05)은 within-tier 정렬·UI 전용이라 row anomaly_score 기여 0.
+    expected = (
+        0.0
+        if rule_id in {"L1-01", "L1-02", "L1-03"} or rule_id in OFF_TIME_SET
+        else (expected_normalized * RULE_LEVEL_WEIGHTS[level])
     )
     assert result["anomaly_score"].iloc[0] == pytest.approx(expected, abs=1e-6)
+    # 점수는 0이어도 표시용 flagged_rules 에는 남는다(UI 표시 유지).
     assert rule_id in result["flagged_rules"].iloc[0]
 
 

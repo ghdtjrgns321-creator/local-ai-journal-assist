@@ -20,7 +20,7 @@ class TestRuleCodesIntegrity:
     def test_rule_count(self) -> None:
         # Why: Current registry includes L1-L4, analytical, graph, evidence, access,
         # trendbreak, NLP, and Phase2 ML rule codes.
-        assert len(RULE_CODES) == 69
+        assert len(RULE_CODES) == 68
 
     def test_layer_a_ids(self) -> None:
         for rid in ("L1-01", "L1-02", "L1-03"):
@@ -38,7 +38,6 @@ class TestRuleCodesIntegrity:
             "L3-05",
             "L3-06",
             "L3-07",
-            "L3-08",
             "L3-09",
             "L3-10",
             "L3-11",
@@ -63,7 +62,7 @@ class TestSeverityMap:
 
     @pytest.mark.parametrize(
         "rule_id, expected",
-        [("L1-01", 5), ("L3-08", 1), ("L1-06", 4)],
+        [("L1-01", 5), ("L1-06", 4)],
     )
     def test_specific_severities(self, rule_id: str, expected: int) -> None:
         assert SEVERITY_MAP[rule_id] == expected

@@ -1,7 +1,7 @@
 """pattern_features 단위 테스트.
 
 계층: 개별 피처 → orchestrator 순서로 검증.
-L4-01(매출계정), L3-02(수기전표), L3-03(관계사), L2-04/L3-08(가계정), L4-02(Benford) 룰 대응.
+L4-01(매출계정), L3-02(수기전표), L3-03(관계사), L2-04(가계정), L4-02(Benford) 룰 대응.
 """
 
 import numpy as np
@@ -17,7 +17,6 @@ from src.feature.pattern_features import (
     add_is_suspense_account,
 )
 
-
 # ── TestAddIsManualJe ────────────────────────────────────────────
 
 
@@ -29,14 +28,14 @@ class TestAddIsManualJe:
     def test_exact_match(self, pf_basic_df):
         """정확히 매칭되는 코드 → True."""
         result = add_is_manual_je(pf_basic_df, self.CODES)
-        assert result["is_manual_je"].iloc[0] == True   # SA
-        assert result["is_manual_je"].iloc[2] == True   # Manual
-        assert result["is_manual_je"].iloc[3] == True   # 수기
+        assert result["is_manual_je"].iloc[0] == True  # SA
+        assert result["is_manual_je"].iloc[2] == True  # Manual
+        assert result["is_manual_je"].iloc[3] == True  # 수기
 
     def test_non_match(self, pf_basic_df):
         """매칭되지 않는 코드 → False."""
         result = add_is_manual_je(pf_basic_df, self.CODES)
-        assert result["is_manual_je"].iloc[1] == False   # AUTO
+        assert result["is_manual_je"].iloc[1] == False  # AUTO
 
     def test_case_insensitive(self):
         """대소문자 무시 매칭."""
@@ -82,53 +81,65 @@ class TestAddIsIntercompany:
 
     def test_gl_account_prefix(self):
         """gl_account가 식별자 prefix와 매칭."""
-        df = pd.DataFrame({
-            "gl_account": pd.array([9900, 1200], dtype="Int64"),
-        })
+        df = pd.DataFrame(
+            {
+                "gl_account": pd.array([9900, 1200], dtype="Int64"),
+            }
+        )
         result = add_is_intercompany(df, self.IDENTIFIERS)
         assert result["is_intercompany"].iloc[0] == True
         assert result["is_intercompany"].iloc[1] == False
 
     def test_company_code_ignored(self):
         """company_code만 있고 gl_account 없으면 → 전부 False (GL 기반 식별)."""
-        df = pd.DataFrame({
-            "company_code": ["INTER_01", "HQ"],
-        })
+        df = pd.DataFrame(
+            {
+                "company_code": ["INTER_01", "HQ"],
+            }
+        )
         result = add_is_intercompany(df, self.IDENTIFIERS)
         assert not result["is_intercompany"].any()
 
     def test_business_process_intercompany(self):
         """business_process가 Intercompany면 GL prefix 없이도 관계사 후보."""
-        df = pd.DataFrame({
-            "gl_account": ["1200", "5000"],
-            "business_process": ["Intercompany", "P2P"],
-        })
+        df = pd.DataFrame(
+            {
+                "gl_account": ["1200", "5000"],
+                "business_process": ["Intercompany", "P2P"],
+            }
+        )
         result = add_is_intercompany(df, self.IDENTIFIERS)
         assert result["is_intercompany"].tolist() == [True, False]
 
     def test_counterparty_type_intercompany_affiliate(self):
         """counterparty_type이 IntercompanyAffiliate면 관계사 후보."""
-        df = pd.DataFrame({
-            "gl_account": ["1200", "5000"],
-            "counterparty_type": ["IntercompanyAffiliate", "Vendor"],
-        })
+        df = pd.DataFrame(
+            {
+                "gl_account": ["1200", "5000"],
+                "counterparty_type": ["IntercompanyAffiliate", "Vendor"],
+            }
+        )
         result = add_is_intercompany(df, self.IDENTIFIERS)
         assert result["is_intercompany"].tolist() == [True, False]
 
     def test_empty_identifiers_still_uses_semantic_columns(self):
         """GL prefix config가 없어도 명시적 semantic 컬럼은 유지."""
-        df = pd.DataFrame({
-            "business_process": ["Intercompany", "P2P"],
-            "counterparty_type": ["Vendor", "IntercompanyAffiliate"],
-        })
+        df = pd.DataFrame(
+            {
+                "business_process": ["Intercompany", "P2P"],
+                "counterparty_type": ["Vendor", "IntercompanyAffiliate"],
+            }
+        )
         result = add_is_intercompany(df, [])
         assert result["is_intercompany"].tolist() == [True, True]
 
     def test_multiple_gl_prefixes(self):
         """여러 GL prefix 중 하나라도 매칭이면 True."""
-        df = pd.DataFrame({
-            "gl_account": pd.array([9900, 1200, 9901], dtype="Int64"),
-        })
+        df = pd.DataFrame(
+            {
+                "gl_account": pd.array([9900, 1200, 9901], dtype="Int64"),
+            }
+        )
         result = add_is_intercompany(df, self.IDENTIFIERS)
         assert result["is_intercompany"].tolist() == [True, False, True]
 
@@ -144,9 +155,11 @@ class TestAddIsIntercompany:
 
     def test_gl_account_na(self):
         """gl_account가 NA → 매칭 안 됨 (정상)."""
-        df = pd.DataFrame({
-            "gl_account": pd.array([pd.NA, 9900], dtype="Int64"),
-        })
+        df = pd.DataFrame(
+            {
+                "gl_account": pd.array([pd.NA, 9900], dtype="Int64"),
+            }
+        )
         result = add_is_intercompany(df, self.IDENTIFIERS)
         assert result["is_intercompany"].iloc[0] == False
         assert result["is_intercompany"].iloc[1] == True
@@ -161,9 +174,9 @@ class TestAddIsRevenueAccount:
     def test_single_prefix(self, pf_basic_df):
         """prefix '4' → 4100, 4200 매칭."""
         result = add_is_revenue_account(pf_basic_df, ["4"])
-        assert result["is_revenue_account"].iloc[0] == True   # 4100
-        assert result["is_revenue_account"].iloc[1] == False   # 1200
-        assert result["is_revenue_account"].iloc[2] == True   # 4200
+        assert result["is_revenue_account"].iloc[0] == True  # 4100
+        assert result["is_revenue_account"].iloc[1] == False  # 1200
+        assert result["is_revenue_account"].iloc[2] == True  # 4200
 
     def test_multiple_prefixes(self, pf_basic_df):
         """복수 prefix ['4', '9'] → 4100, 4200, 9100 매칭."""
@@ -275,7 +288,7 @@ class TestAddFirstDigit:
 
 
 class TestAddIsSuspenseAccount:
-    """L2-04/L3-08: 가계정·미결산 키워드 매칭."""
+    """L2-04: 가계정·미결산 키워드 매칭."""
 
     KEYWORDS = ["가수금", "가지급", "미결산", "임시"]
 
@@ -293,10 +306,12 @@ class TestAddIsSuspenseAccount:
 
     def test_or_combination(self):
         """line_text OR header_text 중 하나라도 매칭이면 True."""
-        df = pd.DataFrame({
-            "line_text": ["일반 전표", "가지급금 반환"],
-            "header_text": ["미결산 처리", "정상"],
-        })
+        df = pd.DataFrame(
+            {
+                "line_text": ["일반 전표", "가지급금 반환"],
+                "header_text": ["미결산 처리", "정상"],
+            }
+        )
         result = add_is_suspense_account(df, self.KEYWORDS)
         assert result["is_suspense_account"].tolist() == [True, True]
 
@@ -335,20 +350,24 @@ class TestAddIsSuspenseAccount:
 
     def test_gl_account_code_match(self):
         """gl_account prefix가 suspense_account_codes에 매칭 → True."""
-        df = pd.DataFrame({
-            "gl_account": pd.array([2190, 1200, 2900], dtype="Int64"),
-            "line_text": ["일반 거래", "일반 거래", "일반 거래"],
-        })
+        df = pd.DataFrame(
+            {
+                "gl_account": pd.array([2190, 1200, 2900], dtype="Int64"),
+                "line_text": ["일반 거래", "일반 거래", "일반 거래"],
+            }
+        )
         codes = ["2190", "2900"]
         result = add_is_suspense_account(df, self.KEYWORDS, account_codes=codes)
         assert result["is_suspense_account"].tolist() == [True, False, True]
 
     def test_keyword_or_code_hybrid(self):
         """키워드 매칭 OR 코드 매칭 — 둘 중 하나라도 True."""
-        df = pd.DataFrame({
-            "gl_account": pd.array([2190, 1200, 4100], dtype="Int64"),
-            "line_text": ["일반 거래", "가수금 정리", "일반 거래"],
-        })
+        df = pd.DataFrame(
+            {
+                "gl_account": pd.array([2190, 1200, 4100], dtype="Int64"),
+                "line_text": ["일반 거래", "가수금 정리", "일반 거래"],
+            }
+        )
         codes = ["2190"]
         result = add_is_suspense_account(df, self.KEYWORDS, account_codes=codes)
         # 행0: 코드 매칭, 행1: 키워드 매칭, 행2: 둘 다 아님
@@ -356,9 +375,11 @@ class TestAddIsSuspenseAccount:
 
     def test_code_match_without_text_columns(self):
         """텍스트 컬럼 없어도 코드 매칭만으로 True."""
-        df = pd.DataFrame({
-            "gl_account": pd.array([2190, 1200], dtype="Int64"),
-        })
+        df = pd.DataFrame(
+            {
+                "gl_account": pd.array([2190, 1200], dtype="Int64"),
+            }
+        )
         codes = ["2190"]
         result = add_is_suspense_account(df, [], account_codes=codes)
         assert result["is_suspense_account"].tolist() == [True, False]
@@ -394,8 +415,11 @@ class TestAddAllPatternFeatures:
         """5개 피처 컬럼 모두 생성."""
         result = add_all_pattern_features(pf_basic_df, self.RULES)
         expected_cols = [
-            "is_manual_je", "is_intercompany", "is_revenue_account",
-            "first_digit", "is_suspense_account",
+            "is_manual_je",
+            "is_intercompany",
+            "is_revenue_account",
+            "first_digit",
+            "is_suspense_account",
         ]
         for col in expected_cols:
             assert col in result.columns, f"{col} 컬럼 누락"

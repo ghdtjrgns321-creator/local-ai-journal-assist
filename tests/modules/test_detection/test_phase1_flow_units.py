@@ -379,7 +379,8 @@ def test_complete_duplicate_artifact_does_not_repeat_artifact_gap_per_flow() -> 
     assert sum(flow.candidate_count - flow.retained_count for flow in flows) == 0
 
 
-def test_intercompany_artifact_builds_flow_unit_with_completeness_fields() -> None:
+def test_intercompany_artifact_no_longer_builds_flow_unit() -> None:
+    """IC(ic_pair_artifact)는 PHASE1-2 family 귀속 — flow unit 미생성(2026-06-21 완전 제거)."""
     details = pd.DataFrame({"IC02": [0.0, 0.7, 0.0, 0.0]}, index=_df().index)
     result = DetectionResult(
         track_name="intercompany_matcher",
@@ -417,17 +418,11 @@ def test_intercompany_artifact_builds_flow_unit_with_completeness_fields() -> No
 
     flows = _flow_units(result)
 
-    assert len(flows) == 1
-    assert flows[0].flow_type == "intercompany_mismatch"
-    assert flows[0].member_document_ids == ["D-B"]
-    assert flows[0].link_key["rule_id"] == "IC02"
-    assert flows[0].artifact_completeness == "complete"
-    assert flows[0].measurement_eligible is True
-    assert flows[0].candidate_count == 1
-    assert flows[0].retained_count == 1
+    assert flows == []
 
 
-def test_intercompany_structural_flows_ignore_probabilistic_candidate_cap() -> None:
+def test_intercompany_structural_artifact_no_longer_builds_flow_unit() -> None:
+    """IC 구조 flow(unmatched/reciprocal)도 PHASE1-2 family 귀속 — flow unit 미생성(2026-06-21)."""
     details = pd.DataFrame(
         {"IC01": [0.6, 0.0, 0.0, 0.0], "IC03": [0.0, 0.0, 0.7, 0.7]},
         index=_df().index,
@@ -479,11 +474,7 @@ def test_intercompany_structural_flows_ignore_probabilistic_candidate_cap() -> N
 
     flows = _flow_units(result)
 
-    assert {flow.flow_type for flow in flows} == {"intercompany_reciprocal"}
-    assert {flow.artifact_completeness for flow in flows} == {"complete"}
-    assert {flow.measurement_eligible for flow in flows} == {True}
-    assert {flow.cap_reason for flow in flows} == {None}
-    assert all(flow.member_count >= 2 for flow in flows)
+    assert flows == []
 
 
 @pytest.mark.skip(
@@ -632,7 +623,8 @@ def test_document_hits_absorb_into_one_primary_flow_when_document_has_multiple_f
     assert sum(len(flow.absorbed_rule_hits) for flow in flows) == 2
 
 
-def test_graph_details_build_flow_unit_and_mark_coverage_limited() -> None:
+def test_graph_details_no_longer_build_flow_unit() -> None:
+    """GR(graph details)은 PHASE1-2 family 귀속 — flow unit 미생성(2026-06-21 완전 제거)."""
     details = pd.DataFrame({"GR01": [0.8, 0.8, 0.0, 0.0]}, index=_df().index)
     result = DetectionResult(
         track_name="graph",
@@ -657,17 +649,11 @@ def test_graph_details_build_flow_unit_and_mark_coverage_limited() -> None:
 
     flows = _flow_units(result)
 
-    assert len(flows) == 1
-    assert flows[0].flow_type == "graph_circular"
-    assert flows[0].member_document_ids == ["D-A", "D-B"]
-    assert flows[0].artifact_completeness == "bounded"
-    assert flows[0].measurement_eligible is False
-    assert flows[0].candidate_count == 5
-    assert flows[0].retained_count == 2
-    assert flows[0].cap_reason == "max_edges_threshold_raised"
+    assert flows == []
 
 
-def test_graph_cycle_artifact_builds_one_flow_per_cycle() -> None:
+def test_graph_cycle_artifact_no_longer_builds_flow() -> None:
+    """GR cycle artifact 도 PHASE1-2 family 귀속 — flow unit 미생성(2026-06-21 완전 제거)."""
     details = pd.DataFrame({"GR01": [0.8, 0.8, 0.8, 0.0]}, index=_df().index)
     result = DetectionResult(
         track_name="graph",
@@ -698,7 +684,4 @@ def test_graph_cycle_artifact_builds_one_flow_per_cycle() -> None:
 
     flows = _flow_units(result)
 
-    assert len(flows) == 2
-    assert {flow.flow_type for flow in flows} == {"graph_circular"}
-    assert {flow.link_key["cycle_id"] for flow in flows} == {"cycle-a", "cycle-b"}
-    assert {flow.artifact_completeness for flow in flows} == {"complete"}
+    assert flows == []

@@ -38,14 +38,14 @@ def test_expense_capitalization_fires_account_logic_high_via_period_end_leg():
 
 def test_period_end_high_fires_via_corroborant_leg():
     # §3.0 HIGH-4: (L3-04|L3-11) & (L3-10|L4-04|L4-03). timing_seed(L3-04) + corroborant(L4-04).
-    # §8(5) 적요부실 L3-08(0/22)은 corroborant 풀에서 삭제됨.
+    # 적요부실 룰은 corroborant 풀에서 삭제됨(룰 자체 폐기).
     tiers = compute_topic_tiers([_ev("L3-04"), _ev("L4-04")])
     assert tiers["closing_timing"].tier == "HIGH"
 
 
-def test_period_end_not_high_via_removed_weak_description_leg():
-    # §8(5) HIGH-4 적요부실 L3-08 헛다리 삭제: L3-04 + L3-08 만으로는 HIGH 불가.
-    tiers = compute_topic_tiers([_ev("L3-04"), _ev("L3-08")])
+def test_period_end_not_high_without_corroborant_leg():
+    # 적요부실 룰 폐기 후: timing_seed(L3-04) 단독으로는 corroborant 다리가 없어 HIGH 불가.
+    tiers = compute_topic_tiers([_ev("L3-04")])
     assert tiers["closing_timing"].tier != "HIGH"
 
 
@@ -123,15 +123,15 @@ def test_booster_rule_has_lower_direct_contribution_than_primary_rule():
         severity=3,
         raw_value=0.6,
     )
-    l308 = normalize_rule_evidence(
-        rule_id="L3-08",
+    l305 = normalize_rule_evidence(
+        rule_id="L3-05",
         evidence_type="timing_anomaly",
         severity=3,
         raw_value=0.6,
     )
 
-    assert l308.scoring_role == "booster"
-    assert l308.normalized_score < l304.normalized_score
+    assert l305.scoring_role == "booster"
+    assert l305.normalized_score < l304.normalized_score
 
 
 def test_macro_rule_does_not_contribute_to_transaction_score():
@@ -179,30 +179,28 @@ def test_l101_normalized_score_accepts_uniform_data_integrity_signal():
     assert evidence.normalized_score == pytest.approx(1.0)
 
 
-def test_l104_bucket_normalization_preserves_phase1_risk_order():
-    buckets = {
-        "boundary": 0.4,
-        "moderate": 0.6,
-        "severe": 0.75,
-        "critical": 0.9,
-        "non_approver": 0.9,
-    }
-
-    normalized = {
-        bucket: normalize_rule_evidence(
-            rule_id="L1-04",
-            evidence_type="control_failure",
-            severity=3,
-            raw_value=raw_score,
-            display_label=bucket,
-        ).normalized_score
-        for bucket, raw_score in buckets.items()
-    }
-
-    assert normalized["boundary"] < normalized["moderate"]
-    assert normalized["moderate"] < normalized["severe"]
-    assert normalized["severe"] < normalized["critical"]
-    assert normalized["critical"] == pytest.approx(normalized["non_approver"])
+def test_binary_unified_rules_ignore_legacy_bucket_labels():
+    # L1-04·L3-07·L3-09 는 binary 통일(2026-06-20, 기다/아니다만). 옛 bucket label 을 줘도
+    # 등급 없이 일관된 binary 강도를 내야 한다(grading 죽은 코드 제거 검증, hollow 방지).
+    cases = [
+        ("L1-04", "control_failure", ["boundary", "severe", "critical"]),
+        ("L3-07", "timing_anomaly", ["moderate_gap", "large_gap", "extreme_gap"]),
+        ("L3-09", "logic_mismatch", ["aging_30_60", "aging_60_90", "aging_over_90"]),
+    ]
+    for rule_id, evidence_type, labels in cases:
+        strengths = [
+            normalize_rule_evidence(
+                rule_id=rule_id,
+                evidence_type=evidence_type,
+                severity=3,
+                raw_value=1.0,
+                display_label=label,
+            ).signal_strength
+            for label in [None, *labels]
+        ]
+        # 모든 label(없음 포함)에서 동일(binary) + 발화 시 1.0
+        assert len({round(s, 6) for s in strengths}) == 1
+        assert strengths[0] == pytest.approx(1.0)
 
 
 def test_l104_boundary_bucket_does_not_receive_topic_floor():
@@ -291,8 +289,10 @@ def test_l310_signal_bands_preserve_phase1_priority_order():
     assert len(set(normalized)) == 3
 
 
-def test_l404_rare_pair_bands_preserve_phase1_priority_order():
-    normalized = [
+def test_l404_rare_pair_contributes_binary_after_phase1_normalization():
+    # binary 전환: 발화(raw>0)면 옛 bucket 크기(0.25/0.35/0.45)와 무관하게 동일 기여.
+    # 강도(쌍 개수)·정황·조합은 통합점수·case priority 소관이므로 룰 기여는 binary.
+    fired = [
         normalize_rule_evidence(
             rule_id="L4-04",
             evidence_type="logic_mismatch",
@@ -301,13 +301,34 @@ def test_l404_rare_pair_bands_preserve_phase1_priority_order():
         ).normalized_score
         for score in [0.25, 0.35, 0.45]
     ]
+    # 세 bucket 모두 동일값 = bucket 차등 폐기
+    assert len(set(fired)) == 1
+    assert fired[0] > 0.0
 
-    assert normalized == pytest.approx([0.1875, 0.2625, 0.3375])
-    assert normalized == sorted(normalized)
-    assert len(set(normalized)) == 3
+    # 미발화(raw=0)는 0 기여
+    none = normalize_rule_evidence(
+        rule_id="L4-04",
+        evidence_type="logic_mismatch",
+        severity=2,
+        raw_value=0.0,
+    ).normalized_score
+    assert none == 0.0
+
+    # signal_strength 도 binary(발화=1.0)
+    sig = normalize_rule_evidence(
+        rule_id="L4-04",
+        evidence_type="logic_mismatch",
+        severity=2,
+        raw_value=0.45,
+    ).signal_strength
+    assert sig == pytest.approx(1.0)
 
 
-def test_l312_review_score_order_is_preserved_after_normalization():
+def test_l312_is_macro_only_zero_contribution():
+    """L3-12(업무범위)는 PHASE1-2 family 귀속 — macro_only 로 row anomaly_score 0 기여(2026-06-21).
+
+    과거 combo_only 로 raw band 순서를 보존했으나, PHASE1-1 통합점수 완전 제거로 0 고정.
+    """
     normalized = [
         normalize_rule_evidence(
             rule_id="L3-12",
@@ -318,8 +339,7 @@ def test_l312_review_score_order_is_preserved_after_normalization():
         for score in [0.20, 0.35, 0.45, 0.55, 0.65]
     ]
 
-    assert normalized == sorted(normalized)
-    assert len(set(normalized)) == 5
+    assert all(score == 0.0 for score in normalized)
 
 
 def test_l107_component_score_is_preserved_for_phase1_priority():
@@ -359,77 +379,36 @@ def test_l305_calendar_scores_are_binary_after_phase1_normalization():
     assert normalized == pytest.approx([0.0, 0.117, 0.117])
 
 
-def test_l307_gap_buckets_are_monotonic_after_phase1_normalization():
-    normalized = [
-        normalize_rule_evidence(
-            rule_id="L3-07",
-            evidence_type="timing_anomaly",
-            severity=3,
-            raw_value=raw_score,
-            display_label=bucket,
-        ).normalized_score
-        for bucket, raw_score in [
-            ("late_moderate_gap", 0.45),
-            ("late_large_gap", 0.60),
-            ("late_extreme_gap", 0.75),
-        ]
-    ]
-
-    assert normalized == pytest.approx([0.2475, 0.3375, 0.45])
-    assert normalized == sorted(normalized)
-
-
-def test_l403_zscore_buckets_are_monotonic_after_phase1_normalization():
-    normalized = [
-        normalize_rule_evidence(
-            rule_id="L4-03",
-            evidence_type="statistical_outlier",
-            severity=3,
-            raw_value=raw_score,
-            display_label=bucket,
-        ).normalized_score
-        for bucket, raw_score in [
-            ("low_zscore", 0.25),
-            ("medium_zscore", 0.45),
-            ("high_zscore", 0.70),
-        ]
-    ]
-
-    assert normalized == pytest.approx([0.2025, 0.315, 0.45])
-    assert normalized == sorted(normalized)
-
-
-def test_l309_aging_score_is_monotonic_in_phase1_priority():
-    scores = [0.45, 0.60, 0.75, 0.80]
-
-    normalized = [
-        normalize_rule_evidence(
-            rule_id="L3-09",
-            evidence_type="logic_mismatch",
-            severity=3,
-            raw_value=score,
-        ).normalized_score
-        for score in scores
-    ]
-
-    assert normalized == pytest.approx([0.3375, 0.45, 0.5625, 0.60])
-    assert normalized == sorted(normalized)
-
-
-def test_l309_aging_bucket_labels_preserve_phase1_order():
-    normalized = {
-        bucket: normalize_rule_evidence(
-            rule_id="L3-09",
-            evidence_type="logic_mismatch",
-            severity=3,
-            raw_value=0.60,
-            display_label=bucket,
-        ).normalized_score
-        for bucket in ["aging_30_60", "aging_60_90", "aging_over_90"]
-    }
-
-    assert normalized["aging_30_60"] < normalized["aging_60_90"]
-    assert normalized["aging_60_90"] < normalized["aging_over_90"]
+def test_l403_binary_score_normalizes_via_generic_fallback():
+    """L4-03 binary(0/1) 발화 — generic fallback이 일관된 normalized score를 반환한다."""
+    # binary hit: score=1.0
+    hit = normalize_rule_evidence(
+        rule_id="L4-03",
+        evidence_type="statistical_outlier",
+        severity=3,
+        raw_value=1.0,
+        display_label="",
+    ).normalized_score
+    # no hit: score=0.0
+    miss = normalize_rule_evidence(
+        rule_id="L4-03",
+        evidence_type="statistical_outlier",
+        severity=3,
+        raw_value=0.0,
+        display_label="",
+    ).normalized_score
+    # hit > miss, 둘 다 [0,1] 범위
+    assert 0.0 <= miss < hit <= 1.0
+    # 구 bucket score(0.25/0.45/0.70) 값은 더 이상 특별 처리되지 않음 — generic 정규화 통과
+    bucket_score = normalize_rule_evidence(
+        rule_id="L4-03",
+        evidence_type="statistical_outlier",
+        severity=3,
+        raw_value=0.25,
+        display_label="low_zscore",
+    ).normalized_score
+    # generic fallback은 raw_value를 그대로 정규화하므로 0~hit 사이 값
+    assert 0.0 <= bucket_score <= hit
 
 
 def test_l306_system_context_scores_below_human_context_in_phase1_normalization():
@@ -525,7 +504,8 @@ def test_locked_macro_only_rules_have_zero_standalone_contribution(rule_id: str)
 
 
 @pytest.mark.parametrize("rule_id", ["L4-06", "L3-12"])
-def test_locked_combo_only_rules_do_not_seed_topic_score(rule_id: str):
+def test_phase1_2_family_rules_do_not_contribute_to_topic_score(rule_id: str):
+    """L4-06(배치)·L3-12(업무범위)는 PHASE1-2 family — macro_only 로 topic seed/score 0 기여(2026-06-21)."""
     evidence = normalize_rule_evidence(
         rule_id=rule_id,
         evidence_type=RULE_SCORING_REGISTRY[rule_id].evidence_type,
@@ -535,7 +515,8 @@ def test_locked_combo_only_rules_do_not_seed_topic_score(rule_id: str):
 
     scores = compute_topic_scores([evidence])
 
-    assert evidence.scoring_role == "combo_only"
+    assert evidence.scoring_role == "macro_only"
+    assert evidence.normalized_score == 0.0
     assert evidence.standalone_rankable is False
     assert max(scores.values()) == 0.0
 
@@ -589,7 +570,7 @@ def _topic_evidences(rule_specs):
             "period_end_or_late_posting + weak_description_or_sensitive_account",
             [
                 # §3.0 HIGH-4 corroborant 풀 (L3-10|L4-04|L4-03).
-                # L3-08 은 §8(5) 삭제됨 → L4-04 사용.
+                # 적요부실 룰은 폐기됨 → L4-04 사용.
                 ("L3-04", "timing_anomaly", 3, 0.6, ""),
                 ("L4-04", "logic_mismatch", 2, 0.6, ""),
             ],
@@ -711,7 +692,7 @@ def test_approval_bypass_with_weak_context_fires_no_approval_combo_floor(rule_sp
 
 
 # §3.0 / §8(1) 고액 복원·§8(6) 조합 정합 이후, 근거 충족 HIGH 조합은 복원된 leg 로 발화한다.
-#   - closing_timing: (L3-04|L3-11) & (L3-10|L4-04|L4-03)   ※L3-08 corroborant 삭제됨
+#   - closing_timing: (L3-04|L3-11) & (L3-10|L4-04|L4-03)   ※적요부실 corroborant 폐기됨
 #   - duplicate_outflow: (L2-02|L2-03|L2-05) & L3-02 & L4-03 (고액 AND)  ※bypass 없는 분기
 @pytest.mark.parametrize(
     ("topic_id", "rule_specs", "expected_reason"),
@@ -751,7 +732,7 @@ def test_grounded_combos_fire_high_with_restored_legs(
 @pytest.mark.parametrize(
     "rule_specs",
     [
-        [("L4-03", "statistical_outlier", 3, 0.7, "high_zscore")],
+        [("L4-03", "statistical_outlier", 3, 1.0, "")],
         [("L3-04", "timing_anomaly", 3, 0.6, "")],
         [("L3-03", "intercompany_structure", 3, 0.6, "")],
     ],
@@ -827,7 +808,7 @@ def test_fraud_combo_rule_scope_gates_automated_only_hits():
     evidences = _topic_evidences(
         [
             ("L3-04", "timing_anomaly", 3, 0.8, ""),
-            ("L4-03", "statistical_outlier", 3, 0.8, "high_zscore"),
+            ("L4-03", "statistical_outlier", 3, 1.0, ""),
             ("L4-04", "logic_mismatch", 2, 0.45, ""),
         ]
     )

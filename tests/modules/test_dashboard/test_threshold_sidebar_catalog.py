@@ -23,7 +23,7 @@ def test_internal_statistics_are_admin_only():
         "zscore_threshold",
         "abnormal_sigma_threshold",
         "sod_process_threshold",
-        "account_pair_rare_percentile",
+        "rare_account_pair_cadence_per_quarter",
         "min_abnormal_ratio",
         "min_user_entries",
         "reversal_score_threshold",

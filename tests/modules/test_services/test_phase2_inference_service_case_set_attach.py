@@ -22,7 +22,6 @@ import pandas as pd
 
 from src.detection.base import DetectionResult
 from src.models.phase2_case import (
-    DuplicateCase,
     IntercompanyCase,
     Phase2CaseSet,
     RelationalCase,
@@ -127,40 +126,6 @@ def _make_intercompany_case_set() -> Phase2CaseSet:
         amount_symmetry=0.9,
     )
     return Phase2CaseSet(intercompany_cases=(reciprocal, mismatch))
-
-
-def _make_duplicate_case_set() -> Phase2CaseSet:
-    left = make_row_ref(
-        row_position=0,
-        index_label=0,
-        document_id="DOC-DUP-A",
-        raw_line_number="1",
-        company_code="C01",
-    )
-    right = make_row_ref(
-        row_position=1,
-        index_label=1,
-        document_id="DOC-DUP-B",
-        raw_line_number="2",
-        company_code="C01",
-    )
-    duplicate = DuplicateCase(
-        phase2_case_id="p2_duplicate_pair_fixture001",
-        batch_id="bid-1",
-        family="duplicate",
-        unit_type="pair",
-        row_refs=(left, right),
-        evidence_tier="strong",
-        case_generation_reason={"gate": "case_grade_pair"},
-        family_score=1.0,
-        family_ecdf=0.0,
-        pair_id="pair-fixture",
-        sub_rule="L2-03a",
-        left_ref=left,
-        right_ref=right,
-        pair_evidence_tier="strong",
-    )
-    return Phase2CaseSet(duplicate_cases=(duplicate,))
 
 
 def _make_relational_case_set() -> Phase2CaseSet:
@@ -426,202 +391,10 @@ def test_attach_records_intercompany_policy_summary_without_changing_ranking(mon
     assert "not that IC is disabled" in summary["interpretation"]
 
 
-def test_attach_records_duplicate_policy_summary_without_replacing_case_order(
-    monkeypatch,
-) -> None:
-    """Duplicate policy metadata is sidecar-only and does not replace case ordering."""
-    sentinel_case_set = _make_duplicate_case_set()
-    native_order_before = tuple(case.phase2_case_id for case in sentinel_case_set.duplicate_cases)
-    orch = _OrchestratorRecorder(case_set=sentinel_case_set)
-    linker = _LinkerRecorder()
-    _patch(monkeypatch, orchestrator=orch, linker=linker)
-
-    result = _make_result(phase1_case_result=None)
-    _attach_phase2_case_set(result, ctx=None, snapshot=None)
-
-    assert result.phase2_case_set is sentinel_case_set
-    assert tuple(case.phase2_case_id for case in result.phase2_case_set.duplicate_cases) == (
-        native_order_before
-    )
-    summary = result.phase2_family_policy_summary["duplicate"]
-    assert summary["primary_product_role"] == (
-        "bounded_pair_evidence_first_review_with_case_grade_sidecar"
-    )
-    assert summary["production_adoption"] is True
-    assert summary["adoption_scope"] == (
-        "bounded_candidate_subset_and_pair_artifact_selection"
-    )
-    assert summary["production_first_review_ranking_changed"] is True
-    assert summary["native_ordering_changed"] is True
-    assert summary["production_default_selector_changed"] is True
-    assert summary["candidate_subset_supplement_changed"] is True
-    assert summary["pair_artifact_selection_strategy_changed"] is True
-    assert summary["document_profile_pair_builder_added"] is True
-    assert summary["phase2_fusion_changed"] is False
-    assert summary["phase1_ranking_changed"] is False
-    assert summary["recommended_first_review_surface"] == (
-        "bounded_observable_profile_rule_balanced_pair_surface"
-    )
-    assert summary["recommended_sidecar_surface"] == "current_plus_case_grade_sidecar"
-    assert summary["v31_primary_target_status"] == "pending_pair_evidence_validation"
-    assert summary["v31_primary_candidate_docs"] == 76
-    assert summary["v31_primary_pair_groups"] == 38
-    assert summary["v31_native_top500_primary_docs"] == 0
-    assert summary["v31_primary_recall_applicable"] is False
-    assert "observable row-score and pair generation path" in (
-        summary["v31_primary_pending_reason"]
-    )
-    assert summary["missed_potential_explainable"] is True
-    assert summary["missed_potential_primary_reason"] == (
-        "weak_pair_only_and_artifact_cap_boundary"
-    )
-    assert summary["ranking_change_rejected_reason"] == (
-        "would sacrifice current captured high-quality pair evidence"
-    )
-    assert summary["weak_pair_promotion_allowed"] is False
-    assert summary["case_count"] == 1
-    assert summary["primary_target_artifact_path"] == (
-        "artifacts/duplicate_primary_target_fixed5_dupmeta_20260530.json"
-    )
-    assert summary["candidate_sidecar_artifact_path"] == (
-        "artifacts/duplicate_candidate_sidecar_fixed5_dupmeta_20260530.json"
-    )
-    assert summary["v31_primary_readiness_artifact_path"] == (
-        "artifacts/duplicate_v31_primary_readiness_fixed5_dupmeta_20260531.json"
-    )
-    assert summary["v33_exact_sidecar_artifact_path"] == (
-        "artifacts/duplicate_v33_exact_sidecar_fixed5_20260531.json"
-    )
-    assert summary["v33_current_path_fixed5_ownermeta_v33b"] == {
-        "primary_target_docs": 22,
-        "companion_target_docs": 71,
-        "candidate_subset_primary_docs": 22,
-        "candidate_subset_companion_docs": 34,
-        "case_grade_primary_docs": 10,
-        "case_grade_companion_docs": 4,
-        "primary_case_grade_recall": 0.45454545454545453,
-        "companion_case_grade_recall": 0.056338028169014086,
-        "candidate_subset_supplement_docs": 500,
-        "candidate_subset_supplement_rows": 1034,
-        "pair_rule_distribution": {
-            "L2-03a": 275,
-            "L2-03b": 166,
-            "L2-03e": 59,
-        },
-    }
-    assert summary["primary_target_attrition_fixed5_dupmeta"] == {
-        "primary_target_docs": 76,
-        "row_score_primary_docs": 28,
-        "candidate_subset_primary_docs": 0,
-        "generated_pair_primary_docs": 0,
-        "duplicate_case_primary_docs": 0,
-        "no_row_score_primary_docs": 48,
-        "low_score_l2_03d_primary_docs": 28,
-        "main_candidate_subset_min_score": 0.5989857631894374,
-        "primary_l2_03d_score": 0.42857142857142855,
-        "top_pairs_cap_is_bottleneck": False,
-    }
-    assert summary["v31_primary_readiness_fixed5_dupmeta"] == {
-        "primary_pair_groups": 38,
-        "primary_row_score_hit_row_count": 54,
-        "primary_rule_doc_counts": {
-            "L2-03a": 0,
-            "L2-03b": 0,
-            "L2-03c": 0,
-            "L2-03d": 28,
-        },
-        "primary_l2_03d_below_candidate_floor": True,
-        "generated_pair_primary_docs": 0,
-        "top_pairs_primary_docs": 0,
-        "case_grade_top_pairs_primary_docs": 0,
-        "non_oracle_sidecar_pair_feasibility_confirmed": False,
-        "oracle_probe_weak_pair_ratio": 0.9775862068965517,
-        "next_improvement_class": (
-            "row_score_feature_coverage_or_observable_lower_score_pair_path"
-        ),
-    }
-    assert summary["v31_primary_gap_decomposition_fixed5_dupmeta"] == {
-        "no_row_score_primary_docs": {
-            "doc_count": 48,
-            "pair_group_count": 24,
-            "time_shift_bucket_distribution": {"1_3d": 48},
-            "amount_similarity_bucket_distribution": {"near": 48},
-            "reference_similarity_bucket_distribution": {"exact": 48},
-            "text_similarity_bucket_distribution": {"medium": 48},
-            "partner_match_ratio": 1.0,
-            "same_account_ratio": 0.0,
-            "same_business_process_ratio": 1.0,
-            "phase1_action_tier_distribution": {
-                "low": 5,
-                "medium": 4,
-                "none": 39,
-            },
-        },
-        "low_score_l2_03d_primary_docs": {
-            "doc_count": 28,
-            "pair_group_count": 14,
-            "row_score_hit_row_count": 54,
-            "score_floor_gap": 0.17041433461800887,
-            "primary_to_candidate_floor_ratio": 0.7154951835405927,
-            "phase1_action_tier_distribution": {
-                "low": 13,
-                "medium": 15,
-            },
-        },
-    }
-    assert summary["v31_non_oracle_sidecar_failure_fixed5_dupmeta"] == {
-        "l2_03d_stratified_primary_docs": 0,
-        "rule_balanced_primary_docs": 0,
-        "non_oracle_candidate_docs_per_sample": 10000,
-        "l2_03d_sample_rule_distribution": {"L2-03b": 5000},
-        "rule_balanced_sample_rule_distribution": {
-            "L2-03a": 434,
-            "L2-03b": 3910,
-            "L2-03d": 656,
-        },
-        "oracle_probe_case_grade_pair_ratio": 0.022413793103448276,
-        "oracle_probe_usable_as_product_selector": False,
-    }
-    assert summary["candidate_sidecar_result_fixed5_dupmeta"] == {
-        "non_oracle_sidecar_pair_feasibility_confirmed": False,
-        "oracle_probe_primary_docs": 76,
-        "oracle_probe_weak_pair_ratio": 0.9775862068965517,
-        "product_sidecar_adoption_allowed": False,
-    }
-    assert summary["primary_target_guardrails"] == {
-        "do_not_use_duplicate_primary_metadata_as_selector": True,
-        "do_not_relax_row_score_threshold_for_fixed5": True,
-        "do_not_expand_top_pairs_cap_as_primary_fix": True,
-        "do_not_promote_weak_pairs_to_duplicate_case": True,
-        "preserve_current_first_review_ordering": False,
-        "do_not_use_truth_or_owner_metadata_as_selector": True,
-    }
-
-    descriptor = summary["sidecar_descriptor"]
-    assert descriptor["sidecar_surface_id"] == "duplicate_case_grade_sidecar_v1"
-    assert descriptor["sidecar_case_grade_only"] is True
-    assert descriptor["sidecar_weak_pair_ratio"] == 0.0
-    assert descriptor["sidecar_top500_truth_docs"] == 36
-    assert descriptor["first_review_top100_captured_outside_phase1_top100"] == 19
-    assert descriptor["missed_potential_count"] == 5
-    assert descriptor["weak_pair_only_missed_count"] == 3
-    assert descriptor["artifact_cap_boundary_missed_count"] == 2
-    assert descriptor["replaces_default_duplicate_case_ordering"] is False
-    assert descriptor["weak_pair_promotion_allowed"] is False
-    assert descriptor["raw_identifier_leak_check"] == {
-        "doc_like_token_count": 0,
-        "forbidden_identifier_key_count": 0,
-        "forbidden_identifier_value_count": 0,
-        "phase2_case_id_like_token_count": 0,
-    }
-
-
 def test_attach_records_relational_relmeta_policy_without_changing_order(monkeypatch) -> None:
     """Relational policy metadata exposes relmeta target status without reordering."""
     sentinel_case_set = _make_relational_case_set()
-    native_order_before = tuple(
-        case.phase2_case_id for case in sentinel_case_set.relational_cases
-    )
+    native_order_before = tuple(case.phase2_case_id for case in sentinel_case_set.relational_cases)
     orch = _OrchestratorRecorder(case_set=sentinel_case_set)
     linker = _LinkerRecorder()
     _patch(monkeypatch, orchestrator=orch, linker=linker)
@@ -630,17 +403,15 @@ def test_attach_records_relational_relmeta_policy_without_changing_order(monkeyp
     _attach_phase2_case_set(result, ctx=None, snapshot=None)
 
     assert result.phase2_case_set is sentinel_case_set
-    assert tuple(
-        case.phase2_case_id for case in result.phase2_case_set.relational_cases
-    ) == native_order_before
+    assert (
+        tuple(case.phase2_case_id for case in result.phase2_case_set.relational_cases)
+        == native_order_before
+    )
     summary = result.phase2_family_policy_summary["relational"]
     assert summary["primary_product_role"] == "relationship_evidence_review_surface"
     assert summary["role_scope"] == "relationship_review_surface_primary_pending"
     assert summary["primary_target_status"] == "pending_relationship_primary_metadata"
-    assert (
-        summary["primary_denominator_status"]
-        == "pending_relationship_primary_metadata"
-    )
+    assert summary["primary_denominator_status"] == "pending_relationship_primary_metadata"
     assert summary["primary_target_recall_applicable"] is False
     assert "no relationship-primary denominator" in summary["primary_recall_pending_reason"]
     assert summary["primary_recall_tuning_allowed"] is False
@@ -651,9 +422,7 @@ def test_attach_records_relational_relmeta_policy_without_changing_order(monkeyp
     assert summary["co_primary_allowed_by_policy"] is True
     assert summary["co_primary_with"] == []
     assert summary["co_primary_overlap_count"] == 0
-    assert summary["adopted_surface"] == (
-        "structural_moderate_audit_then_business_lane_split_v1"
-    )
+    assert summary["adopted_surface"] == ("structural_moderate_audit_then_business_lane_split_v1")
     assert summary["primary_metadata_backlog"] == (
         "injected_relationship_edge_primary",
         "relationship_edge_semantic_group",
@@ -690,9 +459,7 @@ def test_attach_records_timeseries_default_stabilized_policy(
 ) -> None:
     """Timeseries metadata records stabilized ordering as the product default."""
     sentinel_case_set = _make_timeseries_case_set()
-    native_order_before = tuple(
-        case.phase2_case_id for case in sentinel_case_set.timeseries_cases
-    )
+    native_order_before = tuple(case.phase2_case_id for case in sentinel_case_set.timeseries_cases)
     orch = _OrchestratorRecorder(case_set=sentinel_case_set)
     linker = _LinkerRecorder()
     _patch(monkeypatch, orchestrator=orch, linker=linker)
@@ -700,22 +467,19 @@ def test_attach_records_timeseries_default_stabilized_policy(
     result = _make_result(phase1_case_result=None)
     _attach_phase2_case_set(result, ctx=None, snapshot=None)
 
-    assert tuple(
-        case.phase2_case_id for case in result.phase2_case_set.timeseries_cases
-    ) == native_order_before
+    assert (
+        tuple(case.phase2_case_id for case in result.phase2_case_set.timeseries_cases)
+        == native_order_before
+    )
     summary = result.phase2_family_policy_summary["timeseries"]
     assert summary["primary_product_role"] == "timing_primary_diagnostic_candidate"
     assert summary["production_adoption"] is True
     assert summary["production_default_ordering_changed"] is True
     assert summary["native_ordering_changed"] is True
     assert summary["explicit_ordering_flag_available"] is True
-    assert summary["default_ordering_strategy"] == (
-        "ts_specific_top100_stabilized_surface"
-    )
+    assert summary["default_ordering_strategy"] == ("ts_specific_top100_stabilized_surface")
     assert summary["native_ordering_fallback"] is True
-    assert summary["candidate_ordering_strategy"] == (
-        "ts_specific_top100_stabilized_surface"
-    )
+    assert summary["candidate_ordering_strategy"] == ("ts_specific_top100_stabilized_surface")
     assert summary["v31_primary_target"]["truth_docs"] == 21
     assert summary["v31_primary_target"]["period_end_context_docs"] == 92
     assert summary["v31_primary_target"]["native_top500_matched_docs"] == 0
@@ -793,14 +557,12 @@ def test_attach_records_unsupervised_document_case_default_policy(
     _attach_phase2_case_set(result, ctx=None, snapshot=None)
 
     assert result.phase2_case_set is sentinel_case_set
-    assert tuple(
-        case.phase2_case_id for case in result.phase2_case_set.unsupervised_cases
-    ) == native_order_before
-    summary = result.phase2_family_policy_summary["unsupervised"]
     assert (
-        summary["primary_product_role"]
-        == "broad_statistical_review_companion_evidence_surface"
+        tuple(case.phase2_case_id for case in result.phase2_case_set.unsupervised_cases)
+        == native_order_before
     )
+    summary = result.phase2_family_policy_summary["unsupervised"]
+    assert summary["primary_product_role"] == "broad_statistical_review_companion_evidence_surface"
     assert summary["product_role"] == "broad_statistical_review_companion_evidence_surface"
     assert summary["role_scope"] == "broad_statistical_review_companion"
     assert summary["fraud_primary_recall_family"] is False
@@ -825,10 +587,7 @@ def test_attach_records_unsupervised_document_case_default_policy(
     assert summary["case_count"] == 2
     assert summary["top_features_available_case_count"] == 2
     companion = summary["optional_companion_surface"]
-    assert (
-        companion["policy_id"]
-        == "unsupervised_document_review_priority_soft_guard_v1"
-    )
+    assert companion["policy_id"] == "unsupervised_document_review_priority_soft_guard_v1"
     assert companion["surface_name"] == "hybrid_with_soft_repeated_normal_guard"
     assert companion["v31_owner_surface_artifact_path"] == (
         "artifacts/unsupervised_v31_owner_surface_fixed5_20260531.json"
@@ -850,26 +609,15 @@ def test_attach_records_unsupervised_document_case_default_policy(
         ]
         == 151
     )
+    assert judgement["repeated_normal_pressure"]["recommended_surface_top500_fixed5"] == 0.256
     assert (
-        judgement["repeated_normal_pressure"]["recommended_surface_top500_fixed5"]
-        == 0.256
-    )
-    assert (
-        judgement["outside_phase1_complement"][
-            "top500_phase1_immediate_review_outside_truth_docs"
-        ]
+        judgement["outside_phase1_complement"]["top500_phase1_immediate_review_outside_truth_docs"]
         == 95
     )
     assert judgement["evidence_explainability"]["top_features_connected"] is True
     responsibility = summary["responsibility_target"]
-    assert (
-        responsibility["primary_target_status"]
-        == "debug_only_historical_v31_not_product_goal"
-    )
-    assert (
-        responsibility["primary_target_metric_role"]
-        == "debug_only_not_fraud_primary_recall"
-    )
+    assert responsibility["primary_target_status"] == "debug_only_historical_v31_not_product_goal"
+    assert responsibility["primary_target_metric_role"] == "debug_only_not_fraud_primary_recall"
     assert responsibility["primary_target_truth_docs_fixed5"] == 168
     assert (
         responsibility["primary_target_source"]
@@ -882,13 +630,9 @@ def test_attach_records_unsupervised_document_case_default_policy(
     assert responsibility["soft_guard_top100_primary_docs_fixed5"] == 24
     assert responsibility["native_row_queue_top500_primary_docs_fixed5"] == 23
     assert responsibility["soft_guard_top500_primary_docs_fixed5"] == 110
+    assert responsibility["soft_guard_phase1_immediate_outside_top500_primary_docs_fixed5"] == 110
     assert (
-        responsibility["soft_guard_phase1_immediate_outside_top500_primary_docs_fixed5"]
-        == 110
-    )
-    assert (
-        responsibility["soft_guard_phase1_review_or_above_outside_top500_primary_docs_fixed5"]
-        == 74
+        responsibility["soft_guard_phase1_review_or_above_outside_top500_primary_docs_fixed5"] == 74
     )
     assert (
         responsibility["soft_guard_phase1_candidate_or_above_outside_top500_primary_docs_fixed5"]
@@ -896,10 +640,7 @@ def test_attach_records_unsupervised_document_case_default_policy(
     )
     assert responsibility["native_row_queue_top500_companion_docs_fixed5"] == 34
     assert responsibility["soft_guard_top500_companion_docs_fixed5"] == 33
-    assert (
-        responsibility["soft_guard_phase1_immediate_outside_top500_companion_docs_fixed5"]
-        == 33
-    )
+    assert responsibility["soft_guard_phase1_immediate_outside_top500_companion_docs_fixed5"] == 33
     assert (
         responsibility["soft_guard_phase1_review_or_above_outside_top500_companion_docs_fixed5"]
         == 32
@@ -910,10 +651,7 @@ def test_attach_records_unsupervised_document_case_default_policy(
     )
     readiness = summary["v31_adoption_readiness"]
     assert readiness["default_native_ordering_unchanged"] is False
-    assert (
-        readiness["soft_guard_role"]
-        == "historical_document_review_priority_diagnostic"
-    )
+    assert readiness["soft_guard_role"] == "historical_document_review_priority_diagnostic"
     assert readiness["product_default_adoption"] is False
     assert readiness["primary_top500_lift_vs_native"] == 87
     assert readiness["primary_lift_metric_role"] == "debug_only_historical_v31"
@@ -930,15 +668,11 @@ def test_attach_records_unsupervised_document_case_default_policy(
         "companion TOP500 does not improve",
     )
     assert (
-        summary["pressure_monitoring"][
-            "v31_primary_soft_guard_repeated_normal_pressure_top500"
-        ]
+        summary["pressure_monitoring"]["v31_primary_soft_guard_repeated_normal_pressure_top500"]
         == 0.336
     )
     assert (
-        summary["pressure_monitoring"][
-            "v31_primary_soft_guard_period_end_normal_background_top500"
-        ]
+        summary["pressure_monitoring"]["v31_primary_soft_guard_period_end_normal_background_top500"]
         == 0.578
     )
     assert summary["q95_backlog_policy"]["near_miss_promoted_to_case"] is False
@@ -948,20 +682,11 @@ def test_attach_records_unsupervised_document_case_default_policy(
     assert summary["anti_fitting_guardrails"]["threshold_or_weight_recall_fitting"] is False
     assert summary["anti_fitting_guardrails"]["top_features_used_for_ranking"] is False
     assert summary["anti_fitting_guardrails"]["phase1_prior_disguised_as_vae"] is False
+    assert summary["anti_fitting_guardrails"]["datasynth_changed_to_match_vae_score"] is False
     assert (
-        summary["anti_fitting_guardrails"]["datasynth_changed_to_match_vae_score"]
-        is False
+        summary["anti_fitting_guardrails"]["truth_owner_scenario_shortcut_feature_allowed"] is False
     )
-    assert (
-        summary["anti_fitting_guardrails"][
-            "truth_owner_scenario_shortcut_feature_allowed"
-        ]
-        is False
-    )
-    assert (
-        summary["anti_fitting_guardrails"]["truth_or_owner_metadata_used_as_selector"]
-        is False
-    )
+    assert summary["anti_fitting_guardrails"]["truth_or_owner_metadata_used_as_selector"] is False
 
 
 def test_intercompany_policy_summary_does_not_import_relational_builder(monkeypatch) -> None:

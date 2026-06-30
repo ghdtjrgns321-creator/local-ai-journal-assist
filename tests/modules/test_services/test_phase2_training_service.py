@@ -326,7 +326,6 @@ def test_build_phase2_training_report_defaults_to_unsupervised_mvp_queue():
         "unsupervised",
         "timeseries",
         "relational",
-        "duplicate",
         "intercompany",
     ]
     assert report.metadata["phase2_training_mode"] == "unsupervised_autoencoder_mvp"
@@ -338,7 +337,6 @@ def test_build_phase2_training_report_defaults_to_unsupervised_mvp_queue():
         "unsupervised",
         "timeseries",
         "relational",
-        "duplicate",
         "intercompany",
     }
 
@@ -816,14 +814,12 @@ def test_build_phase2_training_report_keeps_default_unsupervised_with_ground_tru
         "unsupervised",
         "timeseries",
         "relational",
-        "duplicate",
         "intercompany",
     ]
     assert trial_families == {
         "unsupervised",
         "timeseries",
         "relational",
-        "duplicate",
         "intercompany",
     }
 
@@ -1272,7 +1268,6 @@ def test_run_phase2_training_executes_trials_with_injected_detectors():
             "unsupervised",
             "timeseries",
             "relational",
-            "duplicate",
             "intercompany",
         ]
         assert report.metadata["phase2_training_mode"] == "test_unsupervised_mvp"
@@ -1280,7 +1275,6 @@ def test_run_phase2_training_executes_trials_with_injected_detectors():
             "unsupervised",
             "timeseries",
             "relational",
-            "duplicate",
             "intercompany",
         }
         assert all(trial.artifact_path for trial in report.leaderboard)
@@ -1330,14 +1324,12 @@ def test_run_phase2_training_executes_trials_with_injected_detectors():
         assert set(report.metadata["sub_detector_summaries"]) <= {
             "timeseries",
             "relational",
-            "duplicate",
             "intercompany",
         }
         assert set(report.metadata["family_promotion_decisions"]) == {
             "unsupervised",
             "timeseries",
             "relational",
-            "duplicate",
             "intercompany",
         }
         case_contract = report.metadata["inference_contract"]["phase1_case_contract"]

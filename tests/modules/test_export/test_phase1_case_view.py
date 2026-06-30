@@ -252,7 +252,6 @@ def test_build_phase1_case_queue_and_drilldown_return_projection_rows() -> None:
     assert queue[0]["representative_explanation"]
     assert "base_priority_score" in queue[0]
     assert "topside_bonus" in queue[0]
-    assert "batch_combo_bonus" in queue[0]
     assert "weak_evidence_bonus" in queue[0]
     assert "priority_adjustment_reasons" in queue[0]
     assert "direct_risk_count" in queue[0]
@@ -486,7 +485,7 @@ def test_build_phase1_rule_documents_returns_master_detail_payload() -> None:
 
 def test_export_skips_row_violation_detail_for_non_transaction_surfaces() -> None:
     pipeline_result = _make_pipeline_result()
-    blocked_rules = ("L4-02", "Benford", "D01", "D02", "GR01", "GR03")
+    blocked_rules = ("L4-02", "Benford", "D01", "D02")
 
     for rule_id in blocked_rules:
         pipeline_result.featured_data.loc[
@@ -495,18 +494,6 @@ def test_export_skips_row_violation_detail_for_non_transaction_surfaces() -> Non
         ] = rule_id
 
         assert build_phase1_rule_documents(pipeline_result, rule_id) == []
-
-
-def test_l308_context_badge_rule_still_renders_hit_documents() -> None:
-    pipeline_result = _make_row_level_row_index_result("L3-08")
-
-    rows = build_phase1_rule_documents(pipeline_result, "L3-08")
-
-    assert len(rows) == 1
-    assert rows[0]["document_id"] == "DOC-HIT-L3-08"
-    assert rows[0]["line_number"] == 3
-    assert rows[0]["violation_summary"] == "적요 누락 또는 손상"
-    assert rows[0]["line_text"] == "L3-08 violation line"
 
 
 def test_export_canonicalizes_l203_reason_codes_without_separate_detail_heading() -> None:
@@ -675,7 +662,6 @@ def _make_row_level_row_index_result(rule_id: str) -> SimpleNamespace:
         "L3-03",
         "L3-05",
         "L3-06",
-        "L3-08",
         "L3-07",
         "L3-09",
         "L3-10",
@@ -1059,7 +1045,6 @@ def test_phase1_rule_document_builders_cover_all_current_rules() -> None:
         "L3-05",
         "L3-06",
         "L3-07",
-        "L3-08",
         "L3-09",
         "L3-10",
         "L3-11",

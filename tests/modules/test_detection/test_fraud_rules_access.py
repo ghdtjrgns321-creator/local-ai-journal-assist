@@ -10,128 +10,108 @@ from src.detection.fraud_rules_access import (
     b09_skipped_approval,
     b09b_unknown_approver,
     b10_intercompany_review_signal,
-    b13_high_risk_account_use,
+    b13_estimate_account_use,
     b14_work_scope_excess_review,
 )
 
 
 class TestL3_10:
-    def test_high_risk_account_exact_and_prefix_flagged(self) -> None:
-        df = pd.DataFrame({"gl_account": ["1190", "1115", "5100", None]})
+    def test_estimate_account_keyword_and_code_flagged(self) -> None:
+        # account_name 키워드(1차) + 코드(2차) 매칭. 현금·매출은 비발화.
+        df = pd.DataFrame(
+            {
+                "gl_account": ["109", "1190", "5100", None],
+                "account_name": ["대손충당금", "", "상품매출", "현금"],
+            }
+        )
         rules = {
             "patterns": {
-                "high_risk_account_use": {
+                "estimate_account_use": {
+                    "account_name_keywords": ["대손충당금", "충당부채"],
                     "accounts": ["1190"],
-                    "account_prefixes": ["111"],
+                    "account_prefixes": [],
                 }
             }
         }
-        assert b13_high_risk_account_use(df, audit_rules=rules).tolist() == [
+        assert b13_estimate_account_use(df, audit_rules=rules).tolist() == [
             True,
             True,
             False,
             False,
         ]
 
-    def test_high_risk_account_includes_match_annotations(self) -> None:
-        df = pd.DataFrame({"gl_account": ["1190", "1115", "5100"]}, index=[10, 11, 12])
+    def test_estimate_account_prefix_code_flagged(self) -> None:
+        df = pd.DataFrame({"gl_account": ["1115", "5100"]})
         rules = {
             "patterns": {
-                "high_risk_account_use": {
-                    "accounts": ["1190"],
+                "estimate_account_use": {
+                    "account_name_keywords": [],
+                    "accounts": [],
                     "account_prefixes": ["111"],
-                    "sensitive_account_groups": {
-                        "cash_equivalent": {"accounts": [], "account_prefixes": ["111"]},
-                        "suspense_clearing": {"accounts": ["1190"], "account_prefixes": []},
+                }
+            }
+        }
+        assert b13_estimate_account_use(df, audit_rules=rules).tolist() == [True, False]
+
+    def test_estimate_account_match_annotations_factual_only(self) -> None:
+        # binary 전환: signal_category/category_reason 폐기, 사실값(match_type/value/group)만.
+        df = pd.DataFrame(
+            {
+                "gl_account": ["109", "1190"],
+                "account_name": ["대손충당금", ""],
+            },
+            index=[10, 11],
+        )
+        rules = {
+            "patterns": {
+                "estimate_account_use": {
+                    "account_name_keywords": ["대손충당금"],
+                    "accounts": ["1190"],
+                    "account_prefixes": [],
+                    "estimate_account_groups": {
+                        "allowance_impairment": {"keywords": ["대손충당금"]},
                     },
                 }
             }
         }
 
-        result = b13_high_risk_account_use(df, audit_rules=rules)
+        result = b13_estimate_account_use(df, audit_rules=rules)
 
-        assert result.attrs["breakdown"]["reason_counts"] == {
-            "exact": 1,
-            "prefix": 1,
-            "category_counts": {"raw_signal": 2},
-        }
         assert result.attrs["row_annotations"] == {
             10: {
-                "match_type": "exact",
-                "matched_value": "1190",
-                "matched_group": "suspense_clearing",
-                "signal_category": "raw_signal",
-                "category_reason": "sensitive_account_touch",
+                "match_type": "keyword",
+                "matched_value": "대손충당금",
+                "matched_group": "allowance_impairment",
             },
             11: {
-                "match_type": "prefix",
-                "matched_value": "111",
-                "matched_group": "cash_equivalent",
-                "signal_category": "raw_signal",
-                "category_reason": "sensitive_account_touch",
+                "match_type": "exact",
+                "matched_value": "1190",
+                "matched_group": "",
             },
         }
 
-    def test_high_risk_account_splits_signal_categories(self) -> None:
+    def test_estimate_account_binary_score_series_and_breakdown(self) -> None:
+        # 정황 차등(0.65/0.35/0.20) 폐기 → 발화 전부 1.0.
         df = pd.DataFrame(
             {
-                "gl_account": ["1190", "1190", "1190"],
-                "source": ["manual", "automated", "recurring"],
-                "exceeds_threshold": [False, False, True],
-            },
-            index=[1, 2, 3],
-        )
-        rules = {
-            "patterns": {
-                "high_risk_account_use": {
-                    "accounts": ["1190"],
-                    "account_prefixes": [],
-                }
-            }
-        }
-
-        result = b13_high_risk_account_use(df, audit_rules=rules)
-        annotations = result.attrs["row_annotations"]
-
-        assert annotations[1]["signal_category"] == "priority_case"
-        assert annotations[1]["category_reason"] == "manual_or_adjustment"
-        assert annotations[2]["signal_category"] == "normal_control_candidate"
-        assert annotations[2]["category_reason"] == "routine_source"
-        assert annotations[3]["signal_category"] == "priority_case"
-        assert annotations[3]["category_reason"] == "high_amount"
-
-    def test_high_risk_account_score_series_and_category_breakdown(self) -> None:
-        df = pd.DataFrame(
-            {
-                "gl_account": ["1190", "1190", "1190", "5100"],
-                "source": ["manual", "automated", "other", "manual"],
-                "exceeds_threshold": [False, False, False, False],
+                "gl_account": ["109", "109", "5100"],
+                "account_name": ["대손충당금", "대손충당금", "상품매출"],
+                "source": ["manual", "automated", "manual"],
             }
         )
-        rules = {
-            "patterns": {
-                "high_risk_account_use": {
-                    "accounts": ["1190"],
-                    "account_prefixes": [],
-                }
-            }
-        }
+        rules = {"patterns": {"estimate_account_use": {"account_name_keywords": ["대손충당금"]}}}
 
-        result = b13_high_risk_account_use(df, audit_rules=rules)
+        result = b13_estimate_account_use(df, audit_rules=rules)
 
-        assert result.attrs["score_series"].tolist() == [0.65, 0.20, 0.35, 0.0]
-        assert result.attrs["breakdown"]["priority_case_rows"] == 1
-        assert result.attrs["breakdown"]["normal_control_candidate_rows"] == 1
-        assert result.attrs["breakdown"]["raw_signal_rows"] == 1
-        assert result.attrs["breakdown"]["category_counts"] == {
-            "priority_case": 1,
-            "normal_control_candidate": 1,
-            "raw_signal": 1,
+        assert result.attrs["score_series"].tolist() == [1.0, 1.0, 0.0]
+        assert result.attrs["breakdown"] == {
+            "flagged_rows": 2,
+            "reason_counts": {"keyword": 2, "exact": 0, "prefix": 0},
         }
 
     def test_missing_gl_account_returns_false(self) -> None:
         df = pd.DataFrame({"debit_amount": [1.0]})
-        assert not b13_high_risk_account_use(df).any()
+        assert not b13_estimate_account_use(df).any()
 
 
 class TestL3_12:
@@ -203,7 +183,9 @@ class TestL3_12:
                 "business_process": ["P2P", "O2C", "R2R", "TRE"],
                 "company_code": ["1000", "2000", "3000", "3000"],
                 "source": ["manual", "automated", "automated", "automated"],
-                "gl_account": ["1190", "5100", "4100", "1100"],
+                "gl_account": ["109", "5100", "4100", "1100"],
+                # L3-12 sensitive_account reason은 추정계정(L3-10과 공유 정의)에서 발화한다.
+                "account_name": ["대손충당금", "상품매출", "매출원가", "현금"],
                 "is_period_end": [True, False, False, False],
                 "exceeds_threshold": [False, False, False, False],
             }
@@ -239,13 +221,15 @@ class TestL3_12:
 
 class TestL1_05:
     def test_human_self_approval_flagged_without_amount_filter(self) -> None:
-        df = pd.DataFrame({
-            "created_by": ["USR-JA-001"],
-            "approved_by": ["USR-JA-001"],
-            "user_persona": ["junior_accountant"],
-            "debit_amount": [5_000_000.0],
-            "credit_amount": [0.0],
-        })
+        df = pd.DataFrame(
+            {
+                "created_by": ["USR-JA-001"],
+                "approved_by": ["USR-JA-001"],
+                "user_persona": ["junior_accountant"],
+                "debit_amount": [5_000_000.0],
+                "credit_amount": [0.0],
+            }
+        )
         result = b06_self_approval(df)
         assert result[0]
         assert result.attrs["breakdown"]["immediate_rows"] == 1
@@ -254,11 +238,13 @@ class TestL1_05:
         assert result.attrs["row_annotations"][0]["bucket"] == "binary_flag"
 
     def test_default_allowed_system_persona_excluded(self) -> None:
-        df = pd.DataFrame({
-            "created_by": ["SYSTEM"],
-            "approved_by": ["SYSTEM"],
-            "user_persona": ["automated_system"],
-        })
+        df = pd.DataFrame(
+            {
+                "created_by": ["SYSTEM"],
+                "approved_by": ["SYSTEM"],
+                "user_persona": ["automated_system"],
+            }
+        )
         result = b06_self_approval(df)
         assert not result[0]
         assert result.attrs["breakdown"]["candidate_rows"] == 0
@@ -270,11 +256,13 @@ class TestL1_05:
         assert result.attrs["row_annotations"][0]["bucket"] == "trusted_system_excluded"
 
     def test_default_allowed_system_source_excluded(self) -> None:
-        df = pd.DataFrame({
-            "created_by": ["BATCHUSER"],
-            "approved_by": ["BATCHUSER"],
-            "source": ["automated"],
-        })
+        df = pd.DataFrame(
+            {
+                "created_by": ["BATCHUSER"],
+                "approved_by": ["BATCHUSER"],
+                "source": ["automated"],
+            }
+        )
         result = b06_self_approval(df)
         assert not result[0]
         assert result.attrs["breakdown"]["candidate_rows"] == 0
@@ -284,15 +272,17 @@ class TestL1_05:
         assert result.attrs["row_annotations"][0]["bucket"] == "trusted_system_excluded"
 
     def test_lone_automated_source_self_approval_is_not_allowed_system(self) -> None:
-        df = pd.DataFrame({
-            "document_id": ["D1"],
-            "created_by": ["BATCHUSER"],
-            "approved_by": ["BATCHUSER"],
-            "source": ["automated"],
-            "posting_date": pd.to_datetime(["2025-01-02"]),
-            "batch_id": [None],
-            "job_id": [None],
-        })
+        df = pd.DataFrame(
+            {
+                "document_id": ["D1"],
+                "created_by": ["BATCHUSER"],
+                "approved_by": ["BATCHUSER"],
+                "source": ["automated"],
+                "posting_date": pd.to_datetime(["2025-01-02"]),
+                "batch_id": [None],
+                "job_id": [None],
+            }
+        )
 
         result = b06_self_approval(df)
 
@@ -303,15 +293,17 @@ class TestL1_05:
         assert result.attrs["row_annotations"][0]["bucket"] == "binary_flag"
 
     def test_partial_identity_automated_source_self_approval_is_lone(self) -> None:
-        df = pd.DataFrame({
-            "document_id": ["D1"],
-            "created_by": ["BATCHUSER"],
-            "approved_by": ["BATCHUSER"],
-            "source": ["automated"],
-            "posting_date": pd.to_datetime(["2025-01-02"]),
-            "batch_id": ["BATCH-1"],
-            "job_id": [None],
-        })
+        df = pd.DataFrame(
+            {
+                "document_id": ["D1"],
+                "created_by": ["BATCHUSER"],
+                "approved_by": ["BATCHUSER"],
+                "source": ["automated"],
+                "posting_date": pd.to_datetime(["2025-01-02"]),
+                "batch_id": ["BATCH-1"],
+                "job_id": [None],
+            }
+        )
 
         result = b06_self_approval(df)
 
@@ -322,13 +314,15 @@ class TestL1_05:
         assert result.attrs["row_annotations"][0]["bucket"] == "binary_flag"
 
     def test_missing_identity_columns_use_lone_branch_for_self_approval(self) -> None:
-        df = pd.DataFrame({
-            "document_id": ["D1"],
-            "created_by": ["BATCHUSER"],
-            "approved_by": ["BATCHUSER"],
-            "source": ["automated"],
-            "posting_date": pd.to_datetime(["2025-01-02"]),
-        })
+        df = pd.DataFrame(
+            {
+                "document_id": ["D1"],
+                "created_by": ["BATCHUSER"],
+                "approved_by": ["BATCHUSER"],
+                "source": ["automated"],
+                "posting_date": pd.to_datetime(["2025-01-02"]),
+            }
+        )
 
         result = b06_self_approval(df)
 
@@ -339,13 +333,15 @@ class TestL1_05:
         assert result.attrs["row_annotations"][0]["bucket"] == "binary_flag"
 
     def test_r2r_self_approval_is_binary_flag(self) -> None:
-        df = pd.DataFrame({
-            "created_by": ["CTRL-001"],
-            "approved_by": ["CTRL-001"],
-            "user_persona": ["controller"],
-            "document_type": ["SA"],
-            "business_process": ["R2R"],
-        })
+        df = pd.DataFrame(
+            {
+                "created_by": ["CTRL-001"],
+                "approved_by": ["CTRL-001"],
+                "user_persona": ["controller"],
+                "document_type": ["SA"],
+                "business_process": ["R2R"],
+            }
+        )
         result = b06_self_approval(df)
         assert result[0]
         assert result.attrs["breakdown"]["immediate_rows"] == 1
@@ -355,14 +351,16 @@ class TestL1_05:
         assert result.attrs["row_annotations"][0]["bucket"] == "binary_flag"
 
     def test_r2r_large_manual_self_approval_is_binary_flag(self) -> None:
-        df = pd.DataFrame({
-            "created_by": ["CTRL-001"],
-            "approved_by": ["CTRL-001"],
-            "business_process": ["R2R"],
-            "source": ["manual"],
-            "debit_amount": [2_000_000_000.0],
-            "credit_amount": [0.0],
-        })
+        df = pd.DataFrame(
+            {
+                "created_by": ["CTRL-001"],
+                "approved_by": ["CTRL-001"],
+                "business_process": ["R2R"],
+                "source": ["manual"],
+                "debit_amount": [2_000_000_000.0],
+                "credit_amount": [0.0],
+            }
+        )
         result = b06_self_approval(df)
         assert result[0]
         assert result.attrs["breakdown"]["immediate_rows"] == 1
@@ -372,12 +370,14 @@ class TestL1_05:
         assert result.attrs["row_annotations"][0]["bucket"] == "binary_flag"
 
     def test_r2r_after_hours_self_approval_is_binary_flag(self) -> None:
-        df = pd.DataFrame({
-            "created_by": ["CTRL-001"],
-            "approved_by": ["CTRL-001"],
-            "business_process": ["R2R"],
-            "is_after_hours": [True],
-        })
+        df = pd.DataFrame(
+            {
+                "created_by": ["CTRL-001"],
+                "approved_by": ["CTRL-001"],
+                "business_process": ["R2R"],
+                "is_after_hours": [True],
+            }
+        )
         result = b06_self_approval(df)
         assert result[0]
         assert result.attrs["breakdown"]["immediate_rows"] == 1
@@ -386,12 +386,14 @@ class TestL1_05:
         assert result.attrs["row_annotations"][0]["bucket"] == "binary_flag"
 
     def test_r2r_high_risk_account_self_approval_is_binary_flag(self) -> None:
-        df = pd.DataFrame({
-            "created_by": ["CTRL-001"],
-            "approved_by": ["CTRL-001"],
-            "business_process": ["R2R"],
-            "gl_account": ["1190"],
-        })
+        df = pd.DataFrame(
+            {
+                "created_by": ["CTRL-001"],
+                "approved_by": ["CTRL-001"],
+                "business_process": ["R2R"],
+                "gl_account": ["1190"],
+            }
+        )
         result = b06_self_approval(df)
         assert result[0]
         assert result.attrs["breakdown"]["immediate_rows"] == 1
@@ -400,13 +402,15 @@ class TestL1_05:
         assert result.attrs["row_annotations"][0]["bucket"] == "binary_flag"
 
     def test_o2c_self_approval_defaults_to_immediate(self) -> None:
-        df = pd.DataFrame({
-            "created_by": ["CTRL-001"],
-            "approved_by": ["CTRL-001"],
-            "user_persona": ["controller"],
-            "document_type": ["SA"],
-            "business_process": ["O2C"],
-        })
+        df = pd.DataFrame(
+            {
+                "created_by": ["CTRL-001"],
+                "approved_by": ["CTRL-001"],
+                "user_persona": ["controller"],
+                "document_type": ["SA"],
+                "business_process": ["O2C"],
+            }
+        )
         result = b06_self_approval(df)
         assert result[0]
         assert result.attrs["breakdown"]["immediate_rows"] == 1
@@ -414,11 +418,13 @@ class TestL1_05:
         assert result.attrs["score_series"].iloc[0] == 1.0
 
     def test_review_process_config_no_longer_changes_binary_score(self) -> None:
-        df = pd.DataFrame({
-            "created_by": ["CTRL-001"],
-            "approved_by": ["CTRL-001"],
-            "business_process": ["TRE"],
-        })
+        df = pd.DataFrame(
+            {
+                "created_by": ["CTRL-001"],
+                "approved_by": ["CTRL-001"],
+                "business_process": ["TRE"],
+            }
+        )
         rules = {
             "patterns": {
                 "self_approval_review": {
@@ -434,16 +440,18 @@ class TestL1_05:
         assert result.attrs["review_score_series"].iloc[0] == 0.0
 
     def test_observed_summary_groups_results_for_queue_review(self) -> None:
-        df = pd.DataFrame({
-            "document_id": ["D1", "D2", "D3"],
-            "created_by": ["Kim", "Kim", "Lee"],
-            "approved_by": ["Kim", "Kim", "Lee"],
-            "business_process": ["P2P", "P2P", "R2R"],
-            "posting_date": ["2024-09-01", "2024-09-15", "2024-12-28"],
-            "source": ["manual", "manual", "manual"],
-            "debit_amount": [100_000.0, 200_000.0, 300_000.0],
-            "credit_amount": [0.0, 0.0, 0.0],
-        })
+        df = pd.DataFrame(
+            {
+                "document_id": ["D1", "D2", "D3"],
+                "created_by": ["Kim", "Kim", "Lee"],
+                "approved_by": ["Kim", "Kim", "Lee"],
+                "business_process": ["P2P", "P2P", "R2R"],
+                "posting_date": ["2024-09-01", "2024-09-15", "2024-12-28"],
+                "source": ["manual", "manual", "manual"],
+                "debit_amount": [100_000.0, 200_000.0, 300_000.0],
+                "credit_amount": [0.0, 0.0, 0.0],
+            }
+        )
         result = b06_self_approval(df)
         summary = result.attrs["breakdown"]["observed_summary"]
 
@@ -457,10 +465,12 @@ class TestL1_05:
         assert top_group["total_docs"] == 2
 
     def test_missing_approved_by_is_not_l105(self) -> None:
-        df = pd.DataFrame({
-            "created_by": ["User1"],
-            "source": ["Manual"],
-        })
+        df = pd.DataFrame(
+            {
+                "created_by": ["User1"],
+                "source": ["Manual"],
+            }
+        )
         assert not b06_self_approval(df).any()
 
     def test_no_created_by_skip(self) -> None:
@@ -468,23 +478,27 @@ class TestL1_05:
         assert not b06_self_approval(df).any()
 
     def test_null_persona_still_evaluated(self) -> None:
-        df = pd.DataFrame({
-            "created_by": ["User1"],
-            "approved_by": ["User1"],
-            "user_persona": [None],
-            "debit_amount": [50_000_000.0],
-            "credit_amount": [0.0],
-        })
+        df = pd.DataFrame(
+            {
+                "created_by": ["User1"],
+                "approved_by": ["User1"],
+                "user_persona": [None],
+                "debit_amount": [50_000_000.0],
+                "credit_amount": [0.0],
+            }
+        )
         result = b06_self_approval(df)
         assert result[0]
 
 
 class TestL1_06:
     def test_red_toxic_pair_scores_binary(self) -> None:
-        df = pd.DataFrame({
-            "created_by": ["A", "A", "B", "B"],
-            "business_process": ["TRE", "P2P", "P2P", "O2C"],
-        })
+        df = pd.DataFrame(
+            {
+                "created_by": ["A", "A", "B", "B"],
+                "business_process": ["TRE", "P2P", "P2P", "O2C"],
+            }
+        )
         result = b07_segregation_of_duties(df)
         assert result.tolist() == [True, True, False, False]
         assert result.attrs["score_series"].tolist() == [1.0, 1.0, 0.0, 0.0]
@@ -494,10 +508,12 @@ class TestL1_06:
         assert result.attrs["row_annotations"][0]["toxic_pair"] == ["P2P", "TRE"]
 
     def test_yellow_toxic_pair_is_annotation_only(self) -> None:
-        df = pd.DataFrame({
-            "created_by": ["C1"] * 2,
-            "business_process": ["R2R", "P2P"],
-        })
+        df = pd.DataFrame(
+            {
+                "created_by": ["C1"] * 2,
+                "business_process": ["R2R", "P2P"],
+            }
+        )
         result = b07_segregation_of_duties(df)
         assert not result.any()
         assert result.attrs["score_series"].eq(0.0).all()
@@ -507,11 +523,13 @@ class TestL1_06:
         assert result.attrs["row_annotations"][0]["toxic_pair"] == ["P2P", "R2R"]
 
     def test_within_process_p2p_and_tre_single_process_are_red(self) -> None:
-        df = pd.DataFrame({
-            "created_by": ["P_USER", "T_USER", "R_USER"],
-            "approved_by": ["P_USER", "T_USER", "R_USER"],
-            "business_process": ["P2P", "TRE", "R2R"],
-        })
+        df = pd.DataFrame(
+            {
+                "created_by": ["P_USER", "T_USER", "R_USER"],
+                "approved_by": ["P_USER", "T_USER", "R_USER"],
+                "business_process": ["P2P", "TRE", "R2R"],
+            }
+        )
         result = b07_segregation_of_duties(df)
         assert result.tolist() == [True, True, False]
         assert result.attrs["score_series"].tolist() == [1.0, 1.0, 0.0]
@@ -519,50 +537,63 @@ class TestL1_06:
         assert result.attrs["row_annotations"][1]["toxic_pair"] == ["TRE"]
 
     def test_injected_label_columns_are_ignored(self) -> None:
-        df = pd.DataFrame({
-            "created_by": ["A", "B"],
-            "business_process": ["R2R", "O2C"],
-            "sod_violation": [True, True],
-            "sod_conflict_type": ["cash_disbursement", "preparer_approver"],
-        })
+        df = pd.DataFrame(
+            {
+                "created_by": ["A", "B"],
+                "business_process": ["R2R", "O2C"],
+                "sod_violation": [True, True],
+                "sod_conflict_type": ["cash_disbursement", "preparer_approver"],
+            }
+        )
         result = b07_segregation_of_duties(df)
         assert not result.any()
         assert result.attrs["score_series"].eq(0.0).all()
 
     def test_automated_source_excluded_from_sod(self) -> None:
-        df = pd.DataFrame({
-            "created_by": ["AUTOUSER"] * 8,
-            "business_process": ["TRE", "P2P"] * 4,
-            "source": ["automated", "batch", "system", "interface"] * 2,
-        })
+        df = pd.DataFrame(
+            {
+                "created_by": ["AUTOUSER"] * 8,
+                "business_process": ["TRE", "P2P"] * 4,
+                "source": ["automated", "batch", "system", "interface"] * 2,
+            }
+        )
         result = b07_segregation_of_duties(df)
         assert not result.any()
         assert result.attrs["score_series"].eq(0.0).all()
         assert result.attrs["breakdown"]["excluded_system_rows"] == 8
 
     def test_automated_persona_and_system_actor_excluded_from_sod(self) -> None:
-        df = pd.DataFrame({
-            "created_by": ["HUMAN_AUTO_PERSONA", "HUMAN_AUTO_PERSONA", "SVC_BATCH", "SVC_BATCH"],
-            "business_process": ["TRE", "P2P", "TRE", "P2P"],
-            "user_persona": [
-                "automated_system",
-                "automated_system",
-                "senior_accountant",
-                "senior_accountant",
-            ],
-        })
+        df = pd.DataFrame(
+            {
+                "created_by": [
+                    "HUMAN_AUTO_PERSONA",
+                    "HUMAN_AUTO_PERSONA",
+                    "SVC_BATCH",
+                    "SVC_BATCH",
+                ],
+                "business_process": ["TRE", "P2P", "TRE", "P2P"],
+                "user_persona": [
+                    "automated_system",
+                    "automated_system",
+                    "senior_accountant",
+                    "senior_accountant",
+                ],
+            }
+        )
         result = b07_segregation_of_duties(df)
         assert not result.any()
         assert result.attrs["score_series"].eq(0.0).all()
         assert result.attrs["breakdown"]["excluded_system_rows"] == 4
 
     def test_human_toxic_pair_still_scores_red(self) -> None:
-        df = pd.DataFrame({
-            "created_by": ["HUMAN_USER", "HUMAN_USER"],
-            "business_process": ["TRE", "P2P"],
-            "user_persona": ["senior_accountant", "senior_accountant"],
-            "source": ["manual", "manual"],
-        })
+        df = pd.DataFrame(
+            {
+                "created_by": ["HUMAN_USER", "HUMAN_USER"],
+                "business_process": ["TRE", "P2P"],
+                "user_persona": ["senior_accountant", "senior_accountant"],
+                "source": ["manual", "manual"],
+            }
+        )
         result = b07_segregation_of_duties(df)
         assert result.tolist() == [True, True]
         assert result.attrs["score_series"].tolist() == [1.0, 1.0]
@@ -575,12 +606,14 @@ class TestL1_06:
 
 class TestL1_07:
     def test_blank_approver_scores_binary_one(self) -> None:
-        df = pd.DataFrame({
-            "approved_by": [""],
-            "approver_in_master": pd.Series([pd.NA], dtype="boolean"),
-            "source": ["Manual"],
-            "exceeds_threshold": [False],
-        })
+        df = pd.DataFrame(
+            {
+                "approved_by": [""],
+                "approver_in_master": pd.Series([pd.NA], dtype="boolean"),
+                "source": ["Manual"],
+                "exceeds_threshold": [False],
+            }
+        )
 
         result = b09_skipped_approval(df)
         ghost = b09b_unknown_approver(df)
@@ -594,12 +627,14 @@ class TestL1_07:
         assert ghost.attrs["score_series"].tolist() == [0.0]
 
     def test_unknown_approver_moved_to_l10702_binary(self) -> None:
-        df = pd.DataFrame({
-            "approved_by": ["APR-GHOST"],
-            "approver_in_master": pd.Series([False], dtype="boolean"),
-            "source": ["Manual"],
-            "exceeds_threshold": [False],
-        })
+        df = pd.DataFrame(
+            {
+                "approved_by": ["APR-GHOST"],
+                "approver_in_master": pd.Series([False], dtype="boolean"),
+                "source": ["Manual"],
+                "exceeds_threshold": [False],
+            }
+        )
 
         skipped = b09_skipped_approval(df)
         result = b09b_unknown_approver(df)
@@ -613,12 +648,14 @@ class TestL1_07:
         assert result.attrs["row_annotations"][0]["approved_by"] == "APR-GHOST"
 
     def test_known_approver_in_master_does_not_trigger_l107_or_l10702(self) -> None:
-        df = pd.DataFrame({
-            "approved_by": ["APR-001"],
-            "approver_in_master": pd.Series([True], dtype="boolean"),
-            "source": ["Manual"],
-            "exceeds_threshold": [True],
-        })
+        df = pd.DataFrame(
+            {
+                "approved_by": ["APR-001"],
+                "approver_in_master": pd.Series([True], dtype="boolean"),
+                "source": ["Manual"],
+                "exceeds_threshold": [True],
+            }
+        )
 
         skipped = b09_skipped_approval(df)
         ghost = b09b_unknown_approver(df)
@@ -630,10 +667,12 @@ class TestL1_07:
         assert ghost.attrs["breakdown"]["unknown_approver_rows"] == 0
 
     def test_missing_approver_membership_column_gracefully_false_for_l10702(self) -> None:
-        df = pd.DataFrame({
-            "approved_by": ["APR-001"],
-            "source": ["Manual"],
-        })
+        df = pd.DataFrame(
+            {
+                "approved_by": ["APR-001"],
+                "source": ["Manual"],
+            }
+        )
 
         result = b09b_unknown_approver(df)
 
@@ -647,11 +686,13 @@ class TestL1_07:
         assert not b09b_unknown_approver(df).any()
 
     def test_approval_contract_degraded_suppresses_l107_and_l10702(self) -> None:
-        df = pd.DataFrame({
-            "approved_by": ["", "APR-GHOST"],
-            "approver_in_master": pd.Series([pd.NA, False], dtype="boolean"),
-            "approval_contract_degraded": [True, True],
-        })
+        df = pd.DataFrame(
+            {
+                "approved_by": ["", "APR-GHOST"],
+                "approver_in_master": pd.Series([pd.NA, False], dtype="boolean"),
+                "approval_contract_degraded": [True, True],
+            }
+        )
 
         skipped = b09_skipped_approval(df)
         ghost = b09b_unknown_approver(df)
@@ -661,14 +702,17 @@ class TestL1_07:
         assert not ghost.any()
         assert ghost.attrs["breakdown"]["rule_id"] == "L1-07-02"
 
+
 class TestL3_03:
     def test_intercompany_account_flagged_for_review(self) -> None:
-        df = pd.DataFrame({
-            "document_id": ["D1", "D2", "D3"],
-            "is_intercompany": [True, True, False],
-            "company_code": ["A", "B", "A"],
-            "trading_partner": ["B", "", ""],
-        })
+        df = pd.DataFrame(
+            {
+                "document_id": ["D1", "D2", "D3"],
+                "is_intercompany": [True, True, False],
+                "company_code": ["A", "B", "A"],
+                "trading_partner": ["B", "", ""],
+            }
+        )
         result = b10_intercompany_review_signal(df)
         assert result[0]
         assert result[1]
@@ -698,10 +742,12 @@ class TestL3_03:
         assert set(result.attrs["score_series"].unique()) == {0.0, 1.0}
 
     def test_single_company_intercompany_account_still_flagged(self) -> None:
-        df = pd.DataFrame({
-            "is_intercompany": [True, False],
-            "company_code": ["A", "A"],
-        })
+        df = pd.DataFrame(
+            {
+                "is_intercompany": [True, False],
+                "company_code": ["A", "A"],
+            }
+        )
         result = b10_intercompany_review_signal(df)
         assert result[0]
         assert not result[1]

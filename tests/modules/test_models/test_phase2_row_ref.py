@@ -13,7 +13,6 @@ import pandas as pd
 import pytest
 
 from src.models.phase2_case import (
-    DuplicateCase,
     IntercompanyCase,
     Phase2CaseBase,
     Phase2CaseSet,
@@ -138,19 +137,18 @@ def test_line_number_key_pd_na_collapses_to_none() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _make_minimal_case(case_id: str = "p2_duplicate_pair_aaaaaaaaaa") -> DuplicateCase:
-    """공통 fixture — 최소 DuplicateCase."""
-    return DuplicateCase(
+def _make_minimal_case(case_id: str = "p2_relational_edge_aaaaaaaaaa") -> RelationalCase:
+    """공통 fixture — 최소 RelationalCase (case 인프라 generic fixture)."""
+    return RelationalCase(
         phase2_case_id=case_id,
         batch_id="batch-001",
-        family="duplicate",
+        family="relational",
         unit_type="pair",
         row_refs=(),
         evidence_tier="moderate",
         case_generation_reason={"trigger": "L2-03a"},
         family_score=0.8,
         family_ecdf=0.95,
-        pair_id="pair-001",
         sub_rule="L2-03a",
     )
 
@@ -246,9 +244,8 @@ def _make_timeseries(case_id: str) -> TimeseriesCase:
 def test_phase2_case_set_iter_all_cases_sorted() -> None:
     """다섯 family 가 섞여도 phase2_case_id 사전순으로 yield."""
     case_set = Phase2CaseSet(
-        duplicate_cases=(_make_minimal_case("p2_d_z"),),
         intercompany_cases=(_make_ic("p2_i_a"),),
-        relational_cases=(_make_relational("p2_r_m"),),
+        relational_cases=(_make_minimal_case("p2_d_z"), _make_relational("p2_r_m")),
         unsupervised_cases=(_make_unsupervised("p2_u_b"),),
         timeseries_cases=(_make_timeseries("p2_t_k"),),
     )
@@ -259,17 +256,17 @@ def test_phase2_case_set_iter_all_cases_sorted() -> None:
 
 def test_phase2_case_set_with_phase1_refs_sets_linked_true() -> None:
     """refs_by_case_id 적용 후 linked=True 인 새 set, 명시되지 않은 case 는 기존 유지."""
-    dup_case = _make_minimal_case("p2_d_x")
+    rel_case = _make_minimal_case("p2_d_x")
     ic_case = _make_ic("p2_i_y")
     case_set = Phase2CaseSet(
-        duplicate_cases=(dup_case,),
+        relational_cases=(rel_case,),
         intercompany_cases=(ic_case,),
     )
     assert case_set.linked is False
     updated_set = case_set.with_phase1_refs({"p2_d_x": ("case-b", "case-a")})
     assert updated_set.linked is True
     # 명시된 case 는 정렬된 refs 부착
-    assert updated_set.duplicate_cases[0].phase1_case_refs == ("case-a", "case-b")
+    assert updated_set.relational_cases[0].phase1_case_refs == ("case-a", "case-b")
     # 명시되지 않은 case 는 기존 () 유지
     assert updated_set.intercompany_cases[0].phase1_case_refs == ()
     # 원본 set 의 linked 는 False 그대로 (immutable)

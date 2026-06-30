@@ -10,7 +10,6 @@ def test_build_family_matrix_frame_shows_active_and_dormant_families():
                 "unsupervised",
                 "timeseries",
                 "relational",
-                "duplicate",
                 "intercompany",
             ],
             "model_versions": {
@@ -35,9 +34,9 @@ def test_build_family_matrix_frame_shows_active_and_dormant_families():
 
     frame = build_family_matrix_frame(snapshot, partition_summary)
 
-    assert len(frame) == 9
+    assert len(frame) == 8
     assert set(frame["state"]) == {"active", "dormant"}
-    assert frame["state"].value_counts().to_dict() == {"active": 5, "dormant": 4}
+    assert frame["state"].value_counts().to_dict() == {"active": 4, "dormant": 4}
     ic_row = frame[frame["family"] == "intercompany"].iloc[0]
     assert ic_row["note"] == "active, IC01 only"
     assert ic_row["metric_confidence"] == "sidecar_unmatched_reference_only"
