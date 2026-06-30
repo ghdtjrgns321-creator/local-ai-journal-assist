@@ -101,5 +101,8 @@ tools/tmp_*.py
 # 런타임 생성물 (케이스/리포트 등)
 artifacts/
 
+# dev 측정 원시 덤프 (baseline 재실행 시 재생성, 대용량 — 커밋 금지)
+dev/active/**/rule_hits.csv
+
 # 배포 시크릿 (basic auth 비밀번호 해시 — 서버에서 생성, 커밋 금지)
 deploy/nginx/.htpasswd
