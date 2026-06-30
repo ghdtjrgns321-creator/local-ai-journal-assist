@@ -29,7 +29,6 @@ _ACTIVE_FAMILIES: tuple[str, ...] = (
     "unsupervised",
     "timeseries",
     "relational",
-    "duplicate",
     "intercompany",
 )
 
@@ -69,7 +68,6 @@ def count_native_cases_by_family(case_set: Phase2CaseSet | None) -> dict[str, in
     counts: dict[str, int] = dict.fromkeys(_ACTIVE_FAMILIES, 0)
     if case_set is None:
         return counts
-    counts["duplicate"] = len(case_set.duplicate_cases)
     counts["intercompany"] = len(case_set.intercompany_cases)
     counts["relational"] = len(case_set.relational_cases)
     counts["unsupervised"] = len(case_set.unsupervised_cases)

@@ -103,7 +103,7 @@ def _render_settings_editor(
                 format="%.3f",
                 key="cm_benford",
             )
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     with col1:
         st.checkbox(
             "NLP 탐지",
@@ -113,12 +113,6 @@ def _render_settings_editor(
             help="외부 임베딩/API 경로 차단을 위해 active 제품에서는 비활성화합니다.",
         )
     with col2:
-        enable_graph = st.checkbox(
-            "Graph 탐지",
-            value=bool(resolved.enable_graph_detection),
-            key="cm_enable_graph",
-        )
-    with col3:
         enable_ml = st.checkbox(
             "ML 탐지",
             value=bool(resolved.enable_ml_detection),
@@ -126,12 +120,7 @@ def _render_settings_editor(
         )
 
     if st.button("설정 저장", key="cm_save_settings"):
-        amounts = (
-            edited_thresholds["금액"]
-            .fillna(0)
-            .astype(int)
-            .tolist()
-        )
+        amounts = edited_thresholds["금액"].fillna(0).astype(int).tolist()
         amounts = [amount for amount in amounts if amount > 0]
         if not amounts:
             st.error("승인 한도는 최소 1개 이상 필요합니다.")
@@ -141,7 +130,6 @@ def _render_settings_editor(
             "approval_thresholds": amounts,
             "period_end_margin_days": period_margin,
             "enable_nlp_detection": False,
-            "enable_graph_detection": enable_graph,
             "enable_ml_detection": enable_ml,
         }
         overrides.update(admin_overrides)

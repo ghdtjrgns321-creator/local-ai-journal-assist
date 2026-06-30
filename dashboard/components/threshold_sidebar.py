@@ -90,10 +90,10 @@ _ADMIN_FIELD_DEFS: dict[str, list[tuple[str, str, str, dict]]] = {
         ),
         ("sod_process_threshold", "SoD 임계", "slider", {"min_value": 2, "max_value": 5}),
         (
-            "account_pair_rare_percentile",
-            "희소쌍 %ile",
+            "rare_account_pair_cadence_per_quarter",
+            "희소쌍 cadence(분기당)",
             "slider",
-            {"min_value": 0.005, "max_value": 0.05, "step": 0.005, "format": "%.3f"},
+            {"min_value": 0.5, "max_value": 4.0, "step": 0.5, "format": "%.1f"},
         ),
         ("rapid_approval_minutes", "부실검토(분)", "slider", {"min_value": 1, "max_value": 30}),
         (

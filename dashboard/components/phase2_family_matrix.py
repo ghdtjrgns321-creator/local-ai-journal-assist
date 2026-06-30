@@ -9,7 +9,6 @@ ACTIVE_FAMILIES = (
     "unsupervised",
     "timeseries",
     "relational",
-    "duplicate",
     "intercompany",
 )
 DORMANT_FAMILIES = ("supervised", "transformer", "sequence", "stacking")
@@ -17,7 +16,6 @@ FAMILY_METRICS = {
     "unsupervised": "ECDF high q95 count",
     "timeseries": "burst_detection_rate",
     "relational": "new_counterparty_precision",
-    "duplicate": "fuzzy_match_f1",
     "intercompany": "ic_match_completeness",
     "supervised": "f1_macro",
     "transformer": "f1_macro",
@@ -28,7 +26,6 @@ FAMILY_INTERPRETATIONS = {
     "unsupervised": "ECDF q95 tail review count, rule_proxy_score label only",
     "timeseries": "rule_proxy_score",
     "relational": "rule_proxy_score",
-    "duplicate": "rule_proxy_score",
     "intercompany": "rule_proxy_score",
     "supervised": "dormant label-gated metric",
     "transformer": "dormant label-gated metric",

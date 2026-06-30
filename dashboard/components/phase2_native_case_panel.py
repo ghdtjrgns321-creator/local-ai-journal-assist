@@ -18,7 +18,6 @@ import pandas as pd
 import streamlit as st
 
 from src.models.phase2_case import (
-    DuplicateCase,
     IntercompanyCase,
     Phase2CaseBase,
     Phase2CaseSet,
@@ -34,7 +33,6 @@ _UNSUPERVISED_DETAIL_EVIDENCE_LIMIT = 10
 
 # family → Phase2CaseSet 필드 매핑
 _FAMILY_TO_ATTR: dict[str, str] = {
-    "duplicate": "duplicate_cases",
     "intercompany": "intercompany_cases",
     "relational": "relational_cases",
     "unsupervised": "unsupervised_cases",
@@ -238,7 +236,6 @@ def _build_family_frame(
 ) -> pd.DataFrame:
     """family 별 dispatcher — 컴럼 spec 에 맞춰 DataFrame 반환."""
     builders = {
-        "duplicate": _build_duplicate_row,
         "intercompany": _build_intercompany_row,
         "relational": _build_relational_row,
         "unsupervised": _build_unsupervised_row,
@@ -249,19 +246,6 @@ def _build_family_frame(
         return pd.DataFrame()
     rows = [builder(case) for case in cases]
     return pd.DataFrame(rows)
-
-
-def _build_duplicate_row(case: DuplicateCase) -> dict[str, Any]:  # type: ignore[override]
-    return {
-        "case_id": _short_case_id(case.phase2_case_id),
-        "_full_case_id": case.phase2_case_id,
-        "evidence_tier": _tier_cell(case.evidence_tier),
-        "sub_rule": case.sub_rule or "—",
-        "left_doc": _row_label(case.left_ref),
-        "right_doc": _row_label(case.right_ref),
-        "family_score": round(float(case.family_score or 0.0), 3),
-        "linked_to": _linked_to_text(case.phase1_case_refs),
-    }
 
 
 def _build_intercompany_row(case: IntercompanyCase) -> dict[str, Any]:  # type: ignore[override]
@@ -489,7 +473,6 @@ def _render_case_detail(
 
 # family → 한국어 base 라벨 (narrative 첫 토큰).
 _FAMILY_NARRATIVE_LABEL: dict[str, str] = {
-    "duplicate": "중복 전표 신호",
     "intercompany": "관계사 거래 신호",
     "relational": "관계망 신호",
     "unsupervised": "비지도 statistical outlier 신호",
@@ -516,22 +499,12 @@ def _build_case_narrative(case: Phase2CaseBase) -> str:
 def _family_specific_detail(case: Phase2CaseBase) -> str:
     """family 별 추가 attribute 요약 (sub_rule, pair, metric 등)."""
     from src.models.phase2_case import (
-        DuplicateCase,
         IntercompanyCase,
         RelationalCase,
         TimeseriesCase,
         UnsupervisedCase,
     )
 
-    if isinstance(case, DuplicateCase):
-        parts = []
-        if case.sub_rule:
-            parts.append(f"sub_rule {case.sub_rule}")
-        left = _row_label(case.left_ref)
-        right = _row_label(case.right_ref)
-        if left != "—" or right != "—":
-            parts.append(f"{left} ↔ {right}")
-        return " · ".join(parts)
     if isinstance(case, IntercompanyCase):
         parts = []
         if case.ic_role:

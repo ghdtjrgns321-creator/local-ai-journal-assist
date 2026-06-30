@@ -108,7 +108,6 @@ def render(prep_result, result: PipelineResult | None) -> None:
     family_tab_order = (
         "unsupervised",
         "timeseries",
-        "duplicate",
         "relational",
         "intercompany",
     )
@@ -477,7 +476,6 @@ _PHASE2_FAMILY_TRACK_LABELS: dict[str, str] = {
     "ml_unsupervised": "VAE Deep Learning",
     "timeseries": "시점",
     "relational": "관계망",
-    "duplicate": "중복",
     "intercompany": "관계사",
 }
 
@@ -963,7 +961,6 @@ def _is_phase1_immediate_case(case) -> bool:
 # moderate/weak 축과 측정 단위가 달라 lane matrix 에서 제외하고 별도 VAE 패널
 # (_render_phase2_vae_distribution / meta) 로 분리한다.
 _PHASE2_ACTIVE_LANES: tuple[str, ...] = (
-    "duplicate",
     "relational",
     "intercompany",
 )
@@ -1572,7 +1569,6 @@ def _render_phase2_family_case_bar(
 # Why: 활성 분포 막대 전용 색상 — 기존 _FAMILY_ACCENT(600 톤, 카드 액센트용)와 별도로
 #      막대 차트는 면적이 크므로 700 톤으로 채도를 한 단계 낮춰 본문 톤과 정렬한다.
 _PHASE2_FAMILY_BAR_COLORS: dict[str, str] = {
-    "duplicate": "#B91C1C",  # red-700
     "relational": "#6D28D9",  # violet-700
     "timeseries": "#0F766E",  # teal-700
     "intercompany": "#0369A1",  # sky-700
@@ -2176,7 +2172,7 @@ def _count_active_families(
     contribution 단위를 사용한다. partition_summary 는 overlay 가 없을 때만 row-level
     fallback 으로 사용한다.
     """
-    active = {"unsupervised", "timeseries", "relational", "duplicate", "intercompany"}
+    active = {"unsupervised", "timeseries", "relational", "intercompany"}
     case_counts = _family_case_contribution_counts(overlays)
     if overlays:
         return sum(1 for family in active if int(case_counts.get(family, 0) or 0) > 0)
@@ -3074,7 +3070,6 @@ def _render_phase2_stats_tab(
 # ── 분석 영역 카드 디자인 ─────────────────────────────────────
 
 _FAMILY_LABELS_KR: dict[str, str] = {
-    "duplicate": "중복 전표",
     "relational": "관계망 이상",
     "timeseries": "시점 이상",
     "intercompany": "관계사 매칭",
@@ -3086,7 +3081,6 @@ _FAMILY_LABELS_KR: dict[str, str] = {
 }
 
 _FAMILY_ACCENT: dict[str, str] = {
-    "duplicate": "#DC2626",  # red-600
     "relational": "#7C3AED",  # violet-600
     "timeseries": "#0D9488",  # teal-600
     "intercompany": "#0EA5E9",  # sky-500
@@ -3094,7 +3088,6 @@ _FAMILY_ACCENT: dict[str, str] = {
 }
 
 _FAMILY_HINT_KR: dict[str, str] = {
-    "duplicate": "같은 거래가 여러 번 기표된 패턴",
     "relational": "신규 거래처·휴면계정 등 관계 이상",
     "timeseries": "거래 빈도·집중 등 시계열 이상",
     "intercompany": "관계사 거래의 미매칭 신호",
@@ -3106,7 +3099,6 @@ _FAMILY_HINT_KR: dict[str, str] = {
 }
 
 _FAMILY_AUDIT_PURPOSE_KR: dict[str, str] = {
-    "duplicate": "중복 지급, 반복 기표, 분할 처리처럼 같은 경제 사건이 여러 번 잡힌 후보를 봅니다.",
     "relational": (
         "신규 거래처, 휴면 계정, 낮은 빈도의 조합처럼 거래 관계가 평소와 달라진 지점을 봅니다."
     ),
@@ -3120,7 +3112,6 @@ _FAMILY_AUDIT_PURPOSE_KR: dict[str, str] = {
 }
 
 _FAMILY_AUDIT_CHECK_KR: dict[str, str] = {
-    "duplicate": "원전표, 지급 참조, 금액·거래처·일자 근접성을 같이 확인",
     "relational": "거래처 마스터 변경, 신규 등록 승인, 계정 사용 이력 확인",
     "timeseries": "cutoff, 결산 조정, 승인일과 기표일 차이 확인",
     "intercompany": "상대 법인 전표, 상계 계정, 참조 번호 매칭 확인",
@@ -3134,7 +3125,6 @@ _FAMILY_AUDIT_CHECK_KR: dict[str, str] = {
 # family 별 강한 부정/감사 시나리오. _FAMILY_AUDIT_PURPOSE_KR(거래 패턴 일반 묘사)와는
 # 다른 정보로, 도메인 매칭(PCAOB AS 2401 / ISA 240 / 금감원 실증 사례)을 한 줄로 표현한다.
 _FAMILY_AUDIT_SCENARIO_KR: dict[str, str] = {
-    "duplicate": "동일 송장 이중지급, 승인한도 회피 분할, 환급 반복 횡령 (AS 2401 billing schemes)",
     "relational": (
         "가공 거래처(phantom vendor), 휴면 거래처 활성화, 권한 외 사용자 거래 (ISA 240 §A29)"
     ),
@@ -3515,7 +3505,6 @@ _PHASE2_TRACK_TO_FAMILY: dict[str, str] = {
     "ml_unsupervised": "unsupervised",
     "timeseries": "timeseries",
     "relational": "relational",
-    "duplicate": "duplicate",
     "intercompany": "intercompany",
 }
 

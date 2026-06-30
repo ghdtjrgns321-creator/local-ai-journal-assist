@@ -56,10 +56,12 @@ from src.export.phase1_case_view import (
     build_phase1_review_candidate_summary,
     build_phase1_rule_case_doc_map,
     build_phase1_rule_cases,
+    build_phase1_rule_coverage,
     build_phase1_rule_document_counts,
     build_phase1_rule_document_detail,
     build_phase1_rule_documents,
     build_phase1_topic_top_n,
+    build_phase1_transaction_queue,
     resolve_phase1_case_result,
     summarize_phase1_case_result,
 )
@@ -740,18 +742,13 @@ _RULE_DESCRIPTIONS_KR: dict[str, str] = {
         "증빙일(document_date)과 기표일(posting_date)의 차이가 비정상적으로 큰 전표입니다. "
         "사후 끼워넣기(backdating), 늦은 cutoff 처리, 증빙 신뢰성 검토의 보조 신호."
     ),
-    "L3-08": (
-        '적요(line_text)가 비어 있거나 의미 없는 문자열(예: "...", "테스트", '
-        "동일 글자 반복)인 전표입니다. 감사 추적성을 깨뜨리는 데이터 품질 이슈이자 "
-        "가공 전표의 신호입니다."
-    ),
     "L3-09": (
         "가지급금·미결산·임시계정의 잔액이 장기간 해소되지 않은 케이스를 검토 후보로 올립니다. "
         "회계 정리가 누락됐거나, 자금 유용 리스크가 임시계정에 장기 잔류하는지 검토할 신호."
     ),
     "L3-10": (
-        "회사 정책상 고위험으로 분류된 계정(현금성 자산, 가지급금, 임원 차입금 등)이 "
-        "사용된 라인을 표시합니다. 단독으로는 확정 이슈가 아니지만 다른 신호와 결합 시 "
+        "경영진 추정·재량이 큰 추정계정(대손충당금·재고평가충당금·자산손상·충당부채 등)이 "
+        "사용된 라인을 표시합니다. 단독으로는 확정 이슈가 아니지만 결산시점 신호와 결합 시 "
         "우선순위가 올라갑니다."
     ),
     "L3-12": (
@@ -1269,7 +1266,6 @@ _RULE_MASTER_EXTRAS: dict[str, list[tuple[str, str, str]]] = {
     "L3-05": [("posting_date", "전기일", "date")],
     "L3-06": [("posting_date", "전기일", "date")],
     "L3-07": [("difference_value", "일자 차이(일)", "delta_days")],
-    "L3-08": [("line_text", "적요", "text")],
     "L3-09": [("gl_account", "계정", "text")],
     "L3-10": [("gl_account", "계정", "text")],
     "L3-11": [("difference_value", "일자 차이(일)", "delta_days")],
@@ -1336,9 +1332,8 @@ _RULE_SIGNATURES: dict[str, str] = {
     "L3-05": "주말·공휴일 전기 검증",
     "L3-06": "야간·근무외 전기 검증",
     "L3-07": "전기일·증빙일 간격 이상 검증",
-    "L3-08": "적요 누락·손상 검증",
     "L3-09": "장기 미해소 임시·반제 계정 검증",
-    "L3-10": "민감 계정 사용 검증",
+    "L3-10": "추정계정 사용 검증",
     "L3-11": "기말 컷오프 일자 차이 검증",
     "L3-12": "사용자 작업 범위(회사·프로세스) 광범위 검증",
     "L4-01": "매출 계정 금액 이상치 검증",
@@ -1382,7 +1377,6 @@ _RULE_RAW_HIGHLIGHTS: dict[str, set[str]] = {
     "L3-05": {"posting_date"},
     "L3-06": {"posting_date"},
     "L3-07": {"posting_date", "document_date"},
-    "L3-08": {"line_text"},
     "L3-09": {"gl_account"},
     "L3-10": {"gl_account"},
     "L3-11": {"posting_date", "document_date"},
@@ -1725,6 +1719,8 @@ def _display_priority_band_for_case(case: Any, immediate_case_ids: set[str]) -> 
         getattr(case, "priority_score", None),
         getattr(case, "priority_band", "low"),
     )
+
+
 # §5-4 row risk_level 분포: case 안에 어떤 row risk 가 섞여 있는지 한 줄 막대로 노출.
 # Why: v2 high case 229건 안의 row 68% 가 Normal/Low (audit §5-4). case 우선순위 = High
 #      라고 해서 그 안 모든 행이 High 인 것이 아님을 시각적으로 즉시 보여준다.
@@ -2375,8 +2371,8 @@ _DQ_MAIN_DESC = (
 _DQ_EXTENDED_CATEGORIES: tuple[tuple[str, tuple[str, ...], str], ...] = (
     (
         "계정·마스터 정합성",
-        ("L1-03", "L3-01", "L3-08"),
-        "마스터 데이터(계정·거래처) 정합성 이슈와 필수 메타데이터(적요) 누락 ·훼손 항목입니다.",
+        ("L1-03", "L3-01"),
+        "마스터 데이터(계정·거래처) 정합성 이슈 항목입니다.",
     ),
     (
         "일자·기간 흐름 정합성",
@@ -3348,48 +3344,150 @@ def _render_violation_cases_tab(pr, summary: dict) -> None:
         unsafe_allow_html=True,
     )
 
-    # Why: priority band → composite_sort_score → tie-breakers 순으로 내림차순 정렬.
-    #      _category_rule_groups 의 정렬 기준과 동일해 운영 해석 일관성을 유지한다.
-    cases = sorted(
-        phase1.cases,
-        key=lambda c: (
-            _case_display_priority_band_rank(c),
-            c.composite_sort_score,
-            c.priority_score,
-            c.triage_rank_score,
-            c.total_amount,
-            c.rule_count,
-        ),
-        reverse=True,
-    )
-    total_cases = len(cases)
-    top_cap = min(_VIOLATION_CASES_CAP, total_cases)
-    case_rows = _violation_case_master_rows(cases[:top_cap])
+    # 주 검토 큐 = 전표/흐름(unit) 단위. UNIT_MEASUREMENT_POLICY 상 tier(정답)는
+    # document/flow 에만 붙으므로 큐 축을 unit 으로 통일한다. HIGH/MEDIUM unit 만 큐에
+    # 올라오고, LOW/CONTEXT 는 아래 전수 커버리지 표로만 surface 된다.
+    st.markdown("#### 주 검토 큐 (전표/흐름 단위)")
+    unit_rows = build_phase1_transaction_queue(pr, top_n=_VIOLATION_CASES_CAP)
+    _render_unit_queue_grid(unit_rows)
 
-    selected_case_id = _render_rule_case_master(
-        "violation_cases",
-        case_rows,
-        key_suffix="violation_cases",
-        hide_columns={"전표 수", "Band"},
-        # Why: 안내 박스에 우선순위·검토 분량이 모두 정리돼 있으므로 캡션은 생략.
-        caption_override="",
-        show_header=False,
-        # Why: 호출부에서 priority_band → composite_sort_score → ... 순으로 이미
-        #      정렬했으므로 내부 (band, -amount) 재정렬을 끈다. 그렇지 않으면
-        #      Top 200을 amount 순으로 다시 정렬해 priority 순서가 깨진다.
-        preserve_order=True,
-        # Why: 사례 요약 왼쪽에 위험도 순위(1~200)를 pinned 컬럼으로 노출.
-        rank_column=True,
-    )
-    if not selected_case_id:
-        st.caption("위 case 목록에서 한 줄을 선택하세요.")
+    # 룰별 전수 커버리지 표 — LOW 신호 포함 모든 룰 발화를 전수 집계한다.
+    st.divider()
+    _render_rule_coverage_table(pr)
+
+    # case 집계뷰 = 보조 grouping 표시(주 큐 자리가 아님). 묶음 단위로 case 를
+    # 펼쳐 drilldown 까지 연결하되, 주 큐(전표/흐름)와 라벨을 혼용하지 않는다.
+    st.divider()
+    with st.expander("case 집계뷰 (보조 — 묶음 단위 grouping)", expanded=False):
+        cases = sorted(
+            phase1.cases,
+            key=lambda c: (
+                _case_display_priority_band_rank(c),
+                c.composite_sort_score,
+                c.priority_score,
+                c.triage_rank_score,
+                c.total_amount,
+                c.rule_count,
+            ),
+            reverse=True,
+        )
+        total_cases = len(cases)
+        top_cap = min(_VIOLATION_CASES_CAP, total_cases)
+        case_rows = _violation_case_master_rows(cases[:top_cap])
+
+        selected_case_id = _render_rule_case_master(
+            "violation_cases",
+            case_rows,
+            key_suffix="violation_cases",
+            hide_columns={"전표 수", "Band"},
+            caption_override=(
+                "case 는 전표를 회사·기간·계정 등으로 묶은 보조 grouping 입니다. "
+                "한 줄을 선택하면 묶음 안 검토 신호 전표가 아래에 펼쳐집니다."
+            ),
+            show_header=False,
+            preserve_order=True,
+            rank_column=True,
+        )
+        if not selected_case_id:
+            st.caption("위 case 묶음 목록에서 한 줄을 선택하세요.")
+            return
+
+        drilldown = build_phase1_case_drilldown(pr, selected_case_id)
+        if drilldown is None:
+            st.caption("선택된 case의 상세를 찾지 못했습니다.")
+            return
+        _render_case_drilldown(drilldown, pr=pr)
+
+
+def _render_unit_queue_grid(unit_rows: list[dict[str, Any]]) -> None:
+    """주 검토 큐 — 전표/흐름(unit) 1줄 = 1 unit. AgGrid 컴포넌트 재사용.
+
+    행 키는 unit_id, 컬럼은 unit_type·priority_band·time_severity_score·total_amount·
+    발화 룰. _render_rule_case_master 와 동일한 AgGrid 패턴을 쓰되 unit 필드를
+    소비한다(신규 UI 프레임워크 발명 금지).
+    """
+    from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
+
+    if not unit_rows:
+        st.info("HIGH/MEDIUM tier 전표·흐름 unit 이 없습니다.")
         return
 
-    drilldown = build_phase1_case_drilldown(pr, selected_case_id)
-    if drilldown is None:
-        st.caption("선택된 case의 상세를 찾지 못했습니다.")
+    _UNIT_TYPE_LABELS = {"document": "전표", "flow": "흐름"}
+    grid_rows: list[dict[str, Any]] = []
+    for idx, unit in enumerate(unit_rows, start=1):
+        grid_rows.append(
+            {
+                "unit_id": unit["unit_id"],
+                "순위": idx,
+                "단위": _UNIT_TYPE_LABELS.get(unit["unit_type"], unit["unit_type"]),
+                "Band": _format_band_cell(unit["priority_band"]),
+                "시점심각도": int(unit.get("time_severity_score") or 0),
+                "합계": _format_amount_short(float(unit.get("total_amount") or 0.0)),
+                "발화 룰": " · ".join(unit.get("fired_rule_labels") or []) or "-",
+            }
+        )
+    unit_df = pd.DataFrame(grid_rows)
+    st.caption(
+        f"{len(grid_rows):,}개의 전표·흐름 unit 이 우선순위 순으로 정렬돼 있습니다 "
+        "(HIGH/MEDIUM tier 만)."
+    )
+
+    gb = GridOptionsBuilder.from_dataframe(unit_df)
+    gb.configure_default_column(resizable=True, filter=True, sortable=True)
+    gb.configure_selection(selection_mode="single", use_checkbox=False)
+    gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=50)
+    gb.configure_grid_options(rowHeight=34, rowBuffer=10, suppressCellFocus=True)
+    gb.configure_column("unit_id", hide=True)
+    gb.configure_column("순위", type=["numericColumn"], minWidth=44, maxWidth=56, pinned="left")
+    gb.configure_column("단위", minWidth=64, maxWidth=88)
+    gb.configure_column("Band", minWidth=80, maxWidth=110)
+    gb.configure_column("시점심각도", type=["numericColumn"], minWidth=84, maxWidth=110)
+    gb.configure_column("합계", minWidth=80, maxWidth=110)
+    gb.configure_column("발화 룰", minWidth=360, flex=1, tooltipField="발화 룰")
+
+    AgGrid(
+        unit_df,
+        gridOptions=gb.build(),
+        height=320,
+        theme="streamlit",
+        key="phase1_unit_queue_violation_cases",
+        update_mode=GridUpdateMode.SELECTION_CHANGED,
+        allow_unsafe_jscode=True,
+        reload_data=False,
+        fit_columns_on_grid_load=False,
+    )
+
+
+def _render_rule_coverage_table(pr) -> None:
+    """룰별 전수 커버리지 숫자표 — LOW 신호 포함 모든 룰 발화 전수 집계.
+
+    HIGH_COMBO_GROUNDING §5(A안): LOW 는 "위험 없음"이 아니라 전수 커버리지
+    집계 대상이다. 기존 st.dataframe 표 컴포넌트를 재사용한다.
+    """
+    st.markdown("#### 룰별 전수 커버리지")
+    coverage = build_phase1_rule_coverage(pr)
+    items = coverage.get("items") or []
+    if not coverage.get("available") or not items:
+        st.info("커버리지 집계 대상 룰 발화가 없습니다.")
         return
-    _render_case_drilldown(drilldown, pr=pr)
+
+    st.caption(
+        "LOW tier 는 위험 없음이 아니라 전수 커버리지 집계 대상입니다. "
+        "모든 unit 의 룰 발화를 전수로 집계하며 HIGH/MEDIUM 전표의 발화도 포함합니다."
+    )
+    coverage_df = pd.DataFrame(
+        [
+            {
+                "룰": f"{item['rule_id']} · {item['rule_label']}",
+                "전표 발화 수": int(item["documents"]),
+                "HIGH": int(item["high"]),
+                "MEDIUM": int(item["medium"]),
+                "LOW": int(item["low"]),
+            }
+            for item in items
+        ]
+    )
+    st.dataframe(coverage_df, hide_index=True, use_container_width=True)
 
 
 _VIOLATION_PART_LABELS: dict[str, str] = {
@@ -5024,9 +5122,8 @@ _RULE_NAMES_KR: dict[str, str] = {
     "L3-05": "주말 기표",
     "L3-06": "심야 기표",
     "L3-07": "기표일·증빙일 간격",
-    "L3-08": "적요 누락·훼손",
     "L3-09": "미결 계정 장기화",
-    "L3-10": "고위험 계정 사용",
+    "L3-10": "추정계정 사용",
     "L3-12": "업무범위 초과 검토",
     "L4-01": "매출 이상치",
     "L4-02": "벤포드 편차",

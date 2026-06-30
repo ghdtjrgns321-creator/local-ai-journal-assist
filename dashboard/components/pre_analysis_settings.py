@@ -460,9 +460,9 @@ def _render_company_policy(
             )
             high_risk_prefixes = _parse_list(
                 st.text_input(
-                    "민감 계정 prefix",
+                    "추정계정 prefix",
                     value=_join_list(
-                        patterns.get("high_risk_account_use", {}).get("account_prefixes", [])
+                        patterns.get("estimate_account_use", {}).get("account_prefixes", [])
                     ),
                 )
             )
@@ -475,7 +475,7 @@ def _render_company_policy(
                     "intercompany_identifiers": intercompany_ids,
                     "suspense_account_codes": suspense_codes,
                     "suspense_keywords": suspense_keywords,
-                    "high_risk_account_use": {"account_prefixes": high_risk_prefixes},
+                    "estimate_account_use": {"account_prefixes": high_risk_prefixes},
                 },
                 "evidence": {"expense_account_prefixes": expense_prefixes},
             }
