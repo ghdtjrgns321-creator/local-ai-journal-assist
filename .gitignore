@@ -110,6 +110,7 @@ docs/archive/completed/datasynth_hard_exception_reclassification_v126.csv
 
 # datasynth QG3 스크립트 출력 대용량 덤프 (review_datasynth_semantic_v1_accounting.py OUT_DIR)
 tests/datasynth_quality_gate3/results/**/accounting_llm_review_phase1_hits.csv
+tests/datasynth_quality_gate3/results/**/accounting_llm_review_reviews.csv
 tests/datasynth_quality_gate3/results/accounting_logic_extra_seed_20260514/reviews.csv
 tests/datasynth_quality_gate3/results/accounting_logic_extra_seed_20260514/samples.csv
 
