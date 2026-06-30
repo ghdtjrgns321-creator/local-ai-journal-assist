@@ -27,13 +27,9 @@ from src.detection.benford_detector import BenfordDetector
 from src.detection.fraud_layer import FraudLayer
 from src.detection.fraud_rules_access import build_access_rule_cache
 from src.detection.fraud_rules_groupby import (
-    _flag_document_duplicate_entries,
     _flag_exact_duplicate_entries,
-    _flag_ic_r2r_split_population,
-    _flag_near_duplicate_entries,
     _flag_o2c_offset_duplicate_entries,
     _flag_reference_duplicate_entries,
-    _flag_split_duplicate_entries,
     _prepare_duplicate_entry_work,
     _score_l203_duplicate_entries,
 )
@@ -73,6 +69,7 @@ PHASE1_USECOLS = {
     "job_id",
     "business_process",
     "semantic_scenario_id",
+    "semantic_account_subtype",
     "counterparty_type",
     "approved_by",
     "approval_date",
@@ -645,6 +642,9 @@ def _profile_l203_duplicate_entry(
     window_days: int = 7,
     split_window_days: int = 3,
     max_group_size: int = 1000,
+    reference_max_frequency_ratio: float = 0.10,
+    reference_min_unique_ratio: float = 0.40,
+    reference_nonunique_min_count: int = 2,
 ) -> pd.Series:
     """Profile L2-03 duplicate-entry substeps and return a compatible Series."""
 
@@ -671,53 +671,31 @@ def _profile_l203_duplicate_entry(
         return value
 
     work = run_step("prepare_work", lambda: _prepare_duplicate_entry_work(df))
-    document_scores = run_step(
-        "document_duplicate",
-        lambda: _flag_document_duplicate_entries(
-            work,
-            df,
-            amount_tolerance=amount_tolerance,
-            fuzzy_threshold=fuzzy_threshold,
-            window_days=window_days,
-            max_group_size=max_group_size,
-        ),
-    )
+    # 2026-06-21: fraud_rules_groupby no longer exposes the legacy
+    # document/near/split/IC helper functions. Keep profiler output compatible
+    # with historical reports by recording those retired paths as empty, while
+    # measuring the active L2-03 exact/reference/O2C-offset paths from the
+    # production module.
+    empty_scores = pd.Series(0.0, index=df.index)
+    document_scores = run_step("document_duplicate_retired", lambda: empty_scores)
     exact_scores = run_step("exact_duplicate", lambda: _flag_exact_duplicate_entries(work))
     reference_scores = run_step(
         "reference_duplicate",
         lambda: _flag_reference_duplicate_entries(
             work,
             amount_tolerance=amount_tolerance,
-            window_days=window_days,
+            reference_max_frequency_ratio=reference_max_frequency_ratio,
+            reference_min_unique_ratio=reference_min_unique_ratio,
+            reference_nonunique_min_count=reference_nonunique_min_count,
         ),
     )
-    near_scores = run_step(
-        "near_duplicate",
-        lambda: _flag_near_duplicate_entries(
-            work,
-            amount_tolerance=amount_tolerance,
-            fuzzy_threshold=fuzzy_threshold,
-            window_days=window_days,
-            max_group_size=max_group_size,
-        ),
-    )
-    split_scores = run_step(
-        "split_duplicate",
-        lambda: _flag_split_duplicate_entries(
-            work,
-            amount_tolerance=amount_tolerance,
-            split_window_days=split_window_days,
-            max_group_size=max_group_size,
-        ),
-    )
+    near_scores = run_step("near_duplicate_retired", lambda: empty_scores)
+    split_scores = run_step("split_duplicate_retired", lambda: empty_scores)
     o2c_offset_scores = run_step(
         "o2c_offset_duplicate",
         lambda: _flag_o2c_offset_duplicate_entries(work, df),
     )
-    ic_split_scores = run_step(
-        "ic_split_duplicate",
-        lambda: _flag_ic_r2r_split_population(work, df, split_window_days=split_window_days),
-    )
+    ic_split_scores = run_step("ic_split_duplicate_retired", lambda: empty_scores)
 
     t0 = time.perf_counter()
     _log("L2-03 step start: combine")

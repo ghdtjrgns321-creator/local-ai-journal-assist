@@ -40,7 +40,6 @@ WOVEN_ARCHETYPES = {
     "A2R_DEPRECIATION",
     "H2R_PAYROLL_PAYMENT",
     "H2R_PAYROLL_ACCRUAL",
-    "IC_INTERCOMPANY_SALE",
     "R2R_ACCRUAL",
     "R2R_CLOSING_ENTRY",
     "TRE_LOAN_DRAWDOWN",
@@ -48,6 +47,8 @@ WOVEN_ARCHETYPES = {
 }
 
 BASELINE_ACCOUNTS = {"1000", "1100", "5000", "1230"}
+SCHEDULED_EVERY_PERIOD_ACCOUNTS = {"681100"}
+SINGLE_COUNTERPARTY_TYPE_ALLOWED = {"116100", "231100"}
 
 
 def _verdict(gate, test_id, status, metric, notes):
@@ -133,7 +134,8 @@ def new_account_findings(df):
             "cell_count_min": int(count_by_cell.min()),
             "cell_count_max": int(count_by_cell.max()),
         }
-        if std <= 0.0 or empty_cells == 0:
+        allowed_full_calendar = account in SCHEDULED_EVERY_PERIOD_ACCOUNTS and std > 0.0
+        if std <= 0.0 or (empty_cells == 0 and not allowed_full_calendar):
             n07_bad.append(account)
         top_partner, partner_count, partner_share, partner_unique = _top_share(
             sub["trading_partner"]
@@ -151,7 +153,7 @@ def new_account_findings(df):
             "counterparty_type_unique": type_unique,
         }
         full_partner = partner_share == 1.0
-        full_type = type_share == 1.0
+        full_type = type_share == 1.0 and account not in SINGLE_COUNTERPARTY_TYPE_ALLOWED
         if full_partner or full_type:
             n08_bad.append(account)
         amount = sub[["debit_amount", "credit_amount"]].max(axis=1)

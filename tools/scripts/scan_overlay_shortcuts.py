@@ -98,7 +98,10 @@ def main(argv=None):
     args = ap.parse_args(argv)
     D = args.data_dir
 
-    truth = pd.read_csv(D / "labels" / "p3_2_rule_truth.csv")
+    truth_path = D / "labels" / "p3_2_rule_truth.csv"
+    if not truth_path.exists():
+        truth_path = D / "labels" / "phase1_combo_tier_truth.csv"
+    truth = pd.read_csv(truth_path)
     tdocs = set()
     for _, r in truth.iterrows():
         tdocs.update(jlist(r.get("member_document_ids")))

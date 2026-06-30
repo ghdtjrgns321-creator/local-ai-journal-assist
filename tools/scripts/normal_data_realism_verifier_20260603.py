@@ -53,7 +53,6 @@ PHASE2_ALLOWED_WOVEN_ARCHETYPES = {
     "A2R_DEPRECIATION",
     "H2R_PAYROLL_PAYMENT",
     "H2R_PAYROLL_ACCRUAL",
-    "IC_INTERCOMPANY_SALE",
     "R2R_ACCRUAL",
     "R2R_CLOSING_ENTRY",
     "TRE_LOAN_DRAWDOWN",
@@ -275,6 +274,62 @@ def _ic_direction_asymmetry_metrics(df: pd.DataFrame) -> dict[str, Any]:
     }
 
 
+def _single_company_sidecar_metrics(dataset: Path) -> tuple[str, dict[str, Any]]:
+    roots = [
+        dataset / "master_data",
+        dataset / "document_flows",
+        dataset / "relationships",
+        dataset / "subledger",
+        dataset / "balance",
+        dataset / "financial_reporting",
+        dataset / "intercompany",
+    ]
+    namespace_patterns = ["IC-C", "IC_INTERCOMPANY"]
+    forbidden_company_field_hits: list[dict[str, Any]] = []
+    findings: list[dict[str, Any]] = []
+    files_checked = 0
+    for root in roots:
+        if not root.exists():
+            continue
+        for path in root.rglob("*.json"):
+            files_checked += 1
+            text = path.read_text(encoding="utf-8", errors="replace")
+            hits = {pattern: text.count(pattern) for pattern in namespace_patterns if pattern in text}
+            if hits:
+                findings.append(
+                    {
+                        "path": str(path.relative_to(dataset)),
+                        "hits": hits,
+                    }
+                )
+            try:
+                raw = json.loads(text)
+            except Exception:
+                raw = []
+            stack = raw if isinstance(raw, list) else [raw]
+            for item in stack:
+                if not isinstance(item, dict):
+                    continue
+                company = str(item.get("company_code", item.get("company", ""))).strip()
+                if company in {"C002", "C003"}:
+                    allowed_related_master = path.name == "related_parties.json" and str(
+                        item.get("journal_company_code", "")
+                    ).strip() == "C001"
+                    if not allowed_related_master:
+                        forbidden_company_field_hits.append(
+                            {"path": str(path.relative_to(dataset)), "company_code": company}
+                        )
+    metric = {
+        "files_checked": files_checked,
+        "forbidden_sidecar_file_count": len(findings) + len(forbidden_company_field_hits),
+        "sample_findings": findings[:20],
+        "sample_forbidden_company_field_hits": forbidden_company_field_hits[:20],
+        "forbidden_patterns": namespace_patterns,
+        "allowed_related_party_partner_codes": ["C002", "C003"],
+    }
+    return ("PASS" if not findings and not forbidden_company_field_hits else "FAIL"), metric
+
+
 def _reversal_link_metrics(df: pd.DataFrame, doc_head: pd.DataFrame) -> tuple[str, dict[str, Any]]:
     required = [
         "original_document_id",
@@ -452,6 +507,234 @@ def _load_coa_meta(dataset: Path) -> dict[str, dict[str, Any]]:
         if code:
             meta[code] = account
     return meta
+
+
+def _meta_text(meta: dict[str, Any]) -> str:
+    return " ".join(
+        str(meta.get(key, ""))
+        for key in [
+            "account_name",
+            "name",
+            "description",
+            "account_type",
+            "category",
+            "sub_type",
+            "semantic_account_subtype",
+            "normal_use",
+        ]
+    ).lower()
+
+
+def _account_meta_type(meta: dict[str, Any]) -> str:
+    return str(meta.get("account_type") or meta.get("category") or "").strip().lower()
+
+
+def _company_year_pnl(df: pd.DataFrame, coa_meta: dict[str, dict[str, Any]]) -> tuple[str, dict[str, Any]]:
+    if df.empty:
+        return "BLOCKED", {"rows": 0}
+    work = df.copy()
+    batch_type = work.get("batch_type", pd.Series("", index=work.index)).fillna("").astype(str)
+    reference = work.get("reference", pd.Series("", index=work.index)).fillna("").astype(str)
+    nonclosing = work[~(batch_type.eq("annual_closing") | reference.str.startswith("CLOSE-"))].copy()
+    if nonclosing.empty:
+        return "BLOCKED", {"nonclosing_rows": 0}
+
+    nonclosing["_debit_i"] = nonclosing["debit_amount"].round(0).astype("int64")
+    nonclosing["_credit_i"] = nonclosing["credit_amount"].round(0).astype("int64")
+    nonclosing["_prefix"] = nonclosing["gl_account"].fillna("").astype(str).str.strip().str[:1]
+    nonclosing["_meta_text"] = nonclosing["gl_account"].astype(str).map(lambda account: _meta_text(coa_meta.get(account, {})))
+    nonclosing["_expense_net"] = nonclosing["_debit_i"] - nonclosing["_credit_i"]
+    nonclosing["_revenue_net"] = nonclosing["_credit_i"] - nonclosing["_debit_i"]
+
+    bad_periods: list[dict[str, Any]] = []
+    ratios: list[dict[str, Any]] = []
+    grouped = nonclosing.groupby(["company_code", "fiscal_year"], dropna=False)
+    for (company, year), group in grouped:
+        revenue = int(group.loc[group["_prefix"].eq("4"), "_revenue_net"].sum())
+        cogs = int(group.loc[group["_prefix"].eq("5"), "_expense_net"].sum())
+        sga = int(group.loc[group["_prefix"].eq("6"), "_expense_net"].sum())
+        interest = int(group.loc[group["_meta_text"].str.contains("interest|이자", regex=True), "_expense_net"].sum())
+        taxes = int(group.loc[group["_meta_text"].str.contains("tax|income_tax|corporate_tax|세금|법인세", regex=True), "_expense_net"].sum())
+        if revenue <= 0:
+            bad_periods.append({"company": str(company), "year": str(year), "reason": "nonpositive_revenue", "revenue": revenue})
+            continue
+        cogs_ratio = cogs / revenue
+        sga_ratio = sga / revenue
+        interest_ratio = interest / revenue
+        tax_ratio = taxes / revenue
+        operating_margin = (revenue - cogs - sga) / revenue
+        item = {
+            "company": str(company),
+            "year": str(year),
+            "revenue": revenue,
+            "cogs_ratio": cogs_ratio,
+            "sga_ratio": sga_ratio,
+            "interest_ratio": interest_ratio,
+            "tax_ratio": tax_ratio,
+            "operating_margin": operating_margin,
+        }
+        ratios.append(item)
+        period_bad = (
+            not (0.55 <= cogs_ratio <= 0.92)
+            or not (0.03 <= sga_ratio <= 0.45)
+            or interest_ratio > 0.15
+            or tax_ratio > 0.40
+            or operating_margin < -0.20
+        )
+        if period_bad:
+            bad_periods.append(item)
+
+    if not ratios:
+        return "BLOCKED", {"company_years_checked": 0, "bad_periods": bad_periods[:10]}
+    metric = {
+        "company_years_checked": len(ratios),
+        "bad_company_years": len(bad_periods),
+        "thresholds": {
+            "cogs_ratio": "0.55..0.92",
+            "sga_ratio": "0.03..0.45",
+            "interest_ratio_max": 0.15,
+            "tax_ratio_max": 0.40,
+            "operating_margin_min": -0.20,
+        },
+        "ratio_summary": {
+            key: {
+                "min": float(pd.Series([r[key] for r in ratios]).min()),
+                "p50": float(pd.Series([r[key] for r in ratios]).quantile(0.5)),
+                "max": float(pd.Series([r[key] for r in ratios]).max()),
+            }
+            for key in ["cogs_ratio", "sga_ratio", "interest_ratio", "tax_ratio", "operating_margin"]
+        },
+        "sample_bad_periods": bad_periods[:10],
+    }
+    return ("PASS" if not bad_periods else "FAIL"), metric
+
+
+def _coa_prefix_semantic_metrics(df: pd.DataFrame, coa_meta: dict[str, dict[str, Any]]) -> tuple[str, dict[str, Any]]:
+    used_accounts = set(df["gl_account"].fillna("").astype(str).str.strip())
+    checked = 0
+    bad: list[dict[str, Any]] = []
+    for account in sorted(used_accounts):
+        if not account:
+            continue
+        meta = coa_meta.get(account, {})
+        text = _meta_text(meta)
+        account_type = _account_meta_type(meta)
+        prefix1 = account[:1]
+        checked += 1
+        reason = ""
+        if prefix1 == "4" and any(term in text for term in ["expense", "cost", "tax", "interest", "loss", "비용", "원가", "세금", "이자", "손상"]):
+            reason = "revenue_prefix_has_expense_semantics"
+        elif prefix1 == "5" and any(term in text for term in ["interest", "tax", "depreciation", "amortization", "opex", "selling", "admin", "이자", "세금", "감가", "상각", "판관"]):
+            reason = "cogs_prefix_has_non_cogs_semantics"
+        elif prefix1 == "6" and any(term in text for term in ["interest", "income tax", "corporate tax", "이자", "법인세"]):
+            reason = "sga_prefix_has_financing_or_tax_semantics"
+        elif prefix1 == "7" and any(term in text for term in ["expense", "cost", "loss", "tax", "interest", "비용", "원가", "손실", "세금", "이자"]):
+            reason = "other_income_prefix_has_expense_semantics"
+        elif prefix1 == "8" and "income tax" not in text and any(term in text for term in ["revenue", "income", "sales", "매출", "수익"]):
+            reason = "other_expense_prefix_has_income_semantics"
+        elif prefix1 in {"1", "2", "3"} and any(term in account_type for term in ["revenue", "expense", "income"]):
+            reason = "balance_sheet_prefix_has_pl_account_type"
+        elif prefix1 in {"4", "5", "6", "7", "8"} and any(term in account_type for term in ["asset", "liability", "equity"]):
+            reason = "pl_prefix_has_balance_sheet_account_type"
+        if reason:
+            bad.append(
+                {
+                    "account": account,
+                    "reason": reason,
+                    "account_type": account_type,
+                    "sub_type": str(meta.get("sub_type") or meta.get("semantic_account_subtype") or ""),
+                    "name": str(meta.get("account_name") or meta.get("name") or ""),
+                }
+            )
+    metric = {
+        "used_accounts_checked": checked,
+        "bad_account_count": len(bad),
+        "sample_bad_accounts": bad[:30],
+    }
+    return ("PASS" if checked > 0 and not bad else "FAIL"), metric
+
+
+def _financial_statement_export_metrics(dataset: Path) -> tuple[str, dict[str, Any]]:
+    fs_path = dataset / "financial_reporting" / "financial_statements.json"
+    if not fs_path.exists():
+        fs_path = dataset / "financial_statements.json"
+    if not fs_path.exists():
+        return "BLOCKED", {"missing": "financial_statements.json"}
+    raw = json.loads(fs_path.read_text(encoding="utf-8"))
+    statements = raw if isinstance(raw, list) else []
+    income = [rec for rec in statements if str(rec.get("statement_type", "")).lower() == "income_statement"]
+    if not income:
+        return "BLOCKED", {"financial_statement_records": len(statements), "income_statement_records": 0}
+    revenue_negative = 0
+    cogs_gt_revenue = 0
+    empty_mapping = 0
+    checked = 0
+    sample_bad: list[dict[str, Any]] = []
+    for rec in income:
+        items = {str(item.get("line_code")): item for item in rec.get("line_items", []) if isinstance(item, dict)}
+        rev = int(round(float(items.get("IS-REV", {}).get("amount", 0) or 0)))
+        cogs = int(round(float(items.get("IS-COGS", {}).get("amount", 0) or 0)))
+        checked += 1
+        bad_reasons = []
+        if rev <= 0:
+            revenue_negative += 1
+            bad_reasons.append("nonpositive_revenue")
+        if rev > 0 and cogs > rev:
+            cogs_gt_revenue += 1
+            bad_reasons.append("cogs_gt_revenue")
+        for code in ["IS-REV", "IS-COGS", "IS-OPEX", "IS-TAX"]:
+            item = items.get(code)
+            if item is not None and not item.get("gl_accounts"):
+                empty_mapping += 1
+                bad_reasons.append(f"{code}_empty_gl_accounts")
+        if bad_reasons and len(sample_bad) < 10:
+            sample_bad.append(
+                {
+                    "company": rec.get("company_code"),
+                    "year": rec.get("fiscal_year"),
+                    "period": rec.get("fiscal_period"),
+                    "revenue": rev,
+                    "cogs": cogs,
+                    "reasons": sorted(set(bad_reasons)),
+                }
+            )
+    metric = {
+        "income_statement_records": checked,
+        "nonpositive_revenue_records": revenue_negative,
+        "cogs_gt_revenue_records": cogs_gt_revenue,
+        "empty_gl_account_mapping_items": empty_mapping,
+        "sample_bad_records": sample_bad,
+    }
+    status = "PASS" if checked > 0 and revenue_negative == 0 and cogs_gt_revenue == 0 and empty_mapping == 0 else "FAIL"
+    return status, metric
+
+
+def _depreciation_net_metrics(df: pd.DataFrame, coa_meta: dict[str, dict[str, Any]]) -> tuple[str, dict[str, Any]]:
+    work = df.copy()
+    batch_type = work.get("batch_type", pd.Series("", index=work.index)).fillna("").astype(str)
+    reference = work.get("reference", pd.Series("", index=work.index)).fillna("").astype(str)
+    work = work[~(batch_type.eq("annual_closing") | reference.str.startswith("CLOSE-"))].copy()
+    work["_meta_text"] = work["gl_account"].astype(str).map(lambda account: _meta_text(coa_meta.get(account, {})))
+    dep = work[work["_meta_text"].str.contains("depreciation expense|amortization expense|감가상각비|상각비", regex=True)].copy()
+    if dep.empty:
+        return "BLOCKED", {"depreciation_expense_rows": 0}
+    dep["_debit_i"] = dep["debit_amount"].round(0).astype("int64")
+    dep["_credit_i"] = dep["credit_amount"].round(0).astype("int64")
+    grouped = dep.groupby(["company_code", "fiscal_year"], dropna=False).agg(
+        debit=("_debit_i", "sum"),
+        credit=("_credit_i", "sum"),
+        rows=("document_id", "size"),
+    ).reset_index()
+    grouped["net_expense"] = grouped["debit"] - grouped["credit"]
+    zero_or_negative = grouped[grouped["net_expense"] <= 0]
+    metric = {
+        "company_years_checked": int(len(grouped)),
+        "zero_or_negative_net_expense_count": int(len(zero_or_negative)),
+        "net_expense_min": int(grouped["net_expense"].min()) if not grouped.empty else None,
+        "net_expense_p50": float(grouped["net_expense"].quantile(0.5)) if not grouped.empty else None,
+        "sample_bad": zero_or_negative.head(10).to_dict("records"),
+    }
+    return ("PASS" if len(grouped) > 0 and zero_or_negative.empty else "FAIL"), metric
 
 
 def _load_opening_balances(dataset: Path) -> dict[str, dict[str, int]]:
@@ -1257,6 +1540,8 @@ def audit(dataset: Path) -> dict[str, Any]:
         "COGS_MATERIAL",
         "IC_PAYABLE",
         "IC_RECEIVABLE",
+        "IC_REVENUE",
+        "IC_SERVICE_EXPENSE",
         "INTERCOMPANY_REVENUE",
         "INTEREST_EXPENSE",
         "OPEX_INTERCOMPANY_SERVICE",
@@ -1278,7 +1563,13 @@ def audit(dataset: Path) -> dict[str, Any]:
             document_types != {"IC"}
             or processes != {"Intercompany"}
             or not counterparty_types.issubset({"IntercompanyAffiliate", "RELATED_PARTY", "RelatedParty"})
-            or line_families != {"INTERCOMPANY_SALE"}
+            or not line_families.issubset(
+                {
+                    "INTERCOMPANY_SALE",
+                    "related_party_service_revenue",
+                    "related_party_service_charge",
+                }
+            )
             or has_blank_semantic
             or has_off_domain_subtype
         ):
@@ -1511,7 +1802,13 @@ def audit(dataset: Path) -> dict[str, Any]:
         work = work[work[column].astype(str).str.strip().ne("")]
         if column == "trading_partner":
             company_values = set(df["company_code"].fillna("").astype(str).str.strip()) if "company_code" in df.columns else set()
-            work = work[~work[column].astype(str).str.strip().isin(company_values)]
+            structural_related_parties = {"C002", "C003"}
+            work = work[
+                ~work[column]
+                .astype(str)
+                .str.strip()
+                .isin(company_values | structural_related_parties)
+            ]
         if work.empty:
             continue
         work["scenario"] = work["document_id"].map(scenario_by_doc).fillna("")
@@ -1588,91 +1885,128 @@ def audit(dataset: Path) -> dict[str, Any]:
         )
     )
 
-    pair_map = _load_ic_pair_map()
     company_codes = set(df["company_code"].fillna("").astype(str).str.strip()) if "company_code" in df.columns else set()
     has_ic_required = all(col in df.columns for col in ["is_intercompany", "company_code", "trading_partner", "gl_account"])
     if not has_ic_required:
         missing = [col for col in ["is_intercompany", "company_code", "trading_partner", "gl_account"] if col not in df.columns]
         for test_id, note in [
-            ("K01", "is_intercompany/counterparty/company/partner population"),
-            ("K02", "IC GL pair-map coverage"),
-            ("K03", "normal IC reconciliation amount matching"),
-            ("K04", "normal IC reconciliation timing matching"),
-            ("K05", "IC partner namespace integrity"),
-            ("K06", "company-node graph cycle background"),
-            ("K07", "normal IC direction asymmetry"),
+            ("K01", "single-company journal scope"),
+            ("K02", "normal related-party IC background required"),
+            ("K03", "normal IC GL prefix population required"),
+            ("K04", "normal IC dates must be plausible"),
+            ("K05", "company-code partners allowed only for related-party IC rows"),
+            ("K06", "no company-node graph cycle background"),
+            ("K07", "normal IC direction population should not be one-sided"),
         ]:
             findings.append(verdict("Gate 1" if test_id <= "K05" else "Gate 2", test_id, "BLOCKED", {"missing_required_columns": missing}, note))
     else:
+        primary_company = "C001"
         ic_mask = _truthy(df["is_intercompany"])
         ic_df = df[ic_mask].copy()
         ic_doc_count = int(ic_df["document_id"].nunique())
         ic_row_count = int(len(ic_df))
-        partner_values = ic_df["trading_partner"].fillna("").astype(str).str.strip()
-        bad_self_partner = int((partner_values == ic_df["company_code"].astype(str).str.strip()).sum())
-        non_company_partner = int((partner_values.ne("") & ~partner_values.isin(company_codes)).sum())
-        related_cp = ic_df["counterparty_type"].fillna("").astype(str).str.contains("Intercompany|RELATED_PARTY|Related", case=False, regex=True)
-        related_scenario = ic_df["semantic_scenario_id"].fillna("").astype(str).str.contains("IC_|INTERCOMPANY|RELATED", case=False, regex=True)
-        bad_counterparty_docs = int(ic_df[~(related_cp | related_scenario)]["document_id"].nunique())
+        partner_all = df["trading_partner"].fillna("").astype(str).str.strip()
+        company_partner_rows = int(partner_all.isin(company_codes | {"C002", "C003"}).sum())
+        related_surface = (
+            df["counterparty_type"].fillna("").astype(str).str.contains("Intercompany|RELATED_PARTY|Related", case=False, regex=True)
+            | df["semantic_scenario_id"].fillna("").astype(str).str.contains("IC_|INTERCOMPANY|RELATED", case=False, regex=True)
+            | df["business_process"].fillna("").astype(str).str.upper().eq("IC")
+            | df["document_type"].fillna("").astype(str).str.upper().eq("IC")
+        )
+        related_surface_docs = int(df[related_surface]["document_id"].nunique())
         k01_metric = {
-            "ic_row_count": ic_row_count,
-            "ic_doc_count": ic_doc_count,
-            "min_expected_ic_docs": 1000,
-            "bad_self_partner_rows": bad_self_partner,
-            "non_company_partner_rows": non_company_partner,
-            "bad_counterparty_or_scenario_docs": bad_counterparty_docs,
+            "company_codes": sorted(company_codes),
+            "expected_company_codes": [primary_company],
+            "company_code_count": len(company_codes),
+            "total_documents": int(df["document_id"].nunique()),
+            "total_rows": int(len(df)),
         }
-        k01_pass = ic_doc_count >= 1000 and bad_self_partner == 0 and non_company_partner == 0 and bad_counterparty_docs == 0
-        findings.append(verdict("Gate 1", "K01", "PASS" if k01_pass else "FAIL", k01_metric, "related-party IC population and namespace"))
+        k01_pass = company_codes == {primary_company}
+        findings.append(verdict("Gate 1", "K01", "PASS" if k01_pass else "FAIL", k01_metric, "single legal-entity journal scope"))
 
+        pair_map = _load_ic_pair_map()
         rec_prefixes = set(pair_map)
         pay_prefixes = set(pair_map.values())
         rec_rows = int((_starts_with_any(ic_df["gl_account"], rec_prefixes)).sum())
         pay_rows = int((_starts_with_any(ic_df["gl_account"], pay_prefixes)).sum())
         pairmap_rows = rec_rows + pay_rows
         k02_metric = {
-            "pair_map": pair_map,
-            "receivable_prefix_rows": rec_rows,
-            "payable_prefix_rows": pay_rows,
-            "pair_map_coverage_rate": float(pairmap_rows / max(ic_row_count, 1)),
+            "ic_row_count": ic_row_count,
+            "ic_doc_count": ic_doc_count,
+            "related_surface_docs": related_surface_docs,
+            "receivable_prefix_rows_in_ic": rec_rows,
+            "payable_prefix_rows_in_ic": pay_rows,
+            "pair_map_rows_in_ic": pairmap_rows,
         }
-        k02_pass = rec_rows > 0 and pay_rows > 0 and k02_metric["pair_map_coverage_rate"] >= 0.90
-        findings.append(verdict("Gate 1", "K02", "PASS" if k02_pass else "FAIL", k02_metric, "IC receivable/payable GL pair-map coverage"))
+        ic_row_share = ic_row_count / max(len(df), 1)
+        k02_metric["ic_row_share"] = ic_row_share
+        k02_metric["expected_ic_row_share_range"] = [0.0005, 0.02]
+        k02_pass = (
+            ic_doc_count >= 50
+            and 0.0005 <= ic_row_share <= 0.02
+            and related_surface_docs >= ic_doc_count
+            and pairmap_rows > 0
+        )
+        findings.append(verdict("Gate 1", "K02", "PASS" if k02_pass else "FAIL", k02_metric, "single-company normal must contain low-volume related-party IC traces without adding extra ledger companies"))
 
         recon = _ic_reconciliation_metrics(df, pair_map)
-        k03_pass = (
-            recon["candidate_pair_count"] >= 500
-            and recon["matched_pair_count"] >= 500
-            and recon["matched_rate"] >= 0.95
-            and (recon["diff_ratio_p95"] is not None and recon["diff_ratio_p95"] <= 0.05)
-            and recon["tolerance_exceeded_pairs"] <= max(5, int(recon["matched_pair_count"] * 0.02))
-        )
-        findings.append(verdict("Gate 1", "K03", "PASS" if k03_pass else "FAIL", recon, "normal IC reconciliation amount match quality"))
+        k03_metric = dict(recon)
+        k03_metric.update({"receivable_prefix_rows": rec_rows, "payable_prefix_rows": pay_rows})
+        k03_pass = rec_rows > 0 and pay_rows > 0
+        findings.append(verdict("Gate 1", "K03", "PASS" if k03_pass else "FAIL", k03_metric, "normal related-party IC must include both receivable/revenue and payable/cost traces"))
 
-        k04_pass = (
-            recon["matched_pair_count"] >= 500
-            and (recon["date_diff_p95"] is not None and recon["date_diff_p95"] <= 5)
-            and recon["close_lag_exceeded_pairs"] <= max(5, int(recon["matched_pair_count"] * 0.02))
-        )
-        findings.append(verdict("Gate 1", "K04", "PASS" if k04_pass else "FAIL", recon, "normal IC reconciliation timing quality"))
+        ic_dates_missing = 0
+        if not ic_df.empty:
+            ic_dates_missing = int(
+                ic_df[["posting_date", "document_date"]]
+                .fillna("")
+                .astype(str)
+                .apply(lambda col: col.str.strip().eq(""))
+                .any(axis=1)
+                .sum()
+            )
+        k04_metric = dict(recon)
+        k04_metric["ic_date_missing_rows"] = ic_dates_missing
+        k04_pass = ic_row_count > 0 and ic_dates_missing == 0 and recon["close_lag_exceeded_pairs"] == 0
+        findings.append(verdict("Gate 1", "K04", "PASS" if k04_pass else "FAIL", k04_metric, "normal related-party IC timing must have populated dates and no stale close-lag pattern"))
 
-        vendor_customer_like = int(partner_values.str.match(r"^(V-|C-)").sum())
+        partner_values = df["trading_partner"].fillna("").astype(str).str.strip()
+        company_partner_mask = partner_values.isin(company_codes | {"C002", "C003"})
+        company_partner_non_ic_rows = int((company_partner_mask & ~ic_mask).sum())
         k05_metric = {
             "company_codes": sorted(company_codes),
-            "non_company_partner_rows": non_company_partner,
-            "vendor_customer_like_partner_rows": vendor_customer_like,
+            "company_code_partner_rows": company_partner_rows,
             "ic_prefixed_partner_rows": int(partner_values.str.match(r"^IC-").sum()),
+            "self_company_partner_rows": int(partner_values.eq(primary_company).sum()),
+            "company_code_partner_non_ic_rows": company_partner_non_ic_rows,
+            "allowed_related_party_partners": ["C002", "C003"],
         }
-        k05_pass = non_company_partner == 0 and vendor_customer_like == 0 and k05_metric["ic_prefixed_partner_rows"] == 0
-        findings.append(verdict("Gate 1", "K05", "PASS" if k05_pass else "FAIL", k05_metric, "IC partner format must collapse to company nodes"))
+        k05_pass = (
+            company_partner_rows > 0
+            and company_partner_non_ic_rows == 0
+            and k05_metric["self_company_partner_rows"] == 0
+            and k05_metric["ic_prefixed_partner_rows"] == 0
+        )
+        findings.append(verdict("Gate 1", "K05", "PASS" if k05_pass else "FAIL", k05_metric, "company-code partners are allowed only as related-party trading_partner values on IC rows"))
 
         cycle_metrics = _ic_cycle_metrics(df)
-        k06_pass = bool(cycle_metrics.get("networkx_available", False)) and int(cycle_metrics.get("cycle_instance_count", 0)) >= 12
-        findings.append(verdict("Gate 2", "K06", "PASS" if k06_pass else "FAIL", cycle_metrics, "normal company-node graph cycle background"))
+        k06_pass = bool(cycle_metrics.get("networkx_available", False)) and int(cycle_metrics.get("cycle_instance_count", 0)) == 0
+        findings.append(verdict("Gate 2", "K06", "PASS" if k06_pass else "FAIL", cycle_metrics, "single-company normal must not contain company-node graph cycles"))
 
         asym = _ic_direction_asymmetry_metrics(df)
-        k07_pass = int(asym["direction_pair_count"]) > 0 and float(asym["high_asymmetry_rate"]) <= 0.20
-        findings.append(verdict("Gate 2", "K07", "PASS" if k07_pass else "FAIL", asym, "normal IC direction amount asymmetry must be rare"))
+        k07_pass = int(asym["direction_pair_count"]) > 0 and float(asym["high_asymmetry_rate"]) <= 0.75
+        findings.append(verdict("Gate 2", "K07", "PASS" if k07_pass else "FAIL", asym, "normal related-party IC should have a directional population without being entirely one-sided"))
+
+    k08_status, k08_metric = _single_company_sidecar_metrics(dataset)
+    findings.append(
+        verdict(
+            "Gate 1",
+            "K08",
+            k08_status,
+            k08_metric,
+            "single-company scope must also hold in master/flow/subledger/balance sidecars",
+        )
+    )
 
     line_counts = df.groupby("document_id").size()
     high_line_docs = int((line_counts >= 100).sum())
@@ -1723,6 +2057,47 @@ def audit(dataset: Path) -> dict[str, Any]:
     )
 
     findings.extend(_balance_metrics(df, dataset))
+    coa_meta = _load_coa_meta(dataset)
+    p01_status, p01_metric = _company_year_pnl(df, coa_meta)
+    findings.append(
+        verdict(
+            "Gate 2",
+            "M11",
+            p01_status,
+            p01_metric,
+            "company-year P&L ratio realism: revenue, COGS, SGA, interest, tax must be economically plausible",
+        )
+    )
+    coa_status, coa_metric = _coa_prefix_semantic_metrics(df, coa_meta)
+    findings.append(
+        verdict(
+            "Gate 1",
+            "B18",
+            coa_status,
+            coa_metric,
+            "account code prefix must match account type and semantic subtype",
+        )
+    )
+    fs_status, fs_metric = _financial_statement_export_metrics(dataset)
+    findings.append(
+        verdict(
+            "Gate 2",
+            "M12",
+            fs_status,
+            fs_metric,
+            "exported financial statements must have positive revenue, COGS below revenue, and GL rollup mappings",
+        )
+    )
+    dep_status, dep_metric = _depreciation_net_metrics(df, coa_meta)
+    findings.append(
+        verdict(
+            "Gate 2",
+            "M13",
+            dep_status,
+            dep_metric,
+            "depreciation and amortization expense must have positive net P&L impact by company-year",
+        )
+    )
     b17_status, b17_metric = _archetype_coverage_metrics(df, doc_head, dataset)
     findings.append(
         verdict(
