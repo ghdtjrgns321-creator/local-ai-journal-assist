@@ -104,5 +104,14 @@ artifacts/
 # dev 측정 원시 덤프 (baseline 재실행 시 재생성, 대용량 — 커밋 금지)
 dev/active/**/rule_hits.csv
 
+# 아카이브 대용량 taxonomy/예외 덤프 (재생성물, 코드 참조 없음)
+docs/archive/completed/datasynth_contract_rule_truth_taxonomy_v126.csv
+docs/archive/completed/datasynth_hard_exception_reclassification_v126.csv
+
+# datasynth QG3 스크립트 출력 대용량 덤프 (review_datasynth_semantic_v1_accounting.py OUT_DIR)
+tests/datasynth_quality_gate3/results/**/accounting_llm_review_phase1_hits.csv
+tests/datasynth_quality_gate3/results/accounting_logic_extra_seed_20260514/reviews.csv
+tests/datasynth_quality_gate3/results/accounting_logic_extra_seed_20260514/samples.csv
+
 # 배포 시크릿 (basic auth 비밀번호 해시 — 서버에서 생성, 커밋 금지)
 deploy/nginx/.htpasswd
