@@ -80,7 +80,6 @@ PHASE1_RULE_IDS: tuple[str, ...] = (
     "L3-06",
     "L3-07",
     "L1-08",
-    "L3-08",
     "L4-03",
     "L4-04",
     "L3-09",
@@ -93,7 +92,7 @@ PHASE1_RULE_IDS: tuple[str, ...] = (
 )
 
 TOPIC_RULE_WHITELIST: dict[str, set[str]] = {
-    "ledger_integrity": {"L1-01", "L1-02", "L1-08", "L3-08"},
+    "ledger_integrity": {"L1-01", "L1-02", "L1-08"},
     "approval_control": {
         "L1-04",
         "L1-05",
@@ -114,7 +113,6 @@ TOPIC_RULE_WHITELIST: dict[str, set[str]] = {
         "L3-05",
         "L3-06",
         "L3-07",
-        "L3-08",
         "L3-11",
         "L4-05",
         "D02",

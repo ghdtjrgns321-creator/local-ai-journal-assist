@@ -25,7 +25,6 @@ RULE_TO_LABEL: dict[str, list[str]] = {
     "L3-06": ["AfterHoursPosting"],
     "L3-07": ["BackdatedEntry", "LatePosting"],
     "L1-08": ["WrongPeriod"],
-    "L3-08": ["MissingOrCorruptedDescription"],
     "L4-02": ["BenfordViolation"],
     "L4-03": ["UnusuallyHighAmount", "StatisticalOutlier"],
     "L4-04": ["UnusualAccountPair"],
@@ -39,8 +38,6 @@ RULE_TO_LABEL: dict[str, list[str]] = {
     "IC01": ["UnmatchedIntercompany"],
     "IC02": ["IntercompanyAmountMismatch"],
     "IC03": ["IntercompanyTimingMismatch"],
-    "GR01": ["CircularTransaction", "CircularIntercompany"],
-    "GR03": ["TransferPricingAnomaly"],
 }
 
 # NOTE:
@@ -99,8 +96,6 @@ RULE_TO_TRUTH_BASIS: dict[str, str] = {
     "IC01": "confirmed unmatched intercompany labels",
     "IC02": "amount-mismatch review candidates, evaluated against matching exception labels",
     "IC03": "timing-gap review candidates, evaluated against matching exception labels",
-    "GR01": "confirmed graph anomaly labels; graph_gr01_review_population is coverage only",
-    "GR03": "transfer-pricing review candidates, evaluated against confirmed anomaly labels",
     "L3-06": "after-hours-only anomaly labels",
     "L4-05": (
         "combined-context abnormal-hours behavior review universe; confirmed "
@@ -138,8 +133,6 @@ RULE_TO_TRUTH_DISPLAY: dict[str, str] = {
     "IC01": "UnmatchedIntercompany",
     "IC02": "IntercompanyAmountMismatch",
     "IC03": "IntercompanyTimingMismatch",
-    "GR01": "confirmed graph anomalies",
-    "GR03": "TransferPricingAnomaly",
     "L3-11": "cutoff review population",
     "L3-12": "work-scope concentration review population",
     "L4-05": "abnormal-hours behavior review",
@@ -200,8 +193,6 @@ RULE_TO_EVALUATION_NOTE: dict[str, str] = {
     "IC03": (
         "Phase 1 review candidate. Preserve recall; precision is handled by case priority/Phase 2."
     ),
-    "GR01": "Review population sidecar is not a confirmed-anomaly precision denominator.",
-    "GR03": "Graph review candidate. Preserve recall; confirmed judgement remains downstream.",
     "L3-11": (
         "Cutoff review rule. Long but reasonable delay controls may appear as raw "
         "hits and should be handled by case priority/Phase 2."
@@ -272,7 +263,6 @@ RULE_TO_TRACK: dict[str, str] = {
     "L3-06": "layer_c",
     "L3-07": "layer_c",
     "L1-08": "layer_c",
-    "L3-08": "layer_c",
     "L4-02": "benford",
     "L4-03": "layer_c",
     "L4-04": "layer_c",
@@ -283,8 +273,6 @@ RULE_TO_TRACK: dict[str, str] = {
     "IC01": "intercompany",
     "IC02": "intercompany",
     "IC03": "intercompany",
-    "GR01": "graph",
-    "GR03": "graph",
 }
 
 
@@ -455,7 +443,6 @@ RULE_TO_ACTION_LAYER: dict[str, str] = {
     "L3-06": "review_needed",
     "L3-07": "review_needed",
     "L1-08": "confirmed_issue",
-    "L3-08": "review_needed",
     "L4-02": "stat_outlier",
     "L4-03": "stat_outlier",
     "L4-04": "stat_outlier",
@@ -469,8 +456,6 @@ RULE_TO_ACTION_LAYER: dict[str, str] = {
     "IC01": "review_needed",
     "IC02": "review_needed",
     "IC03": "review_needed",
-    "GR01": "review_needed",
-    "GR03": "review_needed",
 }
 
 PHASE1_TRACKS: tuple[str, ...] = ("layer_a", "layer_b", "layer_c", "benford", "evidence")

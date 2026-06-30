@@ -109,7 +109,6 @@ RULE_CODES: dict[str, str] = {
     "L3-06": "After-hours Posting",
     "L3-07": "Posting-Document Date Gap",
     "L1-08": "Wrong Fiscal Period",
-    "L3-08": "Missing or Corrupted Description",
     "L4-02": "Benford Violation",
     "L4-03": "High Amount Outlier",
     "L4-04": "Rare Debit-Credit Account Pair",
@@ -146,8 +145,6 @@ RULE_CODES: dict[str, str] = {
     "EV03": "Evidence Amount Mismatch",
     "TB01": "Estimate Bias Drift",
     "TB02": "Estimate Range Extreme",
-    "GR01": "Circular Transaction Graph Signal",
-    "GR03": "Transfer Pricing Graph Signal",
     "NLP01": "Header-Account Semantic Mismatch",
     "NLP02": "Process-Account Semantic Mismatch",
     "NLP03": "Abnormal Description",
@@ -181,7 +178,6 @@ SEVERITY_MAP: dict[str, int] = {
     "L3-06": 2,
     "L3-07": 3,
     "L1-08": 4,
-    "L3-08": 1,
     "L4-02": 2,
     "L4-03": 3,
     "L4-04": 2,
@@ -218,8 +214,6 @@ SEVERITY_MAP: dict[str, int] = {
     "EV03": 3,
     "TB01": 4,
     "TB02": 3,
-    "GR01": 4,
-    "GR03": 4,
     "NLP01": 4,
     "NLP02": 3,
     "NLP03": 2,
@@ -325,7 +319,6 @@ DETECTOR_DISPLAY_ORDER: list[str] = [
     Layer.LAYER_B,
     Layer.LAYER_C,
     Layer.BENFORD,
-    Layer.DUPLICATE,
     Layer.INTERCOMPANY,
     Layer.RELATIONAL,
     Layer.EVIDENCE,
@@ -366,7 +359,6 @@ DETECTOR_PROFILES: dict[str, DetectorProfile] = {
         DetectorMaturity.PRODUCTION,
         True,
     ),
-    Layer.DUPLICATE: DetectorProfile(Layer.DUPLICATE, "Duplicate", DetectorMaturity.BETA, True),
     Layer.INTERCOMPANY: DetectorProfile(
         Layer.INTERCOMPANY,
         "Intercompany",
@@ -514,14 +506,14 @@ RULE_EXPLANATIONS: dict[str, RuleExplanation] = {
     "L1-06": RuleExplanation(
         rule_id="L1-06",
         plain_reason=(
-            "The entry shows a direct segregation-of-duties conflict through "
-            "a conflict marker or IT super-user business posting."
+            "The same user owns conflicting business functions in one entry "
+            "(toxic process combination derived from created_by + business_process)."
         ),
+        # sod_violation·sod_conflict_type 제거(2026-06-21): 구 주입 컬럼 방식 폐기.
+        # b07_segregation_of_duties 는 created_by+business_process 로 toxic 쌍을 직접 도출한다.
         used_columns=(
             "created_by",
             "business_process",
-            "sod_violation",
-            "sod_conflict_type",
             "user_persona",
             "source",
             "debit_amount",
@@ -606,11 +598,6 @@ RULE_EXPLANATIONS: dict[str, RuleExplanation] = {
         rule_id="L3-07",
         plain_reason=("The posting date and document date differ beyond the allowed threshold."),
         used_columns=("posting_date", "document_date"),
-    ),
-    "L3-08": RuleExplanation(
-        rule_id="L3-08",
-        plain_reason="The description is missing or clearly corrupted.",
-        used_columns=("line_text", "header_text"),
     ),
     "L3-09": RuleExplanation(
         rule_id="L3-09",
@@ -762,57 +749,11 @@ TOPSIDE_BONUS_RULES: list[tuple[str, list[tuple[str, str]]]] = [
     ("approval_bypass", [("L1-05", "layer_b"), ("L1-07", "layer_b")]),
     ("invalid_accounting_pattern", [("L1-03", "layer_a"), ("L4-04", "layer_c")]),
     ("high_amount", [("L4-03", "layer_c")]),
-    ("missing_or_corrupted_description", [("L3-08", "layer_c")]),
 ]
 
-BATCH_CORROBORATION_RULES: list[tuple[str, list[tuple[str, str]]]] = [
-    ("closing_or_cutoff", [("L3-04", "layer_c"), ("L3-07", "layer_c"), ("L1-08", "layer_c")]),
-    ("control_failure", [("L1-05", "layer_b"), ("L1-06", "layer_b"), ("L1-07", "layer_b")]),
-    ("amount_or_account", [("L4-03", "layer_c"), ("L4-04", "layer_c"), ("L3-10", "layer_c")]),
-    ("missing_or_corrupted_description", [("L3-08", "layer_c")]),
-    ("reversal_or_duplicate", [("L2-05", "layer_c"), ("L2-02", "layer_b")]),
-]
-
-WORK_SCOPE_CORROBORATION_RULES: list[tuple[str, list[tuple[str, str]]]] = [
-    (
-        "manual_or_control",
-        [
-            ("L3-02", "layer_b"),
-            ("L1-04", "layer_b"),
-            ("L1-05", "layer_b"),
-            ("L1-06", "layer_b"),
-            ("L1-07", "layer_b"),
-            ("L1-07-02", "layer_b"),
-        ],
-    ),
-    (
-        "sensitive_or_amount",
-        [("L3-10", "layer_b"), ("L4-03", "layer_c"), ("L4-04", "layer_c")],
-    ),
-    (
-        "closing_or_timing",
-        [
-            ("L3-04", "layer_c"),
-            ("L3-06", "layer_c"),
-            ("L3-07", "layer_c"),
-            ("L3-11", "evidence"),
-            ("L1-08", "layer_c"),
-        ],
-    ),
-    (
-        "duplicate_or_outflow",
-        [
-            ("L2-01", "layer_b"),
-            ("L2-02", "layer_b"),
-            ("L2-03", "layer_b"),
-            ("L2-05", "layer_c"),
-        ],
-    ),
-    (
-        "revenue_or_intercompany",
-        [("L4-01", "layer_b"), ("L3-03", "layer_b"), ("IC01", "intercompany")],
-    ),
-]
+# BATCH_CORROBORATION_RULES·WORK_SCOPE_CORROBORATION_RULES 제거(2026-06-21):
+# L4-06(배치)·L3-12(업무범위)는 PHASE1-2 family 귀속이라 PHASE1-1 row anomaly_score/risk_level
+# corroboration 승격을 폐기했다(score_aggregator 의 해당 함수도 제거).
 
 RISK_THRESHOLDS: dict[str, float] = {
     RiskLevel.HIGH: 0.50,

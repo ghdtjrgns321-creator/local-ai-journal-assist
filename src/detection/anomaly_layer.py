@@ -1,4 +1,4 @@
-"""L1-L4 anomaly-rule track orchestrator — L3-04~L3-08, L4-03~L4-06.
+"""L1-L4 anomaly-rule track orchestrator — L3-04~L3-07, L4-03~L4-06.
 
 룰 레지스트리를 순회하며 try/except로 격리 실행.
 한 룰 실패해도 나머지 계속 진행, 실패 룰은 skipped + warning 기록.
@@ -20,7 +20,6 @@ from src.detection.anomaly_rules_simple import (
     c03_after_hours_entry,
     c04_backdated_entry,
     c05_fiscal_period_mismatch,
-    c06_missing_or_corrupted_description,
     c08_amount_outlier,
     c10_suspense_account,
     c12_abnormal_hours_concentration,
@@ -41,9 +40,7 @@ _REQUIRED_COLUMNS = ["debit_amount", "credit_amount"]
 ANOMALY_RULE_EXPLANATIONS: dict[str, RuleExplanation] = {
     "L3-04": RuleExplanation(
         principle="Period-end postings should be supported by clear cutoff rationale.",
-        violation_reason=(
-            "The entry occurs near period end or period start."
-        ),
+        violation_reason=("The entry occurs near period end or period start."),
         audit_next_action=(
             "Inspect cutoff support and corroborating amount, approval, source, or account context."
         ),
@@ -83,24 +80,17 @@ ANOMALY_RULE_EXPLANATIONS: dict[str, RuleExplanation] = {
         ),
         reference="PCAOB AS 1105; ISA 240",
     ),
-    "L3-08": RuleExplanation(
-        principle="Narrative descriptions should provide enough context for audit review.",
-        violation_reason="The line or header description is missing, weak, or corrupted.",
-        audit_next_action=(
-            "Inspect source support and combine with amount, timing, account, or approval signals."
-        ),
-        reference="PCAOB AS 1105; ISA 500",
-    ),
     "L4-03": RuleExplanation(
-        principle="Unusual amounts should be evaluated against the relevant population.",
+        principle="Journal entries exceeding performance materiality warrant auditor review.",
         violation_reason=(
-            "The amount is a statistical outlier under the configured population model."
+            "The transaction amount exceeds the performance materiality threshold derived "
+            "from the entity's PBT or revenue for the fiscal year."
         ),
         audit_next_action=(
             "Inspect supporting documents and compare peer transactions in the same "
             "account/process."
         ),
-        reference="ISA 520; PCAOB AS 2305",
+        reference="ISA 320; PCAOB AS 2101",
     ),
     "L4-04": RuleExplanation(
         principle="Rare account pairings can indicate unusual transaction substance.",
@@ -148,7 +138,7 @@ ANOMALY_RULE_EXPLANATIONS: dict[str, RuleExplanation] = {
 
 
 class AnomalyDetector(BaseDetector):
-    """L3-04~L3-08, L4-03~L4-05 이상 징후 탐지. 보조 레이어 (가중치 0.25).
+    """L3-04~L3-07, L4-03~L4-05 이상 징후 탐지. 보조 레이어 (가중치 0.25).
 
     L4-02(Benford)은 BenfordDetector 독립 트랙으로 분리.
     """
@@ -166,7 +156,7 @@ class AnomalyDetector(BaseDetector):
         return "layer_c"
 
     def detect(self, df: pd.DataFrame) -> DetectionResult:
-        """L3-04~L3-08, L4-03~L4-05 순차 실행. 각 룰은 try/except로 격리."""
+        """L3-04~L3-07, L4-03~L4-05 순차 실행. 각 룰은 try/except로 격리."""
         start = time.perf_counter()
         warnings: list[str] = []
 
@@ -230,17 +220,19 @@ class AnomalyDetector(BaseDetector):
                     "policy": patterns.get("fiscal_period_mismatch_policy", {}),
                 },
             ),
-            ("L3-08", c06_missing_or_corrupted_description, {}),
             # L4-02(Benford)은 BenfordDetector 독립 트랙으로 분리
             (
                 "L4-03",
                 c08_amount_outlier,
                 {
-                    "zscore_threshold": s.zscore_threshold,
-                    "min_amount_quantile": s.l403_min_amount_quantile,
+                    "materiality_config": patterns.get("l403_materiality", {}),
                 },
             ),
-            ("L4-04", c09_rare_account_pair, {"percentile": s.account_pair_rare_percentile}),
+            (
+                "L4-04",
+                c09_rare_account_pair,
+                {"cadence_per_quarter": s.rare_account_pair_cadence_per_quarter},
+            ),
             (
                 "L3-09",
                 c10_suspense_account,
@@ -327,11 +319,7 @@ class AnomalyDetector(BaseDetector):
                 rule_id=rule_id,
                 flagged_count=int(flagged.sum()),
                 total_count=len(df),
-                detail=(
-                    self._l307_detail(df, flagged)
-                    if rule_id == "L3-07"
-                    else self._format_rule_detail(rule_id, flagged)
-                ),
+                detail=self._format_rule_detail(rule_id, flagged),
             )
             for rule_id, flagged in rule_results.items()
         ]
@@ -367,25 +355,6 @@ class AnomalyDetector(BaseDetector):
             return base_score.copy()
         return flagged.astype(float) * severity_score
 
-    def _l307_detail(self, df: pd.DataFrame, flagged: pd.Series) -> str | None:
-        """Summarize L3-07 direction without changing score columns."""
-        if "days_backdated" not in df.columns:
-            return None
-
-        days = pd.to_numeric(df["days_backdated"], errors="coerce")
-        flagged_mask = flagged.reindex(df.index, fill_value=False).astype(bool)
-        flagged_days = days[flagged_mask]
-        if flagged_days.empty:
-            return None
-
-        late_count = int((flagged_days > 0).sum())
-        forward_count = int((flagged_days < 0).sum())
-        return (
-            f"late_posting={late_count}, "
-            f"forward_date_gap={forward_count}, "
-            f"threshold_days={self._settings.backdated_threshold_days}"
-        )
-
     def _format_rule_detail(self, rule_id: str, flagged: pd.Series) -> str | None:
         """Render optional rule detail from attrs for surfaced rules."""
         if not hasattr(flagged, "attrs"):
@@ -393,6 +362,8 @@ class AnomalyDetector(BaseDetector):
         breakdown = flagged.attrs.get("breakdown")
         if not breakdown:
             return None
+        if rule_id == "L3-07":
+            return f"threshold_days={breakdown.get('threshold_days')}"
         if rule_id == "L3-09":
             return f"threshold_days={breakdown.get('base_threshold_days')}"
         if rule_id == "L2-05":

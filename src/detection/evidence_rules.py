@@ -135,19 +135,16 @@ def ev01_missing_evidence(
 def ev02_cutoff_violation(
     df: pd.DataFrame,
     *,
-    revenue_cutoff_days: int = 5,
-    expense_cutoff_days: int = 7,
-    period_end_weight: float = 1.5,
-    max_day_diff: int = 30,
-    use_business_days: bool = True,
-    custom_holidays: list[str] | None = None,
     revenue_account_prefixes: list[str] | None = None,
     expense_account_prefixes: list[str] | None = None,
 ) -> pd.Series:
-    """L3-11 컷오프 검증.
+    """L3-11 기말 컷오프 불일치 (binary).
 
-    Why: 감사기준서 315호/330호 — K-IFRS 15 수익인식 기준.
-         posting_date와 delivery_date 간 차이가 임계 초과 시 기간귀속 오류 의심.
+    Why: 감사기준서 315호/330호 — K-IFRS 15 수익인식 기간귀속.
+         통제이전 시점(delivery_date)이 속한 회계연도와 인식 회계연도(fiscal_year,
+         없으면 posting_date 연도로 폴백)가 다르면 결산일 경계를 넘긴 기간귀속
+         의심 → 발화 1.0. 같은 연도 안의 처리지연은 일수가 커도 0.0.
+         일수 차이·기말 가중·강도 차등은 폐기(정황·조합은 통합점수체계 소관).
     """
     if revenue_account_prefixes is None:
         revenue_account_prefixes = ["4"]
@@ -155,50 +152,29 @@ def ev02_cutoff_violation(
         expense_account_prefixes = ["5"]
 
     scores = pd.Series(0.0, index=df.index)
-    if len(df) == 0:
-        return scores
-
-    if "delivery_date" not in df.columns or "posting_date" not in df.columns:
+    if len(df) == 0 or "delivery_date" not in df.columns or "posting_date" not in df.columns:
+        scores.attrs["breakdown"] = {}
+        scores.attrs["row_annotations"] = {}
         return scores
 
     posting = pd.to_datetime(df["posting_date"], errors="coerce")
     delivery = pd.to_datetime(df["delivery_date"], errors="coerce")
 
-    # Why: np.busday_count는 NaT 1개라도 있으면 ValueError → 유효 행만 필터링
-    valid_mask = posting.notna() & delivery.notna()
-    if not valid_mask.any():
-        return scores
-
-    posting_valid = posting[valid_mask]
-    delivery_valid = delivery[valid_mask]
-
-    # ── 날짜 차이 계산 ──
-    if use_business_days:
-        try:
-            # Why: busday_count는 numpy datetime64 필요
-            p_np = posting_valid.values.astype("datetime64[D]")
-            d_np = delivery_valid.values.astype("datetime64[D]")
-            # Why: holidays=None은 ValueError → 빈 배열 또는 파라미터 생략
-            kwargs: dict = {}
-            if custom_holidays:
-                kwargs["holidays"] = np.array(
-                    [np.datetime64(h) for h in custom_holidays],
-                    dtype="datetime64[D]",
-                )
-            day_diff = np.abs(np.busday_count(d_np, p_np, **kwargs))
-        except Exception:
-            # Why: busday_count 실패 시 달력일로 fallback
-            logger.warning("np.busday_count 실패 — 달력일로 fallback")
-            day_diff = (posting_valid - delivery_valid).dt.days.abs().values
+    # ── 인식 회계연도 해소: fiscal_year 우선, 없으면 posting_date 연도로 폴백 ──
+    posting_year = posting.dt.year
+    if "fiscal_year" in df.columns:
+        fiscal_year = pd.Series(pd.to_numeric(df["fiscal_year"], errors="coerce"), index=df.index)
+        recognition_year = fiscal_year.where(fiscal_year.notna(), posting_year)
     else:
-        day_diff = (posting_valid - delivery_valid).dt.days.abs().values
+        recognition_year = posting_year
+    delivery_year = delivery.dt.year
 
-    day_diff_series = pd.Series(0.0, index=df.index)
-    day_diff_series.loc[valid_mask] = day_diff
+    # Why: 통제이전일·인식연도가 모두 있어야 경계 판정 가능 (없으면 미검증)
+    testable = delivery.notna() & recognition_year.notna()
 
-    # ── 매출/비용 분류 ──
+    # ── 매출/비용 분류 (동일 판정식, account_type 구분용) ──
     if "is_revenue_account" in df.columns:
-        is_revenue = df["is_revenue_account"].fillna(False)
+        is_revenue = df["is_revenue_account"].fillna(False).astype(bool)
     elif "gl_account" in df.columns:
         is_revenue = df["gl_account"].astype(str).str[:1].isin(revenue_account_prefixes)
     else:
@@ -208,81 +184,58 @@ def ev02_cutoff_violation(
         is_expense = df["gl_account"].astype(str).str[:1].isin(expense_account_prefixes)
     else:
         is_expense = pd.Series(False, index=df.index)
+    # Why: 동일 행이 양쪽으로 분류되면 매출 우선
+    is_expense = is_expense & ~is_revenue
+    in_scope = is_revenue | is_expense
 
-    # ── 임계 초과 시 점수 부여 ──
-    # Why: max_day_diff를 분모로 정규화 → 0.0~1.0
-    max_dd = max(max_day_diff, 1)
-    revenue_score = ((day_diff_series > revenue_cutoff_days) & is_revenue & valid_mask).astype(
-        float
-    ) * (day_diff_series / max_dd)
+    # ── 판정: 회계연도 경계 넘김 = binary 발화 ──
+    boundary_cross = (testable & in_scope & (delivery_year != recognition_year)).fillna(False)
+    scores.loc[boundary_cross] = 1.0
 
-    expense_score = ((day_diff_series > expense_cutoff_days) & is_expense & valid_mask).astype(
-        float
-    ) * (day_diff_series / max_dd)
-
-    revenue_flag = (day_diff_series > revenue_cutoff_days) & is_revenue & valid_mask
-    expense_flag = (day_diff_series > expense_cutoff_days) & is_expense & valid_mask
-    scores = _np_max(revenue_score, expense_score)
-
-    # ── 기말 가중 ──
-    period_end = pd.Series(False, index=df.index)
-    if "is_period_end" in df.columns:
-        period_end = df["is_period_end"].fillna(False)
-        scores.loc[period_end] *= period_end_weight
-
-    scores = scores.clip(0.0, 1.0).fillna(0.0)
-    flagged = scores.gt(0)
-    revenue_mask = flagged & revenue_flag
-    expense_mask = flagged & ~revenue_mask & expense_flag
-    period_end_weighted = flagged & period_end
-    missing_event_date = posting.isna() | delivery.isna()
+    revenue_flag = boundary_cross & is_revenue
+    expense_flag = boundary_cross & is_expense
+    missing_event_date = delivery.isna() | recognition_year.isna()
 
     reason_counts = {
-        "revenue_cutoff_gap": int(revenue_mask.sum()),
-        "expense_cutoff_gap": int(expense_mask.sum()),
+        "revenue_cutoff_gap": int(revenue_flag.sum()),
+        "expense_cutoff_gap": int(expense_flag.sum()),
     }
     reason_counts = {key: value for key, value in reason_counts.items() if value > 0}
     breakdown = {
-        "cutoff_review_rows": int(flagged.sum()),
-        "revenue_cutoff_rows": int(revenue_mask.sum()),
-        "expense_cutoff_rows": int(expense_mask.sum()),
-        "period_end_weighted_rows": int(period_end_weighted.sum()),
+        "cutoff_review_rows": int(boundary_cross.sum()),
+        "revenue_cutoff_rows": int(revenue_flag.sum()),
+        "expense_cutoff_rows": int(expense_flag.sum()),
         "missing_event_date_rows": int(missing_event_date.sum()),
-        "max_day_diff": int(max_dd),
-        "revenue_cutoff_days": int(revenue_cutoff_days),
-        "expense_cutoff_days": int(expense_cutoff_days),
-        "use_business_days": bool(use_business_days),
         "reason_counts": reason_counts,
     }
     if "document_id" in df.columns:
         breakdown.update(
             {
-                "cutoff_review_docs": _nunique_documents(df, flagged),
-                "revenue_cutoff_docs": _nunique_documents(df, revenue_mask),
-                "expense_cutoff_docs": _nunique_documents(df, expense_mask),
-                "period_end_weighted_docs": _nunique_documents(df, period_end_weighted),
+                "cutoff_review_docs": _nunique_documents(df, boundary_cross),
+                "revenue_cutoff_docs": _nunique_documents(df, revenue_flag),
+                "expense_cutoff_docs": _nunique_documents(df, expense_flag),
                 "missing_event_date_docs": _nunique_documents(df, missing_event_date),
             }
         )
 
+    # Why: 달력일 차는 참고 사실값으로만 기록 — 점수·우선순위를 구동하지 않는다
+    day_diff_ref = (posting - delivery).dt.days.abs()
+
     row_annotations: dict[int, dict[str, object]] = {}
-    for idx in df.index[flagged]:
-        if bool(revenue_mask.loc[idx]):
+    for idx in df.index[boundary_cross]:
+        if bool(revenue_flag.loc[idx]):
             reason_code = "revenue_cutoff_gap"
-            cutoff_days = revenue_cutoff_days
             account_type = "revenue"
         else:
             reason_code = "expense_cutoff_gap"
-            cutoff_days = expense_cutoff_days
             account_type = "expense"
+        diff_val = day_diff_ref.loc[idx]
         row_annotations[int(idx)] = {
             "reason_code": reason_code,
-            "score": float(scores.loc[idx]),
-            "day_diff": float(day_diff_series.loc[idx]),
-            "cutoff_days": int(cutoff_days),
             "account_type": account_type,
-            "period_end_weighted": bool(period_end.loc[idx]),
-            "use_business_days": bool(use_business_days),
+            "delivery_year": int(delivery_year.loc[idx]),
+            "recognition_year": int(recognition_year.loc[idx]),
+            "day_diff": float(diff_val) if pd.notna(diff_val) else None,
         }
 
     scores.attrs["breakdown"] = breakdown

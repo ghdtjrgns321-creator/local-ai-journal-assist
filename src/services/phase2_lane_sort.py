@@ -6,9 +6,6 @@ lane 내부 정렬은 RRF 를 쓰지 않는다 (Phase C 측정에서 internal RR
 정렬 기준 (desc, lexicographic):
   1. evidence_tier_weight (strong=3 > moderate=2 > weak=1 > ml_quantile=0)
   2. family-specific secondary dim (family 별 의미 분리, 비해당 family 는 0)
-     - duplicate: pair_evidence_tier_weight
-         same_partner + reference/text/amount similarity 기반 categorical tier.
-         duplicate row score 가 q95~q99 cap 으로 동률 bucket 큰 문제 분해용.
      - intercompany: ic_role_priority (2026-05-25 추가)
          reciprocal_flow=5 > amount_mismatch=4 > no_candidate=3 > timing_gap=2
          > weak_contract=1. 매핑은 ``_IC_ROLE_PRIORITY`` 참조.
@@ -97,9 +94,7 @@ def sort_lane(
         # family-specific 보조 sort key (단일 secondary slot, family 별 의미 분리).
         # 비해당 family entry 는 0 으로 두어 sort 영향 없음.
         secondary_dim: float
-        if family == "duplicate":
-            secondary_dim = float(int(entry.get("pair_evidence_tier_weight") or 0))
-        elif family == "intercompany":
+        if family == "intercompany":
             secondary_dim = float(_ic_role_priority(entry))
         elif family == "relational":
             # Why: R05/R06 연속 raw score depth (0~1) 로 plateau 안 tie-break.

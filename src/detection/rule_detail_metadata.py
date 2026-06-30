@@ -107,10 +107,10 @@ CANONICALIZATION_MAP = {
 }
 
 LOCKED_NO_STANDALONE_COPY_RULE_IDS = frozenset(
-    {"L3-05", "L3-06", "L3-08", "L3-10", "L3-12", "L4-05", "L4-06"}
+    {"L3-05", "L3-06", "L3-10", "L3-12", "L4-05", "L4-06"}
 )
 LOCKED_CONTEXT_ROW_DETAIL_RULE_IDS = frozenset(
-    {"L3-03", "L3-05", "L3-06", "L3-08", "L3-10", "L3-12", "L4-05", "L4-06"}
+    {"L3-03", "L3-05", "L3-06", "L3-10", "L3-12", "L4-05", "L4-06"}
 )
 
 CANONICAL_TRANSACTION_RULE_IDS = (
@@ -134,7 +134,6 @@ CANONICAL_TRANSACTION_RULE_IDS = (
     "L3-05",
     "L3-06",
     "L3-07",
-    "L3-08",
     "L3-09",
     "L3-10",
     "L3-11",
@@ -603,26 +602,6 @@ RULE_DETAIL_METADATA_REGISTRY: dict[str, RuleDetailMetadata] = {
             derived=("date_gap_days", "difference_value", "display_label"),
         ),
     ),
-    "L3-08": _entry(
-        "L3-08",
-        presenter_surface=PresenterSurface.CONTEXT_BADGE,
-        final_topic="ledger_integrity",
-        secondary_topics=("closing_timing",),
-        scoring_role=ScoringRole.BOOSTER,
-        standalone_rankable=False,
-        allow_row_violation_detail=True,
-        allow_standalone_violation_copy=False,
-        title="Weak description context",
-        tone="context_only",
-        column_sources=_transaction_columns(
-            "line_text",
-            "header_text",
-            "gl_account",
-            "source",
-            derived=("text_quality_flag", "signal_status"),
-        ),
-        conflict_note="Locked context rule; standalone copy forbidden.",
-    ),
     "L3-09": _entry(
         "L3-09",
         final_topic="account_logic",
@@ -650,7 +629,7 @@ RULE_DETAIL_METADATA_REGISTRY: dict[str, RuleDetailMetadata] = {
             "created_by",
             "approved_by",
             "source",
-            derived=("account_family", "sensitive_account_touch", "priority_case"),
+            derived=("match_type", "matched_value", "matched_group"),
         ),
         conflict_note="Locked context rule; standalone copy forbidden.",
     ),
@@ -723,8 +702,7 @@ RULE_DETAIL_METADATA_REGISTRY: dict[str, RuleDetailMetadata] = {
             ),
         ),
         conflict_note=(
-            "PHASE1-2 family(Benford 모집단통계)로 이관 — "
-            "canonical L1~L4 count 제외(2026-06-15)."
+            "PHASE1-2 family(Benford 모집단통계)로 이관 — canonical L1~L4 count 제외(2026-06-15)."
         ),
     ),
     "Benford": _entry(
@@ -943,60 +921,6 @@ RULE_DETAIL_METADATA_REGISTRY: dict[str, RuleDetailMetadata] = {
         ),
         conflict_note="Macro finding, excluded from L1-L4 transaction count.",
     ),
-    "GR01": _entry(
-        "GR01",
-        status=RuleStatus.SIDECAR,
-        presenter_surface=PresenterSurface.GRAPH_SIDECAR,
-        final_topic="intercompany_cycle",
-        scoring_role=ScoringRole.MACRO_ONLY,
-        standalone_rankable=False,
-        include_in_l1_l4_transaction_count=False,
-        allow_standalone_violation_copy=False,
-        allow_topic_seed=False,
-        title="Intercompany graph cycle signal",
-        tone="graph_context",
-        column_sources=_columns(
-            ("company_code",),
-            ("trading_partner", "reference", "posting_date", "debit_amount", "credit_amount"),
-            sidecar=(
-                "target_document_id",
-                "graph_finding_id",
-                "path_nodes",
-                "path_edges",
-                "cycle_length",
-                "graph_score",
-                "sidecar_role",
-            ),
-        ),
-        conflict_note="Graph sidecar, excluded from v1 transaction detail.",
-    ),
-    "GR03": _entry(
-        "GR03",
-        status=RuleStatus.SIDECAR,
-        presenter_surface=PresenterSurface.GRAPH_SIDECAR,
-        final_topic="intercompany_cycle",
-        scoring_role=ScoringRole.MACRO_ONLY,
-        standalone_rankable=False,
-        include_in_l1_l4_transaction_count=False,
-        allow_standalone_violation_copy=False,
-        allow_topic_seed=False,
-        title="Intercompany graph asymmetry signal",
-        tone="graph_context",
-        column_sources=_columns(
-            ("company_code",),
-            ("trading_partner", "reference", "posting_date", "debit_amount", "credit_amount"),
-            sidecar=(
-                "target_document_id",
-                "graph_finding_id",
-                "path_nodes",
-                "path_edges",
-                "asymmetry_metric",
-                "graph_score",
-                "sidecar_role",
-            ),
-        ),
-        conflict_note="Graph sidecar, excluded from v1 transaction detail.",
-    ),
 }
 
 
@@ -1113,8 +1037,8 @@ def validate_rule_detail_metadata_registry(schema_path: Path | None = None) -> l
             missing = ", ".join(sorted(missing_required))
             errors.append(f"{rule_id}: required ledger columns absent from schema: {missing}")
 
-    if len(canonical_seen) != 30:
-        errors.append(f"canonical transaction/detail count is {len(canonical_seen)}, expected 30")
+    if len(canonical_seen) != 29:
+        errors.append(f"canonical transaction/detail count is {len(canonical_seen)}, expected 29")
     if "Benford" in canonical_seen:
         errors.append("Benford counted separately from L4-02")
     if {"L2-03a", "L2-03b", "L2-03c", "L2-03d"} & canonical_seen:

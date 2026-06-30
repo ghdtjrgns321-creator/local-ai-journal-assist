@@ -100,12 +100,8 @@ class EvidenceDetector(BaseDetector):
                 "L3-11",
                 ev02_cutoff_violation,
                 {
-                    "revenue_cutoff_days": s.ev_revenue_cutoff_days,
-                    "expense_cutoff_days": s.ev_expense_cutoff_days,
-                    "period_end_weight": s.ev_cutoff_period_end_weight,
-                    "max_day_diff": s.ev_cutoff_max_day_diff,
-                    "use_business_days": s.ev_cutoff_use_business_days,
-                    "custom_holidays": s.custom_holidays or None,
+                    # Why: binary 회계연도 경계 판정 — 일수 임계·기말 가중·영업일 폐기.
+                    #      매출/비용 분류 prefix만 입력으로 유지(§3).
                     # Why: evidence 섹션 우선, 없으면 patterns 섹션 fallback (비대칭 방지)
                     "revenue_account_prefixes": (
                         evidence_cfg.get("revenue_account_prefixes")

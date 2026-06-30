@@ -39,7 +39,6 @@ import pandas as pd
 from sklearn.metrics import f1_score
 
 from config.settings import PROJECT_ROOT, get_settings
-from src.detection.duplicate_detector import DuplicateDetector
 from src.detection.ensemble_detector import EnsembleDetector
 from src.detection.intercompany_matcher import IntercompanyMatcher
 from src.detection.relational_detector import RelationalDetector
@@ -80,7 +79,6 @@ _DEFAULT_MODEL_FAMILIES = (
     "unsupervised",
     "timeseries",
     "relational",
-    "duplicate",
     "intercompany",
 )
 DEFAULT_HOLD_OUT_SCENARIOS = (
@@ -89,7 +87,7 @@ DEFAULT_HOLD_OUT_SCENARIOS = (
 )
 _PHASE2_TRAINING_MODE = "unsupervised_autoencoder_mvp"
 _PHASE2_RULE_INPUT_DIM = 22
-_RULE_STYLE_FAMILIES = {"timeseries", "relational", "duplicate", "intercompany"}
+_RULE_STYLE_FAMILIES = {"timeseries", "relational", "intercompany"}
 _SEQUENCE_CONTEXT_COLUMNS = ("document_id", "created_by", "posting_date", "posting_time")
 _RULE_STYLE_REQUIRED_COLUMNS = {
     "timeseries": ("posting_date", "auxiliary_account_number"),
@@ -101,13 +99,6 @@ _RULE_STYLE_REQUIRED_COLUMNS = {
         "gl_account",
         "is_intercompany",
         "document_id",
-    ),
-    "duplicate": (
-        "gl_account",
-        "posting_date",
-        "debit_amount",
-        "credit_amount",
-        "line_text",
     ),
     "intercompany": (
         "is_intercompany",
@@ -139,12 +130,6 @@ _RULE_STYLE_SUB_DETECTORS = {
         "user_account_degree_spike",
         "dormant_partner_reactivation",
     ),
-    "duplicate": (
-        "exact_duplicate_amount",
-        "fuzzy_duplicate",
-        "split_transaction",
-        "time_shifted_duplicate",
-    ),
     "intercompany": (
         "unmatched_intercompany",
         "amount_mismatch",
@@ -154,7 +139,6 @@ _RULE_STYLE_SUB_DETECTORS = {
 _RULE_STYLE_METRIC_NAMES = {
     "timeseries": "burst_detection_rate",
     "relational": "new_counterparty_precision",
-    "duplicate": "fuzzy_match_f1",
     "intercompany": "ic_match_completeness",
 }
 _DEFAULT_FAMILY_MIN_COMPLETED_TRIALS = {
@@ -164,7 +148,6 @@ _DEFAULT_FAMILY_MIN_COMPLETED_TRIALS = {
     "sequence": 2,
     "timeseries": 2,
     "relational": 2,
-    "duplicate": 2,
     "intercompany": 2,
     "stacking": 2,
 }
@@ -175,7 +158,6 @@ _DEFAULT_FAMILY_MIN_METRIC = {
     "sequence": 0.10,
     "timeseries": 0.05,
     "relational": 0.05,
-    "duplicate": 0.05,
     "intercompany": 0.05,
     "stacking": 0.10,
 }
@@ -193,7 +175,6 @@ _DEFAULT_DETECTOR_FACTORIES = {
     "sequence": SequenceDetector,
     "timeseries": TimeseriesDetector,
     "relational": RelationalDetector,
-    "duplicate": DuplicateDetector,
     "intercompany": IntercompanyMatcher,
     "stacking": EnsembleDetector,
 }
@@ -204,7 +185,6 @@ _PROMOTED_TRACK_MAP = {
     "bilstm_sequence": "ml_sequence",
     "timeseries": "timeseries",
     "relational": "relational",
-    "duplicate": "duplicate",
     "intercompany": "intercompany",
     "stacking_meta": "ensemble",
 }
@@ -216,7 +196,6 @@ _FAMILY_TO_CANONICAL_MODEL = {
     "sequence": "bilstm_sequence",
     "timeseries": "timeseries",
     "relational": "relational",
-    "duplicate": "duplicate",
     "intercompany": "intercompany",
     "stacking": "stacking_meta",
 }
@@ -324,22 +303,6 @@ _DEFAULT_SEARCH_PRESETS = {
                 "rel_new_cp_lookback_days": 60,
                 "rel_new_cp_large_quantile": 0.95,
                 "rel_dormant_inactive_days": 240,
-            },
-        },
-    ),
-    "duplicate": (
-        {
-            "name": "balanced",
-            "settings_updates": {
-                "duplicate_fuzzy_threshold": 80,
-                "duplicate_time_window_days": 7,
-            },
-        },
-        {
-            "name": "strict",
-            "settings_updates": {
-                "duplicate_fuzzy_threshold": 88,
-                "duplicate_time_window_days": 3,
             },
         },
     ),
@@ -2125,7 +2088,6 @@ def _build_promotion_policy(trials: list[Phase2TrialResult]) -> dict[str, Any]:
             "unsupervised",
             "timeseries",
             "relational",
-            "duplicate",
             "intercompany",
         ],
         "eligible_statuses": [Phase2TrainingStatus.COMPLETED.value],

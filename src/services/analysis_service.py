@@ -42,7 +42,6 @@ def make_phase_settings(
     updates = {
         "enable_variance_detection": True,
         "enable_relational_detection": False,
-        "enable_graph_detection": False,
         "enable_nlp_detection": False,
         "enable_access_audit_detection": False,
         "enable_evidence_detection": True,

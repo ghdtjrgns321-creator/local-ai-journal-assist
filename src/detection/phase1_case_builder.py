@@ -19,7 +19,7 @@ import pandas as pd
 from config.settings import PROJECT_ROOT, AuditSettings
 from src.detection.base import DetectionResult
 from src.detection.boolean_utils import bool_column, coerce_bool_value
-from src.detection.constants import BATCH_CORROBORATION_RULES, SEVERITY_MAP, TOPSIDE_BONUS_RULES
+from src.detection.constants import SEVERITY_MAP, TOPSIDE_BONUS_RULES
 from src.detection.phase1_rule_catalog import (
     EVIDENCE_QUEUE_MAP as _EVIDENCE_QUEUE_MAP,
 )
@@ -47,6 +47,7 @@ from src.detection.rule_detail_metadata import (
     get_rule_detail_metadata,
 )
 from src.detection.rule_scoring import (
+    OFF_TIME_SET,
     RULE_SCORING_REGISTRY,
     TOPIC_REGISTRY,
     normalize_rule_evidence,
@@ -73,24 +74,24 @@ from src.services.phase2_ref_pseudonymize import hash_ref_key
 
 SCHEMA_VERSION = "1.0.0"
 
-# OFF-TIME 보조축: 근무시간 외 입력 신호 묶음 (주말·공휴일 | 심야 | 작성자 비정상시간 집중).
-# tier 게이트에는 참여하지 않으며 within-tier 정렬·UI 표시 전용이다.
-# 근거 SoT: docs/spec/HIGH_COMBO_GROUNDING.md §2(5), PHASE1_TIER_SCORING_SPEC.md §4.
-# 기간귀속(L3-04 기말·L3-11 컷오프)은 off-time이 아니므로 절대 포함하지 않는다.
-OFF_TIME_SET = {"L3-05", "L3-06", "L4-05"}
+# OFF-TIME 룰별 시점심각도(뱃지/UI 표시 전용) 가중치. OFF_TIME_SET(rule_scoring 단일 출처)과
+# 키가 반드시 일치해야 한다 — 아래 모듈 가드가 import 시 드리프트를 차단한다. tier 게이트·점수
+# 병합·within-tier 정렬에 미참여(현행 _tier_sort_score 미포함, 정렬 반영은 PHASE1-2 구현 예정).
+# 대시보드 "시점심각도" 컬럼 표시용. high(2): L3-05 주말·L4-05 작성자집중 / med(1): L3-06 심야.
+# 근거 SoT: HIGH_COMBO_GROUNDING §2(5), PHASE1_TIER_SCORING_SPEC §4.
+_TIME_SEVERITY_WEIGHTS: dict[str, int] = {"L3-05": 2, "L4-05": 2, "L3-06": 1}
+assert set(_TIME_SEVERITY_WEIGHTS) == set(OFF_TIME_SET), (
+    "_TIME_SEVERITY_WEIGHTS 키가 OFF_TIME_SET 과 어긋남 — OFF-TIME 멤버 변경 시 동기화 필요"
+)
 
 
 def compute_time_severity_score(fired_rule_ids: set[str]) -> int:
     """case가 발화한 룰ID 집합으로 OFF-TIME 보조축 점수를 계산한다.
 
-    high(2점): L3-05(주말·공휴일) 또는 L4-05(작성자 집중)
-    med(1점) : L3-06(심야)
     합산(상한 없음). 금액·시각 임계·연도 리터럴 미사용 — 룰ID 발화 여부만 본다.
     """
-    return (
-        (2 if "L3-05" in fired_rule_ids else 0)
-        + (2 if "L4-05" in fired_rule_ids else 0)
-        + (1 if "L3-06" in fired_rule_ids else 0)
+    return sum(
+        weight for rule_id, weight in _TIME_SEVERITY_WEIGHTS.items() if rule_id in fired_rule_ids
     )
 
 
@@ -139,8 +140,6 @@ _MACRO_FINDING_RULES = {"L4-02", "D01", "D02"}
 # 데이터 품질 문제다. 위험 큐(topic/tier/priority)에서 분리해 별도 트랙으로만 보여준다.
 # macro 와 동일하게 case_hits 에서 제외 → topic·tier·priority 기여 0. 별도 수집은
 # _build_data_integrity_findings 가 raw 탐지 결과에서 직접 한다. L1-08(기간불일치)은 위험 큐 잔류.
-# L3-08(적요 결손)은 데이터 품질이지만 fraud combo(고액+기말+적요없음 = period_end_adjustment_high
-# 의 weak-description 다리) 보강 신호라 위험 큐에 잔류한다(2026-06-15 사용자 결정). 데이터 트랙 제외.
 _DATA_INTEGRITY_TRACK_RULES = {"L1-01", "L1-02", "L1-03"}
 _DUAL_INTEGRITY_TRACK_RULES = {"L1-08"}
 
@@ -162,7 +161,6 @@ _DOCUMENT_UNIT_RULES = {
     "L3-05",
     "L3-06",
     "L3-07",
-    "L3-08",
     "L3-09",
     "L3-10",
     "L3-11",
@@ -171,8 +169,24 @@ _DOCUMENT_UNIT_RULES = {
     "L4-04",
 }
 
-_FLOW_UNIT_RULES = {"L2-02", "L2-03", "L2-05", "IC01", "IC02", "IC03", "GR01", "GR03"}
-_REVIEW_POPULATION_RULES = {"L4-02", "D01", "D02", "L3-12", "L4-05", "L4-06"}
+# IC01-03·GR01/03 제거(2026-06-21): PHASE1-2 family 귀속 — flow unit case 미생성(완전 소멸).
+_FLOW_UNIT_RULES = {"L2-02", "L2-03", "L2-05"}
+# transaction case 생성에서 제외하는 룰(각 사유 상이):
+# L4-02·D01·D02=macro finding, L3-12=사용자 업무범위, L4-06=배치 모집단, L4-05=OFF-TIME 작성자 집계,
+# IC01-03·GR01/03=PHASE1-2 family(2026-06-21 완전 소멸). IC/GR 은 sidecar surface 라
+# can_seed_case=True 경로로 빈 case group 을 만든 뒤 primary_topic=None 으로 버려지던 낭비가 있어,
+# 여기 추가해 hits 적재 단계에서 선제 제외한다(score_aggregator IC corroboration 은 단계A에서 제거됨).
+_REVIEW_POPULATION_RULES = {
+    "L4-02",
+    "D01",
+    "D02",
+    "L3-12",
+    "L4-05",
+    "L4-06",
+    "IC01",
+    "IC02",
+    "IC03",
+}
 
 _FLOW_ID_SCHEMA_VERSION = "p1_flow_v1"
 _DUPLICATE_DETAIL_RULE_IDS = ("L2-03", "L2-03a", "L2-03b", "L2-03c", "L2-03d", "L2-03e")
@@ -380,11 +394,6 @@ _RULE_EXPRESSION_METADATA: dict[str, dict[str, Any]] = {
         "focus": "posting_document_date_gap",
         "action": ["전기일과 문서일 차이 사유 확인", "기간 귀속 근거 확인"],
     },
-    "L3-08": {
-        "evidence_strength": "weak",
-        "focus": "missing_or_corrupted_description",
-        "action": ["전표 적요와 증빙의 설명 충분성 확인"],
-    },
     "L3-09": {
         "evidence_strength": "medium",
         "focus": "suspense_account_linger",
@@ -392,8 +401,8 @@ _RULE_EXPRESSION_METADATA: dict[str, dict[str, Any]] = {
     },
     "L3-10": {
         "evidence_strength": "weak",
-        "focus": "sensitive_account_touch",
-        "action": ["민감 계정 사용 사유 확인", "승인 문서와 증빙 대사"],
+        "focus": "estimate_account_use",
+        "action": ["추정계정 사용 사유 확인", "추정 근거·증빙과 결산시점 대사"],
     },
     "L3-11": {
         "evidence_strength": "medium",
@@ -492,7 +501,7 @@ _OUTFLOW_RULES = {
 
 _LOGIC_RULES = {
     "L3-12": "권한·업무 범위 집중",
-    "L3-10": "고위험 계정 사용",
+    "L3-10": "추정계정 사용",
     "L1-03": "무효 계정",
     "L2-04": "비용 자산화 의심",
     "L3-09": "가수금 장기체류",
@@ -504,7 +513,6 @@ _TIMING_RULES = {
     "L3-05": "주말 전기",
     "L3-06": "심야 전기",
     "L3-07": "전기일-문서일 장기 괴리",
-    "L3-08": "적요 결손/파손",
     "L3-11": "매출 컷오프 불일치",
     "L4-05": "비정상 시간대 집중",
 }
@@ -770,7 +778,7 @@ def build_phase1_case_result(
             "macro_findings": macro_findings,
             "macro_finding_count": len(macro_findings),
             "macro_finding_policy": (
-                "L4-02/D01/D02/GR01/GR03 are Account/Process Queue findings. They do not create "
+                "L4-02/D01/D02 are Account/Process Queue findings. They do not create "
                 "transaction queue priority_score or row-level anomaly_score by themselves."
             ),
             "data_integrity_findings": data_integrity_findings,
@@ -778,7 +786,7 @@ def build_phase1_case_result(
                 int(item.get("flagged_row_count", 0)) for item in data_integrity_findings
             ),
             "data_integrity_policy": (
-                "L1-01/L1-02/L1-03/L3-08 are data-quality checks shown in a separate data-integrity "
+                "L1-01/L1-02/L1-03 are data-quality checks shown in a separate data-integrity "
                 "track. They do not contribute to risk topic/tier/priority (HIGH/MEDIUM/LOW)."
             ),
             "elapsed_seconds": float(elapsed_seconds),
@@ -858,7 +866,7 @@ _DATA_INTEGRITY_RULE_LABELS: dict[str, str] = {
 def _build_data_integrity_findings(
     results: list[DetectionResult],
 ) -> list[dict[str, Any]]:
-    """데이터 정합성 트랙(L1-01/L1-02/L1-03/L3-08) 별도 수집.
+    """데이터 정합성 트랙(L1-01/L1-02/L1-03) 별도 수집.
 
     이 룰들은 부정 위험이 아니라 데이터 품질 문제라 위험 큐(topic/tier/priority)에서
     제외(_DATA_INTEGRITY_TRACK_RULES)된다. 여기서는 raw 탐지 결과에서 룰별 발화 건수만
@@ -1086,102 +1094,6 @@ def _build_d02_macro_findings(
             }
         )
     return rows
-
-
-def _build_graph_macro_findings(
-    track_name: str,
-    details: pd.DataFrame | None,
-    df: pd.DataFrame | None,
-) -> list[dict[str, Any]]:
-    """Build macro queue items for graph findings without row score inflation."""
-
-    if details is None or details.empty or df is None or df.empty:
-        return []
-
-    rows: list[dict[str, Any]] = []
-    for rule_id in ("GR01", "GR03"):
-        if rule_id not in details.columns:
-            continue
-        scores = pd.to_numeric(details[rule_id].reindex(df.index), errors="coerce").fillna(0.0)
-        if not scores.gt(0).any():
-            continue
-
-        work = df.loc[scores.gt(0)].copy()
-        work["_graph_score"] = scores.loc[work.index].astype(float)
-        work["_row_position"] = [df.index.get_loc(index_value) for index_value in work.index]
-        group_columns = [
-            column
-            for column in ("fiscal_year", "company_code", "gl_account")
-            if column in work.columns
-        ]
-        if not group_columns:
-            group_columns = ["_graph_scope"]
-            work["_graph_scope"] = "all"
-
-        for ordinal, (_group_key, group) in enumerate(
-            work.groupby(group_columns, dropna=False),
-            start=1,
-        ):
-            review_score = float(group["_graph_score"].max())
-            document_ids = _ordered_unique(
-                _string_value(value)
-                for value in group.get("document_id", pd.Series(dtype=object)).tolist()
-                if _string_value(value)
-            )
-            rows.append(
-                {
-                    "finding_id": f"{rule_id}:{ordinal:04d}",
-                    "rule_id": rule_id,
-                    "rule_label": _graph_rule_label(rule_id),
-                    "queue_type": "account_process_macro",
-                    "source_track": track_name,
-                    "scope": "company_gl_account"
-                    if "company_code" in group_columns
-                    else "gl_account",
-                    "fiscal_year": _first_group_value(group, "fiscal_year"),
-                    "company_code": _first_group_value(group, "company_code"),
-                    "gl_account": _first_group_value(group, "gl_account"),
-                    "review_score": review_score,
-                    "macro_priority_score": _graph_macro_priority_score(review_score),
-                    "queue_bucket": _graph_queue_bucket(rule_id),
-                    "normal_likelihood": 0.35,
-                    "scoring_policy": "macro_priority_calibrated_not_row_score",
-                    "finding_severity": "graph_review",
-                    "candidate_rows": int(len(group)),
-                    "candidate_documents": len(document_ids),
-                    "document_ids": document_ids[:25],
-                    "row_indices": [int(value) for value in group["_row_position"].tolist()],
-                    "metrics": {
-                        "max_graph_score": review_score,
-                        "mean_graph_score": float(group["_graph_score"].mean()),
-                    },
-                    "interpretation": (
-                        "Graph-level relationship finding. Use it as macro corroboration for "
-                        "matching transaction-level cases, especially related-party review."
-                    ),
-                }
-            )
-    return rows
-
-
-def _graph_rule_label(rule_id: str) -> str:
-    if rule_id == "GR01":
-        return "Graph circular transaction"
-    if rule_id == "GR03":
-        return "Graph transfer-pricing asymmetry"
-    return rule_id
-
-
-def _graph_queue_bucket(rule_id: str) -> str:
-    if rule_id == "GR01":
-        return "corroborated_graph_cycle"
-    if rule_id == "GR03":
-        return "corroborated_graph_transfer_pricing"
-    return "corroborated_graph_review"
-
-
-def _graph_macro_priority_score(review_score: float) -> float:
-    return max(0.55, min(float(review_score), 0.85))
 
 
 def _first_group_value(group: pd.DataFrame, column: str) -> Any:
@@ -1887,7 +1799,6 @@ def _build_cases(
                 composite_sort_score=composite_sort_score,
                 composite_sort_score_components=composite_sort_score_components,
                 topside_bonus=bonuses["topside_bonus"],
-                batch_combo_bonus=bonuses["batch_combo_bonus"],
                 weak_evidence_bonus=bonuses["weak_evidence_bonus"],
                 priority_adjustment_reasons=adjustment_reasons,
                 priority_band=priority_band,
@@ -2623,19 +2534,13 @@ def _build_flow_units(
     units: list[Phase1Unit] = []
     for result in results:
         metadata = result.metadata or {}
+        # IC(ic_pair_artifact)·GR(graph_result) flow unit 생성 제거(2026-06-21): IC/GR 은
+        # PHASE1-2 family 귀속 — PHASE1-1 case 에 생성하지 않는다(완전 소멸).
         units.extend(
             _flow_units_from_duplicate_artifact(
                 df,
                 result,
                 metadata.get("pair_artifact"),
-                engagement_salt=engagement_salt,
-            )
-        )
-        units.extend(
-            _flow_units_from_ic_artifact(
-                df,
-                result,
-                metadata.get("ic_pair_artifact"),
                 engagement_salt=engagement_salt,
             )
         )
@@ -2653,7 +2558,6 @@ def _build_flow_units(
                 engagement_salt=engagement_salt,
             )
         )
-        units.extend(_flow_units_from_graph_result(df, result, engagement_salt=engagement_salt))
 
     units.sort(key=lambda unit: (unit.unit_type, unit.unit_id))
     return units
@@ -3363,306 +3267,6 @@ def _flow_units_from_duplicate_artifact(
     return units
 
 
-def _flow_units_from_ic_artifact(
-    df: pd.DataFrame,
-    result: DetectionResult,
-    artifact: Any,
-    *,
-    engagement_salt: str = "",
-) -> list[FlowUnit]:
-    if not isinstance(artifact, dict):
-        return []
-
-    units: list[FlowUnit] = []
-
-    # IC unmatched rows are review-only mapping uncertainty. They stay in the
-    # detector artifact/sidecar, but a one-document row is not a flow unit.
-    for entry in artifact.get("mismatch_pairs") or []:
-        if isinstance(entry, dict):
-            cap_reason = _ic_structural_cap_reason(artifact, "mismatch_pair")
-            completeness = "bounded" if cap_reason else "complete"
-            units.extend(
-                _ic_entry_flow_unit(
-                    df,
-                    result,
-                    entry,
-                    artifact=artifact,
-                    flow_type="intercompany_mismatch",
-                    rule_id="IC02",
-                    positions=(
-                        _safe_int(entry.get("left_position"), default=-1),
-                        _safe_int(entry.get("right_position"), default=-1),
-                    ),
-                    completeness=completeness,
-                    cap_reason=cap_reason,
-                    measurement_eligible=completeness == "complete",
-                    engagement_salt=engagement_salt,
-                )
-            )
-    for entry in artifact.get("reciprocal_pairs") or []:
-        if not isinstance(entry, dict):
-            continue
-        positions = tuple(
-            pos
-            for pos in [
-                *(_int_list(entry.get("receivable_positions"))),
-                *(_int_list(entry.get("payable_positions"))),
-            ]
-            if pos >= 0
-        )
-        cap_reason = _ic_structural_cap_reason(artifact, "reciprocal_pair")
-        completeness = "bounded" if cap_reason else "complete"
-        units.extend(
-            _ic_entry_flow_unit(
-                df,
-                result,
-                entry,
-                artifact=artifact,
-                flow_type="intercompany_reciprocal",
-                rule_id="IC03",
-                positions=positions,
-                completeness=completeness,
-                cap_reason=cap_reason,
-                measurement_eligible=completeness == "complete",
-                engagement_salt=engagement_salt,
-            )
-        )
-    return units
-
-
-def _ic_entry_flow_unit(
-    df: pd.DataFrame,
-    result: DetectionResult,
-    entry: dict[str, Any],
-    *,
-    artifact: dict[str, Any],
-    flow_type: str,
-    rule_id: str,
-    positions: tuple[int, ...],
-    completeness: str,
-    cap_reason: str | None,
-    measurement_eligible: bool,
-    engagement_salt: str,
-) -> list[FlowUnit]:
-    row_positions = sorted({pos for pos in positions if 0 <= pos < len(df)})
-    member_document_ids = _member_documents_from_positions(df, row_positions)
-    if not member_document_ids:
-        doc_id = _optional_string(entry.get("document_id"))
-        member_document_ids = [doc_id] if doc_id else []
-    if not member_document_ids:
-        return []
-
-    link_key = {
-        "rule_id": rule_id,
-        "entry": _json_stable(
-            {
-                key: value
-                for key, value in entry.items()
-                if key
-                not in {
-                    "review_reason",
-                    "row_index",
-                    "left_index",
-                    "right_index",
-                    "receivable_indices",
-                    "payable_indices",
-                }
-            }
-        ),
-    }
-    flow_id = _deterministic_flow_id(
-        company_id=_flow_company_scope(df),
-        rule_id=rule_id,
-        flow_type=flow_type,
-        link_key=link_key,
-        member_document_ids=member_document_ids,
-    )
-    return [
-        FlowUnit(
-            unit_id=flow_id,
-            flow_id=flow_id,
-            flow_type=flow_type,
-            link_key=link_key,
-            member_document_ids=member_document_ids,
-            evidence_rows=_flow_evidence_rows(
-                df,
-                result,
-                rule_id=rule_id,
-                row_positions=row_positions,
-                engagement_salt=engagement_salt,
-            ),
-            artifact_completeness=completeness,
-            truncated=bool(cap_reason),
-            cap_reason=cap_reason,
-            source_artifact_schema=f"ic_pair_artifact.v{artifact.get('schema_version', 1)}",
-            candidate_count=1,
-            retained_count=1,
-            member_count=len(member_document_ids),
-            measurement_eligible=measurement_eligible,
-        )
-    ]
-
-
-def _flow_units_from_graph_result(
-    df: pd.DataFrame,
-    result: DetectionResult,
-    *,
-    engagement_salt: str = "",
-) -> list[FlowUnit]:
-    if result.details is None or result.details.empty:
-        return []
-    metadata = result.metadata or {}
-    units: list[FlowUnit] = []
-    units.extend(_graph_cycle_flow_units(df, result, metadata, engagement_salt=engagement_salt))
-    if units:
-        return units
-    for rule_id, flow_type in (("GR01", "graph_circular"), ("GR03", "graph_transfer_pricing")):
-        if rule_id not in result.details.columns:
-            continue
-        scores = pd.to_numeric(result.details[rule_id].reindex(df.index), errors="coerce").fillna(
-            0.0
-        )
-        row_positions = [int(pos) for pos, value in enumerate(scores.tolist()) if float(value) > 0]
-        if not row_positions:
-            continue
-        member_document_ids = _member_documents_from_positions(df, row_positions)
-        if not member_document_ids:
-            continue
-        cap_reason = _graph_cap_reason(rule_id, metadata)
-        skipped = _optional_string(metadata.get(f"{rule_id.lower()}_skip_reason"))
-        if skipped:
-            completeness = "skipped"
-        else:
-            completeness = "bounded" if cap_reason else "complete"
-        measurement_eligible = completeness == "complete"
-        candidate_count = _graph_candidate_count(rule_id, metadata, default=len(row_positions))
-        retained_count = len(row_positions)
-        link_key = {
-            "rule_id": rule_id,
-            "graph_scope": "positive_rows",
-            "metadata": _json_stable(
-                {
-                    key: value
-                    for key, value in metadata.items()
-                    if str(key).lower().startswith(rule_id.lower())
-                }
-            ),
-        }
-        flow_id = _deterministic_flow_id(
-            company_id=_flow_company_scope(df),
-            rule_id=rule_id,
-            flow_type=flow_type,
-            link_key=link_key,
-            member_document_ids=member_document_ids,
-        )
-        units.append(
-            FlowUnit(
-                unit_id=flow_id,
-                flow_id=flow_id,
-                flow_type=flow_type,
-                link_key=link_key,
-                member_document_ids=member_document_ids,
-                evidence_rows=_flow_evidence_rows(
-                    df,
-                    result,
-                    rule_id=rule_id,
-                    row_positions=row_positions,
-                    engagement_salt=engagement_salt,
-                ),
-                artifact_completeness=completeness,
-                truncated=bool(cap_reason or skipped),
-                cap_reason=cap_reason or skipped,
-                source_artifact_schema="graph_detector_metadata.v1",
-                candidate_count=candidate_count,
-                retained_count=retained_count,
-                member_count=len(member_document_ids),
-                measurement_eligible=measurement_eligible,
-            )
-        )
-    return units
-
-
-def _graph_cycle_flow_units(
-    df: pd.DataFrame,
-    result: DetectionResult,
-    metadata: dict[str, Any],
-    *,
-    engagement_salt: str = "",
-) -> list[FlowUnit]:
-    units: list[FlowUnit] = []
-    specs = (
-        ("GR01", "graph_circular", "gr01_cycle_instances", "cycle_id"),
-        ("GR03", "graph_transfer_pricing", "gr03_pair_instances", "pair_id"),
-    )
-    for rule_id, flow_type, metadata_key, id_key in specs:
-        instances = metadata.get(metadata_key)
-        if not isinstance(instances, list) or not instances:
-            continue
-        cap_reason = _graph_cap_reason(rule_id, metadata)
-        skipped = _optional_string(metadata.get(f"{rule_id.lower()}_skip_reason"))
-        completeness = "skipped" if skipped else ("bounded" if cap_reason else "complete")
-        for idx, instance in enumerate(instances, start=1):
-            if not isinstance(instance, dict):
-                continue
-            row_positions = [
-                pos for pos in _int_list(instance.get("row_positions")) if 0 <= pos < len(df)
-            ]
-            member_document_ids = [
-                value
-                for value in sorted(
-                    {
-                        *(_member_documents_from_positions(df, row_positions)),
-                        *[
-                            _optional_string(item) or ""
-                            for item in (instance.get("document_ids") or [])
-                        ],
-                    }
-                )
-                if value
-            ]
-            if not member_document_ids:
-                continue
-            instance_id = _optional_string(instance.get(id_key)) or f"{metadata_key}-{idx}"
-            link_key = {
-                "rule_id": rule_id,
-                id_key: instance_id,
-                "nodes": list(instance.get("nodes") or []),
-                "group_key": list(instance.get("group_key") or []),
-            }
-            flow_id = _deterministic_flow_id(
-                company_id=_flow_company_scope(df),
-                rule_id=rule_id,
-                flow_type=flow_type,
-                link_key=link_key,
-                member_document_ids=member_document_ids,
-            )
-            units.append(
-                FlowUnit(
-                    unit_id=flow_id,
-                    flow_id=flow_id,
-                    flow_type=flow_type,
-                    link_key=link_key,
-                    member_document_ids=member_document_ids,
-                    evidence_rows=_flow_evidence_rows(
-                        df,
-                        result,
-                        rule_id=rule_id,
-                        row_positions=row_positions,
-                        engagement_salt=engagement_salt,
-                    ),
-                    artifact_completeness=completeness,
-                    truncated=bool(cap_reason or skipped),
-                    cap_reason=cap_reason or skipped,
-                    source_artifact_schema="graph_detector_cycle_instances.v1",
-                    candidate_count=1,
-                    retained_count=1,
-                    member_count=len(member_document_ids),
-                    measurement_eligible=completeness == "complete",
-                )
-            )
-    return units
-
-
 def _flow_evidence_rows(
     df: pd.DataFrame,
     result: DetectionResult,
@@ -3933,70 +3537,6 @@ def _flow_evidence_type(rule_id: str) -> str:
     return "flow_evidence"
 
 
-def _ic_cap_reason(artifact: dict[str, Any]) -> str | None:
-    lengths = {
-        "candidate_pairs": len(artifact.get("candidate_pairs") or []),
-        "unmatched_rows": len(artifact.get("unmatched_rows") or []),
-        "mismatch_pairs": len(artifact.get("mismatch_pairs") or []),
-        "reciprocal_pairs": len(artifact.get("reciprocal_pairs") or []),
-    }
-    caps = {
-        "candidate_pairs": _IC_CANDIDATE_PAIR_CAP,
-        "unmatched_rows": _IC_UNMATCHED_ROW_CAP,
-        "mismatch_pairs": _IC_MISMATCH_PAIR_CAP,
-        "reciprocal_pairs": _IC_RECIPROCAL_PAIR_CAP,
-    }
-    hit_caps = [name for name, count in lengths.items() if count >= caps[name]]
-    return "ic_pair_artifact_cap:" + ",".join(hit_caps) if hit_caps else None
-
-
-def _ic_structural_cap_reason(artifact: dict[str, Any], list_kind: str) -> str | None:
-    coverage = artifact.get("coverage") if isinstance(artifact.get("coverage"), dict) else {}
-    flag_key = f"{list_kind}_truncated"
-    if bool(coverage.get(flag_key)):
-        return f"ic_pair_artifact_cap:{list_kind}"
-    count_key = f"{list_kind}_count"
-    cap = {
-        "unmatched_row": _IC_UNMATCHED_ROW_CAP,
-        "mismatch_pair": _IC_MISMATCH_PAIR_CAP,
-        "reciprocal_pair": _IC_RECIPROCAL_PAIR_CAP,
-    }.get(list_kind, 0)
-    available_key = f"{list_kind}_available_count"
-    available = _safe_int(coverage.get(available_key), default=-1)
-    retained = _safe_int(coverage.get(count_key), default=0)
-    if available >= 0:
-        return f"ic_pair_artifact_cap:{list_kind}" if available > retained else None
-    return f"ic_pair_artifact_cap:{list_kind}" if cap and retained >= cap else None
-
-
-def _graph_cap_reason(rule_id: str, metadata: dict[str, Any]) -> str | None:
-    prefix = rule_id.lower()
-    if rule_id == "GR01":
-        if metadata.get("gr01_max_edges_raised"):
-            return "max_edges_threshold_raised"
-        if _safe_int(metadata.get("gr01_skipped_components")) > 0:
-            return "component_limit_skipped"
-    for issue in metadata.get("coverage_issues") or []:
-        if isinstance(issue, dict) and str(issue.get("rule_id")) == rule_id:
-            return _optional_string(issue.get("reason")) or _optional_string(issue.get("kind"))
-    return _optional_string(metadata.get(f"{prefix}_skip_reason"))
-
-
-def _graph_candidate_count(rule_id: str, metadata: dict[str, Any], *, default: int) -> int:
-    if rule_id == "GR01":
-        return max(
-            default,
-            _safe_int(metadata.get("gr01_edges_prefiltered")),
-            _safe_int(metadata.get("gr01_edges_built")),
-        )
-    return max(
-        default,
-        _safe_int(metadata.get("gr03_bidirectional_pairs")),
-        _safe_int(metadata.get("gr03_flagged_pairs")),
-        _safe_int(metadata.get("gr03_reference_rows")),
-    )
-
-
 def _safe_int(value: Any, *, default: int = 0) -> int:
     try:
         return int(value)
@@ -4090,7 +3630,8 @@ def _case_macro_contexts(
     seen: set[str] = set()
     for finding in macro_findings:
         rule_id = str(finding.get("rule_id") or "")
-        if rule_id not in {"D01", "D02", "GR01", "GR03"}:
+        # GR01/GR03 제거(2026-06-21): graph macro finding 미생성이라 D01/D02 만 macro_context 부착.
+        if rule_id not in {"D01", "D02"}:
             continue
         macro_year = _macro_key_part(finding.get("fiscal_year"))
         macro_company = _macro_key_part(finding.get("company_code"))
@@ -5179,7 +4720,6 @@ def _apply_priority_adjustments(
     adjustments = config.get("priority_adjustments", {})
     bonuses = {
         "topside_bonus": 0.0,
-        "batch_combo_bonus": 0.0,
         "weak_evidence_bonus": 0.0,
         "l203_duplicate_bonus": 0.0,
     }
@@ -5200,22 +4740,8 @@ def _apply_priority_adjustments(
         bonuses["topside_bonus"] = float(topside_cfg.get("medium_bonus", 0.10))
         reasons.append(f"topside_score={topside_score:.2f}")
 
-    batch_count = _batch_corroboration_group_count(rule_ids)
-    batch_cfg = adjustments.get("batch_combo", {})
-    if "L4-06" in rule_ids and batch_count >= int(batch_cfg.get("high_group_count", 3)):
-        bonuses["batch_combo_bonus"] = float(batch_cfg.get("high_bonus", 0.15))
-        adjusted_behavior = max(
-            adjusted_behavior,
-            float(batch_cfg.get("high_behavior_floor", 1.0)),
-        )
-        reasons.append(f"batch_combo_groups={batch_count}")
-    elif "L4-06" in rule_ids and batch_count >= int(batch_cfg.get("medium_group_count", 2)):
-        bonuses["batch_combo_bonus"] = float(batch_cfg.get("medium_bonus", 0.08))
-        adjusted_behavior = max(
-            adjusted_behavior,
-            float(batch_cfg.get("medium_behavior_floor", 0.70)),
-        )
-        reasons.append(f"batch_combo_groups={batch_count}")
+    # batch_combo_bonus 제거(2026-06-21): L4-06 PHASE1-2 family 귀속이라 case priority/behavior
+    # 가산 폐기 — bonuses dict 키·CaseGroupResult 필드·export/contract 키 모두 제거됨.
 
     weak_tags = _case_weak_evidence_tags(
         rows=rows,
@@ -5312,14 +4838,6 @@ def _case_topside_score(
     return matched / max(len(TOPSIDE_BONUS_RULES), 1)
 
 
-def _batch_corroboration_group_count(rule_ids: set[str]) -> int:
-    count = 0
-    for _label, rule_pairs in BATCH_CORROBORATION_RULES:
-        if any(rule_id in rule_ids for rule_id, _layer_name in rule_pairs):
-            count += 1
-    return count
-
-
 def _case_weak_evidence_tags(
     *,
     rows: pd.DataFrame,
@@ -5349,13 +4867,6 @@ def _case_weak_evidence_tags(
             tags.append(str(column))
 
     if (
-        config.get("include_l3_08_as_weak_description", True)
-        and "L3-08" in rule_ids
-        and _l308_has_corroborating_rule(rule_ids, config)
-    ):
-        tags.append("missing_or_corrupted_description")
-
-    if (
         config.get("derive_manual_period_end", True)
         and _case_has_true(rows, "is_manual_je")
         and (_case_has_true(rows, "is_period_end") or "L3-04" in rule_ids)
@@ -5363,40 +4874,6 @@ def _case_weak_evidence_tags(
         tags.append("manual_period_end")
 
     return sorted(set(tags))
-
-
-def _l308_has_corroborating_rule(rule_ids: set[str], config: dict[str, Any]) -> bool:
-    """Allow L3-08 weak-description bonus only with an independent review signal."""
-
-    default_rules = {
-        "L1-03",
-        "L1-05",
-        "L1-07",
-        "L1-07-02",
-        "L2-02",
-        "L2-03",
-        "L2-05",
-        "L3-02",
-        "L3-04",
-        "L3-05",
-        "L3-06",
-        "L3-07",
-        "L3-09",
-        "L3-10",
-        "L3-11",
-        "L4-03",
-        "L4-04",
-        "L4-05",
-        "L4-06",
-    }
-    configured = config.get("l3_08_corroborating_rules")
-    if configured is None:
-        corroborating_rules = default_rules
-    else:
-        corroborating_rules = {
-            str(rule_id).strip() for rule_id in configured if str(rule_id).strip()
-        }
-    return bool((set(rule_ids) - {"L3-08"}) & corroborating_rules)
 
 
 def _case_has_true(rows: pd.DataFrame, column: str) -> bool:
@@ -5452,8 +4929,10 @@ def _apply_timing_priority_adjustments(
     l304_only = rule_ids == {"L3-04"}
     has_sensitive = _case_has_sensitive_account(rows, timing_cfg)
     has_high_amount = amount_score >= float(timing_cfg.get("l304_high_amount_case_score", 0.75))
+    # OFF-TIME(L3-05·L3-06·L4-05)은 priority/behavior 가산에서 제외 — within-tier 정렬·UI 전용이라
+    # case 등급에 기여하지 않는다(rule_scoring.OFF_TIME_SET). 기간귀속·고액(L3-07·L3-11·L4-03)은 유지.
     has_combo_signal = bool(
-        rule_ids & {"L3-05", "L3-06", "L3-07", "L3-08", "L3-11", "L4-05", "L4-03"}
+        rule_ids & {"L3-07", "L3-11", "L4-03"}
         or {"control_failure", "duplicate_or_outflow"} & set(secondary_tags)
     )
     repeat_pattern = _is_l304_repeat_pattern_case(
@@ -5662,7 +5141,6 @@ def _row_display_label(row_annotation: dict[str, Any] | None) -> str | None:
         "finding_severity",
         "severity_label",
         "signal_strength",
-        "signal_category",
         "bucket",
         "queue_label",
         "label",
@@ -6039,18 +5517,12 @@ def _rule_hit_detail(
     match_type = str(row_annotation.get("match_type", "")).strip()
     matched_value = str(row_annotation.get("matched_value", "")).strip()
     matched_group = str(row_annotation.get("matched_group", "")).strip()
-    signal_category = str(row_annotation.get("signal_category", "")).strip()
-    category_reason = str(row_annotation.get("category_reason", "")).strip()
 
     parts: list[str] = []
     if match_type and matched_value:
         parts.append(f"{match_type}={matched_value}")
     if matched_group:
         parts.append(f"group={matched_group}")
-    if signal_category:
-        parts.append(f"result={signal_category}")
-    if category_reason:
-        parts.append(f"reason={category_reason}")
 
     if not parts:
         return base_detail

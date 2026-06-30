@@ -335,9 +335,6 @@ def _rule_trigger_text(
         return _l307_trigger_text(row)
     if rule_id == "L1-08":
         return "Fiscal period mismatch"
-    if rule_id == "L3-08":
-        text = line_text or header_text
-        return f"Vague description '{text[:60]}'" if text else "Vague description"
     if rule_id == "L4-01":
         return f"Revenue outlier on account {gl_account or '-'}"
     if rule_id == "L4-02":

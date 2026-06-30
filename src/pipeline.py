@@ -1453,18 +1453,14 @@ class AuditPipeline:
         for _name, _func in optional_detectors:
             results.extend(self._run_optional_detection_step(_name, _func, df))
 
-        # Why: Phase 2 추론의 4개 family detector (timeseries/relational/duplicate/intercompany)
-        #      는 순차 호출 시 348k 행 기준 10분+ 걸려 Streamlit 이 죽는다. phase1 의
-        #      ``_run_detectors_parallel`` 패턴을 따라 ThreadPoolExecutor 로 병렬 실행한다.
-        #      pandas/numpy 내부 연산은 GIL 해제하므로 thread pool 로 충분히 가속.
+        # Why: PHASE1-2 재설계(2026-06-30)로 relational/duplicate/intercompany family 는
+        #      phase2 inference 에서 제거(단일 법인 범위 외·PHASE1-1/L2-03 이관·드롭). timeseries 만
+        #      당기 내 집중 자기큐 재설계 전까지 phase2 lane 에 잔류. 다건 대비 ThreadPoolExecutor 유지.
         if detection_scope == "phase2_only":
             from concurrent.futures import ThreadPoolExecutor, as_completed
 
             family_funcs = [
                 ("timeseries", lambda d: self._try_timeseries_detection(d, force_enable=True)),
-                ("relational", lambda d: self._try_relational_detection(d, force_enable=True)),
-                ("duplicate", lambda d: self._try_duplicate_detection(d, force_enable=True)),
-                ("intercompany", lambda d: self._try_intercompany_detection(d, force_enable=True)),
             ]
             configured_workers = getattr(self._ctx.settings, "detection_parallel_workers", None)
             max_workers = min(
@@ -1651,36 +1647,6 @@ class AuditPipeline:
             )
             return None
 
-    def _try_duplicate_detection(
-        self, df: pd.DataFrame, *, force_enable: bool = False
-    ) -> DetectionResult | None:
-        """Duplicate detector 실행 (Exact/Fuzzy/Split/TimeShift).
-
-        Why: Phase 2 추론에서 family=duplicate 결과를 얻기 위해 호출. ``force_enable``
-        은 settings 플래그 무시 (학습 단계가 이미 promoted 한 family).
-        """
-        if not force_enable and not getattr(
-            self._ctx.settings, "enable_duplicate_detection", False
-        ):
-            logger.debug("duplicate detection disabled by settings")
-            self._record_detector_status(
-                "duplicate", run_status="skipped", reason="disabled_by_settings"
-            )
-            return None
-        try:
-            from src.detection.duplicate_detector import DuplicateDetector
-
-            det = DuplicateDetector(self._ctx.settings)
-            result = det.detect(df)
-            self._record_detector_status("duplicate", run_status="executed", result=result)
-            return result
-        except Exception:
-            logger.warning("Duplicate 탐지 실패 — 스킵", exc_info=True)
-            self._record_detector_status(
-                "duplicate", run_status="failed", reason="detector_exception"
-            )
-            return None
-
     def _try_intercompany_detection(
         self, df: pd.DataFrame, *, force_enable: bool = False
     ) -> DetectionResult | None:
@@ -1712,37 +1678,6 @@ class AuditPipeline:
             self._record_detector_status(
                 "intercompany", run_status="failed", reason="detector_exception"
             )
-            return None
-
-    def _try_graph_detection(self, df: pd.DataFrame) -> DetectionResult | None:
-        """Graph 탐지기 실행(WU-22). networkx 미설치 또는 예외 시 graceful 스킵.
-
-        Why: GR01(N-hop 순환) + GR03(양방향 IC 가격 asymmetry). 사전 필터 +
-             from_pandas_edgelist로 OOM 방어.
-        """
-        if not getattr(self._ctx.settings, "enable_graph_detection", False):
-            logger.debug("graph detection disabled by settings")
-            self._record_detector_status(
-                "graph", run_status="skipped", reason="disabled_by_settings"
-            )
-            return None
-        try:
-            from src.detection.graph_detector import GraphDetector
-
-            det = GraphDetector(self._ctx.settings)
-            result = det.detect(df)
-            reason = None
-            run_status = "executed"
-            if result.total_rules_run == 0 and any("networkx" in w for w in result.warnings):
-                run_status = "skipped"
-                reason = "missing_optional_dependency"
-            self._record_detector_status(
-                "graph", run_status=run_status, reason=reason, result=result
-            )
-            return result
-        except Exception:
-            logger.warning("Graph 탐지 실패 — 스킵", exc_info=True)
-            self._record_detector_status("graph", run_status="failed", reason="detector_exception")
             return None
 
     def _try_nlp_detection(self, df: pd.DataFrame) -> DetectionResult | None:

@@ -464,7 +464,6 @@ def _attach_phase2_case_overlays(result) -> None:
         detector_statuses=getattr(result, "detector_statuses", None) or [],
         phase2_inference_contract=getattr(result, "phase2_inference_contract", None),
         phase2_training_report_id=getattr(result, "phase2_training_report_id", None),
-        duplicate_pair_evidence_by_case=overlay_inputs.duplicate_pair_evidence_by_case,
         family_explanation_features_by_case=(overlay_inputs.family_explanation_features_by_case),
         family_document_context_by_case=(overlay_inputs.family_document_context_by_case),
         relational_continuity_depth_by_case=(overlay_inputs.relational_continuity_depth_by_case),
@@ -588,13 +587,11 @@ def _attach_phase2_family_policy_summary(result, case_set) -> None:
     from src.services.phase2_family_policy import (
         INTERCOMPANY_BROAD_RECALL_EXPANSION_FAMILY,
         INTERCOMPANY_PRODUCT_ROLE,
-        build_duplicate_policy_summary,
         build_relational_policy_summary,
         build_timeseries_policy_summary,
         build_unsupervised_policy_summary,
     )
 
-    duplicate_cases = tuple(getattr(case_set, "duplicate_cases", ()) or ())
     intercompany_cases = tuple(getattr(case_set, "intercompany_cases", ()) or ())
     relational_cases = tuple(getattr(case_set, "relational_cases", ()) or ())
     timeseries_cases = tuple(getattr(case_set, "timeseries_cases", ()) or ())
@@ -625,7 +622,6 @@ def _attach_phase2_family_policy_summary(result, case_set) -> None:
         ),
     }
     summary["relational"] = build_relational_policy_summary(relational_cases)
-    summary["duplicate"] = build_duplicate_policy_summary(duplicate_cases)
     summary["timeseries"] = build_timeseries_policy_summary(timeseries_cases)
     summary["unsupervised"] = build_unsupervised_policy_summary(unsupervised_cases)
     setattr(result, "phase2_family_policy_summary", summary)

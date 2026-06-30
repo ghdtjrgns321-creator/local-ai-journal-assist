@@ -17,31 +17,25 @@ def b01_revenue_manipulation(
     df: pd.DataFrame,
     zscore_threshold: float = 3.0,
 ) -> pd.Series:
-    """L4-01 revenue account outlier: revenue account and high amount z-score."""
+    """L4-01 상대적 고액 매출: 매출계정이고 금액 z-score가 임계 초과면 발화(binary)."""
     missing = _check_features(df, ["is_revenue_account", "amount_zscore"])
     if missing:
         return pd.Series(False, index=df.index)
     zscore = pd.to_numeric(df["amount_zscore"], errors="coerce").fillna(0.0)
     result = df["is_revenue_account"].fillna(False) & (zscore > zscore_threshold)
 
-    score_series = pd.Series(0.0, index=df.index, dtype="float64")
-    score_series.loc[result & zscore.lt(4.0)] = 0.45
-    score_series.loc[result & zscore.ge(4.0) & zscore.lt(6.0)] = 0.60
-    score_series.loc[result & zscore.ge(6.0)] = 0.75
-
-    bucket = pd.Series("none", index=df.index, dtype="object")
-    bucket.loc[result & zscore.lt(4.0)] = "review_zscore"
-    bucket.loc[result & zscore.ge(4.0) & zscore.lt(6.0)] = "strong_zscore"
-    bucket.loc[result & zscore.ge(6.0)] = "extreme_zscore"
+    # binary flag: 발화=1.0, 미발화=0.0. z-score 폭에 따른 등급 차등(구 bucket)은
+    # 폐기 — 강도·정황·조합은 통합점수체계 소관이고 룰은 발화 여부만 결정한다. z-score 값은
+    # 사실값으로 row_annotation 에만 남겨 표시·정렬에 통합점수 쪽이 활용한다.
+    score_series = result.astype("float64")
 
     row_annotations: dict[object, dict[str, object]] = {}
     for idx in result[result].index:
         annotation: dict[str, object] = {
-            "bucket": str(bucket.loc[idx]),
-            "score": round(float(score_series.loc[idx]), 4),
+            "score": 1.0,
             "amount_zscore": round(float(zscore.loc[idx]), 4),
             "zscore_threshold": float(zscore_threshold),
-            "interpretation": "high_value_revenue_outlier_anchor",
+            "interpretation": "relative_high_value_revenue",
         }
         if "gl_account" in df.columns:
             value = df.at[idx, "gl_account"]
@@ -51,15 +45,9 @@ def b01_revenue_manipulation(
     result.attrs["score_series"] = score_series
     result.attrs["row_annotations"] = row_annotations
     result.attrs["breakdown"] = {
-        "interpretation": "high_value_revenue_outlier_anchor",
+        "interpretation": "relative_high_value_revenue",
         "zscore_threshold": float(zscore_threshold),
         "flagged_rows": int(result.sum()),
-        "score_bands": {
-            "review_zscore": 0.45,
-            "strong_zscore": 0.60,
-            "extreme_zscore": 0.75,
-        },
-        "bucket_counts": bucket.loc[result].value_counts().to_dict(),
     }
     return result
 
@@ -107,10 +95,7 @@ def b02_near_threshold(df: pd.DataFrame) -> pd.Series:
         "scored_rows": int(score_series.gt(0).sum()),
         "zero_score_rows": int((result & score_series.eq(0)).sum()),
         "queue_counts": pd.Series(
-            [
-                _l201_queue_label(score_series.loc[idx])
-                for idx in result[result].index
-            ],
+            [_l201_queue_label(score_series.loc[idx]) for idx in result[result].index],
             dtype="object",
         )
         .value_counts()

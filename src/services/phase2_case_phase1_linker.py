@@ -39,7 +39,7 @@ linker. ``key_mode`` 로 매칭 알고리즘을 분기한다:
 - PHASE1 priority_score / priority_rank / composite_sort_score 변경 금지 (read-only).
 - PHASE2 family_score / family_ecdf / case_generation_reason 변경 금지.
 - phase1_case_refs 는 정렬된 tuple — input 순서 무관, idempotent.
-- DuplicateCase 의 left_ref / right_ref 도 cross-reference 대상.
+- 각 case 의 row_refs row_position 이 cross-reference 대상.
 - key_mode invalid 입력 → ValueError 즉시 (silent fallback 금지, #44).
 - ``doc_line`` / ``company_doc`` / ``label`` 호출 시 **salt 만 필수** (#78).
   row_ref_map 은 fallback 용 — None / empty 허용. PHASE1 hit hash 보유 시 sidecar
@@ -92,14 +92,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from src.models.phase1_case import Phase1CaseResult
-from src.models.phase2_case import DuplicateCase, Phase2CaseSet, Phase2RowRef
+from src.models.phase2_case import Phase2CaseSet, Phase2RowRef
 from src.services.phase2_ref_canonical import normalize_line_number_key
 from src.services.phase2_ref_pseudonymize import hash_ref_key
 
 # Why: empty short-circuit 검사용 family field 목록.
 # Phase2CaseSet._FAMILY_FIELD_NAMES 와 동기화 (private 라 import 하지 않고 복제).
 _FAMILY_FIELD_NAMES: tuple[str, ...] = (
-    "duplicate_cases",
     "intercompany_cases",
     "relational_cases",
     "unsupervised_cases",
@@ -267,10 +266,6 @@ def _resolve_auto_key_mode(
         for ref in case.row_refs:
             if not ref.document_id:
                 return "position"
-        if isinstance(case, DuplicateCase):
-            for pair_ref in (case.left_ref, case.right_ref):
-                if pair_ref is not None and not pair_ref.document_id:
-                    return "position"
     return "doc_id"
 
 
@@ -314,15 +309,11 @@ def _has_full_phase1_position_coverage(
 
 
 def _iter_phase2_refs(case_set: Phase2CaseSet) -> list[tuple[Any, Phase2RowRef]]:
-    """case_set 의 모든 ref 를 (case, ref) 쌍으로. DuplicateCase pair 도 포함."""
+    """case_set 의 모든 ref 를 (case, ref) 쌍으로."""
     items: list[tuple[Any, Phase2RowRef]] = []
     for case in case_set.iter_all_cases_sorted():
         for ref in case.row_refs:
             items.append((case, ref))
-        if isinstance(case, DuplicateCase):
-            for pair_ref in (case.left_ref, case.right_ref):
-                if pair_ref is not None:
-                    items.append((case, pair_ref))
     return items
 
 
@@ -399,10 +390,6 @@ def _link_via_position(
         matched: set[str] = set()
         for ref in case.row_refs:
             matched.update(position_to_phase1_ids.get(ref.row_position, set()))
-        if isinstance(case, DuplicateCase):
-            for pair_ref in (case.left_ref, case.right_ref):
-                if pair_ref is not None:
-                    matched.update(position_to_phase1_ids.get(pair_ref.row_position, set()))
         refs_by_case_id[case.phase2_case_id] = tuple(sorted(matched))
 
     return _finalize_linked_result(
@@ -450,10 +437,6 @@ def _link_via_doc_id(
         for ref in case.row_refs:
             if ref.document_id:
                 matched.update(doc_id_to_phase1_ids.get(ref.document_id, set()))
-        if isinstance(case, DuplicateCase):
-            for pair_ref in (case.left_ref, case.right_ref):
-                if pair_ref is not None and pair_ref.document_id:
-                    matched.update(doc_id_to_phase1_ids.get(pair_ref.document_id, set()))
         refs_by_case_id[case.phase2_case_id] = tuple(sorted(matched))
 
     return _finalize_linked_result(
@@ -551,12 +534,6 @@ def _link_via_doc_line(
             key = _phase2_doc_line_key(ref, salt=salt)
             if key is not None:
                 matched.update(key_to_phase1_ids.get(key, set()))
-        if isinstance(case, DuplicateCase):
-            for pair_ref in (case.left_ref, case.right_ref):
-                if pair_ref is not None:
-                    key = _phase2_doc_line_key(pair_ref, salt=salt)
-                    if key is not None:
-                        matched.update(key_to_phase1_ids.get(key, set()))
         refs_by_case_id[case.phase2_case_id] = tuple(sorted(matched))
 
     return _finalize_linked_result(
@@ -642,12 +619,6 @@ def _link_via_company_doc(
             key = _phase2_company_doc_key(ref, salt=salt)
             if key is not None:
                 matched.update(key_to_phase1_ids.get(key, set()))
-        if isinstance(case, DuplicateCase):
-            for pair_ref in (case.left_ref, case.right_ref):
-                if pair_ref is not None:
-                    key = _phase2_company_doc_key(pair_ref, salt=salt)
-                    if key is not None:
-                        matched.update(key_to_phase1_ids.get(key, set()))
         refs_by_case_id[case.phase2_case_id] = tuple(sorted(matched))
 
     return _finalize_linked_result(
@@ -732,12 +703,6 @@ def _link_via_label(
             key = _phase2_label_key(ref, salt=salt)
             if key is not None:
                 matched.update(key_to_phase1_ids.get(key, set()))
-        if isinstance(case, DuplicateCase):
-            for pair_ref in (case.left_ref, case.right_ref):
-                if pair_ref is not None:
-                    key = _phase2_label_key(pair_ref, salt=salt)
-                    if key is not None:
-                        matched.update(key_to_phase1_ids.get(key, set()))
         refs_by_case_id[case.phase2_case_id] = tuple(sorted(matched))
 
     return _finalize_linked_result(

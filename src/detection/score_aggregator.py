@@ -16,22 +16,17 @@ import pandas as pd
 from config.settings import get_settings
 from src.detection.base import DetectionResult
 from src.detection.constants import (
-    BATCH_CORROBORATION_RULES,
     LAYER_WEIGHTS,
     RISK_THRESHOLDS,
     RULE_LEVEL_WEIGHTS,
     SEVERITY_MAP,
     TOPSIDE_BONUS_RULES,
-    WORK_SCOPE_CORROBORATION_RULES,
     Layer,
     RiskLevel,
 )
 from src.detection.rule_scoring import (
     EVIDENCE_STRENGTH_FACTOR,
-    L104_BUCKET_SIGNAL_STRENGTH,
-    L307_BUCKET_SIGNAL_STRENGTH,
-    L309_AGING_BUCKET_SIGNAL_STRENGTH,
-    L403_ZSCORE_BUCKET_SIGNAL_STRENGTH,
+    OFF_TIME_SET,
     RULE_SCORING_REGISTRY,
     SCORING_ROLE_FACTOR,
     SIGNAL_STRENGTH_MAP,
@@ -61,8 +56,6 @@ class _Phase2Timer:
 
 
 _TOPSIDE_CONDITIONS = len(TOPSIDE_BONUS_RULES)
-_BATCH_CORROBORATION_CONDITIONS = len(BATCH_CORROBORATION_RULES)
-_WORK_SCOPE_CORROBORATION_CONDITIONS = len(WORK_SCOPE_CORROBORATION_RULES)
 _DATA_INTEGRITY_TRACK_RULES = {"L1-01", "L1-02", "L1-03"}
 
 _POLICY_HIGH_RULES = {"L1-04"}
@@ -150,10 +143,9 @@ def aggregate_scores(
     with _Phase2Timer(detection_scope, "phase2.aggregate.policy_floors"):
         agg_df = _apply_policy_risk_floors(agg_df, results)
     with _Phase2Timer(detection_scope, "phase2.aggregate.corroboration"):
+        # batch(L4-06)·work_scope(L3-12)·intercompany(IC01-03) corroboration 제거(2026-06-21):
+        # PHASE1-2 family 귀속 룰이라 PHASE1-1 row anomaly_score/risk_level 에 기여하지 않는다.
         agg_df = _apply_auto_escalation(agg_df, results)
-        agg_df = _apply_intercompany_exception_corroboration(agg_df, results)
-        agg_df = _apply_batch_corroboration(agg_df, results)
-        agg_df = _apply_work_scope_corroboration(agg_df, results)
     with _Phase2Timer(detection_scope, "phase2.aggregate.topside"):
         return _inject_topside_score(agg_df, df, results)
 
@@ -171,48 +163,6 @@ def _combined_rule_details(results: list[DetectionResult], index: pd.Index) -> p
     #      모든 다운스트림 비교(`combined > 0` 등)에서 'str > int' TypeError를 유발.
     #      numeric 강제 변환으로 근본 차단 — non-numeric은 NaN→0.0 처리.
     combined = combined.apply(lambda c: pd.to_numeric(c, errors="coerce")).fillna(0.0)
-    if combined.columns.duplicated().any():
-        combined = combined.T.groupby(level=0).max().T
-    return combined
-
-
-def _combined_rule_signal_details(
-    results: list[DetectionResult],
-    index: pd.Index,
-) -> pd.DataFrame:
-    """Return raw rule signals, including review-only annotation scores."""
-    combined = _combined_rule_details(results, index)
-    annotation_columns: list[pd.Series] = []
-    for result in results:
-        if result.details is None or result.details.empty:
-            continue
-        for rule_id in result.details.columns:
-            rule_code = str(rule_id)
-            annotation_scores = _row_annotation_scores_for_rule(result, rule_code, index)
-            if annotation_scores.gt(0).any():
-                base = (
-                    pd.to_numeric(result.details[rule_code].reindex(index), errors="coerce")
-                    .fillna(0.0)
-                    .astype(float)
-                )
-                annotation_columns.append(
-                    pd.Series(
-                        np.maximum(
-                            base.to_numpy(dtype="float64"),
-                            annotation_scores.to_numpy(dtype="float64"),
-                        ),
-                        index=index,
-                        name=rule_code,
-                    ),
-                )
-
-    if not annotation_columns:
-        return combined
-    annotated = pd.concat(annotation_columns, axis=1).reindex(index).fillna(0.0)
-    if combined.empty:
-        combined = annotated
-    else:
-        combined = pd.concat([combined, annotated], axis=1).reindex(index).fillna(0.0)
     if combined.columns.duplicated().any():
         combined = combined.T.groupby(level=0).max().T
     return combined
@@ -290,6 +240,12 @@ def _combined_normalized_rule_details(
             if not _is_rule_level_code(rule_code):
                 continue
             if rule_code in _DATA_INTEGRITY_TRACK_RULES:
+                normalized_columns.append(pd.Series(0.0, index=index, name=rule_code))
+                continue
+            # OFF-TIME(L3-05·L3-06·L4-05)은 within-tier 정렬·UI 전용이라 row anomaly_score 에
+            # 0 기여한다(HIGH_COMBO_GROUNDING §2(5)). 정렬은 case_builder time_severity 가 룰ID
+            # 발화 여부로 별도 산출하므로 점수 0 강제가 정렬을 깨지 않는다.
+            if rule_code in OFF_TIME_SET:
                 normalized_columns.append(pd.Series(0.0, index=index, name=rule_code))
                 continue
             metadata = RULE_SCORING_REGISTRY.get(rule_code)
@@ -586,7 +542,6 @@ def _row_labels_for_rule(
                 or annotation.get("queue_label")
                 or annotation.get("risk_level")
                 or annotation.get("severity_label")
-                or annotation.get("signal_category")
                 or annotation.get("label")
             )
             if label is None:
@@ -666,22 +621,15 @@ def _vector_signal_strength(
     severity_factor = max(min(float(severity) / 5.0, 1.0), 0.01)
     default = _default_signal_strength(numeric, labels, severity_factor)
 
-    if rule_id == "L1-04":
-        return labels.map(L104_BUCKET_SIGNAL_STRENGTH).fillna(default).astype("float64")
-    if rule_id in {"L1-03", "L1-07", "L3-09", "L4-04"}:
+    # L1-04·L3-07·L3-09 binary 통일(2026-06-20) — 옛 bucket 등급 제거, generic(default) 로 일관.
+    if rule_id in {"L1-03", "L1-07", "L4-04"}:
         signal = numeric.clip(upper=1.0) / severity_factor
-        if rule_id == "L3-09":
-            signal = labels.map(L309_AGING_BUCKET_SIGNAL_STRENGTH).fillna(signal)
         return signal.astype("float64")
-    if rule_id in {"L3-10", "L3-12", "L3-05", "L3-06", "L4-05"}:
+    # OFF-TIME(L3-05·L3-06·L4-05)·macro_only(L3-12 등)는 _combined_normalized_rule_details 에서
+    # 선행 차단(0강제)되어 이 경로에 도달하지 않는다 — 차단 단일 출처를 그쪽으로 고정(회귀방어).
+    if rule_id == "L3-10":
         return numeric.clip(upper=1.0).astype("float64")
-    if rule_id == "L3-07":
-        signal = default.copy()
-        for suffix, strength in L307_BUCKET_SIGNAL_STRENGTH.items():
-            signal = signal.mask(labels.str.endswith(suffix, na=False), strength)
-        return signal.astype("float64")
-    if rule_id == "L4-03":
-        return labels.map(L403_ZSCORE_BUCKET_SIGNAL_STRENGTH).fillna(default).astype("float64")
+    # L4-03: binary 통일 — 수행중요성 절대임계 초과. generic default 로 일관된 binary 강도.
     return default.astype("float64")
 
 
@@ -731,7 +679,12 @@ def _apply_auto_escalation(
     if combined.empty:
         return agg_df
     a_cols = [col for col in combined.columns if str(col) in {"L1-01", "L1-02", "L1-03"}]
-    b_cols = [col for col in combined.columns if str(col) not in {"L1-01", "L1-02", "L1-03"}]
+    # 등급 승격에 기여하면 안 되는 룰은 escalation 카운트에서 제외:
+    # OFF-TIME(L3-05·L3-06·L4-05) + PHASE1-2 family(L4-06·L3-12·IC).
+    b_exclude = (
+        {"L1-01", "L1-02", "L1-03"} | OFF_TIME_SET | {"L4-06", "L3-12", "IC01", "IC02", "IC03"}
+    )
+    b_cols = [col for col in combined.columns if str(col) not in b_exclude]
     if not a_cols or not b_cols:
         return agg_df
 
@@ -761,19 +714,6 @@ def _get_rule_flag(
         layer.details[rule_id].reindex(index, fill_value=0.0), errors="coerce"
     ).fillna(0.0)
     return raw > 0
-
-
-def _get_rule_signal_flag(
-    result_map: dict[str, DetectionResult],
-    rule_id: str,
-    index: pd.Index,
-) -> pd.Series:
-    """Return whether a rule has a confirmed or review-only row signal."""
-
-    combined = _combined_rule_signal_details(list(result_map.values()), index)
-    if rule_id not in combined.columns:
-        return pd.Series(False, index=index)
-    return combined[rule_id].reindex(index, fill_value=0.0) > 0
 
 
 def _compute_topside_score(
@@ -806,216 +746,4 @@ def _inject_topside_score(
     """Add top-side score as a supporting feature."""
     raw_score = _compute_topside_score(df, results)
     agg_df["topside_score"] = raw_score / _TOPSIDE_CONDITIONS
-    return agg_df
-
-
-def _apply_batch_corroboration(
-    agg_df: pd.DataFrame,
-    results: list[DetectionResult],
-) -> pd.DataFrame:
-    """Promote L4-06 only when corroborating rule groups are also present."""
-    result_map = {r.track_name: r for r in results}
-    idx = agg_df.index
-    batch_flag = _get_rule_flag(result_map, "L4-06", Layer.LAYER_C.value, idx)
-
-    raw_score = pd.Series(0, index=idx, dtype=int)
-    reason_parts = pd.Series("", index=idx, dtype="string")
-    for label, rule_pairs in BATCH_CORROBORATION_RULES:
-        group_flag = pd.Series(False, index=idx)
-        for rule_id, layer_name in rule_pairs:
-            group_flag = group_flag | _get_rule_flag(result_map, rule_id, layer_name, idx)
-        group_flag = group_flag & batch_flag
-        raw_score += group_flag.astype(int)
-        reason_parts = reason_parts.mask(
-            group_flag,
-            reason_parts.where(reason_parts == "", reason_parts + ",") + label,
-        )
-
-    if _BATCH_CORROBORATION_CONDITIONS == 0:
-        agg_df["batch_combo_score"] = 0.0
-    else:
-        agg_df["batch_combo_score"] = raw_score / _BATCH_CORROBORATION_CONDITIONS
-    agg_df["batch_combo_reasons"] = reason_parts.fillna("")
-
-    high_mask = batch_flag & (raw_score >= 3)
-    medium_mask = batch_flag & (raw_score >= 2) & ~high_mask
-    if high_mask.any():
-        agg_df.loc[high_mask, "anomaly_score"] = agg_df.loc[
-            high_mask,
-            "anomaly_score",
-        ].clip(lower=RISK_THRESHOLDS[RiskLevel.HIGH])
-        agg_df.loc[high_mask, "risk_level"] = RiskLevel.HIGH
-    if medium_mask.any():
-        agg_df.loc[medium_mask, "anomaly_score"] = agg_df.loc[
-            medium_mask,
-            "anomaly_score",
-        ].clip(lower=RISK_THRESHOLDS[RiskLevel.MEDIUM])
-        current_high = agg_df["risk_level"].eq(RiskLevel.HIGH)
-        agg_df.loc[medium_mask & ~current_high, "risk_level"] = RiskLevel.MEDIUM
-    return agg_df
-
-
-def _apply_work_scope_corroboration(
-    agg_df: pd.DataFrame,
-    results: list[DetectionResult],
-) -> pd.DataFrame:
-    """Promote L3-12 only when independent corroborating rule groups exist."""
-
-    result_map = {r.track_name: r for r in results}
-    idx = agg_df.index
-    scope_flag = _get_rule_signal_flag(result_map, "L3-12", idx)
-
-    raw_score = pd.Series(0, index=idx, dtype=int)
-    reason_parts = pd.Series("", index=idx, dtype="string")
-    for label, rule_pairs in WORK_SCOPE_CORROBORATION_RULES:
-        group_flag = pd.Series(False, index=idx)
-        for rule_id, layer_name in rule_pairs:
-            group_flag = group_flag | _get_rule_flag(result_map, rule_id, layer_name, idx)
-        group_flag = group_flag & scope_flag
-        raw_score += group_flag.astype(int)
-        reason_parts = reason_parts.mask(
-            group_flag,
-            reason_parts.where(reason_parts == "", reason_parts + ",") + label,
-        )
-
-    if _WORK_SCOPE_CORROBORATION_CONDITIONS == 0:
-        agg_df["work_scope_combo_score"] = 0.0
-    else:
-        agg_df["work_scope_combo_score"] = raw_score / _WORK_SCOPE_CORROBORATION_CONDITIONS
-    agg_df["work_scope_combo_reasons"] = reason_parts.fillna("")
-
-    high_mask = scope_flag & (raw_score >= 3)
-    medium_mask = scope_flag & (raw_score >= 2) & ~high_mask
-    if high_mask.any():
-        agg_df.loc[high_mask, "anomaly_score"] = agg_df.loc[
-            high_mask,
-            "anomaly_score",
-        ].clip(lower=RISK_THRESHOLDS[RiskLevel.HIGH])
-        agg_df.loc[high_mask, "risk_level"] = RiskLevel.HIGH
-    if medium_mask.any():
-        agg_df.loc[medium_mask, "anomaly_score"] = agg_df.loc[
-            medium_mask,
-            "anomaly_score",
-        ].clip(lower=RISK_THRESHOLDS[RiskLevel.MEDIUM])
-        current_high = agg_df["risk_level"].eq(RiskLevel.HIGH)
-        agg_df.loc[medium_mask & ~current_high, "risk_level"] = RiskLevel.MEDIUM
-    return agg_df
-
-
-def _extract_ic01_evidence_level(
-    results: list[DetectionResult],
-    index: pd.Index,
-) -> pd.Series:
-    """IntercompanyMatcher 결과 metadata 에서 ic01_evidence_level sidecar 추출.
-
-    details 는 numeric rule-score matrix 계약을 유지하기 위해 string sidecar 는
-    `metadata["row_sidecar"]` 에 보관된다. 평가/리포트 단계에서만 read 한다.
-    하위 호환: 과거 details 컬럼에 sidecar 가 부착된 결과도 fallback 으로 지원.
-    """
-    for result in results:
-        metadata = result.metadata or {}
-        row_sidecar = metadata.get("row_sidecar") if isinstance(metadata, dict) else None
-        if isinstance(row_sidecar, dict) and "ic01_evidence_level" in row_sidecar:
-            series = row_sidecar["ic01_evidence_level"]
-            if isinstance(series, pd.Series):
-                return series.reindex(index, fill_value="").astype(str)
-        if result.details is not None and not result.details.empty:
-            if "ic01_evidence_level" in result.details.columns:
-                return (
-                    result.details["ic01_evidence_level"].reindex(index, fill_value="").astype(str)
-                )
-    return pd.Series("", index=index, dtype="object")
-
-
-def _apply_intercompany_exception_corroboration(
-    agg_df: pd.DataFrame,
-    results: list[DetectionResult],
-) -> pd.DataFrame:
-    """Promote intercompany reconciliation exceptions in row-level scoring.
-
-    근거: IFRS 10 §B86 / K-IFRS 1110 / 1024 / KICPA Issue Paper 46 / ISA 600.
-          L3-03 는 약한 모집단 신호이고, IC01/IC02/IC03 은 31 canonical 룰 외부
-          finding 이므로 row-level anomaly_score 에서 숨지 않도록 별도 floor 적용.
-
-    IC01 evidence level 정책 (D0xx, D055 supersede):
-      - evidence=high  → Medium floor (0.40)
-      - evidence=review → Low floor (0.20)
-      - 2 개 이상 IC 예외 결합 → Medium floor (기존 유지)
-    """
-
-    combined = _combined_rule_details(results, agg_df.index)
-    evidence_level = (
-        _extract_ic01_evidence_level(results, agg_df.index)
-        .fillna("")
-        .astype(str)
-        .str.strip()
-        .str.lower()
-    )
-    ic01_evidence_hit = evidence_level.isin({"high", "review_stale", "review"})
-    if "IC01" not in combined and ic01_evidence_hit.any():
-        combined["IC01"] = 0.0
-    exception_rules = [rule_id for rule_id in ("IC01", "IC02", "IC03") if rule_id in combined]
-    if not exception_rules:
-        agg_df["intercompany_exception_score"] = 0.0
-        agg_df["intercompany_exception_reasons"] = ""
-        return agg_df
-
-    exception_hits = (
-        combined[exception_rules].apply(pd.to_numeric, errors="coerce").fillna(0.0).gt(0)
-    )
-    if "IC01" in exception_hits:
-        ic01_hit = exception_hits["IC01"] | ic01_evidence_hit
-        exception_hits["IC01"] = ic01_hit
-    else:
-        ic01_hit = pd.Series(False, index=agg_df.index)
-    exception_count = exception_hits.sum(axis=1)
-    any_exception = exception_count.gt(0)
-    ic01_high = ic01_hit & evidence_level.eq("high")
-    ic01_review_stale = ic01_hit & evidence_level.eq("review_stale")
-    ic01_review = ic01_hit & evidence_level.eq("review")
-
-    raw_score = pd.Series(0.0, index=agg_df.index)
-    raw_score = raw_score.mask(any_exception, RISK_THRESHOLDS[RiskLevel.LOW])
-    # Medium floor: IC01[high] / IC01[review_stale](결산기 이탈 미대사) 단독, 또는
-    # 2 개 이상 IC 예외 결합. review(결산기 근접, 타이밍 설명 가능)는 Low 유지.
-    raw_score = raw_score.mask(
-        ic01_high | ic01_review_stale | exception_count.ge(2),
-        RISK_THRESHOLDS[RiskLevel.MEDIUM],
-    )
-
-    reason_parts = pd.Series("", index=agg_df.index, dtype="string")
-    for rule_id in exception_rules:
-        rule_mask = exception_hits[rule_id]
-        if rule_id == "IC01":
-            # IC01 hit 에는 evidence level qualifier 부착
-            high_label_mask = rule_mask & ic01_high
-            review_stale_label_mask = rule_mask & ic01_review_stale
-            review_label_mask = rule_mask & ic01_review
-            reason_parts = _append_reason(reason_parts, high_label_mask, "IC01[high]")
-            reason_parts = _append_reason(
-                reason_parts, review_stale_label_mask, "IC01[review_stale]"
-            )
-            reason_parts = _append_reason(reason_parts, review_label_mask, "IC01[review]")
-        else:
-            reason_parts = _append_reason(reason_parts, rule_mask, rule_id)
-
-    medium_mask = raw_score.ge(RISK_THRESHOLDS[RiskLevel.MEDIUM])
-    low_mask = raw_score.ge(RISK_THRESHOLDS[RiskLevel.LOW]) & ~medium_mask
-    if medium_mask.any():
-        agg_df.loc[medium_mask, "anomaly_score"] = agg_df.loc[
-            medium_mask,
-            "anomaly_score",
-        ].clip(lower=RISK_THRESHOLDS[RiskLevel.MEDIUM])
-        current_high = agg_df["risk_level"].eq(RiskLevel.HIGH)
-        agg_df.loc[medium_mask & ~current_high, "risk_level"] = RiskLevel.MEDIUM
-    if low_mask.any():
-        agg_df.loc[low_mask, "anomaly_score"] = agg_df.loc[
-            low_mask,
-            "anomaly_score",
-        ].clip(lower=RISK_THRESHOLDS[RiskLevel.LOW])
-        current_medium_or_high = agg_df["risk_level"].isin([RiskLevel.MEDIUM, RiskLevel.HIGH])
-        agg_df.loc[low_mask & ~current_medium_or_high, "risk_level"] = RiskLevel.LOW
-
-    agg_df["intercompany_exception_score"] = raw_score
-    agg_df["intercompany_exception_reasons"] = reason_parts.fillna("")
     return agg_df

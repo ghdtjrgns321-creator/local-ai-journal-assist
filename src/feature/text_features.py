@@ -1,6 +1,6 @@
 """텍스트 기반 감사 파생변수 생성 모듈.
 
-L3-08 룰 + WU-19 NLP 기초 — description_quality, has_risk_keyword, morpheme_tokens.
+적요 품질·텍스트 파생 + WU-19 NLP 기초 — description_quality, has_risk_keyword, morpheme_tokens.
 ingest 완료된 표준 DataFrame을 입력으로 받는다.
 
 핵심 설계 — 같은 원본 텍스트를 **2가지 버전**으로 정제:
@@ -222,7 +222,7 @@ def add_description_quality(
     ttr_threshold: float = 0.3,
     entropy_threshold: float = 1.0,
 ) -> pd.DataFrame:
-    """L3-08: 적요 결손/파손 3단계 — missing / corrupted / normal.
+    """적요 결손/파손 3단계 — missing / corrupted / normal.
 
     Phase 1에서는 설명의 의미적 충분성을 판단하지 않는다.
     공백/누락은 missing, 특수문자·자모·명백한 반복 문자열은 corrupted,
@@ -267,7 +267,7 @@ def add_description_quality(
 def add_description_diagnostics(df: pd.DataFrame) -> pd.DataFrame:
     """Add Phase 1 operational diagnostics for description coverage.
 
-    These columns do not make the L3-08 rule smarter. They explain whether the hit came
+    These columns are operational diagnostics only. They explain whether the gap came
     from both fields being empty, a line-only gap, or explicit corruption.
     """
     line_missing = _text_field_missing(df, "line_text")
@@ -289,7 +289,7 @@ def build_description_quality_profile(
 ) -> pd.DataFrame:
     """Summarize description coverage by available operational dimensions.
 
-    Intended for Phase 1 diagnostics, not for changing L3-08 flags.
+    Intended for Phase 1 diagnostics only.
     """
     if "description_quality" not in df.columns:
         add_description_quality(df)
@@ -334,7 +334,7 @@ def add_has_risk_keyword(
     df: pd.DataFrame,
     risk_kw: dict[str, list[str]] | None = None,
 ) -> pd.DataFrame:
-    """L3-08: 위험 키워드 등급 — high / medium / low.
+    """위험 키워드 등급 — high / medium / low.
 
     cleaned_text(완전 정제 버전) 사용 — 은폐 패턴 관통.
     risk_kw 직접 주입 가능 (테스트 용이), 미지정 시 YAML 로드.
@@ -663,8 +663,8 @@ def add_all_text_features(
     """텍스트 파생변수를 한번에 추가. engine.py 진입점.
 
     생성 컬럼:
-      - description_quality : missing / corrupted / normal (L3-08)
-      - description_*        : L3-08 운영 진단용 결손/파손 coverage flags
+      - description_quality : missing / corrupted / normal
+      - description_*        : 운영 진단용 결손/파손 coverage flags
       - has_risk_keyword    : high / medium / low (NLP/semantic 보조 피처)
       - morpheme_tokens     : list[str] — WU-19 형태소 토큰 (WU-21 전처리)
 

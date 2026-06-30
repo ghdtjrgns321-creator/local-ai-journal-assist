@@ -160,7 +160,6 @@ def build_phase2_case_overlays(
     detector_statuses: list[dict[str, Any]] | None = None,
     phase2_inference_contract: dict[str, Any] | None = None,
     phase2_training_report_id: str | None = None,
-    duplicate_pair_evidence_by_case: dict[str, str] | None = None,
     family_explanation_features_by_case: (dict[str, dict[str, list[dict[str, Any]]]] | None) = None,
     family_document_context_by_case: dict[str, dict[str, dict[str, Any]]] | None = None,
     relational_continuity_depth_by_case: dict[str, float] | None = None,
@@ -194,7 +193,6 @@ def build_phase2_case_overlays(
     family_roles = family_roles or {}
     family_q95_thresholds = family_q95_thresholds or {}
     detector_statuses = detector_statuses or []
-    duplicate_pair_evidence_by_case = duplicate_pair_evidence_by_case or {}
     family_explanation_features_by_case = family_explanation_features_by_case or {}
     family_document_context_by_case = family_document_context_by_case or {}
     relational_continuity_depth_by_case = relational_continuity_depth_by_case or {}
@@ -216,15 +214,10 @@ def build_phase2_case_overlays(
                 relational_continuity_depth_by_case.get(case.case_id, 0.0) or 0.0
             ),
         )
-        _attach_duplicate_pair_evidence(
-            contributions, duplicate_pair_evidence_by_case.get(case.case_id)
-        )
         _attach_explanation_features(
             contributions, family_explanation_features_by_case.get(case.case_id)
         )
-        _attach_document_context(
-            contributions, family_document_context_by_case.get(case.case_id)
-        )
+        _attach_document_context(contributions, family_document_context_by_case.get(case.case_id))
         top_family = _select_top_family(contributions)
         breadth = _coverage_breadth_q95(
             family_scores, family_q95_thresholds, family_roles=family_roles
@@ -520,38 +513,6 @@ def _attach_document_context(
         return
 
 
-def _attach_duplicate_pair_evidence(
-    contributions: list[dict[str, Any]],
-    pair_tier: str | None,
-) -> None:
-    """duplicate family entry 에 pair_evidence_tier / weight 부착.
-
-    Why: PHASE2 duplicate family row score 가 q95~q99 cap 으로 동률 bucket 이
-         크다. pair_artifact 의 same_partner + reference/text/amount similarity 를
-         categorical tier (strong/moderate/weak) 로 환산해 lane sort 보조키로
-         쓰기 위해 case overlay 단계에서 entry 에 부착한다.
-
-    가드:
-      - duplicate family entry 가 없으면 no-op.
-      - pair_tier 가 None/빈 문자열이면 weight=0 으로 명시 부착 (sort key 안정성).
-      - 다른 family entry 는 절대 수정 안 함.
-      - lexicographic sort key 보조 한정. weighted sum 금지.
-    """
-    from src.services.duplicate_pair_tier import pair_tier_weight
-
-    weight = pair_tier_weight(pair_tier)
-    if weight <= 0:
-        # pair_tier 미부착 case 는 entry dict 를 그대로 둔다.
-        # lane sort 가 entry.get("pair_evidence_tier_weight") or 0 으로 처리하므로 동등.
-        return
-    for entry in contributions:
-        if str(entry.get("family") or "") != "duplicate":
-            continue
-        entry["pair_evidence_tier"] = pair_tier
-        entry["pair_evidence_tier_weight"] = weight
-        return
-
-
 def _select_top_family(contributions: list[dict[str, Any]]) -> str | None:
     if not contributions:
         return None
@@ -691,7 +652,6 @@ def _case_provenance_row(case: CaseGroupResult) -> dict[str, Any]:
         "phase1_base_priority": case.base_priority_score,
         "phase1_priority_adjustments": {
             "topside_bonus": case.topside_bonus,
-            "batch_combo_bonus": case.batch_combo_bonus,
             "weak_evidence_bonus": case.weak_evidence_bonus,
             "reasons": list(case.priority_adjustment_reasons),
         },

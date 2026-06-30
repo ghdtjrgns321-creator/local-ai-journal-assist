@@ -110,21 +110,10 @@ class Phase2CaseBase:
     def with_phase1_refs(self, refs: tuple[str, ...]) -> Self:
         """phase1_case_refs 를 정렬해 새 case 반환 (immutable replace).
 
-        Self 반환 — DuplicateCase.with_phase1_refs(...) 가 DuplicateCase 로 좁혀져
+        Self 반환 — 각 subclass.with_phase1_refs(...) 가 자신의 타입으로 좁혀져
         Phase2CaseSet 의 family-typed tuple 에 안전하게 들어간다.
         """
         return dataclasses.replace(self, phase1_case_refs=tuple(sorted(refs)))
-
-
-@dataclass(frozen=True)
-class DuplicateCase(Phase2CaseBase):
-    """L2-03 중복 전표 — pair 단위 (left/right row_ref)."""
-
-    pair_id: str = ""
-    sub_rule: str = ""  # L2-03a / L2-03b / L2-03c / L2-03d
-    left_ref: Phase2RowRef | None = None
-    right_ref: Phase2RowRef | None = None
-    pair_evidence_tier: str = ""
 
 
 @dataclass(frozen=True)
@@ -237,7 +226,6 @@ class TimeseriesCase(Phase2CaseBase):
 
 # Phase2CaseSet.iter_all_cases_sorted 가 다섯 family 를 한 번에 순회하기 위한 묶음
 _FAMILY_FIELD_NAMES: tuple[str, ...] = (
-    "duplicate_cases",
     "intercompany_cases",
     "relational_cases",
     "unsupervised_cases",
@@ -247,9 +235,8 @@ _FAMILY_FIELD_NAMES: tuple[str, ...] = (
 
 @dataclass(frozen=True)
 class Phase2CaseSet:
-    """5 family case 묶음. linked=False 가 raw, linked=True 가 phase1_case_refs 부착 상태."""
+    """family case 묶음. linked=False 가 raw, linked=True 가 phase1_case_refs 부착 상태."""
 
-    duplicate_cases: tuple[DuplicateCase, ...] = ()
     intercompany_cases: tuple[IntercompanyCase, ...] = ()
     relational_cases: tuple[RelationalCase, ...] = ()
     unsupervised_cases: tuple[UnsupervisedCase, ...] = ()
@@ -280,7 +267,6 @@ class Phase2CaseSet:
             )
             updated[family_field] = new_cases
         return Phase2CaseSet(
-            duplicate_cases=updated["duplicate_cases"],
             intercompany_cases=updated["intercompany_cases"],
             relational_cases=updated["relational_cases"],
             unsupervised_cases=updated["unsupervised_cases"],
@@ -290,7 +276,6 @@ class Phase2CaseSet:
 
 
 __all__ = [
-    "DuplicateCase",
     "IntercompanyCase",
     "Phase2CaseBase",
     "Phase2CaseSet",

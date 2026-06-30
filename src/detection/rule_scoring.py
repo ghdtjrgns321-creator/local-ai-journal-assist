@@ -42,6 +42,14 @@ SCORING_ROLE_FACTOR: dict[str, float] = {
     "macro_only": 0.0,
 }
 
+# OFF-TIME 보조축: 근무시간 외 입력 신호 묶음 (주말·공휴일 | 심야 | 작성자 비정상시간 집중).
+# 설계상 tier 게이트·점수 병합에 참여하지 않고 within-tier 정렬·UI 표시 전용이다
+# (HIGH_COMBO_GROUNDING.md §2(5), PHASE1_TIER_SCORING_SPEC.md §4). 따라서 PHASE1-1 통합
+# 점수경로(row anomaly_score 정규화 합산·auto-escalation 카운트·corroboration)에서 0 기여로
+# 차단한다. 단일 출처 — score_aggregator·phase1_case_builder 가 import 한다.
+# 기간귀속(L3-04 기말·L3-11 컷오프)은 off-time 이 아니므로 절대 포함하지 않는다.
+OFF_TIME_SET: frozenset[str] = frozenset({"L3-05", "L3-06", "L4-05"})
+
 
 @dataclass(frozen=True)
 class TopicMetadata:
@@ -60,34 +68,10 @@ TOPIC_REGISTRY: dict[str, TopicMetadata] = {
     "revenue_statistical": TopicMetadata("revenue_statistical", "수익·금액·모집단 통계 이상"),
 }
 
-L104_BUCKET_SIGNAL_STRENGTH: dict[str, float] = {
-    "boundary": 0.35,
-    "moderate": 0.65,
-    "severe": 0.85,
-    "critical": 1.0,
-    "non_approver": 1.0,
-}
+# L1-04·L3-07·L3-09·L4-03 는 binary 룰(기다/아니다)로 통일.
+# 옛 bucket 등급표는 룰이 더 이상 등급 label 을 생성하지 않아 죽은 코드였으므로 제거.
+# binary hit → 정규화 fallback(generic)이 일관된 signal_strength 를 준다.
 
-L307_BUCKET_SIGNAL_STRENGTH: dict[str, float] = {
-    "moderate_gap": 0.55,
-    "large_gap": 0.75,
-    "extreme_gap": 1.0,
-}
-
-L403_ZSCORE_BUCKET_SIGNAL_STRENGTH: dict[str, float] = {
-    "low_zscore": 0.45,
-    "review_zscore": 0.45,
-    "medium_zscore": 0.70,
-    "strong_zscore": 0.70,
-    "high_zscore": 1.0,
-    "extreme_zscore": 1.0,
-}
-
-L309_AGING_BUCKET_SIGNAL_STRENGTH: dict[str, float] = {
-    "aging_30_60": 0.75,
-    "aging_60_90": 1.0,
-    "aging_over_90": 1.25,
-}
 
 @dataclass(frozen=True)
 class RuleScoringMetadata:
@@ -150,7 +134,9 @@ RULE_SCORING_REGISTRY: dict[str, RuleScoringMetadata] = {
         "L1-03",
         "logic_mismatch",
         "medium",
-        final_topic="account_logic",
+        # 데이터정합성 묶음(L1-01·02·03, HIGH_COMBO §2(1)) — ledger_integrity 로 교정(2026-06-20).
+        # 구 account_logic(부정 토픽)은 "계정과목표 밖 계정"을 fraud 신호로 오분류해 누수.
+        final_topic="ledger_integrity",
         fraud_scenario_tags=("account_classification_mismatch",),
     ),
     "L1-04": RuleScoringMetadata(
@@ -314,16 +300,6 @@ RULE_SCORING_REGISTRY: dict[str, RuleScoringMetadata] = {
         final_topic="closing_timing",
         fraud_scenario_tags=("posting_document_date_gap",),
     ),
-    "L3-08": RuleScoringMetadata(
-        "L3-08",
-        "timing_anomaly",
-        "weak",
-        "booster",
-        final_topic="ledger_integrity",
-        secondary_topics=("closing_timing",),
-        standalone_rankable=False,
-        fraud_scenario_tags=("sequence_gap_or_backdated_context",),
-    ),
     "L3-09": RuleScoringMetadata(
         "L3-09",
         "logic_mismatch",
@@ -348,15 +324,17 @@ RULE_SCORING_REGISTRY: dict[str, RuleScoringMetadata] = {
         final_topic="closing_timing",
         fraud_scenario_tags=("period_end_concentration",),
     ),
+    # L3-12(업무범위 집중)는 PHASE1-2 family(사용자·연도 집계) 귀속. macro_only 로 PHASE1-1
+    # row anomaly_score·tier 에 0 기여(2026-06-21 완전 제거). registry 항목은 폴백 점수 방지를
+    # 위해 유지(L4-02 와 동일 사유). combo_policy_ids 제거 — work_scope corroboration 폐기.
     "L3-12": RuleScoringMetadata(
         "L3-12",
         "access_scope_review",
         "weak",
-        "combo_only",
+        "macro_only",
         final_topic="approval_control",
         secondary_topics=("duplicate_outflow",),
         standalone_rankable=False,
-        combo_policy_ids=("work_scope_combo",),
         fraud_scenario_tags=("work_scope_concentration",),
     ),
     "L4-01": RuleScoringMetadata(
@@ -396,7 +374,7 @@ RULE_SCORING_REGISTRY: dict[str, RuleScoringMetadata] = {
         "statistical_outlier",
         "medium",
         final_topic="revenue_statistical",
-        fraud_scenario_tags=("zscore_amount_outlier",),
+        fraud_scenario_tags=("amount_outlier",),
     ),
     "L4-04": RuleScoringMetadata(
         "L4-04",
@@ -415,14 +393,16 @@ RULE_SCORING_REGISTRY: dict[str, RuleScoringMetadata] = {
         standalone_rankable=False,
         fraud_scenario_tags=("behavioral_timing_context",),
     ),
+    # L4-06(배치성 전표)는 PHASE1-2 family(배치·모집단) 귀속. macro_only 로 PHASE1-1 row
+    # anomaly_score·tier 에 0 기여(2026-06-21 완전 제거). combo_policy_ids 제거 — batch
+    # corroboration 폐기.
     "L4-06": RuleScoringMetadata(
         "L4-06",
         "statistical_outlier",
         "weak",
-        "combo_only",
+        "macro_only",
         final_topic="revenue_statistical",
         standalone_rankable=False,
-        combo_policy_ids=("batch_combo",),
         fraud_scenario_tags=("batch_population_anomaly",),
     ),
     # IC01~03·GR01/03 제거 (2026-06-14): intercompany/graph 는 PHASE2 family 영역으로,
@@ -547,8 +527,7 @@ def _rule_specific_signal_strength(
     display_label: str | None,
 ) -> float:
     label = str(display_label or "").strip().lower()
-    if rule_id == "L1-04" and label in L104_BUCKET_SIGNAL_STRENGTH:
-        return L104_BUCKET_SIGNAL_STRENGTH[label]
+    # L1-04: binary 통일 — 옛 L104 bucket 등급 제거. generic fallback 으로 일관된 binary 강도.
     if rule_id == "L1-03":
         try:
             numeric = max(float(raw_value), 0.0)
@@ -571,19 +550,7 @@ def _rule_specific_signal_strength(
             )
         severity_factor = max(min(float(severity) / 5.0, 1.0), 0.01)
         return min(numeric, 1.0) / severity_factor
-    if rule_id == "L3-09":
-        if label in L309_AGING_BUCKET_SIGNAL_STRENGTH:
-            return L309_AGING_BUCKET_SIGNAL_STRENGTH[label]
-        try:
-            numeric = max(float(raw_value), 0.0)
-        except (TypeError, ValueError):
-            return normalize_signal_strength(
-                raw_value,
-                severity=severity,
-                display_label=display_label,
-            )
-        severity_factor = max(min(float(severity) / 5.0, 1.0), 0.01)
-        return min(numeric, 1.0) / severity_factor
+    # L3-09: binary 통일 — 옛 L309 aging 등급 제거. generic fallback 으로 일관된 binary 강도.
     if rule_id == "L3-10":
         try:
             return min(max(float(raw_value), 0.0), 1.0)
@@ -593,6 +560,8 @@ def _rule_specific_signal_strength(
                 severity=severity,
                 display_label=display_label,
             )
+    # L4-04: binary 통일 — 옛 rare-pair bucket(0.25/0.35/0.45) 차등 폐기.
+    # 발화(raw>0)면 강도 1.0, bucket 크기 무시. 강도·정황·조합은 통합점수·case priority 소관.
     if rule_id == "L4-04":
         try:
             numeric = max(float(raw_value), 0.0)
@@ -602,8 +571,9 @@ def _rule_specific_signal_strength(
                 severity=severity,
                 display_label=display_label,
             )
-        severity_factor = max(min(float(severity) / 5.0, 1.0), 0.01)
-        return min(numeric, 1.0) / severity_factor
+        return 1.0 if numeric > 0.0 else 0.0
+    # L3-12: macro_only(2026-06-21) → _combined_normalized_rule_details 에서 선행 0강제되어 이
+    # 분기는 실제 도달하지 않는다. registry 폴백(primary) 점수 부착 방지용으로만 유지.
     if rule_id == "L3-12":
         try:
             return min(max(float(raw_value), 0.0), 1.0)
@@ -631,13 +601,7 @@ def _rule_specific_signal_strength(
                 severity=severity,
                 display_label=display_label,
             )
-    if rule_id == "L3-07":
-        for suffix, signal_strength in L307_BUCKET_SIGNAL_STRENGTH.items():
-            if label.endswith(suffix):
-                return signal_strength
-    if rule_id == "L4-03":
-        if label in L403_ZSCORE_BUCKET_SIGNAL_STRENGTH:
-            return L403_ZSCORE_BUCKET_SIGNAL_STRENGTH[label]
+    # L4-03: binary 통일 — 수행중요성 절대임계 초과 binary. generic fallback 으로 일관된 binary 강도.
     return normalize_signal_strength(
         raw_value,
         severity=severity,

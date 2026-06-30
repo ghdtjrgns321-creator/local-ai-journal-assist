@@ -1,6 +1,6 @@
 """전표 속성 기반 패턴 매칭 파생변수 5개 생성 모듈.
 
-L4-01(매출계정), L3-02(수기전표), L3-03(관계사), L2-04/L3-08(가계정), L4-02(Benford) 룰 대응.
+L4-01(매출계정), L3-02(수기전표), L3-03(관계사), L2-04(가계정), L4-02(Benford) 룰 대응.
 감사 업무 룰(키워드/코드)은 config/audit_rules.yaml에서 로드 — 함수 인자로 주입.
 """
 
@@ -79,6 +79,33 @@ def add_is_intercompany(
     return df
 
 
+def load_ic_pairs(audit_rules: dict) -> dict[str, str]:
+    """YAML intercompany.pairs → 양방향 prefix 매핑 dict.
+
+    Why: is_intercompany(L3-03) GL prefix 매칭용. 클라이언트별 CoA 체계가
+    다르므로 코드 하드코딩 금지. (구 intercompany_rules 에서 is_intercompany
+    전용 의존만 이전 — IC family 검사기 삭제와 분리.)
+    """
+    patterns = audit_rules.get("patterns", audit_rules)
+    ic_config = patterns.get("intercompany", {})
+    pairs_list = ic_config.get("pairs", [])
+
+    pair_map: dict[str, str] = {}
+    for pair in pairs_list:
+        rec = str(pair.get("receivable", ""))
+        pay = str(pair.get("payable", ""))
+        if rec and pay:
+            pair_map[rec] = pay
+            pair_map[pay] = rec
+    return pair_map
+
+
+def extract_ic_prefixes(audit_rules: dict) -> list[str]:
+    """pairs 에서 모든 고유 prefix 추출 — add_is_intercompany() 입력용."""
+    pair_map = load_ic_pairs(audit_rules)
+    return sorted(set(pair_map.keys()))
+
+
 def add_is_revenue_account(
     df: pd.DataFrame,
     prefixes: list[str],
@@ -136,7 +163,7 @@ def add_is_suspense_account(
     keywords: list[str],
     account_codes: list[str] | None = None,
 ) -> pd.DataFrame:
-    """L2-04/L3-08: 가계정·미결산 계정 하이브리드 판별.
+    """L2-04: 가계정·미결산 계정 하이브리드 판별.
 
     감사 관점: 실무에서는 GL 코드가 1순위 탐지 기준 — 횡령범은 적요를 위장하지만
     계정 코드는 변경할 수 없음. 텍스트 키워드 매칭과 OR 결합하여 양쪽 모두 커버.
@@ -197,9 +224,8 @@ def add_all_pattern_features(
         rules = get_audit_rules()["patterns"]
 
     add_is_manual_je(df, rules.get("manual_source_codes", []))
-    # Why: intercompany.pairs 구조에서 flat prefix 리스트 추출 (WU-07 YAML 구조화)
-    from src.detection.intercompany_rules import extract_ic_prefixes
-
+    # Why: intercompany.pairs 구조에서 flat prefix 리스트 추출 (WU-07 YAML 구조화).
+    # extract_ic_prefixes 는 본 모듈 로컬 헬퍼 — IC family 검사기와 디커플(Inc-IC 선행).
     add_is_intercompany(df, extract_ic_prefixes(rules))
     add_is_revenue_account(df, rules.get("revenue_account_prefixes", []))
     add_first_digit(df)

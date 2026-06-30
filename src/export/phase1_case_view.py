@@ -1799,10 +1799,10 @@ _CLASSIFICATION_RULES = {
         "review": "미해소 잔액 경과·반제 전표·담당자 해소 계획을 점검하세요.",
     },
     "L3-10": {
-        "summary": "민감 계정 사용: {account}",
-        "expected": "맥락 없는 고위험 계정 사용 없음",
-        "difference": "민감 계정",
-        "review": "계정 사용 목적·승인·연관 룰 조합을 확인하세요.",
+        "summary": "추정계정 사용: {account}",
+        "expected": "맥락 없는 추정계정 사용 없음",
+        "difference": "추정계정",
+        "review": "추정 근거·결산시점·연관 룰 조합을 확인하세요.",
     },
     "L3-12": {
         "summary": "{process} 광범위 작업 범위",
@@ -2012,14 +2012,6 @@ _EVIDENCE_BUILDERS = {
         _value(record, "source"),
         "수기 입력",
         "수기 입력 근거·작성자 권한·자동화 우회 반복 여부를 확인하세요.",
-        amount,
-    ),
-    "L3-08": lambda rule_id, record, doc_rows, amount: _ev(
-        "적요 누락 또는 손상",
-        "추적 가능한 업무 적요",
-        _value(record, "line_text", "누락"),
-        "적요 부실",
-        "원천 적요와 증빙 추적을 복구하세요.",
         amount,
     ),
     **{rule: _timing_evidence for rule in _TIMING_RULES},
@@ -2520,7 +2512,6 @@ def _case_row(
         "composite_sort_score": case.composite_sort_score,
         "composite_sort_score_components": dict(case.composite_sort_score_components),
         "topside_bonus": case.topside_bonus,
-        "batch_combo_bonus": case.batch_combo_bonus,
         "weak_evidence_bonus": case.weak_evidence_bonus,
         "priority_adjustment_reasons": list(case.priority_adjustment_reasons),
         # 집계뷰 파생 표시값 — 정답/우선순위 truth 축 아님(정책 §5). 주 검토 큐 tier 는
@@ -2748,7 +2739,6 @@ def _low_signal_case_row(item: dict[str, Any]) -> dict[str, Any]:
         "priority_score": score,
         "base_priority_score": score,
         "topside_bonus": 0.0,
-        "batch_combo_bonus": 0.0,
         "weak_evidence_bonus": 0.0,
         "priority_adjustment_reasons": [],
         "priority_band": "low",
@@ -3247,8 +3237,8 @@ _SIGNAL_TYPE_LABELS = {
 }
 
 _INTEGRITY_RULES = {"L1-01", "L1-02", "L1-03", "L1-08"}
-_MACRO_RULES = {"L4-02", "D01", "D02", "GR01", "GR03"}
-_REVIEW_CONTEXT_RULES = {"L3-03", "L3-05", "L3-06", "L3-08", "L3-12", "L4-06"}
+_MACRO_RULES = {"L4-02", "D01", "D02"}
+_REVIEW_CONTEXT_RULES = {"L3-03", "L3-05", "L3-06", "L3-12", "L4-06"}
 _L302_DIRECT_BUCKETS = {"manual_control_bypass"}
 
 

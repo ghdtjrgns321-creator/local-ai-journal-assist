@@ -16,7 +16,7 @@ from src.detection.fraud_rules_access import (
     b09_skipped_approval,
     b09b_unknown_approver,
     b10_intercompany_review_signal,
-    b13_high_risk_account_use,
+    b13_estimate_account_use,
     b14_work_scope_excess_review,
     build_access_rule_cache,
 )
@@ -136,11 +136,12 @@ FRAUD_RULE_EXPLANATIONS: dict[str, RuleExplanation] = {
     ),
     "L3-10": RuleExplanation(
         principle=(
-            "Sensitive accounts should be reviewed with account-specific professional skepticism."
+            "Accounting-estimate accounts (allowances, impairment, provisions) are management-bias "
+            "prone and warrant period-end professional skepticism (ISA 240 §32(b))."
         ),
-        violation_reason="The entry touches a configured sensitive or high-risk account.",
+        violation_reason="The entry touches a configured accounting-estimate account.",
         audit_next_action=(
-            "Inspect account purpose, supporting evidence, approver, and related entries."
+            "Inspect estimate basis, supporting evidence, period-end timing, and related entries."
         ),
         reference="PCAOB AS 2401; ISA 240",
     ),
@@ -290,7 +291,7 @@ class FraudLayer(BaseDetector):
             ("L3-02", b08_manual_override, {"audit_rules": self._audit_rules}),
             ("L1-07", b09_skipped_approval, {"audit_rules": self._audit_rules}),
             ("L1-07-02", b09b_unknown_approver, {"audit_rules": self._audit_rules}),
-            ("L3-10", b13_high_risk_account_use, {"audit_rules": self._audit_rules}),
+            ("L3-10", b13_estimate_account_use, {"audit_rules": self._audit_rules}),
             ("L3-12", b14_work_scope_excess_review, {"audit_rules": self._audit_rules}),
             ("L3-03", b10_intercompany_review_signal, {"audit_rules": self._audit_rules}),
             (

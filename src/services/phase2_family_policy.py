@@ -11,9 +11,7 @@ INTERCOMPANY_BROAD_RECALL_EXPANSION_FAMILY = False
 RELATIONAL_REVIEW_SURFACE_POLICY = "structural_moderate_audit_then_business_lane_split_v1"
 RELATIONAL_REVIEW_SURFACE_NAME = "structural_moderate_audit_then_business_lane_split_surface"
 RELATIONAL_PRODUCT_ROLE = "relationship_evidence_review_surface"
-RELATIONAL_PRIMARY_DENOMINATOR_STATUS = (
-    "pending_relationship_primary_metadata"
-)
+RELATIONAL_PRIMARY_DENOMINATOR_STATUS = "pending_relationship_primary_metadata"
 RELATIONAL_PRIMARY_TARGET_TRUTH_DOCS_FIXED5_RELMETA = 0
 RELATIONAL_PRIMARY_TARGET_MATCHED_DOCS_FIXED5_RELMETA = 0
 RELATIONAL_COMPANION_TRUTH_DOCS_FIXED5_V32D = 139
@@ -42,26 +40,6 @@ UNSUPERVISED_ADOPTION_NOTE = (
     "fields display-only; q95 gate, VAE score, detector threshold/weight, PHASE1 "
     "ranking, and PHASE2 fusion remain unchanged; case generation intentionally "
     "changed from row cases to document review cases"
-)
-
-DUPLICATE_PRODUCT_ROLE = "bounded_pair_evidence_first_review_with_case_grade_sidecar"
-DUPLICATE_FIRST_REVIEW_SURFACE = "bounded_observable_profile_rule_balanced_pair_surface"
-DUPLICATE_SIDECAR_SURFACE = "current_plus_case_grade_sidecar"
-DUPLICATE_SIDECAR_SURFACE_ID = "duplicate_case_grade_sidecar_v1"
-DUPLICATE_REMAINING_POTENTIAL_ARTIFACT_PATH = (
-    "artifacts/duplicate_remaining_potential_fixed5_20260530.json"
-)
-DUPLICATE_PRIMARY_TARGET_ARTIFACT_PATH = (
-    "artifacts/duplicate_primary_target_fixed5_dupmeta_20260530.json"
-)
-DUPLICATE_CANDIDATE_SIDECAR_ARTIFACT_PATH = (
-    "artifacts/duplicate_candidate_sidecar_fixed5_dupmeta_20260530.json"
-)
-DUPLICATE_V31_PRIMARY_READINESS_ARTIFACT_PATH = (
-    "artifacts/duplicate_v31_primary_readiness_fixed5_dupmeta_20260531.json"
-)
-DUPLICATE_V33_EXACT_SIDECAR_ARTIFACT_PATH = (
-    "artifacts/duplicate_v33_exact_sidecar_fixed5_20260531.json"
 )
 
 TIMESERIES_PRODUCT_ROLE = "timing_primary_diagnostic_candidate"
@@ -97,9 +75,7 @@ def build_relational_policy_summary(relational_cases: tuple[object, ...]) -> dic
         "primary_recall_tuning_allowed": False,
         "primary_recall_tuning_blocked_until_metadata": True,
         "primary_target_truth_docs": RELATIONAL_PRIMARY_TARGET_TRUTH_DOCS_FIXED5_RELMETA,
-        "primary_target_matched_docs": (
-            RELATIONAL_PRIMARY_TARGET_MATCHED_DOCS_FIXED5_RELMETA
-        ),
+        "primary_target_matched_docs": (RELATIONAL_PRIMARY_TARGET_MATCHED_DOCS_FIXED5_RELMETA),
         "primary_target_recall_fixed5_relmeta": None,
         "co_primary_allowed_by_policy": True,
         "co_primary_with": [],
@@ -190,9 +166,7 @@ def build_unsupervised_policy_summary(unsupervised_cases: tuple[object, ...]) ->
             "policy_id": UNSUPERVISED_COMPANION_POLICY_ID,
             "surface_name": UNSUPERVISED_COMPANION_SURFACE_NAME,
             "artifact_path": UNSUPERVISED_COMPANION_ARTIFACT_PATH,
-            "v31_owner_surface_artifact_path": (
-                UNSUPERVISED_V31_OWNER_SURFACE_ARTIFACT_PATH
-            ),
+            "v31_owner_surface_artifact_path": (UNSUPERVISED_V31_OWNER_SURFACE_ARTIFACT_PATH),
             "adoption_state": "historical_diagnostic_not_current_default",
             "descriptor_only": True,
             "replaces_native_case_ordering": False,
@@ -239,9 +213,7 @@ def build_unsupervised_policy_summary(unsupervised_cases: tuple[object, ...]) ->
             "primary_target_status": "debug_only_historical_v31_not_product_goal",
             "primary_target_metric_role": "debug_only_not_fraud_primary_recall",
             "primary_target_truth_docs_fixed5": 168,
-            "primary_target_source": (
-                "historical v3.1 fictitious-entry statistical diagnostic"
-            ),
+            "primary_target_source": ("historical v3.1 fictitious-entry statistical diagnostic"),
             "primary_target_product_goal": False,
             "must_capture_statistical_primary_40_by_vae": False,
             "companion_target_truth_docs_fixed5": 339,
@@ -260,9 +232,7 @@ def build_unsupervised_policy_summary(unsupervised_cases: tuple[object, ...]) ->
         },
         "v31_adoption_readiness": {
             "default_native_ordering_unchanged": False,
-            "soft_guard_role": (
-                "historical_document_review_priority_diagnostic"
-            ),
+            "soft_guard_role": ("historical_document_review_priority_diagnostic"),
             "product_default_adoption": False,
             "primary_top500_lift_vs_native": 87,
             "primary_lift_metric_role": "debug_only_historical_v31",
@@ -285,12 +255,8 @@ def build_unsupervised_policy_summary(unsupervised_cases: tuple[object, ...]) ->
             "v31_primary_native_repeated_normal_pressure_top500": 0.818,
             "v31_primary_soft_guard_repeated_normal_pressure_top500": 0.336,
             "v31_primary_soft_guard_period_end_normal_background_top500": 0.578,
-            "v31_primary_soft_guard_account_top1_share_top500": (
-                0.14396887159533073
-            ),
-            "v31_primary_soft_guard_process_top1_share_top500": (
-                0.35797665369649806
-            ),
+            "v31_primary_soft_guard_account_top1_share_top500": (0.14396887159533073),
+            "v31_primary_soft_guard_process_top1_share_top500": (0.35797665369649806),
             "v31_primary_soft_guard_single_row_high_amount_normal_proxy_top500": 0.0,
         },
         "q95_backlog_policy": {
@@ -307,186 +273,6 @@ def build_unsupervised_policy_summary(unsupervised_cases: tuple[object, ...]) ->
             "datasynth_changed_to_match_vae_score": False,
             "truth_owner_scenario_shortcut_feature_allowed": False,
             "truth_or_owner_metadata_used_as_selector": False,
-        },
-    }
-
-
-def build_duplicate_policy_summary(duplicate_cases: tuple[object, ...]) -> dict:
-    """Return aggregate-only duplicate first-review and sidecar policy metadata.
-
-    The descriptor records Phase 5 diagnostic constants. It does not replace
-    ``case_set.duplicate_cases`` ordering and is not consumed by scoring,
-    ranking, fusion, or PHASE1 priority logic.
-    """
-
-    return {
-        "primary_product_role": DUPLICATE_PRODUCT_ROLE,
-        "production_adoption": True,
-        "adoption_scope": "bounded_candidate_subset_and_pair_artifact_selection",
-        "production_first_review_ranking_changed": True,
-        "native_ordering_changed": True,
-        "production_default_selector_changed": True,
-        "candidate_subset_supplement_changed": True,
-        "pair_artifact_selection_strategy_changed": True,
-        "document_profile_pair_builder_added": True,
-        "phase2_fusion_changed": False,
-        "phase1_ranking_changed": False,
-        "recommended_first_review_surface": DUPLICATE_FIRST_REVIEW_SURFACE,
-        "recommended_sidecar_surface": DUPLICATE_SIDECAR_SURFACE,
-        "sidecar_adoption_state": "optional_export_candidate",
-        "v31_primary_target_status": "pending_pair_evidence_validation",
-        "v31_primary_candidate_docs": 76,
-        "v31_primary_pair_groups": 38,
-        "v31_native_top500_primary_docs": 0,
-        "v31_primary_recall_applicable": False,
-        "v31_primary_pending_reason": (
-            "duplicate-like metadata exists, but observable row-score and pair "
-            "generation path has not validated case-grade primary evidence"
-        ),
-        "missed_potential_explainable": True,
-        "missed_potential_primary_reason": "weak_pair_only_and_artifact_cap_boundary",
-        "ranking_change_rejected_reason": (
-            "would sacrifice current captured high-quality pair evidence"
-        ),
-        "weak_pair_promotion_allowed": False,
-        "case_count": len(duplicate_cases),
-        "phase5_artifact_path": DUPLICATE_REMAINING_POTENTIAL_ARTIFACT_PATH,
-        "primary_target_artifact_path": DUPLICATE_PRIMARY_TARGET_ARTIFACT_PATH,
-        "candidate_sidecar_artifact_path": DUPLICATE_CANDIDATE_SIDECAR_ARTIFACT_PATH,
-        "v31_primary_readiness_artifact_path": (
-            DUPLICATE_V31_PRIMARY_READINESS_ARTIFACT_PATH
-        ),
-        "v33_exact_sidecar_artifact_path": DUPLICATE_V33_EXACT_SIDECAR_ARTIFACT_PATH,
-        "v33_current_path_fixed5_ownermeta_v33b": {
-            "primary_target_docs": 22,
-            "companion_target_docs": 71,
-            "candidate_subset_primary_docs": 22,
-            "candidate_subset_companion_docs": 34,
-            "case_grade_primary_docs": 10,
-            "case_grade_companion_docs": 4,
-            "primary_case_grade_recall": 0.45454545454545453,
-            "companion_case_grade_recall": 0.056338028169014086,
-            "candidate_subset_supplement_docs": 500,
-            "candidate_subset_supplement_rows": 1034,
-            "pair_rule_distribution": {
-                "L2-03a": 275,
-                "L2-03b": 166,
-                "L2-03e": 59,
-            },
-        },
-        "primary_target_attrition_fixed5_dupmeta": {
-            "primary_target_docs": 76,
-            "row_score_primary_docs": 28,
-            "candidate_subset_primary_docs": 0,
-            "generated_pair_primary_docs": 0,
-            "duplicate_case_primary_docs": 0,
-            "no_row_score_primary_docs": 48,
-            "low_score_l2_03d_primary_docs": 28,
-            "main_candidate_subset_min_score": 0.5989857631894374,
-            "primary_l2_03d_score": 0.42857142857142855,
-            "top_pairs_cap_is_bottleneck": False,
-        },
-        "v31_primary_readiness_fixed5_dupmeta": {
-            "primary_pair_groups": 38,
-            "primary_row_score_hit_row_count": 54,
-            "primary_rule_doc_counts": {
-                "L2-03a": 0,
-                "L2-03b": 0,
-                "L2-03c": 0,
-                "L2-03d": 28,
-            },
-            "primary_l2_03d_below_candidate_floor": True,
-            "generated_pair_primary_docs": 0,
-            "top_pairs_primary_docs": 0,
-            "case_grade_top_pairs_primary_docs": 0,
-            "non_oracle_sidecar_pair_feasibility_confirmed": False,
-            "oracle_probe_weak_pair_ratio": 0.9775862068965517,
-            "next_improvement_class": (
-                "row_score_feature_coverage_or_observable_lower_score_pair_path"
-            ),
-        },
-        "v31_primary_gap_decomposition_fixed5_dupmeta": {
-            "no_row_score_primary_docs": {
-                "doc_count": 48,
-                "pair_group_count": 24,
-                "time_shift_bucket_distribution": {"1_3d": 48},
-                "amount_similarity_bucket_distribution": {"near": 48},
-                "reference_similarity_bucket_distribution": {"exact": 48},
-                "text_similarity_bucket_distribution": {"medium": 48},
-                "partner_match_ratio": 1.0,
-                "same_account_ratio": 0.0,
-                "same_business_process_ratio": 1.0,
-                "phase1_action_tier_distribution": {
-                    "low": 5,
-                    "medium": 4,
-                    "none": 39,
-                },
-            },
-            "low_score_l2_03d_primary_docs": {
-                "doc_count": 28,
-                "pair_group_count": 14,
-                "row_score_hit_row_count": 54,
-                "score_floor_gap": 0.17041433461800887,
-                "primary_to_candidate_floor_ratio": 0.7154951835405927,
-                "phase1_action_tier_distribution": {
-                    "low": 13,
-                    "medium": 15,
-                },
-            },
-        },
-        "v31_non_oracle_sidecar_failure_fixed5_dupmeta": {
-            "l2_03d_stratified_primary_docs": 0,
-            "rule_balanced_primary_docs": 0,
-            "non_oracle_candidate_docs_per_sample": 10000,
-            "l2_03d_sample_rule_distribution": {"L2-03b": 5000},
-            "rule_balanced_sample_rule_distribution": {
-                "L2-03a": 434,
-                "L2-03b": 3910,
-                "L2-03d": 656,
-            },
-            "oracle_probe_case_grade_pair_ratio": 0.022413793103448276,
-            "oracle_probe_usable_as_product_selector": False,
-        },
-        "candidate_sidecar_result_fixed5_dupmeta": {
-            "non_oracle_sidecar_pair_feasibility_confirmed": False,
-            "oracle_probe_primary_docs": 76,
-            "oracle_probe_weak_pair_ratio": 0.9775862068965517,
-            "product_sidecar_adoption_allowed": False,
-        },
-        "current_first_review_metrics": {
-            "generated_potential_outside_phase1_top100": 24,
-            "captured_outside_phase1_top100": 19,
-            "missed_potential_count": 5,
-            "generated_potential_outside_phase1_top500": 8,
-            "captured_outside_phase1_top500": 5,
-            "missed_potential_outside_phase1_top500": 3,
-        },
-        "sidecar_descriptor": {
-            "sidecar_surface_id": DUPLICATE_SIDECAR_SURFACE_ID,
-            "sidecar_surface": DUPLICATE_SIDECAR_SURFACE,
-            "sidecar_case_grade_only": True,
-            "sidecar_weak_pair_ratio": 0.0,
-            "sidecar_top500_truth_docs": 36,
-            "first_review_top100_captured_outside_phase1_top100": 19,
-            "missed_potential_count": 5,
-            "weak_pair_only_missed_count": 3,
-            "artifact_cap_boundary_missed_count": 2,
-            "replaces_default_duplicate_case_ordering": False,
-            "weak_pair_promotion_allowed": False,
-            "raw_identifier_leak_check": {
-                "doc_like_token_count": 0,
-                "forbidden_identifier_key_count": 0,
-                "forbidden_identifier_value_count": 0,
-                "phase2_case_id_like_token_count": 0,
-            },
-        },
-        "primary_target_guardrails": {
-            "do_not_use_duplicate_primary_metadata_as_selector": True,
-            "do_not_relax_row_score_threshold_for_fixed5": True,
-            "do_not_expand_top_pairs_cap_as_primary_fix": True,
-            "do_not_promote_weak_pairs_to_duplicate_case": True,
-            "preserve_current_first_review_ordering": False,
-            "do_not_use_truth_or_owner_metadata_as_selector": True,
         },
     }
 
@@ -589,15 +375,8 @@ def build_timeseries_policy_summary(timeseries_cases: tuple[object, ...]) -> dic
         },
     }
 
+
 __all__ = [
-    "DUPLICATE_FIRST_REVIEW_SURFACE",
-    "DUPLICATE_CANDIDATE_SIDECAR_ARTIFACT_PATH",
-    "DUPLICATE_PRIMARY_TARGET_ARTIFACT_PATH",
-    "DUPLICATE_PRODUCT_ROLE",
-    "DUPLICATE_REMAINING_POTENTIAL_ARTIFACT_PATH",
-    "DUPLICATE_SIDECAR_SURFACE",
-    "DUPLICATE_SIDECAR_SURFACE_ID",
-    "DUPLICATE_V31_PRIMARY_READINESS_ARTIFACT_PATH",
     "INTERCOMPANY_BROAD_RECALL_EXPANSION_FAMILY",
     "INTERCOMPANY_PRODUCT_ROLE",
     "RELATIONAL_CONTEXT_LANE_SUB_RULES",
@@ -624,7 +403,6 @@ __all__ = [
     "UNSUPERVISED_COMPANION_SURFACE_NAME",
     "UNSUPERVISED_PRODUCT_ROLE",
     "UNSUPERVISED_V31_OWNER_SURFACE_ARTIFACT_PATH",
-    "build_duplicate_policy_summary",
     "build_relational_policy_summary",
     "build_timeseries_policy_summary",
     "build_unsupervised_policy_summary",

@@ -10,10 +10,6 @@ import pandas as pd
 from src.detection.base import DetectionResult
 from src.models.phase1_case import Phase1CaseResult
 from src.models.phase2_case import Phase2CaseSet, UnsupervisedCase
-from src.services.duplicate_pair_tier import (
-    best_pair_tier,
-    classify_pair_evidence_tier,
-)
 from src.services.phase2_family_diagnostics import (
     classify_all_family_roles,
     compute_all_family_diagnostics,
@@ -25,7 +21,6 @@ _TRACK_TO_FAMILY = {
     "ml_unsupervised": "unsupervised",
     "timeseries": "timeseries",
     "relational": "relational",
-    "duplicate": "duplicate",
     "intercompany": "intercompany",
 }
 
@@ -42,9 +37,6 @@ class Phase2CaseFamilyOverlayInputs:
     family_review_only_by_case: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
     family_roles: dict[str, str] = field(default_factory=dict)
     family_q95_thresholds: dict[str, float] = field(default_factory=dict)
-    # duplicate lane sort 보조용 case별 best pair tier ("strong"/"moderate"/"weak").
-    # pair_artifact 미존재·미매칭 case 는 dict 에서 누락 → sort_lane 에서 weight=0 fallback.
-    duplicate_pair_evidence_by_case: dict[str, str] = field(default_factory=dict)
     # relational lane sort 보조용 case별 R05/R06 연속 raw score depth (0~1).
     # severity factor (0.6) 복원 후 max(R05, R06). sort tie-break 전용, score 미반영.
     # R05/R06 미hit case 는 dict 에서 누락 → sort_lane 에서 0.0 fallback.
@@ -104,7 +96,6 @@ def build_phase2_case_family_overlay_inputs(
         if result.track_name in _TRACK_TO_FAMILY
     }
     intercompany_review_only = _intercompany_review_only_sidecar(detection_results, df.index)
-    duplicate_pair_tier_by_label = _duplicate_pair_tier_by_label(result_by_family.get("duplicate"))
     unsupervised_cases_by_label = _unsupervised_cases_by_label(case_set, label_by_position)
 
     for case in phase1.cases:
@@ -156,10 +147,6 @@ def build_phase2_case_family_overlay_inputs(
             inputs.family_top_subdetectors_by_case[case.case_id] = case_subdetectors
         if review_only_meta:
             inputs.family_review_only_by_case[case.case_id] = {"intercompany": review_only_meta}
-        if "duplicate" in case_scores and duplicate_pair_tier_by_label:
-            best_tier = _case_best_pair_tier(labels, duplicate_pair_tier_by_label)
-            if best_tier is not None:
-                inputs.duplicate_pair_evidence_by_case[case.case_id] = best_tier
         if "relational" in case_scores:
             depth = _relational_continuity_depth_for_case(
                 result_by_family.get("relational"),
@@ -260,45 +247,6 @@ def _unsupervised_document_context(case: UnsupervisedCase) -> dict[str, Any]:
             }
         ),
     }
-
-
-def _duplicate_pair_tier_by_label(
-    duplicate_result: DetectionResult | None,
-) -> dict[Any, str]:
-    """duplicate detector pair_artifact.top_pairs → {index_label: best_tier} 맵.
-
-    Why: pair_artifact 은 detector 단위로 한 번만 산출되므로, 각 pair 의 양쪽
-         index label 에 best tier 를 부착해 case label 조회 시 O(1) lookup 한다.
-         같은 label 이 여러 pair 에 등장하면 최고 tier 만 유지.
-
-    pair_artifact 미존재·top_pairs 빈 경우 빈 dict graceful fallback.
-    """
-    if duplicate_result is None:
-        return {}
-    metadata = getattr(duplicate_result, "metadata", None) or {}
-    artifact = metadata.get("pair_artifact") if isinstance(metadata, dict) else None
-    if not isinstance(artifact, dict):
-        return {}
-    top_pairs = artifact.get("top_pairs") or []
-    if not isinstance(top_pairs, list) or not top_pairs:
-        return {}
-
-    tier_by_label: dict[Any, str] = {}
-    for pair in top_pairs:
-        if not isinstance(pair, dict):
-            continue
-        features = pair.get("features")
-        tier = classify_pair_evidence_tier(features if isinstance(features, dict) else None)
-        for key in ("left_index", "right_index"):
-            label = pair.get(key)
-            if label is None:
-                continue
-            current = tier_by_label.get(label)
-            _, current_weight = best_pair_tier([current]) if current else (None, 0)
-            _, new_weight = best_pair_tier([tier])
-            if new_weight > current_weight:
-                tier_by_label[label] = tier
-    return tier_by_label
 
 
 _UNSUPERVISED_TOP_K = 3
@@ -415,20 +363,6 @@ def _unsupervised_explanation_features_for_case(
             }
         )
     return explanations
-
-
-def _case_best_pair_tier(
-    labels: list[Any],
-    tier_by_label: dict[Any, str],
-) -> str | None:
-    """case label set 에서 최고 pair tier 추출 (없으면 None)."""
-    if not labels or not tier_by_label:
-        return None
-    candidates = [tier_by_label[label] for label in labels if label in tier_by_label]
-    if not candidates:
-        return None
-    best_tier, _ = best_pair_tier(candidates)
-    return best_tier
 
 
 def _family_score_series(

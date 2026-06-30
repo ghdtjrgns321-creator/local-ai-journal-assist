@@ -37,7 +37,6 @@ from pathlib import Path
 from typing import Any
 
 from src.models.phase2_case import (
-    DuplicateCase,
     IntercompanyCase,
     Phase2CaseSet,
     Phase2RowRef,
@@ -67,7 +66,6 @@ _ROW_REF_MAP_ALLOWED_STATUSES: frozenset[str] = frozenset(
 # Why: family 이름 → Phase2CaseSet 의 tuple 필드명 매핑.
 #      jsonl 파일명과 케이스셋 attribute 를 한 줄에서 관리.
 _FAMILY_TO_ATTR: dict[str, str] = {
-    "duplicate": "duplicate_cases",
     "intercompany": "intercompany_cases",
     "relational": "relational_cases",
     "unsupervised": "unsupervised_cases",
@@ -76,7 +74,6 @@ _FAMILY_TO_ATTR: dict[str, str] = {
 
 # Why: load 시 family 이름 → dataclass 매핑. row_refs 재구성을 위해 사용.
 _FAMILY_TO_DATACLASS: dict[str, type] = {
-    "duplicate": DuplicateCase,
     "intercompany": IntercompanyCase,
     "relational": RelationalCase,
     "unsupervised": UnsupervisedCase,
@@ -197,7 +194,7 @@ def _row_ref_entry(ref: Phase2RowRef, *, salt: str) -> dict[str, Any]:
 
 
 def _collect_unique_row_refs(case_set: Phase2CaseSet) -> dict[int, Phase2RowRef]:
-    """모든 case 의 row_refs + DuplicateCase.left_ref/right_ref 를 position 기준 dedup.
+    """모든 case 의 row_refs 를 position 기준 dedup.
 
     invariant #28 — 같은 position 이 여러 case 에 등장해도 1 entry.
     먼저 등장한 ref 를 보존 (iter_all_cases_sorted 순회 순서가 결정적).
@@ -207,15 +204,6 @@ def _collect_unique_row_refs(case_set: Phase2CaseSet) -> dict[int, Phase2RowRef]
         for ref in case.row_refs:
             if ref.row_position not in by_position:
                 by_position[ref.row_position] = ref
-        # DuplicateCase 의 left_ref / right_ref 도 dedup 대상에 포함.
-        # 보통 row_refs 와 동일 ref 라 dedup 효과로 처리되지만,
-        # row_refs 와 별개로 채워진 경우를 안전하게 흡수.
-        if isinstance(case, DuplicateCase):
-            for extra in (case.left_ref, case.right_ref):
-                if extra is None:
-                    continue
-                if extra.row_position not in by_position:
-                    by_position[extra.row_position] = extra
     return by_position
 
 
@@ -541,7 +529,6 @@ def load_phase2_case_set(
     # 6) Phase2CaseSet 조립. linked 는 manifest.linked_case_hash 존재 여부로 추론.
     linked_case_hash = manifest.get("linked_case_hash")
     case_set = Phase2CaseSet(
-        duplicate_cases=family_cases["duplicate"],
         intercompany_cases=family_cases["intercompany"],
         relational_cases=family_cases["relational"],
         unsupervised_cases=family_cases["unsupervised"],

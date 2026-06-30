@@ -10,6 +10,10 @@ import pandas as pd
 
 from src.detection.base import DetectionResult
 from src.detection.constants import get_track_display_label
+from src.detection.fraud_rules_access import (
+    _estimate_account_mask,
+    _get_estimate_account_config,
+)
 from src.ingest.datasynth_labels import get_source_path
 from src.metrics.models import (
     AnalyticalReviewMetric,
@@ -672,36 +676,13 @@ def _rule_score_bands(
             "closing_high_docs": int(high_docs),
         }
     if rule_id == "L3-09":
-        review_docs = (
-            df.loc[
-                (scores > 0) & (scores < 0.60),
-                "document_id",
-            ]
-            .dropna()
-            .nunique()
-        )
-        priority_docs = (
-            df.loc[
-                (scores >= 0.60) & (scores < 0.75),
-                "document_id",
-            ]
-            .dropna()
-            .nunique()
-        )
-        high_docs = df.loc[scores >= 0.75, "document_id"].dropna().nunique()
-        return {
-            "suspense_aging_review_docs": int(review_docs),
-            "suspense_aging_priority_docs": int(priority_docs),
-            "suspense_aging_high_docs": int(high_docs),
-        }
+        return {"flagged_docs": int(df.loc[scores > 0, "document_id"].dropna().nunique())}
     if rule_id == "L3-03":
         ic_docs = _docs_for_mask(df, scores > 0)
         ic_exception_docs = _docs_for_rules(df, results, {"IC01", "IC02", "IC03"})
-        graph_docs = _docs_for_rules(df, results, {"GR01", "GR03"})
         return {
             "ic_population_docs": len(ic_docs),
             "ic_exception_overlap_docs": len(ic_docs & ic_exception_docs),
-            "graph_overlap_docs": len(ic_docs & graph_docs),
         }
     if rule_id == "L3-05":
         weekend = _bool_column(df, "is_weekend")
@@ -751,157 +732,20 @@ def _rule_score_bands(
         after_hours_docs = df.loc[scores > 0, "document_id"].dropna().nunique()
         return {"after_hours_docs": int(after_hours_docs)}
     if rule_id == "L3-07":
-        annotations = _rule_row_annotations(rule_id, result)
-        if annotations:
-            return {
-                "late_posting_docs": _annotation_doc_count_by_field(
-                    df,
-                    annotations,
-                    "direction",
-                    "late_posting",
-                ),
-                "forward_date_gap_docs": _annotation_doc_count_by_field(
-                    df,
-                    annotations,
-                    "direction",
-                    "forward_date_gap",
-                ),
-                "moderate_gap_docs": _annotation_doc_count_by_field_suffix(
-                    df,
-                    annotations,
-                    "bucket",
-                    "_moderate_gap",
-                ),
-                "large_gap_docs": _annotation_doc_count_by_field_suffix(
-                    df,
-                    annotations,
-                    "bucket",
-                    "_large_gap",
-                ),
-                "extreme_gap_docs": _annotation_doc_count_by_field_suffix(
-                    df,
-                    annotations,
-                    "bucket",
-                    "_extreme_gap",
-                ),
-            }
-        return {
-            "moderate_gap_docs": int(
-                df.loc[(scores > 0) & (scores < 0.60), "document_id"].dropna().nunique()
-            ),
-            "large_gap_docs": int(
-                df.loc[(scores >= 0.60) & (scores < 0.75), "document_id"].dropna().nunique()
-            ),
-            "extreme_gap_docs": int(df.loc[scores >= 0.75, "document_id"].dropna().nunique()),
-        }
-    if rule_id == "L3-08":
-        if "description_quality" not in df.columns:
-            return {}
-        quality = df["description_quality"].fillna("").astype(str).str.strip().str.lower()
-        flagged = scores > 0
-        missing_docs = df.loc[flagged & quality.eq("missing"), "document_id"].dropna().nunique()
-        corrupted_docs = (
-            df.loc[
-                flagged & quality.eq("corrupted"),
-                "document_id",
-            ]
-            .dropna()
-            .nunique()
-        )
-        poor_docs = df.loc[flagged & quality.eq("poor"), "document_id"].dropna().nunique()
-        return {
-            "missing_description_docs": int(missing_docs),
-            "corrupted_description_docs": int(corrupted_docs),
-            "poor_legacy_docs": int(poor_docs),
-        }
+        return {"flagged_docs": int(df.loc[scores > 0, "document_id"].dropna().nunique())}
     if rule_id == "L3-10":
-        annotations = _rule_row_annotations(rule_id, result)
-        if annotations:
-            return {
-                "raw_sensitive_touch_docs": _annotation_doc_count_by_field(
-                    df,
-                    annotations,
-                    "signal_category",
-                    "raw_signal",
-                ),
-                "priority_case_docs": _annotation_doc_count_by_field(
-                    df,
-                    annotations,
-                    "signal_category",
-                    "priority_case",
-                ),
-                "normal_control_docs": _annotation_doc_count_by_field(
-                    df,
-                    annotations,
-                    "signal_category",
-                    "normal_control_candidate",
-                ),
-            }
-        raw_docs = (
-            df.loc[
-                (scores >= 0.30) & (scores < 0.60),
-                "document_id",
-            ]
-            .dropna()
-            .nunique()
-        )
-        priority_docs = df.loc[scores >= 0.60, "document_id"].dropna().nunique()
-        normal_docs = (
-            df.loc[
-                (scores > 0) & (scores < 0.30),
-                "document_id",
-            ]
-            .dropna()
-            .nunique()
-        )
-        return {
-            "raw_sensitive_touch_docs": int(raw_docs),
-            "priority_case_docs": int(priority_docs),
-            "normal_control_docs": int(normal_docs),
-        }
+        return {"flagged_docs": int(df.loc[scores > 0, "document_id"].dropna().nunique())}
     if rule_id == "L3-11":
+        # Why: L3-11 binary — 연속 점수 band(>=0.30/0.60) 폐기, 발화 문서만 집계
         cutoff_review_docs = df.loc[scores > 0, "document_id"].dropna().nunique()
-        cutoff_priority_docs = (
-            df.loc[
-                scores >= 0.30,
-                "document_id",
-            ]
-            .dropna()
-            .nunique()
-        )
-        cutoff_high_docs = df.loc[scores >= 0.60, "document_id"].dropna().nunique()
         return {
             "cutoff_review_docs": int(cutoff_review_docs),
-            "cutoff_priority_docs": int(cutoff_priority_docs),
-            "cutoff_high_docs": int(cutoff_high_docs),
         }
     if rule_id == "L4-03":
-        annotations = _rule_row_annotations(rule_id, result)
-        if annotations:
-            return {
-                "high_amount_review_docs": len(_docs_for_mask(df, scores > 0)),
-                "review_zscore_docs": _annotation_doc_count_by_field(
-                    df,
-                    annotations,
-                    "bucket",
-                    "review_zscore",
-                ),
-                "strong_zscore_docs": _annotation_doc_count_by_field(
-                    df,
-                    annotations,
-                    "bucket",
-                    "strong_zscore",
-                ),
-                "extreme_zscore_docs": _annotation_doc_count_by_field(
-                    df,
-                    annotations,
-                    "bucket",
-                    "extreme_zscore",
-                ),
-            }
+        # Why: L4-03 binary 전환 — 수행중요성 절대임계 초과 발화(0/1).
+        #      구 bucket(review/strong/extreme_zscore) 의존 제거.
         return {
             "high_amount_review_docs": len(_docs_for_mask(df, scores > 0)),
-            "strong_or_extreme_docs": len(_docs_for_mask(df, scores >= 0.60)),
         }
     if rule_id == "L4-04":
         annotations = _rule_row_annotations(rule_id, result)
@@ -1000,30 +844,18 @@ def _review_queue_docs(rule_id: str, fp_docs: int, score_bands: dict[str, int]) 
         return int(score_bands.get("closing_priority_docs", 0)) + int(
             score_bands.get("closing_high_docs", 0)
         )
-    if rule_id == "L3-09":
-        return int(score_bands.get("suspense_aging_priority_docs", 0)) + int(
-            score_bands.get("suspense_aging_high_docs", 0)
-        )
+    if rule_id == "L3-09" and "flagged_docs" in score_bands:
+        return int(score_bands["flagged_docs"])
     if rule_id == "L3-03" and "ic_population_docs" in score_bands:
         return int(score_bands["ic_population_docs"])
     if rule_id == "L3-05" and "calendar_review_docs" in score_bands:
         return int(score_bands["calendar_review_docs"])
     if rule_id == "L3-06" and "after_hours_docs" in score_bands:
         return int(score_bands["after_hours_docs"])
-    if rule_id == "L3-07" and "moderate_gap_docs" in score_bands:
-        return (
-            int(score_bands.get("moderate_gap_docs", 0))
-            + int(score_bands.get("large_gap_docs", 0))
-            + int(score_bands.get("extreme_gap_docs", 0))
-        )
-    if rule_id == "L3-08" and "missing_description_docs" in score_bands:
-        return (
-            int(score_bands.get("missing_description_docs", 0))
-            + int(score_bands.get("corrupted_description_docs", 0))
-            + int(score_bands.get("poor_legacy_docs", 0))
-        )
-    if rule_id == "L3-10" and "priority_case_docs" in score_bands:
-        return int(score_bands["priority_case_docs"])
+    if rule_id == "L3-07" and "flagged_docs" in score_bands:
+        return int(score_bands["flagged_docs"])
+    if rule_id == "L3-10" and "flagged_docs" in score_bands:
+        return int(score_bands["flagged_docs"])
     if rule_id == "L3-11" and "cutoff_review_docs" in score_bands:
         return int(score_bands["cutoff_review_docs"])
     if rule_id == "L4-03" and "high_amount_review_docs" in score_bands:
@@ -1286,18 +1118,16 @@ def _label_doc_set_for_rule(
         return set(df.loc[ic_mask, "document_id"].dropna().unique())
 
     if rule_id == "L3-10":
-        if not {"document_id", "gl_account"}.issubset(df.columns):
+        if "document_id" not in df.columns:
             return set()
-        gl = (
-            df["gl_account"]
-            .fillna("")
-            .astype(str)
-            .str.strip()
-            .str.lower()
-            .str.replace(r"\.0+$", "", regex=True)
+        cfg = _get_estimate_account_config()
+        estimate_mask, _, _, _ = _estimate_account_mask(
+            df,
+            account_name_keywords=cfg["account_name_keywords"],
+            exact_accounts=cfg["accounts"],
+            account_prefixes=cfg["account_prefixes"],
         )
-        high_risk_mask = gl.isin({"1190", "2190"}) | gl.str.startswith(("111", "112", "113"))
-        return set(df.loc[high_risk_mask, "document_id"].dropna().unique())
+        return set(df.loc[estimate_mask, "document_id"].dropna().unique())
 
     if rule_id == "L4-01":
         if not {"document_id", "anomaly_type"}.issubset(labels.columns):

@@ -1,4 +1,4 @@
-"""피처 기반 이상 징후 룰 — L3-04~L3-08, L4-03, L3-09, L4-05.
+"""피처 기반 이상 징후 룰 — L3-04~L3-07, L4-03, L3-09, L4-05.
 
 피처 엔진(src/feature/)이 미리 생성한 bool/float 컬럼을 조합하는 마스크 연산.
 피처 미존재 시 Series(False) 반환 → 오케스트레이터가 warning 기록.
@@ -228,9 +228,7 @@ def c02_weekend_entry(df: pd.DataFrame) -> pd.Series:
 
     row_annotations: dict[int, dict[str, object]] = {}
     optional_columns = [
-        column
-        for column in ("document_id", "posting_date", "source")
-        if column in df.columns
+        column for column in ("document_id", "posting_date", "source") if column in df.columns
     ]
     optional_values = (
         df.loc[flagged, optional_columns]
@@ -328,39 +326,7 @@ def c04_backdated_entry(
     days = pd.to_numeric(df["days_backdated"], errors="coerce").fillna(0)
     abs_gap = days.abs()
     result = (abs_gap > threshold_days).astype(bool)
-    if not result.any():
-        score_series = pd.Series(0.0, index=df.index, dtype="float64")
-        result.attrs["score_series"] = score_series
-        result.attrs["breakdown"] = {
-            "flagged_rows": 0,
-            "late_rows": 0,
-            "forward_rows": 0,
-            "bucket_counts": {},
-            "direction_counts": {},
-            "threshold_days": int(threshold_days),
-        }
-        result.attrs["row_annotations"] = {}
-        return result
-
-    direction = pd.Series("none", index=df.index, dtype="object")
-    direction.loc[result & days.gt(0)] = "late_posting"
-    direction.loc[result & days.lt(0)] = "forward_date_gap"
-
-    bucket = pd.Series("none", index=df.index, dtype="object")
-    moderate = result & abs_gap.le(60)
-    large = result & abs_gap.gt(60) & abs_gap.le(90)
-    extreme = result & abs_gap.gt(90)
-    bucket.loc[moderate & days.gt(0)] = "late_moderate_gap"
-    bucket.loc[large & days.gt(0)] = "late_large_gap"
-    bucket.loc[extreme & days.gt(0)] = "late_extreme_gap"
-    bucket.loc[moderate & days.lt(0)] = "forward_moderate_gap"
-    bucket.loc[large & days.lt(0)] = "forward_large_gap"
-    bucket.loc[extreme & days.lt(0)] = "forward_extreme_gap"
-
-    score_series = pd.Series(0.0, index=df.index, dtype="float64")
-    score_series.loc[moderate] = 0.45
-    score_series.loc[large] = 0.60
-    score_series.loc[extreme] = 0.75
+    score_series = result.astype(float)
 
     row_annotations: dict[object, dict[str, object]] = {}
     optional_columns = (
@@ -376,9 +342,7 @@ def c04_backdated_entry(
     )
     for idx in result[result].index:
         annotation: dict[str, object] = {
-            "bucket": str(bucket.loc[idx]),
-            "score": round(float(score_series.loc[idx]), 4),
-            "direction": str(direction.loc[idx]),
+            "score": 1.0,
             "days_backdated": int(days.loc[idx]),
             "abs_gap_days": int(abs_gap.loc[idx]),
             "threshold_days": int(threshold_days),
@@ -393,10 +357,6 @@ def c04_backdated_entry(
     result.attrs["score_series"] = score_series
     result.attrs["breakdown"] = {
         "flagged_rows": int(result.sum()),
-        "late_rows": int((result & days.gt(0)).sum()),
-        "forward_rows": int((result & days.lt(0)).sum()),
-        "bucket_counts": bucket.loc[result].value_counts().to_dict(),
-        "direction_counts": direction.loc[result].value_counts().to_dict(),
         "threshold_days": int(threshold_days),
     }
     result.attrs["row_annotations"] = row_annotations
@@ -608,166 +568,220 @@ def c05_fiscal_period_mismatch(
     return final
 
 
-def c06_missing_or_corrupted_description(df: pd.DataFrame) -> pd.Series:
-    """L3-08 적요 결손/파손: 설명 필드가 비었거나 명백히 깨진 경우.
+def _match_subtype_patterns(
+    subtype_series: pd.Series,
+    patterns: list[str],
+) -> pd.Series:
+    """대소문자 무시 부분일치로 subtype 패턴을 매칭한다.
 
-    Why: PCAOB AS 240 A49(c), K-SOX §8①1호 — 적요 미비는 전표 추적 방해.
+    Why: config에서 관리하는 패턴 목록(대문자 기준)을 실제 데이터 subtype에
+         대소문자 무시 부분일치로 적용 — 하드코딩 금지 정책 준수.
     """
-    if "description_quality" not in df.columns:
-        return pd.Series(False, index=df.index)
+    if not patterns:
+        return pd.Series(False, index=subtype_series.index)
+    upper = subtype_series.str.upper().fillna("")
+    mask = pd.Series(False, index=subtype_series.index)
+    for pat in patterns:
+        mask = mask | upper.str.contains(pat.upper(), na=False)
+    return mask
 
-    quality = df["description_quality"].fillna("").astype(str).str.strip().str.lower()
-    # "poor"는 기존 저장 데이터/테스트 fixture 호환용 별칭이다.
-    missing = quality.eq("missing")
-    corrupted = quality.eq("corrupted")
-    poor = quality.eq("poor")
-    result = missing | corrupted | poor
-    if not result.any():
-        return result
 
-    score_series = pd.Series(0.0, index=df.index)
-    score_series.loc[missing] = 0.45
-    score_series.loc[corrupted] = 0.55
-    score_series.loc[poor] = 0.50
+def _compute_pbt_thresholds(
+    df: pd.DataFrame,
+    company_col: str,
+    year_col: str,
+    debit: pd.Series,
+    credit: pd.Series,
+    subtype: pd.Series,
+    mc: dict[str, Any],
+) -> dict[tuple[str, Any], dict[str, float | str | None]]:
+    """회사×연도 단위 수행중요성 임계(threshold)와 근거 basis를 산출한다.
 
-    row_annotations: dict[int, dict[str, object]] = {}
-    for idx in result[result].index:
-        bucket = str(quality.loc[idx])
-        normalized_bucket = "corrupted_legacy_poor" if bucket == "poor" else bucket
-        row_annotations[int(idx)] = {
-            "description_quality": bucket,
-            "bucket": normalized_bucket,
-            "score": round(float(score_series.loc[idx]), 4),
-            "line_missing": (
-                bool(df.at[idx, "description_line_missing"])
-                if "description_line_missing" in df.columns
-                else None
-            ),
-            "header_missing": (
-                bool(df.at[idx, "description_header_missing"])
-                if "description_header_missing" in df.columns
-                else None
-            ),
-            "both_missing": (
-                bool(df.at[idx, "description_both_missing"])
-                if "description_both_missing" in df.columns
-                else None
-            ),
+    Why: PCAOB AS 2101 / ISA 320 — 수행중요성(PM)은 engagement별로 결정된다.
+         이익은 **마감분개(income_statement_close)가 닫은 손익계정 순액 = NI** 로 우선 산출한다
+         (키워드 분류 없이 GL이 실제로 확정한 손익이라 정확). 마감분개가 없는(연중) 데이터는
+         수익·비용 subtype 키워드 합산으로 fallback 한다.
+         법인세는 OPEX_TAX 등에 세금과공과와 섞여 분리가 부정확하므로 떼지 않고 NI 기준을 쓴다.
+         저마진·손익분기 근처는 이익 기준 임계가 비현실적으로 낮아지므로 매출 기준을 floor 로 둔다
+         (ISA 320: PBT 변동·손익분기 근처는 매출/총자산 벤치마크). materiality_amount > 0 이면 override.
+    """
+    rev_patterns = mc.get("revenue_subtype_patterns", [])
+    exp_patterns = mc.get("expense_subtype_patterns", [])
+    excl_patterns = mc.get("exclude_subtype_patterns", [])
+    closing_sub = mc.get("closing_subtype", "")
+    income_prefixes = [str(p) for p in mc.get("income_account_prefixes", [])]
+    pbt_pct = float(mc.get("pbt_pct", 0.05))
+    rev_pct = float(mc.get("rev_pct", 0.005))
+    pm_ratio = float(mc.get("pm_ratio", 0.75))
+    override = float(mc.get("materiality_amount", 0))
+
+    subtype_upper = subtype.str.upper().fillna("")
+    is_closing = subtype_upper == closing_sub.upper()
+    not_excluded = ~_match_subtype_patterns(subtype, excl_patterns)
+    base_mask = ~is_closing & not_excluded
+
+    is_revenue = base_mask & _match_subtype_patterns(subtype, rev_patterns)
+    is_expense = base_mask & _match_subtype_patterns(subtype, exp_patterns)
+
+    # 마감분개 손익계정 라인(NI 역산용): closing AND 손익 prefix
+    if income_prefixes and "gl_account" in df.columns:
+        gl_first = df["gl_account"].astype(str).str.strip().str[:1]
+        is_closing_income = is_closing & gl_first.isin(income_prefixes)
+    else:
+        is_closing_income = pd.Series(False, index=df.index)
+
+    result: dict[tuple[str, Any], dict[str, float | str | None]] = {}
+    groups = df.groupby([company_col, year_col])
+    for (cc, yr), idx in groups.groups.items():
+        if override > 0:
+            result[(cc, yr)] = {
+                "threshold": override,
+                "threshold_basis": "override",
+                "income": None,
+                "revenue": None,
+            }
+            continue
+
+        rev_idx = idx[is_revenue.loc[idx]]
+        rev_val = float(credit.loc[rev_idx].sum() - debit.loc[rev_idx].sum())
+
+        # 이익(NI): 마감분개 우선, 없으면 키워드 합산 fallback
+        close_idx = idx[is_closing_income.loc[idx]]
+        if len(close_idx) > 0:
+            # 마감분개가 수익을 차변·비용을 대변으로 닫으므로 (debit-credit)=순이익
+            income = float(debit.loc[close_idx].sum() - credit.loc[close_idx].sum())
+            income_basis = "closing_ni"
+        else:
+            exp_idx = idx[is_expense.loc[idx]]
+            exp_val = float(debit.loc[exp_idx].sum() - credit.loc[exp_idx].sum())
+            income = rev_val - exp_val
+            income_basis = "keyword_pbt"
+
+        # 매출 기준 floor (저마진·손익분기 근처는 이익 대신 매출 벤치마크)
+        rev_floor = rev_val * rev_pct * pm_ratio if rev_val > 0 else 0.0
+
+        if income > 0:
+            income_thr = income * pbt_pct * pm_ratio
+            if income_thr >= rev_floor:
+                threshold, basis = income_thr, income_basis
+            else:
+                threshold, basis = rev_floor, "revenue_floor"
+        elif rev_val > 0:
+            threshold, basis = rev_floor, "revenue"
+        else:
+            # 매출·이익 모두 산출 불가 — fallback 정책 미결정(추후 결정), 발화 0
+            result[(cc, yr)] = {
+                "threshold": None,
+                "threshold_basis": "unset",
+                "income": income,
+                "revenue": rev_val,
+            }
+            continue
+
+        result[(cc, yr)] = {
+            "threshold": threshold,
+            "threshold_basis": basis,
+            "income": income,
+            "revenue": rev_val,
         }
 
-    result.attrs["score_series"] = score_series
-    result.attrs["breakdown"] = {
-        "missing_rows": int(missing.sum()),
-        "corrupted_rows": int(corrupted.sum()),
-        "poor_legacy_rows": int(poor.sum()),
-        "quality_counts": {
-            str(key): int(value)
-            for key, value in quality.loc[result].value_counts(dropna=False).items()
-            if str(key)
-        },
-    }
-    result.attrs["row_annotations"] = row_annotations
     return result
-
-
-# Backward-compatible alias for older imports/tests.
-c06_risky_description = c06_missing_or_corrupted_description
 
 
 def c08_amount_outlier(
     df: pd.DataFrame,
-    zscore_threshold: float = 3.0,
-    min_amount_quantile: float = 0.90,
+    materiality_config: dict[str, Any] | None = None,
 ) -> pd.Series:
-    """L4-03 이상 고액: 양의 Z-score + 전역 상위 금액 분위수.
+    """L4-03 이상 고액: 수행중요성 절대임계(PM) 초과 binary 발화.
 
-    Why: PCAOB AS 240 §33(b), ISA 315 — 3σ 초과 금액은 조작 가능성.
-         Phase1에서는 무거운 계정별 whitelist 대신 최소 금액 분위수 가드만 적용해
-         저액 방향 이상치와 낮은 금액의 통계적 흔들림을 줄인다.
+    Why: PCAOB AS 2101 / ISA 320 — 수행중요성(PM) 초과 금액 전표는 감사인 리뷰 대상.
+         z-score 통계 모집단 대비 PM 기반 절대임계가 감사 기준에 더 직접적으로 대응하며,
+         회사×연도별 재무 규모에 비례하여 임계가 결정된다.
+
+    Args:
+        df: 전표 DataFrame. 필수 컬럼: debit_amount, credit_amount, company_code,
+            fiscal_year, semantic_account_subtype.
+        materiality_config: audit_rules.yaml의 patterns.l403_materiality 블록.
+                            None이면 빈 dict로 처리(threshold=unset → 발화 0).
     """
-    required = {"amount_zscore", "debit_amount", "credit_amount"}
+    mc: dict[str, Any] = materiality_config or {}
+
+    required = {"debit_amount", "credit_amount"}
     if not required.issubset(df.columns):
         return pd.Series(False, index=df.index)
+
+    company_col = "company_code" if "company_code" in df.columns else None
+    year_col = "fiscal_year" if "fiscal_year" in df.columns else None
 
     debit = pd.to_numeric(df["debit_amount"], errors="coerce").fillna(0.0)
     credit = pd.to_numeric(df["credit_amount"], errors="coerce").fillna(0.0)
     base_amount = pd.concat([debit, credit], axis=1).max(axis=1)
 
-    if 0.0 < min_amount_quantile <= 1.0:
-        amount_threshold = base_amount.quantile(min_amount_quantile)
-        high_amount = base_amount >= amount_threshold
+    subtype: pd.Series
+    if "semantic_account_subtype" in df.columns:
+        subtype = df["semantic_account_subtype"].fillna("").astype(str)
     else:
-        high_amount = pd.Series(True, index=df.index)
+        subtype = pd.Series("", index=df.index, dtype="str")
 
-    zscore = pd.to_numeric(df["amount_zscore"], errors="coerce").fillna(0.0)
-    high_zscore = zscore > zscore_threshold
-    result = (high_zscore & high_amount).astype(bool)
+    # 회사×연도 단위 임계 산출
+    thresholds_map: dict[tuple[Any, Any], dict[str, float | str | None]] = {}
+    unset_groups: set[tuple[Any, Any]] = set()
 
-    bucket = pd.Series("none", index=df.index, dtype="object")
-    bucket.loc[result] = "low_zscore"
-    bucket.loc[result & zscore.ge(5.0)] = "medium_zscore"
-    bucket.loc[result & zscore.ge(10.0)] = "high_zscore"
+    if company_col and year_col:
+        thresholds_map = _compute_pbt_thresholds(
+            df, company_col, year_col, debit, credit, subtype, mc
+        )
+        unset_groups = {k for k, v in thresholds_map.items() if v["threshold_basis"] == "unset"}
+    else:
+        # grouping 컬럼 없으면 threshold=None (unset)
+        pass
 
+    # 라인 단위 발화 판정
     score_series = pd.Series(0.0, index=df.index, dtype="float64")
-    score_series.loc[result & bucket.eq("low_zscore")] = 0.25
-    score_series.loc[result & bucket.eq("medium_zscore")] = 0.45
-    score_series.loc[result & bucket.eq("high_zscore")] = 0.70
-
     row_annotations: dict[object, dict[str, object]] = {}
-    optional_columns = (
-        "document_id",
-        "gl_account",
-        "account_group",
-        "posting_date",
-        "debit_amount",
-        "credit_amount",
-    )
-    for idx in result[result].index:
-        annotation_key = int(idx) if isinstance(idx, (int, np.integer)) else idx
-        annotation: dict[str, object] = {
-            "bucket": str(bucket.loc[idx]),
-            "score": round(float(score_series.loc[idx]), 4),
-            "amount_zscore": round(float(zscore.loc[idx]), 4),
-            "base_amount": float(base_amount.loc[idx]),
-            "amount_threshold": (
-                float(amount_threshold) if 0.0 < min_amount_quantile <= 1.0 else None
-            ),
-            "min_amount_quantile": float(min_amount_quantile),
-            "zscore_threshold": float(zscore_threshold),
-        }
-        for column in optional_columns:
-            if column in df.columns:
-                value = df.at[idx, column]
-                annotation[column] = None if pd.isna(value) else value
-        row_annotations[annotation_key] = annotation
 
-    result.attrs["score_series"] = score_series
-    result.attrs["breakdown"] = {
-        "high_amount_review_rows": int(result.sum()),
-        "low_zscore_rows": int((result & bucket.eq("low_zscore")).sum()),
-        "medium_zscore_rows": int((result & bucket.eq("medium_zscore")).sum()),
-        "high_zscore_rows": int((result & bucket.eq("high_zscore")).sum()),
-        "review_zscore_rows": int((result & bucket.eq("low_zscore")).sum()),
-        "strong_zscore_rows": int((result & bucket.eq("medium_zscore")).sum()),
-        "extreme_zscore_rows": int((result & bucket.eq("high_zscore")).sum()),
-        "amount_guard_rows": int(high_amount.sum()),
-        "zscore_candidate_rows": int(high_zscore.sum()),
-        "amount_threshold": float(amount_threshold) if 0.0 < min_amount_quantile <= 1.0 else None,
-        "min_amount_quantile": float(min_amount_quantile),
-        "zscore_threshold": float(zscore_threshold),
+    if company_col and year_col:
+        for idx in df.index:
+            cc = df.at[idx, company_col]
+            yr = df.at[idx, year_col]
+            key = (cc, yr)
+            info = thresholds_map.get(key, {"threshold": None, "threshold_basis": "unset"})
+            thr = info["threshold"]
+            basis = info["threshold_basis"]
+            ba = float(base_amount.loc[idx])
+            if thr is not None and ba >= thr:
+                score_series.loc[idx] = 1.0
+                annotation_key = int(idx) if isinstance(idx, (int, np.integer)) else idx
+                row_annotations[annotation_key] = {
+                    "base_amount": ba,
+                    "threshold": float(thr),
+                    "threshold_basis": str(basis),
+                    "exceed_ratio": round(ba / thr, 4) if thr > 0 else None,
+                }
+            elif thr is None:
+                # threshold 산출 불가 — 발화 0, annotation에 "threshold_unset" 표기
+                annotation_key = int(idx) if isinstance(idx, (int, np.integer)) else idx
+                row_annotations[annotation_key] = {
+                    "base_amount": ba,
+                    "threshold": None,
+                    "threshold_basis": "unset",
+                    "exceed_ratio": None,
+                }
+
+    result = (score_series > 0).astype(bool)
+
+    # breakdown 집계
+    flagged_count = int(result.sum())
+    unset_cy_count = len(unset_groups)
+    breakdown: dict[str, object] = {
+        "high_amount_review_rows": flagged_count,
+        "threshold_unset_company_years": unset_cy_count,
     }
     if "document_id" in df.columns:
-        result.attrs["breakdown"].update(
-            {
-                "high_amount_review_docs": _nunique_documents(df, result),
-                "low_zscore_docs": _nunique_documents(df, result & bucket.eq("low_zscore")),
-                "medium_zscore_docs": _nunique_documents(df, result & bucket.eq("medium_zscore")),
-                "high_zscore_docs": _nunique_documents(df, result & bucket.eq("high_zscore")),
-                "review_zscore_docs": _nunique_documents(df, result & bucket.eq("low_zscore")),
-                "strong_zscore_docs": _nunique_documents(df, result & bucket.eq("medium_zscore")),
-                "extreme_zscore_docs": _nunique_documents(df, result & bucket.eq("high_zscore")),
-            }
-        )
+        breakdown["high_amount_review_docs"] = _nunique_documents(df, result)
+
+    result.attrs["score_series"] = score_series
+    result.attrs["breakdown"] = breakdown
     result.attrs["row_annotations"] = row_annotations
     return result
 
@@ -874,39 +888,11 @@ def c10_suspense_account(
         credit = pd.to_numeric(df["credit_amount"], errors="coerce").fillna(0.0).abs()
         amount_open_abs = pd.concat([debit, credit], axis=1).max(axis=1)
 
-    aging_bucket = pd.Series("none", index=df.index, dtype="object")
-    aging_bucket.loc[result & aging_days.lt(threshold_days * 2)] = "aging_30_60"
-    aging_bucket.loc[
-        result & aging_days.ge(threshold_days * 2) & aging_days.lt(threshold_days * 3)
-    ] = "aging_60_90"
-    aging_bucket.loc[result & aging_days.ge(threshold_days * 3)] = "aging_over_90"
-
-    amount_bucket = pd.Series("unknown_amount", index=df.index, dtype="object")
-    flagged_amounts = amount_open_abs[result & amount_open_abs.notna()]
-    if not flagged_amounts.empty:
-        q50 = flagged_amounts.quantile(0.50)
-        q75 = flagged_amounts.quantile(0.75)
-        amount_bucket.loc[result & amount_open_abs.lt(q50)] = "open_amount_low"
-        amount_bucket.loc[result & amount_open_abs.ge(q50) & amount_open_abs.lt(q75)] = (
-            "open_amount_medium"
-        )
-        amount_bucket.loc[result & amount_open_abs.ge(q75)] = "open_amount_high"
-
-    score_series = pd.Series(0.0, index=df.index, dtype="float64")
-    score_series.loc[result & aging_bucket.eq("aging_30_60")] = 0.45
-    score_series.loc[result & aging_bucket.eq("aging_60_90")] = 0.60
-    score_series.loc[result & aging_bucket.eq("aging_over_90")] = 0.75
-    high_open_amount = result & amount_bucket.eq("open_amount_high") & score_series.gt(0)
-    score_series.loc[high_open_amount] = (score_series.loc[high_open_amount] + 0.05).clip(
-        upper=0.80
-    )
+    score_series = result.astype(float)
 
     result.attrs["breakdown"] = {
         "base_threshold_days": int(threshold_days),
         "flagged_rows": int(result.sum()),
-        "aging_bucket_counts": aging_bucket.loc[result].value_counts().to_dict(),
-        "open_amount_bucket_counts": amount_bucket.loc[result].value_counts().to_dict(),
-        "high_open_amount_rows": int((result & amount_bucket.eq("open_amount_high")).sum()),
     }
     row_annotations: dict[object, dict[str, object]] = {}
     gl_account = (
@@ -920,12 +906,10 @@ def c10_suspense_account(
             "gl_account": None if pd.isna(gl_account.loc[idx]) else str(gl_account.loc[idx]),
             "aging_days": None if pd.isna(aging_days.loc[idx]) else int(aging_days.loc[idx]),
             "threshold_days": int(threshold_days),
-            "aging_bucket": str(aging_bucket.loc[idx]),
             "open_amount": (
                 None if pd.isna(amount_open_abs.loc[idx]) else float(amount_open_abs.loc[idx])
             ),
-            "open_amount_bucket": str(amount_bucket.loc[idx]),
-            "score": round(float(score_series.loc[idx]), 4),
+            "score": 1.0,
         }
         for column in (
             "document_id",

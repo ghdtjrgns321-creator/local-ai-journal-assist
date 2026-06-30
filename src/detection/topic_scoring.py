@@ -32,7 +32,7 @@ _REVENUE_OR_AMOUNT_RULES = {"L4-01", "L4-03"}
 _TIMING_SEED_RULES = {"L3-04", "L3-11"}
 _OUTFLOW_RULES = {"L2-02", "L2-05"} | _DUPLICATE_ENTRY_RULES
 _APPROVAL_BYPASS_RULES = {"L1-04", "L1-05", "L1-06", "L1-07", "L1-07-02"}
-# §3.0 HIGH-4 둘째 leg (L3-10|L4-04|L4-03). §8(1) 고액 L4-03 복원, §8(5) 적요부실 L3-08 제거.
+# §3.0 HIGH-4 둘째 leg (L3-10|L4-04|L4-03). §8(1) 고액 L4-03 복원, 적요부실 룰은 폐기됨.
 _PERIOD_END_CORROBORANT_RULES = {"L3-10", "L4-04", "L4-03"}
 # Why: 가공전표(fictitious_entry_high) 조합의 "셋째 다리"(2차 정황) 풀.
 #      FSS HIGH 17건 재감사(A안, HIGH_COMBO_GROUNDING.md §5b / DECISION D075)에서

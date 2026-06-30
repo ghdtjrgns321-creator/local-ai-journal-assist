@@ -197,28 +197,67 @@ def c07_benford_violation(
     return scores, meta
 
 
+_RARE_PAIR_QUARTER_DAYS = 91.3125  # 365.25 / 4
+_RARE_PAIR_LARGE_DOC_LINE_THRESHOLD = 100
+_RARE_PAIR_MAX_LINES_PER_DOC = 1_000_000
+
+
+def _engagement_rare_thresholds(
+    df: pd.DataFrame,
+    eng_cols: list[str],
+    cadence_per_quarter: float,
+) -> pd.Series:
+    """engagement(회사·연도)별 cadence 희소 임계 빈도를 산정한다.
+
+    "정상 거래라면 분기 단위로 반복된다"는 cadence 판단:
+    임계 = round(분기수 · cadence_per_quarter) - 1. 빈도 ≤ 임계면 희소.
+    분기수는 engagement posting_date 범위로 산정(기간 비례 자동조정 — 1년→4분기→임계 3,
+    반기→2분기→임계 1). posting_date·기간 불명이면 1년(4분기) 가정. 임계 최소 0.
+    """
+    if "posting_date" in df.columns:
+        dates = pd.to_datetime(df["posting_date"], errors="coerce", format="ISO8601")
+    else:
+        dates = pd.Series(pd.NaT, index=df.index)
+    work = pd.DataFrame({col: df[col] for col in eng_cols})
+    work["_d"] = dates.to_numpy()
+    grouped = work.groupby(eng_cols, sort=False)["_d"]
+    span_days = (grouped.max() - grouped.min()).dt.days
+    quarters = (span_days / _RARE_PAIR_QUARTER_DAYS).round()
+    quarters = quarters.fillna(4.0).clip(lower=1.0)  # 기간 불명 → 1년 가정
+    threshold = (quarters * float(cadence_per_quarter)).round() - 1.0
+    return threshold.clip(lower=0.0).astype(int)
+
+
 def c09_rare_account_pair(
     df: pd.DataFrame,
-    percentile: float = 0.01,
+    cadence_per_quarter: float = 1.0,
 ) -> pd.Series:
-    """L4-04 희소 차대 계정쌍: 차변-대변 계정 쌍 빈도 하위 N%.
+    """L4-04 희소 차대 계정쌍: engagement(회사·연도) 기간 cadence(분기 1회) 미만 등장 쌍.
 
-    Why: PCAOB AS 240 A49(a), ISA 315 — 희소한 계정 조합은 비정상 거래 의심.
-         복합 분개(N:M)를 merge 기반 Cartesian Product로 처리하여
-         반복문 없이 벡터화 연산으로 모든 (차변, 대변) 쌍 생성.
+    Why: PCAOB AS2401 A45(a)/ISA315 — 희소한 계정 조합은 비정상 거래 의심.
+         희소 기준은 고정 퍼센트(구 하위 1%)가 아니라 cadence(주기): "정상 거래라면
+         분기 단위로 반복된다". engagement 기간을 분기수로 환산해 빈도 ≤ (분기수·cadence - 1)
+         이면 희소(기간 비례 자동조정). 빈도는 회사·연도 단위로 센다(합본 금지 — 회사 간 재등장로
+         희소 정의 붕괴 방지). 복합분개(N:M)는 merge 기반 Cartesian Product로 벡터화.
+         발화는 전표 단위 binary(0/1) — 강도/정황/조합은 통합점수체계 소관.
     """
-    # Phase 1 interpretation: rare debit-credit account-pair review signal.
-    # This rule does not try to maintain semantic allow/deny lists by account.
     required = ["document_id", "gl_account", "debit_amount", "credit_amount"]
     if any(c not in df.columns for c in required):
         return pd.Series(False, index=df.index)
 
-    # 1. 차변/대변 뷰 분리
-    debit_amt = df["debit_amount"].fillna(0)
-    credit_amt = df["credit_amount"].fillna(0)
+    # engagement 키 — company_code·fiscal_year 가 있으면 그 단위로, 없으면 전체 1 engagement.
+    eng_cols = [c for c in ("company_code", "fiscal_year") if c in df.columns]
+    df_eng = df.copy()
+    if not eng_cols:
+        df_eng["_engagement"] = 0
+        eng_cols = ["_engagement"]
 
-    debits = df.loc[debit_amt > 0, ["document_id", "gl_account"]]
-    credits = df.loc[credit_amt > 0, ["document_id", "gl_account"]]
+    # 1. 차변/대변 뷰 분리 (engagement 키 동반) — gl_account 결측 라인은 제외(L1-02/03 소관).
+    debit_amt = df_eng["debit_amount"].fillna(0)
+    credit_amt = df_eng["credit_amount"].fillna(0)
+    view_cols = ["document_id", "gl_account", *eng_cols]
+    debits = df_eng.loc[debit_amt > 0, view_cols]
+    credits = df_eng.loc[credit_amt > 0, view_cols]
 
     debit_null_account_lines = int(debits["gl_account"].isna().sum())
     credit_null_account_lines = int(credits["gl_account"].isna().sum())
@@ -233,206 +272,131 @@ def c09_rare_account_pair(
     debits = debits[debits["gl_account"].notna()]
     credits = credits[credits["gl_account"].notna()]
 
-    if debits.empty or credits.empty:
-        result = pd.Series(False, index=df.index)
-        result.attrs["breakdown"] = {
+    threshold_by_eng = _engagement_rare_thresholds(df_eng, eng_cols, cadence_per_quarter)
+
+    def _empty_result() -> pd.Series:
+        out = pd.Series(False, index=df.index)
+        out.attrs["breakdown"] = {
             "interpretation": "rare_debit_credit_pair_review_signal",
-            "percentile": float(percentile),
-            "threshold_count": None,
-            "distinct_pair_count": 0,
+            "rarity_basis": "cadence_per_quarter",
+            "cadence_per_quarter": float(cadence_per_quarter),
             "rare_pair_count": 0,
             "candidate_document_count": 0,
             "excluded_null_account_debit_lines": debit_null_account_lines,
             "excluded_null_account_credit_lines": credit_null_account_lines,
             "excluded_null_account_document_count": int(len(null_account_docs)),
         }
-        return result
+        out.attrs["score_series"] = pd.Series(0.0, index=df.index, dtype="float64")
+        out.attrs["row_annotations"] = {}
+        return out
 
-    # Why: 단일 전표 내 행 수가 과다하면 Cartesian Product로 메모리 폭발 가능
-    #      (차변 50 × 대변 50 = 2,500행/전표) — 임계 초과 전표는 제외
-    _LARGE_DOC_LINE_THRESHOLD = 100
-    doc_sizes = df.groupby("document_id").size()
-    large_docs = doc_sizes[doc_sizes > _LARGE_DOC_LINE_THRESHOLD].index
-    large_doc_mask_debit = debits["document_id"].isin(large_docs)
-    large_doc_mask_credit = credits["document_id"].isin(large_docs)
-    large_debits_before = int(large_doc_mask_debit.sum())
-    large_credits_before = int(large_doc_mask_credit.sum())
-    normal_debits = debits[~large_doc_mask_debit]
-    normal_credits = credits[~large_doc_mask_credit]
-    large_debits = debits[large_doc_mask_debit].drop_duplicates(["document_id", "gl_account"])
-    large_credits = credits[large_doc_mask_credit].drop_duplicates(["document_id", "gl_account"])
-    debits = pd.concat([normal_debits, large_debits], ignore_index=True)
-    credits = pd.concat([normal_credits, large_credits], ignore_index=True)
-    _MAX_LINES_PER_DOC = 1_000_000
-    doc_sizes = df.groupby("document_id").size()
-    bloated = doc_sizes[doc_sizes > _MAX_LINES_PER_DOC].index
-    if not bloated.empty:
+    if debits.empty or credits.empty:
+        return _empty_result()
+
+    # 메모리 보호: 100라인 초과 대형 전표는 (document_id, gl_account) 고유 쌍으로 압축한다.
+    # 구 "대형 전표면 신규 조합을 자동 희소" 정책은 폐기 — 압축된 쌍도 동일 cadence 로 판정.
+    doc_sizes = df_eng.groupby("document_id").size()
+    large_docs = set(doc_sizes[doc_sizes > _RARE_PAIR_LARGE_DOC_LINE_THRESHOLD].index)
+    lg_d = debits["document_id"].isin(large_docs)
+    lg_c = credits["document_id"].isin(large_docs)
+    large_debits_before = int(lg_d.sum())
+    large_credits_before = int(lg_c.sum())
+    large_debits = debits[lg_d].drop_duplicates(["document_id", "gl_account"])
+    large_credits = credits[lg_c].drop_duplicates(["document_id", "gl_account"])
+    debits = pd.concat([debits[~lg_d], large_debits], ignore_index=True)
+    credits = pd.concat([credits[~lg_c], large_credits], ignore_index=True)
+
+    bloated = set(doc_sizes[doc_sizes > _RARE_PAIR_MAX_LINES_PER_DOC].index)
+    if bloated:
         logger.warning(
             "L4-04: %d개 전표가 %d행 초과 — Cartesian Product 제한으로 제외",
             len(bloated),
-            _MAX_LINES_PER_DOC,
+            _RARE_PAIR_MAX_LINES_PER_DOC,
         )
         debits = debits[~debits["document_id"].isin(bloated)]
         credits = credits[~credits["document_id"].isin(bloated)]
 
-    if normal_debits.empty or normal_credits.empty:
-        return pd.Series(False, index=df.index)
+    if debits.empty or credits.empty:
+        return _empty_result()
 
-    # 2. document_id 기준 inner join → N:M 복합 분개의 모든 쌍 생성
-    normal_pairs = normal_debits.merge(normal_credits, on="document_id", suffixes=("_dr", "_cr"))
-    large_pairs = (
-        large_debits.merge(large_credits, on="document_id", suffixes=("_dr", "_cr"))
-        if not large_debits.empty and not large_credits.empty
-        else pd.DataFrame(columns=normal_pairs.columns)
+    # 2. document_id 기준 inner join → N:M 복합분개 모든 쌍(차변계정→대변계정). engagement 동반.
+    pairs = debits.merge(credits, on=["document_id", *eng_cols], suffixes=("_dr", "_cr"))
+    if pairs.empty:
+        return _empty_result()
+    pairs["_large_doc_pair"] = pairs["document_id"].isin(large_docs)
+
+    # 3. engagement·쌍별 빈도 → engagement 별 cadence 임계 적용. 빈도 ≤ 임계면 희소.
+    pair_key = [*eng_cols, "gl_account_dr", "gl_account_cr"]
+    pair_counts = pairs.groupby(pair_key, sort=False).size().rename("_count").reset_index()
+    pair_counts = pair_counts.merge(
+        threshold_by_eng.rename("_threshold").reset_index(), on=eng_cols, how="left"
     )
-    normal_pairs["_large_doc_pair"] = False
-    large_pairs["_large_doc_pair"] = True
-    pairs = pd.concat([normal_pairs, large_pairs], ignore_index=True)
+    pair_counts["_threshold"] = pair_counts["_threshold"].fillna(0).astype(int)
+    pair_counts["_rare"] = pair_counts["_count"] <= pair_counts["_threshold"]
+    rare_keys = pair_counts[pair_counts["_rare"]]
 
-    if normal_pairs.empty:
-        return pd.Series(False, index=df.index)
+    pairs = pairs.merge(rare_keys[[*pair_key, "_count", "_threshold"]], on=pair_key, how="inner")
+    if pairs.empty:
+        return _empty_result()
+    rare_docs = set(pairs["document_id"])
 
-    # 3. 쌍별 빈도 계산 → 하위 percentile 임계값
-    pair_counts = pairs.groupby(["gl_account_dr", "gl_account_cr"]).size()
-    # Why: quantile이 0을 반환하면 모든 쌍이 희소로 분류되는 것을 방지
-    pair_counts = normal_pairs.groupby(["gl_account_dr", "gl_account_cr"]).size()
-    threshold = max(pair_counts.quantile(percentile), 1)
-
-    # 4. 희소 쌍 → merge 기반 벡터화 판별 (tuple isin 대비 성능 우수)
-    rare_idx = pair_counts[pair_counts <= threshold].reset_index()
-    rare_idx.columns = ["gl_account_dr", "gl_account_cr", "_count"]
-    rare_idx["_rare"] = True
-    rare_count_lookup = {
-        (row["gl_account_dr"], row["gl_account_cr"]): int(row["_count"])
-        for row in rare_idx.to_dict("records")
-    }
-    pairs = pairs.merge(
-        rare_idx[["gl_account_dr", "gl_account_cr", "_rare"]],
-        on=["gl_account_dr", "gl_account_cr"],
-        how="left",
-    )
-    pairs["_rare"] = (
-        pairs["_rare"]
-        .where(
-            pairs["_rare"].notna(),
-            pairs["_large_doc_pair"],
-        )
-        .astype(bool)
-    )
-    rare_docs = set(pairs.loc[pairs["_rare"] == True, "document_id"])  # noqa: E712
-
-    # 5. Flag every line in documents that contain at least one rare pair.
+    # 4. 희소쌍이 하나라도 포함된 전표의 모든 라인을 binary 1.0 으로 플래그.
     result = df["document_id"].isin(rare_docs)
     score_series = pd.Series(0.0, index=df.index, dtype="float64")
+    score_series.loc[result] = 1.0
 
-    rare_pairs = pairs[pairs["_rare"] == True].copy()  # noqa: E712
-    if not rare_pairs.empty:
-        rare_doc_summary = rare_pairs.groupby("document_id").agg(
-            rare_pair_count=("document_id", "size"),
-            has_large_doc_pair=("_large_doc_pair", "max"),
-        )
-    else:
-        rare_doc_summary = pd.DataFrame(
-            columns=["rare_pair_count", "has_large_doc_pair"],
-        )
-
-    doc_annotation_inputs: dict[object, dict[str, object]] = {}
-    for document_id, doc_pairs in rare_pairs.groupby("document_id", sort=False):
+    doc_inputs: dict[object, dict[str, object]] = {}
+    for document_id, doc_pairs in pairs.groupby("document_id", sort=False):
         sample_pairs = [
-            f"{pair.gl_account_dr}->{pair.gl_account_cr}"
-            for pair in doc_pairs.head(5).itertuples(index=False)
+            f"{p.gl_account_dr}->{p.gl_account_cr}"
+            for p in doc_pairs.head(5).itertuples(index=False)
         ]
-        first_pair = doc_pairs.iloc[0]
-        pair_key = (first_pair["gl_account_dr"], first_pair["gl_account_cr"])
-        doc_annotation_inputs[document_id] = {
+        doc_inputs[document_id] = {
             "has_large_doc_pair": bool(doc_pairs["_large_doc_pair"].any()),
             "rare_pair_count": int(len(doc_pairs)),
             "sample_pairs": sample_pairs,
-            "sample_pair_count": rare_count_lookup.get(pair_key, None),
+            "threshold_count": int(doc_pairs["_threshold"].iloc[0]),
         }
-
-    score_bucket_by_doc: dict[object, str] = {}
-    score_by_doc: dict[object, float] = {}
-    for document_id, doc_input in doc_annotation_inputs.items():
-        rare_pair_count = int(doc_input.get("rare_pair_count", 0))
-        if bool(doc_input.get("has_large_doc_pair", False)):
-            score_bucket = "large_doc_distinct_pair"
-            score = 0.35
-        elif rare_pair_count >= 2:
-            score_bucket = "multiple_rare_pairs"
-            score = 0.45
-        else:
-            score_bucket = "single_rare_pair"
-            score = 0.25
-        score_bucket_by_doc[document_id] = score_bucket
-        score_by_doc[document_id] = score
-
-    mapped_scores = df["document_id"].map(score_by_doc).fillna(0.0).astype("float64")
-    score_series.loc[result] = mapped_scores.loc[result]
 
     row_annotations: dict[object, dict[str, object]] = {}
     for idx in df.index[result]:
         document_id = df.at[idx, "document_id"]
-        doc_input = doc_annotation_inputs.get(document_id, {})
-        score_bucket = score_bucket_by_doc.get(document_id, "single_rare_pair")
+        doc_input = doc_inputs.get(document_id, {})
         reason_codes = ["rare_account_pair"]
         if bool(doc_input.get("has_large_doc_pair", False)):
-            reason_codes.append("large_doc_distinct_pair")
+            reason_codes.append("large_doc_distinct_pair")  # 사실 표시(점수 가중 아님)
         annotation_key = int(idx) if isinstance(idx, int) else idx
         row_annotations[annotation_key] = {
             "reason_codes": reason_codes,
-            "primary_reason": reason_codes[-1],
-            "score": round(float(score_series.loc[idx]), 4),
-            "score_bucket": score_bucket,
+            "primary_reason": reason_codes[0],
+            "score": 1.0,
             "rare_pair_count": int(doc_input.get("rare_pair_count", 0)),
             "sample_pairs": list(doc_input.get("sample_pairs", [])),
-            "threshold_count": float(threshold),
+            "threshold_count": int(doc_input.get("threshold_count", 0)),
         }
         if "gl_account" in df.columns:
             value = df.at[idx, "gl_account"]
             row_annotations[annotation_key]["gl_account"] = None if pd.isna(value) else value
-        if "sample_pair_count" in doc_input:
-            row_annotations[annotation_key]["sample_pair_count"] = doc_input["sample_pair_count"]
 
-    large_doc_rare_docs = (
-        set(rare_doc_summary[rare_doc_summary["has_large_doc_pair"]].index)
-        if not rare_doc_summary.empty
-        else set()
-    )
-    single_rare_pair_docs = {
-        doc for doc, bucket in score_bucket_by_doc.items() if bucket == "single_rare_pair"
-    }
-    multiple_rare_pair_docs = {
-        doc for doc, bucket in score_bucket_by_doc.items() if bucket == "multiple_rare_pairs"
+    large_doc_rare_docs = {
+        doc for doc, inp in doc_inputs.items() if inp.get("has_large_doc_pair", False)
     }
     result.attrs["breakdown"] = {
         "interpretation": "rare_debit_credit_pair_review_signal",
-        "percentile": float(percentile),
-        "threshold_count": float(threshold),
+        "rarity_basis": "cadence_per_quarter",
+        "cadence_per_quarter": float(cadence_per_quarter),
+        "engagement_count": int(len(threshold_by_eng)),
         "distinct_pair_count": int(len(pair_counts)),
-        "rare_pair_count": int(len(rare_idx)),
+        "rare_pair_count": int(len(rare_keys)),
         "candidate_document_count": int(len(rare_docs)),
         "rare_pair_review_docs": int(len(rare_docs)),
         "ordinary_rare_pair_docs": int(len(rare_docs - large_doc_rare_docs)),
         "large_doc_distinct_pair_docs": int(len(large_doc_rare_docs)),
-        "single_rare_pair_docs": int(len(single_rare_pair_docs)),
-        "multiple_rare_pair_docs": int(len(multiple_rare_pair_docs)),
-        "single_rare_pair_rows": int(
-            (result & df["document_id"].isin(single_rare_pair_docs)).sum()
-        ),
-        "multiple_rare_pair_rows": int(
-            (result & df["document_id"].isin(multiple_rare_pair_docs)).sum()
-        ),
         "large_doc_distinct_pair_rows": int(
             (result & df["document_id"].isin(large_doc_rare_docs)).sum()
         ),
-        "score_bands": {
-            "single_rare_pair": 0.25,
-            "large_doc_distinct_pair": 0.35,
-            "multiple_rare_pairs": 0.45,
-        },
-        "pair_generation_mode": "line_pairs_with_large_doc_distinct_account_pairs",
-        "large_document_line_threshold": _LARGE_DOC_LINE_THRESHOLD,
+        "pair_generation_mode": "engagement_cadence_line_pairs",
+        "large_document_line_threshold": _RARE_PAIR_LARGE_DOC_LINE_THRESHOLD,
         "large_document_count": int(len(large_docs)),
         "deduplicated_large_debit_account_rows": int(large_debits_before - len(large_debits)),
         "deduplicated_large_credit_account_rows": int(large_credits_before - len(large_credits)),

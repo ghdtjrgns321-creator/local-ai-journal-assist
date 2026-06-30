@@ -35,7 +35,6 @@ class CaseGroupResult(BaseModel):
     composite_sort_score: float = 0.0
     composite_sort_score_components: dict[str, float] = Field(default_factory=dict)
     topside_bonus: float = 0.0
-    batch_combo_bonus: float = 0.0
     weak_evidence_bonus: float = 0.0
     priority_adjustment_reasons: list[str] = Field(default_factory=list)
     priority_band: str = "low"

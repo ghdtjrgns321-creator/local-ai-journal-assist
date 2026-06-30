@@ -21,7 +21,6 @@ import pandas as pd
 
 from src.detection.base import DetectionResult
 from src.models.phase2_case import Phase2CaseSet
-from src.services.phase2_duplicate_case_builder import build_duplicate_cases
 from src.services.phase2_intercompany_case_builder import build_intercompany_cases
 from src.services.phase2_relational_case_builder import build_relational_cases
 from src.services.phase2_timeseries_case_builder import build_timeseries_cases
@@ -29,7 +28,6 @@ from src.services.phase2_unsupervised_case_builder import build_unsupervised_cas
 
 # track_name → family key. 모르는 track 은 dict 부재로 silent skip (invariant #80).
 _TRACK_NAME_TO_FAMILY: dict[str, str] = {
-    "duplicate": "duplicate",
     "ml_unsupervised": "unsupervised",
     "intercompany": "intercompany",
     "relational": "relational",
@@ -55,7 +53,6 @@ def build_phase2_case_set(
     """5 family builder 호출 후 ``Phase2CaseSet`` 조립.
 
     detection_results 에서 track_name 별 라우팅:
-    - ``"duplicate"``       → ``build_duplicate_cases(batch_id, detection_result, df)``
     - ``"ml_unsupervised"`` → ``build_unsupervised_cases(... + model_id, schema_hash, ecdf_gate)``
     - ``"intercompany"``    → ``build_intercompany_cases(...)``
     - ``"relational"``      → ``build_relational_cases(...)``
@@ -99,14 +96,6 @@ def build_phase2_case_set(
             by_track[track] = result
 
     # family 별 builder 호출. 부재 track 은 빈 tuple 로 graceful fallback.
-    duplicate_cases: tuple = ()
-    if "duplicate" in by_track:
-        duplicate_cases = build_duplicate_cases(
-            batch_id=batch_id,
-            detection_result=by_track["duplicate"],
-            df=df,
-        )
-
     unsupervised_cases: tuple = ()
     if "ml_unsupervised" in by_track:
         # invariant #81 — unsupervised 만 model_id / schema_hash / ecdf_gate 전달.
@@ -147,7 +136,6 @@ def build_phase2_case_set(
 
     # invariant #82 — linked=False default. linker 가 후속 단계에서 부착.
     return Phase2CaseSet(
-        duplicate_cases=duplicate_cases,
         intercompany_cases=intercompany_cases,
         relational_cases=relational_cases,
         unsupervised_cases=unsupervised_cases,
