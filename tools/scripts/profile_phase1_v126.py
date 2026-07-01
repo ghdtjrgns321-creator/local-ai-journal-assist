@@ -86,6 +86,16 @@ PHASE1_USECOLS = {
     "invoice_amount",
     "supply_amount",
     "document_number",
+    # Why: L2-05 has an ERP structural-reference path. Dropping these fields makes
+    # combo/tier gates see only weak mirror-pair evidence and misclassify valid
+    # reversal-link datasets as missing L2-05.
+    "original_document_id",
+    "reversal_document_id",
+    "reference_document_id",
+    "reversed_document_id",
+    "reverse_document_id",
+    "reversal_reason",
+    "reversal_reason_code",
     "line_number",
     "gl_account",
     "debit_amount",

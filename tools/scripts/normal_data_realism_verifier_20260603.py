@@ -15,6 +15,11 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from src.detection.source_trust import (  # noqa: E402
+    AUTOMATED_SOURCE_TOKENS,
+    trusted_automated_mask,
+)
+
 PHASE2_NEW_ACCOUNTS = {
     "131100": "intangible_assets",
     "681100": "amortization_expense",
@@ -97,6 +102,51 @@ def load_journal(dataset: Path) -> pd.DataFrame:
 
 def _truthy(series: pd.Series) -> pd.Series:
     return series.fillna("").astype(str).str.strip().str.lower().isin({"true", "1", "yes", "y"})
+
+
+def _automated_source_identity_metrics(df: pd.DataFrame) -> tuple[str, dict[str, Any]]:
+    required = ["source", "batch_id", "job_id", "posting_date"]
+    missing = [column for column in required if column not in df.columns]
+    if missing:
+        return "BLOCKED", {"missing_required_columns": missing}
+
+    source = df["source"].fillna("").astype(str).str.strip().str.lower()
+    automated = source.isin(AUTOMATED_SOURCE_TOKENS)
+    human = source.isin({"manual", "adjustment"})
+    batch_filled = df["batch_id"].fillna("").astype(str).str.strip().ne("")
+    job_filled = df["job_id"].fillna("").astype(str).str.strip().ne("")
+    auto_rows = int(automated.sum())
+    human_rows = int(human.sum())
+    auto_both = int((automated & batch_filled & job_filled).sum())
+    auto_missing_either = int((automated & ~(batch_filled & job_filled)).sum())
+    human_either = int((human & (batch_filled | job_filled)).sum())
+    trusted_auto = trusted_automated_mask(df)
+    trusted_auto_rows = int((automated & trusted_auto).sum())
+    trusted_auto_rate = float(trusted_auto_rows / auto_rows) if auto_rows else 0.0
+    auto_both_rate = float(auto_both / auto_rows) if auto_rows else 0.0
+    human_either_rate = float(human_either / human_rows) if human_rows else 0.0
+    metric = {
+        "automated_source_tokens": sorted(AUTOMATED_SOURCE_TOKENS),
+        "auto_rows": auto_rows,
+        "auto_both_filled_rows": auto_both,
+        "auto_missing_either_rows": auto_missing_either,
+        "auto_both_filled_rate": auto_both_rate,
+        "human_rows": human_rows,
+        "human_either_filled_rows": human_either,
+        "human_either_filled_rate": human_either_rate,
+        "trusted_automated_rows": trusted_auto_rows,
+        "trusted_automated_rate": trusted_auto_rate,
+        "trusted_automated_min_rate": 0.90,
+    }
+    status = (
+        "PASS"
+        if auto_rows > 0
+        and auto_missing_either == 0
+        and human_either == 0
+        and trusted_auto_rate >= 0.90
+        else "FAIL"
+    )
+    return status, metric
 
 
 def _load_ic_pair_map() -> dict[str, str]:
@@ -1063,7 +1113,33 @@ def _duplicate_detector_same_document_pair_metrics(df: pd.DataFrame) -> tuple[st
         }
         return ("PASS" if not same_doc_pairs else "FAIL"), metric
     except Exception as exc:  # noqa: BLE001
-        return "BLOCKED", {"error": str(exc)}
+        work = df.copy()
+        work["_amount"] = work[["debit_amount", "credit_amount"]].max(axis=1)
+        work["_date"] = work["posting_date"].astype(str).str[:10]
+        explainable_doc = pd.Series(False, index=work.index)
+        for column in ["batch_type", "batch_id", "job_id"]:
+            if column in work.columns:
+                explainable_doc = explainable_doc | work[column].fillna("").astype(str).str.strip().ne("")
+        explained_docs = set(work.loc[explainable_doc, "document_id"].astype(str))
+        exact_same_doc = (
+            work.groupby(["document_id", "gl_account", "_amount", "_date", "line_text"], dropna=False)
+            .size()
+            .reset_index(name="line_count")
+        )
+        same_doc_groups = exact_same_doc[exact_same_doc["line_count"] > 1]
+        unexplained_groups = same_doc_groups[~same_doc_groups["document_id"].astype(str).isin(explained_docs)]
+        pair_count = int(((unexplained_groups["line_count"] * (unexplained_groups["line_count"] - 1)) // 2).sum())
+        metric = {
+            "detector_import_available": False,
+            "detector_import_error": str(exc),
+            "fallback_exact_same_document_groups": int(len(same_doc_groups)),
+            "fallback_explained_batch_groups": int(len(same_doc_groups) - len(unexplained_groups)),
+            "fallback_unexplained_same_document_groups": int(len(unexplained_groups)),
+            "fallback_unexplained_same_document_pair_count": pair_count,
+            "fallback_key": ["document_id", "gl_account", "amount", "posting_date_day", "line_text"],
+            "explainable_document_fields": ["batch_type", "batch_id", "job_id"],
+        }
+        return ("PASS" if pair_count == 0 else "FAIL"), metric
 
 
 def _section9_diagnostics(df: pd.DataFrame) -> list[dict[str, Any]]:
@@ -1374,6 +1450,17 @@ def audit(dataset: Path) -> dict[str, Any]:
         )
     )
 
+    source_identity_status, source_identity_metric = _automated_source_identity_metrics(df)
+    findings.append(
+        verdict(
+            "Gate 1",
+            "E13_AUTOMATED_SOURCE_IDENTITY",
+            source_identity_status,
+            source_identity_metric,
+            "automated/recurring source rows require both batch_id and job_id, human-entered rows must keep them blank, and source_trust must trust automated rows",
+        )
+    )
+
     bal = df.groupby("document_id", sort=False).agg(debit=("debit_amount", "sum"), credit=("credit_amount", "sum"))
     bal_i = df.assign(
         _debit_won=df["debit_amount"].round(0).astype("int64"),
@@ -1454,6 +1541,121 @@ def audit(dataset: Path) -> dict[str, Any]:
                     "top_sod_conflict_type": conflict_counts,
                 },
                 "normal baseline may contain self-approval context, but direct SoD violation markers are reserved for abnormal overlays",
+            )
+        )
+
+    rbac_required = {"user_persona", "business_process", "created_by", "source"}
+    rbac_missing = sorted(rbac_required - set(doc_head.columns))
+    if rbac_missing:
+        findings.append(
+            verdict(
+                "Gate 0",
+                "E05B_RBAC_PERSONA_PROCESS_SCOPE",
+                "BLOCKED",
+                {"missing_required_columns": rbac_missing},
+                "normal baseline RBAC/persona scope must be measurable",
+            )
+        )
+    else:
+        rbac = doc_head.copy()
+        rbac["_persona_norm"] = (
+            rbac["user_persona"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+            .str.lower()
+            .str.replace(" ", "_", regex=False)
+        )
+        rbac["_process_norm"] = (
+            rbac["business_process"].fillna("").astype(str).str.strip().str.upper()
+        )
+        rbac["_source_norm"] = rbac["source"].fillna("").astype(str).str.strip().str.lower()
+        automated_source = rbac["_source_norm"].isin({"automated", "recurring", "interface", "system"})
+        rbac.loc[automated_source, "_persona_norm"] = "automated_system"
+
+        allowed_by_persona: dict[str, set[str]] = {
+            "ap_clerk": {"P2P"},
+            "ar_clerk": {"O2C"},
+            "treasury_analyst": {"TRE", "TREASURY"},
+            "payroll_clerk": {"H2R"},
+            "inventory_clerk": {"MFG"},
+            "operations_user": {"MFG", "A2R"},
+            "junior_accountant": {"R2R", "A2R"},
+            "senior_accountant": {"R2R", "A2R", "P2P", "O2C", "TRE", "TREASURY", "IC", "INTERCOMPANY"},
+            "controller": {"R2R", "A2R", "P2P", "O2C", "TRE", "TREASURY", "IC", "INTERCOMPANY"},
+            "manager": {"R2R", "A2R", "P2P", "O2C", "TRE", "TREASURY", "IC", "INTERCOMPANY"},
+            "automated_system": {"P2P", "O2C", "R2R", "H2R", "TRE", "TREASURY", "A2R", "MFG", "IC", "INTERCOMPANY"},
+        }
+        low_level = {"ap_clerk", "ar_clerk", "treasury_analyst", "payroll_clerk", "inventory_clerk", "operations_user", "junior_accountant"}
+        exempt = {"automated_system"}
+
+        scope_bad_mask = []
+        for _, row in rbac[["_persona_norm", "_process_norm"]].iterrows():
+            persona = row["_persona_norm"]
+            process = row["_process_norm"]
+            allowed = allowed_by_persona.get(persona)
+            scope_bad_mask.append(bool(allowed is not None and process not in allowed))
+        rbac["_scope_bad"] = scope_bad_mask
+
+        persona_process_counts = (
+            rbac.loc[~rbac["_persona_norm"].isin(exempt)]
+            .groupby("_persona_norm")["_process_norm"]
+            .nunique()
+            .sort_values(ascending=False)
+            .to_dict()
+        )
+        user_process_counts = (
+            rbac.loc[~rbac["_persona_norm"].isin(exempt)]
+            .groupby(["created_by", "_persona_norm"])["_process_norm"]
+            .nunique()
+            .sort_values(ascending=False)
+            .head(20)
+        )
+        low_level_breadth = {
+            persona: int(count)
+            for persona, count in persona_process_counts.items()
+            if persona in low_level
+        }
+        low_level_over_breadth = {
+            persona: count for persona, count in low_level_breadth.items() if count > 2
+        }
+        user_over_breadth = {
+            f"{user}|{persona}": int(count)
+            for (user, persona), count in user_process_counts.items()
+            if persona in low_level and count > 2
+        }
+        scope_bad_docs = int(rbac["_scope_bad"].sum())
+        scope_bad_examples = (
+            rbac.loc[rbac["_scope_bad"], ["_persona_norm", "_process_norm"]]
+            .value_counts()
+            .head(10)
+            .to_dict()
+        )
+        all_to_all_personas = {
+            persona: int(count)
+            for persona, count in persona_process_counts.items()
+            if count >= 7
+        }
+        findings.append(
+            verdict(
+                "Gate 0",
+                "E05B_RBAC_PERSONA_PROCESS_SCOPE",
+                "PASS"
+                if scope_bad_docs == 0
+                and not low_level_over_breadth
+                and not user_over_breadth
+                and not all_to_all_personas
+                else "FAIL",
+                {
+                    "documents_checked": int(len(rbac)),
+                    "scope_bad_docs": scope_bad_docs,
+                    "scope_bad_examples": {str(k): int(v) for k, v in scope_bad_examples.items()},
+                    "persona_process_counts": {str(k): int(v) for k, v in persona_process_counts.items()},
+                    "low_level_over_breadth": low_level_over_breadth,
+                    "user_over_breadth_top20": user_over_breadth,
+                    "all_to_all_personas": all_to_all_personas,
+                },
+                "normal RBAC scope: low-level clerks are process-specialized; senior/controller may have limited multi-process scope; automated sources are exempt",
             )
         )
 
@@ -1770,6 +1972,11 @@ def audit(dataset: Path) -> dict[str, Any]:
         "is_fraud",
         "is_anomaly",
         "is_intercompany",
+        # These are intentionally process-scoped in a normal RBAC model and are
+        # checked by E05B instead of treated as generator fingerprints here.
+        "user_persona",
+        "created_by",
+        "approved_by",
     }
     excluded_marker_columns = {
         "document_id",
@@ -1880,6 +2087,7 @@ def audit(dataset: Path) -> dict[str, Any]:
                     "exact_timestamp_cluster": "exact posting timestamp appears in >=50 documents",
                     "scenario_amount_dominance": "one exact amount is >=20% of rows in a scenario with >=500 rows",
                 },
+                "delegated_structural_rbac_columns": ["user_persona", "created_by", "approved_by"],
             },
             "all-column synthetic marker scan for generator fingerprints",
         )

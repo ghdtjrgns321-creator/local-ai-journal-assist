@@ -11,6 +11,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.detection.topic_scoring import DEFAULT_COMBO_FLOORS  # noqa: E402
+from tools.scripts import profile_phase1_v126 as phase1_profile  # noqa: E402
 
 MATRIX_PATH = Path("dev/active/phase1-rule-basis-audit/phase1-combo-tier-firing-matrix.md")
 R11_RULES = {
@@ -145,6 +146,21 @@ REQUIRED_TRUTH_COLUMNS = {
     "member_document_ids",
     "source_contract",
 }
+L205_STRUCTURAL_COLUMNS = {
+    "original_document_id",
+    "reversal_document_id",
+    "reference_document_id",
+    "reversed_document_id",
+    "reverse_document_id",
+    "reversal_reason",
+    "reversal_reason_code",
+}
+L205_JOURNAL_REQUIRED_COLUMNS = {
+    "original_document_id",
+    "reversal_document_id",
+    "reversal_reason",
+    "reversal_reason_code",
+}
 
 
 def _parse_args() -> argparse.Namespace:
@@ -178,6 +194,30 @@ def _truth_path(dataset: Path) -> Path | None:
         if candidate.exists():
             return candidate
     return None
+
+
+def _journal_columns(dataset: Path) -> set[str]:
+    path = dataset / "journal_entries.csv"
+    if not path.exists():
+        return set()
+    with path.open(newline="", encoding="utf-8-sig") as f:
+        reader = csv.reader(f)
+        return {str(column) for column in next(reader, [])}
+
+
+def _validate_l205_structural_preflight(dataset: Path) -> list[str]:
+    failures: list[str] = []
+    profile_missing = sorted(L205_STRUCTURAL_COLUMNS - set(phase1_profile.PHASE1_USECOLS))
+    if profile_missing:
+        failures.append(f"phase1_usecols_l205_structural_missing:{profile_missing}")
+    journal_cols = _journal_columns(dataset)
+    if not journal_cols:
+        failures.append("journal_entries_missing_or_empty")
+        return failures
+    journal_missing = sorted(L205_JOURNAL_REQUIRED_COLUMNS - journal_cols)
+    if journal_missing:
+        failures.append(f"journal_l205_structural_columns_missing:{journal_missing}")
+    return failures
 
 
 def _validate_matrix() -> list[str]:
@@ -273,6 +313,7 @@ def main() -> int:
         if args.dataset is None:
             failures.append("dataset_required_without_matrix_only")
         else:
+            failures.extend(_validate_l205_structural_preflight(args.dataset))
             failures.extend(_validate_truth(args.dataset))
     report = {
         "status": "PASS" if not failures else "FAIL",
