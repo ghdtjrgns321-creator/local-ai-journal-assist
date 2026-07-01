@@ -12,6 +12,7 @@
    - PHASE1-1 개별 룰 recall.
    - PHASE1 combo/tier case assembly.
    - PHASE2 fraud scheme overlay.
+   - Integrated usefulness benchmark overlay.
 2. 기존 accepted dataset을 덮어쓰지 않는다.
 3. Rust generator를 고친다. Python CSV 후처리로 생성 결함을 덧대지 않는다.
 4. detector 성능을 보고 주입을 맞추지 않는다. 데이터 realism, 회계 실체, shortcut gate 실패만 피드백으로 사용한다.
@@ -48,7 +49,7 @@ uv run python tools/scripts/audit_full_leak_scan.py <PHASE2_DATASET>
 
 현재 accepted NORMAL:
 
-`data/journal/primary/datasynth_semantic_v1_normal_20260621_v46b`
+`data/journal/primary/datasynth_semantic_v1_normal_20260630_v47_batchid_r1`
 
 역할:
 
@@ -104,11 +105,11 @@ uv run python tools/scripts/audit_balance_integrity.py <NORMAL_OUTPUT>
 
 Accepted dataset:
 
-`data/journal/primary/datasynth_semantic_v1_recall_20260622_v46b_phase1_1_r11`
+`data/journal/primary/datasynth_semantic_v1_recall_20260630_v47_batchid_phase1_1_r1`
 
 Base:
 
-`data/journal/primary/datasynth_semantic_v1_normal_20260621_v46b`
+`data/journal/primary/datasynth_semantic_v1_normal_20260630_v47_batchid_r1`
 
 SoT:
 
@@ -121,7 +122,7 @@ SoT:
 ```powershell
 cargo run --manifest-path tools/datasynth/Cargo.toml -p datasynth-cli -- generate `
   --profile phase1-recall-overlay `
-  --manipulation-source data/journal/primary/datasynth_semantic_v1_normal_20260621_v46b `
+  --manipulation-source data/journal/primary/datasynth_semantic_v1_normal_20260630_v47_batchid_r1 `
   --output <PHASE1_RECALL_OUTPUT>
 ```
 
@@ -162,11 +163,11 @@ uv run python tools/scripts/measure_phase1_detector_catch.py <PHASE1_RECALL_OUTP
 
 Accepted dataset:
 
-`data/journal/primary/datasynth_semantic_v1_combo_tier_20260622_v46b_r1z`
+`data/journal/primary/datasynth_semantic_v1_combo_tier_20260630_v47_batchid_r1j`
 
 Base:
 
-`data/journal/primary/datasynth_semantic_v1_normal_20260621_v46b`
+`data/journal/primary/datasynth_semantic_v1_normal_20260630_v47_batchid_r1`
 
 SoT:
 
@@ -179,7 +180,7 @@ SoT:
 ```powershell
 cargo run --manifest-path tools/datasynth/Cargo.toml -p datasynth-cli -- generate `
   --profile phase1-combo-tier-overlay `
-  --manipulation-source data/journal/primary/datasynth_semantic_v1_normal_20260621_v46b `
+  --manipulation-source data/journal/primary/datasynth_semantic_v1_normal_20260630_v47_batchid_r1 `
   --output <PHASE1_COMBO_TIER_OUTPUT>
 ```
 
@@ -213,6 +214,9 @@ uv run python tools/scripts/measure_phase1_combo_tier.py <PHASE1_COMBO_TIER_OUTP
 - static gate PASS.
 - shortcut findings 0.
 - actual case-builder gate 15 / 15.
+- PHASE1 measurement harness reads L2-05 structural-reference fields. If
+  `profile_phase1_v126.PHASE1_USECOLS` drops `original_document_id`/`reversal_document_id` family
+  columns, related-party reversal combos can false-fail even when the dataset is correct.
 
 ### 4.4 중요한 판정 규칙
 
@@ -245,8 +249,8 @@ Scale reference:
 
 주의:
 
-- r4m_h는 accepted이지만 최신 NORMAL v46b 위에서 재생성된 것은 아니다.
-- 다음 PHASE2 run은 v46b base 위에서 같은 gate를 다시 통과해야 한다.
+- r4m_h는 accepted이지만 최신 NORMAL v47 batch/job successor 위에서 재생성된 것은 아니다.
+- 다음 PHASE2 run은 v47 batch/job successor base 위에서 같은 gate를 다시 통과해야 한다.
 
 ### 5.2 생성 profile
 
@@ -267,6 +271,8 @@ cargo run --manifest-path tools/datasynth/Cargo.toml -p datasynth-cli -- generat
 ```
 
 ### 5.3 필수 gate
+
+세부 수락 기준은 [Fraud Overlay Realism Gate](./fraud-overlay-realism-gate.md)를 따른다.
 
 ```powershell
 uv run python tools/scripts/phase2_shortcut_gate.py <PHASE2_OUTPUT> <PHASE2_SCALE_REFERENCE>
@@ -319,7 +325,69 @@ uv run python tools/scripts/verify_phase2_seed_diversity.py `
 - 부작위 금액을 상수로 복사하면 FAIL이다.
 - seed가 document id만 바꾸고 fraud content가 같으면 FAIL이다.
 
-## 6. 완료 보고 양식
+## 6. Integrated usefulness Phase1 overlay runbook
+
+### 6.1 현재 기준
+
+Accepted dataset:
+
+`data/journal/primary/datasynth_integrated_usefulness_phase1_20260701_v1g`
+
+Base:
+
+`data/journal/primary/datasynth_semantic_v1_normal_20260630_v47_batchid_r7`
+
+SoT:
+
+- `dev/active/integrated-usefulness-benchmark/GENERATION_HANDOFF.md`
+- `dev/active/integrated-usefulness-benchmark/INJECTION_POPULATION.md`
+- `dev/active/integrated-usefulness-benchmark/pattern_specs/`
+- `dev/active/integrated-usefulness-benchmark/COHERENCE_ORACLE_SPEC.md`
+
+### 6.2 생성 profile
+
+```powershell
+cargo run --manifest-path tools/datasynth/Cargo.toml -p datasynth-cli -- generate `
+  --profile integrated-usefulness-phase1-overlay `
+  --contract-source data/journal/primary/datasynth_semantic_v1_normal_20260630_v47_batchid_r7 `
+  --output <IUB_PHASE1_OUTPUT>
+```
+
+### 6.3 필수 gate
+
+```powershell
+uv run python tools/scripts/verify_injection_coherence.py --self-test
+```
+
+```powershell
+uv run python tools/scripts/verify_integrated_usefulness_phase1.py `
+  <IUB_PHASE1_OUTPUT> `
+  --base data/journal/primary/datasynth_semantic_v1_normal_20260630_v47_batchid_r7
+```
+
+```powershell
+uv run python tools/scripts/verify_injection_coherence.py <IUB_PHASE1_OUTPUT>
+```
+
+수락 기준:
+
+- truth rows 595, seed_0~seed_4 각각 119.
+- 3 generated patterns 모두 존재.
+- label/provenance/surface hint journal 노출 0.
+- exact-value oracle findings 0.
+- distribution leak findings 0.
+- temporal coherence findings 0.
+- coherence oracle accidents 0.
+
+### 6.4 REJECT 처리
+
+- `source`, `batch_id`, `job_id`가 fraud-only 또는 fraud-dominant이면 donor 상속을 고친다.
+- `weak_signal=true` 행은 manual/blank batch artifact를 만들면 안 된다.
+- `approval_date < document_date`, `posting_date < document_date`, `settlement_date < posting_date`는
+  relationship leak으로 처리한다.
+- `verify_injection_coherence.py --self-test`가 실패하면 dataset 판정 전에 오라클 자체를 먼저 고친다.
+
+## 7. 완료 보고 양식
 
 새 accepted dataset이 생기면 다음을 보고한다.
 

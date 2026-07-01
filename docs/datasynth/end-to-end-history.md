@@ -226,6 +226,41 @@ Dataset:
 - 같은 case에 unrelated broad signal이 섞이면 final band가 더 높아질 수 있다.
 - expected topic의 actual topic score cut 충족 여부가 combo/tier acceptance의 핵심이다.
 
+### 5.4 v47 batch/job successor
+
+2026-06-30에 v46b/r11/r1z lineage 위에 automated source identity 보정을 적용했다.
+
+원인:
+
+- 자동 계열 source는 실제 ERP 배치 실행 정체성을 가져야 한다.
+- `source_trust.py`는 `batch_id`와 `job_id` 중 하나라도 없는 자동 source를 weak identity로 본다.
+- 기존 데이터는 automated/recurring row의 batch/job 표면이 부족해 정상 자동 전표가 의심 경로로 새는
+  문제가 있었다.
+
+수정:
+
+- `normal_coa_v30.rs`: automated/recurring/batch/interface/system 계열 row에 `batch_id`와 `job_id`를
+  모두 부여한다. 같은 배치 실행은 같은 id를 공유하고, manual/adjustment는 비워 둔다.
+- `p3_2_overlay.rs`: PHASE1 recall/combo overlay에서도 같은 batch/job 정책을 유지한다.
+- `profile_phase1_v126.py`: L2-05 ERP structural-reference 컬럼을 PHASE1 측정 입력에 포함한다.
+  이 보정 없이는 `original_document_id`/`reversal_document_id`가 CSV에 있어도 measurement가 버려
+  combo/tier related-party reversal rows를 false reject한다.
+
+산출:
+
+- NORMAL: `datasynth_semantic_v1_normal_20260630_v47_batchid_r1`.
+- PHASE1-1 recall: `datasynth_semantic_v1_recall_20260630_v47_batchid_phase1_1_r1`.
+- PHASE1 combo/tier: `datasynth_semantic_v1_combo_tier_20260630_v47_batchid_r1j`.
+
+검증:
+
+- NORMAL automated batch/job both-filled rate 1.0000, human source either-filled rate 0.0000,
+  `trusted_automated_mask` rate 0.9761.
+- NORMAL realism verifier exit 0. I05 duplicate-artifact check는 import path 문제로 BLOCKED이며,
+  batch/job 데이터 회귀로 판정하지 않는다.
+- PHASE1-1 recall shortcut scan findings 0, detector catch script exit 0.
+- PHASE1 combo/tier static gate PASS, shortcut scan findings 0, actual case-builder gate PASS 15 / 15.
+
 ## 6. PHASE2 fraud overlay
 
 PHASE2는 14개 구조적 fraud scheme을 NORMAL 위에 overlay한다.
@@ -288,7 +323,7 @@ Seed:
 현재 gap:
 
 - r4m_h는 v46b NORMAL 위에서 재생성된 산출물은 아니다.
-- 다음 PHASE2 작업은 v46b base 위에서 r4m_h 검증 세트를 유지한 채 재동기화해야 한다.
+- 다음 PHASE2 작업은 v47 batch/job successor base 위에서 r4m_h 검증 세트를 유지한 채 재동기화해야 한다.
 
 ## 7. 현재 문서 체계
 

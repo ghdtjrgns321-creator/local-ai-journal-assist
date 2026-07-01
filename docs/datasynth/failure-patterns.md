@@ -182,7 +182,70 @@
 - assignment vector만 주기적으로 회전하면 FAIL이다.
 - representative와 seed1 이상에서 full-column leak scan을 실행한다.
 
-## 10. REJECT 처리 규칙
+## 10. Source identity / measurement input hollow PASS
+
+### 증상
+
+- automated/recurring 전표에 `batch_id` 또는 `job_id` 중 하나만 있어도 단순 채움률은 좋아 보인다.
+- 그러나 `source_trust.py`는 batch/job 둘 중 하나가 비면 weak identity로 보고 자동 source를 신뢰하지 않는다.
+- raw CSV에는 `original_document_id`/`reversal_document_id`가 있는데, PHASE1 measurement harness가
+  해당 컬럼을 읽지 않아 L2-05 combo가 missing으로 false reject된다.
+
+### 재발 사례
+
+- v47 작업 중 combo/tier `L2-05|L3-03`은 raw detector에서 발화했지만,
+  `profile_phase1_v126.PHASE1_USECOLS`가 reversal structural columns를 버려 full combo gate에서 false reject됐다.
+- 기존 PHASE1-1 recall 산출물은 automated source의 batch/job 동시 채움률이 65.4%라 새 E13 gate에서
+  FAIL한다. 다음 recall 재생성은 generator-level batch/job identity fix를 포함해야 한다.
+
+### Gate 원칙
+
+- NORMAL E13: automated-family rows는 `batch_id`와 `job_id`가 둘 다 있어야 하고, human source rows는 둘 다 비어 있어야 하며, `trusted_automated_mask` rate >= 0.90이어야 한다.
+- PHASE1 combo/tier preflight: L2-05 structural-reference columns가 measurement usecols와 journal schema 양쪽에 있어야 한다.
+- full PHASE1 measurement는 이 fast gate가 통과한 뒤 마지막 1회만 돌린다.
+
+## 11. Categorical distribution leak
+
+### 증상
+
+- exact-value oracle은 통과하지만 fraud의 최빈 범주값이 한 컬럼에 과도하게 몰린다.
+- 해당 값이 normal에서는 낮은 비율이라, 값 자체가 정답 토큰이 아니어도 분포만으로 fraud를 분리한다.
+
+### 재발 사례
+
+- Integrated usefulness Phase1 v1e:
+  - fraud `source=manual` 100%, normal 약 10%.
+  - fraud `batch_id/job_id` blank 100%, normal blank 약 12%.
+- v1f_b:
+  - O2C weak만 donor 상속하고 R2R weak는 manual로 남아 weak signal 표면이 분리됐다.
+
+### Gate 원칙
+
+- journal 범주형 컬럼마다 fraud 최빈값 비중 > 85%이고 해당 값의 normal 비중 < 20%이면 FAIL.
+- `weak_signal=true` 행은 manual/blank batch artifact를 만들지 않는다.
+- 정상 흐름 편승형은 base/donor의 `source`, `batch_id`, `job_id`, `batch_type` 조합을 상속한다.
+
+## 12. Temporal relationship leak
+
+### 증상
+
+- 단일 날짜값은 정상처럼 보이지만 날짜 관계가 불가능하다.
+- 예: `approval_date < document_date`, `posting_date < document_date`, `settlement_date < posting_date`.
+- 2컬럼 관계만으로 fraud와 normal을 분리할 수 있다.
+
+### 재발 사례
+
+- Integrated usefulness Phase1 v1f_c:
+  - overlay가 새 결산기 `document_date/posting_date`로 옮겼지만 donor의 더 이른 `approval_date`를 그대로
+    둬 `INV-TEMPORAL` 1,874건이 발생했다.
+
+### Gate 원칙
+
+- overlay가 날짜를 이동하면 관련 날짜 필드를 함께 이동한다.
+- `verify_integrated_usefulness_phase1.py`는 temporal coherence counts/findings를 포함한다.
+- `verify_injection_coherence.py --self-test`가 PASS한 뒤 dataset coherence oracle을 실행한다.
+
+## 13. REJECT 처리 규칙
 
 REJECT는 중단 사유가 아니다.
 다음 순서로 처리한다.

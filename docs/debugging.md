@@ -6960,3 +6960,503 @@ r1l 이후 r1m~r1z 반복에서 REJECT를 멈춤 조건이 아니라 다음 suff
 
 r1z는 accepted PHASE1 combo/tier overlay다. r11은 최신 PHASE1-1 개별 룰 발화 검증용이고,
 r1z는 HIGH/MEDIUM/LOW/CONTEXT combo/tier case assembly 검증용으로 분리해 사용한다.
+
+## 2026-06-30 — DataSynth v47 batch/job identity successor
+
+### 배경
+
+`source_trust.py`의 `trusted_automated_mask`는 자동 계열 source에서 `batch_id` 또는 `job_id`가 비어
+있으면 weak identity로 본다. v46b 계열은 automated/recurring 전표의 batch/job identity가 부족해 정상
+자동 전표가 PHASE1-2 source trust 쪽에서 위장 의심으로 새는 문제가 있었다.
+
+### 수정
+
+- `tools/datasynth/crates/datasynth-cli/src/normal_coa_v30.rs`
+  - automated/recurring/batch/interface/system 계열 row에 `batch_id`와 `job_id`를 둘 다 부여.
+  - 같은 배치 실행은 같은 id를 공유.
+  - manual/adjustment는 둘 다 빈칸 유지.
+- `tools/datasynth/crates/datasynth-cli/src/p3_2_overlay.rs`
+  - PHASE1 combo/tier overlay와 filler docs에도 동일 batch/job identity 정책 적용.
+  - combo/tier L2-05 related-party reversal rows가 정상 표면을 유지하도록 text/source/account guard 조정.
+- `tools/scripts/profile_phase1_v126.py`
+  - PHASE1 measurement usecols에 L2-05 ERP structural-reference 컬럼을 추가.
+  - 원인: CSV에는 `original_document_id`/`reversal_document_id`가 있었지만 measurement harness가 버려서
+    `measure_phase1_combo_tier.py`가 valid reversal-link combo를 `L2-05` missing으로 false reject했다.
+
+### 산출
+
+- NORMAL: `data/journal/primary/datasynth_semantic_v1_normal_20260630_v47_batchid_r1`
+- PHASE1-1 recall: `data/journal/primary/datasynth_semantic_v1_recall_20260630_v47_batchid_phase1_1_r1`
+- PHASE1 combo/tier: `data/journal/primary/datasynth_semantic_v1_combo_tier_20260630_v47_batchid_r1j`
+
+### 검증
+
+- NORMAL batch/job:
+  - rows 345,968.
+  - automated-family rows 258,307.
+  - automated-family `batch_id`+`job_id` both-filled rate 1.0000.
+  - manual/adjustment either-filled rate 0.0000.
+  - `trusted_automated_mask` rate 0.9761.
+- NORMAL realism verifier:
+  - exit 0.
+  - total checks 42: PASS 37 / BLOCKED 1 / MONITOR 1 / INFO 3.
+  - BLOCKED 1은 I05 duplicate artifact check의 `src.detection.duplicate_detector` import path 문제다.
+- PHASE1-1 recall:
+  - `measure_phase1_detector_catch.py --expect-truth-units 1500` exit 0.
+  - `audit_overlay_injection.py` exit 0, truth units 1,500, target docs 3,100, missing journal rows 0.
+  - `scan_overlay_shortcuts.py` findings 0.
+- PHASE1 combo/tier:
+  - `verify_phase1_combo_tier_gate.py` PASS.
+  - `scan_overlay_shortcuts.py` findings 0.
+  - `measure_phase1_combo_tier.py --expect-truth-rows 15` PASS: passed rows 15 / 15, failed rows 0 / 15.
+- Rust/Python focused:
+  - `cargo check -p datasynth-cli` PASS with existing warnings.
+  - `python -m py_compile tools/scripts/profile_phase1_v126.py tools/scripts/measure_phase1_combo_tier.py tools/scripts/measure_phase1_detector_catch.py` PASS.
+
+### 판정
+
+v47는 v46b/r11/r1z의 batch/job identity successor다. PHASE2 r4m_h는 아직 이 v47 NORMAL 위에서
+재생성되지 않았으므로, 다음 PHASE2 작업은 v47 base로 다시 overlay하고 기존 PHASE2 gate를 재실행해야 한다.
+
+## 2026-06-30 — DataSynth gate hardening: source identity + L2-05 preflight
+
+### 배경
+
+v47 batch/job 수정 후 문서에는 원칙이 기록됐지만, verifier/gate 코드에는 아직 hard check가 없었다.
+이 상태면 다음 DataSynth 작업에서 같은 결함이 다시 나도 full PHASE1 measurement를 돌릴 때까지 모른다.
+
+### 수정
+
+- `tools/scripts/normal_data_realism_verifier_20260603.py`
+  - `E13_AUTOMATED_SOURCE_IDENTITY` hard gate 추가.
+  - automated/recurring/batch/interface/system row는 `batch_id`와 `job_id`가 모두 있어야 한다.
+  - manual/adjustment row는 둘 다 비어 있어야 한다.
+  - `source_trust.trusted_automated_mask` rate가 0.90 이상이어야 한다.
+- `tools/scripts/verify_phase1_combo_tier_gate.py`
+  - L2-05 structural-reference preflight 추가.
+  - measurement harness `PHASE1_USECOLS`에는 `original_document_id`, `reversal_document_id`,
+    `reference_document_id`, `reversed_document_id`, `reverse_document_id`, `reversal_reason`,
+    `reversal_reason_code`가 있어야 한다.
+  - dataset journal에는 최소 `original_document_id`, `reversal_document_id`, `reversal_reason`,
+    `reversal_reason_code`가 있어야 한다.
+- `tools/datasynth/crates/datasynth-cli/src/p3_2_overlay.rs`
+  - PHASE1 recall overlay 최종 rows에도 batch/job identity policy 적용.
+  - 이유: 새 E13 gate로 기존 recall 산출물을 검사하니 automated source both-filled rate 0.6542,
+    trusted_automated rate 0.6326으로 FAIL했다. combo/tier는 1.0000 / 0.9795로 PASS.
+
+### 검증
+
+- `uv run python -m py_compile tools/scripts/normal_data_realism_verifier_20260603.py tools/scripts/verify_phase1_combo_tier_gate.py tools/scripts/profile_phase1_v126.py` — PASS.
+- `uv run python tools/scripts/verify_phase1_combo_tier_gate.py data/journal/primary/datasynth_semantic_v1_combo_tier_20260630_v47_batchid_r1j --json-out .../combo_tier_gate_with_l205_preflight.json` — PASS.
+- source identity helper on existing datasets:
+  - combo/tier r1j: PASS, auto both-filled 1.0000, trusted automated 0.9795.
+  - recall r1: FAIL, auto both-filled 0.6542, trusted automated 0.6326. This is a stale generated dataset; future recall regeneration is now blocked unless fixed by Rust policy.
+- `cargo check -p datasynth-cli` — PASS with existing warnings.
+
+### 판정
+
+Gate는 박혔다. 단, 현재 workspace에는 v47 NORMAL dataset 본체가 없어 full normal realism verifier를 재실행하지 못했다.
+다음 normal 재생성 또는 복원 시 `E13_AUTOMATED_SOURCE_IDENTITY`가 normal gate에 포함되어 자동으로 판정된다.
+
+## 2026-06-30 — DataSynth NORMAL v47 재생성 복구: legacy 재생성 경로 정합화
+
+### 배경
+
+사용자가 확정 NORMAL을 실수로 삭제해 재생성이 필요했다. 처음에는 legacy contract를 직접
+`normal-coa-v42`로 올리면서 최신 NORMAL 산출물에 있던 후단 정규화가 빠져 다음 문제가 반복됐다.
+
+- `period_close/trial_balances.json` 누락 시 재생성 실패.
+- legacy 행의 `semantic_scenario_id`, `semantic_account_subtype`, `line_text_family`,
+  `counterparty_type`, `fiscal_period` 누락.
+- automated/recurring 계열의 `batch_id`/`job_id` 누락.
+- VAT-only legacy 문서가 P2P/O2C invoice 모집단에 섞여 tax gate를 오염.
+- high-line/repeated-line 정상 batch 문서가 batch metadata 없이 남아 duplicate artifact fallback에 걸림.
+- CoA metadata의 계정 prefix와 의미 충돌(예: 7번대 expense metadata).
+
+### 수정
+
+- `tools/datasynth/crates/datasynth-cli/src/normal_coa_v30.rs`
+  - TB sidecar가 없으면 journal 기반 skeleton을 생성하도록 fallback 추가.
+  - 최신 journal 필수 컬럼을 `ensure_headers`/`backfill_headers`에서 보장.
+  - legacy 행의 fiscal period, semantic tuple, counterparty type, scenario/event/line family를 root에서 보정.
+  - 전표 내 both-side/zero-side/imbalanced line을 정상 단변 라인 + balancing line으로 정리.
+  - P2P/O2C taxable sample과 required tax treatment(`taxable_10`, `zero_rated_export`, `exempt`,
+    `non_taxable`, `import_vat`)를 생성.
+  - VAT base가 없는 legacy tax 문서는 `R2R_TAX_SETTLEMENT`로 demote해 invoice VAT ratio gate를 오염하지 않게 함.
+  - high-line 및 repeated-line 정상 배치 문서에 `batch_type`/`batch_id`/`job_id`를 부여.
+  - single-company scope에서 self-company trading partner를 제거하고 related-party IC는 `C002`/`C003` 흔적으로 유지.
+  - CoA metadata를 계정 prefix와 맞게 정리.
+- `tools/scripts/normal_data_realism_verifier_20260603.py`
+  - 삭제된 `src.detection.duplicate_detector` import에 의존하지 않도록 I05 fallback 추가.
+  - fallback은 같은 문서 내 exact duplicate-like line을 세되, `batch_type`/`batch_id`/`job_id`가 있는
+    설명 가능한 batch 문서는 제외한다.
+
+### 산출
+
+- 재생성 NORMAL 확정본:
+  `data/journal/primary/datasynth_semantic_v1_normal_20260630_v47_batchid_r7`
+- 검증 리포트:
+  - JSON: `data/journal/primary/datasynth_semantic_v1_normal_20260630_v47_batchid_r7/reports/normal_realism_gate_v47_batchid_r7.json`
+  - Markdown: `data/journal/primary/datasynth_semantic_v1_normal_20260630_v47_batchid_r7/reports/normal_realism_gate_v47_batchid_r7.md`
+
+### 검증
+
+- `cargo check --manifest-path tools/datasynth/Cargo.toml -p datasynth-cli` — PASS with existing warnings.
+- `uv run python tools/scripts/normal_data_realism_verifier_20260603.py ...v47_batchid_r7 ...` — exit 0.
+- Realism summary: PASS 39 / MONITOR 1 / INFO 3 / FAIL 0 / BLOCKED 0.
+- 핵심 수치:
+  - A01 imbalance 0, max diff 0 KRW.
+  - M01 TB mismatch 0, max diff 0 KRW.
+  - M12 income statement: nonpositive revenue 0, COGS > revenue 0, empty GL mapping 0.
+  - B17 raw semantic tuple missing rows 0, missing archetype docs 0.
+  - O02 synthetic marker findings 0.
+  - A07 tax docs: P2P 15 / O2C 13, bad ratio 0.
+  - L06 required tax treatments all present, bad docs 0.
+  - K05 company-code partner non-IC rows 0, self-company partner rows 0.
+  - J08 high-line docs 76, missing batch metadata 0.
+  - E13 automated source identity: auto rows 331,272, both-filled rate 1.0000,
+    human either-filled rate 0.0000, trusted automated rate 0.9904.
+  - I05 duplicate artifact fallback: exact same-document groups 602, explained batch groups 602,
+    unexplained same-document pair count 0.
+
+### 판정
+
+`datasynth_semantic_v1_normal_20260630_v47_batchid_r7`을 현재 NORMAL 재생성 확정본으로 사용한다.
+이전 `v47_batchid_r1` 및 중간 `r2~r6` 산출물은 reject/중간 산출물이며 후속 PHASE1/PHASE2 base로 쓰지 않는다.
+
+## 2026-06-30 — DataSynth NORMAL r7 export hygiene 정리
+
+### 배경
+
+`datasynth_semantic_v1_combo_tier_20260630_v47_batchid_r1j`와 확정 NORMAL r7을 비교한 결과,
+NORMAL journal 본체는 full realism gate를 통과했지만 export hygiene 문제가 2개 남아 있었다.
+
+- `journal_entries*.csv` 및 `journal_entries.json`에 내부 작업용 `_doc_id_str` 컬럼이 남아 있었다.
+- NORMAL-only 디렉터리에 과거 contract/sidecar 산출물에서 복사된 `labels/` 파일 1,442개가 남아 있었다.
+  이 중 `truth` 파일 380개와 `fraud` 이름 파일 8개가 있어 후속 PHASE1/PHASE2가 sidecar를 잘못 읽을 수 있었다.
+
+### 수정
+
+- `tools/datasynth/crates/datasynth-cli/src/normal_coa_v30.rs`
+  - `write_journal`에서 `_`로 시작하는 scratch column을 export header에서 제외하도록 변경.
+  - 다음 NORMAL 재생성 시 `_doc_id_str`가 다시 journal export에 나오지 않게 막았다.
+- 현재 산출물 `data/journal/primary/datasynth_semantic_v1_normal_20260630_v47_batchid_r7`
+  - `journal_entries.csv`, `journal_entries_2022.csv`, `journal_entries_2023.csv`,
+    `journal_entries_2024.csv`, `journal_entries.json`에서 `_doc_id_str` 컬럼 제거.
+  - `labels/` 디렉터리 제거. NORMAL baseline에는 truth/review/fraud sidecar를 두지 않는다.
+
+### 검증
+
+- `cargo check --manifest-path tools/datasynth/Cargo.toml -p datasynth-cli` — PASS with existing warnings.
+- `_doc_id_str` 제거 확인:
+  - journal CSV 4개 모두 `_doc_id_str` 없음, 컬럼 수 75.
+  - `journal_entries.json` first 100 rows에 `_doc_id_str` 없음.
+- `labels/` 제거 확인: `Test-Path .../labels` = false.
+- `uv run python tools/scripts/normal_data_realism_verifier_20260603.py ...v47_batchid_r7 ...cleaned` — exit 0.
+- 정리 후 realism summary: PASS 39 / MONITOR 1 / INFO 3 / FAIL 0 / BLOCKED 0.
+- 핵심 재확인:
+  - O01 normal flags: `is_fraud_true=0`, `is_anomaly_true=0`, `fraud_type_nonblank=0`, `anomaly_type_nonblank=0`.
+  - O02 synthetic marker findings 0.
+  - B17 raw semantic tuple missing 0.
+  - E13 automated source identity PASS.
+  - I05 unexplained same-document duplicate-like pair count 0.
+
+### 판정
+
+정리 후에도 `datasynth_semantic_v1_normal_20260630_v47_batchid_r7`이 확정 NORMAL이다.
+후속 PHASE1 recall/combo 및 PHASE2 fraud overlay는 이 cleaned r7 디렉터리를 base로 사용한다.
+
+## 2026-06-30 — Integrated Usefulness Benchmark Phase1 fraud overlay v1e
+
+### 배경
+
+`dev/active/integrated-usefulness-benchmark/GENERATION_HANDOFF.md` 기준으로 통합 쓸모 벤치마크용
+부정 주입 데이터 생성을 시작했다. 기존 `phase2_fraud_*` 산출물은 옛 설계 기반이라 메커니즘을 재사용하지
+않고, 최신 NORMAL r7 위에 새 Rust overlay profile을 추가했다.
+
+이번 회차는 handoff의 단계 순서에 따라 상태 의존이 가벼운 Phase1 패턴만 생성했다.
+
+- 01 가공전표/수익통계
+- 02 비용자산화
+- 03 계정분류 misbooking
+
+Phase2 패턴(횡령은폐, 승인 SoD, 순환거래)은 기존 잔액·원전표·flow·graph 상태를 참조하는 2/3층
+오라클 신축 전까지 보류한다.
+
+### 수정
+
+- `tools/datasynth/crates/datasynth-cli/src/main.rs`
+  - `generate --profile integrated-usefulness-phase1-overlay` 추가.
+- `tools/datasynth/crates/datasynth-cli/src/integrated_usefulness_phase1_overlay.rs`
+  - 최신 normal r7을 복사하되 기존 `journal_entries*`와 `labels/`는 제외.
+  - `INJECTION_POPULATION.md`에서 `io=in`, `Ph=1`인 119건을 런타임에 읽어 5벌 seed로 생성.
+  - 총 595개 fraud document unit을 추가.
+  - journal에는 truth 라벨·mutation·surface hint를 노출하지 않고,
+    `labels/integrated_usefulness_phase1_truth.csv/json`에만 `declared_violations`를 기록.
+  - 표면 shortcut을 막기 위해 header/line text, tax, attachment, synthetic flag 등은 normal donor에서 상속.
+- `tools/scripts/verify_integrated_usefulness_phase1.py`
+  - 전용 gate 추가: 5벌 seed, 119건/seed, 3패턴 coverage, truth sidecar 정합, 차대균형,
+    CoA orphan, journal label firewall, base doc id 미재사용, exact-value oracle scan을 확인.
+
+### 산출
+
+- 최종 산출물:
+  `data/journal/primary/datasynth_integrated_usefulness_phase1_20260630_v1e`
+- Gate report:
+  `data/journal/primary/datasynth_integrated_usefulness_phase1_20260630_v1e/reports/integrated_usefulness_phase1_gate.json`
+
+중간 산출물:
+
+- `v1`: 최초 생성. journal label은 숨겼으나 텍스트 지문 위험 확인.
+- `v1b`: donor 텍스트 상속 반영. 추가 exact-value oracle에서 표면값 지문 발견.
+- `v1c/v1d`: tax/synthetic/subtype/event/timestamp/delivery 지문 순차 제거.
+- `v1e`: gate PASS.
+
+### 검증
+
+- `cargo check --manifest-path tools/datasynth/Cargo.toml -p datasynth-cli` — PASS with existing warnings.
+- `cargo run --manifest-path tools/datasynth/Cargo.toml -p datasynth-cli -- generate --profile integrated-usefulness-phase1-overlay --contract-source data/journal/primary/datasynth_semantic_v1_normal_20260630_v47_batchid_r7 --output data/journal/primary/datasynth_integrated_usefulness_phase1_20260630_v1e` — PASS.
+- `uv run python tools/scripts/verify_integrated_usefulness_phase1.py data/journal/primary/datasynth_integrated_usefulness_phase1_20260630_v1e --base data/journal/primary/datasynth_semantic_v1_normal_20260630_v47_batchid_r7` — exit 0.
+
+Gate 결과:
+
+- truth rows: 595
+- seed counts: seed_0~seed_4 각각 119
+- pattern counts:
+  - fabricated_revenue 415
+  - expense_capitalization 80
+  - account_misclassification 100
+- truth documents: 595
+- journal rows: 378,321
+- exact-value oracle findings: 0
+- failures: 0
+
+샘플 의미 검증:
+
+- 비용자산화: 차) 1590 건설중인자산 / 대) 6000 비용, R2R SA manual, declared violation은 비용의 자산화.
+- 가공전표: 차) 1100 AR / 대) 4000 매출 + 차) 5000 COGS / 대) 1200 재고, O2C manual.
+- 계정분류: 차) 123100 재공품 / 대) 1100 AR, declared violation은 부실/실질의 계정 오분류.
+
+### 판정
+
+`datasynth_integrated_usefulness_phase1_20260630_v1e`를 통합 쓸모 벤치마크 Phase1 부정 주입
+첫 PASS 산출물로 둔다. 이 데이터셋은 탐지 성능 측정용이 아니라 생성 게이트 통과 산출물이며,
+PHASE1-1/PHASE1-2/PHASE2 surface별 catch matrix 측정은 별도 단계에서 수행한다.
+
+## 2026-07-01 — Integrated Usefulness Benchmark Phase1 v1f_c distribution leak fix
+
+### 배경
+
+`v1e`는 exact-value oracle과 label firewall은 통과했지만, 범주형 분포 누수가 남아 있었다.
+
+- `source`: fraud 100%가 `manual`, normal은 약 10%.
+- `batch_id`/`job_id`: fraud 100%가 blank, normal은 약 88%가 batch/job 소속.
+
+이는 값 하나가 정답 토큰은 아니더라도, 분포만으로 fraud와 normal을 쉽게 가르는 shortcut이다.
+
+### 수정
+
+- `tools/datasynth/crates/datasynth-cli/src/integrated_usefulness_phase1_overlay.rs`
+  - weak O2C 편승형은 batched non-manual O2C donor에서 `source`/`batch_id`/`job_id`/`batch_type`을 상속.
+  - weak R2R 계정분류형도 batched non-manual R2R donor에서 상속해 `weak_signal=true` 행의 manual/blank artifact를 제거.
+  - 수기 조작형은 manual 유지.
+- `tools/scripts/verify_integrated_usefulness_phase1.py`
+  - 범주형 분포 누수 scan 추가.
+  - 기준: journal 범주형 컬럼에서 fraud 최빈값 비중 > 85%이고 해당 값의 normal 비중 < 20%이면 FAIL.
+  - 기존 exact-value oracle scan과 별도 gate로 매 재생성마다 실행.
+
+### 산출
+
+- 최종 산출물:
+  `data/journal/primary/datasynth_integrated_usefulness_phase1_20260701_v1f_c`
+- Gate report:
+  `data/journal/primary/datasynth_integrated_usefulness_phase1_20260701_v1f_c/reports/integrated_usefulness_phase1_gate.json`
+
+중간 산출물:
+
+- `v1f`: 전체 분포 scan은 통과했으나 `weak_signal=true` 일부가 manual로 남음.
+- `v1f_b`: O2C weak donor만 수정되어 R2R weak manual이 잔존.
+- `v1f_c`: weak O2C/R2R donor를 모두 batched non-manual donor로 제한.
+
+### 검증
+
+- `cargo check --manifest-path tools/datasynth/Cargo.toml -p datasynth-cli` — PASS with existing warnings.
+- `cargo run --manifest-path tools/datasynth/Cargo.toml -p datasynth-cli -- generate --profile integrated-usefulness-phase1-overlay --contract-source data/journal/primary/datasynth_semantic_v1_normal_20260630_v47_batchid_r7 --output data/journal/primary/datasynth_integrated_usefulness_phase1_20260701_v1f_c` — PASS.
+- `uv run python tools/scripts/verify_integrated_usefulness_phase1.py data/journal/primary/datasynth_integrated_usefulness_phase1_20260701_v1f_c --base data/journal/primary/datasynth_semantic_v1_normal_20260630_v47_batchid_r7` — exit 0.
+
+Gate 결과:
+
+- truth rows: 595
+- seed counts: seed_0~seed_4 각각 119
+- pattern counts:
+  - fabricated_revenue 415
+  - expense_capitalization 80
+  - account_misclassification 100
+- truth documents: 595
+- journal rows: 378,321
+- exact-value oracle findings: 0
+- distribution leak findings: 0
+- failures: 0
+
+추가 분포 확인:
+
+- fraud row source: manual 1,500 / recurring 90 / automated 326 / interface 104
+- fraud row batch: filled 1,680 / blank 340
+- weak row source: recurring 90 / automated 326 / interface 104 / manual 0
+- weak row batch: filled 520 / blank 0
+
+### 판정
+
+`datasynth_integrated_usefulness_phase1_20260701_v1f_c`를 `v1e`의 분포 누수 보정 산출물로 사용한다.
+label firewall, 595건/119건 per seed, 3패턴 coverage, 차대균형, CoA 정합, exact-value oracle, 분포 누수
+gate가 모두 통과했다.
+
+## 2026-07-01 — Integrated Usefulness Benchmark Phase1 v1g temporal coherence fix
+
+### 배경
+
+`v1f_c`에서 source/batch 분포 누수는 닫혔지만, 별도 정합 오라클
+`tools/scripts/verify_injection_coherence.py`가 날짜 관계 결함을 잡았다.
+
+- `approval_date < document_date`가 fraud 문서 대부분에서 발생.
+- 원인은 overlay가 `document_date`/`posting_date`를 새 부정 시점으로 옮기면서 `approval_date`와
+  `settlement_date`를 donor 원본 값으로 그대로 둔 것이다.
+- 값 하나의 토큰 누수는 아니지만 `approval_date`와 `document_date`의 관계만으로 fraud를 가르는
+  관계형 shortcut이 된다.
+
+### 수정
+
+- `tools/datasynth/crates/datasynth-cli/src/integrated_usefulness_phase1_overlay.rs`
+  - `approval_date`를 새 `document_date` 기준 당일~2일 뒤로 재계산.
+  - donor가 원래 `settlement_date`를 가진 경우에만 새 `document_date` 이후 7~40일로 재계산.
+  - `posting_date >= document_date`, `approval_date >= document_date`, `settlement_date >= posting_date`
+    관계를 유지.
+
+### 산출
+
+- 최종 산출물:
+  `data/journal/primary/datasynth_integrated_usefulness_phase1_20260701_v1g`
+- Gate report:
+  `data/journal/primary/datasynth_integrated_usefulness_phase1_20260701_v1g/reports/integrated_usefulness_phase1_gate.json`
+
+### 검증
+
+- `uv run python tools/scripts/verify_injection_coherence.py --self-test` — PASS.
+- `uv run python tools/scripts/verify_injection_coherence.py data/journal/primary/datasynth_integrated_usefulness_phase1_20260701_v1f_c` — expected FAIL, `INV-TEMPORAL` 1,874.
+- `cargo check --manifest-path tools/datasynth/Cargo.toml -p datasynth-cli` — PASS with existing warnings.
+- `cargo run --manifest-path tools/datasynth/Cargo.toml -p datasynth-cli -- generate --profile integrated-usefulness-phase1-overlay --contract-source data/journal/primary/datasynth_semantic_v1_normal_20260630_v47_batchid_r7 --output data/journal/primary/datasynth_integrated_usefulness_phase1_20260701_v1g` — PASS.
+- `uv run python tools/scripts/verify_injection_coherence.py data/journal/primary/datasynth_integrated_usefulness_phase1_20260701_v1g` — exit 0, total accidents 0.
+- `uv run python tools/scripts/verify_integrated_usefulness_phase1.py data/journal/primary/datasynth_integrated_usefulness_phase1_20260701_v1g --base data/journal/primary/datasynth_semantic_v1_normal_20260630_v47_batchid_r7` — exit 0.
+
+Gate 결과:
+
+- truth rows: 595
+- seed counts: seed_0~seed_4 각각 119
+- pattern counts:
+  - fabricated_revenue 415
+  - expense_capitalization 80
+  - account_misclassification 100
+- exact-value oracle findings: 0
+- distribution leak findings: 0
+- failures: 0
+- coherence oracle accidents: 0
+
+추가 집계:
+
+- date relation violations: 0
+- fraud row source: manual 1,500 / recurring 90 / automated 326 / interface 104
+- fraud row batch: filled 1,680 / blank 340
+- weak row source: recurring 90 / automated 326 / interface 104 / manual 0
+- weak row batch: filled 520 / blank 0
+
+### 판정
+
+`datasynth_integrated_usefulness_phase1_20260701_v1g`를 `v1f_c`의 날짜 관계 결함 보정 산출물로 사용한다.
+향후 Integrated Usefulness Phase1 overlay 재생성 시
+`verify_integrated_usefulness_phase1.py`와 함께 `verify_injection_coherence.py`를 필수 gate로 실행한다.
+
+## 2026-07-01 — Integrated Usefulness Benchmark Phase2 v1f state-aware overlay
+
+### 배경
+
+통합 쓸모 벤치마크 Phase2는 상태 의존 부정 3패턴을 생성한다.
+Phase1과 달리 단일 문서가 아니라 실재 장부 상태를 참조하는 flow/graph 단위여야 한다.
+
+- SoT: `dev/active/integrated-usefulness-benchmark/GENERATION_HANDOFF.md`
+- pattern specs: `04-embezzlement-concealment`, `05-approval-sod`, `06-circular-transaction`
+- 모집단: `INJECTION_POPULATION.md`의 Phase2 in-scope 108건 x 5 seed
+
+### 구현
+
+- `tools/datasynth/crates/datasynth-cli/src/integrated_usefulness_phase2_overlay.rs` 추가.
+- CLI profile `integrated-usefulness-phase2-overlay` 추가.
+- truth sidecar:
+  `labels/integrated_usefulness_phase2_truth.csv/json`
+- journal에는 `is_fraud`, `fraud_type`, `mutation_*`, `detection_surface_hints` 노출 없음.
+
+생성 구조:
+
+- `embezzlement_concealment`: 자금 유출, 재입금 위장, 실재 open reference clearing, 장기 미해소 open item을
+  4개 member document flow로 생성.
+- `approval_sod`: 정상 데이터에 실제 존재하는 사용자 표면을 사용하되 `created_by == approved_by` 구조로
+  생성.
+- `circular_transaction`: 관계사 거래 표면을 사용한 3문서 member graph로 생성.
+
+주의: base normal `datasynth_semantic_v1_normal_20260630_v47_batchid_r7`에는 journal 기준
+`amount_open > 0`인 AR 계정이 없었다. 따라서 현행 coherence oracle이 검증하는 실재 open clearing
+reference를 사용했다. 없는 AR을 새로 만들어 갚는 방식은 사용하지 않았다. 향후 base normal에 실재 open
+AR sidecar/journal 표현이 추가되면 이 pool을 AR 전용으로 좁힌다.
+
+### 반복 수정
+
+- `v1b`: 1차 생성 성공. event/scenario/header/line/date/tax 표면값이 fraud-only로 남아 gate FAIL.
+- `v1c`: donor 표면 상속 후에도 `settlement_date < posting_date`가 남아 coherence oracle FAIL.
+- `v1d`: settlement 재계산 경로 수정. SoD actor와 settlement exact marker 잔존.
+- `v1e`: 정상 created_by/approved_by 교집합 actor 사용. settlement exact marker 1건 잔존.
+- `v1f`: clearing 문서의 synthetic settlement date 제거. gate PASS.
+
+### 산출
+
+- 최종 산출물:
+  `data/journal/primary/datasynth_integrated_usefulness_phase2_20260701_v1f`
+- Gate report:
+  `data/journal/primary/datasynth_integrated_usefulness_phase2_20260701_v1f/reports/integrated_usefulness_phase2_gate.json`
+
+### 검증
+
+- `cargo check --manifest-path tools/datasynth/Cargo.toml -p datasynth-cli` — PASS with existing warnings.
+- `cargo run --manifest-path tools/datasynth/Cargo.toml -p datasynth-cli -- generate --profile integrated-usefulness-phase2-overlay --contract-source data/journal/primary/datasynth_semantic_v1_normal_20260630_v47_batchid_r7 --output data/journal/primary/datasynth_integrated_usefulness_phase2_20260701_v1f` — PASS.
+- `uv run python tools/scripts/verify_injection_coherence.py --self-test` — PASS.
+- `uv run python tools/scripts/verify_integrated_usefulness_phase2.py data/journal/primary/datasynth_integrated_usefulness_phase2_20260701_v1f --base data/journal/primary/datasynth_semantic_v1_normal_20260630_v47_batchid_r7` — exit 0.
+- `uv run python tools/scripts/verify_injection_coherence.py data/journal/primary/datasynth_integrated_usefulness_phase2_20260701_v1f` — exit 0, accidents 0.
+
+Gate 결과:
+
+- truth rows: 540
+- seed counts: seed_0~seed_4 각각 108
+- generated pattern counts:
+  - embezzlement_concealment 355
+  - approval_sod 120
+  - circular_transaction 65
+- source pattern coverage: 가공전표, 비용자산화, 계정분류, 횡령은폐, 승인SoD, 순환거래
+- truth documents: 1,735
+- member document shape:
+  - circular_transaction 3/3/65
+  - approval_sod 1/1/120
+  - embezzlement_concealment 4/4/355
+- state reference aggregate:
+  - original reference rows 710
+  - open item rows 714
+  - cleared rows 738
+  - created_by == approved_by rows 242
+  - intercompany/circular rows 390
+- exact-value oracle findings: 0
+- distribution leak findings: 0
+- temporal coherence findings: 0
+- coherence oracle accidents: 0
+
+### 판정
+
+`datasynth_integrated_usefulness_phase2_20260701_v1f`를 Integrated Usefulness Benchmark Phase2 accepted
+overlay로 사용한다. 향후 재생성 시 `verify_integrated_usefulness_phase2.py`와
+`verify_injection_coherence.py`를 필수 gate로 실행한다.

@@ -29,15 +29,19 @@
 - 산출물: base 경로 + `cooccurrence_pools.parquet`.
 - 완료조건: A값별 공동출현 집합 비어있지 않음(빈 집합이면 주입 불가 명시). FAIL=base에 없는 식별자 형식.
 
-## T3 — 기전 생성 신축 (Phase 1 패턴부터)
-- 무엇: 재사용 배관 위에 **기전 기반 변이** 신설. AnomalyMutator 텍스트덮어쓰기 1종을 대체/확장해 Phase1 패턴(가공전표·계정분류·비용자산화) 기전을 T1 spec(A/C/D)대로 생성. provenance 자가검증(위반필수) 재사용. truth sidecar 출력. Python 덧대기 금지(Rust).
-- 산출물: `crates/datasynth-generators/src/anomaly/` 신규 기전 + truth sidecar 스키마.
-- 완료조건: `cargo test` 통과 + 2+ 패턴이 spec선언 위반만 생성(T4 검증). ripple-search 2케이스. FAIL=D값 지어냄.
+## T3 — 기전 생성 신축 (Phase 1 패턴부터) ✅ 완료 (datasynth 컨텍스트 + 독립검증)
+- 무엇: 재사용 배관 위에 기전 기반 변이 신설. Phase1 패턴(가공전표·계정분류·비용자산화) 기전을 T1 spec대로 생성. truth sidecar 출력. Rust.
+- **산출물(최종 수령)**: `data/journal/primary/datasynth_integrated_usefulness_phase1_20260701_v1g` + truth sidecar. profile `integrated-usefulness-phase1-overlay`.
+- **결과**: Phase1 in-scope 119 × 5 seed = 595 doc(fabricated 415·expense 80·account 100). base=…v47_r7.
+- **독립검증(56afde75-verify-phase1.md) 3라운드**: v1e 분포누수 2건(source·batch)→v1f_c 수정; v1f_c에서 내 정합오라클이 시점역전(approval<document 542/595) 적발→v1g 수정. **v1g 재현: 오라클 사고 0·분포누수 0·라벨firewall 0·건수 회귀 0 → ACCEPT.** 소프트 1건(approval-lag 분포)은 T7 전 정리.
+- 완료조건: 595/119/패턴 ✅. 라벨 누수 0 ✅. 분포 누수 0 ✅. 정합 사고 0 ✅. ripple(source·batch·temporal) ✅.
 
-## T4 — 정합 2·3층 오라클 신축
-- 무엇: 기존 1층 SemanticValidator 위에 2층(참조 무결성 — `audit_document_flow.py`)·3층(잔액 상태 — `audit_balance_integrity.py`·`audit_temporal.py`) 게이트 + "spec선언 위반만 깸" 검증기. 상태 인지 생성(⑥D)을 T3에 결합(존재하는 것만 참조).
-- 산출물: `verify_injection_coherence.py` + 위반분류 리포트.
-- 완료조건: 사고(spec밖) 위반 0건. FAIL=사고를 통과로 둠.
+## T4 — 정합 2·3층 오라클 신축 ✅ 오라클 완성 / v1f_c 결함 1건 회신
+- 무엇: HARD 구조 불변식 7종(INV-BAL/POS/REV/ORIG/TEMPORAL/CLEAR/AR-EXISTS) 검사기. "부정은 substance만 조작, structure는 지킴 → 구조 break=사고".
+- 산출물: [COHERENCE_ORACLE_SPEC.md](COHERENCE_ORACLE_SPEC.md), `tools/scripts/verify_injection_coherence.py`(--self-test 포함).
+- 검증: self-test 7/7 발화+clean 0(비-hollow). Phase1 v1f_c baseline 실행.
+- **발견(오라클이 잡음)**: v1f_c의 approval_date < document_date **542/595 문서**(92.7% fraud vs 1.7% normal) = 코히런스 사고 + 관계형 leak(단일컬럼 스캔이 못 봄). → datasynth 회신: approval≥document 수정 + 이 오라클을 게이트 편입.
+- 완료조건: 오라클 self-test PASS ✅. baseline 사고 적시(은폐 없음) ✅.
 
 ## T5 — Phase 2 패턴 추가 (상태 중량)
 - 무엇: T4 2·3층 오라클 확보 후 횡령/중복자금유출·가수금은닉·승인SoD 기전 추가(열린 AR/AP·역분개 원전표 상태 참조).

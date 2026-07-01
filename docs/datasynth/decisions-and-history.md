@@ -142,6 +142,29 @@ DataSynth의 truth는 개발 검증 보조자료다.
 - shortcut scan findings 0.
 - actual case-builder gate PASS: passed rows 15 / 15, failed rows 0 / 15.
 
+### v47 batch/job identity successor
+
+날짜: 2026-06-30.
+
+결정:
+
+- `source_trust.py`의 `weak_identity`는 `batch_id`와 `job_id`를 OR로 본다.
+  automated/recurring 계열에서 한쪽만 채우면 자동 source를 계속 의심하므로 둘 다 채우는 것이 필수다.
+- manual/adjustment는 사람 입력 계열이므로 batch/job를 비워 둔다.
+- combo/tier measurement가 L2-05 ERP structural-reference path를 검증하려면
+  `profile_phase1_v126.PHASE1_USECOLS`가 reversal structural columns를 읽어야 한다.
+  이 컬럼을 버리면 raw dataset은 맞아도 `measure_phase1_combo_tier.py`가 L2-05 missing으로 false reject한다.
+
+검증:
+
+- NORMAL dataset: `datasynth_semantic_v1_normal_20260630_v47_batchid_r1`.
+- automated 계열 batch/job 동시 채움률 1.0000, manual/adjustment 채움률 0.0000.
+- `trusted_automated_mask` rate 0.9761.
+- PHASE1-1 recall dataset: `datasynth_semantic_v1_recall_20260630_v47_batchid_phase1_1_r1`.
+  shortcut scan findings 0, detector catch script exit 0.
+- PHASE1 combo/tier dataset: `datasynth_semantic_v1_combo_tier_20260630_v47_batchid_r1j`.
+  static gate PASS, shortcut scan findings 0, actual case-builder gate PASS 15 / 15.
+
 ### PHASE2 r4m_h
 
 날짜: 2026-06-14.
@@ -164,7 +187,7 @@ DataSynth의 truth는 개발 검증 보조자료다.
 
 | 항목 | 현재 판단 |
 | --- | --- |
-| v20~v31 NORMAL 기록 | 생성 원칙 진화와 regression 설계 근거. 현재 accepted NORMAL 기준은 v46b |
+| v20~v31 NORMAL 기록 | 생성 원칙 진화와 regression 설계 근거. 현재 accepted NORMAL 기준은 v47 batch/job successor |
 | v42j/v43d NORMAL | 각각 PHASE1/PHASE2 과거 accepted lineage의 base-history. 현재 NORMAL 기준은 v46b |
 | PHASE1 recall v42j_r3/r9/r10 | 구버전 DETECTION_RULES 기준. 최신 26룰 개별 발화 검증은 r11 |
 | PHASE1 combo r1i/r1l | static/shortcut 일부 PASS였지만 actual case-builder gate FAIL. accepted 아님 |
