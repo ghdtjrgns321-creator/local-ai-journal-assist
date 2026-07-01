@@ -7,7 +7,7 @@
 
 | 영역 | 현재 기준 | 역할 |
 | --- | --- | --- |
-| NORMAL base | `datasynth_semantic_v1_normal_20260630_v47_batchid_r1` | v46b successor. 단일법인 C001 정상 원장 + 관계사 IC trace + automated/recurring batch_id·job_id 동시 부여 기준본 |
+| NORMAL base | `datasynth_semantic_v1_normal_20260701_v48_rbac_r1` | v47 batch/job successor 위 RBAC/SoD persona-process 현실성 보정. 단일법인 C001 정상 원장 + 관계사 IC trace + automated/recurring batch_id·job_id 동시 부여 기준본 |
 | PHASE1-1 recall overlay | `datasynth_semantic_v1_recall_20260630_v47_batchid_phase1_1_r1` | v47 normal 위 최신 `DETECTION_RULES.md` 기준 26개 개별 룰 detector-only recall 검증용 |
 | PHASE1 combo/tier overlay | `datasynth_semantic_v1_combo_tier_20260630_v47_batchid_r1j` | v47 normal 위 HIGH/MEDIUM/LOW/CONTEXT case assembly 검증용 |
 | PHASE2 fraud overlay | `datasynth_semantic_v1_phase2_fraud_20260614_v1_r4m_h` + `..._seed1` | PHASE2 비지도/구조 신호의 shortcut-free 부정 scheme 검증용 |

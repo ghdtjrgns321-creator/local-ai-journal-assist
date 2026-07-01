@@ -6,7 +6,7 @@
 
 | 영역 | 현재 기준 | 판정 |
 | --- | --- | --- |
-| NORMAL | `datasynth_semantic_v1_normal_20260630_v47_batchid_r1` | Accepted for batch/job identity successor |
+| NORMAL | `datasynth_semantic_v1_normal_20260701_v48_rbac_r1` | Accepted for batch/job identity + RBAC/SoD persona-process realism successor |
 | PHASE1-1 recall | `datasynth_semantic_v1_recall_20260630_v47_batchid_phase1_1_r1` | Accepted |
 | PHASE1 combo/tier | `datasynth_semantic_v1_combo_tier_20260630_v47_batchid_r1j` | Accepted |
 | PHASE2 fraud | `datasynth_semantic_v1_phase2_fraud_20260614_v1_r4m_h` + seed1 | Accepted, but base-sync pending |
@@ -99,6 +99,22 @@ v47 successor는 다음 원칙으로 수정했다.
 - manual/adjustment row의 batch/job 채움률: 0.0000.
 - PHASE1-1 recall v47: shortcut scan findings 0, truth units 1,500, detector catch script exit 0.
 - PHASE1 combo/tier v47 r1j: static gate PASS, shortcut scan findings 0, actual case-builder gate 15/15 PASS.
+
+### 7. v48 RBAC/SoD NORMAL successor
+
+v48는 v47 batch/job successor 위에서 정상 회사의 권한분리와 persona-process 범위를 보정한 successor다.
+v47은 direct SoD marker는 제거했지만 AP/AR/Treasury/Payroll 계열 persona가 여러 process를 처리하는
+all-to-all 분포가 남아 있었다. v48는 생성기에서 전표 단위로 `created_by`, `approved_by`,
+`user_persona`를 함께 재배정하고, 새 사용자를 `employees.json`에 등록한다.
+
+검증 snapshot:
+
+- Dataset: `data/journal/primary/datasynth_semantic_v1_normal_20260701_v48_rbac_r1`
+- Report: `reports/normal_v48_rbac_r1_gate_v2.json`
+- Realism verifier: PASS 40, MONITOR 1, INFO 3, FAIL 0.
+- E05B RBAC gate: documents checked 111,522, scope bad docs 0, low-level over-breadth 0, all-to-all persona 0.
+- Direct SoD/self-approval: 0.
+- O02 synthetic marker scan: 0 findings after delegating RBAC structural columns to E05B.
 
 ### 7. Integrated usefulness Phase1 v1g
 
