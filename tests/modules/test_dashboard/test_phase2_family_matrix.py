@@ -9,8 +9,6 @@ def test_build_family_matrix_frame_shows_active_and_dormant_families():
             "required_models": [
                 "unsupervised",
                 "timeseries",
-                "relational",
-                "intercompany",
             ],
             "model_versions": {
                 "timeseries": {"model_version": None, "schema_hash": None},
@@ -20,26 +18,18 @@ def test_build_family_matrix_frame_shows_active_and_dormant_families():
     partition_summary = {
         "families": {
             "unsupervised": {"high_count_q95": 30374},
-            "intercompany": {
+            "timeseries": {
                 "metric_interpretation": "rule_proxy_score",
                 "score_distribution": {"nonzero_count": 16},
-                "ui_meta": {
-                    "metric_confidence": "sidecar_unmatched_reference_only",
-                    "active_sub_detectors": ["IC01"],
-                    "zero_hit_sub_detectors": ["IC02", "IC03"],
-                },
             },
         }
     }
 
     frame = build_family_matrix_frame(snapshot, partition_summary)
 
-    assert len(frame) == 8
+    assert len(frame) == 6
     assert set(frame["state"]) == {"active", "dormant"}
-    assert frame["state"].value_counts().to_dict() == {"active": 4, "dormant": 4}
-    ic_row = frame[frame["family"] == "intercompany"].iloc[0]
-    assert ic_row["note"] == "active, IC01 only"
-    assert ic_row["metric_confidence"] == "sidecar_unmatched_reference_only"
+    assert frame["state"].value_counts().to_dict() == {"active": 2, "dormant": 4}
     supervised_row = frame[frame["family"] == "supervised"].iloc[0]
     assert supervised_row["block_reason"] == "low_signal_fallback"
 

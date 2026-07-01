@@ -51,6 +51,9 @@ class CaseGroupResult(BaseModel):
     repeat_score: float = 0.0
     # OFF-TIME 보조축(주말·심야·작성자 집중) 합산. tier 게이트 미참여, within-tier 정렬·UI 전용.
     time_severity_score: int = 0
+    # PHASE1-2 배지 통합 필드(표시·자기큐 전용, 점수 비병합). 거래처(첫등장/희소/휴면재활성) +
+    # off_time + weak_evidence + L4-06/L3-12 발화를 한 리스트로 노출. priority_score 무영향.
+    badge_tags: list[str] = Field(default_factory=list)
     rule_count: int = 0
     evidence_count: int = 0
     document_count: int = 0

@@ -55,9 +55,6 @@ EXPECTED_RULE_IDS = {
     "Benford",
     "D01",
     "D02",
-    "IC01",
-    "IC02",
-    "IC03",
 }
 
 
@@ -134,7 +131,6 @@ def test_row_detail_eligibility_is_surface_and_flag_gated() -> None:
 
     for surface_rule in (
         "L4-02",
-        "IC01",
         "L2-03a",
     ):
         assert can_render_row_violation_detail(surface_rule) is False
@@ -180,9 +176,6 @@ def test_alias_reason_macro_and_sidecar_rules_do_not_increase_count() -> None:
         "L2-03d",
         "D01",
         "D02",
-        "IC01",
-        "IC02",
-        "IC03",
     )
 
     for rule_id in excluded_rule_ids:

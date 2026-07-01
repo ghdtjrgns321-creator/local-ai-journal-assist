@@ -468,56 +468,17 @@ def _apply_policy_risk_floors(
                     "anomaly_score",
                 ].clip(lower=_POLICY_LABEL_FLOORS.get(label, RISK_THRESHOLDS[RiskLevel.HIGH]))
 
-    if "L1-06" in combined.columns:
-        l106_score = pd.to_numeric(combined["L1-06"], errors="coerce").fillna(0.0).astype(float)
-        l106_critical = l106_score.ge(0.95)
-        l106_high = l106_score.ge(0.80) & l106_score.lt(0.95)
-        l106_medium = l106_score.ge(0.70) & l106_score.lt(0.80)
-        l106_low = l106_score.ge(0.50) & l106_score.lt(0.70)
-
-        l106_high_or_critical = l106_high | l106_critical
-        high_mask = high_mask | l106_high_or_critical
-        reasons = _append_reason(reasons, l106_low, "L1-06:direct_low")
-        reasons = _append_reason(reasons, l106_medium, "L1-06:direct_medium")
-        reasons = _append_reason(reasons, l106_high, "L1-06:direct_high")
-        reasons = _append_reason(reasons, l106_critical, "L1-06:direct_critical")
+    # L1-06(직무분리) 강제 risk floor 제거(2026-06-30): SOD_TOXIC_COMBINATIONS_GROUNDING §3 —
+    # RED 직무분리는 단독이면 LOW, 행위신호와 조합될 때만 HIGH(겸직만으로 부정 단정 불가).
+    # 구 direct_low/medium/high/critical floor 가 L1-06 단독을 강제 승격해 문서 위반이었다.
+    # 이제 L1-06 은 정규 룰 점수경로(_combined_normalized_rule_details)로만 흐르고, tier 승격은
+    # approval_bypass·embezzlement 등 콤보 leg 로만 일어난다.
 
     if high_mask.any():
         agg_df.loc[high_mask, "anomaly_score"] = agg_df.loc[high_mask, "anomaly_score"].clip(
             lower=RISK_THRESHOLDS[RiskLevel.HIGH]
         )
         agg_df.loc[high_mask, "risk_level"] = RiskLevel.HIGH
-
-    if "L1-06" in combined.columns:
-        l106_score = pd.to_numeric(combined["L1-06"], errors="coerce").fillna(0.0).astype(float)
-        l106_critical = l106_score.ge(0.95)
-        l106_high = l106_score.ge(0.80) & l106_score.lt(0.95)
-        l106_medium = l106_score.ge(0.70) & l106_score.lt(0.80)
-        l106_low = l106_score.ge(0.50) & l106_score.lt(0.70)
-        if l106_critical.any():
-            agg_df.loc[l106_critical, "anomaly_score"] = agg_df.loc[
-                l106_critical,
-                "anomaly_score",
-            ].clip(lower=0.85)
-        if l106_high.any():
-            agg_df.loc[l106_high, "anomaly_score"] = agg_df.loc[
-                l106_high,
-                "anomaly_score",
-            ].clip(lower=RISK_THRESHOLDS[RiskLevel.HIGH])
-        if l106_medium.any():
-            agg_df.loc[l106_medium, "anomaly_score"] = agg_df.loc[
-                l106_medium,
-                "anomaly_score",
-            ].clip(lower=RISK_THRESHOLDS[RiskLevel.MEDIUM])
-            current_high = agg_df["risk_level"].eq(RiskLevel.HIGH)
-            agg_df.loc[l106_medium & ~current_high, "risk_level"] = RiskLevel.MEDIUM
-        if l106_low.any():
-            agg_df.loc[l106_low, "anomaly_score"] = agg_df.loc[
-                l106_low,
-                "anomaly_score",
-            ].clip(lower=RISK_THRESHOLDS[RiskLevel.LOW])
-            current_medium_or_high = agg_df["risk_level"].isin([RiskLevel.MEDIUM, RiskLevel.HIGH])
-            agg_df.loc[l106_low & ~current_medium_or_high, "risk_level"] = RiskLevel.LOW
 
     agg_df["risk_floor_reasons"] = reasons.fillna("")
     return agg_df
@@ -680,10 +641,8 @@ def _apply_auto_escalation(
         return agg_df
     a_cols = [col for col in combined.columns if str(col) in {"L1-01", "L1-02", "L1-03"}]
     # 등급 승격에 기여하면 안 되는 룰은 escalation 카운트에서 제외:
-    # OFF-TIME(L3-05·L3-06·L4-05) + PHASE1-2 family(L4-06·L3-12·IC).
-    b_exclude = (
-        {"L1-01", "L1-02", "L1-03"} | OFF_TIME_SET | {"L4-06", "L3-12", "IC01", "IC02", "IC03"}
-    )
+    # OFF-TIME(L3-05·L3-06·L4-05) + PHASE1-2 family(L4-06·L3-12).
+    b_exclude = {"L1-01", "L1-02", "L1-03"} | OFF_TIME_SET | {"L4-06", "L3-12"}
     b_cols = [col for col in combined.columns if str(col) not in b_exclude]
     if not a_cols or not b_cols:
         return agg_df

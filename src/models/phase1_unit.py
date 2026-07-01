@@ -30,6 +30,8 @@ class BasePhase1Unit(BaseModel):
     # OFF-TIME 보조축(주말·심야·작성자 집중) 합산. tier 게이트 미참여, within-tier 정렬·UI 전용.
     # case 동명 필드와 의미 동일.
     time_severity_score: int = 0
+    # PHASE1-2 배지 통합 필드(표시·자기큐 전용, 점수 비병합). case 동명 필드와 의미 동일.
+    badge_tags: list[str] = Field(default_factory=list)
 
 
 class DocumentUnit(BasePhase1Unit):

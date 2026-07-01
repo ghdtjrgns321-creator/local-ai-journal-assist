@@ -18,11 +18,9 @@ import pandas as pd
 import streamlit as st
 
 from src.models.phase2_case import (
-    IntercompanyCase,
     Phase2CaseBase,
     Phase2CaseSet,
     Phase2RowRef,
-    RelationalCase,
     TimeseriesCase,
     UnsupervisedCase,
 )
@@ -33,8 +31,6 @@ _UNSUPERVISED_DETAIL_EVIDENCE_LIMIT = 10
 
 # family → Phase2CaseSet 필드 매핑
 _FAMILY_TO_ATTR: dict[str, str] = {
-    "intercompany": "intercompany_cases",
-    "relational": "relational_cases",
     "unsupervised": "unsupervised_cases",
     "timeseries": "timeseries_cases",
 }
@@ -99,9 +95,7 @@ def render_phase2_native_case_panel(
         return
 
     lookup = phase1_case_lookup or {}
-    # Relational cases already carry the product review-surface order in the
-    # Phase2CaseSet data path. Keep UI layout unchanged and preserve that order.
-    sorted_cases = list(cases) if family == "relational" else sorted(cases, key=_sort_key)
+    sorted_cases = sorted(cases, key=_sort_key)
     frame = _build_family_frame(family, sorted_cases, phase1_case_lookup=lookup)
     selected_id = _render_master_table(family, frame, sorted_cases)
     if selected_id:
@@ -236,8 +230,6 @@ def _build_family_frame(
 ) -> pd.DataFrame:
     """family 별 dispatcher — 컴럼 spec 에 맞춰 DataFrame 반환."""
     builders = {
-        "intercompany": _build_intercompany_row,
-        "relational": _build_relational_row,
         "unsupervised": _build_unsupervised_row,
         "timeseries": _build_timeseries_row,
     }
@@ -246,46 +238,6 @@ def _build_family_frame(
         return pd.DataFrame()
     rows = [builder(case) for case in cases]
     return pd.DataFrame(rows)
-
-
-def _build_intercompany_row(case: IntercompanyCase) -> dict[str, Any]:  # type: ignore[override]
-    pair = case.counterparty_pair
-    if pair and isinstance(pair, tuple) and len(pair) == 2 and pair[0] and pair[1]:
-        pair_text = f"{pair[0]}↔{pair[1]}"
-    elif pair and isinstance(pair, tuple):
-        # 단일 reciprocal — 한쪽만 의미 있는 경우
-        non_empty = [p for p in pair if p]
-        pair_text = non_empty[0] if non_empty else "—"
-    else:
-        pair_text = "—"
-    return {
-        "case_id": _short_case_id(case.phase2_case_id),
-        "_full_case_id": case.phase2_case_id,
-        "evidence_tier": _tier_cell(case.evidence_tier),
-        "ic_role": case.ic_role or "—",
-        "counterparty_pair": pair_text,
-        "amount_a": _fmt_amount(case.amount_a),
-        "amount_b": _fmt_amount(case.amount_b),
-        "linked_to": _linked_to_text(case.phase1_case_refs),
-    }
-
-
-def _build_relational_row(case: RelationalCase) -> dict[str, Any]:  # type: ignore[override]
-    metric_name = str(case.metric_name or "").strip()
-    try:
-        metric_text = f"{metric_name}={float(case.metric_value):.2f}" if metric_name else "—"
-    except (TypeError, ValueError):
-        metric_text = metric_name or "—"
-    return {
-        "case_id": _short_case_id(case.phase2_case_id),
-        "_full_case_id": case.phase2_case_id,
-        "evidence_tier": _tier_cell(case.evidence_tier),
-        "sub_rule": case.sub_rule or "—",
-        "edge_a": case.edge_a or "—",
-        "edge_b": case.edge_b or "—",
-        "metric": metric_text,
-        "linked_to": _linked_to_text(case.phase1_case_refs),
-    }
 
 
 def _build_unsupervised_row(case: UnsupervisedCase) -> dict[str, Any]:  # type: ignore[override]
@@ -473,8 +425,6 @@ def _render_case_detail(
 
 # family → 한국어 base 라벨 (narrative 첫 토큰).
 _FAMILY_NARRATIVE_LABEL: dict[str, str] = {
-    "intercompany": "관계사 거래 신호",
-    "relational": "관계망 신호",
     "unsupervised": "비지도 statistical outlier 신호",
     "timeseries": "시점 컨텍스트 신호",
 }
@@ -499,34 +449,10 @@ def _build_case_narrative(case: Phase2CaseBase) -> str:
 def _family_specific_detail(case: Phase2CaseBase) -> str:
     """family 별 추가 attribute 요약 (sub_rule, pair, metric 등)."""
     from src.models.phase2_case import (
-        IntercompanyCase,
-        RelationalCase,
         TimeseriesCase,
         UnsupervisedCase,
     )
 
-    if isinstance(case, IntercompanyCase):
-        parts = []
-        if case.ic_role:
-            parts.append(f"역할 {case.ic_role}")
-        pair = case.counterparty_pair
-        if pair and pair[0] and pair[1]:
-            parts.append(f"{pair[0]}↔{pair[1]}")
-        if case.amount_a is not None or case.amount_b is not None:
-            parts.append(f"금액 {_fmt_amount(case.amount_a)} vs {_fmt_amount(case.amount_b)}")
-        return " · ".join(parts)
-    if isinstance(case, RelationalCase):
-        parts = []
-        if case.sub_rule:
-            parts.append(f"sub_rule {case.sub_rule}")
-        if case.edge_a or case.edge_b:
-            parts.append(f"{case.edge_a or '—'} → {case.edge_b or '—'}")
-        if case.metric_name:
-            try:
-                parts.append(f"{case.metric_name}={float(case.metric_value):.2f}")
-            except (TypeError, ValueError):
-                parts.append(f"{case.metric_name}={case.metric_value}")
-        return " · ".join(parts)
     if isinstance(case, UnsupervisedCase):
         parts = []
         try:
@@ -835,9 +761,8 @@ def _phase2_signal_label(case: Phase2CaseBase) -> str:
         str(case.evidence_tier or "").lower(), case.evidence_tier or "—"
     )
     sub_rule = str(getattr(case, "sub_rule", "") or "").strip()
-    ic_role = str(getattr(case, "ic_role", "") or "").strip()
     base = _FAMILY_NARRATIVE_LABEL.get(case.family, case.family)
-    suffix = sub_rule or ic_role
+    suffix = sub_rule
     if suffix:
         return f"{base} · {suffix} · {tier_label}"
     return f"{base} · {tier_label}"

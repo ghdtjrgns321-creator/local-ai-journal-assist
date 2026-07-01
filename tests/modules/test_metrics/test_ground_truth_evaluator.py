@@ -684,7 +684,7 @@ class TestGroundTruthEvaluator:
         )
         assert "candidate clearing/reclass" in l205["reason"]
 
-    def test_l3_03_keeps_population_and_ic_overlap_bands(self):
+    def test_l3_03_keeps_population_band(self):
         df = pd.DataFrame(
             {
                 "document_id": ["D1", "D2", "D3", "D4"],
@@ -703,10 +703,6 @@ class TestGroundTruthEvaluator:
                 }
             },
         )
-        intercompany = _make_result(
-            "intercompany",
-            pd.DataFrame({"IC01": [0.0, 0.8, 0.0, 0.0]}, index=df.index),
-        )
         labels = pd.DataFrame(
             {
                 "document_id": ["D4"],
@@ -716,7 +712,7 @@ class TestGroundTruthEvaluator:
 
         analysis = per_rule_label_analysis(
             df,
-            {"layer_b": layer_b, "intercompany": intercompany},
+            {"layer_b": layer_b},
             labels,
         )
         l303 = next(item for item in analysis if item["rule_id"] == "L3-03")
@@ -724,7 +720,6 @@ class TestGroundTruthEvaluator:
         assert l303["status"] == "population"
         assert l303["score_bands"] == {
             "ic_population_docs": 3,
-            "ic_exception_overlap_docs": 1,
         }
         assert l303["breakdown"]["ic_population_docs"] == 3
         assert l303["review_queue_docs"] == 3

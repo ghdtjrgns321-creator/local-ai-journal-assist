@@ -405,9 +405,9 @@ RULE_SCORING_REGISTRY: dict[str, RuleScoringMetadata] = {
         standalone_rankable=False,
         fraud_scenario_tags=("batch_population_anomaly",),
     ),
-    # IC01~03·GR01/03 제거 (2026-06-14): intercompany/graph 는 PHASE2 family 영역으로,
-    # PHASE1 정규 32룰이 아니다(RULE_DETAIL_METADATA_V1_LOCK §). PHASE1 점수경로에서 제외.
-    # 탐지기 파일(intercompany_matcher·graph_detector)은 PHASE2 가 사용하므로 유지.
+    # IC01~03·GR01/03 제거: intercompany/graph 는 PHASE1 정규 32룰이 아니다
+    # (RULE_DETAIL_METADATA_V1_LOCK §). PHASE1 점수경로에서 제외.
+    # 탐지기 파일(intercompany_matcher·graph_detector)은 완전 삭제됨(2026-06-30).
     # D01/D02 도 macro_only 유지(중화). PHASE1-2 family(TS) 귀속이나 위 L4-02 와 동일 사유로
     # registry 항목 유지 — 지우면 폴백 점수가 붙는다.
     "D01": RuleScoringMetadata(

@@ -8,20 +8,6 @@ import streamlit as st
 SUB_DETECTORS = (
     ("timeseries", "TS01", "transaction_burst"),
     ("timeseries", "TS02", "unusual_frequency"),
-    ("relational", "R01", "new_counterparty"),
-    ("relational", "R02", "dormant_account_activity"),
-    ("relational", "R03", "transfer_pricing_anomaly"),
-    ("relational", "R04", "missing_relationship"),
-    ("relational", "R05", "rare_account_partner_edge"),
-    ("relational", "R06", "user_account_degree_spike"),
-    ("relational", "R07", "dormant_partner_reactivation"),
-    ("intercompany", "IC01", "unmatched_intercompany"),
-    ("intercompany", "IC02", "amount_mismatch"),
-    ("intercompany", "IC03", "timing_gap"),
-    ("intercompany", "ic_reciprocal_flow_prob", "reciprocal_flow"),
-    ("intercompany", "ic_amount_prob", "amount_mismatch_probability"),
-    ("intercompany", "ic_unmatched_prob", "unmatched_probability"),
-    ("intercompany", "ic_timing_prob", "timing_gap_probability"),
 )
 
 
@@ -60,10 +46,4 @@ def render_subdetector_grid(partition_summary: dict[str, Any] | None) -> None:
 
 
 def _subdetector_meta(family: str, code: str, ui_meta: dict[str, Any]) -> str:
-    if family != "intercompany":
-        return "-"
-    if code in set(ui_meta.get("active_sub_detectors") or []):
-        return "active sidecar unmatched-reference"
-    if code in {"IC02", "IC03"}:
-        return "carry-over (matched-pair data 미보유)"
     return "-"

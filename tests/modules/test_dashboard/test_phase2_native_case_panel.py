@@ -13,10 +13,8 @@ import pandas as pd
 
 from dashboard.components import phase2_native_case_panel as panel
 from src.models.phase2_case import (
-    IntercompanyCase,
     Phase2CaseSet,
     Phase2RowRef,
-    RelationalCase,
     TimeseriesCase,
     UnsupervisedCase,
     make_row_ref,
@@ -33,28 +31,25 @@ def _row_ref(doc_id: str = "DOC-A", line: int = 3) -> Phase2RowRef:
     )
 
 
-def _relational(
+def _ts_fixture(
     *,
-    case_id: str = "p2_relational_edge_abc1234567",
+    case_id: str = "p2_timeseries_window_abc1234567",
     tier: str = "strong",
     score: float = 0.9,
-) -> RelationalCase:
-    """case 인프라 generic fixture — 정렬·프레임 빌더 검증용 RelationalCase."""
-    return RelationalCase(
+) -> TimeseriesCase:
+    """case 인프라 generic fixture — 정렬·프레임 빌더 검증용 TimeseriesCase."""
+    return TimeseriesCase(
         phase2_case_id=case_id,
         batch_id="batch-1",
-        family="relational",
-        unit_type="edge",
+        family="timeseries",
+        unit_type="window",
         row_refs=(_row_ref("DOC-A", 3), _row_ref("DOC-B", 7)),
         evidence_tier=tier,
-        case_generation_reason={"gate": "relational_edge"},
+        case_generation_reason={"gate": "timeseries_window"},
         family_score=score,
         family_ecdf=0.0,
-        sub_rule="R01",
-        edge_a="acct:1100",
-        edge_b="cp:1234",
-        metric_name="novelty",
-        metric_value=0.5,
+        sub_rule="TS01",
+        subject="acct:1100",
     )
 
 
@@ -74,232 +69,13 @@ def test_linked_to_text_truncates_at_three():
 
 def test_sort_key_orders_by_tier_then_score():
     """evidence_tier 우선 → 같은 tier 안에서 family_score 내림차순."""
-    a = _relational(case_id="p2_relational_edge_aaaaaaaa01", tier="moderate", score=0.95)
-    b = _relational(case_id="p2_relational_edge_aaaaaaaa02", tier="strong", score=0.30)
-    c = _relational(case_id="p2_relational_edge_aaaaaaaa03", tier="strong", score=0.80)
-    d = _relational(case_id="p2_relational_edge_aaaaaaaa04", tier="weak", score=0.99)
+    a = _ts_fixture(case_id="p2_timeseries_window_aaaaaaaa01", tier="moderate", score=0.95)
+    b = _ts_fixture(case_id="p2_timeseries_window_aaaaaaaa02", tier="strong", score=0.30)
+    c = _ts_fixture(case_id="p2_timeseries_window_aaaaaaaa03", tier="strong", score=0.80)
+    d = _ts_fixture(case_id="p2_timeseries_window_aaaaaaaa04", tier="weak", score=0.99)
     cases = sorted([a, b, c, d], key=panel._sort_key)
     # strong (높은 score 우선) → moderate → weak
     assert [case.phase2_case_id[-2:] for case in cases] == ["03", "02", "01", "04"]
-
-
-def test_build_intercompany_row_counterparty_pair_formatting():
-    case = IntercompanyCase(
-        phase2_case_id="p2_intercompany_amount_xyz00099911",
-        batch_id="batch-1",
-        family="intercompany",
-        unit_type="pair",
-        row_refs=(_row_ref(),),
-        evidence_tier="moderate",
-        case_generation_reason={},
-        family_score=0.7,
-        family_ecdf=0.0,
-        ic_role="amount",
-        counterparty_pair=("A001", "B002"),
-        amount_a=1_000_000.0,
-        amount_b=999_000.0,
-        amount_symmetry=0.999,
-    )
-    row = panel._build_intercompany_row(case)
-    assert row["counterparty_pair"] == "A001↔B002"
-    assert row["amount_a"] == "1,000,000"
-    assert row["amount_b"] == "999,000"
-    assert row["evidence_tier"] == "Moderate"
-
-
-def test_build_intercompany_row_handles_missing_pair():
-    case = IntercompanyCase(
-        phase2_case_id="p2_intercompany_reciprocal_xyz11111111",
-        batch_id="batch-1",
-        family="intercompany",
-        unit_type="row",
-        row_refs=(_row_ref(),),
-        evidence_tier="weak",
-        case_generation_reason={},
-        family_score=0.4,
-        family_ecdf=0.0,
-        ic_role="reciprocal",
-        counterparty_pair=None,
-        amount_a=None,
-        amount_b=None,
-        amount_symmetry=None,
-    )
-    row = panel._build_intercompany_row(case)
-    assert row["counterparty_pair"] == "—"
-    assert row["amount_a"] == "—"
-    assert row["amount_b"] == "—"
-
-
-def test_intercompany_family_frame_preserves_native_case_fields_without_layout_change():
-    rec_case = IntercompanyCase(
-        phase2_case_id="p2_intercompany_pair_reciprocal22222",
-        batch_id="batch-1",
-        family="intercompany",
-        unit_type="pair",
-        row_refs=(_row_ref("DOC-IC", 1), _row_ref("DOC-IC", 2)),
-        evidence_tier="strong",
-        case_generation_reason={"gate": "ic_strong_evidence"},
-        family_score=1.0,
-        family_ecdf=0.0,
-        phase1_case_refs=("case-phase1-1",),
-        ic_role="reciprocal_flow",
-        counterparty_pair=("C001", "C002"),
-        amount_a=500_000.0,
-        amount_b=500_000.0,
-        amount_symmetry=1.0,
-    )
-    frame = panel._build_family_frame(
-        "intercompany",
-        [rec_case],
-        phase1_case_lookup={},
-    )
-
-    assert list(frame.columns) == [
-        "case_id",
-        "_full_case_id",
-        "evidence_tier",
-        "ic_role",
-        "counterparty_pair",
-        "amount_a",
-        "amount_b",
-        "linked_to",
-    ]
-    row = frame.iloc[0].to_dict()
-    assert row["_full_case_id"] == rec_case.phase2_case_id
-    assert row["ic_role"] == "reciprocal_flow"
-    assert row["counterparty_pair"] == "C001↔C002"
-    assert row["amount_a"] == "500,000"
-    assert row["amount_b"] == "500,000"
-    assert row["linked_to"] == "case-phase1-1"
-
-
-def test_intercompany_detail_helpers_handle_paired_refs_and_optional_payloads():
-    rec_case = IntercompanyCase(
-        phase2_case_id="p2_intercompany_pair_reciprocal33333",
-        batch_id="batch-1",
-        family="intercompany",
-        unit_type="pair",
-        row_refs=(_row_ref("DOC-IC-A", 1), _row_ref("DOC-IC-B", 2)),
-        evidence_tier="strong",
-        case_generation_reason={},
-        family_score=1.0,
-        family_ecdf=0.0,
-        ic_role="reciprocal_flow",
-        counterparty_pair=("C001", "C002"),
-        amount_a=500_000.0,
-        amount_b=500_000.0,
-        amount_symmetry=1.0,
-    )
-    mismatch_without_amounts = IntercompanyCase(
-        phase2_case_id="p2_intercompany_pair_mismatch33333",
-        batch_id="batch-1",
-        family="intercompany",
-        unit_type="pair",
-        row_refs=(_row_ref("DOC-IC-C", 1), _row_ref("DOC-IC-D", 2)),
-        evidence_tier="moderate",
-        case_generation_reason={},
-        family_score=0.7,
-        family_ecdf=0.0,
-        ic_role="amount_mismatch",
-        counterparty_pair=("C003", "C004"),
-        amount_a=None,
-        amount_b=None,
-        amount_symmetry=None,
-    )
-
-    assert panel._document_ids_from_row_refs(rec_case.row_refs) == ["DOC-IC-A", "DOC-IC-B"]
-    rec_narrative = panel._build_case_narrative(rec_case)
-    mismatch_row = panel._build_intercompany_row(mismatch_without_amounts)
-
-    assert "reciprocal_flow" in rec_narrative
-    assert "C001↔C002" in rec_narrative
-    assert "부정" not in rec_narrative
-    assert "fraud" not in rec_narrative.lower()
-    assert mismatch_row["amount_a"] == "—"
-    assert mismatch_row["amount_b"] == "—"
-
-
-def test_build_relational_row_metric_format():
-    case = RelationalCase(
-        phase2_case_id="p2_relational_edge_rel00000001",
-        batch_id="batch-1",
-        family="relational",
-        unit_type="edge",
-        row_refs=(_row_ref(),),
-        evidence_tier="strong",
-        case_generation_reason={},
-        family_score=0.82,
-        family_ecdf=0.0,
-        sub_rule="R01",
-        edge_a="acct:1100",
-        edge_b="cp:1234",
-        metric_name="novelty",
-        metric_value=0.7654321,
-    )
-    row = panel._build_relational_row(case)
-    assert row["sub_rule"] == "R01"
-    assert row["edge_a"] == "acct:1100"
-    assert row["edge_b"] == "cp:1234"
-    assert row["metric"] == "novelty=0.77"
-
-
-def test_render_relational_panel_preserves_case_set_order_without_schema_change(monkeypatch):
-    low_score_first = RelationalCase(
-        phase2_case_id="p2_relational_edge_rel00000010",
-        batch_id="batch-1",
-        family="relational",
-        unit_type="edge",
-        row_refs=(_row_ref("DOC-A", 1),),
-        evidence_tier="moderate",
-        case_generation_reason={},
-        family_score=0.10,
-        family_ecdf=0.96,
-        sub_rule="R01",
-        edge_a="acct:1100",
-        edge_b="cp:1234",
-        metric_name="new_counterparty_score",
-        metric_value=0.10,
-    )
-    high_score_second = RelationalCase(
-        phase2_case_id="p2_relational_edge_rel00000020",
-        batch_id="batch-1",
-        family="relational",
-        unit_type="edge",
-        row_refs=(_row_ref("DOC-B", 1),),
-        evidence_tier="strong",
-        case_generation_reason={},
-        family_score=0.99,
-        family_ecdf=1.0,
-        sub_rule="R03",
-        edge_a="acct:2100",
-        edge_b="cp:9999",
-        metric_name="transfer_pricing_score",
-        metric_value=0.99,
-    )
-    case_set = Phase2CaseSet(relational_cases=(low_score_first, high_score_second))
-    captured: dict[str, object] = {}
-
-    def capture_frame(family, cases, *, phase1_case_lookup):
-        del phase1_case_lookup
-        captured["family"] = family
-        captured["case_ids"] = [case.phase2_case_id for case in cases]
-        return pd.DataFrame(
-            {
-                "case_id": ["a", "b"],
-                "_full_case_id": [case.phase2_case_id for case in cases],
-            }
-        )
-
-    monkeypatch.setattr(panel, "_build_family_frame", capture_frame)
-    monkeypatch.setattr(panel, "_render_master_table", lambda *args, **kwargs: None)
-
-    panel.render_phase2_native_case_panel("relational", case_set=case_set)
-
-    assert captured["family"] == "relational"
-    assert captured["case_ids"] == [
-        low_score_first.phase2_case_id,
-        high_score_second.phase2_case_id,
-    ]
 
 
 def test_build_unsupervised_row_top_feature():
@@ -539,12 +315,12 @@ def test_build_timeseries_row_window_formatting():
 
 
 def test_build_family_frame_returns_dataframe_for_each_family():
-    rel = _relational()
-    frame = panel._build_family_frame("relational", [rel], phase1_case_lookup={})
+    ts = _ts_fixture()
+    frame = panel._build_family_frame("timeseries", [ts], phase1_case_lookup={})
     assert isinstance(frame, pd.DataFrame)
     assert "case_id" in frame.columns
     assert "_full_case_id" in frame.columns
-    assert frame.iloc[0]["_full_case_id"] == rel.phase2_case_id
+    assert frame.iloc[0]["_full_case_id"] == ts.phase2_case_id
 
 
 def test_render_panel_when_case_set_none_shows_info(monkeypatch):
@@ -555,7 +331,7 @@ def test_render_panel_when_case_set_none_shows_info(monkeypatch):
     monkeypatch.setattr(panel.st, "button", lambda *args, **kwargs: False)
     monkeypatch.setattr(panel.st, "rerun", lambda: captured.update(rerun=True))
 
-    panel.render_phase2_native_case_panel("relational", case_set=None)
+    panel.render_phase2_native_case_panel("timeseries", case_set=None)
     assert any("실행되지 않았습니다" in msg for msg in captured["info"])
     assert captured["rerun"] is False
 
@@ -565,9 +341,9 @@ def test_render_panel_empty_family_shows_info(monkeypatch):
     captured = {"info": []}
     monkeypatch.setattr(panel.st, "info", lambda msg: captured["info"].append(msg))
     empty_set = Phase2CaseSet()
-    panel.render_phase2_native_case_panel("relational", case_set=empty_set)
+    panel.render_phase2_native_case_panel("timeseries", case_set=empty_set)
     assert captured["info"], "0건 안내 표시 필요"
-    assert "relational" in captured["info"][0]
+    assert "timeseries" in captured["info"][0]
 
 
 def test_phase2_document_drilldown_preserves_company_boundary():

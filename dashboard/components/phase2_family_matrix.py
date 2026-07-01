@@ -8,15 +8,11 @@ import streamlit as st
 ACTIVE_FAMILIES = (
     "unsupervised",
     "timeseries",
-    "relational",
-    "intercompany",
 )
 DORMANT_FAMILIES = ("supervised", "transformer", "sequence", "stacking")
 FAMILY_METRICS = {
     "unsupervised": "ECDF high q95 count",
     "timeseries": "burst_detection_rate",
-    "relational": "new_counterparty_precision",
-    "intercompany": "ic_match_completeness",
     "supervised": "f1_macro",
     "transformer": "f1_macro",
     "sequence": "f1_macro",
@@ -25,8 +21,6 @@ FAMILY_METRICS = {
 FAMILY_INTERPRETATIONS = {
     "unsupervised": "ECDF q95 tail review count, rule_proxy_score label only",
     "timeseries": "rule_proxy_score",
-    "relational": "rule_proxy_score",
-    "intercompany": "rule_proxy_score",
     "supervised": "dormant label-gated metric",
     "transformer": "dormant label-gated metric",
     "sequence": "dormant D047-gated metric",
@@ -130,8 +124,6 @@ def _family_metric_value(family: str, payload: dict[str, Any]) -> str:
 
 
 def _family_note(family: str, ui_meta: dict[str, Any]) -> str:
-    if family == "intercompany" and ui_meta.get("active_sub_detectors") == ["IC01"]:
-        return "active, IC01 only"
     return "-"
 
 

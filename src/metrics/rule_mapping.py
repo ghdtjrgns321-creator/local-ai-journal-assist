@@ -35,9 +35,6 @@ RULE_TO_LABEL: dict[str, list[str]] = {
     "L2-05": ["ReversedAmount"],
     "L4-05": ["AbnormalHoursConcentration"],
     "L4-06": [],
-    "IC01": ["UnmatchedIntercompany"],
-    "IC02": ["IntercompanyAmountMismatch"],
-    "IC03": ["IntercompanyTimingMismatch"],
 }
 
 # NOTE:
@@ -93,9 +90,6 @@ RULE_TO_TRUTH_BASIS: dict[str, str] = {
     "L4-04": (
         "rare account-pair raw review universe; confirmed UnusualAccountPair is a separate subset"
     ),
-    "IC01": "confirmed unmatched intercompany labels",
-    "IC02": "amount-mismatch review candidates, evaluated against matching exception labels",
-    "IC03": "timing-gap review candidates, evaluated against matching exception labels",
     "L3-06": "after-hours-only anomaly labels",
     "L4-05": (
         "combined-context abnormal-hours behavior review universe; confirmed "
@@ -130,9 +124,6 @@ RULE_TO_TRUTH_DISPLAY: dict[str, str] = {
     "L3-10": "high-risk account review population",
     "L4-03": "high-amount confirmed subset",
     "L4-04": "rare account-pair review population",
-    "IC01": "UnmatchedIntercompany",
-    "IC02": "IntercompanyAmountMismatch",
-    "IC03": "IntercompanyTimingMismatch",
     "L3-11": "cutoff review population",
     "L3-12": "work-scope concentration review population",
     "L4-05": "abnormal-hours behavior review",
@@ -186,12 +177,6 @@ RULE_TO_EVALUATION_NOTE: dict[str, str] = {
         "not L1-06 review or promotion signals. Self-approval, skipped "
         "approval, and manual override are evaluated by L1-05, L1-07, and "
         "L3-02."
-    ),
-    "IC02": (
-        "Phase 1 review candidate. Preserve recall; precision is handled by case priority/Phase 2."
-    ),
-    "IC03": (
-        "Phase 1 review candidate. Preserve recall; precision is handled by case priority/Phase 2."
     ),
     "L3-11": (
         "Cutoff review rule. Long but reasonable delay controls may appear as raw "
@@ -270,9 +255,6 @@ RULE_TO_TRACK: dict[str, str] = {
     "L2-05": "layer_c",
     "L4-05": "layer_c",
     "L4-06": "layer_c",
-    "IC01": "intercompany",
-    "IC02": "intercompany",
-    "IC03": "intercompany",
 }
 
 
@@ -453,9 +435,6 @@ RULE_TO_ACTION_LAYER: dict[str, str] = {
     "L2-05": "fraud_signal",
     "L4-05": "stat_outlier",
     "L4-06": "stat_outlier",
-    "IC01": "review_needed",
-    "IC02": "review_needed",
-    "IC03": "review_needed",
 }
 
 PHASE1_TRACKS: tuple[str, ...] = ("layer_a", "layer_b", "layer_c", "benford", "evidence")

@@ -1,16 +1,16 @@
 """PHASE2 native case set orchestrator (v7-plan S3.next Phase A).
 
-5 family detection_results 를 받아 각 family builder 로 라우팅 후 Phase2CaseSet
+2 family detection_results 를 받아 각 family builder 로 라우팅 후 Phase2CaseSet
 조립. invariant #80~83.
 
 호출자 책임:
-- detection_results 의 track_name 이 정확해야 한다 (duplicate / ml_unsupervised /
-  intercompany / relational / timeseries 외 track 은 silent skip).
+- detection_results 의 track_name 이 정확해야 한다 (ml_unsupervised /
+  timeseries 외 track 은 silent skip).
 - unsupervised builder 만 model_id / schema_hash / ecdf_gate 추가 인자 받음.
 - 출력 Phase2CaseSet.linked == False — linker (S4.next.2 / S6.next Phase 2) 가
   후속 단계에서 phase1_case_refs 부착 + linked=True 설정.
 
-PHASE1 prior 접근 0건 — 5 builder 의 invariant 인계.
+PHASE1 prior 접근 0건 — 2 builder 의 invariant 인계.
 """
 
 from __future__ import annotations
@@ -21,16 +21,12 @@ import pandas as pd
 
 from src.detection.base import DetectionResult
 from src.models.phase2_case import Phase2CaseSet
-from src.services.phase2_intercompany_case_builder import build_intercompany_cases
-from src.services.phase2_relational_case_builder import build_relational_cases
 from src.services.phase2_timeseries_case_builder import build_timeseries_cases
 from src.services.phase2_unsupervised_case_builder import build_unsupervised_cases
 
 # track_name → family key. 모르는 track 은 dict 부재로 silent skip (invariant #80).
 _TRACK_NAME_TO_FAMILY: dict[str, str] = {
     "ml_unsupervised": "unsupervised",
-    "intercompany": "intercompany",
-    "relational": "relational",
     "timeseries": "timeseries",
 }
 
@@ -50,12 +46,10 @@ def build_phase2_case_set(
         "native", "ts_specific_top100_stabilized_surface"
     ] = "ts_specific_top100_stabilized_surface",
 ) -> Phase2CaseSet:
-    """5 family builder 호출 후 ``Phase2CaseSet`` 조립.
+    """family builder 호출 후 ``Phase2CaseSet`` 조립.
 
     detection_results 에서 track_name 별 라우팅:
     - ``"ml_unsupervised"`` → ``build_unsupervised_cases(... + model_id, schema_hash, ecdf_gate)``
-    - ``"intercompany"``    → ``build_intercompany_cases(...)``
-    - ``"relational"``      → ``build_relational_cases(...)``
     - ``"timeseries"``      → ``build_timeseries_cases(...)``
 
     각 family detection_result 부재 시 해당 cases tuple 은 빈 ``()``.
@@ -65,7 +59,7 @@ def build_phase2_case_set(
 
     Args:
         batch_id: 분석 배치 식별자. 각 builder 의 case_id payload 에 그대로 전달.
-        detection_results: 5 family detector 가 산출한 ``DetectionResult`` list.
+        detection_results: 2 family detector 가 산출한 ``DetectionResult`` list.
             ``track_name`` 으로 라우팅.
         df: detection 대상 GL DataFrame. 모든 builder 에 동일 객체 그대로 전달.
         unsupervised_model_id: unsupervised builder 전용 — VAE/IsolationForest
@@ -109,22 +103,6 @@ def build_phase2_case_set(
             ordering_strategy=unsupervised_ordering_strategy,
         )
 
-    intercompany_cases: tuple = ()
-    if "intercompany" in by_track:
-        intercompany_cases = build_intercompany_cases(
-            batch_id=batch_id,
-            detection_result=by_track["intercompany"],
-            df=df,
-        )
-
-    relational_cases: tuple = ()
-    if "relational" in by_track:
-        relational_cases = build_relational_cases(
-            batch_id=batch_id,
-            detection_result=by_track["relational"],
-            df=df,
-        )
-
     timeseries_cases: tuple = ()
     if "timeseries" in by_track:
         timeseries_cases = build_timeseries_cases(
@@ -136,8 +114,6 @@ def build_phase2_case_set(
 
     # invariant #82 — linked=False default. linker 가 후속 단계에서 부착.
     return Phase2CaseSet(
-        intercompany_cases=intercompany_cases,
-        relational_cases=relational_cases,
         unsupervised_cases=unsupervised_cases,
         timeseries_cases=timeseries_cases,
         linked=False,

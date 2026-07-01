@@ -127,18 +127,12 @@ phase1_case:
       min_raw_score: 0.80
       min_priority_score: 0.75
       reason: approval_limit_exceeded
-    - rule_id: L1-06
-      min_raw_score: 0.70
-      min_priority_score: 0.45
-      reason: sod_direct_medium
-    - rule_id: L1-06
-      min_raw_score: 0.80
-      min_priority_score: 0.75
-      reason: sod_direct_high
-    - rule_id: L1-06
-      min_raw_score: 0.95
-      min_priority_score: 0.90
-      reason: sod_direct_critical
+# L1-06(직무분리) sod_direct floor 제거(2026-06-30): SOD_TOXIC_COMBINATIONS_GROUNDING §3 —
+# RED 직무분리는 binary 이고 "단독이면 LOW, 행위신호와 조합되면 HIGH. 단독으로 HIGH 를 만들지
+# 않는다"(겸직만으로 부정 단정 불가). severity_hint(critical 등)는 점수가 아니다(§4 line109).
+# 구 sod_direct_critical(0.90)/high(0.75)/medium(0.45) floor 가 L1-06 단독을 HIGH/MEDIUM 으로
+# 승격해 문서 위반(정상 high 폭증 주범) → 제거. L1-06 은 approval_bypass·embezzlement 등 콤보
+# leg 로만 tier 에 기여한다(topic_scoring _APPROVAL_BYPASS_RULES).
     - rule_id: L3-11
       min_raw_score: 0.60
       min_priority_score: 0.45

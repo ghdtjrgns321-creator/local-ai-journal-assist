@@ -16,7 +16,7 @@ import pytest
 from src.models.phase2_case import (
     Phase2CaseSet,
     Phase2RowRef,
-    RelationalCase,
+    TimeseriesCase,
     UnsupervisedCase,
     make_row_ref,
 )
@@ -86,8 +86,8 @@ def _make_relational_case(
     left_pos: int = 10,
     right_pos: int = 11,
     sub_rule: str = "L2-03a",
-) -> RelationalCase:
-    """RelationalCase fixture (case 인프라 generic pair fixture) — 두 row_ref 포함."""
+) -> TimeseriesCase:
+    """TimeseriesCase fixture (case 인프라 generic pair fixture) — 두 row_ref 포함."""
     left = _make_row_ref(row_position=left_pos, index_label=left_pos)
     right = _make_row_ref(
         row_position=right_pos,
@@ -100,15 +100,15 @@ def _make_relational_case(
     canonical_refs = (left.index_label, right.index_label)
     case_id = make_phase2_case_id(
         batch_id=batch_id,
-        family="relational",
+        family="timeseries",
         unit_type="pair",
         canonical_refs=canonical_refs,
         evidence_signature=f"sub_rule={sub_rule}",
     )
-    return RelationalCase(
+    return TimeseriesCase(
         phase2_case_id=case_id,
         batch_id=batch_id,
-        family="relational",
+        family="timeseries",
         unit_type="pair",
         row_refs=(left, right),
         evidence_tier="strong",
@@ -176,10 +176,10 @@ def _make_case_set(
     with_relational: bool = True,
 ) -> Phase2CaseSet:
     """duplicate + unsupervised 만 채운 case_set fixture (S3 범위)."""
-    relational_cases = (_make_relational_case(batch_id=batch_id),) if with_relational else ()
+    timeseries_cases = (_make_relational_case(batch_id=batch_id),) if with_relational else ()
     unsupervised_cases = (_make_unsupervised_case(batch_id=batch_id),) if with_unsupervised else ()
     case_set = Phase2CaseSet(
-        relational_cases=relational_cases,
+        timeseries_cases=timeseries_cases,
         unsupervised_cases=unsupervised_cases,
     )
     if linked:
@@ -253,7 +253,7 @@ def test_save_default_key_mode_is_position_for_s4_mvp(
     ctx: _MockCtx, salt: str, batch_id: str
 ) -> None:
     """key_mode default 는 S4 MVP linker capability ("position") 와 정합 — 미래 변경 차단."""
-    case_set = Phase2CaseSet(relational_cases=(_make_relational_case(batch_id=batch_id),))
+    case_set = Phase2CaseSet(timeseries_cases=(_make_relational_case(batch_id=batch_id),))
     # key_mode 명시 안 함 — default 적용.
     result = save_phase2_case_set(ctx=ctx, batch_id=batch_id, case_set=case_set, salt=salt)
     assert result.status == CaseStoreStatus.SAVED
@@ -273,7 +273,7 @@ def test_save_explicit_key_mode_preserved_in_manifest(
     'label' / 'doc_line' / 'company_doc' 은 S4.next.2 deferred —
     test_save_rejects_deferred_key_modes 에서 별도 거절 검증.
     """
-    case_set = Phase2CaseSet(relational_cases=(_make_relational_case(batch_id=batch_id),))
+    case_set = Phase2CaseSet(timeseries_cases=(_make_relational_case(batch_id=batch_id),))
     for explicit_mode in ("position", "doc_id"):
         result = save_phase2_case_set(
             ctx=ctx,
@@ -296,23 +296,23 @@ def test_save_writes_family_jsonl_for_each_nonempty_family(
     result = save_phase2_case_set(ctx=ctx, batch_id=batch_id, case_set=case_set, salt=salt)
     assert result.manifest_path is not None
     base_dir = result.manifest_path.parent
-    assert (base_dir / "relational.jsonl").exists()
+    assert (base_dir / "timeseries.jsonl").exists()
     assert (base_dir / "unsupervised.jsonl").exists()
     # 각 jsonl 의 행 수 == case 개수
-    dup_lines = (base_dir / "relational.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    dup_lines = (base_dir / "timeseries.jsonl").read_text(encoding="utf-8").strip().splitlines()
     unsup_lines = (base_dir / "unsupervised.jsonl").read_text(encoding="utf-8").strip().splitlines()
     assert len(dup_lines) == 1
     assert len(unsup_lines) == 1
 
 
 def test_save_skips_jsonl_for_empty_family(ctx: _MockCtx, salt: str, batch_id: str) -> None:
-    """비어있는 family (intercompany / timeseries) 의 jsonl 은 생성 안 함."""
-    case_set = _make_case_set(batch_id=batch_id)
+    """비어있는 family (timeseries) 의 jsonl 은 생성 안 함."""
+    case_set = _make_case_set(batch_id=batch_id, with_relational=False)
     result = save_phase2_case_set(ctx=ctx, batch_id=batch_id, case_set=case_set, salt=salt)
     assert result.manifest_path is not None
     base_dir = result.manifest_path.parent
-    assert not (base_dir / "intercompany.jsonl").exists()
     assert not (base_dir / "timeseries.jsonl").exists()
+    assert (base_dir / "unsupervised.jsonl").exists()
 
 
 def test_save_writes_row_ref_map_with_dedup_by_position(
@@ -322,7 +322,7 @@ def test_save_writes_row_ref_map_with_dedup_by_position(
     # 동일 row_position(10) 을 두 duplicate case 가 공유하도록 구성
     dup1 = _make_relational_case(batch_id=batch_id, left_pos=10, right_pos=11)
     dup2 = _make_relational_case(batch_id=batch_id, left_pos=10, right_pos=12, sub_rule="L2-03b")
-    case_set = Phase2CaseSet(relational_cases=(dup1, dup2))
+    case_set = Phase2CaseSet(timeseries_cases=(dup1, dup2))
     result = save_phase2_case_set(ctx=ctx, batch_id=batch_id, case_set=case_set, salt=salt)
     assert result.manifest_path is not None
     base_dir = result.manifest_path.parent
@@ -567,7 +567,7 @@ def test_load_returns_invalid_payload_for_corrupt_jsonl(
     save_result = save_phase2_case_set(ctx=ctx, batch_id=batch_id, case_set=case_set, salt=salt)
     assert save_result.manifest_path is not None
     base_dir = save_result.manifest_path.parent
-    (base_dir / "relational.jsonl").write_text("not a json line\n", encoding="utf-8")
+    (base_dir / "timeseries.jsonl").write_text("not a json line\n", encoding="utf-8")
     result = load_phase2_case_set(ctx=ctx, batch_id=batch_id)
     assert result.status == CaseStoreStatus.INVALID_PAYLOAD
 
@@ -581,10 +581,9 @@ def test_load_roundtrip_preserves_case_count_per_family(
     result = load_phase2_case_set(ctx=ctx, batch_id=batch_id)
     assert result.status == CaseStoreStatus.LOAD_SUCCESS
     assert result.case_set is not None
-    assert len(result.case_set.relational_cases) == len(case_set.relational_cases)
+    assert len(result.case_set.timeseries_cases) == len(case_set.timeseries_cases)
     assert len(result.case_set.unsupervised_cases) == len(case_set.unsupervised_cases)
-    assert len(result.case_set.intercompany_cases) == 0
-    assert len(result.case_set.timeseries_cases) == 0
+    assert len(result.case_set.timeseries_cases) == 1
 
 
 def test_load_roundtrip_preserves_case_ids(ctx: _MockCtx, salt: str, batch_id: str) -> None:
@@ -681,7 +680,7 @@ def test_load_returns_row_ref_map_missing_when_jsonl_deleted(
     ctx: _MockCtx, salt: str, batch_id: str
 ) -> None:
     """row_ref_map.jsonl 부재 → ROW_REF_MAP_MISSING. S4 linker sidecar 가드."""
-    case_set = Phase2CaseSet(relational_cases=(_make_relational_case(batch_id=batch_id),))
+    case_set = Phase2CaseSet(timeseries_cases=(_make_relational_case(batch_id=batch_id),))
     save_result = save_phase2_case_set(ctx=ctx, batch_id=batch_id, case_set=case_set, salt=salt)
     assert save_result.status == CaseStoreStatus.SAVED
     # row_ref_map 삭제 시뮬레이션
@@ -697,7 +696,7 @@ def test_load_returns_row_ref_map_hash_mismatch_when_jsonl_tampered(
     ctx: _MockCtx, salt: str, batch_id: str
 ) -> None:
     """row_ref_map.jsonl 변조 → ROW_REF_MAP_HASH_MISMATCH. manifest 와 sha256 불일치."""
-    case_set = Phase2CaseSet(relational_cases=(_make_relational_case(batch_id=batch_id),))
+    case_set = Phase2CaseSet(timeseries_cases=(_make_relational_case(batch_id=batch_id),))
     save_result = save_phase2_case_set(ctx=ctx, batch_id=batch_id, case_set=case_set, salt=salt)
     assert save_result.status == CaseStoreStatus.SAVED
     # 마지막 줄 변조
@@ -717,12 +716,12 @@ def test_load_returns_case_hash_mismatch_when_family_jsonl_tampered(
     ctx: _MockCtx, salt: str, batch_id: str
 ) -> None:
     """family jsonl 변조 → CASE_HASH_MISMATCH. raw_case_hash 재계산으로 감지."""
-    case_set = Phase2CaseSet(relational_cases=(_make_relational_case(batch_id=batch_id),))
+    case_set = Phase2CaseSet(timeseries_cases=(_make_relational_case(batch_id=batch_id),))
     save_result = save_phase2_case_set(ctx=ctx, batch_id=batch_id, case_set=case_set, salt=salt)
     assert save_result.status == CaseStoreStatus.SAVED
-    # relational.jsonl 의 case dict 의 family_score 만 변조 (파싱은 가능, hash 만 변경)
+    # timeseries.jsonl 의 case dict 의 family_score 만 변조 (파싱은 가능, hash 만 변경)
     assert save_result.manifest_path is not None
-    dup_path = save_result.manifest_path.parent / "relational.jsonl"
+    dup_path = save_result.manifest_path.parent / "timeseries.jsonl"
     original = dup_path.read_text(encoding="utf-8")
     # JSON 으로 파싱 후 재직렬화 — manifest 의 row_ref_map_hash 영향 없도록
     line = json.loads(original.strip())
@@ -745,14 +744,14 @@ def test_load_returns_case_hash_mismatch_for_linked_when_linked_jsonl_tampered(
     """linked case_set 변조 → CASE_HASH_MISMATCH (kind=linked). linked hash 재계산 감지."""
     case = _make_relational_case(batch_id=batch_id)
     case_set = Phase2CaseSet(
-        relational_cases=(case.with_phase1_refs(("case-a",)),),
+        timeseries_cases=(case.with_phase1_refs(("case-a",)),),
         linked=True,
     )
     save_result = save_phase2_case_set(ctx=ctx, batch_id=batch_id, case_set=case_set, salt=salt)
     assert save_result.status == CaseStoreStatus.SAVED
     # phase1_case_refs 만 변조 — raw 는 phase1_case_refs 제외하므로 raw 통과, linked 에서만 깨짐.
     assert save_result.manifest_path is not None
-    dup_path = save_result.manifest_path.parent / "relational.jsonl"
+    dup_path = save_result.manifest_path.parent / "timeseries.jsonl"
     line = json.loads(dup_path.read_text(encoding="utf-8").strip())
     line["phase1_case_refs"] = ["case-z"]  # 다른 ref
     dup_path.write_text(
@@ -771,7 +770,7 @@ def test_load_returns_case_hash_mismatch_for_linked_when_linked_jsonl_tampered(
 
 def test_save_accepts_doc_id_key_mode(ctx: _MockCtx, salt: str, batch_id: str) -> None:
     """linker S4.next capability 의 'doc_id' 도 manifest 에 그대로 기록."""
-    case_set = Phase2CaseSet(relational_cases=(_make_relational_case(batch_id=batch_id),))
+    case_set = Phase2CaseSet(timeseries_cases=(_make_relational_case(batch_id=batch_id),))
     result = save_phase2_case_set(
         ctx=ctx, batch_id=batch_id, case_set=case_set, salt=salt, key_mode="doc_id"
     )
@@ -787,7 +786,7 @@ def test_save_rejects_unknown_key_modes(ctx: _MockCtx, salt: str, batch_id: str)
     S4.next.2 부터 ``doc_line`` / ``label`` / ``company_doc`` 은 허용되므로 enum 외
     값만 거절. silent 통과 시 manifest 가 linker capability 를 잘못 신호.
     """
-    case_set = Phase2CaseSet(relational_cases=(_make_relational_case(batch_id=batch_id),))
+    case_set = Phase2CaseSet(timeseries_cases=(_make_relational_case(batch_id=batch_id),))
     for unknown_mode in ("bogus", "row_position", "label2"):
         result = save_phase2_case_set(
             ctx=ctx,
@@ -809,7 +808,7 @@ def test_save_rejects_auto_key_mode(ctx: _MockCtx, salt: str, batch_id: str) -> 
     ('position' / 'doc_id' / 'doc_line' / 'company_doc' / 'label') 이 기록되어야
     하므로 'auto' 직접 입력은 거절.
     """
-    case_set = Phase2CaseSet(relational_cases=(_make_relational_case(batch_id=batch_id),))
+    case_set = Phase2CaseSet(timeseries_cases=(_make_relational_case(batch_id=batch_id),))
     result = save_phase2_case_set(
         ctx=ctx, batch_id=batch_id, case_set=case_set, salt=salt, key_mode="auto"
     )
@@ -823,7 +822,7 @@ def test_save_rejects_auto_key_mode(ctx: _MockCtx, salt: str, batch_id: str) -> 
 
 def test_save_accepts_doc_line_key_mode(ctx: _MockCtx, salt: str, batch_id: str) -> None:
     """S4.next.2 도입 — 'doc_line' 도 manifest 에 그대로 기록 (#49)."""
-    case_set = Phase2CaseSet(relational_cases=(_make_relational_case(batch_id=batch_id),))
+    case_set = Phase2CaseSet(timeseries_cases=(_make_relational_case(batch_id=batch_id),))
     result = save_phase2_case_set(
         ctx=ctx, batch_id=batch_id, case_set=case_set, salt=salt, key_mode="doc_line"
     )
@@ -835,7 +834,7 @@ def test_save_accepts_doc_line_key_mode(ctx: _MockCtx, salt: str, batch_id: str)
 
 def test_save_accepts_company_doc_key_mode(ctx: _MockCtx, salt: str, batch_id: str) -> None:
     """S4.next.2 도입 — 'company_doc' 도 manifest 에 그대로 기록 (#49)."""
-    case_set = Phase2CaseSet(relational_cases=(_make_relational_case(batch_id=batch_id),))
+    case_set = Phase2CaseSet(timeseries_cases=(_make_relational_case(batch_id=batch_id),))
     result = save_phase2_case_set(
         ctx=ctx, batch_id=batch_id, case_set=case_set, salt=salt, key_mode="company_doc"
     )
@@ -847,7 +846,7 @@ def test_save_accepts_company_doc_key_mode(ctx: _MockCtx, salt: str, batch_id: s
 
 def test_save_accepts_label_key_mode(ctx: _MockCtx, salt: str, batch_id: str) -> None:
     """S4.next.2 도입 — 'label' 도 manifest 에 그대로 기록 (#49)."""
-    case_set = Phase2CaseSet(relational_cases=(_make_relational_case(batch_id=batch_id),))
+    case_set = Phase2CaseSet(timeseries_cases=(_make_relational_case(batch_id=batch_id),))
     result = save_phase2_case_set(
         ctx=ctx, batch_id=batch_id, case_set=case_set, salt=salt, key_mode="label"
     )

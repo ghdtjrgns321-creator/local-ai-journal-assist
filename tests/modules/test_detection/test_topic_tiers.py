@@ -39,8 +39,9 @@ def test_duplicate_reference_match_single_primary_is_low():
 
 
 def test_outflow_plus_approval_bypass_is_high():
-    # 횡령은폐 HIGH: 자금유출(L2-02) + 승인우회(L1-05)
-    tiers = compute_topic_tiers([_ev("L2-02", 0.9), _ev("L1-05", 0.8)])
+    # 횡령은폐 HIGH(§8.3): 자금유출(L2-02) + 승인우회(L1-05) + corroborant(L3-04).
+    # corroborant 없이 2신호만이면 MEDIUM 이하(FSS 2012-아-A) — 아래 demote 테스트 참조.
+    tiers = compute_topic_tiers([_ev("L2-02", 0.9), _ev("L1-05", 0.8), _ev("L3-04", 0.8)])
     assert tiers["duplicate_outflow"].tier == "HIGH"
     assert "embezzlement_concealment_high" in tiers["duplicate_outflow"].fired_triggers
 
@@ -113,16 +114,25 @@ def test_high_trigger_without_primary_does_not_escalate():
 
 
 def test_case_tier_takes_max():
-    # L2-02 + L1-05 → duplicate_outflow HIGH(outflow&bypass), approval_control 도
-    # HIGH(§3.0 bypass & L2-02 corroborant) → case HIGH(최고 tier).
-    tiers = compute_topic_tiers([_ev("L2-02", 0.9), _ev("L1-05", 0.8)])
+    # §8.3(2026-07-01): L2-02 + L1-05뿐(보강신호 0개)은 FSS상 MEDIUM 사례(2011-다-나)와
+    # 동일 구조라 더 이상 HIGH가 아니다. 승인우회 룰이 2종(L1-05+L1-06) 겹치면 보강신호
+    # 요건을 충족해 duplicate_outflow·approval_control 둘 다 HIGH → case HIGH(최고 tier).
+    tiers = compute_topic_tiers([_ev("L2-02", 0.9), _ev("L1-05", 0.8), _ev("L1-06", 0.8)])
     assert case_tier(tiers) == "HIGH"
 
 
+def test_bare_outflow_bypass_no_corroborant_is_not_high():
+    # §8.3(2026-07-01): 자금유출+승인우회 딱 2신호뿐이고 보강신호가 없으면 FSS 근거상
+    # MEDIUM(2011-다-나: L2-02+L1-05, 2012-아-A: L2-02+L1-06)이므로 HIGH가 아니어야 한다.
+    tiers = compute_topic_tiers([_ev("L2-02", 0.9), _ev("L1-05", 0.8)])
+    assert case_tier(tiers) != "HIGH"
+
+
 def test_pick_primary_topic_by_tier():
-    # §3.0 HIGH-2: 역분개(L2-05, outflow) + 자기승인(L1-05, bypass) → duplicate_outflow HIGH.
-    # approval_control 은 corroborant(L4-03|L2-02|L2-03) 부재로 LOW → duplicate_outflow 가 primary.
-    tiers = compute_topic_tiers([_ev("L2-05", 0.9), _ev("L1-05", 0.8)])
+    # §3.0/§8.3 HIGH-2: 역분개(L2-05, outflow) + 자기승인(L1-05, bypass) + corroborant(L3-04)
+    # → duplicate_outflow HIGH. approval_control 은 approval_bypass corroborant(L4-03|L2-02|L2-03)
+    # 부재로 LOW, closing_timing 도 period_end 2다리 부재로 LOW → duplicate_outflow 가 primary.
+    tiers = compute_topic_tiers([_ev("L2-05", 0.9), _ev("L1-05", 0.8), _ev("L3-04", 0.8)])
     assert tiers["duplicate_outflow"].tier == "HIGH"
     assert pick_primary_topic_by_tier(tiers) == "duplicate_outflow"
 
@@ -159,10 +169,13 @@ def test_row01_fictitious_entry_high_demotes_without_manual_leg():
     assert tiers["revenue_statistical"].tier != "HIGH"
 
 
-# --- 행2: HIGH embezzlement_concealment_high  (outflow&bypass)|(outflow&L3-02&L4-03) ---
+# --- 행2: HIGH embezzlement_concealment_high (§8.3) ---
+#   (outflow&bypass&corroborant) | (outflow&L3-02&L4-03)
+#   corroborant = {bypass 2종+ | outflow 2종+ | (L3-01|L3-02|L3-03|L3-04|L3-10|L4-01|L4-03) 1개+},
+#   L3-09 단독 불인정.
 def test_row02_embezzlement_concealment_high_fires_high():
-    # 조합 충족(첫째 분기): L2-02(중복지급, outflow) + L1-05(자기승인, bypass) → HIGH.
-    tiers = compute_topic_tiers([_ev("L2-02", 0.9), _ev("L1-05", 0.8)])
+    # 조합 충족(첫째 분기): L2-02(outflow) + L1-05(bypass) + L3-04(corroborant) → HIGH.
+    tiers = compute_topic_tiers([_ev("L2-02", 0.9), _ev("L1-05", 0.8), _ev("L3-04", 0.8)])
     assert tiers["duplicate_outflow"].tier == "HIGH"
     assert "embezzlement_concealment_high" in tiers["duplicate_outflow"].fired_triggers
 
@@ -171,6 +184,21 @@ def test_row02_embezzlement_concealment_high_demotes_without_bypass():
     # 한 다리 빠짐: bypass·고액수기 둘 다 없이 outflow(L2-02) 단독 → HIGH 미발화(LOW).
     tiers = compute_topic_tiers([_ev("L2-02", 0.9)])
     assert tiers["duplicate_outflow"].tier != "HIGH"
+
+
+def test_row02_embezzlement_concealment_high_demotes_without_corroborant():
+    # §8.3: outflow(L2-02) + bypass(L1-05) 2신호만, corroborant 부재 → HIGH 미발화.
+    # (FSS 2012-아-A: L2-02+L1-06 보강0 → MEDIUM 태깅. 2신호 HIGH 는 FSS 근거 초과.)
+    tiers = compute_topic_tiers([_ev("L2-02", 0.9), _ev("L1-05", 0.8)])
+    assert tiers["duplicate_outflow"].tier != "HIGH"
+    assert "embezzlement_concealment_high" not in tiers["duplicate_outflow"].fired_triggers
+
+
+def test_row02_embezzlement_concealment_high_excludes_suspense_only():
+    # §8.3: outflow + bypass + L3-09(가수금) 단독은 corroborant 불인정 → HIGH 미발화
+    # (약화형 가수금 MEDIUM 분기로 위임).
+    tiers = compute_topic_tiers([_ev("L2-02", 0.9), _ev("L1-05", 0.8), _ev("L3-09", 0.8)])
+    assert "embezzlement_concealment_high" not in tiers["duplicate_outflow"].fired_triggers
 
 
 # --- 행3: HIGH suspense_concealment_high  L3-09&(L2-02|L2-03|L2-05)&L4-03 ---

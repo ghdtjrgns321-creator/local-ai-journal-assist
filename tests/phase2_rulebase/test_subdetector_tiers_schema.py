@@ -1,12 +1,10 @@
 """PHASE2 sub-detector evidence_tier YAML schema 강제 테스트.
 
 config/phase2_subdetector_tiers.yaml 변경 시 본 테스트가 통과해야 한다.
-- 21 sub-detector cover
-  (1 unsupervised + 2 timeseries + 7 relational + 4 duplicate + 7 intercompany).
-  relational R05~R07은 graph/entity anomaly 보강 (2026-05-24).
-  intercompany ic_reciprocal_flow_prob / ic_amount_prob / ic_unmatched_prob /
-  ic_timing_prob 는 PHASE2 internal probability surface evidence_role 노출용
-  (2026-05-25 등록, lane sort ic_role_priority 차원).
+- 7 sub-detector cover
+  (1 unsupervised + 2 timeseries + 4 duplicate).
+  intercompany(IC family) 는 2026-06-30 완전 삭제.
+  relational(R01~R07) family 는 2026-06-30 완전 삭제.
 - tier ∈ {strong, moderate, weak, ml_quantile}
 - source_type ∈ {standard, distribution}
 - source_citation, distribution_metric, rationale 비어 있지 않음
@@ -31,24 +29,10 @@ REQUIRED_KEYS: frozenset[tuple[str, str]] = frozenset(
         ("unsupervised", "VAE-01"),
         ("timeseries", "TS01"),
         ("timeseries", "TS02"),
-        ("relational", "R01"),
-        ("relational", "R02"),
-        ("relational", "R03"),
-        ("relational", "R04"),
-        ("relational", "R05"),
-        ("relational", "R06"),
-        ("relational", "R07"),
         ("duplicate", "L2-03a"),
         ("duplicate", "L2-03b"),
         ("duplicate", "L2-03c"),
         ("duplicate", "L2-03d"),
-        ("intercompany", "IC01"),
-        ("intercompany", "IC02"),
-        ("intercompany", "IC03"),
-        ("intercompany", "ic_reciprocal_flow_prob"),
-        ("intercompany", "ic_amount_prob"),
-        ("intercompany", "ic_unmatched_prob"),
-        ("intercompany", "ic_timing_prob"),
     }
 )
 
@@ -59,7 +43,7 @@ def tier_index() -> dict[tuple[str, str], SubdetectorTier]:
 
 
 class TestCoverage:
-    def test_all_21_sub_detectors_present(self, tier_index):
+    def test_all_7_sub_detectors_present(self, tier_index):
         actual = set(tier_index.keys())
         missing = REQUIRED_KEYS - actual
         extra = actual - REQUIRED_KEYS
@@ -67,7 +51,7 @@ class TestCoverage:
         assert not extra, f"extra sub_detectors not allowed: {sorted(extra)}"
 
     def test_no_duplicate_keys(self, tier_index):
-        assert len(tier_index) == 21
+        assert len(tier_index) == 7
 
 
 class TestTierValues:

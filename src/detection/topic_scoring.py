@@ -32,6 +32,11 @@ _REVENUE_OR_AMOUNT_RULES = {"L4-01", "L4-03"}
 _TIMING_SEED_RULES = {"L3-04", "L3-11"}
 _OUTFLOW_RULES = {"L2-02", "L2-05"} | _DUPLICATE_ENTRY_RULES
 _APPROVAL_BYPASS_RULES = {"L1-04", "L1-05", "L1-06", "L1-07", "L1-07-02"}
+# §8.3(2026-07-01) 보강신호 풀. embezzlement_concealment_high·approval_bypass_high 공통 사용.
+# "승인우회 1개 + 자금유출/동반신호 1개"만으로는 부족하고 아래 중 1개(또는 2번째 승인우회·
+# 2번째 자금유출)가 더 있어야 HIGH. L3-09(가수금)는 제외 — 약화형 가수금 MEDIUM(§4b-2)이 전담
+# (집합에 미포함이라 자동 배제).
+_SECONDARY_CORROBORANT_RULES = {"L3-01", "L3-02", "L3-03", "L3-04", "L3-10", "L4-01", "L4-03"}
 # §3.0 HIGH-4 둘째 leg (L3-10|L4-04|L4-03). §8(1) 고액 L4-03 복원, 적요부실 룰은 폐기됨.
 _PERIOD_END_CORROBORANT_RULES = {"L3-10", "L4-04", "L4-03"}
 # Why: 가공전표(fictitious_entry_high) 조합의 "셋째 다리"(2차 정황) 풀.
@@ -525,14 +530,26 @@ def _fraud_combo_floor_results(
     # → 승인우회 OR (역분개 + 수기) 분기 추가. 고액(L4-03) 게이트 제거(2026-06-17): 과탐가드용
     # 패딩이었고 AS2401 §61에 고액 특성 없음. 정상 reversal+clearing 과탐은 L2-05/L2-03 룰의
     # 발화조건(step3)에서 다루고 고액으로 되막지 않는다.
-    # §3.0 HIGH-2: ((L2-02|L2-03|L2-05)&bypass) | ((L2-02|L2-03|L2-05)&L3-02&L4-03).
-    #   §8(6) H2 일반화 — 자금유출+수기+고액 일반형(역분개 L2-05 한정 해제).
-    if has_outflow and (has_approval_bypass or ("L3-02" in rule_ids and "L4-03" in rule_ids)):
+    # §3.0/§8.3 HIGH-2: ((L2-02|L2-03|L2-05)&bypass&보강신호1개) | ((L2-02|L2-03|L2-05)&L3-02&L4-03).
+    #   §8.3(2026-07-01) 보강신호 요건 반영: outflow&bypass 2신호만으로는 FSS 상 MEDIUM
+    #   (예 2012-아-A: L2-02+L1-06 보강0 → MEDIUM). 보강신호 = {bypass 2종+ | outflow 2종+ |
+    #   단일보강(_SECONDARY_CORROBORANT_RULES 1개+)}. L3-09 단독은 집합 미포함이라 자동 배제
+    #   → 약화형 가수금 MEDIUM 분기로 위임. FSS C군 14건은 전건 보강신호 보유(HIGH 유지).
+    #   has_secondary_corroborant는 approval_bypass_high(HIGH-5, 아래)와 공통 사용.
+    has_secondary_corroborant = (
+        len(rule_ids & _APPROVAL_BYPASS_RULES) >= 2
+        or len(rule_ids & _OUTFLOW_RULES) >= 2
+        or bool(rule_ids & _SECONDARY_CORROBORANT_RULES)
+    )
+    if has_outflow and (
+        (has_approval_bypass and has_secondary_corroborant)
+        or ("L3-02" in rule_ids and "L4-03" in rule_ids)
+    ):
         add(
             "duplicate_outflow",
             "embezzlement_concealment_high",
             "embezzlement_concealment_risk",
-            "outflow_or_duplicate + (approval_bypass or manual_with_high_amount)",
+            "outflow_or_duplicate + approval_bypass + secondary_corroborant (or manual_with_high_amount)",
         )
     elif "L2-01" in rule_ids and (rule_ids & {"L1-05", "L1-06", "L1-07", "L1-07-02"}):
         # §3.0 MEDIUM(a) 한도직하 분할: L2-01 & (L1-05|L1-06|L1-07|L1-07-02).
@@ -609,16 +626,21 @@ def _fraud_combo_floor_results(
     # intercompany_cycle circular_transaction combo 제거 (2026-06-14): IC/GR 제거에 따라
     # 관계사·순환 주제 자체가 폐지됨.
 
-    # §3.0 HIGH-5 승인통제: bypass & (L4-03|L2-02|L2-03). §8(6) corroborant 확장
+    # §3.0/§8.3 HIGH-5 승인통제: bypass & (L4-03|L2-02|L2-03) & 보강신호1개. §8(6) corroborant 확장
     #   (고액·중복지급·중복전표). approval_bypass_medium 전 분기 폐기(§8(5)).
-    if has_approval_bypass and (
-        "L4-03" in rule_ids or "L2-02" in rule_ids or bool(rule_ids & _DUPLICATE_ENTRY_RULES)
+    #   §8.3(2026-07-01) 보강신호 요건 추가: "승인우회 1개 + L2-02뿐"인 사례(2011-다-라)가 FSS상
+    #   MEDIUM인데도 HIGH로 새치기하는 결함을 HIGH-2와 동일한 방식으로 제거. has_secondary_corroborant
+    #   는 위 embezzlement_concealment_high 블록에서 이미 계산됨(공용).
+    if (
+        has_approval_bypass
+        and ("L4-03" in rule_ids or "L2-02" in rule_ids or bool(rule_ids & _DUPLICATE_ENTRY_RULES))
+        and has_secondary_corroborant
     ):
         add(
             "approval_control",
             "approval_bypass_high",
             "approval_bypass_risk",
-            "approval_bypass + high_amount_or_duplicate",
+            "approval_bypass + high_amount_or_duplicate + secondary_corroborant",
         )
 
     return {topic_id: tuple(floors) for topic_id, floors in results.items()}

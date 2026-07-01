@@ -40,8 +40,6 @@ from sklearn.metrics import f1_score
 
 from config.settings import PROJECT_ROOT, get_settings
 from src.detection.ensemble_detector import EnsembleDetector
-from src.detection.intercompany_matcher import IntercompanyMatcher
-from src.detection.relational_detector import RelationalDetector
 from src.detection.sequence_detector import SequenceDetector
 from src.detection.supervised_detector import SupervisedDetector, SupervisedGateError
 from src.detection.tabular_transformer import TransformerDetector
@@ -78,8 +76,6 @@ _DEFAULT_PHASE2_TRAIN_DIR = PROJECT_ROOT / "data" / "phase2_train"
 _DEFAULT_MODEL_FAMILIES = (
     "unsupervised",
     "timeseries",
-    "relational",
-    "intercompany",
 )
 DEFAULT_HOLD_OUT_SCENARIOS = (
     "unusual_timing_manipulation",
@@ -87,59 +83,22 @@ DEFAULT_HOLD_OUT_SCENARIOS = (
 )
 _PHASE2_TRAINING_MODE = "unsupervised_autoencoder_mvp"
 _PHASE2_RULE_INPUT_DIM = 22
-_RULE_STYLE_FAMILIES = {"timeseries", "relational", "intercompany"}
+_RULE_STYLE_FAMILIES = {"timeseries"}
 _SEQUENCE_CONTEXT_COLUMNS = ("document_id", "created_by", "posting_date", "posting_time")
 _RULE_STYLE_REQUIRED_COLUMNS = {
     "timeseries": ("posting_date", "auxiliary_account_number"),
-    "relational": (
-        "trading_partner",
-        "posting_date",
-        "debit_amount",
-        "credit_amount",
-        "gl_account",
-        "is_intercompany",
-        "document_id",
-    ),
-    "intercompany": (
-        "is_intercompany",
-        "gl_account",
-        "debit_amount",
-        "credit_amount",
-        "posting_date",
-        "trading_partner",
-    ),
 }
 # 학습 trial metadata 의 sub_detector_keys (training_report.json) 출처.
 # 본 매핑은 phase2_subdetector_tiers.yaml 의 tier registry 와 의도적으로 다른
-# 범위를 가진다 — 여기에는 **rule-style 학습 trial 의 식별자만** 등재하며,
-# IC family 의 `ic_reciprocal_flow_prob` / `ic_amount_prob` / `ic_unmatched_prob` /
-# `ic_timing_prob` (2026-05-25 옵션 2 로 tier registry 에 등록된 4개 internal
-# probability column) 는 IntercompanyMatcher detector 내부에서 한 번에 산출되는
-# probability surface 이지 독립 학습 대상이 아니므로 본 매핑에서 의도적으로 제외한다.
+# 범위를 가진다 — 여기에는 **rule-style 학습 trial 의 식별자만** 등재한다.
 # tier registry 와 본 매핑의 정합 lock 은
 # `tests/modules/test_services/test_phase2_training_service.py`
 # ::TestRuleStyleSubDetectorRegistryContract 참조.
 _RULE_STYLE_SUB_DETECTORS = {
     "timeseries": ("transaction_burst", "unusual_frequency"),
-    "relational": (
-        "new_counterparty",
-        "dormant_account_activity",
-        "transfer_pricing_anomaly",
-        "missing_relationship",
-        "rare_account_partner_edge",
-        "user_account_degree_spike",
-        "dormant_partner_reactivation",
-    ),
-    "intercompany": (
-        "unmatched_intercompany",
-        "amount_mismatch",
-        "timing_gap",
-    ),
 }
 _RULE_STYLE_METRIC_NAMES = {
     "timeseries": "burst_detection_rate",
-    "relational": "new_counterparty_precision",
-    "intercompany": "ic_match_completeness",
 }
 _DEFAULT_FAMILY_MIN_COMPLETED_TRIALS = {
     "unsupervised": 2,
@@ -147,8 +106,6 @@ _DEFAULT_FAMILY_MIN_COMPLETED_TRIALS = {
     "transformer": 2,
     "sequence": 2,
     "timeseries": 2,
-    "relational": 2,
-    "intercompany": 2,
     "stacking": 2,
 }
 _DEFAULT_FAMILY_MIN_METRIC = {
@@ -157,8 +114,6 @@ _DEFAULT_FAMILY_MIN_METRIC = {
     "transformer": 0.10,
     "sequence": 0.10,
     "timeseries": 0.05,
-    "relational": 0.05,
-    "intercompany": 0.05,
     "stacking": 0.10,
 }
 _SEVERE_UNSUPERVISED_RELIABILITY_WARNINGS = {
@@ -174,8 +129,6 @@ _DEFAULT_DETECTOR_FACTORIES = {
     "transformer": TransformerDetector,
     "sequence": SequenceDetector,
     "timeseries": TimeseriesDetector,
-    "relational": RelationalDetector,
-    "intercompany": IntercompanyMatcher,
     "stacking": EnsembleDetector,
 }
 _PROMOTED_TRACK_MAP = {
@@ -184,8 +137,6 @@ _PROMOTED_TRACK_MAP = {
     "ft_transformer": "ml_transformer",
     "bilstm_sequence": "ml_sequence",
     "timeseries": "timeseries",
-    "relational": "relational",
-    "intercompany": "intercompany",
     "stacking_meta": "ensemble",
 }
 logger = logging.getLogger(__name__)
@@ -195,8 +146,6 @@ _FAMILY_TO_CANONICAL_MODEL = {
     "transformer": "ft_transformer",
     "sequence": "bilstm_sequence",
     "timeseries": "timeseries",
-    "relational": "relational",
-    "intercompany": "intercompany",
     "stacking": "stacking_meta",
 }
 _DEFAULT_SEARCH_PRESETS = {
@@ -285,40 +234,6 @@ _DEFAULT_SEARCH_PRESETS = {
                 "burst_sigma": 2.0,
                 "frequency_window_days": 10,
                 "frequency_min_count": 4,
-            },
-        },
-    ),
-    "relational": (
-        {
-            "name": "balanced",
-            "settings_updates": {
-                "rel_new_cp_lookback_days": 90,
-                "rel_new_cp_large_quantile": 0.90,
-                "rel_dormant_inactive_days": 180,
-            },
-        },
-        {
-            "name": "strict",
-            "settings_updates": {
-                "rel_new_cp_lookback_days": 60,
-                "rel_new_cp_large_quantile": 0.95,
-                "rel_dormant_inactive_days": 240,
-            },
-        },
-    ),
-    "intercompany": (
-        {
-            "name": "balanced",
-            "settings_updates": {
-                "ic_amount_tolerance": 0.05,
-                "ic_max_day_diff": 7,
-            },
-        },
-        {
-            "name": "strict",
-            "settings_updates": {
-                "ic_amount_tolerance": 0.05,
-                "ic_max_day_diff": 3,
             },
         },
     ),
@@ -1849,10 +1764,6 @@ def _build_rule_style_detector_kwargs(
     detector_kwargs: dict[str, Any],
 ) -> dict[str, Any]:
     kwargs = dict(detector_kwargs or {})
-    if family in {"relational", "intercompany"}:
-        audit_rules = getattr(ctx, "audit_rules", None)
-        if audit_rules:
-            kwargs.setdefault("audit_rules", audit_rules)
     return kwargs
 
 
@@ -2087,8 +1998,6 @@ def _build_promotion_policy(trials: list[Phase2TrialResult]) -> dict[str, Any]:
         "eligible_model_families": [
             "unsupervised",
             "timeseries",
-            "relational",
-            "intercompany",
         ],
         "eligible_statuses": [Phase2TrainingStatus.COMPLETED.value],
         "requires_registry_version": True,

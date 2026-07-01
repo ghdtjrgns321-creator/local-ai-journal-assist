@@ -466,7 +466,6 @@ def _attach_phase2_case_overlays(result) -> None:
         phase2_training_report_id=getattr(result, "phase2_training_report_id", None),
         family_explanation_features_by_case=(overlay_inputs.family_explanation_features_by_case),
         family_document_context_by_case=(overlay_inputs.family_document_context_by_case),
-        relational_continuity_depth_by_case=(overlay_inputs.relational_continuity_depth_by_case),
     )
     setattr(result, "phase2_case_overlays", overlays)
 
@@ -578,50 +577,20 @@ def _attach_phase2_case_set(result, *, ctx=None, snapshot=None) -> None:
 def _attach_phase2_family_policy_summary(result, case_set) -> None:
     """Attach aggregate-only native family role metadata.
 
-    This metadata lets dashboard/session consumers preserve the IC product role
-    without reading fixed5 diagnostic artifacts or changing UI layout. It is not
-    consumed by detectors, gates, ranking, fusion, or PHASE1 priority logic.
+    This metadata lets dashboard/session consumers preserve native family role
+    metadata without reading fixed5 diagnostic artifacts or changing UI layout. It
+    is not consumed by detectors, gates, ranking, fusion, or PHASE1 priority logic.
     """
     if result is None or case_set is None:
         return
     from src.services.phase2_family_policy import (
-        INTERCOMPANY_BROAD_RECALL_EXPANSION_FAMILY,
-        INTERCOMPANY_PRODUCT_ROLE,
-        build_relational_policy_summary,
         build_timeseries_policy_summary,
         build_unsupervised_policy_summary,
     )
 
-    intercompany_cases = tuple(getattr(case_set, "intercompany_cases", ()) or ())
-    relational_cases = tuple(getattr(case_set, "relational_cases", ()) or ())
     timeseries_cases = tuple(getattr(case_set, "timeseries_cases", ()) or ())
     unsupervised_cases = tuple(getattr(case_set, "unsupervised_cases", ()) or ())
-    reciprocal_count = sum(
-        1 for case in intercompany_cases if str(getattr(case, "ic_role", "")) == "reciprocal_flow"
-    )
-    mismatch_count = sum(
-        1 for case in intercompany_cases if str(getattr(case, "ic_role", "")) == "amount_mismatch"
-    )
     summary = dict(getattr(result, "phase2_family_policy_summary", None) or {})
-    summary["intercompany"] = {
-        "primary_product_role": INTERCOMPANY_PRODUCT_ROLE,
-        "broad_recall_expansion_family": INTERCOMPANY_BROAD_RECALL_EXPANSION_FAMILY,
-        "production_adoption": False,
-        "production_ranking_changed": False,
-        "new_policy_adopted": False,
-        "ic_gate_changed": False,
-        "phase2_fusion_changed": False,
-        "phase1_ranking_changed": False,
-        "case_count": len(intercompany_cases),
-        "reciprocal_flow_case_count": reciprocal_count,
-        "amount_mismatch_case_count": mismatch_count,
-        "interpretation": (
-            "Intercompany native cases strengthen PHASE1 review candidates with "
-            "IC-specific reciprocal/pair evidence; production_adoption=false means "
-            "no new ranking or gate policy was adopted, not that IC is disabled."
-        ),
-    }
-    summary["relational"] = build_relational_policy_summary(relational_cases)
     summary["timeseries"] = build_timeseries_policy_summary(timeseries_cases)
     summary["unsupervised"] = build_unsupervised_policy_summary(unsupervised_cases)
     setattr(result, "phase2_family_policy_summary", summary)

@@ -579,10 +579,13 @@ def _topic_evidences(rule_specs):
             "duplicate_outflow",
             "embezzlement_concealment_risk",
             0.75,
-            "outflow_or_duplicate + (approval_bypass or manual_with_high_amount)",
+            "outflow_or_duplicate + approval_bypass + secondary_corroborant (or manual_with_high_amount)",
             [
+                # §8.3(2026-07-01) 보강신호 요건: outflow+bypass 2신호뿐이면 FSS상 MEDIUM
+                # (2011-다-나)이라 더 이상 HIGH 아님 → 보강신호 풀(L3-04 등) 1개 추가.
                 ("L2-05", "duplicate_or_outflow", 3, 0.8, ""),
                 ("L1-05", "control_failure", 4, 0.8, ""),
+                ("L3-04", "timing_anomaly", 3, 0.6, ""),
             ],
         ),
         (
@@ -600,7 +603,7 @@ def _topic_evidences(rule_specs):
             "approval_control",
             "approval_bypass_risk",
             0.75,
-            "approval_bypass + high_amount_or_duplicate",
+            "approval_bypass + high_amount_or_duplicate + secondary_corroborant",
             [
                 # §3.0 HIGH-5 corroborant 풀 (L4-03|L2-02|L2-03).
                 # cutoff(L3-11) 은 §8(5) 삭제됨 → L4-03 사용.
@@ -712,7 +715,7 @@ def test_approval_bypass_with_weak_context_fires_no_approval_combo_floor(rule_sp
                 ("L3-02", "control_failure", 3, 0.8, ""),
                 ("L4-03", "statistical_outlier", 3, 0.7, ""),
             ],
-            "outflow_or_duplicate + (approval_bypass or manual_with_high_amount)",
+            "outflow_or_duplicate + approval_bypass + secondary_corroborant (or manual_with_high_amount)",
         ),
     ],
 )

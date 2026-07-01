@@ -20,7 +20,6 @@ def _overlay(
     score: float,
     ecdf: float,
     tier: str | None,
-    relational_continuity_depth: float | None = None,
 ) -> dict:
     weight_map = {"strong": 3, "moderate": 2, "weak": 1, "ml_quantile": 0}
     entry: dict = {
@@ -32,8 +31,6 @@ def _overlay(
         "evidence_tier_weight": weight_map.get(tier or "", 0),
         "sub_detectors": [],
     }
-    if relational_continuity_depth is not None:
-        entry["relational_continuity_depth"] = relational_continuity_depth
     return {
         "phase1_case_id": case_id,
         "family_contributions": [entry],
@@ -51,44 +48,6 @@ _IC_CODE_TIER: dict[str, str] = {
     "ic_timing_prob": "weak",
     "ic_unmatched_prob": "weak",
 }
-
-
-def _ic_overlay(
-    case_id: str,
-    *,
-    score: float,
-    ecdf: float,
-    codes: list[str],
-    family: str = "intercompany",
-    tier: str | None = None,
-) -> dict:
-    weight_map = {"strong": 3, "moderate": 2, "weak": 1, "ml_quantile": 0}
-    if tier is None:
-        tiers_present = [_IC_CODE_TIER[c] for c in codes if c in _IC_CODE_TIER]
-        # 가장 강한 tier 가 entry tier — codes 비어 있으면 None (tier_weight=0).
-        tier = max(tiers_present, key=lambda t: weight_map[t]) if tiers_present else None
-    sub_detectors = [
-        {
-            "code": code,
-            "label": code,
-            "evidence_tier": _IC_CODE_TIER.get(code),
-            "evidence_tier_weight": weight_map.get(_IC_CODE_TIER.get(code) or "", 0),
-        }
-        for code in codes
-    ]
-    entry: dict = {
-        "family": family,
-        "score": score,
-        "ecdf": ecdf,
-        "role": "active-ranker",
-        "evidence_tier": tier,
-        "evidence_tier_weight": weight_map.get(tier or "", 0),
-        "sub_detectors": sub_detectors,
-    }
-    return {
-        "phase1_case_id": case_id,
-        "family_contributions": [entry],
-    }
 
 
 def _review_only_overlay(case_id: str) -> dict:
@@ -160,167 +119,6 @@ class TestSortLane:
         result = sort_lane("duplicate", overlays)
         ids = [o["phase1_case_id"] for o in result]
         assert ids == ["c2", "c1"]
-
-    def test_relational_tie_break_by_continuity_depth(self):
-        # tier 동일·ecdf 동일·score 동일 → depth 가 큰 case 가 위.
-        overlays = [
-            _overlay(
-                "c1",
-                "relational",
-                score=0.6,
-                ecdf=0.7,
-                tier="moderate",
-                relational_continuity_depth=0.2,
-            ),
-            _overlay(
-                "c2",
-                "relational",
-                score=0.6,
-                ecdf=0.7,
-                tier="moderate",
-                relational_continuity_depth=0.85,
-            ),
-            _overlay(
-                "c3",
-                "relational",
-                score=0.6,
-                ecdf=0.7,
-                tier="moderate",
-                relational_continuity_depth=None,  # depth 미존재 → 0 fallback
-            ),
-        ]
-        result = sort_lane("relational", overlays)
-        ids = [o["phase1_case_id"] for o in result]
-        assert ids == ["c2", "c1", "c3"]
-
-    def test_relational_depth_does_not_override_tier(self):
-        # depth 가 더 크더라도 tier 가 낮으면 위로 못 올라간다.
-        overlays = [
-            _overlay(
-                "c_strong_low_depth",
-                "relational",
-                score=0.6,
-                ecdf=0.5,
-                tier="strong",
-                relational_continuity_depth=0.1,
-            ),
-            _overlay(
-                "c_moderate_high_depth",
-                "relational",
-                score=0.6,
-                ecdf=0.9,
-                tier="moderate",
-                relational_continuity_depth=0.95,
-            ),
-        ]
-        result = sort_lane("relational", overlays)
-        ids = [o["phase1_case_id"] for o in result]
-        assert ids == ["c_strong_low_depth", "c_moderate_high_depth"]
-
-
-class TestIntercompanyRolePriority:
-    """IC lane 한정 ic_role_priority 차원 회귀 테스트 (2026-05-25 옵션 2).
-
-    sort 우선순위: evidence_tier_weight > ic_role_priority > ecdf > score.
-    ic_role_priority: reciprocal_flow=5 > amount_mismatch=4 > no_candidate=3
-    > timing_gap=2 > weak_contract(=fallback 0).
-    """
-
-    def test_strong_tier_reciprocal_outranks_ic01_unmatched(self):
-        # 같은 strong tier — ic_reciprocal_flow_prob(role=5) > IC01(role=3, no_candidate).
-        overlays = [
-            _ic_overlay("c_ic01", score=1.0, ecdf=0.6, codes=["IC01"]),
-            _ic_overlay(
-                "c_reciprocal",
-                score=1.0,
-                ecdf=0.6,
-                codes=["ic_reciprocal_flow_prob"],
-            ),
-        ]
-        result = sort_lane("intercompany", overlays)
-        ids = [o["phase1_case_id"] for o in result]
-        assert ids == ["c_reciprocal", "c_ic01"]
-
-    def test_weak_tier_no_candidate_outranks_timing(self):
-        # 같은 weak tier — ic_unmatched_prob(role=3, no_candidate)
-        # > ic_timing_prob(role=2, timing_gap).
-        overlays = [
-            _ic_overlay("c_timing", score=1.0, ecdf=0.6, codes=["ic_timing_prob"]),
-            _ic_overlay("c_no_cand", score=1.0, ecdf=0.6, codes=["ic_unmatched_prob"]),
-            _ic_overlay("c_ic03", score=1.0, ecdf=0.6, codes=["IC03"]),
-        ]
-        result = sort_lane("intercompany", overlays)
-        ids = [o["phase1_case_id"] for o in result]
-        # IC03(weak, role=2) 와 ic_timing_prob(weak, role=2) 는 동률
-        # — ecdf·score tie 면 입력 순서 보존.
-        assert ids[0] == "c_no_cand"
-        assert set(ids[1:]) == {"c_timing", "c_ic03"}
-
-    def test_role_priority_does_not_override_evidence_tier(self):
-        # ic_amount_prob(moderate, role=4) 가 IC01(strong, role=3) 보다 위로 가서는 안 됨.
-        # evidence_tier_weight 가 1차 sort dim.
-        overlays = [
-            _ic_overlay("c_amount_mod", score=1.0, ecdf=0.9, codes=["ic_amount_prob"]),
-            _ic_overlay("c_ic01_strong", score=1.0, ecdf=0.6, codes=["IC01"]),
-        ]
-        result = sort_lane("intercompany", overlays)
-        ids = [o["phase1_case_id"] for o in result]
-        assert ids == ["c_ic01_strong", "c_amount_mod"]
-
-    def test_role_priority_dim_falls_back_to_ecdf(self):
-        # 같은 tier + 같은 role priority — ecdf 가 다음 tiebreaker.
-        overlays = [
-            _ic_overlay(
-                "c_amount_low_ecdf",
-                score=1.0,
-                ecdf=0.5,
-                codes=["ic_amount_prob"],
-            ),
-            _ic_overlay(
-                "c_amount_high_ecdf",
-                score=1.0,
-                ecdf=0.9,
-                codes=["ic_amount_prob"],
-            ),
-        ]
-        result = sort_lane("intercompany", overlays)
-        ids = [o["phase1_case_id"] for o in result]
-        assert ids == ["c_amount_high_ecdf", "c_amount_low_ecdf"]
-
-    def test_other_family_unaffected_by_ic_role_priority(self):
-        # relational lane 에서 IC 코드가 들어가도 ic_role_priority 가 작동하지 않음
-        # (lane sort 의 family 분기가 intercompany 외에는 secondary_dim=0 유지).
-        overlays = [
-            _ic_overlay(
-                "c_high_ecdf",
-                score=0.5,
-                ecdf=0.9,
-                codes=["ic_reciprocal_flow_prob"],
-                family="relational",
-            ),
-            _ic_overlay(
-                "c_low_ecdf",
-                score=0.5,
-                ecdf=0.6,
-                codes=["IC01"],
-                family="relational",
-            ),
-        ]
-        result = sort_lane("relational", overlays)
-        ids = [o["phase1_case_id"] for o in result]
-        assert ids == ["c_high_ecdf", "c_low_ecdf"]
-
-    def test_weak_contract_only_falls_to_role_priority_zero(self):
-        # weak_contract 는 sub_detector 코드로 표현되지 않음 — role priority=0 fallback.
-        # tier·ecdf·score 가 같으면 weak_contract 만 있는 case 는 다른 role 보다 뒤.
-        overlays = [
-            _ic_overlay("c_weak_contract", score=1.0, ecdf=0.6, codes=[]),
-            _ic_overlay("c_timing", score=1.0, ecdf=0.6, codes=["ic_timing_prob"]),
-        ]
-        # 둘 다 tier=None → tier_weight=0 동률.
-        result = sort_lane("intercompany", overlays)
-        ids = [o["phase1_case_id"] for o in result]
-        assert ids == ["c_timing", "c_weak_contract"]
 
 
 class TestLaneSummary:

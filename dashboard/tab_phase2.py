@@ -108,8 +108,6 @@ def render(prep_result, result: PipelineResult | None) -> None:
     family_tab_order = (
         "unsupervised",
         "timeseries",
-        "relational",
-        "intercompany",
     )
     sub_tabs = st.tabs(
         ["전체 요약", *(_FAMILY_LABELS_KR.get(family, family) for family in family_tab_order)]
@@ -475,8 +473,6 @@ def _render_phase2_status_captions() -> None:
 _PHASE2_FAMILY_TRACK_LABELS: dict[str, str] = {
     "ml_unsupervised": "VAE Deep Learning",
     "timeseries": "시점",
-    "relational": "관계망",
-    "intercompany": "관계사",
 }
 
 
@@ -956,14 +952,11 @@ def _is_phase1_immediate_case(case) -> bool:
 
 
 # Lane matrix 표시용 lane 그룹 — 결정 9 정합으로 active 와 supporting 분리.
-# active = primary ranker 4개, supporting = timeseries (결산·시점 보조 lane).
+# supporting = timeseries (결산·시점 보조 lane).
 # Lane matrix 전용 family 그룹. unsupervised(VAE) 는 ml_quantile 단위라 strong/
 # moderate/weak 축과 측정 단위가 달라 lane matrix 에서 제외하고 별도 VAE 패널
 # (_render_phase2_vae_distribution / meta) 로 분리한다.
-_PHASE2_ACTIVE_LANES: tuple[str, ...] = (
-    "relational",
-    "intercompany",
-)
+_PHASE2_ACTIVE_LANES: tuple[str, ...] = ()
 _PHASE2_SUPPORTING_LANES: tuple[str, ...] = ("timeseries",)
 
 
@@ -1569,9 +1562,7 @@ def _render_phase2_family_case_bar(
 # Why: 활성 분포 막대 전용 색상 — 기존 _FAMILY_ACCENT(600 톤, 카드 액센트용)와 별도로
 #      막대 차트는 면적이 크므로 700 톤으로 채도를 한 단계 낮춰 본문 톤과 정렬한다.
 _PHASE2_FAMILY_BAR_COLORS: dict[str, str] = {
-    "relational": "#6D28D9",  # violet-700
     "timeseries": "#0F766E",  # teal-700
-    "intercompany": "#0369A1",  # sky-700
     "unsupervised": "#B45309",  # amber-700
 }
 
@@ -1749,7 +1740,7 @@ def _phase2_family_badge_style(signal_value: int) -> tuple[str, str, str]:
 def _family_contribution_has_positive_signal(entry: dict) -> bool:
     """Count family candidate signals used by the overview bar/summary.
 
-    일반 family 는 양수 score/ECDF 를 후보 신호로 본다. IC01 review-only 처럼
+    일반 family 는 양수 score/ECDF 를 후보 신호로 본다. review-only 신호처럼
     confirmed score 로 승격하지 않는 신호는 review_only_count 메타가 있을 때만
     후보 신호로 집계한다.
     """
@@ -2172,7 +2163,7 @@ def _count_active_families(
     contribution 단위를 사용한다. partition_summary 는 overlay 가 없을 때만 row-level
     fallback 으로 사용한다.
     """
-    active = {"unsupervised", "timeseries", "relational", "intercompany"}
+    active = {"unsupervised", "timeseries"}
     case_counts = _family_case_contribution_counts(overlays)
     if overlays:
         return sum(1 for family in active if int(case_counts.get(family, 0) or 0) > 0)
@@ -2809,48 +2800,20 @@ _PHASE2_SUBDETECTOR_LABEL_KR: dict[str, str] = {
     "VAE-01": "VAE 분포 꼬리",
     "TS01": "단기간 거래 폭증",
     "TS02": "비정상 빈도",
-    "R01": "신규 거래처",
-    "R02": "휴면 계정 재활성",
-    "R03": "이전가격 이상",
-    "R04": "관계 정보 누락",
-    "R05": "희소 계정-거래처 조합",
-    "R06": "사용자 계정 범위 급증",
-    "R07": "휴면 거래처 재활성",
     "L2-03a": "정확 중복",
     "L2-03b": "유사 중복",
     "L2-03c": "분할 거래",
     "L2-03d": "시차 중복",
-    "IC01": "관계사 미대사",
-    "IC02": "관계사 금액 불일치",
-    "IC03": "관계사 시차",
-    "ic_reciprocal_flow_prob": "상호 이전 흐름",
-    "ic_amount_prob": "관계사 금액 차이",
-    "ic_unmatched_prob": "대응 전표 미확인",
-    "ic_timing_prob": "관계사 인식 시차",
 }
 
 _PHASE2_SUBDETECTOR_TIER: dict[str, str] = {
     "VAE-01": "ml_quantile",
     "TS01": "moderate",
     "TS02": "weak",
-    "R01": "strong",
-    "R02": "strong",
-    "R03": "moderate",
-    "R04": "moderate",
-    "R05": "moderate",
-    "R06": "moderate",
-    "R07": "moderate",
     "L2-03a": "strong",
     "L2-03b": "moderate",
     "L2-03c": "moderate",
     "L2-03d": "weak",
-    "IC01": "strong",
-    "IC02": "moderate",
-    "IC03": "weak",
-    "ic_reciprocal_flow_prob": "strong",
-    "ic_amount_prob": "moderate",
-    "ic_unmatched_prob": "weak",
-    "ic_timing_prob": "weak",
 }
 
 
@@ -2900,26 +2863,10 @@ _PHASE2_SUBDETECTOR_DESCRIPTION_KR: dict[str, str] = {
     "VAE-01": "금액, 계정, 사용자, 거래 속성 조합이 전체 분포의 꼬리에 있는 case를 잡습니다.",
     "TS01": "짧은 기간에 같은 작성자, 프로세스, 계정 조합 거래가 몰리는 case를 잡습니다.",
     "TS02": "평소보다 반복 빈도나 발생 패턴이 튀는 case를 잡습니다.",
-    "R01": "신규 거래처 또는 평소 없던 거래 관계가 등장한 case를 잡습니다.",
-    "R02": "오랫동안 쓰이지 않던 계정이나 관계가 다시 사용된 case를 잡습니다.",
-    "R03": "관계사나 거래처 조합에서 금액 흐름이 일반 패턴과 다른 case를 잡습니다.",
-    "R04": "거래 관계 식별 정보가 부족하거나 매칭되지 않는 case를 잡습니다.",
-    "R05": "평소 드문 계정과 거래처 조합이 등장한 case를 잡습니다.",
-    "R06": "특정 사용자가 짧은 기간에 평소보다 많은 계정을 다룬 case를 잡습니다.",
-    "R07": "오랫동안 거래가 없던 거래처가 다시 등장한 case를 잡습니다.",
     "L2-03a": "같은 날짜, 계정, 금액 등 핵심 조건이 정확히 겹치는 중복 후보를 잡습니다.",
     "L2-03b": "거래 조건이 완전히 같지는 않지만 금액과 참조 정보가 유사한 중복 후보를 잡습니다.",
     "L2-03c": "승인한도 회피나 분할 처리 가능성이 있는 금액 쪼개기 후보를 잡습니다.",
     "L2-03d": "일자만 조금 다른 동일 또는 유사 금액 반복 거래 후보를 잡습니다.",
-    "IC01": "관계사 거래인데 상대 전표나 대응 참조가 확인되지 않는 case를 잡습니다.",
-    "IC02": "관계사 간 대응 금액이 맞지 않는 case를 잡습니다.",
-    "IC03": "관계사 대응 거래의 인식 시점 차이가 큰 case를 잡습니다.",
-    "ic_reciprocal_flow_prob": (
-        "한 전표 안에서 관계사 채권·채무가 동시에 오가며 상호 이전 흐름이 보이는 case를 잡습니다."
-    ),
-    "ic_amount_prob": "관계사 대응 후보 간 금액 유사도가 낮은 case를 잡습니다.",
-    "ic_unmatched_prob": "관계사 거래인데 대응 후보나 참조 전표가 약한 case를 잡습니다.",
-    "ic_timing_prob": "관계사 대응 후보 간 전표 인식 시점 차이가 큰 case를 잡습니다.",
 }
 
 
@@ -3070,9 +3017,7 @@ def _render_phase2_stats_tab(
 # ── 분석 영역 카드 디자인 ─────────────────────────────────────
 
 _FAMILY_LABELS_KR: dict[str, str] = {
-    "relational": "관계망 이상",
     "timeseries": "시점 이상",
-    "intercompany": "관계사 매칭",
     "unsupervised": "VAE Deep Learning",
     "supervised": "지도 학습",
     "transformer": "트랜스포머",
@@ -3081,16 +3026,12 @@ _FAMILY_LABELS_KR: dict[str, str] = {
 }
 
 _FAMILY_ACCENT: dict[str, str] = {
-    "relational": "#7C3AED",  # violet-600
     "timeseries": "#0D9488",  # teal-600
-    "intercompany": "#0EA5E9",  # sky-500
     "unsupervised": "#D97706",  # amber-600
 }
 
 _FAMILY_HINT_KR: dict[str, str] = {
-    "relational": "신규 거래처·휴면계정 등 관계 이상",
     "timeseries": "거래 빈도·집중 등 시계열 이상",
-    "intercompany": "관계사 거래의 미매칭 신호",
     "unsupervised": "ML 모델이 분포 꼬리로 분류한 케이스",
     "supervised": "감사 라벨로 학습한 전표 위험 패턴",
     "transformer": "텍스트·범주 조합의 복합 이상 패턴",
@@ -3099,11 +3040,7 @@ _FAMILY_HINT_KR: dict[str, str] = {
 }
 
 _FAMILY_AUDIT_PURPOSE_KR: dict[str, str] = {
-    "relational": (
-        "신규 거래처, 휴면 계정, 낮은 빈도의 조합처럼 거래 관계가 평소와 달라진 지점을 봅니다."
-    ),
     "timeseries": "결산기 집중, 짧은 기간 폭증, 비정상 시간대처럼 발생 시점이 튀는 거래를 봅니다.",
-    "intercompany": "관계사 거래에서 대응 전표나 참조가 맞지 않는 후보를 봅니다.",
     "unsupervised": "정해진 룰로 설명하기 어려운 금액·계정·거래속성 조합의 분포 꼬리를 봅니다.",
     "supervised": "검토 완료 라벨이 충분할 때 과거 감사인이 문제 삼은 패턴과 유사한 후보를 봅니다.",
     "transformer": "적요, 거래처, 계정, 사용자 등 범주 조합의 문맥상 이상한 후보를 봅니다.",
@@ -3112,9 +3049,7 @@ _FAMILY_AUDIT_PURPOSE_KR: dict[str, str] = {
 }
 
 _FAMILY_AUDIT_CHECK_KR: dict[str, str] = {
-    "relational": "거래처 마스터 변경, 신규 등록 승인, 계정 사용 이력 확인",
     "timeseries": "cutoff, 결산 조정, 승인일과 기표일 차이 확인",
-    "intercompany": "상대 법인 전표, 상계 계정, 참조 번호 매칭 확인",
     "unsupervised": "Phase1 근거와 함께 금액·계정 조합의 업무상 설명 가능성 확인",
     "supervised": "라벨 품질과 holdout 성능이 확보된 뒤 검토 후보로 사용",
     "transformer": "텍스트/범주 데이터 품질과 개인정보 마스킹 정책 확인",
@@ -3125,11 +3060,7 @@ _FAMILY_AUDIT_CHECK_KR: dict[str, str] = {
 # family 별 강한 부정/감사 시나리오. _FAMILY_AUDIT_PURPOSE_KR(거래 패턴 일반 묘사)와는
 # 다른 정보로, 도메인 매칭(PCAOB AS 2401 / ISA 240 / 금감원 실증 사례)을 한 줄로 표현한다.
 _FAMILY_AUDIT_SCENARIO_KR: dict[str, str] = {
-    "relational": (
-        "가공 거래처(phantom vendor), 휴면 거래처 활성화, 권한 외 사용자 거래 (ISA 240 §A29)"
-    ),
     "timeseries": "결산기 매출 인식 조작, cutoff 조작, 백데이팅 (ISA 240 §A41 period-end)",
-    "intercompany": "관계사 일방 기재 미대사, 전가 가격 조작, 손익 이전 (ISA 550 related party)",
     "unsupervised": "정해진 룰로 잡히지 않는 신종 패턴, 분포 꼬리 비정형 거래",
     "supervised": "감사인 과거 검토 라벨과 유사한 패턴 (라벨 확보 후 활성)",
     "transformer": "적요·거래처·계정·사용자 범주 조합의 문맥 이상",
@@ -3245,15 +3176,8 @@ def _build_subdetector_kr_frame(partition_summary: dict | None) -> pd.DataFrame:
     for family, code, label in SUB_DETECTORS:
         family_payload = families_payload.get(family) or {}
         sub_payload = (family_payload.get("sub_detectors") or {}).get(code) or {}
-        ui_meta = family_payload.get("ui_meta") or {}
         hit = int(sub_payload.get("hit_count") or 0)
         note = "-"
-        if family == "intercompany":
-            active_codes = set(ui_meta.get("active_sub_detectors") or [])
-            if code in active_codes:
-                note = "active (sidecar)"
-            elif code in {"IC02", "IC03"}:
-                note = "데이터 미보유"
         rows.append(
             {
                 "분석 영역": _FAMILY_LABELS_KR.get(family, family),
@@ -3504,8 +3428,6 @@ def _load_phase2_partition_summary(partition: str) -> dict | None:
 _PHASE2_TRACK_TO_FAMILY: dict[str, str] = {
     "ml_unsupervised": "unsupervised",
     "timeseries": "timeseries",
-    "relational": "relational",
-    "intercompany": "intercompany",
 }
 
 

@@ -99,8 +99,6 @@ from src.services.phase2_ref_pseudonymize import hash_ref_key
 # Why: empty short-circuit 검사용 family field 목록.
 # Phase2CaseSet._FAMILY_FIELD_NAMES 와 동기화 (private 라 import 하지 않고 복제).
 _FAMILY_FIELD_NAMES: tuple[str, ...] = (
-    "intercompany_cases",
-    "relational_cases",
     "unsupervised_cases",
     "timeseries_cases",
 )

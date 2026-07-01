@@ -28,7 +28,6 @@ _RESTORED_CORE_TRACKS: frozenset[str] = frozenset(
         "layer_b",
         "layer_c",
         "benford",
-        "intercompany",
     }
 )
 

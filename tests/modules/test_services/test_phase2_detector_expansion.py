@@ -21,12 +21,10 @@ from src.services.phase2_training_service import (
     run_phase2_training,
 )
 
-RULE_FAMILIES = ("timeseries", "relational", "intercompany")
+RULE_FAMILIES = ("timeseries",)
 ACTIVE_FAMILIES = ("unsupervised", *RULE_FAMILIES)
 RULE_METRICS = {
     "timeseries": "burst_detection_rate",
-    "relational": "new_counterparty_precision",
-    "intercompany": "ic_match_completeness",
 }
 
 
@@ -66,14 +64,6 @@ class _FakeTimeseries(_FakeRuleDetector):
     track = "timeseries"
 
 
-class _FakeRelational(_FakeRuleDetector):
-    track = "relational"
-
-
-class _FakeIntercompany(_FakeRuleDetector):
-    track = "intercompany"
-
-
 def _training_df() -> pd.DataFrame:
     return pd.DataFrame(
         {
@@ -95,15 +85,13 @@ def _training_df() -> pd.DataFrame:
     )
 
 
-def test_a3_family_registration_maps_include_eight_families_and_four_active_defaults():
+def test_a3_family_registration_maps_include_six_families_and_two_active_defaults():
     all_families = {
         "unsupervised",
         "supervised",
         "transformer",
         "sequence",
         "timeseries",
-        "relational",
-        "intercompany",
         "stacking",
     }
 
@@ -112,8 +100,6 @@ def test_a3_family_registration_maps_include_eight_families_and_four_active_defa
     assert set(_DEFAULT_SEARCH_PRESETS) == all_families
     assert set(_DEFAULT_MODEL_FAMILIES) == set(ACTIVE_FAMILIES)
     assert _PROMOTED_TRACK_MAP["timeseries"] == "timeseries"
-    assert _PROMOTED_TRACK_MAP["relational"] == "relational"
-    assert _PROMOTED_TRACK_MAP["intercompany"] == "intercompany"
 
 
 def test_rule_based_families_end_to_end_leaderboard_promotion_and_inference_contract():
@@ -131,8 +117,6 @@ def test_rule_based_families_end_to_end_leaderboard_promotion_and_inference_cont
             model_families=RULE_FAMILIES,
             detector_factories={
                 "timeseries": _FakeTimeseries,
-                "relational": _FakeRelational,
-                "intercompany": _FakeIntercompany,
             },
             base_dir=root / "phase2_train",
         )

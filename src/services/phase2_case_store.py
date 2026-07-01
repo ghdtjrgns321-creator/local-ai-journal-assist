@@ -37,10 +37,8 @@ from pathlib import Path
 from typing import Any
 
 from src.models.phase2_case import (
-    IntercompanyCase,
     Phase2CaseSet,
     Phase2RowRef,
-    RelationalCase,
     TimeseriesCase,
     UnsupervisedCase,
 )
@@ -66,16 +64,12 @@ _ROW_REF_MAP_ALLOWED_STATUSES: frozenset[str] = frozenset(
 # Why: family 이름 → Phase2CaseSet 의 tuple 필드명 매핑.
 #      jsonl 파일명과 케이스셋 attribute 를 한 줄에서 관리.
 _FAMILY_TO_ATTR: dict[str, str] = {
-    "intercompany": "intercompany_cases",
-    "relational": "relational_cases",
     "unsupervised": "unsupervised_cases",
     "timeseries": "timeseries_cases",
 }
 
 # Why: load 시 family 이름 → dataclass 매핑. row_refs 재구성을 위해 사용.
 _FAMILY_TO_DATACLASS: dict[str, type] = {
-    "intercompany": IntercompanyCase,
-    "relational": RelationalCase,
     "unsupervised": UnsupervisedCase,
     "timeseries": TimeseriesCase,
 }
@@ -415,9 +409,6 @@ def _case_from_dict(family: str, payload: dict[str, Any]) -> Any:
             kwargs[f_name] = _restore_row_refs(f_value)
         elif f_name == "phase1_case_refs":
             kwargs[f_name] = tuple(f_value) if isinstance(f_value, list) else ()
-        elif f_name == "counterparty_pair" and isinstance(f_value, list):
-            # IntercompanyCase 의 counterparty_pair 는 tuple[str, str] 이지만 JSON 은 list.
-            kwargs[f_name] = tuple(f_value)
         elif f_name in {"top_features", "max_score_top_features"} and isinstance(f_value, list):
             # UnsupervisedCase feature trace fields are tuple[dict, ...].
             kwargs[f_name] = tuple(f_value)
@@ -529,8 +520,6 @@ def load_phase2_case_set(
     # 6) Phase2CaseSet 조립. linked 는 manifest.linked_case_hash 존재 여부로 추론.
     linked_case_hash = manifest.get("linked_case_hash")
     case_set = Phase2CaseSet(
-        intercompany_cases=family_cases["intercompany"],
-        relational_cases=family_cases["relational"],
         unsupervised_cases=family_cases["unsupervised"],
         timeseries_cases=family_cases["timeseries"],
         linked=linked_case_hash is not None,

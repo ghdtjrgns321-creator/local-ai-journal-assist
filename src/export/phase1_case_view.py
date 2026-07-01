@@ -1765,24 +1765,6 @@ _RELATIONSHIP_RULES = {
         "difference": "내부거래 검토",
         "review": "거래 상대 전표·금액·시점·연결제거 처리를 매칭 확인하세요.",
     },
-    "IC01": {
-        "summary": "내부거래 거래처 예외",
-        "expected": "유효한 내부거래 거래처 매칭",
-        "difference": "거래처 불일치",
-        "review": "거래처 매핑·상대 전표·연결제거 처리 여부를 확인하세요.",
-    },
-    "IC02": {
-        "summary": "내부거래 금액 불일치",
-        "expected": "내부거래 양쪽 금액 일치",
-        "difference": "금액 불일치",
-        "review": "내부거래 양면 전표와 결제 증빙을 비교하세요.",
-    },
-    "IC03": {
-        "summary": "내부거래 시점 불일치",
-        "expected": "내부거래 양쪽 시점 일치",
-        "difference": "시점 불일치",
-        "review": "양쪽 회계기간·컷오프 처리·후속 결제를 비교하세요.",
-    },
 }
 
 _CLASSIFICATION_RULES = {

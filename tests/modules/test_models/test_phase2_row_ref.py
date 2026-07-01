@@ -13,11 +13,9 @@ import pandas as pd
 import pytest
 
 from src.models.phase2_case import (
-    IntercompanyCase,
     Phase2CaseBase,
     Phase2CaseSet,
     Phase2RowRef,
-    RelationalCase,
     TimeseriesCase,
     UnsupervisedCase,
     make_row_ref,
@@ -137,19 +135,19 @@ def test_line_number_key_pd_na_collapses_to_none() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _make_minimal_case(case_id: str = "p2_relational_edge_aaaaaaaaaa") -> RelationalCase:
-    """공통 fixture — 최소 RelationalCase (case 인프라 generic fixture)."""
-    return RelationalCase(
+def _make_minimal_case(case_id: str = "p2_timeseries_window_aaaaaa") -> TimeseriesCase:
+    """공통 fixture — 최소 TimeseriesCase (case 인프라 generic fixture)."""
+    return TimeseriesCase(
         phase2_case_id=case_id,
         batch_id="batch-001",
-        family="relational",
-        unit_type="pair",
+        family="timeseries",
+        unit_type="window",
         row_refs=(),
         evidence_tier="moderate",
-        case_generation_reason={"trigger": "L2-03a"},
+        case_generation_reason={"trigger": "TS01"},
         family_score=0.8,
         family_ecdf=0.95,
-        sub_rule="L2-03a",
+        sub_rule="TS01",
     )
 
 
@@ -185,41 +183,6 @@ def _make_unsupervised(case_id: str) -> UnsupervisedCase:
     )
 
 
-def _make_ic(case_id: str) -> IntercompanyCase:
-    return IntercompanyCase(
-        phase2_case_id=case_id,
-        batch_id="batch-001",
-        family="intercompany",
-        unit_type="pair",
-        row_refs=(),
-        evidence_tier="strong",
-        case_generation_reason={"trigger": "ic_reciprocal"},
-        family_score=0.85,
-        family_ecdf=0.96,
-        ic_role="reciprocal_flow",
-        counterparty_pair=("A", "B"),
-    )
-
-
-def _make_relational(case_id: str) -> RelationalCase:
-    return RelationalCase(
-        phase2_case_id=case_id,
-        batch_id="batch-001",
-        family="relational",
-        unit_type="edge",
-        row_refs=(),
-        evidence_tier="strong",
-        case_generation_reason={"trigger": "R01"},
-        family_score=0.75,
-        family_ecdf=0.92,
-        sub_rule="R01",
-        edge_a="N1",
-        edge_b="N2",
-        metric_name="centrality",
-        metric_value=0.42,
-    )
-
-
 def _make_timeseries(case_id: str) -> TimeseriesCase:
     return TimeseriesCase(
         phase2_case_id=case_id,
@@ -242,33 +205,31 @@ def _make_timeseries(case_id: str) -> TimeseriesCase:
 
 
 def test_phase2_case_set_iter_all_cases_sorted() -> None:
-    """다섯 family 가 섞여도 phase2_case_id 사전순으로 yield."""
+    """여러 family 가 섞여도 phase2_case_id 사전순으로 yield."""
     case_set = Phase2CaseSet(
-        intercompany_cases=(_make_ic("p2_i_a"),),
-        relational_cases=(_make_minimal_case("p2_d_z"), _make_relational("p2_r_m")),
         unsupervised_cases=(_make_unsupervised("p2_u_b"),),
-        timeseries_cases=(_make_timeseries("p2_t_k"),),
+        timeseries_cases=(_make_minimal_case("p2_d_z"), _make_timeseries("p2_t_k")),
     )
     ids = [case.phase2_case_id for case in case_set.iter_all_cases_sorted()]
     assert ids == sorted(ids)
-    assert set(ids) == {"p2_d_z", "p2_i_a", "p2_r_m", "p2_u_b", "p2_t_k"}
+    assert set(ids) == {"p2_d_z", "p2_u_b", "p2_t_k"}
 
 
 def test_phase2_case_set_with_phase1_refs_sets_linked_true() -> None:
     """refs_by_case_id 적용 후 linked=True 인 새 set, 명시되지 않은 case 는 기존 유지."""
-    rel_case = _make_minimal_case("p2_d_x")
-    ic_case = _make_ic("p2_i_y")
+    ts_case = _make_minimal_case("p2_d_x")
+    us_case = _make_unsupervised("p2_u_y")
     case_set = Phase2CaseSet(
-        relational_cases=(rel_case,),
-        intercompany_cases=(ic_case,),
+        timeseries_cases=(ts_case,),
+        unsupervised_cases=(us_case,),
     )
     assert case_set.linked is False
     updated_set = case_set.with_phase1_refs({"p2_d_x": ("case-b", "case-a")})
     assert updated_set.linked is True
     # 명시된 case 는 정렬된 refs 부착
-    assert updated_set.relational_cases[0].phase1_case_refs == ("case-a", "case-b")
+    assert updated_set.timeseries_cases[0].phase1_case_refs == ("case-a", "case-b")
     # 명시되지 않은 case 는 기존 () 유지
-    assert updated_set.intercompany_cases[0].phase1_case_refs == ()
+    assert updated_set.unsupervised_cases[0].phase1_case_refs == ()
     # 원본 set 의 linked 는 False 그대로 (immutable)
     assert case_set.linked is False
 

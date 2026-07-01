@@ -1095,23 +1095,17 @@ def _build_kpi_card(
 #      "어느 영역에서 검토 후보가 늘었는가"가 감사인이 받아 가야 할 정보다.
 #      (docs/spec/PHASE2_GOVERNANCE_DESIGN.md 결정 8, PHASE2_TIMESERIES_ROLE_LOCK 결정 9)
 
-# 표시 순서는 active ranker 3개(관계망/관계사/시점) 다음에 VAE.
+# 표시 순서는 active ranker(시점) 다음에 VAE.
 # VAE 는 ml_quantile 단위라 strong/moderate/weak 축과 측정 단위가 다르다.
 _PHASE2_FAMILY_ORDER: tuple[str, ...] = (
-    "relational",
-    "intercompany",
     "timeseries",
     "unsupervised",
 )
 _PHASE2_FAMILY_KO: dict[str, str] = {
-    "relational": "관계망 이상",
-    "intercompany": "관계사 매칭",
     "timeseries": "시점 이상 (보조)",
     "unsupervised": "VAE 통계 이상",
 }
 _PHASE2_FAMILY_HINT: dict[str, str] = {
-    "relational": "희귀 거래관계·휴면 재활성 후보 변화",
-    "intercompany": "미매칭·금액·시차·순환 거래 후보 변화",
     "timeseries": "결산·시점 맥락 변화 (단독 ranker 아님)",
     "unsupervised": "VAE 통계 이상 패턴 변화",
 }
@@ -1165,7 +1159,7 @@ def _family_signal_has_positive(entry: dict) -> bool:
     """family_contribution 1개가 후보 신호로 카운트될 자격이 있는지.
 
     Why: ``dashboard.tab_phase2._family_contribution_has_positive_signal`` 과
-    동일 로직을 본 모듈에 옮겨 두어 외부 의존을 피한다. IC01 review-only 처럼
+    동일 로직을 본 모듈에 옮겨 두어 외부 의존을 피한다. review-only 신호처럼
     confirmed score 로 승격하지 않는 신호는 ``review_only_count`` 메타가 있을 때만
     후보 신호로 본다. 일반 family 는 양수 score/ECDF 를 후보 신호로 본다.
     """

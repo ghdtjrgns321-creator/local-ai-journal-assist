@@ -169,13 +169,10 @@ _DOCUMENT_UNIT_RULES = {
     "L4-04",
 }
 
-# IC01-03·GR01/03 제거(2026-06-21): PHASE1-2 family 귀속 — flow unit case 미생성(완전 소멸).
+# IC01-03·GR01/03 (PHASE1-2 family) 는 2026-06-30 완전 삭제 — flow/transaction unit case 미생성.
 _FLOW_UNIT_RULES = {"L2-02", "L2-03", "L2-05"}
 # transaction case 생성에서 제외하는 룰(각 사유 상이):
-# L4-02·D01·D02=macro finding, L3-12=사용자 업무범위, L4-06=배치 모집단, L4-05=OFF-TIME 작성자 집계,
-# IC01-03·GR01/03=PHASE1-2 family(2026-06-21 완전 소멸). IC/GR 은 sidecar surface 라
-# can_seed_case=True 경로로 빈 case group 을 만든 뒤 primary_topic=None 으로 버려지던 낭비가 있어,
-# 여기 추가해 hits 적재 단계에서 선제 제외한다(score_aggregator IC corroboration 은 단계A에서 제거됨).
+# L4-02·D01·D02=macro finding, L3-12=사용자 업무범위, L4-06=배치 모집단, L4-05=OFF-TIME 작성자 집계.
 _REVIEW_POPULATION_RULES = {
     "L4-02",
     "D01",
@@ -183,17 +180,10 @@ _REVIEW_POPULATION_RULES = {
     "L3-12",
     "L4-05",
     "L4-06",
-    "IC01",
-    "IC02",
-    "IC03",
 }
 
 _FLOW_ID_SCHEMA_VERSION = "p1_flow_v1"
 _DUPLICATE_DETAIL_RULE_IDS = ("L2-03", "L2-03a", "L2-03b", "L2-03c", "L2-03d", "L2-03e")
-_IC_CANDIDATE_PAIR_CAP = 10_000
-_IC_UNMATCHED_ROW_CAP = 500
-_IC_MISMATCH_PAIR_CAP = 500
-_IC_RECIPROCAL_PAIR_CAP = 10_000
 _REVERSAL_REFERENCE_COLUMNS = (
     "reversal_document_id",
     "original_document_id",
@@ -450,21 +440,6 @@ _RULE_EXPRESSION_METADATA: dict[str, dict[str, Any]] = {
         "focus": "batch_anomaly",
         "action": ["배치 처리 로그 확인", "대량 자동 전표의 결산·금액 이상 결합 여부 확인"],
     },
-    "IC01": {
-        "evidence_strength": "medium",
-        "focus": "intercompany_reconciliation_gap",
-        "action": ["관계사 대사 차이 확인", "상대 회사 전표와 reference 대조"],
-    },
-    "IC02": {
-        "evidence_strength": "medium",
-        "focus": "intercompany_amount_mismatch",
-        "action": ["관계사 양방향 금액 차이 확인", "세금·환율·상계 조건 확인"],
-    },
-    "IC03": {
-        "evidence_strength": "medium",
-        "focus": "intercompany_timing_mismatch",
-        "action": ["관계사 전표 시차 확인", "기간 귀속과 사후 정리 여부 확인"],
-    },
 }
 
 
@@ -532,9 +507,6 @@ _INTEGRITY_RULES = {
 
 _INTERCOMPANY_RULES = {
     "L3-03": "관계사 거래 검토 신호",
-    "IC01": "관계사 거래 대사 이상",
-    "IC02": "관계사 거래 금액 불일치",
-    "IC03": "관계사 거래 시차 이상",
 }
 
 
@@ -664,6 +636,7 @@ def build_phase1_case_result(
     phase1_case_config: dict[str, Any] | None = None,
     generated_at: datetime | None = None,
     engagement_salt: str = "",
+    settings: Any = None,
 ) -> Phase1CaseResult:
     # Why: ``engagement_salt`` 는 S6.next Phase 1 (옵션 C) — RawRuleHitRef 의
     # canonical_label_hash / doc_id_hash 산출 시 PHASE2 store 와 동일 salt 를
@@ -675,6 +648,15 @@ def build_phase1_case_result(
     _build_t0 = _time.perf_counter()
     generated_at = generated_at or datetime.now(UTC)
     config = (phase1_case_config or {}).get("phase1_case", {})
+    # PHASE1-2 거래처 배지(첫등장/희소/휴면재활성) — df 전체 1회 계산, case/unit 에 positional 집계.
+    # settings 부재 시 배지 계산 스킵(None) — 실제 파이프라인은 ctx.settings 를 명시 전달한다.
+    # 전역 get_settings() 를 여기서 호출하지 않는다(lru_cache 싱글톤을 monkeypatch 한 테스트가
+    # Mock 속성을 흘려 float() 크래시 유발하는 오염 벡터 회피). 점수 비병합(배지 전용).
+    partner_row_badges: pd.DataFrame | None = None
+    if settings is not None:
+        from src.detection.partner_signals import compute_partner_signals
+
+        partner_row_badges = compute_partner_signals(df, settings).row_badges
     run_id = build_phase1_case_run_id(
         company_id=company_id,
         batch_id=batch_id,
@@ -726,6 +708,7 @@ def build_phase1_case_result(
         raw_hits,
         df,
         config,
+        partner_row_badges=partner_row_badges,
     )
     _st = _stage("score_phase1_units", _st)
     cases = _build_cases(
@@ -734,6 +717,7 @@ def build_phase1_case_result(
         config,
         macro_findings,
         engagement_salt=engagement_salt,
+        partner_row_badges=partner_row_badges,
     )
     _st = _stage("build_cases", _st)
     cases = _derive_case_scores_from_units(cases, units, config)
@@ -1471,6 +1455,7 @@ def _build_cases(
     profile_callback: Callable[[str, dict[str, Any]], None] | None = None,
     *,
     engagement_salt: str = "",
+    partner_row_badges: pd.DataFrame | None = None,
 ) -> list[CaseGroupResult]:
     if not raw_hits:
         return []
@@ -1646,7 +1631,13 @@ def _build_cases(
         loop_timings["timing_adjust"] += time.perf_counter() - segment_start
 
         segment_start = time.perf_counter()
-        priority_score, behavior_score, adjustment_reasons, bonuses = _apply_priority_adjustments(
+        (
+            priority_score,
+            behavior_score,
+            adjustment_reasons,
+            bonuses,
+            case_weak_tags,
+        ) = _apply_priority_adjustments(
             rows=rows,
             case_hits=case_hits,
             evidence_types=evidence_types,
@@ -1776,6 +1767,14 @@ def _build_cases(
         loop_timings["refs"] += time.perf_counter() - segment_start
 
         segment_start = time.perf_counter()
+        case_rule_ids = {hit.rule_id for hit in case_hits}
+        case_time_severity = compute_time_severity_score(case_rule_ids)
+        case_badge_tags = _compose_badge_tags(
+            partner_tags=_partner_badges_for_positions(partner_row_badges, indices),
+            time_severity_score=case_time_severity,
+            fired_rule_ids=case_rule_ids,
+            weak_tags=case_weak_tags,
+        )
         cases.append(
             CaseGroupResult(
                 case_id=f"case_{theme_id}_{ordinal:05d}",
@@ -1813,8 +1812,9 @@ def _build_cases(
                 timing_score=timing_score,
                 behavior_score=behavior_score,
                 repeat_score=repeat_score,
-                time_severity_score=compute_time_severity_score({hit.rule_id for hit in case_hits}),
-                rule_count=len({hit.rule_id for hit in case_hits}),
+                time_severity_score=case_time_severity,
+                badge_tags=case_badge_tags,
+                rule_count=len(case_rule_ids),
                 evidence_count=len(case_hits),
                 document_count=len({hit.document_id for hit in case_hits}),
                 row_count=len(indices),
@@ -1943,6 +1943,8 @@ def _score_phase1_units(
     raw_hits: list[_RawHit],
     df: pd.DataFrame,
     config: dict[str, Any],
+    *,
+    partner_row_badges: pd.DataFrame | None = None,
 ) -> list[Phase1Unit]:
     if not units:
         return units
@@ -1982,6 +1984,13 @@ def _score_phase1_units(
             fired_rule_ids.update(ref.rule_id for ref in unit.absorbed_rule_hits)
         unit_total_amount = unit_amounts.get(unit.unit_id, 0.0)
         unit_time_severity = compute_time_severity_score(fired_rule_ids)
+        unit_badge_tags = _compose_badge_tags(
+            partner_tags=_partner_badges_for_positions(
+                partner_row_badges, _unit_row_positions(unit, doc_positions)
+            ),
+            time_severity_score=unit_time_severity,
+            fired_rule_ids=fired_rule_ids,
+        )
         hits = unit_hits.get(unit.unit_id, [])
         if not hits:
             scored_units.append(
@@ -1989,6 +1998,7 @@ def _score_phase1_units(
                     update={
                         "total_amount": unit_total_amount,
                         "time_severity_score": unit_time_severity,
+                        "badge_tags": unit_badge_tags,
                     }
                 )
             )
@@ -2017,6 +2027,7 @@ def _score_phase1_units(
                     "triage_rank_reasons": projection.triage_rank_reasons or [],
                     "total_amount": unit_total_amount,
                     "time_severity_score": unit_time_severity,
+                    "badge_tags": unit_badge_tags,
                 }
             )
         )
@@ -2112,7 +2123,13 @@ def _score_unit_hits(
         config=config,
     )
     base_priority_score = priority_score
-    priority_score, behavior_score, adjustment_reasons, _bonuses = _apply_priority_adjustments(
+    (
+        priority_score,
+        behavior_score,
+        adjustment_reasons,
+        _bonuses,
+        _weak_tags,
+    ) = _apply_priority_adjustments(
         rows=rows,
         case_hits=hits,
         evidence_types=evidence_types,
@@ -4724,7 +4741,7 @@ def _apply_priority_adjustments(
         "l203_duplicate_bonus": 0.0,
     }
     if adjustments.get("enabled", True) is False:
-        return priority_score, behavior_score, [], bonuses
+        return priority_score, behavior_score, [], bonuses, []
 
     rule_ids = {hit.rule_id for hit in case_hits}
     reasons: list[str] = []
@@ -4786,7 +4803,7 @@ def _apply_priority_adjustments(
             reasons.append(f"l404_recurring_source_penalty=-{penalty:.2f}")
 
     adjusted_priority += sum(bonuses.values())
-    return max(0.0, min(adjusted_priority, 1.0)), adjusted_behavior, reasons, bonuses
+    return max(0.0, min(adjusted_priority, 1.0)), adjusted_behavior, reasons, bonuses, weak_tags
 
 
 def _l108_priority_adjustment(
@@ -4880,6 +4897,54 @@ def _case_has_true(rows: pd.DataFrame, column: str) -> bool:
     if column not in rows.columns:
         return False
     return bool(bool_column(rows, column).any())
+
+
+# PHASE1-2 배지 어휘 (표시·자기큐 전용, 점수 비병합).
+_PARTNER_BADGE_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("is_first_seen_partner", "first_seen_partner"),
+    ("is_rare_partner", "rare_partner"),
+    ("is_dormant_partner", "dormant_partner"),
+)
+_RULE_BADGE_MAP: dict[str, str] = {
+    "L4-06": "batch_posting_outlier",
+    "L3-12": "work_scope_excess",
+}
+
+
+def _partner_badges_for_positions(
+    partner_row_badges: pd.DataFrame | None, positions: list[int]
+) -> set[str]:
+    """positional 행집합의 거래처 배지 any() 집계. row_badges 는 df.index 정렬이라 .iloc 사용."""
+    if partner_row_badges is None or partner_row_badges.empty or not positions:
+        return set()
+    sub = partner_row_badges.iloc[positions]
+    return {
+        tag for col, tag in _PARTNER_BADGE_COLUMNS if col in sub.columns and bool(sub[col].any())
+    }
+
+
+def _compose_badge_tags(
+    *,
+    partner_tags: set[str],
+    time_severity_score: int,
+    fired_rule_ids: set[str],
+    weak_tags: list[str] | tuple[str, ...] = (),
+) -> list[str]:
+    """배지 소스 통합(거래처 + off_time + L4-06/L3-12 + weak_evidence). 중복 제거·정렬. 점수 무영향."""
+    tags: set[str] = set(partner_tags)
+    if time_severity_score > 0:
+        tags.add("off_time")
+    for rule_id, tag in _RULE_BADGE_MAP.items():
+        if rule_id in fired_rule_ids:
+            tags.add(tag)
+    tags.update(weak_tags or ())
+    return sorted(tags)
+
+
+def _unit_row_positions(unit: Phase1Unit, doc_positions: dict[str, list[int]]) -> list[int]:
+    """unit 이 소유한 positional 행 위치. DocumentUnit=unit_id(=document_id), FlowUnit=member docs."""
+    doc_ids = unit.member_document_ids if isinstance(unit, FlowUnit) else [unit.unit_id]
+    return sorted({pos for d in doc_ids for pos in doc_positions.get(str(d), ())})
 
 
 def _case_source_ratio(rows: pd.DataFrame, source_values: list[str]) -> float:

@@ -28,8 +28,6 @@ SIGNAL_TIERS: frozenset[str] = frozenset({"strong", "moderate"})
 _ACTIVE_FAMILIES: tuple[str, ...] = (
     "unsupervised",
     "timeseries",
-    "relational",
-    "intercompany",
 )
 
 
@@ -47,14 +45,14 @@ def resolve_phase2_case_set_from_state() -> Phase2CaseSet | None:
 
 
 def _iter_all_cases(case_set: Phase2CaseSet | None) -> list[Phase2CaseBase]:
-    """5 family case 를 평탄화한 리스트. None / 빈 set → []."""
+    """active family case 를 평탄화한 리스트. None / 빈 set → []."""
     if case_set is None:
         return []
     return list(case_set.iter_all_cases_sorted())
 
 
 def count_native_cases_total(case_set: Phase2CaseSet | None) -> int:
-    """전체 native case 수 (5 family 합산)."""
+    """전체 native case 수 (active family 합산)."""
     return len(_iter_all_cases(case_set))
 
 
@@ -64,12 +62,10 @@ def count_native_cases_signaled(case_set: Phase2CaseSet | None) -> int:
 
 
 def count_native_cases_by_family(case_set: Phase2CaseSet | None) -> dict[str, int]:
-    """family → case 수 매핑. Active 5 family 모두 키로 포함 (없으면 0)."""
+    """family → case 수 매핑. active family 모두 키로 포함 (없으면 0)."""
     counts: dict[str, int] = dict.fromkeys(_ACTIVE_FAMILIES, 0)
     if case_set is None:
         return counts
-    counts["intercompany"] = len(case_set.intercompany_cases)
-    counts["relational"] = len(case_set.relational_cases)
     counts["unsupervised"] = len(case_set.unsupervised_cases)
     counts["timeseries"] = len(case_set.timeseries_cases)
     return counts

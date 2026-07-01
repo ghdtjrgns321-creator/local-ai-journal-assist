@@ -22,9 +22,7 @@ import pandas as pd
 
 from src.detection.base import DetectionResult
 from src.models.phase2_case import (
-    IntercompanyCase,
     Phase2CaseSet,
-    RelationalCase,
     TimeseriesCase,
     UnsupervisedCase,
     make_row_ref,
@@ -74,85 +72,8 @@ def _make_result(
 
 
 def _make_case_set() -> Phase2CaseSet:
-    """empty 5 family case_set. orchestrator stub 이 반환할 sentinel."""
+    """empty case_set. orchestrator stub 이 반환할 sentinel."""
     return Phase2CaseSet()
-
-
-def _make_intercompany_case_set() -> Phase2CaseSet:
-    left = make_row_ref(
-        row_position=0,
-        index_label=0,
-        document_id="DOC-IC-A",
-        raw_line_number="1",
-        company_code="C01",
-    )
-    right = make_row_ref(
-        row_position=1,
-        index_label=1,
-        document_id="DOC-IC-A",
-        raw_line_number="2",
-        company_code="C02",
-    )
-    reciprocal = IntercompanyCase(
-        phase2_case_id="p2_intercompany_pair_reciprocal001",
-        batch_id="bid-1",
-        family="intercompany",
-        unit_type="pair",
-        row_refs=(left, right),
-        evidence_tier="strong",
-        case_generation_reason={"gate": "ic_strong_evidence", "ic_role": "reciprocal_flow"},
-        family_score=1.0,
-        family_ecdf=0.0,
-        ic_role="reciprocal_flow",
-        counterparty_pair=("C01", "C02"),
-        amount_a=100.0,
-        amount_b=100.0,
-        amount_symmetry=1.0,
-    )
-    mismatch = IntercompanyCase(
-        phase2_case_id="p2_intercompany_pair_mismatch001",
-        batch_id="bid-1",
-        family="intercompany",
-        unit_type="pair",
-        row_refs=(left, right),
-        evidence_tier="moderate",
-        case_generation_reason={"gate": "ic_moderate_evidence", "ic_role": "amount_mismatch"},
-        family_score=0.7,
-        family_ecdf=0.0,
-        ic_role="amount_mismatch",
-        counterparty_pair=("C01", "C02"),
-        amount_a=100.0,
-        amount_b=90.0,
-        amount_symmetry=0.9,
-    )
-    return Phase2CaseSet(intercompany_cases=(reciprocal, mismatch))
-
-
-def _make_relational_case_set() -> Phase2CaseSet:
-    ref = make_row_ref(
-        row_position=0,
-        index_label=0,
-        document_id="DOC-REL-A",
-        raw_line_number="1",
-        company_code="C01",
-    )
-    case = RelationalCase(
-        phase2_case_id="p2_relational_edge_fixture001",
-        batch_id="bid-1",
-        family="relational",
-        unit_type="edge",
-        row_refs=(ref,),
-        evidence_tier="strong",
-        case_generation_reason={"gate": "relational_edge_artifact"},
-        family_score=0.8,
-        family_ecdf=0.99,
-        sub_rule="R03",
-        edge_a="partner-a",
-        edge_b="account-b",
-        metric_name="transfer_pricing_deviation",
-        metric_value=1.2,
-    )
-    return Phase2CaseSet(relational_cases=(case,))
 
 
 def _make_unsupervised_case_set() -> Phase2CaseSet:
@@ -362,96 +283,6 @@ def test_attach_attaches_case_set_to_result(monkeypatch) -> None:
     # case_set 만 부착, linker_diagnostics 는 None / 부재
     assert result.phase2_case_set is sentinel_case_set
     assert getattr(result, "phase2_linker_diagnostics", None) is None
-
-
-def test_attach_records_intercompany_policy_summary_without_changing_ranking(monkeypatch) -> None:
-    """IntercompanyCase reaches PipelineResult with aggregate-only policy metadata."""
-    sentinel_case_set = _make_intercompany_case_set()
-    orch = _OrchestratorRecorder(case_set=sentinel_case_set)
-    linker = _LinkerRecorder()
-    _patch(monkeypatch, orchestrator=orch, linker=linker)
-
-    result = _make_result(phase1_case_result=None)
-    _attach_phase2_case_set(result, ctx=None, snapshot=None)
-
-    assert result.phase2_case_set is sentinel_case_set
-    assert len(result.phase2_case_set.intercompany_cases) == 2
-    summary = result.phase2_family_policy_summary["intercompany"]
-    assert summary["primary_product_role"] == "ic_specific_evidence_strengthening"
-    assert summary["broad_recall_expansion_family"] is False
-    assert summary["production_adoption"] is False
-    assert summary["production_ranking_changed"] is False
-    assert summary["new_policy_adopted"] is False
-    assert summary["ic_gate_changed"] is False
-    assert summary["phase2_fusion_changed"] is False
-    assert summary["phase1_ranking_changed"] is False
-    assert summary["case_count"] == 2
-    assert summary["reciprocal_flow_case_count"] == 1
-    assert summary["amount_mismatch_case_count"] == 1
-    assert "not that IC is disabled" in summary["interpretation"]
-
-
-def test_attach_records_relational_relmeta_policy_without_changing_order(monkeypatch) -> None:
-    """Relational policy metadata exposes relmeta target status without reordering."""
-    sentinel_case_set = _make_relational_case_set()
-    native_order_before = tuple(case.phase2_case_id for case in sentinel_case_set.relational_cases)
-    orch = _OrchestratorRecorder(case_set=sentinel_case_set)
-    linker = _LinkerRecorder()
-    _patch(monkeypatch, orchestrator=orch, linker=linker)
-
-    result = _make_result(phase1_case_result=None)
-    _attach_phase2_case_set(result, ctx=None, snapshot=None)
-
-    assert result.phase2_case_set is sentinel_case_set
-    assert (
-        tuple(case.phase2_case_id for case in result.phase2_case_set.relational_cases)
-        == native_order_before
-    )
-    summary = result.phase2_family_policy_summary["relational"]
-    assert summary["primary_product_role"] == "relationship_evidence_review_surface"
-    assert summary["role_scope"] == "relationship_review_surface_primary_pending"
-    assert summary["primary_target_status"] == "pending_relationship_primary_metadata"
-    assert summary["primary_denominator_status"] == "pending_relationship_primary_metadata"
-    assert summary["primary_target_recall_applicable"] is False
-    assert "no relationship-primary denominator" in summary["primary_recall_pending_reason"]
-    assert summary["primary_recall_tuning_allowed"] is False
-    assert summary["primary_recall_tuning_blocked_until_metadata"] is True
-    assert summary["primary_target_truth_docs"] == 0
-    assert summary["primary_target_matched_docs"] == 0
-    assert summary["primary_target_recall_fixed5_relmeta"] is None
-    assert summary["co_primary_allowed_by_policy"] is True
-    assert summary["co_primary_with"] == []
-    assert summary["co_primary_overlap_count"] == 0
-    assert summary["adopted_surface"] == ("structural_moderate_audit_then_business_lane_split_v1")
-    assert summary["primary_metadata_backlog"] == (
-        "injected_relationship_edge_primary",
-        "relationship_edge_semantic_group",
-    )
-    assert summary["structural_lane_sub_rules"] == ("R03", "R07")
-    assert summary["moderate_audit_business_lane_sub_rules"] == ("R01", "R02")
-    assert summary["context_lane_sub_rules"] == ("R05", "R06")
-    assert summary["r05_r06_primary_surface_default"] is False
-    assert summary["fixed5_ratio_tuning_allowed"] is False
-    assert summary["production_ranking_changed"] is False
-    assert summary["detector_gate_changed"] is False
-    assert summary["phase2_fusion_changed"] is False
-    assert summary["case_count"] == 1
-
-    coverage = summary["relationship_companion_coverage_fixed5_v32d"]
-    assert coverage["truth_docs"] == 139
-    assert coverage["matched_docs"] == 33
-    assert coverage["recall"] == 33 / 139
-    assert coverage["metric_role"] == (
-        "interim_relationship_evidence_surface_until_primary_denominator_available"
-    )
-    assert summary["guardrails"] == {
-        "do_not_claim_primary_recall_without_primary_denominator": True,
-        "do_not_treat_pending_denominator_as_family_retirement": True,
-        "do_not_mix_r05_r06_into_primary_surface": True,
-        "do_not_tune_against_fixed5_truth_ratio": True,
-        "preserve_audit_then_business_ordering": True,
-        "relationship_sidecar_used_for_detector_or_ranking": False,
-    }
 
 
 def test_attach_records_timeseries_default_stabilized_policy(
@@ -687,30 +518,6 @@ def test_attach_records_unsupervised_document_case_default_policy(
         summary["anti_fitting_guardrails"]["truth_owner_scenario_shortcut_feature_allowed"] is False
     )
     assert summary["anti_fitting_guardrails"]["truth_or_owner_metadata_used_as_selector"] is False
-
-
-def test_intercompany_policy_summary_does_not_import_relational_builder(monkeypatch) -> None:
-    """IC policy metadata must not depend on relational builder import health."""
-    sentinel_case_set = _make_intercompany_case_set()
-    orch = _OrchestratorRecorder(case_set=sentinel_case_set)
-    linker = _LinkerRecorder()
-    _patch(monkeypatch, orchestrator=orch, linker=linker)
-
-    real_import = builtins.__import__
-
-    def _guarded_import(name: str, *args: Any, **kwargs: Any):
-        if name == "src.services.phase2_relational_case_builder":
-            raise ImportError("simulated relational builder import failure")
-        return real_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", _guarded_import)
-
-    result = _make_result(phase1_case_result=None)
-    _attach_phase2_case_set(result, ctx=None, snapshot=None)
-
-    summary = result.phase2_family_policy_summary["intercompany"]
-    assert summary["primary_product_role"] == "ic_specific_evidence_strengthening"
-    assert summary["case_count"] == 2
 
 
 def test_attach_with_phase1_invokes_linker_and_records_diagnostics(monkeypatch) -> None:

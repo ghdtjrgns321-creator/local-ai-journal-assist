@@ -679,10 +679,8 @@ def _rule_score_bands(
         return {"flagged_docs": int(df.loc[scores > 0, "document_id"].dropna().nunique())}
     if rule_id == "L3-03":
         ic_docs = _docs_for_mask(df, scores > 0)
-        ic_exception_docs = _docs_for_rules(df, results, {"IC01", "IC02", "IC03"})
         return {
             "ic_population_docs": len(ic_docs),
-            "ic_exception_overlap_docs": len(ic_docs & ic_exception_docs),
         }
     if rule_id == "L3-05":
         weekend = _bool_column(df, "is_weekend")

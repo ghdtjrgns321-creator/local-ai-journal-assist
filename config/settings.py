@@ -202,31 +202,6 @@ class AuditSettings(BaseSettings):
     # --- Detection Layer C: C11 역분개 ---
     reversal_mirror_window_days: int = 90  # L2-05: 1:1 거울 쌍 매칭 허용 일수
 
-    # --- RelationalDetector (WU-08) ---
-    rel_new_cp_large_quantile: float = 0.90  # R01: 대액 기준 분위수
-    rel_new_cp_lookback_days: int = 90  # R01: 신규 거래처 판정 기간 (일)
-    rel_dormant_inactive_days: int = 180  # R02: 휴면 계정 판정 기간 (일)
-    rel_dormant_reactivation_window_days: int = 7  # R02: 연좌 플래깅 윈도우 (일)
-    rel_dormant_reactivation_min_amount: float = 0.0  # R02: 재활성화 최소 금액 (0=제한없음)
-    rel_tp_ic_deviation_threshold: float = (
-        1.0  # R03: IC 가격 편차 허용 (truth-negative q95 ≈ 0.9995)
-    )
-    rel_tp_min_ic_pairs: int = 5  # R03: 최소 비교 쌍 수 (그룹 통계 유의미 최소 표본)
-
-    # --- RelationalDetector graph/entity 보강 (R05~R07) ---
-    # Why: Phase 2 relational family를 graph/entity anomaly로 격상.
-    #      모든 sub-detector는 컬럼 부재 시 0 반환 (graceful), small sample 가드 포함.
-    rel_r05_min_pair_population: int = 50  # R05: rare 판정 최소 unique pair 수 (small sample 가드)
-    rel_r05_min_freq: int = 2  # R05: rare pair 판정 최대 빈도
-    rel_r05_lookback_days: int = 90  # R05: 첫 등장 recency bonus 윈도우 (일)
-    rel_r06_period: str = "M"  # R06: degree bucket period ("M" month 또는 "W" week)
-    rel_r06_z_threshold: float = 2.0  # R06: robust z-score (MAD 기반) 임계
-    rel_r06_min_user_obs: int = 3  # R06: user별 period 관측 수 최소 (통계 유의미)
-    rel_r06_min_users: int = 10  # R06: 모집단 user 수 최소 (small sample 가드)
-    rel_r07_partner_inactive_days: int = 180  # R07: trading_partner 휴면 판정 일수
-    rel_r07_reactivation_window_days: int = 7  # R07: 재활성화 윈도우 (일)
-    rel_r07_min_amount: float = 0.0  # R07: 재활성화 최소 금액 (0=제한없음)
-
     # --- GraphDetector (WU-22) — networkx 기반 순환/이전가격 탐지 ---
     # Why: 회계 장부 100만+ 행을 graph에 올리면 OOM. pandas 사전 필터 + from_pandas_edgelist 강제.
     graph_gr01_max_cycle_length: int = 5  # GR01: simple_cycles length_bound (Johnson 폭주 방지)
@@ -251,75 +226,6 @@ class AuditSettings(BaseSettings):
     nlp_synonym_threshold: float = 0.70  # NLP05: risk keyword 임베딩 유사도 임계
     nlp_embedding_batch_size: int = 100  # 임베딩 API 배치 크기
     nlp_min_group_size: int = 5  # NLP03/NLP04: centroid 산출 최소 표본 (소규모 그룹 스킵)
-
-    # --- IntercompanyMatcher (WU-07) ---
-    ic_amount_tolerance: float = 0.05  # IC01/IC02: 금액 허용 오차 (5%)
-    ic_max_diff_ratio: float = 0.10  # IC02: 최대 비율 (10% → score 1.0)
-    ic_cross_currency_ratio_threshold: float = 20.0  # IC02: 통화 미상 시 FX 의심 금액비 가드
-    ic_date_window_days: int = 5  # IC03: 정상 시차 허용 (일)
-    ic_max_day_diff: int = 30  # IC03: 최대 시차 (30일 → score 1.0)
-    ic_min_ic_rows: int = 2  # 최소 IC 행 수 (미달 시 스킵 + warning)
-    ic_use_related_party_master: bool = True  # IC01: YAML related_party_master 사용 여부
-    ic_period_boundary_days: int = 5  # IC03: 결산 경계 reason code 부착용 (월말 ±N일)
-    # PHASE2 internal probabilistic reconciliation (IC01~03 보강) 폴백 기본값.
-    # Why: audit_rules.yaml::patterns.intercompany.matching_weights /
-    #      candidate_blocking 미지정 시 사용.
-    ic_prob_weight_amount: float = 0.40
-    ic_prob_weight_date: float = 0.25
-    ic_prob_weight_reference: float = 0.20
-    ic_prob_weight_counterparty: float = 0.15
-    ic_prob_amount_bucket_factor: float = 2.0
-    ic_prob_max_candidates_per_row: int = 50
-    ic_prob_reference_min_length: int = 3
-    # contract-tier score caps (audit evidence strength 기준, truth recall 튜닝 금지).
-    # Why: no_candidate (counterpart 가 후보로 잡히지 않은 row) 는 정상 단방향 거래나
-    #      matching evidence 부족과 양립하므로 strong anomaly 처럼 다루면 정상 row 가
-    #      Phase2 Noisy-OR TOP 구간을 오염시킨다. candidate mismatch (실제 reconciliation
-    #      gap 가 측정된 case) 만 강한 점수를 받을 수 있게 cap 을 분리한다.
-    #   - L1 + candidate mismatch: 1.0 — counterparty + reference 식별자 명확한데 gap → 강 증거
-    #   - L1 + no_candidate:       0.5 — counterpart 명확한데 후보 없음 → 단방향 양립, mid review
-    #   - L2 + candidate mismatch: 0.7 — reference 약함으로 매칭 정밀도 하락, FP 가능
-    #   - L2 + no_candidate:       0.3 — matching evidence 약함 + 후보 없음, weak review
-    #   - weak cp_block:           0.3 — cc/tp 모두 비어 anchor 부재, matching evidence 자체 부족
-    #   - L3 insufficient:         0.0 — matching 불가능 (early return, 폴백용 상수)
-    ic_prob_l1_mismatch_cap: float = 1.0
-    ic_prob_l2_mismatch_cap: float = 0.7
-    ic_prob_no_candidate_cap_l1: float = 0.5
-    ic_prob_no_candidate_cap_l2: float = 0.3
-    ic_prob_weak_contract_cap: float = 0.3
-    ic_prob_l3_cap: float = 0.0
-
-    # --- IC timing_prob 도메인 분리 (정상 결산 close lag vs 의심 timing gap) ---
-    # Why: ic_timing_prob 는 단독 row 의 day_diff/max_day_diff 만 보고 1.0 박는다.
-    #      정상 IC 는 receivable 측 월말 결산 → payable 측 다음 달 인식 패턴이
-    #      흔하다 (K-IFRS / KICPA cutoff). 시차만 큰 정상 close lag 가 의심 timing
-    #      gap 과 동일 점수로 합류하면 IC family TOP 구간이 정상으로 채워진다.
-    #      audit 의미상 timing 단독은 weak signal, timing + (amount mismatch /
-    #      weak counterparty / no reference) 조합만 strong evidence 로 본다.
-    ic_timing_grace_window_days: int = 14  # month-end close lag 판정 day_diff 한계
-    ic_timing_month_end_window_days: int = 7  # 월말/월초 N일 정의 (raw close pattern)
-    ic_timing_amount_strong_min: float = 0.95  # amount_sim ≥ → amount 강한 매칭 판정
-    ic_timing_cp_strong_min: float = 0.5  # cp_score ≥ → counterparty 강한 매칭 판정
-    ic_timing_ref_strong_min: float = 0.7  # reference_sim ≥ → ref 강한 매칭 판정
-    ic_timing_only_weak_cap: float = 0.3  # 모든 evidence 강할 때 timing 단독 cap
-
-    # --- PHASE2 internal: single-document reciprocal IC flow (ic_reciprocal_flow_prob) ---
-    # Why: 정상 IC 는 receivable 또는 payable 한 쪽 GL 만 단일 doc 에 기록하고
-    #      양측 reconciliation 으로 검증된다 (분석 결과 fixed5: 정상 9,256건 single-doc
-    #      reciprocal GL 비율 0%). receivable + payable GL pair 가 같은 doc 안에
-    #      self-balanced 로 동시 기표되면 양측 검증 없이 한 회사가 임의로 양변을
-    #      동시 처리한 것 (ISA 550 §23 related-party 사업상 합리성 결여,
-    #      PCAOB AS 2401 management override). cap/weight 는 audit evidence 강도
-    #      기준이며 fixed5 truth recall 기준으로 튜닝 금지.
-    ic_reciprocal_amount_similarity_min: float = 0.95  # 1 - |rec-pay|/max ≥ threshold
-    ic_reciprocal_min_structural_score: float = 0.5  # structural 미달 시 context boost 차단
-    ic_reciprocal_structural_weight: float = 0.7  # bounded combination weight (structural)
-    ic_reciprocal_context_weight: float = 0.3  # bounded combination weight (context)
-    ic_reciprocal_context_period_end_days: int = 5  # 월말/월초 N일 (posting_date.day 기반)
-    ic_reciprocal_context_round_amount_unit: float = 1_000_000.0  # round amount 판정 단위
-    ic_reciprocal_context_period_end_weight: float = 0.4  # context sub-weight (sum=1)
-    ic_reciprocal_context_after_hours_weight: float = 0.3
-    ic_reciprocal_context_round_weight: float = 0.3
 
     # --- Detection Layer C: C12 비정상 시간대 집중 분석 ---
     normal_hours_start: float = 8.5  # 정상 업무시간 시작 (08:30)
@@ -460,8 +366,19 @@ class AuditSettings(BaseSettings):
     # 곱에서 D-3 ~ 0.5 percentile 인 경우 0.125 이상 산출, 그 이하는 약한 결산기 인접).
     ts_composite_period_end_min: float = 0.05
     # Why: rarity sub-signal 의 batch-local ECDF 산출 시 unique pair 수가 본 값 미만이면
-    # 통계적으로 의미 있는 rare 판정 불가 → 전체 0. R05 와 일관 (rel_r05_min_pair_population).
+    # 통계적으로 의미 있는 rare 판정 불가 → 전체 0 (small sample 가드).
     ts_rarity_min_pair_population: int = 50
+
+    # --- PHASE1-2 거래처 신호 (partner_signals: 첫등장/희소/휴면재활성 배지) ---
+    # Why: 옛 PHASE2 relational(R01/R05/R07) 삭제 후 base 경로 거래처 단위 신규 신호.
+    #      §3 데이터주도 — 절대 리터럴로 계산 분기 금지, 전부 본 설정에서 read.
+    partner_rare_quantile: float = 0.10  # 당기 거래처별 txn count 하위 분위수 (희소 판정)
+    partner_dormant_inactive_days: int = (
+        180  # 전기 마지막 활동~당기 첫 활동 gap ≥ 이 값이면 휴면재활성
+    )
+    partner_signal_min_population: int = (
+        50  # 당기 거래처 수 미만이면 rare 분위수 산출 불가 (small sample 가드)
+    )
 
     # --- L3 통계 검증 (statistical_validator) ---
     monthly_volatility_zscore: float = 2.0  # 월별 변동률 이상 판정 Z-score
@@ -575,7 +492,6 @@ class AuditSettings(BaseSettings):
     #      enable_evidence_detection controls optional EV01/EV03 extensions only;
     #      L3-11 cutoff runs by default through the PHASE1 base detector path.
     enable_timeseries_detection: bool = False
-    enable_relational_detection: bool = False
     enable_nlp_detection: bool = False
     enable_access_audit_detection: bool = False
     enable_evidence_detection: bool = False

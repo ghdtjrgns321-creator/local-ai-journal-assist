@@ -959,6 +959,7 @@ class AuditPipeline:
                 dataset_id=batch_id,
                 phase1_case_config=phase1_case_config,
                 engagement_salt=engagement_salt,
+                settings=getattr(self._ctx, "settings", None),
             )
             artifact_path = save_phase1_case_result(phase1_result)
             annotate_detection_results_with_phase1_refs(results, phase1_result, artifact_path)
@@ -999,9 +1000,6 @@ class AuditPipeline:
                 overlay_inputs.family_explanation_features_by_case
             ),
             family_document_context_by_case=(overlay_inputs.family_document_context_by_case),
-            relational_continuity_depth_by_case=(
-                overlay_inputs.relational_continuity_depth_by_case
-            ),
         )
 
     def _ingest(self, path: str | Path) -> tuple[pd.DataFrame, list[str]]:
@@ -1604,82 +1602,6 @@ class AuditPipeline:
             )
             return None
 
-    def _try_relational_detection(
-        self, df: pd.DataFrame, *, force_enable: bool = False
-    ) -> DetectionResult | None:
-        """Relational 탐지기 실행. R01~R03 항상, R04는 document_flows 존재 시만.
-
-        Why: R04(문서 흐름 누락)는 DuckDB에 적재된 document_references 테이블 필요.
-             conn이 없거나 테이블 미적재 시 R04만 graceful 스킵 (R01~R03는 정상 실행).
-             ``force_enable`` 은 Phase 2 추론 분기 (settings 플래그 무시) 용도.
-        """
-        if not force_enable and not getattr(
-            self._ctx.settings, "enable_relational_detection", False
-        ):
-            logger.debug("relational detection disabled by settings")
-            self._record_detector_status(
-                "relational", run_status="skipped", reason="disabled_by_settings"
-            )
-            return None
-        try:
-            from src.detection.relational_detector import RelationalDetector
-            from src.detection.relational_rules import build_doc_flow_df
-
-            doc_flow_df = None
-            if self._conn is not None:
-                try:
-                    doc_flow_df = build_doc_flow_df(self._conn)
-                except Exception:
-                    logger.debug("document_flows 쿼리 실패 — R04 스킵")
-
-            det = RelationalDetector(
-                self._ctx.settings,
-                audit_rules=self._ctx.audit_rules,
-                doc_flow_df=doc_flow_df,
-            )
-            result = det.detect(df)
-            self._record_detector_status("relational", run_status="executed", result=result)
-            return result
-        except Exception:
-            logger.warning("Relational 탐지 실패 — 스킵", exc_info=True)
-            self._record_detector_status(
-                "relational", run_status="failed", reason="detector_exception"
-            )
-            return None
-
-    def _try_intercompany_detection(
-        self, df: pd.DataFrame, *, force_enable: bool = False
-    ) -> DetectionResult | None:
-        """Intercompany matcher 실행.
-
-        Why: Phase 2 추론에서 family=intercompany 결과를 얻기 위해 호출. ``force_enable``
-        은 settings 플래그 무시.
-        """
-        if not force_enable and not getattr(
-            self._ctx.settings, "enable_intercompany_detection", False
-        ):
-            logger.debug("intercompany detection disabled by settings")
-            self._record_detector_status(
-                "intercompany", run_status="skipped", reason="disabled_by_settings"
-            )
-            return None
-        try:
-            from src.detection.intercompany_matcher import IntercompanyMatcher
-
-            det = IntercompanyMatcher(
-                self._ctx.settings,
-                audit_rules=self._ctx.audit_rules,
-            )
-            result = det.detect(df)
-            self._record_detector_status("intercompany", run_status="executed", result=result)
-            return result
-        except Exception:
-            logger.warning("Intercompany 탐지 실패 — 스킵", exc_info=True)
-            self._record_detector_status(
-                "intercompany", run_status="failed", reason="detector_exception"
-            )
-            return None
-
     def _try_nlp_detection(self, df: pd.DataFrame) -> DetectionResult | None:
         """Skip NLP detection in active local-first product path."""
         logger.debug("nlp detection disabled by local-first policy")
@@ -1690,7 +1612,7 @@ class AuditPipeline:
         """Access Audit 탐지기 실행. change_log 없으면 AL1-01만 graceful 스킵.
 
         Why: AL1-01(전표 수정이력)은 change_log 테이블 JOIN 필요.
-             _try_relational_detection의 doc_flow_df 패턴과 동일한 외부 DF 주입.
+             외부 DF(change_log)를 DuckDB에서 조회해 주입하는 패턴.
         """
         if not getattr(self._ctx.settings, "enable_access_audit_detection", False):
             logger.debug("access audit detection disabled by settings")

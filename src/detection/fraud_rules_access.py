@@ -179,7 +179,9 @@ def _get_skipped_approval_immediate_config(
         "manual_sources": tuple(str(v).strip().lower() for v in manual_sources),
         "system_sources": tuple(
             str(v).strip().lower()
-            for v in cfg.get("system_sources", ["automated", "batch", "interface", "system"])
+            for v in cfg.get(
+                "system_sources", ["automated", "recurring", "batch", "interface", "system"]
+            )
         ),
         "business_processes": tuple(
             str(v).strip().upper()
@@ -463,7 +465,9 @@ def _get_work_scope_excess_config(audit_rules: dict | None = None) -> dict[str, 
     manual_sources = cfg.get("manual_sources", patterns.get("manual_source_codes", []))
     if not manual_sources:
         manual_sources = ["manual", "adjustment"]
-    system_sources = cfg.get("system_sources", ["automated", "batch", "interface", "system"])
+    system_sources = cfg.get(
+        "system_sources", ["automated", "recurring", "batch", "interface", "system"]
+    )
     automated_personas = cfg.get("automated_personas", ["automated_system", "batch_user"])
     admin_personas = cfg.get("admin_personas", ["admin", "superuser", "system_admin"])
     thresholds = cfg.get("persona_thresholds", {})
@@ -1167,9 +1171,15 @@ def _get_sod_human_filter_config(audit_rules: dict | None = None) -> dict[str, t
     rules = audit_rules or get_audit_rules()
     cfg = rules.get("patterns", {}).get("sod_human_filter", {})
     return {
+        # recurring(정기 자동 반복 전표) 추가(2026-06-30): SoD 는 사람의 통제 충돌이므로 자동/정기
+        # 전표는 겸직 범위 집계에서 제외해야 한다. recurring 누락 시 정기 자동 전표가 사람 활동으로
+        # 집계돼 L1-06 겸직을 부풀리고(거짓 발화) embezzlement 콤보 bypass leg 를 거짓 충족시킨다.
+        # source_trust.AUTOMATED_SOURCE_TOKENS 와 정합.
         "system_sources": tuple(
             str(v).strip().lower()
-            for v in cfg.get("system_sources", ["automated", "interface", "system", "batch"])
+            for v in cfg.get(
+                "system_sources", ["automated", "recurring", "interface", "system", "batch"]
+            )
         ),
         "system_actor_tokens": tuple(
             str(v).strip().lower()

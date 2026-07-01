@@ -20,8 +20,6 @@ from src.services.unsupervised_reason_tags import resolve_tag
 _TRACK_TO_FAMILY = {
     "ml_unsupervised": "unsupervised",
     "timeseries": "timeseries",
-    "relational": "relational",
-    "intercompany": "intercompany",
 }
 
 _UNSUPERVISED_SUBDETECTOR = ("VAE-01", "audit_vae_reconstruction")
@@ -37,10 +35,6 @@ class Phase2CaseFamilyOverlayInputs:
     family_review_only_by_case: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
     family_roles: dict[str, str] = field(default_factory=dict)
     family_q95_thresholds: dict[str, float] = field(default_factory=dict)
-    # relational lane sort 보조용 case별 R05/R06 연속 raw score depth (0~1).
-    # severity factor (0.6) 복원 후 max(R05, R06). sort tie-break 전용, score 미반영.
-    # R05/R06 미hit case 는 dict 에서 누락 → sort_lane 에서 0.0 fallback.
-    relational_continuity_depth_by_case: dict[str, float] = field(default_factory=dict)
     # PHASE2 unsupervised (ML02 / VAE) explanation surface. score 입력에 절대 사용 금지.
     # {case_id: {family: [{feature, contrib, tag, label_ko, evidence_type}, ...]}}
     family_explanation_features_by_case: dict[str, dict[str, list[dict[str, Any]]]] = field(
@@ -95,7 +89,6 @@ def build_phase2_case_family_overlay_inputs(
         for result in detection_results
         if result.track_name in _TRACK_TO_FAMILY
     }
-    intercompany_review_only = _intercompany_review_only_sidecar(detection_results, df.index)
     unsupervised_cases_by_label = _unsupervised_cases_by_label(case_set, label_by_position)
 
     for case in phase1.cases:
@@ -139,21 +132,11 @@ def build_phase2_case_family_overlay_inputs(
             )
             if subdetectors:
                 case_subdetectors[family] = subdetectors
-        review_only_meta = _review_only_meta_for_case(intercompany_review_only, labels)
         if case_scores:
             inputs.family_scores_by_case[case.case_id] = case_scores
             inputs.family_ecdf_by_case[case.case_id] = case_ecdfs
         if case_subdetectors:
             inputs.family_top_subdetectors_by_case[case.case_id] = case_subdetectors
-        if review_only_meta:
-            inputs.family_review_only_by_case[case.case_id] = {"intercompany": review_only_meta}
-        if "relational" in case_scores:
-            depth = _relational_continuity_depth_for_case(
-                result_by_family.get("relational"),
-                labels,
-            )
-            if depth > 0:
-                inputs.relational_continuity_depth_by_case[case.case_id] = depth
         # PHASE2 unsupervised explanation surface — score 입력 비허용.
         if "unsupervised" in case_scores and case.case_id not in (
             inputs.family_explanation_features_by_case
@@ -253,60 +236,6 @@ _UNSUPERVISED_TOP_K = 3
 _UNSUPERVISED_FEATURE_COL_PREFIX = "ML02_top_feature_"
 _UNSUPERVISED_CONTRIB_SUFFIX = "_contrib"
 
-
-# SEVERITY_MAP[code]/5.0 — R05/R06 severity 가 향후 분기될 경우에도 code 단위
-# severity factor 로 raw 복원되도록 dict 으로 잠근다. 0 / 음수 fallback 으로
-# 0-division 방어.
-_RELATIONAL_CONTINUITY_CODES: tuple[str, ...] = ("R05", "R06")
-
-
-def _relational_continuity_severity_factors() -> dict[str, float]:
-    from src.detection.constants import SEVERITY_MAP
-
-    factors: dict[str, float] = {}
-    for code in _RELATIONAL_CONTINUITY_CODES:
-        sev = SEVERITY_MAP.get(code, 0)
-        factor = float(sev) / 5.0 if sev > 0 else 0.0
-        factors[code] = factor
-    return factors
-
-
-def _relational_continuity_depth_for_case(
-    result: DetectionResult | None,
-    labels: list[Any],
-) -> float:
-    """case label set 의 R05/R06 details 에서 raw score depth (0~1) 추출.
-
-    severity_factor 로 곱해진 details 값을 ``SEVERITY_MAP[code]/5.0`` 로 복원해
-    ``max(R05_raw, R06_raw)`` 를 반환한다. R05/R06 severity 가 분기되어도 정합.
-    lane sort tie-break 전용이며 score 에 절대 재반영하지 않는다.
-
-    R05/R06 column 미존재·case label 미매칭·factor=0 (severity 미등록) 인 경우
-    0.0 fallback.
-    """
-    if result is None:
-        return 0.0
-    details = result.details
-    if details is None or details.empty or not labels:
-        return 0.0
-    factors = _relational_continuity_severity_factors()
-    depth = 0.0
-    for code in _RELATIONAL_CONTINUITY_CODES:
-        if code not in details.columns:
-            continue
-        factor = factors.get(code, 0.0)
-        if factor <= 0:
-            continue
-        try:
-            selected = details[code].reindex(labels).fillna(0.0)
-        except (KeyError, TypeError):
-            continue
-        if selected.empty:
-            continue
-        raw_max = float(selected.max()) / factor
-        if raw_max > depth:
-            depth = raw_max
-    return min(depth, 1.0)
 
 
 def _unsupervised_explanation_features_for_case(
@@ -443,11 +372,6 @@ def _top_subdetectors_for_case(
     #      canonical sub-detector 만 overlay 의 sub_detectors entry 로 노출한다.
     #      등록되지 않은 column 은 family score contributor 로만 동작하고 sub-detector
     #      직렬화에서는 제외해 `evidence_tier=None` 가짜 entry 가 새지 않게 한다.
-    #      (2026-05-25 옵션 2 적용: IntercompanyMatcher 의 ic_reciprocal_flow_prob /
-    #      ic_amount_prob / ic_unmatched_prob / ic_timing_prob 4개 column 은
-    #      phase2_subdetector_tiers.yaml 에 등록됐으므로 본 화이트리스트를 통과하여
-    #      sub_detectors entry 로 정상 노출되며, lane sort 의 ic_role_priority 차원
-    #      과 phase2_review_band 승격 chain 에 사용된다.)
     registered_codes = _registered_subdetector_codes_for_family(family)
     selected = details.reindex(labels)
     codes: list[tuple[str, str]] = []
@@ -476,76 +400,3 @@ def _registered_subdetector_codes_for_family(family: str) -> set[str] | None:
     except Exception:  # noqa: BLE001
         return None
     return {code for (registered_family, code) in index.keys() if registered_family == family}
-
-
-def _intercompany_review_only_sidecar(
-    detection_results: list[DetectionResult],
-    index: pd.Index,
-) -> pd.DataFrame:
-    for result in detection_results:
-        if result.track_name != "intercompany":
-            continue
-        metadata = result.metadata or {}
-        row_sidecar = metadata.get("row_sidecar") if isinstance(metadata, dict) else None
-        if not isinstance(row_sidecar, dict):
-            continue
-        evidence = row_sidecar.get("ic01_evidence_level")
-        if not isinstance(evidence, pd.Series):
-            continue
-        evidence_level = (
-            evidence.reindex(index, fill_value="").fillna("").astype(str).str.strip().str.lower()
-        )
-        reason_source = row_sidecar.get("ic01_review_reason")
-        if isinstance(reason_source, pd.Series):
-            reasons = reason_source.reindex(index, fill_value="").fillna("").astype(str)
-        else:
-            reasons = pd.Series("", index=index, dtype="object")
-        if result.details is not None and "IC01" in result.details.columns:
-            ic01_score = (
-                pd.to_numeric(result.details["IC01"], errors="coerce")
-                .reindex(index, fill_value=0.0)
-                .fillna(0.0)
-            )
-        else:
-            ic01_score = pd.Series(0.0, index=index, dtype=float)
-        # review / review_stale 모두 details 점수 0(확정 위반 아님)인 review-only 신호.
-        # review_stale는 aggregator에서 Medium floor를 받지만 IC01 details는 0이므로 동일 집계.
-        review_only = evidence_level.isin({"review", "review_stale"}) & ic01_score.le(0.0)
-        return pd.DataFrame(
-            {
-                "review_only": review_only,
-                "review_reason": reasons,
-            },
-            index=index,
-        )
-    return pd.DataFrame(
-        {
-            "review_only": pd.Series(False, index=index, dtype=bool),
-            "review_reason": pd.Series("", index=index, dtype="object"),
-        },
-        index=index,
-    )
-
-
-def _review_only_meta_for_case(
-    review_only_frame: pd.DataFrame,
-    labels: list[Any],
-) -> dict[str, Any]:
-    if review_only_frame.empty or not labels:
-        return {}
-    selected = review_only_frame.reindex(labels)
-    mask = selected["review_only"].fillna(False).astype(bool)
-    count = int(mask.sum())
-    if count <= 0:
-        return {}
-    reasons = sorted(
-        {
-            str(reason).strip()
-            for reason in selected.loc[mask, "review_reason"].fillna("").astype(str)
-            if str(reason).strip()
-        }
-    )
-    return {
-        "review_only_count": count,
-        "review_reasons": reasons,
-    }

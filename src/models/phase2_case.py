@@ -117,28 +117,6 @@ class Phase2CaseBase:
 
 
 @dataclass(frozen=True)
-class IntercompanyCase(Phase2CaseBase):
-    """관계사 간 거래 — reciprocal / amount / timing / no_candidate role."""
-
-    ic_role: str = ""
-    counterparty_pair: tuple[str, str] | None = None
-    amount_a: float | None = None
-    amount_b: float | None = None
-    amount_symmetry: float | None = None
-
-
-@dataclass(frozen=True)
-class RelationalCase(Phase2CaseBase):
-    """관계 그래프 R01~R07 — edge_a, edge_b 두 노드 간 metric."""
-
-    sub_rule: str = ""
-    edge_a: str = ""
-    edge_b: str = ""
-    metric_name: str = ""
-    metric_value: float = 0.0
-
-
-@dataclass(frozen=True)
 class UnsupervisedCase(Phase2CaseBase):
     """비지도 이상치 (VAE/IsolationForest) — document 단위 review case.
 
@@ -224,10 +202,8 @@ class TimeseriesCase(Phase2CaseBase):
     subject_frequency_context: dict[str, Any] | None = None
 
 
-# Phase2CaseSet.iter_all_cases_sorted 가 다섯 family 를 한 번에 순회하기 위한 묶음
+# Phase2CaseSet.iter_all_cases_sorted 가 두 family 를 한 번에 순회하기 위한 묶음
 _FAMILY_FIELD_NAMES: tuple[str, ...] = (
-    "intercompany_cases",
-    "relational_cases",
     "unsupervised_cases",
     "timeseries_cases",
 )
@@ -237,8 +213,6 @@ _FAMILY_FIELD_NAMES: tuple[str, ...] = (
 class Phase2CaseSet:
     """family case 묶음. linked=False 가 raw, linked=True 가 phase1_case_refs 부착 상태."""
 
-    intercompany_cases: tuple[IntercompanyCase, ...] = ()
-    relational_cases: tuple[RelationalCase, ...] = ()
     unsupervised_cases: tuple[UnsupervisedCase, ...] = ()
     timeseries_cases: tuple[TimeseriesCase, ...] = ()
     linked: bool = False
@@ -267,8 +241,6 @@ class Phase2CaseSet:
             )
             updated[family_field] = new_cases
         return Phase2CaseSet(
-            intercompany_cases=updated["intercompany_cases"],
-            relational_cases=updated["relational_cases"],
             unsupervised_cases=updated["unsupervised_cases"],
             timeseries_cases=updated["timeseries_cases"],
             linked=True,
@@ -276,11 +248,9 @@ class Phase2CaseSet:
 
 
 __all__ = [
-    "IntercompanyCase",
     "Phase2CaseBase",
     "Phase2CaseSet",
     "Phase2RowRef",
-    "RelationalCase",
     "TimeseriesCase",
     "UnsupervisedCase",
     "make_row_ref",

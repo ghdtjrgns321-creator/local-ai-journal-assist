@@ -1285,15 +1285,6 @@ _RULE_MASTER_EXTRAS: dict[str, list[tuple[str, str, str]]] = {
     ],
     "L4-05": [("created_by", "작성자", "text"), ("source", "출처", "text")],
     "L4-06": [("created_by", "작성자", "text"), ("source", "출처", "text")],
-    "IC01": [("counterparty", "거래처", "text")],
-    "IC02": [
-        ("counterparty", "거래처", "text"),
-        ("difference_value", "금액 차이", "amount"),
-    ],
-    "IC03": [
-        ("counterparty", "거래처", "text"),
-        ("difference_value", "시점 차이(일)", "delta_days"),
-    ],
     "D01": [
         ("company_code", "회사", "text"),
         ("gl_account", "계정", "text"),
@@ -1342,9 +1333,6 @@ _RULE_SIGNATURES: dict[str, str] = {
     "L4-04": "드문 계정 조합 검증",
     "L4-05": "비정상 시간 클러스터 검증",
     "L4-06": "배치 전기 이상치 검증",
-    "IC01": "내부거래 거래처 매칭 검증",
-    "IC02": "내부거래 양면 금액 일치 검증",
-    "IC03": "내부거래 양면 시점 일치 검증",
     "D01": "전기 대비 계정 활동 변동 검증",
     "D02": "전기 대비 월별 비율 분포 변동 검증",
 }
@@ -1387,9 +1375,6 @@ _RULE_RAW_HIGHLIGHTS: dict[str, set[str]] = {
     "L4-04": {"gl_account"},
     "L4-05": {"created_by", "posting_date"},
     "L4-06": {"created_by", "posting_date"},
-    "IC01": {"counterparty"},
-    "IC02": {"counterparty", "debit_amount", "credit_amount"},
-    "IC03": {"counterparty", "posting_date"},
     "D01": {"company_code", "gl_account"},
     "D02": {"company_code", "gl_account"},
 }
@@ -2625,13 +2610,8 @@ def _rules_for_topic(topic_id: str) -> set[str]:
         if include_in_l1_l4_transaction_count(canonical):
             cleaned.add(canonical)
             continue
-        # account_process_macro(D01/D02), graph_sidecar(GR01/03) 는 토픽 활성 룰에서 제외.
-        # intercompany_sidecar(IC01-03) 만 final_topic 일치 시 sidecar topic seed 로 인정.
-        if (
-            meta.presenter_surface == PresenterSurface.INTERCOMPANY_SIDECAR
-            and meta.final_topic == topic_id
-        ):
-            cleaned.add(canonical)
+        # account_process_macro(D01/D02), graph_sidecar(GR01/03), intercompany_sidecar
+        # (IC01-03, 2026-06-30 완전 삭제) 는 토픽 활성 룰에서 제외.
     return cleaned
 
 

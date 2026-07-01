@@ -1057,9 +1057,6 @@ def test_phase1_rule_document_builders_cover_all_current_rules() -> None:
         "L4-06",
         "D01",
         "D02",
-        "IC01",
-        "IC02",
-        "IC03",
     }
 
     assert current_rules <= PHASE1_RULE_DOCUMENT_RULES

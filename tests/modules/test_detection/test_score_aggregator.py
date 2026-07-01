@@ -456,45 +456,31 @@ class TestAggregateScores:
         assert result["review_rules"].iloc[1] == ""
         assert result["anomaly_score"].iloc[0] == pytest.approx(result["anomaly_score"].iloc[1])
 
-    def test_l106_score_bands_align_to_risk_floors(self, base_df):
+    def test_l106_standalone_not_force_escalated(self, base_df):
+        # SOD_TOXIC_COMBINATIONS_GROUNDING §3: 직무분리(L1-06) RED 는 단독이면 LOW,
+        # 행위신호와 조합될 때만 HIGH(겸직만으로 부정 단정 불가). 구 direct_* 강제 risk floor
+        # 제거(2026-06-30) 후 L1-06 단독은 정책 floor 로 HIGH 승격되지 않고 정규 점수경로로만
+        # 분류된다. 실 탐지기 출력(binary 1.0) 단독 입력으로 "강제 HIGH 없음"을 검증한다.
         layer_b = DetectionResult(
             track_name="layer_b",
-            flagged_indices=[0, 1, 2, 3],
-            scores=pd.Series([0.50, 0.70, 0.80, 0.95, 0.0], index=base_df.index),
+            flagged_indices=[0, 1],
+            scores=pd.Series([1.0, 1.0, 0.0, 0.0, 0.0], index=base_df.index),
             rule_flags=[RuleFlag("L1-06", "L1-06", 4, 4, len(base_df))],
             details=pd.DataFrame(
-                {"L1-06": [0.50, 0.70, 0.80, 0.95, 0.0]},
+                {"L1-06": [1.0, 1.0, 0.0, 0.0, 0.0]},
                 index=base_df.index,
             ),
-            metadata={
-                "row_annotations": {
-                    "L1-06": {
-                        0: {"bucket": "direct_low", "score": 0.50},
-                        1: {"bucket": "direct_medium", "score": 0.70},
-                        2: {"bucket": "direct_high", "score": 0.80},
-                        3: {"bucket": "direct_critical", "score": 0.95},
-                    }
-                }
-            },
+            metadata={"row_annotations": {"L1-06": {0: {"signal_class": "red", "score": 1.0}}}},
         )
 
         result = aggregate_scores(base_df, [layer_b])
 
-        assert result["risk_level"].tolist()[:4] == [
-            RiskLevel.LOW,
-            RiskLevel.MEDIUM,
-            RiskLevel.HIGH,
-            RiskLevel.HIGH,
-        ]
-        assert result["anomaly_score"].iloc[0] >= RISK_THRESHOLDS[RiskLevel.LOW]
-        assert result["anomaly_score"].iloc[0] < RISK_THRESHOLDS[RiskLevel.MEDIUM]
-        assert result["anomaly_score"].iloc[1] >= RISK_THRESHOLDS[RiskLevel.MEDIUM]
-        assert result["anomaly_score"].iloc[1] < RISK_THRESHOLDS[RiskLevel.HIGH]
-        assert result["anomaly_score"].iloc[2] >= RISK_THRESHOLDS[RiskLevel.HIGH]
-        assert result["anomaly_score"].iloc[3] == pytest.approx(0.85)
-        assert result["risk_floor_reasons"].iloc[1] == "L1-06:direct_medium"
-        assert result["risk_floor_reasons"].iloc[2] == "L1-06:direct_high"
-        assert result["risk_floor_reasons"].iloc[3] == "L1-06:direct_critical"
+        # 강제 risk floor 미적용: L1-06:direct_* 사유가 더 이상 생기지 않는다
+        assert not result["risk_floor_reasons"].str.contains("L1-06").any()
+        # L1-06 단독은 HIGH 로 강제 승격되지 않는다(정규 점수 → HIGH 임계 미만)
+        l106_rows = result.loc[[0, 1]]
+        assert (l106_rows["risk_level"] != RiskLevel.HIGH).all()
+        assert (l106_rows["anomaly_score"] < RISK_THRESHOLDS[RiskLevel.HIGH]).all()
 
 
 class TestClassifyRiskLevel:

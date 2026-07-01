@@ -325,8 +325,6 @@ def test_build_phase2_training_report_defaults_to_unsupervised_mvp_queue():
     assert report.metadata["candidate_families"] == [
         "unsupervised",
         "timeseries",
-        "relational",
-        "intercompany",
     ]
     assert report.metadata["phase2_training_mode"] == "unsupervised_autoencoder_mvp"
     assert report.metadata["feature_metadata"]["rule_input_dim"] == 22
@@ -336,8 +334,6 @@ def test_build_phase2_training_report_defaults_to_unsupervised_mvp_queue():
     assert trial_families == {
         "unsupervised",
         "timeseries",
-        "relational",
-        "intercompany",
     }
 
 
@@ -813,14 +809,10 @@ def test_build_phase2_training_report_keeps_default_unsupervised_with_ground_tru
     assert report.metadata["candidate_families"] == [
         "unsupervised",
         "timeseries",
-        "relational",
-        "intercompany",
     ]
     assert trial_families == {
         "unsupervised",
         "timeseries",
-        "relational",
-        "intercompany",
     }
 
 
@@ -1267,15 +1259,11 @@ def test_run_phase2_training_executes_trials_with_injected_detectors():
         assert report.metadata["candidate_families"] == [
             "unsupervised",
             "timeseries",
-            "relational",
-            "intercompany",
         ]
         assert report.metadata["phase2_training_mode"] == "test_unsupervised_mvp"
         assert {trial.model_family for trial in report.leaderboard} == {
             "unsupervised",
             "timeseries",
-            "relational",
-            "intercompany",
         }
         assert all(trial.artifact_path for trial in report.leaderboard)
         assert report.promoted_models
@@ -1323,14 +1311,10 @@ def test_run_phase2_training_executes_trials_with_injected_detectors():
         )
         assert set(report.metadata["sub_detector_summaries"]) <= {
             "timeseries",
-            "relational",
-            "intercompany",
         }
         assert set(report.metadata["family_promotion_decisions"]) == {
             "unsupervised",
             "timeseries",
-            "relational",
-            "intercompany",
         }
         case_contract = report.metadata["inference_contract"]["phase1_case_contract"]
         assert case_contract["available"] is False
@@ -1470,36 +1454,16 @@ def test_eligible_promotion_trials_require_search_diversity_and_control_failure_
 # ──────────────────────────────────────────────────────────────────────────────
 # _RULE_STYLE_SUB_DETECTORS ↔ phase2_subdetector_tiers.yaml 정합 lock
 #
-# tier registry (21 항목) 와 training metadata sub_detector_keys 는 의도적으로
-# 다른 범위를 가진다. IC family 의 4개 internal probability column
-# (ic_reciprocal_flow_prob / ic_amount_prob / ic_unmatched_prob / ic_timing_prob)
-# 은 tier registry 에는 등록하되 training metadata 에서는 의도적으로 제외한다 —
-# IntercompanyMatcher detector 내부에서 한 번에 산출되는 probability surface 이지
-# 독립 학습 trial 대상이 아니기 때문이다. 본 lock 은 이 비대칭이 우연한 누락이
-# 아니라 의도된 설계임을 코드 단에서 고정한다 (2026-05-25 옵션 2 결정).
+# training metadata sub_detector_keys 에는 rule-style 학습 trial 의 식별자만
+# 등재하며, detector 내부 probability surface (ic_* 류) 는 등장하지 않는다.
+# 본 lock 은 이 비대칭이 우연한 누락이 아니라 의도된 설계임을 고정한다.
 # ──────────────────────────────────────────────────────────────────────────────
 
 
 class TestRuleStyleSubDetectorRegistryContract:
-    """training metadata 의 sub_detector_keys 가 tier registry 와 의도적으로
-    다른 범위를 가짐을 lock 하는 회귀.
+    """training metadata 의 sub_detector_keys 에 detector 내부 surface 가
+    누출되지 않음을 lock 하는 회귀.
     """
-
-    def test_intercompany_training_keys_only_canonical_labels(self):
-        """IC training sub_detector_keys 는 IC01/02/03 의 label 3개만 보고한다.
-
-        IC internal probability column (ic_reciprocal_flow_prob / ic_amount_prob /
-        ic_unmatched_prob / ic_timing_prob) 는 detector 내부 surface 이므로
-        training trial sub_detector_keys 에서 제외한다.
-        """
-        from src.services.phase2_training_service import _RULE_STYLE_SUB_DETECTORS
-
-        intercompany_keys = _RULE_STYLE_SUB_DETECTORS["intercompany"]
-        assert intercompany_keys == (
-            "unmatched_intercompany",
-            "amount_mismatch",
-            "timing_gap",
-        )
 
     def test_ic_internal_prob_codes_excluded_from_training_keys(self):
         """ic_* prefix internal probability column 은 training keys 에 등장하지 않는다."""
@@ -1508,25 +1472,3 @@ class TestRuleStyleSubDetectorRegistryContract:
         for family, keys in _RULE_STYLE_SUB_DETECTORS.items():
             leaked = [key for key in keys if key.startswith("ic_")]
             assert leaked == [], f"family {family} 에 IC internal prob key 누출: {leaked}"
-
-    def test_ic_internal_prob_codes_registered_in_tier_registry(self):
-        """tier registry 쪽은 4개 internal prob column 을 보유.
-
-        training metadata 와의 비대칭이 의도된 설계임을 확인하는 회귀.
-        """
-        from src.services.subdetector_tiers import get_subdetector_tier_index
-
-        tier_index = get_subdetector_tier_index()
-        registry_ic_codes = {
-            code for (family, code) in tier_index.keys() if family == "intercompany"
-        }
-        # IC01~03 canonical + 4 internal prob = 7
-        expected_internal = {
-            "ic_reciprocal_flow_prob",
-            "ic_amount_prob",
-            "ic_unmatched_prob",
-            "ic_timing_prob",
-        }
-        assert expected_internal.issubset(registry_ic_codes), (
-            f"tier registry 에 IC internal prob 4개 누락: {expected_internal - registry_ic_codes}"
-        )

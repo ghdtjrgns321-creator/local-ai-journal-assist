@@ -162,7 +162,6 @@ def build_phase2_case_overlays(
     phase2_training_report_id: str | None = None,
     family_explanation_features_by_case: (dict[str, dict[str, list[dict[str, Any]]]] | None) = None,
     family_document_context_by_case: dict[str, dict[str, dict[str, Any]]] | None = None,
-    relational_continuity_depth_by_case: dict[str, float] | None = None,
 ) -> list[dict[str, Any]]:
     """Build neutral overlays keyed by PHASE1 case id.
 
@@ -195,7 +194,6 @@ def build_phase2_case_overlays(
     detector_statuses = detector_statuses or []
     family_explanation_features_by_case = family_explanation_features_by_case or {}
     family_document_context_by_case = family_document_context_by_case or {}
-    relational_continuity_depth_by_case = relational_continuity_depth_by_case or {}
     coverage_gap = sorted(family for family, role in family_roles.items() if role == "near-dormant")
 
     overlays: list[dict[str, Any]] = []
@@ -210,9 +208,6 @@ def build_phase2_case_overlays(
             family_subdetectors=family_subdetectors,
             family_review_only=family_review_only,
             family_roles=family_roles,
-            relational_continuity_depth=float(
-                relational_continuity_depth_by_case.get(case.case_id, 0.0) or 0.0
-            ),
         )
         _attach_explanation_features(
             contributions, family_explanation_features_by_case.get(case.case_id)
@@ -359,15 +354,11 @@ def _build_family_contributions(
     family_subdetectors: dict[str, list[tuple[str, str]]],
     family_review_only: dict[str, dict[str, Any]],
     family_roles: dict[str, str],
-    relational_continuity_depth: float = 0.0,
 ) -> list[dict[str, Any]]:
     """family 별 기여 정보를 dict 리스트로 직렬화.
 
     리턴 항목 형태:
       {family, score, ecdf, role, evidence_tier, evidence_tier_weight, sub_detectors}
-
-    relational family entry 에 한해 ``relational_continuity_depth`` 가 부착되며
-    lane sort tie-break 전용이다 (score 재반영 금지).
     """
     from src.services.subdetector_tiers import (
         get_subdetector_tier_index,
@@ -407,34 +398,7 @@ def _build_family_contributions(
             "evidence_tier_weight": family_tier_weight,
             "sub_detectors": sub_detector_entries,
         }
-        if str(family) == "relational" and relational_continuity_depth > 0:
-            entry["relational_continuity_depth"] = float(relational_continuity_depth)
         _attach_review_only_meta(entry, family_review_only.get(family))
-        entries.append(entry)
-    for family, review_meta in family_review_only.items():
-        if family in seen_families:
-            continue
-        count = int(review_meta.get("review_only_count") or 0)
-        if count <= 0:
-            continue
-        entry = {
-            "family": family,
-            "score": 0.0,
-            "ecdf": float(family_ecdf.get(family, 0.0)),
-            "role": family_roles.get(family, "unknown"),
-            "evidence_tier": None,
-            "evidence_tier_weight": 0,
-            "sub_detectors": [
-                {
-                    "code": "IC01",
-                    "label": "IC01 review-only",
-                    "evidence_tier": None,
-                    "evidence_tier_weight": 0,
-                    "review_only": True,
-                }
-            ],
-        }
-        _attach_review_only_meta(entry, review_meta)
         entries.append(entry)
     # tier weight 우선, 동률은 ecdf 우선으로 정렬 (narrator·dashboard 가독성)
     entries.sort(

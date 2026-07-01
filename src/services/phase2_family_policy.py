@@ -5,26 +5,6 @@ family role labels without importing detector or case-builder implementation
 modules. Constants here are descriptive policy metadata, not scoring inputs.
 """
 
-INTERCOMPANY_PRODUCT_ROLE = "ic_specific_evidence_strengthening"
-INTERCOMPANY_BROAD_RECALL_EXPANSION_FAMILY = False
-
-RELATIONAL_REVIEW_SURFACE_POLICY = "structural_moderate_audit_then_business_lane_split_v1"
-RELATIONAL_REVIEW_SURFACE_NAME = "structural_moderate_audit_then_business_lane_split_surface"
-RELATIONAL_PRODUCT_ROLE = "relationship_evidence_review_surface"
-RELATIONAL_PRIMARY_DENOMINATOR_STATUS = "pending_relationship_primary_metadata"
-RELATIONAL_PRIMARY_TARGET_TRUTH_DOCS_FIXED5_RELMETA = 0
-RELATIONAL_PRIMARY_TARGET_MATCHED_DOCS_FIXED5_RELMETA = 0
-RELATIONAL_COMPANION_TRUTH_DOCS_FIXED5_V32D = 139
-RELATIONAL_COMPANION_MATCHED_DOCS_FIXED5_V32D = 33
-RELATIONAL_CO_PRIMARY_OVERLAP_COUNT_FIXED5_RELMETA = 0
-RELATIONAL_PRIMARY_METADATA_BACKLOG = (
-    "injected_relationship_edge_primary",
-    "relationship_edge_semantic_group",
-)
-RELATIONAL_STRUCTURAL_LANE_SUB_RULES = ("R03", "R07")
-RELATIONAL_MODERATE_AUDIT_BUSINESS_LANE_SUB_RULES = ("R01", "R02")
-RELATIONAL_CONTEXT_LANE_SUB_RULES = ("R05", "R06")
-
 UNSUPERVISED_COMPANION_POLICY_ID = "unsupervised_document_review_priority_soft_guard_v1"
 UNSUPERVISED_COMPANION_SURFACE_NAME = "hybrid_with_soft_repeated_normal_guard"
 UNSUPERVISED_DEFAULT_DISPLAY_ORDERING = "document_case_max_score_order"
@@ -49,81 +29,6 @@ TIMESERIES_DEFAULT_ORDERING = TIMESERIES_STABILIZED_SURFACE
 TIMESERIES_V31_PRIMARY_ARTIFACT_PATH = (
     "artifacts/timeseries_v31_primary_fixed5_ownermeta_ic_20260531.json"
 )
-
-
-def build_relational_policy_summary(relational_cases: tuple[object, ...]) -> dict:
-    """Return aggregate-only relational review-surface policy metadata.
-
-    v3.2d does not contain a relationship-primary denominator. That is a
-    denominator status, not product-family retirement: the adopted relational
-    surface remains the product review surface until relationship-primary or
-    co-primary metadata is regenerated and measured.
-    """
-
-    return {
-        "primary_product_role": RELATIONAL_PRODUCT_ROLE,
-        "product_role": RELATIONAL_PRODUCT_ROLE,
-        "role_scope": "relationship_review_surface_primary_pending",
-        "primary_target_status": RELATIONAL_PRIMARY_DENOMINATOR_STATUS,
-        "primary_denominator_status": RELATIONAL_PRIMARY_DENOMINATOR_STATUS,
-        "primary_target_recall_applicable": False,
-        "primary_recall_pending_reason": (
-            "fixed5 v3.2d has no relationship-primary denominator; regenerate "
-            "DataSynth relationship-primary/co-primary metadata before owned "
-            "recall tuning"
-        ),
-        "primary_recall_tuning_allowed": False,
-        "primary_recall_tuning_blocked_until_metadata": True,
-        "primary_target_truth_docs": RELATIONAL_PRIMARY_TARGET_TRUTH_DOCS_FIXED5_RELMETA,
-        "primary_target_matched_docs": (RELATIONAL_PRIMARY_TARGET_MATCHED_DOCS_FIXED5_RELMETA),
-        "primary_target_recall_fixed5_relmeta": None,
-        "co_primary_allowed_by_policy": True,
-        "co_primary_with": [],
-        "co_primary_overlap_count": RELATIONAL_CO_PRIMARY_OVERLAP_COUNT_FIXED5_RELMETA,
-        "adopted_surface": RELATIONAL_REVIEW_SURFACE_POLICY,
-        "primary_metadata_backlog": RELATIONAL_PRIMARY_METADATA_BACKLOG,
-        "relational_review_surface_policy": RELATIONAL_REVIEW_SURFACE_POLICY,
-        "relational_review_surface_name": RELATIONAL_REVIEW_SURFACE_NAME,
-        "structural_lane_sub_rules": RELATIONAL_STRUCTURAL_LANE_SUB_RULES,
-        "moderate_audit_business_lane_sub_rules": (
-            RELATIONAL_MODERATE_AUDIT_BUSINESS_LANE_SUB_RULES
-        ),
-        "context_lane_sub_rules": RELATIONAL_CONTEXT_LANE_SUB_RULES,
-        "interleave_ratio": "1:1",
-        "r05_r06_primary_surface_default": False,
-        "diagnostic_upper_bound_not_adopted": "structural_anchor_moderate_1_to_4_surface",
-        "fixed5_ratio_tuning_allowed": False,
-        "production_ranking_changed": False,
-        "phase2_fusion_changed": False,
-        "phase1_ranking_changed": False,
-        "detector_gate_changed": False,
-        "relational_gate_changed": False,
-        "case_count": len(relational_cases),
-        "relationship_companion_coverage_fixed5_v32d": {
-            "truth_docs": RELATIONAL_COMPANION_TRUTH_DOCS_FIXED5_V32D,
-            "matched_docs": RELATIONAL_COMPANION_MATCHED_DOCS_FIXED5_V32D,
-            "recall": (
-                RELATIONAL_COMPANION_MATCHED_DOCS_FIXED5_V32D
-                / RELATIONAL_COMPANION_TRUTH_DOCS_FIXED5_V32D
-            ),
-            "metric_role": (
-                "interim_relationship_evidence_surface_until_primary_denominator_available"
-            ),
-        },
-        "improvement_focus": (
-            "restore and measure relationship-primary/co-primary coverage from "
-            "DataSynth metadata; keep R03/R07 structural evidence and R01/R02 "
-            "moderate-tail explanation visible until then"
-        ),
-        "guardrails": {
-            "do_not_claim_primary_recall_without_primary_denominator": True,
-            "do_not_treat_pending_denominator_as_family_retirement": True,
-            "do_not_mix_r05_r06_into_primary_surface": True,
-            "do_not_tune_against_fixed5_truth_ratio": True,
-            "preserve_audit_then_business_ordering": True,
-            "relationship_sidecar_used_for_detector_or_ranking": False,
-        },
-    }
 
 
 def build_unsupervised_policy_summary(unsupervised_cases: tuple[object, ...]) -> dict:
@@ -377,21 +282,6 @@ def build_timeseries_policy_summary(timeseries_cases: tuple[object, ...]) -> dic
 
 
 __all__ = [
-    "INTERCOMPANY_BROAD_RECALL_EXPANSION_FAMILY",
-    "INTERCOMPANY_PRODUCT_ROLE",
-    "RELATIONAL_CONTEXT_LANE_SUB_RULES",
-    "RELATIONAL_MODERATE_AUDIT_BUSINESS_LANE_SUB_RULES",
-    "RELATIONAL_CO_PRIMARY_OVERLAP_COUNT_FIXED5_RELMETA",
-    "RELATIONAL_PRIMARY_DENOMINATOR_STATUS",
-    "RELATIONAL_PRIMARY_METADATA_BACKLOG",
-    "RELATIONAL_PRIMARY_TARGET_MATCHED_DOCS_FIXED5_RELMETA",
-    "RELATIONAL_PRIMARY_TARGET_TRUTH_DOCS_FIXED5_RELMETA",
-    "RELATIONAL_PRODUCT_ROLE",
-    "RELATIONAL_REVIEW_SURFACE_NAME",
-    "RELATIONAL_REVIEW_SURFACE_POLICY",
-    "RELATIONAL_COMPANION_MATCHED_DOCS_FIXED5_V32D",
-    "RELATIONAL_COMPANION_TRUTH_DOCS_FIXED5_V32D",
-    "RELATIONAL_STRUCTURAL_LANE_SUB_RULES",
     "TIMESERIES_NATIVE_ORDERING",
     "TIMESERIES_DEFAULT_ORDERING",
     "TIMESERIES_PRODUCT_ROLE",
@@ -403,7 +293,6 @@ __all__ = [
     "UNSUPERVISED_COMPANION_SURFACE_NAME",
     "UNSUPERVISED_PRODUCT_ROLE",
     "UNSUPERVISED_V31_OWNER_SURFACE_ARTIFACT_PATH",
-    "build_relational_policy_summary",
     "build_timeseries_policy_summary",
     "build_unsupervised_policy_summary",
 ]

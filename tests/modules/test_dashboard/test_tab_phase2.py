@@ -8,7 +8,7 @@ import pandas as pd
 from dashboard import tab_phase2
 from src.metrics.models import PerformanceReport, RuleMetric
 from src.metrics.report_builder import build_markdown_report
-from src.models.phase2_case import Phase2CaseSet, RelationalCase, make_row_ref
+from src.models.phase2_case import Phase2CaseSet, TimeseriesCase, make_row_ref
 
 
 def test_build_performance_cards_formats_values():
@@ -291,8 +291,8 @@ def test_company_partition_summary_rebuilds_from_overlays_when_results_missing()
                 "phase1_case_id": "c1",
                 "family_contributions": [
                     {
-                        "family": "relational",
-                        "sub_detectors": [{"code": "R01"}],
+                        "family": "timeseries",
+                        "sub_detectors": [{"code": "TS01"}],
                     }
                 ],
             },
@@ -300,8 +300,8 @@ def test_company_partition_summary_rebuilds_from_overlays_when_results_missing()
                 "phase1_case_id": "c2",
                 "family_contributions": [
                     {
-                        "family": "relational",
-                        "sub_detectors": [{"code": "R01"}],
+                        "family": "timeseries",
+                        "sub_detectors": [{"code": "TS01"}],
                     }
                 ],
             },
@@ -311,20 +311,20 @@ def test_company_partition_summary_rebuilds_from_overlays_when_results_missing()
     summary = tab_phase2._build_company_partition_summary(phase2_result, "전체")
 
     assert summary is not None
-    family = summary["families"]["relational"]
+    family = summary["families"]["timeseries"]
     assert family["rows_scored"] == 2
     assert family["score_distribution"]["nonzero_count"] == 2
-    assert family["sub_detectors"]["R01"]["hit_count"] == 2
+    assert family["sub_detectors"]["TS01"]["hit_count"] == 2
 
 
 def test_family_overview_frame_centers_audit_family_meaning():
     partition_summary = {
         "families": {
-            "relational": {
+            "timeseries": {
                 "score_distribution": {"nonzero_count": 12},
                 "sub_detectors": {
-                    "R01": {"hit_count": 4},
-                    "R04": {"hit_count": 0},
+                    "TS01": {"hit_count": 4},
+                    "TS02": {"hit_count": 0},
                 },
             },
             "unsupervised": {"high_count_q95": 3},
@@ -337,9 +337,9 @@ def test_family_overview_frame_centers_audit_family_meaning():
     assert "무엇을 잡나" in frame.columns
     assert "감사인이 확인할 것" in frame.columns
     assert set(frame["상태"]) == {"활성", "대기"}
-    relational = frame.loc[frame["분석 영역"] == "관계망 이상"].iloc[0]
-    assert relational["이번 데이터 반응"] == "12건 신호"
-    assert "신규 거래처" in relational["무엇을 잡나"]
+    timeseries = frame.loc[frame["분석 영역"] == "시점 이상"].iloc[0]
+    assert timeseries["이번 데이터 반응"] == "12건 신호"
+    assert "결산기" in timeseries["무엇을 잡나"]
     supervised = frame.loc[frame["분석 영역"] == "지도 학습"].iloc[0]
     assert supervised["이번 데이터 반응"] == "조건 충족 전"
     assert "라벨" in supervised["활성 조건/비고"]
@@ -384,18 +384,18 @@ def test_phase2_family_summary_row_renders_dormant_without_support_note_error():
 def test_family_signal_chart_frame_uses_relative_reaction_score():
     partition_summary = {
         "families": {
-            "relational": {"score_distribution": {"nonzero_count": 200}},
-            "timeseries": {"score_distribution": {"nonzero_count": 50}},
+            "timeseries": {"score_distribution": {"nonzero_count": 200}},
+            "unsupervised": {"high_count_q95": 50},
         }
     }
 
     frame = tab_phase2._build_family_signal_chart_frame(partition_summary)
 
-    relational = frame.loc[frame["분석 영역"] == "관계망 이상"].iloc[0]
     timeseries = frame.loc[frame["분석 영역"] == "시점 이상"].iloc[0]
+    unsupervised = frame.loc[frame["분석 영역"] == "VAE Deep Learning"].iloc[0]
     supervised = frame.loc[frame["분석 영역"] == "지도 학습"].iloc[0]
-    assert relational["반응도"] == 100.0
-    assert timeseries["반응도"] == 25.0
+    assert timeseries["반응도"] == 100.0
+    assert unsupervised["반응도"] == 25.0
     assert supervised["반응도"] == 0.0
 
 
@@ -404,31 +404,27 @@ def test_lane_tier_counts_aggregates_family_contributions_by_evidence_tier():
         {
             "phase1_case_id": "case_1",
             "family_contributions": [
-                {"family": "relational", "evidence_tier": "strong", "score": 1.0},
+                {"family": "timeseries", "evidence_tier": "strong", "score": 1.0},
                 {"family": "unsupervised", "evidence_tier": "ml_quantile", "score": 0.9},
             ],
         },
         {
             "phase1_case_id": "case_2",
             "family_contributions": [
-                {"family": "relational", "evidence_tier": "weak", "score": 0.3},
                 {"family": "timeseries", "evidence_tier": "weak", "score": 0.4},
             ],
         },
         {
             "phase1_case_id": "case_3",
             "family_contributions": [
-                {"family": "relational", "evidence_tier": "strong", "score": 0.95},
-                {"family": "intercompany", "evidence_tier": "moderate", "score": 0.7},
+                {"family": "timeseries", "evidence_tier": "strong", "score": 0.95},
             ],
         },
     ]
 
     counts = tab_phase2._lane_tier_counts(overlays)
 
-    assert counts["relational"] == {"strong": 2, "moderate": 0, "weak": 1, "ml_quantile": 0}
-    assert counts["intercompany"] == {"strong": 0, "moderate": 1, "weak": 0, "ml_quantile": 0}
-    assert counts["timeseries"] == {"strong": 0, "moderate": 0, "weak": 1, "ml_quantile": 0}
+    assert counts["timeseries"] == {"strong": 2, "moderate": 0, "weak": 1, "ml_quantile": 0}
     # unsupervised(VAE) 는 lane matrix 에서 분리돼 카운트 dict 에 포함되지 않는다.
     assert "unsupervised" not in counts
 
@@ -440,18 +436,18 @@ def test_lane_tier_counts_ignores_unknown_family_and_tier_values():
             "family_contributions": [
                 {"family": "supervised", "evidence_tier": "strong", "score": 1.0},  # unknown lane
                 {
-                    "family": "relational",
+                    "family": "timeseries",
                     "evidence_tier": "bogus_tier",
                     "score": 0.5,
                 },  # unknown tier
-                {"family": "relational", "evidence_tier": "strong", "score": 1.0},
+                {"family": "timeseries", "evidence_tier": "strong", "score": 1.0},
             ],
         }
     ]
 
     counts = tab_phase2._lane_tier_counts(overlays)
 
-    assert counts["relational"] == {"strong": 1, "moderate": 0, "weak": 0, "ml_quantile": 0}
+    assert counts["timeseries"] == {"strong": 1, "moderate": 0, "weak": 0, "ml_quantile": 0}
     assert "supervised" not in counts
 
 
@@ -490,7 +486,7 @@ def test_lane_tier_counts_ignore_explicit_zero_signal_entries():
             "phase1_case_id": "case_1",
             "family_contributions": [
                 {
-                    "family": "relational",
+                    "family": "timeseries",
                     "evidence_tier": "weak",
                     "score": 0.0,
                     "ecdf": 0.0,
@@ -507,7 +503,7 @@ def test_lane_tier_counts_ignore_explicit_zero_signal_entries():
 
     counts = tab_phase2._lane_tier_counts(overlays)
 
-    assert counts["relational"] == {"strong": 0, "moderate": 0, "weak": 0, "ml_quantile": 0}
+    assert counts["timeseries"] == {"strong": 0, "moderate": 0, "weak": 0, "ml_quantile": 0}
     # unsupervised(VAE) 는 lane matrix 에서 분리돼 카운트 dict 에 포함되지 않는다.
     assert "unsupervised" not in counts
 
@@ -518,7 +514,7 @@ def test_family_case_contribution_counts_ignore_explicit_zero_signal_entries():
             "phase1_case_id": "case_1",
             "family_contributions": [
                 {"family": "timeseries", "score": 0.0, "ecdf": 0.0},
-                {"family": "relational", "score": 0.4, "ecdf": 0.8},
+                {"family": "unsupervised", "score": 0.4, "ecdf": 0.8},
             ],
         }
     ]
@@ -526,7 +522,7 @@ def test_family_case_contribution_counts_ignore_explicit_zero_signal_entries():
     counts = tab_phase2._family_case_contribution_counts(overlays)
 
     assert counts["timeseries"] == 0
-    assert counts["relational"] == 1
+    assert counts["unsupervised"] == 1
 
 
 def test_family_case_contribution_counts_include_review_only_candidates():
@@ -535,11 +531,11 @@ def test_family_case_contribution_counts_include_review_only_candidates():
             "phase1_case_id": "case_1",
             "family_contributions": [
                 {
-                    "family": "intercompany",
+                    "family": "timeseries",
                     "score": 0.0,
                     "ecdf": 0.0,
                     "review_only_count": 3,
-                    "review_reasons": ["missing_partner"],
+                    "review_reasons": ["missing_window"],
                 }
             ],
         }
@@ -547,7 +543,7 @@ def test_family_case_contribution_counts_include_review_only_candidates():
 
     counts = tab_phase2._family_case_contribution_counts(overlays)
 
-    assert counts["intercompany"] == 1
+    assert counts["timeseries"] == 1
 
 
 def test_all_family_summary_uses_native_case_set_counts(monkeypatch):
@@ -560,10 +556,7 @@ def test_all_family_summary_uses_native_case_set_counts(monkeypatch):
     monkeypatch.setattr(
         "dashboard.components.phase2_native_case_metrics.count_native_cases_by_family",
         lambda _case_set: {
-            "duplicate": 0,
-            "intercompany": 3,
-            "relational": 0,
-            "timeseries": 0,
+            "timeseries": 3,
             "unsupervised": 0,
         },
     )
@@ -573,10 +566,10 @@ def test_all_family_summary_uses_native_case_set_counts(monkeypatch):
     )
 
     rows = tab_phase2._build_all_family_summary({"families": {}}, overlays=[])
-    intercompany = next(row for row in rows if row["family"] == "intercompany")
+    timeseries = next(row for row in rows if row["family"] == "timeseries")
 
-    assert intercompany["signal_value"] == 3
-    assert intercompany["이번 데이터 반응"] == "3건 신호"
+    assert timeseries["signal_value"] == 3
+    assert timeseries["이번 데이터 반응"] == "3건 신호"
 
 
 def test_family_case_section_passes_phase2_case_set_to_native_panel(monkeypatch):
@@ -587,23 +580,20 @@ def test_family_case_section_passes_phase2_case_set_to_native_panel(monkeypatch)
         raw_line_number=1,
         company_code="C01",
     )
-    relational_case = RelationalCase(
-        phase2_case_id="p2_relational_edge_rel00000001",
+    timeseries_case = TimeseriesCase(
+        phase2_case_id="p2_timeseries_window_ts000000001",
         batch_id="batch-1",
-        family="relational",
-        unit_type="edge",
+        family="timeseries",
+        unit_type="window",
         row_refs=(row_ref,),
         evidence_tier="strong",
         case_generation_reason={},
         family_score=0.9,
         family_ecdf=1.0,
-        sub_rule="R03",
-        edge_a="partner",
-        edge_b="account",
-        metric_name="transfer_pricing_score",
-        metric_value=0.9,
+        sub_rule="TS01",
+        subject="acct:1100",
     )
-    case_set = Phase2CaseSet(relational_cases=(relational_case,))
+    case_set = Phase2CaseSet(timeseries_cases=(timeseries_case,))
     phase2_result = SimpleNamespace(phase2_case_set=case_set)
     captured = {}
 
@@ -620,23 +610,23 @@ def test_family_case_section_passes_phase2_case_set_to_native_panel(monkeypatch)
     )
 
     tab_phase2._render_phase2_family_case_section(
-        "relational",
+        "timeseries",
         overlays=[],
         overlay_status=None,
         partition="all",
         phase2_result=phase2_result,
     )
 
-    assert captured["family"] == "relational"
+    assert captured["family"] == "timeseries"
     assert captured["case_set"] is case_set
-    assert captured["case_set"].relational_cases == (relational_case,)
+    assert captured["case_set"].timeseries_cases == (timeseries_case,)
 
 
 def test_count_active_families_prefers_overlay_case_contributions_over_partition_summary():
     partition_summary = {
         "families": {
             "duplicate": {"score_distribution": {"nonzero_count": 99}},
-            "relational": {"score_distribution": {"nonzero_count": 99}},
+            "timeseries": {"score_distribution": {"nonzero_count": 99}},
         }
     }
     overlays = [
@@ -650,7 +640,7 @@ def test_count_active_families_prefers_overlay_case_contributions_over_partition
         {
             "phase1_case_id": "case_2",
             "family_contributions": [
-                {"family": "intercompany", "score": 0.7, "ecdf": 0.9},
+                {"family": "unsupervised", "score": 0.7, "ecdf": 0.9},
             ],
         },
     ]
@@ -971,35 +961,19 @@ def test_phase2_subdetector_labels_can_hide_code_and_show_english_tier():
     assert tab_phase2._phase2_subdetector_tier_label("L2-03a") == "Strong"
     assert (
         tab_phase2._phase2_subdetector_display_label(
-            "R05",
+            "TS02",
             include_code=False,
             include_tier=False,
         )
-        == "희소 계정-거래처 조합"
+        == "비정상 빈도"
     )
     assert (
         tab_phase2._phase2_subdetector_display_label(
-            "R06",
+            "L2-03b",
             include_code=False,
             include_tier=False,
         )
-        == "사용자 계정 범위 급증"
-    )
-    assert (
-        tab_phase2._phase2_subdetector_display_label(
-            "ic_unmatched_prob",
-            include_code=False,
-            include_tier=False,
-        )
-        == "대응 전표 미확인"
-    )
-    assert (
-        tab_phase2._phase2_subdetector_display_label(
-            "ic_reciprocal_flow_prob",
-            include_code=False,
-            include_tier=False,
-        )
-        == "상호 이전 흐름"
+        == "유사 중복"
     )
 
 
@@ -1009,21 +983,21 @@ def test_phase2_family_case_frame_keeps_more_than_first_page():
             "phase1_case_id": f"case_{idx:03d}",
             "family_contributions": [
                 {
-                    "family": "intercompany",
+                    "family": "timeseries",
                     "score": 1.0,
                     "ecdf": 0.9,
                     "evidence_tier": "strong",
-                    "sub_detectors": [{"code": "ic_unmatched_prob"}],
+                    "sub_detectors": [{"code": "TS01"}],
                 }
             ],
         }
         for idx in range(75)
     ]
 
-    frame = tab_phase2._build_phase2_family_case_frame("intercompany", overlays)
+    frame = tab_phase2._build_phase2_family_case_frame("timeseries", overlays)
 
     assert len(frame) == 75
-    assert set(frame["세부 탐지 내용"]) == {"대응 전표 미확인"}
+    assert set(frame["세부 탐지 내용"]) == {"단기간 거래 폭증"}
 
 
 def test_phase2_subdetector_case_counts_are_unique_by_case_and_code():
