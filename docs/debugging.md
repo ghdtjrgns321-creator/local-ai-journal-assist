@@ -7460,3 +7460,49 @@ Gate 결과:
 `datasynth_integrated_usefulness_phase2_20260701_v1f`를 Integrated Usefulness Benchmark Phase2 accepted
 overlay로 사용한다. 향후 재생성 시 `verify_integrated_usefulness_phase2.py`와
 `verify_injection_coherence.py`를 필수 gate로 실행한다.
+## 2026-07-01 — DataSynth NORMAL v48 RBAC/SoD persona-process realism
+
+v47 batch/job successor는 direct SoD marker와 self-approval 오염은 제거했지만, 정상 원장의
+`user_persona × business_process` 분포가 실제 ERP RBAC와 맞지 않았다. AP/AR/Treasury/Payroll 계열
+clerk가 여러 process를 동시에 처리하고 일부 persona가 all-to-all에 가까운 범위를 갖는 구조였다. 이는
+정상 회사의 역할별 접근통제와 맞지 않고, PHASE1 L1-06/L3-12 검증에서 정상 비교군을 왜곡한다.
+
+수정:
+
+- `tools/datasynth/crates/datasynth-cli/src/normal_coa_v30.rs`
+  - `apply_v48_rbac_persona_scope()`를 추가해 전표 단위로 `created_by`, `approved_by`, `user_persona`를
+    함께 배정한다.
+  - AP clerk=P2P, AR clerk=O2C, treasury analyst=TRE/TREASURY, payroll clerk=H2R,
+    operations/inventory=A2R/MFG, R2R=junior/senior/controller 중심으로 제한했다.
+  - automated/recurring/interface 계열은 `automated_system`으로 유지하고 batch/job identity를 유지한다.
+  - 생성된 작성자/승인자를 `master_data/employees.json`에 등록하도록 `update_v42_employee_master()`를
+    보강했다.
+- `tools/scripts/normal_data_realism_verifier_20260603.py`
+  - `E05B_RBAC_PERSONA_PROCESS_SCOPE` gate를 추가했다.
+  - O02 synthetic marker scan에서 `user_persona`, `created_by`, `approved_by`는 E05B에 위임한다. 이 세
+    컬럼은 RBAC상 process와 구조적으로 연결되는 필드라 O02가 생성기 지문으로 오인하면 안 된다.
+- `dev/active/datasynth-journal-realism-rebuild/normal-data-realism-test-catalog.md`
+  - E05B 항목 추가.
+
+산출물:
+
+- `data/journal/primary/datasynth_semantic_v1_normal_20260701_v48_rbac_r1`
+- `reports/normal_v48_rbac_r1_gate_v2.json`
+- `reports/normal_v48_rbac_r1_gate_v2.md`
+
+검증:
+
+- `cargo check -p datasynth-cli` — PASS.
+- `cargo run -p datasynth-cli -- generate --profile normal-coa-v42 --contract-source ...v47_batchid_r7 --output ...v48_rbac_r1` — PASS.
+- `uv run python tools/scripts/normal_data_realism_verifier_20260603.py ...v48_rbac_r1 --json-out reports/normal_v48_rbac_r1_gate_v2.json --md-out reports/normal_v48_rbac_r1_gate_v2.md` — exit 0.
+- Verifier summary: PASS 40, MONITOR 1, INFO 3, FAIL 0.
+- E05B: documents checked 111,522, scope bad docs 0, low-level over-breadth 0, user over-breadth 0,
+  all-to-all persona 0.
+- Direct SoD/self-approval: 0.
+- O02 synthetic marker findings: 0.
+- Master reference check: created_by missing 0, approved_by missing 0.
+
+남은 사항:
+
+- M06 normal balance direction은 기존과 동일하게 MONITOR다. RBAC/SoD 수정 범위 밖이며, 별도 계정 잔액
+  방향 분류 작업에서 다룬다.

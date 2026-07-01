@@ -45,12 +45,24 @@ v46b acceptance snapshot:
 - Company-node graph cycle: 0.
 - IC semantic coherence: B15/B16/H04 checked docs 216, bad docs 0.
 
+v48 RBAC/SoD successor acceptance snapshot:
+
+- Dataset: `data/journal/primary/datasynth_semantic_v1_normal_20260701_v48_rbac_r1`.
+- Command: `uv run python tools/scripts/normal_data_realism_verifier_20260603.py data/journal/primary/datasynth_semantic_v1_normal_20260701_v48_rbac_r1 --json-out reports/normal_v48_rbac_r1_gate_v2.json --md-out reports/normal_v48_rbac_r1_gate_v2.md`.
+- NORMAL realism verifier: PASS 40 / MONITOR 1 / INFO 3 / FAIL 0.
+- E05B RBAC/persona scope: documents checked 111,522, scope bad docs 0, low-level over-breadth 0,
+  user over-breadth 0, all-to-all persona 0.
+- Direct SoD/self-approval: 0.
+- O02 synthetic marker findings 0. `user_persona`, `created_by`, `approved_by` are delegated to E05B
+  because they are structural RBAC fields, not arbitrary generator markers.
+
 ## NORMAL 주요 검사 축
 
 - A: 기본 회계 구조. 차대변 균형, 금액 양수/정수, 전표 단위 일관성.
 - B: semantic coherence. 계정 subtype, line text family, document type, business process의 joint draw.
 - C/D: 시간·분포. 결산월, 주말/심야, 연도 drift, timestamp 분산.
-- E: 승인·SoD. NORMAL에는 direct confirmed SoD marker가 없어야 한다.
+- E: 승인·SoD. NORMAL에는 direct confirmed SoD marker가 없어야 하며, RBAC/persona-process 범위가
+  현실적이어야 한다. AP/AR/Treasury/Payroll clerk가 모든 process를 처리하는 all-to-all 분포는 FAIL이다.
 - F/G/H: 거래처, 계정, description, noise attribution.
 - I/J: document number, reference, duplicate artifact, reversal pair.
 - K: IC/graph normal background.
