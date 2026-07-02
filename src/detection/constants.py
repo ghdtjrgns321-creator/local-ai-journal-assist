@@ -643,7 +643,7 @@ RULE_EXPLANATIONS: dict[str, RuleExplanation] = {
     "L4-01": RuleExplanation(
         rule_id="L4-01",
         plain_reason="A revenue-account amount is an outlier within its peer distribution.",
-        used_columns=("gl_account", "amount_zscore"),
+        used_columns=("gl_account", "amount_zscore_log"),
     ),
     "L4-02": RuleExplanation(
         rule_id="L4-02",

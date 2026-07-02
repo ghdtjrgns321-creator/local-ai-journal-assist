@@ -58,6 +58,7 @@ AUTO_HIDDEN_SOURCE_COLUMNS = SYNTHETIC_ONLY_COLUMNS | frozenset(
         "approval_excess_ratio",
         "approval_excess_bucket",
         "amount_zscore",
+        "amount_zscore_log",
         "amount_magnitude",
         "is_round_number",
         "is_manual_je",

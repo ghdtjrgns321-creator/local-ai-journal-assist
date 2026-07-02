@@ -85,7 +85,20 @@ def _compute_document_amount(df: pd.DataFrame, base: pd.Series) -> pd.Series:
     return pd.concat([doc_debit, doc_credit], axis=1).max(axis=1)
 
 
-def _resolve_employee_master_path(df: pd.DataFrame) -> Path | None:
+def _resolve_employee_master_path(
+    df: pd.DataFrame,
+    employee_master_path: str | Path | None = None,
+) -> Path | None:
+    """Resolve employees.json path.
+
+    Why: df.attrs (source_path 자동 감지)는 merge/concat/parquet round-trip 등
+    pandas 연산을 거치면 쉽게 유실된다. 호출자가 경로를 알고 있으면
+    employee_master_path로 명시 전달해 attrs 유실과 무관하게 해소한다.
+    """
+    if employee_master_path is not None:
+        candidate = Path(employee_master_path)
+        return candidate if candidate.exists() else None
+
     source_path = get_source_path(df)
     if source_path is None:
         return None
@@ -115,11 +128,14 @@ def _compute_approver_limit(df: pd.DataFrame) -> pd.Series | None:
     return info["approval_limit"]
 
 
-def _compute_approver_info(df: pd.DataFrame) -> pd.DataFrame | None:
+def _compute_approver_info(
+    df: pd.DataFrame,
+    employee_master_path: str | Path | None = None,
+) -> pd.DataFrame | None:
     if "approved_by" not in df.columns:
         return None
 
-    master_path = _resolve_employee_master_path(df)
+    master_path = _resolve_employee_master_path(df, employee_master_path)
     if master_path is None:
         return None
 
@@ -226,7 +242,9 @@ def _zscore_with_fallback(
             if total_std == 0:
                 result.loc[remaining] = 0.0
             else:
-                result.loc[remaining] = (base[remaining] - total_mean) / total_std
+                # base가 NaN인 행(예: log 불가한 0원 라인)은 z=0.0으로 마감.
+                # 큰 그룹·CoA 경로와 동일하게 NaN↔0.0 처리를 대칭으로 맞춘다.
+                result.loc[remaining] = ((base[remaining] - total_mean) / total_std).fillna(0.0)
     else:
         # CoA 카테고리 미제공 → 기존 동작 (전체 데이터 fallback)
         total_mean = base.mean()
@@ -234,7 +252,7 @@ def _zscore_with_fallback(
         if total_std == 0:
             result.loc[small_mask] = 0.0
         else:
-            result.loc[small_mask] = (base[small_mask] - total_mean) / total_std
+            result.loc[small_mask] = ((base[small_mask] - total_mean) / total_std).fillna(0.0)
 
     return result
 
@@ -247,6 +265,7 @@ def add_is_near_threshold(
     base: pd.Series,
     thresholds: list[int | float],
     ratio: float,
+    employee_master_path: str | Path | None = None,
 ) -> pd.DataFrame:
     """L2-01: 승인권자 실제 한도 직하 여부.
 
@@ -261,7 +280,7 @@ def add_is_near_threshold(
         if can_compute_document_amount
         else pd.Series(np.nan, index=df.index, dtype="float64")
     )
-    approver_info = _compute_approver_info(df)
+    approver_info = _compute_approver_info(df, employee_master_path)
     approver_limit = approver_info["approval_limit"] if approver_info is not None else None
 
     near = pd.Series(False, index=df.index)
@@ -319,6 +338,7 @@ def add_exceeds_threshold(
     df: pd.DataFrame,
     base: pd.Series,
     thresholds: list[int | float],
+    employee_master_path: str | Path | None = None,
 ) -> pd.DataFrame:
     """L1-04: 승인한도 초과 여부 + 해당 한도 레벨.
 
@@ -327,7 +347,7 @@ def add_exceeds_threshold(
          approval_level은 초과한 가장 낮은 한도의 인덱스(1~6). 미초과=0.
     """
     if not thresholds:
-        approver_info = _compute_approver_info(df)
+        approver_info = _compute_approver_info(df, employee_master_path)
         df["exceeds_threshold"] = False
         df["approval_level"] = 0
         df["document_approval_amount"] = _compute_document_amount(df, base)
@@ -343,7 +363,7 @@ def add_exceeds_threshold(
 
     sorted_t = sorted(thresholds)
     threshold_amount = _compute_document_amount(df, base)
-    approver_info = _compute_approver_info(df)
+    approver_info = _compute_approver_info(df, employee_master_path)
     approver_limit = approver_info["approval_limit"] if approver_info is not None else None
 
     # Why: L1-04 is binary: amount above a resolved approver limit, or approval
@@ -358,9 +378,7 @@ def add_exceeds_threshold(
         has_approver = approver.ne("")
         can_approve = approver_info["can_approve_je"].fillna(True).astype(bool)
         real_approver = approver_info["approver_in_master"].fillna(True).astype(bool)
-        no_approval_authority = has_approver & real_approver & (
-            can_approve.eq(False) | ~resolved
-        )
+        no_approval_authority = has_approver & real_approver & (can_approve.eq(False) | ~resolved)
         df["exceeds_threshold"] = has_approver & (
             (resolved & (threshold_amount > approver_limit)) | no_approval_authority
         )
@@ -465,6 +483,37 @@ def add_amount_zscore(
     return df
 
 
+def add_amount_zscore_log(
+    df: pd.DataFrame,
+    base: pd.Series,
+    coa_prefixes: dict[str, list[str]] | None = None,
+) -> pd.DataFrame:
+    """L4-01: 로그변환 후 gl_account 그룹별 Z-score. gl_account 없으면 NaN + 경고.
+
+    Why: 매출 금액은 우편향(right-skew)이라 원금액 평균/표준편차 z-score는
+    극단값 하나가 표준편차를 부풀려 어지간히 큰 금액도 임계를 못 넘긴다(σ 팽창).
+    log 변환은 곱셈적 차이를 덧셈 거리로 압축해 분포를 정규에 가깝게 만들어
+    3σ 임계가 원 의도대로 작동한다(회계 금액의 log-normal 근사).
+    base = max(차변,대변) ≥ 0 이라 음수는 구조상 없고, 0원 라인만 log 불가 →
+    NaN 처리해 z-score 계산에서 제외·미발화한다.
+    """
+    if "gl_account" not in df.columns:
+        logger.warning("gl_account 컬럼 누락 — amount_zscore_log를 NaN으로 설정")
+        df["amount_zscore_log"] = np.nan
+        return df
+
+    # 양수만 로그 대상. 0원(및 구조상 없는 음수)은 NaN → 그룹 통계에서 제외되고 미발화.
+    log_base = pd.Series(np.nan, index=df.index, dtype="float64")
+    positive = base > 0
+    log_base.loc[positive] = np.log(base.loc[positive].astype("float64"))
+
+    coa_cat = _map_coa_category(df["gl_account"], coa_prefixes) if coa_prefixes else None
+    df["amount_zscore_log"] = _zscore_with_fallback(
+        log_base, df["gl_account"], coa_category=coa_cat
+    )
+    return df
+
+
 def add_amount_magnitude(
     df: pd.DataFrame,
     base: pd.Series,
@@ -513,12 +562,16 @@ def add_all_amount_features(
     df: pd.DataFrame,
     settings: AuditSettings | None = None,
     audit_rules: dict | None = None,
+    employee_master_path: str | Path | None = None,
 ) -> pd.DataFrame:
     """금액 파생변수 5개를 한번에 추가. engine.py 진입점.
 
     audit_rules: get_audit_rules() 반환값과 동일한 원본 dict.
                  {"patterns": {...}, "currency_decimals": {...}} 중첩 구조.
                  None이면 get_audit_rules()로 자동 로드.
+    employee_master_path: employees.json 경로. None이면 df.attrs의 source_path로
+                 자동 해소(정식 ingest 파이프라인 기준 동작). df.attrs가 유실되는
+                 호출부(ad-hoc 스크립트, thin-copy 등)는 명시적으로 전달한다.
     """
     s = settings or get_settings()
     base = _compute_base_amount(df)
@@ -533,9 +586,12 @@ def add_all_amount_features(
     # Why: coa_category_prefixes는 patterns 밖에 있으므로 원본 audit_rules에서 직접 접근
     coa_prefixes = audit_rules.get("coa_category_prefixes")
 
-    add_is_near_threshold(df, base, s.approval_thresholds, s.near_threshold_ratio)
-    add_exceeds_threshold(df, base, s.approval_thresholds)
+    add_is_near_threshold(
+        df, base, s.approval_thresholds, s.near_threshold_ratio, employee_master_path
+    )
+    add_exceeds_threshold(df, base, s.approval_thresholds, employee_master_path)
     add_amount_zscore(df, base, coa_prefixes=coa_prefixes)
+    add_amount_zscore_log(df, base, coa_prefixes=coa_prefixes)
     add_amount_magnitude(df, base)
     add_is_round_number(df, base, s.round_unit, currency_decimals=currency_dec)
 

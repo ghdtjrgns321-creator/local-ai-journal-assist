@@ -9,8 +9,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from config.settings import AuditSettings
 import src.feature.amount_features as amount_features_module
+from config.settings import AuditSettings
 from src.feature.engine import (
     EXPECTED_COLUMNS,
     FeatureCategory,
@@ -52,11 +52,18 @@ class TestGenerateAllFeatures:
 
         # bool 타입 피처
         bool_cols = [
-            "is_weekend", "is_after_hours", "is_period_end",
-            "is_near_threshold", "exceeds_threshold", "is_round_number",
-            "near_threshold_limit_resolved", "approval_limit_resolved",
+            "is_weekend",
+            "is_after_hours",
+            "is_period_end",
+            "is_near_threshold",
+            "exceeds_threshold",
+            "is_round_number",
+            "near_threshold_limit_resolved",
+            "approval_limit_resolved",
             "approver_can_approve_je",
-            "is_manual_je", "is_intercompany", "is_revenue_account",
+            "is_manual_je",
+            "is_intercompany",
+            "is_revenue_account",
             "is_suspense_account",
         ]
         for col in bool_cols:
@@ -103,7 +110,8 @@ class TestSelectiveCategories:
     def test_time_only(self, en_full_df: pd.DataFrame) -> None:
         """time만 실행 → 6개 컬럼 추가, 나머지 없음."""
         result = generate_all_features(
-            en_full_df, categories=[FeatureCategory.TIME],
+            en_full_df,
+            categories=[FeatureCategory.TIME],
         )
         time_cols = EXPECTED_COLUMNS[FeatureCategory.TIME]
         assert len(result.added_columns) == len(time_cols)
@@ -119,9 +127,8 @@ class TestSelectiveCategories:
             en_full_df,
             categories=[FeatureCategory.AMOUNT, FeatureCategory.PATTERN],
         )
-        expected_count = (
-            len(EXPECTED_COLUMNS[FeatureCategory.AMOUNT])
-            + len(EXPECTED_COLUMNS[FeatureCategory.PATTERN])
+        expected_count = len(EXPECTED_COLUMNS[FeatureCategory.AMOUNT]) + len(
+            EXPECTED_COLUMNS[FeatureCategory.PATTERN]
         )
         assert len(result.added_columns) == expected_count
         assert result.categories_run == ["amount", "pattern"]
@@ -174,11 +181,13 @@ class TestGracefulDegradation:
 
     def test_empty_df(self) -> None:
         """0행 DataFrame → FeatureResult 정상 반환."""
-        empty_df = pd.DataFrame({
-            "posting_date": pd.to_datetime([]),
-            "debit_amount": pd.Series([], dtype="float64"),
-            "credit_amount": pd.Series([], dtype="float64"),
-        })
+        empty_df = pd.DataFrame(
+            {
+                "posting_date": pd.to_datetime([]),
+                "debit_amount": pd.Series([], dtype="float64"),
+                "credit_amount": pd.Series([], dtype="float64"),
+            }
+        )
         result = generate_all_features(empty_df)
         assert isinstance(result, FeatureResult)
         assert len(result.data) == 0
@@ -206,7 +215,7 @@ class TestSettingsInjection:
         monkeypatch.setattr(
             amount_features_module,
             "_resolve_employee_master_path",
-            lambda df: Path("dummy-employees.json"),
+            lambda df, employee_master_path=None: Path("dummy-employees.json"),
         )
         monkeypatch.setattr(
             amount_features_module,

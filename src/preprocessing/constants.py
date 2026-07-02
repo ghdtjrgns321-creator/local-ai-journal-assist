@@ -111,6 +111,9 @@ LEAKAGE_DENY_COLUMNS_V7_DERIVED = frozenset(
         "near_threshold_gap_amount",
         "near_threshold_gap_ratio",
         "near_threshold_limit_amount",
+        # amount_zscore(원금액 z)의 로그변환 형제. 같은 base 금액 파생이라 동일 leakage
+        # 프로파일 — PHASE2 shortcut 방지를 위해 amount_zscore와 함께 deny한다(L4-01 전용).
+        "amount_zscore_log",
     }
 )
 

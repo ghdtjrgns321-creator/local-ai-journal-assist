@@ -17,11 +17,16 @@ def b01_revenue_manipulation(
     df: pd.DataFrame,
     zscore_threshold: float = 3.0,
 ) -> pd.Series:
-    """L4-01 상대적 고액 매출: 매출계정이고 금액 z-score가 임계 초과면 발화(binary)."""
-    missing = _check_features(df, ["is_revenue_account", "amount_zscore"])
+    """L4-01 상대적 고액 매출: 매출계정이고 로그 z-score가 임계 초과면 발화(binary).
+
+    매출은 우편향이라 원금액 z-score(`amount_zscore`)는 극단값이 σ를 부풀려 이상치를
+    가린다. 로그변환 z-score(`amount_zscore_log`)를 써서 σ 팽창을 제거한다(피처 근거는
+    amount_features.add_amount_zscore_log).
+    """
+    missing = _check_features(df, ["is_revenue_account", "amount_zscore_log"])
     if missing:
         return pd.Series(False, index=df.index)
-    zscore = pd.to_numeric(df["amount_zscore"], errors="coerce").fillna(0.0)
+    zscore = pd.to_numeric(df["amount_zscore_log"], errors="coerce").fillna(0.0)
     result = df["is_revenue_account"].fillna(False) & (zscore > zscore_threshold)
 
     # binary flag: 발화=1.0, 미발화=0.0. z-score 폭에 따른 등급 차등(구 bucket)은
@@ -33,7 +38,7 @@ def b01_revenue_manipulation(
     for idx in result[result].index:
         annotation: dict[str, object] = {
             "score": 1.0,
-            "amount_zscore": round(float(zscore.loc[idx]), 4),
+            "amount_zscore_log": round(float(zscore.loc[idx]), 4),
             "zscore_threshold": float(zscore_threshold),
             "interpretation": "relative_high_value_revenue",
         }

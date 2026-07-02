@@ -161,6 +161,7 @@ EXPECTED_COLUMNS: dict[FeatureCategory, list[str]] = {
         "approval_excess_ratio",
         "approval_excess_bucket",
         "amount_zscore",
+        "amount_zscore_log",
         "amount_magnitude",
         "is_round_number",
     ],
@@ -217,6 +218,7 @@ def generate_all_features(
     parallel: bool = False,
     max_workers: int | None = None,
     include_morpheme_tokens: bool = True,
+    employee_master_path: str | None = None,
 ) -> FeatureResult:
     """감사 파생변수와 NLP 임시 컬럼을 일괄 생성하는 단일 진입점.
 
@@ -229,6 +231,9 @@ def generate_all_features(
     categories : 실행할 카테고리 목록. None이면 전체 4개.
     parallel : True이면 ThreadPoolExecutor로 카테고리 병렬 실행.
     max_workers : 병렬 실행 시 최대 스레드 수. None이면 카테고리 수.
+    employee_master_path : L1-04/L2-01 승인한도 조회용 employees.json 경로.
+        None이면 df.attrs의 source_path로 자동 해소한다. df.attrs가 유실되는
+        호출부(ad-hoc 스크립트, parallel thin-copy)는 명시적으로 전달해야 한다.
     """
     s = settings or get_settings()
 
@@ -252,6 +257,7 @@ def generate_all_features(
             risk_keywords=risk_keywords,
             max_workers=max_workers,
             include_morpheme_tokens=include_morpheme_tokens,
+            employee_master_path=employee_master_path,
         )
     else:
         execution_times, categories_run, failed_categories, warnings_map = (
@@ -263,6 +269,7 @@ def generate_all_features(
                 raw_rules=raw_rules,
                 risk_keywords=risk_keywords,
                 include_morpheme_tokens=include_morpheme_tokens,
+                employee_master_path=employee_master_path,
             )
         )
 
@@ -307,6 +314,7 @@ def _run_categories_sequential(
     raw_rules: dict | None,
     risk_keywords: dict | None,
     include_morpheme_tokens: bool = True,
+    employee_master_path: str | None = None,
 ) -> tuple[dict[str, float], list[str], list[str], dict[str, list[str]]]:
     """순차 실행 — 기존 로직을 함수로 분리."""
     execution_times: dict[str, float] = {}
@@ -325,6 +333,7 @@ def _run_categories_sequential(
             raw_rules=raw_rules,
             risk_keywords=risk_keywords,
             include_morpheme_tokens=include_morpheme_tokens,
+            employee_master_path=employee_master_path,
             warnings_out=cat_warnings,
         )
         elapsed = time.monotonic() - t0
@@ -349,6 +358,7 @@ def _run_categories_parallel(
     risk_keywords: dict | None,
     max_workers: int | None = None,
     include_morpheme_tokens: bool = True,
+    employee_master_path: str | None = None,
 ) -> tuple[dict[str, float], list[str], list[str], dict[str, list[str]]]:
     """병렬 실행 — Thin Copy + Series 반환 패턴으로 OOM 방지.
 
@@ -357,6 +367,8 @@ def _run_categories_parallel(
          GIL 환경에서 CPU-bound pandas 연산은 실질적 속도 향상이 제한적.
          주 목적: 카테고리 독립 실행 + 타임아웃 격리. 순수 속도 목적이면
          ProcessPoolExecutor 검토 필요 (단 DataFrame pickle 비용 발생).
+         thin copy는 df.attrs(source_path)를 보존하지 않으므로 AMOUNT 카테고리는
+         employee_master_path를 명시 전달해야 승인한도 조회가 유실되지 않는다.
     """
     execution_times: dict[str, float] = {}
     categories_run: list[str] = []
@@ -378,6 +390,7 @@ def _run_categories_parallel(
             raw_rules=raw_rules,
             risk_keywords=risk_keywords,
             include_morpheme_tokens=include_morpheme_tokens,
+            employee_master_path=employee_master_path,
             warnings_out=cat_warnings,
         )
         elapsed = time.monotonic() - t0
@@ -427,6 +440,7 @@ def _run_category(
     raw_rules: dict | None = None,
     risk_keywords: dict | None = None,
     include_morpheme_tokens: bool = True,
+    employee_master_path: str | None = None,
     warnings_out: list[str] | None = None,
 ) -> bool:
     """카테고리별 서브모듈 디스패치. 성공 시 True, 실패 시 False.
@@ -440,7 +454,12 @@ def _run_category(
         if cat == FeatureCategory.TIME:
             add_all_time_features(df, settings=settings)
         elif cat == FeatureCategory.AMOUNT:
-            add_all_amount_features(df, settings=settings, audit_rules=raw_rules)
+            add_all_amount_features(
+                df,
+                settings=settings,
+                audit_rules=raw_rules,
+                employee_master_path=employee_master_path,
+            )
         elif cat == FeatureCategory.PATTERN:
             add_all_pattern_features(df, rules=rules)
         elif cat == FeatureCategory.TEXT:

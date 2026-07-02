@@ -38,6 +38,7 @@ def full_df() -> pd.DataFrame:
             # 피처 컬럼
             "is_revenue_account": [True, True, False, True, False],
             "amount_zscore": [4.0, 1.5, 0.2, 3.5, 0.1],
+            "amount_zscore_log": [4.0, 1.5, 0.2, 3.5, 0.1],
             "is_near_threshold": [False, True, False, False, False],
             "exceeds_threshold": [True, False, False, True, False],
             "is_manual_je": [True, False, False, True, False],

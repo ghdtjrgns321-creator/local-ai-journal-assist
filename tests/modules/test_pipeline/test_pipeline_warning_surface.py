@@ -20,12 +20,12 @@ def test_pipeline_surfaces_detector_coverage_warnings(monkeypatch, small_gl_df) 
                 {
                     "rule_id": "L4-01",
                     "kind": "missing_prerequisites",
-                    "missing_inputs": ["amount_zscore"],
+                    "missing_inputs": ["amount_zscore_log"],
                     "affected_rows": int(len(small_gl_df)),
                 }
             ],
         },
-        warnings=["L4-01 skipped: missing required input ['amount_zscore']"],
+        warnings=["L4-01 skipped: missing required input ['amount_zscore_log']"],
     )
 
     monkeypatch.setattr(

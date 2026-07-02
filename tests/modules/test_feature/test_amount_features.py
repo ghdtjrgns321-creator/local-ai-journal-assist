@@ -12,13 +12,14 @@ import pytest
 from config.settings import AuditSettings
 from src.feature import amount_features as amount_features_module
 from src.feature.amount_features import (
+    _compute_approver_info,
     _compute_base_amount,
     _compute_document_amount,
-    _compute_approver_info,
     _map_coa_category,
     add_all_amount_features,
     add_amount_magnitude,
     add_amount_zscore,
+    add_amount_zscore_log,
     add_exceeds_threshold,
     add_is_near_threshold,
     add_is_round_number,
@@ -67,7 +68,7 @@ class TestIsNearThreshold:
         monkeypatch.setattr(
             amount_features_module,
             "_resolve_employee_master_path",
-            lambda df: Path("dummy-employees.json"),
+            lambda df, employee_master_path=None: Path("dummy-employees.json"),
         )
         monkeypatch.setattr(
             amount_features_module,
@@ -75,12 +76,14 @@ class TestIsNearThreshold:
             lambda path: {"APR-001": (100_000_000.0, True)},
         )
 
-        df = pd.DataFrame({
-            "document_id": ["A", "A"],
-            "approved_by": ["APR-001", "APR-001"],
-            "debit_amount": [45_000_000, 50_000_000],
-            "credit_amount": [0, 0],
-        })
+        df = pd.DataFrame(
+            {
+                "document_id": ["A", "A"],
+                "approved_by": ["APR-001", "APR-001"],
+                "debit_amount": [45_000_000, 50_000_000],
+                "credit_amount": [0, 0],
+            }
+        )
         base = _compute_base_amount(df)
 
         add_is_near_threshold(df, base, self.THRESHOLDS, self.RATIO)
@@ -96,7 +99,7 @@ class TestIsNearThreshold:
         monkeypatch.setattr(
             amount_features_module,
             "_resolve_employee_master_path",
-            lambda df: Path("dummy-employees.json"),
+            lambda df, employee_master_path=None: Path("dummy-employees.json"),
         )
         monkeypatch.setattr(
             amount_features_module,
@@ -104,12 +107,14 @@ class TestIsNearThreshold:
             lambda path: {"APR-001": (100_000_000.0, True)},
         )
 
-        df = pd.DataFrame({
-            "document_id": ["A", "A"],
-            "approved_by": ["APR-001", "APR-001"],
-            "debit_amount": [40_000_000, 45_000_000],
-            "credit_amount": [0, 0],
-        })
+        df = pd.DataFrame(
+            {
+                "document_id": ["A", "A"],
+                "approved_by": ["APR-001", "APR-001"],
+                "debit_amount": [40_000_000, 45_000_000],
+                "credit_amount": [0, 0],
+            }
+        )
         base = _compute_base_amount(df)
 
         add_is_near_threshold(df, base, self.THRESHOLDS, self.RATIO)
@@ -122,7 +127,7 @@ class TestIsNearThreshold:
         monkeypatch.setattr(
             amount_features_module,
             "_resolve_employee_master_path",
-            lambda df: Path("dummy-employees.json"),
+            lambda df, employee_master_path=None: Path("dummy-employees.json"),
         )
         monkeypatch.setattr(
             amount_features_module,
@@ -130,12 +135,14 @@ class TestIsNearThreshold:
             lambda path: {"APR-001": (100_000_000.0, True)},
         )
 
-        df = pd.DataFrame({
-            "document_id": ["A", "A"],
-            "approved_by": ["APR-001", "APR-001"],
-            "debit_amount": [40_000_000, 60_000_000],
-            "credit_amount": [0, 0],
-        })
+        df = pd.DataFrame(
+            {
+                "document_id": ["A", "A"],
+                "approved_by": ["APR-001", "APR-001"],
+                "debit_amount": [40_000_000, 60_000_000],
+                "credit_amount": [0, 0],
+            }
+        )
         base = _compute_base_amount(df)
 
         add_is_near_threshold(df, base, self.THRESHOLDS, self.RATIO)
@@ -146,12 +153,14 @@ class TestIsNearThreshold:
     def test_missing_approver_limit_is_not_flagged(self):
         """approval_limit를 알 수 없으면 L2-01로 판정하지 않는다."""
         base = pd.Series([95_000_000])
-        df = pd.DataFrame({
-            "document_id": ["A"],
-            "approved_by": ["APR-UNKNOWN"],
-            "debit_amount": [95_000_000],
-            "credit_amount": [0],
-        })
+        df = pd.DataFrame(
+            {
+                "document_id": ["A"],
+                "approved_by": ["APR-UNKNOWN"],
+                "debit_amount": [95_000_000],
+                "credit_amount": [0],
+            }
+        )
         add_is_near_threshold(df, base, self.THRESHOLDS, self.RATIO)
         assert df["is_near_threshold"].iloc[0] == False
         assert df["near_threshold_bucket"].iloc[0] == "unresolved_limit"
@@ -159,12 +168,14 @@ class TestIsNearThreshold:
     def test_common_thresholds_do_not_apply_without_approver_limit(self):
         """공통 approval_thresholds는 L2-01 fallback으로 쓰지 않는다."""
         base = pd.Series([20_000_000])
-        df = pd.DataFrame({
-            "document_id": ["A"],
-            "approved_by": ["APR-UNKNOWN"],
-            "debit_amount": [20_000_000],
-            "credit_amount": [0],
-        })
+        df = pd.DataFrame(
+            {
+                "document_id": ["A"],
+                "approved_by": ["APR-UNKNOWN"],
+                "debit_amount": [20_000_000],
+                "credit_amount": [0],
+            }
+        )
         add_is_near_threshold(df, base, self.THRESHOLDS, self.RATIO)
         assert df["is_near_threshold"].iloc[0] == False
         assert df["near_threshold_bucket"].iloc[0] == "unresolved_limit"
@@ -174,7 +185,7 @@ class TestIsNearThreshold:
         monkeypatch.setattr(
             amount_features_module,
             "_resolve_employee_master_path",
-            lambda df: Path("dummy-employees.json"),
+            lambda df, employee_master_path=None: Path("dummy-employees.json"),
         )
         monkeypatch.setattr(
             amount_features_module,
@@ -182,11 +193,13 @@ class TestIsNearThreshold:
             lambda path: {"APR-001": (100_000_000.0, True)},
         )
         base = pd.Series([95_000_000])
-        df = pd.DataFrame({
-            "approved_by": ["APR-001"],
-            "debit_amount": [95_000_000],
-            "credit_amount": [0],
-        })
+        df = pd.DataFrame(
+            {
+                "approved_by": ["APR-001"],
+                "debit_amount": [95_000_000],
+                "credit_amount": [0],
+            }
+        )
 
         add_is_near_threshold(df, base, self.THRESHOLDS, self.RATIO)
 
@@ -197,7 +210,7 @@ class TestIsNearThreshold:
         monkeypatch.setattr(
             amount_features_module,
             "_resolve_employee_master_path",
-            lambda df: Path("dummy-employees.json"),
+            lambda df, employee_master_path=None: Path("dummy-employees.json"),
         )
         monkeypatch.setattr(
             amount_features_module,
@@ -208,12 +221,14 @@ class TestIsNearThreshold:
                 "APR-003": (100_000_000.0, True),
             },
         )
-        df = pd.DataFrame({
-            "document_id": ["A", "B", "C"],
-            "approved_by": ["APR-001", "APR-002", "APR-003"],
-            "debit_amount": [91_000_000, 96_000_000, 99_000_000],
-            "credit_amount": [0, 0, 0],
-        })
+        df = pd.DataFrame(
+            {
+                "document_id": ["A", "B", "C"],
+                "approved_by": ["APR-001", "APR-002", "APR-003"],
+                "debit_amount": [91_000_000, 96_000_000, 99_000_000],
+                "credit_amount": [0, 0, 0],
+            }
+        )
         base = _compute_base_amount(df)
 
         add_is_near_threshold(df, base, self.THRESHOLDS, self.RATIO)
@@ -284,11 +299,13 @@ class TestExceedsThresholdDocumentLevel:
     THRESHOLDS = [10_000_000, 100_000_000, 1_000_000_000]
 
     def test_document_total_exceeds_even_when_each_line_is_below_threshold(self):
-        df = pd.DataFrame({
-            "document_id": ["A", "A", "A", "A"],
-            "debit_amount": [6_627_172, 4_372_828, 0, 0],
-            "credit_amount": [0, 0, 7_523_745, 3_476_255],
-        })
+        df = pd.DataFrame(
+            {
+                "document_id": ["A", "A", "A", "A"],
+                "debit_amount": [6_627_172, 4_372_828, 0, 0],
+                "credit_amount": [0, 0, 7_523_745, 3_476_255],
+            }
+        )
         base = _compute_base_amount(df)
 
         add_exceeds_threshold(df, base, self.THRESHOLDS)
@@ -297,11 +314,13 @@ class TestExceedsThresholdDocumentLevel:
         assert (df["approval_level"] == 1).all()
 
     def test_document_amount_uses_larger_debit_or_credit_side(self):
-        df = pd.DataFrame({
-            "document_id": ["A", "A"],
-            "debit_amount": [4_551_508.0, 0.0],
-            "credit_amount": [0.0, 45_515_080.0],
-        })
+        df = pd.DataFrame(
+            {
+                "document_id": ["A", "A"],
+                "debit_amount": [4_551_508.0, 0.0],
+                "credit_amount": [0.0, 45_515_080.0],
+            }
+        )
         base = _compute_base_amount(df)
 
         document_amount = _compute_document_amount(df, base)
@@ -319,7 +338,7 @@ class TestExceedsThresholdApproverLimit:
         monkeypatch.setattr(
             amount_features_module,
             "_resolve_employee_master_path",
-            lambda df: Path("dummy-employees.json"),
+            lambda df, employee_master_path=None: Path("dummy-employees.json"),
         )
         monkeypatch.setattr(
             amount_features_module,
@@ -330,12 +349,14 @@ class TestExceedsThresholdApproverLimit:
             },
         )
 
-        df = pd.DataFrame({
-            "document_id": ["A", "A", "B", "B"],
-            "approved_by": ["APR-001", "APR-001", "APR-002", "APR-002"],
-            "debit_amount": [6_000_000, 5_000_000, 30_000_000, 10_000_000],
-            "credit_amount": [0, 0, 0, 0],
-        })
+        df = pd.DataFrame(
+            {
+                "document_id": ["A", "A", "B", "B"],
+                "approved_by": ["APR-001", "APR-001", "APR-002", "APR-002"],
+                "debit_amount": [6_000_000, 5_000_000, 30_000_000, 10_000_000],
+                "credit_amount": [0, 0, 0, 0],
+            }
+        )
         base = _compute_base_amount(df)
 
         add_exceeds_threshold(df, base, self.THRESHOLDS)
@@ -343,21 +364,15 @@ class TestExceedsThresholdApproverLimit:
         assert df.loc[df["document_id"] == "A", "exceeds_threshold"].all()
         assert not df.loc[df["document_id"] == "B", "exceeds_threshold"].any()
         assert df.loc[df["document_id"] == "A", "approval_limit_resolved"].all()
-        assert (
-            df.loc[df["document_id"] == "A", "approval_excess_amount"] == 1_000_000.0
-        ).all()
-        assert (
-            df.loc[df["document_id"] == "A", "approval_excess_bucket"] == "boundary"
-        ).all()
-        assert (
-            df.loc[df["document_id"] == "B", "approval_excess_bucket"] == "none"
-        ).all()
+        assert (df.loc[df["document_id"] == "A", "approval_excess_amount"] == 1_000_000.0).all()
+        assert (df.loc[df["document_id"] == "A", "approval_excess_bucket"] == "boundary").all()
+        assert (df.loc[df["document_id"] == "B", "approval_excess_bucket"] == "none").all()
 
     def test_can_approve_je_false_behaves_like_zero_limit(self, monkeypatch):
         monkeypatch.setattr(
             amount_features_module,
             "_resolve_employee_master_path",
-            lambda df: Path("dummy-employees.json"),
+            lambda df, employee_master_path=None: Path("dummy-employees.json"),
         )
         monkeypatch.setattr(
             amount_features_module,
@@ -365,12 +380,14 @@ class TestExceedsThresholdApproverLimit:
             lambda path: {"APR-001": (50_000_000.0, False)},
         )
 
-        df = pd.DataFrame({
-            "document_id": ["A", "A"],
-            "approved_by": ["APR-001", "APR-001"],
-            "debit_amount": [1_000_000, 2_000_000],
-            "credit_amount": [0, 0],
-        })
+        df = pd.DataFrame(
+            {
+                "document_id": ["A", "A"],
+                "approved_by": ["APR-001", "APR-001"],
+                "debit_amount": [1_000_000, 2_000_000],
+                "credit_amount": [0, 0],
+            }
+        )
         base = _compute_base_amount(df)
 
         add_exceeds_threshold(df, base, self.THRESHOLDS)
@@ -383,7 +400,7 @@ class TestExceedsThresholdApproverLimit:
         monkeypatch.setattr(
             amount_features_module,
             "_resolve_employee_master_path",
-            lambda df: Path("dummy-employees.json"),
+            lambda df, employee_master_path=None: Path("dummy-employees.json"),
         )
         monkeypatch.setattr(
             amount_features_module,
@@ -391,12 +408,14 @@ class TestExceedsThresholdApproverLimit:
             lambda path: {"APR-001": (100_000_000.0, True)},
         )
 
-        df = pd.DataFrame({
-            "document_id": ["A", "B"],
-            "approved_by": ["APR-001", "APR-UNKNOWN"],
-            "debit_amount": [120_000_000, 20_000_000],
-            "credit_amount": [0, 0],
-        })
+        df = pd.DataFrame(
+            {
+                "document_id": ["A", "B"],
+                "approved_by": ["APR-001", "APR-UNKNOWN"],
+                "debit_amount": [120_000_000, 20_000_000],
+                "credit_amount": [0, 0],
+            }
+        )
         base = _compute_base_amount(df)
 
         add_exceeds_threshold(df, base, self.THRESHOLDS)
@@ -411,7 +430,7 @@ class TestExceedsThresholdApproverLimit:
         monkeypatch.setattr(
             amount_features_module,
             "_resolve_employee_master_path",
-            lambda df: Path("dummy-employees.json"),
+            lambda df, employee_master_path=None: Path("dummy-employees.json"),
         )
         monkeypatch.setattr(
             amount_features_module,
@@ -423,12 +442,14 @@ class TestExceedsThresholdApproverLimit:
                 "APR-004": (100_000_000.0, True),
             },
         )
-        df = pd.DataFrame({
-            "document_id": ["A", "B", "C", "D"],
-            "approved_by": ["APR-001", "APR-002", "APR-003", "APR-004"],
-            "debit_amount": [105_000_000, 125_000_000, 175_000_000, 250_000_000],
-            "credit_amount": [0, 0, 0, 0],
-        })
+        df = pd.DataFrame(
+            {
+                "document_id": ["A", "B", "C", "D"],
+                "approved_by": ["APR-001", "APR-002", "APR-003", "APR-004"],
+                "debit_amount": [105_000_000, 125_000_000, 175_000_000, 250_000_000],
+                "credit_amount": [0, 0, 0, 0],
+            }
+        )
         base = _compute_base_amount(df)
 
         add_exceeds_threshold(df, base, self.THRESHOLDS)
@@ -448,18 +469,20 @@ class TestApproverMasterMembership:
         monkeypatch.setattr(
             amount_features_module,
             "_resolve_employee_master_path",
-            lambda df: Path("dummy-employees.json"),
+            lambda df, employee_master_path=None: Path("dummy-employees.json"),
         )
         monkeypatch.setattr(
             amount_features_module,
             "_load_employee_approval_map",
             lambda path: {"APR-001": (100_000_000.0, True)},
         )
-        df = pd.DataFrame({
-            "approved_by": ["APR-001", "APR-GHOST", ""],
-            "debit_amount": [1_000_000, 1_000_000, 1_000_000],
-            "credit_amount": [0, 0, 0],
-        })
+        df = pd.DataFrame(
+            {
+                "approved_by": ["APR-001", "APR-GHOST", ""],
+                "debit_amount": [1_000_000, 1_000_000, 1_000_000],
+                "credit_amount": [0, 0, 0],
+            }
+        )
 
         info = _compute_approver_info(df)
 
@@ -472,19 +495,21 @@ class TestApproverMasterMembership:
         monkeypatch.setattr(
             amount_features_module,
             "_resolve_employee_master_path",
-            lambda df: Path("dummy-employees.json"),
+            lambda df, employee_master_path=None: Path("dummy-employees.json"),
         )
         monkeypatch.setattr(
             amount_features_module,
             "_load_employee_approval_map",
             lambda path: {"APR-001": (100_000_000.0, True)},
         )
-        df = pd.DataFrame({
-            "document_id": ["A", "B", "C"],
-            "approved_by": ["APR-001", "APR-GHOST", ""],
-            "debit_amount": [1_000_000, 1_000_000, 1_000_000],
-            "credit_amount": [0, 0, 0],
-        })
+        df = pd.DataFrame(
+            {
+                "document_id": ["A", "B", "C"],
+                "approved_by": ["APR-001", "APR-GHOST", ""],
+                "debit_amount": [1_000_000, 1_000_000, 1_000_000],
+                "credit_amount": [0, 0, 0],
+            }
+        )
         base = _compute_base_amount(df)
 
         add_exceeds_threshold(df, base, self.THRESHOLDS)
@@ -496,14 +521,16 @@ class TestApproverMasterMembership:
         monkeypatch.setattr(
             amount_features_module,
             "_resolve_employee_master_path",
-            lambda df: None,
+            lambda df, employee_master_path=None: None,
         )
-        df = pd.DataFrame({
-            "document_id": ["A"],
-            "approved_by": ["APR-001"],
-            "debit_amount": [1_000_000],
-            "credit_amount": [0],
-        })
+        df = pd.DataFrame(
+            {
+                "document_id": ["A"],
+                "approved_by": ["APR-001"],
+                "debit_amount": [1_000_000],
+                "credit_amount": [0],
+            }
+        )
         base = _compute_base_amount(df)
 
         add_exceeds_threshold(df, base, self.THRESHOLDS)
@@ -588,21 +615,25 @@ class TestAmountZscore:
 
     def test_too_few_rows_returns_nan(self):
         """전체 10건 미만 → Z-score 전부 NaN."""
-        df = pd.DataFrame({
-            "debit_amount": [1_000_000] * 5,
-            "credit_amount": [0] * 5,
-            "gl_account": ["X"] * 5,
-        })
+        df = pd.DataFrame(
+            {
+                "debit_amount": [1_000_000] * 5,
+                "credit_amount": [0] * 5,
+                "gl_account": ["X"] * 5,
+            }
+        )
         base = _compute_base_amount(df)
         add_amount_zscore(df, base)
         assert df["amount_zscore"].isna().all()
 
     def test_missing_gl_account(self):
         """gl_account 컬럼 누락 → NaN + warning."""
-        df = pd.DataFrame({
-            "debit_amount": [1_000_000],
-            "credit_amount": [0],
-        })
+        df = pd.DataFrame(
+            {
+                "debit_amount": [1_000_000],
+                "credit_amount": [0],
+            }
+        )
         base = _compute_base_amount(df)
         add_amount_zscore(df, base)
         assert df["amount_zscore"].isna().all()
@@ -659,6 +690,79 @@ class TestAmountZscore:
         assert z_coa.notna().all()
         # CoA도 소그룹이므로 전체 fallback과 동일
         assert np.allclose(z_no_coa.values, z_coa.values)
+
+
+# ── TestAmountZscoreLog ──────────────────────────────────────────
+
+
+class TestAmountZscoreLog:
+    """L4-01: 로그변환 z-score — 우편향 매출에서 극단값 σ 팽창 제거."""
+
+    def _skewed_revenue_df(self) -> pd.DataFrame:
+        # 38개 소액(1e6) + 2차 고액 target(5e7) + 극단값(3e8) = 우편향 매출계정.
+        # 극단값이 원금액 std를 부풀려 2차 고액을 임계 아래로 묻는 구조.
+        amounts = [1_000_000.0] * 38 + [50_000_000.0, 300_000_000.0]
+        return pd.DataFrame(
+            {
+                "debit_amount": [0.0] * 40,
+                "credit_amount": amounts,
+                "gl_account": ["4000"] * 40,
+                "is_revenue_account": [True] * 40,
+            }
+        )
+
+    def test_log_zscore_surfaces_value_that_raw_zscore_buries(self) -> None:
+        df = self._skewed_revenue_df()
+        base = _compute_base_amount(df)
+        add_amount_zscore(df, base.copy())
+        add_amount_zscore_log(df, base.copy())
+
+        target = 38  # 2차 고액(5e7) 라인
+        # 원금액 z-score: 극단값(3e8)이 std를 부풀려 2차 고액을 3.0 아래로 묻는다
+        assert df.loc[target, "amount_zscore"] < 3.0
+        # 로그 z-score: σ 팽창 제거 → 2차 고액이 3.0 초과로 표면화(발화)
+        assert df.loc[target, "amount_zscore_log"] > 3.0
+
+    def test_extreme_value_flagged_in_both(self) -> None:
+        df = self._skewed_revenue_df()
+        base = _compute_base_amount(df)
+        add_amount_zscore(df, base.copy())
+        add_amount_zscore_log(df, base.copy())
+        extreme = 39  # 극단값(3e8)은 두 방식 모두 발화
+        assert df.loc[extreme, "amount_zscore"] > 3.0
+        assert df.loc[extreme, "amount_zscore_log"] > 3.0
+
+    def test_zero_amount_not_flagged(self) -> None:
+        # 0원 라인은 log 불가 → z-score 계산 제외, 미발화(임계 3.0 미만)
+        df = self._skewed_revenue_df()
+        df.loc[0, "credit_amount"] = 0.0  # 소액 하나를 0원으로
+        base = _compute_base_amount(df)
+        add_amount_zscore_log(df, base)
+        z0 = df.loc[0, "amount_zscore_log"]
+        assert pd.isna(z0) or z0 <= 3.0
+
+    def test_small_group_fallback_zero_amount_is_zero_not_nan(self) -> None:
+        # 소그룹(n<30) 전체 fallback 경로 + 0원 라인: log 불가로 base가 NaN이어도
+        # 큰 그룹 경로와 대칭으로 0.0 마감(미발화)돼야 하고 NaN이 새지 않아야 한다.
+        amounts = [1_000_000.0] * 13 + [50_000_000.0, 0.0]
+        df = pd.DataFrame(
+            {
+                "debit_amount": [0.0] * 15,
+                "credit_amount": amounts,
+                "gl_account": ["9999"] * 15,
+                "is_revenue_account": [True] * 15,
+            }
+        )
+        base = _compute_base_amount(df)
+        add_amount_zscore_log(df, base)  # coa_prefixes 미전달 → 전체 fallback(else) 경로
+        z_zero = df.loc[14, "amount_zscore_log"]
+        assert z_zero == 0.0
+
+    def test_missing_gl_account_returns_nan(self) -> None:
+        df = pd.DataFrame({"debit_amount": [1_000_000], "credit_amount": [0]})
+        base = _compute_base_amount(df)
+        add_amount_zscore_log(df, base)
+        assert df["amount_zscore_log"].isna().all()
 
 
 # ── TestAmountMagnitude ──────────────────────────────────────────
@@ -772,8 +876,8 @@ class TestIsRoundNumber:
         base = pd.Series([10_000_000.0, 5_000_000.0])
         df = pd.DataFrame({"x": [0, 0], "currency": ["USD", None]})
         add_is_round_number(df, base, self.UNIT, currency_decimals=self._CURR_DEC)
-        assert df["is_round_number"].iloc[0] == True   # noqa: E712 — USD round(2)
-        assert df["is_round_number"].iloc[1] == True   # noqa: E712 — NaN round(0)
+        assert df["is_round_number"].iloc[0] == True  # noqa: E712 — USD round(2)
+        assert df["is_round_number"].iloc[1] == True  # noqa: E712 — NaN round(0)
 
 
 # ── TestAddAllAmountFeatures ─────────────────────────────────────

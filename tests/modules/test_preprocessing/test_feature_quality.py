@@ -253,6 +253,7 @@ def test_v7_derived_leakage_deny_columns_are_locked_and_dropped() -> None:
             "near_threshold_gap_amount",
             "near_threshold_gap_ratio",
             "near_threshold_limit_amount",
+            "amount_zscore_log",
         }
     )
     assert LEAKAGE_DENY_COLUMNS_V7_DERIVED == expected_v7_columns

@@ -20,7 +20,7 @@ def feature_df() -> pd.DataFrame:
             "debit_amount": [60e6, 40e6, 10e6, 80e6, 30e6, 55e6],
             "credit_amount": [0.0] * 6,
             "is_revenue_account": [True, True, False, True, False, True],
-            "amount_zscore": [4.0, 2.0, 5.0, 3.5, 1.0, 0.5],
+            "amount_zscore_log": [4.0, 2.0, 5.0, 3.5, 1.0, 0.5],
             "is_near_threshold": [False, True, False, False, True, False],
             "exceeds_threshold": [True, False, False, True, False, True],
             "is_manual_je": [True, False, False, True, True, False],
@@ -49,7 +49,7 @@ class TestL4_01:
                 "document_id": ["D001", "D001"],
                 "gl_account": ["4000", "5000"],
                 "is_revenue_account": [True, False],
-                "amount_zscore": [2.8, 9.0],
+                "amount_zscore_log": [2.8, 9.0],
             }
         )
 
@@ -68,7 +68,7 @@ class TestL4_01:
             {
                 "gl_account": ["4100", "4100", "4100", "5100"],
                 "is_revenue_account": [True, True, True, False],
-                "amount_zscore": [3.2, 4.5, 6.2, 8.0],
+                "amount_zscore_log": [3.2, 4.5, 6.2, 8.0],
             }
         )
 

@@ -309,7 +309,7 @@ class FraudLayer(BaseDetector):
         """Return missing prerequisite columns or features for a rule."""
 
         required_by_rule = {
-            "L4-01": ["is_revenue_account", "amount_zscore"],
+            "L4-01": ["is_revenue_account", "amount_zscore_log"],
             "L2-01": ["is_near_threshold"],
             "L1-04": ["exceeds_threshold"],
             "L2-03": ["document_id", "gl_account", "posting_date", "debit_amount", "credit_amount"],
