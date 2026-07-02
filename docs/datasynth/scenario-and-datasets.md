@@ -6,7 +6,7 @@
 
 | 계층 | 설명 | 현재 기준 |
 | --- | --- | --- |
-| NORMAL | 정상 전표, 정상 master, 정상 flow, 정상 결산 산출물 | `datasynth_semantic_v1_normal_20260630_v47_batchid_r1` |
+| NORMAL | 정상 전표, 정상 master, 정상 flow, 정상 결산 산출물 | `datasynth_semantic_v1_normal_20260702_v50_approval_noise_r2` |
 | PHASE1-1 recall | 26개 최신 PHASE1-1 개별 룰의 standard/boundary 검증 overlay | `datasynth_semantic_v1_recall_20260630_v47_batchid_phase1_1_r1` |
 | PHASE1 combo/tier | 켜진 룰 조합이 case 단위 HIGH/MEDIUM/LOW/CONTEXT tier로 조립되는지 검증하는 별도 overlay | `datasynth_semantic_v1_combo_tier_20260630_v47_batchid_r1j` |
 | PHASE2 fraud | 14개 구조적 fraud scheme overlay | `datasynth_semantic_v1_phase2_fraud_20260614_v1_r4m_h` |

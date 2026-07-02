@@ -310,3 +310,90 @@ v31c 주요 잔차:
 - N10: all 11 woven-required accounts PASS. Dedicated-flow accounts `116100`, `231100`, `123100` are exempt but still pass
   N07~N09.
 - N11: all 14 new accounts normal-only, fraud/anomaly/provenance 0.
+
+## v48~v49에서 닫은 RBAC/승인권한 정상 오염
+
+v48은 v47 batch/job successor 위에서 정상 회사의 `user_persona × business_process` 범위를 현실화했다.
+AP/AR/Treasury/Payroll 계열 clerk가 모든 process를 만지는 all-to-all 구조를 제거하고, direct SoD marker와
+self-approval 없이 정상 RBAC 분포를 만들었다.
+
+v48 산출물:
+
+- Dataset: `data/journal/primary/datasynth_semantic_v1_normal_20260701_v48_rbac_r1`
+- Report JSON: `reports/normal_v48_rbac_r1_gate_v2.json`
+- Report MD: `reports/normal_v48_rbac_r1_gate_v2.md`
+
+v48 검증 요약:
+
+- Realism verifier: `PASS 40`, `MONITOR 1`, `INFO 3`, `FAIL 0`.
+- E05B: `scope_bad_docs=0`, low-level over-breadth 0, user over-breadth 0, all-to-all persona 0.
+- self-approval 0, O02 synthetic marker 0.
+
+v49는 v48에서 발견된 L1-04 정상 발화 결함을 닫았다. v48은 `APMGR*`, `ARMGR*`, `HRMGR*` 같은 승인자 ID를
+사용했지만 employee master 등록 시 prefix 판정이 clerk로 떨어져 `can_approve_je=false`가 됐다. 그 결과
+H2R/O2C/P2P 수기 전표가 승인권한 없는 사용자에게 결재되는 구조가 생겼다.
+
+v49 수정 원칙:
+
+- `APMGR*`, `ARMGR*`, `HRMGR*`, `OPSMGR*`, `FINMGR*`는 clerk가 아니라 manager persona로 등록한다.
+- 재생성 시 기존 employee master의 RBAC 생성 사용자도 현재 journal 배정에 맞춰 persona, job title,
+  job level, department, cost center, system role을 동기화한다.
+- 승인자로 등장한 모든 사용자는 `employees.json`에 존재하고, `can_approve_je=true`이며, 전표금액 이상의
+  `approval_limit`을 가져야 한다.
+
+v49 verifier 추가:
+
+- `E05C_APPROVER_MASTER_AUTHORITY`: `approved_by`가 있는 모든 전표를 employee master와 join해 미등록
+  승인자, `can_approve_je=false`, 승인한도 미달을 FAIL로 판정한다.
+
+v49 산출물:
+
+- Dataset: `data/journal/primary/datasynth_semantic_v1_normal_20260702_v49_approver_r1`
+- Report JSON: `reports/normal_v49_approver_r1_gate.json`
+- Report MD: `reports/normal_v49_approver_r1_gate.md`
+
+v49 검증 요약:
+
+- Realism verifier: `PASS 41`, `MONITOR 1`, `INFO 3`, `FAIL 0`.
+- E05C: approved docs checked 111,524, unresolved approver 0, unauthorized approver 0, approval-limit bad 0.
+- 문제 구간 직접 집계: H2R/O2C/P2P manual/adjustment 전표 1,748건 전부 `can_approve_je=true` manager 승인자.
+- E05B 회귀 없음: `scope_bad_docs=0`, all-to-all persona 0.
+- self-approval 0, O02 synthetic marker 0.
+
+## v50에서 닫은 L1-04 죽은 룰 정상 배경 결함
+
+v49는 승인자 master 권한 결함을 닫았지만, 모든 승인 전표가 승인자 한도 안에 들어가
+L1-04(승인한도 초과)가 NORMAL에서 0건이었다. 정상 baseline이 통제 실패로 가득 차면 안 되지만, 실제
+운영에는 낮은 비율의 비부정 승인한도 초과 예외가 존재한다. 0건은 룰이 자연 배경에서 전혀 검증되지 않는
+죽은 룰 상태다.
+
+v50 수정 원칙:
+
+- L1-04의 권위 원천은 journal 표면 컬럼이 아니라 `employees.json`의 `approval_limit`과
+  `can_approve_je`다.
+- 전표의 미사용 `approval_limit`, `approver_authority_limit` 컬럼은 export에서 제거한다.
+- 일부 실재 승인자의 master `approval_limit`을 본인 승인액 분포의 상위 일부보다 낮게 두어, 낮은 비율의
+  자연 운영 예외가 생기게 한다.
+- 미등록 승인자와 `can_approve_je=false` 승인자는 계속 0이어야 한다. 자연 예외는 한도 초과이지 권한 없는
+  승인자가 아니다.
+
+v50 verifier 기준:
+
+- `E05C_APPROVER_MASTER_AUTHORITY`는 미등록/무권한 승인자 0을 요구한다.
+- 승인한도 초과율은 approved docs 기준 `0.05% <= rate <= 2.0%`여야 한다. 0%는 죽은 룰, 2% 초과는 통제
+  붕괴로 FAIL이다.
+
+v50 산출물:
+
+- Dataset: `data/journal/primary/datasynth_semantic_v1_normal_20260702_v50_approval_noise_r2`
+- Report JSON: `reports/normal_v50_approval_noise_r2_gate.json`
+- Report MD: `reports/normal_v50_approval_noise_r2_gate.md`
+
+v50 검증 요약:
+
+- Realism verifier: `PASS 41`, `MONITOR 1`, `INFO 3`, `FAIL 0`.
+- E05C: approved docs checked 111,524, unauthorized/unresolved approver 0, approval-limit exceeded docs 178,
+  exceeded rate `0.1596%`.
+- Feature path smoke: `add_exceeds_threshold()` 기준 L1-04 distinct documents 178.
+- `journal_entries_*.csv`에 미사용 `approval_limit`, `approver_authority_limit` 컬럼 없음.
+- E05B RBAC scope, O02 synthetic marker, self-approval 회귀 없음.

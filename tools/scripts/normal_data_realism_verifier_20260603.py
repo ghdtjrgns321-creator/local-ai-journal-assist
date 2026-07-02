@@ -1209,7 +1209,7 @@ def _balance_metrics(df: pd.DataFrame, dataset: Path) -> list[dict[str, Any]]:
                 if not present
             ],
         }
-        for test_id in ["M01", "M02", "M03", "M04", "M05", "M06"]:
+        for test_id in ["M01", "M02", "M03", "M04", "M05", "M06", "M08"]:
             findings.append(verdict("Gate 2", test_id, "BLOCKED", metric, "financial statement balance artifacts required"))
     else:
         work = df.copy()
@@ -1401,6 +1401,107 @@ def _balance_metrics(df: pd.DataFrame, dataset: Path) -> list[dict[str, Any]]:
             if abs(pnl - re_effect) > 1:
                 closing_bad += 1
         findings.append(verdict("Gate 2", "M05", "PASS" if closing_checked > 0 and closing_bad == 0 else "FAIL", {"company_years_checked": closing_checked, "closing_bad": closing_bad}, "P&L closes to retained earnings"))
+
+        # M08: annual closing rows must keep closing semantics, not account-native
+        # revenue/expense labels. L4-03 materiality thresholds read
+        # semantic_account_subtype == income_statement_close to infer P&L scale,
+        # so a balanced closing entry can still be unusable if these labels drift.
+        m08_years_checked = 0
+        m08_pnl_lines = 0
+        m08_re_lines = 0
+        m08_bad_subtype = 0
+        m08_bad_line_family = 0
+        m08_bad_re_subtype = 0
+        m08_bad_re_line_family = 0
+        m08_missing_closing_components = 0
+        m08_bad_reconciliation = 0
+        m08_max_reconciliation_diff = 0
+        m08_examples: list[dict[str, Any]] = []
+        for company, fy in years.itertuples(index=False, name=None):
+            cls_year = closing[(closing["company_code"].eq(company)) & (closing["fiscal_year"].eq(fy))]
+            pnl_cls = cls_year[cls_year["gl_account"].astype(str).str[:1].isin(["4", "5", "6", "7", "8"])]
+            re_cls = cls_year[cls_year["gl_account"].astype(str).eq("3200")]
+            m08_years_checked += 1
+            if pnl_cls.empty or re_cls.empty:
+                m08_missing_closing_components += 1
+                if len(m08_examples) < 10:
+                    m08_examples.append(
+                        {
+                            "company_code": str(company),
+                            "fiscal_year": int(fy),
+                            "issue": "missing_pnl_or_retained_earnings_closing_line",
+                            "pnl_closing_lines": int(len(pnl_cls)),
+                            "retained_earnings_lines": int(len(re_cls)),
+                        }
+                    )
+                continue
+
+            m08_pnl_lines += int(len(pnl_cls))
+            m08_re_lines += int(len(re_cls))
+            bad_sub = pnl_cls["semantic_account_subtype"].fillna("").astype(str).ne("income_statement_close")
+            bad_fam = pnl_cls["line_text_family"].fillna("").astype(str).ne("annual_closing")
+            bad_re_sub = re_cls["semantic_account_subtype"].fillna("").astype(str).ne("retained_earnings")
+            bad_re_fam = re_cls["line_text_family"].fillna("").astype(str).ne("annual_closing")
+            m08_bad_subtype += int(bad_sub.sum())
+            m08_bad_line_family += int(bad_fam.sum())
+            m08_bad_re_subtype += int(bad_re_sub.sum())
+            m08_bad_re_line_family += int(bad_re_fam.sum())
+
+            pnl_net = int((pnl_cls["_amount_credit_i"] - pnl_cls["_amount_debit_i"]).sum())
+            re_effect = int((re_cls["_amount_credit_i"] - re_cls["_amount_debit_i"]).sum())
+            diff = abs(pnl_net + re_effect)
+            m08_max_reconciliation_diff = max(m08_max_reconciliation_diff, diff)
+            if diff > 1:
+                m08_bad_reconciliation += 1
+
+            if len(m08_examples) < 10 and (
+                bad_sub.any()
+                or bad_fam.any()
+                or bad_re_sub.any()
+                or bad_re_fam.any()
+                or diff > 1
+            ):
+                m08_examples.append(
+                    {
+                        "company_code": str(company),
+                        "fiscal_year": int(fy),
+                        "bad_pnl_subtype_lines": int(bad_sub.sum()),
+                        "bad_pnl_line_family_lines": int(bad_fam.sum()),
+                        "bad_re_subtype_lines": int(bad_re_sub.sum()),
+                        "bad_re_line_family_lines": int(bad_re_fam.sum()),
+                        "closing_reconciliation_diff_krw": int(diff),
+                    }
+                )
+
+        m08_bad_total = (
+            m08_bad_subtype
+            + m08_bad_line_family
+            + m08_bad_re_subtype
+            + m08_bad_re_line_family
+            + m08_missing_closing_components
+            + m08_bad_reconciliation
+        )
+        findings.append(
+            verdict(
+                "Gate 2",
+                "M08",
+                "PASS" if m08_years_checked > 0 and m08_bad_total == 0 else "FAIL",
+                {
+                    "company_years_checked": m08_years_checked,
+                    "pnl_closing_lines_checked": m08_pnl_lines,
+                    "retained_earnings_lines_checked": m08_re_lines,
+                    "bad_pnl_semantic_subtype_lines": m08_bad_subtype,
+                    "bad_pnl_line_text_family_lines": m08_bad_line_family,
+                    "bad_retained_earnings_subtype_lines": m08_bad_re_subtype,
+                    "bad_retained_earnings_line_text_family_lines": m08_bad_re_line_family,
+                    "missing_closing_component_years": m08_missing_closing_components,
+                    "bad_reconciliation_years": m08_bad_reconciliation,
+                    "max_reconciliation_diff_krw": m08_max_reconciliation_diff,
+                    "examples": m08_examples,
+                },
+                "annual closing semantic labels must support downstream materiality threshold derivation",
+            )
+        )
 
     recon_path = dataset / "balance" / "subledger_reconciliation.json"
     if not recon_path.exists():
@@ -1658,6 +1759,130 @@ def audit(dataset: Path) -> dict[str, Any]:
                 "normal RBAC scope: low-level clerks are process-specialized; senior/controller may have limited multi-process scope; automated sources are exempt",
             )
         )
+
+    approver_required = {"document_id", "approved_by", "debit_amount"}
+    approver_missing = sorted(approver_required - set(df.columns))
+    employee_path = dataset / "master_data" / "employees.json"
+    if approver_missing or not employee_path.exists():
+        findings.append(
+            verdict(
+                "Gate 0",
+                "E05C_APPROVER_MASTER_AUTHORITY",
+                "BLOCKED",
+                {
+                    "missing_required_columns": approver_missing,
+                    "missing_employee_master": not employee_path.exists(),
+                },
+                "normal baseline approvers must be master-backed and authorized",
+            )
+        )
+    else:
+        employees = json.loads(employee_path.read_text(encoding="utf-8"))
+        emp_rows = []
+        for employee in employees if isinstance(employees, list) else []:
+            if not isinstance(employee, dict):
+                continue
+            user_id = str(employee.get("user_id", "") or "").strip()
+            if not user_id:
+                continue
+            emp_rows.append(
+                {
+                    "approved_by": user_id,
+                    "_approver_can_approve_je": employee.get("can_approve_je", False),
+                    "_approver_approval_limit": employee.get("approval_limit", 0),
+                    "_approver_persona": employee.get("persona", employee.get("user_persona", "")),
+                    "_approver_job_title": employee.get("job_title", ""),
+                }
+            )
+        emp = pd.DataFrame(emp_rows)
+        if emp.empty:
+            approver_metric = {
+                "approved_docs_checked": int(doc_head["approved_by"].fillna("").astype(str).str.strip().ne("").sum()),
+                "employee_master_rows": 0,
+            }
+            findings.append(
+                verdict(
+                    "Gate 0",
+                    "E05C_APPROVER_MASTER_AUTHORITY",
+                    "FAIL",
+                    approver_metric,
+                    "normal baseline approvers must be master-backed and authorized",
+                )
+            )
+        else:
+            emp["_approver_can_approve_je"] = emp["_approver_can_approve_je"].map(
+                lambda value: value if isinstance(value, bool) else str(value).strip().lower() == "true"
+            )
+            emp["_approver_approval_limit"] = pd.to_numeric(
+                emp["_approver_approval_limit"], errors="coerce"
+            ).fillna(0)
+            doc_amount = (
+                df.assign(_debit_i=pd.to_numeric(df["debit_amount"], errors="coerce").fillna(0))
+                .groupby("document_id", sort=False)["_debit_i"]
+                .sum()
+                .rename("_document_debit_total")
+                .reset_index()
+            )
+            approved_docs = (
+                doc_head[["document_id", "approved_by", "business_process", "source"]]
+                .copy()
+                .assign(approved_by=lambda frame: frame["approved_by"].fillna("").astype(str).str.strip())
+            )
+            approved_docs = approved_docs[approved_docs["approved_by"].ne("")]
+            approved_docs = approved_docs.merge(doc_amount, on="document_id", how="left")
+            approved_docs = approved_docs.merge(emp, on="approved_by", how="left")
+            unresolved = approved_docs["_approver_can_approve_je"].isna()
+            unauthorized = approved_docs["_approver_can_approve_je"].eq(False)
+            limit_bad = (
+                approved_docs["_approver_can_approve_je"].eq(True)
+                & approved_docs["_approver_approval_limit"].fillna(0).lt(approved_docs["_document_debit_total"].fillna(0))
+            )
+            authority_bad = unresolved | unauthorized
+            limit_bad_docs = int(limit_bad.sum())
+            approved_doc_count = int(len(approved_docs))
+            limit_bad_rate = limit_bad_docs / max(approved_doc_count, 1)
+            min_limit_bad_rate = 0.0005
+            max_limit_bad_rate = 0.02
+            limit_rate_in_range = min_limit_bad_rate <= limit_bad_rate <= max_limit_bad_rate
+            bad = authority_bad | (limit_bad if not limit_rate_in_range else pd.Series(False, index=approved_docs.index))
+            bad_by_process = (
+                approved_docs.loc[authority_bad | limit_bad, "business_process"]
+                .fillna("")
+                .astype(str)
+                .value_counts()
+                .head(10)
+                .to_dict()
+            )
+            bad_approvers = (
+                approved_docs.loc[authority_bad | limit_bad, ["approved_by", "_approver_persona", "_approver_job_title"]]
+                .fillna("")
+                .astype(str)
+                .drop_duplicates()
+                .head(20)
+                .to_dict(orient="records")
+            )
+            findings.append(
+                verdict(
+                    "Gate 0",
+                    "E05C_APPROVER_MASTER_AUTHORITY",
+                    "PASS" if int(authority_bad.sum()) == 0 and limit_rate_in_range else "FAIL",
+                    {
+                        "approved_docs_checked": approved_doc_count,
+                        "unresolved_approver_docs": int(unresolved.sum()),
+                        "unauthorized_approver_docs": int(unauthorized.sum()),
+                        "approval_limit_exceeded_docs": limit_bad_docs,
+                        "approval_limit_exceeded_rate": limit_bad_rate,
+                        "approval_limit_exceeded_min_rate": min_limit_bad_rate,
+                        "approval_limit_exceeded_max_rate": max_limit_bad_rate,
+                        "authority_bad_docs": int(authority_bad.sum()),
+                        "limit_rate_in_range": bool(limit_rate_in_range),
+                        "bad_docs": int(authority_bad.sum()) + (0 if limit_rate_in_range else limit_bad_docs),
+                        "exception_by_process_top10": {str(k): int(v) for k, v in bad_by_process.items()},
+                        "exception_approver_examples": bad_approvers,
+                    },
+                    "approved_by users must exist and have can_approve_je=true; approval-limit exceedance must be present but bounded as a natural control exception",
+                )
+            )
 
     i_status, i_metric = _document_reference_structure_metrics(df, doc_head)
     findings.append(

@@ -1,13 +1,13 @@
 # SAP-Merged (Graceful Degradation) E2E 테스트 결과 (ingest → feature)
 
-> 실행일: 2026-07-01 23:13
+> 실행일: 2026-07-02 21:09
 
 ## 1. 요약
 
 | 항목           | 값                          |
 |:---------------|:----------------------------|
 | 입력 행수      | 331,934               |
-| 소요시간       | 2.08s              |
+| 소요시간       | 2.30s              |
 | 생성 피처      | 20/18 |
 | 성공 카테고리  | time, pattern, text |
 | 실패 카테고리  | amount |
@@ -41,6 +41,7 @@
 | approval_excess_ratio   | —       |       — |    — | 의도된 스킵   |
 | approval_excess_bucket  | —       |       — |    — | 의도된 스킵   |
 | amount_zscore           | —       |       — |    — | 의도된 스킵   |
+| amount_zscore_log       | —       |       — |    — | 의도된 스킵   |
 | amount_magnitude        | —       |       — |    — | 의도된 스킵   |
 | is_round_number         | —       |       — |    — | 의도된 스킵   |
 | is_manual_je            | bool    |      0.0 |      1 | True 0.0%     |
@@ -84,6 +85,7 @@
 - `approval_excess_ratio`: 미생성 (amount 카테고리 스킵)
 - `approval_excess_bucket`: 미생성 (amount 카테고리 스킵)
 - `amount_zscore`: 미생성 (amount 카테고리 스킵)
+- `amount_zscore_log`: 미생성 (amount 카테고리 스킵)
 - `amount_magnitude`: 미생성 (amount 카테고리 스킵)
 - `is_round_number`: 미생성 (amount 카테고리 스킵)
 - `first_digit`: 전체 NaN (금액 컬럼 부재)
@@ -104,8 +106,8 @@
 
 | 카테고리 | 상태   | 소요시간(s) | 피처 수 |
 |:---------|:------:|------------:|--------:|
-| time     | 성공     |      0.250 |       7 |
-| amount   | 스킵     |      0.000 |      19 |
-| pattern  | 성공     |      0.453 |       5 |
-| text     | 성공     |      1.375 |       8 |
-| **합계** |        |      2.078 |      20 |
+| time     | 성공     |      0.344 |       7 |
+| amount   | 스킵     |      0.000 |      20 |
+| pattern  | 성공     |      0.500 |       5 |
+| text     | 성공     |      1.453 |       8 |
+| **합계** |        |      2.297 |      20 |

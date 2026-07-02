@@ -7,9 +7,10 @@
 
 | 영역 | 현재 기준 | 역할 |
 | --- | --- | --- |
-| NORMAL base | `datasynth_semantic_v1_normal_20260701_v48_rbac_r1` | v47 batch/job successor 위 RBAC/SoD persona-process 현실성 보정. 단일법인 C001 정상 원장 + 관계사 IC trace + automated/recurring batch_id·job_id 동시 부여 기준본 |
+| NORMAL base | `datasynth_semantic_v1_normal_20260702_v50_approval_noise_r2` | v49 approver-authority successor 위 L1-04 자연 승인한도 초과 예외율 보정. 단일법인 C001 정상 원장 + 관계사 IC trace + automated/recurring batch_id·job_id + RBAC/승인권한 기준본 |
 | PHASE1-1 recall overlay | `datasynth_semantic_v1_recall_20260630_v47_batchid_phase1_1_r1` | v47 normal 위 최신 `DETECTION_RULES.md` 기준 26개 개별 룰 detector-only recall 검증용 |
 | PHASE1 combo/tier overlay | `datasynth_semantic_v1_combo_tier_20260630_v47_batchid_r1j` | v47 normal 위 HIGH/MEDIUM/LOW/CONTEXT case assembly 검증용 |
+| Integrated usefulness all-fraud | `datasynth_integrated_usefulness_all_fraud_20260702_v1` | integrated usefulness PHASE1 v1g + PHASE2 v1f truth를 한 journal에 병합한 벤치마크용 combined dataset |
 | PHASE2 fraud overlay | `datasynth_semantic_v1_phase2_fraud_20260614_v1_r4m_h` + `..._seed1` | PHASE2 비지도/구조 신호의 shortcut-free 부정 scheme 검증용 |
 | PHASE2 scale reference | `datasynth_semantic_v1_phase2_fraud_20260613_v1_r4l_b` | r4m 이후 S13 규모 보존 비교용. full-column leak 때문에 최종 accepted overlay는 아님 |
 | Integrated usefulness Phase1 overlay | `datasynth_integrated_usefulness_phase1_20260701_v1g` | 통합 쓸모 벤치마크 Phase1 3패턴 5벌 seed, label firewall, 분포/날짜 coherence 검증용 |

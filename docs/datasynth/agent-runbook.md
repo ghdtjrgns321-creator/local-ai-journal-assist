@@ -49,11 +49,11 @@ uv run python tools/scripts/audit_full_leak_scan.py <PHASE2_DATASET>
 
 현재 accepted NORMAL:
 
-`data/journal/primary/datasynth_semantic_v1_normal_20260630_v47_batchid_r1`
+`data/journal/primary/datasynth_semantic_v1_normal_20260702_v50_approval_noise_r2`
 
 역할:
 
-- PHASE1-1 recall과 PHASE1 combo/tier의 base.
+- next PHASE1-1 recall과 PHASE1 combo/tier 재생성의 base.
 - 다음 PHASE2 fraud overlay의 target base.
 
 ### 2.2 생성 profile
@@ -67,7 +67,7 @@ cargo run -p datasynth-cli --bin datasynth-data -- generate `
 
 주의:
 
-- profile 이름은 `normal-coa-v42`지만 현행 v46b materialization도 이 계열 함수에서 확장된다.
+- profile 이름은 `normal-coa-v42`지만 현행 v50 materialization도 이 계열 함수에서 확장된다.
 - 출력 이름은 새 버전 suffix를 사용한다. 기존 accepted path를 덮어쓰지 않는다.
 
 ### 2.3 필수 gate
@@ -75,6 +75,13 @@ cargo run -p datasynth-cli --bin datasynth-data -- generate `
 ```powershell
 uv run python tools/scripts/normal_data_realism_verifier_20260603.py <NORMAL_OUTPUT>
 ```
+
+현행 v50 필수 확인:
+
+- `E05B_RBAC_PERSONA_PROCESS_SCOPE` PASS.
+- `E05C_APPROVER_MASTER_AUTHORITY` PASS.
+- E05C approval-limit exceeded rate is nonzero and bounded.
+- O02 synthetic marker 0.
 
 ```powershell
 uv run python tools/scripts/audit_balance_integrity.py <NORMAL_OUTPUT>

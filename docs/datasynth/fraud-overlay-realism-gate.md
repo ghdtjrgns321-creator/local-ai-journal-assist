@@ -90,8 +90,8 @@ uv run python tools/scripts/measure_phase1_combo_tier.py <PHASE1_COMBO_TIER_DATA
 - seed check: `..._r4m_h_seed1`
 - scale reference: `data/journal/primary/datasynth_semantic_v1_phase2_fraud_20260613_v1_r4l_b`
 
-주의: r4m_h는 accepted fraud overlay지만 최신 NORMAL v47 batch/job successor 위에서 재생성된 산출물은
-아니다. 다음 PHASE2 fraud overlay는 v47 또는 그 successor base 위에서 아래 gate를 다시 통과해야 한다.
+주의: r4m_h는 accepted fraud overlay지만 최신 NORMAL v50 approval-noise successor 위에서 재생성된 산출물은
+아니다. 다음 PHASE2 fraud overlay는 v50 또는 그 successor base 위에서 아래 gate를 다시 통과해야 한다.
 
 필수 명령:
 

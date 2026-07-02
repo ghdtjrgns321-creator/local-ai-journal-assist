@@ -56,6 +56,28 @@ v48 RBAC/SoD successor acceptance snapshot:
 - O02 synthetic marker findings 0. `user_persona`, `created_by`, `approved_by` are delegated to E05B
   because they are structural RBAC fields, not arbitrary generator markers.
 
+v49 approver authority successor acceptance snapshot:
+
+- Dataset: `data/journal/primary/datasynth_semantic_v1_normal_20260702_v49_approver_r1`.
+- Command: `uv run python tools/scripts/normal_data_realism_verifier_20260603.py data/journal/primary/datasynth_semantic_v1_normal_20260702_v49_approver_r1 --json-out reports/normal_v49_approver_r1_gate.json --md-out reports/normal_v49_approver_r1_gate.md`.
+- NORMAL realism verifier: PASS 41 / MONITOR 1 / INFO 3 / FAIL 0.
+- E05C approver master authority: approved docs checked 111,524, unresolved approver 0,
+  unauthorized approver 0, approval-limit bad 0.
+- H2R/O2C/P2P manual/adjustment 전표 1,748건은 모두 manager 승인자이고 `can_approve_je=true`.
+- E05B, O02, self-approval all passed with no regression.
+
+v50 bounded L1-04 natural exception acceptance snapshot:
+
+- Dataset: `data/journal/primary/datasynth_semantic_v1_normal_20260702_v50_approval_noise_r2`.
+- Command: `uv run python tools/scripts/normal_data_realism_verifier_20260603.py data/journal/primary/datasynth_semantic_v1_normal_20260702_v50_approval_noise_r2 --json-out reports/normal_v50_approval_noise_r2_gate.json --md-out reports/normal_v50_approval_noise_r2_gate.md`.
+- NORMAL realism verifier: PASS 41 / MONITOR 1 / INFO 3 / FAIL 0.
+- E05C approver master authority and natural exception: approved docs checked 111,524, unauthorized approver 0,
+  unresolved approver 0, approval-limit exceeded docs 178, exceeded rate 0.1596%.
+- Allowed approval-limit exceeded rate range: 0.05% to 2.0%. Zero is FAIL because it makes L1-04 dead on NORMAL;
+  above 2.0% is FAIL because it implies control breakdown.
+- Journal no longer exports unused `approval_limit` or `approver_authority_limit`; employee master is the
+  authoritative limit source.
+
 ## NORMAL 주요 검사 축
 
 - A: 기본 회계 구조. 차대변 균형, 금액 양수/정수, 전표 단위 일관성.
@@ -63,6 +85,9 @@ v48 RBAC/SoD successor acceptance snapshot:
 - C/D: 시간·분포. 결산월, 주말/심야, 연도 drift, timestamp 분산.
 - E: 승인·SoD. NORMAL에는 direct confirmed SoD marker가 없어야 하며, RBAC/persona-process 범위가
   현실적이어야 한다. AP/AR/Treasury/Payroll clerk가 모든 process를 처리하는 all-to-all 분포는 FAIL이다.
+  또한 결재자로 등장하는 사용자는 employee master에 존재하고 `can_approve_je=true`여야 한다. 전표금액이
+  승인자 `approval_limit`을 초과하는 건은 낮은 비율의 운영 예외로 존재해야 하지만, 0% 또는 대량 발생은
+  실패다.
 - F/G/H: 거래처, 계정, description, noise attribution.
 - I/J: document number, reference, duplicate artifact, reversal pair.
 - K: IC/graph normal background.
