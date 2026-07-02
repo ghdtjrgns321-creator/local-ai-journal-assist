@@ -17,7 +17,9 @@ def _core_df(**overrides: object) -> pd.DataFrame:
         "gl_account": ["1000", "1000"],
         "debit_amount": [1_000_000.0, 0.0],
         "credit_amount": [0.0, 1_000_000.0],
-        "posting_date": pd.to_datetime(["2025-01-01", "2025-03-22"]),
+        "posting_date": pd.to_datetime(
+            ["2025-01-01", "2025-02-10"]
+        ),  # 40일 시차 (기본 45일 윈도우 내)
         "source": ["manual", "manual"],
     }
     data.update(overrides)
@@ -53,11 +55,18 @@ class TestS0StructuralReversalReference:
 
 
 class TestS1OneToOneMatch:
-    def test_same_account_opposite_side_80_days_flagged(self) -> None:
-        result = _s1_one_to_one_match(_core_df(), match_window_days=90)
+    def test_same_account_opposite_side_within_default_window_flagged(self) -> None:
+        result = _s1_one_to_one_match(_core_df())  # 40일 시차, 기본 45일 윈도우
         assert result.tolist() == [True, True]
         assert result.attrs["pair_details"][0]["counterpart_document_id"] == "D002"
         assert result.attrs["pair_details"][0]["gl_account"] == "1000"
+
+    def test_gap_between_45_and_90_days_not_matched_by_default(self) -> None:
+        # 60일 시차: 구 90일 윈도우에선 발화했으나 45일로 좁힌 기본 윈도우에선 미발화
+        df = _core_df(posting_date=pd.to_datetime(["2025-01-01", "2025-03-02"]))
+        assert not _s1_one_to_one_match(df).any()
+        # 명시적으로 90일 윈도우를 주면 여전히 발화 (윈도우 파라미터 동작 검증)
+        assert _s1_one_to_one_match(df, match_window_days=90).tolist() == [True, True]
 
     def test_same_document_not_flagged(self) -> None:
         df = _core_df(document_id=["D001", "D001"], posting_date=pd.to_datetime(["2025-01-01"] * 2))

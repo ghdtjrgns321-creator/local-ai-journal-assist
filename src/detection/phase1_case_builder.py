@@ -2951,7 +2951,7 @@ def _l205_one_to_one_pairs(df: pd.DataFrame, row_positions: list[int]) -> list[d
     negatives = docs[docs["net"].lt(0)]
     if positives.empty or negatives.empty:
         return []
-    window_days = int(getattr(_FLOW_SETTINGS, "reversal_mirror_window_days", 90))
+    window_days = int(getattr(_FLOW_SETTINGS, "reversal_mirror_window_days", 45))
     entries: list[dict[str, Any]] = []
     merged = positives.merge(
         negatives,

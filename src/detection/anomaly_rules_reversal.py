@@ -132,7 +132,7 @@ def _s0_reference_details(df: pd.DataFrame, s0: pd.Series) -> dict[object, dict[
 
 def _s1_one_to_one_match(
     df: pd.DataFrame,
-    match_window_days: int = 90,
+    match_window_days: int = 45,
     amount_tolerance: float = 0.02,
 ) -> pd.Series:
     """Return True for same-account, opposite-side, one-to-one reversal mirror pairs."""
@@ -201,8 +201,8 @@ def _s1_one_to_one_match(
         return result
 
     day_gap = (
-        candidate_pairs["posting_date_pos"] - candidate_pairs["posting_date_neg"]
-    ).abs().dt.days
+        (candidate_pairs["posting_date_pos"] - candidate_pairs["posting_date_neg"]).abs().dt.days
+    )
     different_docs = candidate_pairs["document_id_pos"].ne(candidate_pairs["document_id_neg"])
     in_window = day_gap.le(int(match_window_days))
     amount_close = [
@@ -284,7 +284,7 @@ def _build_row_annotations(
 def c11_reversal_entry(
     df: pd.DataFrame,
     *,
-    match_window_days: int = 90,
+    match_window_days: int = 45,
     amount_tolerance: float = 0.02,
 ) -> pd.Series:
     """Binary L2-05 reversal detector: ERP link or same-account mirror pair."""

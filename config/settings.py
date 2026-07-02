@@ -200,7 +200,9 @@ class AuditSettings(BaseSettings):
     batch_amount_zscore: float = 3.0  # 배치 내 금액 Z-score 임계
 
     # --- Detection Layer C: C11 역분개 ---
-    reversal_mirror_window_days: int = 90  # L2-05: 1:1 거울 쌍 매칭 허용 일수
+    reversal_mirror_window_days: int = (
+        45  # L2-05: 1:1 거울 쌍 매칭 허용 일수 (구 90일 → 45일, 시차 분포 분석 반영)
+    )
 
     # --- GraphDetector (WU-22) — networkx 기반 순환/이전가격 탐지 ---
     # Why: 회계 장부 100만+ 행을 graph에 올리면 OOM. pandas 사전 필터 + from_pandas_edgelist 강제.
