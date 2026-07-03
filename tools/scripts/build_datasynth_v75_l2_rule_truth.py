@@ -16,13 +16,15 @@ from pathlib import Path
 
 import pandas as pd
 
-
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from config.settings import get_audit_rules, get_settings  # noqa: E402
 from src.detection.anomaly_rules_reversal import c11_reversal_entry  # noqa: E402
-from src.detection.fraud_rules_groupby import b05_duplicate_entry, b11_expense_capitalization  # noqa: E402
+from src.detection.fraud_rules_groupby import (  # noqa: E402
+    b05_duplicate_entry,
+    b11_expense_capitalization,
+)
 
 SOURCE = ROOT / "data" / "journal" / "primary" / "datasynth_v74_candidate"
 DEST = ROOT / "data" / "journal" / "primary" / "datasynth_v75_candidate"
@@ -120,7 +122,9 @@ def _write_json_records(path: Path, df: pd.DataFrame) -> None:
     path.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _write_rule_truth(rule_id: str, docs: pd.DataFrame, basis: str, metadata: dict[str, object]) -> pd.DataFrame:
+def _write_rule_truth(
+    rule_id: str, docs: pd.DataFrame, basis: str, metadata: dict[str, object]
+) -> pd.DataFrame:
     out = docs.copy()
     out["rule_id"] = rule_id
     out["expected_hit"] = True
@@ -144,7 +148,11 @@ def _docs_from_flag(rows: pd.DataFrame, flag: pd.Series, rule_name: str) -> pd.D
     flagged = rows.loc[flag.fillna(False).astype(bool)].copy()
     if flagged.empty:
         return _doc_context(rows).iloc[0:0].copy()
-    counts = flagged.groupby("document_id", as_index=False).size().rename(columns={"size": "flagged_row_count"})
+    counts = (
+        flagged.groupby("document_id", as_index=False)
+        .size()
+        .rename(columns={"size": "flagged_row_count"})
+    )
     docs = _doc_context(rows).merge(counts, on="document_id", how="inner")
     docs["detector_rule_name"] = rule_name
     return docs
@@ -203,10 +211,8 @@ def main() -> None:
     )
     l205_flag = c11_reversal_entry(
         rows,
-        match_window_days=settings.reversal_match_window_days,
-        rolling_window_days=settings.reversal_rolling_window_days,
-        zero_threshold=settings.reversal_zero_threshold,
-        score_threshold=settings.reversal_score_threshold,
+        match_window_days=settings.reversal_mirror_window_days,
+        amount_tolerance=settings.reversal_amount_tolerance,
     )
 
     replacements = {

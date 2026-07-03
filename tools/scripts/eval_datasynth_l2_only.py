@@ -121,7 +121,9 @@ def load_candidate(data_dir: Path, years: list[int]) -> tuple[pd.DataFrame, pd.D
     return df, labels
 
 
-def run_l2_only(df: pd.DataFrame, rule_ids: set[str]) -> tuple[dict[str, pd.Series], dict[str, float]]:
+def run_l2_only(
+    df: pd.DataFrame, rule_ids: set[str]
+) -> tuple[dict[str, pd.Series], dict[str, float]]:
     settings = get_settings()
     audit_rules = get_audit_rules()
     results: dict[str, pd.Series] = {}
@@ -179,10 +181,8 @@ def run_l2_only(df: pd.DataFrame, rule_ids: set[str]) -> tuple[dict[str, pd.Seri
         start = time.perf_counter()
         flagged = c11_reversal_entry(
             df,
-            match_window_days=settings.reversal_match_window_days,
-            rolling_window_days=settings.reversal_rolling_window_days,
-            zero_threshold=settings.reversal_zero_threshold,
-            score_threshold=settings.reversal_score_threshold,
+            match_window_days=settings.reversal_mirror_window_days,
+            amount_tolerance=settings.reversal_amount_tolerance,
         )
         results["L2-05"] = flagged
         timings["L2-05 rule"] = time.perf_counter() - start
@@ -281,7 +281,9 @@ def _metric_l202_by_duplicate_pair(
     flagged_rows = df.loc[flagged, ["document_id"]]
     for idx, row in flagged_rows.itertuples():
         annotation = annotations.get(idx, {}) if isinstance(annotations, dict) else {}
-        matched_doc = annotation.get("matched_document_id") if isinstance(annotation, dict) else None
+        matched_doc = (
+            annotation.get("matched_document_id") if isinstance(annotation, dict) else None
+        )
         if matched_doc:
             flagged_pairs.add(_pair_key(row, matched_doc))
 
@@ -322,11 +324,13 @@ def _document_score_bands(rule_id: str, df: pd.DataFrame, flagged: pd.Series) ->
         }
 
     doc_scores = (
-        pd.DataFrame({
-            "document_id": df["document_id"].astype(str),
-            "score": score_series.where(detected, 0.0),
-            "detected": detected,
-        })
+        pd.DataFrame(
+            {
+                "document_id": df["document_id"].astype(str),
+                "score": score_series.where(detected, 0.0),
+                "detected": detected,
+            }
+        )
         .loc[lambda frame: frame["detected"]]
         .groupby("document_id", sort=False)["score"]
         .max()
@@ -362,8 +366,7 @@ def evaluate_by_year(
             for rule_id, flagged in results.items()
         ]
     report["전체"] = [
-        metric_for_rule(df, labels, rule_id, flagged)
-        for rule_id, flagged in results.items()
+        metric_for_rule(df, labels, rule_id, flagged) for rule_id, flagged in results.items()
     ]
     return report
 
@@ -376,10 +379,12 @@ def render_section(title: str, metrics: list[RuleMetric]) -> str:
     phase1_items = [item for item in metrics if item.evaluation_mode == "phase1_population"]
 
     if strict_items:
-        lines.extend([
-            "룰      룰 이름            정답   탐지   정탐   과탐   미탐",
-            "-----  ----------------  -----  -----  -----  -----  -----",
-        ])
+        lines.extend(
+            [
+                "룰      룰 이름            정답   탐지   정탐   과탐   미탐",
+                "-----  ----------------  -----  -----  -----  -----  -----",
+            ]
+        )
         for item in strict_items:
             lines.append(
                 f"{item.rule_id:<6} {item.rule_name:<16}"
@@ -393,10 +398,12 @@ def render_section(title: str, metrics: list[RuleMetric]) -> str:
     if phase1_items:
         if strict_items:
             lines.append("")
-        lines.extend([
-            "룰      룰 이름            정답   후보   정탐   라벨외   미탐   high   medium   low   zero",
-            "-----  ----------------  -----  -----  -----  -------  -----  -----  -------  ----  -----",
-        ])
+        lines.extend(
+            [
+                "룰      룰 이름            정답   후보   정탐   라벨외   미탐   high   medium   low   zero",
+                "-----  ----------------  -----  -----  -----  -------  -----  -----  -------  ----  -----",
+            ]
+        )
         for item in phase1_items:
             bands = item.score_bands or {}
             lines.append(

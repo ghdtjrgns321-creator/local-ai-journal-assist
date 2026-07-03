@@ -203,6 +203,11 @@ class AuditSettings(BaseSettings):
     reversal_mirror_window_days: int = (
         45  # L2-05: 1:1 거울 쌍 매칭 허용 일수 (구 90일 → 45일, 시차 분포 분석 반영)
     )
+    # L2-05: 거울 쌍 금액 일치 허용오차(비율). 역분개는 ERP 표준상 exact reverse(정확 반대)이므로
+    # 정확일치(±0)가 도메인 정합. 구 0.02(±2%)는 L2-02 중복지급 tolerance를 전용한 값으로,
+    # 정상 순환거래(AR 발생↔회수 등 우연 동액)를 대량 오탐했다(정상 v51 FP 17,434→207).
+    # 근거: docs/spec/results/normal/L2-05_REVERSAL_TOLERANCE_DECISION.md
+    reversal_amount_tolerance: float = 0.0
 
     # --- GraphDetector (WU-22) — networkx 기반 순환/이전가격 탐지 ---
     # Why: 회계 장부 100만+ 행을 graph에 올리면 OOM. pandas 사전 필터 + from_pandas_edgelist 강제.

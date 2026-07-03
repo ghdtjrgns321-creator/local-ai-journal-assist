@@ -44,14 +44,26 @@ def _has_value(series: pd.Series) -> pd.Series:
     return normalized.ne("") & ~normalized.isin(["nan", "none", "null"])
 
 
+# 부동소수 합산 오차 흡수용 절대 epsilon. tolerance=0.0(정확일치) 의도를 해치지 않으면서
+# 다중 라인 전표 groupby-sum의 float 결합법칙 오차(예: 7×0.07 vs 0.49 = 5.5e-17)를 흡수한다.
+# 회계 최소단위(원/센트) 미만이라 정수 KRW·센트 통화의 실제 금액 차이는 그대로 구분한다.
+_AMOUNT_FLOOR_EPSILON = 0.005
+
+
 def _is_amount_close(left: float, right: float, tolerance: float) -> bool:
-    """Return True when amounts are equal within a relative tolerance."""
+    """Return True when amounts are equal within a relative tolerance.
+
+    tolerance=0.0(정확일치)이라도 _AMOUNT_FLOOR_EPSILON(0.005) 이하의 부동소수 합산 오차는
+    흡수한다 — 역분개 exact reverse 의도를 유지하면서 다중라인 float 오차로 인한 미탐을 막는다.
+    """
 
     left_abs = abs(float(left))
     right_abs = abs(float(right))
     if left_abs == 0 or right_abs == 0:
-        return left_abs == right_abs
-    return abs(left_abs - right_abs) <= max(left_abs, right_abs) * tolerance
+        return abs(left_abs - right_abs) <= _AMOUNT_FLOOR_EPSILON
+    return abs(left_abs - right_abs) <= max(
+        max(left_abs, right_abs) * tolerance, _AMOUNT_FLOOR_EPSILON
+    )
 
 
 def _s0_structural_reversal_reference(df: pd.DataFrame) -> pd.Series:
@@ -133,9 +145,13 @@ def _s0_reference_details(df: pd.DataFrame, s0: pd.Series) -> dict[object, dict[
 def _s1_one_to_one_match(
     df: pd.DataFrame,
     match_window_days: int = 45,
-    amount_tolerance: float = 0.02,
+    amount_tolerance: float = 0.0,
 ) -> pd.Series:
-    """Return True for same-account, opposite-side, one-to-one reversal mirror pairs."""
+    """Return True for same-account, opposite-side, one-to-one reversal mirror pairs.
+
+    amount_tolerance 기본 0.0(정확일치): 역분개는 ERP 표준상 exact reverse이므로 원전표와
+    금액이 정확히 같다. 구 0.02는 정상 순환거래를 우연 동액으로 대량 오탐했다.
+    """
 
     required = ["document_id", "gl_account", "debit_amount", "credit_amount", "posting_date"]
     if any(column not in df.columns for column in required):
@@ -285,9 +301,14 @@ def c11_reversal_entry(
     df: pd.DataFrame,
     *,
     match_window_days: int = 45,
-    amount_tolerance: float = 0.02,
+    amount_tolerance: float = 0.0,
 ) -> pd.Series:
-    """Binary L2-05 reversal detector: ERP link or same-account mirror pair."""
+    """Binary L2-05 reversal detector: ERP link or same-account mirror pair.
+
+    amount_tolerance 기본 0.0(정확일치): 역분개=exact reverse 도메인 원리. 운영 값은
+    config `reversal_amount_tolerance`로 주입(anomaly_layer). 근거:
+    docs/spec/results/normal/L2-05_REVERSAL_TOLERANCE_DECISION.md
+    """
 
     missing = [column for column in _CORE_COLUMNS if column not in df.columns]
     if missing or len(df) < 2:

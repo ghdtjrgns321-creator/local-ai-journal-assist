@@ -246,6 +246,7 @@ class AnomalyDetector(BaseDetector):
                 c11_reversal_entry,
                 {
                     "match_window_days": s.reversal_mirror_window_days,
+                    "amount_tolerance": s.reversal_amount_tolerance,
                 },
             ),
             (

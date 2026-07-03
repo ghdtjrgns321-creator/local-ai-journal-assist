@@ -22,15 +22,16 @@ from typing import Any
 
 import pandas as pd
 
-
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from config.settings import get_audit_rules, get_settings  # noqa: E402
 from src.detection.anomaly_rules_reversal import c11_reversal_entry  # noqa: E402
-from src.detection.fraud_rules_groupby import b05_duplicate_entry, b11_expense_capitalization  # noqa: E402
+from src.detection.fraud_rules_groupby import (  # noqa: E402
+    b05_duplicate_entry,
+    b11_expense_capitalization,
+)
 from src.ingest.datasynth_labels import SOURCE_PATH_ATTR  # noqa: E402
-
 
 SOURCE = ROOT / "data" / "journal" / "primary" / "datasynth_v114_candidate"
 DEST = ROOT / "data" / "journal" / "primary" / "datasynth_v115_candidate"
@@ -120,7 +121,9 @@ def _read_year(year: int) -> pd.DataFrame:
     path = DEST / f"journal_entries_{year}.csv"
     header = pd.read_csv(path, nrows=0).columns.tolist()
     cols = [column for column in RULE_INPUT_COLUMNS if column in header]
-    frame = pd.read_csv(path, usecols=cols, parse_dates=["posting_date", "document_date"], low_memory=False)
+    frame = pd.read_csv(
+        path, usecols=cols, parse_dates=["posting_date", "document_date"], low_memory=False
+    )
     for column in RULE_INPUT_COLUMNS:
         if column not in frame.columns:
             frame[column] = pd.NA
@@ -156,10 +159,14 @@ def _purge_stale_l2_truth() -> list[str]:
     return sorted(removed)
 
 
-def _annotate_from_result(df: pd.DataFrame, result: pd.Series, prefix: str) -> tuple[pd.DataFrame, dict[str, Any]]:
+def _annotate_from_result(
+    df: pd.DataFrame, result: pd.Series, prefix: str
+) -> tuple[pd.DataFrame, dict[str, Any]]:
     mask = pd.Series(result, index=df.index).fillna(False).astype(bool)
     annotations = result.attrs.get("row_annotations", {})
-    scores = pd.Series(result.attrs.get("score_series", 0.0), index=df.index).fillna(0.0).astype(float)
+    scores = (
+        pd.Series(result.attrs.get("score_series", 0.0), index=df.index).fillna(0.0).astype(float)
+    )
     work = df.loc[mask].copy()
     if work.empty:
         return pd.DataFrame(), result.attrs.get("breakdown", {})
@@ -181,10 +188,14 @@ def _annotate_from_result(df: pd.DataFrame, result: pd.Series, prefix: str) -> t
         lambda idx: str(annotations.get(int(idx), {}).get("queue_label", ""))
     )
     work["_matched_reason_codes"] = work.index.map(
-        lambda idx: "|".join(str(v) for v in annotations.get(int(idx), {}).get("matched_reason_codes", []))
+        lambda idx: "|".join(
+            str(v) for v in annotations.get(int(idx), {}).get("matched_reason_codes", [])
+        )
     )
     work["_trigger_signals"] = work.index.map(
-        lambda idx: "|".join(str(v) for v in annotations.get(int(idx), {}).get("trigger_signals", []))
+        lambda idx: "|".join(
+            str(v) for v in annotations.get(int(idx), {}).get("trigger_signals", [])
+        )
     )
 
     grouped = work.groupby("document_id", dropna=False).agg(
@@ -297,10 +308,8 @@ def _build_truths(rows: pd.DataFrame) -> tuple[dict[str, pd.DataFrame], dict[str
 
     l205 = c11_reversal_entry(
         rows,
-        match_window_days=settings.reversal_match_window_days,
-        rolling_window_days=settings.reversal_rolling_window_days,
-        zero_threshold=settings.reversal_zero_threshold,
-        score_threshold=settings.reversal_score_threshold,
+        match_window_days=settings.reversal_mirror_window_days,
+        amount_tolerance=settings.reversal_amount_tolerance,
     )
     l205_docs, l205_breakdown = _annotate_from_result(rows, l205, "l205")
 
@@ -338,7 +347,9 @@ def _write_truth_family(rule_id: str, truth: pd.DataFrame, review_stem: str) -> 
         truth.to_csv(LABELS / f"{stem}.csv", index=False)
         _write_json_records(LABELS / f"{stem}.json", truth)
         for year in YEARS:
-            year_df = truth.loc[pd.to_numeric(truth["fiscal_year"], errors="coerce").eq(year)].copy()
+            year_df = truth.loc[
+                pd.to_numeric(truth["fiscal_year"], errors="coerce").eq(year)
+            ].copy()
             year_df.to_csv(LABELS / f"{stem}_{year}.csv", index=False)
             _write_json_records(LABELS / f"{stem}_{year}.json", year_df)
 
@@ -367,7 +378,9 @@ def _stale_l2_files() -> dict[str, list[str]]:
             stale[rule_id] = ["missing"]
             continue
         df = pd.read_csv(path, low_memory=False)
-        values = sorted(df.get("source_candidate", pd.Series(dtype=str)).dropna().astype(str).unique().tolist())
+        values = sorted(
+            df.get("source_candidate", pd.Series(dtype=str)).dropna().astype(str).unique().tolist()
+        )
         stale_values = [value for value in values if value != "v115"]
         if stale_values:
             stale[rule_id] = stale_values

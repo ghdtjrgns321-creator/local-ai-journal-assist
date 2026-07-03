@@ -83,6 +83,42 @@ class TestS1OneToOneMatch:
         result = _s1_one_to_one_match(df)
         assert not result.any()
 
+    def test_near_but_not_exact_amount_not_matched_by_default(self) -> None:
+        # 역분개는 exact reverse가 본질 → 기본 tolerance 0.0(±0%)에서 ±1% 미세차는 미발화.
+        # 구 ±2%였다면 발화했을 케이스(정상 순환거래 우연 동액 오탐의 전형).
+        df = _core_df(credit_amount=[0.0, 990_000.0])  # 원전표 1,000,000 대비 -1%
+        assert not _s1_one_to_one_match(df).any()
+        # 명시적으로 ±2%를 주면 발화 (tolerance 파라미터 동작 검증)
+        assert _s1_one_to_one_match(df, amount_tolerance=0.02).tolist() == [True, True]
+
+    def test_exact_amount_matched_at_zero_tolerance(self) -> None:
+        # 정확일치는 기본 tolerance 0.0에서 발화(recall 유지).
+        assert _s1_one_to_one_match(_core_df(), amount_tolerance=0.0).tolist() == [True, True]
+
+    def test_multiline_float_sum_matched_at_zero_tolerance(self) -> None:
+        # 다중 라인 전표 groupby-sum의 부동소수 오차(7×0.07=0.49000000000000005 vs 0.49,
+        # 차이 5.5e-17)를 floor epsilon이 흡수해 tolerance=0.0에서도 정확일치로 발화해야 한다.
+        # floor epsilon 없으면 [False]로 미탐(진짜 역분개 놓침).
+        df = pd.DataFrame(
+            {
+                "document_id": ["D001"] * 7 + ["D002"],
+                "gl_account": ["1000"] * 8,
+                "debit_amount": [0.07] * 7 + [0.0],
+                "credit_amount": [0.0] * 7 + [0.49],
+                "posting_date": pd.to_datetime(["2025-01-01"] * 7 + ["2025-02-10"]),
+            }
+        )
+        result = _s1_one_to_one_match(df, amount_tolerance=0.0)
+        assert result.tolist() == [True] * 8
+
+    def test_real_amount_difference_still_not_matched_with_floor(self) -> None:
+        # floor epsilon(0.005)은 부동소수 오차만 흡수하고, 실제 금액 차이(0.5원)는 여전히 미발화.
+        df = _core_df(
+            debit_amount=[1_000_000.0, 0.0],
+            credit_amount=[0.0, 1_000_000.5],  # 0.5원 실제 차이 (floor 0.005 초과)
+        )
+        assert not _s1_one_to_one_match(df, amount_tolerance=0.0).any()
+
     def test_date_outside_window_not_matched(self) -> None:
         df = _core_df(posting_date=pd.to_datetime(["2025-01-01", "2025-04-02"]))
         result = _s1_one_to_one_match(df, match_window_days=90)
