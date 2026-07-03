@@ -2869,16 +2869,16 @@ def _flow_units_from_l205_minimal_link_keys(
         return []
     units: list[FlowUnit] = []
     seen_doc_sets: set[tuple[str, ...]] = set()
-    # Why: 세 빌더(structural→one_to_one→rolling)가 같은 L2-05 역분개 문서를 각각 별도 flow로
-    #      만들 수 있다. seen_doc_sets는 완전 동일 집합만 dedup하므로 부분 겹침(한 문서가 두 flow에)을
-    #      못 막아 단위 disjoint를 깬다(예: one_to_one {A,B} + rolling {A,B,C} → A,B 중복). 문서 단위
-    #      seen_documents로, 이미 다른 reversal flow에 흡수된 문서를 포함하는 후속 flow는 skip한다
-    #      (우선순위: structural > one_to_one > rolling). 한 문서는 단일 primary flow로만 흡수.
+    # Why: 두 빌더(structural→one_to_one)가 같은 L2-05 역분개 문서를 각각 별도 flow로 만들 수
+    #      있다. seen_doc_sets는 완전 동일 집합만 dedup하므로 부분 겹침(한 문서가 두 flow에)을 못
+    #      막아 단위 disjoint를 깬다. 문서 단위 seen_documents로, 이미 다른 reversal flow에 흡수된
+    #      문서를 포함하는 후속 flow는 skip한다(우선순위: structural > one_to_one). 한 문서는 단일
+    #      primary flow로만 흡수. (구 rolling_zero_out=S2 N:M순액≈0 빌더는 폐기 — DETECTION_RULES.md
+    #      L2-05 S2 폐기와 정합. detector c11도 S2 미발화.)
     seen_documents: set[str] = set()
     for builder in (
         _l205_structural_pairs,
         _l205_one_to_one_pairs,
-        _l205_rolling_zero_out_sets,
     ):
         for entry in builder(df, row_positions):
             doc_key = tuple(entry["member_document_ids"])
@@ -2991,60 +2991,6 @@ def _l205_one_to_one_pairs(df: pd.DataFrame, row_positions: list[int]) -> list[d
     return _dedupe_flow_entries(entries)
 
 
-def _l205_rolling_zero_out_sets(df: pd.DataFrame, row_positions: list[int]) -> list[dict[str, Any]]:
-    required = {"document_id", "gl_account", "posting_date", "debit_amount", "credit_amount"}
-    if not required.issubset(df.columns):
-        return []
-    docs = _l205_document_rows(df, row_positions)
-    if docs.empty:
-        return []
-    threshold = float(getattr(_FLOW_SETTINGS, "reversal_zero_threshold", 1000.0))
-    window_days = int(getattr(_FLOW_SETTINGS, "reversal_rolling_window_days", 7))
-    entries: list[dict[str, Any]] = []
-    group_cols = ["gl_account", "created_by_norm"]
-    for _, group in docs.groupby(group_cols, sort=False):
-        if len(group) < 2:
-            continue
-        ordered = group.sort_values("posting_date").reset_index(drop=True)
-        for left in range(len(ordered)):
-            for right in range(left + 1, len(ordered)):
-                window = ordered.iloc[left : right + 1]
-                day_span = int((window["posting_date"].max() - window["posting_date"].min()).days)
-                if day_span > window_days:
-                    break
-                if window["document_id"].nunique() < 2:
-                    continue
-                if not (window["net"].gt(0).any() and window["net"].lt(0).any()):
-                    continue
-                net = float(window["net"].sum())
-                gross = float(window["gross"].sum())
-                if gross <= 0 or abs(net) > threshold or abs(net) / gross >= 0.05:
-                    continue
-                if _l205_window_context_score(window) < 2:
-                    continue
-                member_document_ids = sorted(set(window["document_id"].astype(str)))
-                entries.append(
-                    {
-                        "link_type": "rolling_zero_out_set",
-                        "member_document_ids": member_document_ids,
-                        "row_positions": sorted(
-                            {pos for values in window["row_positions"] for pos in values}
-                        ),
-                        "link_key": {
-                            "rule_id": "L2-05",
-                            "link_type": "rolling_zero_out_set",
-                            "gl_account": str(window["gl_account"].iloc[0]),
-                            "created_by_norm": str(window["created_by_norm"].iloc[0]),
-                            "period_start": _date_string(window["posting_date"].min()),
-                            "period_end": _date_string(window["posting_date"].max()),
-                            "net_minor": _amount_minor_bucket(net),
-                        },
-                    }
-                )
-                break
-    return _dedupe_flow_entries(entries)
-
-
 def _l205_document_rows(df: pd.DataFrame, row_positions: list[int]) -> pd.DataFrame:
     scoped = df.iloc[row_positions].copy()
     scoped["_row_position"] = [_position_from_index_label(df, index) for index in scoped.index]
@@ -3109,20 +3055,6 @@ def _l205_pair_context_score(row: Any) -> int:
         row.header_text_norm_neg
     ):
         score += 1
-    return score
-
-
-def _l205_window_context_score(window: pd.DataFrame) -> int:
-    score = 0
-    for column, weight in (
-        ("reference_norm", 2),
-        ("created_by_norm", 1),
-        ("document_type_norm", 1),
-        ("line_text_norm", 1),
-    ):
-        values = {str(value) for value in window[column].tolist() if str(value)}
-        if len(values) == 1:
-            score += weight
     return score
 
 
