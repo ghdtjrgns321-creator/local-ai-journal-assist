@@ -525,8 +525,9 @@ RULE_DETAIL_METADATA_REGISTRY: dict[str, RuleDetailMetadata] = {
     "L3-03": _entry(
         "L3-03",
         presenter_surface=PresenterSurface.CONTEXT_BADGE,
-        final_topic="intercompany_cycle",
-        secondary_topics=("account_logic",),
+        # intercompany_cycle 은 TOPIC_REGISTRY 에서 제거됨(2026-06-14) — 스테일 참조 시
+        # _collect_raw_hits 의 topic 게이트에서 L3-03 hit 이 전량 탈락한다(S4 발견, 2026-07-18).
+        final_topic="account_logic",
         scoring_role=ScoringRole.BOOSTER,
         standalone_rankable=False,
         allow_row_violation_detail=True,

@@ -204,7 +204,7 @@ Benford(L4-02)·D01/D02·L4-05는 PHASE1-2 family/macro로 이관(별도 문서,
 - **이중 트랙 (정합성 + 부정)** — L1-08만 양 트랙에 싣는다
   - 같은 표면신호(`fiscal_period_mismatch=True`)가 두 원인을 가린다: ① 오타·ERP 매핑 오류(의도 없음) ② 의도적 기간 조작(cutoff). 플래그만으로는 구분 불가하므로 한 플래그를 두 surface가 다르게 소비한다. L1-01(차대불일치)·L1-02(필수필드)는 부정 조합 의미가 약해 정합성 단독이지만, 기간불일치는 cutoff fraud의 정통 수법이라 L1-08만 dual이 정당하다.
   - **정합성 트랙 (raw 전수)**: 결산조정·특수기수 포함 **raw mismatch 전부**를 데이터 품질·coverage 지표로 집계한다. "기간 귀속 점검 필요" 경고이며 **부정 priority_score에는 합산하지 않는다**(별도 surface·집계). `Integrity / Coverage Blockers`(L1-01·L1-02와 동일 묶음)로 표시.
-  - **부정 트랙 (정책예외 제외 final)**: 결산조정·특수기수(`13~16`)처럼 정책으로 확인된 합법 예외를 제외한 **final mismatch만** `closing_timing` topic의 seed로 쓴다. `period_end_adjustment_high (L3-04|L3-07|L3-11|L1-08) & (L3-10|L4-04)`의 seed이며, **단독으로는 HIGH/MEDIUM을 만들지 못하고**(조합 없으면 부정 LOW), 반드시 2차신호(`L3-10|L4-04`) 동반 시에만 HIGH로 발화한다.
+  - **부정 트랙 (정책예외 제외 final)**: 결산조정·특수기수(`13~16`)처럼 정책으로 확인된 합법 예외를 제외한 **final mismatch만** `closing_timing` topic의 seed로 쓴다. `period_end_adjustment_high (L3-04|L3-11) & (L3-10 | L4-03 | (L4-04 & {L4-01|L2-05|L2-02|L2-03}))`의 seed이며, **단독으로는 HIGH/MEDIUM을 만들지 못하고**(조합 없으면 부정 LOW), 반드시 둘째 leg(추정계정 L3-10·고액 L4-03, 또는 강신호 동반 희소계정쌍 L4-04) 동반 시에만 HIGH로 발화한다.
   - **이중계산 아님**: 정합성=전수 행 집계(품질지표, priority_score 미유입), 부정=per-case 조합 기여. 플래그는 한 번 켜지고 소비자 둘이 다른 입도로 읽을 뿐 같은 점수를 두 번 더하지 않는다.
   - **라벨 분리 가드**: "데이터 품질: 기간귀속 점검"(정합성)과 "부정후보: cutoff 조작"(부정)을 같은 화면에서 섞지 않는다. 감사인이 오타를 조작으로 오인하지 않도록 surface·큐 라벨을 분리한다.
   - **binary 정합**: L1-08은 이미 `True/False` 단일 플래그라 점수 버킷이 없다. dual-track은 "점수를 나눈다"가 아니라 "같은 binary 플래그를 두 surface가 다르게 소비한다"이므로 binary 원칙과 충돌하지 않는다. raw/final의 차이는 점수 차등이 아니라 **정책예외 필터 적용 여부**다.
@@ -433,6 +433,9 @@ Benford(L4-02)·D01/D02·L4-05는 PHASE1-2 family/macro로 이관(별도 문서,
       - **미탐/evasion 한계**: 차대변 정합성은 "금액 다른 역분개"(역전표 99/99 자체 균형)를 못 막으므로, ERP 연결 없는 **부분역분개**나 값을 살짝 바꾼 회피는 (B)에서 놓칠 수 있다. 단 완전 은폐는 정확상쇄가 필요해 ±0%가 정조준하고, 어설픈 회피는 잔액이 남아 다른 신호(불완전 상계·장기 미결)에 걸린다. 실데이터 부분역분개 유의성은 합성으로 답할 수 없어 미해결로 둔다(합성 recall 튜닝은 자기순환).
       - **윈도우 45일 근거 (2026-07-02 시차 분포 분석)**: 거울 쌍 전수 44,836건의 시차(원전표↔역전표 posting_date 차이)를 측정한 결과 중간값 44일, 1~91일 구간에 거의 평평하게 분포하고 창 상한(구 90일)까지 계속 누적됐다. 진짜 결산 역분개라면 월차 결산 주기(25~35일)에 뾰족하게 몰려야 하는데 그렇지 않아, 넓은 창 안에서 "같은 계정·유사 금액·반대 방향"이 우연히 맞아떨어진 쌍이 상당수 섞인다고 판단해 90일 → 45일로 좁혔다. (30일 이내 35.3% / 45일 이내가 결산 신호의 주 구간)
   - **"같은 계정"이 정상 상계를 거른다**: 역분개는 **같은 계정**을 되돌리고, 정상 상계/정산은 **다른 계정** 간(받을 돈↔줄 돈, AR↔AP)이다. 같은 계정 거울 쌍이면 상계가 아니라 되돌림이다. 이 조건의 **미탐 위험은 작다** — 진짜 역분개는 수학적으로 같은 계정을 뒤집으므로 정의상 매칭된다(놓치는 건 다른 계정으로 우회한 "가짜전표+커버"로, 역분개가 아닌 별개 패턴).
+- **검토 표면화 (unit 계약, 2026-07-18 사용자 확정)**
+  - **flow 승격에 context_score 게이트 없음**: 구 `context_score >= 2`(적요·작성자·전표유형 닮음 점수) 게이트는 폐기. 적요·작성자까지 닮는 역분개는 ERP 자동 역분개(=structural 참조로 path A가 이미 커버)이고, path B가 노리는 수기 역분개는 흔적을 맞춰줄 이유가 없어 게이트로 쓰면 은폐형일수록 탈락하는 역선택이었다. detector(c11)와 동일 기준(같은 계정+정확동액+반대방향+45일)만으로 flow 승격하고, context_score는 flow `link_key`에 참고 정보로만 기록(높음 = 자동 역분개 가능성).
+  - **document unit fallback**: flow 승격에서 탈락한 L2-05 발화(같은 문서가 복수 쌍일 때 disjoint dedup이 상대 문서를 버리는 경우 등)는 document unit에 evidence로 적재 — detector 발화가 어느 검토 표면에도 안 나타나는 유실을 막는다. S4 실측(S2 단위 데이터): 발화 135 문서 중 133 표면화, 잔여 2건은 L2-02 flow에 이미 흡수된 문서(표면에는 존재, L2-05 표시만 해당 unit에 없음 — flow 간 상호 흡수 미지원 한계로 기록).
 - **자동 source도 발화 (정상성 판단은 통합점수)**
   - 자동/시스템/배치 source의 정기 결산 역분개(발생주의 미수·미지급 자동 역분개 등)도 거울 쌍/ERP 연결이면 **flag 1.0으로 발화한다.** "자동 정기 역분개라 정상"은 source/수기 차원의 정상성 판단이므로 룰이 하지 않고, `L3-02`(수기 전용 룰)와 통합점수체계가 `역분개 + 자동 source`를 정상으로 다운웨이트한다(룰은 멍청하게). 단 "같은 계정 되돌림"·"다른 document_id"는 역분개 정의 자체라 유지(intrinsic).
 - **폐기 (구 신호 정리)**
@@ -503,7 +506,7 @@ Benford(L4-02)·D01/D02·L4-05는 PHASE1-2 family/macro로 이관(별도 문서,
 - **탐지 로직**: IC GL prefix 매칭
   - `intercompany_identifiers: ['1150', '2050', '4500', '2700']`
   - 관계사 채권/채무/매출/미지급 등 고객사 CoA상 IC 전용 계정 사용 여부만 판단
-  - 실제 A→B→C→A N-hop 순환 탐지는 **GR01(GraphDetector)** 에서 담당 ([DETECTION_RULES_PHASE1-2.MD](DETECTION_RULES_PHASE1-2.MD) §4.5)
+  - A→B→C→A N-hop 순환 탐지는 **범위 외**(2026-06-30). 순환거래는 회사를 가로질러야 성립하는데 단일 법인 확정으로 상대 계열사 장부가 없다 → GR01(GraphDetector)는 **완전 삭제**됐다. [CONSTRAINTS.md §단일 법인 분석으로 한정](CONSTRAINTS.md) · [DETECTION_RULES_PHASE1-2.MD](DETECTION_RULES_PHASE1-2.MD)
 - **구현**: `fraud_rules_access.py` → `b10_intercompany_review_signal()`
 - **필요 피처**: `is_intercompany` (`gl_account` prefix에서 생성), 보강 설명용 `company_code`, `trading_partner`, `reference`
 - **PHASE1-1 경계 (binary)**: 함수는 `is_intercompany=True` 모집단을 flag `1.0`(아니면 `0`)으로 표시하는 context 태그다. `RULE_SCORING_REGISTRY` 기준 scoring은 `logic_mismatch/weak/booster`, `final_topic=account_logic`, `standalone_rankable=False`이며 단독 floor는 없다.
@@ -516,7 +519,7 @@ Benford(L4-02)·D01/D02·L4-05는 PHASE1-2 family/macro로 이관(별도 문서,
   - `row_annotations`: `signal_category=ic_population`, `company_code`, `trading_partner`.
 - **실무 해석**: 단독 부정 후보가 아니라 특수관계자 거래 모집단/샘플링 후보. 계약서·상대방·정상가격·대사 여부는 후속 확인한다. recall 우선 스크리닝이므로 IC prefix·금액·시차 조건을 임의로 좁혀 미탐을 늘리지 않는다.
 - **DataSynth 계약**: `v37_candidate`부터 IC GL prefix 기준 `intercompany_population_truth` sidecar를 별도 관리하고, 실제 비정상 순환거래 라벨(`CircularIntercompany`/`CircularTransaction`)과 혼동하지 않는다.
-- **PHASE1-2 family 이관 (2026-06-20)**: 관계사 쌍 대사 예외(IC01/IC02/IC03)·그 evidence_level/floor/PHASE2 확률컬럼, N-hop 순환(GR01)·이전가격 비대칭(GR03)과 평가계약은 [DETECTION_RULES_PHASE1-2.MD](DETECTION_RULES_PHASE1-2.MD) §4.4 IC Matcher / §4.5 Graph Detector 소관이다. L3-03 카드는 관계사 계정 사용 binary 태그만 정의한다.
+- **IC·GR 완전 삭제 (2026-06-30, 구 "PHASE1-2 family 이관 2026-06-20"을 supersede)**: 관계사 쌍 대사(IC01/IC02/IC03)·N-hop 순환(GR01)·이전가격 비대칭(GR03)은 회사를 가로질러야 성립 → **단일 법인 확정으로 영구 불가**. 검사기·registry·phase2 배선을 삭제했고(커밋 5d16525·aaf0390) 죽은 코드를 보존하지 않는다. 따라서 "§4.4 IC Matcher / §4.5 Graph Detector 소관"은 **현행이 아니다**. SoT [CONSTRAINTS.md §단일 법인 분석으로 한정](CONSTRAINTS.md) · [DETECTION_RULES_PHASE1-2.MD](DETECTION_RULES_PHASE1-2.MD). **본 L3-03 카드는 관계사 계정 사용 binary 태그만 정의하며 PHASE1-1 조합(관계사+역분개 등)용으로 잔존한다.**
 - **한계**: 정상 내부거래도 많이 포함될 수 있으며, 이 룰만으로 순환거래나 부정을 단정하지 않는다. 고객사 CoA에서 관계사 계정 prefix가 다르면 `patterns.intercompany.pairs`를 먼저 보정해야 한다.
 
 #### L3-04 — 기말/기초 결산 검토 후보군 (Period-start/end Closing Review) ✅
@@ -593,6 +596,9 @@ Benford(L4-02)·D01/D02·L4-05는 PHASE1-2 family/macro로 이관(별도 문서,
 - **근거**: 외감법§8①2호 오류통제. FSS 횡령은폐: 가수금을 통한 자금 유용
 - **탐지 로직**:
   - 모집단: `is_suspense_account == True`
+    - **가계정 판별 권위**: CoA(`chart_of_accounts.json`)의 계정별 `is_suspense_account` 플래그가 1순위 권위다. 원장 파일 옆 CoA에서 플래그가 있으면 `gl_account` 정확 매칭만 사용한다(적요 키워드·코드 prefix 휴리스틱 미사용). 플래그가 없는 실무 CoA에서만 `suspense_keywords`(적요)·`suspense_account_codes`(GL prefix) 휴리스틱으로 폴백한다. 구현: `pattern_features.add_is_suspense_account(coa_suspense_codes=...)`.
+    - Why: 휴리스틱(적요의 `Clearing`/`임시` 긁기 + 코드 prefix)은 현금성 계정·`1290`(기타비유동자산) 등을 과탐한다. v53 정상셋 실측에서 휴리스틱 2,652건 중 1,851건(70%)이 CoA 권위 기준 비가계정 오태깅이었고, 권위 정확 매칭으로 801건(오태깅 0)으로 정정했다(누락 0). 검증: [reports/suspense_retag_verify_20260704.md](../../reports/suspense_retag_verify_20260704.md).
+    - 참고: "대여금 계정 추가"는 이 권위 방식으로 대체(superseded)한다. 가계정 여부는 CoA 플래그가 정하므로, 특정 계정명을 휴리스틱 목록에 수기 추가하지 않는다. (이 CoA에서 `1150`은 단기대여금이 아니라 Intercompany AR Clearing이며, `115001~3` IC 채권과 prefix가 겹쳐 코드 목록 확장은 부적절.)
   - 미정리 상태: `amount_open > suspense_min_open_amount` 또는 `is_cleared == False` 또는 `settlement_status ∉ {settled, cleared, closed, resolved, matched}`
   - fallback: 위 정산 정보가 없을 때만 `settlement_date IS NULL`, `lettrage_date IS NULL`, `lettrage IS NULL/blank`를 보조 신호로 사용
   - 체류 기간: `posting_date`부터 정산일(`settlement_date` 또는 `lettrage_date`)까지, 정산일이 없으면 데이터셋 기준일(max `posting_date`)까지의 경과일수

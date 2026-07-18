@@ -139,6 +139,48 @@ class TestS1OneToOneMatch:
         result = _s1_one_to_one_match(df)
         assert result.tolist() == [True, True]
 
+    def test_large_same_account_group_no_cartesian_blowup(self) -> None:
+        # 회귀 가드(2026-07-03 OOM): 한 계정에 서로 다른 금액의 양수/음수 doc-net 이 대량으로
+        # 몰려도 금액 키 블로킹으로 O(n^2) 카테시안이 생기지 않는다. 진짜 거울쌍만 발화한다.
+        n = 4000  # gl_account 단독 merge 라면 4000x4000=1600만 쌍 → 블로킹으로 금액당 1쌍만.
+        pos_docs = [f"P{i:05d}" for i in range(n)]
+        neg_docs = [f"N{i:05d}" for i in range(n)]
+        # 양수 i 는 금액 (i+1)*100, 음수 i 도 (i+1)*100 → 같은 금액끼리만 거울쌍(1:1).
+        amounts = [(i + 1) * 100.0 for i in range(n)]
+        df = pd.DataFrame(
+            {
+                "document_id": pos_docs + neg_docs,
+                "gl_account": ["1000"] * (2 * n),
+                "debit_amount": amounts + [0.0] * n,
+                "credit_amount": [0.0] * n + amounts,
+                "posting_date": pd.to_datetime(["2025-01-01"] * n + ["2025-01-10"] * n),
+            }
+        )
+        result = _s1_one_to_one_match(df)
+        # 모든 금액이 유일 매칭이므로 전 행 발화(양수 n + 음수 n).
+        assert int(result.sum()) == 2 * n
+
+    def test_amount_key_blocking_matches_only_equal_amounts(self) -> None:
+        # 동일 계정에 금액이 다른 두 거울쌍 후보: 금액이 같은 쌍끼리만 매칭돼야 한다.
+        df = pd.DataFrame(
+            {
+                "document_id": ["P1", "P2", "N1", "N2"],
+                "gl_account": ["1000"] * 4,
+                "debit_amount": [100.0, 200.0, 0.0, 0.0],
+                "credit_amount": [0.0, 0.0, 100.0, 200.0],
+                "posting_date": pd.to_datetime(
+                    ["2025-01-01", "2025-01-01", "2025-01-05", "2025-01-05"]
+                ),
+            }
+        )
+        result = _s1_one_to_one_match(df)
+        # P1↔N1(100), P2↔N2(200) 각각 매칭 → 4행 전부 발화. 교차(P1↔N2)는 금액 불일치로 배제.
+        assert result.tolist() == [True, True, True, True]
+        details = result.attrs["pair_details"]
+        # P1(index 0)의 상대는 N1(200 아님)
+        assert details[0]["counterpart_document_id"] == "N1"
+        assert details[1]["counterpart_document_id"] == "N2"
+
 
 class TestC11ReversalEntry:
     def test_mirror_pair_scores_binary(self) -> None:

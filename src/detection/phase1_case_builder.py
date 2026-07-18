@@ -572,29 +572,6 @@ class _AuditEvidenceContext:
     trusted_automated: list[bool]
 
 
-def _fraud_combo_rule_scope(hits, audit_context: _AuditEvidenceContext) -> set[str]:
-    """fraud combo 트리거로 인정할 룰 — 신뢰 자동 행에서만 발화한 룰은 제외.
-
-    Why: 자동 결산 배치 전표는 승인 부재·결산기 집중이 정상이라 사람 행위 전제의
-         fraud combo를 구성할 수 없다. 위장 의심(단독 자동) 행은 신뢰하지 않으므로
-         그 발화는 콤보 트리거로 유지된다 (OPEN_ISSUES #14·#16).
-    """
-    trusted = audit_context.trusted_automated
-    size = len(trusted)
-    scope: set[str] = set()
-    for hit in hits:
-        position = getattr(hit, "row_index", None)
-        try:
-            pos = int(position) if position is not None else -1
-        except (TypeError, ValueError):
-            pos = -1
-        on_trusted = 0 <= pos < size and trusted[pos]
-        if not on_trusted:
-            scope.add(str(getattr(hit, "rule_id", "")))
-    scope.discard("")
-    return scope
-
-
 def build_phase1_case_run_id(
     *,
     company_id: str | None,
@@ -653,10 +630,17 @@ def build_phase1_case_result(
     # 전역 get_settings() 를 여기서 호출하지 않는다(lru_cache 싱글톤을 monkeypatch 한 테스트가
     # Mock 속성을 흘려 float() 크래시 유발하는 오염 벡터 회피). 점수 비병합(배지 전용).
     partner_row_badges: pd.DataFrame | None = None
+    partner_summary: list[dict[str, Any]] = []
+    round_density_findings: list[dict[str, Any]] = []
     if settings is not None:
         from src.detection.partner_signals import compute_partner_signals
+        from src.detection.round_density_rules import compute_round_density_findings
 
-        partner_row_badges = compute_partner_signals(df, settings).row_badges
+        partner_signals = compute_partner_signals(df, settings)
+        partner_row_badges = partner_signals.row_badges
+        partner_summary = partner_signals.partner_summary
+        # PHASE1-2 라운드넘버 밀집도 자기 큐(계정·월·작성자 축별). 점수 비병합 — 배지는 단건 is_round_number.
+        round_density_findings = compute_round_density_findings(df, settings).findings
     run_id = build_phase1_case_run_id(
         company_id=company_id,
         batch_id=batch_id,
@@ -666,8 +650,9 @@ def build_phase1_case_result(
     macro_findings = _build_macro_findings(
         results,
         df=df,
-        top_n=int(config.get("top_n_macro_findings", 100)),
+        extra_findings=_build_round_density_macro_findings(round_density_findings),
     )
+    partner_findings = _build_partner_findings(partner_summary)
     data_integrity_findings = _build_data_integrity_findings(results)
     import os as _os_dbg
 
@@ -751,10 +736,8 @@ def build_phase1_case_result(
         },
         metadata={
             "phase1_case_config_version": SCHEMA_VERSION,
-            "score_cutoff": {
-                "high": float(config.get("priority_band", {}).get("high", 0.90)),
-                "medium": float(config.get("priority_band", {}).get("medium", 0.75)),
-            },
+            # tier 자동 등급 폐지(PHASE1_COMBO_BUILDER_SPEC §6) — score_cutoff 메타 제거.
+            "tier_policy": "abolished_2026-07-17_combo_builder",
             "grouping_window": {
                 "near_period_days": int(config.get("near_period_days", 7)),
                 "period_end_window_days": int(config.get("period_end_window_days", 5)),
@@ -764,6 +747,13 @@ def build_phase1_case_result(
             "macro_finding_policy": (
                 "L4-02/D01/D02 are Account/Process Queue findings. They do not create "
                 "transaction queue priority_score or row-level anomaly_score by themselves."
+            ),
+            "partner_findings": partner_findings,
+            "partner_finding_count": len(partner_findings),
+            "partner_finding_policy": (
+                "첫등장/희소/휴면 거래처는 거래처 단위 자기 큐다. 계정/프로세스 단위 "
+                "macro_findings 와 단위가 달라 별도 큐로 유지하며, 전표 tier·priority_score·"
+                "row anomaly_score 에 기여하지 않는다(배지로만 전표에 연결)."
             ),
             "data_integrity_findings": data_integrity_findings,
             "data_integrity_finding_count": sum(
@@ -815,11 +805,19 @@ def _build_macro_findings(
     results: list[DetectionResult],
     *,
     df: pd.DataFrame | None = None,
-    top_n: int,
+    extra_findings: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Build Account/Process Queue findings that must not enter transaction scoring."""
+    """Build Account/Process Queue findings that must not enter transaction scoring.
 
-    findings: list[dict[str, Any]] = []
+    절단하지 않는다(2026-07-15). PHASE1-2 는 신호를 만들 뿐 검토 목록을 소유하지 않는다 —
+    무엇을 몇 개 보여줄지는 화면 몫이다. 백엔드가 미리 잘라내면 화면은 사라진 신호를 볼 수 없고,
+    신호 종류마다 점수 척도가 달라(Benford 0~1 vs 시계열 robust-z 무한대) 한 리스트를 잘랐다간
+    척도 큰 종류가 칸을 독식한다. sort 는 기본 표시 순서일 뿐이며 화면이 rule_id 로 재편한다.
+
+    extra_findings: 탐지기 metadata 가 아닌 경로로 만들어진 같은 단위의 finding(라운드넘버 밀집도).
+    """
+
+    findings: list[dict[str, Any]] = list(extra_findings or [])
     for result in results:
         metadata = result.metadata or {}
         findings.extend(_build_l402_macro_findings(result.track_name, metadata))
@@ -834,9 +832,83 @@ def _build_macro_findings(
         ),
         reverse=True,
     )
-    if top_n > 0:
-        findings = findings[:top_n]
     return [_json_safe_mapping(item) for item in findings]
+
+
+def _build_round_density_macro_findings(
+    findings: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """라운드넘버 밀집도 → Account/Process Queue finding. Benford 동렬(모집단 분포 이상).
+
+    review_score 는 신호 강도(excess = baseline 대비 round 비율 초과분)다. 부정 확률이 아니다.
+    """
+    rows: list[dict[str, Any]] = []
+    for ordinal, finding in enumerate(findings or [], start=1):
+        axis = str(finding.get("axis", ""))
+        group_key = str(finding.get("group_key", ""))
+        rows.append(
+            {
+                "finding_id": f"ROUND-DENSITY:{ordinal:04d}",
+                "rule_id": "ROUND-DENSITY",
+                "rule_label": "둥근 금액 모집단 밀집",
+                "queue_type": "account_process_macro",
+                "source_track": "phase1_round_density",
+                "scope": axis,
+                "group_key": group_key,
+                # Why: 계정 축 finding 만 gl_account 로 노출 — 월/작성자 축을 계정으로 오인하면
+                #      case 의 macro_context 가 엉뚱한 계정에 붙는다.
+                "gl_account": group_key if axis == "gl_account" else None,
+                "sample_size": int(finding.get("sample_size", 0)),
+                "review_score": float(finding.get("excess", 0.0)),
+                "finding_severity": str(finding.get("finding_severity", "")),
+                "candidate_rows": int(finding.get("round_count", 0)),
+                "metrics": {
+                    "round_ratio": finding.get("round_ratio"),
+                    "baseline_ratio": finding.get("baseline_ratio"),
+                    "excess": finding.get("excess"),
+                    "p_value": finding.get("p_value"),
+                },
+                "interpretation": (
+                    "모집단 단위 둥근 금액 집중 finding(AS2401 §61(e)). 정상 계약·예산 금액도 "
+                    "둥글 수 있으므로 확정 예외가 아니라 검토 후보이며, 전표 tier 에 참여하지 않는다."
+                ),
+            }
+        )
+    return rows
+
+
+def _build_partner_findings(summary: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """거래처 단위 자기 큐(첫등장/희소/휴면재활성). 점수 비병합 — row score 무기여.
+
+    macro_findings 와 합치지 않는 이유: 단위가 계정/프로세스가 아니라 거래처다
+    (UNIT_MEASUREMENT_POLICY). 절단하지 않는다 — 무엇을 몇 개 보여줄지는 화면 몫이다.
+    입력은 이미 고액/대량 순이므로 재정렬하지 않는다.
+    """
+    rows: list[dict[str, Any]] = []
+    for ordinal, item in enumerate(summary or [], start=1):
+        if not isinstance(item, dict):
+            continue
+        rows.append(
+            {
+                "finding_id": f"PARTNER:{ordinal:04d}",
+                "rule_id": "PARTNER",
+                "rule_label": "원장 첫 등장·희소·휴면재활성 거래처",
+                "queue_type": "partner_macro",
+                "source_track": "phase1_partner_signals",
+                "scope": "trading_partner",
+                "trading_partner": item.get("partner"),
+                "signals": [str(signal) for signal in item.get("signals", []) or []],
+                "txn_count": int(item.get("txn_count", 0) or 0),
+                "total_amount": float(item.get("total_amount", 0.0) or 0.0),
+                "content_groups": item.get("content_groups", []) or [],
+                "interpretation": (
+                    "GL-only 약근사 — 가공거래처 검토 후보를 원장 집계 범위에서 surface한다. "
+                    "정상 신규 공급처도 원장 첫 등장이므로 적발이 아니라 검토 신호이며, "
+                    "HIGH-6 커버리지로 주장하지 않는다."
+                ),
+            }
+        )
+    return [_json_safe_mapping(item) for item in rows]
 
 
 _DATA_INTEGRITY_RULE_LABELS: dict[str, str] = {
@@ -1669,21 +1741,9 @@ def _build_cases(
         loop_timings["macro_context"] += time.perf_counter() - segment_start
 
         segment_start = time.perf_counter()
-        topic_breakdowns = compute_topic_scores(
-            case_hits,
-            topic_floor_policies=_topic_floor_policies(config),
-            combo_floor_policies=_combo_floor_policies(config),
-            fraud_combo_rule_scope=_fraud_combo_rule_scope(case_hits, audit_context),
-            return_breakdown=True,
-        )
-        # PHASE1_TIER_SCORING_SPEC: 주제 점수·선택·band·정렬 전부 tier(가중합 .score 폐기).
-        topic_tiers = compute_topic_tiers(
-            case_hits,
-            topic_floor_policies=_topic_floor_policies(config),
-            combo_floor_policies=_combo_floor_policies(config),
-            fraud_combo_rule_scope=_fraud_combo_rule_scope(case_hits, audit_context),
-            breakdowns=topic_breakdowns,  # 이미 위에서 계산 — 재계산 생략(성능)
-        )
+        topic_breakdowns = compute_topic_scores(case_hits, return_breakdown=True)
+        # tier 자동 등급 폐지(PHASE1_COMBO_BUILDER_SPEC §6) — LOW/CONTEXT standalone 게이트만.
+        topic_tiers = compute_topic_tiers(case_hits, breakdowns=topic_breakdowns)
         # topic_scores = tier 대표값(가중합 아님). CONTEXT 제외. pick_primary_topic 은 max 라
         # 자동으로 최고 tier 주제를 선택(동률은 TOPIC_REGISTRY 순서).
         topic_scores = {
@@ -1918,9 +1978,17 @@ def _build_document_units(
             continue
         if hit.document_id in absorbed_document_ids:
             continue
-        if hit.rule_id in _FLOW_UNIT_RULES or hit.rule_id in _REVIEW_POPULATION_RULES:
+        if hit.rule_id in _REVIEW_POPULATION_RULES:
             continue
-        if hit.rule_id not in _DOCUMENT_UNIT_RULES:
+        if hit.rule_id in _FLOW_UNIT_RULES:
+            # L2-05: flow 승격에서 탈락한 발화는 document unit 으로 fallback (2026-07-18).
+            # flow 에 흡수된 문서는 위 absorbed 분기에서 이미 걸러졌으므로 여기 도달한
+            # L2-05 hit 은 전부 비흡수 문서 — 이중 적재 없음. 같은 문서가 복수 쌍일 때
+            # disjoint dedup 이 상대 문서를 버리는 유실 등, detector 발화가 어느 표면에도
+            # 안 나타나는 경우를 막는다. L2-02/L2-03 은 N:M 그룹 의미라 기존대로 flow 전용.
+            if hit.rule_id != "L2-05":
+                continue
+        elif hit.rule_id not in _DOCUMENT_UNIT_RULES:
             continue
         document_hits[hit.document_id].append(hit)
 
@@ -2150,22 +2218,10 @@ def _score_unit_hits(
             priority_score, float(config.get("l205_linked_reversal_low_cap", 0.35))
         )
         adjustment_reasons = [*adjustment_reasons, "l205_linked_accrual_reversal_low"]
-    topic_breakdowns = compute_topic_scores(
-        hits,
-        topic_floor_policies=_topic_floor_policies(config),
-        combo_floor_policies=_combo_floor_policies(config),
-        fraud_combo_rule_scope=_fraud_combo_rule_scope(hits, audit_context),
-        return_breakdown=True,
-    )
-    # PHASE1_TIER_SCORING_SPEC: unit topic 점수·band·정렬 전부 tier(가중합 .score 폐기).
-    # _derive_case_scores_from_units 가 이 unit 점수를 case 로 전파하므로 활성 경로는 여기다.
-    topic_tiers = compute_topic_tiers(
-        hits,
-        topic_floor_policies=_topic_floor_policies(config),
-        combo_floor_policies=_combo_floor_policies(config),
-        fraud_combo_rule_scope=_fraud_combo_rule_scope(hits, audit_context),
-        breakdowns=topic_breakdowns,  # 이미 위에서 계산 — 재계산 생략(성능)
-    )
+    topic_breakdowns = compute_topic_scores(hits, return_breakdown=True)
+    # tier 자동 등급 폐지(PHASE1_COMBO_BUILDER_SPEC §6) — LOW/CONTEXT standalone 게이트만.
+    # _derive_case_scores_from_units 가 이 unit 결과를 case 로 전파하므로 활성 경로는 여기다.
+    topic_tiers = compute_topic_tiers(hits, breakdowns=topic_breakdowns)
     # topic_scores = tier 대표값(가중합 아님). pick_primary_topic 이 max 라 자동 최고 tier.
     topic_scores = {
         topic_id: _TIER_TO_PRIORITY_SCORE[tier_breakdown.tier]
@@ -2174,11 +2230,8 @@ def _score_unit_hits(
     }
     # priority_score = tier 대표값([0,1]) → _derive 의 _priority_band 가 올바른 band 자동 전파.
     topic_tier = case_tier(topic_tiers)
-    # config priority_floors(명시 도메인 조건: SoD critical·승인생략·핵심필드 누락 등)도
-    # tier 트리거다. floor-only 점수(가중합 배제, 0.0 기준)로 산출해 합류.
-    floor_only_score, _ = _apply_priority_floors(case_hits=hits, priority_score=0.0, config=config)
-    floor_tier = _legacy_floor_tier(floor_only_score)
-    unit_tier = topic_tier if TIER_RANK[topic_tier] >= TIER_RANK[floor_tier] else floor_tier
+    # config priority_floors 의 tier 승격 경로 폐지(등급 생산 금지) — standalone 게이트만 사용.
+    unit_tier = topic_tier
     priority_score = _TIER_TO_PRIORITY_SCORE.get(unit_tier, 0.0)
     priority_band = _TIER_TO_BAND.get(unit_tier, "low")
     composite_sort_score, composite_sort_score_components = _tier_sort_score(
@@ -2410,7 +2463,7 @@ def _derive_case_scores_from_units(
                     "composite_sort_score_components": max_composite.composite_sort_score_components,
                     "topic_scores": topic_scores,
                     "topic_score_breakdown": topic_score_breakdown,
-                    "priority_band": _priority_band(derived_priority, config),
+                    "priority_band": "low",  # tier 폐지 — deprecated 필드(호환 유지)
                     "triage_rank_score": max(
                         float(unit.triage_rank_score) for unit in linked_units
                     ),
@@ -2966,9 +3019,12 @@ def _l205_one_to_one_pairs(df: pd.DataFrame, row_positions: list[int]) -> list[d
         date_gap = abs((row.posting_date_pos - row.posting_date_neg).days)
         if date_gap > window_days:
             continue
+        # context_score 는 승격 게이트가 아니라 참고 정보(2026-07-18 사용자 확정).
+        # 이유: 적요·작성자까지 닮는 역분개는 ERP 자동 역분개(=structural 참조로 이미 커버)이고,
+        # path B 가 노리는 수기 역분개는 흔적을 맞춰줄 이유가 없다 — 게이트로 쓰면 은폐형일수록
+        # 탈락하는 역선택. detector(c11)와 동일하게 계정+정확동액+윈도우만으로 승격하고,
+        # 점수는 link_key 에 남겨 감사인 참고용으로만 쓴다(높음=자동 역분개 가능성).
         context_score = _l205_pair_context_score(row)
-        if context_score < 2:
-            continue
         member_document_ids = sorted({pos_doc, neg_doc})
         entries.append(
             {
@@ -4420,26 +4476,6 @@ def _legacy_theme_for_topic(topic_id: str) -> str:
     return _TOPIC_LEGACY_THEME_MAP.get(topic_id, topic_id)
 
 
-def _topic_floor_policies(config: dict[str, Any]) -> dict[str, float]:
-    topic_scoring = config.get("topic_scoring", {})
-    if not isinstance(topic_scoring, dict):
-        return {}
-    floors = topic_scoring.get("topic_floors", {})
-    if not isinstance(floors, dict):
-        return {}
-    return {str(policy_id): float(value) for policy_id, value in floors.items()}
-
-
-def _combo_floor_policies(config: dict[str, Any]) -> dict[str, float]:
-    topic_scoring = config.get("topic_scoring", {})
-    if not isinstance(topic_scoring, dict):
-        return {}
-    floors = topic_scoring.get("combo_floors", {})
-    if not isinstance(floors, dict):
-        return {}
-    return {str(policy_id): float(value) for policy_id, value in floors.items()}
-
-
 def _case_secondary_topics(
     case_hits: list[_RawHit],
     topic_scores: dict[str, float],
@@ -4454,35 +4490,18 @@ def _case_secondary_topics(
     return _ordered_unique(topics)
 
 
-# PHASE1 tier → band 매핑 (PHASE1_TIER_SCORING_SPEC §2). band 결정은 가중합이 아니라 tier.
+# tier 자동 등급 폐지(2026-07-17, PHASE1_COMBO_BUILDER_SPEC §6) — band 는 항상 "low".
+# priority_band 필드 자체는 artifact/PHASE2 인터페이스 호환용 deprecated 필드로만 남는다.
 _TIER_TO_BAND: dict[str, str] = {
-    "HIGH": "high",
-    "MEDIUM": "medium",
     "LOW": "low",
     "CONTEXT": "low",
 }
 
-# priority_score(deprecated) 호환 shim: tier 대표값. band 결정은 tier 가 하고, 이 값은
-# [0,1] 을 가정하는 기존 소비처(export/phase2 linker)와의 호환을 위해서만 둔다.
+# priority_score(deprecated) 호환 shim. [0,1] 가정 소비처(export/phase2 linker) 호환 전용.
 _TIER_TO_PRIORITY_SCORE: dict[str, float] = {
-    "HIGH": 0.90,
-    "MEDIUM": 0.75,
     "LOW": 0.40,
     "CONTEXT": 0.0,
 }
-
-
-def _legacy_floor_tier(floor_only_score: float) -> str:
-    """config priority_floors(명시 도메인 조건) 의 min_priority_score 를 tier 로 매핑.
-
-    이 floor 들은 가중합이 아니라 명시 조건(SoD critical·승인생략·자기승인 material·핵심필드
-    누락 등)이라 tier 트리거로 유효하다. band cut 관례(high>=0.90, medium>=0.75)를 따른다.
-    """
-    if floor_only_score >= 0.90:
-        return "HIGH"
-    if floor_only_score >= 0.75:
-        return "MEDIUM"
-    return "CONTEXT"
 
 
 def _tier_sort_score(
@@ -4887,17 +4906,6 @@ def _case_source_ratio(rows: pd.DataFrame, source_values: list[str]) -> float:
     if not source_set:
         return 0.0
     return float(normalized.isin(source_set).mean())
-
-
-def _priority_band(priority_score: float, config: dict[str, Any]) -> str:
-    bands = config.get("priority_band", {})
-    high = float(bands.get("high", 0.90))
-    medium = float(bands.get("medium", 0.75))
-    if priority_score >= high:
-        return "high"
-    if priority_score >= medium:
-        return "medium"
-    return "low"
 
 
 def _apply_timing_priority_adjustments(

@@ -183,7 +183,13 @@ def test_document_units_exclude_review_score_only_annotations() -> None:
 
 
 def test_flow_and_review_population_rules_do_not_create_document_units() -> None:
-    """Flow rules and review-population signals are not document denominator units."""
+    """Flow rules(L2-02/L2-03)와 review-population 신호는 document unit 을 만들지 않는다.
+
+    예외 — L2-05 fallback (2026-07-18): flow 승격에서 탈락한 L2-05 발화는 document
+    unit 으로 적재된다(detector 발화가 어느 표면에도 안 나타나는 유실 방지 —
+    DETECTION_RULES.md L2-05 "검토 표면화" 절). 이 df 에는 참조 필드도 거울쌍도
+    없어 L2-05 flow 가 생성되지 않으므로 DOC-2 가 fallback document unit 이 된다.
+    """
 
     result = _result(
         [
@@ -220,7 +226,9 @@ def test_flow_and_review_population_rules_do_not_create_document_units() -> None
 
     phase1 = _build(result)
 
-    assert [unit for unit in phase1.units if unit.unit_type == "document"] == []
+    document_units = [unit for unit in phase1.units if unit.unit_type == "document"]
+    assert [unit.unit_id for unit in document_units] == ["DOC-2"]
+    assert {hit.rule_id for hit in document_units[0].evidence_rows} == {"L2-05"}
 
 
 def test_document_unit_addition_does_not_change_existing_cases() -> None:
