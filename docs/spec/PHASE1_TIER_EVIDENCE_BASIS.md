@@ -1,5 +1,9 @@
 # PHASE1 Tier Evidence Basis — 근거 기반 tier 체계
 
+> **⚠️ SUPERSEDED (2026-07-17)**: tier 자동 등급 체계 전면 폐지(사용자 확정) — 새 SoT =
+> [PHASE1_COMBO_BUILDER_SPEC.md](PHASE1_COMBO_BUILDER_SPEC.md) (조합 빌더 + 프리셋).
+> 본 문서는 구 tier 근거 이력 참조용. LOW/CONTEXT 는 등급이 아닌 standalone 게이트로만 코드 잔존.
+
 > **PHASE1 역할 원칙**: PHASE1은 `fraud`를 확정하거나 정답 라벨을 맞히는 단계가 아니다. PHASE1의 목적은 전수 모집단에서 규칙 위반, 정책 위반, 이상 징후, 분석적 검토 신호를 넓게 올려 **감사인이 봐야 할 항목과 우선순위**를 만드는 것이다. DataSynth의 `is_fraud`/`is_anomaly`와 precision/recall은 개발 검증 보조 지표이며, 운영 해석은 예외 처리 대상, 감사인 리뷰 대상, 고위험 후보를 구분하는 review queue 기준으로 한다.
 
 > **포트폴리오 주장 범위**: 이 프로젝트는 `fraud`를 판정하거나 실제 운영 부정 탐지 성능을 보장하는 모델이 아니다. 전수 모집단에서 감사인이 먼저 볼 review queue를 만들고, 무작위 검토 대비 상위 구간에 review-worthy synthetic anomaly를 강하게 농축하는 로컬 감사 분석 보조 도구다. DataSynth 기반 precision/recall은 개발 검증 보조 지표이며, 실데이터 운영 성능으로 주장하지 않는다.

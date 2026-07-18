@@ -90,7 +90,7 @@ def build_phase1_case_brief_payload(drilldown: dict[str, Any]) -> dict[str, Any]
         "case_id": str(case.get("case_id") or ""),
         "selected_phase1_case": {
             "topic_label": case.get("topic_label") or case.get("primary_topic_label") or "",
-            "priority_band": case.get("priority_band") or "",
+            # priority_band 제거(tier 폐지, PHASE1_COMBO_BUILDER_SPEC §6) — 등급 표기 비노출.
             "risk_narrative": case.get("risk_narrative") or "",
             "representative_explanation": case.get("representative_explanation") or "",
             "review_focus": list(case.get("review_focus") or []),

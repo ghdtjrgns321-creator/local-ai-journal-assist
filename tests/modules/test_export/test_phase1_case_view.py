@@ -25,7 +25,6 @@ from src.export.phase1_case_view import (
     build_phase1_rule_document_detail,
     build_phase1_rule_documents,
     build_phase1_topic_top_n,
-    build_phase1_transaction_queue,
     resolve_phase1_case_result,
     summarize_phase1_case_result,
 )
@@ -1266,71 +1265,6 @@ def _phase1_with_units(units: list[object]) -> SimpleNamespace:
     return SimpleNamespace(phase1_case_result=result)
 
 
-def test_transaction_queue_excludes_low_units_keeps_high_and_medium() -> None:
-    # 정책: HIGH/MEDIUM tier unit 만 큐에 1줄씩. LOW 는 제외(커버리지 표로만 surface).
-    pr = _phase1_with_units(
-        [
-            _document_unit("DOC-HIGH", priority_band="high", rule_ids=["L2-02"]),
-            _document_unit("DOC-MED", priority_band="medium", rule_ids=["L2-02"]),
-            _document_unit("DOC-LOW", priority_band="low", rule_ids=["L2-02"]),
-        ]
-    )
-
-    rows = build_phase1_transaction_queue(pr)
-
-    unit_ids = {row["unit_id"] for row in rows}
-    # 빈 큐 PASS 금지 — HIGH/MEDIUM 최소 2줄 기대.
-    assert len(rows) == 2
-    assert "DOC-HIGH" in unit_ids
-    assert "DOC-MED" in unit_ids
-    assert "DOC-LOW" not in unit_ids
-    bands = {row["unit_id"]: row["priority_band"] for row in rows}
-    assert bands["DOC-HIGH"] == "high"
-    assert bands["DOC-MED"] == "medium"
-
-
-def test_transaction_queue_orders_high_before_medium() -> None:
-    # band 컷·정렬은 _band_rank 경유. HIGH 가 MEDIUM 보다 먼저.
-    pr = _phase1_with_units(
-        [
-            _document_unit("DOC-MED", priority_band="medium", rule_ids=["L2-02"]),
-            _document_unit("DOC-HIGH", priority_band="high", rule_ids=["L2-02"]),
-        ]
-    )
-
-    rows = build_phase1_transaction_queue(pr)
-
-    assert [row["unit_id"] for row in rows] == ["DOC-HIGH", "DOC-MED"]
-
-
-def test_transaction_queue_time_severity_outranks_amount_within_band() -> None:
-    # 정책: 동일 band·triage 에서 time_severity 가 금액보다 위(anti-burying).
-    pr = _phase1_with_units(
-        [
-            _document_unit(
-                "DOC-BIG-AMOUNT",
-                priority_band="high",
-                rule_ids=["L2-02"],
-                total_amount=9_999_999.0,
-                time_severity_score=0,
-                triage_rank_score=0.5,
-            ),
-            _document_unit(
-                "DOC-OFFTIME",
-                priority_band="high",
-                rule_ids=["L2-02"],
-                total_amount=1.0,
-                time_severity_score=2,
-                triage_rank_score=0.5,
-            ),
-        ]
-    )
-
-    rows = build_phase1_transaction_queue(pr)
-
-    assert [row["unit_id"] for row in rows] == ["DOC-OFFTIME", "DOC-BIG-AMOUNT"]
-
-
 def test_rule_coverage_counts_all_units_and_only_standalone_primary() -> None:
     # 정책: 모든 unit(HIGH/MEDIUM/LOW) 의 evidence_rows 를 룰별 전수 집계.
     # 행 대상 = standalone primary 룰만. booster(L3-05) 는 제외.
@@ -1351,16 +1285,17 @@ def test_rule_coverage_counts_all_units_and_only_standalone_primary() -> None:
     # booster L3-05 는 커버리지 행 대상이 아님(standalone_rankable=False).
     assert "L3-05" not in items
     l202 = items["L2-02"]
-    # 3개 document 모두에서 L2-02 발화 → distinct document 3.
+    # 3개 document 모두에서 L2-02 발화 → distinct document 3. unit 수 3.
     assert l202["documents"] == 3
-    # tier 분해: HIGH unit 1, MEDIUM unit 1, LOW unit 1.
-    assert l202["high"] == 1
-    assert l202["medium"] == 1
-    assert l202["low"] == 1
+    assert l202["units"] == 3
+    # tier 폐지(PHASE1_COMBO_BUILDER_SPEC §6): band 분해 컬럼은 더 이상 없다.
+    assert "high" not in l202
+    assert "medium" not in l202
+    assert "low" not in l202
 
 
-def test_rule_coverage_includes_high_unit_rule_firing_in_document_count() -> None:
-    # 정책: HIGH unit 의 룰 발화도 documents 카운트에 포함(tier 무관 전수).
+def test_rule_coverage_counts_every_unit_rule_firing() -> None:
+    # 정책: 어떤 unit 이든 룰 발화는 documents/units 카운트에 전수 포함.
     pr = _phase1_with_units(
         [
             _document_unit("DOC-HIGH", priority_band="high", rule_ids=["L2-02"]),
@@ -1371,4 +1306,4 @@ def test_rule_coverage_includes_high_unit_rule_firing_in_document_count() -> Non
 
     items = {item["rule_id"]: item for item in coverage["items"]}
     assert items["L2-02"]["documents"] == 1
-    assert items["L2-02"]["high"] == 1
+    assert items["L2-02"]["units"] == 1

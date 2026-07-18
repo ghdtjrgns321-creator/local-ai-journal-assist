@@ -1,5 +1,9 @@
 # PHASE1 Detection Ranking Criteria
 
+> **⚠️ SUPERSEDED (2026-07-17)**: tier(HIGH/MEDIUM/LOW/CONTEXT) 기반 ranking 은 폐지 —
+> 새 SoT = [PHASE1_COMBO_BUILDER_SPEC.md](PHASE1_COMBO_BUILDER_SPEC.md). 빌더 결과 내
+> 정렬(sort_key: triage → time_severity → 금액)만 본 문서의 정렬 원칙을 승계한다.
+
 > **PHASE1 역할 원칙**: PHASE1은 `fraud`를 확정하거나 정답 라벨을 맞히는 단계가 아니다. PHASE1의 목적은 전수 모집단에서 규칙 위반, 정책 위반, 이상 징후, 분석적 검토 신호를 넓게 올려 **감사인이 봐야 할 항목과 우선순위**를 만드는 것이다. DataSynth의 `is_fraud`/`is_anomaly`와 precision/recall은 개발 검증 보조 지표이며, 운영 해석은 예외 처리 대상, 감사인 리뷰 대상, 고위험 후보를 구분하는 review queue 기준으로 한다.
 
 

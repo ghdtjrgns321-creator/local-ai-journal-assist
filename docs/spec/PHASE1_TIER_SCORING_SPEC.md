@@ -1,5 +1,9 @@
 # PHASE1 Tier Scoring Spec — 구현 계약
 
+> **⚠️ SUPERSEDED (2026-07-17)**: tier 자동 등급 폐지 — 새 SoT =
+> [PHASE1_COMBO_BUILDER_SPEC.md](PHASE1_COMBO_BUILDER_SPEC.md). 본 계약의 combo floor·
+> tier cascade 는 코드에서 제거됨(2026-07-18, topic_scoring.py 재작성). 이력 참조용.
+
 > **PHASE1 역할 원칙**: PHASE1은 `fraud`를 확정하거나 정답 라벨을 맞히는 단계가 아니다. PHASE1의 목적은 전수 모집단에서 규칙 위반, 정책 위반, 이상 징후, 분석적 검토 신호를 넓게 올려 **감사인이 봐야 할 항목과 우선순위**를 만드는 것이다. DataSynth의 `is_fraud`/`is_anomaly`와 precision/recall은 개발 검증 보조 지표이며, 운영 해석은 review queue 기준으로 한다.
 
 작성일: 2026-06-14

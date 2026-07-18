@@ -553,49 +553,8 @@ def build_phase1_integrity_rule_view(
 # phase1.units(document/flow)를 직접 축으로 쓴다. 기존 case 큐 빌더는 건드리지 않는다(신설만).
 
 
-def _unit_band_rank(unit: Any) -> int:
-    """unit.priority_band 의 순서 랭크. band 문자 직접 분기 금지 — _band_rank 재사용."""
-    return _band_rank(unit.priority_band)
-
-
-def _unit_sort_key(unit: Any) -> tuple[int, float, int, float, int]:
-    """case 정렬튜플 구조를 unit 필드로 옮긴 공통 sort_key.
-
-    (band_rank, triage_rank_score, time_severity_score, total_amount, rule_count).
-    time_severity 를 금액 위에 두어 truth 가 금액 큰 nontruth 에 묻히지 않게 한다
-    (anti-burying, stage2 와 일관). repeat_months 는 unit 에 없으므로 제외.
-    """
-    return (
-        _band_rank(unit.priority_band),
-        unit.triage_rank_score,
-        unit.time_severity_score,
-        unit.total_amount,
-        len(unit.evidence_rows),
-    )
-
-
-def build_phase1_transaction_queue(
-    pr: PipelineResult,
-    *,
-    topic_id: str | None = None,
-    top_n: int | None = None,
-) -> list[dict[str, Any]]:
-    """전표/흐름(unit) 단위 검토 큐. HIGH/MEDIUM tier unit 만, 1 unit = 1 줄.
-
-    LOW/CONTEXT unit 은 큐에서 빠지고 build_phase1_rule_coverage 로만 surface 된다.
-    band 컷은 _band_rank("medium") 경유 — band 문자 리터럴 분기 금지.
-    """
-    phase1 = resolve_phase1_case_result(pr)
-    if phase1 is None:
-        return []
-    medium_cut = _band_rank("medium")
-    units = [unit for unit in phase1.units if _band_rank(unit.priority_band) >= medium_cut]
-    if topic_id:
-        units = [unit for unit in units if topic_id in unit.topic_scores]
-    units = sorted(units, key=_unit_sort_key, reverse=True)
-    if top_n is not None:
-        units = units[:top_n]
-    return [_unit_row(unit, phase1) for unit in units]
+# build_phase1_transaction_queue(HIGH/MEDIUM tier 큐)는 tier 폐지(2026-07-18)로 삭제 —
+# 주 검토 표면은 조합 빌더(src/export/phase1_combo_builder.py, PHASE1_COMBO_BUILDER_SPEC §5).
 
 
 def _unit_row(unit: Any, phase1: Phase1CaseResult) -> dict[str, Any]:
@@ -631,11 +590,12 @@ def _unit_row(unit: Any, phase1: Phase1CaseResult) -> dict[str, Any]:
 
 
 def build_phase1_rule_coverage(pr: PipelineResult) -> dict[str, Any]:
-    """룰별 커버리지 표. 모든 unit 의 evidence_rows 를 룰별로 전수 집계(tier 무관).
+    """룰별 커버리지 표. 모든 unit 의 evidence_rows 를 룰별로 전수 집계.
 
     행 대상 = RULE_SCORING_REGISTRY 에서 scoring_role=="primary" 이고 standalone_rankable
     인 룰만(booster/macro/combo_only 제외). 룰ID 화이트리스트 나열 금지 — 메타로 판별.
-    룰별 distinct document_id 수(전표 발화 수) + tier 분해(high/medium/low unit 수).
+    tier 폐지(PHASE1_COMBO_BUILDER_SPEC §6) 후 band 분해 없이 distinct document 수 +
+    unit 수만 집계한다.
     """
     phase1 = resolve_phase1_case_result(pr)
     if phase1 is None:
@@ -643,7 +603,6 @@ def build_phase1_rule_coverage(pr: PipelineResult) -> dict[str, Any]:
 
     rule_items: dict[str, dict[str, Any]] = {}
     for unit in phase1.units:
-        band_rank = _band_rank(unit.priority_band)
         # 이 unit 이 어느 document 들에 귀속되는지(flow 면 member 전체, document 면 자기 자신).
         if unit.unit_type == "flow":
             unit_document_ids = set(getattr(unit, "member_document_ids", []) or [])
@@ -661,37 +620,25 @@ def build_phase1_rule_coverage(pr: PipelineResult) -> dict[str, Any]:
                     "rule_id": rule_id,
                     "rule_label": _rule_label(rule_id),
                     "document_ids": set(),
-                    "high_unit_ids": set(),
-                    "medium_unit_ids": set(),
-                    "low_unit_ids": set(),
+                    "unit_ids": set(),
                 },
             )
             # 전표 발화 수 = distinct document_id. ref document_id + unit 귀속 document 반영.
             if ref.document_id:
                 item["document_ids"].add(ref.document_id)
             item["document_ids"].update(unit_document_ids)
-            if band_rank >= _band_rank("high"):
-                item["high_unit_ids"].add(unit.unit_id)
-            elif band_rank >= _band_rank("medium"):
-                item["medium_unit_ids"].add(unit.unit_id)
-            else:
-                item["low_unit_ids"].add(unit.unit_id)
+            item["unit_ids"].add(unit.unit_id)
 
     items = [
         {
             "rule_id": value["rule_id"],
             "rule_label": value["rule_label"],
             "documents": len(value["document_ids"]),
-            "high": len(value["high_unit_ids"]),
-            "medium": len(value["medium_unit_ids"]),
-            "low": len(value["low_unit_ids"]),
+            "units": len(value["unit_ids"]),
         }
         for value in rule_items.values()
     ]
-    items.sort(
-        key=lambda row: (row["documents"], row["high"], row["medium"], row["rule_id"]),
-        reverse=True,
-    )
+    items.sort(key=lambda row: (row["documents"], row["units"], row["rule_id"]), reverse=True)
     return {
         "available": True,
         "items": items,
@@ -2343,6 +2290,31 @@ def build_phase1_macro_finding_queue(
     if rule_id:
         rule = str(rule_id)
         items = [item for item in items if str(item.get("rule_id", "")) == rule]
+    if top_n is not None:
+        items = items[:top_n]
+    return items
+
+
+def build_phase1_partner_finding_queue(
+    pr: PipelineResult,
+    *,
+    signal: str | None = None,
+    top_n: int | None = None,
+) -> list[dict[str, Any]]:
+    """Return trading-partner Queue rows (first-seen / rare / dormant).
+
+    거래처 단위 자기 큐 — 계정/프로세스 단위 macro finding queue 와 단위가 달라 분리한다.
+    이미 고액/대량 순으로 정렬돼 있다. signal 로 first_seen/rare/dormant 필터.
+    """
+
+    phase1 = resolve_phase1_case_result(pr)
+    if phase1 is None:
+        return []
+
+    items = list(phase1.metadata.get("partner_findings", []) or [])
+    if signal:
+        target = str(signal)
+        items = [item for item in items if target in (item.get("signals") or [])]
     if top_n is not None:
         items = items[:top_n]
     return items

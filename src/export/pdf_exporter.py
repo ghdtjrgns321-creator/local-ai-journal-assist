@@ -155,17 +155,16 @@ class PDFExporter:
             )
             top_cases = build_phase1_case_queue(pr, top_n=3)
             if top_cases:
-                phase1_rows = [("Case ID", "Theme", "Band", "Amount")]
+                phase1_rows = [("Case ID", "Theme", "Amount")]
                 phase1_rows.extend(
                     (
                         str(case["case_id"]),
                         str(case["primary_theme_label"]),
-                        str(case["priority_band"]),
                         f"{case['total_amount']:,.0f}",
                     )
                     for case in top_cases
                 )
-                self._render_table(pdf, phase1_rows, col_widths=[45, 45, 25, 35])
+                self._render_table(pdf, phase1_rows, col_widths=[50, 55, 45])
 
     def _render_process_distribution(self, pdf: FPDF, where_sql: str, params: list[Any]) -> None:
         pdf.add_page()

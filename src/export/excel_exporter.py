@@ -147,7 +147,6 @@ class ExcelExporter:
                     [
                         self._header_cell(ws, "Case ID"),
                         self._header_cell(ws, "Theme"),
-                        self._header_cell(ws, "Band"),
                         self._header_cell(ws, "Amount"),
                         self._header_cell(ws, "Risk Narrative"),
                         self._header_cell(ws, "Recommended Actions"),
@@ -158,7 +157,6 @@ class ExcelExporter:
                         [
                             case["case_id"],
                             case["primary_theme_label"],
-                            case["priority_band"],
                             case["total_amount"],
                             case.get("risk_narrative") or case["representative_explanation"],
                             "; ".join(case.get("recommended_audit_actions", [])),

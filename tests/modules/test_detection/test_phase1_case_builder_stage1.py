@@ -140,8 +140,12 @@ def test_stage1_l102_separated_into_data_integrity_track():
     assert di["L1-02"]["track"] == "data_integrity"
 
 
-def test_stage1_sod_direct_critical_stays_above_090():
-    """L1-06 raw>=0.95 단독으로 sod_direct_critical floor 0.90 유지."""
+def test_stage1_sod_direct_critical_no_longer_promotes():
+    """tier 폐지(PHASE1_COMBO_BUILDER_SPEC §6): config priority_floors 는 등급을 못 올린다.
+
+    L1-06 raw>=0.95 + sod_direct_critical floor 를 넣어도 band=low, 점수는 게이트
+    대표값에 머문다. floor 사유는 정렬 참고용으로만 남는다.
+    """
 
     df = _row()
     floors = [
@@ -154,10 +158,8 @@ def test_stage1_sod_direct_critical_stays_above_090():
     ]
     result = _build(df, "L1-06", score=0.95, priority_floors=floors)
     case = result.cases[0]
-    assert case.priority_score >= 0.90, (
-        f"sod_direct_critical: priority_score={case.priority_score} < 0.90"
-    )
-    assert "sod_direct_critical" in case.priority_adjustment_reasons
+    assert case.priority_band == "low"
+    assert case.priority_score < 0.90, f"floor 승격 폐지 위반: priority_score={case.priority_score}"
 
 
 def test_stage1_skipped_approval_critical_stays_above_090():
@@ -187,10 +189,9 @@ def test_stage1_skipped_approval_critical_stays_above_090():
         priority_floors=floors,
     )
     case = result.cases[0]
-    assert case.priority_score >= 0.90, (
-        f"skipped_approval_critical: priority_score={case.priority_score} < 0.90"
-    )
-    assert "skipped_approval_critical" in case.priority_adjustment_reasons
+    # tier 폐지: skipped_approval_critical floor 도 승격 불가 — band=low 고정.
+    assert case.priority_band == "low"
+    assert case.priority_score < 0.90
 
 
 def test_stage1_escalated_self_approval_material_or_sensitive_stays_above_090():
@@ -213,10 +214,9 @@ def test_stage1_escalated_self_approval_material_or_sensitive_stays_above_090():
         priority_floors=floors,
     )
     case = result.cases[0]
-    assert case.priority_score >= 0.90, (
-        f"escalated_self_approval: priority_score={case.priority_score} < 0.90"
-    )
-    assert "escalated_self_approval_material_or_sensitive" in case.priority_adjustment_reasons
+    # tier 폐지: escalated 자기승인 floor 도 승격 불가 — band=low 고정.
+    assert case.priority_band == "low"
+    assert case.priority_score < 0.90
 
 
 # ---- anti-noise --------------------------------------------------------------
@@ -283,8 +283,8 @@ def test_stage1_weekend_only_stays_below_090():
 # ---- composite_sort_score / merge sanity -------------------------------------
 
 
-def test_stage1_legacy_floor_merge_does_not_demote_in_topic_score():
-    """legacy floor 로 0.90 진입한 케이스의 priority_score 는 topic 점수보다 우선."""
+def test_stage1_legacy_floor_does_not_touch_priority_score():
+    """tier 폐지: legacy floor 는 priority_score 에 손대지 못한다 — 게이트 대표값 그대로."""
 
     df = _row()
     floors = [
@@ -298,10 +298,10 @@ def test_stage1_legacy_floor_merge_does_not_demote_in_topic_score():
     result = _build(df, "L1-06", score=0.95, priority_floors=floors)
     case = result.cases[0]
     topic_max = max(case.topic_scores.values(), default=0.0)
-    assert case.priority_score == pytest.approx(max(topic_max, 0.90)), (
-        f"merge mismatch: priority_score={case.priority_score}, topic_max={topic_max}"
+    assert case.priority_score == pytest.approx(topic_max), (
+        f"floor 개입 흔적: priority_score={case.priority_score}, topic_max={topic_max}"
     )
-    assert case.priority_score >= 0.90
+    assert case.priority_score < 0.90
 
 
 def test_stage1_macro_context_does_not_promote_weak_seed_to_immediate():

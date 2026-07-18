@@ -10,7 +10,6 @@ from src.detection.rule_scoring import (
     normalize_signal_strength,
 )
 from src.detection.topic_scoring import (
-    apply_topic_floors,
     compute_fraud_scenario_tags,
     compute_topic_scores,
     compute_topic_tiers,
@@ -23,56 +22,31 @@ def _ev(rule_id: str, score: float = 0.6) -> dict[str, object]:
     return {"rule_id": rule_id, "normalized_score": score}
 
 
-def test_related_party_reversal_is_medium_after_high7_handoff():
-    # §3.0 / §8(4) HIGH-7 → MEDIUM 이관: 역분개(L2-05) & 관계사(L3-03) → duplicate_outflow MEDIUM
-    # (related_party_reversal_medium). 기말 L3-04 필수 제외 — L2-05/L3-03 단독으로 승격되어야 한다.
+def test_old_related_party_reversal_combo_no_longer_promotes():
+    # tier 폐지(PHASE1_COMBO_BUILDER_SPEC §6): 구 related_party_reversal_medium 조합은
+    # 등급을 만들지 않는다 — L2-05 standalone 게이트(LOW)만 남는다.
     tiers = compute_topic_tiers([_ev("L2-05"), _ev("L3-03")])
-    assert tiers["duplicate_outflow"].tier == "MEDIUM"
+    assert tiers["duplicate_outflow"].tier == "LOW"
 
 
-def test_expense_capitalization_fires_account_logic_high_via_period_end_leg():
-    # §3.0 HIGH-9: L2-04 비용자산화 & L3-02 수기 & (L4-03|L3-04|L1-06) 셋째다리. 여기선 L3-04.
+def test_old_expense_capitalization_high_combo_no_longer_promotes():
     tiers = compute_topic_tiers([_ev("L2-04"), _ev("L3-02"), _ev("L3-04")])
-    assert tiers["account_logic"].tier == "HIGH"
+    assert tiers["account_logic"].tier == "LOW"
 
 
-def test_period_end_high_fires_via_corroborant_leg():
-    # §3.0 HIGH-4: (L3-04|L3-11) & (L3-10|L4-04|L4-03). timing_seed(L3-04) + corroborant(L4-04).
-    # 적요부실 룰은 corroborant 풀에서 삭제됨(룰 자체 폐기).
-    tiers = compute_topic_tiers([_ev("L3-04"), _ev("L4-04")])
-    assert tiers["closing_timing"].tier == "HIGH"
+def test_old_period_end_high_combo_no_longer_promotes():
+    tiers = compute_topic_tiers([_ev("L3-04"), _ev("L3-10")])
+    assert tiers["closing_timing"].tier == "LOW"
 
 
-def test_period_end_not_high_without_corroborant_leg():
-    # 적요부실 룰 폐기 후: timing_seed(L3-04) 단독으로는 corroborant 다리가 없어 HIGH 불가.
-    tiers = compute_topic_tiers([_ev("L3-04")])
-    assert tiers["closing_timing"].tier != "HIGH"
-
-
-def test_embezzlement_reversal_is_not_high_without_bypass_or_high_amount():
-    # §3.0 HIGH-2 / §8(1) 고액 복원: 역분개(L2-05)+수기(L3-02)는 bypass 도 고액(L4-03)도 없으면
-    # HIGH 불가(둘째 분기가 L4-03 을 AND 로 요구).
-    tiers = compute_topic_tiers([_ev("L2-05"), _ev("L3-02")])
-    assert tiers["duplicate_outflow"].tier != "HIGH"
-
-
-def test_embezzlement_reversal_fires_high_with_manual_and_high_amount():
-    # §3.0 HIGH-2 둘째 분기: (L2-02|L2-03|L2-05) & L3-02 & L4-03 → HIGH.
+def test_old_embezzlement_high_combo_no_longer_promotes():
     tiers = compute_topic_tiers([_ev("L2-05"), _ev("L3-02"), _ev("L4-03")])
-    assert tiers["duplicate_outflow"].tier == "HIGH"
+    assert tiers["duplicate_outflow"].tier == "LOW"
 
 
-def test_unknown_approver_with_cutoff_is_not_approval_high():
-    # §3.0 HIGH-5: bypass & (L4-03|L2-02|L2-03). cutoff(L3-11)은 corroborant 가 아니므로
-    # 유령승인자(L1-07-02)+cutoff 만으로는 approval HIGH 불가(§8(5) 강맥락 L3-11 삭제).
-    tiers = compute_topic_tiers([_ev("L1-07-02"), _ev("L3-11")])
-    assert tiers["approval_control"].tier != "HIGH"
-
-
-def test_high_amount_corroborant_lifts_approval_bypass_to_high():
-    # §3.0 HIGH-5 / §8(1) 고액 복원: 승인우회(L1-05) & 고액(L4-03) → approval HIGH.
+def test_old_approval_bypass_high_combo_no_longer_promotes():
     tiers = compute_topic_tiers([_ev("L1-05"), _ev("L4-03")])
-    assert tiers["approval_control"].tier == "HIGH"
+    assert tiers["approval_control"].tier == "LOW"
 
 
 def test_rule_scoring_registry_covers_phase1_transaction_rules():
@@ -538,216 +512,14 @@ def test_topic_scoring_uses_primary_secondary_and_tags():
 
     scores = compute_topic_scores([primary, secondary])
 
-    assert pick_primary_topic(scores) == "duplicate_outflow"
-    assert scores["duplicate_outflow"] > scores["approval_control"]
+    # 점수 폐지: topic 점수는 전부 0 — 우선순위 선택은 게이트/빌더 몫.
+    assert max(scores.values()) == 0.0
+    assert pick_primary_topic(scores) is None
+    # 태그는 룰 메타데이터 기원만 남는다(구 combo 기원 embezzlement_concealment_risk 제거).
     assert compute_fraud_scenario_tags([primary, secondary]) == (
         "threshold_splitting",
         "approval_bypass",
-        "embezzlement_concealment_risk",
     )
-
-
-def _topic_evidences(rule_specs):
-    return [
-        normalize_rule_evidence(
-            rule_id=rule_id,
-            evidence_type=evidence_type,
-            severity=severity,
-            raw_value=raw_value,
-            display_label=display_label,
-        )
-        for rule_id, evidence_type, severity, raw_value, display_label in rule_specs
-    ]
-
-
-@pytest.mark.parametrize(
-    ("topic_id", "expected_tag", "expected_floor", "expected_reason", "rule_specs"),
-    [
-        (
-            "closing_timing",
-            "period_end_adjustment_risk",
-            0.75,
-            "period_end_or_late_posting + weak_description_or_sensitive_account",
-            [
-                # §3.0 HIGH-4 corroborant 풀 (L3-10|L4-04|L4-03).
-                # 적요부실 룰은 폐기됨 → L4-04 사용.
-                ("L3-04", "timing_anomaly", 3, 0.6, ""),
-                ("L4-04", "logic_mismatch", 2, 0.6, ""),
-            ],
-        ),
-        (
-            "duplicate_outflow",
-            "embezzlement_concealment_risk",
-            0.75,
-            "outflow_or_duplicate + approval_bypass + secondary_corroborant (or manual_with_high_amount)",
-            [
-                # §8.3(2026-07-01) 보강신호 요건: outflow+bypass 2신호뿐이면 FSS상 MEDIUM
-                # (2011-다-나)이라 더 이상 HIGH 아님 → 보강신호 풀(L3-04 등) 1개 추가.
-                ("L2-05", "duplicate_or_outflow", 3, 0.8, ""),
-                ("L1-05", "control_failure", 4, 0.8, ""),
-                ("L3-04", "timing_anomaly", 3, 0.6, ""),
-            ],
-        ),
-        (
-            "revenue_statistical",
-            "fictitious_entry_risk",
-            0.75,
-            "revenue_or_amount_outlier + manual_adjustment + secondary_red_flag",
-            [
-                ("L4-01", "statistical_outlier", 3, 0.8, ""),
-                ("L3-02", "control_failure", 3, 0.8, ""),
-                ("L4-04", "logic_mismatch", 2, 0.45, ""),
-            ],
-        ),
-        (
-            "approval_control",
-            "approval_bypass_risk",
-            0.75,
-            "approval_bypass + high_amount_or_duplicate + secondary_corroborant",
-            [
-                # §3.0 HIGH-5 corroborant 풀 (L4-03|L2-02|L2-03).
-                # cutoff(L3-11) 은 §8(5) 삭제됨 → L4-03 사용.
-                ("L1-07", "control_failure", 4, 0.8, ""),
-                ("L4-03", "statistical_outlier", 3, 0.7, ""),
-            ],
-        ),
-    ],
-)
-def test_fraud_combo_floor_raises_expected_topic_score(
-    topic_id,
-    expected_tag,
-    expected_floor,
-    expected_reason,
-    rule_specs,
-):
-    evidences = _topic_evidences(rule_specs)
-
-    breakdowns = compute_topic_scores(evidences, return_breakdown=True)
-
-    assert expected_tag in compute_fraud_scenario_tags(evidences)
-    assert breakdowns[topic_id].score >= expected_floor
-    assert expected_reason in breakdowns[topic_id].fraud_combo_policy_ids
-    assert expected_tag in breakdowns[topic_id].fraud_combo_tags
-    assert "manipulation_candidate" not in TOPIC_REGISTRY
-
-
-def test_manual_scope_closing_does_not_create_fictitious_or_period_end_floor():
-    evidences = _topic_evidences(
-        [
-            ("L3-02", "control_failure", 3, 0.8, ""),
-            ("L3-04", "timing_anomaly", 3, 0.6, ""),
-            ("L3-12", "access_scope_review", 3, 0.8, ""),
-        ]
-    )
-
-    breakdowns = compute_topic_scores(evidences, return_breakdown=True)
-    tags = compute_fraud_scenario_tags(evidences)
-
-    assert "fictitious_entry_risk" not in tags
-    assert "period_end_adjustment_risk" not in tags
-    assert breakdowns["revenue_statistical"].fraud_combo_policy_ids == ()
-    assert breakdowns["closing_timing"].fraud_combo_policy_ids == ()
-
-
-def test_approval_manual_scope_does_not_create_embezzlement_floor():
-    evidences = _topic_evidences(
-        [
-            ("L1-05", "control_failure", 4, 0.8, ""),
-            ("L3-02", "control_failure", 3, 0.8, ""),
-            ("L3-12", "access_scope_review", 3, 0.8, ""),
-        ]
-    )
-
-    breakdowns = compute_topic_scores(evidences, return_breakdown=True)
-    tags = compute_fraud_scenario_tags(evidences)
-
-    assert "embezzlement_concealment_risk" not in tags
-    assert breakdowns["duplicate_outflow"].fraud_combo_policy_ids == ()
-
-
-# §3.0 / §8(5): approval_bypass_medium 전 분기 폐기. 승인우회 + 약맥락(수기·비영업일·야간)은
-#   더 이상 어떤 approval combo floor 도 발화하지 않는다(HIGH-5 corroborant = L4-03|L2-02|L2-03 만).
-@pytest.mark.parametrize(
-    "rule_specs",
-    [
-        [
-            ("L1-07", "control_failure", 4, 0.8, ""),
-            ("L3-02", "control_failure", 3, 0.8, ""),
-        ],
-        [
-            ("L1-07", "control_failure", 4, 0.8, ""),
-            ("L3-05", "timing_anomaly", 3, 0.6, ""),
-        ],
-        [
-            ("L1-07", "control_failure", 4, 0.8, ""),
-            ("L3-06", "timing_anomaly", 3, 0.6, ""),
-        ],
-    ],
-)
-def test_approval_bypass_with_weak_context_fires_no_approval_combo_floor(rule_specs):
-    evidences = _topic_evidences(rule_specs)
-
-    breakdowns = compute_topic_scores(evidences, return_breakdown=True)
-
-    # combo floor 미발화 → score 가 HIGH(0.75) 미만이고 fraud_combo policy 가 비어 있다.
-    assert breakdowns["approval_control"].score < 0.75
-    assert breakdowns["approval_control"].fraud_combo_policy_ids == ()
-
-
-# §3.0 / §8(1) 고액 복원·§8(6) 조합 정합 이후, 근거 충족 HIGH 조합은 복원된 leg 로 발화한다.
-#   - closing_timing: (L3-04|L3-11) & (L3-10|L4-04|L4-03)   ※적요부실 corroborant 폐기됨
-#   - duplicate_outflow: (L2-02|L2-03|L2-05) & L3-02 & L4-03 (고액 AND)  ※bypass 없는 분기
-@pytest.mark.parametrize(
-    ("topic_id", "rule_specs", "expected_reason"),
-    [
-        (
-            "closing_timing",
-            [
-                ("L3-04", "timing_anomaly", 3, 0.6, ""),
-                ("L4-03", "statistical_outlier", 3, 0.7, ""),
-            ],
-            "period_end_or_late_posting + weak_description_or_sensitive_account",
-        ),
-        (
-            "duplicate_outflow",
-            [
-                ("L2-05", "duplicate_or_outflow", 3, 0.8, ""),
-                ("L3-02", "control_failure", 3, 0.8, ""),
-                ("L4-03", "statistical_outlier", 3, 0.7, ""),
-            ],
-            "outflow_or_duplicate + approval_bypass + secondary_corroborant (or manual_with_high_amount)",
-        ),
-    ],
-)
-def test_grounded_combos_fire_high_with_restored_legs(
-    topic_id,
-    rule_specs,
-    expected_reason,
-):
-    evidences = _topic_evidences(rule_specs)
-
-    breakdowns = compute_topic_scores(evidences, return_breakdown=True)
-
-    assert breakdowns[topic_id].score >= 0.75
-    assert expected_reason in breakdowns[topic_id].fraud_combo_policy_ids
-
-
-@pytest.mark.parametrize(
-    "rule_specs",
-    [
-        [("L4-03", "statistical_outlier", 3, 1.0, "")],
-        [("L3-04", "timing_anomaly", 3, 0.6, "")],
-        [("L3-03", "intercompany_structure", 3, 0.6, "")],
-    ],
-)
-def test_single_rules_do_not_apply_fraud_combo_floor(rule_specs):
-    evidences = _topic_evidences(rule_specs)
-
-    breakdowns = compute_topic_scores(evidences, return_breakdown=True)
-
-    assert not any(breakdown.fraud_combo_tags for breakdown in breakdowns.values())
-    assert not any(breakdown.fraud_combo_policy_ids for breakdown in breakdowns.values())
-    assert not any(tag.endswith("_risk") for tag in compute_fraud_scenario_tags(evidences))
 
 
 def test_l202_duplicate_payment_reasons_are_uniform_binary():
@@ -793,39 +565,7 @@ def test_l202_reference_match_has_no_topic_floor():
         display_label="reference_match",
     )
 
-    scores = apply_topic_floors(
-        {"duplicate_outflow": 0.0},
-        [evidence],
-    )
+    scores = compute_topic_scores([evidence])
 
     assert evidence.floor_policy_ids == ()
     assert scores["duplicate_outflow"] == pytest.approx(0.0)
-
-
-def test_fraud_combo_rule_scope_gates_automated_only_hits():
-    """신뢰 자동 전표에서만 발화한 룰은 fraud combo 트리거에서 제외 (이슈 #14).
-
-    Why: 자동 결산 배치 전표는 승인 부재·결산기 집중이 정상이므로, 그 행들에서만
-    발화한 룰 조합은 사람 행위를 전제로 한 fraud combo floor를 받으면 안 된다.
-    """
-    evidences = _topic_evidences(
-        [
-            ("L3-04", "timing_anomaly", 3, 0.8, ""),
-            ("L4-03", "statistical_outlier", 3, 1.0, ""),
-            ("L4-04", "logic_mismatch", 2, 0.45, ""),
-        ]
-    )
-
-    open_breakdowns = compute_topic_scores(evidences, return_breakdown=True)
-    gated_breakdowns = compute_topic_scores(
-        evidences,
-        return_breakdown=True,
-        fraud_combo_rule_scope={"L4-04"},  # L3-04/L4-03은 신뢰 자동 행 발화 → 제외
-    )
-
-    assert open_breakdowns["closing_timing"].fraud_combo_policy_ids != ()
-    assert gated_breakdowns["closing_timing"].fraud_combo_policy_ids == ()
-    # Why: 메타데이터만이 아니라 점수 인상 경로(apply_combo_floors)도 게이트돼야 한다 —
-    #      1차 구현이 기록 경로만 막고 점수는 그대로 0.75로 올린 회귀의 잠금.
-    assert open_breakdowns["closing_timing"].score >= 0.75
-    assert gated_breakdowns["closing_timing"].score < 0.75

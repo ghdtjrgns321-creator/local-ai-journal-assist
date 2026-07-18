@@ -12,7 +12,6 @@ from src.detection.base import DetectionResult, RuleFlag
 from src.detection.phase1_case_builder import (
     _build_macro_context_index,
     _macro_only_evidences,
-    _priority_band,
     build_phase1_case_reference,
     build_phase1_case_result,
     build_phase1_case_run_id,
@@ -114,10 +113,8 @@ def _build_single_rule_case_result(
     )
 
 
-def test_priority_band_does_not_promote_low_score_repeated_case() -> None:
-    config = {"priority_band": {"high": 0.90, "medium": 0.75}}
-
-    assert _priority_band(0.50, config) == "low"
+# tier 자동 등급 폐지(PHASE1_COMBO_BUILDER_SPEC §6, 2026-07-17): _priority_band 삭제.
+# band 계약 테스트는 test_topic_tiers.py 의 폐지 계약(LOW/CONTEXT 게이트)으로 대체됨.
 
 
 def test_score_phase1_units_fills_total_amount_and_time_severity() -> None:
@@ -1246,7 +1243,7 @@ def test_case_scores_expose_integrity_and_intercompany_axes():
     assert intercompany_case.data_integrity_score == 0
 
 
-def test_fraud_combo_floor_is_written_to_case_topic_breakdown():
+def test_old_combo_floor_config_no_longer_promotes_case():
     df = pd.DataFrame(
         {
             "document_id": ["DOC-CLOSING"],
@@ -1299,16 +1296,15 @@ def test_fraud_combo_floor_is_written_to_case_topic_breakdown():
     case = next(case for case in result.cases if case.primary_topic == "closing_timing")
     breakdown = case.topic_score_breakdown["closing_timing"]
 
-    # period_end_adjustment_high combo → closing_timing tier HIGH. topic_scores 는 이제 tier
-    # 대표값(가중합 .score 아님): HIGH=0.90. band 도 high.
-    assert case.topic_scores["closing_timing"] == pytest.approx(0.90)
-    assert case.priority_band == "high"
-    assert "period_end_adjustment_risk" in case.fraud_scenario_tags
-    assert "period_end_adjustment_risk" in breakdown["fraud_combo_tags"]
-    assert (
-        "period_end_or_late_posting + weak_description_or_sensitive_account"
-        in (breakdown["fraud_combo_policy_ids"])
-    )
+    # tier 자동 등급 폐지(PHASE1_COMBO_BUILDER_SPEC §6): 구 period_end_adjustment_high
+    # combo 조건(L3-04+L4-03)과 config combo_floors 를 넣어도 등급 승격이 없다.
+    # topic_scores 는 standalone 게이트 대표값(LOW=0.40), band 는 항상 low.
+    assert case.topic_scores["closing_timing"] == pytest.approx(0.40)
+    assert case.priority_band == "low"
+    # combo 기원 태그·policy 필드는 breakdown 에서 사라졌다(룰 메타 태그만 잔존).
+    assert "fraud_combo_tags" not in breakdown
+    assert "fraud_combo_policy_ids" not in breakdown
+    assert breakdown["has_rankable_primary"] is True
 
 
 def test_l102_separated_into_data_integrity_track():

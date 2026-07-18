@@ -1052,8 +1052,9 @@ def test_phase2_subdetector_case_counts_are_unique_by_case_and_code():
 def test_phase1_no_longer_imports_phase2_inference_action_directly():
     source = Path("dashboard/tab_phase1.py").read_text(encoding="utf-8")
 
+    # "Phase 2 탭으로 이동" 버튼 문구 검사는 삭제 — 해당 문구는 도달 불가 구 6-탭
+    # 블록(AI결론)에만 있었고 tier 폐지 정리(2026-07-18)에서 블록째 제거됨.
     assert "from dashboard.tab_phase2 import _start_phase2_analysis" not in source
-    assert "Phase 2 탭으로 이동" in source
 
 
 # ── P2-4: status 별 메시지/short_text 분기 테스트 ─────────────────

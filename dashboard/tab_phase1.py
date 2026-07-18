@@ -12,7 +12,6 @@ from dashboard._state import (
     KEY_ACTIVE_RESULT_TAB,
     KEY_PENDING_RESULT_TAB,
     PAGE_PHASE1,
-    PAGE_PHASE2,
 )
 from dashboard.phase1_display import (
     CASE_IMMEDIATE_REVIEW_RATIO as _CASE_IMMEDIATE_REVIEW_RATIO,
@@ -34,12 +33,11 @@ from src.detection.phase1_rule_catalog import (
     TOPIC_RULE_WHITELIST as _TOPIC_RULE_WHITELIST,
 )
 from src.detection.rule_detail_metadata import (
-    PresenterSurface,
-    get_rule_detail_metadata,
-    include_in_l1_l4_transaction_count,
+    canonicalize_rule_id as _canonicalize_metadata_rule_id,
 )
 from src.detection.rule_detail_metadata import (
-    canonicalize_rule_id as _canonicalize_metadata_rule_id,
+    get_rule_detail_metadata,
+    include_in_l1_l4_transaction_count,
 )
 from src.detection.rule_scoring import TOPIC_REGISTRY
 from src.export.phase1_case_view import (
@@ -47,13 +45,10 @@ from src.export.phase1_case_view import (
     _case_signal_counts,
     _case_topic_ids,
     _case_topic_score,
-    build_phase1_audit_risk_by_queue,
     build_phase1_case_drilldown,
-    build_phase1_case_queue,
     build_phase1_data_quality_gate,
     build_phase1_integrity_rule_view,
     build_phase1_raw_rule_truth_index,
-    build_phase1_review_candidate_summary,
     build_phase1_rule_case_doc_map,
     build_phase1_rule_cases,
     build_phase1_rule_coverage,
@@ -61,10 +56,10 @@ from src.export.phase1_case_view import (
     build_phase1_rule_document_detail,
     build_phase1_rule_documents,
     build_phase1_topic_top_n,
-    build_phase1_transaction_queue,
     resolve_phase1_case_result,
     summarize_phase1_case_result,
 )
+from src.export.phase1_combo_builder import build_combo_builder_result
 from src.formatting import format_krw_compact
 
 # Why: TOPIC_REGISTRY.label 은 export/리포트 API 의 외부 계약이라 변경 시 파급이 크다.
@@ -231,31 +226,6 @@ def render(prep_result, phase1_result) -> None:
         ):
             _start_phase1_analysis()
         return
-
-    # Why: 라디오 한 줄 → 상단 대분류와 동일한 st.tabs 사용. dashboard/app.py 의
-    #      탭 패턴과 일관성을 맞추고, 시각적으로도 "섹션 전환"임을 즉시 인지하게 한다.
-    section_tabs = st.tabs(
-        [
-            "전체데이터",
-            "데이터정합성",
-            "Topic Top N",
-            "Topic 보조 표시",
-            "Scenario badge",
-            "AI결론",
-        ]
-    )
-    with section_tabs[0]:
-        _render_overview(phase1_result, summary)
-    with section_tabs[1]:
-        _render_data_quality_gate(phase1_result)
-    with section_tabs[2]:
-        _render_priority_risk_queue(phase1_result)
-    with section_tabs[3]:
-        _render_low_priority_risk_queue(phase1_result)
-    with section_tabs[4]:
-        _render_context_review_candidates(phase1_result)
-    with section_tabs[5]:
-        _render_ai_conclusion(phase1_result, summary)
 
 
 def _render_prep_summary(prep_result) -> None:
@@ -2604,7 +2574,7 @@ def _rules_for_topic(topic_id: str) -> set[str]:
     for rule_id in legacy:
         canonical = _canonicalize_metadata_rule_id(rule_id)
         try:
-            meta = get_rule_detail_metadata(canonical)
+            get_rule_detail_metadata(canonical)  # 등록 룰만 통과(존재 확인)
         except KeyError:
             continue
         if include_in_l1_l4_transaction_count(canonical):
@@ -3060,231 +3030,10 @@ def _render_topic_rule_case_heatmap(
     st.divider()
 
 
-def _render_priority_risk_queue(pr) -> None:
-    _render_category_case_queue(
-        pr,
-        category="Topic Top N",
-        title="Topic Top N",
-        caption="priority high/medium 우선순위이며 직접 위험 신호가 있는 case입니다.",
-        key_prefix="phase1_priority_risk",
-    )
-
-
-def _render_low_priority_risk_queue(pr) -> None:
-    _render_category_case_queue(
-        pr,
-        category="Topic 보조 표시",
-        title="Topic 보조 표시",
-        caption=(
-            "직접 위험 신호는 있지만 priority low이거나 timing/control 성격의 넓은 "
-            "모집단으로 분류된 case입니다."
-        ),
-        key_prefix="phase1_low_priority_risk",
-    )
-
-
-def _render_context_review_candidates(pr) -> None:
-    _render_category_case_queue(
-        pr,
-        category="Scenario badge",
-        title="Scenario badge",
-        caption="직접 위험 신호 없이 review/context/macro 근거만 있는 case입니다.",
-        key_prefix="phase1_context_review",
-    )
-
-
-def _render_category_case_queue(
-    pr,
-    *,
-    category: str,
-    title: str,
-    caption: str,
-    key_prefix: str,
-) -> None:
-    st.markdown(f"### {title}")
-    st.caption(caption)
-
-    rows = _category_case_rows(pr, category)
-    if not rows:
-        st.info(f"{title} case가 없습니다.")
-        return
-
-    rule_groups = _category_rule_groups(pr, category)
-    grouped_case_total = sum(group["case_count"] for group in rule_groups)
-    c1, c2, c3 = st.columns([1, 1, 3])
-    c1.metric("고유 Case", f"{len(rows):,}", border=True)
-    c2.metric("룰별 Case", f"{grouped_case_total:,}", border=True)
-    top_n = c3.slider(
-        "룰별 표시 Case 수",
-        min_value=10,
-        max_value=min(max(len(rows), 10), 200),
-        value=min(50, max(len(rows), 10)),
-        step=10,
-        key=f"{key_prefix}_top_n",
-    )
-    st.caption(
-        "한 case가 여러 룰을 포함하면 각 룰 그룹에 중복 표시됩니다. "
-        "상단 고유 Case는 중복 제거 기준입니다."
-    )
-
-    if not rule_groups:
-        st.info("룰 hit가 연결된 case가 없습니다.")
-        return
-
-    for group in rule_groups:
-        visible_rows = group["rows"][: int(top_n)]
-        header = f"{group['rule_id']} · {group['rule_label']} · case {group['case_count']:,}건"
-        with st.expander(header, expanded=False):
-            _render_case_table(pd.DataFrame(visible_rows))
-            _render_case_selector(
-                pr,
-                visible_rows,
-                key_suffix=f"{key_prefix}_{group['rule_id']}",
-            )
-
-
-def _category_rule_groups(pr, category: str) -> list[dict[str, Any]]:
-    phase1 = resolve_phase1_case_result(pr)
-    if phase1 is None:
-        return []
-    dq_case_ids = _data_quality_case_ids(pr)
-    grouped: dict[str, list[Any]] = {}
-    for case in phase1.cases:
-        if _case_signal_category(case, dq_case_ids) != category:
-            continue
-        rule_ids = {
-            str(getattr(hit, "rule_id", "") or "").strip()
-            for hit in getattr(case, "raw_rule_hits", []) or []
-        }
-        for rule_id in _sort_rule_ids([rule for rule in rule_ids if rule]):
-            grouped.setdefault(rule_id, []).append(case)
-
-    groups: list[dict[str, Any]] = []
-    for rule_id in _sort_rule_ids(list(grouped.keys())):
-        cases = grouped[rule_id]
-        # §9.3 composite_sort_score 우선 정렬. priority_score 단독 정렬은 components 토글로만 사용.
-        cases.sort(
-            key=lambda case: (
-                _case_display_priority_band_rank(case),
-                case.composite_sort_score,
-                case.priority_score,
-                case.triage_rank_score,
-                case.total_amount,
-                case.rule_count,
-                -case.document_count,
-            ),
-            reverse=True,
-        )
-        groups.append(
-            {
-                "rule_id": rule_id,
-                "rule_label": _RULE_NAMES_KR.get(rule_id)
-                or RULE_CODES.get(rule_id, "Unknown Rule"),
-                "case_count": len(cases),
-                "rows": [_display_case_row(case, phase1) for case in cases],
-            }
-        )
-    return groups
-
-
-def _render_review_candidates(pr) -> None:
-    summary = build_phase1_review_candidate_summary(pr)
-    if not summary["available"] or not summary["items"]:
-        st.info("Review 후보가 없습니다.")
-        return
-
-    review_df = pd.DataFrame(summary["items"])
-    review_df["Sample cases"] = review_df["sample_case_ids"].map(lambda values: ", ".join(values))
-    review_df["Focus"] = review_df["review_focus"].map(lambda values: " / ".join(values))
-    review_df["Actions"] = review_df["actions"].map(lambda values: " / ".join(values))
-    display_df = review_df.rename(
-        columns={
-            "queue_label": "Review type",
-            "cases": "Cases",
-            "documents": "Documents",
-            "review_hits": "Review hits",
-            "direct_hits": "Direct hits",
-            "high_cases": "High",
-            "medium_cases": "Medium",
-            "low_cases": "Low",
-        }
-    )
-    st.dataframe(
-        display_df[
-            [
-                "Review type",
-                "Cases",
-                "Documents",
-                "Review hits",
-                "Direct hits",
-                "High",
-                "Medium",
-                "Low",
-                "Focus",
-                "Actions",
-                "Sample cases",
-            ]
-        ],
-        width="stretch",
-        hide_index=True,
-    )
-
-
-def _render_all_case_queue(pr, summary: dict) -> None:
-    st.markdown("### 전체 Case Drill-down")
-    st.caption("전체 PHASE1 case를 queue/theme으로 필터링해서 세부 근거를 확인합니다.")
-
-    queue_options = [("전체", None)] + [
-        (queue["queue_label"], queue["queue_id"]) for queue in summary.get("queues", [])
-    ]
-    selected_queue_label = st.selectbox(
-        "Issue Queue",
-        options=[label for label, _ in queue_options],
-        index=0,
-        key="phase1_queue_select",
-    )
-    selected_queue = next(
-        queue_id for label, queue_id in queue_options if label == selected_queue_label
-    )
-
-    theme_options = [("전체 Theme", None)] + [
-        (theme["theme_label"], theme["theme_id"]) for theme in summary["themes"]
-    ]
-    selected_theme_label = st.selectbox(
-        "Theme 보조 필터",
-        options=[label for label, _ in theme_options],
-        index=0,
-        key="phase1_theme_select",
-    )
-    selected_theme = next(
-        theme_id for label, theme_id in theme_options if label == selected_theme_label
-    )
-    top_n = st.slider(
-        "표시할 Case 수",
-        min_value=5,
-        max_value=50,
-        value=10,
-        step=5,
-        key="phase1_top_n",
-    )
-
-    queue = build_phase1_case_queue(
-        pr,
-        queue_id=selected_queue,
-        theme_id=selected_theme,
-        top_n=top_n,
-    )
-    if not queue:
-        st.info("선택한 조건에 해당하는 case가 없습니다.")
-        return
-    _render_case_table(pd.DataFrame(queue))
-    _render_case_selector(pr, queue)
-
-
+# case 집계뷰 master 로 보내는 상한 (AgGrid 페이지네이션 50건/페이지 전제)
 _VIOLATION_CASES_CAP = 200
 
 
-@st.fragment
 def _render_violation_cases_tab(pr, summary: dict) -> None:
     """검토 케이스 탭 — 핵심 메시지 + Top 200 case master + 클릭 시 drilldown.
 
@@ -3299,39 +3048,22 @@ def _render_violation_cases_tab(pr, summary: dict) -> None:
          버그가 난다. fragment 로 격리해 검토 케이스 탭 영역만 부분 rerun.
     """
     phase1 = resolve_phase1_case_result(pr)
-    if phase1 is None or not phase1.cases:
+    if phase1 is None:
         st.info("PHASE1 case 결과가 없습니다.")
         return
 
-    # Why: streamlit st.info()는 파란 강조 박스라 화면 톤이 과하다. 회색 컨테이너
-    #      + ℹ 아이콘으로 부드럽게 처리하고, 본문은 priority cohort별 회수율을
-    #      간결한 dash 형식으로 정리한다.
-    st.markdown(
-        """
-<div style="background:#F3F4F6; border:1px solid #E5E7EB; border-radius:8px;
-            padding:0.75rem 1rem; margin:0.25rem 0 1rem; color:#374151;">
-  <div style="font-weight:600; margin-bottom:0.45rem; color:#111827;">
-    ℹ 검토 우선순위 안내
-  </div>
-  <ul style="margin:0; padding-left:1.2rem; font-size:0.88rem; line-height:1.6;">
-    <li><strong>Top 50 우선 조회</strong> — 감사인이 먼저 확인할 이상 징후가
-    상위 구간에 집중되어 있습니다.</li>
-    <li><strong>Top 100 ~ 200 확장</strong> — 회수율 약 40 ~ 50%까지 상승.</li>
-    <li><strong>Top 500 이후</strong> — 추가 발견의 한계 효익 급감.</li>
-  </ul>
-</div>
-""",
-        unsafe_allow_html=True,
+    # 주 검토 표면 = 조합 빌더(몸통×특징, 감사인 선택). tier 자동 등급은 폐지됨.
+    # (SoT: docs/spec/PHASE1_COMBO_BUILDER_SPEC.md — 2026-07-17 사용자 확정).
+    from dashboard.components.phase1_combo_builder_panel import render_combo_builder_panel
+
+    render_combo_builder_panel(
+        pr,
+        build_result=lambda **kw: _cached_phase1_build(
+            pr, "combo_builder", build_combo_builder_result, **kw
+        ),
     )
 
-    # 주 검토 큐 = 전표/흐름(unit) 단위. UNIT_MEASUREMENT_POLICY 상 tier(정답)는
-    # document/flow 에만 붙으므로 큐 축을 unit 으로 통일한다. HIGH/MEDIUM unit 만 큐에
-    # 올라오고, LOW/CONTEXT 는 아래 전수 커버리지 표로만 surface 된다.
-    st.markdown("#### 주 검토 큐 (전표/흐름 단위)")
-    unit_rows = build_phase1_transaction_queue(pr, top_n=_VIOLATION_CASES_CAP)
-    _render_unit_queue_grid(unit_rows)
-
-    # 룰별 전수 커버리지 표 — LOW 신호 포함 모든 룰 발화를 전수 집계한다.
+    # 룰별 전수 커버리지 표 — 빌더 어휘 밖 룰 포함 모든 룰 발화를 전수 집계한다.
     st.divider()
     _render_rule_coverage_table(pr)
 
@@ -3339,6 +3071,9 @@ def _render_violation_cases_tab(pr, summary: dict) -> None:
     # 펼쳐 drilldown 까지 연결하되, 주 큐(전표/흐름)와 라벨을 혼용하지 않는다.
     st.divider()
     with st.expander("case 집계뷰 (보조 — 묶음 단위 grouping)", expanded=False):
+        if not phase1.cases:
+            st.caption("case 묶음이 없습니다.")
+            return
         cases = sorted(
             phase1.cases,
             key=lambda c: (
@@ -3379,70 +3114,11 @@ def _render_violation_cases_tab(pr, summary: dict) -> None:
         _render_case_drilldown(drilldown, pr=pr)
 
 
-def _render_unit_queue_grid(unit_rows: list[dict[str, Any]]) -> None:
-    """주 검토 큐 — 전표/흐름(unit) 1줄 = 1 unit. AgGrid 컴포넌트 재사용.
-
-    행 키는 unit_id, 컬럼은 unit_type·priority_band·time_severity_score·total_amount·
-    발화 룰. _render_rule_case_master 와 동일한 AgGrid 패턴을 쓰되 unit 필드를
-    소비한다(신규 UI 프레임워크 발명 금지).
-    """
-    from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
-
-    if not unit_rows:
-        st.info("HIGH/MEDIUM tier 전표·흐름 unit 이 없습니다.")
-        return
-
-    _UNIT_TYPE_LABELS = {"document": "전표", "flow": "흐름"}
-    grid_rows: list[dict[str, Any]] = []
-    for idx, unit in enumerate(unit_rows, start=1):
-        grid_rows.append(
-            {
-                "unit_id": unit["unit_id"],
-                "순위": idx,
-                "단위": _UNIT_TYPE_LABELS.get(unit["unit_type"], unit["unit_type"]),
-                "Band": _format_band_cell(unit["priority_band"]),
-                "시점심각도": int(unit.get("time_severity_score") or 0),
-                "합계": _format_amount_short(float(unit.get("total_amount") or 0.0)),
-                "발화 룰": " · ".join(unit.get("fired_rule_labels") or []) or "-",
-            }
-        )
-    unit_df = pd.DataFrame(grid_rows)
-    st.caption(
-        f"{len(grid_rows):,}개의 전표·흐름 unit 이 우선순위 순으로 정렬돼 있습니다 "
-        "(HIGH/MEDIUM tier 만)."
-    )
-
-    gb = GridOptionsBuilder.from_dataframe(unit_df)
-    gb.configure_default_column(resizable=True, filter=True, sortable=True)
-    gb.configure_selection(selection_mode="single", use_checkbox=False)
-    gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=50)
-    gb.configure_grid_options(rowHeight=34, rowBuffer=10, suppressCellFocus=True)
-    gb.configure_column("unit_id", hide=True)
-    gb.configure_column("순위", type=["numericColumn"], minWidth=44, maxWidth=56, pinned="left")
-    gb.configure_column("단위", minWidth=64, maxWidth=88)
-    gb.configure_column("Band", minWidth=80, maxWidth=110)
-    gb.configure_column("시점심각도", type=["numericColumn"], minWidth=84, maxWidth=110)
-    gb.configure_column("합계", minWidth=80, maxWidth=110)
-    gb.configure_column("발화 룰", minWidth=360, flex=1, tooltipField="발화 룰")
-
-    AgGrid(
-        unit_df,
-        gridOptions=gb.build(),
-        height=320,
-        theme="streamlit",
-        key="phase1_unit_queue_violation_cases",
-        update_mode=GridUpdateMode.SELECTION_CHANGED,
-        allow_unsafe_jscode=True,
-        reload_data=False,
-        fit_columns_on_grid_load=False,
-    )
-
-
 def _render_rule_coverage_table(pr) -> None:
-    """룰별 전수 커버리지 숫자표 — LOW 신호 포함 모든 룰 발화 전수 집계.
+    """룰별 전수 커버리지 숫자표 — 모든 룰 발화 전수 집계.
 
-    HIGH_COMBO_GROUNDING §5(A안): LOW 는 "위험 없음"이 아니라 전수 커버리지
-    집계 대상이다. 기존 st.dataframe 표 컴포넌트를 재사용한다.
+    PHASE1_COMBO_BUILDER_SPEC §5: 커버리지 큐는 빌더와 별개 표면이며, 빌더
+    어휘 밖 룰의 유일한 소비처다. 기존 st.dataframe 표 컴포넌트를 재사용한다.
     """
     st.markdown("#### 룰별 전수 커버리지")
     coverage = build_phase1_rule_coverage(pr)
@@ -3452,17 +3128,14 @@ def _render_rule_coverage_table(pr) -> None:
         return
 
     st.caption(
-        "LOW tier 는 위험 없음이 아니라 전수 커버리지 집계 대상입니다. "
-        "모든 unit 의 룰 발화를 전수로 집계하며 HIGH/MEDIUM 전표의 발화도 포함합니다."
+        "모든 unit 의 룰 발화를 전수로 집계합니다. 빌더 어휘 밖 룰(중복지급·한도분할 등)도 "
+        "여기서 빠짐없이 확인할 수 있습니다."
     )
     coverage_df = pd.DataFrame(
         [
             {
                 "룰": f"{item['rule_id']} · {item['rule_label']}",
                 "전표 발화 수": int(item["documents"]),
-                "HIGH": int(item["high"]),
-                "MEDIUM": int(item["medium"]),
-                "LOW": int(item["low"]),
             }
             for item in items
         ]
@@ -4155,68 +3828,6 @@ def _render_topn_hbar(
     fig.update_xaxes(**AXIS_STYLE, rangemode="tozero")
     fig.update_yaxes(automargin=True, tickfont=_TICK_FONT_MONO)
     st.plotly_chart(fig, width="stretch", key=key, config={"displayModeBar": False})
-
-
-def _render_ai_conclusion(pr, summary: dict) -> None:
-    gate = build_phase1_data_quality_gate(pr)
-    audit = build_phase1_audit_risk_by_queue(pr, top_n_per_queue=1)
-    review = build_phase1_review_candidate_summary(pr)
-    phase1 = resolve_phase1_case_result(pr)
-    high_count = 0
-    medium_count = 0
-    if phase1 is not None:
-        high_count = sum(1 for case in phase1.cases if _case_display_priority_band(case) == "high")
-        medium_count = sum(
-            1 for case in phase1.cases if _case_display_priority_band(case) == "medium"
-        )
-
-    st.markdown("#### 요약 판단")
-    st.write(
-        f"PHASE1은 총 {summary['case_count']:,}개 case를 생성했고, "
-        f"즉시검토 {high_count:,}개, 검토대상 {medium_count:,}개로 분류했습니다."
-    )
-    st.write(
-        f"데이터정합성 Gate에는 {gate.get('document_count', 0):,}개 document가 걸렸습니다. "
-        "이 항목은 감사위험 Top과 섞지 말고 먼저 데이터/계약 오류로 처리해야 합니다."
-    )
-    st.write(
-        f"PHASE1 topic은 {len(audit.get('queues', [])):,}개 topic으로 나누어 표시됩니다. "
-        "동점 case는 Queue Tie 점수와 Tie Reason으로 같은 queue 안에서 다시 정렬합니다."
-    )
-    st.write(
-        f"Scenario detail은 {len(review.get('items', [])):,}개 유형으로 집계됩니다. "
-        "확정 위험이 아니라 정책 판단, 샘플 검토, 보조 근거 확인 대상입니다."
-    )
-
-    queue_rows = []
-    for queue in audit.get("queues", []):
-        if not queue["items"]:
-            continue
-        top = queue["items"][0]
-        queue_rows.append(
-            {
-                "Queue": queue["queue_label"],
-                "대표 case": top["case_id"],
-                "Queue Tie": top["queue_tiebreaker_score"],
-                "Docs": top["document_count"],
-                "Tie Reason": " / ".join(top["queue_tiebreaker_reasons"][:4]),
-            }
-        )
-    if queue_rows:
-        st.markdown("#### Queue별 대표 우선 검토 case")
-        st.dataframe(pd.DataFrame(queue_rows), width="stretch", hide_index=True)
-
-    st.divider()
-    if st.button(
-        "Phase 2 탭으로 이동",
-        type="primary",
-        key="ai_conclusion_goto_phase2",
-    ):
-        # KEY_TOP_LEVEL_NAV 는 widget key — _consume_pending_page 가 다음 run
-        # widget 렌더 전에 KEY_PENDING_RESULT_TAB 를 옮긴다.
-        st.session_state[KEY_ACTIVE_RESULT_TAB] = PAGE_PHASE2
-        st.session_state[KEY_PENDING_RESULT_TAB] = PAGE_PHASE2
-        st.rerun()
 
 
 def _render_case_table(queue_df: pd.DataFrame) -> None:
