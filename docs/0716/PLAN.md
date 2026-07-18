@@ -247,6 +247,16 @@ FY2024 슬라이스 ─▶ [배경 ~12만행] ─▶ [+ 교과서 위반 전표 
 
 **원칙**: CONSTRAINTS 포트폴리오 주장 범위 준수(금지 표현 — "부정을 정확히 탐지"·"운영 성능 검증 완료" 류 금지), truth 수치는 개발 검증 보조 지표로만, 실패·한계를 숨기지 않는 서술이 본 문서의 정체성.
 
+### 다음 작업: Streamlit 대시보드 다듬기 ← **재개점 (2026-07-18, 컴팩션 핸드오프)**
+
+> **컴팩션 재개 노트**: S0~S6 로드맵 완주 + 커밋·푸시 완료 상태에서 사용자 지시 "이걸 기반으로 Streamlit을 깎을 거야".
+>
+> - **커밋 상태**: 부모 repo 5커밋 push 완료(`feature/l2-05-reversal-tolerance` → origin 신규 브랜치, 87d97e0~2a36aad — S3 빌더 / S4 판정+결함수정 / S5 게이트·측정 / S6 문서 / S0~S2 유산). **tools/datasynth는 로컬 커밋만**(26844fa) — **원격이 외부 업스트림(mivertowski/SyntheticData)이라 push 금지**, 자기 fork 원격 추가는 사용자 결정 사안. 미커밋 잔여 = `reports/s1_normal_*/rule_hits.csv` 4종(각 70M+ 대형이라 의도적 제외).
+> - **Streamlit 작업 기반 재료**: ① 조합 빌더 패널 `dashboard/components/phase1_combo_builder_panel.py`(프리셋 4버튼 on_click 세션키 주입 + st.pills 2그룹(몸통 라벨에 FSS 건수) + 엄격 st.toggle + 근거 expander + AgGrid, Streamlit 1.55) ② `dashboard/tab_phase1.py` 4,928줄(S3 대수술 후 — 검토케이스 탭이 빌더 호출, 커버리지 큐/데이터정합성 패널 별도) ③ 데모 데이터: 부정 시연 = `data/journal/primary/datasynth_semantic_v1_phase2_fraud_s10_20260718_r1`(부정 330·정답지 labels/), 정상 = s10 base(덮어쓰기 금지) ④ UI에 실을 수치·문구 재료 = `docs/guide/VALIDATION_RESULTS_2026-07.md`(주장 가능 범위가 여기 정의됨 — UI 문구도 CONSTRAINTS 금지 표현 준수) ⑤ UX 기준 = `docs/guide/ux-flow.md`.
+> - **Streamlit 습관(필수)**: 서버 kill·재시작·캐시 정리 자동 실행 금지 — 사용자가 직접(2026-05-10 확정). `developing-with-streamlit` 스킬 루틴 사용. st.metric은 value=핵심숫자만·delta=시간증감 전용·비율은 label로.
+> - **운영 습관 승계**: 전수 측정·생성·빌드는 10분 캡 초과 → nohup+Monitor(병렬 생성 금지 — 오늘 3병렬 killed 사례). 한글 문서 편집 후 U+FFFD 검사. 포맷터 훅이 편집마다 재정렬 — 테이블은 짧은 고유 조각으로 편집. 커밋은 사용자 요청 시만(AI 문구 금지·main 직접 금지).
+> - **이연 목록**: L4-03·L1-05 중요성 재설계+datasynth 손익 묶음(Q5), 기존 테스트 실패 정리 라운드(분류표 §S3 — RULE_CODES 카운트 등), README 전면 개작(readme-maker 인터뷰), PHASE1-2 벤치마크(§S6 표에서 "범위 밖"으로 남긴 표면).
+
 ## 4. 열린 질문
 
 | #   | 질문                                                                                       | 결정 시점                                                                                                             |
