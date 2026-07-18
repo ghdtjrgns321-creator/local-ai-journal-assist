@@ -75,7 +75,7 @@ DataSynth의 truth는 개발 검증 보조자료다.
 - v42j는 도메인 7구역 감사 결함을 닫았지만, PHASE2 full-column scan에서 reversal link surface 누출이 발견됐다.
 - NORMAL에 linked normal reversal background를 추가하는 base 수정이 승인됐다.
 - v43d는 정상 역분개 배경, SoD marker 정책, document-number gate를 정리한 당시 accepted NORMAL이다.
-- 현재 NORMAL 기준은 v46b이며, v43d는 PHASE2 r4m_h lineage의 base-history로 남긴다.
+- 현재 NORMAL 기준은 `datasynth_semantic_v1_normal_20260703_v53_account_determination_r6`이며, v43d는 PHASE2 r4m_h lineage의 base-history로 남긴다.
 
 검증:
 
@@ -187,14 +187,14 @@ DataSynth의 truth는 개발 검증 보조자료다.
 
 | 항목 | 현재 판단 |
 | --- | --- |
-| v20~v31 NORMAL 기록 | 생성 원칙 진화와 regression 설계 근거. 현재 accepted NORMAL 기준은 v47 batch/job successor |
-| v42j/v43d NORMAL | 각각 PHASE1/PHASE2 과거 accepted lineage의 base-history. 현재 NORMAL 기준은 v46b |
+| v20~v31 NORMAL 기록 | 생성 원칙 진화와 regression 설계 근거. 현재 accepted NORMAL 기준은 v53 account-determination successor |
+| v42j/v43d NORMAL | 각각 PHASE1/PHASE2 과거 accepted lineage의 base-history. 현재 NORMAL 기준은 v53 |
 | PHASE1 recall v42j_r3/r9/r10 | 구버전 DETECTION_RULES 기준. 최신 26룰 개별 발화 검증은 r11 |
 | PHASE1 combo r1i/r1l | static/shortcut 일부 PASS였지만 actual case-builder gate FAIL. accepted 아님 |
 | r4f~r4l non-b | 실패 또는 중간 산출. 삭제 가능/legacy |
 | r4l_b | S13 scale reference로 유지. full-column leak 때문에 accepted overlay 아님 |
 | v126 freeze | historical contract truth/sidecar 기준. 현행 semantic NORMAL/PHASE2 기준 아님 |
-| manipulation v2~v7/fixed 계열 | 과거 anti-fitting/shortcut 수리 이력. 현행 PHASE2 accepted lineage는 semantic v43/r4m, 현행 NORMAL은 v46b |
+| manipulation v2~v7/fixed 계열 | 과거 anti-fitting/shortcut 수리 이력. 현행 PHASE2 accepted lineage는 semantic v43/r4m, 현행 NORMAL은 v53 |
 | Python `build_datasynth_v*.py` patch series | 과거 patch history. 현행 생성 원인은 Rust profile에 반영해야 함 |
 
 ## 문서와 코드 근거

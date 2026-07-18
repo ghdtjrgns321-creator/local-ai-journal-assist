@@ -299,10 +299,18 @@ def t5_16(con: duckdb.DuckDBPyConnection) -> CheckResult:
     return _cr("T5-16", "debit=0 AND credit=0 (first_digit NaN)", "WARNING" if n else "PASS", "0", f"{n}건", ms=_ms(s))
 
 def t5_17(con: duckdb.DuckDBPyConnection) -> CheckResult:
+    """is_round_number 재계산 — 상대 기준(유효숫자 ≤2 · 자릿수 ≥3), settings 기본값과 일치.
+
+    구 정의(%1M=0)는 2026-07-15 폐기. 거래 64.9%가 100만원 미만이라 구조적으로 0에 수렴했다.
+    """
     s = _t()
-    tot = _v(con, "SELECT COUNT(*) FROM je WHERE GREATEST(COALESCE(debit_amount,0),COALESCE(credit_amount,0))>0")
-    rnd = _v(con, "SELECT COUNT(*) FROM je WHERE GREATEST(COALESCE(debit_amount,0),COALESCE(credit_amount,0))>0 AND CAST(GREATEST(COALESCE(debit_amount,0),COALESCE(credit_amount,0)) AS BIGINT)%1000000=0")
-    return _cr("T5-17", "is_round_number 재계산 (%1M=0)", "PASS", "정보 제공",
+    amt = "CAST(GREATEST(COALESCE(debit_amount,0),COALESCE(credit_amount,0)) AS BIGINT)"
+    # 유효숫자 = 끝자리 0 제거 후 남은 자릿수, 총 자릿수 = 문자열 길이
+    sig = f"LENGTH(RTRIM(CAST({amt} AS VARCHAR), '0'))"
+    digits = f"LENGTH(CAST({amt} AS VARCHAR))"
+    tot = _v(con, f"SELECT COUNT(*) FROM je WHERE {amt}>0")
+    rnd = _v(con, f"SELECT COUNT(*) FROM je WHERE {amt}>0 AND {sig}<=2 AND {digits}>=3")
+    return _cr("T5-17", "is_round_number 재계산 (유효숫자<=2, 자릿수>=3)", "PASS", "정보 제공",
                f"{rnd/tot:.2%} ({rnd}/{tot})" if tot else "0", ms=_ms(s))
 
 def t5_18(con: duckdb.DuckDBPyConnection) -> CheckResult:

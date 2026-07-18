@@ -32,6 +32,16 @@ patterns:
       - "169100"  # 투자자산평가충당금
       - "237100"  # 충당부채
       - "682100"  # 손상차손
+      # 현행 4자리 CoA 동기화 (2026-07-16, D10) — 위 6자리는 구 CoA 죽은 목록.
+      # 원장에 account_name 컬럼이 없어 키워드 축이 원리상 침묵하므로 코드 축으로 커버.
+      - "2220"    # 순퇴직급여부채 — 보험수리적 추정(ISA 540)
+      # D10 연장 (2026-07-18, S5 실측): FSS scheme overlay에서 대손회피(FS10)·상각조작(FS08)
+      # 부정이 추정 몸통(L3-10)에 0건 매치 — s10 CoA의 ISA 540 추정계정이 2220뿐이던 갭.
+      # 대손·상각은 경영진 추정(회수가능성·내용연수·잔존가치)의 대표 계정이라 코드 축에 추가.
+      - "6900"    # 대손상각비 (BAD_DEBT_EXPENSE) — 회수가능성 추정
+      - "6000"    # 감가상각비 (DEPRECIATION_EXPENSE) — 내용연수·잔존가치 추정
+      - "6050"    # 무형자산상각비 (AMORTIZATION_EXPENSE) — 내용연수 추정
+      - "1510"    # 감가상각누계액 (ACCUMULATED_DEPRECIATION) — 상각 추정 누계
     account_prefixes: []
     estimate_account_groups:
       allowance_impairment:

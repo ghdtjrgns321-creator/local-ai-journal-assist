@@ -78,11 +78,46 @@ v50 bounded L1-04 natural exception acceptance snapshot:
 - Journal no longer exports unused `approval_limit` or `approver_authority_limit`; employee master is the
   authoritative limit source.
 
+v51 annual closing semantic consistency acceptance snapshot:
+
+- Dataset: `data/journal/primary/datasynth_semantic_v1_normal_20260702_v51_closing_semantics_r1`.
+- Command: `uv run python tools/scripts/normal_data_realism_verifier_20260603.py data/journal/primary/datasynth_semantic_v1_normal_20260702_v51_closing_semantics_r1 --json-out reports/normal_v51_closing_semantics_r1_gate.json --md-out reports/normal_v51_closing_semantics_r1_gate.md`.
+- Regression command: `uv run python tools/scripts/normal_data_realism_verifier_20260603.py data/journal/primary/datasynth_semantic_v1_normal_20260702_v50_approval_noise_r2 --json-out reports/normal_v50_approval_noise_r2_gate_with_m14.json --md-out reports/normal_v50_approval_noise_r2_gate_with_m14.md`.
+- NORMAL realism verifier: PASS 42 / MONITOR 1 / INFO 3 / FAIL 0.
+- M14 annual closing semantics: company-years checked 3, P&L closing lines checked 642,
+  retained earnings lines checked 3, bad subtype/family 0, bad reconciliation years 0.
+- L4-03 threshold smoke: 2022/2023/2024 all use `threshold_basis=closing_ni`; unset group count 0.
+
+v52 stable-account YoY volatility acceptance snapshot:
+
+- Dataset: `data/journal/primary/datasynth_semantic_v1_normal_20260703_v52_stable_account_r2`.
+- Command: `uv run python tools/scripts/normal_data_realism_verifier_20260603.py data/journal/primary/datasynth_semantic_v1_normal_20260703_v52_stable_account_r2 --json-out reports/normal_v52_stable_account_r2_gate.json --md-out reports/normal_v52_stable_account_r2_gate.md`.
+- Regression command: `uv run python tools/scripts/normal_data_realism_verifier_20260603.py data/journal/primary/datasynth_semantic_v1_normal_20260702_v51_closing_semantics_r1 --json-out reports/normal_v51_closing_semantics_r1_gate_with_c07.json --md-out reports/normal_v51_closing_semantics_r1_gate_with_c07.md`.
+- NORMAL realism verifier: PASS 43 / MONITOR 1 / INFO 3 / FAIL 0.
+- C07 stable-account YoY volatility: checked year pairs 26, bad year pairs 0, max change ratio 4.5312.
+- Direct smoke: interest expense 2022→2023 1.2041x and 2023→2024 1.2374x; income tax expense
+  2022→2023 2.0559x and 2023→2024 4.5312x.
+
+v53 account-determination / L4-04 rare-pair fragmentation acceptance snapshot:
+
+- Dataset: `data/journal/primary/datasynth_semantic_v1_normal_20260703_v53_account_determination_r6`.
+- Command: `uv run python tools/scripts/normal_data_realism_verifier_20260603.py data/journal/primary/datasynth_semantic_v1_normal_20260703_v53_account_determination_r6 --json-out reports/normal_v53_account_determination_r6_gate_v2.json --md-out reports/normal_v53_account_determination_r6_gate_v2.md`.
+- Regression command: `uv run python tools/scripts/normal_data_realism_verifier_20260603.py data/journal/primary/datasynth_semantic_v1_normal_20260703_v52_stable_account_r2 --json-out reports/normal_v52_stable_account_r2_gate_with_c06.json --md-out reports/normal_v52_stable_account_r2_gate_with_c06.md`.
+- NORMAL realism verifier: PASS 44 / MONITOR 1 / INFO 3 / FAIL 0.
+- C06 account-pair reuse: L4-04-like rare doc rate 0.129%, recurring rare doc rate 0.244%,
+  automated rare doc rate 0.105%, fragmented rare pair rate 0.0%.
+- Regression evidence: v52 fails C06 with L4-04-like rare doc rate 7.59%, recurring rare doc rate 10.3%,
+  automated rare doc rate 6.21%, fragmented rare pair rate 98.1%.
+- C06 excludes annual closing, linked reversal, and IC prefix rows because M14/J04_J07/K02~K05 own those
+  domains; it measures ordinary GL account-pair reuse.
+
 ## NORMAL 주요 검사 축
 
 - A: 기본 회계 구조. 차대변 균형, 금액 양수/정수, 전표 단위 일관성.
 - B: semantic coherence. 계정 subtype, line text family, document type, business process의 joint draw.
 - C/D: 시간·분포. 결산월, 주말/심야, 연도 drift, timestamp 분산.
+- C06: ERP account determination. 정상 recurring/automated 전표는 같은 의미 거래가 매번 다른 구체
+  계정쌍으로 흩어지면 안 된다. L4-04-like 희소쌍이 subtype fragmentation에서 나오면 FAIL이다.
 - E: 승인·SoD. NORMAL에는 direct confirmed SoD marker가 없어야 하며, RBAC/persona-process 범위가
   현실적이어야 한다. AP/AR/Treasury/Payroll clerk가 모든 process를 처리하는 all-to-all 분포는 FAIL이다.
   또한 결재자로 등장하는 사용자는 employee master에 존재하고 `can_approve_je=true`여야 한다. 전표금액이
@@ -234,8 +269,8 @@ Current acceptance is open: r1j is the accepted PHASE1 combo/tier overlay.
 
 현재 accepted dataset: `datasynth_semantic_v1_phase2_fraud_20260614_v1_r4m_h`와 `..._seed1`.
 
-주의: 이 PHASE2 accepted overlay는 v47 batch/job successor NORMAL 기준으로 재생성된 산출물이 아니다.
-최신 NORMAL과 PHASE2를 동기화할 때는 아래 gate를 동일하게 적용하되, base path를 v47로 바꾸고
+주의: 이 PHASE2 accepted overlay는 v53 account-determination successor NORMAL 기준으로 재생성된 산출물이 아니다.
+최신 NORMAL과 PHASE2를 동기화할 때는 아래 gate를 동일하게 적용하되, base path를 v53으로 바꾸고
 normal twin/IC trace 분포가 새 base와 충돌하지 않는지 다시 확인한다.
 
 필수 검증 명령:

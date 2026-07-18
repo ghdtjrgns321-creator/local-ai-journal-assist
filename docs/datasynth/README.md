@@ -7,7 +7,7 @@
 
 | 영역 | 현재 기준 | 역할 |
 | --- | --- | --- |
-| NORMAL base | `datasynth_semantic_v1_normal_20260702_v50_approval_noise_r2` | v49 approver-authority successor 위 L1-04 자연 승인한도 초과 예외율 보정. 단일법인 C001 정상 원장 + 관계사 IC trace + automated/recurring batch_id·job_id + RBAC/승인권한 기준본 |
+| NORMAL base | `datasynth_semantic_v1_normal_20260703_v53_account_determination_r6` | v52 stable-account successor 위 ERP account determination 보정. 단일법인 C001 정상 원장 + 관계사 IC trace + automated/recurring batch_id·job_id + RBAC/승인권한 + L4-03/C07 + L4-04/C06 기준본 |
 | PHASE1-1 recall overlay | `datasynth_semantic_v1_recall_20260630_v47_batchid_phase1_1_r1` | v47 normal 위 최신 `DETECTION_RULES.md` 기준 26개 개별 룰 detector-only recall 검증용 |
 | PHASE1 combo/tier overlay | `datasynth_semantic_v1_combo_tier_20260630_v47_batchid_r1j` | v47 normal 위 HIGH/MEDIUM/LOW/CONTEXT case assembly 검증용 |
 | Integrated usefulness all-fraud | `datasynth_integrated_usefulness_all_fraud_20260702_v1` | integrated usefulness PHASE1 v1g + PHASE2 v1f truth를 한 journal에 병합한 벤치마크용 combined dataset |
@@ -44,7 +44,7 @@
 - 어떤 테스트와 감사 스크립트를 실행했으며 어떤 결함을 찾아 수정했는지.
 - REJECT가 났을 때 어디를 보고 어떻게 다음 suffix로 반복해야 하는지.
 - 현재 accepted lineage와 legacy lineage의 차이.
-- v43d 이후 추가된 단일법인 전환, 관계사 IC 흔적 복구, PHASE1-1 r11, combo/tier r1z, v47 batch/job identity successor의 수락 기준.
+- v43d 이후 추가된 단일법인 전환, 관계사 IC 흔적 복구, PHASE1-1 r11, combo/tier r1z, v47 batch/job identity successor, v50 approval-noise, v51 closing semantics, v52 stable-account successor, v53 account-determination successor의 수락 기준.
 
 포함하지 않는다.
 

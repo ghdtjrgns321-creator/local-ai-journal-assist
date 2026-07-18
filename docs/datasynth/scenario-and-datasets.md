@@ -6,7 +6,7 @@
 
 | 계층 | 설명 | 현재 기준 |
 | --- | --- | --- |
-| NORMAL | 정상 전표, 정상 master, 정상 flow, 정상 결산 산출물 | `datasynth_semantic_v1_normal_20260702_v50_approval_noise_r2` |
+| NORMAL | 정상 전표, 정상 master, 정상 flow, 정상 결산 산출물 | `datasynth_semantic_v1_normal_20260703_v53_account_determination_r6` |
 | PHASE1-1 recall | 26개 최신 PHASE1-1 개별 룰의 standard/boundary 검증 overlay | `datasynth_semantic_v1_recall_20260630_v47_batchid_phase1_1_r1` |
 | PHASE1 combo/tier | 켜진 룰 조합이 case 단위 HIGH/MEDIUM/LOW/CONTEXT tier로 조립되는지 검증하는 별도 overlay | `datasynth_semantic_v1_combo_tier_20260630_v47_batchid_r1j` |
 | PHASE2 fraud | 14개 구조적 fraud scheme overlay | `datasynth_semantic_v1_phase2_fraud_20260614_v1_r4m_h` |
@@ -226,8 +226,8 @@ r4m_h accepted 이유:
 
 현재 gap:
 
-- r4m_h는 accepted PHASE2 fraud overlay지만, 최신 NORMAL v47 batch/job successor 위에서 재생성된 산출물은 아니다.
-- v47의 단일법인+관계사 흔적 및 batch/job identity 기준을 PHASE2에 반영하려면, r4m_h의 regression/shortcut/full-column/seed gate를 유지한 상태로 base를 v47로 교체해 재검증해야 한다.
+- r4m_h는 accepted PHASE2 fraud overlay지만, 최신 NORMAL v53 account-determination successor 위에서 재생성된 산출물은 아니다.
+- v53의 단일법인+관계사 흔적, batch/job identity, RBAC/승인권한, closing semantics, stable-account, account-pair determination 기준을 PHASE2에 반영하려면, r4m_h의 regression/shortcut/full-column/seed gate를 유지한 상태로 base를 v53으로 교체해 재검증해야 한다.
 - 이 gap은 r4m_h를 폐기한다는 뜻이 아니라, PHASE2 overlay의 최신 base 동기화가 아직 별도 작업이라는 뜻이다.
 
 ## Seed rotation

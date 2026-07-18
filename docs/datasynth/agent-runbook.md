@@ -49,7 +49,7 @@ uv run python tools/scripts/audit_full_leak_scan.py <PHASE2_DATASET>
 
 현재 accepted NORMAL:
 
-`data/journal/primary/datasynth_semantic_v1_normal_20260702_v50_approval_noise_r2`
+`data/journal/primary/datasynth_semantic_v1_normal_20260703_v53_account_determination_r6`
 
 역할:
 
@@ -67,7 +67,7 @@ cargo run -p datasynth-cli --bin datasynth-data -- generate `
 
 주의:
 
-- profile 이름은 `normal-coa-v42`지만 현행 v50 materialization도 이 계열 함수에서 확장된다.
+- profile 이름은 `normal-coa-v42`지만 현행 v53 materialization도 이 계열 함수에서 확장된다.
 - 출력 이름은 새 버전 suffix를 사용한다. 기존 accepted path를 덮어쓰지 않는다.
 
 ### 2.3 필수 gate
@@ -76,11 +76,14 @@ cargo run -p datasynth-cli --bin datasynth-data -- generate `
 uv run python tools/scripts/normal_data_realism_verifier_20260603.py <NORMAL_OUTPUT>
 ```
 
-현행 v50 필수 확인:
+현행 v53 필수 확인:
 
 - `E05B_RBAC_PERSONA_PROCESS_SCOPE` PASS.
 - `E05C_APPROVER_MASTER_AUTHORITY` PASS.
 - E05C approval-limit exceeded rate is nonzero and bounded.
+- `M14_ANNUAL_CLOSING_SEMANTIC_CONSISTENCY` PASS.
+- `C07_STABLE_ACCOUNT_YOY_VOLATILITY` PASS.
+- `C06_ACCOUNT_PAIR_REUSE` PASS.
 - O02 synthetic marker 0.
 
 ```powershell
@@ -95,6 +98,9 @@ uv run python tools/scripts/audit_balance_integrity.py <NORMAL_OUTPUT>
 - `company_code`는 C001 하나.
 - 정상 IC trace는 존재한다.
 - company-node graph cycle은 0.
+- annual closing semantic label 불일치 0.
+- 안정 계정 YoY 급변 pair 0.
+- recurring/automated 계정쌍 희소쌍 과발화 0.
 - synthetic marker scan findings 0.
 
 ### 2.4 v46b K gate 기준
@@ -256,8 +262,8 @@ Scale reference:
 
 주의:
 
-- r4m_h는 accepted이지만 최신 NORMAL v47 batch/job successor 위에서 재생성된 것은 아니다.
-- 다음 PHASE2 run은 v47 batch/job successor base 위에서 같은 gate를 다시 통과해야 한다.
+- r4m_h는 accepted이지만 최신 NORMAL v53 account-determination successor 위에서 재생성된 것은 아니다.
+- 다음 PHASE2 run은 v53 account-determination successor base 위에서 같은 gate를 다시 통과해야 한다.
 
 ### 5.2 생성 profile
 

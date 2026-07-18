@@ -41,17 +41,20 @@ for i in range(len(DIRS)):
         if ratio < TH_MIN_DIFF_RATIO:
             fails.append((name_i, name_k, ratio))
 
-# ---------- 배정 다양성: scheme→회사 배정 벡터가 쌍별로 동일하면 FAIL ----------
-# 내용(금액·일자)이 달라도 "어느 scheme이 어느 회사에서" 배정이 통째로 같으면(mod-N 로테이션)
-# 배치 차원의 표본 다양성이 없음. 단일회사 scheme들의 배정 벡터로 비교.
+# ---------- 배정 다양성: scheme→거래처(trading_partner) 배정 벡터가 쌍별로 동일하면 FAIL ----------
+# 내용(금액·일자)이 달라도 "어느 scheme이 어느 상대와" 배정이 통째로 같으면(mod-N 로테이션)
+# 배치 차원의 표본 다양성이 없음.
+# s10 세대교체(2026-07-18): base가 단일 법인(C001)이라 구 scheme→회사 벡터는 전 데이터셋에서
+# 구조적으로 동일 — 검사 의미 소멸. 시드 회전 원칙의 배치 축(고객·거래처·전표 표면)에 맞춰
+# trading_partner 벡터로 교체. 임계(배정 동일 0쌍)는 불변.
 assign = []
 for i, d in enumerate(DIRS):
-    vec = con.execute(f"""SELECT p.scheme_id, list_sort(array_agg(DISTINCT j.company_code))
+    vec = con.execute(f"""SELECT p.scheme_id, list_sort(array_agg(DISTINCT j.trading_partner))
         FROM read_csv('{d}/labels/phase2_scheme_provenance.csv', all_varchar=true) p
         JOIN read_csv('{d}/journal_entries.csv', all_varchar=true) j USING(document_id)
         GROUP BY 1 ORDER BY 1""").fetchall()
     assign.append(str(vec))
-print("\n=== 배정 다양성 (scheme→회사 벡터 쌍별 비교) ===")
+print("\n=== 배정 다양성 (scheme→거래처 벡터 쌍별 비교) ===")
 afails = []
 for i in range(len(DIRS)):
     for k in range(i + 1, len(DIRS)):

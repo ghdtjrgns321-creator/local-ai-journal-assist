@@ -128,7 +128,9 @@ v46b 기준:
 - company-node graph cycle 0.
 - NORMAL realism verifier PASS 38 / MONITOR 1 / FAIL 0 / BLOCKED 0.
 
-현재 NORMAL accepted 기준은 v46b다.
+v46b는 단일법인+관계사 trace를 복구한 당시 accepted 기준이다. 이후 v47 batch/job identity, v48 RBAC,
+v49 승인자 권한, v51 closing semantics, v52 안정계정 변동 제한, v53 계정쌍 결정 보정이 누적되었고, 현재 NORMAL accepted 기준은
+`datasynth_semantic_v1_normal_20260703_v53_account_determination_r6`다.
 
 ## 4. PHASE1-1 recall rebuild
 

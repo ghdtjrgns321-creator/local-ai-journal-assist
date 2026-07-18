@@ -24,24 +24,9 @@ MIN_SUPPORT = 5  # S2 판정 최소 부정 표본
 # 주: S7(라인수 분포) 게이트 폐기 — 라인수의 fraud precision≈base(분리력 0)로 shortcut 아님이
 #     실측됨(2라인 0.131%/3라인 0.144% vs base 0.101%). 부정 단순분개(2라인)는 회계적으로 자연.
 SCHEME_DETERMINED = {"business_process", "document_type"}
-EXT_ACCOUNTS = [
-    "131100",
-    "681100",
-    "151900",
-    "116100",
-    "231100",
-    "123100",
-    "117100",
-    "117900",
-    "106100",
-    "119100",
-    "469100",
-    "237100",
-    "160100",
-    "682100",
-    "139100",
-    "169100",
-]
+# s10 정합(2026-07-18): 신규 계정 도입 폐기로 확장계정 쌍둥이 검사 대상 없음.
+# 계정 지름길은 S2(단일피처 precision)가 감시.
+EXT_ACCOUNTS = []
 META_COLS = [
     "user_persona",
     "auxiliary_account_label",
@@ -201,51 +186,36 @@ gate("S4 확장계정정상쌍둥이", not s4, "; ".join(s4))
 
 # ---------- S8 scheme-계정 정합성 (카탈로그 (b)(c)(d) 정당 sub_type 화이트리스트) ----------
 # 부정의 회계 메커니즘이 scheme별 정당 계정으로만 구성돼야 함. 라인추가용 무관계정 침입 = "억지 부정".
+# s10 정합(2026-07-18): base 세대교체(4자리 39계정, 부정 전용 계정 폐기)에 맞춰
+# scheme별 정당 subtype 화이트리스트를 s10 계정 매핑(base 실측 subtype) 기준으로 재산정.
+# 게이트 기능(설계 외 무관계정 침입 차단)은 동일 — 임계 완화 아님.
 SCHEME_ACCT = {
     "FS01": {"AR", "PRODUCT_REVENUE", "CASH", "SHORT_TERM_DEBT"},
-    "FS02": {
-        "contract_asset",
-        "long_term_contract_revenue",
-        "inventory_wip",
-        "prepaid_assets",
-        "AP",
-        "COGS_MATERIAL",
-        "operating_expenses",
-    },
-    "FS03": {"CASH", "short_term_investments", "employee_advances"},
+    "FS02": {"AR", "SERVICE_REVENUE", "INVENTORY", "COGS_MATERIAL", "AP"},
+    "FS03": {"SUSPENSE_RECEIVABLE", "CASH", "AR"},
     "FS04": {
-        "prepaid_assets",
-        "loans_receivable",
-        "employee_advances",
-        "construction_in_progress",
+        "SUSPENSE_RECEIVABLE",
         "CASH",
-        "operating_expenses",
+        "AR",
+        "OPEX_PROFESSIONAL_FEES",
+        "FIXED_ASSET",
     },
     "FS05": {"AR", "PRODUCT_REVENUE", "COGS_MATERIAL", "AP", "CASH"},
     "FS06": {"AP", "AR", "PRODUCT_REVENUE", "GRIR"},
-    "FS07": {"INVENTORY", "COGS_MATERIAL", "GRIR", "inventory_wip"},
+    "FS07": {"INVENTORY", "COGS_MATERIAL", "GRIR", "RAW_MATERIALS"},
     "FS08": {
-        "intangible_development_cost",
-        "amortization_expense",
-        "accumulated_amortization",
-        "construction_in_progress",
-        "impairment_loss",
-        "operating_expenses",
+        "INTANGIBLE_ASSET",
+        "OPEX_PROFESSIONAL_FEES",
+        "FIXED_ASSET",
         "AP",
-        "prepaid_assets",
+        "AMORTIZATION_EXPENSE",
     },
     "FS09": {"AR", "PRODUCT_REVENUE", "COGS_MATERIAL", "INVENTORY"},
-    "FS10": {
-        "AR",
-        "CASH",
-        "allowance_for_doubtful_accounts",
-        "allowance_reversal",
-        "operating_expenses",
-    },
+    "FS10": {"CASH", "AR", "BAD_DEBT_EXPENSE"},
     "FS11": {"IC_RECEIVABLE", "IC_PAYABLE", "PRODUCT_REVENUE", "COGS_MATERIAL"},
-    "FS12": {"operating_expenses", "CASH", "provisions"},
-    "FS13": {"investments", "impairment_loss", "CASH", "IC_RECEIVABLE", "allowance_reversal"},
-    "FS14": {"payroll_expense", "CASH"},
+    "FS12": {"OPEX_PROFESSIONAL_FEES", "CASH", "BAD_DEBT_EXPENSE", "ACCRUED_LIABILITIES"},
+    "FS13": {"FIXED_ASSET", "CASH", "MISC_INCOME", "DEPRECIATION_EXPENSE"},
+    "FS14": {"OPEX_PAYROLL", "CASH"},
 }
 s8 = []
 for sc, allowed in SCHEME_ACCT.items():
@@ -368,12 +338,12 @@ fs01_rep = q("""SELECT max(c) FROM (SELECT j.trading_partner, count(DISTINCT j.d
 fs01_max = fs01_rep[0][0] if fs01_rep and fs01_rep[0][0] else 0
 if fs01_max < 3:
     s14.append(f"FS01 고객반복 최대{fs01_max}건(<3)")
-# FS05 순환거래: 3사 이상 원환. 관여 회사 수 >= 3.
-fs05_co = q(
-    "SELECT count(DISTINCT j.company_code) FROM p JOIN j USING(document_id) WHERE p.scheme_id='FS05'"
-)[0][0]
-if fs05_co < 3:
-    s14.append(f"FS05 회사수 {fs05_co}(<3, 원환부재)")
+# FS05 순환거래: s10 정합(2026-07-18) — base 가 단일 법인(C001)이므로 원환은 company_code 가 아니라
+# 관계사 trading_partner(C002/C003) 순환으로 실재해야 함. 관계사 상대 수 >= 2.
+fs05_rp = q("""SELECT count(DISTINCT j.trading_partner) FROM p JOIN j USING(document_id)
+    WHERE p.scheme_id='FS05' AND j.trading_partner IN ('C002','C003')""")[0][0]
+if fs05_rp < 2:
+    s14.append(f"FS05 관계사상대 {fs05_rp}(<2, 원환부재)")
 # FS01 가공매출 상대는 외부 고객이어야(카탈로그 (d) 가공 고객 = customers 정상형식 외부처).
 # 내부부서(DEPT-*)·계열사 코드(자사 company_code)가 fictitious_sale 상대면 회계 비현실.
 fs01_internal = q("""SELECT count(DISTINCT j.document_id) FROM p JOIN j USING(document_id)
