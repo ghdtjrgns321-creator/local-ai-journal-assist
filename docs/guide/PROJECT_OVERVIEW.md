@@ -23,23 +23,23 @@ MindBridge, KPMG Clara의 핵심 로직을 오픈소스(Python)로 재현하는 
 
 ## 기술 스택
 
-| 영역        | 기술                               | 비고                                        |
-|-------------|------------------------------------|---------------------------------------------|
-| 언어        | Python 3.11+                       |                                             |
-| 패키지      | uv + pyproject.toml                | dependency-groups로 core/ml/dashboard 분리; llm group은 legacy/historical |
-| 전처리      | openpyxl, pandas 2.x, pandera      | pandera: 스키마 기반 품질 게이트            |
-| 컬럼 매핑   | rapidfuzz                          | fuzzy string matching                       |
-| 설정        | pydantic-settings, pyyaml          | 환경변수 + YAML                             |
-| 통계        | scipy.stats, numpy                 | Benford, KS 검정, Runs test                 |
-| 지도학습    | xgboost, lightgbm, scikit-learn, shap | 파이프라인 인프라 (고객사 실데이터 fine-tuning용, Phase 2 dormant) |
-| 비지도학습  | pytorch (VAE), scikit-learn (IF)   | **핵심 탐지기** — Phase 2 MVP 단일 promoted model |
-| 한국어 NLP  | kiwipiepy                          | JVM 의존성 없음. future local-only NLP 후보 |
-| DB          | duckdb                             | OLAP 최적화, Engagement별 격리              |
-| LLM         | OpenAI/API integrations (historical) | Active product path에서 제거 |
-| 벡터 DB     | ChromaDB (historical v1)           | Active product path에서 제거               |
-| Text-to-SQL | (historical v1, Vanna)             | Active product path에서 제거               |
-| 대시보드    | streamlit, plotly, streamlit-aggrid |                                             |
-| PDF/Export  | local export/report modules         | 로컬 렌더링만 허용                          |
+| 영역        | 기술                                  | 비고                                                                      |
+| ----------- | ------------------------------------- | ------------------------------------------------------------------------- |
+| 언어        | Python 3.11+                          |                                                                           |
+| 패키지      | uv + pyproject.toml                   | dependency-groups로 core/ml/dashboard 분리; llm group은 legacy/historical |
+| 전처리      | openpyxl, pandas 2.x, pandera         | pandera: 스키마 기반 품질 게이트                                          |
+| 컬럼 매핑   | rapidfuzz                             | fuzzy string matching                                                     |
+| 설정        | pydantic-settings, pyyaml             | 환경변수 + YAML                                                           |
+| 통계        | scipy.stats, numpy                    | Benford, KS 검정, Runs test                                               |
+| 지도학습    | xgboost, lightgbm, scikit-learn, shap | 파이프라인 인프라 (고객사 실데이터 fine-tuning용, Phase 2 dormant)        |
+| 비지도학습  | pytorch (VAE), scikit-learn (IF)      | **핵심 탐지기** — Phase 2 MVP 단일 promoted model                         |
+| 한국어 NLP  | kiwipiepy                             | JVM 의존성 없음. future local-only NLP 후보                               |
+| DB          | duckdb                                | OLAP 최적화, Engagement별 격리                                            |
+| LLM         | OpenAI/API integrations (historical)  | Active product path에서 제거                                              |
+| 벡터 DB     | ChromaDB (historical v1)              | Active product path에서 제거                                              |
+| Text-to-SQL | (historical v1, Vanna)                | Active product path에서 제거                                              |
+| 대시보드    | streamlit, plotly, streamlit-aggrid   |                                                                           |
+| PDF/Export  | local export/report modules           | 로컬 렌더링만 허용                                                        |
 
 ## 디렉토리 구조
 
@@ -116,38 +116,39 @@ local-ai-assist/
 
 ## 활성 문서 인덱스
 
-| 영역 | 문서 |
-|------|------|
-| 프로젝트 정의 | 본 문서, [상세.MD](상세.MD), [핵심기능.MD](핵심기능.MD), [EXPLAIN.md](EXPLAIN.md), [ux-flow.md](ux-flow.md) |
-| 설계 결정/제약 | [DECISION.md](../spec/DECISION.md), [CONSTRAINTS.md](../spec/CONSTRAINTS.md), [TROUBLESHOOT.md](../spec/TROUBLESHOOT.md), [debugging.md](../debugging.md) |
-| Detection 운영 | [DETECTION_RULES.md](../spec/DETECTION_RULES.md) (PHASE1-1), [DETECTION_RULES_PHASE1-2.MD](../spec/DETECTION_RULES_PHASE1-2.MD) (PHASE1-2 family·macro), [DETECTION_RULES_PHASE2_ML.md](../spec/DETECTION_RULES_PHASE2_ML.md) (Phase2 ML), [UNIT_MEASUREMENT_POLICY.md](../spec/UNIT_MEASUREMENT_POLICY.md), [DETECTION_REFERENCE.md](../spec/DETECTION_REFERENCE.md), [DETECTION_PARAMETERS.md](../spec/DETECTION_PARAMETERS.md), [DETECTION_PORTFOLIO_REFRAME.md](../spec/DETECTION_PORTFOLIO_REFRAME.md), [DETECTION_RANKING_CRITERIA.md](../spec/DETECTION_RANKING_CRITERIA.md) |
-| Detection 사용자 해설 | [룰원칙해설.md](룰원칙해설.md) — 룰별 "왜 신호인가·숨은 가정" 전수 해설 |
-| PHASE1 활성 락 | [PHASE1_TIER_EVIDENCE_BASIS.md](../spec/PHASE1_TIER_EVIDENCE_BASIS.md), [PHASE1_TIER_SCORING_SPEC.md](../spec/PHASE1_TIER_SCORING_SPEC.md), [HIGH_COMBO_GROUNDING.md](../spec/HIGH_COMBO_GROUNDING.md), [RULE_DETAIL_METADATA_V1_LOCK.md](../spec/RULE_DETAIL_METADATA_V1_LOCK.md), [PHASE1_RULE_RELATIONSHIP_MAP.md](../spec/PHASE1_RULE_RELATIONSHIP_MAP.md), [PHASE1_SEPARATE_BENCHMARK_SPEC.md](../spec/PHASE1_SEPARATE_BENCHMARK_SPEC.md) |
-| PHASE2 진행 | [PHASE2_GOVERNANCE_DESIGN.md](../spec/PHASE2_GOVERNANCE_DESIGN.md), [PHASE2_INTERFACE_DESIGN.md](../spec/PHASE2_INTERFACE_DESIGN.md), [PHASE2_FITTING_AUDIT.md](../spec/PHASE2_FITTING_AUDIT.md) |
-| Local-first / deprecated PHASE3 | [LOCAL_FIRST_EVIDENCE_POLICY.md](../spec/LOCAL_FIRST_EVIDENCE_POLICY.md), [PHASE3_REVIEW_NARRATOR_SPEC.md](../archive/abandoned/PHASE3_REVIEW_NARRATOR_SPEC.md) |
-| 최신 검증 결과 | [DETECTION_RESULTS_CONTRACT_V3.md](DETECTION_RESULTS_CONTRACT_V3.md), [DETECTION_RESULTS_MANIPULATION_V7_FIXED3_PHASE2.md](DETECTION_RESULTS_MANIPULATION_V7_FIXED3_PHASE2.md) |
-| 지표 정의 | [metrics.md](../spec/metrics.md) |
-| Git 운영 | [GIT.md](../spec/GIT.md) |
-| 사용자 시나리오 | [users/00_INDEX.md](users/00_INDEX.md) ~ `10_PORTFOLIO_POSITIONING.md` |
-| 템플릿 | [templates/phase2_evaluation_report_template.md](../spec/templates/phase2_evaluation_report_template.md) |
-| 완료 산출물 (구현 가이드 포함) | [archive/completed/](../archive/completed/) — `raw-plan/` (구 pre-plan 13개), S 시리즈, DataSynth contract v126 sidecar, 구버전 DETECTION_RESULTS 등 |
+| 영역                            | 문서                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 프로젝트 정의                   | 본 문서, [상세.MD](상세.MD), [핵심기능.MD](핵심기능.MD), [EXPLAIN.md](EXPLAIN.md), [ux-flow.md](ux-flow.md)                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| **검증 결과 (포트폴리오 본문)** | [VALIDATION_RESULTS_2026-07.md](VALIDATION_RESULTS_2026-07.md) — 2026-07 검증 라운드 종합: 룰 표면 성공·행 단위 VAE 실패 기록·원리적 한계·빅4 실무 정합                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 설계 결정/제약                  | [DECISION.md](../spec/DECISION.md), [CONSTRAINTS.md](../spec/CONSTRAINTS.md), [TROUBLESHOOT.md](../spec/TROUBLESHOOT.md), [debugging.md](../debugging.md)                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Detection 운영                  | [DETECTION_RULES.md](../spec/DETECTION_RULES.md) (PHASE1-1), [DETECTION_RULES_PHASE1-2.MD](../spec/DETECTION_RULES_PHASE1-2.MD) (PHASE1-2 family·macro), [DETECTION_RULES_PHASE2_ML.md](../spec/DETECTION_RULES_PHASE2_ML.md) (Phase2 ML), [UNIT_MEASUREMENT_POLICY.md](../spec/UNIT_MEASUREMENT_POLICY.md), [DETECTION_REFERENCE.md](../spec/DETECTION_REFERENCE.md), [DETECTION_PARAMETERS.md](../spec/DETECTION_PARAMETERS.md), [DETECTION_PORTFOLIO_REFRAME.md](../spec/DETECTION_PORTFOLIO_REFRAME.md), [DETECTION_RANKING_CRITERIA.md](../spec/DETECTION_RANKING_CRITERIA.md) |
+| Detection 사용자 해설           | [룰원칙해설.md](룰원칙해설.md) — 룰별 "왜 신호인가·숨은 가정" 전수 해설                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| PHASE1 활성 락                  | [PHASE1_COMBO_BUILDER_SPEC.md](../spec/PHASE1_COMBO_BUILDER_SPEC.md) (현행 SoT — tier 폐지 2026-07-17), [RULE_DETAIL_METADATA_V1_LOCK.md](../spec/RULE_DETAIL_METADATA_V1_LOCK.md), [PHASE1_RULE_RELATIONSHIP_MAP.md](../spec/PHASE1_RULE_RELATIONSHIP_MAP.md), [PHASE1_SEPARATE_BENCHMARK_SPEC.md](../spec/PHASE1_SEPARATE_BENCHMARK_SPEC.md) — 구 tier 3종(TIER_EVIDENCE_BASIS·TIER_SCORING_SPEC·HIGH_COMBO_GROUNDING)은 SUPERSEDED                                                                                                                                               |
+| PHASE2 진행                     | [PHASE2_GOVERNANCE_DESIGN.md](../spec/PHASE2_GOVERNANCE_DESIGN.md), [PHASE2_INTERFACE_DESIGN.md](../spec/PHASE2_INTERFACE_DESIGN.md), [PHASE2_FITTING_AUDIT.md](../spec/PHASE2_FITTING_AUDIT.md)                                                                                                                                                                                                                                                                                                                                                                                    |
+| Local-first / deprecated PHASE3 | [LOCAL_FIRST_EVIDENCE_POLICY.md](../spec/LOCAL_FIRST_EVIDENCE_POLICY.md), [PHASE3_REVIEW_NARRATOR_SPEC.md](../archive/abandoned/PHASE3_REVIEW_NARRATOR_SPEC.md)                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| 최신 검증 결과                  | [DETECTION_RESULTS_CONTRACT_V3.md](DETECTION_RESULTS_CONTRACT_V3.md), [DETECTION_RESULTS_MANIPULATION_V7_FIXED3_PHASE2.md](DETECTION_RESULTS_MANIPULATION_V7_FIXED3_PHASE2.md)                                                                                                                                                                                                                                                                                                                                                                                                      |
+| 지표 정의                       | [metrics.md](../spec/metrics.md)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Git 운영                        | [GIT.md](../spec/GIT.md)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 사용자 시나리오                 | [users/00_INDEX.md](users/00_INDEX.md) ~ `10_PORTFOLIO_POSITIONING.md`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 템플릿                          | [templates/phase2_evaluation_report_template.md](../spec/templates/phase2_evaluation_report_template.md)                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 완료 산출물 (구현 가이드 포함)  | [archive/completed/](../archive/completed/) — `raw-plan/` (구 pre-plan 13개), S 시리즈, DataSynth contract v126 sidecar, 구버전 DETECTION_RESULTS 등                                                                                                                                                                                                                                                                                                                                                                                                                                |
 
 ## 합성 데이터 (DataSynth)
 
 EY-ASU DataSynth(Rust)로 생성한 K-IFRS 적용 한국 중견 제조 그룹사 시뮬레이션. 현재 baseline freeze `v126` (2026-05-02).
 
-| 항목           | 값                                                    |
-|----------------|-------------------------------------------------------|
-| 법인           | C001 본사(서울), C002 울산공장, C003 천안공장 — 전체 KRW |
-| 회계연도       | 2022-01 ~ 2024-12 (3개년)                             |
-| 전표 규모      | `319,193` 문서 / `1,109,435` 라인아이템 (52 컬럼) |
-| 금액 분포      | LogNormal(14.0, 2.5) — 라인 중앙값 ~33.6만원, 평균 ~1,706만원 |
-| 승인 한도      | 6단계 전결규정 (자동→담당자→팀장→본부장→CFO→이사회)    |
-| 사용자 풀      | 직원 마스터 246명 (기본 204 + JE actor 42), `created_by 42/42` 및 `approved_by 14/14` 직접 조인 |
-| 시간 패턴      | 한국 근무 문화 반영 (심야 1.5%, 오전 피크 29.7%, 야근 13.1%) |
-| 이상 주입      | sidecar `labels/anomaly_labels.csv` `3,149` 건 (manipulation v4~v7 시리즈로 fitting 위험 제거 후 확장 중) |
-| Benford        | 첫째 자릿수 적합 (tolerance 5%, payroll/recurring 제외) |
-| 외부 검증      | OpenDataPhilly / Tritscher portability·shadow 검증 (보조) |
+| 항목      | 값                                                                                                        |
+| --------- | --------------------------------------------------------------------------------------------------------- |
+| 법인      | C001 본사(서울), C002 울산공장, C003 천안공장 — 전체 KRW                                                  |
+| 회계연도  | 2022-01 ~ 2024-12 (3개년)                                                                                 |
+| 전표 규모 | `319,193` 문서 / `1,109,435` 라인아이템 (52 컬럼)                                                         |
+| 금액 분포 | LogNormal(14.0, 2.5) — 라인 중앙값 ~33.6만원, 평균 ~1,706만원                                             |
+| 승인 한도 | 6단계 전결규정 (자동→담당자→팀장→본부장→CFO→이사회)                                                       |
+| 사용자 풀 | 직원 마스터 246명 (기본 204 + JE actor 42), `created_by 42/42` 및 `approved_by 14/14` 직접 조인           |
+| 시간 패턴 | 한국 근무 문화 반영 (심야 1.5%, 오전 피크 29.7%, 야근 13.1%)                                              |
+| 이상 주입 | sidecar `labels/anomaly_labels.csv` `3,149` 건 (manipulation v4~v7 시리즈로 fitting 위험 제거 후 확장 중) |
+| Benford   | 첫째 자릿수 적합 (tolerance 5%, payroll/recurring 제외)                                                   |
+| 외부 검증 | OpenDataPhilly / Tritscher portability·shadow 검증 (보조)                                                 |
 
 상세: [datasynth.md](../archive/completed/datasynth.md), [DATASYNTH_INJECTION_SPEC.md](../archive/completed/DATASYNTH_INJECTION_SPEC.md), DataSynth contract sidecar/taxonomy v126 (`docs/archive/completed/datasynth_contract_*_v126.*`).
 
@@ -155,12 +156,12 @@ EY-ASU DataSynth(Rust)로 생성한 K-IFRS 적용 한국 중견 제조 그룹사
 
 비지도학습 중심 + 지도학습 dormant + local evidence summaries.
 
-| 접근법 | 모델 | 역할 | 합성 데이터 적합도 |
-|:-------|:-----|:-----|:-----------------:|
-| 비지도학습 | VAE (1개 promoted) + Isolation Forest | **Phase 2 MVP 핵심 탐지기** — 정상 분포 이탈 evidence | 높음 |
-| 지도학습 | XGBoost, LightGBM, FT-Transformer, BiLSTM | Dormant. 라벨 누수 가드(Supervised Gate) 통과 후만 활성화 | 낮음 (생성기 shortcut 위험) |
-| 앙상블 | Stacking Meta-Learner (LR Ridge, OOF) | Experimental — 지도학습 활성화 시 결합 | 중간 |
-| Local Evidence Brief | deterministic template | PHASE1/PHASE2 로컬 근거 요약 | 외부 API 없음 |
+| 접근법               | 모델                                      | 역할                                                      |     합성 데이터 적합도      |
+| :------------------- | :---------------------------------------- | :-------------------------------------------------------- | :-------------------------: |
+| 비지도학습           | VAE (1개 promoted) + Isolation Forest     | **Phase 2 MVP 핵심 탐지기** — 정상 분포 이탈 evidence     |            높음             |
+| 지도학습             | XGBoost, LightGBM, FT-Transformer, BiLSTM | Dormant. 라벨 누수 가드(Supervised Gate) 통과 후만 활성화 | 낮음 (생성기 shortcut 위험) |
+| 앙상블               | Stacking Meta-Learner (LR Ridge, OOF)     | Experimental — 지도학습 활성화 시 결합                    |            중간             |
+| Local Evidence Brief | deterministic template                    | PHASE1/PHASE2 로컬 근거 요약                              |        외부 API 없음        |
 
 **배경**: DataSynth 합성 데이터의 이상치는 룰 기반으로 주입되므로, 지도학습 시 순환 학습(Circular Learning) 문제 발생.
 비지도학습(VAE+IF)은 정상 분포를 학습하므로 합성 데이터에서도 유효.
@@ -212,9 +213,9 @@ EY-ASU DataSynth(Rust)로 생성한 K-IFRS 적용 한국 중견 제조 그룹사
 
 ## CI 워크플로우
 
-| 워크플로우 | 트리거 | 역할 |
-|-----------|--------|------|
-| `phase1-kpi-guard` | PR (main/develop), main push, weekly schedule, manual | PHASE1 Layer A/B hard guard + Layer C soft warn |
-| `audit-testing` | manual + nightly `0 18 * * *` UTC (KST 03:00) | PHASE2 Stage 5 baseline `training_report.json` Layer A + case contract 회귀 차단 |
+| 워크플로우         | 트리거                                                | 역할                                                                             |
+| ------------------ | ----------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `phase1-kpi-guard` | PR (main/develop), main push, weekly schedule, manual | PHASE1 Layer A/B hard guard + Layer C soft warn                                  |
+| `audit-testing`    | manual + nightly `0 18 * * *` UTC (KST 03:00)         | PHASE2 Stage 5 baseline `training_report.json` Layer A + case contract 회귀 차단 |
 
 상세: [GIT.md](../spec/GIT.md).
