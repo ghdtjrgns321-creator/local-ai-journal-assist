@@ -23,8 +23,9 @@
 - 자연 noise는 존재해야 하지만 계정/프로세스/정답 라벨의 shortcut이 되면 안 된다.
 - 세무 처리는 랜덤이 아니라 거래 archetype과 증빙 성격에 따라 과세/영세/면세/비과세가 결정되어야 한다.
 - 이 프로젝트의 NORMAL baseline은 단일법인 원장이다. journal 안에는 하나의 회사코드(C001)만 존재해야
-  하며, 관계사/내부거래/회사간 순환은 normal에 넣지 않는다. IC/GR 계열 부정이나 오류 검증은 별도
-  PHASE1/PHASE2 overlay 데이터셋에서 명시 라벨과 함께 만든다.
+  한다. 단, 단일법인이 관계사 거래를 하지 않는다는 뜻은 아니므로 `1150/2050/4500/2700` 계정과
+  `trading_partner=C002/C003` 같은 저빈도 관계사 거래 흔적은 정상 배경으로 존재해야 한다. 별도 회사
+  장부(C002/C003 journal row)와 정상 company-node 순환은 넣지 않는다.
 - 정상 반복거래, batch 전표, 연말마감 전표처럼 단일법인 내부에서 이후 룰 검증의 정상 비교군이 될 구조를
   소량 샘플이 아니라 충분한 모집단으로 생성한다.
 - 재무제표 정합은 전표 단위 균형과 별개로 검증한다. TB, roll-forward, closing, subledger는 hollow
@@ -397,3 +398,120 @@ v50 검증 요약:
 - Feature path smoke: `add_exceeds_threshold()` 기준 L1-04 distinct documents 178.
 - `journal_entries_*.csv`에 미사용 `approval_limit`, `approver_authority_limit` 컬럼 없음.
 - E05B RBAC scope, O02 synthetic marker, self-approval 회귀 없음.
+
+## v51에서 닫은 annual closing semantic label 회귀
+
+v50은 전표 균형과 M05 P&L-to-retained-earnings 금액 대사는 통과했지만, 연도별 annual closing 라인의
+semantic label이 서로 달랐다. `src/detection/anomaly_rules_simple.py`의 L4-03 수행중요성 임계는
+`semantic_account_subtype=income_statement_close` closing 라인에서 순이익을 역산하므로, closing 금액이
+맞아도 closing semantic label이 틀리면 연도별 threshold가 비거나 과대 산출된다.
+
+v50 결함:
+
+- 2022: P&L closing 214라인 중 수익 마감 91라인이 `SERVICE_REVENUE`로 남아 L4-03 순이익 역산에서 빠졌다.
+- 2023: 비용 마감 101라인이 `COGS_*`/`OPEX_*` 계정-native subtype으로 남아 순이익이 과대 산출됐다.
+- 2024: subtype은 맞았지만 `line_text_family=payroll` 215라인과 retained earnings family 1라인 오류가
+  남아 closing family가 일관되지 않았다.
+
+v51 수정 원칙:
+
+- annual closing 식별자는 `batch_type=annual_closing` 또는 `reference=CLOSE-*`다.
+- annual closing 손익계정(4/5/6/7/8 prefix) 라인은 항상
+  `semantic_account_subtype=income_statement_close`, `line_text_family=annual_closing`이어야 한다.
+- retained earnings closing 라인(`3200`)은 `semantic_account_subtype=retained_earnings`,
+  `line_text_family=annual_closing`이어야 한다.
+- 생성기 마지막 repair 이후에도 closing semantics를 다시 정규화해 계정-native subtype이나 donor
+  line family가 남지 않게 한다.
+
+v51 verifier 기준:
+
+- `M14_ANNUAL_CLOSING_SEMANTIC_CONSISTENCY`는 company-year별 P&L closing subtype/family,
+  retained-earnings subtype/family, `P&L closing net + retained earnings effect = 0`을 원 단위 정수로
+  검사한다.
+- v50은 `M14 FAIL`로 bad P&L subtype 192라인, bad P&L family 215라인, bad retained earnings family
+  1라인을 잡는다. v51은 모두 0이어야 한다.
+
+v51 산출물:
+
+- Dataset: `data/journal/primary/datasynth_semantic_v1_normal_20260702_v51_closing_semantics_r1`
+- Report JSON: `reports/normal_v51_closing_semantics_r1_gate.json`
+- Report MD: `reports/normal_v51_closing_semantics_r1_gate.md`
+- Regression evidence: `reports/normal_v50_approval_noise_r2_gate_with_m14.json`
+
+v51 검증 요약:
+
+- Realism verifier: `PASS 42`, `MONITOR 1`, `INFO 3`, `FAIL 0`.
+- M14: company-years checked 3, P&L closing lines 642, retained earnings lines 3, bad subtype/family 0,
+  bad reconciliation years 0, max reconciliation diff 0 KRW.
+- 직접 L4-03 threshold smoke: 2022/2023/2024 모두 `threshold_basis=closing_ni`, unset 0.
+
+## v52에서 닫은 D01 안정계정 급변 NORMAL 결함
+
+v51은 D01 detector 자체에는 문제가 없었지만, NORMAL 안정 계정의 세부 계정코드가 연도별로 과도하게
+흔들렸다. 특히 이자비용·법인세비용 세부계정 일부가 전년 대비 8배를 넘게 움직였고, 법인세 계정은
+최대 203.6배까지 튀었다. 이는 detector가 아니라 DataSynth가 안정 계정 세부코드를 연도별로 난수처럼
+배정한 문제다.
+
+v52 수정 원칙:
+
+- D01 detector는 수정하지 않는다. D01은 넓은 macro queue를 만드는 정상 설계다.
+- NORMAL realism gate C07에서 안정 계정군을 별도 guardrail로 본다.
+- C07 안정 계정군은 CoA `account_name/sub_type` 기준의 이자비용, 법인세비용, 감가/상각, 임차/리스다.
+- closing 제외 company×account×year 활동금액(`debit+credit`)을 원 단위로 집계한다.
+- 양년 모두 5천만원 이상 활동이 있는 인접연도 pair에서 변화율이 8배를 넘으면 FAIL이다.
+- 생성기는 이자비용과 법인세비용을 대표 control 계정으로 정규화해, 같은 총액이 세부계정 난수분산 때문에
+  D01에 새지 않게 한다.
+
+v52 산출물:
+
+- Dataset: `data/journal/primary/datasynth_semantic_v1_normal_20260703_v52_stable_account_r2`
+- Report JSON: `reports/normal_v52_stable_account_r2_gate.json`
+- Report MD: `reports/normal_v52_stable_account_r2_gate.md`
+- Regression evidence: `reports/normal_v51_closing_semantics_r1_gate_with_c07.json`
+
+v52 검증 요약:
+
+- Realism verifier: `PASS 43`, `MONITOR 1`, `INFO 3`, `FAIL 0`.
+- C07: checked year pairs 26, bad year pairs 0, max change ratio 4.5312.
+- 이자비용 직접 집계: 2022→2023 `1.2041x`, 2023→2024 `1.2374x`.
+- 법인세비용 직접 집계: 2022→2023 `2.0559x`, 2023→2024 `4.5312x`.
+
+## v53에서 닫아야 하는 L4-04 계정쌍 파편화 NORMAL 결함
+
+v52는 안정 계정의 연도별 활동금액 급변(C07)은 닫았지만, L4-04 희소 계정쌍 관점에서는 여전히
+정상이 아니다. 원인은 세부 계정코드가 의미 subtype만 맞춘 뒤 문서마다 넓은 계정 풀에서 새로 선택되어,
+동일한 거래 아키타입이 매번 다른 concrete debit-credit pair로 흩어지는 것이다.
+
+현상:
+
+- 정상 v52에서 L4-04-like 희소쌍 전표율이 약 6.94%로 높다.
+- recurring 전표도 9.6%, automated 전표도 5.6%가 희소쌍으로 잡힌다. 실제 ERP 자동/반복 전표는
+  계정결정이 템플릿화되어 있으므로 이런 비율은 비현실적이다.
+- 희소 concrete pair의 99.9%는 parent semantic subtype pair 수준에서는 흔한 쌍이다. 즉 도메인상
+  희소한 조합이 아니라 synthetic account fragmentation이다.
+
+v53 수정 원칙:
+
+- detector 임계나 L4-04 룰은 수정하지 않는다. 오염된 NORMAL 기준으로 룰을 튜닝하면 자기순환이다.
+- 생성기는 거래 아키타입, 거래처 유형, document_type, line_text_family, semantic subtype, 차대변 방향
+  단위로 concrete gl_account를 재사용한다(account determination).
+- 금액, 차대변, 재무제표 잔액은 건드리지 않는다. 계정 코드 안정화와 그에 따른 semantic label 정합만
+  수행한다.
+- verifier C06은 L4-04-like rare doc rate ≤1%, recurring rare doc rate ≤0.5%, automated rare doc
+  rate ≤1%, fragmented rare concrete pair rate ≤20%를 hard/distribution gate로 본다.
+
+v53 산출물:
+
+- Dataset: `data/journal/primary/datasynth_semantic_v1_normal_20260703_v53_account_determination_r6`
+- Report JSON: `reports/normal_v53_account_determination_r6_gate_v2.json`
+- Report MD: `reports/normal_v53_account_determination_r6_gate_v2.md`
+- Regression evidence: `reports/normal_v52_stable_account_r2_gate_with_c06.json`에서 C06 FAIL.
+
+v53 검증 요약:
+
+- Realism verifier: `PASS 44`, `MONITOR 1`, `INFO 3`, `FAIL 0`.
+- C06: L4-04-like rare doc rate `0.129%`, recurring rare doc rate `0.244%`,
+  automated rare doc rate `0.105%`, fragmented rare pair rate `0.0%`.
+- A01/M01/M02/M05/M11/M12/M14/J04_J07/E13/E05C/K02/B18 모두 PASS.
+- 구현상 account determination은 annual closing, reversal, related-party IC 계정 prefix를 제외한다.
+  이들은 각각 M14/J04_J07/K02~K05가 별도 검증하므로 C06에서 일반 GL 계정쌍으로 섞지 않는다.

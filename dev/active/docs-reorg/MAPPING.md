@@ -14,11 +14,11 @@ dev/active/   ← 살아있는 작업만
 
 ## 0. 먼저 결정해야 할 경계 이슈 (배정 전 확정 필요)
 
-| 이슈 | 내용 | 영향 범위 |
-|------|------|-----------|
-| **시계열(TS) 귀속** | CLAUDE.md는 TS를 PHASE1-2 family로 명시하나, spec/debugging의 TIMESERIES_* 진단과 ROLE_LOCK은 PHASE2 평가 surface와 직결. phase1로 갈지 phase2로 갈지 미확정 | PHASE2_TIMESERIES_ROLE_LOCK + debugging TS 5종 + users TS surface |
-| **IC(intercompany) 귀속** | 탐지 구조는 PHASE1-2 family, 평가는 PHASE2 native case. 두 기둥에 걸침 | INTERCOMPANY 문서 2종 |
-| **링크 깨짐 비용** | 하위폴더 이동 시 참조 대량 수정: DETECTION_RULES 60곳·TIER_EVIDENCE 34곳·PHASE2_GOVERNANCE 24곳·DATASYNTH 20곳 = 138곳+ | 이동 실행 단계 전체 |
+| 이슈                      | 내용                                                                                                                                                         | 영향 범위                                                         |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
+| **시계열(TS) 귀속**       | CLAUDE.md는 TS를 PHASE1-2 family로 명시하나, spec/debugging의 TIMESERIES_* 진단과 ROLE_LOCK은 PHASE2 평가 surface와 직결. phase1로 갈지 phase2로 갈지 미확정 | PHASE2_TIMESERIES_ROLE_LOCK + debugging TS 5종 + users TS surface |
+| **IC(intercompany) 귀속** | 탐지 구조는 PHASE1-2 family, 평가는 PHASE2 native case. 두 기둥에 걸침                                                                                       | INTERCOMPANY 문서 2종                                             |
+| **링크 깨짐 비용**        | 하위폴더 이동 시 참조 대량 수정: DETECTION_RULES 60곳·TIER_EVIDENCE 34곳·PHASE2_GOVERNANCE 24곳·DATASYNTH 20곳 = 138곳+                                      | 이동 실행 단계 전체                                               |
 
 ---
 
@@ -94,7 +94,10 @@ r03-ts01-calibration, relational-circular-ownership-20260602
 
 ## 4. dev/active 루트 단독 파일 (30개)
 
-- **유지(현역 핸드오프)**: HANDOFF_CURRENT.md, HANDOFF_phase2_datasynth.md
+- **유지(현역 핸드오프)**: HANDOFF_phase2_datasynth.md
+- **삭제(2026-07-15)**: HANDOFF_CURRENT.md — 2026-06-07 시점에서 정지. 기준 데이터셋(NORMAL v29,
+  overlay v11/v12)이 모두 디스크에서 사라져 내용 전체가 무효였다. 현행 진행 상태는 dev/active 하위
+  각 plan 폴더가 관리한다.
 - **archive 이관(완료 스펙·프롬프트 히스토리 19개)**: p3-2-overlay-injection-audit, phase1-evasion-injection-spec,
   phase1-rule-detail-audit-note, phase1-rule-recall-checklist, phase2-fraud-scheme-catalog,
   phase2-fraud-*-prompt 다수(r1f/r2/v33-r3/r4f~r4m/v42-r4l/deshortcut/unrecognized-fix/overlay)
@@ -112,11 +115,11 @@ r03-ts01-calibration, relational-circular-ownership-20260602
 
 ## ripple-search 실측 (링크 깨짐 위험)
 
-| 이동 대상 대표 파일 | 참조 문서 수 |
-|---|---|
-| DETECTION_RULES.md | 60 |
-| PHASE1_TIER_EVIDENCE_BASIS.md | 34 |
-| PHASE2_GOVERNANCE_DESIGN.md | 24 |
-| DATASYNTH_* 계열 | 20 |
+| 이동 대상 대표 파일           | 참조 문서 수 |
+| ----------------------------- | ------------ |
+| DETECTION_RULES.md            | 60           |
+| PHASE1_TIER_EVIDENCE_BASIS.md | 34           |
+| PHASE2_GOVERNANCE_DESIGN.md   | 24           |
+| DATASYNTH_* 계열              | 20           |
 
 → 하위폴더 이동 실행 시 최소 138곳 링크 수정 필요. 0건 아님(측정됨).

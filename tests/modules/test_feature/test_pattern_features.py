@@ -9,6 +9,7 @@ import pandas as pd
 import pytest
 
 from src.feature.pattern_features import (
+    _load_coa_suspense_codes,
     add_all_pattern_features,
     add_first_digit,
     add_is_intercompany,
@@ -395,6 +396,125 @@ class TestAddIsSuspenseAccount:
         df = pd.DataFrame({"line_text": ["가수금 정리", "일반"]})
         result = add_is_suspense_account(df, self.KEYWORDS, account_codes=["2190"])
         assert result["is_suspense_account"].tolist() == [True, False]
+
+    # ── CoA 권위 플래그 우선 (오태깅 근본 수정) ──
+
+    def test_coa_authority_exact_match(self):
+        """coa_suspense_codes 주어지면 gl_account 정확 매칭만 사용 (키워드/prefix 무시)."""
+        df = pd.DataFrame(
+            {
+                "gl_account": pd.array([9000, 1020, 2900], dtype="Int64"),
+                "line_text": ["일반", "Wire Clearing 이체", "GR/IR 정리"],
+            }
+        )
+        # 권위 = 9000, 2900만 가계정. 1020은 텍스트에 'Clearing' 있어도 권위 밖 → False.
+        result = add_is_suspense_account(
+            df, self.KEYWORDS, account_codes=["1020"], coa_suspense_codes={"9000", "2900"}
+        )
+        assert result["is_suspense_account"].tolist() == [True, False, True]
+
+    def test_coa_authority_removes_keyword_false_positive(self):
+        """권위 있으면 적요 키워드 오태깅(현금 등)이 제거된다."""
+        df = pd.DataFrame(
+            {
+                "gl_account": pd.array([1020], dtype="Int64"),
+                "line_text": ["Bank Clearing 이체"],  # 휴리스틱이면 True가 됐을 행
+            }
+        )
+        result = add_is_suspense_account(df, self.KEYWORDS, coa_suspense_codes={"9000"})
+        assert result["is_suspense_account"].tolist() == [False]
+
+    def test_coa_authority_none_falls_back_to_heuristic(self):
+        """coa_suspense_codes=None이면 기존 키워드/prefix 휴리스틱 폴백."""
+        df = pd.DataFrame(
+            {
+                "gl_account": pd.array([2190, 1200], dtype="Int64"),
+                "line_text": ["가수금 정리", "일반"],
+            }
+        )
+        result = add_is_suspense_account(
+            df, self.KEYWORDS, account_codes=["2190"], coa_suspense_codes=None
+        )
+        assert result["is_suspense_account"].tolist() == [True, False]
+
+    def test_coa_authority_gl_string_strip(self):
+        """gl_account 문자열/공백 혼재여도 정확 매칭."""
+        df = pd.DataFrame(
+            {
+                "gl_account": [" 9000", "9000", "115001"],
+                "line_text": ["a", "b", "c"],
+            }
+        )
+        result = add_is_suspense_account(df, [], coa_suspense_codes={"9000"})
+        assert result["is_suspense_account"].tolist() == [True, True, False]
+
+    def test_coa_authority_float_gl_account_no_dot_zero(self):
+        """gl_account가 NaN 섞여 float64로 로드되어도 '9000.0'→'9000' 정규화되어 매칭.
+
+        Why: isin은 startswith와 달리 표기 차이에 민감 — .0 접미사 미제거 시 전멸(미탐).
+        """
+        df = pd.DataFrame(
+            {
+                "gl_account": [9000.0, 1150.0, float("nan")],  # float64 (NaN 유발)
+                "line_text": ["a", "b", "c"],
+            }
+        )
+        result = add_is_suspense_account(df, [], coa_suspense_codes={"9000"})
+        assert result["is_suspense_account"].tolist() == [True, False, False]
+
+    def test_coa_authority_empty_set_all_false_not_heuristic(self):
+        """빈 frozenset(가계정 0개 권위) → 전 행 False. 키워드 폴백으로 되돌리지 않는다."""
+        df = pd.DataFrame(
+            {
+                "gl_account": pd.array([9000, 2190], dtype="Int64"),
+                "line_text": ["가수금 정리", "Clearing 이체"],  # 휴리스틱이면 True 됐을 행
+            }
+        )
+        result = add_is_suspense_account(df, self.KEYWORDS, coa_suspense_codes=frozenset())
+        assert result["is_suspense_account"].tolist() == [False, False]
+
+
+class TestLoadCoaSuspenseCodes:
+    """chart_of_accounts.json → is_suspense_account=True 계정 코드 set."""
+
+    def _write_coa(self, tmp_path, accounts):
+        import json
+
+        path = tmp_path / "chart_of_accounts.json"
+        path.write_text(json.dumps({"accounts": accounts}, ensure_ascii=False), encoding="utf-8")
+        return tmp_path / "journal_entries.csv"  # source_path sibling
+
+    def test_reads_suspense_flag(self, tmp_path):
+        source = self._write_coa(
+            tmp_path,
+            [
+                {"account_number": "9000", "is_suspense_account": True},
+                {"account_number": "1150", "is_suspense_account": False},
+                {"account_number": "2900", "is_suspense_account": True},
+            ],
+        )
+        assert _load_coa_suspense_codes(source) == {"9000", "2900"}
+
+    def test_missing_file_returns_none(self, tmp_path):
+        assert _load_coa_suspense_codes(tmp_path / "journal_entries.csv") is None
+
+    def test_no_flag_key_returns_none(self, tmp_path):
+        """is_suspense_account 키 자체가 없는 CoA(미지정) → None → 휴리스틱 폴백."""
+        source = self._write_coa(
+            tmp_path,
+            [{"account_number": "1150"}, {"account_number": "9000"}],
+        )
+        assert _load_coa_suspense_codes(source) is None
+
+    def test_flag_present_all_false_returns_empty_set(self, tmp_path):
+        """플래그는 있고 전부 False(가계정 0개) → 빈 frozenset(권위), None 아님."""
+        source = self._write_coa(
+            tmp_path,
+            [{"account_number": "1150", "is_suspense_account": False}],
+        )
+        result = _load_coa_suspense_codes(source)
+        assert result == frozenset()
+        assert result is not None
 
 
 # ── TestAddAllPatternFeatures ────────────────────────────────────

@@ -1,36 +1,43 @@
 # HANDOFF — PHASE1-2 코드 재작업
 
-작성 2026-06-30. 다음 세션 재개용. 상세 계획: `PLAN.md`(같은 폴더). 컨트랙트: `.claude/state/contracts/ad43d23a-...md`.
+갱신 2026-07-15(구 2026-06-30 "코딩 미착수" 판은 폐기). 계획: [PLAN.md](PLAN.md). 실측 근거 전량: [backend_verify.md](backend_verify.md).
+설계 SoT: [DETECTION_RULES_PHASE1-2.MD](../../../docs/spec/DETECTION_RULES_PHASE1-2.MD).
 
-## 지금까지 (설계·문서 = 완료, 코딩 = 미착수)
-PHASE1-2를 grill로 재설계 완료 → 문서 4종 동기화 완료(DETECTION_RULES_PHASE1-2.MD / DETECTION_RULES_PHASE2_ML.md / CONSTRAINTS.md / PHASE2_TIMESERIES_ROLE_LOCK.md). **이제 코딩만 남음.**
+## 현황 한 줄
 
-## 확정 설계 (PHASE1-2 = 분석적 검토 신호)
-- **자기 큐**(별도 목록 화면, 고액/대량 정렬): Benford(L4-02)·D01·D02 + **라운드넘버 밀집도[신규]·첫등장/희소 거래처[신규]·시계열 당기내 집중[신규]**
-- **배지**(PHASE1-1 전표 등급 줄 꼬리표, 점수 비병합): L4-05·L4-06·L3-12 + 라운드넘버 단건 + 첫등장/희소 전표
-- **dual**: 라운드넘버(밀집도=자기큐/단건=배지), 첫등장/희소(거래처목록=자기큐/전표=배지)
-- **완전 삭제**: IC01~03(단일법인 한계)·GR01/GR03(dead)·R02/R04/R06. 단 L3-03 관계사 꼬리표는 PHASE1-1 조합용 잔존
-- **PHASE1-1로**: 중복지급=L2-03(매칭 "거래처+금액+근접기간" 확장, fuzzy·split 드롭)
-- **PHASE2**: VAE/IF 단독(나머지 family 전부 이동/삭제)
-- 단일 법인 확정: 3법인 통합 GL을 회사별로 스코프해야 함(현재 안 됨 = 버그)
+**백엔드 완료, UI 미착수.** 자기 큐 6종 → **5종**(시계열 폐기), 배지 통합·거래처 자기 큐·라운드넘버 밀집도 배선 완료. 화면(PLAN §3 Phase 5·6)은 사용자 지시로 범위 외.
 
-## 핵심 코드 실측 (재조사 불필요)
-- 활성 base(default scope): IntegrityDetector(L1-01~03)·FraudLayer·AnomalyDetector(11룰)·BenfordDetector(L4-02)·EvidenceDetector(L3-11) — `pipeline.py:1397-1415`. variance(D01/D02)는 optional.
-- IC·relational·duplicate·timeseries = **phase2_only 블록에서만** 실행 `pipeline.py:1460-1491`. GR = dead(호출 0).
-- 옛 PHASE2 rule-style 4종 끊을 지점 = `pipeline.py:1460-1491` 한 블록(소비처 전부 silent-skip, 안 깨짐).
-- **자기 큐 백엔드 이미 존재, 화면만 없음**: `build_phase1_macro_finding_queue`(`phase1_case_view.py:2348`), macro_findings(`phase1_case_builder.py:832-1098`). `tab_phase1.py` 미import.
-- **배지 토대 일부 존재**: time_severity(`phase1_case_builder.py:88-95`)+weak_evidence_tags(`:4843-4878`, is_round_number·희소). 통합 배지 컬럼 없음(unit 그리드 `tab_phase1.py:3418-3427`).
-- macro 0기여 강제: `rule_scoring.py:38-43`·`score_aggregator.py:251-254`.
+## 완료
 
-## 다음 = 코딩 (PLAN §3 순서)
-0. **baseline 고정**: `uv run pytest tests/phase1_rulebase/` 통과수 + case/queue/band 분포 캡처 → `baseline.md`
-1. **단일 회사 스코프** ★최우선: `_run_detection` company_code별 실행. 검증=C001 vs C002 분리 결과 다름
-2. **레거시 정리**(저위험): phase2 rule-style 블록서 relational/duplicate/IC 제거(timeseries는 PHASE1-2로 재구현 예정), GR·IC 완전 삭제
-3. **첫등장/희소** base 신규 구현(거래처 단위, first-seen=전기미등장+당기등장)
-4. **배지 통합 필드** + L3-12/L4-06 표시 재분류
-5. **자기 큐 UI**(백엔드 재사용) + 6. 한 화면 소분류 + 배지 컬럼
-+ 신규 자기큐 구현: 라운드넘버 밀집도(round_amount_score 재활용)·시계열 당기내 집중(robust-z 재활용)
+| 항목                     | 구현                                                                   | 실측                                                 |
+| ------------------------ | ---------------------------------------------------------------------- | ---------------------------------------------------- |
+| Phase 0 baseline         | [baseline.md](baseline.md)                                             | phase1_rulebase 25 passed                            |
+| Phase 1 단일 회사 스코프 | **입구 가드로 대체** `pipeline.py::single_company_scope_warnings`      | 다회사 3사 → 경고 1건 / 단일회사 → 0건               |
+| Phase 2 레거시 정리      | relational(R01~R09)·IC01~03·duplicate·graph 삭제(커밋 5d16525·aaf0390) | —                                                    |
+| Phase 3 첫등장/희소      | `partner_signals.py` + `_build_partner_findings` → `partner_findings`  | 거래처 2,966 → 신호 625(첫등장 568·희소 596·휴면 22) |
+| Phase 4 배지 통합        | `_compose_badge_tags` → `badge_tags`(`phase1_case.py:56`)              | —                                                    |
+| 라운드넘버 밀집도        | `round_density_rules.py`(축별 이항검정) → `macro_findings`             | 정상 finding 1건 vs fraud 3건                        |
+| is_round_number 정의교체 | 절대 `round_unit` → 상대(유효숫자 ≤2·자릿수 ≥3)                        | 0.037% → 5.52%, 소비처 5/5, **등급 영향 0**          |
+| 큐 절단 제거             | `macro_findings`·`partner_findings` top_n 제거                         | 회귀 1,703 passed / 0 failed                         |
+
+## 폐기 (실측 근거 있음)
+
+- **시계열 당기내 집중 자기 큐** — 당기 내 baseline 이 결산 캘린더를 재발견(정상 864건·분기말 70% → 레인 분리 후 595건·52.4%). 연말은 한 해 1회라 당기 내 판정 원리적 불가. "작년 같은 달 비교"는 D02 중복. → **D02 드릴다운으로 재정의(미구현)**. 코드·테스트 9건 보존, 배선 제거. DataSynth 아티팩트 **아님**(Rust 수정 대상 아님).
+- **Phase 1 회사별 실행 후 병합** — 데이터 14/15 가 이미 단일 회사 → 입구 가드로 대체.
+
+## 다음 (우선순위 순)
+
+1. **D02 드릴다운 구현** — D02 가 "이 계정 월분포가 바뀌었다"를 띄우면 어느 달이 작년 같은 달 대비 몇 배인지 상세 표시. 새 룰 아님(D02 상세정보). `timeseries_concentration_rules.py` 의 robust-z 자산 재사용 가능.
+2. **UI**(PLAN §3 Phase 5·6) — 자기 큐 5종 화면 + 배지 컬럼. 백엔드는 준비됨(`build_phase1_macro_finding_queue`·`build_phase1_partner_finding_queue`, `badge_tags`).
+
+## 미해결 (본 작업 범위 밖, 기록만)
+
+- `fraud_rules_groupby.py:355 _flag_o2c_offset_duplicate_entries` — L2-03 헬퍼 중 유일하게 `company_code` 를 groupby 키에 포함하나 호출처 0건인 죽은 코드.
+- `tests/datasynth_quality_gate/checks/tier5_label.py:105` — 기존 인코딩 손상(U+FFFD 6개, HEAD 에도 존재).
+- `tests/modules/test_db/test_batch_reader.py::TestDetectorStatuses::test_restored_core_tracks_default_to_executed` — `KeyError: 'duplicate'` 기존 실패(HEAD worktree 재현 확인). 커밋 aaf0390 duplicate 제거 잔재.
+- `weak_evidence_bonus`·`topside_bonus` — 계산·저장되나 `phase1_case_builder:1820` 에서 tier 대표값이 덮어써 등급 무기여(dead path). `config/phase1_case.yaml` 의 `per_tag_bonus`·`max_bonus`·`topside.*_bonus` 동일.
+- `PHASE2_TIMESERIES_ROLE_LOCK.md` 위치 — CLAUDE.md 는 `docs/spec/` 를 가리키나 실제는 `docs/archive/completed/`(링크 깨짐, 활성 문서 5곳이 spec 경로 참조). supersede 취소로 lock 은 유효 존속 → 위치 결정 필요(docs-reorg MAPPING §경계 미확정 항목).
 
 ## 회귀 가드
-각 Phase 종료 시 pytest 통과 + "알려진 실패 N, 신규 0". 3-surface 점수 비병합 유지. KPI 3-Layer(CONSTRAINTS.md) Layer A/B HARD 통과.
-DataSynth 게이트: 시계열·라운드넘버가 정상 데이터 과탐 시 → Rust(DataSynth) 수정(검사기 드롭 아님).
+
+각 단계 종료 시 pytest 통과 + "알려진 실패 N, 신규 0". 3-surface 점수 비병합 유지. KPI 3-Layer(CONSTRAINTS.md) Layer A/B HARD 통과.

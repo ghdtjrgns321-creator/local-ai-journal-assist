@@ -1,6 +1,10 @@
 # PHASE2 Timeseries Family Role Lock
 
-> **🔄 2026-06-30 갱신 (grill 종결)**: 본 문서의 "TS = PHASE1-2 귀속" 결론은 유효하며, 그 구체 설계가 확정됐다 — **시계열 = PHASE1-2 "자기 큐"(당기 내 거래 집중)**. D01/D02의 전기비교가 못 보는 "특정 연도 안에서 특정 시점에 거래 몰림"을 본다. 실패한 TS01 burst/TS02 frequency 구현은 통계(robust-z)만 재활용하고 **당기 내 집중으로 신규 설계**한다. 현행 SoT: [DETECTION_RULES_PHASE1-2.MD](../../spec/DETECTION_RULES_PHASE1-2.MD), `dev/active/phase1-2-code-rework/PLAN.md`. 아래 "결산·시점 lane" 서술은 역사 기록.
+> **🔄 2026-07-15 갱신 (구현 후 실측 → supersede 취소)**: 아래 2026-06-30 노트가 예고한 "시계열 = PHASE1-2 자기 큐(당기 내 거래 집중)"는 **구현 후 실측에서 폐기**됐다. 당기 내 baseline 은 결산 캘린더를 재발견할 뿐이고(정상 데이터 finding 864건 중 분기말 70%, 레인 분리 후에도 595건·52.4%), 한 해에 연말은 한 번뿐이라 "연말치고도 이상한가"를 당기 내에서 판정할 방법이 원리적으로 없다. "작년 같은 달과 비교"로 가면 D02 중복이다. 근거 SoT: [DETECTION_RULES_PHASE1-2.MD §시계열 당기내 집중](../../spec/DETECTION_RULES_PHASE1-2.MD) · 실측 `dev/active/phase1-2-code-rework/backend_verify.md` §8.
+>
+> **따라서 본 LOCK 은 supersede 되지 않는다.** 아래 "결산·시점·빈도 컨텍스트 lane" 역할 고정(결정 9, 2026-05-25)은 **유효하게 존속**하며, 코드도 `timeseries` 를 PHASE2 lane 에서 계속 실행한다(`pipeline.py` phase2_only family 블록). 시계열은 자기 큐가 아니라 **D02 드릴다운**으로 재정의됐다(미구현).
+
+> **🔄 2026-06-30 (역사 기록 — 위 2026-07-15 노트로 폐기됨)**: 본 문서의 "TS = PHASE1-2 귀속" 결론은 유효하며, 그 구체 설계가 확정됐다 — **시계열 = PHASE1-2 "자기 큐"(당기 내 거래 집중)**. D01/D02의 전기비교가 못 보는 "특정 연도 안에서 특정 시점에 거래 몰림"을 본다. 실패한 TS01 burst/TS02 frequency 구현은 통계(robust-z)만 재활용하고 **당기 내 집중으로 신규 설계**한다.
 
 > **C안 3-surface 정합 + TS 귀속 판단 (2026-06-14, SoT [PHASE1_TIER_EVIDENCE_BASIS.md §7](PHASE1_TIER_EVIDENCE_BASIS.md))**:
 > SoT §7은 시계열을 PHASE1-2 family(family = graph·relational·시계열)에 포함한다. 따라서 시계열 탐지기 자체(TS01 transaction_burst / TS02 unusual_frequency = 결정론·근거·명명된 구조 단위 탐지)는 **PHASE1-2 family 로 귀속**한다. PHASE2 단독 surface 는 VAE(비지도) 하나뿐이며, TS 는 PHASE2 surface 가 아니다.

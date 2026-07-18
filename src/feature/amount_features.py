@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 # -- Z-score fallback 기준 --
 _MIN_GROUP_SIZE = 30  # 이상이면 그룹별 Z-score
 _MIN_TOTAL_SIZE = 10  # 미만이면 Z-score 포기 → NaN
+_ROUND_FLOAT_TOLERANCE = 1e-6  # 통화 반올림 후 남는 float 표현오차 허용치 (판정 임계 아님)
 
 
 # ── Private helpers ──────────────────────────────────────────────
@@ -523,18 +524,37 @@ def add_amount_magnitude(
     return df
 
 
+def significant_digit_stats(integer_part: pd.Series) -> tuple[pd.Series, pd.Series]:
+    """정수 금액의 (총 자릿수, 유효숫자) — 유효숫자 = 끝자리 0 제거 후 남은 자릿수.
+
+    예: 5,000,000 → (7, 1) · 250,000 → (6, 2) · 416,628 → (6, 6)
+    """
+    safe = integer_part.fillna(0).abs().astype("int64")
+    text = safe.astype(str)
+    digits = text.str.len()
+    significant = text.str.rstrip("0").str.len()
+    # "0" 은 rstrip 후 빈 문자열 — 유효숫자 1자리로 본다.
+    return digits, significant.where(significant > 0, 1)
+
+
 def add_is_round_number(
     df: pd.DataFrame,
     base: pd.Series,
-    unit: int,
+    max_significant_digits: int,
+    min_digits: int,
     currency_decimals: dict[str, int] | None = None,
 ) -> pd.DataFrame:
-    """L2-02: 라운드넘버 여부. 0원은 제외(False).
+    """라운드넘버 여부 — 금액 규모에 **상대적인** 둥근 정도. 0원·음수는 제외(False).
 
-    Why: DataSynth 등 외부 생성 데이터에서 float 소수점 꼬리(예: 10000000.000001)가
-    발생할 수 있으므로 round 후 나머지 연산으로 허용 오차 적용.
-    currency_decimals 전달 + currency 컬럼 존재 시 통화별 소수점 자릿수 적용.
-    (예: USD→round(2), KRW→round(0))
+    Why(2026-07-15 절대단위 폐기): 구 정의는 `amount % round_unit(100만원) == 0` 이었으나,
+    원장 금액이 1,526원(p10)~2,057억원(max) 으로 8자릿수에 걸쳐 있어 단일 절대 단위로는
+    잴 수 없다. 실측상 거래의 64.9% 가 100만원 미만이라 구조적으로 판정 대상에서 빠졌고
+    전체 원장의 0.04% 만 round 로 잡혀 신호가 死문화됐다. 규모 대비 끝자리 0 개수로 보면
+    소액·고액을 같은 자로 잴 수 있다(AS2401 §61(e) "끝자리 0 다수", Nigrini 끝자리 분석).
+
+    판정: 통화별 소수점 반올림 후 (1) 소수부가 없고 (2) 유효숫자 ≤ max_significant_digits
+          (3) 총 자릿수 ≥ min_digits. (3)은 10원·50원 같은 사소한 소액이 자동으로
+          "둥글다"고 잡히는 것을 막는다.
     """
     if currency_decimals and "currency" in df.columns:
         # Why: 행마다 통화가 다르므로 단일 round() 호출 불가.
@@ -549,9 +569,21 @@ def add_is_round_number(
         for dec_val in dec_series.unique():
             mask = dec_series == dec_val
             rounded.loc[mask] = base.loc[mask].round(dec_val)
-        df["is_round_number"] = (base > 0) & (rounded % unit == 0)
     else:
-        df["is_round_number"] = (base > 0) & (base.round(0) % unit == 0)
+        rounded = base.round(0)
+
+    integer_part = rounded.round(0)
+    # Why: 통화 반올림 후에도 소수부가 남으면(예: USD 5,000.25) 둥근 금액이 아니다.
+    #      float 꼬리(10000000.000001)는 통화 반올림 단계에서 이미 제거된다.
+    is_integral = (rounded - integer_part).abs() <= _ROUND_FLOAT_TOLERANCE
+    digits, significant = significant_digit_stats(integer_part)
+
+    df["is_round_number"] = (
+        (base > 0)
+        & is_integral
+        & (significant <= int(max_significant_digits))
+        & (digits >= int(min_digits))
+    ).fillna(False)
     return df
 
 
@@ -593,6 +625,12 @@ def add_all_amount_features(
     add_amount_zscore(df, base, coa_prefixes=coa_prefixes)
     add_amount_zscore_log(df, base, coa_prefixes=coa_prefixes)
     add_amount_magnitude(df, base)
-    add_is_round_number(df, base, s.round_unit, currency_decimals=currency_dec)
+    add_is_round_number(
+        df,
+        base,
+        s.round_max_significant_digits,
+        s.round_min_digits,
+        currency_decimals=currency_dec,
+    )
 
     return df

@@ -10,7 +10,6 @@ from typing import Any
 
 import pandas as pd
 
-
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -19,6 +18,7 @@ from src.detection.source_trust import (  # noqa: E402
     AUTOMATED_SOURCE_TOKENS,
     trusted_automated_mask,
 )
+from tools.scripts.normal_realism_account_checks import run_account_checks  # noqa: E402
 
 PHASE2_NEW_ACCOUNTS = {
     "131100": "intangible_assets",
@@ -67,8 +67,19 @@ PHASE2_ALLOWED_WOVEN_ARCHETYPES = {
 PHASE2_NEW_ACCOUNT_BASELINES = {"1000", "1100", "5000", "1230"}
 
 
+# 항등식/자기검사 게이트 — 판정 참조 제외 (2026-07-15 판정, docs/0716/PLAN.md §3 S1 게이트 정비).
+# M03/M04는 같은 지역변수를 재계산해 비교하므로 어떤 데이터로도 FAIL이 불가하고,
+# M01/M07도 동류로 판정됨(계약 e5adea09 §Unit 2). PASS로 세면 hollow-PASS가 되므로
+# INFO로 강등한다. BLOCKED는 강등하지 않는다(입력 부재 사실은 그대로 보고).
+IDENTITY_EXCLUDED_TESTS = {"M01", "M03", "M04", "M07"}
 
-def verdict(gate: str, test_id: str, status: str, metric: dict[str, Any], notes: str) -> dict[str, Any]:
+
+def verdict(
+    gate: str, test_id: str, status: str, metric: dict[str, Any], notes: str
+) -> dict[str, Any]:
+    if test_id in IDENTITY_EXCLUDED_TESTS and status in ("PASS", "FAIL"):
+        notes = f"[판정 제외 — 항등식 검사, 원판정 {status}] {notes}"
+        status = "INFO"
     return {
         "gate": gate,
         "test_id": test_id,
@@ -153,9 +164,15 @@ def _load_ic_pair_map() -> dict[str, str]:
     try:
         import yaml
 
-        raw = yaml.safe_load((ROOT / "config" / "audit_rules.yaml").read_text(encoding="utf-8")) or {}
+        raw = (
+            yaml.safe_load((ROOT / "config" / "audit_rules.yaml").read_text(encoding="utf-8")) or {}
+        )
         pairs = raw.get("patterns", {}).get("intercompany", {}).get("pairs", [])
-        return {str(item["receivable"]): str(item["payable"]) for item in pairs if "receivable" in item and "payable" in item}
+        return {
+            str(item["receivable"]): str(item["payable"])
+            for item in pairs
+            if "receivable" in item and "payable" in item
+        }
     except Exception:
         return {"1150": "2050", "4500": "2700"}
 
@@ -189,16 +206,24 @@ def _ic_reconciliation_metrics(df: pd.DataFrame, pair_map: dict[str, str]) -> di
         }
 
     group_cols = ["reference", "company_code", "trading_partner"]
-    rec_g = rec.groupby(group_cols, dropna=False).agg(
-        rec_amount=("debit_amount", "sum"),
-        rec_date=("posting_date", "min"),
-        rec_rows=("document_id", "count"),
-    ).reset_index()
-    pay_g = pay.groupby(group_cols, dropna=False).agg(
-        pay_amount=("credit_amount", "sum"),
-        pay_date=("posting_date", "min"),
-        pay_rows=("document_id", "count"),
-    ).reset_index()
+    rec_g = (
+        rec.groupby(group_cols, dropna=False)
+        .agg(
+            rec_amount=("debit_amount", "sum"),
+            rec_date=("posting_date", "min"),
+            rec_rows=("document_id", "count"),
+        )
+        .reset_index()
+    )
+    pay_g = (
+        pay.groupby(group_cols, dropna=False)
+        .agg(
+            pay_amount=("credit_amount", "sum"),
+            pay_date=("posting_date", "min"),
+            pay_rows=("document_id", "count"),
+        )
+        .reset_index()
+    )
 
     merged = rec_g.merge(
         pay_g,
@@ -258,10 +283,14 @@ def _ic_cycle_metrics(df: pd.DataFrame) -> dict[str, Any]:
     is_credit = ic["credit_amount"] > 0
     ic["_src"] = ic["company_code"].where(is_credit, ic["trading_partner"]).astype(str)
     ic["_dst"] = ic["trading_partner"].where(is_credit, ic["company_code"]).astype(str)
-    ic = ic[ic["_src"].isin(company_codes) & ic["_dst"].isin(company_codes) & ic["_src"].ne(ic["_dst"])]
+    ic = ic[
+        ic["_src"].isin(company_codes) & ic["_dst"].isin(company_codes) & ic["_src"].ne(ic["_dst"])
+    ]
     if ic.empty:
         return {"networkx_available": True, "edges_built": 0, "cycles_found": 0}
-    graph = nx.from_pandas_edgelist(ic, source="_src", target="_dst", edge_attr=["document_id"], create_using=nx.MultiDiGraph)
+    graph = nx.from_pandas_edgelist(
+        ic, source="_src", target="_dst", edge_attr=["document_id"], create_using=nx.MultiDiGraph
+    )
     cycles = [cycle for cycle in nx.simple_cycles(graph, length_bound=5) if len(cycle) >= 3]
     length_counts: dict[str, int] = {}
     for cycle in cycles:
@@ -288,17 +317,26 @@ def _ic_cycle_metrics(df: pd.DataFrame) -> dict[str, Any]:
 def _ic_direction_asymmetry_metrics(df: pd.DataFrame) -> dict[str, Any]:
     ic = df[_truthy(df["is_intercompany"])].copy()
     if ic.empty:
-        return {"direction_pair_count": 0, "high_asymmetry_pair_count": 0, "high_asymmetry_rate": 0.0}
+        return {
+            "direction_pair_count": 0,
+            "high_asymmetry_pair_count": 0,
+            "high_asymmetry_rate": 0.0,
+        }
     amount = ic[["debit_amount", "credit_amount"]].max(axis=1)
     is_credit = ic["credit_amount"] > 0
     ic["_src"] = ic["company_code"].where(is_credit, ic["trading_partner"]).astype(str)
     ic["_dst"] = ic["trading_partner"].where(is_credit, ic["company_code"]).astype(str)
     ic["_amount"] = amount
-    directed = ic[ic["_src"].ne(ic["_dst"])].groupby(["_src", "_dst"]).agg(
-        count=("_amount", "size"),
-        total_amount=("_amount", "sum"),
-        mean_amount=("_amount", "mean"),
-    ).reset_index()
+    directed = (
+        ic[ic["_src"].ne(ic["_dst"])]
+        .groupby(["_src", "_dst"])
+        .agg(
+            count=("_amount", "size"),
+            total_amount=("_amount", "sum"),
+            mean_amount=("_amount", "mean"),
+        )
+        .reset_index()
+    )
     checked = 0
     high = 0
     for _, row in directed.iterrows():
@@ -344,7 +382,9 @@ def _single_company_sidecar_metrics(dataset: Path) -> tuple[str, dict[str, Any]]
         for path in root.rglob("*.json"):
             files_checked += 1
             text = path.read_text(encoding="utf-8", errors="replace")
-            hits = {pattern: text.count(pattern) for pattern in namespace_patterns if pattern in text}
+            hits = {
+                pattern: text.count(pattern) for pattern in namespace_patterns if pattern in text
+            }
             if hits:
                 findings.append(
                     {
@@ -362,9 +402,10 @@ def _single_company_sidecar_metrics(dataset: Path) -> tuple[str, dict[str, Any]]
                     continue
                 company = str(item.get("company_code", item.get("company", ""))).strip()
                 if company in {"C002", "C003"}:
-                    allowed_related_master = path.name == "related_parties.json" and str(
-                        item.get("journal_company_code", "")
-                    ).strip() == "C001"
+                    allowed_related_master = (
+                        path.name == "related_parties.json"
+                        and str(item.get("journal_company_code", "")).strip() == "C001"
+                    )
                     if not allowed_related_master:
                         forbidden_company_field_hits.append(
                             {"path": str(path.relative_to(dataset)), "company_code": company}
@@ -393,7 +434,9 @@ def _reversal_link_metrics(df: pd.DataFrame, doc_head: pd.DataFrame) -> tuple[st
         return "BLOCKED", {"missing_required_columns": missing}
 
     reversal_scenario_docs = set(
-        doc_head[doc_head["semantic_scenario_id"].astype(str).eq("R2R_REVERSAL")]["document_id"].astype(str)
+        doc_head[doc_head["semantic_scenario_id"].astype(str).eq("R2R_REVERSAL")][
+            "document_id"
+        ].astype(str)
     )
     linked_reversal_heads = doc_head[
         doc_head["original_document_id"].fillna("").astype(str).str.strip().ne("")
@@ -410,7 +453,9 @@ def _reversal_link_metrics(df: pd.DataFrame, doc_head: pd.DataFrame) -> tuple[st
     max_abs_pair_net_krw = 0.0
 
     amount_work = df.copy()
-    amount_work["_signed"] = amount_work["debit_amount"].round(0) - amount_work["credit_amount"].round(0)
+    amount_work["_signed"] = amount_work["debit_amount"].round(0) - amount_work[
+        "credit_amount"
+    ].round(0)
     for row in linked_reversal_heads.itertuples(index=False):
         reversal_doc = str(row.document_id)
         original_doc = str(row.original_document_id).strip()
@@ -428,7 +473,9 @@ def _reversal_link_metrics(df: pd.DataFrame, doc_head: pd.DataFrame) -> tuple[st
         if reason_code != "NORMAL_ACCRUAL_REVERSAL" or reversal_type != "normal_accrual_reversal":
             bad_reason += 1
 
-        pair_lines = amount_work[amount_work["document_id"].astype(str).isin({original_doc, reversal_doc})]
+        pair_lines = amount_work[
+            amount_work["document_id"].astype(str).isin({original_doc, reversal_doc})
+        ]
         by_account = pair_lines.groupby("gl_account", dropna=False)["_signed"].sum().abs()
         pair_max = float(by_account.max()) if len(by_account) else 0.0
         max_abs_pair_net_krw = max(max_abs_pair_net_krw, pair_max)
@@ -511,15 +558,28 @@ def _is_credit_normal(account_code: str, coa_meta: dict[str, dict[str, Any]]) ->
     return str(account_code).strip()[:1] in {"2", "3", "4"}
 
 
-def _debit_minus_credit_from_normal(account_code: str, normal_side_balance: int, coa_meta: dict[str, dict[str, Any]]) -> int:
-    return -normal_side_balance if _is_credit_normal(account_code, coa_meta) else normal_side_balance
+def _debit_minus_credit_from_normal(
+    account_code: str, normal_side_balance: int, coa_meta: dict[str, dict[str, Any]]
+) -> int:
+    return (
+        -normal_side_balance if _is_credit_normal(account_code, coa_meta) else normal_side_balance
+    )
 
 
-def _is_contra_account(account_code: str, category: str, coa_meta: dict[str, dict[str, Any]]) -> bool:
+def _is_contra_account(
+    account_code: str, category: str, coa_meta: dict[str, dict[str, Any]]
+) -> bool:
     meta = coa_meta.get(str(account_code), {})
     text = " ".join(
         str(meta.get(key, ""))
-        for key in ["account_name", "name", "description", "account_type", "sub_type", "semantic_account_subtype"]
+        for key in [
+            "account_name",
+            "name",
+            "description",
+            "account_type",
+            "sub_type",
+            "semantic_account_subtype",
+        ]
     ).lower()
     contra_terms = {
         "accumulated depreciation",
@@ -536,11 +596,18 @@ def _is_contra_account(account_code: str, category: str, coa_meta: dict[str, dic
     }
     if any(term in text for term in contra_terms):
         return True
-    if category in {"Cash", "Receivables", "Inventory", "FixedAssets"} and _is_credit_normal(account_code, coa_meta):
+    if category in {"Cash", "Receivables", "Inventory", "FixedAssets"} and _is_credit_normal(
+        account_code, coa_meta
+    ):
         return True
     if category in {"Revenue", "OtherIncome"} and not _is_credit_normal(account_code, coa_meta):
         return True
-    if category in {"Payables", "AccruedLiabilities", "LongTermDebt", "Equity"} and not _is_credit_normal(account_code, coa_meta):
+    if category in {
+        "Payables",
+        "AccruedLiabilities",
+        "LongTermDebt",
+        "Equity",
+    } and not _is_credit_normal(account_code, coa_meta):
         return True
     return False
 
@@ -579,20 +646,28 @@ def _account_meta_type(meta: dict[str, Any]) -> str:
     return str(meta.get("account_type") or meta.get("category") or "").strip().lower()
 
 
-def _company_year_pnl(df: pd.DataFrame, coa_meta: dict[str, dict[str, Any]]) -> tuple[str, dict[str, Any]]:
+def _company_year_pnl(
+    df: pd.DataFrame, coa_meta: dict[str, dict[str, Any]]
+) -> tuple[str, dict[str, Any]]:
     if df.empty:
         return "BLOCKED", {"rows": 0}
     work = df.copy()
     batch_type = work.get("batch_type", pd.Series("", index=work.index)).fillna("").astype(str)
     reference = work.get("reference", pd.Series("", index=work.index)).fillna("").astype(str)
-    nonclosing = work[~(batch_type.eq("annual_closing") | reference.str.startswith("CLOSE-"))].copy()
+    nonclosing = work[
+        ~(batch_type.eq("annual_closing") | reference.str.startswith("CLOSE-"))
+    ].copy()
     if nonclosing.empty:
         return "BLOCKED", {"nonclosing_rows": 0}
 
     nonclosing["_debit_i"] = nonclosing["debit_amount"].round(0).astype("int64")
     nonclosing["_credit_i"] = nonclosing["credit_amount"].round(0).astype("int64")
     nonclosing["_prefix"] = nonclosing["gl_account"].fillna("").astype(str).str.strip().str[:1]
-    nonclosing["_meta_text"] = nonclosing["gl_account"].astype(str).map(lambda account: _meta_text(coa_meta.get(account, {})))
+    nonclosing["_meta_text"] = (
+        nonclosing["gl_account"]
+        .astype(str)
+        .map(lambda account: _meta_text(coa_meta.get(account, {})))
+    )
     nonclosing["_expense_net"] = nonclosing["_debit_i"] - nonclosing["_credit_i"]
     nonclosing["_revenue_net"] = nonclosing["_credit_i"] - nonclosing["_debit_i"]
 
@@ -603,10 +678,28 @@ def _company_year_pnl(df: pd.DataFrame, coa_meta: dict[str, dict[str, Any]]) -> 
         revenue = int(group.loc[group["_prefix"].eq("4"), "_revenue_net"].sum())
         cogs = int(group.loc[group["_prefix"].eq("5"), "_expense_net"].sum())
         sga = int(group.loc[group["_prefix"].eq("6"), "_expense_net"].sum())
-        interest = int(group.loc[group["_meta_text"].str.contains("interest|이자", regex=True), "_expense_net"].sum())
-        taxes = int(group.loc[group["_meta_text"].str.contains("tax|income_tax|corporate_tax|세금|법인세", regex=True), "_expense_net"].sum())
+        interest = int(
+            group.loc[
+                group["_meta_text"].str.contains("interest|이자", regex=True), "_expense_net"
+            ].sum()
+        )
+        taxes = int(
+            group.loc[
+                group["_meta_text"].str.contains(
+                    "tax|income_tax|corporate_tax|세금|법인세", regex=True
+                ),
+                "_expense_net",
+            ].sum()
+        )
         if revenue <= 0:
-            bad_periods.append({"company": str(company), "year": str(year), "reason": "nonpositive_revenue", "revenue": revenue})
+            bad_periods.append(
+                {
+                    "company": str(company),
+                    "year": str(year),
+                    "reason": "nonpositive_revenue",
+                    "revenue": revenue,
+                }
+            )
             continue
         cogs_ratio = cogs / revenue
         sga_ratio = sga / revenue
@@ -652,14 +745,22 @@ def _company_year_pnl(df: pd.DataFrame, coa_meta: dict[str, dict[str, Any]]) -> 
                 "p50": float(pd.Series([r[key] for r in ratios]).quantile(0.5)),
                 "max": float(pd.Series([r[key] for r in ratios]).max()),
             }
-            for key in ["cogs_ratio", "sga_ratio", "interest_ratio", "tax_ratio", "operating_margin"]
+            for key in [
+                "cogs_ratio",
+                "sga_ratio",
+                "interest_ratio",
+                "tax_ratio",
+                "operating_margin",
+            ]
         },
         "sample_bad_periods": bad_periods[:10],
     }
     return ("PASS" if not bad_periods else "FAIL"), metric
 
 
-def _coa_prefix_semantic_metrics(df: pd.DataFrame, coa_meta: dict[str, dict[str, Any]]) -> tuple[str, dict[str, Any]]:
+def _coa_prefix_semantic_metrics(
+    df: pd.DataFrame, coa_meta: dict[str, dict[str, Any]]
+) -> tuple[str, dict[str, Any]]:
     used_accounts = set(df["gl_account"].fillna("").astype(str).str.strip())
     checked = 0
     bad: list[dict[str, Any]] = []
@@ -672,19 +773,73 @@ def _coa_prefix_semantic_metrics(df: pd.DataFrame, coa_meta: dict[str, dict[str,
         prefix1 = account[:1]
         checked += 1
         reason = ""
-        if prefix1 == "4" and any(term in text for term in ["expense", "cost", "tax", "interest", "loss", "비용", "원가", "세금", "이자", "손상"]):
+        if prefix1 == "4" and any(
+            term in text
+            for term in [
+                "expense",
+                "cost",
+                "tax",
+                "interest",
+                "loss",
+                "비용",
+                "원가",
+                "세금",
+                "이자",
+                "손상",
+            ]
+        ):
             reason = "revenue_prefix_has_expense_semantics"
-        elif prefix1 == "5" and any(term in text for term in ["interest", "tax", "depreciation", "amortization", "opex", "selling", "admin", "이자", "세금", "감가", "상각", "판관"]):
+        elif prefix1 == "5" and any(
+            term in text
+            for term in [
+                "interest",
+                "tax",
+                "depreciation",
+                "amortization",
+                "opex",
+                "selling",
+                "admin",
+                "이자",
+                "세금",
+                "감가",
+                "상각",
+                "판관",
+            ]
+        ):
             reason = "cogs_prefix_has_non_cogs_semantics"
-        elif prefix1 == "6" and any(term in text for term in ["interest", "income tax", "corporate tax", "이자", "법인세"]):
+        elif prefix1 == "6" and any(
+            term in text for term in ["interest", "income tax", "corporate tax", "이자", "법인세"]
+        ):
             reason = "sga_prefix_has_financing_or_tax_semantics"
-        elif prefix1 == "7" and any(term in text for term in ["expense", "cost", "loss", "tax", "interest", "비용", "원가", "손실", "세금", "이자"]):
+        elif prefix1 == "7" and any(
+            term in text
+            for term in [
+                "expense",
+                "cost",
+                "loss",
+                "tax",
+                "interest",
+                "비용",
+                "원가",
+                "손실",
+                "세금",
+                "이자",
+            ]
+        ):
             reason = "other_income_prefix_has_expense_semantics"
-        elif prefix1 == "8" and "income tax" not in text and any(term in text for term in ["revenue", "income", "sales", "매출", "수익"]):
+        elif (
+            prefix1 == "8"
+            and "income tax" not in text
+            and any(term in text for term in ["revenue", "income", "sales", "매출", "수익"])
+        ):
             reason = "other_expense_prefix_has_income_semantics"
-        elif prefix1 in {"1", "2", "3"} and any(term in account_type for term in ["revenue", "expense", "income"]):
+        elif prefix1 in {"1", "2", "3"} and any(
+            term in account_type for term in ["revenue", "expense", "income"]
+        ):
             reason = "balance_sheet_prefix_has_pl_account_type"
-        elif prefix1 in {"4", "5", "6", "7", "8"} and any(term in account_type for term in ["asset", "liability", "equity"]):
+        elif prefix1 in {"4", "5", "6", "7", "8"} and any(
+            term in account_type for term in ["asset", "liability", "equity"]
+        ):
             reason = "pl_prefix_has_balance_sheet_account_type"
         if reason:
             bad.append(
@@ -692,7 +847,9 @@ def _coa_prefix_semantic_metrics(df: pd.DataFrame, coa_meta: dict[str, dict[str,
                     "account": account,
                     "reason": reason,
                     "account_type": account_type,
-                    "sub_type": str(meta.get("sub_type") or meta.get("semantic_account_subtype") or ""),
+                    "sub_type": str(
+                        meta.get("sub_type") or meta.get("semantic_account_subtype") or ""
+                    ),
                     "name": str(meta.get("account_name") or meta.get("name") or ""),
                 }
             )
@@ -712,16 +869,27 @@ def _financial_statement_export_metrics(dataset: Path) -> tuple[str, dict[str, A
         return "BLOCKED", {"missing": "financial_statements.json"}
     raw = json.loads(fs_path.read_text(encoding="utf-8"))
     statements = raw if isinstance(raw, list) else []
-    income = [rec for rec in statements if str(rec.get("statement_type", "")).lower() == "income_statement"]
+    income = [
+        rec
+        for rec in statements
+        if str(rec.get("statement_type", "")).lower() == "income_statement"
+    ]
     if not income:
-        return "BLOCKED", {"financial_statement_records": len(statements), "income_statement_records": 0}
+        return "BLOCKED", {
+            "financial_statement_records": len(statements),
+            "income_statement_records": 0,
+        }
     revenue_negative = 0
     cogs_gt_revenue = 0
     empty_mapping = 0
     checked = 0
     sample_bad: list[dict[str, Any]] = []
     for rec in income:
-        items = {str(item.get("line_code")): item for item in rec.get("line_items", []) if isinstance(item, dict)}
+        items = {
+            str(item.get("line_code")): item
+            for item in rec.get("line_items", [])
+            if isinstance(item, dict)
+        }
         rev = int(round(float(items.get("IS-REV", {}).get("amount", 0) or 0)))
         cogs = int(round(float(items.get("IS-COGS", {}).get("amount", 0) or 0)))
         checked += 1
@@ -755,36 +923,347 @@ def _financial_statement_export_metrics(dataset: Path) -> tuple[str, dict[str, A
         "empty_gl_account_mapping_items": empty_mapping,
         "sample_bad_records": sample_bad,
     }
-    status = "PASS" if checked > 0 and revenue_negative == 0 and cogs_gt_revenue == 0 and empty_mapping == 0 else "FAIL"
+    status = (
+        "PASS"
+        if checked > 0 and revenue_negative == 0 and cogs_gt_revenue == 0 and empty_mapping == 0
+        else "FAIL"
+    )
     return status, metric
 
 
-def _depreciation_net_metrics(df: pd.DataFrame, coa_meta: dict[str, dict[str, Any]]) -> tuple[str, dict[str, Any]]:
+def _depreciation_net_metrics(
+    df: pd.DataFrame, coa_meta: dict[str, dict[str, Any]]
+) -> tuple[str, dict[str, Any]]:
     work = df.copy()
     batch_type = work.get("batch_type", pd.Series("", index=work.index)).fillna("").astype(str)
     reference = work.get("reference", pd.Series("", index=work.index)).fillna("").astype(str)
     work = work[~(batch_type.eq("annual_closing") | reference.str.startswith("CLOSE-"))].copy()
-    work["_meta_text"] = work["gl_account"].astype(str).map(lambda account: _meta_text(coa_meta.get(account, {})))
-    dep = work[work["_meta_text"].str.contains("depreciation expense|amortization expense|감가상각비|상각비", regex=True)].copy()
+    work["_meta_text"] = (
+        work["gl_account"].astype(str).map(lambda account: _meta_text(coa_meta.get(account, {})))
+    )
+    dep = work[
+        work["_meta_text"].str.contains(
+            "depreciation expense|amortization expense|감가상각비|상각비", regex=True
+        )
+    ].copy()
     if dep.empty:
         return "BLOCKED", {"depreciation_expense_rows": 0}
     dep["_debit_i"] = dep["debit_amount"].round(0).astype("int64")
     dep["_credit_i"] = dep["credit_amount"].round(0).astype("int64")
-    grouped = dep.groupby(["company_code", "fiscal_year"], dropna=False).agg(
-        debit=("_debit_i", "sum"),
-        credit=("_credit_i", "sum"),
-        rows=("document_id", "size"),
-    ).reset_index()
+    grouped = (
+        dep.groupby(["company_code", "fiscal_year"], dropna=False)
+        .agg(
+            debit=("_debit_i", "sum"),
+            credit=("_credit_i", "sum"),
+            rows=("document_id", "size"),
+        )
+        .reset_index()
+    )
     grouped["net_expense"] = grouped["debit"] - grouped["credit"]
     zero_or_negative = grouped[grouped["net_expense"] <= 0]
     metric = {
         "company_years_checked": int(len(grouped)),
         "zero_or_negative_net_expense_count": int(len(zero_or_negative)),
         "net_expense_min": int(grouped["net_expense"].min()) if not grouped.empty else None,
-        "net_expense_p50": float(grouped["net_expense"].quantile(0.5)) if not grouped.empty else None,
+        "net_expense_p50": float(grouped["net_expense"].quantile(0.5))
+        if not grouped.empty
+        else None,
         "sample_bad": zero_or_negative.head(10).to_dict("records"),
     }
     return ("PASS" if len(grouped) > 0 and zero_or_negative.empty else "FAIL"), metric
+
+
+def _stable_account_class(account: str, coa_meta: dict[str, dict[str, Any]]) -> str:
+    meta = coa_meta.get(str(account), {})
+    text = _meta_text(meta)
+    if account.startswith("810") or "income_tax_expense" in text or "income tax expense" in text:
+        return "income_tax_expense"
+    if account.startswith("800") or "interest_expense" in text or "interest expense" in text:
+        return "interest_expense"
+    if "depreciation" in text or "amortization" in text or "감가" in text or "상각" in text:
+        return "depreciation_amortization"
+    if "rent" in text or "lease" in text or "임차" in text or "리스" in text:
+        return "rent_lease"
+    return ""
+
+
+def _stable_account_yoy_volatility_metrics(
+    df: pd.DataFrame,
+    coa_meta: dict[str, dict[str, Any]],
+) -> tuple[str, dict[str, Any]]:
+    work = df.copy()
+    batch_type = work.get("batch_type", pd.Series("", index=work.index)).fillna("").astype(str)
+    reference = work.get("reference", pd.Series("", index=work.index)).fillna("").astype(str)
+    work = work[~(batch_type.eq("annual_closing") | reference.str.startswith("CLOSE-"))].copy()
+    work["_stable_class"] = (
+        work["gl_account"].astype(str).map(lambda account: _stable_account_class(account, coa_meta))
+    )
+    stable = work[work["_stable_class"].ne("")].copy()
+    if stable.empty:
+        return "BLOCKED", {"stable_account_rows": 0}
+
+    stable["_activity_i"] = (
+        stable["debit_amount"].round(0).astype("int64").abs()
+        + stable["credit_amount"].round(0).astype("int64").abs()
+    )
+    grouped = (
+        stable.groupby(
+            ["company_code", "gl_account", "_stable_class", "fiscal_year"], dropna=False
+        )["_activity_i"]
+        .sum()
+        .reset_index()
+    )
+    min_activity = 50_000_000
+    max_ratio = 8.0
+    checked_pairs = 0
+    bad_pair_count = 0
+    bad_pairs: list[dict[str, Any]] = []
+    ratios: list[float] = []
+    class_counts: dict[str, int] = {}
+    years = sorted(str(year) for year in grouped["fiscal_year"].dropna().astype(str).unique())
+    year_pairs = list(zip(years, years[1:]))
+    for (company, account, stable_class), sub in grouped.groupby(
+        ["company_code", "gl_account", "_stable_class"],
+        dropna=False,
+        sort=False,
+    ):
+        values = {str(row["fiscal_year"]): int(row["_activity_i"]) for _, row in sub.iterrows()}
+        for prev_year, curr_year in year_pairs:
+            prev_amount = values.get(prev_year, 0)
+            curr_amount = values.get(curr_year, 0)
+            if min(prev_amount, curr_amount) < min_activity:
+                continue
+            ratio = max(prev_amount, curr_amount) / max(min(prev_amount, curr_amount), 1)
+            ratios.append(float(ratio))
+            checked_pairs += 1
+            if ratio > max_ratio:
+                bad_pair_count += 1
+                class_counts[str(stable_class)] = class_counts.get(str(stable_class), 0) + 1
+                if len(bad_pairs) < 20:
+                    bad_pairs.append(
+                        {
+                            "company_code": str(company),
+                            "gl_account": str(account),
+                            "stable_class": str(stable_class),
+                            "prev_year": prev_year,
+                            "curr_year": curr_year,
+                            "prev_activity": prev_amount,
+                            "curr_activity": curr_amount,
+                            "change_ratio": float(ratio),
+                        }
+                    )
+    metric = {
+        "stable_account_rows": int(len(stable)),
+        "stable_accounts_used": int(stable["gl_account"].nunique()),
+        "checked_year_pairs": checked_pairs,
+        "year_pairs": [[left, right] for left, right in year_pairs],
+        "min_activity_krw": min_activity,
+        "max_allowed_change_ratio": max_ratio,
+        "bad_year_pairs": bad_pair_count,
+        "bad_year_pairs_by_class": class_counts,
+        "max_change_ratio": max(ratios) if ratios else None,
+        "sample_bad_pairs": bad_pairs,
+    }
+    return ("PASS" if checked_pairs > 0 and not bad_pairs else "FAIL"), metric
+
+
+def _rare_account_pair_reuse_metrics(df: pd.DataFrame) -> tuple[str, dict[str, Any]]:
+    required = {
+        "document_id",
+        "company_code",
+        "fiscal_year",
+        "gl_account",
+        "debit_amount",
+        "credit_amount",
+        "semantic_account_subtype",
+        "source",
+    }
+    missing = sorted(required - set(df.columns))
+    if missing:
+        return "BLOCKED", {"missing_required_columns": missing}
+
+    work = df.copy()
+    batch_type = work.get("batch_type", pd.Series("", index=work.index)).fillna("").astype(str)
+    reference = work.get("reference", pd.Series("", index=work.index)).fillna("").astype(str)
+    is_closing = batch_type.eq("annual_closing") | reference.str.startswith("CLOSE-")
+    gl_for_ic = work["gl_account"].fillna("").astype(str)
+    is_ic_account = gl_for_ic.str.startswith(("1150", "2050", "4500", "2700"))
+    is_ic = (
+        work.get("is_intercompany", pd.Series(False, index=work.index))
+        .fillna(False)
+        .astype(str)
+        .str.lower()
+        .eq("true")
+        | is_ic_account
+    )
+    work = work[~(is_closing | is_ic)].copy()
+    if work.empty:
+        return "BLOCKED", {"eligible_rows": 0}
+
+    work["_amount_i"] = work[["debit_amount", "credit_amount"]].max(axis=1).round(0).astype("int64")
+    work = work[work["_amount_i"] > 0].copy()
+    work["_side"] = work["debit_amount"].fillna(0).astype(float).gt(0).map({True: "D", False: "C"})
+    work["_gl"] = work["gl_account"].fillna("").astype(str)
+    work["_subtype"] = work["semantic_account_subtype"].fillna("").astype(str)
+    work["_pair_parent"] = [
+        _account_pair_parent(subtype, account)
+        for subtype, account in zip(work["_subtype"], work["_gl"], strict=False)
+    ]
+    work["_source"] = work["source"].fillna("").astype(str).str.lower()
+
+    doc_keys = ["company_code", "fiscal_year", "document_id"]
+    doc_sources = (
+        work.groupby(doc_keys, dropna=False)["_source"]
+        .agg(lambda values: "|".join(sorted(set(values))))
+        .reset_index()
+    )
+    debits = (
+        work[work["_side"].eq("D")]
+        .groupby(doc_keys, dropna=False)
+        .agg(
+            debit_accounts=("_gl", lambda values: sorted(set(values))),
+            debit_subtypes=("_pair_parent", lambda values: sorted(set(values))),
+        )
+        .reset_index()
+    )
+    credits = (
+        work[work["_side"].eq("C")]
+        .groupby(doc_keys, dropna=False)
+        .agg(
+            credit_accounts=("_gl", lambda values: sorted(set(values))),
+            credit_subtypes=("_pair_parent", lambda values: sorted(set(values))),
+        )
+        .reset_index()
+    )
+    docs = debits.merge(credits, on=doc_keys, how="inner").merge(
+        doc_sources, on=doc_keys, how="left"
+    )
+    if docs.empty:
+        return "BLOCKED", {"eligible_documents": 0}
+
+    concrete_records: list[dict[str, Any]] = []
+    subtype_records: list[dict[str, Any]] = []
+    for _, row in docs.iterrows():
+        key_base = {
+            "company_code": str(row["company_code"]),
+            "fiscal_year": str(row["fiscal_year"]),
+            "document_id": str(row["document_id"]),
+            "source": str(row["_source"]),
+        }
+        for debit in row["debit_accounts"]:
+            for credit in row["credit_accounts"]:
+                concrete_records.append({**key_base, "debit": debit, "credit": credit})
+        for debit in row["debit_subtypes"]:
+            for credit in row["credit_subtypes"]:
+                subtype_records.append({**key_base, "debit": debit, "credit": credit})
+
+    concrete = pd.DataFrame(concrete_records)
+    subtype = pd.DataFrame(subtype_records)
+    if concrete.empty or subtype.empty:
+        return "BLOCKED", {"eligible_documents": int(len(docs)), "pair_records": int(len(concrete))}
+
+    pair_keys = ["company_code", "fiscal_year", "debit", "credit"]
+    concrete_counts = (
+        concrete.groupby(pair_keys, dropna=False).size().rename("pair_count").reset_index()
+    )
+    subtype_counts = (
+        subtype.groupby(pair_keys, dropna=False).size().rename("subtype_pair_count").reset_index()
+    )
+    concrete = concrete.merge(concrete_counts, on=pair_keys, how="left")
+    subtype = subtype.merge(subtype_counts, on=pair_keys, how="left")
+
+    rare_docs = concrete[concrete["pair_count"] <= 3]["document_id"].drop_duplicates()
+    l404_doc_rate = len(rare_docs) / max(docs["document_id"].nunique(), 1)
+
+    source_by_doc = docs.set_index("document_id")["_source"].to_dict()
+    rare_source = rare_docs.map(lambda doc: source_by_doc.get(doc, ""))
+    source_doc = docs[["document_id", "_source"]].drop_duplicates()
+    source_rates: dict[str, float] = {}
+    for token in ["recurring", "automated", "interface"]:
+        denom = source_doc[source_doc["_source"].str.contains(token, regex=False)][
+            "document_id"
+        ].nunique()
+        numer = int(rare_source.fillna("").str.contains(token, regex=False).sum())
+        source_rates[token] = numer / denom if denom else 0.0
+
+    concrete_pair_meta = concrete_counts.copy()
+    concrete_pair_meta["is_rare"] = concrete_pair_meta["pair_count"] <= 3
+    subtype_pair_counts = subtype_counts.rename(
+        columns={"debit": "debit_subtype", "credit": "credit_subtype"}
+    )
+    account_to_subtype = (
+        work.groupby("_gl", dropna=False)["_pair_parent"]
+        .agg(lambda values: values.value_counts().index[0] if len(values) else "")
+        .to_dict()
+    )
+    rare_pair_meta = concrete_pair_meta[concrete_pair_meta["is_rare"]].copy()
+    rare_pair_meta["debit_subtype"] = rare_pair_meta["debit"].map(account_to_subtype).fillna("")
+    rare_pair_meta["credit_subtype"] = rare_pair_meta["credit"].map(account_to_subtype).fillna("")
+    rare_pair_meta = rare_pair_meta.merge(
+        subtype_pair_counts,
+        on=["company_code", "fiscal_year", "debit_subtype", "credit_subtype"],
+        how="left",
+    )
+    rare_pair_count = int(len(rare_pair_meta))
+    fragmented = rare_pair_meta[rare_pair_meta["subtype_pair_count"].fillna(0) > 3]
+    fragmentation_rate = len(fragmented) / max(rare_pair_count, 1)
+
+    top_pairs_share = float(
+        concrete_counts["pair_count"].sort_values(ascending=False).head(20).sum()
+        / max(concrete_counts["pair_count"].sum(), 1)
+    )
+    metric = {
+        "eligible_documents": int(docs["document_id"].nunique()),
+        "concrete_pair_count": int(len(concrete_counts)),
+        "rare_pair_count": rare_pair_count,
+        "l404_like_rare_doc_rate": float(l404_doc_rate),
+        "l404_like_rare_doc_max_rate": 0.01,
+        "source_rare_doc_rates": source_rates,
+        "recurring_rare_doc_max_rate": 0.005,
+        "automated_rare_doc_max_rate": 0.01,
+        "fragmented_rare_pair_count": int(len(fragmented)),
+        "fragmented_rare_pair_rate": float(fragmentation_rate),
+        "fragmented_rare_pair_max_rate": 0.20,
+        "top20_pair_occurrence_share": top_pairs_share,
+        "sample_fragmented_pairs": fragmented.head(10).to_dict("records"),
+    }
+    passed = (
+        l404_doc_rate <= 0.01
+        and source_rates.get("recurring", 0.0) <= 0.005
+        and source_rates.get("automated", 0.0) <= 0.01
+        and fragmentation_rate <= 0.20
+    )
+    return ("PASS" if passed else "FAIL"), metric
+
+
+def _account_pair_parent(subtype: str, account: str) -> str:
+    subtype_norm = str(subtype or "").strip()
+    if subtype_norm.lower() != "standard_account":
+        return subtype_norm
+    account = str(account or "")
+    if account.startswith(("100", "101")):
+        bucket = "cash"
+    elif account.startswith("11"):
+        bucket = "receivable"
+    elif account.startswith("12"):
+        bucket = "inventory"
+    elif account.startswith(("13", "15", "16")):
+        bucket = "asset"
+    elif account.startswith(("20", "21", "22", "23", "25", "27")):
+        bucket = "liability"
+    elif account.startswith("3"):
+        bucket = "equity"
+    elif account.startswith("4"):
+        bucket = "revenue"
+    elif account.startswith("5"):
+        bucket = "cogs"
+    elif account.startswith(("6", "7")):
+        bucket = "sga"
+    elif account.startswith(("8", "9")):
+        bucket = "other"
+    else:
+        bucket = "other"
+    return f"standard_account:{bucket}"
 
 
 def _load_opening_balances(dataset: Path) -> dict[str, dict[str, int]]:
@@ -808,9 +1287,14 @@ def _load_period_tbs(dataset: Path) -> list[dict[str, Any]]:
     return raw if isinstance(raw, list) else []
 
 
-def _archetype_coverage_metrics(df: pd.DataFrame, doc_head: pd.DataFrame, dataset: Path) -> tuple[str, dict[str, Any]]:
+def _archetype_coverage_metrics(
+    df: pd.DataFrame, doc_head: pd.DataFrame, dataset: Path
+) -> tuple[str, dict[str, Any]]:
     archetype_col = "semantic_scenario_id"
-    if archetype_col not in df.columns or df[archetype_col].fillna("").astype(str).str.strip().eq("").all():
+    if (
+        archetype_col not in df.columns
+        or df[archetype_col].fillna("").astype(str).str.strip().eq("").all()
+    ):
         archetype_col = "scenario_id" if "scenario_id" in df.columns else "event_type"
     archetype = df[archetype_col].fillna("").astype(str).str.strip()
     missing_rows = int(archetype.eq("").sum())
@@ -833,22 +1317,34 @@ def _archetype_coverage_metrics(df: pd.DataFrame, doc_head: pd.DataFrame, datase
         tuple_counts = pd.Series(dtype="int64")
         tuple_summary: dict[str, Any] = {}
     else:
-        raw_tuple_missing_mask = work[required].fillna("").astype(str).apply(lambda col: col.str.strip().eq("")).any(axis=1)
+        raw_tuple_missing_mask = (
+            work[required]
+            .fillna("")
+            .astype(str)
+            .apply(lambda col: col.str.strip().eq(""))
+            .any(axis=1)
+        )
         raw_tuple_missing_rows = int(raw_tuple_missing_mask.sum())
         coa_meta = _load_coa_meta(dataset)
         account_subtype = work["semantic_account_subtype"].fillna("").astype(str).str.strip()
         account_subtype = account_subtype.mask(
             account_subtype.eq(""),
-            work["gl_account"].astype(str).map(lambda code: str(coa_meta.get(code, {}).get("sub_type", ""))),
+            work["gl_account"]
+            .astype(str)
+            .map(lambda code: str(coa_meta.get(code, {}).get("sub_type", ""))),
         )
-        account_subtype = account_subtype.mask(account_subtype.eq(""), work["gl_account"].map(_account_category))
+        account_subtype = account_subtype.mask(
+            account_subtype.eq(""), work["gl_account"].map(_account_category)
+        )
         line_family = work["line_text_family"].fillna("").astype(str).str.strip()
         line_family = line_family.mask(
-            line_family.eq("") & work["_archetype_key"].str.contains("IC_|INTERCOMPANY", case=False, regex=True),
+            line_family.eq("")
+            & work["_archetype_key"].str.contains("IC_|INTERCOMPANY", case=False, regex=True),
             "INTERCOMPANY",
         )
         line_family = line_family.mask(
-            line_family.eq("") & work["_archetype_key"].str.contains("CLOSING|RECLASS", case=False, regex=True),
+            line_family.eq("")
+            & work["_archetype_key"].str.contains("CLOSING|RECLASS", case=False, regex=True),
             "ACCRUAL",
         )
         work["_derived_account_subtype"] = account_subtype
@@ -860,7 +1356,13 @@ def _archetype_coverage_metrics(df: pd.DataFrame, doc_head: pd.DataFrame, datase
             "document_type",
             "_derived_line_text_family",
         ]
-        tuple_missing_mask = work[derived_required].fillna("").astype(str).apply(lambda col: col.str.strip().eq("")).any(axis=1)
+        tuple_missing_mask = (
+            work[derived_required]
+            .fillna("")
+            .astype(str)
+            .apply(lambda col: col.str.strip().eq(""))
+            .any(axis=1)
+        )
         tuple_missing_rows = int(tuple_missing_mask.sum())
         work["_tuple_key"] = (
             work["_derived_account_subtype"].astype(str)
@@ -873,7 +1375,11 @@ def _archetype_coverage_metrics(df: pd.DataFrame, doc_head: pd.DataFrame, datase
             + "|"
             + work["_derived_line_text_family"].astype(str)
         )
-        tuple_counts = work[~tuple_missing_mask & work["_archetype_key"].ne("")].groupby("_archetype_key")["_tuple_key"].nunique()
+        tuple_counts = (
+            work[~tuple_missing_mask & work["_archetype_key"].ne("")]
+            .groupby("_archetype_key")["_tuple_key"]
+            .nunique()
+        )
         tuple_summary = {
             key: {
                 "rows": int(group_rows),
@@ -895,9 +1401,13 @@ def _archetype_coverage_metrics(df: pd.DataFrame, doc_head: pd.DataFrame, datase
             .itertuples()
         }
 
-    dist = work[work["_archetype_key"].ne("")].groupby("_archetype_key").agg(
-        rows=("document_id", "size"),
-        docs=("document_id", "nunique"),
+    dist = (
+        work[work["_archetype_key"].ne("")]
+        .groupby("_archetype_key")
+        .agg(
+            rows=("document_id", "size"),
+            docs=("document_id", "nunique"),
+        )
     )
     dist_top = {
         str(idx): {"docs": int(row.docs), "rows": int(row.rows)}
@@ -967,14 +1477,20 @@ def _p01_sample_rows(df: pd.DataFrame, max_rows: int = 200) -> list[dict[str, An
                 "line_count": int(len(group)),
                 "debit_total": debit_total,
                 "credit_total": credit_total,
-                "top_gl_accounts": ",".join(group["gl_account"].astype(str).value_counts().head(8).index.tolist()),
-                "line_text_sample": " | ".join(group["line_text"].astype(str).drop_duplicates().head(4).tolist()),
+                "top_gl_accounts": ",".join(
+                    group["gl_account"].astype(str).value_counts().head(8).index.tolist()
+                ),
+                "line_text_sample": " | ".join(
+                    group["line_text"].astype(str).drop_duplicates().head(4).tolist()
+                ),
             }
         )
     return doc_rows
 
 
-def _document_reference_structure_metrics(df: pd.DataFrame, doc_head: pd.DataFrame) -> tuple[str, dict[str, Any]]:
+def _document_reference_structure_metrics(
+    df: pd.DataFrame, doc_head: pd.DataFrame
+) -> tuple[str, dict[str, Any]]:
     required = [
         "document_id",
         "company_code",
@@ -1002,7 +1518,9 @@ def _document_reference_structure_metrics(df: pd.DataFrame, doc_head: pd.DataFra
     )
     doc_num_nonblank = docs["document_number"].ne("")
     duplicate_doc_number_docs = int(
-        docs[doc_num_nonblank & docs.duplicated("document_number", keep=False)]["document_id"].nunique()
+        docs[doc_num_nonblank & docs.duplicated("document_number", keep=False)][
+            "document_id"
+        ].nunique()
     )
     number_parts = docs["document_number"].str.extract(
         r"^(?P<company>[^-]+)-(?P<year>\d{4})-(?P<document_type>[^-]+)-(?P<seq>\d{6})$"
@@ -1033,7 +1551,9 @@ def _document_reference_structure_metrics(df: pd.DataFrame, doc_head: pd.DataFra
     )
     same_role_ref_groups = same_role_ref_groups[same_role_ref_groups["docs"].gt(1)]
     same_role_duplicate_reference_groups = int(len(same_role_ref_groups))
-    same_role_duplicate_reference_docs = int(same_role_ref_groups["docs"].sum()) if len(same_role_ref_groups) else 0
+    same_role_duplicate_reference_docs = (
+        int(same_role_ref_groups["docs"].sum()) if len(same_role_ref_groups) else 0
+    )
 
     cross_role_shared_reference_groups = 0
     if not ref_docs.empty:
@@ -1092,8 +1612,9 @@ def _duplicate_detector_same_document_pair_metrics(df: pd.DataFrame) -> tuple[st
     if missing:
         return "BLOCKED", {"missing_required_columns": missing}
     try:
-        from config.settings import AuditSettings
         from src.detection.duplicate_detector import DuplicateDetector
+
+        from config.settings import AuditSettings
 
         result = DuplicateDetector(AuditSettings()).detect(df)
         artifact = (result.metadata or {}).get("pair_artifact", {})
@@ -1109,7 +1630,9 @@ def _duplicate_detector_same_document_pair_metrics(df: pd.DataFrame) -> tuple[st
         metric = {
             "retained_pair_count": int(len(top_pairs)),
             "same_document_retained_pair_count": int(len(same_doc_pairs)),
-            "truncated": bool(artifact.get("truncated", False)) if isinstance(artifact, dict) else False,
+            "truncated": bool(artifact.get("truncated", False))
+            if isinstance(artifact, dict)
+            else False,
         }
         return ("PASS" if not same_doc_pairs else "FAIL"), metric
     except Exception as exc:  # noqa: BLE001
@@ -1119,16 +1642,24 @@ def _duplicate_detector_same_document_pair_metrics(df: pd.DataFrame) -> tuple[st
         explainable_doc = pd.Series(False, index=work.index)
         for column in ["batch_type", "batch_id", "job_id"]:
             if column in work.columns:
-                explainable_doc = explainable_doc | work[column].fillna("").astype(str).str.strip().ne("")
+                explainable_doc = explainable_doc | work[column].fillna("").astype(
+                    str
+                ).str.strip().ne("")
         explained_docs = set(work.loc[explainable_doc, "document_id"].astype(str))
         exact_same_doc = (
-            work.groupby(["document_id", "gl_account", "_amount", "_date", "line_text"], dropna=False)
+            work.groupby(
+                ["document_id", "gl_account", "_amount", "_date", "line_text"], dropna=False
+            )
             .size()
             .reset_index(name="line_count")
         )
         same_doc_groups = exact_same_doc[exact_same_doc["line_count"] > 1]
-        unexplained_groups = same_doc_groups[~same_doc_groups["document_id"].astype(str).isin(explained_docs)]
-        pair_count = int(((unexplained_groups["line_count"] * (unexplained_groups["line_count"] - 1)) // 2).sum())
+        unexplained_groups = same_doc_groups[
+            ~same_doc_groups["document_id"].astype(str).isin(explained_docs)
+        ]
+        pair_count = int(
+            ((unexplained_groups["line_count"] * (unexplained_groups["line_count"] - 1)) // 2).sum()
+        )
         metric = {
             "detector_import_available": False,
             "detector_import_error": str(exc),
@@ -1136,7 +1667,13 @@ def _duplicate_detector_same_document_pair_metrics(df: pd.DataFrame) -> tuple[st
             "fallback_explained_batch_groups": int(len(same_doc_groups) - len(unexplained_groups)),
             "fallback_unexplained_same_document_groups": int(len(unexplained_groups)),
             "fallback_unexplained_same_document_pair_count": pair_count,
-            "fallback_key": ["document_id", "gl_account", "amount", "posting_date_day", "line_text"],
+            "fallback_key": [
+                "document_id",
+                "gl_account",
+                "amount",
+                "posting_date_day",
+                "line_text",
+            ],
             "explainable_document_fields": ["batch_type", "batch_id", "job_id"],
         }
         return ("PASS" if pair_count == 0 else "FAIL"), metric
@@ -1144,50 +1681,104 @@ def _duplicate_detector_same_document_pair_metrics(df: pd.DataFrame) -> tuple[st
 
 def _section9_diagnostics(df: pd.DataFrame) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
-    reclass = df[df.get("batch_type", pd.Series("", index=df.index)).fillna("").astype(str).eq("monthly_balance_reclass")].copy()
+    reclass = df[
+        df.get("batch_type", pd.Series("", index=df.index))
+        .fillna("")
+        .astype(str)
+        .eq("monthly_balance_reclass")
+    ].copy()
     if reclass.empty:
-        findings.append(verdict("Diagnostic", "S09_RECLASS", "INFO", {"reclass_documents": 0, "reclass_rows": 0}, "monthly balance reclass trigger diagnostics"))
+        findings.append(
+            verdict(
+                "Diagnostic",
+                "S09_RECLASS",
+                "INFO",
+                {"reclass_documents": 0, "reclass_rows": 0},
+                "monthly balance reclass trigger diagnostics",
+            )
+        )
     else:
         doc_line_counts = reclass.groupby("document_id").size()
-        restore_rows = reclass[reclass["line_text"].fillna("").astype(str).str.contains("정상잔액 복원", regex=False)]
+        restore_rows = reclass[
+            reclass["line_text"].fillna("").astype(str).str.contains("정상잔액 복원", regex=False)
+        ]
         reclass_metric = {
             "reclass_documents": int(reclass["document_id"].nunique()),
             "reclass_rows": int(len(reclass)),
-            "company_periods_with_reclass": int(reclass[["company_code", "fiscal_year", "fiscal_period"]].drop_duplicates().shape[0]),
+            "company_periods_with_reclass": int(
+                reclass[["company_code", "fiscal_year", "fiscal_period"]].drop_duplicates().shape[0]
+            ),
             "line_count_per_doc_min": int(doc_line_counts.min()),
             "line_count_per_doc_p50": float(doc_line_counts.quantile(0.5)),
             "line_count_per_doc_max": int(doc_line_counts.max()),
             "restored_account_rows": int(len(restore_rows)),
-            "restored_account_top": {str(k): int(v) for k, v in restore_rows["gl_account"].value_counts().head(20).items()},
+            "restored_account_top": {
+                str(k): int(v)
+                for k, v in restore_rows["gl_account"].value_counts().head(20).items()
+            },
             "trigger_rule": "issued only when a company-period/account has negative normal-side BS balance after monthly roll-forward; line count varies by triggered accounts, not a fixed blanket row pattern",
         }
-        findings.append(verdict("Diagnostic", "S09_RECLASS", "INFO", reclass_metric, "monthly balance reclass trigger diagnostics"))
+        findings.append(
+            verdict(
+                "Diagnostic",
+                "S09_RECLASS",
+                "INFO",
+                reclass_metric,
+                "monthly balance reclass trigger diagnostics",
+            )
+        )
 
     work = df.copy()
     work["_category"] = work["gl_account"].map(_account_category)
-    pnl = work[work["_category"].isin({"Revenue", "OtherIncome", "CostOfSales", "OperatingExpenses", "OtherExpenses"})].copy()
+    pnl = work[
+        work["_category"].isin(
+            {"Revenue", "OtherIncome", "CostOfSales", "OperatingExpenses", "OtherExpenses"}
+        )
+    ].copy()
     if pnl.empty:
         pnl_metric = {"income_statement_rows": 0}
     else:
         pnl["_amount_debit_i"] = pnl["debit_amount"].round(0).astype("int64")
         pnl["_amount_credit_i"] = pnl["credit_amount"].round(0).astype("int64")
-        by_period_account = pnl.groupby(["company_code", "fiscal_year", "fiscal_period", "gl_account", "_category"], dropna=False).agg(
-            debit=("_amount_debit_i", "sum"),
-            credit=("_amount_credit_i", "sum"),
-            docs=("document_id", "nunique"),
-            rows=("document_id", "size"),
-        ).reset_index()
+        by_period_account = (
+            pnl.groupby(
+                ["company_code", "fiscal_year", "fiscal_period", "gl_account", "_category"],
+                dropna=False,
+            )
+            .agg(
+                debit=("_amount_debit_i", "sum"),
+                credit=("_amount_credit_i", "sum"),
+                docs=("document_id", "nunique"),
+                rows=("document_id", "size"),
+            )
+            .reset_index()
+        )
         revenue_like = by_period_account["_category"].isin({"Revenue", "OtherIncome"})
-        expense_like = by_period_account["_category"].isin({"CostOfSales", "OperatingExpenses", "OtherExpenses"})
-        reverse = by_period_account[(revenue_like & (by_period_account["debit"] > by_period_account["credit"])) | (expense_like & (by_period_account["credit"] > by_period_account["debit"]))]
+        expense_like = by_period_account["_category"].isin(
+            {"CostOfSales", "OperatingExpenses", "OtherExpenses"}
+        )
+        reverse = by_period_account[
+            (revenue_like & (by_period_account["debit"] > by_period_account["credit"]))
+            | (expense_like & (by_period_account["credit"] > by_period_account["debit"]))
+        ]
         pnl_metric = {
             "period_account_reverse_count": int(len(reverse)),
             "reverse_rate": float(len(reverse) / max(len(by_period_account), 1)),
             "by_category": {str(k): int(v) for k, v in reverse["_category"].value_counts().items()},
-            "top_accounts": {str(k): int(v) for k, v in reverse["gl_account"].value_counts().head(20).items()},
+            "top_accounts": {
+                str(k): int(v) for k, v in reverse["gl_account"].value_counts().head(20).items()
+            },
             "basis": "period-level P&L reverse balances are diagnostic: returns/discounts, reallocations, reversals, reclass, tax/closing timing can create debit revenue or credit expense in a month without breaking annual closing",
         }
-    findings.append(verdict("Diagnostic", "S09_M06_IS_REVERSE", "INFO", pnl_metric, "income statement reverse-balance diagnostic"))
+    findings.append(
+        verdict(
+            "Diagnostic",
+            "S09_M06_IS_REVERSE",
+            "INFO",
+            pnl_metric,
+            "income statement reverse-balance diagnostic",
+        )
+    )
     return findings
 
 
@@ -1209,8 +1800,16 @@ def _balance_metrics(df: pd.DataFrame, dataset: Path) -> list[dict[str, Any]]:
                 if not present
             ],
         }
-        for test_id in ["M01", "M02", "M03", "M04", "M05", "M06", "M08"]:
-            findings.append(verdict("Gate 2", test_id, "BLOCKED", metric, "financial statement balance artifacts required"))
+        for test_id in ["M01", "M02", "M03", "M04", "M05", "M06", "M14"]:
+            findings.append(
+                verdict(
+                    "Gate 2",
+                    test_id,
+                    "BLOCKED",
+                    metric,
+                    "financial statement balance artifacts required",
+                )
+            )
     else:
         work = df.copy()
         work["_amount_debit_i"] = work["debit_amount"].round(0).astype("int64")
@@ -1226,7 +1825,13 @@ def _balance_metrics(df: pd.DataFrame, dataset: Path) -> list[dict[str, Any]]:
         else:
             reference = pd.Series("", index=work.index)
         work["_is_closing"] = batch_type.eq("annual_closing") | reference.str.startswith("CLOSE-")
-        work["_period_key"] = list(zip(work["company_code"], work["fiscal_year"].astype(str), work["fiscal_period"].astype(str).str.zfill(2)))
+        work["_period_key"] = list(
+            zip(
+                work["company_code"],
+                work["fiscal_year"].astype(str),
+                work["fiscal_period"].astype(str).str.zfill(2),
+            )
+        )
 
         # M01: exported TB must match journal-derived balances by company/period/account.
         mismatches = 0
@@ -1279,12 +1884,36 @@ def _balance_metrics(df: pd.DataFrame, dataset: Path) -> list[dict[str, Any]]:
                 if diff > 1:
                     mismatches += 1
         if checked_lines == 0:
-            findings.append(verdict("Gate 2", "M01", "BLOCKED", {"trial_balance_periods": len(tbs), "company_code_missing": True}, "TB must carry company_code for multi-company verification"))
+            findings.append(
+                verdict(
+                    "Gate 2",
+                    "M01",
+                    "BLOCKED",
+                    {"trial_balance_periods": len(tbs), "company_code_missing": True},
+                    "TB must carry company_code for multi-company verification",
+                )
+            )
         else:
-            findings.append(verdict("Gate 2", "M01", "PASS" if mismatches == 0 else "FAIL", {"checked_lines": checked_lines, "mismatches": mismatches, "max_abs_diff_krw": max_diff}, "GL aggregate equals exported TB balances"))
+            findings.append(
+                verdict(
+                    "Gate 2",
+                    "M01",
+                    "PASS" if mismatches == 0 else "FAIL",
+                    {
+                        "checked_lines": checked_lines,
+                        "mismatches": mismatches,
+                        "max_abs_diff_krw": max_diff,
+                    },
+                    "GL aggregate equals exported TB balances",
+                )
+            )
 
         # M02/M03/M04/M06 use journal-derived roll-forward ledger state.
-        periods = sorted(work[["company_code", "fiscal_year", "fiscal_period"]].drop_duplicates().itertuples(index=False, name=None))
+        periods = sorted(
+            work[["company_code", "fiscal_year", "fiscal_period"]]
+            .drop_duplicates()
+            .itertuples(index=False, name=None)
+        )
         equation_bad = 0
         max_equation_diff = 0
         roll_bad = 0
@@ -1301,26 +1930,55 @@ def _balance_metrics(df: pd.DataFrame, dataset: Path) -> list[dict[str, Any]]:
             company = str(company)
             fy_i = int(fy)
             fp_i = int(fp)
-            rows = work[(work["company_code"].astype(str) == company) & (work["fiscal_year"].astype(int) == fy_i) & (work["fiscal_period"].astype(int) == fp_i)]
+            rows = work[
+                (work["company_code"].astype(str) == company)
+                & (work["fiscal_year"].astype(int) == fy_i)
+                & (work["fiscal_period"].astype(int) == fp_i)
+            ]
             carried_accounts = {
                 account
                 for (prior_company, account), _closing in prior_closing.items()
                 if prior_company == company
             }
-            accounts = set(opening.get(company, {})) | set(rows["gl_account"].astype(str)) | carried_accounts
+            accounts = (
+                set(opening.get(company, {}))
+                | set(rows["gl_account"].astype(str))
+                | carried_accounts
+            )
             assets = liabilities = equity = revenue = expenses = 0
             for account in accounts:
                 cat = _account_category(account)
-                opening_value = prior_closing.get((company, account), opening.get(company, {}).get(account, 0))
-                debit = int(rows.loc[rows["gl_account"].astype(str).eq(account), "_amount_debit_i"].sum())
-                credit = int(rows.loc[rows["gl_account"].astype(str).eq(account), "_amount_credit_i"].sum())
+                opening_value = prior_closing.get(
+                    (company, account), opening.get(company, {}).get(account, 0)
+                )
+                debit = int(
+                    rows.loc[rows["gl_account"].astype(str).eq(account), "_amount_debit_i"].sum()
+                )
+                credit = int(
+                    rows.loc[rows["gl_account"].astype(str).eq(account), "_amount_credit_i"].sum()
+                )
                 if _is_credit_normal(account, coa_meta):
                     closing = opening_value - debit + credit
                 else:
                     closing = opening_value + debit - credit
-                if abs((opening_value + (credit - debit if _is_credit_normal(account, coa_meta) else debit - credit)) - closing) > 1:
+                if (
+                    abs(
+                        (
+                            opening_value
+                            + (
+                                credit - debit
+                                if _is_credit_normal(account, coa_meta)
+                                else debit - credit
+                            )
+                        )
+                        - closing
+                    )
+                    > 1
+                ):
                     roll_bad += 1
-                if (company, account) in prior_closing and abs(opening_value - prior_closing[(company, account)]) > 1:
+                if (company, account) in prior_closing and abs(
+                    opening_value - prior_closing[(company, account)]
+                ) > 1:
                     continuity_bad += 1
                 prior_closing[(company, account)] = closing
                 checked_period_accounts += 1
@@ -1338,16 +1996,30 @@ def _balance_metrics(df: pd.DataFrame, dataset: Path) -> list[dict[str, Any]]:
                 if closing < -1:
                     if _is_contra_account(account, cat, coa_meta):
                         contra_negative += 1
-                    elif cat in {"Revenue", "OtherIncome", "CostOfSales", "OperatingExpenses", "OtherExpenses"}:
+                    elif cat in {
+                        "Revenue",
+                        "OtherIncome",
+                        "CostOfSales",
+                        "OperatingExpenses",
+                        "OtherExpenses",
+                    }:
                         pnl_negative += 1
-                    elif account == "3200" or str(coa_meta.get(account, {}).get("sub_type", "")).lower() == "retained_earnings":
+                    elif (
+                        account == "3200"
+                        or str(coa_meta.get(account, {}).get("sub_type", "")).lower()
+                        == "retained_earnings"
+                    ):
                         retained_deficit += 1
                     elif cat == "Equity":
                         other_equity_negative += 1
-                        normal_side_bad_by_account[account] = normal_side_bad_by_account.get(account, 0) + 1
+                        normal_side_bad_by_account[account] = (
+                            normal_side_bad_by_account.get(account, 0) + 1
+                        )
                     else:
                         normal_side_bad += 1
-                        normal_side_bad_by_account[account] = normal_side_bad_by_account.get(account, 0) + 1
+                        normal_side_bad_by_account[account] = (
+                            normal_side_bad_by_account.get(account, 0) + 1
+                        )
             equation_diff = assets - liabilities - equity - (revenue - expenses)
             max_equation_diff = max(max_equation_diff, abs(equation_diff))
             if abs(equation_diff) > 1:
@@ -1373,15 +2045,80 @@ def _balance_metrics(df: pd.DataFrame, dataset: Path) -> list[dict[str, Any]]:
                 fs_max_diff = max(fs_max_diff, diff)
                 if diff > 1:
                     fs_bad += 1
-            findings.append(verdict("Gate 2", "M02", "PASS" if fs_checked > 0 and fs_bad == 0 else "FAIL", {"periods_checked": fs_checked, "equation_bad_periods": fs_bad, "max_equation_diff_krw": fs_max_diff, "equation_formula": "financial_statements BS-TA = BS-TL + BS-TE"}, "ending accounting equation"))
+            findings.append(
+                verdict(
+                    "Gate 2",
+                    "M02",
+                    "PASS" if fs_checked > 0 and fs_bad == 0 else "FAIL",
+                    {
+                        "periods_checked": fs_checked,
+                        "equation_bad_periods": fs_bad,
+                        "max_equation_diff_krw": fs_max_diff,
+                        "equation_formula": "financial_statements BS-TA = BS-TL + BS-TE",
+                    },
+                    "ending accounting equation",
+                )
+            )
         else:
-            findings.append(verdict("Gate 2", "M02", "PASS" if equation_bad == 0 else "FAIL", {"periods_checked": len(periods), "equation_bad_periods": equation_bad, "max_equation_diff_krw": max_equation_diff, "equation_formula": "assets = liabilities + equity + current_ytd_income"}, "ending accounting equation"))
-        findings.append(verdict("Gate 2", "M03", "PASS" if roll_bad == 0 else "FAIL", {"period_accounts_checked": checked_period_accounts, "roll_forward_bad": roll_bad}, "account roll-forward"))
-        findings.append(verdict("Gate 2", "M04", "PASS" if continuity_bad == 0 else "FAIL", {"period_accounts_checked": checked_period_accounts, "continuity_bad": continuity_bad}, "prior closing equals current opening"))
-        top_normal_side_bad = sorted(normal_side_bad_by_account.items(), key=lambda item: item[1], reverse=True)[:10]
+            findings.append(
+                verdict(
+                    "Gate 2",
+                    "M02",
+                    "PASS" if equation_bad == 0 else "FAIL",
+                    {
+                        "periods_checked": len(periods),
+                        "equation_bad_periods": equation_bad,
+                        "max_equation_diff_krw": max_equation_diff,
+                        "equation_formula": "assets = liabilities + equity + current_ytd_income",
+                    },
+                    "ending accounting equation",
+                )
+            )
+        findings.append(
+            verdict(
+                "Gate 2",
+                "M03",
+                "PASS" if roll_bad == 0 else "FAIL",
+                {"period_accounts_checked": checked_period_accounts, "roll_forward_bad": roll_bad},
+                "account roll-forward",
+            )
+        )
+        findings.append(
+            verdict(
+                "Gate 2",
+                "M04",
+                "PASS" if continuity_bad == 0 else "FAIL",
+                {
+                    "period_accounts_checked": checked_period_accounts,
+                    "continuity_bad": continuity_bad,
+                },
+                "prior closing equals current opening",
+            )
+        )
+        top_normal_side_bad = sorted(
+            normal_side_bad_by_account.items(), key=lambda item: item[1], reverse=True
+        )[:10]
         hard_negative_rate = normal_side_bad / max(checked_period_accounts, 1)
         m06_pass = other_equity_negative == 0 and hard_negative_rate <= 0.02
-        findings.append(verdict("Gate 2", "M06", "PASS" if m06_pass else "MONITOR", {"period_accounts_checked": checked_period_accounts, "hard_negative_balance_count": normal_side_bad, "hard_negative_balance_rate": hard_negative_rate, "hard_negative_balance_rate_threshold": 0.02, "other_equity_negative_balance_count": other_equity_negative, "contra_negative_balance_count": contra_negative, "retained_earnings_deficit_count": retained_deficit, "income_statement_reverse_balance_count": pnl_negative, "top_hard_negative_accounts": dict(top_normal_side_bad)}, "normal balance direction"))
+        findings.append(
+            verdict(
+                "Gate 2",
+                "M06",
+                "PASS" if m06_pass else "MONITOR",
+                {
+                    "period_accounts_checked": checked_period_accounts,
+                    "hard_negative_balance_count": normal_side_bad,
+                    "hard_negative_balance_rate": hard_negative_rate,
+                    "hard_negative_balance_rate_threshold": 0.02,
+                    "other_equity_negative_balance_count": other_equity_negative,
+                    "contra_negative_balance_count": contra_negative,
+                    "retained_earnings_deficit_count": retained_deficit,
+                    "income_statement_reverse_balance_count": pnl_negative,
+                    "top_hard_negative_accounts": dict(top_normal_side_bad),
+                },
+                "normal balance direction",
+            )
+        )
 
         closing = work[work["_is_closing"]]
         nonclosing = work[~work["_is_closing"]]
@@ -1389,20 +2126,34 @@ def _balance_metrics(df: pd.DataFrame, dataset: Path) -> list[dict[str, Any]]:
         closing_bad = 0
         closing_checked = 0
         for company, fy in years.itertuples(index=False, name=None):
-            sub = nonclosing[(nonclosing["company_code"].eq(company)) & (nonclosing["fiscal_year"].eq(fy))]
+            sub = nonclosing[
+                (nonclosing["company_code"].eq(company)) & (nonclosing["fiscal_year"].eq(fy))
+            ]
             pnl = 0
             for _, row in sub.iterrows():
                 account = str(row["gl_account"])
                 if account[:1] in {"4", "5", "6", "7", "8"}:
                     pnl += int(row["_amount_credit_i"] - row["_amount_debit_i"])
-            cls = closing[(closing["company_code"].eq(company)) & (closing["fiscal_year"].eq(fy)) & (closing["gl_account"].astype(str).eq("3200"))]
+            cls = closing[
+                (closing["company_code"].eq(company))
+                & (closing["fiscal_year"].eq(fy))
+                & (closing["gl_account"].astype(str).eq("3200"))
+            ]
             re_effect = int(cls["_amount_credit_i"].sum() - cls["_amount_debit_i"].sum())
             closing_checked += 1
             if abs(pnl - re_effect) > 1:
                 closing_bad += 1
-        findings.append(verdict("Gate 2", "M05", "PASS" if closing_checked > 0 and closing_bad == 0 else "FAIL", {"company_years_checked": closing_checked, "closing_bad": closing_bad}, "P&L closes to retained earnings"))
+        findings.append(
+            verdict(
+                "Gate 2",
+                "M05",
+                "PASS" if closing_checked > 0 and closing_bad == 0 else "FAIL",
+                {"company_years_checked": closing_checked, "closing_bad": closing_bad},
+                "P&L closes to retained earnings",
+            )
+        )
 
-        # M08: annual closing rows must keep closing semantics, not account-native
+        # M14: annual closing rows must keep closing semantics, not account-native
         # revenue/expense labels. L4-03 materiality thresholds read
         # semantic_account_subtype == income_statement_close to infer P&L scale,
         # so a balanced closing entry can still be unusable if these labels drift.
@@ -1418,8 +2169,12 @@ def _balance_metrics(df: pd.DataFrame, dataset: Path) -> list[dict[str, Any]]:
         m08_max_reconciliation_diff = 0
         m08_examples: list[dict[str, Any]] = []
         for company, fy in years.itertuples(index=False, name=None):
-            cls_year = closing[(closing["company_code"].eq(company)) & (closing["fiscal_year"].eq(fy))]
-            pnl_cls = cls_year[cls_year["gl_account"].astype(str).str[:1].isin(["4", "5", "6", "7", "8"])]
+            cls_year = closing[
+                (closing["company_code"].eq(company)) & (closing["fiscal_year"].eq(fy))
+            ]
+            pnl_cls = cls_year[
+                cls_year["gl_account"].astype(str).str[:1].isin(["4", "5", "6", "7", "8"])
+            ]
             re_cls = cls_year[cls_year["gl_account"].astype(str).eq("3200")]
             m08_years_checked += 1
             if pnl_cls.empty or re_cls.empty:
@@ -1438,9 +2193,16 @@ def _balance_metrics(df: pd.DataFrame, dataset: Path) -> list[dict[str, Any]]:
 
             m08_pnl_lines += int(len(pnl_cls))
             m08_re_lines += int(len(re_cls))
-            bad_sub = pnl_cls["semantic_account_subtype"].fillna("").astype(str).ne("income_statement_close")
+            bad_sub = (
+                pnl_cls["semantic_account_subtype"]
+                .fillna("")
+                .astype(str)
+                .ne("income_statement_close")
+            )
             bad_fam = pnl_cls["line_text_family"].fillna("").astype(str).ne("annual_closing")
-            bad_re_sub = re_cls["semantic_account_subtype"].fillna("").astype(str).ne("retained_earnings")
+            bad_re_sub = (
+                re_cls["semantic_account_subtype"].fillna("").astype(str).ne("retained_earnings")
+            )
             bad_re_fam = re_cls["line_text_family"].fillna("").astype(str).ne("annual_closing")
             m08_bad_subtype += int(bad_sub.sum())
             m08_bad_line_family += int(bad_fam.sum())
@@ -1455,11 +2217,7 @@ def _balance_metrics(df: pd.DataFrame, dataset: Path) -> list[dict[str, Any]]:
                 m08_bad_reconciliation += 1
 
             if len(m08_examples) < 10 and (
-                bad_sub.any()
-                or bad_fam.any()
-                or bad_re_sub.any()
-                or bad_re_fam.any()
-                or diff > 1
+                bad_sub.any() or bad_fam.any() or bad_re_sub.any() or bad_re_fam.any() or diff > 1
             ):
                 m08_examples.append(
                     {
@@ -1484,7 +2242,7 @@ def _balance_metrics(df: pd.DataFrame, dataset: Path) -> list[dict[str, Any]]:
         findings.append(
             verdict(
                 "Gate 2",
-                "M08",
+                "M14",
                 "PASS" if m08_years_checked > 0 and m08_bad_total == 0 else "FAIL",
                 {
                     "company_years_checked": m08_years_checked,
@@ -1505,13 +2263,34 @@ def _balance_metrics(df: pd.DataFrame, dataset: Path) -> list[dict[str, Any]]:
 
     recon_path = dataset / "balance" / "subledger_reconciliation.json"
     if not recon_path.exists():
-        findings.append(verdict("Gate 2", "M07", "BLOCKED", {"missing": "balance/subledger_reconciliation.json"}, "subledger reconciliation required"))
+        findings.append(
+            verdict(
+                "Gate 2",
+                "M07",
+                "BLOCKED",
+                {"missing": "balance/subledger_reconciliation.json"},
+                "subledger reconciliation required",
+            )
+        )
     else:
         recon = json.loads(recon_path.read_text(encoding="utf-8"))
         diffs = [abs(float(item.get("difference", 0))) for item in recon if isinstance(item, dict)]
         statuses = [str(item.get("status", "")) for item in recon if isinstance(item, dict)]
         bad = sum(1 for diff in diffs if diff > 1.0)
-        findings.append(verdict("Gate 2", "M07", "PASS" if bad == 0 and statuses else "FAIL", {"reconciliations": len(diffs), "bad_reconciliations": bad, "max_abs_diff_krw": max(diffs) if diffs else None, "statuses": dict(pd.Series(statuses).value_counts()) if statuses else {}}, "AR/AP/Inventory/FA subledger equals GL control"))
+        findings.append(
+            verdict(
+                "Gate 2",
+                "M07",
+                "PASS" if bad == 0 and statuses else "FAIL",
+                {
+                    "reconciliations": len(diffs),
+                    "bad_reconciliations": bad,
+                    "max_abs_diff_krw": max(diffs) if diffs else None,
+                    "statuses": dict(pd.Series(statuses).value_counts()) if statuses else {},
+                },
+                "AR/AP/Inventory/FA subledger equals GL control",
+            )
+        )
 
     return findings
 
@@ -1537,15 +2316,16 @@ def audit(dataset: Path) -> dict[str, Any]:
         "anomaly_type_nonblank": int(df["anomaly_type"].str.strip().ne("").sum()),
     }
     mutation_nonblank = {
-        col: int(df[col].str.strip().ne("").sum())
-        for col in mutation_cols
-        if col in df.columns
+        col: int(df[col].str.strip().ne("").sum()) for col in mutation_cols if col in df.columns
     }
     findings.append(
         verdict(
             "Gate 0",
             "O01",
-            "PASS" if all(v == 0 for v in normal_flags.values()) and all(v == 0 for v in mutation_nonblank.values()) else "FAIL",
+            "PASS"
+            if all(v == 0 for v in normal_flags.values())
+            and all(v == 0 for v in mutation_nonblank.values())
+            else "FAIL",
             {"normal_flags": normal_flags, "mutation_nonblank": mutation_nonblank},
             "normal-only label/provenance contamination check",
         )
@@ -1562,11 +2342,17 @@ def audit(dataset: Path) -> dict[str, Any]:
         )
     )
 
-    bal = df.groupby("document_id", sort=False).agg(debit=("debit_amount", "sum"), credit=("credit_amount", "sum"))
-    bal_i = df.assign(
-        _debit_won=df["debit_amount"].round(0).astype("int64"),
-        _credit_won=df["credit_amount"].round(0).astype("int64"),
-    ).groupby("document_id", sort=False).agg(debit=("_debit_won", "sum"), credit=("_credit_won", "sum"))
+    bal = df.groupby("document_id", sort=False).agg(
+        debit=("debit_amount", "sum"), credit=("credit_amount", "sum")
+    )
+    bal_i = (
+        df.assign(
+            _debit_won=df["debit_amount"].round(0).astype("int64"),
+            _credit_won=df["credit_amount"].round(0).astype("int64"),
+        )
+        .groupby("document_id", sort=False)
+        .agg(debit=("_debit_won", "sum"), credit=("_credit_won", "sum"))
+    )
     diff = (bal_i["debit"] - bal_i["credit"]).abs()
     imbalance_count = int((diff > 1).sum())
     findings.append(
@@ -1574,7 +2360,10 @@ def audit(dataset: Path) -> dict[str, Any]:
             "Gate 0",
             "A01",
             "PASS" if imbalance_count == 0 else "FAIL",
-            {"imbalance_count": imbalance_count, "max_abs_diff_krw": int(diff.max() if len(diff) else 0)},
+            {
+                "imbalance_count": imbalance_count,
+                "max_abs_diff_krw": int(diff.max() if len(diff) else 0),
+            },
             "document-level debit/credit balance in integer KRW",
         )
     )
@@ -1605,7 +2394,9 @@ def audit(dataset: Path) -> dict[str, Any]:
         )
     else:
         sod_true = _truthy(doc_head["sod_violation"])
-        sod_conflict_nonblank = doc_head["sod_conflict_type"].fillna("").astype(str).str.strip().ne("")
+        sod_conflict_nonblank = (
+            doc_head["sod_conflict_type"].fillna("").astype(str).str.strip().ne("")
+        )
         self_approval = doc_head["approved_by"].fillna("").astype(str).str.strip().ne("") & (
             doc_head["created_by"].fillna("").astype(str).str.strip()
             == doc_head["approved_by"].fillna("").astype(str).str.strip()
@@ -1628,9 +2419,7 @@ def audit(dataset: Path) -> dict[str, Any]:
                 "Gate 0",
                 "E05_SOD_DIRECT_MARKER",
                 "PASS"
-                if sod_true_docs == 0
-                and conflict_docs == 0
-                and non_self_sod_docs == 0
+                if sod_true_docs == 0 and conflict_docs == 0 and non_self_sod_docs == 0
                 else "FAIL",
                 {
                     "documents_checked": total_docs,
@@ -1658,6 +2447,24 @@ def audit(dataset: Path) -> dict[str, Any]:
             )
         )
     else:
+        # ── E05B 재설계 (2026-07-16, 사용자 결정) ──────────────────────────────
+        # 구판은 persona 라벨별 허용 프로세스 표(ap_clerk 등 clerk 어휘)를 검사했다.
+        # 생성기 UserPersona enum에는 clerk 어휘가 없어(junior/senior/controller/
+        # manager/...만 존재) 그 표는 원리상 만족 불가능한 주장이었다 — ACC01과
+        # 같은 게이트 오류 계열. 감사 실질(SoD·직무 전문화)은 라벨이 아니라
+        # "한 사용자가 몇 개 프로세스를 넘나드는가"로 측정한다 (T3-10 전담 원칙).
+        #
+        # 검증 주장 (수기·조정 전표의 사람 사용자 단위):
+        #   1. junior_accountant 사용자는 프로세스 폭 1 (단일 전담, 겸직 0)
+        #   2. 그 외 사람 persona는 폭 <=2 (compatible 겸직 최대 2)
+        #   3. 폭 2인 사용자의 두 번째 프로세스는 반드시 R2R —
+        #      생성기 compatible_pairs 4쌍(R2R-A2R·R2R-TRE·P2P-R2R·O2C-R2R)은 전부
+        #      R2R을 포함하고, 12월 결산 투입(T4-21)도 R2R로만 확장된다. 즉 정상
+        #      겸직의 본질은 "결산(R2R)과의 겸직"이며, R2R 없는 쌍(H2R-O2C,
+        #      O2C-P2P, TRE-P2P 등 anomalous 계열)은 normal에서 0건
+        #      (생성기 config anomalous_assignment_rate 0.0과 정합)
+        #   4. junior_accountant × Treasury 문서 0건 (T3-09)
+        # automated source 행은 배치 잡 소유라 사용자 전문화 주장에서 제외.
         rbac = doc_head.copy()
         rbac["_persona_norm"] = (
             rbac["user_persona"]
@@ -1671,92 +2478,72 @@ def audit(dataset: Path) -> dict[str, Any]:
             rbac["business_process"].fillna("").astype(str).str.strip().str.upper()
         )
         rbac["_source_norm"] = rbac["source"].fillna("").astype(str).str.strip().str.lower()
-        automated_source = rbac["_source_norm"].isin({"automated", "recurring", "interface", "system"})
-        rbac.loc[automated_source, "_persona_norm"] = "automated_system"
+        automated_source = rbac["_source_norm"].isin(
+            {"automated", "recurring", "interface", "system"}
+        )
+        human = rbac.loc[~automated_source & ~rbac["_persona_norm"].isin({"automated_system", ""})]
 
-        allowed_by_persona: dict[str, set[str]] = {
-            "ap_clerk": {"P2P"},
-            "ar_clerk": {"O2C"},
-            "treasury_analyst": {"TRE", "TREASURY"},
-            "payroll_clerk": {"H2R"},
-            "inventory_clerk": {"MFG"},
-            "operations_user": {"MFG", "A2R"},
-            "junior_accountant": {"R2R", "A2R"},
-            "senior_accountant": {"R2R", "A2R", "P2P", "O2C", "TRE", "TREASURY", "IC", "INTERCOMPANY"},
-            "controller": {"R2R", "A2R", "P2P", "O2C", "TRE", "TREASURY", "IC", "INTERCOMPANY"},
-            "manager": {"R2R", "A2R", "P2P", "O2C", "TRE", "TREASURY", "IC", "INTERCOMPANY"},
-            "automated_system": {"P2P", "O2C", "R2R", "H2R", "TRE", "TREASURY", "A2R", "MFG", "IC", "INTERCOMPANY"},
-        }
-        low_level = {"ap_clerk", "ar_clerk", "treasury_analyst", "payroll_clerk", "inventory_clerk", "operations_user", "junior_accountant"}
-        exempt = {"automated_system"}
+        # TRE/TREASURY 표기 통일 (생성기는 Treasury, 카탈로그 축약은 TRE)
+        process_alias = {"TREASURY": "TRE", "INTERCOMPANY": "IC"}
+        human = human.assign(
+            _process_norm=human["_process_norm"].map(lambda p: process_alias.get(p, p))
+        )
 
-        scope_bad_mask = []
-        for _, row in rbac[["_persona_norm", "_process_norm"]].iterrows():
-            persona = row["_persona_norm"]
-            process = row["_process_norm"]
-            allowed = allowed_by_persona.get(persona)
-            scope_bad_mask.append(bool(allowed is not None and process not in allowed))
-        rbac["_scope_bad"] = scope_bad_mask
+        user_groups = human.groupby("created_by").agg(
+            _persona=("_persona_norm", "first"),
+            _processes=("_process_norm", lambda s: sorted(set(s))),
+            _docs=("_process_norm", "size"),
+        )
+        junior_multi = {}
+        over_breadth = {}
+        bad_pairs = {}
+        for user, row in user_groups.iterrows():
+            persona, procs = row["_persona"], row["_processes"]
+            if persona == "junior_accountant" and len(procs) > 1:
+                junior_multi[user] = procs
+            elif len(procs) > 2:
+                over_breadth[f"{user}|{persona}"] = procs
+            elif len(procs) == 2 and "R2R" not in procs:
+                bad_pairs[f"{user}|{persona}"] = procs
 
-        persona_process_counts = (
-            rbac.loc[~rbac["_persona_norm"].isin(exempt)]
-            .groupby("_persona_norm")["_process_norm"]
-            .nunique()
-            .sort_values(ascending=False)
+        junior_treasury_docs = int(
+            (
+                (human["_persona_norm"] == "junior_accountant") & (human["_process_norm"] == "TRE")
+            ).sum()
+        )
+        persona_user_breadth_max = (
+            user_groups.assign(_breadth=user_groups["_processes"].map(len))
+            .groupby("_persona")["_breadth"]
+            .max()
             .to_dict()
         )
-        user_process_counts = (
-            rbac.loc[~rbac["_persona_norm"].isin(exempt)]
-            .groupby(["created_by", "_persona_norm"])["_process_norm"]
-            .nunique()
-            .sort_values(ascending=False)
-            .head(20)
-        )
-        low_level_breadth = {
-            persona: int(count)
-            for persona, count in persona_process_counts.items()
-            if persona in low_level
-        }
-        low_level_over_breadth = {
-            persona: count for persona, count in low_level_breadth.items() if count > 2
-        }
-        user_over_breadth = {
-            f"{user}|{persona}": int(count)
-            for (user, persona), count in user_process_counts.items()
-            if persona in low_level and count > 2
-        }
-        scope_bad_docs = int(rbac["_scope_bad"].sum())
-        scope_bad_examples = (
-            rbac.loc[rbac["_scope_bad"], ["_persona_norm", "_process_norm"]]
-            .value_counts()
-            .head(10)
-            .to_dict()
-        )
-        all_to_all_personas = {
-            persona: int(count)
-            for persona, count in persona_process_counts.items()
-            if count >= 7
-        }
         findings.append(
             verdict(
                 "Gate 0",
                 "E05B_RBAC_PERSONA_PROCESS_SCOPE",
                 "PASS"
-                if scope_bad_docs == 0
-                and not low_level_over_breadth
-                and not user_over_breadth
-                and not all_to_all_personas
+                if not junior_multi
+                and not over_breadth
+                and not bad_pairs
+                and junior_treasury_docs == 0
                 else "FAIL",
                 {
-                    "documents_checked": int(len(rbac)),
-                    "scope_bad_docs": scope_bad_docs,
-                    "scope_bad_examples": {str(k): int(v) for k, v in scope_bad_examples.items()},
-                    "persona_process_counts": {str(k): int(v) for k, v in persona_process_counts.items()},
-                    "low_level_over_breadth": low_level_over_breadth,
-                    "user_over_breadth_top20": user_over_breadth,
-                    "all_to_all_personas": all_to_all_personas,
+                    "human_documents_checked": int(len(human)),
+                    "human_users_checked": int(len(user_groups)),
+                    "junior_multi_process_users": {
+                        str(k): v for k, v in list(junior_multi.items())[:10]
+                    },
+                    "over_breadth_users": {str(k): v for k, v in list(over_breadth.items())[:10]},
+                    "non_compatible_pair_users": {
+                        str(k): v for k, v in list(bad_pairs.items())[:10]
+                    },
+                    "junior_treasury_docs": junior_treasury_docs,
+                    "persona_user_breadth_max": {
+                        str(k): int(v) for k, v in persona_user_breadth_max.items()
+                    },
                 },
-                "normal RBAC scope: low-level clerks are process-specialized; senior/controller may have limited multi-process scope; automated sources are exempt",
+                "normal RBAC scope (user-level): junior single-process; senior+ at most one "
+                "compatible dual assignment; anomalous pairs and junior-Treasury are overlay-only",
             )
         )
 
@@ -1797,7 +2584,9 @@ def audit(dataset: Path) -> dict[str, Any]:
         emp = pd.DataFrame(emp_rows)
         if emp.empty:
             approver_metric = {
-                "approved_docs_checked": int(doc_head["approved_by"].fillna("").astype(str).str.strip().ne("").sum()),
+                "approved_docs_checked": int(
+                    doc_head["approved_by"].fillna("").astype(str).str.strip().ne("").sum()
+                ),
                 "employee_master_rows": 0,
             }
             findings.append(
@@ -1811,7 +2600,9 @@ def audit(dataset: Path) -> dict[str, Any]:
             )
         else:
             emp["_approver_can_approve_je"] = emp["_approver_can_approve_je"].map(
-                lambda value: value if isinstance(value, bool) else str(value).strip().lower() == "true"
+                lambda value: (
+                    value if isinstance(value, bool) else str(value).strip().lower() == "true"
+                )
             )
             emp["_approver_approval_limit"] = pd.to_numeric(
                 emp["_approver_approval_limit"], errors="coerce"
@@ -1826,17 +2617,20 @@ def audit(dataset: Path) -> dict[str, Any]:
             approved_docs = (
                 doc_head[["document_id", "approved_by", "business_process", "source"]]
                 .copy()
-                .assign(approved_by=lambda frame: frame["approved_by"].fillna("").astype(str).str.strip())
+                .assign(
+                    approved_by=lambda frame: (
+                        frame["approved_by"].fillna("").astype(str).str.strip()
+                    )
+                )
             )
             approved_docs = approved_docs[approved_docs["approved_by"].ne("")]
             approved_docs = approved_docs.merge(doc_amount, on="document_id", how="left")
             approved_docs = approved_docs.merge(emp, on="approved_by", how="left")
             unresolved = approved_docs["_approver_can_approve_je"].isna()
             unauthorized = approved_docs["_approver_can_approve_je"].eq(False)
-            limit_bad = (
-                approved_docs["_approver_can_approve_je"].eq(True)
-                & approved_docs["_approver_approval_limit"].fillna(0).lt(approved_docs["_document_debit_total"].fillna(0))
-            )
+            limit_bad = approved_docs["_approver_can_approve_je"].eq(True) & approved_docs[
+                "_approver_approval_limit"
+            ].fillna(0).lt(approved_docs["_document_debit_total"].fillna(0))
             authority_bad = unresolved | unauthorized
             limit_bad_docs = int(limit_bad.sum())
             approved_doc_count = int(len(approved_docs))
@@ -1844,7 +2638,11 @@ def audit(dataset: Path) -> dict[str, Any]:
             min_limit_bad_rate = 0.0005
             max_limit_bad_rate = 0.02
             limit_rate_in_range = min_limit_bad_rate <= limit_bad_rate <= max_limit_bad_rate
-            bad = authority_bad | (limit_bad if not limit_rate_in_range else pd.Series(False, index=approved_docs.index))
+            bad = authority_bad | (
+                limit_bad
+                if not limit_rate_in_range
+                else pd.Series(False, index=approved_docs.index)
+            )
             bad_by_process = (
                 approved_docs.loc[authority_bad | limit_bad, "business_process"]
                 .fillna("")
@@ -1854,7 +2652,10 @@ def audit(dataset: Path) -> dict[str, Any]:
                 .to_dict()
             )
             bad_approvers = (
-                approved_docs.loc[authority_bad | limit_bad, ["approved_by", "_approver_persona", "_approver_job_title"]]
+                approved_docs.loc[
+                    authority_bad | limit_bad,
+                    ["approved_by", "_approver_persona", "_approver_job_title"],
+                ]
                 .fillna("")
                 .astype(str)
                 .drop_duplicates()
@@ -1876,8 +2677,11 @@ def audit(dataset: Path) -> dict[str, Any]:
                         "approval_limit_exceeded_max_rate": max_limit_bad_rate,
                         "authority_bad_docs": int(authority_bad.sum()),
                         "limit_rate_in_range": bool(limit_rate_in_range),
-                        "bad_docs": int(authority_bad.sum()) + (0 if limit_rate_in_range else limit_bad_docs),
-                        "exception_by_process_top10": {str(k): int(v) for k, v in bad_by_process.items()},
+                        "bad_docs": int(authority_bad.sum())
+                        + (0 if limit_rate_in_range else limit_bad_docs),
+                        "exception_by_process_top10": {
+                            str(k): int(v) for k, v in bad_by_process.items()
+                        },
                         "exception_approver_examples": bad_approvers,
                     },
                     "approved_by users must exist and have can_approve_je=true; approval-limit exceedance must be present but bounded as a natural control exception",
@@ -1916,10 +2720,26 @@ def audit(dataset: Path) -> dict[str, Any]:
         "ic_bad_docs": 0,
     }
     p2p_families = {
-        "VendorService": ("vendor_service_text_off_domain", "PROFESSIONAL_FEES", re.compile(r"전문|자문|용역|매입세액")),
-        "VendorOfficeSupplies": ("vendor_office_text_off_domain", "OFFICE_SUPPLIES_PURCHASE", re.compile(r"사무|문구|복사|토너|오피스|매입세액")),
-        "VendorRawMaterial": ("vendor_rawmaterial_text_off_domain", "RAW_MATERIAL_PURCHASE", re.compile(r"원자.?재|원재료|원자\s*입고|자재|재료|매입세액")),
-        "VendorUtilities": ("vendor_utilities_text_off_domain", "UTILITIES", re.compile(r"전.?력|력.?전|전.?요금|력.?요금|수.?도|통.?신|전력|수도|통신|매입세액")),
+        "VendorService": (
+            "vendor_service_text_off_domain",
+            "PROFESSIONAL_FEES",
+            re.compile(r"전문|자문|용역|매입세액"),
+        ),
+        "VendorOfficeSupplies": (
+            "vendor_office_text_off_domain",
+            "OFFICE_SUPPLIES_PURCHASE",
+            re.compile(r"사무|문구|복사|토너|오피스|매입세액"),
+        ),
+        "VendorRawMaterial": (
+            "vendor_rawmaterial_text_off_domain",
+            "RAW_MATERIAL_PURCHASE",
+            re.compile(r"원자.?재|원재료|원자\s*입고|자재|재료|매입세액"),
+        ),
+        "VendorUtilities": (
+            "vendor_utilities_text_off_domain",
+            "UTILITIES",
+            re.compile(r"전.?력|력.?전|전.?요금|력.?요금|수.?도|통.?신|전력|수도|통신|매입세액"),
+        ),
     }
     tax_subtypes = {"INPUT_TAX_RECEIVABLE", "OUTPUT_TAX_PAYABLE"}
     for cp, (flag, expected_family, pattern) in p2p_families.items():
@@ -1931,7 +2751,8 @@ def audit(dataset: Path) -> dict[str, Any]:
             texts = [
                 str(row.line_text)
                 for row in group.itertuples()
-                if str(row.line_text).strip() and str(row.semantic_account_subtype) not in tax_subtypes
+                if str(row.line_text).strip()
+                and str(row.semantic_account_subtype) not in tax_subtypes
             ]
             families = {
                 str(row.line_text_family)
@@ -1950,7 +2771,9 @@ def audit(dataset: Path) -> dict[str, Any]:
         r"이체|이\s*체|급여\s*체|급여|원천세|반제|납부|지급|payment|payroll payment|clearing|tax payment",
         re.I,
     )
-    wrong_pattern = re.compile(r"fx revaluation|depreciation|CAPEX|고객|매출|원자재|전력요금|자문수수료", re.I)
+    wrong_pattern = re.compile(
+        r"fx revaluation|depreciation|CAPEX|고객|매출|원자재|전력요금|자문수수료", re.I
+    )
     h2r_payment_docs = df[df["semantic_scenario_id"].eq("H2R_PAYROLL_PAYMENT")]
     text_metrics["h2r_payment_checked_docs"] = int(h2r_payment_docs["document_id"].nunique())
     for _, group in h2r_payment_docs.groupby("document_id", sort=False):
@@ -1989,7 +2812,9 @@ def audit(dataset: Path) -> dict[str, Any]:
         if (
             document_types != {"IC"}
             or processes != {"Intercompany"}
-            or not counterparty_types.issubset({"IntercompanyAffiliate", "RELATED_PARTY", "RelatedParty"})
+            or not counterparty_types.issubset(
+                {"IntercompanyAffiliate", "RELATED_PARTY", "RelatedParty"}
+            )
             or not line_families.issubset(
                 {
                     "INTERCOMPANY_SALE",
@@ -2037,7 +2862,9 @@ def audit(dataset: Path) -> dict[str, Any]:
     for scenario, tax_subtype, base_subtypes in checks:
         sub = df[df["semantic_scenario_id"].eq(scenario)].copy()
         sub["tax_amt"] = sub["abs_amount"].where(sub["semantic_account_subtype"].eq(tax_subtype), 0)
-        sub["base_amt"] = sub["abs_amount"].where(sub["semantic_account_subtype"].isin(base_subtypes), 0)
+        sub["base_amt"] = sub["abs_amount"].where(
+            sub["semantic_account_subtype"].isin(base_subtypes), 0
+        )
         agg = sub.groupby("document_id", sort=False)[["tax_amt", "base_amt"]].sum()
         tax_docs = agg[agg["tax_amt"] > 0].copy()
         tax_docs["ratio"] = tax_docs["tax_amt"] / tax_docs["base_amt"].replace(0, pd.NA)
@@ -2046,8 +2873,12 @@ def audit(dataset: Path) -> dict[str, Any]:
             "tax_docs": int(len(tax_docs)),
             "bad_ratio_gt_15pct_or_no_base": int(len(bad)),
             "no_base": int((tax_docs["base_amt"] <= 0).sum()),
-            "ratio_p50": None if tax_docs.empty else float(tax_docs["ratio"].dropna().quantile(0.5)),
-            "ratio_p95": None if tax_docs.empty else float(tax_docs["ratio"].dropna().quantile(0.95)),
+            "ratio_p50": None
+            if tax_docs.empty
+            else float(tax_docs["ratio"].dropna().quantile(0.5)),
+            "ratio_p95": None
+            if tax_docs.empty
+            else float(tax_docs["ratio"].dropna().quantile(0.95)),
         }
         if len(tax_docs) == 0 or len(bad) > 0:
             tax_fail = True
@@ -2068,7 +2899,13 @@ def audit(dataset: Path) -> dict[str, Any]:
     else:
         treatment_counts = df["tax_treatment"].value_counts().to_dict()
         l06_metrics["treatment_counts"] = {str(k): int(v) for k, v in treatment_counts.items()}
-        required_treatments = {"taxable_10", "zero_rated_export", "exempt", "non_taxable", "import_vat"}
+        required_treatments = {
+            "taxable_10",
+            "zero_rated_export",
+            "exempt",
+            "non_taxable",
+            "import_vat",
+        }
         missing_treatments = sorted(required_treatments - set(treatment_counts))
 
         vat_subtypes = {"INPUT_TAX_RECEIVABLE", "OUTPUT_TAX_PAYABLE"}
@@ -2083,23 +2920,43 @@ def audit(dataset: Path) -> dict[str, Any]:
 
         bad_taxable = doc_tax[
             doc_tax["treatment"].map(lambda x: "taxable_10" in x)
-            & ((doc_tax["supporting"] != "세금계산서") | (~doc_tax["has_vat_line"]) | (doc_tax["tax_amount"] <= 0))
+            & (
+                (doc_tax["supporting"] != "세금계산서")
+                | (~doc_tax["has_vat_line"])
+                | (doc_tax["tax_amount"] <= 0)
+            )
         ]
         bad_import = doc_tax[
             doc_tax["treatment"].map(lambda x: "import_vat" in x)
-            & ((doc_tax["supporting"] != "수입장") | (~doc_tax["has_vat_line"]) | (doc_tax["tax_amount"] <= 0))
+            & (
+                (doc_tax["supporting"] != "수입장")
+                | (~doc_tax["has_vat_line"])
+                | (doc_tax["tax_amount"] <= 0)
+            )
         ]
         bad_zero = doc_tax[
             doc_tax["treatment"].map(lambda x: "zero_rated_export" in x)
-            & ((doc_tax["supporting"] != "수출신고필증") | (doc_tax["has_vat_line"]) | (doc_tax["tax_amount"] != 0))
+            & (
+                (doc_tax["supporting"] != "수출신고필증")
+                | (doc_tax["has_vat_line"])
+                | (doc_tax["tax_amount"] != 0)
+            )
         ]
         bad_exempt = doc_tax[
             doc_tax["treatment"].map(lambda x: "exempt" in x)
-            & ((doc_tax["supporting"] != "계산서") | (doc_tax["has_vat_line"]) | (doc_tax["tax_amount"] != 0))
+            & (
+                (doc_tax["supporting"] != "계산서")
+                | (doc_tax["has_vat_line"])
+                | (doc_tax["tax_amount"] != 0)
+            )
         ]
         bad_non_taxable = doc_tax[
             doc_tax["treatment"].map(lambda x: "non_taxable" in x)
-            & (doc_tax["has_vat_line"] | (doc_tax["tax_amount"] != 0) | doc_tax["tax_codes"].map(bool))
+            & (
+                doc_tax["has_vat_line"]
+                | (doc_tax["tax_amount"] != 0)
+                | doc_tax["tax_codes"].map(bool)
+            )
         ]
         mixed_treatment_docs = int(doc_tax["treatment"].map(len).gt(1).sum())
         l06_metrics.update(
@@ -2139,13 +2996,23 @@ def audit(dataset: Path) -> dict[str, Any]:
     total_rows = len(df)
     total_docs = len(doc_head)
     true_noise = {
-        "missing_field_rate_per_row": (dq_stats.get("missing_values", {}).get("total_missing", 0) / max(total_rows, 1)),
-        "text_format_variation_rate_per_row": (dq_stats.get("format_variations", {}).get("text_variations", 0) / max(total_rows, 1)),
+        "missing_field_rate_per_row": (
+            dq_stats.get("missing_values", {}).get("total_missing", 0) / max(total_rows, 1)
+        ),
+        "text_format_variation_rate_per_row": (
+            dq_stats.get("format_variations", {}).get("text_variations", 0) / max(total_rows, 1)
+        ),
         "typo_rate_per_row": (dq_stats.get("typos", {}).get("total_typos", 0) / max(total_rows, 1)),
-        "records_with_issues_rate_per_doc": (dq_stats.get("records_with_issues", 0) / max(dq_stats.get("total_records", total_docs), 1)),
+        "records_with_issues_rate_per_doc": (
+            dq_stats.get("records_with_issues", 0)
+            / max(dq_stats.get("total_records", total_docs), 1)
+        ),
     }
     noise_status = "PASS"
-    if true_noise["records_with_issues_rate_per_doc"] > 0.15 or true_noise["text_format_variation_rate_per_row"] > 0.05:
+    if (
+        true_noise["records_with_issues_rate_per_doc"] > 0.15
+        or true_noise["text_format_variation_rate_per_row"] > 0.05
+    ):
         noise_status = "FAIL"
     findings.append(
         verdict(
@@ -2160,7 +3027,9 @@ def audit(dataset: Path) -> dict[str, Any]:
     amount = df[["debit_amount", "credit_amount"]].max(axis=1)
     positive = amount[amount > 0]
     round_10k_rate = float(((positive % 10_000) == 0).mean()) if len(positive) else 0.0
-    top_exact_share = float(positive.value_counts(normalize=True).head(1).iloc[0]) if len(positive) else 0.0
+    top_exact_share = (
+        float(positive.value_counts(normalize=True).head(1).iloc[0]) if len(positive) else 0.0
+    )
     amount_status = "PASS" if round_10k_rate <= 0.25 and top_exact_share <= 0.02 else "FAIL"
     findings.append(
         verdict(
@@ -2171,6 +3040,31 @@ def audit(dataset: Path) -> dict[str, Any]:
             "amount round-grid dominance and exact amount concentration",
         )
     )
+    c07_status, c07_metric = _stable_account_yoy_volatility_metrics(df, _load_coa_meta(dataset))
+    findings.append(
+        verdict(
+            "Gate 2",
+            "C07_STABLE_ACCOUNT_YOY_VOLATILITY",
+            c07_status,
+            c07_metric,
+            "stable accounts such as tax, interest, depreciation/amortization, and rent must not swing by implausible account-level YoY ratios",
+        )
+    )
+    c06_status, c06_metric = _rare_account_pair_reuse_metrics(df)
+    findings.append(
+        verdict(
+            "Gate 2",
+            "C06_ACCOUNT_PAIR_REUSE",
+            c06_status,
+            c06_metric,
+            "normal ERP account determination should reuse concrete debit-credit account pairs; L4-04-like rare pairs must not be dominated by subtype fragmentation. NOTE: this check reads the RESULT only, so it can be satisfied by post-hoc rewriting of gl_account -- ACC02 checks the METHOD and is the one that blocks that",
+        )
+    )
+
+    # 계정 체계 검사. C06가 결과만 보는 탓에 최빈계정 강제치환으로 통과당한 이력이 있어,
+    # ACC02가 생성기의 계정결정 표 준수를 직접 본다.
+    for test_id, status, metric, notes in run_account_checks(df, dataset):
+        findings.append(verdict("Gate 2", test_id, status, metric, notes))
 
     marker_findings: list[dict[str, Any]] = []
     allowed_single_scenario_columns = {
@@ -2233,7 +3127,11 @@ def audit(dataset: Path) -> dict[str, Any]:
         work = df[["document_id", column]].drop_duplicates()
         work = work[work[column].astype(str).str.strip().ne("")]
         if column == "trading_partner":
-            company_values = set(df["company_code"].fillna("").astype(str).str.strip()) if "company_code" in df.columns else set()
+            company_values = (
+                set(df["company_code"].fillna("").astype(str).str.strip())
+                if "company_code" in df.columns
+                else set()
+            )
             structural_related_parties = {"C002", "C003"}
             work = work[
                 ~work[column]
@@ -2277,7 +3175,9 @@ def audit(dataset: Path) -> dict[str, Any]:
 
     if {"semantic_scenario_id", "debit_amount", "credit_amount"}.issubset(df.columns):
         df["_marker_amount"] = df[["debit_amount", "credit_amount"]].max(axis=1)
-        for scenario, group in df[df["_marker_amount"] > 0].groupby("semantic_scenario_id", sort=False):
+        for scenario, group in df[df["_marker_amount"] > 0].groupby(
+            "semantic_scenario_id", sort=False
+        ):
             n_rows = int(len(group))
             if n_rows < 500:
                 continue
@@ -2298,7 +3198,11 @@ def audit(dataset: Path) -> dict[str, Any]:
                 )
         df.drop(columns=["_marker_amount"], inplace=True)
 
-    marker_findings = sorted(marker_findings, key=lambda item: item.get("documents", item.get("top_count", 0)), reverse=True)
+    marker_findings = sorted(
+        marker_findings,
+        key=lambda item: item.get("documents", item.get("top_count", 0)),
+        reverse=True,
+    )
     findings.append(
         verdict(
             "Diagnostic",
@@ -2318,10 +3222,21 @@ def audit(dataset: Path) -> dict[str, Any]:
         )
     )
 
-    company_codes = set(df["company_code"].fillna("").astype(str).str.strip()) if "company_code" in df.columns else set()
-    has_ic_required = all(col in df.columns for col in ["is_intercompany", "company_code", "trading_partner", "gl_account"])
+    company_codes = (
+        set(df["company_code"].fillna("").astype(str).str.strip())
+        if "company_code" in df.columns
+        else set()
+    )
+    has_ic_required = all(
+        col in df.columns
+        for col in ["is_intercompany", "company_code", "trading_partner", "gl_account"]
+    )
     if not has_ic_required:
-        missing = [col for col in ["is_intercompany", "company_code", "trading_partner", "gl_account"] if col not in df.columns]
+        missing = [
+            col
+            for col in ["is_intercompany", "company_code", "trading_partner", "gl_account"]
+            if col not in df.columns
+        ]
         for test_id, note in [
             ("K01", "single-company journal scope"),
             ("K02", "normal related-party IC background required"),
@@ -2331,7 +3246,15 @@ def audit(dataset: Path) -> dict[str, Any]:
             ("K06", "no company-node graph cycle background"),
             ("K07", "normal IC direction population should not be one-sided"),
         ]:
-            findings.append(verdict("Gate 1" if test_id <= "K05" else "Gate 2", test_id, "BLOCKED", {"missing_required_columns": missing}, note))
+            findings.append(
+                verdict(
+                    "Gate 1" if test_id <= "K05" else "Gate 2",
+                    test_id,
+                    "BLOCKED",
+                    {"missing_required_columns": missing},
+                    note,
+                )
+            )
     else:
         primary_company = "C001"
         ic_mask = _truthy(df["is_intercompany"])
@@ -2341,8 +3264,14 @@ def audit(dataset: Path) -> dict[str, Any]:
         partner_all = df["trading_partner"].fillna("").astype(str).str.strip()
         company_partner_rows = int(partner_all.isin(company_codes | {"C002", "C003"}).sum())
         related_surface = (
-            df["counterparty_type"].fillna("").astype(str).str.contains("Intercompany|RELATED_PARTY|Related", case=False, regex=True)
-            | df["semantic_scenario_id"].fillna("").astype(str).str.contains("IC_|INTERCOMPANY|RELATED", case=False, regex=True)
+            df["counterparty_type"]
+            .fillna("")
+            .astype(str)
+            .str.contains("Intercompany|RELATED_PARTY|Related", case=False, regex=True)
+            | df["semantic_scenario_id"]
+            .fillna("")
+            .astype(str)
+            .str.contains("IC_|INTERCOMPANY|RELATED", case=False, regex=True)
             | df["business_process"].fillna("").astype(str).str.upper().eq("IC")
             | df["document_type"].fillna("").astype(str).str.upper().eq("IC")
         )
@@ -2355,7 +3284,15 @@ def audit(dataset: Path) -> dict[str, Any]:
             "total_rows": int(len(df)),
         }
         k01_pass = company_codes == {primary_company}
-        findings.append(verdict("Gate 1", "K01", "PASS" if k01_pass else "FAIL", k01_metric, "single legal-entity journal scope"))
+        findings.append(
+            verdict(
+                "Gate 1",
+                "K01",
+                "PASS" if k01_pass else "FAIL",
+                k01_metric,
+                "single legal-entity journal scope",
+            )
+        )
 
         pair_map = _load_ic_pair_map()
         rec_prefixes = set(pair_map)
@@ -2380,13 +3317,29 @@ def audit(dataset: Path) -> dict[str, Any]:
             and related_surface_docs >= ic_doc_count
             and pairmap_rows > 0
         )
-        findings.append(verdict("Gate 1", "K02", "PASS" if k02_pass else "FAIL", k02_metric, "single-company normal must contain low-volume related-party IC traces without adding extra ledger companies"))
+        findings.append(
+            verdict(
+                "Gate 1",
+                "K02",
+                "PASS" if k02_pass else "FAIL",
+                k02_metric,
+                "single-company normal must contain low-volume related-party IC traces without adding extra ledger companies",
+            )
+        )
 
         recon = _ic_reconciliation_metrics(df, pair_map)
         k03_metric = dict(recon)
         k03_metric.update({"receivable_prefix_rows": rec_rows, "payable_prefix_rows": pay_rows})
         k03_pass = rec_rows > 0 and pay_rows > 0
-        findings.append(verdict("Gate 1", "K03", "PASS" if k03_pass else "FAIL", k03_metric, "normal related-party IC must include both receivable/revenue and payable/cost traces"))
+        findings.append(
+            verdict(
+                "Gate 1",
+                "K03",
+                "PASS" if k03_pass else "FAIL",
+                k03_metric,
+                "normal related-party IC must include both receivable/revenue and payable/cost traces",
+            )
+        )
 
         ic_dates_missing = 0
         if not ic_df.empty:
@@ -2400,8 +3353,18 @@ def audit(dataset: Path) -> dict[str, Any]:
             )
         k04_metric = dict(recon)
         k04_metric["ic_date_missing_rows"] = ic_dates_missing
-        k04_pass = ic_row_count > 0 and ic_dates_missing == 0 and recon["close_lag_exceeded_pairs"] == 0
-        findings.append(verdict("Gate 1", "K04", "PASS" if k04_pass else "FAIL", k04_metric, "normal related-party IC timing must have populated dates and no stale close-lag pattern"))
+        k04_pass = (
+            ic_row_count > 0 and ic_dates_missing == 0 and recon["close_lag_exceeded_pairs"] == 0
+        )
+        findings.append(
+            verdict(
+                "Gate 1",
+                "K04",
+                "PASS" if k04_pass else "FAIL",
+                k04_metric,
+                "normal related-party IC timing must have populated dates and no stale close-lag pattern",
+            )
+        )
 
         partner_values = df["trading_partner"].fillna("").astype(str).str.strip()
         company_partner_mask = partner_values.isin(company_codes | {"C002", "C003"})
@@ -2420,15 +3383,44 @@ def audit(dataset: Path) -> dict[str, Any]:
             and k05_metric["self_company_partner_rows"] == 0
             and k05_metric["ic_prefixed_partner_rows"] == 0
         )
-        findings.append(verdict("Gate 1", "K05", "PASS" if k05_pass else "FAIL", k05_metric, "company-code partners are allowed only as related-party trading_partner values on IC rows"))
+        findings.append(
+            verdict(
+                "Gate 1",
+                "K05",
+                "PASS" if k05_pass else "FAIL",
+                k05_metric,
+                "company-code partners are allowed only as related-party trading_partner values on IC rows",
+            )
+        )
 
         cycle_metrics = _ic_cycle_metrics(df)
-        k06_pass = bool(cycle_metrics.get("networkx_available", False)) and int(cycle_metrics.get("cycle_instance_count", 0)) == 0
-        findings.append(verdict("Gate 2", "K06", "PASS" if k06_pass else "FAIL", cycle_metrics, "single-company normal must not contain company-node graph cycles"))
+        k06_pass = (
+            bool(cycle_metrics.get("networkx_available", False))
+            and int(cycle_metrics.get("cycle_instance_count", 0)) == 0
+        )
+        findings.append(
+            verdict(
+                "Gate 2",
+                "K06",
+                "PASS" if k06_pass else "FAIL",
+                cycle_metrics,
+                "single-company normal must not contain company-node graph cycles",
+            )
+        )
 
         asym = _ic_direction_asymmetry_metrics(df)
-        k07_pass = int(asym["direction_pair_count"]) > 0 and float(asym["high_asymmetry_rate"]) <= 0.75
-        findings.append(verdict("Gate 2", "K07", "PASS" if k07_pass else "FAIL", asym, "normal related-party IC should have a directional population without being entirely one-sided"))
+        k07_pass = (
+            int(asym["direction_pair_count"]) > 0 and float(asym["high_asymmetry_rate"]) <= 0.75
+        )
+        findings.append(
+            verdict(
+                "Gate 2",
+                "K07",
+                "PASS" if k07_pass else "FAIL",
+                asym,
+                "normal related-party IC should have a directional population without being entirely one-sided",
+            )
+        )
 
     k08_status, k08_metric = _single_company_sidecar_metrics(dataset)
     findings.append(
@@ -2549,7 +3541,12 @@ def audit(dataset: Path) -> dict[str, Any]:
             "INFO",
             {
                 "fixed_seed": 20260605,
-                "stratification": ["semantic_scenario_id", "business_process", "document_type", "source"],
+                "stratification": [
+                    "semantic_scenario_id",
+                    "business_process",
+                    "document_type",
+                    "source",
+                ],
                 "sample_documents": len(p01_rows),
                 "sample_scope": "diagnostic only; no pass/fail authority",
             },
@@ -2595,7 +3592,7 @@ def main() -> None:
     args.json_out.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
 
     lines = [
-        f"# Normal Data Realism Verifier",
+        "# Normal Data Realism Verifier",
         f"- dataset: `{result['dataset']}`",
         f"- documents: {result['documents']:,}",
         f"- rows: {result['rows']:,}",

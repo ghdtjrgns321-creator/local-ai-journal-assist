@@ -240,6 +240,43 @@ def _detector_result_warnings(results: list[DetectionResult]) -> list[str]:
     return warnings
 
 
+# Why: 단일 법인 확정(CONSTRAINTS.md §단일 법인)으로 회사를 가로지르는 모집단 통계는 정합하지
+#      않는다. L4-02·L4-03·L4-04·L2-02·D01·D02 는 company_code 를 groupby 키에 포함해 안전하지만,
+#      아래 룰은 회사 구분 없이 한 모집단으로 통계를 낸다(2026-07-15 전수 조사: 통계성 룰 17개 중 7개).
+_MULTI_COMPANY_CONTAMINATED_RULES: tuple[str, ...] = (
+    "L4-01",  # amount_features._zscore_with_fallback — gl_account 단독, 최종 fallback 은 전체 df mean/std
+    "L1-06",  # created_by 단독 — 회사별 권한이 합집합돼 실재하지 않는 toxic 조합 생성
+    "L2-03",  # 중복 매칭 키에 company_code 없음
+    "L2-05",  # 역분개 거울쌍 매칭 키에 company_code 없음
+    "L4-05",  # 사용자 행동 비율 + 전역 sigma 임계
+    "L4-06",  # 기말 비율·동시생성 count·금액 z-score 전부 전 회사 합산
+    "L3-09",  # 전역 posting_date.max() 를 기준일로 사용
+)
+_NULL_TOKENS: frozenset[str] = frozenset({"", "nan", "none", "null", "<na>"})
+
+
+def single_company_scope_warnings(df: pd.DataFrame) -> list[str]:
+    """다회사 원장이면 경고 1건. 단일 법인이거나 company_code 부재면 빈 목록(no-op).
+
+    결측/공백 company_code 는 회사로 세지 않는다 — 실데이터에 결측 행이 섞여 있어
+    이를 회사로 세면 단일 회사 원장이 다회사로 오판된다.
+    """
+    if "company_code" not in df.columns or df.empty:
+        return []
+    codes = df["company_code"].dropna().astype(str).str.strip()
+    companies = sorted({code for code in codes if code.lower() not in _NULL_TOKENS})
+    if len(companies) <= 1:
+        return []
+    return [
+        "[분석범위제한]\n"
+        f"다회사 원장 감지: {len(companies)}개 회사({', '.join(companies)}). "
+        "본 도구는 단일 법인 분석으로 한정된다(CONSTRAINTS.md §단일 법인). "
+        f"회사별 모집단을 분리하지 않는 룰({', '.join(_MULTI_COMPANY_CONTAMINATED_RULES)})은 "
+        "회사 간 분포가 한 모집단으로 섞여 결과가 정합하지 않으므로, "
+        "회사별로 분리해 실행할 것."
+    ]
+
+
 @dataclass
 class PipelineResult:
     """전체 파이프라인 실행 결과."""
@@ -1391,6 +1428,7 @@ class AuditPipeline:
         results: list[DetectionResult] = []
 
         if detection_scope != "phase2_only":
+            warns.extend(single_company_scope_warnings(df))
             # Phase 1 core scope: L1-L4 rules plus D01/D02 when prior data exists.
             base_detectors = [
                 IntegrityDetector(

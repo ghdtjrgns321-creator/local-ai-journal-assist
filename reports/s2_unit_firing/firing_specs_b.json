@@ -1,0 +1,82 @@
+[
+  {
+    "rule_id": "L3-02",
+    "source": "src/detection/fraud_rules_feature.py:241-307 (b08_manual_override); 파생: src/feature/pattern_features.py:78-101 (add_is_manual_je); 임계: config/audit_rules.yaml manual_source_codes",
+    "fires_when": "is_manual_je==True 라인마다 발화(binary). source 정규화(소문자·trim) 후 {manual, adjustment} 포함이면 발화.",
+    "raw_row_recipe": "단일 행, source=\"Manual\"(대소문자 무관). 날짜·금액·계정·사용자·문서 무관.",
+    "population_needs": "없음",
+    "pitfalls": "source가 automated/recurring이면 미발화. is_manual_je 피처가 있으면 그 컬럼 우선."
+  },
+  {
+    "rule_id": "L3-03",
+    "source": "src/detection/fraud_rules_access.py:1698-1760 (b10_intercompany_review_signal), 1673-1695 (_intercompany_prefix_mask); 파생: pattern_features.py:104-133",
+    "fires_when": "is_intercompany==True 또는 gl_account가 intercompany prefix([1150,2050,4500,2700] 기본)로 시작하면 발화.",
+    "raw_row_recipe": "단일 행, gl_account=\"1150\"(또는 2050/4500/2700 시작). 또는 business_process=\"intercompany\" 또는 counterparty_type=\"intercompanyaffiliate\".",
+    "population_needs": "없음 (company distinct<2여도 발화 유지: fraud_rules_access.py:1755-1760)",
+    "pitfalls": "prefix 시작 문자열 정확히. intercompany_identifiers YAML 커스텀 시 그 값 우선."
+  },
+  {
+    "rule_id": "L3-10",
+    "source": "src/detection/fraud_rules_access.py:787-813 (b13), 321-356 (_estimate_account_mask); 임계: config/audit_rules.yaml estimate_account_use",
+    "fires_when": "account_name 키워드 OR gl_account 확정코드 정확일치([116100,119100,169100,237100,682100,2220]) OR prefix(빈 리스트=침묵).",
+    "raw_row_recipe": "단일 행, gl_account=\"2220\" (확정코드 축 — 원시 CSV에 account_name 컬럼이 없어 키워드 축은 원리상 침묵).",
+    "population_needs": "없음",
+    "pitfalls": "정확일치(startswith 아님) — \"22200\" 미매칭. 정규화: 소문자화 + \\.0+$ 제거."
+  },
+  {
+    "rule_id": "L3-12",
+    "source": "src/detection/fraud_rules_access.py:520-784 (b14), 458-517 (threshold); 임계: config/audit_rules.yaml work_scope_excess_review",
+    "fires_when": "사용자(created_by)×fiscal_year 집계. process_count>=persona 임계(default 4, junior/staff 3) OR company_count>=임계 OR (process>=3 AND company>=2) OR info_only(process>=3). 후보 사용자-연도의 전 행에 투영.",
+    "raw_row_recipe": "한 사용자·한 회계연도로 서로 다른 business_process 3종 각 1행(총 3행). 모든 행 동일 created_by(비공백)·동일 fiscal_year. user_persona는 staff(automated/admin 계열 금지), source는 manual 권장.",
+    "population_needs": "사용자-연도 다건 필요 (통계 분포 아님)",
+    "pitfalls": "created_by 정규화 후 system/ic_generator 금지. automated persona는 발화 억제 로직 있음. group=[fiscal_year,user] (fraud_rules_access.py:617)."
+  },
+  {
+    "rule_id": "L4-01",
+    "source": "src/detection/fraud_rules_feature.py:16-57 (b01); 파생: amount_features.py:487-515 + 174-258 (_zscore_with_fallback); 임계: zscore_threshold=3.0, revenue prefix \"4\"",
+    "fires_when": "gl_account startswith \"4\" AND amount_zscore_log > 3.0. 그룹=gl_account(n>=30), 폴백 CoA revenue → 전체.",
+    "raw_row_recipe": "안전 주입: 같은 gl_account \"4000\"에 비슷한 금액 정상행 30건+ 넣어 σ_log 축소 → 목표행 1건을 exp(μ_log+3.5σ_log) 이상으로. 배경 폴백(σ_log≈2.6) 의존 시 그룹 기하평균의 ~2,440배 필요.",
+    "population_needs": "그룹 로그 분포 의존 — 주입행이 자기 그룹 통계에 포함되므로 배경 표본 ≥30 권장",
+    "pitfalls": "std==0이면 z=0 강제. 0원/음수 base NaN. 엄격 부등호 >3.0."
+  },
+  {
+    "rule_id": "L3-04",
+    "source": "src/detection/anomaly_rules_simple.py:18-91 (c01); 파생: time_features.py:114-138; 임계: period_end_margin_days=5",
+    "fires_when": "is_period_end OR is_period_start. 월말 잔여일<=5 OR day<=5 → 월말 26~말일, 월초 1~5일.",
+    "raw_row_recipe": "단일 행, posting_date를 월말(예 xx-27~31) 또는 월초(1~5일)로.",
+    "population_needs": "없음",
+    "pitfalls": "posting_date 파싱 실패 시 미발화."
+  },
+  {
+    "rule_id": "L3-05",
+    "source": "src/detection/anomaly_rules_simple.py:200-254 (c02); 파생: time_features.py:69-75, 189-207",
+    "fires_when": "is_weekend(토/일) OR is_holiday(한국 법정공휴일).",
+    "raw_row_recipe": "단일 행, posting_date를 토/일(예 2024-07-13 토) 또는 공휴일로.",
+    "population_needs": "없음",
+    "pitfalls": "holidays 패키지 미설치 시 공휴일 축 침묵(주말 축 유효)."
+  },
+  {
+    "rule_id": "L3-06",
+    "source": "src/detection/anomaly_rules_simple.py:257-311 (c03); 파생: time_features.py:78-111; 임계: midnight_start=22.0, midnight_end=6.0",
+    "fires_when": "posting_date 시각이 22:00~05:59. 단 컬럼 전체가 00:00:00이면 '시간정보 없음'으로 전체 False.",
+    "raw_row_recipe": "단일 행, posting_date=\"YYYY-MM-DD 23:30:00\" 등 시각 포함. 배경에 시각 정보가 이미 존재해야(전 컬럼 자정이면 침묵).",
+    "population_needs": "컬럼 단위 시간정보 존재 전제 (time_features.py:53-63)",
+    "pitfalls": "22:00 포함, 06:00 미포함."
+  },
+  {
+    "rule_id": "L3-07",
+    "source": "src/detection/anomaly_rules_simple.py:314-363 (c04); 파생: time_features.py:141-160; 임계: backdated_threshold_days=30",
+    "fires_when": "abs((posting_date - document_date).days) > 30 (31일부터, 부호 무관).",
+    "raw_row_recipe": "단일 행, document_date와 posting_date 차이 31일 이상 (예 doc 2024-01-01, posting 2024-02-15).",
+    "population_needs": "없음",
+    "pitfalls": "정확히 30일은 미발화. document_date 결측이면 NaN→미발화."
+  },
+  {
+    "rule_id": "L1-08",
+    "source": "src/detection/anomaly_rules_simple.py:418-568 (c05); 파생: time_features.py:163-186; 임계: fiscal_year_start=1, strict_mode=True",
+    "fires_when": "fiscal_period != posting_date 월 (둘 다 non-null). strict 기본이라 면제 없음.",
+    "raw_row_recipe": "단일 행, posting_date=2024-03-10 + fiscal_period=4 (expected 3 ≠ 4).",
+    "population_needs": "없음",
+    "pitfalls": "둘 중 하나라도 결측이면 pd.NA→미발화."
+  }
+]

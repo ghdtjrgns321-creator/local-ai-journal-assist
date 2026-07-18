@@ -1,0 +1,2258 @@
+{
+  "dataset": "scale_out",
+  "documents": 300196,
+  "rows": 882633,
+  "summary": {
+    "FAIL": 30,
+    "PASS": 15,
+    "BLOCKED": 9,
+    "INFO": 3
+  },
+  "findings": [
+    {
+      "gate": "Gate 0",
+      "test_id": "O01",
+      "verdict": "FAIL",
+      "metric": {
+        "normal_flags": {
+          "is_fraud_true": 349,
+          "is_anomaly_true": 1737,
+          "fraud_type_nonblank": 349,
+          "anomaly_type_nonblank": 1737
+        },
+        "mutation_nonblank": {
+          "mutation_base_event_type": 1737,
+          "mutation_type": 1737,
+          "mutation_mutated_field": 1737,
+          "mutation_original_value": 1737,
+          "mutation_mutated_value": 1737,
+          "mutation_reason": 1737,
+          "detection_surface_hints": 0
+        }
+      },
+      "notes": "normal-only label/provenance contamination check"
+    },
+    {
+      "gate": "Gate 1",
+      "test_id": "E13_AUTOMATED_SOURCE_IDENTITY",
+      "verdict": "FAIL",
+      "metric": {
+        "automated_source_tokens": [
+          "auto",
+          "automated",
+          "batch",
+          "if",
+          "interface",
+          "recurring",
+          "sys",
+          "system"
+        ],
+        "auto_rows": 653557,
+        "auto_both_filled_rows": 13870,
+        "auto_missing_either_rows": 639687,
+        "auto_both_filled_rate": 0.021222326438244867,
+        "human_rows": 229076,
+        "human_either_filled_rows": 0,
+        "human_either_filled_rate": 0.0,
+        "trusted_automated_rows": 13467,
+        "trusted_automated_rate": 0.02060570080344943,
+        "trusted_automated_min_rate": 0.9
+      },
+      "notes": "automated/recurring source rows require both batch_id and job_id, human-entered rows must keep them blank, and source_trust must trust automated rows"
+    },
+    {
+      "gate": "Gate 0",
+      "test_id": "A01",
+      "verdict": "FAIL",
+      "metric": {
+        "imbalance_count": 118,
+        "max_abs_diff_krw": 149246820
+      },
+      "notes": "document-level debit/credit balance in integer KRW"
+    },
+    {
+      "gate": "Gate 0",
+      "test_id": "A02",
+      "verdict": "PASS",
+      "metric": {
+        "both_side_rows": 0,
+        "zero_side_rows": 0
+      },
+      "notes": "line side validity"
+    },
+    {
+      "gate": "Gate 0",
+      "test_id": "E05_SOD_DIRECT_MARKER",
+      "verdict": "FAIL",
+      "metric": {
+        "documents_checked": 300196,
+        "sod_violation_true_docs": 3209,
+        "sod_violation_true_rate": 0.010689682740609469,
+        "sod_conflict_type_nonblank_docs": 3209,
+        "non_self_sod_docs": 3028,
+        "self_approval_without_direct_marker_docs": 0,
+        "top_sod_conflict_type": {
+          "preparer_approver": 1737,
+          "requester_approver": 523,
+          "journal_entry_poster": 337,
+          "reconciler_poster": 321,
+          "payment_releaser": 219,
+          "master_data_maintainer": 71,
+          "skipped_approval": 1
+        }
+      },
+      "notes": "normal baseline may contain self-approval context, but direct SoD violation markers are reserved for abnormal overlays"
+    },
+    {
+      "gate": "Gate 0",
+      "test_id": "E05B_RBAC_PERSONA_PROCESS_SCOPE",
+      "verdict": "FAIL",
+      "metric": {
+        "documents_checked": 300196,
+        "scope_bad_docs": 24053,
+        "scope_bad_examples": {
+          "('junior_accountant', 'P2P')": 10146,
+          "('junior_accountant', 'O2C')": 9181,
+          "('junior_accountant', 'H2R')": 2510,
+          "('senior_accountant', 'H2R')": 2216
+        },
+        "persona_process_counts": {
+          "senior_accountant": 6,
+          "junior_accountant": 5,
+          "manager": 3
+        },
+        "low_level_over_breadth": {
+          "junior_accountant": 5
+        },
+        "user_over_breadth_top20": {},
+        "all_to_all_personas": {}
+      },
+      "notes": "normal RBAC scope: low-level clerks are process-specialized; senior/controller may have limited multi-process scope; automated sources are exempt"
+    },
+    {
+      "gate": "Gate 0",
+      "test_id": "E05C_APPROVER_MASTER_AUTHORITY",
+      "verdict": "FAIL",
+      "metric": {
+        "approved_docs_checked": 87049,
+        "unresolved_approver_docs": 0,
+        "unauthorized_approver_docs": 16,
+        "approval_limit_exceeded_docs": 56,
+        "approval_limit_exceeded_rate": 0.0006433158336109548,
+        "approval_limit_exceeded_min_rate": 0.0005,
+        "approval_limit_exceeded_max_rate": 0.02,
+        "authority_bad_docs": 16,
+        "limit_rate_in_range": 1,
+        "bad_docs": 16,
+        "exception_by_process_top10": {
+          "P2P": 38,
+          "O2C": 18,
+          "H2R": 6,
+          "A2R": 6,
+          "R2R": 4
+        },
+        "exception_approver_examples": [
+          {
+            "approved_by": "BJONES035",
+            "_approver_persona": "manager",
+            "_approver_job_title": "Staff Accountant"
+          },
+          {
+            "approved_by": "PPILLA023",
+            "_approver_persona": "manager",
+            "_approver_job_title": "Staff Accountant"
+          },
+          {
+            "approved_by": "DBAKER061",
+            "_approver_persona": "manager",
+            "_approver_job_title": "Staff Accountant"
+          },
+          {
+            "approved_by": "JSNCHE037",
+            "_approver_persona": "junior_accountant",
+            "_approver_job_title": "Staff Accountant"
+          },
+          {
+            "approved_by": "LBECKE041",
+            "_approver_persona": "manager",
+            "_approver_job_title": "Staff Accountant"
+          },
+          {
+            "approved_by": "ASCHUB031",
+            "_approver_persona": "manager",
+            "_approver_job_title": "Staff Accountant"
+          },
+          {
+            "approved_by": "RMEIER050",
+            "_approver_persona": "manager",
+            "_approver_job_title": "Staff Accountant"
+          },
+          {
+            "approved_by": "BLEWIS067",
+            "_approver_persona": "manager",
+            "_approver_job_title": "Staff Accountant"
+          },
+          {
+            "approved_by": "DSINGH056",
+            "_approver_persona": "senior_accountant",
+            "_approver_job_title": "Staff Accountant"
+          },
+          {
+            "approved_by": "DCARTE028",
+            "_approver_persona": "manager",
+            "_approver_job_title": "Staff Accountant"
+          },
+          {
+            "approved_by": "EWALKE019",
+            "_approver_persona": "manager",
+            "_approver_job_title": "Staff Accountant"
+          },
+          {
+            "approved_by": "SRUIZ007",
+            "_approver_persona": "junior_accountant",
+            "_approver_job_title": "Staff Accountant"
+          },
+          {
+            "approved_by": "KCOLLI004",
+            "_approver_persona": "manager",
+            "_approver_job_title": "Staff Accountant"
+          },
+          {
+            "approved_by": "JCAMPB033",
+            "_approver_persona": "junior_accountant",
+            "_approver_job_title": "Staff Accountant"
+          },
+          {
+            "approved_by": "CYE047",
+            "_approver_persona": "junior_accountant",
+            "_approver_job_title": "Staff Accountant"
+          },
+          {
+            "approved_by": "VGUPTA020",
+            "_approver_persona": "manager",
+            "_approver_job_title": "Staff Accountant"
+          },
+          {
+            "approved_by": "AROUSS010",
+            "_approver_persona": "junior_accountant",
+            "_approver_job_title": "Staff Accountant"
+          },
+          {
+            "approved_by": "APATIL062",
+            "_approver_persona": "junior_accountant",
+            "_approver_job_title": "Staff Accountant"
+          },
+          {
+            "approved_by": "SMITCH009",
+            "_approver_persona": "manager",
+            "_approver_job_title": "Staff Accountant"
+          },
+          {
+            "approved_by": "LALLEN025",
+            "_approver_persona": "manager",
+            "_approver_job_title": "Staff Accountant"
+          }
+        ]
+      },
+      "notes": "approved_by users must exist and have can_approve_je=true; approval-limit exceedance must be present but bounded as a natural control exception"
+    },
+    {
+      "gate": "Gate 1",
+      "test_id": "I01_I03_I04",
+      "verdict": "FAIL",
+      "metric": {
+        "document_id_company_year_type_conflict_docs": 0,
+        "duplicate_document_number_docs": 0,
+        "bad_document_number_format_docs": 0,
+        "same_role_duplicate_reference_groups": 43,
+        "same_role_duplicate_reference_docs": 86,
+        "cross_role_shared_reference_groups": 6401,
+        "document_number_pattern": "company-year-document_type-000001 by company/year/document_type range",
+        "reference_policy": "same-role reference reuse must be 0; cross-role shared references are flow-link diagnostics"
+      },
+      "notes": "document number uniqueness/number range and same-role reference reuse"
+    },
+    {
+      "gate": "Gate 1",
+      "test_id": "I05_DUPLICATE_ARTIFACT_DOCUMENT_SCOPE",
+      "verdict": "FAIL",
+      "metric": {
+        "detector_import_available": 0,
+        "detector_import_error": "No module named 'src.detection.duplicate_detector'",
+        "fallback_exact_same_document_groups": 101,
+        "fallback_explained_batch_groups": 98,
+        "fallback_unexplained_same_document_groups": 3,
+        "fallback_unexplained_same_document_pair_count": 3,
+        "fallback_key": [
+          "document_id",
+          "gl_account",
+          "amount",
+          "posting_date_day",
+          "line_text"
+        ],
+        "explainable_document_fields": [
+          "batch_type",
+          "batch_id",
+          "job_id"
+        ]
+      },
+      "notes": "DuplicateDetector retained pair artifact must not contain same-document line pairs"
+    },
+    {
+      "gate": "Gate 1",
+      "test_id": "B15_B16_H04",
+      "verdict": "FAIL",
+      "metric": {
+        "p2p_checked_docs": {
+          "VendorService": 4099,
+          "VendorOfficeSupplies": 4102,
+          "VendorRawMaterial": 4054,
+          "VendorUtilities": 4062
+        },
+        "p2p_bad_docs": {
+          "VendorService": 0,
+          "VendorOfficeSupplies": 0,
+          "VendorRawMaterial": 0,
+          "VendorUtilities": 0
+        },
+        "h2r_payment_checked_docs": 6295,
+        "h2r_payment_bad_docs": 1,
+        "ic_checked_docs": 0,
+        "ic_bad_docs": 0,
+        "violation_flags": {
+          "h2r_payment_text_off_domain": 1
+        }
+      },
+      "notes": "counterparty/account/text/document coherence"
+    },
+    {
+      "gate": "Gate 1",
+      "test_id": "A07_L02_L03",
+      "verdict": "FAIL",
+      "metric": {
+        "P2P_VENDOR_INVOICE": {
+          "tax_docs": 13986,
+          "bad_ratio_gt_15pct_or_no_base": 94,
+          "no_base": 73,
+          "ratio_p50": 0.1,
+          "ratio_p95": 0.10000292127175191
+        },
+        "O2C_CUSTOMER_INVOICE": {
+          "tax_docs": 56727,
+          "bad_ratio_gt_15pct_or_no_base": 3,
+          "no_base": 0,
+          "ratio_p50": 0.1,
+          "ratio_p95": 0.10000313361751259
+        }
+      },
+      "notes": "VAT GL line existence and base/tax ratio; empty tax population is not PASS"
+    },
+    {
+      "gate": "Gate 1",
+      "test_id": "L06",
+      "verdict": "FAIL",
+      "metric": {
+        "treatment_counts": {
+          "non_taxable": 599185,
+          "taxable_10": 261104,
+          "zero_rated_export": 13538,
+          "exempt": 6453,
+          "import_vat": 2353
+        },
+        "missing_treatments": [],
+        "bad_taxable_docs": 8,
+        "bad_import_vat_docs": 0,
+        "bad_zero_rated_docs": 0,
+        "bad_exempt_docs": 0,
+        "bad_non_taxable_docs": 8,
+        "mixed_treatment_docs": 8
+      },
+      "notes": "tax treatment must follow transaction archetype/evidence, not random/reference markers"
+    },
+    {
+      "gate": "Gate 1",
+      "test_id": "G08_G09",
+      "verdict": "FAIL",
+      "metric": {
+        "missing_field_rate_per_row": 0.06503382493063369,
+        "text_format_variation_rate_per_row": 0.010014354777127072,
+        "typo_rate_per_row": 0.025324228756459368,
+        "records_with_issues_rate_per_doc": 0.2946084446528394
+      },
+      "notes": "true noise rate from generator stats; lexical Latin scans are diagnostic only"
+    },
+    {
+      "gate": "Gate 2",
+      "test_id": "C03_C09_C10",
+      "verdict": "PASS",
+      "metric": {
+        "round_10k_rate": 0.06884061665494039,
+        "top_exact_share": 0.0021299906076477993
+      },
+      "notes": "amount round-grid dominance and exact amount concentration"
+    },
+    {
+      "gate": "Gate 2",
+      "test_id": "C07_STABLE_ACCOUNT_YOY_VOLATILITY",
+      "verdict": "PASS",
+      "metric": {
+        "stable_account_rows": 168095,
+        "stable_accounts_used": 5,
+        "checked_year_pairs": 10,
+        "year_pairs": [
+          [
+            "2022",
+            "2023"
+          ],
+          [
+            "2023",
+            "2024"
+          ]
+        ],
+        "min_activity_krw": 50000000,
+        "max_allowed_change_ratio": 8.0,
+        "bad_year_pairs": 0,
+        "bad_year_pairs_by_class": {},
+        "max_change_ratio": 2.103800062836084,
+        "sample_bad_pairs": []
+      },
+      "notes": "stable accounts such as tax, interest, depreciation/amortization, and rent must not swing by implausible account-level YoY ratios"
+    },
+    {
+      "gate": "Gate 2",
+      "test_id": "C06_ACCOUNT_PAIR_REUSE",
+      "verdict": "FAIL",
+      "metric": {
+        "eligible_documents": 300183,
+        "concrete_pair_count": 253,
+        "rare_pair_count": 97,
+        "l404_like_rare_doc_rate": 0.0003064797140411016,
+        "l404_like_rare_doc_max_rate": 0.01,
+        "source_rare_doc_rates": {
+          "recurring": 0.0002296540835366729,
+          "automated": 0.00019837333862328903,
+          "interface": 0.0
+        },
+        "recurring_rare_doc_max_rate": 0.005,
+        "automated_rare_doc_max_rate": 0.01,
+        "fragmented_rare_pair_count": 27,
+        "fragmented_rare_pair_rate": 0.27835051546391754,
+        "fragmented_rare_pair_max_rate": 0.2,
+        "top20_pair_occurrence_share": 0.5816983201523985,
+        "sample_fragmented_pairs": [
+          {
+            "company_code": "C001",
+            "fiscal_year": "2022",
+            "debit": "1160",
+            "credit": "",
+            "pair_count": 1,
+            "is_rare": 1,
+            "debit_subtype": "INPUT_TAX_RECEIVABLE",
+            "credit_subtype": "ACCRUED_LIABILITIES",
+            "subtype_pair_count": 1932.0
+          },
+          {
+            "company_code": "C001",
+            "fiscal_year": "2022",
+            "debit": "1160",
+            "credit": "2300",
+            "pair_count": 1,
+            "is_rare": 1,
+            "debit_subtype": "INPUT_TAX_RECEIVABLE",
+            "credit_subtype": "GRIR",
+            "subtype_pair_count": 1950.0
+          },
+          {
+            "company_code": "C001",
+            "fiscal_year": "2022",
+            "debit": "1570",
+            "credit": "6600",
+            "pair_count": 1,
+            "is_rare": 1,
+            "debit_subtype": "OPEX_TAX",
+            "credit_subtype": "ACCRUED_LIABILITIES",
+            "subtype_pair_count": 9817.0
+          },
+          {
+            "company_code": "C001",
+            "fiscal_year": "2022",
+            "debit": "1590",
+            "credit": "6300",
+            "pair_count": 1,
+            "is_rare": 1,
+            "debit_subtype": "OPEX_TAX",
+            "credit_subtype": "ACCRUED_LIABILITIES",
+            "subtype_pair_count": 9817.0
+          },
+          {
+            "company_code": "C001",
+            "fiscal_year": "2022",
+            "debit": "1700",
+            "credit": "2900",
+            "pair_count": 1,
+            "is_rare": 1,
+            "debit_subtype": "FIXED_ASSET",
+            "credit_subtype": "GRIR",
+            "subtype_pair_count": 1598.0
+          },
+          {
+            "company_code": "C001",
+            "fiscal_year": "2022",
+            "debit": "4600",
+            "credit": "2200",
+            "pair_count": 1,
+            "is_rare": 1,
+            "debit_subtype": "OPEX_TAX",
+            "credit_subtype": "ACCRUED_LIABILITIES",
+            "subtype_pair_count": 9817.0
+          },
+          {
+            "company_code": "C001",
+            "fiscal_year": "2022",
+            "debit": "5000",
+            "credit": "",
+            "pair_count": 1,
+            "is_rare": 1,
+            "debit_subtype": "COGS_MATERIAL",
+            "credit_subtype": "ACCRUED_LIABILITIES",
+            "subtype_pair_count": 222.0
+          },
+          {
+            "company_code": "C001",
+            "fiscal_year": "2022",
+            "debit": "6000",
+            "credit": "1900",
+            "pair_count": 1,
+            "is_rare": 1,
+            "debit_subtype": "DEPRECIATION_EXPENSE",
+            "credit_subtype": "ACCUMULATED_DEPRECIATION",
+            "subtype_pair_count": 6049.0
+          },
+          {
+            "company_code": "C001",
+            "fiscal_year": "2022",
+            "debit": "6700",
+            "credit": "",
+            "pair_count": 3,
+            "is_rare": 1,
+            "debit_subtype": "OPEX_PROFESSIONAL_FEES",
+            "credit_subtype": "ACCRUED_LIABILITIES",
+            "subtype_pair_count": 10266.0
+          },
+          {
+            "company_code": "C001",
+            "fiscal_year": "2022",
+            "debit": "6700",
+            "credit": "2300",
+            "pair_count": 1,
+            "is_rare": 1,
+            "debit_subtype": "OPEX_PROFESSIONAL_FEES",
+            "credit_subtype": "GRIR",
+            "subtype_pair_count": 594.0
+          }
+        ]
+      },
+      "notes": "normal ERP account determination should reuse concrete debit-credit account pairs; L4-04-like rare pairs must not be dominated by subtype fragmentation. NOTE: this check reads the RESULT only, so it can be satisfied by post-hoc rewriting of gl_account -- ACC02 checks the METHOD and is the one that blocks that"
+    },
+    {
+      "gate": "Gate 2",
+      "test_id": "ACC01_TAX_LINE_USES_TAX_ACCOUNT",
+      "verdict": "FAIL",
+      "metric": {
+        "violations": 98282,
+        "denominator": 168990,
+        "tax_accounts_in_coa": 19,
+        "top_violating_accounts": {
+          "4100": 39912,
+          "4000": 39889,
+          "6700": 5031,
+          "6400": 4930,
+          "6500": 4842
+        }
+      },
+      "notes": "tax-bearing lines must post to a tax account; VAT receivable/payable have dedicated accounts under Korean VAT law"
+    },
+    {
+      "gate": "Gate 2",
+      "test_id": "ACC02_ACCOUNT_DETERMINATION_COMPLIANCE",
+      "verdict": "FAIL",
+      "metric": {
+        "violations": 116,
+        "denominator": 882633,
+        "uncovered_rows": 0,
+        "top_mismatches": {
+          "R2R_ACCRUAL | ACCRUED_LIABILITIES |  | 2200": 16,
+          "A2R_DEPRECIATION | ACCUMULATED_DEPRECIATION |  | 1510": 6,
+          "O2C_CUSTOMER_INVOICE | AR |  | 1100": 4,
+          "A2R_ASSET_ACQUISITION | FIXED_ASSET |  | 1500": 3,
+          "A2R_DEPRECIATION | AMORTIZATION_EXPENSE | 888888 | 6050": 3
+        }
+      },
+      "notes": "ledger gl_account must match the generator's account determination table for its (scenario, side, subtype); post-hoc gl_account rewriting necessarily breaks this"
+    },
+    {
+      "gate": "Gate 2",
+      "test_id": "ACC03_SEMANTIC_SUBTYPE_ASSIGNED",
+      "verdict": "PASS",
+      "metric": {
+        "standard_account_rows": 0,
+        "denominator": 882633,
+        "ratio": 0.0,
+        "threshold": 0.01
+      },
+      "notes": "semantic_account_subtype must carry meaning, not the 'standard_account' placeholder"
+    },
+    {
+      "gate": "Gate 2",
+      "test_id": "ACC04_SUSPENSE_FLAG_AGREES_WITH_COA",
+      "verdict": "PASS",
+      "metric": {
+        "violations": 0,
+        "denominator": 882633,
+        "disagreeing_accounts": {}
+      },
+      "notes": "ledger is_suspense_account must agree with the CoA flag for the same account"
+    },
+    {
+      "gate": "Gate 2",
+      "test_id": "ACC05_NO_AUTOGENERATED_ACCOUNT_NAMES",
+      "verdict": "PASS",
+      "metric": {
+        "violations": 0,
+        "denominator": 882633,
+        "distinct_auto_accounts_posted": 0,
+        "sample": {}
+      },
+      "notes": "no postings to padding accounts named like 'Cash 4'; real charts of accounts have no serial-numbered names"
+    },
+    {
+      "gate": "Gate 2",
+      "test_id": "ACC06_LEDGER_ACCOUNTS_DEFINED_IN_COA",
+      "verdict": "FAIL",
+      "metric": {
+        "undefined_accounts": [
+          "",
+          "1520",
+          "1530",
+          "1540",
+          "1570",
+          "1590",
+          "1700",
+          "1900",
+          "4300",
+          "777777"
+        ],
+        "undefined_account_count": 11,
+        "violating_rows": 76,
+        "denominator": 882633,
+        "accounts_used": 50
+      },
+      "notes": "every gl_account used by the ledger must exist in chart_of_accounts.json"
+    },
+    {
+      "gate": "Gate 2",
+      "test_id": "ACC07_NO_DUPLICATE_ACCOUNT_NAMES",
+      "verdict": "PASS",
+      "metric": {
+        "duplicate_name_groups": 0,
+        "denominator_accounts_used": 50,
+        "duplicates": {}
+      },
+      "notes": "accounts posted to must have distinct names; duplicates leave an auditor no basis to tell them apart"
+    },
+    {
+      "gate": "Gate 2",
+      "test_id": "ACC08_SUBTYPE_VOCABULARY_IS_REAL",
+      "verdict": "PASS",
+      "metric": {
+        "violations": 0,
+        "denominator": 882633,
+        "known_subtypes": 40,
+        "unknown_labels": {}
+      },
+      "notes": "semantic_account_subtype must come from the account determination table's vocabulary; invented labels hide from ACC02, which skips subtypes it does not know"
+    },
+    {
+      "gate": "Gate 2",
+      "test_id": "ACC09_PAYROLL_TEXT_ON_PAYROLL_ACCOUNTS",
+      "verdict": "FAIL",
+      "metric": {
+        "violations": 2,
+        "denominator": 12169,
+        "payroll_expense_accounts": [
+          "5200",
+          "6100"
+        ],
+        "top_violations": {
+          "6200|PAYROLL_TAX": 1,
+          "6600|PAYROLL_SALARY": 1
+        }
+      },
+      "notes": "payroll line text must sit on a payroll expense account; regression gate for the defect that started this work (rent account carried 5,145 payroll lines because a post-hoc step rewrote gl_account and left the text)"
+    },
+    {
+      "gate": "Diagnostic",
+      "test_id": "O02",
+      "verdict": "FAIL",
+      "metric": {
+        "high_risk_marker_count": 7,
+        "sample_findings": [
+          {
+            "type": "single_value_single_scenario",
+            "column": "profit_center",
+            "value": "PC-C001-R2R",
+            "documents": 95136,
+            "top_scenario": "R2R_ACCRUAL",
+            "top_scenario_share": 1.0
+          },
+          {
+            "type": "single_value_single_scenario",
+            "column": "sod_conflict_type",
+            "value": "journal_entry_poster",
+            "documents": 337,
+            "top_scenario": "R2R_ACCRUAL",
+            "top_scenario_share": 1.0
+          },
+          {
+            "type": "single_value_single_scenario",
+            "column": "sod_conflict_type",
+            "value": "reconciler_poster",
+            "documents": 321,
+            "top_scenario": "R2R_ACCRUAL",
+            "top_scenario_share": 1.0
+          },
+          {
+            "type": "single_value_single_scenario",
+            "column": "mutation_base_event_type",
+            "value": "R2R_ACCRUAL",
+            "documents": 232,
+            "top_scenario": "R2R_ACCRUAL",
+            "top_scenario_share": 1.0
+          },
+          {
+            "type": "single_value_single_scenario",
+            "column": "mutation_original_value",
+            "value": "R2R_ACCRUAL",
+            "documents": 232,
+            "top_scenario": "R2R_ACCRUAL",
+            "top_scenario_share": 1.0
+          },
+          {
+            "type": "single_value_single_scenario",
+            "column": "mutation_base_event_type",
+            "value": "O2C_CUSTOMER_INVOICE",
+            "documents": 143,
+            "top_scenario": "O2C_CUSTOMER_INVOICE",
+            "top_scenario_share": 1.0
+          },
+          {
+            "type": "single_value_single_scenario",
+            "column": "mutation_original_value",
+            "value": "O2C_CUSTOMER_INVOICE",
+            "documents": 143,
+            "top_scenario": "O2C_CUSTOMER_INVOICE",
+            "top_scenario_share": 1.0
+          }
+        ],
+        "rules": {
+          "single_value_single_scenario": "non-structural value appears in >=100 documents and >=98% one scenario",
+          "exact_timestamp_cluster": "exact posting timestamp appears in >=50 documents",
+          "scenario_amount_dominance": "one exact amount is >=20% of rows in a scenario with >=500 rows"
+        },
+        "delegated_structural_rbac_columns": [
+          "user_persona",
+          "created_by",
+          "approved_by"
+        ]
+      },
+      "notes": "all-column synthetic marker scan for generator fingerprints"
+    },
+    {
+      "gate": "Gate 1",
+      "test_id": "K01",
+      "verdict": "PASS",
+      "metric": {
+        "company_codes": [
+          "C001"
+        ],
+        "expected_company_codes": [
+          "C001"
+        ],
+        "company_code_count": 1,
+        "total_documents": 300196,
+        "total_rows": 882633
+      },
+      "notes": "single legal-entity journal scope"
+    },
+    {
+      "gate": "Gate 1",
+      "test_id": "K02",
+      "verdict": "FAIL",
+      "metric": {
+        "ic_row_count": 0,
+        "ic_doc_count": 0,
+        "related_surface_docs": 0,
+        "receivable_prefix_rows_in_ic": 0,
+        "payable_prefix_rows_in_ic": 0,
+        "pair_map_rows_in_ic": 0,
+        "ic_row_share": 0.0,
+        "expected_ic_row_share_range": [
+          0.0005,
+          0.02
+        ]
+      },
+      "notes": "single-company normal must contain low-volume related-party IC traces without adding extra ledger companies"
+    },
+    {
+      "gate": "Gate 1",
+      "test_id": "K03",
+      "verdict": "FAIL",
+      "metric": {
+        "candidate_pair_count": 0,
+        "matched_pair_count": 0,
+        "matched_rate": 0.0,
+        "diff_ratio_p95": null,
+        "diff_ratio_max": null,
+        "tolerance_exceeded_pairs": 0,
+        "date_diff_p95": null,
+        "date_diff_max": null,
+        "close_lag_exceeded_pairs": 0,
+        "receivable_prefix_rows": 0,
+        "payable_prefix_rows": 0
+      },
+      "notes": "normal related-party IC must include both receivable/revenue and payable/cost traces"
+    },
+    {
+      "gate": "Gate 1",
+      "test_id": "K04",
+      "verdict": "FAIL",
+      "metric": {
+        "candidate_pair_count": 0,
+        "matched_pair_count": 0,
+        "matched_rate": 0.0,
+        "diff_ratio_p95": null,
+        "diff_ratio_max": null,
+        "tolerance_exceeded_pairs": 0,
+        "date_diff_p95": null,
+        "date_diff_max": null,
+        "close_lag_exceeded_pairs": 0,
+        "ic_date_missing_rows": 0
+      },
+      "notes": "normal related-party IC timing must have populated dates and no stale close-lag pattern"
+    },
+    {
+      "gate": "Gate 1",
+      "test_id": "K05",
+      "verdict": "FAIL",
+      "metric": {
+        "company_codes": [
+          "C001"
+        ],
+        "company_code_partner_rows": 0,
+        "ic_prefixed_partner_rows": 0,
+        "self_company_partner_rows": 0,
+        "company_code_partner_non_ic_rows": 0,
+        "allowed_related_party_partners": [
+          "C002",
+          "C003"
+        ]
+      },
+      "notes": "company-code partners are allowed only as related-party trading_partner values on IC rows"
+    },
+    {
+      "gate": "Gate 2",
+      "test_id": "K06",
+      "verdict": "PASS",
+      "metric": {
+        "networkx_available": 1,
+        "edges_built": 0,
+        "cycles_found": 0
+      },
+      "notes": "single-company normal must not contain company-node graph cycles"
+    },
+    {
+      "gate": "Gate 2",
+      "test_id": "K07",
+      "verdict": "FAIL",
+      "metric": {
+        "direction_pair_count": 0,
+        "high_asymmetry_pair_count": 0,
+        "high_asymmetry_rate": 0.0
+      },
+      "notes": "normal related-party IC should have a directional population without being entirely one-sided"
+    },
+    {
+      "gate": "Gate 1",
+      "test_id": "K08",
+      "verdict": "FAIL",
+      "metric": {
+        "files_checked": 18,
+        "forbidden_sidecar_file_count": 2,
+        "sample_findings": [
+          {
+            "path": "master_data\\customers.json",
+            "hits": {
+              "IC-C": 22
+            }
+          },
+          {
+            "path": "master_data\\vendors.json",
+            "hits": {
+              "IC-C": 41
+            }
+          }
+        ],
+        "sample_forbidden_company_field_hits": [],
+        "forbidden_patterns": [
+          "IC-C",
+          "IC_INTERCOMPANY"
+        ],
+        "allowed_related_party_partner_codes": [
+          "C002",
+          "C003"
+        ]
+      },
+      "notes": "single-company scope must also hold in master/flow/subledger/balance sidecars"
+    },
+    {
+      "gate": "Gate 1",
+      "test_id": "J08",
+      "verdict": "PASS",
+      "metric": {
+        "max_line_count": 141,
+        "high_line_docs_ge_100": 108,
+        "min_expected_high_line_docs_ge_100": 60,
+        "has_batch_fields": 1,
+        "missing_batch_metadata_docs": 0,
+        "batch_type_counts": {
+          "payroll_payment_batch": 36,
+          "vendor_payment_batch": 36,
+          "depreciation_run": 36
+        }
+      },
+      "notes": "high-line-count batch explainability; missing batch metadata is BLOCKED"
+    },
+    {
+      "gate": "Gate 1",
+      "test_id": "J04_J07",
+      "verdict": "FAIL",
+      "metric": {
+        "reversal_scenario_docs": 33,
+        "linked_reversal_docs": 33,
+        "checked_pairs": 33,
+        "unlinked_reversal_docs": 0,
+        "sample_unlinked_reversal_docs": [],
+        "missing_originals": 0,
+        "bad_time_order": 0,
+        "bad_pair_net": 2,
+        "bad_reason_or_type": 0,
+        "max_abs_pair_net_krw": 9974649965.0
+      },
+      "notes": "normal reversal entries must carry original-document links and net to zero by GL account"
+    },
+    {
+      "gate": "Gate 2",
+      "test_id": "M01",
+      "verdict": "BLOCKED",
+      "metric": {
+        "opening_balance_companies": 0,
+        "trial_balance_periods": 36,
+        "missing": [
+          "balance/opening_balances.json"
+        ]
+      },
+      "notes": "financial statement balance artifacts required"
+    },
+    {
+      "gate": "Gate 2",
+      "test_id": "M02",
+      "verdict": "BLOCKED",
+      "metric": {
+        "opening_balance_companies": 0,
+        "trial_balance_periods": 36,
+        "missing": [
+          "balance/opening_balances.json"
+        ]
+      },
+      "notes": "financial statement balance artifacts required"
+    },
+    {
+      "gate": "Gate 2",
+      "test_id": "M03",
+      "verdict": "BLOCKED",
+      "metric": {
+        "opening_balance_companies": 0,
+        "trial_balance_periods": 36,
+        "missing": [
+          "balance/opening_balances.json"
+        ]
+      },
+      "notes": "financial statement balance artifacts required"
+    },
+    {
+      "gate": "Gate 2",
+      "test_id": "M04",
+      "verdict": "BLOCKED",
+      "metric": {
+        "opening_balance_companies": 0,
+        "trial_balance_periods": 36,
+        "missing": [
+          "balance/opening_balances.json"
+        ]
+      },
+      "notes": "financial statement balance artifacts required"
+    },
+    {
+      "gate": "Gate 2",
+      "test_id": "M05",
+      "verdict": "BLOCKED",
+      "metric": {
+        "opening_balance_companies": 0,
+        "trial_balance_periods": 36,
+        "missing": [
+          "balance/opening_balances.json"
+        ]
+      },
+      "notes": "financial statement balance artifacts required"
+    },
+    {
+      "gate": "Gate 2",
+      "test_id": "M06",
+      "verdict": "BLOCKED",
+      "metric": {
+        "opening_balance_companies": 0,
+        "trial_balance_periods": 36,
+        "missing": [
+          "balance/opening_balances.json"
+        ]
+      },
+      "notes": "financial statement balance artifacts required"
+    },
+    {
+      "gate": "Gate 2",
+      "test_id": "M14",
+      "verdict": "BLOCKED",
+      "metric": {
+        "opening_balance_companies": 0,
+        "trial_balance_periods": 36,
+        "missing": [
+          "balance/opening_balances.json"
+        ]
+      },
+      "notes": "financial statement balance artifacts required"
+    },
+    {
+      "gate": "Gate 2",
+      "test_id": "M07",
+      "verdict": "PASS",
+      "metric": {
+        "reconciliations": 5,
+        "bad_reconciliations": 0,
+        "max_abs_diff_krw": 0.0,
+        "statuses": {
+          "Reconciled": 5
+        }
+      },
+      "notes": "AR/AP/Inventory/FA subledger equals GL control"
+    },
+    {
+      "gate": "Gate 2",
+      "test_id": "M11",
+      "verdict": "FAIL",
+      "metric": {
+        "company_years_checked": 3,
+        "bad_company_years": 3,
+        "thresholds": {
+          "cogs_ratio": "0.55..0.92",
+          "sga_ratio": "0.03..0.45",
+          "interest_ratio_max": 0.15,
+          "tax_ratio_max": 0.4,
+          "operating_margin_min": -0.2
+        },
+        "ratio_summary": {
+          "cogs_ratio": {
+            "min": 0.10733497004876866,
+            "p50": 0.11438985518676044,
+            "max": 0.12858932126801756
+          },
+          "sga_ratio": {
+            "min": 1.1571121416133674,
+            "p50": 1.342041452600988,
+            "max": 1.8173524355461164
+          },
+          "interest_ratio": {
+            "min": 0.37279828562929346,
+            "p50": 0.39815326410894497,
+            "max": 0.460741919101434
+          },
+          "tax_ratio": {
+            "min": 0.07818943359034673,
+            "p50": 0.14106129411370943,
+            "max": 0.2200950398683558
+          },
+          "operating_margin": {
+            "min": -0.924687405594885,
+            "p50": -0.47063077386900554,
+            "max": -0.2715019968001279
+          }
+        },
+        "sample_bad_periods": [
+          {
+            "company": "C001",
+            "year": "2022",
+            "revenue": 458447302735,
+            "cogs_ratio": 0.10733497004876866,
+            "sga_ratio": 1.8173524355461164,
+            "interest_ratio": 0.460741919101434,
+            "tax_ratio": 0.2200950398683558,
+            "operating_margin": -0.924687405594885
+          },
+          {
+            "company": "C001",
+            "year": "2023",
+            "revenue": 506794866637,
+            "cogs_ratio": 0.11438985518676044,
+            "sga_ratio": 1.1571121416133674,
+            "interest_ratio": 0.37279828562929346,
+            "tax_ratio": 0.14106129411370943,
+            "operating_margin": -0.2715019968001279
+          },
+          {
+            "company": "C001",
+            "year": "2024",
+            "revenue": 510378782459,
+            "cogs_ratio": 0.12858932126801756,
+            "sga_ratio": 1.342041452600988,
+            "interest_ratio": 0.39815326410894497,
+            "tax_ratio": 0.07818943359034673,
+            "operating_margin": -0.47063077386900554
+          }
+        ]
+      },
+      "notes": "company-year P&L ratio realism: revenue, COGS, SGA, interest, tax must be economically plausible"
+    },
+    {
+      "gate": "Gate 1",
+      "test_id": "B18",
+      "verdict": "FAIL",
+      "metric": {
+        "used_accounts_checked": 49,
+        "bad_account_count": 1,
+        "sample_bad_accounts": [
+          {
+            "account": "7100",
+            "reason": "other_income_prefix_has_expense_semantics",
+            "account_type": "expense",
+            "sub_type": "interest_expense",
+            "name": ""
+          }
+        ]
+      },
+      "notes": "account code prefix must match account type and semantic subtype"
+    },
+    {
+      "gate": "Gate 2",
+      "test_id": "M12",
+      "verdict": "BLOCKED",
+      "metric": {
+        "missing": "financial_statements.json"
+      },
+      "notes": "exported financial statements must have positive revenue, COGS below revenue, and GL rollup mappings"
+    },
+    {
+      "gate": "Gate 2",
+      "test_id": "M13",
+      "verdict": "BLOCKED",
+      "metric": {
+        "depreciation_expense_rows": 0
+      },
+      "notes": "depreciation and amortization expense must have positive net P&L impact by company-year"
+    },
+    {
+      "gate": "Gate 1",
+      "test_id": "B17",
+      "verdict": "PASS",
+      "metric": {
+        "archetype_column": "semantic_scenario_id",
+        "archetype_count": 14,
+        "total_documents": 300196,
+        "missing_archetype_docs": 0,
+        "missing_archetype_doc_rate": 0.0,
+        "missing_archetype_rows": 0,
+        "required_tuple_fields": [
+          "semantic_account_subtype",
+          "business_process",
+          "counterparty_type",
+          "document_type",
+          "line_text_family"
+        ],
+        "missing_required_columns": [],
+        "raw_tuple_missing_rows": 0,
+        "derived_tuple_missing_rows": 0,
+        "derivation_policy": "diagnostic only: derived tuple still reports CoA/scenario fallback, but PASS requires raw semantic tuple fields to be populated",
+        "max_tuple_count_per_archetype": 45,
+        "top_archetypes": {
+          "R2R_ACCRUAL": {
+            "docs": 95169,
+            "rows": 269165
+          },
+          "O2C_CUSTOMER_INVOICE": {
+            "docs": 70709,
+            "rows": 249035
+          },
+          "A2R_DEPRECIATION": {
+            "docs": 31815,
+            "rows": 93061
+          },
+          "P2P_VENDOR_INVOICE": {
+            "docs": 16317,
+            "rows": 58260
+          },
+          "A2R_ASSET_ACQUISITION": {
+            "docs": 21024,
+            "rows": 53268
+          },
+          "TRE_LOAN_DRAWDOWN": {
+            "docs": 20590,
+            "rows": 48724
+          },
+          "O2C_CASH_RECEIPT": {
+            "docs": 13667,
+            "rows": 31822
+          },
+          "H2R_PAYROLL_ACCRUAL": {
+            "docs": 10954,
+            "rows": 25111
+          },
+          "TRE_INTEREST_PAYMENT": {
+            "docs": 9080,
+            "rows": 19977
+          },
+          "H2R_PAYROLL_PAYMENT": {
+            "docs": 6295,
+            "rows": 18907
+          },
+          "P2P_PAYMENT": {
+            "docs": 4521,
+            "rows": 15155
+          },
+          "R2R_REVERSAL": {
+            "docs": 33,
+            "rows": 66
+          },
+          "R2R_CLOSING_ENTRY": {
+            "docs": 3,
+            "rows": 42
+          },
+          "R2R_MONTH_END_RECLASS": {
+            "docs": 19,
+            "rows": 40
+          }
+        },
+        "top_archetype_tuple_profiles": {
+          "R2R_ACCRUAL": {
+            "rows": 269165,
+            "docs": 95169,
+            "tuple_count": 10,
+            "top_tuples": {
+              "ACCRUED_LIABILITIES|R2R|InternalDepartment|SA|ACCRUAL": 139360,
+              "OPEX_UTILITIES|R2R|InternalDepartment|SA|ACCRUAL": 32358,
+              "INTEREST_EXPENSE|R2R|InternalDepartment|SA|ACCRUAL": 32285,
+              "OPEX_PROFESSIONAL_FEES|R2R|InternalDepartment|SA|ACCRUAL": 32070,
+              "OPEX_TAX|R2R|InternalDepartment|SA|ACCRUAL": 31983
+            }
+          },
+          "O2C_CUSTOMER_INVOICE": {
+            "rows": 249035,
+            "docs": 70709,
+            "tuple_count": 4,
+            "top_tuples": {
+              "AR|O2C|Customer|DR|CUSTOMER_BILLING": 92872,
+              "OUTPUT_TAX_PAYABLE|O2C|Customer|DR|CUSTOMER_BILLING": 56727,
+              "SERVICE_REVENUE|O2C|Customer|DR|CUSTOMER_BILLING": 49837,
+              "PRODUCT_REVENUE|O2C|Customer|DR|CUSTOMER_BILLING": 49599
+            }
+          },
+          "A2R_DEPRECIATION": {
+            "rows": 93061,
+            "docs": 31815,
+            "tuple_count": 6,
+            "top_tuples": {
+              "ACCUMULATED_DEPRECIATION|A2R|InternalDepartment|AF|DEPRECIATION": 46074,
+              "AMORTIZATION_EXPENSE|A2R|InternalDepartment|AF|DEPRECIATION": 21613,
+              "DEPRECIATION_EXPENSE|A2R|InternalDepartment|AF|DEPRECIATION": 21378,
+              "AMORTIZATION_EXPENSE|A2R|InternalDepartment|SA|DEPRECIATION": 2088,
+              "DEPRECIATION_EXPENSE|A2R|InternalDepartment|SA|DEPRECIATION": 1872
+            }
+          },
+          "P2P_VENDOR_INVOICE": {
+            "rows": 58260,
+            "docs": 16317,
+            "tuple_count": 34,
+            "top_tuples": {
+              "OPEX_PROFESSIONAL_FEES|P2P|VendorService|KR|PROFESSIONAL_FEES": 5376,
+              "OPEX_OFFICE_SUPPLIES|P2P|VendorOfficeSupplies|KR|OFFICE_SUPPLIES_PURCHASE": 5271,
+              "OPEX_UTILITIES|P2P|VendorUtilities|KR|UTILITIES": 5263,
+              "INPUT_TAX_RECEIVABLE|P2P|VendorService|KR|PROFESSIONAL_FEES": 3793,
+              "INPUT_TAX_RECEIVABLE|P2P|VendorOfficeSupplies|KR|OFFICE_SUPPLIES_PURCHASE": 3757
+            }
+          },
+          "A2R_ASSET_ACQUISITION": {
+            "rows": 53268,
+            "docs": 21024,
+            "tuple_count": 30,
+            "top_tuples": {
+              "INTANGIBLE_ASSET|A2R|InternalDepartment|AA|ASSET_ACQUISITION": 2902,
+              "FIXED_ASSET|A2R|VendorFixedAsset|AA|ASSET_ACQUISITION": 2892,
+              "INTANGIBLE_ASSET|A2R|Bank|AA|ASSET_ACQUISITION": 2853,
+              "FIXED_ASSET|A2R|InternalDepartment|AA|ASSET_ACQUISITION": 2836,
+              "INTANGIBLE_ASSET|A2R|VendorFixedAsset|AA|ASSET_ACQUISITION": 2816
+            }
+          },
+          "TRE_LOAN_DRAWDOWN": {
+            "rows": 48724,
+            "docs": 20590,
+            "tuple_count": 16,
+            "top_tuples": {
+              "CASH|TRE|Bank|TR|LOAN_DRAWDOWN": 5859,
+              "CASH|TRE|Lender|BK|LOAN_DRAWDOWN": 5819,
+              "CASH|TRE|Bank|BK|LOAN_DRAWDOWN": 5750,
+              "CASH|TRE|Lender|TR|LOAN_DRAWDOWN": 5705,
+              "SHORT_TERM_DEBT|TRE|Bank|BK|LOAN_DRAWDOWN": 3226
+            }
+          },
+          "O2C_CASH_RECEIPT": {
+            "rows": 31822,
+            "docs": 13667,
+            "tuple_count": 12,
+            "top_tuples": {
+              "AR|O2C|Customer|BK|CUSTOMER_RECEIPT": 6664,
+              "AR|O2C|Customer|DZ|CUSTOMER_RECEIPT": 6653,
+              "CASH|O2C|Customer|DZ|CUSTOMER_RECEIPT": 6096,
+              "CASH|O2C|Customer|BK|CUSTOMER_RECEIPT": 6060,
+              "AR|O2C|Bank|DZ|CUSTOMER_RECEIPT": 1627
+            }
+          },
+          "H2R_PAYROLL_ACCRUAL": {
+            "rows": 25111,
+            "docs": 10954,
+            "tuple_count": 28,
+            "top_tuples": {
+              "PAYROLL_TAX_PAYABLE|H2R|TaxAuthority|HR|PAYROLL_TAX": 1652,
+              "PAYROLL_TAX_PAYABLE|H2R|PayrollProvider|HR|PAYROLL_TAX": 1633,
+              "PAYROLL_TAX_PAYABLE|H2R|InternalDepartment|HR|PAYROLL_TAX": 1630,
+              "COGS_DIRECT_LABOR|H2R|InternalDepartment|HR|DIRECT_LABOR_PAYROLL": 1570,
+              "COGS_DIRECT_LABOR|H2R|PayrollProvider|HR|DIRECT_LABOR_PAYROLL": 1556
+            }
+          },
+          "TRE_INTEREST_PAYMENT": {
+            "rows": 19977,
+            "docs": 9080,
+            "tuple_count": 18,
+            "top_tuples": {
+              "CASH|TRE|Lender|KZ|INTEREST_PAYMENT": 1757,
+              "CASH|TRE|Lender|BK|INTEREST_PAYMENT": 1746,
+              "CASH|TRE|Bank|KZ|INTEREST_PAYMENT": 1741,
+              "CASH|TRE|Bank|TR|INTEREST_PAYMENT": 1691,
+              "CASH|TRE|Lender|TR|INTEREST_PAYMENT": 1666
+            }
+          },
+          "H2R_PAYROLL_PAYMENT": {
+            "rows": 18907,
+            "docs": 6295,
+            "tuple_count": 39,
+            "top_tuples": {
+              "PAYROLL_TAX_PAYABLE|H2R|PayrollProvider|SA|PAYROLL_PAYMENT": 3060,
+              "ACCRUED_PAYROLL|H2R|PayrollProvider|SA|PAYROLL_PAYMENT": 1980,
+              "CASH|H2R|Bank|HR|PAYROLL_PAYMENT": 640,
+              "CASH|H2R|TaxAuthority|BK|PAYROLL_PAYMENT": 637,
+              "CASH|H2R|Bank|KZ|PAYROLL_PAYMENT": 633
+            }
+          },
+          "P2P_PAYMENT": {
+            "rows": 15155,
+            "docs": 4521,
+            "tuple_count": 45,
+            "top_tuples": {
+              "AP|P2P|VendorOfficeSupplies|SA|VENDOR_PAYMENT": 1764,
+              "ACCRUED_LIABILITIES|P2P|VendorOfficeSupplies|SA|VENDOR_PAYMENT": 1548,
+              "GRIR|P2P|VendorOfficeSupplies|SA|VENDOR_PAYMENT": 1296,
+              "CASH|P2P|VendorService|KZ|VENDOR_PAYMENT": 694,
+              "CASH|P2P|VendorOfficeSupplies|BK|VENDOR_PAYMENT": 690
+            }
+          },
+          "R2R_REVERSAL": {
+            "rows": 66,
+            "docs": 33,
+            "tuple_count": 2,
+            "top_tuples": {
+              "ACCRUED_LIABILITIES|R2R|InternalDepartment|SA|REVERSAL": 33,
+              "OPEX_PROFESSIONAL_FEES|R2R|InternalDepartment|SA|REVERSAL": 33
+            }
+          },
+          "R2R_CLOSING_ENTRY": {
+            "rows": 42,
+            "docs": 3,
+            "tuple_count": 14,
+            "top_tuples": {
+              "SERVICE_REVENUE|R2R|InternalDepartment|SA|CLOSING": 3,
+              "INTEREST_EXPENSE|R2R|InternalDepartment|SA|CLOSING": 3,
+              "PRODUCT_REVENUE|R2R|InternalDepartment|SA|CLOSING": 3,
+              "OPEX_UTILITIES|R2R|InternalDepartment|SA|CLOSING": 3,
+              "RAW_MATERIALS|R2R|InternalDepartment|SA|CLOSING": 3
+            }
+          },
+          "R2R_MONTH_END_RECLASS": {
+            "rows": 40,
+            "docs": 19,
+            "tuple_count": 4,
+            "top_tuples": {
+              "CASH|R2R|InternalDepartment|SA|BALANCE_RECLASS": 10,
+              "SHORT_TERM_DEBT|R2R|InternalDepartment|SA|BALANCE_RECLASS": 10,
+              "PREPAID_EXPENSE|R2R|InternalDepartment|SA|BALANCE_RECLASS": 10,
+              "ACCRUED_PAYROLL|R2R|InternalDepartment|SA|BALANCE_RECLASS": 10
+            }
+          }
+        }
+      },
+      "notes": "transaction archetype coverage and joint tuple coherence"
+    },
+    {
+      "gate": "Diagnostic",
+      "test_id": "P01",
+      "verdict": "INFO",
+      "metric": {
+        "fixed_seed": 20260605,
+        "stratification": [
+          "semantic_scenario_id",
+          "business_process",
+          "document_type",
+          "source"
+        ],
+        "sample_documents": 82,
+        "sample_scope": "diagnostic only; no pass/fail authority",
+        "sample_json": "reports\\unit2_rescope\\verifier_scale_out_p01_samples.json",
+        "sample_csv": "reports\\unit2_rescope\\verifier_scale_out_p01_samples.csv"
+      },
+      "notes": "expert/LLM fixed-seed stratified sample review artifact"
+    },
+    {
+      "gate": "Diagnostic",
+      "test_id": "S09_RECLASS",
+      "verdict": "INFO",
+      "metric": {
+        "reclass_documents": 19,
+        "reclass_rows": 40,
+        "company_periods_with_reclass": 19,
+        "line_count_per_doc_min": 2,
+        "line_count_per_doc_p50": 2.0,
+        "line_count_per_doc_max": 4,
+        "restored_account_rows": 20,
+        "restored_account_top": {
+          "1000": 10,
+          "2210": 10
+        },
+        "trigger_rule": "issued only when a company-period/account has negative normal-side BS balance after monthly roll-forward; line count varies by triggered accounts, not a fixed blanket row pattern"
+      },
+      "notes": "monthly balance reclass trigger diagnostics"
+    },
+    {
+      "gate": "Diagnostic",
+      "test_id": "S09_M06_IS_REVERSE",
+      "verdict": "INFO",
+      "metric": {
+        "period_account_reverse_count": 89,
+        "reverse_rate": 0.17519685039370078,
+        "by_category": {
+          "OperatingExpenses": 36,
+          "OtherIncome": 33,
+          "CostOfSales": 9,
+          "Revenue": 8,
+          "OtherExpenses": 3
+        },
+        "top_accounts": {
+          "7100": 33,
+          "": 13,
+          "4000": 3,
+          "4100": 3,
+          "5000": 3,
+          "5100": 3,
+          "5200": 3,
+          "6000": 3,
+          "6050": 3,
+          "6100": 3,
+          "6400": 3,
+          "6500": 3,
+          "6700": 3,
+          "8000": 3,
+          "6600": 2,
+          "6300": 2,
+          "4300": 2,
+          "6200": 1
+        },
+        "basis": "period-level P&L reverse balances are diagnostic: returns/discounts, reallocations, reversals, reclass, tax/closing timing can create debit revenue or credit expense in a month without breaking annual closing"
+      },
+      "notes": "income statement reverse-balance diagnostic"
+    },
+    {
+      "gate": "Gate 2",
+      "test_id": "N07",
+      "verdict": "FAIL",
+      "metric": {
+        "bad_accounts": [
+          "131100",
+          "681100",
+          "151900",
+          "116100",
+          "231100",
+          "123100",
+          "117100",
+          "117900",
+          "106100",
+          "119100",
+          "469100",
+          "237100",
+          "160100",
+          "682100"
+        ],
+        "accounts": {
+          "131100": {
+            "name": "intangible_assets",
+            "docs": 0,
+            "rows": 0,
+            "cell_count_std": 0.0,
+            "empty_cells": 36,
+            "cell_count_min": 0,
+            "cell_count_max": 0
+          },
+          "681100": {
+            "name": "amortization_expense",
+            "docs": 0,
+            "rows": 0,
+            "cell_count_std": 0.0,
+            "empty_cells": 36,
+            "cell_count_min": 0,
+            "cell_count_max": 0
+          },
+          "151900": {
+            "name": "construction_in_progress",
+            "docs": 0,
+            "rows": 0,
+            "cell_count_std": 0.0,
+            "empty_cells": 36,
+            "cell_count_min": 0,
+            "cell_count_max": 0
+          },
+          "116100": {
+            "name": "contract_assets",
+            "docs": 0,
+            "rows": 0,
+            "cell_count_std": 0.0,
+            "empty_cells": 36,
+            "cell_count_min": 0,
+            "cell_count_max": 0
+          },
+          "231100": {
+            "name": "contract_liabilities",
+            "docs": 0,
+            "rows": 0,
+            "cell_count_std": 0.0,
+            "empty_cells": 36,
+            "cell_count_min": 0,
+            "cell_count_max": 0
+          },
+          "123100": {
+            "name": "inventory_wip",
+            "docs": 0,
+            "rows": 0,
+            "cell_count_std": 0.0,
+            "empty_cells": 36,
+            "cell_count_min": 0,
+            "cell_count_max": 0
+          },
+          "117100": {
+            "name": "loans_receivable",
+            "docs": 0,
+            "rows": 0,
+            "cell_count_std": 0.0,
+            "empty_cells": 36,
+            "cell_count_min": 0,
+            "cell_count_max": 0
+          },
+          "117900": {
+            "name": "employee_advances",
+            "docs": 0,
+            "rows": 0,
+            "cell_count_std": 0.0,
+            "empty_cells": 36,
+            "cell_count_min": 0,
+            "cell_count_max": 0
+          },
+          "106100": {
+            "name": "short_term_investments",
+            "docs": 0,
+            "rows": 0,
+            "cell_count_std": 0.0,
+            "empty_cells": 36,
+            "cell_count_min": 0,
+            "cell_count_max": 0
+          },
+          "119100": {
+            "name": "allowance_for_doubtful_accounts",
+            "docs": 0,
+            "rows": 0,
+            "cell_count_std": 0.0,
+            "empty_cells": 36,
+            "cell_count_min": 0,
+            "cell_count_max": 0
+          },
+          "469100": {
+            "name": "allowance_reversal",
+            "docs": 0,
+            "rows": 0,
+            "cell_count_std": 0.0,
+            "empty_cells": 36,
+            "cell_count_min": 0,
+            "cell_count_max": 0
+          },
+          "237100": {
+            "name": "provisions",
+            "docs": 0,
+            "rows": 0,
+            "cell_count_std": 0.0,
+            "empty_cells": 36,
+            "cell_count_min": 0,
+            "cell_count_max": 0
+          },
+          "160100": {
+            "name": "investments",
+            "docs": 0,
+            "rows": 0,
+            "cell_count_std": 0.0,
+            "empty_cells": 36,
+            "cell_count_min": 0,
+            "cell_count_max": 0
+          },
+          "682100": {
+            "name": "impairment_loss",
+            "docs": 0,
+            "rows": 0,
+            "cell_count_std": 0.0,
+            "empty_cells": 36,
+            "cell_count_min": 0,
+            "cell_count_max": 0
+          }
+        }
+      },
+      "notes": "new-account company/year/month count variance and empty-cell realism"
+    },
+    {
+      "gate": "Gate 2",
+      "test_id": "N08",
+      "verdict": "PASS",
+      "metric": {
+        "bad_accounts": [],
+        "accounts": {
+          "131100": {
+            "name": "intangible_assets",
+            "top_trading_partner": "",
+            "top_trading_partner_count": 0,
+            "top_trading_partner_share": 0.0,
+            "trading_partner_unique": 0,
+            "top_counterparty_type": "",
+            "top_counterparty_type_count": 0,
+            "top_counterparty_type_share": 0.0,
+            "counterparty_type_unique": 0
+          },
+          "681100": {
+            "name": "amortization_expense",
+            "top_trading_partner": "",
+            "top_trading_partner_count": 0,
+            "top_trading_partner_share": 0.0,
+            "trading_partner_unique": 0,
+            "top_counterparty_type": "",
+            "top_counterparty_type_count": 0,
+            "top_counterparty_type_share": 0.0,
+            "counterparty_type_unique": 0
+          },
+          "151900": {
+            "name": "construction_in_progress",
+            "top_trading_partner": "",
+            "top_trading_partner_count": 0,
+            "top_trading_partner_share": 0.0,
+            "trading_partner_unique": 0,
+            "top_counterparty_type": "",
+            "top_counterparty_type_count": 0,
+            "top_counterparty_type_share": 0.0,
+            "counterparty_type_unique": 0
+          },
+          "116100": {
+            "name": "contract_assets",
+            "top_trading_partner": "",
+            "top_trading_partner_count": 0,
+            "top_trading_partner_share": 0.0,
+            "trading_partner_unique": 0,
+            "top_counterparty_type": "",
+            "top_counterparty_type_count": 0,
+            "top_counterparty_type_share": 0.0,
+            "counterparty_type_unique": 0
+          },
+          "231100": {
+            "name": "contract_liabilities",
+            "top_trading_partner": "",
+            "top_trading_partner_count": 0,
+            "top_trading_partner_share": 0.0,
+            "trading_partner_unique": 0,
+            "top_counterparty_type": "",
+            "top_counterparty_type_count": 0,
+            "top_counterparty_type_share": 0.0,
+            "counterparty_type_unique": 0
+          },
+          "123100": {
+            "name": "inventory_wip",
+            "top_trading_partner": "",
+            "top_trading_partner_count": 0,
+            "top_trading_partner_share": 0.0,
+            "trading_partner_unique": 0,
+            "top_counterparty_type": "",
+            "top_counterparty_type_count": 0,
+            "top_counterparty_type_share": 0.0,
+            "counterparty_type_unique": 0
+          },
+          "117100": {
+            "name": "loans_receivable",
+            "top_trading_partner": "",
+            "top_trading_partner_count": 0,
+            "top_trading_partner_share": 0.0,
+            "trading_partner_unique": 0,
+            "top_counterparty_type": "",
+            "top_counterparty_type_count": 0,
+            "top_counterparty_type_share": 0.0,
+            "counterparty_type_unique": 0
+          },
+          "117900": {
+            "name": "employee_advances",
+            "top_trading_partner": "",
+            "top_trading_partner_count": 0,
+            "top_trading_partner_share": 0.0,
+            "trading_partner_unique": 0,
+            "top_counterparty_type": "",
+            "top_counterparty_type_count": 0,
+            "top_counterparty_type_share": 0.0,
+            "counterparty_type_unique": 0
+          },
+          "106100": {
+            "name": "short_term_investments",
+            "top_trading_partner": "",
+            "top_trading_partner_count": 0,
+            "top_trading_partner_share": 0.0,
+            "trading_partner_unique": 0,
+            "top_counterparty_type": "",
+            "top_counterparty_type_count": 0,
+            "top_counterparty_type_share": 0.0,
+            "counterparty_type_unique": 0
+          },
+          "119100": {
+            "name": "allowance_for_doubtful_accounts",
+            "top_trading_partner": "",
+            "top_trading_partner_count": 0,
+            "top_trading_partner_share": 0.0,
+            "trading_partner_unique": 0,
+            "top_counterparty_type": "",
+            "top_counterparty_type_count": 0,
+            "top_counterparty_type_share": 0.0,
+            "counterparty_type_unique": 0
+          },
+          "469100": {
+            "name": "allowance_reversal",
+            "top_trading_partner": "",
+            "top_trading_partner_count": 0,
+            "top_trading_partner_share": 0.0,
+            "trading_partner_unique": 0,
+            "top_counterparty_type": "",
+            "top_counterparty_type_count": 0,
+            "top_counterparty_type_share": 0.0,
+            "counterparty_type_unique": 0
+          },
+          "237100": {
+            "name": "provisions",
+            "top_trading_partner": "",
+            "top_trading_partner_count": 0,
+            "top_trading_partner_share": 0.0,
+            "trading_partner_unique": 0,
+            "top_counterparty_type": "",
+            "top_counterparty_type_count": 0,
+            "top_counterparty_type_share": 0.0,
+            "counterparty_type_unique": 0
+          },
+          "160100": {
+            "name": "investments",
+            "top_trading_partner": "",
+            "top_trading_partner_count": 0,
+            "top_trading_partner_share": 0.0,
+            "trading_partner_unique": 0,
+            "top_counterparty_type": "",
+            "top_counterparty_type_count": 0,
+            "top_counterparty_type_share": 0.0,
+            "counterparty_type_unique": 0
+          },
+          "682100": {
+            "name": "impairment_loss",
+            "top_trading_partner": "",
+            "top_trading_partner_count": 0,
+            "top_trading_partner_share": 0.0,
+            "trading_partner_unique": 0,
+            "top_counterparty_type": "",
+            "top_counterparty_type_count": 0,
+            "top_counterparty_type_share": 0.0,
+            "counterparty_type_unique": 0
+          }
+        }
+      },
+      "notes": "new-account counterparty diversity"
+    },
+    {
+      "gate": "Gate 2",
+      "test_id": "N09",
+      "verdict": "FAIL",
+      "metric": {
+        "bad_accounts": [
+          "131100",
+          "681100",
+          "151900",
+          "116100",
+          "231100",
+          "123100",
+          "117100",
+          "117900",
+          "106100",
+          "119100",
+          "469100",
+          "237100",
+          "160100",
+          "682100"
+        ],
+        "min_required_max_p50_ratio": 10.0,
+        "accounts": {
+          "131100": {
+            "name": "intangible_assets",
+            "rows": 0,
+            "max_p50_ratio": null
+          },
+          "681100": {
+            "name": "amortization_expense",
+            "rows": 0,
+            "max_p50_ratio": null
+          },
+          "151900": {
+            "name": "construction_in_progress",
+            "rows": 0,
+            "max_p50_ratio": null
+          },
+          "116100": {
+            "name": "contract_assets",
+            "rows": 0,
+            "max_p50_ratio": null
+          },
+          "231100": {
+            "name": "contract_liabilities",
+            "rows": 0,
+            "max_p50_ratio": null
+          },
+          "123100": {
+            "name": "inventory_wip",
+            "rows": 0,
+            "max_p50_ratio": null
+          },
+          "117100": {
+            "name": "loans_receivable",
+            "rows": 0,
+            "max_p50_ratio": null
+          },
+          "117900": {
+            "name": "employee_advances",
+            "rows": 0,
+            "max_p50_ratio": null
+          },
+          "106100": {
+            "name": "short_term_investments",
+            "rows": 0,
+            "max_p50_ratio": null
+          },
+          "119100": {
+            "name": "allowance_for_doubtful_accounts",
+            "rows": 0,
+            "max_p50_ratio": null
+          },
+          "469100": {
+            "name": "allowance_reversal",
+            "rows": 0,
+            "max_p50_ratio": null
+          },
+          "237100": {
+            "name": "provisions",
+            "rows": 0,
+            "max_p50_ratio": null
+          },
+          "160100": {
+            "name": "investments",
+            "rows": 0,
+            "max_p50_ratio": null
+          },
+          "682100": {
+            "name": "impairment_loss",
+            "rows": 0,
+            "max_p50_ratio": null
+          },
+          "_baseline_accounts": {
+            "1000": {
+              "rows": 70613,
+              "p50": 968887.0,
+              "max": 49999499986.0,
+              "max_p50_ratio": 51605.08912391228
+            },
+            "1100": {
+              "rows": 109374,
+              "p50": 868838.0,
+              "max": 49999499986.0,
+              "max_p50_ratio": 57547.55200163897
+            },
+            "5000": {
+              "rows": 1790,
+              "p50": 850121.5,
+              "max": 8076801208.0,
+              "max_p50_ratio": 9500.761018277975
+            }
+          }
+        }
+      },
+      "notes": "new-account amount heavy-tail realism"
+    },
+    {
+      "gate": "Gate 2",
+      "test_id": "N10",
+      "verdict": "FAIL",
+      "metric": {
+        "bad_accounts": [
+          "131100",
+          "681100",
+          "151900",
+          "117100",
+          "117900",
+          "106100",
+          "119100",
+          "469100",
+          "237100",
+          "160100",
+          "682100"
+        ],
+        "allowed_woven_archetypes": [
+          "A2R_ASSET_ACQUISITION",
+          "A2R_DEPRECIATION",
+          "H2R_PAYROLL_ACCRUAL",
+          "H2R_PAYROLL_PAYMENT",
+          "P2P_PAYMENT",
+          "P2P_VENDOR_INVOICE",
+          "R2R_ACCRUAL",
+          "R2R_CLOSING_ENTRY",
+          "TRE_INTEREST_PAYMENT",
+          "TRE_LOAN_DRAWDOWN"
+        ],
+        "accounts": {
+          "131100": {
+            "name": "intangible_assets",
+            "scenario_unique": 0,
+            "top_scenarios": {},
+            "woven_docs": 0,
+            "woven_required": 1
+          },
+          "681100": {
+            "name": "amortization_expense",
+            "scenario_unique": 0,
+            "top_scenarios": {},
+            "woven_docs": 0,
+            "woven_required": 1
+          },
+          "151900": {
+            "name": "construction_in_progress",
+            "scenario_unique": 0,
+            "top_scenarios": {},
+            "woven_docs": 0,
+            "woven_required": 1
+          },
+          "116100": {
+            "name": "contract_assets",
+            "scenario_unique": 0,
+            "top_scenarios": {},
+            "woven_docs": 0,
+            "woven_required": 0
+          },
+          "231100": {
+            "name": "contract_liabilities",
+            "scenario_unique": 0,
+            "top_scenarios": {},
+            "woven_docs": 0,
+            "woven_required": 0
+          },
+          "123100": {
+            "name": "inventory_wip",
+            "scenario_unique": 0,
+            "top_scenarios": {},
+            "woven_docs": 0,
+            "woven_required": 0
+          },
+          "117100": {
+            "name": "loans_receivable",
+            "scenario_unique": 0,
+            "top_scenarios": {},
+            "woven_docs": 0,
+            "woven_required": 1
+          },
+          "117900": {
+            "name": "employee_advances",
+            "scenario_unique": 0,
+            "top_scenarios": {},
+            "woven_docs": 0,
+            "woven_required": 1
+          },
+          "106100": {
+            "name": "short_term_investments",
+            "scenario_unique": 0,
+            "top_scenarios": {},
+            "woven_docs": 0,
+            "woven_required": 1
+          },
+          "119100": {
+            "name": "allowance_for_doubtful_accounts",
+            "scenario_unique": 0,
+            "top_scenarios": {},
+            "woven_docs": 0,
+            "woven_required": 1
+          },
+          "469100": {
+            "name": "allowance_reversal",
+            "scenario_unique": 0,
+            "top_scenarios": {},
+            "woven_docs": 0,
+            "woven_required": 1
+          },
+          "237100": {
+            "name": "provisions",
+            "scenario_unique": 0,
+            "top_scenarios": {},
+            "woven_docs": 0,
+            "woven_required": 1
+          },
+          "160100": {
+            "name": "investments",
+            "scenario_unique": 0,
+            "top_scenarios": {},
+            "woven_docs": 0,
+            "woven_required": 1
+          },
+          "682100": {
+            "name": "impairment_loss",
+            "scenario_unique": 0,
+            "top_scenarios": {},
+            "woven_docs": 0,
+            "woven_required": 1
+          }
+        }
+      },
+      "notes": "new-account woven archetype membership"
+    },
+    {
+      "gate": "Gate 2",
+      "test_id": "N11",
+      "verdict": "PASS",
+      "metric": {
+        "bad_accounts": [],
+        "accounts": {
+          "131100": {
+            "name": "intangible_assets",
+            "is_fraud_true": 0,
+            "is_anomaly_true": 0,
+            "fraud_type_nonblank": 0,
+            "mutation_base_event_type": 0,
+            "mutation_type": 0,
+            "mutation_mutated_field": 0,
+            "mutation_original_value": 0,
+            "mutation_mutated_value": 0,
+            "mutation_reason": 0,
+            "detection_surface_hints": 0
+          },
+          "681100": {
+            "name": "amortization_expense",
+            "is_fraud_true": 0,
+            "is_anomaly_true": 0,
+            "fraud_type_nonblank": 0,
+            "mutation_base_event_type": 0,
+            "mutation_type": 0,
+            "mutation_mutated_field": 0,
+            "mutation_original_value": 0,
+            "mutation_mutated_value": 0,
+            "mutation_reason": 0,
+            "detection_surface_hints": 0
+          },
+          "151900": {
+            "name": "construction_in_progress",
+            "is_fraud_true": 0,
+            "is_anomaly_true": 0,
+            "fraud_type_nonblank": 0,
+            "mutation_base_event_type": 0,
+            "mutation_type": 0,
+            "mutation_mutated_field": 0,
+            "mutation_original_value": 0,
+            "mutation_mutated_value": 0,
+            "mutation_reason": 0,
+            "detection_surface_hints": 0
+          },
+          "116100": {
+            "name": "contract_assets",
+            "is_fraud_true": 0,
+            "is_anomaly_true": 0,
+            "fraud_type_nonblank": 0,
+            "mutation_base_event_type": 0,
+            "mutation_type": 0,
+            "mutation_mutated_field": 0,
+            "mutation_original_value": 0,
+            "mutation_mutated_value": 0,
+            "mutation_reason": 0,
+            "detection_surface_hints": 0
+          },
+          "231100": {
+            "name": "contract_liabilities",
+            "is_fraud_true": 0,
+            "is_anomaly_true": 0,
+            "fraud_type_nonblank": 0,
+            "mutation_base_event_type": 0,
+            "mutation_type": 0,
+            "mutation_mutated_field": 0,
+            "mutation_original_value": 0,
+            "mutation_mutated_value": 0,
+            "mutation_reason": 0,
+            "detection_surface_hints": 0
+          },
+          "123100": {
+            "name": "inventory_wip",
+            "is_fraud_true": 0,
+            "is_anomaly_true": 0,
+            "fraud_type_nonblank": 0,
+            "mutation_base_event_type": 0,
+            "mutation_type": 0,
+            "mutation_mutated_field": 0,
+            "mutation_original_value": 0,
+            "mutation_mutated_value": 0,
+            "mutation_reason": 0,
+            "detection_surface_hints": 0
+          },
+          "117100": {
+            "name": "loans_receivable",
+            "is_fraud_true": 0,
+            "is_anomaly_true": 0,
+            "fraud_type_nonblank": 0,
+            "mutation_base_event_type": 0,
+            "mutation_type": 0,
+            "mutation_mutated_field": 0,
+            "mutation_original_value": 0,
+            "mutation_mutated_value": 0,
+            "mutation_reason": 0,
+            "detection_surface_hints": 0
+          },
+          "117900": {
+            "name": "employee_advances",
+            "is_fraud_true": 0,
+            "is_anomaly_true": 0,
+            "fraud_type_nonblank": 0,
+            "mutation_base_event_type": 0,
+            "mutation_type": 0,
+            "mutation_mutated_field": 0,
+            "mutation_original_value": 0,
+            "mutation_mutated_value": 0,
+            "mutation_reason": 0,
+            "detection_surface_hints": 0
+          },
+          "106100": {
+            "name": "short_term_investments",
+            "is_fraud_true": 0,
+            "is_anomaly_true": 0,
+            "fraud_type_nonblank": 0,
+            "mutation_base_event_type": 0,
+            "mutation_type": 0,
+            "mutation_mutated_field": 0,
+            "mutation_original_value": 0,
+            "mutation_mutated_value": 0,
+            "mutation_reason": 0,
+            "detection_surface_hints": 0
+          },
+          "119100": {
+            "name": "allowance_for_doubtful_accounts",
+            "is_fraud_true": 0,
+            "is_anomaly_true": 0,
+            "fraud_type_nonblank": 0,
+            "mutation_base_event_type": 0,
+            "mutation_type": 0,
+            "mutation_mutated_field": 0,
+            "mutation_original_value": 0,
+            "mutation_mutated_value": 0,
+            "mutation_reason": 0,
+            "detection_surface_hints": 0
+          },
+          "469100": {
+            "name": "allowance_reversal",
+            "is_fraud_true": 0,
+            "is_anomaly_true": 0,
+            "fraud_type_nonblank": 0,
+            "mutation_base_event_type": 0,
+            "mutation_type": 0,
+            "mutation_mutated_field": 0,
+            "mutation_original_value": 0,
+            "mutation_mutated_value": 0,
+            "mutation_reason": 0,
+            "detection_surface_hints": 0
+          },
+          "237100": {
+            "name": "provisions",
+            "is_fraud_true": 0,
+            "is_anomaly_true": 0,
+            "fraud_type_nonblank": 0,
+            "mutation_base_event_type": 0,
+            "mutation_type": 0,
+            "mutation_mutated_field": 0,
+            "mutation_original_value": 0,
+            "mutation_mutated_value": 0,
+            "mutation_reason": 0,
+            "detection_surface_hints": 0
+          },
+          "160100": {
+            "name": "investments",
+            "is_fraud_true": 0,
+            "is_anomaly_true": 0,
+            "fraud_type_nonblank": 0,
+            "mutation_base_event_type": 0,
+            "mutation_type": 0,
+            "mutation_mutated_field": 0,
+            "mutation_original_value": 0,
+            "mutation_mutated_value": 0,
+            "mutation_reason": 0,
+            "detection_surface_hints": 0
+          },
+          "682100": {
+            "name": "impairment_loss",
+            "is_fraud_true": 0,
+            "is_anomaly_true": 0,
+            "fraud_type_nonblank": 0,
+            "mutation_base_event_type": 0,
+            "mutation_type": 0,
+            "mutation_mutated_field": 0,
+            "mutation_original_value": 0,
+            "mutation_mutated_value": 0,
+            "mutation_reason": 0,
+            "detection_surface_hints": 0
+          }
+        }
+      },
+      "notes": "new-account normal-only label and provenance guard"
+    }
+  ]
+}

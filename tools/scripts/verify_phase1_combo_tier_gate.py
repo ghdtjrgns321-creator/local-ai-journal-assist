@@ -57,7 +57,11 @@ EXPECTED_POLICIES = {
     "period_end_adjustment_high": {
         "tier": "HIGH",
         "topic": "closing_timing",
-        "rules_any": ({"L3-04", "L3-11"}, {"L3-10", "L4-04", "L4-03"}),
+        # 둘째 leg: 추정계정(L3-10)·고액(L4-03)은 단독 인정. 희소계정쌍(L4-04)은 강신호
+        # (L4-01|L2-05|L2-02|L2-03) 동반 시에만 HIGH (topic_scoring.py B안). 이 flat 매처는
+        # 중첩 AND 를 표현 못하므로 직접 leg 만 요구하고, L4-04 escalation 경로는
+        # tests/modules/test_detection/test_topic_tiers.py 가 검증한다.
+        "rules_any": ({"L3-04", "L3-11"}, {"L3-10", "L4-03"}),
     },
     "embezzlement_concealment_high": {
         "tier": "HIGH",
@@ -291,7 +295,9 @@ def _validate_truth(dataset: Path) -> list[str]:
         if policy in EXPECTED_POLICIES:
             spec = EXPECTED_POLICIES[policy]
             if row.get("expected_case_tier") != spec["tier"]:
-                failures.append(f"{scheme}:tier_bad:{row.get('expected_case_tier')}!={spec['tier']}")
+                failures.append(
+                    f"{scheme}:tier_bad:{row.get('expected_case_tier')}!={spec['tier']}"
+                )
             if row.get("expected_topic") != spec["topic"]:
                 failures.append(f"{scheme}:topic_bad:{row.get('expected_topic')}!={spec['topic']}")
             rules = _split_rules(row.get("expected_rule_ids", ""))

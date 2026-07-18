@@ -6,16 +6,70 @@ L4-01(매출계정), L3-02(수기전표), L3-03(관계사), L2-04(가계정), L4
 
 from __future__ import annotations
 
+import functools
+import json
 import logging
 import re
+from pathlib import Path
 
 import pandas as pd
+
+from src.ingest.datasynth_labels import get_source_path
 
 logger = logging.getLogger(__name__)
 
 # 가계정 키워드 검색 대상 텍스트 컬럼
 # gl_account_name: Phase 2 스키마 확장 시 자동 반영 (existing_cols 필터로 안전)
 _SUSPENSE_TEXT_COLS = ["line_text", "header_text", "gl_account_name"]
+
+
+@functools.lru_cache(maxsize=16)
+def _load_coa_suspense_codes_cached(path_str: str, mtime_ns: int) -> frozenset[str] | None:
+    """chart_of_accounts.json → is_suspense_account=True 계정 코드 집합.
+
+    Why: 가계정 판별의 권위(authority)는 CoA의 계정별 is_suspense_account 플래그다.
+    적요 키워드/코드 prefix 휴리스틱은 이 권위가 없는 실무 CoA용 폴백일 뿐이다.
+    반환 의미 구분:
+      - None: 플래그 키 자체가 없는 CoA(진짜 미지정) → 휴리스틱 폴백
+      - frozenset (빈 것 포함): 플래그가 지정된 CoA → 권위. 빈 집합이면 "가계정
+        0개"가 정답이므로 전 행 False가 맞다(휴리스틱으로 되돌리지 않는다).
+
+    mtime_ns는 캐시 무효화 키다 — datasynth 재생성으로 같은 경로에 CoA가 다시
+    써지면(장수명 대시보드 프로세스) mtime이 바뀌어 stale 캐시를 피한다.
+    """
+    coa_path = Path(path_str)
+    if not coa_path.exists():
+        return None
+    raw = json.loads(coa_path.read_text(encoding="utf-8"))
+    accounts = raw.get("accounts", raw if isinstance(raw, list) else [])
+    # Why: "플래그 키 없음(미지정)"과 "키 있고 전부 False(가계정 0개)"를 구분해야
+    #      후자를 휴리스틱으로 잘못 폴백시키지 않는다.
+    has_flag_key = any(isinstance(a, dict) and "is_suspense_account" in a for a in accounts)
+    if not has_flag_key:
+        return None
+    codes = {
+        str(a.get("account_number") or a.get("account_code") or "").strip()
+        for a in accounts
+        if isinstance(a, dict) and a.get("is_suspense_account")
+    }
+    codes.discard("")
+    return frozenset(codes)
+
+
+def _load_coa_suspense_codes(source_path: str | Path | None) -> frozenset[str] | None:
+    """source(원장 파일) 옆의 chart_of_accounts.json에서 가계정 코드 집합 해소.
+
+    source_path는 원장 파일(journal_entries*.csv) 경로. 같은 디렉터리의
+    chart_of_accounts.json을 권위로 사용한다. 미존재/빈집합이면 None.
+    """
+    if source_path is None:
+        return None
+    coa_path = Path(source_path).parent / "chart_of_accounts.json"
+    try:
+        mtime_ns = coa_path.stat().st_mtime_ns
+    except OSError:
+        return None
+    return _load_coa_suspense_codes_cached(str(coa_path), mtime_ns)
 
 
 # ── Public feature functions ─────────────────────────────────────
@@ -162,12 +216,29 @@ def add_is_suspense_account(
     df: pd.DataFrame,
     keywords: list[str],
     account_codes: list[str] | None = None,
+    coa_suspense_codes: frozenset[str] | set[str] | None = None,
 ) -> pd.DataFrame:
-    """L2-04: 가계정·미결산 계정 하이브리드 판별.
+    """L2-04: 가계정·미결산 계정 판별.
 
-    감사 관점: 실무에서는 GL 코드가 1순위 탐지 기준 — 횡령범은 적요를 위장하지만
-    계정 코드는 변경할 수 없음. 텍스트 키워드 매칭과 OR 결합하여 양쪽 모두 커버.
+    권위 우선: `coa_suspense_codes`(CoA의 is_suspense_account 플래그에서 도출한
+    가계정 코드 집합)가 주어지면 `gl_account` 정확 매칭만 사용한다. 적요 키워드/
+    코드 prefix 휴리스틱은 권위가 없는 실무 CoA용 폴백이다 — 휴리스틱은 적요의
+    'Clearing/임시' 등을 긁어 현금 등 비가계정을 과탐하므로, 권위가 있으면 쓰지 않는다.
     """
+    # Why: CoA 권위가 있으면(빈 집합=가계정 0개 포함) 정확 매칭으로 대체 (휴리스틱 과탐 제거).
+    #      None만 폴백 — 빈 frozenset은 "가계정 없음"이 정답이므로 권위로 인정한다.
+    if coa_suspense_codes is not None:
+        if "gl_account" in df.columns:
+            # Why: isin은 startswith와 달리 표기 차이에 민감. gl_account가 NaN 섞인
+            # float64로 로드되면 astype(str)이 "9000.0"이 되어 isin({"9000"}) 전멸(미탐).
+            # 정확매칭 전 트레일링 ".0"을 제거해 정규화한다.
+            gl_str = df["gl_account"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+            df["is_suspense_account"] = gl_str.isin(set(coa_suspense_codes))
+        else:
+            logger.warning("gl_account 컬럼 없음 — CoA 권위 매칭 불가, 전체 False")
+            df["is_suspense_account"] = False
+        return df
+
     # Why: keywords와 account_codes 둘 다 비어야 early return
     if not keywords and not account_codes:
         logger.warning("suspense_keywords·account_codes 모두 비어있음 — 전체 False")
@@ -213,10 +284,15 @@ def add_is_suspense_account(
 def add_all_pattern_features(
     df: pd.DataFrame,
     rules: dict | None = None,
+    source_path: str | Path | None = None,
 ) -> pd.DataFrame:
     """패턴 파생변수 5개를 한번에 추가. engine.py 진입점.
 
     rules: audit_rules.yaml["patterns"] dict. None이면 자동 로드.
+    source_path: 원장 파일 경로. None이면 df.attrs의 source_path로 자동 해소.
+        같은 디렉터리의 chart_of_accounts.json이 가계정 판별 권위가 된다.
+        Why: 병렬 thin-copy는 df.attrs를 버리므로 호출부가 명시 전달해야
+        가계정 CoA 권위가 유실되지 않는다(employee_master_path와 동일 패턴).
     """
     if rules is None:
         from config.settings import get_audit_rules
@@ -229,10 +305,13 @@ def add_all_pattern_features(
     add_is_intercompany(df, extract_ic_prefixes(rules))
     add_is_revenue_account(df, rules.get("revenue_account_prefixes", []))
     add_first_digit(df)
+    # Why: CoA is_suspense_account 플래그(권위)를 우선, 없으면 키워드/코드 휴리스틱 폴백
+    coa_suspense_codes = _load_coa_suspense_codes(source_path or get_source_path(df))
     add_is_suspense_account(
         df,
         rules.get("suspense_keywords", []),
         account_codes=rules.get("suspense_account_codes", []),
+        coa_suspense_codes=coa_suspense_codes,
     )
 
     return df

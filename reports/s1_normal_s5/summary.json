@@ -1,0 +1,117 @@
+{
+  "generated_at": "2026-07-16T07:42:27.159213+00:00",
+  "elapsed_sec": 308.508,
+  "batch_id": "s5_c001_current_phase1",
+  "rows": 359106,
+  "phase1_case_count": 18142,
+  "phase1_unit_count": 111200,
+  "phase1_raw_hit_count": 1254055,
+  "truth_units": 0,
+  "caught_truth_units": 0,
+  "missed_truth_units": 0,
+  "l3_04_row_count": 159483,
+  "l3_04_row_rate": 0.444111,
+  "l3_04_unit_count": 49415,
+  "phase1_case_artifact_path": "C:\\Users\\ghdtj\\workspace\\portfolio\\local-ai-assist\\artifacts\\phase1_cases\\_anonymous\\phase1case__anonymous_s5_c001_current_phase1_20260716T073833Z.json",
+  "direct_phase1_checkpoint": "C:\\Users\\ghdtj\\workspace\\portfolio\\local-ai-assist\\reports\\s1_normal_s5\\direct_phase1_checkpoint.json",
+  "baseline_case_count": 18142,
+  "baseline_new_truth_units": 0,
+  "priority_band_units": {
+    "high": 2390,
+    "medium": 1158,
+    "low": 107652
+  },
+  "priority_band_cases": {
+    "high": 4672,
+    "medium": 824,
+    "low": 12646
+  },
+  "priority_band_high_medium_rule_count": 17,
+  "priority_band_high_medium_rules": {
+    "L1-07": {
+      "cases": 8450,
+      "high": 2277,
+      "medium": 309
+    },
+    "L3-05": {
+      "cases": 5961,
+      "high": 2286,
+      "medium": 335
+    },
+    "L4-03": {
+      "cases": 8477,
+      "high": 4356,
+      "medium": 802
+    },
+    "L4-05": {
+      "cases": 2754,
+      "high": 1230,
+      "medium": 377
+    },
+    "L3-12": {
+      "cases": 5867,
+      "high": 1983,
+      "medium": 216
+    },
+    "L1-06": {
+      "cases": 6247,
+      "high": 2299,
+      "medium": 1
+    },
+    "L3-02": {
+      "cases": 15290,
+      "high": 4477,
+      "medium": 582
+    },
+    "L4-06": {
+      "cases": 1295,
+      "high": 628,
+      "medium": 51
+    },
+    "L2-02": {
+      "cases": 194,
+      "high": 52,
+      "medium": 3
+    },
+    "L3-04": {
+      "cases": 17451,
+      "high": 4571,
+      "medium": 685
+    },
+    "L3-06": {
+      "cases": 4326,
+      "high": 1740,
+      "medium": 437
+    },
+    "L2-01": {
+      "cases": 40,
+      "high": 28,
+      "medium": 12
+    },
+    "L2-05": {
+      "cases": 481,
+      "high": 137,
+      "medium": 5
+    },
+    "L4-04": {
+      "cases": 64,
+      "high": 21,
+      "medium": 40
+    },
+    "L4-01": {
+      "cases": 18,
+      "high": 8,
+      "medium": 10
+    },
+    "L2-03": {
+      "cases": 28,
+      "high": 14,
+      "medium": 1
+    },
+    "L1-04": {
+      "cases": 438,
+      "high": 131,
+      "medium": 307
+    }
+  }
+}

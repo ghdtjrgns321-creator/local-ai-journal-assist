@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 
 from src.detection.boolean_utils import bool_column
+from src.feature.amount_features import significant_digit_stats
 
 _MAD_SCALE = 0.6745  # modified z-score (normal consistent constant)
 
@@ -723,12 +724,15 @@ def manual_or_adjustment_score(
 def round_amount_score(
     df: pd.DataFrame,
     *,
-    round_unit: float = 1_000_000.0,
+    max_significant_digits: int = 2,
+    min_digits: int = 3,
 ) -> SubSignalResult:
     """근사치 금액 boolean context signal.
 
-    Why: PCAOB AS 2401 §B7 round-dollar amounts. is_round_number 가 있으면 우선
-         사용, 없으면 |debit-credit| 의 max 가 round_unit 의 배수인 경우.
+    Why: PCAOB AS 2401 §B7 round-dollar amounts. is_round_number 가 있으면 우선 사용,
+         없으면 |debit-credit| 의 max 로 같은 상대 기준(끝자리 0 개수)을 재계산한다.
+         2026-07-15 절대 단위(round_unit) 폐기 — feature 정의와 fallback 이 어긋나면
+         is_round_number 유무에 따라 같은 전표가 다르게 판정된다.
     """
     name = "round_amount"
     if df.empty:
@@ -772,8 +776,12 @@ def round_amount_score(
         else pd.Series(0.0, index=df.index)
     )
     amount_abs = pd.concat([debit_abs, credit_abs], axis=1).max(axis=1).astype(float)
-    unit = max(float(round_unit), 1.0)
-    flag = (amount_abs > 0) & ((amount_abs % unit) == 0)
+    digits, significant = significant_digit_stats(amount_abs.round(0))
+    flag = (
+        (amount_abs > 0)
+        & (significant <= int(max_significant_digits))
+        & (digits >= int(min_digits))
+    )
     score = flag.astype(float) * 0.5
     return SubSignalResult(
         name=name,
@@ -782,8 +790,9 @@ def round_amount_score(
         meta={
             "nonzero_row_count": int(flag.sum()),
             "nonzero_rate": float(flag.mean()) if len(flag) else 0.0,
-            "source": "debit_credit_modulo",
-            "round_unit": float(unit),
+            "source": "debit_credit_significant_digits",
+            "max_significant_digits": int(max_significant_digits),
+            "min_digits": int(min_digits),
             "context_only": True,
         },
     )

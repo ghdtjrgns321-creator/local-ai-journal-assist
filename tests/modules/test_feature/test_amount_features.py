@@ -794,49 +794,89 @@ class TestAmountMagnitude:
 
 
 class TestIsRoundNumber:
-    """L2-02: 라운드넘버 판정."""
+    """라운드넘버 판정 — 금액 규모에 상대적인 둥근 정도(유효숫자 기준).
 
-    UNIT = 1_000_000
+    2026-07-15 절대 단위(round_unit=100만원) 폐기. 원장 금액이 1,526원~2,057억원으로
+    8자릿수에 걸쳐 있어 단일 절대 단위로는 잴 수 없었다(거래 64.9%가 100만원 미만이라
+    구조적으로 판정 대상에서 빠져 전체의 0.04%만 round 로 잡힘).
+    """
+
+    MAX_SIG = 2
+    MIN_DIGITS = 3
+
+    def _run(self, base, df, **kwargs):
+        return add_is_round_number(df, base, self.MAX_SIG, self.MIN_DIGITS, **kwargs)
 
     def test_round(self):
-        base = pd.Series([10_000_000])
+        base = pd.Series([10_000_000])  # 유효숫자 1
         df = pd.DataFrame({"x": [0]})
-        add_is_round_number(df, base, self.UNIT)
+        self._run(base, df)
         assert df["is_round_number"].iloc[0] == True
 
     def test_not_round(self):
-        base = pd.Series([10_500_000])
+        base = pd.Series([10_500_000])  # "105" → 유효숫자 3
         df = pd.DataFrame({"x": [0]})
-        add_is_round_number(df, base, self.UNIT)
+        self._run(base, df)
         assert df["is_round_number"].iloc[0] == False
+
+    def test_two_significant_digits_is_round(self):
+        base = pd.Series([1_500_000])  # "15" → 유효숫자 2 → 경계 포함
+        df = pd.DataFrame({"x": [0]})
+        self._run(base, df)
+        assert df["is_round_number"].iloc[0] == True
+
+    def test_three_significant_digits_is_not_round(self):
+        base = pd.Series([1_250_000])  # "125" → 유효숫자 3 → 경계 밖
+        df = pd.DataFrame({"x": [0]})
+        self._run(base, df)
+        assert df["is_round_number"].iloc[0] == False
+
+    def test_small_amount_is_round_when_relative(self):
+        """구 절대 정의(100만원 배수)로는 잡히지 않던 소액 둥근 금액."""
+        base = pd.Series([20_000])  # 유효숫자 1, 자릿수 5
+        df = pd.DataFrame({"x": [0]})
+        self._run(base, df)
+        assert df["is_round_number"].iloc[0] == True
+
+    def test_trivial_small_amount_excluded_by_min_digits(self):
+        """10원·50원은 자릿수 하한 미만 — 자동으로 '둥글다'고 잡히면 안 된다."""
+        base = pd.Series([10, 50])
+        df = pd.DataFrame({"x": [0, 0]})
+        self._run(base, df)
+        assert df["is_round_number"].tolist() == [False, False]
 
     def test_zero_excluded(self):
         """0원 → False (라운드넘버에서 제외)."""
         base = pd.Series([0])
         df = pd.DataFrame({"x": [0]})
-        add_is_round_number(df, base, self.UNIT)
+        self._run(base, df)
+        assert df["is_round_number"].iloc[0] == False
+
+    def test_negative_excluded(self):
+        base = pd.Series([-5_000_000])
+        df = pd.DataFrame({"x": [0]})
+        self._run(base, df)
         assert df["is_round_number"].iloc[0] == False
 
     def test_nan_is_false(self):
         """NaN → False."""
         base = pd.Series([np.nan])
         df = pd.DataFrame({"x": [0]})
-        add_is_round_number(df, base, self.UNIT)
+        self._run(base, df)
         assert df["is_round_number"].iloc[0] == False
 
     def test_float_tail_tolerance(self):
-        """float 소수점 꼬리(미세)가 있어도 round 후 배수 판정."""
+        """float 소수점 꼬리(미세)가 있어도 round 후 판정."""
         base = pd.Series([10_000_000.000001, 5_000_000.4])
         df = pd.DataFrame({"x": [0, 0]})
-        add_is_round_number(df, base, self.UNIT)
-        # .000001 → round → 10M (배수), .4 → round → 5M (배수)
+        self._run(base, df)
         assert df["is_round_number"].tolist() == [True, True]
 
     def test_near_but_not_round(self):
-        """반올림해도 배수가 아닌 경우 → False."""
+        """반올림해도 유효숫자가 많으면 False."""
         base = pd.Series([10_500_000.3])
         df = pd.DataFrame({"x": [0]})
-        add_is_round_number(df, base, self.UNIT)
+        self._run(base, df)
         assert df["is_round_number"].iloc[0] == False
 
     # ── 외화 소수점 처리 (currency_decimals) ──────────────────
@@ -844,38 +884,45 @@ class TestIsRoundNumber:
     _CURR_DEC = {"KRW": 0, "USD": 2, "EUR": 2, "JPY": 0}
 
     def test_usd_round_with_decimals(self):
-        """USD $10,000,000.00 → round(2) → %1M==0 → True."""
+        """USD $10,000,000.00 → round(2) → 유효숫자 1 → True."""
         base = pd.Series([10_000_000.00])
         df = pd.DataFrame({"x": [0], "currency": ["USD"]})
-        add_is_round_number(df, base, self.UNIT, currency_decimals=self._CURR_DEC)
+        self._run(base, df, currency_decimals=self._CURR_DEC)
         assert df["is_round_number"].iloc[0] == True  # noqa: E712
+
+    def test_usd_with_cents_is_not_round(self):
+        """USD $5,000,000.25 → 소수부가 남으면 둥근 금액이 아니다."""
+        base = pd.Series([5_000_000.25])
+        df = pd.DataFrame({"x": [0], "currency": ["USD"]})
+        self._run(base, df, currency_decimals=self._CURR_DEC)
+        assert df["is_round_number"].iloc[0] == False
 
     def test_mixed_currency(self):
         """KRW + USD 혼합: 둘 다 10M → 둘 다 True."""
         base = pd.Series([10_000_000, 10_000_000.00])
         df = pd.DataFrame({"x": [0, 0], "currency": ["KRW", "USD"]})
-        add_is_round_number(df, base, self.UNIT, currency_decimals=self._CURR_DEC)
+        self._run(base, df, currency_decimals=self._CURR_DEC)
         assert df["is_round_number"].tolist() == [True, True]
 
     def test_no_currency_column_fallback(self):
         """currency 컬럼 없으면 기존 로직(round(0)) 폴백."""
         base = pd.Series([10_000_000.00])
         df = pd.DataFrame({"x": [0]})
-        add_is_round_number(df, base, self.UNIT, currency_decimals=self._CURR_DEC)
+        self._run(base, df, currency_decimals=self._CURR_DEC)
         assert df["is_round_number"].iloc[0] == True  # noqa: E712
 
     def test_unknown_currency_defaults_to_round0(self):
         """currency_decimals에 없는 통화 → round(0) 폴백."""
         base = pd.Series([10_000_000.00])
         df = pd.DataFrame({"x": [0], "currency": ["CHF"]})
-        add_is_round_number(df, base, self.UNIT, currency_decimals=self._CURR_DEC)
+        self._run(base, df, currency_decimals=self._CURR_DEC)
         assert df["is_round_number"].iloc[0] == True  # noqa: E712
 
     def test_nan_currency_fallback(self):
         """currency가 NaN인 행 → round(0) 폴백. groupby NaN 제외 버그 방지."""
         base = pd.Series([10_000_000.0, 5_000_000.0])
         df = pd.DataFrame({"x": [0, 0], "currency": ["USD", None]})
-        add_is_round_number(df, base, self.UNIT, currency_decimals=self._CURR_DEC)
+        self._run(base, df, currency_decimals=self._CURR_DEC)
         assert df["is_round_number"].iloc[0] == True  # noqa: E712 — USD round(2)
         assert df["is_round_number"].iloc[1] == True  # noqa: E712 — NaN round(0)
 
@@ -921,7 +968,6 @@ class TestAddAllAmountFeatures:
         custom = AuditSettings(
             approval_thresholds=[10_000_000],
             near_threshold_ratio=0.80,
-            round_unit=500_000,
         )
         result = add_all_amount_features(af_basic_df.copy(), settings=custom)
         assert self.EXPECTED_COLS.issubset(result.columns)

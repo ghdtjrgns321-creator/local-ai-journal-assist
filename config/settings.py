@@ -94,7 +94,11 @@ class AuditSettings(BaseSettings):
         return max(self.approval_thresholds)
 
     near_threshold_ratio: float = 0.90  # 한도의 90% 이상이면 플래그
-    round_unit: int = 1_000_000  # B04: 정수 단위 판정 기준 (100만원)
+    # Why(2026-07-15): 절대 단위(구 round_unit=100만원) 폐기 — 원장 금액이 1,526원~2,057억원으로
+    #      8자릿수에 걸쳐 단일 절대 단위로 잴 수 없다(거래 64.9%가 100만원 미만 → 구조적 미발화).
+    #      규모 대비 끝자리 0 개수로 판정한다. 실측 baseline: ≤2·≥3 → 5.16%.
+    round_max_significant_digits: int = 2  # 끝자리 0 제거 후 남은 자릿수 ≤ 이 값이면 둥근 금액
+    round_min_digits: int = 3  # 총 자릿수 미만이면 제외 — 10원·50원 같은 사소한 소액 배제
     zscore_threshold: float = 3.0  # L4-01(b01_revenue_manipulation) 등 통계 이상치 기준
     midnight_start: float = 22.0  # C03: 심야 전기
     midnight_end: float = 6.0  # C03: 심야 전기
@@ -386,6 +390,31 @@ class AuditSettings(BaseSettings):
     partner_signal_min_population: int = (
         50  # 당기 거래처 수 미만이면 rare 분위수 산출 불가 (small sample 가드)
     )
+
+    # --- PHASE1-2 라운드넘버 밀집도 (round_density_rules) ---
+    # Why: AS2401 §61(e) 둥근 금액. 단건 is_round_number 는 배지, 모집단 집중은 자기 큐(Benford 동렬).
+    #      baseline(정상 둥근 금액률)은 원장 자체에서 산출해 산업·회사별 차이를 흡수한다.
+    #      §3 데이터주도 — 절대 리터럴로 계산 분기 금지, 전부 본 설정에서 read.
+    round_density_min_sample: int = 100  # 모집단 최소 표본 — 미만 그룹은 검정 제외(우연 방지)
+    round_density_alpha: float = 0.01  # 이항검정 단측 유의수준 — finding 생성 기준
+    round_density_strong_alpha: float = 0.0001  # strong finding 유의수준 (미만은 moderate)
+    round_density_min_excess: float = 0.05  # 실무 유의성 하한 — baseline 대비 round 비율 초과분
+    # Why: 표본이 크면 사소한 차이도 통계적 유의가 되므로 effect size 하한을 함께 건다.
+
+    # --- PHASE1-2 시계열 당기내 집중 (timeseries_concentration_rules) ---
+    # Why: D01/D02 는 전기 대비만 본다. "당기(그 해) 안에서 특정 시점에 몰린다"는 별개 차원이며
+    #      ACFE 결산 직전 이례적 집중이 대표 사례. baseline 은 그 계정·그 해 자신의 리듬(median/MAD)
+    #      이라 전기 데이터가 없어도 성립한다. §3 데이터주도 — 임계는 전부 본 설정에서 read.
+    ts_concentration_min_buckets: int = (
+        6  # 계정·연도의 활성 버킷 수 미만이면 baseline 산출 불가 → 스킵
+    )
+    ts_concentration_zscore: float = 3.5  # robust z 임계 (MAD→IQR→Poisson 폴백 사다리)
+    ts_concentration_min_docs: int = 10  # 버킷 전표 수 미만이면 제외 — 사소한 burst 배제
+    # Why: 계절성 통제 — 분기말(회계기수 % 3 == 0)은 결산조정·감가상각으로 원래 몰린다.
+    #      평범한 달과 섞어 비교하면 "기말이라 바쁘다"를 계정마다 재발견하고(실측: finding 70%가
+    #      분기말), 그건 L3-04(기말 전표)가 이미 행 단위로 커버한다. 기말은 기말끼리 비교해
+    #      "기말치고도 이례적"만 남긴다. 기말 레인은 월 축 기준 연 4개뿐이라 최소 버킷을 따로 둔다.
+    ts_concentration_min_buckets_seasonal: int = 3  # 기말 레인 최소 버킷 수
 
     # --- L3 통계 검증 (statistical_validator) ---
     monthly_volatility_zscore: float = 2.0  # 월별 변동률 이상 판정 Z-score

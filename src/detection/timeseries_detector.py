@@ -624,7 +624,8 @@ class TimeseriesDetector(BaseDetector):
     def _compute_sub_signals(self, df: pd.DataFrame) -> list[SubSignalResult]:
         s = self._settings
         rarity_min_pop = int(getattr(s, "ts_rarity_min_pair_population", 50))
-        round_unit = float(getattr(s, "round_unit", 1_000_000.0))
+        round_max_sig = int(getattr(s, "round_max_significant_digits", 2))
+        round_min_digits = int(getattr(s, "round_min_digits", 3))
         return [
             daily_burst_positive_robust_z_score(
                 df,
@@ -649,7 +650,11 @@ class TimeseriesDetector(BaseDetector):
             # Why: context axis (boolean 0/0.5) — composite gate 의 context_count 입력 전용.
             after_hours_or_weekend_score(df),
             manual_or_adjustment_score(df),
-            round_amount_score(df, round_unit=round_unit),
+            round_amount_score(
+                df,
+                max_significant_digits=round_max_sig,
+                min_digits=round_min_digits,
+            ),
             # Why: rarity axis 신규 3축 — composite gate 의 rarity_tail 입력 전용.
             account_process_rarity_score(df, min_pair_population=rarity_min_pop),
             user_account_rarity_score(df, min_pair_population=rarity_min_pop),

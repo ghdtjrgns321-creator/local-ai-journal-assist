@@ -1,6 +1,17 @@
 {
   "_meta": {
     "measured_at": "2026-06-12",
+    "status": "retired_pending_reestablishment",
+    "retired_at": "2026-07-15",
+    "retirement_reason": "v42j baseline 퇴역. 세 가지가 동시에 무효화했다. (1) raw 데이터셋 부재 — datasets.normal(datasynth_semantic_v1_normal_20260613_v42j)과 datasets.recall(datasynth_semantic_v1_recall_20260613_v42j_r3)이 둘 다 디스크에 없어 재측정 경로가 끊겼다. (2) 아티팩트 노후 — measurement/checkpoint가 2026-06-13~14 생성으로 freshness_days=7을 31일 초과한다. test_freshness_within_window가 이를 HARD FAIL로 차단 중이며, 이 FAIL은 결함이 아니라 '재측정 필요' 신호로 의도적으로 유지한다(가드를 skip 처리하지 말 것). (3) 룰 집합 변경 — 본 baseline은 39룰 기준(a3/c1 표준 1,020)이나 현행 PHASE1-1은 26룰이라(docs/datasynth/scenario-and-datasets.md) 표준·경계 분모가 구조적으로 다르다. 따라서 값 갱신이 아니라 재수립 대상이다. 퇴역 시점 사본은 kpi_baseline_legacy_20260614_v42j.json. 선례는 아래 redefined_from(kpi_baseline_legacy_20260514.json)과 같은 패턴.",
+    "reestablishment_conditions": [
+      "선결: NORMAL 수정 확정. 2026-07-15 기준 NORMAL은 수정 진행 중이며, 확정 전 재측정은 곧 무효화되므로 하지 않는다.",
+      "normal 키를 현행 accepted NORMAL로 교체 후 measure_phase1_current_p3_2.py 재실행. 2026-07-15 현행: datasynth_semantic_v1_normal_20260703_v53_account_determination_r6.",
+      "recall 키를 현행 accepted PHASE1-1 recall로 교체. 2026-07-15 현행: datasynth_semantic_v1_recall_20260630_v47_batchid_phase1_1_r1. 26룰 기준으로 a3/c1의 표준·경계 분모를 재도출한다. 39룰 시절 값 1,020을 그대로 옮기지 않는다.",
+      "b2 해소: recall 체크포인트에 phase1_case_builder 스테이지가 없어 test_b2_case_builder_runtime이 KeyError로 실패한다(assert 실패가 아님). 재측정을 case build 포함으로 실행해 스테이지를 생성하거나, 스테이지 부재를 읽을 수 있는 실패 메시지로 처리한다.",
+      "a2/a6/b1 재측정: 정상 high=0 HARD 불변은 유지하되 medium/enrichment/case 수는 새 NORMAL 실측값으로 교체한다.",
+      "재수립 후에도 _meta.principle 유지: truth recall 향상을 강제하는 가드는 추가하지 않는다."
+    ],
     "redefined_from": "kpi_baseline_legacy_20260514.json — manipulation_v2/contract_v2 기반 구 baseline. raw 데이터셋 부재 + 아티팩트 25일 노후로 현재 코드 재검증 불가하여 퇴역 (docs/archive/completed/PHASE1_VERIFICATION_20260608.md 잔여 사각 1). unusual_timing/fictitious_entry ceiling 등 도메인 지식은 legacy 파일에 보존.",
     "datasets": {
       "normal": {

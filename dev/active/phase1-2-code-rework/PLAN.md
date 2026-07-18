@@ -2,6 +2,19 @@
 
 작성: 2026-06-30. 설계 SoT: [DETECTION_RULES_PHASE1-2.MD](../../../docs/spec/DETECTION_RULES_PHASE1-2.MD), [CONSTRAINTS.md §단일 법인](../../../docs/spec/CONSTRAINTS.md), [HIGH_COMBO_GROUNDING.md](../../../docs/spec/HIGH_COMBO_GROUNDING.md).
 
+> **⚠️ 2026-07-15 갱신 — 구현 후 실측으로 §3 Phase 1·§6 시계열 결론이 바뀌었다.** 실측 근거 전량: [backend_verify.md](backend_verify.md).
+>
+> | 항목                       | 계획(2026-06-30)             | 현행(2026-07-15)                                                    |
+> | -------------------------- | ---------------------------- | ------------------------------------------------------------------- |
+> | Phase 1 단일 회사 스코프   | 회사별 실행 후 병합          | **폐기 → 입구 가드**(데이터 15개 중 14개가 이미 단일 회사)          |
+> | 시계열 당기내 집중         | 자기 큐 신규 채택            | **폐기 → D02 드릴다운**(당기 내 baseline 이 결산 캘린더를 재발견)   |
+> | 자기 큐                    | 6종                          | **5종**(시계열 제외)                                                |
+> | macro 큐 top_n(100) 절단   | 유지 전제                    | **제거**(PHASE1-2 는 검토 목록을 소유하지 않음)                     |
+> | 라운드넘버 `round_amount_score` 재활용 | 재활용            | 신규 `round_density_rules.py`(이항검정) + `is_round_number` 정의 교체 |
+> | PHASE2_TIMESERIES_ROLE_LOCK | 본 결정으로 supersede 예정  | **supersede 취소** — 결산 lane lock 존속                            |
+>
+> 완료: Phase 0(baseline) · Phase 2(레거시 정리) · Phase 3(첫등장/희소) · Phase 4(배지 통합). 미착수: Phase 5·6(UI — 사용자 지시로 범위 외), D02 드릴다운.
+
 ## 0. 한 줄 목표
 
 문서로만 확정된 PHASE1-2 재설계(자기 큐 / 배지 / 범위 외 / 드롭)를 코드에 반영하고, 옛 PHASE2 rule-style 잔재를 정리하며, 전표 테스트를 단일 법인 단위로 스코프한다.
@@ -45,11 +58,11 @@
 - 한 데이터셋(정상 v44f)으로 현재 PHASE1 case/queue/band 분포 수치 캡처 → `dev/active/phase1-2-code-rework/baseline.md`.
 - 검증 기준: 이후 모든 단계에서 "알려진 실패 N, 신규 0" 가드. band 분포 의도적 변경 외 회귀 0.
 
-### Phase 1 — 단일 회사 스코프 (correctness, 최우선)
-- 대상: `pipeline.py` `_run_detection` / `_execute`. base+variance 탐지를 `company_code`별로 돌려 합치도록. IC/GR는 범위외라 그룹 로드 불요.
-- 구현 주의: company_code 단일이면 현행과 동일(no-op). 다회사면 분리 실행.
-- 검증(ripple-search, 2케이스): C001 단독 vs C002 단독으로 돌렸을 때 (a) Benford/D01/고액 모집단이 회사별로 갈리는지, (b) 합산 결과가 회사별 결과의 합과 일치하는지. 산출물: `dev/active/phase1-2-code-rework/phase1_company_scope_check.md` (C001/C002 각 핵심 수치 표).
-- 실패조건: 두 회사 결과가 동일(스코프 미적용) → FAIL.
+### Phase 1 — 단일 회사 스코프 → **입구 가드로 대체 (2026-07-15 완료)**
+- ~~base+variance 탐지를 `company_code`별로 돌려 합치도록.~~ **폐기.** DataSynth 데이터셋 15개 중 **14개가 이미 단일 회사(C001)**이고 다회사는 본 PLAN 작성일과 같은 날 생성된 `contract_v3_rebuild_20260630_r1` 1개뿐이다. 운영 DB 도 회사·연도별 격리. 단일 법인 확정 하에서 병합 기계(`flagged_indices` 위치 재매핑 + 탐지기별 metadata 병합)는 투기성 복잡도(§YAGNI).
+- **현행**: `pipeline.py::single_company_scope_warnings` — 다회사면 `[분석범위제한]` 경고 1건, 단일회사·컬럼부재면 no-op. 결측 `company_code` 는 회사로 세지 않는다.
+- **검증 완료(2케이스)**: 다회사 contract_v3_rebuild(3사·결측 6행) → 경고 1건 / 단일회사 v53_r6 → 경고 0건. 단위테스트 6/6. 산출물 [backend_verify.md](backend_verify.md) §2.
+- **회사 오염 룰 7/17 전수 조사** 완료 — L4-01·L1-06·L2-03·L2-05·L4-05·L4-06·L3-09(경고 문구에 명시). 안전: L4-02·L4-03·L4-04·L2-02·D01·D02.
 
 ### Phase 2 — 레거시 정리 (low risk, 대부분 dead/phase2-only)
 - (2a) `pipeline.py:1460-1491` phase2_only family 블록에서 **relational·duplicate·intercompany 제거**, timeseries만 잔류(PHASE2 lane). VAE 경로(`_try_ml_detection`) 무변경.
@@ -102,9 +115,13 @@ IC · duplicate · 관계형(relational) · 시계열(timeseries) 4종은 **옛 
   - **배지**: 해당 거래처 전표에 "새/희소 거래처" 꼬리표.
   - **first-seen 정의**: 전기(2022·2023) 미등장 + 당기 등장 교차(연도 통합 실행 필수, 단일 연도 무의미). rare = 거래처 거래 건수 극소수.
   - **구현**: 실패한 R01/R05/R07(phase2 relational) 코드는 신뢰·재사용하지 않고 base 경로에서 거래처 단위로 신규 구현. R02/R04/R06은 드롭.
-- **시계열 (2026-06-30 종결)**: **살린다 — 당기 내 거래 집중 신호로 신규 설계, 자기 큐.**
-  - **근거(빈 구멍)**: D01/D02는 *전기 대비*만 본다. "당기(특정 연도) 안에서 특정 시점에 거래가 몰린다"는 D01/D02가 안 잡는 별개 차원. ACFE "결산 직전 이례적 집중" 등.
-  - **잡는 것**: 일/주/월 단위 거래 건수·금액이 **그 해 자신의 평소 리듬 대비** 비정상 집중(전기비교 아님, 당기 내 baseline 대비).
-  - **운영**: 자기 큐(거래 집중 시점·계정 목록, Benford·D01/D02와 동렬 분석적 검토) + 고액/대량 순 정렬.
-  - **DataSynth 게이트**: 정상 데이터에서 과탐 시 → 생성 아티팩트(배치 인위 burst)인지 점검, 맞으면 **DataSynth(Rust) 수정**(검사기 드롭 아님 — "데이터를 올바르게 생성" 원칙). 실패조건: 정상 데이터 집중 과탐이 Rust 미수정 상태로 잔존.
-  - **구현**: 실패한 TS01/TS02 코드는 참고만, robust-z(median/MAD) 통계 재활용하되 당기 내 집중으로 신규. **PHASE2_TIMESERIES_ROLE_LOCK(결산 lane)은 본 결정으로 supersede** — 문서 갱신 필요.
+- **시계열 (2026-06-30 채택 → 2026-07-15 폐기)**: ~~살린다 — 당기 내 거래 집중 신호로 신규 설계, 자기 큐.~~ **구현 후 실측으로 전제가 깨져 자기 큐에서 폐기. D02 드릴다운으로 재정의.**
+  - 구 근거(빈 구멍): D01/D02는 *전기 대비*만 보므로 "당기 안에서 특정 시점에 몰림"은 별개 차원(ACFE 결산 직전 집중).
+  - **폐기 사유(실측 3라운드, 정상 v53_r6 376,727행·계정 57개)**:
+    1. 당기 내 자기 리듬 median 대비 → finding **864건**, 버킷의 **70%가 분기말**(3월 95·6월 112·9월 88·12월 307). "이 계정은 분기말에 바쁘다"를 계정마다 재발견 — L3-04(기말 전표)가 이미 행 단위로 커버.
+    2. 분기말/평월 레인 분리 후에도 **595건·52.4%**, 12월 185건 잔존. 연말 결산은 감가상각·충당금·법인세가 얹혀 분기 결산보다 무거워 같은 레인으로 묶어도 12월이 매번 튄다.
+    3. **원리적 한계** — 한 해에 연말은 한 번뿐이라 "연말치고도 이상한가"의 baseline 이 당기 안에 없다. 전기 연말과 비교해야 하는데 그건 본 §6 의 "전기비교 아님" 전제와 충돌.
+    4. **D02 중복** — "작년 같은 달 비교"는 D02(전기/당기 월별 분포 JSD, 계정 단위)가 이미 수행. 3개년 데이터라 기준점이 1~2개뿐이라 median/MAD 도 성립 안 함.
+  - **DataSynth 게이트 판정 — 아티팩트 아님**: 분기·연말 결산 집중은 실무상 정상이며 Rust 를 고쳐 없애면 데이터가 비현실적이 된다. 따라서 실패조건("정상 데이터 집중 과탐이 Rust 미수정 상태로 잔존")에 **비해당**.
+  - **코드**: `timeseries_concentration_rules.py`(계정별 × 일/주/월 축별 robust-z + 기말/평월 레인) + 테스트 9건 **보존**, `phase1_case_builder` 배선 **제거**. 당기내 robust-z 자산은 D02 드릴다운에서 재사용 가능.
+  - **PHASE2_TIMESERIES_ROLE_LOCK supersede 취소** — 시계열이 PHASE2 lane 에 잔류하므로 결산 lane lock 은 존속한다.

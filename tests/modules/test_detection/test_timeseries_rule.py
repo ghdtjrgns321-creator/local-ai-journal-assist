@@ -1620,7 +1620,7 @@ class TestRoundAmountScore:
                 "credit_amount": [0.0, 0.0, 0.0],
             }
         )
-        result = round_amount_score(df, round_unit=1_000_000.0)
+        result = round_amount_score(df, max_significant_digits=2, min_digits=3)
         assert result.active is True
         assert int(result.meta["nonzero_row_count"]) == 2
 

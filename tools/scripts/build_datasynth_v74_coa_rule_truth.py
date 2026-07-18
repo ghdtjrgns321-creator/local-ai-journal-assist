@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
-import importlib.util
 from pathlib import Path
 
 import pandas as pd
-
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "data" / "journal" / "primary" / "datasynth_v73_candidate"
@@ -44,7 +43,12 @@ def _account_template(code: str) -> dict:
         "account_class": first,
         "account_group": "CONFIG_COA_BACKFILL",
         "is_control_account": False,
-        "is_suspense_account": code in {"1190", "2190", "9990"},
+        # 가계정 플래그는 여기서 찍지 않는다. 계정의 성격은 그 계정을 만드는 곳
+        # (datasynth coa_generator)이 정하고, 이 스크립트는 config CSV에 있는 이름만
+        # backfill한다. 종전에는 1190/2190/9990을 여기서 가계정으로 찍었는데,
+        # 9990 통계계정은 가계정이 아니고(원장 0행), 1190/2190은 coa_generator가
+        # Suspense Receivable/Payable로 직접 생성하므로 이 경로로 올 일이 없다.
+        "is_suspense_account": False,
         "parent_account": None,
         "hierarchy_level": 1,
         "normal_debit_balance": account_type in {"asset", "expense", "statistical"},
@@ -75,12 +79,19 @@ def _patch_coa_from_config() -> dict[str, object]:
     config_path = ROOT / "config" / "chart_of_accounts.csv"
     coa = json.loads(coa_path.read_text(encoding="utf-8"))
     config = pd.read_csv(config_path, dtype=str)
-    config_names = dict(zip(config["gl_account"].astype(str), config["account_name_kr"].astype(str)))
+    config_names = dict(
+        zip(config["gl_account"].astype(str), config["account_name_kr"].astype(str))
+    )
     existing = {str(row.get("account_number", "")).strip() for row in coa.get("accounts", [])}
 
     journal_accounts: set[str] = set()
     for year in v73.YEARS:
-        df = pd.read_csv(DEST / f"journal_entries_{year}.csv", dtype=str, usecols=["gl_account"], low_memory=False)
+        df = pd.read_csv(
+            DEST / f"journal_entries_{year}.csv",
+            dtype=str,
+            usecols=["gl_account"],
+            low_memory=False,
+        )
         journal_accounts.update(df["gl_account"].dropna().astype(str).str.strip())
 
     added: list[str] = []

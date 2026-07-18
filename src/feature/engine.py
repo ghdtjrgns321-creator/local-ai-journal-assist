@@ -14,6 +14,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path
 
 import pandas as pd
 
@@ -22,6 +23,7 @@ from src.feature.amount_features import add_all_amount_features
 from src.feature.pattern_features import add_all_pattern_features
 from src.feature.text_features import add_all_text_features
 from src.feature.time_features import add_all_time_features
+from src.ingest.datasynth_labels import get_source_path
 
 logger = logging.getLogger(__name__)
 
@@ -247,6 +249,10 @@ def generate_all_features(
     target_set = set(categories) if categories else set(_EXECUTION_ORDER)
     ordered_targets = [c for c in _EXECUTION_ORDER if c in target_set]
 
+    # Why: 병렬 thin-copy가 df.attrs를 버리기 전에 source_path를 확정해, PATTERN 카테고리의
+    #      가계정 CoA 권위(chart_of_accounts.json) 해소가 병렬 모드에서도 유실되지 않게 한다.
+    resolved_source_path = get_source_path(df)
+
     if parallel:
         execution_times, categories_run, failed_categories, warnings_map = _run_categories_parallel(
             df,
@@ -258,6 +264,7 @@ def generate_all_features(
             max_workers=max_workers,
             include_morpheme_tokens=include_morpheme_tokens,
             employee_master_path=employee_master_path,
+            source_path=resolved_source_path,
         )
     else:
         execution_times, categories_run, failed_categories, warnings_map = (
@@ -270,6 +277,7 @@ def generate_all_features(
                 risk_keywords=risk_keywords,
                 include_morpheme_tokens=include_morpheme_tokens,
                 employee_master_path=employee_master_path,
+                source_path=resolved_source_path,
             )
         )
 
@@ -315,6 +323,7 @@ def _run_categories_sequential(
     risk_keywords: dict | None,
     include_morpheme_tokens: bool = True,
     employee_master_path: str | None = None,
+    source_path: str | Path | None = None,
 ) -> tuple[dict[str, float], list[str], list[str], dict[str, list[str]]]:
     """순차 실행 — 기존 로직을 함수로 분리."""
     execution_times: dict[str, float] = {}
@@ -334,6 +343,7 @@ def _run_categories_sequential(
             risk_keywords=risk_keywords,
             include_morpheme_tokens=include_morpheme_tokens,
             employee_master_path=employee_master_path,
+            source_path=source_path,
             warnings_out=cat_warnings,
         )
         elapsed = time.monotonic() - t0
@@ -359,6 +369,7 @@ def _run_categories_parallel(
     max_workers: int | None = None,
     include_morpheme_tokens: bool = True,
     employee_master_path: str | None = None,
+    source_path: str | Path | None = None,
 ) -> tuple[dict[str, float], list[str], list[str], dict[str, list[str]]]:
     """병렬 실행 — Thin Copy + Series 반환 패턴으로 OOM 방지.
 
@@ -391,6 +402,7 @@ def _run_categories_parallel(
             risk_keywords=risk_keywords,
             include_morpheme_tokens=include_morpheme_tokens,
             employee_master_path=employee_master_path,
+            source_path=source_path,
             warnings_out=cat_warnings,
         )
         elapsed = time.monotonic() - t0
@@ -441,6 +453,7 @@ def _run_category(
     risk_keywords: dict | None = None,
     include_morpheme_tokens: bool = True,
     employee_master_path: str | None = None,
+    source_path: str | Path | None = None,
     warnings_out: list[str] | None = None,
 ) -> bool:
     """카테고리별 서브모듈 디스패치. 성공 시 True, 실패 시 False.
@@ -461,7 +474,7 @@ def _run_category(
                 employee_master_path=employee_master_path,
             )
         elif cat == FeatureCategory.PATTERN:
-            add_all_pattern_features(df, rules=rules)
+            add_all_pattern_features(df, rules=rules, source_path=source_path)
         elif cat == FeatureCategory.TEXT:
             add_all_text_features(
                 df,

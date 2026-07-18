@@ -58,7 +58,12 @@ _FIELD_DEFS: dict[str, list[tuple[str, str, str, dict]]] = {
             "slider",
             {"min_value": 7, "max_value": 90},
         ),
-        ("round_unit", "정수 단위", "selectbox", {"options": [100_000, 1_000_000, 10_000_000]}),
+        (
+            "round_max_significant_digits",
+            "둥근 금액 기준(유효숫자)",
+            "selectbox",
+            {"options": [1, 2, 3]},
+        ),
         (
             "period_end_amount_quantile",
             "기말 고액 분위수",

@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import logging
 
+import pandas as pd
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import IsolationForest, RandomForestClassifier
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OrdinalEncoder, StandardScaler
+from sklearn.preprocessing import FunctionTransformer, OrdinalEncoder, StandardScaler
 
 from src.preprocessing.feature_groups import FeatureGroups
 from src.preprocessing.feature_quality import apply_feature_quality_policy
@@ -73,13 +74,41 @@ def _build_supervised_preprocessor(groups: FeatureGroups) -> ColumnTransformer:
     if groups.categorical_low:
         transformers.append(("cat_low", _build_cat_low_transformer(), groups.categorical_low))
     if groups.boolean:
-        transformers.append(("bool", "passthrough", groups.boolean))
+        transformers.append(("bool", _build_bool_transformer(), groups.boolean))
     if groups.ordinal:
         transformers.append(("ord", _build_ordinal_encoder(groups.ordinal), groups.ordinal))
     preprocessor = ColumnTransformer(transformers, remainder="drop")
     if hasattr(preprocessor, "set_output"):
         preprocessor.set_output(transform="default")
     return preprocessor
+
+
+def _coerce_nullable_bool_to_float(X):
+    """pandas nullable Boolean(pd.NA 포함) → float64(NaN) 행렬.
+
+    Why: sklearn은 pd.NA가 섞인 boolean passthrough를 거부한다(ValueError).
+         결측 있는 불리언은 실데이터에 실재한다 — 승인자 공란 전표의
+         approver_in_master, 가계정 아닌 행의 is_cleared 등.
+    """
+    return (
+        pd.DataFrame(X)
+        .astype("boolean")
+        .astype("Float64")
+        .to_numpy(dtype="float64", na_value=float("nan"))
+    )
+
+
+def _build_bool_transformer() -> Pipeline:
+    """불리언 그룹: float 변환 후 최빈값 대치 (수치형의 중앙값 대치와 같은 결)."""
+    return Pipeline(
+        [
+            (
+                "to_float",
+                FunctionTransformer(_coerce_nullable_bool_to_float, feature_names_out="one-to-one"),
+            ),
+            ("imputer", SimpleImputer(strategy="most_frequent")),
+        ]
+    )
 
 
 def build_xgb_pipeline(groups: FeatureGroups) -> Pipeline:
@@ -254,7 +283,8 @@ def _build_unsupervised_preprocessor(groups: FeatureGroups) -> ColumnTransformer
     if groups.categorical_low:
         transformers.append(("cat_low", _build_cat_low_transformer(), groups.categorical_low))
     if groups.boolean:
-        transformers.append(("bool", "passthrough", groups.boolean))
+        # passthrough 금지 — 결측 있는 불리언(pd.NA)은 sklearn이 거부한다 (_build_bool_transformer 참조)
+        transformers.append(("bool", _build_bool_transformer(), groups.boolean))
     if groups.ordinal:
         transformers.append(("ord", _build_ordinal_encoder(groups.ordinal), groups.ordinal))
 
