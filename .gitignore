@@ -101,8 +101,9 @@ tools/tmp_*.py
 # 런타임 생성물 (케이스/리포트 등)
 artifacts/
 
-# dev 측정 원시 덤프 (baseline 재실행 시 재생성, 대용량 — 커밋 금지)
+# 측정 원시 덤프 (baseline 재실행 시 재생성, 각 75MB 내외 — 커밋 금지)
 dev/active/**/rule_hits.csv
+reports/**/rule_hits.csv
 
 # 아카이브 대용량 taxonomy/예외 덤프 (재생성물, 코드 참조 없음)
 docs/archive/completed/datasynth_contract_rule_truth_taxonomy_v126.csv
