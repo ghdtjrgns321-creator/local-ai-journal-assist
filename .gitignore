@@ -14,7 +14,25 @@ venv/
 .env
 
 # 데이터 (대용량 파일 제외)
-data/
+data/*
+!data/companies/
+data/companies/*
+!data/companies/_ci_baseline/
+data/companies/_ci_baseline/*
+!data/companies/_ci_baseline/engagements/
+data/companies/_ci_baseline/engagements/*
+!data/companies/_ci_baseline/engagements/2026/
+data/companies/_ci_baseline/engagements/2026/*
+!data/companies/_ci_baseline/engagements/2026/models/
+data/companies/_ci_baseline/engagements/2026/models/*
+!data/companies/_ci_baseline/engagements/2026/models/phase2_unsupervised/
+data/companies/_ci_baseline/engagements/2026/models/phase2_unsupervised/*
+!data/companies/_ci_baseline/engagements/2026/models/phase2_unsupervised/v1/
+data/companies/_ci_baseline/engagements/2026/models/phase2_unsupervised/v1/*
+!data/companies/_ci_baseline/engagements/2026/models/phase2_unsupervised/v1/training_report.json
+
+# 면접용 개인 문서 (외부 공개 안 함)
+docs/guide/users/
 
 # DuckDB
 *.duckdb
@@ -41,6 +59,61 @@ Thumbs.db
 
 # pytest
 .pytest_cache/
+pytest-cache-files-*/
 
 # ruff
 .ruff_cache/
+
+# 외부 도구 (별도 클론)
+tools/datasynth/
+
+# 임시/로그 파일
+streamlit_*.log
+.tmp/
+.tmp-*/
+.tmp_*/
+.tmp_*.md
+.tmp_*.py
+.tmp_*.txt
+.tmp_*.log
+_tmp_*.py
+_tmp_*.md
+_tmp_*.txt
+_tmp_*.log
+tmp_*.png
+tmp_*.log
+tmp_*.txt
+.pytest_tmp/
+.pytest_tmp_*/
+codex_pytest_*/
+codex_py_dir_probe/
+tmp*/
+tools/tmp_*.py
+.manual-model-registry-check/
+.playwright-mcp/
+
+# 백업 파일
+*.bak
+
+# 복구 아티팩트 (세션 기반 파일 회복용 임시 보관)
+.codex_recovery/
+
+# 런타임 생성물 (케이스/리포트 등)
+artifacts/
+
+# 측정 원시 덤프 (baseline 재실행 시 재생성, 각 75MB 내외 — 커밋 금지)
+dev/active/**/rule_hits.csv
+reports/**/rule_hits.csv
+
+# 아카이브 대용량 taxonomy/예외 덤프 (재생성물, 코드 참조 없음)
+docs/archive/completed/datasynth_contract_rule_truth_taxonomy_v126.csv
+docs/archive/completed/datasynth_hard_exception_reclassification_v126.csv
+
+# datasynth QG3 스크립트 출력 대용량 덤프 (review_datasynth_semantic_v1_accounting.py OUT_DIR)
+tests/datasynth_quality_gate3/results/**/accounting_llm_review_phase1_hits.csv
+tests/datasynth_quality_gate3/results/**/accounting_llm_review_reviews.csv
+tests/datasynth_quality_gate3/results/accounting_logic_extra_seed_20260514/reviews.csv
+tests/datasynth_quality_gate3/results/accounting_logic_extra_seed_20260514/samples.csv
+
+# 배포 시크릿 (basic auth 비밀번호 해시 — 서버에서 생성, 커밋 금지)
+deploy/nginx/.htpasswd

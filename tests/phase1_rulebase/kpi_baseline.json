@@ -1,0 +1,158 @@
+{
+  "_meta": {
+    "measured_at": "2026-06-12",
+    "status": "retired_pending_reestablishment",
+    "retired_at": "2026-07-15",
+    "retirement_reason": "v42j baseline 퇴역. 세 가지가 동시에 무효화했다. (1) raw 데이터셋 부재 — datasets.normal(datasynth_semantic_v1_normal_20260613_v42j)과 datasets.recall(datasynth_semantic_v1_recall_20260613_v42j_r3)이 둘 다 디스크에 없어 재측정 경로가 끊겼다. (2) 아티팩트 노후 — measurement/checkpoint가 2026-06-13~14 생성으로 freshness_days=7을 31일 초과한다. test_freshness_within_window가 이를 HARD FAIL로 차단 중이며, 이 FAIL은 결함이 아니라 '재측정 필요' 신호로 의도적으로 유지한다(가드를 skip 처리하지 말 것). (3) 룰 집합 변경 — 본 baseline은 39룰 기준(a3/c1 표준 1,020)이나 현행 PHASE1-1은 26룰이라(docs/datasynth/scenario-and-datasets.md) 표준·경계 분모가 구조적으로 다르다. 따라서 값 갱신이 아니라 재수립 대상이다. 퇴역 시점 사본은 kpi_baseline_legacy_20260614_v42j.json. 선례는 아래 redefined_from(kpi_baseline_legacy_20260514.json)과 같은 패턴.",
+    "reestablishment_conditions": [
+      "선결: NORMAL 수정 확정. 2026-07-15 기준 NORMAL은 수정 진행 중이며, 확정 전 재측정은 곧 무효화되므로 하지 않는다.",
+      "normal 키를 현행 accepted NORMAL로 교체 후 measure_phase1_current_p3_2.py 재실행. 2026-07-15 현행: datasynth_semantic_v1_normal_20260703_v53_account_determination_r6.",
+      "recall 키를 현행 accepted PHASE1-1 recall로 교체. 2026-07-15 현행: datasynth_semantic_v1_recall_20260630_v47_batchid_phase1_1_r1. 26룰 기준으로 a3/c1의 표준·경계 분모를 재도출한다. 39룰 시절 값 1,020을 그대로 옮기지 않는다.",
+      "b2 해소: recall 체크포인트에 phase1_case_builder 스테이지가 없어 test_b2_case_builder_runtime이 KeyError로 실패한다(assert 실패가 아님). 재측정을 case build 포함으로 실행해 스테이지를 생성하거나, 스테이지 부재를 읽을 수 있는 실패 메시지로 처리한다.",
+      "a2/a6/b1 재측정: 정상 high=0 HARD 불변은 유지하되 medium/enrichment/case 수는 새 NORMAL 실측값으로 교체한다.",
+      "재수립 후에도 _meta.principle 유지: truth recall 향상을 강제하는 가드는 추가하지 않는다."
+    ],
+    "redefined_from": "kpi_baseline_legacy_20260514.json — manipulation_v2/contract_v2 기반 구 baseline. raw 데이터셋 부재 + 아티팩트 25일 노후로 현재 코드 재검증 불가하여 퇴역 (docs/archive/completed/PHASE1_VERIFICATION_20260608.md 잔여 사각 1). unusual_timing/fictitious_entry ceiling 등 도메인 지식은 legacy 파일에 보존.",
+    "datasets": {
+      "normal": {
+        "dataset": "data/journal/primary/datasynth_semantic_v1_normal_20260613_v42j",
+        "measurement": "artifacts/phase1_priority_band_v42j/summary.json",
+        "checkpoint": "artifacts/phase1_priority_band_v42j/direct_phase1_checkpoint.json"
+      },
+      "recall": {
+        "dataset": "data/journal/primary/datasynth_semantic_v1_recall_20260613_v42j_r3",
+        "measurement": "artifacts/phase1_priority_truth_v42j_r3/summary.json",
+        "checkpoint": "artifacts/phase1_priority_truth_v42j_r3/direct_phase1_checkpoint.json",
+        "truth_band": "artifacts/phase1_priority_truth_v42j_r3/truth_priority_band.json",
+        "truth_measurement": "artifacts/phase1_priority_truth_v42j_r3/truth_unit_measurement.csv"
+      }
+    },
+    "measurement_tools": [
+      "tools/scripts/measure_phase1_current_p3_2.py (full build, evidence/intercompany/graph/variance extra 트랙 포함)",
+      "tools/scripts/analyze_truth_priority_band.py (truth→band/rank 분해)"
+    ],
+    "freshness_days": 7,
+    "policy": "Layer A/B HARD FAIL on regression. Layer C SOFT WARN only (no truth-recall improvement enforcement).",
+    "principle": "PHASE1 향상은 도메인 정합성으로만 발생시킨다. truth recall은 부수효과(회귀 방지선)로만 측정.",
+    "measurement_note": "2026-06-12 재측정: 측정 하니스가 빈 phase1_case_config로 use_topic_scoring=False(legacy 경로)였던 결함을 수정(get_phase1_case 로드). 이전 baseline 수치(정상 high/medium 0, r24 high+medium 61.7%)는 legacy 경로 측정값 — topic scoring ON(제품 경로) 실측으로 전면 교체. 같은 날 OPEN_ISSUES #14 해소 세트(fraud-combo floor 신뢰 자동전표 게이트 + L4-06 lone_batch_identity 확장) 적용 후 v41/r24 재측정으로 a2/b2/b3 재교체 — 정상 medium 3,516→1,029(-71%), truth band(c2 853, c3 718)는 게이트 영향 없음 확인. 2026-06-13 R1 결함 수정 3건(#17 floor 버킷 게이트·#18 source 위장 게이트 4곳·#22 repeat 무조건 medium 승급 제거) 적용 재측정: 정상 v41 불변(high 0·medium 1,029 — R1은 정상 중립), r24 truth c2 853→783(고의적 하락: L2-02 floor 0.45 스펙 정합으로 30유닛 이탈 + repeat 승급 제거분. high 539·Top500 718 불변, 경계 대조군 불변). IC 전건 medium은 콤보 점수 기인으로 확인(repeat 승급과 무관). 2026-06-13 데이터셋 전환(NORMAL v41→v42j) + R2 결함 수정(#24 L2-02 fallback 3종 발화·#19 unknown_approver 서브패턴): NORMAL만 v42j 측정(무결성 통과·CoA 누락 0), recall은 v42j_r1 검증 pending이라 **과도기로 r24(v41-base) 유지** — normal/recall base 불일치 상태, v42j_r1 검증(normal_regression·oracle_scan) 완료 시 recall도 전환 예정. v42j 실측: high 0·medium 838(case 40,594), L2-02 fallback 168행 발화(max 0.65=amount_partner, floor 미부착), unknown_approver 정상 과탐 0(비공란 292,487 중 마스터 미존재 0). a2/a6/b1/b2 normal 키만 갱신, recall(b3/c2/c3) 미변경. 2026-06-14 recall 키 v42j_r3 전환(과도기 r24 종료): v42j_r1/r3 검증 선결 충족 — normal_regression PASS(정상 subset 사용계정 ⊆ config CoA 480·999998은 L1-03 무효계정 truth 한정·차대변 균형·라벨 미오염), oracle_scan은 ML anti-shortcut 렌즈 finding이나 PHASE1 룰(규칙기반·미학습)에 무해 판정(account_subtype 미사용·고정시각 10:05/14:05는 정상시간대라 L3-06/L4-05 무발화·금액은 임계기반·계정 CoA 등록). 도구: tools/scripts/validate_recall_overlay_oracle_normal.py, 리포트: artifacts/recall_v42j_r3_validation/. build 병목 2건 수정(_flow_company_scope memoize·_unit_total_amount doc_positions 맵)으로 case_builder 3,717s→388.9s(b2 1200 통과, 동작 불변: case 28,620·band 870 Jun13 측정과 동일). recall 키 전면 교체 — a3(표준 1020/1020 미탐0·경계 직접과탐0), b1 28,620, b2 388.9, b3(high 0.00451/med 0.03242/low 0.96307), c1(1020/1020), c2(783→870 high+medium=80.6%), c3(718→796). NORMAL/recall 모두 v42j base 정합 회복. SOFT WARN 70% 하한만(truth recall 향상 강제 아님)."
+  },
+  "layer_a_domain_integrity": {
+    "a1_light_seeder_case_count": {
+      "baseline": 0,
+      "max": 0,
+      "fail_mode": "HARD",
+      "source": "case_artifact scan for primary_theme/primary_queue/case_id containing 'light_seeder'",
+      "rationale": "light_seeder authority revoked 2026-05-14 (§9.1). No case should be tagged light_seeder."
+    },
+    "a2_normal_high_medium_cases": {
+      "baseline_high": 0,
+      "baseline_medium": 838,
+      "max_high": 0,
+      "max_medium": 1006,
+      "fail_mode": "HARD",
+      "source": "normal(v42j) summary.priority_band_cases (topic ON + #14 게이트 + R1/R2, cases 40,594)",
+      "rationale": "정상 high 0은 HARD 불변. 정상 medium 838(2.1%)은 v42j 실측. max는 baseline +20% drift 가드. (v41 기준 1,029였으나 데이터셋 전환으로 직접 비교 무의미 — high 0 유지가 핵심.)"
+    },
+    "a3_recall_rule_contract": {
+      "baseline_standard_caught": 1020,
+      "baseline_standard_total_after_exclusion": 1020,
+      "excluded_rules": [
+        "L4-02",
+        "D01",
+        "D02"
+      ],
+      "max_standard_missed": 0,
+      "max_boundary_direct_hit": 0,
+      "fail_mode": "HARD",
+      "source": "recall(v42j_r3, NORMAL v42j 기반) truth_unit_measurement.csv (39룰 × 표준 1,080 + 경계 1,080)",
+      "rationale": "case-레인 룰 표준 위반 미탐 0 + 경계 대조군 detector 직접 과탐 0. 제외: L4-02는 macro finding 레인으로 전건 표면화(20/20), D01/D02는 review 신호 미표면(OPEN_ISSUES #5 해소 시 재포함). fixture 리콜이므로 현실 부정 리콜 아님 (순환 구조 경고)."
+    },
+    "a4_normal_sample_fp_ratio": {
+      "baseline": 0.016667,
+      "max": 0.05,
+      "fail_mode": "HARD",
+      "source": "data/journal/test_normal_sample/normal_sample_300.csv",
+      "rationale": "normal accounting 300행 고정 샘플 false positive ≤ 5%. generator 변경 시에만 random_state 고정으로 갱신."
+    },
+    "a5_policy_floor_conflict": {
+      "baseline": 0,
+      "max": 0,
+      "fail_mode": "HARD",
+      "source": "_apply_policy_risk_floors vs RISK_THRESHOLDS 정합",
+      "rationale": "정책 floor의 HIGH 매핑이 RISK_THRESHOLDS[HIGH] 이상이어야 함. immediate=0.50, escalated_*=0.75/0.80/0.85."
+    },
+    "a6_enrichment_drift": {
+      "baselines": {
+        "approval_matrix_gap_rows": 701049,
+        "document_flow_orphan_rows": 457134,
+        "ic_unmatched_rows": 14
+      },
+      "tolerance_ratio": 0.1,
+      "fail_mode": "HARD",
+      "source": "normal(v42j) checkpoint stages.independent_evidence_enrichment",
+      "rationale": "master/flow 독립 evidence 조인 회귀 방지. ±10% 변동 허용 (데이터셋 갱신 시 baseline 재측정 + 사유 명시)."
+    }
+  },
+  "layer_b_operational_load": {
+    "b1_case_count_max": {
+      "max": 45000,
+      "fail_mode": "HARD",
+      "source": "summary.phase1_case_count",
+      "rationale": "review queue 운영 가능 규모 (~1M행 full 트랙 기준). 정상(v42j) 40,594 + ~11% 여유. 운영 부담의 형태는 a2/b3가 보장.",
+      "normal_baseline": 40594,
+      "recall_baseline": 28620
+    },
+    "b2_case_builder_runtime_sec": {
+      "max": 1200,
+      "fail_mode": "HARD",
+      "source": "checkpoint.stages.phase1_case_builder.elapsed_sec",
+      "rationale": "O(n²) 회귀 방지 (VERIFICATION_20260608 perf 수정 — 수정 전 동급 빌드 20분+ 스톨). ~1M행 full 트랙 실측 기준 max 1200s.",
+      "normal_baseline": 710.4,
+      "recall_baseline": 388.9
+    },
+    "b3_priority_band_distribution": {
+      "tolerance": {
+        "high_max": 0.02,
+        "low_min": 0.9
+      },
+      "fail_mode": "HARD",
+      "source": "recall(v42j_r3, topic ON + 게이트 + R1/R2) summary.priority_band_cases (high 129 / medium 928 / low 27,563, total 28,620)",
+      "rationale": "위반 포함 데이터에서도 high 폭증(>2%)·low 소실(<90%) 차단. 운영 부하 형태 보장.",
+      "recall_baseline": {
+        "high_ratio": 0.00451,
+        "medium_ratio": 0.03242,
+        "low_ratio": 0.96307
+      }
+    }
+  },
+  "layer_c_truth_regression_softwarn": {
+    "_policy": "WARN ONLY. 절대값 임계 금지. baseline 70% 비율 하한만. truth recall 향상을 강제하는 가드 절대 추가 금지.",
+    "c1_standard_capture_ratio": {
+      "baseline_caught": 1020,
+      "baseline_total_after_exclusion": 1020,
+      "excluded_rules": [
+        "L4-02",
+        "D01",
+        "D02"
+      ],
+      "min_ratio": 0.99,
+      "fail_mode": "SOFT_WARN",
+      "source": "recall(v42j_r3) truth_unit_measurement.csv (case-레인 룰)",
+      "rationale": "포착률 99% 절대 회귀만 방지. 향상 강제 없음. 제외 룰은 a3와 동일 (macro/review 레인)."
+    },
+    "c2_high_medium_band_truth": {
+      "baseline_high_medium_truth": 870,
+      "warn_threshold": 609,
+      "fail_mode": "SOFT_WARN",
+      "source": "recall(v42j_r3, topic ON + 게이트 + R1/R2) truth_priority_band.json standard_band_distribution (high 650 + medium 220)",
+      "rationale": "표준 위반의 high+medium 진입(80.6%, 870/1080)이 baseline의 70% 미만으로 떨어지면 WARN. r24 783→v42j_r3 870은 데이터셋 전환(NORMAL/recall 모두 v42j base 정합)에 따른 실측값 — 향상 강제 아님(SOFT WARN, 70% 하한만)."
+    },
+    "c3_top500_truth": {
+      "baseline_truth_in_top500": 796,
+      "warn_threshold": 557,
+      "fail_mode": "SOFT_WARN",
+      "source": "recall(v42j_r3, topic ON + 게이트 + R1/R2) truth_priority_band.json standard_top_n_truth.top500",
+      "rationale": "Top500 case rank 내 truth(796/1,080)가 baseline의 70% 미만 = WARN."
+    }
+  }
+}

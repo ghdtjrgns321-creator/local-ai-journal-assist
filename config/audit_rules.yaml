@@ -1,0 +1,509 @@
+# config/audit_rules.yaml
+# 감사 패턴 피처에 사용되는 업무 룰 — ERP/회사별 커스터마이징 필요
+# Phase 1c에서 Streamlit UI로 편집 가능, 고객사 프로파일에 저장됨
+
+patterns:
+  # L3-02: 수기 전표 식별 코드 (source 컬럼 기준)
+  # DataSynth v1.2.0 source 값: automated, manual, recurring, adjustment
+  # SA는 document_type이므로 제거, Adjustment(결산 조정 수기) 추가
+  manual_source_codes:
+    - "Manual"
+    - "Adjustment"
+
+  estimate_account_use:
+    # L3-10 회계추정치(ISA 540) 계정 — 결산 이익조정 단골(cookie jar). binary flag.
+    # 1차 account_name 키워드(CoA 무관), 2차 클라이언트 확정 코드. 둘 다 비면 발화 0.
+    account_name_keywords:
+      - 대손충당금
+      - 평가충당금
+      - 손상차손
+      - 손상누계
+      - 충당부채
+      - 환불부채
+      - 반품충당
+      - 미청구공사
+      - 계약자산
+      - 퇴직급여
+      - 확정급여
+      - 이연법인세
+    accounts:
+      - "116100"  # 계약자산
+      - "119100"  # 대손충당금
+      - "169100"  # 투자자산평가충당금
+      - "237100"  # 충당부채
+      - "682100"  # 손상차손
+      # 현행 4자리 CoA 동기화 (2026-07-16, D10) — 위 6자리는 구 CoA 죽은 목록.
+      # 원장에 account_name 컬럼이 없어 키워드 축이 원리상 침묵하므로 코드 축으로 커버.
+      - "2220"    # 순퇴직급여부채 — 보험수리적 추정(ISA 540)
+      # D10 연장 (2026-07-18, S5 실측): FSS scheme overlay에서 대손회피(FS10)·상각조작(FS08)
+      # 부정이 추정 몸통(L3-10)에 0건 매치 — s10 CoA의 ISA 540 추정계정이 2220뿐이던 갭.
+      # 대손·상각은 경영진 추정(회수가능성·내용연수·잔존가치)의 대표 계정이라 코드 축에 추가.
+      - "6900"    # 대손상각비 (BAD_DEBT_EXPENSE) — 회수가능성 추정
+      - "6000"    # 감가상각비 (DEPRECIATION_EXPENSE) — 내용연수·잔존가치 추정
+      - "6050"    # 무형자산상각비 (AMORTIZATION_EXPENSE) — 내용연수 추정
+      - "1510"    # 감가상각누계액 (ACCUMULATED_DEPRECIATION) — 상각 추정 누계
+    account_prefixes: []
+    estimate_account_groups:
+      allowance_impairment:
+        keywords: [대손충당금, 재고자산평가충당금, 평가충당금, 손상차손, 손상누계]
+      provision:
+        keywords: [판매보증충당부채, 하자보수충당부채, 복구충당부채, 소송충당부채, 구조조정충당부채, 충당부채]
+      revenue_estimate:
+        keywords: [환불부채, 반품충당, 미청구공사, 계약자산]
+      actuarial_tax:
+        keywords: [퇴직급여, 확정급여, 이연법인세]
+
+  # L3-12: one-user work-scope concentration review.
+  # This does not define SoD/authorization violations; L1-06 owns explicit
+  # matrix conflicts. L3-12 only flags broad current-period activity and raises
+  # priority when manual, sensitive-account, high-amount, or period-end context
+  # is present.
+  work_scope_excess_review:
+    min_process_info: 3
+    min_company_combo: 2
+    manual_sources:
+      - "manual"
+      - "adjustment"
+    system_sources:
+      - "automated"
+      - "recurring"
+      - "batch"
+      - "interface"
+      - "system"
+    automated_personas:
+      - "automated_system"
+      - "batch_user"
+    admin_personas:
+      - "admin"
+      - "superuser"
+      - "system_admin"
+    persona_thresholds:
+      junior:
+        process: 3
+        company: 2
+      staff:
+        process: 3
+        company: 2
+      clerk:
+        process: 3
+        company: 2
+      senior:
+        process: 4
+        company: 3
+      accountant:
+        process: 4
+        company: 3
+      manager:
+        process: 5
+        company: 4
+      controller:
+        process: 5
+        company: 4
+      default:
+        process: 4
+        company: 3
+
+  # L1-05: only system-driven self-approval is allowed by default.
+  # Approval omission is handled by L1-07, so this section only defines explicit allow cases.
+  # recurring(정기 자동 반복 전표: 감가상각·보험료 안분 등)은 automated 와 동일한 무인 자동
+  # 전표라 면제 대상에 포함한다. 단 batch_id/job_id 없는 위장 의심 행은 lone_automated_mask 가
+  # 면제를 취소한다(source_trust). gate AUTOMATED_SOURCE_TOKENS 와 정합.
+  self_approval_allow:
+    user_personas:
+      - "automated_system"
+    company_codes: []
+    sources:
+      - "automated"
+      - "recurring"
+
+  # L1-05: human self-approval is always detected, but some areas default to review-required
+  # instead of immediate violation. Adjust these buckets per client policy.
+  self_approval_review:
+    company_codes: []
+    document_types: []
+    business_processes:
+      - "R2R"
+      - "A2R"
+
+  # L1-05: even in review-eligible processes, escalate to immediate violation
+  # when the self-approval is too large, happens in abnormal time, or touches
+  # accounts that should not be self-approved.
+  self_approval_immediate_override:
+    # Performance materiality placeholder.
+    # 1,000,000,000 KRW is not a universal "correct" threshold.
+    # Replace this with the engagement-specific performance materiality
+    # as soon as the audit team finalizes it.
+    materiality_amount: 1000000000
+    # "Large manual JE" escalation applies only to manual/adjustment sources.
+    manual_sources:
+      - "manual"
+      - "adjustment"
+    # Exact high-risk accounts. These are conservative starter defaults only.
+    # Customize to the client's CoA.
+    high_risk_accounts:
+      - "1190"   # 가지급금
+      - "2190"   # 가수금
+    # Prefix-based high-risk accounts. Conservative starter defaults for
+    # cash / cash-equivalent style accounts in common KR CoA layouts.
+    # Customize to the client's CoA.
+    high_risk_account_prefixes:
+      - "111"
+      - "112"
+      - "113"
+
+  # L1-07: approval omission queue split.
+  # Confirmed rows require missing approved_by, a non-system manual/adjustment
+  # source, approval-required amount evidence, and enough corroborating evidence.
+  # Recurring entries stay in review by default because they may be covered by
+  # standing approval, automatic generation, or master-data approval controls.
+  # Automated/interface/batch/system context stays excluded.
+  skipped_approval_immediate:
+    manual_sources:
+      - "manual"
+      - "adjustment"
+    system_sources:
+      - "automated"
+      - "recurring"
+      - "batch"
+      - "interface"
+      - "system"
+    business_processes:
+      - "TRE"
+      - "P2P"
+      - "O2C"
+      - "H2R"
+    min_evidence_count: 2
+
+  # L1-04: approval limit exceeded queue split.
+  # Small boundary breaches are useful review candidates but should not be
+  # treated as confirmed approval authority violations without client-specific
+  # tolerance, FX/rounding, delegation, or approval-matrix context.
+  approval_limit_exceeded_review:
+    review_buckets:
+      - "boundary"
+    review_sources:
+      - "automated"
+      - "batch"
+      - "interface"
+      - "system"
+      - "recurring"
+    review_user_personas:
+      - "automated_system"
+
+  # L1-08: fiscal-period mismatch policy.
+  # Strict mode keeps the base rule unchanged: fiscal_period must match the
+  # posting_date month after fiscal_year_start conversion. Auditors can switch
+  # strict_mode off per client to allow documented special periods or alternate
+  # period bases for specific processes/sources.
+  fiscal_period_mismatch_policy:
+    fiscal_year_start: 1
+    strict_mode: true
+    allow_special_periods: false
+    special_periods: []
+    special_period_allowed_sources: []
+    special_period_allowed_document_types: []
+    special_period_allowed_business_processes: []
+    period_basis_by_process: {}
+    period_basis_by_source: {}
+
+  # L4-01: 매출 계정 접두사 (K-IFRS 기준 4xxx가 표준)
+  # 영업외수익(9), 글로벌 본사 기준(5) 등 추가 가능
+  revenue_account_prefixes:
+    - "4"
+
+  # L3-04: 기말/기초 결산 검토 후보군 운영 설정.
+  # 결산 일정(period_end_margin_days)은 config/settings.py에서 정한다.
+  # 금액, whitelist, 민감계정 가중은 L3-04 binary 계약에서 사용하지 않는다.
+
+  # L2-04: 비용 자산화 탐지용 계정 분류.
+  # 기본값은 보수적인 시작점일 뿐이며, 회사별 CoA에 맞게 조정해야 한다.
+  expense_capitalization:
+    asset_account_prefixes:
+      - "12"
+      - "15"
+    expense_account_prefixes:
+      - "5"
+      - "6"
+      - "7"
+      - "8"
+
+  # L3-03 + WU-07: 관계사 식별 — IC 계정 쌍 (receivable <-> payable)
+  # Why: 클라이언트별 CoA 체계가 다르므로 코드 하드코딩 금지, YAML에서 관리
+  # 매칭 로직: receivable 쪽 sum(debit) vs payable 쪽 sum(credit) 그룹 대사
+  intercompany:
+    pairs:
+      - receivable: "1150"    # IC Receivable (관계사 채권)
+        payable: "2050"       # IC Payable (관계사 채무)
+      - receivable: "4500"    # IC Revenue (관계사 매출)
+        payable: "2700"       # IC Accrued (관계사 미지급)
+    # IC01 evidence level 분류용 — K-IFRS 1024 관계사 master.
+    # 명시 시 detector 가 trading_partner 가 master 에 있는지 확인.
+    # 빈 리스트/미지정 시 dataset distinct company_code 로 폴백.
+    related_party_master: []
+    # IC01 partner format 정책 — regex 매칭으로 customer/vendor 제외 + 표준 IC 형식 검증.
+    # ic_partner_regex: 표준 IC 회사 코드 형식. 미지정 시 형식 검증 건너뜀 (partner 존재만 확인).
+    # customer_partner_regex / vendor_partner_regex: IC 모집단에서 제외할 외부 거래처 형식.
+    partner_format:
+      ic_partner_regex: "^C\\d{3}$"
+      customer_partner_regex: "^C-\\d+$"
+      vendor_partner_regex: "^V-\\d+$"
+
+    # PHASE2 internal probabilistic reconciliation surface — IC01/IC02/IC03 보강.
+    # Why: hard threshold(group key 동치 + amount tolerance)만으로는 후보 pair 부분 일치
+    #      (금액 근사, 일자 근처, 참조번호 유사)를 점수화하지 못한다. 0~1 raw probability
+    #      column 으로 details DataFrame 에 합류하고, family overlay 가 ECDF + Noisy-OR 로
+    #      흡수한다. canonical rule id (IC04 등) 는 생성하지 않는다.
+    matching_weights:
+      amount: 0.40
+      date: 0.25
+      reference: 0.20
+      counterparty: 0.15
+    candidate_blocking:
+      amount_bucket_factor: 2.0      # log-bucket factor (인접 ±1 bucket = 최대 4x 차이까지 후보)
+      max_candidates_per_row: 50     # row 당 후보 상한 (초과 시 amount 가까운 순 절단 + warning)
+      reference_min_length: 3        # 양측 stripped len 미만이면 reference_similarity=0
+    # contract-tier score caps (audit evidence strength 기준).
+    # Why: no_candidate vs candidate mismatch 의 의미 차이를 점수로 분리한다.
+    #      truth recall 기준 튜닝 금지 — 값 변경은 evidence interpretation 변경 시에만.
+    contract_score_caps:
+      l1_mismatch: 1.0       # L1 + candidate mismatch → cap 없음 (강 증거)
+      l2_mismatch: 0.7       # L2 + candidate mismatch → reference 약함으로 mid-strong
+      no_candidate_l1: 0.5   # L1 + no_candidate → 정상 단방향 양립, mid review
+      no_candidate_l2: 0.3   # L2 + no_candidate → matching evidence 약함, weak review
+      weak_contract: 0.3     # cp_block weak (cc/tp 모두 비어 anchor 부재)
+      l3: 0.0                # L3 insufficient (matching 불가능)
+
+  # L1-06: 직무분리(SoD) 위반 — 하이브리드 로직
+  # Rule B: 프로세스 간 상충 쌍 (직급 불문, 즉시 Critical)
+  # Why: generation_principles §3.4 — 비현실적 겸직 쌍, 횡령 루트
+  sod_legacy_scenario_pairs:
+    - ["TRE", "P2P"]    # 자금 집행 + 매입 → 가짜 AP + 직접 이체
+    - ["TRE", "O2C"]    # 자금 집행 + 수금 → 입금 가로채기 + 대손 세탁
+    - ["O2C", "P2P"]    # 매출 + 매입 → 순환거래(Round-tripping)
+    - ["H2R", "O2C"]    # 급여 + 매출 → 유령직원 + 가공 커미션
+    - ["H2R", "P2P"]    # 급여 + 매입 → 리베이트 + 급여 세탁
+
+  # Rule A: 직급별 프로세스 수 임계값 (toxic pair 미해당 시 적용)
+  # value = 초과 시 위반 (예: junior 1 → 2개 이상이면 위반)
+  # 운영 기본값은 교과서적 SoD 4기능
+  # (승인/기록/자산보관/조정)을 현재 프로세스 체계에 매핑한 6쌍을 사용한다.
+  sod_legacy_review_pairs:
+    - ["TRE", "P2P"]    # 지급 실행 + 매입/지급 처리
+    - ["TRE", "O2C"]    # 자금 이동/수납 통제 + 매출채권/수금 처리
+    - ["TRE", "H2R"]    # 급여 처리 + 실제 지급/은행 통제
+    - ["R2R", "TRE"]    # 총계정원장/분개 + 자금/은행 통제
+    - ["R2R", "P2P"]    # 총계정원장/분개 + 매입채무 처리
+    - ["R2R", "O2C"]    # 총계정원장/분개 + 매출채권/수금 처리
+
+  # L3-12: SoD access/work-scope review pairs.
+  # These pairs are not document-level confirmed violations by themselves.
+  # They identify users whose access / process assignment should be reviewed.
+  # Direct L1-06 immediate findings require document-level evidence such as
+  # sod_violation=true with a populated sod_conflict_type, a populated
+  # sod_conflict_type, or IT/admin direct business posting evidence.
+  sod_review_pairs:
+    strong:
+      - ["TRE", "P2P"]    # cash disbursement + procure/payable processing
+      - ["TRE", "O2C"]    # bank/cash control + receivable/collection processing
+      - ["TRE", "H2R"]    # payroll processing + actual bank/payment control
+    weak:
+      - ["R2R", "TRE"]    # GL/journal close + treasury/bank control
+      - ["R2R", "P2P"]    # GL/journal close + AP processing
+      - ["R2R", "O2C"]    # GL/journal close + AR/collection processing
+
+  # L3-12 work-scope review thresholds. These do not score L1-06.
+  sod_role_thresholds:
+    junior_accountant: 1     # 1인 1프로세스 전담
+    senior_accountant: 3     # 기본 1 + 겸직 2까지 허용
+    # controller, manager, automated_system: 제한 없음 (toxic pair만 감시)
+
+  # L2-04: 가계정/미결산계정 키워드 (정규식 지원)
+  # 한글 키워드: 정확 포함 일치 / 영문 키워드: [Xx] 형태로 대소문자 무관 매칭
+  # DataSynth v1.2.0 적요가 영문이므로 영문 키워드 병기
+  l1_06_sod_scoring:
+    direct_low: 0.50
+    direct_medium: 0.70
+    direct_high: 0.80
+    direct_critical: 0.95
+    protected_processes: ["TRE", "P2P", "O2C", "R2R", "H2R"]
+    high_risk_conflict_types:
+      - cash_disbursement
+      - purchase_payment
+      - treasury_payment
+      - payroll_payment
+      - revenue_collection
+
+  suspense_keywords:
+    - "가수금"
+    - "가지급"
+    - "가계정"
+    - "미결산"
+    - "임시"
+    - "[Ss]uspense"
+    - "[Cc]learing"
+    - "[Tt]emporary"
+    - "[Uu]nallocated"
+    - "[Mm]iscellaneous"
+
+  # L2-05: 정상 청산/반제 계정 — 역분개 탐지 제외 (S1/S2에서 필터링)
+  # GR/IR 청산, IC 정산 등 동일 금액 반대 전표가 정상 프로세스인 계정
+  reversal_exclude_accounts:
+    - "2900"    # GR/IR 청산계정 (Goods Receipt / Invoice Receipt)
+    - "1150"    # IC Receivable 정산
+    - "2050"    # IC Payable 정산
+
+  # L2-04: 가계정/청산계정 GL 코드 prefix (gl_account 기반 판별)
+  # 텍스트 키워드 매칭과 OR 결합 — 실무에서는 GL 코드가 1순위 탐지 기준
+  # K-IFRS 기준 가계정/청산계정 대역, 회사 CoA에 맞춰 조정
+  suspense_account_codes:
+    - "1190"    # 가지급금 (Suspense Receivable)
+    - "1290"    # 선급금 미정리
+    - "2190"    # 가수금 (Suspense Payable)
+    - "2900"    # GR/IR 청산계정
+    - "9990"    # 임시/잡계정
+
+  # L4-03: 수행중요성 절대임계 기반 고액 탐지 설정
+  # Why: PCAOB AS 2101 / ISA 320 — 수행중요성(PM) 초과 금액은 전표 단위 감사 대상.
+  #      z-score 통계 모집단보다 감사 표준 기반 절대임계가 감사인에게 더 직접적인 근거.
+  # pbt_pct: 법인세차감전순이익 대비 PM 비율 (통상 5~10%)
+  # rev_pct: 매출액 대비 PM 비율 (pbt 음수 시 fallback, 통상 0.5~1%)
+  # pm_ratio: PM 대비 수행중요성 비율 (통상 0.60~0.80)
+  # materiality_amount: >0 이면 비율 계산 무시하고 이 값을 직접 사용 (override)
+  l403_materiality:
+    revenue_subtype_patterns:
+      - "REVENUE"
+    expense_subtype_patterns:
+      - "COGS"
+      - "COST_OF_GOODS"
+      - "OPEX"
+      - "INTEREST_EXPENSE"
+      - "DEPRECIATION_EXPENSE"
+      - "AMORTIZATION_EXPENSE"
+      - "PAYROLL_EXPENSE"
+      - "PAYROLL"
+      - "OPERATING_EXPENSES"
+      - "IMPAIRMENT"
+    exclude_subtype_patterns:
+      - "ACCUMULATED"
+      - "ACCRUED"
+      - "PAYABLE"
+      - "RECEIVABLE"
+    closing_subtype: "income_statement_close"
+    # 마감분개로 NI를 역산할 손익계정 prefix (B18 계정코드 정합 기준). 마감분개가 닫는
+    # 손익계정만 골라 (차변-대변)=순이익(NI)을 키워드 분류 없이 정확히 산출한다.
+    income_account_prefixes:
+      - "4"
+      - "5"
+      - "6"
+      - "7"
+      - "8"
+    pbt_pct: 0.05
+    rev_pct: 0.005
+    pm_ratio: 0.75
+    materiality_amount: 0
+
+# WU-16: TrendBreak — 회계추정치 편의(bias) 탐지 대상 계정
+# ISA 540 소급 검토 대상: 충당금, 감가상각, 보증 관련 추정치 계정
+# K-IFRS 기준, 회사 CoA에 맞춰 조정 필요
+# sign: 정상 잔액 방향 (credit_normal=대변정상, debit_normal=차변정상)
+estimation_accounts:
+  # 자산 차감 계정 (대변 정상)
+  - account: "1020"
+    name: "대손충당금"
+    sign: "credit_normal"
+  - account: "1599"
+    name: "감가상각누계액"
+    sign: "credit_normal"
+  - account: "100660"
+    name: "대손충당금(유동)"
+    sign: "credit_normal"
+  - account: "100670"
+    name: "유동자산 평가충당금"
+    sign: "credit_normal"
+  # 부채 계정 (대변 정상)
+  - account: "2200"
+    name: "퇴직급여충당부채"
+    sign: "credit_normal"
+  - account: "2300"
+    name: "장기충당부채"
+    sign: "credit_normal"
+  - account: "200380"
+    name: "단기충당부채"
+    sign: "credit_normal"
+  - account: "200390"
+    name: "판매보증충당부채(유동)"
+    sign: "credit_normal"
+  - account: "200400"
+    name: "공사손실충당부채(유동)"
+    sign: "credit_normal"
+  - account: "200410"
+    name: "반품충당부채"
+    sign: "credit_normal"
+  - account: "200420"
+    name: "하자보수충당부채(유동)"
+    sign: "credit_normal"
+  - account: "200430"
+    name: "소송충당부채(유동)"
+    sign: "credit_normal"
+  - account: "200440"
+    name: "복구충당부채(유동)"
+    sign: "credit_normal"
+
+# WU-15: Access Audit — 접근감사/감사추적 (AL1-01~AL3 01)
+access_audit:
+  # AL1-01: 기말 수정 감시 대상 필드 (change_log.changed_field 기준)
+  modification_watched_fields:
+    - "line_text"
+    - "header_text"
+    - "gl_account"
+    - "debit_amount"
+    - "credit_amount"
+
+  # AL1-03: 전표번호 갭 적법 사유 제외 전표유형
+  gap_exclude_doc_types:
+    - "ST"     # Storno (역분개)
+    - "MG"     # Migration
+
+  # AL3 01: 승인 지연 임계 (영업일)
+  approval_delay_days: 3
+
+# WU-13: TB 교차검증 — 계정 유형별 GL 접두사 (재무제표-장부 대사)
+# 회사 CoA 체계에 맞춰 조정 필요, 회사별 audit_rules.yaml에서 오버라이드 가능
+reconciliation_account_prefixes:
+  AR: ["11"]       # 매출채권 (1100번대)
+  AP: ["21"]       # 매입채무 (2100번대)
+  FA: ["15"]       # 고정자산 (1500번대)
+
+# GL 계정 코드 → CoA 상위그룹 매핑 (K-IFRS 기준)
+# Z-score 소그룹(n<30) fallback 시 상위그룹 통계 사용
+# 회사 CoA 체계에 맞춰 조정 필요
+coa_category_prefixes:
+  asset: ["1"]       # 1xxx = 자산
+  liability: ["2"]   # 2xxx = 부채
+  equity: ["3"]      # 3xxx = 자본
+  revenue: ["4"]     # 4xxx = 수익
+  expense: ["5", "6", "7", "8"]     # 5xxx~8xxx = 비용/원가/판관비
+
+# Evidence: 증빙/컷오프/금액 탐지 (WU-14)
+evidence:
+  # EV01: 한국 세법 적격증빙 유형
+  # 3만원 초과 거래는 아래 유형 중 하나가 있어야 적격
+  qualified_doc_types:
+    - "tax_invoice"          # 세금계산서
+    - "credit_card"          # 신용카드 매출전표
+    - "cash_receipt"         # 현금영수증
+    - "electronic_invoice"   # 전자세금계산서
+  # L3-11: 비용 계정 접두사 (컷오프 비용 대상)
+  expense_account_prefixes:
+    - "5"
+
+# 통화별 소수점 자릿수 — is_round_number 판정에 사용
+# Why: 외화 거래에서 USD $10,000,000.00은 라운드넘버지만
+#      round(0) 적용 시 소수점 이하가 무시되어 판정 왜곡 발생
+currency_decimals:
+  KRW: 0    # 한국원: 정수
+  USD: 2    # 미국달러: 센트 (2자리)
+  EUR: 2    # 유로: 센트 (2자리)
+  JPY: 0    # 일본엔: 정수
+  GBP: 2    # 영국파운드: 펜스 (2자리)
+  CNY: 2    # 중국위안: 펀 (2자리)

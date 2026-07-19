@@ -1,0 +1,988 @@
+"""amount_features 단위 테스트.
+
+계층: base_amount → 개별 피처 → orchestrator 순서로 검증.
+"""
+
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from config.settings import AuditSettings
+from src.feature import amount_features as amount_features_module
+from src.feature.amount_features import (
+    _compute_approver_info,
+    _compute_base_amount,
+    _compute_document_amount,
+    _map_coa_category,
+    add_all_amount_features,
+    add_amount_magnitude,
+    add_amount_zscore,
+    add_amount_zscore_log,
+    add_exceeds_threshold,
+    add_is_near_threshold,
+    add_is_round_number,
+)
+
+# ── TestBaseAmount ───────────────────────────────────────────────
+
+
+class TestBaseAmount:
+    """_compute_base_amount: 차/대 중 큰 값 선택, NaN 방어."""
+
+    def test_debit_only(self):
+        df = pd.DataFrame({"debit_amount": [100], "credit_amount": [0]})
+        assert _compute_base_amount(df).iloc[0] == 100
+
+    def test_credit_only(self):
+        df = pd.DataFrame({"debit_amount": [0], "credit_amount": [200]})
+        assert _compute_base_amount(df).iloc[0] == 200
+
+    def test_both_zero(self):
+        df = pd.DataFrame({"debit_amount": [0], "credit_amount": [0]})
+        assert _compute_base_amount(df).iloc[0] == 0
+
+    def test_both_nan(self):
+        """둘 다 NaN → fillna(0) → 0."""
+        df = pd.DataFrame({"debit_amount": [np.nan], "credit_amount": [np.nan]})
+        assert _compute_base_amount(df).iloc[0] == 0
+
+    def test_one_nan(self):
+        """한쪽 NaN → 유효값 사용."""
+        df = pd.DataFrame({"debit_amount": [np.nan], "credit_amount": [500]})
+        assert _compute_base_amount(df).iloc[0] == 500
+
+
+# ── TestIsNearThreshold ──────────────────────────────────────────
+
+
+class TestIsNearThreshold:
+    """L2-01: 승인권자 한도가 확인되는 경우에만 판정."""
+
+    THRESHOLDS = [10_000_000, 100_000_000, 1_000_000_000]
+    RATIO = 0.90
+
+    def test_uses_approver_limit_on_document_total(self, monkeypatch):
+        """실제 approval_limit가 있으면 문서 총액 기준으로 near 판정."""
+        monkeypatch.setattr(
+            amount_features_module,
+            "_resolve_employee_master_path",
+            lambda df, employee_master_path=None: Path("dummy-employees.json"),
+        )
+        monkeypatch.setattr(
+            amount_features_module,
+            "_load_employee_approval_map",
+            lambda path: {"APR-001": (100_000_000.0, True)},
+        )
+
+        df = pd.DataFrame(
+            {
+                "document_id": ["A", "A"],
+                "approved_by": ["APR-001", "APR-001"],
+                "debit_amount": [45_000_000, 50_000_000],
+                "credit_amount": [0, 0],
+            }
+        )
+        base = _compute_base_amount(df)
+
+        add_is_near_threshold(df, base, self.THRESHOLDS, self.RATIO)
+
+        assert df["is_near_threshold"].all()
+        assert (df["near_threshold_limit_amount"] == 100_000_000.0).all()
+        assert (df["near_threshold_ratio_to_limit"] == 0.95).all()
+        assert (df["near_threshold_gap_amount"] == 5_000_000.0).all()
+        assert (df["near_threshold_bucket"] == "close_band").all()
+
+    def test_below_approver_limit_lower_bound_is_false(self, monkeypatch):
+        """실제 approval_limit의 90% 미만이면 near가 아니다."""
+        monkeypatch.setattr(
+            amount_features_module,
+            "_resolve_employee_master_path",
+            lambda df, employee_master_path=None: Path("dummy-employees.json"),
+        )
+        monkeypatch.setattr(
+            amount_features_module,
+            "_load_employee_approval_map",
+            lambda path: {"APR-001": (100_000_000.0, True)},
+        )
+
+        df = pd.DataFrame(
+            {
+                "document_id": ["A", "A"],
+                "approved_by": ["APR-001", "APR-001"],
+                "debit_amount": [40_000_000, 45_000_000],
+                "credit_amount": [0, 0],
+            }
+        )
+        base = _compute_base_amount(df)
+
+        add_is_near_threshold(df, base, self.THRESHOLDS, self.RATIO)
+
+        assert not df["is_near_threshold"].any()
+        assert (df["near_threshold_bucket"] == "none").all()
+
+    def test_at_approver_limit_is_false(self, monkeypatch):
+        """실제 approval_limit 정확히는 near 상한 밖이다."""
+        monkeypatch.setattr(
+            amount_features_module,
+            "_resolve_employee_master_path",
+            lambda df, employee_master_path=None: Path("dummy-employees.json"),
+        )
+        monkeypatch.setattr(
+            amount_features_module,
+            "_load_employee_approval_map",
+            lambda path: {"APR-001": (100_000_000.0, True)},
+        )
+
+        df = pd.DataFrame(
+            {
+                "document_id": ["A", "A"],
+                "approved_by": ["APR-001", "APR-001"],
+                "debit_amount": [40_000_000, 60_000_000],
+                "credit_amount": [0, 0],
+            }
+        )
+        base = _compute_base_amount(df)
+
+        add_is_near_threshold(df, base, self.THRESHOLDS, self.RATIO)
+
+        assert not df["is_near_threshold"].any()
+        assert (df["near_threshold_bucket"] == "none").all()
+
+    def test_missing_approver_limit_is_not_flagged(self):
+        """approval_limit를 알 수 없으면 L2-01로 판정하지 않는다."""
+        base = pd.Series([95_000_000])
+        df = pd.DataFrame(
+            {
+                "document_id": ["A"],
+                "approved_by": ["APR-UNKNOWN"],
+                "debit_amount": [95_000_000],
+                "credit_amount": [0],
+            }
+        )
+        add_is_near_threshold(df, base, self.THRESHOLDS, self.RATIO)
+        assert df["is_near_threshold"].iloc[0] == False
+        assert df["near_threshold_bucket"].iloc[0] == "unresolved_limit"
+
+    def test_common_thresholds_do_not_apply_without_approver_limit(self):
+        """공통 approval_thresholds는 L2-01 fallback으로 쓰지 않는다."""
+        base = pd.Series([20_000_000])
+        df = pd.DataFrame(
+            {
+                "document_id": ["A"],
+                "approved_by": ["APR-UNKNOWN"],
+                "debit_amount": [20_000_000],
+                "credit_amount": [0],
+            }
+        )
+        add_is_near_threshold(df, base, self.THRESHOLDS, self.RATIO)
+        assert df["is_near_threshold"].iloc[0] == False
+        assert df["near_threshold_bucket"].iloc[0] == "unresolved_limit"
+
+    def test_missing_document_id_does_not_use_line_level_fallback(self, monkeypatch):
+        """L2-01 requires document-level amount; line-level base must not create a hit."""
+        monkeypatch.setattr(
+            amount_features_module,
+            "_resolve_employee_master_path",
+            lambda df, employee_master_path=None: Path("dummy-employees.json"),
+        )
+        monkeypatch.setattr(
+            amount_features_module,
+            "_load_employee_approval_map",
+            lambda path: {"APR-001": (100_000_000.0, True)},
+        )
+        base = pd.Series([95_000_000])
+        df = pd.DataFrame(
+            {
+                "approved_by": ["APR-001"],
+                "debit_amount": [95_000_000],
+                "credit_amount": [0],
+            }
+        )
+
+        add_is_near_threshold(df, base, self.THRESHOLDS, self.RATIO)
+
+        assert not bool(df["is_near_threshold"].iloc[0])
+        assert df["near_threshold_bucket"].iloc[0] == "unresolved_limit"
+
+    def test_near_threshold_bucket_uses_ratio_bands(self, monkeypatch):
+        monkeypatch.setattr(
+            amount_features_module,
+            "_resolve_employee_master_path",
+            lambda df, employee_master_path=None: Path("dummy-employees.json"),
+        )
+        monkeypatch.setattr(
+            amount_features_module,
+            "_load_employee_approval_map",
+            lambda path: {
+                "APR-001": (100_000_000.0, True),
+                "APR-002": (100_000_000.0, True),
+                "APR-003": (100_000_000.0, True),
+            },
+        )
+        df = pd.DataFrame(
+            {
+                "document_id": ["A", "B", "C"],
+                "approved_by": ["APR-001", "APR-002", "APR-003"],
+                "debit_amount": [91_000_000, 96_000_000, 99_000_000],
+                "credit_amount": [0, 0, 0],
+            }
+        )
+        base = _compute_base_amount(df)
+
+        add_is_near_threshold(df, base, self.THRESHOLDS, self.RATIO)
+
+        assert df["near_threshold_bucket"].tolist() == [
+            "lower_band",
+            "close_band",
+            "razor_band",
+        ]
+
+
+# ── TestExceedsThreshold ─────────────────────────────────────────
+
+
+class TestExceedsThreshold:
+    """L1-04: 다단계 승인한도 초과. base >= min(thresholds)."""
+
+    THRESHOLDS = [10_000_000, 100_000_000, 1_000_000_000]
+
+    def test_exact_threshold(self):
+        """최고 한도(1B) 정확히 → True, level=3."""
+        base = pd.Series([self.THRESHOLDS[-1]])
+        df = pd.DataFrame({"x": [0]})
+        add_exceeds_threshold(df, base, self.THRESHOLDS)
+        assert df["exceeds_threshold"].iloc[0] == False
+        assert df["approval_level"].iloc[0] == 3
+
+    def test_below_all_thresholds(self):
+        """최저 한도(10M) 미만 → False, level=0."""
+        base = pd.Series([self.THRESHOLDS[0] - 1])
+        df = pd.DataFrame({"x": [0]})
+        add_exceeds_threshold(df, base, self.THRESHOLDS)
+        assert df["exceeds_threshold"].iloc[0] == False
+        assert df["approval_level"].iloc[0] == 0
+
+    def test_at_min_threshold_is_not_exceeded(self):
+        """Equal to the fallback approval limit is not an exceedance."""
+        base = pd.Series([self.THRESHOLDS[0]])
+        df = pd.DataFrame({"x": [0]})
+        add_exceeds_threshold(df, base, self.THRESHOLDS)
+        assert not bool(df["exceeds_threshold"].iloc[0])
+
+    def test_mid_level_exceeds(self):
+        """최저 한도(10M) 초과, 중간 한도(100M) 미만 → True, level=1."""
+        base = pd.Series([50_000_000])
+        df = pd.DataFrame({"x": [0]})
+        add_exceeds_threshold(df, base, self.THRESHOLDS)
+        assert df["exceeds_threshold"].iloc[0] == False
+        assert df["approval_level"].iloc[0] == 1
+
+    def test_no_gap_with_near(self):
+        """최고 한도 정확히 → near=False, exceeds=True (gap 없음)."""
+        ratio = 0.90
+        base = pd.Series([self.THRESHOLDS[-1]])
+        df = pd.DataFrame({"x": [0]})
+        add_is_near_threshold(df, base, self.THRESHOLDS, ratio)
+        add_exceeds_threshold(df, base, self.THRESHOLDS)
+        assert df["is_near_threshold"].iloc[0] == False
+        assert df["exceeds_threshold"].iloc[0] == False
+
+
+# ── TestMapCoaCategory ───────────────────────────────────────────
+
+
+class TestExceedsThresholdDocumentLevel:
+    """L1-04 additional coverage for document-level totals."""
+
+    THRESHOLDS = [10_000_000, 100_000_000, 1_000_000_000]
+
+    def test_document_total_exceeds_even_when_each_line_is_below_threshold(self):
+        df = pd.DataFrame(
+            {
+                "document_id": ["A", "A", "A", "A"],
+                "debit_amount": [6_627_172, 4_372_828, 0, 0],
+                "credit_amount": [0, 0, 7_523_745, 3_476_255],
+            }
+        )
+        base = _compute_base_amount(df)
+
+        add_exceeds_threshold(df, base, self.THRESHOLDS)
+
+        assert not df["exceeds_threshold"].any()
+        assert (df["approval_level"] == 1).all()
+
+    def test_document_amount_uses_larger_debit_or_credit_side(self):
+        df = pd.DataFrame(
+            {
+                "document_id": ["A", "A"],
+                "debit_amount": [4_551_508.0, 0.0],
+                "credit_amount": [0.0, 45_515_080.0],
+            }
+        )
+        base = _compute_base_amount(df)
+
+        document_amount = _compute_document_amount(df, base)
+        add_exceeds_threshold(df, base, self.THRESHOLDS)
+
+        assert document_amount.tolist() == [45_515_080.0, 45_515_080.0]
+        assert (df["document_approval_amount"] == 45_515_080.0).all()
+        assert (df["approval_level"] == 1).all()
+
+
+class TestExceedsThresholdApproverLimit:
+    THRESHOLDS = [10_000_000, 100_000_000, 1_000_000_000]
+
+    def test_uses_approver_limit_when_employee_master_exists(self, monkeypatch):
+        monkeypatch.setattr(
+            amount_features_module,
+            "_resolve_employee_master_path",
+            lambda df, employee_master_path=None: Path("dummy-employees.json"),
+        )
+        monkeypatch.setattr(
+            amount_features_module,
+            "_load_employee_approval_map",
+            lambda path: {
+                "APR-001": (10_000_000.0, True),
+                "APR-002": (50_000_000.0, True),
+            },
+        )
+
+        df = pd.DataFrame(
+            {
+                "document_id": ["A", "A", "B", "B"],
+                "approved_by": ["APR-001", "APR-001", "APR-002", "APR-002"],
+                "debit_amount": [6_000_000, 5_000_000, 30_000_000, 10_000_000],
+                "credit_amount": [0, 0, 0, 0],
+            }
+        )
+        base = _compute_base_amount(df)
+
+        add_exceeds_threshold(df, base, self.THRESHOLDS)
+
+        assert df.loc[df["document_id"] == "A", "exceeds_threshold"].all()
+        assert not df.loc[df["document_id"] == "B", "exceeds_threshold"].any()
+        assert df.loc[df["document_id"] == "A", "approval_limit_resolved"].all()
+        assert (df.loc[df["document_id"] == "A", "approval_excess_amount"] == 1_000_000.0).all()
+        assert (df.loc[df["document_id"] == "A", "approval_excess_bucket"] == "boundary").all()
+        assert (df.loc[df["document_id"] == "B", "approval_excess_bucket"] == "none").all()
+
+    def test_can_approve_je_false_behaves_like_zero_limit(self, monkeypatch):
+        monkeypatch.setattr(
+            amount_features_module,
+            "_resolve_employee_master_path",
+            lambda df, employee_master_path=None: Path("dummy-employees.json"),
+        )
+        monkeypatch.setattr(
+            amount_features_module,
+            "_load_employee_approval_map",
+            lambda path: {"APR-001": (50_000_000.0, False)},
+        )
+
+        df = pd.DataFrame(
+            {
+                "document_id": ["A", "A"],
+                "approved_by": ["APR-001", "APR-001"],
+                "debit_amount": [1_000_000, 2_000_000],
+                "credit_amount": [0, 0],
+            }
+        )
+        base = _compute_base_amount(df)
+
+        add_exceeds_threshold(df, base, self.THRESHOLDS)
+
+        assert df["exceeds_threshold"].all()
+        assert (df["approver_limit_amount"] == 0.0).all()
+        assert (df["approval_excess_bucket"] == "non_approver").all()
+
+    def test_unresolved_approver_is_not_l104_hit(self, monkeypatch):
+        monkeypatch.setattr(
+            amount_features_module,
+            "_resolve_employee_master_path",
+            lambda df, employee_master_path=None: Path("dummy-employees.json"),
+        )
+        monkeypatch.setattr(
+            amount_features_module,
+            "_load_employee_approval_map",
+            lambda path: {"APR-001": (100_000_000.0, True)},
+        )
+
+        df = pd.DataFrame(
+            {
+                "document_id": ["A", "B"],
+                "approved_by": ["APR-001", "APR-UNKNOWN"],
+                "debit_amount": [120_000_000, 20_000_000],
+                "credit_amount": [0, 0],
+            }
+        )
+        base = _compute_base_amount(df)
+
+        add_exceeds_threshold(df, base, self.THRESHOLDS)
+
+        assert df["exceeds_threshold"].tolist() == [True, False]
+        assert df["approval_limit_resolved"].tolist() == [True, False]
+        assert df["approval_excess_bucket"].tolist() == ["moderate", "none"]
+        assert pd.isna(df.loc[1, "approver_limit_amount"])
+        assert df.loc[1, "approval_excess_amount"] == 0.0
+
+    def test_excess_bucket_uses_ratio_bands(self, monkeypatch):
+        monkeypatch.setattr(
+            amount_features_module,
+            "_resolve_employee_master_path",
+            lambda df, employee_master_path=None: Path("dummy-employees.json"),
+        )
+        monkeypatch.setattr(
+            amount_features_module,
+            "_load_employee_approval_map",
+            lambda path: {
+                "APR-001": (100_000_000.0, True),
+                "APR-002": (100_000_000.0, True),
+                "APR-003": (100_000_000.0, True),
+                "APR-004": (100_000_000.0, True),
+            },
+        )
+        df = pd.DataFrame(
+            {
+                "document_id": ["A", "B", "C", "D"],
+                "approved_by": ["APR-001", "APR-002", "APR-003", "APR-004"],
+                "debit_amount": [105_000_000, 125_000_000, 175_000_000, 250_000_000],
+                "credit_amount": [0, 0, 0, 0],
+            }
+        )
+        base = _compute_base_amount(df)
+
+        add_exceeds_threshold(df, base, self.THRESHOLDS)
+
+        assert df["approval_excess_bucket"].tolist() == [
+            "boundary",
+            "moderate",
+            "severe",
+            "critical",
+        ]
+
+
+class TestApproverMasterMembership:
+    THRESHOLDS = [10_000_000, 100_000_000, 1_000_000_000]
+
+    def test_approver_info_marks_known_unknown_and_blank_approvers(self, monkeypatch):
+        monkeypatch.setattr(
+            amount_features_module,
+            "_resolve_employee_master_path",
+            lambda df, employee_master_path=None: Path("dummy-employees.json"),
+        )
+        monkeypatch.setattr(
+            amount_features_module,
+            "_load_employee_approval_map",
+            lambda path: {"APR-001": (100_000_000.0, True)},
+        )
+        df = pd.DataFrame(
+            {
+                "approved_by": ["APR-001", "APR-GHOST", ""],
+                "debit_amount": [1_000_000, 1_000_000, 1_000_000],
+                "credit_amount": [0, 0, 0],
+            }
+        )
+
+        info = _compute_approver_info(df)
+
+        assert info is not None
+        assert str(info["approver_in_master"].dtype) == "boolean"
+        assert info["approver_in_master"].iloc[:2].tolist() == [True, False]
+        assert pd.isna(info["approver_in_master"].iloc[2])
+
+    def test_approver_membership_is_attached_with_approval_features(self, monkeypatch):
+        monkeypatch.setattr(
+            amount_features_module,
+            "_resolve_employee_master_path",
+            lambda df, employee_master_path=None: Path("dummy-employees.json"),
+        )
+        monkeypatch.setattr(
+            amount_features_module,
+            "_load_employee_approval_map",
+            lambda path: {"APR-001": (100_000_000.0, True)},
+        )
+        df = pd.DataFrame(
+            {
+                "document_id": ["A", "B", "C"],
+                "approved_by": ["APR-001", "APR-GHOST", ""],
+                "debit_amount": [1_000_000, 1_000_000, 1_000_000],
+                "credit_amount": [0, 0, 0],
+            }
+        )
+        base = _compute_base_amount(df)
+
+        add_exceeds_threshold(df, base, self.THRESHOLDS)
+
+        assert df["approver_in_master"].iloc[:2].tolist() == [True, False]
+        assert pd.isna(df["approver_in_master"].iloc[2])
+
+    def test_missing_employee_master_leaves_membership_column_absent(self, monkeypatch):
+        monkeypatch.setattr(
+            amount_features_module,
+            "_resolve_employee_master_path",
+            lambda df, employee_master_path=None: None,
+        )
+        df = pd.DataFrame(
+            {
+                "document_id": ["A"],
+                "approved_by": ["APR-001"],
+                "debit_amount": [1_000_000],
+                "credit_amount": [0],
+            }
+        )
+        base = _compute_base_amount(df)
+
+        add_exceeds_threshold(df, base, self.THRESHOLDS)
+
+        assert _compute_approver_info(df) is None
+        assert "approver_in_master" not in df.columns
+
+
+class TestMapCoaCategory:
+    """GL 계정 코드 → CoA 상위그룹 매핑."""
+
+    COA_PREFIXES = {
+        "asset": ["1"],
+        "liability": ["2"],
+        "equity": ["3"],
+        "revenue": ["4"],
+        "expense": ["5"],
+    }
+
+    def test_standard_mapping(self):
+        """1xxx→asset, 2xxx→liability, 4xxx→revenue 등."""
+        gl = pd.Series(["1000", "2100", "3000", "4100", "5200"])
+        result = _map_coa_category(gl, self.COA_PREFIXES)
+        assert result.tolist() == ["asset", "liability", "equity", "revenue", "expense"]
+
+    def test_unknown_prefix_returns_other(self):
+        """9xxx 등 비표준 계정 → "other"."""
+        gl = pd.Series(["9990", "8000", "0100"])
+        result = _map_coa_category(gl, self.COA_PREFIXES)
+        assert (result == "other").all()
+
+    def test_none_prefixes_returns_all_other(self):
+        """coa_prefixes=None → 전부 "other"."""
+        gl = pd.Series(["1000", "4100"])
+        result = _map_coa_category(gl, None)
+        assert (result == "other").all()
+
+    def test_int64_gl_account(self):
+        """int64로 캐스팅된 gl_account도 정상 매핑."""
+        gl = pd.Series([1000, 4100, 9990])
+        result = _map_coa_category(gl, self.COA_PREFIXES)
+        assert result.tolist() == ["asset", "revenue", "other"]
+
+    def test_nullable_int64(self):
+        """nullable Int64 (pandas NA 포함) 안전 처리."""
+        gl = pd.array([1000, None, 4100], dtype="Int64")
+        result = _map_coa_category(pd.Series(gl), self.COA_PREFIXES)
+        assert result.iloc[0] == "asset"
+        assert result.iloc[1] == "other"  # NA → "<NA>" → 어떤 prefix와도 미매칭
+        assert result.iloc[2] == "revenue"
+
+
+# ── TestAmountZscore ─────────────────────────────────────────────
+
+
+class TestAmountZscore:
+    """L4-03: 그룹별 Z-score + fallback."""
+
+    def test_large_group_has_values(self, af_zscore_df):
+        """30건+ 그룹은 Z-score 값이 존재해야 한다."""
+        base = _compute_base_amount(af_zscore_df)
+        df = af_zscore_df.copy()
+        add_amount_zscore(df, base)
+        # 큰 그룹 "A"의 zscore는 NaN이 아님
+        large = df[df["gl_account"] == "A"]["amount_zscore"]
+        assert large.notna().all()
+
+    def test_small_group_fallback(self, af_zscore_df):
+        """30건 미만 그룹은 전체 기준 Z-score로 fallback."""
+        base = _compute_base_amount(af_zscore_df)
+        df = af_zscore_df.copy()
+        add_amount_zscore(df, base)
+        small = df[df["gl_account"] == "B"]["amount_zscore"]
+        assert small.notna().all()
+
+    def test_std_zero_returns_zero(self, af_uniform_df):
+        """모든 금액 동일(std=0) → Z-score 0.0, 에러 없음."""
+        base = _compute_base_amount(af_uniform_df)
+        df = af_uniform_df.copy()
+        add_amount_zscore(df, base)
+        assert (df["amount_zscore"] == 0.0).all()
+
+    def test_too_few_rows_returns_nan(self):
+        """전체 10건 미만 → Z-score 전부 NaN."""
+        df = pd.DataFrame(
+            {
+                "debit_amount": [1_000_000] * 5,
+                "credit_amount": [0] * 5,
+                "gl_account": ["X"] * 5,
+            }
+        )
+        base = _compute_base_amount(df)
+        add_amount_zscore(df, base)
+        assert df["amount_zscore"].isna().all()
+
+    def test_missing_gl_account(self):
+        """gl_account 컬럼 누락 → NaN + warning."""
+        df = pd.DataFrame(
+            {
+                "debit_amount": [1_000_000],
+                "credit_amount": [0],
+            }
+        )
+        base = _compute_base_amount(df)
+        add_amount_zscore(df, base)
+        assert df["amount_zscore"].isna().all()
+
+    # ── CoA 상위계정 fallback (WU-11) ────────────────────────
+
+    COA_PREFIXES = {
+        "asset": ["1"],
+        "liability": ["2"],
+        "revenue": ["4"],
+        "expense": ["5"],
+    }
+
+    def test_coa_fallback_same_category(self, af_coa_fallback_df):
+        """소그룹 B(1200, n=5)가 같은 CoA(자산=A+B, n=40) 통계로 fallback.
+
+        CoA fallback 없이 전체 데이터 fallback을 했을 때와 다른 값이어야 한다.
+        """
+        df = af_coa_fallback_df.copy()
+        base = _compute_base_amount(df)
+
+        # CoA fallback 없는 기존 방식
+        df_no_coa = df.copy()
+        add_amount_zscore(df_no_coa, base.copy())
+        z_no_coa = df_no_coa.loc[df_no_coa["gl_account"] == "1200", "amount_zscore"]
+
+        # CoA fallback 사용
+        df_coa = df.copy()
+        add_amount_zscore(df_coa, base.copy(), coa_prefixes=self.COA_PREFIXES)
+        z_coa = df_coa.loc[df_coa["gl_account"] == "1200", "amount_zscore"]
+
+        # 둘 다 NaN이 아니어야 함
+        assert z_no_coa.notna().all()
+        assert z_coa.notna().all()
+        # CoA fallback(자산 그룹)과 전체 fallback 값은 달라야 함
+        assert not np.allclose(z_no_coa.values, z_coa.values)
+
+    def test_coa_fallback_small_coa_uses_total(self, af_coa_fallback_df):
+        """소그룹 C(4100, n=5) + CoA(수익, n=5) → CoA도 소그룹 → 전체 fallback."""
+        df = af_coa_fallback_df.copy()
+        base = _compute_base_amount(df)
+
+        # CoA fallback 없는 기존 방식
+        df_no_coa = df.copy()
+        add_amount_zscore(df_no_coa, base.copy())
+        z_no_coa = df_no_coa.loc[df_no_coa["gl_account"] == "4100", "amount_zscore"]
+
+        # CoA fallback 사용 — revenue 그룹도 5건이므로 전체 fallback과 동일해야 함
+        df_coa = df.copy()
+        add_amount_zscore(df_coa, base.copy(), coa_prefixes=self.COA_PREFIXES)
+        z_coa = df_coa.loc[df_coa["gl_account"] == "4100", "amount_zscore"]
+
+        assert z_no_coa.notna().all()
+        assert z_coa.notna().all()
+        # CoA도 소그룹이므로 전체 fallback과 동일
+        assert np.allclose(z_no_coa.values, z_coa.values)
+
+
+# ── TestAmountZscoreLog ──────────────────────────────────────────
+
+
+class TestAmountZscoreLog:
+    """L4-01: 로그변환 z-score — 우편향 매출에서 극단값 σ 팽창 제거."""
+
+    def _skewed_revenue_df(self) -> pd.DataFrame:
+        # 38개 소액(1e6) + 2차 고액 target(5e7) + 극단값(3e8) = 우편향 매출계정.
+        # 극단값이 원금액 std를 부풀려 2차 고액을 임계 아래로 묻는 구조.
+        amounts = [1_000_000.0] * 38 + [50_000_000.0, 300_000_000.0]
+        return pd.DataFrame(
+            {
+                "debit_amount": [0.0] * 40,
+                "credit_amount": amounts,
+                "gl_account": ["4000"] * 40,
+                "is_revenue_account": [True] * 40,
+            }
+        )
+
+    def test_log_zscore_surfaces_value_that_raw_zscore_buries(self) -> None:
+        df = self._skewed_revenue_df()
+        base = _compute_base_amount(df)
+        add_amount_zscore(df, base.copy())
+        add_amount_zscore_log(df, base.copy())
+
+        target = 38  # 2차 고액(5e7) 라인
+        # 원금액 z-score: 극단값(3e8)이 std를 부풀려 2차 고액을 3.0 아래로 묻는다
+        assert df.loc[target, "amount_zscore"] < 3.0
+        # 로그 z-score: σ 팽창 제거 → 2차 고액이 3.0 초과로 표면화(발화)
+        assert df.loc[target, "amount_zscore_log"] > 3.0
+
+    def test_extreme_value_flagged_in_both(self) -> None:
+        df = self._skewed_revenue_df()
+        base = _compute_base_amount(df)
+        add_amount_zscore(df, base.copy())
+        add_amount_zscore_log(df, base.copy())
+        extreme = 39  # 극단값(3e8)은 두 방식 모두 발화
+        assert df.loc[extreme, "amount_zscore"] > 3.0
+        assert df.loc[extreme, "amount_zscore_log"] > 3.0
+
+    def test_zero_amount_not_flagged(self) -> None:
+        # 0원 라인은 log 불가 → z-score 계산 제외, 미발화(임계 3.0 미만)
+        df = self._skewed_revenue_df()
+        df.loc[0, "credit_amount"] = 0.0  # 소액 하나를 0원으로
+        base = _compute_base_amount(df)
+        add_amount_zscore_log(df, base)
+        z0 = df.loc[0, "amount_zscore_log"]
+        assert pd.isna(z0) or z0 <= 3.0
+
+    def test_small_group_fallback_zero_amount_is_zero_not_nan(self) -> None:
+        # 소그룹(n<30) 전체 fallback 경로 + 0원 라인: log 불가로 base가 NaN이어도
+        # 큰 그룹 경로와 대칭으로 0.0 마감(미발화)돼야 하고 NaN이 새지 않아야 한다.
+        amounts = [1_000_000.0] * 13 + [50_000_000.0, 0.0]
+        df = pd.DataFrame(
+            {
+                "debit_amount": [0.0] * 15,
+                "credit_amount": amounts,
+                "gl_account": ["9999"] * 15,
+                "is_revenue_account": [True] * 15,
+            }
+        )
+        base = _compute_base_amount(df)
+        add_amount_zscore_log(df, base)  # coa_prefixes 미전달 → 전체 fallback(else) 경로
+        z_zero = df.loc[14, "amount_zscore_log"]
+        assert z_zero == 0.0
+
+    def test_missing_gl_account_returns_nan(self) -> None:
+        df = pd.DataFrame({"debit_amount": [1_000_000], "credit_amount": [0]})
+        base = _compute_base_amount(df)
+        add_amount_zscore_log(df, base)
+        assert df["amount_zscore_log"].isna().all()
+
+
+# ── TestAmountMagnitude ──────────────────────────────────────────
+
+
+class TestAmountMagnitude:
+    """log10(abs(base) + 1) 스케일."""
+
+    def test_million(self):
+        base = pd.Series([1_000_000])
+        df = pd.DataFrame({"x": [0]})
+        add_amount_magnitude(df, base)
+        assert pytest.approx(df["amount_magnitude"].iloc[0], abs=0.01) == np.log10(1_000_001)
+
+    def test_zero(self):
+        base = pd.Series([0])
+        df = pd.DataFrame({"x": [0]})
+        add_amount_magnitude(df, base)
+        assert df["amount_magnitude"].iloc[0] == 0.0
+
+    def test_nan(self):
+        base = pd.Series([np.nan])
+        df = pd.DataFrame({"x": [0]})
+        add_amount_magnitude(df, base)
+        assert pd.isna(df["amount_magnitude"].iloc[0])
+
+
+# ── TestIsRoundNumber ────────────────────────────────────────────
+
+
+class TestIsRoundNumber:
+    """라운드넘버 판정 — 금액 규모에 상대적인 둥근 정도(유효숫자 기준).
+
+    2026-07-15 절대 단위(round_unit=100만원) 폐기. 원장 금액이 1,526원~2,057억원으로
+    8자릿수에 걸쳐 있어 단일 절대 단위로는 잴 수 없었다(거래 64.9%가 100만원 미만이라
+    구조적으로 판정 대상에서 빠져 전체의 0.04%만 round 로 잡힘).
+    """
+
+    MAX_SIG = 2
+    MIN_DIGITS = 3
+
+    def _run(self, base, df, **kwargs):
+        return add_is_round_number(df, base, self.MAX_SIG, self.MIN_DIGITS, **kwargs)
+
+    def test_round(self):
+        base = pd.Series([10_000_000])  # 유효숫자 1
+        df = pd.DataFrame({"x": [0]})
+        self._run(base, df)
+        assert df["is_round_number"].iloc[0] == True
+
+    def test_not_round(self):
+        base = pd.Series([10_500_000])  # "105" → 유효숫자 3
+        df = pd.DataFrame({"x": [0]})
+        self._run(base, df)
+        assert df["is_round_number"].iloc[0] == False
+
+    def test_two_significant_digits_is_round(self):
+        base = pd.Series([1_500_000])  # "15" → 유효숫자 2 → 경계 포함
+        df = pd.DataFrame({"x": [0]})
+        self._run(base, df)
+        assert df["is_round_number"].iloc[0] == True
+
+    def test_three_significant_digits_is_not_round(self):
+        base = pd.Series([1_250_000])  # "125" → 유효숫자 3 → 경계 밖
+        df = pd.DataFrame({"x": [0]})
+        self._run(base, df)
+        assert df["is_round_number"].iloc[0] == False
+
+    def test_small_amount_is_round_when_relative(self):
+        """구 절대 정의(100만원 배수)로는 잡히지 않던 소액 둥근 금액."""
+        base = pd.Series([20_000])  # 유효숫자 1, 자릿수 5
+        df = pd.DataFrame({"x": [0]})
+        self._run(base, df)
+        assert df["is_round_number"].iloc[0] == True
+
+    def test_trivial_small_amount_excluded_by_min_digits(self):
+        """10원·50원은 자릿수 하한 미만 — 자동으로 '둥글다'고 잡히면 안 된다."""
+        base = pd.Series([10, 50])
+        df = pd.DataFrame({"x": [0, 0]})
+        self._run(base, df)
+        assert df["is_round_number"].tolist() == [False, False]
+
+    def test_zero_excluded(self):
+        """0원 → False (라운드넘버에서 제외)."""
+        base = pd.Series([0])
+        df = pd.DataFrame({"x": [0]})
+        self._run(base, df)
+        assert df["is_round_number"].iloc[0] == False
+
+    def test_negative_excluded(self):
+        base = pd.Series([-5_000_000])
+        df = pd.DataFrame({"x": [0]})
+        self._run(base, df)
+        assert df["is_round_number"].iloc[0] == False
+
+    def test_nan_is_false(self):
+        """NaN → False."""
+        base = pd.Series([np.nan])
+        df = pd.DataFrame({"x": [0]})
+        self._run(base, df)
+        assert df["is_round_number"].iloc[0] == False
+
+    def test_float_tail_tolerance(self):
+        """float 소수점 꼬리(미세)가 있어도 round 후 판정."""
+        base = pd.Series([10_000_000.000001, 5_000_000.4])
+        df = pd.DataFrame({"x": [0, 0]})
+        self._run(base, df)
+        assert df["is_round_number"].tolist() == [True, True]
+
+    def test_near_but_not_round(self):
+        """반올림해도 유효숫자가 많으면 False."""
+        base = pd.Series([10_500_000.3])
+        df = pd.DataFrame({"x": [0]})
+        self._run(base, df)
+        assert df["is_round_number"].iloc[0] == False
+
+    # ── 외화 소수점 처리 (currency_decimals) ──────────────────
+
+    _CURR_DEC = {"KRW": 0, "USD": 2, "EUR": 2, "JPY": 0}
+
+    def test_usd_round_with_decimals(self):
+        """USD $10,000,000.00 → round(2) → 유효숫자 1 → True."""
+        base = pd.Series([10_000_000.00])
+        df = pd.DataFrame({"x": [0], "currency": ["USD"]})
+        self._run(base, df, currency_decimals=self._CURR_DEC)
+        assert df["is_round_number"].iloc[0] == True  # noqa: E712
+
+    def test_usd_with_cents_is_not_round(self):
+        """USD $5,000,000.25 → 소수부가 남으면 둥근 금액이 아니다."""
+        base = pd.Series([5_000_000.25])
+        df = pd.DataFrame({"x": [0], "currency": ["USD"]})
+        self._run(base, df, currency_decimals=self._CURR_DEC)
+        assert df["is_round_number"].iloc[0] == False
+
+    def test_mixed_currency(self):
+        """KRW + USD 혼합: 둘 다 10M → 둘 다 True."""
+        base = pd.Series([10_000_000, 10_000_000.00])
+        df = pd.DataFrame({"x": [0, 0], "currency": ["KRW", "USD"]})
+        self._run(base, df, currency_decimals=self._CURR_DEC)
+        assert df["is_round_number"].tolist() == [True, True]
+
+    def test_no_currency_column_fallback(self):
+        """currency 컬럼 없으면 기존 로직(round(0)) 폴백."""
+        base = pd.Series([10_000_000.00])
+        df = pd.DataFrame({"x": [0]})
+        self._run(base, df, currency_decimals=self._CURR_DEC)
+        assert df["is_round_number"].iloc[0] == True  # noqa: E712
+
+    def test_unknown_currency_defaults_to_round0(self):
+        """currency_decimals에 없는 통화 → round(0) 폴백."""
+        base = pd.Series([10_000_000.00])
+        df = pd.DataFrame({"x": [0], "currency": ["CHF"]})
+        self._run(base, df, currency_decimals=self._CURR_DEC)
+        assert df["is_round_number"].iloc[0] == True  # noqa: E712
+
+    def test_nan_currency_fallback(self):
+        """currency가 NaN인 행 → round(0) 폴백. groupby NaN 제외 버그 방지."""
+        base = pd.Series([10_000_000.0, 5_000_000.0])
+        df = pd.DataFrame({"x": [0, 0], "currency": ["USD", None]})
+        self._run(base, df, currency_decimals=self._CURR_DEC)
+        assert df["is_round_number"].iloc[0] == True  # noqa: E712 — USD round(2)
+        assert df["is_round_number"].iloc[1] == True  # noqa: E712 — NaN round(0)
+
+
+# ── TestAddAllAmountFeatures ─────────────────────────────────────
+
+
+class TestAddAllAmountFeatures:
+    """오케스트레이터: 5개 컬럼 생성, base_amount 미포함."""
+
+    EXPECTED_COLS = {
+        "is_near_threshold",
+        "near_threshold_amount",
+        "near_threshold_limit_amount",
+        "near_threshold_limit_resolved",
+        "near_threshold_ratio_to_limit",
+        "near_threshold_gap_amount",
+        "near_threshold_gap_ratio",
+        "near_threshold_bucket",
+        "exceeds_threshold",
+        "document_approval_amount",
+        "approver_limit_amount",
+        "approval_limit_resolved",
+        "approver_can_approve_je",
+        "approval_excess_amount",
+        "approval_excess_ratio",
+        "approval_excess_bucket",
+        "amount_zscore",
+        "amount_magnitude",
+        "is_round_number",
+    }
+
+    def test_all_columns_present(self, af_basic_df):
+        result = add_all_amount_features(af_basic_df.copy())
+        assert self.EXPECTED_COLS.issubset(result.columns)
+
+    def test_base_amount_not_in_output(self, af_basic_df):
+        result = add_all_amount_features(af_basic_df.copy())
+        assert "base_amount" not in result.columns
+
+    def test_custom_settings(self, af_basic_df):
+        """approval_thresholds 커스텀 주입이 피처에 반영되는지 확인."""
+        custom = AuditSettings(
+            approval_thresholds=[10_000_000],
+            near_threshold_ratio=0.80,
+        )
+        result = add_all_amount_features(af_basic_df.copy(), settings=custom)
+        assert self.EXPECTED_COLS.issubset(result.columns)
+        assert not result["exceeds_threshold"].any()
+        assert result["approval_level"].max() == 1
+
+    def test_edge_cases(self, af_edge_df):
+        """NaN/0 포함 데이터에서 에러 없이 완료."""
+        result = add_all_amount_features(af_edge_df.copy())
+        assert self.EXPECTED_COLS.issubset(result.columns)
+
+    def test_currency_decimals_via_audit_rules(self, af_basic_df):
+        """audit_rules 주입 시 currency_decimals가 is_round_number에 반영."""
+        df = af_basic_df.copy()
+        df["currency"] = "USD"
+        rules = {"currency_decimals": {"USD": 2, "KRW": 0}}
+        result = add_all_amount_features(df, audit_rules=rules)
+        assert "is_round_number" in result.columns

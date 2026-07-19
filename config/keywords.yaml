@@ -1,13 +1,536 @@
-# ⚠️ 예시 키워드 — 실제 ERP(더존, SAP, Oracle 등) 엑셀 헤더를 확인하며 추가할 것
-# key: 표준 컬럼명, values: ERP별 다양한 표현
-journal_id: ["전표번호", "전표No", "voucher_no", "JE Number", "Doc No"]
-entry_date: ["전표일자", "기표일", "posting_date", "Entry Date", "일자"]
-account_code: ["계정코드", "계정CD", "account_cd", "GL Code"]
-account_name: ["계정과목", "계정과목명", "account_name", "GL Name"]
-debit_amount: ["차변금액", "차변", "debit", "Debit Amount", "Dr"]
-credit_amount: ["대변금액", "대변", "credit", "Credit Amount", "Cr"]
-description: ["적요", "설명", "description", "Memo", "비고"]
-department: ["부서", "부서명", "department", "Dept"]
-created_by: ["작성자", "기표자", "created_by", "User", "담당자"]
-source_type: ["전표유형", "유형", "entry_type", "Type"]
-counterparty: ["거래처", "거래처명", "vendor", "Vendor Name", "고객"]
+# 컬럼 매핑 별칭 사전
+# 구조: 표준컬럼명: [별칭1, 별칭2, ...]
+#
+# 별칭 출처:
+#   - DataSynth v1.2.0 컬럼명
+#   - SAP ACDOCA / FI (belnr, budat, racct 등)
+#   - 더존 iCUBE / Smart A (전표번호, 일자, 계정CD 등)
+#   - 위하고 / 영림원 K-System
+#   - Oracle EBS GL (JE_HEADER_ID, ENTERED_DR 등)
+#   - 한국 공인회계사 일반 용어
+#   - 영문 일반 용어
+#
+# 매핑 프로파일로 회사별 커스터마이징 가능 (CONSTRAINTS.md 참조)
+
+# ── 핵심 식별 ──
+document_id:
+  - "전표번호"
+  - "전표No"
+  - "문서번호"
+  - "증번호"
+  - "전표NO"
+  - "슬립번호"
+  - "voucher_no"
+  - "voucher_number"
+  - "JE Number"
+  - "je_number"
+  - "Doc No"
+  - "doc_no"
+  - "document_id"
+  - "document_number"
+  - "journal_id"
+  - "journal_number"
+  - "entry_id"
+  # SAP
+  - "belnr"
+  - "BELNR"
+  # Oracle EBS
+  - "JE_HEADER_ID"
+  - "je_header_id"
+
+company_code:
+  - "회사코드"
+  - "법인"
+  - "법인코드"
+  - "회사CD"
+  - "사업장"
+  - "사업장코드"
+  - "company"
+  - "company_code"
+  - "comp_code"
+  # SAP
+  - "bukrs"
+  - "BUKRS"
+  # Oracle EBS
+  - "LEDGER_ID"
+  - "SET_OF_BOOKS_ID"
+
+fiscal_year:
+  - "회계연도"
+  - "사업연도"
+  - "연도"
+  - "회계년도"
+  - "fiscal_year"
+  - "year"
+  # SAP
+  - "gjahr"
+  - "GJAHR"
+  # Oracle EBS
+  - "PERIOD_YEAR"
+
+# ── 일자 ──
+posting_date:
+  - "전표일자"
+  - "기표일"
+  - "기표일자"
+  - "전기일자"
+  - "전기일"
+  - "일자"
+  - "발생일자"
+  - "posting_date"
+  - "post_date"
+  - "Entry Date"
+  - "entry_date"
+  - "effective_date"
+  - "accounting_date"
+  # SAP
+  - "budat"
+  - "BUDAT"
+  # Oracle EBS
+  - "ACCOUNTING_DATE"
+  - "DEFAULT_EFFECTIVE_DATE"
+
+document_date:
+  - "증빙일자"
+  - "증빙일"
+  - "원전표일자"
+  - "영수증일자"
+  - "document_date"
+  - "doc_date"
+  # SAP
+  - "bldat"
+  - "BLDAT"
+  # Oracle EBS
+  - "CREATION_DATE"
+
+# ── 계정 ──
+gl_account:
+  - "계정코드"
+  - "계정CD"
+  - "계정과목"
+  - "계정과목코드"
+  - "계정과목CD"
+  - "과목코드"
+  - "계정번호"
+  - "account_cd"
+  - "account_code"
+  - "account_number"
+  - "account_no"
+  - "GL Code"
+  - "gl_code"
+  - "gl_account"
+  # SAP
+  - "racct"
+  - "RACCT"
+  - "hkont"
+  - "HKONT"
+  - "saknr"
+  - "SAKNR"
+  # Oracle EBS
+  - "CODE_COMBINATION_ID"
+  - "ACCOUNT_SEGMENT"
+
+# ── 금액 ──
+debit_amount:
+  - "차변금액"
+  - "차변"
+  - "차변액"
+  - "DR금액"
+  - "차방금액"
+  - "debit"
+  - "debit_amount"
+  - "Debit Amount"
+  - "debit_amt"
+  # SAP (차변 방향 금액)
+  - "wrbtr_d"
+  - "dmbtr_d"
+  # Oracle EBS
+  - "ENTERED_DR"
+  - "ACCOUNTED_DR"
+  - "entered_dr"
+
+credit_amount:
+  - "대변금액"
+  - "대변"
+  - "대변액"
+  - "CR금액"
+  - "대방금액"
+  - "credit"
+  - "credit_amount"
+  - "Credit Amount"
+  - "credit_amt"
+  # SAP (대변 방향 금액)
+  - "wrbtr_c"
+  - "dmbtr_c"
+  # Oracle EBS
+  - "ENTERED_CR"
+  - "ACCOUNTED_CR"
+  - "entered_cr"
+
+# ── 적요·텍스트 ──
+line_text:
+  - "적요"
+  - "설명"
+  - "비고"
+  - "적요내용"
+  - "거래내용"
+  - "거래설명"
+  - "거래적요"
+  - "description"
+  - "Memo"
+  - "memo"
+  - "narration"
+  - "narrative"
+  - "remarks"
+  - "line_text"
+  - "line_description"
+  # SAP
+  - "sgtxt"
+  - "SGTXT"
+  # Oracle EBS
+  - "DESCRIPTION"
+
+header_text:
+  - "헤더적요"
+  - "전표적요"
+  - "전표설명"
+  - "전표비고"
+  - "header_text"
+  - "journal_description"
+  # SAP
+  - "bktxt"
+  - "BKTXT"
+  # Oracle EBS
+  - "JE_DESCRIPTION"
+
+# ── 사용자·승인 ──
+created_by:
+  - "작성자"
+  - "입력자"
+  - "기표자"
+  - "등록자"
+  - "생성자"
+  - "user"
+  - "created_by"
+  - "entered_by"
+  - "preparer"
+  # SAP
+  - "usnam"
+  - "USNAM"
+  - "cpudt_user"
+  # Oracle EBS
+  - "CREATED_BY"
+
+approved_by:
+  - "승인자"
+  - "결재자"
+  - "검토자"
+  - "approved_by"
+  - "approver"
+  - "reviewer"
+  # Oracle EBS
+  - "APPROVER_NAME"
+
+approval_date:
+  - "승인일"
+  - "결재일"
+  - "승인일자"
+  - "결재일자"
+  - "approval_date"
+  - "approved_date"
+
+# ── 전표 속성 ──
+document_type:
+  - "전표유형"
+  - "증빙유형"
+  - "문서유형"
+  - "전표종류"
+  - "전표구분"
+  - "전표분류"
+  - "document_type"
+  - "doc_type"
+  - "journal_type"
+  - "journal_category"
+  # SAP
+  - "blart"
+  - "BLART"
+  # Oracle EBS
+  - "JE_CATEGORY"
+  - "JE_SOURCE"
+
+source:
+  - "입력구분"
+  - "입력경로"
+  - "소스"
+  - "원천"
+  - "source_type"
+  - "source"
+  - "origin"
+  # SAP
+  - "awtyp"
+  - "AWTYP"
+
+line_number:
+  - "행번호"
+  - "라인번호"
+  - "순번"
+  - "줄번호"
+  - "line_number"
+  - "line_no"
+  - "line_num"
+  # SAP
+  - "docln"
+  - "DOCLN"
+  - "buzei"
+  - "BUZEI"
+  # Oracle EBS
+  - "JE_LINE_NUM"
+  - "je_line_num"
+
+dc_indicator:
+  - "DC구분"
+  - "차대구분"
+  - "차대"
+  - "대차구분"
+  - "dr_cr"
+  # SAP
+  - "drcrk"
+  - "DRCRK"
+  - "shkzg"
+  - "SHKZG"
+
+business_process:
+  - "업무프로세스"
+  - "비즈니스프로세스"
+  - "업무유형"
+  - "business_process"
+
+# ── 통화·환율 ──
+currency:
+  - "통화"
+  - "통화코드"
+  - "통화CD"
+  - "currency"
+  - "currency_code"
+  # SAP
+  - "rwcur"
+  - "RWCUR"
+  - "waers"
+  - "WAERS"
+  # Oracle EBS
+  - "CURRENCY_CODE"
+
+local_amount:
+  - "현지금액"
+  - "원화금액"
+  - "원화"
+  - "현지통화금액"
+  - "local_amount"
+  - "local_currency_amount"
+  # SAP
+  - "hsl"
+  - "HSL"
+  - "dmbtr"
+  - "DMBTR"
+  # Oracle EBS
+  - "ACCOUNTED_DR"
+  - "ACCOUNTED_CR"
+
+exchange_rate:
+  - "환율"
+  - "적용환율"
+  - "exchange_rate"
+  # SAP
+  - "kursf"
+  - "KURSF"
+  # Oracle EBS
+  - "CURRENCY_CONVERSION_RATE"
+
+# ── 조직·원가 ──
+cost_center:
+  - "코스트센터"
+  - "원가센터"
+  - "원가부서"
+  - "비용부서"
+  - "cost_center"
+  - "cc"
+  # SAP
+  - "rcntr"
+  - "RCNTR"
+  - "kostl"
+  - "KOSTL"
+
+profit_center:
+  - "손익센터"
+  - "이익센터"
+  - "profit_center"
+  # SAP
+  - "prctr"
+  - "PRCTR"
+
+# ── 세금·기간 ──
+fiscal_period:
+  - "회계기간"
+  - "전기기간"
+  - "기간"
+  - "월"
+  - "fiscal_period"
+  - "period"
+  # SAP
+  - "monat"
+  - "MONAT"
+  - "poper"
+  - "POPER"
+  # Oracle EBS
+  - "PERIOD_NAME"
+  - "PERIOD_NUM"
+
+tax_code:
+  - "세금코드"
+  - "세코드"
+  - "부가세코드"
+  - "tax_code"
+  # SAP
+  - "mwskz"
+  - "MWSKZ"
+
+tax_amount:
+  - "세금액"
+  - "부가세"
+  - "세액"
+  - "부가세액"
+  - "tax_amount"
+  - "tax_amt"
+  # SAP
+  - "fwste"
+  - "FWSTE"
+
+# ── 참조·보조 ──
+reference:
+  - "참조번호"
+  - "참조"
+  - "참조문서"
+  - "reference"
+  - "ref_no"
+  # SAP
+  - "xblnr"
+  - "XBLNR"
+  # Oracle EBS
+  - "REFERENCE_1"
+  - "REFERENCE_2"
+
+trading_partner:
+  - "거래처코드"
+  - "거래처"
+  - "거래처CD"
+  - "IC파트너"
+  - "내부거래처"
+  - "trading_partner"
+  - "partner"
+  # SAP
+  - "vbund"
+  - "VBUND"
+  - "lifnr"
+  - "LIFNR"
+  - "kunnr"
+  - "KUNNR"
+
+auxiliary_account_number:
+  - "보조원장번호"
+  - "보조계정"
+  - "보조코드"
+  - "auxiliary_account_number"
+
+auxiliary_account_label:
+  - "보조원장라벨"
+  - "보조원장명"
+  - "보조계정명"
+  - "auxiliary_account_label"
+
+lettrage:
+  - "대사그룹"
+  - "소거그룹"
+  - "lettrage"
+  - "clearing_document"
+  # SAP
+  - "augbl"
+  - "AUGBL"
+
+lettrage_date:
+  - "대사일"
+  - "소거일"
+  - "lettrage_date"
+  - "clearing_date"
+  # SAP
+  - "augdt"
+  - "AUGDT"
+
+# ── 기타 ──
+user_persona:
+  - "사용자유형"
+  - "페르소나"
+  - "user_persona"
+  - "user_type"
+
+ledger:
+  - "원장"
+  - "원장유형"
+  - "ledger"
+  - "ledger_type"
+  # SAP
+  - "rldnr"
+  - "RLDNR"
+
+# ── Stage 2 확장 (증빙/감사추적) ──
+has_attachment:
+  - "증빙첨부"
+  - "첨부여부"
+  - "attachment"
+  - "has_attachment"
+  - "attached"
+
+supporting_doc_type:
+  - "증빙유형"
+  - "증빙종류"
+  - "증빙구분"
+  - "supporting_document"
+  - "doc_type"
+  - "supporting_doc_type"
+
+delivery_date:
+  - "납품일"
+  - "입고일"
+  - "수령일"
+  - "delivery_date"
+  - "receipt_date"
+  - "goods_receipt_date"
+
+invoice_amount:
+  - "세금계산서금액"
+  - "청구금액"
+  - "인보이스금액"
+  - "invoice_amount"
+  - "invoice_total"
+
+supply_amount:
+  - "공급가액"
+  - "공급가"
+  - "순금액"
+  - "supply_amount"
+  - "net_amount"
+
+ip_address:
+  - "접속IP"
+  - "IP주소"
+  - "아이피"
+  - "ip_address"
+  - "source_ip"
+  - "client_ip"
+
+document_number:
+  - "문서순번"
+  - "순차번호"
+  - "문서번호순번"
+  - "document_number"
+  - "doc_seq"
+  - "doc_number"

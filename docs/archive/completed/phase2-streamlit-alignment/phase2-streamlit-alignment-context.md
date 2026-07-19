@@ -1,0 +1,88 @@
+# Phase2 Streamlit Alignment - Context & Decisions
+
+## Status
+- Phase: Implementation
+- Progress: 24 / 24 tasks complete
+- Last Updated: 2026-05-07
+
+## Key Files
+**Modified**:
+- `dashboard/tab_phase2.py` - Phase2 상태 표시, 학습/추론 버튼 분리, 결과 provenance 표시
+- `dashboard/tab_phase1.py` - Phase1에서 Phase2로 넘어가는 action을 새 Phase2 정책과 정렬
+- `dashboard/_state.py` - Phase2 training report 관련 session key 추가
+- `src/services/phase2_training_service.py` - Streamlit용 training entrypoint 추가
+- `src/services/phase2_inference_service.py` - latest training snapshot 조회와 provenance 저장 정리
+- `src/pipeline.py` - 회사/engagement별 model registry 경로 사용
+- `src/db/batch_reader.py` - 저장된 Phase2 provenance 복원 검증
+- `src/export/analysis_status.py` - Phase2 inference mode 표시 검증
+- `docs/archive/completed/PHASE_PROVENANCE.md` - Phase2 운영 정의 갱신
+
+**New**:
+- `dev/active/phase2-streamlit-alignment/phase2-streamlit-alignment-plan.md` - 괴리 해소 전략 계획
+- `dev/active/phase2-streamlit-alignment/phase2-streamlit-alignment-context.md` - 결정 및 상태 기록
+- `dev/active/phase2-streamlit-alignment/phase2-streamlit-alignment-tasks.md` - 실행 체크리스트
+
+## Key Decisions
+1. **Streamlit Phase2는 학습과 추론을 분리해서 노출한다** (2026-05-07)
+   - Rationale: 현재 `Phase 2 분석 시작` 버튼은 실제로 inference-only redetect를 실행하므로 사용자 기대와 다르다.
+   - Alternatives: 버튼 이름만 `Phase2 추론 실행`으로 바꾸고 학습 UI는 만들지 않는 방법.
+   - Trade-offs: 버튼과 상태가 늘어나지만, 실제 동작과 화면 설명이 일치한다.
+
+2. **운영 기본값은 training report 기반 inference로 둔다** (2026-05-07)
+   - Rationale: 기존 설계는 `phase2-train`이 reproducible report/contract를 만들고 `phase2-infer`가 이를 사용하는 구조다.
+   - Alternatives: Phase2 클릭 시 매번 학습부터 자동 실행.
+   - Trade-offs: 사용자가 학습 단계를 한 번 더 이해해야 하지만, 재현성과 provenance가 유지된다.
+
+3. **회사/engagement별 model registry 경로를 기준으로 정렬한다** (2026-05-07)
+   - Rationale: `ctx.model_dir / phase2_train`에서 snapshot을 읽으면서 detector load는 기본 `models` 경로를 쓰면 contract와 실제 모델이 어긋날 수 있다.
+   - Alternatives: 모든 모델을 global `PROJECT_ROOT/models`에 저장.
+   - Trade-offs: context 전달이 필요하지만 RC 구조의 engagement isolation과 맞다.
+
+4. **이번 작업은 AutoML 품질 개선이 아니라 연결 정합성 작업이다** (2026-05-07)
+   - Rationale: `phase2-train-automl`과 `phase2-detector-expansion`은 후보 family/metric/search policy를 다룬다.
+   - Alternatives: AutoML 개선과 UI alignment를 한 작업으로 합친다.
+   - Trade-offs: 범위를 나누면 작업은 하나 늘지만, 변경 위험과 검증 범위가 줄어든다.
+
+## Known Issues
+- `dev/README.md`는 현재 repository에 없다. 계획 문서 형식은 기존 `dev/active/*` 작업과 planner skill 규칙을 기준으로 맞춘다.
+- 일부 기존 문서/소스 주석은 인코딩이 깨져 보인다. 이번 작업 문서는 UTF-8 Korean으로 새로 작성한다.
+- `dashboard/tab_phase1.py`의 기존 Phase2 직접 실행 버튼은 Phase2 탭 이동으로 정렬했다. 학습/추론 선택은 Phase2 탭에서 수행한다.
+- 전체 `test_pipeline.py` 실행은 일부 기존 `tmp_path` fixture가 Windows temp 권한 문제로 setup에서 실패한다. 이번 변경 검증은 관련 pipeline 테스트를 직접 지정해 실행했다.
+- Streamlit 서버는 기존 프로세스가 `http://localhost:8501`에서 응답 중이며 `Invoke-WebRequest` 기준 HTTP 200을 확인했다.
+- `.tmp_streamlit_stderr.log`에는 기존 `use_container_width` deprecation 경고가 남아 있다. 이번 Phase2 alignment 변경 경로의 실패 로그는 확인되지 않았다.
+
+## Rollback Strategy
+- Phase2 UI 변경은 `dashboard/tab_phase2.py`와 `dashboard/tab_phase1.py`에 집중한다. 문제가 생기면 기존 inference-only 버튼 경로로 되돌릴 수 있다.
+- Registry path 변경은 테스트로 고정한 뒤 진행한다. 회사별 모델 로드가 실패하면 `ModelRegistry` 주입만 되돌리고 UI 상태 표시 변경은 유지할 수 있다.
+- DB schema 변경은 계획하지 않는다. 기존 nullable metadata columns만 사용한다.
+
+## A3 Handoff Entry (2026-05-17)
+
+Sprint A3는 dashboard 파일을 수정하지 않고 PHASE2 training/inference contract에 4개 rule-based family(`timeseries`, `relational`, `duplicate`, `intercompany`)를 추가했다. Phase B A4 UI 작업은 `load_latest_phase2_training_snapshot()`이 반환하는 `metadata.inference_contract.required_models`, `model_versions`, `family_sub_detectors`, `track_map`와 `leaderboard.json` / `promotion_decision.json`을 읽어 9 family 표시를 추가하면 된다. Rule-style family의 `model_versions.<family>.model_version`과 `schema_hash`는 `null`일 수 있으며, artifact 링크는 `registry_path`의 `calibration_metadata.json`을 사용한다.
+
+## Pre-UI smoke result (2026-05-18)
+
+Streamlit UI 진입 시 본 smoke 결과를 정독한다. 기준 문서는 `docs/guide/DETECTION_RESULTS_MANIPULATION_V7_FIXED3_PHASE2.md`이고, 연도별 JSON은 `artifacts/phase2_inference_v7_fixed3_year_2022.json`, `artifacts/phase2_inference_v7_fixed3_year_2023.json`, `artifacts/phase2_inference_v7_fixed3_year_2024.json`이다. UI는 active/dormant family를 분리하고, rule-style family는 `rule_proxy_score`로 표시하며, truth recall을 family ranking 근거로 사용하지 않는다.
+
+## Sprint UI-A4 Results (2026-05-18)
+
+Sprint UI-A4는 Phase A handoff 7개와 active plan 3개를 기준으로 Phase2 탭을 3-state UI로 확장했다. 상태는 `Not trained` / `Training report available` / `Inference complete`로 분기하며, 학습은 `run_phase2_training_analysis()`, 추론은 `run_phase2_inference_analysis()`로 분리된다. 추론 실행 시 UI partition selector(`2022`, `2023`, `2024`, `전체`)가 `fiscal_year` 필터로 전달된다.
+
+신규 컴포넌트:
+- `dashboard/components/phase2_family_matrix.py`: `build_family_matrix_frame(snapshot, partition_summary)` / `render_family_matrix(snapshot, partition_summary)`.
+- `dashboard/components/phase2_subdetector_grid.py`: `build_subdetector_grid_frame(partition_summary)` / `render_subdetector_grid(partition_summary)`.
+- `dashboard/components/phase2_leaderboard_view.py`: `build_leaderboard_frame(snapshot)`, `build_promotion_decision_frame(snapshot)`, `render_leaderboard_view(snapshot)`.
+
+UI contract:
+- active 5 family + dormant 4 family를 항상 표시한다.
+- 13 sub-detector hit count는 zero-hit도 숨기지 않는다.
+- `intercompany`는 Diag-1 contract에 따라 active / IC01 only / `metric_confidence=sidecar_unmatched_reference_only`로 표시한다. IC02/IC03은 `carry-over (matched-pair data 미보유)`로 표시한다.
+- `leaderboard.json`과 `promotion_decision.json`은 latest training snapshot의 sidecar artifact로 로드한다. rule-style `schema_hash=null`은 정상 표시값이다.
+- PHASE1 result UI 파일(`dashboard/tab_phase1.py`, `dashboard/components/rule_panel.py`)과 overview는 수정하지 않았다. `git diff` 확인은 local hook이 차단했으므로 fallback grep/변경 파일 검사로 확인했다.
+
+Verification:
+- Focused Phase2 dashboard/service: 27 passed.
+- RUFF changed files: PASS.
+- `dashboard.app` import smoke: PASS with bare Streamlit warnings.
+- Duplicate performance guard: 2 passed.
+- Dashboard full suite: 213 passed, 1 pre-existing `tab_phase1._render_year_over_year` absence failure.

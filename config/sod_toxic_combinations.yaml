@@ -1,0 +1,255 @@
+# =============================================================================
+# SoD(직무분리) toxic 업무조합 근거표 — L1-06 데이터 기반 탐지용
+# =============================================================================
+# 목적: L1-06(직무분리 위반)을 주입 라벨(sod_violation/sod_conflict_type)이 아니라
+#       전표의 created_by / approved_by + business_process 에서 직접 도출하도록,
+#       "어떤 업무를 한 사람이 겸하면 toxic 인가" 를 근거 기반으로 정의한다.
+#
+# 탐지 단위(detection_unit):
+#   - person = created_by (기표자). created_by == approved_by 인 행은 단일인 통제(self-approval)
+#     로 추가 가중. approved_by 도 동일 인물 집합에 포함해 겸직 판정.
+#   - 한 person 이 회기 내에 touch 한 business_process 집합을 구해, 그 집합이 아래
+#     toxic_combinations 의 pair(또는 within-process 조건)를 포함하면 flag(binary).
+#   - 점수 단계 없음(걸리면 flag). severity_hint 는 우선순위 참고용 메모일 뿐 점수 아님.
+#
+# 4기능 프레임(COSO/표준 SoD): authorization(승인) / recording(기록) /
+#   custody(자산보관·집행) / reconciliation(대사·조정).
+#   양립불가 기능 2개 이상이 한 사람에게 모이면 toxic.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# standard 축 근거 프레임 — 한국 기준 우선, 국제기준 병기
+#   각 조합 grounding.standard 는 아래 약칭을 참조한다.
+# -----------------------------------------------------------------------------
+standard_references:
+  KSA_240: "회계감사기준서 240(재무제표감사에서의 부정에 관한 감사인의 책임) — 한국공인회계사회 제정, ISA 240 채택. 부정위험요소와 내부통제(직무분리 포함) 이해를 요구. 분개·결산조정을 통한 경영진 통제무력화(management override) 위험 명시."
+  KSA_265: "회계감사기준서 265(내부통제 미비점에 대한 지배기구·경영진과의 커뮤니케이션) — 직무분리 결여 등 통제 미비점을 '유의적 미비점'으로 식별·소통. 미비점=왜곡표시를 적시 예방/적발하지 못하게 설계·운영되거나 필요한 통제가 누락된 경우."
+  ICFR_원칙10: "내부회계관리제도 설계·운영 개념체계 원칙 10(통제활동 선택·구축) — 이해상충을 일으키는 양립불가능한 업무를 한 사람에게 부여하지 않도록 직무를 적절히 배분(COSO 기반)."
+  외감법: "주식회사 등의 외부감사에 관한 법률 — 내부회계관리제도 구축·운영 의무의 법적 근거."
+  ISA_240: "ISA 240(Revised) — KSA 240의 원천 국제기준. 분개·management override 대응."
+  PCAOB_AS2401: "PCAOB AS 2401 — 기중·기말 부적절 분개를 통한 분식, management override 대응 절차(분개 검사)."
+  COSO: "COSO Internal Control Framework — SoD 4기능(authorization/recording/custody/reconciliation) 분리 원칙. ICFR 개념체계의 원천."
+  # 한계: 내부회계 개념체계 원문의 '승인·기록·보관·대사 4기능' 명시 구절은 로그인/PDF 뒤에 있어
+  #       verbatim 미확보. 4기능 분해는 채택원천인 COSO 기준으로 기재함.
+
+# -----------------------------------------------------------------------------
+# 7개 business_process → 4기능 매핑
+#   primary = 이 프로세스가 toxic-pair 판정에서 대표하는 기능
+#   spans   = 프로세스가 실제로 걸치는 기능들(참고)
+# -----------------------------------------------------------------------------
+process_function_map:
+  R2R:                                   # Record-to-Report (기표·총계정원장·결산조정)
+    primary: [recording, reconciliation] # "장부" 그 자체. 기표+결산대사 모두 보유
+    spans: [recording, reconciliation, authorization]
+    rationale: "총계정원장 기표와 결산조정/대사를 함께 수행 → 회계기록을 만들고 동시에 맞춰보는 기능"
+  O2C:                                   # Order-to-Cash (매출·매출채권·수금)
+    primary: [custody, recording]        # 고객현금 수금(custody) + 매출채권 기표(recording)
+    spans: [authorization, recording, custody]
+    rationale: "수금(현금 보관/입금)과 매출채권 장부기입을 함께 수행 → skimming/lapping 진입점"
+  P2P:                                   # Procure-to-Pay (매입·매입채무·지급)
+    primary: [authorization, recording]  # 거래처/발주 승인 + 매입채무 기표
+    spans: [authorization, recording, custody]
+    rationale: "거래처 등록·발주 승인과 매입채무 생성을 함께 수행 → 허위 채무 생성 진입점(지급집행은 TRE와 중첩)"
+  H2R:                                   # Hire-to-Retire (급여·인사)
+    primary: [authorization, recording]  # 인사마스터/급여율 승인 + 급여 기표
+    spans: [authorization, recording, custody]
+    rationale: "신규입사·급여율 등록(승인)과 급여 기표를 함께 수행 → ghost employee 진입점(지급집행은 TRE와 중첩)"
+  A2R:                                   # Acquire-to-Retire (유형자산 취득·처분)
+    primary: [custody, recording]        # 자산 물리적 보관 + 자산대장 기표/제각
+    spans: [authorization, custody, recording]
+    rationale: "자산의 물리적 보관/처분과 자산대장 기록(제각)을 함께 수행 → 자산 횡령 후 장부 제각"
+  TRE:                                   # Treasury (자금·은행·이체)
+    primary: [custody]                   # 현금/은행 집행 — 자금 이동 기능 그 자체
+    spans: [custody, authorization]
+    rationale: "은행이체·자금집행을 직접 수행 → 모든 현금유출 toxic 조합의 공통 custody 축"
+  MFG:                                   # Manufacturing (제조·원가)
+    primary: [custody, recording]        # 재고/재공품 보관 + 원가 기표
+    spans: [custody, recording]
+    rationale: "재고 물리 보관과 원가 기표를 함께 수행 → 재고 횡령 후 원가/제각 기표로 은폐(근거 상대적 약함)"
+
+# -----------------------------------------------------------------------------
+# toxic 조합 — 프로세스 간 쌍 + within-process 중대 겸직
+#   incompatible_functions: 한 사람에게 모이면 안 되는 4기능 중 둘
+#   grounding 3축: standard(감사기준) / fss_korea(금감원) / external(ACFE·COSO)
+#     - 못 찾은 축은 strength_note 에 "약함" 명시
+# -----------------------------------------------------------------------------
+sod_toxic_combinations:
+
+  - pair: [TRE, P2P]
+    conflict_type: cash_disbursement_with_procurement
+    signal_class: red
+    incompatible_functions: [custody, recording]
+    fraud_route: "허위 거래처/매입채무(AP)를 본인이 생성한 뒤, 본인이 자금이체로 지급해 인출(billing scheme). 가공 채무가 곧 현금유출로 직결."
+    severity_hint: critical
+    grounding:
+      standard: "KSA 240(부정·management override) + ICFR 원칙10(양립불가능 직무분리) + COSO authorization·custody 분리. 국제: ISA 240 / PCAOB AS 2401."
+      fss_korea: "금감원 회계부정 사례 — 자금담당자가 본인 계좌로 자금을 빼돌리며 장부에는 '매입채무 지급'으로 위장, 결산 후 취소로 흔적 제거(intn.co.kr / daeryunlaw-audit.com)."
+      external: "ACFE 2024 Report to the Nations — billing scheme(전체 자산횡령의 22%, 중앙손실 $100K). '거래처를 등록하는 사람과 송장 지급을 승인하는 사람은 분리'(ramp.com/bonadio.com)."
+      strength: strong
+      strength_note: "3축 모두 직접 근거. 금감원 실사례가 본 조합과 정확히 일치."
+
+  - pair: [TRE, R2R]
+    conflict_type: cash_execution_with_bookkeeping
+    signal_class: red
+    incompatible_functions: [custody, reconciliation]
+    fraud_route: "자금이체로 현금을 유출(custody)하고, 동일인이 총계정원장 기표·결산대사를 수행(recording+reconciliation)해 유출을 은폐. 결산 후 분개 취소로 흔적 제거."
+    severity_hint: critical
+    grounding:
+      standard: "KSA 240 — 기중·기말 부적절 분개를 통한 분식, 경영진 통제무력화 대응(분개 검사). KSA 265 — 분개 단일통제는 유의적 미비점. ICFR 원칙10 직무분리. 국제: ISA 240 / PCAOB AS 2401."
+      fss_korea: "금감원 — 인건비 절감 명목으로 1인이 자금·회계 겸직, 영업임원이 재무 겸직 → 현금 횡령을 경영진이 인지 못함(intn.co.kr)."
+      external: "ACFE — '한 개인이 회계거래 전체 또는 일부 다수를 통제하면 현금부정 기회가 발생'. COSO custody↔reconciliation 분리(bonadio.com)."
+      strength: strong
+      strength_note: "감사기준(분개 override)·금감원 실사례 모두 직접. 본 도구의 핵심 toxic."
+
+  - pair: [TRE, O2C]
+    conflict_type: cash_receipts_with_treasury
+    signal_class: red
+    incompatible_functions: [custody, custody]
+    fraud_route: "고객 수금(O2C custody)과 은행 입금/계좌 집행(TRE custody)을 한 사람이 통제 → 수금 가로채기 후 입금 조작(skimming). 입금지연으로 lapping 가능."
+    severity_hint: critical
+    grounding:
+      standard: "ICFR 원칙10(양립불가능 직무분리) — 현금 수령·보관·집행 분리. KSA 240 현금수령 통제취약=부정위험. COSO custody 분리. 국제: ISA 240."
+      fss_korea: "직접 매칭 사례 미확보 — 약함."
+      external: "ACFE skimming/lapping — '한 사람이 현금 수령·입금·기록·자금집행을 모두 할 수 있으면 부정 위험 높음'(legalclarity.org/brisbaneacfe.org)."
+      strength: medium
+      strength_note: "external/standard 강함, 금감원 직접 사례는 미확보로 medium."
+
+  - pair: [O2C, R2R]
+    conflict_type: cash_receipts_with_ar_recording
+    signal_class: red
+    incompatible_functions: [custody, recording]
+    fraud_route: "고객 수금(custody)을 가로채고, 동일인이 매출채권 원장 기표·대사(recording/reconciliation)를 수행해 후속 입금으로 메우는 lapping(teeming and lading)."
+    severity_hint: high
+    grounding:
+      standard: "ICFR 원칙10 — 현금 custody 와 매출채권 recording 분리. KSA 240 수익·채권 부정위험 추정. COSO. 국제: ISA 240."
+      fss_korea: "직접 매칭 사례 미확보 — 약함."
+      external: "ACFE lapping — '직원이 수금을 훔치고 이후 고객 입금으로 부족분을 덮는다'. 수금일↔입금일 시차가 적신호(accountingtools.com/caseiq.com)."
+      strength: strong
+      strength_note: "external(lapping) 매우 강함. 금감원 축은 약함."
+
+  - pair: [H2R, TRE]
+    conflict_type: payroll_with_cash_disbursement
+    signal_class: red
+    incompatible_functions: [authorization, custody]
+    fraud_route: "유령직원(ghost employee)을 인사·급여마스터에 등록(authorization+recording)하고, 동일인이 급여 지급(TRE custody)을 집행해 본인/공모자 계좌로 수령."
+    severity_hint: critical
+    grounding:
+      standard: "ICFR 원칙10 — HR 마스터 승인(authorization)과 급여 지급집행(custody) 분리. KSA 240 급여 부정 시나리오. COSO. 국제: ISA 240."
+      fss_korea: "직접 매칭 사례 미확보 — 약함."
+      external: "ACFE — '신규입사를 HRIS에 등록하는 사람이 급여처리·최종지급 승인을 겸하면 안 된다'. 급여부정 조직 27%, 중앙손실 $120K(bonadio.com/sikich.com)."
+      strength: strong
+      strength_note: "external(ghost employee) 강함. 금감원 직접 사례 미확보로 종합 strong 유지(표준+외부 직접)."
+
+  - pair: [A2R, R2R]
+    conflict_type: asset_custody_with_recording
+    signal_class: red
+    incompatible_functions: [custody, recording]
+    fraud_route: "유형자산을 물리적으로 처분/반출(custody)하고, 동일인이 자산대장 제각·de-recognition 기표(recording)를 수행해 장부상 흔적 제거(scrap 절도)."
+    severity_hint: high
+    grounding:
+      standard: "ICFR 원칙10 — 자산 처분 담당(custody)과 기록 담당(recording) 분리, 자산조정 승인자는 자산 접근 금지. KSA 240 자산 횡령. COSO. 국제: PCAOB AS 2401."
+      fss_korea: "직접 매칭 사례 미확보 — 약함."
+      external: "ACFE asset misappropriation — '폐기자산 절도', '자산을 사고팔거나 처분하는 사람과 회계기록자는 분리'(weaver.com/assetcues.com)."
+      strength: medium
+      strength_note: "standard/external 명확. 금감원 직접 사례 미확보로 medium."
+
+  - pair: [P2P, R2R]
+    conflict_type: payables_creation_with_gl_close
+    signal_class: yellow
+    incompatible_functions: [recording, reconciliation]
+    fraud_route: "매입채무를 생성(P2P recording)하고, 동일인이 총계정원장 마감·조정(R2R reconciliation)을 수행 → 가공 채무를 독립검증 없이 장부에 매장."
+    severity_hint: high
+    grounding:
+      standard: "KSA 240 결산조정 분개 override. ICFR 원칙10 recording↔reconciliation 분리. COSO. 국제: PCAOB AS 2401."
+      fss_korea: "금감원 '매입채무 지급' 위장·결산 후 취소 사례가 본 조합의 R2R 마감 은폐와 연결(daeryunlaw-audit.com)."
+      external: "ACFE billing — fictitious vendor 가 독립적 기록검증 없이 통과될 때 발생."
+      strength: medium
+      strength_note: "두 프로세스 모두 recording 성격이라 TRE 미동반 시 현금유출 직결성은 약함. 결산은폐 경로로 high."
+
+  - pair: [A2R, TRE]
+    conflict_type: asset_disposal_with_cash
+    signal_class: yellow
+    incompatible_functions: [custody, custody]
+    fraud_route: "자산 처분 권한(A2R custody)과 처분대금 수령/이체(TRE custody)를 겸직 → 자산 매각대금 횡령."
+    severity_hint: high
+    grounding:
+      standard: "ICFR 원칙10 — 자산 처분과 대금 수령 custody 분리. KSA 240. COSO."
+      fss_korea: "직접 매칭 사례 미확보 — 약함."
+      external: "ACFE asset misappropriation/fixed asset fraud(davidandersonassociates.com)."
+      strength: medium
+      strength_note: "external 보조 근거. 금감원 직접 사례 미확보."
+
+  - pair: [H2R, R2R]
+    conflict_type: payroll_with_bookkeeping
+    signal_class: yellow
+    incompatible_functions: [authorization, recording]
+    fraud_route: "유령직원 급여(H2R)를 발생시키고, 동일인이 총계정원장 기표/조정(R2R)으로 인건비를 묻어 은폐. TRE 미동반이라 현금화 직결성은 H2R+TRE보다 약함."
+    severity_hint: high
+    grounding:
+      standard: "ICFR 원칙10 authorization↔recording 분리. KSA 240 급여. COSO. 국제: ISA 240."
+      fss_korea: "직접 매칭 사례 미확보 — 약함."
+      external: "ACFE ghost employee + 회계기록 은폐(bonadio.com)."
+      strength: medium
+      strength_note: "external 강하나 현금집행(TRE) 없이는 완성되지 않음 → medium."
+
+  - pair: [MFG, R2R]
+    conflict_type: inventory_custody_with_recording
+    signal_class: yellow
+    incompatible_functions: [custody, recording]
+    fraud_route: "재고/재공품을 물리적으로 보관(MFG custody)하면서 원가·재고 기표(R2R recording)를 겸직 → 재고 횡령을 원가차이/제각으로 은폐."
+    severity_hint: medium
+    grounding:
+      standard: "ICFR 원칙10 / COSO custody↔recording 분리 일반 원칙."
+      fss_korea: "직접 매칭 사례 미확보 — 약함."
+      external: "ACFE — '재고를 개인용도/판매목적으로 절도'(asset misappropriation 일반). 본 쌍에 특화된 출처는 약함."
+      strength: weak
+      strength_note: "원가 은폐 경로는 간접적이고 재고 단위 측정이 별도 필요 → weak."
+
+# -----------------------------------------------------------------------------
+# within-process(단일 프로세스 내) 중대 겸직 — 한 프로세스 안에서 1인이
+#   발생/승인/집행을 모두 통제하는 경우. created_by == approved_by 가 핵심 신호.
+# -----------------------------------------------------------------------------
+within_process_toxic:
+
+  - process: P2P
+    conflict_type: p2p_initiate_approve_disburse_one_person
+    signal_class: red
+    incompatible_functions: [authorization, recording, custody]
+    condition: "동일 person 이 P2P 전표를 created_by 이면서 approved_by (자기승인), 또는 발주·매입채무·지급을 모두 보유"
+    fraud_route: "발주→승인→지급을 한 사람이 완결 → 견제 없이 허위 매입·지급 billing scheme 완성."
+    severity_hint: critical
+    grounding:
+      standard: "ICFR 원칙10 — 한 사람이 한 거래의 한 기능 이상을 통제 금지(양립불가능 직무분리). KSA 265 단일통제=유의적 미비점. COSO."
+      fss_korea: "금감원 '매입채무 지급' 위장 횡령 사례."
+      external: "ACFE — '한 직원/관리자가 구매·검수보고서 서명·송장 지급승인을 모두 가지면 안 된다'(corpay.com/bonadio.com)."
+      strength: strong
+
+  - process: TRE
+    conflict_type: tre_initiate_approve_execute_one_person
+    signal_class: red
+    incompatible_functions: [authorization, custody]
+    condition: "동일 person 이 TRE 전표를 created_by 이면서 approved_by (자기승인 이체)"
+    fraud_route: "이체 기안·승인·집행을 1인이 완결 → 임의 자금유출. 결산 분개로 은폐 시 TRE+R2R로 승격."
+    severity_hint: critical
+    grounding:
+      standard: "ICFR 원칙10 — 자금집행 승인(authorization)·실행(custody) 분리. KSA 265 단일통제=유의적 미비점. COSO."
+      fss_korea: "금감원 자금·회계 1인 겸직 현금 횡령 사례."
+      external: "ACFE check tampering — '수표 승인자가 대사(reconciliation)도 하면 안 된다'(bonadio.com)."
+      strength: strong
+
+# -----------------------------------------------------------------------------
+# 근거 약함 / 제외 조합 — 직관상 toxic 같지만 SoD 단독 근거가 약해 제외
+# -----------------------------------------------------------------------------
+excluded_combinations:
+  - pair: [P2P, O2C]
+    reason: "매입(지출)과 매출(수입)은 상대방·자금흐름이 달라 단일인 직접 횡령경로가 약함. 특수관계 round-trip(가공매출) 우려는 SoD 아닌 별도 관계형/순환거래 룰(PHASE1-2) 소관."
+    strength: weak
+  - pair: [A2R, P2P]
+    reason: "유형자산 취득은 P2P 조달과 기능 중첩 → 별개 toxic 쌍으로 보기 어려움. A2R는 처분/보관 측면에서만 toxic(A2R+R2R/TRE)."
+    strength: weak
+  - pair: [H2R, O2C]
+    reason: "급여와 수금 간 직접 부정경로 없음. 기능 충돌 부재."
+    strength: none
+  - pair: [MFG, P2P]
+    reason: "제조 원가와 조달은 정상 업무흐름상 연속(원자재 매입). 겸직 자체로 toxic 단정 약함."
+    strength: weak

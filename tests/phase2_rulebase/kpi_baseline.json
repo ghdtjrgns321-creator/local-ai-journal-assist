@@ -1,0 +1,241 @@
+{
+  "_meta": {
+    "status": "skeleton",
+    "designed_at": "2026-05-15",
+    "design_source": "docs/spec/PHASE2_GOVERNANCE_DESIGN.md",
+    "measured_at": null,
+    "datasets": {
+      "manipulation_v2": {
+        "training_report": null,
+        "model_bundle": null,
+        "phase2_inference_report": null
+      },
+      "contract_v2": {
+        "phase2_inference_report": null
+      },
+      "normal_sample_300": {
+        "fixture": "data/journal/test_normal_sample/normal_sample_300.csv",
+        "phase2_inference_report": null
+      },
+      "ci_baseline_model": {
+        "path": "data/companies/_ci_baseline/engagements/2026/models/phase2_unsupervised/",
+        "version": null,
+        "model_hash": null,
+        "schema_hash": null,
+        "training_report": null
+      }
+    },
+    "freshness_days": 30,
+    "policy": "Layer A/B HARD FAIL on regression. Layer C SOFT WARN only (no truth-recall improvement enforcement). Reference: docs/spec/PHASE2_GOVERNANCE_DESIGN.md",
+    "principle": "PHASE2 향상은 도메인 정합성과 학습 무결성으로만 발생시킨다. truth recall은 부수효과(회귀 방지선)로만 측정한다. supervised 활성화 시 별도 design PR 의무.",
+    "phase1_reference": "tests/phase1_rulebase/kpi_baseline.json",
+    "soft_warn_history": "artifacts/_phase2_kpi_guard_softwarn_history.json"
+  },
+  "layer_a_domain_integrity": {
+    "a1_leakage_deny_columns_unused": {
+      "baseline": 0,
+      "max": 0,
+      "fail_mode": "HARD",
+      "source": "training_report.feature_metadata.input_columns ∩ src.preprocessing.constants.LEAKAGE_DENY_COLUMNS",
+      "rationale": "DataSynth truth sidecar 누설 차단. 현재 12개 컬럼 (mutation_*, semantic_scenario_id, document_id, header_text 등). 학습 입력에서 1개라도 사용 시 AUROC ≥0.95 가 강제됨 = fitting."
+    },
+    "a2_leakage_deny_rules_unused": {
+      "baseline_required_excluded": [
+        "rule_L3-02",
+        "rule_L1-05",
+        "rule_L1-09",
+        "rule_L2-03",
+        "rule_L2-02"
+      ],
+      "fail_mode": "HARD",
+      "source": "training_report.feature_metadata.excluded_rule_columns ⊇ LEAKAGE_DENY_RULES",
+      "rationale": "Top-5 deterministic rule 이 manipulated 신호 99.7% 점유 (S5 §5). 단독 학습 입력 시 PHASE1 재현."
+    },
+    "a3_normal_sample_ml_fp_ratio": {
+      "baseline": null,
+      "max": 0.05,
+      "fail_mode": "HARD",
+      "source": "normal_sample_300.csv → phase2 inference → ml_score >= HIGH_threshold 비율",
+      "fixture": "data/journal/test_normal_sample/normal_sample_300.csv",
+      "rationale": "PHASE1 A4 와 동일 fixture 공유. 정상 모집단에서 ml_score HIGH 비율 5% 초과 시 학습 분포 fitting."
+    },
+    "a4_contract_v2_ml_high_ratio": {
+      "baseline": null,
+      "max": 0.01,
+      "fail_mode": "HARD",
+      "source": "contract_v2 phase2_inference_report.stages.aggregate.ml_score_summary['High'] / sum",
+      "rationale": "PHASE1 A2 의 PHASE2 변형. semantic-clean contract noise 에서 ml HIGH 1% 초과 시 fitting 의심."
+    },
+    "a5_split_policy_safe": {
+      "allowed_values": [
+        "group_by_document_id",
+        "temporal_holdout"
+      ],
+      "fallback_allowed_with_warning": [
+        "random_row_split"
+      ],
+      "fail_mode": "HARD",
+      "source": "training_report.split_policy.method",
+      "rationale": "row random split 은 document line leakage 위험. group/temporal 우선."
+    },
+    "a6_preprocessing_fit_split": {
+      "required": "train",
+      "fail_mode": "HARD",
+      "source": "training_report.preprocessing_plan.fit_split",
+      "rationale": "scaler / imputer / frequency encoder / rare grouping 이 calibration/test 분포 누설 차단. feedback_imbalanced_data 메모리 정합."
+    },
+    "a7_unsupervised_target_unused": {
+      "required_training_mode": "unsupervised_autoencoder_mvp",
+      "target_used_must_be": false,
+      "fail_mode": "HARD",
+      "source": "training_report.training_mode + training_report.target_used",
+      "rationale": "feedback_unsupervised_no_y 메모리 정합. 비지도 모델이 y 사용 시 supervised 변종."
+    },
+    "a8_schema_hash_consistency": {
+      "fail_mode": "HARD",
+      "source": "model_bundle.schema_hash == training_report.schema_hash",
+      "rationale": "inference 시 column order / encoding 일치 보장."
+    }
+  },
+  "layer_b_operational_load": {
+    "b1_inference_latency_sec_per_50k": {
+      "baseline": null,
+      "max_cpu": 60,
+      "max_gpu": 30,
+      "fail_mode": "HARD",
+      "source": "phase2_inference_report.elapsed_sec (per 50k rows)",
+      "rationale": "review queue 운영. PHASE1 case builder 600s 의 1/10."
+    },
+    "b2_model_bundle_size_mb": {
+      "baseline": null,
+      "max": 50,
+      "fail_mode": "HARD",
+      "source": "os.path.getsize(model_bundle.pt) / 1024 / 1024",
+      "rationale": "engagement 디렉토리 누적 크기. 폭증 시 architecture 변경 의심."
+    },
+    "b3_training_time_sec_per_50k": {
+      "baseline": null,
+      "max": 600,
+      "fail_mode": "HARD",
+      "source": "training_report.training_elapsed_sec",
+      "rationale": "PHASE1 B2 와 동일 quota."
+    },
+    "b4_training_peak_vram_mb": {
+      "baseline": null,
+      "max": 6144,
+      "fail_mode": "HARD",
+      "source": "training_report.peak_vram_mb (torch.cuda.max_memory_allocated)",
+      "rationale": "RTX 3070 Ti VRAM 8GB 제약 (user_dev_environment 메모리)."
+    },
+    "b5_training_report_required_keys": {
+      "required_keys": [
+        "training_mode",
+        "evaluation_policy",
+        "metric_name",
+        "metric_semantics",
+        "split_policy",
+        "preprocessing_plan",
+        "schema_hash",
+        "promoted_versions",
+        "target_used",
+        "feature_metadata",
+        "metrics"
+      ],
+      "fail_mode": "HARD",
+      "source": "training_report JSON validation",
+      "rationale": "inference contract pin. 산출물 구조 변경 시 baseline 갱신 PR 의무."
+    }
+  },
+  "layer_c_ranking_regression_softwarn": {
+    "_policy": "WARN ONLY. 절대값 임계 금지. baseline 70% 비율 하한만. truth recall 향상을 강제하는 가드 절대 추가 금지. 옵션 R 적용 (PHASE2_GOVERNANCE_DESIGN.md §결정5).",
+    "c1_unsupervised_selection_score": {
+      "baseline": null,
+      "min_ratio": 0.70,
+      "warn_threshold": null,
+      "fail_mode": "SOFT_WARN",
+      "source": "training_report.metrics.unsupervised_selection_score",
+      "rationale": "PHASE2 자체 ranking 안정성 회귀 방지. 향상 강제 아님."
+    },
+    "c2_score_tail_gap": {
+      "baseline": null,
+      "min_ratio": 0.70,
+      "warn_threshold": null,
+      "fail_mode": "SOFT_WARN",
+      "source": "training_report.metrics.score_tail_gap",
+      "rationale": "calibration split 의 anomaly score tail 분리도. 0 이면 ranking 의미 없음."
+    },
+    "c3_topk_stability": {
+      "baseline": null,
+      "min_ratio": 0.70,
+      "warn_threshold": null,
+      "fail_mode": "SOFT_WARN",
+      "source": "training_report.metrics.topk_stability (bootstrap top-N 교집합 비율)",
+      "rationale": "top-N 재현성. ranking 신뢰 회귀 감지."
+    },
+    "c4_manipulation_truth_top500_recall": {
+      "baseline": null,
+      "min_ratio": 0.70,
+      "warn_threshold": null,
+      "fail_mode": "SOFT_WARN",
+      "source": "manipulation_v2 truth ∈ ml_score Top500",
+      "rationale": "PHASE1 C3 의 PHASE2 보조 평가. truth recall 향상 강제 아님 — 회귀 감지선."
+    },
+    "c5_cross_engagement_score_distribution": {
+      "baseline_mean": null,
+      "baseline_std": null,
+      "max_std_ratio": 1.5,
+      "fail_mode": "SOFT_WARN",
+      "source": "engagement A vs engagement B 동일 fixture inference 의 mean/std 비교",
+      "rationale": "학습-추론 환경 격리 회귀. 회사별 격리에서 동일 fixture 점수가 너무 다르면 학습 환경 차이."
+    },
+    "c6_family_diagnostics_stability": {
+      "baseline": null,
+      "min_ratio": 0.70,
+      "warn_threshold": null,
+      "fail_mode": "SOFT_WARN",
+      "source": "training_report.metadata.family_diagnostics — row_nonzero_rate / rank_resolution / top_tail_resolution 3 metric 의 직전 학습 대비 변동률",
+      "rationale": "PHASE2 family role 자동 판정(active-ranker / coarse-booster / near-dormant / tail-only-fallback) 안정성 회귀 감지. 결정 8 §8.6 lane visibility 일관성 보호. 향상 강제 아님 — baseline × 0.7 하한.",
+      "decision_link": "docs/spec/PHASE2_GOVERNANCE_DESIGN.md 결정 8 (lane/overlay governance), config/phase2_subdetector_tiers.yaml, artifacts/phase2_family_ranking_measurement_20260519.md"
+    }
+  },
+  "meta_guard_integrity": {
+    "m1_no_truth_recall_improvement_guard": {
+      "required": "Layer C 모든 항목 fail_mode == SOFT_WARN",
+      "fail_mode": "HARD",
+      "rationale": "PHASE1 원칙 계승 (tests/phase1_rulebase/nightly_kpi_guard.py::test_no_truth_recall_improvement_guard)."
+    },
+    "m2_feature_id_phase3_enum_consistent": {
+      "required": "training_report.feature_metadata.feature_ids ⊆ PHASE3_FEATURE_ENUM",
+      "fail_mode": "HARD",
+      "rationale": "SHAP / feature_importance → narrator 인용 일관성. PHASE3 의 rule_id/feature_id 인용 계약 (docs/archive/abandoned/PHASE3_REVIEW_NARRATOR_SPEC.md)."
+    },
+    "m3_training_metadata_required": {
+      "required_keys": [
+        "seed",
+        "dataset_id",
+        "dataset_version",
+        "fold_count",
+        "hyperparams",
+        "git_sha",
+        "training_started_at",
+        "training_completed_at"
+      ],
+      "fail_mode": "HARD",
+      "rationale": "report 갱신 시점에 변경 사유 추적."
+    },
+    "m4_artifact_freshness": {
+      "max_age_days": 30,
+      "fail_mode": "HARD",
+      "rationale": "PHASE1 7일 보다 길게 — PHASE2 학습은 분기 단위."
+    },
+    "m5_principle_recorded": {
+      "required_phrases": [
+        "도메인 정합성",
+        "부수효과"
+      ],
+      "checked_field": "_meta.principle",
+      "fail_mode": "HARD",
+      "rationale": "PHASE1 원칙 lineage 유지."
+    }
+  }
+}

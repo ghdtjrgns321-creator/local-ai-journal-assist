@@ -1,0 +1,95 @@
+[TIMING] validate: 18.2s
+[TIMING] features: 9.6s
+[TIMING] df.copy snapshot: 0.2s
+L2-05 S1 found 29 large groups above 500 rows
+[TIMING] base_detectors_parallel: 68.0s
+[TIMING] detect_variance: 0.0s
+[TIMING] detect_ml: 0.0s
+[TIMING] detection: 68.1s
+[TIMING] aggregate: 6.0s
+[TIMING] shap: 0.0s
+[TIMING] validate: 16.0s
+[TIMING] features: 9.4s
+[TIMING] df.copy snapshot: 0.3s
+L2-05 S1 found 29 large groups above 500 rows
+[TIMING] base_detectors_parallel: 78.7s
+[TIMING] detect_variance: 0.0s
+[TIMING] detect_ml: 0.0s
+[TIMING] detection: 78.8s
+[TIMING] aggregate: 6.5s
+[TIMING] shap: 0.0s
+[TIMING] validate: 15.9s
+[TIMING] features: 9.5s
+[TIMING] df.copy snapshot: 0.2s
+L2-05 S1 found 29 large groups above 500 rows
+[TIMING] base_detectors_parallel: 76.2s
+[TIMING] detect_variance: 0.0s
+[TIMING] detect_ml: 0.0s
+[TIMING] detection: 76.3s
+[TIMING] aggregate: 6.6s
+[TIMING] shap: 0.0s
+[TIMING] validate: 15.8s
+[TIMING] features: 9.7s
+[TIMING] df.copy snapshot: 0.2s
+L2-05 S1 found 29 large groups above 500 rows
+[TIMING] base_detectors_parallel: 70.6s
+[TIMING] detect_variance: 0.0s
+[TIMING] detect_ml: 0.0s
+[TIMING] detection: 70.7s
+[TIMING] aggregate: 6.7s
+[TIMING] shap: 0.0s
+=== datasynth_semantic_v1_phase2_fraud_s10_20260718_r1 ===
+표면 커버리지: 197/330 (59.7%)
+프리셋 estimate_related_party       적중   7 / 표면   5503 (밀도 0.0013) schemes=2
+프리셋 revenue_recognition          적중   8 / 표면    260 (밀도 0.0308) schemes=1
+프리셋 reversal_concealment         적중 103 / 표면  10837 (밀도 0.0095) schemes=12
+프리셋 expense_capitalization       적중  25 / 표면    235 (밀도 0.1064) schemes=3
+몸통 전체 OR: 적중 173 / 표면 57839 (52.4%)
+-> C:\Users\ghdtj\workspace\portfolio\local-ai-assist\reports\s5_fraud_overlay\builder_performance_datasynth_semantic_v1_phase2_fraud_s10_20260718_r1.json
+=== datasynth_semantic_v1_phase2_fraud_s10_20260718_r1_seed1 ===
+표면 커버리지: 203/330 (61.5%)
+프리셋 estimate_related_party       적중  11 / 표면   5507 (밀도 0.0020) schemes=5
+프리셋 revenue_recognition          적중  10 / 표면    262 (밀도 0.0382) schemes=1
+프리셋 reversal_concealment         적중  97 / 표면  10744 (밀도 0.0090) schemes=12
+프리셋 expense_capitalization       적중  21 / 표면    230 (밀도 0.0913) schemes=3
+몸통 전체 OR: 적중 175 / 표면 57789 (53.0%)
+-> C:\Users\ghdtj\workspace\portfolio\local-ai-assist\reports\s5_fraud_overlay\builder_performance_datasynth_semantic_v1_phase2_fraud_s10_20260718_r1_seed1.json
+=== datasynth_semantic_v1_phase2_fraud_s10_20260718_r1_seed2 ===
+표면 커버리지: 204/330 (61.8%)
+프리셋 estimate_related_party       적중   9 / 표면   5505 (밀도 0.0016) schemes=3
+프리셋 revenue_recognition          적중  10 / 표면    262 (밀도 0.0382) schemes=1
+프리셋 reversal_concealment         적중  85 / 표면  10748 (밀도 0.0079) schemes=13
+프리셋 expense_capitalization       적중  23 / 표면    232 (밀도 0.0991) schemes=3
+몸통 전체 OR: 적중 174 / 표면 57797 (52.7%)
+-> C:\Users\ghdtj\workspace\portfolio\local-ai-assist\reports\s5_fraud_overlay\builder_performance_datasynth_semantic_v1_phase2_fraud_s10_20260718_r1_seed2.json
+=== datasynth_semantic_v1_phase2_fraud_s10_20260718_r1_seed3 ===
+표면 커버리지: 204/330 (61.8%)
+프리셋 estimate_related_party       적중  11 / 표면   5507 (밀도 0.0020) schemes=2
+프리셋 revenue_recognition          적중   6 / 표면    258 (밀도 0.0233) schemes=1
+프리셋 reversal_concealment         적중  94 / 표면  10797 (밀도 0.0087) schemes=12
+프리셋 expense_capitalization       적중  20 / 표면    229 (밀도 0.0873) schemes=3
+몸통 전체 OR: 적중 173 / 표면 57819 (52.4%)
+-> C:\Users\ghdtj\workspace\portfolio\local-ai-assist\reports\s5_fraud_overlay\builder_performance_datasynth_semantic_v1_phase2_fraud_s10_20260718_r1_seed3.json
+
+=== seed 합산 ===
+{
+  "datasets": [
+    "datasynth_semantic_v1_phase2_fraud_s10_20260718_r1",
+    "datasynth_semantic_v1_phase2_fraud_s10_20260718_r1_seed1",
+    "datasynth_semantic_v1_phase2_fraud_s10_20260718_r1_seed2",
+    "datasynth_semantic_v1_phase2_fraud_s10_20260718_r1_seed3"
+  ],
+  "surface_coverage_rates": [
+    0.597,
+    0.6152,
+    0.6182,
+    0.6182
+  ],
+  "preset_hit_totals": {
+    "estimate_related_party": 38,
+    "revenue_recognition": 34,
+    "reversal_concealment": 379,
+    "expense_capitalization": 89
+  },
+  "fraud_docs_total": 1320
+}

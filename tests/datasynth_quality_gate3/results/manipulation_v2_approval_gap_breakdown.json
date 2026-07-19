@@ -1,0 +1,36 @@
+{
+  "approval_gap_rows": 545,
+  "approval_gap_docs": 208,
+  "limit_exceeded_rows": 393,
+  "limit_exceeded_docs": 117,
+  "union_docs": 269,
+  "union_truth_docs": 142,
+  "union_nontruth_docs": 127,
+  "truth_scenarios_in_union": {
+    "period_end_adjustment_manipulation": 92,
+    "approval_sod_bypass": 29,
+    "unusual_timing_manipulation": 21
+  },
+  "sample_nontruth_docs": [
+    "008fff27-d363-4460-a18e-67e1f9788410",
+    "0650b88c-8500-456d-9b93-3bc3164e225f",
+    "06bab50a-7bcb-4105-aee2-e0f1d6427f40",
+    "09b621f7-16cd-4205-b331-446586c3b24e",
+    "0bf611a9-9899-48ba-b459-69adbf6f1f66",
+    "0f93a3c8-0383-4450-a7da-b6538b93bd59",
+    "10eb3320-fe50-4ad3-9e8b-cae690668d90",
+    "1196aa7c-d062-43cc-b1f2-18240629770c",
+    "120b0285-f7ea-4e53-8037-c23f0ba35d2b",
+    "1a773b36-be5f-43ec-a4b1-388a48a4f2dc",
+    "1f2604c9-ff7d-4873-8a96-f113fcda69f0",
+    "1fccedc4-4df2-4579-b35e-13304e0bc374",
+    "2042d8a3-c746-4963-a406-ffd8ac29b6e2",
+    "250fa3a5-ef23-4486-b317-01d5532a7c03",
+    "26e242c7-5112-4138-9ac6-8492baeac872",
+    "275c4dda-f422-467f-8642-82eda2493780",
+    "27d73e0d-bc52-4fdf-8e11-9f7f6e7df4e7",
+    "29fa7f8f-efbe-473a-9965-d6e83cf7f584",
+    "2b24fae4-dbff-4f19-949c-a5c4b7232308",
+    "32eab565-0419-4104-9a8e-473319f344a5"
+  ]
+}

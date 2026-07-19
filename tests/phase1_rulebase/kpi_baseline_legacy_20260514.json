@@ -1,0 +1,173 @@
+{
+  "_meta": {
+    "measured_at": "2026-05-14",
+    "datasets": {
+      "manipulation_v2": {
+        "topic_analysis": "artifacts/phase1_manipulation_v2_after_circular_period_end_topic_analysis.json",
+        "profile": "artifacts/phase1_manipulation_v2_after_circular_period_end_20260514.json",
+        "case_checkpoint": "artifacts/phase1_manipulation_v2_after_circular_period_end_case_20260514.json",
+        "case_artifact": "artifacts/phase1_cases/_anonymous/phase1case__anonymous_datasynth_v126_profiled_phase1_20260514T093051Z.json"
+      },
+      "contract_v2": {
+        "profile": "artifacts/phase1_contract_v2_profile_20260514.json",
+        "case_artifact": "artifacts/phase1_cases/_anonymous/phase1case__anonymous_datasynth_v126_profiled_phase1_20260514T102751Z.json"
+      }
+    },
+    "freshness_days": 7,
+    "policy": "Layer A/B HARD FAIL on regression. Layer C SOFT WARN only (no truth-recall improvement enforcement).",
+    "principle": "PHASE1 향상은 도메인 정합성으로만 발생시킨다. truth recall은 부수효과(회귀 방지선)로만 측정."
+  },
+  "layer_a_domain_integrity": {
+    "a1_light_seeder_case_count": {
+      "baseline": 0,
+      "max": 0,
+      "fail_mode": "HARD",
+      "source": "case_artifact scan for primary_theme/primary_queue/case_id containing 'light_seeder'",
+      "rationale": "light_seeder authority revoked 2026-05-14 (§9.1). No case should be tagged light_seeder."
+    },
+    "a2_contract_v2_high_row_ratio": {
+      "baseline": 0.000405,
+      "max": 0.01,
+      "fail_mode": "HARD",
+      "source": "phase1_contract_v2_profile_20260514.json stages.aggregate.risk_summary['High'] / sum",
+      "rationale": "semantic-clean contract_v2에서 HIGH 비율 1% 초과는 fitting 의심."
+    },
+    "a3_contract_v2_rule_truth_match": {
+      "baseline_overdetect": 0,
+      "baseline_underdetect": 0,
+      "max_overdetect": 0,
+      "max_underdetect": 0,
+      "fail_mode": "HARD",
+      "source": "DETECTION_RESULTS_CONTRACT_V2.md A축 — manual check via test_e2e_label_validation.py",
+      "rationale": "contract_v2 strict rule_truth 과탐/미탐 0건 = 룰 계약 검증 통과."
+    },
+    "a4_normal_sample_fp_ratio": {
+      "baseline": 0.016667,
+      "max": 0.05,
+      "fail_mode": "HARD",
+      "source": "data/journal/test_normal_sample/normal_sample_300.csv",
+      "rationale": "normal accounting 300행 고정 샘플 false positive ≤ 5%. contract_v2 generator 변경 시에만 random_state 고정으로 갱신."
+    },
+    "a5_policy_floor_conflict": {
+      "baseline": 0,
+      "max": 0,
+      "fail_mode": "HARD",
+      "source": "phase1_score_band_audit_after.md §3 — _apply_policy_risk_floors vs RISK_THRESHOLDS 정합",
+      "rationale": "정책 floor의 HIGH 매핑이 RISK_THRESHOLDS[HIGH] 이상이어야 함. immediate=0.50, escalated_*=0.75/0.80/0.85."
+    },
+    "a6_contract_v2_master_flow_gap": {
+      "approval_matrix_gap_rows_baseline": 184,
+      "document_flow_orphan_rows_baseline": 0,
+      "tolerance_ratio": 0.10,
+      "fail_mode": "HARD",
+      "source": "contract_v2_master_flow_gap_analysis.md (T8)",
+      "rationale": "master/flow coverage 회귀 방지. ±10% 변동 허용."
+    }
+  },
+  "layer_b_operational_load": {
+    "b1_case_count_max": {
+      "manipulation_v2_baseline": 11116,
+      "contract_v2_baseline": 7640,
+      "max": 13000,
+      "fail_mode": "HARD",
+      "source": "case_artifact / profile.phase1_case_builder.case_count",
+      "rationale": "review queue 운영 가능 규모. 현행 11,116 + 여유 17%."
+    },
+    "b2_case_builder_runtime_sec": {
+      "manipulation_v2_baseline": 99.7,
+      "contract_v2_baseline": 68.2,
+      "max": 600,
+      "fail_mode": "HARD",
+      "source": "case_checkpoint.stages.phase1_case_builder.elapsed_sec",
+      "rationale": "회귀 추적."
+    },
+    "b3_priority_band_distribution": {
+      "manipulation_v2_baseline": {
+        "high_ratio": 0.0219,
+        "medium_ratio": 0.397,
+        "low_ratio": 0.581
+      },
+      "tolerance": {
+        "high_max": 0.05,
+        "medium_min": 0.20,
+        "medium_max": 0.40,
+        "low_min": 0.55,
+        "low_max": 0.75
+      },
+      "fail_mode": "HARD",
+      "source": "topic_analysis.priority_band_metrics",
+      "rationale": "운영 부하 형태 보장. high 폭증/medium 폭증/low 부족 모두 차단."
+    },
+    "b4_policy_floor_applied_ratio": {
+      "manipulation_v2_baseline": null,
+      "tolerance_ratio": 0.50,
+      "fail_mode": "HARD",
+      "source": "score_aggregator floor reason 분포 — baseline 측정 후 채움",
+      "rationale": "탐지기 안정성. baseline ±50% 외 변동 시 회귀."
+    }
+  },
+  "layer_c_truth_regression_softwarn": {
+    "_policy": "WARN ONLY. 절대값 임계 금지. baseline 70% 비율 하한만. truth recall 향상을 강제하는 가드 절대 추가 금지.",
+    "c1_manipulation_truth_capture_ratio": {
+      "baseline_truth_total": 420,
+      "baseline_captured": 420,
+      "min_ratio": 0.99,
+      "fail_mode": "SOFT_WARN",
+      "source": "topic_analysis.truth_total + risk_summary 매칭",
+      "rationale": "포착률 99% 절대 회귀만 방지. 향상 강제 없음."
+    },
+    "c2_priority_band_high_truth_ratio": {
+      "baseline_truth_in_high": 276,
+      "baseline_ratio": 0.70,
+      "warn_threshold": 193,
+      "fail_mode": "SOFT_WARN",
+      "source": "topic_analysis.priority_band_metrics[high].truth_docs",
+      "rationale": "high band truth가 baseline의 70% 미만으로 떨어지면 WARN."
+    },
+    "c3_top500_truth_ratio": {
+      "baseline_truth_in_top500": 305,
+      "baseline_ratio": 0.70,
+      "warn_threshold": 213,
+      "fail_mode": "SOFT_WARN",
+      "source": "topic_analysis.global_top_capture[top_n_cases=500].truth_docs",
+      "rationale": "Top500 truth가 baseline의 70% 미만 = WARN."
+    },
+    "c4_scenario_full_entry_count": {
+      "baseline_full_entry_scenarios": 4,
+      "min_count": 3,
+      "fail_mode": "SOFT_WARN",
+      "source": "topic_analysis.scenario_metrics — expected_topic_docs == truth_docs 인 시나리오 수",
+      "rationale": "PHASE1 full-entry 시나리오 baseline 4개 (approval_sod_bypass / circular_related_party_transaction / embezzlement_concealment / period_end_adjustment_manipulation). 3개 이하로 떨어지면 WARN. baseline - 1. fictitious_entry(85.7%)는 DataSynth mutation 보강 영역, unusual_timing(11/21)은 PHASE1 본질적 ceiling으로 full-entry 비대상.",
+      "scenario_entry_ceilings": {
+        "unusual_timing_manipulation": {
+          "ceiling_truth_docs": 11,
+          "total_truth_docs": 21,
+          "phase1_target_ratio": 0.524,
+          "policy": "PHASE1 detectability ceiling. 21/21 추구 금지. 정상 결산기 야근·주말 전기 false positive 폭증 방지를 위해 L3-05/L3-06 booster + standalone_rankable=False 유지. 11→21 회수는 PHASE2 ML(multi-feature 분류) 또는 PHASE3 LLM(맥락 의미 해석)로 이관.",
+          "reference": [
+            "docs/archive/completed/DETECTION_RESULTS_MANIPULATION_V2.md §6.1, §8.1, §10",
+            "docs/spec/DECISION.md D042",
+            "artifacts/unusual_timing_regression_trace.md §7"
+          ]
+        },
+        "fictitious_entry": {
+          "ceiling_truth_docs": 144,
+          "total_truth_docs": 168,
+          "phase1_target_ratio": 0.857,
+          "policy": "24건 미진입은 mutation amount 분포(1.5B without 25B partner) 원인. DataSynth T7 D1 확장 안 B로 회수 가능. PHASE1 룰 임계 조정 금지(FP 폭증).",
+          "reference": [
+            "docs/archive/completed/DETECTION_RESULTS_MANIPULATION_V2.md §8.2",
+            "artifacts/fictitious_missing_24_trace.md"
+          ]
+        }
+      }
+    },
+    "c5_contract_v2_truth_medium_plus_recall": {
+      "baseline_ratio": 0.1575,
+      "min_ratio": 0.11025,
+      "fail_mode": "SOFT_WARN",
+      "source": "phase1_score_band_audit_after.md §2-1 truth row Medium+ recall",
+      "rationale": "contract_v2 truth row Medium+ recall이 baseline 15.75% 의 70% (=11.03%) 미만 = WARN."
+    }
+  }
+}

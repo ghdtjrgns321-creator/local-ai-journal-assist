@@ -1,0 +1,208 @@
+{
+  "summary": [
+    {
+      "version": "v12",
+      "bucket": "standard_expected",
+      "units": 78,
+      "caught": 31,
+      "missed": 47
+    },
+    {
+      "version": "v12",
+      "bucket": "standard_blind_or_population",
+      "units": 0,
+      "caught": 0,
+      "missed": 0
+    },
+    {
+      "version": "v12",
+      "bucket": "evasion",
+      "units": 78,
+      "caught": 10,
+      "missed": 68
+    },
+    {
+      "version": "v16",
+      "bucket": "standard_expected",
+      "units": 62,
+      "caught": 62,
+      "missed": 0
+    },
+    {
+      "version": "v16",
+      "bucket": "standard_blind_or_population",
+      "units": 16,
+      "caught": 0,
+      "missed": 16
+    },
+    {
+      "version": "v16",
+      "bucket": "evasion",
+      "units": 78,
+      "caught": 0,
+      "missed": 78
+    }
+  ],
+  "examples": {
+    "v12": {
+      "standard_expected_misses": [
+        {
+          "rule_id": "L1-03",
+          "case_index": 0,
+          "expected_surface": "chart_of_accounts"
+        },
+        {
+          "rule_id": "L1-03",
+          "case_index": 1,
+          "expected_surface": "chart_of_accounts"
+        },
+        {
+          "rule_id": "L1-04",
+          "case_index": 0,
+          "expected_surface": "approval_limit"
+        },
+        {
+          "rule_id": "L1-04",
+          "case_index": 1,
+          "expected_surface": "approval_limit"
+        },
+        {
+          "rule_id": "L1-06",
+          "case_index": 0,
+          "expected_surface": "sod_roles"
+        },
+        {
+          "rule_id": "L1-06",
+          "case_index": 1,
+          "expected_surface": "sod_roles"
+        },
+        {
+          "rule_id": "L1-07",
+          "case_index": 1,
+          "expected_surface": "approval_presence"
+        },
+        {
+          "rule_id": "L2-01",
+          "case_index": 0,
+          "expected_surface": "threshold_cluster"
+        },
+        {
+          "rule_id": "L2-01",
+          "case_index": 1,
+          "expected_surface": "threshold_cluster"
+        },
+        {
+          "rule_id": "L2-04",
+          "case_index": 0,
+          "expected_surface": "account_text_document"
+        },
+        {
+          "rule_id": "L2-04",
+          "case_index": 1,
+          "expected_surface": "account_text_document"
+        },
+        {
+          "rule_id": "L2-05",
+          "case_index": 1,
+          "expected_surface": "reversal_link"
+        },
+        {
+          "rule_id": "L3-01",
+          "case_index": 0,
+          "expected_surface": "semantic_tuple"
+        },
+        {
+          "rule_id": "L3-01",
+          "case_index": 1,
+          "expected_surface": "semantic_tuple"
+        },
+        {
+          "rule_id": "L3-04",
+          "case_index": 1,
+          "expected_surface": "period_end_flag"
+        },
+        {
+          "rule_id": "L3-05",
+          "case_index": 0,
+          "expected_surface": "calendar"
+        },
+        {
+          "rule_id": "L3-05",
+          "case_index": 1,
+          "expected_surface": "calendar"
+        },
+        {
+          "rule_id": "L3-08",
+          "case_index": 0,
+          "expected_surface": "line_text"
+        },
+        {
+          "rule_id": "L3-08",
+          "case_index": 1,
+          "expected_surface": "line_text"
+        },
+        {
+          "rule_id": "L3-09",
+          "case_index": 0,
+          "expected_surface": "open_item_lifecycle"
+        }
+      ],
+      "evasion_caught": [
+        {
+          "rule_id": "L1-08",
+          "case_index": 0,
+          "expected_surface": "period_fields"
+        },
+        {
+          "rule_id": "L1-08",
+          "case_index": 1,
+          "expected_surface": "period_fields"
+        },
+        {
+          "rule_id": "L2-02",
+          "case_index": 0,
+          "expected_surface": "payment_pair"
+        },
+        {
+          "rule_id": "L2-02",
+          "case_index": 1,
+          "expected_surface": "payment_pair"
+        },
+        {
+          "rule_id": "L2-03",
+          "case_index": 1,
+          "expected_surface": "journal_pair"
+        },
+        {
+          "rule_id": "L3-03",
+          "case_index": 0,
+          "expected_surface": "counterparty_mapping"
+        },
+        {
+          "rule_id": "L3-03",
+          "case_index": 1,
+          "expected_surface": "counterparty_mapping"
+        },
+        {
+          "rule_id": "L3-04",
+          "case_index": 1,
+          "expected_surface": "period_end_flag"
+        },
+        {
+          "rule_id": "GR03",
+          "case_index": 0,
+          "expected_surface": "ic_price_graph"
+        },
+        {
+          "rule_id": "GR03",
+          "case_index": 1,
+          "expected_surface": "ic_price_graph"
+        }
+      ]
+    },
+    "v16": {
+      "standard_expected_misses": [],
+      "evasion_caught": []
+    }
+  }
+}

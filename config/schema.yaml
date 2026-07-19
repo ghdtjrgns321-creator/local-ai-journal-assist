@@ -1,35 +1,177 @@
-# ⚠️ 예시 스키마 — 실제 전표 데이터를 확인한 뒤 컬럼 구성·타입·필수 여부를 재정의할 것
+# DataSynth journal_entries.csv 출력 기준 (tools/datasynth/ v1.2.0)
+# ACDOCA 매핑: crates/datasynth-core/src/models/acdoca.rs
+# 컬럼 46개: Header 31 + Line 15
 columns:
-  - name: journal_id        # 전표번호
+  # === Header fields — 전표 단위 (document_id별 동일) ===
+
+  # --- 필수 (전표 식별 + 핵심 회계 정보) ---
+  - name: document_id          # ACDOCA: belnr
     type: str
     required: true
-  - name: entry_date        # 전표일자
+  - name: company_code         # ACDOCA: rbukrs
+    type: str
+    required: true
+  - name: fiscal_year          # ACDOCA: gjahr
+    type: int
+    required: true
+  - name: fiscal_period        # ACDOCA: monat — 회계기간 (1~12)
+    type: int
+    required: true
+  - name: posting_date         # ACDOCA: budat — 전기일시 (시분초 포함)
     type: datetime
     required: true
-  - name: account_code      # 계정코드
+  - name: document_date        # ACDOCA: bldat — 증빙일
+    type: date
+    required: true
+  - name: document_type        # ACDOCA: blart — SA/KR/KZ/DR/DZ/WE/AA/HR/IC
     type: str
     required: true
-  - name: account_name      # 계정과목명
+  - name: gl_account           # ACDOCA: racct
     type: str
     required: true
-  - name: debit_amount      # 차변금액
+  - name: debit_amount         # ACDOCA: wsl (drcrk='S') — KRW 정수지만 외부 ERP 호환을 위해 float
     type: float
     required: true
-  - name: credit_amount     # 대변금액
+  - name: credit_amount        # ACDOCA: wsl (drcrk='H') — KRW 정수지만 외부 ERP 호환을 위해 float
     type: float
     required: true
-  - name: description       # 적요
+
+  # --- 권장 (감사 룰에 필요) ---
+  - name: currency             # ACDOCA: rwcur — KRW 단일
     type: str
     required: false
-  - name: department        # 부서
+  - name: exchange_rate        # 환율 (KRW 단일이므로 항상 1.0)
+    type: float
+    required: false
+  - name: reference            # 참조번호 (PO/GR/Invoice 번호)
     type: str
     required: false
-  - name: created_by        # 작성자
+  - name: header_text          # ACDOCA: bktxt — 전표 헤더 적요
     type: str
     required: false
-  - name: source_type       # 전표유형 (자동/수동)
+  - name: created_by           # ACDOCA: usnam — L1-05~L1-07(통제 위반) 판정용
     type: str
     required: false
-  - name: counterparty      # 거래처
+  - name: user_persona         # automated_system/junior_accountant/senior_accountant/controller/manager
     type: str
+    required: false
+  - name: source               # Automated/Manual/Recurring/Adjustment — L3-02(수기전표) 판정용
+    type: str
+    required: false
+  - name: business_process     # P2P/O2C/R2R/H2R/TRE/A2R
+    type: str
+    required: false
+  - name: counterparty_type    # 거래처 유형 (External / IntercompanyAffiliate / Subsidiary 등)
+    # Why: src/feature/pattern_features.py가 intercompany 컨텍스트 도출에 사용. 라벨이 아닌 ledger 메타.
+    type: str
+    required: false
+  - name: ledger               # 원장 (Leading Ledger: 0L)
+    type: str
+    required: false
+  - name: approved_by          # 승인자 ID — L1-05(자기승인) 탐지용
+    type: str
+    required: false
+  - name: approval_date        # 승인일
+    type: date
+    required: false
+
+  # --- 레이블 (DataSynth 전용 — 검증/평가 전용, detection 입력 금지) ---
+  # Why: PHASE1 detector는 truth 라벨을 입력으로 사용하면 안 됨. 평가/리포트에서만 참조.
+  #      실제 GL 파일에는 존재하지 않으나 sidecar(_attach_label_sidecar_if_needed)로 주입될 수 있어
+  #      schema에서 optional로 허용. v2 CSV 자체 컬럼은 아님.
+  - name: is_fraud             # 부정 전표 여부 (DataSynth 라벨, detection 입력 금지)
+    type: bool
+    required: false
+  - name: fraud_type           # 부정 유형 (DataSynth 라벨, detection 입력 금지)
+    type: str
+    required: false
+  - name: is_anomaly           # 이상징후 여부 (DataSynth 라벨, detection 입력 금지)
+    type: bool
+    required: false
+  - name: anomaly_type         # 이상징후 유형 (DataSynth 라벨, detection 입력 금지)
+    type: str
+    required: false
+  - name: sod_violation        # 직무분리 위반 여부 — L1-06 SoD 탐지용
+    type: bool
+    required: false
+  - name: sod_conflict_type    # SoD 충돌 유형 (nullable) — preparer_approver 등
+    type: str
+    required: false
+
+  # --- Stage 2 확장 (증빙/감사추적) ---
+  - name: has_attachment        # 증빙 첨부 여부 — WU-14 증빙 검증용
+    type: bool
+    required: false
+  - name: supporting_doc_type   # 증빙 유형 (발주서/세금계산서/내부결의서 등)
+    type: str
+    required: false
+  - name: delivery_date         # 납품일 (WE 전표만) — 컷오프 검증용
+    type: date
+    required: false
+  - name: invoice_amount        # 세금계산서 금액 (supply_amount × 1.1)
+    type: float
+    required: false
+  - name: supply_amount         # 공급가액 (부가세 제외)
+    type: float
+    required: false
+  - name: ip_address            # 접근 IP — WU-15 IP 이상 탐지용
+    type: str
+    required: false
+  - name: document_number       # 순차 문서번호 (company+year+seq)
+    type: int
+    required: false
+
+  # === Line fields — 라인아이템 단위 ===
+  - name: line_number          # ACDOCA: docln — 라인 번호
+    type: int
+    required: false
+  - name: local_amount         # ACDOCA: hsl — 현지 통화 금액 (외부 ERP 호환 float)
+    type: float
+    required: false
+  - name: cost_center          # ACDOCA: rcntr (nullable)
+    type: str
+    required: false
+  - name: profit_center        # ACDOCA: prctr
+    type: str
+    required: false
+  - name: line_text            # ACDOCA: sgtxt — 적요/위험 텍스트 컬럼
+    type: str
+    required: false
+  - name: tax_code             # 세금코드 (nullable)
+    type: str
+    required: false
+  - name: tax_amount           # 세금액 (nullable)
+    type: float
+    required: false
+  - name: trading_partner      # 거래처 (IC 거래용, nullable) — L3-03 관계사 탐지용
+    type: str
+    required: false
+  - name: auxiliary_account_number  # 보조원장 계정번호 (nullable)
+    type: str
+    required: false
+  - name: auxiliary_account_label   # 보조원장 라벨 (nullable)
+    type: str
+    required: false
+
+  # === Clearing / suspense lifecycle metadata — L1 optional ledger fields ===
+  # Why: anomaly_rules_simple.py(L3-09 suspense aging) 및 fraud_rules_access.py가 직접 참조.
+  #      v2 ledger CSV에서 행 단위로 제공되며, 라벨이 아닌 회계 상태값이므로 L1 optional 허용.
+  - name: is_suspense_account  # 가계정/미결산 계정 여부 — L3-09 suspense aging detector 입력
+    type: bool
+    required: false
+  - name: amount_open          # 미결산 잔액 — suspense lifecycle 메타
+    type: float
+    required: false
+  - name: is_cleared           # 대사 완료 여부 — clearing 상태
+    type: bool
+    required: false
+  - name: settlement_status    # 결제/정리 상태 문자열 (open/cleared/partial 등)
+    type: str
+    required: false
+
+  - name: lettrage             # 대사 그룹 (nullable) — clearing 영역 ledger 메타, anomaly_rules_simple.py 참조
+    type: str
+    required: false
+  - name: lettrage_date        # 대사일 (nullable) — clearing 영역 ledger 메타
+    type: date
     required: false

@@ -8,6 +8,10 @@ requires-python = ">=3.11"
 core = [
     "pandas>=2.2",
     "openpyxl",
+    "xlrd",
+    "pyxlsb",
+    "pyarrow",
+    "charset-normalizer",
     "pandera",
     "rapidfuzz",
     "duckdb",
@@ -15,21 +19,46 @@ core = [
     "numpy",
     "pyyaml",
     "pydantic-settings",
+    "holidays",
+    "networkx>=3.2",
 ]
-ml = ["xgboost", "scikit-learn", "shap", "torch"]
+ml = ["xgboost", "scikit-learn", "shap", "torch", "lightgbm"]
 nlp = ["kiwipiepy"]
-llm = ["vanna[duckdb,ollama,chromadb]", "ollama"]
-dashboard = ["streamlit", "plotly", "streamlit-aggrid"]
+llm = ["vanna[duckdb,chromadb]", "openai>=1.50"]
+dashboard = ["streamlit", "plotly", "streamlit-aggrid", "streamlit-option-menu"]
 export = ["fpdf2"]
 dev = ["pytest", "ruff", "mypy"]
 
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+extend-exclude = [
+    "_tmp*.py",
+    "dev/active/**",
+    "scripts/**",
+    "tools/analysis/**",
+    "tools/scripts/**",
+    "tools/tmp*.py",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
 
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.11"
+typeCheckingMode = "basic"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+addopts = ["-p", "no:cacheprovider", "--basetemp=.tmp_pytest_workspace"]
+cache_dir = ".tmp_pytest_cache"
+markers = [
+    "slow: 대용량 데이터 또는 리포트 생성 (별도 실행)",
+    "experimental_phase2_internal_rrf: PHASE2 internal hierarchical RRF — V7 fixed3 production reject (2026-05-19). 미래 supervised/transformer 활성화 시 재평가",
+]
+filterwarnings = [
+    "ignore:X does not have valid feature names, but LGBMClassifier was fitted with feature names:UserWarning",
+]

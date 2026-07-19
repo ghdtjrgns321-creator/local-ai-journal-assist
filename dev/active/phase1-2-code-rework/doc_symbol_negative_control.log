@@ -1,0 +1,14 @@
+=== 결함 주입 후 검사기 실행 (FAIL 나와야 정상) ===
+모집단 N = 32   권위출처: git diff 추가라인 / 문서 8개 / 추출규칙 사전고정
+실재 28/32   미발견 4
+  FAIL [file   ] src/detection/ghost_module_xyz.py              파일 없음
+  FAIL [func   ] ghost_func_xyz                                 def 없음
+  FAIL [setting] partner_findings                               선언=N read=2건 src/detection/phase1_case_builder.py
+  FAIL [setting] round_density_ghost_key                        선언=N read=0건 -
+exit=0
+
+=== 주입분 제거 후 재실행 (29/29 복구 확인) ===
+checker exit=1
+모집단 N = 29   권위출처: git diff 추가라인 / 문서 8개 / 추출규칙 사전고정
+실재 28/29   미발견 1
+  FAIL [setting] partner_findings                               선언=N read=2건 src/detection/phase1_case_builder.py

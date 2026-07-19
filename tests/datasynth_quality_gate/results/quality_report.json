@@ -1,0 +1,191 @@
+{
+  "meta": {
+    "generated_at": "2026-04-07T14:04:29.372925+00:00",
+    "data_file": "C:\\Users\\ghdtj\\workspace\\portfolio\\local-ai-assist\\data\\journal\\primary\\datasynth\\journal_entries.csv",
+    "total_rows": 1191815,
+    "total_documents": 319135,
+    "elapsed_seconds": 12.25
+  },
+  "summary": {
+    "tier1": {
+      "name": "구조적 무결성",
+      "pass": 15,
+      "fail": 1,
+      "warning": 0,
+      "skip": 0,
+      "verdict": "FAIL"
+    }
+  },
+  "overall_verdict": "FAIL",
+  "checks": [
+    {
+      "check_id": "T1-01",
+      "tier": 1,
+      "name": "행수/컬럼수",
+      "status": "PASS",
+      "expected": "rows>0; cols∈{39,46}",
+      "actual": "rows=1,191,815; cols=46",
+      "detail": null,
+      "elapsed_ms": 3.1
+    },
+    {
+      "check_id": "T1-02",
+      "tier": 1,
+      "name": "필수컬럼 존재+dtype",
+      "status": "PASS",
+      "expected": "필수 10컬럼 존재 + 올바른 dtype",
+      "actual": "OK",
+      "detail": null,
+      "elapsed_ms": 0.4
+    },
+    {
+      "check_id": "T1-03",
+      "tier": 1,
+      "name": "보호필드 NOT NULL",
+      "status": "PASS",
+      "expected": "document_id/company_code/posting_date NULL=0",
+      "actual": "null_doc=0, null_cc=0, null_pd=0",
+      "detail": null,
+      "elapsed_ms": 3.6
+    },
+    {
+      "check_id": "T1-04",
+      "tier": 1,
+      "name": "금액 음수",
+      "status": "PASS",
+      "expected": "음수 금액=0 (ReversedAmount 등 제외)",
+      "actual": "neg_count=0",
+      "detail": null,
+      "elapsed_ms": 2785.3
+    },
+    {
+      "check_id": "T1-05",
+      "tier": 1,
+      "name": "전표 대차일치",
+      "status": "PASS",
+      "expected": "대차불일치 전표=0 (금액변형 anomaly 제외)",
+      "actual": "unbalanced_docs=0",
+      "detail": null,
+      "elapsed_ms": 116.8
+    },
+    {
+      "check_id": "T1-06",
+      "tier": 1,
+      "name": "company_code 도메인",
+      "status": "PASS",
+      "expected": "company_code IN (C001,C002,C003)",
+      "actual": "out_of_domain=0",
+      "detail": null,
+      "elapsed_ms": 3.3
+    },
+    {
+      "check_id": "T1-07",
+      "tier": 1,
+      "name": "기간 범위",
+      "status": "PASS",
+      "expected": "fiscal_year∈[2022, 2023, 2024], period=1~12, posting_date∈[2022-01-01,2024-12-31]",
+      "actual": "bad_fy=0, bad_fp=0, date_out_of_range=0",
+      "detail": {
+        "bad_fiscal_year": 0,
+        "bad_fiscal_period": 0,
+        "date_out_of_range": 0,
+        "valid_years": [
+          2022,
+          2023,
+          2024
+        ]
+      },
+      "elapsed_ms": 62.0
+    },
+    {
+      "check_id": "T1-08",
+      "tier": 1,
+      "name": "라벨 orphan",
+      "status": "PASS",
+      "expected": "orphan labels=0",
+      "actual": "orphan_count=0",
+      "detail": null,
+      "elapsed_ms": 212.0
+    },
+    {
+      "check_id": "T1-09",
+      "tier": 1,
+      "name": "단일행 전표",
+      "status": "PASS",
+      "expected": "단일행 전표=0 (UnbalancedEntry+MissingField 제외)",
+      "actual": "single_line_docs=0",
+      "detail": null,
+      "elapsed_ms": 86.2
+    },
+    {
+      "check_id": "T1-10",
+      "tier": 1,
+      "name": "KRW 소수점",
+      "status": "PASS",
+      "expected": "소수점 금액=0 (KRW)",
+      "actual": "fractional_count=0",
+      "detail": null,
+      "elapsed_ms": 5.1
+    },
+    {
+      "check_id": "T1-11",
+      "tier": 1,
+      "name": "문서 내 일관성",
+      "status": "PASS",
+      "expected": "문서 내 company_code/posting_date 불일치=0",
+      "actual": "inconsistent_docs=0",
+      "detail": null,
+      "elapsed_ms": 68.5
+    },
+    {
+      "check_id": "T1-12",
+      "tier": 1,
+      "name": "gl_account 형식",
+      "status": "PASS",
+      "expected": "gl_account 형식 불일치=0 (InvalidAccount+DormantAccountActivity 제외)",
+      "actual": "bad_format=0",
+      "detail": null,
+      "elapsed_ms": 752.9
+    },
+    {
+      "check_id": "T1-13",
+      "tier": 1,
+      "name": "document_type MCAR 비율",
+      "status": "FAIL",
+      "expected": "MCAR 빈값 비율 0.5~4% (전역 2% 적용)",
+      "actual": "null_or_empty=0 (0.00%)",
+      "detail": null,
+      "elapsed_ms": 6.8
+    },
+    {
+      "check_id": "T1-14",
+      "tier": 1,
+      "name": "gl_account MCAR 비율",
+      "status": "PASS",
+      "expected": "MCAR 빈값 비율 0.5~4% (전역 2% 적용)",
+      "actual": "null_or_empty=23,889 (2.00%)",
+      "detail": null,
+      "elapsed_ms": 7.8
+    },
+    {
+      "check_id": "T1-15",
+      "tier": 1,
+      "name": "change_log 구조",
+      "status": "PASS",
+      "expected": "필수 6컬럼 존재",
+      "actual": "OK (6컬럼)",
+      "detail": null,
+      "elapsed_ms": 1.0
+    },
+    {
+      "check_id": "T1-16",
+      "tier": 1,
+      "name": "change_log NOT NULL",
+      "status": "PASS",
+      "expected": "보호필드 NULL=0",
+      "actual": "null_rows=0",
+      "detail": null,
+      "elapsed_ms": 0.5
+    }
+  ]
+}

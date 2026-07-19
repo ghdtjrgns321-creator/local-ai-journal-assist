@@ -1,0 +1,46 @@
+from __future__ import annotations
+
+from dashboard.components.phase2_family_matrix import build_family_matrix_frame
+
+
+def test_build_family_matrix_frame_shows_active_and_dormant_families():
+    snapshot = {
+        "inference_contract": {
+            "required_models": [
+                "unsupervised",
+                "timeseries",
+            ],
+            "model_versions": {
+                "timeseries": {"model_version": None, "schema_hash": None},
+            },
+        }
+    }
+    partition_summary = {
+        "families": {
+            "unsupervised": {"high_count_q95": 30374},
+            "timeseries": {
+                "metric_interpretation": "rule_proxy_score",
+                "score_distribution": {"nonzero_count": 16},
+            },
+        }
+    }
+
+    frame = build_family_matrix_frame(snapshot, partition_summary)
+
+    assert len(frame) == 6
+    assert set(frame["state"]) == {"active", "dormant"}
+    assert frame["state"].value_counts().to_dict() == {"active": 2, "dormant": 4}
+    supervised_row = frame[frame["family"] == "supervised"].iloc[0]
+    assert supervised_row["block_reason"] == "low_signal_fallback"
+
+
+def test_build_family_matrix_frame_labels_unsupervised_q95_not_truth_recall():
+    frame = build_family_matrix_frame(
+        None,
+        {"families": {"unsupervised": {"high_count_q95": 22689}}},
+    )
+
+    row = frame[frame["family"] == "unsupervised"].iloc[0]
+    assert row["metric"] == "ECDF high q95 count"
+    assert row["metric_value"] == "22,689"
+    assert "recall" not in row["metric_interpretation"].lower()

@@ -1,0 +1,106 @@
+[
+  {
+    "rule_id": "L4-03",
+    "source": "anomaly_rules_simple.py:691 (c08), :589 (_compute_pbt_thresholds); audit_rules.yaml l403_materiality",
+    "fires_when": "base=max(debit,credit) >= 회사×연도 임계(NI*0.05*0.75 또는 revenue*0.005*0.75 floor). 그룹 손익 없으면 unset→발화 0.",
+    "raw_row_recipe": "배경 FY2024 그룹 손익이 임계를 만들므로 발화행 debit을 충분 고액(예 10억)으로. company_code/fiscal_year 배경과 동일하게.",
+    "population_needs": "강한 의존 — company×year 손익 배경 필수 (FY2024 슬라이스가 제공)",
+    "pitfalls": "materiality_amount=0(override 없음). 현행 키 불일치로 임계≈2~3천만원이므로 10억이면 여유."
+  },
+  {
+    "rule_id": "L4-04",
+    "source": "anomaly_rules_statistical.py:231 (c09), :205; cadence_per_quarter=1.0",
+    "fires_when": "engagement(company,fy)별 차변→대변 계정쌍 빈도 <= round(quarters)-1 (1년치=임계 3).",
+    "raw_row_recipe": "배경에 없는 신규 차대쌍 복식 문서 1건 (debit 라인 계정A + credit 라인 계정B, 같은 document_id).",
+    "population_needs": "기간 span 의존 — FY2024 연간이면 quarters=4, 임계 3. 그 쌍이 배경에 4회 이상 있으면 실패.",
+    "pitfalls": "단일 분기 데이터면 임계 0으로 침묵."
+  },
+  {
+    "rule_id": "L3-09",
+    "source": "anomaly_rules_simple.py:789 (c10); suspense_aging_days=30, min_open_amount=0",
+    "fires_when": "is_suspense_account & is_cleared==false & (dataset_end − posting_date) >= 30일.",
+    "raw_row_recipe": "행 1건: is_suspense_account=true, is_cleared=false, posting_date를 슬라이스 최신일(2024-12-31)보다 30일+ 이전(예 2024-06-01).",
+    "population_needs": "dataset_end = 전체 max posting_date (배경이 제공)",
+    "pitfalls": "is_cleared 반드시 false 문자열."
+  },
+  {
+    "rule_id": "L2-05",
+    "source": "anomaly_rules_reversal.py:378 (c11), _s0 :76, _s1 :205; window 45일, tolerance ±0",
+    "fires_when": "S0: reversal_document_id/original_document_id/reversal_reason 등 값 존재. S1: 같은 gl, 문서 net 정확 반대(±0), 45일 내, 다른 문서.",
+    "raw_row_recipe": "경로B(구조 검증): doc1 gl=A debit X / doc2 같은 gl credit X, 45일 내. 계정 접두 2900/1150/2050 회피.",
+    "population_needs": "없음",
+    "pitfalls": "금액 1원이라도 다르면 미발화(±0)."
+  },
+  {
+    "rule_id": "L4-05",
+    "source": "anomaly_rules_simple.py:937 (c12); sigma 2.5, min_midnight_entries=3, min_user_entries=10",
+    "fires_when": "경로B: 사용자 총건수<10 & midnight(22~06시)건수>=3 → 그 midnight 행들 발화.",
+    "raw_row_recipe": "신규 created_by 행 정확 3건, posting_date 시각 02:00, source=manual, persona=staff.",
+    "population_needs": "경로B 자기완결",
+    "pitfalls": "행 10건 이상 넣으면 경로B 소멸. 시각 필수(HH:MM:SS)."
+  },
+  {
+    "rule_id": "L4-06",
+    "source": "anomaly_rules_batch.py:21 (c13); source_trust.py lone_automated; simultaneous=50, lone_threshold=10",
+    "fires_when": "배치토큰 source 행의 4신호 OR. 경로4 lone: batch_id·job_id 공백 & 같은 날 배치문서<=10.",
+    "raw_row_recipe": "행 1건: source='batch', batch_id·job_id 공백, posting_date는 다른 배치문서 없는 날(배경 automated가 많은 날 회피 — 안전하게 배치문서 10개 이하인 날 선택 또는 별도 날짜).",
+    "population_needs": "같은 날 배치문서 수 의존 — 날짜 선택 주의",
+    "pitfalls": "배경 FY2024의 같은 날 batch/system/interface/auto계 문서가 10개 초과면 lone 불성립 → 조용한 날짜 필요. source 토큰: batch/interface/system/auto/automated/if/sys (recurring 아님)."
+  },
+  {
+    "rule_id": "AA01",
+    "source": "access_audit_rules.py:14 (aa01); change_log_df 별도 테이블 필수",
+    "fires_when": "change_log 병합 후 S1(기말+감시필드 0.4)/S2(타인변경+Q90 0.4)/S3(변경>2회 0.2).",
+    "raw_row_recipe": "journal 행 + change_log 보조 테이블(document_id, changed_field, changed_by) 주입 필요.",
+    "population_needs": "change_log_df 주입 — CSV 파이프라인 배선 확인 필요",
+    "pitfalls": "change_log 없으면 무조건 0 — 하네스가 주입 못 하면 '하네스 제약' 기록."
+  },
+  {
+    "rule_id": "AA02",
+    "source": "access_audit_rules.py:81-93 (aa02) — TODO 스켈레톤",
+    "fires_when": "항상 0.0 반환 — 미구현. 어떤 데이터로도 발화 불가.",
+    "raw_row_recipe": "불가 — 구현 선행 필요.",
+    "population_needs": "해당 없음",
+    "pitfalls": "S2 분모에서 '미구현' 재분류 대상."
+  },
+  {
+    "rule_id": "AA03",
+    "source": "access_audit_rules.py:96 (aa03); exclude doc types ST,MG",
+    "fires_when": "(company,fy,document_type) 파티션 내 document_number 숫자 정렬 인접 diff>1 → 갭 직후 행 점수 min(gap/10,1).",
+    "raw_row_recipe": "같은 파티션 2행: document_number '900001','900011' (gap 10 → 1.0). document_type은 ST/MG 외.",
+    "population_needs": "파티션 내 2건 이상 (주입으로 자기완결)",
+    "pitfalls": "점수는 갭 직후 행에. 배경 번호 체계와 충돌하지 않게 새 document_type 파티션 또는 극단 번호대 사용."
+  },
+  {
+    "rule_id": "AA04",
+    "source": "access_audit_rules.py:168 (aa04); max_delay_days=3; thresholds 1e7~5e10",
+    "fires_when": "S1: human & approved_by 공백 & base>1천만 (0.4). S2: 승인지연 >3일 (0.3). S3: approval_level 부족 (원시 컬럼 없어 침묵).",
+    "raw_row_recipe": "행 1건: persona=staff, approved_by 공백, debit 2천만 → 0.4. (S2 추가: approval_date를 posting+5일 — 단 approved_by 공백과 모순되니 S1 단독로 충분)",
+    "population_needs": "없음",
+    "pitfalls": "정확히 3일 지연은 미발화. automated persona 제외."
+  },
+  {
+    "rule_id": "EV01",
+    "source": "evidence_rules.py:60 (ev01); tax_threshold=30000, split_max=29000, split_min_count=3",
+    "fires_when": "S1: has_attachment=false & manual & amount>3만 (0.6). S2: amount>3만 & supporting_doc_type 비적격 (0.5). S3: 동일 거래처+날짜 3건+ 전부 <=29,000 (0.8).",
+    "raw_row_recipe": "행 1건: has_attachment=false, supporting_doc_type='', source=manual, debit 100,000.",
+    "population_needs": "S1/S2 없음",
+    "pitfalls": "S3 쓰려면 그룹 최대금액 <=29,000 엄수."
+  },
+  {
+    "rule_id": "EV03",
+    "source": "evidence_rules.py:249 (ev03); tolerance=1원, vat_rate=0.10",
+    "fires_when": "S1: |max(debit,credit) − invoice_amount| > 1원. S2: |tax − round(supply×0.10)| > 1원 (tax>0 & supply>0).",
+    "raw_row_recipe": "행 1건: supply_amount=1,000,000, tax_amount=90,000 (기대 100,000).",
+    "population_needs": "없음",
+    "pitfalls": "tax 0/NaN이면 S2 제외(면세)."
+  },
+  {
+    "rule_id": "L3-11",
+    "source": "evidence_rules.py:135 (ev02); revenue prefix 4, expense prefix 5",
+    "fires_when": "delivery_date 연도 != fiscal_year(폴백 posting 연도) & 계정 접두 4/5.",
+    "raw_row_recipe": "행 1건: gl='4000', fiscal_year=2024, delivery_date='2023-12-28'.",
+    "population_needs": "없음",
+    "pitfalls": "연도 불일치가 핵심(일수 무관). 접두 6/7/8 비용은 비대상."
+  }
+]

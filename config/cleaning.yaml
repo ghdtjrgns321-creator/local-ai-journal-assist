@@ -1,0 +1,45 @@
+# 타입 캐스팅 전처리 규칙 — type_caster.py에서 참조
+# 새 ERP 포맷 대응 시 이 파일만 편집하면 코드 변경 불필요
+
+amount:
+  # 소수점 포맷: "period" (미국/한국: 1,234.56) | "comma" (유럽: 1.234,56)
+  decimal_format: "period"
+  # 통화 기호 (단일 문자) — 정규식 문자 클래스에 삽입
+  # "\\" = 리터럴 백슬래시 1개. CP949/더존 ERP 환경에서 ₩(U+20A9) 대신 \(U+005C)로 출력되는 인코딩 아티팩트
+  currency_symbols: ["₩", "$", "¥", "€", "\\"]
+  # 통화 단위 (단어) — 정규식 OR로 결합
+  currency_words: ["원", "USD", "KRW", "JPY", "EUR"]
+  # NaN으로 치환할 문자열 (strip 후 비교)
+  null_values:
+    - ""
+    - "-"
+    - "—"
+    - "–"
+    - "nan"
+    - "None"
+    - "none"
+    - "미정"
+    - "해당없음"
+    - "없음"
+    - "N/A"
+    - "n/a"
+
+date:
+  # Excel serial number 유효 범위
+  # 범위 밖 숫자(예: 계정코드 1110, 연도 2025)가 날짜로 오인되는 것을 방지
+  excel_serial_min: 30000   # ≈ 1982-02-18
+  excel_serial_max: 60000   # ≈ 2064-04-26
+
+boolean:
+  true_values:  ["true", "1", "1.0", "yes", "y", "t"]
+  false_values: ["false", "0", "0.0", "no", "n", "f"]
+
+string:
+  # Excel에서 긴 숫자 ID(200000000001)가 과학적 표기법(2E+11)으로 손상된 경우
+  detect_scientific_notation: true
+  # int(float(val))로 복원 시도 (정밀도 손실 가능 — 경고 발생)
+  recover_scientific_notation: true
+
+dc_indicator:
+  debit:  ["D", "S"]    # D=Debit, S=Soll(독일어)
+  credit: ["C", "H"]    # C=Credit, H=Haben(독일어)

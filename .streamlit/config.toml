@@ -1,0 +1,12 @@
+[server]
+# 대용량 감사 데이터(DataSynth CSV 등) 업로드 허용
+maxUploadSize = 1024
+maxMessageSize = 1024
+
+[theme]
+# shadcn/Linear 스타일 — slate-700 CTA + subtle blue accent
+primaryColor = "#374151"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F8F9FA"
+textColor = "#111827"
+font = "sans serif"

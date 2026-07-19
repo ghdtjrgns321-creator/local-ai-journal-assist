@@ -1,0 +1,229 @@
+[measure] current PHASE1 run may take 10+ minutes on full semantic_v1 P3-2 datasets
+[2026-07-16 23:32:00] read_csv start: C:\Users\ghdtj\AppData\Local\Temp\claude\C--Users-ghdtj-workspace-portfolio-local-ai-assist\e5adea09-cd76-4cc9-9236-f787a767ef35\scratchpad\s9_c001\journal_entries.csv
+[2026-07-16 23:32:04] read_csv done: {'elapsed_sec': 3.354, 'rows': 356345, 'documents': 113388}
+[2026-07-16 23:32:04] independent evidence enrichment start
+C:\Users\ghdtj\workspace\portfolio\local-ai-assist\tools\scripts\profile_phase1_v126.py:226: FutureWarning: Downcasting object dtype arrays on .fillna, .ffill, .bfill is deprecated and will change in a future version. Call result.infer_objects(copy=False) instead. To opt-in to the future behavior, set `pd.set_option('future.no_silent_downcasting', True)`
+  can_approve_je = approver.map(employee_master["can_approve_je"]).fillna(False).astype(bool)
+[2026-07-16 23:32:05] independent evidence enrichment done: {'elapsed_sec': 1.431, 'known_counterparty_rows': 125389, 'document_flow_orphan_rows': 177828, 'ic_unmatched_rows': 2, 'approval_matrix_gap_rows': 257906, 'approval_contract_gap_rows': 257906, 'employee_creator_join_gap_rows': 0, 'employee_approver_join_gap_rows': 0, 'employee_creator_join_rate': 1.0, 'employee_approver_join_rate': 1.0, 'approval_contract_degraded': False, 'approval_contract_degraded_reason': '', 'approval_limit_exceeded_rows': 416}
+[2026-07-16 23:32:13] feature start: time
+[2026-07-16 23:32:13] feature done: time {'elapsed_sec': 0.77, 'success': True, 'warnings': [], 'columns': 65}
+[2026-07-16 23:32:13] feature start: amount
+[2026-07-16 23:32:15] feature done: amount {'elapsed_sec': 1.81, 'success': True, 'warnings': [], 'columns': 87}
+[2026-07-16 23:32:15] feature start: pattern
+[2026-07-16 23:32:16] feature done: pattern {'elapsed_sec': 0.897, 'success': True, 'warnings': [], 'columns': 92}
+[2026-07-16 23:32:16] feature start: text
+[2026-07-16 23:32:19] feature done: text {'elapsed_sec': 2.526, 'success': True, 'warnings': [], 'columns': 99}
+[2026-07-16 23:32:19] detector start: layer_a
+[2026-07-16 23:32:20] detector done: layer_a {'elapsed_sec': 0.986, 'flagged_count': 0, 'rules_run': 3, 'warnings': []}
+[2026-07-16 23:32:20] detector start: layer_b
+[2026-07-16 23:32:20] layer_b rule start: L4-01
+[2026-07-16 23:32:20] layer_b rule done: L4-01 {'elapsed_sec': 0.003, 'status': 'ok', 'flagged_rows': 10, 'max_score': 1.0}
+[2026-07-16 23:32:20] layer_b rule start: L2-01
+[2026-07-16 23:32:20] layer_b rule done: L2-01 {'elapsed_sec': 0.03, 'status': 'ok', 'flagged_rows': 51, 'max_score': 1.0}
+[2026-07-16 23:32:20] layer_b rule start: L1-04
+[2026-07-16 23:32:20] layer_b rule done: L1-04 {'elapsed_sec': 0.078, 'status': 'ok', 'flagged_rows': 239, 'max_score': 1.0}
+[2026-07-16 23:32:20] layer_b rule start: L2-02
+[2026-07-16 23:32:25] layer_b rule done: L2-02 {'elapsed_sec': 5.585, 'status': 'ok', 'flagged_rows': 260, 'max_score': 1.0}
+[2026-07-16 23:32:25] layer_b rule start: L2-03
+[2026-07-16 23:32:25] L2-03 step start: prepare_work
+[2026-07-16 23:32:26] L2-03 step done: prepare_work {'elapsed_sec': 0.796, 'nonzero_rows': 356345, 'columns': 10}
+[2026-07-16 23:32:26] L2-03 step start: document_duplicate_retired
+[2026-07-16 23:32:26] L2-03 step done: document_duplicate_retired {'elapsed_sec': 0.001, 'nonzero_rows': 0}
+[2026-07-16 23:32:26] L2-03 step start: exact_duplicate
+[2026-07-16 23:32:26] L2-03 step done: exact_duplicate {'elapsed_sec': 0.197, 'nonzero_rows': 0}
+[2026-07-16 23:32:26] L2-03 step start: reference_duplicate
+[2026-07-16 23:32:30] L2-03 step done: reference_duplicate {'elapsed_sec': 3.278, 'nonzero_rows': 11}
+[2026-07-16 23:32:30] L2-03 step start: near_duplicate_retired
+[2026-07-16 23:32:30] L2-03 step done: near_duplicate_retired {'elapsed_sec': 0.001, 'nonzero_rows': 0}
+[2026-07-16 23:32:30] L2-03 step start: split_duplicate_retired
+[2026-07-16 23:32:30] L2-03 step done: split_duplicate_retired {'elapsed_sec': 0.001, 'nonzero_rows': 0}
+[2026-07-16 23:32:30] L2-03 step start: o2c_offset_duplicate
+[2026-07-16 23:32:31] L2-03 step done: o2c_offset_duplicate {'elapsed_sec': 1.42, 'nonzero_rows': 0}
+[2026-07-16 23:32:31] L2-03 step start: ic_split_duplicate_retired
+[2026-07-16 23:32:31] L2-03 step done: ic_split_duplicate_retired {'elapsed_sec': 0.001, 'nonzero_rows': 0}
+[2026-07-16 23:32:31] L2-03 step start: combine
+[2026-07-16 23:32:31] L2-03 step done: combine {'elapsed_sec': 0.034, 'nonzero_rows': 11, 'scored_rows': 11}
+[2026-07-16 23:32:31] layer_b rule done: L2-03 {'elapsed_sec': 5.752, 'status': 'ok', 'flagged_rows': 11, 'max_score': 1.0}
+[2026-07-16 23:32:31] layer_b rule start: L1-05
+[2026-07-16 23:32:33] layer_b rule done: L1-05 {'elapsed_sec': 2.213, 'status': 'ok', 'flagged_rows': 1139, 'max_score': 1.0}
+[2026-07-16 23:32:33] layer_b rule start: L1-06
+[2026-07-16 23:32:38] layer_b rule done: L1-06 {'elapsed_sec': 4.355, 'status': 'ok', 'flagged_rows': 32348, 'max_score': 1.0}
+[2026-07-16 23:32:38] layer_b rule start: L3-02
+[2026-07-16 23:32:38] layer_b rule done: L3-02 {'elapsed_sec': 0.749, 'status': 'ok', 'flagged_rows': 85149, 'max_score': 1.0}
+[2026-07-16 23:32:38] layer_b rule start: L1-07
+[2026-07-16 23:32:44] layer_b rule done: L1-07 {'elapsed_sec': 5.621, 'status': 'ok', 'flagged_rows': 256673, 'max_score': 1.0}
+[2026-07-16 23:32:44] layer_b rule start: L1-07-02
+[2026-07-16 23:32:44] layer_b rule done: L1-07-02 {'elapsed_sec': 0.077, 'status': 'ok', 'flagged_rows': 0, 'max_score': 0.0}
+[2026-07-16 23:32:44] layer_b rule start: L3-10
+[2026-07-16 23:32:45] layer_b rule done: L3-10 {'elapsed_sec': 0.537, 'status': 'ok', 'flagged_rows': 1083, 'max_score': 1.0}
+[2026-07-16 23:32:45] layer_b rule start: L3-12
+[2026-07-16 23:32:47] layer_b rule done: L3-12 {'elapsed_sec': 2.2, 'status': 'ok', 'flagged_rows': 143546, 'max_score': 0.0}
+[2026-07-16 23:32:47] layer_b rule start: L3-03
+[2026-07-16 23:32:47] layer_b rule done: L3-03 {'elapsed_sec': 0.128, 'status': 'ok', 'flagged_rows': 1078, 'max_score': 1.0}
+[2026-07-16 23:32:47] layer_b rule start: L2-04
+[2026-07-16 23:32:48] layer_b rule done: L2-04 {'elapsed_sec': 0.747, 'status': 'ok', 'flagged_rows': 650, 'max_score': 1.0}
+[2026-07-16 23:32:48] detector done: layer_b {'elapsed_sec': 28.262, 'flagged_count': 341699, 'rules_run': 14, 'warnings': []}
+[2026-07-16 23:32:48] detector start: layer_c
+[2026-07-16 23:32:48] layer_c rule start: L3-04
+[2026-07-16 23:32:49] layer_c rule done: L3-04 {'elapsed_sec': 1.359, 'status': 'ok', 'flagged_rows': 159634, 'max_score': 1.0}
+[2026-07-16 23:32:49] layer_c rule start: L3-05
+[2026-07-16 23:32:50] layer_c rule done: L3-05 {'elapsed_sec': 0.615, 'status': 'ok', 'flagged_rows': 30947, 'max_score': 1.0}
+[2026-07-16 23:32:50] layer_c rule start: L3-06
+[2026-07-16 23:32:51] layer_c rule done: L3-06 {'elapsed_sec': 0.732, 'status': 'ok', 'flagged_rows': 48524, 'max_score': 1.0}
+[2026-07-16 23:32:51] layer_c rule start: L3-07
+[2026-07-16 23:32:51] layer_c rule done: L3-07 {'elapsed_sec': 0.004, 'status': 'ok', 'flagged_rows': 0, 'max_score': 0.0}
+[2026-07-16 23:32:51] layer_c rule start: L1-08
+[2026-07-16 23:32:51] layer_c rule done: L1-08 {'elapsed_sec': 0.108, 'status': 'ok', 'flagged_rows': 0, 'max_score': 0.0}
+[2026-07-16 23:32:51] layer_c rule start: L4-03
+[2026-07-16 23:32:56] layer_c rule done: L4-03 {'elapsed_sec': 5.08, 'status': 'ok', 'flagged_rows': 29572, 'max_score': 1.0}
+[2026-07-16 23:32:56] layer_c rule start: L4-04
+[2026-07-16 23:32:56] layer_c rule done: L4-04 {'elapsed_sec': 0.516, 'status': 'ok', 'flagged_rows': 114, 'max_score': 1.0}
+[2026-07-16 23:32:56] layer_c rule start: L3-09
+[2026-07-16 23:32:56] layer_c rule done: L3-09 {'elapsed_sec': 0.021, 'status': 'ok', 'flagged_rows': 0, 'max_score': None}
+[2026-07-16 23:32:56] layer_c rule start: L2-05
+L2-05 S1 found 29 large groups above 500 rows
+[2026-07-16 23:33:00] layer_c rule done: L2-05 {'elapsed_sec': 3.337, 'status': 'ok', 'flagged_rows': 373, 'max_score': 1.0}
+[2026-07-16 23:33:00] layer_c rule start: L4-05
+[2026-07-16 23:33:04] layer_c rule done: L4-05 {'elapsed_sec': 4.725, 'status': 'ok', 'flagged_rows': 44980, 'max_score': 0.65}
+[2026-07-16 23:33:04] layer_c rule start: L4-06
+[2026-07-16 23:33:06] layer_c rule done: L4-06 {'elapsed_sec': 1.172, 'status': 'ok', 'flagged_rows': 7191, 'max_score': 0.65}
+[2026-07-16 23:33:11] detector done: layer_c {'elapsed_sec': 22.673, 'flagged_count': 212317, 'rules_run': 11, 'warnings': []}
+[2026-07-16 23:33:11] detector start: benford
+[2026-07-16 23:33:12] detector done: benford {'elapsed_sec': 1.189, 'flagged_count': 0, 'rules_run': 1, 'warnings': []}
+[extra] evidence: {"elapsed_sec": 0.48, "flagged_count": 348143, "rules_run": 3, "warnings": []}
+[extra] layer_d: {"elapsed_sec": 1.291, "flagged_count": 0, "rules_run": 2, "warnings": []}
+[2026-07-16 23:33:14] aggregate start
+[2026-07-16 23:33:19] aggregate done: {'elapsed_sec': 5.001, 'risk_summary': {'Medium': 275542, 'Low': 52034, 'High': 14474, 'Normal': 14295}}
+{
+  "generated_at": "2026-07-16T14:37:16.127297+00:00",
+  "elapsed_sec": 314.401,
+  "batch_id": "s9_c001_current_phase1",
+  "rows": 356345,
+  "phase1_case_count": 18397,
+  "phase1_unit_count": 110132,
+  "phase1_raw_hit_count": 1237857,
+  "truth_units": 0,
+  "caught_truth_units": 0,
+  "missed_truth_units": 0,
+  "l3_04_row_count": 159634,
+  "l3_04_row_rate": 0.447976,
+  "l3_04_unit_count": 49325,
+  "phase1_case_artifact_path": "C:\\Users\\ghdtj\\workspace\\portfolio\\local-ai-assist\\artifacts\\phase1_cases\\_anonymous\\phase1case__anonymous_s9_c001_current_phase1_20260716T143319Z.json",
+  "direct_phase1_checkpoint": "C:\\Users\\ghdtj\\workspace\\portfolio\\local-ai-assist\\reports\\s1_normal_s9\\direct_phase1_checkpoint.json",
+  "baseline_case_count": 18397,
+  "baseline_new_truth_units": 0,
+  "priority_band_units": {
+    "high": 2436,
+    "medium": 1052,
+    "low": 106644
+  },
+  "priority_band_cases": {
+    "high": 4900,
+    "medium": 541,
+    "low": 12956
+  },
+  "priority_band_high_medium_rule_count": 20,
+  "priority_band_high_medium_rules": {
+    "L2-04": {
+      "cases": 410,
+      "high": 190,
+      "medium": 33
+    },
+    "L3-04": {
+      "cases": 17691,
+      "high": 4753,
+      "medium": 478
+    },
+    "L3-02": {
+      "cases": 15532,
+      "high": 4695,
+      "medium": 509
+    },
+    "L4-03": {
+      "cases": 8519,
+      "high": 4393,
+      "medium": 522
+    },
+    "L1-05": {
+      "cases": 659,
+      "high": 361,
+      "medium": 37
+    },
+    "L1-06": {
+      "cases": 6309,
+      "high": 2357,
+      "medium": 0
+    },
+    "L1-04": {
+      "cases": 255,
+      "high": 255,
+      "medium": 0
+    },
+    "L3-05": {
+      "cases": 5968,
+      "high": 2292,
+      "medium": 249
+    },
+    "L1-07": {
+      "cases": 8749,
+      "high": 2361,
+      "medium": 174
+    },
+    "L3-06": {
+      "cases": 4157,
+      "high": 1619,
+      "medium": 177
+    },
+    "L4-05": {
+      "cases": 2766,
+      "high": 1126,
+      "medium": 125
+    },
+    "L3-12": {
+      "cases": 5696,
+      "high": 1945,
+      "medium": 145
+    },
+    "L3-10": {
+      "cases": 656,
+      "high": 408,
+      "medium": 18
+    },
+    "L4-06": {
+      "cases": 1431,
+      "high": 611,
+      "medium": 46
+    },
+    "L4-01": {
+      "cases": 25,
+      "high": 10,
+      "medium": 15
+    },
+    "L4-04": {
+      "cases": 126,
+      "high": 47,
+      "medium": 42
+    },
+    "L2-01": {
+      "cases": 87,
+      "high": 57,
+      "medium": 13
+    },
+    "L2-02": {
+      "cases": 187,
+      "high": 74,
+      "medium": 3
+    },
+    "L2-05": {
+      "cases": 431,
+      "high": 109,
+      "medium": 10
+    },
+    "L2-03": {
+      "cases": 15,
+      "high": 3,
+      "medium": 0
+    }
+  }
+}
+[measure] outputs: C:\Users\ghdtj\workspace\portfolio\local-ai-assist\reports\s1_normal_s9

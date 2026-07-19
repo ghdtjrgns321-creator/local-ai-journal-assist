@@ -1,0 +1,32 @@
+rule_id,rule_title,existing_contract_count,v2_phase1_count,v2_rule_truth_docs,a_axis_false_positive_docs,a_axis_false_negative_docs,v2_detector_rows,v2_seed_docs,v2_context_docs,delta,delta_ratio,severity,cause_estimate,action_class
+L4-04,희귀 계정 조합,4091,21798,386,0,0,114026,21798,0,17707,4.328282,WARNING,A축 strict rule_truth 대조 기준 과탐/미탐 0. count 증가가 커서 detector/data 분리 검토 필요.,detector_review_needed
+L4-05,비정상 시간대 입력자 집중,4964,13684,10828,0,0,39931,13684,0,8720,1.756648,WARNING,A축 strict rule_truth 대조 기준 과탐/미탐 0. count 증가가 커서 detector/data 분리 검토 필요.,detector_review_needed
+L3-06,심야/비업무시간 전기,7507,12467,14844,0,0,52874,12467,0,4960,0.660717,WARNING,A축 strict rule_truth 대조 기준 과탐/미탐 0. count 증가가 커서 detector/data 분리 검토 필요.,detector_review_needed
+L2-05,역분개 패턴,80,1471,267,0,0,1946,1471,0,1391,17.3875,WARNING,A축 strict rule_truth 대조 기준 과탐/미탐 0. count 증가가 커서 detector/data 분리 검토 필요.,detector_review_needed
+L2-03,중복 전표 후보,111,466,1208,0,0,1552,466,0,355,3.198198,WARNING,A축 strict rule_truth 대조 기준 과탐/미탐 0. count 증가가 커서 detector/data 분리 검토 필요.,detector_review_needed
+L1-01,차대변 불일치,316,602,281,0,0,0,602,0,286,0.905063,WARNING,A축 strict rule_truth 대조 기준 과탐/미탐 0. count 증가가 커서 detector/data 분리 검토 필요.,detector_review_needed
+L1-04,승인한도 초과,56,244,60,0,0,68,244,0,188,3.357143,WARNING,A축 strict rule_truth 대조 기준 과탐/미탐 0. count 증가가 커서 detector/data 분리 검토 필요.,detector_review_needed
+L1-03,무효 계정,32,40,40,0,0,0,40,0,8,0.25,WARNING,A축 strict rule_truth 대조 기준 과탐/미탐 0. count 증가가 커서 detector/data 분리 검토 필요.,detector_review_needed
+L3-12,업무범위 집중 검토 후보,0,3769,18617,0,0,59182,0,3769,3769,,OK,A축 strict rule_truth 대조 기준 과탐/미탐 0. 기존 contract 기준 없음.,acceptable_no_action
+L3-04,기말/기초 전표,141375,8203,94393,0,0,479561,8203,0,-133172,-0.941977,EXPECTED_CHANGE,A축 strict rule_truth 대조 기준 과탐/미탐 0. semantic-clean 생성으로 일부 쓰레기/계약 fixture 기반 hit 감소 가능.,expected_semantic_clean_change
+L3-02,수기/조정 전표,86808,39762,131775,0,0,239238,39762,0,-47046,-0.541955,EXPECTED_CHANGE,A축 strict rule_truth 대조 기준 과탐/미탐 0. semantic-clean 생성으로 일부 쓰레기/계약 fixture 기반 hit 감소 가능.,expected_semantic_clean_change
+L3-03,관계사 거래,30377,315,6499,0,0,7867,315,0,-30062,-0.98963,EXPECTED_CHANGE,A축 strict rule_truth 대조 기준 과탐/미탐 0. semantic-clean 생성으로 일부 쓰레기/계약 fixture 기반 hit 감소 가능.,expected_semantic_clean_change
+L3-05,주말/휴일 전기,24318,6780,24412,0,0,85237,6780,0,-17538,-0.721194,EXPECTED_CHANGE,A축 strict rule_truth 대조 기준 과탐/미탐 0. semantic-clean 생성으로 일부 쓰레기/계약 fixture 기반 hit 감소 가능.,expected_semantic_clean_change
+L3-01,계정/프로세스 불일치,2419,1,2,0,0,0,1,0,-2418,-0.999587,EXPECTED_CHANGE,A축 strict rule_truth 대조 기준 과탐/미탐 0. semantic-clean 생성으로 일부 쓰레기/계약 fixture 기반 hit 감소 가능.,expected_semantic_clean_change
+L4-03,이상 고액,4015,2101,2946,0,0,4664,2101,0,-1914,-0.476712,EXPECTED_CHANGE,A축 strict rule_truth 대조 기준 과탐/미탐 0. semantic-clean 생성으로 일부 쓰레기/계약 fixture 기반 hit 감소 가능.,expected_semantic_clean_change
+L3-10,고위험 계정,1601,12,12,0,0,12,12,0,-1589,-0.992505,EXPECTED_CHANGE,A축 strict rule_truth 대조 기준 과탐/미탐 0. semantic-clean 생성으로 일부 쓰레기/계약 fixture 기반 hit 감소 가능.,expected_semantic_clean_change
+L3-09,미결/장기미결,1091,12,12,0,0,12,12,0,-1079,-0.989001,EXPECTED_CHANGE,A축 strict rule_truth 대조 기준 과탐/미탐 0. semantic-clean 생성으로 일부 쓰레기/계약 fixture 기반 hit 감소 가능.,expected_semantic_clean_change
+L2-04,자산+비용 동시처리,1098,57,34,0,0,79,57,0,-1041,-0.948087,EXPECTED_CHANGE,A축 strict rule_truth 대조 기준 과탐/미탐 0. semantic-clean 생성으로 일부 쓰레기/계약 fixture 기반 hit 감소 가능.,expected_semantic_clean_change
+L4-01,고액 반올림,964,209,367,0,0,386,209,0,-755,-0.783195,EXPECTED_CHANGE,A축 strict rule_truth 대조 기준 과탐/미탐 0. semantic-clean 생성으로 일부 쓰레기/계약 fixture 기반 hit 감소 가능.,expected_semantic_clean_change
+L3-07,전기일-문서일 장기 괴리,657,7,107,0,0,357,7,0,-650,-0.989346,EXPECTED_CHANGE,A축 strict rule_truth 대조 기준 과탐/미탐 0. semantic-clean 생성으로 일부 쓰레기/계약 fixture 기반 hit 감소 가능.,expected_semantic_clean_change
+L1-08,회계기간 불일치,731,136,54,0,0,136,136,0,-595,-0.813953,EXPECTED_CHANGE,A축 strict rule_truth 대조 기준 과탐/미탐 0. semantic-clean 생성으로 일부 쓰레기/계약 fixture 기반 hit 감소 가능.,expected_semantic_clean_change
+L2-01,반올림 금액,457,0,0,0,0,2,0,0,-457,-1.0,EXPECTED_CHANGE,A축 strict rule_truth 대조 기준 과탐/미탐 0. semantic-clean 생성으로 일부 쓰레기/계약 fixture 기반 hit 감소 가능.,expected_semantic_clean_change
+L3-08,적요 결손/파손,428,35,451,0,0,587,35,0,-393,-0.918224,EXPECTED_CHANGE,A축 strict rule_truth 대조 기준 과탐/미탐 0. semantic-clean 생성으로 일부 쓰레기/계약 fixture 기반 hit 감소 가능.,expected_semantic_clean_change
+L2-02,중복 지급,384,62,47,0,0,119,62,0,-322,-0.838542,EXPECTED_CHANGE,A축 strict rule_truth 대조 기준 과탐/미탐 0. semantic-clean 생성으로 일부 쓰레기/계약 fixture 기반 hit 감소 가능.,expected_semantic_clean_change
+L4-06,배치/대량 전표,692,426,390,0,0,979,426,0,-266,-0.384393,EXPECTED_CHANGE,A축 strict rule_truth 대조 기준 과탐/미탐 0. semantic-clean 생성으로 일부 쓰레기/계약 fixture 기반 hit 감소 가능.,expected_semantic_clean_change
+L3-11,컷오프 불일치,130,0,0,0,0,0,0,0,-130,-1.0,EXPECTED_CHANGE,A축 strict rule_truth 대조 기준 과탐/미탐 0. semantic-clean 생성으로 일부 쓰레기/계약 fixture 기반 hit 감소 가능.,expected_semantic_clean_change
+L1-05,자기승인,244,137,47,0,0,143,137,0,-107,-0.438525,EXPECTED_CHANGE,A축 strict rule_truth 대조 기준 과탐/미탐 0. semantic-clean 생성으로 일부 쓰레기/계약 fixture 기반 hit 감소 가능.,expected_semantic_clean_change
+L1-02,필수필드 누락,156,67,91,0,0,0,67,0,-89,-0.570513,EXPECTED_CHANGE,A축 strict rule_truth 대조 기준 과탐/미탐 0. semantic-clean 생성으로 일부 쓰레기/계약 fixture 기반 hit 감소 가능.,expected_semantic_clean_change
+L1-09,승인일 추적성 결손,122,43,18,0,0,43,2,41,-79,-0.647541,EXPECTED_CHANGE,A축 strict rule_truth 대조 기준 과탐/미탐 0. semantic-clean 생성으로 일부 쓰레기/계약 fixture 기반 hit 감소 가능.,expected_semantic_clean_change
+L1-07,승인 생략,96,41,17,0,0,41,14,27,-55,-0.572917,EXPECTED_CHANGE,A축 strict rule_truth 대조 기준 과탐/미탐 0. semantic-clean 생성으로 일부 쓰레기/계약 fixture 기반 hit 감소 가능.,expected_semantic_clean_change
+L1-06,직무분리 위반,19,0,0,0,0,0,0,0,-19,-1.0,EXPECTED_CHANGE,A축 strict rule_truth 대조 기준 과탐/미탐 0. semantic-clean 생성으로 일부 쓰레기/계약 fixture 기반 hit 감소 가능.,expected_semantic_clean_change

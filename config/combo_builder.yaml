@@ -1,0 +1,100 @@
+# PHASE1-1 조합 빌더 어휘·프리셋 (SoT: docs/spec/PHASE1_COMBO_BUILDER_SPEC.md §2·§4)
+# tier 자동 등급 폐지(2026-07-17) — 빌더에 노출되는 룰은 아래 몸통 10 + 특징 10 뿐.
+# fss_confirmed = 금감원 v3 발화 지도(731행) 확정 태깅 건수.
+# basis = UI에 함께 표시할 근거 문구(감사인이 근거를 보고 고른다).
+
+bodies: # 조작 대상 — 자격: 금감원 확정 1건 이상 AND 기준서 240 조작대상 조항 매핑
+  - rule_id: L3-10
+    label: 추정계정
+    fss_confirmed: 147
+    basis: 회계추정 경영진 편향 검토 (감사기준서 240 문단 32)
+  - rule_id: L3-03
+    label: 관계사
+    fss_confirmed: 80
+    basis: 특수관계자 비경상 거래 (감사기준서 240 문단 32)
+  - rule_id: L3-11
+    label: 컷오프
+    fss_confirmed: 23
+    basis: 수익인식 부정위험 추정 (감사기준서 240 문단 26)
+  - rule_id: L2-04
+    label: 비용자산화
+    fss_confirmed: 22
+    basis: 비경상적 중요 거래 (감사기준서 240)
+  - rule_id: L3-04
+    label: 기말결산
+    fss_confirmed: 20
+    basis: 기말 분개 테스트 (감사기준서 240 문단 32)
+  - rule_id: L4-01
+    label: 매출과대
+    fss_confirmed: 20
+    basis: 수익인식 부정위험 추정 (감사기준서 240 문단 26)
+  - rule_id: L4-03
+    label: 이상고액
+    fss_confirmed: 12
+    basis: 분개 테스트 실무 (임계 재설계 이연 중)
+  - rule_id: L2-05
+    label: 역분개
+    fss_confirmed: 3
+    basis: 마감 후·조정 분개 (감사기준서 240)
+  - rule_id: L3-09
+    label: 가수금 체류
+    fss_confirmed: 2
+    basis: 경과계정 은폐 (금감원 실증)
+  - rule_id: L1-08
+    label: 기간귀속
+    fss_confirmed: 1
+    basis: 기간귀속 위반 (감사기준서 240 문단 26 연계)
+
+features: # 부정 전표의 모양 — 기준서 240 특징 목록 매핑
+  - rule_id: L3-02
+    label: 수기
+    basis: 수기·비정형 분개 우선 테스트 (명문)
+  - rule_id: L1-04
+    label: 승인한도초과
+    basis: 권한 밖 처리 — 통제 무력화 (명문)
+  - rule_id: L1-05
+    label: 자기승인
+    basis: 권한 밖 처리 — 통제 무력화 (명문)
+  - rule_id: L1-07
+    label: 승인생략
+    basis: 권한 밖 처리 — 통제 무력화 (명문)
+  - rule_id: L1-07-02
+    label: 유령승인자
+    basis: 가공 승인기록 (명문)
+  - rule_id: L1-06
+    label: 직무분리 겸직
+    basis: 부정위험요소 '기회' (기준서 240 부록)
+  - rule_id: L3-07
+    label: 소급기표
+    basis: 마감 후 분개 (명문)
+  - rule_id: L4-04
+    label: 희소계정쌍
+    basis: 드물게 쓰는 계정에 기록 (명문)
+  - rule_id: L3-05
+    label: 휴일 입력
+    basis: 분개 테스트 필터 (실무 관행)
+  - rule_id: L3-06
+    label: 심야 입력
+    basis: 분개 테스트 필터 (실무 관행)
+
+presets: # 저장된 체크 상태 + 소명 1줄. 등급 선언 아님(원클릭 시작점).
+  - preset_id: estimate_related_party
+    label: 추정·관계사 조작
+    bodies: [L3-10, L3-03]
+    features: [L1-04, L1-05, L1-07, L1-07-02, L3-02, L3-07]
+    rationale: 금감원 최다 적발 대상 2종 + 통제 무력화 모양
+  - preset_id: revenue_recognition
+    label: 수익인식
+    bodies: [L4-01, L3-11, L1-08]
+    features: all
+    rationale: 감사기준서 240 문단 26 — 수익인식은 부정위험 추정
+  - preset_id: reversal_concealment
+    label: 역분개·은폐
+    bodies: [L2-05, L3-09, L4-03]
+    features: all
+    rationale: 기말 분식 후 되돌림·경과계정 은폐 패턴
+  - preset_id: expense_capitalization
+    label: 비용자산화
+    bodies: [L2-04]
+    features: all
+    rationale: 금감원 22건 실증 수법

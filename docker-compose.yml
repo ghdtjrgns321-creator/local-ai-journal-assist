@@ -1,0 +1,29 @@
+# Oracle A1 (ARM64) 데모 배포 — nginx(basic auth) → streamlit(app)
+# 기동: docker compose up -d --build
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: audit-demo-app
+    restart: unless-stopped
+    expose:
+      - "8501"            # 내부 네트워크에서만 노출 (외부는 nginx 경유)
+    volumes:
+      # 데모 데이터 bind mount — 서버 호스트의 ./data 를 컨테이너로 주입.
+      # git/이미지에는 없고 서버 디스크에만 존재 → 자산 보호 유지.
+      - ./data:/app/data
+    environment:
+      - PYTHONUNBUFFERED=1
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"           # Oracle VCN ingress + iptables 80 개방 필요
+    volumes:
+      - ./deploy/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./deploy/nginx/.htpasswd:/etc/nginx/.htpasswd:ro
+    depends_on:
+      - app

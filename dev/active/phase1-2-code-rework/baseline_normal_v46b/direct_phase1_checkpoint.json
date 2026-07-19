@@ -1,0 +1,307 @@
+{
+  "data_dir": "C:\\Users\\ghdtj\\workspace\\portfolio\\local-ai-assist\\data\\journal\\primary\\datasynth_semantic_v1_normal_20260621_v46b",
+  "started_at": "2026-06-30T02:20:22.241462+00:00",
+  "stages": {
+    "read_csv": {
+      "elapsed_sec": 3.808,
+      "rows": 345944,
+      "documents": 111462
+    },
+    "independent_evidence_enrichment": {
+      "elapsed_sec": 2.104,
+      "known_counterparty_rows": 108832,
+      "document_flow_orphan_rows": 170500,
+      "ic_unmatched_rows": 0,
+      "approval_matrix_gap_rows": 241860,
+      "approval_contract_gap_rows": 241860,
+      "employee_creator_join_gap_rows": 5378,
+      "employee_approver_join_gap_rows": 5380,
+      "employee_creator_join_rate": 0.984454,
+      "employee_approver_join_rate": 0.950855,
+      "approval_contract_degraded": false,
+      "approval_contract_degraded_reason": "",
+      "approval_limit_exceeded_rows": 4794
+    },
+    "features": {
+      "time": {
+        "elapsed_sec": 1.02,
+        "success": true,
+        "warnings": [],
+        "columns": 61
+      },
+      "amount": {
+        "elapsed_sec": 1.616,
+        "success": true,
+        "warnings": [],
+        "columns": 82
+      },
+      "pattern": {
+        "elapsed_sec": 1.628,
+        "success": true,
+        "warnings": [],
+        "columns": 87
+      },
+      "text": {
+        "elapsed_sec": 3.755,
+        "success": true,
+        "warnings": [],
+        "columns": 94
+      }
+    },
+    "detectors": {
+      "layer_a": {
+        "elapsed_sec": 1.355,
+        "flagged_count": 0,
+        "rules_run": 3,
+        "warnings": []
+      },
+      "layer_b": {
+        "elapsed_sec": 30.603,
+        "flagged_count": 331356,
+        "rules_run": 14,
+        "warnings": []
+      },
+      "layer_c": {
+        "elapsed_sec": 156.187,
+        "flagged_count": 299017,
+        "rules_run": 11,
+        "warnings": []
+      },
+      "benford": {
+        "elapsed_sec": 1.394,
+        "flagged_count": 0,
+        "rules_run": 1,
+        "warnings": []
+      }
+    },
+    "detector_rules": {
+      "layer_b": {
+        "L4-01": {
+          "elapsed_sec": 0.005,
+          "status": "ok",
+          "flagged_rows": 252,
+          "max_score": 1.0
+        },
+        "L2-01": {
+          "elapsed_sec": 0.188,
+          "status": "ok",
+          "flagged_rows": 4745,
+          "max_score": 1.0
+        },
+        "L1-04": {
+          "elapsed_sec": 0.051,
+          "status": "ok",
+          "flagged_rows": 0,
+          "max_score": null
+        },
+        "L2-02": {
+          "elapsed_sec": 5.067,
+          "status": "ok",
+          "flagged_rows": 160,
+          "max_score": 1.0
+        },
+        "L2-03": {
+          "elapsed_sec": 3.79,
+          "status": "ok",
+          "flagged_rows": 7,
+          "max_score": 1.0
+        },
+        "L1-05": {
+          "elapsed_sec": 2.052,
+          "status": "ok",
+          "flagged_rows": 10,
+          "max_score": 1.0
+        },
+        "L1-06": {
+          "elapsed_sec": 8.899,
+          "status": "ok",
+          "flagged_rows": 68163,
+          "max_score": 1.0
+        },
+        "L3-02": {
+          "elapsed_sec": 0.757,
+          "status": "ok",
+          "flagged_rows": 87661,
+          "max_score": 1.0
+        },
+        "L1-07": {
+          "elapsed_sec": 5.409,
+          "status": "ok",
+          "flagged_rows": 236472,
+          "max_score": 1.0
+        },
+        "L1-07-02": {
+          "elapsed_sec": 0.188,
+          "status": "ok",
+          "flagged_rows": 5380,
+          "max_score": 1.0
+        },
+        "L3-10": {
+          "elapsed_sec": 0.543,
+          "status": "ok",
+          "flagged_rows": 896,
+          "max_score": 1.0
+        },
+        "L3-12": {
+          "elapsed_sec": 2.831,
+          "status": "ok",
+          "flagged_rows": 306174,
+          "max_score": 0.0
+        },
+        "L3-03": {
+          "elapsed_sec": 0.123,
+          "status": "ok",
+          "flagged_rows": 435,
+          "max_score": 1.0
+        },
+        "L2-04": {
+          "elapsed_sec": 0.516,
+          "status": "ok",
+          "flagged_rows": 284,
+          "max_score": 1.0
+        }
+      },
+      "layer_c": {
+        "L3-04": {
+          "elapsed_sec": 1.584,
+          "status": "ok",
+          "flagged_rows": 158677,
+          "max_score": 1.0
+        },
+        "L3-05": {
+          "elapsed_sec": 0.474,
+          "status": "ok",
+          "flagged_rows": 34462,
+          "max_score": 1.0
+        },
+        "L3-06": {
+          "elapsed_sec": 0.262,
+          "status": "ok",
+          "flagged_rows": 13658,
+          "max_score": 1.0
+        },
+        "L3-07": {
+          "elapsed_sec": 0.005,
+          "status": "ok",
+          "flagged_rows": 0,
+          "max_score": 0.0
+        },
+        "L1-08": {
+          "elapsed_sec": 0.123,
+          "status": "ok",
+          "flagged_rows": 0,
+          "max_score": 0.0
+        },
+        "L4-03": {
+          "elapsed_sec": 4.5,
+          "status": "ok",
+          "flagged_rows": 2128,
+          "max_score": 1.0
+        },
+        "L4-04": {
+          "elapsed_sec": 3.183,
+          "status": "ok",
+          "flagged_rows": 24051,
+          "max_score": 1.0
+        },
+        "L3-09": {
+          "elapsed_sec": 0.006,
+          "status": "ok",
+          "flagged_rows": 0,
+          "max_score": null
+        },
+        "L2-05": {
+          "elapsed_sec": 120.733,
+          "status": "ok",
+          "flagged_rows": 59595,
+          "max_score": 1.0
+        },
+        "L4-05": {
+          "elapsed_sec": 3.083,
+          "status": "ok",
+          "flagged_rows": 11804,
+          "max_score": 0.65
+        },
+        "L4-06": {
+          "elapsed_sec": 12.177,
+          "status": "ok",
+          "flagged_rows": 209648,
+          "max_score": 0.65
+        }
+      }
+    },
+    "detector_rule_steps": {
+      "L2-03": {
+        "prepare_work": {
+          "elapsed_sec": 0.817,
+          "nonzero_rows": 345944,
+          "columns": 10
+        },
+        "document_duplicate_retired": {
+          "elapsed_sec": 0.001,
+          "nonzero_rows": 0
+        },
+        "exact_duplicate": {
+          "elapsed_sec": 0.222,
+          "nonzero_rows": 0
+        },
+        "reference_duplicate": {
+          "elapsed_sec": 1.437,
+          "nonzero_rows": 7
+        },
+        "near_duplicate_retired": {
+          "elapsed_sec": 0.002,
+          "nonzero_rows": 0
+        },
+        "split_duplicate_retired": {
+          "elapsed_sec": 0.001,
+          "nonzero_rows": 0
+        },
+        "o2c_offset_duplicate": {
+          "elapsed_sec": 1.252,
+          "nonzero_rows": 0
+        },
+        "ic_split_duplicate_retired": {
+          "elapsed_sec": 0.001,
+          "nonzero_rows": 0
+        },
+        "combine": {
+          "elapsed_sec": 0.032,
+          "nonzero_rows": 7,
+          "scored_rows": 7
+        }
+      }
+    },
+    "extra_detectors": {
+      "evidence": {
+        "elapsed_sec": 0.468,
+        "flagged_count": 313566,
+        "rules_run": 3,
+        "warnings": []
+      },
+      "layer_d": {
+        "elapsed_sec": 2.178,
+        "flagged_count": 0,
+        "rules_run": 2,
+        "warnings": []
+      }
+    },
+    "aggregate": {
+      "elapsed_sec": 5.913,
+      "risk_summary": {
+        "Medium": 170004,
+        "High": 124594,
+        "Low": 38565,
+        "Normal": 12781
+      }
+    },
+    "phase1_case_builder": {
+      "elapsed_sec": 373.337,
+      "case_count": 41461,
+      "unit_count": 107473,
+      "macro_finding_count": 100,
+      "artifact_path": "C:\\Users\\ghdtj\\workspace\\portfolio\\local-ai-assist\\artifacts\\phase1_cases\\_anonymous\\phase1case__anonymous_datasynth_semantic_v1_normal_20260621_v46b_current_phase1_20260630T022355Z.json"
+    }
+  },
+  "finished_at": "2026-06-30T02:30:08.550262+00:00"
+}

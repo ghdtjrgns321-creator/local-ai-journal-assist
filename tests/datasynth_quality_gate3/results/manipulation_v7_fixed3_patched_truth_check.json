@@ -1,0 +1,19 @@
+{
+  "generated_at": "2026-05-17T00:39:58.652338+00:00",
+  "dataset": "data\\journal\\primary\\datasynth_manipulation_v7_candidate_fixed3",
+  "status": "pass",
+  "truth_docs": 620,
+  "label_docs": 620,
+  "forbidden_label_files": [],
+  "leakage_columns_present": [],
+  "missing_provenance_counts": {
+    "mutation_type": 0,
+    "mutation_reason": 0,
+    "mutation_base_event_type": 0,
+    "mutation_mutated_field": 0,
+    "mutation_original_value": 0,
+    "mutation_mutated_value": 0
+  },
+  "unbalanced_truth_docs": 0,
+  "failures": []
+}

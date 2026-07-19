@@ -1,0 +1,26 @@
+{
+  "dataset": "s10_c001",
+  "train_rows": 50000,
+  "calibration_rows": 50000,
+  "n_features": 71,
+  "threshold": 0.9900002,
+  "if_contamination_setting": 0.01,
+  "flag_rate_train": 0.00998,
+  "flag_rate_calibration": 0.01056,
+  "calib_over_contamination_ratio": 1.056,
+  "vae_diagnostics": {
+    "hidden_dim": 64,
+    "latent_dim": 32,
+    "epochs": 50,
+    "batch_size": 256,
+    "batch_count": 196,
+    "lr": 0.001,
+    "beta": 1.0,
+    "n_samples": 50000,
+    "reconstruction_loss": 0.23001317256450654,
+    "kl_loss": 0.3717825891494751,
+    "kl_to_reconstruction_ratio": 1.6163534679528397,
+    "group_loss_dominance_ratio": 0.0
+  },
+  "elapsed_sec": 460.9
+}

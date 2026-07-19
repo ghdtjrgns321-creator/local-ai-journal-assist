@@ -1,0 +1,18 @@
+{
+  "dataset": "data\\journal\\primary\\datasynth_semantic_v1",
+  "sample_seed": 20260512,
+  "unique_review_docs": 392,
+  "sample_assignments": 404,
+  "verdict_counts": {
+    "PASS": 307,
+    "INTENDED_ABNORMAL": 85
+  },
+  "acceptance_criteria": {
+    "random_scenario_normal_fail_rate_pct": 0.0,
+    "random_scenario_normal_pass": true,
+    "abnormal_mutation_explained_pct": 100.0,
+    "abnormal_mutation_pass": true,
+    "l3_l4_generator_contamination_pct": 0.0,
+    "l3_l4_generator_contamination_low": true
+  }
+}

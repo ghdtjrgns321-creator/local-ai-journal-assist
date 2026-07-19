@@ -1,0 +1,7 @@
+name: "건설업 모드"
+description: "건설/조선 대형 프로젝트 특화"
+overrides:
+  period_end_margin_days: 10
+  # 구 round_unit: 10000000 (2026-07-15 상대 기준 전환). 건설·조선은 금액 규모가 커
+  # 둥근 금액이 흔하므로 기준을 좁혀 노이즈를 줄인다 — 유효숫자 1자리(5,000,000·20,000,000)만 인정.
+  round_max_significant_digits: 1

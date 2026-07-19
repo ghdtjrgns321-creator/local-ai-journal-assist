@@ -1,0 +1,688 @@
+{
+  "meta": {
+    "generated_at": "2026-04-07T22:46:04.679745",
+    "data_file": "C:\\Users\\ghdtj\\workspace\\portfolio\\local-ai-assist\\data\\journal\\primary\\datasynth\\journal_entries.csv",
+    "total_rows": 1191815,
+    "total_documents": 319135,
+    "elapsed_seconds": 4.5
+  },
+  "overall_verdict": "WARNING",
+  "tiers": [
+    {
+      "tier": 1,
+      "name": "기본 무결성",
+      "verdict": "WARNING",
+      "pass": 6,
+      "fail": 0,
+      "warning": 1,
+      "checks": [
+        {
+          "check_id": "R1-01",
+          "name": "차변/대변 동시 양수",
+          "status": "PASS",
+          "expected": "0건",
+          "actual": "0건",
+          "detail": null,
+          "elapsed_ms": 7.9
+        },
+        {
+          "check_id": "R1-02",
+          "name": "차변/대변 모두 0",
+          "status": "WARNING",
+          "expected": "0건",
+          "actual": "156건",
+          "detail": null,
+          "elapsed_ms": 8.0
+        },
+        {
+          "check_id": "R1-03",
+          "name": "전표 내 header 일관성",
+          "status": "PASS",
+          "expected": "불일치 0건",
+          "actual": "0건 불일치",
+          "detail": null,
+          "elapsed_ms": 52.2
+        },
+        {
+          "check_id": "R1-04",
+          "name": "전표 내 헤더필드 일관성",
+          "status": "PASS",
+          "expected": "모든 헤더필드 일관",
+          "actual": "OK",
+          "detail": null,
+          "elapsed_ms": 334.0
+        },
+        {
+          "check_id": "R1-05",
+          "name": "posting_date 범위",
+          "status": "PASS",
+          "expected": "범위 밖 <1%",
+          "actual": "0건 (0.00%)",
+          "detail": null,
+          "elapsed_ms": 33.3
+        },
+        {
+          "check_id": "R1-06",
+          "name": "GL 계정 NaN 비율",
+          "status": "PASS",
+          "expected": "<3%",
+          "actual": "23,889건 (2.0%)",
+          "detail": null,
+          "elapsed_ms": 3.9
+        },
+        {
+          "check_id": "R1-07",
+          "name": "line_number 순차성",
+          "status": "PASS",
+          "expected": "전표 100% 순차",
+          "actual": "비순차 0건",
+          "detail": null,
+          "elapsed_ms": 26.5
+        }
+      ]
+    },
+    {
+      "tier": 2,
+      "name": "정량 벤치마크",
+      "verdict": "WARNING",
+      "pass": 27,
+      "fail": 0,
+      "warning": 1,
+      "checks": [
+        {
+          "check_id": "R2-01",
+          "name": "전표 총액 중앙값",
+          "status": "PASS",
+          "expected": "50만~300만원",
+          "actual": "1,400,000원",
+          "detail": null,
+          "elapsed_ms": 38.5
+        },
+        {
+          "check_id": "R2-02",
+          "name": "전표 총액 평균",
+          "status": "PASS",
+          "expected": "1,000만~8,000만원",
+          "actual": "59,455,327원",
+          "detail": null,
+          "elapsed_ms": 23.3
+        },
+        {
+          "check_id": "R2-03",
+          "name": "전표당 평균 라인 수",
+          "status": "PASS",
+          "expected": "2~5: PASS, 5~15: WARNING",
+          "actual": "3.7",
+          "detail": null,
+          "elapsed_ms": 18.5
+        },
+        {
+          "check_id": "R2-04",
+          "name": "12월/평월 배수",
+          "status": "PASS",
+          "expected": ">=2.5x",
+          "actual": "4.17x",
+          "detail": null,
+          "elapsed_ms": 37.8
+        },
+        {
+          "check_id": "R2-05",
+          "name": "주말 전표 비율",
+          "status": "PASS",
+          "expected": "3~20%",
+          "actual": "10.1%",
+          "detail": null,
+          "elapsed_ms": 40.1
+        },
+        {
+          "check_id": "R2-06",
+          "name": "심야(22-06) 비율",
+          "status": "PASS",
+          "expected": "<5%",
+          "actual": "1.79%",
+          "detail": null,
+          "elapsed_ms": 40.2
+        },
+        {
+          "check_id": "R2-07",
+          "name": "fraud 비율",
+          "status": "PASS",
+          "expected": "0.5~5%",
+          "actual": "1.54%",
+          "detail": null,
+          "elapsed_ms": 35.4
+        },
+        {
+          "check_id": "R2-08",
+          "name": "fraud CV (월별)",
+          "status": "PASS",
+          "expected": ">0.05",
+          "actual": "0.404",
+          "detail": null,
+          "elapsed_ms": 55.9
+        },
+        {
+          "check_id": "R2-09",
+          "name": "SoD 위반률",
+          "status": "PASS",
+          "expected": "<=3%",
+          "actual": "2.07%",
+          "detail": null,
+          "elapsed_ms": 30.4
+        },
+        {
+          "check_id": "R2-10",
+          "name": "정상전표 차대변 불균형",
+          "status": "PASS",
+          "expected": "정상전표 불균형 0건",
+          "actual": "정상 0건, 비정상 400건 (전체 400건)",
+          "detail": null,
+          "elapsed_ms": 80.6
+        },
+        {
+          "check_id": "R2-11",
+          "name": "round number(만원) 비율",
+          "status": "PASS",
+          "expected": "15~35%: PASS, 10~40%: WARNING",
+          "actual": "15.3%",
+          "detail": null,
+          "elapsed_ms": 19.5
+        },
+        {
+          "check_id": "R2-12",
+          "name": "1조원 초과 전표",
+          "status": "PASS",
+          "expected": "0건",
+          "actual": "0건",
+          "detail": null,
+          "elapsed_ms": 23.0
+        },
+        {
+          "check_id": "R2-13",
+          "name": "라인 금액 중앙값 (전표/라인수 기준)",
+          "status": "PASS",
+          "expected": "~374,881원 (전표1,400,000/라인3.7), 0.3~3x: PASS",
+          "actual": "316,000원 (0.84x)",
+          "detail": null,
+          "elapsed_ms": 58.4
+        },
+        {
+          "check_id": "R2-14",
+          "name": "라인 레벨 금액 평균",
+          "status": "PASS",
+          "expected": "~27,371,147원 (0.5~2x: PASS)",
+          "actual": "31,845,490원 (1.16x)",
+          "detail": null,
+          "elapsed_ms": 17.3
+        },
+        {
+          "check_id": "R2-15",
+          "name": "nice number(천원) 비율",
+          "status": "WARNING",
+          "expected": "10~25%: PASS, 5~40%: WARNING",
+          "actual": "25.2%",
+          "detail": null,
+          "elapsed_ms": 18.4
+        },
+        {
+          "check_id": "R2-16",
+          "name": "기말/비기말 일평균 배수",
+          "status": "PASS",
+          "expected": ">=2x",
+          "actual": "9.66x (기말 7242/일, 비기말 750/일)",
+          "detail": null,
+          "elapsed_ms": 37.9
+        },
+        {
+          "check_id": "R2-17",
+          "name": "회사별 전표 비율",
+          "status": "PASS",
+          "expected": "C001>=50%, C002/C003>=10%",
+          "actual": "C001=62.5%, C002=18.8%, C003=18.7%",
+          "detail": null,
+          "elapsed_ms": 23.8
+        },
+        {
+          "check_id": "R2-18",
+          "name": "프로세스별 비율",
+          "status": "PASS",
+          "expected": "R2R/O2C/P2P 각 >=10%",
+          "actual": "R2R=35.9%, O2C=22.4%, P2P=18.1%, H2R=8.1%, A2R=8.1%, TRE=7.4%",
+          "detail": null,
+          "elapsed_ms": 25.4
+        },
+        {
+          "check_id": "R2-19",
+          "name": "user_persona별 비율",
+          "status": "PASS",
+          "expected": "automated>=50%, 사람>=10%",
+          "actual": "automated_system=64.2%, senior_accountant=14.0%, junior_accountant=12.0%, manager=4.9%, controller=4.9%",
+          "detail": null,
+          "elapsed_ms": 27.4
+        },
+        {
+          "check_id": "R2-20",
+          "name": "source별 비율",
+          "status": "PASS",
+          "expected": "automated/manual 각 >=10%",
+          "actual": "automated=60.9%, manual=30.3%, recurring=6.2%, adjustment=2.7%",
+          "detail": null,
+          "elapsed_ms": 25.0
+        },
+        {
+          "check_id": "R2-21",
+          "name": "anomaly 비율",
+          "status": "PASS",
+          "expected": "5~30%",
+          "actual": "14.75%",
+          "detail": null,
+          "elapsed_ms": 33.6
+        },
+        {
+          "check_id": "R2-22",
+          "name": "fraud_type 다양성",
+          "status": "PASS",
+          "expected": ">=5종",
+          "actual": "16종 (DuplicatePayment=886, FictitiousTransaction=846, RevenueManipulation=679, SplitTransaction=613, UnauthorizedAccess=424, TimingAnomaly=404, SuspenseAccountAbuse=226, ExpenseCapitalization=217, JustBelowThreshold=145, RoundDollarManipulation=135)",
+          "detail": null,
+          "elapsed_ms": 22.3
+        },
+        {
+          "check_id": "R2-23",
+          "name": "anomaly_type 다양성",
+          "status": "PASS",
+          "expected": ">=5종",
+          "actual": "53종 (NewCounterparty=7718, UnusualAccountPair=6503, MissingRelationship=5236, DormantAccountActivity=5235, UnmatchedIntercompany=4023, TransferPricingAnomaly=2659, CentralityAnomaly=2578, CircularTransaction=2503, CircularIntercompany=1305, UnusualTiming=1136)",
+          "detail": null,
+          "elapsed_ms": 24.6
+        },
+        {
+          "check_id": "R2-24",
+          "name": "승인자 상위1명 편중도",
+          "status": "PASS",
+          "expected": "<10%",
+          "actual": "3.72%",
+          "detail": null,
+          "elapsed_ms": 19.9
+        },
+        {
+          "check_id": "R2-25",
+          "name": "업무시간(9-18) 비율",
+          "status": "PASS",
+          "expected": ">=50%",
+          "actual": "77.1%",
+          "detail": null,
+          "elapsed_ms": 46.3
+        },
+        {
+          "check_id": "R2-26",
+          "name": "요일별 분포 (최대 편중)",
+          "status": "PASS",
+          "expected": "단일 요일 <40%",
+          "actual": "일=5.0%, 월=33.8%, 화=17.1%, 수=13.3%, 목=13.7%, 금=12.0%, 토=5.1%",
+          "detail": null,
+          "elapsed_ms": 32.6
+        },
+        {
+          "check_id": "R2-27",
+          "name": "GL 대분류별 비율",
+          "status": "PASS",
+          "expected": "자산/부채/비용 각 >=10%",
+          "actual": "자산=34.9%, 부채=27.6%, 비용=17.5%, 수익=16.2%, NaN=2.0%, 기타=1.5%, 자본=0.3%",
+          "detail": null,
+          "elapsed_ms": 18.0
+        },
+        {
+          "check_id": "R2-28",
+          "name": "자기승인 비율",
+          "status": "PASS",
+          "expected": "<3%",
+          "actual": "2,632/319,135 (0.82%)",
+          "detail": null,
+          "elapsed_ms": 28.3
+        }
+      ]
+    },
+    {
+      "tier": 3,
+      "name": "의미 정합성 (적요↔GL, header↔GL)",
+      "verdict": "WARNING",
+      "pass": 6,
+      "fail": 0,
+      "warning": 2,
+      "checks": [
+        {
+          "check_id": "R3-01",
+          "name": "적요 \"매출채권\" -> GL 자산",
+          "status": "PASS",
+          "expected": "불일치 <=5.0%: PASS, <=15.0%: WARNING",
+          "actual": "498/45,858 (1.1%)",
+          "detail": {
+            "keyword": "매출채권",
+            "expected_gl": [
+              "자산"
+            ],
+            "mismatch_pct": 1.09
+          },
+          "elapsed_ms": 9.2
+        },
+        {
+          "check_id": "R3-02",
+          "name": "적요 \"미지급\" -> GL 부채",
+          "status": "WARNING",
+          "expected": "불일치 <=5.0%: PASS, <=15.0%: WARNING",
+          "actual": "5,752/62,120 (9.3%)",
+          "detail": {
+            "keyword": "미지급",
+            "expected_gl": [
+              "부채"
+            ],
+            "mismatch_pct": 9.26
+          },
+          "elapsed_ms": 10.1
+        },
+        {
+          "check_id": "R3-03",
+          "name": "적요 \"급여\" -> GL 비용/부채",
+          "status": "PASS",
+          "expected": "불일치 <=5.0%: PASS, <=15.0%: WARNING",
+          "actual": "1,000/34,427 (2.9%)",
+          "detail": {
+            "keyword": "급여",
+            "expected_gl": [
+              "비용",
+              "부채"
+            ],
+            "mismatch_pct": 2.9
+          },
+          "elapsed_ms": 9.9
+        },
+        {
+          "check_id": "R3-04",
+          "name": "적요 \"감가상각\" -> GL 비용/자산",
+          "status": "WARNING",
+          "expected": "불일치 <=5.0%: PASS, <=15.0%: WARNING",
+          "actual": "2,167/38,525 (5.6%)",
+          "detail": {
+            "keyword": "감가상각",
+            "expected_gl": [
+              "비용",
+              "자산"
+            ],
+            "mismatch_pct": 5.62
+          },
+          "elapsed_ms": 8.9
+        },
+        {
+          "check_id": "R3-05",
+          "name": "적요 \"배당\" -> GL 자본/부채/비용/수익",
+          "status": "PASS",
+          "expected": "불일치 <=5.0%: PASS, <=15.0%: WARNING",
+          "actual": "65/13,586 (0.5%)",
+          "detail": {
+            "keyword": "배당",
+            "expected_gl": [
+              "자본",
+              "부채",
+              "비용",
+              "수익"
+            ],
+            "mismatch_pct": 0.48
+          },
+          "elapsed_ms": 9.8
+        },
+        {
+          "check_id": "R3-06",
+          "name": "header \"감가상각\" -> GL 비용 존재",
+          "status": "PASS",
+          "expected": "미존재 <=30.0%: PASS, <=60.0%: WARNING",
+          "actual": "0/611 (0.0%)",
+          "detail": {
+            "keyword": "감가상각",
+            "required_gl": [
+              "비용"
+            ],
+            "missing_pct": 0.0
+          },
+          "elapsed_ms": 217.3
+        },
+        {
+          "check_id": "R3-07",
+          "name": "header \"자산손상\" -> GL 비용 존재",
+          "status": "PASS",
+          "expected": "미존재 <=30.0%: PASS, <=60.0%: WARNING",
+          "actual": "0/663 (0.0%)",
+          "detail": {
+            "keyword": "자산손상",
+            "required_gl": [
+              "비용"
+            ],
+            "missing_pct": 0.0
+          },
+          "elapsed_ms": 192.4
+        },
+        {
+          "check_id": "R3-08",
+          "name": "header \"매출채권 회수\" -> GL 자산 존재",
+          "status": "SKIP",
+          "expected": "미존재 <=30.0%: PASS, <=60.0%: WARNING",
+          "actual": "0/0 (0.0%)",
+          "detail": {
+            "keyword": "매출채권 회수",
+            "required_gl": [
+              "자산"
+            ],
+            "missing_pct": 0
+          },
+          "elapsed_ms": 190.4
+        },
+        {
+          "check_id": "R3-09",
+          "name": "적요-GL 종합 불일치율 (21개 키워드)",
+          "status": "PASS",
+          "expected": "평균 <=10%: PASS, <=20%: WARNING",
+          "actual": "51,591/535,702 (9.6%)",
+          "detail": {
+            "total_keywords": 21,
+            "weighted_avg_mismatch_pct": 9.63
+          },
+          "elapsed_ms": 217.1
+        }
+      ]
+    },
+    {
+      "tier": 4,
+      "name": "교차 필드 정합성",
+      "verdict": "PASS",
+      "pass": 9,
+      "fail": 0,
+      "warning": 0,
+      "checks": [
+        {
+          "check_id": "R4-01",
+          "name": "O2C 대변 수익 GL 비율",
+          "status": "PASS",
+          "expected": ">=40%",
+          "actual": "102,482/135,283 (75.8%)",
+          "detail": null,
+          "elapsed_ms": 6.7
+        },
+        {
+          "check_id": "R4-02",
+          "name": "H2R 차변 비용 GL 비율",
+          "status": "PASS",
+          "expected": ">=80%",
+          "actual": "41,801/45,411 (92.1%)",
+          "detail": null,
+          "elapsed_ms": 3.5
+        },
+        {
+          "check_id": "R4-03",
+          "name": "P2P 차변에 수익/자본 GL",
+          "status": "PASS",
+          "expected": "<=3%",
+          "actual": "677/103,671 (0.7%)",
+          "detail": null,
+          "elapsed_ms": 5.2
+        },
+        {
+          "check_id": "R4-04",
+          "name": "automated_system + manual",
+          "status": "PASS",
+          "expected": "<=5%",
+          "actual": "9,803/319,135 (3.1%)",
+          "detail": null,
+          "elapsed_ms": 25.7
+        },
+        {
+          "check_id": "R4-05",
+          "name": "SoD 위반 + type 누락",
+          "status": "PASS",
+          "expected": "0건",
+          "actual": "0건",
+          "detail": null,
+          "elapsed_ms": 3.4
+        },
+        {
+          "check_id": "R4-06",
+          "name": "fraud 라벨 정합성",
+          "status": "PASS",
+          "expected": "누락 0건, 오염 0건",
+          "actual": "누락 0건, 오염 0건",
+          "detail": null,
+          "elapsed_ms": 5.9
+        },
+        {
+          "check_id": "R4-07",
+          "name": "IP-회사 분리",
+          "status": "PASS",
+          "expected": "교차 0건",
+          "actual": "교차 0건",
+          "detail": null,
+          "elapsed_ms": 67.0
+        },
+        {
+          "check_id": "R4-08",
+          "name": "비용GL + cost_center 누락",
+          "status": "PASS",
+          "expected": "<=10%",
+          "actual": "12,464/208,754 (6.0%)",
+          "detail": null,
+          "elapsed_ms": 8.4
+        },
+        {
+          "check_id": "R4-09",
+          "name": "한국식 사용자 ID 비율",
+          "status": "PASS",
+          "expected": "한국식 ID 존재 (한글 또는 로마자 한국 성씨)",
+          "actual": "한국식 84/193명 (44%)",
+          "detail": null,
+          "elapsed_ms": 17.9
+        }
+      ]
+    },
+    {
+      "tier": 5,
+      "name": "메타데이터 정합성",
+      "verdict": "PASS",
+      "pass": 7,
+      "fail": 0,
+      "warning": 0,
+      "checks": [
+        {
+          "check_id": "R5-01",
+          "name": "정상전표 local_amount 불일치",
+          "status": "PASS",
+          "expected": "정상전표 <=0.5%",
+          "actual": "정상 2,676/1,006,756 (0.3%), 정상 음수 0건",
+          "detail": {
+            "normal_mismatch_pct": 0.27,
+            "normal_negative": 0
+          },
+          "elapsed_ms": 32.6
+        },
+        {
+          "check_id": "R5-02",
+          "name": "reference 연도 불일치",
+          "status": "PASS",
+          "expected": "<=1%",
+          "actual": "39/311,607 (0.013%)",
+          "detail": null,
+          "elapsed_ms": 61.1
+        },
+        {
+          "check_id": "R5-03",
+          "name": "승인-전기 간격 극단값 (>30일)",
+          "status": "PASS",
+          "expected": "<=0.1%",
+          "actual": "26/105,101 (0.025%)",
+          "detail": null,
+          "elapsed_ms": 14.8
+        },
+        {
+          "check_id": "R5-04",
+          "name": "면세 거래 비율",
+          "status": "SKIP",
+          "expected": "Phase 3 Tax 모듈 scope",
+          "actual": "현재 미구현 (설계 의도)",
+          "detail": null,
+          "elapsed_ms": 0.0
+        },
+        {
+          "check_id": "R5-05",
+          "name": "GL 4/6자리 혼합 전표",
+          "status": "PASS",
+          "expected": "<=50%",
+          "actual": "100,151/319,056 (31.4%)",
+          "detail": null,
+          "elapsed_ms": 36.6
+        },
+        {
+          "check_id": "R5-06",
+          "name": "tax_code/tax_amount 채움률",
+          "status": "SKIP",
+          "expected": "Phase 3 Tax 모듈 scope",
+          "actual": "현재 미구현 (설계 의도)",
+          "detail": null,
+          "elapsed_ms": 0.0
+        },
+        {
+          "check_id": "R5-07",
+          "name": "IC 전표 영어header + NaN적요",
+          "status": "PASS",
+          "expected": "IC header 한글화",
+          "actual": "영어header 0/656 (0%), NaN적요 108행",
+          "detail": null,
+          "elapsed_ms": 12.7
+        },
+        {
+          "check_id": "R5-08",
+          "name": "lettrage(대사) 채움률",
+          "status": "SKIP",
+          "expected": "K-IFRS 비해당",
+          "actual": "French GAAP 전용 필드",
+          "detail": null,
+          "elapsed_ms": 0.0
+        },
+        {
+          "check_id": "R5-09",
+          "name": "정상전표 GL 자기상쇄",
+          "status": "PASS",
+          "expected": "<=0.5%: PASS, <=2%: WARNING",
+          "actual": "817/268,638 (0.30%)",
+          "detail": null,
+          "elapsed_ms": 88.3
+        },
+        {
+          "check_id": "R5-10",
+          "name": "정상전표 document_type null",
+          "status": "PASS",
+          "expected": "0건",
+          "actual": "0건",
+          "detail": null,
+          "elapsed_ms": 6.4
+        }
+      ]
+    }
+  ]
+}

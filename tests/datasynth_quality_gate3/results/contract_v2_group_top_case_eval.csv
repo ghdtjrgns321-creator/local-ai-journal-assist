@@ -1,0 +1,61 @@
+theme_id,theme_label,rank,case_id,band,score,docs,rows,rule_count,top_rules,risk_narrative
+timing_anomaly,timing anomaly,1,case_timing_anomaly_02891,high,1.0,1,1,4,"L3-02,L3-01,L3-04,L4-04","기말 집중이 관찰되었습니다. 결산 시점의 기간 귀속, 결산 조정 승인, 사후 보정 근거를 확인해야 합니다."
+timing_anomaly,timing anomaly,2,case_timing_anomaly_02723,high,0.9995789391810526,7,11,7,"L1-01,L1-08,L3-02,L3-04,L4-03","기말 집중이 관찰되었습니다. 결산 시점의 기간 귀속, 결산 조정 승인, 사후 보정 근거를 확인해야 합니다."
+timing_anomaly,timing anomaly,3,case_timing_anomaly_02638,high,0.9437627608842311,11,16,9,"L1-01,L1-08,L3-02,L2-04,L3-04","기말 집중 + 주말 전기이 관찰되었습니다. 결산 시점의 기간 귀속, 결산 조정 승인, 사후 보정 근거를 확인해야 합니다."
+timing_anomaly,timing anomaly,4,case_timing_anomaly_02802,high,0.8989720965521562,3,4,8,"L1-01,L4-01,L3-02,L2-05,L3-04","기말 집중이 관찰되었습니다. 결산 시점의 기간 귀속, 결산 조정 승인, 사후 보정 근거를 확인해야 합니다."
+timing_anomaly,timing anomaly,5,case_timing_anomaly_02896,high,0.8948509508014656,3,5,6,"L2-04,L3-02,L3-04,L4-03,L1-02","기말 집중이 관찰되었습니다. 결산 시점의 기간 귀속, 결산 조정 승인, 사후 보정 근거를 확인해야 합니다."
+timing_anomaly,timing anomaly,6,case_timing_anomaly_02927,high,0.8827468566659806,7,12,8,"L1-01,L1-07,L3-02,L3-04,L1-09","기말 집중 + 심야 전기이 관찰되었습니다. 결산 시점의 기간 귀속, 결산 조정 승인, 사후 보정 근거를 확인해야 합니다."
+timing_anomaly,timing anomaly,7,case_timing_anomaly_03921,high,0.8777732109337408,4,6,6,"L1-01,L3-02,L3-04,L4-03,L1-02","기말 집중이 관찰되었습니다. 결산 시점의 기간 귀속, 결산 조정 승인, 사후 보정 근거를 확인해야 합니다."
+timing_anomaly,timing anomaly,8,case_timing_anomaly_03039,high,0.8366849942486961,4,6,6,"L3-02,L3-04,L4-03,L4-04,L4-05","기말 집중 + 심야 전기 + 비정상 시간대 집중이 관찰되었습니다. 결산 시점의 기간 귀속, 결산 조정 승인, 사후 보정 근거를 확인해야 합니다."
+timing_anomaly,timing anomaly,9,case_timing_anomaly_05122,high,0.8285838875760675,2,4,5,"L1-08,L3-02,L3-04,L4-04,L3-03","기말 집중이 관찰되었습니다. 결산 시점의 기간 귀속, 결산 조정 승인, 사후 보정 근거를 확인해야 합니다."
+timing_anomaly,timing anomaly,10,case_timing_anomaly_05080,high,0.826411805006569,4,7,5,"L3-02,L3-04,L4-03,L3-12,L4-06","기말 집중이 관찰되었습니다. 결산 시점의 기간 귀속, 결산 조정 승인, 사후 보정 근거를 확인해야 합니다."
+control_failure,control failure,1,case_control_failure_01895,high,1.0,1,4,4,"L3-02,L3-01,L3-04,L4-04",수기 입력이 함께 발생했습니다. 승인·권한 통제 적용과 예외 승인 근거를 우선 확인해야 합니다.
+control_failure,control failure,2,case_control_failure_00712,high,0.9456530837866973,14,413,8,"L3-02,L2-05,L3-04,L4-03,L4-04",수기 입력이 함께 발생했습니다. 승인·권한 통제 적용과 예외 승인 근거를 우선 확인해야 합니다.
+control_failure,control failure,3,case_control_failure_00833,high,0.9284281643939548,3,136,5,"L3-02,L2-05,L3-04,L4-03,L4-04",수기 입력이 함께 발생했습니다. 승인·권한 통제 적용과 예외 승인 근거를 우선 확인해야 합니다.
+control_failure,control failure,4,case_control_failure_01689,high,0.886207226559468,4,13,7,"L1-08,L3-02,L3-04,L4-03,L4-04",수기 입력이 함께 발생했습니다. 승인·권한 통제 적용과 예외 승인 근거를 우선 확인해야 합니다.
+control_failure,control failure,5,case_control_failure_00614,high,0.86404260325029,14,504,11,"L1-01,L1-07,L3-02,L2-04,L4-03",승인 생략 + 승인일 누락 + 수기 입력이 함께 발생했습니다. 승인·권한 통제 적용과 예외 승인 근거를 우선 확인해야 합니다.
+control_failure,control failure,6,case_control_failure_00804,high,0.8552504035724384,5,14,7,"L1-07,L1-08,L3-02,L2-04,L3-04",승인 생략 + 승인일 누락 + 수기 입력이 함께 발생했습니다. 승인·권한 통제 적용과 예외 승인 근거를 우선 확인해야 합니다.
+control_failure,control failure,7,case_control_failure_00516,high,0.8413738477771534,4,13,8,"L1-01,L1-05,L3-02,L2-05,L3-04",자기승인 + 수기 입력이 함께 발생했습니다. 승인·권한 통제 적용과 예외 승인 근거를 우선 확인해야 합니다.
+control_failure,control failure,8,case_control_failure_01112,high,0.8324823608958603,4,111,6,"L3-02,L3-04,L4-03,L4-04,L4-05",수기 입력이 함께 발생했습니다. 승인·권한 통제 적용과 예외 승인 근거를 우선 확인해야 합니다.
+control_failure,control failure,9,case_control_failure_01869,high,0.8313663705995927,7,79,7,"L1-01,L3-02,L2-05,L3-04,L4-03",수기 입력이 함께 발생했습니다. 승인·권한 통제 적용과 예외 승인 근거를 우선 확인해야 합니다.
+control_failure,control failure,10,case_control_failure_01368,high,0.8312484709431414,6,834,7,"L3-02,L4-03,L3-04,L4-04,L4-05",수기 입력이 함께 발생했습니다. 승인·권한 통제 적용과 예외 승인 근거를 우선 확인해야 합니다.
+data_integrity_failure,data integrity failure,1,case_data_integrity_failure_00004,high,0.9828578053161351,55,133,8,"L1-01,L2-05,L3-02,L3-04,L4-03",수기 입력이 함께 발생했습니다. 승인·권한 통제 적용과 예외 승인 근거를 우선 확인해야 합니다.
+data_integrity_failure,data integrity failure,2,case_data_integrity_failure_00005,high,0.8803449343064305,13,34,10,"L1-01,L3-02,L2-05,L3-04,L1-02",수기 입력이 함께 발생했습니다. 승인·권한 통제 적용과 예외 승인 근거를 우선 확인해야 합니다.
+data_integrity_failure,data integrity failure,3,case_data_integrity_failure_00019,high,0.8000978536382126,29,57,9,"L1-01,L3-02,L2-05,L3-04,L1-02",수기 입력이 함께 발생했습니다. 승인·권한 통제 적용과 예외 승인 근거를 우선 확인해야 합니다.
+data_integrity_failure,data integrity failure,4,case_data_integrity_failure_00017,high,0.7756904645781616,27,57,8,"L1-01,L3-02,L2-05,L3-04,L1-02",수기 입력이 함께 발생했습니다. 승인·권한 통제 적용과 예외 승인 근거를 우선 확인해야 합니다.
+data_integrity_failure,data integrity failure,5,case_data_integrity_failure_00014,high,0.760157707316941,24,68,7,"L1-01,L2-05,L3-02,L3-04,L1-02",수기 입력이 함께 발생했습니다. 승인·권한 통제 적용과 예외 승인 근거를 우선 확인해야 합니다.
+data_integrity_failure,data integrity failure,6,case_data_integrity_failure_00008,high,0.7135441275598465,5,10,8,"L1-01,L3-02,L2-05,L3-04,L4-03",수기 입력이 함께 발생했습니다. 승인·권한 통제 적용과 예외 승인 근거를 우선 확인해야 합니다.
+data_integrity_failure,data integrity failure,7,case_data_integrity_failure_00003,high,0.7104999900037272,30,64,6,"L1-01,L3-02,L2-05,L3-04,L1-02",수기 입력이 함께 발생했습니다. 승인·권한 통제 적용과 예외 승인 근거를 우선 확인해야 합니다.
+data_integrity_failure,data integrity failure,8,case_data_integrity_failure_00006,high,0.6859729221876696,21,46,9,"L1-01,L3-02,L2-05,L3-04,L1-02",수기 입력이 함께 발생했습니다. 승인·권한 통제 적용과 예외 승인 근거를 우선 확인해야 합니다.
+data_integrity_failure,data integrity failure,9,case_data_integrity_failure_00024,high,0.6740110675433165,4,14,4,"L1-01,L3-02,L2-05,L3-04",수기 입력이 함께 발생했습니다. 승인·권한 통제 적용과 예외 승인 근거를 우선 확인해야 합니다.
+data_integrity_failure,data integrity failure,10,case_data_integrity_failure_00015,high,0.6567546836649831,7,21,7,"L1-01,L3-02,L2-05,L3-04,L1-02",수기 입력이 함께 발생했습니다. 승인·권한 통제 적용과 예외 승인 근거를 우선 확인해야 합니다.
+logic_mismatch,logic mismatch,1,case_logic_mismatch_00065,high,1.0,2,3,6,"L1-01,L3-02,L2-05,L3-01,L3-04",계정 분류 불일치 + 희소 차대 계정쌍이 관찰되었습니다. 거래의 경제적 실질과 계정 사용이 맞는지 재검토해야 합니다.
+logic_mismatch,logic mismatch,2,case_logic_mismatch_07402,high,0.8357035222483784,2,16,4,"L3-02,L2-05,L3-04,L4-04",희소 차대 계정쌍이 관찰되었습니다. 거래의 경제적 실질과 계정 사용이 맞는지 재검토해야 합니다.
+logic_mismatch,logic mismatch,3,case_logic_mismatch_00027,high,0.8315914961370308,7,235,7,"L3-02,L2-04,L3-04,L1-03,L4-03",무효 계정 + 비용 자산화 의심 + 희소 차대 계정쌍이 관찰되었습니다. 거래의 경제적 실질과 계정 사용이 맞는지 재검토해야 합니다.
+logic_mismatch,logic mismatch,4,case_logic_mismatch_07403,high,0.8175028170143216,2,22,5,"L3-02,L2-05,L3-04,L4-04,L3-03",희소 차대 계정쌍이 관찰되었습니다. 거래의 경제적 실질과 계정 사용이 맞는지 재검토해야 합니다.
+logic_mismatch,logic mismatch,5,case_logic_mismatch_07176,high,0.7682257843721425,2,107,5,"L3-02,L2-05,L4-04,L4-05,L3-06",희소 차대 계정쌍이 관찰되었습니다. 거래의 경제적 실질과 계정 사용이 맞는지 재검토해야 합니다.
+logic_mismatch,logic mismatch,6,case_logic_mismatch_07175,medium,0.7191009687114778,2,22,5,"L3-02,L2-05,L4-04,L4-05,L3-06",희소 차대 계정쌍이 관찰되었습니다. 거래의 경제적 실질과 계정 사용이 맞는지 재검토해야 합니다.
+logic_mismatch,logic mismatch,7,case_logic_mismatch_07174,medium,0.7172809876802021,2,16,5,"L3-02,L2-05,L4-04,L4-05,L3-06",희소 차대 계정쌍이 관찰되었습니다. 거래의 경제적 실질과 계정 사용이 맞는지 재검토해야 합니다.
+logic_mismatch,logic mismatch,8,case_logic_mismatch_07177,medium,0.7164392520202537,3,16,8,"L3-02,L2-05,L3-09,L4-04,L3-10",가수금 장기체류 + 고위험 계정 사용 + 희소 차대 계정쌍이 관찰되었습니다. 거래의 경제적 실질과 계정 사용이 맞는지 재검토해야 합니다.
+logic_mismatch,logic mismatch,9,case_logic_mismatch_07154,medium,0.7151147515475598,5,79,4,"L3-02,L3-04,L4-04,L3-05",희소 차대 계정쌍이 관찰되었습니다. 거래의 경제적 실질과 계정 사용이 맞는지 재검토해야 합니다.
+logic_mismatch,logic mismatch,10,case_logic_mismatch_07179,medium,0.7088779815951349,2,18,5,"L3-02,L2-05,L4-04,L4-05,L3-06",희소 차대 계정쌍이 관찰되었습니다. 거래의 경제적 실질과 계정 사용이 맞는지 재검토해야 합니다.
+statistical_outlier,statistical outlier,1,case_statistical_outlier_06542,high,0.8545868954058929,10,14,10,"L1-05,L3-02,L3-04,L4-03,L4-04",이상 고액 + 배치 전표 이상가 관찰되었습니다. 일반 분포에서 벗어난 예외 거래인지 확인이 필요합니다.
+statistical_outlier,statistical outlier,2,case_statistical_outlier_06547,high,0.8445018166148156,14,19,9,"L1-01,L1-04,L3-02,L3-04,L4-03",이상 고액가 관찰되었습니다. 일반 분포에서 벗어난 예외 거래인지 확인이 필요합니다.
+statistical_outlier,statistical outlier,3,case_statistical_outlier_06381,high,0.8207925107043528,9,14,5,"L1-04,L3-02,L3-04,L4-03,L3-05",이상 고액가 관찰되었습니다. 일반 분포에서 벗어난 예외 거래인지 확인이 필요합니다.
+statistical_outlier,statistical outlier,4,case_statistical_outlier_06438,high,0.7574006894253804,5,7,6,"L1-05,L3-02,L3-04,L4-03,L3-05",이상 고액 + 배치 전표 이상가 관찰되었습니다. 일반 분포에서 벗어난 예외 거래인지 확인이 필요합니다.
+statistical_outlier,statistical outlier,5,case_statistical_outlier_00068,medium,0.7273797249952056,4,6,7,"L1-04,L4-01,L3-02,L3-04,L4-03",매출 이상 변동 + 이상 고액 + 배치 전표 이상가 관찰되었습니다. 일반 분포에서 벗어난 예외 거래인지 확인이 필요합니다.
+statistical_outlier,statistical outlier,6,case_statistical_outlier_00175,medium,0.694197152465917,5,9,9,"L1-04,L4-01,L3-02,L3-04,L4-03",매출 이상 변동 + 이상 고액 + 배치 전표 이상가 관찰되었습니다. 일반 분포에서 벗어난 예외 거래인지 확인이 필요합니다.
+statistical_outlier,statistical outlier,7,case_statistical_outlier_06461,medium,0.6920132703319483,9,15,5,"L1-05,L3-02,L3-04,L4-03,L3-05",이상 고액가 관찰되었습니다. 일반 분포에서 벗어난 예외 거래인지 확인이 필요합니다.
+statistical_outlier,statistical outlier,8,case_statistical_outlier_06515,medium,0.6850240054956441,6,9,5,"L3-02,L3-04,L4-03,L1-02,L4-06",이상 고액 + 배치 전표 이상가 관찰되었습니다. 일반 분포에서 벗어난 예외 거래인지 확인이 필요합니다.
+statistical_outlier,statistical outlier,9,case_statistical_outlier_06390,medium,0.6794495518352079,5,10,5,"L1-05,L3-02,L3-04,L4-03,L4-05",이상 고액가 관찰되었습니다. 일반 분포에서 벗어난 예외 거래인지 확인이 필요합니다.
+statistical_outlier,statistical outlier,10,case_statistical_outlier_06551,medium,0.671226342403869,7,10,5,"L3-02,L3-04,L4-03,L3-05,L4-06",이상 고액 + 배치 전표 이상가 관찰되었습니다. 일반 분포에서 벗어난 예외 거래인지 확인이 필요합니다.
+duplicate_or_outflow,duplicate or outflow,1,case_duplicate_or_outflow_00304,high,0.8855319102985415,15,33,8,"L1-01,L2-05,L3-02,L2-03,L3-04",근접일자 중복 전표 + 역분개 연계가 관찰되었습니다. 동일 지급·중복 처리 여부와 승인·증빙 대사를 확인해야 합니다.
+duplicate_or_outflow,duplicate or outflow,2,case_duplicate_or_outflow_00342,high,0.8062570593043547,3,122,6,"L1-01,L3-02,L2-05,L2-03,L3-04",근접일자 중복 전표 + 역분개 연계가 관찰되었습니다. 동일 지급·중복 처리 여부와 승인·증빙 대사를 확인해야 합니다.
+duplicate_or_outflow,duplicate or outflow,3,case_duplicate_or_outflow_07516,high,0.8062512925555285,6,20,6,"L1-01,L3-02,L2-05,L3-04,L4-04",역분개 연계가 관찰되었습니다. 동일 지급·중복 처리 여부와 승인·증빙 대사를 확인해야 합니다.
+duplicate_or_outflow,duplicate or outflow,4,case_duplicate_or_outflow_07535,high,0.801215348558959,4,107,4,"L3-02,L2-05,L3-04,L4-04",역분개 연계가 관찰되었습니다. 동일 지급·중복 처리 여부와 승인·증빙 대사를 확인해야 합니다.
+duplicate_or_outflow,duplicate or outflow,5,case_duplicate_or_outflow_07539,medium,0.7309488123791743,5,21,7,"L1-01,L3-02,L2-05,L3-04,L4-05",역분개 연계가 관찰되었습니다. 동일 지급·중복 처리 여부와 승인·증빙 대사를 확인해야 합니다.
+duplicate_or_outflow,duplicate or outflow,6,case_duplicate_or_outflow_00444,medium,0.7282055646409713,12,31,6,"L1-01,L3-02,L2-05,L2-03,L3-04",근접일자 중복 전표 + 역분개 연계가 관찰되었습니다. 동일 지급·중복 처리 여부와 승인·증빙 대사를 확인해야 합니다.
+duplicate_or_outflow,duplicate or outflow,7,case_duplicate_or_outflow_00333,medium,0.7070055495459295,6,29,4,"L3-02,L2-03,L3-04,L4-04",근접일자 중복 전표가 관찰되었습니다. 동일 지급·중복 처리 여부와 승인·증빙 대사를 확인해야 합니다.
+duplicate_or_outflow,duplicate or outflow,8,case_duplicate_or_outflow_07526,medium,0.6954743128062885,2,7,4,"L1-01,L3-02,L2-05,L3-04",역분개 연계가 관찰되었습니다. 동일 지급·중복 처리 여부와 승인·증빙 대사를 확인해야 합니다.
+duplicate_or_outflow,duplicate or outflow,9,case_duplicate_or_outflow_00398,medium,0.6896219299676949,5,8,6,"L1-01,L3-02,L2-05,L2-03,L3-04",근접일자 중복 전표 + 역분개 연계가 관찰되었습니다. 동일 지급·중복 처리 여부와 승인·증빙 대사를 확인해야 합니다.
+duplicate_or_outflow,duplicate or outflow,10,case_duplicate_or_outflow_07525,medium,0.684946036417905,3,8,5,"L1-01,L3-02,L2-05,L3-04,L3-05",역분개 연계가 관찰되었습니다. 동일 지급·중복 처리 여부와 승인·증빙 대사를 확인해야 합니다.

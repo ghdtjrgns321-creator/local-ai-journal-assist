@@ -1,0 +1,517 @@
+# DataSynth NORMAL 생성 원칙
+
+이 문서는 P3-1 NORMAL baseline 재구축에서 합의한 생성 원칙과 v20~v30 수정 내역을 정리한다.
+목표는 fraud/anomaly가 없는 정상 원장을 먼저 회계적으로 자연스럽게 만들고, 이후 P3-2/P3-3 위반
+데이터를 이 정상 모집단 위에 얹는 것이다.
+
+## 비협상 원칙
+
+- 정상 데이터에는 `is_fraud`, `is_anomaly`, mutation/provenance 정답 컬럼 값이 들어가면 안 된다.
+- 검증 점수를 맞추기 위한 Python 후처리는 금지한다. 생성 원인은 Rust `tools/datasynth/`에서 고친다.
+- DataSynth 수정 후에는 산출물 종류에 맞는 검증 게이트를 자동 실행 대상으로 삼는다. NORMAL은
+  [normal-data-realism-test-catalog.md](./normal-data-realism-test-catalog.md), PHASE1 overlay는
+  [phase1-abnormal-overlay-test-catalog.md](./phase1-abnormal-overlay-test-catalog.md) 및
+  [phase1-rule-recall-overlay-verification.md](./phase1-rule-recall-overlay-verification.md), PHASE2 fraud
+  overlay는 [phase2-overlay-verification-catalog.md](./phase2-overlay-verification-catalog.md)를 기준으로 한다.
+  PHASE2 shortcut 제거 작업은 `tools/scripts/phase2_shortcut_gate.py DATASET_PATH [REFERENCE]` exit 0과,
+  seed 회전 산출물이 있으면 `tools/scripts/verify_phase2_seed_diversity.py` exit 0까지 포함한다.
+- 새 버그가 발견되거나 같은 유형으로 재발 가능성이 있으면, 해당 수정은 완료 전에 관련 검증
+  카탈로그에 regression gate로 승격한다. 콘솔 검증이나 `docs/debugging.md` 기록만으로 완료 처리하지 않는다.
+- 정상 전표는 document 단위 차변 합계와 대변 합계가 맞아야 한다.
+- 계정 subtype, business_process, counterparty_type, document_type, line_text_family는 독립 샘플링하지
+  않고 거래 archetype 단위로 함께 뽑는다.
+- 자연 noise는 존재해야 하지만 계정/프로세스/정답 라벨의 shortcut이 되면 안 된다.
+- 세무 처리는 랜덤이 아니라 거래 archetype과 증빙 성격에 따라 과세/영세/면세/비과세가 결정되어야 한다.
+- 이 프로젝트의 NORMAL baseline은 단일법인 원장이다. journal 안에는 하나의 회사코드(C001)만 존재해야
+  한다. 단, 단일법인이 관계사 거래를 하지 않는다는 뜻은 아니므로 `1150/2050/4500/2700` 계정과
+  `trading_partner=C002/C003` 같은 저빈도 관계사 거래 흔적은 정상 배경으로 존재해야 한다. 별도 회사
+  장부(C002/C003 journal row)와 정상 company-node 순환은 넣지 않는다.
+- 정상 반복거래, batch 전표, 연말마감 전표처럼 단일법인 내부에서 이후 룰 검증의 정상 비교군이 될 구조를
+  소량 샘플이 아니라 충분한 모집단으로 생성한다.
+- 재무제표 정합은 전표 단위 균형과 별개로 검증한다. TB, roll-forward, closing, subledger는 hollow
+  PASS가 아니라 산출물 기반 숫자로 판정한다.
+- 손익계산서 현실성은 별도 hard gate다. 차대변, TB, BS equation이 맞아도 매출원가·판관비·이자비용·세금이
+  매출과 무관하게 생성되면 NORMAL로 인정하지 않는다. 회사×연도별 revenue, COGS, SGA, interest, tax 비율과
+  exported financial_statements.json의 수익 부호·GL rollup 매핑을 전수 검증한다.
+- 계정코드 prefix와 계정성격은 독립 샘플링하지 않는다. 4번대 수익, 5번대 매출원가, 6번대 판관비,
+  7번대 기타수익, 8번대 기타비용/손실, 1~3번대 BS 계정 규약을 지키며 CoA master와 journal이 같은
+  의미를 가져야 한다.
+
+## v20~v44에서 폐기된 다법인 축
+
+v20~v44에서는 `is_intercompany`와 정상 IC matched pair, 3법인 회사 노드 기반 3-hop cycle 배경을 NORMAL에
+넣었다. 이 방향은 단일법인 입사용 제품 범위와 맞지 않아 v45부터 폐기한다. NORMAL에서는 C001만 남기고
+`is_intercompany`, IC/INTERCOMPANY/RELATED surface, company-code trading_partner, company-node cycle을
+0으로 검증한다.
+
+## 단일법인 NORMAL에서 유지하는 축
+
+- 정상 batch 전표는 급여 지급, vendor payment, 감가상각 run으로 매월 생성한다.
+- O02 synthetic marker scan은 비구조 단일값 marker를 FAIL로 잡고, K01~K07은 단일법인 범위 위반을 전담한다.
+
+## v21에서 추가한 축
+
+- `opening_balances.json`과 `period_close/trial_balances.json` 산출을 켰다.
+- TB 검증을 위해 `PeriodTrialBalance.company_code`를 출력하되, NORMAL에서는 값이 C001 하나여야 한다.
+- TB는 계정별 차변/대변 총액이 아니라 순잔액을 정상 잔액 방향에 표시한다.
+- tax backfill과 최종 semantic/balance hard gate 이후 재무제표/TB를 다시 산출해 최종 journal과 TB가
+  같은 원장을 보도록 했다.
+- 연말 명시 closing entry를 생성한다. 마감 전표는 `batch_type=annual_closing`, `reference=CLOSE-*`로
+  식별하며, 일반 R2R 전표와 구분한다.
+- annual closing은 모든 P&L 계정을 닫는 정상 결산 전표이므로 일반 line role allowlist와 revenue
+  customer-counterparty rule의 좁은 예외로 처리한다.
+- 계정 분류표에서 `4500`은 IC receivable, `5300`은 비용 계정으로 분류되도록 보정했다.
+
+## 현재 v21 검증 상태
+
+> 2026-06-05 v25에서 M01~M07 hard gate는 재검증 완료했다. 아래 v21 상태는 v22~v25 수정 전 진단 기록이다.
+
+산출물:
+
+- Dataset: `data/journal/primary/datasynth_semantic_v1_normal_20260605_v21`
+- Report JSON: `artifacts/datasynth_normal_semantic_v1_realism_gate_audit_20260605_v21.json`
+- Report MD: `artifacts/datasynth_normal_semantic_v1_realism_gate_audit_20260605_v21.md`
+
+현재 verifier 요약은 `PASS 18`, `FAIL 5`, `MONITOR 1`, `BLOCKED 2`다.
+
+닫힌 항목:
+
+- normal-only contamination: PASS
+- tax treatment: PASS
+- natural noise rates: PASS
+- amount/grid dominance: PASS
+- O02 synthetic marker scan: PASS
+- K01~K07은 v45부터 단일법인 scope gate로 재정의됐다.
+- J08 batch explainability: PASS
+- M03 roll-forward arithmetic: PASS
+- M04 period continuity: PASS
+
+남은 항목:
+
+- A01: annual closing 8개 전표가 원 단위 정수 기준 2~7원 불균형이다.
+- M01: TB와 journal-derived GL 합계 차이가 최대 22원 남아 있다.
+- M02: 기말 회계등식이 108개 period 전부 FAIL이다.
+- M05: annual closing은 생성되지만 9개 company-year 중 8개가 P&L to retained earnings 검증에 실패한다.
+- M07: AR/AP/Inventory/FA subledger reconciliation 5건 전부 Unreconciled다.
+- M06: negative normal balance count는 MONITOR다. 과도한 현금/채권/부채 방향 전환이 실제 정상분포인지
+  별도 분포 검토가 필요하다.
+
+## 2차 작업
+
+1. annual closing 정밀화
+   - closing entry 생성 시 모든 금액을 KRW 원 단위로 정규화하거나, 마지막 retained earnings 라인이
+     residual을 흡수하도록 한다.
+   - verifier는 `batch_type=annual_closing`과 `reference=CLOSE-*` 기준으로만 closing을 식별한다.
+   - 수락 기준: A01 imbalance 0, M05 closing_bad 0.
+
+2. M01/M02 재무제표 equation 정합
+   - TB 산출과 verifier가 같은 회계기간 기준을 사용하도록 고정한다.
+   - BS 계정은 opening + fiscal period 누적, P&L 계정은 월별/연말 closing 이후 상태를 명확히 분리한다.
+   - 수락 기준: M01 max diff <= 1원, M02 bad periods 0.
+
+3. M07 subledger architecture
+   - 현재 subledger는 일부 document flow만 만들고, GL은 31만 정상 JE 전체를 포함한다. 그래서 AR/AP/FA/Inventory
+     control balance와 subledger balance가 구조적으로 맞을 수 없다.
+   - 2차에서는 control account에 닿는 모든 정상 JE가 subledger event를 만들거나, subledger-backed
+     거래와 non-subledger GL을 계정/프로세스에서 분리해야 한다.
+   - 수락 기준: AR/AP/Inventory/FA hard gate reconciled, max diff <= 1원.
+
+4. B17/P01
+   - explicit archetype_id를 생성기에 추가하거나 verifier의 inferred mode를 구현한다.
+   - 고정 seed 샘플 전문가/LLM diagnostic review를 별도 산출물로 남긴다.
+
+## v22~v25에서 닫은 재무제표 정합 축
+
+산출물:
+
+- Dataset: `data/journal/primary/datasynth_semantic_v1_normal_20260605_v25`
+- Config: `artifacts/datasynth_semantic_v1_normal_20260605_v25_config.json`
+- Report JSON: `artifacts/datasynth_normal_semantic_v1_realism_gate_audit_20260605_v25.json`
+- Report MD: `artifacts/datasynth_normal_semantic_v1_realism_gate_audit_20260605_v25.md`
+
+최종 verifier 요약은 `PASS 24`, `BLOCKED 2`다. `B17`은 explicit archetype_id 부재, `P01`은 전문가/LLM
+고정 seed 샘플 review 미구현 때문에 diagnostic BLOCKED로 남긴다. hard realism gate 실패는 없다.
+
+적용 원칙:
+
+- KRW 금액은 TB 집계, roll-forward, closing, verifier 비교에서 원 단위 정수로 누적한다. float 잔차를
+  회계 오류로 만들지 않는다.
+- `AccumulatedDepreciation` subtype은 asset 계정이어도 정상 대변잔액 계정으로 생성한다.
+- M02 월말 회계등식은 `assets = liabilities + equity + current_ytd_income`으로 본다. 월별 soft-close에서는
+  손익계정이 아직 이익잉여금으로 닫히지 않았기 때문이다. 연말 closing 후에는 M05가 P&L to retained
+  earnings를 별도 확인한다.
+- annual closing entry는 손익계정 라인별 원 단위 누계로 만들고, 마지막 retained earnings 라인이 실제
+  잔여 차이를 정확히 받는다. 별도 인위적 plug 전표가 아니라 정상 결산 전표다.
+- NORMAL baseline의 M07 보조원장은 최종 GL control-account 라인의 거래처/auxiliary 상세에서 파생한다.
+  정상 기준에서는 subledger=GL이 맞으며, 보조원장 불일치는 P3-3 오류/부정 주입 대상이다.
+- 월말 정상잔액 재분류 전표(`batch_type=monthly_balance_reclass`)를 R2R 시스템 전표로 생성한다. 은행
+  overdraft, 차변성 미지급, 대변성 자산 잔액을 결산 때 단기차입/선급·미수성 계정으로 정리하는 정상
+  실무를 반영한다.
+- M06은 contra 계정, 이익잉여금 누적결손, 손익계정 기간 중 역방향 누계를 diagnostic으로 분리한다.
+  BS hard 반대잔액은 정상 실무상 소수 허용하되, period-account 기준 2% 초과 또는 특정 계정 과집중이면
+  MONITOR/FAIL이다.
+
+v25 주요 잔차:
+
+- A01: imbalance 0, max 0원.
+- M01: checked 39,636 lines, mismatches 0, max diff 0원.
+- M02: 108 periods, bad 0, max equation diff 1원.
+- M03/M04: 38,978 period-account, roll-forward/continuity bad 0.
+- M05: 9 company-year, closing_bad 0.
+- M06: hard negative balance 434 / 38,978 = 1.11%, threshold 2% 이내. retained deficit 99,
+  income-statement reverse balance 7,926, contra 890은 diagnostic으로 분리.
+- M07: 5 reconciliations, bad 0, max diff 0원.
+
+## v26~v28에서 닫은 전표 메타/흐름 현실성 축
+
+산출물:
+
+- Dataset: `data/journal/primary/datasynth_semantic_v1_normal_20260606_v28`
+- Config: `artifacts/datasynth_semantic_v1_normal_20260606_v28_config.json`
+- Report JSON: `artifacts/datasynth_normal_semantic_v1_realism_gate_audit_20260606_v28.json`
+- Report MD: `artifacts/datasynth_normal_semantic_v1_realism_gate_audit_20260606_v28.md`
+
+적용 원칙:
+
+- semantic 필드는 CoA fallback에 기대지 않고 IC/closing/reclass 같은 시스템 전표 라인에도 원천에서 채운다.
+- `document_number`는 company/year/document_type별 증가 번호 체계로 고유하게 생성한다.
+- `reference` 공유는 같은 role 전표의 우연 재사용이 아니라 invoice→payment, accrual→reversal 같은 정상 흐름
+  링크에만 허용한다.
+- `R2R_REVERSAL`은 독립 랜덤 샘플링하지 않는다. 정상 역분개는 반드시 원전표가 있는 월말 발생액→익월 취소
+  pair로 생성하고, `original_document_id`, `reversal_document_id`, `reversal_type`,
+  `reversal_reason_code`를 출력한다.
+- 역분개 pair는 GL 계정별로 합산했을 때 net 0이어야 하며, 정상 baseline에서는 unlinked reversal 문서를
+  허용하지 않는다. 원전표 없는 역분개나 보조 참조 불일치는 P3-3 오류/부정 주입 대상이다.
+
+v28 주요 잔차:
+
+- Realism verifier: `PASS 28`, `INFO 3`, FAIL/BLOCKED 0.
+- J04/J07: reversal scenario docs 99, linked 99, checked pairs 99, unlinked 0, missing original 0,
+  bad time order 0, bad pair net 0, max pair net 0원.
+- B17: raw tuple missing rows 0, `R2R_REVERSAL` 99 docs/198 rows가 `ACCRUED_LIABILITIES`와
+  `OPEX_PROFESSIONAL_FEES`의 `REVERSAL` family로 채워짐.
+- L2-05 read-only: structural reference FlowUnit 99, rolling zero-out FlowUnit 1. 구조 경로는 복구됐지만
+  현 detector 의미상 structural reference rows는 `high_confidence_reversal`로 분류된다. 정상 데이터 자체는
+  fraud/anomaly가 아니므로 이 label을 확정 위반으로 표현하지 않는 책임은 Phase1 presentation/queue 의미론에
+  남아 있다.
+
+## v29에서 닫은 direct SoD 정상 오염
+
+산출물:
+
+- Dataset: `data/journal/primary/datasynth_semantic_v1_normal_20260607_v29`
+- Config: `artifacts/datasynth_semantic_v1_normal_20260607_v29_config.json`
+- Report JSON: `artifacts/datasynth_normal_semantic_v1_realism_gate_audit_20260607_v29.json`
+- Report MD: `artifacts/datasynth_normal_semantic_v1_realism_gate_audit_20260607_v29.md`
+
+적용 원칙:
+
+- NORMAL baseline에는 `sod_violation=true`와 `sod_conflict_type` direct marker를 생성하지 않는다.
+  SoD 위반은 통제 실패 finding이므로 P3-2/P3-3 abnormal/truth 시나리오에서만 명시 주입한다.
+- `anomalous_assignment_rate=0.0`이면 anomalous process user 최소 floor를 적용하지 않는다. 정상 profile에서
+  conflict 전용 사용자를 보장하기 위한 floor는 fitting이며, L1-06 confirmed queue를 오염시킨다.
+- 정상의 현실적 role breadth는 `compatible_extension_rate` 기반의 허용 가능한 겸직으로만 표현한다.
+  direct conflict 마커 없이 남는 broad work-scope 신호는 L3-12 같은 review context로 다뤄야 하며 L1-06
+  confirmed finding으로 승격하지 않는다.
+- 기본 DataSynth internal control 설정도 direct SoD와 anomalous assignment는 0을 기본값으로 둔다. 필요한
+  위반은 abnormal generation config/truth layer가 명시적으로 켠다.
+
+v29 주요 잔차:
+
+- Realism verifier: `PASS 29`, `INFO 3`, FAIL/BLOCKED 0.
+- E05_SOD_DIRECT_MARKER: 320,312 documents checked, `sod_violation=true` 0 docs,
+  `sod_conflict_type` nonblank 0 docs.
+- L1-06 read-only 재측정: v28 `6,327` docs / `18,533` rows → v29 `0` docs / `0` rows.
+- A01, M01~M07, K01~K07, B15/B16/H04, J04/J07는 PASS 유지.
+
+## v30에서 추가한 PHASE2 계정 정상 배경
+
+산출물:
+
+- Dataset: `data/journal/primary/datasynth_semantic_v1_normal_20260610_v30f`
+- Report JSON: `artifacts/datasynth_normal_semantic_v1_realism_gate_audit_20260610_v30f.json`
+- Report MD: `artifacts/datasynth_normal_semantic_v1_realism_gate_audit_20260610_v30f.md`
+
+적용 원칙:
+
+- `dev/active/phase2-fraud-scheme-catalog.md` §2.1의 PHASE2 악용 가능 계정군은 부정 주입 전에 NORMAL
+  baseline에 정상 활동으로 존재해야 한다.
+- v30은 fraud/anomaly/truth를 주입하지 않는다. 신규 계정은 회사·연도·월에 분산된 정상 R2R/O2C/P2P/H2R/
+  TREASURY/MFG 전표로만 추가한다.
+- 신규 계정 전표도 차대변 균형, raw semantic tuple, 전표번호/참조 정책, TB/closing/roll-forward 정합을
+  통과해야 한다.
+- 계정 확장 때문에 생기는 손익은 정상 연말 closing entry로 `3200` 이익잉여금에 반영한다. TB는 v29의 기존
+  정합을 보존하고 v30 확장 전표 delta만 원 단위로 반영한다.
+- 신규 정상 흐름의 상대 계정이 COA에 없으면 journal을 바꾸지 않고 master를 보강한다. v30에서는
+  공사계약 수익 상대계정 `412100`을 supporting normal revenue account로 추가했다.
+
+v30f 주요 잔차:
+
+- Realism verifier: `PASS 29`, `INFO 3`, FAIL/BLOCKED/MONITOR 0.
+- O01: `is_fraud=true`, `is_anomaly=true`, `fraud_type` nonblank, mutation/provenance nonblank 모두 0.
+- A01: imbalance 0, max 0원.
+- I01/I03/I04: duplicate document number 0, bad document number format 0, same-role reference reuse 0.
+- O02 synthetic marker scan: high-risk marker 0.
+- M01: checked 41,256 lines, mismatch 0, max diff 0원.
+- M02: 108 periods, bad 0, max equation diff 1원.
+- M03/M04: 40,851 period-account, roll-forward/continuity bad 0.
+- M05: 9 company-year, closing_bad 0.
+- M06: hard negative balance 607 / 40,851 = 1.49%, threshold 2% 이내.
+- M07: 5 reconciliations, bad 0, max diff 0원.
+- Required 14 PHASE2 accounts: missing 0. 각 계정은 432~864 rows, 3개 회사, 3개 연도, 12개월에 분산.
+- Journal orphan GL account rows: 0.
+
+v30f 재판정:
+
+- N07~N11 신규 gate 적용 후 v30f는 REJECT다. 회계정합은 맞지만 신규 14계정이 회사/연도/월 셀당
+  완벽균일, 전용 scenario 격리, 단일 counterparty, 좁은 금액 범위를 보여 "계정=shortcut" 위험이 남았다.
+- 신규 계정 정상 배경은 전표 수만 채우면 안 된다. 기존 정상 archetype에 섞이고, 일부 셀은 0건이어야 하며,
+  거래처와 금액 분포도 기존 계정군처럼 자연스럽게 퍼져야 한다.
+
+## v31에서 닫은 PHASE2 계정 자연화/N-gate
+
+산출물:
+
+- Dataset: `data/journal/primary/datasynth_semantic_v1_normal_20260610_v31c`
+- Report JSON: `artifacts/datasynth_normal_semantic_v1_realism_gate_audit_20260610_v31c.json`
+- Report MD: `artifacts/datasynth_normal_semantic_v1_realism_gate_audit_20260610_v31c.md`
+
+적용 원칙:
+
+- v31은 v30f를 복사한 뒤 v30 신규계정 확장 문서를 제거하고, 같은 14계정을 자연화된 정상 활동으로
+  재생성한다. 기존 정상 v29/v30의 비신규계정 흐름은 유지한다.
+- 신규계정 회사/연도/월 분포는 deterministic fixed count가 아니라 회사 규모, 계절성, 계정 성격에 따라
+  빈 셀과 변동성을 가진다.
+- 금액은 좁은 선형 범위가 아니라 heavy-tail 분포로 생성한다. 단일 금액/round-grid dominance가 계정
+  shortcut이 되면 안 된다.
+- A계정군은 전용 scenario에 가두지 않고 `P2P_VENDOR_INVOICE`, `A2R_ASSET_ACQUISITION`,
+  `A2R_DEPRECIATION`, `H2R_PAYROLL_ACCRUAL`, `TRE_LOAN_DRAWDOWN`, `TRE_INTEREST_PAYMENT`,
+  `R2R_ACCRUAL`, `R2R_CLOSING_ENTRY` 같은 기존 정상 archetype에 섞는다.
+- contract assets/liabilities와 WIP처럼 본질적으로 전용 흐름이 자연스러운 계정은 전용 archetype을 유지하되,
+  건수/거래처/금액의 완벽균일성은 허용하지 않는다.
+- `document_number`의 company/year/document_type 체계는 row의 실제 `document_type`과 반드시 일치해야 한다.
+  v31b의 `C001-2022-KR-*` 번호와 `SA` row type 불일치가 I01에서 잡혔고, v31c에서 수정했다.
+
+v31c 주요 잔차:
+
+- Realism verifier: `PASS 34`, `INFO 3`, FAIL/BLOCKED/MONITOR 0.
+- O01: fraud/anomaly/provenance nonblank 0.
+- A01: imbalance 0, max 0원.
+- I01/I03/I04: duplicate document number 0, bad document number format 0, same-role reference reuse 0.
+- O02 synthetic marker scan: high-risk marker 0.
+- M01: checked 41,472 lines, mismatch 0, max diff 0원.
+- M02: 108 periods, bad 0, max equation diff 1원.
+- M03/M04: 41,049 period-account, roll-forward/continuity bad 0.
+- M05: 9 company-year, closing_bad 0.
+- M06: hard negative balance 644 / 41,049 = 1.57%, threshold 2% 이내.
+- M07: 5 reconciliations, bad 0, max diff 0원.
+- N07: all 14 new accounts PASS. Cell-count std range 2.17~4.53, empty cells range 15~29.
+- N08: all 14 new accounts PASS. Top trading-partner share max 45.6%, no single counterparty 100%.
+- N09: all 14 new accounts PASS. max/p50 range 31.55~44.87, unique amounts per account equal row count.
+- N10: all 11 woven-required accounts PASS. Dedicated-flow accounts `116100`, `231100`, `123100` are exempt but still pass
+  N07~N09.
+- N11: all 14 new accounts normal-only, fraud/anomaly/provenance 0.
+
+## v48~v49에서 닫은 RBAC/승인권한 정상 오염
+
+v48은 v47 batch/job successor 위에서 정상 회사의 `user_persona × business_process` 범위를 현실화했다.
+AP/AR/Treasury/Payroll 계열 clerk가 모든 process를 만지는 all-to-all 구조를 제거하고, direct SoD marker와
+self-approval 없이 정상 RBAC 분포를 만들었다.
+
+v48 산출물:
+
+- Dataset: `data/journal/primary/datasynth_semantic_v1_normal_20260701_v48_rbac_r1`
+- Report JSON: `reports/normal_v48_rbac_r1_gate_v2.json`
+- Report MD: `reports/normal_v48_rbac_r1_gate_v2.md`
+
+v48 검증 요약:
+
+- Realism verifier: `PASS 40`, `MONITOR 1`, `INFO 3`, `FAIL 0`.
+- E05B: `scope_bad_docs=0`, low-level over-breadth 0, user over-breadth 0, all-to-all persona 0.
+- self-approval 0, O02 synthetic marker 0.
+
+v49는 v48에서 발견된 L1-04 정상 발화 결함을 닫았다. v48은 `APMGR*`, `ARMGR*`, `HRMGR*` 같은 승인자 ID를
+사용했지만 employee master 등록 시 prefix 판정이 clerk로 떨어져 `can_approve_je=false`가 됐다. 그 결과
+H2R/O2C/P2P 수기 전표가 승인권한 없는 사용자에게 결재되는 구조가 생겼다.
+
+v49 수정 원칙:
+
+- `APMGR*`, `ARMGR*`, `HRMGR*`, `OPSMGR*`, `FINMGR*`는 clerk가 아니라 manager persona로 등록한다.
+- 재생성 시 기존 employee master의 RBAC 생성 사용자도 현재 journal 배정에 맞춰 persona, job title,
+  job level, department, cost center, system role을 동기화한다.
+- 승인자로 등장한 모든 사용자는 `employees.json`에 존재하고, `can_approve_je=true`이며, 전표금액 이상의
+  `approval_limit`을 가져야 한다.
+
+v49 verifier 추가:
+
+- `E05C_APPROVER_MASTER_AUTHORITY`: `approved_by`가 있는 모든 전표를 employee master와 join해 미등록
+  승인자, `can_approve_je=false`, 승인한도 미달을 FAIL로 판정한다.
+
+v49 산출물:
+
+- Dataset: `data/journal/primary/datasynth_semantic_v1_normal_20260702_v49_approver_r1`
+- Report JSON: `reports/normal_v49_approver_r1_gate.json`
+- Report MD: `reports/normal_v49_approver_r1_gate.md`
+
+v49 검증 요약:
+
+- Realism verifier: `PASS 41`, `MONITOR 1`, `INFO 3`, `FAIL 0`.
+- E05C: approved docs checked 111,524, unresolved approver 0, unauthorized approver 0, approval-limit bad 0.
+- 문제 구간 직접 집계: H2R/O2C/P2P manual/adjustment 전표 1,748건 전부 `can_approve_je=true` manager 승인자.
+- E05B 회귀 없음: `scope_bad_docs=0`, all-to-all persona 0.
+- self-approval 0, O02 synthetic marker 0.
+
+## v50에서 닫은 L1-04 죽은 룰 정상 배경 결함
+
+v49는 승인자 master 권한 결함을 닫았지만, 모든 승인 전표가 승인자 한도 안에 들어가
+L1-04(승인한도 초과)가 NORMAL에서 0건이었다. 정상 baseline이 통제 실패로 가득 차면 안 되지만, 실제
+운영에는 낮은 비율의 비부정 승인한도 초과 예외가 존재한다. 0건은 룰이 자연 배경에서 전혀 검증되지 않는
+죽은 룰 상태다.
+
+v50 수정 원칙:
+
+- L1-04의 권위 원천은 journal 표면 컬럼이 아니라 `employees.json`의 `approval_limit`과
+  `can_approve_je`다.
+- 전표의 미사용 `approval_limit`, `approver_authority_limit` 컬럼은 export에서 제거한다.
+- 일부 실재 승인자의 master `approval_limit`을 본인 승인액 분포의 상위 일부보다 낮게 두어, 낮은 비율의
+  자연 운영 예외가 생기게 한다.
+- 미등록 승인자와 `can_approve_je=false` 승인자는 계속 0이어야 한다. 자연 예외는 한도 초과이지 권한 없는
+  승인자가 아니다.
+
+v50 verifier 기준:
+
+- `E05C_APPROVER_MASTER_AUTHORITY`는 미등록/무권한 승인자 0을 요구한다.
+- 승인한도 초과율은 approved docs 기준 `0.05% <= rate <= 2.0%`여야 한다. 0%는 죽은 룰, 2% 초과는 통제
+  붕괴로 FAIL이다.
+
+v50 산출물:
+
+- Dataset: `data/journal/primary/datasynth_semantic_v1_normal_20260702_v50_approval_noise_r2`
+- Report JSON: `reports/normal_v50_approval_noise_r2_gate.json`
+- Report MD: `reports/normal_v50_approval_noise_r2_gate.md`
+
+v50 검증 요약:
+
+- Realism verifier: `PASS 41`, `MONITOR 1`, `INFO 3`, `FAIL 0`.
+- E05C: approved docs checked 111,524, unauthorized/unresolved approver 0, approval-limit exceeded docs 178,
+  exceeded rate `0.1596%`.
+- Feature path smoke: `add_exceeds_threshold()` 기준 L1-04 distinct documents 178.
+- `journal_entries_*.csv`에 미사용 `approval_limit`, `approver_authority_limit` 컬럼 없음.
+- E05B RBAC scope, O02 synthetic marker, self-approval 회귀 없음.
+
+## v51에서 닫은 annual closing semantic label 회귀
+
+v50은 전표 균형과 M05 P&L-to-retained-earnings 금액 대사는 통과했지만, 연도별 annual closing 라인의
+semantic label이 서로 달랐다. `src/detection/anomaly_rules_simple.py`의 L4-03 수행중요성 임계는
+`semantic_account_subtype=income_statement_close` closing 라인에서 순이익을 역산하므로, closing 금액이
+맞아도 closing semantic label이 틀리면 연도별 threshold가 비거나 과대 산출된다.
+
+v50 결함:
+
+- 2022: P&L closing 214라인 중 수익 마감 91라인이 `SERVICE_REVENUE`로 남아 L4-03 순이익 역산에서 빠졌다.
+- 2023: 비용 마감 101라인이 `COGS_*`/`OPEX_*` 계정-native subtype으로 남아 순이익이 과대 산출됐다.
+- 2024: subtype은 맞았지만 `line_text_family=payroll` 215라인과 retained earnings family 1라인 오류가
+  남아 closing family가 일관되지 않았다.
+
+v51 수정 원칙:
+
+- annual closing 식별자는 `batch_type=annual_closing` 또는 `reference=CLOSE-*`다.
+- annual closing 손익계정(4/5/6/7/8 prefix) 라인은 항상
+  `semantic_account_subtype=income_statement_close`, `line_text_family=annual_closing`이어야 한다.
+- retained earnings closing 라인(`3200`)은 `semantic_account_subtype=retained_earnings`,
+  `line_text_family=annual_closing`이어야 한다.
+- 생성기 마지막 repair 이후에도 closing semantics를 다시 정규화해 계정-native subtype이나 donor
+  line family가 남지 않게 한다.
+
+v51 verifier 기준:
+
+- `M14_ANNUAL_CLOSING_SEMANTIC_CONSISTENCY`는 company-year별 P&L closing subtype/family,
+  retained-earnings subtype/family, `P&L closing net + retained earnings effect = 0`을 원 단위 정수로
+  검사한다.
+- v50은 `M14 FAIL`로 bad P&L subtype 192라인, bad P&L family 215라인, bad retained earnings family
+  1라인을 잡는다. v51은 모두 0이어야 한다.
+
+v51 산출물:
+
+- Dataset: `data/journal/primary/datasynth_semantic_v1_normal_20260702_v51_closing_semantics_r1`
+- Report JSON: `reports/normal_v51_closing_semantics_r1_gate.json`
+- Report MD: `reports/normal_v51_closing_semantics_r1_gate.md`
+- Regression evidence: `reports/normal_v50_approval_noise_r2_gate_with_m14.json`
+
+v51 검증 요약:
+
+- Realism verifier: `PASS 42`, `MONITOR 1`, `INFO 3`, `FAIL 0`.
+- M14: company-years checked 3, P&L closing lines 642, retained earnings lines 3, bad subtype/family 0,
+  bad reconciliation years 0, max reconciliation diff 0 KRW.
+- 직접 L4-03 threshold smoke: 2022/2023/2024 모두 `threshold_basis=closing_ni`, unset 0.
+
+## v52에서 닫은 D01 안정계정 급변 NORMAL 결함
+
+v51은 D01 detector 자체에는 문제가 없었지만, NORMAL 안정 계정의 세부 계정코드가 연도별로 과도하게
+흔들렸다. 특히 이자비용·법인세비용 세부계정 일부가 전년 대비 8배를 넘게 움직였고, 법인세 계정은
+최대 203.6배까지 튀었다. 이는 detector가 아니라 DataSynth가 안정 계정 세부코드를 연도별로 난수처럼
+배정한 문제다.
+
+v52 수정 원칙:
+
+- D01 detector는 수정하지 않는다. D01은 넓은 macro queue를 만드는 정상 설계다.
+- NORMAL realism gate C07에서 안정 계정군을 별도 guardrail로 본다.
+- C07 안정 계정군은 CoA `account_name/sub_type` 기준의 이자비용, 법인세비용, 감가/상각, 임차/리스다.
+- closing 제외 company×account×year 활동금액(`debit+credit`)을 원 단위로 집계한다.
+- 양년 모두 5천만원 이상 활동이 있는 인접연도 pair에서 변화율이 8배를 넘으면 FAIL이다.
+- 생성기는 이자비용과 법인세비용을 대표 control 계정으로 정규화해, 같은 총액이 세부계정 난수분산 때문에
+  D01에 새지 않게 한다.
+
+v52 산출물:
+
+- Dataset: `data/journal/primary/datasynth_semantic_v1_normal_20260703_v52_stable_account_r2`
+- Report JSON: `reports/normal_v52_stable_account_r2_gate.json`
+- Report MD: `reports/normal_v52_stable_account_r2_gate.md`
+- Regression evidence: `reports/normal_v51_closing_semantics_r1_gate_with_c07.json`
+
+v52 검증 요약:
+
+- Realism verifier: `PASS 43`, `MONITOR 1`, `INFO 3`, `FAIL 0`.
+- C07: checked year pairs 26, bad year pairs 0, max change ratio 4.5312.
+- 이자비용 직접 집계: 2022→2023 `1.2041x`, 2023→2024 `1.2374x`.
+- 법인세비용 직접 집계: 2022→2023 `2.0559x`, 2023→2024 `4.5312x`.
+
+## v53에서 닫아야 하는 L4-04 계정쌍 파편화 NORMAL 결함
+
+v52는 안정 계정의 연도별 활동금액 급변(C07)은 닫았지만, L4-04 희소 계정쌍 관점에서는 여전히
+정상이 아니다. 원인은 세부 계정코드가 의미 subtype만 맞춘 뒤 문서마다 넓은 계정 풀에서 새로 선택되어,
+동일한 거래 아키타입이 매번 다른 concrete debit-credit pair로 흩어지는 것이다.
+
+현상:
+
+- 정상 v52에서 L4-04-like 희소쌍 전표율이 약 6.94%로 높다.
+- recurring 전표도 9.6%, automated 전표도 5.6%가 희소쌍으로 잡힌다. 실제 ERP 자동/반복 전표는
+  계정결정이 템플릿화되어 있으므로 이런 비율은 비현실적이다.
+- 희소 concrete pair의 99.9%는 parent semantic subtype pair 수준에서는 흔한 쌍이다. 즉 도메인상
+  희소한 조합이 아니라 synthetic account fragmentation이다.
+
+v53 수정 원칙:
+
+- detector 임계나 L4-04 룰은 수정하지 않는다. 오염된 NORMAL 기준으로 룰을 튜닝하면 자기순환이다.
+- 생성기는 거래 아키타입, 거래처 유형, document_type, line_text_family, semantic subtype, 차대변 방향
+  단위로 concrete gl_account를 재사용한다(account determination).
+- 금액, 차대변, 재무제표 잔액은 건드리지 않는다. 계정 코드 안정화와 그에 따른 semantic label 정합만
+  수행한다.
+- verifier C06은 L4-04-like rare doc rate ≤1%, recurring rare doc rate ≤0.5%, automated rare doc
+  rate ≤1%, fragmented rare concrete pair rate ≤20%를 hard/distribution gate로 본다.
+
+v53 산출물:
+
+- Dataset: `data/journal/primary/datasynth_semantic_v1_normal_20260703_v53_account_determination_r6`
+- Report JSON: `reports/normal_v53_account_determination_r6_gate_v2.json`
+- Report MD: `reports/normal_v53_account_determination_r6_gate_v2.md`
+- Regression evidence: `reports/normal_v52_stable_account_r2_gate_with_c06.json`에서 C06 FAIL.
+
+v53 검증 요약:
+
+- Realism verifier: `PASS 44`, `MONITOR 1`, `INFO 3`, `FAIL 0`.
+- C06: L4-04-like rare doc rate `0.129%`, recurring rare doc rate `0.244%`,
+  automated rare doc rate `0.105%`, fragmented rare pair rate `0.0%`.
+- A01/M01/M02/M05/M11/M12/M14/J04_J07/E13/E05C/K02/B18 모두 PASS.
+- 구현상 account determination은 annual closing, reversal, related-party IC 계정 prefix를 제외한다.
+  이들은 각각 M14/J04_J07/K02~K05가 별도 검증하므로 C06에서 일반 GL 계정쌍으로 섞지 않는다.

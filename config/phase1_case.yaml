@@ -1,0 +1,257 @@
+# config/phase1_case.yaml
+# PHASE1 결과를 rule list가 아니라 case/theme queue로 묶고 우선순위화할 때 쓰는 전용 설정
+
+phase1_case:
+  secondary_tag_min_score: 0.40
+
+  counterparty_columns:
+    - auxiliary_account_number
+    - vendor_name
+    - customer_name
+  counterparty_fallback: UNKNOWN_COUNTERPARTY
+
+  account_family_strategy: first_digit
+  account_family_fallback_order:
+    - account_family
+    - first_digit
+    - gl_account_prefix_2
+    - gl_account_prefix_3
+  account_family_fallback: UNKNOWN_ACCOUNT_FAMILY
+
+  near_period_days: 7
+  period_end_window_days: 5
+  intercompany_pair_columns:
+    - company_code
+    - trading_partner
+  load_batch_columns:
+    - upload_batch_id
+
+  topic_scoring:
+    weights:
+      max_primary_rule_score: 0.62
+      secondary_evidence_score: 0.12
+      corroboration_score: 0.10
+      materiality_score: 0.08
+      repeat_score: 0.05
+      macro_context_score: 0.03
+    topic_caps:
+      ledger_integrity: 1.0
+      approval_control: 1.0
+      closing_timing: 1.0
+      account_logic: 1.0
+      duplicate_outflow: 1.0
+      revenue_statistical: 1.0
+    # topic_caps intercompany_cycle 제거(2026-06-21): TOPIC_REGISTRY 6 topic 에 없는 죽은 cap.
+    # topic_floors 섹션 제거(2026-06-21): registry 에 floor_policy_ids 보유 룰 0개라 코드 미참조
+    # (approval_control_high·duplicate_reference_match·intercompany_exception 전부 죽은 키).
+    combo_floors:
+      # 코드 _fraud_combo_floor_results 가 실제 add 하는 policy_id 만 유지(2026-06-21 죽은키 제거).
+      # 제거: period_end_adjustment_medium·related_party_reversal_high·circular_transaction_*·
+      #       approval_bypass_medium (명세 폐기/이관 또는 IC·GR 제거로 코드 미발화).
+      fictitious_entry_medium: 0.60
+      fictitious_entry_high: 0.75
+      period_end_adjustment_high: 0.75
+      embezzlement_concealment_medium: 0.60
+      embezzlement_concealment_high: 0.75
+      suspense_concealment_high: 0.75
+      expense_capitalization_high: 0.75
+      approval_bypass_high: 0.75
+    anti_fitting_policy:
+      principle: "Domain-supported floor first; datasynth truth recall is informational only."
+      truth_recall_role: informational_only
+      # weak_floor_handling 블록 제거(2026-06-21): src 코드 참조 0(죽은 config).
+      supported_high_floor_requirements:
+        fictitious_entry: revenue_or_amount_outlier_plus_manual_plus_secondary_red_flag  # 2차정황(코드 _FICTITIOUS_SECONDARY_RULES) = L4-04|L2-03(a~d)|L3-03|L1-05|L3-11. §8(5) L3-10·L3-04·L1-07-02 제외(헛다리/오기).
+        period_end_adjustment: timing_seed_plus_high_amount_plus_description_or_sensitive_or_rare
+        embezzlement_concealment: outflow_or_duplicate_plus_approval_bypass_or_reversal_with_manual  # A안(D075): 승인우회 OR (L2-05 역분개 + L3-02 수기)
+        suspense_concealment: suspense_aging_plus_outflow_or_duplicate_plus_high_amount
+        # circular_transaction 제거(2026-06-21): IC/GR PHASE1-2 이관으로 죽은 scheme.
+        approval_bypass: approval_bypass_plus_high_amount_or_cutoff_or_manual_closing_or_manual_after_hours
+    macro_context_bonus:
+      max_bonus: 0.10
+      context_only_score: 0.0
+    review_states:
+      high: 0.90
+      medium: 0.75
+      low: 0.20
+      context_only: 0.0
+    fraud_scenario_tag_order:
+      - fictitious_entry_risk
+      - period_end_adjustment_risk
+      - embezzlement_concealment_risk
+      - approval_bypass_risk
+      - approval_bypass
+      - segregation_of_duties
+      - duplicate_payment
+      - threshold_splitting
+      - reversal_or_offset_pattern
+      - cutoff_or_period_mismatch
+      - rare_account_partner_pair
+      - amount_outlier
+      - benford_distribution_anomaly
+
+  # Deprecated fallback: retained for old artifacts/views while topic_scoring
+  # drives PHASE1 v1 case ranking.
+  priority_weights:
+    control: 0.25
+    amount: 0.25
+    outflow: 0.15
+    logic: 0.15
+    timing: 0.10
+    behavior: 0.10
+
+  materiality_amount: 0
+
+  priority_band:
+    high: 0.90
+    medium: 0.75
+
+  priority_floors:
+    - rule_id: L1-05
+      labels:
+        - escalated_abnormal_time
+      min_priority_score: 0.80
+      reason: escalated_self_approval_abnormal_time
+    - rule_id: L1-05
+      labels:
+        - escalated_materiality
+        - escalated_high_risk_account
+      min_priority_score: 0.90
+      reason: escalated_self_approval_material_or_sensitive
+    - rule_id: L1-05
+      labels:
+        - immediate
+      min_priority_score: 0.75
+      reason: critical_self_approval
+    - rule_id: L1-04
+      min_raw_score: 0.80
+      min_priority_score: 0.75
+      reason: approval_limit_exceeded
+# L1-06(직무분리) sod_direct floor 제거(2026-06-30): SOD_TOXIC_COMBINATIONS_GROUNDING §3 —
+# RED 직무분리는 binary 이고 "단독이면 LOW, 행위신호와 조합되면 HIGH. 단독으로 HIGH 를 만들지
+# 않는다"(겸직만으로 부정 단정 불가). severity_hint(critical 등)는 점수가 아니다(§4 line109).
+# 구 sod_direct_critical(0.90)/high(0.75)/medium(0.45) floor 가 L1-06 단독을 HIGH/MEDIUM 으로
+# 승격해 문서 위반(정상 high 폭증 주범) → 제거. L1-06 은 approval_bypass·embezzlement 등 콤보
+# leg 로만 tier 에 기여한다(topic_scoring _APPROVAL_BYPASS_RULES).
+    - rule_id: L3-11
+      min_raw_score: 0.60
+      min_priority_score: 0.45
+      reason: l311_severe_cutoff_gap
+    - rule_id: L3-11
+      min_raw_score: 0.30
+      required_rules:
+        - L4-01
+      min_priority_score: 0.75
+      reason: l311_high_amount_cutoff
+    - rule_id: L3-04
+      min_raw_score: 0.45
+      required_rules:
+        - L4-01
+      min_priority_score: 0.75
+      reason: l401_period_end_revenue_outlier
+    - rule_id: L3-02
+      min_raw_score: 0.60
+      required_rules:
+        - L4-01
+      min_priority_score: 0.75
+      reason: l401_manual_revenue_outlier
+    - rule_id: L2-05
+      min_raw_score: 0.45
+      required_rules:
+        - L4-01
+      min_priority_score: 0.75
+      reason: l401_reversal_revenue_outlier
+    - rule_id: L2-02
+      labels:
+        - reference_match
+      min_priority_score: 0.45
+      reason: duplicate_payment_reference_match
+    - rule_id: L1-02
+      missing_fields:
+        - document_id
+      min_priority_score: 0.60
+      reason: missing_document_id_traceability_blocker
+    - rule_id: L1-02
+      missing_fields:
+        - gl_account
+        - posting_date
+        - debit_amount
+        - credit_amount
+      min_priority_score: 0.55
+      reason: missing_core_required_field_blocker
+    - rule_id: L1-02
+      missing_fields:
+        - document_id
+        - gl_account
+        - posting_date
+        - debit_amount
+        - credit_amount
+      min_matching_missing_fields: 2
+      min_priority_score: 0.90
+      reason: multiple_core_required_fields_missing
+    - rule_id: L3-10
+      labels:
+        - priority_case
+      min_priority_score: 0.45
+      reason: sensitive_account_priority_context
+
+  priority_adjustments:
+    enabled: true
+    topside:
+      require_manual: true
+      medium_threshold: 0.40
+      medium_bonus: 0.10
+      high_threshold: 0.60
+      high_bonus: 0.20
+    # batch_combo 제거(2026-06-21): L4-06 PHASE1-2 family 귀속. _apply_priority_adjustments 의
+    # batch 가산 코드도 함께 제거됨(case priority 기여 0).
+    weak_evidence:
+      require_strong_evidence: true
+      per_tag_bonus: 0.03
+      max_bonus: 0.09
+      boolean_columns:
+        - is_round_number
+        - is_rare_account
+        - significant_unusual_transaction
+        - is_period_end_manual
+        - sensitive_account_touch
+      derive_manual_period_end: true
+    l108_context_priority:
+      enabled: true
+      per_context_bonus: 0.03
+      max_bonus: 0.12
+    rare_account_pair:
+      l404_only_penalty: 0.10
+      recurring_source_penalty: 0.08
+      recurring_source_ratio: 0.60
+      recurring_sources:
+        - recurring
+        - automated
+        - batch
+        - interface
+        - system
+  repeat_months_tiebreak: 3
+
+  timing_priority:
+    l304_only_penalty: 0.20
+    l304_sensitive_bonus: 0.15
+    l304_high_amount_bonus: 0.10
+    l304_combo_bonus: 0.20
+    l304_repeat_pattern_penalty: 0.15
+    l304_repeat_pattern_repeat_cap: 0.30
+    l304_high_amount_case_score: 0.75
+    l304_repeat_pattern_min_months: 3
+    l304_repeat_pattern_max_amount_cv: 0.35
+    l304_repeat_pattern_min_signature_share: 0.60
+    l304_sensitive_account_prefixes:
+      - "4"
+      - "12"
+      - "1150"
+      - "2050"
+      - "2700"
+
+  evidence_type_cap: 1.0
+  rule_repeat_scale: sqrt
+
+  top_n_cases: 50
+  top_n_per_theme: 10

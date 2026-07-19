@@ -1,0 +1,57 @@
+name: audit-testing
+
+# PHASE2 audit-testing guard.
+#
+# 트리거:
+#   - workflow_dispatch: 필요 시 수동 실행
+#   - nightly cron: 매일 18:00 UTC (한국 시간 03:00)
+#
+# 정책:
+#   - phase1-kpi-guard 의 가벼운 core+dev+dashboard 트랙을 변경하지 않는다.
+#   - PHASE2 Stage 5 baseline training_report.json 만 사용한다.
+#   - model_bundle.pt 및 ml/torch dependency 는 요구하지 않는다.
+
+on:
+  schedule:
+    - cron: "0 18 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  audit-testing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Sync dev dependencies
+        run: uv sync --group core --group dev
+
+      - name: PHASE2 Layer A + case contract guards
+        run: >
+          uv run pytest
+          tests/modules/test_services/test_phase2_layer_a_guards.py
+          tests/modules/test_services/test_phase2_case_contract.py
+          -v --tb=short
+
+      - name: PHASE1 composite sort guard
+        run: >
+          uv run pytest
+          tests/modules/test_detection/test_phase1_case_builder.py
+          -k composite_sort
+          -v --tb=short

@@ -1,0 +1,11 @@
+{
+  "datasets": [
+    "datasynth_semantic_v1_phase2_fraud_s10_20260718_r1",
+    "datasynth_semantic_v1_phase2_fraud_s10_20260718_r1_seed1",
+    "datasynth_semantic_v1_phase2_fraud_s10_20260718_r1_seed2",
+    "datasynth_semantic_v1_phase2_fraud_s10_20260718_r1_seed3"
+  ],
+  "auroc_mean": 0.5187,
+  "recall_at_top1pct_mean": 0.0038,
+  "recovered_by_vae_total": 2
+}

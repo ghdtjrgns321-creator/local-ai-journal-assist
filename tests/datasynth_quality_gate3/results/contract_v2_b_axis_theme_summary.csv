@@ -1,0 +1,7 @@
+primary_theme,reviewed_cases,high_cases,avg_rule_count,avg_evidence_rows,avg_action_count,avg_unknown_counterparty_doc_ratio,cases_with_flags
+control_failure,20,20,7.75,382.45,15.45,0.154,20
+data_integrity_failure,20,16,7.15,66.4,14.3,0.14,19
+duplicate_or_outflow,20,6,5.05,67.15,10.1,0.1,19
+logic_mismatch,20,4,5.35,196.75,10.7,0.038,20
+statistical_outlier,20,3,7.3,18.45,14.6,0.042,17
+timing_anomaly,20,20,7.65,36.15,15.3,0.124,20
