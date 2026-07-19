@@ -2,11 +2,11 @@
 
 ## 13.1 검증 로그
 
-모든 판정은 스크립트 종료 코드가 완료 선언이며 결과 파일이 저장소에 남아 있다.
+모든 판정은 스크립트 종료 코드가 완료 선언이다. 아래 근거 경로는 판정 스크립트를 실행하면 생성되는 산출물이며, 측정 결과물이라 저장소에는 담지 않는다.
 
 | 검증 항목          | 방법                                                  | 결과 (M/N)                                                                | 근거 경로                                                                                     |
 | ------------------ | ----------------------------------------------------- | ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| 룰 발화율 대역     | 대역 사전 선언 후 정상 base 실측                      | **PASS 27 / 28**                                                          | `reports/s1_normal_s10/rule_summary.csv`, `docs/0716/S1_RULE_BANDS.md`                        |
+| 룰 발화율 대역     | 대역 사전 선언 후 정상 base 실측                      | **PASS 27 / 28**                                                          | `reports/s1_normal_s10/rule_summary.csv`                                                      |
 | VAE 정상 플래그율  | 미학습 정상 구간 플래그율 vs 오염설정                 | 1.056% vs 1.00% (대역 [0.3×,3×]) **PASS**                                 | `reports/s1_normal_s10/vae_flagrate.json`                                                     |
 | 룰 단위시험        | 룰별 표적 주입 후 표적 적중 판정                      | **29 / 29** exit 0                                                        | `tools/scripts/s2_adjudicate_unit_firing.py` → `reports/s2_unit_firing/adjudication.json`     |
 | 룰 분모 고정       | 탐지기 레지스트리에서 스크립트 추출                   | 35 − 비활성 6 = **29**                                                    | `reports/s2_unit_firing/rule_denominator.json`                                                |
@@ -88,7 +88,9 @@
 
 ## 13.6 재현 방법
 
-| 단계          | 스크립트                                                 | 결과 파일                                                     |
+판정 스크립트는 저장소에 있고, 결과 파일은 **스크립트를 실행하면 아래 경로에 생성된다**(측정 산출물이라 저장소에 담지 않는다).
+
+| 단계          | 스크립트                                                 | 생성되는 결과 파일                                            |
 | ------------- | -------------------------------------------------------- | ------------------------------------------------------------- |
 | 룰 단위시험   | `tools/scripts/s2_adjudicate_unit_firing.py`             | `reports/s2_unit_firing/adjudication.json`                    |
 | 빌더 정확성   | `tools/scripts/s4_adjudicate_combo_builder.py`           | `reports/s4_combo_builder/adjudication.json`                  |
@@ -98,7 +100,7 @@
 | 계정 체계     | `tools/scripts/normal_realism_account_checks.py`         | 위 검증기에 통합                                              |
 | 종합 판독     | —                                                        | `reports/s5_fraud_overlay/BUILDER_PERFORMANCE_SUMMARY.md`     |
 
-검증 여정 전체의 단계별 기록(결정 로그·팩트시트 포함)은 `docs/0716/PLAN.md`, 포트폴리오 본문은 `docs/guide/VALIDATION_RESULTS_2026-07.md`에 있다.
+검증 여정의 단계별 원본 기록(결정 로그·팩트시트·측정 회차별 판정)은 개발 과정 문서로 로컬에만 두고 저장소에 담지 않는다. 그 내용의 결론은 본 보고서 각 장에 정리돼 있다.
 
 ## 13.7 실증 예시 — 하나의 판정이 뒤집히는 과정
 

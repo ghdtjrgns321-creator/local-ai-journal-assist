@@ -72,9 +72,11 @@ tools/datasynth/
 .codex/
 _workspace/
 
-# 내부 작업 노트 (진행 중 계획·컨텍스트·측정 메모)
-# 완료된 판단과 근거는 docs/ 와 FINAL-REPORT/ 에 정리돼 있다
+# 내부 개발 문서 (진행 중 계획·보류 항목·디버깅 로그·회차별 측정 메모)
+# 정리된 결론은 README.md 와 FINAL-REPORT/ 가 담는다
 dev/
+docs/
+reports/
 
 # 임시/로그 파일
 streamlit_*.log
