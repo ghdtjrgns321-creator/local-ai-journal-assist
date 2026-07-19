@@ -67,6 +67,15 @@ pytest-cache-files-*/
 # 외부 도구 (별도 클론)
 tools/datasynth/
 
+# AI 에이전트 하네스 (개발 도구 설정 — 제품 산출물 아님)
+.agents/
+.codex/
+_workspace/
+
+# 내부 작업 노트 (진행 중 계획·컨텍스트·측정 메모)
+# 완료된 판단과 근거는 docs/ 와 FINAL-REPORT/ 에 정리돼 있다
+dev/
+
 # 임시/로그 파일
 streamlit_*.log
 .tmp/
