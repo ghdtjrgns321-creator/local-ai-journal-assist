@@ -12,6 +12,7 @@ from config.settings import get_audit_rules
 from dashboard._state import (
     KEY_ACTIVE_RESULT_TAB,
     KEY_COMPANY_CONTEXT,
+    KEY_FEATURED_DATA,
     KEY_PENDING_RESULT_TAB,
     KEY_PRE_ANALYSIS_SETTINGS_OPEN,
     KEY_SETTINGS,
@@ -122,10 +123,17 @@ def _render_engagement_policy(engagement) -> dict[str, Any]:
     #      비워두면(0 저장) 분석 단계에서 원장의 매출/순이익 벤치마크로 자동 산출한다
     #      (anomaly_rules_simple._compute_pbt_thresholds, ISA 320). 감사팀 확정값이 있으면 입력.
     current_materiality = int(getattr(engagement, "materiality_amount", 0) or 0)
+    preview = _materiality_preview(getattr(engagement, "fiscal_year", None))
 
     with st.container(border=True):
         st.markdown("**① 중요성 금액**")
         st.caption("비워두면 분석 시 원장의 매출·순이익 벤치마크로 자동 산출합니다(ISA 320).")
+        if preview is not None:
+            value = preview["value"]
+            st.info(
+                f"**자동 산출 예상: {value:,}원** (약 {value / 1e8:.2f}억)\n\n"
+                f"계산 근거: {preview['basis']}"
+            )
         materiality_text = st.text_input(
             "중요성 금액 (선택)",
             value=_format_krw(current_materiality) if current_materiality > 0 else "",
@@ -137,6 +145,58 @@ def _render_engagement_policy(engagement) -> dict[str, Any]:
         )
 
     return {"materiality_amount": _parse_krw(materiality_text)}
+
+
+def _materiality_preview(fiscal_year: int | None) -> dict[str, Any] | None:
+    """적재된 원장으로 파이프라인과 동일 로직의 수행중요성 예상값·근거를 계산한다.
+
+    Why: 설정 화면에서 "비워두면 자동 산출"이 실제로 얼마를 넣는지 미리 보여준다.
+         원장(featured DF)이 아직 없으면 None → 미리보기 생략(설명만 노출).
+    """
+    df = st.session_state.get(KEY_FEATURED_DATA)
+    if df is None or getattr(df, "empty", True):
+        return None
+    required = {"debit_amount", "credit_amount", "company_code", "fiscal_year"}
+    if not required.issubset(df.columns):
+        return None
+    try:
+        from src.detection.anomaly_rules_simple import _compute_pbt_thresholds
+
+        mc = (get_audit_rules().get("patterns", {}) or {}).get("l403_materiality", {})
+        debit = pd.to_numeric(df["debit_amount"], errors="coerce").fillna(0.0)
+        credit = pd.to_numeric(df["credit_amount"], errors="coerce").fillna(0.0)
+        if "semantic_account_subtype" in df.columns:
+            subtype = df["semantic_account_subtype"].fillna("").astype(str)
+        else:
+            subtype = pd.Series("", index=df.index, dtype="str")
+        result = _compute_pbt_thresholds(
+            df, "company_code", "fiscal_year", debit, credit, subtype, mc
+        )
+    except Exception:
+        # 미리보기는 부가 기능 — 어떤 이유로든 실패하면 조용히 생략.
+        return None
+
+    # 해당 감사연도 우선, 없으면 첫 회사·연도.
+    picked = None
+    if fiscal_year is not None:
+        picked = next((v for k, v in result.items() if k[1] == fiscal_year), None)
+    if picked is None:
+        picked = next(iter(result.values()), None)
+    if not picked or picked.get("threshold") is None:
+        return None
+
+    value = int(round(float(picked["threshold"])))
+    rev = float(picked.get("revenue") or 0) / 1e8
+    inc = float(picked.get("income") or 0) / 1e8
+    basis_map = {
+        "revenue": f"매출 {rev:,.0f}억 × 0.5% × 0.75 (적자·저마진 → 매출 기준, ISA 320)",
+        "revenue_floor": f"매출 {rev:,.0f}억 × 0.5% × 0.75 (매출 floor 적용, ISA 320)",
+        "closing_ni": f"순이익 {inc:,.0f}억 × 5% × 0.75 (마감분개 기준 NI)",
+        "keyword_pbt": f"순이익 {inc:,.0f}억 × 5% × 0.75 (손익계정 합산 NI)",
+        "override": "감사팀 확정값(override)",
+    }
+    basis = basis_map.get(str(picked.get("threshold_basis")), "원장 벤치마크")
+    return {"value": value, "basis": basis}
 
 
 def _holiday_add_cb(
