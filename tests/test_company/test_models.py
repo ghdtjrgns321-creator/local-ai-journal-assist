@@ -22,13 +22,19 @@ class TestCompanyProfile:
         p = CompanyProfile(company_id="acme_corp", display_name="Test")
         assert p.company_id == "acme_corp"
 
-    def test_company_id_invalid_slash(self):
-        with pytest.raises(Exception):
-            CompanyProfile(company_id="acme/corp", display_name="Test")
+    def test_company_id_slash_normalized(self):
+        # path-unsafe 문자는 거부가 아니라 밑줄로 치환된다.
+        p = CompanyProfile(company_id="acme/corp", display_name="Test")
+        assert p.company_id == "acme_corp"
 
-    def test_company_id_invalid_space(self):
+    def test_company_id_space_normalized(self):
+        p = CompanyProfile(company_id="normal test", display_name="Test")
+        assert p.company_id == "normal_test"
+
+    def test_company_id_only_unsafe_chars_rejected(self):
+        # 치환 후 남는 게 없으면 여전히 거부.
         with pytest.raises(Exception):
-            CompanyProfile(company_id="acme corp", display_name="Test")
+            CompanyProfile(company_id="  /  ", display_name="Test")
 
     def test_company_id_empty(self):
         with pytest.raises(Exception):

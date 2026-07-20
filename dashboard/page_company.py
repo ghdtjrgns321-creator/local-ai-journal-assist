@@ -130,8 +130,8 @@ def _render_register_form(repo: CompanyRepository) -> None:
             "회사 ID",
             placeholder="acme_corp",
             help=(
-                '공백과 < > : " / \\ | ? * 문자를 제외한 한글·영문·숫자·기호를 '
-                "허용합니다 (최대 64자)."
+                "한글·영문·숫자·기호를 사용할 수 있습니다 (최대 64자). "
+                '공백과 < > : " / \\ | ? * 문자는 자동으로 밑줄(_)로 바뀝니다.'
             ),
         )
         name = st.text_input("회사명", placeholder="ACME 주식회사")

@@ -12,18 +12,19 @@ from pydantic import BaseModel, Field, field_validator
 from src.company.merger import normalize_settings_overrides
 
 # Why: company_id / engagement_id 는 폴더명으로 쓰이므로 Windows·Linux 모두에서
-#      금지하는 path-unsafe 문자(< > : " / \ | ? *)와 공백/제어문자만 차단한다.
-#      나머지 문자(한글·대문자·하이픈 등)는 모두 허용.
+#      금지하는 path-unsafe 문자(< > : " / \ | ? *)와 공백/제어문자를 거부하지 않고
+#      밑줄(_)로 치환한다. 사용자가 "normal test" 처럼 공백을 넣어도 등록이 막히지
+#      않고 "normal_test" 로 정규화된다. 나머지 문자(한글·대문자·하이픈 등)는 유지.
 _PATH_UNSAFE_RE = re.compile(r'[<>:"/\\|?*\s\x00-\x1f]')
 
 
 def _validate_identifier(value: str, *, field_name: str) -> str:
-    stripped = value.strip()
-    if not stripped:
+    # path-unsafe 문자를 밑줄로 치환 → 연속 밑줄 축약 → 양끝 밑줄 제거
+    normalized = _PATH_UNSAFE_RE.sub("_", value.strip())
+    normalized = re.sub(r"_+", "_", normalized).strip("_")
+    if not normalized:
         raise ValueError(f"{field_name} 는 비어 있을 수 없습니다.")
-    if _PATH_UNSAFE_RE.search(stripped):
-        raise ValueError(f'{field_name} 에는 공백과 < > : " / \\ | ? * 문자를 사용할 수 없습니다.')
-    return stripped
+    return normalized
 
 
 class EngagementStatus(StrEnum):
