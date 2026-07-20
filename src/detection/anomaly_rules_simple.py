@@ -609,6 +609,7 @@ def _compute_pbt_thresholds(
     exp_patterns = mc.get("expense_subtype_patterns", [])
     excl_patterns = mc.get("exclude_subtype_patterns", [])
     closing_sub = mc.get("closing_subtype", "")
+    closing_header_patterns = mc.get("closing_header_patterns", [])
     income_prefixes = [str(p) for p in mc.get("income_account_prefixes", [])]
     pbt_pct = float(mc.get("pbt_pct", 0.05))
     rev_pct = float(mc.get("rev_pct", 0.005))
@@ -617,6 +618,18 @@ def _compute_pbt_thresholds(
 
     subtype_upper = subtype.str.upper().fillna("")
     is_closing = subtype_upper == closing_sub.upper()
+    # Why: DataSynth는 연말 손익 마감 분개를 income_statement_close subtype이 아니라
+    #      원래 손익 subtype(REVENUE/COGS/OPEX)으로 태깅하고 header_text에만 마감 표시를
+    #      남긴다. 이를 잡지 못하면 마감 차변이 매출 대변을 상쇄해 매출≈0 → 중요성 붕괴.
+    #      패턴은 config(closing_header_patterns)로 관리 — 실 ERP는 마감 문서유형/헤더를 매핑.
+    if closing_header_patterns and "header_text" in df.columns:
+        header_upper = df["header_text"].fillna("").astype(str).str.upper()
+        header_close = pd.Series(False, index=df.index)
+        for pat in closing_header_patterns:
+            header_close = header_close | header_upper.str.contains(
+                str(pat).upper(), na=False, regex=False
+            )
+        is_closing = is_closing | header_close
     not_excluded = ~_match_subtype_patterns(subtype, excl_patterns)
     base_mask = ~is_closing & not_excluded
 

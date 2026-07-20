@@ -529,6 +529,7 @@ def _l403_mc(
         "expense_subtype_patterns": ["COGS", "OPEX"],
         "exclude_subtype_patterns": ["ACCUMULATED", "ACCRUED", "PAYABLE", "RECEIVABLE"],
         "closing_subtype": "income_statement_close",
+        "closing_header_patterns": ["손익 마감"],
         "pbt_pct": pbt_pct,
         "rev_pct": rev_pct,
         "pm_ratio": pm_ratio,
@@ -632,6 +633,39 @@ class TestL4_03:
         df = pd.DataFrame({"company_code": ["C001"], "fiscal_year": [2024]})
         result = c08_amount_outlier(df, materiality_config=_l403_mc())
         assert not result.any()
+
+    def test_closing_entries_excluded_from_revenue_benchmark(self) -> None:
+        """연말 손익 마감 분개는 매출/비용 벤치마크 집계에서 제외돼야 한다.
+
+        DataSynth는 마감분개를 income_statement_close subtype이 아니라 원래 손익
+        subtype(REVENUE/COGS 등)으로 태깅하고 header_text에만 "손익 마감"을 남긴다.
+        이를 제외하지 않으면 마감 차변이 매출 대변을 상쇄해 매출≈0 → 중요성 붕괴.
+        """
+        # 매출 인식(대변 10_000) + 같은 금액 마감분개(차변 10_000, "손익 마감" 헤더)
+        # + COGS 6_000. 마감 제외 시 PBT = 10_000 - 6_000 = 4_000
+        # threshold = 4_000 * 0.05 * 0.75 = 150 → 고액 라인(base 200) 발화
+        df = pd.DataFrame(
+            {
+                "company_code": ["C001"] * 4,
+                "fiscal_year": [2024] * 4,
+                "debit_amount": [0.0, 10_000.0, 6_000.0, 200.0],
+                "credit_amount": [10_000.0, 0.0, 0.0, 0.0],
+                "semantic_account_subtype": ["REVENUE", "REVENUE", "COGS", "OTHER"],
+                "header_text": [
+                    "매출 인식",
+                    "연말 손익 마감 - 2024",
+                    "원가 인식",
+                    "고액 전표",
+                ],
+            }
+        )
+        result = c08_amount_outlier(df, materiality_config=_l403_mc())
+        # 마감분개가 제외되면 매출 10_000이 살아 threshold=150 → index 3(base 200) 발화
+        assert bool(result.iloc[3]) is True, (
+            "마감분개가 매출에서 제외되지 않아 매출이 상쇄됨 → threshold 산출 실패"
+        )
+        ann = result.attrs["row_annotations"].get(3, {})
+        assert ann.get("threshold_basis") not in {"unset", None}
 
 
 # ── L3-09 가수금 장기체류 ──────────────────────────────────────

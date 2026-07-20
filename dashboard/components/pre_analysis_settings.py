@@ -64,7 +64,7 @@ def render_pre_analysis_settings() -> bool:
             "고객사 회계정책, ERP source 코드, 계정체계와 다르면 오탐·누락이 커집니다. "
             "4개 영역으로 나눠 입력합니다."
         )
-        engagement_updates = _render_engagement_policy(engagement, audit_rules)
+        engagement_updates = _render_engagement_policy(engagement)
 
         _render_company_policy(
             settings,
@@ -117,30 +117,26 @@ def render_pre_analysis_settings() -> bool:
     return bool(run_clicked)
 
 
-def _render_engagement_policy(engagement, audit_rules: dict[str, Any]) -> dict[str, Any]:
-    default_materiality = _default_materiality_amount(audit_rules)
+def _render_engagement_policy(engagement) -> dict[str, Any]:
+    # Why: 중요성은 회사 규모(매출·순이익)에 따라 다르므로 리터럴 기본값을 강제하지 않는다.
+    #      비워두면(0 저장) 분석 단계에서 원장의 매출/순이익 벤치마크로 자동 산출한다
+    #      (anomaly_rules_simple._compute_pbt_thresholds, ISA 320). 감사팀 확정값이 있으면 입력.
     current_materiality = int(getattr(engagement, "materiality_amount", 0) or 0)
-    display_materiality = current_materiality or default_materiality
 
     with st.container(border=True):
         st.markdown("**① 중요성 금액**")
-        st.caption("감사연도별로 달라지는 중요성 금액입니다.")
+        st.caption("비워두면 분석 시 원장의 매출·순이익 벤치마크로 자동 산출합니다(ISA 320).")
         materiality_text = st.text_input(
-            "중요성 금액",
-            value=_format_krw(display_materiality),
+            "중요성 금액 (선택)",
+            value=_format_krw(current_materiality) if current_materiality > 0 else "",
+            placeholder="비워두면 자동 산출",
             help=(
-                f"현재 기본 제안값은 {default_materiality:,}원입니다. "
-                "감사팀이 확정한 수행중요성 금액으로 바꿔 저장하세요."
+                "감사팀이 확정한 수행중요성 금액이 있으면 입력하세요. "
+                "비워두면 분석 단계에서 원장의 매출·순이익을 기준으로 자동 계산합니다."
             ),
         )
 
     return {"materiality_amount": _parse_krw(materiality_text)}
-
-
-def _default_materiality_amount(audit_rules: dict[str, Any]) -> int:
-    patterns = audit_rules.get("patterns", {})
-    override = patterns.get("self_approval_immediate_override", {})
-    return int(override.get("materiality_amount", 1_000_000_000) or 1_000_000_000)
 
 
 def _holiday_add_cb(

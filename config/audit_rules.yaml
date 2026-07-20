@@ -389,6 +389,11 @@ patterns:
       - "PAYABLE"
       - "RECEIVABLE"
     closing_subtype: "income_statement_close"
+    # 마감분개 식별 — DataSynth는 마감을 income_statement_close subtype이 아니라 원래 손익
+    # subtype으로 태깅하고 header_text에만 마감 표시를 남긴다. header_text가 이 문구를
+    # 포함하면 매출/비용 벤치마크 집계에서 제외한다(마감이 매출을 상쇄하는 것 방지).
+    closing_header_patterns:
+      - "손익 마감"
     # 마감분개로 NI를 역산할 손익계정 prefix (B18 계정코드 정합 기준). 마감분개가 닫는
     # 손익계정만 골라 (차변-대변)=순이익(NI)을 키워드 분류 없이 정확히 산출한다.
     income_account_prefixes:
