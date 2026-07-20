@@ -65,7 +65,7 @@ def render_pre_analysis_settings() -> bool:
             "고객사 회계정책, ERP source 코드, 계정체계와 다르면 오탐·누락이 커집니다. "
             "4개 영역으로 나눠 입력합니다."
         )
-        engagement_updates = _render_engagement_policy(engagement)
+        engagement_updates = _render_engagement_policy(engagement, ctx)
 
         _render_company_policy(
             settings,
@@ -118,12 +118,12 @@ def render_pre_analysis_settings() -> bool:
     return bool(run_clicked)
 
 
-def _render_engagement_policy(engagement) -> dict[str, Any]:
+def _render_engagement_policy(engagement, ctx=None) -> dict[str, Any]:
     # Why: 중요성은 회사 규모(매출·순이익)에 따라 다르므로 리터럴 기본값을 강제하지 않는다.
     #      비워두면(0 저장) 분석 단계에서 원장의 매출/순이익 벤치마크로 자동 산출한다
     #      (anomaly_rules_simple._compute_pbt_thresholds, ISA 320). 감사팀 확정값이 있으면 입력.
     current_materiality = int(getattr(engagement, "materiality_amount", 0) or 0)
-    preview = _materiality_preview(getattr(engagement, "fiscal_year", None))
+    preview = _materiality_preview(getattr(engagement, "fiscal_year", None), ctx)
 
     with st.container(border=True):
         st.markdown("**① 중요성 금액**")
@@ -147,56 +147,121 @@ def _render_engagement_policy(engagement) -> dict[str, Any]:
     return {"materiality_amount": _parse_krw(materiality_text)}
 
 
-def _materiality_preview(fiscal_year: int | None) -> dict[str, Any] | None:
-    """적재된 원장으로 파이프라인과 동일 로직의 수행중요성 예상값·근거를 계산한다.
+def _materiality_preview(fiscal_year: int | None, ctx: Any = None) -> dict[str, Any] | None:
+    """설정 화면에 "비워두면 자동 산출"이 실제로 얼마인지 예상값·근거를 보여준다.
 
-    Why: 설정 화면에서 "비워두면 자동 산출"이 실제로 얼마를 넣는지 미리 보여준다.
-         원장(featured DF)이 아직 없으면 None → 미리보기 생략(설명만 노출).
+    Why: ① 세션 featured DF가 있으면 파이프라인과 동일 로직(subtype 기준)으로 정확 산출.
+         ② Streamlit 재시작 등으로 세션이 비면 엔게이지먼트 DuckDB(general_ledger)를
+            계정코드 기준으로 근사(수익 4, 비용 5~8). 데이터가 아예 없으면 None(설명만).
     """
+    mc = (get_audit_rules().get("patterns", {}) or {}).get("l403_materiality", {})
+    preview = _materiality_preview_from_session(fiscal_year, mc)
+    if preview is None:
+        preview = _materiality_preview_from_db(fiscal_year, ctx, mc)
+    return preview
+
+
+def _materiality_preview_from_session(
+    fiscal_year: int | None, mc: dict[str, Any]
+) -> dict[str, Any] | None:
+    """세션 featured DF 기준 — 파이프라인과 동일한 subtype 로직(정확)."""
     df = st.session_state.get(KEY_FEATURED_DATA)
     if df is None or getattr(df, "empty", True):
         return None
-    required = {"debit_amount", "credit_amount", "company_code", "fiscal_year"}
-    if not required.issubset(df.columns):
+    if not {"debit_amount", "credit_amount", "company_code", "fiscal_year"}.issubset(df.columns):
         return None
     try:
         from src.detection.anomaly_rules_simple import _compute_pbt_thresholds
 
-        mc = (get_audit_rules().get("patterns", {}) or {}).get("l403_materiality", {})
         debit = pd.to_numeric(df["debit_amount"], errors="coerce").fillna(0.0)
         credit = pd.to_numeric(df["credit_amount"], errors="coerce").fillna(0.0)
-        if "semantic_account_subtype" in df.columns:
-            subtype = df["semantic_account_subtype"].fillna("").astype(str)
-        else:
-            subtype = pd.Series("", index=df.index, dtype="str")
+        subtype = (
+            df["semantic_account_subtype"].fillna("").astype(str)
+            if "semantic_account_subtype" in df.columns
+            else pd.Series("", index=df.index, dtype="str")
+        )
         result = _compute_pbt_thresholds(
             df, "company_code", "fiscal_year", debit, credit, subtype, mc
         )
     except Exception:
-        # 미리보기는 부가 기능 — 어떤 이유로든 실패하면 조용히 생략.
         return None
-
-    # 해당 감사연도 우선, 없으면 첫 회사·연도.
     picked = None
     if fiscal_year is not None:
         picked = next((v for k, v in result.items() if k[1] == fiscal_year), None)
-    if picked is None:
-        picked = next(iter(result.values()), None)
+    picked = picked or next(iter(result.values()), None)
     if not picked or picked.get("threshold") is None:
         return None
-
-    value = int(round(float(picked["threshold"])))
     rev = float(picked.get("revenue") or 0) / 1e8
     inc = float(picked.get("income") or 0) / 1e8
     basis_map = {
         "revenue": f"매출 {rev:,.0f}억 × 0.5% × 0.75 (적자·저마진 → 매출 기준, ISA 320)",
-        "revenue_floor": f"매출 {rev:,.0f}억 × 0.5% × 0.75 (매출 floor 적용, ISA 320)",
+        "revenue_floor": f"매출 {rev:,.0f}억 × 0.5% × 0.75 (매출 floor, ISA 320)",
         "closing_ni": f"순이익 {inc:,.0f}억 × 5% × 0.75 (마감분개 기준 NI)",
         "keyword_pbt": f"순이익 {inc:,.0f}억 × 5% × 0.75 (손익계정 합산 NI)",
         "override": "감사팀 확정값(override)",
     }
     basis = basis_map.get(str(picked.get("threshold_basis")), "원장 벤치마크")
-    return {"value": value, "basis": basis}
+    return {"value": int(round(float(picked["threshold"]))), "basis": basis}
+
+
+def _materiality_preview_from_db(
+    fiscal_year: int | None, ctx: Any, mc: dict[str, Any]
+) -> dict[str, Any] | None:
+    """엔게이지먼트 DuckDB(general_ledger) 기준 근사 — 세션이 비어도 동작(재시작 후)."""
+    db_path = getattr(ctx, "db_path", None)
+    if not db_path:
+        return None
+    rev_pre = [str(p) for p in mc.get("revenue_account_prefixes", [])]
+    exp_pre = [str(p) for p in mc.get("expense_account_prefixes", [])]
+    if not rev_pre or not exp_pre:
+        return None
+    pbt_pct = float(mc.get("pbt_pct", 0.05))
+    rev_pct = float(mc.get("rev_pct", 0.005))
+    pm_ratio = float(mc.get("pm_ratio", 0.75))
+    close_pats = [str(p) for p in mc.get("closing_header_patterns", [])]
+    try:
+        from src.db.connection import get_connection
+
+        conn = get_connection(str(db_path))
+        rev_in = ", ".join("?" for _ in rev_pre)
+        exp_in = ", ".join("?" for _ in exp_pre)
+        not_close = "".join(" AND coalesce(header_text, '') NOT LIKE ?" for _ in close_pats)
+        year_clause = " AND fiscal_year = ?" if fiscal_year is not None else ""
+        query = f"""
+            SELECT
+              SUM(CASE WHEN substr(gl_account, 1, 1) IN ({rev_in})
+                       THEN credit_amount - debit_amount ELSE 0 END) AS revenue,
+              SUM(CASE WHEN substr(gl_account, 1, 1) IN ({exp_in})
+                       THEN debit_amount - credit_amount ELSE 0 END) AS expense
+            FROM general_ledger
+            WHERE 1 = 1{not_close}{year_clause}
+        """
+        params: list[Any] = [*rev_pre, *exp_pre]
+        params += [f"%{p}%" for p in close_pats]
+        if fiscal_year is not None:
+            params.append(fiscal_year)
+        row = conn.execute(query, params).fetchone()
+    except Exception:
+        return None
+    if not row:
+        return None
+    rev = float(row[0] or 0)
+    exp = float(row[1] or 0)
+    inc = rev - exp
+    if inc > 0:
+        thr = inc * pbt_pct * pm_ratio
+        basis = (
+            f"순이익 {inc / 1e8:,.0f}억 × {pbt_pct * 100:g}% × {pm_ratio:g} (흑자 → 순이익 기준)"
+        )
+    elif rev > 0:
+        thr = rev * rev_pct * pm_ratio
+        basis = (
+            f"매출 {rev / 1e8:,.0f}억 × {rev_pct * 100:g}% × {pm_ratio:g} "
+            "(적자·저마진 → 매출 기준, ISA 320)"
+        )
+    else:
+        return None
+    return {"value": int(round(thr)), "basis": basis}
 
 
 def _holiday_add_cb(
