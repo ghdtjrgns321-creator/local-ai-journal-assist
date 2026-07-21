@@ -2,15 +2,7 @@
 
 감사 전표 테스트 자동화 도구. 전표 35만 건에서 **감사인이 먼저 볼 검토 큐**를 만든다.
 
-> **Streamlit 화면은 아직 다듬는 중입니다.** 분석 엔진과 검증 체계는 완주했고 결과 화면 6개가 동작하지만, 검토 큐 워크플로·내보내기·분석신호 전용 화면은 코드만 있고 연결되지 않았습니다. 스크린샷은 화면 정리 후 추가 예정입니다.
-
-![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)
-![Rust](https://img.shields.io/badge/DataSynth-Rust-000000?logo=rust&logoColor=white)
-![DuckDB](https://img.shields.io/badge/DuckDB-Engagement%20격리-FFF000?logo=duckdb&logoColor=black)
-![Rules](https://img.shields.io/badge/활성%20룰-29종-2E7D32)
-![UnitTest](https://img.shields.io/badge/룰%20단위시험-29%2F29-2E7D32)
-![Surface](https://img.shields.io/badge/부정%20표면화-59.7~61.8%25-1565C0)
-![VAE](https://img.shields.io/badge/행단위%20VAE-AUROC%200.5187%20실패-C62828)
+> **Streamlit 화면 개발 중🛠️.**
 
 ---
 
