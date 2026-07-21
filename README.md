@@ -1,4 +1,4 @@
-# Local AI Audit Assistant
+# Local AI Audit Assistant ⚠️ readme 수정 진행 중 (현재 초안 readme)
 
 전수 전표 테스트 자동화 도구. **감사인이 먼저 볼 검토 큐**를 만드는것이 목적.
 
