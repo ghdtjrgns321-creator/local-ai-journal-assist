@@ -1440,7 +1440,7 @@ class AuditPipeline:
                 FraudLayer(self._ctx.settings, audit_rules=self._ctx.audit_rules),
                 AnomalyDetector(self._ctx.settings, audit_rules=self._ctx.audit_rules),
                 BenfordDetector(self._ctx.settings),
-                # Why: L3-11(매출 컷오프)은 canonical 31 룰 — DETECTION_RULES.md §306 스펙대로
+                # Why: L3-11(매출 컷오프)은 canonical 29 룰 — DETECTION_RULES.md §306 스펙대로
                 #      기본 경로에서 cutoff 룰만 실행한다. EV01/EV03 확장은
                 #      enable_evidence_detection 영역으로 기본 제외 (§307).
                 EvidenceDetector(

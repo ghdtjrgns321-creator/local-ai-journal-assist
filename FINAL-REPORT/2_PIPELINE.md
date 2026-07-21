@@ -53,7 +53,7 @@ flowchart TD
     MQ --> DB
     P2 --> DB
 
-    DB --> UI[Streamlit 6화면]
+    DB --> UI[Streamlit 7화면]
     UI --> AUD([감사인이 조합 선택·최종 판단])
 ```
 

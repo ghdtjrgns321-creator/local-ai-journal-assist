@@ -153,7 +153,7 @@ def _render_phase1_only_section(
 ) -> None:
     """Phase1 only: rule 만 잡고 PHASE2 보강 없는 case 테이블."""
     if not phase1_present:
-        st.info("Phase1 결과가 없습니다. 먼저 Phase1 결과 탭에서 분석을 실행하세요.")
+        st.info("룰 기반 결과가 없습니다. 먼저 '룰 기반' 탭에서 분석을 실행하세요.")
         return
     if not cases:
         st.info(
@@ -172,7 +172,7 @@ def _render_phase2_only_section(
 ) -> None:
     """Phase2 only: family 단독 신호 테이블."""
     if not phase2_present:
-        st.info("Phase2 결과가 없습니다. 먼저 Phase2 결과 탭에서 추론을 실행하세요.")
+        st.info("비지도(VAE) 결과가 없습니다. 먼저 '비지도(VAE)' 탭에서 추론을 실행하세요.")
         return
     if not cases:
         st.info(
@@ -192,7 +192,7 @@ def _render_both_section(
 ) -> None:
     """Phase1+2 결합: 양 phase 가 모두 잡은 corroborate case 테이블."""
     if not phase2_present:
-        st.info("Phase2 결과가 없어 결합 case 를 산출할 수 없습니다.")
+        st.info("비지도(VAE) 결과가 없어 결합 case 를 산출할 수 없습니다.")
         return
     if not cases:
         st.info("PHASE1 과 PHASE2 가 동시에 잡은 case 가 없습니다.")

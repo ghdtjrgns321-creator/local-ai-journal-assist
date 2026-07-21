@@ -27,6 +27,7 @@ from dashboard._state import (
     KEY_PHASE2_RESULT,
     KEY_PREP_RESULT,
     KEY_UPLOAD_COUNT,
+    PAGE_ANALYTICAL,
     PAGE_COMPANY_SETTINGS,
     PAGE_COMPARISON,
     PAGE_OVERVIEW,
@@ -271,6 +272,7 @@ def _render_main() -> None:
             _reset_to_company_select()
     st.divider()
 
+    from dashboard.tab_analytical import render as render_analytical  # noqa: E402
     from dashboard.tab_comparison import render as render_comparison  # noqa: E402
     from dashboard.tab_overview import render_pre_analysis as render_overview  # noqa: E402
     from dashboard.tab_phase1 import render as render_phase1  # noqa: E402
@@ -303,6 +305,8 @@ def _render_main() -> None:
         _render_company_settings_page(ctx)
     elif active_tab == PAGE_PHASE1:
         render_phase1(prep_result or display_result, phase1_result)
+    elif active_tab == PAGE_ANALYTICAL:
+        render_analytical(prep_result or display_result, phase1_result)
     elif active_tab == PAGE_PHASE2:
         render_phase2(prep_result or display_result, phase2_result)
     elif active_tab == PAGE_PHASE_COMPARISON:

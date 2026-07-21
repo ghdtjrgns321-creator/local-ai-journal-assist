@@ -53,7 +53,8 @@ def test_vocabulary_shape_and_disjointness():
     assert len(vocab.bodies) == 10
     assert len(vocab.features) == 10
     assert not (vocab.body_ids & vocab.feature_ids)
-    assert len(vocab.presets) == 4
+    # 프리셋 5종: 4종 + 결산 손상·충당금 미인식(2026-07-21, v3 기말결산+추정계정 5건 근거)
+    assert len(vocab.presets) == 5
 
 
 def test_preset_features_all_resolved_to_full_feature_list():

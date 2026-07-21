@@ -3,7 +3,7 @@
 ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)
 ![Rust](https://img.shields.io/badge/DataSynth-Rust%2015crates-000000?logo=rust&logoColor=white)
 ![DuckDB](https://img.shields.io/badge/DuckDB-Engagement%20격리-FFF000?logo=duckdb&logoColor=black)
-![Streamlit](https://img.shields.io/badge/Streamlit-6화면%20배선-FF4B4B?logo=streamlit&logoColor=white)
+![Streamlit](https://img.shields.io/badge/Streamlit-7화면%20배선-FF4B4B?logo=streamlit&logoColor=white)
 ![Rules](https://img.shields.io/badge/활성%20룰%20표면-29종-2E7D32)
 ![UnitTest](https://img.shields.io/badge/룰%20단위시험-29%2F29%20exit%200-2E7D32)
 ![Builder](https://img.shields.io/badge/조합%20빌더%20판정-exit%200-2E7D32)
@@ -35,12 +35,12 @@
 │        ↓                       ↓                       ↓                   │
 │  조합 빌더               자기 큐 5종 + 배지      플래그율 1.056%           │
 │  몸통10 × 특징10               (별도 목록)       AUROC 0.5187 ← 실패기록   │
-│  프리셋 4종                                                                │
+│  프리셋 5종                                                                │
 │  + 커버리지 큐                                                             │
 │  + 데이터정합성 패널                                                       │
 └────────────────────────────────────────────────────────────────────────────┘
                                     ▼
-              DuckDB (회사·연도별 격리) → Streamlit 6화면
+              DuckDB (회사·연도별 격리) → Streamlit 7화면
                                     ▼
               감사인이 조합을 선택하고 최종 판단한다
 ```
@@ -61,7 +61,7 @@
 | 8   | [8_PHASE1-2_ANALYTICAL.md](8_PHASE1-2_ANALYTICAL.md)       | 분석적 검토 신호 — 자기 큐 5종, 배지, 폐기한 시계열               |
 | 9   | [9_PHASE2_VAE.md](9_PHASE2_VAE.md)                         | 비지도 VAE — 학습 구성, 플래그율 통과, 성능 실패의 원인 분해      |
 | 10  | [10_PLATFORM.md](10_PLATFORM.md)                           | Company-Centric 격리, DuckDB, 설정 3계층, CI                      |
-| 11  | [11_DASHBOARD.md](11_DASHBOARD.md)                         | Streamlit 현재 상태 — 배선 6화면과 미배선 9모듈                   |
+| 11  | [11_DASHBOARD.md](11_DASHBOARD.md)                         | Streamlit 현재 상태 — 배선 7화면과 미배선 9모듈                   |
 | 12  | [12_DIFFERENTIATION.md](12_DIFFERENTIATION.md)             | 차별점·특장점과 한계                                              |
 | 13  | [13_TEST-DECISIONS.md](13_TEST-DECISIONS.md)               | 검증 로그(M/N)와 설계 결정(ADR)                                   |
 | 14  | [14_JOURNEY.md](14_JOURNEY.md)                             | 재구축 여정 — 무엇을 버리고 무엇으로 대체했나                     |

@@ -46,8 +46,12 @@ KEY_COMPANY_CONTEXT = "audit_company_context"  # CompanyContext | None
 # Top-level dashboard pages.
 PAGE_OVERVIEW = "개요"
 PAGE_COMPANY_SETTINGS = "회사별 설정"
-PAGE_PHASE1 = "Phase1 결과"
-PAGE_PHASE2 = "Phase2 결과"
+# Why: 3-surface 불변식(룰 / 분석적 검토 / VAE)을 상단 탭 라벨에 그대로 노출 (2026-07-20).
+#      상수 값이 곧 탭 라벨이자 session_state 값이며, 모든 참조가 상수 import 경유라
+#      값 변경이 라벨·라우팅에 일관 반영된다.
+PAGE_PHASE1 = "룰 기반"
+PAGE_ANALYTICAL = "분석적 검토"
+PAGE_PHASE2 = "비지도(VAE)"
 PAGE_PHASE_COMPARISON = "Phase1, 2 비교"
 PAGE_COMPARISON = "전기 비교"
 # Why: PAGE_REVIEW_QUEUE 상수는 legacy session_state / 직렬화 호환을 위해 보존하되,
@@ -58,6 +62,7 @@ RESULT_PAGES = (
     PAGE_OVERVIEW,
     PAGE_COMPANY_SETTINGS,
     PAGE_PHASE1,
+    PAGE_ANALYTICAL,
     PAGE_PHASE2,
     PAGE_PHASE_COMPARISON,
     PAGE_COMPARISON,

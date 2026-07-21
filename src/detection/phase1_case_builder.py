@@ -688,12 +688,14 @@ def build_phase1_case_result(
     )
     _st = _stage("absorb_document_hits", _st)
     units = [*document_units, *flow_units]
+    macro_row_badges = _build_macro_row_badges(df, macro_findings)
     units = _score_phase1_units(
         units,
         raw_hits,
         df,
         config,
         partner_row_badges=partner_row_badges,
+        macro_row_badges=macro_row_badges,
     )
     _st = _stage("score_phase1_units", _st)
     cases = _build_cases(
@@ -2013,6 +2015,7 @@ def _score_phase1_units(
     config: dict[str, Any],
     *,
     partner_row_badges: pd.DataFrame | None = None,
+    macro_row_badges: pd.DataFrame | None = None,
 ) -> list[Phase1Unit]:
     if not units:
         return units
@@ -2052,12 +2055,12 @@ def _score_phase1_units(
             fired_rule_ids.update(ref.rule_id for ref in unit.absorbed_rule_hits)
         unit_total_amount = unit_amounts.get(unit.unit_id, 0.0)
         unit_time_severity = compute_time_severity_score(fired_rule_ids)
+        unit_positions = _unit_row_positions(unit, doc_positions)
         unit_badge_tags = _compose_badge_tags(
-            partner_tags=_partner_badges_for_positions(
-                partner_row_badges, _unit_row_positions(unit, doc_positions)
-            ),
+            partner_tags=_partner_badges_for_positions(partner_row_badges, unit_positions),
             time_severity_score=unit_time_severity,
             fired_rule_ids=fired_rule_ids,
+            macro_tags=_macro_badges_for_positions(macro_row_badges, unit_positions),
         )
         hits = unit_hits.get(unit.unit_id, [])
         if not hits:
@@ -4861,6 +4864,49 @@ _RULE_BADGE_MAP: dict[str, str] = {
     "L3-12": "work_scope_excess",
 }
 
+# macro finding(모집단 자기 큐) → 전표 맥락 배지. 전표를 부정으로 확정하지 않고 "이상 계정 소속"만 표시.
+_MACRO_BADGE_MAP: dict[str, str] = {
+    "L4-02": "benford_account",
+    "ROUND-DENSITY": "round_density_account",
+    "D01": "account_activity_shift",
+    "D02": "ratio_variance_account",
+}
+
+
+def _build_macro_row_badges(
+    df: pd.DataFrame, macro_findings: list[dict[str, Any]]
+) -> pd.DataFrame | None:
+    """macro finding 을 df 행별 맥락 배지(bool 컬럼)로 환원. 거래처 row_badges 와 동일 구조.
+
+    매칭 우선순위: finding.document_ids(정밀) → 없으면 (회사·계정) 키(계정 전체). 연도 컬럼이 df 에
+    있으면 연도까지 좁힌다. 전부 False 인 컬럼은 결과에서 제외한다(빈 배지 방지).
+    """
+    if df.empty or not macro_findings:
+        return None
+    cols: dict[str, pd.Series] = {}
+    doc_series = df["document_id"].astype(str) if "document_id" in df.columns else None
+    acct_series = df["gl_account"].astype(str) if "gl_account" in df.columns else None
+    comp_series = df["company_code"].astype(str) if "company_code" in df.columns else None
+    year_series = df["fiscal_year"].astype(str) if "fiscal_year" in df.columns else None
+    for finding in macro_findings:
+        tag = _MACRO_BADGE_MAP.get(str(finding.get("rule_id") or ""))
+        if tag is None:
+            continue
+        doc_ids = {str(d) for d in (finding.get("document_ids") or []) if str(d)}
+        if doc_ids and doc_series is not None:
+            mask = doc_series.isin(doc_ids)
+        elif acct_series is not None and finding.get("gl_account") is not None:
+            mask = acct_series == str(finding.get("gl_account"))
+            if comp_series is not None and finding.get("company_code") is not None:
+                mask &= comp_series == str(finding.get("company_code"))
+            if year_series is not None and finding.get("fiscal_year") is not None:
+                mask &= year_series == str(finding.get("fiscal_year"))
+        else:
+            continue  # 계정도 문서도 못 잡는 축(월/작성자)은 전표 환원 불가 → 스킵
+        cols[tag] = cols[tag] | mask if tag in cols else mask
+    active = {tag: series for tag, series in cols.items() if bool(series.any())}
+    return pd.DataFrame(active, index=df.index) if active else None
+
 
 def _partner_badges_for_positions(
     partner_row_badges: pd.DataFrame | None, positions: list[int]
@@ -4874,14 +4920,29 @@ def _partner_badges_for_positions(
     }
 
 
+def _macro_badges_for_positions(
+    macro_row_badges: pd.DataFrame | None, positions: list[int]
+) -> set[str]:
+    """positional 행집합의 macro 맥락 배지 any() 집계. 컬럼명이 곧 배지 태그(_MACRO_BADGE_MAP 값)."""
+    if macro_row_badges is None or macro_row_badges.empty or not positions:
+        return set()
+    sub = macro_row_badges.iloc[positions]
+    return {str(col) for col in sub.columns if bool(sub[col].any())}
+
+
 def _compose_badge_tags(
     *,
     partner_tags: set[str],
     time_severity_score: int,
     fired_rule_ids: set[str],
     weak_tags: list[str] | tuple[str, ...] = (),
+    macro_tags: set[str] | tuple[str, ...] = (),
 ) -> list[str]:
-    """배지 소스 통합(거래처 + off_time + L4-06/L3-12 + weak_evidence). 중복 제거·정렬. 점수 무영향."""
+    """배지 소스 통합(거래처 + off_time + L4-06/L3-12 + weak_evidence + macro). 중복 제거·정렬. 점수 무영향.
+
+    macro_tags = 이 전표가 '이상하다고 표시된 계정(Benford/라운드밀집/계정활동·비율변동)'에 속함을
+    나타내는 맥락 배지. 전표 자체를 부정으로 확정하지 않는다 — 점수 비병합, 오버레이 표시 전용.
+    """
     tags: set[str] = set(partner_tags)
     if time_severity_score > 0:
         tags.add("off_time")
@@ -4889,6 +4950,7 @@ def _compose_badge_tags(
         if rule_id in fired_rule_ids:
             tags.add(tag)
     tags.update(weak_tags or ())
+    tags.update(macro_tags or ())
     return sorted(tags)
 
 

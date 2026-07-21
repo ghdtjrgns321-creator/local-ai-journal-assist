@@ -69,13 +69,12 @@ def _phase1_grid_pr() -> SimpleNamespace:
     )
 
 
-def test_phase1_render_uses_compact_four_tab_layout(monkeypatch) -> None:
-    """4-tab 압축 구조 가드.
+def test_phase1_render_uses_compact_three_tab_layout(monkeypatch) -> None:
+    """3-tab 압축 구조 가드.
 
-    Why: PHASE1 결과는 수만 건이라 7-Topic + AI 결론을 펼쳐 두면 감사인이
-         어디부터 봐야 할지 잃는다. 4-tab(전체 요약/데이터 정합성/위반 케이스/
-         통계결과)으로 압축하고 통계결과 안에 7-Topic을 sub-tab으로 보존한다.
-         "AI 결론" 탭은 PHASE3 Review Queue Narrator로 대체되어 제거.
+    Why: tier 폐지·조합 빌더 전환(2026-07-21)으로 3-tab(전체 요약/데이터 정합성/조합별 검토)으로
+         재편. 구 "통계결과" 탭은 case·priority_band 기반 차트라 폐기하고 모집단 프로파일은 전체
+         요약으로 이관. "AI 결론" 탭은 PHASE3 Review Queue Narrator로 대체되어 제거.
     """
     captured_label_groups: list[list[str]] = []
 
@@ -94,7 +93,6 @@ def test_phase1_render_uses_compact_four_tab_layout(monkeypatch) -> None:
     monkeypatch.setattr(tab_phase1, "_render_overview", lambda *args, **kwargs: None)
     monkeypatch.setattr(tab_phase1, "_render_data_quality_gate", lambda *args, **kwargs: None)
     monkeypatch.setattr(tab_phase1, "_render_violation_cases_tab", lambda *args, **kwargs: None)
-    monkeypatch.setattr(tab_phase1, "_render_statistics_tab", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         tab_phase1, "_render_year_over_year", lambda *args, **kwargs: None, raising=False
     )
@@ -106,8 +104,7 @@ def test_phase1_render_uses_compact_four_tab_layout(monkeypatch) -> None:
     assert captured_label_groups[0] == [
         "전체 요약",
         "데이터 정합성",
-        "검토 케이스",
-        "통계결과",
+        "조합별 검토",
     ]
     # AI 결론 탭이 더 이상 노출되지 않음을 보장.
     flat = [label for group in captured_label_groups for label in group]
@@ -183,12 +180,14 @@ def test_filter_master_data_falls_back_to_row_flags_without_phase1_truth() -> No
 def test_rules_for_topic_excludes_benford_alias_and_macro_rules() -> None:
     revenue = tab_phase1._rules_for_topic("revenue_statistical")
 
-    # alias / macro 는 canonical L4-02 로 흡수되어야 한다.
+    # Benford(L4-02)·D01·D02 는 PHASE1-2 macro 로 이관(2026-06-17)되어 canonical
+    # L1~L4 count·PHASE1-1 토픽 활성 룰에서 모두 제외된다(3-surface 불변식).
     assert "Benford" not in revenue
-    assert "L4-02" in revenue
-    # macro (D01/D02) 는 canonical 32 에 포함되지 않으므로 토픽 활성 룰에서 제거.
+    assert "L4-02" not in revenue
     assert "D01" not in revenue
     assert "D02" not in revenue
+    # 전표 단위 canonical row 룰은 그대로 활성 룰로 유지.
+    assert {"L3-10", "L4-01", "L4-03", "L4-06"}.issubset(revenue)
 
 
 def test_rules_for_topic_excludes_d_macro_from_account_and_closing() -> None:
@@ -270,10 +269,11 @@ def test_topic_rule_groups_canonicalize_alias_and_internal_reason(monkeypatch) -
     revenue_ids = {group["rule_id"] for group in revenue_groups}
     duplicate_ids = {group["rule_id"] for group in duplicate_groups}
 
-    # Benford 는 L4-02 로 흡수되어야 하고 별도 행이 생기면 안 된다.
-    assert "L4-02" in revenue_ids
+    # Benford 는 canonical L4-02 로 매핑되지만 macro(PHASE1-2 이관)라 토픽 활성
+    # 그룹에는 노출되지 않는다 — alias 별도 행도, canonical 행도 생기지 않는다.
+    assert "L4-02" not in revenue_ids
     assert "Benford" not in revenue_ids
-    # L2-03a 는 L2-03 으로 흡수.
+    # L2-03a 는 전표 단위 canonical L2-03 으로 흡수되어 그룹에 노출.
     assert "L2-03" in duplicate_ids
     assert "L2-03a" not in duplicate_ids
     # canonicalize_rule_id 동작 확인 (스모크).

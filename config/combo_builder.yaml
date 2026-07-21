@@ -98,3 +98,8 @@ presets: # 저장된 체크 상태 + 소명 1줄. 등급 선언 아님(원클릭
     bodies: [L2-04]
     features: all
     rationale: 금감원 22건 실증 수법
+  - preset_id: impairment_provision
+    label: 결산 손상·충당금 미인식
+    bodies: [L3-04, L3-10]
+    features: all
+    rationale: v3 발화지도 결산기말+추정계정 반복 5건(재고·투자주식 손상, 대손충당금 미인식)

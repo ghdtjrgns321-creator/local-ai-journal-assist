@@ -586,14 +586,17 @@ def _unit_row(unit: Any, phase1: Phase1CaseResult) -> dict[str, Any]:
         "evidence_count": len(unit.evidence_rows),
         "document_ids": document_ids,
         "document_count": len(document_ids),
+        # PHASE1-2 배지(점수 비병합) — 분석적 검토 신호 오버레이 전용.
+        "badge_tags": list(getattr(unit, "badge_tags", []) or []),
     }
 
 
 def build_phase1_rule_coverage(pr: PipelineResult) -> dict[str, Any]:
     """룰별 커버리지 표. 모든 unit 의 evidence_rows 를 룰별로 전수 집계.
 
-    행 대상 = RULE_SCORING_REGISTRY 에서 scoring_role=="primary" 이고 standalone_rankable
-    인 룰만(booster/macro/combo_only 제외). 룰ID 화이트리스트 나열 금지 — 메타로 판별.
+    행 대상 = 발화된(문서 1건 이상) 모든 룰. booster(L3-03 관계사·L3-10 추정계정 등)도
+    포함한다. 단 scoring_role=="macro_only" 분석적 검토 신호(Benford·D01·D02·L3-12·
+    L4-02·L4-06)는 전표 단위가 아닌 모집단 단위라 이 표에서 제외한다(PHASE1-2 표면 소유).
     tier 폐지(PHASE1_COMBO_BUILDER_SPEC §6) 후 band 분해 없이 distinct document 수 +
     unit 수만 집계한다.
     """
@@ -611,8 +614,8 @@ def build_phase1_rule_coverage(pr: PipelineResult) -> dict[str, Any]:
         for ref in unit.evidence_rows:
             rule_id = ref.rule_id
             meta = RULE_SCORING_REGISTRY.get(rule_id)
-            # standalone primary 만 행 대상. 메타 없으면(미등록) 제외.
-            if meta is None or meta.scoring_role != "primary" or not meta.standalone_rankable:
+            # macro_only 분석적 검토 신호만 제외. 나머지(booster·primary·미등록)는 발화 시 포함.
+            if meta is not None and meta.scoring_role == "macro_only":
                 continue
             item = rule_items.setdefault(
                 rule_id,
@@ -2503,6 +2506,8 @@ def _case_row(
         "recommended_audit_actions": list(case.recommended_audit_actions),
         "rule_evidence_summary": list(case.rule_evidence_summary),
         "evidence_tags": list(case.evidence_tags),
+        # PHASE1-2 배지(점수 비병합) — 분석적 검토 신호를 룰 case 에 오버레이만.
+        "badge_tags": list(case.badge_tags),
         "has_control_failure": case.has_control_failure,
         "has_high_materiality": case.has_high_materiality,
         "has_repeat_pattern": case.has_repeat_pattern,

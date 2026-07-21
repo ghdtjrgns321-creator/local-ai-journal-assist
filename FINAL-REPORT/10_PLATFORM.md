@@ -36,7 +36,7 @@ data/companies/{company_id}/
 | `settings.py`                 | 전역 Pydantic 설정 + YAML 로더 | 승인한도 6단계, Z-score 임계 3.0, 심야 22~06시, 기말 여유 5일, Benford MAD 0.012, 역분개 윈도우 45일·허용오차 0.0, PHASE2 학습 상한 5만행, 난수 시드 42 |
 | `audit_rules.yaml`            | L1~L4 업무 룰 정본             | L1-07 최소 증거 2건, L2-05 제외계정 3종, L2-04 가계정 5종, L4-03 세전이익 5%·매출 0.5%·중요성비율 0.75, 통화별 소수자리(KRW·JPY 0 / USD·EUR 2)          |
 | `sod_toxic_combinations.yaml` | 직무분리 위험 조합 근거        | 7 프로세스 → 4 기능, toxic 10쌍 + 프로세스 내 2 + 제외 4, 이진 플래그(점수 단계 없음)                                                                   |
-| `combo_builder.yaml`          | 조합 빌더 어휘 정본            | 몸통 10(감리 확정 건수 병기) × 특징 10 × 프리셋 4                                                                                                       |
+| `combo_builder.yaml`          | 조합 빌더 어휘 정본            | 몸통 10(감리 확정 건수 병기) × 특징 10 × 프리셋 5                                                                                                       |
 | `schema.yaml`                 | 원장 컬럼 스키마 정본          | 51컬럼 정의, **필수 10개**, 라벨 6종은 "탐지 입력 금지" 명시                                                                                            |
 | `phase1_case.yaml`            | 케이스·테마 우선순위           | 상위 케이스 50, 테마당 10                                                                                                                               |
 | `keywords.yaml`               | ERP 헤더 별칭 사전             | SAP·더존·위하고·영림원·Oracle EBS                                                                                                                       |

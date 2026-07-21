@@ -90,7 +90,6 @@ def _render_before(result: PipelineResult) -> None:
     df = result.data
 
     st.subheader("데이터 개요")
-    st.caption("회사의 비즈니스 성격과 데이터 건전성을 한눈에 보여주는 지표입니다.")
 
     period = _period_range(df)
     total_lines = int(len(df))
@@ -668,28 +667,31 @@ def _check_period_end_concentration(df: pd.DataFrame) -> tuple[str, str, str] | 
 
 
 def _render_pipeline_briefing() -> None:
-    """PHASE1 기본 큐 + PHASE2 family lane 흐름을 간결한 카드로 예고."""
+    """룰 · 분석적 검토 · VAE 세 검토 표면을 간결한 카드로 예고."""
     st.markdown(
         "<div style='color:#111827; font-size:1.05rem; font-weight:600; "
-        "margin-bottom:0.25rem;'>로컬 감사 분석 파이프라인 가동 대기</div>"
-        "<div style='color:#6B7280; font-size:0.85rem; margin-bottom:1rem;'>"
-        "실행 시 PHASE1 검토 큐와 PHASE2 보조 Lane 이 순차적으로 준비됩니다.</div>",
+        "margin-bottom:1rem;'>로컬 감사 분석 파이프라인 가동 대기</div>",
         unsafe_allow_html=True,
     )
 
     cards = [
         (
-            "Phase 1",
+            "Phase 1 · 룰",
             "룰 기반 감사",
-            "K-IFRS 기반 감사 검토 시나리오",
-            "자기승인·중복지급 등 주요 검토 신호를 1차 스크리닝합니다.",
+            "전표·행 단위 결정론 룰",
+            "자기승인·중복지급 등 명명된 규칙 위반을 전표 단위로 스크리닝합니다.",
         ),
         (
-            "Phase 2",
-            "ML/DL 기반 감사",
-            "중복 · 관계망 · 시점 · 관계사 · 비지도 이상",
-            "영역별로 감사인이 놓치기 쉬운 비선형·우회적 이상 패턴 후보를 "
-            "보조 신호로 제시합니다.",
+            "Phase 1 · 분석적 검토",
+            "분석적 검토 신호",
+            "벤포드 · 라운드넘버 · 첫등장/희소 거래처",
+            "계정·거래처를 모아야 드러나는 모집단 단위 신호를 제시합니다.",
+        ),
+        (
+            "Phase 2 · 비지도",
+            "VAE 이상 탐지",
+            "정상 분포 밖 비정형 패턴",
+            "학습된 정상 범위를 벗어난 전표를 추가 검토 후보로 제시합니다.",
         ),
     ]
 
@@ -732,7 +734,7 @@ def _render_pipeline_cta() -> None:
         )
     with col_p1:
         p1_clicked = st.button(
-            "Phase 1 분석 시작",
+            "감사 분석 실행 (룰 · 분석적 검토 · VAE)",
             type="primary",
             width="stretch",
             key="overview_run_phase1",
@@ -754,7 +756,12 @@ def _render_pipeline_cta() -> None:
 
 
 def _run_phase1() -> None:
-    """Run Phase 1 only. Completed result is reflected on rerun."""
+    """한 번의 실행으로 3표면 산출 — 룰(PHASE1-1)·분석적 검토(PHASE1-2)는 phase1 본
+    실행에서 함께 나오고, 이어서 저장된 VAE 모델이 있으면 비지도(PHASE2) 추론까지 연쇄한다.
+
+    VAE 는 저장모델 추론만 자동 연쇄한다(학습은 GPU 부담이 커 Phase2 탭의 명시 버튼에 남긴다).
+    저장모델이 없으면 조용히 건너뛰고 안내만 남긴다. 완료 결과는 rerun 후 반영된다.
+    """
     from dashboard.components.analysis_runner import run_phase_analysis
 
     # _run_phase1 은 overview_tab 내부에서 실행되므로 widget key 인
@@ -762,15 +769,50 @@ def _run_phase1() -> None:
     # run 에 위임하면 _consume_pending_page 가 widget 렌더 전에 적용한다.
     st.session_state[KEY_ACTIVE_RESULT_TAB] = PAGE_PHASE1
 
-    with st.spinner("Phase 1 룰 기반 탐지 실행 중... 약 5분 정도 소요됩니다."):
+    with st.spinner("룰 · 분석적 검토 탐지 실행 중... 약 5분 정도 소요됩니다."):
         try:
+            # run_phase_analysis(phase1) 이 KEY_PHASE2_RESULT 를 None 으로 리셋하므로
+            # VAE 추론은 반드시 이 뒤에 실행해야 결과가 유지된다.
             run_phase_analysis(phase="phase1")
         except Exception as e:
-            st.error(f"Phase 1 실행 실패: {e}")
+            st.error(f"룰/분석적 검토 실행 실패: {e}")
             return
+
+    _maybe_run_phase2_inference()
+
     st.session_state[KEY_ACTIVE_RESULT_TAB] = PAGE_PHASE1
     st.session_state[KEY_PENDING_RESULT_TAB] = PAGE_PHASE1
     st.rerun()
+
+
+def _maybe_run_phase2_inference() -> None:
+    """저장된 VAE 모델이 있으면 비지도(PHASE2) 추론을 이어서 실행한다.
+
+    없으면 조용히 건너뛴다 — VAE 학습은 Phase2 탭의 명시 버튼 몫이다(GPU 부담).
+    추론 실패는 룰/분석적 검토 결과를 무효화하지 않으므로 warning 으로만 처리한다.
+    """
+    from dashboard._state import KEY_COMPANY_CONTEXT
+    from src.services.phase2_inference_service import (
+        load_latest_phase2_training_snapshot,
+        run_phase2_inference_analysis,
+    )
+
+    ctx = st.session_state.get(KEY_COMPANY_CONTEXT)
+    snapshot = load_latest_phase2_training_snapshot(ctx)
+    if not snapshot:
+        st.info(
+            "저장된 VAE 모델이 없어 비지도(VAE) 표면은 건너뛰었습니다. "
+            "필요하면 '비지도(VAE)' 탭에서 학습 후 다시 실행하세요."
+        )
+        return
+
+    fiscal_year = getattr(ctx, "fiscal_year", None)
+    partition = str(int(fiscal_year)) if fiscal_year is not None else None
+    with st.spinner("비지도(VAE) 추론 실행 중... 약 1분 정도 소요됩니다."):
+        try:
+            run_phase2_inference_analysis(st.session_state, partition=partition)
+        except Exception as e:
+            st.warning(f"비지도(VAE) 추론을 건너뛰었습니다: {e}")
 
 
 # ── After — 분석 후 ────────────────────────────────────────

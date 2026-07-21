@@ -49,7 +49,7 @@ def _resolve_active_partition() -> str | None:
 
 
 def render(prep_result, result: PipelineResult | None) -> None:
-    st.subheader("Phase2 결과")
+    st.subheader("비지도(VAE)")
 
     # Why: phase2 는 phase1 batch_id 를 재사용한다. phase1 결과가 없으면 phase2 추론
     #      자체가 의미 없고 데이터 모델도 깨지므로, phase2 탭에서 phase1 분석 시작 버튼만
