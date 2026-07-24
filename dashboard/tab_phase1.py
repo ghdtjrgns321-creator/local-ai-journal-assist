@@ -377,7 +377,7 @@ def _render_population_profile(pr, data: pd.DataFrame) -> None:
 
     section_t = st.container(border=True)
     section_t.markdown("##### 룰 신호 전표 상위 10")
-    section_t.caption("룰이 하나 이상 걸린 전표 기준.")
+    section_t.caption("룰이 하나 이상 발화된 전표 기준.")
     if not flagged_ids or "document_id" not in data.columns:
         section_t.info("룰 신호가 걸린 전표가 없습니다.")
     else:

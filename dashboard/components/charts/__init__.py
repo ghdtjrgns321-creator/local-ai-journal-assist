@@ -3,7 +3,11 @@
 호출: from dashboard.components.charts import risk_heatmap
 """
 
-from dashboard.components.charts.benford_charts import benford_facet, benford_overlay
+from dashboard.components.charts.benford_charts import (
+    benford_facet,
+    benford_group_summary,
+    benford_overlay,
+)
 from dashboard.components.charts.comparison_charts import (
     category_flux_bar,
     changed_accounts_table,
@@ -43,6 +47,7 @@ __all__ = [
     "amount_box_plot",
     "anomaly_scatter",
     "benford_facet",
+    "benford_group_summary",
     "benford_overlay",
     "category_flux_bar",
     "changed_accounts_table",

@@ -230,6 +230,70 @@ section[data-testid="stSidebar"] .streamlit-expanderHeader {
     color: #FFFFFF !important;
 }
 
+/* 거래처 신호 필터 — 선택 chip을 primary로 확실히 채워 상태를 강조.
+   label / button 두 DOM 형태를 모두 커버해 Streamlit 버전 차이에 견고하게. */
+.st-key-analytical_partner_signal_filter [data-testid="stSegmentedControl"] label,
+.st-key-analytical_partner_signal_filter [data-testid="stSegmentedControl"] button {
+    border: 1px solid var(--c-border) !important;
+    background: var(--c-bg) !important;
+    color: var(--c-text-secondary) !important;
+    border-radius: var(--r-sm) !important;
+    padding: 0.4rem 1.05rem !important;
+    font-size: 0.85rem !important;
+    font-weight: 500 !important;
+    box-shadow: none !important;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.st-key-analytical_partner_signal_filter [data-testid="stSegmentedControl"] label:hover,
+.st-key-analytical_partner_signal_filter [data-testid="stSegmentedControl"] button:hover {
+    border-color: var(--c-text-muted) !important;
+    color: var(--c-text) !important;
+    background: var(--c-surface) !important;
+}
+.st-key-analytical_partner_signal_filter [data-testid="stSegmentedControl"] label:has(input:checked),
+.st-key-analytical_partner_signal_filter [data-testid="stSegmentedControl"] button[aria-checked="true"],
+.st-key-analytical_partner_signal_filter [data-testid="stSegmentedControl"] button[aria-pressed="true"] {
+    background: var(--c-primary) !important;
+    border-color: var(--c-primary) !important;
+    color: #FFFFFF !important;
+    box-shadow: var(--s-btn) !important;
+}
+.st-key-analytical_partner_signal_filter [data-testid="stSegmentedControl"] label:has(input:checked) *,
+.st-key-analytical_partner_signal_filter [data-testid="stSegmentedControl"] button[aria-checked="true"] *,
+.st-key-analytical_partner_signal_filter [data-testid="stSegmentedControl"] button[aria-pressed="true"] * {
+    color: #FFFFFF !important;
+}
+
+/* 거래처 신호 판정 기준 범례 — 카드형 정의 목록(rule-audit-note 톤). */
+.signal-legend {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 12px 14px;
+    margin: 4px 0 14px;
+    background: var(--c-surface);
+    border: 1px solid var(--c-border);
+    border-radius: var(--r-md);
+}
+.signal-legend__item {
+    font-size: 0.78rem;
+    line-height: 1.5;
+    color: var(--c-text-secondary);
+}
+.signal-legend__term {
+    display: inline-block;
+    min-width: 92px;
+    margin-right: 8px;
+    padding: 1px 8px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--c-text);
+    background: var(--c-bg);
+    border: 1px solid var(--c-border);
+    border-radius: 999px;
+    text-align: center;
+}
+
 /* ── Buttons ───────────────────────────────────────── */
 .stMainBlockContainer .stButton > button {
     border-radius: var(--r-sm) !important;
@@ -512,6 +576,123 @@ hr { border-color: var(--c-border) !important; opacity: 0.6; }
     border: 1px solid var(--c-border);
     border-radius: 4px;
     vertical-align: 1px;
+}
+
+/* ── Benford 통계 패널 (오버레이 차트 우측) ────────── */
+/* Why: 좌측 차트와 상·하단을 맞추기 위해 고정 높이 + 세로 분산. 차트 높이(380px)와
+       동일하게 두고 stat-grid가 남는 공간을 채워 바닥선을 정렬한다. */
+.bf-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    height: 320px;
+}
+.bf-verdict {
+    padding: 0.7rem 0.85rem;
+    border-radius: var(--r-md);
+    background: var(--c-surface);
+    border: 1px solid var(--c-border);
+    border-left-width: 3px;
+}
+.bf-verdict__label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--c-text-secondary);
+    margin-bottom: 3px;
+}
+.bf-verdict__value {
+    font-size: 1.35rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    line-height: 1.1;
+}
+.bf-verdict__note {
+    margin-top: 4px;
+    font-size: 0.72rem;
+    line-height: 1.4;
+    color: var(--c-text-secondary);
+}
+.bf-verdict--good { border-left-color: #16A34A; }
+.bf-verdict--good .bf-verdict__value { color: #15803D; }
+.bf-verdict--warn { border-left-color: #D97706; }
+.bf-verdict--warn .bf-verdict__value { color: #B45309; }
+.bf-verdict--bad { border-left-color: #DC2626; }
+.bf-verdict--bad .bf-verdict__value { color: #B91C1C; }
+
+/* Why: 남는 세로 공간에 rows를 space-around로 흩뿌리면 칸 간격이 벌어져 가독성이
+       나쁘다. rows는 붙여서 위쪽에 정렬하고, 아래 여백은 그대로 둔다. */
+.bf-stat-grid {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+}
+.bf-stat {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 0.55rem 0;
+    border-bottom: 1px solid var(--c-border);
+}
+.bf-stat:last-child { border-bottom: none; }
+.bf-stat__label {
+    font-size: 0.78rem;
+    font-weight: 500;
+    color: var(--c-text-secondary);
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+/* Why: Streamlit HTML sanitizer가 title 속성을 제거해 네이티브 툴팁이 안 뜬다.
+       class 기반 nested span은 살아남으므로 CSS 툴팁으로 구현한다. */
+.bf-stat__hint {
+    position: relative;
+    font-size: 0.62rem;
+    font-weight: 600;
+    color: var(--c-text-muted);
+    border: 1px solid var(--c-border);
+    border-radius: 50%;
+    width: 14px;
+    height: 14px;
+    line-height: 13px;
+    text-align: center;
+    cursor: help;
+    flex: 0 0 auto;
+}
+.bf-stat__hint .bf-tip {
+    visibility: hidden;
+    opacity: 0;
+    position: absolute;
+    z-index: 1000;
+    top: 150%;
+    left: -4px;
+    width: 230px;
+    padding: 8px 10px;
+    background: var(--c-primary-active);
+    color: #FFFFFF;
+    border-radius: var(--r-sm);
+    box-shadow: var(--s-md);
+    font-size: 0.72rem;
+    font-weight: 400;
+    line-height: 1.5;
+    text-align: left;
+    letter-spacing: 0;
+    white-space: normal;
+    transition: opacity 0.12s ease;
+    pointer-events: none;
+}
+.bf-stat__hint:hover .bf-tip { visibility: visible; opacity: 1; }
+.bf-stat__value {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--c-text);
+    letter-spacing: -0.01em;
+    white-space: nowrap;
+}
+.bf-stat__value .bf-unit {
+    font-size: 0.78rem;
+    font-weight: 500;
+    color: var(--c-text-secondary);
+    margin-left: 1px;
 }
 </style>
 """

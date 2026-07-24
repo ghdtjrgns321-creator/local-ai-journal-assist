@@ -45,7 +45,6 @@ def compute_partner_signals(df: pd.DataFrame | None, settings: Any) -> PartnerSi
 
     # §3 데이터주도 — 임계값은 전부 settings 에서 read.
     rare_quantile = float(getattr(settings, "partner_rare_quantile", 0.10))
-    dormant_days = int(getattr(settings, "partner_dormant_inactive_days", 180))
     min_population = int(getattr(settings, "partner_signal_min_population", 50))
 
     partner = df["trading_partner"].astype("string")
@@ -75,9 +74,7 @@ def compute_partner_signals(df: pd.DataFrame | None, settings: Any) -> PartnerSi
             for p, yrs in years_by_partner.items()
             if current_year in yrs and not (yrs & prior_years)
         }
-        result.dormant_partners = _dormant_partners(
-            df, partner, year, valid, current_year, dormant_days, years_by_partner
-        )
+        result.dormant_partners = _dormant_partners(current_year, years_by_partner)
 
     result.rare_partners = _rare_partners(
         partner, year, valid, current_year, rare_quantile, min_population, result.warnings
@@ -118,40 +115,21 @@ def _rare_partners(
     return {str(p) for p in counts[counts <= threshold].index}
 
 
-def _dormant_partners(
-    df: pd.DataFrame,
-    partner: pd.Series,
-    year: pd.Series,
-    valid: pd.Series,
-    current_year: Any,
-    dormant_days: int,
-    years_by_partner: pd.Series,
-) -> set[str]:
-    """휴면재활성: 전기 활동 有 + **직전 회계연도 결번**(밀도 무관 가드) +
-    마지막 전기 활동~당기 첫 활동 gap ≥ dormant_days.
+def _dormant_partners(current_year: Any, years_by_partner: pd.Series) -> set[str]:
+    """휴면재활성: 과거(직전 연도 이전) 활동 有 + **직전 회계연도 결번** + 당기 재등장.
 
-    직전 연도 결번 조건이 없으면 매년 꾸준한 거래처도 연 단위 간격(≈365d)만으로 잡혀
-    오탐이 된다(sparse cadence 함정). 두 조건을 함께 걸어 밀도에 의존하지 않는다.
+    직전 회계연도를 통째로 건너뛰므로 마지막 과거 활동~당기 재등장 사이에 자연히 1년
+    이상 공백이 생긴다 → 별도 gap(일수) 조건은 이 결번 조건에 자동 포함돼 불필요하다.
+    'any(y < prev_year)'(과거 어느 해든 활동 有) 조건이 첫등장과 재활성을 가른다 —
+    직직전이든 그 이전이든 과거 이력이 있으면 재활성으로 본다.
+    매년 꾸준한 거래처는 직전 연도에 활동이 있어 결번 조건에서 자연히 제외된다.
     """
-    if "posting_date" not in df.columns:
-        return set()
     prev_year = current_year - 1
-    year_skipped = {
+    return {
         str(p)
         for p, yrs in years_by_partner.items()
         if current_year in yrs and prev_year not in yrs and any(y < prev_year for y in yrs)
     }
-    if not year_skipped:
-        return set()
-    posting = pd.to_datetime(df["posting_date"], errors="coerce")
-    work = pd.DataFrame({"partner": partner, "year": year, "pd": posting})[valid].dropna(
-        subset=["partner", "year", "pd"]
-    )
-    prior_last = work[work["year"] < current_year].groupby("partner")["pd"].max()
-    cur_first = work[work["year"] == current_year].groupby("partner")["pd"].min()
-    gap_days = (cur_first - prior_last).dropna().dt.days
-    gap_ok = {str(p) for p in gap_days[gap_days >= dormant_days].index}
-    return year_skipped & gap_ok
 
 
 def _build_badges(

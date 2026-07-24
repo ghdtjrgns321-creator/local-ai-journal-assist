@@ -53,14 +53,13 @@ def render(prep_result, phase1_result: PipelineResult | None) -> None:
         return
 
     pr = phase1_result
-    benford = build_phase1_macro_finding_queue(pr, rule_id="L4-02")
     round_density = build_phase1_macro_finding_queue(pr, rule_id="ROUND-DENSITY")
     d01 = build_phase1_macro_finding_queue(pr, rule_id="D01")
     d02 = build_phase1_macro_finding_queue(pr, rule_id="D02")
 
-    sub_tabs = st.tabs(["Benford 분포", "둥근 금액 밀집", "거래처 신호", "계정·비율 변동"])
+    sub_tabs = st.tabs(["Benford 분포", "Round Number 밀집", "거래처 신호", "계정·비율 변동"])
     with sub_tabs[0]:
-        _render_benford(pr, benford)
+        _render_benford(pr)
     with sub_tabs[1]:
         _render_round_density(round_density)
     with sub_tabs[2]:
@@ -72,40 +71,11 @@ def render(prep_result, phase1_result: PipelineResult | None) -> None:
 # ── Benford ─────────────────────────────────────────────────
 
 
-def _render_benford(pr: PipelineResult, benford: list[dict[str, Any]]) -> None:
-    """전체 첫자리 분포 차트(orphan tab_benford 재사용) + 계정별 이상 finding 표."""
+def _render_benford(pr: PipelineResult) -> None:
+    """전체 첫자리 분포 차트 + 계정별 분리 분석 (orphan tab_benford 재사용)."""
     from dashboard import tab_benford
 
     tab_benford.render(pr)
-
-    st.divider()
-    st.markdown("##### 계정 단위 Benford 이상 (L4-02)")
-    if not benford:
-        st.caption("계정 단위 Benford 이상 finding 이 없습니다.")
-        return
-    rows = [
-        {
-            "계정": item.get("gl_account"),
-            "표본": item.get("sample_size"),
-            "신호강도": item.get("review_score"),
-            "심각도": item.get("finding_severity"),
-            "후보행": item.get("candidate_rows"),
-            "이상자리": ", ".join(str(d) for d in (item.get("flagged_digits") or [])),
-            "MAD": (item.get("metrics") or {}).get("mad"),
-            "chi2 p": (item.get("metrics") or {}).get("chi2_p_value"),
-        }
-        for item in benford
-    ]
-    st.dataframe(
-        pd.DataFrame(rows),
-        width="stretch",
-        hide_index=True,
-        column_config={
-            "신호강도": st.column_config.NumberColumn(format="%.3f"),
-            "MAD": st.column_config.NumberColumn(format="%.4f"),
-            "chi2 p": st.column_config.NumberColumn(format="%.4f"),
-        },
-    )
 
 
 # ── 라운드넘버 밀집도 ──────────────────────────────────────────
@@ -113,13 +83,13 @@ def _render_benford(pr: PipelineResult, benford: list[dict[str, Any]]) -> None:
 
 def _render_round_density(findings: list[dict[str, Any]]) -> None:
     """둥근 금액이 모집단에서 baseline 대비 과집중한 그룹."""
-    st.markdown("##### 둥근 금액 모집단 밀집 (ROUND-DENSITY)")
+    st.markdown("##### Round Number 밀집")
     st.caption(
-        "계정·월·작성자 등 그룹에서 둥근 금액 비율이 기준선보다 높은 지점입니다. "
-        "예산·계약 금액도 둥글 수 있어 확정 예외가 아닙니다."
+        "계정·월·작성자 등 그룹에서 Round Number 비율이 원장 기준선보다 5%p 이상 "
+        "높은 지점(표본 100건 이상 그룹만 검정)"
     )
     if not findings:
-        st.info("둥근 금액 밀집 finding 이 없습니다.")
+        st.info("Round Number 밀집 finding 이 없습니다.")
         return
     rows = [
         {
@@ -154,9 +124,20 @@ def _render_round_density(findings: list[dict[str, Any]]) -> None:
 def _render_partners(pr: PipelineResult) -> None:
     """첫등장/희소/휴면재활성 거래처 — 신호 필터 연동."""
     st.markdown("##### 거래처 단위 신호")
-    st.caption(
-        "원장 첫 등장·희소·휴면 후 재활성 거래처입니다. 정상 신규 공급처도 첫 등장이므로 "
-        "적발이 아니라 검토 신호입니다."
+    st.caption("첫 등장·희소·휴면 후 재활성 거래처 — 적발이 아닌 검토 신호")
+    st.markdown(
+        "<div class='signal-legend'>"
+        "<div class='signal-legend__item'>"
+        "<span class='signal-legend__term'>첫 등장</span>"
+        "당기에 처음 등장한 거래처</div>"
+        "<div class='signal-legend__item'>"
+        "<span class='signal-legend__term'>희소</span>"
+        "당기 거래건수가 하위 10% 이하</div>"
+        "<div class='signal-legend__item'>"
+        "<span class='signal-legend__term'>휴면 후 재활성</span>"
+        "과거 거래 有, 직전 회계연도 거래 無, 당기에 다시 거래한 거래처</div>"
+        "</div>",
+        unsafe_allow_html=True,
     )
     label = st.segmented_control(
         "신호 필터",
@@ -185,7 +166,7 @@ def _render_partners(pr: PipelineResult) -> None:
         width="stretch",
         hide_index=True,
         column_config={
-            "총금액": st.column_config.NumberColumn(format="%.0f"),
+            "총금액": st.column_config.NumberColumn(format="localized"),
         },
     )
 

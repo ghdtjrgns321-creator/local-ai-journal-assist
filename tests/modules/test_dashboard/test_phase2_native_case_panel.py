@@ -78,7 +78,39 @@ def test_sort_key_orders_by_tier_then_score():
     assert [case.phase2_case_id[-2:] for case in cases] == ["03", "02", "01", "04"]
 
 
-def test_build_unsupervised_row_top_feature():
+def _unsup_fixture(*, case_id: str, anomaly: float) -> UnsupervisedCase:
+    return UnsupervisedCase(
+        phase2_case_id=case_id,
+        batch_id="batch-1",
+        family="unsupervised",
+        unit_type="document",
+        row_refs=(_row_ref("DOC-A", 1),),
+        evidence_tier="ml_quantile",
+        case_generation_reason={"document_grouping": "document_id"},
+        family_score=0.0,
+        family_ecdf=0.0,
+        anomaly_score=anomaly,
+        document_id="DOC-A",
+        evidence_row_count=1,
+    )
+
+
+def test_sort_key_unsupervised_orders_by_anomaly_tail_first():
+    """VAE case 는 anomaly_score(분포 꼬리) 내림차순 — 꼬리 전표가 먼저 보인다."""
+    a = _unsup_fixture(case_id="p2_unsupervised_document_uuuuuuu01", anomaly=0.9612)
+    b = _unsup_fixture(case_id="p2_unsupervised_document_uuuuuuu02", anomaly=0.9987)
+    c = _unsup_fixture(case_id="p2_unsupervised_document_uuuuuuu03", anomaly=0.9740)
+    cases = sorted([a, b, c], key=panel._sort_key)
+    assert [case.phase2_case_id[-2:] for case in cases] == ["02", "03", "01"]
+
+
+def test_build_unsupervised_row_surface_columns():
+    """VAE 목록 컬럼 = 전표·VAE 점수·금액 꼬리·희소도·증거 수·연계 Phase1.
+
+    정보량 없는 컬럼(신호 강도=전 case ML, 이상 사유/주요 피처=단일 generic 태그,
+    결산 근접=전 case 0.00)은 제거됐다. 대신 히스토그램 x축과 동일한
+    anomaly_score(VAE 점수)를 노출한다.
+    """
     case = UnsupervisedCase(
         phase2_case_id="p2_unsupervised_document_unsup0000001",
         batch_id="batch-1",
@@ -89,7 +121,7 @@ def test_build_unsupervised_row_top_feature():
         case_generation_reason={},
         family_score=0.92,
         family_ecdf=0.97,
-        anomaly_score=3.456789,
+        anomaly_score=0.9971,
         top_features=(
             {
                 "feature_id": "amount_z",
@@ -107,15 +139,82 @@ def test_build_unsupervised_row_top_feature():
         model_id="model-1",
         schema_hash="hash-1",
     )
-    row = panel._build_unsupervised_row(case)
-    assert row["evidence_tier"] == "ML"
+    row = panel._build_unsupervised_row(case, entry_amount=1234567.0)
     assert row["review_unit"] == "DOC-A"
-    assert row["reason_tag"] == "금액 꼬리"
-    assert row["top_feature"] == "금액 꼬리"
-    assert row["amount_tail"] == "0.98"
-    assert row["period_end"] == "0.90"
-    assert row["account_process_rarity"] == "acct 0.50 / proc 0.25"
-    assert row["evidence_row_count"] == 2
+    assert row["anomaly_score"] == "0.9971"
+    # 금액은 백분위(금액 꼬리)가 아니라 실제 전표 차변 총액을 천단위 구분해 표시.
+    assert row["amount"] == "1,234,567"
+    # 정보량 없는 컬럼은 더 이상 노출하지 않는다.
+    for removed in (
+        "evidence_tier",
+        "reason_tag",
+        "top_feature",
+        "period_end",
+        "amount_tail",
+        "account_process_rarity",
+        "evidence_row_count",
+        "linked_to",
+    ):
+        assert removed not in row
+
+
+def test_build_unsupervised_row_amount_missing_shows_dash():
+    """pr.data 부재 등으로 전표 금액을 못 구하면 '—'."""
+    case = UnsupervisedCase(
+        phase2_case_id="p2_unsupervised_document_unsup0000009",
+        batch_id="batch-1",
+        family="unsupervised",
+        unit_type="document",
+        row_refs=(_row_ref("DOC-A", 1),),
+        evidence_tier="ml_quantile",
+        case_generation_reason={"document_grouping": "document_id"},
+        family_score=0.9,
+        family_ecdf=0.97,
+        anomaly_score=0.95,
+        document_id="DOC-A",
+        evidence_row_count=1,
+    )
+    row = panel._build_unsupervised_row(case, entry_amount=None)
+    assert row["amount"] == "—"
+
+
+def test_unsupervised_entry_amounts_sums_debit_with_company_isolation():
+    """전표 금액 = 같은 (company_code, document_id) 차변 합. 타 회사 동일 전표번호 배제."""
+    case = UnsupervisedCase(
+        phase2_case_id="p2_unsupervised_document_amount0001",
+        batch_id="batch-1",
+        family="unsupervised",
+        unit_type="document",
+        row_refs=(
+            make_row_ref(
+                row_position=0,
+                index_label="doc:DOC-X:1",
+                document_id="DOC-X",
+                raw_line_number=1,
+                company_code="C001",
+            ),
+        ),
+        evidence_tier="ml_quantile",
+        case_generation_reason={"document_grouping": "document_id"},
+        family_score=0.9,
+        family_ecdf=0.97,
+        anomaly_score=0.95,
+        document_id="DOC-X",
+        evidence_row_count=1,
+    )
+    pr = SimpleNamespace(
+        data=pd.DataFrame(
+            {
+                "company_code": ["C001", "C001", "C002"],
+                "document_id": ["DOC-X", "DOC-X", "DOC-X"],
+                "debit_amount": [100.0, 250.0, 999.0],
+                "credit_amount": [0.0, 0.0, 0.0],
+            }
+        )
+    )
+    amounts = panel._unsupervised_entry_amounts([case], pr)
+    # C001·DOC-X 차변 합 350 만 잡히고 C002 의 999 는 배제.
+    assert amounts[case.phase2_case_id] == 350.0
 
 
 def test_build_unsupervised_row_uses_document_review_surface_columns():
@@ -146,13 +245,16 @@ def test_build_unsupervised_row_uses_document_review_surface_columns():
         process_rarity_context=0.25,
     )
 
-    row = panel._build_unsupervised_row(case)
+    row = panel._build_unsupervised_row(case, entry_amount=5_000_000.0)
 
-    assert "anomaly_score" not in row
-    assert "account_rarity" not in row
-    assert "process_rarity" not in row
-    assert row["account_process_rarity"] == "acct 0.50 / proc 0.25"
-    assert row["evidence_row_count"] == 2
+    assert row["anomaly_score"] == "0.9200"
+    assert row["review_unit"] == "DOC-A"
+    assert row["amount"] == "5,000,000"
+    # 금액 꼬리(백분위)·희소도·증거 수·연계 Phase1 은 정보량이 없어 표에서 제거됐다.
+    assert "amount_tail" not in row
+    assert "account_process_rarity" not in row
+    assert "evidence_row_count" not in row
+    assert "linked_to" not in row
 
 
 def test_build_unsupervised_row_empty_top_features():
@@ -172,8 +274,10 @@ def test_build_unsupervised_row_empty_top_features():
         schema_hash="",
     )
     row = panel._build_unsupervised_row(case)
-    assert row["reason_tag"] == "—"
-    assert row["top_feature"] == "—"
+    # top_features 유무와 무관하게 reason_tag/top_feature 컬럼은 제거됐다.
+    assert "reason_tag" not in row
+    assert "top_feature" not in row
+    assert row["anomaly_score"] == "1.0000"
 
 
 def test_build_unsupervised_row_fallback_singleton_does_not_imply_document_group():
@@ -343,7 +447,7 @@ def test_render_panel_empty_family_shows_info(monkeypatch):
     empty_set = Phase2CaseSet()
     panel.render_phase2_native_case_panel("timeseries", case_set=empty_set)
     assert captured["info"], "0건 안내 표시 필요"
-    assert "timeseries" in captured["info"][0]
+    assert "전표" in captured["info"][0]
 
 
 def test_phase2_document_drilldown_preserves_company_boundary():

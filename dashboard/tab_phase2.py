@@ -105,18 +105,29 @@ def render(prep_result, result: PipelineResult | None) -> None:
     partition = active_partition or _DEFAULT_PARTITION
     partition_summary = _load_phase2_partition_summary(partition)
 
-    family_tab_order = (
+    # Why: 탭 제거 — VAE score 분포 + 요약을 바로 렌더하고, 그 아래 case 상세를 이어 붙인다.
+    #      (전체 요약/VAE Deep Learning 두 탭 통합, 시점 이상 탭 제외.)
+    _render_overview_tab(user_state, snapshot, result, partition, partition_summary)
+    _render_phase2_unsupervised_case_detail(partition)
+
+
+def _render_phase2_unsupervised_case_detail(partition: str) -> None:
+    """VAE(unsupervised) case 상세 목록 — 탭 없이 요약 아래에 이어 렌더.
+
+    VAE 분포 차트는 요약(_render_phase2_active_distribution)에서 이미 그리므로 여기선
+    중복 없이 case 상세 섹션만 렌더한다.
+    """
+    from dashboard._state import KEY_PHASE2_RESULT
+
+    phase2_result = st.session_state.get(KEY_PHASE2_RESULT)
+    overlays, overlay_status = _resolve_display_overlays(phase2_result, partition)
+    _render_phase2_family_case_section(
         "unsupervised",
-        "timeseries",
+        overlays,
+        overlay_status=overlay_status,
+        partition=partition,
+        phase2_result=phase2_result,
     )
-    sub_tabs = st.tabs(
-        ["전체 요약", *(_FAMILY_LABELS_KR.get(family, family) for family in family_tab_order)]
-    )
-    with sub_tabs[0]:
-        _render_overview_tab(user_state, snapshot, result, partition, partition_summary)
-    for tab, family in zip(sub_tabs[1:], family_tab_order, strict=True):
-        with tab:
-            _render_phase2_family_tab(snapshot, partition, partition_summary, family)
 
 
 # ── partition 기본값 ─────────────────────────────────────────
@@ -144,41 +155,125 @@ def _render_overview_tab(
          모델 수치와 case-overlay 상태는 요약/분석 영역 탭의 보조 정보로 두고,
          전체 요약은 분석 영역 해석과 현재 반응도에 집중한다.
     """
-    del user_state, result, partition
+    del user_state, result, partition, snapshot
 
     st.markdown(_PHASE2_FAMILY_OVERVIEW_CSS, unsafe_allow_html=True)
 
-    st.markdown("#### 1. PHASE 2 실행 요약")
-
-    # P3: Phase 1 case basis 분류 상태가 canonical 이 아니면 fallback / unavailable
-    #     사유를 1 줄 caption 으로 노출. canonical_* 은 메시지 없음.
+    # 상태 진단 caption(모델 부재·partition 등) + 학습/추론 실행 버튼 — 기능상 유지.
     _render_phase1_case_basis_caption()
-    # P4: DB load / inference mode / partition fallback / context 4 axis 진단 caption.
     _render_phase2_status_captions()
-    # P7: family detector 실행 결과 진단 — 어떤 family 가 executed/skipped/failed 인지
-    #      한 줄 caption 으로 즉시 노출. 활성 분석 영역 0/1 같은 비정상 결과의 원인을
-    #      별도 내부 진단 화면 없이도 확인할 수 있게 한다.
     _render_phase2_family_dispatch_caption()
-    # R-H2: 통합 empty_state 를 한 번 계산해 ribbon / distribution / actions 가 모두
-    #       동일 객체를 사용하도록 한다. 자체 분류 시 phase1_basis_unavailable /
-    #       placeholder / partition_mismatch 같은 상위 원인이 KPI/차트에서 누락된다.
     empty_state = _current_phase2_empty_state()
-
-    # P5-4: empty state 별 next action 버튼 (있는 경우만).
     _render_phase2_empty_state_actions(empty_state)
-
-    # P6-3: 분석 영역 데이터의 source (회사 scoped vs 정적 reference preview) 명시.
     _render_phase2_signal_source_caption(partition_summary)
 
-    _render_phase2_summary_ribbon(partition_summary, empty_state=empty_state)
-
+    # VAE score 분포 차트 + 요약만 표시 (실행 요약 KPI·lane matrix·분석 영역 요약 제거).
     _render_phase2_active_distribution(partition_summary, empty_state=empty_state)
 
-    overlays = _resolve_phase2_overlays_from_state()
-    all_families = _build_all_family_summary(partition_summary, snapshot, overlays=overlays)
-    if all_families:
-        st.markdown("#### 2. 분석 영역 요약")
-        _render_phase2_family_summary_card(all_families)
+    # VAE 성능 ROC — 정답 라벨(is_fraud)이 있는 검증 데이터에서만 곡선을 그린다.
+    _render_phase2_vae_roc(empty_state=empty_state)
+
+
+def _render_phase2_vae_roc(*, empty_state: Phase2EmptyState | None = None) -> None:
+    """VAE 전표 점수의 ROC 곡선 — (VAE score, is_fraud) 전표 단위 쌍으로 산출.
+
+    Why: VAE는 비지도라 학습에 라벨을 쓰지 않지만, 성능 검증은 정답 라벨로 한다
+         (평가 전용). 부정 라벨이 없는 정상 데이터셋이면 곡선 대신 안내를 표시한다.
+    """
+    if empty_state is not None and empty_state.state_id not in (
+        _PHASE2_STATE_AVAILABLE,
+        _PHASE2_STATE_VALID_NO_HIT,
+    ):
+        return
+
+    from dashboard._state import KEY_PHASE1_RESULT
+    from dashboard.components.phase2_native_case_metrics import (
+        iter_unsupervised_cases,
+        resolve_phase2_case_set_from_state,
+    )
+
+    # 전표(document_id) → VAE score (동일 전표 다중 case 시 최대값).
+    doc_score: dict[str, float] = {}
+    for case in iter_unsupervised_cases(resolve_phase2_case_set_from_state()):
+        did = str(getattr(case, "document_id", "") or "").strip()
+        score = getattr(case, "anomaly_score", None)
+        if not did or score is None:
+            continue
+        doc_score[did] = max(doc_score.get(did, float("-inf")), float(score))
+    if not doc_score:
+        return
+
+    st.markdown("##### VAE 성능 (ROC)")
+
+    pr = st.session_state.get(KEY_PHASE1_RESULT)
+    data = getattr(pr, "featured_data", None)
+    if data is None:
+        data = getattr(pr, "data", None)
+    if data is None or "document_id" not in data.columns or "is_fraud" not in data.columns:
+        st.caption(
+            "정답 라벨(is_fraud)이 없어 ROC를 그릴 수 없습니다. 검증용 라벨 데이터가 필요합니다."
+        )
+        return
+
+    truth = data.groupby(data["document_id"].astype(str))["is_fraud"].any()
+    y_true: list[int] = []
+    y_score: list[float] = []
+    for did, score in doc_score.items():
+        if did in truth.index:
+            y_true.append(1 if bool(truth.loc[did]) else 0)
+            y_score.append(score)
+
+    positives = sum(y_true)
+    if len(y_true) < 2 or positives == 0 or positives == len(y_true):
+        st.caption(
+            "부정으로 라벨된 전표가 없어(또는 전부 부정) ROC를 그릴 수 없습니다 — "
+            "정상 데이터셋에서는 나오지 않는 검증 지표입니다."
+        )
+        return
+
+    import plotly.graph_objects as go
+    from sklearn.metrics import roc_auc_score, roc_curve
+
+    fpr, tpr, _ = roc_curve(y_true, y_score)
+    auc = float(roc_auc_score(y_true, y_score))
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=fpr,
+            y=tpr,
+            mode="lines",
+            line={"color": "#7C3AED", "width": 2.5},
+            name=f"VAE (AUC={auc:.3f})",
+            hovertemplate="FPR %{x:.3f}<br>TPR %{y:.3f}<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=[0, 1],
+            y=[0, 1],
+            mode="lines",
+            line={"color": "#CBD5E1", "width": 1.5, "dash": "dash"},
+            name="무작위 기준선",
+            hoverinfo="skip",
+        )
+    )
+    fig.update_layout(
+        height=340,
+        margin={"l": 55, "r": 20, "t": 20, "b": 45},
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        xaxis_title="거짓 양성 비율 (FPR)",
+        yaxis_title="참 양성 비율 (TPR)",
+        xaxis={"range": [0, 1], "constrain": "domain"},
+        yaxis={"range": [0, 1], "scaleanchor": "x", "scaleratio": 1},
+        legend={"x": 0.98, "y": 0.05, "xanchor": "right", "yanchor": "bottom"},
+    )
+    st.plotly_chart(fig, width="stretch")
+    st.caption(
+        f"부정 전표 {positives:,}건 / 평가 전표 {len(y_true):,}건 · AUC {auc:.3f} "
+        "(0.5=무작위, 1.0=완벽). VAE는 학습에 라벨을 쓰지 않으며 성능 검증에만 사용합니다."
+    )
 
 
 # ── Phase 2 empty-state resolver (P5) ──────────────────────────
@@ -873,16 +968,12 @@ def _render_phase2_active_distribution(
     *,
     empty_state: Phase2EmptyState | None = None,
 ) -> None:
-    """카드 밑 활성 분석 분포 — lane matrix + 가로 막대 2열.
-
-    좌: Phase 2 lane × evidence_tier case-family contribution matrix.
-    우: Phase 2 family 별 case-family contribution hit 수 (중복 포함).
+    """VAE score 분포 차트(좌) + 분포 요약(우) 2열.
 
     Why: state_id 가 ``available`` 또는 ``valid_no_hit`` 일 때만 차트 컨테이너를
     그린다. 그 외(overlay_missing / phase2_not_run / phase1_basis_unavailable)는
     상단 안내가 이미 사유를 노출하므로 차트 자체를 생략해 화면 잡음을 줄인다.
-
-    R-H2: 호출자가 empty_state 를 전달하면 ribbon/actions 와 동일 객체 사용.
+    (실행 요약 KPI·lane matrix·family bar 는 제거 — VAE 단일 표면으로 정리.)
     """
     overlays = _resolve_phase2_overlays_from_state()
     if empty_state is None:
@@ -892,30 +983,14 @@ def _render_phase2_active_distribution(
         _PHASE2_STATE_VALID_NO_HIT,
     ):
         reason = _PHASE2_DISTRIBUTION_EMPTY_REASONS.get(empty_state.state_id, "표시 불가")
-        st.caption(f"활성 분석 분포: {reason}")
+        st.caption(f"VAE 분포: {reason}")
         return
 
-    st.markdown(
-        "<div style='color:#18181B; font-size:1rem; font-weight:600; "
-        "margin:1.5rem 0 0.75rem;'>활성 분석 분포</div>",
-        unsafe_allow_html=True,
-    )
-    # Why: 2x2 그리드. 1행은 rule-based 4 lane 의 tier matrix(좌) + family bar(우).
-    #      2행은 VAE 전용 — 본질적 측정 단위(ml_quantile)가 달라 분리한다.
-    #      1행 카드는 heatmap/bar (height 380) + 헤더에 맞춰 440.
-    #      2행 VAE 카드는 contents 크기에 맞춰 360 (가운데 정렬 효과).
-    chart_card_height = 440
-    vae_card_height = 360
-    row1_left, row1_right = st.columns([1, 1], gap="small")
-    with row1_left, st.container(border=True, height=chart_card_height):
-        _render_phase2_lane_matrix(overlays, empty_state=empty_state)
-    with row1_right, st.container(border=True, height=chart_card_height):
-        _render_phase2_family_case_bar(overlays, empty_state=empty_state)
-
-    row2_left, row2_right = st.columns([1, 1], gap="small")
-    with row2_left, st.container(border=True, height=vae_card_height):
-        _render_phase2_vae_distribution(overlays, empty_state=empty_state)
-    with row2_right, st.container(border=True, height=vae_card_height):
+    vae_card_height = 300
+    left, right = st.columns([1, 1], gap="small")
+    with left, st.container(border=True, height=vae_card_height):
+        _render_phase2_vae_distribution(overlays, empty_state=empty_state, show_description=False)
+    with right, st.container(border=True, height=vae_card_height):
         _render_phase2_vae_meta(overlays, empty_state=empty_state)
 
 
@@ -1199,10 +1274,10 @@ def _render_phase2_vae_distribution(
             "padding-left:1.1rem; line-height:1.6;'>"
             "<li><b>VAE</b>(Variational Autoencoder) + <b>Isolation Forest</b> 두 비지도 "
             "ML 모델이 정상 전표 분포를 학습합니다.</li>"
-            "<li>각 case 의 <b>statistical outlier score</b> = 정상 분포에서 떨어진 정도.</li>"
-            "<li><b>score 가 클수록</b> 정상 분포에서 멀리 떨어진 이상 패턴 case.</li>"
+            "<li>각 전표의 <b>statistical outlier score</b> = 정상 분포에서 떨어진 정도.</li>"
+            "<li><b>score 가 클수록</b> 정상 분포에서 멀리 떨어진 이상 패턴 전표.</li>"
             "<li>점선 <b>q95 cutoff</b>(상위 5%) — 이 위쪽 꼬리가 감사인 우선 검토 후보.</li>"
-            "<li>하위 score 영역은 정상 분포에 가까운 case → 검토 우선순위 <b>제외</b>.</li>"
+            "<li>하위 score 영역은 정상 분포에 가까운 전표 → 검토 우선순위 <b>제외</b>.</li>"
             "</ul>"
             "</div>",
             unsafe_allow_html=True,
@@ -1228,7 +1303,7 @@ def _render_phase2_vae_distribution(
         if state_id == _PHASE2_STATE_VALID_NO_HIT:
             st.info("분석 완료 — VAE 점수 0 (정상 결과)")
         else:
-            st.info("PHASE2 unsupervised native case 가 없어 분포를 표시할 수 없습니다.")
+            st.info("분석할 전표가 없어 분포를 표시할 수 없습니다.")
         return
 
     q95 = float(np.percentile(scores, 95))
@@ -1238,7 +1313,7 @@ def _render_phase2_vae_distribution(
             x=scores,
             nbinsx=40,
             marker={"color": "#7C3AED", "line": {"width": 0}},
-            hovertemplate="score: %{x:.3f}<br>case 수: %{y:,}<extra></extra>",
+            hovertemplate="score: %{x:.3f}<br>전표 수: %{y:,}<extra></extra>",
         )
     )
     fig.add_vline(
@@ -1256,7 +1331,7 @@ def _render_phase2_vae_distribution(
         bargap=0.05,
         font={"family": typography, "color": color_text},
         xaxis_title="VAE score",
-        yaxis_title="case 수",
+        yaxis_title="전표 수",
         showlegend=False,
     )
     fig.update_xaxes(tickfont={"size": 11})
@@ -1274,11 +1349,10 @@ def _render_phase2_vae_meta(
     *,
     empty_state: Phase2EmptyState | None = None,
 ) -> None:
-    """VAE 분포 요약 — Vercel/Linear analytics 스타일 KPI 카드 grid.
+    """VAE 분포 요약 — 통일된 2×2 stat 카드 그리드.
 
-    Layout:
-      [Row 1] 강조 KPI 2 카드 (q95+ / q99+) — 보라색 액센트 + 큰 숫자 + 작은 sub-text
-      [Row 2] 보조 stat 3 카드 (median / max / 신호 비율) — 슬레이트 톤 미니 카드
+    q95/q99 진입 case 는 보라 accent, 전체 모집단·q90 은 중립 톤. cutoff score 를
+    sub-text 로 붙여 상위 몇 %가 어느 score 이상인지 한눈에 보이게 한다.
     """
     import numpy as np
 
@@ -1314,7 +1388,7 @@ def _render_phase2_vae_meta(
         if state_id == _PHASE2_STATE_VALID_NO_HIT:
             st.info("분석 완료 — VAE 점수 0 (정상 결과)")
         else:
-            st.info("PHASE2 unsupervised native case 가 없어 VAE 메타를 계산할 수 없습니다.")
+            st.info("분석할 전표가 없어 VAE 요약을 계산할 수 없습니다.")
         return
 
     arr = np.array(scores, dtype=float)
@@ -1324,113 +1398,40 @@ def _render_phase2_vae_meta(
     high_q90 = int((arr >= q90).sum())
     high_q95 = int((arr >= q95).sum())
     high_q99 = int((arr >= q99).sum())
-    # VAE 단독 발견 case — PHASE1 case 와 cross-reference 안 된 unsupervised native case.
-    # native 기준: phase1_case_refs 가 비어 있으면 rule 이 못 잡은 신호 (PHASE2 단독 가치).
-    vae_only_discovery = sum(1 for c in unsupervised_cases if not c.phase1_case_refs)
-    # ── Row 1: 강조 KPI 2 카드 (q95+ / q99+)
-    primary_card_css = (
-        "background:linear-gradient(135deg, #FAF5FF 0%, #F3E8FF 100%); "
-        "border:1px solid #E9D5FF; border-radius:14px; "
-        "padding:1rem 1.1rem; position:relative;"
-    )
 
-    def _primary_card(label: str, value: int, hint: str, badge: str) -> str:
+    # ── 통일된 2×2 stat 그리드 (q95/q99 는 보라 accent, 전체/q90 은 중립).
+    def _stat_card(label: str, value: int, sub: str, *, accent: bool) -> str:
+        num_color = "#7C3AED" if accent else "#0F172A"
         return (
-            f"<div style='{primary_card_css}'>"
-            "<div style='display:flex; justify-content:space-between; "
-            "align-items:flex-start; gap:0.5rem;'>"
-            "<div style='min-width:0;'>"
-            "<div style='color:#7C3AED; font-size:0.65rem; font-weight:700; "
-            "letter-spacing:0.08em; text-transform:uppercase;'>"
-            f"{label}</div>"
-            "<div style='color:#3B0764; font-size:1.85rem; font-weight:800; "
-            "line-height:1.1; margin-top:0.4rem; letter-spacing:-0.02em; "
-            "font-variant-numeric:tabular-nums;'>"
-            f"{value:,}"
-            "<span style='font-size:0.85rem; font-weight:500; color:#7C3AED; "
-            "margin-left:0.25rem;'>건</span>"
-            "</div>"
-            "<div style='color:#7C3AED; font-size:0.72rem; margin-top:0.35rem; "
-            "opacity:0.85; font-variant-numeric:tabular-nums;'>"
-            f"{hint}</div>"
-            "</div>"
-            "<div style='background:rgba(124,58,237,0.12); border-radius:8px; "
-            "padding:0.3rem 0.55rem; white-space:nowrap;'>"
-            f"<span style='color:#7C3AED; font-size:0.65rem; font-weight:700; "
-            "letter-spacing:0.05em;'>"
-            f"{badge}</span>"
-            "</div>"
-            "</div>"
-            "</div>"
-        )
-
-    primary_html = (
-        "<div style='display:grid; grid-template-columns:1fr 1fr; gap:0.65rem; "
-        "margin-top:0.65rem;'>"
-        + _primary_card(
-            "q95 진입 case",
-            high_q95,
-            f"score ≥ {q95:.3f} · 전체 {total_cases:,} 건",
-            "TOP 5%",
-        )
-        + _primary_card(
-            "q99 진입 case",
-            high_q99,
-            f"score ≥ {q99:.3f} · 전체 {total_cases:,} 건",
-            "TOP 1%",
-        )
-        + "</div>"
-    )
-
-    # ── Row 2: 보조 stat 3 카드 (전체 모집단 / q90+ / 꼬리 평균)
-    secondary_card_css = (
-        "background:#FAFAFA; border:1px solid #F1F5F9; border-radius:10px; padding:0.7rem 0.85rem;"
-    )
-
-    def _secondary_card(label: str, value: str, sub: str = "") -> str:
-        sub_html = (
-            "<div style='color:#94A3B8; font-size:0.66rem; margin-top:0.15rem; "
-            "font-variant-numeric:tabular-nums;'>"
-            f"{sub}</div>"
-            if sub
-            else ""
-        )
-        return (
-            f"<div style='{secondary_card_css}'>"
-            "<div style='color:#94A3B8; font-size:0.62rem; font-weight:700; "
+            "<div style='background:#FFFFFF; border:1px solid #E2E8F0; "
+            "border-radius:12px; padding:0.85rem 0.95rem;'>"
+            "<div style='color:#64748B; font-size:0.63rem; font-weight:700; "
             "letter-spacing:0.06em; text-transform:uppercase;'>"
             f"{label}</div>"
-            "<div style='color:#0F172A; font-size:1.15rem; font-weight:700; "
-            "margin-top:0.25rem; letter-spacing:-0.02em; "
+            f"<div style='color:{num_color}; font-size:1.6rem; font-weight:800; "
+            "line-height:1.1; margin-top:0.35rem; letter-spacing:-0.02em; "
             "font-variant-numeric:tabular-nums;'>"
-            f"{value}</div>"
-            f"{sub_html}"
+            f"{value:,}"
+            "<span style='font-size:0.8rem; font-weight:500; color:#94A3B8; "
+            "margin-left:0.2rem;'>건</span></div>"
+            "<div style='color:#94A3B8; font-size:0.68rem; margin-top:0.3rem; "
+            "font-variant-numeric:tabular-nums;'>"
+            f"{sub}</div>"
             "</div>"
         )
 
-    secondary_html = (
-        "<div style='display:grid; grid-template-columns:1fr 1fr 1fr; "
-        "gap:0.5rem; margin-top:0.5rem;'>"
-        + _secondary_card(
-            "전체 분석 case",
-            f"{total_cases:,}",
-            "VAE 점수 부여된 모집단",
-        )
-        + _secondary_card(
-            "q90 진입 case",
-            f"{high_q90:,}",
-            f"TOP 10% · score ≥ {q90:.3f}",
-        )
-        + _secondary_card(
-            "VAE 단독 발견",
-            f"{vae_only_discovery:,}",
-            "Phase 1 즉시검토 외 ∩ VAE q95+",
-        )
+    grid_html = (
+        "<div style='display:grid; grid-template-columns:1fr 1fr; gap:0.6rem; "
+        "margin-top:0.7rem;'>"
+        + _stat_card("Q95 진입 · TOP 5%", high_q95, f"score ≥ {q95:.3f}", accent=True)
+        + _stat_card("Q99 진입 · TOP 1%", high_q99, f"score ≥ {q99:.3f}", accent=True)
+        + _stat_card("전체 전표", total_cases, "VAE 점수 부여 모집단", accent=False)
+        + _stat_card("Q90 진입 · TOP 10%", high_q90, f"score ≥ {q90:.3f}", accent=False)
         + "</div>"
     )
 
     st.markdown(
-        f"<div style='font-family:{typography};'>{primary_html}{secondary_html}</div>",
+        f"<div style='font-family:{typography};'>{grid_html}</div>",
         unsafe_allow_html=True,
     )
 
@@ -2537,7 +2538,7 @@ def _render_phase2_family_case_section(
     #      원장 라인" 구성을 위해 원장 데이터를 보유한 pr 을 전달.
     pr = st.session_state.get(KEY_PHASE1_RESULT) or phase2_result
 
-    st.markdown("#### Case 목록")
+    st.markdown("#### 전표 목록")
     render_phase2_native_case_panel(
         family,
         case_set=case_set,

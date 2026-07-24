@@ -19,7 +19,6 @@ from src.detection.partner_signals import (
 def _settings(**overrides):
     base = {
         "partner_rare_quantile": 0.10,
-        "partner_dormant_inactive_days": 180,
         "partner_signal_min_population": 3,  # 테스트 소표본 허용
     }
     base.update(overrides)
@@ -49,7 +48,7 @@ def _multi_year_df():
         _row("P_OLD", 2024, "2024-09-01"),
         # P_NEW: 2024 최초 등장 (first-seen)
         _row("P_NEW", 2024, "2024-05-01"),
-        # P_DORM: 2022 활동 후 2023 공백 → 2024 재등장 (gap > 180d)
+        # P_DORM: 2022 활동 후 2023 결번 → 2024 재등장 (직전 연도 결번)
         _row("P_DORM", 2022, "2022-01-10"),
         _row("P_DORM", 2024, "2024-02-01"),
         # 채움용 다수 거래처 (min_population 통과 + rare 분모)
@@ -68,10 +67,25 @@ def test_first_seen_absent_in_prior_years():
     assert 0 < len(res.first_seen_partners) < 30  # 0도 전부도 아님
 
 
-def test_dormant_gap_exceeds_threshold():
+def test_dormant_prior_year_skipped():
     res = compute_partner_signals(_multi_year_df(), _settings())
-    assert "P_DORM" in res.dormant_partners  # 2022→2024 gap ~2년
-    assert "P_OLD" not in res.dormant_partners  # 매년 활동 (gap 작음)
+    assert "P_DORM" in res.dormant_partners  # 2022 有·2023 결번·2024 재등장
+    assert "P_OLD" not in res.dormant_partners  # 매년 활동 → 직전 연도 결번 아님
+
+
+def test_dormant_reactivation_from_distant_past():
+    """직직전보다 더 이전(2020)에만 활동 → 오래 결번 → 2024 재등장도 휴면재활성.
+
+    '과거 어느 해든 활동 有' 조건이라 직직전에 국한되지 않는다(사용자 회귀).
+    """
+    rows = [
+        _row("P_FAR", 2020, "2020-05-01"),
+        _row("P_FAR", 2024, "2024-05-01"),
+        *[_row(f"P_FILL{i}", 2024, "2024-04-01") for i in range(5)],
+    ]
+    res = compute_partner_signals(pd.DataFrame(rows), _settings())
+    assert "P_FAR" in res.dormant_partners
+    assert "P_FAR" not in res.first_seen_partners  # 2020 이력 有 → 첫등장 아님
 
 
 def test_first_seen_and_dormant_are_disjoint():

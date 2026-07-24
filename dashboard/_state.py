@@ -52,7 +52,6 @@ PAGE_COMPANY_SETTINGS = "회사별 설정"
 PAGE_PHASE1 = "룰 기반"
 PAGE_ANALYTICAL = "분석적 검토"
 PAGE_PHASE2 = "비지도(VAE)"
-PAGE_PHASE_COMPARISON = "Phase1, 2 비교"
 PAGE_COMPARISON = "전기 비교"
 # Why: PAGE_REVIEW_QUEUE 상수는 legacy session_state / 직렬화 호환을 위해 보존하되,
 # 대분류 라우팅(RESULT_PAGES)에서는 제거 — UX 가 phase1 → phase2 → 비교 → 전기 비교
@@ -64,7 +63,6 @@ RESULT_PAGES = (
     PAGE_PHASE1,
     PAGE_ANALYTICAL,
     PAGE_PHASE2,
-    PAGE_PHASE_COMPARISON,
     PAGE_COMPARISON,
 )
 

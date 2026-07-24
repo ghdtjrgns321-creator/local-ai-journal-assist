@@ -35,6 +35,21 @@ _FAMILY_TO_ATTR: dict[str, str] = {
     "timeseries": "timeseries_cases",
 }
 
+# master 표 컬럼 display 라벨 (내부 snake_case 키 → 한국어). row builder 키는 그대로 두고
+# 표시 직전에만 rename → tests(키 기반 assert)와 selection 로직을 깨지 않는다.
+_COLUMN_LABELS_KR: dict[str, str] = {
+    "case_id": "식별자",
+    "evidence_tier": "신호 강도",
+    "review_unit": "전표",
+    "anomaly_score": "VAE 점수",
+    "amount": "전표 금액",
+    "linked_to": "연계 Phase 1",
+    "sub_rule": "세부 룰",
+    "subject": "대상",
+    "window": "기간",
+    "daily_count": "일건수",
+}
+
 # tier → 한국어 라벨 + 색상 (감사인 시각 식별용)
 _TIER_LABEL_KR: dict[str, str] = {
     "strong": "Strong",
@@ -91,12 +106,17 @@ def render_phase2_native_case_panel(
 
     cases: Sequence[Phase2CaseBase] = getattr(case_set, attr, ()) or ()
     if not cases:
-        st.info(f"`{family}` family 에 표시할 PHASE2 review case 후보가 없습니다.")
+        st.info("표시할 전표가 없습니다.")
         return
 
     lookup = phase1_case_lookup or {}
     sorted_cases = sorted(cases, key=_sort_key)
-    frame = _build_family_frame(family, sorted_cases, phase1_case_lookup=lookup)
+    entry_amounts = (
+        _unsupervised_entry_amounts(sorted_cases, pr) if family == "unsupervised" else {}
+    )
+    frame = _build_family_frame(
+        family, sorted_cases, phase1_case_lookup=lookup, entry_amounts=entry_amounts
+    )
     selected_id = _render_master_table(family, frame, sorted_cases)
     if selected_id:
         case = next((c for c in sorted_cases if c.phase2_case_id == selected_id), None)
@@ -109,10 +129,17 @@ def render_phase2_native_case_panel(
 # ---------------------------------------------------------------------------
 
 
-def _sort_key(case: Phase2CaseBase) -> tuple[int, float, str]:
-    """evidence_tier (높은 tier 우선) → family_score 내림차순 → id tie-break."""
+def _sort_key(case: Phase2CaseBase) -> tuple[int, float, float, str]:
+    """꼬리 우선 정렬.
+
+    UnsupervisedCase 는 anomaly_score(분포 꼬리 위치) 내림차순이 최우선 —
+    q95 cutoff 위쪽 꼬리 전표를 감사인이 먼저 보게 한다. 그 외 family 는
+    anomaly_score 가 없어 0 으로 떨어지므로 evidence_tier → family_score 순서를 유지한다.
+    """
+    anomaly = float(getattr(case, "anomaly_score", 0.0) or 0.0)
     return (
         -_TIER_ORDER.get(str(case.evidence_tier or "").lower(), -1),
+        -anomaly,
         -float(case.family_score or 0.0),
         case.phase2_case_id,
     )
@@ -166,25 +193,14 @@ def _fmt_amount(value: float | int | None) -> str:
         return str(value)
 
 
-def _fmt_context_score(value: float | int | None) -> str:
-    """Display document-context ratios without implying a hard finding."""
+def _fmt_anomaly_score(value: float | int | None) -> str:
+    """VAE statistical outlier score — 분포 히스토그램 x축과 같은 스케일(0~1)로 표시."""
     if value is None:
         return "—"
     try:
-        return f"{float(value):.2f}"
+        return f"{float(value):.4f}"
     except (TypeError, ValueError):
         return str(value)
-
-
-def _fmt_account_process_rarity(
-    account_value: float | int | None,
-    process_value: float | int | None,
-) -> str:
-    account = _fmt_context_score(account_value)
-    process = _fmt_context_score(process_value)
-    if account == "—" and process == "—":
-        return "—"
-    return f"acct {account} / proc {process}"
 
 
 def _fmt_reason_tags(top_features: tuple[dict, ...]) -> str:
@@ -227,10 +243,18 @@ def _build_family_frame(
     cases: Sequence[Phase2CaseBase],
     *,
     phase1_case_lookup: dict[str, dict],
+    entry_amounts: dict[str, float | None] | None = None,
 ) -> pd.DataFrame:
-    """family 별 dispatcher — 컴럼 spec 에 맞춰 DataFrame 반환."""
+    """family 별 dispatcher — 컴럼 spec 에 맞춰 DataFrame 반환.
+
+    entry_amounts: unsupervised 전표 금액(차변 총액) lookup(full case_id → 금액).
+        pr.data 부재 시 빈 dict → 금액 컬럼은 '—'.
+    """
+    amounts = entry_amounts or {}
     builders = {
-        "unsupervised": _build_unsupervised_row,
+        "unsupervised": lambda case: _build_unsupervised_row(
+            case, amounts.get(case.phase2_case_id)
+        ),
         "timeseries": _build_timeseries_row,
     }
     builder = builders.get(family)
@@ -240,22 +264,22 @@ def _build_family_frame(
     return pd.DataFrame(rows)
 
 
-def _build_unsupervised_row(case: UnsupervisedCase) -> dict[str, Any]:  # type: ignore[override]
+def _build_unsupervised_row(
+    case: UnsupervisedCase,  # type: ignore[override]
+    entry_amount: float | None = None,
+) -> dict[str, Any]:
+    # Why: VAE 표는 "어떤 전표가 얼마나 꼬리인가 + 규모"만 스캔하면 된다. 정보량 없는 컬럼은 제거 —
+    #      신호 강도(전 case ML)·이상 사유/주요 피처(단일 generic 태그 중복)·결산 근접(전 0.00)·
+    #      계정/프로세스 희소도(계정이 흔해 ~0.00)·증거 분개 수(약신호)·연계 Phase1(겹침 없어 전
+    #      case '—') 제거. 금액은 백분위(금액 꼬리) 대신 실제 전표 차변 총액(전표 금액)을 보인다.
+    #      남기는 3열: 전표 · VAE 점수(anomaly_score) · 전표 금액.
+    #      case_id 는 선택 매핑용으로 남기되 master 표에서는 숨긴다(_render_master_table).
     return {
         "case_id": _short_case_id(case.phase2_case_id),
         "_full_case_id": case.phase2_case_id,
-        "evidence_tier": _tier_cell(case.evidence_tier),
         "review_unit": _unsupervised_review_unit(case),
-        "reason_tag": _fmt_reason_tags(case.top_features),
-        "top_feature": _fmt_top_feature(case.top_features),
-        "amount_tail": _fmt_context_score(case.amount_tail_context),
-        "period_end": _fmt_context_score(case.period_end_context),
-        "account_process_rarity": _fmt_account_process_rarity(
-            case.account_rarity_context,
-            case.process_rarity_context,
-        ),
-        "evidence_row_count": int(case.evidence_row_count or len(case.row_refs or ())),
-        "linked_to": _linked_to_text(case.phase1_case_refs),
+        "anomaly_score": _fmt_anomaly_score(case.anomaly_score),
+        "amount": _fmt_amount(entry_amount),
     }
 
 
@@ -299,7 +323,10 @@ def _render_master_table(
 
     from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 
-    visible_frame = frame.drop(columns=["_full_case_id"], errors="ignore")
+    # Why: DataFrame 컬럼명을 바꾸면 AgGrid field(=데이터 키 접근자)가 공백 포함 한글로
+    #      바뀌어 셀 값이 안 뜬다. field 는 snake_case 그대로 두고 header_name 만 한글로.
+    #      선택 매핑용 식별자(_full_case_id, case_id)는 rowData 에 남기고 hide 처리한다.
+    visible_frame = frame.copy()
     gb = GridOptionsBuilder.from_dataframe(visible_frame)
     gb.configure_default_column(resizable=True, filter=True, sortable=True, wrapText=False)
     gb.configure_selection(selection_mode="single", use_checkbox=False, pre_selected_rows=[0])
@@ -310,12 +337,25 @@ def _render_master_table(
         suppressCellFocus=True,
         rowHeight=34,
     )
-    # evidence_tier 컬럼: 사용자 식별성 강화 — cellStyle 로 색상 부여
-    if "evidence_tier" in visible_frame.columns:
-        # AgGrid JS 없이 표에서는 폭만 고정하고, 색상 강조는 detail 패널 badge 에서 처리.
-        gb.configure_column("evidence_tier", minWidth=110, maxWidth=140)
-    if "linked_to" in visible_frame.columns:
-        gb.configure_column("linked_to", minWidth=160, tooltipField="linked_to")
+    # Why: unsupervised(문서 단위 VAE) case 는 case_id 가 무의미한 해시이고 전표
+    #      (document_id) 가 실질 식별자다. 식별자 컬럼은 선택 매핑용으로만 남기고 숨긴다.
+    hidden_fields = {"_full_case_id"}
+    if family == "unsupervised":
+        hidden_fields.add("case_id")
+    if "_full_case_id" in visible_frame.columns:
+        gb.configure_column("_full_case_id", hide=True)
+    # 한국어 헤더 라벨(field 는 유지) + 일부 컬럼 폭/툴팁.
+    for field, label in _COLUMN_LABELS_KR.items():
+        if field not in visible_frame.columns:
+            continue
+        if field in hidden_fields:
+            gb.configure_column(field, hide=True)
+        elif field == "evidence_tier":
+            gb.configure_column(field, header_name=label, minWidth=110, maxWidth=140)
+        elif field == "linked_to":
+            gb.configure_column(field, header_name=label, minWidth=160, tooltipField="linked_to")
+        else:
+            gb.configure_column(field, header_name=label)
 
     grid_options = gb.build()
     response = AgGrid(
@@ -328,29 +368,44 @@ def _render_master_table(
         key=f"phase2_native_case_master_{family}",
         theme="alpine",
     )
-    selected_rows = response.get("selected_rows") if isinstance(response, dict) else None
-    if selected_rows is None:
-        return None
-    # selected_rows 가 list 또는 DataFrame 으로 반환될 수 있음
+    # Why: AgGrid 응답은 dict 가 아닌 AgGridReturn 객체다. isinstance(dict) 가드를 걸면
+    #      항상 None 이 되어 selection 이 죽는다 — Phase 1 와 동일하게 .get() 직접 호출.
+    selected_rows = response.get("selected_rows", []) if response is not None else []
+    if hasattr(selected_rows, "to_dict"):
+        selected_rows = selected_rows.to_dict("records")
+    return _resolve_selected_full_case_id(selected_rows, cases)
+
+
+def _resolve_selected_full_case_id(selected_rows, cases: Sequence[Phase2CaseBase]) -> str | None:
+    """selected_rows → full phase2_case_id.
+
+    hidden 컬럼(_full_case_id/case_id)이 st_aggrid 버전에 따라 selected_rows 에 실리지
+    않을 수 있어, 화면에 보이는 전표(review_unit)까지 3단 fallback 으로 매핑한다.
+    """
     if isinstance(selected_rows, pd.DataFrame):
         if selected_rows.empty:
             return None
-        short_id = str(selected_rows.iloc[0].get("case_id") or "")
+        row = selected_rows.iloc[0].to_dict()
     elif isinstance(selected_rows, list):
-        if not selected_rows:
+        if not selected_rows or not isinstance(selected_rows[0], dict):
             return None
-        first = selected_rows[0]
-        if not isinstance(first, dict):
-            return None
-        short_id = str(first.get("case_id") or "")
+        row = selected_rows[0]
     else:
         return None
-    if not short_id:
-        return None
-    # short_id → full_id 역매핑
-    for case in cases:
-        if _short_case_id(case.phase2_case_id) == short_id:
-            return case.phase2_case_id
+
+    full = str(row.get("_full_case_id") or "").strip()
+    if full:
+        return full
+    short = str(row.get("case_id") or "").strip()
+    if short:
+        for case in cases:
+            if _short_case_id(case.phase2_case_id) == short:
+                return case.phase2_case_id
+    review = str(row.get("review_unit") or "").strip()
+    if review and review != "—":
+        for case in cases:
+            if isinstance(case, UnsupervisedCase) and _unsupervised_review_unit(case) == review:
+                return case.phase2_case_id
     return None
 
 
@@ -385,9 +440,9 @@ def _render_case_detail(
             unsafe_allow_html=True,
         )
 
-        # Case 설명 — family 별 핵심 attribute 를 1~2 문장으로 풀어 표시.
+        # 전표 설명 — family 별 핵심 attribute 를 1~2 문장으로 풀어 표시.
         narrative = _build_case_narrative(case)
-        st.markdown(f"**Case 설명**  \n{narrative}")
+        st.markdown(f"**전표 설명**  \n{narrative}")
 
         if isinstance(case, UnsupervisedCase):
             _render_unsupervised_evidence_rows(case)
@@ -397,16 +452,16 @@ def _render_case_detail(
         if pr is not None and document_ids:
             _render_phase2_case_documents(case, document_ids, pr=pr)
         elif case.row_refs:
-            st.markdown(f"**Row refs ({len(case.row_refs)})**")
+            st.markdown(f"**분개 라인 ({len(case.row_refs)})**")
             row_lines = [_format_row_ref_line(ref) for ref in case.row_refs[:50]]
             st.markdown("\n".join(f"- {line}" for line in row_lines))
             if len(case.row_refs) > 50:
                 st.caption(f"전체 {len(case.row_refs)}건 중 상위 50건만 표시.")
 
-        # Linked PHASE1 (간단 표시 — Phase 1 case 와의 cross-ref)
+        # Linked PHASE1 (간단 표시 — Phase 1 신호와의 cross-ref)
         refs = case.phase1_case_refs
         if refs:
-            st.markdown(f"**연계 PHASE1 case ({len(refs)})**")
+            st.markdown(f"**연계 Phase 1 전표 ({len(refs)})**")
             lines: list[str] = []
             for ref in refs:
                 meta = phase1_case_lookup.get(ref, {})
@@ -523,7 +578,7 @@ def _render_phase2_case_documents(
 
     documents = _build_phase2_documents_list(case, document_ids, pr=pr)
     if not documents:
-        st.caption("선택된 case 의 원장 데이터를 찾지 못했습니다.")
+        st.caption("선택된 전표의 원장 데이터를 찾지 못했습니다.")
         return
 
     safe_key = case.phase2_case_id.replace(" ", "_")
@@ -753,6 +808,62 @@ def _document_keys_from_row_refs(
         seen.add(key)
         out.append(key)
     return out
+
+
+def _unsupervised_entry_amounts(
+    cases: Sequence[Phase2CaseBase],
+    pr,
+) -> dict[str, float | None]:
+    """각 unsupervised case 전표의 차변 총액(전표 금액) 을 full case_id 로 매핑.
+
+    Why: master 표 "전표 금액" 컬럼용. 3천여 case 를 case 마다 df 스캔하면 느려서
+         document_id(+company_code) 별 합계를 groupby 로 한 번에 집계한 뒤 O(1) 조회한다.
+         debit_amount 없으면 credit_amount, 둘 다 없으면 금액 미상(None → '—').
+    """
+    if pr is None:
+        return {}
+    df = getattr(pr, "featured_data", None)
+    if df is None or getattr(df, "empty", True):
+        df = getattr(pr, "data", None)
+    if df is None or getattr(df, "empty", True) or "document_id" not in df.columns:
+        return {}
+    amount_col = (
+        "debit_amount"
+        if "debit_amount" in df.columns
+        else "credit_amount"
+        if "credit_amount" in df.columns
+        else None
+    )
+    if amount_col is None:
+        return {}
+
+    doc_str = df["document_id"].astype(str)
+    by_doc = df.groupby(doc_str)[amount_col].sum()
+    by_pair = None
+    if "company_code" in df.columns:
+        by_pair = df.groupby([df["company_code"].astype(str), doc_str])[amount_col].sum()
+
+    amounts: dict[str, float | None] = {}
+    for case in cases:
+        if not isinstance(case, UnsupervisedCase):
+            continue
+        keys = _document_keys_from_row_refs(case.row_refs)
+        if not keys:
+            amounts[case.phase2_case_id] = None
+            continue
+        total = 0.0
+        found = False
+        for company_code, document_id in keys:
+            value = None
+            if by_pair is not None and company_code:
+                value = by_pair.get((company_code, document_id))
+            if value is None:
+                value = by_doc.get(document_id)
+            if value is not None:
+                total += float(value)
+                found = True
+        amounts[case.phase2_case_id] = total if found else None
+    return amounts
 
 
 def _phase2_signal_label(case: Phase2CaseBase) -> str:

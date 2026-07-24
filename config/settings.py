@@ -384,9 +384,8 @@ class AuditSettings(BaseSettings):
     # Why: 옛 PHASE2 relational(R01/R05/R07) 삭제 후 base 경로 거래처 단위 신규 신호.
     #      §3 데이터주도 — 절대 리터럴로 계산 분기 금지, 전부 본 설정에서 read.
     partner_rare_quantile: float = 0.10  # 당기 거래처별 txn count 하위 분위수 (희소 판정)
-    partner_dormant_inactive_days: int = (
-        180  # 전기 마지막 활동~당기 첫 활동 gap ≥ 이 값이면 휴면재활성
-    )
+    # 휴면재활성은 '직전 회계연도 결번'만으로 판정(직전 연도를 통째로 건너뛰면 자연히 1년+
+    # 공백) — 별도 gap 일수 임계는 이 조건에 자동 포함돼 불필요하여 제거(2026-07-24).
     partner_signal_min_population: int = (
         50  # 당기 거래처 수 미만이면 rare 분위수 산출 불가 (small sample 가드)
     )
