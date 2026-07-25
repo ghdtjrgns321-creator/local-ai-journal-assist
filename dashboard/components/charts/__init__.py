@@ -36,6 +36,7 @@ from dashboard.components.charts.risk_charts import (
     risk_donut,
     risk_heatmap,
 )
+from dashboard.components.charts.round_density_charts import round_density_bar
 from dashboard.components.charts.rule_charts import phase1_rule_violation_bar, rule_violation_bar
 from dashboard.components.charts.special_charts import (
     fraud_type_treemap,
@@ -66,6 +67,7 @@ __all__ = [
     "phase1_rule_violation_bar",
     "risk_donut",
     "risk_heatmap",
+    "round_density_bar",
     "rule_violation_bar",
     # comparison (RC-4-7)
     "new_accounts_table",

@@ -22,11 +22,20 @@ from typing import TYPE_CHECKING, Any
 import pandas as pd
 import streamlit as st
 
+from dashboard.components.charts.round_density_charts import (
+    SCOPE_LABELS,
+    SEVERITY_LABELS,
+    round_density_bar,
+    scope_label,
+)
 from src.export.phase1_case_view import (
     build_phase1_macro_finding_queue,
     build_phase1_partner_finding_queue,
     resolve_phase1_case_result,
 )
+
+# 차트에 그릴 최대 finding 수 — 초과분은 표로만. 세로 무한 확장 방지.
+_ROUND_DENSITY_TOP_N = 20
 
 if TYPE_CHECKING:
     from src.pipeline import PipelineResult
@@ -82,7 +91,7 @@ def _render_benford(pr: PipelineResult) -> None:
 
 
 def _render_round_density(findings: list[dict[str, Any]]) -> None:
-    """둥근 금액이 모집단에서 baseline 대비 과집중한 그룹."""
+    """둥근 금액이 모집단에서 baseline 대비 과집중한 그룹 — 차트가 본문, 표는 부록."""
     st.markdown("##### Round Number 밀집")
     st.caption(
         "계정·월·작성자 등 그룹에서 Round Number 비율이 원장 기준선보다 5%p 이상 "
@@ -91,31 +100,82 @@ def _render_round_density(findings: list[dict[str, Any]]) -> None:
     if not findings:
         st.info("Round Number 밀집 finding 이 없습니다.")
         return
-    rows = [
-        {
-            "축": item.get("scope"),
-            "그룹": item.get("group_key"),
-            "표본": item.get("sample_size"),
-            "둥근건수": item.get("candidate_rows"),
-            "둥근비율": (item.get("metrics") or {}).get("round_ratio"),
-            "기준선": (item.get("metrics") or {}).get("baseline_ratio"),
-            "초과분": (item.get("metrics") or {}).get("excess"),
-            "p-value": (item.get("metrics") or {}).get("p_value"),
-            "심각도": item.get("finding_severity"),
-        }
-        for item in findings
-    ]
-    st.dataframe(
-        pd.DataFrame(rows),
+
+    selected = _select_round_density_scope(findings)
+    shown = [f for f in findings if not selected or str(f.get("scope")) == selected]
+    if not shown:
+        st.info("선택한 축에는 finding 이 없습니다.")
+        return
+
+    st.plotly_chart(
+        round_density_bar(shown, top_n=_ROUND_DENSITY_TOP_N),
         width="stretch",
-        hide_index=True,
-        column_config={
-            "둥근비율": st.column_config.NumberColumn(format="%.3f"),
-            "기준선": st.column_config.NumberColumn(format="%.3f"),
-            "초과분": st.column_config.NumberColumn(format="%.3f"),
-            "p-value": st.column_config.NumberColumn(format="%.4f"),
-        },
+        key=f"round_density_bar_{selected or 'all'}",
     )
+    if len(shown) > _ROUND_DENSITY_TOP_N:
+        st.caption(
+            f"기준선 초과분 상위 {_ROUND_DENSITY_TOP_N}개만 그렸습니다 "
+            f"(선택 축 finding {len(shown):,}개). 전체는 아래 표에서 확인하세요."
+        )
+
+    with st.expander(f"finding 상세 표 ({len(shown):,}건)"):
+        st.dataframe(
+            _round_density_table(shown),
+            width="stretch",
+            hide_index=True,
+            column_config={
+                "둥근비율": st.column_config.NumberColumn(format="percent"),
+                "기준선": st.column_config.NumberColumn(format="percent"),
+                "기준선 초과": st.column_config.NumberColumn(format="percent"),
+                "p-value": st.column_config.NumberColumn(format="%.4f"),
+            },
+        )
+
+
+def _select_round_density_scope(findings: list[dict[str, Any]]) -> str | None:
+    """축 라디오 — finding 이 실제로 있는 축만 노출. 반환값 None 은 전체."""
+    present = {str(f.get("scope") or "") for f in findings if f.get("scope")}
+    # Why: 등장 순에 맡기면 데이터마다 버튼 위치가 바뀐다 — 축 정의 순서로 고정.
+    scopes = [s for s in SCOPE_LABELS if s in present] + sorted(present - set(SCOPE_LABELS))
+    if len(scopes) < 2:
+        return None
+    labels = ["전체"] + [scope_label(s) for s in scopes]
+    choice = st.radio(
+        "축",
+        options=labels,
+        horizontal=True,
+        key="analytical_round_density_scope",
+    )
+    if choice in (None, "전체"):
+        return None
+    return next((s for s in scopes if scope_label(s) == choice), None)
+
+
+def _round_density_table(findings: list[dict[str, Any]]) -> pd.DataFrame:
+    """상세 표 — 차트와 같은 정렬(기준선 초과분 내림차순)."""
+    rows = []
+    for item in findings:
+        metrics = item.get("metrics") or {}
+        rows.append(
+            {
+                "축": scope_label(str(item.get("scope") or "")),
+                "그룹": item.get("group_key"),
+                "표본": item.get("sample_size"),
+                "둥근건수": item.get("candidate_rows"),
+                "둥근비율": metrics.get("round_ratio"),
+                "기준선": metrics.get("baseline_ratio"),
+                "기준선 초과": metrics.get("excess"),
+                "p-value": metrics.get("p_value"),
+                "신호": SEVERITY_LABELS.get(
+                    str(item.get("finding_severity") or ""),
+                    item.get("finding_severity"),
+                ),
+            }
+        )
+    table = pd.DataFrame(rows)
+    if "기준선 초과" in table.columns:
+        table = table.sort_values("기준선 초과", ascending=False)
+    return table
 
 
 # ── 거래처 신호 ────────────────────────────────────────────────
