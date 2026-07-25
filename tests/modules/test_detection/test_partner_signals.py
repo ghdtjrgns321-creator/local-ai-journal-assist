@@ -77,15 +77,30 @@ def test_dormant_reactivation_from_distant_past():
     """직직전보다 더 이전(2020)에만 활동 → 오래 결번 → 2024 재등장도 휴면재활성.
 
     '과거 어느 해든 활동 有' 조건이라 직직전에 국한되지 않는다(사용자 회귀).
+    직전 연도(2023) 원장을 보유해야 '결번'이 성립하므로 다른 거래처로 그 해를 채운다.
     """
+    rows = [
+        _row("P_FAR", 2020, "2020-05-01"),
+        _row("P_FAR", 2024, "2024-05-01"),
+        *[_row(f"P_PREV{i}", 2023, "2023-04-01") for i in range(3)],
+        *[_row(f"P_FILL{i}", 2024, "2024-04-01") for i in range(5)],
+    ]
+    res = compute_partner_signals(pd.DataFrame(rows), _settings())
+    assert "P_FAR" in res.dormant_partners
+    assert "P_FAR" not in res.first_seen_partners  # 2020 이력 有 → 첫등장 아님
+
+
+def test_dormant_unevaluated_when_prior_year_ledger_missing():
+    """직전 연도(2023) 원장 자체가 없으면 '거래 無'와 '데이터 無'를 구분할 수 없다 → 미판정."""
     rows = [
         _row("P_FAR", 2020, "2020-05-01"),
         _row("P_FAR", 2024, "2024-05-01"),
         *[_row(f"P_FILL{i}", 2024, "2024-04-01") for i in range(5)],
     ]
     res = compute_partner_signals(pd.DataFrame(rows), _settings())
-    assert "P_FAR" in res.dormant_partners
-    assert "P_FAR" not in res.first_seen_partners  # 2020 이력 有 → 첫등장 아님
+    assert res.dormant_evaluated is False
+    assert res.dormant_partners == set()
+    assert res.first_seen_evaluated is True  # 과거 연도(2020) 는 있으므로 첫등장은 판정 가능
 
 
 def test_first_seen_and_dormant_are_disjoint():
@@ -112,7 +127,95 @@ def test_single_year_guard_no_first_seen_or_dormant():
     res = compute_partner_signals(single, _settings())
     assert res.first_seen_partners == set()
     assert res.dormant_partners == set()
-    assert any("단일 연도" in w for w in res.warnings)
+    assert res.first_seen_evaluated is False
+    assert res.dormant_evaluated is False
+    assert any("첫등장 판정 불가" in w for w in res.warnings)
+
+
+# ── 과거 engagement 주입 (연도별 DB 격리 환경) ────────────────
+
+
+def _current_year_only_df():
+    """당기(2024) 원장만 — 연도별 engagement 격리 시 실제로 들어오는 모양."""
+    rows = [
+        _row("P_NEW", 2024, "2024-05-01"),
+        _row("P_OLD", 2024, "2024-03-01"),
+        _row("P_DORM", 2024, "2024-02-01"),
+        *[_row(f"P_FILL{i}", 2024, "2024-04-01") for i in range(5)],
+    ]
+    return pd.DataFrame(rows)
+
+
+def test_prior_years_injection_enables_first_seen():
+    """과거 engagement 거래처를 주입하면 당기 원장만으로도 첫등장이 판정된다."""
+    res = compute_partner_signals(
+        _current_year_only_df(),
+        _settings(),
+        prior_partner_years={2023: {"P_OLD", "P_FILL0"}},
+    )
+    assert res.first_seen_evaluated is True
+    assert "P_NEW" in res.first_seen_partners
+    assert "P_OLD" not in res.first_seen_partners
+    assert res.observed_years == [2023, 2024]
+
+
+def test_prior_years_injection_single_year_still_blocks_dormant():
+    """직전 연도 1개만 주입되면 휴면재활성은 여전히 미판정(그 이전 연도 부재)."""
+    res = compute_partner_signals(
+        _current_year_only_df(),
+        _settings(),
+        prior_partner_years={2023: {"P_OLD"}},
+    )
+    assert res.dormant_evaluated is False
+    assert res.dormant_partners == set()
+
+
+def test_prior_years_injection_enables_dormant():
+    """직전(2023)·그 이전(2022) 이 모두 주입되면 휴면재활성 판정."""
+    res = compute_partner_signals(
+        _current_year_only_df(),
+        _settings(),
+        prior_partner_years={2023: {"P_OLD"}, 2022: {"P_OLD", "P_DORM"}},
+    )
+    assert res.dormant_evaluated is True
+    assert "P_DORM" in res.dormant_partners  # 2022 有·2023 결번·2024 재등장
+    assert "P_OLD" not in res.dormant_partners  # 2023 활동 有
+    assert "P_NEW" in res.first_seen_partners  # 과거 어느 해에도 없음
+
+
+def test_prior_years_at_or_after_current_year_ignored():
+    """당기 이상 연도는 과거 비교 기준이 될 수 없어 버린다."""
+    res = compute_partner_signals(
+        _current_year_only_df(),
+        _settings(),
+        prior_partner_years={2024: {"P_NEW"}, 2025: {"P_NEW"}},
+    )
+    assert res.observed_years == [2024]
+    assert res.first_seen_evaluated is False
+    assert res.first_seen_partners == set()
+
+
+def test_prior_only_partner_not_surfaced():
+    """과거에만 있고 당기엔 없는 거래처는 어떤 신호에도 오르지 않는다."""
+    res = compute_partner_signals(
+        _current_year_only_df(),
+        _settings(),
+        prior_partner_years={2023: {"P_GONE"}, 2022: {"P_GONE"}},
+    )
+    all_signaled = res.first_seen_partners | res.rare_partners | res.dormant_partners
+    assert "P_GONE" not in all_signaled
+    assert all(r["partner"] != "P_GONE" for r in res.partner_summary)
+
+
+def test_diagnostics_expose_evaluation_flags():
+    res = compute_partner_signals(
+        _current_year_only_df(), _settings(), prior_partner_years={2023: {"P_OLD"}}
+    )
+    diag = res.diagnostics()
+    assert diag["observed_years"] == [2023, 2024]
+    assert diag["first_seen_evaluated"] is True
+    assert diag["dormant_evaluated"] is False
+    assert isinstance(diag["warnings"], list)
 
 
 def test_row_badges_three_independent_columns():

@@ -2,12 +2,15 @@
 
 Why: PHASE1-2 재설계(2026-06-30)로 옛 PHASE2 relational family(R01/R05/R07)를 삭제한 뒤,
      base 경로에서 거래처 단위로 신규 계산한다. 점수 비병합(배지·자기큐 전용, anomaly_score
-     무기여). first-seen/dormant는 다년 데이터가 필요해 단일 연도 실행 시 가드로 빈 결과 반환.
+     무기여). first-seen/dormant는 다년 비교가 전제라, 당기 df 한 장만으로는 성립하지 않는다.
+     연도별 engagement 격리(RC-3) 환경에서는 당기 df 에 당기 연도만 담기므로, 과거 연도
+     거래처 집합을 ``prior_partner_years`` 로 주입받아 비교 범위를 넓힌다(2026-07-25).
      임계값은 §3 데이터주도 원칙에 따라 전부 settings 에서 read (리터럴 계산분기 금지).
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -22,7 +25,11 @@ BADGE_COLUMNS: tuple[str, ...] = (
 
 @dataclass
 class PartnerSignalResult:
-    """거래처 신호 산출 결과. row_badges 는 df.index 정렬 3 bool 컬럼."""
+    """거래처 신호 산출 결과. row_badges 는 df.index 정렬 3 bool 컬럼.
+
+    ``*_evaluated`` 는 "신호 0건"과 "비교 데이터가 없어 판정 자체를 못 함"을 화면이 구분
+    하도록 싣는다. 둘을 같은 빈 목록으로 뭉개면 감사인이 0건으로 오독한다.
+    """
 
     first_seen_partners: set[str] = field(default_factory=set)
     rare_partners: set[str] = field(default_factory=set)
@@ -30,12 +37,33 @@ class PartnerSignalResult:
     row_badges: pd.DataFrame = field(default_factory=pd.DataFrame)
     partner_summary: list[dict[str, Any]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    observed_years: list[int] = field(default_factory=list)
+    first_seen_evaluated: bool = False
+    rare_evaluated: bool = False
+    dormant_evaluated: bool = False
+
+    def diagnostics(self) -> dict[str, Any]:
+        """화면·아티팩트로 넘길 판정 가능 여부 요약."""
+        return {
+            "observed_years": list(self.observed_years),
+            "first_seen_evaluated": bool(self.first_seen_evaluated),
+            "rare_evaluated": bool(self.rare_evaluated),
+            "dormant_evaluated": bool(self.dormant_evaluated),
+            "warnings": list(self.warnings),
+        }
 
 
-def compute_partner_signals(df: pd.DataFrame | None, settings: Any) -> PartnerSignalResult:
+def compute_partner_signals(
+    df: pd.DataFrame | None,
+    settings: Any,
+    *,
+    prior_partner_years: Mapping[int, set[str]] | None = None,
+) -> PartnerSignalResult:
     """GL df 에서 거래처 단위 첫등장/희소/휴면재활성 신호를 계산.
 
     trading_partner 가 null/'' 인 행은 실제 거래처가 아니라 신호 대상에서 제외한다.
+    ``prior_partner_years`` 는 {회계연도: 그 해 등장한 거래처 집합} — 과거 engagement DB 에서
+    읽어 주입한다. 당기 이상 연도는 과거 비교 기준이 될 수 없어 버린다.
     """
     result = PartnerSignalResult()
     if df is None or "trading_partner" not in df.columns:
@@ -56,27 +84,47 @@ def compute_partner_signals(df: pd.DataFrame | None, settings: Any) -> PartnerSi
         return result
 
     valid = valid & year.notna()
-    distinct_years = sorted(year[valid].dropna().unique().tolist())
+    distinct_years = sorted(int(y) for y in pd.Series(year[valid]).dropna().unique().tolist())
     current_year = distinct_years[-1] if distinct_years else None
 
     # 거래처별 등장 연도 집합 (first-seen / dormant 판정 근거).
     pv = pd.DataFrame({"partner": partner[valid], "year": year[valid]}).dropna()
-    years_by_partner = pv.groupby("partner")["year"].agg(set)
+    years_by_partner: dict[str, set[int]] = {
+        str(p): {int(y) for y in yrs} for p, yrs in pv.groupby("partner")["year"].agg(set).items()
+    }
+    prior_years = _merge_prior_years(prior_partner_years, current_year, years_by_partner)
+    observed_years = sorted(set(distinct_years) | prior_years)
+    result.observed_years = observed_years
 
-    if len(distinct_years) < 2:
+    result.first_seen_evaluated = len(observed_years) >= 2
+    if not result.first_seen_evaluated:
         result.warnings.append(
-            "단일 연도 데이터 — 첫등장/휴면재활성은 다년 비교 필요, rare 만 산출"
+            "비교할 과거 연도 데이터 없음 — 첫등장 판정 불가(0건이 아니라 미판정)"
         )
     else:
-        prior_years = {y for y in distinct_years if y != current_year}
+        past_years = {y for y in observed_years if y != current_year}
         result.first_seen_partners = {
-            str(p)
+            p
             for p, yrs in years_by_partner.items()
-            if current_year in yrs and not (yrs & prior_years)
+            if current_year in yrs and not (yrs & past_years)
         }
-        result.dormant_partners = _dormant_partners(current_year, years_by_partner)
 
-    result.rare_partners = _rare_partners(
+    # 휴면재활성은 "직전 연도 결번"을 봐야 하므로 직전 연도와 그 이전 연도가 **둘 다**
+    # 관측돼야 한다. 직전 연도 데이터 자체가 없으면 '거래 無'와 '데이터 無'를 구분할 수 없다.
+    prev_year = current_year - 1 if current_year is not None else None
+    result.dormant_evaluated = (
+        prev_year is not None
+        and prev_year in observed_years
+        and any(y < prev_year for y in observed_years)
+    )
+    if result.dormant_evaluated:
+        result.dormant_partners = _dormant_partners(current_year, years_by_partner)
+    else:
+        result.warnings.append(
+            "직전 연도·그 이전 연도가 모두 있어야 판정 가능 — 휴면재활성 판정 불가(미판정)"
+        )
+
+    result.rare_partners, result.rare_evaluated = _rare_partners(
         partner, year, valid, current_year, rare_quantile, min_population, result.warnings
     )
 
@@ -94,6 +142,28 @@ def _resolve_year(df: pd.DataFrame) -> pd.Series | None:
     return None
 
 
+def _merge_prior_years(
+    prior_partner_years: Mapping[int, set[str]] | None,
+    current_year: int | None,
+    years_by_partner: dict[str, set[int]],
+) -> set[int]:
+    """과거 engagement 거래처를 등장 연도 맵에 병합하고, 병합된 과거 연도 집합을 반환.
+
+    당기 이상 연도는 과거 비교 기준이 될 수 없어 버린다(당기 자체는 df 가 소유한다).
+    과거에만 있고 당기엔 없는 거래처도 맵에 들어가지만, 신호 판정은 모두
+    ``current_year in yrs`` 를 요구하므로 당기 거래처만 결과에 남는다.
+    """
+    merged: set[int] = set()
+    for raw_year, partners in (prior_partner_years or {}).items():
+        year = int(raw_year)
+        if current_year is not None and year >= current_year:
+            continue
+        merged.add(year)
+        for name in partners:
+            years_by_partner.setdefault(str(name), set()).add(year)
+    return merged
+
+
 def _rare_partners(
     partner: pd.Series,
     year: pd.Series,
@@ -102,20 +172,20 @@ def _rare_partners(
     rare_quantile: float,
     min_population: int,
     warnings: list[str],
-) -> set[str]:
-    """당기 거래처별 txn count 하위 분위수 이하를 rare 로. 모집단 부족 시 빈 set."""
+) -> tuple[set[str], bool]:
+    """당기 거래처별 txn count 하위 분위수 이하를 rare 로. 모집단 부족 시 (빈 set, False)."""
     cur_mask = valid & (year == current_year)
     counts = partner[cur_mask].value_counts()
     if len(counts) < min_population:
         warnings.append(
             f"당기 거래처 {len(counts)} < min_population({min_population}) — rare 산출 스킵"
         )
-        return set()
+        return set(), False
     threshold = counts.quantile(rare_quantile)
-    return {str(p) for p in counts[counts <= threshold].index}
+    return {str(p) for p in counts[counts <= threshold].index}, True
 
 
-def _dormant_partners(current_year: Any, years_by_partner: pd.Series) -> set[str]:
+def _dormant_partners(current_year: Any, years_by_partner: dict[str, set[int]]) -> set[str]:
     """휴면재활성: 과거(직전 연도 이전) 활동 有 + **직전 회계연도 결번** + 당기 재등장.
 
     직전 회계연도를 통째로 건너뛰므로 마지막 과거 활동~당기 재등장 사이에 자연히 1년

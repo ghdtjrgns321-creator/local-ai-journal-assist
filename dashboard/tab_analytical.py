@@ -147,8 +147,10 @@ def _render_partners(pr: PipelineResult) -> None:
     )
     signal = _PARTNER_SIGNAL_LABELS.get(label or "전체")
     findings = build_phase1_partner_finding_queue(pr, signal=signal)
+    diagnostics = _partner_diagnostics(pr)
+    _render_partner_coverage(diagnostics)
     if not findings:
-        st.info("해당 조건의 거래처 신호가 없습니다. (첫등장/휴면은 다년 데이터 필요)")
+        st.info(_empty_partner_message(signal, diagnostics))
         return
     rows = [
         {
@@ -171,6 +173,64 @@ def _render_partners(pr: PipelineResult) -> None:
     )
 
 
+def _partner_diagnostics(pr: PipelineResult) -> dict[str, Any]:
+    """거래처 신호 판정 가능 여부 — PHASE1 아티팩트 metadata 에서 읽는다."""
+    phase1 = resolve_phase1_case_result(pr)
+    if phase1 is None:
+        return {}
+    value = phase1.metadata.get("partner_signal_diagnostics") or {}
+    return value if isinstance(value, dict) else {}
+
+
+def _render_partner_coverage(diagnostics: dict[str, Any]) -> None:
+    """비교에 쓰인 회계연도와 미판정 신호를 먼저 밝힌다 — 빈 목록의 오독 방지."""
+    years = [int(y) for y in (diagnostics.get("observed_years") or [])]
+    if not years:
+        return
+    span = str(years[0]) if len(years) == 1 else f"{years[0]}~{years[-1]}"
+    unevaluated = [
+        label
+        for key, label in (("first_seen_evaluated", "첫 등장"), ("dormant_evaluated", "휴면재활성"))
+        if not diagnostics.get(key)
+    ]
+    text = f"비교 기준 회계연도: {span} ({len(years)}개 연도)"
+    if unevaluated:
+        text += f" · {'·'.join(unevaluated)}은 비교할 과거 연도가 부족해 판정하지 않았습니다"
+    st.caption(text)
+
+
+_PARTNER_UNEVALUATED_REASON: dict[str, tuple[str, str, str]] = {
+    # signal → (판정 가능 여부 키, 한글 라벨, 미판정 사유)
+    "first_seen": ("first_seen_evaluated", "첫 등장", "비교할 과거 연도 데이터가 없습니다"),
+    "dormant": (
+        "dormant_evaluated",
+        "휴면재활성",
+        "직전 연도와 그 이전 연도가 모두 있어야 판정할 수 있습니다",
+    ),
+    "rare": ("rare_evaluated", "희소", "당기 거래처 수가 최소 모집단에 못 미칩니다"),
+}
+
+
+def _empty_partner_message(signal: str | None, diagnostics: dict[str, Any]) -> str:
+    """빈 목록의 의미를 '0건'과 '미판정'으로 갈라 문장으로 만든다."""
+    if not diagnostics:
+        return "해당 조건의 거래처 신호가 없습니다."
+
+    if signal:
+        entry = _PARTNER_UNEVALUATED_REASON.get(signal)
+        if entry and not diagnostics.get(entry[0]):
+            return f"{entry[1]}은 판정하지 않았습니다 — {entry[2]}. (신호 0건이라는 뜻이 아닙니다)"
+        return "판정 결과 해당 신호에 걸린 거래처가 없습니다. (0건)"
+
+    unevaluated = [
+        label
+        for _, (key, label, _reason) in _PARTNER_UNEVALUATED_REASON.items()
+        if not diagnostics.get(key)
+    ]
+    if unevaluated:
+        return (
+            f"{'·'.join(unevaluated)}은 비교 데이터가 부족해 판정하지 않았고, "
+            "나머지 신호는 0건입니다."
 # ── 계정·비율 변동 (D01/D02) ──────────────────────────────────
 
 

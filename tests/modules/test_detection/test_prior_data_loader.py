@@ -15,7 +15,9 @@ import pytest
 from src.company.models import EngagementProfile, EngagementStatus
 from src.detection.prior_data_loader import (
     PriorSummary,
+    find_past_engagements,
     find_prior_engagement,
+    load_partner_years,
     load_prior_summary,
 )
 
@@ -87,6 +89,98 @@ class TestFindPriorEngagement:
         repo.list_engagements.return_value = []
         result = find_prior_engagement(repo, "test_co", 2025)
         assert result is None
+
+
+# ── find_past_engagements / load_partner_years 테스트 ───────
+
+
+class TestFindPastEngagements:
+    """거래처 첫등장/휴면 판정용 과거 engagement 다년 탐색."""
+
+    def test_returns_recent_years_desc(self) -> None:
+        repo = MagicMock()
+        repo.list_engagements.return_value = [
+            _make_engagement(2021, EngagementStatus.COMPLETED),
+            _make_engagement(2022, EngagementStatus.COMPLETED),
+            _make_engagement(2023, EngagementStatus.IN_PROGRESS),
+        ]
+        result = find_past_engagements(repo, "test_co", 2024)
+        assert [e.fiscal_year for e in result] == [2023, 2022, 2021]
+
+    def test_current_and_future_years_excluded(self) -> None:
+        repo = MagicMock()
+        repo.list_engagements.return_value = [
+            _make_engagement(2024, EngagementStatus.COMPLETED),
+            _make_engagement(2025, EngagementStatus.COMPLETED),
+            _make_engagement(2023, EngagementStatus.COMPLETED),
+        ]
+        result = find_past_engagements(repo, "test_co", 2024)
+        assert [e.fiscal_year for e in result] == [2023]
+
+    def test_one_per_year_completed_wins(self) -> None:
+        repo = MagicMock()
+        repo.list_engagements.return_value = [
+            _make_engagement(2023, EngagementStatus.DRAFT, "draft"),
+            _make_engagement(2023, EngagementStatus.COMPLETED, "comp"),
+        ]
+        result = find_past_engagements(repo, "test_co", 2024)
+        assert [e.engagement_id for e in result] == ["comp"]
+
+    def test_max_years_caps_result(self) -> None:
+        repo = MagicMock()
+        repo.list_engagements.return_value = [
+            _make_engagement(y, EngagementStatus.COMPLETED) for y in range(2015, 2024)
+        ]
+        result = find_past_engagements(repo, "test_co", 2024, max_years=3)
+        assert [e.fiscal_year for e in result] == [2023, 2022, 2021]
+
+    def test_no_past_engagements(self) -> None:
+        repo = MagicMock()
+        repo.list_engagements.return_value = []
+        assert find_past_engagements(repo, "test_co", 2024) == []
+
+
+def _create_partner_db(db_path: Path, partners: list[str | None]) -> None:
+    """trading_partner 컬럼을 가진 과거 DB 생성."""
+    conn = duckdb.connect(str(db_path))
+    conn.execute("CREATE TABLE general_ledger (trading_partner VARCHAR, debit_amount DOUBLE)")
+    for name in partners:
+        conn.execute("INSERT INTO general_ledger VALUES (?, 100.0)", [name])
+    conn.close()
+
+
+class TestLoadPartnerYears:
+    """과거 DB 에서 연도별 거래처 집합 로드 — ATTACH 실동작."""
+
+    def test_distinct_partners_per_year(self, tmp_path: Path) -> None:
+        _create_partner_db(tmp_path / "y2022.duckdb", ["A", "A", "B"])
+        _create_partner_db(tmp_path / "y2023.duckdb", ["B", "C"])
+        conn = duckdb.connect(":memory:")
+        result = load_partner_years(
+            conn,
+            {2022: tmp_path / "y2022.duckdb", 2023: tmp_path / "y2023.duckdb"},
+        )
+        assert result == {2022: {"A", "B"}, 2023: {"B", "C"}}
+
+    def test_null_and_blank_partners_excluded(self, tmp_path: Path) -> None:
+        _create_partner_db(tmp_path / "y2023.duckdb", ["A", None, "", "  "])
+        conn = duckdb.connect(":memory:")
+        result = load_partner_years(conn, {2023: tmp_path / "y2023.duckdb"})
+        assert result == {2023: {"A"}}
+
+    def test_missing_file_skipped(self, tmp_path: Path) -> None:
+        _create_partner_db(tmp_path / "y2023.duckdb", ["A"])
+        conn = duckdb.connect(":memory:")
+        result = load_partner_years(
+            conn,
+            {2022: tmp_path / "absent.duckdb", 2023: tmp_path / "y2023.duckdb"},
+        )
+        assert result == {2023: {"A"}}
+
+    def test_missing_trading_partner_column_skipped(self, tmp_path: Path) -> None:
+        _create_prior_db(tmp_path / "y2023.duckdb")  # trading_partner 없는 스키마
+        conn = duckdb.connect(":memory:")
+        assert load_partner_years(conn, {2023: tmp_path / "y2023.duckdb"}) == {}
 
 
 # ── load_prior_summary 테스트 ───────────────────────────────
@@ -214,13 +308,9 @@ class TestLoadPriorSummary:
         conn.close()
 
         assert result is not None
-        assert result.account_aggregates["C001::4110"]["total_amount"] == pytest.approx(
-            300000.0
-        )
+        assert result.account_aggregates["C001::4110"]["total_amount"] == pytest.approx(300000.0)
         assert result.account_aggregates["C001::4110"]["count"] == 2
-        assert result.account_aggregates["C002::4110"]["total_amount"] == pytest.approx(
-            50000.0
-        )
+        assert result.account_aggregates["C002::4110"]["total_amount"] == pytest.approx(50000.0)
         assert "C001::4110" in result.monthly_patterns
         assert sum(result.monthly_patterns["C001::4110"].values()) == pytest.approx(
             1.0,
@@ -270,3 +360,63 @@ class TestLoadPriorSummary:
         result = load_prior_summary(conn, bad_file, 2024)
         conn.close()
         assert result is None
+
+
+class TestAlreadyOpenPriorDb:
+    """전기 DB 가 같은 프로세스에 이미 열려 있어도 로드되어야 한다.
+
+    Why: DuckDB 는 한 파일을 두 핸들로 못 연다. 연도 전환 후 캐시에 전기 커넥션이
+         남아 있으면 READ_ONLY ATTACH 가 실패해 Layer D 가 통째로 조용히 스킵됐다.
+    """
+
+    def test_read_only_attach_conflicts_when_file_already_open(self, tmp_path: Path) -> None:
+        """전제 재현 — 열린 파일에 READ_ONLY ATTACH 는 실제로 실패한다."""
+        prior_db = tmp_path / "prior.duckdb"
+        _create_prior_db(prior_db)
+
+        held = duckdb.connect(str(prior_db))
+        conn = duckdb.connect()
+        try:
+            with pytest.raises(duckdb.Error):
+                conn.execute(f"ATTACH '{prior_db.resolve()}' AS prior (READ_ONLY)")
+        finally:
+            conn.close()
+            held.close()
+
+    def test_load_prior_summary_uses_cached_connection(self, tmp_path: Path) -> None:
+        """캐시에 전기 커넥션이 있으면 ATTACH 없이 그것으로 조회한다."""
+        from src.db.connection import get_connection_manager
+
+        prior_db = tmp_path / "prior.duckdb"
+        _create_prior_db(prior_db)
+
+        manager = get_connection_manager()
+        manager.get(str(prior_db))  # 전기 분석 후 캐시에 남아 있는 상황
+        current = duckdb.connect()
+        try:
+            result = load_prior_summary(current, prior_db, 2024)
+        finally:
+            current.close()
+            manager.close(str(prior_db))
+
+        assert result is not None
+        assert result.prior_fiscal_year == 2024
+        assert result.account_aggregates
+
+    def test_partner_years_uses_cached_connection(self, tmp_path: Path) -> None:
+        """거래처 연도 로더도 같은 경로를 탄다."""
+        from src.db.connection import get_connection_manager
+
+        past_db = tmp_path / "y2023.duckdb"
+        _create_partner_db(past_db, ["A", "B"])
+
+        manager = get_connection_manager()
+        manager.get(str(past_db))
+        current = duckdb.connect()
+        try:
+            result = load_partner_years(current, {2023: past_db})
+        finally:
+            current.close()
+            manager.close(str(past_db))
+
+        assert result == {2023: {"A", "B"}}

@@ -47,6 +47,7 @@ from src.export.phase1_case_view import (
     _case_topic_score,
     build_phase1_case_drilldown,
     build_phase1_data_quality_gate,
+    build_phase1_macro_finding_queue,
     build_phase1_raw_rule_truth_index,
     build_phase1_rule_case_doc_map,
     build_phase1_rule_cases,
@@ -540,6 +541,8 @@ def _render_phase1_rule_audit(rule_audit: dict[str, Any]) -> None:
         "color:#334155; border:1px solid #E2E8F0; border-radius:4px; font-size:0.78rem; "
         "font-weight:500; margin:0 0.15rem;'>검토대상수</span>"
         " (중복 케이스는 중복 카운트).</div>"
+        "<div>L4-02·D01·D02 는 전표가 아니라 계정 단위 신호라 건수 대신 "
+        "<b>변화 확인 / 변화 없음</b> 으로 표시합니다.</div>"
         "<div>룰 행을 클릭하면 상세 설명이 펼쳐집니다.</div>"
         "</div>"
     )
@@ -573,11 +576,16 @@ def _render_phase1_rule_audit(rule_audit: dict[str, Any]) -> None:
     section_html_parts: list[str] = []
     for title, items in ordered_sections:
         rows_html = "".join(_rule_audit_row_html(rule) for rule in items)
+        # Why: 전표 단위 룰과 계정 단위 macro 룰(L4-02·D01·D02)은 분모가 달라
+        #      한 숫자로 합칠 수 없다. 합계는 전표 단위만 세고, 전표 룰이 없는
+        #      섹션(D)은 숫자 대신 단위를 밝힌다.
+        doc_rules = [item for item in items if str(item.get("count_unit", "건")) == "건"]
         section_total = sum(
             int(item.get("flag_count", 0) or 0)
-            for item in items
+            for item in doc_rules
             if str(item.get("status", "")) != "skipped"
         )
+        section_total_text = f"총 {section_total:,}건" if doc_rules else "계정 단위 신호"
         section_html_parts.append(
             "<div style='background:#FFFFFF; border:1px solid #E5E7EB; "
             "border-radius:12px; box-shadow:0 1px 2px rgba(15,23,42,0.04); "
@@ -587,7 +595,7 @@ def _render_phase1_rule_audit(rule_audit: dict[str, Any]) -> None:
             "border-bottom:1px solid #E5E7EB;'>"
             f"<div style='color:#0F172A; font-size:0.92rem; font-weight:600;'>{title}</div>"
             "<div style='color:#1D4ED8; font-size:0.82rem; font-weight:600;'>"
-            f"총 {section_total:,}건</div>"
+            f"{section_total_text}</div>"
             "</div>"
             "<div style='padding:0.4rem 1.5rem 0.6rem;'>"
             f"{rows_html}"
@@ -799,15 +807,27 @@ def _rule_audit_row_html(rule: dict[str, Any]) -> str:
     )
     status = str(rule.get("status", ""))
     flag_count = int(rule.get("flag_count", 0) or 0)
+    verdict_labels = rule.get("verdict_labels")
 
-    # Why: layer_d(D01/D02)는 phase1 본 실행에 통상 포함되지 않는 보조 트랙.
-    #      generated 신호가 0 이라면 미실행으로 간주해 강제로 "스킵됨" 으로 표시.
-    is_layer_d_unflagged = rule_id_raw in {"D01", "D02"} and flag_count == 0
-    if status == "skipped" or is_layer_d_unflagged:
-        badge_text = "스킵됨"
+    if status == "skipped":
+        # Why: 스킵 사유(전기 데이터 없음 / 실행 오류 등)를 배지에 노출한다. 사유 없이
+        #      회색 "스킵됨" 만 보이면 미실행·데이터 부재·오류가 구분되지 않는다.
+        reason = html.escape(str(rule.get("skip_reason", "") or "").strip())
+        badge_text = f"스킵됨 · {reason}" if reason else "스킵됨"
         badge_bg = "#F3F4F6"
         badge_color = "#6B7280"
         text_color = "#9CA3AF"
+    elif verdict_labels:
+        # Why: 계정 단위 macro 룰(L4-02·D01·D02)은 전표 건수와 분모가 달라 숫자를
+        #      나란히 놓으면 오독된다. 배지는 판정 문구만, 계정 수는 상세에 적는다.
+        hit_label, clear_label = verdict_labels
+        if flag_count > 0:
+            badge_text = f"⚠ {hit_label}"
+            badge_bg, badge_color = "#FEF3C7", "#A16207"
+        else:
+            badge_text = f"✓ {clear_label}"
+            badge_bg, badge_color = "#DCFCE7", "#15803D"
+        text_color = "#111827"
     else:  # generated 또는 no_match — 양쪽 모두 건수 기준 색상화
         icon, badge_bg, badge_color = _badge_style_for_count(flag_count)
         badge_text = f"{icon} {flag_count:,}건"
@@ -830,13 +850,21 @@ def _rule_audit_row_html(rule: dict[str, Any]) -> str:
         f"{badge_html}"
         "</summary>"
     )
+    # Why: macro 룰은 배지에서 숫자를 뺐으므로 규모(계정 수)는 상세에서 알려준다.
+    scale_html = ""
+    if verdict_labels and status != "skipped" and flag_count > 0:
+        unit = html.escape(str(rule.get("count_unit", "건") or "건"))
+        scale_html = (
+            "<div style='margin-top:6px; color:#6B7280; font-size:0.78rem;'>"
+            f"해당 {unit} {flag_count:,}개 — 분석적 검토 탭에서 목록 확인</div>"
+        )
     detail_html = (
         "<div style='margin:4px 0 8px; padding:10px 12px; "
         "background:#F9FAFB; border:1px solid #F3F4F6; border-radius:8px; "
         "color:#374151; font-size:0.82rem; line-height:1.6;'>"
         f"<div style='color:#6B7280; font-size:0.72rem; margin-bottom:4px;'>"
         f"{rule_id} · {name}</div>"
-        f"{description}</div>"
+        f"{description}{scale_html}</div>"
     )
     return f"<details style='border-top:1px solid #F3F4F6;'>{summary_html}{detail_html}</details>"
 
@@ -3784,6 +3812,75 @@ def _label_leak_status(data: pd.DataFrame) -> tuple[str, str]:
 _LAYER_D_RULES = {"D01", "D02"}
 
 
+# Why: L4-02·D01·D02 는 계정 단위 macro finding 이라 전표 case 로 집계되지 않는다
+#      (phase1_case_builder._MACRO_FINDING_RULES 에서 raw_rule_hits 생성 제외).
+#      전표 건수로 세면 실행 여부와 무관하게 항상 0 이 되어 "미발화"·"스킵" 이
+#      구분되지 않으므로, 이 룰만 macro finding 큐 건수 + 트랙 실행 상태를 쓴다.
+_MACRO_RULE_TRACKS: dict[str, str] = {
+    "L4-02": "benford",
+    "D01": "layer_d",
+    "D02": "layer_d",
+}
+
+# Why: macro 룰 배지는 건수 대신 판정 문구를 쓴다 — (발화, 미발화) 문구 쌍.
+#      D01/D02 는 전기 대비 "변화", L4-02 는 자릿수 분포 "이상" 이라 어휘가 다르다.
+_MACRO_RULE_VERDICT_LABELS: dict[str, tuple[str, str]] = {
+    "L4-02": ("이상 확인", "이상 없음"),
+    "D01": ("변화 확인", "변화 없음"),
+    "D02": ("변화 확인", "변화 없음"),
+}
+
+_DETECTOR_SKIP_REASON_KR: dict[str, str] = {
+    "missing_historical_data": "전기 데이터 없음",
+    "missing_prior_summary": "전기 원장 로드 실패",
+    "disabled_by_settings": "설정에서 비활성",
+    "anonymous_context": "회사 미선택",
+    "missing_fiscal_year": "회계연도 미설정",
+    "missing_repository": "회사 정보 없음",
+    "detector_exception": "실행 오류",
+    "not part of current inference path": "이번 실행 대상 아님",
+}
+
+
+def _macro_finding_counts(pr) -> dict[str, int]:
+    """macro finding 룰별 건수(= 계정 수). 전표 case 집계로는 잡히지 않는 값."""
+    counts: dict[str, int] = {}
+    for item in build_phase1_macro_finding_queue(pr):
+        rule_id = str(item.get("rule_id", "") or "").strip()
+        if rule_id:
+            counts[rule_id] = counts.get(rule_id, 0) + 1
+    return counts
+
+
+def _macro_rule_states(pr) -> dict[str, tuple[str, str]]:
+    """macro 룰 → (트랙 run_status, 한글 사유). detector 상태가 없으면 항목 없음."""
+    statuses = {
+        str(item.get("track_name", "") or "").strip(): item
+        for item in getattr(pr, "detector_statuses", []) or []
+    }
+    states: dict[str, tuple[str, str]] = {}
+    for rule_id, track_name in _MACRO_RULE_TRACKS.items():
+        status = statuses.get(track_name)
+        if status is None:
+            continue
+        run_status = str(status.get("run_status", "") or "").strip()
+        reason = str(status.get("reason", "") or "").strip()
+        states[rule_id] = (run_status, _DETECTOR_SKIP_REASON_KR.get(reason, reason))
+    return states
+
+
+def _macro_rule_status(
+    rule_id: str,
+    macro_counts: dict[str, int],
+    macro_states: dict[str, tuple[str, str]],
+) -> tuple[str, int, str]:
+    """macro 룰의 (status, count, skip_reason) 산출."""
+    run_status, reason_kr = macro_states.get(rule_id, ("", ""))
+    if run_status in {"skipped", "failed", "not_in_path"}:
+        return "skipped", 0, reason_kr
+    count = macro_counts.get(rule_id, 0)
+    return ("generated" if count > 0 else "no_match"), count, ""
+
 def _phase1_rule_audit(pr) -> dict[str, Any]:
     """전체 33개 룰을 한 리스트로 반환 — 룰별 status/count 부여."""
     target = list(_PHASE1_RULE_IDS)
@@ -3792,9 +3889,14 @@ def _phase1_rule_audit(pr) -> dict[str, Any]:
     generated_counts = {} if case_counts_available else _generated_rule_counts(pr)
     skipped = set(_skipped_rule_ids(pr))
 
+    macro_counts = _macro_finding_counts(pr)
+    macro_states = _macro_rule_states(pr)
     rules: list[dict[str, Any]] = []
     for rule_id in target:
-        if rule_id in case_counts and case_counts[rule_id] > 0:
+        skip_reason = ""
+        if rule_id in _MACRO_RULE_TRACKS:
+            status, count, skip_reason = _macro_rule_status(rule_id, macro_counts, macro_states)
+        elif rule_id in case_counts and case_counts[rule_id] > 0:
             status = "generated"
             count = case_counts[rule_id]
         elif rule_id in generated_counts:
@@ -3813,6 +3915,9 @@ def _phase1_rule_audit(pr) -> dict[str, Any]:
                 "status": status,
                 "flag_count": int(count),
             }
+                "count_unit": "계정" if rule_id in _MACRO_RULE_TRACKS else "건",
+                "verdict_labels": _MACRO_RULE_VERDICT_LABELS.get(rule_id),
+                "skip_reason": skip_reason,
         )
     return {
         "target_count": len(target),

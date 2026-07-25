@@ -100,6 +100,31 @@ class ConnectionManager:
             logger.info("DuckDB 커넥션 생성: %s", key)
             return conn
 
+    def peek(self, db_path: str | Path) -> duckdb.DuckDBPyConnection | None:
+        """이미 열려 있는 커넥션만 반환. 없으면 None — 새로 열지 않는다.
+
+        Why: DuckDB는 한 프로세스에서 같은 파일을 서로 다른 핸들로 열 수 없다.
+             다른 DB에 READ_ONLY ATTACH를 시도하기 전에, 그 파일이 이미 이 프로세스에
+             열려 있는지 확인해 열려 있으면 그 커넥션을 그대로 재사용하기 위함.
+             경로 표기(상대/절대·심볼릭)가 달라도 같은 파일이면 잡히도록 resolve 비교.
+        """
+        try:
+            target = Path(db_path).resolve()
+        except OSError:
+            return None
+
+        with self._lock:
+            for key, conn in self._connections.items():
+                if key == ":memory:":
+                    continue
+                try:
+                    if Path(key).resolve() != target:
+                        continue
+                except OSError:
+                    continue
+                return conn if _is_alive(conn) else None
+        return None
+
     def close(self, db_path: str | Path) -> None:
         """특정 경로 커넥션 종료."""
         key = str(db_path)

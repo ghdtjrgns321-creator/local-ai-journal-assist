@@ -961,6 +961,38 @@ class AuditPipeline:
             phase2_case_overlays=phase2_case_overlays,
         )
 
+    def _load_prior_partner_years(self) -> dict[int, set[str]] | None:
+        """과거 engagement 에서 {회계연도: 거래처 집합} 로드 — 거래처 첫등장/휴면 판정 근거.
+
+        Why: 연도별 engagement 격리(RC-3) 탓에 당기 df 에는 당기 연도만 담긴다. 과거 DB 를
+             읽지 않으면 "작년에 없던 거래처"를 판정할 방법이 없다(2026-07-25 수정).
+             Layer D 와 같은 가드(익명 컨텍스트·fiscal_year·repo)를 쓰고, 실패는 None 으로
+             흘려 PHASE1 빌드 자체를 막지 않는다.
+        """
+        if self._ctx.is_anonymous or self._ctx.fiscal_year is None or self._repo is None:
+            return None
+        try:
+            from src.detection.prior_data_loader import find_past_engagements, load_partner_years
+
+            past = find_past_engagements(self._repo, self._ctx.company_id, self._ctx.fiscal_year)
+            if not past:
+                logger.info("과거 engagement 없음 — 거래처 첫등장/휴면 판정 불가")
+                return None
+
+            db_paths = {
+                int(e.fiscal_year): self._repo.db_path(self._ctx.company_id, e.engagement_id)
+                for e in past
+            }
+            conn = self._conn
+            if conn is None:
+                from src.db.connection import get_connection
+
+                conn = get_connection(path=str(self._ctx.db_path))
+            return load_partner_years(conn, db_paths) or None
+        except Exception:
+            logger.warning("과거 거래처 로드 실패 — 거래처 신호 다년 비교 스킵", exc_info=True)
+            return None
+
     def _build_phase1_case_artifact(
         self,
         df: pd.DataFrame,
@@ -997,6 +1029,7 @@ class AuditPipeline:
                 phase1_case_config=phase1_case_config,
                 engagement_salt=engagement_salt,
                 settings=getattr(self._ctx, "settings", None),
+                prior_partner_years=self._load_prior_partner_years(),
             )
             artifact_path = save_phase1_case_result(phase1_result)
             annotate_detection_results_with_phase1_refs(results, phase1_result, artifact_path)

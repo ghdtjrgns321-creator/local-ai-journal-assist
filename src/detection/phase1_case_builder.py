@@ -614,6 +614,7 @@ def build_phase1_case_result(
     generated_at: datetime | None = None,
     engagement_salt: str = "",
     settings: Any = None,
+    prior_partner_years: dict[int, set[str]] | None = None,
 ) -> Phase1CaseResult:
     # Why: ``engagement_salt`` 는 S6.next Phase 1 (옵션 C) — RawRuleHitRef 의
     # canonical_label_hash / doc_id_hash 산출 시 PHASE2 store 와 동일 salt 를
@@ -631,14 +632,19 @@ def build_phase1_case_result(
     # Mock 속성을 흘려 float() 크래시 유발하는 오염 벡터 회피). 점수 비병합(배지 전용).
     partner_row_badges: pd.DataFrame | None = None
     partner_summary: list[dict[str, Any]] = []
+    partner_diagnostics: dict[str, Any] = {}
     round_density_findings: list[dict[str, Any]] = []
     if settings is not None:
         from src.detection.partner_signals import compute_partner_signals
         from src.detection.round_density_rules import compute_round_density_findings
 
-        partner_signals = compute_partner_signals(df, settings)
+        partner_signals = compute_partner_signals(
+            df, settings, prior_partner_years=prior_partner_years
+        )
         partner_row_badges = partner_signals.row_badges
         partner_summary = partner_signals.partner_summary
+        # 화면이 "신호 0건"과 "비교 데이터 부재로 미판정"을 구분하도록 판정 가능 여부를 싣는다.
+        partner_diagnostics = partner_signals.diagnostics()
         # PHASE1-2 라운드넘버 밀집도 자기 큐(계정·월·작성자 축별). 점수 비병합 — 배지는 단건 is_round_number.
         round_density_findings = compute_round_density_findings(df, settings).findings
     run_id = build_phase1_case_run_id(
@@ -752,6 +758,7 @@ def build_phase1_case_result(
             ),
             "partner_findings": partner_findings,
             "partner_finding_count": len(partner_findings),
+            "partner_signal_diagnostics": partner_diagnostics,
             "partner_finding_policy": (
                 "첫등장/희소/휴면 거래처는 거래처 단위 자기 큐다. 계정/프로세스 단위 "
                 "macro_findings 와 단위가 달라 별도 큐로 유지하며, 전표 tier·priority_score·"
