@@ -57,13 +57,16 @@ PAGE_COMPARISON = "전기 비교"
 # 대분류 라우팅(RESULT_PAGES)에서는 제거 — UX 가 phase1 → phase2 → 비교 → 전기 비교
 # 단방향 흐름으로 통합 (사용자 결정, 2026-05-28).
 PAGE_REVIEW_QUEUE = "Review Queue"
+# Why: 전기 비교를 VAE 앞으로 옮긴다(2026-07-25). 전기 비교는 룰·분석적 검토와 같은
+#      PHASE1 산출을 전기와 맞대보는 화면이라 흐름이 이어지고, 별도 실행이 필요한
+#      PHASE2(VAE)를 마지막에 두는 편이 실행 순서와도 맞는다.
 RESULT_PAGES = (
     PAGE_OVERVIEW,
     PAGE_COMPANY_SETTINGS,
     PAGE_PHASE1,
     PAGE_ANALYTICAL,
-    PAGE_PHASE2,
     PAGE_COMPARISON,
+    PAGE_PHASE2,
 )
 
 # WU7: Ingest 스테이지 관리

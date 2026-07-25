@@ -1,10 +1,9 @@
 """전기 비교 탭 — 분석적 절차(ISA 520) flux analysis 시각화.
 
-감사 표준 요건(분석적 절차)에 맞춰 네 소분류로 구성:
-  ① 분석적 절차 (Flux)   — KPI 리본 + K-IFRS 카테고리 변동 + 월별 추세
-  ② 계정과목 변동         — 변동 큰 계정 Top N + 신규/소멸 계정
-  ③ 검토 신호 변동       — 검토 후보 등급 분포 + 룰별 신호 증감
-  ④ PHASE2 보조 신호      — 영역별 신호 case·근거 강도·세부 탐지 증감
+감사 표준 요건(분석적 절차)에 맞춰 세 소분류로 구성:
+  ① 분석적 절차 (Flux)   — KPI 리본 + K-IFRS 카테고리 변동 + 월별 추세 + 월별 분포 변동(D02)
+  ② 계정과목 변동         — 변동 큰 계정 Top N + 신규/소멸 계정 + 계정 활동 변동(D01)
+  ③ 검토 신호 변동       — 룰별 신호 증감
 
 함정3 방어: 집계 연산은 DuckDB SQL 에 위임. Pandas 에는 요약표만 전달.
 """
@@ -27,11 +26,14 @@ from dashboard.components.charts.comparison_charts import (
     category_flux_bar,
     changed_accounts_table,
     monthly_trend_comparison,
-    risk_distribution_comparison,
     rule_violation_delta,
     top_changed_accounts_bar,
 )
-from dashboard.components.coa_categories import DERIVED_NET_INCOME_LABEL, category_label
+from dashboard.components.coa_categories import (
+    DERIVED_NET_INCOME_LABEL,
+    account_display,
+    category_label,
+)
 from src.db.queries import attached_engagement
 from src.formatting import format_krw_compact
 
@@ -56,7 +58,7 @@ def render(
     repo: CompanyRepository,
     conn_mgr: ConnectionManager,
 ) -> None:
-    """전기 비교 탭 진입점 (최상위 탭 — Phase2 결과 우측).
+    """전기 비교 탭 진입점 (최상위 탭 — 분석적 검토 우측, VAE 좌측).
 
     페이지 구조:
       "전기 비교" 큰 제목 → sub-tabs(3) → 각 sub-tab 안에서
@@ -128,8 +130,10 @@ def render(
         st.error(f"전기 비교 쿼리 실패: {exc}")
         return
 
-    # PHASE2 overlay 는 DB 가 아닌 engagement 폴더의 JSON 이라 attach 컨텍스트 밖에서 로드.
-    data.update(_collect_phase2_signal_data(ctx, current_batch, prior_db, prior_batch))
+    # Why: D01/D02 는 Phase 1 실행 시점에 고정된 전기와 비교한 결과다. 이 화면의 전기
+    #      selectbox 로는 다시 계산되지 않으므로, 두 연도가 어긋나면 표에 그 사실을 밝힌다.
+    selected = next((e for e in others if e.engagement_id == prior), None)
+    data["selected_prior_fiscal_year"] = getattr(selected, "fiscal_year", None)
 
     _render_page(others, data)
 
@@ -138,16 +142,15 @@ def render(
 
 
 def _render_page(others, data: dict) -> None:
-    """큰 제목 + sub-tabs(4) + 각 sub-tab 콘텐츠.
+    """큰 제목 + sub-tabs(3) + 각 sub-tab 콘텐츠.
 
-    Why: "전기 대비 변동 분석" 헤더 + KPI 16 그리드는 첫 sub-tab 에만 노출한다.
+    Why: "전기 대비 변동 분석" 헤더 + KPI 그리드는 첫 sub-tab 에만 노출한다.
          다른 sub-tab 에서 KPI 헤더가 같이 보이면 시야가 분산되고,
          탭을 클릭해도 KPI 가 계속 고정된 것처럼 보이는 시각적 버그가 된다.
-         "PHASE2 보조 신호" 는 통합 점수 비교가 아니라 영역별 보조 신호 증감만 노출.
     """
     st.markdown("## 전기 비교")
 
-    sub_tabs = st.tabs(["전체 요약", "계정과목 변동", "검토 신호 변동", "PHASE2 보조 신호"])
+    sub_tabs = st.tabs(["전체 요약", "계정과목 변동", "검토 신호 변동"])
     with sub_tabs[0]:
         _prior_selectbox(others, suffix="overview")
         _render_header(data["overview"])
@@ -158,9 +161,6 @@ def _render_page(others, data: dict) -> None:
     with sub_tabs[2]:
         _prior_selectbox(others, suffix="risk")
         _render_risk_subtab(data)
-    with sub_tabs[3]:
-        _prior_selectbox(others, suffix="phase2")
-        _render_phase2_subtab(data)
 
 
 # ── 전기 연도 selectbox (sub-tabs 동기화) ─────────────────────
@@ -202,30 +202,35 @@ def _prior_selectbox(others, *, suffix: str) -> str | None:
 #      카테고리별로 좌측에 얇은 컬러 보더를 두어 시각적으로 그룹을 분리한다.
 _KPI_CARD_CSS = """
 <style>
-.comp-kpi-section { margin:0.25rem 0 0.8rem; }
-.comp-kpi-section-header { display:flex; align-items:center; gap:0.5rem;
-                           margin:0 0 0.45rem 0.15rem; }
+/* 줄 사이는 좁게, 블록 아래는 넉넉하게 — 뒤따르는 차트 컨테이너와 붙지 않도록
+   .comp-kpi-wrap 이 KPI 전체와 다음 요소 사이의 간격을 혼자 책임진다. */
+.comp-kpi-wrap { margin-bottom:1.1rem; }
+.comp-kpi-section { margin:0 0 0.5rem; }
+.comp-kpi-wrap .comp-kpi-section:last-child { margin-bottom:0; }
+.comp-kpi-section-header { display:flex; align-items:center; gap:0.45rem;
+                           margin:0 0 0.28rem 0.15rem; }
 .comp-kpi-section-dot { width:6px; height:6px; border-radius:999px; }
-.comp-kpi-section-title { color:#374151; font-size:0.78rem; font-weight:600;
-                          letter-spacing:0.06em; text-transform:uppercase; }
-.comp-kpi-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:0.55rem; }
-.comp-kpi-card { background:#FFFFFF; border:1px solid #E5E7EB; border-radius:10px;
-                 padding:0.75rem 0.95rem; box-shadow:0 1px 2px rgba(15,23,42,0.04);
+.comp-kpi-section-title { color:#374151; font-size:0.75rem; font-weight:600;
+                          letter-spacing:0.06em; text-transform:uppercase;
+                          line-height:1.2; }
+.comp-kpi-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:0.45rem; }
+.comp-kpi-card { background:#FFFFFF; border:1px solid #E5E7EB; border-radius:9px;
+                 padding:0.5rem 0.8rem 0.45rem; box-shadow:0 1px 2px rgba(15,23,42,0.04);
                  border-left:3px solid var(--accent,#E5E7EB); }
-.comp-kpi-label { color:#6B7280; font-size:0.75rem; font-weight:500;
-                  letter-spacing:0.01em; margin-bottom:0.35rem; }
+.comp-kpi-label { color:#6B7280; font-size:0.73rem; font-weight:500;
+                  letter-spacing:0.01em; margin-bottom:0.15rem; line-height:1.25; }
 .comp-kpi-row { display:flex; align-items:baseline; justify-content:space-between;
                 gap:0.4rem; }
-.comp-kpi-value { color:#111827; font-size:1.4rem; font-weight:700;
-                  letter-spacing:-0.02em; line-height:1.15; }
-.comp-kpi-unit { font-size:0.8rem; font-weight:500; color:#6B7280; margin-left:2px; }
-.comp-kpi-delta { font-size:0.74rem; font-weight:600; padding:2px 7px;
+.comp-kpi-value { color:#111827; font-size:1.3rem; font-weight:700;
+                  letter-spacing:-0.02em; line-height:1.1; }
+.comp-kpi-unit { font-size:0.78rem; font-weight:500; color:#6B7280; margin-left:2px; }
+.comp-kpi-delta { font-size:0.72rem; font-weight:600; padding:1px 6px;
                   border-radius:999px; white-space:nowrap; }
 .comp-kpi-delta-up   { background:#FEE2E2; color:#B91C1C; }
 .comp-kpi-delta-down { background:#DCFCE7; color:#15803D; }
 .comp-kpi-delta-flat { background:#F3F4F6; color:#4B5563; }
-.comp-kpi-prior { color:#9CA3AF; font-size:0.72rem; margin-top:0.4rem;
-                  border-top:1px dashed #F1F3F5; padding-top:0.35rem; }
+.comp-kpi-prior { color:#9CA3AF; font-size:0.7rem; margin-top:0.25rem; line-height:1.2;
+                  border-top:1px dashed #F1F3F5; padding-top:0.22rem; }
 </style>
 """
 
@@ -295,46 +300,6 @@ def _render_header(overview: pd.DataFrame) -> None:
             value_fmt=lambda v: f"{v:,.1f}",
             tooltip="전표 건수 / 분석 기간 일수 — 회계기간 길이 차이를 정규화한 활동 강도",
             accent=accent["거래"],
-        ),
-    ]
-
-    # ── 검토 신호 ──
-    section_risk = [
-        _build_kpi_card(
-            label="이상 신호 전표",
-            current_value=int(_v(cur_row, "anomaly_count")),
-            prior_value=int(_v(pri_row, "anomaly_count")),
-            unit="건",
-            inverse=True,
-            tooltip="risk_level ≠ Normal 전표 수",
-            accent=accent["위험"],
-        ),
-        _build_kpi_card(
-            label="High 우선검토 전표",
-            current_value=int(_v(cur_row, "high_count")),
-            prior_value=int(_v(pri_row, "high_count")),
-            unit="건",
-            inverse=True,
-            accent=accent["위험"],
-        ),
-        _build_kpi_card(
-            label="이상 신호율",
-            current_value=_v(cur_row, "anomaly_rate"),
-            prior_value=_v(pri_row, "anomaly_rate"),
-            unit="%",
-            inverse=True,
-            value_fmt=_format_pct,
-            tooltip="이상 신호 전표 / 전체 전표 × 100 — 전표 증가에 정규화한 검토 신호율",
-            accent=accent["위험"],
-        ),
-        _build_kpi_card(
-            label="발동 룰 종류",
-            current_value=int(_v(cur_row, "rule_kind_count")),
-            prior_value=int(_v(pri_row, "rule_kind_count")),
-            unit="개",
-            inverse=True,
-            tooltip="flagged_rules 에 등장한 distinct rule_code 수 (검토 시나리오 다양성)",
-            accent=accent["위험"],
         ),
     ]
 
@@ -422,16 +387,23 @@ def _render_header(overview: pd.DataFrame) -> None:
         ),
     ]
 
-    st.markdown(_KPI_CARD_CSS, unsafe_allow_html=True)
-    _render_kpi_section("거래 규모", accent["거래"], section_trade)
-    _render_kpi_section("검토 신호", accent["위험"], section_risk)
-    _render_kpi_section("통제 환경", accent["통제"], section_control)
-    _render_kpi_section("조직 · 마스터", accent["마스터"], section_master)
+    # Why: 세 섹션을 st.markdown 세 번으로 나눠 그리면 streamlit 이 블록마다 자체
+    #      세로 간격을 끼워 넣어 카드 줄 사이가 벌어진다. 한 번에 그려 그 간격을
+    #      없애고, 줄 간 여백은 CSS(.comp-kpi-section margin)로만 통제한다.
+    sections = (
+        _kpi_section_html("거래 규모", accent["거래"], section_trade)
+        + _kpi_section_html("통제 환경", accent["통제"], section_control)
+        + _kpi_section_html("조직 · 마스터", accent["마스터"], section_master)
+    )
+    st.markdown(
+        _KPI_CARD_CSS + f"<div class='comp-kpi-wrap'>{sections}</div>",
+        unsafe_allow_html=True,
+    )
 
 
-def _render_kpi_section(title: str, color: str, cards: list[str]) -> None:
-    """카테고리 헤더 + 4 카드 그리드 한 섹션 출력."""
-    html = (
+def _kpi_section_html(title: str, color: str, cards: list[str]) -> str:
+    """카테고리 헤더 + 4 카드 그리드 한 섹션의 HTML."""
+    return (
         "<div class='comp-kpi-section'>"
         "<div class='comp-kpi-section-header'>"
         f"<span class='comp-kpi-section-dot' style='background:{color};'></span>"
@@ -440,7 +412,6 @@ def _render_kpi_section(title: str, color: str, cards: list[str]) -> None:
         "<div class='comp-kpi-grid'>" + "".join(cards) + "</div>"
         "</div>"
     )
-    st.markdown(html, unsafe_allow_html=True)
 
 
 def _render_flux_subtab(data: dict) -> None:
@@ -506,6 +477,239 @@ def _render_flux_subtab(data: dict) -> None:
             key="comparison_monthly_sales",
         )
 
+    _render_monthly_shift_section(data)
+
+
+# ── D01/D02 — PHASE1-2 분석적 검토 신호를 전기 비교 맥락에 붙인다 ──
+#
+# Why: D01(계정 활동 변동)·D02(월별 분포 변동)는 Phase 1 파이프라인이 전기 engagement 를
+#      attach 해 계산한 ISA 520 신호다. 전기가 있어야 산출된다는 전제가 이 탭과 같고,
+#      묻는 질문(어떤 계정이 전기 대비 바뀌었나)도 같아 각 소분류 안에 함께 둔다.
+#      신호 소유권은 PHASE1-2 에 그대로 있고, 여기서는 표시만 한다(점수 비병합).
+
+
+def _macro_findings(rule_id: str) -> list[dict]:
+    """세션의 Phase 1 결과에서 macro finding 을 읽는다. 없으면 빈 목록."""
+    result = st.session_state.get(KEY_PHASE1_RESULT)
+    if result is None:
+        return []
+    from src.export.phase1_case_view import build_phase1_macro_finding_queue
+
+    return build_phase1_macro_finding_queue(result, rule_id=rule_id)
+
+
+def _prior_year_note(findings: list[dict], data: dict) -> str:
+    """finding 이 실제로 비교한 전기와 화면에서 고른 전기가 다르면 밝힌다."""
+    years: set[int] = set()
+    for finding in findings:
+        try:
+            years.add(int(finding.get("prior_fiscal_year")))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            continue
+    if not years:
+        return ""
+    used = " · ".join(str(y) for y in sorted(years))
+    selected = data.get("selected_prior_fiscal_year")
+    if selected is not None and {int(selected)} != years:
+        return (
+            f"이 표는 Phase 1 실행 시점에 비교한 전기(FY {used}) 기준입니다. "
+            f"위에서 고른 FY {selected} 과 달라 다른 연도를 보고 있습니다."
+        )
+    return f"비교 기준 전기: FY {used}"
+
+
+def _pct_change(current: object, prior: object) -> float | None:
+    """증감률(%) — 전기가 없거나 0 이면 계산하지 않는다(신규 계정 등)."""
+    try:
+        cur = float(current)  # type: ignore[arg-type]
+        pri = float(prior)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if pri == 0:
+        return None
+    return (cur - pri) / abs(pri) * 100.0
+
+
+_D01_REASON_KR = {"new_account": "신규 계정", "activity_variance": "활동 변동"}
+
+# 목록에서 빠지는 유일한 사유 = 분포를 비교할 수 없음. 신호 강도 컷은 2026-07-25 에 폐지했다.
+_D02_NOT_COMPARABLE_KR: dict[str, str] = {
+    "insufficient_prior_months": "전기 거래월 부족",
+    "insufficient_current_months": "당기 거래월 부족",
+}
+
+
+def _d02_diagnostics() -> list[dict]:
+    """Layer D 트랙이 남긴 계정별 D02 판정 근거(비교 가능·불가 전부)를 읽는다."""
+    result = st.session_state.get(KEY_PHASE1_RESULT)
+    for track in getattr(result, "results", None) or []:
+        metadata = getattr(track, "metadata", None)
+        if isinstance(metadata, dict) and "d02_account_diagnostics" in metadata:
+            rows = metadata.get("d02_account_diagnostics") or []
+            return [row for row in rows if isinstance(row, dict)]
+    return []
+
+
+def _d02_coverage_text(listed_count: int) -> str:
+    """몇 개 계정을 세웠고, 비교 자체가 불가해 빠진 계정은 몇 개인지."""
+    return _format_d02_coverage(listed_count, _d02_diagnostics())
+
+
+def _format_d02_coverage(listed_count: int, diagnostics: list[dict]) -> str:
+    """세션 접근과 분리한 순수 문장 조립 — 판정 근거 목록만 받는다."""
+    if not diagnostics:
+        return ""
+
+    excluded: dict[str, int] = {}
+    for row in diagnostics:
+        reason = str(row.get("skip_reason") or "")
+        if reason in _D02_NOT_COMPARABLE_KR:
+            excluded[reason] = excluded.get(reason, 0) + 1
+
+    text = f"계정 {listed_count}개를 변화폭 순으로 모두 세웠습니다(잘라내지 않음)."
+    if excluded:
+        parts = [
+            f"{_D02_NOT_COMPARABLE_KR[reason]} {count}개"
+            for reason, count in sorted(excluded.items(), key=lambda kv: -kv[1])
+        ]
+        text += (
+            " 거래한 달이 너무 적어 분포를 비교할 수 없는 계정은 제외 — " + ", ".join(parts) + "."
+        )
+    return text
+
+
+def _render_account_activity_section(data: dict) -> None:
+    """계정 활동 변동(D01) — 금액·건수·평균의 당기/전기 원값으로 표시."""
+    section = st.container(border=True)
+    section.markdown("##### 계정 활동 변동 (분석적 검토 신호)")
+    section.caption(
+        "전기 대비 **금액·건수·평균 단가**가 함께 크게 바뀐 계정입니다. 위 변동액 Top 15 는 "
+        "금액만 보지만, 이 표는 거래 건수와 건당 평균까지 봐서 '금액은 비슷한데 건수가 "
+        "급감(=건당 단가 급등)' 같은 변화를 잡아냅니다."
+    )
+
+    findings = _macro_findings("D01")
+    if not findings:
+        section.info("전기 데이터가 연결되지 않아 계정 활동을 비교할 수 없습니다.")
+        return
+
+    note = _prior_year_note(findings, data)
+    if note:
+        section.caption(note)
+    section.caption(f"계정 {len(findings)}개를 변동 금액 순으로 모두 세웠습니다(잘라내지 않음).")
+
+    rows = []
+    for item in findings:
+        m = item.get("metrics") or {}
+        cur_amt, pri_amt = m.get("current_total_amount"), m.get("prior_total_amount")
+        rows.append(
+            {
+                "계정": account_display(item.get("gl_account")),
+                "구분": _D01_REASON_KR.get(str(m.get("reason")), "활동 변동"),
+                "당기 금액": cur_amt,
+                "전기 금액": pri_amt,
+                "변동액": m.get("amount_delta"),
+                "증감률(%)": _pct_change(cur_amt, pri_amt),
+                "당기 건수": m.get("current_count"),
+                "전기 건수": m.get("prior_count"),
+                "건당 평균 증감률(%)": _pct_change(
+                    m.get("current_avg_amount"), m.get("prior_avg_amount")
+                ),
+            }
+        )
+
+    section.dataframe(
+        pd.DataFrame(rows),
+        width="stretch",
+        hide_index=True,
+        column_config={
+            "당기 금액": st.column_config.NumberColumn(format="%,.0f"),
+            "전기 금액": st.column_config.NumberColumn(format="%,.0f"),
+            "변동액": st.column_config.NumberColumn(
+                format="%,.0f",
+                help="당기 금액 − 전기 금액. 이 값의 절대값이 큰 순으로 정렬합니다.",
+            ),
+            "증감률(%)": st.column_config.NumberColumn(format="%.1f%%"),
+            "당기 건수": st.column_config.NumberColumn(format="%,d"),
+            "전기 건수": st.column_config.NumberColumn(format="%,d"),
+            "건당 평균 증감률(%)": st.column_config.NumberColumn(format="%.1f%%"),
+        },
+    )
+
+
+def _render_monthly_shift_section(data: dict) -> None:
+    """월별 분포 변동(D02) — 어느 달에 몰렸었는지가 어떻게 바뀌었는지."""
+    section = st.container(border=True)
+    section.markdown("##### 월별 분포 변동 (분석적 검토 신호)")
+    section.caption(
+        "위 추세는 원장 전체지만, 이 표는 **계정별로** 1년 금액이 어느 달에 몰려 있었는지 "
+        "그 모양이 전기와 달라진 계정입니다. 몰린 달이 기말로 옮겨갔다면 기간 귀속(cutoff) "
+        "이나 결산 조정을 확인할 지점입니다."
+    )
+
+    findings = _macro_findings("D02")
+    coverage = _d02_coverage_text(len(findings))
+    if not findings:
+        section.info(coverage or "전기 데이터가 연결되지 않아 월별 분포를 비교할 수 없습니다.")
+        return
+
+    note = _prior_year_note(findings, data)
+    if note:
+        section.caption(note)
+    if coverage:
+        section.caption(coverage)
+
+    rows = []
+    for item in findings:
+        m = item.get("metrics") or {}
+        pri_ratio, cur_ratio = m.get("prior_top_ratio"), m.get("current_top_ratio")
+        rows.append(
+            {
+                "계정": account_display(item.get("gl_account")),
+                "가장 몰린 달 (전기 → 당기)": _month_shift_label(
+                    m.get("prior_top_month"), m.get("current_top_month")
+                ),
+                "그 달 비중 (전기)": pri_ratio,
+                "그 달 비중 (당기)": cur_ratio,
+                "변화폭(%p)": _ratio_gap_pp(pri_ratio, cur_ratio),
+                "당기 거래 금액": m.get("current_annual_amount"),
+            }
+        )
+
+    section.dataframe(
+        pd.DataFrame(rows),
+        width="stretch",
+        hide_index=True,
+        column_config={
+            "그 달 비중 (전기)": st.column_config.NumberColumn(format="percent"),
+            "그 달 비중 (당기)": st.column_config.NumberColumn(format="percent"),
+            "변화폭(%p)": st.column_config.NumberColumn(
+                format="%.1f",
+                help=(
+                    "한 달에 몰린 정도가 전기 대비 몇 %p 달라졌는지. 이 값이 큰 순으로 정렬합니다."
+                ),
+            ),
+            "당기 거래 금액": st.column_config.NumberColumn(format="%,.0f"),
+        },
+    )
+
+
+def _ratio_gap_pp(prior_ratio: object, current_ratio: object) -> float | None:
+    """두 비중(0~1)의 차이를 %p 로. 값이 없으면 계산하지 않는다."""
+    try:
+        return abs(float(current_ratio) - float(prior_ratio)) * 100.0  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def _month_shift_label(prior_month: object, current_month: object) -> str:
+    """'11월 → 12월' 형태. 같은 달이면 비중만 바뀐 경우라 화살표를 생략."""
+    try:
+        pri, cur = int(prior_month), int(current_month)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return "-"
+    return f"{pri}월 (변동 없음)" if pri == cur else f"{pri}월 → {cur}월"
+
 
 # ── ② 계정과목 변동 ────────────────────────────────────────────
 
@@ -542,6 +746,8 @@ def _render_account_subtab(data: dict) -> None:
             _render_changed_account_card(new_df, kind="new")
         with col_rm:
             _render_changed_account_card(rm_df, kind="removed")
+
+    _render_account_activity_section(data)
 
 
 def _render_changed_account_card(df: pd.DataFrame, *, kind: str) -> None:
@@ -600,19 +806,7 @@ def _render_changed_account_card(df: pd.DataFrame, *, kind: str) -> None:
 
 
 def _render_risk_subtab(data: dict) -> None:
-    """소분류 ③ — 검토 후보 등급 분포 + 룰별 검토 신호 증감."""
-    section_risk = st.container(border=True)
-    section_risk.markdown("##### 검토 후보 등급 분포 비교")
-    section_risk.caption(
-        "룰 기반 review signal 등급(High/Medium/Low/Normal) 비율의 당기·전기 분포입니다. "
-        "High·Medium 비중이 커진 쪽은 감사 표본 확장 후보입니다."
-    )
-    section_risk.plotly_chart(
-        risk_distribution_comparison(data["current_risk"], data["prior_risk"]),
-        width="stretch",
-        key="comparison_risk_donut",
-    )
-
+    """소분류 ③ — 룰별 검토 신호 증감."""
     section_rule = st.container(border=True)
     section_rule.markdown("##### 룰별 검토 신호 건수 증감")
     section_rule.caption(
@@ -675,8 +869,6 @@ def _collect_comparison_data(
         "category": _query_category_amounts(conn, current_batch, alias, prior_batch),
         "monthly": _query_monthly(conn, current_batch, alias, prior_batch),
         "accounts": _query_account_amounts(conn, current_batch, alias, prior_batch),
-        "current_risk": _query_risk_dist(conn, current_batch=current_batch, schema=None),
-        "prior_risk": _query_risk_dist(conn, current_batch=prior_batch, schema=alias),
         "current_rules": _query_rule_counts(conn, current_batch=current_batch, schema=None),
         "prior_rules": _query_rule_counts(conn, current_batch=prior_batch, schema=alias),
         "current_accounts": _query_accounts(conn, current_batch=current_batch, schema=None),
@@ -950,23 +1142,6 @@ def _query_monthly(
     return conn.execute(sql, [current_batch, prior_batch]).fetchdf()
 
 
-def _query_risk_dist(
-    conn: duckdb.DuckDBPyConnection,
-    *,
-    current_batch: str,
-    schema: str | None,
-) -> pd.DataFrame:
-    """위험등급 분포 — GROUP BY risk_level."""
-    table = f"{schema}.general_ledger" if schema else "general_ledger"
-    sql = f"""
-        SELECT risk_level, COUNT(*) AS cnt
-        FROM {table}
-        WHERE upload_batch_id = ? AND risk_level IS NOT NULL
-        GROUP BY risk_level ORDER BY risk_level
-    """
-    return conn.execute(sql, [current_batch]).fetchdf()
-
-
 def _query_rule_counts(
     conn: duckdb.DuckDBPyConnection,
     *,
@@ -1086,424 +1261,3 @@ def _build_kpi_card(
         f"<div class='comp-kpi-prior'>{prior_html}</div>"
         f"</div>"
     )
-
-
-# ── ④ PHASE2 보조 신호 ─────────────────────────────────────────
-#
-# Why: PHASE2 통합 점수의 전기 대비 변화가 아니라, family(분석 영역) 별 보조 신호의
-#      증감을 본다. PHASE2 철학상 통합 위험 등급화·순위 비교는 의미가 없고,
-#      "어느 영역에서 검토 후보가 늘었는가"가 감사인이 받아 가야 할 정보다.
-#      (docs/spec/PHASE2_GOVERNANCE_DESIGN.md 결정 8, PHASE2_TIMESERIES_ROLE_LOCK 결정 9)
-
-# 표시 순서는 active ranker(시점) 다음에 VAE.
-# VAE 는 ml_quantile 단위라 strong/moderate/weak 축과 측정 단위가 다르다.
-_PHASE2_FAMILY_ORDER: tuple[str, ...] = (
-    "timeseries",
-    "unsupervised",
-)
-_PHASE2_FAMILY_KO: dict[str, str] = {
-    "timeseries": "시점 이상 (보조)",
-    "unsupervised": "VAE 통계 이상",
-}
-_PHASE2_FAMILY_HINT: dict[str, str] = {
-    "timeseries": "결산·시점 맥락 변화 (단독 ranker 아님)",
-    "unsupervised": "VAE 통계 이상 패턴 변화",
-}
-_PHASE2_TIER_ORDER: tuple[str, ...] = ("strong", "moderate", "weak", "ml_quantile")
-_PHASE2_TIER_KO: dict[str, str] = {
-    "strong": "Strong",
-    "moderate": "Moderate",
-    "weak": "Weak",
-    "ml_quantile": "ML Quantile",
-}
-
-
-def _collect_phase2_signal_data(
-    ctx,
-    current_batch: str,
-    prior_db_path,
-    prior_batch: str,
-) -> dict:
-    """당기/전기 PHASE2 overlay 를 한 번에 로드해 dict 로 반환.
-
-    Why: overlay 는 DB 가 아니라 engagement 폴더의 JSON 파일에 저장된다
-    (``phase2_overlays/<batch_id>.json``). 전기 ctx 를 만들어 동일 로더를 재사용한다.
-    overlay 로딩이 실패하거나 파일이 없어도 sub-tab 진입은 가능해야 하므로 status 도 함께 반환.
-    """
-    from types import SimpleNamespace
-
-    from src.services.phase2_overlay_store import (
-        OverlayStatus,
-        load_phase2_overlay_status,
-    )
-
-    current_result = load_phase2_overlay_status(ctx=ctx, batch_id=current_batch)
-    # Why: prior engagement 의 db_path 만 있으면 overlay_dir 해석이 가능하다.
-    #      별도 CompanyContext 구성 없이 db_path 만 들고 있는 stub 으로 충분.
-    prior_stub = SimpleNamespace(db_path=prior_db_path)
-    prior_result = load_phase2_overlay_status(ctx=prior_stub, batch_id=prior_batch)
-
-    return {
-        "phase2_current_overlays": (
-            current_result.overlays if current_result.status == OverlayStatus.LOADED else None
-        ),
-        "phase2_prior_overlays": (
-            prior_result.overlays if prior_result.status == OverlayStatus.LOADED else None
-        ),
-        "phase2_current_status": current_result.status,
-        "phase2_prior_status": prior_result.status,
-    }
-
-
-def _family_signal_has_positive(entry: dict) -> bool:
-    """family_contribution 1개가 후보 신호로 카운트될 자격이 있는지.
-
-    Why: ``dashboard.tab_phase2._family_contribution_has_positive_signal`` 과
-    동일 로직을 본 모듈에 옮겨 두어 외부 의존을 피한다. review-only 신호처럼
-    confirmed score 로 승격하지 않는 신호는 ``review_only_count`` 메타가 있을 때만
-    후보 신호로 본다. 일반 family 는 양수 score/ECDF 를 후보 신호로 본다.
-    """
-    try:
-        if int(entry.get("review_only_count") or 0) > 0:
-            return True
-    except (TypeError, ValueError):
-        pass
-    checked = False
-    for key in ("score", "ecdf", "raw_score", "normalized_score"):
-        if key not in entry:
-            continue
-        checked = True
-        try:
-            if float(entry.get(key) or 0.0) > 0.0:
-                return True
-        except (TypeError, ValueError):
-            continue
-    return not checked
-
-
-def _phase2_family_signal_counts(overlays: list[dict] | None) -> dict[str, int]:
-    """family → 양수 신호 보유 case 수."""
-    counts: dict[str, int] = dict.fromkeys(_PHASE2_FAMILY_ORDER, 0)
-    for overlay in overlays or []:
-        for entry in overlay.get("family_contributions") or []:
-            family = str(entry.get("family") or "")
-            if family in counts and _family_signal_has_positive(entry):
-                counts[family] += 1
-    return counts
-
-
-def _phase2_tier_counts_per_family(
-    overlays: list[dict] | None,
-) -> dict[str, dict[str, int]]:
-    """family → tier → case 수.
-
-    Why: VAE(unsupervised) 는 family-level evidence_tier 가 None 인 경우가 많고,
-         sub_detectors[*].evidence_tier 만 ``ml_quantile`` 로 마킹된다. 이 경우
-         unsupervised 의 ml_quantile 카운터에 +1 하여 통계적 이상치 신호로 노출한다.
-    """
-    out: dict[str, dict[str, int]] = {
-        family: dict.fromkeys(_PHASE2_TIER_ORDER, 0) for family in _PHASE2_FAMILY_ORDER
-    }
-    for overlay in overlays or []:
-        for entry in overlay.get("family_contributions") or []:
-            family = str(entry.get("family") or "")
-            if family not in out or not _family_signal_has_positive(entry):
-                continue
-            tier = str(entry.get("evidence_tier") or "").strip().lower()
-            if tier in out[family]:
-                out[family][tier] += 1
-                continue
-            if family == "unsupervised":
-                # 통계적 이상치는 sub_detector 의 ml_quantile 로만 표시되는 경우가 있음.
-                for sub in entry.get("sub_detectors") or []:
-                    sub_tier = str(sub.get("evidence_tier") or "").strip().lower()
-                    if sub_tier == "ml_quantile":
-                        out[family]["ml_quantile"] += 1
-                        break
-    return out
-
-
-def _phase2_subdetector_counts(
-    overlays: list[dict] | None,
-) -> dict[tuple[str, str], int]:
-    """(family, sub_detector_code) → case 수.
-
-    SUB_DETECTORS 에 등록된 canonical 코드만 카운트하고 VAE-01 은 별도 추가.
-    """
-    from dashboard.components.phase2_subdetector_grid import SUB_DETECTORS
-
-    counts: dict[tuple[str, str], int] = {}
-    for family, code, _label in SUB_DETECTORS:
-        counts[(family, code)] = 0
-    counts[("unsupervised", "VAE-01")] = 0
-
-    for overlay in overlays or []:
-        for entry in overlay.get("family_contributions") or []:
-            family = str(entry.get("family") or "")
-            for sub in entry.get("sub_detectors") or []:
-                code = str(sub.get("code") or "")
-                key = (family, code)
-                if key in counts:
-                    counts[key] += 1
-    return counts
-
-
-def _build_phase2_family_delta_frame(
-    cur_counts: dict[str, int],
-    pri_counts: dict[str, int],
-    cur_case_total: int,
-    pri_case_total: int,
-) -> pd.DataFrame:
-    """영역별 신호 case 증감 표 — 점유율 변화(pp) 포함."""
-    rows: list[dict[str, object]] = []
-    for family in _PHASE2_FAMILY_ORDER:
-        cur = cur_counts.get(family, 0)
-        pri = pri_counts.get(family, 0)
-        cur_share = (cur / cur_case_total * 100.0) if cur_case_total else 0.0
-        pri_share = (pri / pri_case_total * 100.0) if pri_case_total else 0.0
-        rows.append(
-            {
-                "분석 영역": _PHASE2_FAMILY_KO[family],
-                "당기 신호 case": cur,
-                "전기 신호 case": pri,
-                "증감(case)": cur - pri,
-                "당기 점유율(%)": round(cur_share, 1),
-                "전기 점유율(%)": round(pri_share, 1),
-                "증감(pp)": round(cur_share - pri_share, 1),
-                "해석": _PHASE2_FAMILY_HINT[family],
-            }
-        )
-    return pd.DataFrame(rows)
-
-
-def _build_phase2_tier_delta_matrix(
-    cur_tier: dict[str, dict[str, int]],
-    pri_tier: dict[str, dict[str, int]],
-) -> pd.DataFrame:
-    """근거 강도 × 분석 영역 case 증감 매트릭스 (값 = 당기 - 전기)."""
-    rows: list[dict[str, object]] = []
-    for tier in _PHASE2_TIER_ORDER:
-        row: dict[str, object] = {"근거 강도": _PHASE2_TIER_KO[tier]}
-        for family in _PHASE2_FAMILY_ORDER:
-            cur = cur_tier.get(family, {}).get(tier, 0)
-            pri = pri_tier.get(family, {}).get(tier, 0)
-            row[_PHASE2_FAMILY_KO[family]] = cur - pri
-        rows.append(row)
-    return pd.DataFrame(rows)
-
-
-def _build_phase2_subdetector_delta_for_family(
-    family: str,
-    cur_sub: dict[tuple[str, str], int],
-    pri_sub: dict[tuple[str, str], int],
-) -> pd.DataFrame:
-    """family 별 sub-detector 증감 표."""
-    from dashboard.components.phase2_subdetector_grid import SUB_DETECTORS
-
-    if family == "unsupervised":
-        codes_labels: list[tuple[str, str]] = [
-            ("VAE-01", "audit_vae_reconstruction"),
-        ]
-    else:
-        codes_labels = [(code, label) for (f, code, label) in SUB_DETECTORS if f == family]
-    rows: list[dict[str, object]] = []
-    for code, label in codes_labels:
-        cur = cur_sub.get((family, code), 0)
-        pri = pri_sub.get((family, code), 0)
-        rows.append(
-            {
-                "세부 탐지 코드": code,
-                "탐지 내용": label,
-                "당기 case": cur,
-                "전기 case": pri,
-                "증감(case)": cur - pri,
-            }
-        )
-    return pd.DataFrame(rows)
-
-
-def _render_phase2_summary_cards(
-    cur_counts: dict[str, int],
-    pri_counts: dict[str, int],
-    cur_tier: dict[str, dict[str, int]],
-    pri_tier: dict[str, dict[str, int]],
-) -> None:
-    """상단 요약 카드 3개 — 신호 case / Strong 근거 / 변화 최대 영역."""
-    cur_total = sum(cur_counts.values())
-    pri_total = sum(pri_counts.values())
-    cur_strong = sum(t.get("strong", 0) for t in cur_tier.values())
-    pri_strong = sum(t.get("strong", 0) for t in pri_tier.values())
-
-    deltas = {f: cur_counts.get(f, 0) - pri_counts.get(f, 0) for f in _PHASE2_FAMILY_ORDER}
-    top_family = max(deltas, key=lambda key: deltas[key])
-    top_delta = deltas[top_family]
-    top_ko = _PHASE2_FAMILY_KO[top_family]
-    top_label = "가장 증가한 영역" if top_delta >= 0 else "가장 감소한 영역"
-
-    accent = "#7C3AED"  # violet-600 — PHASE2 통제 카테고리와 동일 톤
-    cards = [
-        _build_kpi_card(
-            label="PHASE2 보조 신호 case",
-            current_value=cur_total,
-            prior_value=pri_total,
-            unit="건",
-            inverse=False,
-            tooltip="각 영역 family_contributions 양수 신호 case 합계 (영역 중복 포함)",
-            accent=accent,
-        ),
-        _build_kpi_card(
-            label="Strong 근거 case",
-            current_value=cur_strong,
-            prior_value=pri_strong,
-            unit="건",
-            inverse=False,
-            tooltip="evidence_tier=Strong 인 family contribution case 합계",
-            accent=accent,
-        ),
-    ]
-
-    # Why: 3번째 카드는 "변화 최대 영역" — 표준 KPI 카드(value/delta) 구조 대신
-    #      라벨에 영역명을 두고 delta 배지에 증감값을 넣는 변형 카드를 사용.
-    if top_delta > 0:
-        delta_css = "comp-kpi-delta-up"
-        sign = "+"
-    elif top_delta < 0:
-        delta_css = "comp-kpi-delta-down"
-        sign = ""  # 음수 부호는 숫자에 이미 포함
-    else:
-        delta_css = "comp-kpi-delta-flat"
-        sign = "±"
-    top_card = (
-        f"<div class='comp-kpi-card' style='--accent:{accent};'>"
-        f"<div class='comp-kpi-label'>{top_label}</div>"
-        f"<div class='comp-kpi-row'>"
-        f"<div class='comp-kpi-value' style='font-size:1.05rem;'>{top_ko}</div>"
-        f"<span class='comp-kpi-delta {delta_css}'>{sign}{top_delta:,}건</span>"
-        f"</div>"
-        f"<div class='comp-kpi-prior'>"
-        f"당기 {cur_counts.get(top_family, 0):,}건 / 전기 {pri_counts.get(top_family, 0):,}건"
-        f"</div>"
-        f"</div>"
-    )
-    cards.append(top_card)
-
-    st.markdown(_KPI_CARD_CSS, unsafe_allow_html=True)
-    st.markdown(
-        "<div class='comp-kpi-grid' style='grid-template-columns:repeat(3,1fr);'>"
-        + "".join(cards)
-        + "</div>",
-        unsafe_allow_html=True,
-    )
-
-
-def _render_phase2_subtab(data: dict) -> None:
-    """소분류 ④ — PHASE2 영역별 보조 신호 전기 비교.
-
-    Why: PHASE2 통합 점수·통합 위험 등급은 비교 대상이 아니다. 영역별 보조 신호의
-         case·근거 강도·세부 탐지 변화만 노출해 검토 후보 확대 신호로 해석한다.
-    """
-    cur_overlays = data.get("phase2_current_overlays")
-    pri_overlays = data.get("phase2_prior_overlays")
-    cur_status = data.get("phase2_current_status")
-    pri_status = data.get("phase2_prior_status")
-
-    st.caption(
-        "PHASE2 는 통합 점수로 비교하지 않고, 감사인이 놓치기 쉬운 비선형·우회적 "
-        "이상 패턴 후보가 어느 분석 영역에서 증가·감소했는지 비교합니다. "
-        "**증가 = 검토 후보 확대 신호**이며, 위험 확정이 아닙니다."
-    )
-
-    # ── overlay 부재 분기 ──
-    if cur_overlays is None:
-        st.info(
-            "당기 PHASE2 overlay 가 없습니다. Phase 2 결과 탭에서 PHASE2 추론을 "
-            f"먼저 실행하세요. (status: {cur_status or 'unknown'})"
-        )
-        return
-    if pri_overlays is None:
-        st.info(
-            "전기 PHASE2 overlay 가 없어 보조 신호 전기 비교를 생성할 수 없습니다. "
-            "전기 engagement 에서 PHASE2 를 실행한 뒤 다시 비교하세요. "
-            f"(status: {pri_status or 'unknown'})"
-        )
-        return
-
-    # ── 집계 ──
-    cur_signals = _phase2_family_signal_counts(cur_overlays)
-    pri_signals = _phase2_family_signal_counts(pri_overlays)
-    cur_tier = _phase2_tier_counts_per_family(cur_overlays)
-    pri_tier = _phase2_tier_counts_per_family(pri_overlays)
-    cur_sub = _phase2_subdetector_counts(cur_overlays)
-    pri_sub = _phase2_subdetector_counts(pri_overlays)
-
-    # ── 상단 요약 카드 (3개) ──
-    _render_phase2_summary_cards(cur_signals, pri_signals, cur_tier, pri_tier)
-
-    # ── ① 영역별 신호 증감 표 ──
-    section_family = st.container(border=True)
-    section_family.markdown("##### 영역별 보조 신호 case 증감")
-    section_family.caption(
-        "case 단위 = PHASE1 case. 한 case 는 여러 영역에 동시에 후보 신호를 낼 수 있어 "
-        "영역별 합계는 PHASE1 case 총수와 일치하지 않을 수 있습니다."
-    )
-    family_df = _build_phase2_family_delta_frame(
-        cur_signals,
-        pri_signals,
-        len(cur_overlays),
-        len(pri_overlays),
-    )
-    section_family.dataframe(
-        family_df,
-        hide_index=True,
-        width="stretch",
-        column_config={
-            "당기 신호 case": st.column_config.NumberColumn(format="%,d"),
-            "전기 신호 case": st.column_config.NumberColumn(format="%,d"),
-            "증감(case)": st.column_config.NumberColumn(format="%+,d"),
-            "당기 점유율(%)": st.column_config.NumberColumn(format="%.1f%%"),
-            "전기 점유율(%)": st.column_config.NumberColumn(format="%.1f%%"),
-            "증감(pp)": st.column_config.NumberColumn(format="%+.1f"),
-        },
-    )
-
-    # ── ② 영역 × 근거 강도 매트릭스 ──
-    section_tier = st.container(border=True)
-    section_tier.markdown("##### 영역 × 근거 강도 case 증감")
-    section_tier.caption(
-        "행 = Strong / Moderate / Weak / ML Quantile, 열 = 분석 영역. "
-        "값 = 당기 − 전기 case 수. VAE 는 통계적 이상치라 **ML Quantile 행으로만** 집계됩니다."
-    )
-    tier_matrix = _build_phase2_tier_delta_matrix(cur_tier, pri_tier)
-    tier_column_config = {
-        col: st.column_config.NumberColumn(format="%+,d")
-        for col in tier_matrix.columns
-        if col != "근거 강도"
-    }
-    section_tier.dataframe(
-        tier_matrix,
-        hide_index=True,
-        width="stretch",
-        column_config=tier_column_config,
-    )
-
-    # ── ③ 세부 탐지 증감 (영역별 expander) ──
-    section_sub = st.container(border=True)
-    section_sub.markdown("##### 세부 탐지별 case 증감")
-    section_sub.caption(
-        "각 영역의 sub-detector 단위 case 변화입니다. 영역을 펼쳐 어떤 패턴이 늘었는지 확인하세요."
-    )
-    for family in _PHASE2_FAMILY_ORDER:
-        sub_df = _build_phase2_subdetector_delta_for_family(family, cur_sub, pri_sub)
-        if sub_df.empty:
-            continue
-        with section_sub.expander(_PHASE2_FAMILY_KO[family], expanded=False):
-            st.dataframe(
-                sub_df,
-                hide_index=True,
-                width="stretch",
-                column_config={
-                    "당기 case": st.column_config.NumberColumn(format="%,d"),
-                    "전기 case": st.column_config.NumberColumn(format="%,d"),
-                    "증감(case)": st.column_config.NumberColumn(format="%+,d"),
-                },
-            )

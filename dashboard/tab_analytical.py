@@ -7,8 +7,12 @@
 배지(badge_tags)로만 오버레이되고, 검토 목록의 절단은 이 탭이 소유하지 않는다(신호만 생성).
 
 데이터는 phase1_result(PipelineResult)에 이미 산출된 것을 읽는다(별도 실행 없음):
-  - macro_findings   : Benford(L4-02) · 계정활동변동(D01) · 월별비율변동(D02) · 라운드넘버 밀집도(ROUND-DENSITY)
+  - macro_findings   : Benford(L4-02) · 라운드넘버 밀집도(ROUND-DENSITY)
   - partner_findings : 첫등장 / 희소 / 휴면재활성 거래처
+
+여기 남은 세 신호는 전기 없이 당기 모집단만으로 판정된다. 반대로 전기를 붙여야 계산되는
+계정활동변동(D01)·월별비율변동(D02)은 전제와 질문이 전기 비교와 같아 그 탭에서 표시한다
+(dashboard/tab_comparison.py). 신호 자체는 PHASE1-2 소유 그대로이며 표시 위치만 다르다.
 """
 
 from __future__ import annotations
@@ -54,18 +58,14 @@ def render(prep_result, phase1_result: PipelineResult | None) -> None:
 
     pr = phase1_result
     round_density = build_phase1_macro_finding_queue(pr, rule_id="ROUND-DENSITY")
-    d01 = build_phase1_macro_finding_queue(pr, rule_id="D01")
-    d02 = build_phase1_macro_finding_queue(pr, rule_id="D02")
 
-    sub_tabs = st.tabs(["Benford 분포", "Round Number 밀집", "거래처 신호", "계정·비율 변동"])
+    sub_tabs = st.tabs(["Benford 분포", "Round Number 밀집", "거래처 신호"])
     with sub_tabs[0]:
         _render_benford(pr)
     with sub_tabs[1]:
         _render_round_density(round_density)
     with sub_tabs[2]:
         _render_partners(pr)
-    with sub_tabs[3]:
-        _render_variance(d01, d02)
 
 
 # ── Benford ─────────────────────────────────────────────────
@@ -231,62 +231,5 @@ def _empty_partner_message(signal: str | None, diagnostics: dict[str, Any]) -> s
         return (
             f"{'·'.join(unevaluated)}은 비교 데이터가 부족해 판정하지 않았고, "
             "나머지 신호는 0건입니다."
-# ── 계정·비율 변동 (D01/D02) ──────────────────────────────────
-
-
-def _render_variance(d01: list[dict[str, Any]], d02: list[dict[str, Any]]) -> None:
-    """전기 대비 계정 활동(D01) / 월별 비율 분포(D02) 변동."""
-    st.markdown("##### 계정 활동 변동 (D01)")
-    st.caption("전기 대비 계정별 금액·건수·평균 활동이 크게 바뀐 계정입니다.")
-    if d01:
-        rows = [
-            {
-                "계정": item.get("gl_account"),
-                "당기": item.get("fiscal_year"),
-                "전기": item.get("prior_fiscal_year"),
-                "검토행": item.get("review_row_count"),
-                "가중변동": item.get("review_score"),
-                "우선순위": item.get("macro_priority_score"),
-                "버킷": item.get("queue_bucket"),
-            }
-            for item in d01
-        ]
-        st.dataframe(
-            pd.DataFrame(rows),
-            width="stretch",
-            hide_index=True,
-            column_config={
-                "가중변동": st.column_config.NumberColumn(format="%.3f"),
-                "우선순위": st.column_config.NumberColumn(format="%.3f"),
-            },
         )
-    else:
-        st.info("계정 활동 변동 finding 이 없습니다. (전기 데이터 필요)")
-
-    st.divider()
-    st.markdown("##### 월별 비율 분포 변동 (D02)")
-    st.caption("전기 대비 계정의 월별 금액 분포 모양이 바뀐 지점입니다(JSD 기준).")
-    if d02:
-        rows = [
-            {
-                "계정": item.get("gl_account"),
-                "당기": item.get("fiscal_year"),
-                "전기": item.get("prior_fiscal_year"),
-                "JSD": item.get("review_score"),
-                "우선순위": item.get("macro_priority_score"),
-                "시나리오": item.get("scenario_type"),
-                "버킷": item.get("queue_bucket"),
-            }
-            for item in d02
-        ]
-        st.dataframe(
-            pd.DataFrame(rows),
-            width="stretch",
-            hide_index=True,
-            column_config={
-                "JSD": st.column_config.NumberColumn(format="%.4f"),
-                "우선순위": st.column_config.NumberColumn(format="%.3f"),
-            },
-        )
-    else:
-        st.info("월별 비율 분포 변동 finding 이 없습니다. (전기 데이터 필요)")
+    return "판정 결과 신호에 걸린 거래처가 없습니다. (0건)"
