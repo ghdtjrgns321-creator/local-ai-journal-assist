@@ -10,7 +10,8 @@
 # 1단계 — 분모 확정 (프로젝트 폴더 전체 순회)
 python census.py inventory <project_root> --out inventory.json
 
-# 2단계 — 131개 묶음으로 나눠 전수 정독 (서브에이전트 팬아웃)
+# 2단계 — 묶음으로 나눠 전수 정독 (1차 집필은 131개 묶음 팬아웃,
+#          재정합 라운드는 변경분 + 신규분을 직접 정독)
 
 # 3단계 — 커버리지 표와 인벤토리의 차집합이 0인지 검증
 python census.py verify <project_root> FINAL-REPORT/16_COVERAGE.md
@@ -18,15 +19,18 @@ python census.py verify <project_root> FINAL-REPORT/16_COVERAGE.md
 
 | 항목                                |         값 |
 | ----------------------------------- | ---------: |
-| **정독 분모 N**                     | **11,030** |
-| ├ 설정                              |      7,860 |
-| ├ 코드                              |      1,929 |
-| ├ 문서                              |      1,079 |
+| **정독 분모 N**                     | **11,436** |
+| ├ 설정                              |      8,254 |
+| ├ 코드                              |      1,939 |
+| ├ 문서                              |      1,081 |
 | └ 텍스트                            |        162 |
-| 목록만(정독 면제 — 데이터·바이너리) |      3,665 |
-| 정독 묶음 수                        |        131 |
+| 목록만(정독 면제 — 데이터·바이너리) |      3,736 |
 
-정독 착수 시점의 분모는 10,934였고 최종 검증 시점에 **11,030**로 늘었다. 증가분 107건은 정독 과정에서 검증 도구를 실행하며 생긴 부산물(실험 산출물 90 · pytest 임시 작업공간 11 · 테스트 결과 6)이고, 11건이 임시 파일 정리로 사라졌다. 전부 글롭 커버 대상이라 검증 결과에는 영향이 없으나, 분모가 고정값이 아니라 **실행에 따라 움직인다**는 사실을 기록해 둔다.
+정독 착수 시점의 분모는 10,934였고 1차 검증 시점에 11,030, **3차 재정합(2026-07-25) 시점에 11,436**이 됐다. 3차 증가분 406건은 설정 394 · 코드 10 · 문서 2이며, 대부분이 검증 도구 실행 부산물과 새로 추가된 대시보드 모듈·테스트다.
+
+재정합 라운드 **안에서 분모가 세 번 움직였다.** 첫 인벤토리 11,425 → 작업 중 11,430 → 11,436. 증가분은 전부 같은 곳에서 나왔다 — 이 라운드와 병행해 진행된 PHASE2 VAE 진단(`dev/active/phase2-vae-auc-diagnosis/`)의 스크립트·측정 산출물이다. 매번 그 파일을 정독해 표에 넣고 다시 검증했으며, 마지막 회차에서 나온 진단 결과는 [7.8](7_PHASE1-1_COMBO-BUILDER.md)·[9.7~9.9](9_PHASE2_VAE.md)의 판정 정정으로 본문에 반영됐다.
+
+이 움직임 자체가 기록 대상이다. **분모는 고정값이 아니라 실행에 따라 움직이므로, "전수"는 특정 시점의 스냅샷에 대한 주장이다.** 그래서 완료 선언을 문장이 아니라 그 시점의 `verify` 종료 코드로 한다. 그리고 이번 라운드는 그 성질이 형식이 아님을 보여줬다 — 늘어난 파일 여섯 개가 9장의 판정 이름을 바꿨다.
 
 ## 16.2 순회에서 제외된 디렉토리
 
@@ -36,15 +40,16 @@ python census.py verify <project_root> FINAL-REPORT/16_COVERAGE.md
 | --------------- | -------------: | ---------------------------- |
 | `target/`       |         56,862 | Rust 빌드 산출물             |
 | `.venv/`        |         40,940 | Python 가상환경(외부 패키지) |
-| `.git/`         |          2,128 | 버전 관리 내부 저장소        |
-| `__pycache__/`  |          1,182 | Python 바이트코드 캐시       |
+| `.git/`         |          2,472 | 버전 관리 내부 저장소        |
+| `__pycache__/`  |          1,191 | Python 바이트코드 캐시       |
 | `.claude/`      |            163 | 에이전트 하네스 설정         |
-| `.ruff_cache/`  |            137 | 린터 캐시                    |
+| `.ruff_cache/`  |            147 | 린터 캐시                    |
 | `.mypy_cache/`  |            126 | 타입 검사 캐시               |
 | `FINAL-REPORT/` |             17 | 하네스·캐시                  |
 | `.codex/`       |              5 | 에이전트 하네스 설정         |
+| `_workspace/`   |              1 | 스킬 작업공간                |
 | `.vscode/`      |              1 | 에디터 설정                  |
-| **합계**        |    **101,561** |                              |
+| **합계**        |    **101,925** |                              |
 
 `--exclude` 옵션은 사용하지 않았다. 위 목록은 검증 스크립트 상단의 기본 제외 상수이며, verify도 동일 조건으로 실행되므로 조용한 누락이 발생하지 않는다. 산출물 디렉토리(`FINAL-REPORT/`) 자체도 기본 제외에 포함돼 자기 참조가 분모를 부풀리지 않는다.
 
@@ -57,6 +62,10 @@ python census.py verify <project_root> FINAL-REPORT/16_COVERAGE.md
 ## 16.4 파일 → 장 매핑
 
 경로는 프로젝트 루트 기준 상대경로다. 균일한 데이터 디렉토리는 글롭 한 행으로 묶고 사유와 대표 표본을 다룬 장을 병기했다. 전부 매칭 글롭은 사용하지 않는다 — 검증 스크립트가 이를 hollow-PASS로 판정해 거부한다.
+
+3차 재정합에서 이 표가 바뀐 내역이다. **추가 13행** — 신규 대시보드 모듈 3(`round_density_charts.py` · `phase2_roc_truth.py` · `tab_analytical.py`), 신규 회귀 테스트 5, 진행 중 VAE AUC 진단 산출 4, `images/desktop.ini` 1. **삭제 5행** — 제거된 CI 워크플로 4개와 삭제된 `dashboard/tab_phase_comparison.py`다.
+
+삭제 쪽은 검증 스크립트가 잡아 주지 않는다는 점을 적어 둔다. `verify`는 "인벤토리에 있는데 표에 없는 것"(누락)만 차집합으로 확인하고, "표에 있는데 디스크에 없는 것"(유령 행)은 검사하지 않는다. 그래서 삭제된 파일 5건은 별도 스캔으로 찾아 지웠다. **검증 도구가 한 방향만 본다는 사실 자체가 검증 대상**이라는 [15장](15_TROUBLESHOOTING.md) ③ 패턴의 또 한 사례다.
 
 | 파일                                                                                                                      | kind   | 반영 장 | 비고                                                                               |
 | ------------------------------------------------------------------------------------------------------------------------- | ------ | ------- | ---------------------------------------------------------------------------------- |
@@ -84,10 +93,6 @@ python census.py verify <project_root> FINAL-REPORT/16_COVERAGE.md
 | `.codex_recovery/codex_apply_patch_and_diff_since_20260503.md`                                                            | doc    | 10장    | 구조 정독(대형)                                                                    |
 | `.dockerignore`                                                                                                           | config | 10장    |                                                                                    |
 | `.env.example`                                                                                                            | config | 10장    |                                                                                    |
-| `.github/workflows/audit-testing.yml`                                                                                     | config | 10장    |                                                                                    |
-| `.github/workflows/docs-audit.yml`                                                                                        | config | 10장    |                                                                                    |
-| `.github/workflows/phase1-kpi-guard.yml`                                                                                  | config | 10장    |                                                                                    |
-| `.github/workflows/phase2-eval.yml`                                                                                       | config | 10장    |                                                                                    |
 | `.gitignore`                                                                                                              | config | 10장    |                                                                                    |
 | `.manual-model-registry-check/registry.json`                                                                              | config | 10장    |                                                                                    |
 | `.streamlit/config.toml`                                                                                                  | config | 11장    |                                                                                    |
@@ -914,6 +919,7 @@ python census.py verify <project_root> FINAL-REPORT/16_COVERAGE.md
 | `dashboard/components/charts/distribution_charts.py`                                                                      | code   | 11장    |                                                                                    |
 | `dashboard/components/charts/eda_charts.py`                                                                               | code   | 11장    |                                                                                    |
 | `dashboard/components/charts/risk_charts.py`                                                                              | code   | 11장    |                                                                                    |
+| `dashboard/components/charts/round_density_charts.py`                                                                     | code   | 11장    |                                                                                    |
 | `dashboard/components/charts/rule_charts.py`                                                                              | code   | 11장    |                                                                                    |
 | `dashboard/components/charts/special_charts.py`                                                                           | code   | 11장    |                                                                                    |
 | `dashboard/components/charts/trend_charts.py`                                                                             | code   | 11장    |                                                                                    |
@@ -936,6 +942,7 @@ python census.py verify <project_root> FINAL-REPORT/16_COVERAGE.md
 | `dashboard/components/phase2_leaderboard_view.py`                                                                         | code   | 11장    |                                                                                    |
 | `dashboard/components/phase2_native_case_metrics.py`                                                                      | code   | 11장    |                                                                                    |
 | `dashboard/components/phase2_native_case_panel.py`                                                                        | code   | 11장    |                                                                                    |
+| `dashboard/components/phase2_roc_truth.py`                                                                                | code   | 11장    | 9장 라벨 정책과 연동                                                               |
 | `dashboard/components/phase2_subdetector_grid.py`                                                                         | code   | 11장    |                                                                                    |
 | `dashboard/components/pre_analysis_settings.py`                                                                           | code   | 11장    |                                                                                    |
 | `dashboard/components/preset_selector.py`                                                                                 | code   | 11장    |                                                                                    |
@@ -952,6 +959,7 @@ python census.py verify <project_root> FINAL-REPORT/16_COVERAGE.md
 | `dashboard/page_company.py`                                                                                               | code   | 11장    |                                                                                    |
 | `dashboard/phase1_display.py`                                                                                             | code   | 11장    |                                                                                    |
 | `dashboard/styles.py`                                                                                                     | code   | 11장    |                                                                                    |
+| `dashboard/tab_analytical.py`                                                                                             | code   | 11장    |                                                                                    |
 | `dashboard/tab_benford.py`                                                                                                | code   | 11장    |                                                                                    |
 | `dashboard/tab_chat.py`                                                                                                   | code   | 11장    |                                                                                    |
 | `dashboard/tab_comparison.py`                                                                                             | code   | 11장    |                                                                                    |
@@ -963,7 +971,6 @@ python census.py verify <project_root> FINAL-REPORT/16_COVERAGE.md
 | `dashboard/tab_overview.py`                                                                                               | code   | 11장    |                                                                                    |
 | `dashboard/tab_phase1.py`                                                                                                 | code   | 11장    | 구조 정독(대형)                                                                    |
 | `dashboard/tab_phase2.py`                                                                                                 | code   | 11장    |                                                                                    |
-| `dashboard/tab_phase_comparison.py`                                                                                       | code   | 11장    |                                                                                    |
 | `dashboard/tab_review_queue.py`                                                                                           | code   | 11장    |                                                                                    |
 | `dashboard/tab_summary.py`                                                                                                | code   | 11장    |                                                                                    |
 | `deploy/README.md`                                                                                                        | doc    | 10장    |                                                                                    |
@@ -1211,6 +1218,15 @@ python census.py verify <project_root> FINAL-REPORT/16_COVERAGE.md
 | `dev/active/phase2-unsupervised-doc-review-surface/context.md`                                                            | doc    | 14장    |                                                                                    |
 | `dev/active/phase2-unsupervised-doc-review-surface/plan.md`                                                               | doc    | 14장    |                                                                                    |
 | `dev/active/phase2-unsupervised-doc-review-surface/tasks.md`                                                              | doc    | 14장    |                                                                                    |
+| `dev/active/phase2-vae-auc-diagnosis/PHASE2_VAE_DATASET_INVALIDITY.md`                                                    | doc    | 9장     | 데이터 무효 판정 근거 — §9.7~9.9 출처                                              |
+| `dev/active/phase2-vae-auc-diagnosis/measure_rule_contamination.py`                                                       | code   | 7장     | 룰 발화의 승인 결측 의존 층화 검사                                                 |
+| `dev/active/phase2-vae-auc-diagnosis/measure_separability.py`                                                             | code   | 9장     | 단변량 분리도 측정 스크립트                                                        |
+| `dev/active/phase2-vae-auc-diagnosis/plan.md`                                                                             | doc    | 9장     | 진행 중 진단 — §9.7 재검토 항목                                                    |
+| `dev/active/phase2-vae-auc-diagnosis/rule_contamination_datasynth_semantic_v1_phase2_fraud_s10_20260718_r1_seed1.json`    | config | 7장     | 층화 검사 산출                                                                     |
+| `dev/active/phase2-vae-auc-diagnosis/scan_shortcuts.py`                                                                   | code   | 9장     | 전 컬럼 결측 지름길 스캔                                                           |
+| `dev/active/phase2-vae-auc-diagnosis/separability_datasynth_semantic_v1_phase2_fraud_s10_20260718_r1_seed1.csv`           | 데이터 | 9장     | 회차 1 산출(피처별)                                                                |
+| `dev/active/phase2-vae-auc-diagnosis/separability_datasynth_semantic_v1_phase2_fraud_s10_20260718_r1_seed1.json`          | config | 9장     | 회차 1 산출                                                                        |
+| `dev/active/phase2-vae-auc-diagnosis/shortcut_vae_comparison.json`                                                        | config | 9장     | 지름길 단독 AUC vs VAE 점수                                                        |
 | `dev/active/r03-ts01-calibration/r03-ts01-calibration-plan.md`                                                            | doc    | 14장    |                                                                                    |
 | `dev/active/r03-ts01-calibration/r03-ts01-split-trial.md`                                                                 | doc    | 14장    |                                                                                    |
 | `dev/active/relational-circular-ownership-20260602/PROMPT.md`                                                             | doc    | 14장    |                                                                                    |
@@ -1468,6 +1484,7 @@ python census.py verify <project_root> FINAL-REPORT/16_COVERAGE.md
 | `docs/spec/results/phase1-1/INTEGRITY_AND_OFFTIME_SORT_R1Z.md`                                                            | doc    | 13장    |                                                                                    |
 | `docs/spec/results/phase1-1/RULE_FIRING_VERIFICATION_R11.md`                                                              | doc    | 13장    |                                                                                    |
 | `docs/spec/templates/phase2_evaluation_report_template.md`                                                                | doc    | 13장    |                                                                                    |
+| `images/desktop.ini`                                                                                                      | config | —       | Windows 폴더 메타 — 내용 없음                                                      |
 | `pyproject.toml`                                                                                                          | config | 10장    |                                                                                    |
 | `reports/_v43d_verify.json`                                                                                               | config | 13장    |                                                                                    |
 | `reports/_v43d_verify.md`                                                                                                 | doc    | 13장    |                                                                                    |
@@ -2033,13 +2050,18 @@ python census.py verify <project_root> FINAL-REPORT/16_COVERAGE.md
 | `tests/modules/test_dashboard/test_mapping_review.py`                                                                     | code   | 13장    |                                                                                    |
 | `tests/modules/test_dashboard/test_phase1_band_labels.py`                                                                 | code   | 13장    |                                                                                    |
 | `tests/modules/test_dashboard/test_phase1_local_evidence_brief.py`                                                        | code   | 13장    |                                                                                    |
+| `tests/modules/test_dashboard/test_phase2_case_set_disk_restore.py`                                                       | code   | 13장    |                                                                                    |
 | `tests/modules/test_dashboard/test_phase2_family_matrix.py`                                                               | code   | 13장    |                                                                                    |
 | `tests/modules/test_dashboard/test_phase2_leaderboard_view.py`                                                            | code   | 13장    |                                                                                    |
 | `tests/modules/test_dashboard/test_phase2_native_case_panel.py`                                                           | code   | 13장    |                                                                                    |
+| `tests/modules/test_dashboard/test_phase2_roc_truth.py`                                                                   | code   | 13장    |                                                                                    |
 | `tests/modules/test_dashboard/test_phase2_subdetector_grid.py`                                                            | code   | 13장    |                                                                                    |
 | `tests/modules/test_dashboard/test_review_queue_browser.py`                                                               | code   | 13장    |                                                                                    |
+| `tests/modules/test_dashboard/test_round_density_chart.py`                                                                | code   | 13장    |                                                                                    |
 | `tests/modules/test_dashboard/test_rule_charts.py`                                                                        | code   | 13장    |                                                                                    |
+| `tests/modules/test_dashboard/test_tab_analytical_partner_messages.py`                                                    | code   | 13장    |                                                                                    |
 | `tests/modules/test_dashboard/test_tab_chat.py`                                                                           | code   | 13장    |                                                                                    |
+| `tests/modules/test_dashboard/test_tab_comparison_analytical_sections.py`                                                 | code   | 13장    |                                                                                    |
 | `tests/modules/test_dashboard/test_tab_export.py`                                                                         | code   | 13장    |                                                                                    |
 | `tests/modules/test_dashboard/test_tab_findings.py`                                                                       | code   | 13장    |                                                                                    |
 | `tests/modules/test_dashboard/test_tab_overview.py`                                                                       | code   | 13장    |                                                                                    |
