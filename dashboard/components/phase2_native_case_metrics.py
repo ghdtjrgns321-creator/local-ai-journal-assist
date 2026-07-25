@@ -13,6 +13,7 @@ Why: tab_phase2 의 KPI ribbon / 활성 분포 / 분석 영역 요약 세 섹션
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import streamlit as st
@@ -32,16 +33,51 @@ _ACTIVE_FAMILIES: tuple[str, ...] = (
 
 
 def resolve_phase2_case_set_from_state() -> Phase2CaseSet | None:
-    """session_state 의 phase2_result 에서 ``Phase2CaseSet`` 추출.
+    """session_state 의 phase2_result 에서 ``Phase2CaseSet`` 추출, 없으면 디스크에서 복원.
 
-    None 반환 케이스: phase2_result 부재 / phase2_case_set attribute 부재 / 타입 불일치.
+    Why: case set 은 in-memory 에만 있어 앱 재시작·세션 초기화 시 사라졌고, 디스크에
+         멀쩡히 저장된 case 를 두고 Phase 2 를 다시 돌려야 했다(2026-07-25). 같은
+         engagement·batch 의 저장본이 있으면 재실행 없이 그것을 쓴다.
+
+    None 반환 케이스: 세션·디스크 모두에 case set 이 없을 때.
     """
     from dashboard._state import KEY_PHASE2_RESULT
 
     state = st.session_state if hasattr(st, "session_state") else {}
     phase2_result = state.get(KEY_PHASE2_RESULT) if hasattr(state, "get") else None
     case_set = getattr(phase2_result, "phase2_case_set", None)
-    return case_set if isinstance(case_set, Phase2CaseSet) else None
+    if isinstance(case_set, Phase2CaseSet):
+        return case_set
+    return _restore_case_set_from_disk(state)
+
+
+def _restore_case_set_from_disk(state: Any) -> Phase2CaseSet | None:
+    """현재 회사·배치의 저장된 case set 을 읽는다. 실패는 조용히 None (표시 경로 보조)."""
+    from dashboard._state import KEY_BATCH_ID, KEY_COMPANY_CONTEXT
+
+    if not hasattr(state, "get"):
+        return None
+    ctx = state.get(KEY_COMPANY_CONTEXT)
+    batch_id = str(state.get(KEY_BATCH_ID) or "")
+    db_path = getattr(ctx, "db_path", None)
+    if ctx is None or not batch_id or db_path is None:
+        return None
+
+    manifest = Path(db_path).parent / "phase2_cases" / batch_id / "manifest.json"
+    if not manifest.is_file():
+        return None
+    return _load_case_set_cached(ctx, batch_id, manifest.stat().st_mtime)
+
+
+@st.cache_data(show_spinner="저장된 Phase 2 결과 불러오는 중...")
+def _load_case_set_cached(_ctx: Any, batch_id: str, _mtime: float) -> Phase2CaseSet | None:
+    """manifest mtime 까지 캐시 키에 넣어 파일이 갱신되면 자동 무효화."""
+    from src.services.phase2_case_store import CaseStoreStatus, load_phase2_case_set
+
+    result = load_phase2_case_set(ctx=_ctx, batch_id=batch_id)
+    if result.status != CaseStoreStatus.LOAD_SUCCESS:
+        return None
+    return result.case_set
 
 
 def _iter_all_cases(case_set: Phase2CaseSet | None) -> list[Phase2CaseBase]:

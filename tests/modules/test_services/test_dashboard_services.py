@@ -522,3 +522,60 @@ def test_run_phase_analysis_phase1_rebuilds_only_core_features(monkeypatch):
     assert calls["include_morpheme_tokens"] is False
     assert "phase1_feature_marker" in result.data.columns
     assert "heavy_feature" not in result.data.columns
+
+
+def test_load_batch_into_state_restores_persisted_phase2_case_set(monkeypatch, tmp_path):
+    """저장된 VAE case 를 재실행 없이 복원해야 한다 (2026-07-25 — 재시작 시 화면이 비던 문제)."""
+    from src.services.phase2_case_store import save_phase2_case_set
+    from tests.modules.test_services.test_phase2_case_store import _make_case_set
+
+    engagement_dir = tmp_path / "acme" / "engagements" / "FY2024"
+    engagement_dir.mkdir(parents=True, exist_ok=True)
+    ctx = SimpleNamespace(
+        company_id="acme",
+        engagement_id="FY2024",
+        db_path=engagement_dir / "audit.duckdb",
+    )
+    case_set = _make_case_set(batch_id="batch_cases")
+    saved = save_phase2_case_set(
+        ctx=ctx,
+        batch_id="batch_cases",
+        case_set=case_set,
+        salt="acme|FY2024",
+    )
+    assert saved.manifest_path is not None
+
+    # batch_meta 에 phase2 메타가 없는 상태 — case set 만으로도 화면이 살아나야 한다.
+    loaded = SimpleNamespace(
+        data=pd.DataFrame({"risk_level": ["High"]}),
+        featured_data=pd.DataFrame({"x": [1]}),
+        file_name="loaded.csv",
+    )
+    monkeypatch.setattr("src.services.batch_service.load_batch", lambda conn, batch_id: loaded)
+
+    state = {KEY_COMPANY_CONTEXT: ctx}
+    load_batch_into_state(state, object(), "batch_cases")
+
+    phase2_result = state.get(KEY_PHASE2_RESULT)
+    assert phase2_result is loaded
+    restored = getattr(phase2_result, "phase2_case_set", None)
+    assert restored is not None
+    assert len(restored.unsupervised_cases) == len(case_set.unsupervised_cases)
+
+
+def test_load_batch_into_state_keeps_in_memory_case_set(monkeypatch, tmp_path):
+    """세션에 이미 case set 이 있으면 디스크 복원이 덮어쓰지 않는다."""
+    ctx = SimpleNamespace(company_id="acme", engagement_id="FY2024", db_path=tmp_path / "a.duckdb")
+    sentinel = object()
+    loaded = SimpleNamespace(
+        data=pd.DataFrame({"risk_level": ["High"]}),
+        featured_data=pd.DataFrame({"x": [1]}),
+        file_name="loaded.csv",
+        phase2_case_set=sentinel,
+    )
+    monkeypatch.setattr("src.services.batch_service.load_batch", lambda conn, batch_id: loaded)
+
+    state = {KEY_COMPANY_CONTEXT: ctx}
+    load_batch_into_state(state, object(), "batch_x")
+
+    assert getattr(state[KEY_PHASE2_RESULT], "phase2_case_set") is sentinel

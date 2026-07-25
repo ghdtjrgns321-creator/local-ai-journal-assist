@@ -104,6 +104,10 @@ def _has_phase2_artifacts(result: Any) -> bool:
         return True
     if getattr(result, "phase2_inference_mode", None):
         return True
+    # Why: batch_meta 가 비어도 디스크에서 복원한 case set 이 있으면 Phase 2 는 실행된 것이다
+    #      — 이걸 빼면 복원한 case 를 들고도 화면이 "추론 결과 없음"으로 남는다.
+    if getattr(result, "phase2_case_set", None) is not None:
+        return True
     return False
 
 

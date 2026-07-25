@@ -180,17 +180,17 @@ def _render_phase2_vae_roc(*, empty_state: Phase2EmptyState | None = None) -> No
     Why: VAE는 비지도라 학습에 라벨을 쓰지 않지만, 성능 검증은 정답 라벨로 한다
          (평가 전용). 부정 라벨이 없는 정상 데이터셋이면 곡선 대신 안내를 표시한다.
     """
-    if empty_state is not None and empty_state.state_id not in (
-        _PHASE2_STATE_AVAILABLE,
-        _PHASE2_STATE_VALID_NO_HIT,
-    ):
-        return
+    # Why: 게이트는 empty_state 가 아니라 "VAE 점수가 있는가"다. overlay 상태가 어떻든
+    #      전표 점수와 정답 라벨이 있으면 ROC 는 계산된다 — 디스크에서 복원한 case set 으로도
+    #      그려져야 하므로 case 유무로만 판단한다(2026-07-25).
+    del empty_state
 
     from dashboard._state import KEY_PHASE1_RESULT
     from dashboard.components.phase2_native_case_metrics import (
         iter_unsupervised_cases,
         resolve_phase2_case_set_from_state,
     )
+    from dashboard.components.phase2_roc_truth import resolve_roc_truth
 
     # 전표(document_id) → VAE score (동일 전표 다중 case 시 최대값).
     doc_score: dict[str, float] = {}
@@ -203,19 +203,12 @@ def _render_phase2_vae_roc(*, empty_state: Phase2EmptyState | None = None) -> No
     if not doc_score:
         return
 
-    st.markdown("##### VAE 성능 (ROC)")
-
     pr = st.session_state.get(KEY_PHASE1_RESULT)
-    data = getattr(pr, "featured_data", None)
-    if data is None:
-        data = getattr(pr, "data", None)
-    if data is None or "document_id" not in data.columns or "is_fraud" not in data.columns:
-        st.caption(
-            "정답 라벨(is_fraud)이 없어 ROC를 그릴 수 없습니다. 검증용 라벨 데이터가 필요합니다."
-        )
+    truth, source_note = resolve_roc_truth(pr)
+    if truth is None:
+        _render_roc_unavailable(source_note)
         return
 
-    truth = data.groupby(data["document_id"].astype(str))["is_fraud"].any()
     y_true: list[int] = []
     y_score: list[float] = []
     for did, score in doc_score.items():
@@ -224,10 +217,16 @@ def _render_phase2_vae_roc(*, empty_state: Phase2EmptyState | None = None) -> No
             y_score.append(score)
 
     positives = sum(y_true)
-    if len(y_true) < 2 or positives == 0 or positives == len(y_true):
-        st.caption(
-            "부정으로 라벨된 전표가 없어(또는 전부 부정) ROC를 그릴 수 없습니다 — "
-            "정상 데이터셋에서는 나오지 않는 검증 지표입니다."
+    if len(y_true) < 2:
+        _render_roc_unavailable(
+            f"VAE 점수 전표({len(doc_score):,}건)와 정답 라벨 전표({len(truth):,}건)의 "
+            "document_id 가 맞물리지 않아 ROC를 그릴 수 없습니다."
+        )
+        return
+    if positives == 0 or positives == len(y_true):
+        _render_roc_unavailable(
+            f"평가 대상 전표 {len(y_true):,}건이 전부 정상(또는 전부 부정)으로 라벨되어 "
+            "ROC를 그릴 수 없습니다 — 정상 데이터셋에서는 나오지 않는 검증 지표입니다."
         )
         return
 
@@ -259,20 +258,81 @@ def _render_phase2_vae_roc(*, empty_state: Phase2EmptyState | None = None) -> No
         )
     )
     fig.update_layout(
-        height=340,
-        margin={"l": 55, "r": 20, "t": 20, "b": 45},
+        height=250,
+        # Why: 한글 y축 제목이 눈금과 겹치지 않도록 왼쪽 여백을 넉넉히 준다.
+        margin={"l": 60, "r": 12, "t": 8, "b": 58},
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        xaxis_title="거짓 양성 비율 (FPR)",
-        yaxis_title="참 양성 비율 (TPR)",
-        xaxis={"range": [0, 1], "constrain": "domain"},
-        yaxis={"range": [0, 1], "scaleanchor": "x", "scaleratio": 1},
-        legend={"x": 0.98, "y": 0.05, "xanchor": "right", "yanchor": "bottom"},
+        xaxis={
+            "range": [0, 1],
+            "constrain": "domain",
+            "title": {"text": "거짓 양성 비율 (FPR)", "standoff": 12},
+        },
+        yaxis={
+            "range": [0, 1],
+            "scaleanchor": "x",
+            "scaleratio": 1,
+            "title": {"text": "참 양성 비율 (TPR)", "standoff": 12},
+        },
+        # Why: 정사각 고정 플롯은 오른쪽에 여백을 남긴다 — 범례를 플롯 안에 두면 그 여백으로
+        #      밀려나므로 x축 아래 가로 배치로 뺀다.
+        legend={
+            "orientation": "h",
+            "x": 0,
+            "y": -0.28,
+            "xanchor": "left",
+            "yanchor": "top",
+            "font": {"size": 10},
+        },
     )
-    st.plotly_chart(fig, width="stretch")
-    st.caption(
-        f"부정 전표 {positives:,}건 / 평가 전표 {len(y_true):,}건 · AUC {auc:.3f} "
-        "(0.5=무작위, 1.0=완벽). VAE는 학습에 라벨을 쓰지 않으며 성능 검증에만 사용합니다."
+
+    # Why: 위 "분포 차트(좌) + 요약 카드(우)" 와 같은 2열 카드 레이아웃으로 통일한다.
+    #      숫자는 문장이 아니라 카드로 읽는다(2026-07-25).
+    card_height = 300
+    left, right = st.columns([1, 1], gap="small")
+    with left, st.container(border=True, height=card_height):
+        st.markdown(
+            "<div style='color:#0F172A; font-size:0.875rem; font-weight:600;'>VAE 성능 (ROC)</div>",
+            unsafe_allow_html=True,
+        )
+        st.plotly_chart(fig, width="stretch")
+    with right, st.container(border=True, height=card_height):
+        _render_roc_meta_cards(
+            auc=auc,
+            positives=positives,
+            evaluated=len(y_true),
+            source_note=source_note,
+        )
+
+
+def _render_roc_unavailable(reason: str) -> None:
+    """ROC 미표시 사유 — 제목은 유지해 섹션이 사라진 것으로 보이지 않게 한다."""
+    st.markdown("##### VAE 성능 (ROC)")
+    st.caption(reason)
+
+
+def _render_roc_meta_cards(*, auc: float, positives: int, evaluated: int, source_note: str) -> None:
+    """ROC 지표 카드 — 분포 요약과 같은 2×2 그리드."""
+    typography = "Inter, -apple-system, BlinkMacSystemFont, sans-serif"
+    fraud_ratio = (positives / evaluated * 100) if evaluated else 0.0
+    grid_html = _phase2_stat_grid(
+        [
+            ("AUC", f"{auc:.3f}", "", "0.5 = 무작위 · 1.0 = 완벽", True),
+            ("부정 전표", f"{positives:,}", "건", "정답 라벨 기준", True),
+            ("평가 전표", f"{evaluated:,}", "건", "VAE 점수 × 라벨 매칭", False),
+            ("부정 비율", f"{fraud_ratio:.1f}", "%", "평가 전표 대비", False),
+        ]
+    )
+    # Why: 출처를 그리드 아래에 두면 카드 컨테이너 높이에서 잘린다 — 부제 줄로 올린다.
+    st.markdown(
+        f"<div style='font-family:{typography};'>"
+        "<div style='color:#0F172A; font-size:0.875rem; font-weight:600;'>"
+        "VAE 성능 요약</div>"
+        "<div style='color:#64748B; font-size:0.72rem; margin-top:2px;'>"
+        f"{source_note}</div>"
+        f"{grid_html}"
+        "</div>",
+        unsafe_allow_html=True,
     )
 
 
@@ -994,6 +1054,45 @@ def _render_phase2_active_distribution(
         _render_phase2_vae_meta(overlays, empty_state=empty_state)
 
 
+def _phase2_stat_card(label: str, value: str, unit: str, sub: str, *, accent: bool) -> str:
+    """VAE 패널 공통 stat 카드 HTML — 분포 요약과 ROC 지표가 같은 모양을 쓴다."""
+    num_color = "#7C3AED" if accent else "#0F172A"
+    unit_html = (
+        f"<span style='font-size:0.8rem; font-weight:500; color:#94A3B8; "
+        f"margin-left:0.2rem;'>{unit}</span>"
+        if unit
+        else ""
+    )
+    return (
+        "<div style='background:#FFFFFF; border:1px solid #E2E8F0; "
+        "border-radius:12px; padding:0.85rem 0.95rem;'>"
+        "<div style='color:#64748B; font-size:0.63rem; font-weight:700; "
+        "letter-spacing:0.06em; text-transform:uppercase;'>"
+        f"{label}</div>"
+        f"<div style='color:{num_color}; font-size:1.6rem; font-weight:800; "
+        "line-height:1.1; margin-top:0.35rem; letter-spacing:-0.02em; "
+        "font-variant-numeric:tabular-nums;'>"
+        f"{value}{unit_html}</div>"
+        "<div style='color:#94A3B8; font-size:0.68rem; margin-top:0.3rem; "
+        "font-variant-numeric:tabular-nums;'>"
+        f"{sub}</div>"
+        "</div>"
+    )
+
+
+def _phase2_stat_grid(cards: list[tuple[str, str, str, str, bool]]) -> str:
+    """(label, value, unit, sub, accent) 목록 → 2열 카드 그리드 HTML."""
+    return (
+        "<div style='display:grid; grid-template-columns:1fr 1fr; gap:0.6rem; "
+        "margin-top:0.7rem;'>"
+        + "".join(
+            _phase2_stat_card(label, value, unit, sub, accent=accent)
+            for label, value, unit, sub, accent in cards
+        )
+        + "</div>"
+    )
+
+
 _PHASE2_DISTRIBUTION_EMPTY_REASONS: dict[str, str] = {
     _PHASE2_STATE_NOT_RUN: "Phase 2 추론 후 표시됩니다.",
     _PHASE2_STATE_PHASE1_BASIS_UNAVAILABLE: "Phase 1 케이스 기준이 있어야 분포를 그릴 수 있습니다.",
@@ -1400,34 +1499,19 @@ def _render_phase2_vae_meta(
     high_q99 = int((arr >= q99).sum())
 
     # ── 통일된 2×2 stat 그리드 (q95/q99 는 보라 accent, 전체/q90 은 중립).
-    def _stat_card(label: str, value: int, sub: str, *, accent: bool) -> str:
-        num_color = "#7C3AED" if accent else "#0F172A"
-        return (
-            "<div style='background:#FFFFFF; border:1px solid #E2E8F0; "
-            "border-radius:12px; padding:0.85rem 0.95rem;'>"
-            "<div style='color:#64748B; font-size:0.63rem; font-weight:700; "
-            "letter-spacing:0.06em; text-transform:uppercase;'>"
-            f"{label}</div>"
-            f"<div style='color:{num_color}; font-size:1.6rem; font-weight:800; "
-            "line-height:1.1; margin-top:0.35rem; letter-spacing:-0.02em; "
-            "font-variant-numeric:tabular-nums;'>"
-            f"{value:,}"
-            "<span style='font-size:0.8rem; font-weight:500; color:#94A3B8; "
-            "margin-left:0.2rem;'>건</span></div>"
-            "<div style='color:#94A3B8; font-size:0.68rem; margin-top:0.3rem; "
-            "font-variant-numeric:tabular-nums;'>"
-            f"{sub}</div>"
-            "</div>"
-        )
-
-    grid_html = (
-        "<div style='display:grid; grid-template-columns:1fr 1fr; gap:0.6rem; "
-        "margin-top:0.7rem;'>"
-        + _stat_card("Q95 진입 · TOP 5%", high_q95, f"score ≥ {q95:.3f}", accent=True)
-        + _stat_card("Q99 진입 · TOP 1%", high_q99, f"score ≥ {q99:.3f}", accent=True)
-        + _stat_card("전체 전표", total_cases, "VAE 점수 부여 모집단", accent=False)
-        + _stat_card("Q90 진입 · TOP 10%", high_q90, f"score ≥ {q90:.3f}", accent=False)
-        + "</div>"
+    grid_html = _phase2_stat_grid(
+        [
+            (
+                "Q95 진입 · TOP 5%",
+                f"{high_q95:,}",
+                "건",
+                f"score ≥ {q95:.3f}",
+                True,
+            ),
+            ("Q99 진입 · TOP 1%", f"{high_q99:,}", "건", f"score ≥ {q99:.3f}", True),
+            ("전체 전표", f"{total_cases:,}", "건", "VAE 점수 부여 모집단", False),
+            ("Q90 진입 · TOP 10%", f"{high_q90:,}", "건", f"score ≥ {q90:.3f}", False),
+        ]
     )
 
     st.markdown(
@@ -2528,11 +2612,18 @@ def _render_phase2_family_case_section(
     del overlays, overlay_status, partition  # 신규 panel 는 case_set 직접 사용
 
     from dashboard._state import KEY_PHASE1_RESULT
+    from dashboard.components.phase2_native_case_metrics import (
+        resolve_phase2_case_set_from_state,
+    )
     from dashboard.components.phase2_native_case_panel import (
         render_phase2_native_case_panel,
     )
 
+    # Why: 세션 phase2_result 만 보면 재시작 후 "추론이 실행되지 않았습니다" 가 뜬다 —
+    #      분포·ROC 와 같은 해소기(세션 → 디스크 저장본)를 쓴다(2026-07-25).
     case_set = getattr(phase2_result, "phase2_case_set", None) if phase2_result else None
+    if case_set is None:
+        case_set = resolve_phase2_case_set_from_state()
     phase1_lookup = _build_phase2_phase1_priority_lookup(phase2_result)
     # Why: Phase 1 의 case drilldown 과 같은 "Case 설명 → document_id master →
     #      원장 라인" 구성을 위해 원장 데이터를 보유한 pr 을 전달.

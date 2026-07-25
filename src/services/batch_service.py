@@ -29,8 +29,37 @@ def load_batch_into_state(
     """
     loaded = load_batch(conn, batch_id)
     _attach_persisted_phase2_overlays(state, loaded, batch_id)
+    _attach_persisted_phase2_case_set(state, loaded, batch_id)
     restore_loaded_result(state, loaded, batch_id)
     return loaded
+
+
+def _attach_persisted_phase2_case_set(
+    state: MutableMapping[str, Any],
+    loaded: Any,
+    batch_id: str,
+) -> None:
+    """engagement 폴더의 phase2 case set 을 loaded 에 attach (best-effort).
+
+    Why: VAE 화면(점수 분포·요약·ROC·전표 목록)은 전부 ``phase2_case_set`` 을 읽는데,
+         이 값은 in-memory 에만 있었다. 앱을 재시작하면 case 는 디스크에 남아 있는데도
+         화면이 비어 "Phase 2 를 다시 돌려야" 하는 상태가 됐다(2026-07-25). overlay 와
+         같은 자리에서 복원해 재실행 없이 저장된 결과를 그대로 본다.
+    """
+    from src.services.phase2_case_store import CaseStoreStatus, load_phase2_case_set
+
+    if getattr(loaded, "phase2_case_set", None) is not None or not batch_id:
+        return
+
+    from dashboard._state import KEY_COMPANY_CONTEXT
+
+    ctx = state.get(KEY_COMPANY_CONTEXT)
+    if ctx is None:
+        return
+    result = load_phase2_case_set(ctx=ctx, batch_id=batch_id)
+    _set_loaded_attr(loaded, "phase2_case_store_status", result.status)
+    if result.status == CaseStoreStatus.LOAD_SUCCESS and result.case_set is not None:
+        _set_loaded_attr(loaded, "phase2_case_set", result.case_set)
 
 
 def _attach_persisted_phase2_overlays(
