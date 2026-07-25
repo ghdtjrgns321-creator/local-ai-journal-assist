@@ -1098,8 +1098,18 @@ def _build_d01_macro_findings(
                 "business_event_type": finding.get("business_event_type"),
                 "precision_policy": finding.get("precision_policy"),
                 "metrics": {
+                    # Why: 감사인이 읽는 표(전기 비교 > 계정과목 변동)는 가중치가 아니라
+                    #      금액·건수·평균의 당기/전기 원값을 그대로 보여준다. 파생 var 만
+                    #      실어 보내면 화면에서 "왜 걸렸는지"를 복원할 수 없다.
+                    "reason": finding.get("reason"),
                     "current_total_amount": finding.get("current_total_amount"),
                     "prior_total_amount": finding.get("prior_total_amount"),
+                    "current_count": finding.get("current_count"),
+                    "prior_count": finding.get("prior_count"),
+                    "current_avg_amount": finding.get("current_avg_amount"),
+                    "prior_avg_amount": finding.get("prior_avg_amount"),
+                    # 목록 정렬 키. 화면의 "변동액" 컬럼이 곧 정렬 근거가 되도록 함께 싣는다.
+                    "amount_delta": finding.get("amount_delta"),
                     "total_var": finding.get("total_var"),
                     "count_var": finding.get("count_var"),
                     "avg_var": finding.get("avg_var"),
@@ -1116,13 +1126,23 @@ def _build_d01_macro_findings(
     return rows
 
 
+# 분포를 비교할 수 없어 목록에서 빼는 사유. 신호 강도 컷이 아니라 계산 성립 요건이다.
+_D02_NOT_COMPARABLE = frozenset({"insufficient_prior_months", "insufficient_current_months"})
+
+
 def _build_d02_macro_findings(
     track_name: str,
     metadata: dict[str, Any],
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for ordinal, finding in enumerate(metadata.get("d02_account_diagnostics", []) or [], start=1):
-        if not isinstance(finding, dict) or not bool(finding.get("flagged", False)):
+        if not isinstance(finding, dict):
+            continue
+        # 2026-07-25: flagged(=JSD 0.3·비중변화 0.25·전표 100건 컷 통과) 필터 폐지.
+        # 남기는 기준은 "월별 분포를 비교할 수 있느냐" 하나뿐 — 거래월이 한두 달이면
+        # 분포라는 말 자체가 성립하지 않는다. 금액·전표수 하한처럼 근거 없는 컷은 뺐고,
+        # 우선순위는 변화폭 정렬이 표현한다.
+        if str(finding.get("skip_reason") or "") in _D02_NOT_COMPARABLE:
             continue
         priority_score = _d02_macro_priority_score(finding)
         queue_bucket = _d02_queue_bucket(finding)
@@ -3615,6 +3635,15 @@ def _collect_case_hits(indices: list[int], hits_by_row: dict[int, list[_RawHit]]
     return collected
 
 
+# macro finding 을 전표 case 에 문맥으로 붙이는 대상 룰.
+#
+# 2026-07-25 이후 비어 있다. GR01/GR03 은 2026-06-21 에 graph family 삭제로 빠졌고,
+# L4-02(Benford)는 부착 시 broad fan-out OOM 이라 애초에 제외였으며, 마지막 남아 있던
+# D01/D02 를 이번에 뺐다 — 부착 여부를 가르려면 근거 없는 임계가 필요해서다(_MACRO_BADGE_MAP
+# 주석 참조). 비어 있는 동안 아래 함수들은 항상 빈 목록을 돌려준다.
+_MACRO_CONTEXT_RULES: frozenset[str] = frozenset()
+
+
 def _case_macro_contexts(
     rows: pd.DataFrame,
     macro_findings: list[dict[str, Any]],
@@ -3645,8 +3674,7 @@ def _case_macro_contexts(
     seen: set[str] = set()
     for finding in macro_findings:
         rule_id = str(finding.get("rule_id") or "")
-        # GR01/GR03 제거(2026-06-21): graph macro finding 미생성이라 D01/D02 만 macro_context 부착.
-        if rule_id not in {"D01", "D02"}:
+        if rule_id not in _MACRO_CONTEXT_RULES:
             continue
         macro_year = _macro_key_part(finding.get("fiscal_year"))
         macro_company = _macro_key_part(finding.get("company_code"))
@@ -3704,9 +3732,7 @@ def _build_macro_context_index(macro_findings: list[dict[str, Any]]) -> dict[str
     by_account: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for finding in macro_findings:
         rule_id = str(finding.get("rule_id") or "")
-        # macro_context 부착 대상은 D01/D02 만 (2026-06-14): GR01/GR03 제거(PHASE2 family),
-        # L4-02(Benford)는 모집단 신호로 거래 case 부착 제외(부착 시 broad fan-out OOM).
-        if rule_id not in {"D01", "D02"}:
+        if rule_id not in _MACRO_CONTEXT_RULES:
             continue
         macro_account = _macro_key_part(finding.get("gl_account"))
         if not macro_account:
@@ -4872,11 +4898,14 @@ _RULE_BADGE_MAP: dict[str, str] = {
 }
 
 # macro finding(모집단 자기 큐) → 전표 맥락 배지. 전표를 부정으로 확정하지 않고 "이상 계정 소속"만 표시.
+#
+# D01/D02 제외(2026-07-25): 두 신호는 계정 단위 순위 목록으로만 쓰고 전표에는 꼬리표를 달지
+# 않는다. 붙이려면 "어느 계정부터 꼬리표인가"를 가르는 임계가 필요한데, 그 임계(가중변동
+# 0.5·JSD 0.3 등)에 근거가 없었다. 임계를 없애면 전 계정이 대상이 되어 꼬리표가 무의미해지므로,
+# 임계와 꼬리표를 함께 버리고 목록은 정렬로 우선순위를 표현한다.
 _MACRO_BADGE_MAP: dict[str, str] = {
     "L4-02": "benford_account",
     "ROUND-DENSITY": "round_density_account",
-    "D01": "account_activity_shift",
-    "D02": "ratio_variance_account",
 }
 
 

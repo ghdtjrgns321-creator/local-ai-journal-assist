@@ -18,6 +18,7 @@ from src.detection.prior_data_loader import PriorSummary
 from src.detection.variance_rules import (
     _lookup_prior_account,
     _normalise_key_part,
+    _valid_account_mask,
     d01_account_activity_variance,
     d02_monthly_pattern_diagnostics,
 )
@@ -228,13 +229,22 @@ class VarianceDetector(BaseDetector):
         df: pd.DataFrame,
         flagged: pd.Series,
     ) -> list[dict[str, object]]:
-        """Build account-level D01 review metadata without row-level scoring."""
-        if flagged.empty or not flagged.any():
-            return []
+        """Build account-level D01 review metadata without row-level scoring.
 
-        review_df = df.loc[flagged].copy()
-        if review_df.empty:
+        전기와 비교 가능한 **모든 계정**을 담고 변동 금액 절대값 내림차순으로 정렬한다
+        (2026-07-25). 이전에는 가중변동 > 0.5 인 계정만 남겼는데, 그 0.5 도 가중치
+        0.5/0.3/0.2 도 근거가 없었다. 목록을 자르는 대신 순위로 우선순위를 표현하고,
+        어디서 끊을지는 감사인이 금액을 보고 정한다. ``flagged`` 는 행 마스크 전용으로
+        남아 이 목록의 범위에 관여하지 않는다.
+        """
+        if df.empty:
             return []
+        del flagged  # 목록은 임계로 자르지 않는다 — 마스크는 행 플래그 쪽에서만 쓴다.
+
+        valid_accounts = _valid_account_mask(df["gl_account"]) if "gl_account" in df else None
+        if valid_accounts is None or not valid_accounts.any():
+            return []
+        review_df = df.loc[valid_accounts].copy()
 
         amount = review_df[["debit_amount", "credit_amount"]].fillna(0).sum(axis=1)
         has_company_code = "company_code" in review_df.columns
@@ -270,6 +280,8 @@ class VarianceDetector(BaseDetector):
                         "prior_total_amount": None,
                         "prior_count": None,
                         "prior_avg_amount": None,
+                        # 전기가 없으므로 변동 금액은 당기 전액 = 통째로 새로 생긴 활동.
+                        "amount_delta": float(current["total_amount"]),
                         "total_var": None,
                         "count_var": None,
                         "avg_var": None,
@@ -296,6 +308,7 @@ class VarianceDetector(BaseDetector):
                     "prior_total_amount": float(prior["total_amount"]),
                     "prior_count": int(prior["count"]),
                     "prior_avg_amount": float(prior["avg_amount"]),
+                    "amount_delta": float(current["total_amount"] - prior["total_amount"]),
                     "total_var": float(total_var),
                     "count_var": float(count_var),
                     "avg_var": float(avg_var),
@@ -303,7 +316,9 @@ class VarianceDetector(BaseDetector):
                 }
             )
 
-        rows.sort(key=lambda item: float(item["weighted_variance"]), reverse=True)
+        # 정렬 = 변동 금액 절대값. 감사 플럭스 분석 실무 그대로이며, 관찰값을 그대로 쓰므로
+        # "왜 이 계정이 위인가"가 표의 금액 두 칸으로 바로 설명된다.
+        rows.sort(key=lambda item: abs(float(item["amount_delta"] or 0.0)), reverse=True)
         return rows
 
     def _calculate_d02_account_diagnostics(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -357,11 +372,17 @@ class VarianceDetector(BaseDetector):
         self,
         diagnostics: pd.DataFrame | None,
     ) -> list[dict[str, object]]:
-        """Build compact account-level D02 evidence for review and tuning."""
+        """Build compact account-level D02 evidence for review and tuning.
+
+        정렬 = 가장 몰린 달의 비중 변화폭(top_month_delta) 내림차순 (2026-07-25).
+        구 정렬(flagged → JSD)은 JSD 0.3·비중변화 0.25·전표 100건 같은 근거 없는 컷을
+        먼저 통과한 계정만 위로 올렸다. 이제 컷 없이 전 계정을 변화폭 순으로 세우고,
+        ``flagged`` 는 행 마스크 판정으로만 남긴다.
+        """
         if diagnostics is None or diagnostics.empty:
             return []
 
-        compact = diagnostics.sort_values(["flagged", "jsd"], ascending=[False, False])
+        compact = diagnostics.sort_values("top_month_delta", ascending=False)
         return compact.to_dict(orient="records")
 
     def _empty_result(

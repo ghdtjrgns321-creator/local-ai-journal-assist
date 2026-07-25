@@ -15,12 +15,14 @@ from src.detection.variance_layer import VarianceDetector
 @pytest.fixture
 def sample_df() -> pd.DataFrame:
     """12건 — 계정 1000(8건, 1~8월), 계정 2000(4건, 1~4월)."""
-    return pd.DataFrame({
-        "gl_account": ["1000"] * 8 + ["2000"] * 4,
-        "debit_amount": [100.0] * 12,
-        "credit_amount": [0.0] * 12,
-        "fiscal_period": [1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4],
-    })
+    return pd.DataFrame(
+        {
+            "gl_account": ["1000"] * 8 + ["2000"] * 4,
+            "debit_amount": [100.0] * 12,
+            "credit_amount": [0.0] * 12,
+            "fiscal_period": [1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4],
+        }
+    )
 
 
 @pytest.fixture
@@ -106,13 +108,15 @@ class TestVarianceDetectorBasic:
 
     def test_d01_metadata_keeps_company_account_pairs(self):
         """company_code가 있으면 D01 review metadata도 회사별 계정 단위다."""
-        df = pd.DataFrame({
-            "company_code": ["C001", "C001", "C002", "C002"],
-            "gl_account": ["1000", "1000", "1000", "1000"],
-            "debit_amount": [500.0, 500.0, 100.0, 100.0],
-            "credit_amount": [0.0, 0.0, 0.0, 0.0],
-            "fiscal_period": [1, 2, 1, 2],
-        })
+        df = pd.DataFrame(
+            {
+                "company_code": ["C001", "C001", "C002", "C002"],
+                "gl_account": ["1000", "1000", "1000", "1000"],
+                "debit_amount": [500.0, 500.0, 100.0, 100.0],
+                "credit_amount": [0.0, 0.0, 0.0, 0.0],
+                "fiscal_period": [1, 2, 1, 2],
+            }
+        )
         prior = PriorSummary(
             account_aggregates={
                 "C001::1000": {"total_amount": 100.0, "count": 1, "avg_amount": 100.0},
@@ -126,10 +130,20 @@ class TestVarianceDetectorBasic:
 
         result = detector.detect(df)
 
-        assert result.metadata["d01_review_account_count"] == 1
+        # 목록은 전기와 비교 가능한 계정을 전부 담는다(2026-07-25 임계 폐지).
+        # 같은 계정코드 1000 이라도 회사가 다르면 별개 단위라 두 줄이 나온다.
+        summary = result.metadata["account_activity_variance"]
+        assert result.metadata["d01_review_account_count"] == 2
+        assert {(item["company_code"], item["gl_account"]) for item in summary} == {
+            ("C001", "1000"),
+            ("C002", "1000"),
+        }
+        # 정렬은 변동 금액 절대값 — C001 은 100 → 1,000(+900), C002 는 200 → 200(0).
+        assert summary[0]["company_code"] == "C001"
+        assert summary[0]["amount_delta"] == 900.0
+        assert summary[1]["amount_delta"] == 0.0
+        # 행 마스크는 임계를 그대로 쓰므로 검토 행 수는 C001 의 2 행뿐이다.
         assert result.metadata["d01_review_row_count"] == 2
-        assert result.metadata["account_activity_variance"][0]["company_code"] == "C001"
-        assert result.metadata["account_activity_variance"][0]["gl_account"] == "1000"
 
 
 class TestVarianceDetectorEdgeCases:
@@ -169,12 +183,14 @@ class TestVarianceDetectorEdgeCases:
             prior_total_rows=12,
             prior_fiscal_year=2024,
         )
-        df = pd.DataFrame({
-            "gl_account": ["1000"] * 120,
-            "debit_amount": [10.0] * 110 + [500.0] * 10,
-            "credit_amount": [0.0] * 120,
-            "fiscal_period": ([1] * 110) + ([12] * 10),
-        })
+        df = pd.DataFrame(
+            {
+                "gl_account": ["1000"] * 120,
+                "debit_amount": [10.0] * 110 + [500.0] * 10,
+                "credit_amount": [0.0] * 120,
+                "fiscal_period": ([1] * 110) + ([12] * 10),
+            }
+        )
         detector = VarianceDetector(
             settings=AuditSettings(
                 d02_min_account_docs=1,
@@ -200,14 +216,16 @@ class TestVarianceDetectorEdgeCases:
             account = str(1000 + idx)
             monthly_patterns[f"C001::{account}"] = {month: 1 / 12 for month in range(1, 13)}
             for month in range(1, 13):
-                rows.append({
-                    "company_code": "C001",
-                    "gl_account": account,
-                    "document_id": f"D{idx}-{month}",
-                    "debit_amount": 500.0 if month == 12 else 10.0,
-                    "credit_amount": 0.0,
-                    "fiscal_period": month,
-                })
+                rows.append(
+                    {
+                        "company_code": "C001",
+                        "gl_account": account,
+                        "document_id": f"D{idx}-{month}",
+                        "debit_amount": 500.0 if month == 12 else 10.0,
+                        "credit_amount": 0.0,
+                        "fiscal_period": month,
+                    }
+                )
         df = pd.DataFrame(rows)
         prior = PriorSummary(
             account_aggregates={},
@@ -225,10 +243,7 @@ class TestVarianceDetectorEdgeCases:
         )
 
         result = detector.detect(df)
-        flagged = [
-            item for item in result.metadata["d02_account_diagnostics"]
-            if item["flagged"]
-        ]
+        flagged = [item for item in result.metadata["d02_account_diagnostics"] if item["flagged"]]
 
         assert len(flagged) == group_count
 
@@ -260,9 +275,7 @@ class TestVarianceDetectorEdgeCases:
             "gl_account",
         ]
 
-    def test_result_scores_shape(
-        self, sample_df: pd.DataFrame, prior_summary_normal: PriorSummary
-    ):
+    def test_result_scores_shape(self, sample_df: pd.DataFrame, prior_summary_normal: PriorSummary):
         """결과 scores의 index가 원본 DataFrame과 일치."""
         detector = VarianceDetector(prior_summary=prior_summary_normal)
         result = detector.detect(sample_df)

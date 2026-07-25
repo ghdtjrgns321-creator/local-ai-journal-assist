@@ -892,9 +892,13 @@ def test_l406_alone_does_not_create_high_priority_case():
     assert result.cases == []
 
 
-def test_l402_benford_not_attached_to_transaction_cases():
-    # #20② 재판정 — L4-02(Benford)는 모집단 신호로 거래 case 부착 제외(by_account 미포함).
-    # Benford detector 가 위반 문서 목록을 안 만들어 broad 부착 시 OOM 유발 → macro 큐에만 표면화.
+def test_macro_findings_are_not_attached_to_transaction_cases():
+    """어떤 macro finding 도 거래 case 에 문맥으로 붙지 않는다 (2026-07-25).
+
+    L4-02(Benford)는 위반 문서 목록이 없어 broad 부착 시 OOM 이라 예전부터 제외였고,
+    마지막까지 붙던 D01/D02 는 이번에 뺐다 — 부착 여부를 가르려면 근거 없는 임계
+    (가중변동 0.5·JSD 0.3)가 필요했기 때문이다. 두 신호는 계정 단위 순위 목록으로만 쓴다.
+    """
     findings = [
         {"rule_id": "L4-02", "gl_account": "8010", "finding_id": "L4-02:0001"},
         {
@@ -903,10 +907,11 @@ def test_l402_benford_not_attached_to_transaction_cases():
             "finding_id": "D01:0001",
             "queue_bucket": "confirmed_account_shift",
         },
+        {"rule_id": "D02", "gl_account": "2600", "finding_id": "D02:0001"},
     ]
     index = _build_macro_context_index(findings)
-    assert "8010" not in index["by_account"], "L4-02 Benford 가 거래 case 에 부착되면 안 됨"
-    assert "1190" in index["by_account"], "D01 은 타깃 단위라 부착 유지"
+    assert index["by_account"] == {}, "macro finding 이 거래 case 에 부착되면 안 됨"
+    assert index["by_doc"] == {}
 
 
 def test_macro_only_evidences_score_by_scoring_effect():

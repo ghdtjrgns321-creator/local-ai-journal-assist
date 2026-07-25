@@ -3467,10 +3467,11 @@ _BADGE_LABELS_KR: dict[str, str] = {
     "manual_period_end": "기말 수기전표",
     "sensitive_account_touch": "민감계정 접촉",
     # 분석적 검토 자기 큐 → 전표 맥락 배지("이상 계정 소속", 점수 비병합)
+    # D01(계정활동 급변)·D02(비율 변동 계정)는 2026-07-25 에 배지에서 빠졌다. 배지를 달려면
+    # "어느 계정부터 배지인가"를 가르는 임계가 필요한데, 근거 없는 그 임계를 폐지했기 때문이다.
+    # 두 신호는 전기 비교 탭의 계정 단위 순위 목록으로만 쓴다.
     "benford_account": "Benford 이상 계정",
     "round_density_account": "라운드넘버 밀집 계정",
-    "account_activity_shift": "계정활동 급변",
-    "ratio_variance_account": "비율 변동 계정",
 }
 
 
@@ -3811,7 +3812,6 @@ def _label_leak_status(data: pd.DataFrame) -> tuple[str, str]:
 
 _LAYER_D_RULES = {"D01", "D02"}
 
-
 # Why: L4-02·D01·D02 는 계정 단위 macro finding 이라 전표 case 로 집계되지 않는다
 #      (phase1_case_builder._MACRO_FINDING_RULES 에서 raw_rule_hits 생성 제외).
 #      전표 건수로 세면 실행 여부와 무관하게 항상 0 이 되어 "미발화"·"스킵" 이
@@ -3881,6 +3881,7 @@ def _macro_rule_status(
     count = macro_counts.get(rule_id, 0)
     return ("generated" if count > 0 else "no_match"), count, ""
 
+
 def _phase1_rule_audit(pr) -> dict[str, Any]:
     """전체 33개 룰을 한 리스트로 반환 — 룰별 status/count 부여."""
     target = list(_PHASE1_RULE_IDS)
@@ -3888,9 +3889,9 @@ def _phase1_rule_audit(pr) -> dict[str, Any]:
     case_counts_available = resolve_phase1_case_result(pr) is not None
     generated_counts = {} if case_counts_available else _generated_rule_counts(pr)
     skipped = set(_skipped_rule_ids(pr))
-
     macro_counts = _macro_finding_counts(pr)
     macro_states = _macro_rule_states(pr)
+
     rules: list[dict[str, Any]] = []
     for rule_id in target:
         skip_reason = ""
@@ -3914,10 +3915,10 @@ def _phase1_rule_audit(pr) -> dict[str, Any]:
                 "name_kr": _RULE_NAMES_KR.get(rule_id) or RULE_CODES.get(rule_id, "Unknown Rule"),
                 "status": status,
                 "flag_count": int(count),
-            }
                 "count_unit": "계정" if rule_id in _MACRO_RULE_TRACKS else "건",
                 "verdict_labels": _MACRO_RULE_VERDICT_LABELS.get(rule_id),
                 "skip_reason": skip_reason,
+            }
         )
     return {
         "target_count": len(target),
