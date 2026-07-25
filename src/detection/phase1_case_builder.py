@@ -16,7 +16,7 @@ from typing import Any
 
 import pandas as pd
 
-from config.settings import PROJECT_ROOT, AuditSettings
+from config.settings import AuditSettings
 from src.detection.base import DetectionResult
 from src.detection.boolean_utils import bool_column, coerce_bool_value
 from src.detection.constants import SEVERITY_MAP, TOPSIDE_BONUS_RULES
@@ -587,20 +587,19 @@ def build_phase1_case_run_id(
     return f"phase1case_default_{timestamp}"
 
 
-def phase1_case_artifact_path(company_id: str, run_id: str) -> Path:
-    return PROJECT_ROOT / "artifacts" / "phase1_cases" / company_id / f"{run_id}.json"
-
-
-def save_phase1_case_result(result: Phase1CaseResult) -> Path:
-    path = phase1_case_artifact_path(result.company_id, result.run_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(result.model_dump_json(indent=2), encoding="utf-8")
-    return path
-
-
-def load_phase1_case_result(path: str | Path) -> Phase1CaseResult:
-    artifact_path = Path(path)
-    return Phase1CaseResult.model_validate_json(artifact_path.read_text(encoding="utf-8"))
+# Why: 저장·로드·경로 세 함수가 여기와 phase1_case_artifacts 에 각각 구현돼 있었다.
+#      로드 경로에 구버전 키 제거 같은 처리를 넣으면 어느 쪽을 import 했느냐에 따라
+#      동작이 갈린다(대시보드는 이 모듈을, export 는 저쪽을 쓴다). 구현은 artifacts
+#      모듈 하나로 두고 여기서는 이름만 다시 내보낸다.
+from src.detection.phase1_case_artifacts import (  # noqa: E402
+    load_phase1_case_result as load_phase1_case_result,
+)
+from src.detection.phase1_case_artifacts import (  # noqa: E402
+    phase1_case_artifact_path as phase1_case_artifact_path,
+)
+from src.detection.phase1_case_artifacts import (  # noqa: E402
+    save_phase1_case_result as save_phase1_case_result,
+)
 
 
 def build_phase1_case_result(
@@ -865,7 +864,7 @@ def _build_round_density_macro_findings(
                 "scope": axis,
                 "group_key": group_key,
                 # Why: 계정 축 finding 만 gl_account 로 노출 — 월/작성자 축을 계정으로 오인하면
-                #      case 의 macro_context 가 엉뚱한 계정에 붙는다.
+                #      전표 배지가 엉뚱한 계정에 붙는다.
                 "gl_account": group_key if axis == "gl_account" else None,
                 "sample_size": int(finding.get("sample_size", 0)),
                 "review_score": float(finding.get("excess", 0.0)),
@@ -1566,8 +1565,6 @@ def _build_cases(
     line_amounts = _line_amount_series(df)
     document_amounts = _document_amounts_by_id(df, line_amounts)
     document_ref_columns = _document_ref_columns(df, config)
-    macro_index = _build_macro_context_index(macro_findings or [])
-    macro_row_context = _build_macro_row_context(df)
     audit_context = _build_audit_evidence_context(df)
     if profile_callback is not None:
         profile_callback(
@@ -1757,19 +1754,6 @@ def _build_cases(
         loop_timings["priority_adjust"] += time.perf_counter() - segment_start
 
         segment_start = time.perf_counter()
-        macro_contexts = _case_macro_contexts(
-            rows,
-            macro_findings or [],
-            indices=indices,
-            macro_index=macro_index,
-            macro_row_context=macro_row_context,
-        )
-        # macro(D01/D02/L4-02·Benford)는 PHASE1-1 점수경로에서 제외(2026-06-15, PHASE1-2 귀속).
-        # case_hits 만으로 topic score/tier 산출. macro_contexts 는 _macro_context_tags 로 별도
-        # 표시 surface 에만 반영, priority_score 에는 가산하지 않는다.
-        loop_timings["macro_context"] += time.perf_counter() - segment_start
-
-        segment_start = time.perf_counter()
         topic_breakdowns = compute_topic_scores(case_hits, return_breakdown=True)
         # tier 자동 등급 폐지(PHASE1_COMBO_BUILDER_SPEC §6) — LOW/CONTEXT standalone 게이트만.
         topic_tiers = compute_topic_tiers(case_hits, breakdowns=topic_breakdowns)
@@ -1928,10 +1912,8 @@ def _build_cases(
                     {
                         *evidence_types,
                         *secondary_tags,
-                        *(_macro_context_tags(macro_contexts)),
                     }
                 ),
-                macro_contexts=macro_contexts,
                 documents=documents,
                 raw_rule_hits=raw_rule_hits,
                 has_control_failure="control_failure" in evidence_types,
@@ -3633,296 +3615,6 @@ def _collect_case_hits(indices: list[int], hits_by_row: dict[int, list[_RawHit]]
             seen.add(key)
             collected.append(hit)
     return collected
-
-
-# macro finding 을 전표 case 에 문맥으로 붙이는 대상 룰.
-#
-# 2026-07-25 이후 비어 있다. GR01/GR03 은 2026-06-21 에 graph family 삭제로 빠졌고,
-# L4-02(Benford)는 부착 시 broad fan-out OOM 이라 애초에 제외였으며, 마지막 남아 있던
-# D01/D02 를 이번에 뺐다 — 부착 여부를 가르려면 근거 없는 임계가 필요해서다(_MACRO_BADGE_MAP
-# 주석 참조). 비어 있는 동안 아래 함수들은 항상 빈 목록을 돌려준다.
-_MACRO_CONTEXT_RULES: frozenset[str] = frozenset()
-
-
-def _case_macro_contexts(
-    rows: pd.DataFrame,
-    macro_findings: list[dict[str, Any]],
-    *,
-    indices: list[int] | None = None,
-    macro_index: dict[str, Any] | None = None,
-    macro_row_context: dict[str, list[str]] | None = None,
-) -> list[dict[str, Any]]:
-    if rows.empty or not macro_findings or "gl_account" not in rows.columns:
-        return []
-    if indices is not None and macro_index is not None and macro_row_context is not None:
-        return _case_macro_contexts_from_index(indices, macro_index, macro_row_context)
-
-    row_document_ids = {
-        _string_value(value)
-        for value in rows.get("document_id", pd.Series(dtype=object)).tolist()
-        if _string_value(value)
-    }
-    row_keys = {
-        (
-            _macro_key_part(row.get("fiscal_year")),
-            _macro_key_part(row.get("company_code")),
-            _macro_key_part(row.get("gl_account")),
-        )
-        for _, row in rows.iterrows()
-    }
-    contexts: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for finding in macro_findings:
-        rule_id = str(finding.get("rule_id") or "")
-        if rule_id not in _MACRO_CONTEXT_RULES:
-            continue
-        macro_year = _macro_key_part(finding.get("fiscal_year"))
-        macro_company = _macro_key_part(finding.get("company_code"))
-        macro_account = _macro_key_part(finding.get("gl_account"))
-        finding_document_ids = {
-            _string_value(value)
-            for value in finding.get("document_ids", []) or []
-            if _string_value(value)
-        }
-        if not macro_account:
-            continue
-        if finding_document_ids and row_document_ids.intersection(finding_document_ids):
-            matched = True
-        else:
-            matched = any(
-                _macro_key_matches(
-                    row_key,
-                    (macro_year, macro_company, macro_account),
-                )
-                for row_key in row_keys
-            )
-        if not matched:
-            continue
-        context_id = str(finding.get("finding_id") or f"{rule_id}:{macro_account}")
-        if context_id in seen:
-            continue
-        seen.add(context_id)
-        contexts.append(
-            {
-                "finding_id": context_id,
-                "rule_id": rule_id,
-                "queue_bucket": finding.get("queue_bucket"),
-                "macro_priority_score": finding.get("macro_priority_score"),
-                "normal_likelihood": finding.get("normal_likelihood"),
-                "company_code": finding.get("company_code"),
-                "gl_account": finding.get("gl_account"),
-                "fiscal_year": finding.get("fiscal_year"),
-                "review_score": finding.get("review_score"),
-                "candidate_documents": finding.get("candidate_documents"),
-                "scoring_effect": _macro_context_scoring_effect(finding),
-            }
-        )
-    contexts.sort(
-        key=lambda item: (
-            float(item.get("macro_priority_score") or 0.0),
-            str(item.get("rule_id") or ""),
-        ),
-        reverse=True,
-    )
-    return contexts
-
-
-def _build_macro_context_index(macro_findings: list[dict[str, Any]]) -> dict[str, Any]:
-    by_doc: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    by_account: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for finding in macro_findings:
-        rule_id = str(finding.get("rule_id") or "")
-        if rule_id not in _MACRO_CONTEXT_RULES:
-            continue
-        macro_account = _macro_key_part(finding.get("gl_account"))
-        if not macro_account:
-            continue
-        context = _macro_context_from_finding(finding, rule_id, macro_account)
-        for value in finding.get("document_ids", []) or []:
-            document_id = _string_value(value)
-            if document_id:
-                by_doc[document_id].append(context)
-        by_account[macro_account].append(context)
-    return {"by_doc": by_doc, "by_account": by_account}
-
-
-def _build_macro_row_context(df: pd.DataFrame) -> dict[str, list[str]]:
-    def _column_values(column: str) -> list[str]:
-        if column not in df.columns:
-            return [""] * len(df)
-        return [_macro_key_part(value) for value in df[column].tolist()]
-
-    document_ids = (
-        [_string_value(value) for value in df["document_id"].tolist()]
-        if "document_id" in df.columns
-        else [""] * len(df)
-    )
-    return {
-        "document_id": document_ids,
-        "year": _column_values("fiscal_year"),
-        "company": _column_values("company_code"),
-        "account": _column_values("gl_account"),
-    }
-
-
-def _case_macro_contexts_from_index(
-    indices: list[int],
-    macro_index: dict[str, Any],
-    macro_row_context: dict[str, list[str]],
-) -> list[dict[str, Any]]:
-    by_doc = macro_index.get("by_doc", {})
-    by_account = macro_index.get("by_account", {})
-    documents = macro_row_context["document_id"]
-    years = macro_row_context["year"]
-    companies = macro_row_context["company"]
-    accounts = macro_row_context["account"]
-
-    contexts: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for row_index in indices:
-        document_id = documents[row_index]
-        if document_id:
-            _append_macro_contexts(contexts, seen, by_doc.get(document_id, ()))
-        row_key = (years[row_index], companies[row_index], accounts[row_index])
-        if row_key[2]:
-            for context in by_account.get(row_key[2], ()):
-                macro_key = (
-                    str(context.get("_macro_year") or ""),
-                    str(context.get("_macro_company") or ""),
-                    str(context.get("_macro_account") or ""),
-                )
-                if _macro_key_matches(row_key, macro_key):
-                    _append_macro_contexts(contexts, seen, (context,))
-    contexts.sort(
-        key=lambda item: (
-            float(item.get("macro_priority_score") or 0.0),
-            str(item.get("rule_id") or ""),
-        ),
-        reverse=True,
-    )
-    return [_public_macro_context(context) for context in contexts]
-
-
-def _append_macro_contexts(
-    contexts: list[dict[str, Any]],
-    seen: set[str],
-    candidates,
-) -> None:
-    for context in candidates:
-        context_id = str(context.get("finding_id") or "")
-        if context_id in seen:
-            continue
-        seen.add(context_id)
-        contexts.append(context)
-
-
-def _macro_context_from_finding(
-    finding: dict[str, Any],
-    rule_id: str,
-    macro_account: str,
-) -> dict[str, Any]:
-    context_id = str(finding.get("finding_id") or f"{rule_id}:{macro_account}")
-    return {
-        "finding_id": context_id,
-        "rule_id": rule_id,
-        "queue_bucket": finding.get("queue_bucket"),
-        "macro_priority_score": finding.get("macro_priority_score"),
-        "normal_likelihood": finding.get("normal_likelihood"),
-        "company_code": finding.get("company_code"),
-        "gl_account": finding.get("gl_account"),
-        "fiscal_year": finding.get("fiscal_year"),
-        "review_score": finding.get("review_score"),
-        "candidate_documents": finding.get("candidate_documents"),
-        "scoring_effect": _macro_context_scoring_effect(finding),
-        "_macro_year": _macro_key_part(finding.get("fiscal_year")),
-        "_macro_company": _macro_key_part(finding.get("company_code")),
-        "_macro_account": macro_account,
-    }
-
-
-def _public_macro_context(context: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in context.items() if not str(key).startswith("_macro_")}
-
-
-def _macro_key_matches(
-    row_key: tuple[str, str, str],
-    macro_key: tuple[str, str, str],
-) -> bool:
-    row_year, row_company, row_account = row_key
-    macro_year, macro_company, macro_account = macro_key
-    if macro_account and row_account != macro_account:
-        return False
-    if macro_company and row_company != macro_company:
-        return False
-    if macro_year and row_year != macro_year:
-        return False
-    return True
-
-
-def _macro_key_part(value: Any) -> str:
-    text = _string_value(value)
-    if not text:
-        return ""
-    try:
-        numeric = float(text)
-    except ValueError:
-        return text
-    if numeric.is_integer():
-        return str(int(numeric))
-    return text
-
-
-def _macro_context_scoring_effect(finding: dict[str, Any]) -> str:
-    bucket = str(finding.get("queue_bucket") or "")
-    if bucket.startswith("confirmed_"):
-        return "priority_booster"
-    if bucket.startswith("corroborated_"):
-        return "weak_priority_booster"
-    return "context_only"
-
-
-# Why: #20① — macro_context 의 scoring_effect 를 topic_scoring macro_context_score 의
-# normalized_score 로 환산. confirmed=1.0(full), corroborated=0.67(weak), context_only=0
-# (정보성 부착만). 가중치 0.03 과 곱해져 최대 기여 0.03 으로 bounded — macro 단독 seed 불가.
-_MACRO_SCORING_EFFECT_SCORE: dict[str, float] = {
-    "priority_booster": 1.0,
-    "weak_priority_booster": 0.67,
-}
-
-
-def _macro_only_evidences(macro_contexts: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """macro_context 를 compute_topic_scores 용 macro_only evidence 로 변환 (#20①).
-
-    final_topic/secondary/standalone_rankable 은 RULE_SCORING_REGISTRY 에서 해소되도록
-    rule_id 만 넘긴다. score 0(context_only) evidence 도 포함 — circular 콤보의 graph_cycle
-    감지(#20③)가 점수 무관하게 GR01/GR03 존재를 보게 하기 위함.
-    """
-    evidences: list[dict[str, Any]] = []
-    for context in macro_contexts:
-        rule_id = str(context.get("rule_id") or "")
-        if not rule_id:
-            continue
-        score = _MACRO_SCORING_EFFECT_SCORE.get(str(context.get("scoring_effect") or ""), 0.0)
-        evidences.append(
-            {
-                "rule_id": rule_id,
-                "scoring_role": "macro_only",
-                "normalized_score": score,
-            }
-        )
-    return evidences
-
-
-def _macro_context_tags(macro_contexts: list[dict[str, Any]]) -> set[str]:
-    tags: set[str] = set()
-    for context in macro_contexts:
-        rule_id = str(context.get("rule_id") or "").lower()
-        bucket = str(context.get("queue_bucket") or "").lower()
-        if rule_id:
-            tags.add(f"{rule_id}_macro_context")
-        if bucket:
-            tags.add(bucket)
-    return tags
 
 
 def _secondary_tags(

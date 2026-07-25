@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -7,11 +8,10 @@ from types import SimpleNamespace
 
 import pandas as pd
 import pytest
+from pydantic import ValidationError
 
 from src.detection.base import DetectionResult, RuleFlag
 from src.detection.phase1_case_builder import (
-    _build_macro_context_index,
-    _macro_only_evidences,
     build_phase1_case_reference,
     build_phase1_case_result,
     build_phase1_case_run_id,
@@ -25,6 +25,7 @@ from src.detection.rule_scoring import (
     normalize_rule_evidence,
 )
 from src.export.phase1_case_view import build_phase1_topic_top_n
+from src.models.phase1_case import CaseGroupResult
 
 
 def _make_detection_result(df: pd.DataFrame) -> DetectionResult:
@@ -892,40 +893,47 @@ def test_l406_alone_does_not_create_high_priority_case():
     assert result.cases == []
 
 
-def test_macro_findings_are_not_attached_to_transaction_cases():
-    """어떤 macro finding 도 거래 case 에 문맥으로 붙지 않는다 (2026-07-25).
+def test_case_model_rejects_removed_macro_contexts_field():
+    """macro_contexts 는 case 모델에서 사라졌다 (2026-07-25).
 
-    L4-02(Benford)는 위반 문서 목록이 없어 broad 부착 시 OOM 이라 예전부터 제외였고,
-    마지막까지 붙던 D01/D02 는 이번에 뺐다 — 부착 여부를 가르려면 근거 없는 임계
-    (가중변동 0.5·JSD 0.3)가 필요했기 때문이다. 두 신호는 계정 단위 순위 목록으로만 쓴다.
+    D01/D02 꼬리표 폐지로 이 필드를 채우는 공급자가 없어져 배관째 걷어냈다.
+    extra="forbid" 모델이라 필드가 남아 있으면 곧바로 거부되어야 한다.
     """
-    findings = [
-        {"rule_id": "L4-02", "gl_account": "8010", "finding_id": "L4-02:0001"},
-        {
-            "rule_id": "D01",
-            "gl_account": "1190",
-            "finding_id": "D01:0001",
-            "queue_bucket": "confirmed_account_shift",
-        },
-        {"rule_id": "D02", "gl_account": "2600", "finding_id": "D02:0001"},
-    ]
-    index = _build_macro_context_index(findings)
-    assert index["by_account"] == {}, "macro finding 이 거래 case 에 부착되면 안 됨"
-    assert index["by_doc"] == {}
+    with pytest.raises(ValidationError):
+        CaseGroupResult(
+            case_id="C1",
+            primary_theme="revenue",
+            case_key="K1",
+            macro_contexts=[{"rule_id": "D01"}],
+        )
 
 
-def test_macro_only_evidences_score_by_scoring_effect():
-    # #20① — scoring_effect 별 normalized_score 환산 (confirmed=1.0, corroborated=0.67, context_only=0)
-    contexts = [
-        {"rule_id": "D01", "scoring_effect": "priority_booster"},
-        {"rule_id": "GR01", "scoring_effect": "weak_priority_booster"},
-        {"rule_id": "L4-02", "scoring_effect": "context_only"},
-    ]
-    evidences = {ev["rule_id"]: ev for ev in _macro_only_evidences(contexts)}
-    assert all(ev["scoring_role"] == "macro_only" for ev in evidences.values())
-    assert evidences["D01"]["normalized_score"] == pytest.approx(1.0)
-    assert evidences["GR01"]["normalized_score"] == pytest.approx(0.67)
-    assert evidences["L4-02"]["normalized_score"] == pytest.approx(0.0)
+def test_legacy_artifact_with_macro_contexts_still_loads(tmp_path):
+    """구버전 아티팩트는 폐기된 키를 걷어내고 읽힌다.
+
+    Why: 필드를 지운 그날부터 저장돼 있던 결과를 못 읽게 되면 룰 기반 탭이 통째로
+         빈다. 읽는 쪽에서 명시적으로 제거하고, forbid 자체는 유지한다.
+    """
+    payload = {
+        "run_id": "r1",
+        "company_id": "acme",
+        "generated_at": "2026-07-01T00:00:00Z",
+        "cases": [
+            {
+                "case_id": "C1",
+                "primary_theme": "revenue",
+                "case_key": "K1",
+                "macro_contexts": [{"rule_id": "D01"}],
+            },
+        ],
+    }
+    path = tmp_path / "legacy.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    loaded = load_phase1_case_result(path)
+
+    assert [case.case_id for case in loaded.cases] == ["C1"]
+    assert not hasattr(loaded.cases[0], "macro_contexts")
 
 
 def test_macro_findings_do_not_enter_transaction_queue():
@@ -1484,7 +1492,7 @@ def test_save_and_load_phase1_case_result_roundtrip(monkeypatch):
     artifact_root = Path(
         "C:/Users/ghdtj/workspace/portfolio/local-ai-assist/.tmp_phase1_case_tests"
     )
-    monkeypatch.setattr("src.detection.phase1_case_builder.PROJECT_ROOT", artifact_root)
+    monkeypatch.setattr("src.detection.phase1_case_artifacts.PROJECT_ROOT", artifact_root)
 
     artifact_path = save_phase1_case_result(result)
     loaded = load_phase1_case_result(artifact_path)

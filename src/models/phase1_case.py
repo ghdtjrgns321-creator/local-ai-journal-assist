@@ -68,7 +68,6 @@ class CaseGroupResult(BaseModel):
     recommended_audit_actions: list[str] = Field(default_factory=list)
     rule_evidence_summary: list[dict[str, Any]] = Field(default_factory=list)
     evidence_tags: list[str] = Field(default_factory=list)
-    macro_contexts: list[dict[str, Any]] = Field(default_factory=list)
     documents: list[CaseDocumentRef] = Field(default_factory=list)
     raw_rule_hits: list[RawRuleHitRef] = Field(default_factory=list)
     exposure_rank: int | None = None

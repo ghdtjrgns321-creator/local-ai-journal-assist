@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -21,9 +22,29 @@ def save_phase1_case_result(result: Phase1CaseResult) -> Path:
     return path
 
 
+# 모델에서 사라졌지만 예전 아티팩트에는 남아 있는 case 키.
+#
+# Why: CaseGroupResult 는 extra="forbid" 라 모르는 키가 하나라도 있으면 로드가 통째로
+#      실패한다. 필드를 지운 그날부터 저장돼 있던 결과를 못 읽게 되는 셈이라, 읽는
+#      쪽에서 명시적으로 걷어낸다. forbid 는 그대로 둬서 오타·신규 오염은 계속 막는다.
+#      macro_contexts: 2026-07-25 삭제. D01/D02 꼬리표 폐지로 공급자가 사라진 필드.
+_LEGACY_CASE_KEYS: frozenset[str] = frozenset({"macro_contexts"})
+
+
 def load_phase1_case_result(path: str | Path) -> Phase1CaseResult:
-    artifact_path = Path(path)
-    return Phase1CaseResult.model_validate_json(artifact_path.read_text(encoding="utf-8"))
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    _strip_legacy_case_keys(payload)
+    return Phase1CaseResult.model_validate(payload)
+
+
+def _strip_legacy_case_keys(payload: Any) -> None:
+    """구버전 아티팩트의 폐기된 case 키를 제자리에서 제거."""
+    if not isinstance(payload, dict):
+        return
+    for case in payload.get("cases") or []:
+        if isinstance(case, dict):
+            for key in _LEGACY_CASE_KEYS:
+                case.pop(key, None)
 
 
 def annotate_detection_results_with_phase1_refs(
