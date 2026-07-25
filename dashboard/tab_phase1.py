@@ -543,6 +543,8 @@ def _render_phase1_rule_audit(rule_audit: dict[str, Any]) -> None:
         " (중복 케이스는 중복 카운트).</div>"
         "<div>L4-02·D01·D02 는 전표가 아니라 계정 단위 신호라 건수 대신 "
         "<b>변화 확인 / 변화 없음</b> 으로 표시합니다.</div>"
+        "<div>L1-01·L1-02·L1-03 은 case 묶음 없이 <b>전표 단위</b>로 셉니다 "
+        "(데이터 정합성 탭 상세와 동일한 건수).</div>"
         "<div>룰 행을 클릭하면 상세 설명이 펼쳐집니다.</div>"
         "</div>"
     )
@@ -3830,6 +3832,13 @@ _MACRO_RULE_VERDICT_LABELS: dict[str, tuple[str, str]] = {
     "D02": ("변화 확인", "변화 없음"),
 }
 
+# Why: L1-01/02/03 은 데이터 품질 트랙이라 phase1 case(raw_rule_hits) 생성에서 제외된다
+#      (phase1_case_builder._DATA_INTEGRITY_TRACK_RULES). case 기준으로 세면 실제 위반이
+#      있어도 배지가 항상 "0건"(= 미발화 초록)이 되어 데이터 정합성 탭 상세와 어긋난다.
+#      이 룰들은 상세 목록과 같은 소스(build_phase1_rule_documents · 전표 단위)로 센다.
+#      L1-08 은 dual 트랙으로 위험 큐에 잔류하므로 case 카운트를 그대로 쓴다.
+_CASE_EXCLUDED_INTEGRITY_RULES = {"L1-01", "L1-02", "L1-03"}
+
 _DETECTOR_SKIP_REASON_KR: dict[str, str] = {
     "missing_historical_data": "전기 데이터 없음",
     "missing_prior_summary": "전기 원장 로드 실패",
@@ -3882,6 +3891,15 @@ def _macro_rule_status(
     return ("generated" if count > 0 else "no_match"), count, ""
 
 
+def _integrity_document_counts(pr) -> dict[str, int]:
+    """case 제외 정합성 룰(L1-01/02/03)의 전표 단위 건수 — 상세 목록과 동일 소스."""
+    counts: dict[str, int] = {}
+    for rule_id in _CASE_EXCLUDED_INTEGRITY_RULES:
+        rows = _cached_phase1_build(pr, "rule_documents", build_phase1_rule_documents, rule_id)
+        counts[rule_id] = len(rows or [])
+    return counts
+
+
 def _phase1_rule_audit(pr) -> dict[str, Any]:
     """전체 33개 룰을 한 리스트로 반환 — 룰별 status/count 부여."""
     target = list(_PHASE1_RULE_IDS)
@@ -3891,12 +3909,18 @@ def _phase1_rule_audit(pr) -> dict[str, Any]:
     skipped = set(_skipped_rule_ids(pr))
     macro_counts = _macro_finding_counts(pr)
     macro_states = _macro_rule_states(pr)
+    integrity_counts = _integrity_document_counts(pr) if case_counts_available else {}
 
     rules: list[dict[str, Any]] = []
     for rule_id in target:
         skip_reason = ""
         if rule_id in _MACRO_RULE_TRACKS:
             status, count, skip_reason = _macro_rule_status(rule_id, macro_counts, macro_states)
+        elif integrity_counts.get(rule_id):
+            # Why: 전표 수가 0 이면(원장 프레임 부재 등) 아래 case 카운트로 내려간다.
+            #      정합성 보정이 기존에 잡히던 건수를 깎는 방향으로는 작동하지 않게 한다.
+            status = "generated"
+            count = integrity_counts[rule_id]
         elif rule_id in case_counts and case_counts[rule_id] > 0:
             status = "generated"
             count = case_counts[rule_id]

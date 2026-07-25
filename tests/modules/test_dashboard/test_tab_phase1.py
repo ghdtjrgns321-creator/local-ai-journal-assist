@@ -220,6 +220,90 @@ def test_metadata_rule_label_prefers_legacy_korean_then_metadata() -> None:
     assert fallback_label == get_rule_detail_metadata(legacy_only_id).display_copy.display_title
 
 
+def _integrity_pr() -> SimpleNamespace:
+    """L1-01 위반 전표 2건 + case 는 다른 룰만 보유한 pr.
+
+    Why: L1-01/02/03 은 phase1 case(raw_rule_hits) 생성에서 제외되므로(데이터 품질 트랙),
+         case 기준으로 세면 실제 위반이 있어도 0 이 된다. 이 fixture 가 그 상황을 재현한다.
+    """
+    data = pd.DataFrame(
+        {
+            "document_id": ["DOC-IMB-1", "DOC-IMB-1", "DOC-IMB-2", "DOC-OK"],
+            "line_number": [1, 2, 1, 1],
+            "gl_account": ["6300", "200150", "6300", "1000"],
+            "debit_amount": [100.0, 0.0, 50.0, 10.0],
+            "credit_amount": [0.0, 101.0, 51.0, 10.0],
+            "posting_date": pd.to_datetime(
+                ["2022-12-27", "2022-12-27", "2022-12-28", "2022-12-29"]
+            ),
+            "flagged_rules": ["L1-01", "L1-01", "L1-01", "L1-04"],
+            "review_rules": ["", "", "", ""],
+        }
+    )
+    case = CaseGroupResult(
+        case_id="CASE-L1-04",
+        primary_topic="approval_control",
+        primary_theme="approval_control",
+        primary_queue="approval_control",
+        primary_queue_label="",
+        topic_scores={"approval_control": 0.5},
+        secondary_topics=[],
+        secondary_queues=[],
+        secondary_queue_labels=[],
+        fraud_scenario_tags=[],
+        case_key="CASE-L1-04",
+        priority_score=0.5,
+        priority_band="medium",
+        triage_rank_score=0.5,
+        document_count=1,
+        row_count=1,
+        rule_count=1,
+        total_amount=10.0,
+        representative_explanation="approval",
+        documents=[CaseDocumentRef(document_id="DOC-OK", matched_rules=["L1-04"], amount=10.0)],
+        raw_rule_hits=[
+            RawRuleHitRef(
+                rule_id="L1-04",
+                severity=3,
+                document_id="DOC-OK",
+                row_index=3,
+                score=0.5,
+                normalized_score=0.5,
+                evidence_type="approval_control",
+            )
+        ],
+    )
+    return SimpleNamespace(
+        data=data,
+        featured_data=data,
+        phase1_case_result=SimpleNamespace(cases=[case], metadata={}),
+        results=[],
+        detector_statuses=[],
+    )
+
+
+def test_rule_audit_counts_case_excluded_integrity_rules_by_document() -> None:
+    """L1-01 배지는 case 수(항상 0)가 아니라 상세 목록과 같은 전표 수를 써야 한다.
+
+    Why(회귀): 요약 배지가 case 기준이라 L1-01 위반이 실제로 있어도 "0건"(미발화 초록)으로
+         표시되어 데이터 정합성 탭 상세(전표 N건)와 어긋났다.
+    """
+    pr = _integrity_pr()
+
+    audit = tab_phase1._phase1_rule_audit(pr)
+    by_rule = {rule["rule_id"]: rule for rule in audit["rules"]}
+    detail_rows = tab_phase1.build_phase1_rule_documents(pr, "L1-01")
+
+    assert by_rule["L1-01"]["flag_count"] == 2
+    assert by_rule["L1-01"]["flag_count"] == len(detail_rows)
+    assert by_rule["L1-01"]["status"] == "generated"
+    # 위반이 없는 정합성 룰은 미발화 유지 — 없는 건수를 만들지 않는다.
+    assert by_rule["L1-02"]["flag_count"] == 0
+    assert by_rule["L1-02"]["status"] == "no_match"
+    # case 에 잔류하는 룰은 기존 case 기준 카운트를 그대로 쓴다.
+    assert by_rule["L1-04"]["flag_count"] == 1
+
+
 def test_topic_rule_groups_canonicalize_alias_and_internal_reason(monkeypatch) -> None:
     """raw_rule_hits 가 Benford / L2-03a 같은 alias·내부 코드여도 canonical 로 묶여야."""
 
