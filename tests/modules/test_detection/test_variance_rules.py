@@ -17,12 +17,14 @@ from src.detection.variance_rules import (
 @pytest.fixture
 def base_df() -> pd.DataFrame:
     """12건 — 계정 1000(8건), 계정 2000(4건)."""
-    return pd.DataFrame({
-        "gl_account": ["1000"] * 8 + ["2000"] * 4,
-        "debit_amount": [100.0] * 12,
-        "credit_amount": [0.0] * 12,
-        "fiscal_period": [1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4],
-    })
+    return pd.DataFrame(
+        {
+            "gl_account": ["1000"] * 8 + ["2000"] * 4,
+            "debit_amount": [100.0] * 12,
+            "credit_amount": [0.0] * 12,
+            "fiscal_period": [1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4],
+        }
+    )
 
 
 # ── D01: 계정과목별 집계 급변 ──────────────────────────────
@@ -83,11 +85,13 @@ class TestD01AccountActivityVariance:
 
     def test_prior_zero_values_no_division_error(self):
         """전기 값이 0이어도 epsilon으로 division-by-zero 방지."""
-        df = pd.DataFrame({
-            "gl_account": ["1000"],
-            "debit_amount": [100.0],
-            "credit_amount": [0.0],
-        })
+        df = pd.DataFrame(
+            {
+                "gl_account": ["1000"],
+                "debit_amount": [100.0],
+                "credit_amount": [0.0],
+            }
+        )
         prior = {"1000": {"total_amount": 0.0, "count": 0, "avg_amount": 0.0}}
         # 에러 없이 실행되어야 함
         result = d01_account_activity_variance(df, prior, variance_threshold=0.5)
@@ -95,11 +99,13 @@ class TestD01AccountActivityVariance:
 
     def test_missing_account_tokens_not_flagged(self):
         """Missing-like account values are handled by integrity rules, not D01."""
-        df = pd.DataFrame({
-            "gl_account": [None, "nan", "", "1000"],
-            "debit_amount": [100.0, 100.0, 100.0, 100.0],
-            "credit_amount": [0.0, 0.0, 0.0, 0.0],
-        })
+        df = pd.DataFrame(
+            {
+                "gl_account": [None, "nan", "", "1000"],
+                "debit_amount": [100.0, 100.0, 100.0, 100.0],
+                "credit_amount": [0.0, 0.0, 0.0, 0.0],
+            }
+        )
         prior = {"1000": {"total_amount": 1.0, "count": 1, "avg_amount": 1.0}}
 
         result = d01_account_activity_variance(df, prior, variance_threshold=0.5)
@@ -108,12 +114,14 @@ class TestD01AccountActivityVariance:
 
     def test_company_code_keeps_same_account_separate(self):
         """D01 compares company/account pairs when company_code is available."""
-        df = pd.DataFrame({
-            "company_code": ["C001", "C001", "C002", "C002"],
-            "gl_account": ["1000", "1000", "1000", "1000"],
-            "debit_amount": [500.0, 500.0, 100.0, 100.0],
-            "credit_amount": [0.0, 0.0, 0.0, 0.0],
-        })
+        df = pd.DataFrame(
+            {
+                "company_code": ["C001", "C001", "C002", "C002"],
+                "gl_account": ["1000", "1000", "1000", "1000"],
+                "debit_amount": [500.0, 500.0, 100.0, 100.0],
+                "credit_amount": [0.0, 0.0, 0.0, 0.0],
+            }
+        )
         prior = {
             "C001::1000": {"total_amount": 100.0, "count": 1, "avg_amount": 100.0},
             "C002::1000": {"total_amount": 200.0, "count": 2, "avg_amount": 100.0},
@@ -125,11 +133,13 @@ class TestD01AccountActivityVariance:
 
     def test_numeric_account_key_matches_string_prior(self):
         """D01 normalizes numeric-looking account keys before prior lookup."""
-        df = pd.DataFrame({
-            "gl_account": [1000.0, 1000.0],
-            "debit_amount": [100.0, 100.0],
-            "credit_amount": [0.0, 0.0],
-        })
+        df = pd.DataFrame(
+            {
+                "gl_account": [1000.0, 1000.0],
+                "debit_amount": [100.0, 100.0],
+                "credit_amount": [0.0, 0.0],
+            }
+        )
         prior = {"1000": {"total_amount": 200.0, "count": 2, "avg_amount": 100.0}}
 
         result = d01_account_activity_variance(df, prior, variance_threshold=0.5)
@@ -138,12 +148,14 @@ class TestD01AccountActivityVariance:
 
     def test_company_numeric_account_key_matches_company_prior(self):
         """D01 normalizes company/account keys before company-aware prior lookup."""
-        df = pd.DataFrame({
-            "company_code": ["C001", "C001"],
-            "gl_account": [1000.0, 1000.0],
-            "debit_amount": [100.0, 100.0],
-            "credit_amount": [0.0, 0.0],
-        })
+        df = pd.DataFrame(
+            {
+                "company_code": ["C001", "C001"],
+                "gl_account": [1000.0, 1000.0],
+                "debit_amount": [100.0, 100.0],
+                "credit_amount": [0.0, 0.0],
+            }
+        )
         prior = {
             "C001::1000": {"total_amount": 200.0, "count": 2, "avg_amount": 100.0},
         }
@@ -165,12 +177,14 @@ class TestD02MonthlyPatternVariance:
         prior = {"1000": {m: 1 / 12 for m in range(1, 13)}}
 
         # 당기: 12월에 금액 집중
-        df = pd.DataFrame({
-            "gl_account": ["1000"] * 12,
-            "debit_amount": [10.0] * 11 + [500.0],
-            "credit_amount": [0.0] * 12,
-            "fiscal_period": list(range(1, 13)),
-        })
+        df = pd.DataFrame(
+            {
+                "gl_account": ["1000"] * 12,
+                "debit_amount": [10.0] * 11 + [500.0],
+                "credit_amount": [0.0] * 12,
+                "fiscal_period": list(range(1, 13)),
+            }
+        )
         result = d02_monthly_pattern_variance(
             df,
             prior,
@@ -189,36 +203,42 @@ class TestD02MonthlyPatternVariance:
 
     def test_less_than_3_months_skipped(self):
         """당기 데이터 2개월만 → 비교 불가 → 미플래그."""
-        df = pd.DataFrame({
-            "gl_account": ["1000", "1000"],
-            "debit_amount": [100.0, 100.0],
-            "credit_amount": [0.0, 0.0],
-            "fiscal_period": [1, 2],
-        })
+        df = pd.DataFrame(
+            {
+                "gl_account": ["1000", "1000"],
+                "debit_amount": [100.0, 100.0],
+                "credit_amount": [0.0, 0.0],
+                "fiscal_period": [1, 2],
+            }
+        )
         prior = {"1000": {m: 1 / 12 for m in range(1, 13)}}
         result = d02_monthly_pattern_variance(df, prior, jsd_threshold=0.3)
         assert not result.any()
 
     def test_prior_less_than_3_months_skipped(self):
         """전기 데이터 2개월만 → 비교 불가 → 미플래그."""
-        df = pd.DataFrame({
-            "gl_account": ["1000"] * 6,
-            "debit_amount": [100.0] * 6,
-            "credit_amount": [0.0] * 6,
-            "fiscal_period": [1, 2, 3, 4, 5, 6],
-        })
+        df = pd.DataFrame(
+            {
+                "gl_account": ["1000"] * 6,
+                "debit_amount": [100.0] * 6,
+                "credit_amount": [0.0] * 6,
+                "fiscal_period": [1, 2, 3, 4, 5, 6],
+            }
+        )
         prior = {"1000": {1: 0.5, 2: 0.5}}  # 2개월만
         result = d02_monthly_pattern_variance(df, prior, jsd_threshold=0.3)
         assert not result.any()
 
     def test_min_months_parameter_allows_stricter_skip(self):
         """min_months 인자를 높이면 3개월 데이터도 비교하지 않는다."""
-        df = pd.DataFrame({
-            "gl_account": ["1000"] * 3,
-            "debit_amount": [10.0, 10.0, 500.0],
-            "credit_amount": [0.0, 0.0, 0.0],
-            "fiscal_period": [1, 2, 3],
-        })
+        df = pd.DataFrame(
+            {
+                "gl_account": ["1000"] * 3,
+                "debit_amount": [10.0, 10.0, 500.0],
+                "credit_amount": [0.0, 0.0, 0.0],
+                "fiscal_period": [1, 2, 3],
+            }
+        )
         prior = {"1000": {m: 1 / 12 for m in range(1, 13)}}
 
         result = d02_monthly_pattern_variance(
@@ -232,14 +252,16 @@ class TestD02MonthlyPatternVariance:
 
     def test_company_account_grouping_prevents_company_level_miss(self):
         """D02 compares company/account pairs when company_code is available."""
-        df = pd.DataFrame({
-            "company_code": ["C001"] * 12 + ["C002"] * 12,
-            "gl_account": ["1000"] * 24,
-            "document_id": [f"D{i}" for i in range(24)],
-            "debit_amount": ([10.0] * 11 + [500.0]) + ([100.0] * 12),
-            "credit_amount": [0.0] * 24,
-            "fiscal_period": list(range(1, 13)) * 2,
-        })
+        df = pd.DataFrame(
+            {
+                "company_code": ["C001"] * 12 + ["C002"] * 12,
+                "gl_account": ["1000"] * 24,
+                "document_id": [f"D{i}" for i in range(24)],
+                "debit_amount": ([10.0] * 11 + [500.0]) + ([100.0] * 12),
+                "credit_amount": [0.0] * 24,
+                "fiscal_period": list(range(1, 13)) * 2,
+            }
+        )
         prior = {
             "C001::1000": {m: 1 / 12 for m in range(1, 13)},
             "C002::1000": {m: 1 / 12 for m in range(1, 13)},
@@ -270,14 +292,16 @@ class TestD02MonthlyPatternVariance:
 
     def test_company_grouping_falls_back_to_account_prior_for_legacy_patterns(self):
         """Legacy gl_account prior patterns still work when company_code is present."""
-        df = pd.DataFrame({
-            "company_code": ["C001"] * 12,
-            "gl_account": ["1000"] * 12,
-            "document_id": [f"D{i}" for i in range(12)],
-            "debit_amount": [10.0] * 11 + [500.0],
-            "credit_amount": [0.0] * 12,
-            "fiscal_period": list(range(1, 13)),
-        })
+        df = pd.DataFrame(
+            {
+                "company_code": ["C001"] * 12,
+                "gl_account": ["1000"] * 12,
+                "document_id": [f"D{i}" for i in range(12)],
+                "debit_amount": [10.0] * 11 + [500.0],
+                "credit_amount": [0.0] * 12,
+                "fiscal_period": list(range(1, 13)),
+            }
+        )
         prior = {"1000": {m: 1 / 12 for m in range(1, 13)}}
 
         result = d02_monthly_pattern_variance(
@@ -292,13 +316,15 @@ class TestD02MonthlyPatternVariance:
 
     def test_min_account_docs_guardrail_suppresses_small_accounts(self):
         """소량 계정은 JSD가 커도 D02 단독 플래그를 억제한다."""
-        df = pd.DataFrame({
-            "document_id": [f"D{i}" for i in range(12)],
-            "gl_account": ["1000"] * 12,
-            "debit_amount": [10.0] * 11 + [500.0],
-            "credit_amount": [0.0] * 12,
-            "fiscal_period": list(range(1, 13)),
-        })
+        df = pd.DataFrame(
+            {
+                "document_id": [f"D{i}" for i in range(12)],
+                "gl_account": ["1000"] * 12,
+                "debit_amount": [10.0] * 11 + [500.0],
+                "credit_amount": [0.0] * 12,
+                "fiscal_period": list(range(1, 13)),
+            }
+        )
         prior = {"1000": {m: 1 / 12 for m in range(1, 13)}}
 
         result = d02_monthly_pattern_variance(
@@ -313,13 +339,15 @@ class TestD02MonthlyPatternVariance:
 
     def test_top_month_delta_guardrail_suppresses_small_concentration_change(self):
         """최대월 비중 변화가 작으면 JSD만으로는 플래그하지 않는다."""
-        df = pd.DataFrame({
-            "document_id": [f"D{i}" for i in range(120)],
-            "gl_account": ["1000"] * 120,
-            "debit_amount": [100.0] * 120,
-            "credit_amount": [0.0] * 120,
-            "fiscal_period": ([1] * 20) + ([2] * 20) + ([3] * 80),
-        })
+        df = pd.DataFrame(
+            {
+                "document_id": [f"D{i}" for i in range(120)],
+                "gl_account": ["1000"] * 120,
+                "debit_amount": [100.0] * 120,
+                "credit_amount": [0.0] * 120,
+                "fiscal_period": ([1] * 20) + ([2] * 20) + ([3] * 80),
+            }
+        )
         prior = {"1000": {1: 1 / 3, 2: 1 / 3, 3: 1 / 3}}
 
         result = d02_monthly_pattern_variance(
@@ -334,11 +362,13 @@ class TestD02MonthlyPatternVariance:
 
     def test_missing_fiscal_period_column(self):
         """fiscal_period 없으면 전체 False."""
-        df = pd.DataFrame({
-            "gl_account": ["1000"],
-            "debit_amount": [100.0],
-            "credit_amount": [0.0],
-        })
+        df = pd.DataFrame(
+            {
+                "gl_account": ["1000"],
+                "debit_amount": [100.0],
+                "credit_amount": [0.0],
+            }
+        )
         prior = {"1000": {m: 1 / 12 for m in range(1, 13)}}
         result = d02_monthly_pattern_variance(df, prior)
         assert not result.any()
@@ -353,3 +383,78 @@ class TestD02MonthlyPatternVariance:
         prior = {"9999": {m: 1 / 12 for m in range(1, 13)}}
         result = d02_monthly_pattern_variance(base_df, prior, jsd_threshold=0.3)
         assert not result.any()
+
+
+class TestD02ClosingConcentration:
+    """결산월 집중 비중 — 화면이 정렬·표시에 쓰는 축(2026-07-25)."""
+
+    @staticmethod
+    def _df(monthly_amounts: dict[int, float]) -> pd.DataFrame:
+        rows = [
+            {
+                "document_id": f"D{period}_{seq}",
+                "gl_account": "1000",
+                "debit_amount": amount,
+                "credit_amount": 0.0,
+                "fiscal_period": period,
+            }
+            for period, amount in monthly_amounts.items()
+            for seq in range(1)
+        ]
+        return pd.DataFrame(rows)
+
+    def test_고르던_계정이_결산월로_쏠리면_증가분이_잡힌다(self):
+        # 전기 = 12개월 균등(결산월 1/12), 당기 = 12월에 절반.
+        current = {m: 100.0 for m in range(1, 12)}
+        current[12] = 1100.0
+        diagnostics = d02_monthly_pattern_diagnostics(
+            self._df(current),
+            {"1000": {m: 1 / 12 for m in range(1, 13)}},
+            min_account_docs=1,
+            min_top_month_delta=0.0,
+        )
+
+        row = diagnostics.iloc[0]
+        assert row["closing_period"] == 12
+        assert row["prior_closing_ratio"] == pytest.approx(1 / 12)
+        assert row["current_closing_ratio"] == pytest.approx(0.5)
+        assert row["closing_ratio_delta"] == pytest.approx(0.5 - 1 / 12)
+
+    def test_결산월_몰림이_풀리면_증가분이_음수다(self):
+        current = {m: 100.0 for m in range(1, 13)}
+        prior = {m: 0.02 for m in range(1, 12)}
+        prior[12] = 0.78
+        diagnostics = d02_monthly_pattern_diagnostics(
+            self._df(current),
+            {"1000": prior},
+            min_account_docs=1,
+            min_top_month_delta=0.0,
+        )
+
+        assert diagnostics.iloc[0]["closing_ratio_delta"] < 0
+
+    def test_결산월은_원장의_마지막_회계기간으로_잡는다(self):
+        # 3월 결산 법인: fiscal_period 최대값이 3 이면 3월이 결산월이다.
+        current = {1: 100.0, 2: 100.0, 3: 800.0}
+        diagnostics = d02_monthly_pattern_diagnostics(
+            self._df(current),
+            {"1000": {1: 1 / 3, 2: 1 / 3, 3: 1 / 3}},
+            min_account_docs=1,
+            min_top_month_delta=0.0,
+        )
+
+        row = diagnostics.iloc[0]
+        assert row["closing_period"] == 3
+        assert row["current_closing_ratio"] == pytest.approx(0.8)
+
+    def test_결산월을_인자로_고정할_수_있다(self):
+        current = {m: 100.0 for m in range(1, 13)}
+        diagnostics = d02_monthly_pattern_diagnostics(
+            self._df(current),
+            {"1000": {m: 1 / 12 for m in range(1, 13)}},
+            min_account_docs=1,
+            min_top_month_delta=0.0,
+            closing_period=6,
+        )
+
+        assert diagnostics.iloc[0]["closing_period"] == 6

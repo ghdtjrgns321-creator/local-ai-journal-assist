@@ -247,6 +247,57 @@ class TestVarianceDetectorEdgeCases:
 
         assert len(flagged) == group_count
 
+    def test_d02_diagnostics_are_ordered_by_closing_month_increase(self):
+        """결산월로 더 몰린 계정이 위, 몰림이 풀린 계정이 아래 (2026-07-25).
+
+        구 정렬(top_month_delta 절대값)이면 몰림이 풀린 계정이 먼저 올라왔다.
+        """
+        monthly_patterns = {
+            # 전기: 결산월(12월) 비중이 이미 높던 계정 → 당기에 고르게 풀린다.
+            "C001::5000": {month: (0.78 if month == 12 else 0.02) for month in range(1, 13)},
+            # 전기: 12개월 균등 → 당기에 결산월로 몰린다.
+            "C001::4000": {month: 1 / 12 for month in range(1, 13)},
+        }
+        rows = []
+        for month in range(1, 13):
+            rows.append(
+                {
+                    "company_code": "C001",
+                    "gl_account": "4000",
+                    "document_id": f"A-{month}",
+                    "debit_amount": 1100.0 if month == 12 else 100.0,
+                    "credit_amount": 0.0,
+                    "fiscal_period": month,
+                }
+            )
+            rows.append(
+                {
+                    "company_code": "C001",
+                    "gl_account": "5000",
+                    "document_id": f"B-{month}",
+                    "debit_amount": 100.0,
+                    "credit_amount": 0.0,
+                    "fiscal_period": month,
+                }
+            )
+        prior = PriorSummary(
+            account_aggregates={},
+            monthly_patterns=monthly_patterns,
+            prior_total_rows=24,
+            prior_fiscal_year=2023,
+        )
+        detector = VarianceDetector(
+            settings=AuditSettings(d02_min_account_docs=1, d02_min_top_month_delta=0.0),
+            prior_summary=prior,
+        )
+
+        result = detector.detect(pd.DataFrame(rows))
+        diagnostics = result.metadata["d02_account_diagnostics"]
+
+        assert [item["gl_account"] for item in diagnostics] == ["4000", "5000"]
+        assert diagnostics[0]["closing_ratio_delta"] > 0
+        assert diagnostics[1]["closing_ratio_delta"] < 0
+
     def test_d02_uses_min_monthly_data_months_setting(
         self, sample_df: pd.DataFrame, prior_summary_normal: PriorSummary
     ):

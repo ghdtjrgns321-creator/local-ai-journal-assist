@@ -36,6 +36,21 @@ def _valid_account_mask(series: pd.Series) -> pd.Series:
     )
 
 
+def _infer_closing_period(fiscal_periods: pd.Series) -> int | None:
+    """Return the ledger's closing month = the largest fiscal_period actually present.
+
+    Why: "얼마가 결산월로 쏠렸나" 는 결산월이 몇 월인지에 달려 있다. 12 를 코드에
+         박으면 3월·6월 결산 법인에서 조용히 틀린다(전역 룰: 분석 구동 값은 데이터에서).
+         관측된 최대 회계기간을 결산월로 본다.
+    """
+    numeric = pd.to_numeric(pd.Series(fiscal_periods).astype("object"), errors="coerce")
+    periods = np.asarray(numeric, dtype="float64")
+    valid = periods[(periods >= 1) & (periods <= 12)]
+    if valid.size == 0:
+        return None
+    return int(valid.max())
+
+
 def _company_account_key(company_code: object, gl_account: object) -> str:
     """Return the stable D01 key used when company_code is available."""
 
@@ -246,6 +261,7 @@ def d02_monthly_pattern_diagnostics(
     min_annual_amount: float = _MIN_ANNUAL_AMOUNT,
     min_top_month_delta: float = _MIN_TOP_MONTH_DELTA,
     group_keys: list[str] | tuple[str, ...] | None = _D02_DEFAULT_GROUP_KEYS,
+    closing_period: int | None = None,
 ) -> pd.DataFrame:
     """Return account-level D02 evidence and eligibility decisions."""
     columns = [
@@ -264,6 +280,10 @@ def d02_monthly_pattern_diagnostics(
         "prior_top_ratio",
         "current_top_ratio",
         "top_month_delta",
+        "closing_period",
+        "prior_closing_ratio",
+        "current_closing_ratio",
+        "closing_ratio_delta",
         "skip_reason",
     ]
     if "gl_account" not in df.columns or "fiscal_period" not in df.columns:
@@ -286,6 +306,9 @@ def d02_monthly_pattern_diagnostics(
         lambda row: _d02_group_key(row, effective_group_keys),
         axis=1,
     )
+    if closing_period is None:
+        closing_period = _infer_closing_period(analysis_df["fiscal_period"])
+    closing_idx = None if closing_period is None else int(closing_period) - 1
     amount = analysis_df[["debit_amount", "credit_amount"]].fillna(0).sum(axis=1)
     monthly = (
         analysis_df.assign(_amount=amount)
@@ -357,6 +380,14 @@ def d02_monthly_pattern_diagnostics(
             skip_reason = "small_top_month_delta"
 
         jsd = float(jensenshannon(prior_norm, current_norm))
+        # 결산월 비중 = 연간 활동금액 중 결산월 한 달이 차지한 비중. 부호 있는 증가분이
+        # "전기에는 고르던 계정이 당기에 결산월로 쏠렸다" 를 그대로 표현한다(감소는 음수).
+        if closing_idx is None:
+            prior_closing_ratio = current_closing_ratio = closing_ratio_delta = None
+        else:
+            prior_closing_ratio = float(prior_norm[closing_idx])
+            current_closing_ratio = float(current_norm[closing_idx])
+            closing_ratio_delta = current_closing_ratio - prior_closing_ratio
         rows.append(
             {
                 "d02_group_key": str(group_key),
@@ -374,6 +405,10 @@ def d02_monthly_pattern_diagnostics(
                 "prior_top_ratio": prior_top_ratio,
                 "current_top_ratio": current_top_ratio,
                 "top_month_delta": top_month_delta,
+                "closing_period": closing_period,
+                "prior_closing_ratio": prior_closing_ratio,
+                "current_closing_ratio": current_closing_ratio,
+                "closing_ratio_delta": closing_ratio_delta,
                 "skip_reason": skip_reason,
             }
         )

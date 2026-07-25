@@ -374,15 +374,21 @@ class VarianceDetector(BaseDetector):
     ) -> list[dict[str, object]]:
         """Build compact account-level D02 evidence for review and tuning.
 
-        정렬 = 가장 몰린 달의 비중 변화폭(top_month_delta) 내림차순 (2026-07-25).
-        구 정렬(flagged → JSD)은 JSD 0.3·비중변화 0.25·전표 100건 같은 근거 없는 컷을
-        먼저 통과한 계정만 위로 올렸다. 이제 컷 없이 전 계정을 변화폭 순으로 세우고,
+        정렬 = 결산월 비중 증가분(closing_ratio_delta) 내림차순, 부호 유지 (2026-07-25).
+        구 정렬(top_month_delta)은 절대값이라 "결산월로 쏠린 계정" 과 "쏠림이 풀린 계정" 을
+        같은 크기로 뒤섞었고, 몰린 달이 7월이든 결산월이든 구분하지 않았다. 감사에서 보는
+        방향은 결산월 쪽 증가 하나이므로 그 값으로 세운다. 컷은 없다(2026-07-25 폐지).
         ``flagged`` 는 행 마스크 판정으로만 남긴다.
         """
         if diagnostics is None or diagnostics.empty:
             return []
 
-        compact = diagnostics.sort_values("top_month_delta", ascending=False)
+        sort_column = (
+            "closing_ratio_delta"
+            if "closing_ratio_delta" in diagnostics.columns
+            else "top_month_delta"
+        )
+        compact = diagnostics.sort_values(sort_column, ascending=False, na_position="last")
         return compact.to_dict(orient="records")
 
     def _empty_result(

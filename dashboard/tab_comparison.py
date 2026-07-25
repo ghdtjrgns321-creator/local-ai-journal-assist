@@ -1,7 +1,7 @@
 """전기 비교 탭 — 분석적 절차(ISA 520) flux analysis 시각화.
 
 감사 표준 요건(분석적 절차)에 맞춰 세 소분류로 구성:
-  ① 분석적 절차 (Flux)   — KPI 리본 + K-IFRS 카테고리 변동 + 월별 추세 + 월별 분포 변동(D02)
+  ① 분석적 절차 (Flux)   — KPI 리본 + K-IFRS 카테고리 변동 + 월별 추세 + 결산월 집중 변동(D02)
   ② 계정과목 변동         — 변동 큰 계정 Top N + 신규/소멸 계정 + 계정 활동 변동(D01)
   ③ 검토 신호 변동       — 룰별 신호 증감
 
@@ -482,7 +482,7 @@ def _render_flux_subtab(data: dict) -> None:
 
 # ── D01/D02 — PHASE1-2 분석적 검토 신호를 전기 비교 맥락에 붙인다 ──
 #
-# Why: D01(계정 활동 변동)·D02(월별 분포 변동)는 Phase 1 파이프라인이 전기 engagement 를
+# Why: D01(계정 활동 변동)·D02(결산월 집중 변동)는 Phase 1 파이프라인이 전기 engagement 를
 #      attach 해 계산한 ISA 520 신호다. 전기가 있어야 산출된다는 전제가 이 탭과 같고,
 #      묻는 질문(어떤 계정이 전기 대비 바뀌었나)도 같아 각 소분류 안에 함께 둔다.
 #      신호 소유권은 PHASE1-2 에 그대로 있고, 여기서는 표시만 한다(점수 비병합).
@@ -518,6 +518,53 @@ def _prior_year_note(findings: list[dict], data: dict) -> str:
     return f"비교 기준 전기: FY {used}"
 
 
+def _has_closing_ratio(findings: list[dict]) -> bool:
+    """결산월 비중이 하나라도 계산돼 있는지 — 구 Phase 1 결과 판별용."""
+    for finding in findings:
+        metrics = finding.get("metrics") or {}
+        if metrics.get("current_closing_ratio") is not None:
+            return True
+    return False
+
+
+def _sort_value(value: object) -> float | None:
+    """정렬에 쓸 수 있는 실수만 통과시킨다. NaN 은 값이 없는 것과 같이 취급.
+
+    Why: NaN 은 어떤 비교에도 False 를 돌려주므로 정렬 키에 NaN 이 하나라도 섞이면
+         list.sort() 가 그 행 주변 순서를 조용히 어긋나게 만든다. 표에서는 "정렬이
+         안 된다" 로 보인다. 그래서 None 과 똑같이 맨 뒤로 보낸다.
+    """
+    try:
+        number = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return None if number != number else number
+
+
+def _desc_sort_key(value: object) -> float:
+    """절대값 내림차순 정렬 키 — 값이 없거나 NaN 인 행은 맨 뒤로 보낸다."""
+    number = _sort_value(value)
+    return float("inf") if number is None else -abs(number)
+
+
+def _signed_desc_sort_key(value: object) -> float:
+    """부호 있는 내림차순 정렬 키 — 증가가 위, 감소는 아래, 값이 없으면 맨 뒤."""
+    number = _sort_value(value)
+    return float("inf") if number is None else -number
+
+
+def _delta(current: object, prior: object) -> float | None:
+    """당기 − 전기. 전기가 없으면(신규 계정) 당기 전액이 곧 변동이다."""
+    try:
+        cur = float(current)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    try:
+        return cur - float(prior)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return cur
+
+
 def _pct_change(current: object, prior: object) -> float | None:
     """증감률(%) — 전기가 없거나 0 이면 계산하지 않는다(신규 계정 등)."""
     try:
@@ -530,13 +577,24 @@ def _pct_change(current: object, prior: object) -> float | None:
     return (cur - pri) / abs(pri) * 100.0
 
 
-_D01_REASON_KR = {"new_account": "신규 계정", "activity_variance": "활동 변동"}
+# Why(2026-07-25): D01 은 금액·건수·건당 금액 세 축을 대조하는 표인데, 정렬은 금액 변동
+#   하나로만 했다. 그래서 "금액은 비슷한데 건수가 1/10" 같은 계정이 아래로 밀려 사실상
+#   안 보였고, 절대 금액이 큰 대형 계정이 상위를 고정 점유했다. 세 축을 합성 점수로 묶는
+#   길(구 가중변동 0.5/0.3/0.2)은 가중치 근거가 없고 순위 이유를 설명할 수 없어 폐지된
+#   상태이므로, 합치는 대신 어느 축으로 볼지를 감사인이 고르게 한다.
+#   세 축 12열을 한 화면에 늘어놓으면 어느 숫자가 어느 축인지 헷갈리므로, 고른 축의
+#   네 열(전기·당기·변동·증감률)만 남기고 정렬도 그 축의 변동으로 한다.
+_D01_AXES: dict[str, list[str]] = {
+    "금액": ["전기 금액", "당기 금액", "금액 변동", "금액 증감률(%)"],
+    "건수": ["전기 건수", "당기 건수", "건수 변동", "건수 증감률(%)"],
+    "건당 금액": ["전기 건당", "당기 건당", "건당 변동", "건당 증감률(%)"],
+}
+_D01_DEFAULT_AXIS = "금액"
 
 # 목록에서 빠지는 유일한 사유 = 분포를 비교할 수 없음. 신호 강도 컷은 2026-07-25 에 폐지했다.
-_D02_NOT_COMPARABLE_KR: dict[str, str] = {
-    "insufficient_prior_months": "전기 거래월 부족",
-    "insufficient_current_months": "당기 거래월 부족",
-}
+_D02_NOT_COMPARABLE = frozenset({"insufficient_prior_months", "insufficient_current_months"})
+
+_D02_EXCLUSION_NOTE = "거래한 달이 너무 적어 분포를 비교할 수 없는 계정은 제외"
 
 
 def _d02_diagnostics() -> list[dict]:
@@ -550,42 +608,136 @@ def _d02_diagnostics() -> list[dict]:
     return []
 
 
-def _d02_coverage_text(listed_count: int) -> str:
-    """몇 개 계정을 세웠고, 비교 자체가 불가해 빠진 계정은 몇 개인지."""
-    return _format_d02_coverage(listed_count, _d02_diagnostics())
+def _d02_exclusion_note() -> str:
+    """비교 자체가 불가해 빠진 계정이 있는지."""
+    return _format_d02_exclusion_note(_d02_diagnostics())
 
 
-def _format_d02_coverage(listed_count: int, diagnostics: list[dict]) -> str:
+def _format_d02_exclusion_note(diagnostics: list[dict]) -> str:
     """세션 접근과 분리한 순수 문장 조립 — 판정 근거 목록만 받는다."""
-    if not diagnostics:
-        return ""
-
-    excluded: dict[str, int] = {}
     for row in diagnostics:
-        reason = str(row.get("skip_reason") or "")
-        if reason in _D02_NOT_COMPARABLE_KR:
-            excluded[reason] = excluded.get(reason, 0) + 1
+        if str(row.get("skip_reason") or "") in _D02_NOT_COMPARABLE:
+            return _D02_EXCLUSION_NOTE
+    return ""
 
-    text = f"계정 {listed_count}개를 변화폭 순으로 모두 세웠습니다(잘라내지 않음)."
-    if excluded:
-        parts = [
-            f"{_D02_NOT_COMPARABLE_KR[reason]} {count}개"
-            for reason, count in sorted(excluded.items(), key=lambda kv: -kv[1])
-        ]
-        text += (
-            " 거래한 달이 너무 적어 분포를 비교할 수 없는 계정은 제외 — " + ", ".join(parts) + "."
+
+def _d01_column_config() -> dict:
+    """D01 표 열 서식. 축이 바뀌어도 없는 열 설정은 무시되므로 한 번에 다 담아 둔다."""
+    won = "%,.0f"
+    pct = "%.1f%%"
+    return {
+        "전기 금액": st.column_config.NumberColumn(format=won),
+        "당기 금액": st.column_config.NumberColumn(format=won),
+        "금액 변동": st.column_config.NumberColumn(
+            format=won,
+            help="당기 − 전기. 전기 칸이 비었으면 전기에 없던 계정이고, 당기 전액이 변동입니다.",
+        ),
+        "금액 증감률(%)": st.column_config.NumberColumn(format=pct),
+        "전기 건수": st.column_config.NumberColumn(format="%,d"),
+        "당기 건수": st.column_config.NumberColumn(format="%,d"),
+        "건수 변동": st.column_config.NumberColumn(format=won),
+        "건수 증감률(%)": st.column_config.NumberColumn(
+            format=pct,
+            help="금액은 그대로인데 건수만 급감했다면 잔건이 소수 대형 거래로 바뀐 것입니다.",
+        ),
+        "전기 건당": st.column_config.NumberColumn(format=won, help="건당 금액 = 금액 ÷ 건수."),
+        "당기 건당": st.column_config.NumberColumn(format=won),
+        "건당 변동": st.column_config.NumberColumn(format=won),
+        "건당 증감률(%)": st.column_config.NumberColumn(
+            format=pct,
+            help="건수는 그대로인데 건당 금액만 뛰면 대형 거래나 수기 조정 분개 의심.",
+        ),
+    }
+
+
+def _d01_table_rows(
+    findings: list[dict],
+    axis: str = _D01_DEFAULT_AXIS,
+) -> list[dict]:
+    """계정 활동 변동(D01) 표의 행 — 고른 축의 네 열만, 그 축의 변동 절대값 내림차순.
+
+    축을 바꾸면 열도 그 축으로 바뀐다(금액 축 → 금액 네 열). 세 축을 한 화면에 다 늘어놓던
+    구 표는 12열이라 어느 숫자가 어느 축인지 읽히지 않았다.
+
+    Why(정렬): macro finding 큐는 룰 공통 정렬(macro_priority_score = 시나리오 버킷 + 신호
+         강도 합성)로 넘어와 표가 약속한 어느 열과도 맞지 않는다. 표시 순서는 화면 몫이라
+         (phase1_case_builder._build_macro_findings 주석) 고른 축으로 다시 센다.
+    """
+    columns = _D01_AXES.get(axis) or _D01_AXES[_D01_DEFAULT_AXIS]
+    sort_column = columns[2]
+    rows: list[dict] = []
+    for item in findings:
+        m = item.get("metrics") or {}
+        cur_amt, pri_amt = m.get("current_total_amount"), m.get("prior_total_amount")
+        cur_cnt, pri_cnt = m.get("current_count"), m.get("prior_count")
+        cur_avg, pri_avg = m.get("current_avg_amount"), m.get("prior_avg_amount")
+        values = {
+            "전기 금액": pri_amt,
+            "당기 금액": cur_amt,
+            # 금액 변동은 트랙이 준 값을 그대로 쓴다(신규 계정 = 당기 전액 처리 포함).
+            "금액 변동": m.get("amount_delta"),
+            "금액 증감률(%)": _pct_change(cur_amt, pri_amt),
+            "전기 건수": pri_cnt,
+            "당기 건수": cur_cnt,
+            "건수 변동": _delta(cur_cnt, pri_cnt),
+            "건수 증감률(%)": _pct_change(cur_cnt, pri_cnt),
+            "전기 건당": pri_avg,
+            "당기 건당": cur_avg,
+            "건당 변동": _delta(cur_avg, pri_avg),
+            "건당 증감률(%)": _pct_change(cur_avg, pri_avg),
+        }
+        row = {"계정": account_display(item.get("gl_account"))}
+        row.update({column: values[column] for column in columns})
+        rows.append(row)
+    rows.sort(key=lambda row: _desc_sort_key(row[sort_column]))
+    return rows
+
+
+def _d02_table_rows(findings: list[dict]) -> list[dict]:
+    """결산월 집중 변동(D02) 표의 행 — 결산월 비중 증가분(%p) 내림차순.
+
+    Why: 구 표는 "가장 몰린 달 11월 → 12월" 처럼 달 이름 이동을 앞세웠고 변화폭도
+         절대값이었다. 그래서 (1) 결산월로 쏠린 계정과 쏠림이 풀린 계정이 같은 값으로
+         뒤섞였고, (2) 7월 몰림과 결산월 몰림을 구분하지 않았고, (3) 전기가 분기 배치
+         (3·6·9·12월 각 25%)였던 계정은 최대월 비중 차이가 작아 아래로 밀렸다.
+         감사에서 읽고 싶은 문장은 "이 계정, 연간 금액 중 결산월분이 전기 9% → 당기 38%"
+         하나이므로 그 한 축만 남긴다.
+    """
+    rows: list[dict] = []
+    for item in findings:
+        m = item.get("metrics") or {}
+        pri_ratio, cur_ratio = m.get("prior_closing_ratio"), m.get("current_closing_ratio")
+        rows.append(
+            {
+                "계정": account_display(item.get("gl_account")),
+                "결산월 비중 (전기)": pri_ratio,
+                "결산월 비중 (당기)": cur_ratio,
+                "증가분(%p)": _ratio_delta_pp(pri_ratio, cur_ratio),
+                "당기 거래 금액": m.get("current_annual_amount"),
+            }
         )
-    return text
+    rows.sort(key=lambda row: _signed_desc_sort_key(row["증가분(%p)"]))
+    return rows
 
 
+@st.fragment
 def _render_account_activity_section(data: dict) -> None:
-    """계정 활동 변동(D01) — 금액·건수·평균의 당기/전기 원값으로 표시."""
+    """계정 활동 변동(D01) — 금액·건수·건당 금액을 전기와 대조.
+
+    @st.fragment: 정렬 축 라디오가 페이지 전체 rerun 을 일으키면 브라우저 스크롤이 탭
+    상단으로 점프한다. 이 섹션만 부분 rerun 되도록 격리한다.
+    """
     section = st.container(border=True)
     section.markdown("##### 계정 활동 변동 (분석적 검토 신호)")
+    # Why: 구 문구("금액·건수·평균 단가가 함께 크게 바뀐 계정")는 두 군데가 사실과 달랐다.
+    #      (1) 가중변동 = 0.5·금액 + 0.3·건수 + 0.2·평균 의 합이라 한 축만 커도 걸린다.
+    #          "함께" 바뀔 필요가 없다.
+    #      (2) 그 임계(0.5)로 목록을 자르는 것은 2026-07-25 에 폐지됐다
+    #          (variance_layer._build_d01_account_summary 의 del flagged). 즉 "크게 바뀐 계정"이
+    #          아니라 비교 가능한 전 계정이다. 표가 실제로 하는 일만 적는다.
     section.caption(
-        "전기 대비 **금액·건수·평균 단가**가 함께 크게 바뀐 계정입니다. 위 변동액 Top 15 는 "
-        "금액만 보지만, 이 표는 거래 건수와 건당 평균까지 봐서 '금액은 비슷한데 건수가 "
-        "급감(=건당 단가 급등)' 같은 변화를 잡아냅니다."
+        "계정마다 전기와 당기의 금액·건수·건당 금액을 대조합니다. "
+        "변동에 이유가 안 붙는 계정을 골라내는 표입니다."
     )
 
     findings = _macro_findings("D01")
@@ -596,97 +748,71 @@ def _render_account_activity_section(data: dict) -> None:
     note = _prior_year_note(findings, data)
     if note:
         section.caption(note)
-    section.caption(f"계정 {len(findings)}개를 변동 금액 순으로 모두 세웠습니다(잘라내지 않음).")
 
-    rows = []
-    for item in findings:
-        m = item.get("metrics") or {}
-        cur_amt, pri_amt = m.get("current_total_amount"), m.get("prior_total_amount")
-        rows.append(
-            {
-                "계정": account_display(item.get("gl_account")),
-                "구분": _D01_REASON_KR.get(str(m.get("reason")), "활동 변동"),
-                "당기 금액": cur_amt,
-                "전기 금액": pri_amt,
-                "변동액": m.get("amount_delta"),
-                "증감률(%)": _pct_change(cur_amt, pri_amt),
-                "당기 건수": m.get("current_count"),
-                "전기 건수": m.get("prior_count"),
-                "건당 평균 증감률(%)": _pct_change(
-                    m.get("current_avg_amount"), m.get("prior_avg_amount")
-                ),
-            }
-        )
-
+    # Why: 세 축 중 어느 것으로 볼지는 감사인 판단이라 라디오로 넘긴다. 시스템이 축을
+    #      합성해 한 줄 순위를 선언하지 않는다(구 가중변동 폐지와 같은 이유).
+    axis = section.radio(
+        "비교 축",
+        options=list(_D01_AXES),
+        index=list(_D01_AXES).index(_D01_DEFAULT_AXIS),
+        horizontal=True,
+        key="d01_axis",
+    )
     section.dataframe(
-        pd.DataFrame(rows),
+        pd.DataFrame(_d01_table_rows(findings, axis or _D01_DEFAULT_AXIS)),
         width="stretch",
         hide_index=True,
-        column_config={
-            "당기 금액": st.column_config.NumberColumn(format="%,.0f"),
-            "전기 금액": st.column_config.NumberColumn(format="%,.0f"),
-            "변동액": st.column_config.NumberColumn(
-                format="%,.0f",
-                help="당기 금액 − 전기 금액. 이 값의 절대값이 큰 순으로 정렬합니다.",
-            ),
-            "증감률(%)": st.column_config.NumberColumn(format="%.1f%%"),
-            "당기 건수": st.column_config.NumberColumn(format="%,d"),
-            "전기 건수": st.column_config.NumberColumn(format="%,d"),
-            "건당 평균 증감률(%)": st.column_config.NumberColumn(format="%.1f%%"),
-        },
+        column_config=_d01_column_config(),
     )
 
 
 def _render_monthly_shift_section(data: dict) -> None:
-    """월별 분포 변동(D02) — 어느 달에 몰렸었는지가 어떻게 바뀌었는지."""
+    """결산월 집중 변동(D02) — 연간 금액 중 결산월 비중이 전기 대비 얼마나 늘었는지."""
     section = st.container(border=True)
-    section.markdown("##### 월별 분포 변동 (분석적 검토 신호)")
+    section.markdown("##### 결산월 집중 변동 (분석적 검토 신호)")
     section.caption(
-        "위 추세는 원장 전체지만, 이 표는 **계정별로** 1년 금액이 어느 달에 몰려 있었는지 "
-        "그 모양이 전기와 달라진 계정입니다. 몰린 달이 기말로 옮겨갔다면 기간 귀속(cutoff) "
-        "이나 결산 조정을 확인할 지점입니다."
+        "계정별로 1년 거래금액 중 **결산월 한 달**이 차지한 비중이 전기와 얼마나 달라졌는지입니다."
     )
 
     findings = _macro_findings("D02")
-    coverage = _d02_coverage_text(len(findings))
+    exclusion_note = _d02_exclusion_note()
+
+    # Why: 결산월 비중은 2026-07-25 에 추가된 진단값이라 그 전에 실행해 세션에 남은
+    #      Phase 1 결과에는 없다. 이 표를 보려고 2년치를 30분 재실행하게 만들지 않는다.
+    #      이 탭은 이미 전기 DB 를 attach 해 SQL 을 돌리므로, 값이 없으면 원장에서
+    #      직접 계산해 채운다. 계산식은 백엔드 D02 함수를 그대로 호출해 정의를 한 곳에 둔다.
+    if not _has_closing_ratio(findings):
+        findings = _closing_shift_findings_from_ledger(data.get("account_monthly"))
+
     if not findings:
-        section.info(coverage or "전기 데이터가 연결되지 않아 월별 분포를 비교할 수 없습니다.")
+        section.info(
+            exclusion_note or "전기 데이터가 연결되지 않아 월별 분포를 비교할 수 없습니다."
+        )
         return
 
-    note = _prior_year_note(findings, data)
-    if note:
-        section.caption(note)
-    if coverage:
-        section.caption(coverage)
-
-    rows = []
-    for item in findings:
-        m = item.get("metrics") or {}
-        pri_ratio, cur_ratio = m.get("prior_top_ratio"), m.get("current_top_ratio")
-        rows.append(
-            {
-                "계정": account_display(item.get("gl_account")),
-                "가장 몰린 달 (전기 → 당기)": _month_shift_label(
-                    m.get("prior_top_month"), m.get("current_top_month")
-                ),
-                "그 달 비중 (전기)": pri_ratio,
-                "그 달 비중 (당기)": cur_ratio,
-                "변화폭(%p)": _ratio_gap_pp(pri_ratio, cur_ratio),
-                "당기 거래 금액": m.get("current_annual_amount"),
-            }
+    # Why: 원장 재집계까지 했는데도 비중이 비어 있다면, 실행 중인 프로세스가 결산월 비중을
+    #      만들기 전 버전의 `variance_rules` 를 sys.modules 에 물고 있는 경우다(대시보드
+    #      모듈만 리로드되고 src 모듈은 안 바뀌는 상황). 빈 칸 표를 그리면 "변동 없음" 으로
+    #      오독되므로, 값 없이는 표를 만들지 않고 사유를 밝힌다.
+    if not _has_closing_ratio(findings):
+        section.warning(
+            "결산월 비중이 계산되지 않았습니다. 실행 중인 앱이 변경 전 탐지 모듈을 "
+            "사용하고 있습니다 — 앱을 재시작해 주세요(Phase 1 재실행은 필요 없습니다)."
         )
+        return
 
     section.dataframe(
-        pd.DataFrame(rows),
+        pd.DataFrame(_d02_table_rows(findings)),
         width="stretch",
         hide_index=True,
         column_config={
-            "그 달 비중 (전기)": st.column_config.NumberColumn(format="percent"),
-            "그 달 비중 (당기)": st.column_config.NumberColumn(format="percent"),
-            "변화폭(%p)": st.column_config.NumberColumn(
+            "결산월 비중 (전기)": st.column_config.NumberColumn(format="percent"),
+            "결산월 비중 (당기)": st.column_config.NumberColumn(format="percent"),
+            "증가분(%p)": st.column_config.NumberColumn(
                 format="%.1f",
                 help=(
-                    "한 달에 몰린 정도가 전기 대비 몇 %p 달라졌는지. 이 값이 큰 순으로 정렬합니다."
+                    "당기 결산월 비중 − 전기 결산월 비중. 양수면 결산월로 더 몰렸다는 뜻이고, "
+                    "이 값이 큰 순으로 정렬합니다."
                 ),
             ),
             "당기 거래 금액": st.column_config.NumberColumn(format="%,.0f"),
@@ -694,21 +820,90 @@ def _render_monthly_shift_section(data: dict) -> None:
     )
 
 
-def _ratio_gap_pp(prior_ratio: object, current_ratio: object) -> float | None:
-    """두 비중(0~1)의 차이를 %p 로. 값이 없으면 계산하지 않는다."""
+def _closing_shift_findings_from_ledger(account_monthly: pd.DataFrame | None) -> list[dict]:
+    """계정×월 원장 집계로 D02 finding 모양을 만든다 — Phase 1 재실행 없이 표를 채운다.
+
+    Why: 판정식을 여기서 다시 쓰면 백엔드와 어긋난다. `d02_monthly_pattern_diagnostics`
+         를 그대로 호출하고, 입력만 이 탭의 SQL 결과로 바꾼다. 계정×월 합계는 이미
+         "차변+대변 활동금액" 이므로 debit 한 칸에 실어 넘겨도 같은 값이 나온다.
+    """
+    if account_monthly is None or account_monthly.empty:
+        return []
+
+    from src.detection.variance_rules import d02_monthly_pattern_diagnostics
+
+    records = [
+        {
+            "period": str(row.get("period") or ""),
+            "gl_account": str(row.get("gl_account") or ""),
+            "fiscal_period": _safe_int(row.get("fiscal_period")),
+            "amount": _safe_float(row.get("amount")),
+        }
+        for row in account_monthly.to_dict("records")
+    ]
+    records = [r for r in records if r["gl_account"] and r["fiscal_period"] is not None]
+
+    prior_patterns: dict[str, dict[int, float]] = {}
+    current_rows: list[dict] = []
+    for rec in records:
+        month = int(rec["fiscal_period"])  # type: ignore[arg-type]
+        if rec["period"] == "prior":
+            prior_patterns.setdefault(rec["gl_account"], {})[month] = rec["amount"]
+        elif rec["period"] == "current":
+            current_rows.append(
+                {
+                    "gl_account": rec["gl_account"],
+                    "fiscal_period": month,
+                    # 계정×월 합계가 이미 차변+대변이므로 한 칸에 실어도 같은 활동금액이 된다.
+                    "debit_amount": rec["amount"],
+                    "credit_amount": 0.0,
+                    "document_id": f"{rec['gl_account']}-{month}",
+                }
+            )
+
+    if not current_rows or not prior_patterns:
+        return []
+
+    diagnostics = d02_monthly_pattern_diagnostics(
+        pd.DataFrame(current_rows),
+        prior_patterns,
+        # 계정×월 1행 단위로 넘기므로 전표 수·금액·비중 하한은 풀어 둔다(백엔드도 2026-07-25 폐지).
+        min_account_docs=1,
+        min_annual_amount=0.0,
+        min_top_month_delta=0.0,
+        group_keys=None,
+    )
+    if diagnostics.empty:
+        return []
+
+    # 남기는 기준은 백엔드 큐와 같다 — "월별 분포를 비교할 수 있느냐" 하나뿐.
+    return [
+        {"gl_account": row.get("gl_account"), "metrics": row}
+        for row in diagnostics.to_dict("records")
+        if str(row.get("skip_reason") or "") not in _D02_NOT_COMPARABLE
+    ]
+
+
+def _safe_int(value: object) -> int | None:
     try:
-        return abs(float(current_ratio) - float(prior_ratio)) * 100.0  # type: ignore[arg-type]
+        return int(float(value))  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return None
 
 
-def _month_shift_label(prior_month: object, current_month: object) -> str:
-    """'11월 → 12월' 형태. 같은 달이면 비중만 바뀐 경우라 화살표를 생략."""
+def _safe_float(value: object) -> float:
     try:
-        pri, cur = int(prior_month), int(current_month)  # type: ignore[arg-type]
+        return float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
-        return "-"
-    return f"{pri}월 (변동 없음)" if pri == cur else f"{pri}월 → {cur}월"
+        return 0.0
+
+
+def _ratio_delta_pp(prior_ratio: object, current_ratio: object) -> float | None:
+    """비중(0~1) 증가분을 %p 로 — 부호 유지. 줄어들면 음수, 값이 없으면 계산하지 않는다."""
+    try:
+        return (float(current_ratio) - float(prior_ratio)) * 100.0  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
 
 
 # ── ② 계정과목 변동 ────────────────────────────────────────────
@@ -868,6 +1063,7 @@ def _collect_comparison_data(
         "overview": _query_overview(conn, current_batch, alias, prior_batch),
         "category": _query_category_amounts(conn, current_batch, alias, prior_batch),
         "monthly": _query_monthly(conn, current_batch, alias, prior_batch),
+        "account_monthly": _query_account_monthly(conn, current_batch, alias, prior_batch),
         "accounts": _query_account_amounts(conn, current_batch, alias, prior_batch),
         "current_rules": _query_rule_counts(conn, current_batch=current_batch, schema=None),
         "prior_rules": _query_rule_counts(conn, current_batch=prior_batch, schema=alias),
@@ -1138,6 +1334,39 @@ def _query_monthly(
         WHERE upload_batch_id = ? AND posting_date IS NOT NULL
         GROUP BY EXTRACT(MONTH FROM posting_date)
         ORDER BY period, month
+    """
+    return conn.execute(sql, [current_batch, prior_batch]).fetchdf()
+
+
+def _query_account_monthly(
+    conn: duckdb.DuckDBPyConnection,
+    current_batch: str,
+    alias: str,
+    prior_batch: str,
+) -> pd.DataFrame:
+    """계정 × 회계기간별 활동금액(차변+대변) — 당기/전기 한 테이블.
+
+    Why: 결산월 집중 변동(D02)을 Phase 1 재실행 없이 이 화면에서 계산하기 위한 입력.
+         금액 정의는 백엔드 D02 와 같은 "차변+대변 활동금액", 월 정의도 같은
+         `fiscal_period` 를 쓴다(posting_date 의 달이 아니라 회계기간).
+    """
+    amount_expr = "COALESCE(SUM(COALESCE(debit_amount, 0) + COALESCE(credit_amount, 0)), 0)"
+    sql = f"""
+        SELECT 'current' AS period,
+               CAST(gl_account AS VARCHAR) AS gl_account,
+               fiscal_period,
+               {amount_expr} AS amount
+        FROM general_ledger
+        WHERE upload_batch_id = ? AND gl_account IS NOT NULL AND fiscal_period IS NOT NULL
+        GROUP BY CAST(gl_account AS VARCHAR), fiscal_period
+        UNION ALL
+        SELECT 'prior',
+               CAST(gl_account AS VARCHAR),
+               fiscal_period,
+               {amount_expr}
+        FROM {alias}.general_ledger
+        WHERE upload_batch_id = ? AND gl_account IS NOT NULL AND fiscal_period IS NOT NULL
+        GROUP BY CAST(gl_account AS VARCHAR), fiscal_period
     """
     return conn.execute(sql, [current_batch, prior_batch]).fetchdf()
 
