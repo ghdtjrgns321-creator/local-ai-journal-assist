@@ -1366,7 +1366,11 @@ def _collect_raw_hits_profiled(
         tuple[str, str, int, float, str | None],
         Any,
     ] = {}
-    case_candidate_labels = _case_candidate_index_labels(df)
+    # Why: 구 위험도 게이트(_case_candidate_index_labels, 2026-05-03)를 2026-07-26 제거했다.
+    #      risk_level != "Normal" 인 행만 케이스 후보로 넘기던 필터인데, tier 자동등급
+    #      폐지(2026-07-17) 이후로는 시스템이 등급을 선언하지 않고 조합 빌더가 감사인의
+    #      선택으로 좁히는 구조다. 게이트는 그 앞단에서 발화를 조용히 버려(실측 5,957행
+    #      / 2,006문서) 화면이 되살릴 수 없게 만들었다. 후보 판정은 룰 발화 자체로 한다.
     for result in results:
         details = result.details if result.details is not None else pd.DataFrame(index=df.index)
         row_annotations = (result.metadata or {}).get("row_annotations", {})
@@ -1412,8 +1416,6 @@ def _collect_raw_hits_profiled(
             )
             raw_scores = pd.to_numeric(column, errors="coerce").fillna(0.0)
             seed_labels: set[Any] = set(raw_scores[raw_scores.gt(0)].index.tolist())
-            if case_candidate_labels is not None:
-                seed_labels.intersection_update(case_candidate_labels)
             context_labels: set[Any] = set()
             if isinstance(rule_annotations, dict):
                 for raw_idx, annotation in rule_annotations.items():
@@ -1428,8 +1430,6 @@ def _collect_raw_hits_profiled(
                         if 0 <= candidate_pos < len(df):
                             row_label = df.index[candidate_pos]
                     if row_label is None:
-                        continue
-                    if case_candidate_labels is not None and row_label not in case_candidate_labels:
                         continue
                     if _annotation_can_seed_case(requested_rule_id, annotation):
                         seed_labels.add(row_label)
@@ -1533,18 +1533,6 @@ def _collect_raw_hits_profiled(
                     },
                 )
     return hits
-
-
-def _case_candidate_index_labels(df: pd.DataFrame) -> set[Any] | None:
-    """Return row labels eligible for the Phase 1 case queue after aggregation."""
-
-    if "risk_level" in df.columns:
-        risk = df["risk_level"].astype(str)
-        return set(risk[risk.ne("Normal")].index.tolist())
-    if "anomaly_score" in df.columns:
-        score = pd.to_numeric(df["anomaly_score"], errors="coerce").fillna(0.0)
-        return set(score[score.gt(0)].index.tolist())
-    return None
 
 
 def _build_cases(
@@ -2246,9 +2234,7 @@ def _score_unit_hits(
     unit_tier = topic_tier
     priority_score = _TIER_TO_PRIORITY_SCORE.get(unit_tier, 0.0)
     priority_band = _TIER_TO_BAND.get(unit_tier, "low")
-    composite_sort_score, composite_sort_score_components = _case_sort_score(
-        hits, amount_score
-    )
+    composite_sort_score, composite_sort_score_components = _case_sort_score(hits, amount_score)
     if _is_low_risk_linked_l205_reversal(unit, rows):
         # tier 경로는 priority_score 를 tier 대표값으로 덮으므로 low cap 을 여기서 재적용.
         # _derive_case_scores_from_units 가 priority_score 로 case band 를 재계산하기 때문.
