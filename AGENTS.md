@@ -21,7 +21,7 @@
 - ML / analytics: scikit-learn, XGBoost, LightGBM, SHAP, PyTorch, networkx.
 - NLP / LLM: kiwipiepy, OpenAI API through the project LLM abstraction layer.
 - Export: fpdf2, Excel/PDF/CSV reporting modules.
-- Synthetic data generator: EY-ASU DataSynth under `tools/datasynth/`, implemented in Rust.
+- Synthetic data generator: DataSynth under `tools/datasynth/`, implemented in Rust. Originally published by EY Switzerland Assurance R&D (Apache 2.0); the upstream repository has since been taken private.
 
 ## Non-negotiables
 
