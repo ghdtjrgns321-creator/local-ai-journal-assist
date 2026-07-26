@@ -286,10 +286,16 @@ LLM 개입 없이 로컬로 실행 가능
     L3-12  업무범위 집중   한 사람이 다루는 업무·회사 수가 직급 기준을 넘음(직급 기준 수정 가능)
     L4-04  희귀 차대쌍     그 원장에서 분기당 1회 미만으로만 나오는 계정 조합
 ```
-**룰 기반 전체 요약 화면**
+**룰 기반 전체 요약 화면 — 검토 대상 모집단**
 
 <p align="center">
-  <img src="images/screenshot-rules.png" width="860" alt="룰 기반 전체 요약 — 검토 대상 모집단 KPI와 L1~L4 계층별 룰 발화 요약">
+  <img src="images/screenshot-rules.png" width="860" alt="검토 대상 모집단 — 전표·분개 라인·작성자·수기 전표 KPI, 월별 기표 전표 추이, 작성자별·계정과목별 룰 신호 상위 10">
+</p>
+
+**룰 기반 전체 요약 화면 — 분석 룰 요약**
+
+<p align="center">
+  <img src="images/screenshot-rule-summary.png" width="860" alt="분석 룰 요약 — L1~L4 계층별 룰 목록과 검토대상 건수 배지, 계층별 총 건수">
 </p>
 
 **데이터 정합성 점검 화면**
@@ -344,10 +350,16 @@ LLM 개입 없이 로컬로 실행 가능
 | 비용자산화       | 비용자산화                      | 감리 확정 22건                           |
 | 결산 손상·충당금 | 기말결산 · 추정계정             | 감리 확정 — 손상 · 대손충당금 미인식 5건 |
 
-**결합 선택 화면**
+**결합 선택 화면 — 금감원 사례 조합**
 
 <p align="center">
-  <img src="images/screenshot-combo-builder.png" width="860" alt="조합 빌더 — 금감원 사례 조합 카드 5장과 논리식 표기, 직접 조합의 조작 대상 10 × 조작 방법 10 선택 표">
+  <img src="images/screenshot-combo-builder.png" width="860" alt="검토 조합 — 금감원 사례 조합 카드 5장과 몸통·특징 논리식 표기">
+</p>
+
+**결합 선택 화면 — 직접 조합**
+
+<p align="center">
+  <img src="images/screenshot-combo-direct.png" width="860" alt="직접 조합 — 조작 대상 10개와 조작 방법 10개를 직접 고르는 선택 표">
 </p>
 
 ## 3-4. 기술 설명 - 분석적 검토
