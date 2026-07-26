@@ -4,41 +4,43 @@
 
 모든 판정은 스크립트 종료 코드가 완료 선언이다. 아래 근거 경로는 판정 스크립트를 실행하면 생성되는 산출물이며, 측정 결과물이라 저장소에는 담지 않는다.
 
-| 검증 항목           | 방법                                                  | 결과 (M/N)                                                                                                       | 근거 경로                                                                                     |
-| ------------------- | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| 룰 발화율 대역      | 대역 사전 선언 후 정상 base 실측                      | **PASS 27 / 28**                                                                                                 | `reports/s1_normal_s10/rule_summary.csv`                                                      |
-| VAE 정상 플래그율   | 미학습 정상 구간 플래그율 vs 오염설정                 | 1.056% vs 1.00% (대역 [0.3×,3×]) **PASS**                                                                        | `reports/s1_normal_s10/vae_flagrate.json`                                                     |
-| 룰 단위시험         | 룰별 표적 주입 후 표적 적중 판정                      | **29 / 29** exit 0                                                                                               | `tools/scripts/s2_adjudicate_unit_firing.py` → `reports/s2_unit_firing/adjudication.json`     |
-| 룰 분모 고정        | 탐지기 레지스트리에서 스크립트 추출                   | 35 − 비활성 6 = **29**                                                                                           | `reports/s2_unit_firing/rule_denominator.json`                                                |
-| 빌더 날조 검사      | 제시 증거가 오라클에 실재하는가                       | **위반 0 / 36,774 unit**                                                                                         | `tools/scripts/s4_adjudicate_combo_builder.py` → `reports/s4_combo_builder/adjudication.json` |
-| 빌더 결합 의미론    | 120셀 × 2모드 독립 재구현 대조                        | **120/120**, **120/120**                                                                                         | 동상                                                                                          |
-| 빌더 프리셋         | 4종 뷰 정합·절단 규칙                                 | **4 / 4**                                                                                                        | 동상                                                                                          |
-| 빌더 정답지 하한    | 어휘 20룰 단독 선택 시 표적 일치                      | **20 / 20**                                                                                                      | 동상                                                                                          |
-| 발화→표면 커버리지  | 탐지기 발화 대비 표면 진입 전수 대조                  | L2-05 유실 109 → **2**, 그 외 **약 741건 유실 잔존**(합격선 없는 관찰 축)                                        | 동상 (v0b 필드)                                                                               |
-| 부정 표면화         | overlay 4벌 문서 커버리지                             | **197~204 / 330** (59.7~61.8%) — 밀도·대비 수치는 상한([7.8](7_PHASE1-1_COMBO-BUILDER.md))                       | `tools/scripts/s5_measure_builder_performance.py` → `reports/s5_fraud_overlay/`               |
-| VAE 부정 탐지       | overlay 4벌 문서 AUROC                                | **0.5187** — 성능 검증 불성립(측정 데이터 무효, [9.9](9_PHASE2_VAE.md))                                          | `tools/scripts/s5_measure_vae_performance.py` → `vae_performance_aggregate.json`              |
-| overlay 결측 지름길 | 전 컬럼 결측률 차 + 결측 단독 AUC 스캔                | **69컬럼 중 16개 위반** (`is_suspense_account` 결측 단독 AUC 1.000) — **수정 안 함(결정)**, 데이터셋 부적격 표기 | `dev/active/phase2-vae-auc-diagnosis/scan_shortcuts.py`                                       |
-| 룰 오염 층화 검사   | 승인자 보유 전표만으로 재집계(seed1 FY2022, 부정 83)  | 부정 측 변화 0(구조적) · 승인 의존 룰에서 정상 발화율 급등 · **L1-07 부정 표면화 0.000**                         | `dev/active/phase2-vae-auc-diagnosis/measure_rule_contamination.py`                           |
-| 현실성 게이트       | 57종 자동 검사                                        | PASS 37 / FAIL 7 / BLOCKED 9 / INFO 4                                                                            | `reports/unit2_rescope/verifier_s10_gatefix.{json,md}`                                        |
-| 계정 체계           | ACC 9종                                               | 8~9 / 9                                                                                                          | `tools/scripts/normal_realism_account_checks.py`                                              |
-| 지름길 게이트       | overlay 16종                                          | **ALL PASS** (대표본·seed1) — 단 결측률 축 분모는 메타 8컬럼뿐([9.7](9_PHASE2_VAE.md))                           | `reports/s5_fraud_overlay/`                                                                   |
-| 단위 테스트         | pytest 수집                                           | **4,178 수집**                                                                                                   | `uv run pytest tests --collect-only`                                                          |
-| 본 보고서 전수      | census 차집합 (집필 하네스 도구 — 저장소 산출물 아님) | **11,436 / 11,436** exit 0                                                                                       | [16장](16_COVERAGE.md)                                                                        |
+| 검증 항목           | 방법                                                  | 결과 (M/N)                                                                                                         | 근거 경로                                                                                                |
+| ------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| 룰 발화율 대역      | 대역 사전 선언 후 정상 base 실측                      | **PASS 28 / 28** (L4-03·L3-10 은 실패 후 조치로 해소)                                                              | `reports/s1_normal_s10_remeasure_20260726_l310fix/rule_summary.csv`                                      |
+| VAE 정상 플래그율   | 미학습 정상 구간 플래그율 vs 오염설정                 | 1.056% vs 1.00% (대역 [0.3×,3×]) **PASS**                                                                          | `reports/s1_normal_s10/vae_flagrate.json`                                                                |
+| 룰 단위시험         | 룰별 표적 주입 후 표적 적중 판정                      | **29 / 29** exit 0                                                                                                 | `tools/scripts/s2_adjudicate_unit_firing.py` → `reports/s2_unit_firing/adjudication.json`                |
+| 룰 분모 고정        | 탐지기 레지스트리에서 스크립트 추출                   | 35 − 비활성 6 = **29**                                                                                             | `reports/s2_unit_firing/rule_denominator.json`                                                           |
+| 빌더 날조 검사      | 제시 증거가 오라클에 실재하는가                       | **위반 0 / 36,774 unit**                                                                                           | `tools/scripts/s4_adjudicate_combo_builder.py` → `reports/s4_combo_builder/adjudication.json`            |
+| 빌더 결합 의미론    | 120셀 × 2모드 독립 재구현 대조                        | **120/120**, **120/120**                                                                                           | 동상                                                                                                     |
+| 빌더 프리셋         | 4종 뷰 정합·절단 규칙                                 | **4 / 4**                                                                                                          | 동상                                                                                                     |
+| 빌더 정답지 하한    | 어휘 20룰 단독 선택 시 표적 일치                      | **20 / 20**                                                                                                        | 동상                                                                                                     |
+| 발화→표면 커버리지  | 탐지기 발화 대비 표면 진입 전수 대조                  | L2-05 유실 109 → **2**, 그 외 **약 741건 유실 잔존**(합격선 없는 관찰 축)                                          | 동상 (v0b 필드)                                                                                          |
+| 부정 표면화         | overlay 4벌 문서 커버리지                             | **197~204 / 330** (59.7~61.8%) — 밀도·대비 수치는 상한([7.8](7_PHASE1-1_COMBO-BUILDER.md))                         | `tools/scripts/s5_measure_builder_performance.py` → `reports/s5_fraud_overlay/`                          |
+| VAE 부정 탐지       | overlay 4벌 문서 AUROC                                | 학습 5만 행 **0.5187** / 20만 행 **1.0000** — 둘 다 성능 검증 불성립(측정 데이터 무효, [9.6~9.9](9_PHASE2_VAE.md)) | `tools/scripts/s5_measure_vae_performance.py --train-rows N --tag T` → `vae_performance_aggregate*.json` |
+| overlay 결측 지름길 | 전 컬럼 결측률 차 + 결측 단독 AUC 스캔                | **69컬럼 중 16개 위반** (`is_suspense_account` 결측 단독 AUC 1.000) — **수정 안 함(결정)**, 데이터셋 부적격 표기   | `dev/active/phase2-vae-auc-diagnosis/scan_shortcuts.py`                                                  |
+| 룰 오염 층화 검사   | 승인자 보유 전표만으로 재집계(seed1 FY2022, 부정 83)  | 부정 측 변화 0(구조적) · 승인 의존 룰에서 정상 발화율 급등 · **L1-07 부정 표면화 0.000**                           | `dev/active/phase2-vae-auc-diagnosis/measure_rule_contamination.py`                                      |
+| 현실성 게이트       | 57종 자동 검사                                        | PASS 37 / FAIL 7 / BLOCKED 9 / INFO 4                                                                              | `reports/unit2_rescope/verifier_s10_gatefix.{json,md}`                                                   |
+| 계정 체계           | ACC 9종                                               | 8~9 / 9                                                                                                            | `tools/scripts/normal_realism_account_checks.py`                                                         |
+| 지름길 게이트       | overlay 16종                                          | **ALL PASS** (대표본·seed1) — 단 결측률 축 분모는 메타 8컬럼뿐([9.7](9_PHASE2_VAE.md))                             | `reports/s5_fraud_overlay/`                                                                              |
+| 단위 테스트         | pytest 수집                                           | **4,178 수집**                                                                                                     | `uv run pytest tests --collect-only`                                                                     |
+| 본 보고서 전수      | census 차집합 (집필 하네스 도구 — 저장소 산출물 아님) | **11,436 / 11,436** exit 0                                                                                         | [16장](16_COVERAGE.md)                                                                                   |
 
 ### 판정에서 실제로 뒤집힌 것
 
 검증이 형식이 아니었다는 증거로, 판정 과정에서 결론이 바뀐 사례를 남긴다.
 
-| 사례         | 1차                        | 최종                         | 원인                                                                        |
-| ------------ | -------------------------- | ---------------------------- | --------------------------------------------------------------------------- |
-| 룰 단위시험  | 26/29                      | **29/29**                    | 미발화 3건이 전부 시험 장치 결함                                            |
-| S1 판정 분모 | "PASS 29 / 분모 30"        | **PASS 27 / 분모 28**        | 탐지기 부재 구 ID 3종의 "PASS 0"이 hollow였음 + 행 수 오산                  |
-| 빌더 정확성  | FAIL                       | **exit 0**                   | 관계사 룰 메타데이터 스테일 발견·수정                                       |
-| 죽은 룰 3종  | "대역 재선언(정상)"        | **생성기 갭으로 재분류**     | "정상에 컷오프 0건은 이상하다"는 지적으로 재개봉                            |
-| ACC01 게이트 | FAIL(데이터 결함으로 판단) | **게이트 설계 오류**         | 라인 단위 판정이 정상 26%를 오탐                                            |
-| VAE 성능     | 모델 **검증 실패**         | **측정 불성립(데이터 무효)** | 측정 데이터에 부정·정상 결측 지름길 16개 실재 — 수치는 유지, 라벨·원인 교체 |
+| 사례                 | 1차                        | 최종                         | 원인                                                                                             |
+| -------------------- | -------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------ |
+| 룰 단위시험          | 26/29                      | **29/29**                    | 미발화 3건이 전부 시험 장치 결함                                                                 |
+| S1 판정 분모         | "PASS 29 / 분모 30"        | **분모 28** (당시 PASS 27)   | 탐지기 부재 구 ID 3종의 "PASS 0"이 hollow였음 + 행 수 오산                                       |
+| 빌더 정확성          | FAIL                       | **exit 0**                   | 관계사 룰 메타데이터 스테일 발견·수정                                                            |
+| 죽은 룰 3종          | "대역 재선언(정상)"        | **생성기 갭으로 재분류**     | "정상에 컷오프 0건은 이상하다"는 지적으로 재개봉                                                 |
+| ACC01 게이트         | FAIL(데이터 결함으로 판단) | **게이트 설계 오류**         | 라인 단위 판정이 정상 26%를 오탐                                                                 |
+| VAE 성능             | 모델 **검증 실패**         | **측정 불성립(데이터 무효)** | 측정 데이터에 부정·정상 결측 지름길 16개 실재 — 수치는 유지, 라벨·원인 교체                      |
+| VAE 낮은 수치의 해석 | **방어가 작동한 신호**     | **학습 부족이었다**          | 학습 표본 5만 → 20만 행에서 같은 차단 설정으로 AUROC 1.0000 — 해석 철회, 1.000도 인용 금지       |
+| S1 실패 룰           | L4-03 (3.61%)              | **없음 (28/28)**             | 임계 수정으로 L4-03 해소 → 추정계정 목록 확대로 L3-10 초과(1.43%) → 상각 3계정 철회로 0.42% 복귀 |
 
-마지막 행이 가장 늦게 뒤집힌 것이고 방향도 다르다. 앞의 다섯은 "실패로 보였는데 도구·장치 결함이었다"이고, 이것은 **"모델 실패로 적었는데 측정 자체가 성립하지 않았다"**다. 다섯 사례에서 얻은 교훈("측정 도구도 검증 대상")이 여섯 번째에서 한 칸 더 갔다 — **측정 대상 데이터도 검증 대상이다.** 그리고 이 정정이 수치를 유리하게 바꾸지 않도록, 낮은 AUC를 성능 주장으로 재해석하지 않는다는 결정을 아래 ADR에 함께 박았다.
+VAE 행이 가장 늦게 뒤집힌 것이고 방향도 다르다. 앞의 다섯은 "실패로 보였는데 도구·장치 결함이었다"이고, 이것은 **"모델 실패로 적었는데 측정 자체가 성립하지 않았다"**다. 다섯 사례에서 얻은 교훈("측정 도구도 검증 대상")이 여섯 번째에서 한 칸 더 갔다 — **측정 대상 데이터도 검증 대상이다.** 그리고 이 정정이 수치를 유리하게 바꾸지 않도록, 낮은 AUC를 성능 주장으로 재해석하지 않는다는 결정을 아래 ADR에 함께 박았다.
 
 ## 13.2 설계 결정 (ADR)
 
@@ -105,15 +107,17 @@
 
 판정 스크립트는 저장소에 있고, 결과 파일은 **스크립트를 실행하면 아래 경로에 생성된다**(측정 산출물이라 저장소에 담지 않는다).
 
-| 단계          | 스크립트                                                 | 생성되는 결과 파일                                            |
-| ------------- | -------------------------------------------------------- | ------------------------------------------------------------- |
-| 룰 단위시험   | `tools/scripts/s2_adjudicate_unit_firing.py`             | `reports/s2_unit_firing/adjudication.json`                    |
-| 빌더 정확성   | `tools/scripts/s4_adjudicate_combo_builder.py`           | `reports/s4_combo_builder/adjudication.json`                  |
-| 빌더 성능     | `tools/scripts/s5_measure_builder_performance.py`        | `reports/s5_fraud_overlay/builder_performance_aggregate.json` |
-| VAE 성능      | `tools/scripts/s5_measure_vae_performance.py`            | `reports/s5_fraud_overlay/vae_performance_aggregate.json`     |
-| 현실성 게이트 | `tools/scripts/normal_data_realism_verifier_20260603.py` | `reports/unit2_rescope/verifier_*.json`                       |
-| 계정 체계     | `tools/scripts/normal_realism_account_checks.py`         | 위 검증기에 통합                                              |
-| 종합 판독     | —                                                        | `reports/s5_fraud_overlay/BUILDER_PERFORMANCE_SUMMARY.md`     |
+| 단계              | 스크립트                                                                 | 생성되는 결과 파일                                            |
+| ----------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------- |
+| 룰 발화율 대역    | `tools/scripts/measure_phase1_current_p3_2.py <dataset_dir>`             | `reports/<output-dir>/rule_summary.csv`                       |
+| 룰 단위시험       | `tools/scripts/s2_adjudicate_unit_firing.py`                             | `reports/s2_unit_firing/adjudication.json`                    |
+| 빌더 정확성       | `tools/scripts/s4_adjudicate_combo_builder.py`                           | `reports/s4_combo_builder/adjudication.json`                  |
+| 빌더 성능         | `tools/scripts/s5_measure_builder_performance.py`                        | `reports/s5_fraud_overlay/builder_performance_aggregate.json` |
+| VAE 성능          | `tools/scripts/s5_measure_vae_performance.py [--train-rows N] [--tag T]` | `reports/s5_fraud_overlay/vae_performance_aggregate<_T>.json` |
+| VAE 정상 플래그율 | `tools/scripts/s1_measure_vae_flagrate.py <base_dir> [--train-rows N]`   | `reports/s1_vae_flagrate_<base>/vae_flagrate.json`            |
+| 현실성 게이트     | `tools/scripts/normal_data_realism_verifier_20260603.py`                 | `reports/unit2_rescope/verifier_*.json`                       |
+| 계정 체계         | `tools/scripts/normal_realism_account_checks.py`                         | 위 검증기에 통합                                              |
+| 종합 판독         | —                                                                        | `reports/s5_fraud_overlay/BUILDER_PERFORMANCE_SUMMARY.md`     |
 
 ### 데이터셋 부적격 판정의 재현 (2026-07-25)
 
@@ -126,6 +130,18 @@
 | 룰 오염 층화 검사              | `dev/active/phase2-vae-auc-diagnosis/measure_rule_contamination.py [dataset_dir]` | `rule_contamination_<dataset>.csv` / `.json`                  |
 
 판단 근거와 회차별 원본 기록은 같은 디렉토리의 진단 문서 2건에 있다 — `PHASE2_VAE_DATASET_INVALIDITY.md`(부적격 판정의 근거와 역설), `plan.md`(원인 후보 4종 분해, 과적합 방지 프로토콜, 홀드아웃 측정 횟수 기록).
+
+### 학습 표본 상한 재측정의 재현 (2026-07-26)
+
+[9.6](9_PHASE2_VAE.md) 회차 B와 [9.8](9_PHASE2_VAE.md)의 해석 철회는 아래로 재현한다.
+
+| 측정                   | 스크립트                                                                                        | 산출물                                 |
+| ---------------------- | ----------------------------------------------------------------------------------------------- | -------------------------------------- |
+| 회차 B 판별력          | `tools/scripts/s5_measure_vae_performance.py <base> <fraud...> --train-rows 200000 --tag t200k` | `vae_performance_aggregate_t200k.json` |
+| 결측 지시자 단독 AUROC | `dev/active/vae-train-cap-remeasure/diagnose_perfect_auroc.py <base> <fraud>`                   | `diagnosis_perfect_auroc.json`         |
+| 문서 수치 분모 고정    | `dev/active/vae-train-cap-remeasure/census_vae_numbers.py`                                      | `census_inventory.csv`                 |
+
+회차별 실측 기록은 같은 디렉토리 `findings.md`에 누적했다. **회차 A(5만 행) 산출물은 덮어쓰지 않고 `reports/s5_fraud_overlay/_backup_20260726_pre_t200k/`에 보존했다** — `reports/`는 git 미추적이라 덮으면 복원 경로가 없다.
 
 세 스크립트는 **프로덕션 코드가 import하지 않는 독립 진단 도구**이며 pytest가 수집하지 않는다(§10.5의 독립 검증 도구와 같은 성격). `measure_rule_contamination.py`는 평가를 위해 `datasynth_label_mode="visible"`로 파이프라인을 돌리므로 **운영 경로가 아니다** — 라벨은 이 스크립트 안에서만 쓰인다.
 
