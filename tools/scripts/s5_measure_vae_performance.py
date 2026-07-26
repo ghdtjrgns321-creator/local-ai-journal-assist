@@ -1,10 +1,15 @@
 """S5 측정 — VAE(PHASE2) 부정 농축 성능 + PHASE1 빌더와의 상보성.
 
 사용: uv run python tools/scripts/s5_measure_vae_performance.py <base_dir> <fraud_dir> [...]
+      [--train-rows N] [--tag SUFFIX]
+
+  --train-rows  학습 표본 상한(기본 50,000 = 2026-07 기록 회차 조건). 0 이하면 전 행 사용.
+  --tag         출력 파일명 접미어. reports/ 는 git 미추적이라 접미어 없이 재실행하면
+                기존 산출물을 복원 불가하게 덮어쓴다.
 
 절차 (라벨 미사용 학습 원칙 — feedback_unsupervised_no_y):
   1) base(s10 정상)에 파이프라인 실행 → featured df → phase2 피처 입력 준비 →
-     50,000행 표본으로 UnsupervisedDetector 학습 (S1 vae_flagrate 측정과 동일 조건).
+     --train-rows 표본으로 UnsupervisedDetector 학습 (S1 vae_flagrate 측정과 동일 조건).
   2) 각 fraud 데이터셋: 파이프라인 실행 → 동일 준비 → detect → 행 점수(ECDF percentile).
   3) 문서 단위 점수 = 행 점수 max. truth(provenance) 대비:
      AUROC / recall@top1% / recall@top0.5% / scheme별 top1% 적중.
@@ -16,6 +21,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -28,7 +34,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 OUT_DIR = ROOT / "reports/s5_fraud_overlay"
-TRAIN_SAMPLE_ROWS = 50_000
+DEFAULT_TRAIN_SAMPLE_ROWS = 50_000
 TRAIN_SAMPLE_SEED = 20260718
 
 
@@ -54,11 +60,22 @@ def main() -> int:
     from src.detection.vae_detector import UnsupervisedDetector
     from src.services.phase2_training_service import prepare_phase2_feature_inputs
 
-    if len(sys.argv) < 3:
-        print("usage: s5_measure_vae_performance.py <base_dir> <fraud_dir> [...]")
-        return 2
-    base_dir = Path(sys.argv[1])
-    fraud_dirs = [Path(a) for a in sys.argv[2:]]
+    parser = argparse.ArgumentParser(prog="s5_measure_vae_performance.py")
+    parser.add_argument("base_dir")
+    parser.add_argument("fraud_dirs", nargs="+")
+    parser.add_argument(
+        "--train-rows",
+        type=int,
+        default=DEFAULT_TRAIN_SAMPLE_ROWS,
+        help="학습 표본 상한. 0 이하면 전 행 사용",
+    )
+    parser.add_argument("--tag", default="", help="출력 파일명 접미어(기존 산출물 보존용)")
+    args = parser.parse_args()
+
+    base_dir = Path(args.base_dir)
+    fraud_dirs = [Path(a) for a in args.fraud_dirs]
+    train_rows = int(args.train_rows)
+    tag = f"_{args.tag}" if args.tag else ""
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     from config.settings import get_settings as _gs
@@ -68,13 +85,18 @@ def main() -> int:
     print(f"=== base 학습: {base_dir.name} ===", flush=True)
     base_df = _featured_df(base_dir)
     cleaned, groups, _payload = prepare_phase2_feature_inputs(base_df, settings=settings)
-    if len(cleaned) > TRAIN_SAMPLE_ROWS:
-        train_X = cleaned.sample(n=TRAIN_SAMPLE_ROWS, random_state=TRAIN_SAMPLE_SEED)
+    if 0 < train_rows < len(cleaned):
+        train_X = cleaned.sample(n=train_rows, random_state=TRAIN_SAMPLE_SEED)
     else:
         train_X = cleaned
+    n_train = int(len(train_X))
     det = UnsupervisedDetector(settings)
     det.train(train_X, groups)
-    print(f"학습 완료: {len(train_X)}행 × {train_X.shape[1]}피처", flush=True)
+    print(
+        f"학습 완료: {n_train}행 × {train_X.shape[1]}피처"
+        f" (모집단 {len(cleaned)}행 · 상한 인자 {train_rows})",
+        flush=True,
+    )
 
     reports = []
     for fdir in fraud_dirs:
@@ -124,6 +146,8 @@ def main() -> int:
 
         rep = {
             "dataset": fdir.name,
+            "train_rows": n_train,
+            "train_population_rows": int(len(cleaned)),
             "documents_total": int(len(doc_score)),
             "fraud_docs_total": len(fraud_docs),
             "auroc_document": round(auroc, 4),
@@ -134,7 +158,7 @@ def main() -> int:
             "phase1_complementarity": comp,
         }
         reports.append(rep)
-        out = OUT_DIR / f"vae_performance_{fdir.name}.json"
+        out = OUT_DIR / f"vae_performance_{fdir.name}{tag}.json"
         out.write_text(json.dumps(rep, indent=2, ensure_ascii=False), encoding="utf-8")
         print(
             f"AUROC(doc) {rep['auroc_document']} | recall@1% {rep['recall_at_top1pct']}"
@@ -145,6 +169,8 @@ def main() -> int:
     if len(reports) > 1:
         agg = {
             "datasets": [r["dataset"] for r in reports],
+            "train_rows": n_train,
+            "train_population_rows": int(len(cleaned)),
             "auroc_mean": round(float(np.mean([r["auroc_document"] for r in reports])), 4),
             "recall_at_top1pct_mean": round(
                 float(np.mean([r["recall_at_top1pct"] for r in reports])), 4
@@ -153,7 +179,7 @@ def main() -> int:
                 (r["phase1_complementarity"] or {}).get("vae_top1pct_recovers", 0) for r in reports
             ),
         }
-        (OUT_DIR / "vae_performance_aggregate.json").write_text(
+        (OUT_DIR / f"vae_performance_aggregate{tag}.json").write_text(
             json.dumps(agg, indent=2, ensure_ascii=False), encoding="utf-8"
         )
         print("=== seed 합산 ===", flush=True)
