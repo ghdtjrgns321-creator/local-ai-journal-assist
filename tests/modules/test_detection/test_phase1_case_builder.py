@@ -1523,9 +1523,9 @@ def _topic_scoring_config() -> dict:
     }
 
 
-def test_tier_sort_score_components_are_ordinal_keys():
-    # PHASE1_TIER_SCORING_SPEC §4: tier sort = 순서형 (tier_rank, 독립 primary 수, rule_count,
-    # materiality). 가중합/composite 공식 폐기. components 는 이 4개 순서형 키.
+def test_case_sort_score_components_are_ordinal_keys():
+    # 등급 폐지(2026-07-17) 반영: 정렬은 순서형 (rule_count, time_severity, materiality).
+    # tier_rank 축 제거 — 등급을 정렬에 되살리지 않는다.
     df = _single_row_df()
     detection_result = _single_rule_detection_result(df, "L1-05", score=0.8, severity=4)
     result = build_phase1_case_result(
@@ -1542,19 +1542,17 @@ def test_tier_sort_score_components_are_ordinal_keys():
     case = result.cases[0]
     comps = case.composite_sort_score_components
     assert set(comps) == {
-        "tier_rank",
-        "independent_primary_count",
         "rule_count",
+        "time_severity",
         "materiality_score",
     }
-    assert comps["independent_primary_count"] >= 1
-    assert comps["tier_rank"] >= 1  # L1-05 primary → 최소 LOW tier
+    assert comps["rule_count"] >= 1
+    assert "tier_rank" not in comps  # 등급 축이 정렬에 되살아나지 않았는지 고정
 
 
-def test_tier_sort_orders_more_signals_above_high_amount():
-    # PHASE1_TIER_SCORING_SPEC §4: 같은 tier 안에서 서로 다른 신호(독립 primary 룰)가 더 많은
-    # case 가 위. 금액(materiality)은 최후 tiebreak 이므로, 신호 적지만 고액인 case 를
-    # 신호 많은 case 가 누른다(§9.3 anti-burying lock 호환).
+def test_case_sort_orders_more_signals_above_high_amount():
+    # 걸린 룰이 더 많은 case 가 위. 금액(materiality)은 최후 tiebreak 이므로, 신호 적지만
+    # 고액인 case 를 신호 많은 case 가 누른다(§9.3 anti-burying lock 호환).
     df = pd.DataFrame(
         {
             "document_id": ["DOC-MANY", "DOC-AMOUNT"],

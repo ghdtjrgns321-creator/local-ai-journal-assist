@@ -76,7 +76,7 @@ SCHEMA_VERSION = "1.0.0"
 
 # OFF-TIME 룰별 시점심각도(뱃지/UI 표시 전용) 가중치. OFF_TIME_SET(rule_scoring 단일 출처)과
 # 키가 반드시 일치해야 한다 — 아래 모듈 가드가 import 시 드리프트를 차단한다. tier 게이트·점수
-# 병합·within-tier 정렬에 미참여(현행 _tier_sort_score 미포함, 정렬 반영은 PHASE1-2 구현 예정).
+# 병합 게이트에는 미참여. 목록 표시 순서(_case_sort_score)에서 2순위 축으로 쓴다.
 # 대시보드 "시점심각도" 컬럼 표시용. high(2): L3-05 주말·L4-05 작성자집중 / med(1): L3-06 심야.
 # 근거 SoT: HIGH_COMBO_GROUNDING §2(5), PHASE1_TIER_SCORING_SPEC §4.
 _TIME_SEVERITY_WEIGHTS: dict[str, int] = {"L3-05": 2, "L4-05": 2, "L3-06": 1}
@@ -1784,8 +1784,8 @@ def _build_cases(
         case_tier_value = case_tier(topic_tiers)
         priority_band = _TIER_TO_BAND.get(case_tier_value, "low")
         priority_score = _TIER_TO_PRIORITY_SCORE.get(case_tier_value, 0.0)
-        composite_sort_score, composite_sort_score_components = _tier_sort_score(
-            case_tier_value, case_hits, amount_score
+        composite_sort_score, composite_sort_score_components = _case_sort_score(
+            case_hits, amount_score
         )
         l304_repeat_pattern = _is_l304_repeat_pattern_case(
             df,
@@ -2246,8 +2246,8 @@ def _score_unit_hits(
     unit_tier = topic_tier
     priority_score = _TIER_TO_PRIORITY_SCORE.get(unit_tier, 0.0)
     priority_band = _TIER_TO_BAND.get(unit_tier, "low")
-    composite_sort_score, composite_sort_score_components = _tier_sort_score(
-        unit_tier, hits, amount_score
+    composite_sort_score, composite_sort_score_components = _case_sort_score(
+        hits, amount_score
     )
     if _is_low_risk_linked_l205_reversal(unit, rows):
         # tier 경로는 priority_score 를 tier 대표값으로 덮으므로 low cap 을 여기서 재적용.
@@ -4232,32 +4232,25 @@ _TIER_TO_PRIORITY_SCORE: dict[str, float] = {
 }
 
 
-def _tier_sort_score(
-    case_tier_value: str,
+def _case_sort_score(
     case_hits: list[_RawHit],
     materiality_score: float,
 ) -> tuple[float, dict[str, float]]:
-    """within-tier 순서형 정렬 (PHASE1_TIER_SCORING_SPEC §4, option 1 + 금액 최후 tiebreak).
+    """목록 표시 순서용 scalar — (룰 수, 시간 신호, 금액) lexicographic packing.
 
-    가중합이 아니라 (tier_rank, 독립 primary 수, rule_count, materiality) lexicographic
-    순서를 단일 정렬 scalar 로 packing 한다. 금액(materiality)은 최후 tiebreak 로, 고액
-    routine 이 신호 케이스를 묻지 않게 한다(§9.3 audit anti-burying lock 호환).
-    이 scalar 는 정렬 전용이며 위험도 크기 아님.
+    등급(tier) 축을 쓰지 않는다. 등급 자동판정 폐지(2026-07-17) 이후에도 정렬 함수만
+    tier_rank 를 최상위 축으로 남겨 두고 있었으므로 제거했다. 금액(materiality)은 최후
+    tiebreak 로만 기여해, 고액 정상 거래가 신호 있는 소액 전표를 목록에서 밀어내지 않는다.
+    이 scalar 는 표시 순서 전용이며 위험도 크기가 아니다.
     """
-    tier_rank = TIER_RANK.get(case_tier_value, 0)
-    independent_primary = len({hit.rule_id for hit in case_hits if hit.scoring_role == "primary"})
-    rule_count = len({hit.rule_id for hit in case_hits})
+    rule_ids = {hit.rule_id for hit in case_hits}
+    rule_count = len(rule_ids)
+    time_severity = compute_time_severity_score(rule_ids)
     materiality = max(0.0, min(float(materiality_score), 1.0))
-    score = (
-        tier_rank * 1_000_000
-        + min(independent_primary, 99) * 10_000
-        + min(rule_count, 99) * 100
-        + round(materiality * 99)
-    )
+    score = min(rule_count, 99) * 10_000 + min(time_severity, 99) * 100 + round(materiality * 99)
     components = {
-        "tier_rank": float(tier_rank),
-        "independent_primary_count": float(independent_primary),
         "rule_count": float(rule_count),
+        "time_severity": float(time_severity),
         "materiality_score": materiality,
     }
     return float(score), components
