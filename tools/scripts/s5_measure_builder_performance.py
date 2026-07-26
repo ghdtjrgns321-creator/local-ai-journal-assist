@@ -88,7 +88,30 @@ def measure_dataset(fraud_dir: Path) -> dict:
             }
         )
 
-    # 3) 몸통 전체 OR (빌더 상한)
+    # 3) any-rule 발화 축 — 부정 vs 정상 문서 대비.
+    #    표면화(검토 목록 등재)와 구분되는 원시 축이다. 탐지기가 걸기만 하면 카운트하므로
+    #    빌더 어휘 밖 룰과 표면에 오르지 못한 발화까지 포함한다.
+    row_docs = res.data["document_id"].astype(str)
+    fired_labels: set = set()
+    for r in res.results:
+        fired_labels |= set(r.flagged_indices)
+    valid_labels = [lbl for lbl in fired_labels if lbl in row_docs.index]
+    fired_docs = set(row_docs.loc[valid_labels]) if valid_labels else set()
+    all_docs = set(row_docs)
+    normal_docs = all_docs - fraud_docs
+    any_rule = {
+        "documents_total": len(all_docs),
+        "fraud_fired": len(fired_docs & fraud_docs),
+        "fraud_rate": round(len(fired_docs & fraud_docs) / len(fraud_docs), 4)
+        if fraud_docs
+        else 0.0,
+        "normal_fired": len(fired_docs & normal_docs),
+        "normal_rate": round(len(fired_docs & normal_docs) / len(normal_docs), 4)
+        if normal_docs
+        else 0.0,
+    }
+
+    # 4) 몸통 전체 OR (빌더 상한)
     all_bodies = match_units(units, bodies=set(vocab.body_ids), features=set(), strict=False)
     all_body_docs: set[str] = set()
     for u in all_bodies:
@@ -108,6 +131,7 @@ def measure_dataset(fraud_dir: Path) -> dict:
         "fraud_rule_distribution": {
             r: len(v) for r, v in sorted(fraud_rule_hits.items(), key=lambda kv: -len(kv[1]))
         },
+        "any_rule_firing": any_rule,
         "presets": preset_rows,
         "all_bodies_or": {
             "matched_docs": len(all_body_docs),
@@ -142,6 +166,11 @@ def main() -> int:
                 f"프리셋 {row['preset_id']:<28} 적중 {row['fraud_docs_hit']:>3} / 표면 {row['matched_docs']:>6}"
                 f" (밀도 {row['fraud_density']:.4f}) schemes={len(row['schemes_hit'])}"
             )
+        ar = rep["any_rule_firing"]
+        print(
+            f"any-rule 발화: 부정 {ar['fraud_fired']} ({ar['fraud_rate']:.1%})"
+            f" vs 정상 {ar['normal_fired']} ({ar['normal_rate']:.1%})"
+        )
         ab = rep["all_bodies_or"]
         print(
             f"몸통 전체 OR: 적중 {ab['fraud_docs_hit']} / 표면 {ab['matched_docs']} ({ab['rate']:.1%})"
