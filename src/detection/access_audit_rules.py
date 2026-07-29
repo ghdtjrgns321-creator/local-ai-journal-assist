@@ -79,14 +79,22 @@ def aa01_document_modification(
 
 
 def aa02_abnormal_ip_access(df: pd.DataFrame, **kwargs) -> pd.Series:
-    """AL1-02 IP 비정상 접근 — 스켈레톤 (ip_address 컬럼 추가 후 구현).
+    """AL1-02 IP 비정상 접근 — 미구현 스켈레톤.
 
     Why: KLCA IT 체크리스트 — 사용자별 평소 IP 풀 대비 이탈 IP 탐지.
-         현재 GL 테이블에 ip_address 컬럼 미존재 (DataSynth Rust 확장 필요).
+
+    컬럼은 있다. 2026-07-29 실측 — 정상 정본·부정 r9 양쪽 모두 `ip_address`
+    443종·결측 0%(`10.1.0.x` 사내 사설 대역). 예전 주석의 "GL 테이블에 컬럼 미존재,
+    DataSynth Rust 확장 필요"는 컬럼이 생성된 뒤에도 갱신되지 않은 서술이었다.
+    막힌 것은 데이터가 아니라 구현이다.
+
+    미구현 상태를 유지하는 이유는 별개다 — `ip_address` 는 개인 활동 추적 정보라
+    PHASE2 입력에서 구조적으로 차단돼 있고(`LEAKAGE_DENY_COLUMNS_STRUCTURAL`),
+    PHASE1 룰로 쓸지는 비식별화 정책 결정이 선행돼야 한다.
     """
     if "ip_address" not in df.columns:
         return pd.Series(0.0, index=df.index)
-    # TODO: DataSynth ip_address 컬럼 생성 후 구현
+    # TODO: 비식별화 정책 확정 후 구현
     # S1: 사용자별 최빈 IP 대역 이탈
     # S2: 외부 IP(203.x.x.x) + 고액
     # S3: 심야 + VPN + 고액 → 가중
