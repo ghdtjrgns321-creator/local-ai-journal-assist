@@ -128,3 +128,6 @@ tests/datasynth_quality_gate3/results/accounting_logic_extra_seed_20260514/sampl
 
 # 배포 시크릿 (basic auth 비밀번호 해시 — 서버에서 생성, 커밋 금지)
 deploy/nginx/.htpasswd
+
+# Windows 탐색기가 폴더 설정을 저장하며 만드는 파일 — 소스가 아니다
+desktop.ini
