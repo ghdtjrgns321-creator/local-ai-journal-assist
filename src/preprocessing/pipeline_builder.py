@@ -1,7 +1,11 @@
 """Pipeline 조립 — 지도학습 4종(LR/RF/XGB/LGBM) + 비지도 2종(VAE/IF).
 
 Why: 모델 특성에 따라 전처리가 달라진다.
-지도학습은 스케일링 불필요+TargetEncoder, VAE/IF는 StandardScaler+고카디널리티 DROP.
+지도학습은 스케일링 불필요 + TargetEncoder(y 사용).
+비지도(VAE/IF)는 `phase2_matrix.Phase2AutoencoderMatrixBuilder` 가 조립한 매트릭스만
+받는다 — 여기서는 결측 대치만 하고 스케일·인코딩을 다시 하지 않는다. 2026-07-28 이전에는
+원본 프레임을 직접 받아 인코딩하는 두 번째 경로가 있었고, 제품과 측정이 서로 다른 경로를
+타는 원인이 됐다. 그 경로는 삭제했다(§`_build_prepared_matrix_preprocessor` 아래 주석).
 """
 
 from __future__ import annotations
@@ -14,11 +18,10 @@ from sklearn.ensemble import IsolationForest, RandomForestClassifier
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import FunctionTransformer, OrdinalEncoder, StandardScaler
+from sklearn.preprocessing import FunctionTransformer, OrdinalEncoder
 
 from src.preprocessing.feature_groups import FeatureGroups
 from src.preprocessing.feature_quality import apply_feature_quality_policy
-from src.preprocessing.transformers import SafePowerTransformer
 from src.preprocessing.vae_wrapper import VAEDetector
 
 logger = logging.getLogger(__name__)
@@ -190,14 +193,14 @@ def _wrap_pipeline(preprocessor: ColumnTransformer, clf, use_smote: bool) -> Pip
 
 
 def build_vae_pipeline(groups: FeatureGroups) -> Pipeline:
-    """VAE 비지도 Pipeline 조립. 고카디널리티 범주형은 DROP."""
-    preprocessor = _build_unsupervised_preprocessor(groups)
+    """VAE 비지도 Pipeline 조립. 입력은 조립된 PHASE2 매트릭스여야 한다."""
+    preprocessor = _build_prepared_matrix_preprocessor(groups)
     return Pipeline([("preprocessor", preprocessor), ("detector", VAEDetector())])
 
 
 def build_if_pipeline(groups: FeatureGroups) -> Pipeline:
-    """Isolation Forest 비지도 Pipeline 조립."""
-    preprocessor = _build_unsupervised_preprocessor(groups)
+    """Isolation Forest 비지도 Pipeline 조립. 입력은 조립된 PHASE2 매트릭스여야 한다."""
+    preprocessor = _build_prepared_matrix_preprocessor(groups)
     return Pipeline(
         [
             ("preprocessor", preprocessor),
@@ -262,33 +265,33 @@ def _build_cat_low_transformer() -> Pipeline:
 build_supervised_preprocessor = _build_supervised_preprocessor
 
 
-def _build_unsupervised_preprocessor(groups: FeatureGroups) -> ColumnTransformer:
-    """VAE/IF 공용 전처리: 수치형 스케일링 + 고카디널리티 DROP."""
-    transformers = []
-    if groups.numeric:
-        transformers.append(
-            (
-                "num",
-                Pipeline(
-                    [
-                        ("imputer", SimpleImputer(strategy="median")),
-                        ("power", SafePowerTransformer()),
-                        ("scaler", StandardScaler()),
-                    ]
-                ),
-                groups.numeric,
-            )
-        )
-    # 고카디널리티 범주형: TargetEncoder 없이(y 불필요) → DROP
-    if groups.categorical_low:
-        transformers.append(("cat_low", _build_cat_low_transformer(), groups.categorical_low))
-    if groups.boolean:
-        # passthrough 금지 — 결측 있는 불리언(pd.NA)은 sklearn이 거부한다 (_build_bool_transformer 참조)
-        transformers.append(("bool", _build_bool_transformer(), groups.boolean))
-    if groups.ordinal:
-        transformers.append(("ord", _build_ordinal_encoder(groups.ordinal), groups.ordinal))
+def _build_prepared_matrix_preprocessor(groups: FeatureGroups) -> ColumnTransformer:
+    """준비된 매트릭스 전용 — 결측 대치만. 스케일·분포 변환 없음.
 
-    preprocessor = ColumnTransformer(transformers, remainder="drop")
-    if hasattr(preprocessor, "set_output"):
-        preprocessor.set_output(transform="default")
-    return preprocessor
+    Why: 매트릭스 빌더(`phase2_matrix.Phase2AutoencoderMatrixBuilder`)가 이미
+         수치형은 표준화/robust, 금액은 signed-log, 저카디널리티는 원-핫(0/1),
+         고카디널리티는 빈도+건수, 불리언은 0/1 로 만들어 놓았다.
+         여기서 Yeo-Johnson + 표준화를 한 번 더 태우면 0/1 더미 하나하나가
+         std 1 로 부풀어, 범주형 블록이 **칸 수만큼** 재구성 손실을 먹는다.
+         2026-07-28 실측(diag_vae_input_audit): 298칸 중 279칸이 범주형이라
+         분산 점유율 93.5%. 게다가 희소 범주 더미는 표준화 후 1/sqrt(p) 로
+         튀어(빈도 1e-4 이면 약 100) 그 행 하나가 손실을 통째로 지배한다.
+         원-핫은 0/1 그대로 두면 범주 컬럼 하나의 총분산이 1-Σp² ≤ 1 이라
+         표준화된 수치형 한 칸과 대등해진다.
+    """
+    return ColumnTransformer(
+        [("prepared", SimpleImputer(strategy="median"), groups.numeric)],
+        remainder="drop",
+    )
+
+
+# 삭제됨(2026-07-28): `_build_unsupervised_preprocessor` — 비지도 전처리의 두 번째 경로.
+#
+# 원본 프레임의 범주형을 OrdinalEncoder 로 스케일링 없이 넣고(정수 0~38 이 표준화된
+# 수치형보다 11배 무거웠다) 고카디널리티는 통째로 버렸다(`trading_partner` 1,271종 ·
+# `line_text` 1,430종). 제품은 매트릭스 빌더를 거쳐 원-핫·빈도+건수로 인코딩하는데
+# 측정 스크립트만 이 경로를 탔고, 그래서 넉 달간의 VAE 수치가 제품을 설명하지 못했다.
+#
+# 남은 경로는 `_build_prepared_matrix_preprocessor` 하나다. 진입을 막는 것으로는
+# 부족해서 함수 자체를 지웠다 — 있으면 언젠가 누가 다시 부른다.
+# 경위: FINAL-REPORT 15장 사고 101 · 9장 §9.4

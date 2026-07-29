@@ -39,7 +39,37 @@ def test_phase2_matrix_transform_handles_unseen_category_without_state_change():
     assert builder.to_metadata() == before
     assert builder.to_metadata()["schema_hash"] == before["schema_hash"]
     assert calibration_matrix.filter(like="vendor_name__freq").shape[1] == 1
-    assert calibration_matrix.filter(like="vendor_name__count").shape[1] == 1
+    # 2026-07-29: __count 는 폐지. count = freq × 학습 행수 라 정보가 같은데 원값이라
+    # 스케일이 폭주했다(실측 approved_by__count std 15,842 대 수치형 기준 1.0).
+    assert calibration_matrix.filter(like="vendor_name__count").shape[1] == 0
+
+
+def test_phase2_matrix_flags_numeric_missing_as_information():
+    """수치형 결측도 정보다 — 0 으로 채우면 "없음"과 "0"이 같아진다.
+
+    2026-07-29: 불리언에만 결측 표식을 세워 반쪽이었다. 새 PHASE2 파생 중
+    `p2_days_approval_minus_posting`(승인 없으면 빔, 실측 72%)이 정확히 이 함정에
+    걸렸다 — "승인 없음"과 "당일 승인(간격 0)"이 같은 0 이 된다.
+    """
+    df = pd.DataFrame(
+        {
+            "days_approval_minus_posting": pd.array([0, 3, None, None, 5], dtype="Int64"),
+            "approver_limit_amount": [1e7, 5e7, None, None, 1e8],
+            "days_posting_minus_document": [0, 1, 2, 0, 3],
+        }
+    )
+    builder = _fit_builder(df)
+    matrix = builder.transform(df)
+
+    assert set(builder.numeric_missing_columns) == {
+        "days_approval_minus_posting",
+        "approver_limit_amount",
+    }
+    # 결측이 없는 칸에는 표식을 세우지 않는다 — 상수 0 칸이 늘 뿐이다.
+    assert "days_posting_minus_document__missing" not in matrix.columns
+
+    flag = matrix["days_approval_minus_posting__missing"]
+    assert list(flag) == [0.0, 0.0, 1.0, 1.0, 0.0]
 
 
 def test_phase2_matrix_drops_sparse_raw_and_keeps_has_indicator():
@@ -94,7 +124,7 @@ def test_phase2_matrix_metadata_records_output_feature_groups():
 
     assert groups["amount__signed_log"] == "amount"
     assert groups["vendor_name__freq"] == "categorical"
-    assert groups["vendor_name__count"] == "categorical"
+    assert "vendor_name__count" not in groups
     assert groups["approved"] == "boolean"
     assert set(groups) == set(metadata["feature_names"])
 
@@ -151,8 +181,8 @@ def test_phase2_matrix_reuses_train_time_numeric_policy_on_calibration():
 
     calibration_matrix = builder.transform(calibration_df)
 
-    assert builder.to_metadata()["numeric_transform_policies"] == before[
-        "numeric_transform_policies"
-    ]
+    assert (
+        builder.to_metadata()["numeric_transform_policies"] == before["numeric_transform_policies"]
+    )
     assert "line_count__standard_scaled" in calibration_matrix.columns
     assert "line_count__robust_scaled" not in calibration_matrix.columns

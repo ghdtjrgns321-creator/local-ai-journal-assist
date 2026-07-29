@@ -12,6 +12,7 @@ import pandas as pd
 from config.settings import AuditSettings
 from src.detection.base import DetectionResult
 from src.evaluation.phase2_report import build_hold_out_metrics
+from src.preprocessing.constants import LEAKAGE_DENY_COLUMNS, LEAKAGE_DENY_RULES
 from src.services.phase2_training_models import (
     Phase2LabelSummary,
     Phase2PromotedModel,
@@ -290,7 +291,10 @@ def test_prepare_phase2_feature_inputs_returns_variant_payload(caplog):
         cleaned_df, groups, payload = prepare_phase2_feature_inputs(df)
     variants = build_phase2_feature_variants(cleaned_df, groups)
 
-    assert "Leakage deny applied: 54 columns" in caplog.text
+    # Why: 하드코딩 수치는 deny 목록이 늘 때마다 stale 이 된다(54 로 박혀 있다가 실제 57 이
+    #      된 상태로 방치된 이력). 로그가 상수와 같은 집합을 세는지만 확인한다.
+    deny_size = len(LEAKAGE_DENY_COLUMNS | LEAKAGE_DENY_RULES)
+    assert f"Leakage deny applied: {deny_size} columns" in caplog.text
     assert "feature_quality_profile" in payload
     assert payload["feature_metadata"]["rule_input_dim"] == 22
     assert payload["feature_variants"]
@@ -415,9 +419,10 @@ def test_build_phase2_training_report_persists_preprocessing_plan_metadata():
     assert plan["duplicate_rows_estimated"] is True
     assert plan["duplicate_sample_size"] == 3
     assert plan["duplicate_rate_estimate"] is not None
-    assert decisions["model_score"]["action"] == "exclude"
-    assert decisions["model_score"]["reason_code"] == "leakage_score"
-    assert decisions["risk_level"]["reason_code"] == "leakage_risk"
+    # 2026-07-29: 입력이 허용 목록으로 바뀌어 PHASE1/PHASE3 산출물은 plan 에 도달조차
+    # 하지 않는다. deny 는 2차 방어로 남고, 무엇이 들어오는지는 allow 가 정한다.
+    assert "model_score" not in decisions
+    assert "risk_level" not in decisions
     assert payload["metadata"]["preprocessing_plan"]["decisions"][0]["reason_code"]
 
 
@@ -829,7 +834,7 @@ def test_run_phase2_training_uses_prepared_matrix_for_unsupervised_train_and_det
             {
                 "document_id": [f"d{i}" for i in range(1, 7)],
                 "amount": [100.0, -50.0, 25.0, 40.0, 300.0, -10.0],
-                "vendor_name": ["A", "B", "C", "D", "CAL_ONLY", "CAL_ONLY_2"],
+                "trading_partner": ["A", "B", "C", "D", "CAL_ONLY", "CAL_ONLY_2"],
                 "tax_amount": [None, None, None, None, 12.5, None],
                 "cost_center": [None, None, None, None, "CC-10", None],
                 "posting_date": pd.to_datetime(
@@ -886,11 +891,12 @@ def test_run_phase2_training_uses_prepared_matrix_for_unsupervised_train_and_det
         high_card_frames = [
             frame
             for frame in _MatrixCaptureUnsupervised.train_frames
-            if "vendor_name__freq" in frame.columns
+            if "trading_partner__freq" in frame.columns
         ]
         assert high_card_frames
-        assert all("vendor_name" not in frame.columns for frame in high_card_frames)
-        assert all("vendor_name__count" in frame.columns for frame in high_card_frames)
+        assert all("trading_partner" not in frame.columns for frame in high_card_frames)
+        # __count 폐지(2026-07-29) — freq 와 동일 정보인데 원값이라 스케일이 폭주했다.
+        assert all("trading_partner__count" not in frame.columns for frame in high_card_frames)
         assert all(
             set(frame.columns) == set(group.numeric)
             for frame, group in zip(

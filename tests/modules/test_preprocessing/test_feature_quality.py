@@ -6,8 +6,9 @@ from sklearn.metrics import roc_auc_score
 
 from src.preprocessing.constants import (
     LEAKAGE_DENY_COLUMNS,
-    LEAKAGE_DENY_COLUMNS_V6_BASELINE,
-    LEAKAGE_DENY_COLUMNS_V7_DERIVED,
+    LEAKAGE_DENY_COLUMNS_MEASURED,
+    LEAKAGE_DENY_COLUMNS_PHASE1_OUTPUT,
+    LEAKAGE_DENY_COLUMNS_STRUCTURAL,
     LEAKAGE_DENY_RULES,
 )
 from src.preprocessing.feature_groups import FeatureGroups
@@ -194,80 +195,112 @@ def test_v4_top5_leakage_deny_rules_are_locked_and_dropped() -> None:
     assert {"rule_L1-09", "rule_L2-02", "feature_probe"}.issubset(cleaned.columns)
 
 
-def test_v6_baseline_leakage_deny_columns_are_locked_and_dropped() -> None:
-    expected_v6_columns = frozenset(
+def test_structural_leakage_deny_columns_are_locked_and_dropped() -> None:
+    """재측정으로 풀 수 없는 차단 — 정답지·조작 메모·식별자·비식별화·기술 필드."""
+    expected_structural = frozenset(
         {
-            "amount_magnitude",
-            "amount_zscore",
-            "credit_amount",
-            "debit_amount",
-            "document_approval_amount",
-            "invoice_amount",
-            "local_amount",
-            "near_threshold_amount",
-            "supply_amount",
-            "tax_amount",
-            "approval_after_30d",
-            "approval_before_posting",
-            "approval_date_null",
-            "approval_excess_amount",
-            "approval_lag_abs",
-            "approval_lag_days",
-            "approval_level",
-            "approval_limit_exceeded_independent",
-            "exceeds_threshold",
-            "approval_contract_gap",
-            "approval_matrix_gap",
-            "days_backdated",
-            "first_digit",
-            "has_revenue_line",
-            "is_intercompany",
-            "is_round_number",
-            "is_suspense_account",
-            "master_counterparty_intercompany",
-            "near_threshold_ratio_to_limit",
-            "self_approval",
+            "detection_surface_hints",
+            "document_id",
+            "document_number",
+            "ip_address",
+            "is_mutated",
+            "is_synthetic",
+            "line_number",
+            "mutation_base_event_type",
+            "mutation_mutated_field",
+            "mutation_mutated_value",
+            "mutation_original_value",
+            "mutation_reason",
+            "mutation_type",
+            "reference",
+            "semantic_scenario_id",
         }
     )
-    assert LEAKAGE_DENY_COLUMNS_V6_BASELINE == expected_v6_columns
+    assert LEAKAGE_DENY_COLUMNS_STRUCTURAL == expected_structural
 
     df = pd.DataFrame(
         {
-            **{col: [1, 0] for col in expected_v6_columns},
+            **{col: [1, 0] for col in expected_structural},
             "user_persona": ["manager", "controller"],
         }
     )
 
     cleaned, _, _ = apply_feature_quality_policy(df, None, for_training=False)
 
-    assert set(cleaned.columns).isdisjoint(expected_v6_columns)
+    assert set(cleaned.columns).isdisjoint(expected_structural)
     assert "user_persona" in cleaned.columns
 
 
-def test_v7_derived_leakage_deny_columns_are_locked_and_dropped() -> None:
-    expected_v7_columns = frozenset(
+def test_measured_leakage_deny_columns_are_locked_and_dropped() -> None:
+    """실측 차단 — r9 재측정에서 아직 기준을 넘는 칸만 남는다.
+
+    2026-07-29: 차단 중이던 27칸을 `tools/scripts/diag_deny_basis_recheck.py` 로
+    전수 재측정. HARD(AUROC ≥ 0.95) 0건, SOFT(0.80~0.95) 1건, 나머지 26칸 근거소멸.
+    v6/v7 감사는 결측·조합 누출이 살아 있던 생성기에서 나온 값이라 그대로 쓸 수 없다.
+    차대변 금액은 원장의 핵심이므로, 근거 없는 차단을 남기면 그것 자체가 결함이다.
+    """
+    expected_measured = frozenset({"near_threshold_gap_ratio"})
+    assert LEAKAGE_DENY_COLUMNS_MEASURED == expected_measured
+
+    # 근거소멸로 해제한 칸은 다시 통과해야 한다 — 재차단은 실측 갱신을 동반해야 한다.
+    released = frozenset(
         {
-            "approver_can_approve_je",
-            "approver_limit_amount",
-            "line_number",
-            "near_threshold_gap_amount",
-            "near_threshold_gap_ratio",
-            "near_threshold_limit_amount",
-            "amount_zscore_log",
+            "debit_amount",
+            "credit_amount",
+            "local_amount",
+            "tax_amount",
+            "days_backdated",
+            "is_round_number",
+            "exceeds_threshold",
+            "is_intercompany",
+            "is_suspense_account",
         }
     )
-    assert LEAKAGE_DENY_COLUMNS_V7_DERIVED == expected_v7_columns
+    assert released.isdisjoint(LEAKAGE_DENY_COLUMNS)
 
     df = pd.DataFrame(
         {
-            **{col: [1, 0] for col in expected_v7_columns},
+            **{col: [1, 0] for col in expected_measured | released},
             "operating_feature": [100, 200],
         }
     )
 
     cleaned, _, _ = apply_feature_quality_policy(df, None, for_training=False)
 
-    assert set(cleaned.columns).isdisjoint(expected_v7_columns)
+    assert set(cleaned.columns).isdisjoint(expected_measured)
+    assert released <= set(cleaned.columns)
+    assert "operating_feature" in cleaned.columns
+
+
+def test_phase1_output_leakage_deny_columns_are_locked_and_dropped() -> None:
+    """PHASE1 집계 산출물은 PHASE2 입력에 들어오면 안 된다(3-surface 비병합).
+
+    2026-07-28: 파이프라인이 aggregate 결과를 원본 DF 에 되쓰기 때문에 이 6칸이
+    VAE 입력 71칸에 섞여 있었다. 경로 어느 쪽에서 오든 입력 경계에서 막는다.
+    """
+    expected_phase1_output = frozenset(
+        {
+            "anomaly_score",
+            "risk_level",
+            "flagged_rules",
+            "review_rules",
+            "risk_floor_reasons",
+            "topside_score",
+        }
+    )
+    assert LEAKAGE_DENY_COLUMNS_PHASE1_OUTPUT == expected_phase1_output
+    assert expected_phase1_output <= LEAKAGE_DENY_COLUMNS
+
+    df = pd.DataFrame(
+        {
+            **{col: [1, 0] for col in expected_phase1_output},
+            "operating_feature": [100, 200],
+        }
+    )
+
+    cleaned, _, _ = apply_feature_quality_policy(df, None, for_training=False)
+
+    assert set(cleaned.columns).isdisjoint(expected_phase1_output)
     assert "operating_feature" in cleaned.columns
 
 

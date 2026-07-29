@@ -18,7 +18,43 @@ from src.services.phase2_training_models import (
 
 _ID_NAMES = {"document_id", "doc_id", "row_id", "id", "transaction_id", "journal_id"}
 _LOW_CARD_DOMAIN_COLUMNS = {"user_persona"}
-_CODE_CATEGORICAL_COLUMNS = {"account_code", "gl_account"}
+# 숫자로 저장돼 있지만 크기가 의미 없는 칸 — 이름표이지 수량이 아니다.
+# Why: 계정과목 `4000`·`5000` 은 코드 체계이고, `fiscal_year` 2023·2024 는 연도 라벨,
+#      `fiscal_period` 1~12 는 회계월이다. 수치형으로 표준화하면 "2024가 2022보다 크다",
+#      "12월과 1월이 가장 멀다"를 학습한다. 회계에서 12월(결산)과 1월(기초)은 붙어 있고
+#      감사에서 가장 중요한 구간이다. 원-핫이면 그 왜곡이 없고, 학습에 없던 연도가
+#      들어와도 `__RARE__` 로 착지해 이상치로 잡힌다.
+_CODE_CATEGORICAL_COLUMNS = {"account_code", "gl_account", "fiscal_year", "fiscal_period"}
+
+# 이름·식별 성격 — 값이 몇 종이든 빈도로 본다.
+# Why: 카디널리티 임계(50)는 두 질문을 뭉갠다 — "칸을 몇 개 쓸까"(계산)와
+#      "무엇을 보게 할까"(의미). 앞의 질문은 희소 값 묶음(`__RARE__`)이 이미 푼다.
+#      뒤의 질문은 컬럼이 무엇이냐로 갈린다: 승인자·거래처 같은 **이름** 칸은
+#      "누가"보다 "얼마나 드문 사람·거래처인가"가 신호이고, 계정과목·전표유형 같은
+#      **분류** 칸은 어느 분류인지 자체가 신호다.
+#      임계에 맡기면 경계에서 뒤집힌다 — 실측 r9 `approved_by` 는 6만 행 표본에서
+#      48종(원-핫 48칸), 전 행에서 60종(빈도 1칸)이었다. 승인자가 45명인 회사와
+#      55명인 회사가 서로 다른 전처리를 받는다는 뜻이다.
+_IDENTITY_COLUMNS = {
+    "approved_by",
+    "created_by",
+    "cost_center",
+    "trading_partner",
+    "auxiliary_account_number",
+    "auxiliary_account_label",
+    "line_text",
+    "header_text",
+}
+
+# 결측이 "해당 없음"을 뜻하는 칸 — 고결측 자동 제외에서 뺀다.
+# Why: `is_cleared`(가계정 정리 여부)는 가계정이 아닌 전표에서는 물어볼 수 없는
+#      질문이라 빈다. 실측 r9: 가계정 행 결측 0% / 그 외 100%, 전체 95%.
+#      "90% 넘게 비면 고장난 칸"이라는 규칙은 이 모양을 구분하지 못한다.
+#      값이 있는 것 중 미정리 649건이 L3-09(가수금·가지급금 미정리)가 보는 항목이다.
+#      대신 결측을 0 으로 채우면 안 된다 — 매트릭스 빌더가 `__missing` 표식을 세워
+#      "정리된 가계정 / 미정리 가계정 / 가계정 아님" 세 상황을 가른다.
+STRUCTURAL_MISSING_COLUMNS = {"is_cleared"}
+
 _HIGH_MISSING_THRESHOLD = 0.90
 
 # DataSynth v3 S4 §3 measured `f_manual` as normal=0.41 vs manipulated=1.00.
@@ -122,8 +158,13 @@ def _decide_column(
         return _decision(name, column, "identifier", "exclude", "identifier")
     if column.dtype_group == "datetime":
         return _decision(name, column, "datetime", "exclude", "datetime_raw")
-    if column.missing_rate >= _HIGH_MISSING_THRESHOLD:
+    if (
+        column.missing_rate >= _HIGH_MISSING_THRESHOLD
+        and normalized_name not in STRUCTURAL_MISSING_COLUMNS
+    ):
         return _decision(name, column, "feature", "exclude", "high_missing")
+    if normalized_name in _IDENTITY_COLUMNS:
+        return _decision(name, column, "categorical_high", "include", "domain_identity")
     if normalized_name in _CODE_CATEGORICAL_COLUMNS:
         if column.unique_count >= high_card_threshold:
             return _decision(
@@ -177,7 +218,30 @@ def _decision(
     )
 
 
+def _is_master_data_name_column(normalized_name: str) -> bool:
+    """`X_label` 이 정답 라벨이 아니라 마스터 데이터의 '명칭'인 경우를 가려낸다.
+
+    Why: 2026-07-29 발견. `auxiliary_account_label`(보조계정 명칭 — '기업다이렉트(유)',
+         '내부부서')이 이름에 `label` 이 있다는 이유로 정답 라벨로 오인돼 잘렸다.
+         짝인 `auxiliary_account_number`('V-000526')는 통과한다. 이 데이터에서는
+         번호 칸이 같은 정보를 담아 손실이 없었지만, 실 ERP 의 `gl_account_label` ·
+         `cost_center_label` · `vendor_label` 이 전부 같은 규칙에 걸린다.
+
+         판정 어휘(fraud·anomaly·risk·target·score 등)가 접두어에 있으면 여전히
+         차단된다 — `fraud_label` 은 `fraud` 토큰이, `risk_label` 은 `risk` 토큰이
+         잡는다. 정확한 이름의 라벨(`label` · `target`)은 LABEL_COLUMNS 가 잡는다.
+         여기서 통과시키는 것은 **판정 어휘가 없는 `*_label`** 뿐이다.
+    """
+    if not normalized_name.endswith("_label"):
+        return False
+    prefix_tokens = set(normalized_name[: -len("_label")].split("_"))
+    judgment_tokens = {token for token, _ in _LEAKAGE_PATTERNS}
+    return prefix_tokens.isdisjoint(judgment_tokens)
+
+
 def _leakage_reason(normalized_name: str) -> str | None:
+    if _is_master_data_name_column(normalized_name):
+        return None
     tokens = set(normalized_name.split("_"))
     # Why: 단복수 모두 차단 (flagged_rules / review_rules / labels / scores 등).
     #      Phase 2 standalone contract 위반을 막기 위해 plural 도 매칭.

@@ -13,14 +13,24 @@ class TestClassifyFeatures:
         groups = classify_features(pp_sample_profile)
         for col in ("fiscal_period", "gl_account"):
             assert col in groups.numeric, f"{col} not in numeric"
+        # 2026-07-29: 금액 deny 는 v6 감사 근거가 사라져 해제됐다(r9 재측정 AUROC 0.56~0.78).
+        # 차대변 금액은 원장의 핵심이므로 이제 피처로 들어간다.
         for col in ("debit_amount", "credit_amount", "amount_zscore"):
-            assert col in groups.excluded, f"{col} should be leakage-denied"
+            assert col in groups.numeric, f"{col} should be an input after deny release"
 
     def test_boolean_columns_classified(self, pp_sample_profile):
         groups = classify_features(pp_sample_profile)
         expected = {"is_weekend", "is_after_hours", "has_risk_keyword"}
         assert expected.issubset(set(groups.boolean))
-        assert "is_round_number" in groups.excluded
+        # is_round_number 도 같은 재측정에서 해제(AUROC 0.5225 — 동전 던지기).
+        assert "is_round_number" not in groups.excluded
+
+    def test_structural_deny_columns_still_excluded(self, pp_sample_profile):
+        """구조적 차단은 재측정과 무관하게 유지된다 — 식별자·기술 필드."""
+        groups = classify_features(pp_sample_profile)
+        for col in ("document_id", "line_number"):
+            if col in pp_sample_profile.columns:
+                assert col in groups.excluded, f"{col} must stay denied"
 
     def test_gl_account_high_cardinality(self, pp_sample_profile):
         # gl_account는 Int64(numeric) → domain_overrides로 categorical_high 배치
@@ -67,12 +77,18 @@ class TestClassifyFeatures:
         """결측률 95% 컬럼 → excluded 자동 배치."""
         profile = EDAProfile(total_rows=100, total_columns=2, memory_bytes=1000, duplicate_rows=0)
         profile.columns["sparse_col"] = ColumnProfile(
-            name="sparse_col", dtype="float64", dtype_group="numeric",
-            missing_rate=0.95, unique_count=3,
+            name="sparse_col",
+            dtype="float64",
+            dtype_group="numeric",
+            missing_rate=0.95,
+            unique_count=3,
         )
         profile.columns["normal_col"] = ColumnProfile(
-            name="normal_col", dtype="float64", dtype_group="numeric",
-            missing_rate=0.05, unique_count=50,
+            name="normal_col",
+            dtype="float64",
+            dtype_group="numeric",
+            missing_rate=0.05,
+            unique_count=50,
         )
         groups = classify_features(profile)
         assert "sparse_col" in groups.excluded
@@ -92,8 +108,12 @@ class TestClassifyFeatures:
     def test_no_duplicate_assignments(self, pp_sample_profile):
         groups = classify_features(pp_sample_profile)
         all_lists = [
-            groups.numeric, groups.categorical_high, groups.categorical_low,
-            groups.boolean, groups.ordinal, groups.excluded,
+            groups.numeric,
+            groups.categorical_high,
+            groups.categorical_low,
+            groups.boolean,
+            groups.ordinal,
+            groups.excluded,
         ]
         all_cols = [col for lst in all_lists for col in lst]
         assert len(all_cols) == len(set(all_cols)), "중복 배치 발견"

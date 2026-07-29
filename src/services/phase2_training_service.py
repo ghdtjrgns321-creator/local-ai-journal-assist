@@ -55,6 +55,7 @@ from src.preprocessing.feature_quality import (
 )
 from src.preprocessing.label_strategy import create_labels, create_labels_from_feedback
 from src.preprocessing.model_registry import ModelRegistry
+from src.preprocessing.phase2_features import build_phase2_input_frame
 from src.preprocessing.phase2_matrix import Phase2AutoencoderMatrixBuilder
 from src.preprocessing.phase2_plan import build_phase2_preprocessing_plan
 from src.services._phase_timing import TimingBlock, log_timing
@@ -403,12 +404,23 @@ def _build_supervised_gate_payload(
 
 
 def prepare_phase2_feature_inputs(df, *, settings=None) -> tuple[Any, Any, dict[str, Any]]:
-    """Build cleaned training features, groups, and quality metadata once."""
+    """Build cleaned training features, groups, and quality metadata once.
+
+    입력은 **허용 목록**으로 만든다(`preprocessing.phase2_features`). 2026-07-29 이전에는
+    PHASE1 이 룰용으로 만든 파생 39칸이 deny 에 걸리지 않으면 그대로 흘러들어왔다.
+    deny 목록은 이제 2차 방어이고, 무엇이 들어오는지는 allow 목록이 정한다.
+    """
     logger.info(
         "Leakage deny applied: %s columns",
         len(LEAKAGE_DENY_COLUMNS | LEAKAGE_DENY_RULES),
     )
     active_settings = settings or get_settings()
+    df = build_phase2_input_frame(df, settings=active_settings)
+    logger.info(
+        "PHASE2 입력 프레임: 원본 %s칸 + 전용 파생 %s칸",
+        len(df.attrs.get("phase2_source_columns", [])),
+        len(df.attrs.get("phase2_derived_columns", [])),
+    )
     profile = profile_dataframe(
         df,
         max_rows=getattr(active_settings, "phase2_profile_max_rows", None),
@@ -1233,43 +1245,42 @@ def _execute_model_trial(
         training_groups = groups
         train_y = _align_labels_to_index(label_result.y, trial_df.index)
         if family == "unsupervised":
-            if preprocessing_plan is not None:
-                matrix_builder = Phase2AutoencoderMatrixBuilder(
-                    preprocessing_plan,
-                    rare_min_count=int(
-                        getattr(trial_settings, "phase2_low_card_rare_min_count", 2),
-                    ),
-                ).fit(trial_df)
-                train_matrix = matrix_builder.transform(trial_df)
-                calibration_matrix = (
-                    matrix_builder.transform(calibration_df)
-                    if calibration_df is not None and not calibration_df.empty
-                    else pd.DataFrame(columns=train_matrix.columns)
+            # Why: preprocessing_plan 을 선택 인자로 두던 시절, 안 넘기면 조용히 다른
+            #      전처리(OrdinalEncoder 무스케일 · 고카디널리티 버림)로 학습됐다.
+            #      경로가 둘이면 측정이 제품을 설명하지 못한다(2026-07-28). 필수로 바꾼다.
+            if preprocessing_plan is None:
+                raise ValueError(
+                    "비지도 학습에는 preprocessing_plan 이 필수다 — "
+                    "매트릭스 빌더를 건너뛰면 제품과 다른 전처리로 학습된다."
                 )
-                train_matrix.attrs["phase2_matrix_prepared"] = True
-                calibration_matrix.attrs["phase2_matrix_prepared"] = True
-                feature_group_map = dict(matrix_builder.output_feature_groups_)
-                train_matrix.attrs["phase2_feature_group_map"] = feature_group_map
-                calibration_matrix.attrs["phase2_feature_group_map"] = feature_group_map
-                training_df = train_matrix
-                training_groups = _matrix_feature_groups(train_matrix)
-                detection_df = calibration_matrix
-                matrix_metadata = matrix_builder.to_metadata()
-                matrix_metadata.update(
-                    {
-                        "train_matrix_shape": list(train_matrix.shape),
-                        "calibration_matrix_shape": list(calibration_matrix.shape),
-                    }
-                )
+            matrix_builder = fit_unsupervised_matrix_builder(
+                trial_df,
+                preprocessing_plan,
+                settings=trial_settings,
+            )
+            train_matrix = apply_unsupervised_matrix(matrix_builder, trial_df)
+            calibration_matrix = (
+                apply_unsupervised_matrix(matrix_builder, calibration_df)
+                if calibration_df is not None and not calibration_df.empty
+                else pd.DataFrame(columns=train_matrix.columns)
+            )
+            calibration_matrix.attrs["phase2_matrix_prepared"] = True
+            calibration_matrix.attrs["phase2_feature_group_map"] = dict(
+                matrix_builder.output_feature_groups_
+            )
+            training_df = train_matrix
+            training_groups = matrix_feature_groups(train_matrix)
+            detection_df = calibration_matrix
+            matrix_metadata = matrix_builder.to_metadata()
+            matrix_metadata.update(
+                {
+                    "train_matrix_shape": list(train_matrix.shape),
+                    "calibration_matrix_shape": list(calibration_matrix.shape),
+                }
+            )
             train_info = detector.train(training_df, training_groups, y=train_y)
-            if matrix_metadata is not None and hasattr(detector, "set_phase2_matrix_state"):
+            if hasattr(detector, "set_phase2_matrix_state"):
                 detector.set_phase2_matrix_state(matrix_builder, matrix_metadata)
-            if (
-                preprocessing_plan is None
-                and calibration_df is not None
-                and not calibration_df.empty
-            ):
-                detection_df = calibration_df
         else:
             train_info = detector.train(trial_df, label_result, groups)
         detect_result = detector.detect(detection_df)
@@ -1337,9 +1348,32 @@ def _execute_model_trial(
         trial.elapsed_sec = time.perf_counter() - start
 
 
-def _matrix_feature_groups(matrix: pd.DataFrame) -> FeatureGroups:
+def matrix_feature_groups(matrix: pd.DataFrame) -> FeatureGroups:
     """Treat a prepared Phase 2 autoencoder matrix as numeric model input."""
     return FeatureGroups(numeric=list(matrix.columns))
+
+
+def fit_unsupervised_matrix_builder(df, preprocessing_plan, *, settings=None):
+    """비지도 학습 입력 매트릭스 빌더를 적합한다 — 제품·측정 공용 단일 경로.
+
+    Why: 2026-07-28 발견. 제품 학습은 이 빌더가 낸 매트릭스(금액 signed-log ·
+         저카디널리티 원-핫 · 고카디널리티 빈도+건수)를 쓰는데, 측정 스크립트는
+         `detector.train(cleaned, groups)` 를 직접 불러 OrdinalEncoder 무스케일 ·
+         고카디널리티 버림 경로를 탔다. 경로가 둘이면 측정값이 제품을 설명하지
+         못한다. 조립을 여기 한 곳에 두고 양쪽이 부른다.
+    """
+    return Phase2AutoencoderMatrixBuilder(
+        preprocessing_plan,
+        rare_min_count=int(getattr(settings, "phase2_low_card_rare_min_count", 2)),
+    ).fit(df)
+
+
+def apply_unsupervised_matrix(builder, df) -> pd.DataFrame:
+    """적합된 빌더로 변환하고, 하류가 다시 변환하지 않도록 표식을 단다."""
+    matrix = builder.transform(df)
+    matrix.attrs["phase2_matrix_prepared"] = True
+    matrix.attrs["phase2_feature_group_map"] = dict(builder.output_feature_groups_)
+    return matrix
 
 
 def _align_labels_to_index(y, index: pd.Index):

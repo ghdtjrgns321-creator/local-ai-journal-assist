@@ -33,17 +33,35 @@ SYNTHETIC_ONLY_COLUMNS = LABEL_COLUMNS | frozenset(
     }
 )
 
-# Stage 1 leakage deny-list: DataSynth truth sidecar and identifier-only leak columns.
-# Confirmed by Stage 0 AUROC >= 0.95, explicit mutation metadata denies, and residual audit.
-LEAKAGE_DENY_COLUMNS_BASE = frozenset(
+# ── PHASE2 입력 차단 목록 ─────────────────────────────────────────────
+#
+# 2026-07-29 이후 이 목록은 **2차 방어**다. 1차는 허용 목록
+# (`preprocessing.phase2_features.PHASE2_SOURCE_COLUMNS`)이고, 거기 없으면 애초에
+# 들어오지 않는다. 실측상 허용 ∩ 차단 = 0 이라 아래 22칸은 **한 칸도 발동하지 않는다.**
+#
+# 그래도 남기는 이유는 죽은 코드로 두려는 게 아니라 **허용 목록의 가드레일**이기
+# 때문이다. 누군가 허용 목록에 위험한 칸을 추가하면
+# `test_allow_list_and_deny_list_never_overlap` 이 즉시 실패한다.
+# 차단 사유(왜 위험한가)는 여기에, 미채택 사유(왜 안 넣었나)는 허용 목록 쪽에 적는다.
+#
+# 구조적 차단 — 재측정으로 풀 수 없다. 데이터가 바뀌어도 유지된다.
+#
+#   정답지·조작 메모  실 ERP 에 존재하지 않는 칸. AUROC 가 낮아도 쓸 수 없다.
+#   식별자            값이 거의 다 달라 모델엔 난수다(document_id 113,465종).
+#   비식별화          ip_address 는 정책상 ML 입력 금지.
+#   기술 필드         line_number 는 전표 안에서의 줄 위치일 뿐 감사 신호가 아니다.
+#
+# 날짜 원본(posting_date 등)과 라벨(LABEL_COLUMNS)은 각각 phase2_plan 의
+# datetime_raw · leakage_label 갈래가 막으므로 여기 중복 기재하지 않는다.
+LEAKAGE_DENY_COLUMNS_STRUCTURAL = frozenset(
     {
         "detection_surface_hints",
         "document_id",
         "document_number",
-        "header_text",
         "ip_address",
         "is_mutated",
         "is_synthetic",
+        "line_number",
         "mutation_base_event_type",
         "mutation_mutated_field",
         "mutation_mutated_value",
@@ -55,70 +73,66 @@ LEAKAGE_DENY_COLUMNS_BASE = frozenset(
     }
 )
 
-# DataSynth manipulation V6 baseline limitation.
-# Source: artifacts/datasynth_v6_phase2_cheat_route_audit.md
-# These columns encode synthetic manipulation mechanics or deterministic
-# enrichment tails. They are denied for PHASE2 training until a later generator
-# version proves each column has non-shortcut real-data-like overlap.
-LEAKAGE_DENY_COLUMNS_V6_BASELINE = frozenset(
+# 실측 차단 — 합성 데이터가 실제로 지름길을 흘리는 칸만 남긴다.
+#
+# 재측정 (2026-07-29, `tools/scripts/diag_deny_basis_recheck.py`, 데이터셋 r9):
+#   기준선은 v6 치트루트 감사가 쓴 것 그대로 — HARD AUROC ≥ 0.95 / SOFT 0.80~0.95.
+#   차단 중이던 27칸 전수 재측정 결과 **HARD 0건**, SOFT 1건, 나머지 26칸 근거소멸.
+#
+#   | 칸                        | v6 감사 | r9 재측정 |
+#   | debit_amount / credit_amount | 0.917 | 0.71 |
+#   | local_amount              | 0.918 | 0.78 |
+#   | invoice_amount            | 0.853 | 0.56 |
+#   | tax_amount                | 0.848 | 0.57 |
+#   | days_backdated            |     — | 0.50 |
+#   | exceeds_threshold         |     — | 0.51 |
+#
+#   v6 근거는 결측 누출·조합 누출이 살아 있던 생성기에서 나온 값이다. r9 에서
+#   도너 복제 구조로 재설계하며 그 누출들을 제거했고, 지름길도 같이 사라졌다.
+#   근거가 사라진 차단을 남겨두면 원장의 핵심인 차대변 금액을 영구히 못 본다.
+#
+# **이 목록은 누출 차단 전용이다.** 파생 피처끼리의 중복(금액 계열 다수 등)은
+# 여기서 다루지 않는다 — 섞으면 "왜 막혔는지"를 다시 잃는다.
+#
+# 생성기를 바꾸면 위 스크립트를 다시 돌려 이 목록을 갱신한다.
+LEAKAGE_DENY_COLUMNS_MEASURED = frozenset(
     {
-        # amount-related: synthetic manipulation scenarios still separate too cleanly
-        "amount_magnitude",
-        "amount_zscore",
-        "credit_amount",
-        "debit_amount",
-        "document_approval_amount",
-        "invoice_amount",
-        "local_amount",
-        "near_threshold_amount",
-        "supply_amount",
-        "tax_amount",
-        # approval/anachronism-related: intended manipulation timing signals
-        "approval_after_30d",
-        "approval_before_posting",
-        "approval_date_null",
-        "approval_excess_amount",
-        "approval_lag_abs",
-        "approval_lag_days",
-        "approval_level",
-        "approval_limit_exceeded_independent",
-        "exceeds_threshold",
-        # scenario-specific synthetic surfaces
-        "approval_contract_gap",
-        "approval_matrix_gap",
-        "days_backdated",
-        "first_digit",
-        "has_revenue_line",
-        "is_intercompany",
-        "is_round_number",
-        "is_suspense_account",
-        "master_counterparty_intercompany",
-        "near_threshold_ratio_to_limit",
-        "self_approval",
+        # 문서 단위 AUROC 0.8622 — 유일하게 SOFT 대역에 남았다.
+        #
+        # 2026-07-29 같은 날 오후, PHASE2 입력이 허용 목록으로 바뀌면서 이 칸을 만드는
+        # PHASE1 파생 자체가 입력에서 빠졌다. 따라서 이 조항은 **현재 도달하지 않는다.**
+        # 지우지 않는 이유는 측정값이 살아 있기 때문이다 — 누군가 이 파생을 PHASE2
+        # 입력에 다시 넣으려 할 때 "쟀더니 SOFT 였다"는 근거가 여기 남아 있어야 한다.
+        "near_threshold_gap_ratio",
     }
 )
 
-# DataSynth manipulation V7 phase2 cheat-route residuals.
-# Source: artifacts/datasynth_v7_phase2_cheat_route_audit.md
-# These are derived near-threshold/approval-limit or technical line-position
-# features that let a supervised probe recover synthetic truth after the V6
-# baseline deny-list is applied.
-LEAKAGE_DENY_COLUMNS_V7_DERIVED = frozenset(
+# PHASE1 집계 산출물. 2026-07-28 발견 — `AuditPipeline` 이 aggregate 결과를 원본 DF 에
+# 되쓰기(src/pipeline.py:879) 때문에, 그 DF 를 그대로 PHASE2 입력으로 넘기는 경로에서는
+# PHASE1 룰 발화·점수가 VAE 입력 피처로 들어간다. 3-surface 비병합(PHASE1/PHASE2 독립,
+# FINAL-REPORT 9장 §9.4)의 위반이므로 입력 경계에서 차단한다.
+#
+# 경로별 실태:
+#   신규 실행  — `PipelineResult.featured_data` 는 탐지 전 스냅샷(pipeline.py:850)이라 깨끗.
+#   DB 재적재  — `load_batch` 가 featured_data=None 을 주고 journal_entries 테이블에
+#                anomaly_score/risk_level 이 저장돼 있어(db/schema.py:115) `.data` 폴백이 오염.
+#   측정 스크립트 — `res.data` 를 쓰므로 오염.
+# 어느 스냅샷이 넘어왔는지에 의존하지 않도록 deny 목록에서 막는다.
+LEAKAGE_DENY_COLUMNS_PHASE1_OUTPUT = frozenset(
     {
-        "approver_can_approve_je",
-        "approver_limit_amount",
-        "line_number",
-        "near_threshold_gap_amount",
-        "near_threshold_gap_ratio",
-        "near_threshold_limit_amount",
-        # amount_zscore(원금액 z)의 로그변환 형제. 같은 base 금액 파생이라 동일 leakage
-        # 프로파일 — PHASE2 shortcut 방지를 위해 amount_zscore와 함께 deny한다(L4-01 전용).
-        "amount_zscore_log",
+        "anomaly_score",
+        "risk_level",
+        "flagged_rules",
+        "review_rules",
+        "risk_floor_reasons",
+        "topside_score",
     }
 )
 
 LEAKAGE_DENY_COLUMNS = (
-    LEAKAGE_DENY_COLUMNS_BASE | LEAKAGE_DENY_COLUMNS_V6_BASELINE | LEAKAGE_DENY_COLUMNS_V7_DERIVED
+    LEAKAGE_DENY_COLUMNS_STRUCTURAL
+    | LEAKAGE_DENY_COLUMNS_MEASURED
+    | LEAKAGE_DENY_COLUMNS_PHASE1_OUTPUT
 )
 
 # Stage 5 concentration risk — deterministic Top-5 rule columns are removed

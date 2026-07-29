@@ -34,6 +34,46 @@ _RULE_ID = "ML02"
 # Why: 감사조서에 첨부할 상위 기여 피처 개수. 너무 많으면 가독성 저하.
 _TOP_K_FEATURES = 3
 
+_MATRIX_REQUIRED_HINT = (
+    "비지도 입력은 Phase2 매트릭스 빌더를 거친 프레임이어야 한다. "
+    "src.services.phase2_training_service 의 "
+    "fit_unsupervised_matrix_builder() → apply_unsupervised_matrix() → "
+    "matrix_feature_groups() 를 써서 만든 뒤 넘겨라."
+)
+
+
+def _assert_matrix_prepared(X: pd.DataFrame, groups: FeatureGroups | None, *, caller: str) -> None:
+    """매트릭스 빌더를 거치지 않은 입력을 거부한다.
+
+    Why: 2026-07-28. 비지도 전처리 경로가 둘이었다 — 제품 학습은 매트릭스 빌더
+         (금액 signed-log · 저카디널리티 원-핫 · 고카디널리티 빈도+건수)를 거치는데,
+         측정 스크립트는 이 메서드를 직접 불러 OrdinalEncoder 무스케일 · 고카디널리티
+         버림 경로를 탔다. 그래서 측정값이 제품을 설명하지 못했고, 그 사실을 넉 달간
+         아무도 몰랐다. 경로를 하나만 남기려면 나머지 하나가 **조용히 동작하지 않아야**
+         한다. 표식(attrs)이 아니라 실제 내용으로 판정한다 — attrs 는 pandas 연산에서
+         쉽게 유실되므로 계약을 지킬 수 없다.
+
+         빌더 산출물은 전 칸이 수치형이다. 원본 범주형이 남아 있다는 것은 빌더를
+         건너뛰었다는 뜻이다.
+    """
+    raw_groups: list[str] = []
+    if groups is not None:
+        for name in ("categorical_low", "categorical_high", "ordinal"):
+            raw_groups.extend(getattr(groups, name, []) or [])
+    non_numeric = [
+        column
+        for column in X.columns
+        if not pd.api.types.is_numeric_dtype(X[column])
+        and not pd.api.types.is_bool_dtype(X[column])
+    ]
+    if not raw_groups and not non_numeric:
+        return
+    raise ValueError(
+        f"{caller}: 매트릭스 빌더를 거치지 않은 입력이다. "
+        f"미인코딩 범주형 그룹 {sorted(set(raw_groups))[:8]} · "
+        f"비수치 컬럼 {non_numeric[:8]}. {_MATRIX_REQUIRED_HINT}"
+    )
+
 
 class UnsupervisedDetector(BaseDetector):
     """VAE + Isolation Forest 앙상블 비지도 이상 탐지기.
@@ -68,6 +108,7 @@ class UnsupervisedDetector(BaseDetector):
              자체적으로 소수의 이상치를 튕겨냄. y로 필터링하면 룰 엔진 편향 답습.
         """
         start = time.perf_counter()
+        _assert_matrix_prepared(X, groups, caller=f"{type(self).__name__}.train")
         matrix_prepared = bool(X.attrs.get("phase2_matrix_prepared", False))
         matrix_feature_group_map = dict(X.attrs.get("phase2_feature_group_map", {}) or {})
         X, groups, feature_quality = prepare_training_features(X, groups)
@@ -323,7 +364,16 @@ class UnsupervisedDetector(BaseDetector):
             return df
         builder = getattr(self, "_phase2_matrix_builder", None)
         if builder is None:
-            return drop_label_columns(df)
+            # Why: 빌더가 없으면 학습 때와 다른 인코딩으로 채점하게 된다. 예전에는
+            #      여기서 조용히 drop_label_columns 로 넘어갔고, 그래서 측정 스크립트가
+            #      제품과 다른 전처리로 점수를 냈다(2026-07-28). 조용히 넘어가지 않는다.
+            cleaned = drop_label_columns(df)
+            _assert_matrix_prepared(
+                cleaned,
+                None,
+                caller=f"{type(self).__name__}.detect",
+            )
+            return cleaned
         matrix = builder.transform(df)
         matrix.attrs["phase2_matrix_prepared"] = True
         return matrix

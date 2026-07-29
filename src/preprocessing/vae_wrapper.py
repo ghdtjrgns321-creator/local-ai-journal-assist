@@ -45,6 +45,7 @@ class VAEDetector(BaseEstimator):
         group_loss_dominance_threshold: float = 0.75,
         use_compile: bool = True,
         use_amp: bool = True,
+        random_state: int = 42,
     ):
         self.hidden_dim = hidden_dim
         self.latent_dim = latent_dim
@@ -60,6 +61,7 @@ class VAEDetector(BaseEstimator):
         self.group_loss_dominance_threshold = group_loss_dominance_threshold
         self.use_compile = use_compile
         self.use_amp = use_amp
+        self.random_state = random_state
 
     def _resolve_device(self) -> str:
         if self.device == "auto":
@@ -84,6 +86,11 @@ class VAEDetector(BaseEstimator):
             return model
 
     def fit(self, X, y=None):  # noqa: ARG002
+        # Why: 시드가 없으면 같은 데이터로 다시 재도 다른 수치가 나온다.
+        #      가중치 초기화와 DataLoader 셔플이 매 실행 난수라 AUROC 가 흔들리고,
+        #      "재측정했더니 올랐다"가 수정 효과인지 난수인지 구분되지 않는다.
+        #      2026-07-29 이전에는 이 시드가 없어 회차 간 비교의 근거가 없었다.
+        torch.manual_seed(int(self.random_state))
         X = np.array(X, dtype=np.float32)
         device = self._resolve_device()
         self.model_ = AuditVAE(X.shape[1], self.latent_dim, self.hidden_dim).to(device)

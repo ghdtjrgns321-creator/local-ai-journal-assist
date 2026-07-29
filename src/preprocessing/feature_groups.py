@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 
 from src.eda.models import ColumnProfile, EDAProfile
 from src.preprocessing.constants import LABEL_COLUMNS, LEAKAGE_DENY_COLUMNS
+from src.preprocessing.phase2_plan import STRUCTURAL_MISSING_COLUMNS
 
 logger = logging.getLogger(__name__)
 
@@ -67,8 +68,11 @@ def classify_features(
             _assign_to_group(groups, col_name, "excluded")
             continue
 
-        # 고결측률 자동 제외
-        if cp.missing_rate >= _HIGH_MISSING_THRESHOLD:
+        # 고결측률 자동 제외 — 결측이 "해당 없음"을 뜻하는 칸은 뺀다(phase2_plan 과 같은 기준).
+        if (
+            cp.missing_rate >= _HIGH_MISSING_THRESHOLD
+            and col_name.lower() not in STRUCTURAL_MISSING_COLUMNS
+        ):
             logger.warning("컬럼 '%s' 결측률 %.1f%% → excluded", col_name, cp.missing_rate * 100)
             _assign_to_group(groups, col_name, "excluded")
             continue

@@ -127,7 +127,17 @@ class NumericPolicyTransformer(BaseEstimator, TransformerMixin):
             values = pd.to_numeric(frame[column], errors="coerce").fillna(0.0).to_numpy(float)
             if policy["policy"] == "robust":
                 center = float(policy["median"])
-                scale = max(float(policy["iqr"]), float(self.near_constant_epsilon))
+                # Why: IQR 만으로 나누면 두 자리에서 터진다.
+                #      (1) 중앙 50%가 같은 값인 희소 칸(`days_backdated` 는 대부분 0)은
+                #          IQR=0 이라 1e-12 로 나눠 값이 8.8e13 까지 튄다(2026-07-29 실측).
+                #      (2) 꼬리가 두꺼운 비율 칸은 IQR 이 std 보다 훨씬 작아 꼬리가 증폭된다.
+                #      std 를 하한으로 두면 대칭 분포에서는 IQR(≈1.35σ)이 이겨 robust 가
+                #      유지되고, 위 두 경우에는 std 가 이겨 출력 std 가 1 근처로 묶인다.
+                scale = max(
+                    float(policy["iqr"]),
+                    float(policy["std"]),
+                    float(self.near_constant_epsilon),
+                )
             else:
                 center = float(policy["mean"])
                 scale = max(float(policy["std"]), float(self.near_constant_epsilon))
@@ -238,19 +248,26 @@ class RareCategoryOneHotEncoder(BaseEstimator, TransformerMixin):
 
 
 class FrequencyCountEncoder(BaseEstimator, TransformerMixin):
-    """Encode high-cardinality categoricals from train-fitted frequency/count maps."""
+    """Encode high-cardinality categoricals as train-fitted frequency shares.
+
+    Why: 거래처 1,271종에 칸을 하나씩 줄 수는 없으므로 "이 값이 원장에 얼마나
+         자주 나오나"로 바꾼다. 희소 거래처는 자연히 낮은 값을 받는다.
+
+    건수(count)는 내지 않는다 — `count = freq × 학습 행수` 라 freq 와 정보가 같은데,
+    원값이라 스케일이 폭주한다(2026-07-29 실측: `approved_by__count` std 15,842 대
+    수치형 기준 1.0). 같은 정보를 두 칸에 적으면 그 축이 재구성 손실을 두 배로 먹는다.
+    """
 
     def fit(self, X, y=None):  # noqa: ARG002
         frame = _as_frame(X)
         self.input_features_ = list(frame.columns)
-        self.maps_: dict[str, dict[str, dict[str, float]]] = {}
+        self.maps_: dict[str, dict[str, float]] = {}
         row_count = max(len(frame), 1)
         for column in self.input_features_:
             values = frame[column].astype("string").fillna("__MISSING__")
             counts = values.value_counts()
             self.maps_[column] = {
-                "count": {str(key): float(value) for key, value in counts.items()},
-                "freq": {str(key): float(value / row_count) for key, value in counts.items()},
+                str(key): float(value / row_count) for key, value in counts.items()
             }
         return self
 
@@ -259,20 +276,14 @@ class FrequencyCountEncoder(BaseEstimator, TransformerMixin):
         encoded = []
         for column in self.input_features_:
             values = frame[column].astype("string").fillna("__MISSING__")
-            count_map = self.maps_[column]["count"]
-            freq_map = self.maps_[column]["freq"]
-            encoded.append(values.map(freq_map).fillna(0.0).astype(float).to_numpy())
-            encoded.append(values.map(count_map).fillna(0.0).astype(float).to_numpy())
+            encoded.append(values.map(self.maps_[column]).fillna(0.0).astype(float).to_numpy())
         if not encoded:
             return np.empty((len(frame), 0), dtype=float)
         return np.vstack(encoded).T
 
     def get_feature_names_out(self, input_features=None):
         features = getattr(self, "input_features_", input_features or [])
-        names = []
-        for column in features:
-            names.extend([f"{column}__freq", f"{column}__count"])
-        return np.array(names)
+        return np.array([f"{column}__freq" for column in features])
 
 
 def _as_frame(X, columns=None) -> pd.DataFrame:
