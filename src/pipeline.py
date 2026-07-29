@@ -644,6 +644,14 @@ class AuditPipeline:
         start = time.monotonic()
         _t = time.monotonic()
         _ts = now_str()
+        # Why: 인자로 들어온 df 가 곧 탐지 전 피처 프레임이다. 이 시점을 featured_data 로
+        #      고정한다 — 탐지 후에 뜨면 aggregate 가 되쓴 PHASE1 산출물(anomaly_score 등)이
+        #      섞여 "detection 결과 컬럼 미포함" 계약이 깨지고, 그 프레임이 PHASE2 학습
+        #      입력으로 되돌아온다(2026-07-28 발견).
+        #      바로 아래 df = df.copy() 가 작업본을 뜨므로 탐지는 이 스냅샷을 건드리지 않는다.
+        #      호출자 프레임과 같은 객체를 공유한다 — analysis_service 가 이미 같은 객체를
+        #      KEY_FEATURED_DATA 로 세션에 넣으므로 공유가 이 경로의 기존 전제다.
+        featured_data_snapshot = df
         df = df.copy()
         if detection_scope == "phase2_only":
             log_timing("phase2.redetect.df_copy", time.monotonic() - _t, start_ts=_ts)
@@ -773,11 +781,6 @@ class AuditPipeline:
             df["risk_level"].value_counts().to_dict() if "risk_level" in df.columns else {}
         )
         elapsed = time.monotonic() - start
-        _t = time.monotonic()
-        _ts = now_str()
-        featured_data_snapshot = df.copy()
-        if detection_scope == "phase2_only":
-            log_timing("phase2.redetect.result_copy", time.monotonic() - _t, start_ts=_ts)
         # Why: 재탐지 연속성 — 설정 변경으로 risk_level 분포가 달라졌음을 증적에 남김
         self._log_event(
             event_type="analysis",

@@ -1,7 +1,7 @@
 """조합 빌더 엔진 계약 테스트 (SoT: docs/spec/PHASE1_COMBO_BUILDER_SPEC.md §2·§3·§4).
 
 tier 폐지 후 주 검토 표면 — 결합 의미론(그룹 내 OR/간 AND·엄격 모드)과
-어휘 무결성(몸통10·특징10·프리셋4, 겹침 금지)을 계약으로 박는다.
+어휘 무결성(몸통9·특징10·프리셋5, 겹침 금지)을 계약으로 박는다.
 """
 
 from __future__ import annotations
@@ -50,7 +50,10 @@ def _unit(unit_id: str, *rules: str, **kw) -> _Unit:
 
 def test_vocabulary_shape_and_disjointness():
     vocab = load_combo_vocabulary()
-    assert len(vocab.bodies) == 10
+    # 몸통 9종: 구 10종에서 L1-08 기간귀속 제거(2026-07-27) — 원장 fiscal_period 는 ERP 가
+    # posting_date 로 정하므로 둘의 비교가 동어반복이고 실측 전건 불일치 0. 데이터정합성 패널 전용.
+    assert len(vocab.bodies) == 9
+    assert "L1-08" not in vocab.body_ids
     assert len(vocab.features) == 10
     assert not (vocab.body_ids & vocab.feature_ids)
     # 프리셋 5종: 4종 + 결산 손상·충당금 미인식(2026-07-21, v3 기말결산+추정계정 5건 근거)

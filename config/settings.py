@@ -99,7 +99,15 @@ class AuditSettings(BaseSettings):
     #      규모 대비 끝자리 0 개수로 판정한다. 실측 baseline: ≤2·≥3 → 5.16%.
     round_max_significant_digits: int = 2  # 끝자리 0 제거 후 남은 자릿수 ≤ 이 값이면 둥근 금액
     round_min_digits: int = 3  # 총 자릿수 미만이면 제외 — 10원·50원 같은 사소한 소액 배제
-    zscore_threshold: float = 3.0  # L4-01(b01_revenue_manipulation) 등 통계 이상치 기준
+    # L4-01(b01_revenue_manipulation) 상대적 고액 매출 임계.
+    # 근거는 통계 관행이지 감리 실증이 아니다 — 금액을 log 변환해 정규에 가깝게 만든 뒤
+    # (amount_features.add_amount_zscore_log) 3σ = 상위 0.135% 라는 관행을 쓴다.
+    # 실측(2026-07-27, s10 정상 원장 매출 4xxx 25,239행 · gl_account 그룹별 log z):
+    #   z>3.0 → 10행(0.040%) · z>2.5 → 105행 · z>2.0 → 591행(2.34%).
+    #   2.0 으로 낮추면 발화가 59배로 늘어 검토 목록이 성립하지 않는다.
+    # 한계: 이 축은 "정상 분포 대비 큰 매출"만 본다. 총액을 여러 전표로 쪼갠 분식은
+    #       개별 금액이 분포 안에 있어 원리적으로 미발화한다(모집단 축은 PHASE1-2 소관).
+    zscore_threshold: float = 3.0
     midnight_start: float = 22.0  # C03: 심야 전기
     midnight_end: float = 6.0  # C03: 심야 전기
     period_end_margin_days: int = 5  # C01: 기말 판정 마진 (월말 전후 n일)

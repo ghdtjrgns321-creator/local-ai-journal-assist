@@ -40,10 +40,12 @@ bodies: # 조작 대상 — 자격: 금감원 확정 1건 이상 AND 기준서 2
     label: 가수금 체류
     fss_confirmed: 2
     basis: 경과계정 은폐 (금감원 실증)
-  - rule_id: L1-08
-    label: 기간귀속
-    fss_confirmed: 1
-    basis: 기간귀속 위반 (감사기준서 240 문단 26 연계)
+# L1-08 기간귀속은 2026-07-27 몸통 어휘에서 제거 — 데이터정합성 패널 전용으로 되돌림.
+# 근거: 룰이 보는 fiscal_period 는 ERP 가 posting_date 로 정하는 값이라 둘의 비교는
+#       동어반복이다. 실측 358,426행 전건에서 불일치 0 — 정상·부정 모두 0이다.
+#       원장 필드 정합성 검사로는 올바르지만 조작 대상(몸통)으로 두면 감사인에게
+#       구조적으로 발화 불가능한 선택지를 주게 된다. 데이터정합성 패널은
+#       "부정 신호 아님"이 스펙 계약이므로(SPEC §93) 겸직 자체가 모순이었다.
 
 features: # 부정 전표의 모양 — 기준서 240 특징 목록 매핑
   - rule_id: L3-02
@@ -85,7 +87,7 @@ presets: # 저장된 체크 상태 + 소명 1줄. 등급 선언 아님(원클릭
     rationale: 금감원 최다 적발 대상 2종 + 통제 무력화 모양
   - preset_id: revenue_recognition
     label: 수익인식
-    bodies: [L4-01, L3-11, L1-08]
+    bodies: [L4-01, L3-11]
     features: all
     rationale: 감사기준서 240 문단 26 — 수익인식은 부정위험 추정
   - preset_id: reversal_concealment
