@@ -49,18 +49,55 @@ def measure_dataset(fraud_dir: Path) -> dict:
         return {str(unit.unit_id)}
 
     # 1) 표면 커버리지 + 부정 문서 발화 룰 분포
+    #    룰별로 정상 문서 적중도 함께 센다 — 부정만 세면 "정상에도 똑같이 발화하는 룰"이
+    #    커버리지를 부풀린다(실측 L3-04: 부정 43.0% vs 정상 44.5%).
     surfaced: set[str] = set()
     fraud_rule_hits: dict[str, set[str]] = {}  # rule_id -> fraud docs
+    normal_rule_hits: dict[str, set[str]] = {}  # rule_id -> normal docs
+    doc_rules: dict[str, set[str]] = {}  # fraud doc -> 그 문서를 표면에 올린 룰들
     for unit in units:
         docs = unit_docs(unit)
         hit_frauds = docs & fraud_docs
+        hit_normals = docs - fraud_docs
+        rule_ids = {ref.rule_id for ref in unit.evidence_rows}
+        for rule_id in rule_ids:
+            if hit_frauds:
+                fraud_rule_hits.setdefault(rule_id, set()).update(hit_frauds)
+            if hit_normals:
+                normal_rule_hits.setdefault(rule_id, set()).update(hit_normals)
         if not hit_frauds:
             continue
         surfaced |= hit_frauds
-        for ref in unit.evidence_rows:
-            fraud_rule_hits.setdefault(ref.rule_id, set()).update(hit_frauds)
+        for doc in hit_frauds:
+            doc_rules.setdefault(doc, set()).update(rule_ids)
+
+    # 판별력(lift) = 부정 발화율 / 정상 발화율. lift <= 1.0 이면 그 룰은 부정을 정상보다
+    # 더 자주 지목하지 않으므로 표면화 근거로 셀 수 없다. 임계를 손으로 정하지 않고
+    # "정상보다 나은가"라는 최소 조건만 쓴다.
+    fraud_total = len(fraud_docs)
+    normal_total = len(set(res.data["document_id"].astype(str))) - fraud_total
+    rule_power = {}
+    for rule_id in sorted(set(fraud_rule_hits) | set(normal_rule_hits)):
+        f_hit = len(fraud_rule_hits.get(rule_id, set()))
+        n_hit = len(normal_rule_hits.get(rule_id, set()))
+        f_rate = f_hit / fraud_total if fraud_total else 0.0
+        n_rate = n_hit / normal_total if normal_total else 0.0
+        rule_power[rule_id] = {
+            "fraud_docs": f_hit,
+            "fraud_rate": round(f_rate, 4),
+            "normal_docs": n_hit,
+            "normal_rate": round(n_rate, 4),
+            "lift": round(f_rate / n_rate, 3) if n_rate > 0 else None,
+        }
+    uninformative = sorted(
+        r for r, p in rule_power.items() if p["lift"] is not None and p["lift"] <= 1.0
+    )
+    surfaced_informative = {doc for doc, rules in doc_rules.items() if rules - set(uninformative)}
 
     scheme_surfaced = {s: sorted(d for d in surfaced if doc_scheme[d] == s) for s in schemes}
+    scheme_informative = {
+        s: len([d for d in surfaced_informative if doc_scheme[d] == s]) for s in schemes
+    }
 
     # 2) 프리셋별 측정
     preset_rows = []
@@ -128,6 +165,22 @@ def measure_dataset(fraud_dir: Path) -> dict:
             "per_scheme": {s: len(v) for s, v in scheme_surfaced.items()},
             "missed_docs": sorted(fraud_docs - surfaced),
         },
+        # 무정보 룰(lift <= 1.0) 발화만으로 오른 문서를 뺀 커버리지. 감사인이 그 룰을 골라도
+        # 정상 모집단이 같은 비율로 딸려오므로 검토 목록이 되지 않는다.
+        "surface_coverage_informative": {
+            "uninformative_rules": uninformative,
+            "surfaced_fraud_docs": len(surfaced_informative),
+            "rate": round(len(surfaced_informative) / len(fraud_docs), 4) if fraud_docs else 0.0,
+            "per_scheme": scheme_informative,
+            "schemes_lost": sorted(
+                s for s in schemes if len(scheme_surfaced[s]) > 0 and scheme_informative[s] == 0
+            ),
+            # Why: PHASE2 상보성 측정의 분모. surface_coverage.missed_docs 는 r9 에서 0~2건이라
+            #      "VAE 가 PHASE1 미표면을 얼마나 건지나"를 잴 수 없다(2026-07-28). 무정보 룰을
+            #      뺀 미표면(30여 건)이 실제로 감사인에게 안 보이는 부정이므로 이쪽을 분모로 쓴다.
+            "missed_docs": sorted(fraud_docs - surfaced_informative),
+        },
+        "rule_discriminating_power": rule_power,
         "fraud_rule_distribution": {
             r: len(v) for r, v in sorted(fraud_rule_hits.items(), key=lambda kv: -len(kv[1]))
         },
@@ -160,6 +213,12 @@ def main() -> int:
         sc = rep["surface_coverage"]
         print(
             f"표면 커버리지: {sc['surfaced_fraud_docs']}/{rep['fraud_docs_total']} ({sc['rate']:.1%})"
+        )
+        si = rep["surface_coverage_informative"]
+        print(
+            f"  판별력 있는 룰만: {si['surfaced_fraud_docs']}/{rep['fraud_docs_total']}"
+            f" ({si['rate']:.1%}) · 무정보 룰 {si['uninformative_rules']}"
+            f" · 표면 소멸 scheme {si['schemes_lost']}"
         )
         for row in rep["presets"]:
             print(

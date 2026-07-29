@@ -47,7 +47,8 @@ def _featured_df(dataset_dir: Path) -> pd.DataFrame:
     from src.pipeline import AuditPipeline
 
     res = AuditPipeline(skip_db=True).run(str(dataset_dir / "journal_entries.csv"))
-    return res.data
+    # Why: s5_measure_vae_performance 와 동일 이유 — 탐지 전 스냅샷을 쓴다.
+    return res.featured_data if res.featured_data is not None else res.data
 
 
 def _take_groups_until(
@@ -97,7 +98,12 @@ def _split_by_document(
 def main() -> int:
     from config.settings import get_settings
     from src.detection.vae_detector import UnsupervisedDetector
-    from src.services.phase2_training_service import prepare_phase2_feature_inputs
+    from src.services.phase2_training_service import (
+        apply_unsupervised_matrix,
+        fit_unsupervised_matrix_builder,
+        matrix_feature_groups,
+        prepare_phase2_feature_inputs,
+    )
 
     parser = argparse.ArgumentParser(prog="s1_measure_vae_flagrate.py")
     parser.add_argument("base_dir")
@@ -114,7 +120,7 @@ def main() -> int:
     print(f"=== base 준비: {base_dir.name} ===", flush=True)
     base_df = _featured_df(base_dir)
     print(f"[진행] 파이프라인 완료 {len(base_df)}행 × {base_df.shape[1]}컬럼", flush=True)
-    cleaned, groups, _payload = prepare_phase2_feature_inputs(base_df, settings=settings)
+    cleaned, _groups, payload = prepare_phase2_feature_inputs(base_df, settings=settings)
     print(f"[진행] 피처 입력 준비 완료 {len(cleaned)}행 × {cleaned.shape[1]}컬럼", flush=True)
 
     if GROUP_COLUMN not in base_df.columns:
@@ -134,9 +140,19 @@ def main() -> int:
         print("오류: 확인용 표본이 0행 — 학습 상한이 모집단 전부를 먹었다", flush=True)
         return 1
 
+    # Why: 제품 학습과 같은 매트릭스 빌더를 태운다 (2026-07-28 경로 통합).
+    #      상세는 s5_measure_vae_performance.py 의 같은 구간 주석 참조.
+    builder = fit_unsupervised_matrix_builder(
+        train_X,
+        payload["preprocessing_plan"],
+        settings=settings,
+    )
+    train_matrix = apply_unsupervised_matrix(builder, train_X)
+
     start = time.perf_counter()
     det = UnsupervisedDetector(settings)
-    train_info = det.train(train_X, groups)
+    train_info = det.train(train_matrix, matrix_feature_groups(train_matrix))
+    det.set_phase2_matrix_state(builder)
     elapsed = time.perf_counter() - start
 
     threshold = float(train_info["ensemble_threshold"])
@@ -155,7 +171,8 @@ def main() -> int:
         "calibration_rows": int(len(calib_X)),
         "train_population_rows": int(len(cleaned)),
         "split": split_meta,
-        "n_features": int(train_X.shape[1]),
+        "n_features_source": int(train_X.shape[1]),
+        "n_features": int(train_matrix.shape[1]),
         "threshold": threshold,
         "if_contamination_setting": contamination,
         "flag_rate_train": round(flag_train, 5),

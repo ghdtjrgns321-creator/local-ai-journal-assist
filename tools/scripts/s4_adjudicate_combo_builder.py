@@ -7,10 +7,10 @@ S2 단위 데이터에 실제 파이프라인을 돌린 뒤 빌더를 3면으로
 - V0b (실측 기록, FAIL 아님): 오라클 발화의 표면 커버리지 — 룰별 details 발화 문서 중
   어느 unit evidence 에도 안 실린 유실 문서 수. flow 승격 게이트(L2-05 context_score 등)
   정책의 결과라 S4(빌더 조회 정확성) 범위 밖 — 수치만 남겨 후속 결정 재료로 쓴다.
-- V1/V2 (HARD): 결합 의미론 전수 — 몸통10×특징10 + 단독 20 = 120셀을 기본/엄격 모드로,
+- V1/V2 (HARD): 결합 의미론 전수 — 몸통×특징 + 단독을 어휘에서 계산해(현행 109셀) 기본/엄격 모드로,
   unit 발화집합 입력 + 독립 재구현(_expected_match)과 대조. 입력은 공유하되 로직이 독립이라
   의미론 검증으로 성립하고, 입력 자체의 정확성은 V0a/V0b 가 별도 담당한다.
-- V3 (HARD): 프리셋 4종 + build_combo_builder_result 뷰 정합(matched 수·rows·top_n 절단).
+- V3 (HARD): 프리셋 전종(현행 5) + build_combo_builder_result 뷰 정합(matched 수·rows·top_n 절단).
 - V4 (HARD): 정답지 하한 — 어휘 룰 단독 선택 시 units 내 표적 문서는 반드시 일치.
   units 밖 표적 문서는 standalone 게이트 정책의 결과이므로 gate_excluded 로 기록만.
 """
@@ -132,7 +132,8 @@ def main() -> int:
             }
         )
 
-    # ── V1/V2: 조합 셀 전수 — 몸통10×특징10 + 몸통만10 + 특징만10 = 120셀 × 2모드
+    # ── V1/V2: 조합 셀 전수 — 몸통×특징 + 몸통만 + 특징만 (어휘에서 계산) × 2모드.
+    #    2026-07-27 L1-08 제거로 몸통9 → 9×10 + 9 + 10 = 109셀.
     cells: list[tuple[set[str], set[str]]] = []
     cells += [({b}, {f}) for b in body_ids for f in feature_ids]
     cells += [({b}, set()) for b in body_ids]
@@ -170,7 +171,7 @@ def main() -> int:
             {"axis": "V1", "cell": "empty-selection", "detail": "빈 선택이 빈 결과가 아님"}
         )
 
-    # ── V3: 프리셋 4종 (기본 모드) + build_combo_builder_result 정합 + top_n 절단
+    # ── V3: 프리셋 전종 (기본 모드) + build_combo_builder_result 정합 + top_n 절단
     preset_rows = []
     for preset in vocab.presets:
         bodies = set(preset.get("bodies", []))
