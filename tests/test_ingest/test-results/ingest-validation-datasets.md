@@ -1,6 +1,6 @@
 # Validation 데이터셋 Ingest 파이프라인 검증 결과
 
-> 실행일: 2026-07-18 15:33 | 5종 실데이터셋
+> 실행일: 2026-07-29 13:52 | 5종 실데이터셋
 
 ## 1. 테스트 요약
 
@@ -59,7 +59,7 @@
 **✅ ① 파일 검증** (0.16s)
   category=text
 
-**❌ ② 파일 읽기** (0.56s)
+**❌ ② 파일 읽기** (0.55s)
   ERROR: 'utf-8' codec can't decode byte 0x96 in position 15: invalid start byte
 
 ---
@@ -71,7 +71,7 @@
 **✅ ① 파일 검증** (0.01s)
   category=text
 
-**✅ ② 파일 읽기** (0.26s)
+**✅ ② 파일 읽기** (0.27s)
   sheets=['Sheet1'], selected=Sheet1, rows=217442, cols=7, format=csv, encoding=utf-8
 
 **✅ ③ 헤더 탐지** (0.00s)
@@ -111,7 +111,7 @@
 **✅ ① 파일 검증** (0.02s)
   category=excel
 
-**✅ ② 파일 읽기** (2.36s)
+**✅ ② 파일 읽기** (2.57s)
   sheets=['GL', 'Chart of Accounts', 'Calendar', 'Territory', 'CashFlow_St', 'SoCE_St'], selected=GL, rows=27910, cols=12, format=xlsx
 
 **✅ ③ 헤더 탐지** (0.00s)
@@ -150,7 +150,7 @@
 **✅ ① 파일 검증** (0.00s)
   category=columnar
 
-**✅ ② 파일 읽기** (0.19s)
+**✅ ② 파일 읽기** (0.20s)
   sheets=['Sheet1'], selected=Sheet1, rows=331934, cols=60, format=parquet
 
 **✅ ③ 헤더 탐지** (0.00s)
@@ -160,7 +160,7 @@
   mapping=19개, suggestions=6개, unmapped=35개, needs_review=True
   WARN: 필수 컬럼 미매핑: ['credit_amount']
 
-**✅ ⑤ 타입 캐스팅** (0.74s)
+**✅ ⑤ 타입 캐스팅** (0.80s)
   cast=4개, skipped=14개
 
 | 원본 | 표준 | 구분 |
@@ -213,17 +213,17 @@
 **✅ ① 파일 검증** (0.01s)
   category=text
 
-**✅ ② 파일 읽기** (0.60s)
+**✅ ② 파일 읽기** (0.67s)
   sheets=['Sheet1'], selected=Sheet1, rows=533010, cols=10, format=csv, encoding=utf-8
 
 **✅ ③ 헤더 탐지** (0.00s)
   header_row=0, confidence=1.00, matched=['BELNR', 'WAERS', 'BUKRS', 'PRCTR', 'HKONT', 'DMBTR']
 
-**✅ ④ 컬럼 매핑** (0.09s)
+**✅ ④ 컬럼 매핑** (0.10s)
   mapping=9개, suggestions=0개, unmapped=1개, needs_review=True
   WARN: 필수 컬럼 미매핑: ['credit_amount', 'document_date', 'document_type', 'fiscal_period', 'fiscal_year', 'posting_date']
 
-**✅ ⑤ 타입 캐스팅** (1.41s)
+**✅ ⑤ 타입 캐스팅** (1.42s)
   cast=2개, skipped=7개
 
 | 원본 | 표준 | 구분 |
