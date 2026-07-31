@@ -113,7 +113,7 @@
 
 ---
 
-#### 4-4. 머신러닝 - 비지도 학습 (VAE) — 상세 [3-5 학습·평가](#3-5-기술-설명--비지도-vae)
+#### 4-4. 머신러닝 - 비지도 학습 (VAE) — 상세 [3-5 VAE](#3-5-기술-설명--비지도-vae)
 
 **비지도 학습 채택 사유**
 - 정답 데이터 부재 : 전표별 부정 여부에 대한 정답 라벨 부재
@@ -169,22 +169,72 @@
 </p>
 <p align="center"><sub>분석 실행 전 품질진단 화면. 세 표면으로 들어가기 전에 원장 자체가 읽을 만한 상태인지 먼저 본다.</sub></p>
 
+<details>
+<summary><b>룰 기반 검증 화면 3종 (펼치기)</b></summary>
+
+<p align="center"><img src="images/screenshot-rules.png" width="820" alt="룰 기반 전체 요약 화면"></p>
+<p align="center"><sub>검토 대상 모집단 — 작성자별·계정과목별로 신호가 어디에 몰리는지 먼저 본다.</sub></p>
+
+<p align="center"><img src="images/screenshot-rule-summary.png" width="820" alt="분석 룰 요약 화면"></p>
+<p align="center"><sub>룰별 검토대상 건수. 실행되지 않은 룰과 실행 후 0건인 룰을 화면에서 구분한다.</sub></p>
+
+<p align="center"><img src="images/screenshot-integrity.png" width="820" alt="데이터 정합성 화면"></p>
+<p align="center"><sub>데이터 정합성 패널. 부정 징후가 아니라 "먼저 데이터를 고치라"는 신호로 쓴다.</sub></p>
+
+</details>
+
+<details>
+<summary><b>검토 조합 화면 2종 (펼치기)</b></summary>
+
+<p align="center"><img src="images/screenshot-combo-builder.png" width="820" alt="금감원 사례 조합 카드 화면"></p>
+<p align="center"><sub>감리 사례 조합 5종. 카드마다 확정 건수를 표기해 "왜 이 묶음인가"를 화면에서 읽게 한다.</sub></p>
+
+<p align="center"><img src="images/screenshot-combo-direct.png" width="820" alt="직접 조합 선택 화면"></p>
+<p align="center"><sub>직접 조합. 조작 대상·수법 매트릭스에서 감사인이 임의로 교차 선택한다.</sub></p>
+
+</details>
+
+<details>
+<summary><b>분석적 검토 화면 4종 (펼치기)</b></summary>
+
+<p align="center"><img src="images/screenshot-benford.png" width="820" alt="벤포드 첫째 자릿수 분석 화면"></p>
+<p align="center"><sub>벤포드 첫째 자릿수. 원장 전체는 적합 판정이고, 아래에 계정별 이탈도 상위를 따로 세운다.</sub></p>
+
+<p align="center"><img src="images/screenshot-round-density.png" width="820" alt="라운드넘버 밀집 차트 화면"></p>
+<p align="center"><sub>라운드넘버 밀집. 점선이 그 원장에서 뽑은 기준선이며 상수가 아니다.</sub></p>
+
+<p align="center"><img src="images/screenshot-vendor-signal.png" width="820" alt="거래처 단위 신호 화면"></p>
+<p align="center"><sub>거래처 단위 신호. 세 신호 모두 원장 범위 내 약한 근사로 표기한다.</sub></p>
+
+<p align="center"><img src="images/screenshot-account-activity.png" width="820" alt="계정 활동 변동 표 화면"></p>
+<p align="center"><sub>계정 활동 변동. 금액·건수·건당 금액 중 축을 골라 전기와 대조한다.</sub></p>
+
+</details>
+
+<details>
+<summary><b>비지도 VAE 화면 (펼치기)</b></summary>
+
+<p align="center"><img src="images/screenshot-vae-roc.png" width="820" alt="VAE 문서 단위 ROC 곡선 화면"></p>
+<p align="center"><sub>문서 단위 판별력. 합성 원장에서 잰 값이며 실데이터 성능 주장이 아니다.</sub></p>
+
+</details>
+
 ---
 
 ## 목차
 
-1. [문제 인식과 스코프](#1-문제-인식과-스코프) — 무엇을 하려 했고 어디에 선을 그었나
-2. [실증 예시](#2-실증-예시--단일-전표-파이프라인-처리-과정) — 전표 한 장을 끝까지 추적
+1. [문제 인식과 스코프](#1-문제-인식과-스코프)
+2. [실증 예시](#2-실증-예시--단일-전표-파이프라인-처리-과정)
 3. 기술 설명
-   1. [합성 데이터 생성](#3-1-기술-설명--합성-데이터-생성) — 8단계 생성과 정합성 검증
-   2. [룰 위반 검증](#3-2-기술-설명--룰-위반-검증) — 룰 29종의 도출과 판정
-   3. [룰 위반 조합 검토](#3-3-기술-설명--룰-위반-조합-검토) — 몸통 9 × 특징 10
-   4. [분석적 검토](#3-4-기술-설명--분석적-검토) — 모집단 단위 신호 5종
-   5. [비지도 VAE](#3-5-기술-설명--비지도-vae) — 학습·평가와 네 차례 정정
-4. [검증](#4-검증) — 정상 원장 · 룰 발화 · 부정 주입
-5. [핵심 의사결정](#5-핵심-의사결정) — 스코프 축소 · 등급 폐지 · VAE 판정
-6. [한계점](#6-한계점) — 원리적 한계와 미조치
-7. [기술 스택](#7-기술-스택) — 레이어별 구성
+   1. [합성 데이터 생성](#3-1-기술-설명--합성-데이터-생성)
+   2. [룰 위반 검증](#3-2-기술-설명--룰-위반-검증)
+   3. [룰 위반 조합 검토](#3-3-기술-설명--룰-위반-조합-검토)
+   4. [분석적 검토](#3-4-기술-설명--분석적-검토)
+   5. [비지도 VAE](#3-5-기술-설명--비지도-vae)
+4. [검증](#4-검증)
+5. [핵심 의사결정](#5-핵심-의사결정)
+6. [한계점](#6-한계점)
+7. [기술 스택](#7-기술-스택)
 
 ---
 
