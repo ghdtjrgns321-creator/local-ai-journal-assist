@@ -201,6 +201,22 @@ graph LR
   - 분석 범위를 **단일 법인 원장으로만 한정**
   - 감리 고위험 사례 36건 중 25건(69%)이 실물 재고·부외 자금·증빙 위조·타사 원장 대사에 기인해 원장 안에 신호 없음
 
+### 다루는 자료
+
+| 구분      | 자료                 | 범위                                 |       수량 | 상술                                         |
+| --------- | -------------------- | ------------------------------------ | ---------: | -------------------------------------------- |
+| 근거      | 금감원 감리 지적사례 | 2009~2025 공개 원문                  |      230건 | [3-2](#3-2-기술-설명--룰-위반-검증)          |
+| 근거      | 사례 태깅 결과       | 적발 계정·거래 유형 전수 태깅        |      731행 | [3-2](#3-2-기술-설명--룰-위반-검증)          |
+| 근거      | 감사기준서           | 240 부정 분개 특징 · 520 분석적 검토 |        2종 | [3-3](#3-3-기술-설명--룰-위반-조합-검토)     |
+| 원장      | 정상 합성 원장       | K-IFRS 제조업 3개년 · 73컬럼         |  355,786행 | [3-1](#3-1-기술-설명--합성-데이터-생성)      |
+| 원장      | 전표 문서            | 행을 전표 단위로 묶은 수             |  113,135건 | [3-1](#3-1-기술-설명--합성-데이터-생성)      |
+| 원장      | 거래 시나리오        | 구매·판매·급여·결산·자산·자금·관계사 |       20종 | [3-1](#3-1-기술-설명--합성-데이터-생성)      |
+| 원장      | 이상치 주입 시나리오 | FS01~FS14 · 부정 문서 330            |       14종 | [3-1](#3-1-기술-설명--합성-데이터-생성)      |
+| 탐지 자산 | 활성 룰              | 데이터 정합성 4 + 부정·이상 25       |       29종 | [3-2](#3-2-기술-설명--룰-위반-검증)          |
+| 탐지 자산 | 조합 어휘·프리셋     | 조작 대상 9 × 조작 수법 10           | 프리셋 5종 | [3-3](#3-3-기술-설명--룰-위반-조합-검토)     |
+| 탐지 자산 | 분석적 검토 신호     | 자기 큐 5 + 배지 5                   |       10종 | [3-4](#3-4-기술-설명--분석적-검토)           |
+| 검증 자산 | 합성 원장 검증 지표  | 일반 57 + 계정 9                     |       66개 | [4-1](#4-1-정상-원장-베이스라인-정합성-검증) |
+
 ---
 
 ## 2. 실증 예시 — 단일 전표 파이프라인 처리 과정
@@ -242,6 +258,12 @@ graph LR
 ---
 
 ## 3-1. 기술 설명 — 합성 데이터 생성
+
+> **실제 구현**
+> - 생성 설정 : [`datasynth.yaml`](config/datasynth.yaml) — 기업 규모·거래 비중·임계 17개 파일
+> - 라벨 수집 : [`datasynth_labels.py`](src/ingest/datasynth_labels.py) · [`datasynth_metadata.py`](src/ingest/datasynth_metadata.py)
+> - 품질 게이트 : [`datasynth_quality_gate/`](tests/datasynth_quality_gate) — 구조·도메인·교차참조·분포 4계층
+> - 생성기 본체는 Rust 벤더 코드로 이 저장소 밖에 있고, 빌드된 바이너리와 위 설정만 사용
 
 | 항목         | 내용                                                        |
 | ------------ | ----------------------------------------------------------- |
@@ -349,22 +371,29 @@ graph LR
 
 ## 3-2. 기술 설명 — 룰 위반 검증
 
-```
- 검증 통과 원장
-        │
-        ├─▶ 정합성 검사기     ── 차대균형 · 필수필드 · 무효계정 ────┐
-        ├─▶ 부정 탐지 계층    ── 우회 승인·자본화 등 14개 룰 ───────┤
-        ├─▶ 이상 탐지 계층    ── 시점·고액·역분개 등 11개 룰 ───────┤
-        └─▶ 증빙 대사 검사기  ── 수익 컷오프 ────────────────────────┘
-                        │
-                        ▼
-    개별 탐지 모듈은 예외 발생 시에도 표준 결과 객체 반환
-        ◆ 실행 상태(실행 / 스킵 / 오류)와 스킵 사유를 계약 필드에 명시
-          ┗ '컬럼 결측으로 실행 불가'와 '실행 결과 0건'의 상태 분리
+> **실제 구현**
+> - 공통 계약 : [`base.py`](src/detection/base.py) — 모든 탐지기가 상속하는 추상 클래스와 표준 결과 객체
+> - 검사기 4종 : [`integrity_layer.py`](src/detection/integrity_layer.py) · [`fraud_layer.py`](src/detection/fraud_layer.py) · [`anomaly_layer.py`](src/detection/anomaly_layer.py) · [`evidence_detector.py`](src/detection/evidence_detector.py)
+> - 룰 임계·파라미터 : [`audit_rules.yaml`](config/audit_rules.yaml) · [`sod_toxic_combinations.yaml`](config/sod_toxic_combinations.yaml)
+> - 룰 메타데이터 : [`rule_detail_metadata.py`](src/detection/rule_detail_metadata.py) — 활성 룰 29종을 코드에서 고정
+> - 병렬 실행 : [`pipeline.py`](src/pipeline.py)
 
- ※ 벤포드·계정 단위 집계 신호는 동일 파이프라인에서 병렬 실행되나
-    별도의 분석적 검토 영역으로 분류 (3-4 참조)
+```mermaid
+graph LR
+    L["검증 통과 원장"]
+    L --> I["정합성 검사기<br/>차대균형 · 필수필드 · 무효계정"]
+    L --> F["부정 탐지 계층<br/>우회 승인 · 자본화 등 14개 룰"]
+    L --> A["이상 탐지 계층<br/>시점 · 고액 · 역분개 등 11개 룰"]
+    L --> E["증빙 대사 검사기<br/>수익 컷오프"]
+    I --> R["표준 결과 객체<br/>실행 · 스킵 · 오류 상태와 사유"]
+    F --> R
+    A --> R
+    E --> R
+    L -.->|같은 실행에서 병렬 · 별도 표면| B["분석적 검토 신호<br/>3-4 참조"]
 ```
+
+- 예외가 나도 결과 객체를 반환 : 한 탐지기의 실패가 나머지 실행을 멈추지 않음
+- '컬럼 결측으로 실행 불가'와 '실행 결과 0건'을 상태로 분리해 화면에서 구분
 
 ### 룰 설계 원칙
 
@@ -453,6 +482,12 @@ graph LR
 
 ## 3-3. 기술 설명 — 룰 위반 조합 검토
 
+> **실제 구현**
+> - 빌더 본체 : [`phase1_combo_builder.py`](src/export/phase1_combo_builder.py) — 어휘 적재·결합 판정·정렬
+> - 어휘·프리셋 정의 : [`combo_builder.yaml`](config/combo_builder.yaml)
+> - 화면 : [`phase1_combo_builder_panel.py`](dashboard/components/phase1_combo_builder_panel.py)
+> - 판정 스크립트 : [`s4_adjudicate_combo_builder.py`](tools/scripts/s4_adjudicate_combo_builder.py) — 날조 검사와 결합 의미론 전수 대조
+
 ### 조작 대상(몸통) 9 × 조작 수법(특징) 10
 
 | 룰    | 몸통(조작 대상) | 감리 확정 | 룰       | 특징(전표의 모양) | 출처 성격  |
@@ -518,23 +553,26 @@ graph LR
 
 > 전표 한 장이 아닌 계정·거래처·작성자를 모아야 드러나는 신호 · 근거는 감사기준서 520
 
+> **실제 구현**
+> - 벤포드 : [`benford_detector.py`](src/detection/benford_detector.py)
+> - 라운드넘버 밀집도 : [`round_density_rules.py`](src/detection/round_density_rules.py)
+> - 첫등장·희소 거래처 : [`partner_signals.py`](src/detection/partner_signals.py)
+> - 계정 활동 변동 : [`trendbreak_detector.py`](src/detection/trendbreak_detector.py) · [`trendbreak_rules.py`](src/detection/trendbreak_rules.py)
+> - 결산월 집중 변동 : [`timeseries_concentration_rules.py`](src/detection/timeseries_concentration_rules.py)
+
 ### 두 가지 운영 방식
 
+```mermaid
+graph LR
+    S["분석적 검토 신호 10종"]
+    S --> Q["자기 큐 5종<br/>벤포드 · 계정 활동 변동 · 결산월 집중<br/>라운드넘버 밀집도 · 첫등장/희소 거래처"]
+    S --> G["배지 5종<br/>심야 배치 · 배치 이상 · 업무범위 집중<br/>라운드넘버 단건 · 첫등장/희소 전표"]
+    Q --> QR["독립 표면으로 별도 목록<br/>전표 점수 기여 0"]
+    G --> GR["전표 줄의 맥락 꼬리표<br/>순위를 바꾸지 않음"]
 ```
- ━━━ 자기 큐 — 별도 목록으로 세운다 ━━━
 
-    ◆ 신호   벤포드 · 계정 활동 변동 · 결산월 집중 변동
-             라운드넘버 밀집도 · 첫등장/희소 거래처
-    ◆ 역할   "이 계정·거래처가 통째로 이상하다"를 독립 표면으로
-             ┗ 전표 점수에 미참여 (기여 0)
-
- ━━━ 배지 — 전표 줄의 맥락 꼬리표로만 붙는다 ━━━
-
-    ◆ 신호   심야 배치 · 배치 이상 · 업무범위 집중
-             라운드넘버 단건 · 첫등장/희소 전표
-    ◆ 역할   정상 업무에 흔해서 단독 큐로 세우면 노이즈
-             ┗ 전표에 꼬리표만 달고 순위를 바꾸지 않음
-```
+- 자기 큐로 세우는 기준 : "이 계정·거래처가 통째로 이상하다"를 단독으로 주장할 수 있는 신호
+- 배지로 내리는 기준 : 정상 업무에도 흔해서 단독 큐로 세우면 노이즈가 되는 신호
 
 - 배지의 의미 : "이 전표가 범인"이 아니라 "이 전표가 이상하다고 표시된 계정에 속한다"
   - "이 집이 도둑맞았다"가 아니라 "이 집은 도둑 많은 동네에 있다"
@@ -588,6 +626,15 @@ graph LR
 ## 3-5. 기술 설명 — 비지도 VAE
 
 > 정상 전표의 특성을 학습해 이탈하는 전표를 추가 검토 후보로 올리는 보조 모듈
+
+> **실제 구현**
+> - 입력 경계 : [`phase2_plan.py`](src/preprocessing/phase2_plan.py) — 허용 목록 51칸을 컬럼별로 판정
+> - 파생 생성 : [`phase2_features.py`](src/preprocessing/phase2_features.py) — 날짜·마스터 조인·금액 구조 3종
+> - 행렬 구성 : [`phase2_matrix.py`](src/preprocessing/phase2_matrix.py) · 변환기 [`transformers.py`](src/preprocessing/transformers.py)
+> - 모델 : [`vae_model.py`](src/preprocessing/vae_model.py) — 인코더·디코더와 손실 두 항
+> - 학습·분할 : [`phase2_training_service.py`](src/services/phase2_training_service.py)
+> - 점수화 : [`vae_detector.py`](src/detection/vae_detector.py) — 재구성 오차와 칸별 기여 분해
+> - 측정 스크립트 : [`s5_measure_vae_performance.py`](tools/scripts/s5_measure_vae_performance.py) · [`diag_vae_input_audit.py`](tools/scripts/diag_vae_input_audit.py)
 
 - 지도학습을 안 쓰는 이유 : 합성데이터의 부정 라벨은 규칙으로 심은 것이라 모델이 배우는 것은 부정이 아니라 주입 규칙
 
