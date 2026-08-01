@@ -24,6 +24,7 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import sys
 import time
@@ -45,10 +46,20 @@ DECLARED_BAND = (0.3, 3.0)
 
 def _featured_df(dataset_dir: Path) -> pd.DataFrame:
     from src.pipeline import AuditPipeline
+    from src.preprocessing.phase2_features import PHASE2_INPUT_COLUMNS
 
     res = AuditPipeline(skip_db=True).run(str(dataset_dir / "journal_entries.csv"))
     # Why: s5_measure_vae_performance 와 동일 이유 — 탐지 전 스냅샷을 쓴다.
-    return res.featured_data if res.featured_data is not None else res.data
+    featured = res.featured_data if res.featured_data is not None else res.data
+    # Why: 16GB 장비에서 20만 행 학습이 두 차례 강제 종료됐다(회차 B·C 1차 관문 미측정의
+    #      직접 원인). s5 가 2026-07-29 에 같은 지점에서 넣은 트리밍이 여기에는 없어
+    #      355,786행 × 98칸을 그대로 들고 갔다. 허용 목록 밖 칸은 PHASE1 룰용 파생이라
+    #      PHASE2 입력이 되지 않으므로 결과는 불변이고 메모리만 줄어든다.
+    keep = [c for c in featured.columns if c in PHASE2_INPUT_COLUMNS or c == GROUP_COLUMN]
+    trimmed = featured.loc[:, keep].copy()
+    del featured, res
+    gc.collect()
+    return trimmed
 
 
 def _take_groups_until(
@@ -127,6 +138,10 @@ def main() -> int:
         print(f"오류: {GROUP_COLUMN} 컬럼이 없어 전표 단위 분할을 할 수 없다", flush=True)
         return 1
     doc_ids = base_df.loc[cleaned.index, GROUP_COLUMN].astype(str)
+    # Why: prepare 구간에서 35만 행 프레임이 겹쳐 잡힌다(s5 와 같은 지점). base_df 는
+    #      전표 id 를 뽑고 나면 역할이 끝나므로 분할 전에 놓는다.
+    del base_df
+    gc.collect()
 
     train_X, calib_X, split_meta = _split_by_document(
         cleaned, doc_ids, args.train_rows, args.calibration_rows
