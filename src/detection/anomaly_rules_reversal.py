@@ -405,6 +405,11 @@ def c11_reversal_entry(
         amount_tolerance=amount_tolerance,
     )
 
+    # s0(ERP 원전표 포인터)를 발화에서 빼면 안 된다. 부정 overlay는 `reversal_type`만
+    # 생략하고 원전표 포인터는 남기므로, s0가 부정 탐지의 주 경로다. 2026-08-02에
+    # `s1 & ~s0`로 바꿔 실측한 결과 부정 적중이 204/660 → 0/660으로 사라졌다.
+    # 정상 원장의 과다 발화는 룰이 아니라 결제·정산 전표가 original_document_id를
+    # 쓴 데이터 쪽 문제다.
     flagged = s0.astype(bool) | s1.astype(bool)
     score_series = flagged.astype(float)
     s0_details = _s0_reference_details(df, s0)
