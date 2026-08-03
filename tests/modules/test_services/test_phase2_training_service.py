@@ -78,10 +78,10 @@ def test_audit_settings_exposes_phase2_vae_mvp_defaults():
     settings = AuditSettings()
 
     assert settings.phase2_training_mode == "unsupervised_autoencoder_mvp"
-    assert settings.phase2_train_max_rows == 50_000
+    assert settings.phase2_train_max_rows == 200_000
     assert settings.phase2_review_capacity_ratio == 0.10
     assert settings.phase2_unsup_train_ratio == 0.80
-    assert settings.phase2_unsup_calibration_rows == 50_000
+    assert settings.phase2_unsup_calibration_rows == 200_000
     assert settings.phase2_reconstruction_group_weights["numeric"] == 1.0
     assert settings.phase2_reconstruction_group_weights["boolean"] == 1.0
 

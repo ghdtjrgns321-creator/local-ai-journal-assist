@@ -442,12 +442,15 @@ class AuditSettings(BaseSettings):
 
     # --- ML Pipeline (Phase 2) ---
     phase2_training_mode: str = "unsupervised_autoencoder_mvp"
-    phase2_train_max_rows: int = 50_000
+    # 5만 행은 근거가 기록되지 않은 채 굳어 있던 값이고, 그 조건에서 나온 수치는 전부
+    # 인용 불가로 철회됐다(2026-07-26: 차단 설정을 그대로 두고 표본만 20만으로 올리자
+    # 결과가 뒤집혔다 — 낮은 수치는 방어가 아니라 학습 부족이었다). 20만이 현행 기준이다.
+    phase2_train_max_rows: int = 200_000
     phase2_profile_max_rows: int = 100_000
     phase2_random_seed: int = 42
     phase2_review_capacity_ratio: float = 0.10
     phase2_unsup_train_ratio: float = 0.80
-    phase2_unsup_calibration_rows: int = 50_000
+    phase2_unsup_calibration_rows: int = 200_000
     phase2_calibration_size: float = 0.20
     phase2_split_strategy: str = "group"
     phase2_split_group_column: str = "document_id"

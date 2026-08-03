@@ -3,8 +3,8 @@
 사용: uv run python tools/scripts/s1_measure_vae_flagrate.py <base_dir>
       [--train-rows N] [--calibration-rows N] [--out PATH]
 
-  --train-rows        학습 표본 상한(기본 50,000 = 2026-07 기록 회차 조건). 0 이하면 전 행.
-  --calibration-rows  확인용 표본 상한(기본 50,000). 학습에 쓰지 않은 전표에서만 뽑는다.
+  --train-rows        학습 표본 상한(기본 200,000). 0 이하면 전 행.
+  --calibration-rows  확인용 표본 상한(기본 200,000). 학습에 쓰지 않은 전표에서만 뽑는다.
 
 배경: `reports/s1_normal_s10/vae_flagrate.json` 은 1회성 실행으로 만들어졌고 생성
       스크립트가 리포에 없었다. 학습 표본 상한을 바꿔 재측정하려면 같은 조건을 재현할
@@ -37,8 +37,11 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-DEFAULT_TRAIN_ROWS = 50_000
-DEFAULT_CALIBRATION_ROWS = 50_000
+# 5만 행은 근거 없이 굳어 있던 값이고 그 조건의 수치는 전부 인용 불가로 철회됐다
+# (2026-07-26: 차단 설정을 그대로 두고 표본만 20만으로 올리자 결과가 뒤집혔다).
+# 20만 행이 현행 기준이다.
+DEFAULT_TRAIN_ROWS = 200_000
+DEFAULT_CALIBRATION_ROWS = 200_000
 SPLIT_SEED = 20260718
 GROUP_COLUMN = "document_id"
 DECLARED_BAND = (0.3, 3.0)

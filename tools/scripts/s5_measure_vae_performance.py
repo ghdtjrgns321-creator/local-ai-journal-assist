@@ -3,7 +3,7 @@
 사용: uv run python tools/scripts/s5_measure_vae_performance.py <base_dir> <fraud_dir> [...]
       [--train-rows N] [--tag SUFFIX]
 
-  --train-rows  학습 표본 상한(기본 50,000 = 2026-07 기록 회차 조건). 0 이하면 전 행 사용.
+  --train-rows  학습 표본 상한(기본 200,000). 0 이하면 전 행 사용.
   --tag         출력 파일명 접미어. reports/ 는 git 미추적이라 접미어 없이 재실행하면
                 기존 산출물을 복원 불가하게 덮어쓴다.
 
@@ -37,7 +37,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 OUT_DIR = ROOT / "reports/s5_fraud_overlay"
-DEFAULT_TRAIN_SAMPLE_ROWS = 50_000
+# 5만 행은 근거 없이 굳어 있던 값이고 그 조건의 수치는 전부 인용 불가로 철회됐다
+# (2026-07-26: 차단 설정을 그대로 두고 표본만 20만으로 올리자 결과가 뒤집혔다).
+# 20만 행이 현행 기준이다.
+DEFAULT_TRAIN_SAMPLE_ROWS = 200_000
 TRAIN_SAMPLE_SEED = 20260718
 
 
