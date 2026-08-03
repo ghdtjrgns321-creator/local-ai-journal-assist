@@ -9,23 +9,24 @@
 로컬 환경에서 전표를 전수 분석하여 감사인이 검토할 항목을 1차 스크리닝하는 도구
 
 ```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 320, "nodeSpacing": 24, "rankSpacing": 44, "padding": 6}}}%%
 flowchart LR
     IN(["전표 전수 데이터"]) --> Q3
     IN --> Q2
     IN --> Q1
 
     subgraph ML["머신러닝 · 비지도 학습 (VAE)"]
-        direction TB
+        direction LR
         Q3["사전에 정의되지 않은 패턴?"] --> O3["신종, 복합 패턴 식별"]
     end
 
     subgraph ANALYTIC["분석적 검토 · 5종"]
-        direction TB
+        direction LR
         Q2["계정, 거래처 분포에 통계적 이상치?"] --> O2["통계적 분석, 이상치 시각화"]
     end
 
     subgraph RULE["룰 기반 검증 · 29종"]
-        direction TB
+        direction LR
         Q1["사전에 정의된 특정 조건에 해당?"] --> O1["룰 조합별 검토 대상 전표 목록"]
     end
 
