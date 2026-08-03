@@ -8,13 +8,48 @@
 
 로컬 환경에서 전표를 전수 분석하여 감사인이 검토할 항목을 1차 스크리닝하는 도구
 
+```mermaid
+flowchart LR
+    IN(["전표 전수 데이터"]) --> Q1
+    IN --> Q2
+    IN --> Q3
+
+    subgraph RULE["룰 기반 검증 · 29종"]
+        direction TB
+        Q1["사전에 정의된<br/>특정 조건에 해당?"] --> O1["룰 조합에 따른<br/>검토 대상 전표 목록"]
+    end
+
+    subgraph ANALYTIC["분석적 검토 · 5종"]
+        direction TB
+        Q2["계정, 거래처 데이터 분포에<br/>통계적 이상치가 존재?"] --> O2["통계적 분석 및<br/>이상치 결과 시각화"]
+    end
+
+    subgraph ML["머신러닝 · 비지도 학습 (VAE)"]
+        direction TB
+        Q3["사전에 정의되지 않은<br/>패턴?"] --> O3["신종, 복합 패턴 식별"]
+    end
+
+    O1 --> OUT(["감사인 검토 대상"])
+    O2 --> OUT
+    O3 --> OUT
+
+    classDef step fill:none,stroke:#9aa0a6,stroke-width:1px
+    classDef port fill:none,stroke:#5f6368,stroke-width:1.5px
+    class Q1,Q2,Q3,O1,O2,O3 step
+    class IN,OUT port
+    style RULE fill:none,stroke:#c8cdd2,stroke-dasharray:5 4
+    style ANALYTIC fill:none,stroke:#c8cdd2,stroke-dasharray:5 4
+    style ML fill:none,stroke:#c8cdd2,stroke-dasharray:5 4
+```
 - 분석 범위 및 역할
   - 전수 스크리닝 : 표본 추출 없이 전표의 전체 데이터를 분석하여 검토 대상 1차 선별
   - 판단 보조 도구 : 감사인이 분석 결과를 직접 조합해 검토 목록 구성 가능, 시스템이 부정 여부를 확정하지 않음
 - 핵심 설계
-  - 룰 기반 검증 : 감리지적사례와 회계감사기준을 바탕으로 설계된 룰 29종을 전표 단위로 적용해 위반 여부 분석
-  - 분석적 검토 : 단일 전표로 확인이 어려운 통계적 이상치를 전체 집계 분석으로 식별
-  - 머신러닝 - 비지도 학습 (VAE) : 정상 전표의 분포를 학습하여 룰로 정의할 수 없는 잠재적 이상 패턴 추출
+  - 룰 기반 검증 : 사전 정의된 조건 해당 여부 분석(전표단위) → 감리지적사례와 회계감사기준을 바탕으로 설계된 룰 29종
+  - 분석적 검토 : 계정, 거래처 데이터 분포의 통계 검증 → 단일 전표에서 확인이 어려운 통계적 이상치 식별
+  - 머신러닝 - 비지도 학습 (VAE) : 정의 되지 않은 잠재적 이상 패턴 추출 → 정상 전표 분포 학습을 통해 식별
+
+
 
 ### 2. 문제 인식 및 해결 방향
 
