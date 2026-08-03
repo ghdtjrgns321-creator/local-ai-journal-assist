@@ -8,10 +8,10 @@ flowchart TD
         C1[config YAML 17섹션] --> C2[EnhancedOrchestrator]
         C2 --> C3[마스터데이터<br/>거래처·직원·자산]
         C3 --> C4[문서흐름 P2P/O2C]
-        C4 --> C5[JournalEntryGenerator<br/>시나리오 20종]
+        C4 --> C5[JournalEntryGenerator<br/>시나리오 24종]
         C5 --> C6[계정결정표<br/>subtype→GL계정]
         C6 --> C7[output_writer<br/>CSV 73컬럼]
-        C7 --> D1[(정상 base<br/>355,786행)]
+        C7 --> D1[(정상 base<br/>460,898행)]
         C7 --> D2[(fraud overlay<br/>14 scheme × seed4)]
     end
 
@@ -85,7 +85,7 @@ PHASE1 케이스 단계에서는 **과거 engagement DB도 함께 읽는다.** �
 
 정상 base의 첫 전표를 끝까지 따라간다. 값은 전부 `data/journal/primary/datasynth_semantic_v1_normal_s10_c001_20260717/journal_entries.csv`의 실제 레코드다.
 
-**생성 단계.** 시나리오 추첨에서 `P2P_VENDOR_INVOICE`가 뽑힌다. 이 시나리오는 20종 중 가중치 300으로 가장 크다(`process_gl_mapping.rs:927-940`) — 실제 기업 원장에서 매입송장이 가장 흔하다는 사실의 반영이다. 계정결정표가 차변 subtype `OPEX_OFFICE_SUPPLIES`를 계정 `6500`으로, 세액 라인을 매입부가세로 해소한다. 금액 표본기가 공급가액 **45,987,521원**을 뽑고, 세율 10%가 적용돼 세액 **4,598,752.1원**, 송장 총액 **50,586,273원**이 된다. 일시 표본기가 2023-10-04 11:22:56(평일 오전)을 배정하고, 작성자로 senior_accountant 페르소나의 `CWHITE048`이 선택된다. 전기 방식은 `recurring`(반복 처리)이라 개별 승인 기록이 남지 않아 `approved_by`가 공란이 된다. 균형 검증을 통과하고 문서 ID `ef8bb035-647a-4283-8756-393d7ca7bb08`으로 확정된다. 부정 라벨 `is_fraud`·`is_anomaly`는 **false**다 — 이 base는 부정을 한 건도 심지 않았다.
+**생성 단계.** 시나리오 추첨에서 `P2P_VENDOR_INVOICE`가 뽑힌다. 이 시나리오는 24종 중 가중치 300으로 가장 크다(`process_gl_mapping.rs:927-940`) — 실제 기업 원장에서 매입송장이 가장 흔하다는 사실의 반영이다. 계정결정표가 차변 subtype `OPEX_OFFICE_SUPPLIES`를 계정 `6500`으로, 세액 라인을 매입부가세로 해소한다. 금액 표본기가 공급가액 **45,987,521원**을 뽑고, 세율 10%가 적용돼 세액 **4,598,752.1원**, 송장 총액 **50,586,273원**이 된다. 일시 표본기가 2023-10-04 11:22:56(평일 오전)을 배정하고, 작성자로 senior_accountant 페르소나의 `CWHITE048`이 선택된다. 전기 방식은 `recurring`(반복 처리)이라 개별 승인 기록이 남지 않아 `approved_by`가 공란이 된다. 균형 검증을 통과하고 문서 ID `ef8bb035-647a-4283-8756-393d7ca7bb08`으로 확정된다. 부정 라벨 `is_fraud`·`is_anomaly`는 **false**다 — 이 base는 부정을 한 건도 심지 않았다.
 
 **수집 단계.** CSV 73컬럼이 표준 스키마로 매핑된다. 이 데이터는 이미 표준 컬럼명을 쓰므로 exact 매칭 단계에서 대부분 해소되고, fuzzy 매칭은 개입하지 않는다.
 
