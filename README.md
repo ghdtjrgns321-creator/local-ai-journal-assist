@@ -10,13 +10,13 @@
 
 ```mermaid
 flowchart LR
-    IN(["전표 전수 데이터"]) --> Q1
+    IN(["전표 전수 데이터"]) --> Q3
     IN --> Q2
-    IN --> Q3
+    IN --> Q1
 
-    subgraph RULE["룰 기반 검증 · 29종"]
+    subgraph ML["머신러닝 · 비지도 학습 (VAE)"]
         direction TB
-        Q1["사전에 정의된<br/>특정 조건에 해당?"] --> O1["룰 조합에 따른<br/>검토 대상 전표 목록"]
+        Q3["사전에 정의되지 않은<br/>패턴?"] --> O3["신종, 복합 패턴 식별"]
     end
 
     subgraph ANALYTIC["분석적 검토 · 5종"]
@@ -24,14 +24,14 @@ flowchart LR
         Q2["계정, 거래처 데이터 분포에<br/>통계적 이상치가 존재?"] --> O2["통계적 분석 및<br/>이상치 결과 시각화"]
     end
 
-    subgraph ML["머신러닝 · 비지도 학습 (VAE)"]
+    subgraph RULE["룰 기반 검증 · 29종"]
         direction TB
-        Q3["사전에 정의되지 않은<br/>패턴?"] --> O3["신종, 복합 패턴 식별"]
+        Q1["사전에 정의된<br/>특정 조건에 해당?"] --> O1["룰 조합에 따른<br/>검토 대상 전표 목록"]
     end
 
-    O1 --> OUT(["감사인 검토 대상"])
+    O3 --> OUT(["감사인 검토 대상"])
     O2 --> OUT
-    O3 --> OUT
+    O1 --> OUT
 
     classDef step fill:none,stroke:#9aa0a6,stroke-width:1px
     classDef port fill:none,stroke:#5f6368,stroke-width:1.5px
