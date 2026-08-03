@@ -273,9 +273,7 @@ def _flag_exact_duplicate_entries(work: pd.DataFrame) -> pd.Series:
             exact_cols.append(optional_col)
 
     populated_mask = (
-        work["_document_id"].ne("")
-        & work["_posting_ts"].notna()
-        & work["_base_amt"].gt(0)
+        work["_document_id"].ne("") & work["_posting_ts"].notna() & work["_base_amt"].gt(0)
     )
     for optional_col in ("_partner_key", "_line_text"):
         if optional_col in work.columns:
@@ -312,9 +310,7 @@ def _flag_reference_duplicate_entries(
         return result
 
     target = work.loc[
-        work["_reference"].ne("")
-        & work["_document_id"].ne("")
-        & work["_base_amt"].gt(0)
+        work["_reference"].ne("") & work["_document_id"].ne("") & work["_base_amt"].gt(0)
     ].copy()
     if target.empty:
         return result
@@ -634,6 +630,7 @@ def b04_duplicate_payment(
         "amount_partner_fallback": 1,
         "blank_reference_fallback": 2,
     }
+
     def _fallback_reason(
         prev_ref: str,
         row_ref: str,
@@ -641,15 +638,32 @@ def b04_duplicate_payment(
         prev_amount: float,
         tolerance: float,
     ) -> str | None:
-        if prev_ref and not row_ref and abs(amount - prev_amount) <= tolerance:
-            return "mixed_reference_fallback"
-        if not prev_ref and not row_ref:
-            if abs(amount - prev_amount) <= tolerance:
-                return "blank_reference_fallback"
+        """참조가 없을 때만 금액·거래처로 대신 판단한다.
+
+        Why: 중복지급은 "물건은 한 번인데 청구가 두 번"이다. 여기 들어오는 참조는
+        정규화를 거친 뒤라 사실상 발주번호이고(`_canonical_payment_reference` 가
+        `PO-C001-2024-001517-...` 에서 앞 토큰만 뽑는다), 발주가 같으면서 금액이
+        비슷한 짝은 이미 참조 일치 경로가 잡는다. 여기까지 온 것은 **발주가 다르다**
+        는 뜻 — 다른 주문 건이므로 물건이 둘이고, 중복이 아니다.
+
+        금액만으로는 재청구 사기와 정상 매입을 가를 수 없다. 둘 다 "같은 거래처에
+        비슷한 금액이 두 번"으로 보이기 때문이다. 가르는 축은 발주번호이고, 그
+        판정은 참조 일치 경로가 이미 하고 있다.
+
+        2026-08-03 이전에는 발주가 달라도 발화했다. 정상 원장에 결제 전표가 3,444건
+        뿐이던 시절에는 짝이 드물어 드러나지 않다가, 되돌아오는 흐름을 채워 8,062건이
+        되자 발화가 93 → 913건으로 뛰며 노출됐다. 913건 중 903건이 이 경로였고,
+        그중 부정은 0건이었다.
+        """
+        if abs(amount - prev_amount) > tolerance:
             return None
-        if prev_ref != row_ref and abs(amount - prev_amount) <= tolerance:
-            return "amount_partner_fallback"
-        return None
+        if prev_ref and row_ref:
+            # 둘 다 참조가 있으면 참조 일치 경로가 이미 판단했다. 여기 온 것은
+            # 참조가 다르다는 뜻이므로 중복이 아니다.
+            return None
+        if prev_ref or row_ref:
+            return "mixed_reference_fallback"
+        return "blank_reference_fallback"
 
     for _, group in amount_target.groupby(amount_cols, group_keys=False):
         if len(group) < 2:
@@ -689,10 +703,14 @@ def b04_duplicate_payment(
                 )
                 if reason_code is None:
                     continue
-                if reason_code in {
-                    "amount_partner_fallback",
-                    "blank_reference_fallback",
-                } and day_gap > window:
+                if (
+                    reason_code
+                    in {
+                        "amount_partner_fallback",
+                        "blank_reference_fallback",
+                    }
+                    and day_gap > window
+                ):
                     continue
                 if doc_id in recurring_suppressed_doc_ids:
                     break
@@ -703,9 +721,10 @@ def b04_duplicate_payment(
                     "matched_reference_norm": prev_ref,
                     "day_gap": int(day_gap.days),
                 }
-                if best_match is None or fallback_rank[reason_code] < fallback_rank[
-                    str(best_match["reason_code"])
-                ]:
+                if (
+                    best_match is None
+                    or fallback_rank[reason_code] < fallback_rank[str(best_match["reason_code"])]
+                ):
                     best_match = candidate
                     if fallback_rank[reason_code] == 0:
                         break
@@ -860,9 +879,7 @@ def b04_duplicate_payment(
         "near_extra_docs": int(reason_counts.get("near_extra", 0)),
         "ambiguous_fallback_dropped_docs": int(ambiguous_fallback_dropped),
         "near_extra_context_suppressed_docs": int(near_extra_context_suppressed_docs),
-        "recurring_suppressed_docs": int(
-            len(suppressed_doc_ids | recurring_suppressed_doc_ids)
-        ),
+        "recurring_suppressed_docs": int(len(suppressed_doc_ids | recurring_suppressed_doc_ids)),
         "partner_key_coverage_ratio": float(populated_partner.mean()),
     }
     result.attrs["row_annotations"] = row_annotations
