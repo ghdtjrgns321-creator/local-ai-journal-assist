@@ -151,28 +151,14 @@ patterns:
       - "112"
       - "113"
 
-  # L1-07: approval omission queue split.
-  # Confirmed rows require missing approved_by, a non-system manual/adjustment
-  # source, approval-required amount evidence, and enough corroborating evidence.
-  # Recurring entries stay in review by default because they may be covered by
-  # standing approval, automatic generation, or master-data approval controls.
-  # Automated/interface/batch/system context stays excluded.
-  skipped_approval_immediate:
-    manual_sources:
-      - "manual"
-      - "adjustment"
-    system_sources:
-      - "automated"
-      - "recurring"
-      - "batch"
-      - "interface"
-      - "system"
-    business_processes:
-      - "TRE"
-      - "P2P"
-      - "O2C"
-      - "H2R"
-    min_evidence_count: 2
+  # L1-07: approval omission is a binary control flag on human-owned entries.
+  # Blank approved_by fires, except on trusted automated entries — ERP batch/
+  # recurring postings have no human approver by design. The exemption and its
+  # disguise guard (automated source without batch identity stays flagged) live
+  # in src/detection/source_trust.py, driven by AUTOMATED_SOURCE_TOKENS rather
+  # than by this file. There is no per-engagement knob here on purpose: the
+  # earlier skipped_approval_immediate block was removed in 2026-08 because the
+  # rule had stopped reading it, leaving config and code contradicting.
 
   # L1-04: approval limit exceeded queue split.
   # Small boundary breaches are useful review candidates but should not be

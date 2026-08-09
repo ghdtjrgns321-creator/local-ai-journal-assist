@@ -211,16 +211,19 @@ class TestFraudLayerDetect:
 
         result = layer.detect(df)
         breakdown = result.metadata["rule_breakdowns"]["L1-07"]
+        # 승인자 빈칸은 2행이지만 recurring(정기 자동)은 승인자 부재가 정상이라 면제된다.
         assert breakdown["blank_approved_by_rows"] == 2
-        assert breakdown["candidate_rows"] == 2
-        assert breakdown["score_bands"] == {"binary_flag": 2}
+        assert breakdown["trusted_automated_exempt_rows"] == 1
+        assert breakdown["candidate_rows"] == 1
+        assert breakdown["score_bands"] == {"binary_flag": 1}
 
         l107_flag = next(flag for flag in result.rule_flags if flag.rule_id == "L1-07")
-        assert l107_flag.flagged_count == 2
-        assert result.details["L1-07"].tolist() == [1.0, 1.0]
+        assert l107_flag.flagged_count == 1
+        assert result.details["L1-07"].tolist() == [1.0, 0.0]
         assert result.metadata["review_score_series"]["L1-07"].eq(0.0).all()
         assert result.metadata["row_annotations"]["L1-07"][0]["queue_label"] == "binary_flag"
-        assert result.metadata["row_annotations"]["L1-07"][1]["reason_code"] == "blank_approved_by"
+        assert result.metadata["row_annotations"]["L1-07"][0]["reason_code"] == "blank_approved_by"
+        assert 1 not in result.metadata["row_annotations"]["L1-07"]
 
     def test_l302_breakdown_metadata_exposes_manual_buckets(self) -> None:
         layer = FraudLayer()
