@@ -1,5 +1,8 @@
 # PHASE1-1 조합 빌더 어휘·프리셋 (SoT: docs/spec/PHASE1_COMBO_BUILDER_SPEC.md §2·§4)
-# tier 자동 등급 폐지(2026-07-17) — 빌더에 노출되는 룰은 아래 몸통 10 + 특징 10 뿐.
+# tier 자동 등급 폐지(2026-07-17) — 빌더에 노출되는 룰은 아래 몸통 9 + 특징 13 뿐.
+# L2-01·L2-02·L2-03 특징 편입(2026-08-04) — L2-01 은 A45(e) 명문 매핑
+# (docs/guide/users/05_DOMAIN_BRIDGE.md §2.2), L2-02·L2-03 은 지출 사이클 실무 관행.
+# 종전 커버리지 큐 전용 배치는 근거 기록 없이 빠져 있던 상태였다.
 # fss_confirmed = 금감원 v3 발화 지도(731행) 확정 태깅 건수.
 # basis = UI에 함께 표시할 근거 문구(감사인이 근거를 보고 고른다).
 
@@ -78,6 +81,15 @@ features: # 부정 전표의 모양 — 기준서 240 특징 목록 매핑
   - rule_id: L3-06
     label: 심야 입력
     basis: 분개 테스트 필터 (실무 관행)
+  - rule_id: L2-01
+    label: 한도 직하 분할
+    basis: round number·일관된 끝자리 (감사기준서 240 A45(e))
+  - rule_id: L2-02
+    label: 중복지급
+    basis: 지출 사이클 중복지급 테스트 (실무 관행)
+  - rule_id: L2-03
+    label: 중복 전표
+    basis: 동일 전표 재기표 테스트 (실무 관행)
 
 presets: # 저장된 체크 상태 + 소명 1줄. 등급 선언 아님(원클릭 시작점).
   - preset_id: estimate_related_party

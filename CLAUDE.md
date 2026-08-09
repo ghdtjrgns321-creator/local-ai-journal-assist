@@ -36,91 +36,65 @@ PCAOB AS 2401, ISA 240 커버. MindBridge/KPMG Clara 핵심 로직을 오픈소�
   - 1c: dashboard → RC-4에서 회사 선택 UI와 함께 구현
 - **Phase 2 (VAE companion surface)**: 정상 분포 비지도 학습(VAE) 단독 surface. 학습된 정상 밖 비정형을 추가 검토 후보로 surface(부정 확정 아님).
   - **3-surface 불변식**: PHASE1-1 룰 / PHASE1-2 family / PHASE2 VAE 세 surface는 절대 비병합(독립 탭/뷰/큐, 단일 점수 미병합).
-- **Phase 3**: Removed from active product path (2026-05-26). 선택된 PHASE1 case 설명은 외부 API 호출 없이 Local Evidence Brief가 기존 룰/문서/family 신호를 deterministic summary로 표시한다. 상세: [docs/spec/LOCAL_EVIDENCE_BRIEF_SPEC.md](docs/spec/LOCAL_EVIDENCE_BRIEF_SPEC.md)
+- **Phase 3**: Removed from active product path (2026-05-26). 선택된 PHASE1 case 설명은 외부 API 호출 없이 Local Evidence Brief가 기존 룰/문서/family 신호를 deterministic summary로 표시한다. (구 상세 스펙 `docs/spec/LOCAL_EVIDENCE_BRIEF_SPEC.md` 는 삭제됨)
   - historical only: PHASE3 Review Narrator, Text-to-SQL, LLM rule feedback
 
 ## 문서 가이드
 
-- 관련있는 작업을 할 때 문서가이드를 참조하여 작업 후 업데이트 할 것
-- 사용자/포트폴리오 문서는 `docs/guide/`, 권위 기준 문서는 `docs/spec/`, 완료 산출물은 `docs/archive/completed/`, 폐기/구버전 결정은 `docs/archive/abandoned/`. 예외적으로 [docs/debugging.md](docs/debugging.md)는 전역 훅 호환을 위해 루트에 유지한다. 단일 인덱스는 [docs/guide/PROJECT_OVERVIEW.md](docs/guide/PROJECT_OVERVIEW.md) §활성 문서 인덱스 참조.
+> 아래는 **실제 존재하는 파일만** 적는다. 없는 문서를 표에 되살리지 말 것 — 죽은 링크를 쫓다
+> 폐기된 문서로 떨어지는 사고가 반복됐다.
 
-### 메인 참조 (전 Phase 공통)
+- 작업 관련 문서를 먼저 읽고, 완료 후 변경사항을 반영한다.
+- 문서 본체 = `FINAL-REPORT/`. `docs/` 에는 SoT 몇 건과 작업 기록만 남아 있다.
 
-| 문서           | 경로                                                                                                                                       | 내용                                                             |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------- |
-| 프로젝트 개요  | [docs/guide/PROJECT_OVERVIEW.md](docs/guide/PROJECT_OVERVIEW.md)                                                                           | 기술 스택, 디렉토리 구조, 데이터 흐름, 활성 문서 인덱스          |
-| 프로젝트 설명  | [docs/guide/상세.MD](docs/guide/상세.MD), [docs/guide/핵심기능.MD](docs/guide/핵심기능.MD), [docs/guide/EXPLAIN.md](docs/guide/EXPLAIN.md) | 포트폴리오 포지셔닝·기능 설명·1줄 정의                           |
-| 개발 방법론    | [docs/guide/개발방법론.md](docs/guide/개발방법론.md)                                                                                       | 데이터-우선·검증중심 탐지 개발 순서(6단계)와 원칙 (포트폴리오용) |
-| UX 흐름        | [docs/guide/ux-flow.md](docs/guide/ux-flow.md)                                                                                             | 사용자 흐름·UI 원칙·상태 문구 기준                               |
-| 설계 결정 로그 | [docs/spec/DECISION.md](docs/spec/DECISION.md)                                                                                             | 기술 선택 이유, 아키텍처 결정                                    |
-| 제약·정책      | [docs/spec/CONSTRAINTS.md](docs/spec/CONSTRAINTS.md)                                                                                       | ML 학습 전략, PHASE1 CI KPI 가드, 비식별화 정책                  |
-| 트러블슈팅     | [docs/spec/TROUBLESHOOT.md](docs/spec/TROUBLESHOOT.md), [docs/debugging.md](docs/debugging.md)                                             | TS 시리즈 결정 + 디버깅 히스토리                                 |
-| 지표 정의      | [docs/spec/metrics.md](docs/spec/metrics.md)                                                                                               | PHASE1 truth/proxy 구분, 평가 지표                               |
-| Git            | [docs/spec/GIT.md](docs/spec/GIT.md)                                                                                                       | 브랜치 구조, CI 워크플로우, 태그 규칙                            |
+### FINAL-REPORT — 문서 본체 (17개)
 
-### Detection (운영)
+| 파일                                               | 내용                                        |
+| -------------------------------------------------- | ------------------------------------------- |
+| `0_README.md` · `1_OVERVIEW.md`                    | 진입점, 프로젝트 개요                       |
+| `2_PIPELINE.md`                                    | 데이터 흐름                                 |
+| `3_DATASYNTH-ENGINE.md` · `4_DATASYNTH-QUALITY.md` | 합성 생성기 · 품질 게이트                   |
+| `5_INGEST-FEATURE.md`                              | 적재 · 피처                                 |
+| `6_PHASE1-1_RULES.md`                              | **룰 SoT** — 룰 정의, §6.6 발화율 대역 판정 |
+| `7_PHASE1-1_COMBO-BUILDER.md`                      | 조합 빌더                                   |
+| `8_PHASE1-2_ANALYTICAL.md`                         | 분석적 검토 신호                            |
+| `9_PHASE2_VAE.md`                                  | 비지도 VAE                                  |
+| `10_PLATFORM.md` · `11_DASHBOARD.md`               | 플랫폼 · 대시보드                           |
+| `12_DIFFERENTIATION.md` · `13_TEST-DECISIONS.md`   | 차별점 · 테스트 결정                        |
+| `14_JOURNEY.md` · `15_TROUBLESHOOTING.md`          | 개발 여정 · 트러블슈팅                      |
+| `16_COVERAGE.md`                                   | 커버리지                                    |
 
-| 문서                      | 경로                                                                                           | 내용                                                                                                                          |
-| ------------------------- | ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| 탐지 룰 목록 (PHASE1-1)   | [docs/spec/DETECTION_RULES.md](docs/spec/DETECTION_RULES.md)                                   | PHASE1-1 L1~L4 행 단위 룰 SoT, 점수 체계, DataSynth 갭, 컬럼 스키마                                                           |
-| L1-06 SoD toxic 조합 근거 | [docs/spec/SOD_TOXIC_COMBINATIONS_GROUNDING.md](docs/spec/SOD_TOXIC_COMBINATIONS_GROUNDING.md) | 직무분리 toxic 업무조합(7프로세스→4기능, 12조합) 3축 근거 해설. 데이터 SoT는 config/sod_toxic_combinations.yaml               |
-| PHASE1-2 룰 (분석적 검토) | [docs/spec/DETECTION_RULES_PHASE1-2.MD](docs/spec/DETECTION_RULES_PHASE1-2.MD)                 | 자기 큐 5종(L4-02·D01·D02·라운드넘버 밀집도·첫등장/희소) + 배지(L4-05·L4-06·L3-12). GR/IC/relational 삭제, 시계열 PHASE2 잔류 |
-| Phase 2 ML 룰             | [docs/spec/DETECTION_RULES_PHASE2_ML.md](docs/spec/DETECTION_RULES_PHASE2_ML.md)               | Phase 2 ML/DL 보조 분석 (VAE 등 model family)                                                                                 |
-| 룰 원칙 해설 (사용자용)   | [docs/guide/룰원칙해설.md](docs/guide/룰원칙해설.md)                                           | 비회계 사용자용 — 룰별 "왜 신호인가·숨은 도메인 가정" 전수 해설 (canonical 29 + macro/보조 L4-02/IC/GR/D)                     |
-| 단위 측정 정책            | [docs/spec/UNIT_MEASUREMENT_POLICY.md](docs/spec/UNIT_MEASUREMENT_POLICY.md)                   | PHASE1·PHASE2 탐지 단위와 분모/분자 측정 기준 SoT                                                                             |
-| 탐지 레퍼런스             | [docs/spec/DETECTION_REFERENCE.md](docs/spec/DETECTION_REFERENCE.md)                           | 법규 체계, 감사기준서 매핑, 금감원 189건 실증                                                                                 |
-| 파라미터 매핑             | [docs/spec/DETECTION_PARAMETERS.md](docs/spec/DETECTION_PARAMETERS.md)                         | 룰 정의 ↔ 설정·코드·UX 조정면 연결                                                                                            |
-| 포트폴리오 재해석         | [docs/spec/DETECTION_PORTFOLIO_REFRAME.md](docs/spec/DETECTION_PORTFOLIO_REFRAME.md)           | 운영 목적 기준 탐지 포트폴리오                                                                                                |
-| Ranking 기준              | [docs/spec/DETECTION_RANKING_CRITERIA.md](docs/spec/DETECTION_RANKING_CRITERIA.md)             | (SUPERSEDED 2026-07-17) 구 tier ranking — 정렬 원칙만 빌더 sort_key 로 승계                                                   |
+### docs/ — 살아있는 것 전부
 
-### PHASE1 활성 락 / PHASE2 진행
+| 경로                                       | 역할                                                                             |
+| ------------------------------------------ | -------------------------------------------------------------------------------- |
+| `docs/spec/PHASE1_COMBO_BUILDER_SPEC.md`   | **PHASE1-1 현행 SoT** — tier 폐지(2026-07-18) 후 조합 빌더+프리셋                |
+| `docs/spec/results/normal/`                | 정상 데이터 실측 결과 기록                                                       |
+| `docs/0716/S1_RULE_BANDS.md`               | **룰 발화율 대역 SoT** — 실측 전 선언, 3분류(①생성기 결함 ②룰 과탐 ③대역 오선언) |
+| `docs/0716/PLAN.md`                        | S 시리즈 검증 라운드 계획                                                        |
+| `docs/guide/VALIDATION_RESULTS_2026-07.md` | S1~S5 검증 종합                                                                  |
+| `docs/guide/users/`                        | 사용자·포트폴리오 서술 (00_INDEX.md 부터)                                        |
+| `docs/methodology/`                        | CARDS · FACTCHECK · GAPS · GLOSSARY · QBANK                                      |
+| `docs/phase1-1/fsscombo.md`                | 금감원 조합 검증                                                                 |
+| `docs/archive/completed/`                  | 완료 산출물 3건                                                                  |
 
-| 문서                              | 경로                                                                                                             | 내용                                                                                                                                                 |
-| --------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Combo Builder Spec (현행 SoT)** | [docs/spec/PHASE1_COMBO_BUILDER_SPEC.md](docs/spec/PHASE1_COMBO_BUILDER_SPEC.md)                                 | PHASE1-1 조합 빌더 — 몸통9(금감원)×특징10(기준서240)·프리셋5·tier 폐지(2026-07-17)·L1-08 제거(2026-07-27)                                            |
-| PHASE1 Tier Evidence Basis        | [docs/spec/PHASE1_TIER_EVIDENCE_BASIS.md](docs/spec/PHASE1_TIER_EVIDENCE_BASIS.md)                               | (SUPERSEDED 2026-07-17 — tier 폐지, 현행 SoT는 PHASE1_COMBO_BUILDER_SPEC) 구 tier 근거 이력                                                          |
-| Rule Detail Metadata v1 Lock      | [docs/archive/completed/RULE_DETAIL_METADATA_V1_LOCK.md](docs/archive/completed/RULE_DETAIL_METADATA_V1_LOCK.md) | 29 canonical rule count (L4-02 PHASE1-2 이관), alias/reason code 정책, surface gating. 현행 SoT는 `src/detection/rule_detail_metadata.py`(assert 29) |
-| Topic Scoring v1 Lock             | [docs/archive/completed/PHASE1_TOPIC_SCORING_V1_LOCK.md](docs/archive/completed/PHASE1_TOPIC_SCORING_V1_LOCK.md) | **[2026-06-16 archive 이관]** 구 가중합/floor/band컷 v1 lock 역사 기록. 현행 SoT는 PHASE1_COMBO_BUILDER_SPEC (tier 폐지 2026-07-17)                  |
-| Rule Relationship Map             | [docs/spec/PHASE1_RULE_RELATIONSHIP_MAP.md](docs/spec/PHASE1_RULE_RELATIONSHIP_MAP.md)                           | 룰 간 증폭 관계, scoring 업데이트                                                                                                                    |
-| Separate Benchmark                | [docs/spec/PHASE1_SEPARATE_BENCHMARK_SPEC.md](docs/spec/PHASE1_SEPARATE_BENCHMARK_SPEC.md)                       | L4-02/03/04/L3-09/L4-05 별도 검증 단위                                                                                                               |
-| PHASE2 Governance                 | [docs/spec/PHASE2_GOVERNANCE_DESIGN.md](docs/spec/PHASE2_GOVERNANCE_DESIGN.md)                                   | KPI 가드 설계, Layer A/B/C                                                                                                                           |
-| PHASE1↔PHASE2 Interface           | [docs/spec/PHASE2_INTERFACE_DESIGN.md](docs/spec/PHASE2_INTERFACE_DESIGN.md)                                     | row feature contract, ml_score 결합 정책                                                                                                             |
-| PHASE2 Fitting Audit              | [docs/spec/PHASE2_FITTING_AUDIT.md](docs/spec/PHASE2_FITTING_AUDIT.md)                                           | Stage 0~10 종합 entry-point                                                                                                                          |
-| PHASE2 Timeseries Role Lock       | [docs/spec/PHASE2_TIMESERIES_ROLE_LOCK.md](docs/spec/PHASE2_TIMESERIES_ROLE_LOCK.md)                             | TS01/TS02 결산·시점 컨텍스트 lane 역할 고정 (결정 9, 2026-05-25)                                                                                     |
+> ⚠️ `docs/` 는 `dd02727` 로 git 추적에서 제외됐다 — 로컬에만 있고 이력이 남지 않는다.
+> 삭제·덮어쓰기 전 반드시 내용을 확인할 것.
 
-### Phase 3 / 최신 결과
+### 폐지된 개념 — 문서에서 보이면 무시할 것
 
-| 문서                                    | 경로                                                                                                                           | 내용                                                                                  |
-| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
-| Local Evidence Brief                    | [docs/spec/LOCAL_EVIDENCE_BRIEF_SPEC.md](docs/spec/LOCAL_EVIDENCE_BRIEF_SPEC.md)                                               | Local-only selected case evidence summary contract                                    |
-| Contract V3 결과                        | [docs/guide/DETECTION_RESULTS_CONTRACT_V3.md](docs/guide/DETECTION_RESULTS_CONTRACT_V3.md)                                     | datasynth_contract_v2 전표 단위 재집계 (TS-12 적용)                                   |
-| Manipulation V7 결과                    | [docs/guide/DETECTION_RESULTS_MANIPULATION_V7_FIXED3_PHASE2.md](docs/guide/DETECTION_RESULTS_MANIPULATION_V7_FIXED3_PHASE2.md) | V7 fixed3 연도별 PHASE2 추가 분석                                                     |
-| **2026-07 검증 종합 (포트폴리오 본문)** | [docs/guide/VALIDATION_RESULTS_2026-07.md](docs/guide/VALIDATION_RESULTS_2026-07.md)                                           | S1~S5 검증 라운드 종합 — 룰 표면 성공·행 단위 VAE 실패 기록·원리적 한계·빅4 실무 정합 |
-
-### 완료 / 구버전 산출물 (`docs/archive/`)
-
-| 영역                                            | 위치                                                                                                                                                                                 |
-| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 원본 계획서 & 구현 가이드 (옛 pre-plan)         | [docs/archive/completed/raw-plan/](docs/archive/completed/raw-plan/) — `개요서.md`, `00-dataset.md` ~ `10-sample-data.md`, `03a-preprocessing.md`, `05a-detection-ml.md` (13개 파일) |
-| Phase 3 재코딩 계획 (폐기)                      | [docs/archive/abandoned/PHASE3_REWORK_PLAN.md](docs/archive/abandoned/PHASE3_REWORK_PLAN.md)                                                                                         |
-| Phase 3 완료 리포트 (폐기)                      | [docs/archive/abandoned/phase3_review_narrator_completion.md](docs/archive/abandoned/phase3_review_narrator_completion.md)                                                           |
-| PHASE1 Topic Scoring 완료                       | [docs/archive/completed/PHASE1_TOPIC_SCORING_V1_COMPLETION.md](docs/archive/completed/PHASE1_TOPIC_SCORING_V1_COMPLETION.md)                                                         |
-| RC 재설계 태스크 (완료)                         | [docs/archive/completed/NEW_TASKS.MD](docs/archive/completed/NEW_TASKS.MD)                                                                                                           |
-| DataSynth 품질·계획·sidecar                     | [docs/archive/completed/datasynth.md](docs/archive/completed/datasynth.md), `datasynth_*_v126.*`, `DATASYNTH_*.md`                                                                   |
-| PHASE1 Remodeling Plan                          | [docs/archive/completed/PHASE1_REMODELING_PLAN.md](docs/archive/completed/PHASE1_REMODELING_PLAN.md)                                                                                 |
-| Rule Detail Metadata 입력자료 (tmp_context_a~e) | [docs/archive/completed/tmp_context_*.md](docs/archive/completed/)                                                                                                                   |
-| S 시리즈 Stage 산출                             | `docs/archive/completed/S3_*.md`, `S8_*.md`, `S9_*.md`                                                                                                                               |
-| 구버전 DETECTION_RESULTS                        | `docs/archive/completed/DETECTION_RESULTS_CONTRACT.md`/V2, `DETECTION_RESULTS_D/L1/L2/L3/L4.md`, `DETECTION_RESULTS_MANIPULATION.md`/V2/V3/V4/V7_FIXED3                              |
-| Phase 1/2/3 feasibility                         | `docs/archive/completed/phase1_feasibility.md`, `phase2_ml_feasibility.md`, `docs/archive/abandoned/phase3_llm_feasibility.md`                                                       |
-
-> 작업 전 관련 docs를 먼저 읽고, 완료 후 변경사항 반영할 것.
-> 구현 시 해당 영역의 `completed/raw-plan/0X-*.md` 가이드를 참조할 것 (구 pre-plan).
+| 개념                                    | 상태                                                                           |
+| --------------------------------------- | ------------------------------------------------------------------------------ |
+| tier 자동등급 (HIGH/MEDIUM/LOW/CONTEXT) | **2026-07-18 `87d97e0` 전면 폐지.** "단독 발화는 LOW 흡수" 류 근거는 전부 무효 |
+| `priority_band`                         | 폐지된 tier 의 잔재 필드 — 코드가 항상 `"low"` 를 넣는다. 지표로 쓰지 말 것    |
+| combo floor 12종                        | tier 와 함께 폐지                                                              |
+| `docs/spec/DETECTION_RULES.md`          | 삭제됨. 룰 SoT 는 `FINAL-REPORT/6_PHASE1-1_RULES.md`                           |
 
 ### ⚠️ 태스크 시작/종료 시 필수 체크리스트
-1. **시작 시**: 올바른 브랜치에서 작업 중인지 확인 (`docs/spec/GIT.md` 브랜치 전략 참고)
-2. **시작 시**: 활성 plan/context/tasks 위치 — `dev/active/<plan-name>/`
-3. **종료 시**: `docs/debugging.md`에 트러블슈팅 기록 (있을 경우) + 관련 docs 문서 최신화
-4. **종료 시**: 새로 완료된 산출물은 `docs/archive/completed/`로 이동하고 본 가이드 표 갱신
+1. **시작 시**: 올바른 브랜치에서 작업 중인지 확인. main 직접 커밋 금지
+2. **시작 시**: 다단계 작업이면 `dev/<작업명>/` 에 context.md·tasks.md 를 판다 (전역 룰)
+3. **종료 시**: 트러블슈팅은 `FINAL-REPORT/15_TROUBLESHOOTING.md` 에 기록 + 관련 문서 최신화
+4. **종료 시**: 수치를 바꿨으면 그 수치를 인용한 문서를 전부 찾아 갱신 (README·FINAL-REPORT 교차 인용 잦음)
 
 ## 핵심 코딩 규칙
 
@@ -190,12 +164,12 @@ MVP 설치: `uv sync --group core --group dashboard --group dev`
 
 ### Issue tracker
 
-Issues live in GitHub Issues for `ghdtjrgns321-creator/local-ai-journal-assist` (uses the `gh` CLI). External PRs are not a triage surface. See `docs/agents/issue-tracker.md`.
+Issues live in GitHub Issues for `ghdtjrgns321-creator/local-ai-journal-assist` (uses the `gh` CLI). External PRs are not a triage surface.
 
 ### Triage labels
 
-Five canonical roles use their default label strings (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+Five canonical roles use their default label strings (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`).
 
 ### Domain docs
 
-Single-context — one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+Single-context — the project brief lives in `CLAUDE.md` / `AGENTS.md`; there is no separate `docs/adr/`.

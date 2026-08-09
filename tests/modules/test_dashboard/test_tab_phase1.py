@@ -211,13 +211,16 @@ def test_rules_for_topic_keeps_canonical_transaction_rules() -> None:
 
 
 def test_metadata_rule_label_prefers_legacy_korean_then_metadata() -> None:
-    # legacy `_RULE_NAMES_KR` 가 있으면 그대로 사용.
-    assert tab_phase1._metadata_rule_label("L1-01") == "차대변 불일치"
-    # legacy 에 없는 canonical 룰은 metadata display_title fallback.
-    legacy_only_id = "L3-11"
-    assert legacy_only_id not in tab_phase1._RULE_NAMES_KR
-    fallback_label = tab_phase1._metadata_rule_label(legacy_only_id)
-    assert fallback_label == get_rule_detail_metadata(legacy_only_id).display_copy.display_title
+    # legacy `_RULE_NAMES_KR` 가 있으면 그대로 사용(2026-08-04 어휘 통일: README·빌더 기준).
+    assert tab_phase1._metadata_rule_label("L1-01") == "차대균형"
+    # 한국어 라벨이 없는 룰만 metadata display_title(영문) 로 fallback.
+    # Why: 종전 예시였던 L3-11 은 라벨이 없어 화면에 영문으로 노출되고 있었다 —
+    #      canonical 29 는 전부 한국어 라벨을 갖도록 채웠고, fallback 은 내부
+    #      reason code 처럼 표면에 이름을 두지 않는 항목에만 남는다.
+    fallback_id = "L2-03a"
+    assert fallback_id not in tab_phase1._RULE_NAMES_KR
+    fallback_label = tab_phase1._metadata_rule_label(fallback_id)
+    assert fallback_label == get_rule_detail_metadata(fallback_id).display_copy.display_title
 
 
 def _integrity_pr() -> SimpleNamespace:

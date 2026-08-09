@@ -10,7 +10,7 @@ import yaml
 
 from config.settings import get_audit_rules
 from src.detection.boolean_utils import bool_column, coerce_bool_value
-from src.detection.source_trust import lone_automated_mask
+from src.detection.source_trust import lone_automated_mask, trusted_automated_mask
 
 
 @dataclass
@@ -160,34 +160,6 @@ def _get_self_approval_review_config(audit_rules: dict | None = None) -> dict[st
         "business_processes": tuple(
             str(v).strip().lower() for v in review.get("business_processes", ["r2r", "a2r"])
         ),
-    }
-
-
-def _get_skipped_approval_immediate_config(
-    audit_rules: dict | None = None,
-) -> dict[str, tuple[str, ...] | int]:
-    """Load immediate-violation corroboration policy for L1-07."""
-
-    rules = audit_rules or get_audit_rules()
-    patterns = rules.get("patterns", {})
-    cfg = patterns.get("skipped_approval_immediate", {})
-    manual_sources = cfg.get(
-        "manual_sources",
-        patterns.get("manual_source_codes", ["manual", "adjustment"]),
-    )
-    return {
-        "manual_sources": tuple(str(v).strip().lower() for v in manual_sources),
-        "system_sources": tuple(
-            str(v).strip().lower()
-            for v in cfg.get(
-                "system_sources", ["automated", "recurring", "batch", "interface", "system"]
-            )
-        ),
-        "business_processes": tuple(
-            str(v).strip().upper()
-            for v in cfg.get("business_processes", ["TRE", "P2P", "O2C", "H2R"])
-        ),
-        "min_evidence_count": int(cfg.get("min_evidence_count", 2)),
     }
 
 
@@ -1406,122 +1378,6 @@ def b07_segregation_of_duties(
     return result
 
 
-def _skipped_approval_components(
-    df: pd.DataFrame,
-    audit_rules: dict | None = None,
-    cache: AccessRuleCache | None = None,
-) -> dict[str, object]:
-    """Compute reusable L1-07 masks without row-level annotation construction."""
-
-    if cache is not None and "b09_skipped_approval_components" in cache.objects:
-        return cache.objects["b09_skipped_approval_components"]  # type: ignore[return-value]
-
-    if "approved_by" not in df.columns:
-        false_mask = pd.Series(False, index=df.index, dtype=bool)
-        zero_count = pd.Series(0, index=df.index, dtype="int64")
-        cfg = _get_skipped_approval_immediate_config(audit_rules)
-        components: dict[str, object] = {
-            "cfg": cfg,
-            "exceeds": false_mask,
-            "level_review_required": false_mask,
-            "approval_required": false_mask,
-            "system_source": false_mask,
-            "no_approval": false_mask,
-            "candidate": false_mask,
-            "manual_source": false_mask,
-            "no_approval_date": false_mask,
-            "manual_entry": false_mask,
-            "abnormal_time": false_mask,
-            "high_risk_process": false_mask,
-            "high_approval_level": false_mask,
-            "evidence_count": zero_count,
-            "immediate": false_mask,
-            "review": false_mask,
-            "low_priority": false_mask,
-        }
-        if cache is not None:
-            cache.objects["b09_skipped_approval_components"] = components
-        return components
-
-    cfg = _get_skipped_approval_immediate_config(audit_rules)
-    no_approval = _cached_text(df, "approved_by", cache).eq("")
-    exceeds = (
-        bool_column(df, "exceeds_threshold")
-        if "exceeds_threshold" in df.columns
-        else pd.Series(False, index=df.index, dtype=bool)
-    )
-    if "source" in df.columns:
-        source_norm = _cached_text(df, "source", cache)
-        system_source = source_norm.isin(cfg["system_sources"])
-    else:
-        source_norm = pd.Series("", index=df.index)
-        system_source = pd.Series(False, index=df.index, dtype=bool)
-    high_approval_level = (
-        pd.to_numeric(df["approval_level"], errors="coerce").fillna(0).astype(int).ge(1)
-        if "approval_level" in df.columns
-        else pd.Series(False, index=df.index, dtype=bool)
-    )
-    level_review_required = no_approval & high_approval_level
-    approval_required = exceeds | level_review_required
-    candidate = no_approval
-
-    manual_source = source_norm.isin(cfg["manual_sources"])
-    no_approval_date = pd.Series(False, index=df.index, dtype=bool)
-    if "approval_date" in df.columns:
-        no_approval_date = _cached_text(df, "approval_date", cache).eq("")
-    manual_entry = (
-        bool_column(df, "is_manual_je")
-        if "is_manual_je" in df.columns
-        else pd.Series(False, index=df.index, dtype=bool)
-    )
-    abnormal_time = _is_abnormal_self_approval_time(df, cache=cache)
-    high_risk_process = (
-        _cached_process(df, "business_process", cache).isin(cfg["business_processes"])
-        if "business_process" in df.columns
-        else pd.Series(False, index=df.index, dtype=bool)
-    )
-    high_approval_level_evidence = high_approval_level & (
-        pd.to_numeric(df["approval_level"], errors="coerce").fillna(0).astype(int).ge(2)
-        if "approval_level" in df.columns
-        else False
-    )
-
-    evidence_count = (
-        manual_source.astype(int)
-        + no_approval_date.astype(int)
-        + manual_entry.astype(int)
-        + abnormal_time.astype(int)
-        + high_risk_process.astype(int)
-        + high_approval_level_evidence.astype(int)
-    )
-    actionable = candidate & approval_required & ~system_source
-    immediate = actionable & manual_source & evidence_count.ge(int(cfg["min_evidence_count"]))
-    review = actionable & ~immediate
-    low_priority = candidate & ~immediate & ~review
-    components: dict[str, object] = {
-        "cfg": cfg,
-        "exceeds": exceeds,
-        "level_review_required": level_review_required,
-        "approval_required": approval_required,
-        "system_source": system_source,
-        "no_approval": no_approval,
-        "candidate": candidate,
-        "manual_source": manual_source,
-        "no_approval_date": no_approval_date,
-        "manual_entry": manual_entry,
-        "abnormal_time": abnormal_time,
-        "high_risk_process": high_risk_process,
-        "high_approval_level": high_approval_level_evidence,
-        "evidence_count": evidence_count,
-        "immediate": immediate,
-        "review": review,
-        "low_priority": low_priority,
-    }
-    if cache is not None:
-        cache.objects["b09_skipped_approval_components"] = components
-    return components
-
-
 def _bounded_score(series: pd.Series | float, index: pd.Index) -> pd.Series:
     if isinstance(series, pd.Series):
         return series.reindex(index).fillna(0.0).astype(float).clip(0.0, 1.0)
@@ -1533,7 +1389,14 @@ def b09_skipped_approval(
     audit_rules: dict | None = None,
     cache: AccessRuleCache | None = None,
 ) -> pd.Series:
-    """L1-07 skipped approval: blank approver is a binary control flag."""
+    """L1-07 skipped approval: blank approver on a human-owned entry.
+
+    Why: ERP 자동·정기 전표는 사람 승인자 칸이 비어 있는 것이 정상 설계다. 빈칸을 무조건
+         위반으로 세면 정상 모집단의 대부분이 발화한다 (실측: 승인자 빈칸 행의 99.9%가
+         automated/recurring, 전표 기준 발화율 71~73%). 자동 계열은 면제하되,
+         source만 자동으로 적어둔 위장 전표는 trusted_automated_mask 가 면제에서
+         빼주므로 감시에 남는다 (source_trust 위장 의심 분기).
+    """
 
     if "approved_by" not in df.columns:
         return pd.Series(False, index=df.index, dtype=bool)
@@ -1543,7 +1406,9 @@ def b09_skipped_approval(
         return cache.bool_masks["b09_skipped_approval_result"]
 
     approved_by = _cached_text(df, "approved_by", cache)
-    candidate = approved_by.eq("")
+    blank_approver = approved_by.eq("")
+    trusted_automated = trusted_automated_mask(df)
+    candidate = blank_approver & ~trusted_automated
     score_series = pd.Series(0.0, index=df.index, dtype="float64")
     score_series.loc[candidate] = 1.0
     review_score_series = pd.Series(0.0, index=df.index, dtype="float64")
@@ -1583,7 +1448,9 @@ def b09_skipped_approval(
         "candidate_rows": int(candidate.sum()),
         "confirmed_rows": int(candidate.sum()),
         "missing_approver_rows": int(candidate.sum()),
-        "blank_approved_by_rows": int(candidate.sum()),
+        "blank_approved_by_rows": int(blank_approver.sum()),
+        # Why: 면제된 자동 전표 수를 노출해야 "왜 빈칸인데 안 잡혔나"를 감사인이 추적할 수 있다.
+        "trusted_automated_exempt_rows": int((blank_approver & trusted_automated).sum()),
         "score_bands": {"binary_flag": int(candidate.sum())},
         "rule_id": "L1-07",
     }

@@ -702,6 +702,46 @@ class TestL1_07:
         assert not ghost.any()
         assert ghost.attrs["breakdown"]["rule_id"] == "L1-07-02"
 
+    def test_trusted_automated_blank_approver_is_exempt(self) -> None:
+        """자동 배치 전표는 승인자 부재가 정상 설계이므로 위반으로 세지 않는다."""
+
+        size = 12  # 같은 날 무리지어 발생 — 단독성 임계(10) 초과
+        df = pd.DataFrame(
+            {
+                "document_id": [f"DOC-{i:03d}" for i in range(size)],
+                "approved_by": [""] * size,
+                "source": ["automated"] * size,
+                "batch_id": ["BATCH-01"] * size,
+                "posting_date": ["2024-03-15"] * size,
+            }
+        )
+
+        result = b09_skipped_approval(df)
+
+        assert not result.any()
+        assert result.attrs["breakdown"]["blank_approved_by_rows"] == size
+        assert result.attrs["breakdown"]["trusted_automated_exempt_rows"] == size
+        assert result.attrs["breakdown"]["candidate_rows"] == 0
+
+    def test_disguised_automated_blank_approver_still_flags(self) -> None:
+        """source만 automated 로 적은 위장 전표는 면제에서 빠져 계속 발화한다."""
+
+        df = pd.DataFrame(
+            {
+                "document_id": ["DOC-001"],
+                "approved_by": [""],
+                "source": ["automated"],
+                "batch_id": [""],  # 배치 정체성 없음 — 위장 의심
+                "posting_date": ["2024-03-15"],
+            }
+        )
+
+        result = b09_skipped_approval(df)
+
+        assert result.tolist() == [True]
+        assert result.attrs["breakdown"]["trusted_automated_exempt_rows"] == 0
+        assert result.attrs["breakdown"]["candidate_rows"] == 1
+
 
 class TestL3_03:
     def test_intercompany_account_flagged_for_review(self) -> None:
