@@ -93,14 +93,21 @@ def _render_before(result: PipelineResult) -> None:
 
     period = _period_range(df)
     total_lines = int(len(df))
+    # Why(2026-08-04): 구 코드는 라인 수를 "총 전표 수"로 표시했다. 같은 화면의 차대변 대사와
+    #   룰 탭 KPI 는 전표(document) 단위라 한 화면 안에서 같은 이름이 다른 수를 가리켰다.
+    #   집계 방식을 tab_phase1._render_population_kpis 와 맞춘다(document_id 부재 시 라인 폴백).
+    total_docs = (
+        int(df["document_id"].nunique())
+        if "document_id" in df.columns and total_lines
+        else total_lines
+    )
     total_debit = float(df["debit_amount"].sum()) if "debit_amount" in df.columns else 0.0
 
-    # Row 1: KPI cards. In this dashboard, "전표 수" follows the GL line count shown in source data.
     c1, c2, c3 = st.columns(3, gap="small")
     with c1:
         _render_kpi_card("분석 기간", period)
     with c2:
-        _render_kpi_card("총 전표 수", f"{total_lines:,}", unit="건")
+        _render_kpi_card("총 전표 수", f"{total_docs:,}", unit=f"건 · 라인 {total_lines:,}")
     with c3:
         _render_kpi_card("총 거래 금액", _fmt_amount(total_debit))
 

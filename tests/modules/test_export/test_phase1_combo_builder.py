@@ -54,7 +54,11 @@ def test_vocabulary_shape_and_disjointness():
     # posting_date 로 정하므로 둘의 비교가 동어반복이고 실측 전건 불일치 0. 데이터정합성 패널 전용.
     assert len(vocab.bodies) == 9
     assert "L1-08" not in vocab.body_ids
-    assert len(vocab.features) == 10
+    # 특징 13종: 구 10종 + L2-01·L2-02·L2-03 편입(2026-08-04) — L2-01 은 A45(e) 명문 매핑
+    # (05_DOMAIN_BRIDGE.md §2.2)이라 자격을 갖춘 채 빠져 있었고, L2-02·L2-03 은 지출 사이클
+    # 중복·분할 테스트로 L3-05·L3-06 과 같은 "실무 관행" 자격이다.
+    assert len(vocab.features) == 13
+    assert {"L2-01", "L2-02", "L2-03"} <= vocab.feature_ids
     assert not (vocab.body_ids & vocab.feature_ids)
     # 프리셋 5종: 4종 + 결산 손상·충당금 미인식(2026-07-21, v3 기말결산+추정계정 5건 근거)
     assert len(vocab.presets) == 5

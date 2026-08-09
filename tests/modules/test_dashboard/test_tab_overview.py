@@ -21,7 +21,14 @@ def _dummy_columns(spec, **kwargs):
     return [_DummyColumn() for _ in range(count)]
 
 
-def test_render_before_uses_line_count_for_total_journals(monkeypatch):
+def test_render_before_counts_documents_not_lines(monkeypatch):
+    """총 전표 수 = 전표(document) 수, 라인 수는 보조 표기.
+
+    구 계약은 라인 수를 "총 전표 수"로 표시했으나(근거 기록 없이 구현을 굳힌 회귀 테스트),
+    같은 화면의 차대변 대사와 룰 탭 KPI 는 전표 단위라 한 이름이 두 수를 가리켰다.
+    집계는 tab_phase1._render_population_kpis 와 동일하게 document_id nunique 를 쓴다.
+    """
+
     rendered: list[tuple[str, str, str]] = []
 
     monkeypatch.setattr(tab_overview.st, "subheader", lambda *args, **kwargs: None)
@@ -53,7 +60,8 @@ def test_render_before_uses_line_count_for_total_journals(monkeypatch):
 
     tab_overview._render_before(result)
 
-    assert ("총 전표 수", "3", "건") in rendered
+    # D1 이 2행, D2 가 1행 → 전표 2 · 라인 3
+    assert ("총 전표 수", "2", "건 · 라인 3") in rendered
     assert not any(title == "고유 전표 수" for title, _, _ in rendered)
 
 
