@@ -52,19 +52,28 @@ def measure_dataset(fraud_dir: Path) -> dict:
     #    룰별로 정상 문서 적중도 함께 센다 — 부정만 세면 "정상에도 똑같이 발화하는 룰"이
     #    커버리지를 부풀린다(실측 L3-04: 부정 43.0% vs 정상 44.5%).
     surfaced: set[str] = set()
-    fraud_rule_hits: dict[str, set[str]] = {}  # rule_id -> fraud docs
-    normal_rule_hits: dict[str, set[str]] = {}  # rule_id -> normal docs
+    fraud_rule_hits: dict[str, set[str]] = {}  # rule_id -> 그 룰이 실제로 발화한 fraud docs
+    normal_rule_hits: dict[str, set[str]] = {}  # rule_id -> 그 룰이 실제로 발화한 normal docs
     doc_rules: dict[str, set[str]] = {}  # fraud doc -> 그 문서를 표면에 올린 룰들
     for unit in units:
         docs = unit_docs(unit)
         hit_frauds = docs & fraud_docs
-        hit_normals = docs - fraud_docs
         rule_ids = {ref.rule_id for ref in unit.evidence_rows}
-        for rule_id in rule_ids:
-            if hit_frauds:
-                fraud_rule_hits.setdefault(rule_id, set()).update(hit_frauds)
-            if hit_normals:
-                normal_rule_hits.setdefault(rule_id, set()).update(hit_normals)
+
+        # 판별력(lift)은 룰이 **실제로 발화한 전표**만 센다. flow unit 의 나머지 전표까지
+        # 그 룰의 공으로 돌리면 묶음이 큰 룰일수록 발현율이 부풀고(실측 L3-09 35→53건),
+        # "발현율"이라는 이름과 재는 것이 어긋난다. 표면 커버리지는 반대로 묶음 기준이
+        # 맞다 — 묶음이 목록에 오르면 그 안의 전표는 실제로 감사인이 보게 되므로
+        # 아래 surfaced/doc_rules 는 unit 단위를 유지한다.
+        for ref in unit.evidence_rows:
+            ref_doc = str(ref.document_id) if getattr(ref, "document_id", None) else None
+            if ref_doc is None and len(docs) == 1:
+                ref_doc = next(iter(docs))  # 단일 전표 unit 은 unit_id 가 곧 그 전표
+            if ref_doc is None:
+                continue  # flow unit 인데 귀속 전표 불명 — 세지 않는다
+            bucket = fraud_rule_hits if ref_doc in fraud_docs else normal_rule_hits
+            bucket.setdefault(ref.rule_id, set()).add(ref_doc)
+
         if not hit_frauds:
             continue
         surfaced |= hit_frauds
